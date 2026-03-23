@@ -494,7 +494,7 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
       />
       {toast ? (
         <div
-          className="pointer-events-none fixed bottom-[24px] left-1/2 z-[10060] max-w-[90vw] -translate-x-1/2 rounded-[4px] border border-[#3c3c3c] bg-[#252526] px-[14px] py-[8px] font-sans text-[12px] text-[#cccccc] shadow-lg"
+          className="pointer-events-none fixed bottom-[24px] left-1/2 z-[10060] max-w-[90vw] -translate-x-1/2 rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-[var(--bg-card)] px-[14px] py-[8px] font-sans text-[12px] text-[var(--text-primary)] shadow-[var(--palette-shadow)]"
           role="status"
         >
           {toast}

@@ -110,7 +110,7 @@ export function CommandPalette({
         </p>
       }
     >
-      <div className="max-h-[min(360px,42vh)] min-h-[120px] overflow-y-auto py-[4px]">
+      <div className="hide-scrollbar-y max-h-[min(360px,42vh)] min-h-[120px] overflow-y-auto py-[4px]">
         {filtered.length === 0 ? (
           <p className="px-[10px] py-[12px] font-sans text-[13px] text-[var(--palette-row-muted)]">
             No matching commands
