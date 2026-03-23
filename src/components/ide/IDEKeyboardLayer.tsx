@@ -8,6 +8,7 @@ import { CommandPalette, type PaletteCommand } from "./CommandPalette";
 import { QuickOpen } from "./QuickOpen";
 import { useEditorBridgeRef } from "./EditorBridgeContext";
 import { useWorkbench } from "./WorkbenchContext";
+import { useTheme } from "@/components/theme/ThemeProvider";
 
 type PaletteMode = "closed" | "command" | "quickopen";
 
@@ -20,6 +21,7 @@ export function IDEKeyboardLayer() {
   const bridgeRef = useEditorBridgeRef();
   const { openExplorerFile } = useOpenInEditor();
   const workbench = useWorkbench();
+  const { setPreference: setThemePreference } = useTheme();
   const [palette, setPalette] = useState<PaletteMode>("closed");
   const [toast, setToast] = useState<string | null>(null);
 
@@ -130,6 +132,30 @@ export function IDEKeyboardLayer() {
         run: () => flash(setToast, "Settings UI (not wired in this demo)."),
       },
       {
+        id: "workbench.colorTheme.light",
+        label: "Preferences: Color Theme — Light",
+        run: () => {
+          setThemePreference("light");
+          flash(setToast, "Color theme: Light");
+        },
+      },
+      {
+        id: "workbench.colorTheme.dark",
+        label: "Preferences: Color Theme — Dark",
+        run: () => {
+          setThemePreference("dark");
+          flash(setToast, "Color theme: Dark");
+        },
+      },
+      {
+        id: "workbench.colorTheme.system",
+        label: "Preferences: Color Theme — Use System Setting",
+        run: () => {
+          setThemePreference("system");
+          flash(setToast, "Color theme: Use system setting");
+        },
+      },
+      {
         id: "workbench.action.openKeyboardShortcuts",
         label: "Preferences: Open Keyboard Shortcuts",
         run: () => flash(setToast, "Keyboard shortcuts editor (demo)."),
@@ -223,7 +249,7 @@ export function IDEKeyboardLayer() {
         run: () => flash(setToast, "Welcome page (demo)."),
       },
     ],
-    [runWithBridge, workbench]
+    [runWithBridge, setThemePreference, workbench]
   );
 
   useEffect(() => {

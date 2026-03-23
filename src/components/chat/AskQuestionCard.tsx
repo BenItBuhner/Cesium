@@ -64,15 +64,15 @@ function QuestionStepColumn({
           const selected = selectedLetter === opt.letter;
           const rowClass = selected
             ? "rounded-[6px] bg-[var(--plan-accent-selected-bg)] transition-[background-color] duration-150 ease-out motion-reduce:transition-none"
-            : "rounded-[6px] transition-[background-color] duration-150 ease-out motion-reduce:transition-none hover:bg-white/[0.04]";
+            : "rounded-[6px] transition-[background-color] duration-150 ease-out motion-reduce:transition-none hover:bg-[var(--accent-bg)]";
 
           const badgeClass = selected
             ? "border-[var(--plan-accent)] bg-[var(--plan-accent-bg)] text-[var(--plan-accent)]"
-            : "border-[var(--border-card)] text-white";
+            : "border-[var(--border-card)] text-[var(--text-primary)]";
 
           const textClass = selected
             ? "text-[var(--plan-accent-label-strong)]"
-            : "text-white";
+            : "text-[var(--text-primary)]";
 
           const subClass = selected
             ? "text-[var(--plan-accent-label)]"
@@ -282,7 +282,7 @@ export function AskQuestionCard({
             type="button"
             onClick={goPrev}
             disabled={navDisabledPrev}
-            className={`flex size-[24px] shrink-0 items-center justify-center rounded-[var(--radius-tab)] text-[var(--text-secondary)] outline-none ring-0 transition-colors duration-150 ease-out hover:bg-white/[0.06] hover:text-[var(--plan-accent)] focus-visible:outline-none focus-visible:ring-0 motion-reduce:transition-none disabled:pointer-events-none disabled:opacity-25`}
+            className={`flex size-[24px] shrink-0 items-center justify-center rounded-[var(--radius-tab)] text-[var(--text-secondary)] outline-none ring-0 transition-colors duration-150 ease-out hover:bg-[var(--accent-bg)] hover:text-[var(--plan-accent)] focus-visible:outline-none focus-visible:ring-0 motion-reduce:transition-none disabled:pointer-events-none disabled:opacity-25`}
             aria-label="Previous question"
           >
             <ChevronLeft className="size-[14px]" strokeWidth={1.5} />
@@ -291,7 +291,7 @@ export function AskQuestionCard({
             type="button"
             onClick={goNext}
             disabled={navDisabledNext}
-            className={`flex size-[24px] shrink-0 items-center justify-center rounded-[var(--radius-tab)] text-[var(--text-secondary)] outline-none ring-0 transition-colors duration-150 ease-out hover:bg-white/[0.06] hover:text-[var(--plan-accent)] focus-visible:outline-none focus-visible:ring-0 motion-reduce:transition-none disabled:pointer-events-none disabled:opacity-25`}
+            className={`flex size-[24px] shrink-0 items-center justify-center rounded-[var(--radius-tab)] text-[var(--text-secondary)] outline-none ring-0 transition-colors duration-150 ease-out hover:bg-[var(--accent-bg)] hover:text-[var(--plan-accent)] focus-visible:outline-none focus-visible:ring-0 motion-reduce:transition-none disabled:pointer-events-none disabled:opacity-25`}
             aria-label="Next question"
           >
             <ChevronRight className="size-[14px]" strokeWidth={1.5} />
@@ -301,7 +301,7 @@ export function AskQuestionCard({
       <button
         type="button"
         onClick={() => setMinimized((m) => !m)}
-        className={`flex size-[24px] shrink-0 items-center justify-center rounded-[var(--radius-tab)] text-[var(--text-secondary)] outline-none ring-0 transition-colors duration-150 ease-out hover:bg-white/[0.06] hover:text-[var(--plan-accent)] focus-visible:outline-none focus-visible:ring-0 motion-reduce:transition-none`}
+        className={`flex size-[24px] shrink-0 items-center justify-center rounded-[var(--radius-tab)] text-[var(--text-secondary)] outline-none ring-0 transition-colors duration-150 ease-out hover:bg-[var(--accent-bg)] hover:text-[var(--plan-accent)] focus-visible:outline-none focus-visible:ring-0 motion-reduce:transition-none`}
         aria-label={minimized ? "Expand questions" : "Minimize questions"}
       >
         <span className="relative flex size-[13px] items-center justify-center">

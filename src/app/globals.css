@@ -1,6 +1,63 @@
 @import "tailwindcss";
 
+/* Light theme (default). Dark uses `html.dark` — set by theme bootstrap + ThemeProvider. */
 :root {
+  --background: #fafafa;
+  --foreground: #0a0a0a;
+
+  --bg-main: #fafafa;
+  --bg-panel: #f0f0f0;
+  --bg-card: #e6e6e6;
+  --bg-card-hover: #dcdcdc;
+  --bg-tab-active: #fafafa;
+  --bg-tab-inactive: rgba(250, 250, 250, 0.35);
+
+  --border-card: #c4c4c4;
+  --border-subtle: #e2e2e2;
+
+  --text-primary: #1a1a1a;
+  --text-secondary: #5c5c5c;
+  --text-disabled: #9a9a9a;
+
+  --accent: #1a1a1a;
+  --accent-dark: #333333;
+  --accent-bg: rgba(0, 0, 0, 0.08);
+
+  --plan-accent: #9a7f1a;
+  --plan-accent-dark: #7d6615;
+  --plan-accent-bg: #ebe4d0;
+  --plan-accent-selected-bg: rgba(154, 127, 26, 0.14);
+  --plan-accent-selected-border: rgba(154, 127, 26, 0.35);
+  --plan-accent-label: rgba(90, 74, 18, 0.85);
+  --plan-accent-label-strong: rgba(50, 42, 10, 0.95);
+
+  --debug-accent: #b84d55;
+  --debug-accent-dark: #8a3a40;
+  --debug-accent-bg: #f0dedf;
+
+  --ask-accent: #3d6b4d;
+  --ask-accent-dark: #2f523c;
+  --ask-accent-bg: #dfe8e2;
+
+  --file-tag-bg: #c9dcf5;
+  --file-tag-text: #1a2d4d;
+  --file-tag-icon: #3d5a8a;
+
+  --radius-card: 10px;
+  --radius-tab: 5px;
+  --radius-pill: 50px;
+  --radius-checkbox: 2px;
+
+  --font-size-body: 14px;
+  --font-size-small: 10.5px;
+  --font-size-meta: 11.9px;
+
+  --sidebar-width: 290px;
+  --chat-width: 550px;
+  --tab-height: 40px;
+}
+
+html.dark {
   --background: #191919;
   --foreground: #ffffff;
 
@@ -22,43 +79,25 @@
   --accent-dark: #e8e8e8;
   --accent-bg: rgba(255, 255, 255, 0.1);
 
-  /* Plan mode only (agent stays white via --accent) */
   --plan-accent: #c2a738;
   --plan-accent-dark: #b79e38;
   --plan-accent-bg: #494639;
-  /* Plan ask-card: selected option (faded pill + softer label) */
   --plan-accent-selected-bg: rgba(194, 167, 56, 0.16);
   --plan-accent-selected-border: rgba(194, 167, 56, 0.42);
   --plan-accent-label: rgba(220, 200, 120, 0.78);
   --plan-accent-label-strong: rgba(232, 210, 130, 0.92);
 
-  /* Debug mode — salmon on dark maroon pill */
   --debug-accent: #e59a9a;
   --debug-accent-dark: #9b585e;
   --debug-accent-bg: #3a2a2a;
 
-  /* Ask mode — muted teal on dark green-tinted pill */
   --ask-accent: #5e8d6b;
   --ask-accent-dark: #456b52;
   --ask-accent-bg: #2a322e;
 
-  /* User bubble file / context chips */
   --file-tag-bg: #2a4a7a;
   --file-tag-text: #e8f0ff;
   --file-tag-icon: #93b4e8;
-
-  --radius-card: 10px;
-  --radius-tab: 5px;
-  --radius-pill: 50px;
-  --radius-checkbox: 2px;
-
-  --font-size-body: 14px;
-  --font-size-small: 10.5px;
-  --font-size-meta: 11.9px;
-
-  --sidebar-width: 290px;
-  --chat-width: 550px;
-  --tab-height: 40px;
 }
 
 @theme inline {
@@ -108,8 +147,8 @@ body {
 }
 
 ::selection {
-  background: rgba(255, 255, 255, 0.22);
-  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  color: var(--text-primary);
 }
 
 @keyframes spin {

@@ -3,6 +3,7 @@
 import { useReducer, useCallback, useEffect, useRef, type DragEvent } from "react";
 import { EditorTabs } from "./EditorTabs";
 import { CodeEditor } from "./CodeEditor";
+import { FakeTerminal } from "./FakeTerminal";
 import { SimpleMarkdownPreview } from "./SimpleMarkdownPreview";
 import { AgentTranscriptView } from "./AgentTranscriptView";
 import { useEditorBridgeRef } from "@/components/ide/EditorBridgeContext";
@@ -93,12 +94,14 @@ export function EditorPanel() {
     if (tab.language === "markdown" && tab.markdownPreview) {
       return <SimpleMarkdownPreview key={tab.id} source={tab.content} />;
     }
+    if (tab.icon === "terminal") {
+      return <FakeTerminal key={tab.id} initialContent={tab.content} />;
+    }
     return (
       <CodeEditor
         key={tab.id}
         content={tab.content}
         language={tab.language}
-        terminal={tab.icon === "terminal"}
       />
     );
   }
