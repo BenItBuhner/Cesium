@@ -1,26 +1,174 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #191919;
+  --foreground: #ffffff;
+
+  --bg-main: #191919;
+  --bg-panel: #1e1e1e;
+  --bg-card: #393939;
+  --bg-card-hover: #404040;
+  --bg-tab-active: #191919;
+  --bg-tab-inactive: rgba(25, 25, 25, 0.25);
+
+  --border-card: #505050;
+  --border-subtle: #2a2a2a;
+
+  --text-primary: #ffffff;
+  --text-secondary: #6f6f6f;
+  --text-disabled: #5b5b5b;
+
+  --accent: #ffffff;
+  --accent-dark: #e8e8e8;
+  --accent-bg: rgba(255, 255, 255, 0.1);
+
+  /* Plan mode only (agent stays white via --accent) */
+  --plan-accent: #c2a738;
+  --plan-accent-dark: #b79e38;
+  --plan-accent-bg: #494639;
+  /* Plan ask-card: selected option (faded pill + softer label) */
+  --plan-accent-selected-bg: rgba(194, 167, 56, 0.16);
+  --plan-accent-selected-border: rgba(194, 167, 56, 0.42);
+  --plan-accent-label: rgba(220, 200, 120, 0.78);
+  --plan-accent-label-strong: rgba(232, 210, 130, 0.92);
+
+  /* Debug mode — salmon on dark maroon pill */
+  --debug-accent: #e59a9a;
+  --debug-accent-dark: #9b585e;
+  --debug-accent-bg: #3a2a2a;
+
+  /* Ask mode — muted teal on dark green-tinted pill */
+  --ask-accent: #5e8d6b;
+  --ask-accent-dark: #456b52;
+  --ask-accent-bg: #2a322e;
+
+  /* User bubble file / context chips */
+  --file-tag-bg: #2a4a7a;
+  --file-tag-text: #e8f0ff;
+  --file-tag-icon: #93b4e8;
+
+  --radius-card: 10px;
+  --radius-tab: 5px;
+  --radius-pill: 50px;
+  --radius-checkbox: 2px;
+
+  --font-size-body: 14px;
+  --font-size-small: 10.5px;
+  --font-size-meta: 11.9px;
+
+  --sidebar-width: 290px;
+  --chat-width: 550px;
+  --tab-height: 40px;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+  --color-bg-main: var(--bg-main);
+  --color-bg-panel: var(--bg-panel);
+  --color-bg-card: var(--bg-card);
+  --color-bg-card-hover: var(--bg-card-hover);
+  --color-bg-tab-active: var(--bg-tab-active);
+  --color-bg-tab-inactive: var(--bg-tab-inactive);
+  --color-border-card: var(--border-card);
+  --color-border-subtle: var(--border-subtle);
+  --color-text-primary: var(--text-primary);
+  --color-text-secondary: var(--text-secondary);
+  --color-text-disabled: var(--text-disabled);
+  --color-accent: var(--accent);
+  --color-accent-dark: var(--accent-dark);
+  --color-accent-bg: var(--accent-bg);
+  --color-plan-accent: var(--plan-accent);
+  --color-plan-accent-dark: var(--plan-accent-dark);
+  --color-plan-accent-bg: var(--plan-accent-bg);
+  --color-debug-accent: var(--debug-accent);
+  --color-debug-accent-dark: var(--debug-accent-dark);
+  --color-debug-accent-bg: var(--debug-accent-bg);
+  --color-ask-accent: var(--ask-accent);
+  --color-ask-accent-dark: var(--ask-accent-dark);
+  --color-ask-accent-bg: var(--ask-accent-bg);
+  --radius-card: var(--radius-card);
+  --radius-tab: var(--radius-tab);
+  --radius-pill: var(--radius-pill);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-card) transparent;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--bg-main);
+  color: var(--text-primary);
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
+  font-size: var(--font-size-body);
+  overflow: hidden;
+}
+
+::selection {
+  background: rgba(255, 255, 255, 0.22);
+  color: var(--accent);
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.animate-spin {
+  animation: spin 1s linear infinite;
+}
+
+/**
+ * Tab strips: keep horizontal pan/scroll, no visible bar (avoids layout jump / content shift).
+ */
+.hide-scrollbar-x {
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  touch-action: pan-x pinch-zoom;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.hide-scrollbar-x::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  background: transparent;
+}
+
+/** Vertical scroll without a persistent gutter (agent transcript / chat). */
+.hide-scrollbar-y {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.hide-scrollbar-y::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  background: transparent;
+}
+
+/**
+ * Chat bottom stack wrapper: fully transparent so the transcript scrolls through behind it.
+ * Only the inner composer / docked cards paint a background.
+ */
+.chat-bottom-dock {
+  position: relative;
+  background: transparent;
+  box-shadow: none;
+}
+
+[data-group] {
+  display: flex !important;
+}
+
+[data-separator] {
+  cursor: col-resize;
+}
+
+[contenteditable]:focus {
+  outline: none;
 }

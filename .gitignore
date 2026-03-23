@@ -1,8 +1,8 @@
 # See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
 
 # dependencies
-/node_modules
-/.pnp
+node_modules/
+.pnp
 .pnp.*
 .yarn/*
 !.yarn/patches
@@ -11,27 +11,48 @@
 !.yarn/versions
 
 # testing
-/coverage
+coverage/
+.nyc_output/
+*.lcov
+.jest/
 
 # next.js
-/.next/
-/out/
+.next/
+out/
+
+# PWA — generated on production build (@ducanh2912/next-pwa)
+/public/sw.js
+/public/sw.js.map
+/public/workbox-*.js
+/public/workbox-*.js.map
+/public/swe-worker-*.js
+/public/swe-worker-*.js.map
+/public/fallback-*.js
+/public/fallback-*.js.map
 
 # production
-/build
+build/
+dist/
 
 # misc
 .DS_Store
 *.pem
+*.log
+*.pid
+*.seed
+*.pid.lock
 
 # debug
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
-.pnpm-debug.log*
+pnpm-debug.log*
+lerna-debug.log*
 
-# env files (can opt-in for committing if needed)
+# env (secrets); allow committed examples
 .env*
+!.env.example
+!.env*.example
 
 # vercel
 .vercel
@@ -39,3 +60,47 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# caches & tooling
+.turbo/
+.cache/
+.parcel-cache/
+.eslintcache
+.stylelintcache
+*.tsbuildinfo
+
+# IDE / editors
+.idea/
+*.swp
+*.swo
+*~
+.project
+.classpath
+.settings/
+*.sublime-*
+
+# OS (Windows)
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# OS (macOS)
+.AppleDouble
+.LSOverride
+._*
+
+# optional local editor config (uncomment if you never commit team VS Code settings)
+# .vscode/*
+# !.vscode/extensions.json
+
+# Playwright / e2e (if added later)
+test-results/
+playwright-report/
+playwright/.cache/
+
+# Storybook (if added later)
+storybook-static/
+
+# Sentry / source maps (if used)
+.sentryclirc
