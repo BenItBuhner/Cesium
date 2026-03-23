@@ -755,6 +755,8 @@ export const chatMessages: ChatMessage[] = [
       {
         id: "q1",
         title: "Release scope",
+        content:
+          "Pick what we lock in for this pass before moving on. You can change your mind with the arrows until you submit the flow.",
         options: [
           { letter: "A", text: "Ship as-is and move on to keyboard shortcuts." },
           { letter: "B", text: "Add the pane focus ring + polish pass first." },
@@ -769,6 +771,8 @@ export const chatMessages: ChatMessage[] = [
       {
         id: "q2",
         title: "Test coverage",
+        content:
+          "How deep should validation go for the demo shell? Other is always available if your answer is not listed.",
         options: [
           { letter: "A", text: "Smoke-test split UI only." },
           { letter: "B", text: "Full chat + editor regression pass." },
@@ -778,6 +782,8 @@ export const chatMessages: ChatMessage[] = [
       {
         id: "q3",
         title: "Docs follow-up",
+        content:
+          "Whether to touch the plan file or leave docs as-is for this iteration.",
         options: [
           { letter: "A", text: "Update demo-refactor.plan.md." },
           { letter: "B", text: "No doc changes." },
@@ -786,6 +792,8 @@ export const chatMessages: ChatMessage[] = [
       {
         id: "q4",
         title: "Priority after merge",
+        content:
+          "What should we tackle first once this branch lands? Use Other for anything not covered.",
         options: [
           { letter: "A", text: "Keyboard shortcuts for pane focus." },
           { letter: "B", text: "Theming / density pass." },
@@ -800,6 +808,8 @@ export const chatMessages: ChatMessage[] = [
       {
         id: "q5",
         title: "Notify",
+        content:
+          "Let us know if you want a ping when this thread is ready to close.",
         options: [
           { letter: "A", text: "Ping when this thread is ready to close." },
           { letter: "B", text: "No notification needed." },

@@ -1,21 +1,16 @@
 "use client";
 
-import { useState, useCallback, useEffect, useRef } from "react";
-import { Bot, Code2, Files, GitBranch, Search, type LucideIcon } from "lucide-react";
+import { useState, useCallback } from "react";
+import { Files, GitBranch, Search, type LucideIcon } from "lucide-react";
 import { fileTree, resolveExplorerOpenRequest } from "@/lib/mock-data";
 import { useOpenInEditor } from "@/components/editor/OpenInEditorContext";
 import type { FileNode } from "@/lib/types";
 import { FileTree, collectExpandableFolderPaths } from "./FileTree";
 
-/** Below this width, Editor/Agent uses icons only (same row as activity icons). */
-const TOOLBAR_COMPACT_WIDTH_PX = 236;
-
 type SidebarView = "explorer" | "search" | "scm";
 
 export function FileExplorer() {
   const { openExplorerFile } = useOpenInEditor();
-  const rootRef = useRef<HTMLDivElement>(null);
-  const [toolbarCompact, setToolbarCompact] = useState(false);
   const [view, setView] = useState<SidebarView>("explorer");
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(() => {
     return new Set(collectExpandableFolderPaths(fileTree.children, ""));
@@ -37,97 +32,32 @@ export function FileExplorer() {
     });
   }, []);
 
-  useEffect(() => {
-    const el = rootRef.current;
-    if (!el) return;
-    const ro = new ResizeObserver((entries) => {
-      const w = entries[0]?.contentRect.width ?? 0;
-      setToolbarCompact(w < TOOLBAR_COMPACT_WIDTH_PX);
-    });
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
-
-  const modeBtnActive =
-    "bg-[var(--bg-card)] text-[var(--text-primary)] shadow-[0_1px_0_rgba(0,0,0,0.35)]";
-
   return (
-    <div
-      ref={rootRef}
-      className="flex h-full min-w-0 flex-col overflow-hidden bg-[var(--bg-panel)]"
-    >
-      <div
-        className={`flex w-full shrink-0 justify-center py-[4px] ${toolbarCompact ? "px-[4px]" : "px-[11px]"}`}
-      >
-        <div className={`flex items-center ${toolbarCompact ? "gap-[2px]" : "gap-[6px]"}`}>
-          <div
-            className={`inline-flex shrink-0 rounded-[var(--radius-tab)] border border-[var(--border-subtle)] bg-[var(--bg-main)] ${toolbarCompact ? "p-[1px]" : "p-[2px]"}`}
-            role="tablist"
-            aria-label="Sidebar mode"
-          >
-            <button
-              type="button"
-              role="tab"
-              aria-selected
-              aria-label="Editor"
-              className={`outline-none transition-colors focus-visible:outline-none ${
-                toolbarCompact
-                  ? `flex size-[30px] shrink-0 items-center justify-center rounded-[3px] ${modeBtnActive}`
-                  : `rounded-[3px] px-[7px] py-[4px] font-sans text-[10px] font-medium ${modeBtnActive}`
-              }`}
-            >
-              {toolbarCompact ? (
-                <Code2 className="size-[18px]" strokeWidth={2} aria-hidden />
-              ) : (
-                "Editor"
-              )}
-            </button>
-            <button
-              type="button"
-              role="tab"
-              disabled
-              aria-selected={false}
-              aria-disabled="true"
-              aria-label="Agent (coming soon)"
-              title="Coming soon"
-              className={`cursor-not-allowed outline-none transition-colors focus-visible:outline-none ${
-                toolbarCompact
-                  ? "flex size-[30px] shrink-0 items-center justify-center rounded-[3px] text-[var(--text-disabled)]"
-                  : "rounded-[3px] px-[7px] py-[4px] font-sans text-[10px] font-medium text-[var(--text-disabled)]"
-              }`}
-            >
-              {toolbarCompact ? (
-                <Bot className="size-[18px] opacity-50" strokeWidth={1.5} aria-hidden />
-              ) : (
-                "Agent"
-              )}
-            </button>
-          </div>
-
-          <div
-            className="flex shrink-0 items-center gap-[2px]"
-            role="tablist"
-            aria-label="Sidebar views"
-          >
-            <ActivityButton
-              active={view === "explorer"}
-              onClick={() => setView("explorer")}
-              label="Explorer"
-              icon={Files}
-            />
-            <ActivityButton
-              active={view === "search"}
-              onClick={() => setView("search")}
-              label="Search"
-              icon={Search}
-            />
-            <ActivityButton
-              active={view === "scm"}
-              onClick={() => setView("scm")}
-              label="Source Control"
-              icon={GitBranch}
-            />
-          </div>
+    <div className="flex h-full min-w-0 flex-col overflow-hidden bg-[var(--bg-panel)]">
+      <div className="flex w-full shrink-0 justify-center px-[11px] py-[4px]">
+        <div
+          className="flex shrink-0 items-center gap-[2px]"
+          role="tablist"
+          aria-label="Sidebar views"
+        >
+          <ActivityButton
+            active={view === "explorer"}
+            onClick={() => setView("explorer")}
+            label="Explorer"
+            icon={Files}
+          />
+          <ActivityButton
+            active={view === "search"}
+            onClick={() => setView("search")}
+            label="Search"
+            icon={Search}
+          />
+          <ActivityButton
+            active={view === "scm"}
+            onClick={() => setView("scm")}
+            label="Source Control"
+            icon={GitBranch}
+          />
         </div>
       </div>
 

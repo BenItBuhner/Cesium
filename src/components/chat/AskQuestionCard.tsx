@@ -2,10 +2,10 @@
 
 import {
   useCallback,
-  useEffect,
   useRef,
   useState,
   type KeyboardEvent,
+  type MutableRefObject,
 } from "react";
 import {
   ChevronLeft,
@@ -20,9 +20,162 @@ import { CollapsibleHeight } from "./CollapsibleHeight";
 const transitionSnappy =
   "duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none motion-reduce:duration-0";
 
-function scrollChatDown(px = 96) {
-  const root = document.querySelector<HTMLElement>("[data-chat-scroll-root]");
-  root?.scrollBy({ top: px, behavior: "smooth" });
+const slideTransition =
+  "transition-[transform] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none";
+
+/** Only treat as typing context when the event target is inside a real text field (not sidebar buttons). */
+function keyEventTargetIsInTextField(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  return Boolean(
+    target.closest('input, textarea, [contenteditable="true"]')
+  );
+}
+
+type StepUi = { letter: string | null; otherDraft: string };
+
+function QuestionStepColumn({
+  step,
+  selectedLetter,
+  otherDraft,
+  patchUi,
+  selectOption,
+  goNext,
+  otherRefs,
+  registerOptionButton,
+}: {
+  step: AskQuestionStep;
+  selectedLetter: string | null;
+  otherDraft: string;
+  patchUi: (id: string, patch: Partial<StepUi>) => void;
+  selectOption: (stepId: string, opt: AskQuestionOption) => void;
+  goNext: () => void;
+  otherRefs: MutableRefObject<Partial<Record<string, HTMLInputElement | null>>>;
+  registerOptionButton: (letter: string, el: HTMLButtonElement | null) => void;
+}) {
+  return (
+    <div className="min-w-0 max-w-full">
+      {step.content ? (
+        <p className="mb-[8px] font-sans text-[11.5px] font-normal leading-snug text-[var(--text-secondary)]">
+          {step.content}
+        </p>
+      ) : null}
+      <div className="flex flex-col gap-[6px]">
+        {step.options.map((opt) => {
+          const selected = selectedLetter === opt.letter;
+          const rowClass = selected
+            ? "rounded-[6px] bg-[var(--plan-accent-selected-bg)] transition-[background-color] duration-150 ease-out motion-reduce:transition-none"
+            : "rounded-[6px] transition-[background-color] duration-150 ease-out motion-reduce:transition-none hover:bg-white/[0.04]";
+
+          const badgeClass = selected
+            ? "border-[var(--plan-accent)] bg-[var(--plan-accent-bg)] text-[var(--plan-accent)]"
+            : "border-[var(--border-card)] text-white";
+
+          const textClass = selected
+            ? "text-[var(--plan-accent-label-strong)]"
+            : "text-white";
+
+          const subClass = selected
+            ? "text-[var(--plan-accent-label)]"
+            : "text-[var(--text-secondary)]";
+
+          const otherOpen = Boolean(opt.isOther && selected);
+
+          const optionKeyHandlers = (e: KeyboardEvent) => {
+            if (e.key !== "Enter") return;
+            e.preventDefault();
+            if (selectedLetter !== opt.letter) {
+              selectOption(step.id, opt);
+              return;
+            }
+            if (opt.isOther) {
+              if (otherDraft.trim()) goNext();
+              else otherRefs.current[step.id]?.focus();
+            } else {
+              goNext();
+            }
+          };
+
+          const labelInner = (
+            <>
+              <span
+                className={`flex h-[14px] w-[14px] shrink-0 items-center justify-center rounded-[var(--radius-checkbox)] border font-sans text-[7px] font-normal leading-none transition-[color,background-color,border-color] duration-150 ease-out motion-reduce:transition-none ${badgeClass}`}
+              >
+                {opt.letter}
+              </span>
+              <span className="min-w-0 text-left">
+                <span
+                  className={`font-sans text-[10.5px] font-normal leading-snug ${textClass}`}
+                >
+                  {opt.isOther ? (
+                    <>
+                      {opt.text}
+                      {!selected ? (
+                        <span className={subClass}>
+                          {" "}
+                          {opt.placeholder}
+                        </span>
+                      ) : null}
+                    </>
+                  ) : (
+                    opt.text
+                  )}
+                </span>
+              </span>
+            </>
+          );
+
+          return (
+            <div key={opt.letter} className={`${rowClass} px-[6px] py-[5px]`}>
+              {opt.isOther ? (
+                <div className="flex w-full min-w-0 items-center gap-[8px]">
+                  <button
+                    ref={(el) => registerOptionButton(opt.letter, el)}
+                    type="button"
+                    onClick={() => selectOption(step.id, opt)}
+                    onKeyDown={optionKeyHandlers}
+                    className="flex min-w-0 shrink-0 cursor-pointer items-center gap-[8px] rounded-[4px] py-[2px] text-left outline-none ring-0 focus-visible:outline-none focus-visible:ring-0"
+                  >
+                    {labelInner}
+                  </button>
+                  {otherOpen ? (
+                    <input
+                      ref={(el) => {
+                        otherRefs.current[step.id] = el;
+                      }}
+                      type="text"
+                      value={otherDraft}
+                      onChange={(e) =>
+                        patchUi(step.id, { otherDraft: e.target.value })
+                      }
+                      placeholder={opt.placeholder}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          if (otherDraft.trim()) goNext();
+                        }
+                      }}
+                      className="box-border min-h-[26px] min-w-0 flex-1 rounded-[4px] border border-[var(--border-card)] bg-[var(--bg-panel)] px-[8px] py-[4px] text-left font-sans text-[10.5px] text-[var(--plan-accent-label-strong)] outline-none ring-0 transition-[border-color,box-shadow] duration-150 ease-out placeholder:text-[var(--plan-accent-label)] placeholder:opacity-60 focus:border-[var(--border-card)] focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0 motion-reduce:transition-none"
+                    />
+                  ) : null}
+                </div>
+              ) : (
+                <button
+                  ref={(el) => registerOptionButton(opt.letter, el)}
+                  type="button"
+                  onClick={() => selectOption(step.id, opt)}
+                  onKeyDown={optionKeyHandlers}
+                  className="flex w-full min-w-0 cursor-pointer items-center gap-[8px] rounded-[4px] text-left outline-none ring-0 focus-visible:outline-none focus-visible:ring-0"
+                >
+                  {labelInner}
+                </button>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
 }
 
 interface AskQuestionCardProps {
@@ -39,64 +192,79 @@ export function AskQuestionCard({
   embeddedInDock,
 }: AskQuestionCardProps) {
   const [stepIndex, setStepIndex] = useState(0);
-  const [selectedLetter, setSelectedLetter] = useState<string | null>(null);
-  const [otherDraft, setOtherDraft] = useState("");
+  const [stepUi, setStepUi] = useState<Record<string, StepUi>>({});
   const [minimized, setMinimized] = useState(false);
-  const otherInputRef = useRef<HTMLInputElement>(null);
-  const bodyRef = useRef<HTMLDivElement>(null);
+  const otherRefs = useRef<Partial<Record<string, HTMLInputElement | null>>>({});
+  const optionButtonRefs = useRef<
+    Partial<Record<string, Partial<Record<string, HTMLButtonElement | null>>>>
+  >({});
+  const stepUiRef = useRef(stepUi);
 
-  const step = steps[stepIndex];
-  const total = steps.length;
-  const stepNo = stepIndex + 1;
+  stepUiRef.current = stepUi;
 
-  useEffect(() => {
-    setSelectedLetter(null);
-    setOtherDraft("");
-  }, [stepIndex]);
+  const getUi = useCallback(
+    (id: string): StepUi => stepUi[id] ?? { letter: null, otherDraft: "" },
+    [stepUi]
+  );
+
+  const patchUi = useCallback((id: string, patch: Partial<StepUi>) => {
+    setStepUi((prev) => {
+      const cur = prev[id] ?? { letter: null, otherDraft: "" };
+      return { ...prev, [id]: { ...cur, ...patch } };
+    });
+  }, []);
 
   const goNext = useCallback(() => {
-    if (stepIndex < total - 1) {
+    if (stepIndex < steps.length - 1) {
       setStepIndex((i) => i + 1);
-      scrollChatDown();
-      requestAnimationFrame(() => {
-        bodyRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
-      });
     }
-  }, [stepIndex, total]);
+  }, [stepIndex, steps.length]);
 
   const goPrev = useCallback(() => {
     if (stepIndex > 0) setStepIndex((i) => i - 1);
   }, [stepIndex]);
 
-  const selectOption = useCallback((opt: AskQuestionOption) => {
-    setSelectedLetter(opt.letter);
-    if (opt.isOther) {
-      requestAnimationFrame(() => otherInputRef.current?.focus());
-    }
-  }, []);
+  const selectOption = useCallback(
+    (
+      stepId: string,
+      opt: AskQuestionOption,
+      options?: { focusOther?: boolean }
+    ) => {
+      patchUi(stepId, { letter: opt.letter });
+      if (opt.isOther && options?.focusOther !== false) {
+        requestAnimationFrame(() => otherRefs.current[stepId]?.focus());
+      }
+    },
+    [patchUi]
+  );
 
   const tryAdvance = useCallback(() => {
-    if (!selectedLetter || !step) return;
-    const opt = step.options.find((o) => o.letter === selectedLetter);
+    const st = steps[stepIndex];
+    if (!st) return;
+    const u = stepUiRef.current[st.id] ?? { letter: null, otherDraft: "" };
+    if (!u.letter) return;
+    const opt = st.options.find((o) => o.letter === u.letter);
     if (!opt) return;
-    if (opt.isOther) {
-      if (!otherDraft.trim()) return;
-    }
+    if (opt.isOther && !u.otherDraft.trim()) return;
     goNext();
-  }, [selectedLetter, step, otherDraft, goNext]);
+  }, [stepIndex, steps, goNext]);
+
+  if (steps.length === 0) return null;
+
+  const step = steps[stepIndex];
+  const stepNo = stepIndex + 1;
+
+  const frameBase =
+    "flex flex-col overflow-hidden";
 
   const frame = embeddedInDock
-    ? "flex flex-col overflow-hidden px-[8px] pb-[8px] pt-[6px]"
-    : `flex flex-col overflow-hidden ${
-        dockAboveComposer
-          ? "mx-[12px] rounded-t-[var(--radius-card)] rounded-b-none border border-[var(--border-card)] bg-[var(--bg-card)] p-[10px]"
-          : "mx-[10px] rounded-[var(--radius-card)] border border-[var(--border-card)] bg-[var(--bg-card)] p-[10px]"
-      }`;
-
-  if (!step) return null;
+    ? `${frameBase} px-[8px] pb-[8px] pt-[6px]`
+    : dockAboveComposer
+      ? `${frameBase} mx-[12px] rounded-t-[var(--radius-card)] rounded-b-none border-x border-t border-[var(--border-card)] bg-[var(--bg-card)] p-[10px]`
+      : `${frameBase} mx-[10px] rounded-[var(--radius-card)] border border-[var(--border-card)] bg-[var(--bg-card)] p-[10px]`;
 
   const navDisabledPrev = stepIndex === 0;
-  const navDisabledNext = stepIndex >= total - 1;
+  const navDisabledNext = stepIndex >= steps.length - 1;
 
   const headerToolbar = (
     <div className="flex min-w-0 items-center gap-[4px]">
@@ -106,26 +274,30 @@ export function AskQuestionCard({
         }`}
         aria-hidden={minimized}
       >
-        {stepNo}/{total}
+        {stepNo}/{steps.length}
       </span>
-      <button
-        type="button"
-        onClick={goPrev}
-        disabled={navDisabledPrev}
-        className={`flex size-[24px] shrink-0 items-center justify-center rounded-[var(--radius-tab)] text-[var(--text-secondary)] outline-none ring-0 transition-colors duration-150 ease-out hover:bg-white/[0.06] hover:text-[var(--plan-accent)] focus-visible:outline-none focus-visible:ring-0 motion-reduce:transition-none disabled:pointer-events-none disabled:opacity-25`}
-        aria-label="Previous question"
-      >
-        <ChevronLeft className="size-[14px]" strokeWidth={1.5} />
-      </button>
-      <button
-        type="button"
-        onClick={goNext}
-        disabled={navDisabledNext}
-        className={`flex size-[24px] shrink-0 items-center justify-center rounded-[var(--radius-tab)] text-[var(--text-secondary)] outline-none ring-0 transition-colors duration-150 ease-out hover:bg-white/[0.06] hover:text-[var(--plan-accent)] focus-visible:outline-none focus-visible:ring-0 motion-reduce:transition-none disabled:pointer-events-none disabled:opacity-25`}
-        aria-label="Next question"
-      >
-        <ChevronRight className="size-[14px]" strokeWidth={1.5} />
-      </button>
+      {!minimized ? (
+        <>
+          <button
+            type="button"
+            onClick={goPrev}
+            disabled={navDisabledPrev}
+            className={`flex size-[24px] shrink-0 items-center justify-center rounded-[var(--radius-tab)] text-[var(--text-secondary)] outline-none ring-0 transition-colors duration-150 ease-out hover:bg-white/[0.06] hover:text-[var(--plan-accent)] focus-visible:outline-none focus-visible:ring-0 motion-reduce:transition-none disabled:pointer-events-none disabled:opacity-25`}
+            aria-label="Previous question"
+          >
+            <ChevronLeft className="size-[14px]" strokeWidth={1.5} />
+          </button>
+          <button
+            type="button"
+            onClick={goNext}
+            disabled={navDisabledNext}
+            className={`flex size-[24px] shrink-0 items-center justify-center rounded-[var(--radius-tab)] text-[var(--text-secondary)] outline-none ring-0 transition-colors duration-150 ease-out hover:bg-white/[0.06] hover:text-[var(--plan-accent)] focus-visible:outline-none focus-visible:ring-0 motion-reduce:transition-none disabled:pointer-events-none disabled:opacity-25`}
+            aria-label="Next question"
+          >
+            <ChevronRight className="size-[14px]" strokeWidth={1.5} />
+          </button>
+        </>
+      ) : null}
       <button
         type="button"
         onClick={() => setMinimized((m) => !m)}
@@ -152,20 +324,82 @@ export function AskQuestionCard({
     </div>
   );
 
+  const trackWidthPercent = steps.length * 100;
+  const trackOffsetPercent = (stepIndex * 100) / steps.length;
+  const stepWidthPercent = 100 / steps.length;
+  const currentUi = getUi(step.id);
+  const registerOptionButton = useCallback(
+    (stepId: string, letter: string, el: HTMLButtonElement | null) => {
+      const stepButtons = optionButtonRefs.current[stepId] ?? {};
+      stepButtons[letter] = el;
+      optionButtonRefs.current[stepId] = stepButtons;
+    },
+    []
+  );
+
+  function moveOptionSelection(direction: -1 | 1) {
+    const currentIndex = step.options.findIndex(
+      (opt) => opt.letter === currentUi.letter
+    );
+    const fallbackIndex = direction > 0 ? 0 : step.options.length - 1;
+    const nextIndex =
+      currentIndex === -1
+        ? fallbackIndex
+        : Math.max(0, Math.min(step.options.length - 1, currentIndex + direction));
+    const nextOption = step.options[nextIndex];
+    if (!nextOption) return;
+    selectOption(step.id, nextOption, { focusOther: false });
+    requestAnimationFrame(() => {
+      optionButtonRefs.current[step.id]?.[nextOption.letter]?.focus();
+    });
+  }
+
   return (
     <div
       className={frame}
       onKeyDown={(e) => {
-        if (e.key !== "Enter" || e.defaultPrevented) return;
-        const t = e.target as HTMLElement;
-        if (t.tagName === "INPUT" || t.tagName === "TEXTAREA") return;
-        e.preventDefault();
-        tryAdvance();
+        const t = e.target;
+        // Only when focus is inside this card (bubbling); never steal arrows / Enter from text fields.
+        if (keyEventTargetIsInTextField(t)) return;
+
+        if (e.key === "ArrowLeft") {
+          if (navDisabledPrev) return;
+          e.preventDefault();
+          goPrev();
+          return;
+        }
+        if (e.key === "ArrowRight") {
+          if (navDisabledNext) return;
+          e.preventDefault();
+          goNext();
+          return;
+        }
+        if (e.key === "ArrowUp") {
+          e.preventDefault();
+          moveOptionSelection(-1);
+          return;
+        }
+        if (e.key === "ArrowDown") {
+          e.preventDefault();
+          moveOptionSelection(1);
+          return;
+        }
+
+        if (e.key === "Enter" && !e.defaultPrevented) {
+          if (
+            t instanceof HTMLElement &&
+            t.closest("button, a[href]")
+          ) {
+            return;
+          }
+          e.preventDefault();
+          tryAdvance();
+        }
       }}
       role="presentation"
     >
       <div
-        className={`flex items-center gap-[6px] transition-[padding] ${transitionSnappy} ${
+        className={`flex min-w-0 items-center gap-[6px] transition-[padding] ${transitionSnappy} ${
           minimized ? "pb-0" : "pb-[6px]"
         }`}
       >
@@ -183,7 +417,7 @@ export function AskQuestionCard({
             }`}
             aria-hidden={!minimized}
           >
-            Questions · {stepNo}/{total}
+            Questions · {stepNo}/{steps.length}
           </span>
           <span
             className={`absolute inset-0 flex min-w-0 items-center truncate font-sans text-[13px] font-normal text-[var(--plan-accent-label-strong)] transition-[opacity,transform] ${transitionSnappy} ${
@@ -200,114 +434,38 @@ export function AskQuestionCard({
       </div>
 
       <CollapsibleHeight open={!minimized} className="min-h-0">
-        <div ref={bodyRef} className="flex flex-col gap-[6px]">
-          {step.options.map((opt) => {
-            const selected = selectedLetter === opt.letter;
-            const rowClass = selected
-              ? "rounded-[6px] bg-[var(--plan-accent-selected-bg)] transition-[background-color] duration-150 ease-out motion-reduce:transition-none"
-              : "rounded-[6px] transition-[background-color] duration-150 ease-out motion-reduce:transition-none";
-
-            const badgeClass = selected
-              ? "border-[var(--plan-accent)] bg-[var(--plan-accent-bg)] text-[var(--plan-accent)]"
-              : "border-[var(--border-card)] text-white";
-
-            const textClass = selected
-              ? "text-[var(--plan-accent-label-strong)]"
-              : "text-white";
-
-            const subClass = selected
-              ? "text-[var(--plan-accent-label)]"
-              : "text-[var(--text-secondary)]";
-
-            const otherOpen = Boolean(opt.isOther && selected);
-
-            const optionKeyHandlers = (e: KeyboardEvent) => {
-              if (e.key !== "Enter") return;
-              e.preventDefault();
-              if (selectedLetter !== opt.letter) {
-                selectOption(opt);
-                return;
-              }
-              if (opt.isOther) {
-                if (otherDraft.trim()) goNext();
-                else otherInputRef.current?.focus();
-              } else {
-                goNext();
-              }
-            };
-
-            const labelInner = (
-              <>
-                <span
-                  className={`flex h-[14px] w-[14px] shrink-0 items-center justify-center rounded-[var(--radius-checkbox)] border font-sans text-[7px] font-normal leading-none transition-[color,background-color,border-color] duration-150 ease-out motion-reduce:transition-none ${badgeClass}`}
+        <div className="min-h-0 overflow-hidden">
+          <div
+            className={`flex ${slideTransition}`}
+            style={{
+              width: `${trackWidthPercent}%`,
+              transform: `translateX(-${trackOffsetPercent}%)`,
+            }}
+          >
+            {steps.map((s) => {
+              const u = getUi(s.id);
+              return (
+                <div
+                  key={s.id}
+                  className="shrink-0"
+                  style={{ width: `${stepWidthPercent}%` }}
                 >
-                  {opt.letter}
-                </span>
-                <span className="min-w-0 text-left">
-                  <span
-                    className={`font-sans text-[10.5px] font-normal leading-snug ${textClass}`}
-                  >
-                    {opt.isOther ? (
-                      <>
-                        {opt.text}
-                        {!selected ? (
-                          <span className={subClass}>
-                            {" "}
-                            {opt.placeholder}
-                          </span>
-                        ) : null}
-                      </>
-                    ) : (
-                      opt.text
-                    )}
-                  </span>
-                </span>
-              </>
-            );
-
-            return (
-              <div key={opt.letter} className={`${rowClass} px-[6px] py-[5px]`}>
-                {opt.isOther ? (
-                  <div className="flex w-full min-w-0 items-center gap-[8px]">
-                    <button
-                      type="button"
-                      onClick={() => selectOption(opt)}
-                      onKeyDown={optionKeyHandlers}
-                      className="flex shrink-0 cursor-pointer items-center gap-[8px] rounded-[4px] py-[2px] text-left outline-none ring-0 transition-colors hover:bg-white/[0.04] focus-visible:outline-none focus-visible:ring-0"
-                    >
-                      {labelInner}
-                    </button>
-                    {otherOpen ? (
-                      <input
-                        ref={otherInputRef}
-                        type="text"
-                        value={otherDraft}
-                        onChange={(e) => setOtherDraft(e.target.value)}
-                        placeholder={opt.placeholder}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter") {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            if (otherDraft.trim()) goNext();
-                          }
-                        }}
-                        className="box-border min-h-[26px] min-w-0 flex-1 rounded-[4px] border border-[var(--border-card)] bg-[var(--bg-panel)] px-[8px] py-[4px] text-left font-sans text-[10.5px] text-[var(--plan-accent-label-strong)] outline-none ring-0 transition-[border-color,box-shadow] duration-150 ease-out placeholder:text-[var(--plan-accent-label)] placeholder:opacity-60 focus:border-[var(--border-card)] focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0 motion-reduce:transition-none"
-                      />
-                    ) : null}
-                  </div>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => selectOption(opt)}
-                    onKeyDown={optionKeyHandlers}
-                    className="flex w-full min-w-0 cursor-pointer items-center gap-[8px] rounded-[4px] text-left outline-none ring-0 transition-[background-color,color] duration-150 ease-out hover:bg-white/[0.04] focus-visible:outline-none focus-visible:ring-0 motion-reduce:transition-none"
-                  >
-                    {labelInner}
-                  </button>
-                )}
-              </div>
-            );
-          })}
+                  <QuestionStepColumn
+                    step={s}
+                    selectedLetter={u.letter}
+                    otherDraft={u.otherDraft}
+                    patchUi={patchUi}
+                    selectOption={selectOption}
+                    goNext={goNext}
+                    otherRefs={otherRefs}
+                    registerOptionButton={(letter, el) =>
+                      registerOptionButton(s.id, letter, el)
+                    }
+                  />
+                </div>
+              );
+            })}
+          </div>
         </div>
       </CollapsibleHeight>
     </div>

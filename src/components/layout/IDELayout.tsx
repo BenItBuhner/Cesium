@@ -1,7 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { Panel, Group, Separator } from "react-resizable-panels";
+import { useLayoutEffect, useMemo, useState } from "react";
+import { Panel, Group, Separator, usePanelRef } from "react-resizable-panels";
 import { FileExplorer } from "@/components/sidebar/FileExplorer";
 import { EditorPanel } from "@/components/editor/EditorPanel";
 import { OpenInEditorProvider } from "@/components/editor/OpenInEditorContext";
@@ -22,11 +22,20 @@ function ResizeHandle() {
 
 type MobilePanel = "sidebar" | "editor" | "chat";
 
+/** Stable reference — Group must not receive a new defaultLayout object every render. */
+const DESKTOP_DEFAULT_LAYOUT = {
+  sidebar: 15,
+  editor: 56,
+  chat: 29,
+};
+
 export function IDELayout() {
   const { showSidebar, showChat, isMobile } = useViewport();
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [chatOpen, setChatOpen] = useState(true);
   const [mobilePanel, setMobilePanel] = useState<MobilePanel>("editor");
+  const sidebarPanelRef = usePanelRef();
+  const chatPanelRef = usePanelRef();
 
   const workbench = useMemo(
     () => ({
@@ -56,6 +65,30 @@ export function IDELayout() {
     ? mobilePanel === "sidebar"
     : showSidebar && sidebarOpen;
   const chatVisible = isMobile ? mobilePanel === "chat" : showChat && chatOpen;
+
+  // Keep sidebar / chat in the tree at all times so the group layout does not
+  // remount panels or redistribute percentages when toggling — only collapse/expand.
+  useLayoutEffect(() => {
+    if (isMobile) return;
+    const panel = sidebarPanelRef.current;
+    if (!panel) return;
+    if (sidebarVisible) {
+      if (panel.isCollapsed()) panel.expand();
+    } else if (!panel.isCollapsed()) {
+      panel.collapse();
+    }
+  }, [isMobile, sidebarVisible, sidebarPanelRef]);
+
+  useLayoutEffect(() => {
+    if (isMobile) return;
+    const panel = chatPanelRef.current;
+    if (!panel) return;
+    if (chatVisible) {
+      if (panel.isCollapsed()) panel.expand();
+    } else if (!panel.isCollapsed()) {
+      panel.collapse();
+    }
+  }, [isMobile, chatVisible, chatPanelRef]);
 
   return (
     <OpenInEditorProvider>
@@ -123,57 +156,44 @@ export function IDELayout() {
                 </button>
               )}
 
-              <Group orientation="horizontal" id="ide-panels">
-                {sidebarVisible && (
-                  <>
-                    <Panel
-                      defaultSize="15%"
-                      minSize="10%"
-                      maxSize="25%"
-                      collapsible
-                      collapsedSize="0%"
-                      id="sidebar"
-                      className="min-h-0"
-                    >
-                      <FileExplorer />
-                    </Panel>
-                    <ResizeHandle />
-                  </>
-                )}
-
+              <Group
+                orientation="horizontal"
+                id="ide-panels"
+                defaultLayout={DESKTOP_DEFAULT_LAYOUT}
+              >
                 <Panel
-                  defaultSize={
-                    sidebarVisible && chatVisible
-                      ? "56%"
-                      : sidebarVisible || chatVisible
-                        ? "70%"
-                        : "100%"
-                  }
-                  minSize="30%"
+                  id="sidebar"
+                  panelRef={sidebarPanelRef}
+                  minSize="10%"
+                  maxSize="25%"
+                  collapsible
+                  collapsedSize="0%"
+                  className="min-h-0"
+                >
+                  <FileExplorer />
+                </Panel>
+                <ResizeHandle />
+                <Panel
                   id="editor"
+                  minSize="30%"
                   className="min-h-0 h-full"
                   style={{ overflow: "hidden" }}
                 >
                   <EditorPanel />
                 </Panel>
-
-                {chatVisible && (
-                  <>
-                    <ResizeHandle />
-                    <Panel
-                      defaultSize="29%"
-                      minSize="15%"
-                      maxSize="45%"
-                      collapsible
-                      collapsedSize="0%"
-                      id="chat"
-                      className="min-h-0 h-full"
-                      style={{ overflow: "hidden" }}
-                    >
-                      <ChatPanel />
-                    </Panel>
-                  </>
-                )}
+                <ResizeHandle />
+                <Panel
+                  id="chat"
+                  panelRef={chatPanelRef}
+                  minSize="15%"
+                  maxSize="45%"
+                  collapsible
+                  collapsedSize="0%"
+                  className="min-h-0 h-full"
+                  style={{ overflow: "hidden" }}
+                >
+                  <ChatPanel />
+                </Panel>
               </Group>
             </div>
           )}

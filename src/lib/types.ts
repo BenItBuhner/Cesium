@@ -52,6 +52,8 @@ export interface AskQuestionOption {
 export interface AskQuestionStep {
   id: string;
   title: string;
+  /** Shown above the answer list (body copy for the step). */
+  content?: string;
   options: AskQuestionOption[];
 }
 

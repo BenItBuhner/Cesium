@@ -67,6 +67,12 @@ export function IDEKeyboardLayer() {
         run: () => workbench.toggleChat(),
       },
       {
+        id: "workbench.action.toggleAgentPanel",
+        label: "View: Toggle Agent / Chat Side Panel",
+        keybinding: "Ctrl+Shift+B · Ctrl+Alt+B",
+        run: () => workbench.toggleChat(),
+      },
+      {
         id: "workbench.action.splitEditor",
         label: "View: Split Editor",
         keybinding: "Ctrl+\\",
@@ -249,7 +255,17 @@ export function IDEKeyboardLayer() {
         setPalette("command");
         return;
       }
-      if (key === "b" && !e.shiftKey) {
+      if (key === "b" && e.shiftKey) {
+        e.preventDefault();
+        workbench.toggleChat();
+        return;
+      }
+      if (key === "b" && e.altKey) {
+        e.preventDefault();
+        workbench.toggleChat();
+        return;
+      }
+      if (key === "b" && !e.shiftKey && !e.altKey) {
         e.preventDefault();
         workbench.toggleSidebar();
         return;

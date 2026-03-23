@@ -1,5 +1,3 @@
-import { IDELayout } from "@/components/layout/IDELayout";
-
 export default function Home() {
-  return <IDELayout />;
+  return <main className="min-h-dvh bg-[var(--bg-main)]" />;
 }

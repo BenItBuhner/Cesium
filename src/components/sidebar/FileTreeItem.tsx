@@ -8,8 +8,7 @@ interface FileTreeItemProps {
   node: FileNode;
   depth: number;
   isExpanded?: boolean;
-  hasChildren?: boolean;
-  /** Folder with children: toggles expand/collapse. */
+  /** Folder: toggles expand/collapse. File: opens in editor. */
   onActivate?: () => void;
 }
 
@@ -17,7 +16,6 @@ export function FileTreeItem({
   node,
   depth,
   isExpanded = false,
-  hasChildren = false,
   onActivate,
 }: FileTreeItemProps) {
   const paddingLeft = 11 + depth * 18;
@@ -31,20 +29,16 @@ export function FileTreeItem({
       className="flex w-full items-center gap-[4px] py-[1px] text-left transition-colors hover:bg-white/[0.04]"
       style={{ paddingLeft }}
       onClick={onActivate}
-      aria-expanded={isFolder ? (hasChildren ? isExpanded : undefined) : undefined}
+      aria-expanded={isFolder ? isExpanded : undefined}
     >
       {isFolder ? (
-        hasChildren ? (
-          <ChevronRight
-            className={`size-[10px] shrink-0 text-[var(--text-secondary)] transition-transform duration-200 ease-out motion-reduce:transition-none ${
-              isExpanded ? "rotate-90" : ""
-            }`}
-            strokeWidth={2}
-            aria-hidden
-          />
-        ) : (
-          <span className="w-[10px] shrink-0" aria-hidden />
-        )
+        <ChevronRight
+          className={`size-[10px] shrink-0 text-[var(--text-secondary)] transition-transform duration-200 ease-out motion-reduce:transition-none ${
+            isExpanded ? "rotate-90" : ""
+          }`}
+          strokeWidth={2}
+          aria-hidden
+        />
       ) : null}
       <span className="shrink-0">
         {isFolder ? (

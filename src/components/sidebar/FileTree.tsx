@@ -25,15 +25,15 @@ export function FileTree({
   const path = parentPath ? `${parentPath}/${node.name}` : node.name;
   const isFolder = node.type === "folder";
   const childCount = node.children?.length ?? 0;
-  const hasChildren = isFolder && childCount > 0;
-  const isExpanded = hasChildren && expandedPaths.has(path);
+  const hasChildNodes = isFolder && childCount > 0;
+  /** Folders always toggle expand/collapse (including empty folders like node_modules). */
+  const isExpanded = isFolder && expandedPaths.has(path);
 
-  const onActivate =
-    isFolder && hasChildren
-      ? () => onToggleFolder(path)
-      : !isFolder && onOpenFile
-        ? () => onOpenFile(path, node)
-        : undefined;
+  const onActivate = isFolder
+    ? () => onToggleFolder(path)
+    : onOpenFile
+      ? () => onOpenFile(path, node)
+      : undefined;
 
   return (
     <div>
@@ -41,10 +41,9 @@ export function FileTree({
         node={node}
         depth={depth}
         isExpanded={isExpanded}
-        hasChildren={hasChildren}
         onActivate={onActivate}
       />
-      {isFolder && isExpanded
+      {isFolder && isExpanded && hasChildNodes
         ? node.children!.map((child) => (
             <FileTree
               key={`${path}/${child.name}`}

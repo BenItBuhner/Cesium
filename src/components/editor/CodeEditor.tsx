@@ -1,12 +1,12 @@
 "use client";
 
-import { useRef, useEffect } from "react";
+import { useRef, useEffect, useState, useCallback } from "react";
 import Editor, { type Monaco } from "@monaco-editor/react";
 
 interface CodeEditorProps {
   content: string;
   language: string;
-  /** Output-style pane (e.g. bash tab): no line numbers, no folding, no caret. */
+  /** Output-style pane (e.g. bash tab): no line numbers, terminal-like density. Still editable (demo only, not persisted). */
   terminal?: boolean;
 }
 
@@ -44,6 +44,16 @@ function defineOpenCursorTheme(monaco: Monaco) {
 export function CodeEditor({ content, language, terminal }: CodeEditorProps) {
   const monacoRef = useRef<Monaco | null>(null);
   const isTerminal = terminal === true;
+  /** Ephemeral buffer: not written back to workspace state (demo UX only). */
+  const [value, setValue] = useState(content);
+
+  useEffect(() => {
+    setValue(content);
+  }, [content]);
+
+  const onChange = useCallback((v: string | undefined) => {
+    setValue(v ?? "");
+  }, []);
 
   function handleBeforeMount(monaco: Monaco) {
     defineOpenCursorTheme(monaco);
@@ -61,18 +71,19 @@ export function CodeEditor({ content, language, terminal }: CodeEditorProps) {
       <Editor
         height="100%"
         language={language === "shell" ? "shell" : language}
-        value={content}
+        value={value}
+        onChange={onChange}
         theme="opencursor-dark"
         beforeMount={handleBeforeMount}
         options={{
-          readOnly: true,
-          domReadOnly: isTerminal,
+          readOnly: false,
+          domReadOnly: false,
           fontSize: 14,
           fontFamily: "var(--font-geist-mono), 'Geist Mono', monospace",
           lineNumbers: isTerminal ? "off" : "on",
           ...(isTerminal ? { lineNumbersMinChars: 0, lineDecorationsWidth: 0 } : {}),
           minimap: { enabled: false },
-          scrollBeyondLastLine: false,
+          scrollBeyondLastLine: isTerminal,
           padding: { top: 12, bottom: 12 },
           renderLineHighlight: isTerminal ? "none" : "line",
           overviewRulerLanes: 0,
@@ -86,14 +97,21 @@ export function CodeEditor({ content, language, terminal }: CodeEditorProps) {
           },
           wordWrap: "on",
           automaticLayout: true,
-          contextmenu: false,
+          contextmenu: true,
           folding: !isTerminal,
           glyphMargin: false,
           occurrencesHighlight: isTerminal ? "off" : "singleFile",
-          selectionHighlight: !isTerminal,
-          cursorBlinking: isTerminal ? "solid" : "blink",
+          selectionHighlight: true,
+          cursorBlinking: "blink",
           cursorSmoothCaretAnimation: "off",
-          dragAndDrop: !isTerminal,
+          dragAndDrop: true,
+          quickSuggestions: !isTerminal,
+          parameterHints: { enabled: !isTerminal },
+          suggestOnTriggerCharacters: !isTerminal,
+          acceptSuggestionOnEnter: !isTerminal ? "on" : "off",
+          tabCompletion: "off",
+          formatOnPaste: false,
+          formatOnType: false,
         }}
       />
     </div>
