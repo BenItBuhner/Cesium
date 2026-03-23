@@ -39,12 +39,20 @@ const modeColors: Record<EditorMode, { text: string; bg: string }> = {
 interface ModeDropdownProps {
   mode: EditorMode;
   onModeChange?: (mode: EditorMode) => void;
+  /** `below`: open under the trigger (e.g. composer at top). Default: above (docked-bottom composer). */
+  popoverPlacement?: "above" | "below";
 }
 
-export function ModeDropdown({ mode, onModeChange }: ModeDropdownProps) {
+export function ModeDropdown({
+  mode,
+  onModeChange,
+  popoverPlacement = "above",
+}: ModeDropdownProps) {
   const [open, setOpen] = useState(false);
   const close = useCallback(() => setOpen(false), []);
-  const { triggerRef, popoverRef, position, ready } = usePopover(open);
+  const { triggerRef, popoverRef, position, ready } = usePopover(open, {
+    placement: popoverPlacement,
+  });
 
   useClickOutside(triggerRef, close, open, [popoverRef]);
 
@@ -72,7 +80,15 @@ export function ModeDropdown({ mode, onModeChange }: ModeDropdownProps) {
           <div
             ref={popoverRef}
             className="fixed z-[9999] w-[200px] rounded-[var(--radius-card)] border border-[var(--border-card)] bg-[var(--bg-panel)] py-[4px] transition-opacity"
-            style={{ bottom: position.bottom, left: position.left, opacity: ready ? 1 : 0, maxHeight: position.maxHeight, overflow: "auto" }}
+            style={{
+              ...(position.top != null
+                ? { top: position.top }
+                : { bottom: position.bottom ?? 0 }),
+              left: position.left,
+              opacity: ready ? 1 : 0,
+              maxHeight: position.maxHeight,
+              overflow: "auto",
+            }}
             onPointerDown={(e) => e.stopPropagation()}
           >
             {modes.map((opt) => {

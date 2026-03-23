@@ -138,7 +138,8 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
         id: "workbench.action.openGlobalSettings",
         label: "Preferences: Open User Settings",
         keybinding: "Ctrl+,",
-        run: () => flash(setToast, "Settings UI (not wired in this demo)."),
+        run: () =>
+          runWithBridge((b) => b.dispatch({ type: "OPEN_SETTINGS_TAB" })),
       },
       {
         id: "workbench.colorTheme.light",
@@ -410,7 +411,7 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
       }
       if (e.code === "Comma" && !e.shiftKey) {
         e.preventDefault();
-        flash(setToast, "Settings UI (not wired in this demo).");
+        runWithBridge((b) => b.dispatch({ type: "OPEN_SETTINGS_TAB" }));
         return;
       }
       if (key === "n" && !e.shiftKey) {

@@ -4,6 +4,7 @@ import {
   FileCode,
   FileJson,
   FileText,
+  Settings,
   SwatchBook,
   Terminal,
 } from "lucide-react";
@@ -18,6 +19,7 @@ export const fileTypeIcons = {
   javascript: { Icon: FileCode, className: "text-[#d4c26d]" },
   css: { Icon: SwatchBook, className: "text-[#c678dd]" },
   default: { Icon: File, className: "text-[var(--text-secondary)]" },
+  settings: { Icon: Settings, className: "text-[var(--text-secondary)]" },
 } as const satisfies Record<string, FileTypeIconEntry>;
 
 export type FileTypeIconKind = keyof typeof fileTypeIcons;

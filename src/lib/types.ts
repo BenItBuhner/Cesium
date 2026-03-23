@@ -94,7 +94,14 @@ export interface EditorTab {
   id: string;
   name: string;
   language: string;
-  icon: "terminal" | "json" | "markdown" | "typescript" | "css" | "default";
+  icon:
+    | "terminal"
+    | "json"
+    | "markdown"
+    | "typescript"
+    | "css"
+    | "default"
+    | "settings";
   content: string;
   active?: boolean;
   /** Renders agent-style transcript instead of Monaco (e.g. subagent detail tab). */

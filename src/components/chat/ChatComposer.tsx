@@ -218,6 +218,9 @@ export function ChatComposer({
       ? "mx-[10px] mt-[10px] mb-0"
       : "mx-[10px] mb-[10px]";
 
+  const modeModelPopoverPlacement =
+    layout === "empty-top" ? "below" : "above";
+
   return (
     <div
       data-ide-input-sink
@@ -272,8 +275,17 @@ export function ChatComposer({
 
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-[11px]">
-          <ModeDropdown mode={mode} onModeChange={onModeChange} />
-          <ModelDropdown model={model} models={availableModels} onModelChange={onModelChange} />
+          <ModeDropdown
+            mode={mode}
+            onModeChange={onModeChange}
+            popoverPlacement={modeModelPopoverPlacement}
+          />
+          <ModelDropdown
+            model={model}
+            models={availableModels}
+            onModelChange={onModelChange}
+            popoverPlacement={modeModelPopoverPlacement}
+          />
         </div>
 
         <div className="flex items-center gap-[9px]">

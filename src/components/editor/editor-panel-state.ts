@@ -1,5 +1,8 @@
 import type { ChatMessage, EditorTab, ExplorerOpenRequest } from "@/lib/types";
 
+/** Stable id for the in-editor Settings view (command palette, Ctrl+,). */
+export const SETTINGS_EDITOR_TAB_ID = "workbench.settings";
+
 export type EditorGroup = "left" | "right";
 
 export interface EditorPanelState {
@@ -22,6 +25,7 @@ export type EditorPanelAction =
   | { type: "FOCUS_EDITOR_GROUP"; group: EditorGroup }
   | { type: "OPEN_TRANSCRIPT_TAB"; title: string; messages: ChatMessage[] }
   | { type: "TOGGLE_MARKDOWN_PREVIEW" }
+  | { type: "OPEN_SETTINGS_TAB" }
   | ({ type: "OPEN_EXPLORER_FILE" } & ExplorerOpenRequest);
 
 function stripActive(tab: EditorTab): EditorTab {
@@ -187,6 +191,45 @@ export function editorPanelReducer(
         language: action.language,
         icon: action.icon,
         content: action.content,
+      };
+      if (!state.split) {
+        return {
+          ...state,
+          focusedGroup: "left",
+          leftTabs: [...state.leftTabs, tab],
+          leftActiveId: tabId,
+        };
+      }
+      if (state.focusedGroup === "left") {
+        return {
+          ...state,
+          leftTabs: [...state.leftTabs, tab],
+          leftActiveId: tabId,
+        };
+      }
+      return {
+        ...state,
+        rightTabs: [...state.rightTabs, tab],
+        rightActiveId: tabId,
+      };
+    }
+
+    case "OPEN_SETTINGS_TAB": {
+      const tabId = SETTINGS_EDITOR_TAB_ID;
+      const existingLeft = state.leftTabs.find((t) => t.id === tabId);
+      const existingRight = state.rightTabs.find((t) => t.id === tabId);
+      if (existingLeft) {
+        return { ...state, leftActiveId: tabId, focusedGroup: "left" };
+      }
+      if (existingRight) {
+        return { ...state, rightActiveId: tabId, focusedGroup: "right" };
+      }
+      const tab: EditorTab = {
+        id: tabId,
+        name: "Settings",
+        language: "plaintext",
+        icon: "settings",
+        content: "",
       };
       if (!state.split) {
         return {

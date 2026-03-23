@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { useClickOutside } from "@/hooks/useClickOutside";
 import { usePopover } from "@/hooks/usePopover";
+import { ToggleSwitch } from "@/components/ui/ToggleSwitch";
 import type { ModelInfo } from "@/lib/types";
 
 const providerIcon: Record<ModelInfo["provider"], typeof Box> = {
@@ -24,45 +25,27 @@ const providerIcon: Record<ModelInfo["provider"], typeof Box> = {
 const popoverSurface =
   "rounded-[var(--radius-card)] border border-[var(--border-card)] bg-[var(--bg-panel)]";
 
-function Toggle({
-  checked,
-  onChange,
-}: {
-  checked: boolean;
-  onChange: (v: boolean) => void;
-}) {
-  return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={checked}
-      onClick={() => onChange(!checked)}
-      className="relative inline-flex h-[18px] w-[32px] shrink-0 cursor-pointer items-center rounded-full transition-colors"
-      style={{
-        background: checked ? "#2563eb" : "var(--border-card)",
-      }}
-    >
-      <span
-        className="block size-[14px] rounded-full bg-white shadow transition-transform"
-        style={{ transform: checked ? "translateX(16px)" : "translateX(2px)" }}
-      />
-    </button>
-  );
-}
-
 interface ModelDropdownProps {
   model: ModelInfo;
   models: ModelInfo[];
   onModelChange?: (model: ModelInfo) => void;
+  popoverPlacement?: "above" | "below";
 }
 
-export function ModelDropdown({ model, models, onModelChange }: ModelDropdownProps) {
+export function ModelDropdown({
+  model,
+  models,
+  onModelChange,
+  popoverPlacement = "above",
+}: ModelDropdownProps) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [maxMode, setMaxMode] = useState(true);
 
   const close = useCallback(() => { setOpen(false); setQuery(""); }, []);
-  const { triggerRef, popoverRef, position, ready } = usePopover(open);
+  const { triggerRef, popoverRef, position, ready } = usePopover(open, {
+    placement: popoverPlacement,
+  });
 
   useClickOutside(triggerRef, close, open, [popoverRef]);
 
@@ -93,7 +76,15 @@ export function ModelDropdown({ model, models, onModelChange }: ModelDropdownPro
           <div
             ref={popoverRef}
             className={`fixed z-[9999] w-[260px] ${popoverSurface} transition-opacity`}
-            style={{ bottom: position.bottom, left: position.left, opacity: ready ? 1 : 0, maxHeight: position.maxHeight, overflow: "auto" }}
+            style={{
+              ...(position.top != null
+                ? { top: position.top }
+                : { bottom: position.bottom ?? 0 }),
+              left: position.left,
+              opacity: ready ? 1 : 0,
+              maxHeight: position.maxHeight,
+              overflow: "auto",
+            }}
             onPointerDown={(e) => e.stopPropagation()}
           >
             <div className={`flex items-center gap-[6px] border-b border-[var(--border-card)] px-[10px] py-[6px]`}>
@@ -111,7 +102,7 @@ export function ModelDropdown({ model, models, onModelChange }: ModelDropdownPro
             <div className="border-b border-[var(--border-card)] px-[12px] py-[6px]">
               <div className="flex items-center justify-between py-[3px]">
                 <span className="font-sans text-[13px] text-[var(--text-primary)]">MAX Mode</span>
-                <Toggle checked={maxMode} onChange={setMaxMode} />
+                <ToggleSwitch checked={maxMode} onChange={setMaxMode} size="sm" />
               </div>
             </div>
 

@@ -6,6 +6,7 @@ import { CodeEditor } from "./CodeEditor";
 import { FakeTerminal } from "./FakeTerminal";
 import { SimpleMarkdownPreview } from "./SimpleMarkdownPreview";
 import { AgentTranscriptView } from "./AgentTranscriptView";
+import { SettingsEditorView } from "./SettingsEditorView";
 import { useEditorBridgeRef } from "@/components/ide/EditorBridgeContext";
 import {
   useOpenInEditor,
@@ -15,6 +16,7 @@ import type { ExplorerOpenRequest } from "@/lib/types";
 import { editorTabs as initialTabs } from "@/lib/mock-data";
 import type { EditorTab } from "@/lib/types";
 import {
+  SETTINGS_EDITOR_TAB_ID,
   createInitialEditorState,
   editorPanelReducer,
   type EditorGroup,
@@ -83,6 +85,9 @@ export function EditorPanel() {
   );
 
   function renderCodeForTab(tab: EditorTab) {
+    if (tab.id === SETTINGS_EDITOR_TAB_ID) {
+      return <SettingsEditorView key={tab.id} />;
+    }
     if (tab.transcriptMessages && tab.transcriptMessages.length > 0) {
       return (
         <AgentTranscriptView

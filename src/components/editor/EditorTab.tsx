@@ -15,6 +15,7 @@ const tabIconToKind: Record<EditorTabType["icon"], FileTypeIconKind> = {
   typescript: "typescript",
   css: "css",
   default: "default",
+  settings: "settings",
 };
 
 interface EditorTabProps {

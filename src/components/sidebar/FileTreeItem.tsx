@@ -26,7 +26,7 @@ export function FileTreeItem({
   return (
     <button
       type="button"
-      className="flex w-full items-center gap-[4px] py-[1px] text-left transition-colors hover:bg-white/[0.04]"
+      className="flex w-full items-center gap-[4px] rounded-[var(--radius-tab)] py-[1px] text-left transition-colors hover:bg-[var(--accent-bg)]"
       style={{ paddingLeft }}
       onClick={onActivate}
       aria-expanded={isFolder ? isExpanded : undefined}
