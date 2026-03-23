@@ -94,7 +94,7 @@ export function IDELayout() {
     <OpenInEditorProvider>
       <EditorBridgeProvider>
         <WorkbenchProvider value={workbench}>
-          <IDEKeyboardLayer />
+          <IDEKeyboardLayer>
           {isMobile ? (
             <div className="flex h-screen w-screen flex-col overflow-hidden bg-[var(--bg-main)]">
               <div className="min-h-0 flex-1 overflow-hidden">
@@ -168,7 +168,7 @@ export function IDELayout() {
                   maxSize="25%"
                   collapsible
                   collapsedSize="0%"
-                  className="min-h-0"
+                  className="min-h-0 overflow-visible"
                 >
                   <FileExplorer />
                 </Panel>
@@ -197,6 +197,7 @@ export function IDELayout() {
               </Group>
             </div>
           )}
+          </IDEKeyboardLayer>
         </WorkbenchProvider>
       </EditorBridgeProvider>
     </OpenInEditorProvider>

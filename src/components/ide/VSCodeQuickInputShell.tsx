@@ -9,7 +9,7 @@ import {
 } from "react";
 
 const shell =
-  "flex w-full max-w-[640px] flex-col overflow-hidden rounded-[5px] border border-[#3c3c3c] bg-[#252526] shadow-[0_16px_48px_rgba(0,0,0,0.55)]";
+  "flex w-full max-w-[640px] flex-col overflow-hidden rounded-[var(--radius-card)] border border-[var(--palette-border)] bg-[var(--palette-surface)] shadow-[var(--palette-shadow)]";
 
 export function VSCodeQuickInputShell({
   open,
@@ -50,11 +50,11 @@ export function VSCodeQuickInputShell({
   return (
     <div
       data-ide-palette
-      className="fixed inset-0 z-[10050] flex items-start justify-center pt-[12vh] px-4"
+      className="fixed inset-0 z-[10050] flex items-start justify-center px-4 pt-[12vh]"
       role="presentation"
     >
       <div
-        className="absolute inset-0 bg-black/45"
+        className="absolute inset-0 bg-[var(--palette-backdrop)]"
         aria-hidden
       />
       <div
@@ -66,7 +66,7 @@ export function VSCodeQuickInputShell({
         <h2 id={titleId} className="sr-only">
           {screenReaderTitle}
         </h2>
-        <div className="border-b border-[#3c3c3c] px-[10px] py-[6px]">
+        <div className="border-b border-[var(--palette-divider)] px-[10px] py-[6px]">
           <label htmlFor={inputId} className="sr-only">
             {inputLabel}
           </label>
@@ -80,12 +80,14 @@ export function VSCodeQuickInputShell({
             value={value}
             onChange={(e) => onChange(e.target.value)}
             onKeyDown={onKeyDown}
-            className="box-border w-full border-0 bg-transparent py-[6px] font-sans text-[13px] text-[#cccccc] outline-none ring-0 placeholder:text-[#767676] focus:outline-none focus:ring-0"
+            className="box-border w-full border-0 bg-transparent py-[6px] font-sans text-[13px] text-[var(--palette-input-text)] outline-none ring-0 placeholder:text-[var(--palette-placeholder)] focus:outline-none focus:ring-0"
           />
         </div>
         {children}
         {footer ? (
-          <div className="border-t border-[#2a2a2a] px-[10px] py-[6px]">{footer}</div>
+          <div className="border-t border-[var(--palette-divider)] px-[10px] py-[6px]">
+            {footer}
+          </div>
         ) : null}
       </div>
     </div>

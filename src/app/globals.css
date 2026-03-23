@@ -55,6 +55,31 @@
   --sidebar-width: 290px;
   --chat-width: 550px;
   --tab-height: 40px;
+
+  /* Command palette & quick open */
+  --palette-surface: #ffffff;
+  --palette-border: var(--border-card);
+  --palette-divider: var(--border-subtle);
+  --palette-input-text: var(--text-primary);
+  --palette-placeholder: var(--text-disabled);
+  --palette-footer-text: var(--text-secondary);
+  --palette-kbd-bg: var(--bg-panel);
+  --palette-kbd-border: var(--border-card);
+  --palette-kbd-text: var(--text-primary);
+  --palette-row-text: var(--text-primary);
+  --palette-row-muted: var(--text-secondary);
+  --palette-row-selected-bg: #d6ebff;
+  --palette-row-selected-text: var(--text-primary);
+  --palette-row-selected-muted: rgba(26, 26, 26, 0.55);
+  --palette-keybinding-on-selected: #0b5cab;
+  --palette-keybinding-idle: var(--text-secondary);
+  --palette-backdrop: rgba(10, 10, 10, 0.38);
+  --palette-shadow: 0 16px 48px rgba(0, 0, 0, 0.14);
+  --palette-icon-json: #7a6410;
+  --palette-icon-md: #0b7285;
+  --palette-icon-css: #5c5c5c;
+  --palette-icon-ts: #1565c0;
+  --palette-icon-fallback: #6b6b6b;
 }
 
 html.dark {
@@ -98,6 +123,30 @@ html.dark {
   --file-tag-bg: #2a4a7a;
   --file-tag-text: #e8f0ff;
   --file-tag-icon: #93b4e8;
+
+  --palette-surface: #252526;
+  --palette-border: #3c3c3c;
+  --palette-divider: #2a2a2a;
+  --palette-input-text: #cccccc;
+  --palette-placeholder: #767676;
+  --palette-footer-text: #969696;
+  --palette-kbd-bg: #1e1e1e;
+  --palette-kbd-border: #3c3c3c;
+  --palette-kbd-text: #cccccc;
+  --palette-row-text: #cccccc;
+  --palette-row-muted: #767676;
+  --palette-row-selected-bg: #04395e;
+  --palette-row-selected-text: #ffffff;
+  --palette-row-selected-muted: rgba(255, 255, 255, 0.62);
+  --palette-keybinding-on-selected: #9dc3e6;
+  --palette-keybinding-idle: #767676;
+  --palette-backdrop: rgba(0, 0, 0, 0.5);
+  --palette-shadow: 0 16px 48px rgba(0, 0, 0, 0.55);
+  --palette-icon-json: #cbcb41;
+  --palette-icon-md: #6fb3d2;
+  --palette-icon-css: #d4d4d4;
+  --palette-icon-ts: #519aba;
+  --palette-icon-fallback: #7f7f7f;
 }
 
 @theme inline {

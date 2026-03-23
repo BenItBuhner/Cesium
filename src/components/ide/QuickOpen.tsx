@@ -21,22 +21,52 @@ function fileGlyph(path: string, language?: string) {
   const lower = path.toLowerCase();
   const lang = language?.toLowerCase() ?? "";
   if (lang === "json" || lower.endsWith(".json")) {
-    return <FileJson className="size-[16px] shrink-0 text-[#cbcb41]" strokeWidth={1.5} aria-hidden />;
+    return (
+      <FileJson
+        className="size-[16px] shrink-0 text-[var(--palette-icon-json)]"
+        strokeWidth={1.5}
+        aria-hidden
+      />
+    );
   }
   if (lang === "markdown" || lower.endsWith(".md")) {
-    return <FileText className="size-[16px] shrink-0 text-[#6fb3d2]" strokeWidth={1.5} aria-hidden />;
+    return (
+      <FileText
+        className="size-[16px] shrink-0 text-[var(--palette-icon-md)]"
+        strokeWidth={1.5}
+        aria-hidden
+      />
+    );
   }
   if (lang === "css" || lower.endsWith(".css")) {
-    return <Braces className="size-[16px] shrink-0 text-[#d4d4d4]" strokeWidth={1.5} aria-hidden />;
+    return (
+      <Braces
+        className="size-[16px] shrink-0 text-[var(--palette-icon-css)]"
+        strokeWidth={1.5}
+        aria-hidden
+      />
+    );
   }
   if (
     lang === "typescript" ||
     lower.endsWith(".tsx") ||
     lower.endsWith(".ts")
   ) {
-    return <FileCode className="size-[16px] shrink-0 text-[#519aba]" strokeWidth={1.5} aria-hidden />;
+    return (
+      <FileCode
+        className="size-[16px] shrink-0 text-[var(--palette-icon-ts)]"
+        strokeWidth={1.5}
+        aria-hidden
+      />
+    );
   }
-  return <File className="size-[16px] shrink-0 text-[#7f7f7f]" strokeWidth={1.5} aria-hidden />;
+  return (
+    <File
+      className="size-[16px] shrink-0 text-[var(--palette-icon-fallback)]"
+      strokeWidth={1.5}
+      aria-hidden
+    />
+  );
 }
 
 function splitPath(path: string): { dir: string; base: string } {
@@ -64,8 +94,9 @@ function score(query: string, path: string): number {
 
 const rowBase =
   "flex w-full cursor-pointer items-center gap-[8px] px-[10px] py-[4px] text-left font-sans outline-none";
-const rowOn = "bg-[#04395e]";
-const rowOff = "text-[#cccccc]";
+
+const kbdCls =
+  "rounded border border-[var(--palette-kbd-border)] bg-[var(--palette-kbd-bg)] px-[5px] py-[1px] font-mono text-[10px] text-[var(--palette-kbd-text)]";
 
 export function QuickOpen({
   open,
@@ -149,22 +180,15 @@ export function QuickOpen({
       onChange={setQuery}
       onKeyDown={onKeyDown}
       footer={
-        <p className="font-sans text-[11px] text-[#767676]">
-          Demo workspace ·{" "}
-          <kbd className="rounded border border-[#3c3c3c] bg-[#1e1e1e] px-[5px] py-[1px] font-mono text-[10px]">
-            Enter
-          </kbd>{" "}
-          open ·{" "}
-          <kbd className="rounded border border-[#3c3c3c] bg-[#1e1e1e] px-[5px] py-[1px] font-mono text-[10px]">
-            Esc
-          </kbd>{" "}
-          close
+        <p className="font-sans text-[11px] text-[var(--palette-footer-text)]">
+          Demo workspace · <kbd className={kbdCls}>Enter</kbd> open ·{" "}
+          <kbd className={kbdCls}>Esc</kbd> close
         </p>
       }
     >
       <div className="max-h-[min(380px,45vh)] min-h-[140px] overflow-y-auto py-[4px]">
         {filtered.length === 0 ? (
-          <p className="px-[10px] py-[12px] font-sans text-[13px] text-[#767676]">
+          <p className="px-[10px] py-[12px] font-sans text-[13px] text-[var(--palette-row-muted)]">
             No matching files
           </p>
         ) : (
@@ -176,18 +200,34 @@ export function QuickOpen({
                 <li key={e.path} role="option" aria-selected={on}>
                   <button
                     type="button"
-                    className={`${rowBase} ${on ? rowOn : rowOff}`}
+                    className={`${rowBase} ${
+                      on
+                        ? "bg-[var(--palette-row-selected-bg)]"
+                        : "text-[var(--palette-row-text)]"
+                    }`}
                     onMouseEnter={() => setSel(i)}
                     onClick={() => pickAt(i)}
                   >
                     {fileGlyph(e.path, e.node.language)}
                     <span className="min-w-0 flex-1 truncate font-sans text-[13px]">
                       {dir ? (
-                        <span className={on ? "text-[#b0c8e8]" : "text-[#767676]"}>
+                        <span
+                          className={
+                            on
+                              ? "text-[var(--palette-row-selected-muted)]"
+                              : "text-[var(--palette-row-muted)]"
+                          }
+                        >
                           {dir}
                         </span>
                       ) : null}
-                      <span className={on ? "text-white" : "text-[#e0e0e0]"}>
+                      <span
+                        className={
+                          on
+                            ? "text-[var(--palette-row-selected-text)]"
+                            : "text-[var(--palette-row-text)]"
+                        }
+                      >
                         {base}
                       </span>
                     </span>

@@ -1,6 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
+import { useRouter } from "next/navigation";
 import { useOpenInEditor } from "@/components/editor/OpenInEditorContext";
 import { fileTree, resolveExplorerOpenRequest } from "@/lib/mock-data";
 import { buildQuickOpenIndex, type QuickOpenEntry } from "@/lib/quick-open-files";
@@ -9,6 +16,7 @@ import { QuickOpen } from "./QuickOpen";
 import { useEditorBridgeRef } from "./EditorBridgeContext";
 import { useWorkbench } from "./WorkbenchContext";
 import { useTheme } from "@/components/theme/ThemeProvider";
+import { IDECommandProvider } from "./IDECommandContext";
 
 type PaletteMode = "closed" | "command" | "quickopen";
 
@@ -17,7 +25,8 @@ function flash(setter: (s: string | null) => void, msg: string) {
   window.setTimeout(() => setter(null), 2200);
 }
 
-export function IDEKeyboardLayer() {
+export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
+  const router = useRouter();
   const bridgeRef = useEditorBridgeRef();
   const { openExplorerFile } = useOpenInEditor();
   const workbench = useWorkbench();
@@ -167,10 +176,80 @@ export function IDEKeyboardLayer() {
         run: () => setPalette("quickopen"),
       },
       {
+        id: "workbench.action.gotoFile",
+        label: "View: Open File",
+        keybinding: "Ctrl+G",
+        run: () => setPalette("quickopen"),
+      },
+      {
         id: "workbench.action.newUntitledFile",
         label: "File: New Untitled Text File",
         keybinding: "Ctrl+N",
         run: () => flash(setToast, "New file (demo)."),
+      },
+      {
+        id: "workbench.action.newAgent",
+        label: "File: New Agent",
+        run: () => router.push("/agent"),
+      },
+      {
+        id: "workbench.action.newWindow",
+        label: "File: New Window",
+        keybinding: "Ctrl+Shift+N",
+        run: () =>
+          flash(setToast, "New window (demo — open another browser tab)."),
+      },
+      {
+        id: "workbench.action.newBrowser",
+        label: "File: New Browser",
+        run: () => flash(setToast, "New browser (demo — not wired)."),
+      },
+      {
+        id: "workbench.action.exit",
+        label: "File: Exit",
+        run: () => flash(setToast, "Exit (demo — this tab stays open)."),
+      },
+      {
+        id: "workbench.action.openChanges",
+        label: "View: Open Changes",
+        keybinding: "Ctrl+E",
+        run: () => flash(setToast, "Open Changes (demo — no SCM diff yet)."),
+      },
+      {
+        id: "editor.action.undo",
+        label: "Edit: Undo",
+        keybinding: "Ctrl+Z",
+        run: () => flash(setToast, "Undo (demo)."),
+      },
+      {
+        id: "editor.action.redo",
+        label: "Edit: Redo",
+        keybinding: "Ctrl+Y",
+        run: () => flash(setToast, "Redo (demo)."),
+      },
+      {
+        id: "editor.action.clipboardCut",
+        label: "Edit: Cut",
+        keybinding: "Ctrl+X",
+        run: () => flash(setToast, "Cut (demo)."),
+      },
+      {
+        id: "editor.action.clipboardCopy",
+        label: "Edit: Copy",
+        keybinding: "Ctrl+C",
+        run: () => flash(setToast, "Copy (demo)."),
+      },
+      {
+        id: "editor.action.clipboardPaste",
+        label: "Edit: Paste",
+        keybinding: "Ctrl+V",
+        run: () => flash(setToast, "Paste (demo)."),
+      },
+      {
+        id: "editor.action.selectAll",
+        label: "Edit: Select All",
+        keybinding: "Ctrl+A",
+        run: () => flash(setToast, "Select All (demo)."),
       },
       {
         id: "workbench.action.openFile",
@@ -249,7 +328,15 @@ export function IDEKeyboardLayer() {
         run: () => flash(setToast, "Welcome page (demo)."),
       },
     ],
-    [runWithBridge, setThemePreference, workbench]
+    [router, runWithBridge, setThemePreference, workbench]
+  );
+
+  const runCommand = useCallback(
+    (id: string) => {
+      const c = commands.find((x) => x.id === id);
+      c?.run();
+    },
+    [commands]
   );
 
   useEffect(() => {
@@ -336,6 +423,16 @@ export function IDEKeyboardLayer() {
         setPalette("quickopen");
         return;
       }
+      if (key === "g" && !e.shiftKey) {
+        e.preventDefault();
+        setPalette("quickopen");
+        return;
+      }
+      if (key === "e" && !e.shiftKey) {
+        e.preventDefault();
+        flash(setToast, "Open Changes (demo — no SCM diff yet).");
+        return;
+      }
       if (key === "v" && e.shiftKey) {
         e.preventDefault();
         runWithBridge((b) =>
@@ -382,7 +479,8 @@ export function IDEKeyboardLayer() {
   );
 
   return (
-    <>
+    <IDECommandProvider value={runCommand}>
+      {children}
       <CommandPalette
         open={palette === "command"}
         onClose={() => setPalette("closed")}
@@ -402,6 +500,6 @@ export function IDEKeyboardLayer() {
           {toast}
         </div>
       ) : null}
-    </>
+    </IDECommandProvider>
   );
 }

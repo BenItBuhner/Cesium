@@ -19,9 +19,10 @@ export type PaletteCommand = {
 
 const rowBase =
   "flex w-full cursor-pointer items-center gap-[10px] px-[10px] py-[5px] text-left font-sans text-[13px] outline-none";
-const rowInactive = "text-[#cccccc]";
-const rowActive = "bg-[#04395e] text-[#ffffff]";
 const kb = "ml-auto shrink-0 font-mono text-[11px] tabular-nums";
+
+const kbdCls =
+  "rounded border border-[var(--palette-kbd-border)] bg-[var(--palette-kbd-bg)] px-[5px] py-[1px] font-mono text-[10px] text-[var(--palette-kbd-text)]";
 
 export function CommandPalette({
   open,
@@ -102,48 +103,50 @@ export function CommandPalette({
       onChange={setQuery}
       onKeyDown={onKeyDown}
       footer={
-        <p className="font-sans text-[11px] text-[#767676]">
-          <kbd className="rounded border border-[#3c3c3c] bg-[#1e1e1e] px-[5px] py-[1px] font-mono text-[10px]">
-            ↑↓
-          </kbd>{" "}
-          to navigate ·{" "}
-          <kbd className="rounded border border-[#3c3c3c] bg-[#1e1e1e] px-[5px] py-[1px] font-mono text-[10px]">
-            Enter
-          </kbd>{" "}
-          to run ·{" "}
-          <kbd className="rounded border border-[#3c3c3c] bg-[#1e1e1e] px-[5px] py-[1px] font-mono text-[10px]">
-            Esc
-          </kbd>{" "}
-          to close
+        <p className="font-sans text-[11px] text-[var(--palette-footer-text)]">
+          <kbd className={kbdCls}>↑↓</kbd> to navigate ·{" "}
+          <kbd className={kbdCls}>Enter</kbd> to run ·{" "}
+          <kbd className={kbdCls}>Esc</kbd> to close
         </p>
       }
     >
       <div className="max-h-[min(360px,42vh)] min-h-[120px] overflow-y-auto py-[4px]">
         {filtered.length === 0 ? (
-          <p className="px-[10px] py-[12px] font-sans text-[13px] text-[#767676]">
+          <p className="px-[10px] py-[12px] font-sans text-[13px] text-[var(--palette-row-muted)]">
             No matching commands
           </p>
         ) : (
           <ul className="m-0 list-none p-0" role="listbox">
-            {filtered.map((c, i) => (
-              <li key={c.id} role="option" aria-selected={i === sel}>
-                <button
-                  type="button"
-                  className={`${rowBase} ${i === sel ? rowActive : rowInactive}`}
-                  onMouseEnter={() => setSel(i)}
-                  onClick={() => runAt(i)}
-                >
-                  <span className="min-w-0 flex-1 truncate">{c.label}</span>
-                  {c.keybinding ? (
-                    <span
-                      className={`${kb} ${i === sel ? "text-[#9dc3e6]" : "text-[#767676]"}`}
-                    >
-                      {c.keybinding}
-                    </span>
-                  ) : null}
-                </button>
-              </li>
-            ))}
+            {filtered.map((c, i) => {
+              const on = i === sel;
+              return (
+                <li key={c.id} role="option" aria-selected={on}>
+                  <button
+                    type="button"
+                    className={`${rowBase} ${
+                      on
+                        ? "bg-[var(--palette-row-selected-bg)] text-[var(--palette-row-selected-text)]"
+                        : "text-[var(--palette-row-text)]"
+                    }`}
+                    onMouseEnter={() => setSel(i)}
+                    onClick={() => runAt(i)}
+                  >
+                    <span className="min-w-0 flex-1 truncate">{c.label}</span>
+                    {c.keybinding ? (
+                      <span
+                        className={`${kb} ${
+                          on
+                            ? "text-[var(--palette-keybinding-on-selected)]"
+                            : "text-[var(--palette-keybinding-idle)]"
+                        }`}
+                      >
+                        {c.keybinding}
+                      </span>
+                    ) : null}
+                  </button>
+                </li>
+              );
+            })}
           </ul>
         )}
       </div>

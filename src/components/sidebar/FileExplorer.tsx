@@ -6,6 +6,7 @@ import { fileTree, resolveExplorerOpenRequest } from "@/lib/mock-data";
 import { useOpenInEditor } from "@/components/editor/OpenInEditorContext";
 import type { FileNode } from "@/lib/types";
 import { FileTree, collectExpandableFolderPaths } from "./FileTree";
+import { SidebarAppMenu } from "./SidebarAppMenu";
 
 type SidebarView = "explorer" | "search" | "scm";
 
@@ -33,13 +34,15 @@ export function FileExplorer() {
   }, []);
 
   return (
-    <div className="flex h-full min-w-0 flex-col overflow-hidden bg-[var(--bg-panel)]">
+    <div className="flex h-full min-w-0 flex-col bg-[var(--bg-panel)]">
       <div className="flex w-full shrink-0 justify-center px-[11px] py-[4px]">
-        <div
-          className="flex shrink-0 items-center gap-[2px]"
-          role="tablist"
-          aria-label="Sidebar views"
-        >
+        <div className="flex shrink-0 items-center gap-[4px]">
+          <SidebarAppMenu />
+          <div
+            className="flex shrink-0 items-center gap-[2px]"
+            role="tablist"
+            aria-label="Sidebar views"
+          >
           <ActivityButton
             active={view === "explorer"}
             onClick={() => setView("explorer")}
@@ -58,9 +61,11 @@ export function FileExplorer() {
             label="Source Control"
             icon={GitBranch}
           />
+          </div>
         </div>
       </div>
 
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
       {view === "explorer" && (
         <>
           <p className="shrink-0 px-[11px] pb-[5px] pt-[6px] font-sans text-[14px] font-normal text-[var(--text-primary)]">
@@ -116,6 +121,7 @@ export function FileExplorer() {
           </p>
         </div>
       )}
+      </div>
 
     </div>
   );
@@ -142,7 +148,7 @@ function ActivityButton({
       className={`flex size-[30px] shrink-0 items-center justify-center rounded-[4px] outline-none transition-colors focus-visible:outline-none ${
         active
           ? "text-[var(--text-primary)]"
-          : "text-[var(--text-secondary)] hover:bg-white/[0.04] hover:text-[var(--text-primary)]"
+          : "text-[var(--text-secondary)] hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)]"
       }`}
     >
       <Icon className="size-[18px]" strokeWidth={active ? 2 : 1.5} aria-hidden />
