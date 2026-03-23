@@ -51,9 +51,17 @@ interface ChatComposerProps {
   onModeChange: (mode: EditorMode) => void;
   model: ModelInfo;
   onModelChange: (model: ModelInfo) => void;
+  /** Empty thread: composer sits under tabs; otherwise docked above bottom. */
+  layout?: "docked-bottom" | "empty-top";
 }
 
-export function ChatComposer({ mode, onModeChange, model, onModelChange }: ChatComposerProps) {
+export function ChatComposer({
+  mode,
+  onModeChange,
+  model,
+  onModelChange,
+  layout = "docked-bottom",
+}: ChatComposerProps) {
   const [isEmpty, setIsEmpty] = useState(true);
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -205,10 +213,15 @@ export function ChatComposer({ mode, onModeChange, model, onModelChange }: ChatC
     }
   }
 
+  const shellMargin =
+    layout === "empty-top"
+      ? "mx-[10px] mt-[10px] mb-0"
+      : "mx-[10px] mb-[10px]";
+
   return (
     <div
       data-ide-input-sink
-      className="mx-[10px] mb-[10px] flex shrink-0 flex-col gap-[10px] overflow-hidden rounded-[var(--radius-card)] border border-[var(--border-card)] bg-[var(--bg-card)] p-[10px]"
+      className={`${shellMargin} flex shrink-0 flex-col gap-[10px] overflow-hidden rounded-[var(--radius-card)] border border-[var(--border-card)] bg-[var(--bg-card)] p-[10px]`}
     >
       <div className="relative">
         {isEmpty && (

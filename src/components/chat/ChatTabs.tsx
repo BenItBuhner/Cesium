@@ -8,9 +8,10 @@ import type { ChatTab } from "@/lib/types";
 interface ChatTabsProps {
   tabs: ChatTab[];
   onSelectTab: (id: string) => void;
+  onNewChat: () => void;
 }
 
-export function ChatTabs({ tabs, onSelectTab }: ChatTabsProps) {
+export function ChatTabs({ tabs, onSelectTab, onNewChat }: ChatTabsProps) {
   const stripRef = useRef<HTMLDivElement>(null);
   useTabStripWheel(stripRef, { speed: 2.1 });
 
@@ -38,6 +39,7 @@ export function ChatTabs({ tabs, onSelectTab }: ChatTabsProps) {
       </div>
       <button
         type="button"
+        onClick={onNewChat}
         className="mr-[9px] shrink-0 text-[var(--text-secondary)] transition-colors hover:text-[var(--text-primary)]"
         aria-label="New chat"
       >
