@@ -12,6 +12,7 @@ import {
   X,
 } from "lucide-react";
 import { ToggleSwitch } from "@/components/ui/ToggleSwitch";
+import { availableModels, currentModel } from "@/lib/mock-data";
 
 export const rowButtonClass =
   "inline-flex shrink-0 items-center gap-[6px] rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-transparent px-[12px] py-[5px] font-sans text-[12px] font-normal text-[var(--text-primary)] transition-colors hover:bg-[var(--accent-bg)]";
@@ -596,17 +597,16 @@ export function AgentsSettingsPanel() {
   );
 }
 
-const MODEL_ROWS = [
-  { id: "c2", name: "Composer 2", on: true, premium: false },
-  { id: "g4", name: "GPT-4o", on: true, premium: false },
-  { id: "op", name: "Opus 4.8", on: true, premium: false },
-  { id: "gm", name: "GPT-4o Mini", on: true, premium: false },
-  { id: "c1", name: "Composer 1", on: false, premium: true },
-  { id: "cx", name: "Codex 3.0", on: false, premium: true },
-];
+function createModelsSettingsState(): { id: string; name: string; on: boolean }[] {
+  return availableModels.map((m) => ({
+    id: m.id,
+    name: m.name,
+    on: m.id === currentModel.id,
+  }));
+}
 
 export function ModelsSettingsPanel() {
-  const [models, setModels] = useState(MODEL_ROWS);
+  const [models, setModels] = useState(createModelsSettingsState);
   const [apiOpen, setApiOpen] = useState(false);
 
   return (
@@ -629,60 +629,34 @@ export function ModelsSettingsPanel() {
         </button>
       </div>
       <SettingsSection>
-        {models
-          .filter((m) => !m.premium)
-          .map((m) => (
-            <SettingsRow
-              key={m.id}
-              title={m.name}
-              trailing={
-                <div className="flex items-center gap-[8px]">
-                  <button
-                    type="button"
-                    className="text-[var(--text-disabled)] hover:text-[var(--text-primary)]"
-                    aria-label={`About ${m.name}`}
-                  >
-                    <Info className="size-[14px]" strokeWidth={1.5} />
-                  </button>
-                  <ToggleSwitch
-                    checked={m.on}
-                    onChange={(v) =>
-                      setModels((rows) =>
-                        rows.map((r) => (r.id === m.id ? { ...r, on: v } : r))
-                      )
-                    }
-                    size="md"
-                    variant="green"
-                  />
-                </div>
-              }
-            />
-          ))}
-        <SubsectionLabel>Premium</SubsectionLabel>
-        {models
-          .filter((m) => m.premium)
-          .map((m) => (
-            <SettingsRow
-              key={m.id}
-              title={m.name}
-              trailing={
-                <div className="flex items-center gap-[8px]">
-                  <Info className="size-[14px] text-[var(--text-disabled)]" strokeWidth={1.5} />
-                  <ToggleSwitch
-                    checked={m.on}
-                    onChange={(v) =>
-                      setModels((rows) =>
-                        rows.map((r) => (r.id === m.id ? { ...r, on: v } : r))
-                      )
-                    }
-                    size="md"
-                    variant="green"
-                  />
-                </div>
-              }
-              border={m.id !== "cx"}
-            />
-          ))}
+        {models.map((m, i) => (
+          <SettingsRow
+            key={m.id}
+            title={m.name}
+            trailing={
+              <div className="flex items-center gap-[8px]">
+                <button
+                  type="button"
+                  className="text-[var(--text-disabled)] hover:text-[var(--text-primary)]"
+                  aria-label={`About ${m.name}`}
+                >
+                  <Info className="size-[14px]" strokeWidth={1.5} />
+                </button>
+                <ToggleSwitch
+                  checked={m.on}
+                  onChange={(v) =>
+                    setModels((rows) =>
+                      rows.map((r) => (r.id === m.id ? { ...r, on: v } : r))
+                    )
+                  }
+                  size="md"
+                  variant="green"
+                />
+              </div>
+            }
+            border={i < models.length - 1}
+          />
+        ))}
         <div className="px-[16px] py-[12px]">
           <button
             type="button"
@@ -962,7 +936,6 @@ export function ToolsMcpSettingsPanel() {
 }
 
 export function BetaSettingsPanel() {
-  const [rpc, setRpc] = useState(false);
   return (
     <>
       <PageIntro title="Beta" />
@@ -981,12 +954,6 @@ export function BetaSettingsPanel() {
             </p>
           </div>
         </div>
-        <SettingsRow
-          title="Extension RPC Tracer"
-          description="Log extension host RPC messages to JSON files viewable in Perfetto for performance analysis. Requires a restart."
-          trailing={<ToggleSwitch checked={rpc} onChange={setRpc} size="md" variant="green" />}
-          border={false}
-        />
       </SettingsSection>
       <h2 className="mt-[24px] font-sans text-[13px] font-semibold text-[var(--text-secondary)]">
         Development
