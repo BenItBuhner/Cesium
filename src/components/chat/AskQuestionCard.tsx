@@ -2,6 +2,7 @@
 
 import {
   useCallback,
+  useLayoutEffect,
   useRef,
   useState,
   type KeyboardEvent,
@@ -21,7 +22,10 @@ const transitionSnappy =
   "duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none motion-reduce:duration-0";
 
 const slideTransition =
-  "transition-[transform] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none";
+  "transition-[transform] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none motion-reduce:duration-0";
+
+const heightTransition =
+  "transition-[height] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none motion-reduce:duration-0";
 
 /** Only treat as typing context when the event target is inside a real text field (not sidebar buttons). */
 function keyEventTargetIsInTextField(target: EventTarget | null): boolean {
@@ -198,9 +202,22 @@ export function AskQuestionCard({
   const optionButtonRefs = useRef<
     Partial<Record<string, Partial<Record<string, HTMLButtonElement | null>>>>
   >({});
+  /** Measures only the active step so card height ignores off-screen slides (slides are absolutely laid out). */
+  const activeSlideMeasureRef = useRef<HTMLDivElement>(null);
+  const [bodyHeight, setBodyHeight] = useState<number | null>(null);
   const stepUiRef = useRef(stepUi);
 
   stepUiRef.current = stepUi;
+
+  useLayoutEffect(() => {
+    const el = activeSlideMeasureRef.current;
+    if (!el) return;
+    const measure = () => setBodyHeight(el.scrollHeight);
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [stepIndex]);
 
   const getUi = useCallback(
     (id: string): StepUi => stepUi[id] ?? { letter: null, otherDraft: "" },
@@ -436,35 +453,45 @@ export function AskQuestionCard({
       <CollapsibleHeight open={!minimized} className="min-h-0">
         <div className="min-h-0 overflow-hidden">
           <div
-            className={`flex ${slideTransition}`}
-            style={{
-              width: `${trackWidthPercent}%`,
-              transform: `translateX(-${trackOffsetPercent}%)`,
-            }}
+            className={`overflow-hidden ${heightTransition}`}
+            style={{ height: bodyHeight === null ? "auto" : bodyHeight }}
           >
-            {steps.map((s) => {
-              const u = getUi(s.id);
-              return (
-                <div
-                  key={s.id}
-                  className="shrink-0"
-                  style={{ width: `${stepWidthPercent}%` }}
-                >
-                  <QuestionStepColumn
-                    step={s}
-                    selectedLetter={u.letter}
-                    otherDraft={u.otherDraft}
-                    patchUi={patchUi}
-                    selectOption={selectOption}
-                    goNext={goNext}
-                    otherRefs={otherRefs}
-                    registerOptionButton={(letter, el) =>
-                      registerOptionButton(s.id, letter, el)
-                    }
-                  />
-                </div>
-              );
-            })}
+            <div
+              className={`relative ${slideTransition}`}
+              style={{
+                width: `${trackWidthPercent}%`,
+                transform: `translateX(-${trackOffsetPercent}%)`,
+              }}
+            >
+              {steps.map((s, i) => {
+                const u = getUi(s.id);
+                const isActive = i === stepIndex;
+                return (
+                  <div
+                    key={s.id}
+                    ref={isActive ? activeSlideMeasureRef : undefined}
+                    className="absolute top-0"
+                    style={{
+                      width: `${stepWidthPercent}%`,
+                      left: `${(i * 100) / steps.length}%`,
+                    }}
+                  >
+                    <QuestionStepColumn
+                      step={s}
+                      selectedLetter={u.letter}
+                      otherDraft={u.otherDraft}
+                      patchUi={patchUi}
+                      selectOption={selectOption}
+                      goNext={goNext}
+                      otherRefs={otherRefs}
+                      registerOptionButton={(letter, el) =>
+                        registerOptionButton(s.id, letter, el)
+                      }
+                    />
+                  </div>
+                );
+              })}
+            </div>
           </div>
         </div>
       </CollapsibleHeight>
