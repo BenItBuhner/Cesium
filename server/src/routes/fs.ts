@@ -82,7 +82,7 @@ async function readDirectoryChildren(
       return {
         name: dirent.name,
         type: "file",
-        language: inferLanguage(dirent.name),
+        language: inferLanguage(relativeChildPath),
         dimmed: isDimmed(dirent.name),
       };
     })
@@ -154,7 +154,7 @@ async function collectFileMatches(
         matches.push({
           path: relativeChildPath,
           name: dirent.name,
-          language: inferLanguage(dirent.name),
+          language: inferLanguage(relativeChildPath),
           score,
         });
       })

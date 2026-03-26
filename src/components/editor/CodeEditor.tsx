@@ -4,6 +4,7 @@ import { useRef, useEffect, useState, useCallback, useMemo } from "react";
 import Editor, { type Monaco } from "@monaco-editor/react";
 import type { editor as MonacoEditor } from "monaco-editor";
 import { useHtmlDarkClass } from "@/hooks/useHtmlDarkClass";
+import { resolveEditorLanguageId } from "@/lib/editor-language";
 
 interface CodeEditorProps {
   content: string;
@@ -61,6 +62,160 @@ function defineOpenCursorThemes(monaco: Monaco) {
   });
 }
 
+function hasLanguage(monaco: Monaco, id: string): boolean {
+  return monaco.languages
+    .getLanguages()
+    .some((language: { id: string }) => language.id.toLowerCase() === id.toLowerCase());
+}
+
+function registerIniLanguage(monaco: Monaco) {
+  if (hasLanguage(monaco, "ini")) {
+    return;
+  }
+
+  monaco.languages.register({
+    id: "ini",
+    aliases: ["INI", "Properties"],
+    extensions: [".ini", ".cfg", ".conf", ".properties"],
+  });
+
+  monaco.languages.setLanguageConfiguration("ini", {
+    comments: { lineComment: "#" },
+  });
+
+  monaco.languages.setMonarchTokensProvider("ini", {
+    tokenizer: {
+      root: [
+        [/^\s*[#;].*$/, "comment"],
+        [/\[[^[\]]+\]/, "keyword"],
+        [/[A-Za-z0-9_.-]+(?=\s*[=:])/, "type"],
+        [/[=:]/, "operator"],
+        [/"([^"\\]|\\.)*"/, "string"],
+        [/'([^'\\]|\\.)*'/, "string"],
+        [/[+-]?\d+(?:\.\d+)?\b/, "number"],
+        [/\s+/, ""],
+        [/[^\s#;]+/, "string"],
+      ],
+    },
+  });
+}
+
+function registerIgnoreLanguage(monaco: Monaco) {
+  if (hasLanguage(monaco, "ignore")) {
+    return;
+  }
+
+  monaco.languages.register({
+    id: "ignore",
+    aliases: ["Ignore", "Git Ignore"],
+    filenames: [
+      ".cursorignore",
+      ".dockerignore",
+      ".eslintignore",
+      ".gitattributes",
+      ".gitignore",
+      ".ignore",
+      ".npmignore",
+      ".prettierignore",
+      ".stylelintignore",
+    ],
+  });
+
+  monaco.languages.setLanguageConfiguration("ignore", {
+    comments: { lineComment: "#" },
+  });
+
+  monaco.languages.setMonarchTokensProvider("ignore", {
+    tokenizer: {
+      root: [
+        [/^\s*#.*$/, "comment"],
+        [/\s+/, ""],
+        [/\[[^\]]+\]/, "regexp"],
+        [/\{[^}]+\}/, "regexp"],
+        [/\*\*|\*|\?/, "regexp"],
+        [/!/, "keyword"],
+        [/\\./, "string.escape"],
+        [/[\\/]+/, "delimiter"],
+        [/[^#!*?{}\[\]\/\\\s]+/, "string"],
+      ],
+    },
+  });
+}
+
+function registerDotenvLanguage(monaco: Monaco) {
+  if (hasLanguage(monaco, "dotenv")) {
+    return;
+  }
+
+  monaco.languages.register({
+    id: "dotenv",
+    aliases: ["Dotenv", ".env"],
+    filenames: [".env"],
+  });
+
+  monaco.languages.setLanguageConfiguration("dotenv", {
+    comments: { lineComment: "#" },
+  });
+
+  monaco.languages.setMonarchTokensProvider("dotenv", {
+    tokenizer: {
+      root: [
+        [/^\s*#.*$/, "comment"],
+        [/^\s*export\b/, "keyword"],
+        [/[A-Za-z_][\w.-]*(?=\s*=)/, "type"],
+        [/=/, "operator"],
+        [/\$\{?[A-Za-z_][\w]*\}?/, "variable"],
+        [/"([^"\\]|\\.)*"/, "string"],
+        [/'([^'\\]|\\.)*'/, "string"],
+        [/\b(true|false|null)\b/, "keyword"],
+        [/[+-]?\d+(?:\.\d+)?\b/, "number"],
+        [/\s+/, ""],
+        [/[^\s#]+/, "string"],
+      ],
+    },
+  });
+}
+
+function registerTomlLanguage(monaco: Monaco) {
+  if (hasLanguage(monaco, "toml")) {
+    return;
+  }
+
+  monaco.languages.register({
+    id: "toml",
+    aliases: ["TOML"],
+    extensions: [".toml"],
+  });
+
+  monaco.languages.setLanguageConfiguration("toml", {
+    comments: { lineComment: "#" },
+  });
+
+  monaco.languages.setMonarchTokensProvider("toml", {
+    tokenizer: {
+      root: [
+        [/^\s*#.*$/, "comment"],
+        [/\[[^[\]]+\]/, "keyword"],
+        [/[A-Za-z0-9_.-]+(?=\s*=)/, "type"],
+        [/=/, "operator"],
+        [/"([^"\\]|\\.)*"/, "string"],
+        [/'([^'\\]|\\.)*'/, "string"],
+        [/\b(true|false)\b/, "keyword"],
+        [/[+-]?\d+(?:_\d+)*(?:\.\d+(?:_\d+)*)?\b/, "number"],
+        [/[{}\[\],]/, "delimiter"],
+        [/\s+/, ""],
+      ],
+    },
+  });
+}
+
+function registerOpenCursorLanguages(monaco: Monaco) {
+  registerIniLanguage(monaco);
+  registerIgnoreLanguage(monaco);
+  registerDotenvLanguage(monaco);
+  registerTomlLanguage(monaco);
+}
+
 export function CodeEditor({
   content,
   language,
@@ -71,7 +226,10 @@ export function CodeEditor({
   const monacoRef = useRef<Monaco | null>(null);
   const isDark = useHtmlDarkClass();
   const monacoTheme = isDark ? "opencursor-dark" : "opencursor-light";
-  const editorLanguage = language === "shell" ? "shell" : language;
+  const editorLanguage = useMemo(
+    () => resolveEditorLanguageId(language, filePath),
+    [filePath, language]
+  );
   const editorModelPath = useMemo(() => {
     if (!filePath) {
       return undefined;
@@ -92,6 +250,7 @@ export function CodeEditor({
   }, []);
 
   function handleBeforeMount(monaco: Monaco) {
+    registerOpenCursorLanguages(monaco);
     defineOpenCursorThemes(monaco);
     monacoRef.current = monaco;
   }
