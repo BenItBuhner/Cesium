@@ -8,7 +8,17 @@ import { initializeFileWatcher, handleFsUpgrade } from "./ws/filewatcher.js";
 import { handleTerminalUpgrade } from "./ws/terminal.js";
 
 const port = Number.parseInt(process.env.PORT ?? "9100", 10);
-const allowedOrigins = (process.env.ALLOWED_ORIGINS ?? "http://localhost:3000")
+const host = process.env.HOST?.trim() || "0.0.0.0";
+const publicHost =
+  process.env.PUBLIC_HOST?.trim() || (host === "0.0.0.0" ? "localhost" : host);
+const defaultAllowedOrigins = [
+  `http://${publicHost}:3000`,
+  "http://localhost:3000",
+  "http://127.0.0.1:3000",
+];
+const allowedOrigins = (
+  process.env.ALLOWED_ORIGINS ?? defaultAllowedOrigins.join(",")
+)
   .split(",")
   .map((origin) => origin.trim())
   .filter(Boolean);
@@ -41,6 +51,7 @@ await initializeFileWatcher();
 const server = serve({
   fetch: app.fetch,
   port,
+  hostname: host,
 });
 
 server.on("upgrade", (request, socket, head) => {
@@ -59,4 +70,4 @@ server.on("upgrade", (request, socket, head) => {
   socket.destroy();
 });
 
-console.log(`OpenCursor server listening on http://localhost:${port}`);
+console.log(`OpenCursor server listening on http://${publicHost}:${port}`);
