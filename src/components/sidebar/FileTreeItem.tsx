@@ -8,6 +8,8 @@ interface FileTreeItemProps {
   node: FileNode;
   depth: number;
   isExpanded?: boolean;
+  isExpandable?: boolean;
+  isActive?: boolean;
   /** Folder: toggles expand/collapse. File: opens in editor. */
   onActivate?: () => void;
 }
@@ -16,41 +18,65 @@ export function FileTreeItem({
   node,
   depth,
   isExpanded = false,
+  isExpandable = false,
+  isActive = false,
   onActivate,
 }: FileTreeItemProps) {
   const paddingLeft = 11 + depth * 18;
   const isFolder = node.type === "folder";
-  const textColor = node.dimmed ? "var(--text-disabled)" : "var(--text-primary)";
+  const textColor = isActive
+    ? "var(--text-primary)"
+    : node.dimmed
+      ? "var(--text-disabled)"
+      : "var(--text-primary)";
   const fileIconEntry = isFolder ? null : getFileIconForNode(node.language, node.name);
   const FileIconComponent = fileIconEntry?.Icon;
   return (
     <button
       type="button"
       className="flex w-full items-center gap-[4px] rounded-[var(--radius-tab)] py-[1px] text-left transition-colors hover:bg-[var(--accent-bg)]"
-      style={{ paddingLeft }}
+      style={{
+        paddingLeft,
+        backgroundColor: isActive
+          ? "color-mix(in srgb, var(--accent) 12%, transparent)"
+          : undefined,
+      }}
       onClick={onActivate}
-      aria-expanded={isFolder ? isExpanded : undefined}
+      aria-expanded={isFolder && isExpandable ? isExpanded : undefined}
+      aria-current={isActive ? "true" : undefined}
     >
       {isFolder ? (
-        <ChevronRight
-          className={`size-[10px] shrink-0 text-[var(--text-secondary)] transition-transform duration-200 ease-out motion-reduce:transition-none ${
-            isExpanded ? "rotate-90" : ""
-          }`}
-          strokeWidth={2}
-          aria-hidden
-        />
+        isExpandable ? (
+          <ChevronRight
+            className={`size-[10px] shrink-0 text-[var(--text-secondary)] transition-transform duration-200 ease-out motion-reduce:transition-none ${
+              isExpanded ? "rotate-90" : ""
+            }`}
+            strokeWidth={2}
+            aria-hidden
+          />
+        ) : (
+          <span className="size-[10px] shrink-0" aria-hidden />
+        )
       ) : null}
       <span className="shrink-0">
         {isFolder ? (
           <Folder
-            className={`size-[18px] ${node.dimmed ? "text-[var(--text-disabled)]" : "text-[#6f6f6f]"}`}
+            className={`size-[18px] ${
+              isActive
+                ? "text-[var(--text-primary)]"
+                : node.dimmed
+                  ? "text-[var(--text-disabled)]"
+                  : "text-[#6f6f6f]"
+            }`}
             strokeWidth={1.5}
             aria-hidden
           />
         ) : (
           FileIconComponent && (
             <FileIconComponent
-              className={`size-[18px] shrink-0 ${fileIconEntry!.className} ${node.dimmed ? "opacity-45" : ""}`}
+              className={`size-[18px] shrink-0 ${fileIconEntry!.className} ${
+                !isActive && node.dimmed ? "opacity-45" : ""
+              }`}
               strokeWidth={1.5}
               aria-hidden
             />

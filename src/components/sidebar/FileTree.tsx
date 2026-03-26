@@ -8,8 +8,9 @@ interface FileTreeProps {
   depth: number;
   /** Path from explorer root, e.g. `src` or `src/app`. */
   parentPath: string;
+  activePath: string | null;
   expandedPaths: Set<string>;
-  onToggleFolder: (path: string) => void;
+  onToggleFolder: (path: string, node: FileNode) => void | Promise<void>;
   /** File leaf: open in editor (demo). */
   onOpenFile?: (path: string, node: FileNode) => void;
 }
@@ -18,6 +19,7 @@ export function FileTree({
   node,
   depth,
   parentPath,
+  activePath,
   expandedPaths,
   onToggleFolder,
   onOpenFile,
@@ -25,12 +27,17 @@ export function FileTree({
   const path = parentPath ? `${parentPath}/${node.name}` : node.name;
   const isFolder = node.type === "folder";
   const childCount = node.children?.length ?? 0;
+  const canExpand =
+    isFolder &&
+    (node.hasChildren === true || childCount > 0 || node.childrenLoaded === false);
   const hasChildNodes = isFolder && childCount > 0;
-  /** Folders always toggle expand/collapse (including empty folders like node_modules). */
   const isExpanded = isFolder && expandedPaths.has(path);
+  const isActive = !isFolder && activePath === path;
 
   const onActivate = isFolder
-    ? () => onToggleFolder(path)
+    ? canExpand
+      ? () => onToggleFolder(path, node)
+      : undefined
     : onOpenFile
       ? () => onOpenFile(path, node)
       : undefined;
@@ -41,6 +48,8 @@ export function FileTree({
         node={node}
         depth={depth}
         isExpanded={isExpanded}
+        isExpandable={canExpand}
+        isActive={isActive}
         onActivate={onActivate}
       />
       {isFolder && isExpanded && hasChildNodes
@@ -50,6 +59,7 @@ export function FileTree({
               node={child}
               depth={depth + 1}
               parentPath={path}
+              activePath={activePath}
               expandedPaths={expandedPaths}
               onToggleFolder={onToggleFolder}
               onOpenFile={onOpenFile}
@@ -70,8 +80,12 @@ export function collectExpandableFolderPaths(
     if (n.type !== "folder") continue;
     const p = parentPath ? `${parentPath}/${n.name}` : n.name;
     const count = n.children?.length ?? 0;
+    const canExpand = n.hasChildren === true || count > 0 || n.childrenLoaded === false;
+    if (canExpand) {
+      out.push(p);
+    }
     if (count > 0) {
-      out.push(p, ...collectExpandableFolderPaths(n.children, p));
+      out.push(...collectExpandableFolderPaths(n.children, p));
     }
   }
   return out;

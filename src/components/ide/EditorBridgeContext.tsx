@@ -14,6 +14,8 @@ import type { EditorPanelAction, EditorPanelState } from "@/components/editor/ed
 export type EditorBridge = {
   dispatch: Dispatch<EditorPanelAction>;
   getState: () => EditorPanelState;
+  saveActiveTab: () => Promise<boolean>;
+  openTerminalTab: () => Promise<void>;
 };
 
 const EditorBridgeRefContext =

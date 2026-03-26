@@ -4,6 +4,8 @@ export interface FileNode {
   children?: FileNode[];
   language?: string;
   dimmed?: boolean;
+  hasChildren?: boolean;
+  childrenLoaded?: boolean;
 }
 
 export type ChatMessageType =
@@ -106,8 +108,26 @@ export interface EditorTab {
   active?: boolean;
   /** Renders agent-style transcript instead of Monaco (e.g. subagent detail tab). */
   transcriptMessages?: ChatMessage[];
-  /** Markdown source tabs: toggled with Ctrl+Shift+V (VS Code preview). */
-  markdownPreview?: boolean;
+  /** Source/preview toggle for previewable files like Markdown and SVG. */
+  previewMode?: "source" | "preview";
+  /** Relative workspace path when this tab represents a real file on disk. */
+  filePath?: string;
+  /** Server-side terminal session id when this tab represents a PTY. */
+  terminalId?: string;
+  /** File classification used to drive editor vs preview rendering. */
+  fileKind?: "text" | "svg" | "image";
+  /** Best-effort mime type from the backend. */
+  mimeType?: string;
+  /** Backend path for raw preview rendering (image/svg). */
+  previewPath?: string;
+  /** Waiting on file content to be fetched from the backend. */
+  loading?: boolean;
+  /** Buffer diverges from the last saved on-disk content. */
+  dirty?: boolean;
+  /** Last successful on-disk content snapshot for dirty detection. */
+  savedContent?: string;
+  /** File changed on disk while the editor also had local edits. */
+  externalChange?: boolean;
 }
 
 /** Payload to open a demo file from the explorer into the editor (deduped by `path`). */
@@ -115,9 +135,31 @@ export interface ExplorerOpenRequest {
   path: string;
   name: string;
   language: string;
-  content: string;
+  content?: string;
   icon: EditorTab["icon"];
 }
+
+export interface WorkspaceInfo {
+  root: string;
+  name: string;
+}
+
+export interface TerminalInfo {
+  id: string;
+  shell: string;
+  cwd: string;
+  alive: boolean;
+  attachedClients: number;
+}
+
+export type FileWatcherEvent =
+  | { type: "add"; path: string; isDir: false }
+  | { type: "addDir"; path: string; isDir: true }
+  | { type: "change"; path: string }
+  | { type: "unlink"; path: string; isDir: false }
+  | { type: "unlinkDir"; path: string; isDir: true }
+  | { type: "ready" }
+  | { type: "workspace_changed"; root: string; name: string };
 
 export interface ChatTab {
   id: string;

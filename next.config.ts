@@ -1,4 +1,5 @@
 import type { NextConfig } from "next";
+import { fileURLToPath } from "node:url";
 import withPWAInit from "@ducanh2912/next-pwa";
 
 const withPWA = withPWAInit({
@@ -12,8 +13,11 @@ const withPWA = withPWAInit({
   },
 });
 
+const workspaceRoot = fileURLToPath(new URL(".", import.meta.url));
+
 const nextConfig: NextConfig = {
   reactCompiler: true,
+  outputFileTracingRoot: workspaceRoot,
 };
 
 export default withPWA(nextConfig);

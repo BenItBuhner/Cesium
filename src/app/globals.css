@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "@xterm/xterm/css/xterm.css";
 
 /* Light theme (default). Dark uses `html.dark` — set by theme bootstrap + ThemeProvider. */
 :root {

@@ -1,37 +1,141 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { Files, GitBranch, Search, type LucideIcon } from "lucide-react";
-import { fileTree, resolveExplorerOpenRequest } from "@/lib/mock-data";
 import { useOpenInEditor } from "@/components/editor/OpenInEditorContext";
-import type { FileNode } from "@/lib/types";
+import type { EditorTab, FileNode } from "@/lib/types";
 import { FileTree, collectExpandableFolderPaths } from "./FileTree";
 import { SidebarAppMenu } from "./SidebarAppMenu";
+import { useWorkspace } from "@/contexts/WorkspaceContext";
 
 type SidebarView = "explorer" | "search" | "scm";
 
+function inferEditorIcon(node: FileNode): EditorTab["icon"] {
+  const lower = node.name.toLowerCase();
+  const language = node.language?.toLowerCase();
+  if (language === "css" || lower.endsWith(".css")) return "css";
+  if (language === "json" || lower.endsWith(".json")) return "json";
+  if (language === "markdown" || lower.endsWith(".md")) return "markdown";
+  if (
+    language === "typescript" ||
+    language === "javascript" ||
+    lower.endsWith(".ts") ||
+    lower.endsWith(".tsx") ||
+    lower.endsWith(".js") ||
+    lower.endsWith(".jsx")
+  ) {
+    return "typescript";
+  }
+  return "default";
+}
+
+function collectParentPaths(path: string | null): string[] {
+  if (!path) return [];
+  const segments = path.split("/").filter(Boolean);
+  return segments.slice(0, -1).map((_, index) => segments.slice(0, index + 1).join("/"));
+}
+
+function findNodeAtPath(nodes: FileNode[] | undefined, targetPath: string): FileNode | null {
+  const segments = targetPath.split("/").filter(Boolean);
+  if (segments.length === 0) return null;
+
+  let currentNodes = nodes;
+  let currentNode: FileNode | null = null;
+  for (const segment of segments) {
+    currentNode = currentNodes?.find((node) => node.name === segment) ?? null;
+    if (!currentNode) {
+      return null;
+    }
+    currentNodes = currentNode.children;
+  }
+
+  return currentNode;
+}
+
 export function FileExplorer() {
-  const { openExplorerFile } = useOpenInEditor();
+  const { openExplorerFile, activeExplorerPath } = useOpenInEditor();
+  const { fileTree, workspaceInfo, loading, loadFolderChildren } = useWorkspace();
   const [view, setView] = useState<SidebarView>("explorer");
-  const [expandedPaths, setExpandedPaths] = useState<Set<string>>(() => {
-    return new Set(collectExpandableFolderPaths(fileTree.children, ""));
-  });
+  const [expandedPaths, setExpandedPaths] = useState<Set<string>>(new Set());
+  const pendingRevealLoadsRef = useRef(new Set<string>());
+  const expandablePaths = useMemo(
+    () => new Set(collectExpandableFolderPaths(fileTree?.children, "")),
+    [fileTree]
+  );
+  const visibleExpandedPaths = useMemo(
+    () => new Set([...expandedPaths].filter((path) => expandablePaths.has(path))),
+    [expandedPaths, expandablePaths]
+  );
 
   const handleOpenFile = useCallback(
     (path: string, node: FileNode) => {
-      openExplorerFile(resolveExplorerOpenRequest(path, node));
+      openExplorerFile({
+        path,
+        name: node.name,
+        language: node.language ?? "plaintext",
+        icon: inferEditorIcon(node),
+      });
     },
     [openExplorerFile]
   );
 
-  const toggleFolder = useCallback((path: string) => {
+  const toggleFolder = useCallback(async (path: string, node: FileNode) => {
+    if (node.type !== "folder") {
+      return;
+    }
+
+    const isOpening = !expandedPaths.has(path);
+    if (isOpening && node.childrenLoaded === false) {
+      try {
+        await loadFolderChildren(path);
+      } catch {
+        return;
+      }
+    }
+
     setExpandedPaths((prev) => {
       const next = new Set(prev);
-      if (next.has(path)) next.delete(path);
-      else next.add(path);
+      if (next.has(path)) {
+        next.delete(path);
+      } else {
+        next.add(path);
+      }
       return next;
     });
-  }, []);
+  }, [expandedPaths, loadFolderChildren]);
+
+  useEffect(() => {
+    const parentPaths = collectParentPaths(activeExplorerPath);
+    if (parentPaths.length === 0) {
+      return;
+    }
+
+    setExpandedPaths((prev) => {
+      let changed = false;
+      const next = new Set(prev);
+      for (const parentPath of parentPaths) {
+        if (!next.has(parentPath)) {
+          next.add(parentPath);
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+
+    const nextUnloadedParent = parentPaths.find((parentPath) => {
+      const node = findNodeAtPath(fileTree?.children, parentPath);
+      return node?.type === "folder" && node.childrenLoaded === false;
+    });
+
+    if (!nextUnloadedParent || pendingRevealLoadsRef.current.has(nextUnloadedParent)) {
+      return;
+    }
+
+    pendingRevealLoadsRef.current.add(nextUnloadedParent);
+    void loadFolderChildren(nextUnloadedParent).finally(() => {
+      pendingRevealLoadsRef.current.delete(nextUnloadedParent);
+    });
+  }, [activeExplorerPath, fileTree, loadFolderChildren]);
 
   return (
     <div className="flex h-full min-w-0 flex-col bg-[var(--bg-panel)]">
@@ -68,21 +172,33 @@ export function FileExplorer() {
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
       {view === "explorer" && (
         <>
-          <p className="shrink-0 px-[11px] pb-[5px] pt-[6px] font-sans text-[14px] font-normal text-[var(--text-primary)]">
-            {fileTree.name}
+          <p className="pointer-events-none shrink-0 px-[11px] pb-[5px] pt-[6px] font-sans text-[14px] font-normal text-[var(--text-primary)]">
+            {workspaceInfo?.name ?? "Workspace"}
           </p>
           <div className="min-h-0 flex-1 overflow-y-auto">
-            {fileTree.children?.map((node) => (
-              <FileTree
-                key={node.name}
-                node={node}
-                depth={0}
-                parentPath=""
-                expandedPaths={expandedPaths}
-                onToggleFolder={toggleFolder}
-                onOpenFile={handleOpenFile}
-              />
-            ))}
+            {loading ? (
+              <div className="space-y-[6px] px-[11px] py-[8px]">
+                {Array.from({ length: 8 }).map((_, index) => (
+                  <div
+                    key={index}
+                    className="h-[20px] rounded-[var(--radius-tab)] bg-[var(--bg-card)] opacity-70"
+                  />
+                ))}
+              </div>
+            ) : (
+              fileTree?.children?.map((node) => (
+                <FileTree
+                  key={node.name}
+                  node={node}
+                  depth={0}
+                  parentPath=""
+                  activePath={activeExplorerPath}
+                  expandedPaths={visibleExpandedPaths}
+                  onToggleFolder={toggleFolder}
+                  onOpenFile={handleOpenFile}
+                />
+              ))
+            )}
           </div>
         </>
       )}

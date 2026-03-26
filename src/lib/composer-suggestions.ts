@@ -1,4 +1,3 @@
-import { fileTree } from "@/lib/mock-data";
 import type { FileNode } from "@/lib/types";
 
 export type AtSuggestion = {
@@ -69,8 +68,8 @@ const TOOL_AT: AtSuggestion[] = [
   },
 ];
 
-export function getAllAtSuggestions(): AtSuggestion[] {
-  return [...TOOL_AT, ...filesFromTree(fileTree)];
+export function getAllAtSuggestions(root?: FileNode | null): AtSuggestion[] {
+  return [...TOOL_AT, ...filesFromTree(root ?? { name: "", type: "folder", children: [] })];
 }
 
 export const SLASH_COMMANDS: SlashSuggestion[] = [

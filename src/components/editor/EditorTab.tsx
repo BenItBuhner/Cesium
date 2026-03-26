@@ -67,6 +67,12 @@ export function EditorTab({
       <span className="ml-[7px] truncate font-sans text-[14px] font-normal text-[var(--text-secondary)]">
         {tab.name}
       </span>
+      {tab.dirty ? (
+        <span
+          className="ml-[6px] size-[6px] shrink-0 rounded-full bg-[var(--accent)]"
+          aria-label="Unsaved changes"
+        />
+      ) : null}
       <span
         role="button"
         tabIndex={0}

@@ -9,7 +9,6 @@ import {
 } from "react";
 import { useRouter } from "next/navigation";
 import { useOpenInEditor } from "@/components/editor/OpenInEditorContext";
-import { fileTree, resolveExplorerOpenRequest } from "@/lib/mock-data";
 import { buildQuickOpenIndex, type QuickOpenEntry } from "@/lib/quick-open-files";
 import { CommandPalette, type PaletteCommand } from "./CommandPalette";
 import { QuickOpen } from "./QuickOpen";
@@ -17,6 +16,8 @@ import { useEditorBridgeRef } from "./EditorBridgeContext";
 import { useWorkbench } from "./WorkbenchContext";
 import { useTheme } from "@/components/theme/ThemeProvider";
 import { IDECommandProvider } from "./IDECommandContext";
+import { useWorkspace } from "@/contexts/WorkspaceContext";
+import type { EditorTab } from "@/lib/types";
 
 type PaletteMode = "closed" | "command" | "quickopen";
 
@@ -31,10 +32,50 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
   const { openExplorerFile } = useOpenInEditor();
   const workbench = useWorkbench();
   const { setPreference: setThemePreference } = useTheme();
+  const { fileTree, workspaceInfo, refreshTree, openFolder } = useWorkspace();
   const [palette, setPalette] = useState<PaletteMode>("closed");
   const [toast, setToast] = useState<string | null>(null);
 
-  const quickEntries = useMemo(() => buildQuickOpenIndex(fileTree), []);
+  const quickEntries = useMemo(
+    () => (fileTree ? buildQuickOpenIndex(fileTree) : []),
+    [fileTree]
+  );
+
+  const inferEditorIcon = useCallback((entry: QuickOpenEntry): EditorTab["icon"] => {
+    const lower = entry.name.toLowerCase();
+    const language = entry.node.language?.toLowerCase();
+    if (language === "css" || lower.endsWith(".css")) return "css";
+    if (language === "json" || lower.endsWith(".json")) return "json";
+    if (language === "markdown" || lower.endsWith(".md")) return "markdown";
+    if (
+      language === "typescript" ||
+      language === "javascript" ||
+      lower.endsWith(".ts") ||
+      lower.endsWith(".tsx") ||
+      lower.endsWith(".js") ||
+      lower.endsWith(".jsx")
+    ) {
+      return "typescript";
+    }
+    return "default";
+  }, []);
+
+  const promptForFolder = useCallback(async () => {
+    const root = window.prompt(
+      "Open folder",
+      workspaceInfo?.root ?? ""
+    );
+    if (!root) return;
+    try {
+      await openFolder(root);
+      flash(setToast, `Opened ${root}`);
+    } catch (error) {
+      flash(
+        setToast,
+        error instanceof Error ? error.message : "Failed to open workspace."
+      );
+    }
+  }, [openFolder, workspaceInfo?.root]);
 
   const runWithBridge = useCallback(
     (fn: (d: NonNullable<typeof bridgeRef.current>) => void) => {
@@ -91,12 +132,12 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
           runWithBridge((b) => b.dispatch({ type: "TOGGLE_SPLIT" })),
       },
       {
-        id: "markdown.showPreview",
-        label: "Markdown: Open Preview",
+        id: "workbench.action.openPreview",
+        label: "Open Preview",
         keybinding: "Ctrl+Shift+V",
         run: () =>
           runWithBridge((b) =>
-            b.dispatch({ type: "TOGGLE_MARKDOWN_PREVIEW" })
+            b.dispatch({ type: "TOGGLE_FILE_PREVIEW" })
           ),
       },
       {
@@ -126,7 +167,18 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
         id: "workbench.action.files.save",
         label: "File: Save",
         keybinding: "Ctrl+S",
-        run: () => flash(setToast, "Save (demo — no disk write)."),
+        run: () =>
+          void (async () => {
+            const bridge = bridgeRef.current;
+            if (!bridge) {
+              flash(setToast, "Editor is not ready yet.");
+              return;
+            }
+            const saved = await bridge.saveActiveTab();
+            if (!saved) {
+              flash(setToast, "Active editor cannot be saved.");
+            }
+          })(),
       },
       {
         id: "workbench.action.files.saveAll",
@@ -259,6 +311,36 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
         run: () => setPalette("quickopen"),
       },
       {
+        id: "workbench.action.openFolder",
+        label: "File: Open Folder…",
+        keybinding: "Ctrl+Shift+O",
+        run: () => {
+          void promptForFolder();
+        },
+      },
+      {
+        id: "workbench.action.refreshTree",
+        label: "Explorer: Refresh File Tree",
+        run: () => {
+          void refreshTree().then(() => {
+            flash(setToast, "Explorer refreshed.");
+          });
+        },
+      },
+      {
+        id: "workbench.action.terminal.new",
+        label: "Terminal: Create New Terminal",
+        run: () =>
+          void (async () => {
+            const bridge = bridgeRef.current;
+            if (!bridge) {
+              flash(setToast, "Editor is not ready yet.");
+              return;
+            }
+            await bridge.openTerminalTab();
+          })(),
+      },
+      {
         id: "editor.action.revealDefinition",
         label: "Go to Definition",
         keybinding: "F12",
@@ -284,20 +366,25 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
         label: "View: Toggle Terminal",
         keybinding: "Ctrl+`",
         run: () =>
-          runWithBridge((b) => {
-            const s = b.getState();
-            const inLeft = s.leftTabs.some((t) => t.id === "bash");
-            const inRight = s.rightTabs.some((t) => t.id === "bash");
-            if (inLeft) {
-              b.dispatch({ type: "SELECT_TAB", group: "left", id: "bash" });
+          void (async () => {
+            const bridge = bridgeRef.current;
+            if (!bridge) {
+              flash(setToast, "Editor is not ready yet.");
               return;
             }
-            if (inRight) {
-              b.dispatch({ type: "SELECT_TAB", group: "right", id: "bash" });
+            const s = bridge.getState();
+            const leftTerminal = s.leftTabs.find((t) => t.terminalId);
+            const rightTerminal = s.rightTabs.find((t) => t.terminalId);
+            if (leftTerminal) {
+              bridge.dispatch({ type: "SELECT_TAB", group: "left", id: leftTerminal.id });
               return;
             }
-            flash(setToast, "Terminal tab not found in this session.");
-          }),
+            if (rightTerminal) {
+              bridge.dispatch({ type: "SELECT_TAB", group: "right", id: rightTerminal.id });
+              return;
+            }
+            await bridge.openTerminalTab();
+          })(),
       },
       {
         id: "workbench.action.reloadWindow",
@@ -329,7 +416,7 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
         run: () => flash(setToast, "Welcome page (demo)."),
       },
     ],
-    [router, runWithBridge, setThemePreference, workbench]
+    [bridgeRef, promptForFolder, refreshTree, router, runWithBridge, setThemePreference, workbench]
   );
 
   const runCommand = useCallback(
@@ -406,7 +493,16 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
       }
       if (key === "s" && !e.shiftKey) {
         e.preventDefault();
-        flash(setToast, "Save (demo — no disk write).");
+        const bridge = bridgeRef.current;
+        if (!bridge) {
+          flash(setToast, "Editor is not ready yet.");
+          return;
+        }
+        void bridge.saveActiveTab().then((saved) => {
+          if (!saved) {
+            flash(setToast, "Active editor cannot be saved.");
+          }
+        });
         return;
       }
       if (e.code === "Comma" && !e.shiftKey) {
@@ -437,7 +533,7 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
       if (key === "v" && e.shiftKey) {
         e.preventDefault();
         runWithBridge((b) =>
-          b.dispatch({ type: "TOGGLE_MARKDOWN_PREVIEW" })
+          b.dispatch({ type: "TOGGLE_FILE_PREVIEW" })
         );
         return;
       }
@@ -454,29 +550,39 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
       }
       if (e.code === "Backquote" && !e.shiftKey) {
         e.preventDefault();
-        runWithBridge((b) => {
-          const s = b.getState();
-          if (s.leftTabs.some((t) => t.id === "bash")) {
-            b.dispatch({ type: "SELECT_TAB", group: "left", id: "bash" });
-          } else if (s.rightTabs.some((t) => t.id === "bash")) {
-            b.dispatch({ type: "SELECT_TAB", group: "right", id: "bash" });
-          } else {
-            flash(setToast, "Terminal tab not found in this session.");
-          }
-        });
+        const bridge = bridgeRef.current;
+        if (!bridge) {
+          flash(setToast, "Editor is not ready yet.");
+          return;
+        }
+        const snapshot = bridge.getState();
+        const leftTerminal = snapshot.leftTabs.find((tab) => tab.terminalId);
+        const rightTerminal = snapshot.rightTabs.find((tab) => tab.terminalId);
+        if (leftTerminal) {
+          bridge.dispatch({ type: "SELECT_TAB", group: "left", id: leftTerminal.id });
+        } else if (rightTerminal) {
+          bridge.dispatch({ type: "SELECT_TAB", group: "right", id: rightTerminal.id });
+        } else {
+          void bridge.openTerminalTab();
+        }
         return;
       }
     };
 
     document.addEventListener("keydown", onKeyDown, true);
     return () => document.removeEventListener("keydown", onKeyDown, true);
-  }, [runWithBridge, workbench]);
+  }, [bridgeRef, runWithBridge, workbench]);
 
   const onQuickPick = useCallback(
     (entry: QuickOpenEntry) => {
-      openExplorerFile(resolveExplorerOpenRequest(entry.path, entry.node));
+      openExplorerFile({
+        path: entry.path,
+        name: entry.name,
+        language: entry.node.language ?? "plaintext",
+        icon: inferEditorIcon(entry),
+      });
     },
-    [openExplorerFile]
+    [inferEditorIcon, openExplorerFile]
   );
 
   return (

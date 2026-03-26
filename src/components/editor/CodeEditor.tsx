@@ -1,25 +1,23 @@
 "use client";
 
-import { useRef, useEffect, useState, useCallback } from "react";
+import { useRef, useEffect, useState, useCallback, useMemo } from "react";
 import Editor, { type Monaco } from "@monaco-editor/react";
+import type { editor as MonacoEditor } from "monaco-editor";
 import { useHtmlDarkClass } from "@/hooks/useHtmlDarkClass";
 
 interface CodeEditorProps {
   content: string;
   language: string;
+  filePath?: string;
+  onContentChange?: (content: string) => void;
+  onSave?: (content: string) => Promise<unknown>;
 }
 
 function defineOpenCursorThemes(monaco: Monaco) {
   monaco.editor.defineTheme("opencursor-dark", {
     base: "vs-dark",
     inherit: true,
-    rules: [
-      { token: "comment", foreground: "5b5b5b", fontStyle: "italic" },
-      { token: "keyword", foreground: "ffffff" },
-      { token: "string", foreground: "a5d6a7" },
-      { token: "number", foreground: "f4a261" },
-      { token: "type", foreground: "80cbc4" },
-    ],
+    rules: [],
     colors: {
       "editor.background": "#191919",
       "editor.foreground": "#ffffff",
@@ -42,13 +40,7 @@ function defineOpenCursorThemes(monaco: Monaco) {
   monaco.editor.defineTheme("opencursor-light", {
     base: "vs",
     inherit: true,
-    rules: [
-      { token: "comment", foreground: "8a8a8a", fontStyle: "italic" },
-      { token: "keyword", foreground: "1a1a1a" },
-      { token: "string", foreground: "2d6a3a" },
-      { token: "number", foreground: "b85c1c" },
-      { token: "type", foreground: "00695c" },
-    ],
+    rules: [],
     colors: {
       "editor.background": "#fafafa",
       "editor.foreground": "#1a1a1a",
@@ -69,13 +61,27 @@ function defineOpenCursorThemes(monaco: Monaco) {
   });
 }
 
-export function CodeEditor({ content, language }: CodeEditorProps) {
+export function CodeEditor({
+  content,
+  language,
+  filePath,
+  onContentChange,
+  onSave,
+}: CodeEditorProps) {
   const monacoRef = useRef<Monaco | null>(null);
   const isDark = useHtmlDarkClass();
   const monacoTheme = isDark ? "opencursor-dark" : "opencursor-light";
   const editorLanguage = language === "shell" ? "shell" : language;
+  const editorModelPath = useMemo(() => {
+    if (!filePath) {
+      return undefined;
+    }
+    const normalized = filePath.replace(/\\/g, "/");
+    return encodeURI(`file:///${normalized}`);
+  }, [filePath]);
   /** Ephemeral buffer: not written back to workspace state (demo UX only). */
   const [value, setValue] = useState(content);
+  const [saveState, setSaveState] = useState<"idle" | "saving" | "saved">("idle");
 
   useEffect(() => {
     setValue(content);
@@ -101,15 +107,51 @@ export function CodeEditor({ content, language }: CodeEditorProps) {
     if (m) m.editor.setTheme(monacoTheme);
   }, [monacoTheme]);
 
+  useEffect(() => {
+    if (!onContentChange || value === content) return;
+    const timeout = window.setTimeout(() => {
+      onContentChange(value);
+    }, 250);
+    return () => window.clearTimeout(timeout);
+  }, [content, onContentChange, value]);
+
+  const handleSave = useCallback(async () => {
+    if (!onSave) return;
+    setSaveState("saving");
+    await onSave(value);
+    setSaveState("saved");
+    window.setTimeout(() => setSaveState("idle"), 1200);
+  }, [onSave, value]);
+
+  const handleMount = useCallback(
+    (editorInstance: MonacoEditor.IStandaloneCodeEditor, monaco: Monaco) => {
+      monacoRef.current = monaco;
+      editorInstance.addCommand(
+        monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS,
+        () => {
+          void handleSave();
+        }
+      );
+    },
+    [handleSave]
+  );
+
   return (
-    <div className="h-full w-full">
+    <div className="relative h-full w-full">
+      {saveState !== "idle" ? (
+        <div className="pointer-events-none absolute right-3 top-3 z-10 rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-[var(--bg-panel)] px-2 py-1 font-sans text-[11px] text-[var(--text-secondary)]">
+          {saveState === "saving" ? "Saving..." : "Saved"}
+        </div>
+      ) : null}
       <Editor
         height="100%"
         language={editorLanguage}
+        path={editorModelPath}
         value={value}
         onChange={onChange}
         theme={monacoTheme}
         beforeMount={handleBeforeMount}
+        onMount={handleMount}
         options={{
           readOnly: false,
           domReadOnly: false,

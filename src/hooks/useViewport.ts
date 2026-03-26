@@ -1,21 +1,24 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useSyncExternalStore } from "react";
 
 export type Breakpoint = "desktop" | "tablet" | "mobile";
 
-export function useViewport() {
-  const [width, setWidth] = useState(
-    typeof window !== "undefined" ? window.innerWidth : 1920
-  );
+function subscribe(onStoreChange: () => void) {
+  window.addEventListener("resize", onStoreChange);
+  return () => window.removeEventListener("resize", onStoreChange);
+}
 
-  useEffect(() => {
-    function handleResize() {
-      setWidth(window.innerWidth);
-    }
-    window.addEventListener("resize", handleResize);
-    return () => window.removeEventListener("resize", handleResize);
-  }, []);
+function getSnapshot(): number {
+  return window.innerWidth;
+}
+
+function getServerSnapshot(): number {
+  return 1920;
+}
+
+export function useViewport() {
+  const width = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
 
   const breakpoint: Breakpoint =
     width >= 1024 ? "desktop" : width >= 768 ? "tablet" : "mobile";

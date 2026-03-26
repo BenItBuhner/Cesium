@@ -6,6 +6,7 @@ import {
   useContext,
   useMemo,
   useRef,
+  useState,
   type ReactNode,
 } from "react";
 import type { ChatMessage, ExplorerOpenRequest } from "@/lib/types";
@@ -23,6 +24,8 @@ type Ctx = {
   openSubagentTranscript: (payload: OpenTranscriptPayload) => void;
   registerOpenExplorerFile: (handler: ExplorerHandler | null) => void;
   openExplorerFile: (payload: ExplorerOpenRequest) => void;
+  activeExplorerPath: string | null;
+  setActiveExplorerPath: (path: string | null) => void;
 };
 
 const OpenInEditorContext = createContext<Ctx | null>(null);
@@ -32,6 +35,7 @@ export function OpenInEditorProvider({ children }: { children: ReactNode }) {
   const pendingRef = useRef<OpenTranscriptPayload | null>(null);
   const explorerRef = useRef<ExplorerHandler | null>(null);
   const pendingExplorerRef = useRef<ExplorerOpenRequest | null>(null);
+  const [activeExplorerPath, setActiveExplorerPath] = useState<string | null>(null);
 
   const registerOpenTranscript = useCallback((handler: TranscriptHandler | null) => {
     handlerRef.current = handler;
@@ -60,6 +64,7 @@ export function OpenInEditorProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const openExplorerFile = useCallback((payload: ExplorerOpenRequest) => {
+    setActiveExplorerPath(payload.path);
     if (explorerRef.current) {
       explorerRef.current(payload);
     } else {
@@ -73,12 +78,15 @@ export function OpenInEditorProvider({ children }: { children: ReactNode }) {
       openSubagentTranscript,
       registerOpenExplorerFile,
       openExplorerFile,
+      activeExplorerPath,
+      setActiveExplorerPath,
     }),
     [
       registerOpenTranscript,
       openSubagentTranscript,
       registerOpenExplorerFile,
       openExplorerFile,
+      activeExplorerPath,
     ]
   );
 

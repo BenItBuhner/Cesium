@@ -8,7 +8,7 @@ import {
   useLayoutEffect,
   useMemo,
 } from "react";
-import { ArrowUp, Upload } from "lucide-react";
+import { ArrowUp, Mic, Upload } from "lucide-react";
 import { ModeDropdown } from "./ModeDropdown";
 import { ModelDropdown } from "./ModelDropdown";
 import {
@@ -295,6 +295,13 @@ export function ChatComposer({
             aria-label="Upload file"
           >
             <Upload className="size-[14px] shrink-0" strokeWidth={1.5} aria-hidden />
+          </button>
+          <button
+            type="button"
+            className="text-[var(--text-secondary)] transition-colors hover:text-[var(--text-primary)]"
+            aria-label="Voice input"
+          >
+            <Mic className="size-[14px] shrink-0" strokeWidth={1.5} aria-hidden />
           </button>
           <button
             type="button"
