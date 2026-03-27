@@ -1,9 +1,15 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { Terminal as XTerm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
+import { useHardwareInput } from "@/components/input/HardwareInputProvider";
+import {
+  getTerminalSelectionText,
+  handleTerminalHardwareKey,
+  pasteIntoTerminal,
+} from "@/components/editor/TerminalHardwareAdapter";
 import { getServerBaseUrl } from "@/lib/server-api";
 import { BinaryWebSocket, toWebSocketUrl } from "@/lib/ws-client";
 import { useHtmlDarkClass } from "@/hooks/useHtmlDarkClass";
@@ -117,6 +123,15 @@ function normalizeCommandName(line: string): string | null {
 }
 
 export function Terminal({ terminalId }: TerminalProps) {
+  const surfaceId = useId().replace(/:/g, "_");
+  const {
+    enabled: hardwareInputEnabled,
+    registerSurface,
+    unregisterSurface,
+    activateSurface,
+    deactivateSurface,
+  } = useHardwareInput();
+  const captureRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<XTerm | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
@@ -126,7 +141,9 @@ export function Terminal({ terminalId }: TerminalProps) {
   const pendingCommandRef = useRef("");
   const pendingClearRef = useRef(false);
   const clearTimerRef = useRef<number | null>(null);
+  const hardwareInputEnabledRef = useRef(hardwareInputEnabled);
   const [connectionState, setConnectionState] = useState("connecting");
+  const [terminalReadyNonce, setTerminalReadyNonce] = useState(0);
   const isDark = useHtmlDarkClass();
   const initialThemeRef = useRef(getTerminalTheme(isDark));
 
@@ -136,7 +153,35 @@ export function Terminal({ terminalId }: TerminalProps) {
   );
 
   useEffect(() => {
+    hardwareInputEnabledRef.current = hardwareInputEnabled;
+    if (!hardwareInputEnabled) return;
+    const target = captureRef.current;
+    if (!target) return;
+    const activeElement = document.activeElement;
+    if (activeElement && !target.contains(activeElement)) return;
+    try {
+      target.focus({ preventScroll: true });
+    } catch {
+      target.focus();
+    }
+  }, [hardwareInputEnabled]);
+
+  useEffect(() => {
     if (!containerRef.current) return;
+
+    const focusTerminalTarget = () => {
+      if (hardwareInputEnabledRef.current) {
+        const target = captureRef.current;
+        if (!target) return;
+        try {
+          target.focus({ preventScroll: true });
+        } catch {
+          target.focus();
+        }
+        return;
+      }
+      terminal.focus();
+    };
 
     const terminal = new XTerm({
       cursorBlink: true,
@@ -155,11 +200,15 @@ export function Terminal({ terminalId }: TerminalProps) {
     terminal.loadAddon(fitAddon);
     terminal.loadAddon(webLinksAddon);
     terminal.open(containerRef.current);
+    terminal.attachCustomKeyEventHandler(
+      () => !hardwareInputEnabledRef.current
+    );
     fitAddon.fit();
-    requestAnimationFrame(() => terminal.focus());
+    requestAnimationFrame(focusTerminalTarget);
 
     terminalRef.current = terminal;
     fitAddonRef.current = fitAddon;
+    setTerminalReadyNonce((value) => value + 1);
 
     const socket = new BinaryWebSocket(socketUrl);
     socketRef.current = socket;
@@ -196,7 +245,7 @@ export function Terminal({ terminalId }: TerminalProps) {
         pendingClearRef.current = false;
         terminal.clear();
         socket.sendJson({ type: "clear" });
-        terminal.focus();
+        focusTerminalTarget();
       }, 80);
     };
 
@@ -238,7 +287,7 @@ export function Terminal({ terminalId }: TerminalProps) {
         if (state === "open") {
           terminal.reset();
           sendResize();
-          requestAnimationFrame(() => terminal.focus());
+          requestAnimationFrame(focusTerminalTarget);
         }
       }),
       socket.onMessage((message) => {
@@ -320,6 +369,33 @@ export function Terminal({ terminalId }: TerminalProps) {
   }, [socketUrl]);
 
   useEffect(() => {
+    if (!hardwareInputEnabled || !terminalRef.current) {
+      unregisterSurface(surfaceId);
+      return;
+    }
+
+    const terminal = terminalRef.current;
+    registerSurface(surfaceId, {
+      id: surfaceId,
+      kind: "terminal",
+      allowWorkbenchShortcuts: true,
+      focusTarget: captureRef.current,
+      onKeyDown: (event) => handleTerminalHardwareKey(terminal, event),
+      onPaste: (text) => pasteIntoTerminal(terminal, text),
+      onCopy: () => getTerminalSelectionText(terminal),
+      onCut: () => null,
+    });
+
+    return () => unregisterSurface(surfaceId);
+  }, [
+    hardwareInputEnabled,
+    registerSurface,
+    surfaceId,
+    terminalReadyNonce,
+    unregisterSurface,
+  ]);
+
+  useEffect(() => {
     const terminal = terminalRef.current;
     if (!terminal) return;
     terminal.options.theme = getTerminalTheme(isDark);
@@ -328,8 +404,29 @@ export function Terminal({ terminalId }: TerminalProps) {
 
   return (
     <div
-      className="relative h-full w-full bg-[var(--bg-main)]"
-      onMouseDown={() => terminalRef.current?.focus()}
+      ref={captureRef}
+      className="relative h-full w-full bg-[var(--bg-main)] outline-none"
+      tabIndex={hardwareInputEnabled ? 0 : -1}
+      data-hardware-input-surface={hardwareInputEnabled ? "" : undefined}
+      data-hardware-surface-kind={hardwareInputEnabled ? "terminal" : undefined}
+      onFocus={() => {
+        if (hardwareInputEnabled) {
+          activateSurface(surfaceId, captureRef.current);
+        }
+      }}
+      onBlur={() => {
+        if (hardwareInputEnabled) {
+          deactivateSurface(surfaceId);
+        }
+      }}
+      onPointerDownCapture={(event) => {
+        if (hardwareInputEnabled) {
+          activateSurface(surfaceId, captureRef.current);
+          event.preventDefault();
+          return;
+        }
+        terminalRef.current?.focus();
+      }}
     >
       {connectionState !== "open" ? (
         <div className="pointer-events-none absolute right-3 top-3 z-10 rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-[var(--bg-panel)] px-2 py-1 font-sans text-[11px] text-[var(--text-secondary)]">

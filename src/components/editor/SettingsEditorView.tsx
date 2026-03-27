@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useState } from "react";
+import { HardwareAwareTextInput } from "@/components/input/HardwareAwareTextField";
 import type { LucideIcon } from "lucide-react";
 import {
   BookMarked,
@@ -42,6 +43,7 @@ const navItemClass =
 
 export function SettingsEditorView() {
   const [activeNav, setActiveNav] = useState("general");
+  const [searchQuery, setSearchQuery] = useState("");
   const Panel = SETTINGS_PANELS[activeNav];
 
   const openDocsInNewTab = useCallback(() => {
@@ -71,11 +73,13 @@ export function SettingsEditorView() {
         </div>
 
         <div className="px-[10px] pb-[8px]">
-          <input
+          <HardwareAwareTextInput
             type="search"
+            value={searchQuery}
+            onChange={setSearchQuery}
             placeholder="Search settings Ctrl+F"
             className={searchInputClass}
-            aria-label="Search settings"
+            ariaLabel="Search settings"
           />
         </div>
 

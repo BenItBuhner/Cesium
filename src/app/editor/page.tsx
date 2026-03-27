@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { IDELayout } from "@/components/layout/IDELayout";
+import { WorkbenchNotificationProvider } from "@/components/notifications/WorkbenchNotificationProvider";
 import { WorkspaceProvider } from "@/contexts/WorkspaceContext";
 
 export const metadata: Metadata = {
@@ -8,8 +9,10 @@ export const metadata: Metadata = {
 
 export default function EditorPage() {
   return (
-    <WorkspaceProvider>
-      <IDELayout />
-    </WorkspaceProvider>
+    <WorkbenchNotificationProvider>
+      <WorkspaceProvider>
+        <IDELayout />
+      </WorkspaceProvider>
+    </WorkbenchNotificationProvider>
   );
 }

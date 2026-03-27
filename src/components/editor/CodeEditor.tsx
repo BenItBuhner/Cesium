@@ -1,9 +1,17 @@
 "use client";
 
-import { useRef, useEffect, useState, useCallback, useMemo } from "react";
+import { useRef, useEffect, useState, useCallback, useMemo, useId } from "react";
 import Editor, { type Monaco } from "@monaco-editor/react";
 import type { editor as MonacoEditor } from "monaco-editor";
+import { useHardwareInput } from "@/components/input/HardwareInputProvider";
 import { useHtmlDarkClass } from "@/hooks/useHtmlDarkClass";
+import {
+  cutMonacoSelectedText,
+  getMonacoSelectedText,
+  handleMonacoHardwareKey,
+  pasteIntoMonaco,
+  placeMonacoCursorFromClientPoint,
+} from "@/components/editor/MonacoHardwareAdapter";
 import { resolveEditorLanguageId } from "@/lib/editor-language";
 
 interface CodeEditorProps {
@@ -223,7 +231,19 @@ export function CodeEditor({
   onContentChange,
   onSave,
 }: CodeEditorProps) {
+  const surfaceId = useId().replace(/:/g, "_");
+  const {
+    enabled: hardwareInputEnabled,
+    registerSurface,
+    unregisterSurface,
+    activateSurface,
+    deactivateSurface,
+  } = useHardwareInput();
   const monacoRef = useRef<Monaco | null>(null);
+  const editorInstanceRef = useRef<MonacoEditor.IStandaloneCodeEditor | null>(
+    null
+  );
+  const captureRef = useRef<HTMLDivElement | null>(null);
   const isDark = useHtmlDarkClass();
   const monacoTheme = isDark ? "opencursor-dark" : "opencursor-light";
   const editorLanguage = useMemo(
@@ -240,6 +260,8 @@ export function CodeEditor({
   /** Ephemeral buffer: not written back to workspace state (demo UX only). */
   const [value, setValue] = useState(content);
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved">("idle");
+  const [editorInstance, setEditorInstance] =
+    useState<MonacoEditor.IStandaloneCodeEditor | null>(null);
 
   useEffect(() => {
     setValue(content);
@@ -258,6 +280,7 @@ export function CodeEditor({
   useEffect(() => {
     return () => {
       monacoRef.current = null;
+      editorInstanceRef.current = null;
     };
   }, []);
 
@@ -285,6 +308,8 @@ export function CodeEditor({
   const handleMount = useCallback(
     (editorInstance: MonacoEditor.IStandaloneCodeEditor, monaco: Monaco) => {
       monacoRef.current = monaco;
+      editorInstanceRef.current = editorInstance;
+      setEditorInstance(editorInstance);
       editorInstance.addCommand(
         monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS,
         () => {
@@ -295,8 +320,82 @@ export function CodeEditor({
     [handleSave]
   );
 
+  useEffect(() => {
+    if (!hardwareInputEnabled || !editorInstance) {
+      unregisterSurface(surfaceId);
+      return;
+    }
+
+    registerSurface(surfaceId, {
+      id: surfaceId,
+      kind: "monaco",
+      allowWorkbenchShortcuts: true,
+      focusTarget: captureRef.current,
+      onKeyDown: (event) => handleMonacoHardwareKey(editorInstance, event),
+      onPaste: (text) => pasteIntoMonaco(editorInstance, text),
+      onCopy: () => getMonacoSelectedText(editorInstance),
+      onCut: () => cutMonacoSelectedText(editorInstance),
+    });
+
+    return () => unregisterSurface(surfaceId);
+  }, [
+    editorInstance,
+    hardwareInputEnabled,
+    registerSurface,
+    surfaceId,
+    unregisterSurface,
+  ]);
+
+  useEffect(() => {
+    if (!hardwareInputEnabled || !editorInstance) return;
+
+    const disposable = editorInstance.onDidFocusEditorText(() => {
+      const target = captureRef.current;
+      if (!target) return;
+      try {
+        target.focus({ preventScroll: true });
+      } catch {
+        target.focus();
+      }
+    });
+
+    return () => disposable.dispose();
+  }, [editorInstance, hardwareInputEnabled]);
+
   return (
-    <div className="relative h-full w-full">
+    <div
+      ref={captureRef}
+      className="relative h-full w-full outline-none"
+      tabIndex={hardwareInputEnabled ? 0 : -1}
+      data-hardware-input-surface={hardwareInputEnabled ? "" : undefined}
+      data-hardware-surface-kind={hardwareInputEnabled ? "monaco" : undefined}
+      onFocus={() => {
+        if (hardwareInputEnabled) {
+          activateSurface(surfaceId, captureRef.current);
+        }
+      }}
+      onBlur={() => {
+        if (hardwareInputEnabled) {
+          deactivateSurface(surfaceId);
+        }
+      }}
+      onPointerDownCapture={(event) => {
+        if (!hardwareInputEnabled) return;
+        const editor = editorInstanceRef.current;
+        const monaco = monacoRef.current;
+        if (!editor || !monaco) return;
+
+        activateSurface(surfaceId, captureRef.current);
+        void placeMonacoCursorFromClientPoint(
+          editor,
+          monaco,
+          event.clientX,
+          event.clientY,
+          event.shiftKey
+        );
+        event.preventDefault();
+      }}
+    >
       {saveState !== "idle" ? (
         <div className="pointer-events-none absolute right-3 top-3 z-10 rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-[var(--bg-panel)] px-2 py-1 font-sans text-[11px] text-[var(--text-secondary)]">
           {saveState === "saving" ? "Saving..." : "Saved"}

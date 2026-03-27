@@ -42,5 +42,5 @@ export function useTabStripWheel(
 
     el.addEventListener("wheel", onWheel, { passive: false });
     return () => el.removeEventListener("wheel", onWheel);
-  }, [speed]);
+  }, [ref, speed]);
 }

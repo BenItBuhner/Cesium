@@ -10,6 +10,7 @@ import {
   Sparkles,
   Box,
 } from "lucide-react";
+import { HardwareAwareTextInput } from "@/components/input/HardwareAwareTextField";
 import { useClickOutside } from "@/hooks/useClickOutside";
 import { usePopover } from "@/hooks/usePopover";
 import { ToggleSwitch } from "@/components/ui/ToggleSwitch";
@@ -76,6 +77,7 @@ export function ModelDropdown({
           <div
             ref={popoverRef}
             className={`fixed z-[9999] w-[260px] ${popoverSurface} transition-opacity`}
+            data-ide-input-sink
             style={{
               ...(position.top != null
                 ? { top: position.top }
@@ -89,12 +91,13 @@ export function ModelDropdown({
           >
             <div className={`flex items-center gap-[6px] border-b border-[var(--border-card)] px-[10px] py-[6px]`}>
               <Search className="size-[13px] shrink-0 text-[var(--text-disabled)]" strokeWidth={1.5} />
-              <input
+              <HardwareAwareTextInput
                 type="text"
                 value={query}
-                onChange={(e) => setQuery(e.target.value)}
+                onChange={setQuery}
                 placeholder="Search models"
                 className="flex-1 bg-transparent font-sans text-[13px] text-[var(--text-primary)] outline-none placeholder:text-[var(--text-disabled)]"
+                ariaLabel="Search models"
                 autoFocus
               />
             </div>

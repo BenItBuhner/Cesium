@@ -12,8 +12,10 @@ import { useOpenInEditor } from "@/components/editor/OpenInEditorContext";
 import { buildQuickOpenIndex, type QuickOpenEntry } from "@/lib/quick-open-files";
 import { CommandPalette, type PaletteCommand } from "./CommandPalette";
 import { QuickOpen } from "./QuickOpen";
+import { VSCodeQuickInputShell } from "./VSCodeQuickInputShell";
 import { useEditorBridgeRef } from "./EditorBridgeContext";
 import { useWorkbench } from "./WorkbenchContext";
+import { useHardwareInput } from "@/components/input/HardwareInputProvider";
 import { useTheme } from "@/components/theme/ThemeProvider";
 import { IDECommandProvider } from "./IDECommandContext";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
@@ -31,9 +33,18 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
   const bridgeRef = useEditorBridgeRef();
   const { openExplorerFile } = useOpenInEditor();
   const workbench = useWorkbench();
+  const {
+    enabled: hardwareInputEnabled,
+    routeKeyDown,
+    handlePaste,
+    handleCopy,
+    handleCut,
+  } = useHardwareInput();
   const { setPreference: setThemePreference } = useTheme();
   const { fileTree, workspaceInfo, refreshTree, openFolder } = useWorkspace();
   const [palette, setPalette] = useState<PaletteMode>("closed");
+  const [folderPromptOpen, setFolderPromptOpen] = useState(false);
+  const [folderPromptValue, setFolderPromptValue] = useState("");
   const [toast, setToast] = useState<string | null>(null);
 
   const quickEntries = useMemo(
@@ -60,14 +71,18 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
     return "default";
   }, []);
 
-  const promptForFolder = useCallback(async () => {
-    const root = window.prompt(
-      "Open folder",
-      workspaceInfo?.root ?? ""
-    );
+  const promptForFolder = useCallback(() => {
+    setPalette("closed");
+    setFolderPromptValue(workspaceInfo?.root ?? "");
+    setFolderPromptOpen(true);
+  }, [workspaceInfo?.root]);
+
+  const submitFolderPrompt = useCallback(async () => {
+    const root = folderPromptValue.trim();
     if (!root) return;
     try {
       await openFolder(root);
+      setFolderPromptOpen(false);
       flash(setToast, `Opened ${root}`);
     } catch (error) {
       flash(
@@ -75,7 +90,7 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
         error instanceof Error ? error.message : "Failed to open workspace."
       );
     }
-  }, [openFolder, workspaceInfo?.root]);
+  }, [folderPromptValue, openFolder]);
 
   const runWithBridge = useCallback(
     (fn: (d: NonNullable<typeof bridgeRef.current>) => void) => {
@@ -315,7 +330,7 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
         label: "File: Open Folder…",
         keybinding: "Ctrl+Shift+O",
         run: () => {
-          void promptForFolder();
+          promptForFolder();
         },
       },
       {
@@ -427,59 +442,53 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
     [commands]
   );
 
-  useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent) => {
-      const t = e.target;
-      if (t instanceof Element) {
-        if (t.closest("[data-ide-palette]")) return;
-        if (t.closest("[data-ide-input-sink]")) return;
-      }
-
+  const handleWorkbenchKeyDown = useCallback(
+    (e: KeyboardEvent) => {
       if (e.key === "F1") {
         e.preventDefault();
         setPalette("command");
-        return;
+        return true;
       }
 
       const mod = e.metaKey || e.ctrlKey;
-      if (!mod) return;
+      if (!mod) return false;
 
       const key = e.key.toLowerCase();
 
       if (key === "p" && !e.shiftKey) {
         e.preventDefault();
         setPalette("quickopen");
-        return;
+        return true;
       }
       if (key === "p" && e.shiftKey) {
         e.preventDefault();
         setPalette("command");
-        return;
+        return true;
       }
       if (key === "b" && e.shiftKey) {
         e.preventDefault();
         workbench.toggleChat();
-        return;
+        return true;
       }
       if (key === "b" && e.altKey) {
         e.preventDefault();
         workbench.toggleChat();
-        return;
+        return true;
       }
       if (key === "b" && !e.shiftKey && !e.altKey) {
         e.preventDefault();
         workbench.toggleSidebar();
-        return;
+        return true;
       }
       if (key === "e" && e.shiftKey) {
         e.preventDefault();
         workbench.revealExplorer();
-        return;
+        return true;
       }
       if (key === "j" && !e.shiftKey) {
         e.preventDefault();
         workbench.toggleChat();
-        return;
+        return true;
       }
       if (key === "w" && !e.shiftKey) {
         e.preventDefault();
@@ -489,71 +498,69 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
           const id = g === "left" ? s.leftActiveId : s.rightActiveId;
           if (id) b.dispatch({ type: "CLOSE_TAB", group: g, id });
         });
-        return;
+        return true;
       }
       if (key === "s" && !e.shiftKey) {
         e.preventDefault();
         const bridge = bridgeRef.current;
         if (!bridge) {
           flash(setToast, "Editor is not ready yet.");
-          return;
+          return true;
         }
         void bridge.saveActiveTab().then((saved) => {
           if (!saved) {
             flash(setToast, "Active editor cannot be saved.");
           }
         });
-        return;
+        return true;
       }
       if (e.code === "Comma" && !e.shiftKey) {
         e.preventDefault();
         runWithBridge((b) => b.dispatch({ type: "OPEN_SETTINGS_TAB" }));
-        return;
+        return true;
       }
       if (key === "n" && !e.shiftKey) {
         e.preventDefault();
         flash(setToast, "New file (demo).");
-        return;
+        return true;
       }
       if (key === "o" && !e.shiftKey) {
         e.preventDefault();
         setPalette("quickopen");
-        return;
+        return true;
       }
       if (key === "g" && !e.shiftKey) {
         e.preventDefault();
         setPalette("quickopen");
-        return;
+        return true;
       }
       if (key === "e" && !e.shiftKey) {
         e.preventDefault();
         flash(setToast, "Open Changes (demo — no SCM diff yet).");
-        return;
+        return true;
       }
       if (key === "v" && e.shiftKey) {
         e.preventDefault();
-        runWithBridge((b) =>
-          b.dispatch({ type: "TOGGLE_FILE_PREVIEW" })
-        );
-        return;
+        runWithBridge((b) => b.dispatch({ type: "TOGGLE_FILE_PREVIEW" }));
+        return true;
       }
       if (e.code === "Backslash" && !e.shiftKey) {
         e.preventDefault();
         runWithBridge((b) => b.dispatch({ type: "TOGGLE_SPLIT" }));
-        return;
+        return true;
       }
       if (key === "f" && e.shiftKey) {
         e.preventDefault();
         workbench.revealExplorer();
         flash(setToast, "Find in Files — open Search in the sidebar.");
-        return;
+        return true;
       }
       if (e.code === "Backquote" && !e.shiftKey) {
         e.preventDefault();
         const bridge = bridgeRef.current;
         if (!bridge) {
           flash(setToast, "Editor is not ready yet.");
-          return;
+          return true;
         }
         const snapshot = bridge.getState();
         const leftTerminal = snapshot.leftTabs.find((tab) => tab.terminalId);
@@ -565,13 +572,72 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
         } else {
           void bridge.openTerminalTab();
         }
+        return true;
+      }
+
+      return false;
+    },
+    [bridgeRef, runWithBridge, workbench]
+  );
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      const t = e.target;
+      const insidePalette =
+        t instanceof Element && Boolean(t.closest("[data-ide-palette]"));
+      const insideInputSink =
+        t instanceof Element && Boolean(t.closest("[data-ide-input-sink]"));
+
+      if (insidePalette) {
+        if (hardwareInputEnabled) {
+          const routed = routeKeyDown(e);
+          if (routed.handled) return;
+        }
         return;
       }
+
+      if (hardwareInputEnabled) {
+        const routed = routeKeyDown(e);
+        if (routed.handled) return;
+        if (insideInputSink) return;
+        if (!routed.allowWorkbenchShortcuts) return;
+      } else if (insideInputSink) {
+        return;
+      }
+
+      void handleWorkbenchKeyDown(e);
+    };
+
+    const onPaste = (e: ClipboardEvent) => {
+      void handlePaste(e);
+    };
+
+    const onCopy = (e: ClipboardEvent) => {
+      void handleCopy(e);
+    };
+
+    const onCut = (e: ClipboardEvent) => {
+      void handleCut(e);
     };
 
     document.addEventListener("keydown", onKeyDown, true);
-    return () => document.removeEventListener("keydown", onKeyDown, true);
-  }, [bridgeRef, runWithBridge, workbench]);
+    document.addEventListener("paste", onPaste, true);
+    document.addEventListener("copy", onCopy, true);
+    document.addEventListener("cut", onCut, true);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown, true);
+      document.removeEventListener("paste", onPaste, true);
+      document.removeEventListener("copy", onCopy, true);
+      document.removeEventListener("cut", onCut, true);
+    };
+  }, [
+    handleWorkbenchKeyDown,
+    hardwareInputEnabled,
+    routeKeyDown,
+    handlePaste,
+    handleCopy,
+    handleCut,
+  ]);
 
   const onQuickPick = useCallback(
     (entry: QuickOpenEntry) => {
@@ -599,6 +665,42 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
         entries={quickEntries}
         onPick={onQuickPick}
       />
+      <VSCodeQuickInputShell
+        open={folderPromptOpen}
+        screenReaderTitle="Open Folder"
+        inputLabel="Folder path"
+        placeholder="Enter folder path"
+        value={folderPromptValue}
+        onChange={setFolderPromptValue}
+        onKeyDown={(event) => {
+          if (event.key === "Escape") {
+            event.preventDefault();
+            setFolderPromptOpen(false);
+            return;
+          }
+          if (event.key === "Enter") {
+            event.preventDefault();
+            void submitFolderPrompt();
+          }
+        }}
+        onHardwareKeyDown={(event) => {
+          if (event.key === "Escape") {
+            event.preventDefault();
+            setFolderPromptOpen(false);
+            return true;
+          }
+          if (event.key === "Enter") {
+            event.preventDefault();
+            void submitFolderPrompt();
+            return true;
+          }
+          return false;
+        }}
+      >
+        <div className="border-t border-[var(--palette-divider)] px-[10px] py-[8px] font-sans text-[12px] text-[var(--palette-footer-text)]">
+          Open a local workspace folder without using the browser prompt.
+        </div>
+      </VSCodeQuickInputShell>
       {toast ? (
         <div
           className="pointer-events-none fixed bottom-[24px] left-1/2 z-[10060] max-w-[90vw] -translate-x-1/2 rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-[var(--bg-card)] px-[14px] py-[8px] font-sans text-[12px] text-[var(--text-primary)] shadow-[var(--palette-shadow)]"

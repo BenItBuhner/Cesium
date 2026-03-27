@@ -15,6 +15,7 @@ import {
   Maximize2,
   Minimize2,
 } from "lucide-react";
+import { HardwareAwareTextInput } from "@/components/input/HardwareAwareTextField";
 import type { AskQuestionOption, AskQuestionStep } from "@/lib/types";
 import { CollapsibleHeight } from "./CollapsibleHeight";
 
@@ -31,7 +32,9 @@ const heightTransition =
 function keyEventTargetIsInTextField(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
   return Boolean(
-    target.closest('input, textarea, [contenteditable="true"]')
+    target.closest(
+      'input, textarea, [contenteditable="true"], [data-hardware-input-surface]'
+    )
   );
 }
 
@@ -53,7 +56,7 @@ function QuestionStepColumn({
   patchUi: (id: string, patch: Partial<StepUi>) => void;
   selectOption: (stepId: string, opt: AskQuestionOption) => void;
   goNext: () => void;
-  otherRefs: MutableRefObject<Partial<Record<string, HTMLInputElement | null>>>;
+  otherRefs: MutableRefObject<Partial<Record<string, HTMLElement | null>>>;
   registerOptionButton: (letter: string, el: HTMLButtonElement | null) => void;
 }) {
   return (
@@ -142,24 +145,33 @@ function QuestionStepColumn({
                     {labelInner}
                   </button>
                   {otherOpen ? (
-                    <input
-                      ref={(el) => {
-                        otherRefs.current[step.id] = el;
+                    <HardwareAwareTextInput
+                      inputRef={{
+                        get current() {
+                          return otherRefs.current[step.id] ?? null;
+                        },
+                        set current(value: HTMLElement | null) {
+                          otherRefs.current[step.id] = value;
+                        },
                       }}
-                      type="text"
                       value={otherDraft}
-                      onChange={(e) =>
-                        patchUi(step.id, { otherDraft: e.target.value })
-                      }
+                      onChange={(value) => patchUi(step.id, { otherDraft: value })}
                       placeholder={opt.placeholder}
-                      onKeyDown={(e) => {
+                      onNativeKeyDown={(e) => {
                         if (e.key === "Enter") {
                           e.preventDefault();
                           e.stopPropagation();
                           if (otherDraft.trim()) goNext();
                         }
                       }}
+                      onHardwareKeyDown={(event) => {
+                        if (event.key !== "Enter") return false;
+                        event.preventDefault();
+                        if (otherDraft.trim()) goNext();
+                        return true;
+                      }}
                       className="box-border min-h-[26px] min-w-0 flex-1 rounded-[4px] border border-[var(--border-card)] bg-[var(--bg-panel)] px-[8px] py-[4px] text-left font-sans text-[10.5px] text-[var(--plan-accent-label-strong)] outline-none ring-0 transition-[border-color,box-shadow] duration-150 ease-out placeholder:text-[var(--plan-accent-label)] placeholder:opacity-60 focus:border-[var(--border-card)] focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0 motion-reduce:transition-none"
+                      ariaLabel={opt.placeholder}
                     />
                   ) : null}
                 </div>
@@ -198,7 +210,7 @@ export function AskQuestionCard({
   const [stepIndex, setStepIndex] = useState(0);
   const [stepUi, setStepUi] = useState<Record<string, StepUi>>({});
   const [minimized, setMinimized] = useState(false);
-  const otherRefs = useRef<Partial<Record<string, HTMLInputElement | null>>>({});
+  const otherRefs = useRef<Partial<Record<string, HTMLElement | null>>>({});
   const optionButtonRefs = useRef<
     Partial<Record<string, Partial<Record<string, HTMLButtonElement | null>>>>
   >({});
@@ -207,7 +219,9 @@ export function AskQuestionCard({
   const [bodyHeight, setBodyHeight] = useState<number | null>(null);
   const stepUiRef = useRef(stepUi);
 
-  stepUiRef.current = stepUi;
+  useLayoutEffect(() => {
+    stepUiRef.current = stepUi;
+  }, [stepUi]);
 
   useLayoutEffect(() => {
     const el = activeSlideMeasureRef.current;
@@ -265,6 +279,15 @@ export function AskQuestionCard({
     if (opt.isOther && !u.otherDraft.trim()) return;
     goNext();
   }, [stepIndex, steps, goNext]);
+
+  const registerOptionButton = useCallback(
+    (stepId: string, letter: string, el: HTMLButtonElement | null) => {
+      const stepButtons = optionButtonRefs.current[stepId] ?? {};
+      stepButtons[letter] = el;
+      optionButtonRefs.current[stepId] = stepButtons;
+    },
+    []
+  );
 
   if (steps.length === 0) return null;
 
@@ -345,14 +368,6 @@ export function AskQuestionCard({
   const trackOffsetPercent = (stepIndex * 100) / steps.length;
   const stepWidthPercent = 100 / steps.length;
   const currentUi = getUi(step.id);
-  const registerOptionButton = useCallback(
-    (stepId: string, letter: string, el: HTMLButtonElement | null) => {
-      const stepButtons = optionButtonRefs.current[stepId] ?? {};
-      stepButtons[letter] = el;
-      optionButtonRefs.current[stepId] = stepButtons;
-    },
-    []
-  );
 
   function moveOptionSelection(direction: -1 | 1) {
     const currentIndex = step.options.findIndex(

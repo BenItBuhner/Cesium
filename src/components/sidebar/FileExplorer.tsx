@@ -2,6 +2,7 @@
 
 import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { Files, GitBranch, Search, type LucideIcon } from "lucide-react";
+import { HardwareAwareTextInput } from "@/components/input/HardwareAwareTextField";
 import { useOpenInEditor } from "@/components/editor/OpenInEditorContext";
 import type { EditorTab, FileNode } from "@/lib/types";
 import { FileTree, collectExpandableFolderPaths } from "./FileTree";
@@ -56,6 +57,7 @@ export function FileExplorer() {
   const { openExplorerFile, activeExplorerPath } = useOpenInEditor();
   const { fileTree, workspaceInfo, loading, loadFolderChildren } = useWorkspace();
   const [view, setView] = useState<SidebarView>("explorer");
+  const [searchQuery, setSearchQuery] = useState("");
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(new Set());
   const pendingRevealLoadsRef = useRef(new Set<string>());
   const expandablePaths = useMemo(
@@ -210,11 +212,13 @@ export function FileExplorer() {
         >
           <div className="flex shrink-0 items-center gap-[6px] rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-[var(--bg-main)] px-[8px] py-[5px]">
             <Search className="size-[14px] shrink-0 text-[var(--text-disabled)]" strokeWidth={1.5} />
-            <input
+            <HardwareAwareTextInput
               type="search"
+              value={searchQuery}
+              onChange={setSearchQuery}
               placeholder="Search"
               className="min-w-0 flex-1 bg-transparent font-sans text-[13px] text-[var(--text-primary)] outline-none placeholder:text-[var(--text-disabled)]"
-              aria-label="Search files"
+              ariaLabel="Search files"
             />
           </div>
           <p className="mt-[14px] font-sans text-[12px] text-[var(--text-disabled)]">

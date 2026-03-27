@@ -25,6 +25,12 @@ import {
   openWorkspace,
 } from "@/lib/server-api";
 import { JsonWebSocket, toWebSocketUrl } from "@/lib/ws-client";
+import { useWorkbenchNotifications } from "@/components/notifications/WorkbenchNotificationProvider";
+import { WORKBENCH_NOTIFICATION_KIND } from "@/components/notifications/workbench-notification-types";
+
+const HEARTBEAT_INTERVAL_MS = 5_000;
+const PONG_STALE_MS = 12_000;
+const RECONNECT_TOAST_MS = 5_000;
 
 type FileChangeNotice = {
   path: string;
@@ -37,7 +43,6 @@ type WorkspaceContextValue = {
   loading: boolean;
   connected: boolean;
   connectionState: "idle" | "connecting" | "open" | "closed" | "reconnecting";
-  error: string | null;
   lastFileChange: FileChangeNotice | null;
   terminals: TerminalInfo[];
   refreshTree: () => Promise<void>;
@@ -170,10 +175,10 @@ function replaceFolderChildren(
 }
 
 export function WorkspaceProvider({ children }: { children: ReactNode }) {
+  const { pushNotification, dismissByKind } = useWorkbenchNotifications();
   const [workspaceInfo, setWorkspaceInfo] = useState<WorkspaceInfo | null>(null);
   const [fileTree, setFileTree] = useState<FileNode | null>(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [connectionState, setConnectionState] =
     useState<WorkspaceContextValue["connectionState"]>("idle");
   const [lastFileChange, setLastFileChange] = useState<FileChangeNotice | null>(null);
@@ -213,15 +218,23 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       const next = await openWorkspace(root);
       setWorkspaceInfo({ root: next.root, name: next.name });
       setFileTree(next.tree);
-      setError(null);
       await refreshTerminals();
     } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : "Failed to open workspace");
+      const msg =
+        nextError instanceof Error ? nextError.message : "Failed to open workspace";
+      pushNotification({
+        kind: WORKBENCH_NOTIFICATION_KIND.workspaceLoadError,
+        severity: "error",
+        title: "Workspace error",
+        message: msg,
+        persistent: false,
+        autoDismissMs: 10_000,
+      });
       throw nextError;
     } finally {
       setLoading(false);
     }
-  }, [refreshTerminals]);
+  }, [pushNotification, refreshTerminals]);
 
   useEffect(() => {
     let mounted = true;
@@ -238,10 +251,18 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         setWorkspaceInfo({ root, name });
         setFileTree(treeResponse.tree);
         setTerminals(terminalList);
-        setError(null);
       } catch (nextError) {
         if (!mounted) return;
-        setError(nextError instanceof Error ? nextError.message : "Failed to load workspace");
+        const msg =
+          nextError instanceof Error ? nextError.message : "Failed to load workspace";
+        pushNotification({
+          kind: WORKBENCH_NOTIFICATION_KIND.workspaceLoadError,
+          severity: "error",
+          title: "Workspace error",
+          message: msg,
+          persistent: false,
+          autoDismissMs: 10_000,
+        });
       } finally {
         if (mounted) {
           setLoading(false);
@@ -254,18 +275,88 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [pushNotification]);
 
   useEffect(() => {
+    let active = true;
+    let openedAt = Date.now();
+    let lastPongAt: number | null = null;
+    const suppressedDisconnectRef = { current: false };
+    const wasDisconnectedRef = { current: false };
+    let connectionLostHandled = false;
+
     const socket = new JsonWebSocket<FileWatcherEvent>(
       `${toWebSocketUrl(getServerBaseUrl())}/ws/fs`
     );
+
+    function handleConnectionLost(message: string) {
+      if (!active) return;
+      if (connectionLostHandled) return;
+      connectionLostHandled = true;
+      wasDisconnectedRef.current = true;
+      if (!suppressedDisconnectRef.current) {
+        dismissByKind(WORKBENCH_NOTIFICATION_KIND.connectionReconnected);
+        dismissByKind(WORKBENCH_NOTIFICATION_KIND.connectionDisconnected);
+        pushNotification({
+          kind: WORKBENCH_NOTIFICATION_KIND.connectionDisconnected,
+          severity: "error",
+          title: "Disconnected",
+          message,
+          persistent: true,
+          onDismiss: () => {
+            suppressedDisconnectRef.current = true;
+          },
+          actions: [
+            {
+              id: "retry",
+              label: "Retry",
+              primary: true,
+              onClick: () => {
+                void refreshTree();
+                socket.forceCloseConnection();
+              },
+            },
+          ],
+        });
+      }
+    }
+
+    function tryReconnectToast() {
+      if (!active) return;
+      if (!wasDisconnectedRef.current) return;
+      if (lastPongAt == null) return;
+      if (Date.now() - lastPongAt > PONG_STALE_MS) return;
+      if (!socket.connected) return;
+      wasDisconnectedRef.current = false;
+      suppressedDisconnectRef.current = false;
+      dismissByKind(WORKBENCH_NOTIFICATION_KIND.connectionDisconnected);
+      dismissByKind(WORKBENCH_NOTIFICATION_KIND.connectionReconnected);
+      pushNotification({
+        kind: WORKBENCH_NOTIFICATION_KIND.connectionReconnected,
+        severity: "info",
+        title: "Reconnected",
+        message: "Connection to the IDE backend was restored.",
+        persistent: false,
+        autoDismissMs: RECONNECT_TOAST_MS,
+      });
+    }
 
     const unsubscribers = [
       socket.onState((state) =>
         setConnectionState(state as WorkspaceContextValue["connectionState"])
       ),
+      socket.onOpen(() => {
+        openedAt = Date.now();
+        lastPongAt = null;
+        connectionLostHandled = false;
+      }),
       socket.onMessage((event) => {
+        if (event.type === "pong") {
+          lastPongAt = Date.now();
+          tryReconnectToast();
+          return;
+        }
+
         if (event.type === "workspace_changed") {
           setWorkspaceInfo({ root: event.root, name: event.name });
           void refreshTree();
@@ -296,21 +387,39 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
           });
         }
       }),
-      socket.onError(() => {
-        setError("Lost connection to the IDE backend.");
+      socket.onClose(() => {
+        handleConnectionLost("Lost connection to the IDE backend.");
       }),
-      socket.onOpen(() => {
-        setError(null);
+      socket.onError(() => {
+        handleConnectionLost("Lost connection to the IDE backend.");
       }),
     ];
+
+    const heartbeat = window.setInterval(() => {
+      if (!active) return;
+      if (!socket.connected) return;
+      socket.send({ type: "ping" });
+      const stale =
+        lastPongAt == null
+          ? Date.now() - openedAt > PONG_STALE_MS
+          : Date.now() - lastPongAt > PONG_STALE_MS;
+      if (stale) {
+        handleConnectionLost(
+          "No response from the IDE backend. The connection may be stale."
+        );
+        socket.forceCloseConnection();
+      }
+    }, HEARTBEAT_INTERVAL_MS);
 
     socket.connect();
 
     return () => {
+      active = false;
+      window.clearInterval(heartbeat);
       unsubscribers.forEach((unsubscribe) => unsubscribe());
       socket.disconnect();
     };
-  }, [refreshTree]);
+  }, [dismissByKind, pushNotification, refreshTree]);
 
   const value = useMemo<WorkspaceContextValue>(
     () => ({
@@ -319,7 +428,6 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       loading,
       connected: connectionState === "open",
       connectionState,
-      error,
       lastFileChange,
       terminals,
       refreshTree,
@@ -330,7 +438,6 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     }),
     [
       connectionState,
-      error,
       fileTree,
       lastFileChange,
       loadFolderChildren,

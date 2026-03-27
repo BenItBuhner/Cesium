@@ -11,7 +11,7 @@ import { PanelLeft } from "lucide-react";
 import { EditorBridgeProvider } from "@/components/ide/EditorBridgeContext";
 import { WorkbenchProvider } from "@/components/ide/WorkbenchContext";
 import { IDEKeyboardLayer } from "@/components/ide/IDEKeyboardLayer";
-import { useWorkspace } from "@/contexts/WorkspaceContext";
+import { HardwareInputProvider } from "@/components/input/HardwareInputProvider";
 
 function ResizeHandle() {
   return (
@@ -32,7 +32,6 @@ const DESKTOP_DEFAULT_LAYOUT = {
 
 export function IDELayout() {
   const { showSidebar, showChat, isMobile } = useViewport();
-  const { connectionState, workspaceInfo, terminals, error } = useWorkspace();
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [chatOpen, setChatOpen] = useState(true);
   const [mobilePanel, setMobilePanel] = useState<MobilePanel>("editor");
@@ -96,7 +95,8 @@ export function IDELayout() {
     <OpenInEditorProvider>
       <EditorBridgeProvider>
         <WorkbenchProvider value={workbench}>
-          <IDEKeyboardLayer>
+          <HardwareInputProvider>
+            <IDEKeyboardLayer>
           {isMobile ? (
             <div className="flex h-screen w-screen flex-col overflow-hidden bg-[var(--bg-main)]">
               <div className="min-h-0 flex-1 overflow-hidden">
@@ -145,20 +145,9 @@ export function IDELayout() {
                   Chat
                 </button>
               </nav>
-              <StatusBar
-                connectionState={connectionState}
-                workspaceRoot={workspaceInfo?.root ?? ""}
-                terminalCount={terminals.length}
-                error={error}
-              />
             </div>
           ) : (
             <div className="flex h-screen w-screen flex-col overflow-hidden bg-[var(--bg-main)]">
-              {error ? (
-                <div className="border-b border-[var(--border-card)] bg-[var(--debug-accent-bg)] px-3 py-2 font-sans text-[12px] text-[var(--text-primary)]">
-                  {error}
-                </div>
-              ) : null}
               <div className="flex min-h-0 flex-1 overflow-hidden">
               {!sidebarVisible && (
                 <button
@@ -210,51 +199,12 @@ export function IDELayout() {
                 </Panel>
               </Group>
               </div>
-              <StatusBar
-                connectionState={connectionState}
-                workspaceRoot={workspaceInfo?.root ?? ""}
-                terminalCount={terminals.length}
-                error={error}
-              />
             </div>
           )}
-          </IDEKeyboardLayer>
+            </IDEKeyboardLayer>
+          </HardwareInputProvider>
         </WorkbenchProvider>
       </EditorBridgeProvider>
     </OpenInEditorProvider>
-  );
-}
-
-function StatusBar({
-  connectionState,
-  workspaceRoot,
-  terminalCount,
-  error,
-}: {
-  connectionState: string;
-  workspaceRoot: string;
-  terminalCount: number;
-  error: string | null;
-}) {
-  const statusLabel =
-    connectionState === "open"
-      ? "Connected"
-      : connectionState === "reconnecting"
-        ? "Reconnecting"
-        : connectionState === "connecting"
-          ? "Connecting"
-          : "Disconnected";
-
-  return (
-    <div className="flex h-[28px] shrink-0 items-center justify-between gap-4 border-t border-[var(--border-subtle)] bg-[var(--bg-panel)] px-3 font-sans text-[11px] text-[var(--text-secondary)]">
-      <div className="min-w-0 truncate">
-        {statusLabel}
-        {error ? ` - ${error}` : ""}
-      </div>
-      <div className="min-w-0 flex-1 truncate text-center">
-        {workspaceRoot || "No workspace selected"}
-      </div>
-      <div className="shrink-0">{terminalCount} terminal(s)</div>
-    </div>
   );
 }

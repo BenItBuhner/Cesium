@@ -159,6 +159,7 @@ export type FileWatcherEvent =
   | { type: "unlink"; path: string; isDir: false }
   | { type: "unlinkDir"; path: string; isDir: true }
   | { type: "ready" }
+  | { type: "pong" }
   | { type: "workspace_changed"; root: string; name: string };
 
 export interface ChatTab {

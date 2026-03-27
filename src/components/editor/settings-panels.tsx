@@ -11,6 +11,8 @@ import {
   RefreshCw,
   X,
 } from "lucide-react";
+import { HardwareAwareTextInput } from "@/components/input/HardwareAwareTextField";
+import { useUserPreferences } from "@/components/preferences/UserPreferencesProvider";
 import { ToggleSwitch } from "@/components/ui/ToggleSwitch";
 import { availableModels, currentModel } from "@/lib/mock-data";
 
@@ -301,6 +303,7 @@ export function AgentsSettingsPanel() {
   });
   const [cmdTags, setCmdTags] = useState(CMD_TAGS);
   const [modeTags, setModeTags] = useState(MODE_TAGS);
+  const [branchPrefix, setBranchPrefix] = useState("cursor/");
 
   const rm = (arr: string[], t: string) => arr.filter((x) => x !== t);
 
@@ -583,11 +586,13 @@ export function AgentsSettingsPanel() {
           title="Branch Prefix"
           description="Prefix for new branches created by Agent (e.g. cursor/, username/)."
           trailing={
-            <input
+            <HardwareAwareTextInput
               type="text"
+              value={branchPrefix}
+              onChange={setBranchPrefix}
               placeholder="cursor/"
-              defaultValue="cursor/"
               className="w-[min(100%,200px)] rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-[var(--bg-main)] px-[10px] py-[6px] font-sans text-[12px] text-[var(--text-primary)] outline-none placeholder:text-[var(--text-disabled)]"
+              ariaLabel="Branch prefix"
             />
           }
           border={false}
@@ -608,16 +613,26 @@ function createModelsSettingsState(): { id: string; name: string; on: boolean }[
 export function ModelsSettingsPanel() {
   const [models, setModels] = useState(createModelsSettingsState);
   const [apiOpen, setApiOpen] = useState(false);
+  const [modelQuery, setModelQuery] = useState("");
+
+  const visibleModels = useMemo(() => {
+    const q = modelQuery.trim().toLowerCase();
+    if (!q) return models;
+    return models.filter((model) => model.name.toLowerCase().includes(q));
+  }, [modelQuery, models]);
 
   return (
     <>
       <PageIntro title="Models" />
       <div className="mb-[16px] flex items-center gap-[8px]">
         <div className="relative min-w-0 flex-1">
-          <input
+          <HardwareAwareTextInput
             type="search"
+            value={modelQuery}
+            onChange={setModelQuery}
             placeholder="Add or search model"
             className="box-border h-[36px] w-full rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-[var(--bg-panel)] pl-[10px] pr-[10px] font-sans text-[13px] text-[var(--text-primary)] outline-none placeholder:text-[var(--text-disabled)]"
+            ariaLabel="Add or search model"
           />
         </div>
         <button
@@ -629,7 +644,7 @@ export function ModelsSettingsPanel() {
         </button>
       </div>
       <SettingsSection>
-        {models.map((m, i) => (
+        {visibleModels.map((m, i) => (
           <SettingsRow
             key={m.id}
             title={m.name}
@@ -654,7 +669,7 @@ export function ModelsSettingsPanel() {
                 />
               </div>
             }
-            border={i < models.length - 1}
+            border={i < visibleModels.length - 1}
           />
         ))}
         <div className="px-[16px] py-[12px]">
@@ -936,6 +951,9 @@ export function ToolsMcpSettingsPanel() {
 }
 
 export function BetaSettingsPanel() {
+  const { experimentalIpadMode, setExperimentalIpadMode } =
+    useUserPreferences();
+
   return (
     <>
       <PageIntro title="Beta" />
@@ -954,6 +972,19 @@ export function BetaSettingsPanel() {
             </p>
           </div>
         </div>
+        <SettingsRow
+          title="Experimental iPad Mode"
+          description="Use hardware-keyboard-first input surfaces on iPad and avoid native text fields where possible. Experimental and intended for iPad web app sessions with a connected physical keyboard."
+          trailing={
+            <ToggleSwitch
+              checked={experimentalIpadMode}
+              onChange={setExperimentalIpadMode}
+              size="md"
+              variant="green"
+            />
+          }
+          border={false}
+        />
       </SettingsSection>
       <h2 className="mt-[24px] font-sans text-[13px] font-semibold text-[var(--text-secondary)]">
         Development

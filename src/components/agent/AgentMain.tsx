@@ -1,11 +1,15 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
 import { ArrowUp, ChevronDown, Plus, Sparkles } from "lucide-react";
+import { HardwareAwareTextArea } from "@/components/input/HardwareAwareTextField";
 import { agentContextLine } from "@/lib/agent-mock";
 import { currentModel } from "@/lib/mock-data";
 
 export function AgentMain() {
+  const [prompt, setPrompt] = useState("");
+
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-[var(--bg-main)]">
       <div className="flex shrink-0 justify-center px-[16px] pt-[14px]">
@@ -21,12 +25,13 @@ export function AgentMain() {
             data-agent-composer-shell
           >
             <div className="relative min-h-[120px]">
-              <textarea
-                readOnly
+              <HardwareAwareTextArea
                 rows={5}
+                value={prompt}
+                onChange={setPrompt}
                 placeholder="Plan, build, @ to context"
                 className="box-border min-h-[120px] w-full resize-none bg-transparent font-sans text-[14px] font-normal leading-normal text-[var(--text-primary)] outline-none placeholder:text-[var(--text-secondary)]"
-                aria-label="Agent prompt"
+                ariaLabel="Agent prompt"
               />
             </div>
             <div className="flex items-center justify-between gap-[10px]">

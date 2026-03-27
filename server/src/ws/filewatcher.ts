@@ -17,6 +17,7 @@ type FSEvent =
   | { type: "unlink"; path: string; isDir: false }
   | { type: "unlinkDir"; path: string; isDir: true }
   | { type: "ready" }
+  | { type: "pong" }
   | { type: "workspace_changed"; root: string; name: string };
 
 const fsWebSocketServer = new WebSocketServer({ noServer: true });
@@ -131,6 +132,16 @@ export function handleFsUpgrade(
       } satisfies FSEvent)
     );
     ws.send(JSON.stringify({ type: "ready" } satisfies FSEvent));
+    ws.on("message", (raw) => {
+      try {
+        const msg = JSON.parse(String(raw)) as { type?: string };
+        if (msg?.type === "ping") {
+          ws.send(JSON.stringify({ type: "pong" } satisfies FSEvent));
+        }
+      } catch {
+        /* ignore malformed */
+      }
+    });
     ws.on("close", () => {
       fsClients.delete(ws);
     });

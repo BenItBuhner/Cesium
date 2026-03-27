@@ -1,12 +1,16 @@
 "use client";
 
 import {
-  useEffect,
   useId,
   useRef,
   type KeyboardEvent,
+  type MutableRefObject,
   type ReactNode,
 } from "react";
+import {
+  HardwareAwareTextInput,
+  type TextSurfaceController,
+} from "@/components/input/HardwareAwareTextField";
 
 const shell =
   "flex w-full max-w-[640px] flex-col overflow-hidden rounded-[var(--radius-card)] border border-[var(--palette-border)] bg-[var(--palette-surface)] shadow-[var(--palette-shadow)]";
@@ -19,6 +23,7 @@ export function VSCodeQuickInputShell({
   value,
   onChange,
   onKeyDown,
+  onHardwareKeyDown,
   inputRef: inputRefProp,
   children,
   footer,
@@ -30,20 +35,18 @@ export function VSCodeQuickInputShell({
   value: string;
   onChange: (v: string) => void;
   onKeyDown: (e: KeyboardEvent<HTMLInputElement>) => void;
-  inputRef?: React.RefObject<HTMLInputElement | null>;
+  onHardwareKeyDown?: (
+    event: globalThis.KeyboardEvent,
+    controller: TextSurfaceController
+  ) => boolean;
+  inputRef?: MutableRefObject<HTMLElement | null>;
   children: ReactNode;
   footer?: ReactNode;
 }) {
   const inputId = useId();
   const titleId = useId();
-  const internalRef = useRef<HTMLInputElement>(null);
+  const internalRef = useRef<HTMLElement | null>(null);
   const inputRef = inputRefProp ?? internalRef;
-
-  useEffect(() => {
-    if (!open) return;
-    const t = requestAnimationFrame(() => inputRef.current?.focus());
-    return () => cancelAnimationFrame(t);
-  }, [open, inputRef]);
 
   if (!open) return null;
 
@@ -70,17 +73,21 @@ export function VSCodeQuickInputShell({
           <label htmlFor={inputId} className="sr-only">
             {inputLabel}
           </label>
-          <input
-            ref={inputRef}
+          <HardwareAwareTextInput
+            inputRef={inputRef}
             id={inputId}
+            placeholder={placeholder}
+            value={value}
+            onChange={onChange}
+            onNativeKeyDown={onKeyDown}
+            onHardwareKeyDown={onHardwareKeyDown}
             type="text"
             autoComplete="off"
             spellCheck={false}
-            placeholder={placeholder}
-            value={value}
-            onChange={(e) => onChange(e.target.value)}
-            onKeyDown={onKeyDown}
+            autoFocus
+            surfaceKind="palette"
             className="box-border w-full border-0 bg-transparent py-[6px] font-sans text-[13px] text-[var(--palette-input-text)] outline-none ring-0 placeholder:text-[var(--palette-placeholder)] focus:outline-none focus:ring-0"
+            ariaLabel={inputLabel}
           />
         </div>
         {children}

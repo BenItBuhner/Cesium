@@ -7,6 +7,7 @@ import {
   useState,
   type KeyboardEvent,
 } from "react";
+import type { TextSurfaceController } from "@/components/input/HardwareAwareTextField";
 import {
   File,
   FileCode,
@@ -143,31 +144,48 @@ export function QuickOpen({
     [filtered, onClose, onPick]
   );
 
-  const onKeyDown = useCallback(
-    (e: KeyboardEvent<HTMLInputElement>) => {
-      if (e.key === "Escape") {
-        e.preventDefault();
+  const handleListKey = useCallback(
+    (key: string, preventDefault: () => void) => {
+      if (key === "Escape") {
+        preventDefault();
         onClose();
-        return;
+        return true;
       }
-      if (e.key === "ArrowDown") {
-        e.preventDefault();
+      if (key === "ArrowDown") {
+        preventDefault();
         setSel((s) => (filtered.length ? (s + 1) % filtered.length : 0));
-        return;
+        return true;
       }
-      if (e.key === "ArrowUp") {
-        e.preventDefault();
+      if (key === "ArrowUp") {
+        preventDefault();
         setSel((s) =>
           filtered.length ? (s - 1 + filtered.length) % filtered.length : 0
         );
-        return;
+        return true;
       }
-      if (e.key === "Enter") {
-        e.preventDefault();
+      if (key === "Enter") {
+        preventDefault();
         pickAt(sel);
+        return true;
       }
+      return false;
     },
     [filtered.length, onClose, pickAt, sel]
+  );
+
+  const onKeyDown = useCallback(
+    (e: KeyboardEvent<HTMLInputElement>) => {
+      void handleListKey(e.key, () => e.preventDefault());
+    },
+    [handleListKey]
+  );
+
+  const onHardwareKeyDown = useCallback(
+    (event: globalThis.KeyboardEvent, _controller: TextSurfaceController) => {
+      void _controller;
+      return handleListKey(event.key, () => event.preventDefault());
+    },
+    [handleListKey]
   );
 
   return (
@@ -179,6 +197,7 @@ export function QuickOpen({
       value={query}
       onChange={setQuery}
       onKeyDown={onKeyDown}
+      onHardwareKeyDown={onHardwareKeyDown}
       footer={
         <p className="font-sans text-[11px] text-[var(--palette-footer-text)]">
           Demo workspace · <kbd className={kbdCls}>Enter</kbd> open ·{" "}

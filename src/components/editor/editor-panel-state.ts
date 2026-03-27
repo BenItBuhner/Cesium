@@ -43,7 +43,8 @@ export type EditorPanelAction =
   | ({ type: "OPEN_EXPLORER_FILE" } & ExplorerOpenRequest);
 
 function stripActive(tab: EditorTab): EditorTab {
-  const { active: _a, ...rest } = tab;
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- omit `active` from stored tab shape
+  const { active, ...rest } = tab;
   return rest;
 }
 

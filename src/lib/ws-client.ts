@@ -54,6 +54,13 @@ abstract class BaseReconnectSocket<TMessage> {
     this.setState("closed");
   }
 
+  /** Close the socket without disabling auto-reconnect (e.g. heartbeat failure). */
+  forceCloseConnection(): void {
+    if (this.manuallyClosed) return;
+    this.clearReconnectTimer();
+    this.ws?.close();
+  }
+
   get connected(): boolean {
     return this.ws?.readyState === WebSocket.OPEN;
   }

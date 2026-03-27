@@ -46,6 +46,7 @@ export function FilePreview({
       </div>
       <div className="min-h-0 flex-1 overflow-auto" style={checkerboardStyle}>
         <div className="flex min-h-full min-w-full items-start justify-center p-6">
+          {/* eslint-disable-next-line @next/next/no-img-element -- dynamic preview URLs; next/image needs width/height */}
           <img
             src={src}
             alt={name}
