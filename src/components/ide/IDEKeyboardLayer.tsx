@@ -20,6 +20,7 @@ import { useTheme } from "@/components/theme/ThemeProvider";
 import { IDECommandProvider } from "./IDECommandContext";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import type { EditorTab } from "@/lib/types";
+import { isFocusedBrowserSurface } from "@/lib/browser-keyboard-passthrough";
 import { normalizeBrowserTargetUrl } from "@/lib/browser-proxy-url";
 
 type PaletteMode = "closed" | "command" | "quickopen";
@@ -637,6 +638,17 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
         return;
       }
 
+      if (
+        bridgeRef.current &&
+        isFocusedBrowserSurface(bridgeRef.current, t)
+      ) {
+        if (hardwareInputEnabled) {
+          const routed = routeKeyDown(e);
+          if (routed.handled) return;
+        }
+        return;
+      }
+
       if (hardwareInputEnabled) {
         const routed = routeKeyDown(e);
         if (routed.handled) return;
@@ -650,14 +662,32 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
     };
 
     const onPaste = (e: ClipboardEvent) => {
+      if (
+        bridgeRef.current &&
+        isFocusedBrowserSurface(bridgeRef.current, e.target)
+      ) {
+        return;
+      }
       void handlePaste(e);
     };
 
     const onCopy = (e: ClipboardEvent) => {
+      if (
+        bridgeRef.current &&
+        isFocusedBrowserSurface(bridgeRef.current, e.target)
+      ) {
+        return;
+      }
       void handleCopy(e);
     };
 
     const onCut = (e: ClipboardEvent) => {
+      if (
+        bridgeRef.current &&
+        isFocusedBrowserSurface(bridgeRef.current, e.target)
+      ) {
+        return;
+      }
       void handleCut(e);
     };
 
@@ -672,6 +702,7 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
       document.removeEventListener("cut", onCut, true);
     };
   }, [
+    bridgeRef,
     handleWorkbenchKeyDown,
     hardwareInputEnabled,
     routeKeyDown,

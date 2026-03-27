@@ -260,7 +260,7 @@ export function EditorPanel() {
     []
   );
 
-  function renderCodeForTab(tab: EditorTab) {
+  function renderCodeForTab(tab: EditorTab, group: EditorGroup) {
     if (tab.id === SETTINGS_EDITOR_TAB_ID) {
       return <SettingsEditorView key={tab.id} />;
     }
@@ -385,7 +385,7 @@ export function EditorPanel() {
           {!leftActive ? (
             emptyState("No files open")
           ) : (
-            renderCodeForTab(leftActive)
+            renderCodeForTab(leftActive, "left")
           )}
         </div>
       </div>
@@ -427,7 +427,7 @@ export function EditorPanel() {
             {!leftActive ? (
               emptyState("No file selected — open a tab above or drop one here.")
             ) : (
-              renderCodeForTab(leftActive)
+              renderCodeForTab(leftActive, "left")
             )}
           </div>
         </div>
@@ -461,7 +461,7 @@ export function EditorPanel() {
                 "Drop a tab from the left group here, or drag a tab onto the row above."
               )
             ) : (
-              renderCodeForTab(rightActive)
+              renderCodeForTab(rightActive, "right")
             )}
           </div>
         </div>

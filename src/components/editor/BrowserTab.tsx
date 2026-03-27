@@ -9,7 +9,10 @@ import {
 import { resolveFaviconForPage } from "@/lib/browser-favicon";
 import { getServerBaseUrl } from "@/lib/server-api";
 import type { EditorTab } from "@/lib/types";
-import type { EditorPanelAction } from "@/components/editor/editor-panel-state";
+import type {
+  EditorGroup,
+  EditorPanelAction,
+} from "@/components/editor/editor-panel-state";
 
 const DEFAULT_HOME = "http://localhost:3000/";
 
@@ -18,9 +21,11 @@ type HistoryStack = { entries: string[]; index: number };
 export function BrowserTab({
   tab,
   dispatch,
+  editorGroup,
 }: {
   tab: EditorTab;
   dispatch: (action: EditorPanelAction) => void;
+  editorGroup: EditorGroup;
 }) {
   const initial = tab.browser?.targetUrl ?? DEFAULT_HOME;
   const historyRef = useRef<HistoryStack>({ entries: [initial], index: 0 });
@@ -138,7 +143,11 @@ export function BrowserTab({
   }, [dispatch, tab.id, tab.browser?.targetUrl]);
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-[var(--bg-main)]">
+    <div
+      className="flex h-full min-h-0 flex-col bg-[var(--bg-main)]"
+      data-ide-browser-surface
+      data-ide-editor-group={editorGroup}
+    >
       <div
         className="flex shrink-0 flex-wrap items-center gap-[6px] border-b border-[var(--border-subtle)] bg-[var(--bg-panel)] px-[8px] py-[6px]"
         role="toolbar"
