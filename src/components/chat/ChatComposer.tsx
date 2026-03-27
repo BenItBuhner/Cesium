@@ -11,6 +11,7 @@ import {
   type ClipboardEvent as ReactClipboardEvent,
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
+  type ReactElement,
 } from "react";
 import { ArrowUp, Mic, Upload } from "lucide-react";
 import { useHardwareInput } from "@/components/input/HardwareInputProvider";
@@ -95,7 +96,7 @@ function renderComposerText(
   caretRef: { current: HTMLSpanElement | null }
 ) {
   const safe = clampSelection(value, selection);
-  const nodes: JSX.Element[] = [];
+  const nodes: ReactElement[] = [];
 
   if (value.length === 0) {
     if (active) {

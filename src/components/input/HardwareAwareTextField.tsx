@@ -10,6 +10,7 @@ import {
   type KeyboardEventHandler,
   type MutableRefObject,
   type PointerEvent,
+  type ReactElement,
 } from "react";
 import { useHardwareInput } from "@/components/input/HardwareInputProvider";
 import type { HardwareSurfaceKind } from "@/components/input/hardware-input-types";
@@ -94,7 +95,7 @@ function renderTextNodes(
   active: boolean
 ) {
   const safe = clampSelection(value, selection);
-  const nodes: JSX.Element[] = [];
+  const nodes: ReactElement[] = [];
 
   if (value.length === 0) {
     if (active) {
@@ -185,8 +186,7 @@ function HardwareAwareTextSurface({
     end: value.length,
   });
   const fauxRef = useRef<HTMLDivElement | null>(null);
-  const nativeRef =
-    useRef<HTMLInputElement | HTMLTextAreaElement | null>(null);
+  const nativeRef = useRef<HTMLElement | null>(null);
   const valueRef = useRef(value);
   const selectionRef = useRef(selection);
   const onChangeRef = useRef(onChange);
@@ -213,6 +213,14 @@ function HardwareAwareTextSurface({
     },
     []
   );
+
+  const setNativeInputRef = useCallback((node: HTMLInputElement | null) => {
+    nativeRef.current = node;
+  }, []);
+
+  const setNativeTextareaRef = useCallback((node: HTMLTextAreaElement | null) => {
+    nativeRef.current = node;
+  }, []);
 
   useEffect(() => {
     valueRef.current = value;
@@ -326,7 +334,7 @@ function HardwareAwareTextSurface({
     if (multiline) {
       return (
         <textarea
-          ref={nativeRef}
+          ref={setNativeTextareaRef}
           id={id}
           rows={rows}
           value={value}
@@ -350,7 +358,7 @@ function HardwareAwareTextSurface({
 
     return (
       <input
-        ref={nativeRef}
+        ref={setNativeInputRef}
         id={id}
         type={type}
         value={value}
