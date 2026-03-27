@@ -6,6 +6,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -14,23 +15,43 @@ import type {
   FileWatcherEvent,
   TerminalInfo,
   WorkspaceInfo,
+  WorkspaceRecord,
 } from "@/lib/types";
 import {
   createTerminal,
+  createWorkspaceSelection,
   fetchFolderChildren,
   fetchTree,
+  fetchWorkspaceBootstrap,
+  fetchWorkspaceSession,
   getServerBaseUrl,
-  getWorkspace,
   listTerminals,
-  openWorkspace,
+  openWorkspaceSelection,
+  saveWorkspaceSession,
+  setActiveWorkspaceId,
+  setDefaultWorkspaceSelection,
 } from "@/lib/server-api";
+import {
+  createDefaultWorkspaceSession,
+  createPersistableWorkspaceSession,
+  type WorkspaceSessionState,
+} from "@/lib/workspace-session";
 import { JsonWebSocket, toWebSocketUrl } from "@/lib/ws-client";
 import { useWorkbenchNotifications } from "@/components/notifications/WorkbenchNotificationProvider";
 import { WORKBENCH_NOTIFICATION_KIND } from "@/components/notifications/workbench-notification-types";
+import { chatTabs, chatMessages, currentModel } from "@/lib/mock-data";
 
 const HEARTBEAT_INTERVAL_MS = 5_000;
 const PONG_STALE_MS = 12_000;
 const RECONNECT_TOAST_MS = 5_000;
+const SESSION_SAVE_DEBOUNCE_MS = 500;
+const MAIN_CHAT_TAB_ID = "planning";
+const SESSION_BACKUP_STORAGE_PREFIX = "opencursor.workspace-session.";
+
+type WorkspaceSessionBackup = {
+  savedAt: number;
+  session: WorkspaceSessionState;
+};
 
 type FileChangeNotice = {
   path: string;
@@ -39,20 +60,153 @@ type FileChangeNotice = {
 
 type WorkspaceContextValue = {
   workspaceInfo: WorkspaceInfo | null;
+  activeWorkspaceId: string | null;
+  workspaces: WorkspaceRecord[];
+  defaultWorkspaceId: string | null;
+  recentWorkspaceIds: string[];
   fileTree: FileNode | null;
   loading: boolean;
+  sessionReady: boolean;
+  workspaceSession: WorkspaceSessionState;
+  updateWorkspaceSession: (
+    updater: (current: WorkspaceSessionState) => WorkspaceSessionState
+  ) => void;
   connected: boolean;
   connectionState: "idle" | "connecting" | "open" | "closed" | "reconnecting";
   lastFileChange: FileChangeNotice | null;
+  fsResyncToken: number;
   terminals: TerminalInfo[];
   refreshTree: () => Promise<void>;
   refreshTerminals: () => Promise<void>;
   loadFolderChildren: (path: string) => Promise<void>;
-  openFolder: (root: string) => Promise<void>;
+  openFolder: (root: string, name?: string) => Promise<void>;
+  openWorkspaceById: (workspaceId: string) => Promise<void>;
+  createWorkspace: (input: {
+    name?: string;
+    parentPath: string;
+    directoryName: string;
+    setDefault?: boolean;
+  }) => Promise<void>;
+  setDefaultWorkspace: (workspaceId: string) => Promise<void>;
   createNewTerminal: (shell?: string) => Promise<{ id: string }>;
 };
 
 const WorkspaceContext = createContext<WorkspaceContextValue | null>(null);
+
+function buildInitialThreads(): Record<string, typeof chatMessages> {
+  const threads: Record<string, typeof chatMessages> = {};
+  for (const tab of chatTabs) {
+    threads[tab.id] = tab.id === MAIN_CHAT_TAB_ID ? chatMessages : [];
+  }
+  return threads;
+}
+
+function createSessionDefaults(): WorkspaceSessionState {
+  return createDefaultWorkspaceSession(chatTabs, buildInitialThreads(), currentModel);
+}
+
+function getWorkspaceSessionBackupKey(workspaceId: string): string {
+  return `${SESSION_BACKUP_STORAGE_PREFIX}${workspaceId}`;
+}
+
+function readWorkspaceSessionBackup(workspaceId: string): WorkspaceSessionState | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  try {
+    const raw = window.localStorage.getItem(getWorkspaceSessionBackupKey(workspaceId));
+    if (!raw) {
+      return null;
+    }
+    const parsed = JSON.parse(raw) as WorkspaceSessionBackup | null;
+    if (!parsed || typeof parsed !== "object") {
+      return null;
+    }
+    return parsed.session ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function writeWorkspaceSessionBackup(
+  workspaceId: string,
+  session: WorkspaceSessionState
+): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  try {
+    const backup: WorkspaceSessionBackup = {
+      savedAt: Date.now(),
+      session,
+    };
+    window.localStorage.setItem(
+      getWorkspaceSessionBackupKey(workspaceId),
+      JSON.stringify(backup)
+    );
+  } catch {
+    // Ignore local backup failures; server persistence still runs in the background.
+  }
+}
+
+function normalizeWorkspaceSession(
+  raw: WorkspaceSessionState | null | undefined
+): WorkspaceSessionState {
+  const defaults = createSessionDefaults();
+  if (!raw || raw.schemaVersion !== 1) {
+    return defaults;
+  }
+
+  return {
+    schemaVersion: 1,
+    editor: {
+      ...defaults.editor,
+      ...(raw.editor ?? {}),
+      leftTabs: Array.isArray(raw.editor?.leftTabs) ? raw.editor.leftTabs : defaults.editor.leftTabs,
+      rightTabs: Array.isArray(raw.editor?.rightTabs) ? raw.editor.rightTabs : defaults.editor.rightTabs,
+      viewStateByTabId:
+        raw.editor?.viewStateByTabId && typeof raw.editor.viewStateByTabId === "object"
+          ? raw.editor.viewStateByTabId
+          : defaults.editor.viewStateByTabId,
+    },
+    chat: {
+      ...defaults.chat,
+      ...(raw.chat ?? {}),
+      tabs: Array.isArray(raw.chat?.tabs) && raw.chat.tabs.length > 0 ? raw.chat.tabs : defaults.chat.tabs,
+      messagesByTabId:
+        raw.chat?.messagesByTabId && typeof raw.chat.messagesByTabId === "object"
+          ? raw.chat.messagesByTabId
+          : defaults.chat.messagesByTabId,
+      scrollTopByTabId:
+        raw.chat?.scrollTopByTabId && typeof raw.chat.scrollTopByTabId === "object"
+          ? raw.chat.scrollTopByTabId
+          : defaults.chat.scrollTopByTabId,
+      model: raw.chat?.model ?? defaults.chat.model,
+      mode: raw.chat?.mode ?? defaults.chat.mode,
+    },
+    explorer: {
+      ...defaults.explorer,
+      ...(raw.explorer ?? {}),
+      expandedPaths: Array.isArray(raw.explorer?.expandedPaths)
+        ? raw.explorer.expandedPaths
+        : defaults.explorer.expandedPaths,
+    },
+    layout: {
+      ...defaults.layout,
+      ...(raw.layout ?? {}),
+      desktopLayout:
+        raw.layout?.desktopLayout && typeof raw.layout.desktopLayout === "object"
+          ? raw.layout.desktopLayout
+          : defaults.layout.desktopLayout,
+    },
+    settingsView: {
+      ...defaults.settingsView,
+      ...(raw.settingsView ?? {}),
+    },
+  };
+}
 
 function cloneFolder(node: FileNode): FileNode {
   return {
@@ -177,26 +331,92 @@ function replaceFolderChildren(
 export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const { pushNotification, dismissByKind } = useWorkbenchNotifications();
   const [workspaceInfo, setWorkspaceInfo] = useState<WorkspaceInfo | null>(null);
+  const [activeWorkspaceId, setActiveWorkspaceIdState] = useState<string | null>(null);
+  const [workspaces, setWorkspaces] = useState<WorkspaceRecord[]>([]);
+  const [defaultWorkspaceId, setDefaultWorkspaceIdState] = useState<string | null>(null);
+  const [recentWorkspaceIds, setRecentWorkspaceIds] = useState<string[]>([]);
   const [fileTree, setFileTree] = useState<FileNode | null>(null);
   const [loading, setLoading] = useState(true);
+  const [sessionReady, setSessionReady] = useState(false);
+  const [workspaceSession, setWorkspaceSession] = useState<WorkspaceSessionState>(
+    createSessionDefaults()
+  );
   const [connectionState, setConnectionState] =
     useState<WorkspaceContextValue["connectionState"]>("idle");
   const [lastFileChange, setLastFileChange] = useState<FileChangeNotice | null>(null);
+  const [fsResyncToken, setFsResyncToken] = useState(0);
   const [terminals, setTerminals] = useState<TerminalInfo[]>([]);
 
-  const refreshTree = useCallback(async () => {
-    const [{ root, name }, treeResponse] = await Promise.all([
-      getWorkspace(),
-      fetchTree(),
-    ]);
-    setWorkspaceInfo({ root, name });
-    setFileTree(treeResponse.tree);
+  const workspaceSessionRef = useRef(workspaceSession);
+  const lastSeenSeqRef = useRef(0);
+  const hasSyncedOnceRef = useRef(false);
+  const sessionSaveTimerRef = useRef<number | null>(null);
+  const skipNextSessionSaveRef = useRef(false);
+
+  useEffect(() => {
+    workspaceSessionRef.current = workspaceSession;
+  }, [workspaceSession]);
+
+  const setServerWorkspace = useCallback((workspace: WorkspaceRecord | null) => {
+    setActiveWorkspaceId(workspace?.id ?? null);
+    setActiveWorkspaceIdState(workspace?.id ?? null);
+    setWorkspaceInfo(
+      workspace
+        ? {
+            id: workspace.id,
+            root: workspace.root,
+            name: workspace.name,
+          }
+        : null
+    );
   }, []);
 
+  const updateWorkspaceSession = useCallback(
+    (updater: (current: WorkspaceSessionState) => WorkspaceSessionState) => {
+      setWorkspaceSession((current) => updater(current));
+    },
+    []
+  );
+
+  const flushWorkspaceSessionNow = useCallback(
+    async () => {
+      if (!workspaceInfo || !sessionReady) {
+        return;
+      }
+
+      if (sessionSaveTimerRef.current) {
+        window.clearTimeout(sessionSaveTimerRef.current);
+        sessionSaveTimerRef.current = null;
+      }
+
+      const persistableSession = createPersistableWorkspaceSession(
+        workspaceSessionRef.current
+      );
+      writeWorkspaceSessionBackup(workspaceInfo.id, persistableSession);
+
+      await saveWorkspaceSession(workspaceInfo.id, persistableSession).catch(() => {
+        // Ignore flush failures; background saves will retry on future changes.
+      });
+    },
+    [sessionReady, workspaceInfo]
+  );
+
+  const refreshTree = useCallback(async () => {
+    if (!activeWorkspaceId) {
+      return;
+    }
+    const treeResponse = await fetchTree();
+    setFileTree(treeResponse.tree);
+  }, [activeWorkspaceId]);
+
   const refreshTerminals = useCallback(async () => {
+    if (!activeWorkspaceId) {
+      setTerminals([]);
+      return;
+    }
     const next = await listTerminals();
     setTerminals(next);
-  }, []);
+  }, [activeWorkspaceId]);
 
   const loadFolderChildren = useCallback(async (path: string) => {
     const next = await fetchFolderChildren(path);
@@ -212,45 +432,117 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     return terminal;
   }, [refreshTerminals]);
 
-  const openFolder = useCallback(async (root: string) => {
-    setLoading(true);
-    try {
-      const next = await openWorkspace(root);
-      setWorkspaceInfo({ root: next.root, name: next.name });
-      setFileTree(next.tree);
-      await refreshTerminals();
-    } catch (nextError) {
-      const msg =
-        nextError instanceof Error ? nextError.message : "Failed to open workspace";
-      pushNotification({
-        kind: WORKBENCH_NOTIFICATION_KIND.workspaceLoadError,
-        severity: "error",
-        title: "Workspace error",
-        message: msg,
-        persistent: false,
-        autoDismissMs: 10_000,
-      });
-      throw nextError;
-    } finally {
-      setLoading(false);
-    }
-  }, [pushNotification, refreshTerminals]);
+  const loadWorkspaceState = useCallback(
+    async (workspace: WorkspaceRecord) => {
+      setLoading(true);
+      setSessionReady(false);
+      setLastFileChange(null);
+      hasSyncedOnceRef.current = false;
+      lastSeenSeqRef.current = 0;
+      setServerWorkspace(workspace);
+
+      try {
+        const [{ tree }, { session }, terminalList] = await Promise.all([
+          fetchTree(),
+          fetchWorkspaceSession(workspace.id),
+          listTerminals(),
+        ]);
+        const localBackup = readWorkspaceSessionBackup(workspace.id);
+        setFileTree(tree);
+        setTerminals(terminalList);
+        skipNextSessionSaveRef.current = true;
+        setWorkspaceSession(normalizeWorkspaceSession(localBackup ?? session));
+        setSessionReady(true);
+        setFsResyncToken((value) => value + 1);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [setServerWorkspace]
+  );
+
+  const applyWorkspaceListingUpdate = useCallback(
+    (nextWorkspaces: WorkspaceRecord[], nextDefaultWorkspaceId: string | null, nextRecent: string[]) => {
+      setWorkspaces(nextWorkspaces);
+      setDefaultWorkspaceIdState(nextDefaultWorkspaceId);
+      setRecentWorkspaceIds(nextRecent);
+    },
+    []
+  );
+
+  const openWorkspaceById = useCallback(
+    async (workspaceId: string) => {
+      await flushWorkspaceSessionNow();
+      const result = await openWorkspaceSelection({ workspaceId });
+      applyWorkspaceListingUpdate(
+        result.workspaces,
+        result.defaultWorkspaceId,
+        result.recentWorkspaceIds
+      );
+      await loadWorkspaceState(result.workspace);
+    },
+    [applyWorkspaceListingUpdate, flushWorkspaceSessionNow, loadWorkspaceState]
+  );
+
+  const openFolder = useCallback(
+    async (root: string, name?: string) => {
+      await flushWorkspaceSessionNow();
+      const result = await openWorkspaceSelection({ root, name });
+      applyWorkspaceListingUpdate(
+        result.workspaces,
+        result.defaultWorkspaceId,
+        result.recentWorkspaceIds
+      );
+      await loadWorkspaceState(result.workspace);
+    },
+    [applyWorkspaceListingUpdate, flushWorkspaceSessionNow, loadWorkspaceState]
+  );
+
+  const createWorkspace = useCallback(
+    async (input: {
+      name?: string;
+      parentPath: string;
+      directoryName: string;
+      setDefault?: boolean;
+    }) => {
+      await flushWorkspaceSessionNow();
+      const result = await createWorkspaceSelection(input);
+      applyWorkspaceListingUpdate(
+        result.workspaces,
+        result.defaultWorkspaceId,
+        result.recentWorkspaceIds
+      );
+      await loadWorkspaceState(result.workspace);
+    },
+    [applyWorkspaceListingUpdate, flushWorkspaceSessionNow, loadWorkspaceState]
+  );
+
+  const setDefaultWorkspace = useCallback(async (workspaceId: string) => {
+    const result = await setDefaultWorkspaceSelection(workspaceId);
+    setDefaultWorkspaceIdState(result.defaultWorkspaceId);
+  }, []);
 
   useEffect(() => {
     let mounted = true;
 
-    async function load(): Promise<void> {
+    async function bootstrap(): Promise<void> {
       setLoading(true);
       try {
-        const [{ root, name }, treeResponse, terminalList] = await Promise.all([
-          getWorkspace(),
-          fetchTree(),
-          listTerminals(),
-        ]);
+        const bootstrapResult = await fetchWorkspaceBootstrap();
         if (!mounted) return;
-        setWorkspaceInfo({ root, name });
-        setFileTree(treeResponse.tree);
-        setTerminals(terminalList);
+        applyWorkspaceListingUpdate(
+          bootstrapResult.workspaces,
+          bootstrapResult.defaultWorkspaceId,
+          bootstrapResult.recentWorkspaceIds
+        );
+        const startupWorkspace = bootstrapResult.workspaces.find(
+          (workspace) => workspace.id === bootstrapResult.startupWorkspaceId
+        ) ?? bootstrapResult.workspaces[0];
+        if (!startupWorkspace) {
+          setLoading(false);
+          return;
+        }
+        await loadWorkspaceState(startupWorkspace);
       } catch (nextError) {
         if (!mounted) return;
         const msg =
@@ -263,21 +555,82 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
           persistent: false,
           autoDismissMs: 10_000,
         });
-      } finally {
-        if (mounted) {
-          setLoading(false);
-        }
+        setLoading(false);
       }
     }
 
-    void load();
+    void bootstrap();
 
     return () => {
       mounted = false;
     };
-  }, [pushNotification]);
+  }, [applyWorkspaceListingUpdate, loadWorkspaceState, pushNotification]);
 
   useEffect(() => {
+    if (!workspaceInfo || !sessionReady) {
+      return;
+    }
+
+    if (skipNextSessionSaveRef.current) {
+      skipNextSessionSaveRef.current = false;
+      return;
+    }
+
+    if (sessionSaveTimerRef.current) {
+      window.clearTimeout(sessionSaveTimerRef.current);
+    }
+
+    sessionSaveTimerRef.current = window.setTimeout(() => {
+      const persistableSession = createPersistableWorkspaceSession(
+        workspaceSessionRef.current
+      );
+      writeWorkspaceSessionBackup(workspaceInfo.id, persistableSession);
+      void saveWorkspaceSession(workspaceInfo.id, persistableSession).catch(() => {
+        // Ignore save failures here; user-visible work continues in memory.
+      });
+    }, SESSION_SAVE_DEBOUNCE_MS);
+
+    return () => {
+      if (sessionSaveTimerRef.current) {
+        window.clearTimeout(sessionSaveTimerRef.current);
+      }
+    };
+  }, [workspaceInfo, workspaceSession, sessionReady]);
+
+  useEffect(() => {
+    if (!workspaceInfo || !sessionReady) {
+      return;
+    }
+
+    const flushForPageHide = () => {
+      writeWorkspaceSessionBackup(
+        workspaceInfo.id,
+        createPersistableWorkspaceSession(workspaceSessionRef.current)
+      );
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "hidden") {
+        flushForPageHide();
+      }
+    };
+
+    window.addEventListener("pagehide", flushForPageHide);
+    window.addEventListener("beforeunload", flushForPageHide);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      window.removeEventListener("pagehide", flushForPageHide);
+      window.removeEventListener("beforeunload", flushForPageHide);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [flushWorkspaceSessionNow, sessionReady, workspaceInfo]);
+
+  useEffect(() => {
+    if (!activeWorkspaceId) {
+      return;
+    }
+
     let active = true;
     let openedAt = Date.now();
     let lastPongAt: number | null = null;
@@ -285,9 +638,13 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     const wasDisconnectedRef = { current: false };
     let connectionLostHandled = false;
 
-    const socket = new JsonWebSocket<FileWatcherEvent>(
-      `${toWebSocketUrl(getServerBaseUrl())}/ws/fs`
-    );
+    const socket = new JsonWebSocket<FileWatcherEvent>(() => {
+      const params = new URLSearchParams({ workspaceId: activeWorkspaceId });
+      if (hasSyncedOnceRef.current && lastSeenSeqRef.current > 0) {
+        params.set("since", String(lastSeenSeqRef.current));
+      }
+      return `${toWebSocketUrl(getServerBaseUrl())}/ws/fs?${params.toString()}`;
+    });
 
     function handleConnectionLost(message: string) {
       if (!active) return;
@@ -351,17 +708,37 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         connectionLostHandled = false;
       }),
       socket.onMessage((event) => {
+        if (event.type === "workspace_snapshot") {
+          setWorkspaceInfo({
+            id: event.workspaceId,
+            root: event.root,
+            name: event.name,
+          });
+          return;
+        }
+
+        if (event.type === "ready") {
+          hasSyncedOnceRef.current = true;
+          lastSeenSeqRef.current = Math.max(lastSeenSeqRef.current, event.latestSeq);
+          return;
+        }
+
+        if (event.type === "resync_required") {
+          hasSyncedOnceRef.current = true;
+          lastSeenSeqRef.current = event.latestSeq;
+          setFsResyncToken((value) => value + 1);
+          void refreshTree();
+          return;
+        }
+
         if (event.type === "pong") {
           lastPongAt = Date.now();
+          lastSeenSeqRef.current = Math.max(lastSeenSeqRef.current, event.latestSeq);
           tryReconnectToast();
           return;
         }
 
-        if (event.type === "workspace_changed") {
-          setWorkspaceInfo({ root: event.root, name: event.name });
-          void refreshTree();
-          return;
-        }
+        lastSeenSeqRef.current = event.seq;
 
         if (event.type === "change") {
           setLastFileChange({ path: event.path, at: Date.now() });
@@ -419,34 +796,56 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       unsubscribers.forEach((unsubscribe) => unsubscribe());
       socket.disconnect();
     };
-  }, [dismissByKind, pushNotification, refreshTree]);
+  }, [activeWorkspaceId, dismissByKind, pushNotification, refreshTree]);
 
   const value = useMemo<WorkspaceContextValue>(
     () => ({
       workspaceInfo,
+      activeWorkspaceId,
+      workspaces,
+      defaultWorkspaceId,
+      recentWorkspaceIds,
       fileTree,
       loading,
+      sessionReady,
+      workspaceSession,
+      updateWorkspaceSession,
       connected: connectionState === "open",
       connectionState,
       lastFileChange,
+      fsResyncToken,
       terminals,
       refreshTree,
       refreshTerminals,
       loadFolderChildren,
       openFolder,
+      openWorkspaceById,
+      createWorkspace,
+      setDefaultWorkspace,
       createNewTerminal,
     }),
     [
-      connectionState,
-      fileTree,
-      lastFileChange,
-      loadFolderChildren,
-      loading,
-      openFolder,
-      refreshTerminals,
-      refreshTree,
-      terminals,
       workspaceInfo,
+      activeWorkspaceId,
+      workspaces,
+      defaultWorkspaceId,
+      recentWorkspaceIds,
+      fileTree,
+      loading,
+      sessionReady,
+      workspaceSession,
+      updateWorkspaceSession,
+      connectionState,
+      lastFileChange,
+      fsResyncToken,
+      terminals,
+      refreshTree,
+      refreshTerminals,
+      loadFolderChildren,
+      openFolder,
+      openWorkspaceById,
+      createWorkspace,
+      setDefaultWorkspace,
       createNewTerminal,
     ]
   );

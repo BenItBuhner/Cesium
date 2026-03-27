@@ -1,6 +1,6 @@
 "use client";
 
-import { useLayoutEffect, useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useState } from "react";
 import { Panel, Group, Separator, usePanelRef } from "react-resizable-panels";
 import { FileExplorer } from "@/components/sidebar/FileExplorer";
 import { EditorPanel } from "@/components/editor/EditorPanel";
@@ -13,6 +13,7 @@ import { WorkbenchProvider } from "@/components/ide/WorkbenchContext";
 import { IDEKeyboardLayer } from "@/components/ide/IDEKeyboardLayer";
 import { WorkbenchContextMenuProvider } from "@/components/ide/WorkbenchContextMenuProvider";
 import { HardwareInputProvider } from "@/components/input/HardwareInputProvider";
+import { useWorkspace } from "@/contexts/WorkspaceContext";
 
 function ResizeHandle() {
   return (
@@ -33,11 +34,31 @@ const DESKTOP_DEFAULT_LAYOUT = {
 
 export function IDELayout() {
   const { showSidebar, showChat, isMobile } = useViewport();
-  const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [chatOpen, setChatOpen] = useState(true);
-  const [mobilePanel, setMobilePanel] = useState<MobilePanel>("editor");
+  const { activeWorkspaceId, loading, sessionReady, workspaceSession, updateWorkspaceSession } =
+    useWorkspace();
+  const [sidebarOpen, setSidebarOpen] = useState(workspaceSession.layout.sidebarOpen);
+  const [chatOpen, setChatOpen] = useState(workspaceSession.layout.chatOpen);
+  const [mobilePanel, setMobilePanel] = useState<MobilePanel>(workspaceSession.layout.mobilePanel);
   const sidebarPanelRef = usePanelRef();
   const chatPanelRef = usePanelRef();
+
+  useEffect(() => {
+    setSidebarOpen(workspaceSession.layout.sidebarOpen);
+    setChatOpen(workspaceSession.layout.chatOpen);
+    setMobilePanel(workspaceSession.layout.mobilePanel);
+  }, [workspaceSession.layout.chatOpen, workspaceSession.layout.mobilePanel, workspaceSession.layout.sidebarOpen]);
+
+  useEffect(() => {
+    updateWorkspaceSession((current) => ({
+      ...current,
+      layout: {
+        ...current.layout,
+        sidebarOpen,
+        chatOpen,
+        mobilePanel,
+      },
+    }));
+  }, [chatOpen, mobilePanel, sidebarOpen, updateWorkspaceSession]);
 
   const workbench = useMemo(
     () => ({
@@ -91,6 +112,14 @@ export function IDELayout() {
       panel.collapse();
     }
   }, [isMobile, chatVisible, chatPanelRef]);
+
+  if (loading || !sessionReady) {
+    return (
+      <div className="flex h-screen w-screen items-center justify-center bg-[var(--bg-main)] font-sans text-[13px] text-[var(--text-secondary)]">
+        Loading workspace...
+      </div>
+    );
+  }
 
   return (
     <OpenInEditorProvider>
@@ -164,7 +193,17 @@ export function IDELayout() {
               <Group
                 orientation="horizontal"
                 id="ide-panels"
-                defaultLayout={DESKTOP_DEFAULT_LAYOUT}
+                key={activeWorkspaceId ?? "workspace-layout"}
+                defaultLayout={workspaceSession.layout.desktopLayout ?? DESKTOP_DEFAULT_LAYOUT}
+                onLayoutChanged={(layout) => {
+                  updateWorkspaceSession((current) => ({
+                    ...current,
+                    layout: {
+                      ...current.layout,
+                      desktopLayout: layout,
+                    },
+                  }));
+                }}
               >
                 <Panel
                   id="sidebar"

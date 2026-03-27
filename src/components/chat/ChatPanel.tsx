@@ -10,24 +10,13 @@ import {
 import { ChatTabs } from "./ChatTabs";
 import { MessageList } from "./MessageList";
 import { ChatComposer } from "./ChatComposer";
-import { chatTabs as initialTabs, chatMessages, currentModel } from "@/lib/mock-data";
 import { AskQuestionCard } from "./AskQuestionCard";
 import { askStepsFromMessage } from "@/lib/ask-question-utils";
 import { useWorkbenchContextMenu } from "@/components/ide/WorkbenchContextMenuProvider";
 import type { WorkbenchMenuItem } from "@/components/ide/workbench-context-menu-types";
 import { VSCodeQuickInputShell } from "@/components/ide/VSCodeQuickInputShell";
 import type { ChatMessage, ChatTab, EditorMode, ModelInfo } from "@/lib/types";
-
-/** Demo thread lives on this tab id from mock-data. */
-const MAIN_CHAT_TAB_ID = "planning";
-
-function buildInitialThreads(tabs: ChatTab[]): Record<string, ChatMessage[]> {
-  const m: Record<string, ChatMessage[]> = {};
-  for (const t of tabs) {
-    m[t.id] = t.id === MAIN_CHAT_TAB_ID ? chatMessages : [];
-  }
-  return m;
-}
+import { useWorkspace } from "@/contexts/WorkspaceContext";
 
 function partitionMessagesForDock(messages: ChatMessage[]): {
   scrollMessages: ChatMessage[];
@@ -45,16 +34,72 @@ function partitionMessagesForDock(messages: ChatMessage[]): {
 
 export function ChatPanel() {
   const { openAt } = useWorkbenchContextMenu();
-  const [tabs, setTabs] = useState(initialTabs);
-  const [messagesByTabId, setMessagesByTabId] = useState<
-    Record<string, ChatMessage[]>
-  >(() => buildInitialThreads(initialTabs));
-  const [mode, setMode] = useState<EditorMode>("agent");
-  const [model, setModel] = useState<ModelInfo>(currentModel);
+  const { workspaceSession, updateWorkspaceSession } = useWorkspace();
   const [renameTarget, setRenameTarget] = useState<{
     tabId: string;
     draft: string;
   } | null>(null);
+
+  const tabs = workspaceSession.chat.tabs;
+  const messagesByTabId = workspaceSession.chat.messagesByTabId;
+  const mode = workspaceSession.chat.mode;
+  const model = workspaceSession.chat.model;
+
+  const setTabs = useCallback(
+    (updater: (current: ChatTab[]) => ChatTab[]) => {
+      updateWorkspaceSession((current) => ({
+        ...current,
+        chat: {
+          ...current.chat,
+          tabs: updater(current.chat.tabs),
+        },
+      }));
+    },
+    [updateWorkspaceSession]
+  );
+
+  const setMessagesByTabId = useCallback(
+    (
+      updater: (
+        current: Record<string, ChatMessage[]>
+      ) => Record<string, ChatMessage[]>
+    ) => {
+      updateWorkspaceSession((current) => ({
+        ...current,
+        chat: {
+          ...current.chat,
+          messagesByTabId: updater(current.chat.messagesByTabId),
+        },
+      }));
+    },
+    [updateWorkspaceSession]
+  );
+
+  const setMode = useCallback(
+    (next: EditorMode) => {
+      updateWorkspaceSession((current) => ({
+        ...current,
+        chat: {
+          ...current.chat,
+          mode: next,
+        },
+      }));
+    },
+    [updateWorkspaceSession]
+  );
+
+  const setModel = useCallback(
+    (next: ModelInfo) => {
+      updateWorkspaceSession((current) => ({
+        ...current,
+        chat: {
+          ...current.chat,
+          model: next,
+        },
+      }));
+    },
+    [updateWorkspaceSession]
+  );
 
   const activeTabId = useMemo(
     () => tabs.find((t) => t.active)?.id ?? tabs[0]?.id ?? "",
@@ -74,7 +119,7 @@ export function ChatPanel() {
 
   const handleSelectTab = useCallback((id: string) => {
     setTabs((prev) => prev.map((t) => ({ ...t, active: t.id === id })));
-  }, []);
+  }, [setTabs]);
 
   const handleNewChat = useCallback(() => {
     const id = `chat-${Date.now()}`;
@@ -83,14 +128,14 @@ export function ChatPanel() {
       { id, title: "New chat", active: true },
     ]);
     setMessagesByTabId((prev) => ({ ...prev, [id]: [] }));
-  }, []);
+  }, [setMessagesByTabId, setTabs]);
 
   const closeChatTab = useCallback((tabId: string) => {
     setTabs((prev) => {
       const removed = prev.filter((t) => t.id !== tabId);
       if (removed.length === 0) {
         const id = `chat-${Date.now()}`;
-        queueMicrotask(() => setMessagesByTabId({ [id]: [] }));
+        queueMicrotask(() => setMessagesByTabId(() => ({ [id]: [] })));
         return [{ id, title: "New chat", active: true }];
       }
       const wasClosingActive = prev.find((t) => t.id === tabId)?.active;
@@ -109,7 +154,7 @@ export function ChatPanel() {
       delete next[tabId];
       return next;
     });
-  }, []);
+  }, [setMessagesByTabId, setTabs]);
 
   const closeOtherChatTabs = useCallback((tabId: string) => {
     setTabs((prev) => {
@@ -120,17 +165,17 @@ export function ChatPanel() {
     setMessagesByTabId((prev) =>
       tabId in prev ? { [tabId]: prev[tabId] ?? [] } : { [tabId]: [] }
     );
-  }, []);
+  }, [setMessagesByTabId, setTabs]);
 
   const closeAllChatTabs = useCallback(() => {
     const id = `chat-${Date.now()}`;
-    setTabs([{ id, title: "New chat", active: true }]);
-    setMessagesByTabId({ [id]: [] });
-  }, []);
+    setTabs(() => [{ id, title: "New chat", active: true }]);
+    setMessagesByTabId(() => ({ [id]: [] }));
+  }, [setMessagesByTabId, setTabs]);
 
   const clearThreadMessages = useCallback((tabId: string) => {
     setMessagesByTabId((prev) => ({ ...prev, [tabId]: [] }));
-  }, []);
+  }, [setMessagesByTabId]);
 
   const submitChatRename = useCallback(() => {
     setRenameTarget((prev) => {
@@ -143,7 +188,7 @@ export function ChatPanel() {
       );
       return null;
     });
-  }, []);
+  }, [setTabs]);
 
   const handleChatTabContextMenu = useCallback(
     (e: MouseEvent, tabId: string) => {
@@ -265,7 +310,22 @@ export function ChatPanel() {
         </div>
       ) : (
         <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
-          <MessageList messages={scrollMessages} />
+          <MessageList
+            messages={scrollMessages}
+            scrollTop={workspaceSession.chat.scrollTopByTabId[activeTabId] ?? 0}
+            onScrollTopChange={(scrollTop) => {
+              updateWorkspaceSession((current) => ({
+                ...current,
+                chat: {
+                  ...current.chat,
+                  scrollTopByTabId: {
+                    ...current.chat.scrollTopByTabId,
+                    [activeTabId]: scrollTop,
+                  },
+                },
+              }));
+            }}
+          />
           <div className="pointer-events-none absolute inset-x-0 bottom-0 z-30">
             <div className="pointer-events-auto chat-bottom-dock">
               {dockedAskSteps.length > 0 ? (

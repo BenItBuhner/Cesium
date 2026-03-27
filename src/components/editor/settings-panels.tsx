@@ -12,6 +12,7 @@ import {
   X,
 } from "lucide-react";
 import { HardwareAwareTextInput } from "@/components/input/HardwareAwareTextField";
+import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
 import { useUserPreferences } from "@/components/preferences/UserPreferencesProvider";
 import { ToggleSwitch } from "@/components/ui/ToggleSwitch";
 import { availableModels, currentModel } from "@/lib/mock-data";
@@ -167,10 +168,18 @@ function PageIntro({ title, subtitle }: { title: string; subtitle?: string }) {
 /* ——— Panels ——— */
 
 export function GeneralSettingsPanel() {
-  const [sysNotify, setSysNotify] = useState(true);
-  const [warnNotify, setWarnNotify] = useState(false);
-  const [trayIcon, setTrayIcon] = useState(true);
-  const [completionSound, setCompletionSound] = useState(true);
+  const { settings, updateSettings } = useGlobalSettings();
+  const general = settings.general;
+
+  const patchGeneral = (patch: Partial<typeof general>) => {
+    updateSettings((current) => ({
+      ...current,
+      general: {
+        ...current.general,
+        ...patch,
+      },
+    }));
+  };
 
   return (
     <>
@@ -222,23 +231,45 @@ export function GeneralSettingsPanel() {
         <SettingsRow
           title="System notifications"
           description="Show notifications for important events and completions."
-          trailing={<ToggleSwitch checked={sysNotify} onChange={setSysNotify} size="md" />}
+          trailing={
+            <ToggleSwitch
+              checked={general.sysNotify}
+              onChange={(value) => patchGeneral({ sysNotify: value })}
+              size="md"
+            />
+          }
         />
         <SettingsRow
           title="Warning Notifications"
           description="Surface warnings and non-fatal issues as notifications."
-          trailing={<ToggleSwitch checked={warnNotify} onChange={setWarnNotify} size="md" />}
+          trailing={
+            <ToggleSwitch
+              checked={general.warnNotify}
+              onChange={(value) => patchGeneral({ warnNotify: value })}
+              size="md"
+            />
+          }
         />
         <SettingsRow
           title="System Tray Icon"
           description="Keep an icon in the system tray while the app runs."
-          trailing={<ToggleSwitch checked={trayIcon} onChange={setTrayIcon} size="md" />}
+          trailing={
+            <ToggleSwitch
+              checked={general.trayIcon}
+              onChange={(value) => patchGeneral({ trayIcon: value })}
+              size="md"
+            />
+          }
         />
         <SettingsRow
           title="Completion Sound"
           description="Play a short sound when a generation completes."
           trailing={
-            <ToggleSwitch checked={completionSound} onChange={setCompletionSound} size="md" />
+            <ToggleSwitch
+              checked={general.completionSound}
+              onChange={(value) => patchGeneral({ completionSound: value })}
+              size="md"
+            />
           }
           border={false}
         />
@@ -268,42 +299,19 @@ export function GeneralSettingsPanel() {
   );
 }
 
-const CMD_TAGS = [
-  "pip install *",
-  "npm install *",
-  "uv install *",
-  "python *",
-  "cd *",
-  "ls *",
-  "grep *",
-  "Select-Object *",
-];
-
-const MODE_TAGS = ["agent-plan"];
-
 export function AgentsSettingsPanel() {
-  const [a, setA] = useState({
-    submitCtrlEnter: false,
-    autocomplete: false,
-    webSearch: true,
-    autoWeb: true,
-    webFetch: true,
-    hierIgnore: false,
-    symlinkIgnore: false,
-    legacyTerm: false,
-    autoParse: false,
-    themedDiff: true,
-    collapseAuto: true,
-    commitAttr: true,
-    prAttr: true,
-    fileDel: true,
-    extFile: true,
-    browserProt: false,
-    mcpProt: false,
-  });
-  const [cmdTags, setCmdTags] = useState(CMD_TAGS);
-  const [modeTags, setModeTags] = useState(MODE_TAGS);
-  const [branchPrefix, setBranchPrefix] = useState("cursor/");
+  const { settings, updateSettings } = useGlobalSettings();
+  const agents = settings.agents;
+
+  const patchAgents = (patch: Partial<typeof agents>) => {
+    updateSettings((current) => ({
+      ...current,
+      agents: {
+        ...current.agents,
+        ...patch,
+      },
+    }));
+  };
 
   const rm = (arr: string[], t: string) => arr.filter((x) => x !== t);
 
@@ -316,8 +324,8 @@ export function AgentsSettingsPanel() {
           description="When enabled, Ctrl + Enter submits chat and Enter inserts a newline."
           trailing={
             <ToggleSwitch
-              checked={a.submitCtrlEnter}
-              onChange={(v) => setA((s) => ({ ...s, submitCtrlEnter: v }))}
+              checked={agents.submitCtrlEnter}
+              onChange={(v) => patchAgents({ submitCtrlEnter: v })}
               size="md"
               variant="green"
             />
@@ -338,8 +346,8 @@ export function AgentsSettingsPanel() {
           description="Contextual suggestions while prompting Agent."
           trailing={
             <ToggleSwitch
-              checked={a.autocomplete}
-              onChange={(v) => setA((s) => ({ ...s, autocomplete: v }))}
+              checked={agents.autocomplete}
+              onChange={(v) => patchAgents({ autocomplete: v })}
               size="md"
               variant="green"
             />
@@ -354,8 +362,8 @@ export function AgentsSettingsPanel() {
           description="Allow Agent to search the web for relevant information."
           trailing={
             <ToggleSwitch
-              checked={a.webSearch}
-              onChange={(v) => setA((s) => ({ ...s, webSearch: v }))}
+              checked={agents.webSearch}
+              onChange={(v) => patchAgents({ webSearch: v })}
               size="md"
               variant="green"
             />
@@ -366,8 +374,8 @@ export function AgentsSettingsPanel() {
           description="Skip approval dialog. Agent may run web searches automatically."
           trailing={
             <ToggleSwitch
-              checked={a.autoWeb}
-              onChange={(v) => setA((s) => ({ ...s, autoWeb: v }))}
+              checked={agents.autoWeb}
+              onChange={(v) => patchAgents({ autoWeb: v })}
               size="md"
               variant="green"
             />
@@ -378,8 +386,8 @@ export function AgentsSettingsPanel() {
           description="Allow Agent to fetch content from URLs."
           trailing={
             <ToggleSwitch
-              checked={a.webFetch}
-              onChange={(v) => setA((s) => ({ ...s, webFetch: v }))}
+              checked={agents.webFetch}
+              onChange={(v) => patchAgents({ webFetch: v })}
               size="md"
               variant="green"
             />
@@ -390,8 +398,8 @@ export function AgentsSettingsPanel() {
           description="Apply .cursorignore files in all subdirectories. Changing this setting will require a restart."
           trailing={
             <ToggleSwitch
-              checked={a.hierIgnore}
-              onChange={(v) => setA((s) => ({ ...s, hierIgnore: v }))}
+              checked={agents.hierIgnore}
+              onChange={(v) => patchAgents({ hierIgnore: v })}
               size="md"
               variant="green"
             />
@@ -410,8 +418,8 @@ export function AgentsSettingsPanel() {
           }
           trailing={
             <ToggleSwitch
-              checked={a.symlinkIgnore}
-              onChange={(v) => setA((s) => ({ ...s, symlinkIgnore: v }))}
+              checked={agents.symlinkIgnore}
+              onChange={(v) => patchAgents({ symlinkIgnore: v })}
               size="md"
               variant="green"
             />
@@ -434,12 +442,22 @@ export function AgentsSettingsPanel() {
         <SettingsRow
           title="Auto-Approved Mode Transitions"
           description="Mode transitions that will be automatically approved without prompting."
-          trailing={<TagList tags={modeTags} onRemove={(t) => setModeTags((x) => rm(x, t))} />}
+          trailing={
+            <TagList
+              tags={agents.modeTags}
+              onRemove={(t) => patchAgents({ modeTags: rm(agents.modeTags, t) })}
+            />
+          }
         />
         <SettingsRow
           title="Command Allowlist"
           description="Commands Agent may run without confirmation when auto-run is enabled."
-          trailing={<TagList tags={cmdTags} onRemove={(t) => setCmdTags((x) => rm(x, t))} />}
+          trailing={
+            <TagList
+              tags={agents.cmdTags}
+              onRemove={(t) => patchAgents({ cmdTags: rm(agents.cmdTags, t) })}
+            />
+          }
           border={false}
         />
       </SettingsSection>
@@ -449,8 +467,8 @@ export function AgentsSettingsPanel() {
           description="Prevent Agent from automatically running Browser tools."
           trailing={
             <ToggleSwitch
-              checked={a.browserProt}
-              onChange={(v) => setA((s) => ({ ...s, browserProt: v }))}
+              checked={agents.browserProt}
+              onChange={(v) => patchAgents({ browserProt: v })}
               size="md"
               variant="green"
             />
@@ -461,8 +479,8 @@ export function AgentsSettingsPanel() {
           description="Prevent Agent from automatically running MCP tools."
           trailing={
             <ToggleSwitch
-              checked={a.mcpProt}
-              onChange={(v) => setA((s) => ({ ...s, mcpProt: v }))}
+              checked={agents.mcpProt}
+              onChange={(v) => patchAgents({ mcpProt: v })}
               size="md"
               variant="green"
             />
@@ -473,8 +491,8 @@ export function AgentsSettingsPanel() {
           description="Prevent Agent from deleting files automatically."
           trailing={
             <ToggleSwitch
-              checked={a.fileDel}
-              onChange={(v) => setA((s) => ({ ...s, fileDel: v }))}
+              checked={agents.fileDel}
+              onChange={(v) => patchAgents({ fileDel: v })}
               size="md"
               variant="green"
             />
@@ -485,8 +503,8 @@ export function AgentsSettingsPanel() {
           description="Prevent Agent from creating or modifying files outside of the workspace automatically."
           trailing={
             <ToggleSwitch
-              checked={a.extFile}
-              onChange={(v) => setA((s) => ({ ...s, extFile: v }))}
+              checked={agents.extFile}
+              onChange={(v) => patchAgents({ extFile: v })}
               size="md"
               variant="green"
             />
@@ -501,8 +519,8 @@ export function AgentsSettingsPanel() {
           description="Use the legacy terminal tool in agent mode, for use on systems with unsupported shell configurations."
           trailing={
             <ToggleSwitch
-              checked={a.legacyTerm}
-              onChange={(v) => setA((s) => ({ ...s, legacyTerm: v }))}
+              checked={agents.legacyTerm}
+              onChange={(v) => patchAgents({ legacyTerm: v })}
               size="md"
               variant="green"
             />
@@ -513,8 +531,8 @@ export function AgentsSettingsPanel() {
           description="Automatically parse links when pasted into Quick Edit (Ctrl+K) input."
           trailing={
             <ToggleSwitch
-              checked={a.autoParse}
-              onChange={(v) => setA((s) => ({ ...s, autoParse: v }))}
+              checked={agents.autoParse}
+              onChange={(v) => patchAgents({ autoParse: v })}
               size="md"
               variant="green"
             />
@@ -525,8 +543,8 @@ export function AgentsSettingsPanel() {
           description="Use themed background colors for inline code diffs."
           trailing={
             <ToggleSwitch
-              checked={a.themedDiff}
-              onChange={(v) => setA((s) => ({ ...s, themedDiff: v }))}
+              checked={agents.themedDiff}
+              onChange={(v) => patchAgents({ themedDiff: v })}
               size="md"
               variant="green"
             />
@@ -537,8 +555,8 @@ export function AgentsSettingsPanel() {
           description="Collapse auto-run command output by default in Terminal command previews."
           trailing={
             <ToggleSwitch
-              checked={a.collapseAuto}
-              onChange={(v) => setA((s) => ({ ...s, collapseAuto: v }))}
+              checked={agents.collapseAuto}
+              onChange={(v) => patchAgents({ collapseAuto: v })}
               size="md"
               variant="green"
             />
@@ -560,8 +578,8 @@ export function AgentsSettingsPanel() {
           description="Mark Agent commits as &apos;Made with Cursor&apos;."
           trailing={
             <ToggleSwitch
-              checked={a.commitAttr}
-              onChange={(v) => setA((s) => ({ ...s, commitAttr: v }))}
+              checked={agents.commitAttr}
+              onChange={(v) => patchAgents({ commitAttr: v })}
               size="md"
               variant="green"
             />
@@ -572,8 +590,8 @@ export function AgentsSettingsPanel() {
           description="Mark pull requests as made with Cursor."
           trailing={
             <ToggleSwitch
-              checked={a.prAttr}
-              onChange={(v) => setA((s) => ({ ...s, prAttr: v }))}
+              checked={agents.prAttr}
+              onChange={(v) => patchAgents({ prAttr: v })}
               size="md"
               variant="green"
             />
@@ -588,8 +606,8 @@ export function AgentsSettingsPanel() {
           trailing={
             <HardwareAwareTextInput
               type="text"
-              value={branchPrefix}
-              onChange={setBranchPrefix}
+               value={agents.branchPrefix}
+               onChange={(value) => patchAgents({ branchPrefix: value })}
               placeholder="cursor/"
               className="w-[min(100%,200px)] rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-[var(--bg-main)] px-[10px] py-[6px] font-sans text-[12px] text-[var(--text-primary)] outline-none placeholder:text-[var(--text-disabled)]"
               ariaLabel="Branch prefix"
@@ -611,9 +629,28 @@ function createModelsSettingsState(): { id: string; name: string; on: boolean }[
 }
 
 export function ModelsSettingsPanel() {
-  const [models, setModels] = useState(createModelsSettingsState);
+  const { settings, updateSettings } = useGlobalSettings();
   const [apiOpen, setApiOpen] = useState(false);
   const [modelQuery, setModelQuery] = useState("");
+  const models = settings.models.models.length
+    ? settings.models.models
+    : createModelsSettingsState();
+
+  const setModels = (
+    updater: (current: { id: string; name: string; on: boolean }[]) => {
+      id: string;
+      name: string;
+      on: boolean;
+    }[]
+  ) => {
+    updateSettings((current) => ({
+      ...current,
+      models: {
+        ...current.models,
+        models: updater(current.models.models),
+      },
+    }));
+  };
 
   const visibleModels = useMemo(() => {
     const q = modelQuery.trim().toLowerCase();
@@ -702,7 +739,7 @@ export function ModelsSettingsPanel() {
 }
 
 export function RulesSkillsSubagentsPanel() {
-  const [thirdParty, setThirdParty] = useState(true);
+  const { settings, updateSettings } = useGlobalSettings();
   return (
     <>
       <PageIntro
@@ -712,12 +749,25 @@ export function RulesSkillsSubagentsPanel() {
       <SettingsSection>
         <SettingsRow
           title="Include third-party Plugins, Skills, and other configs"
-          description="Automatically import agent configs from other tools."
-          trailing={
-            <ToggleSwitch checked={thirdParty} onChange={setThirdParty} size="md" variant="green" />
-          }
-          border={false}
-        />
+           description="Automatically import agent configs from other tools."
+           trailing={
+            <ToggleSwitch
+              checked={settings.rules.thirdParty}
+              onChange={(value) =>
+                updateSettings((current) => ({
+                  ...current,
+                  rules: {
+                    ...current.rules,
+                    thirdParty: value,
+                  },
+                }))
+              }
+              size="md"
+              variant="green"
+            />
+           }
+           border={false}
+         />
       </SettingsSection>
       <SettingsSection
         title="Rules"
@@ -801,37 +851,9 @@ export function RulesSkillsSubagentsPanel() {
   );
 }
 
-const MCP_TAGS = [
-  "figma:get_design_context",
-  "figma:get_screenshot",
-  "linear:get_issue",
-  "linear:list_issues",
-  "notion:notion-search",
-  "slack:slack_read_channel",
-];
-
-const DOMAIN_TAGS = [
-  "raw.githubusercontent.com",
-  "github.com",
-  "docs.polymarket.com",
-  "api.github.com",
-  "developer.notion.com",
-  "www.todoist.com",
-];
-
-const PLUGIN_MCP = [
-  { id: "c7", name: "context7", status: "2 tools enabled", on: true },
-  { id: "fg", name: "Figma", status: "13 tools, 1 prompts, 25 resources enabled", on: true },
-  { id: "ln", name: "Linear", status: "34 tools enabled", on: true },
-  { id: "nt", name: "Notion", status: "needs authentication", on: false, connect: true },
-  { id: "sl", name: "Slack", status: "13 tools, 1 resources enabled", on: true },
-];
-
 export function ToolsMcpSettingsPanel() {
-  const [localhost, setLocalhost] = useState(true);
-  const [mcpTags] = useState(MCP_TAGS);
-  const [domainTags] = useState(DOMAIN_TAGS);
-  const [pluginState, setPluginState] = useState(PLUGIN_MCP);
+  const { settings, updateSettings } = useGlobalSettings();
+  const tools = settings.tools;
 
   return (
     <>
@@ -861,7 +883,20 @@ export function ToolsMcpSettingsPanel() {
           title="Show Localhost Links in Browser"
           description="Automatically open localhost links in the Browser Tab."
           trailing={
-            <ToggleSwitch checked={localhost} onChange={setLocalhost} size="md" variant="green" />
+            <ToggleSwitch
+              checked={tools.localhost}
+              onChange={(value) =>
+                updateSettings((current) => ({
+                  ...current,
+                  tools: {
+                    ...current.tools,
+                    localhost: value,
+                  },
+                }))
+              }
+              size="md"
+              variant="green"
+            />
           }
           border={false}
         />
@@ -900,11 +935,11 @@ export function ToolsMcpSettingsPanel() {
         </div>
       </SettingsSection>
       <SettingsSection title="Plugin MCP Servers">
-        {pluginState.map((p, i) => (
+        {tools.pluginState.map((p, i) => (
           <div
             key={p.id}
             className={`flex min-h-[56px] items-center justify-between gap-[12px] px-[16px] py-[12px] ${
-              i < pluginState.length - 1 ? "border-b border-[var(--border-subtle)]" : ""
+              i < tools.pluginState.length - 1 ? "border-b border-[var(--border-subtle)]" : ""
             }`}
           >
             <div className="min-w-0">
@@ -922,9 +957,15 @@ export function ToolsMcpSettingsPanel() {
               <ToggleSwitch
                 checked={p.on}
                 onChange={(v) =>
-                  setPluginState((rows) =>
-                    rows.map((r) => (r.id === p.id ? { ...r, on: v } : r))
-                  )
+                  updateSettings((current) => ({
+                    ...current,
+                    tools: {
+                      ...current.tools,
+                      pluginState: current.tools.pluginState.map((row) =>
+                        row.id === p.id ? { ...row, on: v } : row
+                      ),
+                    },
+                  }))
                 }
                 size="md"
                 variant="green"
@@ -937,12 +978,12 @@ export function ToolsMcpSettingsPanel() {
         <SettingsRow
           title="MCP Allowlist"
           description="MCP tools that can run automatically. Format: &apos;server:tool&apos;, &apos;server:*&apos;, &apos;tool&apos;, or &apos;*&apos;."
-          trailing={<TagList tags={mcpTags} />}
+          trailing={<TagList tags={tools.mcpTags} />}
         />
         <SettingsRow
           title="Fetch Domain Allowlist"
           description="Domains that Agent can fetch from automatically. Use &apos;*&apos; for all domains."
-          trailing={<TagList tags={domainTags} />}
+          trailing={<TagList tags={tools.domainTags} />}
           border={false}
         />
       </SettingsSection>

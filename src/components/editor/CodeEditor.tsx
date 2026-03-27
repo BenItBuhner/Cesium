@@ -18,6 +18,8 @@ interface CodeEditorProps {
   content: string;
   language: string;
   filePath?: string;
+  initialViewState?: unknown;
+  onViewStateChange?: (viewState: unknown) => void;
   onContentChange?: (content: string) => void;
   /** Fires on every keystroke (and when `content` loads from parent). Used for save without debounce lag. */
   onLiveContentChange?: (content: string) => void;
@@ -230,6 +232,8 @@ export function CodeEditor({
   content,
   language,
   filePath,
+  initialViewState,
+  onViewStateChange,
   onContentChange,
   onLiveContentChange,
   onSave,
@@ -327,9 +331,53 @@ export function CodeEditor({
           void handleSave();
         }
       );
+      if (initialViewState) {
+        editorInstance.restoreViewState(
+          initialViewState as MonacoEditor.ICodeEditorViewState
+        );
+      }
     },
-    [handleSave]
+    [handleSave, initialViewState]
   );
+
+  useEffect(() => {
+    if (!editorInstance || !onViewStateChange) {
+      return;
+    }
+
+    let timer: number | null = null;
+    const emitViewState = () => {
+      if (timer) {
+        window.clearTimeout(timer);
+      }
+      timer = window.setTimeout(() => {
+        timer = null;
+        onViewStateChange(editorInstance.saveViewState());
+      }, 120);
+    };
+
+    const disposables = [
+      editorInstance.onDidScrollChange(emitViewState),
+      editorInstance.onDidChangeCursorPosition(emitViewState),
+      editorInstance.onDidBlurEditorText(() => {
+        if (timer) {
+          window.clearTimeout(timer);
+          timer = null;
+        }
+        onViewStateChange(editorInstance.saveViewState());
+      }),
+    ];
+
+    return () => {
+      if (timer) {
+        window.clearTimeout(timer);
+      }
+      onViewStateChange(editorInstance.saveViewState());
+      for (const disposable of disposables) {
+        disposable.dispose();
+      }
+    };
+  }, [editorInstance, onViewStateChange]);
 
   useEffect(() => {
     if (!hardwareInputEnabled || !editorInstance) {

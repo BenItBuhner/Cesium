@@ -34,14 +34,18 @@ abstract class BaseReconnectSocket<TMessage> {
   };
   private state: ConnectionState = "idle";
 
-  constructor(protected readonly url: string) {}
+  constructor(protected readonly url: string | (() => string)) {}
+
+  private getResolvedUrl(): string {
+    return typeof this.url === "function" ? this.url() : this.url;
+  }
 
   connect(): void {
     this.manuallyClosed = false;
     this.clearReconnectTimer();
     this.setState(this.reconnectAttempt > 0 ? "reconnecting" : "connecting");
 
-    const ws = new WebSocket(this.url);
+    const ws = new WebSocket(this.getResolvedUrl());
     this.ws = ws;
     this.configureSocket(ws);
   }

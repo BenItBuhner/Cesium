@@ -1,21 +1,4 @@
-import { promises as fs } from "node:fs";
 import path from "node:path";
-
-function resolveInitialWorkspaceRoot(): string {
-  const configuredRoot = process.env.WORKSPACE_ROOT?.trim();
-  if (configuredRoot) {
-    return path.resolve(configuredRoot);
-  }
-
-  const cwd = process.cwd();
-  if (path.basename(cwd).toLowerCase() === "server") {
-    return path.resolve(cwd, "..");
-  }
-
-  return path.resolve(cwd);
-}
-
-let workspaceRoot = resolveInitialWorkspaceRoot();
 
 const DIMMED_NAMES = new Set(["node_modules", ".git", ".next", "dist"]);
 
@@ -193,25 +176,11 @@ const IMAGE_EXTENSIONS = new Set([
   ".webp",
 ]);
 
-export function getWorkspaceRoot(): string {
-  return workspaceRoot;
-}
-
-export function getWorkspaceName(): string {
+export function getWorkspaceName(workspaceRoot: string): string {
   return path.basename(workspaceRoot);
 }
 
-export async function changeWorkspaceRoot(newRoot: string): Promise<string> {
-  const resolved = path.resolve(newRoot);
-  const stat = await fs.stat(resolved);
-  if (!stat.isDirectory()) {
-    throw new Error(`Workspace root is not a directory: ${resolved}`);
-  }
-  workspaceRoot = resolved;
-  return workspaceRoot;
-}
-
-export function resolveSafePath(relativePath: string): string {
+export function resolveSafePath(workspaceRoot: string, relativePath: string): string {
   const normalizedRelative = relativePath.replace(/\\/g, "/");
   const resolved = path.resolve(workspaceRoot, normalizedRelative);
   const relative = path.relative(workspaceRoot, resolved);
@@ -227,7 +196,7 @@ export function resolveSafePath(relativePath: string): string {
   return resolved;
 }
 
-export function toRelativePath(absolutePath: string): string {
+export function toRelativePath(workspaceRoot: string, absolutePath: string): string {
   return path.relative(workspaceRoot, absolutePath).replace(/\\/g, "/");
 }
 

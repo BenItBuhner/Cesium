@@ -67,6 +67,8 @@ next-env.d.ts
 .parcel-cache/
 .eslintcache
 .stylelintcache
+.opencursor-data/
+server/.opencursor-data/
 *.tsbuildinfo
 
 # IDE / editors

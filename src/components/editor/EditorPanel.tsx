@@ -27,7 +27,6 @@ import type { ExplorerOpenRequest } from "@/lib/types";
 import type { EditorTab } from "@/lib/types";
 import {
   SETTINGS_EDITOR_TAB_ID,
-  createInitialEditorState,
   editorPanelReducer,
   type EditorGroup,
   TAB_DND_MIME,
@@ -42,20 +41,51 @@ function tabCanSave(tab: EditorTab): boolean {
   return Boolean(tab.filePath && tab.fileKind && tab.fileKind !== "image");
 }
 
+function createEditorStateFromSession(session: {
+  split: boolean;
+  focusedGroup: EditorGroup;
+  leftTabs: EditorTab[];
+  rightTabs: EditorTab[];
+  leftActiveId: string | null;
+  rightActiveId: string | null;
+}) {
+  return {
+    split: session.split,
+    focusedGroup: session.focusedGroup,
+    leftTabs: session.leftTabs,
+    rightTabs: session.rightTabs,
+    leftActiveId: session.leftActiveId,
+    rightActiveId: session.rightActiveId,
+  };
+}
+
 export function EditorPanel() {
   const {
     registerOpenTranscript,
     registerOpenExplorerFile,
     setActiveExplorerPath,
   } = useOpenInEditor();
-  const { lastFileChange, refreshTerminals, workspaceInfo } = useWorkspace();
+  const {
+    fsResyncToken,
+    lastFileChange,
+    refreshTerminals,
+    terminals,
+    workspaceInfo,
+    workspaceSession,
+    updateWorkspaceSession,
+  } = useWorkspace();
   const { openAt } = useWorkbenchContextMenu();
   const { pushNotification, dismiss, dismissByKind } = useWorkbenchNotifications();
   const liveTabContentRef = useRef<Map<string, string>>(new Map());
+  const viewStateByTabIdRef = useRef<Record<string, unknown>>(
+    workspaceSession.editor.viewStateByTabId
+  );
+  const handledDiskChangeAtRef = useRef<number | null>(null);
+  const handledFsResyncTokenRef = useRef<number | null>(null);
   const [state, dispatch] = useReducer(
     editorPanelReducer,
-    [],
-    createInitialEditorState
+    workspaceSession.editor,
+    createEditorStateFromSession
   );
 
   const stateRef = useRef(state);
@@ -64,6 +94,16 @@ export function EditorPanel() {
   useEffect(() => {
     stateRef.current = state;
   }, [state]);
+
+  useEffect(() => {
+    updateWorkspaceSession((current) => ({
+      ...current,
+      editor: {
+        ...state,
+        viewStateByTabId: viewStateByTabIdRef.current,
+      },
+    }));
+  }, [state, updateWorkspaceSession]);
 
   const flashNotice = useCallback(
     (message: string, severity: "info" | "error" = "info") => {
@@ -209,10 +249,14 @@ export function EditorPanel() {
 
   useEffect(() => {
     if (!lastFileChange) return;
+    if (handledDiskChangeAtRef.current === lastFileChange.at) {
+      return;
+    }
+    handledDiskChangeAtRef.current = lastFileChange.at;
 
     const matchingTab = [
-      ...state.leftTabs,
-      ...state.rightTabs,
+      ...stateRef.current.leftTabs,
+      ...stateRef.current.rightTabs,
     ].find((tab) => tab.filePath === lastFileChange.path);
     if (!matchingTab) return;
 
@@ -236,7 +280,38 @@ export function EditorPanel() {
       .catch(() => {
         // Keep the stale buffer visible if a background refresh fails.
       });
-  }, [lastFileChange, state.leftTabs, state.rightTabs]);
+  }, [lastFileChange]);
+
+  useEffect(() => {
+    if (fsResyncToken === 0) return;
+    if (handledFsResyncTokenRef.current === fsResyncToken) {
+      return;
+    }
+    handledFsResyncTokenRef.current = fsResyncToken;
+
+    const openTabs = [...stateRef.current.leftTabs, ...stateRef.current.rightTabs];
+    for (const tab of openTabs) {
+      if (!tab.filePath || tab.dirty || tab.fileKind === "image") {
+        continue;
+      }
+
+      void readFile(tab.filePath)
+        .then((result) => {
+          dispatch({
+            type: "LOAD_FILE_CONTENT",
+            tabId: tab.id,
+            content: result.content,
+            language: result.language,
+            fileKind: result.fileKind,
+            mimeType: result.mimeType,
+            previewPath: result.previewPath,
+          });
+        })
+        .catch(() => {
+          // Keep the current buffer if a resync refresh fails.
+        });
+    }
+  }, [fsResyncToken]);
 
   useEffect(() => {
     const activeId =
@@ -659,6 +734,16 @@ export function EditorPanel() {
       );
     }
     if (tab.terminalId) {
+      const terminalStillAvailable = terminals.some(
+        (terminal) => terminal.id === tab.terminalId
+      );
+      if (!terminalStillAvailable) {
+        return (
+          <div className="flex h-full items-center justify-center px-6 text-center font-sans text-[13px] text-[var(--text-secondary)]">
+            This terminal session is no longer running. Create a new terminal to continue.
+          </div>
+        );
+      }
       return <Terminal key={tab.id} terminalId={tab.terminalId} />;
     }
     if (
@@ -689,6 +774,20 @@ export function EditorPanel() {
           content={tab.content}
           language={tab.language}
           filePath={tab.filePath}
+          initialViewState={viewStateByTabIdRef.current[tab.id]}
+          onViewStateChange={(viewState) => {
+            viewStateByTabIdRef.current = {
+              ...viewStateByTabIdRef.current,
+              [tab.id]: viewState,
+            };
+            updateWorkspaceSession((current) => ({
+              ...current,
+              editor: {
+                ...stateRef.current,
+                viewStateByTabId: viewStateByTabIdRef.current,
+              },
+            }));
+          }}
           onContentChange={(content) =>
             dispatch({ type: "UPDATE_TAB_CONTENT", tabId: tab.id, content })
           }

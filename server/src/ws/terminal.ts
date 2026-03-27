@@ -7,10 +7,10 @@ import type { Duplex } from "node:stream";
 import type { IPty } from "node-pty";
 import pty from "node-pty";
 import { WebSocketServer, WebSocket } from "ws";
-import { getWorkspaceRoot } from "../lib/workspace.js";
 
 type TerminalSession = {
   id: string;
+  workspaceId: string;
   pty: IPty;
   shell: string;
   cwd: string;
@@ -202,8 +202,11 @@ function clearIdleCleanup(session: TerminalSession): void {
   }
 }
 
-function spawnTerminalSession(shell = getDefaultShell()): TerminalSession {
-  const cwd = getWorkspaceRoot();
+function spawnTerminalSession(
+  workspaceId: string,
+  cwd: string,
+  shell = getDefaultShell()
+): TerminalSession {
   const id = randomUUID();
   const ptyProcess = pty.spawn(shell, [], {
     name: "xterm-256color",
@@ -215,6 +218,7 @@ function spawnTerminalSession(shell = getDefaultShell()): TerminalSession {
 
   const session: TerminalSession = {
     id,
+    workspaceId,
     pty: ptyProcess,
     shell,
     cwd,
@@ -250,12 +254,17 @@ function spawnTerminalSession(shell = getDefaultShell()): TerminalSession {
   return session;
 }
 
-export function createTerminalSession(shell?: string): { id: string } {
-  const session = spawnTerminalSession(shell);
+export function createTerminalSession(
+  workspaceId: string,
+  cwd: string,
+  shell?: string
+): { id: string } {
+  const session = spawnTerminalSession(workspaceId, cwd, shell);
   return { id: session.id };
 }
 
 export function listTerminalSessions(): Array<{
+  workspaceId: string;
   id: string;
   shell: string;
   cwd: string;
@@ -263,6 +272,7 @@ export function listTerminalSessions(): Array<{
   attachedClients: number;
 }> {
   return [...terminalSessions.values()].map((session) => ({
+    workspaceId: session.workspaceId,
     id: session.id,
     shell: session.shell,
     cwd: session.cwd,

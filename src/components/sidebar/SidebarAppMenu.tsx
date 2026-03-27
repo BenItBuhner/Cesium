@@ -17,7 +17,9 @@ type MenuBlock = { sep: true } | MenuLeaf;
 const FILE_MENU: MenuBlock[] = [
   { cmd: "workbench.action.newAgent", label: "New Agent", key: "Ctrl+N" },
   { cmd: "workbench.action.newWindow", label: "New Window", key: "Ctrl+Shift+N" },
-  { cmd: "workbench.action.openFile", label: "Open Folder", key: "Ctrl+O" },
+  { cmd: "workbench.action.openFolder", label: "Open Folder", key: "Ctrl+Shift+O" },
+  { cmd: "workbench.action.createWorkspace", label: "Create Workspace" },
+  { cmd: "workbench.action.setDefaultWorkspace", label: "Set as Default" },
   { sep: true },
   { cmd: "workbench.action.terminal.toggleTerminal", label: "New Terminal" },
   { cmd: "workbench.action.newBrowser", label: "New Browser" },

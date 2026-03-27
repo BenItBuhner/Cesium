@@ -7,9 +7,11 @@ dns.setDefaultResultOrder("ipv4first");
 import { cors } from "hono/cors";
 import { Hono } from "hono";
 import { fsRoutes } from "./routes/fs.js";
+import { workspaceRoutes } from "./routes/workspaces.js";
+import { settingsRoutes } from "./routes/settings.js";
 import { terminalRoutes } from "./routes/terminals.js";
 import { browserProxyRoutes } from "./routes/browser-proxy.js";
-import { initializeFileWatcher, handleFsUpgrade } from "./ws/filewatcher.js";
+import { handleFsUpgrade } from "./ws/filewatcher.js";
 import { handleTerminalUpgrade } from "./ws/terminal.js";
 
 const port = Number.parseInt(process.env.PORT ?? "9100", 10);
@@ -37,8 +39,8 @@ app.use(
       if (!origin) return allowedOrigins[0] ?? "*";
       return allowedOrigins.includes(origin) ? origin : allowedOrigins[0] ?? "*";
     },
-    allowMethods: ["GET", "POST", "DELETE", "OPTIONS"],
-    allowHeaders: ["Content-Type"],
+    allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allowHeaders: ["Content-Type", "x-opencursor-workspace-id"],
   })
 );
 
@@ -49,10 +51,10 @@ app.onError((error, c) => {
 
 app.get("/health", (c) => c.json({ ok: true }));
 app.route("/browser", browserProxyRoutes);
+app.route("/", workspaceRoutes);
+app.route("/", settingsRoutes);
 app.route("/", fsRoutes);
 app.route("/", terminalRoutes);
-
-await initializeFileWatcher();
 
 const server = serve({
   fetch: app.fetch,

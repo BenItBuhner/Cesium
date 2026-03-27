@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { HardwareAwareTextInput } from "@/components/input/HardwareAwareTextField";
 import type { LucideIcon } from "lucide-react";
 import {
@@ -14,6 +14,7 @@ import {
   Wrench,
 } from "lucide-react";
 import { SETTINGS_PANELS } from "@/components/editor/settings-panels";
+import { useWorkspace } from "@/contexts/WorkspaceContext";
 
 type NavEntry =
   | { kind: "item"; id: string; label: string; icon: LucideIcon }
@@ -42,9 +43,33 @@ const navItemClass =
   "flex h-[32px] w-full items-center gap-[10px] rounded-[var(--radius-tab)] px-[10px] text-left font-sans text-[13px] leading-none transition-colors";
 
 export function SettingsEditorView() {
-  const [activeNav, setActiveNav] = useState("general");
-  const [searchQuery, setSearchQuery] = useState("");
+  const { workspaceSession, updateWorkspaceSession } = useWorkspace();
+  const [activeNav, setActiveNav] = useState(workspaceSession.settingsView.activeNav);
+  const [searchQuery, setSearchQuery] = useState(workspaceSession.settingsView.searchQuery);
+  const scrollRootRef = useRef<HTMLElement | null>(null);
   const Panel = SETTINGS_PANELS[activeNav];
+
+  useEffect(() => {
+    setActiveNav(workspaceSession.settingsView.activeNav);
+    setSearchQuery(workspaceSession.settingsView.searchQuery);
+  }, [workspaceSession.settingsView.activeNav, workspaceSession.settingsView.searchQuery]);
+
+  useEffect(() => {
+    updateWorkspaceSession((current) => ({
+      ...current,
+      settingsView: {
+        ...current.settingsView,
+        activeNav,
+        searchQuery,
+      },
+    }));
+  }, [activeNav, searchQuery, updateWorkspaceSession]);
+
+  useEffect(() => {
+    const root = scrollRootRef.current;
+    if (!root) return;
+    root.scrollTop = workspaceSession.settingsView.scrollTop;
+  }, [workspaceSession.settingsView.scrollTop]);
 
   const openDocsInNewTab = useCallback(() => {
     const url =
@@ -128,7 +153,19 @@ export function SettingsEditorView() {
         </nav>
       </aside>
 
-      <main className="hide-scrollbar-y min-h-0 min-w-0 flex-1 overflow-y-auto bg-[var(--bg-main)] px-[28px] py-[24px]">
+      <main
+        ref={scrollRootRef}
+        className="hide-scrollbar-y min-h-0 min-w-0 flex-1 overflow-y-auto bg-[var(--bg-main)] px-[28px] py-[24px]"
+        onScroll={(event) => {
+          updateWorkspaceSession((current) => ({
+            ...current,
+            settingsView: {
+              ...current.settingsView,
+              scrollTop: event.currentTarget.scrollTop,
+            },
+          }));
+        }}
+      >
         {Panel ? <Panel /> : null}
       </main>
     </div>

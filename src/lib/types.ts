@@ -143,8 +143,18 @@ export interface ExplorerOpenRequest {
 }
 
 export interface WorkspaceInfo {
+  id: string;
   root: string;
   name: string;
+}
+
+export interface WorkspaceRecord {
+  id: string;
+  root: string;
+  name: string;
+  createdAt: number;
+  updatedAt: number;
+  lastOpenedAt: number;
 }
 
 export interface TerminalInfo {
@@ -156,14 +166,21 @@ export interface TerminalInfo {
 }
 
 export type FileWatcherEvent =
-  | { type: "add"; path: string; isDir: false }
-  | { type: "addDir"; path: string; isDir: true }
-  | { type: "change"; path: string }
-  | { type: "unlink"; path: string; isDir: false }
-  | { type: "unlinkDir"; path: string; isDir: true }
-  | { type: "ready" }
-  | { type: "pong" }
-  | { type: "workspace_changed"; root: string; name: string };
+  | { type: "add"; seq: number; path: string; isDir: false }
+  | { type: "addDir"; seq: number; path: string; isDir: true }
+  | { type: "change"; seq: number; path: string }
+  | { type: "unlink"; seq: number; path: string; isDir: false }
+  | { type: "unlinkDir"; seq: number; path: string; isDir: true }
+  | {
+      type: "workspace_snapshot";
+      workspaceId: string;
+      root: string;
+      name: string;
+      latestSeq: number;
+    }
+  | { type: "ready"; latestSeq: number }
+  | { type: "resync_required"; latestSeq: number }
+  | { type: "pong"; latestSeq: number };
 
 export interface ChatTab {
   id: string;
@@ -179,4 +196,3 @@ export interface ModelInfo {
   provider: "openai" | "anthropic" | "google" | "auto";
   selected?: boolean;
 }
-

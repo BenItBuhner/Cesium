@@ -48,6 +48,7 @@ export const viewport: Viewport = {
 
 const themeBootstrap = `(()=>{try{var K=${JSON.stringify(THEME_STORAGE_KEY)};function pref(){var v=localStorage.getItem(K);return v==="light"||v==="dark"||v==="system"?v:"system"}function apply(){var p=pref();var d=p==="dark"||(p==="system"&&window.matchMedia("(prefers-color-scheme: dark)").matches);document.documentElement.classList.toggle("dark",d)}apply();window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change",function(){if(pref()==="system")apply()})}catch(e){}})();`;
 const preferencesBootstrap = `(()=>{try{var K=${JSON.stringify(USER_PREFERENCES_STORAGE_KEY)};var enabled=false;try{var raw=localStorage.getItem(K);var parsed=raw?JSON.parse(raw):null;enabled=!!(parsed&&parsed.experimentalIpadMode===true)}catch(e){}document.documentElement.setAttribute("data-experimental-ipad-mode",enabled?"true":"false");document.documentElement.classList.toggle("experimental-ipad-mode",enabled)}catch(e){}})();`;
+const serviceWorkerCleanupBootstrap = `(()=>{try{if(!('serviceWorker'in navigator))return;window.addEventListener('load',function(){navigator.serviceWorker.getRegistrations().then(function(regs){return Promise.all(regs.map(function(reg){return reg.unregister()}))}).catch(function(){});if('caches'in window){caches.keys().then(function(keys){return Promise.all(keys.map(function(key){return caches.delete(key)}))}).catch(function(){})}})}catch(e){}})();`;
 
 export default function RootLayout({
   children,
@@ -64,6 +65,9 @@ export default function RootLayout({
         </Script>
         <Script id="preferences-bootstrap" strategy="beforeInteractive">
           {preferencesBootstrap}
+        </Script>
+        <Script id="service-worker-cleanup" strategy="beforeInteractive">
+          {serviceWorkerCleanupBootstrap}
         </Script>
         <ThemeProvider>
           <UserPreferencesProvider>{children}</UserPreferencesProvider>

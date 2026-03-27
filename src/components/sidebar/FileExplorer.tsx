@@ -78,20 +78,38 @@ function findNodeAtPath(nodes: FileNode[] | undefined, targetPath: string): File
   return currentNode;
 }
 
+function samePathSet(current: Set<string>, next: string[]): boolean {
+  if (current.size !== next.length) return false;
+  for (const value of next) {
+    if (!current.has(value)) return false;
+  }
+  return true;
+}
+
 export function FileExplorer() {
   const { openExplorerFile, activeExplorerPath } = useOpenInEditor();
   const bridgeRef = useEditorBridgeRef();
   const { openAt, openAtPoint } = useWorkbenchContextMenu();
   const { experimentalIpadCustomButtons } = useUserPreferences();
   const { pushNotification, dismiss } = useWorkbenchNotifications();
-  const { fileTree, workspaceInfo, loading, loadFolderChildren, refreshTree } =
-    useWorkspace();
-  const [view, setView] = useState<SidebarView>("explorer");
-  const [searchQuery, setSearchQuery] = useState("");
-  const [expandedPaths, setExpandedPaths] = useState<Set<string>>(new Set());
+  const {
+    fileTree,
+    workspaceInfo,
+    loading,
+    loadFolderChildren,
+    refreshTree,
+    workspaceSession,
+    updateWorkspaceSession,
+  } = useWorkspace();
+  const [view, setView] = useState<SidebarView>(workspaceSession.explorer.view);
+  const [searchQuery, setSearchQuery] = useState(workspaceSession.explorer.searchQuery);
+  const [expandedPaths, setExpandedPaths] = useState<Set<string>>(
+    () => new Set(workspaceSession.explorer.expandedPaths)
+  );
   const pendingRevealLoadsRef = useRef(new Set<string>());
   const uploadInputRef = useRef<HTMLInputElement>(null);
   const uploadFolderRef = useRef<string>("");
+  const scrollRootRef = useRef<HTMLDivElement>(null);
 
   const [fsPrompt, setFsPrompt] = useState<{
     kind: FsPromptKind;
@@ -109,6 +127,38 @@ export function FileExplorer() {
     () => new Set([...expandedPaths].filter((path) => expandablePaths.has(path))),
     [expandedPaths, expandablePaths]
   );
+
+  useEffect(() => {
+    setView(workspaceSession.explorer.view);
+    setSearchQuery(workspaceSession.explorer.searchQuery);
+    setExpandedPaths((current) =>
+      samePathSet(current, workspaceSession.explorer.expandedPaths)
+        ? current
+        : new Set(workspaceSession.explorer.expandedPaths)
+    );
+  }, [
+    workspaceSession.explorer.expandedPaths,
+    workspaceSession.explorer.searchQuery,
+    workspaceSession.explorer.view,
+  ]);
+
+  useEffect(() => {
+    updateWorkspaceSession((current) => ({
+      ...current,
+      explorer: {
+        ...current.explorer,
+        view,
+        searchQuery,
+        expandedPaths: [...expandedPaths],
+      },
+    }));
+  }, [expandedPaths, searchQuery, updateWorkspaceSession, view]);
+
+  useEffect(() => {
+    const root = scrollRootRef.current;
+    if (!root) return;
+    root.scrollTop = workspaceSession.explorer.scrollTop;
+  }, [workspaceSession.explorer.scrollTop]);
 
   const flashError = useCallback(
     (message: string) => {
@@ -676,7 +726,20 @@ export function FileExplorer() {
             <p className="pointer-events-none shrink-0 px-[11px] pb-[5px] pt-[6px] font-sans text-[14px] font-normal text-[var(--text-primary)]">
               {workspaceInfo?.name ?? "Workspace"}
             </p>
-            <div className="min-h-0 flex-1 overflow-y-auto">
+            <div
+              ref={scrollRootRef}
+              className="min-h-0 flex-1 overflow-y-auto"
+              onScroll={(event) => {
+                const nextScrollTop = event.currentTarget.scrollTop;
+                updateWorkspaceSession((current) => ({
+                  ...current,
+                  explorer: {
+                    ...current.explorer,
+                    scrollTop: nextScrollTop,
+                  },
+                }));
+              }}
+            >
               <div
                 className="min-h-full"
                 onContextMenu={onExplorerBackgroundContextMenu}

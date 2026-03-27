@@ -43,10 +43,28 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
     handleCut,
   } = useHardwareInput();
   const { setPreference: setThemePreference } = useTheme();
-  const { fileTree, workspaceInfo, refreshTree, openFolder } = useWorkspace();
+  const {
+    activeWorkspaceId,
+    defaultWorkspaceId,
+    fileTree,
+    workspaceInfo,
+    workspaces,
+    refreshTree,
+    openFolder,
+    openWorkspaceById,
+    createWorkspace,
+    setDefaultWorkspace,
+  } = useWorkspace();
   const [palette, setPalette] = useState<PaletteMode>("closed");
   const [folderPromptOpen, setFolderPromptOpen] = useState(false);
   const [folderPromptValue, setFolderPromptValue] = useState("");
+  const [createWorkspaceNameOpen, setCreateWorkspaceNameOpen] = useState(false);
+  const [createWorkspaceNameValue, setCreateWorkspaceNameValue] = useState("");
+  const [createWorkspaceParentOpen, setCreateWorkspaceParentOpen] = useState(false);
+  const [createWorkspaceParentValue, setCreateWorkspaceParentValue] = useState(
+    "/home/bennett/projects"
+  );
+  const [pendingWorkspaceName, setPendingWorkspaceName] = useState("");
   const [browserPromptOpen, setBrowserPromptOpen] = useState(false);
   const [browserPromptValue, setBrowserPromptValue] = useState(
     "http://localhost:3000/"
@@ -97,6 +115,43 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
       );
     }
   }, [folderPromptValue, openFolder]);
+
+  const promptForCreateWorkspace = useCallback(() => {
+    setPalette("closed");
+    setCreateWorkspaceNameValue("");
+    setCreateWorkspaceNameOpen(true);
+  }, []);
+
+  const submitCreateWorkspaceName = useCallback(() => {
+    const name = createWorkspaceNameValue.trim();
+    if (!name) return;
+    setPendingWorkspaceName(name);
+    setCreateWorkspaceNameOpen(false);
+    setCreateWorkspaceParentValue("/home/bennett/projects");
+    setCreateWorkspaceParentOpen(true);
+  }, [createWorkspaceNameValue]);
+
+  const submitCreateWorkspaceParent = useCallback(async () => {
+    const parentPath = createWorkspaceParentValue.trim();
+    const name = pendingWorkspaceName.trim();
+    if (!parentPath || !name) return;
+
+    try {
+      await createWorkspace({
+        name,
+        parentPath,
+        directoryName: name,
+      });
+      setCreateWorkspaceParentOpen(false);
+      setPendingWorkspaceName("");
+      flash(setToast, `Created workspace ${name}`);
+    } catch (error) {
+      flash(
+        setToast,
+        error instanceof Error ? error.message : "Failed to create workspace."
+      );
+    }
+  }, [createWorkspace, createWorkspaceParentValue, pendingWorkspaceName]);
 
   const openBrowserUrlPrompt = useCallback(() => {
     setPalette("closed");
@@ -367,6 +422,26 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
         },
       },
       {
+        id: "workbench.action.createWorkspace",
+        label: "Workspace: Create New Workspace…",
+        run: () => {
+          promptForCreateWorkspace();
+        },
+      },
+      {
+        id: "workbench.action.setDefaultWorkspace",
+        label: "Workspace: Set Current Workspace as Default",
+        run: () => {
+          if (!activeWorkspaceId) {
+            flash(setToast, "No active workspace.");
+            return;
+          }
+          void setDefaultWorkspace(activeWorkspaceId).then(() => {
+            flash(setToast, "Default workspace updated.");
+          });
+        },
+      },
+      {
         id: "workbench.action.refreshTree",
         label: "Explorer: Refresh File Tree",
         run: () => {
@@ -463,15 +538,31 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
         label: "Help: Welcome",
         run: () => flash(setToast, "Welcome page (demo)."),
       },
+      ...workspaces.map((workspace) => ({
+        id: `workbench.action.workspace.switch.${workspace.id}`,
+        label: `Workspace: Switch to ${workspace.name}${workspace.id === defaultWorkspaceId ? " (Default)" : ""}`,
+        detail: workspace.root,
+        run: () => {
+          void openWorkspaceById(workspace.id).then(() => {
+            flash(setToast, `Opened ${workspace.name}`);
+          });
+        },
+      })),
     ],
     [
+      activeWorkspaceId,
       bridgeRef,
+      defaultWorkspaceId,
+      openWorkspaceById,
       openBrowserUrlPrompt,
+      promptForCreateWorkspace,
       promptForFolder,
       refreshTree,
       router,
       runWithBridge,
+      setDefaultWorkspace,
       setThemePreference,
+      workspaces,
       workbench,
     ]
   );
@@ -771,6 +862,78 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
       >
         <div className="border-t border-[var(--palette-divider)] px-[10px] py-[8px] font-sans text-[12px] text-[var(--palette-footer-text)]">
           Open a local workspace folder without using the browser prompt.
+        </div>
+      </VSCodeQuickInputShell>
+      <VSCodeQuickInputShell
+        open={createWorkspaceNameOpen}
+        screenReaderTitle="Create workspace"
+        inputLabel="Workspace name"
+        placeholder="Workspace name"
+        value={createWorkspaceNameValue}
+        onChange={setCreateWorkspaceNameValue}
+        onKeyDown={(event) => {
+          if (event.key === "Escape") {
+            event.preventDefault();
+            setCreateWorkspaceNameOpen(false);
+            return;
+          }
+          if (event.key === "Enter") {
+            event.preventDefault();
+            submitCreateWorkspaceName();
+          }
+        }}
+        onHardwareKeyDown={(event) => {
+          if (event.key === "Escape") {
+            event.preventDefault();
+            setCreateWorkspaceNameOpen(false);
+            return true;
+          }
+          if (event.key === "Enter") {
+            event.preventDefault();
+            submitCreateWorkspaceName();
+            return true;
+          }
+          return false;
+        }}
+      >
+        <div className="border-t border-[var(--palette-divider)] px-[10px] py-[8px] font-sans text-[12px] text-[var(--palette-footer-text)]">
+          Choose the new workspace folder name. The next step picks the parent directory.
+        </div>
+      </VSCodeQuickInputShell>
+      <VSCodeQuickInputShell
+        open={createWorkspaceParentOpen}
+        screenReaderTitle="Create workspace parent"
+        inputLabel="Parent directory"
+        placeholder="/home/bennett/projects"
+        value={createWorkspaceParentValue}
+        onChange={setCreateWorkspaceParentValue}
+        onKeyDown={(event) => {
+          if (event.key === "Escape") {
+            event.preventDefault();
+            setCreateWorkspaceParentOpen(false);
+            return;
+          }
+          if (event.key === "Enter") {
+            event.preventDefault();
+            void submitCreateWorkspaceParent();
+          }
+        }}
+        onHardwareKeyDown={(event) => {
+          if (event.key === "Escape") {
+            event.preventDefault();
+            setCreateWorkspaceParentOpen(false);
+            return true;
+          }
+          if (event.key === "Enter") {
+            event.preventDefault();
+            void submitCreateWorkspaceParent();
+            return true;
+          }
+          return false;
+        }}
+      >
+        <div className="border-t border-[var(--palette-divider)] px-[10px] py-[8px] font-sans text-[12px] text-[var(--palette-footer-text)]">
+          Create <span className="font-semibold text-[var(--palette-input-text)]">{pendingWorkspaceName || "workspace"}</span> inside this directory.
         </div>
       </VSCodeQuickInputShell>
       <VSCodeQuickInputShell
