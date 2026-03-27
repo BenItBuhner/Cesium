@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef } from "react";
+import { useRef, type MouseEvent } from "react";
 import { Plus } from "lucide-react";
 import { useTabStripWheel } from "@/hooks/useTabStripWheel";
 import type { ChatTab } from "@/lib/types";
@@ -9,23 +9,44 @@ interface ChatTabsProps {
   tabs: ChatTab[];
   onSelectTab: (id: string) => void;
   onNewChat: () => void;
+  onTabContextMenu?: (e: MouseEvent, tabId: string) => void;
+  onStripContextMenu?: (e: MouseEvent) => void;
 }
 
-export function ChatTabs({ tabs, onSelectTab, onNewChat }: ChatTabsProps) {
+export function ChatTabs({
+  tabs,
+  onSelectTab,
+  onNewChat,
+  onTabContextMenu,
+  onStripContextMenu,
+}: ChatTabsProps) {
   const stripRef = useRef<HTMLDivElement>(null);
   useTabStripWheel(stripRef, { speed: 2.1 });
+
+  function handleStripContextMenu(e: MouseEvent<HTMLDivElement>) {
+    if (e.target !== e.currentTarget) return;
+    onStripContextMenu?.(e);
+  }
 
   return (
     <div className="flex h-[var(--tab-height)] min-w-0 items-center overflow-hidden">
       <div
         ref={stripRef}
+        role="tablist"
+        onContextMenu={handleStripContextMenu}
         className="hide-scrollbar-x flex min-w-0 flex-1 items-center gap-0 p-[2px]"
       >
         {tabs.map((tab) => (
           <button
             key={tab.id}
             type="button"
+            role="tab"
+            aria-selected={tab.active}
             onClick={() => onSelectTab(tab.id)}
+            onContextMenu={(e) => {
+              e.stopPropagation();
+              onTabContextMenu?.(e, tab.id);
+            }}
             className="flex shrink-0 items-center justify-center overflow-hidden rounded-[var(--radius-tab)] px-[9px] py-[9px] transition-colors"
             style={{
               background: tab.active ? "var(--bg-tab-active)" : "transparent",

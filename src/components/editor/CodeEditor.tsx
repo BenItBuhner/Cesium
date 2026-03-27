@@ -19,6 +19,8 @@ interface CodeEditorProps {
   language: string;
   filePath?: string;
   onContentChange?: (content: string) => void;
+  /** Fires on every keystroke (and when `content` loads from parent). Used for save without debounce lag. */
+  onLiveContentChange?: (content: string) => void;
   onSave?: (content: string) => Promise<unknown>;
 }
 
@@ -229,6 +231,7 @@ export function CodeEditor({
   language,
   filePath,
   onContentChange,
+  onLiveContentChange,
   onSave,
 }: CodeEditorProps) {
   const surfaceId = useId().replace(/:/g, "_");
@@ -262,13 +265,21 @@ export function CodeEditor({
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved">("idle");
   const [editorInstance, setEditorInstance] =
     useState<MonacoEditor.IStandaloneCodeEditor | null>(null);
+  const onLiveContentChangeRef = useRef(onLiveContentChange);
+  onLiveContentChangeRef.current = onLiveContentChange;
 
   useEffect(() => {
     setValue(content);
   }, [content]);
 
+  useEffect(() => {
+    onLiveContentChangeRef.current?.(content);
+  }, [content]);
+
   const onChange = useCallback((v: string | undefined) => {
-    setValue(v ?? "");
+    const next = v ?? "";
+    setValue(next);
+    onLiveContentChangeRef.current?.(next);
   }, []);
 
   function handleBeforeMount(monaco: Monaco) {

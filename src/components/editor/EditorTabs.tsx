@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useLayoutEffect, useRef } from "react";
+import { useState, useCallback, useLayoutEffect, useRef, type MouseEvent } from "react";
 import { createPortal } from "react-dom";
 import { Columns2, MoreVertical } from "lucide-react";
 import { EditorTab } from "./EditorTab";
@@ -23,6 +23,8 @@ interface EditorTabsProps {
   onCloseAllTabs: () => void;
   onCloseOtherTabs: () => void;
   onMoveTabBetweenGroups: (tabId: string, from: EditorGroup, to: EditorGroup) => void;
+  onTabContextMenu?: (e: MouseEvent, tabId: string) => void;
+  onStripContextMenu?: (e: MouseEvent) => void;
 }
 
 const MENU_W = 240;
@@ -39,6 +41,8 @@ export function EditorTabs({
   onCloseAllTabs,
   onCloseOtherTabs,
   onMoveTabBetweenGroups,
+  onTabContextMenu,
+  onStripContextMenu,
 }: EditorTabsProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [menuPos, setMenuPos] = useState({ top: 0, left: 0 });
@@ -112,6 +116,10 @@ export function EditorTabs({
         className="hide-scrollbar-x flex min-h-[36px] min-w-0 flex-1 items-center gap-0 p-[2px]"
         onDragOver={handleStripDragOver}
         onDrop={handleStripDrop}
+        onContextMenu={(e) => {
+          if (e.target !== e.currentTarget) return;
+          onStripContextMenu?.(e);
+        }}
       >
         {tabs.map((tab) => (
           <EditorTab
@@ -122,6 +130,9 @@ export function EditorTabs({
             dragEnabled={splitActive}
             onSelect={onSelectTab}
             onClose={onCloseTab}
+            onContextMenu={
+              onTabContextMenu ? (ev) => onTabContextMenu(ev, tab.id) : undefined
+            }
           />
         ))}
         {tabs.length === 0 && splitActive && (

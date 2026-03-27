@@ -41,7 +41,7 @@ export function BrowserTab({
     setUrlBar(u);
     setIframeKey((k) => k + 1);
     forceNavUi();
-  }, [tab.id, forceNavUi]);
+  }, [tab.id, tab.browser?.targetUrl, forceNavUi]);
 
   useEffect(() => {
     const u = tab.browser?.targetUrl;

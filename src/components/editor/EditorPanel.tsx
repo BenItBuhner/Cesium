@@ -5,8 +5,8 @@ import {
   useCallback,
   useEffect,
   useRef,
-  useState,
   type DragEvent,
+  type MouseEvent,
 } from "react";
 import { EditorTabs } from "./EditorTabs";
 import { CodeEditor } from "./CodeEditor";
@@ -17,6 +17,8 @@ import { AgentTranscriptView } from "./AgentTranscriptView";
 import { SettingsEditorView } from "./SettingsEditorView";
 import { BrowserTab } from "./BrowserTab";
 import { useEditorBridgeRef } from "@/components/ide/EditorBridgeContext";
+import { useWorkbenchContextMenu } from "@/components/ide/WorkbenchContextMenuProvider";
+import type { WorkbenchMenuItem } from "@/components/ide/workbench-context-menu-types";
 import {
   useOpenInEditor,
   type OpenTranscriptPayload,
@@ -33,6 +35,12 @@ import {
 } from "./editor-panel-state";
 import { createTerminal, readFile, writeFile } from "@/lib/server-api";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
+import { useWorkbenchNotifications } from "@/components/notifications/WorkbenchNotificationProvider";
+import { WORKBENCH_NOTIFICATION_KIND } from "@/components/notifications/workbench-notification-types";
+
+function tabCanSave(tab: EditorTab): boolean {
+  return Boolean(tab.filePath && tab.fileKind && tab.fileKind !== "image");
+}
 
 export function EditorPanel() {
   const {
@@ -40,8 +48,10 @@ export function EditorPanel() {
     registerOpenExplorerFile,
     setActiveExplorerPath,
   } = useOpenInEditor();
-  const { lastFileChange, refreshTerminals } = useWorkspace();
-  const [notice, setNotice] = useState<string | null>(null);
+  const { lastFileChange, refreshTerminals, workspaceInfo } = useWorkspace();
+  const { openAt } = useWorkbenchContextMenu();
+  const { pushNotification, dismiss, dismissByKind } = useWorkbenchNotifications();
+  const liveTabContentRef = useRef<Map<string, string>>(new Map());
   const [state, dispatch] = useReducer(
     editorPanelReducer,
     [],
@@ -55,10 +65,19 @@ export function EditorPanel() {
     stateRef.current = state;
   }, [state]);
 
-  const flashNotice = useCallback((message: string) => {
-    setNotice(message);
-    window.setTimeout(() => setNotice(null), 2400);
-  }, []);
+  const flashNotice = useCallback(
+    (message: string, severity: "info" | "error" = "info") => {
+      pushNotification({
+        kind: WORKBENCH_NOTIFICATION_KIND.editorNotice,
+        severity,
+        title: severity === "error" ? "Editor" : "Notice",
+        message,
+        persistent: false,
+        autoDismissMs: severity === "error" ? 10_000 : 4000,
+      });
+    },
+    [pushNotification]
+  );
 
   const findTab = useCallback((tabId: string) => {
     const snapshot = stateRef.current;
@@ -105,28 +124,46 @@ export function EditorPanel() {
   );
 
   const saveTab = useCallback(
-    async (tabId: string, nextContent?: string) => {
+    async (
+      tabId: string,
+      nextContent?: string,
+      options?: { quiet?: boolean }
+    ) => {
       const tab = findTab(tabId);
       if (!tab?.filePath || tab.fileKind === "image") {
         return false;
       }
 
-      const contentToSave = nextContent ?? tab.content;
+      const contentToSave =
+        nextContent ??
+        liveTabContentRef.current.get(tabId) ??
+        tab.content;
       try {
         await writeFile(tab.filePath, contentToSave);
+        liveTabContentRef.current.set(tabId, contentToSave);
         dispatch({ type: "MARK_SAVED", tabId, content: contentToSave });
-        flashNotice(`Saved ${tab.name}`);
+        if (!options?.quiet) {
+          pushNotification({
+            kind: WORKBENCH_NOTIFICATION_KIND.editorNotice,
+            severity: "info",
+            title: "Saved",
+            message: tab.name,
+            persistent: false,
+            autoDismissMs: 4000,
+          });
+        }
         return true;
       } catch (error) {
         flashNotice(
           error instanceof Error
             ? `Failed to save ${tab.name}: ${error.message}`
-            : `Failed to save ${tab.name}.`
+            : `Failed to save ${tab.name}.`,
+          "error"
         );
         return false;
       }
     },
-    [findTab, flashNotice]
+    [findTab, flashNotice, pushNotification]
   );
 
   const openTerminalTab = useCallback(async () => {
@@ -150,28 +187,6 @@ export function EditorPanel() {
   const openBrowserTab = useCallback((url: string) => {
     dispatch({ type: "OPEN_BROWSER_TAB", url });
   }, []);
-
-  useEffect(() => {
-    bridgeRef.current = {
-      dispatch,
-      getState: () => stateRef.current,
-      saveActiveTab: async () => {
-        const snapshot = stateRef.current;
-        const group = snapshot.focusedGroup;
-        const activeId = group === "left" ? snapshot.leftActiveId : snapshot.rightActiveId;
-        if (!activeId) {
-          flashNotice("No active editor to save.");
-          return false;
-        }
-        return saveTab(activeId);
-      },
-      openTerminalTab,
-      openBrowserTab,
-    };
-    return () => {
-      bridgeRef.current = null;
-    };
-  }, [bridgeRef, dispatch, flashNotice, openBrowserTab, openTerminalTab, saveTab]);
 
   useEffect(() => {
     const onTranscript = (payload: OpenTranscriptPayload) => {
@@ -249,15 +264,371 @@ export function EditorPanel() {
     dispatch({ type: "SELECT_TAB", group, id });
   }, []);
 
-  const closeTab = useCallback((group: EditorGroup, id: string) => {
-    dispatch({ type: "CLOSE_TAB", group, id });
-  }, []);
+  const requestCloseTab = useCallback(
+    (group: EditorGroup, id: string) => {
+      const tab = findTab(id);
+      if (!tab) return;
+      if (!tab.dirty) {
+        dispatch({ type: "CLOSE_TAB", group, id });
+        return;
+      }
+
+      const canSave = tabCanSave(tab);
+      dismissByKind(WORKBENCH_NOTIFICATION_KIND.editorCloseConfirm);
+      const nid = pushNotification({
+        kind: WORKBENCH_NOTIFICATION_KIND.editorCloseConfirm,
+        severity: "warning",
+        title: "Save changes?",
+        message: canSave
+          ? `Your changes to "${tab.name}" will be lost if you close the tab without saving.`
+          : `Close "${tab.name}" and discard unsaved changes?`,
+        persistent: true,
+        actions: [
+          ...(canSave
+            ? [
+                {
+                  id: "save",
+                  label: "Save",
+                  primary: true as const,
+                  onClick: () => {
+                    dismiss(nid);
+                    void (async () => {
+                      const ok = await saveTab(id, undefined, { quiet: true });
+                      if (ok) dispatch({ type: "CLOSE_TAB", group, id });
+                    })();
+                  },
+                },
+              ]
+            : []),
+          {
+            id: "dont",
+            label: "Don't Save",
+            onClick: () => {
+              dismiss(nid);
+              dispatch({ type: "CLOSE_TAB", group, id });
+            },
+          },
+          {
+            id: "cancel",
+            label: "Cancel",
+            onClick: () => dismiss(nid),
+          },
+        ],
+      });
+    },
+    [dismiss, dismissByKind, findTab, pushNotification, saveTab]
+  );
+
+  const requestCloseAllInGroup = useCallback(
+    (group: EditorGroup) => {
+      const tabs = group === "left" ? stateRef.current.leftTabs : stateRef.current.rightTabs;
+      const dirty = tabs.filter((t) => t.dirty);
+      if (dirty.length === 0) {
+        dispatch({ type: "CLOSE_ALL_GROUP", group });
+        return;
+      }
+
+      const savable = dirty.filter(tabCanSave);
+      const canSaveAny = savable.length > 0;
+      const label =
+        dirty.length === 1
+          ? `"${dirty[0]?.name ?? "file"}"`
+          : `${dirty.length} files`;
+
+      dismissByKind(WORKBENCH_NOTIFICATION_KIND.editorCloseConfirm);
+      const nid = pushNotification({
+        kind: WORKBENCH_NOTIFICATION_KIND.editorCloseConfirm,
+        severity: "warning",
+        title: "Save changes?",
+        message: canSaveAny
+          ? `Save changes to ${label} before closing all tabs in this group?`
+          : "Close all tabs in this group and discard unsaved changes?",
+        persistent: true,
+        actions: [
+          ...(canSaveAny
+            ? [
+                {
+                  id: "save",
+                  label: "Save All",
+                  primary: true as const,
+                  onClick: () => {
+                    dismiss(nid);
+                    void (async () => {
+                      for (const t of savable) {
+                        const ok = await saveTab(t.id, undefined, { quiet: true });
+                        if (!ok) return;
+                      }
+                      dispatch({ type: "CLOSE_ALL_GROUP", group });
+                    })();
+                  },
+                },
+              ]
+            : []),
+          {
+            id: "dont",
+            label: "Don't Save",
+            onClick: () => {
+              dismiss(nid);
+              dispatch({ type: "CLOSE_ALL_GROUP", group });
+            },
+          },
+          {
+            id: "cancel",
+            label: "Cancel",
+            onClick: () => dismiss(nid),
+          },
+        ],
+      });
+    },
+    [dismiss, dismissByKind, pushNotification, saveTab]
+  );
+
+  const requestCloseOthersInGroup = useCallback(
+    (group: EditorGroup) => {
+      const tabs = group === "left" ? stateRef.current.leftTabs : stateRef.current.rightTabs;
+      const activeId =
+        group === "left" ? stateRef.current.leftActiveId : stateRef.current.rightActiveId;
+      const toClose = tabs.filter((t) => t.id !== activeId);
+      const dirty = toClose.filter((t) => t.dirty);
+      if (dirty.length === 0) {
+        dispatch({ type: "CLOSE_OTHERS_GROUP", group });
+        return;
+      }
+
+      const savable = dirty.filter(tabCanSave);
+      const canSaveAny = savable.length > 0;
+      const label =
+        dirty.length === 1
+          ? `"${dirty[0]?.name ?? "file"}"`
+          : `${dirty.length} files`;
+
+      dismissByKind(WORKBENCH_NOTIFICATION_KIND.editorCloseConfirm);
+      const nid = pushNotification({
+        kind: WORKBENCH_NOTIFICATION_KIND.editorCloseConfirm,
+        severity: "warning",
+        title: "Save changes?",
+        message: canSaveAny
+          ? `Save changes to ${label} before closing the other tabs in this group?`
+          : "Close other tabs and discard unsaved changes?",
+        persistent: true,
+        actions: [
+          ...(canSaveAny
+            ? [
+                {
+                  id: "save",
+                  label: "Save All",
+                  primary: true as const,
+                  onClick: () => {
+                    dismiss(nid);
+                    void (async () => {
+                      for (const t of savable) {
+                        const ok = await saveTab(t.id, undefined, { quiet: true });
+                        if (!ok) return;
+                      }
+                      dispatch({ type: "CLOSE_OTHERS_GROUP", group });
+                    })();
+                  },
+                },
+              ]
+            : []),
+          {
+            id: "dont",
+            label: "Don't Save",
+            onClick: () => {
+              dismiss(nid);
+              dispatch({ type: "CLOSE_OTHERS_GROUP", group });
+            },
+          },
+          {
+            id: "cancel",
+            label: "Cancel",
+            onClick: () => dismiss(nid),
+          },
+        ],
+      });
+    },
+    [dismiss, dismissByKind, pushNotification, saveTab]
+  );
+
+  useEffect(() => {
+    bridgeRef.current = {
+      dispatch,
+      getState: () => stateRef.current,
+      saveActiveTab: async () => {
+        const snapshot = stateRef.current;
+        const group = snapshot.focusedGroup;
+        const activeId = group === "left" ? snapshot.leftActiveId : snapshot.rightActiveId;
+        if (!activeId) {
+          flashNotice("No active editor to save.", "info");
+          return false;
+        }
+        return saveTab(activeId);
+      },
+      openTerminalTab,
+      openBrowserTab,
+      requestCloseTab,
+      requestCloseAllInGroup,
+      requestCloseOthersInGroup,
+    };
+    return () => {
+      bridgeRef.current = null;
+    };
+  }, [
+    bridgeRef,
+    dispatch,
+    flashNotice,
+    openBrowserTab,
+    openTerminalTab,
+    requestCloseAllInGroup,
+    requestCloseOthersInGroup,
+    requestCloseTab,
+    saveTab,
+  ]);
 
   const moveTab = useCallback(
     (tabId: string, from: EditorGroup, to: EditorGroup) => {
       dispatch({ type: "MOVE_TAB", tabId, from, to });
     },
     []
+  );
+
+  const copyToClipboard = useCallback(
+    async (text: string) => {
+      try {
+        await navigator.clipboard.writeText(text);
+      } catch {
+        flashNotice("Could not copy to clipboard.", "error");
+      }
+    },
+    [flashNotice]
+  );
+
+  const handleEditorStripContextMenu = useCallback(
+    (e: MouseEvent, group: EditorGroup) => {
+      if (e.target !== e.currentTarget) return;
+      e.preventDefault();
+      const tabs =
+        group === "left" ? stateRef.current.leftTabs : stateRef.current.rightTabs;
+      const hasTabs = tabs.length > 0;
+      openAt(e, [
+        {
+          type: "item",
+          id: "close-all",
+          label: "Close All",
+          disabled: !hasTabs,
+          onSelect: () => requestCloseAllInGroup(group),
+        },
+        {
+          type: "item",
+          id: "close-others",
+          label: "Close Others",
+          disabled: tabs.length <= 1,
+          onSelect: () => requestCloseOthersInGroup(group),
+        },
+        { type: "sep" },
+        {
+          type: "item",
+          id: "split",
+          label: "Split Editor",
+          onSelect: () => dispatch({ type: "TOGGLE_SPLIT" }),
+        },
+      ]);
+    },
+    [dispatch, openAt, requestCloseAllInGroup, requestCloseOthersInGroup]
+  );
+
+  const handleEditorTabContextMenu = useCallback(
+    (e: MouseEvent, group: EditorGroup, tabId: string) => {
+      e.stopPropagation();
+      const tab = findTab(tabId);
+      if (!tab) return;
+      const tabsInGroup =
+        group === "left" ? stateRef.current.leftTabs : stateRef.current.rightTabs;
+      const idx = tabsInGroup.findIndex((t) => t.id === tabId);
+      const root = workspaceInfo?.root ?? "";
+      const fullPath =
+        tab.filePath && root
+          ? `${root.replace(/\\/g, "/")}/${tab.filePath}`
+          : (tab.filePath ?? "");
+
+      const items: WorkbenchMenuItem[] = [
+        {
+          type: "item",
+          id: "close",
+          label: "Close",
+          onSelect: () => requestCloseTab(group, tabId),
+        },
+        {
+          type: "item",
+          id: "close-others",
+          label: "Close Others",
+          disabled: tabsInGroup.length <= 1,
+          onSelect: () => {
+            dispatch({ type: "SELECT_TAB", group, id: tabId });
+            requestCloseOthersInGroup(group);
+          },
+        },
+        {
+          type: "item",
+          id: "close-right",
+          label: "Close to the Right",
+          disabled: idx < 0 || idx >= tabsInGroup.length - 1,
+          onSelect: () => {
+            const rest = tabsInGroup.slice(idx + 1);
+            for (const t of rest) {
+              requestCloseTab(group, t.id);
+            }
+          },
+        },
+      ];
+
+      if (tab.dirty && tabCanSave(tab)) {
+        items.push({
+          type: "item",
+          id: "save",
+          label: "Save",
+          onSelect: () => void saveTab(tabId),
+        });
+      }
+
+      items.push({ type: "sep" });
+      items.push({
+        type: "item",
+        id: "split",
+        label: "Split Editor",
+        onSelect: () => dispatch({ type: "TOGGLE_SPLIT" }),
+      });
+
+      if (tab.filePath) {
+        items.push({ type: "sep" });
+        items.push(
+          {
+            type: "item",
+            id: "copy-rel",
+            label: "Copy Relative Path",
+            onSelect: () => void copyToClipboard(tab.filePath!),
+          },
+          {
+            type: "item",
+            id: "copy-full",
+            label: "Copy Path",
+            onSelect: () => void copyToClipboard(fullPath),
+          }
+        );
+      }
+
+      openAt(e, items);
+    },
+    [
+      copyToClipboard,
+      dispatch,
+      findTab,
+      openAt,
+      requestCloseOthersInGroup,
+      requestCloseTab,
+      saveTab,
+      workspaceInfo?.root,
+    ]
   );
 
   function renderCodeForTab(tab: EditorTab, group: EditorGroup) {
@@ -273,7 +644,9 @@ export function EditorPanel() {
       );
     }
     if (tab.browser) {
-      return <BrowserTab key={tab.id} tab={tab} dispatch={dispatch} />;
+      return (
+        <BrowserTab key={tab.id} tab={tab} dispatch={dispatch} editorGroup={group} />
+      );
     }
     if (tab.language === "markdown" && tab.previewMode === "preview") {
       return <SimpleMarkdownPreview key={tab.id} source={tab.content} />;
@@ -319,6 +692,9 @@ export function EditorPanel() {
           onContentChange={(content) =>
             dispatch({ type: "UPDATE_TAB_CONTENT", tabId: tab.id, content })
           }
+          onLiveContentChange={(content) => {
+            liveTabContentRef.current.set(tab.id, content);
+          }}
           onSave={(content) => saveTab(tab.id, content)}
         />
       </div>
@@ -358,11 +734,6 @@ export function EditorPanel() {
   if (!state.split) {
     return (
       <div className="flex h-full flex-col overflow-hidden bg-[var(--bg-main)]">
-        {notice ? (
-          <div className="border-b border-[var(--border-subtle)] px-3 py-2 font-sans text-[12px] text-[var(--text-secondary)]">
-            {notice}
-          </div>
-        ) : null}
         <EditorTabs
           group="left"
           tabs={state.leftTabs}
@@ -370,13 +741,13 @@ export function EditorPanel() {
           splitActive={false}
           showSplitToolbar
           onSelectTab={(id) => selectTab("left", id)}
-          onCloseTab={(id) => closeTab("left", id)}
+          onCloseTab={(id) => requestCloseTab("left", id)}
           onToggleSplit={() => dispatch({ type: "TOGGLE_SPLIT" })}
-          onCloseAllTabs={() => dispatch({ type: "CLOSE_ALL_GROUP", group: "left" })}
-          onCloseOtherTabs={() =>
-            dispatch({ type: "CLOSE_OTHERS_GROUP", group: "left" })
-          }
+          onCloseAllTabs={() => requestCloseAllInGroup("left")}
+          onCloseOtherTabs={() => requestCloseOthersInGroup("left")}
           onMoveTabBetweenGroups={moveTab}
+          onTabContextMenu={(e, id) => handleEditorTabContextMenu(e, "left", id)}
+          onStripContextMenu={(e) => handleEditorStripContextMenu(e, "left")}
         />
         <div
           className="min-h-0 flex-1 overflow-hidden"
@@ -394,11 +765,6 @@ export function EditorPanel() {
 
   return (
     <div className="flex h-full flex-col overflow-hidden bg-[var(--bg-main)]">
-      {notice ? (
-        <div className="border-b border-[var(--border-subtle)] px-3 py-2 font-sans text-[12px] text-[var(--text-secondary)]">
-          {notice}
-        </div>
-      ) : null}
       <div className="flex min-h-0 min-w-0 flex-1 flex-row">
         <div className="flex min-h-0 min-w-0 flex-1 flex-col border-r border-[var(--border-subtle)]">
           <EditorTabs
@@ -408,15 +774,13 @@ export function EditorPanel() {
             splitActive
             showSplitToolbar
             onSelectTab={(id) => selectTab("left", id)}
-            onCloseTab={(id) => closeTab("left", id)}
+            onCloseTab={(id) => requestCloseTab("left", id)}
             onToggleSplit={() => dispatch({ type: "TOGGLE_SPLIT" })}
-            onCloseAllTabs={() =>
-              dispatch({ type: "CLOSE_ALL_GROUP", group: "left" })
-            }
-            onCloseOtherTabs={() =>
-              dispatch({ type: "CLOSE_OTHERS_GROUP", group: "left" })
-            }
+            onCloseAllTabs={() => requestCloseAllInGroup("left")}
+            onCloseOtherTabs={() => requestCloseOthersInGroup("left")}
             onMoveTabBetweenGroups={moveTab}
+            onTabContextMenu={(e, id) => handleEditorTabContextMenu(e, "left", id)}
+            onStripContextMenu={(e) => handleEditorStripContextMenu(e, "left")}
           />
           <div
             className="min-h-0 flex-1 overflow-hidden"
@@ -440,15 +804,13 @@ export function EditorPanel() {
             splitActive
             showSplitToolbar={false}
             onSelectTab={(id) => selectTab("right", id)}
-            onCloseTab={(id) => closeTab("right", id)}
+            onCloseTab={(id) => requestCloseTab("right", id)}
             onToggleSplit={() => dispatch({ type: "TOGGLE_SPLIT" })}
-            onCloseAllTabs={() =>
-              dispatch({ type: "CLOSE_ALL_GROUP", group: "right" })
-            }
-            onCloseOtherTabs={() =>
-              dispatch({ type: "CLOSE_OTHERS_GROUP", group: "right" })
-            }
+            onCloseAllTabs={() => requestCloseAllInGroup("right")}
+            onCloseOtherTabs={() => requestCloseOthersInGroup("right")}
             onMoveTabBetweenGroups={moveTab}
+            onTabContextMenu={(e, id) => handleEditorTabContextMenu(e, "right", id)}
+            onStripContextMenu={(e) => handleEditorStripContextMenu(e, "right")}
           />
           <div
             className="min-h-0 flex-1 overflow-hidden"

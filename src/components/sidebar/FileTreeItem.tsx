@@ -1,5 +1,6 @@
 "use client";
 
+import type { MouseEvent } from "react";
 import { ChevronRight, Folder } from "lucide-react";
 import type { FileNode } from "@/lib/types";
 import { getFileIconForNode } from "@/lib/file-type-icons";
@@ -12,6 +13,7 @@ interface FileTreeItemProps {
   isActive?: boolean;
   /** Folder: toggles expand/collapse. File: opens in editor. */
   onActivate?: () => void;
+  onContextMenu?: (e: MouseEvent) => void;
 }
 
 export function FileTreeItem({
@@ -21,6 +23,7 @@ export function FileTreeItem({
   isExpandable = false,
   isActive = false,
   onActivate,
+  onContextMenu,
 }: FileTreeItemProps) {
   const paddingLeft = 11 + depth * 18;
   const isFolder = node.type === "folder";
@@ -42,6 +45,10 @@ export function FileTreeItem({
           : undefined,
       }}
       onClick={onActivate}
+      onContextMenu={(e) => {
+        e.stopPropagation();
+        onContextMenu?.(e);
+      }}
       aria-expanded={isFolder && isExpandable ? isExpanded : undefined}
       aria-current={isActive ? "true" : undefined}
     >

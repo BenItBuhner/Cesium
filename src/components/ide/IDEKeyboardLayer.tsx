@@ -193,7 +193,7 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
             const g = s.focusedGroup;
             const id =
               g === "left" ? s.leftActiveId : s.rightActiveId;
-            if (id) b.dispatch({ type: "CLOSE_TAB", group: g, id });
+            if (id) b.requestCloseTab(g, id);
           }),
       },
       {
@@ -202,8 +202,8 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
         run: () =>
           runWithBridge((b) => {
             const s = b.getState();
-            b.dispatch({ type: "CLOSE_ALL_GROUP", group: "left" });
-            if (s.split) b.dispatch({ type: "CLOSE_ALL_GROUP", group: "right" });
+            b.requestCloseAllInGroup("left");
+            if (s.split) b.requestCloseAllInGroup("right");
           }),
       },
       {
@@ -538,7 +538,7 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
           const s = b.getState();
           const g = s.focusedGroup;
           const id = g === "left" ? s.leftActiveId : s.rightActiveId;
-          if (id) b.dispatch({ type: "CLOSE_TAB", group: g, id });
+          if (id) b.requestCloseTab(g, id);
         });
         return true;
       }

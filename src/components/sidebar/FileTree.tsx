@@ -1,5 +1,6 @@
 "use client";
 
+import type { MouseEvent } from "react";
 import { FileTreeItem } from "./FileTreeItem";
 import type { FileNode } from "@/lib/types";
 
@@ -13,6 +14,7 @@ interface FileTreeProps {
   onToggleFolder: (path: string, node: FileNode) => void | Promise<void>;
   /** File leaf: open in editor (demo). */
   onOpenFile?: (path: string, node: FileNode) => void;
+  onTreeContextMenu?: (e: MouseEvent, path: string, node: FileNode) => void;
 }
 
 export function FileTree({
@@ -23,6 +25,7 @@ export function FileTree({
   expandedPaths,
   onToggleFolder,
   onOpenFile,
+  onTreeContextMenu,
 }: FileTreeProps) {
   const path = parentPath ? `${parentPath}/${node.name}` : node.name;
   const isFolder = node.type === "folder";
@@ -51,6 +54,11 @@ export function FileTree({
         isExpandable={canExpand}
         isActive={isActive}
         onActivate={onActivate}
+        onContextMenu={
+          onTreeContextMenu
+            ? (e) => onTreeContextMenu(e, path, node)
+            : undefined
+        }
       />
       {isFolder && isExpanded && hasChildNodes
         ? node.children!.map((child) => (
@@ -63,6 +71,7 @@ export function FileTree({
               expandedPaths={expandedPaths}
               onToggleFolder={onToggleFolder}
               onOpenFile={onOpenFile}
+              onTreeContextMenu={onTreeContextMenu}
             />
           ))
         : null}

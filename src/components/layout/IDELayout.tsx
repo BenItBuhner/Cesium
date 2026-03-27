@@ -11,6 +11,7 @@ import { PanelLeft } from "lucide-react";
 import { EditorBridgeProvider } from "@/components/ide/EditorBridgeContext";
 import { WorkbenchProvider } from "@/components/ide/WorkbenchContext";
 import { IDEKeyboardLayer } from "@/components/ide/IDEKeyboardLayer";
+import { WorkbenchContextMenuProvider } from "@/components/ide/WorkbenchContextMenuProvider";
 import { HardwareInputProvider } from "@/components/input/HardwareInputProvider";
 
 function ResizeHandle() {
@@ -93,6 +94,7 @@ export function IDELayout() {
 
   return (
     <OpenInEditorProvider>
+      <WorkbenchContextMenuProvider>
       <EditorBridgeProvider>
         <WorkbenchProvider value={workbench}>
           <HardwareInputProvider>
@@ -205,6 +207,7 @@ export function IDELayout() {
           </HardwareInputProvider>
         </WorkbenchProvider>
       </EditorBridgeProvider>
+      </WorkbenchContextMenuProvider>
     </OpenInEditorProvider>
   );
 }

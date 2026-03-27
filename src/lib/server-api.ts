@@ -81,6 +81,44 @@ export async function writeFile(path: string, content: string): Promise<void> {
   });
 }
 
+export async function mkdir(relativePath: string): Promise<void> {
+  await request(`/api/fs/mkdir`, {
+    method: "POST",
+    body: JSON.stringify({ path: relativePath }),
+  });
+}
+
+export async function deletePath(relativePath: string): Promise<void> {
+  await request(`/api/fs/delete`, {
+    method: "POST",
+    body: JSON.stringify({ path: relativePath }),
+  });
+}
+
+export async function renamePath(from: string, to: string): Promise<void> {
+  await request(`/api/fs/rename`, {
+    method: "POST",
+    body: JSON.stringify({ from, to }),
+  });
+}
+
+/** Write a binary file (multipart). `relativePath` is workspace-relative. */
+export async function uploadFile(relativePath: string, file: File): Promise<void> {
+  const form = new FormData();
+  form.set("path", relativePath);
+  form.set("file", file);
+  const response = await fetch(`${BASE_URL}/api/fs/upload`, {
+    method: "POST",
+    body: form,
+    cache: "no-store",
+  });
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(message || `Request failed with status ${response.status}`);
+  }
+  await response.json();
+}
+
 export async function statFile(path: string): Promise<FileStatResult> {
   return request(`/api/fs/stat?path=${encodeURIComponent(path)}`);
 }

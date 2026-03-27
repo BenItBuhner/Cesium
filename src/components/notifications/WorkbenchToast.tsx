@@ -45,6 +45,12 @@ export function WorkbenchToast({
 
   const visible = exiting ? false : entered;
 
+  const accentSuccess =
+    item.kind === WORKBENCH_NOTIFICATION_KIND.connectionReconnected ||
+    (item.kind === WORKBENCH_NOTIFICATION_KIND.editorNotice &&
+      item.title === "Saved" &&
+      item.severity === "info");
+
   return (
     <section
       role={item.severity === "error" ? "alert" : "status"}
@@ -57,23 +63,20 @@ export function WorkbenchToast({
         <div
           className="mt-[1px] flex size-[26px] shrink-0 items-center justify-center rounded-[var(--radius-tab)] border"
           style={{
-            color:
-              item.kind === WORKBENCH_NOTIFICATION_KIND.connectionReconnected
-                ? "var(--accent)"
-                : item.severity === "error" || item.severity === "warning"
-                  ? "var(--debug-accent)"
-                  : "var(--text-secondary)",
-            borderColor:
-              item.kind === WORKBENCH_NOTIFICATION_KIND.connectionReconnected
-                ? "color-mix(in srgb, var(--accent) 30%, var(--border-card))"
-                : "color-mix(in srgb, var(--debug-accent) 26%, var(--border-card))",
-            backgroundColor:
-              item.kind === WORKBENCH_NOTIFICATION_KIND.connectionReconnected
-                ? "color-mix(in srgb, var(--accent) 12%, transparent)"
-                : "color-mix(in srgb, var(--debug-accent) 12%, transparent)",
+            color: accentSuccess
+              ? "var(--accent)"
+              : item.severity === "error" || item.severity === "warning"
+                ? "var(--debug-accent)"
+                : "var(--text-secondary)",
+            borderColor: accentSuccess
+              ? "color-mix(in srgb, var(--accent) 30%, var(--border-card))"
+              : "color-mix(in srgb, var(--debug-accent) 26%, var(--border-card))",
+            backgroundColor: accentSuccess
+              ? "color-mix(in srgb, var(--accent) 12%, transparent)"
+              : "color-mix(in srgb, var(--debug-accent) 12%, transparent)",
           }}
         >
-          {item.kind === WORKBENCH_NOTIFICATION_KIND.connectionReconnected ? (
+          {accentSuccess ? (
             <CheckCircle2 className="size-[14px]" strokeWidth={1.8} aria-hidden />
           ) : (
             <SeverityIcon severity={item.severity} className="size-[14px]" />

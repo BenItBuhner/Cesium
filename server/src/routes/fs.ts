@@ -165,7 +165,10 @@ async function collectFileMatches(
   return matches
     .sort((a, b) => b.score - a.score || a.path.localeCompare(b.path))
     .slice(0, 200)
-    .map(({ score: _score, ...rest }) => rest);
+    .map(({ score, ...rest }) => {
+      void score;
+      return rest;
+    });
 }
 
 export const fsRoutes = new Hono();
@@ -325,6 +328,28 @@ fsRoutes.post("/api/fs/rename", async (c) => {
   await fs.mkdir(path.dirname(toAbsolutePath), { recursive: true });
   await fs.rename(fromAbsolutePath, toAbsolutePath);
   return c.json({ ok: true });
+});
+
+fsRoutes.post("/api/fs/upload", async (c) => {
+  let body: Record<string, string | File | (string | File)[]>;
+  try {
+    body = await c.req.parseBody();
+  } catch {
+    return c.json({ error: "Invalid multipart body" }, 400);
+  }
+  const relPath = body.path;
+  const file = body.file;
+  if (typeof relPath !== "string" || !relPath.trim()) {
+    return c.json({ error: "Expected path field" }, 400);
+  }
+  if (!file || typeof file === "string") {
+    return c.json({ error: "Expected file field" }, 400);
+  }
+  const absolutePath = resolveSafePath(relPath.trim());
+  const buf = Buffer.from(await (file as File).arrayBuffer());
+  await fs.mkdir(path.dirname(absolutePath), { recursive: true });
+  await fs.writeFile(absolutePath, buf);
+  return c.json({ ok: true, size: buf.byteLength });
 });
 
 fsRoutes.get("/api/fs/search", async (c) => {

@@ -2,6 +2,10 @@ export const WORKBENCH_NOTIFICATION_KIND = {
   connectionDisconnected: "connection.disconnected",
   connectionReconnected: "connection.reconnected",
   workspaceLoadError: "workspace.loadError",
+  /** Ephemeral editor messages (save, open, terminal, etc.). */
+  editorNotice: "editor.notice",
+  /** Save / don't save / cancel when closing dirty editors. */
+  editorCloseConfirm: "editor.closeConfirm",
 } as const;
 
 export type WorkbenchNotificationKind =

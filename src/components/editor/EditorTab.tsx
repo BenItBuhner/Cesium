@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type DragEvent } from "react";
+import { useEffect, useState, type DragEvent, type MouseEvent } from "react";
 import { X } from "lucide-react";
 import { buildBrowserProxyUrl } from "@/lib/browser-proxy-url";
 import { fileTypeIcons, type FileTypeIconKind } from "@/lib/file-type-icons";
@@ -29,6 +29,7 @@ interface EditorTabProps {
   dragEnabled?: boolean;
   onSelect: (id: string) => void;
   onClose: (id: string) => void;
+  onContextMenu?: (e: MouseEvent) => void;
 }
 
 export function EditorTab({
@@ -38,6 +39,7 @@ export function EditorTab({
   dragEnabled = false,
   onSelect,
   onClose,
+  onContextMenu,
 }: EditorTabProps) {
   const kind = tabIconToKind[tab.icon];
   const { Icon, className: iconClass } = fileTypeIcons[kind];
@@ -69,11 +71,15 @@ export function EditorTab({
       draggable={dragEnabled}
       onDragStart={dragEnabled ? handleDragStart : undefined}
       onClick={() => onSelect(tab.id)}
+      onContextMenu={onContextMenu}
+      aria-label={tab.dirty ? `${tab.name}, unsaved changes` : tab.name}
       className={`group relative flex h-[36px] w-[220px] shrink-0 items-center overflow-hidden rounded-[var(--radius-tab)] transition-colors ${dragEnabled ? "cursor-grab active:cursor-grabbing" : ""}`}
       style={{ background: surface }}
     >
       <span className="ml-[9px] flex size-[18px] shrink-0 items-center justify-center">
         {faviconSrc && !faviconFailed ? (
+          // Proxied arbitrary URLs; next/image is not appropriate here.
+          // eslint-disable-next-line @next/next/no-img-element
           <img
             src={faviconSrc}
             alt=""
@@ -84,35 +90,41 @@ export function EditorTab({
           <Icon className={`size-[18px] shrink-0 ${iconClass}`} strokeWidth={1.5} aria-hidden />
         )}
       </span>
-      <span className="ml-[7px] truncate font-sans text-[14px] font-normal text-[var(--text-secondary)]">
+      <span className="ml-[7px] min-w-0 flex-1 truncate text-left font-sans text-[14px] font-normal text-[var(--text-secondary)]">
         {tab.name}
       </span>
-      {tab.dirty ? (
+      <div className="relative mr-[6px] flex size-[22px] shrink-0 items-center justify-center">
+        {tab.dirty ? (
+          <span
+            className="pointer-events-none size-[8px] rounded-full bg-white group-hover:hidden"
+            aria-hidden
+          />
+        ) : null}
         <span
-          className="ml-[6px] size-[6px] shrink-0 rounded-full bg-[var(--accent)]"
-          aria-label="Unsaved changes"
-        />
-      ) : null}
-      <span
-        role="button"
-        tabIndex={0}
-        draggable={false}
-        onDragStart={(e) => e.stopPropagation()}
-        onClick={(e) => {
-          e.stopPropagation();
-          onClose(tab.id);
-        }}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" || e.key === " ") {
+          role="button"
+          tabIndex={0}
+          draggable={false}
+          onDragStart={(e) => e.stopPropagation()}
+          onClick={(e) => {
             e.stopPropagation();
             onClose(tab.id);
-          }
-        }}
-        className="absolute right-[9px] text-[var(--text-secondary)] opacity-0 transition-opacity hover:text-[var(--text-primary)] group-hover:opacity-100"
-        aria-label={`Close ${tab.name}`}
-      >
-        <X className="size-[18px]" strokeWidth={1.5} />
-      </span>
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.stopPropagation();
+              onClose(tab.id);
+            }
+          }}
+          className={`absolute inset-0 flex items-center justify-center rounded-[var(--radius-tab)] text-[var(--text-secondary)] transition-opacity hover:text-[var(--text-primary)] ${
+            tab.dirty
+              ? "pointer-events-none hidden opacity-100 group-hover:pointer-events-auto group-hover:flex"
+              : "pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100"
+          }`}
+          aria-label={`Close ${tab.name}`}
+        >
+          <X className="size-[18px]" strokeWidth={1.5} />
+        </span>
+      </div>
     </button>
   );
 }

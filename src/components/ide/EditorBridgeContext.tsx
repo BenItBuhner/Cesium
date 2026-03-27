@@ -9,7 +9,11 @@ import {
   type MutableRefObject,
   type ReactNode,
 } from "react";
-import type { EditorPanelAction, EditorPanelState } from "@/components/editor/editor-panel-state";
+import type {
+  EditorGroup,
+  EditorPanelAction,
+  EditorPanelState,
+} from "@/components/editor/editor-panel-state";
 
 export type EditorBridge = {
   dispatch: Dispatch<EditorPanelAction>;
@@ -17,6 +21,9 @@ export type EditorBridge = {
   saveActiveTab: () => Promise<boolean>;
   openTerminalTab: () => Promise<void>;
   openBrowserTab: (url: string) => void;
+  requestCloseTab: (group: EditorGroup, id: string) => void;
+  requestCloseAllInGroup: (group: EditorGroup) => void;
+  requestCloseOthersInGroup: (group: EditorGroup) => void;
 };
 
 const EditorBridgeRefContext =
