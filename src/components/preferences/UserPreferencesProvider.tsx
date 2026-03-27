@@ -21,7 +21,9 @@ import { applyDomUserPreferences } from "@/lib/preferences-dom";
 type UserPreferencesContextValue = {
   preferences: UserPreferences;
   experimentalIpadMode: boolean;
+  experimentalIpadCustomButtons: boolean;
   setExperimentalIpadMode: (enabled: boolean) => void;
+  setExperimentalIpadCustomButtons: (enabled: boolean) => void;
 };
 
 const UserPreferencesContext =
@@ -44,20 +46,35 @@ export function UserPreferencesProvider({
     applyDomUserPreferences(stored);
   }, []);
 
+  const persistPreferences = useCallback((next: UserPreferences) => {
+    window.localStorage.setItem(
+      USER_PREFERENCES_STORAGE_KEY,
+      serializeUserPreferences(next)
+    );
+    applyDomUserPreferences(next);
+  }, []);
+
   const setExperimentalIpadMode = useCallback((enabled: boolean) => {
     setPreferencesState((prev) => {
       const next: UserPreferences = {
         ...prev,
         experimentalIpadMode: enabled,
       };
-      window.localStorage.setItem(
-        USER_PREFERENCES_STORAGE_KEY,
-        serializeUserPreferences(next)
-      );
-      applyDomUserPreferences(next);
+      persistPreferences(next);
       return next;
     });
-  }, []);
+  }, [persistPreferences]);
+
+  const setExperimentalIpadCustomButtons = useCallback((enabled: boolean) => {
+    setPreferencesState((prev) => {
+      const next: UserPreferences = {
+        ...prev,
+        experimentalIpadCustomButtons: enabled,
+      };
+      persistPreferences(next);
+      return next;
+    });
+  }, [persistPreferences]);
 
   useEffect(() => {
     const onStorage = (event: StorageEvent) => {
@@ -75,9 +92,11 @@ export function UserPreferencesProvider({
     () => ({
       preferences,
       experimentalIpadMode: preferences.experimentalIpadMode,
+      experimentalIpadCustomButtons: preferences.experimentalIpadCustomButtons,
       setExperimentalIpadMode,
+      setExperimentalIpadCustomButtons,
     }),
-    [preferences, setExperimentalIpadMode]
+    [preferences, setExperimentalIpadMode, setExperimentalIpadCustomButtons]
   );
 
   return (

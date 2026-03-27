@@ -29,6 +29,7 @@ import {
 } from "@/lib/server-api";
 import { FileTree, collectExpandableFolderPaths } from "./FileTree";
 import { SidebarAppMenu } from "./SidebarAppMenu";
+import { useUserPreferences } from "@/components/preferences/UserPreferencesProvider";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 
 type SidebarView = "explorer" | "search" | "scm";
@@ -80,7 +81,8 @@ function findNodeAtPath(nodes: FileNode[] | undefined, targetPath: string): File
 export function FileExplorer() {
   const { openExplorerFile, activeExplorerPath } = useOpenInEditor();
   const bridgeRef = useEditorBridgeRef();
-  const { openAt } = useWorkbenchContextMenu();
+  const { openAt, openAtPoint } = useWorkbenchContextMenu();
+  const { experimentalIpadCustomButtons } = useUserPreferences();
   const { pushNotification, dismiss } = useWorkbenchNotifications();
   const { fileTree, workspaceInfo, loading, loadFolderChildren, refreshTree } =
     useWorkspace();
@@ -445,6 +447,14 @@ export function FileExplorer() {
     [buildTreeMenu, openAt]
   );
 
+  const onTreeOverflowMenu = useCallback(
+    (path: string, node: FileNode, anchorEl: HTMLElement) => {
+      const rect = anchorEl.getBoundingClientRect();
+      openAtPoint(rect.right - 8, rect.bottom + 4, buildTreeMenu(path, node));
+    },
+    [buildTreeMenu, openAtPoint]
+  );
+
   const toggleFolder = useCallback(async (path: string, node: FileNode) => {
     if (node.type !== "folder") {
       return;
@@ -692,6 +702,8 @@ export function FileExplorer() {
                       onToggleFolder={toggleFolder}
                       onOpenFile={handleOpenFile}
                       onTreeContextMenu={onTreeContextMenu}
+                      showOverflowMenu={experimentalIpadCustomButtons}
+                      onTreeOverflowMenu={onTreeOverflowMenu}
                     />
                   ))
                 )}

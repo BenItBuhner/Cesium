@@ -1,6 +1,20 @@
 @import "tailwindcss";
 @import "@xterm/xterm/css/xterm.css";
 
+/*
+ * iPadOS Safari commonly reports touch as the primary input even when a trackpad
+ * or mouse is connected, which breaks Tailwind's default v4 hover media query on
+ * those devices. Use any-hover/any-pointer so hover styles activate whenever a
+ * fine pointer that can hover is available.
+ */
+@custom-variant hover {
+  @media (any-hover: hover) and (any-pointer: fine) {
+    &:hover {
+      @slot;
+    }
+  }
+}
+
 /* Light theme (default). Dark uses `html.dark` — set by theme bootstrap + ThemeProvider. */
 :root {
   --background: #fafafa;

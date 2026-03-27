@@ -951,8 +951,12 @@ export function ToolsMcpSettingsPanel() {
 }
 
 export function BetaSettingsPanel() {
-  const { experimentalIpadMode, setExperimentalIpadMode } =
-    useUserPreferences();
+  const {
+    experimentalIpadMode,
+    experimentalIpadCustomButtons,
+    setExperimentalIpadMode,
+    setExperimentalIpadCustomButtons,
+  } = useUserPreferences();
 
   return (
     <>
@@ -972,13 +976,30 @@ export function BetaSettingsPanel() {
             </p>
           </div>
         </div>
+      </SettingsSection>
+      <h2 className="mt-[24px] font-sans text-[13px] font-semibold text-[var(--text-secondary)]">
+        iPad
+      </h2>
+      <SettingsSection>
         <SettingsRow
-          title="Experimental iPad Mode"
+          title="Text Input Abstraction"
           description="Use hardware-keyboard-first input surfaces on iPad and avoid native text fields where possible. Experimental and intended for iPad web app sessions with a connected physical keyboard."
           trailing={
             <ToggleSwitch
               checked={experimentalIpadMode}
               onChange={setExperimentalIpadMode}
+              size="md"
+              variant="green"
+            />
+          }
+        />
+        <SettingsRow
+          title="Custom Menu Buttons"
+          description="Show explicit three-dot menu buttons for iPad-specific workarounds, starting with files and folders in the explorer tree."
+          trailing={
+            <ToggleSwitch
+              checked={experimentalIpadCustomButtons}
+              onChange={setExperimentalIpadCustomButtons}
               size="md"
               variant="green"
             />

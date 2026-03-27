@@ -15,6 +15,8 @@ interface FileTreeProps {
   /** File leaf: open in editor (demo). */
   onOpenFile?: (path: string, node: FileNode) => void;
   onTreeContextMenu?: (e: MouseEvent, path: string, node: FileNode) => void;
+  showOverflowMenu?: boolean;
+  onTreeOverflowMenu?: (path: string, node: FileNode, anchorEl: HTMLElement) => void;
 }
 
 export function FileTree({
@@ -26,6 +28,8 @@ export function FileTree({
   onToggleFolder,
   onOpenFile,
   onTreeContextMenu,
+  showOverflowMenu = false,
+  onTreeOverflowMenu,
 }: FileTreeProps) {
   const path = parentPath ? `${parentPath}/${node.name}` : node.name;
   const isFolder = node.type === "folder";
@@ -59,6 +63,12 @@ export function FileTree({
             ? (e) => onTreeContextMenu(e, path, node)
             : undefined
         }
+        showOverflowMenu={showOverflowMenu}
+        onOverflowMenu={
+          onTreeOverflowMenu
+            ? (anchorEl) => onTreeOverflowMenu(path, node, anchorEl)
+            : undefined
+        }
       />
       {isFolder && isExpanded && hasChildNodes
         ? node.children!.map((child) => (
@@ -72,6 +82,8 @@ export function FileTree({
               onToggleFolder={onToggleFolder}
               onOpenFile={onOpenFile}
               onTreeContextMenu={onTreeContextMenu}
+              showOverflowMenu={showOverflowMenu}
+              onTreeOverflowMenu={onTreeOverflowMenu}
             />
           ))
         : null}
