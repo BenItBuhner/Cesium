@@ -1,4 +1,24 @@
+import { normalizeBrowserTargetUrl } from "@/lib/browser-proxy-url";
 import type { ChatMessage, EditorTab, ExplorerOpenRequest } from "@/lib/types";
+
+function tabTitleFromUrl(url: string): string {
+  try {
+    const u = new URL(url);
+    const path = u.pathname === "/" ? "" : u.pathname;
+    const combined = `${u.host}${path}${u.search}`;
+    return combined.length > 42 ? `${combined.slice(0, 39)}…` : combined;
+  } catch {
+    return "Browser";
+  }
+}
+
+/** UUID when available; otherwise works on non-secure origins (e.g. http://LAN:3000) where `randomUUID` is absent. */
+function newIdSegment(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 11)}`;
+}
 
 /** Stable id for the in-editor Settings view (command palette, Ctrl+,). */
 export const SETTINGS_EDITOR_TAB_ID = "workbench.settings";
@@ -25,6 +45,9 @@ export type EditorPanelAction =
   | { type: "FOCUS_EDITOR_GROUP"; group: EditorGroup }
   | { type: "OPEN_TRANSCRIPT_TAB"; title: string; messages: ChatMessage[] }
   | { type: "OPEN_TERMINAL_TAB"; terminalId: string; name?: string }
+  | { type: "OPEN_BROWSER_TAB"; url: string; name?: string }
+  | { type: "UPDATE_BROWSER_TAB_URL"; tabId: string; targetUrl: string }
+  | { type: "UPDATE_BROWSER_TAB_FAVICON"; tabId: string; faviconUrl: string | null }
   | { type: "TOGGLE_FILE_PREVIEW" }
   | { type: "OPEN_SETTINGS_TAB" }
   | {
@@ -204,6 +227,74 @@ export function editorPanelReducer(
         focusedGroup: "right",
         rightTabs: [...state.rightTabs, tab],
         rightActiveId: tabId,
+      };
+    }
+
+    case "OPEN_BROWSER_TAB": {
+      const tabId = `browser:${newIdSegment()}`;
+      const targetUrl = normalizeBrowserTargetUrl(action.url).href;
+      const tab: EditorTab = {
+        id: tabId,
+        name: action.name ?? tabTitleFromUrl(targetUrl),
+        language: "html",
+        icon: "browser",
+        content: "",
+        browser: { targetUrl },
+      };
+
+      if (!state.split || state.focusedGroup === "left") {
+        return {
+          ...state,
+          focusedGroup: "left",
+          leftTabs: [...state.leftTabs, tab],
+          leftActiveId: tabId,
+        };
+      }
+
+      return {
+        ...state,
+        focusedGroup: "right",
+        rightTabs: [...state.rightTabs, tab],
+        rightActiveId: tabId,
+      };
+    }
+
+    case "UPDATE_BROWSER_TAB_URL": {
+      const nextUrl = normalizeBrowserTargetUrl(action.targetUrl).href;
+      const patch = (tabs: EditorTab[]) =>
+        tabs.map((t) =>
+          t.id === action.tabId && t.browser
+            ? {
+                ...t,
+                browser: { targetUrl: nextUrl, faviconUrl: undefined },
+                name: tabTitleFromUrl(nextUrl),
+              }
+            : t
+        );
+      return {
+        ...state,
+        leftTabs: patch(state.leftTabs),
+        rightTabs: patch(state.rightTabs),
+      };
+    }
+
+    case "UPDATE_BROWSER_TAB_FAVICON": {
+      const patch = (tabs: EditorTab[]) =>
+        tabs.map((t) =>
+          t.id === action.tabId && t.browser
+            ? {
+                ...t,
+                browser: {
+                  ...t.browser,
+                  faviconUrl: action.faviconUrl ?? undefined,
+                },
+              }
+            : t
+        );
+      return {
+        ...state,
+        leftTabs: patch(state.leftTabs),
+        rightTabs: patch(state.rightTabs),
       };
     }
 

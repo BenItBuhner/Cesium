@@ -1,9 +1,14 @@
 import "dotenv/config";
+import dns from "node:dns";
 import { serve } from "@hono/node-server";
+
+/** Prefer IPv4 when connecting upstream (avoids broken IPv6 routes that make `fetch()` fail with "fetch failed"). */
+dns.setDefaultResultOrder("ipv4first");
 import { cors } from "hono/cors";
 import { Hono } from "hono";
 import { fsRoutes } from "./routes/fs.js";
 import { terminalRoutes } from "./routes/terminals.js";
+import { browserProxyRoutes } from "./routes/browser-proxy.js";
 import { initializeFileWatcher, handleFsUpgrade } from "./ws/filewatcher.js";
 import { handleTerminalUpgrade } from "./ws/terminal.js";
 
@@ -43,6 +48,7 @@ app.onError((error, c) => {
 });
 
 app.get("/health", (c) => c.json({ ok: true }));
+app.route("/browser", browserProxyRoutes);
 app.route("/", fsRoutes);
 app.route("/", terminalRoutes);
 

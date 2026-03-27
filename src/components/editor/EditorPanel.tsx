@@ -15,6 +15,7 @@ import { SimpleMarkdownPreview } from "./SimpleMarkdownPreview";
 import { FilePreview } from "./FilePreview";
 import { AgentTranscriptView } from "./AgentTranscriptView";
 import { SettingsEditorView } from "./SettingsEditorView";
+import { BrowserTab } from "./BrowserTab";
 import { useEditorBridgeRef } from "@/components/ide/EditorBridgeContext";
 import {
   useOpenInEditor,
@@ -146,6 +147,10 @@ export function EditorPanel() {
     }
   }, [flashNotice, refreshTerminals]);
 
+  const openBrowserTab = useCallback((url: string) => {
+    dispatch({ type: "OPEN_BROWSER_TAB", url });
+  }, []);
+
   useEffect(() => {
     bridgeRef.current = {
       dispatch,
@@ -161,11 +166,12 @@ export function EditorPanel() {
         return saveTab(activeId);
       },
       openTerminalTab,
+      openBrowserTab,
     };
     return () => {
       bridgeRef.current = null;
     };
-  }, [bridgeRef, dispatch, flashNotice, openTerminalTab, saveTab]);
+  }, [bridgeRef, dispatch, flashNotice, openBrowserTab, openTerminalTab, saveTab]);
 
   useEffect(() => {
     const onTranscript = (payload: OpenTranscriptPayload) => {
@@ -265,6 +271,9 @@ export function EditorPanel() {
           messages={tab.transcriptMessages}
         />
       );
+    }
+    if (tab.browser) {
+      return <BrowserTab key={tab.id} tab={tab} dispatch={dispatch} />;
     }
     if (tab.language === "markdown" && tab.previewMode === "preview") {
       return <SimpleMarkdownPreview key={tab.id} source={tab.content} />;

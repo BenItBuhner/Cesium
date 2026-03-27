@@ -103,7 +103,8 @@ export interface EditorTab {
     | "typescript"
     | "css"
     | "default"
-    | "settings";
+    | "settings"
+    | "browser";
   content: string;
   active?: boolean;
   /** Renders agent-style transcript instead of Monaco (e.g. subagent detail tab). */
@@ -114,6 +115,8 @@ export interface EditorTab {
   filePath?: string;
   /** Server-side terminal session id when this tab represents a PTY. */
   terminalId?: string;
+  /** In-IDE browser tab proxied through the workspace server. */
+  browser?: { targetUrl: string; /** Absolute favicon URL (resolved client-side; displayed via proxy). */ faviconUrl?: string };
   /** File classification used to drive editor vs preview rendering. */
   fileKind?: "text" | "svg" | "image";
   /** Best-effort mime type from the backend. */

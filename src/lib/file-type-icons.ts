@@ -4,6 +4,7 @@ import {
   FileCode,
   FileJson,
   FileText,
+  Globe,
   Settings,
   SwatchBook,
   Terminal,
@@ -20,6 +21,7 @@ export const fileTypeIcons = {
   css: { Icon: SwatchBook, className: "text-[#c678dd]" },
   default: { Icon: File, className: "text-[var(--text-secondary)]" },
   settings: { Icon: Settings, className: "text-[var(--text-secondary)]" },
+  browser: { Icon: Globe, className: "text-[#6cb5f5]" },
 } as const satisfies Record<string, FileTypeIconEntry>;
 
 export type FileTypeIconKind = keyof typeof fileTypeIcons;

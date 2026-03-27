@@ -16,6 +16,7 @@ export type EditorBridge = {
   getState: () => EditorPanelState;
   saveActiveTab: () => Promise<boolean>;
   openTerminalTab: () => Promise<void>;
+  openBrowserTab: (url: string) => void;
 };
 
 const EditorBridgeRefContext =

@@ -196,6 +196,14 @@ body {
   overflow: hidden;
 }
 
+/* Monospace: Geist Mono (next/font) — same stack as Tailwind `font-mono` */
+code,
+kbd,
+samp,
+pre {
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+}
+
 ::selection {
   background: color-mix(in srgb, var(--accent) 22%, transparent);
   color: var(--text-primary);

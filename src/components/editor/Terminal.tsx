@@ -20,18 +20,8 @@ interface TerminalProps {
 
 const decoder = new TextDecoder();
 const DEFAULT_CLEAR_COMMANDS = new Set(["clear", "cls", "clear-host", "reset"]);
-const TERMINAL_FONT_FAMILY = [
-  '"Cascadia Mono"',
-  '"Cascadia Code"',
-  "Consolas",
-  '"SFMono-Regular"',
-  "Menlo",
-  "Monaco",
-  '"Liberation Mono"',
-  '"DejaVu Sans Mono"',
-  '"Courier New"',
-  "monospace",
-].join(", ");
+const GEIST_MONO_FALLBACK =
+  "'Geist Mono', 'Geist Mono Fallback', ui-monospace, monospace";
 
 type TerminalServerMessage =
   | { type: "exit"; code: number | null }
@@ -185,7 +175,7 @@ export function Terminal({ terminalId }: TerminalProps) {
 
     const terminal = new XTerm({
       cursorBlink: true,
-      fontFamily: TERMINAL_FONT_FAMILY,
+      fontFamily: readCssVariable("--font-geist-mono", GEIST_MONO_FALLBACK),
       fontSize: 12,
       fontWeight: "400",
       fontWeightBold: "600",

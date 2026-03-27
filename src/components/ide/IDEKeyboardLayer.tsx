@@ -20,6 +20,7 @@ import { useTheme } from "@/components/theme/ThemeProvider";
 import { IDECommandProvider } from "./IDECommandContext";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import type { EditorTab } from "@/lib/types";
+import { normalizeBrowserTargetUrl } from "@/lib/browser-proxy-url";
 
 type PaletteMode = "closed" | "command" | "quickopen";
 
@@ -45,6 +46,10 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
   const [palette, setPalette] = useState<PaletteMode>("closed");
   const [folderPromptOpen, setFolderPromptOpen] = useState(false);
   const [folderPromptValue, setFolderPromptValue] = useState("");
+  const [browserPromptOpen, setBrowserPromptOpen] = useState(false);
+  const [browserPromptValue, setBrowserPromptValue] = useState(
+    "http://localhost:3000/"
+  );
   const [toast, setToast] = useState<string | null>(null);
 
   const quickEntries = useMemo(
@@ -92,6 +97,12 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
     }
   }, [folderPromptValue, openFolder]);
 
+  const openBrowserUrlPrompt = useCallback(() => {
+    setPalette("closed");
+    setBrowserPromptValue("http://localhost:3000/");
+    setBrowserPromptOpen(true);
+  }, []);
+
   const runWithBridge = useCallback(
     (fn: (d: NonNullable<typeof bridgeRef.current>) => void) => {
       const b = bridgeRef.current;
@@ -100,6 +111,22 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
     },
     [bridgeRef]
   );
+
+  const submitBrowserPrompt = useCallback(() => {
+    const raw = browserPromptValue.trim();
+    if (!raw) return;
+    try {
+      normalizeBrowserTargetUrl(raw);
+    } catch {
+      flash(setToast, "Invalid URL.");
+      return;
+    }
+    runWithBridge((b) => {
+      b.openBrowserTab(raw);
+      setBrowserPromptOpen(false);
+      flash(setToast, "Browser tab opened.");
+    });
+  }, [browserPromptValue, runWithBridge]);
 
   const commands: PaletteCommand[] = useMemo(
     () => [
@@ -270,7 +297,12 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
       {
         id: "workbench.action.newBrowser",
         label: "File: New Browser",
-        run: () => flash(setToast, "New browser (demo — not wired)."),
+        run: () => openBrowserUrlPrompt(),
+      },
+      {
+        id: "browser.openUrl",
+        label: "Browser: Open URL…",
+        run: () => openBrowserUrlPrompt(),
       },
       {
         id: "workbench.action.exit",
@@ -431,7 +463,16 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
         run: () => flash(setToast, "Welcome page (demo)."),
       },
     ],
-    [bridgeRef, promptForFolder, refreshTree, router, runWithBridge, setThemePreference, workbench]
+    [
+      bridgeRef,
+      openBrowserUrlPrompt,
+      promptForFolder,
+      refreshTree,
+      router,
+      runWithBridge,
+      setThemePreference,
+      workbench,
+    ]
   );
 
   const runCommand = useCallback(
@@ -699,6 +740,42 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
       >
         <div className="border-t border-[var(--palette-divider)] px-[10px] py-[8px] font-sans text-[12px] text-[var(--palette-footer-text)]">
           Open a local workspace folder without using the browser prompt.
+        </div>
+      </VSCodeQuickInputShell>
+      <VSCodeQuickInputShell
+        open={browserPromptOpen}
+        screenReaderTitle="Open URL in Browser tab"
+        inputLabel="URL"
+        placeholder="http://localhost:3000/"
+        value={browserPromptValue}
+        onChange={setBrowserPromptValue}
+        onKeyDown={(event) => {
+          if (event.key === "Escape") {
+            event.preventDefault();
+            setBrowserPromptOpen(false);
+            return;
+          }
+          if (event.key === "Enter") {
+            event.preventDefault();
+            submitBrowserPrompt();
+          }
+        }}
+        onHardwareKeyDown={(event) => {
+          if (event.key === "Escape") {
+            event.preventDefault();
+            setBrowserPromptOpen(false);
+            return true;
+          }
+          if (event.key === "Enter") {
+            event.preventDefault();
+            submitBrowserPrompt();
+            return true;
+          }
+          return false;
+        }}
+      >
+        <div className="border-t border-[var(--palette-divider)] px-[10px] py-[8px] font-sans text-[12px] text-[var(--palette-footer-text)]">
+          Loads through the OpenCursor server proxy. Public HTTPS is allowed by default; set BROWSER_PROXY_ALLOW_PUBLIC=0 on the API server to restrict to private/local hosts only.
         </div>
       </VSCodeQuickInputShell>
       {toast ? (

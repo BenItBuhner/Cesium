@@ -1,8 +1,10 @@
 "use client";
 
-import type { DragEvent } from "react";
+import { useEffect, useState, type DragEvent } from "react";
 import { X } from "lucide-react";
+import { buildBrowserProxyUrl } from "@/lib/browser-proxy-url";
 import { fileTypeIcons, type FileTypeIconKind } from "@/lib/file-type-icons";
+import { getServerBaseUrl } from "@/lib/server-api";
 import type { EditorTab as EditorTabType } from "@/lib/types";
 import type { EditorGroup } from "./editor-panel-state";
 import { TAB_DND_MIME } from "./editor-panel-state";
@@ -16,6 +18,7 @@ const tabIconToKind: Record<EditorTabType["icon"], FileTypeIconKind> = {
   css: "css",
   default: "default",
   settings: "settings",
+  browser: "browser",
 };
 
 interface EditorTabProps {
@@ -38,6 +41,14 @@ export function EditorTab({
 }: EditorTabProps) {
   const kind = tabIconToKind[tab.icon];
   const { Icon, className: iconClass } = fileTypeIcons[kind];
+  const [faviconFailed, setFaviconFailed] = useState(false);
+  const faviconSrc =
+    tab.browser?.faviconUrl &&
+    buildBrowserProxyUrl(getServerBaseUrl(), tab.browser.faviconUrl);
+
+  useEffect(() => {
+    setFaviconFailed(false);
+  }, [tab.browser?.faviconUrl]);
 
   const surface = isActive
     ? "var(--bg-tab-active)"
@@ -61,8 +72,17 @@ export function EditorTab({
       className={`group relative flex h-[36px] w-[220px] shrink-0 items-center overflow-hidden rounded-[var(--radius-tab)] transition-colors ${dragEnabled ? "cursor-grab active:cursor-grabbing" : ""}`}
       style={{ background: surface }}
     >
-      <span className="ml-[9px] shrink-0">
-        <Icon className={`size-[18px] shrink-0 ${iconClass}`} strokeWidth={1.5} aria-hidden />
+      <span className="ml-[9px] flex size-[18px] shrink-0 items-center justify-center">
+        {faviconSrc && !faviconFailed ? (
+          <img
+            src={faviconSrc}
+            alt=""
+            className="size-[18px] rounded-[3px] object-contain"
+            onError={() => setFaviconFailed(true)}
+          />
+        ) : (
+          <Icon className={`size-[18px] shrink-0 ${iconClass}`} strokeWidth={1.5} aria-hidden />
+        )}
       </span>
       <span className="ml-[7px] truncate font-sans text-[14px] font-normal text-[var(--text-secondary)]">
         {tab.name}
