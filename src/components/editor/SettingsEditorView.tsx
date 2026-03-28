@@ -18,6 +18,7 @@ import {
   ExternalLink,
   FlaskConical,
   Keyboard,
+  Palette,
   Settings,
   User,
   Wrench,
@@ -38,6 +39,7 @@ const DOCS_PATH = "/docs";
  */
 const NAV_ENTRIES: NavEntry[] = [
   { kind: "item", id: "general", label: "General", icon: Settings },
+  { kind: "item", id: "appearance", label: "Appearance", icon: Palette },
   { kind: "item", id: "keyboardShortcuts", label: "Keyboard shortcuts", icon: Keyboard },
   { kind: "item", id: "agents", label: "Agents", icon: Bot },
   { kind: "item", id: "models", label: "Models", icon: Box },

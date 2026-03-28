@@ -4,10 +4,17 @@ import {
   type KeyboardShortcutsSettingsState,
 } from "@/lib/keyboard-shortcuts";
 import { parseUserPreferences, type UserPreferences } from "@/lib/preferences";
+import {
+  normalizeThemeConfig,
+  type ThemeConfig,
+} from "@/lib/theme-config";
 import { parseThemePreference, type ThemePreference } from "@/lib/theme";
 import type { WorkspaceSessionState } from "@/lib/workspace-session";
 
-export const SETTINGS_EXPORT_SCHEMA_VERSION = 1 as const;
+/** Legacy export bundles (appearance string only). */
+export const SETTINGS_EXPORT_SCHEMA_V1 = 1 as const;
+/** Full theme config (appearance + per-mode themes + custom themes). */
+export const SETTINGS_EXPORT_SCHEMA_V2 = 2 as const;
 
 export type SettingsExportGranularity = {
   theme: boolean;
@@ -17,15 +24,21 @@ export type SettingsExportGranularity = {
   workspaceSession: boolean;
 };
 
-export type SettingsExportBundleV1 = {
-  schemaVersion: typeof SETTINGS_EXPORT_SCHEMA_VERSION;
+export type SettingsExportBundle = {
+  schemaVersion: typeof SETTINGS_EXPORT_SCHEMA_V1 | typeof SETTINGS_EXPORT_SCHEMA_V2;
   exportedAt: string;
+  /** Appearance mode; v1 primary; v2 duplicate of `themeConfig.appearance` when present. */
   theme?: ThemePreference;
+  /** v2+ full theming state. */
+  themeConfig?: ThemeConfig;
   userPreferences?: UserPreferences;
   keyboardShortcuts?: KeyboardShortcutsSettingsState;
   globalApp?: GlobalAppSettingsSlice;
   workspaceSession?: WorkspaceSessionState;
 };
+
+/** @deprecated Use `SettingsExportBundle`. */
+export type SettingsExportBundleV1 = SettingsExportBundle;
 
 export function sliceGlobalAppFromSettings(
   settings: GlobalSettingsState
@@ -90,21 +103,29 @@ function parseWorkspaceSessionImport(value: unknown): WorkspaceSessionState | nu
   return value as WorkspaceSessionState;
 }
 
+function parseThemeConfigImport(value: unknown): ThemeConfig | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  return normalizeThemeConfig(value);
+}
+
 export function buildSettingsExportBundle(options: {
   selection: SettingsExportGranularity;
-  theme: ThemePreference;
+  themeConfig: ThemeConfig;
   userPreferences: UserPreferences;
   globalSettings: GlobalSettingsState;
   workspaceSession: WorkspaceSessionState;
-}): SettingsExportBundleV1 {
+}): SettingsExportBundle {
   const exportedAt = new Date().toISOString();
-  const bundle: SettingsExportBundleV1 = {
-    schemaVersion: SETTINGS_EXPORT_SCHEMA_VERSION,
+  const bundle: SettingsExportBundle = {
+    schemaVersion: SETTINGS_EXPORT_SCHEMA_V2,
     exportedAt,
   };
   const { selection } = options;
   if (selection.theme) {
-    bundle.theme = options.theme;
+    bundle.theme = options.themeConfig.appearance;
+    bundle.themeConfig = options.themeConfig;
   }
   if (selection.userPreferences) {
     bundle.userPreferences = options.userPreferences;
@@ -121,23 +142,28 @@ export function buildSettingsExportBundle(options: {
   return bundle;
 }
 
-export function parseSettingsImportBundle(raw: unknown): SettingsExportBundleV1 | null {
+export function parseSettingsImportBundle(raw: unknown): SettingsExportBundle | null {
   if (!raw || typeof raw !== "object") {
     return null;
   }
   const r = raw as Record<string, unknown>;
-  if (r.schemaVersion !== SETTINGS_EXPORT_SCHEMA_VERSION) {
+  const sv = r.schemaVersion;
+  if (sv !== SETTINGS_EXPORT_SCHEMA_V1 && sv !== SETTINGS_EXPORT_SCHEMA_V2) {
     return null;
   }
   const exportedAt =
     typeof r.exportedAt === "string" ? r.exportedAt : new Date().toISOString();
-  const out: SettingsExportBundleV1 = {
-    schemaVersion: SETTINGS_EXPORT_SCHEMA_VERSION,
+  const out: SettingsExportBundle = {
+    schemaVersion: sv as typeof SETTINGS_EXPORT_SCHEMA_V1 | typeof SETTINGS_EXPORT_SCHEMA_V2,
     exportedAt,
   };
 
   if ("theme" in r && isThemePreference(r.theme)) {
     out.theme = r.theme;
+  }
+  const tc = parseThemeConfigImport(r.themeConfig);
+  if (tc) {
+    out.themeConfig = tc;
   }
   if (r.userPreferences != null && typeof r.userPreferences === "object") {
     const parsedPrefs = parseUserPreferencesFromExport(r.userPreferences);
@@ -159,16 +185,21 @@ export function parseSettingsImportBundle(raw: unknown): SettingsExportBundleV1 
 }
 
 export function stripBundleBySelection(
-  bundle: SettingsExportBundleV1,
+  bundle: SettingsExportBundle,
   selection: SettingsExportGranularity
-): SettingsExportBundleV1 {
+): SettingsExportBundle {
   const exportedAt = bundle.exportedAt;
-  const next: SettingsExportBundleV1 = {
-    schemaVersion: SETTINGS_EXPORT_SCHEMA_VERSION,
+  const next: SettingsExportBundle = {
+    schemaVersion: bundle.schemaVersion,
     exportedAt,
   };
-  if (selection.theme && bundle.theme != null) {
-    next.theme = bundle.theme;
+  if (selection.theme) {
+    if (bundle.themeConfig != null) {
+      next.themeConfig = bundle.themeConfig;
+    }
+    if (bundle.theme != null) {
+      next.theme = bundle.theme;
+    }
   }
   if (selection.userPreferences && bundle.userPreferences != null) {
     next.userPreferences = bundle.userPreferences;

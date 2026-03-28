@@ -23,6 +23,14 @@ import { HardwareAwareTextInput } from "@/components/input/HardwareAwareTextFiel
 import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
 import { useUserPreferences } from "@/components/preferences/UserPreferencesProvider";
 import { useTheme } from "@/components/theme/ThemeProvider";
+import type { CustomThemeEntry } from "@/lib/theme-config";
+import { DEFAULT_BUILTIN_THEME_ID, BUILTIN_THEME_CATALOG } from "@/lib/theme-presets";
+import type { ThemePreference } from "@/lib/theme";
+import {
+  THEME_TOKEN_GROUPS,
+  sanitizeThemeTokensPartial,
+  type ThemeTokenKey,
+} from "@/lib/theme-tokens";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import {
   DEFAULT_KEYBOARD_SHORTCUT_BINDINGS,
@@ -40,13 +48,14 @@ import {
   parseImportedThemePreference,
   parseSettingsImportBundle,
   stripBundleBySelection,
-  type SettingsExportBundleV1,
+  type SettingsExportBundle,
   type SettingsExportGranularity,
 } from "@/lib/settings-export-import";
 import {
   createPersistableWorkspaceSession,
   mergeWorkspaceSessionFromImport,
 } from "@/lib/workspace-session";
+import { SettingsThemeSelect } from "@/components/editor/SettingsThemeSelect";
 import { ToggleSwitch } from "@/components/ui/ToggleSwitch";
 import { availableModels, currentModel } from "@/lib/mock-data";
 
@@ -61,6 +70,9 @@ const tagClass =
 
 const shortcutInputClass =
   "box-border min-w-[200px] max-w-[min(100%,380px)] rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-[var(--bg-main)] px-[10px] py-[6px] font-mono text-[11px] text-[var(--text-primary)] outline-none placeholder:text-[var(--text-disabled)]";
+
+/** Shared height for Custom theme row (name input, duplicate select, Create). */
+const CUSTOM_THEME_ROW_CONTROL_MIN_H = "min-h-[38px]";
 
 const SECTION_ORDER: ShortcutCommandSection[] = [
   "Workbench",
@@ -259,6 +271,27 @@ export function GeneralSettingsPanel() {
           }
         />
         <SettingsRow
+          title="Appearance & themes"
+          description="System, light, or dark mode; per-appearance themes; custom token presets."
+          trailing={
+            <button
+              type="button"
+              className={rowButtonClass}
+              onClick={() =>
+                updateWorkspaceSession((current) => ({
+                  ...current,
+                  settingsView: {
+                    ...current.settingsView,
+                    activeNav: "appearance",
+                  },
+                }))
+              }
+            >
+              Open
+            </button>
+          }
+        />
+        <SettingsRow
           title="Keyboard Shortcuts"
           description="Customize keyboard shortcuts for commands and workflows."
           trailing={
@@ -370,6 +403,302 @@ export function GeneralSettingsPanel() {
           Log Out
         </button>
       </div>
+    </>
+  );
+}
+
+const appearanceBtnBase =
+  "rounded-[var(--radius-tab)] px-[12px] py-[6px] font-sans text-[12px] transition-colors";
+
+export function AppearanceSettingsPanel() {
+  const {
+    themeConfig,
+    setPreference,
+    setLightThemeId,
+    setDarkThemeId,
+    upsertCustomTheme,
+    removeCustomTheme,
+    duplicateCustomTheme,
+  } = useTheme();
+
+  const themeOptions = useMemo(() => {
+    const builtins = Object.entries(BUILTIN_THEME_CATALOG).map(([id, p]) => ({
+      id,
+      label: p.label,
+    }));
+    const customs = themeConfig.customThemes.map((t) => ({
+      id: t.id,
+      label: `${t.label} (custom)`,
+    }));
+    return [...builtins, ...customs];
+  }, [themeConfig.customThemes]);
+
+  const [newThemeName, setNewThemeName] = useState("");
+  const [duplicateSourceId, setDuplicateSourceId] = useState<string>(DEFAULT_BUILTIN_THEME_ID);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [draft, setDraft] = useState<CustomThemeEntry | null>(null);
+
+  useEffect(() => {
+    if (!editingId) {
+      setDraft(null);
+      return;
+    }
+    const entry = themeConfig.customThemes.find((t) => t.id === editingId);
+    if (entry) {
+      setDraft({
+        ...entry,
+        light: { ...entry.light },
+        dark: { ...entry.dark },
+      });
+    }
+  }, [editingId, themeConfig.customThemes]);
+
+  const appearanceChoice = (value: ThemePreference, label: string) => {
+    const on = themeConfig.appearance === value;
+    return (
+      <button
+        key={value}
+        type="button"
+        className={`${appearanceBtnBase} ${
+          on
+            ? "border-2 border-[var(--accent)] bg-[var(--accent-bg)] font-medium text-[var(--text-primary)]"
+            : "border border-[var(--border-card)] bg-transparent text-[var(--text-primary)] hover:bg-[var(--accent-bg)]"
+        }`}
+        onClick={() => setPreference(value)}
+      >
+        {label}
+      </button>
+    );
+  };
+
+  const saveDraft = () => {
+    if (!draft) return;
+    upsertCustomTheme({
+      ...draft,
+      light: sanitizeThemeTokensPartial(draft.light),
+      dark: sanitizeThemeTokensPartial(draft.dark),
+    });
+    setEditingId(null);
+    setDraft(null);
+  };
+
+  const allDuplicateSources = useMemo(() => {
+    const builtins = Object.keys(BUILTIN_THEME_CATALOG);
+    const customs = themeConfig.customThemes.map((t) => t.id);
+    return [...builtins, ...customs];
+  }, [themeConfig.customThemes]);
+
+  const duplicateSelectOptions = useMemo(
+    () =>
+      allDuplicateSources.map((id) => ({
+        value: id,
+        label:
+          BUILTIN_THEME_CATALOG[id]?.label ??
+          themeConfig.customThemes.find((t) => t.id === id)?.label ??
+          id,
+      })),
+    [allDuplicateSources, themeConfig.customThemes]
+  );
+
+  const themeSelectOptions = useMemo(
+    () => themeOptions.map((o) => ({ value: o.id, label: o.label })),
+    [themeOptions]
+  );
+
+  return (
+    <>
+      <PageIntro
+        title="Appearance"
+        subtitle="Choose system/light/dark behavior, a theme for each resolved appearance, and optional custom token overrides. Custom themes are stored in this browser and can be included in settings export."
+      />
+      <SettingsSection title="Appearance mode">
+        <div className="flex flex-wrap items-center gap-[8px] border-b border-[var(--border-subtle)] px-[16px] py-[14px] last:border-b-0">
+          {appearanceChoice("system", "System")}
+          {appearanceChoice("light", "Light")}
+          {appearanceChoice("dark", "Dark")}
+        </div>
+      </SettingsSection>
+      <SettingsSection title="Theme when appearance is light">
+        <div className="border-b border-[var(--border-subtle)] px-[16px] py-[14px] last:border-b-0">
+          <p className="mb-[10px] font-sans text-[12px] text-[var(--text-secondary)]">
+            Applied when the UI resolves to light (including under &quot;Light&quot; mode or system light).
+          </p>
+          <SettingsThemeSelect
+            className="w-full max-w-[min(100%,400px)]"
+            triggerClassName={`${selectClass} w-full min-w-0 max-w-[min(100%,400px)]`}
+            value={themeConfig.lightThemeId}
+            options={themeSelectOptions}
+            onChange={setLightThemeId}
+            ariaLabel="Light appearance theme"
+            placement="below"
+          />
+        </div>
+      </SettingsSection>
+      <SettingsSection title="Theme when appearance is dark">
+        <div className="border-b border-[var(--border-subtle)] px-[16px] py-[14px] last:border-b-0">
+          <p className="mb-[10px] font-sans text-[12px] text-[var(--text-secondary)]">
+            Applied when the UI resolves to dark (including under &quot;Dark&quot; mode or system dark).
+          </p>
+          <SettingsThemeSelect
+            className="w-full max-w-[min(100%,400px)]"
+            triggerClassName={`${selectClass} w-full min-w-0 max-w-[min(100%,400px)]`}
+            value={themeConfig.darkThemeId}
+            options={themeSelectOptions}
+            onChange={setDarkThemeId}
+            ariaLabel="Dark appearance theme"
+            placement="below"
+          />
+        </div>
+      </SettingsSection>
+      <SettingsSection title="Custom themes">
+        <div className="space-y-[12px] border-b border-[var(--border-subtle)] px-[16px] py-[14px] last:border-b-0">
+          <p className="font-sans text-[12px] text-[var(--text-secondary)]">
+            Duplicate a built-in preset or another custom theme, then edit CSS variable values (empty =
+            use built-in default for that branch).
+          </p>
+          <div className="flex flex-wrap items-end gap-[10px]">
+            <label className="flex min-w-[160px] flex-1 flex-col gap-[4px] font-sans text-[11px] text-[var(--text-secondary)]">
+              Name
+              <HardwareAwareTextInput
+                value={newThemeName}
+                onChange={setNewThemeName}
+                className={`${shortcutInputClass} ${CUSTOM_THEME_ROW_CONTROL_MIN_H} flex items-center`}
+                ariaLabel="New custom theme name"
+              />
+            </label>
+            <label className="flex min-w-[160px] flex-1 flex-col gap-[4px] font-sans text-[11px] text-[var(--text-secondary)]">
+              Duplicate from
+              <SettingsThemeSelect
+                className="w-full"
+                triggerClassName={`${selectClass} ${CUSTOM_THEME_ROW_CONTROL_MIN_H} w-full min-w-0 max-w-none`}
+                value={duplicateSourceId}
+                options={duplicateSelectOptions}
+                onChange={setDuplicateSourceId}
+                ariaLabel="Duplicate theme from preset"
+                placement="below"
+              />
+            </label>
+            <button
+              type="button"
+              className={`${rowButtonClass} ${CUSTOM_THEME_ROW_CONTROL_MIN_H}`}
+              onClick={() => {
+                const id = duplicateCustomTheme(duplicateSourceId, newThemeName || "Custom theme");
+                if (id) {
+                  setNewThemeName("");
+                  setEditingId(id);
+                }
+              }}
+            >
+              Create
+            </button>
+          </div>
+          {themeConfig.customThemes.length ? (
+            <ul className="divide-y divide-[var(--border-subtle)] rounded-[var(--radius-tab)] border border-[var(--border-card)]">
+              {themeConfig.customThemes.map((t) => (
+                <li
+                  key={t.id}
+                  className="flex flex-wrap items-center justify-between gap-[8px] px-[12px] py-[10px]"
+                >
+                  <span className="font-sans text-[13px] text-[var(--text-primary)]">{t.label}</span>
+                  <div className="flex flex-wrap gap-[8px]">
+                    <button
+                      type="button"
+                      className={rowButtonClass}
+                      onClick={() => setEditingId(t.id)}
+                    >
+                      Edit
+                    </button>
+                    <button
+                      type="button"
+                      className={rowButtonClass}
+                      onClick={() => removeCustomTheme(t.id)}
+                    >
+                      Delete
+                    </button>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="font-sans text-[12px] text-[var(--text-disabled)]">No custom themes yet.</p>
+          )}
+        </div>
+      </SettingsSection>
+      {draft && editingId ? (
+        <SettingsSection title={`Edit: ${draft.label}`}>
+          <div className="space-y-[16px] border-b border-[var(--border-subtle)] px-[16px] py-[14px] last:border-b-0">
+            <div className="flex flex-wrap items-center gap-[10px]">
+              <label className="font-sans text-[12px] text-[var(--text-secondary)]">
+                Display name
+                <HardwareAwareTextInput
+                  value={draft.label}
+                  onChange={(v) => setDraft((d) => (d ? { ...d, label: v } : null))}
+                  className={`${shortcutInputClass} mt-[4px] block w-full max-w-md`}
+                  ariaLabel="Custom theme display name"
+                />
+              </label>
+            </div>
+            {(["light", "dark"] as const).map((branch) => (
+              <div key={branch}>
+                <SubsectionLabel>{branch === "light" ? "Light branch tokens" : "Dark branch tokens"}</SubsectionLabel>
+                <div className="space-y-[12px] pt-[8px]">
+                  {THEME_TOKEN_GROUPS.map((group) => (
+                    <div key={group.title}>
+                      <p className="mb-[6px] font-sans text-[11px] font-medium uppercase tracking-wide text-[var(--text-disabled)]">
+                        {group.title}
+                      </p>
+                      <div className="grid gap-[8px] sm:grid-cols-2">
+                        {group.keys.map((key: ThemeTokenKey) => (
+                          <label
+                            key={key}
+                            className="flex flex-col gap-[2px] font-mono text-[10px] text-[var(--text-secondary)]"
+                          >
+                            {key}
+                            <HardwareAwareTextInput
+                              value={draft[branch][key] ?? ""}
+                              onChange={(v) =>
+                                setDraft((d) => {
+                                  if (!d) return null;
+                                  const next = { ...d[branch] };
+                                  if (v.trim() === "") {
+                                    delete next[key];
+                                  } else {
+                                    next[key] = v;
+                                  }
+                                  return branch === "light"
+                                    ? { ...d, light: next }
+                                    : { ...d, dark: next };
+                                })
+                              }
+                              className="font-mono text-[11px]"
+                              ariaLabel={`${branch} ${key}`}
+                            />
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+            <div className="flex flex-wrap gap-[10px]">
+              <button type="button" className={rowButtonClass} onClick={saveDraft}>
+                Save theme
+              </button>
+              <button
+                type="button"
+                className={rowButtonClass}
+                onClick={() => {
+                  setEditingId(null);
+                  setDraft(null);
+                }}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </SettingsSection>
+      ) : null}
     </>
   );
 }
@@ -1329,7 +1658,11 @@ function ExportGranularityPicker({
 
   return (
     <div className="flex flex-col gap-[10px]">
-      {row("theme", "Color theme", "Light / dark / system (browser local storage).")}
+      {row(
+        "theme",
+        "Theming",
+        "Appearance mode, per-light/dark themes, and custom presets (local storage)."
+      )}
       {row("userPreferences", "Local preferences", "iPad experimental toggles and related UI flags.")}
       {row(
         "keyboardShortcuts",
@@ -1351,14 +1684,14 @@ function ExportGranularityPicker({
 }
 
 export function ExportImportSettingsPanel() {
-  const { preference, setPreference } = useTheme();
+  const { themeConfig, setPreference, setThemeConfig } = useTheme();
   const { preferences, importUserPreferences } = useUserPreferences();
   const { settings, updateSettings } = useGlobalSettings();
   const { workspaceSession, updateWorkspaceSession } = useWorkspace();
   const [exportSelection, setExportSelection] = useState<SettingsExportGranularity>({
     ...EXPORT_DEFAULT_SELECTION,
   });
-  const [importBundle, setImportBundle] = useState<SettingsExportBundleV1 | null>(null);
+  const [importBundle, setImportBundle] = useState<SettingsExportBundle | null>(null);
   const [importSelection, setImportSelection] =
     useState<SettingsExportGranularity | null>(null);
   const [importPresence, setImportPresence] = useState<SettingsExportGranularity | null>(
@@ -1370,7 +1703,7 @@ export function ExportImportSettingsPanel() {
     const persistable = createPersistableWorkspaceSession(workspaceSession);
     const bundle = buildSettingsExportBundle({
       selection: exportSelection,
-      theme: preference,
+      themeConfig,
       userPreferences: preferences,
       globalSettings: settings,
       workspaceSession: persistable,
@@ -1384,7 +1717,7 @@ export function ExportImportSettingsPanel() {
     a.download = `opencursor-settings-${new Date().toISOString().slice(0, 10)}.json`;
     a.click();
     URL.revokeObjectURL(url);
-  }, [exportSelection, preference, preferences, settings, workspaceSession]);
+  }, [exportSelection, themeConfig, preferences, settings, workspaceSession]);
 
   const onImportFileChange = useCallback((fileList: FileList | null) => {
     const file = fileList?.[0] ?? null;
@@ -1400,12 +1733,14 @@ export function ExportImportSettingsPanel() {
         const raw: unknown = JSON.parse(text);
         const parsed = parseSettingsImportBundle(raw);
         if (!parsed) {
-          setImportError("Not a valid OpenCursor settings export (need schemaVersion 1).");
+          setImportError(
+            "Not a valid OpenCursor settings export (need schemaVersion 1 or 2)."
+          );
           return;
         }
         setImportBundle(parsed);
         const presence: SettingsExportGranularity = {
-          theme: parsed.theme != null,
+          theme: parsed.theme != null || parsed.themeConfig != null,
           userPreferences: parsed.userPreferences != null,
           keyboardShortcuts: parsed.keyboardShortcuts != null,
           globalApp: parsed.globalApp != null,
@@ -1430,7 +1765,9 @@ export function ExportImportSettingsPanel() {
       return;
     }
     const slice = stripBundleBySelection(importBundle, importSelection);
-    if (slice.theme != null) {
+    if (slice.themeConfig != null) {
+      setThemeConfig(slice.themeConfig);
+    } else if (slice.theme != null) {
       const t = parseImportedThemePreference(slice.theme);
       if (t) {
         setPreference(t);
@@ -1465,6 +1802,7 @@ export function ExportImportSettingsPanel() {
     importSelection,
     importUserPreferences,
     setPreference,
+    setThemeConfig,
     updateSettings,
     updateWorkspaceSession,
   ]);
@@ -1534,6 +1872,7 @@ export function ExportImportSettingsPanel() {
 
 export const SETTINGS_PANELS: Record<string, ComponentType> = {
   general: GeneralSettingsPanel,
+  appearance: AppearanceSettingsPanel,
   agents: AgentsSettingsPanel,
   models: ModelsSettingsPanel,
   rulesSkills: RulesSkillsSubagentsPanel,

@@ -1,13 +1,34 @@
+import {
+  createDefaultThemeConfig,
+  type ThemeConfig,
+} from "@/lib/theme-config";
 import type { ThemePreference } from "@/lib/theme";
+import {
+  resolveColorSchemeDark,
+  resolveMergedTokens,
+} from "@/lib/theme-resolve";
 
-/** Applies `dark` class on `<html>` from a stored preference (call only in the browser). */
+/** Apply merged CSS variables + `html.dark` from a full theme config (browser only). */
+export function applyThemeConfigToDom(config: ThemeConfig): void {
+  if (typeof document === "undefined") {
+    return;
+  }
+  const resolvedDark = resolveColorSchemeDark(config.appearance);
+  const tokens = resolveMergedTokens(config, resolvedDark);
+  const el = document.documentElement;
+  el.classList.toggle("dark", resolvedDark);
+  for (const key of Object.keys(tokens) as (keyof typeof tokens)[]) {
+    el.style.setProperty(key, tokens[key]);
+  }
+}
+
+/**
+ * Legacy: appearance only, default built-in themes for both branches.
+ * Prefer `applyThemeConfigToDom` when full config is available.
+ */
 export function applyDomTheme(pref: ThemePreference): void {
-  if (typeof document === "undefined") return;
-  const dark =
-    pref === "dark"
-      ? true
-      : pref === "light"
-        ? false
-        : window.matchMedia("(prefers-color-scheme: dark)").matches;
-  document.documentElement.classList.toggle("dark", dark);
+  applyThemeConfigToDom({
+    ...createDefaultThemeConfig(),
+    appearance: pref,
+  });
 }
