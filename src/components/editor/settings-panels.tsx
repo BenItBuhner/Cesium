@@ -313,7 +313,7 @@ export function GeneralSettingsPanel() {
           }
         />
         <SettingsRow
-          title="Export / import settings"
+          title="Import & export settings"
           description="Back up or restore theme, shortcuts, workspace app settings, and more as JSON."
           trailing={
             <button
@@ -518,7 +518,7 @@ export function AppearanceSettingsPanel() {
           {appearanceChoice("dark", "Dark")}
         </div>
       </SettingsSection>
-      <SettingsSection title="Theme when appearance is light">
+      <SettingsSection title="Light theme">
         <div className="border-b border-[var(--border-subtle)] px-[16px] py-[14px] last:border-b-0">
           <p className="mb-[10px] font-sans text-[12px] text-[var(--text-secondary)]">
             Applied when the UI resolves to light (including under &quot;Light&quot; mode or system light).
@@ -534,7 +534,7 @@ export function AppearanceSettingsPanel() {
           />
         </div>
       </SettingsSection>
-      <SettingsSection title="Theme when appearance is dark">
+      <SettingsSection title="Dark theme">
         <div className="border-b border-[var(--border-subtle)] px-[16px] py-[14px] last:border-b-0">
           <p className="mb-[10px] font-sans text-[12px] text-[var(--text-secondary)]">
             Applied when the UI resolves to dark (including under &quot;Dark&quot; mode or system dark).
@@ -1810,7 +1810,7 @@ export function ExportImportSettingsPanel() {
   return (
     <>
       <PageIntro
-        title="Export / import"
+        title="Import & export"
         subtitle="Choose which parts of your setup to include in a JSON backup. Import merges selected sections into this browser and workspace; keyboard shortcuts and app settings are saved to the server."
       />
       <SettingsSection title="Export">

@@ -46,7 +46,7 @@ const NAV_ENTRIES: NavEntry[] = [
   { kind: "divider" },
   { kind: "item", id: "rulesSkills", label: "Rules, Skills, Subagents", icon: BookMarked },
   { kind: "item", id: "tools", label: "Tools & MCPs", icon: Wrench },
-  { kind: "item", id: "exportImport", label: "Export / import", icon: Download },
+  { kind: "item", id: "exportImport", label: "Import & export", icon: Download },
   { kind: "item", id: "beta", label: "Beta", icon: FlaskConical },
 ];
 
