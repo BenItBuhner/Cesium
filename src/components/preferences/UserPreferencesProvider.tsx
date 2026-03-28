@@ -24,6 +24,8 @@ type UserPreferencesContextValue = {
   experimentalIpadCustomButtons: boolean;
   setExperimentalIpadMode: (enabled: boolean) => void;
   setExperimentalIpadCustomButtons: (enabled: boolean) => void;
+  /** Replace persisted preferences (e.g. settings import). */
+  importUserPreferences: (next: UserPreferences) => void;
 };
 
 const UserPreferencesContext =
@@ -76,6 +78,14 @@ export function UserPreferencesProvider({
     });
   }, [persistPreferences]);
 
+  const importUserPreferences = useCallback(
+    (next: UserPreferences) => {
+      setPreferencesState(next);
+      persistPreferences(next);
+    },
+    [persistPreferences]
+  );
+
   useEffect(() => {
     const onStorage = (event: StorageEvent) => {
       if (event.key !== USER_PREFERENCES_STORAGE_KEY) return;
@@ -95,8 +105,14 @@ export function UserPreferencesProvider({
       experimentalIpadCustomButtons: preferences.experimentalIpadCustomButtons,
       setExperimentalIpadMode,
       setExperimentalIpadCustomButtons,
+      importUserPreferences,
     }),
-    [preferences, setExperimentalIpadMode, setExperimentalIpadCustomButtons]
+    [
+      preferences,
+      setExperimentalIpadMode,
+      setExperimentalIpadCustomButtons,
+      importUserPreferences,
+    ]
   );
 
   return (

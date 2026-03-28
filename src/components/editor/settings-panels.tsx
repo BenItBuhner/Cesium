@@ -1,10 +1,18 @@
 "use client";
 
-import { useMemo, useState, type ComponentType, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type ComponentType,
+  type ReactNode,
+} from "react";
 import {
   AlertTriangle,
   ChevronDown,
   ChevronRight,
+  Download,
   ExternalLink,
   Info,
   Lock,
@@ -14,6 +22,31 @@ import {
 import { HardwareAwareTextInput } from "@/components/input/HardwareAwareTextField";
 import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
 import { useUserPreferences } from "@/components/preferences/UserPreferencesProvider";
+import { useTheme } from "@/components/theme/ThemeProvider";
+import { useWorkspace } from "@/contexts/WorkspaceContext";
+import {
+  DEFAULT_KEYBOARD_SHORTCUT_BINDINGS,
+  detectShortcutPlatform,
+  formatShortcutBindingsForInput,
+  parseShortcutBindingsInput,
+  primaryModifierLabel,
+  SHORTCUT_COMMAND_DEFINITIONS,
+  type ShortcutCommandSection,
+  type ShortcutPlatform,
+} from "@/lib/keyboard-shortcuts";
+import {
+  buildSettingsExportBundle,
+  mergeImportedGlobalAppSlice,
+  parseImportedThemePreference,
+  parseSettingsImportBundle,
+  stripBundleBySelection,
+  type SettingsExportBundleV1,
+  type SettingsExportGranularity,
+} from "@/lib/settings-export-import";
+import {
+  createPersistableWorkspaceSession,
+  mergeWorkspaceSessionFromImport,
+} from "@/lib/workspace-session";
 import { ToggleSwitch } from "@/components/ui/ToggleSwitch";
 import { availableModels, currentModel } from "@/lib/mock-data";
 
@@ -25,6 +58,20 @@ const selectClass =
 
 const tagClass =
   "inline-flex items-center gap-[6px] rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-[var(--bg-main)] px-[8px] py-[3px] font-mono text-[11px] text-[var(--text-primary)]";
+
+const shortcutInputClass =
+  "box-border min-w-[200px] max-w-[min(100%,380px)] rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-[var(--bg-main)] px-[10px] py-[6px] font-mono text-[11px] text-[var(--text-primary)] outline-none placeholder:text-[var(--text-disabled)]";
+
+const SECTION_ORDER: ShortcutCommandSection[] = [
+  "Workbench",
+  "File",
+  "Editor",
+  "Edit",
+  "Search",
+  "Terminal",
+  "Window",
+  "Developer",
+];
 
 export function SettingsSection({
   title,
@@ -169,6 +216,7 @@ function PageIntro({ title, subtitle }: { title: string; subtitle?: string }) {
 
 export function GeneralSettingsPanel() {
   const { settings, updateSettings } = useGlobalSettings();
+  const { updateWorkspaceSession } = useWorkspace();
   const general = settings.general;
 
   const patchGeneral = (patch: Partial<typeof general>) => {
@@ -214,16 +262,43 @@ export function GeneralSettingsPanel() {
           title="Keyboard Shortcuts"
           description="Customize keyboard shortcuts for commands and workflows."
           trailing={
-            <button type="button" className={rowButtonClass}>
+            <button
+              type="button"
+              className={rowButtonClass}
+              onClick={() =>
+                updateWorkspaceSession((current) => ({
+                  ...current,
+                  settingsView: {
+                    ...current.settingsView,
+                    activeNav: "keyboardShortcuts",
+                  },
+                }))
+              }
+            >
               Open
-              <ExternalLink className="size-[14px]" strokeWidth={1.5} aria-hidden />
             </button>
           }
         />
         <SettingsRow
-          title="Import Settings from VS Code"
-          description="Bring your editor preferences from VS Code into this workspace."
-          trailing={<button type="button" className={rowButtonClass}>Import</button>}
+          title="Export / import settings"
+          description="Back up or restore theme, shortcuts, workspace app settings, and more as JSON."
+          trailing={
+            <button
+              type="button"
+              className={rowButtonClass}
+              onClick={() =>
+                updateWorkspaceSession((current) => ({
+                  ...current,
+                  settingsView: {
+                    ...current.settingsView,
+                    activeNav: "exportImport",
+                  },
+                }))
+              }
+            >
+              Open
+            </button>
+          }
           border={false}
         />
       </SettingsSection>
@@ -302,6 +377,10 @@ export function GeneralSettingsPanel() {
 export function AgentsSettingsPanel() {
   const { settings, updateSettings } = useGlobalSettings();
   const agents = settings.agents;
+  const modLabel = useMemo(
+    () => primaryModifierLabel(detectShortcutPlatform()),
+    []
+  );
 
   const patchAgents = (patch: Partial<typeof agents>) => {
     updateSettings((current) => ({
@@ -320,8 +399,8 @@ export function AgentsSettingsPanel() {
       <PageIntro title="Agents" />
       <SettingsSection>
         <SettingsRow
-          title="Submit with Ctrl + Enter"
-          description="When enabled, Ctrl + Enter submits chat and Enter inserts a newline."
+          title={`Submit with ${modLabel} + Enter`}
+          description={`When enabled, ${modLabel} + Enter submits chat and Enter inserts a newline.`}
           trailing={
             <ToggleSwitch
               checked={agents.submitCtrlEnter}
@@ -528,7 +607,7 @@ export function AgentsSettingsPanel() {
         />
         <SettingsRow
           title="Auto-Parse Links"
-          description="Automatically parse links when pasted into Quick Edit (Ctrl+K) input."
+          description={`Automatically parse links when pasted into Quick Edit (${modLabel}+K) input.`}
           trailing={
             <ToggleSwitch
               checked={agents.autoParse}
@@ -1055,6 +1134,404 @@ export function BetaSettingsPanel() {
   );
 }
 
+function ShortcutBindingField({
+  commandId,
+  bindings,
+  platform,
+  onCommit,
+  onReset,
+}: {
+  commandId: string;
+  bindings: string[];
+  platform: ShortcutPlatform;
+  onCommit: (raw: string) => boolean;
+  onReset: () => void;
+}) {
+  const displayValue = formatShortcutBindingsForInput(bindings, platform);
+  const [draft, setDraft] = useState(displayValue);
+  useEffect(() => {
+    setDraft(displayValue);
+  }, [displayValue]);
+
+  return (
+    <div className="flex max-w-[min(100%,440px)] flex-wrap items-center justify-end gap-[8px]">
+      <HardwareAwareTextInput
+        value={draft}
+        onChange={setDraft}
+        onBlur={() => {
+          if (!onCommit(draft)) {
+            setDraft(displayValue);
+          }
+        }}
+        placeholder={`${primaryModifierLabel(platform)}+P, F1 (comma = alternate)`}
+        className={shortcutInputClass}
+        ariaLabel={`Shortcuts for ${commandId}`}
+      />
+      <button type="button" className={rowButtonClass} onClick={onReset}>
+        Reset
+      </button>
+    </div>
+  );
+}
+
+export function KeyboardShortcutsSettingsPanel() {
+  const { settings, updateSettings } = useGlobalSettings();
+  const platform = useMemo(() => detectShortcutPlatform(), []);
+  const bindings = settings.keyboardShortcuts.bindings;
+
+  const bySection = useMemo(() => {
+    const map = new Map<
+      ShortcutCommandSection,
+      (typeof SHORTCUT_COMMAND_DEFINITIONS)[number][]
+    >();
+    for (const def of SHORTCUT_COMMAND_DEFINITIONS) {
+      const list = map.get(def.section) ?? [];
+      list.push(def);
+      map.set(def.section, list);
+    }
+    return map;
+  }, []);
+
+  const commitBinding = useCallback(
+    (commandId: string, raw: string) => {
+      const parsed = parseShortcutBindingsInput(raw);
+      if (parsed === null) {
+        return false;
+      }
+      updateSettings((current) => ({
+        ...current,
+        keyboardShortcuts: {
+          ...current.keyboardShortcuts,
+          bindings: {
+            ...current.keyboardShortcuts.bindings,
+            [commandId]: parsed,
+          },
+        },
+      }));
+      return true;
+    },
+    [updateSettings]
+  );
+
+  const resetBinding = useCallback(
+    (commandId: string) => {
+      const fallback = DEFAULT_KEYBOARD_SHORTCUT_BINDINGS[commandId] ?? [];
+      updateSettings((current) => ({
+        ...current,
+        keyboardShortcuts: {
+          ...current.keyboardShortcuts,
+          bindings: {
+            ...current.keyboardShortcuts.bindings,
+            [commandId]: [...fallback],
+          },
+        },
+      }));
+    },
+    [updateSettings]
+  );
+
+  return (
+    <>
+      <PageIntro
+        title="Keyboard shortcuts"
+        subtitle={`Bindings use Mod as the primary modifier (${primaryModifierLabel(platform)} on this device). Separate chord steps with spaces (e.g. ${primaryModifierLabel(platform)}+K ${primaryModifierLabel(platform)}+S). Changes sync to the server with other settings.`}
+      />
+      {SECTION_ORDER.map((section) => {
+        const defs = bySection.get(section);
+        if (!defs?.length) {
+          return null;
+        }
+        return (
+          <SettingsSection key={section} title={section}>
+            {defs.map((def, index) => (
+              <SettingsRow
+                key={def.id}
+                title={def.label}
+                description={def.id}
+                border={index < defs.length - 1}
+                titleExtra={
+                  <span className="font-mono text-[11px] font-normal text-[var(--text-disabled)]">
+                    {def.defaultBindings.length
+                      ? formatShortcutBindingsForInput(def.defaultBindings, platform)
+                      : "—"}
+                  </span>
+                }
+                trailing={
+                  <ShortcutBindingField
+                    commandId={def.id}
+                    platform={platform}
+                    bindings={
+                      bindings[def.id] ??
+                      DEFAULT_KEYBOARD_SHORTCUT_BINDINGS[def.id] ??
+                      []
+                    }
+                    onCommit={(raw) => commitBinding(def.id, raw)}
+                    onReset={() => resetBinding(def.id)}
+                  />
+                }
+              />
+            ))}
+          </SettingsSection>
+        );
+      })}
+    </>
+  );
+}
+
+const EXPORT_DEFAULT_SELECTION: SettingsExportGranularity = {
+  theme: true,
+  userPreferences: true,
+  keyboardShortcuts: true,
+  globalApp: true,
+  workspaceSession: false,
+};
+
+function ExportGranularityPicker({
+  value,
+  onChange,
+  presence,
+}: {
+  value: SettingsExportGranularity;
+  onChange: (next: SettingsExportGranularity) => void;
+  /** When set, disable checkboxes for sections not in the file (import mode). */
+  presence?: SettingsExportGranularity | null;
+}) {
+  const row = (
+    key: keyof SettingsExportGranularity,
+    label: string,
+    hint?: string
+  ) => {
+    const available = presence ? presence[key] : true;
+    return (
+      <label
+        className={`flex items-start gap-[10px] font-sans text-[13px] ${
+          available ? "cursor-pointer text-[var(--text-primary)]" : "text-[var(--text-disabled)]"
+        }`}
+      >
+        <input
+          type="checkbox"
+          className="mt-[3px] size-[14px] shrink-0"
+          checked={value[key]}
+          disabled={!available}
+          onChange={(e) => onChange({ ...value, [key]: e.target.checked })}
+        />
+        <span>
+          {label}
+          {hint ? (
+            <span className="mt-[2px] block font-sans text-[11px] text-[var(--text-secondary)]">
+              {hint}
+            </span>
+          ) : null}
+        </span>
+      </label>
+    );
+  };
+
+  return (
+    <div className="flex flex-col gap-[10px]">
+      {row("theme", "Color theme", "Light / dark / system (browser local storage).")}
+      {row("userPreferences", "Local preferences", "iPad experimental toggles and related UI flags.")}
+      {row(
+        "keyboardShortcuts",
+        "Keyboard shortcuts",
+        "Custom bindings stored with global workspace settings."
+      )}
+      {row(
+        "globalApp",
+        "App settings",
+        "General, Agents, Models, Rules, Tools — demo settings from the settings API."
+      )}
+      {row(
+        "workspaceSession",
+        "Workspace layout session",
+        "Open tabs, chat, sidebar layout for this workspace (can be large)."
+      )}
+    </div>
+  );
+}
+
+export function ExportImportSettingsPanel() {
+  const { preference, setPreference } = useTheme();
+  const { preferences, importUserPreferences } = useUserPreferences();
+  const { settings, updateSettings } = useGlobalSettings();
+  const { workspaceSession, updateWorkspaceSession } = useWorkspace();
+  const [exportSelection, setExportSelection] = useState<SettingsExportGranularity>({
+    ...EXPORT_DEFAULT_SELECTION,
+  });
+  const [importBundle, setImportBundle] = useState<SettingsExportBundleV1 | null>(null);
+  const [importSelection, setImportSelection] =
+    useState<SettingsExportGranularity | null>(null);
+  const [importPresence, setImportPresence] = useState<SettingsExportGranularity | null>(
+    null
+  );
+  const [importError, setImportError] = useState<string | null>(null);
+
+  const runExport = useCallback(() => {
+    const persistable = createPersistableWorkspaceSession(workspaceSession);
+    const bundle = buildSettingsExportBundle({
+      selection: exportSelection,
+      theme: preference,
+      userPreferences: preferences,
+      globalSettings: settings,
+      workspaceSession: persistable,
+    });
+    const blob = new Blob([JSON.stringify(bundle, null, 2)], {
+      type: "application/json",
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `opencursor-settings-${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }, [exportSelection, preference, preferences, settings, workspaceSession]);
+
+  const onImportFileChange = useCallback((fileList: FileList | null) => {
+    const file = fileList?.[0] ?? null;
+    setImportError(null);
+    setImportBundle(null);
+    setImportSelection(null);
+    setImportPresence(null);
+    if (!file) {
+      return;
+    }
+    void file.text().then((text) => {
+      try {
+        const raw: unknown = JSON.parse(text);
+        const parsed = parseSettingsImportBundle(raw);
+        if (!parsed) {
+          setImportError("Not a valid OpenCursor settings export (need schemaVersion 1).");
+          return;
+        }
+        setImportBundle(parsed);
+        const presence: SettingsExportGranularity = {
+          theme: parsed.theme != null,
+          userPreferences: parsed.userPreferences != null,
+          keyboardShortcuts: parsed.keyboardShortcuts != null,
+          globalApp: parsed.globalApp != null,
+          workspaceSession: parsed.workspaceSession != null,
+        };
+        setImportPresence(presence);
+        setImportSelection({
+          theme: presence.theme,
+          userPreferences: presence.userPreferences,
+          keyboardShortcuts: presence.keyboardShortcuts,
+          globalApp: presence.globalApp,
+          workspaceSession: presence.workspaceSession,
+        });
+      } catch {
+        setImportError("Could not parse JSON.");
+      }
+    });
+  }, []);
+
+  const runApplyImport = useCallback(() => {
+    if (!importBundle || !importSelection) {
+      return;
+    }
+    const slice = stripBundleBySelection(importBundle, importSelection);
+    if (slice.theme != null) {
+      const t = parseImportedThemePreference(slice.theme);
+      if (t) {
+        setPreference(t);
+      }
+    }
+    if (slice.userPreferences != null) {
+      importUserPreferences(slice.userPreferences);
+    }
+    if (slice.keyboardShortcuts != null || slice.globalApp != null) {
+      updateSettings((c) => {
+        let next = c;
+        if (slice.keyboardShortcuts != null) {
+          next = { ...next, keyboardShortcuts: slice.keyboardShortcuts };
+        }
+        if (slice.globalApp != null) {
+          next = mergeImportedGlobalAppSlice(next, slice.globalApp);
+        }
+        return next;
+      });
+    }
+    if (slice.workspaceSession != null) {
+      updateWorkspaceSession((c) =>
+        mergeWorkspaceSessionFromImport(c, slice.workspaceSession!)
+      );
+    }
+    setImportBundle(null);
+    setImportSelection(null);
+    setImportPresence(null);
+    setImportError(null);
+  }, [
+    importBundle,
+    importSelection,
+    importUserPreferences,
+    setPreference,
+    updateSettings,
+    updateWorkspaceSession,
+  ]);
+
+  return (
+    <>
+      <PageIntro
+        title="Export / import"
+        subtitle="Choose which parts of your setup to include in a JSON backup. Import merges selected sections into this browser and workspace; keyboard shortcuts and app settings are saved to the server."
+      />
+      <SettingsSection title="Export">
+        <div className="space-y-[14px] border-b border-[var(--border-subtle)] px-[16px] py-[14px] last:border-b-0">
+          <ExportGranularityPicker
+            value={exportSelection}
+            onChange={setExportSelection}
+          />
+          <button
+            type="button"
+            className={`inline-flex items-center gap-[8px] ${rowButtonClass}`}
+            onClick={runExport}
+          >
+            <Download className="size-[14px]" strokeWidth={1.5} aria-hidden />
+            Download JSON
+          </button>
+        </div>
+      </SettingsSection>
+      <SettingsSection title="Import">
+        <div className="space-y-[14px] border-b border-[var(--border-subtle)] px-[16px] py-[14px] last:border-b-0">
+          <label className="block font-sans text-[12px] text-[var(--text-secondary)]">
+            <span className="mb-[6px] block">Choose a previously exported file</span>
+            <input
+              type="file"
+              accept="application/json,.json"
+              className="max-w-full font-sans text-[12px] text-[var(--text-primary)]"
+              onChange={(e) => onImportFileChange(e.target.files)}
+            />
+          </label>
+          {importError ? (
+            <p className="font-sans text-[12px] text-[#dc2626] dark:text-[#fca5a5]">
+              {importError}
+            </p>
+          ) : null}
+          {importBundle && importSelection ? (
+            <>
+              <p className="font-sans text-[12px] text-[var(--text-secondary)]">
+                Exported {importBundle.exportedAt}. Choose which sections to apply:
+              </p>
+              <ExportGranularityPicker
+                value={importSelection}
+                onChange={setImportSelection}
+                presence={importPresence}
+              />
+              <button
+                type="button"
+                className={rowButtonClass}
+                onClick={runApplyImport}
+              >
+                Apply import
+              </button>
+            </>
+          ) : null}
+        </div>
+      </SettingsSection>
+    </>
+  );
+}
+
 export const SETTINGS_PANELS: Record<string, ComponentType> = {
   general: GeneralSettingsPanel,
   agents: AgentsSettingsPanel,
@@ -1062,4 +1539,6 @@ export const SETTINGS_PANELS: Record<string, ComponentType> = {
   rulesSkills: RulesSkillsSubagentsPanel,
   tools: ToolsMcpSettingsPanel,
   beta: BetaSettingsPanel,
+  keyboardShortcuts: KeyboardShortcutsSettingsPanel,
+  exportImport: ExportImportSettingsPanel,
 };

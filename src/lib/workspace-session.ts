@@ -164,3 +164,65 @@ export function createPersistableWorkspaceSession(
     settingsView: session.settingsView,
   };
 }
+
+/** Merge an imported session snapshot onto the current workspace session. */
+export function mergeWorkspaceSessionFromImport(
+  current: WorkspaceSessionState,
+  imported: unknown
+): WorkspaceSessionState {
+  if (!imported || typeof imported !== "object") {
+    return current;
+  }
+  const r = imported as Partial<WorkspaceSessionState>;
+  if (r.schemaVersion !== 1) {
+    return current;
+  }
+
+  return {
+    schemaVersion: 1,
+    editor: {
+      ...current.editor,
+      ...(r.editor ?? {}),
+      leftTabs: Array.isArray(r.editor?.leftTabs) ? r.editor.leftTabs : current.editor.leftTabs,
+      rightTabs: Array.isArray(r.editor?.rightTabs) ? r.editor.rightTabs : current.editor.rightTabs,
+      viewStateByTabId:
+        r.editor?.viewStateByTabId && typeof r.editor.viewStateByTabId === "object"
+          ? r.editor.viewStateByTabId
+          : current.editor.viewStateByTabId,
+    },
+    chat: {
+      ...current.chat,
+      ...(r.chat ?? {}),
+      tabs: Array.isArray(r.chat?.tabs) && r.chat.tabs.length > 0 ? r.chat.tabs : current.chat.tabs,
+      messagesByTabId:
+        r.chat?.messagesByTabId && typeof r.chat.messagesByTabId === "object"
+          ? r.chat.messagesByTabId
+          : current.chat.messagesByTabId,
+      scrollTopByTabId:
+        r.chat?.scrollTopByTabId && typeof r.chat.scrollTopByTabId === "object"
+          ? r.chat.scrollTopByTabId
+          : current.chat.scrollTopByTabId,
+      model: r.chat?.model ?? current.chat.model,
+      mode: r.chat?.mode ?? current.chat.mode,
+    },
+    explorer: {
+      ...current.explorer,
+      ...(r.explorer ?? {}),
+      expandedPaths: Array.isArray(r.explorer?.expandedPaths)
+        ? r.explorer.expandedPaths
+        : current.explorer.expandedPaths,
+    },
+    layout: {
+      ...current.layout,
+      ...(r.layout ?? {}),
+      desktopLayout:
+        r.layout?.desktopLayout && typeof r.layout.desktopLayout === "object"
+          ? r.layout.desktopLayout
+          : current.layout.desktopLayout,
+    },
+    settingsView: {
+      ...current.settingsView,
+      ...(r.settingsView ?? {}),
+    },
+  };
+}

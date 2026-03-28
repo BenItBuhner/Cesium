@@ -4,20 +4,27 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
 import { createPortal } from "react-dom";
 import { ChevronRight, Menu } from "lucide-react";
 import { useIDECommandRunner } from "@/components/ide/IDECommandContext";
+import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
+import {
+  detectShortcutPlatform,
+  getShortcutDisplayForCommand,
+  type ShortcutPlatform,
+} from "@/lib/keyboard-shortcuts";
 
-type MenuLeaf = { cmd: string; label: string; key?: string };
+type MenuLeaf = { cmd: string; label: string };
 type MenuBlock = { sep: true } | MenuLeaf;
 
 const FILE_MENU: MenuBlock[] = [
-  { cmd: "workbench.action.newAgent", label: "New Agent", key: "Ctrl+N" },
-  { cmd: "workbench.action.newWindow", label: "New Window", key: "Ctrl+Shift+N" },
-  { cmd: "workbench.action.openFolder", label: "Open Folder", key: "Ctrl+Shift+O" },
+  { cmd: "workbench.action.newAgent", label: "New Agent" },
+  { cmd: "workbench.action.newWindow", label: "New Window" },
+  { cmd: "workbench.action.openFolder", label: "Open Folder" },
   { cmd: "workbench.action.createWorkspace", label: "Create Workspace" },
   { cmd: "workbench.action.setDefaultWorkspace", label: "Set as Default" },
   { sep: true },
@@ -28,23 +35,23 @@ const FILE_MENU: MenuBlock[] = [
 ];
 
 const EDIT_MENU: MenuBlock[] = [
-  { cmd: "editor.action.undo", label: "Undo", key: "Ctrl+Z" },
-  { cmd: "editor.action.redo", label: "Redo", key: "Ctrl+Y" },
+  { cmd: "editor.action.undo", label: "Undo" },
+  { cmd: "editor.action.redo", label: "Redo" },
   { sep: true },
-  { cmd: "editor.action.clipboardCut", label: "Cut", key: "Ctrl+X" },
-  { cmd: "editor.action.clipboardCopy", label: "Copy", key: "Ctrl+C" },
-  { cmd: "editor.action.clipboardPaste", label: "Paste", key: "Ctrl+V" },
+  { cmd: "editor.action.clipboardCut", label: "Cut" },
+  { cmd: "editor.action.clipboardCopy", label: "Copy" },
+  { cmd: "editor.action.clipboardPaste", label: "Paste" },
   { sep: true },
-  { cmd: "editor.action.selectAll", label: "Select All", key: "Ctrl+A" },
+  { cmd: "editor.action.selectAll", label: "Select All" },
 ];
 
 const VIEW_MENU: MenuBlock[] = [
-  { cmd: "workbench.action.openChanges", label: "Open Changes", key: "Ctrl+E" },
-  { cmd: "workbench.action.toggleAgentPanel", label: "Open Browser", key: "Ctrl+Shift+B" },
-  { cmd: "workbench.action.gotoFile", label: "Open File", key: "Ctrl+G" },
-  { cmd: "workbench.action.togglePanel", label: "Open Terminal", key: "Ctrl+J" },
+  { cmd: "workbench.action.openChanges", label: "Open Changes" },
+  { cmd: "workbench.action.toggleAgentPanel", label: "Open Browser" },
+  { cmd: "workbench.action.gotoFile", label: "Open File" },
+  { cmd: "workbench.action.togglePanel", label: "Open Terminal" },
   { sep: true },
-  { cmd: "workbench.action.openGlobalSettings", label: "Settings", key: "Ctrl+," },
+  { cmd: "workbench.action.openGlobalSettings", label: "Settings" },
 ];
 
 function isSep(b: MenuBlock): b is { sep: true } {
@@ -66,9 +73,13 @@ const subWrapBase =
 function SubmenuItems({
   blocks,
   onPick,
+  bindings,
+  platform,
 }: {
   blocks: MenuBlock[];
   onPick: (cmd: string) => void;
+  bindings: Record<string, string[]>;
+  platform: ShortcutPlatform;
 }) {
   return (
     <div
@@ -91,7 +102,16 @@ function SubmenuItems({
             onClick={() => onPick(b.cmd)}
           >
             <span className="min-w-0 flex-1">{b.label}</span>
-            {b.key ? <span className={shortcutCls}>{b.key}</span> : null}
+            {(() => {
+              const shortcut = getShortcutDisplayForCommand(
+                bindings,
+                b.cmd,
+                platform
+              );
+              return shortcut ? (
+                <span className={shortcutCls}>{shortcut}</span>
+              ) : null;
+            })()}
           </button>
         )
       )}
@@ -99,7 +119,15 @@ function SubmenuItems({
   );
 }
 
-function FileSubmenu({ onPick }: { onPick: (cmd: string) => void }) {
+function FileSubmenu({
+  onPick,
+  bindings,
+  platform,
+}: {
+  onPick: (cmd: string) => void;
+  bindings: Record<string, string[]>;
+  platform: ShortcutPlatform;
+}) {
   return (
     <div className="group/file relative w-full">
       <div className={rowTrigger} role="presentation">
@@ -113,13 +141,26 @@ function FileSubmenu({ onPick }: { onPick: (cmd: string) => void }) {
       <div
         className={`${subWrapBase} group-hover/file:visible group-hover/file:block`}
       >
-        <SubmenuItems blocks={FILE_MENU} onPick={onPick} />
+        <SubmenuItems
+          blocks={FILE_MENU}
+          onPick={onPick}
+          bindings={bindings}
+          platform={platform}
+        />
       </div>
     </div>
   );
 }
 
-function EditSubmenu({ onPick }: { onPick: (cmd: string) => void }) {
+function EditSubmenu({
+  onPick,
+  bindings,
+  platform,
+}: {
+  onPick: (cmd: string) => void;
+  bindings: Record<string, string[]>;
+  platform: ShortcutPlatform;
+}) {
   return (
     <div className="group/edit relative w-full">
       <div className={rowTrigger} role="presentation">
@@ -133,13 +174,26 @@ function EditSubmenu({ onPick }: { onPick: (cmd: string) => void }) {
       <div
         className={`${subWrapBase} group-hover/edit:visible group-hover/edit:block`}
       >
-        <SubmenuItems blocks={EDIT_MENU} onPick={onPick} />
+        <SubmenuItems
+          blocks={EDIT_MENU}
+          onPick={onPick}
+          bindings={bindings}
+          platform={platform}
+        />
       </div>
     </div>
   );
 }
 
-function ViewSubmenu({ onPick }: { onPick: (cmd: string) => void }) {
+function ViewSubmenu({
+  onPick,
+  bindings,
+  platform,
+}: {
+  onPick: (cmd: string) => void;
+  bindings: Record<string, string[]>;
+  platform: ShortcutPlatform;
+}) {
   return (
     <div className="group/view relative w-full">
       <div className={rowTrigger} role="presentation">
@@ -153,7 +207,12 @@ function ViewSubmenu({ onPick }: { onPick: (cmd: string) => void }) {
       <div
         className={`${subWrapBase} group-hover/view:visible group-hover/view:block`}
       >
-        <SubmenuItems blocks={VIEW_MENU} onPick={onPick} />
+        <SubmenuItems
+          blocks={VIEW_MENU}
+          onPick={onPick}
+          bindings={bindings}
+          platform={platform}
+        />
       </div>
     </div>
   );
@@ -164,6 +223,9 @@ const PORTAL_Z = 10048;
 
 export function SidebarAppMenu() {
   const runCommand = useIDECommandRunner();
+  const { settings } = useGlobalSettings();
+  const bindings = settings.keyboardShortcuts.bindings;
+  const platform = useMemo(() => detectShortcutPlatform(), []);
   const [open, setOpen] = useState(false);
   const [mounted, setMounted] = useState(false);
   const [pos, setPos] = useState({ top: 0, left: 0 });
@@ -236,9 +298,9 @@ export function SidebarAppMenu() {
         aria-label="Application menu"
         data-ide-sidebar-app-menu
       >
-        <FileSubmenu onPick={onPick} />
-        <EditSubmenu onPick={onPick} />
-        <ViewSubmenu onPick={onPick} />
+        <FileSubmenu onPick={onPick} bindings={bindings} platform={platform} />
+        <EditSubmenu onPick={onPick} bindings={bindings} platform={platform} />
+        <ViewSubmenu onPick={onPick} bindings={bindings} platform={platform} />
       </div>
     ) : null;
 

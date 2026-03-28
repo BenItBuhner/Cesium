@@ -57,13 +57,23 @@ export type ToolsSettingsState = {
   pluginState: PluginMcpState[];
 };
 
-export type GlobalSettingsState = {
-  schemaVersion: 1;
+import {
+  createDefaultKeyboardShortcutsState,
+  normalizeKeyboardShortcutsState,
+  type KeyboardShortcutsSettingsState,
+} from "@/lib/keyboard-shortcuts";
+
+export type GlobalAppSettingsSlice = {
   general: GeneralSettingsState;
   agents: AgentsSettingsState;
   models: ModelsSettingsState;
   rules: RulesSettingsState;
   tools: ToolsSettingsState;
+};
+
+export type GlobalSettingsState = GlobalAppSettingsSlice & {
+  schemaVersion: 1;
+  keyboardShortcuts: KeyboardShortcutsSettingsState;
 };
 
 export const DEFAULT_CMD_TAGS = [
@@ -126,6 +136,7 @@ export function createDefaultGlobalSettings(
 ): GlobalSettingsState {
   return {
     schemaVersion: 1,
+    keyboardShortcuts: createDefaultKeyboardShortcutsState(),
     general: {
       sysNotify: true,
       warnNotify: false,
@@ -165,6 +176,47 @@ export function createDefaultGlobalSettings(
       mcpTags: DEFAULT_MCP_TAGS,
       domainTags: DEFAULT_DOMAIN_TAGS,
       pluginState: DEFAULT_PLUGIN_MCP_STATE,
+    },
+  };
+}
+
+/** Merge server/local partial payload onto defaults (survives missing `keyboardShortcuts`). */
+export function normalizeLoadedGlobalSettings(
+  raw: unknown,
+  modelsFallback: ModelToggleState[]
+): GlobalSettingsState {
+  const base = createDefaultGlobalSettings(modelsFallback);
+  if (!raw || typeof raw !== "object") {
+    return base;
+  }
+  const r = raw as Partial<GlobalSettingsState>;
+  if (r.schemaVersion !== 1) {
+    return base;
+  }
+
+  return {
+    schemaVersion: 1,
+    keyboardShortcuts: normalizeKeyboardShortcutsState(r.keyboardShortcuts),
+    general: { ...base.general, ...(r.general ?? {}) },
+    agents: {
+      ...base.agents,
+      ...(r.agents ?? {}),
+      cmdTags: r.agents?.cmdTags ?? base.agents.cmdTags,
+      modeTags: r.agents?.modeTags ?? base.agents.modeTags,
+    },
+    models: {
+      models:
+        r.models?.models && r.models.models.length > 0
+          ? r.models.models
+          : base.models.models,
+    },
+    rules: { ...base.rules, ...(r.rules ?? {}) },
+    tools: {
+      ...base.tools,
+      ...(r.tools ?? {}),
+      mcpTags: r.tools?.mcpTags ?? base.tools.mcpTags,
+      domainTags: r.tools?.domainTags ?? base.tools.domainTags,
+      pluginState: r.tools?.pluginState ?? base.tools.pluginState,
     },
   };
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useMemo } from "react";
 import { createPortal } from "react-dom";
 import {
   Infinity,
@@ -13,6 +13,11 @@ import {
 } from "lucide-react";
 import { useClickOutside } from "@/hooks/useClickOutside";
 import { usePopover } from "@/hooks/usePopover";
+import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
+import {
+  detectShortcutPlatform,
+  getShortcutDisplayForCommand,
+} from "@/lib/keyboard-shortcuts";
 import type { EditorMode } from "@/lib/types";
 
 interface ModeOption {
@@ -22,8 +27,8 @@ interface ModeOption {
   shortcut?: string;
 }
 
-const modes: ModeOption[] = [
-  { id: "agent", label: "Agent", icon: Infinity, shortcut: "Ctrl+I" },
+const STATIC_MODES: Omit<ModeOption, "shortcut">[] = [
+  { id: "agent", label: "Agent", icon: Infinity },
   { id: "plan", label: "Plan", icon: ListChecks },
   { id: "debug", label: "Debug", icon: Bug },
   { id: "ask", label: "Ask", icon: MessageSquare },
@@ -48,6 +53,20 @@ export function ModeDropdown({
   onModeChange,
   popoverPlacement = "above",
 }: ModeDropdownProps) {
+  const { settings } = useGlobalSettings();
+  const platform = useMemo(() => detectShortcutPlatform(), []);
+  const modes = useMemo((): ModeOption[] => {
+    const agentShortcut = getShortcutDisplayForCommand(
+      settings.keyboardShortcuts.bindings,
+      "workbench.action.focusChatAgentMode",
+      platform
+    );
+    return STATIC_MODES.map((m) =>
+      m.id === "agent"
+        ? { ...m, shortcut: agentShortcut || undefined }
+        : { ...m }
+    );
+  }, [platform, settings.keyboardShortcuts.bindings]);
   const [open, setOpen] = useState(false);
   const close = useCallback(() => setOpen(false), []);
   const { triggerRef, popoverRef, position, ready } = usePopover(open, {

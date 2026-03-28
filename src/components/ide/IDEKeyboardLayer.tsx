@@ -4,6 +4,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -22,6 +23,13 @@ import { useWorkspace } from "@/contexts/WorkspaceContext";
 import type { EditorTab } from "@/lib/types";
 import { isFocusedBrowserSurface } from "@/lib/browser-keyboard-passthrough";
 import { normalizeBrowserTargetUrl } from "@/lib/browser-proxy-url";
+import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
+import {
+  detectShortcutPlatform,
+  getShortcutDisplayForCommand,
+  tryDispatchKeyboardShortcut,
+  type ShortcutChordState,
+} from "@/lib/keyboard-shortcuts";
 
 type PaletteMode = "closed" | "command" | "quickopen";
 
@@ -43,6 +51,11 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
     handleCut,
   } = useHardwareInput();
   const { setPreference: setThemePreference } = useTheme();
+  const { settings } = useGlobalSettings();
+  const shortcutBindings = settings.keyboardShortcuts.bindings;
+  const shortcutPlatform = useMemo(() => detectShortcutPlatform(), []);
+  const chordRef = useRef<ShortcutChordState | null>(null);
+
   const {
     activeWorkspaceId,
     defaultWorkspaceId,
@@ -54,6 +67,7 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
     openWorkspaceById,
     createWorkspace,
     setDefaultWorkspace,
+    updateWorkspaceSession,
   } = useWorkspace();
   const [palette, setPalette] = useState<PaletteMode>("closed");
   const [folderPromptOpen, setFolderPromptOpen] = useState(false);
@@ -184,72 +198,236 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
     });
   }, [browserPromptValue, runWithBridge]);
 
+  const kb = useCallback(
+    (commandId: string) => {
+      const s = getShortcutDisplayForCommand(
+        shortcutBindings,
+        commandId,
+        shortcutPlatform
+      );
+      return s || undefined;
+    },
+    [shortcutBindings, shortcutPlatform]
+  );
+
+  const runShortcutCommand = useCallback(
+    (id: string) => {
+      switch (id) {
+        case "palette.quickOpen":
+          setPalette("quickopen");
+          break;
+        case "palette.showCommands":
+          setPalette("command");
+          break;
+        case "workbench.action.toggleSidebarVisibility":
+          workbench.toggleSidebar();
+          break;
+        case "workbench.view.explorer":
+          workbench.revealExplorer();
+          break;
+        case "workbench.action.togglePanel":
+          workbench.toggleChat();
+          break;
+        case "workbench.action.toggleAgentPanel":
+          workbench.toggleChat();
+          break;
+        case "workbench.action.focusChatAgentMode":
+          updateWorkspaceSession((current) => ({
+            ...current,
+            chat: { ...current.chat, mode: "agent" },
+          }));
+          break;
+        case "workbench.action.openGlobalSettings":
+          runWithBridge((b) => b.dispatch({ type: "OPEN_SETTINGS_TAB" }));
+          break;
+        case "workbench.action.openKeyboardShortcuts":
+          updateWorkspaceSession((current) => ({
+            ...current,
+            settingsView: { ...current.settingsView, activeNav: "keyboardShortcuts" },
+          }));
+          runWithBridge((b) => b.dispatch({ type: "OPEN_SETTINGS_TAB" }));
+          break;
+        case "workbench.action.openFile":
+        case "workbench.action.gotoFile":
+          setPalette("quickopen");
+          break;
+        case "workbench.action.openFolder":
+          promptForFolder();
+          break;
+        case "workbench.action.newUntitledFile":
+          flash(setToast, "New file (demo).");
+          break;
+        case "workbench.action.newWindow":
+          flash(setToast, "New window (demo — open another browser tab).");
+          break;
+        case "workbench.action.newAgent":
+          router.push("/agent");
+          break;
+        case "workbench.action.closeActiveEditor":
+          runWithBridge((b) => {
+            const s = b.getState();
+            const g = s.focusedGroup;
+            const tabId = g === "left" ? s.leftActiveId : s.rightActiveId;
+            if (tabId) b.requestCloseTab(g, tabId);
+          });
+          break;
+        case "workbench.action.files.save":
+          void (async () => {
+            const bridge = bridgeRef.current;
+            if (!bridge) {
+              flash(setToast, "Editor is not ready yet.");
+              return;
+            }
+            const saved = await bridge.saveActiveTab();
+            if (!saved) {
+              flash(setToast, "Active editor cannot be saved.");
+            }
+          })();
+          break;
+        case "workbench.action.files.saveAll":
+          flash(setToast, "Save All (demo).");
+          break;
+        case "workbench.action.splitEditor":
+          runWithBridge((b) => b.dispatch({ type: "TOGGLE_SPLIT" }));
+          break;
+        case "workbench.action.openPreview":
+          runWithBridge((b) => b.dispatch({ type: "TOGGLE_FILE_PREVIEW" }));
+          break;
+        case "workbench.action.openChanges":
+          flash(setToast, "Open Changes (demo — no SCM diff yet).");
+          break;
+        case "workbench.action.findInFiles":
+          workbench.revealExplorer();
+          flash(setToast, "Find in Files — use the sidebar Search view.");
+          break;
+        case "workbench.action.terminal.toggleTerminal":
+          void (async () => {
+            const bridge = bridgeRef.current;
+            if (!bridge) {
+              flash(setToast, "Editor is not ready yet.");
+              return;
+            }
+            const snapshot = bridge.getState();
+            const leftTerminal = snapshot.leftTabs.find((tab) => tab.terminalId);
+            const rightTerminal = snapshot.rightTabs.find((tab) => tab.terminalId);
+            if (leftTerminal) {
+              bridge.dispatch({ type: "SELECT_TAB", group: "left", id: leftTerminal.id });
+            } else if (rightTerminal) {
+              bridge.dispatch({ type: "SELECT_TAB", group: "right", id: rightTerminal.id });
+            } else {
+              await bridge.openTerminalTab();
+            }
+          })();
+          break;
+        case "editor.action.undo":
+          flash(setToast, "Undo (demo).");
+          break;
+        case "editor.action.redo":
+          flash(setToast, "Redo (demo).");
+          break;
+        case "editor.action.clipboardCut":
+          flash(setToast, "Cut (demo).");
+          break;
+        case "editor.action.clipboardCopy":
+          flash(setToast, "Copy (demo).");
+          break;
+        case "editor.action.clipboardPaste":
+          flash(setToast, "Paste (demo).");
+          break;
+        case "editor.action.selectAll":
+          flash(setToast, "Select All (demo).");
+          break;
+        case "workbench.action.reloadWindow":
+          flash(setToast, "Reload Window — use the browser refresh.");
+          break;
+        case "workbench.action.zoomIn":
+        case "workbench.action.zoomOut":
+        case "workbench.action.zoomReset":
+          flash(setToast, "Zoom (demo).");
+          break;
+        default:
+          break;
+      }
+    },
+    [
+      bridgeRef,
+      promptForFolder,
+      router,
+      runWithBridge,
+      setPalette,
+      setToast,
+      updateWorkspaceSession,
+      workbench,
+    ]
+  );
+
+  const handleWorkbenchKeyDown = useCallback(
+    (e: KeyboardEvent) =>
+      tryDispatchKeyboardShortcut({
+        event: e,
+        platform: shortcutPlatform,
+        bindings: shortcutBindings,
+        chordRef,
+        onCommand: runShortcutCommand,
+      }),
+    [runShortcutCommand, shortcutBindings, shortcutPlatform]
+  );
+
   const commands: PaletteCommand[] = useMemo(
     () => [
       {
         id: "palette.quickOpen",
         label: "Go to File…",
-        keybinding: "Ctrl+P",
-        run: () => setPalette("quickopen"),
+        keybinding: kb("palette.quickOpen"),
+        run: () => runShortcutCommand("palette.quickOpen"),
       },
       {
         id: "palette.showCommands",
         label: "Show All Commands",
-        keybinding: "Ctrl+Shift+P",
-        run: () => setPalette("command"),
+        keybinding: kb("palette.showCommands"),
+        run: () => runShortcutCommand("palette.showCommands"),
       },
       {
         id: "workbench.action.toggleSidebarVisibility",
         label: "View: Toggle Primary Side Bar Visibility",
-        keybinding: "Ctrl+B",
-        run: () => workbench.toggleSidebar(),
+        keybinding: kb("workbench.action.toggleSidebarVisibility"),
+        run: () => runShortcutCommand("workbench.action.toggleSidebarVisibility"),
       },
       {
         id: "workbench.view.explorer",
         label: "View: Show Explorer",
-        keybinding: "Ctrl+Shift+E",
-        run: () => workbench.revealExplorer(),
+        keybinding: kb("workbench.view.explorer"),
+        run: () => runShortcutCommand("workbench.view.explorer"),
       },
       {
         id: "workbench.action.togglePanel",
         label: "View: Toggle Panel",
-        keybinding: "Ctrl+J",
-        run: () => workbench.toggleChat(),
+        keybinding: kb("workbench.action.togglePanel"),
+        run: () => runShortcutCommand("workbench.action.togglePanel"),
       },
       {
         id: "workbench.action.toggleAgentPanel",
         label: "View: Toggle Agent / Chat Side Panel",
-        keybinding: "Ctrl+Shift+B · Ctrl+Alt+B",
-        run: () => workbench.toggleChat(),
+        keybinding: kb("workbench.action.toggleAgentPanel"),
+        run: () => runShortcutCommand("workbench.action.toggleAgentPanel"),
       },
       {
         id: "workbench.action.splitEditor",
         label: "View: Split Editor",
-        keybinding: "Ctrl+\\",
-        run: () =>
-          runWithBridge((b) => b.dispatch({ type: "TOGGLE_SPLIT" })),
+        keybinding: kb("workbench.action.splitEditor"),
+        run: () => runShortcutCommand("workbench.action.splitEditor"),
       },
       {
         id: "workbench.action.openPreview",
         label: "Open Preview",
-        keybinding: "Ctrl+Shift+V",
-        run: () =>
-          runWithBridge((b) =>
-            b.dispatch({ type: "TOGGLE_FILE_PREVIEW" })
-          ),
+        keybinding: kb("workbench.action.openPreview"),
+        run: () => runShortcutCommand("workbench.action.openPreview"),
       },
       {
         id: "workbench.action.closeActiveEditor",
         label: "View: Close Editor",
-        keybinding: "Ctrl+W",
-        run: () =>
-          runWithBridge((b) => {
-            const s = b.getState();
-            const g = s.focusedGroup;
-            const id =
-              g === "left" ? s.leftActiveId : s.rightActiveId;
-            if (id) b.requestCloseTab(g, id);
-          }),
+        keybinding: kb("workbench.action.closeActiveEditor"),
+        run: () => runShortcutCommand("workbench.action.closeActiveEditor"),
       },
       {
         id: "workbench.action.closeAllEditors",
@@ -264,32 +442,20 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
       {
         id: "workbench.action.files.save",
         label: "File: Save",
-        keybinding: "Ctrl+S",
-        run: () =>
-          void (async () => {
-            const bridge = bridgeRef.current;
-            if (!bridge) {
-              flash(setToast, "Editor is not ready yet.");
-              return;
-            }
-            const saved = await bridge.saveActiveTab();
-            if (!saved) {
-              flash(setToast, "Active editor cannot be saved.");
-            }
-          })(),
+        keybinding: kb("workbench.action.files.save"),
+        run: () => runShortcutCommand("workbench.action.files.save"),
       },
       {
         id: "workbench.action.files.saveAll",
         label: "File: Save All",
-        keybinding: "Ctrl+K S",
-        run: () => flash(setToast, "Save All (demo)."),
+        keybinding: kb("workbench.action.files.saveAll"),
+        run: () => runShortcutCommand("workbench.action.files.saveAll"),
       },
       {
         id: "workbench.action.openGlobalSettings",
         label: "Preferences: Open User Settings",
-        keybinding: "Ctrl+,",
-        run: () =>
-          runWithBridge((b) => b.dispatch({ type: "OPEN_SETTINGS_TAB" })),
+        keybinding: kb("workbench.action.openGlobalSettings"),
+        run: () => runShortcutCommand("workbench.action.openGlobalSettings"),
       },
       {
         id: "workbench.colorTheme.light",
@@ -318,37 +484,38 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
       {
         id: "workbench.action.openKeyboardShortcuts",
         label: "Preferences: Open Keyboard Shortcuts",
-        run: () => flash(setToast, "Keyboard shortcuts editor (demo)."),
+        keybinding: kb("workbench.action.openKeyboardShortcuts"),
+        run: () => runShortcutCommand("workbench.action.openKeyboardShortcuts"),
       },
       {
         id: "workbench.action.quickOpen",
         label: "File: Quick Open",
-        keybinding: "Ctrl+P",
-        run: () => setPalette("quickopen"),
+        keybinding: kb("palette.quickOpen"),
+        run: () => runShortcutCommand("palette.quickOpen"),
       },
       {
         id: "workbench.action.gotoFile",
         label: "View: Open File",
-        keybinding: "Ctrl+G",
-        run: () => setPalette("quickopen"),
+        keybinding: kb("workbench.action.gotoFile"),
+        run: () => runShortcutCommand("workbench.action.gotoFile"),
       },
       {
         id: "workbench.action.newUntitledFile",
         label: "File: New Untitled Text File",
-        keybinding: "Ctrl+N",
-        run: () => flash(setToast, "New file (demo)."),
+        keybinding: kb("workbench.action.newUntitledFile"),
+        run: () => runShortcutCommand("workbench.action.newUntitledFile"),
       },
       {
         id: "workbench.action.newAgent",
         label: "File: New Agent",
-        run: () => router.push("/agent"),
+        keybinding: kb("workbench.action.newAgent"),
+        run: () => runShortcutCommand("workbench.action.newAgent"),
       },
       {
         id: "workbench.action.newWindow",
         label: "File: New Window",
-        keybinding: "Ctrl+Shift+N",
-        run: () =>
-          flash(setToast, "New window (demo — open another browser tab)."),
+        keybinding: kb("workbench.action.newWindow"),
+        run: () => runShortcutCommand("workbench.action.newWindow"),
       },
       {
         id: "workbench.action.newBrowser",
@@ -368,58 +535,56 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
       {
         id: "workbench.action.openChanges",
         label: "View: Open Changes",
-        keybinding: "Ctrl+E",
-        run: () => flash(setToast, "Open Changes (demo — no SCM diff yet)."),
+        keybinding: kb("workbench.action.openChanges"),
+        run: () => runShortcutCommand("workbench.action.openChanges"),
       },
       {
         id: "editor.action.undo",
         label: "Edit: Undo",
-        keybinding: "Ctrl+Z",
-        run: () => flash(setToast, "Undo (demo)."),
+        keybinding: kb("editor.action.undo"),
+        run: () => runShortcutCommand("editor.action.undo"),
       },
       {
         id: "editor.action.redo",
         label: "Edit: Redo",
-        keybinding: "Ctrl+Y",
-        run: () => flash(setToast, "Redo (demo)."),
+        keybinding: kb("editor.action.redo"),
+        run: () => runShortcutCommand("editor.action.redo"),
       },
       {
         id: "editor.action.clipboardCut",
         label: "Edit: Cut",
-        keybinding: "Ctrl+X",
-        run: () => flash(setToast, "Cut (demo)."),
+        keybinding: kb("editor.action.clipboardCut"),
+        run: () => runShortcutCommand("editor.action.clipboardCut"),
       },
       {
         id: "editor.action.clipboardCopy",
         label: "Edit: Copy",
-        keybinding: "Ctrl+C",
-        run: () => flash(setToast, "Copy (demo)."),
+        keybinding: kb("editor.action.clipboardCopy"),
+        run: () => runShortcutCommand("editor.action.clipboardCopy"),
       },
       {
         id: "editor.action.clipboardPaste",
         label: "Edit: Paste",
-        keybinding: "Ctrl+V",
-        run: () => flash(setToast, "Paste (demo)."),
+        keybinding: kb("editor.action.clipboardPaste"),
+        run: () => runShortcutCommand("editor.action.clipboardPaste"),
       },
       {
         id: "editor.action.selectAll",
         label: "Edit: Select All",
-        keybinding: "Ctrl+A",
-        run: () => flash(setToast, "Select All (demo)."),
+        keybinding: kb("editor.action.selectAll"),
+        run: () => runShortcutCommand("editor.action.selectAll"),
       },
       {
         id: "workbench.action.openFile",
         label: "File: Open File…",
-        keybinding: "Ctrl+O",
-        run: () => setPalette("quickopen"),
+        keybinding: kb("workbench.action.openFile"),
+        run: () => runShortcutCommand("workbench.action.openFile"),
       },
       {
         id: "workbench.action.openFolder",
         label: "File: Open Folder…",
-        keybinding: "Ctrl+Shift+O",
-        run: () => {
-          promptForFolder();
-        },
+        keybinding: kb("workbench.action.openFolder"),
+        run: () => runShortcutCommand("workbench.action.openFolder"),
       },
       {
         id: "workbench.action.createWorkspace",
@@ -478,60 +643,38 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
       {
         id: "workbench.action.findInFiles",
         label: "Search: Find in Files",
-        keybinding: "Ctrl+Shift+F",
-        run: () => {
-          workbench.revealExplorer();
-          flash(setToast, "Find in Files — use the sidebar Search view.");
-        },
+        keybinding: kb("workbench.action.findInFiles"),
+        run: () => runShortcutCommand("workbench.action.findInFiles"),
       },
       {
         id: "workbench.action.terminal.toggleTerminal",
         label: "View: Toggle Terminal",
-        keybinding: "Ctrl+`",
-        run: () =>
-          void (async () => {
-            const bridge = bridgeRef.current;
-            if (!bridge) {
-              flash(setToast, "Editor is not ready yet.");
-              return;
-            }
-            const s = bridge.getState();
-            const leftTerminal = s.leftTabs.find((t) => t.terminalId);
-            const rightTerminal = s.rightTabs.find((t) => t.terminalId);
-            if (leftTerminal) {
-              bridge.dispatch({ type: "SELECT_TAB", group: "left", id: leftTerminal.id });
-              return;
-            }
-            if (rightTerminal) {
-              bridge.dispatch({ type: "SELECT_TAB", group: "right", id: rightTerminal.id });
-              return;
-            }
-            await bridge.openTerminalTab();
-          })(),
+        keybinding: kb("workbench.action.terminal.toggleTerminal"),
+        run: () => runShortcutCommand("workbench.action.terminal.toggleTerminal"),
       },
       {
         id: "workbench.action.reloadWindow",
         label: "Developer: Reload Window",
-        keybinding: "Ctrl+R",
-        run: () => flash(setToast, "Reload Window — use the browser refresh."),
+        keybinding: kb("workbench.action.reloadWindow"),
+        run: () => runShortcutCommand("workbench.action.reloadWindow"),
       },
       {
         id: "workbench.action.zoomIn",
         label: "View: Zoom In",
-        keybinding: "Ctrl+=",
-        run: () => flash(setToast, "Zoom (demo)."),
+        keybinding: kb("workbench.action.zoomIn"),
+        run: () => runShortcutCommand("workbench.action.zoomIn"),
       },
       {
         id: "workbench.action.zoomOut",
         label: "View: Zoom Out",
-        keybinding: "Ctrl+-",
-        run: () => flash(setToast, "Zoom (demo)."),
+        keybinding: kb("workbench.action.zoomOut"),
+        run: () => runShortcutCommand("workbench.action.zoomOut"),
       },
       {
         id: "workbench.action.zoomReset",
         label: "View: Reset Zoom",
-        keybinding: "Ctrl+0",
-        run: () => flash(setToast, "Reset zoom (demo)."),
+        keybinding: kb("workbench.action.zoomReset"),
+        run: () => runShortcutCommand("workbench.action.zoomReset"),
       },
       {
         id: "workbench.action.showCommands",
@@ -553,17 +696,16 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
       activeWorkspaceId,
       bridgeRef,
       defaultWorkspaceId,
+      kb,
       openWorkspaceById,
       openBrowserUrlPrompt,
       promptForCreateWorkspace,
-      promptForFolder,
       refreshTree,
-      router,
+      runShortcutCommand,
       runWithBridge,
       setDefaultWorkspace,
       setThemePreference,
       workspaces,
-      workbench,
     ]
   );
 
@@ -573,144 +715,6 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
       c?.run();
     },
     [commands]
-  );
-
-  const handleWorkbenchKeyDown = useCallback(
-    (e: KeyboardEvent) => {
-      if (e.key === "F1") {
-        e.preventDefault();
-        setPalette("command");
-        return true;
-      }
-
-      const mod = e.metaKey || e.ctrlKey;
-      if (!mod) return false;
-
-      const key = e.key.toLowerCase();
-
-      if (key === "p" && !e.shiftKey) {
-        e.preventDefault();
-        setPalette("quickopen");
-        return true;
-      }
-      if (key === "p" && e.shiftKey) {
-        e.preventDefault();
-        setPalette("command");
-        return true;
-      }
-      if (key === "b" && e.shiftKey) {
-        e.preventDefault();
-        workbench.toggleChat();
-        return true;
-      }
-      if (key === "b" && e.altKey) {
-        e.preventDefault();
-        workbench.toggleChat();
-        return true;
-      }
-      if (key === "b" && !e.shiftKey && !e.altKey) {
-        e.preventDefault();
-        workbench.toggleSidebar();
-        return true;
-      }
-      if (key === "e" && e.shiftKey) {
-        e.preventDefault();
-        workbench.revealExplorer();
-        return true;
-      }
-      if (key === "j" && !e.shiftKey) {
-        e.preventDefault();
-        workbench.toggleChat();
-        return true;
-      }
-      if (key === "w" && !e.shiftKey) {
-        e.preventDefault();
-        runWithBridge((b) => {
-          const s = b.getState();
-          const g = s.focusedGroup;
-          const id = g === "left" ? s.leftActiveId : s.rightActiveId;
-          if (id) b.requestCloseTab(g, id);
-        });
-        return true;
-      }
-      if (key === "s" && !e.shiftKey) {
-        e.preventDefault();
-        const bridge = bridgeRef.current;
-        if (!bridge) {
-          flash(setToast, "Editor is not ready yet.");
-          return true;
-        }
-        void bridge.saveActiveTab().then((saved) => {
-          if (!saved) {
-            flash(setToast, "Active editor cannot be saved.");
-          }
-        });
-        return true;
-      }
-      if (e.code === "Comma" && !e.shiftKey) {
-        e.preventDefault();
-        runWithBridge((b) => b.dispatch({ type: "OPEN_SETTINGS_TAB" }));
-        return true;
-      }
-      if (key === "n" && !e.shiftKey) {
-        e.preventDefault();
-        flash(setToast, "New file (demo).");
-        return true;
-      }
-      if (key === "o" && !e.shiftKey) {
-        e.preventDefault();
-        setPalette("quickopen");
-        return true;
-      }
-      if (key === "g" && !e.shiftKey) {
-        e.preventDefault();
-        setPalette("quickopen");
-        return true;
-      }
-      if (key === "e" && !e.shiftKey) {
-        e.preventDefault();
-        flash(setToast, "Open Changes (demo — no SCM diff yet).");
-        return true;
-      }
-      if (key === "v" && e.shiftKey) {
-        e.preventDefault();
-        runWithBridge((b) => b.dispatch({ type: "TOGGLE_FILE_PREVIEW" }));
-        return true;
-      }
-      if (e.code === "Backslash" && !e.shiftKey) {
-        e.preventDefault();
-        runWithBridge((b) => b.dispatch({ type: "TOGGLE_SPLIT" }));
-        return true;
-      }
-      if (key === "f" && e.shiftKey) {
-        e.preventDefault();
-        workbench.revealExplorer();
-        flash(setToast, "Find in Files — open Search in the sidebar.");
-        return true;
-      }
-      if (e.code === "Backquote" && !e.shiftKey) {
-        e.preventDefault();
-        const bridge = bridgeRef.current;
-        if (!bridge) {
-          flash(setToast, "Editor is not ready yet.");
-          return true;
-        }
-        const snapshot = bridge.getState();
-        const leftTerminal = snapshot.leftTabs.find((tab) => tab.terminalId);
-        const rightTerminal = snapshot.rightTabs.find((tab) => tab.terminalId);
-        if (leftTerminal) {
-          bridge.dispatch({ type: "SELECT_TAB", group: "left", id: leftTerminal.id });
-        } else if (rightTerminal) {
-          bridge.dispatch({ type: "SELECT_TAB", group: "right", id: rightTerminal.id });
-        } else {
-          void bridge.openTerminalTab();
-        }
-        return true;
-      }
-
-      return false;
-    },
-    [bridgeRef, runWithBridge, workbench]
   );
 
   useEffect(() => {
@@ -749,7 +753,9 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
         return;
       }
 
-      void handleWorkbenchKeyDown(e);
+      if (handleWorkbenchKeyDown(e)) {
+        return;
+      }
     };
 
     const onPaste = (e: ClipboardEvent) => {

@@ -1,20 +1,30 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type UIEvent,
+} from "react";
 import { HardwareAwareTextInput } from "@/components/input/HardwareAwareTextField";
 import type { LucideIcon } from "lucide-react";
 import {
   BookMarked,
   Bot,
   Box,
+  Download,
   ExternalLink,
   FlaskConical,
+  Keyboard,
   Settings,
   User,
   Wrench,
 } from "lucide-react";
 import { SETTINGS_PANELS } from "@/components/editor/settings-panels";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
+import { detectShortcutPlatform, primaryModifierLabel } from "@/lib/keyboard-shortcuts";
 
 type NavEntry =
   | { kind: "item"; id: string; label: string; icon: LucideIcon }
@@ -28,11 +38,13 @@ const DOCS_PATH = "/docs";
  */
 const NAV_ENTRIES: NavEntry[] = [
   { kind: "item", id: "general", label: "General", icon: Settings },
+  { kind: "item", id: "keyboardShortcuts", label: "Keyboard shortcuts", icon: Keyboard },
   { kind: "item", id: "agents", label: "Agents", icon: Bot },
   { kind: "item", id: "models", label: "Models", icon: Box },
   { kind: "divider" },
   { kind: "item", id: "rulesSkills", label: "Rules, Skills, Subagents", icon: BookMarked },
   { kind: "item", id: "tools", label: "Tools & MCPs", icon: Wrench },
+  { kind: "item", id: "exportImport", label: "Export / import", icon: Download },
   { kind: "item", id: "beta", label: "Beta", icon: FlaskConical },
 ];
 
@@ -47,7 +59,11 @@ export function SettingsEditorView() {
   const [activeNav, setActiveNav] = useState(workspaceSession.settingsView.activeNav);
   const [searchQuery, setSearchQuery] = useState(workspaceSession.settingsView.searchQuery);
   const scrollRootRef = useRef<HTMLElement | null>(null);
-  const Panel = SETTINGS_PANELS[activeNav];
+  const Panel = SETTINGS_PANELS[activeNav] ?? SETTINGS_PANELS.general;
+  const searchModLabel = useMemo(
+    () => primaryModifierLabel(detectShortcutPlatform()),
+    []
+  );
 
   useEffect(() => {
     setActiveNav(workspaceSession.settingsView.activeNav);
@@ -79,6 +95,25 @@ export function SettingsEditorView() {
     window.open(url, "_blank", "noopener,noreferrer");
   }, []);
 
+  /** `currentTarget` on synthetic events can be cleared before React runs the state updater — read scrollTop now. */
+  const onMainScroll = useCallback(
+    (event: UIEvent<HTMLElement>) => {
+      const el = event.currentTarget ?? scrollRootRef.current;
+      if (!el) {
+        return;
+      }
+      const scrollTop = el.scrollTop;
+      updateWorkspaceSession((current) => ({
+        ...current,
+        settingsView: {
+          ...current.settingsView,
+          scrollTop,
+        },
+      }));
+    },
+    [updateWorkspaceSession]
+  );
+
   return (
     <div className="flex h-full min-h-0 w-full bg-[var(--bg-main)]">
       <aside className="flex w-[min(100%,268px)] shrink-0 flex-col bg-[var(--bg-main)]">
@@ -102,7 +137,7 @@ export function SettingsEditorView() {
             type="search"
             value={searchQuery}
             onChange={setSearchQuery}
-            placeholder="Search settings Ctrl+F"
+            placeholder={`Search settings ${searchModLabel}+F`}
             className={searchInputClass}
             ariaLabel="Search settings"
           />
@@ -156,15 +191,7 @@ export function SettingsEditorView() {
       <main
         ref={scrollRootRef}
         className="hide-scrollbar-y min-h-0 min-w-0 flex-1 overflow-y-auto bg-[var(--bg-main)] px-[28px] py-[24px]"
-        onScroll={(event) => {
-          updateWorkspaceSession((current) => ({
-            ...current,
-            settingsView: {
-              ...current.settingsView,
-              scrollTop: event.currentTarget.scrollTop,
-            },
-          }));
-        }}
+        onScroll={onMainScroll}
       >
         {Panel ? <Panel /> : null}
       </main>

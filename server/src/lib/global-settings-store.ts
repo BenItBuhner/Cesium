@@ -49,6 +49,9 @@ export type GlobalSettings = {
       connect?: boolean;
     }>;
   };
+  keyboardShortcuts: {
+    bindings: Record<string, string[]>;
+  };
 };
 
 const GLOBAL_SETTINGS_FILE = path.join(DATA_DIR, "profile", "global-settings.json");
@@ -148,6 +151,9 @@ function createDefaultSettings(): GlobalSettings {
           on: true,
         },
       ],
+    },
+    keyboardShortcuts: {
+      bindings: {},
     },
   };
 }

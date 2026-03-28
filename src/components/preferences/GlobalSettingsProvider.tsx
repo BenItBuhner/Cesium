@@ -12,6 +12,7 @@ import {
 } from "react";
 import {
   createDefaultGlobalSettings,
+  normalizeLoadedGlobalSettings,
   type GlobalSettingsState,
 } from "@/lib/global-settings";
 import { availableModels, currentModel } from "@/lib/mock-data";
@@ -77,7 +78,16 @@ export function GlobalSettingsProvider({ children }: { children: ReactNode }) {
         const result = await fetchGlobalSettings();
         if (!mounted) return;
         skipNextSaveRef.current = true;
-        setSettings(result.settings ?? createDefaultState());
+        setSettings(
+          normalizeLoadedGlobalSettings(
+            result.settings,
+            availableModels.map((model) => ({
+              id: model.id,
+              name: model.name,
+              on: model.id === currentModel.id,
+            }))
+          )
+        );
       } finally {
         if (mounted) {
           setReady(true);
