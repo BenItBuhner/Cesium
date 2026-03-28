@@ -2,7 +2,17 @@ import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 
-const DEFAULT_ALLOWED_ROOTS = ["/home/bennett", "/home/bennett/projects"];
+/**
+ * Repo root when the server runs from `server/` (npm run dev in server/), else `process.cwd()`.
+ * Matches bootstrap workspace default so the initial workspace is allowed without extra env.
+ */
+export function resolveRepoRootFromProcessCwd(): string {
+  const cwd = process.cwd();
+  if (path.basename(cwd).toLowerCase() === "server") {
+    return path.resolve(cwd, "..");
+  }
+  return path.resolve(cwd);
+}
 
 function resolveDataDir(): string {
   const configured = process.env.OPENCURSOR_DATA_DIR?.trim();
@@ -67,14 +77,33 @@ export function createWorkspaceId(root: string): string {
 
 export function getAllowedWorkspaceRoots(): string[] {
   const configured = process.env.WORKSPACE_ALLOWED_ROOTS?.trim();
-  const values = configured
-    ? configured
-        .split(",")
-        .map((value) => value.trim())
-        .filter(Boolean)
-    : DEFAULT_ALLOWED_ROOTS;
+  if (configured) {
+    return [
+      ...new Set(
+        configured
+          .split(",")
+          .map((value) => path.resolve(value.trim()))
+          .filter(Boolean)
+      ),
+    ];
+  }
 
-  return values.map((value) => path.resolve(value));
+  const defaults: string[] = [];
+  const workspaceRoot = process.env.WORKSPACE_ROOT?.trim();
+  if (workspaceRoot) {
+    defaults.push(path.resolve(workspaceRoot));
+  }
+  defaults.push(resolveRepoRootFromProcessCwd());
+
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const value of defaults) {
+    const key = path.normalize(value);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(value);
+  }
+  return out;
 }
 
 export function isWithinAllowedRoots(targetPath: string): boolean {

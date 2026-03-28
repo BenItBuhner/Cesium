@@ -1,4 +1,4 @@
-import "dotenv/config";
+import "./env-bootstrap.js";
 import dns from "node:dns";
 import { serve } from "@hono/node-server";
 

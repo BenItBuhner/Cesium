@@ -1,5 +1,6 @@
 import path from "node:path";
 import { Hono } from "hono";
+import { resolveRepoRootFromProcessCwd } from "../lib/persistence.js";
 import {
   createWorkspace,
   ensureInitialWorkspace,
@@ -25,12 +26,7 @@ function resolveInitialWorkspaceRoot(): string {
     return path.resolve(configuredRoot);
   }
 
-  const cwd = process.cwd();
-  if (path.basename(cwd).toLowerCase() === "server") {
-    return path.resolve(cwd, "..");
-  }
-
-  return path.resolve(cwd);
+  return resolveRepoRootFromProcessCwd();
 }
 
 workspaceRoutes.get("/api/workspaces/bootstrap", async (c) => {
