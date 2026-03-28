@@ -21,6 +21,9 @@ const providerIcon: Record<ModelInfo["provider"], typeof Box> = {
   anthropic: Hexagon,
   google: Box,
   auto: Box,
+  cursor: Sparkles,
+  opencode: Box,
+  fixture: Box,
 };
 
 const popoverSurface =
@@ -31,6 +34,7 @@ interface ModelDropdownProps {
   models: ModelInfo[];
   onModelChange?: (model: ModelInfo) => void;
   popoverPlacement?: "above" | "below";
+  disabled?: boolean;
 }
 
 export function ModelDropdown({
@@ -38,6 +42,7 @@ export function ModelDropdown({
   models,
   onModelChange,
   popoverPlacement = "above",
+  disabled = false,
 }: ModelDropdownProps) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -55,15 +60,18 @@ export function ModelDropdown({
   const filtered = useMemo(() => {
     if (!query.trim()) return models;
     const q = query.toLowerCase();
-    return models.filter((m) => m.name.toLowerCase().includes(q));
+    return models.filter(
+      (m) => m.name.toLowerCase().includes(q) || m.id.toLowerCase().includes(q)
+    );
   }, [models, query]);
 
   return (
     <div ref={triggerRef}>
       <button
         type="button"
+        disabled={disabled}
         onClick={() => setOpen((v) => !v)}
-        className="flex items-center gap-[4px] transition-opacity hover:opacity-80"
+        className="flex items-center gap-[4px] transition-opacity hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-50"
       >
         <ProviderIcon className="size-[14px] shrink-0 text-[var(--text-secondary)]" strokeWidth={1.5} />
         <span className="font-sans text-[13px] font-normal text-[var(--text-secondary)]">

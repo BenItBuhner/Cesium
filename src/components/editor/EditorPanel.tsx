@@ -59,6 +59,17 @@ function createEditorStateFromSession(session: {
   };
 }
 
+function areViewStatesEqual(a: unknown, b: unknown): boolean {
+  if (Object.is(a, b)) {
+    return true;
+  }
+  try {
+    return JSON.stringify(a) === JSON.stringify(b);
+  } catch {
+    return false;
+  }
+}
+
 export function EditorPanel() {
   const {
     registerOpenTranscript,
@@ -776,17 +787,33 @@ export function EditorPanel() {
           filePath={tab.filePath}
           initialViewState={viewStateByTabIdRef.current[tab.id]}
           onViewStateChange={(viewState) => {
-            viewStateByTabIdRef.current = {
+            if (
+              areViewStatesEqual(viewStateByTabIdRef.current[tab.id], viewState)
+            ) {
+              return;
+            }
+            const nextViewStateByTabId = {
               ...viewStateByTabIdRef.current,
               [tab.id]: viewState,
             };
-            updateWorkspaceSession((current) => ({
-              ...current,
-              editor: {
-                ...stateRef.current,
-                viewStateByTabId: viewStateByTabIdRef.current,
-              },
-            }));
+            viewStateByTabIdRef.current = nextViewStateByTabId;
+            updateWorkspaceSession((current) => {
+              if (
+                areViewStatesEqual(
+                  current.editor.viewStateByTabId[tab.id],
+                  viewState
+                )
+              ) {
+                return current;
+              }
+              return {
+                ...current,
+                editor: {
+                  ...stateRef.current,
+                  viewStateByTabId: nextViewStateByTabId,
+                },
+              };
+            });
           }}
           onContentChange={(content) =>
             dispatch({ type: "UPDATE_TAB_CONTENT", tabId: tab.id, content })

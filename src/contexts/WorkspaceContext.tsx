@@ -39,13 +39,12 @@ import {
 import { JsonWebSocket, toWebSocketUrl } from "@/lib/ws-client";
 import { useWorkbenchNotifications } from "@/components/notifications/WorkbenchNotificationProvider";
 import { WORKBENCH_NOTIFICATION_KIND } from "@/components/notifications/workbench-notification-types";
-import { chatTabs, chatMessages, currentModel } from "@/lib/mock-data";
+import { currentModel } from "@/lib/mock-data";
 
 const HEARTBEAT_INTERVAL_MS = 5_000;
 const PONG_STALE_MS = 12_000;
 const RECONNECT_TOAST_MS = 5_000;
 const SESSION_SAVE_DEBOUNCE_MS = 500;
-const MAIN_CHAT_TAB_ID = "planning";
 const SESSION_BACKUP_STORAGE_PREFIX = "opencursor.workspace-session.";
 
 type WorkspaceSessionBackup = {
@@ -93,16 +92,8 @@ type WorkspaceContextValue = {
 
 const WorkspaceContext = createContext<WorkspaceContextValue | null>(null);
 
-function buildInitialThreads(): Record<string, typeof chatMessages> {
-  const threads: Record<string, typeof chatMessages> = {};
-  for (const tab of chatTabs) {
-    threads[tab.id] = tab.id === MAIN_CHAT_TAB_ID ? chatMessages : [];
-  }
-  return threads;
-}
-
 function createSessionDefaults(): WorkspaceSessionState {
-  return createDefaultWorkspaceSession(chatTabs, buildInitialThreads(), currentModel);
+  return createDefaultWorkspaceSession([], currentModel);
 }
 
 function getWorkspaceSessionBackupKey(workspaceId: string): string {
@@ -175,16 +166,24 @@ function normalizeWorkspaceSession(
       ...defaults.chat,
       ...(raw.chat ?? {}),
       tabs: Array.isArray(raw.chat?.tabs) && raw.chat.tabs.length > 0 ? raw.chat.tabs : defaults.chat.tabs,
-      messagesByTabId:
-        raw.chat?.messagesByTabId && typeof raw.chat.messagesByTabId === "object"
-          ? raw.chat.messagesByTabId
-          : defaults.chat.messagesByTabId,
       scrollTopByTabId:
         raw.chat?.scrollTopByTabId && typeof raw.chat.scrollTopByTabId === "object"
           ? raw.chat.scrollTopByTabId
           : defaults.chat.scrollTopByTabId,
+      hiddenConversationIds: Array.isArray(raw.chat?.hiddenConversationIds)
+        ? raw.chat.hiddenConversationIds.filter(
+            (value): value is string => typeof value === "string" && value.length > 0
+          )
+        : defaults.chat.hiddenConversationIds,
       model: raw.chat?.model ?? defaults.chat.model,
       mode: raw.chat?.mode ?? defaults.chat.mode,
+      backendId:
+        raw.chat?.backendId === "cursor-acp" ||
+        raw.chat?.backendId === "opencode-acp" ||
+        raw.chat?.backendId === "codex-adapter" ||
+        raw.chat?.backendId === "claude-adapter"
+          ? raw.chat.backendId
+          : defaults.chat.backendId,
     },
     explorer: {
       ...defaults.explorer,
@@ -451,7 +450,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         setFileTree(tree);
         setTerminals(terminalList);
         skipNextSessionSaveRef.current = true;
-        setWorkspaceSession(normalizeWorkspaceSession(localBackup ?? session));
+        setWorkspaceSession(normalizeWorkspaceSession(session ?? localBackup));
         setSessionReady(true);
         setFsResyncToken((value) => value + 1);
       } finally {

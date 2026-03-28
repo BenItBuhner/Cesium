@@ -13,7 +13,7 @@ import {
   type PointerEvent as ReactPointerEvent,
   type ReactElement,
 } from "react";
-import { ArrowUp, Mic, Upload } from "lucide-react";
+import { ArrowUp, Mic, Square, Upload } from "lucide-react";
 import { useHardwareInput } from "@/components/input/HardwareInputProvider";
 import {
   applyTextBufferKey,
@@ -23,12 +23,13 @@ import {
 } from "@/components/input/text-buffer";
 import { ModeDropdown } from "./ModeDropdown";
 import { ModelDropdown } from "./ModelDropdown";
+import { BackendDropdown } from "./BackendDropdown";
+import { SessionConfigOptionDropdown } from "./SessionConfigOptionDropdown";
 import {
   ComposerAutocomplete,
   type ComposerPopoverPosition,
 } from "./ComposerAutocomplete";
 import { useClickOutside } from "@/hooks/useClickOutside";
-import { availableModels } from "@/lib/mock-data";
 import {
   getAllAtSuggestions,
   filterAtSuggestions,
@@ -43,11 +44,13 @@ import {
   parseTriggerToken,
   replaceTextRange,
 } from "./composer-editor-utils";
-import type { EditorMode, ModelInfo } from "@/lib/types";
+import { getModeTone } from "@/lib/chat-modes";
+import type { AgentModeOption, EditorMode, KnownEditorMode, ModelInfo } from "@/lib/types";
+import type { AgentBackendId, AgentBackendInfo, AgentConfigOption } from "@/lib/agent-types";
 
 const AT_LIST = getAllAtSuggestions();
 
-const sendButtonBgClass: Record<EditorMode, string> = {
+const sendButtonBgClass: Record<KnownEditorMode, string> = {
   agent: "bg-[var(--accent-dark)]",
   plan: "bg-[var(--plan-accent-dark)]",
   debug: "bg-[var(--debug-accent-dark)]",
@@ -63,6 +66,18 @@ interface ChatComposerProps {
   onModeChange: (mode: EditorMode) => void;
   model: ModelInfo;
   onModelChange: (model: ModelInfo) => void;
+  backendId: AgentBackendId;
+  backends: AgentBackendInfo[];
+  onBackendChange: (backendId: AgentBackendId) => void;
+  models: ModelInfo[];
+  modeOptions?: AgentModeOption[];
+  /** Extra ACP selectors: reasoning effort, speed, context window, etc. */
+  sessionConfigOptions?: AgentConfigOption[];
+  onSessionConfigOptionChange?: (configId: string, value: string) => void;
+  onSubmit: (text: string) => Promise<void> | void;
+  onCancel?: () => Promise<void> | void;
+  busy?: boolean;
+  configLocked?: boolean;
   /** Empty thread: composer sits under tabs; otherwise docked above bottom. */
   layout?: "docked-bottom" | "empty-top";
 }
@@ -167,6 +182,17 @@ export function ChatComposer({
   onModeChange,
   model,
   onModelChange,
+  backendId,
+  backends,
+  onBackendChange,
+  models,
+  modeOptions,
+  sessionConfigOptions,
+  onSessionConfigOptionChange,
+  onSubmit,
+  onCancel,
+  busy = false,
+  configLocked = false,
   layout = "docked-bottom",
 }: ChatComposerProps) {
   const surfaceId = useId().replace(/:/g, "_");
@@ -296,6 +322,19 @@ export function ChatComposer({
   useEffect(() => {
     setSelection((prev) => clampSelection(value, prev));
   }, [value]);
+
+  const submitComposer = useCallback(async () => {
+    const trimmed = valueRef.current.trim();
+    if (!trimmed || busy) {
+      return;
+    }
+    await onSubmit(trimmed);
+    valueRef.current = "";
+    selectionRef.current = { start: 0, end: 0 };
+    setValue("");
+    setSelection({ start: 0, end: 0 });
+    setMenu(null);
+  }, [busy, onSubmit]);
 
   const syncNativeState = useCallback(() => {
     if (hardwareInputEnabled) return;
@@ -430,6 +469,11 @@ export function ChatComposer({
         }
         return true;
       }
+      if (!currentMenu && event.key === "Enter" && !event.shiftKey) {
+        event.preventDefault();
+        void submitComposer();
+        return true;
+      }
 
       const next = applyTextBufferKey(
         valueRef.current,
@@ -449,12 +493,18 @@ export function ChatComposer({
       setSelection(next.selection);
       return true;
     },
-    [pickAt, pickSlash]
+    [pickAt, pickSlash, submitComposer]
   );
 
   const handleNativeComposerKeyDown = useCallback(
     (event: ReactKeyboardEvent<HTMLDivElement>) => {
-      if (!menu) return;
+      if (!menu) {
+        if (event.key === "Enter" && !event.shiftKey) {
+          event.preventDefault();
+          void submitComposer();
+        }
+        return;
+      }
       const items = menu.kind === "at" ? filteredAt : filteredSlash;
 
       if (event.key === "Escape") {
@@ -482,9 +532,10 @@ export function ChatComposer({
         } else {
           pickSlash(items[idx] as SlashSuggestion);
         }
+        return;
       }
     },
-    [filteredAt, filteredSlash, menu, pickAt, pickSlash, selectedIndex]
+    [filteredAt, filteredSlash, menu, pickAt, pickSlash, selectedIndex, submitComposer]
   );
 
   useEffect(() => {
@@ -560,6 +611,7 @@ export function ChatComposer({
     () => renderComposerText(value, selection, isActive, caretRef),
     [isActive, selection, value]
   );
+  const canSubmit = value.trim().length > 0 && !busy;
 
   return (
     <div
@@ -680,22 +732,48 @@ export function ChatComposer({
         />
       )}
 
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-[11px]">
-          <ModeDropdown
-            mode={mode}
-            onModeChange={onModeChange}
-            popoverPlacement={modeModelPopoverPlacement}
-          />
-          <ModelDropdown
-            model={model}
-            models={availableModels}
-            onModelChange={onModelChange}
-            popoverPlacement={modeModelPopoverPlacement}
-          />
+      <div className="flex items-start justify-between gap-[12px]">
+        <div className="flex min-w-0 flex-1 flex-col gap-[6px]">
+          <div className="flex flex-wrap items-center gap-[11px]">
+            <BackendDropdown
+              backendId={backendId}
+              backends={backends}
+              onBackendChange={onBackendChange}
+              popoverPlacement={modeModelPopoverPlacement}
+              disabled={busy || configLocked}
+            />
+            <ModeDropdown
+              mode={mode}
+              onModeChange={onModeChange}
+              popoverPlacement={modeModelPopoverPlacement}
+              disabled={busy || configLocked}
+              options={modeOptions}
+            />
+            <ModelDropdown
+              model={model}
+              models={models}
+              onModelChange={onModelChange}
+              popoverPlacement={modeModelPopoverPlacement}
+              disabled={busy || configLocked}
+            />
+          </div>
+          {sessionConfigOptions && sessionConfigOptions.length > 0 && (
+            <div className="flex max-w-full flex-wrap items-center gap-[8px]">
+              {sessionConfigOptions.map((opt) => (
+                <SessionConfigOptionDropdown
+                  key={opt.id}
+                  option={opt}
+                  value={opt.currentValue}
+                  popoverPlacement={modeModelPopoverPlacement}
+                  disabled={busy || configLocked || !onSessionConfigOptionChange}
+                  onChange={(next) => onSessionConfigOptionChange?.(opt.id, next)}
+                />
+              ))}
+            </div>
+          )}
         </div>
 
-        <div className="flex items-center gap-[9px]">
+        <div className="flex shrink-0 items-center gap-[9px]">
           <button
             type="button"
             className="text-[var(--text-secondary)] transition-colors hover:text-[var(--text-primary)]"
@@ -712,10 +790,22 @@ export function ChatComposer({
           </button>
           <button
             type="button"
-            className={`flex h-[20px] w-[20px] items-center justify-center rounded-full transition-opacity hover:opacity-80 ${sendButtonBgClass[mode]}`}
-            aria-label="Send"
+            onClick={() => {
+              if (busy) {
+                void onCancel?.();
+                return;
+              }
+              void submitComposer();
+            }}
+            disabled={busy ? !onCancel : !canSubmit}
+            className={`flex h-[20px] w-[20px] items-center justify-center rounded-full transition-opacity hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-50 ${sendButtonBgClass[getModeTone(mode)]}`}
+            aria-label={busy ? "Stop" : "Send"}
           >
-            <ArrowUp className="size-3 text-[var(--bg-main)]" strokeWidth={2.5} />
+            {busy ? (
+              <Square className="size-[9px] text-[var(--bg-main)]" fill="currentColor" strokeWidth={2.2} />
+            ) : (
+              <ArrowUp className="size-3 text-[var(--bg-main)]" strokeWidth={2.5} />
+            )}
           </button>
         </div>
       </div>

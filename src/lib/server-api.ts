@@ -1,8 +1,16 @@
 "use client";
 
 import type { GlobalSettingsState } from "@/lib/global-settings";
+import type {
+  AgentConversationConfigPatch,
+  AgentConversationCreateInput,
+  AgentConversationListResult,
+  AgentConversationRecord,
+  AgentConversationSnapshot,
+} from "@/lib/agent-types";
 import type { WorkspaceSessionState } from "@/lib/workspace-session";
 import type { FileNode, TerminalInfo, WorkspaceInfo, WorkspaceRecord } from "@/lib/types";
+import { toWebSocketUrl } from "@/lib/ws-client";
 
 const BASE_URL =
   process.env.NEXT_PUBLIC_SERVER_URL?.replace(/\/+$/, "") ??
@@ -71,6 +79,11 @@ async function request<T>(
 
 export function getServerBaseUrl(): string {
   return BASE_URL;
+}
+
+export function buildAgentWebSocketUrl(workspaceId: string): string {
+  const params = new URLSearchParams({ workspaceId });
+  return `${toWebSocketUrl(BASE_URL)}/ws/agent?${params.toString()}`;
 }
 
 export async function fetchWorkspaceBootstrap(): Promise<{
@@ -171,6 +184,64 @@ export async function saveWorkspaceSession(
     },
     { skipWorkspaceHeader: true }
   );
+}
+
+export async function listAgentConversations(): Promise<AgentConversationListResult> {
+  return request(`/api/agents/conversations`);
+}
+
+export async function createAgentConversation(
+  input: AgentConversationCreateInput
+): Promise<{ conversation: AgentConversationRecord }> {
+  return request(`/api/agents/conversations`, {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export async function fetchAgentConversationSnapshot(
+  conversationId: string
+): Promise<{ snapshot: AgentConversationSnapshot }> {
+  return request(`/api/agents/conversations/${encodeURIComponent(conversationId)}`);
+}
+
+export async function updateAgentConversationConfig(
+  conversationId: string,
+  patch: AgentConversationConfigPatch
+): Promise<{ conversation: AgentConversationRecord }> {
+  return request(`/api/agents/conversations/${encodeURIComponent(conversationId)}/config`, {
+    method: "PATCH",
+    body: JSON.stringify(patch),
+  });
+}
+
+export async function promptAgentConversation(
+  conversationId: string,
+  text: string
+): Promise<{ snapshot: AgentConversationSnapshot }> {
+  return request(`/api/agents/conversations/${encodeURIComponent(conversationId)}/prompt`, {
+    method: "POST",
+    body: JSON.stringify({ text }),
+  });
+}
+
+export async function cancelAgentConversation(
+  conversationId: string
+): Promise<{ conversation: AgentConversationRecord }> {
+  return request(`/api/agents/conversations/${encodeURIComponent(conversationId)}/cancel`, {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+}
+
+export async function answerAgentPermission(
+  conversationId: string,
+  input: { requestId: string; optionId?: string; cancelled?: boolean }
+): Promise<{ conversation: AgentConversationRecord }> {
+  return request(`/api/agents/conversations/${encodeURIComponent(conversationId)}/permission`, {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
 }
 
 export async function fetchGlobalSettings(): Promise<{ settings: GlobalSettingsState }> {

@@ -18,55 +18,76 @@ import {
   detectShortcutPlatform,
   getShortcutDisplayForCommand,
 } from "@/lib/keyboard-shortcuts";
-import type { EditorMode } from "@/lib/types";
+import { DEFAULT_MODE_OPTIONS, ensureCurrentModeOption, getModeTone } from "@/lib/chat-modes";
+import type { AgentModeOption, EditorMode, KnownEditorMode } from "@/lib/types";
 
 interface ModeOption {
   id: EditorMode;
   label: string;
+  description?: string;
   icon: LucideIcon;
+  tone: KnownEditorMode;
   shortcut?: string;
 }
 
-const STATIC_MODES: Omit<ModeOption, "shortcut">[] = [
-  { id: "agent", label: "Agent", icon: Infinity },
-  { id: "plan", label: "Plan", icon: ListChecks },
-  { id: "debug", label: "Debug", icon: Bug },
-  { id: "ask", label: "Ask", icon: MessageSquare },
-];
-
-const modeColors: Record<EditorMode, { text: string; bg: string }> = {
+const modeColors: Record<KnownEditorMode, { text: string; bg: string }> = {
   agent: { text: "var(--accent)", bg: "var(--accent-bg)" },
   plan: { text: "var(--plan-accent)", bg: "var(--plan-accent-bg)" },
   debug: { text: "var(--debug-accent)", bg: "var(--debug-accent-bg)" },
   ask: { text: "var(--ask-accent)", bg: "var(--ask-accent-bg)" },
 };
 
+function iconForModeTone(tone: KnownEditorMode): LucideIcon {
+  switch (tone) {
+    case "plan":
+      return ListChecks;
+    case "debug":
+      return Bug;
+    case "ask":
+      return MessageSquare;
+    default:
+      return Infinity;
+  }
+}
+
 interface ModeDropdownProps {
   mode: EditorMode;
   onModeChange?: (mode: EditorMode) => void;
   /** `below`: open under the trigger (e.g. composer at top). Default: above (docked-bottom composer). */
   popoverPlacement?: "above" | "below";
+  disabled?: boolean;
+  options?: AgentModeOption[];
 }
 
 export function ModeDropdown({
   mode,
   onModeChange,
   popoverPlacement = "above",
+  disabled = false,
+  options,
 }: ModeDropdownProps) {
   const { settings } = useGlobalSettings();
   const platform = useMemo(() => detectShortcutPlatform(), []);
   const modes = useMemo((): ModeOption[] => {
+    const baseOptions = ensureCurrentModeOption(
+      mode,
+      options?.length ? options : DEFAULT_MODE_OPTIONS
+    );
     const agentShortcut = getShortcutDisplayForCommand(
       settings.keyboardShortcuts.bindings,
       "workbench.action.focusChatAgentMode",
       platform
     );
-    return STATIC_MODES.map((m) =>
-      m.id === "agent"
-        ? { ...m, shortcut: agentShortcut || undefined }
-        : { ...m }
-    );
-  }, [platform, settings.keyboardShortcuts.bindings]);
+    return baseOptions.map((option) => {
+      const tone = getModeTone(option.id);
+      return {
+        ...option,
+        icon: iconForModeTone(tone),
+        tone,
+        shortcut: option.id === "agent" ? agentShortcut || undefined : undefined,
+      };
+    });
+  }, [mode, options, platform, settings.keyboardShortcuts.bindings]);
   const [open, setOpen] = useState(false);
   const close = useCallback(() => setOpen(false), []);
   const { triggerRef, popoverRef, position, ready } = usePopover(open, {
@@ -75,16 +96,17 @@ export function ModeDropdown({
 
   useClickOutside(triggerRef, close, open, [popoverRef]);
 
-  const current = modes.find((m) => m.id === mode)!;
-  const colors = modeColors[mode];
+  const current = modes.find((candidate) => candidate.id === mode) ?? modes[0];
+  const colors = modeColors[current?.tone ?? "agent"];
   const TriggerIcon = current.icon;
 
   return (
     <div ref={triggerRef}>
       <button
         type="button"
+        disabled={disabled}
         onClick={() => setOpen((v) => !v)}
-        className="flex items-center gap-[4px] rounded-[var(--radius-pill)] px-[6px] py-[1px] transition-opacity hover:opacity-80"
+        className="flex items-center gap-[4px] rounded-[var(--radius-pill)] px-[6px] py-[1px] transition-opacity hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-50"
         style={{ background: colors.bg }}
       >
         <TriggerIcon className="size-[13px] shrink-0" style={{ color: colors.text }} strokeWidth={1.5} />
@@ -126,14 +148,27 @@ export function ModeDropdown({
                   <Icon
                     className="size-[15px] shrink-0"
                     strokeWidth={1.5}
-                    style={{ color: active ? colors.text : "var(--text-secondary)" }}
+                    style={{
+                      color: active
+                        ? modeColors[opt.tone].text
+                        : "var(--text-secondary)",
+                    }}
                   />
-                  <span
-                    className="flex-1 font-sans text-[13px] font-normal"
-                    style={{ color: active ? "var(--text-primary)" : "var(--text-secondary)" }}
-                  >
-                    {opt.label}
-                  </span>
+                  <div className="flex-1">
+                    <div
+                      className="font-sans text-[13px] font-normal"
+                      style={{
+                        color: active ? "var(--text-primary)" : "var(--text-secondary)",
+                      }}
+                    >
+                      {opt.label}
+                    </div>
+                    {opt.description && (
+                      <div className="mt-[1px] font-sans text-[11px] text-[var(--text-disabled)]">
+                        {opt.description}
+                      </div>
+                    )}
+                  </div>
                   {opt.shortcut && (
                     <span className="font-sans text-[11px] text-[var(--text-disabled)]">
                       {opt.shortcut}

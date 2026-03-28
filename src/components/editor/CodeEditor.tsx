@@ -228,6 +228,17 @@ function registerOpenCursorLanguages(monaco: Monaco) {
   registerTomlLanguage(monaco);
 }
 
+function serializeViewState(viewState: unknown): string | null {
+  if (viewState == null) {
+    return null;
+  }
+  try {
+    return JSON.stringify(viewState);
+  } catch {
+    return null;
+  }
+}
+
 export function CodeEditor({
   content,
   language,
@@ -270,7 +281,12 @@ export function CodeEditor({
   const [editorInstance, setEditorInstance] =
     useState<MonacoEditor.IStandaloneCodeEditor | null>(null);
   const onLiveContentChangeRef = useRef(onLiveContentChange);
+  const onViewStateChangeRef = useRef(onViewStateChange);
+  const lastViewStateSignatureRef = useRef<string | null>(
+    serializeViewState(initialViewState)
+  );
   onLiveContentChangeRef.current = onLiveContentChange;
+  onViewStateChangeRef.current = onViewStateChange;
 
   useEffect(() => {
     setValue(content);
@@ -280,10 +296,30 @@ export function CodeEditor({
     onLiveContentChangeRef.current?.(content);
   }, [content]);
 
+  useEffect(() => {
+    lastViewStateSignatureRef.current = serializeViewState(initialViewState);
+  }, [initialViewState]);
+
   const onChange = useCallback((v: string | undefined) => {
     const next = v ?? "";
     setValue(next);
     onLiveContentChangeRef.current?.(next);
+  }, []);
+
+  const emitViewStateChange = useCallback((viewState: unknown) => {
+    const handler = onViewStateChangeRef.current;
+    if (!handler) {
+      return;
+    }
+    const nextSignature = serializeViewState(viewState);
+    if (
+      nextSignature !== null &&
+      nextSignature === lastViewStateSignatureRef.current
+    ) {
+      return;
+    }
+    lastViewStateSignatureRef.current = nextSignature;
+    handler(viewState);
   }, []);
 
   function handleBeforeMount(monaco: Monaco) {
@@ -336,35 +372,41 @@ export function CodeEditor({
           initialViewState as MonacoEditor.ICodeEditorViewState
         );
       }
+      lastViewStateSignatureRef.current = serializeViewState(
+        editorInstance.saveViewState()
+      );
     },
     [handleSave, initialViewState]
   );
 
   useEffect(() => {
-    if (!editorInstance || !onViewStateChange) {
+    if (!editorInstance) {
       return;
     }
 
     let timer: number | null = null;
-    const emitViewState = () => {
+    const flushViewState = () => {
+      emitViewStateChange(editorInstance.saveViewState());
+    };
+    const scheduleViewState = () => {
       if (timer) {
         window.clearTimeout(timer);
       }
       timer = window.setTimeout(() => {
         timer = null;
-        onViewStateChange(editorInstance.saveViewState());
+        flushViewState();
       }, 120);
     };
 
     const disposables = [
-      editorInstance.onDidScrollChange(emitViewState),
-      editorInstance.onDidChangeCursorPosition(emitViewState),
+      editorInstance.onDidScrollChange(scheduleViewState),
+      editorInstance.onDidChangeCursorPosition(scheduleViewState),
       editorInstance.onDidBlurEditorText(() => {
         if (timer) {
           window.clearTimeout(timer);
           timer = null;
         }
-        onViewStateChange(editorInstance.saveViewState());
+        flushViewState();
       }),
     ];
 
@@ -372,12 +414,12 @@ export function CodeEditor({
       if (timer) {
         window.clearTimeout(timer);
       }
-      onViewStateChange(editorInstance.saveViewState());
+      flushViewState();
       for (const disposable of disposables) {
         disposable.dispose();
       }
     };
-  }, [editorInstance, onViewStateChange]);
+  }, [editorInstance, emitViewStateChange]);
 
   useEffect(() => {
     if (!hardwareInputEnabled || !editorInstance) {

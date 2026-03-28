@@ -153,7 +153,11 @@ workspaceRoutes.put("/api/workspaces/:workspaceId/session", async (c) => {
     return c.json({ error: `Unknown workspace: ${workspaceId}` }, 404);
   }
 
-  const body = await c.req.json<PersistedWorkspaceSession>();
+  const rawBody = await c.req.text();
+  if (!rawBody.trim()) {
+    return c.json({ ok: true, skipped: true });
+  }
+  const body = JSON.parse(rawBody) as PersistedWorkspaceSession;
   await saveWorkspaceSession(workspaceId, {
     schemaVersion: 1,
     editor: body.editor,

@@ -11,7 +11,9 @@ import { workspaceRoutes } from "./routes/workspaces.js";
 import { settingsRoutes } from "./routes/settings.js";
 import { terminalRoutes } from "./routes/terminals.js";
 import { browserProxyRoutes } from "./routes/browser-proxy.js";
+import { agentRoutes } from "./routes/agents.js";
 import { handleFsUpgrade } from "./ws/filewatcher.js";
+import { handleAgentUpgrade } from "./ws/agent.js";
 import { handleTerminalUpgrade } from "./ws/terminal.js";
 
 const port = Number.parseInt(process.env.PORT ?? "9100", 10);
@@ -55,6 +57,7 @@ app.route("/", workspaceRoutes);
 app.route("/", settingsRoutes);
 app.route("/", fsRoutes);
 app.route("/", terminalRoutes);
+app.route("/", agentRoutes);
 
 const server = serve({
   fetch: app.fetch,
@@ -66,6 +69,11 @@ server.on("upgrade", (request, socket, head) => {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "localhost"}`);
   if (url.pathname === "/ws/fs") {
     handleFsUpgrade(request, socket, head);
+    return;
+  }
+
+  if (url.pathname === "/ws/agent") {
+    handleAgentUpgrade(request, socket, head);
     return;
   }
 

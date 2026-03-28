@@ -12,6 +12,7 @@ import { AskQuestionCard } from "./AskQuestionCard";
 import { ActivityLabel } from "./ActivityLabel";
 import { WorkedSessionCard } from "./WorkedSessionCard";
 import { ShellCommandCard } from "./ShellCommandCard";
+import { PermissionRequestCard } from "./PermissionRequestCard";
 import { askStepsFromMessage } from "@/lib/ask-question-utils";
 import type { ChatMessage } from "@/lib/types";
 
@@ -26,6 +27,7 @@ export interface MessageThreadContentProps {
   scrollRootRef?: RefObject<HTMLElement | null>;
   /** When a subagent row has `subagentTranscript`, clicking opens this. */
   onOpenSubagent?: (title: string, transcript: ChatMessage[]) => void;
+  onResolvePermission?: (requestId: string, optionId: string) => void;
 }
 
 export function MessageThreadContent({
@@ -33,6 +35,7 @@ export function MessageThreadContent({
   stickyUserHeader = false,
   scrollRootRef,
   onOpenSubagent,
+  onResolvePermission,
 }: MessageThreadContentProps) {
   const stickyElMapRef = useRef<Map<number, HTMLDivElement>>(new Map());
   const registerStickyEl = useCallback((order: number, el: HTMLDivElement | null) => {
@@ -164,6 +167,22 @@ export function MessageThreadContent({
         }
         break;
       }
+      case "permission-request":
+        nodes.push(
+          <PermissionRequestCard
+            key={msg.id}
+            title={msg.permissionTitle ?? "Permission required"}
+            detail={msg.permissionDetail}
+            options={msg.permissionOptions ?? []}
+            resolved={msg.permissionResolved}
+            selectedOptionId={msg.permissionSelectedOptionId}
+            onSelect={(optionId) => {
+              if (!msg.permissionRequestId) return;
+              onResolvePermission?.(msg.permissionRequestId, optionId);
+            }}
+          />
+        );
+        break;
       case "activity-label":
         nodes.push(
           <ActivityLabel

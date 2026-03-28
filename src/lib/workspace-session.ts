@@ -1,10 +1,10 @@
 import type {
-  ChatMessage,
   ChatTab,
   EditorTab,
   EditorMode,
   ModelInfo,
 } from "@/lib/types";
+import type { AgentBackendId } from "@/lib/agent-types";
 
 export type SidebarView = "explorer" | "search" | "scm";
 export type MobilePanel = "sidebar" | "editor" | "chat";
@@ -35,10 +35,11 @@ export type EditorSessionState = {
 
 export type ChatSessionState = {
   tabs: ChatTab[];
-  messagesByTabId: Record<string, ChatMessage[]>;
   mode: EditorMode;
   model: ModelInfo;
+  backendId: AgentBackendId;
   scrollTopByTabId: Record<string, number>;
+  hiddenConversationIds: string[];
 };
 
 export type SettingsViewSessionState = {
@@ -70,7 +71,6 @@ export function createEmptyEditorSession(): EditorSessionState {
 
 export function createDefaultWorkspaceSession(
   initialChatTabs: ChatTab[],
-  initialMessagesByTabId: Record<string, ChatMessage[]>,
   initialModel: ModelInfo
 ): WorkspaceSessionState {
   return {
@@ -78,10 +78,11 @@ export function createDefaultWorkspaceSession(
     editor: createEmptyEditorSession(),
     chat: {
       tabs: initialChatTabs,
-      messagesByTabId: initialMessagesByTabId,
       mode: "agent",
       model: initialModel,
+      backendId: "cursor-acp",
       scrollTopByTabId: {},
+      hiddenConversationIds: [],
     },
     explorer: {
       view: "explorer",
@@ -194,16 +195,24 @@ export function mergeWorkspaceSessionFromImport(
       ...current.chat,
       ...(r.chat ?? {}),
       tabs: Array.isArray(r.chat?.tabs) && r.chat.tabs.length > 0 ? r.chat.tabs : current.chat.tabs,
-      messagesByTabId:
-        r.chat?.messagesByTabId && typeof r.chat.messagesByTabId === "object"
-          ? r.chat.messagesByTabId
-          : current.chat.messagesByTabId,
       scrollTopByTabId:
         r.chat?.scrollTopByTabId && typeof r.chat.scrollTopByTabId === "object"
           ? r.chat.scrollTopByTabId
           : current.chat.scrollTopByTabId,
+      hiddenConversationIds: Array.isArray(r.chat?.hiddenConversationIds)
+        ? r.chat.hiddenConversationIds.filter(
+            (value): value is string => typeof value === "string" && value.length > 0
+          )
+        : current.chat.hiddenConversationIds,
       model: r.chat?.model ?? current.chat.model,
       mode: r.chat?.mode ?? current.chat.mode,
+      backendId:
+        r.chat?.backendId === "cursor-acp" ||
+        r.chat?.backendId === "opencode-acp" ||
+        r.chat?.backendId === "codex-adapter" ||
+        r.chat?.backendId === "claude-adapter"
+          ? r.chat.backendId
+          : current.chat.backendId,
     },
     explorer: {
       ...current.explorer,

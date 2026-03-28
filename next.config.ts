@@ -25,6 +25,18 @@ const nextConfig: NextConfig = {
   reactCompiler: true,
   outputFileTracingRoot: workspaceRoot,
   allowedDevOrigins,
+  webpack: (config, { dev }) => {
+    if (dev) {
+      config.watchOptions = {
+        ...config.watchOptions,
+        ignored: [
+          "**/.opencursor-data/**",
+          "**/server/.opencursor-data/**",
+        ],
+      };
+    }
+    return config;
+  },
 };
 
 export default withPWA(nextConfig);

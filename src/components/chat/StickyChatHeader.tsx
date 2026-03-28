@@ -31,21 +31,24 @@ export function StickyChatHeader({
 
   useLayoutEffect(() => {
     if (!enabled) {
-      setAllowSticky(true);
+      setAllowSticky((current) => (current ? current : true));
       return;
     }
     const el = ref.current;
     if (!el) return;
 
     const measure = () => {
-      setAllowSticky(el.scrollHeight <= MAX_STICKY_HEIGHT_PX);
+      const nextAllowSticky = el.scrollHeight <= MAX_STICKY_HEIGHT_PX;
+      setAllowSticky((current) =>
+        current === nextAllowSticky ? current : nextAllowSticky
+      );
     };
 
     measure();
     const ro = new ResizeObserver(measure);
     ro.observe(el);
     return () => ro.disconnect();
-  }, [enabled, children]);
+  }, [enabled]);
 
   function setRefs(el: HTMLDivElement | null) {
     ref.current = el;

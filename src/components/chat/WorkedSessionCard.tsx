@@ -15,6 +15,22 @@ import type { WorkedSessionEntry } from "@/lib/types";
 const iconWrap =
   "mt-[2px] flex size-[14px] shrink-0 items-center justify-center text-[var(--text-secondary)]";
 
+const toolStatusClass: Record<
+  NonNullable<Extract<WorkedSessionEntry, { kind: "tool" }>["status"]>,
+  string
+> = {
+  pending:
+    "border-[color-mix(in_srgb,var(--border-card)_80%,transparent)] bg-[color-mix(in_srgb,var(--bg-card)_82%,transparent)] text-[var(--text-secondary)]",
+  running:
+    "border-[color-mix(in_srgb,var(--accent)_45%,transparent)] bg-[color-mix(in_srgb,var(--accent)_18%,transparent)] text-[var(--accent-text)]",
+  completed:
+    "border-[color-mix(in_srgb,#4ade80_35%,transparent)] bg-[color-mix(in_srgb,#4ade80_12%,transparent)] text-[#86efac]",
+  failed:
+    "border-[color-mix(in_srgb,#fb7185_35%,transparent)] bg-[color-mix(in_srgb,#fb7185_12%,transparent)] text-[#fda4af]",
+  cancelled:
+    "border-[color-mix(in_srgb,#f59e0b_35%,transparent)] bg-[color-mix(in_srgb,#f59e0b_12%,transparent)] text-[#fcd34d]",
+};
+
 interface WorkedSessionCardProps {
   label: string;
   entries: WorkedSessionEntry[];
@@ -119,13 +135,34 @@ function WorkedEntryBlock({ entry }: { entry: WorkedSessionEntry }) {
             )}
           </span>
           <div className="min-w-0 flex-1">
-            <p className="font-sans text-[13px] font-normal text-[var(--text-primary)]">
-              {entry.title}
-            </p>
+            <div className="flex flex-wrap items-center gap-[8px]">
+              <p className="font-sans text-[13px] font-normal text-[var(--text-primary)]">
+                {entry.title}
+              </p>
+              {entry.status ? (
+                <span
+                  className={`rounded-full border px-[7px] py-[1px] font-sans text-[10px] font-medium uppercase tracking-[0.08em] ${toolStatusClass[entry.status]}`}
+                >
+                  {entry.status}
+                </span>
+              ) : null}
+            </div>
             {entry.detail?.trim() ? (
               <p className="mt-[4px] font-sans text-[12px] font-normal leading-relaxed text-[var(--text-secondary)]">
                 {entry.detail}
               </p>
+            ) : null}
+            {entry.files?.length ? (
+              <ul className="mt-[6px] flex list-none flex-col gap-[4px]">
+                {entry.files.map((file) => (
+                  <li
+                    key={file}
+                    className="font-mono text-[12px] font-normal leading-snug text-[var(--text-secondary)]"
+                  >
+                    {file}
+                  </li>
+                ))}
+              </ul>
             ) : null}
           </div>
         </div>

@@ -15,6 +15,7 @@ export type ChatMessageType =
   | "todo"
   | "subagent"
   | "ask-question"
+  | "permission-request"
   | "activity-label"
   | "worked-session"
   | "shell-run";
@@ -29,6 +30,8 @@ export type WorkedSessionEntry =
       title: string;
       detail?: string;
       variant?: "default" | "terminal";
+      status?: "pending" | "running" | "completed" | "failed" | "cancelled";
+      files?: string[];
     };
 
 /** Inline user bubble: plain text runs and file/context chips. */
@@ -48,6 +51,12 @@ export interface AskQuestionOption {
   text: string;
   isOther?: boolean;
   placeholder?: string;
+}
+
+export interface PermissionChoiceOption {
+  id: string;
+  label: string;
+  kind: "allow_once" | "allow_always" | "reject_once" | "reject_always";
 }
 
 /** One step in a docked / inline question wizard (3–5 typical). */
@@ -79,6 +88,12 @@ export interface ChatMessage {
   options?: AskQuestionOption[];
   /** Multi-step questions; when set, takes precedence over `questionTitle` + `options`. */
   questionSteps?: AskQuestionStep[];
+  permissionRequestId?: string;
+  permissionTitle?: string;
+  permissionDetail?: string;
+  permissionOptions?: PermissionChoiceOption[];
+  permissionResolved?: boolean;
+  permissionSelectedOptionId?: string;
   /** Collapsible status row: timing, reasoning, explored files, etc. */
   activityLabel?: string;
   activityDetail?: string;
@@ -188,11 +203,26 @@ export interface ChatTab {
   active?: boolean;
 }
 
-export type EditorMode = "agent" | "plan" | "debug" | "ask";
+export type KnownEditorMode = "agent" | "plan" | "debug" | "ask";
+
+export type EditorMode = KnownEditorMode | (string & {});
+
+export interface AgentModeOption {
+  id: EditorMode;
+  label: string;
+  description?: string;
+}
 
 export interface ModelInfo {
   id: string;
   name: string;
-  provider: "openai" | "anthropic" | "google" | "auto";
+  provider:
+    | "openai"
+    | "anthropic"
+    | "google"
+    | "auto"
+    | "cursor"
+    | "opencode"
+    | "fixture";
   selected?: boolean;
 }

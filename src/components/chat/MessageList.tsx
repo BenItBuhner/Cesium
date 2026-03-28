@@ -9,12 +9,14 @@ interface MessageListProps {
   messages: ChatMessage[];
   scrollTop?: number;
   onScrollTopChange?: (scrollTop: number) => void;
+  onResolvePermission?: (requestId: string, optionId: string) => void;
 }
 
 export function MessageList({
   messages,
   scrollTop = 0,
   onScrollTopChange,
+  onResolvePermission,
 }: MessageListProps) {
   const { openSubagentTranscript } = useOpenInEditor();
   const scrollRootRef = useRef<HTMLDivElement>(null);
@@ -36,6 +38,7 @@ export function MessageList({
         messages={messages}
         stickyUserHeader
         scrollRootRef={scrollRootRef}
+        onResolvePermission={onResolvePermission}
         onOpenSubagent={(title, transcript) =>
           openSubagentTranscript({ title, messages: transcript })
         }
