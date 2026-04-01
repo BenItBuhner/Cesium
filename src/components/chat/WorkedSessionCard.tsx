@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ChevronDown,
   FolderOpen,
@@ -43,6 +43,8 @@ interface WorkedSessionCardProps {
   loading?: boolean;
 }
 
+const ENTRY_LIST_MAX_HEIGHT = 240;
+
 export function WorkedSessionCard({
   label,
   entries,
@@ -53,6 +55,11 @@ export function WorkedSessionCard({
   const hasActiveTool = entries.some((entry) => isToolEntryActive(entry));
   const showLoadingState = loading || hasActiveTool;
   const previousLoadingRef = useRef(showLoadingState);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const prevEntryCountRef = useRef(0);
+  const stickToBottomRef = useRef(true);
+  const [showTopGrad, setShowTopGrad] = useState(false);
+  const [showBottomGrad, setShowBottomGrad] = useState(false);
 
   useEffect(() => {
     if (defaultOpen) {
@@ -67,6 +74,50 @@ export function WorkedSessionCard({
     }
     previousLoadingRef.current = showLoadingState;
   }, [showLoadingState]);
+
+  const updateGradients = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const atTop = el.scrollTop > 2;
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight > 2;
+    setShowTopGrad(atTop);
+    setShowBottomGrad(atBottom);
+  }, []);
+
+  useEffect(() => {
+    if (!open) return;
+    updateGradients();
+  }, [entries, open, updateGradients]);
+
+  useEffect(() => {
+    if (!open) return;
+    const el = scrollRef.current;
+    if (!el) return;
+    const observer = new ResizeObserver(() => updateGradients());
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [open, updateGradients]);
+
+  useEffect(() => {
+    if (!open) return;
+    const el = scrollRef.current;
+    if (!el) return;
+    if (entries.length > prevEntryCountRef.current && stickToBottomRef.current) {
+      el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+    }
+    prevEntryCountRef.current = entries.length;
+  }, [entries.length, open]);
+
+  const handleScroll = useCallback(
+    (e: React.UIEvent<HTMLDivElement>) => {
+      const el = e.currentTarget;
+      const nearBottom =
+        el.scrollHeight - el.scrollTop - el.clientHeight <= 48;
+      stickToBottomRef.current = nearBottom;
+      updateGradients();
+    },
+    [updateGradients]
+  );
 
   return (
     <div className="min-w-0 px-[1px]">
@@ -93,8 +144,13 @@ export function WorkedSessionCard({
       </button>
 
       <CollapsibleHeight open={open}>
-        <div className="pt-[10px]">
-          <div className="ml-[2px] flex flex-col gap-[14px] border-l border-[var(--border-subtle)] pl-[10px]">
+        <div className="relative pt-[10px]">
+          <div
+            ref={scrollRef}
+            onScroll={handleScroll}
+            className="ml-[2px] flex flex-col gap-[14px] border-l border-[var(--border-subtle)] pl-[10px] overflow-y-auto hide-scrollbar-y"
+            style={{ maxHeight: ENTRY_LIST_MAX_HEIGHT }}
+          >
             {entries.map((entry, i) => (
               <WorkedEntryBlock
                 key={
@@ -106,6 +162,12 @@ export function WorkedSessionCard({
               />
             ))}
           </div>
+          {showTopGrad ? (
+            <div className="pointer-events-none absolute inset-x-0 top-[10px] ml-[2px] h-[28px] z-[1] bg-gradient-to-t from-[var(--bg-card)] to-transparent" />
+          ) : null}
+          {showBottomGrad ? (
+            <div className="pointer-events-none absolute inset-x-0 bottom-0 ml-[2px] h-[28px] z-[1] bg-gradient-to-b from-transparent to-[var(--bg-card)]" />
+          ) : null}
         </div>
       </CollapsibleHeight>
     </div>
@@ -113,6 +175,25 @@ export function WorkedSessionCard({
 }
 
 function WorkedEntryBlock({ entry }: { entry: WorkedSessionEntry }) {
+  const [visible, setVisible] = useState(false);
+
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => setVisible(true));
+    return () => cancelAnimationFrame(frame);
+  }, []);
+
+  return (
+    <div
+      className={`transition-all duration-300 ease-out motion-reduce:transition-none motion-reduce:opacity-100 motion-reduce:translate-y-0 ${
+        visible ? "translate-y-0 opacity-100" : "translate-y-[6px] opacity-0"
+      }`}
+    >
+      {renderEntry(entry)}
+    </div>
+  );
+}
+
+function renderEntry(entry: WorkedSessionEntry) {
   switch (entry.kind) {
     case "verbatim":
       return (

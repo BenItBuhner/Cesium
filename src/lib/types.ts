@@ -109,6 +109,8 @@ export interface ChatMessage {
   workedDefaultOpen?: boolean;
   /** Terminal / command runner card */
   shellTitle?: string;
+  /** Loading/working placeholder before any agent content arrives */
+  loading?: boolean;
 }
 
 export interface EditorTab {

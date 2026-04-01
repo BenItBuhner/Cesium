@@ -74,6 +74,18 @@ export function MessageList({
   }, [messages]);
 
   useEffect(() => {
+    const root = scrollRootRef.current;
+    if (!root) return;
+    const observer = new ResizeObserver(() => {
+      if (stickToBottomRef.current) {
+        root.scrollTop = root.scrollHeight;
+      }
+    });
+    observer.observe(root);
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
     const flushOnPageHide = () => {
       flushPersistedScrollTop();
     };

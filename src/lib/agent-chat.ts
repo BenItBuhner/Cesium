@@ -576,6 +576,18 @@ function projectTurnTimelineToMessages(turn: ProjectedTurn): ChatMessage[] {
 
   flushWorked();
   flushAssistant();
+
+  if (messages.length === 0 && turn.userMessage) {
+    messages.push({
+      id: `turn-working-${turn.id}`,
+      type: "worked-session",
+      workedLabel: "Working...",
+      workedEntries: [],
+      workedDefaultOpen: false,
+      loading: true,
+    });
+  }
+
   return messages;
 }
 
