@@ -163,10 +163,10 @@ export function WorkedSessionCard({
             ))}
           </div>
           {showTopGrad ? (
-            <div className="pointer-events-none absolute inset-x-0 top-[10px] ml-[2px] h-[28px] z-[1] bg-gradient-to-t from-[var(--bg-card)] to-transparent" />
+            <div className="pointer-events-none absolute inset-x-0 top-[10px] ml-[2px] h-[28px] z-[1] bg-gradient-to-b from-[var(--bg-panel)] to-transparent" />
           ) : null}
           {showBottomGrad ? (
-            <div className="pointer-events-none absolute inset-x-0 bottom-0 ml-[2px] h-[28px] z-[1] bg-gradient-to-b from-transparent to-[var(--bg-card)]" />
+            <div className="pointer-events-none absolute inset-x-0 bottom-0 ml-[2px] h-[28px] z-[1] bg-gradient-to-b from-transparent to-[var(--bg-panel)]" />
           ) : null}
         </div>
       </CollapsibleHeight>
