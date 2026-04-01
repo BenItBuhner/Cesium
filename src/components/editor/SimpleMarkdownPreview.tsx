@@ -2,13 +2,100 @@
 
 import type { ReactNode } from "react";
 
-function Inline({ text }: { text: string }) {
+type LinkSegment =
+  | { kind: "text"; value: string }
+  | { kind: "link"; label: string; href: string };
+
+function sanitizeHref(raw: string): string | null {
+  const t = raw.trim();
+  if (/^https?:\/\//i.test(t)) return t;
+  if (/^mailto:/i.test(t)) return t;
+  if (t.startsWith("/") || t.startsWith("./") || t.startsWith("../")) return t;
+  if (t.startsWith("#")) return t;
+  return null;
+}
+
+/** Split on [label](url) where label may contain `` `...` `` spans and nested [...] */
+function splitMarkdownLinks(source: string): LinkSegment[] {
+  const out: LinkSegment[] = [];
+  let i = 0;
+  while (i < source.length) {
+    const open = source.indexOf("[", i);
+    if (open === -1) {
+      if (i < source.length) out.push({ kind: "text", value: source.slice(i) });
+      break;
+    }
+    if (open > i) out.push({ kind: "text", value: source.slice(i, open) });
+    let j = open + 1;
+    let depth = 1;
+    let labelEnd = -1;
+    while (j < source.length) {
+      const ch = source[j];
+      if (ch === "`") {
+        const end = source.indexOf("`", j + 1);
+        if (end === -1) {
+          labelEnd = -1;
+          break;
+        }
+        j = end + 1;
+        continue;
+      }
+      if (ch === "[") {
+        depth++;
+        j++;
+        continue;
+      }
+      if (ch === "]") {
+        depth--;
+        if (depth === 0) {
+          labelEnd = j;
+          break;
+        }
+        j++;
+        continue;
+      }
+      j++;
+    }
+    if (labelEnd < 0 || labelEnd + 1 >= source.length || source[labelEnd + 1] !== "(") {
+      out.push({ kind: "text", value: source[open] });
+      i = open + 1;
+      continue;
+    }
+    let k = labelEnd + 2;
+    let parenDepth = 1;
+    let urlEnd = -1;
+    while (k < source.length) {
+      const ch = source[k];
+      if (ch === "(") parenDepth++;
+      else if (ch === ")") {
+        parenDepth--;
+        if (parenDepth === 0) {
+          urlEnd = k;
+          break;
+        }
+      }
+      k++;
+    }
+    if (urlEnd < 0) {
+      out.push({ kind: "text", value: source[open] });
+      i = open + 1;
+      continue;
+    }
+    const label = source.slice(open + 1, labelEnd);
+    const href = source.slice(labelEnd + 2, urlEnd);
+    out.push({ kind: "link", label, href });
+    i = urlEnd + 1;
+  }
+  return out;
+}
+
+function InlineCodeAndBold({ text }: { text: string }): ReactNode {
   const parts = text.split(/(`[^`]+`|\*\*[^*]+\*\*)/g);
-  return parts.map((part, i) => {
+  return parts.map((part, idx) => {
     if (part.startsWith("`") && part.endsWith("`")) {
       return (
         <code
-          key={i}
+          key={idx}
           className="rounded-[3px] bg-white/[0.08] px-[4px] py-[1px] font-mono text-[12px] text-[#a5d6a7]"
         >
           {part.slice(1, -1)}
@@ -17,12 +104,37 @@ function Inline({ text }: { text: string }) {
     }
     if (part.startsWith("**") && part.endsWith("**")) {
       return (
-        <strong key={i} className="font-semibold text-[var(--text-primary)]">
+        <strong key={idx} className="font-semibold text-[var(--text-primary)]">
           {part.slice(2, -2)}
         </strong>
       );
     }
-    return <span key={i}>{part}</span>;
+    return <span key={idx}>{part}</span>;
+  });
+}
+
+function Inline({ text }: { text: string }) {
+  const segments = splitMarkdownLinks(text);
+  return segments.map((seg, idx) => {
+    if (seg.kind === "text") {
+      return <InlineCodeAndBold key={idx} text={seg.value} />;
+    }
+    const safe = sanitizeHref(seg.href);
+    if (!safe) {
+      return <InlineCodeAndBold key={idx} text={`[${seg.label}](${seg.href})`} />;
+    }
+    const external = /^https?:\/\//i.test(safe);
+    return (
+      <a
+        key={idx}
+        href={safe}
+        className="text-[#6cb5f5] underline decoration-[#6cb5f5]/40 underline-offset-2 hover:decoration-[#6cb5f5]"
+        target={external ? "_blank" : undefined}
+        rel={external ? "noopener noreferrer" : undefined}
+      >
+        <InlineCodeAndBold text={seg.label} />
+      </a>
+    );
   });
 }
 
@@ -73,7 +185,7 @@ export function SimpleMarkdownPreview({ source }: { source: string }) {
           key={key++}
           className="mb-[6px] mt-[18px] font-sans text-[15px] font-semibold text-[var(--text-primary)]"
         >
-          {line.slice(4)}
+          <Inline text={line.slice(4)} />
         </h3>
       );
       i++;
@@ -85,7 +197,7 @@ export function SimpleMarkdownPreview({ source }: { source: string }) {
           key={key++}
           className="mb-[8px] mt-[20px] font-sans text-[17px] font-semibold tracking-tight text-[var(--text-primary)]"
         >
-          {line.slice(3)}
+          <Inline text={line.slice(3)} />
         </h2>
       );
       i++;
@@ -97,7 +209,7 @@ export function SimpleMarkdownPreview({ source }: { source: string }) {
           key={key++}
           className="mb-[10px] mt-[4px] font-sans text-[22px] font-semibold tracking-tight text-[var(--text-primary)]"
         >
-          {line.slice(2)}
+          <Inline text={line.slice(2)} />
         </h1>
       );
       i++;

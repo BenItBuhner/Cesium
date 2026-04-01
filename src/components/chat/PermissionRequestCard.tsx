@@ -43,7 +43,7 @@ export function PermissionRequestCard({
             </div>
           ) : null}
           <div className="mt-[10px] flex flex-wrap gap-[8px]">
-            {options.map((option) => {
+            {(options ?? []).map((option) => {
               const selected = option.id === selectedOptionId;
               return (
                 <button

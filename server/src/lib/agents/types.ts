@@ -11,7 +11,8 @@ export type AgentBackendId =
   | "cursor-acp"
   | "opencode-acp"
   | "codex-adapter"
-  | "claude-adapter";
+  | "claude-adapter"
+  | "gemini-adapter";
 
 export type AgentConversationStatus =
   | "idle"
@@ -39,6 +40,7 @@ export type AgentConfigOptionValue = {
   value: string;
   name: string;
   description?: string;
+  metadata?: Record<string, string | string[]>;
 };
 
 export type AgentConfigOption = {
@@ -67,6 +69,8 @@ export type AgentPendingPermission = {
   requestedAt: number;
   toolCallId?: string;
   title?: string;
+  /** Human-readable context from the provider (tool summary, CLI text, etc.). */
+  detail?: string;
   options: AgentPermissionOption[];
 };
 
@@ -93,6 +97,7 @@ export type AgentBackendInfo = {
   defaultModelId: string;
   defaultModelName: string;
   capabilities: AgentProviderCapabilities;
+  cachedConfigOptions?: AgentConfigOption[];
 };
 
 export type AgentConversationConfig = {
@@ -166,6 +171,8 @@ export type AgentStoredEvent =
       createdAt: number;
       kind: "tool_call_update";
       toolCallId: string;
+      title?: string;
+      toolKind?: string;
       status: AgentToolCallStatus;
       detail?: string;
       locations?: AgentToolLocation[];
@@ -189,6 +196,7 @@ export type AgentStoredEvent =
       kind: "permission_request";
       requestId: string;
       title?: string;
+      detail?: string;
       toolCallId?: string;
       options: AgentPermissionOption[];
       raw?: unknown;
@@ -253,8 +261,12 @@ export type AgentConversationCreateInput = Partial<AgentConversationConfig> & {
 };
 
 export type AgentConversationConfigPatch = Partial<AgentConversationConfig> & {
+  /** Conversation display title (always patchable; independent of backend/mode lock). */
+  title?: string;
   /** Set a single ACP config option (reasoning effort, speed, context, etc.). */
   setConfigOption?: { configId: string; value: string };
+  /** Set multiple provider config options atomically when a UI choice maps to a model + variant. */
+  setConfigOptions?: Array<{ configId: string; value: string }>;
 };
 
 export type AgentConversationListResult = {
@@ -281,6 +293,7 @@ export interface AgentRuntimeCallbacks {
   workspace: WorkspaceRecord;
   conversation: AgentConversationRecord;
   appendEvents: (events: AgentEventInput[]) => Promise<AgentStoredEvent[]>;
+  readSnapshot: () => Promise<AgentConversationSnapshot | null>;
   markRuntimeStale?: () => void;
   updateConversation: (
     patch:

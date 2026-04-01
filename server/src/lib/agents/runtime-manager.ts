@@ -8,7 +8,11 @@ import {
   updateConversationRecord,
   listWorkspaceConversationRecords,
 } from "./session-store.js";
-import { AGENT_BACKENDS, createAgentProvider, listAgentBackends } from "./providers.js";
+import {
+  AGENT_BACKENDS,
+  createAgentProvider,
+  listAgentBackendsWithCache,
+} from "./providers.js";
 import {
   findPrimaryModelConfigOption,
   findPrimaryModeConfigOption,
@@ -35,8 +39,25 @@ type ActiveRuntime = {
 type AgentRuntimeManagerOptions = {
   backends?: Record<AgentBackendId, AgentBackendInfo>;
   createProvider?: (backendId: AgentBackendId) => Promise<AgentProvider>;
-  listBackends?: () => AgentBackendInfo[];
+  listBackends?: () => AgentBackendInfo[] | Promise<AgentBackendInfo[]>;
 };
+
+function sameCapabilities(
+  left: AgentConversationRecord["capabilities"],
+  right: AgentBackendInfo["capabilities"]
+): boolean {
+  return (
+    left.supportsLoadSession === right.supportsLoadSession &&
+    left.supportsModeSelection === right.supportsModeSelection &&
+    left.supportsModelSelection === right.supportsModelSelection &&
+    left.supportsSlashCommands === right.supportsSlashCommands &&
+    left.supportsPermissions === right.supportsPermissions &&
+    left.supportsToolCalls === right.supportsToolCalls &&
+    left.supportsStructuredPlans === right.supportsStructuredPlans &&
+    left.supportsTodos === right.supportsTodos &&
+    left.supportsSessionResume === right.supportsSessionResume
+  );
+}
 
 function truncateConversationTitle(text: string): string {
   const normalized = text.trim().replace(/\s+/g, " ");
@@ -46,38 +67,48 @@ function truncateConversationTitle(text: string): string {
   return normalized.length > 44 ? `${normalized.slice(0, 41)}...` : normalized;
 }
 
-function hasConfigChange(
-  record: AgentConversationRecord,
-  patch: Partial<AgentConversationRecord["config"]>,
-  nextBackendId: AgentBackendId
-): boolean {
-  return (
-    nextBackendId !== record.config.backendId ||
-    (patch.mode !== undefined && patch.mode !== record.config.mode) ||
-    (patch.modelId !== undefined && patch.modelId !== record.config.modelId) ||
-    (patch.modelName !== undefined && patch.modelName !== record.config.modelName)
-  );
-}
-
 export class AgentRuntimeManager {
   private readonly runtimes = new Map<string, ActiveRuntime>();
   private readonly retainedConversationCounts = new Map<string, number>();
   private readonly backends: Record<AgentBackendId, AgentBackendInfo>;
   private readonly createProviderFn: (backendId: AgentBackendId) => Promise<AgentProvider>;
-  private readonly listBackendsFn: () => AgentBackendInfo[];
+  private readonly listBackendsFn: () => AgentBackendInfo[] | Promise<AgentBackendInfo[]>;
 
   constructor(options: AgentRuntimeManagerOptions = {}) {
     this.backends = options.backends ?? AGENT_BACKENDS;
     this.createProviderFn = options.createProvider ?? createAgentProvider;
-    this.listBackendsFn = options.listBackends ?? listAgentBackends;
+    this.listBackendsFn = options.listBackends ?? listAgentBackendsWithCache;
+  }
+
+  private withBackendDefaults(
+    conversation: AgentConversationRecord
+  ): AgentConversationRecord {
+    const backend = this.backends[conversation.config.backendId];
+    if (!backend) {
+      return conversation;
+    }
+    if (
+      sameCapabilities(conversation.capabilities, backend.capabilities) &&
+      conversation.experimental === Boolean(backend.experimental)
+    ) {
+      return conversation;
+    }
+    return {
+      ...conversation,
+      capabilities: backend.capabilities,
+      experimental: Boolean(backend.experimental),
+    };
   }
 
   async listWorkspaceConversations(
     workspaceId: string
   ): Promise<AgentConversationListResult> {
+    const conversations = await listWorkspaceConversationRecords(workspaceId);
     return {
-      backends: this.listBackendsFn(),
-      conversations: await listWorkspaceConversationRecords(workspaceId),
+      backends: await Promise.resolve(this.listBackendsFn()),
+      conversations: conversations.map((conversation) =>
+        this.withBackendDefaults(conversation)
+      ),
     };
   }
 
@@ -112,13 +143,8 @@ export class AgentRuntimeManager {
       experimental: Boolean(backend.experimental),
     };
     await saveConversationRecord(record);
-    try {
-      await this.ensureRuntime(workspace, record);
-      return (await readConversationRecord(workspace.id, record.id)) ?? record;
-    } catch (error) {
-      await this.persistRuntimeFailure(workspace.id, record.id, error);
-      return (await readConversationRecord(workspace.id, record.id)) ?? record;
-    }
+    this.warmConversationRuntime(workspace, record);
+    return record;
   }
 
   async getConversationSnapshot(
@@ -138,7 +164,14 @@ export class AgentRuntimeManager {
         await this.persistRuntimeFailure(workspace.id, conversationId, error);
       }
     }
-    return readConversationSnapshot(workspace.id, conversationId);
+    const snapshot = await readConversationSnapshot(workspace.id, conversationId);
+    if (!snapshot) {
+      return null;
+    }
+    return {
+      ...snapshot,
+      conversation: this.withBackendDefaults(snapshot.conversation),
+    };
   }
 
   async updateConversationConfig(
@@ -146,7 +179,10 @@ export class AgentRuntimeManager {
     conversationId: string,
     patch: AgentConversationConfigPatch
   ): Promise<AgentConversationRecord> {
-    const { setConfigOption, ...configPatch } = patch;
+    const { setConfigOption, setConfigOptions, title: titlePatch, ...configPatch } = patch;
+    const nextTitle =
+      titlePatch !== undefined ? truncateConversationTitle(titlePatch) : undefined;
+
     let record = await readConversationRecord(workspace.id, conversationId);
     if (!record) {
       throw new Error(`Unknown conversation: ${conversationId}`);
@@ -156,11 +192,6 @@ export class AgentRuntimeManager {
       ? this.resolveBackendId(configPatch.backendId)
       : record.config.backendId;
     this.assertRunnableBackend(nextBackendId);
-    if (record.lastEventSeq > 0 && hasConfigChange(record, configPatch, nextBackendId)) {
-      throw new Error(
-        "This conversation is locked to its original backend, mode, and model after the first turn. Start a new chat to change them."
-      );
-    }
     const backendChanged = nextBackendId !== record.config.backendId;
     const nextBackend = this.backends[nextBackendId];
 
@@ -168,6 +199,7 @@ export class AgentRuntimeManager {
       await this.disposeRuntime(conversationId);
       record = await updateConversationRecord(workspace.id, conversationId, {
         ...record,
+        ...(nextTitle !== undefined ? { title: nextTitle } : {}),
         config: {
           ...record.config,
           ...configPatch,
@@ -183,26 +215,27 @@ export class AgentRuntimeManager {
         status: "idle",
         experimental: Boolean(nextBackend.experimental),
       });
-      try {
-        await this.ensureRuntime(workspace, record);
-        return (await readConversationRecord(workspace.id, conversationId)) ?? record;
-      } catch (error) {
-        await this.persistRuntimeFailure(workspace.id, conversationId, error);
-        return (await readConversationRecord(workspace.id, conversationId)) ?? record;
-      }
+      this.warmConversationRuntime(workspace, record);
+      return record;
     }
 
-    record = await updateConversationRecord(workspace.id, conversationId, (current) => ({
-      ...current,
-      config: {
-        ...current.config,
-        ...configPatch,
-      },
-    }));
+    record = await updateConversationRecord(workspace.id, conversationId, (current) =>
+      this.applyConfigPatchToRecord(current, {
+        configPatch,
+        setConfigOption,
+        setConfigOptions,
+        nextTitle,
+      })
+    );
 
     const runtime = this.runtimes.get(conversationId);
     if (runtime) {
-      await this.applyLiveConfig(runtime.handle, record, { ...configPatch, setConfigOption });
+      await this.applyLiveConfig(runtime.handle, record, {
+        ...configPatch,
+        setConfigOption,
+        setConfigOptions,
+      });
+      return (await readConversationRecord(workspace.id, conversationId)) ?? record;
     }
     return record;
   }
@@ -400,6 +433,15 @@ export class AgentRuntimeManager {
     await this.disposeRuntime(record.id);
   }
 
+  private warmConversationRuntime(
+    workspace: WorkspaceRecord,
+    record: AgentConversationRecord
+  ): void {
+    void this.ensureRuntime(workspace, record).catch(async (error) => {
+      await this.persistRuntimeFailure(workspace.id, record.id, error);
+    });
+  }
+
   private async ensureRuntime(
     workspace: WorkspaceRecord,
     record: AgentConversationRecord
@@ -415,6 +457,7 @@ export class AgentRuntimeManager {
       conversation: record,
       appendEvents: (events: AgentEventInput[]) =>
         appendConversationEvents(workspace.id, record.id, events),
+      readSnapshot: () => readConversationSnapshot(workspace.id, record.id),
       markRuntimeStale: () => {
         this.runtimes.delete(record.id);
       },
@@ -460,6 +503,77 @@ export class AgentRuntimeManager {
     return runtime;
   }
 
+  private applyConfigPatchToRecord(
+    current: AgentConversationRecord,
+    input: {
+      configPatch: Partial<AgentConversationRecord["config"]>;
+      setConfigOption?: AgentConversationConfigPatch["setConfigOption"];
+      setConfigOptions?: AgentConversationConfigPatch["setConfigOptions"];
+      nextTitle?: string;
+    }
+  ): AgentConversationRecord {
+    const { configPatch, setConfigOption, setConfigOptions, nextTitle } = input;
+    let nextOptions = current.configOptions;
+    const nextConfig = {
+      ...current.config,
+      ...configPatch,
+    };
+
+    const allowCursorRaw = (configId: string) =>
+      current.config.backendId === "cursor-acp" &&
+      (findPrimaryModelConfigOption(nextOptions)?.id === configId ||
+        findPrimaryModeConfigOption(nextOptions)?.id === configId);
+
+    const touchOption = (configId: string, value: string) => {
+      const target = nextOptions.find((o) => o.id === configId);
+      if (!target) {
+        return;
+      }
+      if (target.options.some((o) => o.value === value) || allowCursorRaw(configId)) {
+        nextOptions = nextOptions.map((o) =>
+          o.id === configId ? { ...o, currentValue: value } : o
+        );
+      }
+    };
+
+    if (setConfigOption) {
+      touchOption(setConfigOption.configId, setConfigOption.value);
+    }
+    for (const sel of setConfigOptions ?? []) {
+      touchOption(sel.configId, sel.value);
+    }
+
+    const modeOption = findPrimaryModeConfigOption(nextOptions);
+    if (modeOption && nextConfig.mode) {
+      const ok =
+        modeOption.options.some((o) => o.value === nextConfig.mode) ||
+        current.config.backendId === "cursor-acp";
+      if (ok) {
+        nextOptions = nextOptions.map((o) =>
+          o.id === modeOption.id ? { ...o, currentValue: nextConfig.mode } : o
+        );
+      }
+    }
+    const modelOption = findPrimaryModelConfigOption(nextOptions);
+    if (modelOption && nextConfig.modelId) {
+      const ok =
+        modelOption.options.some((o) => o.value === nextConfig.modelId) ||
+        current.config.backendId === "cursor-acp";
+      if (ok) {
+        nextOptions = nextOptions.map((o) =>
+          o.id === modelOption.id ? { ...o, currentValue: nextConfig.modelId } : o
+        );
+      }
+    }
+
+    return {
+      ...current,
+      ...(nextTitle !== undefined ? { title: nextTitle } : {}),
+      config: nextConfig,
+      configOptions: nextOptions,
+    };
+  }
+
   private async applyLiveConfig(
     handle: AgentSessionHandle,
     record: AgentConversationRecord,
@@ -469,17 +583,19 @@ export class AgentRuntimeManager {
     const modelOption = findPrimaryModelConfigOption(handle.configOptions);
 
     if (patch.mode && modeOption) {
+      const patchKey = patch.mode.trim().toLowerCase();
       const value =
         modeOption.options.find((option) => option.value === patch.mode)?.value ??
-        (patch.mode === "agent"
+        modeOption.options.find((option) => option.value.toLowerCase() === patchKey)?.value ??
+        (patchKey === "agent" || patchKey === "code"
           ? modeOption.options.find((option) =>
               option.value === "agent" || option.value === "code"
             )?.value
-          : patch.mode === "plan"
+          : patchKey === "plan"
             ? modeOption.options.find((option) =>
                 option.value === "plan" || option.value === "ask"
               )?.value
-            : patch.mode === "ask"
+            : patchKey === "ask"
               ? modeOption.options.find((option) => option.value === "ask")?.value
               : modeOption.options.find((option) =>
                   option.value === "debug" ||
@@ -499,6 +615,8 @@ export class AgentRuntimeManager {
           ?.value;
       if (value) {
         await handle.setConfigOption(modelOption.id, value);
+      } else if (record.config.backendId === "cursor-acp" && patch.modelId) {
+        await handle.setConfigOption(modelOption.id, patch.modelId);
       }
     }
 
@@ -514,6 +632,13 @@ export class AgentRuntimeManager {
           patch.setConfigOption.configId,
           patch.setConfigOption.value
         );
+      }
+    }
+
+    for (const selection of patch.setConfigOptions ?? []) {
+      const target = handle.configOptions.find((option) => option.id === selection.configId);
+      if (target && target.options.some((option) => option.value === selection.value)) {
+        await handle.setConfigOption(selection.configId, selection.value);
       }
     }
   }

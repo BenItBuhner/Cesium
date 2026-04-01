@@ -67,6 +67,7 @@ export function SessionConfigOptionDropdown({
           <div
             ref={popoverRef}
             className="fixed z-[9999] min-w-[200px] max-w-[280px] rounded-[var(--radius-card)] border border-[var(--border-card)] bg-[var(--bg-panel)] py-[4px] transition-opacity"
+            data-ide-input-sink
             style={{
               ...(position.top != null
                 ? { top: position.top }
@@ -75,8 +76,10 @@ export function SessionConfigOptionDropdown({
               opacity: ready ? 1 : 0,
               maxHeight: Math.min(position.maxHeight ?? 320, 320),
               overflow: "auto",
+              overscrollBehavior: "contain",
             }}
             onPointerDown={(e) => e.stopPropagation()}
+            onWheel={(e) => e.stopPropagation()}
           >
             <div className="border-b border-[var(--border-card)] px-[12px] py-[6px]">
               <p className="font-sans text-[11px] font-medium uppercase tracking-wide text-[var(--text-disabled)]">

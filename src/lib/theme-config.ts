@@ -30,6 +30,11 @@ export type ThemeConfig = {
   /** Theme id (builtin or custom) when resolved appearance is dark. */
   darkThemeId: string;
   customThemes: CustomThemeEntry[];
+  /**
+   * Tablet/desktop: when the primary sidebar is collapsed, show the floating
+   * top-left control to reopen it. Hidden by default on wide layouts.
+   */
+  showFloatingSidebarReveal: boolean;
 };
 
 export function createDefaultThemeConfig(): ThemeConfig {
@@ -39,6 +44,7 @@ export function createDefaultThemeConfig(): ThemeConfig {
     lightThemeId: DEFAULT_BUILTIN_THEME_ID,
     darkThemeId: DEFAULT_BUILTIN_THEME_ID,
     customThemes: [],
+    showFloatingSidebarReveal: false,
   };
 }
 
@@ -86,12 +92,14 @@ export function normalizeThemeConfig(raw: unknown): ThemeConfig {
     typeof r.darkThemeId === "string" && r.darkThemeId.trim()
       ? r.darkThemeId.trim()
       : base.darkThemeId;
+  const showFloatingSidebarReveal = r.showFloatingSidebarReveal === true;
   return {
     schemaVersion: 1,
     appearance,
     lightThemeId,
     darkThemeId,
     customThemes: sanitizeCustomThemes(r.customThemes),
+    showFloatingSidebarReveal,
   };
 }
 

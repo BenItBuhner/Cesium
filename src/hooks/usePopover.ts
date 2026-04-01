@@ -33,6 +33,7 @@ export function usePopover(
     const triggerRect = triggerRef.current.getBoundingClientRect();
     const gap = 6;
     const edge = 8;
+    const minPreferredSpace = 160;
 
     let left = triggerRect.left;
     const popoverW = popoverRef.current.scrollWidth;
@@ -41,13 +42,20 @@ export function usePopover(
     }
     if (left < 4) left = 4;
 
-    if (placement === "below") {
+    const spaceBelow = window.innerHeight - triggerRect.bottom - gap - edge;
+    const spaceAbove = triggerRect.top - gap - edge;
+    const placeBelow =
+      placement === "below"
+        ? spaceBelow >= minPreferredSpace || spaceBelow >= spaceAbove
+        : !(spaceAbove >= minPreferredSpace || spaceAbove >= spaceBelow);
+
+    if (placeBelow) {
       const top = triggerRect.bottom + gap;
-      const maxHeight = Math.max(100, window.innerHeight - triggerRect.bottom - gap - edge);
+      const maxHeight = Math.max(100, spaceBelow);
       setPosition({ top, left, maxHeight });
     } else {
       const distFromBottom = window.innerHeight - triggerRect.top + gap;
-      const maxHeight = Math.max(100, triggerRect.top - edge);
+      const maxHeight = Math.max(100, spaceAbove);
       setPosition({ bottom: distFromBottom, left, maxHeight });
     }
     setReady(true);

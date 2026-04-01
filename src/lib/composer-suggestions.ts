@@ -1,4 +1,6 @@
 import type { FileNode } from "@/lib/types";
+import type { AgentBackendInfo, AgentConfigOption } from "@/lib/agent-types";
+import type { AgentModeOption, ModelInfo } from "@/lib/types";
 
 export type AtSuggestion = {
   id: string;
@@ -72,7 +74,7 @@ export function getAllAtSuggestions(root?: FileNode | null): AtSuggestion[] {
   return [...TOOL_AT, ...filesFromTree(root ?? { name: "", type: "folder", children: [] })];
 }
 
-export const SLASH_COMMANDS: SlashSuggestion[] = [
+const PROMPT_SLASH_COMMANDS: SlashSuggestion[] = [
   {
     id: "plan",
     label: "Plan",
@@ -116,6 +118,70 @@ export const SLASH_COMMANDS: SlashSuggestion[] = [
     insert: "/summarize",
   },
 ];
+
+function slugifySlashValue(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+function summarizeBackendLabel(backend: AgentBackendInfo): string {
+  return backend.experimental ? `${backend.label} (experimental)` : backend.label;
+}
+
+export function getSlashSuggestions(input: {
+  modeOptions?: AgentModeOption[];
+  models?: ModelInfo[];
+  backends?: AgentBackendInfo[];
+  sessionConfigOptions?: AgentConfigOption[];
+}): SlashSuggestion[] {
+  const suggestions: SlashSuggestion[] = [...PROMPT_SLASH_COMMANDS];
+
+  for (const mode of input.modeOptions ?? []) {
+    suggestions.push({
+      id: `mode:${mode.id}`,
+      label: `Mode: ${mode.label}`,
+      subtitle: mode.description ?? "Switch the active chat mode",
+      insert: `/mode ${mode.id}`,
+    });
+  }
+
+  for (const model of input.models ?? []) {
+    const modelValue = model.modelValue ?? model.id;
+    suggestions.push({
+      id: `model:${modelValue}`,
+      label: `Model: ${model.name}`,
+      subtitle: model.description ?? "Switch the active model",
+      insert: `/model ${modelValue}`,
+    });
+  }
+
+  for (const backend of input.backends ?? []) {
+    suggestions.push({
+      id: `backend:${backend.id}`,
+      label: `Backend: ${backend.label}`,
+      subtitle: summarizeBackendLabel(backend),
+      insert: `/backend ${backend.id}`,
+    });
+  }
+
+  for (const option of input.sessionConfigOptions ?? []) {
+    for (const choice of option.options) {
+      const normalizedConfigId = slugifySlashValue(option.id || option.name);
+      const choiceValue = choice.value || choice.name;
+      suggestions.push({
+        id: `config:${option.id}:${choice.value}`,
+        label: `${option.name}: ${choice.name}`,
+        subtitle: option.description ?? `Set ${option.name}`,
+        insert: `/set ${normalizedConfigId} ${choiceValue}`,
+      });
+    }
+  }
+
+  return suggestions;
+}
 
 export function filterAtSuggestions(list: AtSuggestion[], query: string): AtSuggestion[] {
   const q = query.toLowerCase().trim();

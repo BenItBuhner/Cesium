@@ -44,6 +44,7 @@ export type EditorPanelAction =
   | { type: "MOVE_TAB"; tabId: string; from: EditorGroup; to: EditorGroup }
   | { type: "FOCUS_EDITOR_GROUP"; group: EditorGroup }
   | { type: "OPEN_TRANSCRIPT_TAB"; title: string; messages: ChatMessage[] }
+  | { type: "OPEN_COMPOSER_DRAFT_TAB"; draftId: string; title: string; content: string }
   | { type: "OPEN_TERMINAL_TAB"; terminalId: string; name?: string }
   | { type: "OPEN_BROWSER_TAB"; url: string; name?: string }
   | { type: "UPDATE_BROWSER_TAB_URL"; tabId: string; targetUrl: string }
@@ -190,6 +191,78 @@ export function editorPanelReducer(
         ...state,
         leftTabs: [...state.leftTabs, tab],
         leftActiveId: id,
+      };
+    }
+
+    case "OPEN_COMPOSER_DRAFT_TAB": {
+      const tabId = `composer-draft:${action.draftId}`;
+      const existingLeft = state.leftTabs.find((tab) => tab.id === tabId);
+      const existingRight = state.rightTabs.find((tab) => tab.id === tabId);
+      const name =
+        action.title.length > 40
+          ? `${action.title.slice(0, 37)}…`
+          : action.title;
+      if (existingLeft) {
+        return {
+          ...state,
+          focusedGroup: "left",
+          leftActiveId: tabId,
+          leftTabs: state.leftTabs.map((tab) =>
+            tab.id === tabId
+              ? {
+                  ...tab,
+                  name,
+                  content: action.content,
+                  savedContent: action.content,
+                  dirty: false,
+                }
+              : tab
+          ),
+        };
+      }
+      if (existingRight) {
+        return {
+          ...state,
+          focusedGroup: "right",
+          rightActiveId: tabId,
+          rightTabs: state.rightTabs.map((tab) =>
+            tab.id === tabId
+              ? {
+                  ...tab,
+                  name,
+                  content: action.content,
+                  savedContent: action.content,
+                  dirty: false,
+                }
+              : tab
+          ),
+        };
+      }
+      const tab: EditorTab = {
+        id: tabId,
+        name,
+        language: "plaintext",
+        icon: "default",
+        content: action.content,
+        composerDraftId: action.draftId,
+        fileKind: "text",
+        previewMode: "source",
+        dirty: false,
+        savedContent: action.content,
+      };
+      if (!state.split || state.focusedGroup === "left") {
+        return {
+          ...state,
+          focusedGroup: "left",
+          leftTabs: [...state.leftTabs, tab],
+          leftActiveId: tabId,
+        };
+      }
+      return {
+        ...state,
+        focusedGroup: "right",
+        rightTabs: [...state.rightTabs, tab],
+        rightActiveId: tabId,
       };
     }
 
@@ -405,7 +478,14 @@ export function editorPanelReducer(
           ? {
               ...tab,
               content: action.content,
-              dirty: action.content !== (tab.savedContent ?? ""),
+              ...(tab.composerDraftId
+                ? {
+                    savedContent: action.content,
+                    dirty: false,
+                  }
+                : {
+                    dirty: action.content !== (tab.savedContent ?? ""),
+                  }),
             }
           : tab;
       return {

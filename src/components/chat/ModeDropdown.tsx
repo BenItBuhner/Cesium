@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useMemo } from "react";
+import { useState, useCallback, useMemo, useRef, useLayoutEffect } from "react";
 import { createPortal } from "react-dom";
 import {
   Infinity,
@@ -84,11 +84,15 @@ export function ModeDropdown({
         ...option,
         icon: iconForModeTone(tone),
         tone,
-        shortcut: option.id === "agent" ? agentShortcut || undefined : undefined,
+        shortcut:
+          getModeTone(option.id) === "agent" ? agentShortcut || undefined : undefined,
       };
     });
   }, [mode, options, platform, settings.keyboardShortcuts.bindings]);
   const [open, setOpen] = useState(false);
+  const [expandedWidth, setExpandedWidth] = useState(28);
+  const labelMeasureRef = useRef<HTMLSpanElement>(null);
+  const triggerExpanded = open;
   const close = useCallback(() => setOpen(false), []);
   const { triggerRef, popoverRef, position, ready } = usePopover(open, {
     placement: popoverPlacement,
@@ -100,20 +104,74 @@ export function ModeDropdown({
   const colors = modeColors[current?.tone ?? "agent"];
   const TriggerIcon = current.icon;
 
+  useLayoutEffect(() => {
+    const node = labelMeasureRef.current;
+    if (!node) {
+      return;
+    }
+    const nextWidth = Math.max(28, Math.ceil(node.getBoundingClientRect().width));
+    setExpandedWidth(nextWidth);
+  }, [current.label, triggerExpanded]);
+
   return (
-    <div ref={triggerRef}>
+    <div ref={triggerRef} className="relative inline-flex">
+      <span
+        ref={labelMeasureRef}
+        className="pointer-events-none absolute opacity-0"
+        aria-hidden
+      >
+        <span
+          className="inline-flex items-center rounded-[var(--radius-pill)] py-[1px] pl-[8px] pr-[7px] font-sans text-[13px] font-normal"
+          style={{ background: colors.bg }}
+        >
+          <TriggerIcon
+            className="size-[13px] shrink-0"
+            style={{ color: colors.text }}
+            strokeWidth={1.5}
+          />
+          <span className="ml-[6px] whitespace-nowrap" style={{ color: colors.text }}>
+            {current.label}
+          </span>
+          <ChevronDown
+            className="ml-[6px] size-[8px] shrink-0"
+            style={{ color: colors.text }}
+            strokeWidth={2.5}
+          />
+        </span>
+      </span>
       <button
         type="button"
         disabled={disabled}
         onClick={() => setOpen((v) => !v)}
-        className="flex items-center gap-[4px] rounded-[var(--radius-pill)] px-[6px] py-[1px] transition-opacity hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-50"
-        style={{ background: colors.bg }}
+        style={{
+          background: colors.bg,
+          width: triggerExpanded ? `${expandedWidth}px` : undefined,
+          minWidth: 28,
+        }}
+        className={`group inline-flex items-center overflow-hidden rounded-[var(--radius-pill)] py-[1px] transition-[padding,opacity] duration-200 hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50 ${
+          triggerExpanded ? "pl-[8px] pr-[7px]" : "pl-[7px] pr-[7px]"
+        }`}
       >
         <TriggerIcon className="size-[13px] shrink-0" style={{ color: colors.text }} strokeWidth={1.5} />
-        <span className="font-sans text-[13px] font-normal" style={{ color: colors.text }}>
+        <span
+          className={`overflow-hidden whitespace-nowrap font-sans text-[13px] font-normal transition-[margin,max-width,opacity] duration-200 ${
+            triggerExpanded
+              ? "ml-[6px] max-w-[240px] opacity-100"
+              : "ml-0 max-w-0 opacity-0 group-hover:ml-[6px] group-hover:max-w-[240px] group-hover:opacity-100 group-focus-visible:ml-[6px] group-focus-visible:max-w-[240px] group-focus-visible:opacity-100"
+          }`}
+          style={{ color: colors.text }}
+        >
           {current.label}
         </span>
-        <ChevronDown className="size-[8px] shrink-0" style={{ color: colors.text }} strokeWidth={2.5} />
+        <ChevronDown
+          className={`size-[8px] shrink-0 transition-[margin,opacity,width] duration-200 ${
+            triggerExpanded
+              ? "ml-[6px] w-[8px] opacity-100"
+              : "ml-0 w-0 opacity-0 group-hover:ml-[6px] group-hover:w-[8px] group-hover:opacity-100 group-focus-visible:ml-[6px] group-focus-visible:w-[8px] group-focus-visible:opacity-100"
+          }`}
+          style={{ color: colors.text }}
+          strokeWidth={2.5}
+        />
       </button>
 
       {open &&
@@ -121,6 +179,7 @@ export function ModeDropdown({
           <div
             ref={popoverRef}
             className="fixed z-[9999] w-[200px] rounded-[var(--radius-card)] border border-[var(--border-card)] bg-[var(--bg-panel)] py-[4px] transition-opacity"
+            data-ide-input-sink
             style={{
               ...(position.top != null
                 ? { top: position.top }
@@ -129,8 +188,10 @@ export function ModeDropdown({
               opacity: ready ? 1 : 0,
               maxHeight: position.maxHeight,
               overflow: "auto",
+              overscrollBehavior: "contain",
             }}
             onPointerDown={(e) => e.stopPropagation()}
+            onWheel={(e) => e.stopPropagation()}
           >
             {modes.map((opt) => {
               const Icon = opt.icon;

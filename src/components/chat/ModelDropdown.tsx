@@ -13,7 +13,6 @@ import {
 import { HardwareAwareTextInput } from "@/components/input/HardwareAwareTextField";
 import { useClickOutside } from "@/hooks/useClickOutside";
 import { usePopover } from "@/hooks/usePopover";
-import { ToggleSwitch } from "@/components/ui/ToggleSwitch";
 import type { ModelInfo } from "@/lib/types";
 
 const providerIcon: Record<ModelInfo["provider"], typeof Box> = {
@@ -23,6 +22,9 @@ const providerIcon: Record<ModelInfo["provider"], typeof Box> = {
   auto: Box,
   cursor: Sparkles,
   opencode: Box,
+   codex: Sparkles,
+   claude: Hexagon,
+   gemini: Box,
   fixture: Box,
 };
 
@@ -46,7 +48,6 @@ export function ModelDropdown({
 }: ModelDropdownProps) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
-  const [maxMode, setMaxMode] = useState(true);
 
   const close = useCallback(() => { setOpen(false); setQuery(""); }, []);
   const { triggerRef, popoverRef, position, ready } = usePopover(open, {
@@ -61,9 +62,25 @@ export function ModelDropdown({
     if (!query.trim()) return models;
     const q = query.toLowerCase();
     return models.filter(
-      (m) => m.name.toLowerCase().includes(q) || m.id.toLowerCase().includes(q)
+      (m) =>
+        m.name.toLowerCase().includes(q) ||
+        m.id.toLowerCase().includes(q) ||
+        m.detail?.toLowerCase().includes(q) ||
+        m.description?.toLowerCase().includes(q)
     );
   }, [models, query]);
+
+  const listMaxHeight = Math.max(96, Math.min(220, position.maxHeight - 44));
+
+  const isActiveChoice = useCallback((m: ModelInfo) => {
+    if (m.id === model.id) return true;
+    const mv = m.modelValue ?? m.id;
+    const cur = model.modelValue ?? model.id;
+    if (mv !== cur) return false;
+    const a = m.configSelections?.map((s) => `${s.configId}:${s.value}`).sort().join("|") ?? "";
+    const b = model.configSelections?.map((s) => `${s.configId}:${s.value}`).sort().join("|") ?? "";
+    return a === b;
+  }, [model]);
 
   return (
     <div ref={triggerRef}>
@@ -84,7 +101,7 @@ export function ModelDropdown({
         createPortal(
           <div
             ref={popoverRef}
-            className={`fixed z-[9999] w-[260px] ${popoverSurface} transition-opacity`}
+            className={`fixed z-[9999] flex w-[260px] flex-col ${popoverSurface} transition-opacity`}
             data-ide-input-sink
             style={{
               ...(position.top != null
@@ -93,11 +110,13 @@ export function ModelDropdown({
               left: position.left,
               opacity: ready ? 1 : 0,
               maxHeight: position.maxHeight,
-              overflow: "auto",
+              overflow: "hidden",
             }}
             onPointerDown={(e) => e.stopPropagation()}
           >
-            <div className={`flex items-center gap-[6px] border-b border-[var(--border-card)] px-[10px] py-[6px]`}>
+            <div
+              className={`flex shrink-0 items-center gap-[6px] border-b border-[var(--border-card)] px-[10px] py-[6px]`}
+            >
               <Search className="size-[13px] shrink-0 text-[var(--text-disabled)]" strokeWidth={1.5} />
               <HardwareAwareTextInput
                 type="text"
@@ -109,15 +128,11 @@ export function ModelDropdown({
                 autoFocus
               />
             </div>
-
-            <div className="border-b border-[var(--border-card)] px-[12px] py-[6px]">
-              <div className="flex items-center justify-between py-[3px]">
-                <span className="font-sans text-[13px] text-[var(--text-primary)]">MAX Mode</span>
-                <ToggleSwitch checked={maxMode} onChange={setMaxMode} size="sm" />
-              </div>
-            </div>
-
-            <div className="max-h-[220px] overflow-y-auto py-[2px]">
+            <div
+              className="min-h-0 flex-1 overflow-y-auto overscroll-contain py-[2px]"
+              style={{ maxHeight: listMaxHeight }}
+              onWheel={(e) => e.stopPropagation()}
+            >
               {filtered.length === 0 && (
                 <p className="px-[12px] py-[8px] font-sans text-[13px] text-[var(--text-disabled)]">
                   No models found
@@ -125,7 +140,7 @@ export function ModelDropdown({
               )}
               {filtered.map((m) => {
                 const Icon = providerIcon[m.provider];
-                const active = m.id === model.id;
+                const active = isActiveChoice(m);
                 return (
                   <button
                     key={m.id}
@@ -141,11 +156,18 @@ export function ModelDropdown({
                       className="size-[14px] shrink-0 text-[var(--text-secondary)]"
                       strokeWidth={1.5}
                     />
-                    <span
-                      className="flex-1 font-sans text-[13px] font-normal"
-                      style={{ color: active ? "var(--text-primary)" : "var(--text-secondary)" }}
-                    >
-                      {m.name}
+                    <span className="min-w-0 flex-1">
+                      <span
+                        className="block truncate font-sans text-[13px] font-normal"
+                        style={{ color: active ? "var(--text-primary)" : "var(--text-secondary)" }}
+                      >
+                        {m.name}
+                      </span>
+                      {(m.detail || m.description) && (
+                        <span className="block truncate font-sans text-[11px] text-[var(--text-disabled)]">
+                          {m.detail ?? m.description}
+                        </span>
+                      )}
                     </span>
                     {active && (
                       <Check className="size-[14px] shrink-0 text-[var(--text-primary)]" strokeWidth={2} />

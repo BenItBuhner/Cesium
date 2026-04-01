@@ -73,7 +73,7 @@ export function EditorTab({
       onClick={() => onSelect(tab.id)}
       onContextMenu={onContextMenu}
       aria-label={tab.dirty ? `${tab.name}, unsaved changes` : tab.name}
-      className={`group relative flex h-[36px] w-[220px] shrink-0 items-center overflow-hidden rounded-[var(--radius-tab)] transition-colors ${dragEnabled ? "cursor-grab active:cursor-grabbing" : ""}`}
+      className={`group relative inline-flex h-[36px] max-w-[220px] shrink-0 items-center overflow-hidden rounded-[var(--radius-tab)] transition-colors ${dragEnabled ? "cursor-grab active:cursor-grabbing" : ""}`}
       style={{ background: surface }}
     >
       <span className="ml-[9px] flex size-[18px] shrink-0 items-center justify-center">

@@ -16,11 +16,13 @@ import { FilePreview } from "./FilePreview";
 import { AgentTranscriptView } from "./AgentTranscriptView";
 import { SettingsEditorView } from "./SettingsEditorView";
 import { BrowserTab } from "./BrowserTab";
+import { ExpandedComposerView } from "./ExpandedComposerView";
 import { useEditorBridgeRef } from "@/components/ide/EditorBridgeContext";
 import { useWorkbenchContextMenu } from "@/components/ide/WorkbenchContextMenuProvider";
 import type { WorkbenchMenuItem } from "@/components/ide/workbench-context-menu-types";
 import {
   useOpenInEditor,
+  type OpenComposerDraftPayload,
   type OpenTranscriptPayload,
 } from "./OpenInEditorContext";
 import type { ExplorerOpenRequest } from "@/lib/types";
@@ -73,8 +75,13 @@ function areViewStatesEqual(a: unknown, b: unknown): boolean {
 export function EditorPanel() {
   const {
     registerOpenTranscript,
+    registerOpenComposerDraft,
     registerOpenExplorerFile,
+    composerDrafts,
+    upsertComposerDraft,
     setActiveExplorerPath,
+    expandedComposerDraftId,
+    setExpandedComposerDraft,
   } = useOpenInEditor();
   const {
     fsResyncToken,
@@ -247,16 +254,67 @@ export function EditorPanel() {
         messages: payload.messages,
       });
     };
+    const onComposerDraft = (payload: OpenComposerDraftPayload) => {
+      dispatch({
+        type: "OPEN_COMPOSER_DRAFT_TAB",
+        draftId: payload.draftId,
+        title: payload.title,
+        content: payload.content,
+      });
+    };
     const onExplorer = (payload: ExplorerOpenRequest) => {
       void loadExplorerFile(payload);
     };
     registerOpenTranscript(onTranscript);
+    registerOpenComposerDraft(onComposerDraft);
     registerOpenExplorerFile(onExplorer);
     return () => {
       registerOpenTranscript(null);
+      registerOpenComposerDraft(null);
       registerOpenExplorerFile(null);
     };
-  }, [loadExplorerFile, registerOpenTranscript, registerOpenExplorerFile]);
+  }, [
+    loadExplorerFile,
+    registerOpenComposerDraft,
+    registerOpenTranscript,
+    registerOpenExplorerFile,
+  ]);
+
+  useEffect(() => {
+    const openDraftTabs = [...state.leftTabs, ...state.rightTabs].filter(
+      (tab) => tab.composerDraftId
+    );
+    for (const tab of openDraftTabs) {
+      const draftId = tab.composerDraftId;
+      if (!draftId) {
+        continue;
+      }
+      const draft = composerDrafts[draftId];
+      if (!draft || tab.content === draft.content) {
+        continue;
+      }
+      dispatch({ type: "UPDATE_TAB_CONTENT", tabId: tab.id, content: draft.content });
+    }
+  }, [composerDrafts, state.leftTabs, state.rightTabs]);
+
+  useEffect(() => {
+    if (!expandedComposerDraftId) {
+      return;
+    }
+    const openDraftIds = new Set(
+      [...state.leftTabs, ...state.rightTabs]
+        .map((tab) => tab.composerDraftId)
+        .filter((value): value is string => Boolean(value))
+    );
+    if (!openDraftIds.has(expandedComposerDraftId)) {
+      setExpandedComposerDraft(null);
+    }
+  }, [
+    expandedComposerDraftId,
+    setExpandedComposerDraft,
+    state.leftTabs,
+    state.rightTabs,
+  ]);
 
   useEffect(() => {
     if (!lastFileChange) return;
@@ -354,6 +412,9 @@ export function EditorPanel() {
     (group: EditorGroup, id: string) => {
       const tab = findTab(id);
       if (!tab) return;
+      if (tab.composerDraftId && expandedComposerDraftId === tab.composerDraftId) {
+        setExpandedComposerDraft(null);
+      }
       if (!tab.dirty) {
         dispatch({ type: "CLOSE_TAB", group, id });
         return;
@@ -402,7 +463,15 @@ export function EditorPanel() {
         ],
       });
     },
-    [dismiss, dismissByKind, findTab, pushNotification, saveTab]
+    [
+      dismiss,
+      dismissByKind,
+      expandedComposerDraftId,
+      findTab,
+      pushNotification,
+      saveTab,
+      setExpandedComposerDraft,
+    ]
   );
 
   const requestCloseAllInGroup = useCallback(
@@ -721,6 +790,16 @@ export function EditorPanel() {
     if (tab.id === SETTINGS_EDITOR_TAB_ID) {
       return <SettingsEditorView key={tab.id} />;
     }
+    if (tab.composerDraftId) {
+      return (
+        <ExpandedComposerView
+          key={tab.id}
+          draftId={tab.composerDraftId}
+          title={tab.name}
+          onMinimize={() => requestCloseTab(group, tab.id)}
+        />
+      );
+    }
     if (tab.transcriptMessages && tab.transcriptMessages.length > 0) {
       return (
         <AgentTranscriptView
@@ -820,8 +899,18 @@ export function EditorPanel() {
           }
           onLiveContentChange={(content) => {
             liveTabContentRef.current.set(tab.id, content);
+            if (tab.composerDraftId) {
+              upsertComposerDraft(tab.composerDraftId, {
+                title: tab.name,
+                content,
+              });
+            }
           }}
-          onSave={(content) => saveTab(tab.id, content)}
+          onSave={
+            tab.composerDraftId
+              ? undefined
+              : (content) => saveTab(tab.id, content)
+          }
         />
       </div>
     );

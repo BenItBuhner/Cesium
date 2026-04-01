@@ -112,10 +112,22 @@ export function listSupplementaryAgentConfigOptions(
     skip.add(model.id);
   }
   return conversation.configOptions.filter(
-    (option) =>
-      option.options.length > 0 &&
-      option.category !== "permission" &&
-      !skip.has(option.id) &&
-      !option.id.startsWith("__acp_legacy_")
+    (option) => {
+      const lowerId = option.id.trim().toLowerCase();
+      const lowerName = option.name.trim().toLowerCase();
+      return (
+        option.options.length > 0 &&
+        option.category !== "permission" &&
+        option.category !== "thought_level" &&
+        !lowerId.includes("thought") &&
+        !lowerName.includes("thought") &&
+        !lowerId.includes("reason") &&
+        !lowerName.includes("reason") &&
+        !lowerId.includes("effort") &&
+        !lowerName.includes("effort") &&
+        !skip.has(option.id) &&
+        !option.id.startsWith("__acp_legacy_")
+      );
+    }
   );
 }

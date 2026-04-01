@@ -11,9 +11,10 @@ import type {
   ModelInfo,
   PermissionChoiceOption,
   TodoItem,
+  UserMessageSegment,
   WorkedSessionEntry,
 } from "@/lib/types";
-import { DEFAULT_MODE_OPTIONS } from "@/lib/chat-modes";
+import { DEFAULT_MODE_OPTIONS, formatModeLabel, resolveCanonicalModeId } from "@/lib/chat-modes";
 import {
   findConversationModeConfigOptionForUi,
   findConversationModelConfigOptionForUi,
@@ -25,35 +26,123 @@ function modelProviderForBackend(backendId: AgentBackendId): ModelInfo["provider
       return "cursor";
     case "opencode-acp":
       return "opencode";
+    case "codex-adapter":
+      return "codex";
+    case "claude-adapter":
+      return "claude";
+    case "gemini-adapter":
+      return "gemini";
     default:
       return "auto";
   }
 }
 
+function getBackendForConversation(
+  conversation: AgentConversationRecord,
+  backends: AgentBackendInfo[]
+): AgentBackendInfo | undefined {
+  return backends.find((candidate) => candidate.id === conversation.config.backendId);
+}
+
+function createBackendDraftConversation(
+  backend: AgentBackendInfo
+): AgentConversationRecord {
+  const configOptions = backend.cachedConfigOptions ?? [];
+  const draftConversation: AgentConversationRecord = {
+    schemaVersion: 1,
+    id: `draft-${backend.id}`,
+    workspaceId: "draft",
+    title: "New chat",
+    createdAt: 0,
+    updatedAt: 0,
+    lastEventSeq: 0,
+    status: "idle",
+    config: {
+      backendId: backend.id,
+      mode: backend.defaultMode,
+      modelId: backend.defaultModelId,
+      modelName: backend.defaultModelName,
+    },
+    providerSessionId: null,
+    configOptions,
+    capabilities: backend.capabilities,
+    pendingPermission: null,
+    lastError: null,
+    experimental: Boolean(backend.experimental),
+  };
+  const modeOption = findConversationModeConfigOptionForUi(draftConversation);
+  const modelOption = findConversationModelConfigOptionForUi(draftConversation);
+  const modelId = modelOption?.currentValue || backend.defaultModelId;
+  const modelName =
+    modelOption?.options.find((option) => option.value === modelId)?.name ||
+    backend.defaultModelName;
+  draftConversation.config.mode =
+    (modeOption?.currentValue || backend.defaultMode) as AgentConversationRecord["config"]["mode"];
+  draftConversation.config.modelId = modelId;
+  draftConversation.config.modelName = modelName;
+  const modeOpts = buildConversationModeOptions(draftConversation, [backend]);
+  draftConversation.config.mode = resolveCanonicalModeId(
+    String(draftConversation.config.mode),
+    modeOpts
+  ) as AgentConversationRecord["config"]["mode"];
+  return draftConversation;
+}
+
+function getEffectiveConfigOptions(
+  conversation: AgentConversationRecord,
+  backends: AgentBackendInfo[]
+): AgentConversationRecord["configOptions"] {
+  if (conversation.configOptions.length > 0) {
+    return conversation.configOptions;
+  }
+  return getBackendForConversation(conversation, backends)?.cachedConfigOptions ?? [];
+}
+
+function findConfigOptionByCategory(
+  conversation: AgentConversationRecord,
+  backends: AgentBackendInfo[],
+  category: AgentConversationRecord["configOptions"][number]["category"]
+): AgentConversationRecord["configOptions"][number] | undefined {
+  return getEffectiveConfigOptions(conversation, backends).find(
+    (option) => option.category === category && option.options.length > 0
+  );
+}
+
 export function findConversationModeConfigOption(
-  conversation: AgentConversationRecord
+  conversation: AgentConversationRecord,
+  backends: AgentBackendInfo[] = []
 ) {
-  return findConversationModeConfigOptionForUi(conversation);
+  const configOptions = getEffectiveConfigOptions(conversation, backends);
+  return findConversationModeConfigOptionForUi({
+    ...conversation,
+    configOptions,
+  });
 }
 
 export function buildConversationModeOptions(
-  conversation: AgentConversationRecord
+  conversation: AgentConversationRecord,
+  backends: AgentBackendInfo[] = []
 ): AgentModeOption[] {
-  const modeOption = findConversationModeConfigOption(conversation);
+  const modeOption = findConversationModeConfigOption(conversation, backends);
   if (!modeOption || modeOption.options.length === 0) {
     return DEFAULT_MODE_OPTIONS;
   }
   return modeOption.options.map((option) => ({
     id: option.value,
-    label: option.name,
+    label: formatModeLabel(option.name.trim() || option.value),
     description: option.description,
   }));
 }
 
 export function findConversationModelConfigOption(
-  conversation: AgentConversationRecord
+  conversation: AgentConversationRecord,
+  backends: AgentBackendInfo[] = []
 ) {
-  return findConversationModelConfigOptionForUi(conversation);
+  const configOptions = getEffectiveConfigOptions(conversation, backends);
+  return findConversationModelConfigOptionForUi({
+    ...conversation,
+    configOptions,
+  });
 }
 
 function toTodoItems(entries: AgentPlanEntry[]): TodoItem[] {
@@ -72,7 +161,7 @@ function summarizeTodoLabel(entries: AgentPlanEntry[]): string {
   return `${completed} of ${entries.length} Done`;
 }
 
-function toPermissionOptions(
+export function agentPermissionOptionsToUiChoices(
   options: { optionId: string; name: string; kind: PermissionChoiceOption["kind"] }[]
 ): PermissionChoiceOption[] {
   return options.map((option) => ({
@@ -85,32 +174,141 @@ function toPermissionOptions(
 type ProjectedTurn = {
   id: string;
   userMessage?: ChatMessage;
-  assistantMessage?: ChatMessage;
-  activityMessage?: ChatMessage;
-  toolEntries: WorkedSessionEntry[];
+  timeline: Array<
+    | { kind: "trace"; entry: WorkedSessionEntry }
+    | { kind: "assistant"; text: string; messageId: string }
+    | { kind: "message"; message: ChatMessage }
+  >;
+  /** User-visible worked-session content: tool rows and other non-message trace blocks */
+  trace: WorkedSessionEntry[];
   toolEntryById: Map<string, WorkedSessionEntry>;
-  permissionMessages: ChatMessage[];
+  /** Next slot for orphan `tool_call_update` → running tool (parallel tools; avoids all binding to open[0]) */
+  orphanToolUpdateSlot: number;
+  /** First assistant_message_chunk message id (for standalone assistant bubble id) */
+  assistantMessageId?: string;
   permissionCards: Map<string, ChatMessage>;
-  todoMessages: ChatMessage[];
   todoCards: Map<string, ChatMessage>;
-  trailingMessages: ChatMessage[];
 };
 
 function createTurn(id: string): ProjectedTurn {
   return {
     id,
-    toolEntries: [],
+    timeline: [],
+    trace: [],
     toolEntryById: new Map(),
-    permissionMessages: [],
+    orphanToolUpdateSlot: 0,
     permissionCards: new Map(),
-    todoMessages: [],
     todoCards: new Map(),
-    trailingMessages: [],
   };
+}
+
+function appendTraceEntry(turn: ProjectedTurn, entry: WorkedSessionEntry): void {
+  turn.trace.push(entry);
+  turn.timeline.push({ kind: "trace", entry });
+}
+
+function appendTimelineMessage(turn: ProjectedTurn, message: ChatMessage): void {
+  turn.timeline.push({ kind: "message", message });
+}
+
+function appendAssistantChunk(turn: ProjectedTurn, text: string, messageId: string): void {
+  if (!text) {
+    return;
+  }
+  if (!turn.assistantMessageId) {
+    turn.assistantMessageId = messageId;
+  }
+  const last = turn.timeline[turn.timeline.length - 1];
+  if (last?.kind === "assistant") {
+    last.text += text;
+  } else {
+    turn.timeline.push({ kind: "assistant", text, messageId });
+  }
 }
 
 function pluralize(count: number, singular: string, plural = `${singular}s`): string {
   return `${count} ${count === 1 ? singular : plural}`;
+}
+
+function capitalizeFirst(value: string): string {
+  if (!value) {
+    return value;
+  }
+  return value.charAt(0).toUpperCase() + value.slice(1);
+}
+
+function humanizeToolCallName(value: string): string {
+  return value
+    .replace(/ToolCall$/i, "")
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/[_-]/g, " ")
+    .trim();
+}
+
+function inferUserSegmentKind(token: string): UserMessageSegment["type"] | null {
+  const bare = token.startsWith("@") ? token.slice(1) : token;
+  const lowered = bare.toLowerCase();
+  if (["codebase", "docs", "web", "terminal"].includes(lowered)) {
+    return "context";
+  }
+  if (
+    bare.includes("/") ||
+    bare.includes("\\") ||
+    bare.startsWith(".") ||
+    /\.[a-z0-9]{1,12}$/i.test(bare)
+  ) {
+    return "file";
+  }
+  return null;
+}
+
+function parseUserMessageSegments(content: string): UserMessageSegment[] | undefined {
+  const pattern = /@[^\s]+/g;
+  const segments: UserMessageSegment[] = [];
+  let lastIndex = 0;
+  let sawChip = false;
+
+  for (const match of content.matchAll(pattern)) {
+    const token = match[0];
+    const start = match.index ?? 0;
+    if (start > lastIndex) {
+      segments.push({
+        type: "text",
+        text: content.slice(lastIndex, start),
+      });
+    }
+
+    let chip = token;
+    let trailing = "";
+    while (chip.length > 1 && /[),.;:!?]}]/.test(chip.at(-1) ?? "")) {
+      trailing = `${chip.at(-1)}${trailing}`;
+      chip = chip.slice(0, -1);
+    }
+
+    const kind = inferUserSegmentKind(chip);
+    if (kind) {
+      sawChip = true;
+      segments.push({
+        type: kind,
+        text: kind === "context" ? chip : chip.slice(1),
+      });
+      if (trailing) {
+        segments.push({ type: "text", text: trailing });
+      }
+    } else {
+      segments.push({ type: "text", text: token });
+    }
+    lastIndex = start + token.length;
+  }
+
+  if (lastIndex < content.length) {
+    segments.push({
+      type: "text",
+      text: content.slice(lastIndex),
+    });
+  }
+
+  return sawChip ? segments.filter((segment) => segment.text.length > 0) : undefined;
 }
 
 function toWorkedToolStatus(
@@ -119,6 +317,8 @@ function toWorkedToolStatus(
   switch (status) {
     case "in_progress":
       return "running";
+    case "pending":
+      return "pending";
     case "completed":
       return "completed";
     case "failed":
@@ -130,48 +330,338 @@ function toWorkedToolStatus(
   }
 }
 
-function updateWorkedMessage(turn: ProjectedTurn): void {
-  if (turn.toolEntries.length === 0) {
-    turn.activityMessage = undefined;
-    return;
+function inferToolKindFromTitle(name: string): string {
+  const n = name.toLowerCase();
+  if (n.includes("todo")) {
+    return "todo";
   }
-  if (!turn.activityMessage) {
-    turn.activityMessage = {
-      id: `turn-activity-${turn.id}`,
+  if (n.includes("search web") || n.includes("web search") || n.includes("websearch")) {
+    return "search_web";
+  }
+  if (n.includes("grep") || n.includes("ripgrep")) {
+    return "grep";
+  }
+  if (n.includes("glob") || n.includes("find") || n.includes("search")) {
+    return "search";
+  }
+  if (n.includes("delete") || n.includes("remove") || n.includes("unlink")) {
+    return "delete";
+  }
+  if (
+    n.includes("write") ||
+    n.includes("edit") ||
+    n.includes("patch") ||
+    n.includes("apply") ||
+    n.includes("update") ||
+    n.includes("create") ||
+    n.includes("insert") ||
+    n.includes("str replace") ||
+    n.includes("replace") ||
+    n.includes("rename") ||
+    n.includes("mkdir")
+  ) {
+    return "edit";
+  }
+  if (n.includes("read") || n.includes("open") || n.includes("view")) {
+    return "read";
+  }
+  if (
+    n.includes("run") ||
+    n.includes("shell") ||
+    n.includes("command") ||
+    n.includes("bash") ||
+    n.includes("terminal") ||
+    n.includes("execute")
+  ) {
+    return "terminal";
+  }
+  return "tool";
+}
+
+function recordHasAnyKey(
+  record: Record<string, unknown> | undefined,
+  keys: readonly string[]
+): boolean {
+  if (!record) {
+    return false;
+  }
+  return keys.some((key) => key in record && record[key] != null);
+}
+
+function looksLikeEditPayload(record: Record<string, unknown> | undefined): boolean {
+  if (!record) {
+    return false;
+  }
+  if (
+    recordHasAnyKey(record, [
+      "diffString",
+      "linesAdded",
+      "linesRemoved",
+      "beforeFullFileContent",
+      "afterFullFileContent",
+      "old_string",
+      "new_string",
+      "oldString",
+      "newString",
+      "replacement",
+      "replacements",
+      "patch",
+      "edits",
+      "contents",
+      "renameTo",
+      "newPath",
+    ])
+  ) {
+    return true;
+  }
+  const errorText =
+    typeof record.error === "string"
+      ? record.error
+      : record.error &&
+          typeof record.error === "object" &&
+          typeof (record.error as Record<string, unknown>).error === "string"
+        ? ((record.error as Record<string, unknown>).error as string)
+        : undefined;
+  return Boolean(errorText && /failed to find context|apply patch|replace/i.test(errorText));
+}
+
+function looksLikeReadPayload(record: Record<string, unknown> | undefined): boolean {
+  if (!record || looksLikeEditPayload(record)) {
+    return false;
+  }
+  return recordHasAnyKey(record, [
+    "content",
+    "text",
+    "totalLines",
+    "readRange",
+    "contentBlobId",
+    "isEmpty",
+    "exceededLimit",
+  ]);
+}
+
+function inferToolKindFromPayloadRecords(
+  values: Array<Record<string, unknown> | undefined>
+): string | undefined {
+  if (values.some((value) => looksLikeEditPayload(value))) {
+    return "edit";
+  }
+  if (values.some((value) => looksLikeReadPayload(value))) {
+    return "read";
+  }
+  return undefined;
+}
+
+function turnToolEntries(turn: ProjectedTurn): Extract<WorkedSessionEntry, { kind: "tool" }>[] {
+  return turn.trace.filter(
+    (entry): entry is Extract<WorkedSessionEntry, { kind: "tool" }> => entry.kind === "tool"
+  );
+}
+
+function summarizeWorkedToolBucket(
+  kind: string,
+  count: number,
+  fileCount: number
+): string {
+  const resolvedCount = fileCount > 0 ? fileCount : count;
+  switch (kind) {
+    case "read":
+      return resolvedCount === 1 ? "read 1 file" : `read ${resolvedCount} files`;
+    case "edit":
+      return resolvedCount === 1 ? "edited 1 file" : `edited ${resolvedCount} files`;
+    case "delete":
+      return resolvedCount === 1 ? "deleted 1 file" : `deleted ${resolvedCount} files`;
+    case "grep":
+      return count === 1 ? "grepped" : `grepped ${count} times`;
+    case "search_web":
+      return count === 1 ? "searched web" : `searched web ${count} times`;
+    case "search":
+      return count === 1 ? "searched workspace" : `searched workspace ${count} times`;
+    case "terminal":
+    case "execute":
+      return count === 1 ? "ran a command" : `ran ${count} commands`;
+    case "todo":
+      return count === 1 ? "updated todo list" : `updated todo list ${count} times`;
+    default:
+      return count === 1 ? "used a tool" : `used ${count} tools`;
+  }
+}
+
+function buildWorkedSessionLabel(entries: WorkedSessionEntry[]): string {
+  const tools = entries.filter(
+    (entry): entry is Extract<WorkedSessionEntry, { kind: "tool" }> => entry.kind === "tool"
+  );
+  if (tools.length === 0) {
+    return "Tools";
+  }
+  const orderedBuckets: Array<{ kind: string; count: number; files: Set<string> }> = [];
+  const bucketByKind = new Map<string, (typeof orderedBuckets)[number]>();
+  for (const tool of tools) {
+    const kind =
+      tool.toolKind ??
+      (tool.variant === "terminal" ? "terminal" : inferToolKindFromTitle(tool.title));
+    const bucket =
+      bucketByKind.get(kind) ??
+      (() => {
+        const created = { kind, count: 0, files: new Set<string>() };
+        bucketByKind.set(kind, created);
+        orderedBuckets.push(created);
+        return created;
+      })();
+    bucket.count += 1;
+    for (const file of tool.files ?? []) {
+      bucket.files.add(file);
+    }
+  }
+  const label = orderedBuckets
+    .map((bucket) =>
+      summarizeWorkedToolBucket(bucket.kind, bucket.count, bucket.files.size)
+    )
+    .join(", ");
+  const failedCount = tools.filter((tool) => tool.status === "failed").length;
+  return failedCount > 0
+    ? `${capitalizeFirst(label)} · ${failedCount} failed`
+    : capitalizeFirst(label);
+}
+
+function projectTurnTimelineToMessages(turn: ProjectedTurn): ChatMessage[] {
+  const messages: ChatMessage[] = [];
+  let assistantText = "";
+  let workedEntries: WorkedSessionEntry[] = [];
+  let segmentIndex = 0;
+
+  const flushAssistant = () => {
+    if (assistantText.trim().length === 0) {
+      assistantText = "";
+      return;
+    }
+    messages.push({
+      id: `${turn.assistantMessageId ?? `assistant-${turn.id}`}-${segmentIndex++}`,
+      type: "assistant",
+      content: assistantText,
+    });
+    assistantText = "";
+  };
+
+  const flushWorked = () => {
+    if (workedEntries.length === 0) {
+      return;
+    }
+    messages.push({
+      id: `turn-worked-${turn.id}-${segmentIndex++}`,
       type: "worked-session",
-      workedLabel: "Working through tool calls",
-      workedEntries: turn.toolEntries,
+      workedLabel: buildWorkedSessionLabel(workedEntries),
+      workedEntries,
       workedDefaultOpen: true,
-    };
+    });
+    workedEntries = [];
+  };
+
+  for (const item of turn.timeline) {
+    if (item.kind === "message") {
+      flushWorked();
+      flushAssistant();
+      messages.push(item.message);
+      continue;
+    }
+    if (item.kind === "assistant") {
+      flushWorked();
+      assistantText += item.text;
+      continue;
+    }
+    const entry = item.entry;
+    flushAssistant();
+    workedEntries.push(entry);
   }
-  const activeCount = turn.toolEntries.filter(
-    (entry) =>
-      entry.kind === "tool" &&
-      (entry.status === "pending" || entry.status === "running")
-  ).length;
-  const failedCount = turn.toolEntries.filter(
-    (entry) => entry.kind === "tool" && entry.status === "failed"
-  ).length;
-  turn.activityMessage.workedEntries = turn.toolEntries;
-  turn.activityMessage.workedDefaultOpen = activeCount > 0;
-  if (activeCount > 0) {
-    turn.activityMessage.workedLabel = `Working through ${pluralize(
-      turn.toolEntries.length,
-      "tool call"
-    )}`;
-    return;
+
+  flushWorked();
+  flushAssistant();
+  return messages;
+}
+
+function parseLooseJsonObject(value: unknown): Record<string, unknown> | undefined {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
   }
-  if (failedCount > 0) {
-    turn.activityMessage.workedLabel = `Worked through ${pluralize(
-      turn.toolEntries.length,
-      "tool call"
-    )} with ${pluralize(failedCount, "issue")}`;
-    return;
+  if (typeof value === "string" && value.trim()) {
+    try {
+      const parsed = JSON.parse(value) as unknown;
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        return parsed as Record<string, unknown>;
+      }
+    } catch {
+      return undefined;
+    }
   }
-  turn.activityMessage.workedLabel = `Worked through ${pluralize(
-    turn.toolEntries.length,
-    "tool call"
-  )}`;
+  return undefined;
+}
+
+function parseVerboseToolDetail(detail: string | undefined): Record<string, unknown> | undefined {
+  if (!detail?.trim()) {
+    return undefined;
+  }
+  return parseLooseJsonObject(detail);
+}
+
+function isVerboseToolPayloadDetail(detail: string | undefined): boolean {
+  const trimmed = detail?.trim();
+  if (!trimmed) {
+    return false;
+  }
+  const parsed = parseVerboseToolDetail(trimmed);
+  if (
+    parsed &&
+    ["content", "text", "stdout", "output", "result"].some((key) => key in parsed)
+  ) {
+    return true;
+  }
+  return (
+    (trimmed.startsWith("{") || trimmed.startsWith("[")) &&
+    (trimmed.includes("\\n") || trimmed.includes("\n") || trimmed.length > 180)
+  );
+}
+
+function safeToolDetailText(
+  detail: string | undefined,
+  options: { suppressVerbosePayload?: boolean } = {}
+): string | undefined {
+  const trimmed = detail?.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+  if (options.suppressVerbosePayload && isVerboseToolPayloadDetail(trimmed)) {
+    return undefined;
+  }
+  return trimmed;
+}
+
+function suppressPathOnlyDetail(detail: string | undefined): string | undefined {
+  const parsed = parseVerboseToolDetail(detail);
+  if (
+    parsed &&
+    Object.keys(parsed).length > 0 &&
+    Object.keys(parsed).every((key) =>
+      ["path", "filePath", "filepath", "relativePath", "targetPath", "uri"].includes(key)
+    )
+  ) {
+    return undefined;
+  }
+  return detail;
+}
+
+/** When stream-json IDs do not line up, completion updates never land — close out on turn end. */
+function finalizeOpenToolsInTurn(
+  turn: ProjectedTurn,
+  finalStatus: "completed" | "failed" | "cancelled"
+): void {
+  for (const entry of turn.trace) {
+    if (entry.kind !== "tool") {
+      continue;
+    }
+    if (entry.status === "pending" || entry.status === "running") {
+      entry.status = finalStatus;
+    }
+  }
 }
 
 function getToolRawUpdate(
@@ -185,6 +675,18 @@ function getToolRawUpdate(
   return update && typeof update === "object"
     ? (update as Record<string, unknown>)
     : undefined;
+}
+
+function compactJsonForRejected(record: Record<string, unknown>): string | undefined {
+  try {
+    const compact = JSON.stringify(record);
+    if (!compact || compact === "{}" || compact === "null") {
+      return undefined;
+    }
+    return compact.length > 800 ? `${compact.slice(0, 797)}...` : compact;
+  } catch {
+    return undefined;
+  }
 }
 
 function findFirstStringByKey(
@@ -373,23 +875,245 @@ function summarizeReadContent(content: string): { title?: string; detail?: strin
   };
 }
 
+function extractToolNameFromCliRaw(raw: Record<string, unknown> | undefined): string | undefined {
+  if (!raw) {
+    return undefined;
+  }
+  const pick = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : undefined);
+  const fromFn =
+    raw.function && typeof raw.function === "object"
+      ? pick((raw.function as Record<string, unknown>).name)
+      : undefined;
+  if (fromFn) {
+    return fromFn;
+  }
+  const fromFc =
+    raw.function_call && typeof raw.function_call === "object"
+      ? pick((raw.function_call as Record<string, unknown>).name)
+      : undefined;
+  if (fromFc) {
+    return fromFc;
+  }
+  const direct = pick(raw.tool_name) ?? pick(raw.toolName) ?? pick(raw.name);
+  if (direct && !/^(text|assistant)$/i.test(direct)) {
+    return direct;
+  }
+  return findFirstStringByKey(raw, ["tool_name", "function_name", "toolName"]);
+}
+
+type AcpToolCallEntry = {
+  rawName: string;
+  args?: Record<string, unknown>;
+  result?: Record<string, unknown>;
+};
+
+function extractAcpToolCallEntries(
+  raw: Record<string, unknown> | undefined
+): AcpToolCallEntry[] {
+  if (!raw) {
+    return [];
+  }
+  const toolCall =
+    raw.tool_call && typeof raw.tool_call === "object" && !Array.isArray(raw.tool_call)
+      ? (raw.tool_call as Record<string, unknown>)
+      : raw.toolCall && typeof raw.toolCall === "object" && !Array.isArray(raw.toolCall)
+        ? (raw.toolCall as Record<string, unknown>)
+        : undefined;
+  if (!toolCall) {
+    return [];
+  }
+  const entries: AcpToolCallEntry[] = [];
+  for (const [rawName, value] of Object.entries(toolCall)) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      continue;
+    }
+    const record = value as Record<string, unknown>;
+    const args =
+      parseLooseJsonObject(record.args) ??
+      parseLooseJsonObject(record.input) ??
+      (record.args && typeof record.args === "object" && !Array.isArray(record.args)
+        ? (record.args as Record<string, unknown>)
+        : record.input && typeof record.input === "object" && !Array.isArray(record.input)
+          ? (record.input as Record<string, unknown>)
+          : undefined);
+    const result =
+      parseLooseJsonObject(record.result) ??
+      (record.result && typeof record.result === "object" && !Array.isArray(record.result)
+        ? (record.result as Record<string, unknown>)
+        : undefined);
+    entries.push({ rawName, args, result });
+  }
+  return entries;
+}
+
+function extractAcpToolCallPayload(raw: Record<string, unknown> | undefined): {
+  rawName?: string;
+  args?: Record<string, unknown>;
+  result?: Record<string, unknown>;
+} {
+  const [entry] = extractAcpToolCallEntries(raw);
+  return entry ?? {};
+}
+
+function findFirstStringAcrossValues(
+  values: unknown[],
+  keys: string[]
+): string | undefined {
+  for (const value of values) {
+    const match = findFirstStringByKey(value, keys);
+    if (match) {
+      return match;
+    }
+  }
+  return undefined;
+}
+
+function findFirstNumberAcrossValues(
+  values: unknown[],
+  keys: string[]
+): number | undefined {
+  for (const value of values) {
+    const match = findFirstNumberByKey(value, keys);
+    if (match != null) {
+      return match;
+    }
+  }
+  return undefined;
+}
+
+function findFirstStringArrayAcrossValues(
+  values: unknown[],
+  keys: string[]
+): string[] | undefined {
+  for (const value of values) {
+    const match = findFirstStringArrayByKey(value, keys);
+    if (match?.length) {
+      return match;
+    }
+  }
+  return undefined;
+}
+
+function isGenericToolTitle(title: string | undefined): boolean {
+  const normalized = title?.trim().toLowerCase();
+  return (
+    !normalized ||
+    normalized === "tool call" ||
+    normalized === "tool" ||
+    normalized === "function call" ||
+    normalized === "function"
+  );
+}
+
+/** Stream-json `type` values that are not useful as a user-visible tool title */
+const GENERIC_STREAM_TOOL_TYPES = new Set([
+  "agent_message",
+  "function_call",
+  "function",
+  "tool_call",
+  "tool_use",
+  "tool_result",
+  "tool_output",
+  "mcp_tool_use",
+  "custom_tool_call",
+]);
+
 function formatToolSummary(
   event: Extract<AgentStoredEvent, { kind: "tool_call" | "tool_call_update" }>,
   existing?: Extract<WorkedSessionEntry, { kind: "tool" }>
 ): Extract<WorkedSessionEntry, { kind: "tool" }> {
   const rawUpdate = getToolRawUpdate(event);
-  const rawInput =
+  const rawTop =
+    "raw" in event && event.raw && typeof event.raw === "object"
+      ? (event.raw as Record<string, unknown>)
+      : undefined;
+  const rawToolRecord =
+    (rawUpdate &&
+    (extractAcpToolCallEntries(rawUpdate).length > 0 ||
+      typeof rawUpdate.type === "string" ||
+      typeof rawUpdate.title === "string")
+      ? rawUpdate
+      : undefined) ?? rawTop;
+  const rawType =
+    typeof rawToolRecord?.type === "string" &&
+    rawToolRecord.type &&
+    rawToolRecord.type !== "agent_message"
+      ? rawToolRecord.type
+      : undefined;
+  const acpToolCalls = rawToolRecord ? extractAcpToolCallEntries(rawToolRecord) : [];
+  const acpToolCall = acpToolCalls[0];
+  const acpToolName = acpToolCall?.rawName
+    ? humanizeToolCallName(acpToolCall.rawName)
+    : undefined;
+  const acpToolKinds = acpToolCalls
+    .map((entry) => inferToolKindFromTitle(humanizeToolCallName(entry.rawName)))
+    .filter((kind) => kind !== "tool");
+  const acpToolResultSuccess = acpToolCalls
+    .map((entry) =>
+      entry.result?.success &&
+      typeof entry.result.success === "object" &&
+      !Array.isArray(entry.result.success)
+        ? (entry.result.success as Record<string, unknown>)
+        : undefined
+    )
+    .find((value) => value != null);
+  const acpToolResultRejected = acpToolCalls
+    .map((entry) =>
+      entry.result?.rejected &&
+      typeof entry.result.rejected === "object" &&
+      !Array.isArray(entry.result.rejected)
+        ? (entry.result.rejected as Record<string, unknown>)
+        : undefined
+    )
+    .find((value) => value != null);
+  const rawTypeLabel =
+    rawType && !GENERIC_STREAM_TOOL_TYPES.has(rawType)
+      ? String(rawType).replace(/_/g, " ")
+      : undefined;
+  const nestedArgRecord =
+    acpToolCall?.args ??
+    parseLooseJsonObject(rawToolRecord?.arguments) ??
+    parseLooseJsonObject(rawToolRecord?.input) ??
+    parseLooseJsonObject(rawToolRecord?.args) ??
+    parseLooseJsonObject(rawToolRecord?.params);
+  const nestedFromFunction =
+    rawToolRecord?.function && typeof rawToolRecord.function === "object"
+      ? parseLooseJsonObject((rawToolRecord.function as Record<string, unknown>).arguments) ??
+        parseLooseJsonObject((rawToolRecord.function as Record<string, unknown>).input)
+      : undefined;
+  const titleFromRaw =
+    extractToolNameFromCliRaw(rawToolRecord) ??
+    acpToolName ??
+    (typeof rawToolRecord?.tool_name === "string" ? rawToolRecord.tool_name : undefined) ??
+    (typeof rawToolRecord?.name === "string" ? rawToolRecord.name : undefined) ??
+    rawTypeLabel;
+  const rawTitleLabel =
+    titleFromRaw != null && titleFromRaw !== ""
+      ? String(titleFromRaw).replace(/[_-]/g, " ")
+      : undefined;
+  const acpKind = typeof rawToolRecord?.kind === "string" ? rawToolRecord.kind : undefined;
+  const rawInputs = [
     rawUpdate?.rawInput && typeof rawUpdate.rawInput === "object"
       ? (rawUpdate.rawInput as Record<string, unknown>)
-      : undefined;
-  const rawOutput =
+      : undefined,
+    ...acpToolCalls.map((entry) => entry.args),
+    nestedArgRecord,
+    nestedFromFunction,
+    rawToolRecord,
+    rawTop,
+  ].filter((value): value is Record<string, unknown> => value != null);
+  const rawOutputs = [
     rawUpdate?.rawOutput && typeof rawUpdate.rawOutput === "object"
       ? (rawUpdate.rawOutput as Record<string, unknown>)
-      : undefined;
+      : undefined,
+    acpToolResultSuccess,
+    acpToolResultRejected,
+    ...acpToolCalls.map((entry) => entry.result),
+  ].filter((value): value is Record<string, unknown> => value != null);
 
   const path =
     event.locations?.[0]?.path ??
-    findFirstStringByKey(rawInput, [
+    findFirstStringAcrossValues(rawInputs, [
       "path",
       "filePath",
       "filepath",
@@ -397,7 +1121,7 @@ function formatToolSummary(
       "targetPath",
       "uri",
     ]) ??
-    findFirstStringByKey(rawOutput, [
+    findFirstStringAcrossValues(rawOutputs, [
       "path",
       "filePath",
       "filepath",
@@ -408,7 +1132,7 @@ function formatToolSummary(
 
   const files =
     event.locations?.map((location) => location.path) ??
-    findFirstStringArrayByKey(rawOutput, [
+    findFirstStringArrayAcrossValues(rawOutputs, [
       "files",
       "paths",
       "matchedFiles",
@@ -416,13 +1140,72 @@ function formatToolSummary(
     ]) ??
     existing?.files;
 
-  const status = toWorkedToolStatus(event.status);
+  let status = toWorkedToolStatus(event.status);
+  if (acpToolResultRejected) {
+    status = "failed";
+  } else if (rawToolRecord?.subtype === "completed") {
+    status = "completed";
+  } else if (rawToolRecord?.subtype === "started" && status === "pending") {
+    status = "running";
+  }
   const explicitTitle = "title" in event ? event.title : undefined;
-  const toolKind = "toolKind" in event ? event.toolKind : undefined;
-  const detail = event.detail?.trim();
+  const toolKindFromEvent = "toolKind" in event ? event.toolKind : undefined;
+  const payloadToolKind = inferToolKindFromPayloadRecords([
+    ...rawInputs,
+    ...rawOutputs,
+  ]);
+  const rawKind =
+    (toolKindFromEvent && toolKindFromEvent !== "tool" ? toolKindFromEvent : undefined) ??
+    payloadToolKind ??
+    existing?.toolKind ??
+    (acpToolKinds.length === 1 ? acpToolKinds[0] : undefined) ??
+    (acpToolName ? inferToolKindFromTitle(acpToolName) : undefined) ??
+    (acpKind && acpKind !== "tool" ? acpKind : undefined) ??
+    (titleFromRaw ? inferToolKindFromTitle(titleFromRaw) : undefined) ??
+    (rawTitleLabel ? inferToolKindFromTitle(rawTitleLabel) : undefined);
+  const toolKind = rawKind === "execute" ? "terminal" : rawKind;
+  const resolvedTitleLabel = isGenericToolTitle(explicitTitle)
+    ? rawTitleLabel
+    : explicitTitle ?? rawTitleLabel;
+  const rejectedReason = findFirstStringByKey(acpToolResultRejected, [
+    "reason",
+    "message",
+    "error",
+    "detail",
+    "description",
+  ]);
+  const rejectedFallback =
+    acpToolResultRejected &&
+    typeof acpToolResultRejected === "object" &&
+    !Array.isArray(acpToolResultRejected)
+      ? compactJsonForRejected(acpToolResultRejected as Record<string, unknown>)
+      : undefined;
+  const detail =
+    safeToolDetailText(event.detail) ??
+    (acpToolResultRejected
+      ? rejectedReason?.trim() ||
+        rejectedFallback ||
+        "Tool call was rejected by the current approval settings."
+      : undefined);
+  const likelyEdit =
+    toolKind === "edit" ||
+    toolKind === "write" ||
+    payloadToolKind === "edit" ||
+    /\b(write|edit|patch|apply|replace|str_replace|update)\b/i.test(
+      `${resolvedTitleLabel ?? ""} ${titleFromRaw ?? ""}`
+    );
+  const likelyRead =
+    !likelyEdit &&
+    (toolKind === "read" ||
+      payloadToolKind === "read" ||
+      /\bread\b/i.test(resolvedTitleLabel ?? "") ||
+      (Boolean(path) &&
+        /\bread|cat|open|load|view\b/i.test(
+          `${resolvedTitleLabel ?? ""} ${titleFromRaw ?? ""}`
+        )));
 
-  if (toolKind === "search" || explicitTitle === "Find") {
-    const query = findFirstStringByKey(rawInput, [
+  if (toolKind === "grep" || /\bgrep\b/i.test(acpToolName ?? "")) {
+    const query = findFirstStringAcrossValues(rawInputs, [
       "query",
       "pattern",
       "regex",
@@ -431,32 +1214,95 @@ function formatToolSummary(
       "term",
       "needle",
     ]);
-    const totalFiles = findFirstNumberByKey(rawOutput, [
+    const totalFiles = findFirstNumberAcrossValues(rawOutputs, [
       "totalFiles",
       "fileCount",
       "count",
     ]);
+    const matchedFiles =
+      findFirstStringArrayAcrossValues(rawOutputs, ["files", "matchedFiles", "results"])?.length ??
+      totalFiles;
     return {
       kind: "tool",
-      title: query ? `Find "${query}"` : "Find workspace matches",
+      toolCallId: event.toolCallId,
+      toolKind,
+      title: query ? `Grep "${query}"` : "Grep workspace",
       detail:
-        detail ??
-        (totalFiles != null
-          ? `${pluralize(totalFiles, "file")} matched`
+        safeToolDetailText(detail, { suppressVerbosePayload: true }) ??
+        (matchedFiles != null
+          ? `${pluralize(matchedFiles, "file")} matched`
           : existing?.detail),
       status,
       files,
     };
   }
 
-  if (toolKind === "read" || explicitTitle === "Read File") {
-    const content = findFirstStringByKey(rawOutput, ["content", "text"]);
-    const inferred = content ? summarizeReadContent(content) : {};
+  if (toolKind === "search_web") {
+    const query = findFirstStringAcrossValues(rawInputs, [
+      "query",
+      "searchTerm",
+      "term",
+      "search",
+    ]);
     return {
       kind: "tool",
+      toolCallId: event.toolCallId,
+      toolKind,
+      title: query ? `Search web for "${query}"` : "Search web",
+      detail: safeToolDetailText(detail, { suppressVerbosePayload: true }) ?? existing?.detail,
+      status,
+      files,
+    };
+  }
+
+  if (toolKind === "search" || explicitTitle === "Find" || resolvedTitleLabel === "Find") {
+    const query =
+      findFirstStringAcrossValues(rawInputs, ["globPattern"]) ??
+      findFirstStringAcrossValues(rawInputs, [
+        "query",
+        "pattern",
+        "regex",
+        "search",
+        "searchTerm",
+        "term",
+        "needle",
+      ]);
+    const totalFiles = findFirstNumberAcrossValues(rawOutputs, [
+      "totalFiles",
+      "fileCount",
+      "count",
+    ]);
+    const matchedFiles =
+      findFirstStringArrayAcrossValues(rawOutputs, ["files", "matchedFiles", "results"])?.length ??
+      totalFiles;
+    return {
+      kind: "tool",
+      toolCallId: event.toolCallId,
+      toolKind,
+      title: query ? `Find "${query}"` : "Find workspace matches",
+      detail:
+        safeToolDetailText(detail, { suppressVerbosePayload: true }) ??
+        (matchedFiles != null
+          ? `${pluralize(matchedFiles, "file")} matched`
+          : existing?.detail),
+      status,
+      files,
+    };
+  }
+
+  if (likelyRead) {
+    const content = findFirstStringAcrossValues(rawOutputs, ["content", "text"]);
+    const inferred = content ? summarizeReadContent(content) : {};
+    const safeReadDetail = safeToolDetailText(suppressPathOnlyDetail(detail), {
+      suppressVerbosePayload: true,
+    });
+    return {
+      kind: "tool",
+      toolCallId: event.toolCallId,
+      toolKind,
       title: path ? `Read ${path}` : inferred.title ?? "Read file",
       detail:
-        detail ??
+        safeReadDetail ??
         (path && inferred.detail
           ? inferred.detail
           : inferred.detail ?? existing?.detail),
@@ -465,29 +1311,62 @@ function formatToolSummary(
     };
   }
 
-  if (
-    toolKind === "edit" ||
-    toolKind === "write" ||
-    /edit|write|patch|replace/i.test(explicitTitle ?? "")
-  ) {
+  if (likelyEdit) {
     const nextTitle = path
       ? `Update ${path}`
-      : explicitTitle ?? existing?.title ?? "Update file";
+      : resolvedTitleLabel ?? existing?.title ?? "Update file";
     return {
       kind: "tool",
+      toolCallId: event.toolCallId,
+      toolKind,
       title: nextTitle,
-      detail: detail ?? existing?.detail,
+      detail:
+        safeToolDetailText(suppressPathOnlyDetail(detail), { suppressVerbosePayload: true }) ??
+        existing?.detail,
       status,
       files: path ? [path, ...(files ?? []).filter((file) => file !== path)] : files,
     };
   }
 
-  const command = findFirstStringByKey(rawInput, ["command", "cmd", "script"]);
+  if (toolKind === "delete") {
+    return {
+      kind: "tool",
+      toolCallId: event.toolCallId,
+      toolKind,
+      title: path ? `Delete ${path}` : resolvedTitleLabel ?? existing?.title ?? "Delete file",
+      detail:
+        safeToolDetailText(suppressPathOnlyDetail(detail), { suppressVerbosePayload: true }) ??
+        existing?.detail,
+      status,
+      files: path ? [path, ...(files ?? []).filter((file) => file !== path)] : files,
+    };
+  }
+
+  if (toolKind === "todo") {
+    const todoCount = Array.isArray(rawInputs[0]?.todos)
+      ? (rawInputs[0]?.todos as unknown[]).length
+      : findFirstNumberAcrossValues(rawInputs, ["count", "total"]);
+    return {
+      kind: "tool",
+      toolCallId: event.toolCallId,
+      toolKind,
+      title: "Update todo list",
+      detail:
+        safeToolDetailText(detail, { suppressVerbosePayload: true }) ??
+        (todoCount != null ? `${pluralize(todoCount, "item")} updated` : existing?.detail),
+      status,
+      files,
+    };
+  }
+
+  const command = findFirstStringAcrossValues(rawInputs, ["command", "cmd", "script"]);
   if (command) {
     return {
       kind: "tool",
+      toolCallId: event.toolCallId,
+      toolKind: toolKind === "tool" ? "terminal" : toolKind,
       title: command,
-      detail: detail ?? existing?.detail,
+      detail: safeToolDetailText(detail, { suppressVerbosePayload: true }) ?? existing?.detail,
       variant: "terminal",
       status,
       files,
@@ -496,8 +1375,10 @@ function formatToolSummary(
 
   return {
     kind: "tool",
-    title: explicitTitle ?? existing?.title ?? "Tool call",
-    detail: detail ?? existing?.detail,
+    toolCallId: event.toolCallId,
+    toolKind,
+    title: resolvedTitleLabel ?? existing?.title ?? "Tool call",
+    detail: safeToolDetailText(detail, { suppressVerbosePayload: true }) ?? existing?.detail,
     status,
     files,
     variant: existing?.variant,
@@ -520,41 +1401,57 @@ export function projectAgentEventsToChatMessages(
   };
 
   for (const event of ordered) {
+    try {
     switch (event.kind) {
       case "user_message": {
+        const prev = currentTurn;
         currentTurn = createTurn(event.messageId);
         currentTurn.userMessage = {
           id: event.messageId,
           type: "user",
           content: event.content,
+          segments: parseUserMessageSegments(event.content),
           showReplyCue: true,
         };
+        if (
+          prev &&
+          prev.id.startsWith("synthetic-") &&
+          !prev.userMessage &&
+          prev.timeline.length > 0
+        ) {
+          currentTurn.trace = prev.trace;
+          currentTurn.timeline = prev.timeline;
+          currentTurn.toolEntryById = prev.toolEntryById;
+          currentTurn.orphanToolUpdateSlot = prev.orphanToolUpdateSlot;
+          currentTurn.assistantMessageId = prev.assistantMessageId;
+          currentTurn.permissionCards = prev.permissionCards;
+          currentTurn.todoCards = prev.todoCards;
+          const prevIdx = turns.indexOf(prev);
+          if (prevIdx >= 0) {
+            turns.splice(prevIdx, 1);
+          }
+        }
         turns.push(currentTurn);
         break;
       }
       case "assistant_message_chunk": {
         const turn = ensureTurn();
-        if (!turn.assistantMessage) {
-          turn.assistantMessage = {
-            id: event.messageId,
-            type: "assistant",
-            content: "",
-          };
-        }
-        turn.assistantMessage.content = `${
-          turn.assistantMessage.content ?? ""
-        }${event.text}`;
+        appendAssistantChunk(turn, event.text, event.messageId);
         break;
       }
       case "assistant_message_end": {
         const turn = ensureTurn();
-        if (!turn.assistantMessage && event.stopReason === "failed") {
-          turn.assistantMessage = {
-            id: event.messageId,
-            type: "assistant",
-            content: "The provider ended the turn without returning any visible text.",
-          };
+        const hasAssistantText = turn.timeline.some(
+          (item) => item.kind === "assistant" && item.text.trim().length > 0
+        );
+        if (!hasAssistantText && event.stopReason === "failed") {
+          appendAssistantChunk(
+            turn,
+            "The provider ended the turn without returning any visible text.",
+            event.messageId
+          );
         }
+        finalizeOpenToolsInTurn(turn, event.stopReason === "failed" ? "failed" : "completed");
         break;
       }
       case "tool_call": {
@@ -564,27 +1461,81 @@ export function projectAgentEventsToChatMessages(
           | undefined;
         const entry = formatToolSummary(event, existing);
         if (!existing) {
-          turn.toolEntries.push(entry);
+          appendTraceEntry(turn, entry);
           turn.toolEntryById.set(event.toolCallId, entry);
         } else {
           Object.assign(existing, entry);
         }
-        updateWorkedMessage(turn);
         break;
       }
       case "tool_call_update": {
         const turn = ensureTurn();
-        const existing = turn.toolEntryById.get(event.toolCallId) as
+        let existing = turn.toolEntryById.get(event.toolCallId) as
           | Extract<WorkedSessionEntry, { kind: "tool" }>
           | undefined;
-        const entry = formatToolSummary(event, existing);
+        const unmatchedEntry = !existing ? formatToolSummary(event) : undefined;
         if (!existing) {
-          turn.toolEntries.push(entry);
+          const open = turn.trace.filter(
+            (e): e is Extract<WorkedSessionEntry, { kind: "tool" }> =>
+              e.kind === "tool" &&
+              (e.status === "pending" || e.status === "running")
+          );
+          const terminalOrphan =
+            event.status === "completed" ||
+            event.status === "failed" ||
+            event.status === "cancelled";
+          const previewPath = unmatchedEntry?.files?.[0];
+          const previewKind = unmatchedEntry?.toolKind;
+          const previewTitle = unmatchedEntry?.title;
+          const matchedByPath =
+            previewPath != null
+              ? open.find(
+                  (entry) =>
+                    entry.files?.includes(previewPath) &&
+                    (!previewKind || !entry.toolKind || entry.toolKind === previewKind)
+                )
+              : undefined;
+          const matchedByKindAndTitle =
+            !matchedByPath && previewKind && previewTitle
+              ? open.find(
+                  (entry) =>
+                    entry.toolKind === previewKind &&
+                    entry.title === previewTitle
+                )
+              : undefined;
+          if (matchedByPath || matchedByKindAndTitle) {
+            existing = (matchedByPath ?? matchedByKindAndTitle)!;
+            if (existing.toolCallId) {
+              turn.toolEntryById.set(existing.toolCallId, existing);
+            }
+            turn.toolEntryById.set(event.toolCallId, existing);
+          } else if (open.length >= 1) {
+            const idx = terminalOrphan
+              ? Math.min(turn.orphanToolUpdateSlot, open.length - 1)
+              : 0;
+            existing = open[idx];
+            if (terminalOrphan) {
+              turn.orphanToolUpdateSlot += 1;
+            }
+            if (existing.toolCallId) {
+              turn.toolEntryById.set(existing.toolCallId, existing);
+            }
+            turn.toolEntryById.set(event.toolCallId, existing);
+          }
+        }
+        const entry = existing
+          ? formatToolSummary(event, existing)
+          : unmatchedEntry ?? formatToolSummary(event);
+        if (!existing) {
+          appendTraceEntry(turn, entry);
           turn.toolEntryById.set(event.toolCallId, entry);
         } else {
+          const keepToolCallId = existing.toolCallId;
           Object.assign(existing, entry);
+          if (keepToolCallId) {
+            existing.toolCallId = keepToolCallId;
+          }
         }
-        updateWorkedMessage(turn);
         break;
       }
       case "plan": {
@@ -602,7 +1553,7 @@ export function projectAgentEventsToChatMessages(
         message.todoLabel = summarizeTodoLabel(event.entries);
         if (!turn.todoCards.has(event.planId)) {
           turn.todoCards.set(event.planId, message);
-          turn.todoMessages.push(message);
+          appendTimelineMessage(turn, message);
         }
         break;
       }
@@ -618,17 +1569,29 @@ export function projectAgentEventsToChatMessages(
           };
         message.permissionRequestId = event.requestId;
         message.permissionTitle = event.title ?? "Permission required";
-        message.permissionDetail = event.toolCallId
-          ? `Tool call: ${event.toolCallId}`
+        const toolEntry = event.toolCallId
+          ? (turn.toolEntryById.get(event.toolCallId) as
+              | Extract<WorkedSessionEntry, { kind: "tool" }>
+              | undefined)
           : undefined;
-        message.permissionOptions = toPermissionOptions(event.options);
+        const fromTool =
+          toolEntry?.title && toolEntry.title !== message.permissionTitle
+            ? toolEntry.title
+            : event.toolCallId
+              ? `Tool call: ${event.toolCallId}`
+              : undefined;
+        message.permissionDetail =
+          event.detail?.trim() ||
+          fromTool ||
+          undefined;
+        message.permissionOptions = agentPermissionOptionsToUiChoices(event.options);
         if (!message.permissionResolved) {
           message.permissionResolved = false;
           message.permissionSelectedOptionId = undefined;
         }
         if (!turn.permissionCards.has(id)) {
           turn.permissionCards.set(id, message);
-          turn.permissionMessages.push(message);
+          appendTimelineMessage(turn, message);
         }
         break;
       }
@@ -646,7 +1609,7 @@ export function projectAgentEventsToChatMessages(
                 ? `Selected ${event.optionId}.`
                 : "Permission resolved.";
         } else {
-          turn.trailingMessages.push({
+          appendTimelineMessage(turn, {
             id,
             type: "activity-label",
             activityLabel:
@@ -659,7 +1622,7 @@ export function projectAgentEventsToChatMessages(
         break;
       }
       case "system": {
-        ensureTurn().trailingMessages.push({
+        appendTimelineMessage(ensureTurn(), {
           id: event.eventId,
           type: "assistant",
           content:
@@ -670,6 +1633,11 @@ export function projectAgentEventsToChatMessages(
         break;
       }
       case "status": {
+        if (event.status === "failed" || event.status === "cancelled") {
+          finalizeOpenToolsInTurn(ensureTurn(), event.status);
+        } else if (event.status === "idle") {
+          finalizeOpenToolsInTurn(ensureTurn(), "completed");
+        }
         if (
           event.status === "running" ||
           event.status === "idle" ||
@@ -677,7 +1645,7 @@ export function projectAgentEventsToChatMessages(
         ) {
           break;
         }
-        ensureTurn().trailingMessages.push({
+        appendTimelineMessage(ensureTurn(), {
           id: event.eventId,
           type: "activity-label",
           activityLabel: event.status[0].toUpperCase() + event.status.slice(1),
@@ -688,6 +1656,9 @@ export function projectAgentEventsToChatMessages(
       default:
         break;
     }
+    } catch {
+      // Skip events that cause rendering errors
+    }
   }
 
   const messages: ChatMessage[] = [];
@@ -695,16 +1666,7 @@ export function projectAgentEventsToChatMessages(
     if (turn.userMessage) {
       messages.push(turn.userMessage);
     }
-    if (turn.activityMessage?.workedEntries?.length) {
-      updateWorkedMessage(turn);
-      messages.push(turn.activityMessage);
-    }
-    messages.push(...turn.permissionMessages);
-    if (turn.assistantMessage) {
-      messages.push(turn.assistantMessage);
-    }
-    messages.push(...turn.todoMessages);
-    messages.push(...turn.trailingMessages);
+    messages.push(...projectTurnTimelineToMessages(turn));
   }
   return messages;
 }
@@ -717,6 +1679,31 @@ export function getConversationLatestSeq(
 
 function normalizeModelDetailLabel(label: string): string {
   return label.trim().toLowerCase();
+}
+
+function titleCaseModelDetail(label: string): string {
+  const trimmed = label.trim();
+  if (!trimmed) {
+    return trimmed;
+  }
+  const normalized = trimmed.toLowerCase();
+  if (normalized === "xhigh") {
+    return "XHigh";
+  }
+  return trimmed.charAt(0).toUpperCase() + trimmed.slice(1);
+}
+
+function resolveThoughtOptionsForModel(
+  modelOptionValue: NonNullable<ReturnType<typeof findConversationModelConfigOption>>["options"][number],
+  thoughtLevelOption: NonNullable<ReturnType<typeof findConfigOptionByCategory>>
+) {
+  const supported = Array.isArray(modelOptionValue.metadata?.reasoningLevels)
+    ? modelOptionValue.metadata?.reasoningLevels
+    : null;
+  if (!supported || supported.length === 0) {
+    return [];
+  }
+  return thoughtLevelOption.options.filter((option) => supported.includes(option.value));
 }
 
 function formatModelVariantLabel(name: string, modelId: string): string {
@@ -782,27 +1769,75 @@ export function buildConversationModelOptions(
     backends.find((candidate) => candidate.id === conversation.config.backendId) ??
     backends[0];
   const provider = modelProviderForBackend(conversation.config.backendId);
-  const modelOption = findConversationModelConfigOption(conversation);
+  const modelOption = findConversationModelConfigOption(conversation, backends);
+  const thoughtLevelOption = findConfigOptionByCategory(
+    conversation,
+    backends,
+    "thought_level"
+  );
   if (!modelOption || modelOption.options.length === 0) {
     return [
       {
         id: conversation.config.modelId || backend?.defaultModelId || "auto",
+        modelValue: conversation.config.modelId || backend?.defaultModelId || "auto",
         name: formatModelVariantLabel(
           conversation.config.modelName || backend?.defaultModelName || "Auto",
           conversation.config.modelId || backend?.defaultModelId || "auto"
         ),
         provider,
+        backendId: conversation.config.backendId,
         selected: true,
       },
     ];
   }
+  /** Prefer persisted `config.modelId` so UI matches PATCH updates; option `currentValue` can lag when no runtime session. */
   const selectedValue =
-    modelOption.currentValue || conversation.config.modelId || backend?.defaultModelId;
+    conversation.config.modelId ||
+    modelOption.currentValue ||
+    backend?.defaultModelId;
   const selectedName = conversation.config.modelName || backend?.defaultModelName;
+  if (thoughtLevelOption && thoughtLevelOption.options.length > 0) {
+    const selectedThought = thoughtLevelOption.currentValue;
+    const variantRows = modelOption.options.flatMap((option) =>
+      resolveThoughtOptionsForModel(option, thoughtLevelOption).map((thought) => {
+        const baseName = formatModelVariantLabel(option.name, option.value);
+        const thoughtLabel = titleCaseModelDetail(thought.name || thought.value);
+        const normalizedThought = normalizeModelDetailLabel(thoughtLabel);
+        const name = baseName.toLowerCase().includes(normalizedThought)
+          ? baseName
+          : `${baseName} ${thoughtLabel}`;
+        return {
+          id: `${option.value}::${thoughtLevelOption.id}::${thought.value}`,
+          modelValue: option.value,
+          name,
+          description: option.description,
+          detail: `${backend?.label ?? conversation.config.backendId} · ${thoughtLevelOption.name}: ${thoughtLabel}`,
+          provider,
+          backendId: conversation.config.backendId,
+          configSelections: [
+            { configId: modelOption.id, value: option.value },
+            { configId: thoughtLevelOption.id, value: thought.value },
+          ],
+          selected:
+            option.value === selectedValue &&
+            (!selectedThought || thought.value === selectedThought),
+        } satisfies ModelInfo;
+      })
+    );
+    if (variantRows.length > 0) {
+      return variantRows;
+    }
+  }
+
   return modelOption.options.map((option) => ({
     id: option.value,
+    modelValue: option.value,
     name: formatModelVariantLabel(option.name, option.value),
+    description: option.description,
+    detail: backend?.label ?? conversation.config.backendId,
     provider,
+    backendId: conversation.config.backendId,
+    configSelections: [{ configId: modelOption.id, value: option.value }],
     selected:
       option.value === selectedValue ||
       (!selectedValue &&
@@ -810,6 +1845,24 @@ export function buildConversationModelOptions(
         (option.name === selectedName ||
           formatModelVariantLabel(option.name, option.value) === selectedName)),
   }));
+}
+
+export function buildDraftModelOptionsForBackend(
+  backend: AgentBackendInfo
+): ModelInfo[] {
+  return buildConversationModelOptions(createBackendDraftConversation(backend), [backend]);
+}
+
+export function resolveDraftModelForBackend(
+  backend: AgentBackendInfo
+): ModelInfo {
+  return resolveConversationModel(createBackendDraftConversation(backend), [backend]);
+}
+
+export function buildDraftModeOptionsForBackend(
+  backend: AgentBackendInfo
+): AgentModeOption[] {
+  return buildConversationModeOptions(createBackendDraftConversation(backend), [backend]);
 }
 
 export function resolveConversationModel(
@@ -821,6 +1874,7 @@ export function resolveConversationModel(
     models.find((model) => model.selected) ??
     models[0] ?? {
       id: conversation.config.modelId,
+      modelValue: conversation.config.modelId,
       name: formatModelVariantLabel(
         conversation.config.modelName,
         conversation.config.modelId

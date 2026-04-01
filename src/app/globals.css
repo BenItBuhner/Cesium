@@ -228,8 +228,33 @@ pre {
   to { transform: rotate(360deg); }
 }
 
+@keyframes tool-thinking-sweep {
+  0% {
+    background-position: -150px center;
+  }
+  100% {
+    background-position: calc(100% + 150px) center;
+  }
+}
+
 .animate-spin {
   animation: spin 1s linear infinite;
+}
+
+.tool-loading-text {
+  background-image: radial-gradient(
+    circle 75px at center,
+    color-mix(in srgb, var(--text-primary) 100%, transparent) 0%,
+    color-mix(in srgb, var(--text-primary) 24%, transparent) 55%,
+    transparent 100%
+  );
+  background-color: color-mix(in srgb, var(--text-secondary) 76%, transparent);
+  background-repeat: no-repeat;
+  background-size: 150px 100%;
+  color: transparent;
+  -webkit-background-clip: text;
+  background-clip: text;
+  animation: tool-thinking-sweep 2.4s cubic-bezier(0.35, 0.15, 0.65, 0.85) infinite;
 }
 
 /**

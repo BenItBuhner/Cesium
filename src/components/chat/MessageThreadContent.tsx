@@ -16,6 +16,19 @@ import { PermissionRequestCard } from "./PermissionRequestCard";
 import { askStepsFromMessage } from "@/lib/ask-question-utils";
 import type { ChatMessage } from "@/lib/types";
 
+function shouldKeepWorkedSessionLoading(messages: ChatMessage[], startIndex: number): boolean {
+  for (let i = startIndex + 1; i < messages.length; i += 1) {
+    const next = messages[i];
+    if (next.type === "assistant") {
+      return false;
+    }
+    if (next.type === "user") {
+      return false;
+    }
+  }
+  return true;
+}
+
 export interface MessageThreadContentProps {
   messages: ChatMessage[];
   /**
@@ -201,6 +214,7 @@ export function MessageThreadContent({
             label={msg.workedLabel!}
             entries={msg.workedEntries!}
             defaultOpen={msg.workedDefaultOpen}
+            loading={shouldKeepWorkedSessionLoading(messages, i)}
           />
         );
         break;

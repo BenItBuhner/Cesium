@@ -1,4 +1,6 @@
 import {
+  type Dispatch,
+  type SetStateAction,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -13,6 +15,19 @@ import type { ChatMessage } from "@/lib/types";
 const PUSH_ZONE_PX = 220;
 /** Offset below the scroll area’s inner top so the next bubble meets the rail with a little air. */
 const ANCHOR_INSET_PX = 10;
+
+function supportsAnimatedStickyPush(): boolean {
+  if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+    return true;
+  }
+  return !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+}
+
+function clearPushByOrder(
+  setPushByOrder: Dispatch<SetStateAction<Record<number, number>>>
+): void {
+  setPushByOrder((prev) => (Object.keys(prev).length === 0 ? prev : {}));
+}
 
 function countUserTurns(messages: ChatMessage[]): number {
   let c = 0;
@@ -41,13 +56,32 @@ export function useChatStickyPush(
 ): (order: number) => number {
   const userTurnCount = useMemo(() => countUserTurns(messages), [messages]);
   const [pushByOrder, setPushByOrder] = useState<Record<number, number>>({});
+  const [allowAnimatedPush, setAllowAnimatedPush] = useState(supportsAnimatedStickyPush);
   const rafRef = useRef<number | null>(null);
+  const animatedPushEnabled = enabled && allowAnimatedPush;
+
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+      return;
+    }
+    const mediaQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const sync = () => {
+      setAllowAnimatedPush(!mediaQuery.matches);
+    };
+    sync();
+    if (typeof mediaQuery.addEventListener === "function") {
+      mediaQuery.addEventListener("change", sync);
+      return () => mediaQuery.removeEventListener("change", sync);
+    }
+    mediaQuery.addListener(sync);
+    return () => mediaQuery.removeListener(sync);
+  }, []);
 
   const flush = useCallback(() => {
     const root = scrollRootRef?.current;
     const map = stickyRefs.current;
-    if (!root || !enabled || userTurnCount < 2) {
-      setPushByOrder({});
+    if (!root || !animatedPushEnabled || userTurnCount < 2) {
+      clearPushByOrder(setPushByOrder);
       return;
     }
 
@@ -75,7 +109,7 @@ export function useChatStickyPush(
         const rawT = (PUSH_ZONE_PX - dist) / PUSH_ZONE_PX;
         push = smoothstep01(rawT) * prevH;
       }
-      next[o - 1] = push;
+      next[o - 1] = Math.round(push);
     }
 
     setPushByOrder((prev) => {
@@ -88,7 +122,7 @@ export function useChatStickyPush(
       }
       return prev;
     });
-  }, [enabled, scrollRootRef, stickyRefs, userTurnCount]);
+  }, [animatedPushEnabled, scrollRootRef, stickyRefs, userTurnCount]);
 
   const scheduleFlush = useCallback(() => {
     if (rafRef.current != null) return;
@@ -99,12 +133,15 @@ export function useChatStickyPush(
   }, [flush]);
 
   useLayoutEffect(() => {
+    if (!animatedPushEnabled) {
+      return;
+    }
     scheduleFlush();
-  }, [messages, scheduleFlush]);
+  }, [animatedPushEnabled, messages, scheduleFlush]);
 
   useEffect(() => {
-    if (!scrollRootRef || !enabled || userTurnCount < 2) {
-      setPushByOrder({});
+    if (!scrollRootRef || !animatedPushEnabled || userTurnCount < 2) {
+      clearPushByOrder(setPushByOrder);
       return;
     }
 
@@ -123,9 +160,9 @@ export function useChatStickyPush(
         rafRef.current = null;
       }
     };
-  }, [enabled, scrollRootRef, userTurnCount, scheduleFlush]);
+  }, [animatedPushEnabled, scrollRootRef, userTurnCount, scheduleFlush]);
 
-  const wired = enabled && !!scrollRootRef;
+  const wired = animatedPushEnabled && !!scrollRootRef;
 
   const getter = useCallback(
     (order: number) => (wired ? pushByOrder[order] ?? 0 : 0),

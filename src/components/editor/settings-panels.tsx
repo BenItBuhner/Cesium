@@ -9,7 +9,6 @@ import {
   type ReactNode,
 } from "react";
 import {
-  AlertTriangle,
   ChevronDown,
   ChevronRight,
   Download,
@@ -32,6 +31,10 @@ import {
   type ThemeTokenKey,
 } from "@/lib/theme-tokens";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
+import {
+  fetchAgentDeploymentHints,
+  type CursorAgentDeploymentHintsPayload,
+} from "@/lib/server-api";
 import {
   DEFAULT_KEYBOARD_SHORTCUT_BINDINGS,
   detectShortcutPlatform,
@@ -416,6 +419,7 @@ export function AppearanceSettingsPanel() {
     setPreference,
     setLightThemeId,
     setDarkThemeId,
+    setThemeConfig,
     upsertCustomTheme,
     removeCustomTheme,
     duplicateCustomTheme,
@@ -517,6 +521,22 @@ export function AppearanceSettingsPanel() {
           {appearanceChoice("light", "Light")}
           {appearanceChoice("dark", "Dark")}
         </div>
+      </SettingsSection>
+      <SettingsSection title="Layout">
+        <SettingsRow
+          title="Top-left sidebar reveal"
+          description="On tablet and desktop, show the floating control over the editor when the file sidebar is collapsed. You can always toggle the sidebar with the keyboard shortcut or command palette when this is off."
+          trailing={
+            <ToggleSwitch
+              checked={themeConfig.showFloatingSidebarReveal}
+              onChange={(value) =>
+                setThemeConfig({ ...themeConfig, showFloatingSidebarReveal: value })
+              }
+              size="md"
+            />
+          }
+          border={false}
+        />
       </SettingsSection>
       <SettingsSection title="Light theme">
         <div className="border-b border-[var(--border-subtle)] px-[16px] py-[14px] last:border-b-0">
@@ -703,6 +723,74 @@ export function AppearanceSettingsPanel() {
   );
 }
 
+function CursorAgentServerDeploymentReadout() {
+  const [payload, setPayload] = useState<CursorAgentDeploymentHintsPayload | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchAgentDeploymentHints()
+      .then((data) => {
+        if (!cancelled) {
+          setPayload(data);
+          setLoadError(null);
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setLoadError(error instanceof Error ? error.message : String(error));
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const h = payload?.cursorAgent;
+
+  return (
+    <SettingsSection>
+      <SubsectionLabel>Cursor CLI (OpenCursor server)</SubsectionLabel>
+      <div className="px-[16px] pb-[14px] pt-[2px] font-sans text-[12px] leading-relaxed text-[var(--text-secondary)]">
+        {loadError ? (
+          <p className="text-[var(--text-primary)]">Could not load server hints: {loadError}</p>
+        ) : !h ? (
+          <p>Loading server configuration…</p>
+        ) : (
+          <div className="flex flex-col gap-[10px]">
+            <p>
+              <span className="text-[var(--text-primary)]">Binary: </span>
+              {h.resolved
+                ? h.commandPreview ?? "(resolved)"
+                : "Not found. Set OPENCURSOR_CURSOR_CLI_BIN on the machine that runs the API."}
+            </p>
+            <p>
+              <span className="text-[var(--text-primary)]">Path override env: </span>
+              {h.cursorBinEnvSet ? "set" : "not set (using PATH)"}
+            </p>
+            <p>
+              <span className="text-[var(--text-primary)]">Extra argv: </span>
+              {h.extraArgs.length > 0 ? h.extraArgs.join(" ") : "—"}
+            </p>
+            <p>
+              <span className="text-[var(--text-primary)]">Permission mode env: </span>
+              {h.permissionModeEnv ?? "—"}
+            </p>
+            <p>
+              <span className="text-[var(--text-primary)]">ACP capabilities JSON override: </span>
+              {h.acpCapabilitiesJsonSet ? "set" : "not set"}
+            </p>
+            <p className="text-[11px] opacity-90">
+              When the Cursor backend needs approval, use the card above the composer or the workbench toast.
+              After a new chat session, check the transcript for Cursor CLI authentication notes from the server.
+            </p>
+          </div>
+        )}
+      </div>
+    </SettingsSection>
+  );
+}
+
 export function AgentsSettingsPanel() {
   const { settings, updateSettings } = useGlobalSettings();
   const agents = settings.agents;
@@ -726,6 +814,7 @@ export function AgentsSettingsPanel() {
   return (
     <>
       <PageIntro title="Agents" />
+      <CursorAgentServerDeploymentReadout />
       <SettingsSection>
         <SettingsRow
           title={`Submit with ${modLabel} + Enter`}
@@ -1259,6 +1348,75 @@ export function RulesSkillsSubagentsPanel() {
   );
 }
 
+export function PluginsSettingsPanel() {
+  const { updateWorkspaceSession } = useWorkspace();
+
+  return (
+    <>
+      <PageIntro
+        title="Plugins"
+        subtitle="Extensions for agents: reusable skills, MCP-backed tools, and related capabilities. This page is the hub for ACP-style agents; detailed editors live in Rules, Skills, Subagents and Tools & MCPs until a unified manifest is wired up."
+      />
+      <SettingsSection title="Manage">
+        <SettingsRow
+          title="Rules, skills, and subagents"
+          description="Instruction files, skills, and subagent presets that agents load for domain-specific behavior."
+          trailing={
+            <button
+              type="button"
+              className={rowButtonClass}
+              onClick={() =>
+                updateWorkspaceSession((current) => ({
+                  ...current,
+                  settingsView: {
+                    ...current.settingsView,
+                    activeNav: "rulesSkills",
+                  },
+                }))
+              }
+            >
+              Open
+            </button>
+          }
+        />
+        <SettingsRow
+          title="Tools & MCP servers"
+          description="MCP connections, browser automation, and allowlists for what tools may run automatically."
+          trailing={
+            <button
+              type="button"
+              className={rowButtonClass}
+              onClick={() =>
+                updateWorkspaceSession((current) => ({
+                  ...current,
+                  settingsView: {
+                    ...current.settingsView,
+                    activeNav: "tools",
+                  },
+                }))
+              }
+            >
+              Open
+            </button>
+          }
+          border={false}
+        />
+      </SettingsSection>
+      <SettingsSection title="Roadmap">
+        <div className="p-[12px]">
+          <p className="mb-[10px] font-sans text-[12px] text-[var(--text-secondary)]">
+            Future work: one place to enable or scope skills and MCP servers per agent backend, shared across
+            ACP-supported providers.
+          </p>
+          <EmptyWell>
+            No unified plugin registry yet—use the links above to configure skills and MCP for now.
+          </EmptyWell>
+        </div>
+      </SettingsSection>
+    </>
+  );
+}
+
 export function ToolsMcpSettingsPanel() {
   const { settings, updateSettings } = useGlobalSettings();
   const tools = settings.tools;
@@ -1410,22 +1568,6 @@ export function BetaSettingsPanel() {
   return (
     <>
       <PageIntro title="Beta" />
-      <SettingsSection>
-        <SettingsRow
-          title="Update Access"
-          description="By default, get notifications for stable updates. In Early Access, pre-release builds may be unsuitable for production work."
-          trailing={<SelectMock label="Nightly" />}
-        />
-        <div className="border-b border-[var(--border-subtle)] px-[16px] pb-[14px]">
-          <div className="flex gap-[10px] rounded-[var(--radius-tab)] border border-[#f59e0b]/35 bg-[#fff7ed] px-[12px] py-[10px] dark:border-[#f59e0b]/25 dark:bg-[#422006]/40">
-            <AlertTriangle className="mt-[2px] size-[16px] shrink-0 text-[#d97706]" strokeWidth={2} />
-            <p className="font-sans text-[12px] leading-snug text-[#9a3412] dark:text-[#fdba74]">
-              <strong className="font-semibold">Warning:</strong> Nightly Updates Apply Automatically. Nightly builds
-              will silently download and install updates without prompting whenever the app is closed.
-            </p>
-          </div>
-        </div>
-      </SettingsSection>
       <h2 className="mt-[24px] font-sans text-[13px] font-semibold text-[var(--text-secondary)]">
         iPad
       </h2>
@@ -1456,9 +1598,6 @@ export function BetaSettingsPanel() {
           border={false}
         />
       </SettingsSection>
-      <h2 className="mt-[24px] font-sans text-[13px] font-semibold text-[var(--text-secondary)]">
-        Development
-      </h2>
     </>
   );
 }
@@ -1672,7 +1811,7 @@ function ExportGranularityPicker({
       {row(
         "globalApp",
         "App settings",
-        "General, Agents, Models, Rules, Tools — demo settings from the settings API."
+        "General, Agents, Models, Plugins, Rules, Tools — demo settings from the settings API."
       )}
       {row(
         "workspaceSession",
@@ -1875,6 +2014,7 @@ export const SETTINGS_PANELS: Record<string, ComponentType> = {
   appearance: AppearanceSettingsPanel,
   agents: AgentsSettingsPanel,
   models: ModelsSettingsPanel,
+  plugins: PluginsSettingsPanel,
   rulesSkills: RulesSkillsSubagentsPanel,
   tools: ToolsMcpSettingsPanel,
   beta: BetaSettingsPanel,

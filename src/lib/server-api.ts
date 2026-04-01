@@ -54,6 +54,10 @@ export type FileSearchResult = {
   language: string;
 };
 
+export type AudioTranscriptionResult = {
+  text: string;
+};
+
 async function request<T>(
   input: string,
   init?: RequestInit,
@@ -186,6 +190,21 @@ export async function saveWorkspaceSession(
   );
 }
 
+export type CursorAgentDeploymentHintsPayload = {
+  cursorAgent: {
+    resolved: boolean;
+    commandPreview: string | null;
+    extraArgs: string[];
+    permissionModeEnv: string | null;
+    acpCapabilitiesJsonSet: boolean;
+    cursorBinEnvSet: boolean;
+  };
+};
+
+export async function fetchAgentDeploymentHints(): Promise<CursorAgentDeploymentHintsPayload> {
+  return request(`/api/agents/deployment-hints`);
+}
+
 export async function listAgentConversations(): Promise<AgentConversationListResult> {
   return request(`/api/agents/conversations`);
 }
@@ -200,9 +219,15 @@ export async function createAgentConversation(
 }
 
 export async function fetchAgentConversationSnapshot(
-  conversationId: string
+  conversationId: string,
+  options?: { hydrateRuntime?: boolean }
 ): Promise<{ snapshot: AgentConversationSnapshot }> {
-  return request(`/api/agents/conversations/${encodeURIComponent(conversationId)}`);
+  const params = new URLSearchParams();
+  if (options?.hydrateRuntime) {
+    params.set("hydrate", "1");
+  }
+  const suffix = params.size > 0 ? `?${params.toString()}` : "";
+  return request(`/api/agents/conversations/${encodeURIComponent(conversationId)}${suffix}`);
 }
 
 export async function updateAgentConversationConfig(
@@ -242,6 +267,37 @@ export async function answerAgentPermission(
     method: "POST",
     body: JSON.stringify(input),
   });
+}
+
+export async function transcribeAudio(
+  file: File,
+  options?: { language?: string; prompt?: string }
+): Promise<AudioTranscriptionResult> {
+  const form = new FormData();
+  form.set("file", file);
+  if (options?.language) {
+    form.set("language", options.language);
+  }
+  if (options?.prompt) {
+    form.set("prompt", options.prompt);
+  }
+  const response = await fetch(`${BASE_URL}/api/audio/transcriptions`, {
+    method: "POST",
+    body: form,
+    headers: getWorkspaceHeaders(),
+    cache: "no-store",
+  });
+  if (!response.ok) {
+    const message = await response.text();
+    let parsedError = "";
+    try {
+      parsedError = (JSON.parse(message) as { error?: string })?.error ?? "";
+    } catch {
+      parsedError = "";
+    }
+    throw new Error(parsedError || message || `Request failed with status ${response.status}`);
+  }
+  return (await response.json()) as AudioTranscriptionResult;
 }
 
 export async function fetchGlobalSettings(): Promise<{ settings: GlobalSettingsState }> {

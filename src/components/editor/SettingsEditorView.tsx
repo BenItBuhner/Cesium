@@ -19,8 +19,8 @@ import {
   FlaskConical,
   Keyboard,
   Palette,
+  Puzzle,
   Settings,
-  User,
   Wrench,
 } from "lucide-react";
 import { SETTINGS_PANELS } from "@/components/editor/settings-panels";
@@ -43,6 +43,7 @@ const NAV_ENTRIES: NavEntry[] = [
   { kind: "item", id: "keyboardShortcuts", label: "Keyboard shortcuts", icon: Keyboard },
   { kind: "item", id: "agents", label: "Agents", icon: Bot },
   { kind: "item", id: "models", label: "Models", icon: Box },
+  { kind: "item", id: "plugins", label: "Plugins", icon: Puzzle },
   { kind: "divider" },
   { kind: "item", id: "rulesSkills", label: "Rules, Skills, Subagents", icon: BookMarked },
   { kind: "item", id: "tools", label: "Tools & MCPs", icon: Wrench },
@@ -61,6 +62,9 @@ export function SettingsEditorView() {
   const [activeNav, setActiveNav] = useState(workspaceSession.settingsView.activeNav);
   const [searchQuery, setSearchQuery] = useState(workspaceSession.settingsView.searchQuery);
   const scrollRootRef = useRef<HTMLElement | null>(null);
+  const scrollPersistTimerRef = useRef<number | null>(null);
+  const pendingScrollTopRef = useRef(workspaceSession.settingsView.scrollTop);
+  const persistedScrollTopRef = useRef<number | null>(null);
   const Panel = SETTINGS_PANELS[activeNav] ?? SETTINGS_PANELS.general;
   const searchModLabel = useMemo(
     () => primaryModifierLabel(detectShortcutPlatform()),
@@ -83,10 +87,47 @@ export function SettingsEditorView() {
     }));
   }, [activeNav, searchQuery, updateWorkspaceSession]);
 
+  const flushPersistedScrollTop = useCallback(() => {
+    const nextScrollTop = pendingScrollTopRef.current;
+    if (persistedScrollTopRef.current === nextScrollTop) {
+      return;
+    }
+    persistedScrollTopRef.current = nextScrollTop;
+    updateWorkspaceSession((current) =>
+      Math.abs(current.settingsView.scrollTop - nextScrollTop) < 1
+        ? current
+        : {
+            ...current,
+            settingsView: {
+              ...current.settingsView,
+              scrollTop: nextScrollTop,
+            },
+          }
+    );
+  }, [updateWorkspaceSession]);
+
+  const schedulePersistedScrollTop = useCallback(() => {
+    if (scrollPersistTimerRef.current != null) {
+      window.clearTimeout(scrollPersistTimerRef.current);
+    }
+    scrollPersistTimerRef.current = window.setTimeout(() => {
+      scrollPersistTimerRef.current = null;
+      flushPersistedScrollTop();
+    }, 180);
+  }, [flushPersistedScrollTop]);
+
   useEffect(() => {
     const root = scrollRootRef.current;
     if (!root) return;
+    if (
+      persistedScrollTopRef.current != null &&
+      Math.abs(persistedScrollTopRef.current - workspaceSession.settingsView.scrollTop) < 1
+    ) {
+      return;
+    }
     root.scrollTop = workspaceSession.settingsView.scrollTop;
+    pendingScrollTopRef.current = workspaceSession.settingsView.scrollTop;
+    persistedScrollTopRef.current = workspaceSession.settingsView.scrollTop;
   }, [workspaceSession.settingsView.scrollTop]);
 
   const openDocsInNewTab = useCallback(() => {
@@ -104,37 +145,40 @@ export function SettingsEditorView() {
       if (!el) {
         return;
       }
-      const scrollTop = el.scrollTop;
-      updateWorkspaceSession((current) => ({
-        ...current,
-        settingsView: {
-          ...current.settingsView,
-          scrollTop,
-        },
-      }));
+      pendingScrollTopRef.current = Math.round(el.scrollTop);
+      schedulePersistedScrollTop();
     },
-    [updateWorkspaceSession]
+    [schedulePersistedScrollTop]
   );
+
+  useEffect(() => {
+    const flushOnPageHide = () => {
+      flushPersistedScrollTop();
+    };
+    const flushOnHidden = () => {
+      if (document.visibilityState === "hidden") {
+        flushPersistedScrollTop();
+      }
+    };
+    window.addEventListener("pagehide", flushOnPageHide);
+    window.addEventListener("beforeunload", flushOnPageHide);
+    document.addEventListener("visibilitychange", flushOnHidden);
+    return () => {
+      window.removeEventListener("pagehide", flushOnPageHide);
+      window.removeEventListener("beforeunload", flushOnPageHide);
+      document.removeEventListener("visibilitychange", flushOnHidden);
+      if (scrollPersistTimerRef.current != null) {
+        window.clearTimeout(scrollPersistTimerRef.current);
+        scrollPersistTimerRef.current = null;
+      }
+      flushPersistedScrollTop();
+    };
+  }, [flushPersistedScrollTop]);
 
   return (
     <div className="flex h-full min-h-0 w-full bg-[var(--bg-main)]">
       <aside className="flex w-[min(100%,268px)] shrink-0 flex-col bg-[var(--bg-main)]">
-        <div className="flex items-center gap-[10px] px-[10px] pb-[10px] pt-[12px]">
-          <div
-            className="flex size-[32px] shrink-0 items-center justify-center rounded-full border border-[var(--border-card)] text-[var(--text-secondary)]"
-            aria-hidden
-          >
-            <User className="size-[18px]" strokeWidth={1.5} />
-          </div>
-          <div className="min-w-0 flex-1">
-            <p className="truncate font-sans text-[13px] font-medium text-[var(--text-primary)]">
-              you@opencursor.demo
-            </p>
-            <p className="font-sans text-[11px] text-[var(--text-secondary)]">Demo plan</p>
-          </div>
-        </div>
-
-        <div className="px-[10px] pb-[8px]">
+        <div className="px-[10px] pb-[8px] pt-[12px]">
           <HardwareAwareTextInput
             type="search"
             value={searchQuery}

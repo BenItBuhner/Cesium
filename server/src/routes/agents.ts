@@ -1,12 +1,18 @@
 import { Hono } from "hono";
 import { requireWorkspaceFromRequest } from "../lib/request-workspace.js";
 import { agentRuntimeManager } from "../lib/agents/runtime-manager.js";
+import { getCursorAgentDeploymentHints } from "../lib/agents/providers.js";
 import type {
   AgentConversationConfigPatch,
   AgentConversationCreateInput,
 } from "../lib/agents/types.js";
 
 export const agentRoutes = new Hono();
+
+agentRoutes.get("/api/agents/deployment-hints", async (c) => {
+  await requireWorkspaceFromRequest(c);
+  return c.json({ cursorAgent: getCursorAgentDeploymentHints() });
+});
 
 agentRoutes.get("/api/agents/conversations", async (c) => {
   const workspace = await requireWorkspaceFromRequest(c);
@@ -24,7 +30,10 @@ agentRoutes.post("/api/agents/conversations", async (c) => {
 agentRoutes.get("/api/agents/conversations/:conversationId", async (c) => {
   const workspace = await requireWorkspaceFromRequest(c);
   const conversationId = c.req.param("conversationId");
-  const snapshot = await agentRuntimeManager.getConversationSnapshot(workspace, conversationId);
+  const hydrateRuntime = c.req.query("hydrate") === "1";
+  const snapshot = await agentRuntimeManager.getConversationSnapshot(workspace, conversationId, {
+    hydrateRuntime,
+  });
   if (!snapshot) {
     return c.json({ error: `Unknown conversation: ${conversationId}` }, 404);
   }

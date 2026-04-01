@@ -7,7 +7,8 @@ const withPWA = withPWAInit({
   disable: true,
   cacheOnFrontEndNav: true,
   aggressiveFrontEndNavCaching: false,
-  reloadOnOnline: true,
+  /** Avoid surprise full reloads when connectivity flaps (especially if PWA is enabled later). */
+  reloadOnOnline: false,
   workboxOptions: {
     disableDevLogs: true,
   },

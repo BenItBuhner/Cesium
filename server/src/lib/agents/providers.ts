@@ -1,7 +1,21 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync } from "node:fs";
 import path from "node:path";
 import { AcpStdioClient } from "./acp-transport.js";
+import {
+  type AcpSharedBridge,
+  makeAcpPoolKey,
+  retainAcpSharedBridge,
+} from "./acp-shared-bridge.js";
+import {
+  createClaudeAdapterProvider,
+  createCodexAdapterProvider,
+  type CliRuntimeSpec,
+} from "./cli-adapter.js";
+import {
+  readAgentBackendConfigCache,
+  writeAgentBackendConfigCache,
+} from "./provider-cache-store.js";
 import type {
   AgentBackendId,
   AgentBackendInfo,
@@ -15,32 +29,16 @@ import type {
   AgentProviderCapabilities,
   AgentRuntimeCallbacks,
   AgentSessionHandle,
+  AgentToolCallStatus,
 } from "./types.js";
-import { createUnavailableCapabilities } from "./types.js";
 import {
   configOptionMatchesCategory,
   findPrimaryModelConfigOption,
   findPrimaryModeConfigOption,
 } from "./config-option-utils.js";
+import { formatRejectedToolDetail } from "./tool-rejection-utils.js";
 
-type AcpRuntimeSpec = {
-  command: string;
-  args: string[];
-  env?: NodeJS.ProcessEnv;
-  commandPreview: string;
-};
-
-const cursorCapabilities: AgentProviderCapabilities = {
-  supportsLoadSession: true,
-  supportsModeSelection: true,
-  supportsModelSelection: true,
-  supportsSlashCommands: false,
-  supportsPermissions: true,
-  supportsToolCalls: true,
-  supportsStructuredPlans: true,
-  supportsTodos: true,
-  supportsSessionResume: true,
-};
+type AcpRuntimeSpec = CliRuntimeSpec;
 
 const openCodeCapabilities: AgentProviderCapabilities = {
   supportsLoadSession: true,
@@ -54,8 +52,179 @@ const openCodeCapabilities: AgentProviderCapabilities = {
   supportsSessionResume: true,
 };
 
+const basicCliCapabilities: AgentProviderCapabilities = {
+  supportsLoadSession: false,
+  supportsModeSelection: false,
+  supportsModelSelection: true,
+  supportsSlashCommands: false,
+  supportsPermissions: false,
+  supportsToolCalls: false,
+  supportsStructuredPlans: false,
+  supportsTodos: false,
+  supportsSessionResume: false,
+};
+
+const cursorAcpCapabilities: AgentProviderCapabilities = {
+  supportsLoadSession: true,
+  supportsModeSelection: true,
+  supportsModelSelection: true,
+  supportsSlashCommands: false,
+  supportsPermissions: true,
+  supportsToolCalls: true,
+  supportsStructuredPlans: true,
+  supportsTodos: true,
+  supportsSessionResume: true,
+};
+
+const geminiCapabilities: AgentProviderCapabilities = {
+  supportsLoadSession: true,
+  supportsModeSelection: true,
+  supportsModelSelection: true,
+  supportsSlashCommands: false,
+  supportsPermissions: true,
+  supportsToolCalls: true,
+  supportsStructuredPlans: false,
+  supportsTodos: false,
+  supportsSessionResume: true,
+};
+
 const LEGACY_MODE_CONFIG_ID = "__acp_legacy_mode__";
 const LEGACY_MODEL_CONFIG_ID = "__acp_legacy_model__";
+
+/**
+ * Declares what the OpenCursor Node client can delegate when the agent asks.
+ * Defaults are conservative. For headless / CI, Cursor may require overrides —
+ * set `OPENCURSOR_ACP_CLIENT_CAPABILITIES_JSON` (partial JSON merged on top).
+ */
+function buildAcpClientCapabilities(): Record<string, unknown> {
+  const base: Record<string, unknown> = {
+    fs: { readTextFile: false, writeTextFile: false },
+    terminal: false,
+  };
+  const raw = process.env.OPENCURSOR_ACP_CLIENT_CAPABILITIES_JSON?.trim();
+  if (!raw) {
+    return base;
+  }
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return base;
+    }
+    const p = parsed as Record<string, unknown>;
+    const next: Record<string, unknown> = { ...base, ...p };
+    if (p.fs && typeof p.fs === "object" && !Array.isArray(p.fs)) {
+      next.fs = {
+        ...(base.fs as Record<string, unknown>),
+        ...(p.fs as Record<string, unknown>),
+      };
+    }
+    return next;
+  } catch {
+    return base;
+  }
+}
+
+/** Extra argv merged after the resolved Cursor `agent` binary (JSON string array). */
+function parseCursorAgentExtraArgs(): string[] {
+  const rawJson = process.env.OPENCURSOR_CURSOR_AGENT_ARGS?.trim();
+  if (rawJson) {
+    try {
+      const parsed = JSON.parse(rawJson) as unknown;
+      if (Array.isArray(parsed) && parsed.every((item) => typeof item === "string")) {
+        return parsed;
+      }
+    } catch {
+      // ignore invalid JSON
+    }
+  }
+  const permissionMode = process.env.OPENCURSOR_CURSOR_PERMISSION_MODE?.trim();
+  if (permissionMode) {
+    return ["--permission-mode", permissionMode];
+  }
+  return [];
+}
+
+function summarizeAuthenticateResult(raw: unknown): string | undefined {
+  if (raw == null) {
+    return undefined;
+  }
+  if (typeof raw === "string" && raw.trim()) {
+    return raw.trim();
+  }
+  if (typeof raw !== "object" || Array.isArray(raw)) {
+    return undefined;
+  }
+  const r = raw as Record<string, unknown>;
+  for (const key of [
+    "message",
+    "instructions",
+    "detail",
+    "url",
+    "loginUrl",
+    "verificationUrl",
+  ] as const) {
+    const v = r[key];
+    if (typeof v === "string" && v.trim()) {
+      const t = v.trim();
+      if (key === "url" || key === "loginUrl" || key === "verificationUrl") {
+        return `Open or complete: ${t}`;
+      }
+      return t;
+    }
+  }
+  return undefined;
+}
+
+async function runAcpTransportBootstrap(transport: AcpStdioClient): Promise<string[]> {
+  const messages: string[] = [];
+  const init = (await transport.request("initialize", {
+    protocolVersion: 1,
+    clientCapabilities: buildAcpClientCapabilities(),
+    clientInfo: {
+      name: "opencursor-server",
+      title: "OpenCursor Server",
+      version: "0.1.0",
+    },
+  })) as Record<string, unknown> | undefined;
+
+  const authMethods = Array.isArray(init?.authMethods) ? init.authMethods : [];
+  const seen = new Set<string>();
+  for (const entry of authMethods) {
+    const id =
+      entry && typeof entry === "object" && !Array.isArray(entry)
+        ? parseConfigOptionString((entry as Record<string, unknown>).id)
+        : typeof entry === "string"
+          ? entry.trim()
+          : "";
+    if (!id || seen.has(id)) {
+      continue;
+    }
+    seen.add(id);
+    if (id === "cursor_login") {
+      try {
+        const authResult = await transport.request("authenticate", { methodId: "cursor_login" });
+        const note = summarizeAuthenticateResult(authResult);
+        if (note) {
+          messages.push(`Cursor CLI authentication: ${note}`);
+        } else {
+          messages.push(
+            "Cursor CLI authentication step completed. If model calls still fail, ensure the host is logged in (e.g. `agent login` per your Cursor build) or use supported non-interactive credentials."
+          );
+        }
+      } catch (error) {
+        const errText = error instanceof Error ? error.message : String(error);
+        messages.push(
+          `Cursor CLI authentication failed: ${errText}. Sign in on the server host with your Cursor CLI, set OPENCURSOR_CURSOR_CLI_BIN to that binary, and redeploy.`
+        );
+      }
+    } else {
+      messages.push(
+        `ACP lists authentication method "${id}". If the agent stalls, complete any login this method requires on the server (TTY or documented OAuth); OpenCursor only bridges stdio.`
+      );
+    }
+  }
+  return messages;
+}
 
 function fileExists(filePath: string): boolean {
   try {
@@ -140,22 +309,6 @@ function findExecutableOnPath(names: string[]): string | null {
   return null;
 }
 
-function resolveLatestCursorVersionDir(baseDir: string): string | null {
-  try {
-    const entries = readdirSync(baseDir, { withFileTypes: true })
-      .filter((entry) => entry.isDirectory())
-      .map((entry) => entry.name)
-      .filter((name) => /^\d{4}\.\d{1,2}\.\d{1,2}-[a-f0-9]+$/u.test(name))
-      .sort((a, b) => b.localeCompare(a, undefined, { numeric: true }));
-    if (entries.length === 0) {
-      return null;
-    }
-    return path.join(baseDir, entries[0]!);
-  } catch {
-    return null;
-  }
-}
-
 function resolveConfiguredRuntime(
   configured: string | undefined,
   args: string[],
@@ -181,45 +334,19 @@ function resolveConfiguredRuntime(
   return buildInvocation(direct, args, env);
 }
 
-function resolveCursorAcpRuntime(): AcpRuntimeSpec | null {
+function resolveCursorCliRuntime(): CliRuntimeSpec | null {
   const envOverrides = {
     ...process.env,
     CURSOR_INVOKED_AS: process.env.CURSOR_INVOKED_AS || "agent.cmd",
   };
+  const extraArgs = [...parseCursorAgentExtraArgs(), "acp"];
   const configured = resolveConfiguredRuntime(
-    process.env.OPENCURSOR_CURSOR_ACP_BIN,
-    ["acp"],
+    process.env.OPENCURSOR_CURSOR_CLI_BIN ?? process.env.OPENCURSOR_CURSOR_ACP_BIN,
+    extraArgs,
     envOverrides
   );
   if (configured) {
     return configured;
-  }
-
-  const localAppData = process.env.LOCALAPPDATA?.trim();
-  if (localAppData) {
-    const cursorRoot = path.join(localAppData, "cursor-agent");
-    const latestVersion = resolveLatestCursorVersionDir(path.join(cursorRoot, "versions"));
-    if (latestVersion) {
-      const nodePath = path.join(latestVersion, "node.exe");
-      const indexPath = path.join(latestVersion, "index.js");
-      if (fileExists(nodePath) && fileExists(indexPath)) {
-        return {
-          command: nodePath,
-          args: [indexPath, "acp"],
-          env: envOverrides,
-          commandPreview: [
-            quotePreview(nodePath),
-            quotePreview(indexPath),
-            "acp",
-          ].join(" "),
-        };
-      }
-    }
-
-    const cmdWrapper = path.join(cursorRoot, "agent.cmd");
-    if (fileExists(cmdWrapper)) {
-      return buildInvocation(cmdWrapper, ["acp"], envOverrides);
-    }
   }
 
   const pathHit = findExecutableOnPath(
@@ -228,7 +355,7 @@ function resolveCursorAcpRuntime(): AcpRuntimeSpec | null {
       : ["agent"]
   );
   if (pathHit) {
-    return buildInvocation(pathHit, ["acp"], envOverrides);
+    return buildInvocation(pathHit, extraArgs, envOverrides);
   }
 
   return null;
@@ -264,8 +391,78 @@ function resolveOpenCodeAcpRuntime(): AcpRuntimeSpec | null {
   return null;
 }
 
-const CURSOR_RUNTIME = resolveCursorAcpRuntime();
+function resolveCodexCliRuntime(): CliRuntimeSpec | null {
+  const configured = resolveConfiguredRuntime(process.env.OPENCURSOR_CODEX_BIN, []);
+  if (configured) {
+    return configured;
+  }
+
+  const pathHit = findExecutableOnPath(
+    process.platform === "win32"
+      ? ["codex.exe", "codex.cmd", "codex.bat", "codex"]
+      : ["codex"]
+  );
+  return pathHit ? buildInvocation(pathHit, []) : null;
+}
+
+function resolveClaudeCliRuntime(): CliRuntimeSpec | null {
+  const configured = resolveConfiguredRuntime(process.env.OPENCURSOR_CLAUDE_BIN, []);
+  if (configured) {
+    return configured;
+  }
+
+  const pathHit = findExecutableOnPath(
+    process.platform === "win32"
+      ? ["claude.exe", "claude.cmd", "claude.bat", "claude"]
+      : ["claude"]
+  );
+  return pathHit ? buildInvocation(pathHit, []) : null;
+}
+
+function resolveGeminiAcpRuntime(): AcpRuntimeSpec | null {
+  const configured = resolveConfiguredRuntime(
+    process.env.OPENCURSOR_GEMINI_ACP_BIN ?? process.env.OPENCURSOR_GEMINI_BIN,
+    ["--acp"]
+  );
+  if (configured) {
+    return configured;
+  }
+
+  const pathHit = findExecutableOnPath(
+    process.platform === "win32"
+      ? ["gemini.exe", "gemini.cmd", "gemini.bat", "gemini"]
+      : ["gemini"]
+  );
+  return pathHit ? buildInvocation(pathHit, ["--acp"]) : null;
+}
+
+const CURSOR_RUNTIME = resolveCursorCliRuntime();
 const OPENCODE_RUNTIME = resolveOpenCodeAcpRuntime();
+const CODEX_RUNTIME = resolveCodexCliRuntime();
+const CLAUDE_RUNTIME = resolveClaudeCliRuntime();
+const GEMINI_RUNTIME = resolveGeminiAcpRuntime();
+
+export type CursorAgentDeploymentHints = {
+  resolved: boolean;
+  commandPreview: string | null;
+  extraArgs: string[];
+  permissionModeEnv: string | null;
+  acpCapabilitiesJsonSet: boolean;
+  cursorBinEnvSet: boolean;
+};
+
+export function getCursorAgentDeploymentHints(): CursorAgentDeploymentHints {
+  return {
+    resolved: CURSOR_RUNTIME !== null,
+    commandPreview: CURSOR_RUNTIME?.commandPreview ?? null,
+    extraArgs: parseCursorAgentExtraArgs(),
+    permissionModeEnv: process.env.OPENCURSOR_CURSOR_PERMISSION_MODE?.trim() || null,
+    acpCapabilitiesJsonSet: Boolean(process.env.OPENCURSOR_ACP_CLIENT_CAPABILITIES_JSON?.trim()),
+    cursorBinEnvSet: Boolean(
+      (process.env.OPENCURSOR_CURSOR_CLI_BIN ?? process.env.OPENCURSOR_CURSOR_ACP_BIN)?.trim()
+    ),
+  };
+}
 
 function createBackendInfo(input: {
   id: AgentBackendId;
@@ -296,18 +493,18 @@ function createBackendInfo(input: {
 export const AGENT_BACKENDS: Record<AgentBackendId, AgentBackendInfo> = {
   "cursor-acp": createBackendInfo({
     id: "cursor-acp",
-    label: "Cursor ACP",
-    description: "Cursor Agent CLI over ACP stdio.",
+    label: "Cursor",
+    description: "Cursor CLI over ACP stdio with full model variants.",
     commandPreview: CURSOR_RUNTIME?.commandPreview ?? "Cursor CLI not found",
     available: CURSOR_RUNTIME !== null,
-    capabilities: cursorCapabilities,
+    capabilities: cursorAcpCapabilities,
     defaultMode: "agent",
     defaultModelId: "auto",
     defaultModelName: "Auto",
   }),
   "opencode-acp": createBackendInfo({
     id: "opencode-acp",
-    label: "OpenCode ACP",
+    label: "Opencode",
     description: "OpenCode CLI over ACP stdio.",
     commandPreview: OPENCODE_RUNTIME?.commandPreview ?? "OpenCode CLI not found",
     available: OPENCODE_RUNTIME !== null,
@@ -318,30 +515,53 @@ export const AGENT_BACKENDS: Record<AgentBackendId, AgentBackendInfo> = {
   }),
   "codex-adapter": createBackendInfo({
     id: "codex-adapter",
-    label: "Codex adapter",
-    description: "Reserved for experimental Codex ACP adapter work.",
-    experimental: true,
-    available: false,
-    capabilities: createUnavailableCapabilities(),
+    label: "Codex",
+    description: "Official Codex CLI via non-interactive adapter.",
+    experimental: false,
+    commandPreview: CODEX_RUNTIME?.commandPreview ?? "Codex CLI not found",
+    available: CODEX_RUNTIME !== null,
+    capabilities: basicCliCapabilities,
     defaultMode: "agent",
-    defaultModelId: "codex",
-    defaultModelName: "Codex",
+    defaultModelId: "__default__",
+    defaultModelName: "Default",
   }),
   "claude-adapter": createBackendInfo({
     id: "claude-adapter",
-    label: "Claude adapter",
-    description: "Reserved for experimental Claude Code ACP adapter work.",
-    experimental: true,
-    available: false,
-    capabilities: createUnavailableCapabilities(),
+    label: "Claude Code",
+    description: "Official Claude Code CLI routed through the local model proxy.",
+    experimental: false,
+    commandPreview: CLAUDE_RUNTIME?.commandPreview ?? "Claude Code CLI not found",
+    available: CLAUDE_RUNTIME !== null,
+    capabilities: basicCliCapabilities,
     defaultMode: "agent",
-    defaultModelId: "claude",
-    defaultModelName: "Claude",
+    defaultModelId: "turbo",
+    defaultModelName: "Turbo",
+  }),
+  "gemini-adapter": createBackendInfo({
+    id: "gemini-adapter",
+    label: "Gemini",
+    description: "Official Gemini CLI over ACP stdio.",
+    experimental: false,
+    commandPreview: GEMINI_RUNTIME?.commandPreview ?? "Gemini CLI not found",
+    available: GEMINI_RUNTIME !== null,
+    capabilities: geminiCapabilities,
+    defaultMode: "agent",
+    defaultModelId: "gemini-2.5-pro",
+    defaultModelName: "Gemini 2.5 Pro",
   }),
 };
 
 export function listAgentBackends(): AgentBackendInfo[] {
   return Object.values(AGENT_BACKENDS);
+}
+
+export async function listAgentBackendsWithCache(): Promise<AgentBackendInfo[]> {
+  return Promise.all(
+    Object.values(AGENT_BACKENDS).map(async (backend) => ({
+      ...backend,
+      cachedConfigOptions: await readAgentBackendConfigCache(backend.id),
+    }))
+  );
 }
 
 function parseConfigOptionCategory(value: unknown): AgentConfigOptionCategory {
@@ -646,23 +866,35 @@ function normalizeConversationModeForProvider(
   if (!option) {
     return null;
   }
+  const req = typeof requested === "string" ? requested.trim() : "";
   if (option.options.some((value) => value.value === requested)) {
     return requested;
   }
+  const requestedLower = req.toLowerCase();
+  const caseMatch = option.options.find((v) => v.value.toLowerCase() === requestedLower);
+  if (caseMatch) {
+    return caseMatch.value;
+  }
   const rawCandidates =
-    requested === "agent" || requested === "code"
+    requestedLower === "agent" || requestedLower === "code"
       ? ["agent", "code", "build"]
-      : requested === "plan"
+      : requestedLower === "plan"
         ? ["plan", "architect"]
-        : requested === "ask"
+        : requestedLower === "ask"
           ? ["ask", "review", "readonly", "read-only"]
-          : requested === "debug"
+          : requestedLower === "debug"
             ? ["debug", "build", "agent", "code"]
-            : [requested];
+            : [req];
   const available = new Set(option.options.map((value) => value.value));
   for (const candidate of rawCandidates) {
     if (available.has(candidate)) {
       return candidate;
+    }
+  }
+  for (const candidate of rawCandidates) {
+    const found = option.options.find((v) => v.value.toLowerCase() === candidate.toLowerCase());
+    if (found) {
+      return found.value;
     }
   }
   return null;
@@ -680,16 +912,443 @@ function summarizeToolContent(raw: unknown): string | undefined {
   if (typeof record.path === "string" && typeof record.newText === "string") {
     return `Updated ${record.path}`;
   }
+  const summarizeInlineText = (value: unknown): string | undefined => {
+    if (typeof value !== "string") {
+      return undefined;
+    }
+    const trimmed = value.trim();
+    if (!trimmed) {
+      return undefined;
+    }
+    if (trimmed.includes("\n") || trimmed.length > 240) {
+      return undefined;
+    }
+    return trimmed;
+  };
   if (record.content && typeof record.content === "object") {
     const content = record.content as Record<string, unknown>;
-    if (typeof content.text === "string" && content.text.trim()) {
-      return content.text.trim();
+    const inlineText = summarizeInlineText(content.text);
+    if (inlineText) {
+      return inlineText;
     }
   }
-  if (typeof record.text === "string" && record.text.trim()) {
-    return record.text.trim();
+  const inlineText = summarizeInlineText(record.text);
+  if (inlineText) {
+    return inlineText;
   }
   return undefined;
+}
+
+function humanizeAcpToolCallName(value: string): string {
+  return value
+    .replace(/ToolCall$/i, "")
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/[_-]/g, " ")
+    .trim();
+}
+
+function isGenericAcpToolTitle(value: string | undefined): boolean {
+  const normalized = value?.trim().toLowerCase();
+  return (
+    !normalized ||
+    normalized === "tool call" ||
+    normalized === "tool" ||
+    normalized === "function call" ||
+    normalized === "function"
+  );
+}
+
+type AcpToolCallEntry = {
+  rawName: string;
+  args?: Record<string, unknown>;
+  result?: Record<string, unknown>;
+};
+
+function extractAcpToolCallEntries(
+  record: Record<string, unknown>
+): AcpToolCallEntry[] {
+  const toolCall =
+    record.tool_call && typeof record.tool_call === "object" && !Array.isArray(record.tool_call)
+      ? (record.tool_call as Record<string, unknown>)
+      : record.toolCall && typeof record.toolCall === "object" && !Array.isArray(record.toolCall)
+        ? (record.toolCall as Record<string, unknown>)
+        : undefined;
+  if (!toolCall) {
+    return [];
+  }
+  const entries: AcpToolCallEntry[] = [];
+  for (const [rawName, value] of Object.entries(toolCall)) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      continue;
+    }
+    const entry = value as Record<string, unknown>;
+    const args =
+      entry.args && typeof entry.args === "object" && !Array.isArray(entry.args)
+        ? (entry.args as Record<string, unknown>)
+        : entry.input && typeof entry.input === "object" && !Array.isArray(entry.input)
+          ? (entry.input as Record<string, unknown>)
+          : undefined;
+    const result =
+      entry.result && typeof entry.result === "object" && !Array.isArray(entry.result)
+        ? (entry.result as Record<string, unknown>)
+        : undefined;
+    entries.push({ rawName, args, result });
+  }
+  return entries;
+}
+
+function extractAcpToolCallPayload(record: Record<string, unknown>): {
+  rawName?: string;
+  args?: Record<string, unknown>;
+  result?: Record<string, unknown>;
+} {
+  const [entry] = extractAcpToolCallEntries(record);
+  return entry ?? {};
+}
+
+function hashDeterministicId(value: string): string {
+  let hash = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    hash = (Math.imul(31, hash) + value.charCodeAt(index)) | 0;
+  }
+  return (hash >>> 0).toString(16);
+}
+
+function buildAcpToolCallFallbackId(record: Record<string, unknown>): string {
+  const entries = extractAcpToolCallEntries(record);
+  const title = typeof record.title === "string" ? record.title.trim() : "";
+  if (
+    entries.length === 0 &&
+    !title &&
+    typeof record.session_id !== "string" &&
+    typeof record.model_call_id !== "string"
+  ) {
+    return "tool-call";
+  }
+  const seed = JSON.stringify({
+    title: title || undefined,
+    sessionId: typeof record.session_id === "string" ? record.session_id : undefined,
+    modelCallId: typeof record.model_call_id === "string" ? record.model_call_id : undefined,
+    entries: entries.map((entry) => ({
+      rawName: entry.rawName,
+      path:
+        typeof entry.args?.path === "string"
+          ? entry.args.path
+          : typeof entry.args?.filePath === "string"
+            ? entry.args.filePath
+            : undefined,
+      pattern:
+        typeof entry.args?.pattern === "string"
+          ? entry.args.pattern
+          : typeof entry.args?.query === "string"
+            ? entry.args.query
+            : typeof entry.args?.globPattern === "string"
+              ? entry.args.globPattern
+              : undefined,
+      command:
+        typeof entry.args?.command === "string"
+          ? entry.args.command
+          : typeof entry.args?.cmd === "string"
+            ? entry.args.cmd
+            : undefined,
+    })),
+  });
+  return `tool-${hashDeterministicId(seed)}`;
+}
+
+function inferAcpToolKind(rawName: string | undefined): string {
+  const name = humanizeAcpToolCallName(rawName ?? "").toLowerCase();
+  if (!name) {
+    return "tool";
+  }
+  if (name.includes("todo")) {
+    return "todo";
+  }
+  if (name.includes("shell") || name.includes("terminal") || name.includes("command")) {
+    return "terminal";
+  }
+  if (name.includes("grep")) {
+    return "grep";
+  }
+  if (name.includes("glob") || name.includes("find") || name.includes("search")) {
+    return "search";
+  }
+  if (name.includes("delete") || name.includes("remove") || name.includes("unlink")) {
+    return "delete";
+  }
+  if (
+    name.includes("write") ||
+    name.includes("edit") ||
+    name.includes("patch") ||
+    name.includes("apply") ||
+    name.includes("update") ||
+    name.includes("create") ||
+    name.includes("insert") ||
+    name.includes("str replace") ||
+    name.includes("rename")
+  ) {
+    return "edit";
+  }
+  if (name.includes("read") || name.includes("open")) {
+    return "read";
+  }
+  return "tool";
+}
+
+function acpRecordHasAnyKey(
+  record: Record<string, unknown> | undefined,
+  keys: readonly string[]
+): boolean {
+  if (!record) {
+    return false;
+  }
+  return keys.some((key) => key in record && record[key] != null);
+}
+
+function looksLikeAcpEditPayload(record: Record<string, unknown> | undefined): boolean {
+  if (!record) {
+    return false;
+  }
+  if (
+    acpRecordHasAnyKey(record, [
+      "diffString",
+      "linesAdded",
+      "linesRemoved",
+      "beforeFullFileContent",
+      "afterFullFileContent",
+      "old_string",
+      "new_string",
+      "oldString",
+      "newString",
+      "replacement",
+      "replacements",
+      "patch",
+      "edits",
+      "contents",
+      "renameTo",
+      "newPath",
+    ])
+  ) {
+    return true;
+  }
+  const errorText =
+    typeof record.error === "string"
+      ? record.error
+      : record.error &&
+          typeof record.error === "object" &&
+          typeof (record.error as Record<string, unknown>).error === "string"
+        ? ((record.error as Record<string, unknown>).error as string)
+        : undefined;
+  return Boolean(errorText && /failed to find context|apply patch|replace/i.test(errorText));
+}
+
+function looksLikeAcpReadPayload(record: Record<string, unknown> | undefined): boolean {
+  if (!record || looksLikeAcpEditPayload(record)) {
+    return false;
+  }
+  return acpRecordHasAnyKey(record, [
+    "content",
+    "text",
+    "totalLines",
+    "readRange",
+    "contentBlobId",
+    "isEmpty",
+    "exceededLimit",
+  ]);
+}
+
+function inferAcpToolKindFromEntry(payload: {
+  rawName?: string;
+  args?: Record<string, unknown>;
+  result?: Record<string, unknown>;
+}): string {
+  if (looksLikeAcpEditPayload(payload.result) || looksLikeAcpEditPayload(payload.args)) {
+    return "edit";
+  }
+  const fromName = inferAcpToolKind(payload.rawName);
+  if (fromName !== "tool") {
+    return fromName;
+  }
+  if (looksLikeAcpReadPayload(payload.result) || looksLikeAcpReadPayload(payload.args)) {
+    return "read";
+  }
+  return "tool";
+}
+
+function summarizeAcpToolCallTitle(record: Record<string, unknown>): string | undefined {
+  const entries = extractAcpToolCallEntries(record);
+  if (entries.length > 1) {
+    const parts = entries
+      .map((entry) =>
+        summarizeAcpToolCallTitle({
+          ...record,
+          tool_call: { [entry.rawName]: { args: entry.args, result: entry.result } },
+        })
+      )
+      .filter((value): value is string => Boolean(value));
+    const uniqueParts = parts.filter((value, index) => parts.indexOf(value) === index);
+    if (uniqueParts.length > 0) {
+      return uniqueParts.join(" + ");
+    }
+  }
+  const payload = entries[0];
+  if (!payload) {
+    return undefined;
+  }
+  const args = payload.args ?? {};
+  const path =
+    typeof args.path === "string"
+      ? args.path
+      : typeof args.filePath === "string"
+        ? args.filePath
+        : undefined;
+  const pattern =
+    typeof args.pattern === "string"
+      ? args.pattern
+      : typeof args.query === "string"
+        ? args.query
+        : typeof args.globPattern === "string"
+          ? args.globPattern
+          : undefined;
+  const command =
+    typeof args.command === "string"
+      ? args.command
+      : typeof args.cmd === "string"
+        ? args.cmd
+        : undefined;
+  const toolKind = inferAcpToolKindFromEntry(payload);
+  if (toolKind === "read") {
+    return path ? `Read ${path}` : "Read file";
+  }
+  if (toolKind === "grep") {
+    return pattern ? `Grep "${pattern}"` : "Grep workspace";
+  }
+  if (toolKind === "search") {
+    return pattern ? `Find "${pattern}"` : "Find workspace matches";
+  }
+  if (toolKind === "delete") {
+    return path ? `Delete ${path}` : "Delete file";
+  }
+  if (toolKind === "edit") {
+    return path ? `Update ${path}` : "Update file";
+  }
+  if (toolKind === "todo") {
+    return "Update todo list";
+  }
+  if (command) {
+    return command;
+  }
+  return payload.rawName ? humanizeAcpToolCallName(payload.rawName) : undefined;
+}
+
+function summarizeAcpToolCallDetail(record: Record<string, unknown>): string | undefined {
+  const payloads = extractAcpToolCallEntries(record);
+  const rejected = payloads
+    .map((payload) =>
+      payload.result?.rejected &&
+      typeof payload.result.rejected === "object" &&
+      !Array.isArray(payload.result.rejected)
+        ? (payload.result.rejected as Record<string, unknown>)
+        : undefined
+    )
+    .find((value) => value != null);
+  if (rejected) {
+    return formatRejectedToolDetail(rejected);
+  }
+  for (const payload of payloads) {
+    if (typeof payload.args?.description === "string" && payload.args.description.trim()) {
+      return payload.args.description.trim();
+    }
+  }
+  return summarizeToolContent(record.content);
+}
+
+function normalizeAcpToolCallStatus(
+  record: Record<string, unknown>,
+  fallback: AgentToolCallStatus
+): AgentToolCallStatus {
+  if (record.status === "failed" || record.status === "cancelled") {
+    return record.status;
+  }
+  if (
+    extractAcpToolCallEntries(record).some((payload) => Boolean(payload.result?.rejected))
+  ) {
+    return "failed";
+  }
+  if (record.status === "completed") {
+    return "completed";
+  }
+  if (record.subtype === "completed") {
+    return "completed";
+  }
+  if (
+    record.subtype === "started" &&
+    (record.status == null || record.status === "pending")
+  ) {
+    return "in_progress";
+  }
+  if (
+    record.status === "pending" ||
+    record.status === "in_progress"
+  ) {
+    return record.status;
+  }
+  if (record.subtype === "started") {
+    return "in_progress";
+  }
+  return fallback;
+}
+
+function humanizePermissionOptionLabel(value: string): string {
+  const cleaned = value
+    .trim()
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ");
+  if (!cleaned) {
+    return "Option";
+  }
+  return cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
+}
+
+function normalizePermissionOptionKind(input: {
+  kind?: unknown;
+  optionId?: string;
+  name?: string;
+}): AgentPermissionOption["kind"] | null {
+  const direct =
+    typeof input.kind === "string"
+      ? input.kind.trim().toLowerCase().replace(/[\s-]+/g, "_")
+      : "";
+  if (
+    direct === "allow_once" ||
+    direct === "allow_always" ||
+    direct === "reject_once" ||
+    direct === "reject_always"
+  ) {
+    return direct;
+  }
+  const seed = `${input.optionId ?? ""} ${input.name ?? ""} ${direct}`
+    .trim()
+    .toLowerCase();
+  if (!seed) {
+    return null;
+  }
+  const isAllow = /(allow|approve|accept|continue|yes|grant)/.test(seed);
+  const isReject = /(reject|deny|decline|block|cancel|stop|no)/.test(seed);
+  const isAlways = /(always|permanent|persist|remember|future)/.test(seed);
+  if (isAllow) {
+    return isAlways ? "allow_always" : "allow_once";
+  }
+  if (isReject) {
+    return isAlways ? "reject_always" : "reject_once";
+  }
+  if (direct === "allow") {
+    return "allow_once";
+  }
+  if (direct === "reject" || direct === "deny") {
+    return "reject_once";
+  }
+  return null;
 }
 
 function parsePermissionOptions(raw: unknown): AgentPermissionOption[] {
@@ -698,22 +1357,52 @@ function parsePermissionOptions(raw: unknown): AgentPermissionOption[] {
   }
   return raw
     .map((item) => {
+      if (typeof item === "string" && item.trim()) {
+        const optionId = item.trim();
+        const name = humanizePermissionOptionLabel(optionId);
+        const kind = normalizePermissionOptionKind({ optionId, name });
+        return kind
+          ? ({
+              optionId,
+              name,
+              kind,
+            } satisfies AgentPermissionOption)
+          : null;
+      }
       if (!item || typeof item !== "object") {
         return null;
       }
       const record = item as Record<string, unknown>;
       const optionId =
-        typeof record.optionId === "string" ? record.optionId : undefined;
-      const name = typeof record.name === "string" ? record.name : optionId;
-      const kind = record.kind;
-      if (
-        !optionId ||
-        !name ||
-        (kind !== "allow_once" &&
-          kind !== "allow_always" &&
-          kind !== "reject_once" &&
-          kind !== "reject_always")
-      ) {
+        typeof record.optionId === "string"
+          ? record.optionId.trim()
+          : typeof record.id === "string"
+            ? record.id.trim()
+            : typeof record.value === "string"
+              ? record.value.trim()
+              : typeof record.key === "string"
+                ? record.key.trim()
+                : typeof record.actionId === "string"
+                  ? record.actionId.trim()
+                  : undefined;
+      const name =
+        typeof record.name === "string"
+          ? record.name.trim()
+          : typeof record.label === "string"
+            ? record.label.trim()
+            : typeof record.title === "string"
+              ? record.title.trim()
+              : typeof record.text === "string"
+                ? record.text.trim()
+                : optionId
+                  ? humanizePermissionOptionLabel(optionId)
+                  : undefined;
+      const kind = normalizePermissionOptionKind({
+        kind: record.kind ?? record.type ?? record.action,
+        optionId,
+        name,
+      });
+      if (!optionId || !name || !kind) {
         return null;
       }
       return {
@@ -725,17 +1414,158 @@ function parsePermissionOptions(raw: unknown): AgentPermissionOption[] {
     .filter((value): value is AgentPermissionOption => value !== null);
 }
 
+function buildFallbackPermissionOptions(
+  backendId: AgentBackendId
+): AgentPermissionOption[] {
+  if (backendId === "cursor-acp") {
+    return [
+      {
+        optionId: "allow-once",
+        name: "Allow once",
+        kind: "allow_once",
+      },
+      {
+        optionId: "allow-always",
+        name: "Always allow",
+        kind: "allow_always",
+      },
+      {
+        optionId: "reject-once",
+        name: "Reject",
+        kind: "reject_once",
+      },
+    ];
+  }
+  return [
+    {
+      optionId: "allow_once",
+      name: "Allow once",
+      kind: "allow_once",
+    },
+    {
+      optionId: "reject_once",
+      name: "Reject",
+      kind: "reject_once",
+    },
+  ];
+}
+
 function normalizeToolCallId(record: Record<string, unknown>): string {
+  const readIdFromNestedRecord = (value: unknown): string | undefined => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      return undefined;
+    }
+    const nested = value as Record<string, unknown>;
+    if (typeof nested.toolCallId === "string" && nested.toolCallId.trim()) {
+      return nested.toolCallId;
+    }
+    if (typeof nested.toolUseId === "string" && nested.toolUseId.trim()) {
+      return nested.toolUseId;
+    }
+    if (typeof nested.tool_use_id === "string" && nested.tool_use_id.trim()) {
+      return nested.tool_use_id;
+    }
+    if (typeof nested.call_id === "string" && nested.call_id.trim()) {
+      return nested.call_id;
+    }
+    if (typeof nested.callId === "string" && nested.callId.trim()) {
+      return nested.callId;
+    }
+    if (typeof nested.id === "string" && nested.id.trim()) {
+      return nested.id;
+    }
+    return undefined;
+  };
   if (typeof record.toolCallId === "string" && record.toolCallId.trim()) {
     return record.toolCallId;
+  }
+  if (typeof record.toolUseId === "string" && record.toolUseId.trim()) {
+    return record.toolUseId;
+  }
+  if (typeof record.tool_use_id === "string" && record.tool_use_id.trim()) {
+    return record.tool_use_id;
+  }
+  if (typeof record.call_id === "string" && record.call_id.trim()) {
+    return record.call_id;
+  }
+  if (typeof record.callId === "string" && record.callId.trim()) {
+    return record.callId;
   }
   if (typeof record.id === "string" && record.id.trim()) {
     return record.id;
   }
-  if (typeof record.title === "string" && record.title.trim()) {
-    return `tool-${record.title.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
+  for (const payload of extractAcpToolCallEntries(record)) {
+    const nestedId = readIdFromNestedRecord(payload.args) ?? readIdFromNestedRecord(payload.result);
+    if (nestedId) {
+      return nestedId;
+    }
   }
-  return "tool-call";
+  return buildAcpToolCallFallbackId(record);
+}
+
+function extractAcpLocations(record: Record<string, unknown>): { path: string; line?: number }[] | undefined {
+  if (!Array.isArray(record.locations)) {
+    return undefined;
+  }
+  const nextLocations: { path: string; line?: number }[] = [];
+  for (const location of record.locations) {
+    if (!location || typeof location !== "object") {
+      continue;
+    }
+    const locationRecord = location as Record<string, unknown>;
+    if (typeof locationRecord.path !== "string") {
+      continue;
+    }
+    nextLocations.push({
+      path: locationRecord.path,
+      line:
+        typeof locationRecord.line === "number"
+          ? locationRecord.line
+          : undefined,
+    });
+  }
+  return nextLocations;
+}
+
+function extractPermissionRequestDetail(
+  record: Record<string, unknown>,
+  toolCall: Record<string, unknown>
+): string | undefined {
+  for (const key of [
+    "message",
+    "description",
+    "detail",
+    "rationale",
+    "reason",
+    "summary",
+    "prompt",
+  ] as const) {
+    const v = record[key];
+    if (typeof v === "string" && v.trim()) {
+      return v.trim();
+    }
+  }
+  for (const key of ["message", "description", "detail", "reason"] as const) {
+    const v = toolCall[key];
+    if (typeof v === "string" && v.trim()) {
+      return v.trim();
+    }
+  }
+  const args =
+    toolCall.args && typeof toolCall.args === "object" && !Array.isArray(toolCall.args)
+      ? (toolCall.args as Record<string, unknown>)
+      : undefined;
+  if (args) {
+    const desc = args.description ?? args.prompt;
+    if (typeof desc === "string" && desc.trim()) {
+      return desc.trim();
+    }
+    const cmd = args.command ?? args.cmd;
+    if (typeof cmd === "string" && cmd.trim()) {
+      return `Command: ${cmd.trim()}`;
+    }
+  }
+  return undefined;
 }
 
 class AcpSessionHandle implements AgentSessionHandle {
@@ -746,25 +1576,28 @@ class AcpSessionHandle implements AgentSessionHandle {
   private readonly pendingPermissionRequestIds = new Map<string, number | string>();
   private currentAssistantMessageId: string | null = null;
   private disposed = false;
-  private readonly transport: AcpStdioClient;
+  private readonly bridge: AcpSharedBridge;
+  private readonly releaseBridge: () => Promise<void>;
   private readonly callbacks: AgentRuntimeCallbacks;
   private readonly backend: AgentBackendInfo;
 
   private constructor(input: {
-    transport: AcpStdioClient;
+    bridge: AcpSharedBridge;
+    releaseBridge: () => Promise<void>;
     callbacks: AgentRuntimeCallbacks;
     backend: AgentBackendInfo;
     sessionId: string;
     configOptions: AgentConfigOption[];
     capabilities: AgentProviderCapabilities;
   }) {
-    this.transport = input.transport;
+    this.bridge = input.bridge;
+    this.releaseBridge = input.releaseBridge;
     this.callbacks = input.callbacks;
     this.backend = input.backend;
     this.sessionId = input.sessionId;
     this.configOptions = input.configOptions;
     this.capabilities = input.capabilities;
-    this.bindIncomingMessages();
+    this.registerBridgeHandlers();
   }
 
   static async create(input: {
@@ -775,62 +1608,27 @@ class AcpSessionHandle implements AgentSessionHandle {
     callbacks: AgentRuntimeCallbacks;
     loadSessionId?: string | null;
   }): Promise<AcpSessionHandle> {
-    const transport = await AcpStdioClient.spawn({
+    const poolKey = makeAcpPoolKey({
+      workspaceRoot: input.callbacks.workspace.root,
+      backendId: input.backend.id,
       command: input.command,
       args: input.args,
-      cwd: input.callbacks.workspace.root,
-      env: input.env ?? process.env,
     });
-    const bufferedConfigNotifications: Array<{
-      method: string;
-      params?: unknown;
-    }> = [];
-    const disposeBufferedNotifications = transport.onNotification((notification) => {
-      if (notification.method !== "session/update") {
-        return;
-      }
-      const update =
-        notification.params && typeof notification.params === "object"
-          ? (notification.params as Record<string, unknown>).update
-          : null;
-      if (
-        update &&
-        typeof update === "object" &&
-        ((update as Record<string, unknown>).sessionUpdate === "config_option_update" ||
-          (update as Record<string, unknown>).sessionUpdate === "current_mode_update")
-      ) {
-        bufferedConfigNotifications.push(notification);
-      }
+    const { bridge, release, bootstrapSystemMessages } = await retainAcpSharedBridge({
+      poolKey,
+      spawn: () =>
+        AcpStdioClient.spawn({
+          command: input.command,
+          args: input.args,
+          cwd: input.callbacks.workspace.root,
+          env: input.env ?? process.env,
+        }),
+      afterSpawn: (transport) => runAcpTransportBootstrap(transport),
     });
+
+    bridge.startCreationCapture();
     try {
-      const init = (await transport.request("initialize", {
-      protocolVersion: 1,
-      clientCapabilities: {
-        fs: { readTextFile: false, writeTextFile: false },
-        terminal: false,
-      },
-      clientInfo: {
-        name: "opencursor-server",
-        title: "OpenCursor Server",
-        version: "0.1.0",
-      },
-      })) as Record<string, unknown> | undefined;
-
-      const authMethods = Array.isArray(init?.authMethods)
-        ? init?.authMethods
-        : [];
-      const authMethodIds = authMethods
-        .map((entry) =>
-          entry && typeof entry === "object"
-            ? (entry as Record<string, unknown>).id
-            : entry
-        )
-        .filter((value): value is string => typeof value === "string");
-      if (authMethodIds.includes("cursor_login")) {
-        await transport.request("authenticate", { methodId: "cursor_login" });
-      }
-
-      const openResult = (await transport.request(
+      const openResult = (await bridge.request(
         input.loadSessionId ? "session/load" : "session/new",
         input.loadSessionId
           ? {
@@ -843,7 +1641,7 @@ class AcpSessionHandle implements AgentSessionHandle {
               mcpServers: [],
             }
       )) as Record<string, unknown> | null | undefined;
-      disposeBufferedNotifications();
+
       const openResultRecord =
         openResult && typeof openResult === "object"
           ? (openResult as Record<string, unknown>)
@@ -861,8 +1659,10 @@ class AcpSessionHandle implements AgentSessionHandle {
         parseConfigOptions(openResultRecord.configOptions),
         parseLegacySessionConfigOptions(openResultRecord)
       );
+
       const handle = new AcpSessionHandle({
-        transport,
+        bridge,
+        releaseBridge: release,
         callbacks: input.callbacks,
         backend: input.backend,
         sessionId,
@@ -880,17 +1680,29 @@ class AcpSessionHandle implements AgentSessionHandle {
         lastError: null,
       }));
 
+      if (bootstrapSystemMessages.length > 0) {
+        await input.callbacks.appendEvents(
+          bootstrapSystemMessages.map((text) => ({
+            eventId: randomUUID(),
+            conversationId: input.callbacks.conversation.id,
+            kind: "system" as const,
+            level: "info" as const,
+            text,
+          }))
+        );
+      }
+
       if (configOptions.length > 0) {
         await handle.persistConfigOptions(configOptions);
       }
-      for (const notification of bufferedConfigNotifications) {
-        await handle.handleNotification(notification.method, notification.params);
-      }
+      bridge.endCreationCapture(sessionId, (method, params) => {
+        void handle.handleNotification(method, params);
+      });
       await handle.applyConversationConfig(input.callbacks.conversation);
       return handle;
     } catch (error) {
-      disposeBufferedNotifications();
-      await transport.close().catch(() => undefined);
+      bridge.cancelCreationCapture();
+      await release();
       throw error;
     }
   }
@@ -906,7 +1718,7 @@ class AcpSessionHandle implements AgentSessionHandle {
     }));
 
     try {
-      const result = (await this.transport.request("session/prompt", {
+      const result = (await this.bridge.request("session/prompt", {
         sessionId: this.sessionId,
         messageId: input.userMessageId,
         prompt: [{ type: "text", text: input.text }],
@@ -971,9 +1783,9 @@ class AcpSessionHandle implements AgentSessionHandle {
   }
 
   async cancel(): Promise<void> {
-    this.transport.notify("session/cancel", { sessionId: this.sessionId });
+    this.bridge.notify("session/cancel", { sessionId: this.sessionId });
     for (const requestId of this.pendingPermissionRequestIds.values()) {
-      this.transport.respond(requestId, {
+      this.bridge.respond(requestId, {
         outcome: {
           outcome: "cancelled",
         },
@@ -998,7 +1810,7 @@ class AcpSessionHandle implements AgentSessionHandle {
 
   async setConfigOption(configId: string, value: string): Promise<void> {
     if (configId === LEGACY_MODE_CONFIG_ID) {
-      await this.transport.request("session/set_mode", {
+      await this.bridge.request("session/set_mode", {
         sessionId: this.sessionId,
         modeId: value,
       });
@@ -1010,7 +1822,7 @@ class AcpSessionHandle implements AgentSessionHandle {
       return;
     }
     if (configId === LEGACY_MODEL_CONFIG_ID) {
-      await this.transport.request("session/set_model", {
+      await this.bridge.request("session/set_model", {
         sessionId: this.sessionId,
         modelId: value,
       });
@@ -1021,7 +1833,7 @@ class AcpSessionHandle implements AgentSessionHandle {
       );
       return;
     }
-    const result = (await this.transport.request("session/set_config_option", {
+    const result = (await this.bridge.request("session/set_config_option", {
       sessionId: this.sessionId,
       configId,
       value,
@@ -1052,7 +1864,7 @@ class AcpSessionHandle implements AgentSessionHandle {
     if (rawId === undefined) {
       throw new Error(`Unknown pending permission request: ${input.requestId}`);
     }
-    this.transport.respond(rawId, {
+    this.bridge.respond(rawId, {
       outcome: input.cancelled
         ? { outcome: "cancelled" }
         : {
@@ -1086,7 +1898,8 @@ class AcpSessionHandle implements AgentSessionHandle {
 
   async dispose(): Promise<void> {
     this.disposed = true;
-    await this.transport.close();
+    this.bridge.unregister(this.sessionId);
+    await this.releaseBridge();
   }
 
   private async persistConfigOptions(
@@ -1096,6 +1909,7 @@ class AcpSessionHandle implements AgentSessionHandle {
       return;
     }
     this.configOptions = nextConfigOptions;
+    await writeAgentBackendConfigCache(this.backend.id, nextConfigOptions);
     await this.callbacks.updateConversation((current) => {
       const modeOption = findPrimaryModeConfigOption(nextConfigOptions);
       const modelOption = findPrimaryModelConfigOption(nextConfigOptions);
@@ -1116,45 +1930,47 @@ class AcpSessionHandle implements AgentSessionHandle {
     });
   }
 
-  private bindIncomingMessages(): void {
-    this.transport.onNotification((notification) => {
-      void this.handleNotification(notification.method, notification.params);
-    });
-    this.transport.onRequest((request) => {
-      void this.handleRequest(request.id, request.method, request.params);
-    });
-    this.transport.onStderr((line) => {
-      void this.callbacks.appendEvents([
-        {
-          eventId: randomUUID(),
-          conversationId: this.callbacks.conversation.id,
-          kind: "system",
-          level: "warning",
-          text: `[${this.backend.label}] ${line}`,
-        },
-      ]);
-    });
-    this.transport.onExit((code) => {
-      if (this.disposed) {
-        return;
-      }
-      this.callbacks.markRuntimeStale?.();
-      void this.callbacks.appendEvents([
-        {
-          eventId: randomUUID(),
-          conversationId: this.callbacks.conversation.id,
-          kind: "status",
-          status: "interrupted",
-          detail: `ACP process exited${code == null ? "" : ` with code ${code}`}.`,
-        },
-      ]);
-      void this.callbacks.updateConversation((current) => ({
-        ...current,
-        status:
-          current.status === "idle" || current.status === "cancelled"
-            ? current.status
-            : "interrupted",
-      }));
+  private registerBridgeHandlers(): void {
+    this.bridge.register(this.sessionId, {
+      onNotification: (method, params) => {
+        void this.handleNotification(method, params);
+      },
+      onRequest: (id, method, params) => {
+        void this.handleRequest(id, method, params);
+      },
+      onStderr: (line) => {
+        void this.callbacks.appendEvents([
+          {
+            eventId: randomUUID(),
+            conversationId: this.callbacks.conversation.id,
+            kind: "system",
+            level: "warning",
+            text: `[${this.backend.label}] ${line}`,
+          },
+        ]);
+      },
+      onExit: (code) => {
+        if (this.disposed) {
+          return;
+        }
+        this.callbacks.markRuntimeStale?.();
+        void this.callbacks.appendEvents([
+          {
+            eventId: randomUUID(),
+            conversationId: this.callbacks.conversation.id,
+            kind: "status",
+            status: "interrupted",
+            detail: `ACP process exited${code == null ? "" : ` with code ${code}`}.`,
+          },
+        ]);
+        void this.callbacks.updateConversation((current) => ({
+          ...current,
+          status:
+            current.status === "idle" || current.status === "cancelled"
+              ? current.status
+              : "interrupted",
+        }));
+      },
     });
   }
 
@@ -1190,6 +2006,13 @@ class AcpSessionHandle implements AgentSessionHandle {
       if (modelValue && modelOption.currentValue !== modelValue) {
         await this.setConfigOption(modelOption.id, modelValue);
       }
+    } else if (
+      modelOption &&
+      conversation.config.backendId === "cursor-acp" &&
+      conversation.config.modelId &&
+      modelOption.currentValue !== conversation.config.modelId
+    ) {
+      await this.setConfigOption(modelOption.id, conversation.config.modelId);
     }
   }
 
@@ -1236,70 +2059,75 @@ class AcpSessionHandle implements AgentSessionHandle {
         return;
       }
       case "tool_call": {
+        const normalizedStatus = normalizeAcpToolCallStatus(record, "pending");
+        const toolCallId = normalizeToolCallId(record);
+        const detail = summarizeAcpToolCallDetail(record);
+        const locations = extractAcpLocations(record);
+        const title =
+          typeof record.title === "string" &&
+          record.title.trim() &&
+          !isGenericAcpToolTitle(record.title)
+            ? record.title
+            : summarizeAcpToolCallTitle(record) ?? "Tool call";
+        const toolKind =
+          typeof record.kind === "string" && record.kind !== "tool"
+            ? record.kind
+            : inferAcpToolKindFromEntry(extractAcpToolCallPayload(record));
+        if (record.subtype === "completed") {
+          await this.callbacks.appendEvents([
+            {
+              eventId: randomUUID(),
+              conversationId: this.callbacks.conversation.id,
+              kind: "tool_call_update",
+              toolCallId,
+              title,
+              toolKind,
+              status: normalizedStatus,
+              detail,
+              locations,
+              raw: params,
+            },
+          ]);
+          return;
+        }
         await this.callbacks.appendEvents([
           {
             eventId: randomUUID(),
             conversationId: this.callbacks.conversation.id,
             kind: "tool_call",
-            toolCallId: normalizeToolCallId(record),
-            title:
-              typeof record.title === "string"
-                ? record.title
-                : "Tool call",
-            toolKind:
-              typeof record.kind === "string" ? record.kind : "tool",
-            status:
-              record.status === "pending" ||
-              record.status === "in_progress" ||
-              record.status === "completed" ||
-              record.status === "failed" ||
-              record.status === "cancelled"
-                ? record.status
-                : "pending",
-            detail: summarizeToolContent(record.content),
-            locations: Array.isArray(record.locations)
-              ? (() => {
-                  const locations: { path: string; line?: number }[] = [];
-                  for (const location of record.locations) {
-                    if (!location || typeof location !== "object") {
-                      continue;
-                    }
-                    const locationRecord = location as Record<string, unknown>;
-                    if (typeof locationRecord.path !== "string") {
-                      continue;
-                    }
-                    locations.push({
-                      path: locationRecord.path,
-                      line:
-                        typeof locationRecord.line === "number"
-                          ? locationRecord.line
-                          : undefined,
-                    });
-                  }
-                  return locations;
-                })()
-              : undefined,
+            toolCallId,
+            title,
+            toolKind,
+            status: normalizedStatus,
+            detail,
+            locations,
             raw: params,
           },
         ]);
         return;
       }
       case "tool_call_update": {
+        const title =
+          typeof record.title === "string" &&
+          record.title.trim() &&
+          !isGenericAcpToolTitle(record.title)
+            ? record.title
+            : summarizeAcpToolCallTitle(record);
+        const toolKind =
+          typeof record.kind === "string" && record.kind !== "tool"
+            ? record.kind
+            : inferAcpToolKindFromEntry(extractAcpToolCallPayload(record));
         await this.callbacks.appendEvents([
           {
             eventId: randomUUID(),
             conversationId: this.callbacks.conversation.id,
             kind: "tool_call_update",
             toolCallId: normalizeToolCallId(record),
-            status:
-              record.status === "pending" ||
-              record.status === "in_progress" ||
-              record.status === "completed" ||
-              record.status === "failed" ||
-              record.status === "cancelled"
-                ? record.status
-                : "in_progress",
-            detail: summarizeToolContent(record.content),
+            title,
+            toolKind,
+            status: normalizeAcpToolCallStatus(record, "in_progress"),
+            detail: summarizeAcpToolCallDetail(record),
+            locations: extractAcpLocations(record),
             raw: params,
           },
         ]);
@@ -1391,14 +2219,39 @@ class AcpSessionHandle implements AgentSessionHandle {
       const toolCall =
         record.toolCall && typeof record.toolCall === "object"
           ? (record.toolCall as Record<string, unknown>)
+          : record.tool_call && typeof record.tool_call === "object"
+            ? (record.tool_call as Record<string, unknown>)
           : {};
-      const title =
-        typeof toolCall.title === "string"
-          ? toolCall.title
-          : typeof toolCall.toolCallId === "string"
-            ? `Permission required for ${toolCall.toolCallId}`
-            : "Permission required";
-      const options = parsePermissionOptions(record.options);
+      const toolCallId = normalizeToolCallId(toolCall);
+      const summarizedToolTitle = summarizeAcpToolCallTitle(toolCall);
+      const hasConcreteToolCallId = toolCallId !== "tool-call";
+      let title = "Permission required";
+      if (
+        typeof toolCall.title === "string" &&
+        !isGenericAcpToolTitle(toolCall.title)
+      ) {
+        title = toolCall.title;
+      } else if (summarizedToolTitle) {
+        title = `Permission required for ${summarizedToolTitle}`;
+      } else if (hasConcreteToolCallId) {
+        title = `Permission required for ${toolCallId}`;
+      }
+      const detail = extractPermissionRequestDetail(record, toolCall);
+      const options =
+        parsePermissionOptions(
+        Array.isArray(record.options)
+          ? record.options
+          : Array.isArray(record.choices)
+            ? record.choices
+            : Array.isArray(record.actions)
+              ? record.actions
+              : Array.isArray(record.permissions)
+                ? record.permissions
+                : []
+        ) || [];
+      const normalizedOptions =
+        options.length > 0 ? options : buildFallbackPermissionOptions(this.backend.id);
+      const statusDetail = detail ? `${title} — ${detail}` : title;
       await this.callbacks.appendEvents([
         {
           eventId: randomUUID(),
@@ -1406,11 +2259,9 @@ class AcpSessionHandle implements AgentSessionHandle {
           kind: "permission_request",
           requestId: requestKey,
           title,
-          toolCallId:
-            typeof toolCall.toolCallId === "string"
-              ? toolCall.toolCallId
-              : undefined,
-          options,
+          detail,
+          toolCallId: hasConcreteToolCallId ? toolCallId : undefined,
+          options: normalizedOptions,
           raw: params,
         },
         {
@@ -1418,7 +2269,7 @@ class AcpSessionHandle implements AgentSessionHandle {
           conversationId: this.callbacks.conversation.id,
           kind: "status",
           status: "awaiting_permission",
-          detail: title,
+          detail: statusDetail,
         },
       ]);
       await this.callbacks.updateConversation((current) => ({
@@ -1428,11 +2279,9 @@ class AcpSessionHandle implements AgentSessionHandle {
           requestId: requestKey,
           requestedAt: Date.now(),
           title,
-          toolCallId:
-            typeof toolCall.toolCallId === "string"
-              ? toolCall.toolCallId
-              : undefined,
-          options,
+          detail,
+          toolCallId: hasConcreteToolCallId ? toolCallId : undefined,
+          options: normalizedOptions,
         },
       }));
       return;
@@ -1488,7 +2337,7 @@ class AcpSessionHandle implements AgentSessionHandle {
           raw: params,
         },
       ]);
-      this.transport.respond(requestId, {});
+      this.bridge.respond(requestId, {});
       return;
     }
 
@@ -1503,7 +2352,7 @@ class AcpSessionHandle implements AgentSessionHandle {
           raw: params,
         },
       ]);
-      this.transport.respond(requestId, {});
+      this.bridge.respond(requestId, {});
       return;
     }
 
@@ -1518,11 +2367,11 @@ class AcpSessionHandle implements AgentSessionHandle {
           raw: params,
         },
       ]);
-      this.transport.respond(requestId, {});
+      this.bridge.respond(requestId, {});
       return;
     }
 
-    this.transport.respond(requestId, {});
+    this.bridge.respond(requestId, {});
   }
 }
 
@@ -1534,9 +2383,8 @@ export async function createAgentProvider(
     throw new Error(`Unknown backend: ${backendId}`);
   }
 
-  if (backendId === "cursor-acp" || backendId === "opencode-acp") {
-    const runtime = backendId === "cursor-acp" ? CURSOR_RUNTIME : OPENCODE_RUNTIME;
-    if (!runtime) {
+  if (backendId === "cursor-acp") {
+    if (!CURSOR_RUNTIME) {
       throw new Error(`${backend.label} is not installed or could not be resolved.`);
     }
     return {
@@ -1544,18 +2392,18 @@ export async function createAgentProvider(
       startSession(callbacks) {
         return AcpSessionHandle.create({
           backend,
-          command: runtime.command,
-          args: runtime.args,
-          env: runtime.env,
+          command: CURSOR_RUNTIME.command,
+          args: CURSOR_RUNTIME.args,
+          env: CURSOR_RUNTIME.env,
           callbacks,
         });
       },
       loadSession(callbacks, providerSessionId) {
         return AcpSessionHandle.create({
           backend,
-          command: runtime.command,
-          args: runtime.args,
-          env: runtime.env,
+          command: CURSOR_RUNTIME.command,
+          args: CURSOR_RUNTIME.args,
+          env: CURSOR_RUNTIME.env,
           callbacks,
           loadSessionId: providerSessionId,
         });
@@ -1563,7 +2411,58 @@ export async function createAgentProvider(
     };
   }
 
-  throw new Error(
-    `${backend.label} is an experimental placeholder and is not implemented yet.`
-  );
+  if (backendId === "opencode-acp" || backendId === "gemini-adapter") {
+    const resolvedRuntime = backendId === "gemini-adapter" ? GEMINI_RUNTIME : OPENCODE_RUNTIME;
+    if (!resolvedRuntime) {
+      throw new Error(`${backend.label} is not installed or could not be resolved.`);
+    }
+    return {
+      backend,
+      startSession(callbacks) {
+        return AcpSessionHandle.create({
+          backend,
+          command: resolvedRuntime.command,
+          args: resolvedRuntime.args,
+          env: resolvedRuntime.env,
+          callbacks,
+        });
+      },
+      loadSession(callbacks, providerSessionId) {
+        return AcpSessionHandle.create({
+          backend,
+          command: resolvedRuntime.command,
+          args: resolvedRuntime.args,
+          env: resolvedRuntime.env,
+          callbacks,
+          loadSessionId: providerSessionId,
+        });
+      },
+    };
+  }
+
+  if (backendId === "codex-adapter") {
+    if (!CODEX_RUNTIME) {
+      throw new Error(`${backend.label} is not installed or could not be resolved.`);
+    }
+    return createCodexAdapterProvider({
+      backend,
+      runtime: CODEX_RUNTIME,
+      configOptions: await readAgentBackendConfigCache(backendId),
+      capabilities: basicCliCapabilities,
+    });
+  }
+
+  if (backendId === "claude-adapter") {
+    if (!CLAUDE_RUNTIME) {
+      throw new Error(`${backend.label} is not installed or could not be resolved.`);
+    }
+    return createClaudeAdapterProvider({
+      backend,
+      runtime: CLAUDE_RUNTIME,
+      configOptions: await readAgentBackendConfigCache(backendId),
+      capabilities: basicCliCapabilities,
+    });
+  }
+
+  throw new Error(`${backend.label} is not implemented yet.`);
 }

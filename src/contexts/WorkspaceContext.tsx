@@ -42,7 +42,10 @@ import { WORKBENCH_NOTIFICATION_KIND } from "@/components/notifications/workbenc
 import { currentModel } from "@/lib/mock-data";
 
 const HEARTBEAT_INTERVAL_MS = 5_000;
-const PONG_STALE_MS = 12_000;
+/** Allow slow pongs, quiet workspaces, and main-thread stalls (heavy chat renders) without killing the FS socket. */
+const PONG_STALE_MS = 90_000;
+/** If the heartbeat timer fires this late, the event loop was probably stalled — do not infer a dead socket from skewed time. */
+const HEARTBEAT_DRIFT_SKIP_STALE_MS = HEARTBEAT_INTERVAL_MS * 12;
 const RECONNECT_TOAST_MS = 5_000;
 const SESSION_SAVE_DEBOUNCE_MS = 500;
 const SESSION_BACKUP_STORAGE_PREFIX = "opencursor.workspace-session.";
@@ -181,7 +184,8 @@ function normalizeWorkspaceSession(
         raw.chat?.backendId === "cursor-acp" ||
         raw.chat?.backendId === "opencode-acp" ||
         raw.chat?.backendId === "codex-adapter" ||
-        raw.chat?.backendId === "claude-adapter"
+        raw.chat?.backendId === "claude-adapter" ||
+        raw.chat?.backendId === "gemini-adapter"
           ? raw.chat.backendId
           : defaults.chat.backendId,
     },
@@ -469,6 +473,32 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     []
   );
 
+  const loadWorkspaceStateRef = useRef(loadWorkspaceState);
+  const applyWorkspaceListingUpdateRef = useRef(applyWorkspaceListingUpdate);
+  const pushNotificationRef = useRef(pushNotification);
+  const dismissByKindRef = useRef(dismissByKind);
+  const refreshTreeRef = useRef(refreshTree);
+
+  useEffect(() => {
+    loadWorkspaceStateRef.current = loadWorkspaceState;
+  }, [loadWorkspaceState]);
+
+  useEffect(() => {
+    applyWorkspaceListingUpdateRef.current = applyWorkspaceListingUpdate;
+  }, [applyWorkspaceListingUpdate]);
+
+  useEffect(() => {
+    pushNotificationRef.current = pushNotification;
+  }, [pushNotification]);
+
+  useEffect(() => {
+    dismissByKindRef.current = dismissByKind;
+  }, [dismissByKind]);
+
+  useEffect(() => {
+    refreshTreeRef.current = refreshTree;
+  }, [refreshTree]);
+
   const openWorkspaceById = useCallback(
     async (workspaceId: string) => {
       await flushWorkspaceSessionNow();
@@ -529,7 +559,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       try {
         const bootstrapResult = await fetchWorkspaceBootstrap();
         if (!mounted) return;
-        applyWorkspaceListingUpdate(
+        applyWorkspaceListingUpdateRef.current(
           bootstrapResult.workspaces,
           bootstrapResult.defaultWorkspaceId,
           bootstrapResult.recentWorkspaceIds
@@ -541,12 +571,12 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
           setLoading(false);
           return;
         }
-        await loadWorkspaceState(startupWorkspace);
+        await loadWorkspaceStateRef.current(startupWorkspace);
       } catch (nextError) {
         if (!mounted) return;
         const msg =
           nextError instanceof Error ? nextError.message : "Failed to load workspace";
-        pushNotification({
+        pushNotificationRef.current({
           kind: WORKBENCH_NOTIFICATION_KIND.workspaceLoadError,
           severity: "error",
           title: "Workspace error",
@@ -563,7 +593,18 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     return () => {
       mounted = false;
     };
-  }, [applyWorkspaceListingUpdate, loadWorkspaceState, pushNotification]);
+  }, []);
+
+  useEffect(() => {
+    if (!workspaceInfo || !sessionReady) {
+      return;
+    }
+
+    writeWorkspaceSessionBackup(
+      workspaceInfo.id,
+      createPersistableWorkspaceSession(workspaceSession)
+    );
+  }, [sessionReady, workspaceInfo, workspaceSession]);
 
   useEffect(() => {
     if (!workspaceInfo || !sessionReady) {
@@ -632,7 +673,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
 
     let active = true;
     let openedAt = Date.now();
-    let lastPongAt: number | null = null;
+    /** Updated on every inbound message (not only `pong`) so chat/streaming stalls cannot skew pong-only liveness. */
+    let lastServerContactAt: number | null = null;
     const suppressedDisconnectRef = { current: false };
     const wasDisconnectedRef = { current: false };
     let connectionLostHandled = false;
@@ -651,9 +693,9 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       connectionLostHandled = true;
       wasDisconnectedRef.current = true;
       if (!suppressedDisconnectRef.current) {
-        dismissByKind(WORKBENCH_NOTIFICATION_KIND.connectionReconnected);
-        dismissByKind(WORKBENCH_NOTIFICATION_KIND.connectionDisconnected);
-        pushNotification({
+        dismissByKindRef.current(WORKBENCH_NOTIFICATION_KIND.connectionReconnected);
+        dismissByKindRef.current(WORKBENCH_NOTIFICATION_KIND.connectionDisconnected);
+        pushNotificationRef.current({
           kind: WORKBENCH_NOTIFICATION_KIND.connectionDisconnected,
           severity: "error",
           title: "Disconnected",
@@ -668,7 +710,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
               label: "Retry",
               primary: true,
               onClick: () => {
-                void refreshTree();
+                void refreshTreeRef.current();
                 socket.forceCloseConnection();
               },
             },
@@ -680,14 +722,14 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     function tryReconnectToast() {
       if (!active) return;
       if (!wasDisconnectedRef.current) return;
-      if (lastPongAt == null) return;
-      if (Date.now() - lastPongAt > PONG_STALE_MS) return;
+      if (lastServerContactAt == null) return;
+      if (Date.now() - lastServerContactAt > PONG_STALE_MS) return;
       if (!socket.connected) return;
       wasDisconnectedRef.current = false;
       suppressedDisconnectRef.current = false;
-      dismissByKind(WORKBENCH_NOTIFICATION_KIND.connectionDisconnected);
-      dismissByKind(WORKBENCH_NOTIFICATION_KIND.connectionReconnected);
-      pushNotification({
+      dismissByKindRef.current(WORKBENCH_NOTIFICATION_KIND.connectionDisconnected);
+      dismissByKindRef.current(WORKBENCH_NOTIFICATION_KIND.connectionReconnected);
+      pushNotificationRef.current({
         kind: WORKBENCH_NOTIFICATION_KIND.connectionReconnected,
         severity: "info",
         title: "Reconnected",
@@ -703,10 +745,12 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       ),
       socket.onOpen(() => {
         openedAt = Date.now();
-        lastPongAt = null;
+        lastServerContactAt = null;
         connectionLostHandled = false;
       }),
       socket.onMessage((event) => {
+        lastServerContactAt = Date.now();
+
         if (event.type === "workspace_snapshot") {
           setWorkspaceInfo({
             id: event.workspaceId,
@@ -726,12 +770,11 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
           hasSyncedOnceRef.current = true;
           lastSeenSeqRef.current = event.latestSeq;
           setFsResyncToken((value) => value + 1);
-          void refreshTree();
+          void refreshTreeRef.current();
           return;
         }
 
         if (event.type === "pong") {
-          lastPongAt = Date.now();
           lastSeenSeqRef.current = Math.max(lastSeenSeqRef.current, event.latestSeq);
           tryReconnectToast();
           return;
@@ -771,14 +814,40 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       }),
     ];
 
+    const syncHeartbeatAfterForeground = () => {
+      if (document.visibilityState !== "visible") return;
+      // Background tabs throttle timers; without this, the first tick after focus can look
+      // "stale" and force a reconnect + resync that feels like a full UI reload.
+      openedAt = Date.now();
+      lastServerContactAt = null;
+      if (socket.connected) {
+        socket.send({ type: "ping" });
+      }
+    };
+    document.addEventListener("visibilitychange", syncHeartbeatAfterForeground);
+
+    let lastHeartbeatRunAt = Date.now();
     const heartbeat = window.setInterval(() => {
       if (!active) return;
       if (!socket.connected) return;
+      if (document.visibilityState === "hidden") {
+        return;
+      }
+      const now = Date.now();
+      const drift = now - lastHeartbeatRunAt;
+      lastHeartbeatRunAt = now;
+
       socket.send({ type: "ping" });
+      if (drift > HEARTBEAT_DRIFT_SKIP_STALE_MS) {
+        // Timer was delayed (often main-thread jank). The *next* tick would otherwise compare
+        // wall clock to a pre-stall `lastServerContactAt` and falsely kill the socket.
+        lastServerContactAt = Date.now();
+        return;
+      }
       const stale =
-        lastPongAt == null
-          ? Date.now() - openedAt > PONG_STALE_MS
-          : Date.now() - lastPongAt > PONG_STALE_MS;
+        lastServerContactAt == null
+          ? now - openedAt > PONG_STALE_MS
+          : now - lastServerContactAt > PONG_STALE_MS;
       if (stale) {
         handleConnectionLost(
           "No response from the IDE backend. The connection may be stale."
@@ -791,11 +860,12 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
 
     return () => {
       active = false;
+      document.removeEventListener("visibilitychange", syncHeartbeatAfterForeground);
       window.clearInterval(heartbeat);
       unsubscribers.forEach((unsubscribe) => unsubscribe());
       socket.disconnect();
     };
-  }, [activeWorkspaceId, dismissByKind, pushNotification, refreshTree]);
+  }, [activeWorkspaceId]);
 
   const value = useMemo<WorkspaceContextValue>(
     () => ({

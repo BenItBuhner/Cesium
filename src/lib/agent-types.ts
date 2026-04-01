@@ -9,7 +9,8 @@ export type AgentBackendId =
   | "cursor-acp"
   | "opencode-acp"
   | "codex-adapter"
-  | "claude-adapter";
+  | "claude-adapter"
+  | "gemini-adapter";
 
 export type AgentConversationStatus =
   | "idle"
@@ -37,6 +38,7 @@ export type AgentConfigOptionValue = {
   value: string;
   name: string;
   description?: string;
+  metadata?: Record<string, string | string[]>;
 };
 
 export type AgentConfigOption = {
@@ -65,6 +67,7 @@ export type AgentPendingPermission = {
   requestedAt: number;
   toolCallId?: string;
   title?: string;
+  detail?: string;
   options: AgentPermissionOption[];
 };
 
@@ -91,6 +94,7 @@ export type AgentBackendInfo = {
   defaultModelId: string;
   defaultModelName: string;
   capabilities: AgentProviderCapabilities;
+  cachedConfigOptions?: AgentConfigOption[];
 };
 
 export type AgentConversationConfig = {
@@ -163,6 +167,8 @@ export type AgentStoredEvent =
       createdAt: number;
       kind: "tool_call_update";
       toolCallId: string;
+      title?: string;
+      toolKind?: string;
       status: AgentToolCallStatus;
       detail?: string;
       locations?: AgentToolLocation[];
@@ -186,6 +192,7 @@ export type AgentStoredEvent =
       kind: "permission_request";
       requestId: string;
       title?: string;
+      detail?: string;
       toolCallId?: string;
       options: AgentPermissionOption[];
       raw?: unknown;
@@ -249,7 +256,9 @@ export type AgentConversationCreateInput = Partial<AgentConversationConfig> & {
 };
 
 export type AgentConversationConfigPatch = Partial<AgentConversationConfig> & {
+  title?: string;
   setConfigOption?: { configId: string; value: string };
+  setConfigOptions?: Array<{ configId: string; value: string }>;
 };
 
 export type AgentConversationListResult = {

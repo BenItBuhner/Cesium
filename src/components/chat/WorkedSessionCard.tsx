@@ -1,13 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   ChevronDown,
   FolderOpen,
   ScrollText,
   Lightbulb,
-  Wrench,
-  SquareTerminal,
 } from "lucide-react";
 import { CollapsibleHeight } from "./CollapsibleHeight";
 import type { WorkedSessionEntry } from "@/lib/types";
@@ -31,18 +29,44 @@ const toolStatusClass: Record<
     "border-[color-mix(in_srgb,#f59e0b_35%,transparent)] bg-[color-mix(in_srgb,#f59e0b_12%,transparent)] text-[#fcd34d]",
 };
 
+function isToolEntryActive(entry: WorkedSessionEntry): boolean {
+  return (
+    entry.kind === "tool" &&
+    (entry.status === "pending" || entry.status === "running")
+  );
+}
+
 interface WorkedSessionCardProps {
   label: string;
   entries: WorkedSessionEntry[];
   defaultOpen?: boolean;
+  loading?: boolean;
 }
 
 export function WorkedSessionCard({
   label,
   entries,
   defaultOpen = false,
+  loading = false,
 }: WorkedSessionCardProps) {
   const [open, setOpen] = useState(defaultOpen);
+  const hasActiveTool = entries.some((entry) => isToolEntryActive(entry));
+  const showLoadingState = loading || hasActiveTool;
+  const previousLoadingRef = useRef(showLoadingState);
+
+  useEffect(() => {
+    if (defaultOpen) {
+      setOpen(true);
+    }
+  }, [defaultOpen]);
+
+  useEffect(() => {
+    const wasLoading = previousLoadingRef.current;
+    if (wasLoading && !showLoadingState) {
+      setOpen(false);
+    }
+    previousLoadingRef.current = showLoadingState;
+  }, [showLoadingState]);
 
   return (
     <div className="min-w-0 px-[1px]">
@@ -52,7 +76,11 @@ export function WorkedSessionCard({
         aria-expanded={open}
         className="flex w-full min-w-0 cursor-pointer items-center gap-[6px] text-left text-[var(--text-secondary)] transition-colors hover:text-[var(--text-primary)]"
       >
-        <span className="font-sans text-[13px] font-normal leading-snug">
+        <span
+          className={`font-sans text-[13px] font-normal leading-snug ${
+            showLoadingState ? "tool-loading-text" : ""
+          }`}
+        >
           {label}
         </span>
         <ChevronDown
@@ -68,7 +96,14 @@ export function WorkedSessionCard({
         <div className="pt-[10px]">
           <div className="ml-[2px] flex flex-col gap-[14px] border-l border-[var(--border-subtle)] pl-[10px]">
             {entries.map((entry, i) => (
-              <WorkedEntryBlock key={i} entry={entry} />
+              <WorkedEntryBlock
+                key={
+                  entry.kind === "tool"
+                    ? entry.toolCallId ?? `tool-${i}-${entry.title}`
+                    : `${entry.kind}-${i}`
+                }
+                entry={entry}
+              />
             ))}
           </div>
         </div>
@@ -124,31 +159,39 @@ function WorkedEntryBlock({ entry }: { entry: WorkedSessionEntry }) {
           </p>
         </div>
       );
-    case "tool":
+    case "tool": {
+      const active = isToolEntryActive(entry);
+      const statusKey =
+        entry.status === "failed" || entry.status === "cancelled"
+          ? entry.status
+          : null;
       return (
         <div className="flex gap-[8px]">
-          <span className={iconWrap}>
-            {entry.variant === "terminal" ? (
-              <SquareTerminal className="size-[14px]" strokeWidth={1.5} aria-hidden />
-            ) : (
-              <Wrench className="size-[14px]" strokeWidth={1.5} aria-hidden />
-            )}
-          </span>
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-[8px]">
-              <p className="font-sans text-[13px] font-normal text-[var(--text-primary)]">
+              <p
+                className={`font-sans text-[13px] font-normal ${
+                  active
+                    ? "tool-loading-text"
+                    : entry.status === "failed"
+                      ? "text-[#fda4af]"
+                      : entry.status === "cancelled"
+                        ? "text-[#fcd34d]"
+                        : "text-[var(--text-primary)]"
+                }`}
+              >
                 {entry.title}
               </p>
-              {entry.status ? (
+              {statusKey ? (
                 <span
-                  className={`rounded-full border px-[7px] py-[1px] font-sans text-[10px] font-medium uppercase tracking-[0.08em] ${toolStatusClass[entry.status]}`}
+                  className={`rounded-full border px-[7px] py-[1px] font-sans text-[10px] font-medium uppercase tracking-[0.08em] ${toolStatusClass[statusKey]}`}
                 >
-                  {entry.status}
+                  {statusKey}
                 </span>
               ) : null}
             </div>
             {entry.detail?.trim() ? (
-              <p className="mt-[4px] font-sans text-[12px] font-normal leading-relaxed text-[var(--text-secondary)]">
+              <p className="mt-[4px] line-clamp-4 font-sans text-[12px] font-normal leading-relaxed text-[var(--text-secondary)]">
                 {entry.detail}
               </p>
             ) : null}
@@ -167,5 +210,6 @@ function WorkedEntryBlock({ entry }: { entry: WorkedSessionEntry }) {
           </div>
         </div>
       );
+    }
   }
 }

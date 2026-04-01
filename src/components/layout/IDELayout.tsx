@@ -14,6 +14,7 @@ import { IDEKeyboardLayer } from "@/components/ide/IDEKeyboardLayer";
 import { WorkbenchContextMenuProvider } from "@/components/ide/WorkbenchContextMenuProvider";
 import { HardwareInputProvider } from "@/components/input/HardwareInputProvider";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
+import { useTheme } from "@/components/theme/ThemeProvider";
 
 function ResizeHandle() {
   return (
@@ -33,6 +34,7 @@ const DESKTOP_DEFAULT_LAYOUT = {
 };
 
 export function IDELayout() {
+  const { themeConfig } = useTheme();
   const { showSidebar, showChat, isMobile } = useViewport();
   const { activeWorkspaceId, loading, sessionReady, workspaceSession, updateWorkspaceSession } =
     useWorkspace();
@@ -180,15 +182,17 @@ export function IDELayout() {
           ) : (
             <div className="flex h-screen w-screen flex-col overflow-hidden bg-[var(--bg-main)]">
               <div className="flex min-h-0 flex-1 overflow-hidden">
-              {!sidebarVisible && (
+              {!sidebarVisible && themeConfig.showFloatingSidebarReveal ? (
                 <button
                   type="button"
                   onClick={() => setSidebarOpen(true)}
+                  aria-label="Show primary sidebar"
+                  title="Show primary sidebar"
                   className="absolute left-2 top-2 z-20 rounded-[var(--radius-tab)] bg-[var(--bg-panel)] p-1.5 text-[var(--text-secondary)] transition-colors hover:text-[var(--text-primary)]"
                 >
                   <PanelLeft className="size-[18px]" strokeWidth={1.5} />
                 </button>
-              )}
+              ) : null}
 
               <Group
                 orientation="horizontal"

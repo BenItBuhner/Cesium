@@ -1,4 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { spawnSafeEnv } from "./spawn-env.js";
 import { createInterface } from "node:readline";
 
 type JsonRpcId = number | string;
@@ -66,7 +67,7 @@ export class AcpStdioClient {
   static async spawn(options: AcpTransportOptions): Promise<AcpStdioClient> {
     const child = spawn(options.command, options.args, {
       cwd: options.cwd,
-      env: options.env ?? process.env,
+      env: spawnSafeEnv(options.env),
       stdio: ["pipe", "pipe", "pipe"],
       windowsHide: true,
     });

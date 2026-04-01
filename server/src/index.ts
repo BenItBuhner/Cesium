@@ -12,6 +12,7 @@ import { settingsRoutes } from "./routes/settings.js";
 import { terminalRoutes } from "./routes/terminals.js";
 import { browserProxyRoutes } from "./routes/browser-proxy.js";
 import { agentRoutes } from "./routes/agents.js";
+import { audioRoutes } from "./routes/audio.js";
 import { handleFsUpgrade } from "./ws/filewatcher.js";
 import { handleAgentUpgrade } from "./ws/agent.js";
 import { handleTerminalUpgrade } from "./ws/terminal.js";
@@ -58,6 +59,7 @@ app.route("/", settingsRoutes);
 app.route("/", fsRoutes);
 app.route("/", terminalRoutes);
 app.route("/", agentRoutes);
+app.route("/", audioRoutes);
 
 const server = serve({
   fetch: app.fetch,

@@ -27,6 +27,10 @@ export type WorkedSessionEntry =
   | { kind: "reasoning"; text: string }
   | {
       kind: "tool";
+      /** Stable id from agent `toolCallId` for list keys + updates */
+      toolCallId?: string;
+      /** Normalized action class for dropdown summaries and UI affordances. */
+      toolKind?: string;
       title: string;
       detail?: string;
       variant?: "default" | "terminal";
@@ -36,7 +40,7 @@ export type WorkedSessionEntry =
 
 /** Inline user bubble: plain text runs and file/context chips. */
 export interface UserMessageSegment {
-  type: "text" | "file";
+  type: "text" | "file" | "context";
   text: string;
 }
 
@@ -146,6 +150,8 @@ export interface EditorTab {
   savedContent?: string;
   /** File changed on disk while the editor also had local edits. */
   externalChange?: boolean;
+  /** Ephemeral editor tab bound to the chat composer draft. */
+  composerDraftId?: string;
 }
 
 /** Payload to open a demo file from the explorer into the editor (deduped by `path`). */
@@ -215,7 +221,12 @@ export interface AgentModeOption {
 
 export interface ModelInfo {
   id: string;
+  modelValue?: string;
   name: string;
+  description?: string;
+  detail?: string;
+  backendId?: string;
+  configSelections?: Array<{ configId: string; value: string }>;
   provider:
     | "openai"
     | "anthropic"
@@ -223,6 +234,9 @@ export interface ModelInfo {
     | "auto"
     | "cursor"
     | "opencode"
+    | "codex"
+    | "claude"
+    | "gemini"
     | "fixture";
   selected?: boolean;
 }

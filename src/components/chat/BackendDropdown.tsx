@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Bot, Check, ChevronDown, Sparkles, type LucideProps } from "lucide-react";
 import { useClickOutside } from "@/hooks/useClickOutside";
@@ -8,8 +8,11 @@ import { usePopover } from "@/hooks/usePopover";
 import type { AgentBackendId, AgentBackendInfo } from "@/lib/agent-types";
 
 function renderBackendIcon(id: AgentBackendId, props: LucideProps) {
-  if (id === "cursor-acp") {
+  if (id === "cursor-acp" || id === "codex-adapter") {
     return <Sparkles {...props} />;
+  }
+  if (id === "claude-adapter") {
+    return <Bot {...props} />;
   }
   return <Bot {...props} />;
 }
@@ -30,22 +33,62 @@ export function BackendDropdown({
   disabled = false,
 }: BackendDropdownProps) {
   const [open, setOpen] = useState(false);
+  const [expandedWidth, setExpandedWidth] = useState(28);
   const close = useCallback(() => setOpen(false), []);
   const { triggerRef, popoverRef, position, ready } = usePopover(open, {
     placement: popoverPlacement,
   });
   useClickOutside(triggerRef, close, open, [popoverRef]);
+  const labelMeasureRef = useRef<HTMLSpanElement>(null);
 
   const options = useMemo(() => backends, [backends]);
   const current = options.find((option) => option.id === backendId) ?? null;
+  const triggerExpanded = open;
+
+  useLayoutEffect(() => {
+    const node = labelMeasureRef.current;
+    if (!node) {
+      return;
+    }
+    const nextWidth = Math.max(28, Math.ceil(node.getBoundingClientRect().width));
+    setExpandedWidth(nextWidth);
+  }, [current?.label, triggerExpanded]);
 
   return (
-    <div ref={triggerRef}>
+    <div ref={triggerRef} className="relative inline-flex">
+      <span
+        ref={labelMeasureRef}
+        className="pointer-events-none absolute opacity-0"
+        aria-hidden
+      >
+        <span className="inline-flex items-center rounded-[var(--radius-pill)] bg-[var(--bg-panel)] py-[1px] pl-[8px] pr-[7px] font-sans text-[13px] font-normal">
+          {current
+            ? renderBackendIcon(current.id, {
+                className: "size-[13px] shrink-0",
+                strokeWidth: 1.5,
+              })
+            : (
+                <Bot className="size-[13px] shrink-0" strokeWidth={1.5} />
+              )}
+          <span className="ml-[6px] whitespace-nowrap text-[var(--text-primary)]">
+            {current?.label ?? backendId}
+          </span>
+          <ChevronDown className="ml-[6px] size-[8px] shrink-0" strokeWidth={2.5} />
+        </span>
+      </span>
       <button
         type="button"
         disabled={disabled || !current}
         onClick={() => setOpen((value) => !value)}
-        className="flex items-center gap-[4px] rounded-[var(--radius-pill)] bg-[var(--bg-panel)] px-[6px] py-[1px] text-[var(--text-secondary)] transition-opacity hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-50"
+        style={{
+          width: triggerExpanded ? `${expandedWidth}px` : undefined,
+          minWidth: 28,
+        }}
+        className={`group inline-flex items-center overflow-hidden rounded-[var(--radius-pill)] bg-[var(--bg-panel)] py-[1px] text-[var(--text-secondary)] transition-[padding,opacity] duration-200 hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50 ${
+          triggerExpanded
+            ? "pl-[8px] pr-[7px]"
+            : "pl-[7px] pr-[7px]"
+        }`}
       >
         {current
           ? renderBackendIcon(current.id, {
@@ -55,10 +98,23 @@ export function BackendDropdown({
           : (
               <Bot className="size-[13px] shrink-0" strokeWidth={1.5} />
             )}
-        <span className="font-sans text-[13px] font-normal text-[var(--text-primary)]">
+        <span
+          className={`overflow-hidden whitespace-nowrap font-sans text-[13px] font-normal text-[var(--text-primary)] transition-[margin,max-width,opacity] duration-200 ${
+            triggerExpanded
+              ? "ml-[6px] max-w-[240px] opacity-100"
+              : "ml-0 max-w-0 opacity-0 group-hover:ml-[6px] group-hover:max-w-[240px] group-hover:opacity-100 group-focus-visible:ml-[6px] group-focus-visible:max-w-[240px] group-focus-visible:opacity-100"
+          }`}
+        >
           {current?.label ?? backendId}
         </span>
-        <ChevronDown className="size-[8px] shrink-0" strokeWidth={2.5} />
+        <ChevronDown
+          className={`size-[8px] shrink-0 transition-[margin,opacity,width] duration-200 ${
+            triggerExpanded
+              ? "ml-[6px] w-[8px] opacity-100"
+              : "ml-0 w-0 opacity-0 group-hover:ml-[6px] group-hover:w-[8px] group-hover:opacity-100 group-focus-visible:ml-[6px] group-focus-visible:w-[8px] group-focus-visible:opacity-100"
+          }`}
+          strokeWidth={2.5}
+        />
       </button>
 
       {open &&
@@ -66,6 +122,7 @@ export function BackendDropdown({
           <div
             ref={popoverRef}
             className="fixed z-[9999] w-[240px] rounded-[var(--radius-card)] border border-[var(--border-card)] bg-[var(--bg-panel)] py-[4px] transition-opacity"
+            data-ide-input-sink
             style={{
               ...(position.top != null
                 ? { top: position.top }
@@ -74,8 +131,10 @@ export function BackendDropdown({
               opacity: ready ? 1 : 0,
               maxHeight: position.maxHeight,
               overflow: "auto",
+              overscrollBehavior: "contain",
             }}
             onPointerDown={(event) => event.stopPropagation()}
+            onWheel={(event) => event.stopPropagation()}
           >
             {options.map((option) => {
               const active = option.id === backendId;
