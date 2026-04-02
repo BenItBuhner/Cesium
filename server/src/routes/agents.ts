@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { requireWorkspaceFromRequest } from "../lib/request-workspace.js";
 import { agentRuntimeManager } from "../lib/agents/runtime-manager.js";
+import { exportOpenCodeSession } from "../lib/agents/opencode-export.js";
 import { getCursorAgentDeploymentHints } from "../lib/agents/providers.js";
 import type {
   AgentConversationConfigPatch,
@@ -38,6 +39,23 @@ agentRoutes.get("/api/agents/conversations/:conversationId", async (c) => {
     return c.json({ error: `Unknown conversation: ${conversationId}` }, 404);
   }
   return c.json({ snapshot });
+});
+
+agentRoutes.get("/api/agents/subagents/:sessionId", async (c) => {
+  const workspace = await requireWorkspaceFromRequest(c);
+  const sessionId = c.req.param("sessionId");
+  const session = await exportOpenCodeSession(sessionId);
+  const directory =
+    session &&
+    typeof session === "object" &&
+    (session as { info?: { directory?: unknown } }).info &&
+    typeof (session as { info?: { directory?: unknown } }).info?.directory === "string"
+      ? ((session as { info?: { directory?: string } }).info?.directory as string)
+      : "";
+  if (!directory || !directory.startsWith(workspace.root)) {
+    return c.json({ error: "Subagent session does not belong to the active workspace." }, 404);
+  }
+  return c.json({ session });
 });
 
 agentRoutes.patch("/api/agents/conversations/:conversationId/config", async (c) => {

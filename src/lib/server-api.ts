@@ -16,6 +16,28 @@ const BASE_URL =
   process.env.NEXT_PUBLIC_SERVER_URL?.replace(/\/+$/, "") ??
   "http://localhost:9100";
 
+function resolveClientBaseUrl(): string {
+  if (typeof window === "undefined") {
+    return BASE_URL;
+  }
+  try {
+    const configured = new URL(BASE_URL);
+    const currentHost = window.location.hostname;
+    if (
+      currentHost &&
+      currentHost !== configured.hostname &&
+      (currentHost === "127.0.0.1" || currentHost === "localhost")
+    ) {
+      configured.hostname = currentHost;
+      configured.port = configured.port || "9100";
+      return configured.toString().replace(/\/+$/, "");
+    }
+  } catch {
+    return BASE_URL;
+  }
+  return BASE_URL;
+}
+
 let activeWorkspaceId: string | null = null;
 
 export function setActiveWorkspaceId(workspaceId: string | null): void {
@@ -63,7 +85,7 @@ async function request<T>(
   init?: RequestInit,
   options?: { skipWorkspaceHeader?: boolean }
 ): Promise<T> {
-  const response = await fetch(`${BASE_URL}${input}`, {
+  const response = await fetch(`${resolveClientBaseUrl()}${input}`, {
     ...init,
     headers: {
       "Content-Type": "application/json",
@@ -82,12 +104,12 @@ async function request<T>(
 }
 
 export function getServerBaseUrl(): string {
-  return BASE_URL;
+  return resolveClientBaseUrl();
 }
 
 export function buildAgentWebSocketUrl(workspaceId: string): string {
   const params = new URLSearchParams({ workspaceId });
-  return `${toWebSocketUrl(BASE_URL)}/ws/agent?${params.toString()}`;
+  return `${toWebSocketUrl(resolveClientBaseUrl())}/ws/agent?${params.toString()}`;
 }
 
 export async function fetchWorkspaceBootstrap(): Promise<{
@@ -230,6 +252,12 @@ export async function fetchAgentConversationSnapshot(
   return request(`/api/agents/conversations/${encodeURIComponent(conversationId)}${suffix}`);
 }
 
+export async function fetchOpenCodeSubagentSession(
+  sessionId: string
+): Promise<{ session: unknown }> {
+  return request(`/api/agents/subagents/${encodeURIComponent(sessionId)}`);
+}
+
 export async function updateAgentConversationConfig(
   conversationId: string,
   patch: AgentConversationConfigPatch
@@ -281,7 +309,7 @@ export async function transcribeAudio(
   if (options?.prompt) {
     form.set("prompt", options.prompt);
   }
-  const response = await fetch(`${BASE_URL}/api/audio/transcriptions`, {
+  const response = await fetch(`${resolveClientBaseUrl()}/api/audio/transcriptions`, {
     method: "POST",
     body: form,
     headers: getWorkspaceHeaders(),

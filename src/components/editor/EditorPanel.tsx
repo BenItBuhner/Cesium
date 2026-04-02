@@ -51,11 +51,20 @@ function createEditorStateFromSession(session: {
   leftActiveId: string | null;
   rightActiveId: string | null;
 }) {
+  const normalizeTranscriptTab = (tab: EditorTab): EditorTab => {
+    if (tab.transcriptSessionId || !tab.transcriptMessages?.length) {
+      return tab;
+    }
+    const inferred = tab.transcriptMessages
+      .map((message) => message.id.match(/(ses_[A-Za-z0-9]+)/)?.[1])
+      .find((value): value is string => Boolean(value));
+    return inferred ? { ...tab, transcriptSessionId: inferred } : tab;
+  };
   return {
     split: session.split,
     focusedGroup: session.focusedGroup,
-    leftTabs: session.leftTabs,
-    rightTabs: session.rightTabs,
+    leftTabs: session.leftTabs.map(normalizeTranscriptTab),
+    rightTabs: session.rightTabs.map(normalizeTranscriptTab),
     leftActiveId: session.leftActiveId,
     rightActiveId: session.rightActiveId,
   };
@@ -252,6 +261,7 @@ export function EditorPanel() {
         type: "OPEN_TRANSCRIPT_TAB",
         title: payload.title,
         messages: payload.messages,
+        sessionId: payload.sessionId,
       });
     };
     const onComposerDraft = (payload: OpenComposerDraftPayload) => {
@@ -805,6 +815,7 @@ export function EditorPanel() {
         <AgentTranscriptView
           key={tab.id}
           messages={tab.transcriptMessages}
+          sessionId={tab.transcriptSessionId}
         />
       );
     }

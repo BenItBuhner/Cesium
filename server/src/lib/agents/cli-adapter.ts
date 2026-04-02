@@ -49,6 +49,7 @@ type CliToolEmitPayload = {
 
 type CliPromptCallbacks = {
   appendAssistantText: (text: string) => Promise<void>;
+  appendReasoningText: (text: string, raw?: unknown) => Promise<void>;
   setStopReason: (stopReason: string | undefined) => void;
   appendToolCall: (payload: CliToolEmitPayload) => Promise<void>;
   appendToolCallUpdate: (payload: {
@@ -282,6 +283,22 @@ class OneShotCliSessionHandle implements AgentSessionHandle {
                   kind: "assistant_message_chunk",
                   messageId: this.currentAssistantMessageId,
                   text,
+                },
+              ]);
+            },
+            appendReasoningText: async (text, raw) => {
+              if (!text.trim() || !this.currentAssistantMessageId) {
+                return;
+              }
+              sawAssistantText = true;
+              await this.callbacks.appendEvents([
+                {
+                  eventId: randomUUID(),
+                  conversationId: this.callbacks.conversation.id,
+                  kind: "reasoning",
+                  messageId: this.currentAssistantMessageId,
+                  text,
+                  raw,
                 },
               ]);
             },
@@ -1101,6 +1118,15 @@ function parseCursorAssistantBlocks(
     const record = entry as Record<string, unknown>;
     const t = typeof record.type === "string" ? record.type : "";
 
+    if (
+      (t === "reasoning" || t === "thinking" || t === "redacted_thinking") &&
+      typeof record.text === "string" &&
+      record.text.trim()
+    ) {
+      void callbacks.appendReasoningText(record.text, record);
+      continue;
+    }
+
     if (SKIP_ASSISTANT_CONTENT_TYPES.has(t)) {
       continue;
     }
@@ -1237,6 +1263,15 @@ function parseCodexStdoutLine(line: string, callbacks: CliPromptCallbacks): void
     const text = typeof item?.text === "string" ? item.text : "";
     if (itemType === "agent_message" && text) {
       void callbacks.appendAssistantText(text);
+      return;
+    }
+    if (
+      itemType &&
+      SKIP_CLI_ITEM_TRACE_TYPES.has(itemType) &&
+      text.trim() &&
+      (itemType === "reasoning" || itemType === "thinking" || itemType === "redacted_thinking")
+    ) {
+      void callbacks.appendReasoningText(text, item);
       return;
     }
     if (itemType && SKIP_CLI_ITEM_TRACE_TYPES.has(itemType)) {
@@ -1389,6 +1424,15 @@ function parseCursorStdoutLine(line: string, callbacks: CliPromptCallbacks): voi
     const text = typeof item?.text === "string" ? item.text : "";
     if (itemType === "agent_message" && text) {
       void callbacks.appendAssistantText(text);
+      return;
+    }
+    if (
+      itemType &&
+      SKIP_CLI_ITEM_TRACE_TYPES.has(itemType) &&
+      text.trim() &&
+      (itemType === "reasoning" || itemType === "thinking" || itemType === "redacted_thinking")
+    ) {
+      void callbacks.appendReasoningText(text, item);
       return;
     }
     if (item && itemType && itemType !== "agent_message" && !SKIP_CLI_ITEM_TRACE_TYPES.has(itemType)) {

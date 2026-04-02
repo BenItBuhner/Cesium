@@ -151,6 +151,16 @@ export type AgentStoredEvent =
       eventId: string;
       conversationId: string;
       createdAt: number;
+      kind: "reasoning";
+      messageId: string;
+      text: string;
+      raw?: unknown;
+    }
+  | {
+      seq: number;
+      eventId: string;
+      conversationId: string;
+      createdAt: number;
       kind: "tool_call";
       toolCallId: string;
       title: string;
@@ -226,6 +236,19 @@ export type AgentStoredEvent =
       kind: "status";
       status: AgentConversationStatus;
       detail?: string;
+    }
+  | {
+      seq: number;
+      eventId: string;
+      conversationId: string;
+      createdAt: number;
+      kind: "subagent";
+      subagentId: string;
+      title: string;
+      meta?: string;
+      status: "running" | "completed" | "failed";
+      transcript: AgentStoredEvent[];
+      recentActivity?: string;
     };
 
 export type AgentConversationRecord = {

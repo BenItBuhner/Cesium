@@ -1,6 +1,16 @@
 import { normalizeBrowserTargetUrl } from "@/lib/browser-proxy-url";
 import type { ChatMessage, EditorTab, ExplorerOpenRequest } from "@/lib/types";
 
+function inferTranscriptSessionId(messages: ChatMessage[] | undefined): string | undefined {
+  for (const message of messages ?? []) {
+    const match = message.id.match(/(ses_[A-Za-z0-9]+)/);
+    if (match?.[1]) {
+      return match[1];
+    }
+  }
+  return undefined;
+}
+
 function tabTitleFromUrl(url: string): string {
   try {
     const u = new URL(url);
@@ -43,7 +53,12 @@ export type EditorPanelAction =
   | { type: "TOGGLE_SPLIT" }
   | { type: "MOVE_TAB"; tabId: string; from: EditorGroup; to: EditorGroup }
   | { type: "FOCUS_EDITOR_GROUP"; group: EditorGroup }
-  | { type: "OPEN_TRANSCRIPT_TAB"; title: string; messages: ChatMessage[] }
+  | {
+      type: "OPEN_TRANSCRIPT_TAB";
+      title: string;
+      messages: ChatMessage[];
+      sessionId?: string;
+    }
   | { type: "OPEN_COMPOSER_DRAFT_TAB"; draftId: string; title: string; content: string }
   | { type: "OPEN_TERMINAL_TAB"; terminalId: string; name?: string }
   | { type: "OPEN_BROWSER_TAB"; url: string; name?: string }
@@ -69,6 +84,12 @@ export type EditorPanelAction =
 function stripActive(tab: EditorTab): EditorTab {
   // eslint-disable-next-line @typescript-eslint/no-unused-vars -- omit `active` from stored tab shape
   const { active, ...rest } = tab;
+  if (rest.transcriptMessages?.length && !rest.transcriptSessionId) {
+    return {
+      ...rest,
+      transcriptSessionId: inferTranscriptSessionId(rest.transcriptMessages),
+    };
+  }
   return rest;
 }
 
@@ -172,11 +193,54 @@ export function editorPanelReducer(
     }
 
     case "OPEN_TRANSCRIPT_TAB": {
+      const resolvedSessionId = action.sessionId ?? inferTranscriptSessionId(action.messages);
+      const existingLeft =
+        resolvedSessionId != null
+          ? state.leftTabs.find((tab) => tab.transcriptSessionId === resolvedSessionId)
+          : undefined;
+      const existingRight =
+        resolvedSessionId != null
+          ? state.rightTabs.find((tab) => tab.transcriptSessionId === resolvedSessionId)
+          : undefined;
       const id = `subagent-${Date.now().toString(36)}`;
       const name =
         action.title.length > 40
           ? `${action.title.slice(0, 37)}…`
           : action.title;
+      if (existingLeft) {
+        return {
+          ...state,
+          focusedGroup: "left",
+          leftActiveId: existingLeft.id,
+          leftTabs: state.leftTabs.map((tab) =>
+            tab.id === existingLeft.id
+              ? {
+                  ...tab,
+                  name,
+                  transcriptMessages: action.messages,
+                  transcriptSessionId: resolvedSessionId,
+                }
+              : tab
+          ),
+        };
+      }
+      if (existingRight) {
+        return {
+          ...state,
+          focusedGroup: "right",
+          rightActiveId: existingRight.id,
+          rightTabs: state.rightTabs.map((tab) =>
+            tab.id === existingRight.id
+              ? {
+                  ...tab,
+                  name,
+                  transcriptMessages: action.messages,
+                  transcriptSessionId: resolvedSessionId,
+                }
+              : tab
+          ),
+        };
+      }
       const tab: EditorTab = {
         id,
         name,
@@ -186,6 +250,7 @@ export function editorPanelReducer(
         fileKind: "text",
         previewMode: "source",
         transcriptMessages: action.messages,
+        transcriptSessionId: resolvedSessionId,
       };
       return {
         ...state,

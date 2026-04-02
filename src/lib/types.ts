@@ -88,6 +88,9 @@ export interface ChatMessage {
   subagentComplete?: boolean;
   /** Opens in editor when the subagent card is clicked. */
   subagentTranscript?: ChatMessage[];
+  subagentId?: string;
+  subagentStatus?: "running" | "completed" | "failed";
+  recentActivity?: string;
   questionTitle?: string;
   options?: AskQuestionOption[];
   /** Multi-step questions; when set, takes precedence over `questionTitle` + `options`. */
@@ -130,6 +133,8 @@ export interface EditorTab {
   active?: boolean;
   /** Renders agent-style transcript instead of Monaco (e.g. subagent detail tab). */
   transcriptMessages?: ChatMessage[];
+  /** Real OpenCode session id for live subagent transcript hydration. */
+  transcriptSessionId?: string;
   /** Source/preview toggle for previewable files like Markdown and SVG. */
   previewMode?: "source" | "preview";
   /** Relative workspace path when this tab represents a real file on disk. */

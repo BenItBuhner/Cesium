@@ -188,6 +188,7 @@ type ProjectedTurn = {
   assistantMessageId?: string;
   permissionCards: Map<string, ChatMessage>;
   todoCards: Map<string, ChatMessage>;
+  subagentCards: Map<string, ChatMessage>;
 };
 
 function createTurn(id: string): ProjectedTurn {
@@ -199,6 +200,7 @@ function createTurn(id: string): ProjectedTurn {
     orphanToolUpdateSlot: 0,
     permissionCards: new Map(),
     todoCards: new Map(),
+    subagentCards: new Map(),
   };
 }
 
@@ -491,7 +493,11 @@ function buildWorkedSessionLabel(entries: WorkedSessionEntry[]): string {
   const tools = entries.filter(
     (entry): entry is Extract<WorkedSessionEntry, { kind: "tool" }> => entry.kind === "tool"
   );
+  const thoughtCount = entries.filter((entry) => entry.kind === "reasoning").length;
   if (tools.length === 0) {
+    if (thoughtCount > 0) {
+      return thoughtCount === 1 ? "1 thought" : `${thoughtCount} thoughts`;
+    }
     return "Tools";
   }
   const orderedBuckets: Array<{ kind: string; count: number; files: Set<string> }> = [];
@@ -513,11 +519,12 @@ function buildWorkedSessionLabel(entries: WorkedSessionEntry[]): string {
       bucket.files.add(file);
     }
   }
-  const label = orderedBuckets
+  const segments = orderedBuckets
     .map((bucket) =>
       summarizeWorkedToolBucket(bucket.kind, bucket.count, bucket.files.size)
     )
-    .join(", ");
+    .concat(thoughtCount > 0 ? [thoughtCount === 1 ? "1 thought" : `${thoughtCount} thoughts`] : []);
+  const label = segments.join(", ");
   const failedCount = tools.filter((tool) => tool.status === "failed").length;
   return failedCount > 0
     ? `${capitalizeFirst(label)} · ${failedCount} failed`
@@ -557,7 +564,8 @@ function projectTurnTimelineToMessages(turn: ProjectedTurn): ChatMessage[] {
     workedEntries = [];
   };
 
-  for (const item of turn.timeline) {
+  for (let timelineIndex = 0; timelineIndex < turn.timeline.length; timelineIndex += 1) {
+    const item = turn.timeline[timelineIndex]!;
     if (item.kind === "message") {
       flushWorked();
       flushAssistant();
@@ -581,7 +589,7 @@ function projectTurnTimelineToMessages(turn: ProjectedTurn): ChatMessage[] {
     messages.push({
       id: `turn-working-${turn.id}`,
       type: "worked-session",
-      workedLabel: "Working...",
+      workedLabel: "Working",
       workedEntries: [],
       workedDefaultOpen: false,
       loading: true,
@@ -687,6 +695,209 @@ function getToolRawUpdate(
   return update && typeof update === "object"
     ? (update as Record<string, unknown>)
     : undefined;
+}
+
+function getSubagentTaskInput(
+  event: Extract<AgentStoredEvent, { kind: "tool_call" | "tool_call_update" }>
+): Record<string, unknown> | undefined {
+  const rawUpdate = getToolRawUpdate(event);
+  return (
+    parseLooseJsonObject(rawUpdate?.rawInput) ??
+    parseLooseJsonObject(rawUpdate?.input) ??
+    parseLooseJsonObject(rawUpdate?.args)
+  );
+}
+
+function collectNestedText(value: unknown, bucket: string[]): void {
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      collectNestedText(item, bucket);
+    }
+    return;
+  }
+  if (!value || typeof value !== "object") {
+    return;
+  }
+  const record = value as Record<string, unknown>;
+  if (record.type === "text" && typeof record.text === "string") {
+    const trimmed = record.text.trim();
+    if (trimmed) {
+      bucket.push(trimmed);
+    }
+  }
+  if (record.content !== undefined) {
+    collectNestedText(record.content, bucket);
+  }
+  if (record.contents !== undefined) {
+    collectNestedText(record.contents, bucket);
+  }
+  if (record.items !== undefined) {
+    collectNestedText(record.items, bucket);
+  }
+  if (record.parts !== undefined) {
+    collectNestedText(record.parts, bucket);
+  }
+}
+
+function extractSubagentTaskText(
+  event: Extract<AgentStoredEvent, { kind: "tool_call" | "tool_call_update" }>
+): { taskId?: string; resultText?: string } {
+  const rawUpdate = getToolRawUpdate(event);
+  const texts: string[] = [];
+  collectNestedText(rawUpdate?.content, texts);
+  const rawText = texts.join("\n\n").trim();
+  if (!rawText) {
+    return {};
+  }
+  const taskId = rawText.match(/task_id:\s*(\S+)/i)?.[1];
+  const taskResultMatch = rawText.match(/<task_result>\s*([\s\S]*?)(?:<\/task_result>|$)/i);
+  const resultText = (taskResultMatch?.[1] ?? rawText).trim();
+  return {
+    taskId,
+    resultText: resultText || undefined,
+  };
+}
+
+function isSubagentTaskToolEvent(
+  event: Extract<AgentStoredEvent, { kind: "tool_call" | "tool_call_update" }>
+): boolean {
+  if (event.kind !== "tool_call" && event.kind !== "tool_call_update") {
+    return false;
+  }
+  const rawUpdate = getToolRawUpdate(event);
+  const rawInput = getSubagentTaskInput(event);
+  if (rawInput) {
+    if (
+      typeof rawInput.prompt === "string" ||
+      typeof rawInput.description === "string" ||
+      rawInput.subagent_type != null ||
+      rawInput.subagentType != null
+    ) {
+      return true;
+    }
+  }
+  if (typeof rawUpdate?.title === "string" && rawUpdate.title.trim().toLowerCase() === "task") {
+    return true;
+  }
+  return Boolean(extractSubagentTaskText(event).taskId);
+}
+
+function firstNonEmptyLine(text: string | undefined): string | undefined {
+  if (!text) {
+    return undefined;
+  }
+  return text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .find((line) => line.length > 0);
+}
+
+function parseSubagentResultMessages(text: string, baseId: string): ChatMessage[] {
+  const normalized = text.replace(/\r\n/g, "\n").trim();
+  if (!normalized) {
+    return [];
+  }
+  const messages: ChatMessage[] = [];
+  const assistantLines: string[] = [];
+  const lines = normalized.split("\n");
+  let segmentIndex = 0;
+
+  const flushAssistant = () => {
+    const content = assistantLines.join("\n").trim();
+    assistantLines.length = 0;
+    if (!content) {
+      return;
+    }
+    messages.push({
+      id: `${baseId}-assistant-${segmentIndex++}`,
+      type: "assistant",
+      content,
+    });
+  };
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const current = lines[index]?.trim();
+    const next = lines[index + 1]?.trim();
+    if (
+      current &&
+      /^used a tool$/i.test(current) &&
+      next &&
+      !/^used a tool$/i.test(next)
+    ) {
+      flushAssistant();
+      messages.push({
+        id: `${baseId}-tool-${segmentIndex++}`,
+        type: "worked-session",
+        workedLabel: next,
+        workedEntries: [
+          {
+            kind: "tool",
+            title: next,
+            toolKind: inferToolKindFromTitle(next),
+            status: "completed",
+          },
+        ],
+        workedDefaultOpen: true,
+      });
+      index += 1;
+      continue;
+    }
+    assistantLines.push(lines[index] ?? "");
+  }
+
+  flushAssistant();
+  return messages;
+}
+
+function buildSubagentTranscriptFromTaskEvent(
+  event: Extract<AgentStoredEvent, { kind: "tool_call" | "tool_call_update" }>,
+  title: string
+): ChatMessage[] {
+  const rawInput = getSubagentTaskInput(event);
+  const { taskId, resultText } = extractSubagentTaskText(event);
+  const transcript: ChatMessage[] = [];
+  const prompt = typeof rawInput?.prompt === "string" ? rawInput.prompt.trim() : "";
+  if (prompt) {
+    transcript.push({
+      id: `${event.toolCallId}-prompt`,
+      type: "user",
+      content: prompt,
+      segments: parseUserMessageSegments(prompt),
+    });
+  }
+  if (resultText) {
+    transcript.push(...parseSubagentResultMessages(resultText, taskId ?? event.toolCallId));
+  }
+  if (transcript.length === 0) {
+    transcript.push({
+      id: `${event.toolCallId}-empty`,
+      type: "assistant",
+      content: `No transcript details were exposed for ${title}.`,
+    });
+  }
+  return transcript;
+}
+
+function buildSubagentRecentActivity(
+  transcript: ChatMessage[],
+  fallback: string | undefined
+): string | undefined {
+  for (let index = transcript.length - 1; index >= 0; index -= 1) {
+    const message = transcript[index];
+    if (message?.type === "worked-session") {
+      const toolTitle = message.workedEntries?.find((entry) => entry.kind === "tool");
+      if (toolTitle && toolTitle.kind === "tool") {
+        return toolTitle.title;
+      }
+    }
+    if (message?.type === "assistant") {
+      const line = firstNonEmptyLine(message.content);
+      if (line) {
+        return line;
+      }
+    }
+  }
+  return firstNonEmptyLine(fallback);
 }
 
 function compactJsonForRejected(record: Record<string, unknown>): string | undefined {
@@ -1438,6 +1649,7 @@ export function projectAgentEventsToChatMessages(
           currentTurn.assistantMessageId = prev.assistantMessageId;
           currentTurn.permissionCards = prev.permissionCards;
           currentTurn.todoCards = prev.todoCards;
+          currentTurn.subagentCards = prev.subagentCards;
           const prevIdx = turns.indexOf(prev);
           if (prevIdx >= 0) {
             turns.splice(prevIdx, 1);
@@ -1466,8 +1678,48 @@ export function projectAgentEventsToChatMessages(
         finalizeOpenToolsInTurn(turn, event.stopReason === "failed" ? "failed" : "completed");
         break;
       }
+      case "reasoning": {
+        const turn = ensureTurn();
+        appendTraceEntry(turn, {
+          kind: "reasoning",
+          text: event.text,
+        });
+        break;
+      }
       case "tool_call": {
         const turn = ensureTurn();
+        if (isSubagentTaskToolEvent(event)) {
+          const rawInput = getSubagentTaskInput(event);
+          const title =
+            (typeof rawInput?.description === "string" && rawInput.description.trim()) ||
+            (typeof event.title === "string" && event.title.trim() && event.title.trim().toLowerCase() !== "task"
+              ? event.title.trim()
+              : undefined) ||
+            "Subagent task";
+          const transcript = buildSubagentTranscriptFromTaskEvent(event, title);
+          const message =
+            turn.subagentCards.get(event.toolCallId) ??
+            ({
+              id: `subagent-${event.toolCallId}`,
+              type: "subagent",
+              subagentId: extractSubagentTaskText(event).taskId ?? event.toolCallId,
+            } satisfies ChatMessage);
+          message.subagentId = extractSubagentTaskText(event).taskId ?? event.toolCallId;
+          message.subagentTitle = title;
+          message.subagentMeta = "Running...";
+          message.subagentStatus = "running";
+          message.subagentComplete = false;
+          message.subagentTranscript = transcript;
+          message.recentActivity = buildSubagentRecentActivity(
+            transcript,
+            typeof rawInput?.description === "string" ? rawInput.description : undefined
+          );
+          if (!turn.subagentCards.has(event.toolCallId)) {
+            turn.subagentCards.set(event.toolCallId, message);
+            appendTimelineMessage(turn, message);
+          }
+          break;
+        }
         const existing = turn.toolEntryById.get(event.toolCallId) as
           | Extract<WorkedSessionEntry, { kind: "tool" }>
           | undefined;
@@ -1482,6 +1734,42 @@ export function projectAgentEventsToChatMessages(
       }
       case "tool_call_update": {
         const turn = ensureTurn();
+        if (isSubagentTaskToolEvent(event)) {
+          const rawInput = getSubagentTaskInput(event);
+          const title =
+            (typeof rawInput?.description === "string" && rawInput.description.trim()) ||
+            (typeof event.title === "string" && event.title.trim() && event.title.trim().toLowerCase() !== "task"
+              ? event.title.trim()
+              : undefined) ||
+            "Subagent task";
+          const taskText = extractSubagentTaskText(event);
+          const transcript = buildSubagentTranscriptFromTaskEvent(event, title);
+          const message =
+            turn.subagentCards.get(event.toolCallId) ??
+            ({
+              id: `subagent-${event.toolCallId}`,
+              type: "subagent",
+              subagentId: taskText.taskId ?? event.toolCallId,
+            } satisfies ChatMessage);
+          message.subagentId = taskText.taskId ?? event.toolCallId;
+          message.subagentTitle = title;
+          message.subagentStatus = event.status === "completed" ? "completed" : "running";
+          message.subagentComplete = event.status === "completed";
+          message.subagentMeta =
+            event.status === "completed"
+              ? "Completed"
+              : "Running...";
+          message.subagentTranscript = transcript;
+          message.recentActivity = buildSubagentRecentActivity(
+            transcript,
+            taskText.resultText ?? (typeof rawInput?.description === "string" ? rawInput.description : undefined)
+          );
+          if (!turn.subagentCards.has(event.toolCallId)) {
+            turn.subagentCards.set(event.toolCallId, message);
+            appendTimelineMessage(turn, message);
+          }
+          break;
+        }
         let existing = turn.toolEntryById.get(event.toolCallId) as
           | Extract<WorkedSessionEntry, { kind: "tool" }>
           | undefined;
@@ -1663,6 +1951,23 @@ export function projectAgentEventsToChatMessages(
           activityLabel: event.status[0].toUpperCase() + event.status.slice(1),
           activityDetail: event.detail,
         });
+        break;
+      }
+      case "subagent": {
+        const turn = ensureTurn();
+        const transcript = projectAgentEventsToChatMessages(event.transcript || []);
+        const message: ChatMessage = {
+          id: event.eventId,
+          type: "subagent",
+          subagentId: event.subagentId,
+          subagentTitle: event.title,
+          subagentMeta: event.meta,
+          subagentStatus: event.status,
+          subagentComplete: event.status !== "running",
+          subagentTranscript: transcript,
+          recentActivity: event.recentActivity,
+        };
+        appendTimelineMessage(turn, message);
         break;
       }
       default:

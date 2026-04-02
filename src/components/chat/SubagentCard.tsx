@@ -2,7 +2,8 @@ import { Loader, Check } from "lucide-react";
 
 interface SubagentCardProps {
   title: string;
-  meta: string;
+  meta?: string;
+  recentActivity?: string;
   /** false = in progress (spinner); true/omitted = finished (checkmark). */
   complete?: boolean;
   /** When set with onOpen, card opens subagent transcript in the editor. */
@@ -13,6 +14,7 @@ interface SubagentCardProps {
 export function SubagentCard({
   title,
   meta,
+  recentActivity,
   complete = true,
   interactive,
   onOpen,
@@ -37,9 +39,16 @@ export function SubagentCard({
           {title}
         </span>
       </div>
-      <span className="pl-[24px] font-sans text-[11.9px] font-normal text-[var(--text-secondary)]">
-        {meta}
-      </span>
+      {meta && (
+        <span className="pl-[24px] font-sans text-[11.9px] font-normal text-[var(--text-secondary)]">
+          {meta}
+        </span>
+      )}
+      {recentActivity && (
+        <span className="pl-[24px] font-sans text-[11.9px] font-normal italic text-[var(--text-tertiary)] truncate">
+          Recent: {recentActivity}
+        </span>
+      )}
     </>
   );
 

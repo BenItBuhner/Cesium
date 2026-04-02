@@ -5,7 +5,6 @@ import {
   ChevronDown,
   FolderOpen,
   ScrollText,
-  Lightbulb,
 } from "lucide-react";
 import { CollapsibleHeight } from "./CollapsibleHeight";
 import type { WorkedSessionEntry } from "@/lib/types";
@@ -41,6 +40,7 @@ interface WorkedSessionCardProps {
   entries: WorkedSessionEntry[];
   defaultOpen?: boolean;
   loading?: boolean;
+  surface?: "panel" | "editor";
 }
 
 const ENTRY_LIST_MAX_HEIGHT = 240;
@@ -50,10 +50,13 @@ export function WorkedSessionCard({
   entries,
   defaultOpen = false,
   loading = false,
+  surface = "panel",
 }: WorkedSessionCardProps) {
   const [open, setOpen] = useState(defaultOpen);
   const hasActiveTool = entries.some((entry) => isToolEntryActive(entry));
   const showLoadingState = loading || hasActiveTool;
+  const isWorkingPlaceholder = showLoadingState && entries.length === 0;
+  const gradientVar = surface === "editor" ? "var(--bg-main)" : "var(--bg-panel)";
   const previousLoadingRef = useRef(showLoadingState);
   const scrollRef = useRef<HTMLDivElement>(null);
   const prevEntryCountRef = useRef(0);
@@ -121,27 +124,35 @@ export function WorkedSessionCard({
 
   return (
     <div className="min-w-0 px-[1px]">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        aria-expanded={open}
-        className="flex w-full min-w-0 cursor-pointer items-center gap-[6px] text-left text-[var(--text-secondary)] transition-colors hover:text-[var(--text-primary)]"
-      >
-        <span
-          className={`font-sans text-[13px] font-normal leading-snug ${
-            showLoadingState ? "tool-loading-text" : ""
-          }`}
+      {isWorkingPlaceholder ? (
+        <div className="flex w-full min-w-0 items-center gap-[6px] text-left text-[var(--text-secondary)]">
+          <span className="tool-loading-text font-sans text-[13px] font-normal leading-snug">
+            {label}
+          </span>
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          aria-expanded={open}
+          className="flex w-full min-w-0 cursor-pointer items-center gap-[6px] text-left text-[var(--text-secondary)] transition-colors hover:text-[var(--text-primary)]"
         >
-          {label}
-        </span>
-        <ChevronDown
-          className={`size-[14px] shrink-0 transition-transform duration-300 ease-[cubic-bezier(0.33,1,0.68,1)] motion-reduce:transition-none ${
-            open ? "rotate-180" : ""
-          }`}
-          strokeWidth={1.75}
-          aria-hidden
-        />
-      </button>
+          <span
+            className={`font-sans text-[13px] font-normal leading-snug ${
+              showLoadingState ? "tool-loading-text" : ""
+            }`}
+          >
+            {label}
+          </span>
+          <ChevronDown
+            className={`size-[14px] shrink-0 transition-transform duration-300 ease-[cubic-bezier(0.33,1,0.68,1)] motion-reduce:transition-none ${
+              open ? "rotate-180" : ""
+            }`}
+            strokeWidth={1.75}
+            aria-hidden
+          />
+        </button>
+      )}
 
       <CollapsibleHeight open={open}>
         <div className="relative pt-[10px]">
@@ -163,10 +174,16 @@ export function WorkedSessionCard({
             ))}
           </div>
           {showTopGrad ? (
-            <div className="pointer-events-none absolute inset-x-0 top-[10px] ml-[2px] h-[28px] z-[1] bg-gradient-to-b from-[var(--bg-panel)] to-transparent" />
+            <div
+              className="pointer-events-none absolute inset-x-0 top-[10px] ml-[2px] h-[28px] z-[1] bg-gradient-to-b to-transparent"
+              style={{ backgroundImage: `linear-gradient(to bottom, ${gradientVar}, transparent)` }}
+            />
           ) : null}
           {showBottomGrad ? (
-            <div className="pointer-events-none absolute inset-x-0 bottom-0 ml-[2px] h-[28px] z-[1] bg-gradient-to-b from-transparent to-[var(--bg-panel)]" />
+            <div
+              className="pointer-events-none absolute inset-x-0 bottom-0 ml-[2px] h-[28px] z-[1] bg-gradient-to-b from-transparent"
+              style={{ backgroundImage: `linear-gradient(to bottom, transparent, ${gradientVar})` }}
+            />
           ) : null}
         </div>
       </CollapsibleHeight>
@@ -232,12 +249,12 @@ function renderEntry(entry: WorkedSessionEntry) {
     case "reasoning":
       return (
         <div className="flex gap-[8px]">
-          <span className={iconWrap}>
-            <Lightbulb className="size-[14px]" strokeWidth={1.5} aria-hidden />
-          </span>
-          <p className="font-sans text-[13px] font-normal leading-relaxed text-[var(--text-primary)]">
-            {entry.text}
-          </p>
+          <div className="min-w-0 flex-1">
+            <p className="font-sans text-[13px] font-normal leading-relaxed text-[var(--text-primary)]">
+              <span className="text-[var(--text-secondary)]">Thought: </span>
+              {entry.text}
+            </p>
+          </div>
         </div>
       );
     case "tool": {

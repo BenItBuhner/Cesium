@@ -38,8 +38,13 @@ export interface MessageThreadContentProps {
   stickyUserHeader?: boolean;
   /** Scrollport for progressive “push previous user up” math (main chat only). */
   scrollRootRef?: RefObject<HTMLElement | null>;
+  workedSessionSurface?: "panel" | "editor";
   /** When a subagent row has `subagentTranscript`, clicking opens this. */
-  onOpenSubagent?: (title: string, transcript: ChatMessage[]) => void;
+  onOpenSubagent?: (payload: {
+    title: string;
+    transcript: ChatMessage[];
+    sessionId?: string;
+  }) => void;
   onResolvePermission?: (requestId: string, optionId: string) => void;
 }
 
@@ -47,6 +52,7 @@ export function MessageThreadContent({
   messages,
   stickyUserHeader = false,
   scrollRootRef,
+  workedSessionSurface = "panel",
   onOpenSubagent,
   onResolvePermission,
 }: MessageThreadContentProps) {
@@ -142,8 +148,9 @@ export function MessageThreadContent({
             <SubagentCard
               key={msg.id}
               title={msg.subagentTitle!}
-              meta={msg.subagentMeta!}
-              complete={msg.subagentComplete !== false}
+              meta={msg.subagentMeta}
+              recentActivity={msg.recentActivity}
+              complete={msg.subagentStatus !== "running"}
             />
           );
           break;
@@ -163,11 +170,16 @@ export function MessageThreadContent({
           <SubagentCard
             key={msg.id}
             title={msg.subagentTitle!}
-            meta={msg.subagentMeta!}
-            complete={msg.subagentComplete !== false}
+            meta={msg.subagentMeta}
+            recentActivity={msg.recentActivity}
+            complete={msg.subagentStatus !== "running"}
             interactive
             onOpen={() =>
-              onOpenSubagent(msg.subagentTitle!, transcript)
+              onOpenSubagent({
+                title: msg.subagentTitle!,
+                transcript,
+                sessionId: msg.subagentId,
+              })
             }
           />
         );
@@ -214,7 +226,8 @@ export function MessageThreadContent({
             label={msg.workedLabel!}
             entries={msg.workedEntries!}
             defaultOpen={msg.workedDefaultOpen}
-            loading={shouldKeepWorkedSessionLoading(messages, i)}
+            loading={msg.loading || shouldKeepWorkedSessionLoading(messages, i)}
+            surface={workedSessionSurface}
           />
         );
         break;

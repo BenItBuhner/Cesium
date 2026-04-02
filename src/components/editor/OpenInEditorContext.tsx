@@ -28,6 +28,7 @@ import type {
 export type OpenTranscriptPayload = {
   title: string;
   messages: ChatMessage[];
+  sessionId?: string;
 };
 
 export type OpenComposerDraftPayload = {

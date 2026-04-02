@@ -5,6 +5,16 @@ import { MessageThreadContent } from "./MessageThreadContent";
 import { useOpenInEditor } from "@/components/editor/OpenInEditorContext";
 import type { ChatMessage } from "@/lib/types";
 
+function inferTranscriptSessionId(messages: ChatMessage[]): string | undefined {
+  for (const message of messages) {
+    const match = message.id.match(/(ses_[A-Za-z0-9]+)/);
+    if (match?.[1]) {
+      return match[1];
+    }
+  }
+  return undefined;
+}
+
 interface MessageListProps {
   messages: ChatMessage[];
   initialScrollTop?: number;
@@ -122,15 +132,19 @@ export function MessageList({
         schedulePersistedScrollTop();
       }}
     >
-      <MessageThreadContent
-        messages={messages}
-        stickyUserHeader
-        scrollRootRef={scrollRootRef}
-        onResolvePermission={onResolvePermission}
-        onOpenSubagent={(title, transcript) =>
-          openSubagentTranscript({ title, messages: transcript })
-        }
-      />
-    </div>
+        <MessageThreadContent
+          messages={messages}
+          stickyUserHeader
+          scrollRootRef={scrollRootRef}
+          onResolvePermission={onResolvePermission}
+          onOpenSubagent={({ title, transcript, sessionId }) =>
+            openSubagentTranscript({
+              title,
+              messages: transcript,
+              sessionId: sessionId ?? inferTranscriptSessionId(transcript),
+            })
+          }
+        />
+      </div>
   );
 }

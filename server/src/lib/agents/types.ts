@@ -155,6 +155,16 @@ export type AgentStoredEvent =
       eventId: string;
       conversationId: string;
       createdAt: number;
+      kind: "reasoning";
+      messageId: string;
+      text: string;
+      raw?: unknown;
+    }
+  | {
+      seq: number;
+      eventId: string;
+      conversationId: string;
+      createdAt: number;
       kind: "tool_call";
       toolCallId: string;
       title: string;
