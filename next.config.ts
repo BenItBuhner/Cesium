@@ -4,7 +4,7 @@ import withPWAInit from "@ducanh2912/next-pwa";
 
 const withPWA = withPWAInit({
   dest: "public",
-  disable: true,
+  disable: process.env.NODE_ENV !== "production",
   cacheOnFrontEndNav: true,
   aggressiveFrontEndNavCaching: false,
   /** Avoid surprise full reloads when connectivity flaps (especially if PWA is enabled later). */
