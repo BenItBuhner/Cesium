@@ -213,6 +213,17 @@ async function runAcpTransportBootstrap(transport: AcpStdioClient): Promise<stri
           `Cursor CLI authentication failed: ${errText}. Sign in on the server host with your Cursor CLI, set OPENCURSOR_CURSOR_CLI_BIN to that binary, and redeploy.`
         );
       }
+    } else if (id === "opencode-login") {
+      try {
+        const authResult = await transport.request("authenticate", { methodId: "opencode-login" });
+        const note = summarizeAuthenticateResult(authResult);
+        if (note) {
+          messages.push(`OpenCode ACP authentication: ${note}`);
+        }
+      } catch (error) {
+        const errText = error instanceof Error ? error.message : String(error);
+        messages.push(`OpenCode ACP authentication failed: ${errText}.`);
+      }
     } else {
       messages.push(
         `ACP lists authentication method "${id}". If the agent stalls, complete any login this method requires on the server (TTY or documented OAuth); OpenCursor only bridges stdio.`
