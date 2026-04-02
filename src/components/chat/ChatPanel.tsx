@@ -1496,37 +1496,32 @@ export function ChatPanel() {
   );
 
   const recentChatsSection = showRecentChatsSection ? (
-    <div className="rounded-[var(--radius-card)] border border-[color-mix(in_srgb,var(--border-card)_75%,transparent)] bg-[color-mix(in_srgb,var(--bg-card)_50%,transparent)] p-[10px]">
-      <div className="mb-[8px] flex items-center justify-between gap-[12px]">
-        <p className="font-sans text-[12px] font-medium uppercase tracking-[0.08em] text-[var(--text-secondary)]">
-          Recent chats
-        </p>
+    <div className="flex flex-col gap-[2px]">
+      <div className="flex items-center justify-end">
         <button
           type="button"
           onClick={() => setRecentChatsModalOpen(true)}
-          className="inline-flex items-center gap-[6px] rounded-[6px] px-[6px] py-[4px] font-sans text-[12px] font-medium text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-card-hover)] hover:text-[var(--text-primary)]"
+          className="rounded-[6px] p-[6px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-card-hover)] hover:text-[var(--text-primary)]"
+          aria-label="Search recent chats"
         >
-          <Search className="size-[12px]" strokeWidth={1.75} />
-          Search
+          <Search className="size-[14px]" strokeWidth={1.75} />
         </button>
       </div>
-      <div className="flex flex-col gap-[2px]">
-        {recentConversationPreview.map((conversation) => (
-          <button
-            key={conversation.id}
-            type="button"
-            onClick={() => openConversationById(conversation.id)}
-            className="flex items-center gap-[10px] rounded-[8px] px-[8px] py-[7px] text-left transition-colors hover:bg-[color-mix(in_srgb,var(--bg-card-hover)_75%,transparent)]"
-          >
-            <span className="min-w-0 flex-1 truncate font-sans text-[13px] font-normal text-[var(--text-primary)]">
-              {conversation.title}
-            </span>
-            <span className="shrink-0 font-sans text-[11px] font-normal text-[var(--text-secondary)]">
-              {formatRecentConversationTime(conversation.updatedAt)}
-            </span>
-          </button>
-        ))}
-      </div>
+      {recentConversationPreview.map((conversation) => (
+        <button
+          key={conversation.id}
+          type="button"
+          onClick={() => openConversationById(conversation.id)}
+          className="flex items-center gap-[10px] rounded-[8px] px-[8px] py-[7px] text-left transition-colors hover:bg-[color-mix(in_srgb,var(--bg-card-hover)_75%,transparent)]"
+        >
+          <span className="min-w-0 flex-1 truncate font-sans text-[13px] font-normal text-[var(--text-primary)]">
+            {conversation.title}
+          </span>
+          <span className="shrink-0 font-sans text-[11px] font-normal text-[var(--text-secondary)]">
+            {formatRecentConversationTime(conversation.updatedAt)}
+          </span>
+        </button>
+      ))}
     </div>
   ) : null;
 
