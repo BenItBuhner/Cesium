@@ -220,9 +220,9 @@ async function runAcpTransportBootstrap(transport: AcpStdioClient): Promise<stri
         if (note) {
           messages.push(`OpenCode ACP authentication: ${note}`);
         }
-      } catch (error) {
-        const errText = error instanceof Error ? error.message : String(error);
-        messages.push(`OpenCode ACP authentication failed: ${errText}.`);
+      } catch {
+        // Auth failed (e.g. not logged in) — silent; the ACP transport itself will
+        // surface any action the user needs to take through its normal protocol flow.
       }
     } else {
       messages.push(
