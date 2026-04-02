@@ -30,6 +30,17 @@ export function ExpandedComposerView({
     end: content.length,
   };
 
+  const minimizeComposer = useCallback(() => {
+    setExpandedComposerDraft(null);
+    if (typeof window !== "undefined") {
+      window.requestAnimationFrame(() => {
+        onMinimize();
+      });
+      return;
+    }
+    onMinimize();
+  }, [onMinimize, setExpandedComposerDraft]);
+
   if (!expandedComposerController || expandedComposerController.draftId !== draftId) {
     return (
       <div className="flex h-full min-h-0 flex-col bg-[var(--bg-main)]">
@@ -43,16 +54,6 @@ export function ExpandedComposerView({
   }
 
   const controller = expandedComposerController;
-  const minimizeComposer = useCallback(() => {
-    setExpandedComposerDraft(null);
-    if (typeof window !== "undefined") {
-      window.requestAnimationFrame(() => {
-        onMinimize();
-      });
-      return;
-    }
-    onMinimize();
-  }, [onMinimize, setExpandedComposerDraft]);
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden bg-[var(--bg-main)]">

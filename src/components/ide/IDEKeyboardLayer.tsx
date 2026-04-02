@@ -237,6 +237,9 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
             chat: { ...current.chat, mode: "agent" },
           }));
           break;
+        case "recentChats.open":
+          window.dispatchEvent(new CustomEvent("opencursor:openRecentChats"));
+          break;
         case "workbench.action.openGlobalSettings":
           runWithBridge((b) => b.dispatch({ type: "OPEN_SETTINGS_TAB" }));
           break;
@@ -410,6 +413,12 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
         label: "View: Toggle Agent / Chat Side Panel",
         keybinding: kb("workbench.action.toggleAgentPanel"),
         run: () => runShortcutCommand("workbench.action.toggleAgentPanel"),
+      },
+      {
+        id: "recentChats.open",
+        label: "Chat: Open Recent Chats",
+        keybinding: kb("recentChats.open"),
+        run: () => runShortcutCommand("recentChats.open"),
       },
       {
         id: "workbench.action.splitEditor",

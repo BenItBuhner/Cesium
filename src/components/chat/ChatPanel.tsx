@@ -8,11 +8,13 @@ import {
   useState,
   type MouseEvent,
 } from "react";
+import { Search } from "lucide-react";
 import { ChatTabs } from "./ChatTabs";
 import { MessageList } from "./MessageList";
 import { ChatComposer } from "./ChatComposer";
 import { AskQuestionCard } from "./AskQuestionCard";
 import { PermissionRequestCard } from "./PermissionRequestCard";
+import { RecentChatsModal } from "@/components/ide/RecentChatsModal";
 import { askStepsFromMessage } from "@/lib/ask-question-utils";
 import {
   buildDraftModeOptionsForBackend,
@@ -80,6 +82,38 @@ function tabsEqual(a: ChatTab[], b: ChatTab[]): boolean {
   );
 }
 
+function conversationRequiresVisibleTab(conversation: AgentConversationRecord): boolean {
+  return (
+    conversation.status === "running" ||
+    conversation.status === "awaiting_permission"
+  );
+}
+
+function isRecentConversationCandidate(conversation: AgentConversationRecord): boolean {
+  if (conversation.title === "New chat" && !conversationRequiresVisibleTab(conversation)) {
+    return false;
+  }
+  return conversation.lastEventSeq > 0 || conversationRequiresVisibleTab(conversation);
+}
+
+function formatRecentConversationTime(timestamp: number): string {
+  const diff = Date.now() - timestamp;
+  const minutes = Math.floor(diff / 60_000);
+  const hours = Math.floor(minutes / 60);
+  const days = Math.floor(hours / 24);
+
+  if (days > 0) {
+    return `${days}d ago`;
+  }
+  if (hours > 0) {
+    return `${hours}h ago`;
+  }
+  if (minutes > 0) {
+    return `${minutes}m ago`;
+  }
+  return "just now";
+}
+
 function toConversationMap(
   conversations: AgentConversationRecord[]
 ): Record<string, AgentConversationRecord> {
@@ -138,14 +172,17 @@ export function ChatPanel() {
     activeWorkspaceId,
     workspaceSession,
     updateWorkspaceSession,
+    updateWorkspaceSessionNow,
   } = useWorkspace();
   const [backends, setBackends] = useState<AgentBackendInfo[]>([]);
   const [conversationsById, setConversationsById] = useState<
     Record<string, AgentConversationRecord>
   >({});
+  const [conversations, setConversations] = useState<AgentConversationRecord[]>([]);
   const [eventsByConversationId, setEventsByConversationId] = useState<
     Record<string, AgentStoredEvent[]>
   >({});
+  const [recentChatsModalOpen, setRecentChatsModalOpen] = useState(false);
   const [chatTabRenameTargetId, setChatTabRenameTargetId] = useState<string | null>(
     null
   );
@@ -171,6 +208,12 @@ export function ChatPanel() {
     eventsRef.current = eventsByConversationId;
   }, [eventsByConversationId]);
 
+  useEffect(() => {
+    const handler = () => setRecentChatsModalOpen(true);
+    window.addEventListener("opencursor:openRecentChats", handler);
+    return () => window.removeEventListener("opencursor:openRecentChats", handler);
+  }, []);
+
   const setTabs = useCallback(
     (updater: (current: ChatTab[]) => ChatTab[]) => {
       updateWorkspaceSession((current) => ({
@@ -184,32 +227,36 @@ export function ChatPanel() {
     [updateWorkspaceSession]
   );
 
-  const hideConversationIds = useCallback(
-    (conversationIds: string[]) => {
-      if (conversationIds.length === 0) {
-        return;
-      }
-      updateWorkspaceSession((current) => {
+  const persistClosedTabsNow = useCallback(
+    async (nextTabs: ChatTab[], conversationIds: string[]) => {
+      tabsRef.current = nextTabs;
+      await updateWorkspaceSessionNow((current) => {
         const nextHidden = new Set(current.chat.hiddenConversationIds);
         for (const conversationId of conversationIds) {
           if (conversationId) {
             nextHidden.add(conversationId);
           }
         }
+        for (const tab of nextTabs) {
+          nextHidden.delete(tab.id);
+        }
         const normalized = Array.from(nextHidden);
-        return normalized.length === current.chat.hiddenConversationIds.length &&
-          normalized.every((value, index) => value === current.chat.hiddenConversationIds[index])
+        const hiddenUnchanged =
+          normalized.length === current.chat.hiddenConversationIds.length &&
+          normalized.every((value, index) => value === current.chat.hiddenConversationIds[index]);
+        return hiddenUnchanged && tabsEqual(current.chat.tabs, nextTabs)
           ? current
           : {
               ...current,
               chat: {
                 ...current.chat,
+                tabs: nextTabs,
                 hiddenConversationIds: normalized,
               },
             };
       });
     },
-    [updateWorkspaceSession]
+    [updateWorkspaceSessionNow]
   );
 
   const unhideConversationIds = useCallback(
@@ -540,11 +587,48 @@ export function ChatPanel() {
     unhideConversationIds,
   ]);
 
+  const openConversationById = useCallback(
+    (conversationId: string) => {
+      const conversation = conversationsById[conversationId];
+      if (!conversation) return;
+      const existingTab = tabs.find((tab) => tab.id === conversationId);
+      if (existingTab) {
+        setTabs((current) =>
+          current.map((tab) => ({ ...tab, active: tab.id === conversationId }))
+        );
+      } else {
+        setTabs((current) => [
+          ...current.map((tab) => ({ ...tab, active: false })),
+          { id: conversation.id, title: conversation.title, active: true },
+        ]);
+      }
+      unhideConversationIds([conversationId]);
+    },
+    [conversationsById, tabs, setTabs, unhideConversationIds]
+  );
+
   const activeTabId = useMemo(
     () => tabs.find((tab) => tab.active)?.id ?? tabs[0]?.id ?? "__empty__",
     [tabs]
   );
   const activeConversation = activeTabId ? conversationsById[activeTabId] ?? null : null;
+  const recentConversations = useMemo(
+    () =>
+      conversations
+        .filter(
+          (conversation) =>
+            conversation.id !== activeConversation?.id &&
+            isRecentConversationCandidate(conversation)
+        )
+        .sort((a, b) => b.updatedAt - a.updatedAt),
+    [activeConversation?.id, conversations]
+  );
+  const recentConversationPreview = useMemo(
+    () => recentConversations.slice(0, 5),
+    [recentConversations]
+  );
+  const showRecentChatsSection =
+    activeConversation?.title === "New chat" && recentConversationPreview.length > 0;
   const composerDraftId = activeConversation?.id ?? activeTabId;
   const composerDraftTitle =
     activeConversation?.title && activeConversation.title !== "New chat"
@@ -890,6 +974,7 @@ export function ChatPanel() {
       }
 
       setConversationsById(toConversationMap(conversations));
+      setConversations(conversations);
       updateWorkspaceSession((current) => {
         const validIds = new Set(conversations.map((conversation) => conversation.id));
         const hiddenConversationIds = new Set(current.chat.hiddenConversationIds);
@@ -904,9 +989,10 @@ export function ChatPanel() {
           .filter(
             (conversation) =>
               !knownIds.has(conversation.id) &&
-              (conversation.lastEventSeq > 0 || conversation.status !== "idle") &&
+              (conversation.lastEventSeq > 0 ||
+                conversationRequiresVisibleTab(conversation)) &&
               (!hiddenConversationIds.has(conversation.id) ||
-                conversation.status !== "idle")
+                conversationRequiresVisibleTab(conversation))
           )
           .map((conversation) => ({
             id: conversation.id,
@@ -917,7 +1003,7 @@ export function ChatPanel() {
           .filter(
             (conversation) =>
               !hiddenConversationIds.has(conversation.id) ||
-              conversation.status !== "idle"
+              conversationRequiresVisibleTab(conversation)
           )
           .map((conversation, index) => ({
             id: conversation.id,
@@ -1124,20 +1210,17 @@ export function ChatPanel() {
     if (expandedComposerDraftId === tabId) {
       setExpandedComposerDraft(null);
     }
-    hideConversationIds([tabId]);
     if (remaining.length === 0) {
-      setTabs(() => []);
+      void persistClosedTabsNow([], [tabId]);
       void createConversationAndOpen();
       return;
     }
     const closingActive = currentTabs.find((tab) => tab.id === tabId)?.active;
-    setTabs(() => {
-      if (!closingActive) {
-        return remaining;
-      }
-      return remaining.map((tab, index) => ({ ...tab, active: index === 0 }));
-    });
-  }, [createConversationAndOpen, expandedComposerDraftId, hideConversationIds, setExpandedComposerDraft, setTabs]);
+    const nextTabs = !closingActive
+      ? remaining
+      : remaining.map((tab, index) => ({ ...tab, active: index === 0 }));
+    void persistClosedTabsNow(nextTabs, [tabId]);
+  }, [createConversationAndOpen, expandedComposerDraftId, persistClosedTabsNow, setExpandedComposerDraft]);
 
   const closeOtherChatTabs = useCallback(
     (tabId: string) => {
@@ -1148,22 +1231,21 @@ export function ChatPanel() {
       if (expandedComposerDraftId && expandedComposerDraftId !== tabId) {
         setExpandedComposerDraft(null);
       }
-      hideConversationIds(
-        tabsRef.current.filter((tab) => tab.id !== tabId).map((tab) => tab.id)
-      );
-      setTabs(() => [{ ...keep, active: true }]);
+      const closedIds = tabsRef.current
+        .filter((tab) => tab.id !== tabId)
+        .map((tab) => tab.id);
+      void persistClosedTabsNow([{ ...keep, active: true }], closedIds);
     },
-    [expandedComposerDraftId, hideConversationIds, setExpandedComposerDraft, setTabs]
+    [expandedComposerDraftId, persistClosedTabsNow, setExpandedComposerDraft]
   );
 
   const closeAllChatTabs = useCallback(() => {
     if (expandedComposerDraftId) {
       setExpandedComposerDraft(null);
     }
-    hideConversationIds(tabsRef.current.map((tab) => tab.id));
-    setTabs(() => []);
+    void persistClosedTabsNow([], tabsRef.current.map((tab) => tab.id));
     void createConversationAndOpen();
-  }, [createConversationAndOpen, expandedComposerDraftId, hideConversationIds, setExpandedComposerDraft, setTabs]);
+  }, [createConversationAndOpen, expandedComposerDraftId, persistClosedTabsNow, setExpandedComposerDraft]);
 
   const handleResolveActivePermission = useCallback(
     (requestId: string, optionId: string) => {
@@ -1413,6 +1495,41 @@ export function ChatPanel() {
     />
   );
 
+  const recentChatsSection = showRecentChatsSection ? (
+    <div className="rounded-[var(--radius-card)] border border-[color-mix(in_srgb,var(--border-card)_75%,transparent)] bg-[color-mix(in_srgb,var(--bg-card)_50%,transparent)] p-[10px]">
+      <div className="mb-[8px] flex items-center justify-between gap-[12px]">
+        <p className="font-sans text-[12px] font-medium uppercase tracking-[0.08em] text-[var(--text-secondary)]">
+          Recent chats
+        </p>
+        <button
+          type="button"
+          onClick={() => setRecentChatsModalOpen(true)}
+          className="inline-flex items-center gap-[6px] rounded-[6px] px-[6px] py-[4px] font-sans text-[12px] font-medium text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-card-hover)] hover:text-[var(--text-primary)]"
+        >
+          <Search className="size-[12px]" strokeWidth={1.75} />
+          Search
+        </button>
+      </div>
+      <div className="flex flex-col gap-[2px]">
+        {recentConversationPreview.map((conversation) => (
+          <button
+            key={conversation.id}
+            type="button"
+            onClick={() => openConversationById(conversation.id)}
+            className="flex items-center gap-[10px] rounded-[8px] px-[8px] py-[7px] text-left transition-colors hover:bg-[color-mix(in_srgb,var(--bg-card-hover)_75%,transparent)]"
+          >
+            <span className="min-w-0 flex-1 truncate font-sans text-[13px] font-normal text-[var(--text-primary)]">
+              {conversation.title}
+            </span>
+            <span className="shrink-0 font-sans text-[11px] font-normal text-[var(--text-secondary)]">
+              {formatRecentConversationTime(conversation.updatedAt)}
+            </span>
+          </button>
+        ))}
+      </div>
+    </div>
+  ) : null;
+
   return (
     <div className="flex h-full min-h-0 w-full flex-col overflow-hidden bg-[var(--bg-panel)]">
       <div className="shrink-0">
@@ -1434,10 +1551,13 @@ export function ChatPanel() {
               {composer}
             </div>
           ) : null}
-          <div
-            className="min-h-0 flex-1 bg-[var(--bg-panel)]"
-            aria-hidden
-          />
+          <div className="min-h-0 flex-1 bg-[var(--bg-panel)] px-[10px] pb-[12px] pt-[10px]">
+            {recentChatsSection ? (
+              <div className="flex h-full flex-col justify-end">
+                {recentChatsSection}
+              </div>
+            ) : null}
+          </div>
         </div>
       ) : (
         <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
@@ -1455,6 +1575,9 @@ export function ChatPanel() {
                 {pendingPermissionDock ? (
                   <div className="pointer-events-auto">{pendingPermissionDock}</div>
                 ) : null}
+                {recentChatsSection ? (
+                  <div className="px-[10px] pt-[8px]">{recentChatsSection}</div>
+                ) : null}
                 {dockedAskSteps.length > 0 ? (
                   <div className="px-[10px] pt-[8px]">
                     <AskQuestionCard steps={dockedAskSteps} dockAboveComposer />
@@ -1466,6 +1589,12 @@ export function ChatPanel() {
           ) : null}
         </div>
       )}
+      <RecentChatsModal
+        open={recentChatsModalOpen}
+        onClose={() => setRecentChatsModalOpen(false)}
+        conversations={recentConversations}
+        onSelectConversation={openConversationById}
+      />
     </div>
   );
 }

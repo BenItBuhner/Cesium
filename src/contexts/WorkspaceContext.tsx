@@ -73,6 +73,9 @@ type WorkspaceContextValue = {
   updateWorkspaceSession: (
     updater: (current: WorkspaceSessionState) => WorkspaceSessionState
   ) => void;
+  updateWorkspaceSessionNow: (
+    updater: (current: WorkspaceSessionState) => WorkspaceSessionState
+  ) => Promise<void>;
   connected: boolean;
   connectionState: "idle" | "connecting" | "open" | "closed" | "reconnecting";
   lastFileChange: FileChangeNotice | null;
@@ -381,6 +384,35 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     []
   );
 
+  const updateWorkspaceSessionNow = useCallback(
+    async (updater: (current: WorkspaceSessionState) => WorkspaceSessionState) => {
+      const current = workspaceSessionRef.current;
+      const next = updater(current);
+      if (next === current) {
+        return;
+      }
+
+      workspaceSessionRef.current = next;
+      setWorkspaceSession(next);
+
+      if (!workspaceInfo || !sessionReady) {
+        return;
+      }
+
+      if (sessionSaveTimerRef.current) {
+        window.clearTimeout(sessionSaveTimerRef.current);
+        sessionSaveTimerRef.current = null;
+      }
+
+      const persistableSession = createPersistableWorkspaceSession(next);
+      writeWorkspaceSessionBackup(workspaceInfo.id, persistableSession);
+      await saveWorkspaceSession(workspaceInfo.id, persistableSession).catch(() => {
+        // Ignore immediate save failures; future saves can retry.
+      });
+    },
+    [sessionReady, workspaceInfo]
+  );
+
   const flushWorkspaceSessionNow = useCallback(
     async () => {
       if (!workspaceInfo || !sessionReady) {
@@ -643,10 +675,17 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     }
 
     const flushForPageHide = () => {
-      writeWorkspaceSessionBackup(
-        workspaceInfo.id,
-        createPersistableWorkspaceSession(workspaceSessionRef.current)
+      if (sessionSaveTimerRef.current) {
+        window.clearTimeout(sessionSaveTimerRef.current);
+        sessionSaveTimerRef.current = null;
+      }
+      const persistableSession = createPersistableWorkspaceSession(
+        workspaceSessionRef.current
       );
+      writeWorkspaceSessionBackup(workspaceInfo.id, persistableSession);
+      void saveWorkspaceSession(workspaceInfo.id, persistableSession, { keepalive: true }).catch(() => {
+        // Ignore flush failures.
+      });
     };
 
     const handleVisibilityChange = () => {
@@ -664,7 +703,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       window.removeEventListener("beforeunload", flushForPageHide);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
-  }, [flushWorkspaceSessionNow, sessionReady, workspaceInfo]);
+  }, [sessionReady, workspaceInfo]);
 
   useEffect(() => {
     if (!activeWorkspaceId) {
@@ -879,6 +918,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       sessionReady,
       workspaceSession,
       updateWorkspaceSession,
+      updateWorkspaceSessionNow,
       connected: connectionState === "open",
       connectionState,
       lastFileChange,
@@ -904,6 +944,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       sessionReady,
       workspaceSession,
       updateWorkspaceSession,
+      updateWorkspaceSessionNow,
       connectionState,
       lastFileChange,
       fsResyncToken,
