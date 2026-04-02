@@ -1700,7 +1700,7 @@ function titleCaseModelDetail(label: string): string {
   }
   const normalized = trimmed.toLowerCase();
   if (normalized === "xhigh") {
-    return "XHigh";
+    return "Extra High";
   }
   return trimmed.charAt(0).toUpperCase() + trimmed.slice(1);
 }
@@ -1826,10 +1826,7 @@ export function buildConversationModelOptions(
           detail: `${backend?.label ?? conversation.config.backendId} · ${thoughtLevelOption.name}: ${thoughtLabel}`,
           provider,
           backendId: conversation.config.backendId,
-          configSelections: [
-            { configId: modelOption.id, value: option.value },
-            { configId: thoughtLevelOption.id, value: thought.value },
-          ],
+          configSelections: [{ configId: thoughtLevelOption.id, value: thought.value }],
           selected:
             option.value === selectedValue &&
             (!selectedThought || thought.value === selectedThought),
@@ -1849,7 +1846,6 @@ export function buildConversationModelOptions(
     detail: backend?.label ?? conversation.config.backendId,
     provider,
     backendId: conversation.config.backendId,
-    configSelections: [{ configId: modelOption.id, value: option.value }],
     selected:
       option.value === selectedValue ||
       (!selectedValue &&

@@ -206,10 +206,6 @@ async function runAcpTransportBootstrap(transport: AcpStdioClient): Promise<stri
         const note = summarizeAuthenticateResult(authResult);
         if (note) {
           messages.push(`Cursor CLI authentication: ${note}`);
-        } else {
-          messages.push(
-            "Cursor CLI authentication step completed. If model calls still fail, ensure the host is logged in (e.g. `agent login` per your Cursor build) or use supported non-interactive credentials."
-          );
         }
       } catch (error) {
         const errText = error instanceof Error ? error.message : String(error);
@@ -684,6 +680,199 @@ function normalizeProviderMode(
 ): AgentConversationMode {
   const normalized = rawValue?.trim();
   return normalized ? (normalized as AgentConversationMode) : fallback;
+}
+
+function isCursorCliModelId(value: string): boolean {
+  const trimmed = value.trim();
+  return trimmed.length > 0 && !trimmed.includes("[");
+}
+
+function parseCursorBracketModelValue(value: string): {
+  params: Record<string, string>;
+} {
+  const match = /^.+?\[(.*)\]$/.exec(value.trim());
+  if (!match) {
+    return { params: {} };
+  }
+  const params = Object.fromEntries(
+    match[1]
+      .split(",")
+      .map((entry) => {
+        const [rawKey, rawValue] = entry.split("=");
+        return [rawKey?.trim() ?? "", rawValue?.trim() ?? ""];
+      })
+      .filter(([key]) => key.length > 0)
+  );
+  return { params };
+}
+
+function parseCursorSeedVariant(value: string): {
+  effort?: string;
+  fast: boolean;
+  thinking: boolean;
+} {
+  let rest = value.trim().toLowerCase();
+  let fast = false;
+  let thinking = false;
+  let effort: string | undefined;
+
+  if (rest.endsWith("-fast")) {
+    fast = true;
+    rest = rest.slice(0, -5);
+  }
+
+  if (rest.endsWith("-thinking")) {
+    thinking = true;
+    rest = rest.slice(0, -9);
+  }
+
+  for (const candidate of ["none", "low", "medium", "high", "xhigh"] as const) {
+    if (rest.endsWith(`-${candidate}`)) {
+      effort = candidate;
+      break;
+    }
+  }
+
+  if (!effort && rest.startsWith("claude-") && rest.endsWith("-max")) {
+    effort = "max";
+  }
+
+  return { effort, fast, thinking };
+}
+
+function parseCursorLiveVariant(value: string): {
+  effort?: string;
+  fast: boolean;
+  thinking: boolean;
+} {
+  const params = parseCursorBracketModelValue(value).params;
+  const rawEffort = params.reasoning || params.effort || "";
+  return {
+    effort: rawEffort ? rawEffort.toLowerCase() : undefined,
+    fast: params.fast === "true",
+    thinking: params.thinking === "true",
+  };
+}
+
+function tokenizeCursorModelLabel(value: string): string[] {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+}
+
+function resolveCursorSeedModelValue(input: {
+  seedModelOption: AgentConfigOption;
+  liveModelOption?: AgentConfigOption;
+  selectedModelId?: string;
+  selectedModelName?: string;
+}): string {
+  const { seedModelOption, liveModelOption, selectedModelId, selectedModelName } = input;
+  const directModelId = selectedModelId?.trim() ?? "";
+  if (directModelId && seedModelOption.options.some((option) => option.value === directModelId)) {
+    return directModelId;
+  }
+
+  const directName = selectedModelName?.trim() ?? "";
+  if (directName) {
+    const exactName = seedModelOption.options.find((option) => option.name === directName);
+    if (exactName) {
+      return exactName.value;
+    }
+  }
+
+  const liveCurrentValue = liveModelOption?.currentValue?.trim() ?? "";
+  const liveCurrentOption =
+    liveModelOption?.options.find((option) => option.value === liveCurrentValue) ?? null;
+  const liveName = directName || liveCurrentOption?.name?.trim() || "";
+  const liveVariant = parseCursorLiveVariant(directModelId || liveCurrentValue);
+  const liveTokens = new Set(tokenizeCursorModelLabel(liveName));
+
+  let bestMatch: { value: string; score: number } | null = null;
+  for (const option of seedModelOption.options) {
+    const seedTokens = new Set(tokenizeCursorModelLabel(option.name));
+    let matchedTokenCount = 0;
+    for (const token of liveTokens) {
+      if (seedTokens.has(token)) {
+        matchedTokenCount += 1;
+      }
+    }
+    if (liveTokens.size > 0 && matchedTokenCount === 0) {
+      continue;
+    }
+
+    const seedVariant = parseCursorSeedVariant(option.value);
+    let score = matchedTokenCount * 10;
+    if (liveTokens.size > 0 && matchedTokenCount === liveTokens.size) {
+      score += 20;
+    }
+    if ((seedVariant.effort ?? "") === (liveVariant.effort ?? "")) {
+      score += 12;
+    } else if (liveVariant.effort) {
+      score -= 12;
+    }
+    if (seedVariant.fast === liveVariant.fast) {
+      score += 6;
+    } else if (liveVariant.fast || seedVariant.fast) {
+      score -= 6;
+    }
+    if (seedVariant.thinking === liveVariant.thinking) {
+      score += 6;
+    } else if (liveVariant.thinking || seedVariant.thinking) {
+      score -= 6;
+    }
+
+    if (!bestMatch || score > bestMatch.score) {
+      bestMatch = { value: option.value, score };
+    }
+  }
+
+  if (bestMatch) {
+    return bestMatch.value;
+  }
+
+  return seedModelOption.currentValue;
+}
+
+function mergeCursorSeedConfigOptions(
+  seedConfigOptions: AgentConfigOption[] | undefined,
+  liveConfigOptions: AgentConfigOption[],
+  selectedConfig: AgentConversationRecord["config"]
+): AgentConfigOption[] {
+  if (!seedConfigOptions || seedConfigOptions.length === 0) {
+    return liveConfigOptions;
+  }
+
+  const seedById = new Map(seedConfigOptions.map((option) => [option.id, option]));
+  const liveById = new Map(liveConfigOptions.map((option) => [option.id, option]));
+  const merged: AgentConfigOption[] = [];
+
+  for (const seedOption of seedConfigOptions) {
+    const liveOption = liveById.get(seedOption.id);
+    if (seedOption.category === "model") {
+      merged.push({
+        ...seedOption,
+        currentValue: resolveCursorSeedModelValue({
+          seedModelOption: seedOption,
+          liveModelOption: liveOption,
+          selectedModelId: selectedConfig.modelId,
+          selectedModelName: selectedConfig.modelName,
+        }),
+      });
+      continue;
+    }
+    merged.push(liveOption ? { ...seedOption, currentValue: liveOption.currentValue } : seedOption);
+  }
+
+  for (const liveOption of liveConfigOptions) {
+    if (!seedById.has(liveOption.id)) {
+      merged.push(liveOption);
+    }
+  }
+
+  return merged;
 }
 
 function parseConfigOptions(raw: unknown): AgentConfigOption[] {
@@ -1580,6 +1769,8 @@ class AcpSessionHandle implements AgentSessionHandle {
   private readonly releaseBridge: () => Promise<void>;
   private readonly callbacks: AgentRuntimeCallbacks;
   private readonly backend: AgentBackendInfo;
+  private readonly seedConfigOptions: AgentConfigOption[] | undefined;
+  private suppressedAssistantChunks: string[] | null = null;
 
   private constructor(input: {
     bridge: AcpSharedBridge;
@@ -1589,6 +1780,7 @@ class AcpSessionHandle implements AgentSessionHandle {
     sessionId: string;
     configOptions: AgentConfigOption[];
     capabilities: AgentProviderCapabilities;
+    seedConfigOptions?: AgentConfigOption[];
   }) {
     this.bridge = input.bridge;
     this.releaseBridge = input.releaseBridge;
@@ -1597,6 +1789,7 @@ class AcpSessionHandle implements AgentSessionHandle {
     this.sessionId = input.sessionId;
     this.configOptions = input.configOptions;
     this.capabilities = input.capabilities;
+    this.seedConfigOptions = input.seedConfigOptions;
     this.registerBridgeHandlers();
   }
 
@@ -1607,6 +1800,7 @@ class AcpSessionHandle implements AgentSessionHandle {
     env?: NodeJS.ProcessEnv;
     callbacks: AgentRuntimeCallbacks;
     loadSessionId?: string | null;
+    seedConfigOptions?: AgentConfigOption[];
   }): Promise<AcpSessionHandle> {
     const poolKey = makeAcpPoolKey({
       workspaceRoot: input.callbacks.workspace.root,
@@ -1655,10 +1849,18 @@ class AcpSessionHandle implements AgentSessionHandle {
         throw new Error("ACP session did not return a sessionId.");
       }
 
-      const configOptions = mergeSessionConfigOptions(
+      const liveConfigOptions = mergeSessionConfigOptions(
         parseConfigOptions(openResultRecord.configOptions),
         parseLegacySessionConfigOptions(openResultRecord)
       );
+      const configOptions =
+        input.backend.id === "cursor-acp"
+          ? mergeCursorSeedConfigOptions(
+              input.seedConfigOptions,
+              liveConfigOptions,
+              input.callbacks.conversation.config
+            )
+          : liveConfigOptions;
 
       const handle = new AcpSessionHandle({
         bridge,
@@ -1668,6 +1870,7 @@ class AcpSessionHandle implements AgentSessionHandle {
         sessionId,
         configOptions,
         capabilities: input.backend.capabilities,
+        seedConfigOptions: input.seedConfigOptions,
       });
 
       await input.callbacks.updateConversation((current) => ({
@@ -1809,6 +2012,35 @@ class AcpSessionHandle implements AgentSessionHandle {
   }
 
   async setConfigOption(configId: string, value: string): Promise<void> {
+    const modelOption = findPrimaryModelConfigOption(this.configOptions);
+    if (
+      this.backend.id === "cursor-acp" &&
+      modelOption &&
+      modelOption.id === configId
+    ) {
+      const trimmedValue = value.trim();
+      if (isCursorCliModelId(trimmedValue)) {
+        await this.runCursorModelSlashCommand(trimmedValue);
+        await this.persistConfigOptions(
+          this.configOptions.map((option) =>
+            option.id === configId ? { ...option, currentValue: trimmedValue } : option
+          )
+        );
+        return;
+      }
+      if (trimmedValue.includes("[")) {
+        await this.bridge.request("session/set_model", {
+          sessionId: this.sessionId,
+          modelId: trimmedValue,
+        });
+        await this.persistConfigOptions(
+          this.configOptions.map((option) =>
+            option.id === configId ? { ...option, currentValue: trimmedValue } : option
+          )
+        );
+        return;
+      }
+    }
     if (configId === LEGACY_MODE_CONFIG_ID) {
       await this.bridge.request("session/set_mode", {
         sessionId: this.sessionId,
@@ -1908,18 +2140,22 @@ class AcpSessionHandle implements AgentSessionHandle {
     if (nextConfigOptions.length === 0) {
       return;
     }
-    this.configOptions = nextConfigOptions;
-    await writeAgentBackendConfigCache(this.backend.id, nextConfigOptions);
+    let persistedConfigOptions = nextConfigOptions;
     await this.callbacks.updateConversation((current) => {
-      const modeOption = findPrimaryModeConfigOption(nextConfigOptions);
-      const modelOption = findPrimaryModelConfigOption(nextConfigOptions);
+      persistedConfigOptions =
+        this.backend.id === "cursor-acp"
+          ? mergeCursorSeedConfigOptions(this.seedConfigOptions, nextConfigOptions, current.config)
+          : nextConfigOptions;
+      this.configOptions = persistedConfigOptions;
+      const modeOption = findPrimaryModeConfigOption(persistedConfigOptions);
+      const modelOption = findPrimaryModelConfigOption(persistedConfigOptions);
       const modelId = modelOption?.currentValue || current.config.modelId;
       const modelName =
         modelOption?.options.find((option) => option.value === modelId)?.name ??
         current.config.modelName;
       return {
         ...current,
-        configOptions: nextConfigOptions,
+        configOptions: persistedConfigOptions,
         config: {
           ...current.config,
           mode: normalizeProviderMode(modeOption?.currentValue, current.config.mode),
@@ -1928,6 +2164,27 @@ class AcpSessionHandle implements AgentSessionHandle {
         },
       };
     });
+    await writeAgentBackendConfigCache(this.backend.id, persistedConfigOptions);
+  }
+
+  private async runCursorModelSlashCommand(modelId: string): Promise<void> {
+    if (this.suppressedAssistantChunks) {
+      throw new Error("Cursor model switch already in progress.");
+    }
+    this.suppressedAssistantChunks = [];
+    try {
+      await this.bridge.request("session/prompt", {
+        sessionId: this.sessionId,
+        messageId: `cursor-model-${randomUUID()}`,
+        prompt: [{ type: "text", text: `/model ${modelId}` }],
+      });
+      const responseText = this.suppressedAssistantChunks.join("").trim();
+      if (responseText && /unknown model|invalid model|not found|failed/i.test(responseText)) {
+        throw new Error(responseText);
+      }
+    } finally {
+      this.suppressedAssistantChunks = null;
+    }
   }
 
   private registerBridgeHandlers(): void {
@@ -2043,7 +2300,14 @@ class AcpSessionHandle implements AgentSessionHandle {
           typeof (record.content as Record<string, unknown>).text === "string"
             ? ((record.content as Record<string, unknown>).text as string)
             : null;
-        if (!text || !this.currentAssistantMessageId) {
+        if (!text) {
+          return;
+        }
+        if (this.suppressedAssistantChunks) {
+          this.suppressedAssistantChunks.push(text);
+          return;
+        }
+        if (!this.currentAssistantMessageId) {
           return;
         }
         await this.callbacks.appendEvents([
@@ -2387,6 +2651,7 @@ export async function createAgentProvider(
     if (!CURSOR_RUNTIME) {
       throw new Error(`${backend.label} is not installed or could not be resolved.`);
     }
+    const cursorSeedConfigOptions = await readAgentBackendConfigCache(backendId);
     return {
       backend,
       startSession(callbacks) {
@@ -2396,6 +2661,7 @@ export async function createAgentProvider(
           args: CURSOR_RUNTIME.args,
           env: CURSOR_RUNTIME.env,
           callbacks,
+          seedConfigOptions: cursorSeedConfigOptions,
         });
       },
       loadSession(callbacks, providerSessionId) {
@@ -2406,6 +2672,7 @@ export async function createAgentProvider(
           env: CURSOR_RUNTIME.env,
           callbacks,
           loadSessionId: providerSessionId,
+          seedConfigOptions: cursorSeedConfigOptions,
         });
       },
     };

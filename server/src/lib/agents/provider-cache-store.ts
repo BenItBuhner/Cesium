@@ -314,6 +314,23 @@ async function createSeedConfigOptions(backendId: AgentBackendId): Promise<Agent
   }
 }
 
+function isCursorCliSeedConfigOptions(configOptions: AgentConfigOption[]): boolean {
+  const modelOption = configOptions.find((option) => option.category === "model");
+  if (!modelOption || modelOption.options.length === 0) {
+    return false;
+  }
+  if (
+    configOptions.some(
+      (option) =>
+        option.category === "thought_level" || option.id === "model_reasoning_effort"
+    )
+  ) {
+    return false;
+  }
+  return !modelOption.currentValue.includes("[") &&
+    modelOption.options.every((option) => !option.value.includes("["));
+}
+
 export async function readAgentBackendConfigCache(
   backendId: AgentBackendId
 ): Promise<AgentConfigOption[]> {
@@ -328,6 +345,11 @@ export async function readAgentBackendConfigCache(
     Array.isArray(record.configOptions) &&
     record.configOptions.length > 0
   ) {
+    if (backendId === "cursor-acp" && !isCursorCliSeedConfigOptions(record.configOptions)) {
+      const seeded = await createSeedConfigOptions(backendId);
+      await writeAgentBackendConfigCache(backendId, seeded);
+      return seeded;
+    }
     if (
       backendId === "codex-adapter" &&
       !record.configOptions.some(
