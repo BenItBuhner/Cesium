@@ -243,7 +243,6 @@ export interface ModelInfo {
     | "opencode"
     | "codex"
     | "claude"
-    | "gemini"
     | "fixture";
   selected?: boolean;
 }

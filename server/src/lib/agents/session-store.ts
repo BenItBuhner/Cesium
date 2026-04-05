@@ -2,7 +2,9 @@ import { randomUUID } from "node:crypto";
 import { promises as fs, type Dirent } from "node:fs";
 import path from "node:path";
 import { DATA_DIR, ensureDataDir, readJsonFile, writeJsonFile } from "../persistence.js";
+import { AGENT_BACKENDS } from "./providers.js";
 import type {
+  AgentBackendId,
   AgentConversationRecord,
   AgentConversationSnapshot,
   AgentEventInput,
@@ -12,6 +14,7 @@ import type {
 
 const appendQueues = new Map<string, Promise<void>>();
 const listeners = new Set<(event: AgentManagerEvent) => void>();
+const FALLBACK_BACKEND_ID: AgentBackendId = "cursor-acp";
 
 function getConversationRoot(workspaceId: string): string {
   return path.join(DATA_DIR, "workspaces", workspaceId, "conversations");
@@ -37,6 +40,35 @@ function notify(event: AgentManagerEvent): void {
   for (const listener of listeners) {
     listener(event);
   }
+}
+
+function normalizeConversationRecord(
+  record: AgentConversationRecord
+): AgentConversationRecord {
+  const rawBackendId = record.config.backendId;
+  if (typeof rawBackendId === "string" && rawBackendId in AGENT_BACKENDS) {
+    return record;
+  }
+  const fallbackBackend = AGENT_BACKENDS[FALLBACK_BACKEND_ID];
+  return {
+    ...record,
+    status:
+      record.status === "running" || record.status === "awaiting_permission"
+        ? "idle"
+        : record.status,
+    providerSessionId: null,
+    configOptions: [],
+    pendingPermission: null,
+    capabilities: fallbackBackend.capabilities,
+    experimental: Boolean(fallbackBackend.experimental),
+    config: {
+      ...record.config,
+      backendId: fallbackBackend.id,
+      mode: fallbackBackend.defaultMode,
+      modelId: fallbackBackend.defaultModelId,
+      modelName: fallbackBackend.defaultModelName,
+    },
+  };
 }
 
 async function withConversationQueue<T>(
@@ -95,7 +127,7 @@ export async function readConversationRecord(
   if (!record || record.schemaVersion !== 1) {
     return null;
   }
-  return record;
+  return normalizeConversationRecord(record);
 }
 
 export async function listWorkspaceConversationRecords(
@@ -157,8 +189,13 @@ export async function appendConversationEvents(
       );
     }
 
+    // Re-read meta after the append so concurrent queue work (e.g. runtime
+    // startSession updating providerSessionId) cannot be overwritten by a
+    // stale snapshot captured at the start of this operation.
+    const latest = await readConversationRecord(workspaceId, conversationId);
+    const base = latest ?? record;
     const updatedRecord: AgentConversationRecord = {
-      ...record,
+      ...base,
       updatedAt: appended[appended.length - 1]?.createdAt ?? now,
       lastEventSeq: appended[appended.length - 1]?.seq ?? record.lastEventSeq,
     };
