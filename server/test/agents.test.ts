@@ -614,3 +614,69 @@ test("persisted provider sessions can be rehydrated after dropping runtime state
     "expected persisted provider session id after rehydration"
   );
 });
+
+test("unsupported backends fall back to cursor defaults when legacy conversations are read", async () => {
+  const workspace = await ensureWorkspaceRegistered(repoRoot, "repo");
+  const conversation = await testRuntimeManager.createConversation(workspace, {
+    backendId: "opencode-acp",
+    mode: "plan",
+    modelId: "test-deep",
+    modelName: "Test Deep",
+  });
+
+  await updateConversationRecord(workspace.id, conversation.id, (current) => ({
+    ...current,
+    status: "running",
+    providerSessionId: "legacy-removed-session",
+    configOptions: buildConfigOptions("agent", "test-fast"),
+    pendingPermission: {
+      requestId: randomUUID(),
+      requestedAt: Date.now(),
+      title: "Allow the legacy runtime to continue?",
+      options: [
+        {
+          optionId: "allow-once",
+          name: "Allow once",
+          kind: "allow_once",
+        },
+      ],
+    },
+    config: {
+      ...current.config,
+      backendId: "removed-adapter" as unknown as AgentBackendId,
+      mode: "agent",
+      modelId: "removed-model",
+      modelName: "Removed Model",
+    },
+  }));
+
+  const migrated = await readConversationSnapshot(workspace.id, conversation.id);
+  assert.ok(migrated, "expected migrated snapshot");
+  assert.equal(migrated.conversation.config.backendId, "cursor-acp");
+  assert.equal(
+    migrated.conversation.config.modelId,
+    testBackends["cursor-acp"].defaultModelId
+  );
+  assert.equal(
+    migrated.conversation.config.modelName,
+    testBackends["cursor-acp"].defaultModelName
+  );
+  assert.equal(migrated.conversation.config.mode, testBackends["cursor-acp"].defaultMode);
+  assert.equal(migrated.conversation.status, "idle");
+  assert.equal(migrated.conversation.providerSessionId, null);
+  assert.deepEqual(migrated.conversation.configOptions, []);
+  assert.equal(migrated.conversation.pendingPermission, null);
+  assert.deepEqual(
+    migrated.conversation.capabilities,
+    testBackends["cursor-acp"].capabilities
+  );
+
+  await testRuntimeManager.ensureConversationRuntime(workspace, conversation.id);
+  const resumed = await readConversationSnapshot(workspace.id, conversation.id);
+  assert.ok(resumed, "expected resumed snapshot after fallback runtime");
+  assert.equal(resumed.conversation.config.backendId, "cursor-acp");
+  assert.ok(
+    resumed.conversation.providerSessionId,
+    "expected a fallback cursor runtime session to start"
+  );
+});

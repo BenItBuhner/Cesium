@@ -30,8 +30,6 @@ function modelProviderForBackend(backendId: AgentBackendId): ModelInfo["provider
       return "codex";
     case "claude-adapter":
       return "claude";
-    case "gemini-adapter":
-      return "gemini";
     default:
       return "auto";
   }

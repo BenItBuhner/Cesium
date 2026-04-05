@@ -22,9 +22,8 @@ const providerIcon: Record<ModelInfo["provider"], typeof Box> = {
   auto: Box,
   cursor: Sparkles,
   opencode: Box,
-   codex: Sparkles,
-   claude: Hexagon,
-   gemini: Box,
+  codex: Sparkles,
+  claude: Hexagon,
   fixture: Box,
 };
 

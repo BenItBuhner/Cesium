@@ -178,6 +178,15 @@ export function mergeWorkspaceSessionFromImport(
   if (r.schemaVersion !== 1) {
     return current;
   }
+  const normalizedChatBackendId =
+    r.chat?.backendId === "cursor-acp" ||
+    r.chat?.backendId === "opencode-acp" ||
+    r.chat?.backendId === "codex-adapter" ||
+    r.chat?.backendId === "claude-adapter"
+      ? r.chat.backendId
+      : current.chat.backendId;
+  const importedUnsupportedBackend =
+    r.chat?.backendId != null && normalizedChatBackendId !== r.chat.backendId;
 
   return {
     schemaVersion: 1,
@@ -204,15 +213,9 @@ export function mergeWorkspaceSessionFromImport(
             (value): value is string => typeof value === "string" && value.length > 0
           )
         : current.chat.hiddenConversationIds,
-      model: r.chat?.model ?? current.chat.model,
-      mode: r.chat?.mode ?? current.chat.mode,
-      backendId:
-        r.chat?.backendId === "cursor-acp" ||
-        r.chat?.backendId === "opencode-acp" ||
-        r.chat?.backendId === "codex-adapter" ||
-        r.chat?.backendId === "claude-adapter"
-          ? r.chat.backendId
-          : current.chat.backendId,
+      model: importedUnsupportedBackend ? current.chat.model : r.chat?.model ?? current.chat.model,
+      mode: importedUnsupportedBackend ? current.chat.mode : r.chat?.mode ?? current.chat.mode,
+      backendId: normalizedChatBackendId,
     },
     explorer: {
       ...current.explorer,

@@ -76,18 +76,6 @@ const cursorAcpCapabilities: AgentProviderCapabilities = {
   supportsSessionResume: true,
 };
 
-const geminiCapabilities: AgentProviderCapabilities = {
-  supportsLoadSession: true,
-  supportsModeSelection: true,
-  supportsModelSelection: true,
-  supportsSlashCommands: false,
-  supportsPermissions: true,
-  supportsToolCalls: true,
-  supportsStructuredPlans: false,
-  supportsTodos: false,
-  supportsSessionResume: true,
-};
-
 const LEGACY_MODE_CONFIG_ID = "__acp_legacy_mode__";
 const LEGACY_MODEL_CONFIG_ID = "__acp_legacy_model__";
 
@@ -426,28 +414,10 @@ function resolveClaudeCliRuntime(): CliRuntimeSpec | null {
   return pathHit ? buildInvocation(pathHit, []) : null;
 }
 
-function resolveGeminiAcpRuntime(): AcpRuntimeSpec | null {
-  const configured = resolveConfiguredRuntime(
-    process.env.OPENCURSOR_GEMINI_ACP_BIN ?? process.env.OPENCURSOR_GEMINI_BIN,
-    ["--acp"]
-  );
-  if (configured) {
-    return configured;
-  }
-
-  const pathHit = findExecutableOnPath(
-    process.platform === "win32"
-      ? ["gemini.exe", "gemini.cmd", "gemini.bat", "gemini"]
-      : ["gemini"]
-  );
-  return pathHit ? buildInvocation(pathHit, ["--acp"]) : null;
-}
-
 const CURSOR_RUNTIME = resolveCursorCliRuntime();
 const OPENCODE_RUNTIME = resolveOpenCodeAcpRuntime();
 const CODEX_RUNTIME = resolveCodexCliRuntime();
 const CLAUDE_RUNTIME = resolveClaudeCliRuntime();
-const GEMINI_RUNTIME = resolveGeminiAcpRuntime();
 
 export type CursorAgentDeploymentHints = {
   resolved: boolean;
@@ -543,18 +513,6 @@ export const AGENT_BACKENDS: Record<AgentBackendId, AgentBackendInfo> = {
     defaultMode: "agent",
     defaultModelId: "turbo",
     defaultModelName: "Turbo",
-  }),
-  "gemini-adapter": createBackendInfo({
-    id: "gemini-adapter",
-    label: "Gemini",
-    description: "Official Gemini CLI over ACP stdio.",
-    experimental: false,
-    commandPreview: GEMINI_RUNTIME?.commandPreview ?? "Gemini CLI not found",
-    available: GEMINI_RUNTIME !== null,
-    capabilities: geminiCapabilities,
-    defaultMode: "agent",
-    defaultModelId: "gemini-2.5-pro",
-    defaultModelName: "Gemini 2.5 Pro",
   }),
 };
 
@@ -2689,9 +2647,8 @@ export async function createAgentProvider(
     };
   }
 
-  if (backendId === "opencode-acp" || backendId === "gemini-adapter") {
-    const resolvedRuntime = backendId === "gemini-adapter" ? GEMINI_RUNTIME : OPENCODE_RUNTIME;
-    if (!resolvedRuntime) {
+  if (backendId === "opencode-acp") {
+    if (!OPENCODE_RUNTIME) {
       throw new Error(`${backend.label} is not installed or could not be resolved.`);
     }
     return {
@@ -2699,18 +2656,18 @@ export async function createAgentProvider(
       startSession(callbacks) {
         return AcpSessionHandle.create({
           backend,
-          command: resolvedRuntime.command,
-          args: resolvedRuntime.args,
-          env: resolvedRuntime.env,
+          command: OPENCODE_RUNTIME.command,
+          args: OPENCODE_RUNTIME.args,
+          env: OPENCODE_RUNTIME.env,
           callbacks,
         });
       },
       loadSession(callbacks, providerSessionId) {
         return AcpSessionHandle.create({
           backend,
-          command: resolvedRuntime.command,
-          args: resolvedRuntime.args,
-          env: resolvedRuntime.env,
+          command: OPENCODE_RUNTIME.command,
+          args: OPENCODE_RUNTIME.args,
+          env: OPENCODE_RUNTIME.env,
           callbacks,
           loadSessionId: providerSessionId,
         });

@@ -281,34 +281,6 @@ async function createSeedConfigOptions(backendId: AgentBackendId): Promise<Agent
           ],
         },
       ];
-    case "gemini-adapter":
-      return [
-        {
-          id: "mode",
-          name: "Mode",
-          category: "mode",
-          currentValue: "agent",
-          options: [{ value: "agent", name: "Agent" }],
-        },
-        {
-          id: "model",
-          name: "Model",
-          category: "model",
-          currentValue: "gemini-2.5-pro",
-          options: [
-            {
-              value: "gemini-2.5-pro",
-              name: "Gemini 2.5 Pro",
-              description: "Seeded fallback until Gemini ACP returns its live model list.",
-            },
-            {
-              value: "gemini-2.5-flash",
-              name: "Gemini 2.5 Flash",
-              description: "Seeded fallback until Gemini ACP returns its live model list.",
-            },
-          ],
-        },
-      ];
     default:
       return [];
   }

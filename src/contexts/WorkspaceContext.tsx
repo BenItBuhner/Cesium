@@ -155,6 +155,15 @@ function normalizeWorkspaceSession(
   if (!raw || raw.schemaVersion !== 1) {
     return defaults;
   }
+  const normalizedChatBackendId =
+    raw.chat?.backendId === "cursor-acp" ||
+    raw.chat?.backendId === "opencode-acp" ||
+    raw.chat?.backendId === "codex-adapter" ||
+    raw.chat?.backendId === "claude-adapter"
+      ? raw.chat.backendId
+      : defaults.chat.backendId;
+  const usedFallbackBackend =
+    raw.chat?.backendId != null && normalizedChatBackendId !== raw.chat.backendId;
 
   return {
     schemaVersion: 1,
@@ -181,16 +190,9 @@ function normalizeWorkspaceSession(
             (value): value is string => typeof value === "string" && value.length > 0
           )
         : defaults.chat.hiddenConversationIds,
-      model: raw.chat?.model ?? defaults.chat.model,
-      mode: raw.chat?.mode ?? defaults.chat.mode,
-      backendId:
-        raw.chat?.backendId === "cursor-acp" ||
-        raw.chat?.backendId === "opencode-acp" ||
-        raw.chat?.backendId === "codex-adapter" ||
-        raw.chat?.backendId === "claude-adapter" ||
-        raw.chat?.backendId === "gemini-adapter"
-          ? raw.chat.backendId
-          : defaults.chat.backendId,
+      model: usedFallbackBackend ? defaults.chat.model : raw.chat?.model ?? defaults.chat.model,
+      mode: usedFallbackBackend ? defaults.chat.mode : raw.chat?.mode ?? defaults.chat.mode,
+      backendId: normalizedChatBackendId,
     },
     explorer: {
       ...defaults.explorer,
