@@ -124,6 +124,7 @@ export interface EditorTab {
     | "terminal"
     | "json"
     | "markdown"
+    | "subagent"
     | "typescript"
     | "css"
     | "default"
