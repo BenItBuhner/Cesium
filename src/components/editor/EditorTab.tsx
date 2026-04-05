@@ -14,6 +14,7 @@ const tabIconToKind: Record<EditorTabType["icon"], FileTypeIconKind> = {
   terminal: "shell",
   json: "json",
   markdown: "markdown",
+  subagent: "subagent",
   typescript: "typescript",
   css: "css",
   default: "default",

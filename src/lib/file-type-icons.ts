@@ -1,6 +1,7 @@
 import type { LucideIcon } from "lucide-react";
 import {
   BookOpen,
+  Bot,
   Braces,
   Brackets,
   Container,
@@ -127,6 +128,7 @@ export const fileTypeIcons = {
   default: { Icon: File, className: "text-[var(--text-secondary)]" },
   settings: { Icon: Settings, className: "text-[var(--text-secondary)]" },
   browser: { Icon: Globe, className: "text-[#6cb5f5]" },
+  subagent: { Icon: Bot, className: "text-[#c084fc]" },
 } as const satisfies Record<string, FileTypeIconEntry>;
 
 export type FileTypeIconKind = keyof typeof fileTypeIcons;

@@ -245,7 +245,7 @@ export function editorPanelReducer(
         id,
         name,
         language: "markdown",
-        icon: "markdown",
+        icon: "subagent",
         content: "",
         fileKind: "text",
         previewMode: "source",
