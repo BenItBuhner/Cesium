@@ -46,6 +46,8 @@ const HEARTBEAT_INTERVAL_MS = 5_000;
 const PONG_STALE_MS = 90_000;
 /** If the heartbeat timer fires this late, the event loop was probably stalled — do not infer a dead socket from skewed time. */
 const HEARTBEAT_DRIFT_SKIP_STALE_MS = HEARTBEAT_INTERVAL_MS * 12;
+/** Ignore startup socket flaps while the client and backend settle. */
+const STARTUP_CONNECTION_NOTIFICATION_GRACE_MS = 10_000;
 const RECONNECT_TOAST_MS = 5_000;
 const SESSION_SAVE_DEBOUNCE_MS = 500;
 const SESSION_BACKUP_STORAGE_PREFIX = "opencursor.workspace-session.";
@@ -358,6 +360,9 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const workspaceSessionRef = useRef(workspaceSession);
   const lastSeenSeqRef = useRef(0);
   const hasSyncedOnceRef = useRef(false);
+  const connectionNotificationGraceEndsAtRef = useRef(
+    Date.now() + STARTUP_CONNECTION_NOTIFICATION_GRACE_MS
+  );
   const sessionSaveTimerRef = useRef<number | null>(null);
   const skipNextSessionSaveRef = useRef(false);
 
@@ -716,8 +721,11 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     let openedAt = Date.now();
     /** Updated on every inbound message (not only `pong`) so chat/streaming stalls cannot skew pong-only liveness. */
     let lastServerContactAt: number | null = null;
+    let startupDisconnectTimer: number | null = null;
     const suppressedDisconnectRef = { current: false };
     const wasDisconnectedRef = { current: false };
+    const disconnectToastShownRef = { current: false };
+    const pendingStartupDisconnectMessageRef = { current: null as string | null };
     let connectionLostHandled = false;
 
     const socket = new JsonWebSocket<FileWatcherEvent>(() => {
@@ -728,36 +736,91 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       return `${toWebSocketUrl(getServerBaseUrl())}/ws/fs?${params.toString()}`;
     });
 
+    function clearStartupDisconnectTimer() {
+      if (startupDisconnectTimer != null) {
+        window.clearTimeout(startupDisconnectTimer);
+        startupDisconnectTimer = null;
+      }
+    }
+
+    function clearPendingStartupDisconnect() {
+      pendingStartupDisconnectMessageRef.current = null;
+      clearStartupDisconnectTimer();
+    }
+
+    function shouldSuppressConnectionNotifications() {
+      return Date.now() < connectionNotificationGraceEndsAtRef.current;
+    }
+
+    function showDisconnectToast(message: string) {
+      if (!active || suppressedDisconnectRef.current) {
+        disconnectToastShownRef.current = false;
+        return;
+      }
+
+      disconnectToastShownRef.current = true;
+      dismissByKindRef.current(WORKBENCH_NOTIFICATION_KIND.connectionReconnected);
+      dismissByKindRef.current(WORKBENCH_NOTIFICATION_KIND.connectionDisconnected);
+      pushNotificationRef.current({
+        kind: WORKBENCH_NOTIFICATION_KIND.connectionDisconnected,
+        severity: "error",
+        title: "Disconnected",
+        message,
+        persistent: true,
+        onDismiss: () => {
+          suppressedDisconnectRef.current = true;
+        },
+        actions: [
+          {
+            id: "retry",
+            label: "Retry",
+            primary: true,
+            onClick: () => {
+              void refreshTreeRef.current();
+              socket.forceCloseConnection();
+            },
+          },
+        ],
+      });
+    }
+
+    function scheduleStartupDisconnectToast() {
+      if (startupDisconnectTimer != null) {
+        return;
+      }
+
+      const delay = Math.max(
+        0,
+        connectionNotificationGraceEndsAtRef.current - Date.now()
+      );
+      startupDisconnectTimer = window.setTimeout(() => {
+        startupDisconnectTimer = null;
+        const pendingMessage = pendingStartupDisconnectMessageRef.current;
+        pendingStartupDisconnectMessageRef.current = null;
+        if (!pendingMessage) {
+          return;
+        }
+        if (!active || !wasDisconnectedRef.current || socket.connected) {
+          disconnectToastShownRef.current = false;
+          return;
+        }
+        showDisconnectToast(pendingMessage);
+      }, delay);
+    }
+
     function handleConnectionLost(message: string) {
       if (!active) return;
       if (connectionLostHandled) return;
       connectionLostHandled = true;
       wasDisconnectedRef.current = true;
-      if (!suppressedDisconnectRef.current) {
-        dismissByKindRef.current(WORKBENCH_NOTIFICATION_KIND.connectionReconnected);
-        dismissByKindRef.current(WORKBENCH_NOTIFICATION_KIND.connectionDisconnected);
-        pushNotificationRef.current({
-          kind: WORKBENCH_NOTIFICATION_KIND.connectionDisconnected,
-          severity: "error",
-          title: "Disconnected",
-          message,
-          persistent: true,
-          onDismiss: () => {
-            suppressedDisconnectRef.current = true;
-          },
-          actions: [
-            {
-              id: "retry",
-              label: "Retry",
-              primary: true,
-              onClick: () => {
-                void refreshTreeRef.current();
-                socket.forceCloseConnection();
-              },
-            },
-          ],
-        });
+      if (shouldSuppressConnectionNotifications()) {
+        pendingStartupDisconnectMessageRef.current = message;
+        disconnectToastShownRef.current = false;
+        scheduleStartupDisconnectToast();
+        return;
       }
+
+      showDisconnectToast(message);
     }
 
     function tryReconnectToast() {
@@ -766,8 +829,14 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       if (lastServerContactAt == null) return;
       if (Date.now() - lastServerContactAt > PONG_STALE_MS) return;
       if (!socket.connected) return;
+      clearPendingStartupDisconnect();
+      const shouldAnnounceReconnect = disconnectToastShownRef.current;
       wasDisconnectedRef.current = false;
+      disconnectToastShownRef.current = false;
       suppressedDisconnectRef.current = false;
+      if (!shouldAnnounceReconnect) {
+        return;
+      }
       dismissByKindRef.current(WORKBENCH_NOTIFICATION_KIND.connectionDisconnected);
       dismissByKindRef.current(WORKBENCH_NOTIFICATION_KIND.connectionReconnected);
       pushNotificationRef.current({
@@ -903,6 +972,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       active = false;
       document.removeEventListener("visibilitychange", syncHeartbeatAfterForeground);
       window.clearInterval(heartbeat);
+      clearPendingStartupDisconnect();
       unsubscribers.forEach((unsubscribe) => unsubscribe());
       socket.disconnect();
     };
