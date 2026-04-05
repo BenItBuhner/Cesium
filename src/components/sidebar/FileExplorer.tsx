@@ -592,6 +592,10 @@ export function FileExplorer() {
 
       <VSCodeQuickInputShell
         open={fsPrompt !== null}
+        onClose={() => {
+          setFsPrompt(null);
+          setFsPromptValue("");
+        }}
         screenReaderTitle={fsPromptTitle}
         inputLabel={fsPromptTitle}
         placeholder={

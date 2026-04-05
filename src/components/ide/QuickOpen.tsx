@@ -4,6 +4,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type KeyboardEvent,
 } from "react";
@@ -112,6 +113,7 @@ export function QuickOpen({
 }) {
   const [query, setQuery] = useState("");
   const [sel, setSel] = useState(0);
+  const listRef = useRef<HTMLDivElement | null>(null);
 
   const filtered = useMemo(() => {
     const q = query.trim();
@@ -133,6 +135,16 @@ export function QuickOpen({
   useEffect(() => {
     setSel((s) => (filtered.length === 0 ? 0 : Math.min(s, filtered.length - 1)));
   }, [filtered.length]);
+
+  useEffect(() => {
+    if (!open || filtered.length === 0) return;
+    const root = listRef.current;
+    if (!root) return;
+    const option = root.querySelector<HTMLElement>(
+      `[role="option"][aria-selected="true"]`
+    );
+    option?.scrollIntoView({ block: "nearest" });
+  }, [filtered.length, open, sel]);
 
   const pickAt = useCallback(
     (i: number) => {
@@ -191,6 +203,7 @@ export function QuickOpen({
   return (
     <VSCodeQuickInputShell
       open={open}
+      onClose={onClose}
       screenReaderTitle="Quick open file"
       inputLabel="File search"
       placeholder="Search files by name (demo: path filter only)"
@@ -205,7 +218,10 @@ export function QuickOpen({
         </p>
       }
     >
-      <div className="hide-scrollbar-y max-h-[min(380px,45vh)] min-h-[140px] overflow-y-auto py-[4px]">
+      <div
+        ref={listRef}
+        className="hide-scrollbar-y max-h-[min(380px,45vh)] min-h-[140px] overflow-y-auto py-[4px]"
+      >
         {filtered.length === 0 ? (
           <p className="px-[10px] py-[12px] font-sans text-[13px] text-[var(--palette-row-muted)]">
             No matching files
