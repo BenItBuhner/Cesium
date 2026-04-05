@@ -803,7 +803,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
           return;
         }
         showDisconnectToast(pendingMessage);
-      });
+      }, delay);
     }
 
     function handleConnectionLost(message: string) {
