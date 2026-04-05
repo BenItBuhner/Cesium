@@ -30,17 +30,22 @@ import type { EditorTab } from "@/lib/types";
 import {
   SETTINGS_EDITOR_TAB_ID,
   editorPanelReducer,
+  type EditorPanelAction,
   type EditorGroup,
   TAB_DND_MIME,
   parseTabDragPayload,
 } from "./editor-panel-state";
-import { createTerminal, readFile, writeFile } from "@/lib/server-api";
+import { createTerminal, deleteTerminal, readFile, writeFile } from "@/lib/server-api";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { useWorkbenchNotifications } from "@/components/notifications/WorkbenchNotificationProvider";
 import { WORKBENCH_NOTIFICATION_KIND } from "@/components/notifications/workbench-notification-types";
 
 function tabCanSave(tab: EditorTab): boolean {
   return Boolean(tab.filePath && tab.fileKind && tab.fileKind !== "image");
+}
+
+function isUnknownTerminalError(error: unknown): boolean {
+  return error instanceof Error && error.message.includes("Unknown terminal");
 }
 
 function createEditorStateFromSession(session: {
@@ -255,6 +260,47 @@ export function EditorPanel() {
     dispatch({ type: "OPEN_BROWSER_TAB", url });
   }, []);
 
+  const closeTabs = useCallback(
+    async (tabsToClose: EditorTab[], action: EditorPanelAction) => {
+      const terminalIds = [
+        ...new Set(
+          tabsToClose
+            .map((tab) => tab.terminalId)
+            .filter((terminalId): terminalId is string => Boolean(terminalId))
+        ),
+      ];
+
+      for (const terminalId of terminalIds) {
+        try {
+          await deleteTerminal(terminalId);
+        } catch (error) {
+          if (isUnknownTerminalError(error)) {
+            continue;
+          }
+
+          flashNotice(
+            error instanceof Error
+              ? `Failed to close terminal: ${error.message}`
+              : "Failed to close terminal.",
+            "error"
+          );
+          return false;
+        }
+      }
+
+      dispatch(action);
+
+      if (terminalIds.length > 0) {
+        void refreshTerminals().catch(() => {
+          // Ignore background refresh failures after the close succeeds.
+        });
+      }
+
+      return true;
+    },
+    [flashNotice, refreshTerminals]
+  );
+
   useEffect(() => {
     const onTranscript = (payload: OpenTranscriptPayload) => {
       dispatch({
@@ -426,7 +472,7 @@ export function EditorPanel() {
         setExpandedComposerDraft(null);
       }
       if (!tab.dirty) {
-        dispatch({ type: "CLOSE_TAB", group, id });
+        void closeTabs([tab], { type: "CLOSE_TAB", group, id });
         return;
       }
 
@@ -451,7 +497,8 @@ export function EditorPanel() {
                     dismiss(nid);
                     void (async () => {
                       const ok = await saveTab(id, undefined, { quiet: true });
-                      if (ok) dispatch({ type: "CLOSE_TAB", group, id });
+                      if (!ok) return;
+                      await closeTabs([tab], { type: "CLOSE_TAB", group, id });
                     })();
                   },
                 },
@@ -462,7 +509,7 @@ export function EditorPanel() {
             label: "Don't Save",
             onClick: () => {
               dismiss(nid);
-              dispatch({ type: "CLOSE_TAB", group, id });
+              void closeTabs([tab], { type: "CLOSE_TAB", group, id });
             },
           },
           {
@@ -481,6 +528,7 @@ export function EditorPanel() {
       pushNotification,
       saveTab,
       setExpandedComposerDraft,
+      closeTabs,
     ]
   );
 
@@ -489,7 +537,7 @@ export function EditorPanel() {
       const tabs = group === "left" ? stateRef.current.leftTabs : stateRef.current.rightTabs;
       const dirty = tabs.filter((t) => t.dirty);
       if (dirty.length === 0) {
-        dispatch({ type: "CLOSE_ALL_GROUP", group });
+        void closeTabs(tabs, { type: "CLOSE_ALL_GROUP", group });
         return;
       }
 
@@ -523,7 +571,7 @@ export function EditorPanel() {
                         const ok = await saveTab(t.id, undefined, { quiet: true });
                         if (!ok) return;
                       }
-                      dispatch({ type: "CLOSE_ALL_GROUP", group });
+                      await closeTabs(tabs, { type: "CLOSE_ALL_GROUP", group });
                     })();
                   },
                 },
@@ -534,7 +582,7 @@ export function EditorPanel() {
             label: "Don't Save",
             onClick: () => {
               dismiss(nid);
-              dispatch({ type: "CLOSE_ALL_GROUP", group });
+              void closeTabs(tabs, { type: "CLOSE_ALL_GROUP", group });
             },
           },
           {
@@ -545,7 +593,7 @@ export function EditorPanel() {
         ],
       });
     },
-    [dismiss, dismissByKind, pushNotification, saveTab]
+    [dismiss, dismissByKind, pushNotification, saveTab, closeTabs]
   );
 
   const requestCloseOthersInGroup = useCallback(
@@ -556,7 +604,7 @@ export function EditorPanel() {
       const toClose = tabs.filter((t) => t.id !== activeId);
       const dirty = toClose.filter((t) => t.dirty);
       if (dirty.length === 0) {
-        dispatch({ type: "CLOSE_OTHERS_GROUP", group });
+        void closeTabs(toClose, { type: "CLOSE_OTHERS_GROUP", group });
         return;
       }
 
@@ -590,7 +638,7 @@ export function EditorPanel() {
                         const ok = await saveTab(t.id, undefined, { quiet: true });
                         if (!ok) return;
                       }
-                      dispatch({ type: "CLOSE_OTHERS_GROUP", group });
+                      await closeTabs(toClose, { type: "CLOSE_OTHERS_GROUP", group });
                     })();
                   },
                 },
@@ -601,7 +649,7 @@ export function EditorPanel() {
             label: "Don't Save",
             onClick: () => {
               dismiss(nid);
-              dispatch({ type: "CLOSE_OTHERS_GROUP", group });
+              void closeTabs(toClose, { type: "CLOSE_OTHERS_GROUP", group });
             },
           },
           {
@@ -612,7 +660,7 @@ export function EditorPanel() {
         ],
       });
     },
-    [dismiss, dismissByKind, pushNotification, saveTab]
+    [dismiss, dismissByKind, pushNotification, saveTab, closeTabs]
   );
 
   useEffect(() => {

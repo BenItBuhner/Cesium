@@ -19,7 +19,6 @@ type TerminalSession = {
   attachedClients: Set<WebSocket>;
   exited: boolean;
   exitCode: number | null;
-  idleTimer: NodeJS.Timeout | null;
   scrollbackChunks: Buffer[];
   scrollbackSize: number;
 };
@@ -29,10 +28,6 @@ const decoder = new TextDecoder();
 const terminalSessions = new Map<string, TerminalSession>();
 const terminalWebSocketServer = new WebSocketServer({ noServer: true });
 const TERMINAL_SCROLLBACK_LIMIT = 50 * 1024;
-const TERMINAL_IDLE_TIMEOUT = Number.parseInt(
-  process.env.TERMINAL_IDLE_TIMEOUT ?? "300000",
-  10
-);
 
 function getDefaultShell(): string {
   if (process.platform === "win32") {
@@ -182,26 +177,6 @@ function appendScrollback(session: TerminalSession, chunk: Buffer): void {
   }
 }
 
-function scheduleIdleCleanup(session: TerminalSession): void {
-  if (session.idleTimer) {
-    clearTimeout(session.idleTimer);
-  }
-  session.idleTimer = setTimeout(() => {
-    if (session.attachedClients.size > 0 || session.exited) {
-      return;
-    }
-    session.pty.kill();
-    terminalSessions.delete(session.id);
-  }, TERMINAL_IDLE_TIMEOUT);
-}
-
-function clearIdleCleanup(session: TerminalSession): void {
-  if (session.idleTimer) {
-    clearTimeout(session.idleTimer);
-    session.idleTimer = null;
-  }
-}
-
 function spawnTerminalSession(
   workspaceId: string,
   cwd: string,
@@ -227,7 +202,6 @@ function spawnTerminalSession(
     attachedClients: new Set(),
     exited: false,
     exitCode: null,
-    idleTimer: null,
     scrollbackChunks: [],
     scrollbackSize: 0,
   };
@@ -285,13 +259,11 @@ export function killTerminalSession(id: string): boolean {
   const session = terminalSessions.get(id);
   if (!session) return false;
   session.pty.kill();
-  clearIdleCleanup(session);
   terminalSessions.delete(id);
   return true;
 }
 
 function attachTerminalClient(session: TerminalSession, ws: WebSocket): void {
-  clearIdleCleanup(session);
   session.attachedClients.add(ws);
 
   ws.send(
@@ -343,9 +315,6 @@ function attachTerminalClient(session: TerminalSession, ws: WebSocket): void {
 
   ws.on("close", () => {
     session.attachedClients.delete(ws);
-    if (session.attachedClients.size === 0 && !session.exited) {
-      scheduleIdleCleanup(session);
-    }
   });
 }
 
