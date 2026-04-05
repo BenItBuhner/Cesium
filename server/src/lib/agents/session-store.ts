@@ -47,12 +47,7 @@ function normalizeConversationRecord(
 ): AgentConversationRecord {
   const rawBackendId = record.config.backendId;
   if (typeof rawBackendId === "string" && rawBackendId in AGENT_BACKENDS) {
-    const backend = AGENT_BACKENDS[rawBackendId as AgentBackendId];
-    return {
-      ...record,
-      capabilities: backend.capabilities,
-      experimental: Boolean(backend.experimental),
-    };
+    return record;
   }
   const fallbackBackend = AGENT_BACKENDS[FALLBACK_BACKEND_ID];
   return {
@@ -194,8 +189,13 @@ export async function appendConversationEvents(
       );
     }
 
+    // Re-read meta after the append so concurrent queue work (e.g. runtime
+    // startSession updating providerSessionId) cannot be overwritten by a
+    // stale snapshot captured at the start of this operation.
+    const latest = await readConversationRecord(workspaceId, conversationId);
+    const base = latest ?? record;
     const updatedRecord: AgentConversationRecord = {
-      ...record,
+      ...base,
       updatedAt: appended[appended.length - 1]?.createdAt ?? now,
       lastEventSeq: appended[appended.length - 1]?.seq ?? record.lastEventSeq,
     };

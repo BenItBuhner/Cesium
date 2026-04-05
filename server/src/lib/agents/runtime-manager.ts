@@ -70,6 +70,8 @@ function truncateConversationTitle(text: string): string {
 export class AgentRuntimeManager {
   private readonly runtimes = new Map<string, ActiveRuntime>();
   private readonly retainedConversationCounts = new Map<string, number>();
+  /** Serializes ensureRuntime per conversation so warm + prompt cannot double-start sessions. */
+  private readonly runtimeEnsureQueues = new Map<string, Promise<unknown>>();
   private readonly backends: Record<AgentBackendId, AgentBackendInfo>;
   private readonly createProviderFn: (backendId: AgentBackendId) => Promise<AgentProvider>;
   private readonly listBackendsFn: () => AgentBackendInfo[] | Promise<AgentBackendInfo[]>;
@@ -442,13 +444,64 @@ export class AgentRuntimeManager {
     });
   }
 
+  private async withRuntimeEnsureQueue<T>(
+    conversationId: string,
+    run: () => Promise<T>
+  ): Promise<T> {
+    const previous = this.runtimeEnsureQueues.get(conversationId) ?? Promise.resolve();
+    let release: (() => void) | undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = () => resolve();
+    });
+    const tail = previous.catch(() => undefined).then(() => gate);
+    this.runtimeEnsureQueues.set(conversationId, tail);
+    await previous.catch(() => undefined);
+    try {
+      return await run();
+    } finally {
+      if (release) {
+        release();
+      }
+      if (this.runtimeEnsureQueues.get(conversationId) === tail) {
+        this.runtimeEnsureQueues.delete(conversationId);
+      }
+    }
+  }
+
   private async ensureRuntime(
     workspace: WorkspaceRecord,
     record: AgentConversationRecord
   ): Promise<ActiveRuntime> {
+    return this.withRuntimeEnsureQueue(record.id, () =>
+      this.ensureRuntimeImpl(workspace, record)
+    );
+  }
+
+  private async ensureRuntimeImpl(
+    workspace: WorkspaceRecord,
+    record: AgentConversationRecord
+  ): Promise<ActiveRuntime> {
+    const latest = await readConversationRecord(workspace.id, record.id);
+    if (!latest) {
+      throw new Error(`Unknown conversation: ${record.id}`);
+    }
+    record = latest;
+
     const existing = this.runtimes.get(record.id);
     if (existing) {
-      return existing;
+      const disk = await readConversationRecord(workspace.id, record.id);
+      if (!disk) {
+        await this.disposeRuntime(record.id);
+      } else if (existing.provider.backend.id !== disk.config.backendId) {
+        await this.disposeRuntime(record.id);
+      } else if (
+        disk.providerSessionId !== null &&
+        disk.providerSessionId !== existing.handle.sessionId
+      ) {
+        await this.disposeRuntime(record.id);
+      } else {
+        return existing;
+      }
     }
 
     const provider = await this.createProviderFn(record.config.backendId);
