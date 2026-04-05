@@ -652,24 +652,16 @@ test("unsupported backends fall back to cursor defaults when legacy conversation
 
   const migrated = await readConversationSnapshot(workspace.id, conversation.id);
   assert.ok(migrated, "expected migrated snapshot");
+  const fallbackBackend = AGENT_BACKENDS["cursor-acp"];
   assert.equal(migrated.conversation.config.backendId, "cursor-acp");
-  assert.equal(
-    migrated.conversation.config.modelId,
-    testBackends["cursor-acp"].defaultModelId
-  );
-  assert.equal(
-    migrated.conversation.config.modelName,
-    testBackends["cursor-acp"].defaultModelName
-  );
-  assert.equal(migrated.conversation.config.mode, testBackends["cursor-acp"].defaultMode);
+  assert.equal(migrated.conversation.config.modelId, fallbackBackend.defaultModelId);
+  assert.equal(migrated.conversation.config.modelName, fallbackBackend.defaultModelName);
+  assert.equal(migrated.conversation.config.mode, fallbackBackend.defaultMode);
   assert.equal(migrated.conversation.status, "idle");
   assert.equal(migrated.conversation.providerSessionId, null);
   assert.deepEqual(migrated.conversation.configOptions, []);
   assert.equal(migrated.conversation.pendingPermission, null);
-  assert.deepEqual(
-    migrated.conversation.capabilities,
-    testBackends["cursor-acp"].capabilities
-  );
+  assert.deepEqual(migrated.conversation.capabilities, fallbackBackend.capabilities);
 
   await testRuntimeManager.ensureConversationRuntime(workspace, conversation.id);
   const resumed = await readConversationSnapshot(workspace.id, conversation.id);
