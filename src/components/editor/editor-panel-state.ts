@@ -54,6 +54,12 @@ export type EditorPanelAction =
   | { type: "MOVE_TAB"; tabId: string; from: EditorGroup; to: EditorGroup }
   | { type: "FOCUS_EDITOR_GROUP"; group: EditorGroup }
   | {
+      type: "OPEN_AGENT_CONVERSATION_TAB";
+      conversationId: string;
+      title: string;
+      group?: EditorGroup;
+    }
+  | {
       type: "OPEN_TRANSCRIPT_TAB";
       title: string;
       messages: ChatMessage[];
@@ -91,6 +97,10 @@ function stripActive(tab: EditorTab): EditorTab {
     };
   }
   return rest;
+}
+
+function truncateTabName(title: string): string {
+  return title.length > 40 ? `${title.slice(0, 37)}…` : title;
 }
 
 export function createInitialEditorState(tabs: EditorTab[]): EditorPanelState {
@@ -192,6 +202,138 @@ export function editorPanelReducer(
       };
     }
 
+    case "OPEN_AGENT_CONVERSATION_TAB": {
+      const tabId = `conversation:${action.conversationId}`;
+      const name = truncateTabName(action.title);
+      const shouldSplitForRight = action.group === "right" && !state.split;
+      const splitState = shouldSplitForRight
+        ? {
+            ...state,
+            split: true,
+            rightTabs: state.rightTabs,
+            rightActiveId: state.rightActiveId,
+          }
+        : state;
+      const existingLeft = state.leftTabs.find(
+        (tab) => tab.conversationId === action.conversationId
+      );
+      const existingRight = state.rightTabs.find(
+        (tab) => tab.conversationId === action.conversationId
+      );
+
+      if (!state.split && existingLeft && action.group !== "right") {
+        return {
+          ...state,
+          focusedGroup: "left",
+          leftActiveId: existingLeft.id,
+          leftTabs: state.leftTabs.map((tab) =>
+            tab.id === existingLeft.id ? { ...tab, name } : tab
+          ),
+        };
+      }
+
+      const requestedGroup = action.group;
+      const targetGroup =
+        requestedGroup ??
+        (splitState.split && splitState.focusedGroup === "right" ? "right" : "left");
+
+      if (targetGroup === "left" && existingLeft) {
+        return {
+          ...state,
+          focusedGroup: "left",
+          leftActiveId: existingLeft.id,
+          leftTabs: state.leftTabs.map((tab) =>
+            tab.id === existingLeft.id ? { ...tab, name } : tab
+          ),
+        };
+      }
+
+      if (targetGroup === "right" && existingRight) {
+        return {
+          ...state,
+          focusedGroup: "right",
+          rightActiveId: existingRight.id,
+          rightTabs: state.rightTabs.map((tab) =>
+            tab.id === existingRight.id ? { ...tab, name } : tab
+          ),
+        };
+      }
+
+      if (existingLeft && targetGroup === "right" && splitState.split) {
+        const movedTab = { ...existingLeft, name };
+        const nextLeftTabs = splitState.leftTabs.filter((tab) => tab.id !== existingLeft.id);
+        return {
+          ...splitState,
+          focusedGroup: "right",
+          leftTabs: nextLeftTabs,
+          rightTabs: [...splitState.rightTabs, movedTab],
+          leftActiveId:
+            splitState.leftActiveId === existingLeft.id
+              ? nextLeftTabs[0]?.id ?? null
+              : splitState.leftActiveId,
+          rightActiveId: existingLeft.id,
+        };
+      }
+
+      if (existingRight && targetGroup === "left") {
+        const movedTab = { ...existingRight, name };
+        const nextRightTabs = state.rightTabs.filter((tab) => tab.id !== existingRight.id);
+        return {
+          ...state,
+          focusedGroup: "left",
+          leftTabs: [...state.leftTabs, movedTab],
+          rightTabs: nextRightTabs,
+          leftActiveId: existingRight.id,
+          rightActiveId:
+            state.rightActiveId === existingRight.id
+              ? nextRightTabs[0]?.id ?? null
+              : state.rightActiveId,
+        };
+      }
+
+      if (!splitState.split && existingRight) {
+        const nextRightTabs = splitState.rightTabs.filter((tab) => tab.id !== existingRight.id);
+        return {
+          ...splitState,
+          focusedGroup: "left",
+          leftTabs: [...splitState.leftTabs, { ...existingRight, name }],
+          rightTabs: nextRightTabs,
+          leftActiveId: existingRight.id,
+          rightActiveId:
+            splitState.rightActiveId === existingRight.id
+              ? nextRightTabs[0]?.id ?? null
+              : splitState.rightActiveId,
+        };
+      }
+
+      const tab: EditorTab = {
+        id: tabId,
+        name,
+        language: "markdown",
+        icon: "agent",
+        content: "",
+        conversationId: action.conversationId,
+        fileKind: "text",
+        previewMode: "source",
+      };
+
+      if (!splitState.split || targetGroup === "left") {
+        return {
+          ...splitState,
+          focusedGroup: "left",
+          leftTabs: [...splitState.leftTabs, tab],
+          leftActiveId: tabId,
+        };
+      }
+
+      return {
+        ...splitState,
+        focusedGroup: "right",
+        rightTabs: [...splitState.rightTabs, tab],
+        rightActiveId: tabId,
+      };
+    }
+
     case "OPEN_TRANSCRIPT_TAB": {
       const resolvedSessionId = action.sessionId ?? inferTranscriptSessionId(action.messages);
       const existingLeft =
@@ -203,10 +345,7 @@ export function editorPanelReducer(
           ? state.rightTabs.find((tab) => tab.transcriptSessionId === resolvedSessionId)
           : undefined;
       const id = `subagent-${Date.now().toString(36)}`;
-      const name =
-        action.title.length > 40
-          ? `${action.title.slice(0, 37)}…`
-          : action.title;
+      const name = truncateTabName(action.title);
       if (existingLeft) {
         return {
           ...state,
@@ -263,10 +402,7 @@ export function editorPanelReducer(
       const tabId = `composer-draft:${action.draftId}`;
       const existingLeft = state.leftTabs.find((tab) => tab.id === tabId);
       const existingRight = state.rightTabs.find((tab) => tab.id === tabId);
-      const name =
-        action.title.length > 40
-          ? `${action.title.slice(0, 37)}…`
-          : action.title;
+      const name = truncateTabName(action.title);
       if (existingLeft) {
         return {
           ...state,

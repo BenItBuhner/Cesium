@@ -161,6 +161,7 @@ export function ChatPanel() {
     composerDrafts,
     composerSelections,
     openComposerDraft,
+    openAgentConversation,
     upsertComposerDraft,
     setComposerSelection,
     expandedComposerDraftId,
@@ -852,12 +853,14 @@ export function ChatPanel() {
   ]);
 
   useEffect(() => {
+    const permissionToastIds = permissionToastIdsRef.current;
+    const dismissedPermissionToastKeys = dismissedPermissionToastKeysRef.current;
     return () => {
-      for (const notificationId of permissionToastIdsRef.current.values()) {
+      for (const notificationId of permissionToastIds.values()) {
         dismiss(notificationId);
       }
-      permissionToastIdsRef.current.clear();
-      dismissedPermissionToastKeysRef.current.clear();
+      permissionToastIds.clear();
+      dismissedPermissionToastKeys.clear();
     };
   }, [dismiss]);
 
@@ -1280,6 +1283,7 @@ export function ChatPanel() {
   const handleChatTabContextMenu = useCallback(
     (e: MouseEvent, tabId: string) => {
       const othersOpen = tabs.length > 1;
+      const targetConversation = conversationsById[tabId];
       const items: WorkbenchMenuItem[] = [
         {
           type: "item",
@@ -1300,10 +1304,42 @@ export function ChatPanel() {
           disabled: !othersOpen,
           onSelect: () => closeOtherChatTabs(tabId),
         },
+        { type: "sep" },
+        {
+          type: "item",
+          id: "open-editor",
+          label: "Open in Editor",
+          disabled: !targetConversation,
+          onSelect: () => {
+            if (!targetConversation) {
+              return;
+            }
+            openAgentConversation({
+              conversationId: tabId,
+              title: targetConversation.title,
+            });
+          },
+        },
+        {
+          type: "item",
+          id: "open-editor-side",
+          label: "Open in Side-by-Side Editor",
+          disabled: !targetConversation,
+          onSelect: () => {
+            if (!targetConversation) {
+              return;
+            }
+            openAgentConversation({
+              conversationId: tabId,
+              title: targetConversation.title,
+              group: "right",
+            });
+          },
+        },
       ];
       openAt(e, items);
     },
-    [tabs, openAt, closeChatTab, closeOtherChatTabs]
+    [tabs, conversationsById, openAt, closeChatTab, closeOtherChatTabs, openAgentConversation]
   );
 
   const handleChatStripContextMenu = useCallback(
@@ -1535,6 +1571,10 @@ export function ChatPanel() {
           onNewChat={handleNewChat}
           onTabContextMenu={handleChatTabContextMenu}
           onStripContextMenu={handleChatStripContextMenu}
+          onReorderTabs={handleReorderChatTabs}
+          onRenameTab={handleRenameChatTab}
+          externalRenameTabId={chatTabRenameTargetId}
+          onExternalRenameConsumed={() => setChatTabRenameTargetId(null)}
         />
       </div>
 

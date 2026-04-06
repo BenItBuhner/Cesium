@@ -37,6 +37,12 @@ export type OpenComposerDraftPayload = {
   content: string;
 };
 
+export type OpenAgentConversationPayload = {
+  conversationId: string;
+  title: string;
+  group?: "left" | "right";
+};
+
 export type ComposerDraftRecord = OpenComposerDraftPayload;
 
 export type ExpandedComposerController = {
@@ -129,6 +135,7 @@ function writePersistedComposerState(
 
 type TranscriptHandler = (payload: OpenTranscriptPayload) => void;
 type ComposerDraftHandler = (payload: OpenComposerDraftPayload) => void;
+type AgentConversationHandler = (payload: OpenAgentConversationPayload) => void;
 type ExplorerHandler = (payload: ExplorerOpenRequest) => void;
 
 type Ctx = {
@@ -136,6 +143,10 @@ type Ctx = {
   openSubagentTranscript: (payload: OpenTranscriptPayload) => void;
   registerOpenComposerDraft: (handler: ComposerDraftHandler | null) => void;
   openComposerDraft: (payload: OpenComposerDraftPayload) => void;
+  registerOpenAgentConversation: (
+    handler: AgentConversationHandler | null
+  ) => void;
+  openAgentConversation: (payload: OpenAgentConversationPayload) => void;
   registerOpenExplorerFile: (handler: ExplorerHandler | null) => void;
   openExplorerFile: (payload: ExplorerOpenRequest) => void;
   composerDrafts: Record<string, ComposerDraftRecord>;
@@ -163,6 +174,8 @@ export function OpenInEditorProvider({ children }: { children: ReactNode }) {
   const pendingRef = useRef<OpenTranscriptPayload | null>(null);
   const composerHandlerRef = useRef<ComposerDraftHandler | null>(null);
   const pendingComposerRef = useRef<OpenComposerDraftPayload | null>(null);
+  const conversationHandlerRef = useRef<AgentConversationHandler | null>(null);
+  const pendingConversationRef = useRef<OpenAgentConversationPayload | null>(null);
   const explorerRef = useRef<ExplorerHandler | null>(null);
   const pendingExplorerRef = useRef<ExplorerOpenRequest | null>(null);
   const [composerDrafts, setComposerDrafts] = useState<Record<string, ComposerDraftRecord>>({});
@@ -275,6 +288,29 @@ export function OpenInEditorProvider({ children }: { children: ReactNode }) {
     [upsertComposerDraft]
   );
 
+  const registerOpenAgentConversation = useCallback(
+    (handler: AgentConversationHandler | null) => {
+      conversationHandlerRef.current = handler;
+      if (handler && pendingConversationRef.current) {
+        const pending = pendingConversationRef.current;
+        pendingConversationRef.current = null;
+        handler(pending);
+      }
+    },
+    []
+  );
+
+  const openAgentConversation = useCallback(
+    (payload: OpenAgentConversationPayload) => {
+      if (conversationHandlerRef.current) {
+        conversationHandlerRef.current(payload);
+      } else {
+        pendingConversationRef.current = payload;
+      }
+    },
+    []
+  );
+
   useEffect(() => {
     if (!activeWorkspaceId) {
       setComposerDrafts({});
@@ -331,6 +367,8 @@ export function OpenInEditorProvider({ children }: { children: ReactNode }) {
       openSubagentTranscript,
       registerOpenComposerDraft,
       openComposerDraft,
+      registerOpenAgentConversation,
+      openAgentConversation,
       registerOpenExplorerFile,
       openExplorerFile,
       composerDrafts,
@@ -349,6 +387,8 @@ export function OpenInEditorProvider({ children }: { children: ReactNode }) {
       openSubagentTranscript,
       registerOpenComposerDraft,
       openComposerDraft,
+      registerOpenAgentConversation,
+      openAgentConversation,
       registerOpenExplorerFile,
       openExplorerFile,
       composerDrafts,

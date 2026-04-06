@@ -6,6 +6,7 @@ import { FileExplorer } from "@/components/sidebar/FileExplorer";
 import { EditorPanel } from "@/components/editor/EditorPanel";
 import { OpenInEditorProvider } from "@/components/editor/OpenInEditorContext";
 import { ChatPanel } from "@/components/chat/ChatPanel";
+import { AgentConversationsProvider } from "@/components/chat/AgentConversationsContext";
 import { useViewport } from "@/hooks/useViewport";
 import { PanelLeft } from "lucide-react";
 import { EditorBridgeProvider } from "@/components/ide/EditorBridgeContext";
@@ -125,132 +126,137 @@ export function IDELayout() {
 
   return (
     <OpenInEditorProvider>
-      <WorkbenchContextMenuProvider>
-      <EditorBridgeProvider>
-        <WorkbenchProvider value={workbench}>
-          <HardwareInputProvider>
-            <IDEKeyboardLayer>
-          {isMobile ? (
-            <div className="flex h-screen w-screen flex-col overflow-hidden bg-[var(--bg-main)]">
-              <div className="min-h-0 flex-1 overflow-hidden">
-                {mobilePanel === "sidebar" && <FileExplorer />}
-                {mobilePanel === "editor" && <EditorPanel />}
-                {mobilePanel === "chat" && <ChatPanel />}
-              </div>
-              <nav className="flex h-[44px] shrink-0 items-center justify-around border-t border-[var(--border-subtle)] bg-[var(--bg-panel)]">
-                <button
-                  type="button"
-                  onClick={() => setMobilePanel("sidebar")}
-                  className="px-4 py-2 font-sans text-[12px] transition-colors"
-                  style={{
-                    color:
-                      mobilePanel === "sidebar"
-                        ? "var(--accent)"
-                        : "var(--text-secondary)",
-                  }}
-                >
-                  Files
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setMobilePanel("editor")}
-                  className="px-4 py-2 font-sans text-[12px] transition-colors"
-                  style={{
-                    color:
-                      mobilePanel === "editor"
-                        ? "var(--accent)"
-                        : "var(--text-secondary)",
-                  }}
-                >
-                  Editor
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setMobilePanel("chat")}
-                  className="px-4 py-2 font-sans text-[12px] transition-colors"
-                  style={{
-                    color:
-                      mobilePanel === "chat"
-                        ? "var(--accent)"
-                        : "var(--text-secondary)",
-                  }}
-                >
-                  Chat
-                </button>
-              </nav>
-            </div>
-          ) : (
-            <div className="flex h-screen w-screen flex-col overflow-hidden bg-[var(--bg-main)]">
-              <div className="flex min-h-0 flex-1 overflow-hidden">
-              {!sidebarVisible && themeConfig.showFloatingSidebarReveal ? (
-                <button
-                  type="button"
-                  onClick={() => setSidebarOpen(true)}
-                  aria-label="Show primary sidebar"
-                  title="Show primary sidebar"
-                  className="absolute left-2 top-2 z-20 rounded-[var(--radius-tab)] bg-[var(--bg-panel)] p-1.5 text-[var(--text-secondary)] transition-colors hover:text-[var(--text-primary)]"
-                >
-                  <PanelLeft className="size-[18px]" strokeWidth={1.5} />
-                </button>
-              ) : null}
+      <AgentConversationsProvider>
+        <WorkbenchContextMenuProvider>
+          <EditorBridgeProvider>
+            <WorkbenchProvider value={workbench}>
+              <HardwareInputProvider>
+                <IDEKeyboardLayer>
+                  {isMobile ? (
+                    <div className="flex h-screen w-screen flex-col overflow-hidden bg-[var(--bg-main)]">
+                      <div className="min-h-0 flex-1 overflow-hidden">
+                        {mobilePanel === "sidebar" && <FileExplorer />}
+                        {mobilePanel === "editor" && <EditorPanel />}
+                        {mobilePanel === "chat" && <ChatPanel />}
+                      </div>
+                      <nav className="flex h-[44px] shrink-0 items-center justify-around border-t border-[var(--border-subtle)] bg-[var(--bg-panel)]">
+                        <button
+                          type="button"
+                          onClick={() => setMobilePanel("sidebar")}
+                          className="px-4 py-2 font-sans text-[12px] transition-colors"
+                          style={{
+                            color:
+                              mobilePanel === "sidebar"
+                                ? "var(--accent)"
+                                : "var(--text-secondary)",
+                          }}
+                        >
+                          Files
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setMobilePanel("editor")}
+                          className="px-4 py-2 font-sans text-[12px] transition-colors"
+                          style={{
+                            color:
+                              mobilePanel === "editor"
+                                ? "var(--accent)"
+                                : "var(--text-secondary)",
+                          }}
+                        >
+                          Editor
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setMobilePanel("chat")}
+                          className="px-4 py-2 font-sans text-[12px] transition-colors"
+                          style={{
+                            color:
+                              mobilePanel === "chat"
+                                ? "var(--accent)"
+                                : "var(--text-secondary)",
+                          }}
+                        >
+                          Chat
+                        </button>
+                      </nav>
+                    </div>
+                  ) : (
+                    <div className="flex h-screen w-screen flex-col overflow-hidden bg-[var(--bg-main)]">
+                      <div className="flex min-h-0 flex-1 overflow-hidden">
+                        {!sidebarVisible && themeConfig.showFloatingSidebarReveal ? (
+                          <button
+                            type="button"
+                            onClick={() => setSidebarOpen(true)}
+                            aria-label="Show primary sidebar"
+                            title="Show primary sidebar"
+                            className="absolute left-2 top-2 z-20 rounded-[var(--radius-tab)] bg-[var(--bg-panel)] p-1.5 text-[var(--text-secondary)] transition-colors hover:text-[var(--text-primary)]"
+                          >
+                            <PanelLeft className="size-[18px]" strokeWidth={1.5} />
+                          </button>
+                        ) : null}
 
-              <Group
-                orientation="horizontal"
-                id="ide-panels"
-                key={activeWorkspaceId ?? "workspace-layout"}
-                defaultLayout={workspaceSession.layout.desktopLayout ?? DESKTOP_DEFAULT_LAYOUT}
-                onLayoutChanged={(layout) => {
-                  updateWorkspaceSession((current) => ({
-                    ...current,
-                    layout: {
-                      ...current.layout,
-                      desktopLayout: layout,
-                    },
-                  }));
-                }}
-              >
-                <Panel
-                  id="sidebar"
-                  panelRef={sidebarPanelRef}
-                  minSize="10%"
-                  maxSize="25%"
-                  collapsible
-                  collapsedSize="0%"
-                  className="min-h-0 overflow-visible"
-                >
-                  <FileExplorer />
-                </Panel>
-                <ResizeHandle />
-                <Panel
-                  id="editor"
-                  minSize="30%"
-                  className="min-h-0 h-full"
-                  style={{ overflow: "hidden" }}
-                >
-                  <EditorPanel />
-                </Panel>
-                <ResizeHandle />
-                <Panel
-                  id="chat"
-                  panelRef={chatPanelRef}
-                  minSize="15%"
-                  maxSize="45%"
-                  collapsible
-                  collapsedSize="0%"
-                  className="min-h-0 h-full"
-                  style={{ overflow: "hidden" }}
-                >
-                  <ChatPanel />
-                </Panel>
-              </Group>
-              </div>
-            </div>
-          )}
-            </IDEKeyboardLayer>
-          </HardwareInputProvider>
-        </WorkbenchProvider>
-      </EditorBridgeProvider>
-      </WorkbenchContextMenuProvider>
+                        <Group
+                          orientation="horizontal"
+                          id="ide-panels"
+                          key={activeWorkspaceId ?? "workspace-layout"}
+                          defaultLayout={
+                            workspaceSession.layout.desktopLayout ??
+                            DESKTOP_DEFAULT_LAYOUT
+                          }
+                          onLayoutChanged={(layout) => {
+                            updateWorkspaceSession((current) => ({
+                              ...current,
+                              layout: {
+                                ...current.layout,
+                                desktopLayout: layout,
+                              },
+                            }));
+                          }}
+                        >
+                          <Panel
+                            id="sidebar"
+                            panelRef={sidebarPanelRef}
+                            minSize="10%"
+                            maxSize="25%"
+                            collapsible
+                            collapsedSize="0%"
+                            className="min-h-0 overflow-visible"
+                          >
+                            <FileExplorer />
+                          </Panel>
+                          <ResizeHandle />
+                          <Panel
+                            id="editor"
+                            minSize="30%"
+                            className="min-h-0 h-full"
+                            style={{ overflow: "hidden" }}
+                          >
+                            <EditorPanel />
+                          </Panel>
+                          <ResizeHandle />
+                          <Panel
+                            id="chat"
+                            panelRef={chatPanelRef}
+                            minSize="15%"
+                            maxSize="45%"
+                            collapsible
+                            collapsedSize="0%"
+                            className="min-h-0 h-full"
+                            style={{ overflow: "hidden" }}
+                          >
+                            <ChatPanel />
+                          </Panel>
+                        </Group>
+                      </div>
+                    </div>
+                  )}
+                </IDEKeyboardLayer>
+              </HardwareInputProvider>
+            </WorkbenchProvider>
+          </EditorBridgeProvider>
+        </WorkbenchContextMenuProvider>
+      </AgentConversationsProvider>
     </OpenInEditorProvider>
   );
 }

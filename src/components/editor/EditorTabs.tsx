@@ -6,6 +6,7 @@ import { Columns2, MoreVertical } from "lucide-react";
 import { EditorTab } from "./EditorTab";
 import { useClickOutside } from "@/hooks/useClickOutside";
 import { useTabStripWheel } from "@/hooks/useTabStripWheel";
+import { CHAT_TAB_DND_MIME, parseChatTabDragPayload } from "@/lib/chat-tab-dnd";
 import type { EditorTab as EditorTabType } from "@/lib/types";
 import type { EditorGroup } from "./editor-panel-state";
 import { TAB_DND_MIME, parseTabDragPayload } from "./editor-panel-state";
@@ -23,6 +24,7 @@ interface EditorTabsProps {
   onCloseAllTabs: () => void;
   onCloseOtherTabs: () => void;
   onMoveTabBetweenGroups: (tabId: string, from: EditorGroup, to: EditorGroup) => void;
+  onOpenConversationTab?: (conversationId: string, group: EditorGroup) => void;
   onTabContextMenu?: (e: MouseEvent, tabId: string) => void;
   onStripContextMenu?: (e: MouseEvent) => void;
 }
@@ -41,6 +43,7 @@ export function EditorTabs({
   onCloseAllTabs,
   onCloseOtherTabs,
   onMoveTabBetweenGroups,
+  onOpenConversationTab,
   onTabContextMenu,
   onStripContextMenu,
 }: EditorTabsProps) {
@@ -73,13 +76,19 @@ export function EditorTabs({
   function handleStripDragOver(e: React.DragEvent) {
     const types = [...e.dataTransfer.types];
     const isTabDrag = types.includes(TAB_DND_MIME);
+    const isChatTabDrag = types.includes(CHAT_TAB_DND_MIME);
 
     if (splitActive && isTabDrag) {
       e.preventDefault();
       e.dataTransfer.dropEffect = "move";
     }
 
-    if (!isTabDrag || !stripRef.current) return;
+    if (isChatTabDrag && onOpenConversationTab) {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "move";
+    }
+
+    if ((!isTabDrag && !isChatTabDrag) || !stripRef.current) return;
     const scroller = stripRef.current;
     if (scroller.scrollWidth <= scroller.clientWidth + 1) return;
 
@@ -102,11 +111,22 @@ export function EditorTabs({
   }
 
   function handleStripDrop(e: React.DragEvent) {
-    if (!splitActive) return;
-    e.preventDefault();
-    const payload = parseTabDragPayload(e.dataTransfer.getData(TAB_DND_MIME));
-    if (!payload || payload.group === group) return;
-    onMoveTabBetweenGroups(payload.tabId, payload.group, group);
+    const tabPayload = parseTabDragPayload(e.dataTransfer.getData(TAB_DND_MIME));
+    if (splitActive && tabPayload) {
+      e.preventDefault();
+      if (tabPayload.group !== group) {
+        onMoveTabBetweenGroups(tabPayload.tabId, tabPayload.group, group);
+      }
+      return;
+    }
+
+    const chatPayload = parseChatTabDragPayload(
+      e.dataTransfer.getData(CHAT_TAB_DND_MIME)
+    );
+    if (chatPayload && onOpenConversationTab) {
+      e.preventDefault();
+      onOpenConversationTab(chatPayload.tabId, group);
+    }
   }
 
   return (
