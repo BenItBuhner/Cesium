@@ -845,6 +845,7 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
       />
       <VSCodeQuickInputShell
         open={folderPromptOpen}
+        onClose={() => setFolderPromptOpen(false)}
         screenReaderTitle="Open Folder"
         inputLabel="Folder path"
         placeholder="Enter folder path"
@@ -881,6 +882,7 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
       </VSCodeQuickInputShell>
       <VSCodeQuickInputShell
         open={createWorkspaceNameOpen}
+        onClose={() => setCreateWorkspaceNameOpen(false)}
         screenReaderTitle="Create workspace"
         inputLabel="Workspace name"
         placeholder="Workspace name"
@@ -917,6 +919,7 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
       </VSCodeQuickInputShell>
       <VSCodeQuickInputShell
         open={createWorkspaceParentOpen}
+        onClose={() => setCreateWorkspaceParentOpen(false)}
         screenReaderTitle="Create workspace parent"
         inputLabel="Parent directory"
         placeholder="/home/bennett/projects"
@@ -953,6 +956,7 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
       </VSCodeQuickInputShell>
       <VSCodeQuickInputShell
         open={browserPromptOpen}
+        onClose={() => setBrowserPromptOpen(false)}
         screenReaderTitle="Open URL in Browser tab"
         inputLabel="URL"
         placeholder="http://localhost:3000/"

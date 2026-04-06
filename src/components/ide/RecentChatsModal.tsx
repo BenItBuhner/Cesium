@@ -4,6 +4,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type KeyboardEvent,
 } from "react";
@@ -41,6 +42,7 @@ export function RecentChatsModal({
 }) {
   const [query, setQuery] = useState("");
   const [sel, setSel] = useState(0);
+  const listRef = useRef<HTMLDivElement | null>(null);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -61,6 +63,16 @@ export function RecentChatsModal({
   useEffect(() => {
     setSel((s) => (filtered.length === 0 ? 0 : Math.min(s, filtered.length - 1)));
   }, [filtered.length]);
+
+  useEffect(() => {
+    if (!open || filtered.length === 0) return;
+    const root = listRef.current;
+    if (!root) return;
+    const option = root.querySelector<HTMLElement>(
+      `[role="option"][aria-selected="true"]`
+    );
+    option?.scrollIntoView({ block: "nearest" });
+  }, [filtered.length, open, sel]);
 
   const runAt = useCallback(
     (i: number) => {
@@ -119,6 +131,7 @@ export function RecentChatsModal({
   return (
     <VSCodeQuickInputShell
       open={open}
+      onClose={onClose}
       screenReaderTitle="Recent chats"
       inputLabel="Search recent chats"
       placeholder="Search recent chats..."
@@ -127,7 +140,11 @@ export function RecentChatsModal({
       onKeyDown={onKeyDown}
       onHardwareKeyDown={onHardwareKeyDown}
     >
-      <div className="max-h-[320px] overflow-y-auto overflow-x-hidden">
+      <div
+        ref={listRef}
+        className="max-h-[320px] overflow-y-auto overflow-x-hidden"
+        role="listbox"
+      >
         {filtered.length === 0 ? (
           <div className="px-[10px] py-[20px] text-center font-sans text-[13px] text-[var(--palette-placeholder)]">
             {query ? "No matching chats" : "No recent chats"}
