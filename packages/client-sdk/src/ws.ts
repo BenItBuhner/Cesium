@@ -2,7 +2,7 @@ import type {
   AgentSocketClientMessage,
   AgentSocketServerMessage,
   FileWatcherEvent,
-} from "./types.js";
+} from "./types";
 
 export type ConnectionState =
   | "idle"

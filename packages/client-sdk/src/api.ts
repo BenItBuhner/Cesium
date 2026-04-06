@@ -14,8 +14,8 @@ import type {
   WorkspaceInfo,
   WorkspaceRecord,
   WorkspaceSessionState,
-} from "./types.js";
-import { type RuntimeClientConfig, resolveBaseUrl, toWebSocketUrl } from "./config.js";
+} from "./types";
+import { type RuntimeClientConfig, resolveBaseUrl, toWebSocketUrl } from "./config";
 
 export type ClientOptions = {
   config: RuntimeClientConfig;

@@ -38,6 +38,15 @@ const allowedOrigins = (
   .map((origin) => origin.trim())
   .filter(Boolean);
 
+function isLoopbackOrigin(origin: string): boolean {
+  try {
+    const url = new URL(origin);
+    return url.hostname === "localhost" || url.hostname === "127.0.0.1";
+  } catch {
+    return false;
+  }
+}
+
 const app = new Hono();
 
 app.use(
@@ -45,7 +54,10 @@ app.use(
   cors({
     origin: (origin) => {
       if (!origin) return allowedOrigins[0] ?? "*";
-      return allowedOrigins.includes(origin) ? origin : allowedOrigins[0] ?? "*";
+      if (origin === "null") return origin;
+      if (allowedOrigins.includes(origin)) return origin;
+      if (isLoopbackOrigin(origin)) return origin;
+      return allowedOrigins[0] ?? "*";
     },
     allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allowHeaders: ["Content-Type", "x-opencursor-workspace-id"],

@@ -94,7 +94,7 @@ export default function App() {
     () =>
       new OpenCursorClient({
         config: { serverUrl },
-        fetchImpl: fetch,
+        fetchImpl: (...args) => fetch(...args),
       }),
     [serverUrl]
   );
