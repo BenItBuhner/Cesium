@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Search } from "lucide-react";
 import { ChatComposer } from "@/components/chat/ChatComposer";
 import { AskQuestionCard } from "@/components/chat/AskQuestionCard";
@@ -77,6 +77,8 @@ export function AgentConversationView({
     conversations,
     conversationsById,
     eventsByConversationId,
+    bootstrapped,
+    getConversationLoadStatus,
     answerPermissionForConversation,
     cancelPermissionForConversation,
     getConversationComposerState,
@@ -86,10 +88,12 @@ export function AgentConversationView({
     setConversationModel,
     setConversationBackend,
     setConversationConfigOption,
+    syncConversationSnapshot,
   } = useAgentConversations();
   const { workspaceSession, updateWorkspaceSession } = useWorkspace();
 
   const conversation = conversationsById[conversationId] ?? null;
+  const loadState = getConversationLoadStatus(conversationId);
   const composerState = getConversationComposerState(conversationId);
   const threadMessages = useMemo(
     () => projectAgentEventsToChatMessages(eventsByConversationId[conversationId] ?? []),
@@ -137,6 +141,13 @@ export function AgentConversationView({
   );
   const showRecentChatsSection =
     conversation?.title === "New chat" && recentConversationPreview.length > 0;
+
+  useEffect(() => {
+    if (conversation || loadState === "loading") {
+      return;
+    }
+    void syncConversationSnapshot(conversationId).catch(() => undefined);
+  }, [conversation, conversationId, loadState, syncConversationSnapshot]);
 
   const pendingPermissionDock = useMemo(() => {
     const pending = conversation?.pendingPermission;
@@ -217,6 +228,13 @@ export function AgentConversationView({
   ) : null;
 
   if (!conversation || !composerState) {
+    if (!bootstrapped || loadState === "loading" || loadState === "idle") {
+      return (
+        <div className="flex h-full min-h-0 items-center justify-center px-6 text-center font-sans text-[13px] text-[var(--text-secondary)]">
+          Loading chat...
+        </div>
+      );
+    }
     return (
       <div className="flex h-full min-h-0 items-center justify-center px-6 text-center font-sans text-[13px] text-[var(--text-secondary)]">
         This chat could not be loaded. Reopen it from the agent panel.

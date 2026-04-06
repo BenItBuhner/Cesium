@@ -100,11 +100,15 @@ type ConversationComposerState = {
   busy: boolean;
 };
 
+type ConversationLoadStatus = "idle" | "loading" | "ready" | "error";
+
 type AgentConversationsContextValue = {
   backends: AgentBackendInfo[];
   conversationsById: Record<string, AgentConversationRecord>;
   conversations: AgentConversationRecord[];
   eventsByConversationId: Record<string, AgentStoredEvent[]>;
+  bootstrapped: boolean;
+  getConversationLoadStatus: (conversationId: string) => ConversationLoadStatus;
   renameConversation: (conversationId: string, title: string) => Promise<void>;
   answerPermissionForConversation: (
     conversationId: string,
@@ -158,6 +162,10 @@ export function AgentConversationsProvider({
   >({});
   const [eventsByConversationId, setEventsByConversationId] = useState<
     Record<string, AgentStoredEvent[]>
+  >({});
+  const [bootstrapped, setBootstrapped] = useState(false);
+  const [conversationLoadStatusById, setConversationLoadStatusById] = useState<
+    Record<string, ConversationLoadStatus>
   >({});
   const socketRef = useRef<JsonWebSocket<AgentSocketServerMessage> | null>(null);
   const chatDraftRef = useRef(workspaceSession.chat);
@@ -265,6 +273,14 @@ export function AgentConversationsProvider({
               },
             };
       });
+      setConversationLoadStatusById((current) =>
+        current[snapshot.conversation.id] === "ready"
+          ? current
+          : {
+              ...current,
+              [snapshot.conversation.id]: "ready",
+            }
+      );
     },
     [updateWorkspaceSession]
   );
@@ -316,8 +332,20 @@ export function AgentConversationsProvider({
 
   const syncConversationSnapshot = useCallback(
     async (conversationId: string, options?: { hydrateRuntime?: boolean }) => {
-      const result = await fetchAgentConversationSnapshot(conversationId, options);
-      mergeSnapshot(result.snapshot);
+      setConversationLoadStatusById((current) => ({
+        ...current,
+        [conversationId]: "loading",
+      }));
+      try {
+        const result = await fetchAgentConversationSnapshot(conversationId, options);
+        mergeSnapshot(result.snapshot);
+      } catch (error) {
+        setConversationLoadStatusById((current) => ({
+          ...current,
+          [conversationId]: "error",
+        }));
+        throw error;
+      }
     },
     [mergeSnapshot]
   );
@@ -536,6 +564,16 @@ export function AgentConversationsProvider({
     [backends, conversationsById]
   );
 
+  const getConversationLoadStatus = useCallback(
+    (conversationId: string): ConversationLoadStatus => {
+      if (conversationsById[conversationId]) {
+        return "ready";
+      }
+      return conversationLoadStatusById[conversationId] ?? "idle";
+    },
+    [conversationLoadStatusById, conversationsById]
+  );
+
   const sendSubscription = useCallback(() => {
     const socket = socketRef.current;
     if (!socket?.connected) {
@@ -560,6 +598,8 @@ export function AgentConversationsProvider({
       setBackends([]);
       setConversationsById({});
       setEventsByConversationId({});
+      setConversationLoadStatusById({});
+      setBootstrapped(false);
       socketRef.current?.disconnect();
       socketRef.current = null;
       return;
@@ -568,6 +608,8 @@ export function AgentConversationsProvider({
     let cancelled = false;
     setConversationsById({});
     setEventsByConversationId({});
+    setConversationLoadStatusById({});
+    setBootstrapped(false);
 
     void (async () => {
       const result = await listAgentConversations();
@@ -579,12 +621,70 @@ export function AgentConversationsProvider({
       setBackends(result.backends);
 
       setConversationsById(toConversationMap(nextConversations));
+      setConversationLoadStatusById((current) => {
+        const next = { ...current };
+        for (const conversation of nextConversations) {
+          next[conversation.id] = "ready";
+        }
+        return next;
+      });
+      const validIds = new Set(nextConversations.map((conversation) => conversation.id));
+      updateWorkspaceSession((current) => {
+        const pruneGroup = (
+          tabs: typeof current.editor.leftTabs,
+          activeId: string | null
+        ) => {
+          const nextTabs = tabs.filter(
+            (tab) => !tab.conversationId || validIds.has(tab.conversationId)
+          );
+          const nextActiveId =
+            activeId && nextTabs.some((tab) => tab.id === activeId)
+              ? activeId
+              : nextTabs[0]?.id ?? null;
+          return { nextTabs, nextActiveId };
+        };
+
+        const left = pruneGroup(current.editor.leftTabs, current.editor.leftActiveId);
+        const right = pruneGroup(current.editor.rightTabs, current.editor.rightActiveId);
+        const validTabIds = new Set([
+          ...left.nextTabs.map((tab) => tab.id),
+          ...right.nextTabs.map((tab) => tab.id),
+        ]);
+        const nextViewStateByTabId = Object.fromEntries(
+          Object.entries(current.editor.viewStateByTabId).filter(([tabId]) =>
+            validTabIds.has(tabId)
+          )
+        );
+
+        const editorUnchanged =
+          left.nextTabs.length === current.editor.leftTabs.length &&
+          right.nextTabs.length === current.editor.rightTabs.length &&
+          left.nextActiveId === current.editor.leftActiveId &&
+          right.nextActiveId === current.editor.rightActiveId &&
+          Object.keys(nextViewStateByTabId).length ===
+            Object.keys(current.editor.viewStateByTabId).length;
+
+        return editorUnchanged
+          ? current
+          : {
+              ...current,
+              editor: {
+                ...current.editor,
+                leftTabs: left.nextTabs,
+                rightTabs: right.nextTabs,
+                leftActiveId: left.nextActiveId,
+                rightActiveId: right.nextActiveId,
+                viewStateByTabId: nextViewStateByTabId,
+              },
+            };
+      });
+      setBootstrapped(true);
     })().catch(() => undefined);
 
     return () => {
       cancelled = true;
     };
-  }, [activeWorkspaceId]);
+  }, [activeWorkspaceId, updateWorkspaceSession]);
 
   useEffect(() => {
     if (!activeWorkspaceId) {
@@ -679,6 +779,8 @@ export function AgentConversationsProvider({
       conversationsById,
       conversations,
       eventsByConversationId,
+      bootstrapped,
+      getConversationLoadStatus,
       renameConversation,
       answerPermissionForConversation,
       cancelPermissionForConversation,
@@ -693,11 +795,13 @@ export function AgentConversationsProvider({
     }),
     [
       backends,
+      bootstrapped,
       cancelConversation,
       cancelPermissionForConversation,
       conversations,
       conversationsById,
       eventsByConversationId,
+      getConversationLoadStatus,
       getConversationComposerState,
       promptConversation,
       renameConversation,
