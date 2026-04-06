@@ -690,7 +690,6 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
     ],
     [
       activeWorkspaceId,
-      bridgeRef,
       defaultWorkspaceId,
       kb,
       openWorkspaceById,
@@ -701,6 +700,7 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
       runWithBridge,
       setDefaultWorkspace,
       setThemePreference,
+      workbench,
       workspaces,
     ]
   );
