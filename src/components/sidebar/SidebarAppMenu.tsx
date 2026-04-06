@@ -28,7 +28,7 @@ const FILE_MENU: MenuBlock[] = [
   { cmd: "workbench.action.createWorkspace", label: "Create Workspace" },
   { cmd: "workbench.action.setDefaultWorkspace", label: "Set as Default" },
   { sep: true },
-  { cmd: "workbench.action.terminal.toggleTerminal", label: "New Terminal" },
+  { cmd: "workbench.action.terminal.new", label: "New Terminal" },
   { cmd: "workbench.action.newBrowser", label: "New Browser" },
   { sep: true },
   { cmd: "workbench.action.exit", label: "Exit" },
@@ -49,7 +49,7 @@ const VIEW_MENU: MenuBlock[] = [
   { cmd: "workbench.action.openChanges", label: "Open Changes" },
   { cmd: "workbench.action.toggleAgentPanel", label: "Open Browser" },
   { cmd: "workbench.action.gotoFile", label: "Open File" },
-  { cmd: "workbench.action.togglePanel", label: "Open Terminal" },
+  { cmd: "workbench.action.terminal.toggleTerminal", label: "Open Terminal" },
   { sep: true },
   { cmd: "workbench.action.openGlobalSettings", label: "Settings" },
 ];

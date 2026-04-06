@@ -8,6 +8,7 @@ import type { AgentBackendId } from "@/lib/agent-types";
 
 export type SidebarView = "explorer" | "search" | "scm";
 export type MobilePanel = "sidebar" | "editor" | "chat";
+export type PanelView = "terminal";
 
 export type ExplorerSessionState = {
   view: SidebarView;
@@ -21,6 +22,10 @@ export type LayoutSessionState = {
   chatOpen: boolean;
   mobilePanel: MobilePanel;
   desktopLayout: Record<string, number> | null;
+  panelOpen: boolean;
+  panelView: PanelView;
+  panelLayout: Record<string, number> | null;
+  panelActiveTerminalId: string | null;
 };
 
 export type EditorSessionState = {
@@ -95,6 +100,10 @@ export function createDefaultWorkspaceSession(
       chatOpen: true,
       mobilePanel: "editor",
       desktopLayout: null,
+      panelOpen: false,
+      panelView: "terminal",
+      panelLayout: null,
+      panelActiveTerminalId: null,
     },
     settingsView: {
       activeNav: "general",
@@ -102,6 +111,14 @@ export function createDefaultWorkspaceSession(
       scrollTop: 0,
     },
   };
+}
+
+function filterTerminalTabs(tabs: EditorTab[]): EditorTab[] {
+  return tabs.filter((tab) => !tab.terminalId);
+}
+
+function findFirstTerminalId(tabs: EditorTab[]): string | null {
+  return tabs.find((tab) => tab.terminalId)?.terminalId ?? null;
 }
 
 function createPersistableEditorTab(tab: EditorTab): EditorTab {
@@ -156,8 +173,8 @@ export function createPersistableWorkspaceSession(
     schemaVersion: 1,
     editor: {
       ...session.editor,
-      leftTabs: session.editor.leftTabs.map(createPersistableEditorTab),
-      rightTabs: session.editor.rightTabs.map(createPersistableEditorTab),
+      leftTabs: filterTerminalTabs(session.editor.leftTabs).map(createPersistableEditorTab),
+      rightTabs: filterTerminalTabs(session.editor.rightTabs).map(createPersistableEditorTab),
     },
     chat: session.chat,
     explorer: session.explorer,
@@ -187,14 +204,20 @@ export function mergeWorkspaceSessionFromImport(
       : current.chat.backendId;
   const importedUnsupportedBackend =
     r.chat?.backendId != null && normalizedChatBackendId !== r.chat.backendId;
+  const importedLeftTabs = Array.isArray(r.editor?.leftTabs) ? r.editor.leftTabs : current.editor.leftTabs;
+  const importedRightTabs = Array.isArray(r.editor?.rightTabs)
+    ? r.editor.rightTabs
+    : current.editor.rightTabs;
+  const importedLegacyTerminalId =
+    findFirstTerminalId(importedLeftTabs) ?? findFirstTerminalId(importedRightTabs);
 
   return {
     schemaVersion: 1,
     editor: {
       ...current.editor,
       ...(r.editor ?? {}),
-      leftTabs: Array.isArray(r.editor?.leftTabs) ? r.editor.leftTabs : current.editor.leftTabs,
-      rightTabs: Array.isArray(r.editor?.rightTabs) ? r.editor.rightTabs : current.editor.rightTabs,
+      leftTabs: filterTerminalTabs(importedLeftTabs),
+      rightTabs: filterTerminalTabs(importedRightTabs),
       viewStateByTabId:
         r.editor?.viewStateByTabId && typeof r.editor.viewStateByTabId === "object"
           ? r.editor.viewStateByTabId
@@ -231,6 +254,19 @@ export function mergeWorkspaceSessionFromImport(
         r.layout?.desktopLayout && typeof r.layout.desktopLayout === "object"
           ? r.layout.desktopLayout
           : current.layout.desktopLayout,
+      panelLayout:
+        r.layout?.panelLayout && typeof r.layout.panelLayout === "object"
+          ? r.layout.panelLayout
+          : current.layout.panelLayout,
+      panelOpen:
+        typeof r.layout?.panelOpen === "boolean"
+          ? r.layout.panelOpen
+          : current.layout.panelOpen || importedLegacyTerminalId != null,
+      panelView: r.layout?.panelView === "terminal" ? r.layout.panelView : current.layout.panelView,
+      panelActiveTerminalId:
+        typeof r.layout?.panelActiveTerminalId === "string" && r.layout.panelActiveTerminalId.length > 0
+          ? r.layout.panelActiveTerminalId
+          : importedLegacyTerminalId ?? current.layout.panelActiveTerminalId,
     },
     settingsView: {
       ...current.settingsView,

@@ -6,6 +6,9 @@ export type WorkbenchControls = {
   toggleSidebar: () => void;
   toggleChat: () => void;
   revealExplorer: () => void;
+  togglePanel: () => void;
+  toggleTerminal: () => Promise<void>;
+  createTerminal: () => Promise<void>;
 };
 
 const WorkbenchContext = createContext<WorkbenchControls | null>(null);

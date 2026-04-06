@@ -226,7 +226,7 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
           workbench.revealExplorer();
           break;
         case "workbench.action.togglePanel":
-          workbench.toggleChat();
+          workbench.togglePanel();
           break;
         case "workbench.action.toggleAgentPanel":
           workbench.toggleChat();
@@ -304,23 +304,12 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
           flash(setToast, "Find in Files — use the sidebar Search view.");
           break;
         case "workbench.action.terminal.toggleTerminal":
-          void (async () => {
-            const bridge = bridgeRef.current;
-            if (!bridge) {
-              flash(setToast, "Editor is not ready yet.");
-              return;
-            }
-            const snapshot = bridge.getState();
-            const leftTerminal = snapshot.leftTabs.find((tab) => tab.terminalId);
-            const rightTerminal = snapshot.rightTabs.find((tab) => tab.terminalId);
-            if (leftTerminal) {
-              bridge.dispatch({ type: "SELECT_TAB", group: "left", id: leftTerminal.id });
-            } else if (rightTerminal) {
-              bridge.dispatch({ type: "SELECT_TAB", group: "right", id: rightTerminal.id });
-            } else {
-              await bridge.openTerminalTab();
-            }
-          })();
+          void workbench.toggleTerminal().catch((error) => {
+            flash(
+              setToast,
+              error instanceof Error ? error.message : "Failed to toggle terminal."
+            );
+          });
           break;
         case "editor.action.undo":
           flash(setToast, "Undo (demo).");
@@ -628,14 +617,12 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
         id: "workbench.action.terminal.new",
         label: "Terminal: Create New Terminal",
         run: () =>
-          void (async () => {
-            const bridge = bridgeRef.current;
-            if (!bridge) {
-              flash(setToast, "Editor is not ready yet.");
-              return;
-            }
-            await bridge.openTerminalTab();
-          })(),
+          void workbench.createTerminal().catch((error) => {
+            flash(
+              setToast,
+              error instanceof Error ? error.message : "Failed to create terminal."
+            );
+          }),
       },
       {
         id: "editor.action.revealDefinition",

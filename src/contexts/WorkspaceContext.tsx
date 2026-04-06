@@ -104,6 +104,14 @@ function createSessionDefaults(): WorkspaceSessionState {
   return createDefaultWorkspaceSession([], currentModel);
 }
 
+function filterLegacyTerminalTabs(tabs: WorkspaceSessionState["editor"]["leftTabs"]): typeof tabs {
+  return tabs.filter((tab) => !tab.terminalId);
+}
+
+function findLegacyTerminalId(tabs: WorkspaceSessionState["editor"]["leftTabs"]): string | null {
+  return tabs.find((tab) => tab.terminalId)?.terminalId ?? null;
+}
+
 function getWorkspaceSessionBackupKey(workspaceId: string): string {
   return `${SESSION_BACKUP_STORAGE_PREFIX}${workspaceId}`;
 }
@@ -157,6 +165,12 @@ function normalizeWorkspaceSession(
   if (!raw || raw.schemaVersion !== 1) {
     return defaults;
   }
+  const rawLeftTabs = Array.isArray(raw.editor?.leftTabs) ? raw.editor.leftTabs : defaults.editor.leftTabs;
+  const rawRightTabs = Array.isArray(raw.editor?.rightTabs)
+    ? raw.editor.rightTabs
+    : defaults.editor.rightTabs;
+  const legacyTerminalId =
+    findLegacyTerminalId(rawLeftTabs) ?? findLegacyTerminalId(rawRightTabs);
   const normalizedChatBackendId =
     raw.chat?.backendId === "cursor-acp" ||
     raw.chat?.backendId === "opencode-acp" ||
@@ -172,8 +186,8 @@ function normalizeWorkspaceSession(
     editor: {
       ...defaults.editor,
       ...(raw.editor ?? {}),
-      leftTabs: Array.isArray(raw.editor?.leftTabs) ? raw.editor.leftTabs : defaults.editor.leftTabs,
-      rightTabs: Array.isArray(raw.editor?.rightTabs) ? raw.editor.rightTabs : defaults.editor.rightTabs,
+      leftTabs: filterLegacyTerminalTabs(rawLeftTabs),
+      rightTabs: filterLegacyTerminalTabs(rawRightTabs),
       viewStateByTabId:
         raw.editor?.viewStateByTabId && typeof raw.editor.viewStateByTabId === "object"
           ? raw.editor.viewStateByTabId
@@ -210,6 +224,22 @@ function normalizeWorkspaceSession(
         raw.layout?.desktopLayout && typeof raw.layout.desktopLayout === "object"
           ? raw.layout.desktopLayout
           : defaults.layout.desktopLayout,
+      panelLayout:
+        raw.layout?.panelLayout && typeof raw.layout.panelLayout === "object"
+          ? raw.layout.panelLayout
+          : defaults.layout.panelLayout,
+      panelOpen:
+        typeof raw.layout?.panelOpen === "boolean"
+          ? raw.layout.panelOpen
+          : legacyTerminalId != null || defaults.layout.panelOpen,
+      panelView:
+        raw.layout?.panelView === "terminal"
+          ? raw.layout.panelView
+          : defaults.layout.panelView,
+      panelActiveTerminalId:
+        typeof raw.layout?.panelActiveTerminalId === "string" && raw.layout.panelActiveTerminalId.length > 0
+          ? raw.layout.panelActiveTerminalId
+          : legacyTerminalId ?? defaults.layout.panelActiveTerminalId,
     },
     settingsView: {
       ...defaults.settingsView,

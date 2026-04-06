@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from "react";
 import { Panel, Group, Separator, usePanelRef } from "react-resizable-panels";
 import { FileExplorer } from "@/components/sidebar/FileExplorer";
 import { EditorPanel } from "@/components/editor/EditorPanel";
@@ -36,8 +36,15 @@ const DESKTOP_DEFAULT_LAYOUT = {
 export function IDELayout() {
   const { themeConfig } = useTheme();
   const { showSidebar, showChat, isMobile } = useViewport();
-  const { activeWorkspaceId, loading, sessionReady, workspaceSession, updateWorkspaceSession } =
-    useWorkspace();
+  const {
+    activeWorkspaceId,
+    loading,
+    sessionReady,
+    workspaceSession,
+    updateWorkspaceSession,
+    terminals,
+    createNewTerminal,
+  } = useWorkspace();
   const [sidebarOpen, setSidebarOpen] = useState(workspaceSession.layout.sidebarOpen);
   const [chatOpen, setChatOpen] = useState(workspaceSession.layout.chatOpen);
   const [mobilePanel, setMobilePanel] = useState<MobilePanel>(workspaceSession.layout.mobilePanel);
@@ -62,6 +69,95 @@ export function IDELayout() {
     }));
   }, [chatOpen, mobilePanel, sidebarOpen, updateWorkspaceSession]);
 
+  const togglePanel = useCallback(() => {
+    updateWorkspaceSession((current) => {
+      const panelVisible =
+        !isMobile || current.layout.mobilePanel === "editor";
+      const shouldClose = current.layout.panelOpen && panelVisible;
+      return {
+        ...current,
+        layout: {
+          ...current.layout,
+          panelOpen: !shouldClose,
+          panelView: "terminal",
+          mobilePanel: shouldClose || !isMobile ? current.layout.mobilePanel : "editor",
+        },
+      };
+    });
+  }, [isMobile, updateWorkspaceSession]);
+
+  const toggleTerminal = useCallback(async () => {
+    const terminalVisible =
+      workspaceSession.layout.panelOpen &&
+      workspaceSession.layout.panelView === "terminal" &&
+      (!isMobile || mobilePanel === "editor");
+    if (terminalVisible) {
+      updateWorkspaceSession((current) => ({
+        ...current,
+        layout: {
+          ...current.layout,
+          panelOpen: false,
+        },
+      }));
+      return;
+    }
+
+    const nextTerminalId =
+      (workspaceSession.layout.panelActiveTerminalId &&
+      terminals.some((terminal) => terminal.id === workspaceSession.layout.panelActiveTerminalId)
+        ? workspaceSession.layout.panelActiveTerminalId
+        : null) ?? terminals[0]?.id ?? null;
+
+    if (nextTerminalId) {
+      updateWorkspaceSession((current) => ({
+        ...current,
+        layout: {
+          ...current.layout,
+          panelOpen: true,
+          panelView: "terminal",
+          panelActiveTerminalId: nextTerminalId,
+          mobilePanel: isMobile ? "editor" : current.layout.mobilePanel,
+        },
+      }));
+      return;
+    }
+
+    const terminal = await createNewTerminal();
+    updateWorkspaceSession((current) => ({
+      ...current,
+      layout: {
+        ...current.layout,
+        panelOpen: true,
+        panelView: "terminal",
+        panelActiveTerminalId: terminal.id,
+        mobilePanel: isMobile ? "editor" : current.layout.mobilePanel,
+      },
+    }));
+  }, [
+    createNewTerminal,
+    isMobile,
+    mobilePanel,
+    terminals,
+    updateWorkspaceSession,
+    workspaceSession.layout.panelActiveTerminalId,
+    workspaceSession.layout.panelOpen,
+    workspaceSession.layout.panelView,
+  ]);
+
+  const createTerminal = useCallback(async () => {
+    const terminal = await createNewTerminal();
+    updateWorkspaceSession((current) => ({
+      ...current,
+      layout: {
+        ...current.layout,
+        panelOpen: true,
+        panelView: "terminal",
+        panelActiveTerminalId: terminal.id,
+        mobilePanel: isMobile ? "editor" : current.layout.mobilePanel,
+      },
+    }));
+  }, [createNewTerminal, isMobile, updateWorkspaceSession]);
+
   const workbench = useMemo(
     () => ({
       toggleSidebar: () => {
@@ -82,8 +178,11 @@ export function IDELayout() {
         if (isMobile) setMobilePanel("sidebar");
         else setSidebarOpen(true);
       },
+      togglePanel,
+      toggleTerminal,
+      createTerminal,
     }),
-    [isMobile]
+    [createTerminal, isMobile, togglePanel, toggleTerminal]
   );
 
   const sidebarVisible = isMobile

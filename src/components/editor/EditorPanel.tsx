@@ -4,13 +4,16 @@ import {
   useReducer,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   type DragEvent,
   type MouseEvent,
 } from "react";
+import { Group, Panel, Separator, usePanelRef } from "react-resizable-panels";
 import { EditorTabs } from "./EditorTabs";
 import { CodeEditor } from "./CodeEditor";
 import { Terminal } from "./Terminal";
+import { BottomPanel } from "./BottomPanel";
 import { SimpleMarkdownPreview } from "./SimpleMarkdownPreview";
 import { FilePreview } from "./FilePreview";
 import { AgentTranscriptView } from "./AgentTranscriptView";
@@ -35,7 +38,7 @@ import {
   TAB_DND_MIME,
   parseTabDragPayload,
 } from "./editor-panel-state";
-import { createTerminal, deleteTerminal, readFile, writeFile } from "@/lib/server-api";
+import { deleteTerminal, readFile, writeFile } from "@/lib/server-api";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { useWorkbenchNotifications } from "@/components/notifications/WorkbenchNotificationProvider";
 import { WORKBENCH_NOTIFICATION_KIND } from "@/components/notifications/workbench-notification-types";
@@ -86,6 +89,25 @@ function areViewStatesEqual(a: unknown, b: unknown): boolean {
   }
 }
 
+const PANEL_DEFAULT_LAYOUT = {
+  editorContent: 72,
+  panel: 28,
+};
+
+function PanelResizeHandle({ visible }: { visible: boolean }) {
+  return (
+    <Separator
+      className={`group relative h-[1px] transition-colors ${
+        visible
+          ? "bg-[var(--border-subtle)] hover:bg-[var(--accent)] active:bg-[var(--accent)]"
+          : "pointer-events-none bg-transparent"
+      }`}
+    >
+      <div className="absolute inset-x-0 -top-1 -bottom-1 z-10" />
+    </Separator>
+  );
+}
+
 export function EditorPanel() {
   const {
     registerOpenTranscript,
@@ -100,6 +122,7 @@ export function EditorPanel() {
   const {
     fsResyncToken,
     lastFileChange,
+    createNewTerminal,
     refreshTerminals,
     terminals,
     workspaceInfo,
@@ -119,13 +142,31 @@ export function EditorPanel() {
     workspaceSession.editor,
     createEditorStateFromSession
   );
+  const panelRef = usePanelRef();
 
   const stateRef = useRef(state);
   const bridgeRef = useEditorBridgeRef();
+  const panelVisible =
+    workspaceSession.layout.panelOpen &&
+    workspaceSession.layout.panelView === "terminal";
 
   useEffect(() => {
     stateRef.current = state;
   }, [state]);
+
+  useLayoutEffect(() => {
+    const panel = panelRef.current;
+    if (!panel) {
+      return;
+    }
+    if (panelVisible) {
+      if (panel.isCollapsed()) {
+        panel.expand();
+      }
+    } else if (!panel.isCollapsed()) {
+      panel.collapse();
+    }
+  }, [panelRef, panelVisible]);
 
   useEffect(() => {
     updateWorkspaceSession((current) => ({
@@ -136,6 +177,28 @@ export function EditorPanel() {
       },
     }));
   }, [state, updateWorkspaceSession]);
+
+  useEffect(() => {
+    const nextTerminalId =
+      (workspaceSession.layout.panelActiveTerminalId &&
+      terminals.some((terminal) => terminal.id === workspaceSession.layout.panelActiveTerminalId)
+        ? workspaceSession.layout.panelActiveTerminalId
+        : null) ?? terminals[0]?.id ?? null;
+    if (nextTerminalId === workspaceSession.layout.panelActiveTerminalId) {
+      return;
+    }
+    updateWorkspaceSession((current) => ({
+      ...current,
+      layout: {
+        ...current.layout,
+        panelActiveTerminalId: nextTerminalId,
+      },
+    }));
+  }, [
+    terminals,
+    updateWorkspaceSession,
+    workspaceSession.layout.panelActiveTerminalId,
+  ]);
 
   const flashNotice = useCallback(
     (message: string, severity: "info" | "error" = "info") => {
@@ -238,15 +301,22 @@ export function EditorPanel() {
     [findTab, flashNotice, pushNotification]
   );
 
-  const openTerminalTab = useCallback(async () => {
+  const openBrowserTab = useCallback((url: string) => {
+    dispatch({ type: "OPEN_BROWSER_TAB", url });
+  }, []);
+
+  const createPanelTerminal = useCallback(async () => {
     try {
-      const terminal = await createTerminal();
-      dispatch({
-        type: "OPEN_TERMINAL_TAB",
-        terminalId: terminal.id,
-        name: `Terminal ${stateRef.current.leftTabs.filter((tab) => tab.terminalId).length + stateRef.current.rightTabs.filter((tab) => tab.terminalId).length + 1}`,
-      });
-      await refreshTerminals();
+      const terminal = await createNewTerminal();
+      updateWorkspaceSession((current) => ({
+        ...current,
+        layout: {
+          ...current.layout,
+          panelOpen: true,
+          panelView: "terminal",
+          panelActiveTerminalId: terminal.id,
+        },
+      }));
     } catch (error) {
       flashNotice(
         error instanceof Error
@@ -254,11 +324,67 @@ export function EditorPanel() {
           : "Failed to create terminal."
       );
     }
-  }, [flashNotice, refreshTerminals]);
+  }, [createNewTerminal, flashNotice, updateWorkspaceSession]);
 
-  const openBrowserTab = useCallback((url: string) => {
-    dispatch({ type: "OPEN_BROWSER_TAB", url });
-  }, []);
+  const selectPanelTerminal = useCallback(
+    (terminalId: string) => {
+      updateWorkspaceSession((current) => ({
+        ...current,
+        layout: {
+          ...current.layout,
+          panelOpen: true,
+          panelView: "terminal",
+          panelActiveTerminalId: terminalId,
+        },
+      }));
+    },
+    [updateWorkspaceSession]
+  );
+
+  const hidePanel = useCallback(() => {
+    updateWorkspaceSession((current) => ({
+      ...current,
+      layout: {
+        ...current.layout,
+        panelOpen: false,
+      },
+    }));
+  }, [updateWorkspaceSession]);
+
+  const closePanelTerminal = useCallback(
+    async (terminalId: string) => {
+      try {
+        await deleteTerminal(terminalId);
+        updateWorkspaceSession((current) => {
+          if (current.layout.panelActiveTerminalId !== terminalId) {
+            return current;
+          }
+          const remainingTerminalId =
+            terminals.find((terminal) => terminal.id !== terminalId)?.id ?? null;
+          return {
+            ...current,
+            layout: {
+              ...current.layout,
+              panelActiveTerminalId: remainingTerminalId,
+            },
+          };
+        });
+        await refreshTerminals();
+      } catch (error) {
+        if (isUnknownTerminalError(error)) {
+          await refreshTerminals();
+          return;
+        }
+        flashNotice(
+          error instanceof Error
+            ? `Failed to close terminal: ${error.message}`
+            : "Failed to close terminal.",
+          "error"
+        );
+      }
+    },
+    [flashNotice, refreshTerminals, terminals, updateWorkspaceSession]
+  );
 
   const closeTabs = useCallback(
     async (tabsToClose: EditorTab[], action: EditorPanelAction) => {
@@ -677,7 +803,7 @@ export function EditorPanel() {
         }
         return saveTab(activeId);
       },
-      openTerminalTab,
+      openTerminalTab: createPanelTerminal,
       openBrowserTab,
       requestCloseTab,
       requestCloseAllInGroup,
@@ -689,9 +815,9 @@ export function EditorPanel() {
   }, [
     bridgeRef,
     dispatch,
+    createPanelTerminal,
     flashNotice,
     openBrowserTab,
-    openTerminalTab,
     requestCloseAllInGroup,
     requestCloseOthersInGroup,
     requestCloseTab,
@@ -1005,39 +1131,31 @@ export function EditorPanel() {
   const rightActive =
     state.rightTabs.find((t) => t.id === state.rightActiveId) ?? null;
 
-  if (!state.split) {
-    return (
-      <div className="flex h-full flex-col overflow-hidden bg-[var(--bg-main)]">
-        <EditorTabs
-          group="left"
-          tabs={state.leftTabs}
-          activeTabId={state.leftActiveId}
-          splitActive={false}
-          showSplitToolbar
-          onSelectTab={(id) => selectTab("left", id)}
-          onCloseTab={(id) => requestCloseTab("left", id)}
-          onToggleSplit={() => dispatch({ type: "TOGGLE_SPLIT" })}
-          onCloseAllTabs={() => requestCloseAllInGroup("left")}
-          onCloseOtherTabs={() => requestCloseOthersInGroup("left")}
-          onMoveTabBetweenGroups={moveTab}
-          onTabContextMenu={(e, id) => handleEditorTabContextMenu(e, "left", id)}
-          onStripContextMenu={(e) => handleEditorStripContextMenu(e, "left")}
-        />
-        <div
-          className="min-h-0 flex-1 overflow-hidden"
-          onPointerDown={() => focusEditorGroup("left")}
-        >
-          {!leftActive ? (
-            emptyState("No files open")
-          ) : (
-            renderCodeForTab(leftActive, "left")
-          )}
-        </div>
+  const editorContent = !state.split ? (
+    <div className="flex h-full flex-col overflow-hidden bg-[var(--bg-main)]">
+      <EditorTabs
+        group="left"
+        tabs={state.leftTabs}
+        activeTabId={state.leftActiveId}
+        splitActive={false}
+        showSplitToolbar
+        onSelectTab={(id) => selectTab("left", id)}
+        onCloseTab={(id) => requestCloseTab("left", id)}
+        onToggleSplit={() => dispatch({ type: "TOGGLE_SPLIT" })}
+        onCloseAllTabs={() => requestCloseAllInGroup("left")}
+        onCloseOtherTabs={() => requestCloseOthersInGroup("left")}
+        onMoveTabBetweenGroups={moveTab}
+        onTabContextMenu={(e, id) => handleEditorTabContextMenu(e, "left", id)}
+        onStripContextMenu={(e) => handleEditorStripContextMenu(e, "left")}
+      />
+      <div
+        className="min-h-0 flex-1 overflow-hidden"
+        onPointerDown={() => focusEditorGroup("left")}
+      >
+        {!leftActive ? emptyState("No files open") : renderCodeForTab(leftActive, "left")}
       </div>
-    );
-  }
-
-  return (
+    </div>
+  ) : (
     <div className="flex h-full flex-col overflow-hidden bg-[var(--bg-main)]">
       <div className="flex min-h-0 min-w-0 flex-1 flex-row">
         <div className="flex min-h-0 min-w-0 flex-1 flex-col border-r border-[var(--border-subtle)]">
@@ -1103,5 +1221,48 @@ export function EditorPanel() {
         </div>
       </div>
     </div>
+  );
+
+  return (
+    <Group
+      orientation="vertical"
+      id="editor-panel-layout"
+      key={workspaceInfo?.id ?? "editor-panel-layout"}
+      defaultLayout={workspaceSession.layout.panelLayout ?? PANEL_DEFAULT_LAYOUT}
+      onLayoutChanged={(layout) => {
+        updateWorkspaceSession((current) => ({
+          ...current,
+          layout: {
+            ...current.layout,
+            panelLayout: layout,
+          },
+        }));
+      }}
+    >
+      <Panel id="editorContent" minSize="25%" className="min-h-0 overflow-hidden">
+        {editorContent}
+      </Panel>
+      <PanelResizeHandle visible={panelVisible} />
+      <Panel
+        id="panel"
+        panelRef={panelRef}
+        minSize="12%"
+        maxSize="60%"
+        collapsible
+        collapsedSize="0%"
+        className="min-h-0 overflow-hidden"
+      >
+        {panelVisible ? (
+          <BottomPanel
+            terminals={terminals}
+            activeTerminalId={workspaceSession.layout.panelActiveTerminalId}
+            onSelectTerminal={selectPanelTerminal}
+            onCreateTerminal={createPanelTerminal}
+            onCloseTerminal={closePanelTerminal}
+            onHidePanel={hidePanel}
+          />
+        ) : null}
+      </Panel>
+    </Group>
   );
 }
