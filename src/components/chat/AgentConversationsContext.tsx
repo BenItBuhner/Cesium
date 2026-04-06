@@ -655,6 +655,14 @@ export function AgentConversationsProvider({
             validTabIds.has(tabId)
           )
         );
+        const nextChatTabs = current.chat.tabs.filter((tab) => validIds.has(tab.id));
+        const normalizedChatTabs =
+          nextChatTabs.length === 0 || nextChatTabs.some((tab) => tab.active)
+            ? nextChatTabs
+            : nextChatTabs.map((tab, index) => ({ ...tab, active: index === 0 }));
+        const nextHiddenConversationIds = current.chat.hiddenConversationIds.filter((id) =>
+          validIds.has(id)
+        );
 
         const editorUnchanged =
           left.nextTabs.length === current.editor.leftTabs.length &&
@@ -663,8 +671,20 @@ export function AgentConversationsProvider({
           right.nextActiveId === current.editor.rightActiveId &&
           Object.keys(nextViewStateByTabId).length ===
             Object.keys(current.editor.viewStateByTabId).length;
+        const chatUnchanged =
+          normalizedChatTabs.length === current.chat.tabs.length &&
+          normalizedChatTabs.every(
+            (tab, index) =>
+              tab.id === current.chat.tabs[index]?.id &&
+              tab.title === current.chat.tabs[index]?.title &&
+              Boolean(tab.active) === Boolean(current.chat.tabs[index]?.active)
+          ) &&
+          nextHiddenConversationIds.length === current.chat.hiddenConversationIds.length &&
+          nextHiddenConversationIds.every(
+            (id, index) => id === current.chat.hiddenConversationIds[index]
+          );
 
-        return editorUnchanged
+        return editorUnchanged && chatUnchanged
           ? current
           : {
               ...current,
@@ -675,6 +695,11 @@ export function AgentConversationsProvider({
                 leftActiveId: left.nextActiveId,
                 rightActiveId: right.nextActiveId,
                 viewStateByTabId: nextViewStateByTabId,
+              },
+              chat: {
+                ...current.chat,
+                tabs: normalizedChatTabs,
+                hiddenConversationIds: nextHiddenConversationIds,
               },
             };
       });
