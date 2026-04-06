@@ -34,6 +34,7 @@ import {
 import {
   createDefaultWorkspaceSession,
   createPersistableWorkspaceSession,
+  isPanelView,
   type WorkspaceSessionState,
 } from "@/lib/workspace-session";
 import { JsonWebSocket, toWebSocketUrl } from "@/lib/ws-client";
@@ -232,10 +233,9 @@ function normalizeWorkspaceSession(
         typeof raw.layout?.panelOpen === "boolean"
           ? raw.layout.panelOpen
           : legacyTerminalId != null || defaults.layout.panelOpen,
-      panelView:
-        raw.layout?.panelView === "terminal"
-          ? raw.layout.panelView
-          : defaults.layout.panelView,
+      panelView: isPanelView(raw.layout?.panelView)
+        ? raw.layout.panelView
+        : defaults.layout.panelView,
       panelActiveTerminalId:
         typeof raw.layout?.panelActiveTerminalId === "string" && raw.layout.panelActiveTerminalId.length > 0
           ? raw.layout.panelActiveTerminalId

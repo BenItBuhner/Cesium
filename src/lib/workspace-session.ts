@@ -8,7 +8,12 @@ import type { AgentBackendId } from "@/lib/agent-types";
 
 export type SidebarView = "explorer" | "search" | "scm";
 export type MobilePanel = "sidebar" | "editor" | "chat";
-export type PanelView = "terminal";
+export const PANEL_VIEWS = ["problems", "output", "terminal", "ports"] as const;
+export type PanelView = (typeof PANEL_VIEWS)[number];
+
+export function isPanelView(value: unknown): value is PanelView {
+  return typeof value === "string" && PANEL_VIEWS.includes(value as PanelView);
+}
 
 export type ExplorerSessionState = {
   view: SidebarView;
@@ -262,7 +267,7 @@ export function mergeWorkspaceSessionFromImport(
         typeof r.layout?.panelOpen === "boolean"
           ? r.layout.panelOpen
           : current.layout.panelOpen || importedLegacyTerminalId != null,
-      panelView: r.layout?.panelView === "terminal" ? r.layout.panelView : current.layout.panelView,
+      panelView: isPanelView(r.layout?.panelView) ? r.layout.panelView : current.layout.panelView,
       panelActiveTerminalId:
         typeof r.layout?.panelActiveTerminalId === "string" && r.layout.panelActiveTerminalId.length > 0
           ? r.layout.panelActiveTerminalId

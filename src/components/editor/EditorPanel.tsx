@@ -42,6 +42,7 @@ import { deleteTerminal, readFile, writeFile } from "@/lib/server-api";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { useWorkbenchNotifications } from "@/components/notifications/WorkbenchNotificationProvider";
 import { WORKBENCH_NOTIFICATION_KIND } from "@/components/notifications/workbench-notification-types";
+import type { PanelView } from "@/lib/workspace-session";
 
 function tabCanSave(tab: EditorTab): boolean {
   return Boolean(tab.filePath && tab.fileKind && tab.fileKind !== "image");
@@ -146,9 +147,7 @@ export function EditorPanel() {
 
   const stateRef = useRef(state);
   const bridgeRef = useEditorBridgeRef();
-  const panelVisible =
-    workspaceSession.layout.panelOpen &&
-    workspaceSession.layout.panelView === "terminal";
+  const panelVisible = workspaceSession.layout.panelOpen;
 
   useEffect(() => {
     stateRef.current = state;
@@ -335,6 +334,20 @@ export function EditorPanel() {
           panelOpen: true,
           panelView: "terminal",
           panelActiveTerminalId: terminalId,
+        },
+      }));
+    },
+    [updateWorkspaceSession]
+  );
+
+  const selectPanelView = useCallback(
+    (view: PanelView) => {
+      updateWorkspaceSession((current) => ({
+        ...current,
+        layout: {
+          ...current.layout,
+          panelOpen: true,
+          panelView: view,
         },
       }));
     },
@@ -1254,8 +1267,10 @@ export function EditorPanel() {
       >
         {panelVisible ? (
           <BottomPanel
+            activeView={workspaceSession.layout.panelView}
             terminals={terminals}
             activeTerminalId={workspaceSession.layout.panelActiveTerminalId}
+            onSelectView={selectPanelView}
             onSelectTerminal={selectPanelTerminal}
             onCreateTerminal={createPanelTerminal}
             onCloseTerminal={closePanelTerminal}

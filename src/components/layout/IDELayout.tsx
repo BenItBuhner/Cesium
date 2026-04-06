@@ -79,7 +79,6 @@ export function IDELayout() {
         layout: {
           ...current.layout,
           panelOpen: !shouldClose,
-          panelView: "terminal",
           mobilePanel: shouldClose || !isMobile ? current.layout.mobilePanel : "editor",
         },
       };
