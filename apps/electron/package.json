@@ -1,0 +1,20 @@
+{
+  "name": "@opencursor/electron",
+  "version": "0.1.0",
+  "private": true,
+  "main": "dist/main.js",
+  "scripts": {
+    "compile": "tsc -p tsconfig.json",
+    "dev": "npm run compile && electron dist/main.js",
+    "build": "npm run compile && node ./scripts/prepare-renderer.mjs",
+    "lint": "tsc --noEmit -p tsconfig.json",
+    "start": "electron dist/main.js"
+  },
+  "dependencies": {
+    "electron": "^38.7.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.5.2",
+    "typescript": "^5.9.2"
+  }
+}

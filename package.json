@@ -1,38 +1,27 @@
 {
-  "name": "opencursor",
-  "version": "0.1.0",
+  "name": "opencursor-monorepo",
   "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*",
+    "server"
+  ],
   "scripts": {
-    "dev": "next dev --webpack",
-    "dev:server": "npm run dev --prefix server",
-    "build": "next build --webpack",
-    "start": "next start",
-    "start:all": "bash -c 'npm run start & npm run start --prefix server & wait'",
-    "prod": "npm run build && npm run build --prefix server && npm run start:all",
-    "lint": "eslint"
-  },
-  "dependencies": {
-    "@ducanh2912/next-pwa": "^10.2.9",
-    "@monaco-editor/react": "^4.7.0",
-    "@xterm/addon-fit": "^0.11.0",
-    "@xterm/addon-web-links": "^0.12.0",
-    "@xterm/xterm": "^6.0.0",
-    "lucide-react": "^0.577.0",
-    "next": "16.1.7",
-    "react": "19.2.3",
-    "react-dom": "19.2.3",
-    "react-resizable-panels": "^4.7.3"
+    "build": "npm run build:shared && npm run build:web && npm run build:server && npm run build:electron && npm run build:mobile",
+    "build:shared": "npm run build --workspace @opencursor/client-sdk",
+    "build:web": "npm run build --workspace @opencursor/web",
+    "build:web:static": "npm run build:static --workspace @opencursor/web",
+    "build:server": "npm run build --workspace @opencursor/server",
+    "build:electron": "npm run build --workspace @opencursor/electron",
+    "build:mobile": "npm run export --workspace @opencursor/mobile",
+    "dev:web": "npm run dev --workspace @opencursor/web",
+    "dev:server": "npm run dev --workspace @opencursor/server",
+    "dev:electron": "concurrently -k -n web,server,electron \"npm run dev:web\" \"npm run dev:server\" \"wait-on tcp:3000 && npm run dev --workspace @opencursor/electron\"",
+    "dev:mobile": "concurrently -k -n server,mobile \"npm run dev:server\" \"npm run dev --workspace @opencursor/mobile\"",
+    "lint": "npm run lint --workspace @opencursor/web && npm run lint --workspace @opencursor/client-sdk && npm run lint --workspace @opencursor/electron && npm run lint --workspace @opencursor/mobile && npm run test --workspace @opencursor/server"
   },
   "devDependencies": {
-    "@tailwindcss/postcss": "^4",
-    "@types/node": "^20",
-    "@types/react": "^19",
-    "@types/react-dom": "^19",
-    "babel-plugin-react-compiler": "1.0.0",
-    "eslint": "^9",
-    "eslint-config-next": "16.1.7",
-    "tailwindcss": "^4",
-    "typescript": "^5",
-    "webpack": "^5.105.4"
+    "concurrently": "^9.2.1",
+    "wait-on": "^9.0.1"
   }
 }

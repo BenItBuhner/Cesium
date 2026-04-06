@@ -1,0 +1,313 @@
+"use client";
+
+import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  ChevronDown,
+  FolderOpen,
+  ScrollText,
+} from "lucide-react";
+import { CollapsibleHeight } from "./CollapsibleHeight";
+import type { WorkedSessionEntry } from "@/lib/types";
+
+const iconWrap =
+  "mt-[2px] flex size-[14px] shrink-0 items-center justify-center text-[var(--text-secondary)]";
+
+const toolStatusClass: Record<
+  NonNullable<Extract<WorkedSessionEntry, { kind: "tool" }>["status"]>,
+  string
+> = {
+  pending:
+    "border-[color-mix(in_srgb,var(--border-card)_80%,transparent)] bg-[color-mix(in_srgb,var(--bg-card)_82%,transparent)] text-[var(--text-secondary)]",
+  running:
+    "border-[color-mix(in_srgb,var(--accent)_45%,transparent)] bg-[color-mix(in_srgb,var(--accent)_18%,transparent)] text-[var(--accent-text)]",
+  completed:
+    "border-[color-mix(in_srgb,#4ade80_35%,transparent)] bg-[color-mix(in_srgb,#4ade80_12%,transparent)] text-[#86efac]",
+  failed:
+    "border-[color-mix(in_srgb,#fb7185_35%,transparent)] bg-[color-mix(in_srgb,#fb7185_12%,transparent)] text-[#fda4af]",
+  cancelled:
+    "border-[color-mix(in_srgb,#f59e0b_35%,transparent)] bg-[color-mix(in_srgb,#f59e0b_12%,transparent)] text-[#fcd34d]",
+};
+
+function isToolEntryActive(entry: WorkedSessionEntry): boolean {
+  return (
+    entry.kind === "tool" &&
+    (entry.status === "pending" || entry.status === "running")
+  );
+}
+
+interface WorkedSessionCardProps {
+  label: string;
+  entries: WorkedSessionEntry[];
+  defaultOpen?: boolean;
+  loading?: boolean;
+  surface?: "panel" | "editor";
+}
+
+const ENTRY_LIST_MAX_HEIGHT = 240;
+
+export function WorkedSessionCard({
+  label,
+  entries,
+  defaultOpen = false,
+  loading = false,
+  surface = "panel",
+}: WorkedSessionCardProps) {
+  const [open, setOpen] = useState(defaultOpen);
+  const hasActiveTool = entries.some((entry) => isToolEntryActive(entry));
+  const showLoadingState = loading || hasActiveTool;
+  const isWorkingPlaceholder = showLoadingState && entries.length === 0;
+  const gradientVar = surface === "editor" ? "var(--bg-main)" : "var(--bg-panel)";
+  const previousLoadingRef = useRef(showLoadingState);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const prevEntryCountRef = useRef(0);
+  const stickToBottomRef = useRef(true);
+  const [showTopGrad, setShowTopGrad] = useState(false);
+  const [showBottomGrad, setShowBottomGrad] = useState(false);
+
+  useEffect(() => {
+    if (defaultOpen) {
+      setOpen(true);
+    }
+  }, [defaultOpen]);
+
+  useEffect(() => {
+    const wasLoading = previousLoadingRef.current;
+    if (wasLoading && !showLoadingState) {
+      setOpen(false);
+    }
+    previousLoadingRef.current = showLoadingState;
+  }, [showLoadingState]);
+
+  const updateGradients = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const atTop = el.scrollTop > 2;
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight > 2;
+    setShowTopGrad(atTop);
+    setShowBottomGrad(atBottom);
+  }, []);
+
+  useEffect(() => {
+    if (!open) return;
+    updateGradients();
+  }, [entries, open, updateGradients]);
+
+  useEffect(() => {
+    if (!open) return;
+    const el = scrollRef.current;
+    if (!el) return;
+    const observer = new ResizeObserver(() => updateGradients());
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [open, updateGradients]);
+
+  useEffect(() => {
+    if (!open) return;
+    const el = scrollRef.current;
+    if (!el) return;
+    if (entries.length > prevEntryCountRef.current && stickToBottomRef.current) {
+      el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+    }
+    prevEntryCountRef.current = entries.length;
+  }, [entries.length, open]);
+
+  const handleScroll = useCallback(
+    (e: React.UIEvent<HTMLDivElement>) => {
+      const el = e.currentTarget;
+      const nearBottom =
+        el.scrollHeight - el.scrollTop - el.clientHeight <= 48;
+      stickToBottomRef.current = nearBottom;
+      updateGradients();
+    },
+    [updateGradients]
+  );
+
+  return (
+    <div className="min-w-0 px-[1px]">
+      {isWorkingPlaceholder ? (
+        <div className="flex w-full min-w-0 items-center gap-[6px] text-left text-[var(--text-secondary)]">
+          <span className="tool-loading-text font-sans text-[13px] font-normal leading-snug">
+            {label}
+          </span>
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          aria-expanded={open}
+          className="flex w-full min-w-0 cursor-pointer items-center gap-[6px] text-left text-[var(--text-secondary)] transition-colors hover:text-[var(--text-primary)]"
+        >
+          <span
+            className={`font-sans text-[13px] font-normal leading-snug ${
+              showLoadingState ? "tool-loading-text" : ""
+            }`}
+          >
+            {label}
+          </span>
+          <ChevronDown
+            className={`size-[14px] shrink-0 transition-transform duration-300 ease-[cubic-bezier(0.33,1,0.68,1)] motion-reduce:transition-none ${
+              open ? "rotate-180" : ""
+            }`}
+            strokeWidth={1.75}
+            aria-hidden
+          />
+        </button>
+      )}
+
+      <CollapsibleHeight open={open}>
+        <div className="relative pt-[10px]">
+          <div
+            ref={scrollRef}
+            onScroll={handleScroll}
+            className="ml-[2px] flex flex-col gap-[14px] border-l border-[var(--border-subtle)] pl-[10px] overflow-y-auto hide-scrollbar-y"
+            style={{ maxHeight: ENTRY_LIST_MAX_HEIGHT }}
+          >
+            {entries.map((entry, i) => (
+              <WorkedEntryBlock
+                key={
+                  entry.kind === "tool"
+                    ? entry.toolCallId ?? `tool-${i}-${entry.title}`
+                    : `${entry.kind}-${i}`
+                }
+                entry={entry}
+              />
+            ))}
+          </div>
+          {showTopGrad ? (
+            <div
+              className="pointer-events-none absolute inset-x-0 top-[10px] ml-[2px] h-[28px] z-[1] bg-gradient-to-b to-transparent"
+              style={{ backgroundImage: `linear-gradient(to bottom, ${gradientVar}, transparent)` }}
+            />
+          ) : null}
+          {showBottomGrad ? (
+            <div
+              className="pointer-events-none absolute inset-x-0 bottom-0 ml-[2px] h-[28px] z-[1] bg-gradient-to-b from-transparent"
+              style={{ backgroundImage: `linear-gradient(to bottom, transparent, ${gradientVar})` }}
+            />
+          ) : null}
+        </div>
+      </CollapsibleHeight>
+    </div>
+  );
+}
+
+function WorkedEntryBlock({ entry }: { entry: WorkedSessionEntry }) {
+  const [visible, setVisible] = useState(false);
+
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => setVisible(true));
+    return () => cancelAnimationFrame(frame);
+  }, []);
+
+  return (
+    <div
+      className={`transition-all duration-300 ease-out motion-reduce:transition-none motion-reduce:opacity-100 motion-reduce:translate-y-0 ${
+        visible ? "translate-y-0 opacity-100" : "translate-y-[6px] opacity-0"
+      }`}
+    >
+      {renderEntry(entry)}
+    </div>
+  );
+}
+
+function renderEntry(entry: WorkedSessionEntry) {
+  switch (entry.kind) {
+    case "verbatim":
+      return (
+        <div className="flex gap-[8px]">
+          <span className={iconWrap}>
+            <ScrollText className="size-[14px]" strokeWidth={1.5} aria-hidden />
+          </span>
+          <pre className="whitespace-pre-wrap font-mono text-[12px] font-normal leading-relaxed text-[var(--text-secondary)]">
+            {entry.text}
+          </pre>
+        </div>
+      );
+    case "explore":
+      return (
+        <div className="flex gap-[8px]">
+          <span className={iconWrap}>
+            <FolderOpen className="size-[14px]" strokeWidth={1.5} aria-hidden />
+          </span>
+          <div className="min-w-0 flex-1">
+            <p className="font-sans text-[12px] font-medium text-[var(--text-secondary)]">
+              {entry.caption ?? `Explored ${entry.paths.length} file${entry.paths.length === 1 ? "" : "s"}`}
+            </p>
+            <ul className="mt-[6px] flex list-none flex-col gap-[4px]">
+              {entry.paths.map((path) => (
+                <li
+                  key={path}
+                  className="font-mono text-[12px] font-normal leading-snug text-[var(--text-secondary)]"
+                >
+                  {path}
+                </li>
+              ))}
+            </ul>
+          </div>
+        </div>
+      );
+    case "reasoning":
+      return (
+        <div className="flex gap-[8px]">
+          <div className="min-w-0 flex-1">
+            <p className="font-sans text-[13px] font-normal leading-relaxed text-[var(--text-primary)]">
+              <span className="text-[var(--text-secondary)]">Thought: </span>
+              {entry.text}
+            </p>
+          </div>
+        </div>
+      );
+    case "tool": {
+      const active = isToolEntryActive(entry);
+      const statusKey =
+        entry.status === "failed" || entry.status === "cancelled"
+          ? entry.status
+          : null;
+      return (
+        <div className="flex gap-[8px]">
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-[8px]">
+              <p
+                className={`font-sans text-[13px] font-normal ${
+                  active
+                    ? "tool-loading-text"
+                    : entry.status === "failed"
+                      ? "text-[#fda4af]"
+                      : entry.status === "cancelled"
+                        ? "text-[#fcd34d]"
+                        : "text-[var(--text-primary)]"
+                }`}
+              >
+                {entry.title}
+              </p>
+              {statusKey ? (
+                <span
+                  className={`rounded-full border px-[7px] py-[1px] font-sans text-[10px] font-medium uppercase tracking-[0.08em] ${toolStatusClass[statusKey]}`}
+                >
+                  {statusKey}
+                </span>
+              ) : null}
+            </div>
+            {entry.detail?.trim() ? (
+              <p className="mt-[4px] line-clamp-4 font-sans text-[12px] font-normal leading-relaxed text-[var(--text-secondary)]">
+                {entry.detail}
+              </p>
+            ) : null}
+            {entry.files?.length ? (
+              <ul className="mt-[6px] flex list-none flex-col gap-[4px]">
+                {entry.files.map((file) => (
+                  <li
+                    key={file}
+                    className="font-mono text-[12px] font-normal leading-snug text-[var(--text-secondary)]"
+                  >
+                    {file}
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+          </div>
+        </div>
+      );
+    }
+  }
+}

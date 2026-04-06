@@ -1,0 +1,14 @@
+{
+  "expo": {
+    "name": "OpenCursor Mobile",
+    "slug": "opencursor-mobile",
+    "version": "0.1.0",
+    "orientation": "default",
+    "userInterfaceStyle": "dark",
+    "platforms": ["ios", "android", "web"],
+    "assetBundlePatterns": ["**/*"],
+    "web": {
+      "bundler": "metro"
+    }
+  }
+}

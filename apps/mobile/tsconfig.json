@@ -1,0 +1,13 @@
+{
+  "extends": "expo/tsconfig.base",
+  "compilerOptions": {
+    "strict": true,
+    "moduleResolution": "bundler",
+    "baseUrl": ".",
+    "paths": {
+      "@opencursor/client-sdk": [
+        "../../packages/client-sdk/src/index.ts"
+      ]
+    }
+  }
+}
