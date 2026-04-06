@@ -210,6 +210,14 @@ function normalizeWorkspaceSession(
         raw.layout?.desktopLayout && typeof raw.layout.desktopLayout === "object"
           ? raw.layout.desktopLayout
           : defaults.layout.desktopLayout,
+      agentEditorOpen:
+        typeof raw.layout?.agentEditorOpen === "boolean"
+          ? raw.layout.agentEditorOpen
+          : defaults.layout.agentEditorOpen,
+      agentDesktopLayout:
+        raw.layout?.agentDesktopLayout && typeof raw.layout.agentDesktopLayout === "object"
+          ? raw.layout.agentDesktopLayout
+          : defaults.layout.agentDesktopLayout,
     },
     settingsView: {
       ...defaults.settingsView,

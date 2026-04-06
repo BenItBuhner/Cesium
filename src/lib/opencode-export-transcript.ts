@@ -197,7 +197,7 @@ export function projectOpenCodeExportToChatMessages(session: unknown): {
   const exportedMessages = Array.isArray(root?.messages) ? root.messages : [];
   const messages: ChatMessage[] = [];
   const sessionTime = asRecord(info?.time);
-  let complete = typeof sessionTime?.completed === "number";
+  const complete = typeof sessionTime?.completed === "number";
 
   for (const rawMessage of exportedMessages) {
     const messageRecord = asRecord(rawMessage);

@@ -21,6 +21,8 @@ export type LayoutSessionState = {
   chatOpen: boolean;
   mobilePanel: MobilePanel;
   desktopLayout: Record<string, number> | null;
+  agentEditorOpen: boolean;
+  agentDesktopLayout: Record<string, number> | null;
 };
 
 export type EditorSessionState = {
@@ -95,6 +97,8 @@ export function createDefaultWorkspaceSession(
       chatOpen: true,
       mobilePanel: "editor",
       desktopLayout: null,
+      agentEditorOpen: false,
+      agentDesktopLayout: null,
     },
     settingsView: {
       activeNav: "general",
@@ -231,6 +235,14 @@ export function mergeWorkspaceSessionFromImport(
         r.layout?.desktopLayout && typeof r.layout.desktopLayout === "object"
           ? r.layout.desktopLayout
           : current.layout.desktopLayout,
+      agentEditorOpen:
+        typeof r.layout?.agentEditorOpen === "boolean"
+          ? r.layout.agentEditorOpen
+          : current.layout.agentEditorOpen,
+      agentDesktopLayout:
+        r.layout?.agentDesktopLayout && typeof r.layout.agentDesktopLayout === "object"
+          ? r.layout.agentDesktopLayout
+          : current.layout.agentDesktopLayout,
     },
     settingsView: {
       ...current.settingsView,

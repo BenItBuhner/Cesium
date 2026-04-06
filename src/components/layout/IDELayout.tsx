@@ -4,17 +4,12 @@ import { useEffect, useLayoutEffect, useMemo, useState } from "react";
 import { Panel, Group, Separator, usePanelRef } from "react-resizable-panels";
 import { FileExplorer } from "@/components/sidebar/FileExplorer";
 import { EditorPanel } from "@/components/editor/EditorPanel";
-import { OpenInEditorProvider } from "@/components/editor/OpenInEditorContext";
 import { ChatPanel } from "@/components/chat/ChatPanel";
 import { useViewport } from "@/hooks/useViewport";
 import { PanelLeft } from "lucide-react";
-import { EditorBridgeProvider } from "@/components/ide/EditorBridgeContext";
-import { WorkbenchProvider } from "@/components/ide/WorkbenchContext";
-import { IDEKeyboardLayer } from "@/components/ide/IDEKeyboardLayer";
-import { WorkbenchContextMenuProvider } from "@/components/ide/WorkbenchContextMenuProvider";
-import { HardwareInputProvider } from "@/components/input/HardwareInputProvider";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { useTheme } from "@/components/theme/ThemeProvider";
+import { WorkbenchShellProviders } from "./WorkbenchShellProviders";
 
 function ResizeHandle() {
   return (
@@ -124,12 +119,7 @@ export function IDELayout() {
   }
 
   return (
-    <OpenInEditorProvider>
-      <WorkbenchContextMenuProvider>
-      <EditorBridgeProvider>
-        <WorkbenchProvider value={workbench}>
-          <HardwareInputProvider>
-            <IDEKeyboardLayer>
+    <WorkbenchShellProviders workbench={workbench}>
           {isMobile ? (
             <div className="flex h-screen w-screen flex-col overflow-hidden bg-[var(--bg-main)]">
               <div className="min-h-0 flex-1 overflow-hidden">
@@ -246,11 +236,6 @@ export function IDELayout() {
               </div>
             </div>
           )}
-            </IDEKeyboardLayer>
-          </HardwareInputProvider>
-        </WorkbenchProvider>
-      </EditorBridgeProvider>
-      </WorkbenchContextMenuProvider>
-    </OpenInEditorProvider>
+    </WorkbenchShellProviders>
   );
 }
