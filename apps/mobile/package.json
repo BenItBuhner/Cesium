@@ -2,9 +2,9 @@
   "name": "@opencursor/mobile",
   "version": "0.1.0",
   "private": true,
-  "main": "expo/AppEntry",
+  "main": "./index.ts",
   "scripts": {
-    "dev": "expo start --web",
+    "dev": "expo start --web -c",
     "export": "expo export --platform web",
     "build": "expo export --platform web",
     "lint": "tsc --noEmit"
@@ -13,8 +13,8 @@
     "@expo/metro-runtime": "^6.1.2",
     "@opencursor/client-sdk": "*",
     "expo": "^54.0.13",
-    "react": "19.1.0",
-    "react-dom": "19.1.0",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
     "react-native": "0.81.4",
     "react-native-web": "^0.21.1"
   },
