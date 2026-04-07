@@ -129,7 +129,6 @@ function pickAvailableBackend(
   return (
     backends.find((backend) => backend.id === preferredBackendId && backend.available) ??
     backends.find((backend) => backend.available) ??
-    backends[0] ??
     null
   );
 }
@@ -561,11 +560,26 @@ export function ChatPanel() {
 
   const createConversationAndOpen = useCallback(async () => {
     const draft = chatDraftRef.current;
+    const preferredBackend = pickAvailableBackend(backends, draft.backendId);
+    if (!preferredBackend) {
+      pushNotification({
+        kind: WORKBENCH_NOTIFICATION_KIND.editorNotice,
+        severity: "error",
+        title: "Agent",
+        message:
+          "No available agent backends are configured yet. Voice transcription can still run, but starting a chat requires an installed backend.",
+        autoDismissMs: 8000,
+      });
+      return null;
+    }
+    const preferredModel = resolveDraftModelForBackend(preferredBackend);
+    const preferredMode =
+      buildDraftModeOptionsForBackend(preferredBackend)[0]?.id ?? draft.mode;
     const created = await createAgentConversation({
-      backendId: draft.backendId,
-      mode: draft.mode,
-      modelId: draft.model.modelValue ?? draft.model.id,
-      modelName: draft.model.name,
+      backendId: preferredBackend.id,
+      mode: preferredMode,
+      modelId: preferredModel.modelValue ?? preferredModel.id,
+      modelName: preferredModel.name,
     });
     const { conversation } = created;
     setConversationsById((current) => ({
@@ -583,6 +597,8 @@ export function ChatPanel() {
     unhideConversationIds([conversation.id]);
     return conversation;
   }, [
+    backends,
+    pushNotification,
     setTabs,
     unhideConversationIds,
   ]);
@@ -646,7 +662,6 @@ export function ChatPanel() {
     return (
       backends.find((backend) => backend.id === workspaceSession.chat.backendId && backend.available) ??
       backends.find((backend) => backend.available) ??
-      backends[0] ??
       null
     );
   }, [backends, workspaceSession.chat.backendId]);
@@ -955,6 +970,22 @@ export function ChatPanel() {
       if (conversations.length === 0) {
         const draft = chatDraftRef.current;
         const preferredBackend = pickAvailableBackend(result.backends, draft.backendId);
+        if (!preferredBackend) {
+          setConversations([]);
+          setConversationsById({});
+          updateWorkspaceSession((current) =>
+            tabsEqual(current.chat.tabs, [])
+              ? current
+              : {
+                  ...current,
+                  chat: {
+                    ...current.chat,
+                    tabs: [],
+                  },
+                }
+          );
+          return;
+        }
         const preferredModel = preferredBackend
           ? resolveDraftModelForBackend(preferredBackend)
           : draft.model;
@@ -1335,6 +1366,9 @@ export function ChatPanel() {
           conversationsById[draftId] ??
           (draftId === activeConversation?.id ? activeConversation : null) ??
           (await createConversationAndOpen());
+        if (!conversation) {
+          return false;
+        }
         conversationIdForError = conversation.id;
         const snapshot = await promptAgentConversation(conversation.id, text);
         mergeSnapshot(snapshot.snapshot);
