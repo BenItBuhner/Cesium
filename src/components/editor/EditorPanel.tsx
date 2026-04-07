@@ -36,7 +36,12 @@ import {
   TAB_DND_MIME,
   parseTabDragPayload,
 } from "./editor-panel-state";
-import { createTerminal, deleteTerminal, readFile, writeFile } from "@/lib/server-api";
+import {
+  createTerminal,
+  deleteTerminal,
+  readFile,
+  writeFile,
+} from "@/lib/server-api";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { useWorkbenchNotifications } from "@/components/notifications/WorkbenchNotificationProvider";
 import { WORKBENCH_NOTIFICATION_KIND } from "@/components/notifications/workbench-notification-types";
@@ -1175,7 +1180,7 @@ export function EditorPanel() {
     }
   ) {
     return (
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+      <div className="flex h-full min-h-0 min-w-0 flex-col">
         <EditorTabs
           group={group}
           tabs={options.tabs}
@@ -1195,7 +1200,7 @@ export function EditorPanel() {
           onStripContextMenu={(e) => handleEditorStripContextMenu(e, group)}
         />
         <div
-          className="min-h-0 flex-1 overflow-hidden"
+          className="flex min-h-0 flex-1 flex-col overflow-hidden"
           onPointerDown={() => focusEditorGroup(group)}
           onDragOver={editorDragOverHandler}
           onDrop={editorDropHandler(group)}

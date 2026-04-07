@@ -116,7 +116,7 @@ function createPersistableEditorTab(tab: EditorTab): EditorTab {
       ...tab,
       content: "",
       savedContent: undefined,
-      loading: false,
+      loading: true,
     };
   }
 
