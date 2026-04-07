@@ -22,7 +22,6 @@ import {
   createTerminal,
   createWorkspaceSelection,
   createWorkspaceWindow,
-  fetchWorkspaceWindowSession,
   fetchWorkspaceWindows,
   fetchFolderChildren,
   fetchTree,
@@ -570,12 +569,11 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       const result = await createWorkspaceWindow({
         workspaceId: activeWorkspaceId,
         title: input?.title,
-        sourceWindowId: windowId,
       });
       setWorkspaceWindows(result.windows);
       return result.window;
     },
-    [activeWorkspaceId, windowId]
+    [activeWorkspaceId]
   );
 
   const updatePersistentWorkspaceWindow = useCallback(

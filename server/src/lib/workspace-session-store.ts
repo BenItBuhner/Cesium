@@ -10,6 +10,9 @@ export type PersistedWorkspaceSession = {
   settingsView?: unknown;
 };
 
+const FRESH_WORKSPACE_WINDOW_HIDDEN_CONVERSATIONS_SENTINEL =
+  "__workspace_window_fresh__";
+
 export type WorkspaceWindowRecord = {
   id: string;
   workspaceId: string;
@@ -183,9 +186,17 @@ export async function createWorkspaceWindow(
     lastFocusedAt: now,
   };
   await saveWorkspaceWindows(workspaceId, [windowRecord, ...windows]);
-  if (input?.session) {
-    await saveWorkspaceWindowSession(workspaceId, windowRecord.id, input.session);
-  }
+  await saveWorkspaceWindowSession(
+    workspaceId,
+    windowRecord.id,
+    input?.session ?? {
+      schemaVersion: 1,
+      chat: {
+        tabs: [],
+        hiddenConversationIds: [FRESH_WORKSPACE_WINDOW_HIDDEN_CONVERSATIONS_SENTINEL],
+      },
+    }
+  );
   return windowRecord;
 }
 

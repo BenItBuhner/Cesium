@@ -50,11 +50,19 @@ import {
   buildAgentWebSocketUrl,
   cancelAgentConversation,
   createAgentConversation,
+  createWorkspaceWindow,
   fetchAgentConversationSnapshot,
   listAgentConversations,
   promptAgentConversation,
+  saveWorkspaceWindowSession,
   updateAgentConversationConfig,
 } from "@/lib/server-api";
+import { createPersistableWorkspaceSession } from "@/lib/workspace-session";
+import {
+  buildWorkspaceWindowUrl,
+  FRESH_WORKSPACE_WINDOW_HIDDEN_CONVERSATIONS_SENTINEL,
+  normalizeWorkspaceWindowSession,
+} from "@/lib/workspace-windows";
 
 function partitionMessagesForDock(messages: ChatMessage[]): {
   scrollMessages: ChatMessage[];
@@ -1277,6 +1285,69 @@ export function ChatPanel() {
     [activeTabId, updateWorkspaceSession]
   );
 
+  const moveConversationToWorkspaceWindow = useCallback(
+    async (
+      conversationId: string,
+      target: "new-window" | { windowId: string }
+    ) => {
+      if (!activeWorkspaceId) {
+        flashError("No active workspace.");
+        return;
+      }
+      const nextWindow =
+        target === "new-window"
+          ? await createWorkspaceWindow({ workspaceId: activeWorkspaceId })
+          : { window: { id: target.windowId } };
+      const nextSession = normalizeWorkspaceWindowSession({
+        ...createPersistableWorkspaceSession(workspaceSession),
+        chat: {
+          ...workspaceSession.chat,
+          tabs: [
+            {
+              id: conversationId,
+              title: conversationsById[conversationId]?.title ?? "Chat",
+              active: true,
+            },
+          ],
+          hiddenConversationIds: FRESH_WORKSPACE_WINDOW_HIDDEN_CONVERSATIONS_SENTINEL,
+          scrollTopByTabId: {
+            [conversationId]:
+              workspaceSession.chat.scrollTopByTabId[conversationId] ?? 0,
+          },
+        },
+      });
+      await saveWorkspaceWindowSession(
+        activeWorkspaceId,
+        nextWindow.window.id,
+        nextSession
+      );
+      const remainingTabs = tabsRef.current.filter((tab) => tab.id !== conversationId);
+      const nextTabs = remainingTabs.map((tab, index) => ({
+        ...tab,
+        active:
+          remainingTabs.length > 0
+            ? tab.active && tab.id !== conversationId
+              ? true
+              : !remainingTabs.some((candidate) => candidate.active) && index === 0
+            : false,
+      }));
+      await persistClosedTabsNow(nextTabs, [conversationId]);
+      const openedWindow = window.open(
+        buildWorkspaceWindowUrl(
+          window.location.origin,
+          activeWorkspaceId,
+          nextWindow.window.id
+        ),
+        "_blank",
+        "noopener,noreferrer"
+      );
+      if (!openedWindow) {
+        flashError("Popup blocked while opening the workspace window.");
+      }
+    },
+    [activeWorkspaceId, conversationsById, persistClosedTabsNow, workspaceSession]
+  );
+
   const handleChatTabContextMenu = useCallback(
     (e: MouseEvent, tabId: string) => {
       const othersOpen = tabs.length > 1;
@@ -1300,10 +1371,32 @@ export function ChatPanel() {
           disabled: !othersOpen,
           onSelect: () => closeOtherChatTabs(tabId),
         },
+        { type: "sep" },
+        {
+          type: "item",
+          id: "move-new-window",
+          label: "Move to New Workspace Window",
+          onSelect: () =>
+            void moveConversationToWorkspaceWindow(tabId, "new-window"),
+        },
+        ...workspaceWindows
+          .filter(
+            (windowRecord) =>
+              !windowRecord.closedAt && windowRecord.id !== activeWindowId
+          )
+          .map<WorkbenchMenuItem>((windowRecord) => ({
+            type: "item",
+            id: `move-window:${windowRecord.id}`,
+            label: `Move to Workspace Window: ${windowRecord.label}`,
+            onSelect: () =>
+              void moveConversationToWorkspaceWindow(tabId, {
+                windowId: windowRecord.id,
+              }),
+          })),
       ];
       openAt(e, items);
     },
-    [tabs, openAt, closeChatTab, closeOtherChatTabs]
+    [closeChatTab, closeOtherChatTabs, moveConversationToWorkspaceWindow, openAt, tabs]
   );
 
   const handleChatStripContextMenu = useCallback(

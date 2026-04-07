@@ -211,23 +211,12 @@ workspaceRoutes.post("/api/workspaces/:workspaceId/windows", async (c) => {
     return c.json({ error: `Unknown workspace: ${workspaceId}` }, 404);
   }
 
-  const body: { name?: string; sourceWindowId?: string | null } =
-    await c.req
-      .json<{ name?: string; sourceWindowId?: string | null }>()
-      .catch(() => ({}));
-  const sourceWindowId =
-    typeof body.sourceWindowId === "string" && body.sourceWindowId.trim().length > 0
-      ? body.sourceWindowId.trim()
-      : null;
-  const sourceSession = sourceWindowId
-    ? await getWorkspaceWindowSession(workspaceId, sourceWindowId)
-    : await getWorkspaceSession(workspaceId);
+  const body: { name?: string } = await c.req.json<{ name?: string }>().catch(() => ({}));
   const windowRecord = await createWorkspaceWindow(workspaceId, {
     name:
       typeof body.name === "string" && body.name.trim().length > 0
         ? body.name.trim()
         : undefined,
-    session: sourceSession ?? undefined,
   });
   const windows = await listWorkspaceWindows(workspaceId);
   return c.json({ workspace, window: windowRecord, windows }, 201);

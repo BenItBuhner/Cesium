@@ -240,7 +240,6 @@ export async function fetchWorkspaceWindows(
 export async function createWorkspaceWindow(input: {
   workspaceId: string;
   title?: string;
-  sourceWindowId?: string | null;
 }): Promise<{
   workspace: WorkspaceRecord;
   window: WorkspaceWindowRecord;
@@ -250,7 +249,7 @@ export async function createWorkspaceWindow(input: {
     `/api/workspaces/${encodeURIComponent(input.workspaceId)}/windows`,
     {
       method: "POST",
-      body: JSON.stringify({ name: input.title, sourceWindowId: input.sourceWindowId }),
+      body: JSON.stringify({ name: input.title }),
     },
     { skipWorkspaceHeader: true }
   );

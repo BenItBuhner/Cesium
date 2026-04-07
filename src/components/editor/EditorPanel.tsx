@@ -37,6 +37,8 @@ import {
   parseTabDragPayload,
 } from "./editor-panel-state";
 import {
+  fetchWorkspaceWindowSession,
+  saveWorkspaceWindowSession,
   createTerminal,
   deleteTerminal,
   readFile,
@@ -45,7 +47,14 @@ import {
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { useWorkbenchNotifications } from "@/components/notifications/WorkbenchNotificationProvider";
 import { WORKBENCH_NOTIFICATION_KIND } from "@/components/notifications/workbench-notification-types";
-import type { EditorSplitOrientation } from "@/lib/workspace-session";
+import {
+  createPersistableWorkspaceSession,
+  type EditorSplitOrientation,
+} from "@/lib/workspace-session";
+import {
+  buildWorkspaceWindowUrl,
+  normalizeWorkspaceWindowSession,
+} from "@/lib/workspace-windows";
 
 const EDITOR_SPLIT_PANEL_IDS = {
   left: "editor-split-left",
@@ -158,11 +167,15 @@ export function EditorPanel() {
     setExpandedComposerDraft,
   } = useOpenInEditor();
   const {
+    activeWindowId,
+    activeWorkspaceId,
+    createWorkspaceWindow,
     fsResyncToken,
     lastFileChange,
     refreshTerminals,
     terminals,
     workspaceInfo,
+    workspaceWindows,
     workspaceSession,
     updateWorkspaceSession,
   } = useWorkspace();
@@ -819,6 +832,124 @@ export function EditorPanel() {
     [flashNotice]
   );
 
+  const openWorkspaceWindow = useCallback(
+    (windowId: string) => {
+      if (!activeWorkspaceId) {
+        return;
+      }
+      const nextWindow = window.open(
+        buildWorkspaceWindowUrl(window.location.origin, activeWorkspaceId, windowId),
+        "_blank",
+        "noopener,noreferrer"
+      );
+      if (!nextWindow) {
+        flashNotice("Popup blocked while opening the workspace window.", "error");
+        return;
+      }
+      nextWindow.focus();
+    },
+    [activeWorkspaceId, flashNotice]
+  );
+
+  const moveEditorTabToWorkspaceWindow = useCallback(
+    async (group: EditorGroup, tabId: string, targetWindowId?: string) => {
+      if (!activeWorkspaceId) {
+        flashNotice("No active workspace.", "error");
+        return;
+      }
+      const tab = findTab(tabId);
+      if (!tab) {
+        return;
+      }
+
+      let targetWindow =
+        targetWindowId != null
+          ? workspaceWindows.find((windowRecord) => windowRecord.id === targetWindowId) ?? null
+          : null;
+      if (!targetWindow) {
+        targetWindow = await createWorkspaceWindow();
+      }
+
+      const targetSessionResult = await fetchWorkspaceWindowSession(
+        activeWorkspaceId,
+        targetWindow.id
+      );
+      const targetSession = normalizeWorkspaceWindowSession(targetSessionResult.session);
+      const targetGroup: EditorGroup =
+        targetSession.editor.split && targetSession.editor.focusedGroup === "right"
+          ? "right"
+          : "left";
+
+      let nextLeftTabs = targetSession.editor.leftTabs.filter((candidate) => candidate.id !== tabId);
+      let nextRightTabs = targetSession.editor.rightTabs.filter(
+        (candidate) => candidate.id !== tabId
+      );
+      let nextLeftActiveId =
+        nextLeftTabs.find((candidate) => candidate.id === targetSession.editor.leftActiveId)?.id ??
+        nextLeftTabs[0]?.id ??
+        null;
+      let nextRightActiveId =
+        nextRightTabs.find((candidate) => candidate.id === targetSession.editor.rightActiveId)?.id ??
+        nextRightTabs[0]?.id ??
+        null;
+
+      if (targetGroup === "left") {
+        nextLeftTabs = [...nextLeftTabs, tab];
+        nextLeftActiveId = tabId;
+      } else {
+        nextRightTabs = [...nextRightTabs, tab];
+        nextRightActiveId = tabId;
+      }
+
+      const viewState = viewStateByTabIdRef.current[tabId];
+      const nextTargetSession = {
+        ...targetSession,
+        editor: {
+          ...targetSession.editor,
+          leftTabs: nextLeftTabs,
+          rightTabs: nextRightTabs,
+          leftActiveId: nextLeftActiveId,
+          rightActiveId: nextRightActiveId,
+          focusedGroup: targetGroup,
+          viewStateByTabId:
+            viewState === undefined
+              ? targetSession.editor.viewStateByTabId
+              : {
+                  ...targetSession.editor.viewStateByTabId,
+                  [tabId]: viewState,
+                },
+        },
+      };
+
+      await saveWorkspaceWindowSession(
+        activeWorkspaceId,
+        targetWindow.id,
+        createPersistableWorkspaceSession(nextTargetSession)
+      );
+
+      if (tab.composerDraftId && expandedComposerDraftId === tab.composerDraftId) {
+        setExpandedComposerDraft(null);
+      }
+
+      const nextViewStates = { ...viewStateByTabIdRef.current };
+      delete nextViewStates[tabId];
+      viewStateByTabIdRef.current = nextViewStates;
+      dispatch({ type: "CLOSE_TAB", group, id: tabId });
+      flashNotice(`Moved ${tab.name} to ${targetWindow.label}.`);
+      openWorkspaceWindow(targetWindow.id);
+    },
+    [
+      activeWorkspaceId,
+      createWorkspaceWindow,
+      expandedComposerDraftId,
+      findTab,
+      flashNotice,
+      openWorkspaceWindow,
+      setExpandedComposerDraft,
+      workspaceWindows,
+    ]
+  );
+
   const handleEditorStripContextMenu = useCallback(
     (e: MouseEvent, group: EditorGroup) => {
       if (e.target !== e.currentTarget) return;
@@ -994,6 +1125,32 @@ export function EditorPanel() {
         );
       }
 
+      if (activeWorkspaceId) {
+        const availableWindows = workspaceWindows.filter(
+          (windowRecord) =>
+            windowRecord.id !== activeWindowId && !windowRecord.closedAt
+        );
+        items.push({ type: "sep" });
+        items.push({
+          type: "item",
+          id: "move-new-workspace-window",
+          label: "Move to New Workspace Window",
+          onSelect: () => {
+            void moveEditorTabToWorkspaceWindow(group, tabId);
+          },
+        });
+        for (const windowRecord of availableWindows) {
+          items.push({
+            type: "item",
+            id: `move-workspace-window-${windowRecord.id}`,
+            label: `Move to ${windowRecord.label}`,
+            onSelect: () => {
+              void moveEditorTabToWorkspaceWindow(group, tabId, windowRecord.id);
+            },
+          });
+        }
+      }
+
       if (tab.filePath) {
         items.push({ type: "sep" });
         items.push(
@@ -1015,17 +1172,21 @@ export function EditorPanel() {
       openAt(e, items);
     },
     [
+      activeWindowId,
+      activeWorkspaceId,
       copyToClipboard,
       dispatch,
       findTab,
       joinEditorGroups,
       moveTab,
+      moveEditorTabToWorkspaceWindow,
       moveTabToNewSplit,
       openAt,
       requestCloseOthersInGroup,
       requestCloseTab,
       saveTab,
       setSplitMode,
+      workspaceWindows,
       workspaceInfo?.root,
     ]
   );

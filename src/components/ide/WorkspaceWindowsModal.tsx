@@ -15,30 +15,11 @@ import { VSCodeQuickInputShell } from "./VSCodeQuickInputShell";
 type WorkspaceWindowsModalItem = {
   id: string;
   label: string;
-  detail?: string;
   onSelect: () => void;
 };
 
 const rowBase =
-  "flex w-full cursor-pointer items-start gap-[10px] px-[10px] py-[7px] text-left font-sans text-[13px] outline-none";
-
-function formatRelativeWindowTime(windowRecord: WorkspaceWindowRecord): string {
-  const lastFocusedAt = windowRecord.lastFocusedAt ?? windowRecord.lastOpenedAt;
-  const diffMs = Math.max(0, Date.now() - lastFocusedAt);
-  const minutes = Math.round(diffMs / 60_000);
-  if (minutes <= 1) {
-    return "Active just now";
-  }
-  if (minutes < 60) {
-    return `Active ${minutes}m ago`;
-  }
-  const hours = Math.round(minutes / 60);
-  if (hours < 24) {
-    return `Active ${hours}h ago`;
-  }
-  const days = Math.round(hours / 24);
-  return `Active ${days}d ago`;
-}
+  "flex w-full cursor-pointer items-center gap-[10px] px-[10px] py-[7px] text-left font-sans text-[13px] outline-none";
 
 export function WorkspaceWindowsModal({
   open,
@@ -71,7 +52,6 @@ export function WorkspaceWindowsModal({
       {
         id: "action:create-window",
         label: "Create New Workspace Window",
-        detail: "Open a dedicated window with its own persistent editor session.",
         onSelect: onCreateWindow,
       },
     ];
@@ -79,10 +59,9 @@ export function WorkspaceWindowsModal({
     if (onRenameCurrentWindow) {
       nextItems.push({
         id: "action:rename-current-window",
-        label: "Rename Current Workspace Window",
-        detail: currentWindowLabel
-          ? `Current name: ${currentWindowLabel}`
-          : "Give the current window a memorable name.",
+        label: currentWindowLabel
+          ? `Rename ${currentWindowLabel}...`
+          : "Rename Current Workspace Window...",
         onSelect: onRenameCurrentWindow,
       });
     }
@@ -94,7 +73,6 @@ export function WorkspaceWindowsModal({
       nextItems.push({
         id: `window:${windowRecord.id}`,
         label: windowRecord.label,
-        detail: formatRelativeWindowTime(windowRecord),
         onSelect: () => onOpenWindow(windowRecord.id),
       });
     }
@@ -115,7 +93,7 @@ export function WorkspaceWindowsModal({
       return items;
     }
     return items.filter((item) => {
-      const haystack = `${item.label} ${item.detail ?? ""}`.toLowerCase();
+      const haystack = item.label.toLowerCase();
       return haystack.includes(q);
     });
   }, [items, query]);
@@ -260,14 +238,7 @@ export function WorkspaceWindowsModal({
               onMouseEnter={() => setSel(index)}
               onClick={() => runAt(index)}
             >
-              <div className="min-w-0 flex-1">
-                <div className="truncate">{item.label}</div>
-                {item.detail ? (
-                  <div className="truncate text-[11px] text-[var(--text-disabled)]">
-                    {item.detail}
-                  </div>
-                ) : null}
-              </div>
+              <div className="min-w-0 flex-1 truncate">{item.label}</div>
             </div>
           ))
         )}
