@@ -13,7 +13,7 @@ import {
   type PointerEvent as ReactPointerEvent,
   type ReactElement,
 } from "react";
-import { ArrowUp, Maximize2, Mic, Minimize2, Square, Upload } from "lucide-react";
+import { ArrowUp, Loader, Maximize2, Mic, Minimize2, Square, Upload } from "lucide-react";
 import { useHardwareInput } from "@/components/input/HardwareInputProvider";
 import { useWorkbenchNotifications } from "@/components/notifications/WorkbenchNotificationProvider";
 import { WORKBENCH_NOTIFICATION_KIND } from "@/components/notifications/workbench-notification-types";
@@ -139,6 +139,136 @@ function buildInsertedTranscription(
     value,
     selection: { start: caret, end: caret },
   };
+}
+
+const VOICE_WAVE_BAR_WIDTH_PX = 3;
+const VOICE_WAVE_BAR_GAP_PX = 4;
+const VOICE_WAVE_MIN_BARS = 5;
+const VOICE_WAVE_MAX_BARS = 17;
+
+function buildVoiceWaveBars(
+  barCount: number,
+  state: "idle" | "recording" | "transcribing",
+  inputLevel: number
+): Array<{ height: number; opacity: number; delayMs: number }> {
+  const midpoint = (barCount - 1) / 2;
+  const safeLevel = Math.max(0, Math.min(inputLevel, 1));
+
+  return Array.from({ length: barCount }, (_, index) => {
+    const distance =
+      midpoint <= 0 ? 0 : Math.abs(index - midpoint) / midpoint;
+    const envelope = Math.max(0.28, 1 - distance * 0.74);
+
+    if (state === "transcribing") {
+      const stepped = 0.45 + (index % 4) * 0.11;
+      return {
+        height: Math.round(6 + stepped * envelope * 16),
+        opacity: 0.52 + envelope * 0.28,
+        delayMs: index * 70,
+      };
+    }
+
+    const sway = 0.72 + ((index * 7) % 5) * 0.1;
+    const amplitude = Math.max(0.14, safeLevel * sway);
+    return {
+      height: Math.round(4 + amplitude * (10 + envelope * 18)),
+      opacity: 0.34 + Math.min(0.62, safeLevel * 0.65 + envelope * 0.18),
+      delayMs: index * 40,
+    };
+  });
+}
+
+function VoiceInputWaveform({
+  state,
+  inputLevel,
+}: {
+  state: "idle" | "recording" | "transcribing";
+  inputLevel: number;
+}) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [availableWidth, setAvailableWidth] = useState(0);
+
+  useEffect(() => {
+    const node = containerRef.current;
+    if (!node || state === "idle") {
+      setAvailableWidth(0);
+      return;
+    }
+
+    const measure = () => {
+      setAvailableWidth(
+        Math.max(0, Math.floor(node.getBoundingClientRect().width))
+      );
+    };
+
+    measure();
+    if (typeof ResizeObserver === "undefined") {
+      const frame = requestAnimationFrame(measure);
+      return () => cancelAnimationFrame(frame);
+    }
+
+    const observer = new ResizeObserver(() => measure());
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [state]);
+
+  const barCount = useMemo(() => {
+    if (state === "idle") {
+      return 0;
+    }
+    if (availableWidth <= 0) {
+      return 9;
+    }
+    const rawCount = Math.floor(
+      (availableWidth + VOICE_WAVE_BAR_GAP_PX) /
+        (VOICE_WAVE_BAR_WIDTH_PX + VOICE_WAVE_BAR_GAP_PX)
+    );
+    return Math.max(
+      VOICE_WAVE_MIN_BARS,
+      Math.min(VOICE_WAVE_MAX_BARS, rawCount)
+    );
+  }, [availableWidth, state]);
+
+  const bars = useMemo(
+    () =>
+      buildVoiceWaveBars(
+        barCount || 9,
+        state,
+        state === "recording" ? inputLevel : 0.3
+      ),
+    [barCount, inputLevel, state]
+  );
+
+  if (state === "idle") {
+    return null;
+  }
+
+  return (
+    <div className="flex min-w-[72px] max-w-[220px] flex-[1_1_128px] items-center self-end">
+      <div
+        ref={containerRef}
+        className="flex h-[20px] w-full items-center justify-center gap-[4px] overflow-hidden px-[2px]"
+        aria-hidden
+      >
+        {bars.map((bar, index) => (
+          <span
+            key={index}
+            className={`w-[3px] rounded-full bg-[var(--text-secondary)] transition-[height,opacity] duration-100 ${
+              state === "transcribing" ? "animate-pulse" : ""
+            }`}
+            style={{
+              height: `${bar.height}px`,
+              opacity: bar.opacity,
+              animationDelay:
+                state === "transcribing" ? `${bar.delayMs}ms` : undefined,
+              animationDuration:
+                state === "transcribing" ? "1.1s" : undefined,
+            }}
+          />
+        ))}
+      </div>
+    </div>
+  );
 }
 
 interface ChatComposerProps {
@@ -453,13 +583,20 @@ export function ChatComposer({
       setComposerValue(next.value);
       setComposerSelection(next.selection);
       setMenu(null);
-      if (!hardwareInputEnabled) {
-        requestAnimationFrame(() => {
-          editorRef.current?.focus();
-        });
-      }
+      requestAnimationFrame(() => {
+        editorRef.current?.focus();
+        if (hardwareInputEnabled) {
+          activateSurface(surfaceId, editorRef.current);
+        }
+      });
     },
-    [hardwareInputEnabled, setComposerSelection, setComposerValue]
+    [
+      activateSurface,
+      hardwareInputEnabled,
+      setComposerSelection,
+      setComposerValue,
+      surfaceId,
+    ]
   );
 
   const updateVoiceLevel = useCallback(() => {
@@ -470,10 +607,16 @@ export function ChatComposer({
     const values = new Uint8Array(analyser.fftSize);
     analyser.getByteTimeDomainData(values);
     let peak = 0;
+    let sumSquares = 0;
     for (const value of values) {
-      peak = Math.max(peak, Math.abs(value - 128) / 128);
+      const normalized = (value - 128) / 128;
+      const magnitude = Math.abs(normalized);
+      peak = Math.max(peak, magnitude);
+      sumSquares += normalized * normalized;
     }
-    setInputLevel((current) => current * 0.65 + peak * 0.35);
+    const rms = Math.sqrt(sumSquares / values.length);
+    const nextLevel = Math.min(1, rms * 2.4 + peak * 0.45);
+    setInputLevel((current) => current * 0.55 + nextLevel * 0.45);
     animationFrameRef.current = requestAnimationFrame(updateVoiceLevel);
   }, []);
 
@@ -516,6 +659,7 @@ export function ChatComposer({
       return;
     }
     if (recorder.state !== "inactive") {
+      setRecordingState("transcribing");
       recorder.stop();
       return;
     }
@@ -546,6 +690,8 @@ export function ChatComposer({
       const audioContext = new AudioContextCtor();
       const analyser = audioContext.createAnalyser();
       analyser.fftSize = 256;
+      analyser.smoothingTimeConstant = 0.82;
+      await audioContext.resume();
       const source = audioContext.createMediaStreamSource(stream);
       source.connect(analyser);
 
@@ -1043,6 +1189,8 @@ export function ChatComposer({
     handleComposerKey,
     hardwareInputEnabled,
     registerSurface,
+    setComposerSelection,
+    setComposerValue,
     surfaceId,
     unregisterSurface,
   ]);
@@ -1200,7 +1348,7 @@ export function ChatComposer({
         />
       )}
 
-      <div className={`flex items-start justify-between gap-[12px] ${controlRowClassName}`}>
+      <div className={`flex items-end justify-between gap-[12px] ${controlRowClassName}`}>
         <div className="flex min-w-0 flex-1 flex-col gap-[6px]">
           <div className="flex flex-wrap items-center gap-[11px]">
             <BackendDropdown
@@ -1241,6 +1389,11 @@ export function ChatComposer({
           )}
         </div>
 
+        <VoiceInputWaveform
+          state={recordingState}
+          inputLevel={inputLevel}
+        />
+
         <div className="flex shrink-0 items-center gap-[9px]">
           {isExpanded && onCollapseComposer ? (
             <button
@@ -1280,7 +1433,7 @@ export function ChatComposer({
             }}
             disabled={recordingState === "transcribing"}
             className={`relative flex h-[20px] min-w-[20px] items-center justify-center rounded-full transition-colors ${
-              recordingState === "recording"
+              recordingState === "recording" || recordingState === "transcribing"
                 ? "bg-[var(--accent-bg)] text-[var(--text-primary)]"
                 : "text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
             } disabled:cursor-not-allowed disabled:opacity-50`}
@@ -1294,26 +1447,10 @@ export function ChatComposer({
           >
             {recordingState === "recording" ? (
               <Square className="size-[9px] shrink-0" fill="currentColor" strokeWidth={2.2} aria-hidden />
+            ) : recordingState === "transcribing" ? (
+              <Loader className="size-[12px] shrink-0 animate-spin" strokeWidth={1.8} aria-hidden />
             ) : (
               <Mic className="size-[14px] shrink-0" strokeWidth={1.5} aria-hidden />
-            )}
-            {(recordingState === "recording" || recordingState === "transcribing") && (
-              <span className="pointer-events-none absolute -bottom-[14px] left-1/2 flex -translate-x-1/2 items-end gap-[2px]">
-                {[0.45, 0.8, 0.6].map((scale, index) => (
-                  <span
-                    key={index}
-                    className="w-[2px] rounded-full bg-[var(--text-secondary)] transition-[height,opacity] duration-100"
-                    style={{
-                      height: `${
-                        recordingState === "transcribing"
-                          ? 4 + index * 2
-                          : 4 + Math.max(0.12, inputLevel * scale) * 12
-                      }px`,
-                      opacity: recordingState === "transcribing" ? 0.7 : 0.45 + inputLevel * 0.55,
-                    }}
-                  />
-                ))}
-              </span>
             )}
           </button>
           <button
