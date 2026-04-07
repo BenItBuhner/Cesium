@@ -5,6 +5,7 @@ import { MessageThreadContent } from "@/components/chat/MessageThreadContent";
 import { projectOpenCodeExportToChatMessages } from "@/lib/opencode-export-transcript";
 import type { ChatMessage } from "@/lib/types";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
+import { EDITOR_CHAT_TRANSCRIPT_CONTAINER_CLASS } from "./agent-chat-layout";
 
 function inferTranscriptSessionId(messages: ChatMessage[]): string | undefined {
   for (const message of messages) {
@@ -93,7 +94,7 @@ export function AgentTranscriptView({
       ref={scrollRootRef}
       className="h-full min-h-0 overflow-y-auto overflow-x-hidden hide-scrollbar-y bg-[var(--bg-main)] [-webkit-overflow-scrolling:touch]"
     >
-      <div className="mx-auto w-full max-w-[min(920px,calc(100%-24px))] px-[clamp(20px,5vw,56px)] py-[clamp(16px,3vh,28px)]">
+      <div className={EDITOR_CHAT_TRANSCRIPT_CONTAINER_CLASS}>
         <MessageThreadContent
           messages={renderedMessages}
           stickyUserHeader

@@ -15,6 +15,7 @@ import { Terminal } from "./Terminal";
 import { SimpleMarkdownPreview } from "./SimpleMarkdownPreview";
 import { FilePreview } from "./FilePreview";
 import { AgentTranscriptView } from "./AgentTranscriptView";
+import { AgentConversationView } from "./AgentConversationView";
 import { SettingsEditorView } from "./SettingsEditorView";
 import { BrowserTab } from "./BrowserTab";
 import { ExpandedComposerView } from "./ExpandedComposerView";
@@ -23,9 +24,11 @@ import { useWorkbenchContextMenu } from "@/components/ide/WorkbenchContextMenuPr
 import type { WorkbenchMenuItem } from "@/components/ide/workbench-context-menu-types";
 import {
   useOpenInEditor,
+  type OpenAgentConversationPayload,
   type OpenComposerDraftPayload,
   type OpenTranscriptPayload,
 } from "./OpenInEditorContext";
+import { CHAT_TAB_DND_MIME, parseChatTabDragPayload } from "@/lib/chat-tab-dnd";
 import type { ExplorerOpenRequest } from "@/lib/types";
 import type { EditorTab } from "@/lib/types";
 import {
@@ -159,6 +162,7 @@ export function EditorPanel() {
   const {
     registerOpenTranscript,
     registerOpenComposerDraft,
+    registerOpenAgentConversation,
     registerOpenExplorerFile,
     composerDrafts,
     upsertComposerDraft,
@@ -412,19 +416,30 @@ export function EditorPanel() {
         content: payload.content,
       });
     };
+    const onAgentConversation = (payload: OpenAgentConversationPayload) => {
+      dispatch({
+        type: "OPEN_AGENT_CONVERSATION_TAB",
+        conversationId: payload.conversationId,
+        title: payload.title,
+        group: payload.group,
+      });
+    };
     const onExplorer = (payload: ExplorerOpenRequest) => {
       void loadExplorerFile(payload);
     };
     registerOpenTranscript(onTranscript);
     registerOpenComposerDraft(onComposerDraft);
+    registerOpenAgentConversation(onAgentConversation);
     registerOpenExplorerFile(onExplorer);
     return () => {
       registerOpenTranscript(null);
       registerOpenComposerDraft(null);
+      registerOpenAgentConversation(null);
       registerOpenExplorerFile(null);
     };
   }, [
     loadExplorerFile,
+    registerOpenAgentConversation,
     registerOpenComposerDraft,
     registerOpenTranscript,
     registerOpenExplorerFile,
@@ -801,8 +816,28 @@ export function EditorPanel() {
     []
   );
 
+  const openConversationTab = useCallback(
+    (conversationId: string, group?: EditorGroup) => {
+      const title =
+        stateRef.current.leftTabs.find((tab) => tab.conversationId === conversationId)?.name ??
+        stateRef.current.rightTabs.find((tab) => tab.conversationId === conversationId)?.name ??
+        workspaceSession.chat.tabs.find((tab) => tab.id === conversationId)?.title ??
+        "Chat";
+      dispatch({
+        type: "OPEN_AGENT_CONVERSATION_TAB",
+        conversationId,
+        title,
+        group,
+      });
+    },
+    [workspaceSession.chat.tabs]
+  );
+
   const setSplitMode = useCallback(
-    (orientation: EditorSplitOrientation, focus: EditorGroup = stateRef.current.focusedGroup) => {
+    (
+      orientation: EditorSplitOrientation,
+      focus: EditorGroup = stateRef.current.focusedGroup
+    ) => {
       dispatch({ type: "ENABLE_SPLIT", orientation, focus });
     },
     []
@@ -1151,6 +1186,35 @@ export function EditorPanel() {
         }
       }
 
+      if (tab.conversationId) {
+        items.push({
+          type: "item",
+          id: "move-left",
+          label: "Move Chat to Left Editor Group",
+          disabled: group === "left",
+          onSelect: () =>
+            dispatch({
+              type: "OPEN_AGENT_CONVERSATION_TAB",
+              conversationId: tab.conversationId!,
+              title: tab.name,
+              group: "left",
+            }),
+        });
+        items.push({
+          type: "item",
+          id: "move-right",
+          label: "Move Chat to Right Editor Group",
+          disabled: group === "right",
+          onSelect: () =>
+            dispatch({
+              type: "OPEN_AGENT_CONVERSATION_TAB",
+              conversationId: tab.conversationId!,
+              title: tab.name,
+              group: "right",
+            }),
+        });
+      }
+
       if (tab.filePath) {
         items.push({ type: "sep" });
         items.push(
@@ -1202,6 +1266,14 @@ export function EditorPanel() {
           draftId={tab.composerDraftId}
           title={tab.name}
           onMinimize={() => requestCloseTab(group, tab.id)}
+        />
+      );
+    }
+    if (tab.conversationId) {
+      return (
+        <AgentConversationView
+          key={tab.id}
+          conversationId={tab.conversationId}
         />
       );
     }
@@ -1357,6 +1429,7 @@ export function EditorPanel() {
           onCloseAllTabs={() => requestCloseAllInGroup(group)}
           onCloseOtherTabs={() => requestCloseOthersInGroup(group)}
           onMoveTabBetweenGroups={moveTab}
+          onOpenConversationTab={openConversationTab}
           onTabContextMenu={(e, id) => handleEditorTabContextMenu(e, group, id)}
           onStripContextMenu={(e) => handleEditorStripContextMenu(e, group)}
         />
@@ -1378,17 +1451,34 @@ export function EditorPanel() {
 
   function editorDropHandler(targetGroup: EditorGroup) {
     return (e: DragEvent) => {
-      if (!state.split) return;
-      e.preventDefault();
       const payload = parseTabDragPayload(e.dataTransfer.getData(TAB_DND_MIME));
-      if (!payload || payload.group === targetGroup) return;
-      moveTab(payload.tabId, payload.group, targetGroup);
+      if (state.split && payload) {
+        e.preventDefault();
+        if (payload.group !== targetGroup) {
+          moveTab(payload.tabId, payload.group, targetGroup);
+        }
+        return;
+      }
+
+      const chatPayload = parseChatTabDragPayload(
+        e.dataTransfer.getData(CHAT_TAB_DND_MIME)
+      );
+      if (chatPayload) {
+        e.preventDefault();
+        openConversationTab(chatPayload.tabId, targetGroup);
+      }
     };
   }
 
   function editorDragOverHandler(e: DragEvent) {
+    const types = [...e.dataTransfer.types];
+    if (types.includes(CHAT_TAB_DND_MIME)) {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "move";
+      return;
+    }
     if (!state.split) return;
-    if (![...e.dataTransfer.types].includes(TAB_DND_MIME)) return;
+    if (!types.includes(TAB_DND_MIME)) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = "move";
   }

@@ -124,6 +124,7 @@ export interface EditorTab {
     | "terminal"
     | "json"
     | "markdown"
+    | "agent"
     | "subagent"
     | "typescript"
     | "css"
@@ -136,6 +137,8 @@ export interface EditorTab {
   transcriptMessages?: ChatMessage[];
   /** Real OpenCode session id for live subagent transcript hydration. */
   transcriptSessionId?: string;
+  /** Live primary agent conversation opened from the chat pane. */
+  conversationId?: string;
   /** Source/preview toggle for previewable files like Markdown and SVG. */
   previewMode?: "source" | "preview";
   /** Relative workspace path when this tab represents a real file on disk. */

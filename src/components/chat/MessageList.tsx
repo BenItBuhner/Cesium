@@ -21,6 +21,8 @@ interface MessageListProps {
   onScrollTopSettled?: (scrollTop: number) => void;
   onResolvePermission?: (requestId: string, optionId: string) => void;
   bottomDockVisible?: boolean;
+  surface?: "panel" | "editor";
+  contentClassName?: string;
 }
 
 export function MessageList({
@@ -29,6 +31,8 @@ export function MessageList({
   onScrollTopSettled,
   onResolvePermission,
   bottomDockVisible = true,
+  surface = "panel",
+  contentClassName,
 }: MessageListProps) {
   const { openSubagentTranscript } = useOpenInEditor();
   const scrollRootRef = useRef<HTMLDivElement>(null);
@@ -132,10 +136,12 @@ export function MessageList({
         schedulePersistedScrollTop();
       }}
     >
+      <div className={contentClassName}>
         <MessageThreadContent
           messages={messages}
           stickyUserHeader
           scrollRootRef={scrollRootRef}
+          workedSessionSurface={surface}
           onResolvePermission={onResolvePermission}
           onOpenSubagent={({ title, transcript, sessionId }) =>
             openSubagentTranscript({
@@ -146,5 +152,6 @@ export function MessageList({
           }
         />
       </div>
+    </div>
   );
 }

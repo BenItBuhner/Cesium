@@ -169,6 +169,7 @@ export function ChatPanel() {
     composerDrafts,
     composerSelections,
     openComposerDraft,
+    openAgentConversation,
     upsertComposerDraft,
     setComposerSelection,
     expandedComposerDraftId,
@@ -177,8 +178,10 @@ export function ChatPanel() {
   } = useOpenInEditor();
   const { pushNotification, dismiss } = useWorkbenchNotifications();
   const {
+    activeWindowId,
     activeWorkspaceId,
     workspaceSession,
+    workspaceWindows,
     updateWorkspaceSession,
     updateWorkspaceSessionNow,
   } = useWorkspace();
@@ -787,6 +790,19 @@ export function ChatPanel() {
   const busy = activeComposerState.busy;
   const configLocked = false;
 
+  const flashError = useCallback(
+    (message: string) => {
+      pushNotification({
+        kind: WORKBENCH_NOTIFICATION_KIND.editorNotice,
+        severity: "error",
+        title: "Chat",
+        message,
+        autoDismissMs: 8000,
+      });
+    },
+    [pushNotification]
+  );
+
   useEffect(() => {
     upsertComposerDraft(composerDraftId, {
       title: composerDraftTitle,
@@ -860,12 +876,14 @@ export function ChatPanel() {
   ]);
 
   useEffect(() => {
+    const permissionToastIds = permissionToastIdsRef.current;
+    const dismissedPermissionToastKeys = dismissedPermissionToastKeysRef.current;
     return () => {
-      for (const notificationId of permissionToastIdsRef.current.values()) {
+      for (const notificationId of permissionToastIds.values()) {
         dismiss(notificationId);
       }
-      permissionToastIdsRef.current.clear();
-      dismissedPermissionToastKeysRef.current.clear();
+      permissionToastIds.clear();
+      dismissedPermissionToastKeys.clear();
     };
   }, [dismiss]);
 
@@ -1309,7 +1327,9 @@ export function ChatPanel() {
               active: true,
             },
           ],
-          hiddenConversationIds: FRESH_WORKSPACE_WINDOW_HIDDEN_CONVERSATIONS_SENTINEL,
+          hiddenConversationIds: [
+            FRESH_WORKSPACE_WINDOW_HIDDEN_CONVERSATIONS_SENTINEL,
+          ],
           scrollTopByTabId: {
             [conversationId]:
               workspaceSession.chat.scrollTopByTabId[conversationId] ?? 0,
@@ -1345,12 +1365,19 @@ export function ChatPanel() {
         flashError("Popup blocked while opening the workspace window.");
       }
     },
-    [activeWorkspaceId, conversationsById, persistClosedTabsNow, workspaceSession]
+    [
+      activeWorkspaceId,
+      conversationsById,
+      flashError,
+      persistClosedTabsNow,
+      workspaceSession,
+    ]
   );
 
   const handleChatTabContextMenu = useCallback(
     (e: MouseEvent, tabId: string) => {
       const othersOpen = tabs.length > 1;
+      const targetConversation = conversationsById[tabId];
       const items: WorkbenchMenuItem[] = [
         {
           type: "item",
@@ -1374,6 +1401,22 @@ export function ChatPanel() {
         { type: "sep" },
         {
           type: "item",
+          id: "open-editor",
+          label: "Open in Editor",
+          disabled: !targetConversation,
+          onSelect: () => {
+            if (!targetConversation) {
+              return;
+            }
+            openAgentConversation({
+              conversationId: tabId,
+              title: targetConversation.title,
+            });
+          },
+        },
+        { type: "sep" },
+        {
+          type: "item",
           id: "move-new-window",
           label: "Move to New Workspace Window",
           onSelect: () =>
@@ -1393,10 +1436,36 @@ export function ChatPanel() {
                 windowId: windowRecord.id,
               }),
           })),
+        {
+          type: "item",
+          id: "open-editor-side",
+          label: "Open in Side-by-Side Editor",
+          disabled: !targetConversation,
+          onSelect: () => {
+            if (!targetConversation) {
+              return;
+            }
+            openAgentConversation({
+              conversationId: tabId,
+              title: targetConversation.title,
+              group: "right",
+            });
+          },
+        },
       ];
       openAt(e, items);
     },
-    [closeChatTab, closeOtherChatTabs, moveConversationToWorkspaceWindow, openAt, tabs]
+    [
+      activeWindowId,
+      closeChatTab,
+      closeOtherChatTabs,
+      conversationsById,
+      moveConversationToWorkspaceWindow,
+      openAgentConversation,
+      openAt,
+      tabs,
+      workspaceWindows,
+    ]
   );
 
   const handleChatStripContextMenu = useCallback(
@@ -1628,6 +1697,10 @@ export function ChatPanel() {
           onNewChat={handleNewChat}
           onTabContextMenu={handleChatTabContextMenu}
           onStripContextMenu={handleChatStripContextMenu}
+          onReorderTabs={handleReorderChatTabs}
+          onRenameTab={handleRenameChatTab}
+          externalRenameTabId={chatTabRenameTargetId}
+          onExternalRenameConsumed={() => setChatTabRenameTargetId(null)}
         />
       </div>
 
