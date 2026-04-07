@@ -23,7 +23,7 @@ type MenuBlock = { sep: true } | MenuLeaf;
 
 const FILE_MENU: MenuBlock[] = [
   { cmd: "workbench.action.newAgent", label: "New Agent" },
-  { cmd: "workbench.action.newWindow", label: "New Window" },
+  { cmd: "workbench.action.newWindow", label: "New Window..." },
   { cmd: "workbench.action.openFolder", label: "Open Folder" },
   { cmd: "workbench.action.createWorkspace", label: "Create Workspace" },
   { cmd: "workbench.action.setDefaultWorkspace", label: "Set as Default" },
@@ -52,6 +52,11 @@ const VIEW_MENU: MenuBlock[] = [
   { cmd: "workbench.action.togglePanel", label: "Open Terminal" },
   { sep: true },
   { cmd: "workbench.action.openGlobalSettings", label: "Settings" },
+];
+
+const WINDOW_MENU: MenuBlock[] = [
+  { cmd: "workbench.action.newWindow", label: "New Window..." },
+  { cmd: "workbench.action.window.manage", label: "Workspace Windows..." },
 ];
 
 function isSep(b: MenuBlock): b is { sep: true } {
@@ -218,6 +223,39 @@ function ViewSubmenu({
   );
 }
 
+function WindowSubmenu({
+  onPick,
+  bindings,
+  platform,
+}: {
+  onPick: (cmd: string) => void;
+  bindings: Record<string, string[]>;
+  platform: ShortcutPlatform;
+}) {
+  return (
+    <div className="group/window relative w-full">
+      <div className={rowTrigger} role="presentation">
+        <span>Window</span>
+        <ChevronRight
+          className="size-[14px] shrink-0 text-[var(--text-secondary)]"
+          strokeWidth={1.5}
+          aria-hidden
+        />
+      </div>
+      <div
+        className={`${subWrapBase} group-hover/window:visible group-hover/window:block`}
+      >
+        <SubmenuItems
+          blocks={WINDOW_MENU}
+          onPick={onPick}
+          bindings={bindings}
+          platform={platform}
+        />
+      </div>
+    </div>
+  );
+}
+
 /** Below command palette (10050), above editor/split panels. */
 const PORTAL_Z = 10048;
 
@@ -301,6 +339,7 @@ export function SidebarAppMenu() {
         <FileSubmenu onPick={onPick} bindings={bindings} platform={platform} />
         <EditSubmenu onPick={onPick} bindings={bindings} platform={platform} />
         <ViewSubmenu onPick={onPick} bindings={bindings} platform={platform} />
+        <WindowSubmenu onPick={onPick} bindings={bindings} platform={platform} />
       </div>
     ) : null;
 

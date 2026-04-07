@@ -153,6 +153,12 @@ export const SHORTCUT_COMMAND_DEFINITIONS: ShortcutCommandDefinition[] = [
     defaultBindings: ["Mod+Shift+N"],
   },
   {
+    id: "workbench.action.window.manage",
+    label: "Window: Workspace Windows...",
+    section: "Window",
+    defaultBindings: [],
+  },
+  {
     id: "workbench.action.newAgent",
     label: "File: New Agent",
     section: "File",
@@ -181,6 +187,18 @@ export const SHORTCUT_COMMAND_DEFINITIONS: ShortcutCommandDefinition[] = [
     label: "View: Split Editor",
     section: "Editor",
     defaultBindings: ["Mod+Backslash"],
+  },
+  {
+    id: "workbench.action.splitEditorDown",
+    label: "View: Split Editor Down",
+    section: "Editor",
+    defaultBindings: [],
+  },
+  {
+    id: "workbench.action.joinEditorGroup",
+    label: "View: Join Editor Group",
+    section: "Editor",
+    defaultBindings: [],
   },
   {
     id: "workbench.action.openPreview",
