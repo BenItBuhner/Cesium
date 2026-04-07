@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  useEffect,
   useId,
   useRef,
   type KeyboardEvent,
@@ -17,6 +18,7 @@ const shell =
 
 export function VSCodeQuickInputShell({
   open,
+  onClose,
   screenReaderTitle,
   inputLabel,
   placeholder,
@@ -29,6 +31,7 @@ export function VSCodeQuickInputShell({
   footer,
 }: {
   open: boolean;
+  onClose: () => void;
   screenReaderTitle: string;
   inputLabel: string;
   placeholder: string;
@@ -45,13 +48,45 @@ export function VSCodeQuickInputShell({
 }) {
   const inputId = useId();
   const titleId = useId();
+  const overlayRef = useRef<HTMLDivElement | null>(null);
   const internalRef = useRef<HTMLElement | null>(null);
   const inputRef = inputRefProp ?? internalRef;
+
+  useEffect(() => {
+    if (!open) return;
+
+    const handleDocumentKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.defaultPrevented || event.key !== "Escape") {
+        return;
+      }
+
+      const overlay = overlayRef.current;
+      if (!overlay) {
+        return;
+      }
+
+      const openPalettes = Array.from(
+        document.querySelectorAll<HTMLElement>("[data-ide-palette]")
+      );
+      if (openPalettes.at(-1) !== overlay) {
+        return;
+      }
+
+      event.preventDefault();
+      onClose();
+    };
+
+    document.addEventListener("keydown", handleDocumentKeyDown, true);
+    return () => {
+      document.removeEventListener("keydown", handleDocumentKeyDown, true);
+    };
+  }, [onClose, open]);
 
   if (!open) return null;
 
   return (
     <div
+      ref={overlayRef}
       data-ide-palette
       className="fixed inset-0 z-[10050] flex items-start justify-center px-4 pt-[12vh]"
       role="presentation"
@@ -59,6 +94,10 @@ export function VSCodeQuickInputShell({
       <div
         className="absolute inset-0 bg-[var(--palette-backdrop)]"
         aria-hidden
+        onPointerDown={(event) => {
+          event.preventDefault();
+          onClose();
+        }}
       />
       <div
         className={`relative ${shell}`}

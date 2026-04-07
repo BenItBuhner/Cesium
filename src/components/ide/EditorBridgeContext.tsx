@@ -19,6 +19,7 @@ export type EditorBridge = {
   dispatch: Dispatch<EditorPanelAction>;
   getState: () => EditorPanelState;
   saveActiveTab: () => Promise<boolean>;
+  saveAllTabs: () => Promise<{ savedCount: number; attemptedCount: number }>;
   openTerminalTab: () => Promise<void>;
   openBrowserTab: (url: string) => void;
   requestCloseTab: (group: EditorGroup, id: string) => void;

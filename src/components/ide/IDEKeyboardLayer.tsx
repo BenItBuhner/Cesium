@@ -14,6 +14,7 @@ import { buildQuickOpenIndex, type QuickOpenEntry } from "@/lib/quick-open-files
 import { CommandPalette, type PaletteCommand } from "./CommandPalette";
 import { QuickOpen } from "./QuickOpen";
 import { VSCodeQuickInputShell } from "./VSCodeQuickInputShell";
+import { WorkspaceWindowsModal } from "./WorkspaceWindowsModal";
 import { useEditorBridgeRef } from "./EditorBridgeContext";
 import { useWorkbench } from "./WorkbenchContext";
 import { useHardwareInput } from "@/components/input/HardwareInputProvider";
@@ -24,6 +25,7 @@ import type { EditorTab } from "@/lib/types";
 import { isFocusedBrowserSurface } from "@/lib/browser-keyboard-passthrough";
 import { normalizeBrowserTargetUrl } from "@/lib/browser-proxy-url";
 import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
+import { buildWorkspaceWindowUrl } from "@/lib/workspace-windows";
 import {
   detectShortcutPlatform,
   getShortcutDisplayForCommand,
@@ -58,16 +60,23 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
 
   const {
     activeWorkspaceId,
+    activeWindowId,
     defaultWorkspaceId,
     fileTree,
+    isDedicatedWindow,
     workspaceInfo,
+    workspaceWindows,
     workspaces,
     refreshTree,
     openFolder,
     openWorkspaceById,
+    refreshWorkspaceWindows,
+    createWorkspaceWindow,
     createWorkspace,
     setDefaultWorkspace,
     updateWorkspaceSession,
+    updateWorkspaceWindow,
+    flushWorkspaceSessionNow,
   } = useWorkspace();
   const [palette, setPalette] = useState<PaletteMode>("closed");
   const [folderPromptOpen, setFolderPromptOpen] = useState(false);
@@ -83,6 +92,11 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
   const [browserPromptValue, setBrowserPromptValue] = useState(
     "http://localhost:3000/"
   );
+  const [workspaceWindowsModalOpen, setWorkspaceWindowsModalOpen] = useState(false);
+  const [workspaceWindowsModalInitialSelectionId, setWorkspaceWindowsModalInitialSelectionId] =
+    useState<string | null>(null);
+  const [renameWindowOpen, setRenameWindowOpen] = useState(false);
+  const [renameWindowValue, setRenameWindowValue] = useState("");
   const [toast, setToast] = useState<string | null>(null);
 
   const quickEntries = useMemo(
@@ -198,6 +212,80 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
     });
   }, [browserPromptValue, runWithBridge]);
 
+  const openWorkspaceWindow = useCallback(
+    (windowId: string) => {
+      if (!activeWorkspaceId) {
+        flash(setToast, "No active workspace.");
+        return;
+      }
+      const nextWindow = window.open(
+        buildWorkspaceWindowUrl(window.location.origin, activeWorkspaceId, windowId),
+        "_blank",
+        "noopener,noreferrer"
+      );
+      if (!nextWindow) {
+        flash(setToast, "Popup blocked while opening the workspace window.");
+      }
+    },
+    [activeWorkspaceId]
+  );
+
+  const createAndOpenWorkspaceWindow = useCallback(
+    async (options?: { title?: string }) => {
+      if (!activeWorkspaceId) {
+        flash(setToast, "No active workspace.");
+        return;
+      }
+      await flushWorkspaceSessionNow();
+      const windowRecord = await createWorkspaceWindow({
+        title: options?.title,
+      });
+      openWorkspaceWindow(windowRecord.id);
+    },
+    [activeWorkspaceId, createWorkspaceWindow, flushWorkspaceSessionNow, openWorkspaceWindow]
+  );
+
+  const openWorkspaceWindowsModal = useCallback(
+    (options?: { initialSelectionId?: string | null }) => {
+      setWorkspaceWindowsModalInitialSelectionId(options?.initialSelectionId ?? null);
+      setWorkspaceWindowsModalOpen(true);
+    },
+    []
+  );
+
+  const promptRenameCurrentWindow = useCallback(() => {
+    if (!isDedicatedWindow || !activeWindowId) {
+      flash(setToast, "Open a dedicated workspace window first.");
+      return;
+    }
+    const currentWindow =
+      workspaceWindows.find((windowRecord) => windowRecord.id === activeWindowId) ?? null;
+    setRenameWindowValue(currentWindow?.label ?? "");
+    setRenameWindowOpen(true);
+  }, [activeWindowId, isDedicatedWindow, workspaceWindows]);
+
+  useEffect(() => {
+    if (!workspaceWindowsModalOpen) {
+      return;
+    }
+    void refreshWorkspaceWindows().catch(() => {
+      // Ignore background refresh failures while opening the workspace windows modal.
+    });
+  }, [refreshWorkspaceWindows, workspaceWindowsModalOpen]);
+
+  const submitRenameCurrentWindow = useCallback(async () => {
+    if (!activeWindowId) {
+      return;
+    }
+    const title = renameWindowValue.trim();
+    if (!title) {
+      return;
+    }
+    await updateWorkspaceWindow(activeWindowId, { title });
+    setRenameWindowOpen(false);
+    flash(setToast, `Renamed window to ${title}`);
+  }, [activeWindowId, renameWindowValue, updateWorkspaceWindow]);
+
   const kb = useCallback(
     (commandId: string) => {
       const s = getShortcutDisplayForCommand(
@@ -261,7 +349,18 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
           flash(setToast, "New file (demo).");
           break;
         case "workbench.action.newWindow":
-          flash(setToast, "New window (demo — open another browser tab).");
+          openWorkspaceWindowsModal({ initialSelectionId: "action:create-window" });
+          break;
+        case "workbench.action.window.manage":
+          openWorkspaceWindowsModal();
+          break;
+        case "workbench.action.window.rename":
+          openWorkspaceWindowsModal({
+            initialSelectionId: "action:rename-current-window",
+          });
+          break;
+        case "workbench.action.window.refreshList":
+          openWorkspaceWindowsModal();
           break;
         case "workbench.action.newAgent":
           router.push("/agent");
@@ -288,10 +387,46 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
           })();
           break;
         case "workbench.action.files.saveAll":
-          flash(setToast, "Save All (demo).");
+          void (async () => {
+            const bridge = bridgeRef.current;
+            if (!bridge) {
+              flash(setToast, "Editor is not ready yet.");
+              return;
+            }
+            const result = await bridge.saveAllTabs();
+            if (result.attemptedCount === 0) {
+              flash(setToast, "No dirty editors to save.");
+              return;
+            }
+            if (result.savedCount === result.attemptedCount) {
+              flash(
+                setToast,
+                result.savedCount === 1
+                  ? "Saved 1 editor."
+                  : `Saved ${result.savedCount} editors.`
+              );
+              return;
+            }
+            flash(
+              setToast,
+              `Saved ${result.savedCount} of ${result.attemptedCount} editors.`
+            );
+          })();
           break;
         case "workbench.action.splitEditor":
-          runWithBridge((b) => b.dispatch({ type: "TOGGLE_SPLIT" }));
+          runWithBridge((b) =>
+            b.dispatch({ type: "ENABLE_SPLIT", orientation: "horizontal" })
+          );
+          break;
+        case "workbench.action.splitEditorRight":
+          runWithBridge((b) =>
+            b.dispatch({ type: "ENABLE_SPLIT", orientation: "horizontal" })
+          );
+          break;
+        case "workbench.action.splitEditorDown":
+          runWithBridge((b) =>
+            b.dispatch({ type: "ENABLE_SPLIT", orientation: "vertical" })
+          );
           break;
         case "workbench.action.openPreview":
           runWithBridge((b) => b.dispatch({ type: "TOGGLE_FILE_PREVIEW" }));
@@ -354,6 +489,7 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
     },
     [
       bridgeRef,
+      openWorkspaceWindowsModal,
       promptForFolder,
       router,
       runWithBridge,
@@ -425,6 +561,18 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
         label: "View: Split Editor",
         keybinding: kb("workbench.action.splitEditor"),
         run: () => runShortcutCommand("workbench.action.splitEditor"),
+      },
+      {
+        id: "workbench.action.splitEditorRight",
+        label: "View: Split Editor Right",
+        keybinding: kb("workbench.action.splitEditorRight"),
+        run: () => runShortcutCommand("workbench.action.splitEditorRight"),
+      },
+      {
+        id: "workbench.action.splitEditorDown",
+        label: "View: Split Editor Down",
+        keybinding: kb("workbench.action.splitEditorDown"),
+        run: () => runShortcutCommand("workbench.action.splitEditorDown"),
       },
       {
         id: "workbench.action.openPreview",
@@ -522,9 +670,14 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
       },
       {
         id: "workbench.action.newWindow",
-        label: "File: New Window",
+        label: "File: New Window...",
         keybinding: kb("workbench.action.newWindow"),
         run: () => runShortcutCommand("workbench.action.newWindow"),
+      },
+      {
+        id: "workbench.action.window.manage",
+        label: "Window: Workspace Windows...",
+        run: () => runShortcutCommand("workbench.action.window.manage"),
       },
       {
         id: "workbench.action.newBrowser",
@@ -845,6 +998,7 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
       />
       <VSCodeQuickInputShell
         open={folderPromptOpen}
+        onClose={() => setFolderPromptOpen(false)}
         screenReaderTitle="Open Folder"
         inputLabel="Folder path"
         placeholder="Enter folder path"
@@ -881,6 +1035,7 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
       </VSCodeQuickInputShell>
       <VSCodeQuickInputShell
         open={createWorkspaceNameOpen}
+        onClose={() => setCreateWorkspaceNameOpen(false)}
         screenReaderTitle="Create workspace"
         inputLabel="Workspace name"
         placeholder="Workspace name"
@@ -917,6 +1072,7 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
       </VSCodeQuickInputShell>
       <VSCodeQuickInputShell
         open={createWorkspaceParentOpen}
+        onClose={() => setCreateWorkspaceParentOpen(false)}
         screenReaderTitle="Create workspace parent"
         inputLabel="Parent directory"
         placeholder="/home/bennett/projects"
@@ -953,6 +1109,7 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
       </VSCodeQuickInputShell>
       <VSCodeQuickInputShell
         open={browserPromptOpen}
+        onClose={() => setBrowserPromptOpen(false)}
         screenReaderTitle="Open URL in Browser tab"
         inputLabel="URL"
         placeholder="http://localhost:3000/"
@@ -985,6 +1142,57 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
       >
         <div className="border-t border-[var(--palette-divider)] px-[10px] py-[8px] font-sans text-[12px] text-[var(--palette-footer-text)]">
           Loads through the OpenCursor server proxy. Public HTTPS is allowed by default; set BROWSER_PROXY_ALLOW_PUBLIC=0 on the API server to restrict to private/local hosts only.
+        </div>
+      </VSCodeQuickInputShell>
+      <WorkspaceWindowsModal
+        open={workspaceWindowsModalOpen}
+        onClose={() => setWorkspaceWindowsModalOpen(false)}
+        windows={workspaceWindows.filter((windowRecord) => !windowRecord.closedAt)}
+        activeWindowId={activeWindowId}
+        currentWindowLabel={
+          workspaceWindows.find((windowRecord) => windowRecord.id === activeWindowId)?.label ??
+          null
+        }
+        onCreateWindow={() => void createAndOpenWorkspaceWindow()}
+        onOpenWindow={openWorkspaceWindow}
+        onRenameCurrentWindow={isDedicatedWindow ? promptRenameCurrentWindow : undefined}
+        initialSelectionId={workspaceWindowsModalInitialSelectionId}
+      />
+      <VSCodeQuickInputShell
+        open={renameWindowOpen}
+        onClose={() => setRenameWindowOpen(false)}
+        screenReaderTitle="Rename workspace window"
+        inputLabel="Window name"
+        placeholder="Window name"
+        value={renameWindowValue}
+        onChange={setRenameWindowValue}
+        onKeyDown={(event) => {
+          if (event.key === "Escape") {
+            event.preventDefault();
+            setRenameWindowOpen(false);
+            return;
+          }
+          if (event.key === "Enter") {
+            event.preventDefault();
+            void submitRenameCurrentWindow();
+          }
+        }}
+        onHardwareKeyDown={(event) => {
+          if (event.key === "Escape") {
+            event.preventDefault();
+            setRenameWindowOpen(false);
+            return true;
+          }
+          if (event.key === "Enter") {
+            event.preventDefault();
+            void submitRenameCurrentWindow();
+            return true;
+          }
+          return false;
+        }}
+      >
+        <div className="border-t border-[var(--palette-divider)] px-[10px] py-[8px] font-sans text-[12px] text-[var(--palette-footer-text)]">
+          Give this workspace window a persistent name so it is easy to find and reopen later.
         </div>
       </VSCodeQuickInputShell>
       {toast ? (

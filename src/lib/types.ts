@@ -189,6 +189,17 @@ export interface WorkspaceRecord {
   lastOpenedAt: number;
 }
 
+export interface WorkspaceWindowRecord {
+  id: string;
+  workspaceId: string;
+  label: string;
+  createdAt: number;
+  updatedAt: number;
+  lastOpenedAt: number;
+  lastFocusedAt?: number;
+  closedAt?: number;
+}
+
 export interface TerminalInfo {
   id: string;
   shell: string;

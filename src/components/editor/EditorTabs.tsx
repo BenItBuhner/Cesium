@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useLayoutEffect, useRef, type MouseEvent } from "react";
 import { createPortal } from "react-dom";
-import { Columns2, MoreVertical } from "lucide-react";
+import { Columns2, MoreVertical, Rows2 } from "lucide-react";
 import { EditorTab } from "./EditorTab";
 import { useClickOutside } from "@/hooks/useClickOutside";
 import { useTabStripWheel } from "@/hooks/useTabStripWheel";
@@ -10,17 +10,21 @@ import { CHAT_TAB_DND_MIME, parseChatTabDragPayload } from "@/lib/chat-tab-dnd";
 import type { EditorTab as EditorTabType } from "@/lib/types";
 import type { EditorGroup } from "./editor-panel-state";
 import { TAB_DND_MIME, parseTabDragPayload } from "./editor-panel-state";
+import type { EditorSplitOrientation } from "@/lib/workspace-session";
 
 interface EditorTabsProps {
   group: EditorGroup;
   tabs: EditorTabType[];
   activeTabId: string | null;
   splitActive: boolean;
+  splitOrientation: EditorSplitOrientation;
   /** Left row only: split / join + overflow. Right row when split: overflow only. */
   showSplitToolbar: boolean;
   onSelectTab: (id: string) => void;
   onCloseTab: (id: string) => void;
-  onToggleSplit: () => void;
+  onSplitRight: () => void;
+  onSplitDown: () => void;
+  onJoinGroups: () => void;
   onCloseAllTabs: () => void;
   onCloseOtherTabs: () => void;
   onMoveTabBetweenGroups: (tabId: string, from: EditorGroup, to: EditorGroup) => void;
@@ -36,10 +40,13 @@ export function EditorTabs({
   tabs,
   activeTabId,
   splitActive,
+  splitOrientation,
   showSplitToolbar,
   onSelectTab,
   onCloseTab,
-  onToggleSplit,
+  onSplitRight,
+  onSplitDown,
+  onJoinGroups,
   onCloseAllTabs,
   onCloseOtherTabs,
   onMoveTabBetweenGroups,
@@ -166,9 +173,9 @@ export function EditorTabs({
         {showSplitToolbar && (
           <button
             type="button"
-            onClick={onToggleSplit}
+            onClick={splitActive ? onJoinGroups : onSplitRight}
             className="flex size-[28px] shrink-0 items-center justify-center rounded-[var(--radius-tab)] text-[var(--text-secondary)] transition-colors hover:bg-white/[0.04] hover:text-[var(--text-primary)]"
-            aria-label={splitActive ? "Join editor groups" : "Split editor"}
+            aria-label={splitActive ? "Join editor groups" : "Split editor to the right"}
             aria-pressed={splitActive}
           >
             <Columns2 className="size-[18px]" strokeWidth={1.5} aria-hidden />
@@ -204,13 +211,49 @@ export function EditorTabs({
                   type="button"
                   role="menuitem"
                   onClick={() => {
-                    onToggleSplit();
+                    onJoinGroups();
                     closeMenu();
                   }}
                   className="flex w-full items-center gap-[8px] px-[12px] py-[6px] text-left font-sans text-[13px] text-[var(--text-primary)] transition-colors hover:bg-white/[0.06]"
                 >
                   <Columns2 className="size-[14px] shrink-0 text-[var(--text-secondary)]" strokeWidth={1.5} />
-                  <span className="flex-1">Join Editor Group</span>
+                  <span className="flex-1">Join Editor Groups</span>
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  disabled={splitOrientation === "horizontal"}
+                  onClick={() => {
+                    if (splitOrientation !== "horizontal") {
+                      onSplitRight();
+                    }
+                    closeMenu();
+                  }}
+                  className="flex w-full items-center gap-[8px] px-[12px] py-[6px] text-left font-sans text-[13px] text-[var(--text-primary)] transition-colors hover:bg-white/[0.06] disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  <Columns2
+                    className="size-[14px] shrink-0 text-[var(--text-secondary)]"
+                    strokeWidth={1.5}
+                  />
+                  <span className="flex-1">Use Side-by-side Layout</span>
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  disabled={splitOrientation === "vertical"}
+                  onClick={() => {
+                    if (splitOrientation !== "vertical") {
+                      onSplitDown();
+                    }
+                    closeMenu();
+                  }}
+                  className="flex w-full items-center gap-[8px] px-[12px] py-[6px] text-left font-sans text-[13px] text-[var(--text-primary)] transition-colors hover:bg-white/[0.06] disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  <Rows2
+                    className="size-[14px] shrink-0 text-[var(--text-secondary)]"
+                    strokeWidth={1.5}
+                  />
+                  <span className="flex-1">Use Stacked Layout</span>
                 </button>
                 <div className="my-[4px] h-px bg-[var(--border-subtle)]" aria-hidden />
               </>
@@ -221,13 +264,25 @@ export function EditorTabs({
                   type="button"
                   role="menuitem"
                   onClick={() => {
-                    onToggleSplit();
+                    onSplitRight();
                     closeMenu();
                   }}
                   className="flex w-full items-center gap-[8px] px-[12px] py-[6px] text-left font-sans text-[13px] text-[var(--text-primary)] transition-colors hover:bg-white/[0.06]"
                 >
                   <Columns2 className="size-[14px] shrink-0 text-[var(--text-secondary)]" strokeWidth={1.5} />
-                  <span className="flex-1">Split Editor</span>
+                  <span className="flex-1">Split Editor Right</span>
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    onSplitDown();
+                    closeMenu();
+                  }}
+                  className="flex w-full items-center gap-[8px] px-[12px] py-[6px] text-left font-sans text-[13px] text-[var(--text-primary)] transition-colors hover:bg-white/[0.06]"
+                >
+                  <Rows2 className="size-[14px] shrink-0 text-[var(--text-secondary)]" strokeWidth={1.5} />
+                  <span className="flex-1">Split Editor Down</span>
                 </button>
                 <div className="my-[4px] h-px bg-[var(--border-subtle)]" aria-hidden />
               </>
