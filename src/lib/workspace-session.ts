@@ -23,8 +23,12 @@ export type LayoutSessionState = {
   desktopLayout: Record<string, number> | null;
 };
 
+export type EditorSplitOrientation = "horizontal" | "vertical";
+
 export type EditorSessionState = {
   split: boolean;
+  splitOrientation: EditorSplitOrientation;
+  splitLayout: Record<string, number> | null;
   focusedGroup: "left" | "right";
   leftTabs: EditorTab[];
   rightTabs: EditorTab[];
@@ -60,6 +64,8 @@ export type WorkspaceSessionState = {
 export function createEmptyEditorSession(): EditorSessionState {
   return {
     split: false,
+    splitOrientation: "horizontal",
+    splitLayout: null,
     focusedGroup: "left",
     leftTabs: [],
     rightTabs: [],
@@ -187,12 +193,28 @@ export function mergeWorkspaceSessionFromImport(
       : current.chat.backendId;
   const importedUnsupportedBackend =
     r.chat?.backendId != null && normalizedChatBackendId !== r.chat.backendId;
+  const normalizedSplitOrientation: EditorSplitOrientation =
+    r.editor?.splitOrientation === "vertical" ? "vertical" : current.editor.splitOrientation;
+  const normalizedSplitLayout =
+    r.editor?.splitLayout && typeof r.editor.splitLayout === "object"
+      ? Object.fromEntries(
+          Object.entries(r.editor.splitLayout).filter(
+            ([panelId, size]) =>
+              typeof panelId === "string" &&
+              panelId.length > 0 &&
+              typeof size === "number" &&
+              Number.isFinite(size)
+          )
+        )
+      : current.editor.splitLayout;
 
   return {
     schemaVersion: 1,
     editor: {
       ...current.editor,
       ...(r.editor ?? {}),
+      splitOrientation: normalizedSplitOrientation,
+      splitLayout: normalizedSplitLayout,
       leftTabs: Array.isArray(r.editor?.leftTabs) ? r.editor.leftTabs : current.editor.leftTabs,
       rightTabs: Array.isArray(r.editor?.rightTabs) ? r.editor.rightTabs : current.editor.rightTabs,
       viewStateByTabId:

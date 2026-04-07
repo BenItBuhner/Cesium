@@ -195,9 +195,14 @@ export function FileExplorer() {
       }
       const s = bridge.getState();
       if (!s.split) {
-        bridge.dispatch({ type: "TOGGLE_SPLIT" });
+        bridge.dispatch({
+          type: "ENABLE_SPLIT",
+          orientation: "horizontal",
+          focus: "right",
+        });
+      } else {
+        bridge.dispatch({ type: "ENABLE_SPLIT", orientation: "horizontal", focus: "right" });
       }
-      bridge.dispatch({ type: "FOCUS_EDITOR_GROUP", group: "right" });
       openExplorerFile({
         path,
         name: node.name,

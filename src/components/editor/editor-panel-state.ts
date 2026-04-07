@@ -1,5 +1,6 @@
 import { normalizeBrowserTargetUrl } from "@/lib/browser-proxy-url";
 import type { ChatMessage, EditorTab, ExplorerOpenRequest } from "@/lib/types";
+import type { EditorSplitOrientation } from "@/lib/workspace-session";
 
 function inferTranscriptSessionId(messages: ChatMessage[] | undefined): string | undefined {
   for (const message of messages ?? []) {
@@ -37,6 +38,8 @@ export type EditorGroup = "left" | "right";
 
 export interface EditorPanelState {
   split: boolean;
+  splitOrientation: EditorSplitOrientation;
+  splitLayout: Record<string, number> | null;
   /** Which editor column last received explicit focus (tab click or editor body pointer). */
   focusedGroup: EditorGroup;
   leftTabs: EditorTab[];
@@ -50,7 +53,10 @@ export type EditorPanelAction =
   | { type: "CLOSE_TAB"; group: EditorGroup; id: string }
   | { type: "CLOSE_ALL_GROUP"; group: EditorGroup }
   | { type: "CLOSE_OTHERS_GROUP"; group: EditorGroup }
+  | { type: "ENABLE_SPLIT"; orientation?: EditorSplitOrientation; focus?: EditorGroup }
   | { type: "TOGGLE_SPLIT" }
+  | { type: "SET_SPLIT_ORIENTATION"; orientation: EditorSplitOrientation }
+  | { type: "SET_SPLIT_LAYOUT"; layout: Record<string, number> | null }
   | { type: "MOVE_TAB"; tabId: string; from: EditorGroup; to: EditorGroup }
   | { type: "FOCUS_EDITOR_GROUP"; group: EditorGroup }
   | {
@@ -99,6 +105,8 @@ export function createInitialEditorState(tabs: EditorTab[]): EditorPanelState {
     tabs.find((t) => t.active)?.id ?? tabs[0]?.id ?? null;
   return {
     split: false,
+    splitOrientation: "horizontal",
+    splitLayout: null,
     focusedGroup: "left",
     leftTabs,
     rightTabs: [],
@@ -163,6 +171,28 @@ export function editorPanelReducer(
       return { ...state, [key]: [keep], [activeKey]: activeId };
     }
 
+    case "ENABLE_SPLIT": {
+      const nextOrientation = action.orientation ?? state.splitOrientation;
+      const nextFocus =
+        action.focus ??
+        (state.split ? state.focusedGroup : state.rightTabs.length > 0 ? "right" : "left");
+      if (state.split) {
+        return {
+          ...state,
+          splitOrientation: nextOrientation,
+          focusedGroup: nextFocus,
+        };
+      }
+      return {
+        ...state,
+        split: true,
+        splitOrientation: nextOrientation,
+        focusedGroup: nextFocus,
+        rightTabs: [],
+        rightActiveId: null,
+      };
+    }
+
     case "TOGGLE_SPLIT": {
       if (state.split) {
         const seen = new Set(state.leftTabs.map((t) => t.id));
@@ -177,6 +207,8 @@ export function editorPanelReducer(
           null;
         return {
           split: false,
+          splitOrientation: state.splitOrientation,
+          splitLayout: state.splitLayout,
           focusedGroup: "left",
           leftTabs: merged,
           rightTabs: [],
@@ -187,8 +219,23 @@ export function editorPanelReducer(
       return {
         ...state,
         split: true,
+        splitOrientation: state.splitOrientation,
         rightTabs: [],
         rightActiveId: null,
+      };
+    }
+
+    case "SET_SPLIT_ORIENTATION": {
+      return {
+        ...state,
+        splitOrientation: action.orientation,
+      };
+    }
+
+    case "SET_SPLIT_LAYOUT": {
+      return {
+        ...state,
+        splitLayout: action.layout,
       };
     }
 

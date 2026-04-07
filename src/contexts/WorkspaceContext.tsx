@@ -78,6 +78,7 @@ type WorkspaceContextValue = {
   updateWorkspaceSessionNow: (
     updater: (current: WorkspaceSessionState) => WorkspaceSessionState
   ) => Promise<void>;
+  flushWorkspaceSessionNow: () => Promise<void>;
   connected: boolean;
   connectionState: "idle" | "connecting" | "open" | "closed" | "reconnecting";
   lastFileChange: FileChangeNotice | null;
@@ -104,17 +105,66 @@ function createSessionDefaults(): WorkspaceSessionState {
   return createDefaultWorkspaceSession([], currentModel);
 }
 
-function getWorkspaceSessionBackupKey(workspaceId: string): string {
-  return `${SESSION_BACKUP_STORAGE_PREFIX}${workspaceId}`;
+function readWindowLocationContext(): {
+  requestedWorkspaceId: string | null;
+  windowId: string | null;
+} {
+  if (typeof window === "undefined") {
+    return { requestedWorkspaceId: null, windowId: null };
+  }
+
+  const url = new URL(window.location.href);
+  const requestedWorkspaceId = url.searchParams.get("workspaceId")?.trim() || null;
+  const windowId = url.searchParams.get("windowId")?.trim() || null;
+  return { requestedWorkspaceId, windowId };
 }
 
-function readWorkspaceSessionBackup(workspaceId: string): WorkspaceSessionState | null {
+function writeWindowLocationContext(
+  workspaceId: string | null,
+  windowId: string | null
+): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  const url = new URL(window.location.href);
+  url.pathname = "/editor";
+  if (workspaceId) {
+    url.searchParams.set("workspaceId", workspaceId);
+  } else {
+    url.searchParams.delete("workspaceId");
+  }
+  if (windowId) {
+    url.searchParams.set("windowId", windowId);
+  } else {
+    url.searchParams.delete("windowId");
+  }
+
+  const nextUrl = `${url.pathname}${url.search}${url.hash}`;
+  const currentUrl = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+  if (nextUrl !== currentUrl) {
+    window.history.replaceState(null, "", nextUrl);
+  }
+}
+
+function getWorkspaceSessionScopeId(
+  workspaceId: string,
+  windowId: string | null
+): string {
+  return windowId ? `${workspaceId}:window:${windowId}` : workspaceId;
+}
+
+function getWorkspaceSessionBackupKey(sessionScopeId: string): string {
+  return `${SESSION_BACKUP_STORAGE_PREFIX}${sessionScopeId}`;
+}
+
+function readWorkspaceSessionBackup(sessionScopeId: string): WorkspaceSessionState | null {
   if (typeof window === "undefined") {
     return null;
   }
 
   try {
-    const raw = window.localStorage.getItem(getWorkspaceSessionBackupKey(workspaceId));
+    const raw = window.localStorage.getItem(getWorkspaceSessionBackupKey(sessionScopeId));
     if (!raw) {
       return null;
     }
@@ -129,7 +179,7 @@ function readWorkspaceSessionBackup(workspaceId: string): WorkspaceSessionState 
 }
 
 function writeWorkspaceSessionBackup(
-  workspaceId: string,
+  sessionScopeId: string,
   session: WorkspaceSessionState
 ): void {
   if (typeof window === "undefined") {
@@ -142,7 +192,7 @@ function writeWorkspaceSessionBackup(
       session,
     };
     window.localStorage.setItem(
-      getWorkspaceSessionBackupKey(workspaceId),
+      getWorkspaceSessionBackupKey(sessionScopeId),
       JSON.stringify(backup)
     );
   } catch {
@@ -340,6 +390,7 @@ function replaceFolderChildren(
 
 export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const { pushNotification, dismissByKind } = useWorkbenchNotifications();
+  const [{ requestedWorkspaceId, windowId }] = useState(readWindowLocationContext);
   const [workspaceInfo, setWorkspaceInfo] = useState<WorkspaceInfo | null>(null);
   const [activeWorkspaceId, setActiveWorkspaceIdState] = useState<string | null>(null);
   const [workspaces, setWorkspaces] = useState<WorkspaceRecord[]>([]);
@@ -365,6 +416,12 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   );
   const sessionSaveTimerRef = useRef<number | null>(null);
   const skipNextSessionSaveRef = useRef(false);
+  const isDedicatedWindow = windowId != null;
+
+  const getSessionScopeId = useCallback(
+    (workspaceId: string) => getWorkspaceSessionScopeId(workspaceId, windowId),
+    [windowId]
+  );
 
   useEffect(() => {
     workspaceSessionRef.current = workspaceSession;
@@ -412,12 +469,16 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       }
 
       const persistableSession = createPersistableWorkspaceSession(next);
-      writeWorkspaceSessionBackup(workspaceInfo.id, persistableSession);
+      const sessionScopeId = getSessionScopeId(workspaceInfo.id);
+      writeWorkspaceSessionBackup(sessionScopeId, persistableSession);
+      if (isDedicatedWindow) {
+        return;
+      }
       await saveWorkspaceSession(workspaceInfo.id, persistableSession).catch(() => {
         // Ignore immediate save failures; future saves can retry.
       });
     },
-    [sessionReady, workspaceInfo]
+    [getSessionScopeId, isDedicatedWindow, sessionReady, workspaceInfo]
   );
 
   const flushWorkspaceSessionNow = useCallback(
@@ -434,13 +495,17 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       const persistableSession = createPersistableWorkspaceSession(
         workspaceSessionRef.current
       );
-      writeWorkspaceSessionBackup(workspaceInfo.id, persistableSession);
+      const sessionScopeId = getSessionScopeId(workspaceInfo.id);
+      writeWorkspaceSessionBackup(sessionScopeId, persistableSession);
+      if (isDedicatedWindow) {
+        return;
+      }
 
       await saveWorkspaceSession(workspaceInfo.id, persistableSession).catch(() => {
         // Ignore flush failures; background saves will retry on future changes.
       });
     },
-    [sessionReady, workspaceInfo]
+    [getSessionScopeId, isDedicatedWindow, sessionReady, workspaceInfo]
   );
 
   const refreshTree = useCallback(async () => {
@@ -489,18 +554,22 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
           fetchWorkspaceSession(workspace.id),
           listTerminals(),
         ]);
-        const localBackup = readWorkspaceSessionBackup(workspace.id);
+        const localBackup = readWorkspaceSessionBackup(getSessionScopeId(workspace.id));
         setFileTree(tree);
         setTerminals(terminalList);
         skipNextSessionSaveRef.current = true;
-        setWorkspaceSession(normalizeWorkspaceSession(session ?? localBackup));
+        setWorkspaceSession(
+          normalizeWorkspaceSession(
+            isDedicatedWindow ? localBackup ?? session : session ?? localBackup
+          )
+        );
         setSessionReady(true);
         setFsResyncToken((value) => value + 1);
       } finally {
         setLoading(false);
       }
     },
-    [setServerWorkspace]
+    [getSessionScopeId, isDedicatedWindow, setServerWorkspace]
   );
 
   const applyWorkspaceListingUpdate = useCallback(
@@ -598,6 +667,23 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       try {
         const bootstrapResult = await fetchWorkspaceBootstrap();
         if (!mounted) return;
+        if (requestedWorkspaceId) {
+          try {
+            const requestedResult = await openWorkspaceSelection({
+              workspaceId: requestedWorkspaceId,
+            });
+            if (!mounted) return;
+            applyWorkspaceListingUpdateRef.current(
+              requestedResult.workspaces,
+              requestedResult.defaultWorkspaceId,
+              requestedResult.recentWorkspaceIds
+            );
+            await loadWorkspaceStateRef.current(requestedResult.workspace);
+            return;
+          } catch {
+            // Fall back to the normal startup workspace when the requested id is invalid.
+          }
+        }
         applyWorkspaceListingUpdateRef.current(
           bootstrapResult.workspaces,
           bootstrapResult.defaultWorkspaceId,
@@ -632,7 +718,14 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [requestedWorkspaceId]);
+
+  useEffect(() => {
+    if (loading) {
+      return;
+    }
+    writeWindowLocationContext(activeWorkspaceId, windowId);
+  }, [activeWorkspaceId, loading, windowId]);
 
   useEffect(() => {
     if (!workspaceInfo || !sessionReady) {
@@ -640,10 +733,10 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     }
 
     writeWorkspaceSessionBackup(
-      workspaceInfo.id,
+      getSessionScopeId(workspaceInfo.id),
       createPersistableWorkspaceSession(workspaceSession)
     );
-  }, [sessionReady, workspaceInfo, workspaceSession]);
+  }, [getSessionScopeId, sessionReady, workspaceInfo, workspaceSession]);
 
   useEffect(() => {
     if (!workspaceInfo || !sessionReady) {
@@ -663,7 +756,10 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       const persistableSession = createPersistableWorkspaceSession(
         workspaceSessionRef.current
       );
-      writeWorkspaceSessionBackup(workspaceInfo.id, persistableSession);
+      writeWorkspaceSessionBackup(getSessionScopeId(workspaceInfo.id), persistableSession);
+      if (isDedicatedWindow) {
+        return;
+      }
       void saveWorkspaceSession(workspaceInfo.id, persistableSession).catch(() => {
         // Ignore save failures here; user-visible work continues in memory.
       });
@@ -674,7 +770,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         window.clearTimeout(sessionSaveTimerRef.current);
       }
     };
-  }, [workspaceInfo, workspaceSession, sessionReady]);
+  }, [getSessionScopeId, isDedicatedWindow, workspaceInfo, workspaceSession, sessionReady]);
 
   useEffect(() => {
     if (!workspaceInfo || !sessionReady) {
@@ -689,8 +785,13 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       const persistableSession = createPersistableWorkspaceSession(
         workspaceSessionRef.current
       );
-      writeWorkspaceSessionBackup(workspaceInfo.id, persistableSession);
-      void saveWorkspaceSession(workspaceInfo.id, persistableSession, { keepalive: true }).catch(() => {
+      writeWorkspaceSessionBackup(getSessionScopeId(workspaceInfo.id), persistableSession);
+      if (isDedicatedWindow) {
+        return;
+      }
+      void saveWorkspaceSession(workspaceInfo.id, persistableSession, {
+        keepalive: true,
+      }).catch(() => {
         // Ignore flush failures.
       });
     };
@@ -710,7 +811,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       window.removeEventListener("beforeunload", flushForPageHide);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
-  }, [sessionReady, workspaceInfo]);
+  }, [getSessionScopeId, isDedicatedWindow, sessionReady, workspaceInfo]);
 
   useEffect(() => {
     if (!activeWorkspaceId) {
@@ -991,6 +1092,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       workspaceSession,
       updateWorkspaceSession,
       updateWorkspaceSessionNow,
+      flushWorkspaceSessionNow,
       connected: connectionState === "open",
       connectionState,
       lastFileChange,
@@ -1017,6 +1119,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       workspaceSession,
       updateWorkspaceSession,
       updateWorkspaceSessionNow,
+      flushWorkspaceSessionNow,
       connectionState,
       lastFileChange,
       fsResyncToken,

@@ -183,6 +183,18 @@ export const SHORTCUT_COMMAND_DEFINITIONS: ShortcutCommandDefinition[] = [
     defaultBindings: ["Mod+Backslash"],
   },
   {
+    id: "workbench.action.splitEditorDown",
+    label: "View: Split Editor Down",
+    section: "Editor",
+    defaultBindings: [],
+  },
+  {
+    id: "workbench.action.joinEditorGroup",
+    label: "View: Join Editor Group",
+    section: "Editor",
+    defaultBindings: [],
+  },
+  {
     id: "workbench.action.openPreview",
     label: "Open Preview",
     section: "Editor",

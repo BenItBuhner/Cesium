@@ -31,6 +31,22 @@ import {
   type ShortcutChordState,
 } from "@/lib/keyboard-shortcuts";
 
+function buildWindowUrl(workspaceId: string, dedicated: boolean): string {
+  const url = new URL("/editor", window.location.origin);
+  url.searchParams.set("workspaceId", workspaceId);
+  if (dedicated) {
+    if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+      url.searchParams.set("windowId", crypto.randomUUID());
+    } else {
+      url.searchParams.set(
+        "windowId",
+        `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
+      );
+    }
+  }
+  return url.toString();
+}
+
 type PaletteMode = "closed" | "command" | "quickopen";
 
 function flash(setter: (s: string | null) => void, msg: string) {
@@ -68,6 +84,7 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
     createWorkspace,
     setDefaultWorkspace,
     updateWorkspaceSession,
+    flushWorkspaceSessionNow,
   } = useWorkspace();
   const [palette, setPalette] = useState<PaletteMode>("closed");
   const [folderPromptOpen, setFolderPromptOpen] = useState(false);
@@ -198,6 +215,25 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
     });
   }, [browserPromptValue, runWithBridge]);
 
+  const openNewWindow = useCallback(
+    async (options?: { dedicated?: boolean }) => {
+      if (!activeWorkspaceId) {
+        flash(setToast, "No active workspace.");
+        return;
+      }
+      await flushWorkspaceSessionNow();
+      const nextWindow = window.open(
+        buildWindowUrl(activeWorkspaceId, options?.dedicated ?? true),
+        "_blank",
+        "noopener,noreferrer"
+      );
+      if (!nextWindow) {
+        flash(setToast, "Popup blocked while opening the new window.");
+      }
+    },
+    [activeWorkspaceId, flushWorkspaceSessionNow]
+  );
+
   const kb = useCallback(
     (commandId: string) => {
       const s = getShortcutDisplayForCommand(
@@ -261,7 +297,7 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
           flash(setToast, "New file (demo).");
           break;
         case "workbench.action.newWindow":
-          flash(setToast, "New window (demo — open another browser tab).");
+          void openNewWindow();
           break;
         case "workbench.action.newAgent":
           router.push("/agent");
@@ -288,10 +324,46 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
           })();
           break;
         case "workbench.action.files.saveAll":
-          flash(setToast, "Save All (demo).");
+          void (async () => {
+            const bridge = bridgeRef.current;
+            if (!bridge) {
+              flash(setToast, "Editor is not ready yet.");
+              return;
+            }
+            const result = await bridge.saveAllTabs();
+            if (result.attemptedCount === 0) {
+              flash(setToast, "No dirty editors to save.");
+              return;
+            }
+            if (result.savedCount === result.attemptedCount) {
+              flash(
+                setToast,
+                result.savedCount === 1
+                  ? "Saved 1 editor."
+                  : `Saved ${result.savedCount} editors.`
+              );
+              return;
+            }
+            flash(
+              setToast,
+              `Saved ${result.savedCount} of ${result.attemptedCount} editors.`
+            );
+          })();
           break;
         case "workbench.action.splitEditor":
-          runWithBridge((b) => b.dispatch({ type: "TOGGLE_SPLIT" }));
+          runWithBridge((b) =>
+            b.dispatch({ type: "ENABLE_SPLIT", orientation: "horizontal" })
+          );
+          break;
+        case "workbench.action.splitEditorRight":
+          runWithBridge((b) =>
+            b.dispatch({ type: "ENABLE_SPLIT", orientation: "horizontal" })
+          );
+          break;
+        case "workbench.action.splitEditorDown":
+          runWithBridge((b) =>
+            b.dispatch({ type: "ENABLE_SPLIT", orientation: "vertical" })
+          );
           break;
         case "workbench.action.openPreview":
           runWithBridge((b) => b.dispatch({ type: "TOGGLE_FILE_PREVIEW" }));
@@ -354,6 +426,7 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
     },
     [
       bridgeRef,
+      openNewWindow,
       promptForFolder,
       router,
       runWithBridge,
@@ -425,6 +498,18 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
         label: "View: Split Editor",
         keybinding: kb("workbench.action.splitEditor"),
         run: () => runShortcutCommand("workbench.action.splitEditor"),
+      },
+      {
+        id: "workbench.action.splitEditorRight",
+        label: "View: Split Editor Right",
+        keybinding: kb("workbench.action.splitEditorRight"),
+        run: () => runShortcutCommand("workbench.action.splitEditorRight"),
+      },
+      {
+        id: "workbench.action.splitEditorDown",
+        label: "View: Split Editor Down",
+        keybinding: kb("workbench.action.splitEditorDown"),
+        run: () => runShortcutCommand("workbench.action.splitEditorDown"),
       },
       {
         id: "workbench.action.openPreview",

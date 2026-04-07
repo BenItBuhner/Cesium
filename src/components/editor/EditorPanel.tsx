@@ -8,6 +8,7 @@ import {
   type DragEvent,
   type MouseEvent,
 } from "react";
+import { Group, Panel, Separator } from "react-resizable-panels";
 import { EditorTabs } from "./EditorTabs";
 import { CodeEditor } from "./CodeEditor";
 import { Terminal } from "./Terminal";
@@ -39,6 +40,17 @@ import { createTerminal, deleteTerminal, readFile, writeFile } from "@/lib/serve
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { useWorkbenchNotifications } from "@/components/notifications/WorkbenchNotificationProvider";
 import { WORKBENCH_NOTIFICATION_KIND } from "@/components/notifications/workbench-notification-types";
+import type { EditorSplitOrientation } from "@/lib/workspace-session";
+
+const EDITOR_SPLIT_PANEL_IDS = {
+  left: "editor-split-left",
+  right: "editor-split-right",
+} as const;
+
+const DEFAULT_EDITOR_SPLIT_LAYOUT: Record<string, number> = {
+  [EDITOR_SPLIT_PANEL_IDS.left]: 50,
+  [EDITOR_SPLIT_PANEL_IDS.right]: 50,
+};
 
 function tabCanSave(tab: EditorTab): boolean {
   return Boolean(tab.filePath && tab.fileKind && tab.fileKind !== "image");
@@ -48,8 +60,49 @@ function isUnknownTerminalError(error: unknown): boolean {
   return error instanceof Error && error.message.includes("Unknown terminal");
 }
 
+function normalizeSplitOrientation(value: unknown): EditorSplitOrientation {
+  return value === "vertical" ? "vertical" : "horizontal";
+}
+
+function normalizeSplitLayout(value: unknown): Record<string, number> | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const entries = Object.entries(value).filter(
+    ([panelId, size]) =>
+      typeof panelId === "string" &&
+      panelId.length > 0 &&
+      typeof size === "number" &&
+      Number.isFinite(size)
+  );
+  return entries.length > 0 ? Object.fromEntries(entries) : null;
+}
+
+function EditorSplitResizeHandle({
+  orientation,
+}: {
+  orientation: EditorSplitOrientation;
+}) {
+  const className =
+    orientation === "horizontal"
+      ? "group relative w-[1px] bg-[var(--border-subtle)] transition-colors hover:bg-[var(--accent)] active:bg-[var(--accent)]"
+      : "group relative h-[1px] w-full bg-[var(--border-subtle)] transition-colors hover:bg-[var(--accent)] active:bg-[var(--accent)]";
+  const hitTargetClassName =
+    orientation === "horizontal"
+      ? "absolute inset-y-0 -left-1 -right-1 z-10"
+      : "absolute inset-x-0 -top-1 -bottom-1 z-10";
+
+  return (
+    <Separator className={className}>
+      <div className={hitTargetClassName} />
+    </Separator>
+  );
+}
+
 function createEditorStateFromSession(session: {
   split: boolean;
+  splitOrientation?: EditorSplitOrientation;
+  splitLayout?: Record<string, number> | null;
   focusedGroup: EditorGroup;
   leftTabs: EditorTab[];
   rightTabs: EditorTab[];
@@ -67,6 +120,8 @@ function createEditorStateFromSession(session: {
   };
   return {
     split: session.split,
+    splitOrientation: normalizeSplitOrientation(session.splitOrientation),
+    splitLayout: normalizeSplitLayout(session.splitLayout),
     focusedGroup: session.focusedGroup,
     leftTabs: session.leftTabs.map(normalizeTranscriptTab),
     rightTabs: session.rightTabs.map(normalizeTranscriptTab),
@@ -237,6 +292,27 @@ export function EditorPanel() {
     },
     [findTab, flashNotice, pushNotification]
   );
+
+  const saveAllTabs = useCallback(async () => {
+    const tabs = [
+      ...stateRef.current.leftTabs,
+      ...stateRef.current.rightTabs,
+    ].filter(tabCanSave);
+    const dirtyTabs = tabs.filter((tab) => tab.dirty);
+    if (dirtyTabs.length === 0) {
+      return { savedCount: 0, attemptedCount: 0 };
+    }
+
+    let savedCount = 0;
+    for (const tab of dirtyTabs) {
+      const ok = await saveTab(tab.id, undefined, { quiet: true });
+      if (!ok) {
+        break;
+      }
+      savedCount += 1;
+    }
+    return { savedCount, attemptedCount: dirtyTabs.length };
+  }, [saveTab]);
 
   const openTerminalTab = useCallback(async () => {
     try {
@@ -677,6 +753,7 @@ export function EditorPanel() {
         }
         return saveTab(activeId);
       },
+      saveAllTabs,
       openTerminalTab,
       openBrowserTab,
       requestCloseTab,
@@ -695,12 +772,33 @@ export function EditorPanel() {
     requestCloseAllInGroup,
     requestCloseOthersInGroup,
     requestCloseTab,
+    saveAllTabs,
     saveTab,
   ]);
 
   const moveTab = useCallback(
     (tabId: string, from: EditorGroup, to: EditorGroup) => {
       dispatch({ type: "MOVE_TAB", tabId, from, to });
+    },
+    []
+  );
+
+  const setSplitMode = useCallback(
+    (orientation: EditorSplitOrientation, focus: EditorGroup = stateRef.current.focusedGroup) => {
+      dispatch({ type: "ENABLE_SPLIT", orientation, focus });
+    },
+    []
+  );
+
+  const joinEditorGroups = useCallback(() => {
+    dispatch({ type: "TOGGLE_SPLIT" });
+  }, []);
+
+  const moveTabToNewSplit = useCallback(
+    (tabId: string, from: EditorGroup, orientation: EditorSplitOrientation) => {
+      const targetGroup: EditorGroup = from === "left" ? "right" : "left";
+      dispatch({ type: "ENABLE_SPLIT", orientation, focus: targetGroup });
+      dispatch({ type: "MOVE_TAB", tabId, from, to: targetGroup });
     },
     []
   );
@@ -720,9 +818,46 @@ export function EditorPanel() {
     (e: MouseEvent, group: EditorGroup) => {
       if (e.target !== e.currentTarget) return;
       e.preventDefault();
-      const tabs =
-        group === "left" ? stateRef.current.leftTabs : stateRef.current.rightTabs;
+      const snapshot = stateRef.current;
+      const tabs = group === "left" ? snapshot.leftTabs : snapshot.rightTabs;
       const hasTabs = tabs.length > 0;
+      const splitItems: WorkbenchMenuItem[] = snapshot.split
+        ? [
+            {
+              type: "item",
+              id: "join-groups",
+              label: "Join Editor Groups",
+              onSelect: joinEditorGroups,
+            },
+            {
+              type: "item",
+              id: "split-right",
+              label: "Use Side-by-side Layout",
+              disabled: snapshot.splitOrientation === "horizontal",
+              onSelect: () => setSplitMode("horizontal", group),
+            },
+            {
+              type: "item",
+              id: "split-down",
+              label: "Use Stacked Layout",
+              disabled: snapshot.splitOrientation === "vertical",
+              onSelect: () => setSplitMode("vertical", group),
+            },
+          ]
+        : [
+            {
+              type: "item",
+              id: "split-right",
+              label: "Split Editor Right",
+              onSelect: () => setSplitMode("horizontal", group),
+            },
+            {
+              type: "item",
+              id: "split-down",
+              label: "Split Editor Down",
+              onSelect: () => setSplitMode("vertical", group),
+            },
+          ];
       openAt(e, [
         {
           type: "item",
@@ -739,15 +874,16 @@ export function EditorPanel() {
           onSelect: () => requestCloseOthersInGroup(group),
         },
         { type: "sep" },
-        {
-          type: "item",
-          id: "split",
-          label: "Split Editor",
-          onSelect: () => dispatch({ type: "TOGGLE_SPLIT" }),
-        },
+        ...splitItems,
       ]);
     },
-    [dispatch, openAt, requestCloseAllInGroup, requestCloseOthersInGroup]
+    [
+      joinEditorGroups,
+      openAt,
+      requestCloseAllInGroup,
+      requestCloseOthersInGroup,
+      setSplitMode,
+    ]
   );
 
   const handleEditorTabContextMenu = useCallback(
@@ -755,14 +891,16 @@ export function EditorPanel() {
       e.stopPropagation();
       const tab = findTab(tabId);
       if (!tab) return;
+      const snapshot = stateRef.current;
       const tabsInGroup =
-        group === "left" ? stateRef.current.leftTabs : stateRef.current.rightTabs;
+        group === "left" ? snapshot.leftTabs : snapshot.rightTabs;
       const idx = tabsInGroup.findIndex((t) => t.id === tabId);
       const root = workspaceInfo?.root ?? "";
       const fullPath =
         tab.filePath && root
           ? `${root.replace(/\\/g, "/")}/${tab.filePath}`
           : (tab.filePath ?? "");
+      const otherGroup: EditorGroup = group === "left" ? "right" : "left";
 
       const items: WorkbenchMenuItem[] = [
         {
@@ -805,12 +943,51 @@ export function EditorPanel() {
       }
 
       items.push({ type: "sep" });
-      items.push({
-        type: "item",
-        id: "split",
-        label: "Split Editor",
-        onSelect: () => dispatch({ type: "TOGGLE_SPLIT" }),
-      });
+      if (snapshot.split) {
+        items.push(
+          {
+            type: "item",
+            id: "move-other-group",
+            label: "Move to Other Editor Group",
+            onSelect: () => moveTab(tabId, group, otherGroup),
+          },
+          {
+            type: "item",
+            id: "split-right",
+            label: "Use Side-by-side Layout",
+            disabled: snapshot.splitOrientation === "horizontal",
+            onSelect: () => setSplitMode("horizontal", otherGroup),
+          },
+          {
+            type: "item",
+            id: "split-down",
+            label: "Use Stacked Layout",
+            disabled: snapshot.splitOrientation === "vertical",
+            onSelect: () => setSplitMode("vertical", otherGroup),
+          },
+          {
+            type: "item",
+            id: "join-groups",
+            label: "Join Editor Groups",
+            onSelect: joinEditorGroups,
+          }
+        );
+      } else {
+        items.push(
+          {
+            type: "item",
+            id: "move-split-right",
+            label: "Move to New Right Group",
+            onSelect: () => moveTabToNewSplit(tabId, group, "horizontal"),
+          },
+          {
+            type: "item",
+            id: "move-split-down",
+            label: "Move to New Bottom Group",
+            onSelect: () => moveTabToNewSplit(tabId, group, "vertical"),
+          }
+        );
+      }
 
       if (tab.filePath) {
         items.push({ type: "sep" });
@@ -836,10 +1013,14 @@ export function EditorPanel() {
       copyToClipboard,
       dispatch,
       findTab,
+      joinEditorGroups,
+      moveTab,
+      moveTabToNewSplit,
       openAt,
       requestCloseOthersInGroup,
       requestCloseTab,
       saveTab,
+      setSplitMode,
       workspaceInfo?.root,
     ]
   );
@@ -983,6 +1164,52 @@ export function EditorPanel() {
     );
   }
 
+  function renderEditorGroup(
+    group: EditorGroup,
+    options: {
+      activeTab: EditorTab | null;
+      activeTabId: string | null;
+      tabs: EditorTab[];
+      showSplitToolbar: boolean;
+      emptyMessage: string;
+    }
+  ) {
+    return (
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <EditorTabs
+          group={group}
+          tabs={options.tabs}
+          activeTabId={options.activeTabId}
+          splitActive={state.split}
+          splitOrientation={state.splitOrientation}
+          showSplitToolbar={options.showSplitToolbar}
+          onSelectTab={(id) => selectTab(group, id)}
+          onCloseTab={(id) => requestCloseTab(group, id)}
+          onSplitRight={() => setSplitMode("horizontal", group)}
+          onSplitDown={() => setSplitMode("vertical", group)}
+          onJoinGroups={joinEditorGroups}
+          onCloseAllTabs={() => requestCloseAllInGroup(group)}
+          onCloseOtherTabs={() => requestCloseOthersInGroup(group)}
+          onMoveTabBetweenGroups={moveTab}
+          onTabContextMenu={(e, id) => handleEditorTabContextMenu(e, group, id)}
+          onStripContextMenu={(e) => handleEditorStripContextMenu(e, group)}
+        />
+        <div
+          className="min-h-0 flex-1 overflow-hidden"
+          onPointerDown={() => focusEditorGroup(group)}
+          onDragOver={editorDragOverHandler}
+          onDrop={editorDropHandler(group)}
+        >
+          {!options.activeTab ? (
+            emptyState(options.emptyMessage)
+          ) : (
+            renderCodeForTab(options.activeTab, group)
+          )}
+        </div>
+      </div>
+    );
+  }
+
   function editorDropHandler(targetGroup: EditorGroup) {
     return (e: DragEvent) => {
       if (!state.split) return;
@@ -1004,104 +1231,64 @@ export function EditorPanel() {
     state.leftTabs.find((t) => t.id === state.leftActiveId) ?? null;
   const rightActive =
     state.rightTabs.find((t) => t.id === state.rightActiveId) ?? null;
+  const splitLayout = state.splitLayout ?? DEFAULT_EDITOR_SPLIT_LAYOUT;
 
   if (!state.split) {
     return (
       <div className="flex h-full flex-col overflow-hidden bg-[var(--bg-main)]">
-        <EditorTabs
-          group="left"
-          tabs={state.leftTabs}
-          activeTabId={state.leftActiveId}
-          splitActive={false}
-          showSplitToolbar
-          onSelectTab={(id) => selectTab("left", id)}
-          onCloseTab={(id) => requestCloseTab("left", id)}
-          onToggleSplit={() => dispatch({ type: "TOGGLE_SPLIT" })}
-          onCloseAllTabs={() => requestCloseAllInGroup("left")}
-          onCloseOtherTabs={() => requestCloseOthersInGroup("left")}
-          onMoveTabBetweenGroups={moveTab}
-          onTabContextMenu={(e, id) => handleEditorTabContextMenu(e, "left", id)}
-          onStripContextMenu={(e) => handleEditorStripContextMenu(e, "left")}
-        />
-        <div
-          className="min-h-0 flex-1 overflow-hidden"
-          onPointerDown={() => focusEditorGroup("left")}
-        >
-          {!leftActive ? (
-            emptyState("No files open")
-          ) : (
-            renderCodeForTab(leftActive, "left")
-          )}
-        </div>
+        {renderEditorGroup("left", {
+          activeTab: leftActive,
+          activeTabId: state.leftActiveId,
+          tabs: state.leftTabs,
+          showSplitToolbar: true,
+          emptyMessage: "No files open",
+        })}
       </div>
     );
   }
 
   return (
     <div className="flex h-full flex-col overflow-hidden bg-[var(--bg-main)]">
-      <div className="flex min-h-0 min-w-0 flex-1 flex-row">
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col border-r border-[var(--border-subtle)]">
-          <EditorTabs
-            group="left"
-            tabs={state.leftTabs}
-            activeTabId={state.leftActiveId}
-            splitActive
-            showSplitToolbar
-            onSelectTab={(id) => selectTab("left", id)}
-            onCloseTab={(id) => requestCloseTab("left", id)}
-            onToggleSplit={() => dispatch({ type: "TOGGLE_SPLIT" })}
-            onCloseAllTabs={() => requestCloseAllInGroup("left")}
-            onCloseOtherTabs={() => requestCloseOthersInGroup("left")}
-            onMoveTabBetweenGroups={moveTab}
-            onTabContextMenu={(e, id) => handleEditorTabContextMenu(e, "left", id)}
-            onStripContextMenu={(e) => handleEditorStripContextMenu(e, "left")}
-          />
-          <div
-            className="min-h-0 flex-1 overflow-hidden"
-            onPointerDown={() => focusEditorGroup("left")}
-            onDragOver={editorDragOverHandler}
-            onDrop={editorDropHandler("left")}
-          >
-            {!leftActive ? (
-              emptyState("No file selected — open a tab above or drop one here.")
-            ) : (
-              renderCodeForTab(leftActive, "left")
-            )}
-          </div>
-        </div>
-
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-          <EditorTabs
-            group="right"
-            tabs={state.rightTabs}
-            activeTabId={state.rightActiveId}
-            splitActive
-            showSplitToolbar={false}
-            onSelectTab={(id) => selectTab("right", id)}
-            onCloseTab={(id) => requestCloseTab("right", id)}
-            onToggleSplit={() => dispatch({ type: "TOGGLE_SPLIT" })}
-            onCloseAllTabs={() => requestCloseAllInGroup("right")}
-            onCloseOtherTabs={() => requestCloseOthersInGroup("right")}
-            onMoveTabBetweenGroups={moveTab}
-            onTabContextMenu={(e, id) => handleEditorTabContextMenu(e, "right", id)}
-            onStripContextMenu={(e) => handleEditorStripContextMenu(e, "right")}
-          />
-          <div
-            className="min-h-0 flex-1 overflow-hidden"
-            onPointerDown={() => focusEditorGroup("right")}
-            onDragOver={editorDragOverHandler}
-            onDrop={editorDropHandler("right")}
-          >
-            {!rightActive ? (
-              emptyState(
-                "Drop a tab from the left group here, or drag a tab onto the row above."
-              )
-            ) : (
-              renderCodeForTab(rightActive, "right")
-            )}
-          </div>
-        </div>
-      </div>
+      <Group
+        orientation={state.splitOrientation}
+        id="editor-split-group"
+        key={state.splitOrientation}
+        className="min-h-0 min-w-0 flex-1"
+        defaultLayout={splitLayout}
+        onLayoutChanged={(layout) => {
+          dispatch({ type: "SET_SPLIT_LAYOUT", layout });
+        }}
+      >
+        <Panel
+          id={EDITOR_SPLIT_PANEL_IDS.left}
+          minSize={state.splitOrientation === "horizontal" ? "18%" : "15%"}
+          className="min-h-0 min-w-0"
+          style={{ overflow: "hidden" }}
+        >
+          {renderEditorGroup("left", {
+            activeTab: leftActive,
+            activeTabId: state.leftActiveId,
+            tabs: state.leftTabs,
+            showSplitToolbar: true,
+            emptyMessage: "No file selected — open a tab above or move one here.",
+          })}
+        </Panel>
+        <EditorSplitResizeHandle orientation={state.splitOrientation} />
+        <Panel
+          id={EDITOR_SPLIT_PANEL_IDS.right}
+          minSize={state.splitOrientation === "horizontal" ? "18%" : "15%"}
+          className="min-h-0 min-w-0"
+          style={{ overflow: "hidden" }}
+        >
+          {renderEditorGroup("right", {
+            activeTab: rightActive,
+            activeTabId: state.rightActiveId,
+            tabs: state.rightTabs,
+            showSplitToolbar: false,
+            emptyMessage: "Move or drop a tab here from the other editor group.",
+          })}
+        </Panel>
+      </Group>
     </div>
   );
 }
