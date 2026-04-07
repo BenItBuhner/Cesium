@@ -14,7 +14,13 @@ import {
 } from "../lib/workspace-registry.js";
 import {
   getWorkspaceSession,
+  listWorkspaceWindows,
+  createWorkspaceWindow,
+  updateWorkspaceWindow,
+  getWorkspaceWindow,
+  getWorkspaceWindowSession,
   saveWorkspaceSession,
+  saveWorkspaceWindowSession,
   type PersistedWorkspaceSession,
 } from "../lib/workspace-session-store.js";
 
@@ -138,9 +144,18 @@ workspaceRoutes.patch("/api/workspaces/default", async (c) => {
 
 workspaceRoutes.get("/api/workspaces/:workspaceId/session", async (c) => {
   const workspaceId = c.req.param("workspaceId");
+  const windowId = c.req.query("windowId")?.trim() || null;
   const workspace = await getWorkspaceById(workspaceId);
   if (!workspace) {
     return c.json({ error: `Unknown workspace: ${workspaceId}` }, 404);
+  }
+  if (windowId) {
+    const windowRecord = await getWorkspaceWindow(workspaceId, windowId);
+    if (!windowRecord) {
+      return c.json({ error: `Unknown workspace window: ${windowId}` }, 404);
+    }
+    const session = await getWorkspaceWindowSession(workspaceId, windowId);
+    return c.json({ workspace, window: windowRecord, session });
   }
   const session = await getWorkspaceSession(workspaceId);
   return c.json({ workspace, session });
@@ -148,6 +163,7 @@ workspaceRoutes.get("/api/workspaces/:workspaceId/session", async (c) => {
 
 workspaceRoutes.put("/api/workspaces/:workspaceId/session", async (c) => {
   const workspaceId = c.req.param("workspaceId");
+  const windowId = c.req.query("windowId")?.trim() || null;
   const workspace = await getWorkspaceById(workspaceId);
   if (!workspace) {
     return c.json({ error: `Unknown workspace: ${workspaceId}` }, 404);
@@ -158,13 +174,91 @@ workspaceRoutes.put("/api/workspaces/:workspaceId/session", async (c) => {
     return c.json({ ok: true, skipped: true });
   }
   const body = JSON.parse(rawBody) as PersistedWorkspaceSession;
-  await saveWorkspaceSession(workspaceId, {
+  const nextSession: PersistedWorkspaceSession = {
     schemaVersion: 1,
     editor: body.editor,
     chat: body.chat,
     explorer: body.explorer,
     layout: body.layout,
     settingsView: body.settingsView,
-  });
+  };
+  if (windowId) {
+    const windowRecord = await getWorkspaceWindow(workspaceId, windowId);
+    if (!windowRecord) {
+      return c.json({ error: `Unknown workspace window: ${windowId}` }, 404);
+    }
+    await saveWorkspaceWindowSession(workspaceId, windowId, nextSession);
+    return c.json({ ok: true });
+  }
+  await saveWorkspaceSession(workspaceId, nextSession);
   return c.json({ ok: true });
+});
+
+workspaceRoutes.get("/api/workspaces/:workspaceId/windows", async (c) => {
+  const workspaceId = c.req.param("workspaceId");
+  const workspace = await getWorkspaceById(workspaceId);
+  if (!workspace) {
+    return c.json({ error: `Unknown workspace: ${workspaceId}` }, 404);
+  }
+  const windows = await listWorkspaceWindows(workspaceId);
+  return c.json({ workspace, windows });
+});
+
+workspaceRoutes.post("/api/workspaces/:workspaceId/windows", async (c) => {
+  const workspaceId = c.req.param("workspaceId");
+  const workspace = await getWorkspaceById(workspaceId);
+  if (!workspace) {
+    return c.json({ error: `Unknown workspace: ${workspaceId}` }, 404);
+  }
+
+  const body: { name?: string; sourceWindowId?: string | null } =
+    await c.req
+      .json<{ name?: string; sourceWindowId?: string | null }>()
+      .catch(() => ({}));
+  const sourceWindowId =
+    typeof body.sourceWindowId === "string" && body.sourceWindowId.trim().length > 0
+      ? body.sourceWindowId.trim()
+      : null;
+  const sourceSession = sourceWindowId
+    ? await getWorkspaceWindowSession(workspaceId, sourceWindowId)
+    : await getWorkspaceSession(workspaceId);
+  const windowRecord = await createWorkspaceWindow(workspaceId, {
+    name:
+      typeof body.name === "string" && body.name.trim().length > 0
+        ? body.name.trim()
+        : undefined,
+    session: sourceSession ?? undefined,
+  });
+  const windows = await listWorkspaceWindows(workspaceId);
+  return c.json({ workspace, window: windowRecord, windows }, 201);
+});
+
+workspaceRoutes.patch("/api/workspaces/:workspaceId/windows/:windowId", async (c) => {
+  const workspaceId = c.req.param("workspaceId");
+  const windowId = c.req.param("windowId");
+  const workspace = await getWorkspaceById(workspaceId);
+  if (!workspace) {
+    return c.json({ error: `Unknown workspace: ${workspaceId}` }, 404);
+  }
+
+  const body: { name?: string; lastOpenedAt?: number; markClosed?: boolean } =
+    await c.req
+      .json<{ name?: string; lastOpenedAt?: number; markClosed?: boolean }>()
+      .catch(() => ({}));
+  const windowRecord = await updateWorkspaceWindow(workspaceId, windowId, {
+    name:
+      typeof body.name === "string" && body.name.trim().length > 0
+        ? body.name.trim()
+        : undefined,
+    lastOpenedAt:
+      typeof body.lastOpenedAt === "number" && Number.isFinite(body.lastOpenedAt)
+        ? body.lastOpenedAt
+        : undefined,
+    markClosed: body.markClosed === true,
+  });
+  if (!windowRecord) {
+    return c.json({ error: `Unknown workspace window: ${windowId}` }, 404);
+  }
+  const windows = await listWorkspaceWindows(workspaceId);
+  return c.json({ workspace, window: windowRecord, windows });
 });

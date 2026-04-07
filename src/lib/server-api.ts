@@ -9,7 +9,13 @@ import type {
   AgentConversationSnapshot,
 } from "@/lib/agent-types";
 import type { WorkspaceSessionState } from "@/lib/workspace-session";
-import type { FileNode, TerminalInfo, WorkspaceInfo, WorkspaceRecord } from "@/lib/types";
+import type {
+  FileNode,
+  TerminalInfo,
+  WorkspaceInfo,
+  WorkspaceRecord,
+  WorkspaceWindowRecord,
+} from "@/lib/types";
 import { toWebSocketUrl } from "@/lib/ws-client";
 
 const BASE_URL =
@@ -189,9 +195,15 @@ export async function setDefaultWorkspaceSelection(
 }
 
 export async function fetchWorkspaceSession(
-  workspaceId: string
+  workspaceId: string,
+  options?: { windowId?: string | null }
 ): Promise<{ workspace: WorkspaceRecord; session: WorkspaceSessionState | null }> {
-  return request(`/api/workspaces/${encodeURIComponent(workspaceId)}/session`, undefined, {
+  const params = new URLSearchParams();
+  if (options?.windowId) {
+    params.set("windowId", options.windowId);
+  }
+  const suffix = params.size > 0 ? `?${params.toString()}` : "";
+  return request(`/api/workspaces/${encodeURIComponent(workspaceId)}/session${suffix}`, undefined, {
     skipWorkspaceHeader: true,
   });
 }
@@ -199,10 +211,15 @@ export async function fetchWorkspaceSession(
 export async function saveWorkspaceSession(
   workspaceId: string,
   session: WorkspaceSessionState,
-  options?: { keepalive?: boolean }
+  options?: { keepalive?: boolean; windowId?: string | null }
 ): Promise<void> {
+  const params = new URLSearchParams();
+  if (options?.windowId) {
+    params.set("windowId", options.windowId);
+  }
+  const suffix = params.size > 0 ? `?${params.toString()}` : "";
   await request(
-    `/api/workspaces/${encodeURIComponent(workspaceId)}/session`,
+    `/api/workspaces/${encodeURIComponent(workspaceId)}/session${suffix}`,
     {
       method: "PUT",
       body: JSON.stringify(session),
@@ -210,6 +227,93 @@ export async function saveWorkspaceSession(
     },
     { skipWorkspaceHeader: true }
   );
+}
+
+export async function fetchWorkspaceWindows(
+  workspaceId: string
+): Promise<{ workspace: WorkspaceRecord; windows: WorkspaceWindowRecord[] }> {
+  return request(`/api/workspaces/${encodeURIComponent(workspaceId)}/windows`, undefined, {
+    skipWorkspaceHeader: true,
+  });
+}
+
+export async function createWorkspaceWindow(input: {
+  workspaceId: string;
+  title?: string;
+  sourceWindowId?: string | null;
+}): Promise<{
+  workspace: WorkspaceRecord;
+  window: WorkspaceWindowRecord;
+  windows: WorkspaceWindowRecord[];
+}> {
+  return request(
+    `/api/workspaces/${encodeURIComponent(input.workspaceId)}/windows`,
+    {
+      method: "POST",
+      body: JSON.stringify({ name: input.title, sourceWindowId: input.sourceWindowId }),
+    },
+    { skipWorkspaceHeader: true }
+  );
+}
+
+export async function fetchWorkspaceWindowSession(
+  workspaceId: string,
+  windowId: string
+): Promise<{
+  workspace: WorkspaceRecord;
+  window: WorkspaceWindowRecord;
+  session: WorkspaceSessionState | null;
+}> {
+  return request(
+    `/api/workspaces/${encodeURIComponent(workspaceId)}/session?${new URLSearchParams({
+      windowId,
+    }).toString()}`,
+    undefined,
+    {
+      skipWorkspaceHeader: true,
+    }
+  );
+}
+
+export async function updateWorkspaceWindow(
+  input: {
+    workspaceId: string;
+    windowId: string;
+    name?: string;
+    lastOpenedAt?: number;
+    lastFocusedAt?: number;
+    markClosed?: boolean;
+  }
+): Promise<{
+  workspace: WorkspaceRecord;
+  window: WorkspaceWindowRecord;
+  windows: WorkspaceWindowRecord[];
+}> {
+  return request(
+    `/api/workspaces/${encodeURIComponent(input.workspaceId)}/windows/${encodeURIComponent(input.windowId)}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({
+        name: input.name,
+        lastOpenedAt: input.lastOpenedAt,
+        lastFocusedAt: input.lastFocusedAt,
+        markClosed: input.markClosed,
+      }),
+    },
+    { skipWorkspaceHeader: true }
+  );
+}
+
+export async function saveWorkspaceWindowSession(
+  workspaceId: string,
+  windowId: string,
+  session: WorkspaceSessionState,
+  options?: { keepalive?: boolean }
+): Promise<void> {
+  await saveWorkspaceSession(workspaceId, session, {
+    keepalive: options?.keepalive,
+    windowId,
+  });
 }
 
 export type CursorAgentDeploymentHintsPayload = {

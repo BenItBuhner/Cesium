@@ -20,10 +20,11 @@ import { useHardwareInput } from "@/components/input/HardwareInputProvider";
 import { useTheme } from "@/components/theme/ThemeProvider";
 import { IDECommandProvider } from "./IDECommandContext";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
-import type { EditorTab } from "@/lib/types";
+import type { EditorTab, WorkspaceWindowRecord } from "@/lib/types";
 import { isFocusedBrowserSurface } from "@/lib/browser-keyboard-passthrough";
 import { normalizeBrowserTargetUrl } from "@/lib/browser-proxy-url";
 import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
+import { buildWorkspaceWindowUrl } from "@/lib/workspace-windows";
 import {
   detectShortcutPlatform,
   getShortcutDisplayForCommand,
@@ -31,20 +32,8 @@ import {
   type ShortcutChordState,
 } from "@/lib/keyboard-shortcuts";
 
-function buildWindowUrl(workspaceId: string, dedicated: boolean): string {
-  const url = new URL("/editor", window.location.origin);
-  url.searchParams.set("workspaceId", workspaceId);
-  if (dedicated) {
-    if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
-      url.searchParams.set("windowId", crypto.randomUUID());
-    } else {
-      url.searchParams.set(
-        "windowId",
-        `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
-      );
-    }
-  }
-  return url.toString();
+function formatWorkspaceWindowLabel(windowRecord: WorkspaceWindowRecord): string {
+  return windowRecord.closedAt ? `${windowRecord.label} (Closed)` : windowRecord.label;
 }
 
 type PaletteMode = "closed" | "command" | "quickopen";
@@ -74,16 +63,22 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
 
   const {
     activeWorkspaceId,
+    activeWindowId,
     defaultWorkspaceId,
     fileTree,
+    isDedicatedWindow,
     workspaceInfo,
+    workspaceWindows,
     workspaces,
     refreshTree,
     openFolder,
     openWorkspaceById,
+    refreshWorkspaceWindows,
+    createWorkspaceWindow,
     createWorkspace,
     setDefaultWorkspace,
     updateWorkspaceSession,
+    updateWorkspaceWindow,
     flushWorkspaceSessionNow,
   } = useWorkspace();
   const [palette, setPalette] = useState<PaletteMode>("closed");
@@ -100,6 +95,8 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
   const [browserPromptValue, setBrowserPromptValue] = useState(
     "http://localhost:3000/"
   );
+  const [renameWindowOpen, setRenameWindowOpen] = useState(false);
+  const [renameWindowValue, setRenameWindowValue] = useState("");
   const [toast, setToast] = useState<string | null>(null);
 
   const quickEntries = useMemo(
@@ -215,24 +212,62 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
     });
   }, [browserPromptValue, runWithBridge]);
 
+  const openWorkspaceWindow = useCallback(
+    (windowId: string) => {
+      if (!activeWorkspaceId) {
+        flash(setToast, "No active workspace.");
+        return;
+      }
+      const nextWindow = window.open(
+        buildWorkspaceWindowUrl(window.location.origin, activeWorkspaceId, windowId),
+        "_blank",
+        "noopener,noreferrer"
+      );
+      if (!nextWindow) {
+        flash(setToast, "Popup blocked while opening the workspace window.");
+      }
+    },
+    [activeWorkspaceId]
+  );
+
   const openNewWindow = useCallback(
-    async (options?: { dedicated?: boolean }) => {
+    async (options?: { title?: string }) => {
       if (!activeWorkspaceId) {
         flash(setToast, "No active workspace.");
         return;
       }
       await flushWorkspaceSessionNow();
-      const nextWindow = window.open(
-        buildWindowUrl(activeWorkspaceId, options?.dedicated ?? true),
-        "_blank",
-        "noopener,noreferrer"
-      );
-      if (!nextWindow) {
-        flash(setToast, "Popup blocked while opening the new window.");
-      }
+      const windowRecord = await createWorkspaceWindow({
+        title: options?.title,
+      });
+      openWorkspaceWindow(windowRecord.id);
     },
-    [activeWorkspaceId, flushWorkspaceSessionNow]
+    [activeWorkspaceId, createWorkspaceWindow, flushWorkspaceSessionNow, openWorkspaceWindow]
   );
+
+  const promptRenameCurrentWindow = useCallback(() => {
+    if (!isDedicatedWindow || !activeWindowId) {
+      flash(setToast, "Open a dedicated workspace window first.");
+      return;
+    }
+    const currentWindow =
+      workspaceWindows.find((windowRecord) => windowRecord.id === activeWindowId) ?? null;
+    setRenameWindowValue(currentWindow?.label ?? "");
+    setRenameWindowOpen(true);
+  }, [activeWindowId, isDedicatedWindow, workspaceWindows]);
+
+  const submitRenameCurrentWindow = useCallback(async () => {
+    if (!activeWindowId) {
+      return;
+    }
+    const title = renameWindowValue.trim();
+    if (!title) {
+      return;
+    }
+    await updateWorkspaceWindow(activeWindowId, { title });
+    setRenameWindowOpen(false);
+    flash(setToast, `Renamed window to ${title}`);
+  }, [activeWindowId, renameWindowValue, updateWorkspaceWindow]);
 
   const kb = useCallback(
     (commandId: string) => {
@@ -298,6 +333,14 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
           break;
         case "workbench.action.newWindow":
           void openNewWindow();
+          break;
+        case "workbench.action.window.rename":
+          promptRenameCurrentWindow();
+          break;
+        case "workbench.action.window.refreshList":
+          void refreshWorkspaceWindows().then(() => {
+            flash(setToast, "Workspace windows refreshed.");
+          });
           break;
         case "workbench.action.newAgent":
           router.push("/agent");
@@ -426,7 +469,9 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
     },
     [
       bridgeRef,
+      promptRenameCurrentWindow,
       openNewWindow,
+      refreshWorkspaceWindows,
       promptForFolder,
       router,
       runWithBridge,
@@ -436,6 +481,45 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
       workbench,
     ]
   );
+
+  const workspaceWindowCommands = useMemo<PaletteCommand[]>(() => {
+    if (!activeWorkspaceId) {
+      return [];
+    }
+
+    const baseCommands: PaletteCommand[] = [
+      {
+        id: "workbench.action.window.rename",
+        label: "Window: Rename Current Workspace Window",
+        run: () => runShortcutCommand("workbench.action.window.rename"),
+      },
+      {
+        id: "workbench.action.window.refreshList",
+        label: "Window: Refresh Workspace Windows",
+        run: () => runShortcutCommand("workbench.action.window.refreshList"),
+      },
+    ];
+
+    return [
+      ...baseCommands,
+      ...workspaceWindows.map((windowRecord) => ({
+        id: `workbench.action.window.open.${windowRecord.id}`,
+        label: `Window: Open ${formatWorkspaceWindowLabel(windowRecord)}`,
+        detail:
+          windowRecord.id === activeWindowId
+            ? "Current workspace window"
+            : workspaceInfo?.name ?? "Workspace window",
+        run: () => openWorkspaceWindow(windowRecord.id),
+      })),
+    ];
+  }, [
+    activeWindowId,
+    activeWorkspaceId,
+    openWorkspaceWindow,
+    runShortcutCommand,
+    workspaceInfo?.name,
+    workspaceWindows,
+  ]);
 
   const handleWorkbenchKeyDown = useCallback(
     (e: KeyboardEvent) =>
@@ -709,6 +793,7 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
           });
         },
       },
+      ...workspaceWindowCommands,
       {
         id: "workbench.action.terminal.new",
         label: "Terminal: Create New Terminal",
@@ -800,6 +885,7 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
       setDefaultWorkspace,
       setThemePreference,
       workspaces,
+      workspaceWindowCommands,
     ]
   );
 
@@ -1074,6 +1160,43 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
       >
         <div className="border-t border-[var(--palette-divider)] px-[10px] py-[8px] font-sans text-[12px] text-[var(--palette-footer-text)]">
           Loads through the OpenCursor server proxy. Public HTTPS is allowed by default; set BROWSER_PROXY_ALLOW_PUBLIC=0 on the API server to restrict to private/local hosts only.
+        </div>
+      </VSCodeQuickInputShell>
+      <VSCodeQuickInputShell
+        open={renameWindowOpen}
+        onClose={() => setRenameWindowOpen(false)}
+        screenReaderTitle="Rename workspace window"
+        inputLabel="Window name"
+        placeholder="Window name"
+        value={renameWindowValue}
+        onChange={setRenameWindowValue}
+        onKeyDown={(event) => {
+          if (event.key === "Escape") {
+            event.preventDefault();
+            setRenameWindowOpen(false);
+            return;
+          }
+          if (event.key === "Enter") {
+            event.preventDefault();
+            void submitRenameCurrentWindow();
+          }
+        }}
+        onHardwareKeyDown={(event) => {
+          if (event.key === "Escape") {
+            event.preventDefault();
+            setRenameWindowOpen(false);
+            return true;
+          }
+          if (event.key === "Enter") {
+            event.preventDefault();
+            void submitRenameCurrentWindow();
+            return true;
+          }
+          return false;
+        }}
+      >
+        <div className="border-t border-[var(--palette-divider)] px-[10px] py-[8px] font-sans text-[12px] text-[var(--palette-footer-text)]">
+          Give this workspace window a persistent name so it is easy to find and reopen later.
         </div>
       </VSCodeQuickInputShell>
       {toast ? (

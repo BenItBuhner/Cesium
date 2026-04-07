@@ -15,11 +15,15 @@ import type {
   FileWatcherEvent,
   TerminalInfo,
   WorkspaceInfo,
+  WorkspaceWindowRecord,
   WorkspaceRecord,
 } from "@/lib/types";
 import {
   createTerminal,
   createWorkspaceSelection,
+  createWorkspaceWindow,
+  fetchWorkspaceWindowSession,
+  fetchWorkspaceWindows,
   fetchFolderChildren,
   fetchTree,
   fetchWorkspaceBootstrap,
@@ -30,6 +34,7 @@ import {
   saveWorkspaceSession,
   setActiveWorkspaceId,
   setDefaultWorkspaceSelection,
+  updateWorkspaceWindow,
 } from "@/lib/server-api";
 import {
   createDefaultWorkspaceSession,
@@ -65,7 +70,10 @@ type FileChangeNotice = {
 type WorkspaceContextValue = {
   workspaceInfo: WorkspaceInfo | null;
   activeWorkspaceId: string | null;
+  activeWindowId: string | null;
+  isDedicatedWindow: boolean;
   workspaces: WorkspaceRecord[];
+  workspaceWindows: WorkspaceWindowRecord[];
   defaultWorkspaceId: string | null;
   recentWorkspaceIds: string[];
   fileTree: FileNode | null;
@@ -89,6 +97,14 @@ type WorkspaceContextValue = {
   loadFolderChildren: (path: string) => Promise<void>;
   openFolder: (root: string, name?: string) => Promise<void>;
   openWorkspaceById: (workspaceId: string) => Promise<void>;
+  refreshWorkspaceWindows: () => Promise<void>;
+  createWorkspaceWindow: (input?: {
+    title?: string;
+  }) => Promise<WorkspaceWindowRecord>;
+  updateWorkspaceWindow: (
+    windowId: string,
+    patch: { title?: string; lastFocusedAt?: number }
+  ) => Promise<WorkspaceWindowRecord>;
   createWorkspace: (input: {
     name?: string;
     parentPath: string;
@@ -394,6 +410,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const [workspaceInfo, setWorkspaceInfo] = useState<WorkspaceInfo | null>(null);
   const [activeWorkspaceId, setActiveWorkspaceIdState] = useState<string | null>(null);
   const [workspaces, setWorkspaces] = useState<WorkspaceRecord[]>([]);
+  const [workspaceWindows, setWorkspaceWindows] = useState<WorkspaceWindowRecord[]>([]);
   const [defaultWorkspaceId, setDefaultWorkspaceIdState] = useState<string | null>(null);
   const [recentWorkspaceIds, setRecentWorkspaceIds] = useState<string[]>([]);
   const [fileTree, setFileTree] = useState<FileNode | null>(null);
@@ -471,14 +488,13 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       const persistableSession = createPersistableWorkspaceSession(next);
       const sessionScopeId = getSessionScopeId(workspaceInfo.id);
       writeWorkspaceSessionBackup(sessionScopeId, persistableSession);
-      if (isDedicatedWindow) {
-        return;
-      }
-      await saveWorkspaceSession(workspaceInfo.id, persistableSession).catch(() => {
+      await saveWorkspaceSession(workspaceInfo.id, persistableSession, {
+        windowId,
+      }).catch(() => {
         // Ignore immediate save failures; future saves can retry.
       });
     },
-    [getSessionScopeId, isDedicatedWindow, sessionReady, workspaceInfo]
+    [getSessionScopeId, sessionReady, windowId, workspaceInfo]
   );
 
   const flushWorkspaceSessionNow = useCallback(
@@ -497,15 +513,13 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       );
       const sessionScopeId = getSessionScopeId(workspaceInfo.id);
       writeWorkspaceSessionBackup(sessionScopeId, persistableSession);
-      if (isDedicatedWindow) {
-        return;
-      }
-
-      await saveWorkspaceSession(workspaceInfo.id, persistableSession).catch(() => {
+      await saveWorkspaceSession(workspaceInfo.id, persistableSession, {
+        windowId,
+      }).catch(() => {
         // Ignore flush failures; background saves will retry on future changes.
       });
     },
-    [getSessionScopeId, isDedicatedWindow, sessionReady, workspaceInfo]
+    [getSessionScopeId, sessionReady, windowId, workspaceInfo]
   );
 
   const refreshTree = useCallback(async () => {
@@ -539,6 +553,51 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     return terminal;
   }, [refreshTerminals]);
 
+  const refreshWorkspaceWindows = useCallback(async () => {
+    if (!activeWorkspaceId) {
+      setWorkspaceWindows([]);
+      return;
+    }
+    const result = await fetchWorkspaceWindows(activeWorkspaceId);
+    setWorkspaceWindows(result.windows);
+  }, [activeWorkspaceId]);
+
+  const createPersistentWorkspaceWindow = useCallback(
+    async (input?: { title?: string }) => {
+      if (!activeWorkspaceId) {
+        throw new Error("No active workspace.");
+      }
+      const result = await createWorkspaceWindow({
+        workspaceId: activeWorkspaceId,
+        title: input?.title,
+        sourceWindowId: windowId,
+      });
+      setWorkspaceWindows(result.windows);
+      return result.window;
+    },
+    [activeWorkspaceId, windowId]
+  );
+
+  const updatePersistentWorkspaceWindow = useCallback(
+    async (
+      targetWindowId: string,
+      patch: { title?: string; lastFocusedAt?: number }
+    ) => {
+      if (!activeWorkspaceId) {
+        throw new Error("No active workspace.");
+      }
+      const result = await updateWorkspaceWindow({
+        workspaceId: activeWorkspaceId,
+        windowId: targetWindowId,
+        name: patch.title,
+        lastFocusedAt: patch.lastFocusedAt,
+      });
+      setWorkspaceWindows(result.windows);
+      return result.window;
+    },
+    [activeWorkspaceId]
+  );
+
   const loadWorkspaceState = useCallback(
     async (workspace: WorkspaceRecord) => {
       setLoading(true);
@@ -549,18 +608,21 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       setServerWorkspace(workspace);
 
       try {
-        const [{ tree }, { session }, terminalList] = await Promise.all([
+        const sessionRequest = fetchWorkspaceSession(workspace.id, { windowId });
+        const [{ tree }, sessionResult, terminalList, windowsResult] = await Promise.all([
           fetchTree(),
-          fetchWorkspaceSession(workspace.id),
+          sessionRequest,
           listTerminals(),
+          fetchWorkspaceWindows(workspace.id),
         ]);
         const localBackup = readWorkspaceSessionBackup(getSessionScopeId(workspace.id));
         setFileTree(tree);
         setTerminals(terminalList);
+        setWorkspaceWindows(windowsResult.windows);
         skipNextSessionSaveRef.current = true;
         setWorkspaceSession(
           normalizeWorkspaceSession(
-            isDedicatedWindow ? localBackup ?? session : session ?? localBackup
+            localBackup ?? sessionResult.session
           )
         );
         setSessionReady(true);
@@ -569,7 +631,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         setLoading(false);
       }
     },
-    [getSessionScopeId, isDedicatedWindow, setServerWorkspace]
+    [getSessionScopeId, setServerWorkspace, windowId]
   );
 
   const applyWorkspaceListingUpdate = useCallback(
@@ -606,6 +668,35 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     refreshTreeRef.current = refreshTree;
   }, [refreshTree]);
+
+  useEffect(() => {
+    if (!workspaceInfo || !sessionReady || !windowId) {
+      return;
+    }
+    void updatePersistentWorkspaceWindow(windowId, {
+      lastFocusedAt: Date.now(),
+    }).catch(() => {
+      // Ignore best-effort window activity updates.
+    });
+  }, [sessionReady, updatePersistentWorkspaceWindow, windowId, workspaceInfo]);
+
+  useEffect(() => {
+    if (!workspaceInfo || !windowId) {
+      return;
+    }
+    const markWindowFocused = () => {
+      void updatePersistentWorkspaceWindow(windowId, {
+        lastFocusedAt: Date.now(),
+      }).catch(() => {
+        // Ignore best-effort focus updates.
+      });
+    };
+    markWindowFocused();
+    window.addEventListener("focus", markWindowFocused);
+    return () => {
+      window.removeEventListener("focus", markWindowFocused);
+    };
+  }, [updatePersistentWorkspaceWindow, windowId, workspaceInfo]);
 
   const openWorkspaceById = useCallback(
     async (workspaceId: string) => {
@@ -757,10 +848,9 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         workspaceSessionRef.current
       );
       writeWorkspaceSessionBackup(getSessionScopeId(workspaceInfo.id), persistableSession);
-      if (isDedicatedWindow) {
-        return;
-      }
-      void saveWorkspaceSession(workspaceInfo.id, persistableSession).catch(() => {
+      void saveWorkspaceSession(workspaceInfo.id, persistableSession, {
+        windowId,
+      }).catch(() => {
         // Ignore save failures here; user-visible work continues in memory.
       });
     }, SESSION_SAVE_DEBOUNCE_MS);
@@ -770,7 +860,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         window.clearTimeout(sessionSaveTimerRef.current);
       }
     };
-  }, [getSessionScopeId, isDedicatedWindow, workspaceInfo, workspaceSession, sessionReady]);
+  }, [getSessionScopeId, sessionReady, windowId, workspaceInfo, workspaceSession]);
 
   useEffect(() => {
     if (!workspaceInfo || !sessionReady) {
@@ -786,11 +876,9 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         workspaceSessionRef.current
       );
       writeWorkspaceSessionBackup(getSessionScopeId(workspaceInfo.id), persistableSession);
-      if (isDedicatedWindow) {
-        return;
-      }
       void saveWorkspaceSession(workspaceInfo.id, persistableSession, {
         keepalive: true,
+        windowId,
       }).catch(() => {
         // Ignore flush failures.
       });
@@ -811,7 +899,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       window.removeEventListener("beforeunload", flushForPageHide);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
-  }, [getSessionScopeId, isDedicatedWindow, sessionReady, workspaceInfo]);
+  }, [getSessionScopeId, sessionReady, windowId, workspaceInfo]);
 
   useEffect(() => {
     if (!activeWorkspaceId) {
@@ -1083,7 +1171,10 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     () => ({
       workspaceInfo,
       activeWorkspaceId,
+      activeWindowId: windowId,
+      isDedicatedWindow,
       workspaces,
+      workspaceWindows,
       defaultWorkspaceId,
       recentWorkspaceIds,
       fileTree,
@@ -1103,6 +1194,9 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       loadFolderChildren,
       openFolder,
       openWorkspaceById,
+      refreshWorkspaceWindows,
+      createWorkspaceWindow: createPersistentWorkspaceWindow,
+      updateWorkspaceWindow: updatePersistentWorkspaceWindow,
       createWorkspace,
       setDefaultWorkspace,
       createNewTerminal,
@@ -1110,7 +1204,10 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     [
       workspaceInfo,
       activeWorkspaceId,
+      windowId,
+      isDedicatedWindow,
       workspaces,
+      workspaceWindows,
       defaultWorkspaceId,
       recentWorkspaceIds,
       fileTree,
@@ -1129,6 +1226,9 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       loadFolderChildren,
       openFolder,
       openWorkspaceById,
+      refreshWorkspaceWindows,
+      createPersistentWorkspaceWindow,
+      updatePersistentWorkspaceWindow,
       createWorkspace,
       setDefaultWorkspace,
       createNewTerminal,

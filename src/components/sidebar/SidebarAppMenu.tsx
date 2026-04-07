@@ -12,11 +12,13 @@ import { createPortal } from "react-dom";
 import { ChevronRight, Menu } from "lucide-react";
 import { useIDECommandRunner } from "@/components/ide/IDECommandContext";
 import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
+import { useWorkspace } from "@/contexts/WorkspaceContext";
 import {
   detectShortcutPlatform,
   getShortcutDisplayForCommand,
   type ShortcutPlatform,
 } from "@/lib/keyboard-shortcuts";
+import { buildWorkspaceWindowUrl } from "@/lib/workspace-windows";
 
 type MenuLeaf = { cmd: string; label: string };
 type MenuBlock = { sep: true } | MenuLeaf;
@@ -218,6 +220,97 @@ function ViewSubmenu({
   );
 }
 
+function WindowSubmenu({
+  bindings,
+  platform,
+  onPick,
+}: {
+  bindings: Record<string, string[]>;
+  platform: ShortcutPlatform;
+  onPick: (cmd: string) => void;
+}) {
+  const { activeWorkspaceId, activeWindowId, workspaceWindows } = useWorkspace();
+  const openWindow = useCallback(
+    (windowId: string) => {
+      if (!activeWorkspaceId) {
+        return;
+      }
+      const nextWindow = window.open(
+        buildWorkspaceWindowUrl(window.location.origin, activeWorkspaceId, windowId),
+        "_blank",
+        "noopener,noreferrer"
+      );
+      if (!nextWindow) {
+        return;
+      }
+    },
+    [activeWorkspaceId]
+  );
+  const visibleWindows = workspaceWindows.filter((windowRecord) => !windowRecord.closedAt);
+
+  return (
+    <div className="group/window relative w-full">
+      <div className={rowTrigger} role="presentation">
+        <span>Window</span>
+        <ChevronRight
+          className="size-[14px] shrink-0 text-[var(--text-secondary)]"
+          strokeWidth={1.5}
+          aria-hidden
+        />
+      </div>
+      <div
+        className={`${subWrapBase} group-hover/window:visible group-hover/window:block`}
+      >
+        <div
+          className="min-w-[288px] overflow-hidden rounded-[var(--radius-card)] border border-[var(--border-card)] bg-[var(--bg-card)] py-[4px] shadow-[0_8px_24px_rgba(0,0,0,0.12)] dark:shadow-[0_10px_28px_rgba(0,0,0,0.45)]"
+          role="presentation"
+        >
+          <button
+            type="button"
+            role="menuitem"
+            className={subItemBtn}
+            onClick={() => onPick("workbench.action.newWindow")}
+          >
+            <span className="min-w-0 flex-1">New Window</span>
+            {(() => {
+              const shortcut = getShortcutDisplayForCommand(
+                bindings,
+                "workbench.action.newWindow",
+                platform
+              );
+              return shortcut ? (
+                <span className={shortcutCls}>{shortcut}</span>
+              ) : null;
+            })()}
+          </button>
+          {visibleWindows.length > 0 ? (
+            <>
+              <div className="my-[4px] h-px bg-[var(--border-subtle)]" role="separator" />
+              <div className="px-[10px] py-[4px] font-sans text-[11px] uppercase tracking-[0.08em] text-[var(--text-secondary)]">
+                Reopen Workspace Windows
+              </div>
+              {visibleWindows.map((windowRecord) => (
+                <button
+                  key={windowRecord.id}
+                  type="button"
+                  role="menuitem"
+                  className={subItemBtn}
+                  onClick={() => openWindow(windowRecord.id)}
+                >
+                  <span className="min-w-0 flex-1 truncate">
+                    {windowRecord.label}
+                    {windowRecord.id === activeWindowId ? " (Current)" : ""}
+                  </span>
+                </button>
+              ))}
+            </>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /** Below command palette (10050), above editor/split panels. */
 const PORTAL_Z = 10048;
 
@@ -301,6 +394,7 @@ export function SidebarAppMenu() {
         <FileSubmenu onPick={onPick} bindings={bindings} platform={platform} />
         <EditSubmenu onPick={onPick} bindings={bindings} platform={platform} />
         <ViewSubmenu onPick={onPick} bindings={bindings} platform={platform} />
+        <WindowSubmenu onPick={onPick} bindings={bindings} platform={platform} />
       </div>
     ) : null;
 
