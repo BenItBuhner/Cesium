@@ -16,6 +16,10 @@ import { askStepsFromMessage } from "@/lib/ask-question-utils";
 import { useAgentConversations } from "@/components/chat/AgentConversationsContext";
 import type { EditorMode } from "@/lib/types";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
+import {
+  EDITOR_CHAT_CONTENT_CLASS,
+  EDITOR_CHAT_INSET_X_CLASS,
+} from "./agent-chat-layout";
 
 function partitionMessagesForDock(messages: ReturnType<typeof projectAgentEventsToChatMessages>): {
   scrollMessages: ReturnType<typeof projectAgentEventsToChatMessages>;
@@ -155,8 +159,10 @@ export function AgentConversationView({
       return null;
     }
     return (
-      <div className="border-t border-[var(--border-card)] bg-[var(--bg-main)]/94 px-[clamp(20px,5vw,56px)] pb-[12px] pt-[10px] backdrop-blur-[10px]">
-        <div className="mx-auto w-full max-w-[min(980px,calc(100%-8px))]">
+      <div
+        className={`border-t border-[var(--border-card)] bg-[var(--bg-main)]/94 ${EDITOR_CHAT_INSET_X_CLASS} pb-[12px] pt-[10px] backdrop-blur-[10px]`}
+      >
+        <div className={EDITOR_CHAT_CONTENT_CLASS}>
           <PermissionRequestCard
             title={pending.title ?? "Permission required"}
             detail={pending.detail}
@@ -193,7 +199,7 @@ export function AgentConversationView({
   ]);
 
   const recentChatsSection = showRecentChatsSection ? (
-    <div className="mx-auto flex w-full max-w-[min(980px,calc(100%-8px))] flex-col gap-[2px]">
+    <div className={`${EDITOR_CHAT_CONTENT_CLASS} flex flex-col gap-[2px]`}>
       <div className="flex items-center justify-end">
         <button
           type="button"
@@ -243,7 +249,7 @@ export function AgentConversationView({
   }
 
   const composer = (
-    <div className="mx-auto w-full max-w-[min(980px,calc(100%-8px))]">
+    <div className={EDITOR_CHAT_CONTENT_CLASS}>
       <ChatComposer
         key={composerDraftId}
         mode={composerState.mode}
@@ -318,7 +324,9 @@ export function AgentConversationView({
               {composer}
             </div>
           ) : null}
-          <div className="min-h-0 flex-1 bg-[var(--bg-main)] px-[clamp(20px,5vw,56px)] pb-[16px] pt-[12px]">
+          <div
+            className={`min-h-0 flex-1 bg-[var(--bg-main)] ${EDITOR_CHAT_INSET_X_CLASS} pb-[16px] pt-[12px]`}
+          >
             {recentChatsSection ? (
               <div className="flex h-full flex-col justify-end">
                 {recentChatsSection}
@@ -332,7 +340,7 @@ export function AgentConversationView({
             key={conversationId}
             messages={scrollMessages}
             surface="editor"
-            contentClassName="mx-auto w-full max-w-[min(980px,calc(100%-8px))]"
+            contentClassName={EDITOR_CHAT_CONTENT_CLASS}
             initialScrollTop={workspaceSession.chat.scrollTopByTabId[conversationId] ?? 0}
             onScrollTopSettled={(scrollTop) => {
               updateWorkspaceSession((current) =>
@@ -364,13 +372,13 @@ export function AgentConversationView({
                   <div className="pointer-events-auto">{pendingPermissionDock}</div>
                 ) : null}
                 {recentChatsSection ? (
-                  <div className="px-[clamp(20px,5vw,56px)] pt-[8px]">
+                  <div className={`${EDITOR_CHAT_INSET_X_CLASS} pt-[8px]`}>
                     {recentChatsSection}
                   </div>
                 ) : null}
                 {dockedAskSteps.length > 0 ? (
-                  <div className="px-[clamp(20px,5vw,56px)] pt-[8px]">
-                    <div className="mx-auto w-full max-w-[min(980px,calc(100%-8px))]">
+                  <div className={`${EDITOR_CHAT_INSET_X_CLASS} pt-[8px]`}>
+                    <div className={EDITOR_CHAT_CONTENT_CLASS}>
                       <AskQuestionCard steps={dockedAskSteps} dockAboveComposer />
                     </div>
                   </div>
