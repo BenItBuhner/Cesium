@@ -249,6 +249,8 @@ function VoiceInputWaveform({
         ref={containerRef}
         className="flex h-[20px] w-full items-center justify-center gap-[4px] overflow-hidden px-[2px]"
         aria-hidden
+        data-voice-waveform
+        data-voice-waveform-state={state}
       >
         {bars.map((bar, index) => (
           <span
@@ -1432,6 +1434,8 @@ export function ChatComposer({
               void startVoiceInput();
             }}
             disabled={recordingState === "transcribing"}
+            data-voice-button
+            data-voice-state={recordingState}
             className={`relative flex h-[20px] min-w-[20px] items-center justify-center rounded-full transition-colors ${
               recordingState === "recording" || recordingState === "transcribing"
                 ? "bg-[var(--accent-bg)] text-[var(--text-primary)]"
