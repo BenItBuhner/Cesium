@@ -29,7 +29,6 @@ import {
 } from "@/lib/server-api";
 import { FileTree, collectExpandableFolderPaths } from "./FileTree";
 import { SidebarAppMenu } from "./SidebarAppMenu";
-import { WorkspaceWindowsList } from "./WorkspaceWindowsList";
 import { useUserPreferences } from "@/components/preferences/UserPreferencesProvider";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 
@@ -782,7 +781,6 @@ export function FileExplorer() {
                 )}
               </div>
             </div>
-            <WorkspaceWindowsList />
           </>
         )}
 

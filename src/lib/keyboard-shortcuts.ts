@@ -153,6 +153,12 @@ export const SHORTCUT_COMMAND_DEFINITIONS: ShortcutCommandDefinition[] = [
     defaultBindings: ["Mod+Shift+N"],
   },
   {
+    id: "workbench.action.window.manage",
+    label: "Window: Workspace Windows...",
+    section: "Window",
+    defaultBindings: [],
+  },
+  {
     id: "workbench.action.newAgent",
     label: "File: New Agent",
     section: "File",
