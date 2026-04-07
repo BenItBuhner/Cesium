@@ -10,11 +10,12 @@ export function getCaretOffset(container: HTMLElement): number {
   return pre.toString().length;
 }
 
-export function setCaretOffset(container: HTMLElement, offset: number): void {
+function resolveTextNodeOffset(
+  container: HTMLElement,
+  offset: number
+): { node: Text; offset: number } {
   const text = container.textContent ?? "";
   const safe = Math.max(0, Math.min(offset, text.length));
-  const range = document.createRange();
-  const sel = window.getSelection();
   let remaining = safe;
   const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
   let node = walker.nextNode() as Text | null;
@@ -25,19 +26,34 @@ export function setCaretOffset(container: HTMLElement, offset: number): void {
   while (node) {
     const len = node.textContent?.length ?? 0;
     if (remaining <= len) {
-      range.setStart(node, remaining);
-      range.collapse(true);
-      sel?.removeAllRanges();
-      sel?.addRange(range);
-      return;
+      return { node, offset: remaining };
     }
     remaining -= len;
     node = walker.nextNode() as Text | null;
   }
-  range.selectNodeContents(container);
-  range.collapse(false);
+  return {
+    node: (container.lastChild as Text | null) ?? (container.firstChild as Text),
+    offset: (container.lastChild?.textContent?.length ?? 0),
+  };
+}
+
+export function setTextSelection(
+  container: HTMLElement,
+  start: number,
+  end: number
+): void {
+  const range = document.createRange();
+  const sel = window.getSelection();
+  const startPoint = resolveTextNodeOffset(container, start);
+  const endPoint = resolveTextNodeOffset(container, end);
+  range.setStart(startPoint.node, startPoint.offset);
+  range.setEnd(endPoint.node, endPoint.offset);
   sel?.removeAllRanges();
   sel?.addRange(range);
+}
+
+export function setCaretOffset(container: HTMLElement, offset: number): void {
+  setTextSelection(container, offset, offset);
 }
 
 export function replaceTextRange(

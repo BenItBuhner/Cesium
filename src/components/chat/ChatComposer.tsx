@@ -45,6 +45,7 @@ import {
   getCaretOffset,
   parseTriggerToken,
   replaceTextRange,
+  setTextSelection,
 } from "./composer-editor-utils";
 import { getModeTone } from "@/lib/chat-modes";
 import type { AgentModeOption, EditorMode, KnownEditorMode, ModelInfo } from "@/lib/types";
@@ -142,9 +143,10 @@ function buildInsertedTranscription(
 }
 
 const VOICE_WAVE_BAR_WIDTH_PX = 3;
-const VOICE_WAVE_BAR_GAP_PX = 4;
-const VOICE_WAVE_MIN_BARS = 5;
-const VOICE_WAVE_MAX_BARS = 17;
+const VOICE_WAVE_BAR_GAP_PX = 3;
+const VOICE_WAVE_MIN_BARS = 3;
+const VOICE_WAVE_MAX_BARS = 12;
+const VOICE_WAVE_FALLBACK_BARS = 7;
 
 function buildVoiceWaveBars(
   barCount: number,
@@ -217,7 +219,7 @@ function VoiceInputWaveform({
       return 0;
     }
     if (availableWidth <= 0) {
-      return 9;
+      return VOICE_WAVE_FALLBACK_BARS;
     }
     const rawCount = Math.floor(
       (availableWidth + VOICE_WAVE_BAR_GAP_PX) /
@@ -232,7 +234,7 @@ function VoiceInputWaveform({
   const bars = useMemo(
     () =>
       buildVoiceWaveBars(
-        barCount || 9,
+        barCount || VOICE_WAVE_FALLBACK_BARS,
         state,
         state === "recording" ? inputLevel : 0.3
       ),
@@ -244,10 +246,10 @@ function VoiceInputWaveform({
   }
 
   return (
-    <div className="flex min-w-[72px] max-w-[220px] flex-[1_1_128px] items-center self-end">
+    <div className="flex min-w-0 max-w-[156px] flex-[0_1_156px] items-center self-end">
       <div
         ref={containerRef}
-        className="flex h-[20px] w-full items-center justify-center gap-[4px] overflow-hidden px-[2px]"
+        className="flex h-[20px] w-full items-center justify-center gap-[3px] overflow-hidden px-[1px]"
         aria-hidden
         data-voice-waveform
         data-voice-waveform-state={state}
@@ -586,9 +588,16 @@ export function ChatComposer({
       setComposerSelection(next.selection);
       setMenu(null);
       requestAnimationFrame(() => {
-        editorRef.current?.focus();
+        const editor = editorRef.current;
+        editor?.focus();
         if (hardwareInputEnabled) {
-          activateSurface(surfaceId, editorRef.current);
+          if (editor) {
+            activateSurface(surfaceId, editor);
+          }
+          return;
+        }
+        if (editor) {
+          setTextSelection(editor, next.selection.start, next.selection.end);
         }
       });
     },
@@ -750,6 +759,7 @@ export function ChatComposer({
     : hasFocus;
   const isEmpty = value.trim().length === 0;
   const isExpanded = variant === "expanded";
+  const placeholderText = "Ask anything, @ for files, / for commands";
 
   const applyComposerDirectives = useCallback(
     (input: string): string => {
@@ -922,6 +932,22 @@ export function ChatComposer({
     setComposerSelection(selectionRef.current);
   }, [setComposerSelection, value]);
 
+  useLayoutEffect(() => {
+    if (hardwareInputEnabled) {
+      return;
+    }
+    const el = editorRef.current;
+    if (!el) {
+      return;
+    }
+    if (el.textContent !== value) {
+      el.textContent = value;
+    }
+    if (el.ownerDocument.activeElement === el) {
+      setTextSelection(el, selection.start, selection.end);
+    }
+  }, [hardwareInputEnabled, selection.end, selection.start, value]);
+
   const submitComposer = useCallback(async () => {
     const trimmed = valueRef.current.trim();
     if (!trimmed || busy) {
@@ -951,15 +977,6 @@ export function ChatComposer({
     setComposerValue(text);
     setComposerSelection({ start: caret, end: caret });
   }, [hardwareInputEnabled, setComposerSelection, setComposerValue]);
-
-  useEffect(() => {
-    if (hardwareInputEnabled) return;
-    const el = editorRef.current;
-    if (!el) return;
-    if (el.textContent !== value) {
-      el.textContent = value;
-    }
-  }, [hardwareInputEnabled, value]);
 
   useEffect(() => {
     if (hardwareInputEnabled) return;
@@ -1216,6 +1233,10 @@ export function ChatComposer({
 
   const modeModelPopoverPlacement =
     isExpanded ? "above" : layout === "empty-top" ? "below" : "above";
+  const controlRowLayoutClassName =
+    recordingState === "idle"
+      ? "flex items-end gap-[12px]"
+      : "grid grid-cols-[minmax(0,1fr)_minmax(72px,156px)_minmax(0,1fr)] items-end gap-[12px]";
 
   const textNodes = useMemo(
     () => renderComposerText(value, selection, isActive, caretRef),
@@ -1231,13 +1252,6 @@ export function ChatComposer({
       <div
         className={`relative ${isExpanded ? "flex min-h-0 flex-1 flex-col" : ""} ${editorRegionClassName}`}
       >
-        {isEmpty && (
-          <span
-            className={`pointer-events-none absolute left-0 top-0 z-10 font-sans text-[14px] font-normal text-[var(--text-secondary)] ${textInsetClassName}`}
-          >
-            Ask anything, @ for files, / for commands
-          </span>
-        )}
         <div
           ref={editorRef}
           contentEditable={!hardwareInputEnabled}
@@ -1307,17 +1321,23 @@ export function ChatComposer({
             setComposerValue(next.value);
             setComposerSelection(next.selection);
           }}
-          className={`whitespace-pre-wrap break-words font-sans text-[14px] font-normal text-[var(--text-primary)] outline-none [scrollbar-width:thin] ${textInsetClassName} ${
+          className={`relative whitespace-pre-wrap break-words font-sans text-[14px] font-normal text-[var(--text-primary)] outline-none [scrollbar-width:thin] ${textInsetClassName} ${
             isExpanded
               ? "flex-1 overflow-y-auto pb-[2px]"
               : "min-h-[18px] max-h-[min(42vh,240px)] overflow-y-auto"
+          } ${
+            isEmpty
+              ? "before:pointer-events-none before:absolute before:left-0 before:right-0 before:top-0 before:whitespace-pre-wrap before:font-sans before:text-[14px] before:font-normal before:text-[var(--text-secondary)] before:content-[attr(data-placeholder)]"
+              : ""
           }`}
           role={menu ? "combobox" : "textbox"}
           aria-label="Chat input"
+          aria-placeholder={placeholderText}
           aria-expanded={menu ? true : undefined}
           aria-controls={menu ? "composer-autocomplete" : undefined}
           aria-autocomplete={menu ? "list" : undefined}
           aria-multiline
+          data-placeholder={placeholderText}
           data-hardware-input-surface={hardwareInputEnabled ? "" : undefined}
           data-hardware-surface-kind={hardwareInputEnabled ? "chat" : undefined}
         >
@@ -1350,7 +1370,7 @@ export function ChatComposer({
         />
       )}
 
-      <div className={`flex items-end justify-between gap-[12px] ${controlRowClassName}`}>
+      <div className={`${controlRowLayoutClassName} ${controlRowClassName}`}>
         <div className="flex min-w-0 flex-1 flex-col gap-[6px]">
           <div className="flex flex-wrap items-center gap-[11px]">
             <BackendDropdown
@@ -1391,12 +1411,20 @@ export function ChatComposer({
           )}
         </div>
 
-        <VoiceInputWaveform
-          state={recordingState}
-          inputLevel={inputLevel}
-        />
+        {recordingState !== "idle" && (
+          <div className="flex min-w-0 justify-center">
+            <VoiceInputWaveform
+              state={recordingState}
+              inputLevel={inputLevel}
+            />
+          </div>
+        )}
 
-        <div className="flex shrink-0 items-center gap-[9px]">
+        <div
+          className={`flex shrink-0 items-center gap-[9px] ${
+            recordingState === "idle" ? "" : "justify-self-end"
+          }`}
+        >
           {isExpanded && onCollapseComposer ? (
             <button
               type="button"
