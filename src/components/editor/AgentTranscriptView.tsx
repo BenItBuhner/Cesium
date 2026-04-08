@@ -2,7 +2,9 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { MessageThreadContent } from "@/components/chat/MessageThreadContent";
+import { attachSessionToken, buildAuthenticatedUrl, syncAuthTokenFromResponse } from "@/lib/auth-client";
 import { projectOpenCodeExportToChatMessages } from "@/lib/opencode-export-transcript";
+import { getServerBaseUrl } from "@/lib/server-api";
 import type { ChatMessage } from "@/lib/types";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { EDITOR_CHAT_TRANSCRIPT_CONTAINER_CLASS } from "./agent-chat-layout";
@@ -42,16 +44,17 @@ export function AgentTranscriptView({
 
     const tick = async () => {
       try {
-        const subagentUrl = new URL(
-          `/api/agents/subagents/${encodeURIComponent(resolvedSessionId)}`,
-          `${window.location.protocol}//${window.location.hostname}:9100`
+        const subagentUrl = buildAuthenticatedUrl(
+          `${getServerBaseUrl()}/api/agents/subagents/${encodeURIComponent(resolvedSessionId)}`
         );
-        const response = await fetch(subagentUrl.toString(), {
-          headers: {
+        const response = await fetch(subagentUrl, {
+          headers: attachSessionToken({
             "x-opencursor-workspace-id": activeWorkspaceId,
-          },
+          }),
+          credentials: "include",
           cache: "no-store",
         });
+        syncAuthTokenFromResponse(response);
         if (!response.ok) {
           throw new Error(`Subagent session fetch failed with status ${response.status}`);
         }

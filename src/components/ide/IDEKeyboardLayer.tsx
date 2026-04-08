@@ -10,6 +10,7 @@ import {
 } from "react";
 import { useRouter } from "next/navigation";
 import { useOpenInEditor } from "@/components/editor/OpenInEditorContext";
+import { useAuth } from "@/components/auth/AuthProvider";
 import { buildQuickOpenIndex, type QuickOpenEntry } from "@/lib/quick-open-files";
 import { CommandPalette, type PaletteCommand } from "./CommandPalette";
 import { QuickOpen } from "./QuickOpen";
@@ -52,6 +53,7 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
     handleCopy,
     handleCut,
   } = useHardwareInput();
+  const { logout } = useAuth();
   const { setPreference: setThemePreference } = useTheme();
   const { settings } = useGlobalSettings();
   const shortcutBindings = settings.keyboardShortcuts.bindings;
@@ -483,6 +485,10 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
         case "workbench.action.zoomReset":
           flash(setToast, "Zoom (demo).");
           break;
+        case "workbench.action.logout":
+          void logout();
+          flash(setToast, "Signed out.");
+          break;
         default:
           break;
       }
@@ -493,6 +499,7 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
       promptForFolder,
       router,
       runWithBridge,
+      logout,
       setPalette,
       setToast,
       updateWorkspaceSession,
@@ -688,6 +695,11 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
         id: "browser.openUrl",
         label: "Browser: Open URL…",
         run: () => openBrowserUrlPrompt(),
+      },
+      {
+        id: "workbench.action.logout",
+        label: "Account: Sign Out",
+        run: () => runShortcutCommand("workbench.action.logout"),
       },
       {
         id: "workbench.action.exit",

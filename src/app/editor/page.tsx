@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { AuthGate } from "@/components/auth/AuthGate";
 import { IDELayout } from "@/components/layout/IDELayout";
 import { WorkbenchNotificationProvider } from "@/components/notifications/WorkbenchNotificationProvider";
 import { GlobalSettingsProvider } from "@/components/preferences/GlobalSettingsProvider";
@@ -10,12 +11,14 @@ export const metadata: Metadata = {
 
 export default function EditorPage() {
   return (
-    <WorkbenchNotificationProvider>
-      <WorkspaceProvider>
-        <GlobalSettingsProvider>
-          <IDELayout />
-        </GlobalSettingsProvider>
-      </WorkspaceProvider>
-    </WorkbenchNotificationProvider>
+    <AuthGate>
+      <WorkbenchNotificationProvider>
+        <WorkspaceProvider>
+          <GlobalSettingsProvider>
+            <IDELayout />
+          </GlobalSettingsProvider>
+        </WorkspaceProvider>
+      </WorkbenchNotificationProvider>
+    </AuthGate>
   );
 }

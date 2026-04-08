@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo } from "react";
+import { buildAuthenticatedUrl } from "@/lib/auth-client";
 import { getServerBaseUrl } from "@/lib/server-api";
 
 interface FilePreviewProps {
@@ -12,9 +13,9 @@ interface FilePreviewProps {
 
 function toPreviewUrl(previewPath: string): string {
   if (/^https?:\/\//i.test(previewPath)) {
-    return previewPath;
+    return buildAuthenticatedUrl(previewPath);
   }
-  return `${getServerBaseUrl()}${previewPath}`;
+  return buildAuthenticatedUrl(`${getServerBaseUrl()}${previewPath}`);
 }
 
 export function FilePreview({

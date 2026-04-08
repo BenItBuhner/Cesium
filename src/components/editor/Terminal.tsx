@@ -4,6 +4,7 @@ import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { Terminal as XTerm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
+import { buildAuthenticatedUrl } from "@/lib/auth-client";
 import { useHardwareInput } from "@/components/input/HardwareInputProvider";
 import {
   getTerminalSelectionText,
@@ -138,7 +139,7 @@ export function Terminal({ terminalId }: TerminalProps) {
   const initialThemeRef = useRef(getTerminalTheme(isDark));
 
   const socketUrl = useMemo(
-    () => `${toWebSocketUrl(getServerBaseUrl())}/ws/terminal/${terminalId}`,
+    () => () => buildAuthenticatedUrl(`${toWebSocketUrl(getServerBaseUrl())}/ws/terminal/${terminalId}`),
     [terminalId]
   );
 

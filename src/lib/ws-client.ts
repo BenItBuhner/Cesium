@@ -169,7 +169,7 @@ export class BinaryWebSocket extends BaseReconnectSocket<
 > {
   private readonly encoder = new TextEncoder();
 
-  constructor(url: string) {
+  constructor(url: string | (() => string)) {
     super(url);
   }
 

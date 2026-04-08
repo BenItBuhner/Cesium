@@ -18,6 +18,7 @@ import type {
   WorkspaceWindowRecord,
   WorkspaceRecord,
 } from "@/lib/types";
+import { buildAuthenticatedUrl } from "@/lib/auth-client";
 import {
   createTerminal,
   createWorkspaceSelection,
@@ -920,7 +921,9 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       if (hasSyncedOnceRef.current && lastSeenSeqRef.current > 0) {
         params.set("since", String(lastSeenSeqRef.current));
       }
-      return `${toWebSocketUrl(getServerBaseUrl())}/ws/fs?${params.toString()}`;
+      return buildAuthenticatedUrl(
+        `${toWebSocketUrl(getServerBaseUrl())}/ws/fs?${params.toString()}`
+      );
     });
 
     function clearStartupDisconnectTimer() {

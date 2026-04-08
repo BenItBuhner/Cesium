@@ -31,6 +31,7 @@ const FILE_MENU: MenuBlock[] = [
   { cmd: "workbench.action.terminal.toggleTerminal", label: "New Terminal" },
   { cmd: "workbench.action.newBrowser", label: "New Browser" },
   { sep: true },
+  { cmd: "workbench.action.logout", label: "Sign Out" },
   { cmd: "workbench.action.exit", label: "Exit" },
 ];
 

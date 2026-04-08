@@ -1,5 +1,10 @@
 "use client";
 
+import {
+  attachSessionToken,
+  buildAuthenticatedUrl,
+  syncAuthTokenFromResponse,
+} from "@/lib/auth-client";
 import type { GlobalSettingsState } from "@/lib/global-settings";
 import type {
   AgentConversationConfigPatch,
@@ -91,15 +96,17 @@ async function request<T>(
   init?: RequestInit,
   options?: { skipWorkspaceHeader?: boolean }
 ): Promise<T> {
-  const response = await fetch(`${resolveClientBaseUrl()}${input}`, {
+  const response = await fetch(buildAuthenticatedUrl(`${resolveClientBaseUrl()}${input}`), {
     ...init,
-    headers: {
+    headers: attachSessionToken({
       "Content-Type": "application/json",
       ...getWorkspaceHeaders(options?.skipWorkspaceHeader),
       ...(init?.headers ?? {}),
-    },
+    }),
+    credentials: "include",
     cache: "no-store",
   });
+  syncAuthTokenFromResponse(response);
 
   if (!response.ok) {
     const message = await response.text();
@@ -115,7 +122,9 @@ export function getServerBaseUrl(): string {
 
 export function buildAgentWebSocketUrl(workspaceId: string): string {
   const params = new URLSearchParams({ workspaceId });
-  return `${toWebSocketUrl(resolveClientBaseUrl())}/ws/agent?${params.toString()}`;
+  return buildAuthenticatedUrl(
+    `${toWebSocketUrl(resolveClientBaseUrl())}/ws/agent?${params.toString()}`
+  );
 }
 
 export async function fetchWorkspaceBootstrap(): Promise<{
@@ -412,12 +421,17 @@ export async function transcribeAudio(
   if (options?.prompt) {
     form.set("prompt", options.prompt);
   }
-  const response = await fetch(`${resolveClientBaseUrl()}/api/audio/transcriptions`, {
+  const response = await fetch(
+    buildAuthenticatedUrl(`${resolveClientBaseUrl()}/api/audio/transcriptions`),
+    {
     method: "POST",
     body: form,
-    headers: getWorkspaceHeaders(),
+    headers: attachSessionToken(getWorkspaceHeaders()),
+    credentials: "include",
     cache: "no-store",
-  });
+    }
+  );
+  syncAuthTokenFromResponse(response);
   if (!response.ok) {
     const message = await response.text();
     let parsedError = "";
@@ -506,12 +520,14 @@ export async function uploadFile(relativePath: string, file: File): Promise<void
   const form = new FormData();
   form.set("path", relativePath);
   form.set("file", file);
-  const response = await fetch(`${BASE_URL}/api/fs/upload`, {
+  const response = await fetch(buildAuthenticatedUrl(`${resolveClientBaseUrl()}/api/fs/upload`), {
     method: "POST",
     body: form,
-    headers: getWorkspaceHeaders(),
+    headers: attachSessionToken(getWorkspaceHeaders()),
+    credentials: "include",
     cache: "no-store",
   });
+  syncAuthTokenFromResponse(response);
   if (!response.ok) {
     const message = await response.text();
     throw new Error(message || `Request failed with status ${response.status}`);

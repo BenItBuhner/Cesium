@@ -4,15 +4,11 @@ import { serve } from "@hono/node-server";
 
 /** Prefer IPv4 when connecting upstream (avoids broken IPv6 routes that make `fetch()` fail with "fetch failed"). */
 dns.setDefaultResultOrder("ipv4first");
-import { cors } from "hono/cors";
-import { Hono } from "hono";
-import { fsRoutes } from "./routes/fs.js";
-import { workspaceRoutes } from "./routes/workspaces.js";
-import { settingsRoutes } from "./routes/settings.js";
-import { terminalRoutes } from "./routes/terminals.js";
-import { browserProxyRoutes } from "./routes/browser-proxy.js";
-import { agentRoutes } from "./routes/agents.js";
-import { audioRoutes } from "./routes/audio.js";
+import {
+  authenticateUpgradeRequest,
+  buildUpgradeHttpResponse,
+} from "./lib/auth.js";
+import { createApp } from "./app.js";
 import { handleFsUpgrade } from "./ws/filewatcher.js";
 import { handleAgentUpgrade } from "./ws/agent.js";
 import { handleTerminalUpgrade } from "./ws/terminal.js";
@@ -33,33 +29,7 @@ const allowedOrigins = (
   .map((origin) => origin.trim())
   .filter(Boolean);
 
-const app = new Hono();
-
-app.use(
-  "*",
-  cors({
-    origin: (origin) => {
-      if (!origin) return allowedOrigins[0] ?? "*";
-      return allowedOrigins.includes(origin) ? origin : allowedOrigins[0] ?? "*";
-    },
-    allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allowHeaders: ["Content-Type", "x-opencursor-workspace-id"],
-  })
-);
-
-app.onError((error, c) => {
-  console.error(error);
-  return c.json({ error: error.message }, 500);
-});
-
-app.get("/health", (c) => c.json({ ok: true }));
-app.route("/browser", browserProxyRoutes);
-app.route("/", workspaceRoutes);
-app.route("/", settingsRoutes);
-app.route("/", fsRoutes);
-app.route("/", terminalRoutes);
-app.route("/", agentRoutes);
-app.route("/", audioRoutes);
+const app = createApp({ allowedOrigins });
 
 const server = serve({
   fetch: app.fetch,
@@ -70,18 +40,39 @@ const server = serve({
 server.on("upgrade", (request, socket, head) => {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "localhost"}`);
   if (url.pathname === "/ws/fs") {
-    handleFsUpgrade(request, socket, head);
+    void authenticateUpgradeRequest(request, "ws-fs").then((result) => {
+      if (!result.ok) {
+        socket.write(buildUpgradeHttpResponse(result));
+        socket.destroy();
+        return;
+      }
+      handleFsUpgrade(request, socket, head);
+    });
     return;
   }
 
   if (url.pathname === "/ws/agent") {
-    handleAgentUpgrade(request, socket, head);
+    void authenticateUpgradeRequest(request, "ws-agent").then((result) => {
+      if (!result.ok) {
+        socket.write(buildUpgradeHttpResponse(result));
+        socket.destroy();
+        return;
+      }
+      handleAgentUpgrade(request, socket, head);
+    });
     return;
   }
 
   if (url.pathname.startsWith("/ws/terminal/")) {
     const terminalId = url.pathname.slice("/ws/terminal/".length);
-    handleTerminalUpgrade(request, socket, head, terminalId);
+    void authenticateUpgradeRequest(request, "ws-terminal").then((result) => {
+      if (!result.ok) {
+        socket.write(buildUpgradeHttpResponse(result));
+        socket.destroy();
+        return;
+      }
+      handleTerminalUpgrade(request, socket, head, terminalId);
+    });
     return;
   }
 

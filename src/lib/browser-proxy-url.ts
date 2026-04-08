@@ -1,3 +1,5 @@
+import { buildAuthenticatedUrl } from "@/lib/auth-client";
+
 /** Build `/browser/{scheme}/{encodedHostPort}{path}` matching the OpenCursor server proxy. */
 
 export function normalizeBrowserTargetUrl(input: string): URL {
@@ -26,5 +28,5 @@ export function buildBrowserProxyPath(target: URL): string {
 export function buildBrowserProxyUrl(serverBase: string, target: string | URL): string {
   const u = typeof target === "string" ? normalizeBrowserTargetUrl(target) : target;
   const base = serverBase.replace(/\/+$/, "");
-  return `${base}${buildBrowserProxyPath(u)}`;
+  return buildAuthenticatedUrl(`${base}${buildBrowserProxyPath(u)}`);
 }
