@@ -140,10 +140,12 @@ export function ModelDropdown({
               {filtered.map((m) => {
                 const Icon = providerIcon[m.provider];
                 const active = isActiveChoice(m);
+                const detail = m.detail ?? m.description;
                 return (
                   <button
                     key={m.id}
                     type="button"
+                    title={detail}
                     onClick={() => {
                       onModelChange?.(m);
                       setOpen(false);
@@ -155,18 +157,11 @@ export function ModelDropdown({
                       className="size-[14px] shrink-0 text-[var(--text-secondary)]"
                       strokeWidth={1.5}
                     />
-                    <span className="min-w-0 flex-1">
-                      <span
-                        className="block truncate font-sans text-[13px] font-normal"
-                        style={{ color: active ? "var(--text-primary)" : "var(--text-secondary)" }}
-                      >
-                        {m.name}
-                      </span>
-                      {(m.detail || m.description) && (
-                        <span className="block truncate font-sans text-[11px] text-[var(--text-disabled)]">
-                          {m.detail ?? m.description}
-                        </span>
-                      )}
+                    <span
+                      className="min-w-0 flex-1 truncate font-sans text-[13px] font-normal"
+                      style={{ color: active ? "var(--text-primary)" : "var(--text-secondary)" }}
+                    >
+                      {m.name}
                     </span>
                     {active && (
                       <Check className="size-[14px] shrink-0 text-[var(--text-primary)]" strokeWidth={2} />

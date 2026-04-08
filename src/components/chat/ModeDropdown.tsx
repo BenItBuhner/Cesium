@@ -200,11 +200,12 @@ export function ModeDropdown({
                 <button
                   key={opt.id}
                   type="button"
+                  title={opt.description ?? opt.label}
                   onClick={() => {
                     onModeChange?.(opt.id);
                     setOpen(false);
                   }}
-                  className="flex w-full items-center gap-[8px] px-[12px] py-[6px] text-left transition-colors hover:bg-white/[0.06]"
+                  className="flex w-full items-center gap-[8px] px-[12px] py-[5px] text-left transition-colors hover:bg-white/[0.06]"
                 >
                   <Icon
                     className="size-[15px] shrink-0"
@@ -215,21 +216,14 @@ export function ModeDropdown({
                         : "var(--text-secondary)",
                     }}
                   />
-                  <div className="flex-1">
-                    <div
-                      className="font-sans text-[13px] font-normal"
-                      style={{
-                        color: active ? "var(--text-primary)" : "var(--text-secondary)",
-                      }}
-                    >
-                      {opt.label}
-                    </div>
-                    {opt.description && (
-                      <div className="mt-[1px] font-sans text-[11px] text-[var(--text-disabled)]">
-                        {opt.description}
-                      </div>
-                    )}
-                  </div>
+                  <span
+                    className="min-w-0 flex-1 truncate font-sans text-[13px] font-normal"
+                    style={{
+                      color: active ? "var(--text-primary)" : "var(--text-secondary)",
+                    }}
+                  >
+                    {opt.label}
+                  </span>
                   {opt.shortcut && (
                     <span className="font-sans text-[11px] text-[var(--text-disabled)]">
                       {opt.shortcut}

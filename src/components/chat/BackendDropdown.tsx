@@ -139,17 +139,22 @@ export function BackendDropdown({
             {options.map((option) => {
               const active = option.id === backendId;
               const unavailable = !option.available;
+              const detail =
+                option.experimental && !option.available
+                  ? "Experimental adapter placeholder"
+                  : option.description;
               return (
                 <button
                   key={option.id}
                   type="button"
                   disabled={unavailable}
+                  title={detail}
                   onClick={() => {
                     if (unavailable) return;
                     onBackendChange?.(option.id);
                     setOpen(false);
                   }}
-                  className="flex w-full items-center gap-[8px] px-[12px] py-[6px] text-left transition-colors hover:bg-white/[0.06] disabled:cursor-not-allowed disabled:opacity-50"
+                  className="flex w-full items-center gap-[8px] px-[12px] py-[5px] text-left transition-colors hover:bg-white/[0.06] disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {renderBackendIcon(option.id, {
                     className: "size-[15px] shrink-0",
@@ -160,15 +165,13 @@ export function BackendDropdown({
                         : "var(--text-secondary)",
                     },
                   })}
-                  <span className="min-w-0 flex-1">
-                    <span className="block font-sans text-[13px] font-normal text-[var(--text-primary)]">
-                      {option.label}
-                    </span>
-                    <span className="block truncate font-sans text-[11px] text-[var(--text-secondary)]">
-                      {option.experimental && !option.available
-                        ? "Experimental adapter placeholder"
-                        : option.description}
-                    </span>
+                  <span
+                    className="min-w-0 flex-1 truncate font-sans text-[13px] font-normal"
+                    style={{
+                      color: active ? "var(--text-primary)" : "var(--text-secondary)",
+                    }}
+                  >
+                    {option.label}
                   </span>
                   {active && (
                     <Check className="size-[14px] shrink-0 text-[var(--text-primary)]" strokeWidth={2} />
