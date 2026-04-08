@@ -414,6 +414,7 @@ const appearanceBtnBase =
   "rounded-[var(--radius-tab)] px-[12px] py-[6px] font-sans text-[12px] transition-colors";
 
 export function AppearanceSettingsPanel() {
+  const { settings, updateSettings } = useGlobalSettings();
   const {
     themeConfig,
     setPreference,
@@ -441,6 +442,7 @@ export function AppearanceSettingsPanel() {
   const [duplicateSourceId, setDuplicateSourceId] = useState<string>(DEFAULT_BUILTIN_THEME_ID);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState<CustomThemeEntry | null>(null);
+  const sideColumnsSwapped = settings.general.sideColumnsSwapped;
 
   useEffect(() => {
     if (!editingId) {
@@ -524,8 +526,27 @@ export function AppearanceSettingsPanel() {
       </SettingsSection>
       <SettingsSection title="Layout">
         <SettingsRow
-          title="Top-left sidebar reveal"
-          description="On tablet and desktop, show the floating control over the editor when the file sidebar is collapsed. You can always toggle the sidebar with the keyboard shortcut or command palette when this is off."
+          title="Swap side columns"
+          description="Move the agent/chat pane to the left and the file sidebar to the right while keeping the editor centered."
+          trailing={
+            <ToggleSwitch
+              checked={sideColumnsSwapped}
+              onChange={(value) =>
+                updateSettings((current) => ({
+                  ...current,
+                  general: {
+                    ...current.general,
+                    sideColumnsSwapped: value,
+                  },
+                }))
+              }
+              size="md"
+            />
+          }
+        />
+        <SettingsRow
+          title="Floating sidebar reveal"
+          description="On tablet and desktop, show the floating control over the editor on the current sidebar side when the file sidebar is collapsed. You can always toggle the sidebar with the keyboard shortcut or command palette when this is off."
           trailing={
             <ToggleSwitch
               checked={themeConfig.showFloatingSidebarReveal}

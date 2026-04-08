@@ -8,12 +8,13 @@ import { OpenInEditorProvider } from "@/components/editor/OpenInEditorContext";
 import { ChatPanel } from "@/components/chat/ChatPanel";
 import { AgentConversationsProvider } from "@/components/chat/AgentConversationsContext";
 import { useViewport } from "@/hooks/useViewport";
-import { PanelLeft } from "lucide-react";
+import { PanelLeft, PanelRight } from "lucide-react";
 import { EditorBridgeProvider } from "@/components/ide/EditorBridgeContext";
 import { WorkbenchProvider } from "@/components/ide/WorkbenchContext";
 import { IDEKeyboardLayer } from "@/components/ide/IDEKeyboardLayer";
 import { WorkbenchContextMenuProvider } from "@/components/ide/WorkbenchContextMenuProvider";
 import { HardwareInputProvider } from "@/components/input/HardwareInputProvider";
+import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { useTheme } from "@/components/theme/ThemeProvider";
 
@@ -36,14 +37,17 @@ const DESKTOP_DEFAULT_LAYOUT = {
 
 export function IDELayout() {
   const { themeConfig } = useTheme();
+  const { settings } = useGlobalSettings();
   const { showSidebar, showChat, isMobile } = useViewport();
   const { activeWorkspaceId, loading, sessionReady, workspaceSession, updateWorkspaceSession } =
     useWorkspace();
+  const sideColumnsSwapped = settings.general.sideColumnsSwapped;
   const [sidebarOpen, setSidebarOpen] = useState(workspaceSession.layout.sidebarOpen);
   const [chatOpen, setChatOpen] = useState(workspaceSession.layout.chatOpen);
   const [mobilePanel, setMobilePanel] = useState<MobilePanel>(workspaceSession.layout.mobilePanel);
   const sidebarPanelRef = usePanelRef();
   const chatPanelRef = usePanelRef();
+  const SidebarRevealIcon = sideColumnsSwapped ? PanelRight : PanelLeft;
 
   useEffect(() => {
     setSidebarOpen(workspaceSession.layout.sidebarOpen);
@@ -125,6 +129,46 @@ export function IDELayout() {
     );
   }
 
+  const sidebarPanel = (
+    <Panel
+      id="sidebar"
+      panelRef={sidebarPanelRef}
+      minSize="10%"
+      maxSize="25%"
+      collapsible
+      collapsedSize="0%"
+      className="min-h-0 overflow-visible"
+    >
+      <FileExplorer />
+    </Panel>
+  );
+
+  const editorPanel = (
+    <Panel
+      id="editor"
+      minSize="30%"
+      className="min-h-0 h-full"
+      style={{ overflow: "hidden" }}
+    >
+      <EditorPanel />
+    </Panel>
+  );
+
+  const chatPanel = (
+    <Panel
+      id="chat"
+      panelRef={chatPanelRef}
+      minSize="15%"
+      maxSize="45%"
+      collapsible
+      collapsedSize="0%"
+      className="min-h-0 h-full"
+      style={{ overflow: "hidden" }}
+    >
+      <ChatPanel />
+    </Panel>
+  );
+
   return (
     <OpenInEditorProvider>
       <AgentConversationsProvider>
@@ -191,16 +235,18 @@ export function IDELayout() {
                             onClick={() => setSidebarOpen(true)}
                             aria-label="Show primary sidebar"
                             title="Show primary sidebar"
-                            className="absolute left-2 top-2 z-20 rounded-[var(--radius-tab)] bg-[var(--bg-panel)] p-1.5 text-[var(--text-secondary)] transition-colors hover:text-[var(--text-primary)]"
+                            className={`absolute top-2 z-20 rounded-[var(--radius-tab)] bg-[var(--bg-panel)] p-1.5 text-[var(--text-secondary)] transition-colors hover:text-[var(--text-primary)] ${
+                              sideColumnsSwapped ? "right-2" : "left-2"
+                            }`}
                           >
-                            <PanelLeft className="size-[18px]" strokeWidth={1.5} />
+                            <SidebarRevealIcon className="size-[18px]" strokeWidth={1.5} />
                           </button>
                         ) : null}
 
                         <Group
                           orientation="horizontal"
                           id="ide-panels"
-                          key={activeWorkspaceId ?? "workspace-layout"}
+                          key={`${activeWorkspaceId ?? "workspace-layout"}:${sideColumnsSwapped ? "swapped" : "default"}`}
                           defaultLayout={
                             workspaceSession.layout.desktopLayout ??
                             DESKTOP_DEFAULT_LAYOUT
@@ -215,39 +261,23 @@ export function IDELayout() {
                             }));
                           }}
                         >
-                          <Panel
-                            id="sidebar"
-                            panelRef={sidebarPanelRef}
-                            minSize="10%"
-                            maxSize="25%"
-                            collapsible
-                            collapsedSize="0%"
-                            className="min-h-0 overflow-visible"
-                          >
-                            <FileExplorer />
-                          </Panel>
-                          <ResizeHandle />
-                          <Panel
-                            id="editor"
-                            minSize="30%"
-                            className="min-h-0 h-full"
-                            style={{ overflow: "hidden" }}
-                          >
-                            <EditorPanel />
-                          </Panel>
-                          <ResizeHandle />
-                          <Panel
-                            id="chat"
-                            panelRef={chatPanelRef}
-                            minSize="15%"
-                            maxSize="45%"
-                            collapsible
-                            collapsedSize="0%"
-                            className="min-h-0 h-full"
-                            style={{ overflow: "hidden" }}
-                          >
-                            <ChatPanel />
-                          </Panel>
+                          {sideColumnsSwapped ? (
+                            <>
+                              {chatPanel}
+                              <ResizeHandle />
+                              {editorPanel}
+                              <ResizeHandle />
+                              {sidebarPanel}
+                            </>
+                          ) : (
+                            <>
+                              {sidebarPanel}
+                              <ResizeHandle />
+                              {editorPanel}
+                              <ResizeHandle />
+                              {chatPanel}
+                            </>
+                          )}
                         </Group>
                       </div>
                     </div>

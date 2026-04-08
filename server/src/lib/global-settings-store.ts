@@ -8,6 +8,7 @@ export type GlobalSettings = {
     warnNotify: boolean;
     trayIcon: boolean;
     completionSound: boolean;
+    sideColumnsSwapped: boolean;
   };
   agents: {
     submitCtrlEnter: boolean;
@@ -64,6 +65,7 @@ function createDefaultSettings(): GlobalSettings {
       warnNotify: false,
       trayIcon: true,
       completionSound: true,
+      sideColumnsSwapped: false,
     },
     agents: {
       submitCtrlEnter: false,

@@ -3,6 +3,7 @@ export type GeneralSettingsState = {
   warnNotify: boolean;
   trayIcon: boolean;
   completionSound: boolean;
+  sideColumnsSwapped: boolean;
 };
 
 export type AgentsSettingsState = {
@@ -142,6 +143,7 @@ export function createDefaultGlobalSettings(
       warnNotify: false,
       trayIcon: true,
       completionSound: true,
+      sideColumnsSwapped: false,
     },
     agents: {
       submitCtrlEnter: false,
