@@ -9,7 +9,8 @@ import {
   type KeyboardEvent,
   type MouseEvent,
 } from "react";
-import { Files, GitBranch, Search, type LucideIcon } from "lucide-react";
+import { Files, GitBranch, LogOut, Search, type LucideIcon } from "lucide-react";
+import { useAuth } from "@/components/auth/AuthProvider";
 import { HardwareAwareTextInput } from "@/components/input/HardwareAwareTextField";
 import { useOpenInEditor } from "@/components/editor/OpenInEditorContext";
 import { useEditorBridgeRef } from "@/components/ide/EditorBridgeContext";
@@ -87,6 +88,7 @@ function samePathSet(current: Set<string>, next: string[]): boolean {
 }
 
 export function FileExplorer() {
+  const { enabled: authEnabled, authenticated, session, logout } = useAuth();
   const { openExplorerFile, activeExplorerPath } = useOpenInEditor();
   const bridgeRef = useEditorBridgeRef();
   const { openAt, openAtPoint } = useWorkbenchContextMenu();
@@ -634,7 +636,7 @@ export function FileExplorer() {
       </VSCodeQuickInputShell>
 
       <div
-        className="flex w-full shrink-0 justify-center px-[11px] py-[4px]"
+        className="flex w-full shrink-0 items-center justify-between px-[11px] py-[4px]"
         onContextMenu={(e) => {
           if (e.target !== e.currentTarget) return;
           e.preventDefault();
@@ -727,6 +729,20 @@ export function FileExplorer() {
             />
           </div>
         </div>
+        {authEnabled && authenticated ? (
+          <button
+            type="button"
+            onClick={() => void logout()}
+            className="inline-flex h-[28px] shrink-0 items-center gap-[6px] rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-[var(--bg-main)] px-[9px] font-sans text-[12px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)]"
+            aria-label={`Sign out${session?.username ? ` ${session.username}` : ""}`}
+            title={session?.username ? `Signed in as ${session.username}` : "Sign out"}
+          >
+            <LogOut className="size-[13px] shrink-0" strokeWidth={1.8} />
+            <span className="truncate">Sign out</span>
+          </button>
+        ) : (
+          <div className="h-[28px] w-[1px] shrink-0" aria-hidden />
+        )}
       </div>
 
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
