@@ -50,6 +50,7 @@ const openCodeCapabilities: AgentProviderCapabilities = {
   supportsStructuredPlans: true,
   supportsTodos: true,
   supportsSessionResume: true,
+  supportsPromptImages: true,
 };
 
 const basicCliCapabilities: AgentProviderCapabilities = {
@@ -62,6 +63,7 @@ const basicCliCapabilities: AgentProviderCapabilities = {
   supportsStructuredPlans: false,
   supportsTodos: false,
   supportsSessionResume: false,
+  supportsPromptImages: false,
 };
 
 const cursorAcpCapabilities: AgentProviderCapabilities = {
@@ -74,6 +76,7 @@ const cursorAcpCapabilities: AgentProviderCapabilities = {
   supportsStructuredPlans: true,
   supportsTodos: true,
   supportsSessionResume: true,
+  supportsPromptImages: true,
 };
 
 const LEGACY_MODE_CONFIG_ID = "__acp_legacy_mode__";
@@ -88,6 +91,7 @@ function buildAcpClientCapabilities(): Record<string, unknown> {
   const base: Record<string, unknown> = {
     fs: { readTextFile: false, writeTextFile: false },
     terminal: false,
+    promptCapabilities: { image: true },
   };
   const raw = process.env.OPENCURSOR_ACP_CLIENT_CAPABILITIES_JSON?.trim();
   if (!raw) {
@@ -1879,7 +1883,11 @@ class AcpSessionHandle implements AgentSessionHandle {
     }
   }
 
-  async prompt(input: { text: string; userMessageId: string }): Promise<void> {
+  async prompt(input: {
+    text: string;
+    userMessageId: string;
+    attachments?: Array<{ mimeType: string; data: string; name?: string }>;
+  }): Promise<void> {
     const assistantMessageId = randomUUID();
     this.currentAssistantMessageId = assistantMessageId;
     await this.callbacks.updateConversation((current) => ({
@@ -1890,10 +1898,24 @@ class AcpSessionHandle implements AgentSessionHandle {
     }));
 
     try {
+      const promptContent: Record<string, unknown>[] = [];
+      if (input.attachments && input.attachments.length > 0) {
+        for (const attachment of input.attachments) {
+          promptContent.push({
+            type: "image",
+            mimeType: attachment.mimeType,
+            data: attachment.data,
+          });
+        }
+      }
+      if (input.text.trim()) {
+        promptContent.push({ type: "text", text: input.text });
+      }
+
       const result = (await this.bridge.request("session/prompt", {
         sessionId: this.sessionId,
         messageId: input.userMessageId,
-        prompt: [{ type: "text", text: input.text }],
+        prompt: promptContent,
       })) as Record<string, unknown> | undefined;
 
       await this.callbacks.appendEvents([

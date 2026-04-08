@@ -1,16 +1,19 @@
 import { useEffect, useRef, useState } from "react";
 import { AtSign, CornerUpLeft, LayoutTemplate } from "lucide-react";
-import type { UserMessageSegment } from "@/lib/types";
+import type { ImageAttachment, UserMessageSegment } from "@/lib/types";
+import { ImageCarousel } from "./ImageCarousel";
 
 interface UserMessageProps {
   content?: string;
   segments?: UserMessageSegment[];
+  attachments?: ImageAttachment[];
   showReplyCue?: boolean;
 }
 
 export function UserMessage({
   content,
   segments,
+  attachments,
   showReplyCue,
 }: UserMessageProps) {
   const hasSegments = segments && segments.length > 0;
@@ -45,6 +48,14 @@ export function UserMessage({
     <div
       className={`relative overflow-hidden rounded-[var(--radius-card)] border border-[var(--border-card)] bg-[var(--bg-card)] p-[10px] ${showReplyCue ? "pr-[36px]" : ""} ${overflowing ? "pb-[34px]" : ""}`}
     >
+      {attachments && attachments.length > 0 && (
+        <div className="mb-[10px]">
+          <ImageCarousel
+            images={attachments.map((a, i) => ({ ...a, localId: `display-${i}` }))}
+            onRemove={() => {}}
+          />
+        </div>
+      )}
       <div
         ref={bodyRef}
         className={`relative ${expanded ? "" : "overflow-hidden"}`}

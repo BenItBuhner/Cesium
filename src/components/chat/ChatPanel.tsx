@@ -48,6 +48,7 @@ import type {
   ChatMessage,
   ChatTab,
   EditorMode,
+  ImageAttachment,
   ModelInfo,
   QueuedChatPrompt,
 } from "@/lib/types";
@@ -724,9 +725,10 @@ export function ChatPanel() {
   const threadMessages = useMemo(
     () =>
       projectAgentEventsToChatMessages(
-        activeTabId ? eventsByConversationId[activeTabId] ?? [] : []
+        activeTabId ? eventsByConversationId[activeTabId] ?? [] : [],
+        { backendId: activeConversation?.config.backendId }
       ),
-    [activeTabId, eventsByConversationId]
+    [activeTabId, activeConversation?.config.backendId, eventsByConversationId]
   );
   const isEmptyThread = threadMessages.length === 0;
   const resolveComposerStateForDraft = useCallback(
@@ -1504,7 +1506,7 @@ export function ChatPanel() {
   );
 
   const submitPromptForDraft = useCallback(
-    async (draftId: string, text: string, options?: { skipQueue?: boolean }) => {
+    async (draftId: string, text: string, attachments?: ImageAttachment[], options?: { skipQueue?: boolean }) => {
       let conversationIdForError = conversationsById[draftId]?.id;
       try {
         const conversation =
@@ -1528,14 +1530,14 @@ export function ChatPanel() {
                 ...current.chat,
                 queuedPromptsByConversationId: {
                   ...map,
-                  [convId]: [...prev, { id: entryId, text }],
+                  [convId]: [...prev, { id: entryId, text, attachments }],
                 },
               },
             };
           });
           return true;
         }
-        const snapshot = await promptAgentConversation(conversation.id, text);
+        const snapshot = await promptAgentConversation(conversation.id, text, attachments);
         mergeSnapshot(snapshot.snapshot);
         return true;
       } catch (error) {
@@ -1616,7 +1618,7 @@ export function ChatPanel() {
 
       void (async () => {
         try {
-          await submitPromptForDraftRef.current(conversationId, head.text, {
+          await submitPromptForDraftRef.current(conversationId, head.text, head.attachments, {
             skipQueue: true,
           });
         } finally {
@@ -1674,8 +1676,8 @@ export function ChatPanel() {
       sessionConfigOptions: state.sessionConfigOptions,
       onSessionConfigOptionChange: (configId: string, value: string) =>
         void setSessionConfigOptionForDraft(expandedComposerDraftId, configId, value),
-      onSubmit: (text: string) => {
-        void submitPromptForDraft(expandedComposerDraftId, text);
+      onSubmit: (text: string, attachments?: ImageAttachment[]) => {
+        void submitPromptForDraft(expandedComposerDraftId, text, attachments);
       },
       onCancel: () => cancelPromptForDraft(expandedComposerDraftId),
       busy: state.busy,
@@ -1742,8 +1744,8 @@ export function ChatPanel() {
       }}
       busy={busy}
       configLocked={configLocked}
-      onSubmit={(text) => {
-        void submitPromptForDraft(composerDraftId, text);
+      onSubmit={(text, attachments) => {
+        void submitPromptForDraft(composerDraftId, text, attachments);
       }}
       onCancel={() => cancelPromptForDraft(composerDraftId)}
       layout={isEmptyThread ? "empty-top" : "docked-bottom"}

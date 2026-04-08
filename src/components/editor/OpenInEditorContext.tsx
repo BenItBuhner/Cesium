@@ -22,6 +22,7 @@ import type {
   ChatMessage,
   EditorMode,
   ExplorerOpenRequest,
+  ImageAttachment,
   ModelInfo,
 } from "@/lib/types";
 
@@ -35,6 +36,7 @@ export type OpenComposerDraftPayload = {
   draftId: string;
   title: string;
   content: string;
+  attachments?: ImageAttachment[];
 };
 
 export type OpenAgentConversationPayload = {
@@ -59,7 +61,7 @@ export type ExpandedComposerController = {
   modeOptions?: AgentModeOption[];
   sessionConfigOptions?: AgentConfigOption[];
   onSessionConfigOptionChange?: (configId: string, value: string) => void;
-  onSubmit: (text: string) => Promise<boolean | void> | boolean | void;
+  onSubmit: (text: string, attachments?: ImageAttachment[]) => Promise<boolean | void> | boolean | void;
   onCancel?: () => Promise<void> | void;
   busy?: boolean;
   configLocked?: boolean;
@@ -226,11 +228,13 @@ export function OpenInEditorProvider({ children }: { children: ReactNode }) {
           draftId,
           title: patch.title ?? existing?.title ?? "Composer",
           content: patch.content,
+          attachments: patch.attachments,
         };
         if (
           existing &&
           existing.title === next.title &&
-          existing.content === next.content
+          existing.content === next.content &&
+          existing.attachments === next.attachments
         ) {
           return current;
         }

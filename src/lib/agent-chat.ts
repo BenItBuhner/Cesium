@@ -19,6 +19,16 @@ import {
   findConversationModeConfigOptionForUi,
   findConversationModelConfigOptionForUi,
 } from "@/lib/agent-config-option-utils";
+import {
+  classifyToolCallAsSubagentCard,
+  extractAcpToolCallEntries,
+  extractSubagentTaskText,
+  getSubagentTaskInput,
+  getToolRawUpdate,
+} from "@/lib/agent-subagent-routing";
+import type { ProjectAgentEventsOptions } from "@/lib/agent-subagent-routing";
+
+export type { ProjectAgentEventsOptions };
 
 function modelProviderForBackend(backendId: AgentBackendId): ModelInfo["provider"] {
   switch (backendId) {
@@ -705,104 +715,6 @@ function finalizeOpenToolsInTurn(
   }
 }
 
-function getToolRawUpdate(
-  event: AgentStoredEvent
-): Record<string, unknown> | undefined {
-  const raw =
-    "raw" in event && event.raw && typeof event.raw === "object"
-      ? (event.raw as Record<string, unknown>)
-      : undefined;
-  const update = raw?.update;
-  return update && typeof update === "object"
-    ? (update as Record<string, unknown>)
-    : undefined;
-}
-
-function getSubagentTaskInput(
-  event: Extract<AgentStoredEvent, { kind: "tool_call" | "tool_call_update" }>
-): Record<string, unknown> | undefined {
-  const rawUpdate = getToolRawUpdate(event);
-  return (
-    parseLooseJsonObject(rawUpdate?.rawInput) ??
-    parseLooseJsonObject(rawUpdate?.input) ??
-    parseLooseJsonObject(rawUpdate?.args)
-  );
-}
-
-function collectNestedText(value: unknown, bucket: string[]): void {
-  if (Array.isArray(value)) {
-    for (const item of value) {
-      collectNestedText(item, bucket);
-    }
-    return;
-  }
-  if (!value || typeof value !== "object") {
-    return;
-  }
-  const record = value as Record<string, unknown>;
-  if (record.type === "text" && typeof record.text === "string") {
-    const trimmed = record.text.trim();
-    if (trimmed) {
-      bucket.push(trimmed);
-    }
-  }
-  if (record.content !== undefined) {
-    collectNestedText(record.content, bucket);
-  }
-  if (record.contents !== undefined) {
-    collectNestedText(record.contents, bucket);
-  }
-  if (record.items !== undefined) {
-    collectNestedText(record.items, bucket);
-  }
-  if (record.parts !== undefined) {
-    collectNestedText(record.parts, bucket);
-  }
-}
-
-function extractSubagentTaskText(
-  event: Extract<AgentStoredEvent, { kind: "tool_call" | "tool_call_update" }>
-): { taskId?: string; resultText?: string } {
-  const rawUpdate = getToolRawUpdate(event);
-  const texts: string[] = [];
-  collectNestedText(rawUpdate?.content, texts);
-  const rawText = texts.join("\n\n").trim();
-  if (!rawText) {
-    return {};
-  }
-  const taskId = rawText.match(/task_id:\s*(\S+)/i)?.[1];
-  const taskResultMatch = rawText.match(/<task_result>\s*([\s\S]*?)(?:<\/task_result>|$)/i);
-  const resultText = (taskResultMatch?.[1] ?? rawText).trim();
-  return {
-    taskId,
-    resultText: resultText || undefined,
-  };
-}
-
-function isSubagentTaskToolEvent(
-  event: Extract<AgentStoredEvent, { kind: "tool_call" | "tool_call_update" }>
-): boolean {
-  if (event.kind !== "tool_call" && event.kind !== "tool_call_update") {
-    return false;
-  }
-  const rawUpdate = getToolRawUpdate(event);
-  const rawInput = getSubagentTaskInput(event);
-  if (rawInput) {
-    if (
-      typeof rawInput.prompt === "string" ||
-      typeof rawInput.description === "string" ||
-      rawInput.subagent_type != null ||
-      rawInput.subagentType != null
-    ) {
-      return true;
-    }
-  }
-  if (typeof rawUpdate?.title === "string" && rawUpdate.title.trim().toLowerCase() === "task") {
-    return true;
-  }
-  return Boolean(extractSubagentTaskText(event).taskId);
-}
-
 function firstNonEmptyLine(text: string | undefined): string | undefined {
   if (!text) {
     return undefined;
@@ -1155,51 +1067,6 @@ function extractToolNameFromCliRaw(raw: Record<string, unknown> | undefined): st
     return direct;
   }
   return findFirstStringByKey(raw, ["tool_name", "function_name", "toolName"]);
-}
-
-type AcpToolCallEntry = {
-  rawName: string;
-  args?: Record<string, unknown>;
-  result?: Record<string, unknown>;
-};
-
-function extractAcpToolCallEntries(
-  raw: Record<string, unknown> | undefined
-): AcpToolCallEntry[] {
-  if (!raw) {
-    return [];
-  }
-  const toolCall =
-    raw.tool_call && typeof raw.tool_call === "object" && !Array.isArray(raw.tool_call)
-      ? (raw.tool_call as Record<string, unknown>)
-      : raw.toolCall && typeof raw.toolCall === "object" && !Array.isArray(raw.toolCall)
-        ? (raw.toolCall as Record<string, unknown>)
-        : undefined;
-  if (!toolCall) {
-    return [];
-  }
-  const entries: AcpToolCallEntry[] = [];
-  for (const [rawName, value] of Object.entries(toolCall)) {
-    if (!value || typeof value !== "object" || Array.isArray(value)) {
-      continue;
-    }
-    const record = value as Record<string, unknown>;
-    const args =
-      parseLooseJsonObject(record.args) ??
-      parseLooseJsonObject(record.input) ??
-      (record.args && typeof record.args === "object" && !Array.isArray(record.args)
-        ? (record.args as Record<string, unknown>)
-        : record.input && typeof record.input === "object" && !Array.isArray(record.input)
-          ? (record.input as Record<string, unknown>)
-          : undefined);
-    const result =
-      parseLooseJsonObject(record.result) ??
-      (record.result && typeof record.result === "object" && !Array.isArray(record.result)
-        ? (record.result as Record<string, unknown>)
-        : undefined);
-    entries.push({ rawName, args, result });
-  }
-  return entries;
 }
 
 function extractAcpToolCallPayload(raw: Record<string, unknown> | undefined): {
@@ -1642,7 +1509,8 @@ function formatToolSummary(
 }
 
 export function projectAgentEventsToChatMessages(
-  events: AgentStoredEvent[]
+  events: AgentStoredEvent[],
+  options?: ProjectAgentEventsOptions
 ): ChatMessage[] {
   const ordered = [...events].sort((a, b) => a.seq - b.seq);
   const turns: ProjectedTurn[] = [];
@@ -1668,6 +1536,7 @@ export function projectAgentEventsToChatMessages(
           content: event.content,
           segments: parseUserMessageSegments(event.content),
           showReplyCue: true,
+          attachments: event.attachments,
         };
         if (
           prev &&
@@ -1721,7 +1590,7 @@ export function projectAgentEventsToChatMessages(
       }
       case "tool_call": {
         const turn = ensureTurn();
-        if (isSubagentTaskToolEvent(event)) {
+        if (classifyToolCallAsSubagentCard(options?.backendId, event)) {
           const rawInput = getSubagentTaskInput(event);
           const title =
             (typeof rawInput?.description === "string" && rawInput.description.trim()) ||
@@ -1767,7 +1636,7 @@ export function projectAgentEventsToChatMessages(
       }
       case "tool_call_update": {
         const turn = ensureTurn();
-        if (isSubagentTaskToolEvent(event)) {
+        if (classifyToolCallAsSubagentCard(options?.backendId, event)) {
           const rawInput = getSubagentTaskInput(event);
           const title =
             (typeof rawInput?.description === "string" && rawInput.description.trim()) ||
@@ -1985,7 +1854,7 @@ export function projectAgentEventsToChatMessages(
       }
       case "subagent": {
         const turn = ensureTurn();
-        const transcript = projectAgentEventsToChatMessages(event.transcript || []);
+        const transcript = projectAgentEventsToChatMessages(event.transcript || [], options);
         const message: ChatMessage = {
           id: event.eventId,
           type: "subagent",

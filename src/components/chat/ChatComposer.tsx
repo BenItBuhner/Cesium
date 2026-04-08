@@ -13,7 +13,9 @@ import {
   type PointerEvent as ReactPointerEvent,
   type ReactElement,
 } from "react";
-import { ArrowUp, Maximize2, Mic, Minimize2, Square, Upload } from "lucide-react";
+import { ArrowUp, Image as ImageIcon, Maximize2, Mic, Minimize2, Square } from "lucide-react";
+import { ImageCarousel } from "./ImageCarousel";
+import type { ImageAttachment, ImageAttachmentState } from "@/lib/types";
 import { useHardwareInput } from "@/components/input/HardwareInputProvider";
 import { useWorkbenchNotifications } from "@/components/notifications/WorkbenchNotificationProvider";
 import { WORKBENCH_NOTIFICATION_KIND } from "@/components/notifications/workbench-notification-types";
@@ -51,7 +53,7 @@ import { getModeTone } from "@/lib/chat-modes";
 import type { AgentModeOption, EditorMode, KnownEditorMode, ModelInfo } from "@/lib/types";
 import type { AgentBackendId, AgentBackendInfo, AgentConfigOption } from "@/lib/agent-types";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
-import { transcribeAudio } from "@/lib/server-api";
+import { transcribeAudio, uploadAttachments } from "@/lib/server-api";
 import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
 
 const sendButtonBgClass: Record<KnownEditorMode, string> = {
@@ -162,7 +164,7 @@ interface ChatComposerProps {
   onSelectionChange?: (selection: TextSelection) => void;
   onExpandComposer?: () => void;
   onCollapseComposer?: () => void;
-  onSubmit: (text: string) => Promise<void> | void;
+  onSubmit: (text: string, attachments?: ImageAttachment[]) => Promise<void> | void;
   onCancel?: () => Promise<void> | void;
   busy?: boolean;
   configLocked?: boolean;
@@ -344,6 +346,10 @@ export function ChatComposer({
   const [recordingState, setRecordingState] = useState<
     "idle" | "recording" | "transcribing"
   >("idle");
+  const [attachedImages, setAttachedImages] = useState<ImageAttachmentState[]>([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const isDraggingRef = useRef(false);
+  const imageFilesRef = useRef<Map<string, File>>(new Map());
   const [inputLevel, setInputLevel] = useState(0);
   const [menuPos, setMenuPos] = useState<ComposerPopoverPosition>({
     placement: "above",
@@ -446,6 +452,186 @@ export function ChatComposer({
     }
     setInputLevel(0);
   }, []);
+
+  const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
+  const SLOW_UPLOAD_THRESHOLD_MS = 2500;
+
+  const addImagesFromFileList = useCallback(
+    (files: FileList) => {
+      const imageFiles = Array.from(files).filter((file) => file.type.startsWith("image/"));
+      const currentCount = attachedImages.length;
+      const maxImages = 10 - currentCount;
+      const filesToAdd = imageFiles.slice(0, maxImages);
+
+      const validFiles = filesToAdd.filter((file) => {
+        if (file.size > MAX_FILE_SIZE) {
+          pushNotification({
+            kind: WORKBENCH_NOTIFICATION_KIND.editorNotice,
+            severity: "warning",
+            title: "Image too large",
+            message: `${file.name} is ${(file.size / 1024 / 1024).toFixed(1)}MB. Maximum size is 10MB.`,
+            autoDismissMs: 5000,
+          });
+          return false;
+        }
+        return true;
+      });
+
+      if (validFiles.length === 0) return;
+
+      const newImageEntries: ImageAttachmentState[] = validFiles.map((file) => ({
+        localId: globalThis.crypto?.randomUUID?.() ?? `img-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+        mimeType: file.type,
+        data: "",
+        name: file.name,
+        uploadState: "pending",
+        showSlowSpinner: false,
+      }));
+
+      // Store files in ref for retry functionality
+      newImageEntries.forEach((entry, i) => {
+        imageFilesRef.current.set(entry.localId, validFiles[i]);
+      });
+
+      setAttachedImages((prev) => [...prev, ...newImageEntries]);
+
+      void Promise.all(
+        validFiles.map((file, i) => {
+          return new Promise<void>((resolve) => {
+            const localId = newImageEntries[i].localId;
+
+            const slowUploadTimer = setTimeout(() => {
+              setAttachedImages((prev) =>
+                prev.map((img) =>
+                  img.localId === localId ? { ...img, showSlowSpinner: true } : img
+                )
+              );
+            }, SLOW_UPLOAD_THRESHOLD_MS);
+
+            const reader = new FileReader();
+            reader.onload = () => {
+              const base64 = (reader.result as string).split(",")[1] ?? "";
+
+              setAttachedImages((prev) =>
+                prev.map((img) =>
+                  img.localId === localId ? { ...img, data: base64, uploadState: "uploading" as const } : img
+                )
+              );
+
+              uploadAttachments([file])
+                .then((results) => {
+                  clearTimeout(slowUploadTimer);
+                  setAttachedImages((prev) =>
+                    prev.map((img) =>
+                      img.localId === localId
+                        ? { ...img, uploadState: "uploaded" as const, serverId: results[0]?.id, showSlowSpinner: false }
+                        : img
+                    )
+                  );
+                  resolve();
+                })
+                .catch(() => {
+                  clearTimeout(slowUploadTimer);
+                  setAttachedImages((prev) =>
+                    prev.map((img) =>
+                      img.localId === localId ? { ...img, uploadState: "failed" as const, showSlowSpinner: false } : img
+                    )
+                  );
+                  resolve();
+                });
+            };
+            reader.readAsDataURL(file);
+          });
+        })
+      );
+    },
+    [attachedImages.length, pushNotification, MAX_FILE_SIZE, SLOW_UPLOAD_THRESHOLD_MS]
+  );
+
+  const handleFileInputChange = useCallback(
+    (event: React.ChangeEvent<HTMLInputElement>) => {
+      const files = event.target.files;
+      if (files && files.length > 0) {
+        addImagesFromFileList(files);
+      }
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
+    },
+    [addImagesFromFileList]
+  );
+
+  const handleRemoveImage = useCallback((localId: string) => {
+    setAttachedImages((prev) => prev.filter((img) => img.localId !== localId));
+    imageFilesRef.current.delete(localId);
+  }, []);
+
+  const handleRetryImage = useCallback(
+    (localId: string) => {
+      const file = imageFilesRef.current.get(localId);
+      if (!file) return;
+
+      const slowUploadTimer = setTimeout(() => {
+        setAttachedImages((prev) =>
+          prev.map((img) =>
+            img.localId === localId ? { ...img, showSlowSpinner: true } : img
+          )
+        );
+      }, SLOW_UPLOAD_THRESHOLD_MS);
+
+      setAttachedImages((prev) =>
+        prev.map((img) =>
+          img.localId === localId ? { ...img, uploadState: "uploading", showSlowSpinner: false } : img
+        )
+      );
+
+      uploadAttachments([file])
+        .then((results) => {
+          clearTimeout(slowUploadTimer);
+          setAttachedImages((prev) =>
+            prev.map((img) =>
+              img.localId === localId
+                ? { ...img, uploadState: "uploaded" as const, serverId: results[0]?.id, showSlowSpinner: false }
+                : img
+            )
+          );
+        })
+        .catch(() => {
+          clearTimeout(slowUploadTimer);
+          setAttachedImages((prev) =>
+            prev.map((img) =>
+              img.localId === localId ? { ...img, uploadState: "failed" as const, showSlowSpinner: false } : img
+            )
+          );
+        });
+    },
+    []
+  );
+
+  const handleDragOver = useCallback((event: React.DragEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+    isDraggingRef.current = true;
+  }, []);
+
+  const handleDragLeave = useCallback((event: React.DragEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+    isDraggingRef.current = false;
+  }, []);
+
+  const handleDrop = useCallback(
+    (event: React.DragEvent) => {
+      event.preventDefault();
+      event.stopPropagation();
+      isDraggingRef.current = false;
+      const files = event.dataTransfer.files;
+      if (files && files.length > 0) {
+        addImagesFromFileList(files);
+      }
+    },
+    [addImagesFromFileList]
+  );
 
   const insertTranscription = useCallback(
     (transcription: string) => {
@@ -780,18 +966,24 @@ export function ChatComposer({
 
   const submitComposer = useCallback(async () => {
     const trimmed = valueRef.current.trim();
-    if (!trimmed) {
+    if (!trimmed && attachedImages.length === 0) {
       return;
     }
     const promptText = applyComposerDirectives(trimmed);
+    const imagesToSubmit: ImageAttachment[] = attachedImages.map(({ mimeType, data, name }) => ({
+      mimeType,
+      data,
+      name,
+    }));
     valueRef.current = "";
     setComposerValue("");
     setComposerSelection({ start: 0, end: 0 });
     setMenu(null);
-    if (promptText) {
-      void Promise.resolve(onSubmit(promptText)).catch(() => undefined);
+    setAttachedImages([]);
+    if (promptText || imagesToSubmit.length > 0) {
+      void Promise.resolve(onSubmit(promptText, imagesToSubmit)).catch(() => undefined);
     }
-  }, [applyComposerDirectives, onSubmit, setComposerSelection, setComposerValue]);
+  }, [applyComposerDirectives, onSubmit, setComposerSelection, setComposerValue, attachedImages]);
 
   const syncNativeState = useCallback(() => {
     if (hardwareInputEnabled) return;
@@ -1102,7 +1294,9 @@ export function ChatComposer({
     () => renderComposerText(value, selection, isActive, caretRef),
     [isActive, selection, value]
   );
-  const canSubmit = value.trim().length > 0;
+  const canSubmit = value.trim().length > 0 || attachedImages.length > 0;
+  /** While the turn is running, Stop occupies the primary (send) slot until there is something to queue. */
+  const primaryControlIsStop = Boolean(busy && onCancel && !canSubmit);
 
   return (
     <div
@@ -1112,6 +1306,14 @@ export function ChatComposer({
       <div
         className={`relative ${isExpanded ? "flex min-h-0 flex-1 flex-col" : ""} ${editorRegionClassName}`}
       >
+        {attachedImages.length > 0 && (
+          <ImageCarousel
+            images={attachedImages}
+            onRemove={handleRemoveImage}
+            onRetry={handleRetryImage}
+            size={isExpanded ? "expanded" : "compact"}
+          />
+        )}
         {isEmpty && (
           <span
             className={`pointer-events-none absolute left-0 top-0 z-10 font-sans text-[14px] font-normal text-[var(--text-secondary)] ${textInsetClassName}`}
@@ -1160,6 +1362,30 @@ export function ChatComposer({
           }}
           onPaste={(event: ReactClipboardEvent<HTMLDivElement>) => {
             if (!hardwareInputEnabled) return;
+            const items = event.clipboardData.items;
+            let hasImages = false;
+            for (let i = 0; i < items.length; i++) {
+              if (items[i]?.type.startsWith("image/")) {
+                hasImages = true;
+                break;
+              }
+            }
+            if (hasImages) {
+              event.preventDefault();
+              const imageFiles = new DataTransfer();
+              for (let i = 0; i < items.length; i++) {
+                if (items[i]?.type.startsWith("image/")) {
+                  const file = items[i].getAsFile();
+                  if (file) {
+                    imageFiles.items.add(file);
+                  }
+                }
+              }
+              if (imageFiles.files.length > 0) {
+                addImagesFromFileList(imageFiles.files);
+              }
+              return;
+            }
             event.preventDefault();
             const next = replaceSelection(
               value,
@@ -1169,6 +1395,9 @@ export function ChatComposer({
             setComposerValue(next.value);
             setComposerSelection(next.selection);
           }}
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+          onDrop={handleDrop}
           onCopy={(event: ReactClipboardEvent<HTMLDivElement>) => {
             if (!hardwareInputEnabled || selection.start === selection.end) return;
             event.preventDefault();
@@ -1295,11 +1524,20 @@ export function ChatComposer({
           ) : null}
           <button
             type="button"
+            onClick={() => fileInputRef.current?.click()}
             className="text-[var(--text-secondary)] transition-colors hover:text-[var(--text-primary)]"
-            aria-label="Upload file"
+            aria-label="Upload image"
           >
-            <Upload className="size-[14px] shrink-0" strokeWidth={1.5} aria-hidden />
+            <ImageIcon className="size-[14px] shrink-0" strokeWidth={1.5} aria-hidden />
           </button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            multiple
+            onChange={handleFileInputChange}
+            className="hidden"
+          />
           <button
             type="button"
             onClick={() => {
@@ -1347,25 +1585,26 @@ export function ChatComposer({
               </span>
             )}
           </button>
-          {busy && onCancel ? (
+          {primaryControlIsStop ? (
             <button
               type="button"
-              onClick={() => void onCancel()}
-              className="flex h-[20px] w-[20px] items-center justify-center rounded-full bg-[var(--border-card)] text-[var(--text-primary)] transition-opacity hover:opacity-80"
+              onClick={() => void onCancel?.()}
+              className={`flex h-[20px] w-[20px] items-center justify-center rounded-full transition-opacity hover:opacity-80 ${sendButtonBgClass[getModeTone(mode)]}`}
               aria-label="Stop"
             >
-              <Square className="size-[9px]" fill="currentColor" strokeWidth={2.2} />
+              <Square className="size-[9px] text-[var(--bg-main)]" fill="currentColor" strokeWidth={2.2} />
             </button>
-          ) : null}
-          <button
-            type="button"
-            onClick={() => void submitComposer()}
-            disabled={!canSubmit}
-            className={`flex h-[20px] w-[20px] items-center justify-center rounded-full transition-opacity hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-50 ${sendButtonBgClass[getModeTone(mode)]}`}
-            aria-label={busy ? "Send or queue message" : "Send"}
-          >
-            <ArrowUp className="size-3 text-[var(--bg-main)]" strokeWidth={2.5} />
-          </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => void submitComposer()}
+              disabled={!canSubmit}
+              className={`flex h-[20px] w-[20px] items-center justify-center rounded-full transition-opacity hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-50 ${sendButtonBgClass[getModeTone(mode)]}`}
+              aria-label={busy ? "Send or queue message" : "Send"}
+            >
+              <ArrowUp className="size-3 text-[var(--bg-main)]" strokeWidth={2.5} />
+            </button>
+          )}
         </div>
       </div>
     </div>

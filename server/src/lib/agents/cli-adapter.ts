@@ -228,7 +228,11 @@ class OneShotCliSessionHandle implements AgentSessionHandle {
     }));
   }
 
-  async prompt(input: { text: string; userMessageId: string }): Promise<void> {
+  async prompt(input: {
+    text: string;
+    userMessageId: string;
+    attachments?: Array<{ mimeType: string; data: string; name?: string }>;
+  }): Promise<void> {
     const assistantMessageId = randomUUID();
     this.currentAssistantMessageId = assistantMessageId;
     let sawAssistantText = false;

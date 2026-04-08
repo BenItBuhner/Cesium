@@ -245,11 +245,12 @@ export class AgentRuntimeManager {
   async promptConversation(
     workspace: WorkspaceRecord,
     conversationId: string,
-    text: string
+    text: string,
+    attachments?: Array<{ mimeType: string; data: string; name?: string }>
   ): Promise<AgentConversationSnapshot> {
     const trimmed = text.trim();
-    if (!trimmed) {
-      throw new Error("Prompt text is required.");
+    if (!trimmed && (!attachments || attachments.length === 0)) {
+      throw new Error("Prompt text or attachments are required.");
     }
 
     let record = await readConversationRecord(workspace.id, conversationId);
@@ -275,6 +276,7 @@ export class AgentRuntimeManager {
         kind: "user_message",
         messageId: userMessageId,
         content: trimmed,
+        attachments,
       },
     ]);
     await updateConversationRecord(workspace.id, conversationId, (current) => ({
@@ -285,7 +287,7 @@ export class AgentRuntimeManager {
     }));
 
     const runtime = await this.ensureRuntime(workspace, record);
-    void runtime.handle.prompt({ text: trimmed, userMessageId }).catch(() => undefined);
+    void runtime.handle.prompt({ text: trimmed, userMessageId, attachments }).catch(() => undefined);
     const snapshot = await readConversationSnapshot(workspace.id, conversationId);
     if (!snapshot) {
       throw new Error("Conversation disappeared after prompt.");

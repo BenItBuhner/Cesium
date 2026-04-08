@@ -11,6 +11,7 @@ import type {
 import type { WorkspaceSessionState } from "@/lib/workspace-session";
 import type {
   FileNode,
+  ImageAttachment,
   TerminalInfo,
   WorkspaceInfo,
   WorkspaceRecord,
@@ -373,11 +374,12 @@ export async function updateAgentConversationConfig(
 
 export async function promptAgentConversation(
   conversationId: string,
-  text: string
+  text: string,
+  attachments?: ImageAttachment[]
 ): Promise<{ snapshot: AgentConversationSnapshot }> {
   return request(`/api/agents/conversations/${encodeURIComponent(conversationId)}/prompt`, {
     method: "POST",
-    body: JSON.stringify({ text }),
+    body: JSON.stringify({ text, attachments }),
   });
 }
 
@@ -517,6 +519,32 @@ export async function uploadFile(relativePath: string, file: File): Promise<void
     throw new Error(message || `Request failed with status ${response.status}`);
   }
   await response.json();
+}
+
+export type UploadedAttachment = {
+  id: string;
+  path: string;
+};
+
+export async function uploadAttachments(
+  files: File[]
+): Promise<UploadedAttachment[]> {
+  const form = new FormData();
+  for (const file of files) {
+    form.append("files", file);
+  }
+  const response = await fetch(`${BASE_URL}/api/agents/attachments`, {
+    method: "POST",
+    body: form,
+    headers: getWorkspaceHeaders(),
+    cache: "no-store",
+  });
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(message || `Request failed with status ${response.status}`);
+  }
+  const result = await response.json();
+  return result.attachments;
 }
 
 export async function statFile(path: string): Promise<FileStatResult> {

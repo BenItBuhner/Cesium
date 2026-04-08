@@ -124,6 +124,7 @@ export function MessageThreadContent({
           <UserMessage
             content={msg.content}
             segments={msg.segments}
+            attachments={msg.attachments}
             showReplyCue={msg.showReplyCue}
           />
           <TodoStatusCard content={next.content!} meldUserAbove />
@@ -151,6 +152,7 @@ export function MessageThreadContent({
           <UserMessage
             content={msg.content}
             segments={msg.segments}
+            attachments={msg.attachments}
             showReplyCue={msg.showReplyCue}
           />
         );

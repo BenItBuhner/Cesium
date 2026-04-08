@@ -11,7 +11,7 @@ import { RecentChatsModal } from "@/components/ide/RecentChatsModal";
 import { projectAgentEventsToChatMessages } from "@/lib/agent-chat";
 import { askStepsFromMessage } from "@/lib/ask-question-utils";
 import { useAgentConversations } from "@/components/chat/AgentConversationsContext";
-import type { EditorMode, QueuedChatPrompt } from "@/lib/types";
+import type { EditorMode, ImageAttachment, QueuedChatPrompt } from "@/lib/types";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import {
   EDITOR_CHAT_CONTENT_CLASS,
@@ -97,8 +97,11 @@ export function AgentConversationView({
   const loadState = getConversationLoadStatus(conversationId);
   const composerState = getConversationComposerState(conversationId);
   const threadMessages = useMemo(
-    () => projectAgentEventsToChatMessages(eventsByConversationId[conversationId] ?? []),
-    [conversationId, eventsByConversationId]
+    () =>
+      projectAgentEventsToChatMessages(eventsByConversationId[conversationId] ?? [], {
+        backendId: conversation?.config.backendId,
+      }),
+    [conversationId, conversation?.config.backendId, eventsByConversationId]
   );
   const { scrollMessages, dockedAsk } = useMemo(
     () => partitionMessagesForDock(threadMessages),
@@ -280,8 +283,8 @@ export function AgentConversationView({
         }}
         busy={composerState.busy}
         configLocked={false}
-        onSubmit={(text) => {
-          void promptConversation(conversationId, text).then((ok) => {
+        onSubmit={(text, attachments?: ImageAttachment[]) => {
+          void promptConversation(conversationId, text, attachments).then((ok) => {
             if (!ok) {
               return;
             }

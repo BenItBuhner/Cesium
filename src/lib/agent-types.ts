@@ -124,6 +124,7 @@ export type AgentStoredEvent =
       kind: "user_message";
       messageId: string;
       content: string;
+      attachments?: Array<{ mimeType: string; data: string; name?: string }>;
     }
   | {
       seq: number;

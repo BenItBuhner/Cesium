@@ -83,6 +83,7 @@ export type AgentProviderCapabilities = {
   supportsStructuredPlans: boolean;
   supportsTodos: boolean;
   supportsSessionResume: boolean;
+  supportsPromptImages: boolean;
 };
 
 export type AgentBackendInfo = {
@@ -127,6 +128,7 @@ export type AgentStoredEvent =
       kind: "user_message";
       messageId: string;
       content: string;
+      attachments?: Array<{ mimeType: string; data: string; name?: string }>;
       raw?: unknown;
     }
   | {
@@ -315,7 +317,11 @@ export interface AgentSessionHandle {
   sessionId: string;
   configOptions: AgentConfigOption[];
   capabilities: AgentProviderCapabilities;
-  prompt: (input: { text: string; userMessageId: string }) => Promise<void>;
+  prompt: (input: {
+    text: string;
+    userMessageId: string;
+    attachments?: Array<{ mimeType: string; data: string; name?: string }>;
+  }) => Promise<void>;
   cancel: () => Promise<void>;
   setConfigOption: (configId: string, value: string) => Promise<void>;
   answerPermission: (input: {
@@ -362,5 +368,6 @@ export function createUnavailableCapabilities(): AgentProviderCapabilities {
     supportsStructuredPlans: false,
     supportsTodos: false,
     supportsSessionResume: false,
+    supportsPromptImages: false,
   };
 }

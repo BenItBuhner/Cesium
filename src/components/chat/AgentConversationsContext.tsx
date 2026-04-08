@@ -27,7 +27,7 @@ import type {
   AgentSocketServerMessage,
   AgentStoredEvent,
 } from "@/lib/agent-types";
-import type { AgentModeOption, EditorMode, ModelInfo } from "@/lib/types";
+import type { AgentModeOption, EditorMode, ImageAttachment, ModelInfo } from "@/lib/types";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { nextUnreadCompletionMap } from "@/lib/chat-unread-completion";
 import {
@@ -141,7 +141,7 @@ type AgentConversationsContextValue = {
     configId: string,
     value: string
   ) => Promise<void>;
-  promptConversation: (conversationId: string, text: string) => Promise<boolean>;
+  promptConversation: (conversationId: string, text: string, attachments?: ImageAttachment[]) => Promise<boolean>;
   cancelConversation: (conversationId: string) => Promise<void>;
   getConversationComposerState: (
     conversationId: string
@@ -507,9 +507,9 @@ export function AgentConversationsProvider({
   );
 
   const executePrompt = useCallback(
-    async (conversationId: string, text: string) => {
+    async (conversationId: string, text: string, attachments?: ImageAttachment[]) => {
       try {
-        const snapshot = await promptAgentConversation(conversationId, text);
+        const snapshot = await promptAgentConversation(conversationId, text, attachments);
         mergeSnapshot(snapshot.snapshot);
         return true;
       } catch (error) {
@@ -545,7 +545,7 @@ export function AgentConversationsProvider({
   executePromptRef.current = executePrompt;
 
   const promptConversation = useCallback(
-    async (conversationId: string, text: string) => {
+    async (conversationId: string, text: string, attachments?: ImageAttachment[]) => {
       const conv = conversationsById[conversationId];
       if (
         conv &&
@@ -561,14 +561,14 @@ export function AgentConversationsProvider({
               ...current.chat,
               queuedPromptsByConversationId: {
                 ...map,
-                [conversationId]: [...prev, { id: entryId, text }],
+                [conversationId]: [...prev, { id: entryId, text, attachments }],
               },
             },
           };
         });
         return true;
       }
-      return executePrompt(conversationId, text);
+      return executePrompt(conversationId, text, attachments);
     },
     [conversationsById, executePrompt, updateWorkspaceSession]
   );
@@ -601,7 +601,7 @@ export function AgentConversationsProvider({
 
       void (async () => {
         try {
-          await executePromptRef.current(conversationId, head.text);
+          await executePromptRef.current(conversationId, head.text, head.attachments);
         } finally {
           endQueuedPromptFlush(conversationId);
         }

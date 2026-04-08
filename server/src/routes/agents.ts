@@ -1,5 +1,9 @@
 import { Hono } from "hono";
+import { randomUUID } from "node:crypto";
+import { promises as fs } from "node:fs";
+import path from "node:path";
 import { requireWorkspaceFromRequest } from "../lib/request-workspace.js";
+import { resolveSafePath } from "../lib/workspace.js";
 import { agentRuntimeManager } from "../lib/agents/runtime-manager.js";
 import { exportOpenCodeSession } from "../lib/agents/opencode-export.js";
 import { getCursorAgentDeploymentHints } from "../lib/agents/providers.js";
@@ -73,14 +77,15 @@ agentRoutes.patch("/api/agents/conversations/:conversationId/config", async (c) 
 agentRoutes.post("/api/agents/conversations/:conversationId/prompt", async (c) => {
   const workspace = await requireWorkspaceFromRequest(c);
   const conversationId = c.req.param("conversationId");
-  const body = await c.req.json<{ text?: string }>();
-  if (!body.text?.trim()) {
-    return c.json({ error: "Expected prompt text." }, 400);
+  const body = await c.req.json<{ text?: string; attachments?: Array<{ mimeType: string; data: string; name?: string }> }>();
+  if (!body.text?.trim() && (!body.attachments || body.attachments.length === 0)) {
+    return c.json({ error: "Expected prompt text or attachments." }, 400);
   }
   const snapshot = await agentRuntimeManager.promptConversation(
     workspace,
     conversationId,
-    body.text
+    body.text ?? "",
+    body.attachments
   );
   return c.json({ snapshot });
 });
@@ -116,4 +121,53 @@ agentRoutes.post("/api/agents/conversations/:conversationId/permission", async (
     }
   );
   return c.json({ conversation });
+});
+
+const ATTACHMENTS_FOLDER = ".attachments";
+
+function getExtensionFromMime(mimeType: string): string {
+  const mimeToExt: Record<string, string> = {
+    "image/jpeg": ".jpg",
+    "image/png": ".png",
+    "image/gif": ".gif",
+    "image/webp": ".webp",
+    "image/svg+xml": ".svg",
+  };
+  return mimeToExt[mimeType] ?? ".bin";
+}
+
+agentRoutes.post("/api/agents/attachments", async (c) => {
+  const workspace = await requireWorkspaceFromRequest(c);
+  let body: Record<string, string | File | (string | File)[]>;
+  try {
+    body = await c.req.parseBody();
+  } catch {
+    return c.json({ error: "Invalid multipart body" }, 400);
+  }
+  const files = body.files;
+  const fileArray = Array.isArray(files) ? files : files ? [files] : [];
+  if (fileArray.length === 0) {
+    return c.json({ error: "Expected files field with at least one file" }, 400);
+  }
+  const attachments: { id: string; path: string }[] = [];
+  const attachmentsDir = path.join(workspace.root, ATTACHMENTS_FOLDER);
+  try {
+    await fs.mkdir(attachmentsDir, { recursive: true });
+  } catch {
+    // Directory may already exist
+  }
+  for (const file of fileArray) {
+    if (typeof file === "string") {
+      continue;
+    }
+    const id = randomUUID();
+    const ext = getExtensionFromMime(file.type);
+    const fileName = `${id}${ext}`;
+    const filePath = path.join(ATTACHMENTS_FOLDER, fileName);
+    const absolutePath = resolveSafePath(workspace.root, filePath);
+    const buf = Buffer.from(await file.arrayBuffer());
+    await fs.writeFile(absolutePath, buf);
+    attachments.push({ id, path: filePath });
+  }
+  return c.json({ attachments });
 });

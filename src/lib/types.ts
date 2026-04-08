@@ -40,10 +40,29 @@ export type WorkedSessionEntry =
       files?: string[];
     };
 
+export type ImageAttachment = {
+  mimeType: string;
+  data: string;
+  name?: string;
+};
+
+export type ImageAttachmentState = {
+  localId: string;
+  mimeType: string;
+  data: string;
+  name?: string;
+  uploadState?: "pending" | "uploading" | "uploaded" | "failed";
+  serverId?: string;
+  error?: string;
+  showSlowSpinner?: boolean;
+};
+
 /** Inline user bubble: plain text runs and file/context chips. */
 export interface UserMessageSegment {
-  type: "text" | "file" | "context";
+  type: "text" | "file" | "context" | "image";
   text: string;
+  mimeType?: string;
+  data?: string;
 }
 
 export interface TodoItem {
@@ -80,6 +99,8 @@ export interface ChatMessage {
   content?: string;
   /** Rich user bubble; when set, overrides plain `content` for body text. */
   segments?: UserMessageSegment[];
+  /** Image attachments for user messages. */
+  attachments?: ImageAttachment[];
   /** Small reply/undo affordance in the user bubble corner. */
   showReplyCue?: boolean;
   todos?: TodoItem[];
@@ -242,6 +263,7 @@ export type AgentTabIndicatorByConversationId = Record<
 export type QueuedChatPrompt = {
   id: string;
   text: string;
+  attachments?: ImageAttachment[];
 };
 
 export interface ChatTab {
