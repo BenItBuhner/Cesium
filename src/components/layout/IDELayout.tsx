@@ -63,6 +63,11 @@ export function IDELayout() {
     }));
   }, [chatOpen, mobilePanel, sidebarOpen, updateWorkspaceSession]);
 
+  const sidebarVisible = isMobile
+    ? mobilePanel === "sidebar"
+    : showSidebar && sidebarOpen;
+  const chatVisible = isMobile ? mobilePanel === "chat" : showChat && chatOpen;
+
   const workbench = useMemo(
     () => ({
       toggleSidebar: () => {
@@ -83,14 +88,10 @@ export function IDELayout() {
         if (isMobile) setMobilePanel("sidebar");
         else setSidebarOpen(true);
       },
+      primarySidebarVisible: sidebarVisible,
     }),
-    [isMobile]
+    [isMobile, sidebarVisible]
   );
-
-  const sidebarVisible = isMobile
-    ? mobilePanel === "sidebar"
-    : showSidebar && sidebarOpen;
-  const chatVisible = isMobile ? mobilePanel === "chat" : showChat && chatOpen;
 
   // Keep sidebar / chat in the tree at all times so the group layout does not
   // remount panels or redistribute percentages when toggling — only collapse/expand.

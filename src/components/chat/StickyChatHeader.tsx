@@ -1,10 +1,10 @@
 "use client";
 
 import { useRef, useState, useLayoutEffect, type ReactNode } from "react";
+import { CHAT_STICKY_RAIL_INSET_PX } from "./chat-sticky-rail";
 
 /** Max height (px) for user + melded todo to stay sticky; taller blocks scroll with the thread. */
 const MAX_STICKY_HEIGHT_PX = 320;
-const STICKY_TOP_GAP_PX = 10;
 
 interface StickyChatHeaderProps {
   /** Main chat: each user turn participates in sticky stacking; transcript tabs: off. */
@@ -63,7 +63,7 @@ export function StickyChatHeader({
   return (
     <div
       ref={setRefs}
-      style={allowSticky ? { top: STICKY_TOP_GAP_PX - pushUpPx } : undefined}
+      style={allowSticky ? { top: CHAT_STICKY_RAIL_INSET_PX - pushUpPx } : undefined}
       className={
         allowSticky
           ? "sticky z-10 shrink-0 bg-transparent pb-[10px]"

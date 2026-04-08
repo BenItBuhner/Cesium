@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   ChevronDown,
   FolderOpen,
@@ -38,45 +38,77 @@ function isToolEntryActive(entry: WorkedSessionEntry): boolean {
 interface WorkedSessionCardProps {
   label: string;
   entries: WorkedSessionEntry[];
+  /** When set with `onOpenChange`, expansion is controlled by the parent (persisted). */
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  /** @deprecated Use `open` + `onOpenChange`; still seeds uncontrolled initial state. */
   defaultOpen?: boolean;
   loading?: boolean;
   surface?: "panel" | "editor";
+  /**
+   * When false, header/tool loading shimmer only reflects local `loading` / active tools,
+   * not “superseded” sessions after permission or a newer worked block.
+   */
+  isLiveWorkedTail?: boolean;
 }
 
 const ENTRY_LIST_MAX_HEIGHT = 240;
+const NEAR_BOTTOM_PX = 48;
+const STICK_SETTLE_MS = 80;
+
+function prefersScrollInstant(): boolean {
+  if (typeof window === "undefined") {
+    return true;
+  }
+  return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+}
 
 export function WorkedSessionCard({
   label,
   entries,
+  open: controlledOpen,
+  onOpenChange,
   defaultOpen = false,
   loading = false,
   surface = "panel",
+  isLiveWorkedTail = true,
 }: WorkedSessionCardProps) {
-  const [open, setOpen] = useState(defaultOpen);
+  const isControlled = controlledOpen !== undefined;
+  const [uncontrolledOpen, setUncontrolledOpen] = useState(defaultOpen);
+  const open = isControlled ? controlledOpen! : uncontrolledOpen;
+  const setOpen = useCallback(
+    (next: boolean) => {
+      if (isControlled) {
+        onOpenChange?.(next);
+      } else {
+        setUncontrolledOpen(next);
+      }
+    },
+    [isControlled, onOpenChange]
+  );
   const hasActiveTool = entries.some((entry) => isToolEntryActive(entry));
   const showLoadingState = loading || hasActiveTool;
+  const shimmerLoading = showLoadingState && isLiveWorkedTail;
   const isWorkingPlaceholder = showLoadingState && entries.length === 0;
+  const collapsibleOpen = isWorkingPlaceholder ? true : open;
   const gradientVar = surface === "editor" ? "var(--bg-main)" : "var(--bg-panel)";
-  const previousLoadingRef = useRef(showLoadingState);
+  const prevMessageLoadingRef = useRef(loading);
   const scrollRef = useRef<HTMLDivElement>(null);
-  const prevEntryCountRef = useRef(0);
+  const contentMeasureRef = useRef<HTMLDivElement>(null);
   const stickToBottomRef = useRef(true);
+  const stickSettleTimerRef = useRef<number | null>(null);
+  const touchLastYRef = useRef<number | null>(null);
   const [showTopGrad, setShowTopGrad] = useState(false);
   const [showBottomGrad, setShowBottomGrad] = useState(false);
 
+  // Collapse only when the *message-level* working placeholder (`loading`) clears — not when an
+  // individual tool flips running→completed (that falsely fired for file-edit and other fast tools).
   useEffect(() => {
-    if (defaultOpen) {
-      setOpen(true);
-    }
-  }, [defaultOpen]);
-
-  useEffect(() => {
-    const wasLoading = previousLoadingRef.current;
-    if (wasLoading && !showLoadingState) {
+    if (prevMessageLoadingRef.current && !loading) {
       setOpen(false);
     }
-    previousLoadingRef.current = showLoadingState;
-  }, [showLoadingState]);
+    prevMessageLoadingRef.current = loading;
+  }, [loading, setOpen]);
 
   const updateGradients = useCallback(() => {
     const el = scrollRef.current;
@@ -87,59 +119,144 @@ export function WorkedSessionCard({
     setShowBottomGrad(atBottom);
   }, []);
 
-  useEffect(() => {
-    if (!open) return;
-    updateGradients();
-  }, [entries, open, updateGradients]);
-
-  useEffect(() => {
-    if (!open) return;
-    const el = scrollRef.current;
-    if (!el) return;
-    const observer = new ResizeObserver(() => updateGradients());
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, [open, updateGradients]);
-
-  useEffect(() => {
-    if (!open) return;
-    const el = scrollRef.current;
-    if (!el) return;
-    if (entries.length > prevEntryCountRef.current && stickToBottomRef.current) {
-      el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+  const clearStickSettleTimer = useCallback(() => {
+    if (stickSettleTimerRef.current != null) {
+      window.clearTimeout(stickSettleTimerRef.current);
+      stickSettleTimerRef.current = null;
     }
-    prevEntryCountRef.current = entries.length;
-  }, [entries.length, open]);
+  }, []);
+
+  useEffect(() => {
+    if (!collapsibleOpen) {
+      clearStickSettleTimer();
+    }
+  }, [collapsibleOpen, clearStickSettleTimer]);
+
+  const scheduleStickToBottomSettle = useCallback(
+    (el: HTMLDivElement) => {
+      if (stickSettleTimerRef.current != null) {
+        window.clearTimeout(stickSettleTimerRef.current);
+      }
+      stickSettleTimerRef.current = window.setTimeout(() => {
+        stickSettleTimerRef.current = null;
+        const nearBottom =
+          el.scrollHeight - el.scrollTop - el.clientHeight <= NEAR_BOTTOM_PX;
+        stickToBottomRef.current = nearBottom;
+      }, STICK_SETTLE_MS);
+    },
+    []
+  );
+
+  const scrollListToBottomIfFollowing = useCallback(() => {
+    const el = scrollRef.current;
+    if (!collapsibleOpen || !el || !stickToBottomRef.current) {
+      return;
+    }
+    const behavior = prefersScrollInstant() ? ("auto" as const) : ("smooth" as const);
+    el.scrollTo({ top: el.scrollHeight, behavior });
+  }, [collapsibleOpen]);
+
+  useLayoutEffect(() => {
+    if (!collapsibleOpen) {
+      return;
+    }
+    const el = scrollRef.current;
+    if (!el) {
+      return;
+    }
+    const nearBottom =
+      el.scrollHeight - el.scrollTop - el.clientHeight <= NEAR_BOTTOM_PX;
+    stickToBottomRef.current = nearBottom;
+  }, [collapsibleOpen]);
+
+  useEffect(() => {
+    if (!collapsibleOpen) return;
+    updateGradients();
+  }, [entries, collapsibleOpen, updateGradients]);
+
+  useEffect(() => {
+    if (!collapsibleOpen) return;
+    const scrollEl = scrollRef.current;
+    const contentEl = contentMeasureRef.current;
+    if (!scrollEl || !contentEl) return;
+
+    const ro = new ResizeObserver(() => {
+      scrollListToBottomIfFollowing();
+      updateGradients();
+    });
+    ro.observe(contentEl);
+    return () => ro.disconnect();
+  }, [collapsibleOpen, scrollListToBottomIfFollowing, updateGradients]);
+
+  useEffect(
+    () => () => {
+      clearStickSettleTimer();
+    },
+    [clearStickSettleTimer]
+  );
+
+  const handleWheel = useCallback(
+    (e: React.WheelEvent<HTMLDivElement>) => {
+      if (e.deltaY < -0.5) {
+        stickToBottomRef.current = false;
+        clearStickSettleTimer();
+      }
+    },
+    [clearStickSettleTimer]
+  );
+
+  const handleTouchStart = useCallback((e: React.TouchEvent<HTMLDivElement>) => {
+    touchLastYRef.current = e.touches[0]?.clientY ?? null;
+  }, []);
+
+  const handleTouchMove = useCallback(
+    (e: React.TouchEvent<HTMLDivElement>) => {
+      const y = e.touches[0]?.clientY;
+      if (y == null || touchLastYRef.current == null) return;
+      if (y - touchLastYRef.current > 12) {
+        stickToBottomRef.current = false;
+        clearStickSettleTimer();
+      }
+      touchLastYRef.current = y;
+    },
+    [clearStickSettleTimer]
+  );
+
+  const handleTouchEnd = useCallback(() => {
+    touchLastYRef.current = null;
+  }, []);
 
   const handleScroll = useCallback(
     (e: React.UIEvent<HTMLDivElement>) => {
       const el = e.currentTarget;
-      const nearBottom =
-        el.scrollHeight - el.scrollTop - el.clientHeight <= 48;
-      stickToBottomRef.current = nearBottom;
+      scheduleStickToBottomSettle(el);
       updateGradients();
     },
-    [updateGradients]
+    [scheduleStickToBottomSettle, updateGradients]
   );
 
   return (
     <div className="min-w-0 px-[1px]">
       {isWorkingPlaceholder ? (
         <div className="flex w-full min-w-0 items-center gap-[6px] text-left text-[var(--text-secondary)]">
-          <span className="tool-loading-text font-sans text-[13px] font-normal leading-snug">
+          <span
+            className={`font-sans text-[13px] font-normal leading-snug ${
+              shimmerLoading ? "tool-loading-text" : ""
+            }`}
+          >
             {label}
           </span>
         </div>
       ) : (
         <button
           type="button"
-          onClick={() => setOpen((v) => !v)}
+          onClick={() => setOpen(!open)}
           aria-expanded={open}
           className="flex w-full min-w-0 cursor-pointer items-center gap-[6px] text-left text-[var(--text-secondary)] transition-colors hover:text-[var(--text-primary)]"
         >
           <span
             className={`font-sans text-[13px] font-normal leading-snug ${
-              showLoadingState ? "tool-loading-text" : ""
+              shimmerLoading ? "tool-loading-text" : ""
             }`}
           >
             {label}
@@ -154,24 +271,32 @@ export function WorkedSessionCard({
         </button>
       )}
 
-      <CollapsibleHeight open={open}>
+      <CollapsibleHeight open={collapsibleOpen}>
         <div className="relative pt-[10px]">
           <div
             ref={scrollRef}
             onScroll={handleScroll}
-            className="ml-[2px] flex flex-col gap-[14px] border-l border-[var(--border-subtle)] pl-[10px] overflow-y-auto hide-scrollbar-y"
+            onWheel={handleWheel}
+            onTouchStart={handleTouchStart}
+            onTouchMove={handleTouchMove}
+            onTouchEnd={handleTouchEnd}
+            onTouchCancel={handleTouchEnd}
+            className="ml-[2px] border-l border-[var(--border-subtle)] pl-[10px] overflow-y-auto hide-scrollbar-y"
             style={{ maxHeight: ENTRY_LIST_MAX_HEIGHT }}
           >
-            {entries.map((entry, i) => (
-              <WorkedEntryBlock
-                key={
-                  entry.kind === "tool"
-                    ? entry.toolCallId ?? `tool-${i}-${entry.title}`
-                    : `${entry.kind}-${i}`
-                }
-                entry={entry}
-              />
-            ))}
+            <div ref={contentMeasureRef} className="flex flex-col gap-[14px]">
+              {entries.map((entry, i) => (
+                <WorkedEntryBlock
+                  key={
+                    entry.kind === "tool"
+                      ? entry.toolCallId ?? `tool-${i}-${entry.title}`
+                      : `${entry.kind}-${i}`
+                  }
+                  entry={entry}
+                  isLiveWorkedTail={isLiveWorkedTail}
+                />
+              ))}
+            </div>
           </div>
           {showTopGrad ? (
             <div
@@ -191,7 +316,13 @@ export function WorkedSessionCard({
   );
 }
 
-function WorkedEntryBlock({ entry }: { entry: WorkedSessionEntry }) {
+function WorkedEntryBlock({
+  entry,
+  isLiveWorkedTail,
+}: {
+  entry: WorkedSessionEntry;
+  isLiveWorkedTail: boolean;
+}) {
   const [visible, setVisible] = useState(false);
 
   useEffect(() => {
@@ -205,12 +336,12 @@ function WorkedEntryBlock({ entry }: { entry: WorkedSessionEntry }) {
         visible ? "translate-y-0 opacity-100" : "translate-y-[6px] opacity-0"
       }`}
     >
-      {renderEntry(entry)}
+      {renderEntry(entry, isLiveWorkedTail)}
     </div>
   );
 }
 
-function renderEntry(entry: WorkedSessionEntry) {
+function renderEntry(entry: WorkedSessionEntry, isLiveWorkedTail: boolean) {
   switch (entry.kind) {
     case "verbatim":
       return (
@@ -257,6 +388,16 @@ function renderEntry(entry: WorkedSessionEntry) {
           </div>
         </div>
       );
+    case "assistant_inline":
+      return (
+        <div className="flex gap-[8px]">
+          <div className="min-w-0 flex-1">
+            <p className="font-sans text-[13px] font-normal leading-relaxed text-[var(--text-primary)]">
+              {entry.text}
+            </p>
+          </div>
+        </div>
+      );
     case "tool": {
       const active = isToolEntryActive(entry);
       const statusKey =
@@ -269,9 +410,11 @@ function renderEntry(entry: WorkedSessionEntry) {
             <div className="flex flex-wrap items-center gap-[8px]">
               <p
                 className={`font-sans text-[13px] font-normal ${
-                  active
+                  active && isLiveWorkedTail
                     ? "tool-loading-text"
-                    : entry.status === "failed"
+                    : active
+                      ? "text-[var(--text-primary)]"
+                      : entry.status === "failed"
                       ? "text-[#fda4af]"
                       : entry.status === "cancelled"
                         ? "text-[#fcd34d]"

@@ -4,6 +4,7 @@ import {
   useReducer,
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   type DragEvent,
   type MouseEvent,
@@ -30,7 +31,7 @@ import {
 } from "./OpenInEditorContext";
 import { CHAT_TAB_DND_MIME, parseChatTabDragPayload } from "@/lib/chat-tab-dnd";
 import type { ExplorerOpenRequest } from "@/lib/types";
-import type { EditorTab } from "@/lib/types";
+import type { AgentTabIndicatorByConversationId, EditorTab } from "@/lib/types";
 import {
   SETTINGS_EDITOR_TAB_ID,
   editorPanelReducer,
@@ -47,7 +48,11 @@ import {
   readFile,
   writeFile,
 } from "@/lib/server-api";
+import { useAgentConversations } from "@/components/chat/AgentConversationsContext";
+import { useViewport } from "@/hooks/useViewport";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
+import { useWorkbench } from "@/components/ide/WorkbenchContext";
+import { useUserPreferences } from "@/components/preferences/UserPreferencesProvider";
 import { useWorkbenchNotifications } from "@/components/notifications/WorkbenchNotificationProvider";
 import { WORKBENCH_NOTIFICATION_KIND } from "@/components/notifications/workbench-notification-types";
 import {
@@ -183,6 +188,9 @@ export function EditorPanel() {
     workspaceSession,
     updateWorkspaceSession,
   } = useWorkspace();
+  const { isMobile } = useViewport();
+  const { primarySidebarVisible } = useWorkbench();
+  const { experimentalIpadWindowedTabInset } = useUserPreferences();
   const { openAt } = useWorkbenchContextMenu();
   const { pushNotification, dismiss, dismissByKind } = useWorkbenchNotifications();
   const liveTabContentRef = useRef<Map<string, string>>(new Map());
@@ -196,6 +204,29 @@ export function EditorPanel() {
     workspaceSession.editor,
     createEditorStateFromSession
   );
+
+  const { conversationsById } = useAgentConversations();
+  const agentTabIndicators = useMemo(() => {
+    const unread = workspaceSession.chat.unreadChatCompletionByConversationId ?? {};
+    const m: AgentTabIndicatorByConversationId = {};
+    for (const tab of [...state.leftTabs, ...state.rightTabs]) {
+      if (!tab.conversationId) continue;
+      const c = conversationsById[tab.conversationId];
+      if (!c) continue;
+      m[tab.conversationId] = {
+        needsAttention: c.status === "awaiting_permission",
+        running: c.status === "running",
+        unreadCompletion:
+          Boolean(unread[tab.conversationId]) && c.status === "idle",
+      };
+    }
+    return m;
+  }, [
+    state.leftTabs,
+    state.rightTabs,
+    conversationsById,
+    workspaceSession.chat.unreadChatCompletionByConversationId,
+  ]);
 
   const stateRef = useRef(state);
   const bridgeRef = useEditorBridgeRef();
@@ -569,9 +600,34 @@ export function EditorPanel() {
     dispatch({ type: "FOCUS_EDITOR_GROUP", group });
   }, []);
 
-  const selectTab = useCallback((group: EditorGroup, id: string) => {
-    dispatch({ type: "SELECT_TAB", group, id });
-  }, []);
+  const selectTab = useCallback(
+    (group: EditorGroup, id: string) => {
+      const tab =
+        group === "left"
+          ? stateRef.current.leftTabs.find((t) => t.id === id)
+          : stateRef.current.rightTabs.find((t) => t.id === id);
+      dispatch({ type: "SELECT_TAB", group, id });
+      const convId = tab?.conversationId;
+      if (!convId) {
+        return;
+      }
+      updateWorkspaceSession((current) => {
+        const u = { ...(current.chat.unreadChatCompletionByConversationId ?? {}) };
+        if (!u[convId]) {
+          return current;
+        }
+        delete u[convId];
+        return {
+          ...current,
+          chat: {
+            ...current.chat,
+            unreadChatCompletionByConversationId: u,
+          },
+        };
+      });
+    },
+    [updateWorkspaceSession]
+  );
 
   const requestCloseTab = useCallback(
     (group: EditorGroup, id: string) => {
@@ -1312,7 +1368,17 @@ export function EditorPanel() {
           </div>
         );
       }
-      return <Terminal key={tab.id} terminalId={tab.terminalId} />;
+      return (
+        <Terminal
+          key={tab.id}
+          terminalId={tab.terminalId}
+          onAutoCloseAfterCleanExit={() => {
+            const current = findTab(tab.id);
+            if (!current) return;
+            void closeTabs([current], { type: "CLOSE_TAB", group, id: tab.id });
+          }}
+        />
+      );
     }
     if (
       tab.filePath &&
@@ -1412,6 +1478,12 @@ export function EditorPanel() {
       emptyMessage: string;
     }
   ) {
+    const padStripLeadingForWindowChrome =
+      experimentalIpadWindowedTabInset &&
+      !isMobile &&
+      !primarySidebarVisible &&
+      group === "left";
+
     return (
       <div className="flex h-full min-h-0 min-w-0 flex-col">
         <EditorTabs
@@ -1421,6 +1493,7 @@ export function EditorPanel() {
           splitActive={state.split}
           splitOrientation={state.splitOrientation}
           showSplitToolbar={options.showSplitToolbar}
+          padStripLeadingForWindowChrome={padStripLeadingForWindowChrome}
           onSelectTab={(id) => selectTab(group, id)}
           onCloseTab={(id) => requestCloseTab(group, id)}
           onSplitRight={() => setSplitMode("horizontal", group)}
@@ -1432,6 +1505,7 @@ export function EditorPanel() {
           onOpenConversationTab={openConversationTab}
           onTabContextMenu={(e, id) => handleEditorTabContextMenu(e, group, id)}
           onStripContextMenu={(e) => handleEditorStripContextMenu(e, group)}
+          agentTabIndicators={agentTabIndicators}
         />
         <div
           className="flex min-h-0 flex-1 flex-col overflow-hidden"

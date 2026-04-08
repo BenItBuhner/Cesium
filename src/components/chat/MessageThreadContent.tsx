@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useRef, type RefObject } from "react";
+import { useCallback, useMemo, useRef, type RefObject } from "react";
 import { StickyChatHeader } from "./StickyChatHeader";
 import { useChatStickyPush } from "@/hooks/useChatStickyPush";
 import { UserMessage } from "./UserMessage";
@@ -16,17 +16,40 @@ import { PermissionRequestCard } from "./PermissionRequestCard";
 import { askStepsFromMessage } from "@/lib/ask-question-utils";
 import type { ChatMessage } from "@/lib/types";
 
+/** Types that end the “live tail” worked-session; later messages must not keep prior cards in loading UI. */
+const CHAIN_BREAKING_AFTER_WORKED = new Set<ChatMessage["type"]>([
+  "user",
+  "assistant",
+  "worked-session",
+  "permission-request",
+  "ask-question",
+  "shell-run",
+  "subagent",
+  "todo",
+  "todo-status",
+  "activity-label",
+]);
+
+export function workedSessionScopedKey(conversationId: string, messageId: string): string {
+  return `${conversationId}::${messageId}`;
+}
+
 function shouldKeepWorkedSessionLoading(messages: ChatMessage[], startIndex: number): boolean {
   for (let i = startIndex + 1; i < messages.length; i += 1) {
-    const next = messages[i];
-    if (next.type === "assistant") {
-      return false;
-    }
-    if (next.type === "user") {
+    if (CHAIN_BREAKING_AFTER_WORKED.has(messages[i]!.type)) {
       return false;
     }
   }
   return true;
+}
+
+function findLastWorkedSessionIndex(messages: ChatMessage[]): number {
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    if (messages[i]?.type === "worked-session") {
+      return i;
+    }
+  }
+  return -1;
 }
 
 export interface MessageThreadContentProps {
@@ -46,6 +69,13 @@ export interface MessageThreadContentProps {
     sessionId?: string;
   }) => void;
   onResolvePermission?: (requestId: string, optionId: string) => void;
+  onCancelPermission?: (requestId: string) => void;
+  /** When set, worked-session expand/collapse is persisted under scoped keys. */
+  conversationId?: string;
+  /** Conversation is still producing output (last worked block may default-open). */
+  conversationBusy?: boolean;
+  workedSessionOpenByScopedId?: Record<string, boolean>;
+  onWorkedSessionOpenChange?: (scopedKey: string, open: boolean) => void;
 }
 
 export function MessageThreadContent({
@@ -55,6 +85,11 @@ export function MessageThreadContent({
   workedSessionSurface = "panel",
   onOpenSubagent,
   onResolvePermission,
+  onCancelPermission,
+  conversationId,
+  conversationBusy = false,
+  workedSessionOpenByScopedId,
+  onWorkedSessionOpenChange,
 }: MessageThreadContentProps) {
   const stickyElMapRef = useRef<Map<number, HTMLDivElement>>(new Map());
   const registerStickyEl = useCallback((order: number, el: HTMLDivElement | null) => {
@@ -68,6 +103,11 @@ export function MessageThreadContent({
     stickyElMapRef,
     messages,
     !!stickyUserHeader
+  );
+
+  const lastWorkedSessionIndex = useMemo(
+    () => findLastWorkedSessionIndex(messages),
+    [messages]
   );
 
   const nodes: React.ReactNode[] = [];
@@ -205,6 +245,11 @@ export function MessageThreadContent({
               if (!msg.permissionRequestId) return;
               onResolvePermission?.(msg.permissionRequestId, optionId);
             }}
+            onCancel={
+              msg.permissionRequestId && onCancelPermission
+                ? () => onCancelPermission(msg.permissionRequestId!)
+                : undefined
+            }
           />
         );
         break;
@@ -219,18 +264,49 @@ export function MessageThreadContent({
           />
         );
         break;
-      case "worked-session":
+      case "worked-session": {
+        const scopedKey =
+          conversationId && onWorkedSessionOpenChange
+            ? workedSessionScopedKey(conversationId, msg.id)
+            : null;
+        const stored =
+          scopedKey != null ? workedSessionOpenByScopedId?.[scopedKey] : undefined;
+        const chainLoading =
+          msg.loading || shouldKeepWorkedSessionLoading(messages, i);
+        const isTailForExpandDefault =
+          i === lastWorkedSessionIndex &&
+          conversationBusy &&
+          shouldKeepWorkedSessionLoading(messages, i);
+        let openProp: boolean | undefined;
+        let onOpenChange: ((v: boolean) => void) | undefined;
+        if (scopedKey != null && onWorkedSessionOpenChange) {
+          openProp =
+            stored !== undefined
+              ? stored
+              : isTailForExpandDefault && (msg.workedDefaultOpen !== false)
+                ? true
+                : false;
+          onOpenChange = (v: boolean) => {
+            onWorkedSessionOpenChange(scopedKey, v);
+          };
+        }
         nodes.push(
           <WorkedSessionCard
             key={msg.id}
             label={msg.workedLabel!}
             entries={msg.workedEntries!}
+            open={openProp}
+            onOpenChange={onOpenChange}
             defaultOpen={msg.workedDefaultOpen}
-            loading={msg.loading || shouldKeepWorkedSessionLoading(messages, i)}
+            loading={chainLoading}
+            isLiveWorkedTail={
+              i === lastWorkedSessionIndex && chainLoading
+            }
             surface={workedSessionSurface}
           />
         );
         break;
+      }
       case "shell-run":
         nodes.push(<ShellCommandCard key={msg.id} title={msg.shellTitle!} />);
         break;

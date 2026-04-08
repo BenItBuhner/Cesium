@@ -25,6 +25,8 @@ export type WorkedSessionEntry =
   | { kind: "verbatim"; text: string }
   | { kind: "explore"; paths: string[]; caption?: string }
   | { kind: "reasoning"; text: string }
+  /** Model text interleaved before more tool/reasoning trace; keeps one worked-session dropdown. */
+  | { kind: "assistant_inline"; text: string }
   | {
       kind: "tool";
       /** Stable id from agent `toolCallId` for list keys + updates */
@@ -224,6 +226,23 @@ export type FileWatcherEvent =
   | { type: "ready"; latestSeq: number }
   | { type: "resync_required"; latestSeq: number }
   | { type: "pong"; latestSeq: number };
+
+/** Live agent chat tab affordances; keyed by conversation id (not persisted). */
+export type AgentTabIndicatorByConversationId = Record<
+  string,
+  {
+    needsAttention: boolean;
+    running: boolean;
+    /** Turn finished while tab was in background; cleared when user focuses the tab. */
+    unreadCompletion?: boolean;
+  }
+>;
+
+/** Pending follow-up prompt while the agent turn is still running. */
+export type QueuedChatPrompt = {
+  id: string;
+  text: string;
+};
 
 export interface ChatTab {
   id: string;

@@ -1,3 +1,16 @@
+/**
+ * Plain text for the chat composer contenteditable. Prefer over `textContent`:
+ * browsers represent soft line breaks with `<br>` / block nodes — `textContent` merges those
+ * into a single line and drops structure.
+ */
+export function getComposerPlainText(container: HTMLElement): string {
+  const raw =
+    typeof container.innerText === "string"
+      ? container.innerText
+      : (container.textContent ?? "");
+  return raw.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+}
+
 /** Character offset of the caret inside `container` (text-only contenteditable). */
 export function getCaretOffset(container: HTMLElement): number {
   const sel = window.getSelection();
@@ -11,7 +24,7 @@ export function getCaretOffset(container: HTMLElement): number {
 }
 
 export function setCaretOffset(container: HTMLElement, offset: number): void {
-  const text = container.textContent ?? "";
+  const text = getComposerPlainText(container);
   const safe = Math.max(0, Math.min(offset, text.length));
   const range = document.createRange();
   const sel = window.getSelection();
@@ -46,7 +59,7 @@ export function replaceTextRange(
   end: number,
   insert: string
 ): void {
-  const full = container.textContent ?? "";
+  const full = getComposerPlainText(container);
   const next = full.slice(0, start) + insert + full.slice(end);
   container.textContent = next;
   setCaretOffset(container, start + insert.length);

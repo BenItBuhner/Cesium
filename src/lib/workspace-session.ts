@@ -3,6 +3,7 @@ import type {
   EditorTab,
   EditorMode,
   ModelInfo,
+  QueuedChatPrompt,
 } from "@/lib/types";
 import type { AgentBackendId } from "@/lib/agent-types";
 
@@ -44,6 +45,14 @@ export type ChatSessionState = {
   backendId: AgentBackendId;
   scrollTopByTabId: Record<string, number>;
   hiddenConversationIds: string[];
+  /**
+   * Collapsed/expanded state for worked-session dropdowns.
+   * Keys: `${conversationId}::${messageId}` → true = expanded.
+   */
+  workedSessionOpenByScopedId?: Record<string, boolean>;
+  queuedPromptsByConversationId?: Record<string, QueuedChatPrompt[]>;
+  /** Conversation completed (idle) since last viewed; key present means show unread dot. */
+  unreadChatCompletionByConversationId?: Record<string, true>;
 };
 
 export type SettingsViewSessionState = {
@@ -89,6 +98,9 @@ export function createDefaultWorkspaceSession(
       backendId: "cursor-acp",
       scrollTopByTabId: {},
       hiddenConversationIds: [],
+      workedSessionOpenByScopedId: {},
+      queuedPromptsByConversationId: {},
+      unreadChatCompletionByConversationId: {},
     },
     explorer: {
       view: "explorer",
@@ -235,6 +247,21 @@ export function mergeWorkspaceSessionFromImport(
             (value): value is string => typeof value === "string" && value.length > 0
           )
         : current.chat.hiddenConversationIds,
+      workedSessionOpenByScopedId:
+        r.chat?.workedSessionOpenByScopedId &&
+        typeof r.chat.workedSessionOpenByScopedId === "object"
+          ? r.chat.workedSessionOpenByScopedId
+          : current.chat.workedSessionOpenByScopedId ?? {},
+      queuedPromptsByConversationId:
+        r.chat?.queuedPromptsByConversationId &&
+        typeof r.chat.queuedPromptsByConversationId === "object"
+          ? r.chat.queuedPromptsByConversationId
+          : current.chat.queuedPromptsByConversationId ?? {},
+      unreadChatCompletionByConversationId:
+        r.chat?.unreadChatCompletionByConversationId &&
+        typeof r.chat.unreadChatCompletionByConversationId === "object"
+          ? r.chat.unreadChatCompletionByConversationId
+          : current.chat.unreadChatCompletionByConversationId ?? {},
       model: importedUnsupportedBackend ? current.chat.model : r.chat?.model ?? current.chat.model,
       mode: importedUnsupportedBackend ? current.chat.mode : r.chat?.mode ?? current.chat.mode,
       backendId: normalizedChatBackendId,

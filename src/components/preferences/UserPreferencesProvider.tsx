@@ -22,8 +22,10 @@ type UserPreferencesContextValue = {
   preferences: UserPreferences;
   experimentalIpadMode: boolean;
   experimentalIpadCustomButtons: boolean;
+  experimentalIpadWindowedTabInset: boolean;
   setExperimentalIpadMode: (enabled: boolean) => void;
   setExperimentalIpadCustomButtons: (enabled: boolean) => void;
+  setExperimentalIpadWindowedTabInset: (enabled: boolean) => void;
   /** Replace persisted preferences (e.g. settings import). */
   importUserPreferences: (next: UserPreferences) => void;
 };
@@ -78,6 +80,17 @@ export function UserPreferencesProvider({
     });
   }, [persistPreferences]);
 
+  const setExperimentalIpadWindowedTabInset = useCallback((enabled: boolean) => {
+    setPreferencesState((prev) => {
+      const next: UserPreferences = {
+        ...prev,
+        experimentalIpadWindowedTabInset: enabled,
+      };
+      persistPreferences(next);
+      return next;
+    });
+  }, [persistPreferences]);
+
   const importUserPreferences = useCallback(
     (next: UserPreferences) => {
       setPreferencesState(next);
@@ -103,14 +116,17 @@ export function UserPreferencesProvider({
       preferences,
       experimentalIpadMode: preferences.experimentalIpadMode,
       experimentalIpadCustomButtons: preferences.experimentalIpadCustomButtons,
+      experimentalIpadWindowedTabInset: preferences.experimentalIpadWindowedTabInset,
       setExperimentalIpadMode,
       setExperimentalIpadCustomButtons,
+      setExperimentalIpadWindowedTabInset,
       importUserPreferences,
     }),
     [
       preferences,
       setExperimentalIpadMode,
       setExperimentalIpadCustomButtons,
+      setExperimentalIpadWindowedTabInset,
       importUserPreferences,
     ]
   );

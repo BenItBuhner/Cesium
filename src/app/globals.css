@@ -2,6 +2,18 @@
 @import "@xterm/xterm/css/xterm.css";
 
 /*
+ * Monaco (`@monaco-editor/react`): on iOS / iPadOS WebKit, the standalone bundle
+ * registers editor contribution `editor.contrib.iPadShowKeyboard`, which injects a
+ * textarea.iPadShowKeyboard overlay (keyboard glyph, bottom-right) to refocus and
+ * bring up the software keyboard. It is redundant with normal editor focus and reads
+ * as clutter; hide it outright. (Android does not use this contribution in upstream
+ * Monaco; any other “keyboard” chrome there is typically the browser/OS.)
+ */
+.monaco-editor .iPadShowKeyboard {
+  display: none !important;
+}
+
+/*
  * iPadOS Safari commonly reports touch as the primary input even when a trackpad
  * or mouse is connected, which breaks Tailwind's default v4 hover media query on
  * those devices. Use any-hover/any-pointer so hover styles activate whenever a
@@ -46,6 +58,10 @@
   --plan-accent-label: rgba(90, 74, 18, 0.85);
   --plan-accent-label-strong: rgba(50, 42, 10, 0.95);
 
+  /* Muted gold for permission / attention dots (plan-like, not traffic amber). */
+  --tab-agent-attention-dot: color-mix(in srgb, var(--plan-accent) 68%, #737373 32%);
+  --tab-unread-completion-dot: #4a76a8;
+
   --debug-accent: #b84d55;
   --debug-accent-dark: #8a3a40;
   --debug-accent-bg: #f0dedf;
@@ -70,6 +86,8 @@
   --sidebar-width: 290px;
   --chat-width: 550px;
   --tab-height: 40px;
+  /* Leading inset for editor tabs under iPadOS window controls when the sidebar is collapsed. */
+  --editor-window-chrome-tab-inset: 72px;
 
   /* Command palette & quick open */
   --palette-surface: #ffffff;
@@ -126,6 +144,9 @@ html.dark {
   --plan-accent-selected-border: rgba(194, 167, 56, 0.42);
   --plan-accent-label: rgba(220, 200, 120, 0.78);
   --plan-accent-label-strong: rgba(232, 210, 130, 0.92);
+
+  --tab-agent-attention-dot: color-mix(in srgb, var(--plan-accent) 38%, var(--bg-panel) 62%);
+  --tab-unread-completion-dot: #6b9fd4;
 
   --debug-accent: #e59a9a;
   --debug-accent-dark: #9b585e;

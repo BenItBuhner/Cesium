@@ -7,7 +7,10 @@ import { EditorTab } from "./EditorTab";
 import { useClickOutside } from "@/hooks/useClickOutside";
 import { useTabStripWheel } from "@/hooks/useTabStripWheel";
 import { CHAT_TAB_DND_MIME, parseChatTabDragPayload } from "@/lib/chat-tab-dnd";
-import type { EditorTab as EditorTabType } from "@/lib/types";
+import type {
+  AgentTabIndicatorByConversationId,
+  EditorTab as EditorTabType,
+} from "@/lib/types";
 import type { EditorGroup } from "./editor-panel-state";
 import { TAB_DND_MIME, parseTabDragPayload } from "./editor-panel-state";
 import type { EditorSplitOrientation } from "@/lib/workspace-session";
@@ -20,6 +23,8 @@ interface EditorTabsProps {
   splitOrientation: EditorSplitOrientation;
   /** Left row only: split / join + overflow. Right row when split: overflow only. */
   showSplitToolbar: boolean;
+  /** When true, add leading padding on the tab strip (iPadOS window controls). */
+  padStripLeadingForWindowChrome?: boolean;
   onSelectTab: (id: string) => void;
   onCloseTab: (id: string) => void;
   onSplitRight: () => void;
@@ -31,6 +36,8 @@ interface EditorTabsProps {
   onOpenConversationTab?: (conversationId: string, group: EditorGroup) => void;
   onTabContextMenu?: (e: MouseEvent, tabId: string) => void;
   onStripContextMenu?: (e: MouseEvent) => void;
+  /** Agent chat tabs: permission pending / running; keyed by `conversationId`. */
+  agentTabIndicators?: AgentTabIndicatorByConversationId;
 }
 
 const MENU_W = 240;
@@ -42,6 +49,7 @@ export function EditorTabs({
   splitActive,
   splitOrientation,
   showSplitToolbar,
+  padStripLeadingForWindowChrome = false,
   onSelectTab,
   onCloseTab,
   onSplitRight,
@@ -53,6 +61,7 @@ export function EditorTabs({
   onOpenConversationTab,
   onTabContextMenu,
   onStripContextMenu,
+  agentTabIndicators,
 }: EditorTabsProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [menuPos, setMenuPos] = useState({ top: 0, left: 0 });
@@ -140,7 +149,11 @@ export function EditorTabs({
     <div className="flex h-[var(--tab-height)] items-center overflow-hidden bg-[var(--bg-panel)]">
       <div
         ref={stripRef}
-        className="hide-scrollbar-x flex min-h-[36px] min-w-0 flex-1 items-center gap-0 p-[2px]"
+        className={`hide-scrollbar-x flex min-h-[36px] min-w-0 flex-1 items-center gap-0 py-[2px] pr-[2px] ${
+          padStripLeadingForWindowChrome
+            ? "pl-[var(--editor-window-chrome-tab-inset)]"
+            : "pl-[2px]"
+        }`}
         onDragOver={handleStripDragOver}
         onDrop={handleStripDrop}
         onContextMenu={(e) => {
@@ -148,20 +161,31 @@ export function EditorTabs({
           onStripContextMenu?.(e);
         }}
       >
-        {tabs.map((tab) => (
-          <EditorTab
-            key={tab.id}
-            tab={tab}
-            group={group}
-            isActive={tab.id === activeTabId}
-            dragEnabled={splitActive}
-            onSelect={onSelectTab}
-            onClose={onCloseTab}
-            onContextMenu={
-              onTabContextMenu ? (ev) => onTabContextMenu(ev, tab.id) : undefined
-            }
-          />
-        ))}
+        {tabs.map((tab) => {
+          const convId = tab.conversationId;
+          const ind = convId ? agentTabIndicators?.[convId] : undefined;
+          const needsAttention = Boolean(ind?.needsAttention);
+          const running = Boolean(ind?.running) && !needsAttention;
+          const unreadCompletion =
+            Boolean(ind?.unreadCompletion) && !needsAttention && !running;
+          return (
+            <EditorTab
+              key={tab.id}
+              tab={tab}
+              group={group}
+              isActive={tab.id === activeTabId}
+              dragEnabled={splitActive}
+              agentNeedsAttention={needsAttention}
+              agentRunning={running}
+              agentUnreadCompletion={unreadCompletion}
+              onSelect={onSelectTab}
+              onClose={onCloseTab}
+              onContextMenu={
+                onTabContextMenu ? (ev) => onTabContextMenu(ev, tab.id) : undefined
+              }
+            />
+          );
+        })}
         {tabs.length === 0 && splitActive && (
           <span className="px-[10px] font-sans text-[12px] text-[var(--text-disabled)]">
             Drop a tab here

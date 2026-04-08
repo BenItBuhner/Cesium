@@ -16,6 +16,8 @@ import { useHtmlDarkClass } from "@/hooks/useHtmlDarkClass";
 
 interface TerminalProps {
   terminalId: string;
+  /** When the user typed `exit` / `exit 0` and the shell exits with code 0, close the terminal tab. */
+  onAutoCloseAfterCleanExit?: () => void;
 }
 
 const decoder = new TextDecoder();
@@ -112,7 +114,17 @@ function normalizeCommandName(line: string): string | null {
   return trimmed;
 }
 
-export function Terminal({ terminalId }: TerminalProps) {
+/** Matches a user-submitting the shell `exit` built-in for a successful exit (0 / default). */
+function isUserExplicitExitCommand(line: string): boolean {
+  const t = line.trim().toLowerCase();
+  if (!t) return false;
+  const m = /^exit(?:\s+(\d+))?$/.exec(t);
+  if (!m) return false;
+  if (m[1] === undefined) return true;
+  return m[1] === "0";
+}
+
+export function Terminal({ terminalId, onAutoCloseAfterCleanExit }: TerminalProps) {
   const surfaceId = useId().replace(/:/g, "_");
   const {
     enabled: hardwareInputEnabled,
@@ -131,7 +143,11 @@ export function Terminal({ terminalId }: TerminalProps) {
   const pendingCommandRef = useRef("");
   const pendingClearRef = useRef(false);
   const clearTimerRef = useRef<number | null>(null);
+  const userRequestedExitRef = useRef(false);
+  const onAutoCloseAfterCleanExitRef = useRef(onAutoCloseAfterCleanExit);
   const hardwareInputEnabledRef = useRef(hardwareInputEnabled);
+
+  onAutoCloseAfterCleanExitRef.current = onAutoCloseAfterCleanExit;
   const [connectionState, setConnectionState] = useState("connecting");
   const [terminalReadyNonce, setTerminalReadyNonce] = useState(0);
   const isDark = useHtmlDarkClass();
@@ -242,8 +258,13 @@ export function Terminal({ terminalId }: TerminalProps) {
     const onTerminalInput = (data: string) => {
       for (const char of data) {
         if (char === "\r") {
-          const maybeCommand = normalizeCommandName(pendingCommandRef.current);
+          const lineSnapshot = pendingCommandRef.current;
+          const maybeCommand = normalizeCommandName(lineSnapshot);
           pendingCommandRef.current = "";
+
+          if (isUserExplicitExitCommand(lineSnapshot)) {
+            userRequestedExitRef.current = true;
+          }
 
           if (maybeCommand && clearCommandsRef.current.has(maybeCommand)) {
             pendingClearRef.current = true;
@@ -275,6 +296,7 @@ export function Terminal({ terminalId }: TerminalProps) {
       socket.onState((state) => {
         setConnectionState(state);
         if (state === "open") {
+          userRequestedExitRef.current = false;
           terminal.reset();
           sendResize();
           requestAnimationFrame(focusTerminalTarget);
@@ -300,6 +322,16 @@ export function Terminal({ terminalId }: TerminalProps) {
           }
 
           if (serverMessage.type === "exit") {
+            const closeTab = onAutoCloseAfterCleanExitRef.current;
+            const shouldAutoClose =
+              serverMessage.code === 0 &&
+              userRequestedExitRef.current &&
+              typeof closeTab === "function";
+            userRequestedExitRef.current = false;
+            if (shouldAutoClose) {
+              closeTab();
+              return;
+            }
             terminal.writeln(`\r\n[Process exited with code ${serverMessage.code}]`);
             return;
           }
@@ -346,6 +378,7 @@ export function Terminal({ terminalId }: TerminalProps) {
       }
       pendingCommandRef.current = "";
       pendingClearRef.current = false;
+      userRequestedExitRef.current = false;
       unsubscribers.forEach((unsubscribe) => unsubscribe());
       disposable.dispose();
       resizeObserverRef.current?.disconnect();

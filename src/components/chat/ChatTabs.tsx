@@ -8,14 +8,16 @@ import {
   type KeyboardEvent,
   type MouseEvent,
 } from "react";
-import { Plus, X } from "lucide-react";
+import { Loader, Plus, X } from "lucide-react";
 import { setMinimalTabDragImage } from "@/components/editor/tab-drag-image";
 import { CHAT_TAB_DND_MIME, parseChatTabDragPayload } from "@/lib/chat-tab-dnd";
 import { useTabStripWheel } from "@/hooks/useTabStripWheel";
-import type { ChatTab } from "@/lib/types";
+import type { AgentTabIndicatorByConversationId, ChatTab } from "@/lib/types";
 
 interface ChatTabsProps {
   tabs: ChatTab[];
+  /** Running / permission-pending UI; keyed by tab id (= conversation id). */
+  agentTabIndicators?: AgentTabIndicatorByConversationId;
   onSelectTab: (id: string) => void;
   onCloseTab: (id: string) => void;
   onNewChat: () => void;
@@ -41,6 +43,7 @@ function getChatTabDropIndex(strip: HTMLElement, clientX: number): number {
 
 export function ChatTabs({
   tabs,
+  agentTabIndicators,
   onSelectTab,
   onCloseTab,
   onNewChat,
@@ -174,7 +177,22 @@ export function ChatTabs({
         onContextMenu={handleStripContextMenu}
         className="hide-scrollbar-x flex min-w-0 flex-1 items-center gap-0 p-[2px]"
       >
-        {tabs.map((tab) => (
+        {tabs.map((tab) => {
+          const ind = agentTabIndicators?.[tab.id];
+          const needsAttention = Boolean(ind?.needsAttention);
+          const running = Boolean(ind?.running) && !needsAttention;
+          const unreadCompletion =
+            Boolean(ind?.unreadCompletion) && !needsAttention && !running;
+          const ariaSuffix = needsAttention
+            ? ", approval needed"
+            : running
+              ? ", in progress"
+              : unreadCompletion
+                ? ", new response"
+                : "";
+          const showAgentIndicator = needsAttention || running || unreadCompletion;
+          const titleMarginClass = showAgentIndicator ? "ml-[4px]" : "ml-[9px]";
+          return (
           <button
             key={tab.id}
             type="button"
@@ -183,7 +201,7 @@ export function ChatTabs({
             onDragStart={(e) => handleTabDragStart(e, tab.id)}
             data-chat-tab-id={tab.id}
             aria-selected={tab.active}
-            aria-label={tab.title}
+            aria-label={`${tab.title}${ariaSuffix}`}
             onClick={() => onSelectTab(tab.id)}
             onContextMenu={(e) => {
               e.stopPropagation();
@@ -194,12 +212,35 @@ export function ChatTabs({
               background: tab.active ? "var(--bg-tab-active)" : "transparent",
             }}
           >
+            {showAgentIndicator ? (
+              <span className="ml-[6px] flex w-[18px] shrink-0 flex-col items-center justify-center">
+                {needsAttention ? (
+                  <span
+                    className="size-[7px] shrink-0 rounded-full bg-[var(--tab-agent-attention-dot)]"
+                    title="Approval or permission needed"
+                    aria-hidden
+                  />
+                ) : unreadCompletion ? (
+                  <span
+                    className="size-[7px] shrink-0 rounded-full bg-[var(--tab-unread-completion-dot)]"
+                    title="New response ready"
+                    aria-hidden
+                  />
+                ) : (
+                  <Loader
+                    className="size-[14px] shrink-0 text-[var(--text-secondary)] animate-spin"
+                    strokeWidth={1.5}
+                    aria-hidden
+                  />
+                )}
+              </span>
+            ) : null}
             {editingTabId === tab.id ? (
               <input
                 ref={renameInputRef}
                 value={editValue}
                 aria-label="Tab name"
-                className="ml-[9px] min-w-0 flex-1 bg-transparent font-sans text-[14px] font-normal text-[var(--text-secondary)] outline-none"
+                className={`${titleMarginClass} min-w-0 flex-1 bg-transparent font-sans text-[14px] font-normal text-[var(--text-secondary)] outline-none`}
                 onClick={(e) => e.stopPropagation()}
                 onChange={(e) => setEditValue(e.target.value)}
                 onBlur={() => commitRename()}
@@ -215,7 +256,7 @@ export function ChatTabs({
               />
             ) : (
               <span
-                className="ml-[9px] min-w-0 flex-1 truncate text-left font-sans text-[14px] font-normal text-[var(--text-secondary)]"
+                className={`${titleMarginClass} min-w-0 flex-1 truncate text-left font-sans text-[14px] font-normal text-[var(--text-secondary)]`}
                 onDoubleClick={(e) => {
                   e.stopPropagation();
                   if (!onRenameTab) {
@@ -251,7 +292,8 @@ export function ChatTabs({
               </span>
             </div>
           </button>
-        ))}
+        );
+        })}
       </div>
       <button
         type="button"

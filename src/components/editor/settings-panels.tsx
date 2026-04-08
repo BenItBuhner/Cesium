@@ -781,7 +781,7 @@ function CursorAgentServerDeploymentReadout() {
               {h.acpCapabilitiesJsonSet ? "set" : "not set"}
             </p>
             <p className="text-[11px] opacity-90">
-              When the Cursor backend needs approval, use the card above the composer or the workbench toast.
+              When the Cursor backend needs approval, choose an action on the permission card in the chat transcript.
               After a new chat session, check the transcript for Cursor CLI authentication notes from the server.
             </p>
           </div>
@@ -1561,8 +1561,10 @@ export function BetaSettingsPanel() {
   const {
     experimentalIpadMode,
     experimentalIpadCustomButtons,
+    experimentalIpadWindowedTabInset,
     setExperimentalIpadMode,
     setExperimentalIpadCustomButtons,
+    setExperimentalIpadWindowedTabInset,
   } = useUserPreferences();
 
   return (
@@ -1591,6 +1593,18 @@ export function BetaSettingsPanel() {
             <ToggleSwitch
               checked={experimentalIpadCustomButtons}
               onChange={setExperimentalIpadCustomButtons}
+              size="md"
+              variant="green"
+            />
+          }
+        />
+        <SettingsRow
+          title="Windowed mode tab inset"
+          description="When the primary sidebar is hidden, add extra left padding to the editor tab strip so tabs sit clear of iPadOS window controls (close, minimize, maximize) in multitasking windows."
+          trailing={
+            <ToggleSwitch
+              checked={experimentalIpadWindowedTabInset}
+              onChange={setExperimentalIpadWindowedTabInset}
               size="md"
               variant="green"
             />

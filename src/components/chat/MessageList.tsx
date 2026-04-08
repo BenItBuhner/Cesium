@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef } from "react";
 import { MessageThreadContent } from "./MessageThreadContent";
 import { useOpenInEditor } from "@/components/editor/OpenInEditorContext";
+import { useWorkspace } from "@/contexts/WorkspaceContext";
 import type { ChatMessage } from "@/lib/types";
 
 function inferTranscriptSessionId(messages: ChatMessage[]): string | undefined {
@@ -20,9 +21,12 @@ interface MessageListProps {
   initialScrollTop?: number;
   onScrollTopSettled?: (scrollTop: number) => void;
   onResolvePermission?: (requestId: string, optionId: string) => void;
+  onCancelPermission?: (requestId: string) => void;
   bottomDockVisible?: boolean;
   surface?: "panel" | "editor";
   contentClassName?: string;
+  conversationId?: string;
+  conversationBusy?: boolean;
 }
 
 export function MessageList({
@@ -30,11 +34,15 @@ export function MessageList({
   initialScrollTop = 0,
   onScrollTopSettled,
   onResolvePermission,
+  onCancelPermission,
   bottomDockVisible = true,
   surface = "panel",
   contentClassName,
+  conversationId,
+  conversationBusy = false,
 }: MessageListProps) {
   const { openSubagentTranscript } = useOpenInEditor();
+  const { workspaceSession, updateWorkspaceSession } = useWorkspace();
   const scrollRootRef = useRef<HTMLDivElement>(null);
   const stickToBottomRef = useRef(true);
   const initialScrollTopRef = useRef(initialScrollTop);
@@ -123,11 +131,63 @@ export function MessageList({
     };
   }, [flushPersistedScrollTop]);
 
+  const workedMap = workspaceSession.chat.workedSessionOpenByScopedId ?? {};
+  const setWorkedOpen = useCallback(
+    (scopedKey: string, open: boolean) => {
+      updateWorkspaceSession((current) => {
+        const prev = current.chat.workedSessionOpenByScopedId ?? {};
+        if (prev[scopedKey] === open) {
+          return current;
+        }
+        return {
+          ...current,
+          chat: {
+            ...current.chat,
+            workedSessionOpenByScopedId: {
+              ...prev,
+              [scopedKey]: open,
+            },
+          },
+        };
+      });
+    },
+    [updateWorkspaceSession]
+  );
+
+  const thread = (
+    <MessageThreadContent
+      messages={messages}
+      stickyUserHeader
+      scrollRootRef={scrollRootRef}
+      workedSessionSurface={surface}
+      onResolvePermission={onResolvePermission}
+      onCancelPermission={onCancelPermission}
+      conversationId={conversationId}
+      conversationBusy={conversationBusy}
+      workedSessionOpenByScopedId={conversationId ? workedMap : undefined}
+      onWorkedSessionOpenChange={conversationId ? setWorkedOpen : undefined}
+      onOpenSubagent={({ title, transcript, sessionId }) =>
+        openSubagentTranscript({
+          title,
+          messages: transcript,
+          sessionId: sessionId ?? inferTranscriptSessionId(transcript),
+        })
+      }
+    />
+  );
+
+  /** Top padding lives here, not on the scroll root, so `position: sticky` + `top` is not
+   *  stacked with scroll-container padding (which reads ~20px low in Blink/WebKit). */
+  const innerClass =
+    contentClassName && contentClassName.length > 0
+      ? `pt-[10px] ${contentClassName}`
+      : "pt-[10px]";
+
   return (
     <div
       ref={scrollRootRef}
       data-chat-scroll-root
-      className={`absolute inset-0 overflow-y-auto overflow-x-hidden overscroll-y-contain px-[10px] pt-[10px] [-webkit-overflow-scrolling:touch] hide-scrollbar-y ${
+      className={`absolute inset-0 overflow-y-auto overflow-x-hidden overscroll-y-contain px-[10px] [-webkit-overflow-scrolling:touch] hide-scrollbar-y ${
         bottomDockVisible ? "pb-[clamp(220px,38vh,340px)]" : "pb-[14px]"
       }`}
       onScroll={(event) => {
@@ -136,22 +196,7 @@ export function MessageList({
         schedulePersistedScrollTop();
       }}
     >
-      <div className={contentClassName}>
-        <MessageThreadContent
-          messages={messages}
-          stickyUserHeader
-          scrollRootRef={scrollRootRef}
-          workedSessionSurface={surface}
-          onResolvePermission={onResolvePermission}
-          onOpenSubagent={({ title, transcript, sessionId }) =>
-            openSubagentTranscript({
-              title,
-              messages: transcript,
-              sessionId: sessionId ?? inferTranscriptSessionId(transcript),
-            })
-          }
-        />
-      </div>
+      <div className={innerClass}>{thread}</div>
     </div>
   );
 }

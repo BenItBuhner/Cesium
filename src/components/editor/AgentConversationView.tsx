@@ -1,20 +1,17 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Search } from "lucide-react";
 import { ChatComposer } from "@/components/chat/ChatComposer";
+import { ComposerQueueDock } from "@/components/chat/ComposerQueueDock";
 import { AskQuestionCard } from "@/components/chat/AskQuestionCard";
 import { MessageList } from "@/components/chat/MessageList";
-import { PermissionRequestCard } from "@/components/chat/PermissionRequestCard";
 import { useOpenInEditor } from "@/components/editor/OpenInEditorContext";
 import { RecentChatsModal } from "@/components/ide/RecentChatsModal";
-import {
-  agentPermissionOptionsToUiChoices,
-  projectAgentEventsToChatMessages,
-} from "@/lib/agent-chat";
+import { projectAgentEventsToChatMessages } from "@/lib/agent-chat";
 import { askStepsFromMessage } from "@/lib/ask-question-utils";
 import { useAgentConversations } from "@/components/chat/AgentConversationsContext";
-import type { EditorMode } from "@/lib/types";
+import type { EditorMode, QueuedChatPrompt } from "@/lib/types";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import {
   EDITOR_CHAT_CONTENT_CLASS,
@@ -111,12 +108,56 @@ export function AgentConversationView({
     () => (dockedAsk ? askStepsFromMessage(dockedAsk) : []),
     [dockedAsk]
   );
-  const isEmptyThread = threadMessages.length === 0;
   const composerDraftId = conversationId;
   const composerDraftTitle =
     conversation?.title && conversation.title !== "New chat"
       ? `${conversation.title} prompt`
       : "Composer";
+  const queuedPrompts = useMemo(
+    () => workspaceSession.chat.queuedPromptsByConversationId?.[conversationId] ?? [],
+    [conversationId, workspaceSession.chat.queuedPromptsByConversationId]
+  );
+  const removeQueuedPrompt = useCallback(
+    (item: QueuedChatPrompt) => {
+      updateWorkspaceSession((current) => {
+        const map = { ...(current.chat.queuedPromptsByConversationId ?? {}) };
+        const list = map[conversationId];
+        if (!list) {
+          return current;
+        }
+        const next = list.filter((p) => p.id !== item.id);
+        if (next.length === 0) {
+          delete map[conversationId];
+        } else {
+          map[conversationId] = next;
+        }
+        return {
+          ...current,
+          chat: {
+            ...current.chat,
+            queuedPromptsByConversationId: map,
+          },
+        };
+      });
+    },
+    [conversationId, updateWorkspaceSession]
+  );
+  const unqueuePromptToComposer = useCallback(
+    (item: QueuedChatPrompt) => {
+      removeQueuedPrompt(item);
+      upsertComposerDraft(composerDraftId, {
+        title: composerDraftTitle,
+        content: item.text,
+      });
+    },
+    [
+      composerDraftId,
+      composerDraftTitle,
+      removeQueuedPrompt,
+      upsertComposerDraft,
+    ]
+  );
+  const isEmptyThread = threadMessages.length === 0;
   const composerDraftText = composerDrafts[composerDraftId]?.content ?? "";
   const composerSelection = composerSelections[composerDraftId] ?? {
     start: composerDraftText.length,
@@ -152,51 +193,6 @@ export function AgentConversationView({
     }
     void syncConversationSnapshot(conversationId).catch(() => undefined);
   }, [conversation, conversationId, loadState, syncConversationSnapshot]);
-
-  const pendingPermissionDock = useMemo(() => {
-    const pending = conversation?.pendingPermission;
-    if (!pending || !conversation) {
-      return null;
-    }
-    return (
-      <div
-        className={`border-t border-[var(--border-card)] bg-[var(--bg-main)]/94 ${EDITOR_CHAT_INSET_X_CLASS} pb-[12px] pt-[10px] backdrop-blur-[10px]`}
-      >
-        <div className={EDITOR_CHAT_CONTENT_CLASS}>
-          <PermissionRequestCard
-            title={pending.title ?? "Permission required"}
-            detail={pending.detail}
-            options={agentPermissionOptionsToUiChoices(pending.options ?? [])}
-            onSelect={(optionId) => {
-              void answerPermissionForConversation(
-                conversation.id,
-                pending.requestId,
-                optionId
-              );
-            }}
-          />
-          <div className="mt-[8px] flex justify-end">
-            <button
-              type="button"
-              className="font-sans text-[11px] text-[var(--text-secondary)] underline decoration-dotted underline-offset-2 hover:text-[var(--text-primary)]"
-              onClick={() =>
-                void cancelPermissionForConversation(
-                  conversation.id,
-                  pending.requestId
-                )
-              }
-            >
-              Cancel request
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  }, [
-    answerPermissionForConversation,
-    cancelPermissionForConversation,
-    conversation,
-  ]);
 
   const recentChatsSection = showRecentChatsSection ? (
     <div className={`${EDITOR_CHAT_CONTENT_CLASS} flex flex-col gap-[2px]`}>
@@ -284,9 +280,11 @@ export function AgentConversationView({
         }}
         busy={composerState.busy}
         configLocked={false}
-        onSubmit={async (text) => {
-          const ok = await promptConversation(conversationId, text);
-          if (ok) {
+        onSubmit={(text) => {
+          void promptConversation(conversationId, text).then((ok) => {
+            if (!ok) {
+              return;
+            }
             updateWorkspaceSession((current) => ({
               ...current,
               chat: {
@@ -306,7 +304,7 @@ export function AgentConversationView({
                 ),
               },
             }));
-          }
+          });
         }}
         onCancel={() => cancelConversation(conversationId)}
         layout={isEmptyThread ? "empty-top" : "docked-bottom"}
@@ -320,7 +318,15 @@ export function AgentConversationView({
         <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
           {!composerHiddenForExpanded ? (
             <div className="shrink-0">
-              {pendingPermissionDock}
+              {queuedPrompts.length > 0 ? (
+                <div className={EDITOR_CHAT_CONTENT_CLASS}>
+                  <ComposerQueueDock
+                    items={queuedPrompts}
+                    onDelete={removeQueuedPrompt}
+                    onUnqueue={unqueuePromptToComposer}
+                  />
+                </div>
+              ) : null}
               {composer}
             </div>
           ) : null}
@@ -341,6 +347,11 @@ export function AgentConversationView({
             messages={scrollMessages}
             surface="editor"
             contentClassName={EDITOR_CHAT_CONTENT_CLASS}
+            conversationId={conversationId}
+            conversationBusy={
+              conversation?.status === "running" ||
+              conversation?.status === "awaiting_permission"
+            }
             initialScrollTop={workspaceSession.chat.scrollTopByTabId[conversationId] ?? 0}
             onScrollTopSettled={(scrollTop) => {
               updateWorkspaceSession((current) =>
@@ -363,14 +374,14 @@ export function AgentConversationView({
             onResolvePermission={(requestId, optionId) => {
               void answerPermissionForConversation(conversationId, requestId, optionId);
             }}
+            onCancelPermission={(requestId) => {
+              void cancelPermissionForConversation(conversationId, requestId);
+            }}
             bottomDockVisible={!composerHiddenForExpanded}
           />
           {!composerHiddenForExpanded ? (
             <div className="pointer-events-none absolute inset-x-0 bottom-0 z-30">
               <div className="pointer-events-auto chat-bottom-dock">
-                {pendingPermissionDock ? (
-                  <div className="pointer-events-auto">{pendingPermissionDock}</div>
-                ) : null}
                 {recentChatsSection ? (
                   <div className={`${EDITOR_CHAT_INSET_X_CLASS} pt-[8px]`}>
                     {recentChatsSection}
@@ -380,6 +391,17 @@ export function AgentConversationView({
                   <div className={`${EDITOR_CHAT_INSET_X_CLASS} pt-[8px]`}>
                     <div className={EDITOR_CHAT_CONTENT_CLASS}>
                       <AskQuestionCard steps={dockedAskSteps} dockAboveComposer />
+                    </div>
+                  </div>
+                ) : null}
+                {queuedPrompts.length > 0 ? (
+                  <div className={`${EDITOR_CHAT_INSET_X_CLASS} pt-[8px]`}>
+                    <div className={EDITOR_CHAT_CONTENT_CLASS}>
+                      <ComposerQueueDock
+                        items={queuedPrompts}
+                        onDelete={removeQueuedPrompt}
+                        onUnqueue={unqueuePromptToComposer}
+                      />
                     </div>
                   </div>
                 ) : null}

@@ -257,6 +257,21 @@ function normalizeWorkspaceSession(
             (value): value is string => typeof value === "string" && value.length > 0
           )
         : defaults.chat.hiddenConversationIds,
+      workedSessionOpenByScopedId:
+        raw.chat?.workedSessionOpenByScopedId &&
+        typeof raw.chat.workedSessionOpenByScopedId === "object"
+          ? raw.chat.workedSessionOpenByScopedId
+          : defaults.chat.workedSessionOpenByScopedId ?? {},
+      queuedPromptsByConversationId:
+        raw.chat?.queuedPromptsByConversationId &&
+        typeof raw.chat.queuedPromptsByConversationId === "object"
+          ? raw.chat.queuedPromptsByConversationId
+          : defaults.chat.queuedPromptsByConversationId ?? {},
+      unreadChatCompletionByConversationId:
+        raw.chat?.unreadChatCompletionByConversationId &&
+        typeof raw.chat.unreadChatCompletionByConversationId === "object"
+          ? raw.chat.unreadChatCompletionByConversationId
+          : defaults.chat.unreadChatCompletionByConversationId ?? {},
       model: usedFallbackBackend ? defaults.chat.model : raw.chat?.model ?? defaults.chat.model,
       mode: usedFallbackBackend ? defaults.chat.mode : raw.chat?.mode ?? defaults.chat.mode,
       backendId: normalizedChatBackendId,

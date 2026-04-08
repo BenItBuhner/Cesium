@@ -1,7 +1,15 @@
 "use client";
 
-import { CheckCircle2, CircleSlash, ShieldAlert } from "lucide-react";
+import { ShieldAlert } from "lucide-react";
 import type { PermissionChoiceOption } from "@/lib/types";
+
+/** Shared metrics so reject/deny matches allow-* buttons (primary vs outline only). */
+const btnBase =
+  "inline-flex min-h-[32px] shrink-0 items-center justify-center rounded-[var(--radius-tab)] px-[12px] py-[5px] font-sans text-[12px] font-normal leading-none tracking-normal box-border transition-colors disabled:pointer-events-none disabled:opacity-45";
+
+const btnSecondary = `${btnBase} border border-[var(--border-card)] bg-transparent text-[var(--text-primary)] hover:bg-[var(--accent-bg)]`;
+
+const btnPrimary = `${btnBase} border border-[var(--accent)] bg-[var(--accent)] text-[var(--bg-main)] hover:opacity-90`;
 
 interface PermissionRequestCardProps {
   title: string;
@@ -10,13 +18,11 @@ interface PermissionRequestCardProps {
   resolved?: boolean;
   selectedOptionId?: string;
   onSelect?: (optionId: string) => void;
+  onCancel?: () => void;
 }
 
-function optionTone(kind: PermissionChoiceOption["kind"]): string {
-  if (kind === "allow_once" || kind === "allow_always") {
-    return "border-[var(--plan-accent)] bg-[var(--plan-accent-bg)] text-[var(--plan-accent)]";
-  }
-  return "border-[var(--border-card)] bg-[var(--bg-panel)] text-[var(--text-primary)]";
+function buttonClassForKind(kind: PermissionChoiceOption["kind"]): string {
+  return kind === "allow_once" || kind === "allow_always" ? btnPrimary : btnSecondary;
 }
 
 export function PermissionRequestCard({
@@ -26,7 +32,24 @@ export function PermissionRequestCard({
   resolved = false,
   selectedOptionId,
   onSelect,
+  onCancel,
 }: PermissionRequestCardProps) {
+  const resolvedOutcomeText = (() => {
+    if (!resolved) {
+      return null;
+    }
+    if (detail?.includes("cancelled") || detail?.includes("cancel")) {
+      return detail;
+    }
+    if (selectedOptionId) {
+      const label = (options ?? []).find((o) => o.id === selectedOptionId)?.label;
+      if (label) {
+        return label;
+      }
+    }
+    return detail ?? "Permission resolved.";
+  })();
+
   return (
     <div className="rounded-[var(--radius-card)] border border-[var(--border-card)] bg-[var(--bg-card)] px-[12px] py-[10px]">
       <div className="flex items-start gap-[10px]">
@@ -37,37 +60,42 @@ export function PermissionRequestCard({
           <div className="font-sans text-[13px] font-medium text-[var(--text-primary)]">
             {title}
           </div>
-          {detail ? (
+          {detail && !resolved ? (
             <div className="mt-[2px] font-sans text-[12px] text-[var(--text-secondary)]">
               {detail}
             </div>
           ) : null}
-          <div className="mt-[10px] flex flex-wrap gap-[8px]">
-            {(options ?? []).map((option) => {
-              const selected = option.id === selectedOptionId;
-              return (
-                <button
-                  key={option.id}
-                  type="button"
-                  disabled={resolved}
-                  onClick={() => onSelect?.(option.id)}
-                  className={`inline-flex items-center gap-[6px] rounded-[var(--radius-pill)] border px-[9px] py-[5px] font-sans text-[12px] transition-opacity hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-60 ${optionTone(option.kind)}`}
-                >
-                  {selected ? (
-                    <CheckCircle2 className="size-[12px]" strokeWidth={2} />
-                  ) : option.kind === "reject_once" || option.kind === "reject_always" ? (
-                    <CircleSlash className="size-[12px]" strokeWidth={2} />
-                  ) : null}
-                  <span>{option.label}</span>
-                </button>
-              );
-            })}
-          </div>
-          {resolved ? (
-            <div className="mt-[8px] font-sans text-[11px] text-[var(--text-secondary)]">
-              {selectedOptionId
-                ? `Sent ${selectedOptionId}.`
-                : "Awaiting the provider to continue the turn."}
+          {!resolved ? (
+            <>
+              <div className="mt-[10px] flex flex-wrap justify-end gap-[6px]">
+                {(options ?? []).map((option) => (
+                  <button
+                    key={option.id}
+                    type="button"
+                    onClick={() => onSelect?.(option.id)}
+                    className={buttonClassForKind(option.kind)}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+              {onCancel ? (
+                <div className="mt-[8px] flex justify-end">
+                  <button
+                    type="button"
+                    className="font-sans text-[11px] text-[var(--text-secondary)] underline decoration-dotted underline-offset-2 hover:text-[var(--text-primary)]"
+                    onClick={onCancel}
+                  >
+                    Cancel request
+                  </button>
+                </div>
+              ) : null}
+            </>
+          ) : resolvedOutcomeText ? (
+            <div className="mt-[10px] flex justify-end">
+              <span className="max-w-full text-right font-sans text-[12px] text-[var(--text-disabled)]">
+                {resolvedOutcomeText}
+              </span>
             </div>
           ) : null}
         </div>

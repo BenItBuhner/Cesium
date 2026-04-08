@@ -42,6 +42,7 @@ import {
 } from "@/lib/composer-suggestions";
 import {
   getCaretClientRect,
+  getComposerPlainText,
   getCaretOffset,
   parseTriggerToken,
   replaceTextRange,
@@ -51,6 +52,7 @@ import type { AgentModeOption, EditorMode, KnownEditorMode, ModelInfo } from "@/
 import type { AgentBackendId, AgentBackendInfo, AgentConfigOption } from "@/lib/agent-types";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { transcribeAudio } from "@/lib/server-api";
+import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
 
 const sendButtonBgClass: Record<KnownEditorMode, string> = {
   agent: "bg-[var(--accent-dark)]",
@@ -319,6 +321,8 @@ export function ChatComposer({
   variant = "docked",
 }: ChatComposerProps) {
   const { fileTree } = useWorkspace();
+  const { settings } = useGlobalSettings();
+  const submitCtrlEnter = settings.agents.submitCtrlEnter;
   const { pushNotification } = useWorkbenchNotifications();
   const surfaceId = useId().replace(/:/g, "_");
   const {
@@ -776,29 +780,24 @@ export function ChatComposer({
 
   const submitComposer = useCallback(async () => {
     const trimmed = valueRef.current.trim();
-    if (!trimmed || busy) {
+    if (!trimmed) {
       return;
     }
     const promptText = applyComposerDirectives(trimmed);
-    if (promptText) {
-      await onSubmit(promptText);
-    }
+    valueRef.current = "";
     setComposerValue("");
     setComposerSelection({ start: 0, end: 0 });
     setMenu(null);
-  }, [
-    applyComposerDirectives,
-    busy,
-    onSubmit,
-    setComposerSelection,
-    setComposerValue,
-  ]);
+    if (promptText) {
+      void Promise.resolve(onSubmit(promptText)).catch(() => undefined);
+    }
+  }, [applyComposerDirectives, onSubmit, setComposerSelection, setComposerValue]);
 
   const syncNativeState = useCallback(() => {
     if (hardwareInputEnabled) return;
     const el = editorRef.current;
     if (!el) return;
-    const text = el.textContent ?? "";
+    const text = getComposerPlainText(el);
     const caret = getCaretOffset(el);
     setComposerValue(text);
     setComposerSelection({ start: caret, end: caret });
@@ -808,7 +807,7 @@ export function ChatComposer({
     if (hardwareInputEnabled) return;
     const el = editorRef.current;
     if (!el) return;
-    if (el.textContent !== value) {
+    if (getComposerPlainText(el) !== value) {
       el.textContent = value;
     }
   }, [hardwareInputEnabled, value]);
@@ -923,10 +922,18 @@ export function ChatComposer({
         }
         return true;
       }
-      if (!currentMenu && event.key === "Enter" && !event.shiftKey) {
-        event.preventDefault();
-        void submitComposer();
-        return true;
+      if (!currentMenu && event.key === "Enter") {
+        const mod = event.ctrlKey || event.metaKey;
+        if (submitCtrlEnter && mod) {
+          event.preventDefault();
+          void submitComposer();
+          return true;
+        }
+        if (!submitCtrlEnter && !event.shiftKey) {
+          event.preventDefault();
+          void submitComposer();
+          return true;
+        }
       }
 
       const next = applyTextBufferKey(
@@ -945,15 +952,30 @@ export function ChatComposer({
       setComposerSelection(next.selection);
       return true;
     },
-    [pickAt, pickSlash, setComposerSelection, setComposerValue, submitComposer]
+    [
+      pickAt,
+      pickSlash,
+      setComposerSelection,
+      setComposerValue,
+      submitComposer,
+      submitCtrlEnter,
+    ]
   );
 
   const handleNativeComposerKeyDown = useCallback(
     (event: ReactKeyboardEvent<HTMLDivElement>) => {
       if (!menu) {
-        if (event.key === "Enter" && !event.shiftKey) {
-          event.preventDefault();
-          void submitComposer();
+        if (event.key === "Enter") {
+          const mod = event.ctrlKey || event.metaKey;
+          if (submitCtrlEnter) {
+            if (mod) {
+              event.preventDefault();
+              void submitComposer();
+            }
+          } else if (!event.shiftKey) {
+            event.preventDefault();
+            void submitComposer();
+          }
         }
         return;
       }
@@ -987,7 +1009,16 @@ export function ChatComposer({
         return;
       }
     },
-    [filteredAt, filteredSlash, menu, pickAt, pickSlash, selectedIndex, submitComposer]
+    [
+      filteredAt,
+      filteredSlash,
+      menu,
+      pickAt,
+      pickSlash,
+      selectedIndex,
+      submitComposer,
+      submitCtrlEnter,
+    ]
   );
 
   useEffect(() => {
@@ -1071,7 +1102,7 @@ export function ChatComposer({
     () => renderComposerText(value, selection, isActive, caretRef),
     [isActive, selection, value]
   );
-  const canSubmit = value.trim().length > 0 && !busy;
+  const canSubmit = value.trim().length > 0;
 
   return (
     <div
@@ -1316,24 +1347,24 @@ export function ChatComposer({
               </span>
             )}
           </button>
+          {busy && onCancel ? (
+            <button
+              type="button"
+              onClick={() => void onCancel()}
+              className="flex h-[20px] w-[20px] items-center justify-center rounded-full bg-[var(--border-card)] text-[var(--text-primary)] transition-opacity hover:opacity-80"
+              aria-label="Stop"
+            >
+              <Square className="size-[9px]" fill="currentColor" strokeWidth={2.2} />
+            </button>
+          ) : null}
           <button
             type="button"
-            onClick={() => {
-              if (busy) {
-                void onCancel?.();
-                return;
-              }
-              void submitComposer();
-            }}
-            disabled={busy ? !onCancel : !canSubmit}
+            onClick={() => void submitComposer()}
+            disabled={!canSubmit}
             className={`flex h-[20px] w-[20px] items-center justify-center rounded-full transition-opacity hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-50 ${sendButtonBgClass[getModeTone(mode)]}`}
-            aria-label={busy ? "Stop" : "Send"}
+            aria-label={busy ? "Send or queue message" : "Send"}
           >
-            {busy ? (
-              <Square className="size-[9px] text-[var(--bg-main)]" fill="currentColor" strokeWidth={2.2} />
-            ) : (
-              <ArrowUp className="size-3 text-[var(--bg-main)]" strokeWidth={2.5} />
-            )}
+            <ArrowUp className="size-3 text-[var(--bg-main)]" strokeWidth={2.5} />
           </button>
         </div>
       </div>

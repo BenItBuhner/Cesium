@@ -51,16 +51,16 @@ export function UserMessage({
         style={expanded ? undefined : { maxHeight: 100 }}
       >
         {hasSegments ? (
-          <div className="flex flex-wrap items-baseline gap-x-[6px] gap-y-[6px] font-sans text-[14px] font-normal leading-normal text-[var(--text-primary)]">
+          <div className="block font-sans text-[14px] font-normal leading-normal text-[var(--text-primary)]">
             {segments!.map((s, i) =>
               s.type === "text" ? (
-                <span key={i} className="min-w-0 whitespace-pre-wrap">
+                <span key={i} className="break-words whitespace-pre-wrap">
                   {s.text}
                 </span>
               ) : (
                 <span
                   key={i}
-                  className="inline-flex max-w-full items-center gap-[5px] rounded-[6px] bg-[var(--file-tag-bg)] px-[7px] py-[2px] align-middle font-sans text-[13px] font-medium text-[var(--file-tag-text)]"
+                  className="mx-[2px] inline-flex max-w-full items-center gap-[5px] rounded-[6px] bg-[var(--file-tag-bg)] px-[7px] py-[2px] align-baseline font-sans text-[13px] font-medium text-[var(--file-tag-text)]"
                 >
                   {s.type === "context" ? (
                     <AtSign

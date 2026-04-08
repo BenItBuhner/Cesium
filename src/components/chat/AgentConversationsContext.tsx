@@ -29,6 +29,11 @@ import type {
 } from "@/lib/agent-types";
 import type { AgentModeOption, EditorMode, ModelInfo } from "@/lib/types";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
+import { nextUnreadCompletionMap } from "@/lib/chat-unread-completion";
+import {
+  endQueuedPromptFlush,
+  tryBeginQueuedPromptFlush,
+} from "@/lib/queued-prompt-flush-guard";
 import { JsonWebSocket } from "@/lib/ws-client";
 import {
   answerAgentPermission,
@@ -172,6 +177,8 @@ export function AgentConversationsProvider({
   const eventsRef = useRef(eventsByConversationId);
   const openConversationIdsRef = useRef<string[]>([]);
   const hydratingConversationIdsRef = useRef(new Set<string>());
+  const conversationsByIdRef = useRef(conversationsById);
+  conversationsByIdRef.current = conversationsById;
 
   useEffect(() => {
     chatDraftRef.current = workspaceSession.chat;
@@ -235,13 +242,13 @@ export function AgentConversationsProvider({
 
   const mergeSnapshot = useCallback(
     (snapshot: AgentConversationSnapshot) => {
-      setConversationsById((current) => {
-        const incoming = snapshot.conversation;
-        return {
-          ...current,
-          [incoming.id]: mergeConversationByRecency(current[incoming.id], incoming),
-        };
-      });
+      const incoming = snapshot.conversation;
+      const prev = conversationsByIdRef.current[incoming.id];
+      const merged = mergeConversationByRecency(prev, incoming);
+      setConversationsById((current) => ({
+        ...current,
+        [incoming.id]: mergeConversationByRecency(current[incoming.id], incoming),
+      }));
       setEventsByConversationId((current) => {
         const existing = current[snapshot.conversation.id] ?? [];
         const existingSeq = existing.at(-1)?.seq ?? 0;
@@ -253,25 +260,31 @@ export function AgentConversationsProvider({
         };
       });
       updateWorkspaceSession((current) => {
+        const unreadMap = nextUnreadCompletionMap(current, prev, merged);
         const nextTabs = current.chat.tabs.map((tab) =>
           tab.id === snapshot.conversation.id
             ? { ...tab, title: snapshot.conversation.title }
             : tab
         );
-        return nextTabs.every(
+        const tabUnchanged = nextTabs.every(
           (tab, index) =>
             tab.id === current.chat.tabs[index]?.id &&
             tab.title === current.chat.tabs[index]?.title &&
             Boolean(tab.active) === Boolean(current.chat.tabs[index]?.active)
-        )
-          ? current
-          : {
-              ...current,
-              chat: {
-                ...current.chat,
-                tabs: nextTabs,
-              },
-            };
+        );
+        if (unreadMap === null && tabUnchanged) {
+          return current;
+        }
+        return {
+          ...current,
+          chat: {
+            ...current.chat,
+            ...(unreadMap === null
+              ? {}
+              : { unreadChatCompletionByConversationId: unreadMap }),
+            ...(!tabUnchanged ? { tabs: nextTabs } : {}),
+          },
+        };
       });
       setConversationLoadStatusById((current) =>
         current[snapshot.conversation.id] === "ready"
@@ -303,28 +316,36 @@ export function AgentConversationsProvider({
 
   const upsertConversation = useCallback(
     (conversation: AgentConversationRecord) => {
+      const prev = conversationsByIdRef.current[conversation.id];
+      const merged = mergeConversationByRecency(prev, conversation);
       setConversationsById((current) => ({
         ...current,
-        [conversation.id]: mergeConversationByRecency(current[conversation.id], conversation),
+        [conversation.id]: merged,
       }));
       updateWorkspaceSession((current) => {
+        const unreadMap = nextUnreadCompletionMap(current, prev, merged);
         const nextTabs = current.chat.tabs.map((tab) =>
           tab.id === conversation.id ? { ...tab, title: conversation.title } : tab
         );
-        return nextTabs.every(
+        const tabUnchanged = nextTabs.every(
           (tab, index) =>
             tab.id === current.chat.tabs[index]?.id &&
             tab.title === current.chat.tabs[index]?.title &&
             Boolean(tab.active) === Boolean(current.chat.tabs[index]?.active)
-        )
-          ? current
-          : {
-              ...current,
-              chat: {
-                ...current.chat,
-                tabs: nextTabs,
-              },
-            };
+        );
+        if (unreadMap === null && tabUnchanged) {
+          return current;
+        }
+        return {
+          ...current,
+          chat: {
+            ...current.chat,
+            ...(unreadMap === null
+              ? {}
+              : { unreadChatCompletionByConversationId: unreadMap }),
+            ...(!tabUnchanged ? { tabs: nextTabs } : {}),
+          },
+        };
       });
     },
     [updateWorkspaceSession]
@@ -367,31 +388,33 @@ export function AgentConversationsProvider({
   const answerPermissionForConversation = useCallback(
     async (conversationId: string, requestId: string, optionId: string) => {
       try {
-        const result = await answerAgentPermission(conversationId, {
+        await answerAgentPermission(conversationId, {
           requestId,
           optionId,
         });
-        upsertConversation(result.conversation);
+        const result = await fetchAgentConversationSnapshot(conversationId);
+        mergeSnapshot(result.snapshot);
       } catch {
         void syncConversationSnapshot(conversationId).catch(() => undefined);
       }
     },
-    [syncConversationSnapshot, upsertConversation]
+    [mergeSnapshot, syncConversationSnapshot]
   );
 
   const cancelPermissionForConversation = useCallback(
     async (conversationId: string, requestId: string) => {
       try {
-        const result = await answerAgentPermission(conversationId, {
+        await answerAgentPermission(conversationId, {
           requestId,
           cancelled: true,
         });
-        upsertConversation(result.conversation);
+        const result = await fetchAgentConversationSnapshot(conversationId);
+        mergeSnapshot(result.snapshot);
       } catch {
         void syncConversationSnapshot(conversationId).catch(() => undefined);
       }
     },
-    [syncConversationSnapshot, upsertConversation]
+    [mergeSnapshot, syncConversationSnapshot]
   );
 
   const setConversationMode = useCallback(
@@ -483,7 +506,7 @@ export function AgentConversationsProvider({
     [syncConversationSnapshot, upsertConversation]
   );
 
-  const promptConversation = useCallback(
+  const executePrompt = useCallback(
     async (conversationId: string, text: string) => {
       try {
         const snapshot = await promptAgentConversation(conversationId, text);
@@ -517,6 +540,78 @@ export function AgentConversationsProvider({
     },
     [mergeSnapshot]
   );
+
+  const executePromptRef = useRef(executePrompt);
+  executePromptRef.current = executePrompt;
+
+  const promptConversation = useCallback(
+    async (conversationId: string, text: string) => {
+      const conv = conversationsById[conversationId];
+      if (
+        conv &&
+        (conv.status === "running" || conv.status === "awaiting_permission")
+      ) {
+        const entryId = globalThis.crypto?.randomUUID?.() ?? `q-${Date.now()}`;
+        updateWorkspaceSession((current) => {
+          const map = { ...(current.chat.queuedPromptsByConversationId ?? {}) };
+          const prev = map[conversationId] ?? [];
+          return {
+            ...current,
+            chat: {
+              ...current.chat,
+              queuedPromptsByConversationId: {
+                ...map,
+                [conversationId]: [...prev, { id: entryId, text }],
+              },
+            },
+          };
+        });
+        return true;
+      }
+      return executePrompt(conversationId, text);
+    },
+    [conversationsById, executePrompt, updateWorkspaceSession]
+  );
+
+  useEffect(() => {
+    const queuedMap = workspaceSession.chat.queuedPromptsByConversationId ?? {};
+    for (const conversationId of Object.keys(queuedMap)) {
+      const queue = queuedMap[conversationId];
+      if (!queue?.length) continue;
+      const conv = conversationsById[conversationId];
+      if (!conv || conv.status !== "idle") continue;
+      if (!tryBeginQueuedPromptFlush(conversationId)) continue;
+
+      const [head, ...tail] = queue;
+      updateWorkspaceSession((current) => {
+        const m = { ...(current.chat.queuedPromptsByConversationId ?? {}) };
+        if (tail.length === 0) {
+          delete m[conversationId];
+        } else {
+          m[conversationId] = tail;
+        }
+        return {
+          ...current,
+          chat: {
+            ...current.chat,
+            queuedPromptsByConversationId: m,
+          },
+        };
+      });
+
+      void (async () => {
+        try {
+          await executePromptRef.current(conversationId, head.text);
+        } finally {
+          endQueuedPromptFlush(conversationId);
+        }
+      })();
+    }
+  }, [
+    conversationsById,
+    updateWorkspaceSession,
+    workspaceSession.chat.queuedPromptsByConversationId,
+  ]);
 
   const cancelConversation = useCallback(
     async (conversationId: string) => {

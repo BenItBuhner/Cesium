@@ -6,6 +6,8 @@ export type WorkbenchControls = {
   toggleSidebar: () => void;
   toggleChat: () => void;
   revealExplorer: () => void;
+  /** Primary file sidebar / explorer column is expanded and visible in the layout. */
+  primarySidebarVisible: boolean;
 };
 
 const WorkbenchContext = createContext<WorkbenchControls | null>(null);

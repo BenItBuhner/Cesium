@@ -12,8 +12,8 @@ import { Search } from "lucide-react";
 import { ChatTabs } from "./ChatTabs";
 import { MessageList } from "./MessageList";
 import { ChatComposer } from "./ChatComposer";
+import { ComposerQueueDock } from "./ComposerQueueDock";
 import { AskQuestionCard } from "./AskQuestionCard";
-import { PermissionRequestCard } from "./PermissionRequestCard";
 import { RecentChatsModal } from "@/components/ide/RecentChatsModal";
 import { askStepsFromMessage } from "@/lib/ask-question-utils";
 import {
@@ -23,7 +23,6 @@ import {
   buildConversationModelOptions,
   getConversationLatestSeq,
   projectAgentEventsToChatMessages,
-  agentPermissionOptionsToUiChoices,
   resolveDraftModelForBackend,
   resolveConversationModel,
 } from "@/lib/agent-chat";
@@ -40,7 +39,18 @@ import type {
   AgentSocketServerMessage,
   AgentStoredEvent,
 } from "@/lib/agent-types";
-import type { ChatMessage, ChatTab, EditorMode, ModelInfo } from "@/lib/types";
+import {
+  endQueuedPromptFlush,
+  tryBeginQueuedPromptFlush,
+} from "@/lib/queued-prompt-flush-guard";
+import type {
+  AgentTabIndicatorByConversationId,
+  ChatMessage,
+  ChatTab,
+  EditorMode,
+  ModelInfo,
+  QueuedChatPrompt,
+} from "@/lib/types";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { JsonWebSocket } from "@/lib/ws-client";
 import { useWorkbenchNotifications } from "@/components/notifications/WorkbenchNotificationProvider";
@@ -63,6 +73,7 @@ import {
   FRESH_WORKSPACE_WINDOW_HIDDEN_CONVERSATIONS_SENTINEL,
   normalizeWorkspaceWindowSession,
 } from "@/lib/workspace-windows";
+import { nextUnreadCompletionMap } from "@/lib/chat-unread-completion";
 
 function partitionMessagesForDock(messages: ChatMessage[]): {
   scrollMessages: ChatMessage[];
@@ -176,7 +187,7 @@ export function ChatPanel() {
     setExpandedComposerDraft,
     setExpandedComposerController,
   } = useOpenInEditor();
-  const { pushNotification, dismiss } = useWorkbenchNotifications();
+  const { pushNotification } = useWorkbenchNotifications();
   const {
     activeWindowId,
     activeWorkspaceId,
@@ -202,10 +213,10 @@ export function ChatPanel() {
   const tabsRef = useRef<ChatTab[]>(workspaceSession.chat.tabs);
   const eventsRef = useRef(eventsByConversationId);
   const hydratingConversationIdsRef = useRef(new Set<string>());
-  const permissionToastIdsRef = useRef(new Map<string, string>());
-  const dismissedPermissionToastKeysRef = useRef(new Set<string>());
-
+  const conversationsByIdRef = useRef(conversationsById);
   const tabs = workspaceSession.chat.tabs;
+
+  conversationsByIdRef.current = conversationsById;
 
   useEffect(() => {
     chatDraftRef.current = workspaceSession.chat;
@@ -461,13 +472,13 @@ export function ChatPanel() {
   );
 
   const mergeSnapshot = useCallback((snapshot: AgentConversationSnapshot) => {
-    setConversationsById((current) => {
-      const incoming = snapshot.conversation;
-      return {
-        ...current,
-        [incoming.id]: mergeConversationByRecency(current[incoming.id], incoming),
-      };
-    });
+    const incoming = snapshot.conversation;
+    const prev = conversationsByIdRef.current[incoming.id];
+    const merged = mergeConversationByRecency(prev, incoming);
+    setConversationsById((current) => ({
+      ...current,
+      [incoming.id]: mergeConversationByRecency(current[incoming.id], incoming),
+    }));
     setEventsByConversationId((current) => {
       const existing = current[snapshot.conversation.id] ?? [];
       const existingSeq = existing.at(-1)?.seq ?? 0;
@@ -479,20 +490,26 @@ export function ChatPanel() {
       };
     });
     updateWorkspaceSession((current) => {
+      const unreadMap = nextUnreadCompletionMap(current, prev, merged);
       const nextTabs = current.chat.tabs.map((tab) =>
         tab.id === snapshot.conversation.id
           ? { ...tab, title: snapshot.conversation.title }
           : tab
       );
-      return tabsEqual(current.chat.tabs, nextTabs)
-        ? current
-        : {
-            ...current,
-            chat: {
-              ...current.chat,
-              tabs: nextTabs,
-            },
-          };
+      const tabChanged = !tabsEqual(current.chat.tabs, nextTabs);
+      if (unreadMap === null && !tabChanged) {
+        return current;
+      }
+      return {
+        ...current,
+        chat: {
+          ...current.chat,
+          ...(unreadMap === null
+            ? {}
+            : { unreadChatCompletionByConversationId: unreadMap }),
+          ...(tabChanged ? { tabs: nextTabs } : {}),
+        },
+      };
     });
   }, [updateWorkspaceSession]);
 
@@ -514,23 +531,31 @@ export function ChatPanel() {
 
   const upsertConversation = useCallback(
     (conversation: AgentConversationRecord) => {
+      const prev = conversationsByIdRef.current[conversation.id];
+      const merged = mergeConversationByRecency(prev, conversation);
       setConversationsById((current) => ({
         ...current,
-        [conversation.id]: mergeConversationByRecency(current[conversation.id], conversation),
+        [conversation.id]: merged,
       }));
       updateWorkspaceSession((current) => {
+        const unreadMap = nextUnreadCompletionMap(current, prev, merged);
         const nextTabs = current.chat.tabs.map((tab) =>
           tab.id === conversation.id ? { ...tab, title: conversation.title } : tab
         );
-        return tabsEqual(current.chat.tabs, nextTabs)
-          ? current
-          : {
-              ...current,
-              chat: {
-                ...current.chat,
-                tabs: nextTabs,
-              },
-            };
+        const tabChanged = !tabsEqual(current.chat.tabs, nextTabs);
+        if (unreadMap === null && !tabChanged) {
+          return current;
+        }
+        return {
+          ...current,
+          chat: {
+            ...current.chat,
+            ...(unreadMap === null
+              ? {}
+              : { unreadChatCompletionByConversationId: unreadMap }),
+            ...(tabChanged ? { tabs: nextTabs } : {}),
+          },
+        };
       });
     },
     [updateWorkspaceSession]
@@ -539,35 +564,37 @@ export function ChatPanel() {
   const answerPermissionForConversation = useCallback(
     async (conversationId: string, requestId: string, optionId: string) => {
       try {
-        const result = await answerAgentPermission(conversationId, {
+        await answerAgentPermission(conversationId, {
           requestId,
           optionId,
         });
-        upsertConversation(result.conversation);
+        const snapshot = await fetchAgentConversationSnapshot(conversationId);
+        mergeSnapshot(snapshot.snapshot);
       } catch {
         void fetchAgentConversationSnapshot(conversationId)
           .then((result) => mergeSnapshot(result.snapshot))
           .catch(() => undefined);
       }
     },
-    [mergeSnapshot, upsertConversation]
+    [mergeSnapshot]
   );
 
   const cancelPermissionForConversation = useCallback(
     async (conversationId: string, requestId: string) => {
       try {
-        const result = await answerAgentPermission(conversationId, {
+        await answerAgentPermission(conversationId, {
           requestId,
           cancelled: true,
         });
-        upsertConversation(result.conversation);
+        const snapshot = await fetchAgentConversationSnapshot(conversationId);
+        mergeSnapshot(snapshot.snapshot);
       } catch {
         void fetchAgentConversationSnapshot(conversationId)
           .then((r) => mergeSnapshot(r.snapshot))
           .catch(() => undefined);
       }
     },
-    [mergeSnapshot, upsertConversation]
+    [mergeSnapshot]
   );
 
   const createConversationAndOpen = useCallback(async () => {
@@ -622,6 +649,25 @@ export function ChatPanel() {
     () => tabs.find((tab) => tab.active)?.id ?? tabs[0]?.id ?? "__empty__",
     [tabs]
   );
+  const agentTabIndicators = useMemo(() => {
+    const unread = workspaceSession.chat.unreadChatCompletionByConversationId ?? {};
+    const m: AgentTabIndicatorByConversationId = {};
+    for (const tab of tabs) {
+      const c = conversationsById[tab.id];
+      if (!c) continue;
+      m[tab.id] = {
+        needsAttention: c.status === "awaiting_permission",
+        running: c.status === "running",
+        unreadCompletion:
+          Boolean(unread[tab.id]) && c.status === "idle",
+      };
+    }
+    return m;
+  }, [
+    tabs,
+    conversationsById,
+    workspaceSession.chat.unreadChatCompletionByConversationId,
+  ]);
   const activeConversation = activeTabId ? conversationsById[activeTabId] ?? null : null;
   const recentConversations = useMemo(
     () =>
@@ -683,39 +729,6 @@ export function ChatPanel() {
     [activeTabId, eventsByConversationId]
   );
   const isEmptyThread = threadMessages.length === 0;
-  const pendingPermissionDock = useMemo(() => {
-    const pending = activeConversation?.pendingPermission;
-    if (!pending || !activeConversation) {
-      return null;
-    }
-    return (
-      <div className="border-t border-[var(--border-card)] bg-[var(--bg-panel)] px-[10px] pb-[10px] pt-[8px]">
-        <PermissionRequestCard
-          title={pending.title ?? "Permission required"}
-          detail={pending.detail}
-          options={agentPermissionOptionsToUiChoices(pending.options ?? [])}
-          onSelect={(optionId) => {
-            void answerPermissionForConversation(activeConversation.id, pending.requestId, optionId);
-          }}
-        />
-        <div className="mt-[8px] flex justify-end">
-          <button
-            type="button"
-            className="font-sans text-[11px] text-[var(--text-secondary)] underline decoration-dotted underline-offset-2 hover:text-[var(--text-primary)]"
-            onClick={() =>
-              void cancelPermissionForConversation(activeConversation.id, pending.requestId)
-            }
-          >
-            Cancel request
-          </button>
-        </div>
-      </div>
-    );
-  }, [
-    activeConversation,
-    answerPermissionForConversation,
-    cancelPermissionForConversation,
-  ]);
   const resolveComposerStateForDraft = useCallback(
     (draftId: string) => {
       const conversation = conversationsById[draftId] ?? null;
@@ -810,89 +823,66 @@ export function ChatPanel() {
     });
   }, [composerDraftId, composerDraftText, composerDraftTitle, upsertComposerDraft]);
 
-  useEffect(() => {
-    const nextKeys = new Set<string>();
-    for (const conversation of Object.values(conversationsById)) {
-      const pending = conversation.pendingPermission;
-      if (!pending) {
-        continue;
-      }
-      const key = `${conversation.id}:${pending.requestId}`;
-      nextKeys.add(key);
-      if (
-        permissionToastIdsRef.current.has(key) ||
-        dismissedPermissionToastKeysRef.current.has(key)
-      ) {
-        continue;
-      }
-      const notificationId = pushNotification({
-        kind: WORKBENCH_NOTIFICATION_KIND.agentPermissionRequest,
-        severity: "warning",
-        title: "Agent permission required",
-        message:
-          conversation.title && conversation.title !== "New chat"
-            ? `${conversation.title}: ${pending.title ?? "Waiting for approval to continue."}`
-            : pending.title ?? "Waiting for approval to continue.",
-        persistent: true,
-        actions: (pending.options ?? []).map((option) => ({
-          id: `${key}:${option.optionId}`,
-          label: option.name,
-          primary: option.kind === "allow_once" || option.kind === "allow_always",
-          onClick: () => {
-            void answerPermissionForConversation(
-              conversation.id,
-              pending.requestId,
-              option.optionId
-            );
-          },
-        })),
-        onDismiss: () => {
-          permissionToastIdsRef.current.delete(key);
-          dismissedPermissionToastKeysRef.current.add(key);
-        },
-      });
-      permissionToastIdsRef.current.set(key, notificationId);
-    }
-
-    for (const [key, notificationId] of permissionToastIdsRef.current.entries()) {
-      if (nextKeys.has(key)) {
-        continue;
-      }
-      dismiss(notificationId);
-      permissionToastIdsRef.current.delete(key);
-      dismissedPermissionToastKeysRef.current.delete(key);
-    }
-
-    for (const key of Array.from(dismissedPermissionToastKeysRef.current)) {
-      if (!nextKeys.has(key)) {
-        dismissedPermissionToastKeysRef.current.delete(key);
-      }
-    }
-  }, [
-    answerPermissionForConversation,
-    conversationsById,
-    dismiss,
-    pushNotification,
-  ]);
-
-  useEffect(() => {
-    const permissionToastIds = permissionToastIdsRef.current;
-    const dismissedPermissionToastKeys = dismissedPermissionToastKeysRef.current;
-    return () => {
-      for (const notificationId of permissionToastIds.values()) {
-        dismiss(notificationId);
-      }
-      permissionToastIds.clear();
-      dismissedPermissionToastKeys.clear();
-    };
-  }, [dismiss]);
-
   const { scrollMessages, dockedAsk } =
     partitionMessagesForDock(threadMessages);
 
   const dockedAskSteps = useMemo(
     () => (dockedAsk ? askStepsFromMessage(dockedAsk) : []),
     [dockedAsk]
+  );
+
+  const activeQueuedPrompts = useMemo(() => {
+    const id = activeConversation?.id;
+    if (!id) {
+      return [];
+    }
+    return workspaceSession.chat.queuedPromptsByConversationId?.[id] ?? [];
+  }, [activeConversation?.id, workspaceSession.chat.queuedPromptsByConversationId]);
+
+  const removeQueuedPromptForActiveChat = useCallback(
+    (item: QueuedChatPrompt) => {
+      const cid = activeConversation?.id;
+      if (!cid) {
+        return;
+      }
+      updateWorkspaceSession((current) => {
+        const map = { ...(current.chat.queuedPromptsByConversationId ?? {}) };
+        const list = map[cid];
+        if (!list) {
+          return current;
+        }
+        const next = list.filter((p) => p.id !== item.id);
+        if (next.length === 0) {
+          delete map[cid];
+        } else {
+          map[cid] = next;
+        }
+        return {
+          ...current,
+          chat: {
+            ...current.chat,
+            queuedPromptsByConversationId: map,
+          },
+        };
+      });
+    },
+    [activeConversation?.id, updateWorkspaceSession]
+  );
+
+  const unqueuePromptToComposer = useCallback(
+    (item: QueuedChatPrompt) => {
+      removeQueuedPromptForActiveChat(item);
+      upsertComposerDraft(composerDraftId, {
+        title: composerDraftTitle,
+        content: item.text,
+      });
+    },
+    [
+      composerDraftId,
+      composerDraftTitle,
+      removeQueuedPromptForActiveChat,
+      upsertComposerDraft,
+    ]
   );
 
   useEffect(() => {
@@ -1184,8 +1174,22 @@ export function ChatPanel() {
   const handleSelectTab = useCallback(
     (id: string) => {
       setTabs((current) => current.map((tab) => ({ ...tab, active: tab.id === id })));
+      updateWorkspaceSession((current) => {
+        const u = { ...(current.chat.unreadChatCompletionByConversationId ?? {}) };
+        if (!u[id]) {
+          return current;
+        }
+        delete u[id];
+        return {
+          ...current,
+          chat: {
+            ...current.chat,
+            unreadChatCompletionByConversationId: u,
+          },
+        };
+      });
     },
-    [setTabs]
+    [setTabs, updateWorkspaceSession]
   );
 
   const handleReorderChatTabs = useCallback(
@@ -1281,6 +1285,16 @@ export function ChatPanel() {
       void answerPermissionForConversation(activeConversation.id, requestId, optionId);
     },
     [activeConversation, answerPermissionForConversation]
+  );
+
+  const handleCancelActivePermission = useCallback(
+    (requestId: string) => {
+      if (!activeConversation) {
+        return;
+      }
+      void cancelPermissionForConversation(activeConversation.id, requestId);
+    },
+    [activeConversation, cancelPermissionForConversation]
   );
 
   const handleScrollTopSettled = useCallback(
@@ -1490,7 +1504,7 @@ export function ChatPanel() {
   );
 
   const submitPromptForDraft = useCallback(
-    async (draftId: string, text: string) => {
+    async (draftId: string, text: string, options?: { skipQueue?: boolean }) => {
       let conversationIdForError = conversationsById[draftId]?.id;
       try {
         const conversation =
@@ -1498,6 +1512,29 @@ export function ChatPanel() {
           (draftId === activeConversation?.id ? activeConversation : null) ??
           (await createConversationAndOpen());
         conversationIdForError = conversation.id;
+        if (
+          !options?.skipQueue &&
+          (conversation.status === "running" ||
+            conversation.status === "awaiting_permission")
+        ) {
+          const convId = conversation.id;
+          const entryId = globalThis.crypto?.randomUUID?.() ?? `q-${Date.now()}`;
+          updateWorkspaceSession((current) => {
+            const map = { ...(current.chat.queuedPromptsByConversationId ?? {}) };
+            const prev = map[convId] ?? [];
+            return {
+              ...current,
+              chat: {
+                ...current.chat,
+                queuedPromptsByConversationId: {
+                  ...map,
+                  [convId]: [...prev, { id: entryId, text }],
+                },
+              },
+            };
+          });
+          return true;
+        }
         const snapshot = await promptAgentConversation(conversation.id, text);
         mergeSnapshot(snapshot.snapshot);
         return true;
@@ -1538,8 +1575,60 @@ export function ChatPanel() {
         return false;
       }
     },
-    [activeConversation, conversationsById, createConversationAndOpen, mergeSnapshot, pushNotification]
+    [
+      activeConversation,
+      conversationsById,
+      createConversationAndOpen,
+      mergeSnapshot,
+      pushNotification,
+      updateWorkspaceSession,
+    ]
   );
+
+  const submitPromptForDraftRef = useRef(submitPromptForDraft);
+  submitPromptForDraftRef.current = submitPromptForDraft;
+
+  useEffect(() => {
+    const queuedMap = workspaceSession.chat.queuedPromptsByConversationId ?? {};
+    for (const conversationId of Object.keys(queuedMap)) {
+      const queue = queuedMap[conversationId];
+      if (!queue?.length) continue;
+      const conv = conversationsById[conversationId];
+      if (!conv || conv.status !== "idle") continue;
+      if (!tryBeginQueuedPromptFlush(conversationId)) continue;
+
+      const [head, ...tail] = queue;
+      updateWorkspaceSession((current) => {
+        const m = { ...(current.chat.queuedPromptsByConversationId ?? {}) };
+        if (tail.length === 0) {
+          delete m[conversationId];
+        } else {
+          m[conversationId] = tail;
+        }
+        return {
+          ...current,
+          chat: {
+            ...current.chat,
+            queuedPromptsByConversationId: m,
+          },
+        };
+      });
+
+      void (async () => {
+        try {
+          await submitPromptForDraftRef.current(conversationId, head.text, {
+            skipQueue: true,
+          });
+        } finally {
+          endQueuedPromptFlush(conversationId);
+        }
+      })();
+    }
+  }, [
+    conversationsById,
+    updateWorkspaceSession,
+    workspaceSession.chat.queuedPromptsByConversationId,
+  ]);
 
   const cancelPromptForDraft = useCallback(
     async (draftId: string) => {
@@ -1585,7 +1674,9 @@ export function ChatPanel() {
       sessionConfigOptions: state.sessionConfigOptions,
       onSessionConfigOptionChange: (configId: string, value: string) =>
         void setSessionConfigOptionForDraft(expandedComposerDraftId, configId, value),
-      onSubmit: (text: string) => submitPromptForDraft(expandedComposerDraftId, text),
+      onSubmit: (text: string) => {
+        void submitPromptForDraft(expandedComposerDraftId, text);
+      },
       onCancel: () => cancelPromptForDraft(expandedComposerDraftId),
       busy: state.busy,
       configLocked: false,
@@ -1651,7 +1742,9 @@ export function ChatPanel() {
       }}
       busy={busy}
       configLocked={configLocked}
-      onSubmit={async (text) => { await submitPromptForDraft(composerDraftId, text); }}
+      onSubmit={(text) => {
+        void submitPromptForDraft(composerDraftId, text);
+      }}
       onCancel={() => cancelPromptForDraft(composerDraftId)}
       layout={isEmptyThread ? "empty-top" : "docked-bottom"}
     />
@@ -1692,6 +1785,7 @@ export function ChatPanel() {
       <div className="shrink-0">
         <ChatTabs
           tabs={tabs}
+          agentTabIndicators={agentTabIndicators}
           onSelectTab={handleSelectTab}
           onCloseTab={closeChatTab}
           onNewChat={handleNewChat}
@@ -1708,7 +1802,13 @@ export function ChatPanel() {
         <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
           {!composerHiddenForExpanded ? (
             <div className="shrink-0">
-              {pendingPermissionDock}
+              {activeQueuedPrompts.length > 0 ? (
+                <ComposerQueueDock
+                  items={activeQueuedPrompts}
+                  onDelete={removeQueuedPromptForActiveChat}
+                  onUnqueue={unqueuePromptToComposer}
+                />
+              ) : null}
               {composer}
             </div>
           ) : null}
@@ -1725,7 +1825,13 @@ export function ChatPanel() {
           <MessageList
             key={activeTabId}
             messages={scrollMessages}
+            conversationId={activeTabId}
+            conversationBusy={
+              activeConversation?.status === "running" ||
+              activeConversation?.status === "awaiting_permission"
+            }
             onResolvePermission={handleResolveActivePermission}
+            onCancelPermission={handleCancelActivePermission}
             initialScrollTop={workspaceSession.chat.scrollTopByTabId[activeTabId] ?? 0}
             onScrollTopSettled={handleScrollTopSettled}
             bottomDockVisible={!composerHiddenForExpanded}
@@ -1733,15 +1839,21 @@ export function ChatPanel() {
           {!composerHiddenForExpanded ? (
             <div className="pointer-events-none absolute inset-x-0 bottom-0 z-30">
               <div className="pointer-events-auto chat-bottom-dock">
-                {pendingPermissionDock ? (
-                  <div className="pointer-events-auto">{pendingPermissionDock}</div>
-                ) : null}
                 {recentChatsSection ? (
                   <div className="px-[10px] pt-[8px]">{recentChatsSection}</div>
                 ) : null}
                 {dockedAskSteps.length > 0 ? (
                   <div className="px-[10px] pt-[8px]">
                     <AskQuestionCard steps={dockedAskSteps} dockAboveComposer />
+                  </div>
+                ) : null}
+                {activeQueuedPrompts.length > 0 ? (
+                  <div className="px-[10px] pt-[8px]">
+                    <ComposerQueueDock
+                      items={activeQueuedPrompts}
+                      onDelete={removeQueuedPromptForActiveChat}
+                      onUnqueue={unqueuePromptToComposer}
+                    />
                   </div>
                 ) : null}
                 {composer}

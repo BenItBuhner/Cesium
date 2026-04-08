@@ -487,6 +487,19 @@ function summarizeWorkedToolBucket(
   }
 }
 
+function nextNonAssistantTimelineItem(
+  timeline: ProjectedTurn["timeline"],
+  fromIndex: number
+): ProjectedTurn["timeline"][number] | undefined {
+  for (let j = fromIndex + 1; j < timeline.length; j += 1) {
+    const item = timeline[j]!;
+    if (item.kind !== "assistant") {
+      return item;
+    }
+  }
+  return undefined;
+}
+
 function buildWorkedSessionLabel(entries: WorkedSessionEntry[]): string {
   const tools = entries.filter(
     (entry): entry is Extract<WorkedSessionEntry, { kind: "tool" }> => entry.kind === "tool"
@@ -571,8 +584,18 @@ function projectTurnTimelineToMessages(turn: ProjectedTurn): ChatMessage[] {
       continue;
     }
     if (item.kind === "assistant") {
-      flushWorked();
-      assistantText += item.text;
+      const chunk = item.text;
+      if (!chunk.trim()) {
+        continue;
+      }
+      const upNext = nextNonAssistantTimelineItem(turn.timeline, timelineIndex);
+      if (upNext?.kind === "trace") {
+        flushAssistant();
+        workedEntries.push({ kind: "assistant_inline", text: chunk });
+      } else {
+        flushWorked();
+        assistantText += chunk;
+      }
       continue;
     }
     const entry = item.entry;
@@ -874,6 +897,18 @@ function buildSubagentTranscriptFromTaskEvent(
     });
   }
   return transcript;
+}
+
+/** Omit meta that only mirrors spinner vs checkmark (icons already show this). */
+function subagentMetaForDisplay(meta: string | undefined): string | undefined {
+  const t = meta?.trim();
+  if (!t) {
+    return undefined;
+  }
+  if (/^(running(\.\.\.)?|completed)$/i.test(t)) {
+    return undefined;
+  }
+  return meta;
 }
 
 function buildSubagentRecentActivity(
@@ -1704,7 +1739,7 @@ export function projectAgentEventsToChatMessages(
             } satisfies ChatMessage);
           message.subagentId = extractSubagentTaskText(event).taskId ?? event.toolCallId;
           message.subagentTitle = title;
-          message.subagentMeta = "Running...";
+          message.subagentMeta = undefined;
           message.subagentStatus = "running";
           message.subagentComplete = false;
           message.subagentTranscript = transcript;
@@ -1753,10 +1788,7 @@ export function projectAgentEventsToChatMessages(
           message.subagentTitle = title;
           message.subagentStatus = event.status === "completed" ? "completed" : "running";
           message.subagentComplete = event.status === "completed";
-          message.subagentMeta =
-            event.status === "completed"
-              ? "Completed"
-              : "Running...";
+          message.subagentMeta = undefined;
           message.subagentTranscript = transcript;
           message.recentActivity = buildSubagentRecentActivity(
             transcript,
@@ -1959,7 +1991,7 @@ export function projectAgentEventsToChatMessages(
           type: "subagent",
           subagentId: event.subagentId,
           subagentTitle: event.title,
-          subagentMeta: event.meta,
+          subagentMeta: subagentMetaForDisplay(event.meta),
           subagentStatus: event.status,
           subagentComplete: event.status !== "running",
           subagentTranscript: transcript,
