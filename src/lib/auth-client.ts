@@ -1,6 +1,8 @@
 "use client";
 
 export const AUTH_STORAGE_KEY = "opencursor.auth.session";
+/** Ephemeral login form draft (sessionStorage) — survives Fast Refresh / full remounts while the tab stays open. */
+export const AUTH_LOGIN_DRAFT_KEY = "opencursor.auth.loginDraft";
 export const SESSION_TOKEN_HEADER = "x-opencursor-session-token";
 export const ACCESS_TOKEN_QUERY_PARAM = "access_token";
 
@@ -24,6 +26,57 @@ type StoredAuthState = {
   session: AuthSession | null;
   expiresAt: number | null;
 };
+
+export type AuthLoginDraft = {
+  username: string;
+  password: string;
+  remember: boolean;
+};
+
+export function readAuthLoginDraft(): AuthLoginDraft | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+  try {
+    const raw = window.sessionStorage.getItem(AUTH_LOGIN_DRAFT_KEY);
+    if (!raw) {
+      return null;
+    }
+    const parsed = JSON.parse(raw) as Partial<AuthLoginDraft> | null;
+    if (!parsed || typeof parsed !== "object") {
+      return null;
+    }
+    return {
+      username: typeof parsed.username === "string" ? parsed.username : "",
+      password: typeof parsed.password === "string" ? parsed.password : "",
+      remember: typeof parsed.remember === "boolean" ? parsed.remember : true,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function writeAuthLoginDraft(draft: AuthLoginDraft): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+  try {
+    window.sessionStorage.setItem(AUTH_LOGIN_DRAFT_KEY, JSON.stringify(draft));
+  } catch {
+    // Ignore quota / private mode failures.
+  }
+}
+
+export function clearAuthLoginDraft(): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+  try {
+    window.sessionStorage.removeItem(AUTH_LOGIN_DRAFT_KEY);
+  } catch {
+    // Ignore.
+  }
+}
 
 let cachedToken: string | null = null;
 

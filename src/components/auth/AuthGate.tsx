@@ -1,23 +1,148 @@
 "use client";
 
-import { useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { LockKeyhole, LogOut } from "lucide-react";
 import { useAuth } from "@/components/auth/AuthProvider";
+import {
+  clearAuthLoginDraft,
+  readAuthLoginDraft,
+  writeAuthLoginDraft,
+} from "@/lib/auth-client";
+import { postDebugLog } from "@/lib/debug-auth-log-client";
 
 export function AuthGate({ children }: { children: ReactNode }) {
   const { ready, enabled, authenticated, session, loginPending, error, login, logout } =
     useAuth();
-  const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
-  const [remember, setRemember] = useState(true);
+  const [username, setUsername] = useState(
+    () => readAuthLoginDraft()?.username ?? ""
+  );
+  const [password, setPassword] = useState(
+    () => readAuthLoginDraft()?.password ?? ""
+  );
+  const [remember, setRemember] = useState(
+    () => readAuthLoginDraft()?.remember ?? true
+  );
+  const usernameInputRef = useRef<HTMLInputElement | null>(null);
+  const passwordInputRef = useRef<HTMLInputElement | null>(null);
+  const latestSnapshotRef = useRef<Record<string, unknown> | null>(null);
+
+  const snapshot = {
+    ready,
+    enabled,
+    authenticated,
+    loginPending,
+    usernameStateLen: username.length,
+    passwordStateLen: password.length,
+    usernameDomLen: usernameInputRef.current?.value.length ?? null,
+    passwordDomLen: passwordInputRef.current?.value.length ?? null,
+    activeElement:
+      typeof document !== "undefined" && document.activeElement instanceof HTMLElement
+        ? document.activeElement.tagName
+        : null,
+    activeElementType:
+      typeof document !== "undefined" &&
+      document.activeElement instanceof HTMLInputElement
+        ? document.activeElement.type
+        : null,
+    hasError: Boolean(error),
+    sessionUsername: session?.username ?? null,
+  };
+  latestSnapshotRef.current = snapshot;
+
+  useEffect(() => {
+    // #region agent log
+    postDebugLog({
+      hypothesisId: "A",
+      location: "src/components/auth/AuthGate.tsx:18",
+      message: "AuthGate mounted",
+      data: latestSnapshotRef.current ?? {},
+      timestamp: Date.now(),
+    });
+    // #endregion
+    return () => {
+      // #region agent log
+      postDebugLog({
+        hypothesisId: "A",
+        location: "src/components/auth/AuthGate.tsx:28",
+        message: "AuthGate unmounted",
+        data: latestSnapshotRef.current ?? {},
+        timestamp: Date.now(),
+      });
+      // #endregion
+    };
+  }, []);
+
+  /** After SSR hydration, restore draft (sessionStorage is unavailable on the server). */
+  useEffect(() => {
+    const draft = readAuthLoginDraft();
+    if (!draft || (!draft.username && !draft.password)) {
+      return;
+    }
+    setUsername(draft.username);
+    setPassword(draft.password);
+    setRemember(draft.remember);
+  }, []);
+
+  useEffect(() => {
+    if (authenticated) {
+      clearAuthLoginDraft();
+    }
+  }, [authenticated]);
+
+  useEffect(() => {
+    if (!ready || !enabled || authenticated) {
+      return;
+    }
+    writeAuthLoginDraft({ username, password, remember });
+  }, [authenticated, enabled, password, ready, remember, username]);
+
+  useEffect(() => {
+    // #region agent log
+    postDebugLog({
+      hypothesisId: "C",
+      location: "src/components/auth/AuthGate.tsx:41",
+      message: "AuthGate snapshot",
+      data: latestSnapshotRef.current ?? {},
+      timestamp: Date.now(),
+    });
+    // #endregion
+  }, [
+    authenticated,
+    enabled,
+    error,
+    loginPending,
+    password,
+    ready,
+    session?.username,
+    username,
+  ]);
+
+  const logFieldInteraction = (phase: "focus" | "blur", field: "username" | "password") => {
+    // #region agent log
+    postDebugLog({
+      hypothesisId: "B",
+      location: "src/components/auth/AuthGate.tsx:60",
+      message: "Field interaction",
+      data: {
+        phase,
+        field,
+        ...snapshot,
+      },
+      timestamp: Date.now(),
+    });
+    // #endregion
+  };
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    await login({
+    const ok = await login({
       username,
       password,
       remember,
     });
+    if (ok) {
+      clearAuthLoginDraft();
+    }
     setPassword("");
   };
 
@@ -71,8 +196,27 @@ export function AuthGate({ children }: { children: ReactNode }) {
             <input
               type="text"
               autoComplete="username"
+              ref={usernameInputRef}
               value={username}
-              onChange={(event) => setUsername(event.target.value)}
+              onFocus={() => logFieldInteraction("focus", "username")}
+              onBlur={() => logFieldInteraction("blur", "username")}
+              onChange={(event) => {
+                // #region agent log
+                postDebugLog({
+                  hypothesisId: "B",
+                  location: "src/components/auth/AuthGate.tsx:84",
+                  message: "Username change",
+                  data: {
+                    nextLen: event.target.value.length,
+                    previousLen: username.length,
+                    passwordStateLen: password.length,
+                    passwordDomLen: passwordInputRef.current?.value.length ?? null,
+                  },
+                  timestamp: Date.now(),
+                });
+                // #endregion
+                setUsername(event.target.value);
+              }}
               className="w-full rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-[var(--bg-main)] px-[12px] py-[10px] font-sans text-[13px] text-[var(--text-primary)] outline-none transition-colors focus:border-[var(--accent)]"
               placeholder="Username"
               required
@@ -86,8 +230,27 @@ export function AuthGate({ children }: { children: ReactNode }) {
             <input
               type="password"
               autoComplete="current-password"
+              ref={passwordInputRef}
               value={password}
-              onChange={(event) => setPassword(event.target.value)}
+              onFocus={() => logFieldInteraction("focus", "password")}
+              onBlur={() => logFieldInteraction("blur", "password")}
+              onChange={(event) => {
+                // #region agent log
+                postDebugLog({
+                  hypothesisId: "B",
+                  location: "src/components/auth/AuthGate.tsx:111",
+                  message: "Password change",
+                  data: {
+                    nextLen: event.target.value.length,
+                    previousLen: password.length,
+                    usernameStateLen: username.length,
+                    usernameDomLen: usernameInputRef.current?.value.length ?? null,
+                  },
+                  timestamp: Date.now(),
+                });
+                // #endregion
+                setPassword(event.target.value);
+              }}
               className="w-full rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-[var(--bg-main)] px-[12px] py-[10px] font-sans text-[13px] text-[var(--text-primary)] outline-none transition-colors focus:border-[var(--accent)]"
               placeholder="Password"
               required
