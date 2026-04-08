@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useMemo } from "react";
+import { useState, useCallback, useMemo, useRef, useEffect } from "react";
 import { createPortal } from "react-dom";
 import {
   ChevronDown,
@@ -10,7 +10,6 @@ import {
   Sparkles,
   Box,
 } from "lucide-react";
-import { HardwareAwareTextInput } from "@/components/input/HardwareAwareTextField";
 import { useClickOutside } from "@/hooks/useClickOutside";
 import { usePopover } from "@/hooks/usePopover";
 import type { ModelInfo } from "@/lib/types";
@@ -36,6 +35,8 @@ interface ModelDropdownProps {
   onModelChange?: (model: ModelInfo) => void;
   popoverPlacement?: "above" | "below";
   disabled?: boolean;
+  isOpen?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }
 
 export function ModelDropdown({
@@ -44,16 +45,56 @@ export function ModelDropdown({
   onModelChange,
   popoverPlacement = "above",
   disabled = false,
+  isOpen: controlledIsOpen,
+  onOpenChange,
 }: ModelDropdownProps) {
-  const [open, setOpen] = useState(false);
-  const [query, setQuery] = useState("");
+  const [internalOpen, setInternalOpen] = useState(false);
+  const isControlled = controlledIsOpen !== undefined;
+  const open = isControlled ? controlledIsOpen ?? false : internalOpen;
 
-  const close = useCallback(() => { setOpen(false); setQuery(""); }, []);
+  const [query, setQuery] = useState("");
+  const [highlightedIndex, setHighlightedIndex] = useState(0);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
+
+  const handleOpenChange = useCallback(
+    (nextOpen: boolean) => {
+      if (isControlled) {
+        onOpenChange?.(nextOpen);
+      } else {
+        setInternalOpen(nextOpen);
+      }
+      if (nextOpen) {
+        setQuery("");
+        setHighlightedIndex(0);
+      }
+    },
+    [isControlled, onOpenChange]
+  );
+
+  const openDropdown = useCallback(() => {
+    handleOpenChange(true);
+  }, [handleOpenChange]);
+
+  const close = useCallback(() => {
+    handleOpenChange(false);
+  }, [handleOpenChange]);
+
   const { triggerRef, popoverRef, position, ready } = usePopover(open, {
     placement: popoverPlacement,
   });
 
   useClickOutside(triggerRef, close, open, [popoverRef]);
+
+  useEffect(() => {
+    if (open && searchInputRef.current) {
+      searchInputRef.current.focus();
+    }
+  }, [open]);
+
+  useEffect(() => {
+    setHighlightedIndex(0);
+  }, [query]);
 
   const ProviderIcon = providerIcon[model.provider];
 
@@ -71,25 +112,78 @@ export function ModelDropdown({
 
   const listMaxHeight = Math.max(96, Math.min(220, position.maxHeight - 44));
 
-  const isActiveChoice = useCallback((m: ModelInfo) => {
-    if (m.id === model.id) return true;
-    const mv = m.modelValue ?? m.id;
-    const cur = model.modelValue ?? model.id;
-    if (mv !== cur) return false;
-    const a = m.configSelections?.map((s) => `${s.configId}:${s.value}`).sort().join("|") ?? "";
-    const b = model.configSelections?.map((s) => `${s.configId}:${s.value}`).sort().join("|") ?? "";
-    return a === b;
-  }, [model]);
+  const isActiveChoice = useCallback(
+    (m: ModelInfo) => {
+      if (m.id === model.id) return true;
+      const mv = m.modelValue ?? m.id;
+      const cur = model.modelValue ?? model.id;
+      if (mv !== cur) return false;
+      const a =
+        m.configSelections?.map((s) => `${s.configId}:${s.value}`).sort().join("|") ?? "";
+      const b =
+        model.configSelections?.map((s) => `${s.configId}:${s.value}`).sort().join("|") ?? "";
+      return a === b;
+    },
+    [model]
+  );
+
+  const selectModel = useCallback(
+    (m: ModelInfo) => {
+      onModelChange?.(m);
+      close();
+    },
+    [onModelChange, close]
+  );
+
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      if (!open) return;
+
+      switch (e.key) {
+        case "ArrowDown":
+          e.preventDefault();
+          setHighlightedIndex((prev) => (prev < filtered.length - 1 ? prev + 1 : prev));
+          break;
+        case "ArrowUp":
+          e.preventDefault();
+          setHighlightedIndex((prev) => (prev > 0 ? prev - 1 : prev));
+          break;
+        case "Enter":
+          e.preventDefault();
+          if (filtered[highlightedIndex]) {
+            selectModel(filtered[highlightedIndex]);
+          }
+          break;
+        case "Escape":
+          e.preventDefault();
+          close();
+          break;
+      }
+    },
+    [open, filtered, highlightedIndex, selectModel, close]
+  );
+
+  useEffect(() => {
+    if (listRef.current && open) {
+      const highlightedEl = listRef.current.querySelector(`[data-index="${highlightedIndex}"]`);
+      if (highlightedEl) {
+        highlightedEl.scrollIntoView({ block: "nearest" });
+      }
+    }
+  }, [highlightedIndex, open]);
 
   return (
     <div ref={triggerRef}>
       <button
         type="button"
         disabled={disabled}
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => (open ? close() : openDropdown())}
         className="flex items-center gap-[4px] transition-opacity hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-50"
       >
-        <ProviderIcon className="size-[14px] shrink-0 text-[var(--text-secondary)]" strokeWidth={1.5} />
+        <ProviderIcon
+          className="size-[14px] shrink-0 text-[var(--text-secondary)]"
+          strokeWidth={1.5}
+        />
         <span className="font-sans text-[13px] font-normal text-[var(--text-secondary)]">
           {model.name}
         </span>
@@ -111,47 +205,45 @@ export function ModelDropdown({
               maxHeight: position.maxHeight,
               overflow: "hidden",
             }}
-            onPointerDown={(e) => e.stopPropagation()}
+            onKeyDown={handleKeyDown}
           >
-            <div
-              className={`flex shrink-0 items-center gap-[6px] border-b border-[var(--border-card)] px-[10px] py-[6px]`}
-            >
+            <div className="flex shrink-0 items-center gap-[6px] border-b border-[var(--border-card)] px-[10px] py-[6px]">
               <Search className="size-[13px] shrink-0 text-[var(--text-disabled)]" strokeWidth={1.5} />
-              <HardwareAwareTextInput
+              <input
+                ref={searchInputRef}
                 type="text"
                 value={query}
-                onChange={setQuery}
+                onChange={(e) => setQuery(e.target.value)}
                 placeholder="Search models"
                 className="flex-1 bg-transparent font-sans text-[13px] text-[var(--text-primary)] outline-none placeholder:text-[var(--text-disabled)]"
-                ariaLabel="Search models"
-                autoFocus
+                aria-label="Search models"
               />
             </div>
             <div
+              ref={listRef}
               className="min-h-0 flex-1 overflow-y-auto overscroll-contain py-[2px]"
               style={{ maxHeight: listMaxHeight }}
-              onWheel={(e) => e.stopPropagation()}
             >
               {filtered.length === 0 && (
                 <p className="px-[12px] py-[8px] font-sans text-[13px] text-[var(--text-disabled)]">
                   No models found
                 </p>
               )}
-              {filtered.map((m) => {
+              {filtered.map((m, index) => {
                 const Icon = providerIcon[m.provider];
                 const active = isActiveChoice(m);
                 const detail = m.detail ?? m.description;
                 return (
                   <button
                     key={m.id}
+                    data-index={index}
                     type="button"
                     title={detail}
-                    onClick={() => {
-                      onModelChange?.(m);
-                      setOpen(false);
-                      setQuery("");
-                    }}
-                    className="flex w-full items-center gap-[8px] px-[12px] py-[5px] text-left transition-colors hover:bg-white/[0.06]"
+                    onClick={() => selectModel(m)}
+                    onMouseEnter={() => setHighlightedIndex(index)}
+                    className={`flex w-full items-center gap-[8px] px-[12px] py-[5px] text-left transition-colors ${
+                      index === highlightedIndex ? "bg-white/[0.08]" : "hover:bg-white/[0.06]"
+                    }`}
                   >
                     <Icon
                       className="size-[14px] shrink-0 text-[var(--text-secondary)]"

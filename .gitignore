@@ -106,3 +106,4 @@ storybook-static/
 
 # Sentry / source maps (if used)
 .sentryclirc
+.attachments/

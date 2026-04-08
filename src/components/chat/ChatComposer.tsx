@@ -343,6 +343,7 @@ export function ChatComposer({
   const [hasFocus, setHasFocus] = useState(false);
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [selectedIndex, setSelectedIndex] = useState(0);
+  const [modelDropdownOpen, setModelDropdownOpen] = useState(false);
   const [recordingState, setRecordingState] = useState<
     "idle" | "recording" | "transcribing"
   >("idle");
@@ -905,6 +906,19 @@ export function ChatComposer({
 
   useEffect(() => {
     const trig = parseTriggerToken(value, selection.end);
+    
+    // If "/" alone is typed, open the model dropdown instead of the slash menu
+    if (trig && trig.kind === "slash" && trig.query === "") {
+      setMenu(null);
+      setModelDropdownOpen(true);
+      return;
+    }
+    
+    // Close model dropdown if slash menu is opened for other reasons
+    if (trig && trig.kind === "slash" && trig.query !== "") {
+      setModelDropdownOpen(false);
+    }
+    
     setMenu((prev) => {
       if (!trig) return prev === null ? prev : null;
       const next: MenuState = {
@@ -958,7 +972,7 @@ export function ChatComposer({
     }
   }, [hardwareInputEnabled, menu, selection.end, value]);
 
-  useClickOutside(editorRef, () => setMenu(null), !!menu, [popoverRef]);
+  useClickOutside(editorRef, () => { setMenu(null); setModelDropdownOpen(false); }, !!menu || modelDropdownOpen, [popoverRef]);
 
   useEffect(() => {
     setComposerSelection(selectionRef.current);
@@ -1085,6 +1099,7 @@ export function ChatComposer({
       if (currentMenu && event.key === "Escape") {
         event.preventDefault();
         setMenu(null);
+        setModelDropdownOpen(false);
         return true;
       }
       if (currentMenu && event.key === "ArrowDown") {
@@ -1176,6 +1191,7 @@ export function ChatComposer({
       if (event.key === "Escape") {
         event.preventDefault();
         setMenu(null);
+        setModelDropdownOpen(false);
         return;
       }
       if (event.key === "ArrowDown") {
@@ -1483,6 +1499,8 @@ export function ChatComposer({
               onModelChange={onModelChange}
               popoverPlacement={modeModelPopoverPlacement}
               disabled={busy || configLocked}
+              isOpen={modelDropdownOpen}
+              onOpenChange={setModelDropdownOpen}
             />
           </div>
           {sessionConfigOptions && sessionConfigOptions.length > 0 && (
