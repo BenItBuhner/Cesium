@@ -85,11 +85,6 @@ export function SessionConfigOptionDropdown({
               <p className="font-sans text-[11px] font-medium uppercase tracking-wide text-[var(--text-disabled)]">
                 {label}
               </p>
-              {option.description && (
-                <p className="mt-[2px] font-sans text-[12px] text-[var(--text-secondary)]">
-                  {option.description}
-                </p>
-              )}
             </div>
             <div className="py-[2px]">
               {option.options.map((opt) => {
@@ -98,30 +93,24 @@ export function SessionConfigOptionDropdown({
                   <button
                     key={opt.value}
                     type="button"
+                    title={opt.description ?? opt.name}
                     onClick={() => {
                       onChange(opt.value);
                       setOpen(false);
                     }}
-                    className="flex w-full items-start gap-[8px] px-[12px] py-[6px] text-left transition-colors hover:bg-white/[0.06]"
+                    className="flex w-full items-center gap-[8px] px-[12px] py-[5px] text-left transition-colors hover:bg-white/[0.06]"
                   >
-                    <div className="min-w-0 flex-1">
-                      <span
-                        className="block font-sans text-[13px] font-normal"
-                        style={{
-                          color: active ? "var(--text-primary)" : "var(--text-secondary)",
-                        }}
-                      >
-                        {opt.name}
-                      </span>
-                      {opt.description && (
-                        <span className="mt-[1px] block font-sans text-[11px] text-[var(--text-disabled)]">
-                          {opt.description}
-                        </span>
-                      )}
-                    </div>
+                    <span
+                      className="min-w-0 flex-1 truncate font-sans text-[13px] font-normal"
+                      style={{
+                        color: active ? "var(--text-primary)" : "var(--text-secondary)",
+                      }}
+                    >
+                      {opt.name}
+                    </span>
                     {active && (
                       <Check
-                        className="mt-[2px] size-[14px] shrink-0 text-[var(--text-primary)]"
+                        className="size-[14px] shrink-0 text-[var(--text-primary)]"
                         strokeWidth={2}
                       />
                     )}
