@@ -320,7 +320,8 @@ export function ChatMarkdown({ source }: { source: string }) {
               return (
                 <ol
                   key={index}
-                  className="ml-[18px] list-decimal space-y-[4px] marker:text-[var(--text-secondary)]"
+                  className="ml-[18px] list-none space-y-[4px] counter-reset:[counter_] [&>li]:counter-increment-[counter_] [&>li]:before:content-[counter(counter_)] [&>li]:before:mr-[8px] [&>li]:before:text-[var(--text-secondary)] [&>li]:before:align-middle"
+                  style={{ counterReset: 'counter_ -1' }}
                 >
                   {block.items.map((item, itemIndex) => (
                     <li key={itemIndex} className="pl-[4px]">
