@@ -8,21 +8,25 @@ interface ExpandedComposerViewProps {
   draftId: string;
   title: string;
   onMinimize: () => void;
+  setExpandedComposerDraft?: (draftId: string | null) => void;
 }
 
 export function ExpandedComposerView({
   draftId,
   title,
   onMinimize,
+  setExpandedComposerDraft: setExpandedComposerDraftOverride,
 }: ExpandedComposerViewProps) {
   const {
     composerDrafts,
     composerSelections,
     upsertComposerDraft,
     setComposerSelection,
-    setExpandedComposerDraft,
+    setExpandedComposerDraft: setWorkspaceExpandedComposerDraft,
     expandedComposerController,
   } = useOpenInEditor();
+  const setExpandedComposerDraft =
+    setExpandedComposerDraftOverride ?? setWorkspaceExpandedComposerDraft;
 
   const content = composerDrafts[draftId]?.content ?? "";
   const selection = composerSelections[draftId] ?? {
@@ -80,8 +84,8 @@ export function ExpandedComposerView({
           selection={selection}
           onSelectionChange={(next) => setComposerSelection(draftId, next)}
           onCollapseComposer={minimizeComposer}
-          onSubmit={async (text) => {
-            const submitted = await controller.onSubmit(text);
+          onSubmit={async (text, attachments) => {
+            const submitted = await controller.onSubmit(text, attachments);
             if (submitted === false) {
               return;
             }

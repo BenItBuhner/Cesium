@@ -4,6 +4,7 @@ import type { GlobalSettingsState } from "@/lib/global-settings";
 import type {
   AgentConversationConfigPatch,
   AgentConversationCreateInput,
+  AgentConversationGroupsResult,
   AgentConversationListResult,
   AgentConversationRecord,
   AgentConversationSnapshot,
@@ -32,7 +33,9 @@ function resolveClientBaseUrl(): string {
     const currentHost = window.location.hostname;
     if (
       currentHost &&
-      currentHost !== configured.hostname &&
+      (configured.hostname === "0.0.0.0" ||
+        configured.hostname === "[::]" ||
+        configured.hostname === "::") &&
       (currentHost === "127.0.0.1" || currentHost === "localhost")
     ) {
       configured.hostname = currentHost;
@@ -145,6 +148,7 @@ export async function openWorkspaceSelection(input: {
   workspaceId?: string;
   root?: string;
   name?: string;
+  trackRecent?: boolean;
 }): Promise<{
   workspace: WorkspaceRecord;
   workspaces: WorkspaceRecord[];
@@ -156,6 +160,23 @@ export async function openWorkspaceSelection(input: {
     {
       method: "POST",
       body: JSON.stringify(input),
+    },
+    { skipWorkspaceHeader: true }
+  );
+}
+
+export async function markWorkspaceActivity(workspaceId: string): Promise<{
+  ok: true;
+  workspace: WorkspaceRecord;
+  workspaces: WorkspaceRecord[];
+  defaultWorkspaceId: string | null;
+  recentWorkspaceIds: string[];
+}> {
+  return request(
+    `/api/workspaces/activity`,
+    {
+      method: "POST",
+      body: JSON.stringify({ workspaceId }),
     },
     { skipWorkspaceHeader: true }
   );
@@ -333,6 +354,12 @@ export async function fetchAgentDeploymentHints(): Promise<CursorAgentDeployment
 
 export async function listAgentConversations(): Promise<AgentConversationListResult> {
   return request(`/api/agents/conversations`);
+}
+
+export async function listCrossWorkspaceAgentConversations(): Promise<AgentConversationGroupsResult> {
+  return request(`/api/agents/conversations/all`, undefined, {
+    skipWorkspaceHeader: true,
+  });
 }
 
 export async function createAgentConversation(

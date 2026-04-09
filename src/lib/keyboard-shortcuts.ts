@@ -111,10 +111,16 @@ export const SHORTCUT_COMMAND_DEFINITIONS: ShortcutCommandDefinition[] = [
     defaultBindings: ["Mod+Shift+B", "Mod+Alt+B"],
   },
   {
+    id: "workbench.action.focusChatPlanMode",
+    label: "Chat: Use Plan mode",
+    section: "Workbench",
+    defaultBindings: ["Mod+I"],
+  },
+  {
     id: "workbench.action.focusChatAgentMode",
     label: "Chat: Use Agent mode",
     section: "Workbench",
-    defaultBindings: ["Mod+I"],
+    defaultBindings: [],
   },
   {
     id: "workbench.action.openGlobalSettings",
@@ -444,6 +450,8 @@ export function normalizeShortcutBindingsList(
 export function normalizeShortcutBindingsMap(
   raw: unknown
 ): KeyboardShortcutBindingsMap {
+  const planCommandId = "workbench.action.focusChatPlanMode";
+  const legacyAgentCommandId = "workbench.action.focusChatAgentMode";
   const result: KeyboardShortcutBindingsMap = {
     ...DEFAULT_KEYBOARD_SHORTCUT_BINDINGS,
   };
@@ -458,6 +466,19 @@ export function normalizeShortcutBindingsMap(
       value,
       definition.defaultBindings
     );
+  }
+
+  const rawBindings = raw as Record<string, unknown>;
+  if (rawBindings[planCommandId] == null) {
+    const legacyBindings = normalizeShortcutBindingsList(
+      rawBindings[legacyAgentCommandId],
+      []
+    );
+    // Migrate the old default Mod+I binding from agent mode to the new plan mode
+    // command without clobbering users who already customized both commands.
+    if (legacyBindings.length === 1 && legacyBindings[0] === "Mod+I") {
+      result[legacyAgentCommandId] = [];
+    }
   }
 
   return result;

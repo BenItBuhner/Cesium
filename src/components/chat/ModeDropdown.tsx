@@ -73,19 +73,27 @@ export function ModeDropdown({
       mode,
       options?.length ? options : DEFAULT_MODE_OPTIONS
     );
+    const planShortcut = getShortcutDisplayForCommand(
+      settings.keyboardShortcuts.bindings,
+      "workbench.action.focusChatPlanMode",
+      platform
+    );
     const agentShortcut = getShortcutDisplayForCommand(
       settings.keyboardShortcuts.bindings,
       "workbench.action.focusChatAgentMode",
       platform
     );
+    const shortcutsByTone: Partial<Record<KnownEditorMode, string | undefined>> = {
+      agent: agentShortcut || undefined,
+      plan: planShortcut || undefined,
+    };
     return baseOptions.map((option) => {
       const tone = getModeTone(option.id);
       return {
         ...option,
         icon: iconForModeTone(tone),
         tone,
-        shortcut:
-          getModeTone(option.id) === "agent" ? agentShortcut || undefined : undefined,
+        shortcut: shortcutsByTone[tone],
       };
     });
   }, [mode, options, platform, settings.keyboardShortcuts.bindings]);
@@ -114,7 +122,7 @@ export function ModeDropdown({
   }, [current.label, triggerExpanded]);
 
   return (
-    <div ref={triggerRef} className="relative inline-flex">
+    <div ref={triggerRef} className="relative inline-flex max-w-full min-w-0">
       <span
         ref={labelMeasureRef}
         className="pointer-events-none absolute opacity-0"

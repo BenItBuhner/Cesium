@@ -143,6 +143,8 @@ export class AgentRuntimeManager {
       pendingPermission: null,
       lastError: null,
       experimental: Boolean(backend.experimental),
+      archivedAt: null,
+      lastReadSeq: 0,
     };
     await saveConversationRecord(record);
     this.warmConversationRuntime(workspace, record);

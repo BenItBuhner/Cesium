@@ -6,7 +6,12 @@ import { requireWorkspaceFromRequest } from "../lib/request-workspace.js";
 import { resolveSafePath } from "../lib/workspace.js";
 import { agentRuntimeManager } from "../lib/agents/runtime-manager.js";
 import { exportOpenCodeSession } from "../lib/agents/opencode-export.js";
-import { getCursorAgentDeploymentHints } from "../lib/agents/providers.js";
+import {
+  getCursorAgentDeploymentHints,
+  listAgentBackendsWithCache,
+} from "../lib/agents/providers.js";
+import { listWorkspaceConversationRecords } from "../lib/agents/session-store.js";
+import { listWorkspaces } from "../lib/workspace-registry.js";
 import type {
   AgentConversationConfigPatch,
   AgentConversationCreateInput,
@@ -23,6 +28,35 @@ agentRoutes.get("/api/agents/conversations", async (c) => {
   const workspace = await requireWorkspaceFromRequest(c);
   const result = await agentRuntimeManager.listWorkspaceConversations(workspace.id);
   return c.json(result);
+});
+
+agentRoutes.get("/api/agents/conversations/all", async (c) => {
+  const [workspaces, backends] = await Promise.all([
+    listWorkspaces(),
+    listAgentBackendsWithCache(),
+  ]);
+  const groups = await Promise.all(
+    workspaces.map(async (workspace) => {
+      const conversations = await listWorkspaceConversationRecords(workspace.id);
+      return {
+        workspace,
+        conversations: conversations.map((conversation) => ({
+          id: conversation.id,
+          workspaceId: conversation.workspaceId,
+          title: conversation.title,
+          createdAt: conversation.createdAt,
+          updatedAt: conversation.updatedAt,
+          lastEventSeq: conversation.lastEventSeq,
+          status: conversation.status,
+          backendId: conversation.config.backendId,
+          mode: conversation.config.mode,
+          experimental: conversation.experimental,
+          hasPendingPermission: conversation.pendingPermission != null,
+        })),
+      };
+    })
+  );
+  return c.json({ backends, groups });
 });
 
 agentRoutes.post("/api/agents/conversations", async (c) => {

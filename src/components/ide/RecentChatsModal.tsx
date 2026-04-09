@@ -10,10 +10,17 @@ import {
 } from "react";
 import type { TextSurfaceController } from "@/components/input/HardwareAwareTextField";
 import { VSCodeQuickInputShell } from "./VSCodeQuickInputShell";
-import type { AgentConversationRecord } from "@/lib/agent-types";
 
 const rowBase =
   "flex w-full cursor-pointer items-center gap-[10px] px-[10px] py-[5px] text-left font-sans text-[13px] outline-none";
+
+export type RecentChatOption = {
+  id: string;
+  title: string;
+  updatedAt: number;
+  detail?: string;
+  badge?: string;
+};
 
 function formatRelativeTime(timestamp: number): string {
   const now = Date.now();
@@ -30,14 +37,22 @@ function formatRelativeTime(timestamp: number): string {
 }
 
 export function RecentChatsModal({
+  emptyLabel = "No recent chats",
+  inputLabel = "Search recent chats",
+  items,
   open,
   onClose,
-  conversations,
+  placeholder = "Search recent chats...",
+  screenReaderTitle = "Recent chats",
   onSelectConversation,
 }: {
+  emptyLabel?: string;
+  inputLabel?: string;
+  items: RecentChatOption[];
   open: boolean;
   onClose: () => void;
-  conversations: AgentConversationRecord[];
+  placeholder?: string;
+  screenReaderTitle?: string;
   onSelectConversation: (conversationId: string) => void;
 }) {
   const [query, setQuery] = useState("");
@@ -46,12 +61,12 @@ export function RecentChatsModal({
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return conversations;
-    return conversations.filter((c) => {
-      const hay = c.title.toLowerCase();
+    if (!q) return items;
+    return items.filter((item) => {
+      const hay = `${item.title}\n${item.detail ?? ""}\n${item.badge ?? ""}`.toLowerCase();
       return hay.includes(q);
     });
-  }, [conversations, query]);
+  }, [items, query]);
 
   useEffect(() => {
     if (open) {
@@ -132,9 +147,9 @@ export function RecentChatsModal({
     <VSCodeQuickInputShell
       open={open}
       onClose={onClose}
-      screenReaderTitle="Recent chats"
-      inputLabel="Search recent chats"
-      placeholder="Search recent chats..."
+      screenReaderTitle={screenReaderTitle}
+      inputLabel={inputLabel}
+      placeholder={placeholder}
       value={query}
       onChange={setQuery}
       onKeyDown={onKeyDown}
@@ -142,33 +157,51 @@ export function RecentChatsModal({
     >
       <div
         ref={listRef}
-        className="max-h-[320px] overflow-y-auto overflow-x-hidden"
+        className="hide-scrollbar-y max-h-[320px] overflow-y-auto overflow-x-hidden"
         role="listbox"
       >
         {filtered.length === 0 ? (
           <div className="px-[10px] py-[20px] text-center font-sans text-[13px] text-[var(--palette-placeholder)]">
-            {query ? "No matching chats" : "No recent chats"}
+            {query ? "No matching chats" : emptyLabel}
           </div>
         ) : (
-          filtered.map((conversation, i) => (
-            <div
-              key={conversation.id}
-              role="option"
-              aria-selected={i === sel}
-              className={`${rowBase} ${
-                i === sel
-                  ? "bg-[var(--palette-row-selected-bg)] text-[var(--palette-row-selected-text)]"
-                  : "text-[var(--palette-row-text)]"
-              }`}
-              onMouseEnter={() => setSel(i)}
-              onClick={() => runAt(i)}
-            >
-              <span className="min-w-0 flex-1 truncate">{conversation.title}</span>
-              <span className="shrink-0 font-sans text-[11px] text-[var(--text-disabled)]">
-                {formatRelativeTime(conversation.updatedAt)}
-              </span>
-            </div>
-          ))
+          filtered.map((item, i) => {
+            const on = i === sel;
+            const secondaryCls = on
+              ? "text-[var(--palette-row-selected-muted)]"
+              : "text-[var(--palette-row-muted)]";
+            return (
+              <div
+                key={item.id}
+                role="option"
+                aria-selected={on}
+                className={`${rowBase} ${
+                  on
+                    ? "bg-[var(--palette-row-selected-bg)] text-[var(--palette-row-selected-text)]"
+                    : "text-[var(--palette-row-text)]"
+                }`}
+                onMouseEnter={() => setSel(i)}
+                onClick={() => runAt(i)}
+              >
+                <span
+                  className={`min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap font-sans text-[13px] ${
+                    on ? "text-[var(--palette-row-selected-text)]" : "text-[var(--palette-row-text)]"
+                  }`}
+                >
+                  {item.title}
+                  {item.detail ? (
+                    <span className={secondaryCls}>{` \u00b7 ${item.detail}`}</span>
+                  ) : null}
+                  {item.badge ? (
+                    <span className={`${secondaryCls} uppercase`}>{` \u00b7 ${item.badge}`}</span>
+                  ) : null}
+                </span>
+                <span className={`shrink-0 whitespace-nowrap font-sans text-[11px] ${secondaryCls}`}>
+                  {formatRelativeTime(item.updatedAt)}
+                </span>
+              </div>
+            );
+          })
         )}
       </div>
     </VSCodeQuickInputShell>

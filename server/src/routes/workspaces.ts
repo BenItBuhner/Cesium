@@ -65,7 +65,12 @@ workspaceRoutes.get("/api/workspaces", async (c) => {
 });
 
 workspaceRoutes.post("/api/workspaces/open", async (c) => {
-  const body = await c.req.json<{ workspaceId?: string; root?: string; name?: string }>();
+  const body = await c.req.json<{
+    workspaceId?: string;
+    root?: string;
+    name?: string;
+    trackRecent?: boolean;
+  }>();
   if (!body.workspaceId && !body.root) {
     return c.json({ error: "Expected workspaceId or root" }, 400);
   }
@@ -76,7 +81,9 @@ workspaceRoutes.post("/api/workspaces/open", async (c) => {
     if (!workspace) {
       return c.json({ error: `Unknown workspace: ${body.workspaceId}` }, 404);
     }
-    await noteWorkspaceOpened(workspace.id);
+    if (body.trackRecent) {
+      await noteWorkspaceOpened(workspace.id);
+    }
   } else if (body.root) {
     workspace = await ensureWorkspaceRegistered(body.root, body.name);
   }
@@ -87,6 +94,32 @@ workspaceRoutes.post("/api/workspaces/open", async (c) => {
   ]);
 
   return c.json({
+    workspace,
+    workspaces,
+    defaultWorkspaceId: profile.defaultWorkspaceId,
+    recentWorkspaceIds: profile.recentWorkspaceIds,
+  });
+});
+
+workspaceRoutes.post("/api/workspaces/activity", async (c) => {
+  const body = await c.req.json<{ workspaceId?: string }>();
+  if (!body.workspaceId) {
+    return c.json({ error: "Expected workspaceId" }, 400);
+  }
+
+  const workspace = await getWorkspaceById(body.workspaceId);
+  if (!workspace) {
+    return c.json({ error: `Unknown workspace: ${body.workspaceId}` }, 404);
+  }
+
+  await noteWorkspaceOpened(workspace.id);
+  const [workspaces, profile] = await Promise.all([
+    listWorkspaces(),
+    getWorkspaceProfile(),
+  ]);
+
+  return c.json({
+    ok: true,
     workspace,
     workspaces,
     defaultWorkspaceId: profile.defaultWorkspaceId,

@@ -62,18 +62,20 @@ function normalizeConfigIds(config: ThemeConfig): ThemeConfig {
 }
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
-  const [themeConfig, setThemeConfigState] = useState<ThemeConfig>(
-    createDefaultThemeConfig
+  const [themeConfig, setThemeConfigState] = useState<ThemeConfig>(() =>
+    normalizeConfigIds(
+      typeof window === "undefined"
+        ? createDefaultThemeConfig()
+        : loadThemeConfigFromStorage()
+    )
   );
-
-  useEffect(() => {
-    const loaded = normalizeConfigIds(loadThemeConfigFromStorage());
-    setThemeConfigState(loaded);
-    applyThemeConfigToDom(loaded);
-  }, []);
 
   const configRef = useRef(themeConfig);
   configRef.current = themeConfig;
+
+  useEffect(() => {
+    applyThemeConfigToDom(themeConfig);
+  }, [themeConfig]);
 
   const commit = useCallback((next: ThemeConfig) => {
     const normalized = normalizeConfigIds(next);

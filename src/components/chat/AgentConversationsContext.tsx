@@ -22,6 +22,7 @@ import type {
   AgentBackendId,
   AgentBackendInfo,
   AgentConfigOption,
+  AgentConversationCreateInput,
   AgentConversationRecord,
   AgentConversationSnapshot,
   AgentSocketServerMessage,
@@ -31,6 +32,11 @@ import type { AgentModeOption, EditorMode, ImageAttachment, ModelInfo } from "@/
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { nextUnreadCompletionMap } from "@/lib/chat-unread-completion";
 import {
+  AGENT_NEW_CHAT_SESSION_ID,
+  createEmptyEditorSession,
+  getAgentSidePaneSessionScopeId,
+} from "@/lib/workspace-session";
+import {
   endQueuedPromptFlush,
   tryBeginQueuedPromptFlush,
 } from "@/lib/queued-prompt-flush-guard";
@@ -39,6 +45,7 @@ import {
   answerAgentPermission,
   buildAgentWebSocketUrl,
   cancelAgentConversation,
+  createAgentConversation,
   fetchAgentConversationSnapshot,
   listAgentConversations,
   promptAgentConversation,
@@ -114,6 +121,9 @@ type AgentConversationsContextValue = {
   eventsByConversationId: Record<string, AgentStoredEvent[]>;
   bootstrapped: boolean;
   getConversationLoadStatus: (conversationId: string) => ConversationLoadStatus;
+  createConversation: (
+    input?: AgentConversationCreateInput
+  ) => Promise<AgentConversationRecord>;
   renameConversation: (conversationId: string, title: string) => Promise<void>;
   answerPermissionForConversation: (
     conversationId: string,
@@ -160,7 +170,12 @@ export function AgentConversationsProvider({
 }: {
   children: ReactNode;
 }) {
-  const { activeWorkspaceId, workspaceSession, updateWorkspaceSession } = useWorkspace();
+  const {
+    activeWorkspaceId,
+    markWorkspaceActivity,
+    workspaceSession,
+    updateWorkspaceSession,
+  } = useWorkspace();
   const [backends, setBackends] = useState<AgentBackendInfo[]>([]);
   const [conversationsById, setConversationsById] = useState<
     Record<string, AgentConversationRecord>
@@ -188,6 +203,42 @@ export function AgentConversationsProvider({
     eventsRef.current = eventsByConversationId;
   }, [eventsByConversationId]);
 
+  const isAgentRoute =
+    typeof window !== "undefined" && window.location.pathname === "/agent";
+  const requestedConversationIdFromLocation =
+    isAgentRoute && typeof window !== "undefined"
+      ? new URL(window.location.href).searchParams.get("conversationId")?.trim() || null
+      : null;
+  const activeSelectedConversationId =
+    requestedConversationIdFromLocation &&
+    requestedConversationIdFromLocation !== AGENT_NEW_CHAT_SESSION_ID
+      ? requestedConversationIdFromLocation
+      : workspaceSession.agentView.selectedConversationId &&
+          workspaceSession.agentView.selectedConversationId !== AGENT_NEW_CHAT_SESSION_ID
+        ? workspaceSession.agentView.selectedConversationId
+        : null;
+  const activeAgentSidePaneEditor = useMemo(() => {
+    const scopeId = getAgentSidePaneSessionScopeId(
+      requestedConversationIdFromLocation ?? workspaceSession.agentView.selectedConversationId
+    );
+    return (
+      workspaceSession.agentView.sidePaneSessionsByConversationId?.[scopeId]?.editor ??
+      null
+    );
+  }, [
+    requestedConversationIdFromLocation,
+    workspaceSession.agentView.sidePaneSessionsByConversationId,
+    workspaceSession.agentView.selectedConversationId,
+  ]);
+  const scopedEditorSession =
+    isAgentRoute
+      ? activeAgentSidePaneEditor ??
+        (Object.keys(workspaceSession.agentView.sidePaneSessionsByConversationId ?? {}).length ===
+        0
+          ? workspaceSession.editor
+          : createEmptyEditorSession())
+      : workspaceSession.editor;
+
   const conversations = useMemo(
     () =>
       Object.values(conversationsById).sort((a, b) => b.updatedAt - a.updatedAt),
@@ -196,20 +247,24 @@ export function AgentConversationsProvider({
 
   const openConversationIds = useMemo(() => {
     const ids = new Set<string>();
-    for (const tab of workspaceSession.editor.leftTabs) {
+    if (activeSelectedConversationId) {
+      ids.add(activeSelectedConversationId);
+    }
+    for (const tab of scopedEditorSession.leftTabs) {
       if (tab.conversationId) {
         ids.add(tab.conversationId);
       }
     }
-    for (const tab of workspaceSession.editor.rightTabs) {
+    for (const tab of scopedEditorSession.rightTabs) {
       if (tab.conversationId) {
         ids.add(tab.conversationId);
       }
     }
     return [...ids];
   }, [
-    workspaceSession.editor.leftTabs,
-    workspaceSession.editor.rightTabs,
+    activeSelectedConversationId,
+    scopedEditorSession.leftTabs,
+    scopedEditorSession.rightTabs,
   ]);
 
   useEffect(() => {
@@ -218,15 +273,18 @@ export function AgentConversationsProvider({
 
   const visibleConversationIds = useMemo(() => {
     const ids = new Set<string>();
-    const leftActive = workspaceSession.editor.leftTabs.find(
-      (tab) => tab.id === workspaceSession.editor.leftActiveId
+    if (activeSelectedConversationId) {
+      ids.add(activeSelectedConversationId);
+    }
+    const leftActive = scopedEditorSession.leftTabs.find(
+      (tab) => tab.id === scopedEditorSession.leftActiveId
     );
     if (leftActive?.conversationId) {
       ids.add(leftActive.conversationId);
     }
 
-    const rightActive = workspaceSession.editor.rightTabs.find(
-      (tab) => tab.id === workspaceSession.editor.rightActiveId
+    const rightActive = scopedEditorSession.rightTabs.find(
+      (tab) => tab.id === scopedEditorSession.rightActiveId
     );
     if (rightActive?.conversationId) {
       ids.add(rightActive.conversationId);
@@ -234,10 +292,11 @@ export function AgentConversationsProvider({
 
     return [...ids];
   }, [
-    workspaceSession.editor.leftActiveId,
-    workspaceSession.editor.leftTabs,
-    workspaceSession.editor.rightActiveId,
-    workspaceSession.editor.rightTabs,
+    activeSelectedConversationId,
+    scopedEditorSession.leftActiveId,
+    scopedEditorSession.leftTabs,
+    scopedEditorSession.rightActiveId,
+    scopedEditorSession.rightTabs,
   ]);
 
   const mergeSnapshot = useCallback(
@@ -511,6 +570,9 @@ export function AgentConversationsProvider({
       try {
         const snapshot = await promptAgentConversation(conversationId, text, attachments);
         mergeSnapshot(snapshot.snapshot);
+        void markWorkspaceActivity(snapshot.snapshot.conversation.workspaceId).catch(
+          () => undefined
+        );
         return true;
       } catch (error) {
         const message =
@@ -538,7 +600,7 @@ export function AgentConversationsProvider({
         return false;
       }
     },
-    [mergeSnapshot]
+    [markWorkspaceActivity, mergeSnapshot]
   );
 
   const executePromptRef = useRef(executePrompt);
@@ -571,6 +633,19 @@ export function AgentConversationsProvider({
       return executePrompt(conversationId, text, attachments);
     },
     [conversationsById, executePrompt, updateWorkspaceSession]
+  );
+
+  const createConversation = useCallback(
+    async (input?: AgentConversationCreateInput) => {
+      const result = await createAgentConversation(input ?? {});
+      upsertConversation(result.conversation);
+      setConversationLoadStatusById((current) => ({
+        ...current,
+        [result.conversation.id]: "ready",
+      }));
+      return result.conversation;
+    },
+    [upsertConversation]
   );
 
   useEffect(() => {
@@ -725,10 +800,7 @@ export function AgentConversationsProvider({
       });
       const validIds = new Set(nextConversations.map((conversation) => conversation.id));
       updateWorkspaceSession((current) => {
-        const pruneGroup = (
-          tabs: typeof current.editor.leftTabs,
-          activeId: string | null
-        ) => {
+        const pruneGroup = (tabs: typeof current.editor.leftTabs, activeId: string | null) => {
           const nextTabs = tabs.filter(
             (tab) => !tab.conversationId || validIds.has(tab.conversationId)
           );
@@ -739,16 +811,54 @@ export function AgentConversationsProvider({
           return { nextTabs, nextActiveId };
         };
 
-        const left = pruneGroup(current.editor.leftTabs, current.editor.leftActiveId);
-        const right = pruneGroup(current.editor.rightTabs, current.editor.rightActiveId);
-        const validTabIds = new Set([
-          ...left.nextTabs.map((tab) => tab.id),
-          ...right.nextTabs.map((tab) => tab.id),
-        ]);
-        const nextViewStateByTabId = Object.fromEntries(
-          Object.entries(current.editor.viewStateByTabId).filter(([tabId]) =>
-            validTabIds.has(tabId)
-          )
+        const pruneEditorSession = (editor: typeof current.editor) => {
+          const left = pruneGroup(editor.leftTabs, editor.leftActiveId);
+          const right = pruneGroup(editor.rightTabs, editor.rightActiveId);
+          const validTabIds = new Set([
+            ...left.nextTabs.map((tab) => tab.id),
+            ...right.nextTabs.map((tab) => tab.id),
+          ]);
+          return {
+            nextEditor: {
+              ...editor,
+              leftTabs: left.nextTabs,
+              rightTabs: right.nextTabs,
+              leftActiveId: left.nextActiveId,
+              rightActiveId: right.nextActiveId,
+              viewStateByTabId: Object.fromEntries(
+                Object.entries(editor.viewStateByTabId).filter(([tabId]) =>
+                  validTabIds.has(tabId)
+                )
+              ),
+            },
+            changed:
+              left.nextTabs.length !== editor.leftTabs.length ||
+              right.nextTabs.length !== editor.rightTabs.length ||
+              left.nextActiveId !== editor.leftActiveId ||
+              right.nextActiveId !== editor.rightActiveId ||
+              Object.keys(editor.viewStateByTabId).length !== validTabIds.size,
+          };
+        };
+
+        const { nextEditor, changed: editorChanged } = pruneEditorSession(current.editor);
+        const currentSidePaneSessions =
+          current.agentView.sidePaneSessionsByConversationId ?? {};
+        const nextSidePaneSessions = Object.fromEntries(
+          Object.entries(currentSidePaneSessions)
+            .filter(
+              ([scopeId]) =>
+                scopeId === AGENT_NEW_CHAT_SESSION_ID || validIds.has(scopeId)
+            )
+            .map(([scopeId, session]) => {
+              const pruned = pruneEditorSession(session.editor);
+              return [
+                scopeId,
+                {
+                  ...session,
+                  editor: pruned.nextEditor,
+                },
+              ];
+            })
         );
         const nextChatTabs = current.chat.tabs.filter((tab) => validIds.has(tab.id));
         const normalizedChatTabs =
@@ -759,13 +869,8 @@ export function AgentConversationsProvider({
           validIds.has(id)
         );
 
-        const editorUnchanged =
-          left.nextTabs.length === current.editor.leftTabs.length &&
-          right.nextTabs.length === current.editor.rightTabs.length &&
-          left.nextActiveId === current.editor.leftActiveId &&
-          right.nextActiveId === current.editor.rightActiveId &&
-          Object.keys(nextViewStateByTabId).length ===
-            Object.keys(current.editor.viewStateByTabId).length;
+        const sidePaneSessionsUnchanged =
+          JSON.stringify(currentSidePaneSessions) === JSON.stringify(nextSidePaneSessions);
         const chatUnchanged =
           normalizedChatTabs.length === current.chat.tabs.length &&
           normalizedChatTabs.every(
@@ -779,22 +884,19 @@ export function AgentConversationsProvider({
             (id, index) => id === current.chat.hiddenConversationIds[index]
           );
 
-        return editorUnchanged && chatUnchanged
+        return !editorChanged && sidePaneSessionsUnchanged && chatUnchanged
           ? current
           : {
               ...current,
-              editor: {
-                ...current.editor,
-                leftTabs: left.nextTabs,
-                rightTabs: right.nextTabs,
-                leftActiveId: left.nextActiveId,
-                rightActiveId: right.nextActiveId,
-                viewStateByTabId: nextViewStateByTabId,
-              },
+              editor: nextEditor,
               chat: {
                 ...current.chat,
                 tabs: normalizedChatTabs,
                 hiddenConversationIds: nextHiddenConversationIds,
+              },
+              agentView: {
+                ...current.agentView,
+                sidePaneSessionsByConversationId: nextSidePaneSessions,
               },
             };
       });
@@ -901,6 +1003,7 @@ export function AgentConversationsProvider({
       eventsByConversationId,
       bootstrapped,
       getConversationLoadStatus,
+      createConversation,
       renameConversation,
       answerPermissionForConversation,
       cancelPermissionForConversation,
@@ -918,6 +1021,7 @@ export function AgentConversationsProvider({
       bootstrapped,
       cancelConversation,
       cancelPermissionForConversation,
+      createConversation,
       conversations,
       conversationsById,
       eventsByConversationId,

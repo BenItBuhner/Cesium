@@ -57,6 +57,7 @@ import { useWorkbenchNotifications } from "@/components/notifications/WorkbenchN
 import { WORKBENCH_NOTIFICATION_KIND } from "@/components/notifications/workbench-notification-types";
 import {
   createPersistableWorkspaceSession,
+  type EditorSessionState,
   type EditorSplitOrientation,
 } from "@/lib/workspace-session";
 import {
@@ -163,7 +164,23 @@ function areViewStatesEqual(a: unknown, b: unknown): boolean {
   }
 }
 
-export function EditorPanel() {
+interface EditorPanelProps {
+  session?: EditorSessionState;
+  onSessionChange?: (
+    updater: (current: EditorSessionState) => EditorSessionState
+  ) => void;
+  expandedComposerDraftId?: string | null;
+  setExpandedComposerDraft?: (draftId: string | null) => void;
+  reserveTrailingPaneCloseSlot?: boolean;
+}
+
+export function EditorPanel({
+  session: sessionOverride,
+  onSessionChange,
+  expandedComposerDraftId: expandedComposerDraftIdOverride,
+  setExpandedComposerDraft: setExpandedComposerDraftOverride,
+  reserveTrailingPaneCloseSlot = false,
+}: EditorPanelProps = {}) {
   const {
     registerOpenTranscript,
     registerOpenComposerDraft,
@@ -172,8 +189,8 @@ export function EditorPanel() {
     composerDrafts,
     upsertComposerDraft,
     setActiveExplorerPath,
-    expandedComposerDraftId,
-    setExpandedComposerDraft,
+    expandedComposerDraftId: workspaceExpandedComposerDraftId,
+    setExpandedComposerDraft: setWorkspaceExpandedComposerDraft,
   } = useOpenInEditor();
   const {
     activeWindowId,
@@ -193,15 +210,42 @@ export function EditorPanel() {
   const { experimentalIpadWindowedTabInset } = useUserPreferences();
   const { openAt } = useWorkbenchContextMenu();
   const { pushNotification, dismiss, dismissByKind } = useWorkbenchNotifications();
+  const persistedSession = sessionOverride ?? workspaceSession.editor;
+  const expandedComposerDraftId =
+    expandedComposerDraftIdOverride ?? workspaceExpandedComposerDraftId;
+  const setExpandedComposerDraft =
+    setExpandedComposerDraftOverride ?? setWorkspaceExpandedComposerDraft;
+  const hasExpandedComposerOverrides =
+    expandedComposerDraftIdOverride !== undefined ||
+    setExpandedComposerDraftOverride !== undefined;
+  const updateEditorSession = useCallback(
+    (updater: (current: EditorSessionState) => EditorSessionState) => {
+      if (onSessionChange) {
+        onSessionChange(updater);
+        return;
+      }
+      updateWorkspaceSession((current) => {
+        const nextEditor = updater(current.editor);
+        if (nextEditor === current.editor) {
+          return current;
+        }
+        return {
+          ...current,
+          editor: nextEditor,
+        };
+      });
+    },
+    [onSessionChange, updateWorkspaceSession]
+  );
   const liveTabContentRef = useRef<Map<string, string>>(new Map());
   const viewStateByTabIdRef = useRef<Record<string, unknown>>(
-    workspaceSession.editor.viewStateByTabId
+    persistedSession.viewStateByTabId
   );
   const handledDiskChangeAtRef = useRef<number | null>(null);
   const handledFsResyncTokenRef = useRef<number | null>(null);
   const [state, dispatch] = useReducer(
     editorPanelReducer,
-    workspaceSession.editor,
+    persistedSession,
     createEditorStateFromSession
   );
 
@@ -236,14 +280,11 @@ export function EditorPanel() {
   }, [state]);
 
   useEffect(() => {
-    updateWorkspaceSession((current) => ({
-      ...current,
-      editor: {
-        ...state,
-        viewStateByTabId: viewStateByTabIdRef.current,
-      },
+    updateEditorSession(() => ({
+      ...state,
+      viewStateByTabId: viewStateByTabIdRef.current,
     }));
-  }, [state, updateWorkspaceSession]);
+  }, [state, updateEditorSession]);
 
   const flashNotice = useCallback(
     (message: string, severity: "info" | "error" = "info") => {
@@ -1322,6 +1363,9 @@ export function EditorPanel() {
           draftId={tab.composerDraftId}
           title={tab.name}
           onMinimize={() => requestCloseTab(group, tab.id)}
+          {...(hasExpandedComposerOverrides
+            ? { setExpandedComposerDraft }
+            : {})}
         />
       );
     }
@@ -1330,6 +1374,12 @@ export function EditorPanel() {
         <AgentConversationView
           key={tab.id}
           conversationId={tab.conversationId}
+          {...(hasExpandedComposerOverrides
+            ? {
+                expandedComposerDraftId,
+                setExpandedComposerDraft,
+              }
+            : {})}
         />
       );
     }
@@ -1420,21 +1470,15 @@ export function EditorPanel() {
               [tab.id]: viewState,
             };
             viewStateByTabIdRef.current = nextViewStateByTabId;
-            updateWorkspaceSession((current) => {
+            updateEditorSession((current) => {
               if (
-                areViewStatesEqual(
-                  current.editor.viewStateByTabId[tab.id],
-                  viewState
-                )
+                areViewStatesEqual(current.viewStateByTabId[tab.id], viewState)
               ) {
                 return current;
               }
               return {
-                ...current,
-                editor: {
-                  ...stateRef.current,
-                  viewStateByTabId: nextViewStateByTabId,
-                },
+                ...stateRef.current,
+                viewStateByTabId: nextViewStateByTabId,
               };
             });
           }}
@@ -1483,6 +1527,10 @@ export function EditorPanel() {
       !isMobile &&
       !primarySidebarVisible &&
       group === "left";
+    const paneCloseSlotGroup: EditorGroup =
+      !state.split || state.splitOrientation === "vertical" ? "left" : "right";
+    const trailingSpacerWidthPx =
+      reserveTrailingPaneCloseSlot && group === paneCloseSlotGroup ? 18 : 0;
 
     return (
       <div className="flex h-full min-h-0 min-w-0 flex-col">
@@ -1506,6 +1554,7 @@ export function EditorPanel() {
           onTabContextMenu={(e, id) => handleEditorTabContextMenu(e, group, id)}
           onStripContextMenu={(e) => handleEditorStripContextMenu(e, group)}
           agentTabIndicators={agentTabIndicators}
+          trailingSpacerWidthPx={trailingSpacerWidthPx}
         />
         <div
           className="flex min-h-0 flex-1 flex-col overflow-hidden"

@@ -6,9 +6,16 @@ import type {
   QueuedChatPrompt,
 } from "@/lib/types";
 import type { AgentBackendId } from "@/lib/agent-types";
+import type { AgentRailFilterToggleState } from "@/lib/agent-rail";
+import {
+  defaultAgentRailFilterToggles,
+  normalizeAgentRailFilterToggles,
+} from "@/lib/agent-rail";
+import { normalizeAgentShellDesktopLayout } from "@/components/agent/agent-shell-layout";
 
 export type SidebarView = "explorer" | "search" | "scm";
 export type MobilePanel = "sidebar" | "editor" | "chat";
+export const AGENT_NEW_CHAT_SESSION_ID = "new";
 
 export type ExplorerSessionState = {
   view: SidebarView;
@@ -55,10 +62,33 @@ export type ChatSessionState = {
   unreadChatCompletionByConversationId?: Record<string, true>;
 };
 
+export type AgentSidePaneSessionState = {
+  editor: EditorSessionState;
+  rightPaneOpen: boolean;
+  agentShellDesktopLayout: Record<string, number> | null;
+  expandedComposerDraftId: string | null;
+};
+
 export type SettingsViewSessionState = {
   activeNav: string;
   searchQuery: string;
   scrollTop: number;
+};
+
+export type AgentViewSessionState = {
+  leftRailCollapsed: boolean;
+  rightPaneOpen: boolean;
+  selectedConversationId: string | null;
+  archivedConversationIds: string[];
+  /** Cross-workspace agent chats pinned to the top of the agent rail (most recent first). */
+  pinnedAgentConversationIds: string[];
+  /** Agent rail filter checkboxes (multi-select, AND). Omitted keys mean false after normalize. */
+  railFilterToggles?: AgentRailFilterToggleState;
+  filterPreset: string;
+  /** Horizontal agent shell: rail | center | side pane (%). Same persistence pattern as layout.desktopLayout. */
+  agentShellDesktopLayout: Record<string, number> | null;
+  /** Per-conversation right-side workbench state for the agent shell. */
+  sidePaneSessionsByConversationId?: Record<string, AgentSidePaneSessionState>;
 };
 
 export type WorkspaceSessionState = {
@@ -67,6 +97,7 @@ export type WorkspaceSessionState = {
   chat: ChatSessionState;
   explorer: ExplorerSessionState;
   layout: LayoutSessionState;
+  agentView: AgentViewSessionState;
   settingsView: SettingsViewSessionState;
 };
 
@@ -82,6 +113,23 @@ export function createEmptyEditorSession(): EditorSessionState {
     rightActiveId: null,
     viewStateByTabId: {},
   };
+}
+
+export function createEmptyAgentSidePaneSession(): AgentSidePaneSessionState {
+  return {
+    editor: createEmptyEditorSession(),
+    rightPaneOpen: false,
+    agentShellDesktopLayout: null,
+    expandedComposerDraftId: null,
+  };
+}
+
+export function getAgentSidePaneSessionScopeId(
+  selectedConversationId: string | null | undefined
+): string {
+  return typeof selectedConversationId === "string" && selectedConversationId.length > 0
+    ? selectedConversationId
+    : AGENT_NEW_CHAT_SESSION_ID;
 }
 
 export function createDefaultWorkspaceSession(
@@ -113,6 +161,17 @@ export function createDefaultWorkspaceSession(
       chatOpen: true,
       mobilePanel: "editor",
       desktopLayout: null,
+    },
+    agentView: {
+      leftRailCollapsed: false,
+      rightPaneOpen: false,
+      selectedConversationId: null,
+      archivedConversationIds: [],
+      pinnedAgentConversationIds: [],
+      railFilterToggles: defaultAgentRailFilterToggles(),
+      filterPreset: "default",
+      agentShellDesktopLayout: null,
+      sidePaneSessionsByConversationId: {},
     },
     settingsView: {
       activeNav: "general",
@@ -167,21 +226,108 @@ function createPersistableEditorTab(tab: EditorTab): EditorTab {
   return tab;
 }
 
+function createPersistableEditorSession(session: EditorSessionState): EditorSessionState {
+  return {
+    ...session,
+    leftTabs: session.leftTabs.map(createPersistableEditorTab),
+    rightTabs: session.rightTabs.map(createPersistableEditorTab),
+  };
+}
+
+function createPersistableAgentSidePaneSession(
+  session: AgentSidePaneSessionState
+): AgentSidePaneSessionState {
+  return {
+    ...session,
+    editor: createPersistableEditorSession(session.editor),
+  };
+}
+
 export function createPersistableWorkspaceSession(
   session: WorkspaceSessionState
 ): WorkspaceSessionState {
   return {
     schemaVersion: 1,
-    editor: {
-      ...session.editor,
-      leftTabs: session.editor.leftTabs.map(createPersistableEditorTab),
-      rightTabs: session.editor.rightTabs.map(createPersistableEditorTab),
-    },
+    editor: createPersistableEditorSession(session.editor),
     chat: session.chat,
     explorer: session.explorer,
     layout: session.layout,
+    agentView: {
+      ...session.agentView,
+      sidePaneSessionsByConversationId: Object.fromEntries(
+        Object.entries(session.agentView.sidePaneSessionsByConversationId ?? {}).map(
+          ([scopeId, sidePaneSession]) => [
+            scopeId,
+            createPersistableAgentSidePaneSession(sidePaneSession),
+          ]
+        )
+      ),
+    },
     settingsView: session.settingsView,
   };
+}
+
+function normalizeEditorSession(
+  raw: Partial<EditorSessionState> | null | undefined,
+  defaults: EditorSessionState
+): EditorSessionState {
+  return {
+    ...defaults,
+    ...(raw ?? {}),
+    leftTabs: Array.isArray(raw?.leftTabs) ? raw.leftTabs : defaults.leftTabs,
+    rightTabs: Array.isArray(raw?.rightTabs) ? raw.rightTabs : defaults.rightTabs,
+    viewStateByTabId:
+      raw?.viewStateByTabId && typeof raw.viewStateByTabId === "object"
+        ? raw.viewStateByTabId
+        : defaults.viewStateByTabId,
+  };
+}
+
+function normalizeAgentSidePaneSession(
+  raw: Partial<AgentSidePaneSessionState> | null | undefined,
+  defaults: AgentSidePaneSessionState
+): AgentSidePaneSessionState {
+  return {
+    ...defaults,
+    ...(raw ?? {}),
+    editor: normalizeEditorSession(raw?.editor, defaults.editor),
+    rightPaneOpen:
+      typeof raw?.rightPaneOpen === "boolean"
+        ? raw.rightPaneOpen
+        : defaults.rightPaneOpen,
+    agentShellDesktopLayout:
+      normalizeAgentShellDesktopLayout(
+        raw?.agentShellDesktopLayout ?? defaults.agentShellDesktopLayout
+      ) ?? null,
+    expandedComposerDraftId:
+      typeof raw?.expandedComposerDraftId === "string" ||
+      raw?.expandedComposerDraftId === null
+        ? raw.expandedComposerDraftId
+        : defaults.expandedComposerDraftId,
+  };
+}
+
+function normalizeAgentSidePaneSessionMap(
+  raw: unknown,
+  fallback: Record<string, AgentSidePaneSessionState>
+): Record<string, AgentSidePaneSessionState> {
+  if (!raw || typeof raw !== "object") {
+    return { ...fallback };
+  }
+  const entries: Array<[string, AgentSidePaneSessionState]> = [];
+  for (const [scopeId, value] of Object.entries(raw)) {
+    if (typeof scopeId !== "string" || scopeId.length === 0) {
+      continue;
+    }
+    entries.push([
+      scopeId,
+      normalizeAgentSidePaneSession(
+        value as Partial<AgentSidePaneSessionState>,
+        fallback[scopeId] ?? createEmptyAgentSidePaneSession()
+      ),
+    ]);
+  }
+  return Object.fromEntries(entries);
 }
 
 /** Merge an imported session snapshot onto the current workspace session. */
@@ -222,18 +368,14 @@ export function mergeWorkspaceSessionFromImport(
 
   return {
     schemaVersion: 1,
-    editor: {
-      ...current.editor,
-      ...(r.editor ?? {}),
-      splitOrientation: normalizedSplitOrientation,
-      splitLayout: normalizedSplitLayout,
-      leftTabs: Array.isArray(r.editor?.leftTabs) ? r.editor.leftTabs : current.editor.leftTabs,
-      rightTabs: Array.isArray(r.editor?.rightTabs) ? r.editor.rightTabs : current.editor.rightTabs,
-      viewStateByTabId:
-        r.editor?.viewStateByTabId && typeof r.editor.viewStateByTabId === "object"
-          ? r.editor.viewStateByTabId
-          : current.editor.viewStateByTabId,
-    },
+    editor: normalizeEditorSession(
+      {
+        ...r.editor,
+        splitOrientation: normalizedSplitOrientation,
+        splitLayout: normalizedSplitLayout,
+      },
+      current.editor
+    ),
     chat: {
       ...current.chat,
       ...(r.chat ?? {}),
@@ -280,6 +422,51 @@ export function mergeWorkspaceSessionFromImport(
         r.layout?.desktopLayout && typeof r.layout.desktopLayout === "object"
           ? r.layout.desktopLayout
           : current.layout.desktopLayout,
+    },
+    agentView: {
+      ...current.agentView,
+      ...(r.agentView ?? {}),
+      leftRailCollapsed:
+        typeof r.agentView?.leftRailCollapsed === "boolean"
+          ? r.agentView.leftRailCollapsed
+          : current.agentView.leftRailCollapsed,
+      rightPaneOpen:
+        typeof r.agentView?.rightPaneOpen === "boolean"
+          ? r.agentView.rightPaneOpen
+          : current.agentView.rightPaneOpen,
+      selectedConversationId:
+        typeof r.agentView?.selectedConversationId === "string" ||
+        r.agentView?.selectedConversationId === null
+          ? r.agentView.selectedConversationId
+          : current.agentView.selectedConversationId,
+      archivedConversationIds: Array.isArray(r.agentView?.archivedConversationIds)
+        ? r.agentView.archivedConversationIds.filter(
+            (v): v is string => typeof v === "string" && v.length > 0
+          )
+        : current.agentView.archivedConversationIds ?? [],
+      pinnedAgentConversationIds: Array.isArray(r.agentView?.pinnedAgentConversationIds)
+        ? r.agentView.pinnedAgentConversationIds.filter(
+            (v): v is string => typeof v === "string" && v.length > 0
+          )
+        : current.agentView.pinnedAgentConversationIds ?? [],
+      railFilterToggles: normalizeAgentRailFilterToggles(
+        r.agentView?.railFilterToggles ?? current.agentView.railFilterToggles,
+        typeof r.agentView?.filterPreset === "string"
+          ? r.agentView.filterPreset
+          : current.agentView.filterPreset
+      ),
+      filterPreset:
+        typeof r.agentView?.filterPreset === "string"
+          ? r.agentView.filterPreset
+          : current.agentView.filterPreset ?? "default",
+      agentShellDesktopLayout:
+        normalizeAgentShellDesktopLayout(
+          r.agentView?.agentShellDesktopLayout ?? current.agentView.agentShellDesktopLayout
+        ) ?? null,
+      sidePaneSessionsByConversationId: normalizeAgentSidePaneSessionMap(
+        r.agentView?.sidePaneSessionsByConversationId,
+        current.agentView.sidePaneSessionsByConversationId ?? {}
+      ),
     },
     settingsView: {
       ...current.settingsView,

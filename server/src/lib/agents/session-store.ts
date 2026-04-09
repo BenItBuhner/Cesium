@@ -45,13 +45,27 @@ function notify(event: AgentManagerEvent): void {
 function normalizeConversationRecord(
   record: AgentConversationRecord
 ): AgentConversationRecord {
+  const normalizedMetadata = {
+    archivedAt:
+      typeof record.archivedAt === "number" && Number.isFinite(record.archivedAt)
+        ? record.archivedAt
+        : null,
+    lastReadSeq:
+      typeof record.lastReadSeq === "number" && Number.isFinite(record.lastReadSeq)
+        ? Math.max(0, Math.min(record.lastEventSeq, Math.floor(record.lastReadSeq)))
+        : Math.max(0, record.lastEventSeq),
+  };
   const rawBackendId = record.config.backendId;
   if (typeof rawBackendId === "string" && rawBackendId in AGENT_BACKENDS) {
-    return record;
+    return {
+      ...record,
+      ...normalizedMetadata,
+    };
   }
   const fallbackBackend = AGENT_BACKENDS[FALLBACK_BACKEND_ID];
   return {
     ...record,
+    ...normalizedMetadata,
     status:
       record.status === "running" || record.status === "awaiting_permission"
         ? "idle"

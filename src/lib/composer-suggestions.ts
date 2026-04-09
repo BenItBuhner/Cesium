@@ -117,6 +117,12 @@ const PROMPT_SLASH_COMMANDS: SlashSuggestion[] = [
     subtitle: "Summarize recent changes or context",
     insert: "/summarize",
   },
+  {
+    id: "models",
+    label: "Models",
+    subtitle: "Open the model picker",
+    insert: "/models",
+  },
 ];
 
 function slugifySlashValue(value: string): string {

@@ -125,6 +125,46 @@ export function createInitialEditorState(tabs: EditorTab[]): EditorPanelState {
   };
 }
 
+function collapseEmptySplitIfNeeded(state: EditorPanelState): EditorPanelState {
+  if (!state.split) {
+    return state;
+  }
+  const leftCount = state.leftTabs.length;
+  const rightCount = state.rightTabs.length;
+  if (leftCount > 0 && rightCount > 0) {
+    return state;
+  }
+  if (leftCount === 0 && rightCount === 0) {
+    return {
+      ...state,
+      split: false,
+      focusedGroup: "left",
+      rightTabs: [],
+      leftActiveId: null,
+      rightActiveId: null,
+    };
+  }
+  if (leftCount === 0) {
+    return {
+      ...state,
+      split: false,
+      focusedGroup: "left",
+      leftTabs: state.rightTabs,
+      rightTabs: [],
+      leftActiveId: state.rightActiveId ?? state.rightTabs[0]?.id ?? null,
+      rightActiveId: null,
+    };
+  }
+  return {
+    ...state,
+    split: false,
+    focusedGroup: "left",
+    rightTabs: [],
+    leftActiveId: state.leftActiveId ?? state.leftTabs[0]?.id ?? null,
+    rightActiveId: null,
+  };
+}
+
 export function editorPanelReducer(
   state: EditorPanelState,
   action: EditorPanelAction
@@ -161,14 +201,26 @@ export function editorPanelReducer(
       if (nextActive === action.id) {
         nextActive = nextTabs[0]?.id ?? null;
       }
-      return { ...state, [key]: nextTabs, [activeKey]: nextActive };
+      return collapseEmptySplitIfNeeded({
+        ...state,
+        [key]: nextTabs,
+        [activeKey]: nextActive,
+      });
     }
 
     case "CLOSE_ALL_GROUP": {
       if (action.group === "left") {
-        return { ...state, leftTabs: [], leftActiveId: null };
+        return collapseEmptySplitIfNeeded({
+          ...state,
+          leftTabs: [],
+          leftActiveId: null,
+        });
       }
-      return { ...state, rightTabs: [], rightActiveId: null };
+      return collapseEmptySplitIfNeeded({
+        ...state,
+        rightTabs: [],
+        rightActiveId: null,
+      });
     }
 
     case "CLOSE_OTHERS_GROUP": {

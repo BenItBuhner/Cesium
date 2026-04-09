@@ -39,11 +39,13 @@ const [
     updateConversationRecord,
   },
   { AGENT_BACKENDS },
+  { agentRoutes },
 ] = await Promise.all([
   import("../src/lib/workspace-registry.js"),
   import("../src/lib/agents/runtime-manager.js"),
   import("../src/lib/agents/session-store.js"),
   import("../src/lib/agents/providers.js"),
+  import("../src/routes/agents.js"),
 ]);
 
 const testCapabilities: AgentProviderCapabilities = {
@@ -56,6 +58,7 @@ const testCapabilities: AgentProviderCapabilities = {
   supportsStructuredPlans: true,
   supportsTodos: true,
   supportsSessionResume: true,
+  supportsPromptImages: false,
 };
 
 const testBackends: Record<AgentBackendId, AgentBackendInfo> = {
@@ -671,4 +674,86 @@ test("unsupported backends fall back to cursor defaults when legacy conversation
     resumed.conversation.providerSessionId,
     "expected a fallback cursor runtime session to start"
   );
+});
+
+test("lists grouped conversation summaries across all workspaces", async () => {
+  const workspaceFixturesDir = path.join(repoRoot, ".tmp-agent-workspaces");
+  await fs.mkdir(workspaceFixturesDir, { recursive: true });
+  const workspaceRootA = await fs.mkdtemp(path.join(workspaceFixturesDir, "workspace-a-"));
+  const workspaceRootB = await fs.mkdtemp(path.join(workspaceFixturesDir, "workspace-b-"));
+  const workspaceA = await ensureWorkspaceRegistered(workspaceRootA, "workspace-a");
+  const workspaceB = await ensureWorkspaceRegistered(workspaceRootB, "workspace-b");
+  const conversationA = await testRuntimeManager.createConversation(workspaceA, {
+    backendId: "cursor-acp",
+    mode: "agent",
+    modelId: "test-fast",
+    modelName: "Test Fast",
+    title: "Cross workspace A",
+  });
+  const conversationB = await testRuntimeManager.createConversation(workspaceB, {
+    backendId: "opencode-acp",
+    mode: "plan",
+    modelId: "test-deep",
+    modelName: "Test Deep",
+    title: "Cross workspace B",
+  });
+
+  await updateConversationRecord(workspaceB.id, conversationB.id, (current) => ({
+    ...current,
+    status: "awaiting_permission",
+    pendingPermission: {
+      requestId: randomUUID(),
+      requestedAt: Date.now(),
+      title: "Allow test permission?",
+      options: [
+        {
+          optionId: "allow-once",
+          name: "Allow once",
+          kind: "allow_once",
+        },
+      ],
+    },
+  }));
+
+  const response = await agentRoutes.request("http://test.local/api/agents/conversations/all");
+  assert.equal(response.status, 200);
+  const payload = (await response.json()) as {
+    backends: AgentBackendInfo[];
+    groups: Array<{
+      workspace: { id: string; name: string };
+      conversations: Array<{
+        id: string;
+        workspaceId: string;
+        title: string;
+        status: string;
+        backendId: string;
+        mode: string;
+        hasPendingPermission: boolean;
+      }>;
+    }>;
+  };
+
+  assert.ok(payload.backends.length >= 2);
+  const groupA = payload.groups.find((group) => group.workspace.id === workspaceA.id);
+  const groupB = payload.groups.find((group) => group.workspace.id === workspaceB.id);
+  assert.ok(groupA, "expected workspace A group");
+  assert.ok(groupB, "expected workspace B group");
+  assert.equal(groupA.conversations[0]?.id, conversationA.id);
+  assert.equal(groupA.conversations[0]?.workspaceId, workspaceA.id);
+  assert.equal(groupA.conversations[0]?.title, "Cross workspace A");
+  assert.equal(groupA.conversations[0]?.backendId, "cursor-acp");
+  assert.equal(groupA.conversations[0]?.mode, "agent");
+  assert.equal(groupA.conversations[0]?.hasPendingPermission, false);
+  assert.equal(groupB.conversations[0]?.id, conversationB.id);
+  assert.equal(groupB.conversations[0]?.workspaceId, workspaceB.id);
+  assert.equal(groupB.conversations[0]?.title, "Cross workspace B");
+  assert.equal(groupB.conversations[0]?.status, "awaiting_permission");
+  assert.equal(groupB.conversations[0]?.backendId, "opencode-acp");
+  assert.equal(groupB.conversations[0]?.mode, "plan");
+  assert.equal(groupB.conversations[0]?.hasPendingPermission, true);
+
+  await Promise.all([
+    fs.rm(workspaceRootA, { recursive: true, force: true }),
+    fs.rm(workspaceRootB, { recursive: true, force: true }),
+  ]);
 });

@@ -18,7 +18,7 @@ export function usePopover(
   options?: { placement?: PopoverPlacement }
 ) {
   const placement = options?.placement ?? "above";
-  const triggerRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLDivElement | null>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
   const [position, setPosition] = useState<PopoverPosition>({
     bottom: 0,

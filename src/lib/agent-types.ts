@@ -1,3 +1,5 @@
+import type { WorkspaceRecord } from "./types";
+
 export type AgentConversationMode =
   | "agent"
   | "plan"
@@ -287,6 +289,26 @@ export type AgentConversationConfigPatch = Partial<AgentConversationConfig> & {
 export type AgentConversationListResult = {
   backends: AgentBackendInfo[];
   conversations: AgentConversationRecord[];
+};
+
+export type AgentRailConversationSummary = Pick<
+  AgentConversationRecord,
+  "id" | "workspaceId" | "title" | "createdAt" | "updatedAt" | "lastEventSeq" | "status"
+> & {
+  backendId: AgentBackendId;
+  mode: AgentConversationMode;
+  experimental: boolean;
+  hasPendingPermission: boolean;
+};
+
+export type AgentConversationGroup = {
+  workspace: WorkspaceRecord;
+  conversations: AgentRailConversationSummary[];
+};
+
+export type AgentConversationGroupsResult = {
+  backends: AgentBackendInfo[];
+  groups: AgentConversationGroup[];
 };
 
 export type AgentSocketClientMessage =

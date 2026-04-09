@@ -173,28 +173,30 @@ export function ModelDropdown({
   }, [highlightedIndex, open]);
 
   return (
-    <div ref={triggerRef}>
-      <button
-        type="button"
-        disabled={disabled}
-        onClick={() => (open ? close() : openDropdown())}
-        className="flex items-center gap-[4px] transition-opacity hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-50"
-      >
-        <ProviderIcon
-          className="size-[14px] shrink-0 text-[var(--text-secondary)]"
-          strokeWidth={1.5}
-        />
-        <span className="font-sans text-[13px] font-normal text-[var(--text-secondary)]">
-          {model.name}
-        </span>
-        <ChevronDown className="size-[8px] shrink-0 text-[var(--text-secondary)]" strokeWidth={2.5} />
-      </button>
+    <>
+      <div ref={triggerRef} className="inline-block w-max min-w-0 max-w-full shrink-0 align-middle">
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={() => (open ? close() : openDropdown())}
+          className="inline-flex w-fit max-w-[260px] min-w-0 items-center justify-start gap-[4px] text-left transition-opacity hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          <ProviderIcon
+            className="size-[14px] shrink-0 text-[var(--text-secondary)]"
+            strokeWidth={1.5}
+          />
+          <span className="max-w-[220px] min-w-0 shrink truncate font-sans text-[13px] font-normal text-[var(--text-secondary)]">
+            {model.name}
+          </span>
+          <ChevronDown className="size-[8px] shrink-0 text-[var(--text-secondary)]" strokeWidth={2.5} />
+        </button>
+      </div>
 
       {open &&
         createPortal(
           <div
             ref={popoverRef}
-            className={`fixed z-[9999] flex w-[260px] flex-col ${popoverSurface} transition-opacity`}
+            className={`fixed z-[9999] flex w-[260px] flex-col text-left ${popoverSurface} transition-opacity`}
             data-ide-input-sink
             style={{
               ...(position.top != null
@@ -221,11 +223,11 @@ export function ModelDropdown({
             </div>
             <div
               ref={listRef}
-              className="min-h-0 flex-1 overflow-y-auto overscroll-contain py-[2px]"
+              className="hide-scrollbar-y min-h-0 flex-1 overflow-y-auto overscroll-contain py-[2px]"
               style={{ maxHeight: listMaxHeight }}
             >
               {filtered.length === 0 && (
-                <p className="px-[12px] py-[8px] font-sans text-[13px] text-[var(--text-disabled)]">
+                <p className="px-[10px] py-[8px] font-sans text-[13px] text-[var(--text-disabled)]">
                   No models found
                 </p>
               )}
@@ -241,7 +243,7 @@ export function ModelDropdown({
                     title={detail}
                     onClick={() => selectModel(m)}
                     onMouseEnter={() => setHighlightedIndex(index)}
-                    className={`flex w-full items-center gap-[8px] px-[12px] py-[5px] text-left transition-colors ${
+                    className={`flex w-full items-center gap-[8px] px-[10px] py-[5px] text-left transition-colors ${
                       index === highlightedIndex ? "bg-white/[0.08]" : "hover:bg-white/[0.06]"
                     }`}
                   >
@@ -265,6 +267,6 @@ export function ModelDropdown({
           </div>,
           document.body
         )}
-    </div>
+    </>
   );
 }

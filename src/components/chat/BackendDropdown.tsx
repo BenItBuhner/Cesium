@@ -55,7 +55,7 @@ export function BackendDropdown({
   }, [current?.label, triggerExpanded]);
 
   return (
-    <div ref={triggerRef} className="relative inline-flex">
+    <div ref={triggerRef} className="relative inline-flex max-w-full min-w-0">
       <span
         ref={labelMeasureRef}
         className="pointer-events-none absolute opacity-0"

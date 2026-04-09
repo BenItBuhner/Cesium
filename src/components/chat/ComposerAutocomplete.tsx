@@ -76,7 +76,7 @@ export function ComposerAutocomplete(props: Props) {
         <span className="font-sans text-[13px] font-normal text-[var(--text-secondary)]">{title}</span>
       </div>
 
-      <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto py-[4px]">
+      <div ref={listRef} className="hide-scrollbar-y min-h-0 flex-1 overflow-y-auto py-[4px]">
         {props.kind === "at" &&
           props.items.map((item, i) => (
             <button

@@ -38,6 +38,8 @@ interface EditorTabsProps {
   onStripContextMenu?: (e: MouseEvent) => void;
   /** Agent chat tabs: permission pending / running; keyed by `conversationId`. */
   agentTabIndicators?: AgentTabIndicatorByConversationId;
+  /** Reserve a trailing slot so an external pane-level control can occupy the far-right edge. */
+  trailingSpacerWidthPx?: number;
 }
 
 const MENU_W = 240;
@@ -62,6 +64,7 @@ export function EditorTabs({
   onTabContextMenu,
   onStripContextMenu,
   agentTabIndicators,
+  trailingSpacerWidthPx = 0,
 }: EditorTabsProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [menuPos, setMenuPos] = useState({ top: 0, left: 0 });
@@ -218,6 +221,13 @@ export function EditorTabs({
             <MoreVertical className="size-[18px]" strokeWidth={1.5} aria-hidden />
           </button>
         </div>
+        {trailingSpacerWidthPx > 0 ? (
+          <div
+            aria-hidden
+            className="h-[18px] shrink-0"
+            style={{ width: `${trailingSpacerWidthPx}px` }}
+          />
+        ) : null}
       </div>
 
       {menuOpen &&

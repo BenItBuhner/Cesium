@@ -164,13 +164,21 @@ interface ChatComposerProps {
   onSelectionChange?: (selection: TextSelection) => void;
   onExpandComposer?: () => void;
   onCollapseComposer?: () => void;
-  onSubmit: (text: string, attachments?: ImageAttachment[]) => Promise<void> | void;
+  onSubmit: (
+    text: string,
+    attachments?: ImageAttachment[]
+  ) => Promise<boolean | void> | boolean | void;
   onCancel?: () => Promise<void> | void;
   busy?: boolean;
   configLocked?: boolean;
   /** Empty thread: composer sits under tabs; otherwise docked above bottom. */
   layout?: "docked-bottom" | "empty-top";
   variant?: "docked" | "expanded";
+  /**
+   * When set, replaces the default `mx-[10px]` shell inset (non-expanded only).
+   * Use `""` to align the composer flush inside a parent that already applies the inset.
+   */
+  shellMxClass?: string;
 }
 
 function resolvePointerSelection(
@@ -321,6 +329,7 @@ export function ChatComposer({
   configLocked = false,
   layout = "docked-bottom",
   variant = "docked",
+  shellMxClass,
 }: ChatComposerProps) {
   const { fileTree } = useWorkspace();
   const { settings } = useGlobalSettings();
@@ -906,19 +915,11 @@ export function ChatComposer({
 
   useEffect(() => {
     const trig = parseTriggerToken(value, selection.end);
-    
-    // If "/" alone is typed, open the model dropdown instead of the slash menu
-    if (trig && trig.kind === "slash" && trig.query === "") {
-      setMenu(null);
-      setModelDropdownOpen(true);
-      return;
-    }
-    
-    // Close model dropdown if slash menu is opened for other reasons
-    if (trig && trig.kind === "slash" && trig.query !== "") {
+
+    if (trig?.kind === "slash") {
       setModelDropdownOpen(false);
     }
-    
+
     setMenu((prev) => {
       if (!trig) return prev === null ? prev : null;
       const next: MenuState = {
@@ -1065,6 +1066,11 @@ export function ChatComposer({
     (item: SlashSuggestion) => {
       const currentMenu = menuRef.current;
       if (!currentMenu || currentMenu.kind !== "slash") return;
+      if (item.id === "models") {
+        setMenu(null);
+        setModelDropdownOpen(true);
+        return;
+      }
       if (!hardwareInputEnabled && editorRef.current) {
         replaceTextRange(
           editorRef.current,
@@ -1286,12 +1292,13 @@ export function ChatComposer({
     unregisterSurface,
   ]);
 
+  const shellMx = shellMxClass !== undefined ? shellMxClass : "mx-[10px]";
   const shellMargin =
     isExpanded
       ? ""
       : layout === "empty-top"
-      ? "mx-[10px] mt-[10px] mb-0"
-      : "mx-[10px] mb-[10px]";
+      ? `${shellMx} mt-[2px] mb-0`.trim()
+      : `${shellMx} mb-[10px]`.trim();
   const shellChrome = isExpanded
     ? "h-full min-h-0 gap-0 rounded-none border-0 bg-[var(--bg-main)] p-0"
     : "gap-[10px] overflow-hidden rounded-[var(--radius-card)] border border-[var(--border-card)] bg-[var(--bg-card)] p-[10px]";
@@ -1478,7 +1485,7 @@ export function ChatComposer({
 
       <div className={`flex items-start justify-between gap-[12px] ${controlRowClassName}`}>
         <div className="flex min-w-0 flex-1 flex-col gap-[6px]">
-          <div className="flex flex-wrap items-center gap-[11px]">
+          <div className="flex w-fit max-w-full flex-wrap items-center gap-[11px]">
             <BackendDropdown
               backendId={backendId}
               backends={backends}

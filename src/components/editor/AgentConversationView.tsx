@@ -11,6 +11,7 @@ import { RecentChatsModal } from "@/components/ide/RecentChatsModal";
 import { projectAgentEventsToChatMessages } from "@/lib/agent-chat";
 import { askStepsFromMessage } from "@/lib/ask-question-utils";
 import { useAgentConversations } from "@/components/chat/AgentConversationsContext";
+import type { AgentBackendId } from "@/lib/agent-types";
 import type { EditorMode, ImageAttachment, QueuedChatPrompt } from "@/lib/types";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import {
@@ -57,11 +58,17 @@ function isRecentConversationCandidate(title: string, lastEventSeq: number, busy
   return lastEventSeq > 0 || busy;
 }
 
+interface AgentConversationViewProps {
+  conversationId: string;
+  expandedComposerDraftId?: string | null;
+  setExpandedComposerDraft?: (draftId: string | null) => void;
+}
+
 export function AgentConversationView({
   conversationId,
-}: {
-  conversationId: string;
-}) {
+  expandedComposerDraftId: expandedComposerDraftIdOverride,
+  setExpandedComposerDraft: setExpandedComposerDraftOverride,
+}: AgentConversationViewProps) {
   const [recentChatsModalOpen, setRecentChatsModalOpen] = useState(false);
   const {
     composerDrafts,
@@ -70,8 +77,9 @@ export function AgentConversationView({
     upsertComposerDraft,
     setComposerSelection,
     openComposerDraft,
-    expandedComposerDraftId,
-    setExpandedComposerDraft,
+    setExpandedComposerController,
+    expandedComposerDraftId: workspaceExpandedComposerDraftId,
+    setExpandedComposerDraft: setWorkspaceExpandedComposerDraft,
   } = useOpenInEditor();
   const {
     backends,
@@ -92,6 +100,13 @@ export function AgentConversationView({
     syncConversationSnapshot,
   } = useAgentConversations();
   const { workspaceSession, updateWorkspaceSession } = useWorkspace();
+  const expandedComposerDraftId =
+    expandedComposerDraftIdOverride ?? workspaceExpandedComposerDraftId;
+  const setExpandedComposerDraft =
+    setExpandedComposerDraftOverride ?? setWorkspaceExpandedComposerDraft;
+  const shouldProvideExpandedComposerController =
+    expandedComposerDraftIdOverride !== undefined ||
+    setExpandedComposerDraftOverride !== undefined;
 
   const conversation = conversationsById[conversationId] ?? null;
   const loadState = getConversationLoadStatus(conversationId);
@@ -315,6 +330,70 @@ export function AgentConversationView({
     </div>
   );
 
+  const expandedComposerState = useMemo(() => {
+    if (
+      !shouldProvideExpandedComposerController ||
+      expandedComposerDraftId !== composerDraftId ||
+      !conversation ||
+      !composerState
+    ) {
+      return null;
+    }
+    return {
+      draftId: composerDraftId,
+      title: composerDraftTitle,
+      mode: composerState.mode,
+      onModeChange: (next: EditorMode) =>
+        void setConversationMode(conversationId, next),
+      model: composerState.model,
+      onModelChange: (next: typeof composerState.model) =>
+        void setConversationModel(conversationId, next),
+      backendId: composerState.backendId,
+      backends,
+      onBackendChange: (next: AgentBackendId) =>
+        void setConversationBackend(conversationId, next),
+      models: composerState.models,
+      modeOptions: composerState.modeOptions,
+      sessionConfigOptions: composerState.sessionConfigOptions,
+      onSessionConfigOptionChange: (configId: string, value: string) =>
+        void setConversationConfigOption(conversationId, configId, value),
+      onSubmit: (text: string, attachments?: ImageAttachment[]) =>
+        promptConversation(conversationId, text, attachments),
+      onCancel: () => cancelConversation(conversationId),
+      busy: composerState.busy,
+      configLocked: false,
+    };
+  }, [
+    backends,
+    cancelConversation,
+    composerDraftId,
+    composerDraftTitle,
+    composerState,
+    conversation,
+    conversationId,
+    expandedComposerDraftId,
+    promptConversation,
+    setConversationBackend,
+    setConversationConfigOption,
+    setConversationMode,
+    setConversationModel,
+    shouldProvideExpandedComposerController,
+  ]);
+
+  useEffect(() => {
+    if (!shouldProvideExpandedComposerController) {
+      return;
+    }
+    setExpandedComposerController(expandedComposerState);
+    return () => {
+      setExpandedComposerController(null);
+    };
+  }, [
+    expandedComposerState,
+    setExpandedComposerController,
+    shouldProvideExpandedComposerController,
+  ]);
+
   return (
     <div className="flex h-full min-h-0 w-full flex-col overflow-hidden bg-[var(--bg-main)]">
       {isEmptyThread ? (
@@ -417,7 +496,11 @@ export function AgentConversationView({
       <RecentChatsModal
         open={recentChatsModalOpen}
         onClose={() => setRecentChatsModalOpen(false)}
-        conversations={recentConversations}
+        items={recentConversations.map((conversation) => ({
+          id: conversation.id,
+          title: conversation.title,
+          updatedAt: conversation.updatedAt,
+        }))}
         onSelectConversation={(selectedConversationId) => {
           const selectedConversation = recentConversations.find(
             (candidate) => candidate.id === selectedConversationId

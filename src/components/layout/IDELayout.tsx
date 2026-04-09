@@ -150,7 +150,7 @@ export function IDELayout() {
       className="min-h-0 h-full"
       style={{ overflow: "hidden" }}
     >
-      <EditorPanel />
+      <EditorPanel key={`ide:${activeWorkspaceId ?? "workspace"}`} />
     </Panel>
   );
 
@@ -181,7 +181,9 @@ export function IDELayout() {
                     <div className="flex h-screen w-screen flex-col overflow-hidden bg-[var(--bg-main)]">
                       <div className="min-h-0 flex-1 overflow-hidden">
                         {mobilePanel === "sidebar" && <FileExplorer />}
-                        {mobilePanel === "editor" && <EditorPanel />}
+                        {mobilePanel === "editor" && (
+                          <EditorPanel key={`ide-mobile:${activeWorkspaceId ?? "workspace"}`} />
+                        )}
                         {mobilePanel === "chat" && <ChatPanel />}
                       </div>
                       <nav className="flex h-[44px] shrink-0 items-center justify-around border-t border-[var(--border-subtle)] bg-[var(--bg-panel)]">

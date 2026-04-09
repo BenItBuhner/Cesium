@@ -309,6 +309,19 @@ pre {
 }
 
 /**
+ * Quick-input / palette modals (`VSCodeQuickInputShell`): lists stay scrollable with no visible bar.
+ */
+[data-ide-palette] .overflow-y-auto {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+[data-ide-palette] .overflow-y-auto::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  background: transparent;
+}
+
+/**
  * Chat bottom stack wrapper: fully transparent so the transcript scrolls through behind it.
  * Only the inner composer / docked cards paint a background.
  */

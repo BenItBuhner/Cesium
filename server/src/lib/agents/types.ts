@@ -260,6 +260,8 @@ export type AgentConversationRecord = {
   pendingPermission: AgentPendingPermission | null;
   lastError: string | null;
   experimental: boolean;
+  archivedAt: number | null;
+  lastReadSeq: number;
 };
 
 export type AgentConversationSnapshot = {
@@ -278,6 +280,11 @@ export type AgentConversationConfigPatch = Partial<AgentConversationConfig> & {
   setConfigOption?: { configId: string; value: string };
   /** Set multiple provider config options atomically when a UI choice maps to a model + variant. */
   setConfigOptions?: Array<{ configId: string; value: string }>;
+};
+
+export type AgentConversationMetadataPatch = {
+  archived?: boolean;
+  lastReadSeq?: number;
 };
 
 export type AgentConversationListResult = {

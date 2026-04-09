@@ -27,7 +27,9 @@ import { normalizeBrowserTargetUrl } from "@/lib/browser-proxy-url";
 import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
 import { buildWorkspaceWindowUrl } from "@/lib/workspace-windows";
 import {
+  SHORTCUT_COMMAND_DEFINITIONS,
   detectShortcutPlatform,
+  getShortcutBindingsForCommand,
   getShortcutDisplayForCommand,
   tryDispatchKeyboardShortcut,
   type ShortcutChordState,
@@ -319,6 +321,12 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
         case "workbench.action.toggleAgentPanel":
           workbench.toggleChat();
           break;
+        case "workbench.action.focusChatPlanMode":
+          updateWorkspaceSession((current) => ({
+            ...current,
+            chat: { ...current.chat, mode: "plan" },
+          }));
+          break;
         case "workbench.action.focusChatAgentMode":
           updateWorkspaceSession((current) => ({
             ...current,
@@ -512,6 +520,38 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
     [runShortcutCommand, shortcutBindings, shortcutPlatform]
   );
 
+  const inputSinkWorkbenchBindings = useMemo(
+    () =>
+      Object.assign(
+        Object.fromEntries(
+          SHORTCUT_COMMAND_DEFINITIONS.map((definition) => [definition.id, [] as string[]])
+        ),
+        {
+          "workbench.action.focusChatPlanMode": getShortcutBindingsForCommand(
+            shortcutBindings,
+            "workbench.action.focusChatPlanMode"
+          ),
+          "workbench.action.focusChatAgentMode": getShortcutBindingsForCommand(
+            shortcutBindings,
+            "workbench.action.focusChatAgentMode"
+          ),
+        }
+      ),
+    [shortcutBindings]
+  );
+
+  const handleInputSinkWorkbenchKeyDown = useCallback(
+    (e: KeyboardEvent) =>
+      tryDispatchKeyboardShortcut({
+        event: e,
+        platform: shortcutPlatform,
+        bindings: inputSinkWorkbenchBindings,
+        chordRef,
+        onCommand: runShortcutCommand,
+      }),
+    [inputSinkWorkbenchBindings, runShortcutCommand, shortcutPlatform]
+  );
+
   const commands: PaletteCommand[] = useMemo(
     () => [
       {
@@ -549,6 +589,18 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
         label: "View: Toggle Agent / Chat Side Panel",
         keybinding: kb("workbench.action.toggleAgentPanel"),
         run: () => runShortcutCommand("workbench.action.toggleAgentPanel"),
+      },
+      {
+        id: "workbench.action.focusChatPlanMode",
+        label: "Chat: Use Plan mode",
+        keybinding: kb("workbench.action.focusChatPlanMode"),
+        run: () => runShortcutCommand("workbench.action.focusChatPlanMode"),
+      },
+      {
+        id: "workbench.action.focusChatAgentMode",
+        label: "Chat: Use Agent mode",
+        keybinding: kb("workbench.action.focusChatAgentMode"),
+        run: () => runShortcutCommand("workbench.action.focusChatAgentMode"),
       },
       {
         id: "recentChats.open",
@@ -874,9 +926,13 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
   const runCommand = useCallback(
     (id: string) => {
       const c = commands.find((x) => x.id === id);
-      c?.run();
+      if (c) {
+        c.run();
+        return;
+      }
+      runShortcutCommand(id);
     },
-    [commands]
+    [commands, runShortcutCommand]
   );
 
   useEffect(() => {
@@ -909,9 +965,17 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
       if (hardwareInputEnabled) {
         const routed = routeKeyDown(e);
         if (routed.handled) return;
-        if (insideInputSink) return;
+        if (insideInputSink) {
+          if (handleInputSinkWorkbenchKeyDown(e)) {
+            return;
+          }
+          return;
+        }
         if (!routed.allowWorkbenchShortcuts) return;
       } else if (insideInputSink) {
+        if (handleInputSinkWorkbenchKeyDown(e)) {
+          return;
+        }
         return;
       }
 
@@ -962,6 +1026,7 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
     };
   }, [
     bridgeRef,
+    handleInputSinkWorkbenchKeyDown,
     handleWorkbenchKeyDown,
     hardwareInputEnabled,
     routeKeyDown,

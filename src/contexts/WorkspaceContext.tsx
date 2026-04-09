@@ -29,6 +29,7 @@ import {
   fetchWorkspaceSession,
   getServerBaseUrl,
   listTerminals,
+  markWorkspaceActivity as postWorkspaceActivity,
   openWorkspaceSelection,
   saveWorkspaceSession,
   setActiveWorkspaceId,
@@ -37,9 +38,11 @@ import {
 } from "@/lib/server-api";
 import {
   createDefaultWorkspaceSession,
+  mergeWorkspaceSessionFromImport,
   createPersistableWorkspaceSession,
   type WorkspaceSessionState,
 } from "@/lib/workspace-session";
+import { normalizeWorkspaceScopedRoute } from "@/lib/workspace-windows";
 import { JsonWebSocket, toWebSocketUrl } from "@/lib/ws-client";
 import { useWorkbenchNotifications } from "@/components/notifications/WorkbenchNotificationProvider";
 import { WORKBENCH_NOTIFICATION_KIND } from "@/components/notifications/workbench-notification-types";
@@ -96,6 +99,7 @@ type WorkspaceContextValue = {
   loadFolderChildren: (path: string) => Promise<void>;
   openFolder: (root: string, name?: string) => Promise<void>;
   openWorkspaceById: (workspaceId: string) => Promise<void>;
+  markWorkspaceActivity: (workspaceId?: string) => Promise<void>;
   refreshWorkspaceWindows: () => Promise<void>;
   createWorkspaceWindow: (input?: {
     title?: string;
@@ -143,7 +147,7 @@ function writeWindowLocationContext(
   }
 
   const url = new URL(window.location.href);
-  url.pathname = "/editor";
+  url.pathname = normalizeWorkspaceScopedRoute(window.location.pathname);
   if (workspaceId) {
     url.searchParams.set("workspaceId", workspaceId);
   } else {
@@ -222,80 +226,7 @@ function normalizeWorkspaceSession(
   if (!raw || raw.schemaVersion !== 1) {
     return defaults;
   }
-  const normalizedChatBackendId =
-    raw.chat?.backendId === "cursor-acp" ||
-    raw.chat?.backendId === "opencode-acp" ||
-    raw.chat?.backendId === "codex-adapter" ||
-    raw.chat?.backendId === "claude-adapter"
-      ? raw.chat.backendId
-      : defaults.chat.backendId;
-  const usedFallbackBackend =
-    raw.chat?.backendId != null && normalizedChatBackendId !== raw.chat.backendId;
-
-  return {
-    schemaVersion: 1,
-    editor: {
-      ...defaults.editor,
-      ...(raw.editor ?? {}),
-      leftTabs: Array.isArray(raw.editor?.leftTabs) ? raw.editor.leftTabs : defaults.editor.leftTabs,
-      rightTabs: Array.isArray(raw.editor?.rightTabs) ? raw.editor.rightTabs : defaults.editor.rightTabs,
-      viewStateByTabId:
-        raw.editor?.viewStateByTabId && typeof raw.editor.viewStateByTabId === "object"
-          ? raw.editor.viewStateByTabId
-          : defaults.editor.viewStateByTabId,
-    },
-    chat: {
-      ...defaults.chat,
-      ...(raw.chat ?? {}),
-      tabs: Array.isArray(raw.chat?.tabs) && raw.chat.tabs.length > 0 ? raw.chat.tabs : defaults.chat.tabs,
-      scrollTopByTabId:
-        raw.chat?.scrollTopByTabId && typeof raw.chat.scrollTopByTabId === "object"
-          ? raw.chat.scrollTopByTabId
-          : defaults.chat.scrollTopByTabId,
-      hiddenConversationIds: Array.isArray(raw.chat?.hiddenConversationIds)
-        ? raw.chat.hiddenConversationIds.filter(
-            (value): value is string => typeof value === "string" && value.length > 0
-          )
-        : defaults.chat.hiddenConversationIds,
-      workedSessionOpenByScopedId:
-        raw.chat?.workedSessionOpenByScopedId &&
-        typeof raw.chat.workedSessionOpenByScopedId === "object"
-          ? raw.chat.workedSessionOpenByScopedId
-          : defaults.chat.workedSessionOpenByScopedId ?? {},
-      queuedPromptsByConversationId:
-        raw.chat?.queuedPromptsByConversationId &&
-        typeof raw.chat.queuedPromptsByConversationId === "object"
-          ? raw.chat.queuedPromptsByConversationId
-          : defaults.chat.queuedPromptsByConversationId ?? {},
-      unreadChatCompletionByConversationId:
-        raw.chat?.unreadChatCompletionByConversationId &&
-        typeof raw.chat.unreadChatCompletionByConversationId === "object"
-          ? raw.chat.unreadChatCompletionByConversationId
-          : defaults.chat.unreadChatCompletionByConversationId ?? {},
-      model: usedFallbackBackend ? defaults.chat.model : raw.chat?.model ?? defaults.chat.model,
-      mode: usedFallbackBackend ? defaults.chat.mode : raw.chat?.mode ?? defaults.chat.mode,
-      backendId: normalizedChatBackendId,
-    },
-    explorer: {
-      ...defaults.explorer,
-      ...(raw.explorer ?? {}),
-      expandedPaths: Array.isArray(raw.explorer?.expandedPaths)
-        ? raw.explorer.expandedPaths
-        : defaults.explorer.expandedPaths,
-    },
-    layout: {
-      ...defaults.layout,
-      ...(raw.layout ?? {}),
-      desktopLayout:
-        raw.layout?.desktopLayout && typeof raw.layout.desktopLayout === "object"
-          ? raw.layout.desktopLayout
-          : defaults.layout.desktopLayout,
-    },
-    settingsView: {
-      ...defaults.settingsView,
-      ...(raw.settingsView ?? {}),
-    },
-  };
+  return mergeWorkspaceSessionFromImport(defaults, raw);
 }
 
 function cloneFolder(node: FileNode): FileNode {
@@ -723,6 +654,22 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       await loadWorkspaceState(result.workspace);
     },
     [applyWorkspaceListingUpdate, flushWorkspaceSessionNow, loadWorkspaceState]
+  );
+
+  const markWorkspaceActivity = useCallback(
+    async (workspaceId?: string) => {
+      const targetWorkspaceId = workspaceId ?? activeWorkspaceId;
+      if (!targetWorkspaceId) {
+        return;
+      }
+      const result = await postWorkspaceActivity(targetWorkspaceId);
+      applyWorkspaceListingUpdate(
+        result.workspaces,
+        result.defaultWorkspaceId,
+        result.recentWorkspaceIds
+      );
+    },
+    [activeWorkspaceId, applyWorkspaceListingUpdate]
   );
 
   const openFolder = useCallback(
@@ -1207,6 +1154,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       loadFolderChildren,
       openFolder,
       openWorkspaceById,
+      markWorkspaceActivity,
       refreshWorkspaceWindows,
       createWorkspaceWindow: createPersistentWorkspaceWindow,
       updateWorkspaceWindow: updatePersistentWorkspaceWindow,
@@ -1239,6 +1187,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       loadFolderChildren,
       openFolder,
       openWorkspaceById,
+      markWorkspaceActivity,
       refreshWorkspaceWindows,
       createPersistentWorkspaceWindow,
       updatePersistentWorkspaceWindow,

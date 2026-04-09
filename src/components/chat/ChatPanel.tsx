@@ -1394,6 +1394,8 @@ export function ChatPanel() {
     (e: MouseEvent, tabId: string) => {
       const othersOpen = tabs.length > 1;
       const targetConversation = conversationsById[tabId];
+      const pinnedIds = workspaceSession.agentView.pinnedAgentConversationIds ?? [];
+      const tabIsPinned = pinnedIds.includes(tabId);
       const items: WorkbenchMenuItem[] = [
         {
           type: "item",
@@ -1428,6 +1430,56 @@ export function ChatPanel() {
               conversationId: tabId,
               title: targetConversation.title,
             });
+          },
+        },
+        {
+          type: "item",
+          id: tabIsPinned ? "unpin" : "pin",
+          label: tabIsPinned ? "Unpin" : "Pin",
+          disabled: !isPersistedConversationTabId(tabId),
+          onSelect: () => {
+            if (!isPersistedConversationTabId(tabId)) {
+              return;
+            }
+            updateWorkspaceSession((current) => {
+              const p = current.agentView.pinnedAgentConversationIds ?? [];
+              if (tabIsPinned) {
+                if (!p.includes(tabId)) return current;
+                return {
+                  ...current,
+                  agentView: {
+                    ...current.agentView,
+                    pinnedAgentConversationIds: p.filter((id) => id !== tabId),
+                  },
+                };
+              }
+              return {
+                ...current,
+                agentView: {
+                  ...current.agentView,
+                  pinnedAgentConversationIds: [tabId, ...p.filter((id) => id !== tabId)],
+                },
+              };
+            });
+          },
+        },
+        {
+          type: "item",
+          id: "archive",
+          label: "Archive",
+          onSelect: () => {
+            updateWorkspaceSession((current) => {
+              const archived = current.agentView.archivedConversationIds ?? [];
+              if (archived.includes(tabId)) return current;
+              return {
+                ...current,
+                agentView: {
+                  ...current.agentView,
+                  archivedConversationIds: [...archived, tabId],
+                },
+              };
+            });
+            closeChatTab(tabId);
           },
         },
         { type: "sep" },
@@ -1480,6 +1532,8 @@ export function ChatPanel() {
       openAgentConversation,
       openAt,
       tabs,
+      updateWorkspaceSession,
+      workspaceSession.agentView.pinnedAgentConversationIds,
       workspaceWindows,
     ]
   );
@@ -1867,7 +1921,11 @@ export function ChatPanel() {
       <RecentChatsModal
         open={recentChatsModalOpen}
         onClose={() => setRecentChatsModalOpen(false)}
-        conversations={recentConversations}
+        items={recentConversations.map((conversation) => ({
+          id: conversation.id,
+          title: conversation.title,
+          updatedAt: conversation.updatedAt,
+        }))}
         onSelectConversation={openConversationById}
       />
     </div>

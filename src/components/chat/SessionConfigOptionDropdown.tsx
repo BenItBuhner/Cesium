@@ -40,7 +40,7 @@ export function SessionConfigOptionDropdown({
   const label = option.name || "Option";
 
   return (
-    <div ref={triggerRef}>
+    <div ref={triggerRef} className="inline-flex max-w-full min-w-0">
       <button
         type="button"
         disabled={disabled}
