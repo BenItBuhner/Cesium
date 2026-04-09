@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useDeferredValue, useEffect, useMemo, useState } from "react";
 import { Search } from "lucide-react";
 import { ChatComposer } from "@/components/chat/ChatComposer";
 import { ComposerQueueDock } from "@/components/chat/ComposerQueueDock";
@@ -98,6 +98,8 @@ export function AgentConversationView({
     setConversationBackend,
     setConversationConfigOption,
     syncConversationSnapshot,
+    getConversationHistoryCursor,
+    loadOlderConversationHistory,
   } = useAgentConversations();
   const { workspaceSession, updateWorkspaceSession } = useWorkspace();
   const expandedComposerDraftId =
@@ -111,16 +113,22 @@ export function AgentConversationView({
   const conversation = conversationsById[conversationId] ?? null;
   const loadState = getConversationLoadStatus(conversationId);
   const composerState = getConversationComposerState(conversationId);
+  const rawThreadEvents = eventsByConversationId[conversationId] ?? [];
+  const deferredThreadEvents = useDeferredValue(rawThreadEvents);
   const threadMessages = useMemo(
     () =>
-      projectAgentEventsToChatMessages(eventsByConversationId[conversationId] ?? [], {
+      projectAgentEventsToChatMessages(deferredThreadEvents, {
         backendId: conversation?.config.backendId,
       }),
-    [conversationId, conversation?.config.backendId, eventsByConversationId]
+    [conversationId, conversation?.config.backendId, deferredThreadEvents]
   );
   const { scrollMessages, dockedAsk } = useMemo(
     () => partitionMessagesForDock(threadMessages),
     [threadMessages]
+  );
+  const historyCursor = useMemo(
+    () => getConversationHistoryCursor(conversationId),
+    [conversationId, getConversationHistoryCursor]
   );
   const dockedAskSteps = useMemo(
     () => (dockedAsk ? askStepsFromMessage(dockedAsk) : []),
@@ -434,6 +442,9 @@ export function AgentConversationView({
               conversation?.status === "running" ||
               conversation?.status === "awaiting_permission"
             }
+            hasOlderHistory={historyCursor.hasOlder}
+            loadingOlderHistory={historyCursor.loadingOlder}
+            onRequestOlderHistory={() => loadOlderConversationHistory(conversationId)}
             initialScrollTop={workspaceSession.chat.scrollTopByTabId[conversationId] ?? 0}
             onScrollTopSettled={(scrollTop) => {
               updateWorkspaceSession((current) =>

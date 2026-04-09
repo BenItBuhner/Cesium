@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronRight, ListFilter, PanelLeftClose, PanelLeftOpen, Plus, Search } from "lucide-react";
+import { ChevronRight, ListFilter, PanelLeftClose, Plus, Search } from "lucide-react";
 import {
   useCallback,
   useEffect,
@@ -24,10 +24,43 @@ import {
   type AgentRailFilterToggleKey,
 } from "@/lib/agent-rail";
 import { useClickOutside } from "@/hooks/useClickOutside";
+import { AGENT_RAIL_OPEN_SEARCH_EVENT } from "@/components/agent/agent-rail-events";
 import { useAgentShellState } from "./AgentShellStateContext";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 
 const PINNED_SECTION_WORKSPACE_ID = "__agentPinned__";
+
+const COLLAPSED_WORKSPACES_STORAGE_KEY = "opencursor.agent-rail-collapsed-workspaces";
+
+function readCollapsedWorkspaceIdsFromStorage(): Set<string> {
+  if (typeof window === "undefined") {
+    return new Set();
+  }
+  try {
+    const raw = window.localStorage.getItem(COLLAPSED_WORKSPACES_STORAGE_KEY);
+    if (!raw) {
+      return new Set();
+    }
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) {
+      return new Set();
+    }
+    return new Set(parsed.filter((id): id is string => typeof id === "string"));
+  } catch {
+    return new Set();
+  }
+}
+
+function writeCollapsedWorkspaceIdsToStorage(ids: Set<string>) {
+  try {
+    window.localStorage.setItem(
+      COLLAPSED_WORKSPACES_STORAGE_KEY,
+      JSON.stringify([...ids])
+    );
+  } catch {
+    /* quota or private mode */
+  }
+}
 
 const FILTER_TOGGLE_LABELS: Record<AgentRailFilterToggleKey, string> = {
   archived: "Archived",
@@ -86,6 +119,10 @@ export function AgentWorkspaceRail() {
     setFilterMenuPos({ top: r.bottom + 6, left: r.left });
   }, [filterMenuOpen]);
 
+  useLayoutEffect(() => {
+    setCollapsedWorkspaceIds(readCollapsedWorkspaceIdsFromStorage());
+  }, []);
+
   useClickOutside(filterPanelRef, () => setFilterMenuOpen(false), filterMenuOpen, [
     filterAnchorRef,
   ]);
@@ -102,6 +139,18 @@ export function AgentWorkspaceRail() {
     document.addEventListener("keydown", onKey, true);
     return () => document.removeEventListener("keydown", onKey, true);
   }, [filterMenuOpen]);
+
+  useEffect(() => {
+    if (leftRailCollapsed && !isMobile) {
+      setFilterMenuOpen(false);
+    }
+  }, [isMobile, leftRailCollapsed]);
+
+  useEffect(() => {
+    const onOpenSearch = () => setRecentChatsOpen(true);
+    window.addEventListener(AGENT_RAIL_OPEN_SEARCH_EVENT, onOpenSearch);
+    return () => window.removeEventListener(AGENT_RAIL_OPEN_SEARCH_EVENT, onOpenSearch);
+  }, []);
 
   const filterSummary = useMemo(() => {
     if (!railFilterActive) {
@@ -142,6 +191,7 @@ export function AgentWorkspaceRail() {
       } else {
         next.add(workspaceId);
       }
+      writeCollapsedWorkspaceIdsToStorage(next);
       return next;
     });
   }, []);
@@ -442,114 +492,60 @@ export function AgentWorkspaceRail() {
     updateConversationRenameDraft,
   ]);
 
+  const desktopRailCollapsed = leftRailCollapsed && !isMobile;
+
   return (
-    <div className="flex h-full flex-col bg-[var(--bg-panel)]">
-      <div className="flex shrink-0 items-center gap-[8px] px-[11px] pt-[11px]">
-        <button
-          type="button"
-          onClick={toggleLeftRailCollapsed}
-          className="flex size-[18px] items-center justify-center rounded-[var(--radius-tab)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-card)] hover:text-[var(--text-primary)]"
-          aria-label={leftRailCollapsed ? "Expand workspace rail" : "Collapse workspace rail"}
-          title={leftRailCollapsed ? "Expand workspace rail" : "Collapse workspace rail"}
-        >
-          {leftRailCollapsed ? (
-            <PanelLeftOpen className="size-[16px]" strokeWidth={1.5} />
-          ) : (
-            <PanelLeftClose className="size-[16px]" strokeWidth={1.5} />
-          )}
-        </button>
-        <button
-          type="button"
-          onClick={() => setRecentChatsOpen(true)}
-          className="flex size-[18px] items-center justify-center rounded-[var(--radius-tab)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-card)] hover:text-[var(--text-primary)]"
-          aria-label="Search all chats"
-          title="Search all chats"
-        >
-          <Search className="size-[16px]" strokeWidth={1.5} />
-        </button>
-        <button
-          ref={filterAnchorRef}
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            setFilterMenuOpen((open) => !open);
-          }}
-          className={`flex size-[18px] items-center justify-center rounded-[var(--radius-tab)] transition-colors hover:bg-[var(--bg-card)] hover:text-[var(--text-primary)] ${
-            railFilterActive ? "text-[var(--accent)]" : "text-[var(--text-secondary)]"
-          }`}
-          aria-label="Filter conversations"
-          aria-expanded={filterMenuOpen}
-          title={`Filter: ${filterSummary}`}
-        >
-          <ListFilter className="size-[16px]" strokeWidth={1.5} />
-        </button>
-        <div className="flex-1" />
-        <button
-          type="button"
-          onClick={handleNewChat}
-          className="flex size-[18px] items-center justify-center rounded-[var(--radius-tab)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-card)] hover:text-[var(--text-primary)]"
-          aria-label="Start new chat"
-          title="Start new chat"
-        >
-          <Plus className="size-[16px]" strokeWidth={1.5} />
-        </button>
-      </div>
-
-      <RecentChatsModal
-        items={allConversationsForSearch}
-        open={recentChatsOpen}
-        onClose={() => setRecentChatsOpen(false)}
-        onSelectConversation={handleSearchSelect}
-        placeholder="Search across all workspaces..."
-        emptyLabel="No conversations found"
-        screenReaderTitle="Search agent conversations"
-        inputLabel="Search agent conversations"
-      />
-
-      {filterMenuOpen
-        ? createPortal(
-            <div
-              ref={filterPanelRef}
-              role="dialog"
-              aria-label="Conversation filters"
-              className="fixed z-[10040] min-w-[232px] rounded-[var(--radius-card)] border border-[var(--border-card)] bg-[var(--bg-card)] py-[6px] shadow-[0_8px_24px_rgba(0,0,0,0.12)] dark:shadow-[0_10px_28px_rgba(0,0,0,0.45)]"
-              style={{ top: filterMenuPos.top, left: filterMenuPos.left }}
+    <>
+      {!desktopRailCollapsed ? (
+        <div className="flex h-full flex-col bg-[var(--bg-panel)]">
+          <div className="flex shrink-0 items-center gap-[8px] px-[11px] pt-[11px]">
+            <button
+              type="button"
+              onClick={toggleLeftRailCollapsed}
+              className="flex size-[18px] shrink-0 items-center justify-center rounded-[var(--radius-tab)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-card)] hover:text-[var(--text-primary)]"
+              aria-label="Collapse workspace rail"
+              title="Collapse workspace rail"
             >
-              <div className="px-[10px] pb-[4px] pt-[2px] font-sans text-[11px] font-medium uppercase tracking-wide text-[var(--text-disabled)]">
-                Show conversations
-              </div>
-              <div className="flex flex-col" onPointerDown={(e) => e.stopPropagation()}>
-                {AGENT_RAIL_FILTER_TOGGLE_KEYS.map((key) => (
-                  <label
-                    key={key}
-                    className="flex cursor-pointer items-center gap-[8px] px-[10px] py-[5px] font-sans text-[13px] text-[var(--text-primary)] transition-colors hover:bg-[var(--accent-bg)]"
-                  >
-                    <input
-                      type="checkbox"
-                      checked={railFilterToggles[key]}
-                      onChange={(ev) => setRailFilterToggle(key, ev.target.checked)}
-                      className="size-[14px] shrink-0 rounded border border-[var(--border-subtle)] accent-[var(--accent)]"
-                    />
-                    <span>{FILTER_TOGGLE_LABELS[key]}</span>
-                  </label>
-                ))}
-              </div>
-              <div className="mx-[8px] my-[6px] h-px bg-[var(--border-subtle)]" />
-              <button
-                type="button"
-                disabled={!railFilterActive}
-                onClick={() => clearRailFilters()}
-                className="mx-[6px] rounded-[var(--radius-tab)] px-[8px] py-[6px] text-left font-sans text-[12px] text-[var(--accent)] transition-colors hover:bg-[var(--accent-bg)] disabled:cursor-not-allowed disabled:opacity-40"
-              >
-                Clear all filters
-              </button>
-            </div>,
-            document.body
-          )
-        : null}
+              <PanelLeftClose className="size-[16px]" strokeWidth={1.5} />
+            </button>
+            <button
+              type="button"
+              onClick={() => setRecentChatsOpen(true)}
+              className="flex size-[18px] shrink-0 items-center justify-center rounded-[var(--radius-tab)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-card)] hover:text-[var(--text-primary)]"
+              aria-label="Search all chats"
+              title="Search all chats"
+            >
+              <Search className="size-[16px]" strokeWidth={1.5} />
+            </button>
+            <button
+              ref={filterAnchorRef}
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setFilterMenuOpen((open) => !open);
+              }}
+              className={`flex size-[18px] shrink-0 items-center justify-center rounded-[var(--radius-tab)] transition-colors hover:bg-[var(--bg-card)] hover:text-[var(--text-primary)] ${
+                railFilterActive ? "text-[var(--accent)]" : "text-[var(--text-secondary)]"
+              }`}
+              aria-label="Filter conversations"
+              aria-expanded={filterMenuOpen}
+              title={`Filter: ${filterSummary}`}
+            >
+              <ListFilter className="size-[16px]" strokeWidth={1.5} />
+            </button>
+            <button
+              type="button"
+              onClick={handleNewChat}
+              className="ml-auto flex size-[18px] shrink-0 items-center justify-center rounded-[var(--radius-tab)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-card)] hover:text-[var(--text-primary)]"
+              aria-label="Start new chat"
+              title="Start new chat"
+            >
+              <Plus className="size-[16px]" strokeWidth={1.5} />
+            </button>
+          </div>
 
-      {!leftRailCollapsed ? (
-        <div className="hide-scrollbar-y flex min-h-0 flex-1 flex-col overflow-y-auto px-[11px] pb-[14px] pt-[12px]">
+          {!leftRailCollapsed ? (
+            <div className="hide-scrollbar-y flex min-h-0 flex-1 flex-col overflow-y-auto px-[11px] pb-[14px] pt-[12px]">
           {railLoading ? (
             <div className="flex min-h-[120px] items-center justify-center font-sans text-[13px] text-[var(--text-secondary)]">
               Loading chats...
@@ -638,8 +634,63 @@ export function AgentWorkspaceRail() {
             })}
             </>
           )}
+            </div>
+          ) : null}
         </div>
       ) : null}
-    </div>
+
+      <RecentChatsModal
+        items={allConversationsForSearch}
+        open={recentChatsOpen}
+        onClose={() => setRecentChatsOpen(false)}
+        onSelectConversation={handleSearchSelect}
+        placeholder="Search across all workspaces..."
+        emptyLabel="No conversations found"
+        screenReaderTitle="Search agent conversations"
+        inputLabel="Search agent conversations"
+      />
+
+      {filterMenuOpen
+        ? createPortal(
+            <div
+              ref={filterPanelRef}
+              role="dialog"
+              aria-label="Conversation filters"
+              className="fixed z-[10040] min-w-[232px] rounded-[var(--radius-card)] border border-[var(--border-card)] bg-[var(--bg-card)] py-[6px] shadow-[0_8px_24px_rgba(0,0,0,0.12)] dark:shadow-[0_10px_28px_rgba(0,0,0,0.45)]"
+              style={{ top: filterMenuPos.top, left: filterMenuPos.left }}
+            >
+              <div className="px-[10px] pb-[4px] pt-[2px] font-sans text-[11px] font-medium uppercase tracking-wide text-[var(--text-disabled)]">
+                Show conversations
+              </div>
+              <div className="flex flex-col" onPointerDown={(e) => e.stopPropagation()}>
+                {AGENT_RAIL_FILTER_TOGGLE_KEYS.map((key) => (
+                  <label
+                    key={key}
+                    className="flex cursor-pointer items-center gap-[8px] px-[10px] py-[5px] font-sans text-[13px] text-[var(--text-primary)] transition-colors hover:bg-[var(--accent-bg)]"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={railFilterToggles[key]}
+                      onChange={(ev) => setRailFilterToggle(key, ev.target.checked)}
+                      className="size-[14px] shrink-0 rounded border border-[var(--border-subtle)] accent-[var(--accent)]"
+                    />
+                    <span>{FILTER_TOGGLE_LABELS[key]}</span>
+                  </label>
+                ))}
+              </div>
+              <div className="mx-[8px] my-[6px] h-px bg-[var(--border-subtle)]" />
+              <button
+                type="button"
+                disabled={!railFilterActive}
+                onClick={() => clearRailFilters()}
+                className="mx-[6px] rounded-[var(--radius-tab)] px-[8px] py-[6px] text-left font-sans text-[12px] text-[var(--accent)] transition-colors hover:bg-[var(--accent-bg)] disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                Clear all filters
+              </button>
+            </div>,
+            document.body
+          )
+        : null}
+    </>
   );
 }

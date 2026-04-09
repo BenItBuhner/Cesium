@@ -3,6 +3,7 @@ import { Hono } from "hono";
 import { resolveRepoRootFromProcessCwd } from "../lib/persistence.js";
 import {
   createWorkspace,
+  ensureHomeWorkspace,
   ensureInitialWorkspace,
   ensureWorkspaceRegistered,
   getWorkspaceById,
@@ -52,6 +53,7 @@ workspaceRoutes.get("/api/workspaces/bootstrap", async (c) => {
 });
 
 workspaceRoutes.get("/api/workspaces", async (c) => {
+  await ensureHomeWorkspace();
   const [workspaces, profile] = await Promise.all([
     listWorkspaces(),
     getWorkspaceProfile(),

@@ -2,7 +2,7 @@
   "name": "OpenCursor",
   "short_name": "OpenCursor",
   "description": "An open-source AI-powered IDE",
-  "start_url": "/agent",
+  "start_url": "/",
   "scope": "/",
   "display": "standalone",
   "orientation": "any",

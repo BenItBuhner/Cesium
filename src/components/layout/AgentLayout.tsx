@@ -14,6 +14,7 @@ import { AgentCenterPane } from "@/components/agent/AgentCenterPane";
 import { AgentShellStateProvider, useAgentShellState } from "@/components/agent/AgentShellStateContext";
 import {
   AGENT_CENTER_STAGE_CLASS,
+  AGENT_LEFT_RAIL_COLLAPSED_SIZE_PERCENT,
   AGENT_LEFT_RAIL_EXPANDED_WIDTH,
   AGENT_RIGHT_PANE_WIDTH,
   AGENT_SHELL_DEFAULT_LAYOUT,
@@ -22,6 +23,7 @@ import {
 } from "@/components/agent/agent-shell-layout";
 import { AgentSidePane } from "@/components/agent/AgentSidePane";
 import { AgentWorkspaceRail } from "@/components/agent/AgentWorkspaceRail";
+import { AgentWorkspaceRailCollapsedOverlay } from "@/components/agent/AgentWorkspaceRailCollapsedOverlay";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 
 function AgentShellResizeHandle() {
@@ -42,7 +44,7 @@ function AgentCenterStage({
   return (
     <div
       className={`relative flex h-full min-w-0 justify-center overflow-hidden ${
-        compact ? "px-[8px]" : "px-[clamp(8px,1.25vw,40px)]"
+        compact ? "px-[8px]" : "px-0"
       }`}
     >
       <div className={`h-full w-full ${AGENT_CENTER_STAGE_CLASS}`}>{children}</div>
@@ -194,6 +196,7 @@ function AgentLayoutShell() {
                 ) : null}
               </>
             ) : (
+              <>
               <Group
                 id="agent-shell-panels"
                 key={`${activeWorkspaceId ?? "workspace"}:${sidePaneScopeId}:agent-shell`}
@@ -208,7 +211,7 @@ function AgentLayoutShell() {
                   minSize="10%"
                   maxSize="42%"
                   collapsible
-                  collapsedSize="0%"
+                  collapsedSize={`${AGENT_LEFT_RAIL_COLLAPSED_SIZE_PERCENT}%`}
                   className={`min-h-0 overflow-hidden ${
                     leftRailCollapsed ? "" : "border-r border-[var(--border-subtle)]"
                   }`}
@@ -221,17 +224,6 @@ function AgentLayoutShell() {
                   minSize="28%"
                   className="relative min-h-0 min-w-0 overflow-hidden"
                 >
-                  {leftRailCollapsed ? (
-                    <button
-                      type="button"
-                      onClick={() => setLeftRailCollapsed(false)}
-                      className="absolute left-[11px] top-[11px] z-40 flex size-[18px] items-center justify-center rounded-[var(--radius-tab)] bg-[var(--bg-panel)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-card)] hover:text-[var(--text-primary)]"
-                      aria-label="Show workspace rail"
-                      title="Show workspace rail"
-                    >
-                      <PanelLeftOpen className="size-[16px]" strokeWidth={1.5} />
-                    </button>
-                  ) : null}
                   {!rightPaneOpen ? (
                     <button
                       type="button"
@@ -264,6 +256,8 @@ function AgentLayoutShell() {
                   </div>
                 </Panel>
               </Group>
+              <AgentWorkspaceRailCollapsedOverlay />
+              </>
             )}
           </div>
         </IDEKeyboardLayer>

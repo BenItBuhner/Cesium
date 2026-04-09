@@ -8,7 +8,7 @@ import {
   type KeyboardEvent,
   type MouseEvent,
 } from "react";
-import { Loader, Plus, X } from "lucide-react";
+import { LoaderCircle, Plus, X } from "lucide-react";
 import { setMinimalTabDragImage } from "@/components/editor/tab-drag-image";
 import { CHAT_TAB_DND_MIME, parseChatTabDragPayload } from "@/lib/chat-tab-dnd";
 import { useTabStripWheel } from "@/hooks/useTabStripWheel";
@@ -227,7 +227,7 @@ export function ChatTabs({
                     aria-hidden
                   />
                 ) : (
-                  <Loader
+                  <LoaderCircle
                     className="size-[14px] shrink-0 text-[var(--text-secondary)] animate-spin"
                     strokeWidth={1.5}
                     aria-hidden

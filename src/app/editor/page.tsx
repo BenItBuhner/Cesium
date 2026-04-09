@@ -1,21 +1,32 @@
-import type { Metadata } from "next";
-import { IDELayout } from "@/components/layout/IDELayout";
-import { WorkbenchNotificationProvider } from "@/components/notifications/WorkbenchNotificationProvider";
-import { GlobalSettingsProvider } from "@/components/preferences/GlobalSettingsProvider";
-import { WorkspaceProvider } from "@/contexts/WorkspaceContext";
+import { redirect } from "next/navigation";
+import { WORKBENCH_VIEW_SEARCH_PARAM } from "@/lib/workbench-view";
 
-export const metadata: Metadata = {
-  title: "Editor · OpenCursor",
-};
+type SearchParamsInput = Record<string, string | string[] | undefined>;
 
-export default function EditorPage() {
-  return (
-    <WorkbenchNotificationProvider>
-      <WorkspaceProvider>
-        <GlobalSettingsProvider>
-          <IDELayout />
-        </GlobalSettingsProvider>
-      </WorkspaceProvider>
-    </WorkbenchNotificationProvider>
-  );
+function buildEditorRedirectQuery(sp: SearchParamsInput): string {
+  const qs = new URLSearchParams();
+  for (const [key, raw] of Object.entries(sp)) {
+    if (key === WORKBENCH_VIEW_SEARCH_PARAM) {
+      continue;
+    }
+    if (raw == null) {
+      continue;
+    }
+    const values = Array.isArray(raw) ? raw : [raw];
+    for (const val of values) {
+      qs.append(key, val);
+    }
+  }
+  qs.set(WORKBENCH_VIEW_SEARCH_PARAM, "editor");
+  return qs.toString();
+}
+
+/** Legacy URL; classic IDE is `/?view=editor` on the same workbench route. */
+export default async function LegacyEditorPage({
+  searchParams,
+}: {
+  searchParams: Promise<SearchParamsInput>;
+}) {
+  const sp = await searchParams;
+  redirect(`/?${buildEditorRedirectQuery(sp)}`);
 }

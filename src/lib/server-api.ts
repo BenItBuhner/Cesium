@@ -8,6 +8,7 @@ import type {
   AgentConversationListResult,
   AgentConversationRecord,
   AgentConversationSnapshot,
+  AgentConversationSnapshotHead,
 } from "@/lib/agent-types";
 import type { WorkspaceSessionState } from "@/lib/workspace-session";
 import type {
@@ -70,6 +71,10 @@ export type FileReadResult = {
   fileKind: "text" | "svg" | "image";
   mimeType: string;
   previewPath?: string;
+  readByteOffset?: number;
+  readByteLength?: number;
+  truncated?: boolean;
+  totalSize?: number;
 };
 
 export type FileStatResult = {
@@ -371,13 +376,32 @@ export async function createAgentConversation(
   });
 }
 
+export type AgentConversationSnapshotResponse = {
+  snapshot: AgentConversationSnapshot | AgentConversationSnapshotHead;
+};
+
 export async function fetchAgentConversationSnapshot(
   conversationId: string,
-  options?: { hydrateRuntime?: boolean }
-): Promise<{ snapshot: AgentConversationSnapshot }> {
+  options?: {
+    hydrateRuntime?: boolean;
+    /** Full event log (large). Default is paginated tail. */
+    full?: boolean;
+    limitTurns?: number;
+    limitEvents?: number;
+  }
+): Promise<AgentConversationSnapshotResponse> {
   const params = new URLSearchParams();
   if (options?.hydrateRuntime) {
     params.set("hydrate", "1");
+  }
+  if (options?.full) {
+    params.set("full", "1");
+  }
+  if (options?.limitTurns != null && Number.isFinite(options.limitTurns)) {
+    params.set("limitTurns", String(options.limitTurns));
+  }
+  if (options?.limitEvents != null && Number.isFinite(options.limitEvents)) {
+    params.set("limitEvents", String(options.limitEvents));
   }
   const suffix = params.size > 0 ? `?${params.toString()}` : "";
   return request(`/api/agents/conversations/${encodeURIComponent(conversationId)}${suffix}`);
@@ -403,7 +427,7 @@ export async function promptAgentConversation(
   conversationId: string,
   text: string,
   attachments?: ImageAttachment[]
-): Promise<{ snapshot: AgentConversationSnapshot }> {
+): Promise<AgentConversationSnapshotResponse> {
   return request(`/api/agents/conversations/${encodeURIComponent(conversationId)}/prompt`, {
     method: "POST",
     body: JSON.stringify({ text, attachments }),
@@ -498,8 +522,21 @@ export async function fetchFolderChildren(
   return request(`/api/fs/tree/children?${params.toString()}`);
 }
 
-export async function readFile(path: string): Promise<FileReadResult> {
-  return request(`/api/fs/read?path=${encodeURIComponent(path)}`);
+export async function readFile(
+  path: string,
+  options?: { full?: boolean; byteOffset?: number; byteLength?: number }
+): Promise<FileReadResult> {
+  const params = new URLSearchParams({ path });
+  if (options?.full) {
+    params.set("full", "1");
+  }
+  if (options?.byteOffset != null && Number.isFinite(options.byteOffset)) {
+    params.set("byteOffset", String(Math.floor(options.byteOffset)));
+  }
+  if (options?.byteLength != null && Number.isFinite(options.byteLength)) {
+    params.set("byteLength", String(Math.floor(options.byteLength)));
+  }
+  return request(`/api/fs/read?${params.toString()}`);
 }
 
 export async function writeFile(path: string, content: string): Promise<void> {

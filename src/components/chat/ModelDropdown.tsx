@@ -174,18 +174,21 @@ export function ModelDropdown({
 
   return (
     <>
-      <div ref={triggerRef} className="inline-block w-max min-w-0 max-w-full shrink-0 align-middle">
+      <div ref={triggerRef} className="inline-flex max-w-full min-w-0 align-middle">
         <button
           type="button"
           disabled={disabled}
           onClick={() => (open ? close() : openDropdown())}
-          className="inline-flex w-fit max-w-[260px] min-w-0 items-center justify-start gap-[4px] text-left transition-opacity hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-50"
+          className="inline-flex max-w-full min-w-0 items-center gap-[4px] overflow-hidden text-left transition-opacity hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-50"
         >
           <ProviderIcon
             className="size-[14px] shrink-0 text-[var(--text-secondary)]"
             strokeWidth={1.5}
           />
-          <span className="max-w-[220px] min-w-0 shrink truncate font-sans text-[13px] font-normal text-[var(--text-secondary)]">
+          <span
+            className="min-w-0 max-w-[min(280px,45vw)] truncate font-sans text-[13px] font-normal text-[var(--text-secondary)]"
+            title={model.name}
+          >
             {model.name}
           </span>
           <ChevronDown className="size-[8px] shrink-0 text-[var(--text-secondary)]" strokeWidth={2.5} />

@@ -269,6 +269,20 @@ export type AgentConversationSnapshot = {
   events: AgentStoredEvent[];
 };
 
+/** Window metadata for paginated client sync (tail or history page). */
+export type AgentConversationEventWindow = {
+  oldestSeq: number;
+  newestSeq: number;
+  hasOlder: boolean;
+};
+
+/** Partial snapshot: bounded event array plus cursor metadata for loading older pages. */
+export type AgentConversationSnapshotHead = {
+  conversation: AgentConversationRecord;
+  events: AgentStoredEvent[];
+  window: AgentConversationEventWindow;
+};
+
 export type AgentConversationCreateInput = Partial<AgentConversationConfig> & {
   title?: string;
 };
@@ -354,12 +368,27 @@ export type AgentSocketClientMessage =
       conversationIds: string[];
       sinceByConversationId?: Record<string, number>;
     }
+  | {
+      type: "request_history";
+      conversationId: string;
+      /** Load events strictly before this seq (exclusive). */
+      beforeSeq: number;
+      limitTurns?: number;
+      limitEvents?: number;
+    }
   | { type: "ping" };
 
 export type AgentSocketServerMessage =
   | { type: "connected" }
   | { type: "conversation"; conversation: AgentConversationRecord }
   | { type: "snapshot"; snapshot: AgentConversationSnapshot }
+  | { type: "snapshot_head"; snapshot: AgentConversationSnapshotHead }
+  | {
+      type: "history_page";
+      conversationId: string;
+      events: AgentStoredEvent[];
+      window: AgentConversationEventWindow;
+    }
   | { type: "event"; conversationId: string; event: AgentStoredEvent }
   | { type: "pong" }
   | { type: "error"; message: string };

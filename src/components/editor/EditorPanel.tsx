@@ -47,6 +47,7 @@ import {
   deleteTerminal,
   readFile,
   writeFile,
+  type FileReadResult,
 } from "@/lib/server-api";
 import { useAgentConversations } from "@/components/chat/AgentConversationsContext";
 import { useViewport } from "@/hooks/useViewport";
@@ -64,6 +65,29 @@ import {
   buildWorkspaceWindowUrl,
   normalizeWorkspaceWindowSession,
 } from "@/lib/workspace-windows";
+
+function fileContentLoadAction(
+  tabId: string,
+  result: FileReadResult
+): Extract<EditorPanelAction, { type: "LOAD_FILE_CONTENT" }> {
+  const total = result.totalSize ?? result.size;
+  const readOff = result.readByteOffset ?? 0;
+  const readLen = result.readByteLength ?? 0;
+  const loadedThrough =
+    result.truncated && readLen > 0 ? readOff + readLen : total;
+  return {
+    type: "LOAD_FILE_CONTENT",
+    tabId,
+    content: result.content,
+    language: result.language,
+    fileKind: result.fileKind,
+    mimeType: result.mimeType,
+    previewPath: result.previewPath,
+    fileContentTruncated: Boolean(result.truncated),
+    fileTotalBytes: total,
+    fileLoadedThroughByte: loadedThrough,
+  };
+}
 
 const EDITOR_SPLIT_PANEL_IDS = {
   left: "editor-split-left",
@@ -324,15 +348,7 @@ export function EditorPanel({
 
       try {
         const result = await readFile(payload.path);
-        dispatch({
-          type: "LOAD_FILE_CONTENT",
-          tabId,
-          content: result.content,
-          language: result.language,
-          fileKind: result.fileKind,
-          mimeType: result.mimeType,
-          previewPath: result.previewPath,
-        });
+        dispatch(fileContentLoadAction(tabId, result));
       } catch (error) {
         flashNotice(
           error instanceof Error
@@ -573,15 +589,7 @@ export function EditorPanel({
 
     void readFile(lastFileChange.path)
       .then((result) => {
-        dispatch({
-          type: "LOAD_FILE_CONTENT",
-          tabId: matchingTab.id,
-          content: result.content,
-          language: result.language,
-          fileKind: result.fileKind,
-          mimeType: result.mimeType,
-          previewPath: result.previewPath,
-        });
+        dispatch(fileContentLoadAction(matchingTab.id, result));
       })
       .catch(() => {
         // Keep the stale buffer visible if a background refresh fails.
@@ -603,15 +611,7 @@ export function EditorPanel({
 
       void readFile(tab.filePath)
         .then((result) => {
-          dispatch({
-            type: "LOAD_FILE_CONTENT",
-            tabId: tab.id,
-            content: result.content,
-            language: result.language,
-            fileKind: result.fileKind,
-            mimeType: result.mimeType,
-            previewPath: result.previewPath,
-          });
+          dispatch(fileContentLoadAction(tab.id, result));
         })
         .catch(() => {
           // Keep the current buffer if a resync refresh fails.
@@ -1451,6 +1451,38 @@ export function EditorPanel({
         {tab.externalChange ? (
           <div className="absolute inset-x-3 top-3 z-10 rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-[var(--bg-panel)] px-3 py-2 font-sans text-[12px] text-[var(--text-primary)]">
             This file changed on disk while you had unsaved edits. Save to keep your version, or reopen it from the explorer to discard local changes.
+          </div>
+        ) : null}
+        {tab.fileContentTruncated && tab.filePath ? (
+          <div
+            className={`absolute inset-x-3 z-10 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-[var(--bg-panel)] px-3 py-2 font-sans text-[12px] text-[var(--text-primary)] ${
+              tab.externalChange ? "top-[72px]" : "top-3"
+            }`}
+          >
+            <span className="text-[var(--text-secondary)]">
+              Large file: loaded{" "}
+              {Math.max(1, Math.round((tab.fileLoadedThroughByte ?? 0) / 1024))}{" "}
+              KiB of{" "}
+              {Math.max(1, Math.round((tab.fileTotalBytes ?? 0) / 1024))} KiB.
+            </span>
+            <button
+              type="button"
+              className="text-[var(--accent-fg)] underline decoration-dotted underline-offset-2 hover:text-[var(--text-primary)]"
+              onClick={() => {
+                void readFile(tab.filePath!, { full: true })
+                  .then((result) => dispatch(fileContentLoadAction(tab.id, result)))
+                  .catch((error) =>
+                    flashNotice(
+                      error instanceof Error
+                        ? error.message
+                        : "Failed to load the full file.",
+                      "error"
+                    )
+                  );
+              }}
+            >
+              Load full file
+            </button>
           </div>
         ) : null}
         <CodeEditor

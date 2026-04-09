@@ -233,10 +233,53 @@ fsRoutes.get("/api/fs/read", async (c) => {
       fileKind,
       mimeType,
       previewPath,
+      readByteOffset: 0,
+      readByteLength: 0,
+      truncated: false,
+      totalSize: stat.size,
     });
   }
 
-  const content = await fs.readFile(absolutePath, "utf8");
+  const LARGE_FILE_BYTES = 512 * 1024;
+  const readFull = c.req.query("full") === "1";
+  const byteOffsetRaw = c.req.query("byteOffset");
+  const byteLengthRaw = c.req.query("byteLength");
+
+  let start = 0;
+  let readLen = stat.size;
+  let truncated = false;
+
+  if (
+    !readFull &&
+    byteOffsetRaw != null &&
+    byteLengthRaw != null &&
+    Number.isFinite(Number(byteOffsetRaw)) &&
+    Number.isFinite(Number(byteLengthRaw))
+  ) {
+    start = Math.max(0, Math.min(stat.size, Math.floor(Number(byteOffsetRaw))));
+    const requested = Math.max(0, Math.floor(Number(byteLengthRaw)));
+    readLen = Math.min(requested, stat.size - start);
+    truncated = start + readLen < stat.size;
+  } else if (!readFull && stat.size > LARGE_FILE_BYTES) {
+    readLen = LARGE_FILE_BYTES;
+    truncated = true;
+  }
+
+  let content: string;
+  if (start === 0 && readLen === stat.size) {
+    content = await fs.readFile(absolutePath, "utf8");
+    truncated = false;
+  } else {
+    const fh = await fs.open(absolutePath, "r");
+    try {
+      const buf = Buffer.alloc(readLen);
+      await fh.read(buf, 0, readLen, start);
+      content = buf.toString("utf8");
+    } finally {
+      await fh.close();
+    }
+  }
+
   return c.json({
     content,
     language: inferLanguage(absolutePath),
@@ -244,6 +287,10 @@ fsRoutes.get("/api/fs/read", async (c) => {
     fileKind,
     mimeType,
     previewPath: fileKind === "svg" ? previewPath : undefined,
+    readByteOffset: start,
+    readByteLength: readLen,
+    truncated,
+    totalSize: stat.size,
   });
 });
 

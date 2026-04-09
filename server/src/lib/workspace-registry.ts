@@ -1,4 +1,5 @@
 import { promises as fs } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import {
   DATA_DIR,
@@ -31,6 +32,9 @@ type WorkspaceProfileFile = {
 
 const WORKSPACES_FILE = path.join(DATA_DIR, "workspaces", "index.json");
 const PROFILE_FILE = path.join(DATA_DIR, "profile", "workspace-profile.json");
+
+/** Display name for the workspace rooted at the current OS user's home directory. */
+export const HOME_WORKSPACE_DISPLAY_NAME = "Home";
 
 const EMPTY_REGISTRY: WorkspaceRegistryFile = {
   schemaVersion: 1,
@@ -87,7 +91,35 @@ function deriveWorkspaceName(root: string, preferredName?: string): string {
 }
 
 function sortWorkspaces(workspaces: WorkspaceRecord[]): WorkspaceRecord[] {
-  return [...workspaces].sort((a, b) => b.lastOpenedAt - a.lastOpenedAt || a.name.localeCompare(b.name));
+  return [...workspaces].sort((a, b) => {
+    const aHome = a.name === HOME_WORKSPACE_DISPLAY_NAME ? 0 : 1;
+    const bHome = b.name === HOME_WORKSPACE_DISPLAY_NAME ? 0 : 1;
+    if (aHome !== bHome) return aHome - bHome;
+    return b.lastOpenedAt - a.lastOpenedAt || a.name.localeCompare(b.name);
+  });
+}
+
+export function resolveUserHomeDirectory(): string {
+  const home = os.homedir()?.trim();
+  if (!home) {
+    throw new Error("User home directory is not available on this system.");
+  }
+  return path.resolve(home);
+}
+
+/**
+ * Ensures a workspace entry exists for the current user's home directory.
+ * Skips creation when the path is not allowed (e.g. strict WORKSPACE_ALLOWED_ROOTS).
+ */
+export async function ensureHomeWorkspace(): Promise<WorkspaceRecord | null> {
+  try {
+    const root = resolveUserHomeDirectory();
+    return await ensureWorkspaceRegistered(root, HOME_WORKSPACE_DISPLAY_NAME, {
+      trackOpen: false,
+    });
+  } catch {
+    return null;
+  }
 }
 
 export async function listWorkspaces(): Promise<WorkspaceRecord[]> {
@@ -104,8 +136,10 @@ export async function getWorkspaceById(
 
 export async function ensureWorkspaceRegistered(
   root: string,
-  preferredName?: string
+  preferredName?: string,
+  options?: { trackOpen?: boolean }
 ): Promise<WorkspaceRecord> {
+  const trackOpen = options?.trackOpen !== false;
   const normalizedRoot = await normalizeWorkspaceRoot(root);
   const stat = await fs.stat(normalizedRoot);
   if (!stat.isDirectory()) {
@@ -120,13 +154,15 @@ export async function ensureWorkspaceRegistered(
       ...existing,
       name: deriveWorkspaceName(normalizedRoot, preferredName || existing.name),
       updatedAt: now,
-      lastOpenedAt: now,
+      lastOpenedAt: trackOpen ? now : existing.lastOpenedAt,
     };
     registry.workspaces = registry.workspaces.map((workspace) =>
       workspace.id === next.id ? next : workspace
     );
     await writeRegistry(registry);
-    await noteWorkspaceOpened(next.id);
+    if (trackOpen) {
+      await noteWorkspaceOpened(next.id);
+    }
     return next;
   }
 
@@ -212,10 +248,15 @@ export async function resolveStartupWorkspace(): Promise<WorkspaceRecord | null>
   return workspaces[0] ?? null;
 }
 
-export async function ensureInitialWorkspace(root: string): Promise<WorkspaceRecord> {
+export async function ensureInitialWorkspace(fallbackRoot: string): Promise<WorkspaceRecord> {
+  await ensureHomeWorkspace();
+  const startup = await resolveStartupWorkspace();
+  if (startup) {
+    return startup;
+  }
   const workspaces = await listWorkspaces();
   if (workspaces.length > 0) {
     return workspaces[0]!;
   }
-  return ensureWorkspaceRegistered(root);
+  return ensureWorkspaceRegistered(fallbackRoot);
 }

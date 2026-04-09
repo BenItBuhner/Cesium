@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef } from "react";
 import { AskQuestionCard } from "@/components/chat/AskQuestionCard";
 import { ChatComposer } from "@/components/chat/ChatComposer";
 import { ComposerQueueDock } from "@/components/chat/ComposerQueueDock";
@@ -52,7 +52,6 @@ export function AgentCenterPane() {
   const {
     composerDrafts,
     composerSelections,
-    openComposerDraft,
     setComposerSelection,
     setExpandedComposerController,
     upsertComposerDraft,
@@ -73,6 +72,8 @@ export function AgentCenterPane() {
     syncConversationSnapshot,
     answerPermissionForConversation,
     cancelPermissionForConversation,
+    getConversationHistoryCursor,
+    loadOlderConversationHistory,
   } = useAgentConversations();
   const { workspaceSession, updateWorkspaceSession } = useWorkspace();
   const {
@@ -82,8 +83,6 @@ export function AgentCenterPane() {
     refreshConversationGroups,
     selectedConversationId,
     selectedConversationSummary,
-    setExpandedComposerDraft,
-    setRightPaneOpen,
     setSelectedConversationId,
   } = useAgentShellState();
   const previousConversationStatusRef = useRef<string | null>(null);
@@ -95,19 +94,30 @@ export function AgentCenterPane() {
     ? getConversationLoadStatus(selectedConversationId)
     : "idle";
 
+  const rawThreadEvents = conversation
+    ? (eventsByConversationId[conversation.id] ?? [])
+    : [];
+  const deferredThreadEvents = useDeferredValue(rawThreadEvents);
+
   const threadMessages = useMemo(
     () =>
       conversation
-        ? projectAgentEventsToChatMessages(eventsByConversationId[conversation.id] ?? [], {
+        ? projectAgentEventsToChatMessages(deferredThreadEvents, {
             backendId: conversation.config.backendId,
           })
         : [],
-    [conversation, eventsByConversationId]
+    [conversation, deferredThreadEvents]
   );
   const { scrollMessages, dockedAsk } = useMemo(
     () => partitionMessagesForDock(threadMessages),
     [threadMessages]
   );
+  const historyCursor = useMemo(() => {
+    if (!selectedConversationId) {
+      return { hasOlder: false, loadingOlder: false };
+    }
+    return getConversationHistoryCursor(selectedConversationId);
+  }, [getConversationHistoryCursor, selectedConversationId]);
   const dockedAskSteps = useMemo(
     () => (dockedAsk ? askStepsFromMessage(dockedAsk) : []),
     [dockedAsk]
@@ -413,6 +423,11 @@ export function AgentCenterPane() {
               conversation.status === "running" ||
               conversation.status === "awaiting_permission"
             }
+            hasOlderHistory={historyCursor.hasOlder}
+            loadingOlderHistory={historyCursor.loadingOlder}
+            onRequestOlderHistory={() =>
+              loadOlderConversationHistory(selectedConversationId)
+            }
             initialScrollTop={workspaceSession.chat.scrollTopByTabId[selectedConversationId] ?? 0}
             onScrollTopSettled={(scrollTop) => {
               updateWorkspaceSession((current) =>
@@ -525,15 +540,7 @@ export function AgentCenterPane() {
                   onSelectionChange={(next) =>
                     setComposerSelection(composerDraftId, next)
                   }
-                  onExpandComposer={() => {
-                    setRightPaneOpen(true);
-                    setExpandedComposerDraft(composerDraftId);
-                    openComposerDraft({
-                      draftId: composerDraftId,
-                      title: composerDraftTitle,
-                      content: composerDraftText,
-                    });
-                  }}
+                  agentShellDockHeightExpand
                   busy={composerState?.busy ?? false}
                   configLocked={false}
                   onSubmit={handleSubmit}

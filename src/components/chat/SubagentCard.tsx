@@ -1,4 +1,4 @@
-import { Loader, Check } from "lucide-react";
+import { LoaderCircle, Check } from "lucide-react";
 
 interface SubagentCardProps {
   title: string;
@@ -29,7 +29,7 @@ export function SubagentCard({
             aria-hidden
           />
         ) : (
-          <Loader
+          <LoaderCircle
             className="size-[18px] shrink-0 text-[var(--text-secondary)] animate-spin"
             strokeWidth={1.5}
             aria-hidden

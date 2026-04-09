@@ -24,11 +24,15 @@ export type ExplorerSessionState = {
   scrollTop: number;
 };
 
+export type WorkbenchShellView = "agent" | "editor";
+
 export type LayoutSessionState = {
   sidebarOpen: boolean;
   chatOpen: boolean;
   mobilePanel: MobilePanel;
   desktopLayout: Record<string, number> | null;
+  /** Agent vs classic IDE layout; URL uses `?view=editor` when not default agent. */
+  shellView: WorkbenchShellView;
 };
 
 export type EditorSplitOrientation = "horizontal" | "vertical";
@@ -161,6 +165,7 @@ export function createDefaultWorkspaceSession(
       chatOpen: true,
       mobilePanel: "editor",
       desktopLayout: null,
+      shellView: "agent",
     },
     agentView: {
       leftRailCollapsed: false,
@@ -418,6 +423,10 @@ export function mergeWorkspaceSessionFromImport(
     layout: {
       ...current.layout,
       ...(r.layout ?? {}),
+      shellView:
+        r.layout?.shellView === "editor" || r.layout?.shellView === "agent"
+          ? r.layout.shellView
+          : current.layout.shellView ?? "agent",
       desktopLayout:
         r.layout?.desktopLayout && typeof r.layout.desktopLayout === "object"
           ? r.layout.desktopLayout

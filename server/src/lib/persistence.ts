@@ -180,6 +180,10 @@ export function getAllowedWorkspaceRoots(): string[] {
   }
 
   const defaults: string[] = [];
+  const homeDir = os.homedir()?.trim();
+  if (homeDir) {
+    defaults.push(path.resolve(homeDir));
+  }
   const workspaceRoot = process.env.WORKSPACE_ROOT?.trim();
   if (workspaceRoot) {
     defaults.push(path.resolve(workspaceRoot));

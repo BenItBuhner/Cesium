@@ -3,7 +3,9 @@ import type { Duplex } from "node:stream";
 import { WebSocketServer, WebSocket } from "ws";
 import {
   readConversationEventsSince,
-  readConversationSnapshot,
+  readConversationHistoryPage,
+  readConversationRecord,
+  readConversationSnapshotHead,
   subscribeAgentStoreEvents,
 } from "../lib/agents/session-store.js";
 import type {
@@ -98,8 +100,8 @@ async function sendSubscriptionData(
   for (const conversationId of conversationIds) {
     const since = sinceByConversationId[conversationId] ?? 0;
     if (since > 0) {
-      const snapshot = await readConversationSnapshot(state.workspaceId, conversationId);
-      if (!snapshot) {
+      const record = await readConversationRecord(state.workspaceId, conversationId);
+      if (!record) {
         send(state.socket, {
           type: "error",
           message: `Unknown conversation: ${conversationId}`,
@@ -108,7 +110,7 @@ async function sendSubscriptionData(
       }
       send(state.socket, {
         type: "conversation",
-        conversation: snapshot.conversation,
+        conversation: record,
       });
       const replay = await readConversationEventsSince(
         state.workspaceId,
@@ -125,8 +127,8 @@ async function sendSubscriptionData(
       continue;
     }
 
-    const snapshot = await readConversationSnapshot(state.workspaceId, conversationId);
-    if (!snapshot) {
+    const head = await readConversationSnapshotHead(state.workspaceId, conversationId);
+    if (!head) {
       send(state.socket, {
         type: "error",
         message: `Unknown conversation: ${conversationId}`,
@@ -134,8 +136,8 @@ async function sendSubscriptionData(
       continue;
     }
     send(state.socket, {
-      type: "snapshot",
-      snapshot,
+      type: "snapshot_head",
+      snapshot: head,
     });
   }
 }
@@ -175,6 +177,55 @@ export function handleAgentUpgrade(
       }
       if (message.type === "ping") {
         send(ws, { type: "pong" });
+        return;
+      }
+      if (message.type === "request_history") {
+        const conversationId =
+          typeof message.conversationId === "string" ? message.conversationId.trim() : "";
+        const beforeSeq =
+          typeof message.beforeSeq === "number" && Number.isFinite(message.beforeSeq)
+            ? Math.floor(message.beforeSeq)
+            : 0;
+        if (!conversationId || beforeSeq <= 0) {
+          send(ws, { type: "error", message: "request_history requires conversationId and beforeSeq." });
+          return;
+        }
+        if (!state.subscribedConversationIds.has(conversationId)) {
+          send(ws, { type: "error", message: "Subscribe to the conversation before requesting history." });
+          return;
+        }
+        void (async () => {
+          const workspace = await getWorkspaceById(state.workspaceId);
+          if (!workspace) {
+            send(ws, {
+              type: "error",
+              message: `Unknown workspace: ${state.workspaceId}`,
+            });
+            return;
+          }
+          const page = await readConversationHistoryPage(
+            state.workspaceId,
+            conversationId,
+            beforeSeq,
+            {
+              limitTurns: message.limitTurns,
+              limitEvents: message.limitEvents,
+            }
+          );
+          if (!page) {
+            send(ws, {
+              type: "error",
+              message: `Unknown conversation: ${conversationId}`,
+            });
+            return;
+          }
+          send(ws, {
+            type: "history_page",
+            conversationId,
+            events: page.events,
+            window: page.window,
+          });
+        })();
         return;
       }
       if (message.type === "subscribe") {

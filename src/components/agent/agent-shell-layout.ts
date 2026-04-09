@@ -1,5 +1,8 @@
 export const AGENT_LEFT_RAIL_EXPANDED_WIDTH = 290;
+/** @deprecated Historic constant; collapsed rail uses 0% width — see `AgentWorkspaceRailCollapsedOverlay`. */
 export const AGENT_LEFT_RAIL_COLLAPSED_WIDTH = 0;
+/** Collapsed rail takes no flex space; quick actions use `AgentWorkspaceRailCollapsedOverlay`. */
+export const AGENT_LEFT_RAIL_COLLAPSED_SIZE_PERCENT = 0;
 /** @deprecated Fixed width removed — side pane is resizable; kept for approximate defaults. */
 export const AGENT_RIGHT_PANE_WIDTH = 764;
 
@@ -35,5 +38,6 @@ export function normalizeAgentShellDesktopLayout(
   return Object.fromEntries(entries);
 }
 
-export const AGENT_CENTER_STAGE_CLASS = "mx-auto w-full max-w-[min(886px,calc(100%-24px))]";
+/** Let the center surface use the full panel width; message/content blocks handle their own centering. */
+export const AGENT_CENTER_STAGE_CLASS = "w-full";
 export const AGENT_CENTER_CONTENT_CLASS = "mx-auto w-full max-w-[min(876px,calc(100%-24px))]";

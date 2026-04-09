@@ -6,6 +6,7 @@ import { useAgentShellState } from "./AgentShellStateContext";
 
 export function AgentSidePane() {
   const {
+    rightPaneOpen,
     toggleRightPaneOpen,
     sidePaneEditorSession,
     updateSidePaneEditorSession,
@@ -16,15 +17,17 @@ export function AgentSidePane() {
 
   return (
     <div className="agent-side-pane relative h-full w-full overflow-hidden bg-[var(--bg-panel)]">
-      <button
-        type="button"
-        onClick={toggleRightPaneOpen}
-        className="absolute right-[16px] top-[11px] z-40 flex size-[18px] items-center justify-center rounded-[var(--radius-tab)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-card)] hover:text-[var(--text-primary)]"
-        aria-label="Hide workbench pane"
-        title="Hide workbench pane"
-      >
-        <PanelRightClose className="size-[16px]" strokeWidth={1.5} />
-      </button>
+      {rightPaneOpen ? (
+        <button
+          type="button"
+          onClick={toggleRightPaneOpen}
+          className="absolute right-[16px] top-[11px] z-40 flex size-[18px] items-center justify-center rounded-[var(--radius-tab)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-card)] hover:text-[var(--text-primary)]"
+          aria-label="Hide workbench pane"
+          title="Hide workbench pane"
+        >
+          <PanelRightClose className="size-[16px]" strokeWidth={1.5} />
+        </button>
+      ) : null}
       <EditorPanel
         key={sidePaneScopeId}
         session={sidePaneEditorSession}

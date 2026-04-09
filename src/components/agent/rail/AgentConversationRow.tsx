@@ -6,7 +6,7 @@ import {
   type KeyboardEvent,
   type MouseEvent,
 } from "react";
-import { Loader2 } from "lucide-react";
+import { LoaderCircle } from "lucide-react";
 import type {
   AgentConversationStatus,
   AgentRailConversationSummary,
@@ -23,7 +23,7 @@ function ConversationStatusIcon({
 }) {
   if (status === "running") {
     return (
-      <Loader2
+      <LoaderCircle
         className="size-[14px] shrink-0 animate-spin text-[var(--text-secondary)]"
         strokeWidth={1.5}
       />

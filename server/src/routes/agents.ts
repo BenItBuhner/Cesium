@@ -70,8 +70,28 @@ agentRoutes.get("/api/agents/conversations/:conversationId", async (c) => {
   const workspace = await requireWorkspaceFromRequest(c);
   const conversationId = c.req.param("conversationId");
   const hydrateRuntime = c.req.query("hydrate") === "1";
-  const snapshot = await agentRuntimeManager.getConversationSnapshot(workspace, conversationId, {
+  const full = c.req.query("full") === "1";
+  const limitTurnsRaw = c.req.query("limitTurns");
+  const limitEventsRaw = c.req.query("limitEvents");
+  const limitTurns =
+    limitTurnsRaw && Number.isFinite(Number(limitTurnsRaw)) ? Number(limitTurnsRaw) : undefined;
+  const limitEvents =
+    limitEventsRaw && Number.isFinite(Number(limitEventsRaw)) ? Number(limitEventsRaw) : undefined;
+
+  if (full) {
+    const snapshot = await agentRuntimeManager.getConversationSnapshot(workspace, conversationId, {
+      hydrateRuntime,
+    });
+    if (!snapshot) {
+      return c.json({ error: `Unknown conversation: ${conversationId}` }, 404);
+    }
+    return c.json({ snapshot });
+  }
+
+  const snapshot = await agentRuntimeManager.getConversationSnapshotHead(workspace, conversationId, {
     hydrateRuntime,
+    limitTurns,
+    limitEvents,
   });
   if (!snapshot) {
     return c.json({ error: `Unknown conversation: ${conversationId}` }, 404);

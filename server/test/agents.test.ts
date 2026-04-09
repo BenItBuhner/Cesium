@@ -595,10 +595,14 @@ test("persisted provider sessions can be rehydrated after dropping runtime state
 
   await testRuntimeManager.promptConversation(workspace, conversation.id, "warm runtime");
 
+  // `promptConversation` returns after scheduling the async provider prompt; wait until the turn settles.
   const warmed = await waitFor(
-    "provider session to exist",
+    "prompt turn to finish",
     () => readConversationSnapshot(workspace.id, conversation.id),
-    (value) => value.conversation.providerSessionId !== null
+    (value) =>
+      value.conversation.status === "idle" &&
+      value.conversation.providerSessionId !== null,
+    20_000
   );
   assert.ok(warmed.conversation.providerSessionId);
 

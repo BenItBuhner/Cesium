@@ -46,7 +46,7 @@ export function UserMessage({
 
   return (
     <div
-      className={`relative overflow-hidden rounded-[var(--radius-card)] border border-[var(--border-card)] bg-[var(--bg-card)] p-[10px] ${showReplyCue ? "pr-[36px]" : ""} ${overflowing ? "pb-[34px]" : ""}`}
+      className={`group relative overflow-hidden rounded-[var(--radius-card)] border border-[var(--border-card)] bg-[var(--bg-card)] p-[10px] ${showReplyCue ? "pr-[36px]" : ""} ${overflowing ? "pb-[34px]" : ""}`}
     >
       {attachments && attachments.length > 0 && (
         <div className="mb-[10px]">
@@ -115,7 +115,7 @@ export function UserMessage({
       {showReplyCue ? (
         <button
           type="button"
-          className="absolute bottom-[8px] right-[8px] rounded-[6px] p-[4px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-card-hover)] hover:text-[var(--text-primary)]"
+          className="pointer-events-none absolute bottom-[8px] right-[8px] rounded-[6px] p-[4px] text-[var(--text-secondary)] opacity-0 transition-[opacity,background-color,color] duration-200 group-hover:pointer-events-auto group-hover:opacity-100 hover:bg-[var(--bg-card-hover)] hover:text-[var(--text-primary)] focus-visible:pointer-events-auto focus-visible:opacity-100"
           aria-label="Reply or edit message"
         >
           <CornerUpLeft className="size-[14px]" strokeWidth={1.75} aria-hidden />

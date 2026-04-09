@@ -74,7 +74,7 @@ export function AgentMain() {
               <span className="text-[var(--text-secondary)]">(Cmd I)</span>
             </button>
             <Link
-              href="/editor"
+              href="/?view=editor"
               className="rounded-[var(--radius-pill)] border border-[var(--border-card)] bg-[var(--bg-panel)] px-[14px] py-[7px] font-sans text-[12px] font-normal text-[var(--text-primary)] transition-colors hover:bg-[var(--bg-card-hover)]"
             >
               Open editor

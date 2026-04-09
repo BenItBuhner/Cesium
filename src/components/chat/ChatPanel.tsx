@@ -2,6 +2,7 @@
 
 import {
   useCallback,
+  useDeferredValue,
   useEffect,
   useMemo,
   useRef,
@@ -35,7 +36,9 @@ import type {
   AgentBackendId,
   AgentBackendInfo,
   AgentConversationRecord,
+  AgentConversationEventWindow,
   AgentConversationSnapshot,
+  AgentConversationSnapshotHead,
   AgentSocketServerMessage,
   AgentStoredEvent,
 } from "@/lib/agent-types";
@@ -205,6 +208,12 @@ export function ChatPanel() {
   const [eventsByConversationId, setEventsByConversationId] = useState<
     Record<string, AgentStoredEvent[]>
   >({});
+  const [historyMetaById, setHistoryMetaById] = useState<
+    Record<string, { hasOlder: boolean }>
+  >({});
+  const [loadingOlderById, setLoadingOlderById] = useState<Record<string, boolean>>({});
+  const historyMetaRef = useRef(historyMetaById);
+  const loadingOlderRef = useRef<Record<string, boolean>>({});
   const [recentChatsModalOpen, setRecentChatsModalOpen] = useState(false);
   const [chatTabRenameTargetId, setChatTabRenameTargetId] = useState<string | null>(
     null
@@ -230,6 +239,10 @@ export function ChatPanel() {
   useEffect(() => {
     eventsRef.current = eventsByConversationId;
   }, [eventsByConversationId]);
+
+  useEffect(() => {
+    historyMetaRef.current = historyMetaById;
+  }, [historyMetaById]);
 
   useEffect(() => {
     const handler = () => setRecentChatsModalOpen(true);
@@ -306,27 +319,148 @@ export function ChatPanel() {
     [updateWorkspaceSession]
   );
 
-  const syncConversationSnapshot = useCallback((conversationId: string) => {
-    void fetchAgentConversationSnapshot(conversationId)
-      .then((result) => {
-        const incoming = result.snapshot.conversation;
-        setConversationsById((current) => ({
-          ...current,
-          [incoming.id]: mergeConversationByRecency(current[incoming.id], incoming),
-        }));
+  const mergeSnapshot = useCallback(
+    (snapshot: AgentConversationSnapshot | AgentConversationSnapshotHead) => {
+      const incoming = snapshot.conversation;
+      const prev = conversationsByIdRef.current[incoming.id];
+      const merged = mergeConversationByRecency(prev, incoming);
+      setConversationsById((current) => ({
+        ...current,
+        [incoming.id]: mergeConversationByRecency(current[incoming.id], incoming),
+      }));
+
+      const isHead =
+        "window" in snapshot &&
+        snapshot.window != null &&
+        typeof snapshot.window.oldestSeq === "number";
+      if (isHead) {
+        const head = snapshot;
         setEventsByConversationId((current) => {
           const existing = current[incoming.id] ?? [];
+          const kept = existing.filter((e) => e.seq < head.window.oldestSeq);
+          const bySeq = new Map<number, AgentStoredEvent>();
+          for (const e of kept) {
+            bySeq.set(e.seq, e);
+          }
+          for (const e of head.events) {
+            bySeq.set(e.seq, e);
+          }
+          const mergedEvents = [...bySeq.values()].sort((a, b) => a.seq - b.seq);
+          return { ...current, [incoming.id]: mergedEvents };
+        });
+        setHistoryMetaById((c) => ({
+          ...c,
+          [incoming.id]: { hasOlder: head.window.hasOlder },
+        }));
+      } else {
+        const full = snapshot as AgentConversationSnapshot;
+        setEventsByConversationId((current) => {
+          const existing = current[full.conversation.id] ?? [];
           const existingSeq = existing.at(-1)?.seq ?? 0;
-          const incomingSeq = result.snapshot.events.at(-1)?.seq ?? 0;
+          const incomingSeq = full.events.at(-1)?.seq ?? 0;
           return {
             ...current,
-            [incoming.id]:
-              incomingSeq >= existingSeq ? result.snapshot.events : existing,
+            [full.conversation.id]:
+              incomingSeq >= existingSeq ? full.events : existing,
           };
         });
-      })
-      .catch(() => undefined);
+        setHistoryMetaById((c) => ({
+          ...c,
+          [incoming.id]: { hasOlder: false },
+        }));
+      }
+
+      updateWorkspaceSession((current) => {
+        const unreadMap = nextUnreadCompletionMap(current, prev, merged);
+        const nextTabs = current.chat.tabs.map((tab) =>
+          tab.id === incoming.id ? { ...tab, title: incoming.title } : tab
+        );
+        const tabChanged = !tabsEqual(current.chat.tabs, nextTabs);
+        if (unreadMap === null && !tabChanged) {
+          return current;
+        }
+        return {
+          ...current,
+          chat: {
+            ...current.chat,
+            ...(unreadMap === null
+              ? {}
+              : { unreadChatCompletionByConversationId: unreadMap }),
+            ...(tabChanged ? { tabs: nextTabs } : {}),
+          },
+        };
+      });
+    },
+    [updateWorkspaceSession]
+  );
+
+  const prependHistoryPage = useCallback(
+    (
+      conversationId: string,
+      pageEvents: AgentStoredEvent[],
+      window: AgentConversationEventWindow
+    ) => {
+      loadingOlderRef.current[conversationId] = false;
+      setLoadingOlderById((c) => ({ ...c, [conversationId]: false }));
+      setEventsByConversationId((current) => {
+        const existing = current[conversationId] ?? [];
+        const bySeq = new Map<number, AgentStoredEvent>();
+        for (const e of existing) {
+          bySeq.set(e.seq, e);
+        }
+        for (const e of pageEvents) {
+          bySeq.set(e.seq, e);
+        }
+        const merged = [...bySeq.values()].sort((a, b) => a.seq - b.seq);
+        return { ...current, [conversationId]: merged };
+      });
+      setHistoryMetaById((c) => ({
+        ...c,
+        [conversationId]: { hasOlder: window.hasOlder },
+      }));
+    },
+    []
+  );
+
+  const loadOlderConversationHistory = useCallback((conversationId: string) => {
+    const socket = socketRef.current;
+    if (!socket?.connected) {
+      return;
+    }
+    if (!historyMetaRef.current[conversationId]?.hasOlder) {
+      return;
+    }
+    if (loadingOlderRef.current[conversationId]) {
+      return;
+    }
+    const events = eventsRef.current[conversationId] ?? [];
+    const oldest = events[0]?.seq;
+    if (!oldest) {
+      return;
+    }
+    loadingOlderRef.current[conversationId] = true;
+    setLoadingOlderById((c) => ({ ...c, [conversationId]: true }));
+    socket.send({
+      type: "request_history",
+      conversationId,
+      beforeSeq: oldest,
+    });
+    window.setTimeout(() => {
+      if (loadingOlderRef.current[conversationId]) {
+        loadingOlderRef.current[conversationId] = false;
+        setLoadingOlderById((c) => ({ ...c, [conversationId]: false }));
+      }
+    }, 18_000);
   }, []);
+
+  const syncConversationSnapshot = useCallback(
+    (conversationId: string) => {
+      void fetchAgentConversationSnapshot(conversationId)
+        .then((result) => mergeSnapshot(result.snapshot))
+        .catch(() => undefined);
+    },
+    [mergeSnapshot]
+  );
 
   const setModeForDraft = useCallback(
     async (draftId: string, next: EditorMode) => {
@@ -472,48 +606,6 @@ export function ChatPanel() {
     [backends, syncConversationSnapshot, updateWorkspaceSession, workspaceSession.chat.mode]
   );
 
-  const mergeSnapshot = useCallback((snapshot: AgentConversationSnapshot) => {
-    const incoming = snapshot.conversation;
-    const prev = conversationsByIdRef.current[incoming.id];
-    const merged = mergeConversationByRecency(prev, incoming);
-    setConversationsById((current) => ({
-      ...current,
-      [incoming.id]: mergeConversationByRecency(current[incoming.id], incoming),
-    }));
-    setEventsByConversationId((current) => {
-      const existing = current[snapshot.conversation.id] ?? [];
-      const existingSeq = existing.at(-1)?.seq ?? 0;
-      const incomingSeq = snapshot.events.at(-1)?.seq ?? 0;
-      return {
-        ...current,
-        [snapshot.conversation.id]:
-          incomingSeq >= existingSeq ? snapshot.events : existing,
-      };
-    });
-    updateWorkspaceSession((current) => {
-      const unreadMap = nextUnreadCompletionMap(current, prev, merged);
-      const nextTabs = current.chat.tabs.map((tab) =>
-        tab.id === snapshot.conversation.id
-          ? { ...tab, title: snapshot.conversation.title }
-          : tab
-      );
-      const tabChanged = !tabsEqual(current.chat.tabs, nextTabs);
-      if (unreadMap === null && !tabChanged) {
-        return current;
-      }
-      return {
-        ...current,
-        chat: {
-          ...current.chat,
-          ...(unreadMap === null
-            ? {}
-            : { unreadChatCompletionByConversationId: unreadMap }),
-          ...(tabChanged ? { tabs: nextTabs } : {}),
-        },
-      };
-    });
-  }, [updateWorkspaceSession]);
-
   const appendConversationEvent = useCallback(
     (conversationId: string, event: AgentStoredEvent) => {
       setEventsByConversationId((current) => {
@@ -650,6 +742,15 @@ export function ChatPanel() {
     () => tabs.find((tab) => tab.active)?.id ?? tabs[0]?.id ?? "__empty__",
     [tabs]
   );
+  const panelHistoryCursor = useMemo(() => {
+    if (!activeTabId || activeTabId === "__empty__") {
+      return { hasOlder: false, loadingOlder: false };
+    }
+    return {
+      hasOlder: historyMetaById[activeTabId]?.hasOlder ?? false,
+      loadingOlder: loadingOlderById[activeTabId] ?? false,
+    };
+  }, [activeTabId, historyMetaById, loadingOlderById]);
   const agentTabIndicators = useMemo(() => {
     const unread = workspaceSession.chat.unreadChatCompletionByConversationId ?? {};
     const m: AgentTabIndicatorByConversationId = {};
@@ -722,13 +823,16 @@ export function ChatPanel() {
       resolveDraftModelForBackend(draftBackend)
     );
   }, [draftBackend, draftModels, workspaceSession.chat.model]);
+  const rawPanelThreadEvents = activeTabId
+    ? (eventsByConversationId[activeTabId] ?? [])
+    : [];
+  const deferredPanelThreadEvents = useDeferredValue(rawPanelThreadEvents);
   const threadMessages = useMemo(
     () =>
-      projectAgentEventsToChatMessages(
-        activeTabId ? eventsByConversationId[activeTabId] ?? [] : [],
-        { backendId: activeConversation?.config.backendId }
-      ),
-    [activeTabId, activeConversation?.config.backendId, eventsByConversationId]
+      projectAgentEventsToChatMessages(deferredPanelThreadEvents, {
+        backendId: activeConversation?.config.backendId,
+      }),
+    [activeConversation?.config.backendId, deferredPanelThreadEvents]
   );
   const isEmptyThread = threadMessages.length === 0;
   const resolveComposerStateForDraft = useCallback(
@@ -955,11 +1059,17 @@ export function ChatPanel() {
       setBackends([]);
       setConversationsById({});
       setEventsByConversationId({});
+      setHistoryMetaById({});
+      setLoadingOlderById({});
+      loadingOlderRef.current = {};
       return;
     }
     let cancelled = false;
     setConversationsById({});
     setEventsByConversationId({});
+    setHistoryMetaById({});
+    setLoadingOlderById({});
+    loadingOlderRef.current = {};
 
     void (async () => {
       const result = await listAgentConversations();
@@ -1150,8 +1260,22 @@ export function ChatPanel() {
         case "snapshot":
           mergeSnapshot(message.snapshot);
           return;
+        case "snapshot_head":
+          mergeSnapshot(message.snapshot);
+          return;
+        case "history_page":
+          prependHistoryPage(
+            message.conversationId,
+            message.events,
+            message.window
+          );
+          return;
         case "event":
           appendConversationEvent(message.conversationId, message.event);
+          return;
+        case "error":
+          loadingOlderRef.current = {};
+          setLoadingOlderById({});
           return;
         default:
           return;
@@ -1167,7 +1291,14 @@ export function ChatPanel() {
         socketRef.current = null;
       }
     };
-  }, [activeWorkspaceId, appendConversationEvent, mergeSnapshot, sendSubscription, upsertConversation]);
+  }, [
+    activeWorkspaceId,
+    appendConversationEvent,
+    mergeSnapshot,
+    prependHistoryPage,
+    sendSubscription,
+    upsertConversation,
+  ]);
 
   useEffect(() => {
     sendSubscription();
@@ -1885,6 +2016,13 @@ export function ChatPanel() {
             conversationBusy={
               activeConversation?.status === "running" ||
               activeConversation?.status === "awaiting_permission"
+            }
+            hasOlderHistory={panelHistoryCursor.hasOlder}
+            loadingOlderHistory={panelHistoryCursor.loadingOlder}
+            onRequestOlderHistory={
+              activeTabId && activeTabId !== "__empty__"
+                ? () => loadOlderConversationHistory(activeTabId)
+                : undefined
             }
             onResolvePermission={handleResolveActivePermission}
             onCancelPermission={handleCancelActivePermission}

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Loader, RotateCw, X } from "lucide-react";
+import { LoaderCircle, RotateCw, X } from "lucide-react";
 import type { ImageAttachmentState } from "@/lib/types";
 
 interface ImageCarouselProps {
@@ -69,7 +69,7 @@ export function ImageCarousel({ images, onRemove, onRetry, size = "compact" }: I
             />
             {(image.uploadState === "uploading" || image.uploadState === "pending") && (
               <div className="absolute inset-0 flex flex-col items-center justify-center gap-[4px] bg-black/40">
-                <Loader className="size-5 animate-spin text-white" />
+                <LoaderCircle className="size-5 animate-spin text-white" />
                 {image.showSlowSpinner && (
                   <span className="text-[10px] text-white/80">Uploading...</span>
                 )}

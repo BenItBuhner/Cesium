@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import { MessageThreadContent } from "./MessageThreadContent";
 import { useOpenInEditor } from "@/components/editor/OpenInEditorContext";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
@@ -27,6 +27,10 @@ interface MessageListProps {
   contentClassName?: string;
   conversationId?: string;
   conversationBusy?: boolean;
+  /** Paginated history: request older events when user scrolls near the top. */
+  onRequestOlderHistory?: () => void;
+  hasOlderHistory?: boolean;
+  loadingOlderHistory?: boolean;
 }
 
 export function MessageList({
@@ -40,6 +44,9 @@ export function MessageList({
   contentClassName,
   conversationId,
   conversationBusy = false,
+  onRequestOlderHistory,
+  hasOlderHistory = false,
+  loadingOlderHistory = false,
 }: MessageListProps) {
   const { openSubagentTranscript } = useOpenInEditor();
   const { workspaceSession, updateWorkspaceSession } = useWorkspace();
@@ -49,6 +56,10 @@ export function MessageList({
   const persistTimerRef = useRef<number | null>(null);
   const pendingScrollTopRef = useRef(initialScrollTop);
   const persistedScrollTopRef = useRef<number | null>(null);
+  const olderLoadGateRef = useRef(false);
+
+  const useVirtualThread = useMemo(() => messages.length >= 40, [messages.length]);
+  const stickyUserHeaderEffective = !useVirtualThread;
 
   const isNearBottom = (root: HTMLDivElement) =>
     root.scrollHeight - (root.scrollTop + root.clientHeight) <= 48;
@@ -157,9 +168,10 @@ export function MessageList({
   const thread = (
     <MessageThreadContent
       messages={messages}
-      stickyUserHeader
+      stickyUserHeader={stickyUserHeaderEffective}
       scrollRootRef={scrollRootRef}
       workedSessionSurface={surface}
+      virtualize={useVirtualThread}
       onResolvePermission={onResolvePermission}
       onCancelPermission={onCancelPermission}
       conversationId={conversationId}
@@ -191,12 +203,35 @@ export function MessageList({
         bottomDockVisible ? "pb-[clamp(220px,38vh,340px)]" : "pb-[14px]"
       }`}
       onScroll={(event) => {
-        stickToBottomRef.current = isNearBottom(event.currentTarget);
-        pendingScrollTopRef.current = Math.round(event.currentTarget.scrollTop);
+        const root = event.currentTarget;
+        const scrollTop = root.scrollTop;
+        stickToBottomRef.current = isNearBottom(root);
+        pendingScrollTopRef.current = Math.round(scrollTop);
         schedulePersistedScrollTop();
+
+        if (
+          onRequestOlderHistory &&
+          hasOlderHistory &&
+          !loadingOlderHistory &&
+          scrollTop < 72
+        ) {
+          if (!olderLoadGateRef.current) {
+            olderLoadGateRef.current = true;
+            onRequestOlderHistory();
+          }
+        } else if (scrollTop > 160) {
+          olderLoadGateRef.current = false;
+        }
       }}
     >
-      <div className={innerClass}>{thread}</div>
+      <div className={innerClass}>
+        {loadingOlderHistory ? (
+          <div className="mb-[10px] rounded-[var(--radius-tab)] bg-[var(--bg-card)] px-[10px] py-[6px] font-sans text-[12px] text-[var(--text-secondary)]">
+            Loading older messages…
+          </div>
+        ) : null}
+        {thread}
+      </div>
     </div>
   );
 }

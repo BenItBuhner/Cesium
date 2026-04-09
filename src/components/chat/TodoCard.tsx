@@ -1,4 +1,4 @@
-import { ListChecks, Loader, Circle, Check } from "lucide-react";
+import { ListChecks, LoaderCircle, Circle, Check } from "lucide-react";
 import type { TodoItem } from "@/lib/types";
 
 interface TodoCardProps {
@@ -9,7 +9,7 @@ interface TodoCardProps {
 function TodoIcon({ status }: { status: TodoItem["status"] }) {
   if (status === "in_progress") {
     return (
-      <Loader
+      <LoaderCircle
         className="size-[18px] shrink-0 text-[var(--text-secondary)] animate-spin"
         strokeWidth={1.5}
         aria-hidden

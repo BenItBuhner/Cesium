@@ -1,21 +1,28 @@
-import type { Metadata } from "next";
-import { AgentLayout } from "@/components/layout/AgentLayout";
-import { WorkbenchNotificationProvider } from "@/components/notifications/WorkbenchNotificationProvider";
-import { GlobalSettingsProvider } from "@/components/preferences/GlobalSettingsProvider";
-import { WorkspaceProvider } from "@/contexts/WorkspaceContext";
+import { redirect } from "next/navigation";
 
-export const metadata: Metadata = {
-  title: "Agent · OpenCursor",
-};
+type SearchParamsInput = Record<string, string | string[] | undefined>;
 
-export default function AgentPage() {
-  return (
-    <WorkbenchNotificationProvider>
-      <WorkspaceProvider>
-        <GlobalSettingsProvider>
-          <AgentLayout />
-        </GlobalSettingsProvider>
-      </WorkspaceProvider>
-    </WorkbenchNotificationProvider>
-  );
+function toQueryString(sp: SearchParamsInput): string {
+  const qs = new URLSearchParams();
+  for (const [key, raw] of Object.entries(sp)) {
+    if (raw == null) {
+      continue;
+    }
+    const values = Array.isArray(raw) ? raw : [raw];
+    for (const val of values) {
+      qs.append(key, val);
+    }
+  }
+  return qs.toString();
+}
+
+/** Legacy URL; workbench is a single `/` route (agent is the default when `view` is omitted). */
+export default async function LegacyAgentPage({
+  searchParams,
+}: {
+  searchParams: Promise<SearchParamsInput>;
+}) {
+  const sp = await searchParams;
+  const q = toQueryString(sp);
+  redirect(q ? `/?${q}` : "/");
 }

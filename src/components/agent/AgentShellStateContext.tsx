@@ -10,6 +10,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useViewport } from "@/hooks/useViewport";
 import type {
   AgentBackendInfo,
@@ -77,30 +78,6 @@ type AgentShellStateContextValue = {
 const AgentShellStateContext =
   createContext<AgentShellStateContextValue | null>(null);
 
-function readConversationIdFromLocation(): string | null {
-  if (typeof window === "undefined") {
-    return null;
-  }
-  return new URL(window.location.href).searchParams.get("conversationId")?.trim() || null;
-}
-
-function replaceConversationIdInLocation(conversationId: string | null): void {
-  if (typeof window === "undefined") {
-    return;
-  }
-  const url = new URL(window.location.href);
-  if (conversationId) {
-    url.searchParams.set("conversationId", conversationId);
-  } else {
-    url.searchParams.delete("conversationId");
-  }
-  const nextUrl = `${url.pathname}${url.search}${url.hash}`;
-  const currentUrl = `${window.location.pathname}${window.location.search}${window.location.hash}`;
-  if (nextUrl !== currentUrl) {
-    window.history.replaceState(null, "", nextUrl);
-  }
-}
-
 function sortConversationGroups(
   groups: AgentConversationGroup[],
   recentWorkspaceIds: string[]
@@ -122,6 +99,18 @@ function sortConversationGroups(
     }
     return a.workspace.name.localeCompare(b.workspace.name);
   });
+}
+
+function findConversationOwnerWorkspaceId(
+  groups: AgentConversationGroup[],
+  conversationId: string
+): string | null {
+  for (const group of groups) {
+    if (group.conversations.some((c) => c.id === conversationId)) {
+      return group.workspace.id;
+    }
+  }
+  return null;
 }
 
 function createLegacySidePaneSession(
@@ -159,13 +148,32 @@ export function AgentShellStateProvider({
     updateWorkspaceSession,
   } = useWorkspace();
   const { isMobile } = useViewport();
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const urlConversationId = searchParams.get("conversationId")?.trim() || null;
+  const replaceConversationIdInLocation = useCallback(
+    (conversationId: string | null) => {
+      if (typeof window === "undefined") {
+        return;
+      }
+      const url = new URL(window.location.href);
+      if (conversationId) {
+        url.searchParams.set("conversationId", conversationId);
+      } else {
+        url.searchParams.delete("conversationId");
+      }
+      const nextUrl = `${url.pathname}${url.search}${url.hash}`;
+      const currentUrl = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+      if (nextUrl !== currentUrl) {
+        router.replace(nextUrl);
+      }
+    },
+    [router]
+  );
   const [groups, setGroups] = useState<AgentConversationGroup[]>([]);
   const [backends, setBackends] = useState<AgentBackendInfo[]>([]);
   const [railLoading, setRailLoading] = useState(true);
   const [railRefreshing, setRailRefreshing] = useState(false);
-  const [urlConversationId, setUrlConversationId] = useState<string | null>(
-    readConversationIdFromLocation()
-  );
   const previousEditorTabCountRef = useRef(0);
   const editorTabCountHydratedRef = useRef(false);
   const editorTabScopeRef = useRef<string | null>(null);
@@ -218,14 +226,6 @@ export function AgentShellStateProvider({
   }, [refreshConversationGroupsWithState]);
 
   useEffect(() => {
-    const handlePopState = () => {
-      setUrlConversationId(readConversationIdFromLocation());
-    };
-    window.addEventListener("popstate", handlePopState);
-    return () => window.removeEventListener("popstate", handlePopState);
-  }, []);
-
-  useEffect(() => {
     if (!activeWorkspaceId) {
       return;
     }
@@ -251,26 +251,100 @@ export function AgentShellStateProvider({
     urlConversationId ?? workspaceSession.agentView.selectedConversationId;
   const isDraftConversationSelected =
     requestedConversationId === AGENT_NEW_CHAT_SESSION_ID;
+  const persistedConversationRequest =
+    workspaceSession.agentView.selectedConversationId &&
+    workspaceSession.agentView.selectedConversationId !== AGENT_NEW_CHAT_SESSION_ID
+      ? workspaceSession.agentView.selectedConversationId
+      : null;
+  const urlConversationRequest =
+    urlConversationId && urlConversationId !== AGENT_NEW_CHAT_SESSION_ID
+      ? urlConversationId
+      : null;
 
   const selectedConversationId = useMemo(() => {
     if (isDraftConversationSelected) {
       return null;
     }
-    if (urlConversationId && validActiveConversationIds.has(urlConversationId)) {
-      return urlConversationId;
+
+    // The URL deep-link must beat stale workspace session state during reload hydration.
+    // Otherwise the session's "last selected" chat can overwrite the explicit ?conversationId=
+    // before the rail list finishes loading, which snaps the user back to the most recent chat.
+    if (urlConversationRequest) {
+      if (validActiveConversationIds.has(urlConversationRequest)) {
+        return urlConversationRequest;
+      }
+      if (railLoading) {
+        return urlConversationRequest;
+      }
+      if (orderedGroups.length > 0) {
+        const ownerWs = findConversationOwnerWorkspaceId(orderedGroups, urlConversationRequest);
+        if (ownerWs != null) {
+          return urlConversationRequest;
+        }
+      }
     }
-    if (
-      workspaceSession.agentView.selectedConversationId &&
-      validActiveConversationIds.has(workspaceSession.agentView.selectedConversationId)
-    ) {
-      return workspaceSession.agentView.selectedConversationId;
+
+    if (persistedConversationRequest) {
+      if (validActiveConversationIds.has(persistedConversationRequest)) {
+        return persistedConversationRequest;
+      }
+      // While the rail list is still fetching, hold the previous session id instead of falling
+      // through to the first chat in the workspace.
+      if (railLoading) {
+        return persistedConversationRequest;
+      }
+      if (orderedGroups.length > 0 && activeWorkspaceId) {
+        const ownerWs = findConversationOwnerWorkspaceId(
+          orderedGroups,
+          persistedConversationRequest
+        );
+        if (ownerWs != null && ownerWs !== activeWorkspaceId) {
+          return persistedConversationRequest;
+        }
+      }
     }
+
     return activeWorkspaceGroup?.conversations[0]?.id ?? null;
   }, [
     activeWorkspaceGroup,
+    activeWorkspaceId,
     isDraftConversationSelected,
-    urlConversationId,
+    orderedGroups,
+    persistedConversationRequest,
+    railLoading,
+    urlConversationRequest,
     validActiveConversationIds,
+  ]);
+
+  useEffect(() => {
+    if (railLoading || !activeWorkspaceId || orderedGroups.length === 0) {
+      return;
+    }
+    if (isDraftConversationSelected) {
+      return;
+    }
+    const req =
+      urlConversationId && urlConversationId !== AGENT_NEW_CHAT_SESSION_ID
+        ? urlConversationId
+        : workspaceSession.agentView.selectedConversationId &&
+            workspaceSession.agentView.selectedConversationId !== AGENT_NEW_CHAT_SESSION_ID
+          ? workspaceSession.agentView.selectedConversationId
+          : null;
+    if (!req) {
+      return;
+    }
+    const owner = findConversationOwnerWorkspaceId(orderedGroups, req);
+    if (!owner || owner === activeWorkspaceId) {
+      return;
+    }
+    void openWorkspaceById(owner);
+  }, [
+    activeWorkspaceId,
+    isDraftConversationSelected,
+    openWorkspaceById,
+    orderedGroups,
+    railLoading,
+    urlConversationId,
     workspaceSession.agentView.selectedConversationId,
   ]);
 
@@ -316,6 +390,16 @@ export function AgentShellStateProvider({
     if (workspaceSession.agentView.selectedConversationId === persistedConversationId) {
       return;
     }
+    // Never clobber a real persisted id with null while the rail is still loading — same race
+    // as `selectedConversationId` (empty valid set during fetch).
+    if (
+      railLoading &&
+      persistedConversationId == null &&
+      workspaceSession.agentView.selectedConversationId != null &&
+      workspaceSession.agentView.selectedConversationId !== AGENT_NEW_CHAT_SESSION_ID
+    ) {
+      return;
+    }
     updateWorkspaceSession((current) => ({
       ...current,
       agentView: {
@@ -325,14 +409,27 @@ export function AgentShellStateProvider({
     }));
   }, [
     persistedConversationId,
+    railLoading,
     updateWorkspaceSession,
     workspaceSession.agentView.selectedConversationId,
   ]);
 
   useEffect(() => {
+    if (
+      railLoading &&
+      persistedConversationId == null &&
+      workspaceSession.agentView.selectedConversationId != null &&
+      workspaceSession.agentView.selectedConversationId !== AGENT_NEW_CHAT_SESSION_ID
+    ) {
+      return;
+    }
     replaceConversationIdInLocation(persistedConversationId);
-    setUrlConversationId(persistedConversationId);
-  }, [persistedConversationId]);
+  }, [
+    persistedConversationId,
+    railLoading,
+    replaceConversationIdInLocation,
+    workspaceSession.agentView.selectedConversationId,
+  ]);
 
   useEffect(() => {
     if (hasAnySidePaneSessions || !hasLegacySidePaneState(workspaceSession)) {
@@ -580,9 +677,8 @@ export function AgentShellStateProvider({
         },
       }));
       replaceConversationIdInLocation(conversationId);
-      setUrlConversationId(conversationId);
     },
-    [updateWorkspaceSession]
+    [replaceConversationIdInLocation, updateWorkspaceSession]
   );
 
   const startNewConversation = useCallback(() => {
@@ -594,8 +690,7 @@ export function AgentShellStateProvider({
       },
     }));
     replaceConversationIdInLocation(AGENT_NEW_CHAT_SESSION_ID);
-    setUrlConversationId(AGENT_NEW_CHAT_SESSION_ID);
-  }, [updateWorkspaceSession]);
+  }, [replaceConversationIdInLocation, updateWorkspaceSession]);
 
   const openConversationSummary = useCallback(
     async (summary: AgentRailConversationSummary) => {

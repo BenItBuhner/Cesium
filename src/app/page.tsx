@@ -1,5 +1,15 @@
-import { redirect } from "next/navigation";
+import type { Metadata } from "next";
+import { WorkbenchApp } from "@/components/layout/WorkbenchApp";
+import { WorkbenchProviders } from "@/components/layout/WorkbenchProviders";
+
+export const metadata: Metadata = {
+  title: "OpenCursor",
+};
 
 export default function Home() {
-  redirect("/editor");
+  return (
+    <WorkbenchProviders>
+      <WorkbenchApp />
+    </WorkbenchProviders>
+  );
 }

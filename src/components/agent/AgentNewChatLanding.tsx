@@ -44,7 +44,6 @@ export function AgentNewChatLanding() {
   const {
     composerDrafts,
     composerSelections,
-    openComposerDraft,
     setComposerSelection,
     setExpandedComposerController,
     upsertComposerDraft,
@@ -60,7 +59,6 @@ export function AgentNewChatLanding() {
     expandedComposerDraftId,
     groups,
     refreshConversationGroups,
-    setExpandedComposerDraft,
     setSelectedConversationId,
     setRightPaneOpen,
   } = useAgentShellState();
@@ -301,15 +299,7 @@ export function AgentNewChatLanding() {
                 }}
                 selection={composerSelection}
                 onSelectionChange={(next) => setComposerSelection(composerDraftId, next)}
-                onExpandComposer={() => {
-                  setRightPaneOpen(true);
-                  setExpandedComposerDraft(composerDraftId);
-                  openComposerDraft({
-                    draftId: composerDraftId,
-                    title: composerDraftTitle,
-                    content: composerDraftText,
-                  });
-                }}
+                agentShellDockHeightExpand
                 busy={false}
                 configLocked={false}
                 onSubmit={handleSubmit}

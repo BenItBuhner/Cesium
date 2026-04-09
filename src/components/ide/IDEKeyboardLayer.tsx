@@ -8,7 +8,6 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { useRouter, usePathname } from "next/navigation";
 import { useOpenInEditor } from "@/components/editor/OpenInEditorContext";
 import { buildQuickOpenIndex, type QuickOpenEntry } from "@/lib/quick-open-files";
 import { CommandPalette, type PaletteCommand } from "./CommandPalette";
@@ -34,6 +33,7 @@ import {
   tryDispatchKeyboardShortcut,
   type ShortcutChordState,
 } from "@/lib/keyboard-shortcuts";
+import { useShellView } from "@/components/layout/ShellViewContext";
 
 type PaletteMode = "closed" | "command" | "quickopen";
 
@@ -43,8 +43,7 @@ function flash(setter: (s: string | null) => void, msg: string) {
 }
 
 export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
-  const router = useRouter();
-  const pathname = usePathname();
+  const { setShellView } = useShellView();
   const bridgeRef = useEditorBridgeRef();
   const { openExplorerFile } = useOpenInEditor();
   const workbench = useWorkbench();
@@ -372,7 +371,7 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
           openWorkspaceWindowsModal();
           break;
         case "workbench.action.newAgent":
-          router.push("/agent");
+          setShellView("agent");
           break;
         case "workbench.action.closeActiveEditor":
           runWithBridge((b) => {
@@ -500,9 +499,9 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
       bridgeRef,
       openWorkspaceWindowsModal,
       promptForFolder,
-      router,
       runWithBridge,
       setPalette,
+      setShellView,
       setToast,
       updateWorkspaceSession,
       workbench,
@@ -725,18 +724,14 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
         id: "workbench.action.switchToAgent",
         label: "View: Switch to Agent Mode",
         run: () => {
-          const url = new URL(window.location.href);
-          url.pathname = "/agent";
-          router.push(url.pathname + url.search);
+          setShellView("agent");
         },
       },
       {
         id: "workbench.action.switchToEditor",
         label: "View: Switch to Editor Mode",
         run: () => {
-          const url = new URL(window.location.href);
-          url.pathname = "/editor";
-          router.push(url.pathname + url.search);
+          setShellView("editor");
         },
       },
       {
@@ -937,6 +932,7 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
       runShortcutCommand,
       runWithBridge,
       setDefaultWorkspace,
+      setShellView,
       setThemePreference,
       workspaces,
     ]

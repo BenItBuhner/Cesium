@@ -4,6 +4,7 @@ import {
   createConversationId,
   readConversationRecord,
   readConversationSnapshot,
+  readConversationSnapshotHead,
   saveConversationRecord,
   updateConversationRecord,
   listWorkspaceConversationRecords,
@@ -25,6 +26,7 @@ import type {
   AgentConversationListResult,
   AgentConversationRecord,
   AgentConversationSnapshot,
+  AgentConversationSnapshotHead,
   AgentEventInput,
   AgentProvider,
   AgentSessionHandle,
@@ -178,6 +180,40 @@ export class AgentRuntimeManager {
     };
   }
 
+  async getConversationSnapshotHead(
+    workspace: WorkspaceRecord,
+    conversationId: string,
+    options?: {
+      hydrateRuntime?: boolean;
+      limitTurns?: number;
+      limitEvents?: number;
+    }
+  ): Promise<AgentConversationSnapshotHead | null> {
+    let record = await readConversationRecord(workspace.id, conversationId);
+    if (!record) {
+      return null;
+    }
+    if (options?.hydrateRuntime) {
+      try {
+        await this.ensureRuntime(workspace, record);
+        record = (await readConversationRecord(workspace.id, conversationId)) ?? record;
+      } catch (error) {
+        await this.persistRuntimeFailure(workspace.id, conversationId, error);
+      }
+    }
+    const head = await readConversationSnapshotHead(workspace.id, conversationId, {
+      limitTurns: options?.limitTurns,
+      limitEvents: options?.limitEvents,
+    });
+    if (!head) {
+      return null;
+    }
+    return {
+      ...head,
+      conversation: this.withBackendDefaults(head.conversation),
+    };
+  }
+
   async updateConversationConfig(
     workspace: WorkspaceRecord,
     conversationId: string,
@@ -249,7 +285,7 @@ export class AgentRuntimeManager {
     conversationId: string,
     text: string,
     attachments?: Array<{ mimeType: string; data: string; name?: string }>
-  ): Promise<AgentConversationSnapshot> {
+  ): Promise<AgentConversationSnapshotHead> {
     const trimmed = text.trim();
     if (!trimmed && (!attachments || attachments.length === 0)) {
       throw new Error("Prompt text or attachments are required.");
@@ -290,11 +326,14 @@ export class AgentRuntimeManager {
 
     const runtime = await this.ensureRuntime(workspace, record);
     void runtime.handle.prompt({ text: trimmed, userMessageId, attachments }).catch(() => undefined);
-    const snapshot = await readConversationSnapshot(workspace.id, conversationId);
-    if (!snapshot) {
+    const head = await readConversationSnapshotHead(workspace.id, conversationId);
+    if (!head) {
       throw new Error("Conversation disappeared after prompt.");
     }
-    return snapshot;
+    return {
+      ...head,
+      conversation: this.withBackendDefaults(head.conversation),
+    };
   }
 
   async cancelConversation(

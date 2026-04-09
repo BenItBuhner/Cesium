@@ -179,6 +179,11 @@ interface ChatComposerProps {
    * Use `""` to align the composer flush inside a parent that already applies the inset.
    */
   shellMxClass?: string;
+  /**
+   * Agent shell only: maximize/minimize toggles the docked input max-height in place
+   * instead of delegating to `onExpandComposer` (editor expanded composer).
+   */
+  agentShellDockHeightExpand?: boolean;
 }
 
 function resolvePointerSelection(
@@ -330,6 +335,7 @@ export function ChatComposer({
   layout = "docked-bottom",
   variant = "docked",
   shellMxClass,
+  agentShellDockHeightExpand = false,
 }: ChatComposerProps) {
   const { fileTree } = useWorkspace();
   const { settings } = useGlobalSettings();
@@ -367,6 +373,13 @@ export function ChatComposer({
     left: 8,
     maxHeight: 280,
   });
+  const [agentShellDockTall, setAgentShellDockTall] = useState(false);
+
+  useEffect(() => {
+    if (!agentShellDockHeightExpand) {
+      setAgentShellDockTall(false);
+    }
+  }, [agentShellDockHeightExpand]);
 
   const editorRef = useRef<HTMLDivElement>(null);
   const caretRef = useRef<HTMLSpanElement | null>(null);
@@ -802,6 +815,7 @@ export function ChatComposer({
     : hasFocus;
   const isEmpty = value.trim().length === 0;
   const isExpanded = variant === "expanded";
+  const showAgentShellGrowControls = agentShellDockHeightExpand && !isExpanded;
 
   const applyComposerDirectives = useCallback(
     (input: string): string => {
@@ -1443,7 +1457,11 @@ export function ChatComposer({
           className={`whitespace-pre-wrap break-words font-sans text-[14px] font-normal text-[var(--text-primary)] outline-none [scrollbar-width:thin] ${textInsetClassName} ${
             isExpanded
               ? "flex-1 overflow-y-auto pb-[2px]"
-              : "min-h-[18px] max-h-[min(42vh,240px)] overflow-y-auto"
+              : `min-h-[18px] overflow-y-auto ${
+                  showAgentShellGrowControls && agentShellDockTall
+                    ? "max-h-[min(70vh,560px)]"
+                    : "max-h-[min(42vh,240px)]"
+                }${showAgentShellGrowControls ? " transition-[max-height] duration-300 ease-out" : ""}`
           }`}
           role={menu ? "combobox" : "textbox"}
           aria-label="Chat input"
@@ -1485,30 +1503,36 @@ export function ChatComposer({
 
       <div className={`flex items-start justify-between gap-[12px] ${controlRowClassName}`}>
         <div className="flex min-w-0 flex-1 flex-col gap-[6px]">
-          <div className="flex w-fit max-w-full flex-wrap items-center gap-[11px]">
-            <BackendDropdown
-              backendId={backendId}
-              backends={backends}
-              onBackendChange={onBackendChange}
-              popoverPlacement={modeModelPopoverPlacement}
-              disabled={busy || configLocked}
-            />
-            <ModeDropdown
-              mode={mode}
-              onModeChange={onModeChange}
-              popoverPlacement={modeModelPopoverPlacement}
-              disabled={busy || configLocked}
-              options={modeOptions}
-            />
-            <ModelDropdown
-              model={model}
-              models={models}
-              onModelChange={onModelChange}
-              popoverPlacement={modeModelPopoverPlacement}
-              disabled={busy || configLocked}
-              isOpen={modelDropdownOpen}
-              onOpenChange={setModelDropdownOpen}
-            />
+          <div className="flex w-full min-w-0 flex-nowrap items-center gap-[11px] overflow-hidden">
+            <div className="shrink-0">
+              <BackendDropdown
+                backendId={backendId}
+                backends={backends}
+                onBackendChange={onBackendChange}
+                popoverPlacement={modeModelPopoverPlacement}
+                disabled={busy || configLocked}
+              />
+            </div>
+            <div className="shrink-0">
+              <ModeDropdown
+                mode={mode}
+                onModeChange={onModeChange}
+                popoverPlacement={modeModelPopoverPlacement}
+                disabled={busy || configLocked}
+                options={modeOptions}
+              />
+            </div>
+            <div className="min-w-0 shrink-0">
+              <ModelDropdown
+                model={model}
+                models={models}
+                onModelChange={onModelChange}
+                popoverPlacement={modeModelPopoverPlacement}
+                disabled={busy || configLocked}
+                isOpen={modelDropdownOpen}
+                onOpenChange={setModelDropdownOpen}
+              />
+            </div>
           </div>
           {sessionConfigOptions && sessionConfigOptions.length > 0 && (
             <div className="flex max-w-full flex-wrap items-center gap-[8px]">
@@ -1527,7 +1551,27 @@ export function ChatComposer({
         </div>
 
         <div className="flex shrink-0 items-center gap-[9px]">
-          {isExpanded && onCollapseComposer ? (
+          {showAgentShellGrowControls ? (
+            agentShellDockTall ? (
+              <button
+                type="button"
+                onClick={() => setAgentShellDockTall(false)}
+                className="text-[var(--text-secondary)] transition-colors hover:text-[var(--text-primary)]"
+                aria-label="Shrink composer"
+              >
+                <Minimize2 className="size-[14px] shrink-0" strokeWidth={1.5} aria-hidden />
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setAgentShellDockTall(true)}
+                className="text-[var(--text-secondary)] transition-colors hover:text-[var(--text-primary)]"
+                aria-label="Expand composer height"
+              >
+                <Maximize2 className="size-[14px] shrink-0" strokeWidth={1.5} aria-hidden />
+              </button>
+            )
+          ) : isExpanded && onCollapseComposer ? (
             <button
               type="button"
               onClick={onCollapseComposer}

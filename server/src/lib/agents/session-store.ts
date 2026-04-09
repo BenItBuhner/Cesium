@@ -3,10 +3,18 @@ import { promises as fs, type Dirent } from "node:fs";
 import path from "node:path";
 import { DATA_DIR, ensureDataDir, readJsonFile, writeJsonFile } from "../persistence.js";
 import { AGENT_BACKENDS } from "./providers.js";
+import {
+  DEFAULT_PAGE_EVENTS_CAP,
+  DEFAULT_PAGE_TURNS,
+  readConversationEventHistoryPage,
+  readConversationEventsSinceEfficient,
+  readConversationEventTailPage,
+} from "./event-log-read.js";
 import type {
   AgentBackendId,
   AgentConversationRecord,
   AgentConversationSnapshot,
+  AgentConversationSnapshotHead,
   AgentEventInput,
   AgentManagerEvent,
   AgentStoredEvent,
@@ -256,8 +264,8 @@ export async function readConversationEventsSince(
   conversationId: string,
   since = 0
 ): Promise<AgentStoredEvent[]> {
-  const events = await readConversationEvents(workspaceId, conversationId);
-  return since > 0 ? events.filter((event) => event.seq > since) : events;
+  const filePath = getConversationEventsFile(workspaceId, conversationId);
+  return readConversationEventsSinceEfficient(filePath, since);
 }
 
 export async function readConversationSnapshot(
@@ -270,6 +278,60 @@ export async function readConversationSnapshot(
   }
   const events = await readConversationEvents(workspaceId, conversationId);
   return { conversation, events };
+}
+
+export async function readConversationSnapshotHead(
+  workspaceId: string,
+  conversationId: string,
+  options?: { limitTurns?: number; limitEvents?: number }
+): Promise<AgentConversationSnapshotHead | null> {
+  const conversation = await readConversationRecord(workspaceId, conversationId);
+  if (!conversation) {
+    return null;
+  }
+  const filePath = getConversationEventsFile(workspaceId, conversationId);
+  const limitTurns = options?.limitTurns ?? DEFAULT_PAGE_TURNS;
+  const limitEvents = options?.limitEvents ?? DEFAULT_PAGE_EVENTS_CAP;
+  const page = await readConversationEventTailPage(filePath, {
+    limitTurns,
+    limitEvents,
+  });
+  return {
+    conversation,
+    events: page.events,
+    window: {
+      oldestSeq: page.oldestSeq,
+      newestSeq: page.newestSeq,
+      hasOlder: page.hasOlder,
+    },
+  };
+}
+
+export async function readConversationHistoryPage(
+  workspaceId: string,
+  conversationId: string,
+  beforeSeq: number,
+  options?: { limitTurns?: number; limitEvents?: number }
+): Promise<{ events: AgentStoredEvent[]; window: AgentConversationSnapshotHead["window"] } | null> {
+  const conversation = await readConversationRecord(workspaceId, conversationId);
+  if (!conversation) {
+    return null;
+  }
+  const filePath = getConversationEventsFile(workspaceId, conversationId);
+  const limitTurns = options?.limitTurns ?? DEFAULT_PAGE_TURNS;
+  const limitEvents = options?.limitEvents ?? DEFAULT_PAGE_EVENTS_CAP;
+  const page = await readConversationEventHistoryPage(filePath, beforeSeq, {
+    limitTurns,
+    limitEvents,
+  });
+  return {
+    events: page.events,
+    window: {
+      oldestSeq: page.oldestSeq,
+      newestSeq: page.newestSeq,
+      hasOlder: page.hasOlder,
+    },
+  };
 }
 
 export async function updateConversationRecord(

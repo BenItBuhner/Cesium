@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, type DragEvent, type MouseEvent } from "react";
-import { Loader, X } from "lucide-react";
+import { LoaderCircle, X } from "lucide-react";
 import { buildBrowserProxyUrl } from "@/lib/browser-proxy-url";
 import { fileTypeIcons, type FileTypeIconKind } from "@/lib/file-type-icons";
 import { getServerBaseUrl } from "@/lib/server-api";
@@ -114,7 +114,7 @@ export function EditorTab({
         ) : null}
         <span className="flex size-[18px] items-center justify-center">
           {agentRunning && tab.conversationId ? (
-            <Loader
+            <LoaderCircle
               className="size-[18px] shrink-0 text-[var(--text-secondary)] animate-spin"
               strokeWidth={1.5}
               aria-hidden

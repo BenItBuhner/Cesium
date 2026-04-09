@@ -86,6 +86,9 @@ export type EditorPanelAction =
       fileKind: EditorTab["fileKind"];
       mimeType?: string;
       previewPath?: string;
+      fileContentTruncated?: boolean;
+      fileTotalBytes?: number;
+      fileLoadedThroughByte?: number;
     }
   | { type: "UPDATE_TAB_CONTENT"; tabId: string; content: string }
   | { type: "MARK_SAVED"; tabId: string; content: string }
@@ -763,6 +766,9 @@ export function editorPanelReducer(
               dirty: false,
               savedContent: action.content,
               externalChange: false,
+              fileContentTruncated: action.fileContentTruncated,
+              fileTotalBytes: action.fileTotalBytes,
+              fileLoadedThroughByte: action.fileLoadedThroughByte,
             }
           : tab;
       return {

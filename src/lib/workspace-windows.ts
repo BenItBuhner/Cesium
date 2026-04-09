@@ -1,3 +1,4 @@
+import { WORKBENCH_VIEW_SEARCH_PARAM } from "@/lib/workbench-view";
 import { currentModel } from "@/lib/mock-data";
 import {
   createDefaultWorkspaceSession,
@@ -8,12 +9,14 @@ import {
 export const FRESH_WORKSPACE_WINDOW_HIDDEN_CONVERSATIONS_SENTINEL =
   "__workspace_window_fresh__";
 
-export type WorkspaceScopedRoute = "/editor" | "/agent";
+/** Workbench lives at `/`; editor mode uses `?view=editor`. */
+export type WorkspaceScopedRoute = "/";
 
 export function normalizeWorkspaceScopedRoute(
   pathname: string | null | undefined
 ): WorkspaceScopedRoute {
-  return pathname === "/agent" ? "/agent" : "/editor";
+  void pathname;
+  return "/";
 }
 
 export function buildWorkspaceScopedUrl(
@@ -44,12 +47,15 @@ export function buildWorkspaceWindowUrl(
   windowId: string,
   route?: WorkspaceScopedRoute
 ): string {
-  const effectiveRoute =
-    route ??
-    (typeof window === "undefined"
-      ? "/editor"
-      : normalizeWorkspaceScopedRoute(window.location.pathname));
-  return buildWorkspaceScopedUrl(origin, effectiveRoute, workspaceId, windowId);
+  const effectiveRoute: WorkspaceScopedRoute = route ?? "/";
+  const extra: Record<string, string> = {};
+  if (typeof window !== "undefined") {
+    const v = new URL(window.location.href).searchParams.get(WORKBENCH_VIEW_SEARCH_PARAM);
+    if (v === "editor") {
+      extra[WORKBENCH_VIEW_SEARCH_PARAM] = "editor";
+    }
+  }
+  return buildWorkspaceScopedUrl(origin, effectiveRoute, workspaceId, windowId, extra);
 }
 
 export function normalizeWorkspaceWindowSession(

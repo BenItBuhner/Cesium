@@ -186,6 +186,10 @@ export interface EditorTab {
   externalChange?: boolean;
   /** Ephemeral editor tab bound to the chat composer draft. */
   composerDraftId?: string;
+  /** Large file: only part of the buffer is loaded from the server. */
+  fileContentTruncated?: boolean;
+  fileTotalBytes?: number;
+  fileLoadedThroughByte?: number;
 }
 
 /** Payload to open a demo file from the explorer into the editor (deduped by `path`). */
