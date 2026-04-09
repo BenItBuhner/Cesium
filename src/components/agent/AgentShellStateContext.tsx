@@ -386,7 +386,7 @@ export function AgentShellStateProvider({
           (Object.keys(sessions).length > 0
             ? createEmptyAgentSidePaneSession()
             : createLegacySidePaneSession(current));
-        if (existing.rightPaneOpen) {
+        if (existing.rightPaneOpen || nextEditorTabCount === 0) {
           return current;
         }
         return {
@@ -397,7 +397,7 @@ export function AgentShellStateProvider({
               ...sessions,
               [sidePaneScopeId]: {
                 ...existing,
-                rightPaneOpen: true,
+                rightPaneOpen: false,
               },
             },
           },

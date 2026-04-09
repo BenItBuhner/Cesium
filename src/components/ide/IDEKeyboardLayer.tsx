@@ -8,7 +8,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
 import { useOpenInEditor } from "@/components/editor/OpenInEditorContext";
 import { buildQuickOpenIndex, type QuickOpenEntry } from "@/lib/quick-open-files";
 import { CommandPalette, type PaletteCommand } from "./CommandPalette";
@@ -44,6 +44,7 @@ function flash(setter: (s: string | null) => void, msg: string) {
 
 export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
   const router = useRouter();
+  const pathname = usePathname();
   const bridgeRef = useEditorBridgeRef();
   const { openExplorerFile } = useOpenInEditor();
   const workbench = useWorkbench();
@@ -719,6 +720,24 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
         label: "File: New Agent",
         keybinding: kb("workbench.action.newAgent"),
         run: () => runShortcutCommand("workbench.action.newAgent"),
+      },
+      {
+        id: "workbench.action.switchToAgent",
+        label: "View: Switch to Agent Mode",
+        run: () => {
+          const url = new URL(window.location.href);
+          url.pathname = "/agent";
+          router.push(url.pathname + url.search);
+        },
+      },
+      {
+        id: "workbench.action.switchToEditor",
+        label: "View: Switch to Editor Mode",
+        run: () => {
+          const url = new URL(window.location.href);
+          url.pathname = "/editor";
+          router.push(url.pathname + url.search);
+        },
       },
       {
         id: "workbench.action.newWindow",
