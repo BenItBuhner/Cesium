@@ -6,6 +6,9 @@ import { AGENT_BACKENDS } from "./providers.js";
 import {
   DEFAULT_PAGE_EVENTS_CAP,
   DEFAULT_PAGE_TURNS,
+  EVENT_LOG_FULL_READ_MAX_BYTES,
+  LARGE_LOG_SNAPSHOT_EVENTS,
+  LARGE_LOG_SNAPSHOT_TURNS,
   readConversationEventHistoryPage,
   readConversationEventsSinceEfficient,
   readConversationEventTailPage,
@@ -21,8 +24,24 @@ import type {
 } from "./types.js";
 
 const appendQueues = new Map<string, Promise<void>>();
+/** One in-flight paginated history read per conversation — avoids parallel full-log scans from fast scroll. */
+const historyReadQueues = new Map<string, Promise<unknown>>();
 const listeners = new Set<(event: AgentManagerEvent) => void>();
 const FALLBACK_BACKEND_ID: AgentBackendId = "cursor-acp";
+
+function enqueueHistoryRead<T>(workspaceId: string, conversationId: string, run: () => Promise<T>): Promise<T> {
+  const key = `${workspaceId}:${conversationId}`;
+  const prev = historyReadQueues.get(key) ?? Promise.resolve();
+  const next = prev.catch(() => undefined).then(() => run());
+  historyReadQueues.set(
+    key,
+    next.then(
+      () => undefined,
+      () => undefined
+    )
+  );
+  return next;
+}
 
 function getConversationRoot(workspaceId: string): string {
   return path.join(DATA_DIR, "workspaces", workspaceId, "conversations");
@@ -276,8 +295,29 @@ export async function readConversationSnapshot(
   if (!conversation) {
     return null;
   }
-  const events = await readConversationEvents(workspaceId, conversationId);
-  return { conversation, events };
+  const filePath = getConversationEventsFile(workspaceId, conversationId);
+  let size = 0;
+  try {
+    const st = await fs.stat(filePath);
+    size = st.size;
+  } catch {
+    return { conversation, events: [] };
+  }
+  if (size === 0) {
+    return { conversation, events: [] };
+  }
+  if (size <= EVENT_LOG_FULL_READ_MAX_BYTES) {
+    const events = await readConversationEvents(workspaceId, conversationId);
+    return { conversation, events };
+  }
+  const head = await readConversationSnapshotHead(workspaceId, conversationId, {
+    limitTurns: LARGE_LOG_SNAPSHOT_TURNS,
+    limitEvents: LARGE_LOG_SNAPSHOT_EVENTS,
+  });
+  if (!head) {
+    return { conversation, events: [] };
+  }
+  return { conversation: head.conversation, events: head.events };
 }
 
 export async function readConversationSnapshotHead(
@@ -320,18 +360,20 @@ export async function readConversationHistoryPage(
   const filePath = getConversationEventsFile(workspaceId, conversationId);
   const limitTurns = options?.limitTurns ?? DEFAULT_PAGE_TURNS;
   const limitEvents = options?.limitEvents ?? DEFAULT_PAGE_EVENTS_CAP;
-  const page = await readConversationEventHistoryPage(filePath, beforeSeq, {
-    limitTurns,
-    limitEvents,
+  return enqueueHistoryRead(workspaceId, conversationId, async () => {
+    const page = await readConversationEventHistoryPage(filePath, beforeSeq, {
+      limitTurns,
+      limitEvents,
+    });
+    return {
+      events: page.events,
+      window: {
+        oldestSeq: page.oldestSeq,
+        newestSeq: page.newestSeq,
+        hasOlder: page.hasOlder,
+      },
+    };
   });
-  return {
-    events: page.events,
-    window: {
-      oldestSeq: page.oldestSeq,
-      newestSeq: page.newestSeq,
-      hasOlder: page.hasOlder,
-    },
-  };
 }
 
 export async function updateConversationRecord(
@@ -368,4 +410,18 @@ export async function updateConversationRecord(
 
 export function createConversationId(): string {
   return randomUUID();
+}
+
+/** Best-effort delete of persisted conversation files; notifies listeners like the in-app delete path. */
+export async function deleteConversationFromStore(
+  workspaceId: string,
+  conversationId: string
+): Promise<void> {
+  const key = queueKey(workspaceId, conversationId);
+  const previous = appendQueues.get(key) ?? Promise.resolve();
+  await previous.catch(() => undefined);
+  appendQueues.delete(key);
+  const dir = getConversationDir(workspaceId, conversationId);
+  await fs.rm(dir, { recursive: true, force: true }).catch(() => undefined);
+  notify({ type: "conversation_deleted", workspaceId, conversationId });
 }

@@ -1,4 +1,4 @@
-import { promises as fs } from "node:fs";
+import { promises as fs, type Dirent } from "node:fs";
 import path from "node:path";
 import { Hono } from "hono";
 import {
@@ -10,7 +10,9 @@ import {
   shouldIgnorePath,
   toRelativePath,
 } from "../lib/workspace.js";
-import { requireWorkspaceFromRequest } from "../lib/request-workspace.js";
+import {
+  requireWorkspaceFromRequest,
+} from "../lib/request-workspace.js";
 
 type FileNode = {
   name: string;
@@ -44,7 +46,20 @@ async function readDirectoryChildren(
   absoluteDir: string,
   depth: number
 ): Promise<FileNode[]> {
-  const dirents = await fs.readdir(absoluteDir, { withFileTypes: true });
+  let dirents: Dirent<string>[];
+  try {
+    dirents = await fs.readdir(absoluteDir, { encoding: "utf8", withFileTypes: true });
+  } catch (error) {
+    if (
+      error &&
+      typeof error === "object" &&
+      "code" in error &&
+      (error.code === "EPERM" || error.code === "EACCES" || error.code === "ENOENT")
+    ) {
+      return [];
+    }
+    throw error;
+  }
   const children = await Promise.all(
     dirents.map(async (dirent): Promise<FileNode | null> => {
       const absoluteChildPath = path.join(absoluteDir, dirent.name);
@@ -177,9 +192,10 @@ async function collectFileMatches(
 export const fsRoutes = new Hono();
 
 fsRoutes.get("/api/fs/tree", async (c) => {
-  const workspace = await requireWorkspaceFromRequest(c);
   const depth = Number.parseInt(c.req.query("depth") ?? "10", 10);
-  const tree = await buildTree(workspace.root, workspace.root, Number.isFinite(depth) ? depth : 10);
+  const normalizedDepth = Number.isFinite(depth) ? depth : 10;
+  const workspace = await requireWorkspaceFromRequest(c);
+  const tree = await buildTree(workspace.root, workspace.root, normalizedDepth);
   return c.json({
     root: workspace.root,
     tree,

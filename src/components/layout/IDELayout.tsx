@@ -39,8 +39,15 @@ export function IDELayout() {
   const { themeConfig } = useTheme();
   const { settings } = useGlobalSettings();
   const { showSidebar, showChat, isMobile } = useViewport();
-  const { activeWorkspaceId, loading, sessionReady, workspaceSession, updateWorkspaceSession } =
-    useWorkspace();
+  const {
+    activeWorkspaceId,
+    fileTree,
+    loading,
+    sessionReady,
+    workspaceInfo,
+    workspaceSession,
+    updateWorkspaceSession,
+  } = useWorkspace();
   const sideColumnsSwapped = settings.general.sideColumnsSwapped;
   const [sidebarOpen, setSidebarOpen] = useState(workspaceSession.layout.sidebarOpen);
   const [chatOpen, setChatOpen] = useState(workspaceSession.layout.chatOpen);
@@ -121,7 +128,10 @@ export function IDELayout() {
     }
   }, [isMobile, chatVisible, chatPanelRef]);
 
-  if (loading || !sessionReady) {
+  const showBlockingWorkspaceLoad =
+    !activeWorkspaceId || !workspaceInfo || (fileTree == null && (loading || !sessionReady));
+
+  if (showBlockingWorkspaceLoad) {
     return (
       <div className="flex h-screen w-screen items-center justify-center bg-[var(--bg-main)] font-sans text-[13px] text-[var(--text-secondary)]">
         Loading workspace...

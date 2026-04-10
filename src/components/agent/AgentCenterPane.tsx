@@ -78,12 +78,14 @@ export function AgentCenterPane() {
   const { workspaceSession, updateWorkspaceSession } = useWorkspace();
   const {
     activeWorkspaceGroup,
+    conversationSelectionPending,
     expandedComposerDraftId,
     isDraftConversationSelected,
     refreshConversationGroups,
     selectedConversationId,
-    selectedConversationSummary,
+    setStableConversationView,
     setSelectedConversationId,
+    stableConversationView,
   } = useAgentShellState();
   const previousConversationStatusRef = useRef<string | null>(null);
 
@@ -122,6 +124,8 @@ export function AgentCenterPane() {
     () => (dockedAsk ? askStepsFromMessage(dockedAsk) : []),
     [dockedAsk]
   );
+  const hasConversationHistoryLoaded =
+    !!conversation && (conversation.lastEventSeq === 0 || rawThreadEvents.length > 0);
 
   useEffect(() => {
     if (!selectedConversationId || conversation || loadState === "loading") {
@@ -142,6 +146,38 @@ export function AgentCenterPane() {
     }
     previousConversationStatusRef.current = next;
   }, [conversation?.status, refreshConversationGroups]);
+
+  useEffect(() => {
+    if (!selectedConversationId) {
+      if (!conversationSelectionPending && !isDraftConversationSelected) {
+        setStableConversationView(null);
+      }
+      return;
+    }
+    if (!conversation || !hasConversationHistoryLoaded) {
+      return;
+    }
+    setStableConversationView({
+      conversationId: selectedConversationId,
+      messages: scrollMessages,
+      conversationBusy:
+        conversation.status === "running" || conversation.status === "awaiting_permission",
+      hasOlderHistory: historyCursor.hasOlder,
+      loadingOlderHistory: historyCursor.loadingOlder,
+      initialScrollTop: workspaceSession.chat.scrollTopByTabId[selectedConversationId] ?? 0,
+    });
+  }, [
+    conversation,
+    hasConversationHistoryLoaded,
+    historyCursor.hasOlder,
+    historyCursor.loadingOlder,
+    conversationSelectionPending,
+    isDraftConversationSelected,
+    scrollMessages,
+    selectedConversationId,
+    setStableConversationView,
+    workspaceSession.chat.scrollTopByTabId,
+  ]);
 
   const draftBackend = useMemo(
     () => pickAvailableBackend(backends, workspaceSession.chat.backendId),
@@ -384,6 +420,23 @@ export function AgentCenterPane() {
   }, [expandedComposerState, setExpandedComposerController]);
 
   const showLanding = isDraftConversationSelected && !conversation;
+  const showConversationTransitionState =
+    conversationSelectionPending ||
+    (!!selectedConversationId && loadState !== "error" && (!conversation || !hasConversationHistoryLoaded));
+  const visibleConversationView =
+    selectedConversationId && conversation && hasConversationHistoryLoaded
+      ? {
+          conversationId: selectedConversationId,
+          messages: scrollMessages,
+          conversationBusy:
+            conversation.status === "running" || conversation.status === "awaiting_permission",
+          hasOlderHistory: historyCursor.hasOlder,
+          loadingOlderHistory: historyCursor.loadingOlder,
+          initialScrollTop: workspaceSession.chat.scrollTopByTabId[selectedConversationId] ?? 0,
+        }
+      : showConversationTransitionState
+        ? stableConversationView
+        : null;
 
   const emptyState = (
     <div className="absolute inset-0 flex items-center justify-center px-[12px] pb-[220px] sm:px-[20px]">
@@ -412,54 +465,58 @@ export function AgentCenterPane() {
   return (
     <div className="relative flex h-full min-h-0 w-full flex-col overflow-hidden bg-[var(--bg-main)]">
       <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
-        {selectedConversationId && conversation ? (
-          <MessageList
-            key={selectedConversationId}
-            messages={scrollMessages}
-            surface="editor"
-            contentClassName={AGENT_CENTER_CONTENT_CLASS}
-            conversationId={selectedConversationId}
-            conversationBusy={
-              conversation.status === "running" ||
-              conversation.status === "awaiting_permission"
-            }
-            hasOlderHistory={historyCursor.hasOlder}
-            loadingOlderHistory={historyCursor.loadingOlder}
-            onRequestOlderHistory={() =>
-              loadOlderConversationHistory(selectedConversationId)
-            }
-            initialScrollTop={workspaceSession.chat.scrollTopByTabId[selectedConversationId] ?? 0}
-            onScrollTopSettled={(scrollTop) => {
-              updateWorkspaceSession((current) =>
-                Math.abs(
-                  (current.chat.scrollTopByTabId[selectedConversationId] ?? 0) - scrollTop
-                ) < 1
-                  ? current
-                  : {
-                      ...current,
-                      chat: {
-                        ...current.chat,
-                        scrollTopByTabId: {
-                          ...current.chat.scrollTopByTabId,
-                          [selectedConversationId]: scrollTop,
+        {visibleConversationView ? (
+          <div className={showConversationTransitionState ? "pointer-events-none h-full" : "h-full"}>
+            <MessageList
+              key={visibleConversationView.conversationId}
+              messages={visibleConversationView.messages}
+              surface="editor"
+              contentClassName={AGENT_CENTER_CONTENT_CLASS}
+              conversationId={visibleConversationView.conversationId}
+              conversationBusy={visibleConversationView.conversationBusy}
+              hasOlderHistory={visibleConversationView.hasOlderHistory}
+              loadingOlderHistory={visibleConversationView.loadingOlderHistory}
+              onRequestOlderHistory={() =>
+                loadOlderConversationHistory(visibleConversationView.conversationId)
+              }
+              initialScrollTop={visibleConversationView.initialScrollTop}
+              onScrollTopSettled={(scrollTop) => {
+                updateWorkspaceSession((current) =>
+                  Math.abs(
+                    (current.chat.scrollTopByTabId[visibleConversationView.conversationId] ?? 0) -
+                      scrollTop
+                  ) < 1
+                    ? current
+                    : {
+                        ...current,
+                        chat: {
+                          ...current.chat,
+                          scrollTopByTabId: {
+                            ...current.chat.scrollTopByTabId,
+                            [visibleConversationView.conversationId]: scrollTop,
+                          },
                         },
-                      },
-                    }
-              );
-            }}
-            onResolvePermission={(requestId, optionId) => {
-              void answerPermissionForConversation(selectedConversationId, requestId, optionId);
-            }}
-            onCancelPermission={(requestId) => {
-              void cancelPermissionForConversation(selectedConversationId, requestId);
-            }}
-            bottomDockVisible={!composerHiddenForExpanded}
-          />
+                      }
+                );
+              }}
+              onResolvePermission={(requestId, optionId) => {
+                void answerPermissionForConversation(
+                  visibleConversationView.conversationId,
+                  requestId,
+                  optionId
+                );
+              }}
+              onCancelPermission={(requestId) => {
+                void cancelPermissionForConversation(visibleConversationView.conversationId, requestId);
+              }}
+              bottomDockVisible={!composerHiddenForExpanded && !showConversationTransitionState}
+            />
+          </div>
         ) : (
           emptyState
         )}
 
-        {!composerHiddenForExpanded ? (
+        {!composerHiddenForExpanded && !showConversationTransitionState ? (
           <div className="pointer-events-none absolute inset-x-0 bottom-0 z-30">
             <div className="pointer-events-auto chat-bottom-dock">
               {dockedAskSteps.length > 0 ? (
@@ -557,13 +614,6 @@ export function AgentCenterPane() {
         ) : null}
       </div>
 
-      {selectedConversationSummary && !conversation && loadState === "loading" ? (
-        <div className="pointer-events-none absolute inset-x-0 top-[24px] z-20 flex justify-center">
-          <div className="rounded-[var(--radius-pill)] border border-[var(--border-card)] bg-[var(--bg-panel)] px-[12px] py-[6px] font-sans text-[12px] text-[var(--text-secondary)]">
-            Loading {selectedConversationSummary.title}...
-          </div>
-        </div>
-      ) : null}
     </div>
   );
 }

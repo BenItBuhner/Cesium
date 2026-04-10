@@ -249,7 +249,7 @@ export function AgentNewChatLanding() {
   return (
     <div className="flex h-full w-full items-center justify-center overflow-hidden">
       <div
-        className={`flex w-full max-w-full flex-col items-stretch gap-[2px] px-[12px] sm:px-[20px] ${AGENT_CENTER_CONTENT_CLASS}`}
+        className={`flex w-full flex-col items-stretch gap-[2px] ${AGENT_CENTER_CONTENT_CLASS}`}
       >
         <div className="mx-[10px] flex min-w-0 flex-col gap-[2px]">
           <div className="w-fit max-w-full self-start">

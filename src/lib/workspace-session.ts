@@ -69,6 +69,7 @@ export type ChatSessionState = {
 export type AgentSidePaneSessionState = {
   editor: EditorSessionState;
   rightPaneOpen: boolean;
+  /** Conversation-scoped side pane width snapshot; the shared left rail width comes from `agentView.agentShellDesktopLayout`. */
   agentShellDesktopLayout: Record<string, number> | null;
   expandedComposerDraftId: string | null;
 };
@@ -89,7 +90,7 @@ export type AgentViewSessionState = {
   /** Agent rail filter checkboxes (multi-select, AND). Omitted keys mean false after normalize. */
   railFilterToggles?: AgentRailFilterToggleState;
   filterPreset: string;
-  /** Horizontal agent shell: rail | center | side pane (%). Same persistence pattern as layout.desktopLayout. */
+  /** Shared agent shell layout snapshot. The left rail width stays global across chats. */
   agentShellDesktopLayout: Record<string, number> | null;
   /** Per-conversation right-side workbench state for the agent shell. */
   sidePaneSessionsByConversationId?: Record<string, AgentSidePaneSessionState>;

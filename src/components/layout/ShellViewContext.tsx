@@ -6,6 +6,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   type ReactNode,
 } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -27,14 +28,27 @@ export function ShellViewProvider({ children }: { children: ReactNode }) {
   const searchParams = useSearchParams();
   const { workspaceSession, updateWorkspaceSession, sessionReady } = useWorkspace();
 
+  /**
+   * `useSearchParams()` can lag `router.replace()` by a render or two. During that window
+   * `?view=editor` would still win and a sync effect could stomp session back to editor.
+   * While this is set, prefer persisted `agent` over a stale editor query param.
+   */
+  const preferAgentOverStaleEditorUrlRef = useRef(false);
+
   const explicitView = searchParams.get(WORKBENCH_VIEW_SEARCH_PARAM);
 
   const shellView: WorkbenchShellView = useMemo(() => {
-    if (explicitView === "editor") {
-      return "editor";
-    }
     if (!sessionReady) {
       return "agent";
+    }
+    if (
+      preferAgentOverStaleEditorUrlRef.current &&
+      workspaceSession.layout.shellView === "agent"
+    ) {
+      return "agent";
+    }
+    if (explicitView === "editor") {
+      return "editor";
     }
     if (explicitView == null && workspaceSession.layout.shellView === "editor") {
       return "editor";
@@ -42,8 +56,19 @@ export function ShellViewProvider({ children }: { children: ReactNode }) {
     return "agent";
   }, [explicitView, sessionReady, workspaceSession.layout.shellView]);
 
+  useEffect(() => {
+    if (explicitView !== "editor") {
+      preferAgentOverStaleEditorUrlRef.current = false;
+    }
+  }, [explicitView]);
+
   const setShellView = useCallback(
     (next: WorkbenchShellView) => {
+      if (next === "agent") {
+        preferAgentOverStaleEditorUrlRef.current = true;
+      } else {
+        preferAgentOverStaleEditorUrlRef.current = false;
+      }
       const url = new URL(window.location.href);
       if (next === "editor") {
         url.searchParams.set(WORKBENCH_VIEW_SEARCH_PARAM, "editor");
@@ -83,11 +108,14 @@ export function ShellViewProvider({ children }: { children: ReactNode }) {
       return;
     }
     if (explicitView === "editor") {
-      updateWorkspaceSession((c) =>
-        c.layout.shellView === "editor"
+      updateWorkspaceSession((c) => {
+        if (c.layout.shellView === "agent") {
+          return c;
+        }
+        return c.layout.shellView === "editor"
           ? c
-          : { ...c, layout: { ...c.layout, shellView: "editor" } }
-      );
+          : { ...c, layout: { ...c.layout, shellView: "editor" } };
+      });
       return;
     }
     if (explicitView == null && workspaceSession.layout.shellView === "editor") {

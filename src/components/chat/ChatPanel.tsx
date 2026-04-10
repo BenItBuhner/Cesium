@@ -4,9 +4,11 @@ import {
   useCallback,
   useDeferredValue,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
   type MouseEvent,
 } from "react";
 import { Search } from "lucide-react";
@@ -78,6 +80,12 @@ import {
   normalizeWorkspaceWindowSession,
 } from "@/lib/workspace-windows";
 import { nextUnreadCompletionMap } from "@/lib/chat-unread-completion";
+import {
+  getGlobalPinnedAgentConversationIdsSnapshot,
+  migrateGlobalPinnedAgentConversationIdsIfNeeded,
+  subscribeGlobalPinnedAgentConversationIds,
+  writeGlobalPinnedAgentConversationIds,
+} from "@/lib/agent-rail-pins";
 
 function partitionMessagesForDock(messages: ChatMessage[]): {
   scrollMessages: ChatMessage[];
@@ -225,6 +233,21 @@ export function ChatPanel() {
   const hydratingConversationIdsRef = useRef(new Set<string>());
   const conversationsByIdRef = useRef(conversationsById);
   const tabs = workspaceSession.chat.tabs;
+
+  const globalPinnedAgentConversationIds = useSyncExternalStore(
+    subscribeGlobalPinnedAgentConversationIds,
+    getGlobalPinnedAgentConversationIdsSnapshot,
+    () => []
+  );
+
+  useLayoutEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    migrateGlobalPinnedAgentConversationIdsIfNeeded(
+      workspaceSession.agentView.pinnedAgentConversationIds
+    );
+  }, [workspaceSession.agentView.pinnedAgentConversationIds]);
 
   conversationsByIdRef.current = conversationsById;
 
@@ -1525,7 +1548,7 @@ export function ChatPanel() {
     (e: MouseEvent, tabId: string) => {
       const othersOpen = tabs.length > 1;
       const targetConversation = conversationsById[tabId];
-      const pinnedIds = workspaceSession.agentView.pinnedAgentConversationIds ?? [];
+      const pinnedIds = globalPinnedAgentConversationIds;
       const tabIsPinned = pinnedIds.includes(tabId);
       const items: WorkbenchMenuItem[] = [
         {
@@ -1572,26 +1595,31 @@ export function ChatPanel() {
             if (!isPersistedConversationTabId(tabId)) {
               return;
             }
-            updateWorkspaceSession((current) => {
-              const p = current.agentView.pinnedAgentConversationIds ?? [];
-              if (tabIsPinned) {
-                if (!p.includes(tabId)) return current;
-                return {
-                  ...current,
-                  agentView: {
-                    ...current.agentView,
-                    pinnedAgentConversationIds: p.filter((id) => id !== tabId),
-                  },
-                };
+            const prev = getGlobalPinnedAgentConversationIdsSnapshot();
+            if (tabIsPinned) {
+              if (!prev.includes(tabId)) {
+                return;
               }
-              return {
+              const next = prev.filter((id) => id !== tabId);
+              writeGlobalPinnedAgentConversationIds(next);
+              updateWorkspaceSession((current) => ({
                 ...current,
                 agentView: {
                   ...current.agentView,
-                  pinnedAgentConversationIds: [tabId, ...p.filter((id) => id !== tabId)],
+                  pinnedAgentConversationIds: next,
                 },
-              };
-            });
+              }));
+              return;
+            }
+            const next = [tabId, ...prev.filter((id) => id !== tabId)];
+            writeGlobalPinnedAgentConversationIds(next);
+            updateWorkspaceSession((current) => ({
+              ...current,
+              agentView: {
+                ...current.agentView,
+                pinnedAgentConversationIds: next,
+              },
+            }));
           },
         },
         {
@@ -1664,7 +1692,7 @@ export function ChatPanel() {
       openAt,
       tabs,
       updateWorkspaceSession,
-      workspaceSession.agentView.pinnedAgentConversationIds,
+      globalPinnedAgentConversationIds,
       workspaceWindows,
     ]
   );

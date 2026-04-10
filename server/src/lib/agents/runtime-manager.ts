@@ -10,6 +10,10 @@ import {
   listWorkspaceConversationRecords,
 } from "./session-store.js";
 import {
+  PROMPT_CONTEXT_LIMIT_EVENTS,
+  PROMPT_CONTEXT_LIMIT_TURNS,
+} from "./event-log-read.js";
+import {
   AGENT_BACKENDS,
   createAgentProvider,
   listAgentBackendsWithCache,
@@ -553,7 +557,16 @@ export class AgentRuntimeManager {
       conversation: record,
       appendEvents: (events: AgentEventInput[]) =>
         appendConversationEvents(workspace.id, record.id, events),
-      readSnapshot: () => readConversationSnapshot(workspace.id, record.id),
+      readSnapshot: async () => {
+        const head = await readConversationSnapshotHead(workspace.id, record.id, {
+          limitTurns: PROMPT_CONTEXT_LIMIT_TURNS,
+          limitEvents: PROMPT_CONTEXT_LIMIT_EVENTS,
+        });
+        if (!head) {
+          return null;
+        }
+        return { conversation: head.conversation, events: head.events };
+      },
       markRuntimeStale: () => {
         this.runtimes.delete(record.id);
       },

@@ -571,6 +571,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         );
         setSessionReady(true);
         setFsResyncToken((value) => value + 1);
+      } catch (error) {
+        throw error;
       } finally {
         setLoading(false);
       }

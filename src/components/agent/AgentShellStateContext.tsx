@@ -5,19 +5,31 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
+  type Dispatch,
   type ReactNode,
+  type SetStateAction,
 } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
 import { useViewport } from "@/hooks/useViewport";
 import type {
   AgentBackendInfo,
   AgentConversationGroup,
   AgentRailConversationSummary,
 } from "@/lib/agent-types";
+import type { ChatMessage } from "@/lib/types";
 import { listCrossWorkspaceAgentConversations } from "@/lib/server-api";
+import {
+  AGENT_SHELL_DEFAULT_LAYOUT,
+  AGENT_SHELL_PANEL_IDS,
+  composeAgentShellDesktopLayout,
+  extractAgentSidePaneScopedLayout,
+  isAgentSidePaneScopedLayout,
+  normalizeAgentShellDesktopLayout,
+} from "@/components/agent/agent-shell-layout";
 import {
   defaultAgentRailFilterToggles,
   isAgentRailFilterActive,
@@ -26,14 +38,39 @@ import {
   type AgentRailFilterToggleKey,
   type AgentRailFilterToggleState,
 } from "@/lib/agent-rail";
+import {
+  getGlobalPinnedAgentConversationIdsSnapshot,
+  migrateGlobalPinnedAgentConversationIdsIfNeeded,
+  subscribeGlobalPinnedAgentConversationIds,
+  writeGlobalPinnedAgentConversationIds,
+} from "@/lib/agent-rail-pins";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import {
   AGENT_NEW_CHAT_SESSION_ID,
   createEmptyAgentSidePaneSession,
   getAgentSidePaneSessionScopeId,
+  type WorkspaceSessionState,
   type AgentSidePaneSessionState,
   type EditorSessionState,
 } from "@/lib/workspace-session";
+
+export type AgentCenterStableConversationView = {
+  conversationId: string;
+  messages: ChatMessage[];
+  conversationBusy: boolean;
+  hasOlderHistory: boolean;
+  loadingOlderHistory: boolean;
+  initialScrollTop: number;
+};
+
+type WorkspaceRailArchiveSnapshot = {
+  archivedConversationIds: string[];
+};
+
+type AgentShellWindowSnapshot = {
+  leftRailCollapsed?: boolean;
+  agentShellDesktopLayout?: Record<string, number> | null;
+};
 
 type AgentShellStateContextValue = {
   leftRailCollapsed: boolean;
@@ -52,6 +89,9 @@ type AgentShellStateContextValue = {
   expandedComposerDraftId: string | null;
   setExpandedComposerDraft: (draftId: string | null) => void;
   selectedConversationId: string | null;
+  conversationSelectionPending: boolean;
+  stableConversationView: AgentCenterStableConversationView | null;
+  setStableConversationView: Dispatch<SetStateAction<AgentCenterStableConversationView | null>>;
   isDraftConversationSelected: boolean;
   setSelectedConversationId: (conversationId: string | null) => void;
   startNewConversation: () => void;
@@ -77,6 +117,174 @@ type AgentShellStateContextValue = {
 
 const AgentShellStateContext =
   createContext<AgentShellStateContextValue | null>(null);
+
+function getWorkspaceSessionBackupKey(
+  workspaceId: string,
+  windowId: string | null
+): string {
+  const sessionScopeId = windowId ? `${workspaceId}:window:${windowId}` : workspaceId;
+  return `opencursor.workspace-session.${sessionScopeId}`;
+}
+
+/** One global snapshot for the agent shell (rail + composed layout); not workspace- or window-scoped. */
+const AGENT_SHELL_SHARED_STORAGE_KEY = "opencursor.agent-shell.shared";
+const LEGACY_AGENT_SHELL_WINDOW_KEY_PREFIX = "opencursor.agent-shell.window.";
+
+let agentShellLegacyStorageMigrationDone = false;
+
+function migrateLegacyAgentShellWindowSnapshots(): void {
+  if (typeof window === "undefined" || agentShellLegacyStorageMigrationDone) {
+    return;
+  }
+  try {
+    if (window.localStorage.getItem(AGENT_SHELL_SHARED_STORAGE_KEY)) {
+      for (let i = window.localStorage.length - 1; i >= 0; i -= 1) {
+        const k = window.localStorage.key(i);
+        if (k?.startsWith(LEGACY_AGENT_SHELL_WINDOW_KEY_PREFIX)) {
+          window.localStorage.removeItem(k);
+        }
+      }
+      agentShellLegacyStorageMigrationDone = true;
+      return;
+    }
+    const legacyKeys: string[] = [];
+    for (let i = 0; i < window.localStorage.length; i += 1) {
+      const k = window.localStorage.key(i);
+      if (k?.startsWith(LEGACY_AGENT_SHELL_WINDOW_KEY_PREFIX)) {
+        legacyKeys.push(k);
+      }
+    }
+    if (legacyKeys.length === 0) {
+      agentShellLegacyStorageMigrationDone = true;
+      return;
+    }
+    legacyKeys.sort();
+    let migratedFromLegacy = false;
+    for (const key of legacyKeys) {
+      const raw = window.localStorage.getItem(key);
+      if (!raw) {
+        continue;
+      }
+      const parsed = JSON.parse(raw) as AgentShellWindowSnapshot | null;
+      if (!parsed || typeof parsed !== "object") {
+        continue;
+      }
+      const snapshot: AgentShellWindowSnapshot = {
+        leftRailCollapsed:
+          typeof parsed.leftRailCollapsed === "boolean"
+            ? parsed.leftRailCollapsed
+            : undefined,
+        agentShellDesktopLayout:
+          normalizeAgentShellDesktopLayout(parsed.agentShellDesktopLayout) ?? null,
+      };
+      window.localStorage.setItem(
+        AGENT_SHELL_SHARED_STORAGE_KEY,
+        JSON.stringify({
+          leftRailCollapsed: snapshot.leftRailCollapsed,
+          agentShellDesktopLayout: snapshot.agentShellDesktopLayout,
+        })
+      );
+      migratedFromLegacy = true;
+      break;
+    }
+    if (migratedFromLegacy) {
+      for (const k of legacyKeys) {
+        window.localStorage.removeItem(k);
+      }
+    }
+    agentShellLegacyStorageMigrationDone = true;
+  } catch {
+    // ignore
+  }
+}
+
+function readAgentShellSharedSnapshot(): AgentShellWindowSnapshot | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+  try {
+    migrateLegacyAgentShellWindowSnapshots();
+    const raw = window.localStorage.getItem(AGENT_SHELL_SHARED_STORAGE_KEY);
+    if (!raw) {
+      return null;
+    }
+    const parsed = JSON.parse(raw) as AgentShellWindowSnapshot | null;
+    if (!parsed || typeof parsed !== "object") {
+      return null;
+    }
+    return {
+      leftRailCollapsed:
+        typeof parsed.leftRailCollapsed === "boolean"
+          ? parsed.leftRailCollapsed
+          : undefined,
+      agentShellDesktopLayout:
+        normalizeAgentShellDesktopLayout(parsed.agentShellDesktopLayout) ?? null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function writeAgentShellSharedSnapshot(snapshot: AgentShellWindowSnapshot) {
+  if (typeof window === "undefined") {
+    return;
+  }
+  try {
+    window.localStorage.setItem(
+      AGENT_SHELL_SHARED_STORAGE_KEY,
+      JSON.stringify({
+        leftRailCollapsed: snapshot.leftRailCollapsed,
+        agentShellDesktopLayout:
+          normalizeAgentShellDesktopLayout(snapshot.agentShellDesktopLayout) ?? null,
+      })
+    );
+  } catch {
+    // Ignore storage quota or private browsing failures.
+  }
+}
+
+function readWorkspaceRailArchiveSnapshot(
+  workspaceId: string,
+  windowId: string | null
+): WorkspaceRailArchiveSnapshot | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  try {
+    const raw = window.localStorage.getItem(getWorkspaceSessionBackupKey(workspaceId, windowId));
+    if (!raw) {
+      return null;
+    }
+    const parsed = JSON.parse(raw) as { session?: WorkspaceSessionState | null } | null;
+    const archivedConversationIds = parsed?.session?.agentView?.archivedConversationIds;
+    if (!Array.isArray(archivedConversationIds)) {
+      return null;
+    }
+    return {
+      archivedConversationIds: archivedConversationIds.filter(
+        (id): id is string => typeof id === "string"
+      ),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function stringArraysEqual(a: string[], b: string[]): boolean {
+  if (a === b) {
+    return true;
+  }
+  if (a.length !== b.length) {
+    return false;
+  }
+  for (let i = 0; i < a.length; i += 1) {
+    if (a[i] !== b[i]) {
+      return false;
+    }
+  }
+  return true;
+}
 
 function sortConversationGroups(
   groups: AgentConversationGroup[],
@@ -119,7 +327,9 @@ function createLegacySidePaneSession(
   return {
     editor: workspaceSession.editor,
     rightPaneOpen: workspaceSession.agentView.rightPaneOpen,
-    agentShellDesktopLayout: workspaceSession.agentView.agentShellDesktopLayout,
+    agentShellDesktopLayout: extractAgentSidePaneScopedLayout(
+      workspaceSession.agentView.agentShellDesktopLayout
+    ),
     expandedComposerDraftId: null,
   };
 }
@@ -142,15 +352,19 @@ export function AgentShellStateProvider({
 }) {
   const {
     activeWorkspaceId,
+    activeWindowId,
     openWorkspaceById,
     recentWorkspaceIds,
+    sessionReady,
+    workspaceInfo,
     workspaceSession,
     updateWorkspaceSession,
   } = useWorkspace();
   const { isMobile } = useViewport();
-  const router = useRouter();
-  const searchParams = useSearchParams();
-  const urlConversationId = searchParams.get("conversationId")?.trim() || null;
+  const urlConversationId =
+    typeof window !== "undefined"
+      ? new URL(window.location.href).searchParams.get("conversationId")?.trim() || null
+      : null;
   const replaceConversationIdInLocation = useCallback(
     (conversationId: string | null) => {
       if (typeof window === "undefined") {
@@ -165,18 +379,39 @@ export function AgentShellStateProvider({
       const nextUrl = `${url.pathname}${url.search}${url.hash}`;
       const currentUrl = `${window.location.pathname}${window.location.search}${window.location.hash}`;
       if (nextUrl !== currentUrl) {
-        router.replace(nextUrl);
+        window.history.replaceState(null, "", nextUrl);
       }
     },
-    [router]
+    []
   );
   const [groups, setGroups] = useState<AgentConversationGroup[]>([]);
   const [backends, setBackends] = useState<AgentBackendInfo[]>([]);
   const [railLoading, setRailLoading] = useState(true);
   const [railRefreshing, setRailRefreshing] = useState(false);
+  const [pendingConversationSelection, setPendingConversationSelection] = useState<{
+    workspaceId: string;
+    conversationId: string;
+  } | null>(null);
+  const [archivedConversationIdsByWorkspaceId, setArchivedConversationIdsByWorkspaceId] =
+    useState<Record<string, string[]>>({});
+  const [stableConversationView, setStableConversationView] =
+    useState<AgentCenterStableConversationView | null>(null);
+  const [sharedLeftRailCollapsed, setSharedLeftRailCollapsedState] = useState(false);
+  const [sharedAgentShellDesktopLayout, setSharedAgentShellDesktopLayoutState] =
+    useState<Record<string, number> | null>(null);
   const previousEditorTabCountRef = useRef(0);
   const editorTabCountHydratedRef = useRef(false);
   const editorTabScopeRef = useRef<string | null>(null);
+  const sharedLeftRailCollapsedRef = useRef(sharedLeftRailCollapsed);
+  const sharedAgentShellDesktopLayoutRef = useRef(sharedAgentShellDesktopLayout);
+
+  useEffect(() => {
+    sharedLeftRailCollapsedRef.current = sharedLeftRailCollapsed;
+  }, [sharedLeftRailCollapsed]);
+
+  useEffect(() => {
+    sharedAgentShellDesktopLayoutRef.current = sharedAgentShellDesktopLayout;
+  }, [sharedAgentShellDesktopLayout]);
 
   const refreshConversationGroups = useCallback(async () => {
     const result = await listCrossWorkspaceAgentConversations();
@@ -237,6 +472,50 @@ export function AgentShellStateProvider({
     [groups, recentWorkspaceIds]
   );
 
+  useEffect(() => {
+    if (!activeWorkspaceId) {
+      return;
+    }
+    const archivedConversationIds = workspaceSession.agentView.archivedConversationIds ?? [];
+    setArchivedConversationIdsByWorkspaceId((current) => {
+      const previous = current[activeWorkspaceId] ?? [];
+      if (stringArraysEqual(previous, archivedConversationIds)) {
+        return current;
+      }
+      return {
+        ...current,
+        [activeWorkspaceId]: [...archivedConversationIds],
+      };
+    });
+  }, [activeWorkspaceId, workspaceSession.agentView.archivedConversationIds]);
+
+  useEffect(() => {
+    if (orderedGroups.length === 0) {
+      return;
+    }
+    setArchivedConversationIdsByWorkspaceId((current) => {
+      let changed = false;
+      const next = { ...current };
+      for (const group of orderedGroups) {
+        const workspaceId = group.workspace.id;
+        if (workspaceId === activeWorkspaceId) {
+          continue;
+        }
+        const snapshot = readWorkspaceRailArchiveSnapshot(workspaceId, activeWindowId);
+        if (!snapshot) {
+          continue;
+        }
+        const previous = next[workspaceId] ?? [];
+        if (stringArraysEqual(previous, snapshot.archivedConversationIds)) {
+          continue;
+        }
+        next[workspaceId] = snapshot.archivedConversationIds;
+        changed = true;
+      }
+      return changed ? next : current;
+    });
+  }, [activeWindowId, activeWorkspaceId, orderedGroups]);
+
   const activeWorkspaceGroup = useMemo(
     () => orderedGroups.find((group) => group.workspace.id === activeWorkspaceId) ?? null,
     [activeWorkspaceId, orderedGroups]
@@ -266,6 +545,18 @@ export function AgentShellStateProvider({
       return null;
     }
 
+    if (
+      pendingConversationSelection &&
+      pendingConversationSelection.workspaceId === activeWorkspaceId
+    ) {
+      if (validActiveConversationIds.has(pendingConversationSelection.conversationId)) {
+        return pendingConversationSelection.conversationId;
+      }
+      if (railLoading) {
+        return pendingConversationSelection.conversationId;
+      }
+    }
+
     // The URL deep-link must beat stale workspace session state during reload hydration.
     // Otherwise the session's "last selected" chat can overwrite the explicit ?conversationId=
     // before the rail list finishes loading, which snaps the user back to the most recent chat.
@@ -279,6 +570,16 @@ export function AgentShellStateProvider({
       if (orderedGroups.length > 0) {
         const ownerWs = findConversationOwnerWorkspaceId(orderedGroups, urlConversationRequest);
         if (ownerWs != null) {
+          // Workspace switching updates the URL and session asynchronously. If the old URL still
+          // points at another workspace while the new workspace has already loaded, prefer the
+          // active workspace's persisted request instead of snapping back to the old owner.
+          if (
+            ownerWs !== activeWorkspaceId &&
+            persistedConversationRequest &&
+            validActiveConversationIds.has(persistedConversationRequest)
+          ) {
+            return persistedConversationRequest;
+          }
           return urlConversationRequest;
         }
       }
@@ -310,6 +611,7 @@ export function AgentShellStateProvider({
     activeWorkspaceId,
     isDraftConversationSelected,
     orderedGroups,
+    pendingConversationSelection,
     persistedConversationRequest,
     railLoading,
     urlConversationRequest,
@@ -317,6 +619,9 @@ export function AgentShellStateProvider({
   ]);
 
   useEffect(() => {
+    if (pendingConversationSelection) {
+      return;
+    }
     if (railLoading || !activeWorkspaceId || orderedGroups.length === 0) {
       return;
     }
@@ -343,6 +648,7 @@ export function AgentShellStateProvider({
     isDraftConversationSelected,
     openWorkspaceById,
     orderedGroups,
+    pendingConversationSelection,
     railLoading,
     urlConversationId,
     workspaceSession.agentView.selectedConversationId,
@@ -386,7 +692,116 @@ export function AgentShellStateProvider({
     sidePaneSessionMap,
   ]);
 
+  // Apply persisted global shell before paint. Never re-source rail/layout from per-workspace session
+  // after that — session layout changes when switching workspaces and must not clobber user prefs.
+  useLayoutEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    const snapshot = readAgentShellSharedSnapshot();
+    if (!snapshot) {
+      return;
+    }
+    if (typeof snapshot.leftRailCollapsed === "boolean") {
+      setSharedLeftRailCollapsedState(snapshot.leftRailCollapsed);
+    }
+    if (snapshot.agentShellDesktopLayout != null) {
+      setSharedAgentShellDesktopLayoutState(snapshot.agentShellDesktopLayout);
+    }
+  }, []);
+
   useEffect(() => {
+    if (!sessionReady || !activeWorkspaceId || typeof window === "undefined") {
+      return;
+    }
+    if (readAgentShellSharedSnapshot()?.agentShellDesktopLayout != null) {
+      return;
+    }
+    const fallbackLayout =
+      normalizeAgentShellDesktopLayout(workspaceSession.agentView.agentShellDesktopLayout) ?? null;
+    const nextLeftRailCollapsed =
+      typeof workspaceSession.agentView.leftRailCollapsed === "boolean"
+        ? workspaceSession.agentView.leftRailCollapsed
+        : false;
+    if (fallbackLayout == null) {
+      return;
+    }
+    setSharedLeftRailCollapsedState(nextLeftRailCollapsed);
+    setSharedAgentShellDesktopLayoutState(fallbackLayout);
+    writeAgentShellSharedSnapshot({
+      leftRailCollapsed: nextLeftRailCollapsed,
+      agentShellDesktopLayout: fallbackLayout,
+    });
+  }, [
+    activeWorkspaceId,
+    sessionReady,
+    workspaceSession.agentView.agentShellDesktopLayout,
+    workspaceSession.agentView.leftRailCollapsed,
+  ]);
+
+  const effectiveAgentShellDesktopLayout = useMemo(
+    () =>
+      composeAgentShellDesktopLayout(
+        sharedAgentShellDesktopLayout,
+        activeSidePaneSession.agentShellDesktopLayout
+      ),
+    [
+      activeSidePaneSession.agentShellDesktopLayout,
+      sharedAgentShellDesktopLayout,
+    ]
+  );
+
+  useEffect(() => {
+    const sessions = workspaceSession.agentView.sidePaneSessionsByConversationId ?? {};
+    const needsSanitization = Object.values(sessions).some(
+      (session) => !isAgentSidePaneScopedLayout(session.agentShellDesktopLayout)
+    );
+    if (!needsSanitization) {
+      return;
+    }
+    updateWorkspaceSession((current) => {
+      const currentSessions = current.agentView.sidePaneSessionsByConversationId ?? {};
+      let changed = false;
+      const nextSessions = Object.fromEntries(
+        Object.entries(currentSessions).map(([scopeId, session]) => {
+          if (isAgentSidePaneScopedLayout(session.agentShellDesktopLayout)) {
+            return [scopeId, session];
+          }
+          changed = true;
+          return [
+            scopeId,
+            {
+              ...session,
+              agentShellDesktopLayout: extractAgentSidePaneScopedLayout(
+                session.agentShellDesktopLayout
+              ),
+            },
+          ];
+        })
+      );
+      if (!changed) {
+        return current;
+      }
+      return {
+        ...current,
+        agentView: {
+          ...current.agentView,
+          sidePaneSessionsByConversationId: nextSessions,
+        },
+      };
+    });
+  }, [
+    updateWorkspaceSession,
+    workspaceSession.agentView.sidePaneSessionsByConversationId,
+  ]);
+
+  useEffect(() => {
+    if (
+      pendingConversationSelection &&
+      pendingConversationSelection.workspaceId !== activeWorkspaceId
+    ) {
+      return;
+    }
     if (workspaceSession.agentView.selectedConversationId === persistedConversationId) {
       return;
     }
@@ -408,6 +823,8 @@ export function AgentShellStateProvider({
       },
     }));
   }, [
+    activeWorkspaceId,
+    pendingConversationSelection,
     persistedConversationId,
     railLoading,
     updateWorkspaceSession,
@@ -415,6 +832,12 @@ export function AgentShellStateProvider({
   ]);
 
   useEffect(() => {
+    if (
+      pendingConversationSelection &&
+      pendingConversationSelection.workspaceId !== activeWorkspaceId
+    ) {
+      return;
+    }
     if (
       railLoading &&
       persistedConversationId == null &&
@@ -425,6 +848,8 @@ export function AgentShellStateProvider({
     }
     replaceConversationIdInLocation(persistedConversationId);
   }, [
+    activeWorkspaceId,
+    pendingConversationSelection,
     persistedConversationId,
     railLoading,
     replaceConversationIdInLocation,
@@ -534,22 +959,17 @@ export function AgentShellStateProvider({
     updateWorkspaceSession,
   ]);
 
-  const setLeftRailCollapsed = useCallback(
-    (collapsed: boolean) => {
-      updateWorkspaceSession((current) => ({
-        ...current,
-        agentView: {
-          ...current.agentView,
-          leftRailCollapsed: collapsed,
-        },
-      }));
-    },
-    [updateWorkspaceSession]
-  );
+  const setLeftRailCollapsed = useCallback((collapsed: boolean) => {
+    setSharedLeftRailCollapsedState(collapsed);
+    writeAgentShellSharedSnapshot({
+      leftRailCollapsed: collapsed,
+      agentShellDesktopLayout: sharedAgentShellDesktopLayoutRef.current,
+    });
+  }, []);
 
   const toggleLeftRailCollapsed = useCallback(() => {
-    setLeftRailCollapsed(!workspaceSession.agentView.leftRailCollapsed);
-  }, [setLeftRailCollapsed, workspaceSession.agentView.leftRailCollapsed]);
+    setLeftRailCollapsed(!sharedLeftRailCollapsed);
+  }, [setLeftRailCollapsed, sharedLeftRailCollapsed]);
 
   const setRightPaneOpen = useCallback(
     (open: boolean) => {
@@ -612,6 +1032,39 @@ export function AgentShellStateProvider({
 
   const setAgentShellDesktopLayout = useCallback(
     (layout: Record<string, number> | null) => {
+      const normalizedLayout = normalizeAgentShellDesktopLayout(layout);
+      const sharedLayout =
+        normalizeAgentShellDesktopLayout(sharedAgentShellDesktopLayoutRef.current) ??
+        normalizeAgentShellDesktopLayout(activeSidePaneSession.agentShellDesktopLayout) ??
+        AGENT_SHELL_DEFAULT_LAYOUT;
+      const scopedLayout =
+        normalizeAgentShellDesktopLayout(activeSidePaneSession.agentShellDesktopLayout) ??
+        sharedLayout;
+      const nextLayout =
+        composeAgentShellDesktopLayout(
+          {
+            ...sharedLayout,
+            [AGENT_SHELL_PANEL_IDS.rail]:
+              normalizedLayout?.[AGENT_SHELL_PANEL_IDS.rail] &&
+              normalizedLayout[AGENT_SHELL_PANEL_IDS.rail] > 0
+                ? normalizedLayout[AGENT_SHELL_PANEL_IDS.rail]
+                : sharedLayout[AGENT_SHELL_PANEL_IDS.rail],
+          },
+          {
+            ...scopedLayout,
+            [AGENT_SHELL_PANEL_IDS.side]:
+              normalizedLayout?.[AGENT_SHELL_PANEL_IDS.side] &&
+              normalizedLayout[AGENT_SHELL_PANEL_IDS.side] > 0
+                ? normalizedLayout[AGENT_SHELL_PANEL_IDS.side]
+                : scopedLayout[AGENT_SHELL_PANEL_IDS.side],
+          }
+        ) ?? AGENT_SHELL_DEFAULT_LAYOUT;
+      const nextScopedLayout = extractAgentSidePaneScopedLayout(nextLayout);
+      setSharedAgentShellDesktopLayoutState(nextLayout);
+      writeAgentShellSharedSnapshot({
+        leftRailCollapsed: sharedLeftRailCollapsedRef.current,
+        agentShellDesktopLayout: nextLayout,
+      });
       updateWorkspaceSession((current) => {
         const sessions = current.agentView.sidePaneSessionsByConversationId ?? {};
         const existing =
@@ -627,14 +1080,14 @@ export function AgentShellStateProvider({
               ...sessions,
               [sidePaneScopeId]: {
                 ...existing,
-                agentShellDesktopLayout: layout,
+                agentShellDesktopLayout: nextScopedLayout,
               },
             },
           },
         };
       });
     },
-    [sidePaneScopeId, updateWorkspaceSession]
+    [activeSidePaneSession.agentShellDesktopLayout, sidePaneScopeId, updateWorkspaceSession]
   );
 
   const setExpandedComposerDraft = useCallback(
@@ -694,12 +1147,42 @@ export function AgentShellStateProvider({
 
   const openConversationSummary = useCallback(
     async (summary: AgentRailConversationSummary) => {
-      if (summary.workspaceId !== activeWorkspaceId) {
-        await openWorkspaceById(summary.workspaceId);
+      const archiveSnapshot = readWorkspaceRailArchiveSnapshot(
+        summary.workspaceId,
+        activeWindowId
+      );
+      if (archiveSnapshot) {
+        setArchivedConversationIdsByWorkspaceId((current) => {
+          const previous = current[summary.workspaceId] ?? [];
+          if (stringArraysEqual(previous, archiveSnapshot.archivedConversationIds)) {
+            return current;
+          }
+          return {
+            ...current,
+            [summary.workspaceId]: archiveSnapshot.archivedConversationIds,
+          };
+        });
       }
-      setSelectedConversationId(summary.id);
+      setPendingConversationSelection({
+        workspaceId: summary.workspaceId,
+        conversationId: summary.id,
+      });
+      try {
+        if (summary.workspaceId !== activeWorkspaceId) {
+          await openWorkspaceById(summary.workspaceId);
+        }
+        setSelectedConversationId(summary.id);
+      } catch (error) {
+        throw error;
+      } finally {
+        setPendingConversationSelection((current) =>
+          current?.workspaceId === summary.workspaceId && current.conversationId === summary.id
+            ? null
+            : current
+        );
+      }
     },
-    [activeWorkspaceId, openWorkspaceById, setSelectedConversationId]
+    [activeWindowId, activeWorkspaceId, openWorkspaceById, setSelectedConversationId]
   );
 
   const archiveConversation = useCallback(
@@ -738,37 +1221,35 @@ export function AgentShellStateProvider({
 
   const pinConversation = useCallback(
     (conversationId: string) => {
-      updateWorkspaceSession((current) => {
-        const pinned = current.agentView.pinnedAgentConversationIds ?? [];
-        const next = [conversationId, ...pinned.filter((id) => id !== conversationId)];
-        if (next.length === pinned.length && next[0] === pinned[0]) {
-          return current;
-        }
-        return {
-          ...current,
-          agentView: {
-            ...current.agentView,
-            pinnedAgentConversationIds: next,
-          },
-        };
-      });
+      const prev = getGlobalPinnedAgentConversationIdsSnapshot();
+      const next = [conversationId, ...prev.filter((id) => id !== conversationId)];
+      writeGlobalPinnedAgentConversationIds(next);
+      updateWorkspaceSession((current) => ({
+        ...current,
+        agentView: {
+          ...current.agentView,
+          pinnedAgentConversationIds: next,
+        },
+      }));
     },
     [updateWorkspaceSession]
   );
 
   const unpinConversation = useCallback(
     (conversationId: string) => {
-      updateWorkspaceSession((current) => {
-        const pinned = current.agentView.pinnedAgentConversationIds ?? [];
-        if (!pinned.includes(conversationId)) return current;
-        return {
-          ...current,
-          agentView: {
-            ...current.agentView,
-            pinnedAgentConversationIds: pinned.filter((id) => id !== conversationId),
-          },
-        };
-      });
+      const prev = getGlobalPinnedAgentConversationIdsSnapshot();
+      if (!prev.includes(conversationId)) {
+        return;
+      }
+      const next = prev.filter((id) => id !== conversationId);
+      writeGlobalPinnedAgentConversationIds(next);
+      updateWorkspaceSession((current) => ({
+        ...current,
+        agentView: {
+          ...current.agentView,
+          pinnedAgentConversationIds: next,
+        },
+      }));
     },
     [updateWorkspaceSession]
   );
@@ -819,12 +1300,57 @@ export function AgentShellStateProvider({
     }));
   }, [updateWorkspaceSession]);
 
+  /**
+   * While a workspace is loading, `workspaceInfo`/`activeWorkspaceId` already point at the new
+   * workspace but `workspaceSession` can still be the previous workspace's blob. Using its
+   * archived ids would mis-filter the new workspace's rail (archived/pinned placement flash).
+   */
+  const activeWorkspaceResolvedArchives = useMemo(() => {
+    if (!activeWorkspaceId) {
+      return [];
+    }
+    const sessionAligned =
+      sessionReady && workspaceInfo?.id === activeWorkspaceId;
+    if (sessionAligned) {
+      return workspaceSession.agentView.archivedConversationIds ?? [];
+    }
+    const cached = archivedConversationIdsByWorkspaceId[activeWorkspaceId] ?? [];
+    if (cached.length > 0) {
+      return cached;
+    }
+    return (
+      readWorkspaceRailArchiveSnapshot(activeWorkspaceId, activeWindowId)?.archivedConversationIds ??
+      []
+    );
+  }, [
+    activeWorkspaceId,
+    activeWindowId,
+    archivedConversationIdsByWorkspaceId,
+    sessionReady,
+    workspaceInfo?.id,
+    workspaceSession.agentView.archivedConversationIds,
+  ]);
+
   const archivedConversationIdsSet = useMemo(
-    () => new Set(workspaceSession.agentView.archivedConversationIds ?? []),
-    [workspaceSession.agentView.archivedConversationIds]
+    () => new Set(activeWorkspaceResolvedArchives),
+    [activeWorkspaceResolvedArchives]
   );
 
-  const pinnedAgentConversationIds = workspaceSession.agentView.pinnedAgentConversationIds ?? [];
+  const pinnedAgentConversationIds = useSyncExternalStore(
+    subscribeGlobalPinnedAgentConversationIds,
+    getGlobalPinnedAgentConversationIdsSnapshot,
+    () => []
+  );
+
+  useLayoutEffect(() => {
+    if (!sessionReady || typeof window === "undefined") {
+      return;
+    }
+    migrateGlobalPinnedAgentConversationIdsIfNeeded(
+      workspaceSession.agentView.pinnedAgentConversationIds
+    );
+  }, [sessionReady, workspaceSession.agentView.pinnedAgentConversationIds]);
+
   const pinnedConversationIdSet = useMemo(
     () => new Set(pinnedAgentConversationIds),
     [pinnedAgentConversationIds]
@@ -843,16 +1369,45 @@ export function AgentShellStateProvider({
       workspaceSession.chat.unreadChatCompletionByConversationId,
     ]
   );
+  const emptyConversationIdSet = useMemo(() => new Set<string>(), []);
+  const archivedConversationIdSetByWorkspaceId = useMemo(() => {
+    const sets = new Map<string, Set<string>>();
+    for (const group of orderedGroups) {
+      const workspaceId = group.workspace.id;
+      const archivedConversationIds =
+        workspaceId === activeWorkspaceId
+          ? activeWorkspaceResolvedArchives
+          : (archivedConversationIdsByWorkspaceId[workspaceId] ?? []);
+      sets.set(workspaceId, new Set(archivedConversationIds));
+    }
+    return sets;
+  }, [
+    activeWorkspaceId,
+    activeWorkspaceResolvedArchives,
+    archivedConversationIdsByWorkspaceId,
+    orderedGroups,
+  ]);
 
   const filteredGroups = useMemo(
     () =>
       orderedGroups.map((group) => ({
         ...group,
         conversations: group.conversations.filter((c) =>
-          matchesAgentRailMultiFilter(c, railFilterToggles, railFilterMatchContext)
+          matchesAgentRailMultiFilter(c, railFilterToggles, {
+            ...railFilterMatchContext,
+            archivedConversationIds:
+              archivedConversationIdSetByWorkspaceId.get(group.workspace.id) ??
+              emptyConversationIdSet,
+          })
         ),
       })),
-    [orderedGroups, railFilterMatchContext, railFilterToggles]
+    [
+      archivedConversationIdSetByWorkspaceId,
+      emptyConversationIdSet,
+      orderedGroups,
+      railFilterMatchContext,
+      railFilterToggles,
+    ]
   );
 
   const pinnedRailConversations = useMemo(() => {
@@ -864,12 +1419,20 @@ export function AgentShellStateProvider({
     }
     return pinnedAgentConversationIds
       .map((id) => byId.get(id))
-      .filter(
-        (c): c is AgentRailConversationSummary =>
-          !!c &&
-          matchesAgentRailMultiFilter(c, railFilterToggles, railFilterMatchContext)
-      );
+      .filter((c): c is AgentRailConversationSummary => {
+        if (!c) {
+          return false;
+        }
+        const archivedForWorkspace =
+          archivedConversationIdSetByWorkspaceId.get(c.workspaceId) ?? emptyConversationIdSet;
+        return matchesAgentRailMultiFilter(c, railFilterToggles, {
+          ...railFilterMatchContext,
+          archivedConversationIds: archivedForWorkspace,
+        });
+      });
   }, [
+    archivedConversationIdSetByWorkspaceId,
+    emptyConversationIdSet,
     orderedGroups,
     pinnedAgentConversationIds,
     railFilterMatchContext,
@@ -887,7 +1450,7 @@ export function AgentShellStateProvider({
 
   const value = useMemo<AgentShellStateContextValue>(
     () => ({
-      leftRailCollapsed: workspaceSession.agentView.leftRailCollapsed,
+      leftRailCollapsed: sharedLeftRailCollapsed,
       setLeftRailCollapsed,
       toggleLeftRailCollapsed,
       rightPaneOpen: activeSidePaneSession.rightPaneOpen,
@@ -896,11 +1459,14 @@ export function AgentShellStateProvider({
       sidePaneScopeId,
       sidePaneEditorSession: activeSidePaneSession.editor,
       updateSidePaneEditorSession,
-      agentShellDesktopLayout: activeSidePaneSession.agentShellDesktopLayout,
+      agentShellDesktopLayout: effectiveAgentShellDesktopLayout,
       setAgentShellDesktopLayout,
       expandedComposerDraftId: activeSidePaneSession.expandedComposerDraftId,
       setExpandedComposerDraft,
       selectedConversationId,
+      conversationSelectionPending: pendingConversationSelection != null,
+      stableConversationView,
+      setStableConversationView,
       isDraftConversationSelected,
       setSelectedConversationId,
       startNewConversation,
@@ -925,13 +1491,14 @@ export function AgentShellStateProvider({
     }),
     [
       activeWorkspaceGroup,
-      activeSidePaneSession.agentShellDesktopLayout,
       activeSidePaneSession.editor,
       activeSidePaneSession.expandedComposerDraftId,
       activeSidePaneSession.rightPaneOpen,
+      effectiveAgentShellDesktopLayout,
       archiveConversation,
       backends,
       clearRailFilters,
+      pendingConversationSelection,
       groupsForRail,
       isMobile,
       isDraftConversationSelected,
@@ -945,6 +1512,7 @@ export function AgentShellStateProvider({
       refreshConversationGroupsWithState,
       selectedConversationId,
       selectedConversationSummary,
+      stableConversationView,
       setAgentShellDesktopLayout,
       setExpandedComposerDraft,
       setRailFilterToggle,
@@ -958,7 +1526,7 @@ export function AgentShellStateProvider({
       unarchiveConversation,
       unpinConversation,
       updateSidePaneEditorSession,
-      workspaceSession.agentView.leftRailCollapsed,
+      sharedLeftRailCollapsed,
     ]
   );
 

@@ -1,8 +1,8 @@
 "use client";
 
-import { useLayoutEffect, useMemo, type ReactNode } from "react";
+import { useLayoutEffect, useMemo, useRef, type ReactNode } from "react";
 import { PanelLeftOpen, PanelRightOpen } from "lucide-react";
-import { Group, Panel, Separator, usePanelRef } from "react-resizable-panels";
+import { Group, Panel, Separator, useGroupRef, usePanelRef } from "react-resizable-panels";
 import { AgentConversationsProvider } from "@/components/chat/AgentConversationsContext";
 import { OpenInEditorProvider } from "@/components/editor/OpenInEditorContext";
 import { EditorBridgeProvider } from "@/components/ide/EditorBridgeContext";
@@ -14,11 +14,17 @@ import { AgentCenterPane } from "@/components/agent/AgentCenterPane";
 import { AgentShellStateProvider, useAgentShellState } from "@/components/agent/AgentShellStateContext";
 import {
   AGENT_CENTER_STAGE_CLASS,
+  AGENT_SHELL_CENTER_MIN_PERCENT,
   AGENT_LEFT_RAIL_COLLAPSED_SIZE_PERCENT,
   AGENT_LEFT_RAIL_EXPANDED_WIDTH,
   AGENT_RIGHT_PANE_WIDTH,
   AGENT_SHELL_DEFAULT_LAYOUT,
+  AGENT_SHELL_RAIL_MAX_PERCENT,
+  AGENT_SHELL_RAIL_MIN_PERCENT,
   AGENT_SHELL_PANEL_IDS,
+  AGENT_SHELL_SIDE_MAX_PERCENT,
+  AGENT_SHELL_SIDE_MIN_PERCENT,
+  collapseAgentShellSideLayout,
   normalizeAgentShellDesktopLayout,
 } from "@/components/agent/agent-shell-layout";
 import { AgentSidePane } from "@/components/agent/AgentSidePane";
@@ -53,12 +59,11 @@ function AgentCenterStage({
 }
 
 function AgentLayoutShell() {
-  const { loading, sessionReady, activeWorkspaceId } = useWorkspace();
+  const { activeWorkspaceId, fileTree, loading, sessionReady, workspaceInfo } = useWorkspace();
   const {
     isMobile,
     leftRailCollapsed,
     rightPaneOpen,
-    sidePaneScopeId,
     agentShellDesktopLayout,
     setLeftRailCollapsed,
     setAgentShellDesktopLayout,
@@ -66,14 +71,19 @@ function AgentLayoutShell() {
     toggleRightPaneOpen,
   } = useAgentShellState();
 
+  const groupRef = useGroupRef();
   const railPanelRef = usePanelRef();
   const sidePanelRef = usePanelRef();
+  const applyingShellLayoutFromContextRef = useRef(false);
 
   const agentShellLayout = useMemo(
-    () =>
-      normalizeAgentShellDesktopLayout(agentShellDesktopLayout) ??
-      AGENT_SHELL_DEFAULT_LAYOUT,
-    [agentShellDesktopLayout]
+    () => {
+      const baseLayout =
+        normalizeAgentShellDesktopLayout(agentShellDesktopLayout) ??
+        AGENT_SHELL_DEFAULT_LAYOUT;
+      return rightPaneOpen ? baseLayout : collapseAgentShellSideLayout(baseLayout);
+    },
+    [agentShellDesktopLayout, rightPaneOpen]
   );
 
   const workbench = useMemo(
@@ -96,37 +106,52 @@ function AgentLayoutShell() {
     if (isMobile) {
       return;
     }
-    const panel = railPanelRef.current;
-    if (!panel) {
-      return;
+    applyingShellLayoutFromContextRef.current = true;
+    try {
+      groupRef.current?.setLayout(agentShellLayout);
+    } finally {
+      queueMicrotask(() => {
+        applyingShellLayoutFromContextRef.current = false;
+      });
     }
-    if (!leftRailCollapsed) {
-      if (panel.isCollapsed()) {
-        panel.expand();
-      }
-    } else if (!panel.isCollapsed()) {
-      panel.collapse();
-    }
-  }, [isMobile, leftRailCollapsed, railPanelRef]);
 
-  useLayoutEffect(() => {
-    if (isMobile) {
-      return;
-    }
-    const panel = sidePanelRef.current;
-    if (!panel) {
-      return;
-    }
-    if (rightPaneOpen) {
-      if (panel.isCollapsed()) {
-        panel.expand();
+    const railPanel = railPanelRef.current;
+    if (railPanel) {
+      if (!leftRailCollapsed) {
+        if (railPanel.isCollapsed()) {
+          railPanel.expand();
+        }
+      } else if (!railPanel.isCollapsed()) {
+        railPanel.collapse();
       }
-    } else if (!panel.isCollapsed()) {
-      panel.collapse();
     }
-  }, [isMobile, rightPaneOpen, sidePanelRef]);
+    const sidePanel = sidePanelRef.current;
+    if (sidePanel) {
+      if (rightPaneOpen) {
+        if (sidePanel.isCollapsed()) {
+          sidePanel.expand();
+        }
+      } else if (!sidePanel.isCollapsed()) {
+        sidePanel.collapse();
+      }
+    }
+  }, [
+    agentShellLayout,
+    groupRef,
+    isMobile,
+    leftRailCollapsed,
+    railPanelRef,
+    rightPaneOpen,
+    sidePanelRef,
+  ]);
 
-  if (loading || !sessionReady) {
+  // Only block the entire shell during the first workspace hydration. Once a workspace is already
+  // mounted, keep the existing UI visible during cross-workspace switches so chat hops feel
+  // seamless instead of flashing the full-screen loader.
+  const showBlockingWorkspaceLoad =
+    !activeWorkspaceId || !workspaceInfo || (fileTree == null && (loading || !sessionReady));
+
+  if (showBlockingWorkspaceLoad) {
     return (
       <div className="flex h-screen w-screen items-center justify-center bg-[var(--bg-main)] font-sans text-[13px] text-[var(--text-secondary)]">
         Loading workspace...
@@ -199,19 +224,27 @@ function AgentLayoutShell() {
               <>
               <Group
                 id="agent-shell-panels"
-                key={`${activeWorkspaceId ?? "workspace"}:${sidePaneScopeId}:agent-shell`}
+                groupRef={groupRef}
+                key="agent-shell-desktop"
                 orientation="horizontal"
                 className="h-full min-w-0"
                 defaultLayout={agentShellLayout}
-                onLayoutChanged={(layout) => setAgentShellDesktopLayout(layout)}
               >
                 <Panel
                   id={AGENT_SHELL_PANEL_IDS.rail}
                   panelRef={railPanelRef}
-                  minSize="10%"
-                  maxSize="42%"
+                  minSize={`${AGENT_SHELL_RAIL_MIN_PERCENT}%`}
+                  maxSize={`${AGENT_SHELL_RAIL_MAX_PERCENT}%`}
                   collapsible
                   collapsedSize={`${AGENT_LEFT_RAIL_COLLAPSED_SIZE_PERCENT}%`}
+                  onResize={(panelSize) => {
+                    if (applyingShellLayoutFromContextRef.current) {
+                      return;
+                    }
+                    setAgentShellDesktopLayout({
+                      [AGENT_SHELL_PANEL_IDS.rail]: panelSize.asPercentage,
+                    });
+                  }}
                   className={`min-h-0 overflow-hidden ${
                     leftRailCollapsed ? "" : "border-r border-[var(--border-subtle)]"
                   }`}
@@ -221,7 +254,7 @@ function AgentLayoutShell() {
                 <AgentShellResizeHandle />
                 <Panel
                   id={AGENT_SHELL_PANEL_IDS.center}
-                  minSize="28%"
+                  minSize={`${AGENT_SHELL_CENTER_MIN_PERCENT}%`}
                   className="relative min-h-0 min-w-0 overflow-hidden"
                 >
                   {!rightPaneOpen ? (
@@ -243,10 +276,18 @@ function AgentLayoutShell() {
                 <Panel
                   id={AGENT_SHELL_PANEL_IDS.side}
                   panelRef={sidePanelRef}
-                  minSize="16%"
-                  maxSize="62%"
+                  minSize={`${AGENT_SHELL_SIDE_MIN_PERCENT}%`}
+                  maxSize={`${AGENT_SHELL_SIDE_MAX_PERCENT}%`}
                   collapsible
                   collapsedSize="0%"
+                  onResize={(panelSize) => {
+                    if (applyingShellLayoutFromContextRef.current) {
+                      return;
+                    }
+                    setAgentShellDesktopLayout({
+                      [AGENT_SHELL_PANEL_IDS.side]: panelSize.asPercentage,
+                    });
+                  }}
                   className={`min-h-0 overflow-hidden ${
                     rightPaneOpen ? "border-l border-[var(--border-subtle)]" : ""
                   }`}

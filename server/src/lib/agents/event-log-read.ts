@@ -10,6 +10,20 @@ export const TAIL_MAX_CHUNK_BYTES = 8 * 1024 * 1024;
 /** Beyond this, full read is avoided; tail uses expanding chunks and history uses streaming + trim. */
 export const EVENT_LOG_FULL_READ_MAX_BYTES = 4 * 1024 * 1024;
 
+/** CLI / provider transcript context — bounded so multimillion-event logs cannot OOM the heap. */
+export const PROMPT_CONTEXT_LIMIT_TURNS = 100;
+export const PROMPT_CONTEXT_LIMIT_EVENTS = 8000;
+
+/**
+ * When `GET …?full=1` or `readConversationSnapshot` hits a log larger than
+ * {@link EVENT_LOG_FULL_READ_MAX_BYTES}, return this tail window instead of loading JSONL wholesale.
+ */
+export const LARGE_LOG_SNAPSHOT_TURNS = 320;
+export const LARGE_LOG_SNAPSHOT_EVENTS = 16_000;
+
+/** Yield to the event loop while streaming very long history scans (reduces GC pause + starvation). */
+const HISTORY_STREAM_YIELD_EVERY_LINES = 2500;
+
 export type ConversationEventPageMeta = {
   oldestSeq: number;
   newestSeq: number;
@@ -235,7 +249,12 @@ export async function readConversationEventHistoryPage(
 ): Promise<ReadTailPageResult> {
   const limitTurns = Math.max(1, options.limitTurns);
   const limitEvents = Math.max(1, options.limitEvents);
-  const rollingCap = options.rollingCap ?? Math.max(limitEvents * 6, 2400);
+  const rollingCap =
+    options.rollingCap ??
+    Math.min(
+      96_000,
+      Math.max(limitEvents * 40, limitTurns * 1600, 12_000)
+    );
 
   let statSize = 0;
   try {
@@ -283,8 +302,14 @@ export async function readConversationEventHistoryPage(
   let acc: AgentStoredEvent[] = [];
   let globalMin = Number.MAX_SAFE_INTEGER;
   let trimmedRolling = false;
+  let linesSinceYield = 0;
 
   for await (const line of rl) {
+    linesSinceYield += 1;
+    if (linesSinceYield >= HISTORY_STREAM_YIELD_EVERY_LINES) {
+      linesSinceYield = 0;
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
     const ev = parseEventLine(line);
     if (!ev) {
       continue;
