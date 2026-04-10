@@ -1,6 +1,8 @@
 import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import Script from "next/script";
+import { AuthProvider } from "@/components/auth/AuthProvider";
+import { AuthGate } from "@/components/auth/AuthGate";
 import { UserPreferencesProvider } from "@/components/preferences/UserPreferencesProvider";
 import { RegisterServiceWorker } from "@/components/pwa/RegisterServiceWorker";
 import { ThemeProvider } from "@/components/theme/ThemeProvider";
@@ -72,7 +74,11 @@ export default function RootLayout({
         </Script>
         <RegisterServiceWorker />
         <ThemeProvider>
-          <UserPreferencesProvider>{children}</UserPreferencesProvider>
+          <AuthProvider>
+            <AuthGate>
+              <UserPreferencesProvider>{children}</UserPreferencesProvider>
+            </AuthGate>
+          </AuthProvider>
         </ThemeProvider>
       </body>
     </html>

@@ -12,6 +12,7 @@ import {
 } from "@/components/editor/TerminalHardwareAdapter";
 import { getServerBaseUrl } from "@/lib/server-api";
 import { BinaryWebSocket, toWebSocketUrl } from "@/lib/ws-client";
+import { buildAuthenticatedUrl } from "@/lib/auth-client";
 import { useHtmlDarkClass } from "@/hooks/useHtmlDarkClass";
 
 interface TerminalProps {
@@ -154,7 +155,10 @@ export function Terminal({ terminalId, onAutoCloseAfterCleanExit }: TerminalProp
   const initialThemeRef = useRef(getTerminalTheme(isDark));
 
   const socketUrl = useMemo(
-    () => `${toWebSocketUrl(getServerBaseUrl())}/ws/terminal/${terminalId}`,
+    () =>
+      buildAuthenticatedUrl(
+        `${toWebSocketUrl(getServerBaseUrl())}/ws/terminal/${terminalId}`
+      ),
     [terminalId]
   );
 

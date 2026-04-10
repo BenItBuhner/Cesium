@@ -20,6 +20,12 @@ import type {
   WorkspaceWindowRecord,
 } from "@/lib/types";
 import { toWebSocketUrl } from "@/lib/ws-client";
+import {
+  attachSessionToken,
+  buildAuthenticatedUrl,
+  clearStoredAuth,
+  syncAuthTokenFromResponse,
+} from "@/lib/auth-client";
 
 const BASE_URL =
   process.env.NEXT_PUBLIC_SERVER_URL?.replace(/\/+$/, "") ??
@@ -102,13 +108,22 @@ async function request<T>(
 ): Promise<T> {
   const response = await fetch(`${resolveClientBaseUrl()}${input}`, {
     ...init,
-    headers: {
-      "Content-Type": "application/json",
-      ...getWorkspaceHeaders(options?.skipWorkspaceHeader),
-      ...(init?.headers ?? {}),
-    },
+    headers: Object.fromEntries(
+      attachSessionToken({
+        "Content-Type": "application/json",
+        ...getWorkspaceHeaders(options?.skipWorkspaceHeader),
+        ...(init?.headers ?? {}),
+      }).entries()
+    ),
+    credentials: "include",
     cache: "no-store",
   });
+
+  syncAuthTokenFromResponse(response);
+
+  if (response.status === 401) {
+    clearStoredAuth();
+  }
 
   if (!response.ok) {
     const message = await response.text();
@@ -124,7 +139,8 @@ export function getServerBaseUrl(): string {
 
 export function buildAgentWebSocketUrl(workspaceId: string): string {
   const params = new URLSearchParams({ workspaceId });
-  return `${toWebSocketUrl(resolveClientBaseUrl())}/ws/agent?${params.toString()}`;
+  const base = `${toWebSocketUrl(resolveClientBaseUrl())}/ws/agent?${params.toString()}`;
+  return buildAuthenticatedUrl(base);
 }
 
 export async function fetchWorkspaceBootstrap(): Promise<{
@@ -468,9 +484,16 @@ export async function transcribeAudio(
   const response = await fetch(`${resolveClientBaseUrl()}/api/audio/transcriptions`, {
     method: "POST",
     body: form,
-    headers: getWorkspaceHeaders(),
+    headers: Object.fromEntries(
+      attachSessionToken(getWorkspaceHeaders()).entries()
+    ),
+    credentials: "include",
     cache: "no-store",
   });
+  syncAuthTokenFromResponse(response);
+  if (response.status === 401) {
+    clearStoredAuth();
+  }
   if (!response.ok) {
     const message = await response.text();
     let parsedError = "";
@@ -572,12 +595,19 @@ export async function uploadFile(relativePath: string, file: File): Promise<void
   const form = new FormData();
   form.set("path", relativePath);
   form.set("file", file);
-  const response = await fetch(`${BASE_URL}/api/fs/upload`, {
+  const response = await fetch(`${resolveClientBaseUrl()}/api/fs/upload`, {
     method: "POST",
     body: form,
-    headers: getWorkspaceHeaders(),
+    headers: Object.fromEntries(
+      attachSessionToken(getWorkspaceHeaders()).entries()
+    ),
+    credentials: "include",
     cache: "no-store",
   });
+  syncAuthTokenFromResponse(response);
+  if (response.status === 401) {
+    clearStoredAuth();
+  }
   if (!response.ok) {
     const message = await response.text();
     throw new Error(message || `Request failed with status ${response.status}`);
@@ -597,12 +627,19 @@ export async function uploadAttachments(
   for (const file of files) {
     form.append("files", file);
   }
-  const response = await fetch(`${BASE_URL}/api/agents/attachments`, {
+  const response = await fetch(`${resolveClientBaseUrl()}/api/agents/attachments`, {
     method: "POST",
     body: form,
-    headers: getWorkspaceHeaders(),
+    headers: Object.fromEntries(
+      attachSessionToken(getWorkspaceHeaders()).entries()
+    ),
+    credentials: "include",
     cache: "no-store",
   });
+  syncAuthTokenFromResponse(response);
+  if (response.status === 401) {
+    clearStoredAuth();
+  }
   if (!response.ok) {
     const message = await response.text();
     throw new Error(message || `Request failed with status ${response.status}`);

@@ -44,6 +44,7 @@ import {
 } from "@/lib/workspace-session";
 import { normalizeWorkspaceScopedRoute } from "@/lib/workspace-windows";
 import { JsonWebSocket, toWebSocketUrl } from "@/lib/ws-client";
+import { buildAuthenticatedUrl } from "@/lib/auth-client";
 import { useWorkbenchNotifications } from "@/components/notifications/WorkbenchNotificationProvider";
 import { WORKBENCH_NOTIFICATION_KIND } from "@/components/notifications/workbench-notification-types";
 import { currentModel } from "@/lib/mock-data";
@@ -884,7 +885,9 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       if (hasSyncedOnceRef.current && lastSeenSeqRef.current > 0) {
         params.set("since", String(lastSeenSeqRef.current));
       }
-      return `${toWebSocketUrl(getServerBaseUrl())}/ws/fs?${params.toString()}`;
+      return buildAuthenticatedUrl(
+        `${toWebSocketUrl(getServerBaseUrl())}/ws/fs?${params.toString()}`
+      );
     });
 
     function clearStartupDisconnectTimer() {

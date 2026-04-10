@@ -13,6 +13,13 @@ import { terminalRoutes } from "./routes/terminals.js";
 import { browserProxyRoutes } from "./routes/browser-proxy.js";
 import { agentRoutes } from "./routes/agents.js";
 import { audioRoutes } from "./routes/audio.js";
+import { authRoutes } from "./routes/auth.js";
+import {
+  authMiddleware,
+  authenticateUpgradeRequest,
+  buildUpgradeHttpResponse,
+  SESSION_TOKEN_HEADER,
+} from "./lib/auth.js";
 import { handleFsUpgrade } from "./ws/filewatcher.js";
 import { handleAgentUpgrade } from "./ws/agent.js";
 import { handleTerminalUpgrade } from "./ws/terminal.js";
@@ -42,10 +49,26 @@ app.use(
       if (!origin) return allowedOrigins[0] ?? "*";
       return allowedOrigins.includes(origin) ? origin : allowedOrigins[0] ?? "*";
     },
+    credentials: true,
     allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allowHeaders: ["Content-Type", "x-opencursor-workspace-id"],
+    allowHeaders: [
+      "Content-Type",
+      "x-opencursor-workspace-id",
+      SESSION_TOKEN_HEADER,
+    ],
+    exposeHeaders: [
+      SESSION_TOKEN_HEADER,
+      "x-opencursor-auth-enabled",
+      "x-opencursor-auth-session-expires-at",
+      "x-ratelimit-limit",
+      "x-ratelimit-remaining",
+      "x-ratelimit-reset",
+      "retry-after",
+    ],
   })
 );
+
+app.use("*", authMiddleware);
 
 app.onError((error, c) => {
   console.error(error);
@@ -53,6 +76,7 @@ app.onError((error, c) => {
 });
 
 app.get("/health", (c) => c.json({ ok: true }));
+app.route("/", authRoutes);
 app.route("/browser", browserProxyRoutes);
 app.route("/", workspaceRoutes);
 app.route("/", settingsRoutes);
@@ -70,18 +94,39 @@ const server = serve({
 server.on("upgrade", (request, socket, head) => {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "localhost"}`);
   if (url.pathname === "/ws/fs") {
-    handleFsUpgrade(request, socket, head);
+    void authenticateUpgradeRequest(request, "ws-fs").then((result) => {
+      if (!result.ok) {
+        socket.write(buildUpgradeHttpResponse(result));
+        socket.destroy();
+        return;
+      }
+      handleFsUpgrade(request, socket, head);
+    });
     return;
   }
 
   if (url.pathname === "/ws/agent") {
-    handleAgentUpgrade(request, socket, head);
+    void authenticateUpgradeRequest(request, "ws-agent").then((result) => {
+      if (!result.ok) {
+        socket.write(buildUpgradeHttpResponse(result));
+        socket.destroy();
+        return;
+      }
+      handleAgentUpgrade(request, socket, head);
+    });
     return;
   }
 
   if (url.pathname.startsWith("/ws/terminal/")) {
     const terminalId = url.pathname.slice("/ws/terminal/".length);
-    handleTerminalUpgrade(request, socket, head, terminalId);
+    void authenticateUpgradeRequest(request, "ws-terminal").then((result) => {
+      if (!result.ok) {
+        socket.write(buildUpgradeHttpResponse(result));
+        socket.destroy();
+        return;
+      }
+      handleTerminalUpgrade(request, socket, head, terminalId);
+    });
     return;
   }
 
