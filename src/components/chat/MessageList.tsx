@@ -314,11 +314,20 @@ export function MessageList({
       ? `pt-[10px] ${contentClassName}`
       : "pt-[10px]";
 
+  /**
+   * With a centered content column: no extra scroll inset on narrow viewports (avoids double
+   * gutter with `max-w`); from `sm` up, restore the legacy `10px` scroll inset for wide layouts.
+   */
+  const scrollPadX =
+    contentClassName && contentClassName.length > 0
+      ? "pl-[max(0px,env(safe-area-inset-left,0px))] pr-[max(0px,env(safe-area-inset-right,0px))] sm:pl-[max(10px,env(safe-area-inset-left,0px))] sm:pr-[max(10px,env(safe-area-inset-right,0px))]"
+      : "px-[10px]";
+
   return (
     <div
       ref={scrollRootRef}
       data-chat-scroll-root
-      className={`absolute inset-0 overflow-y-auto overflow-x-hidden overscroll-y-contain px-[10px] [-webkit-overflow-scrolling:touch] hide-scrollbar-y ${
+      className={`absolute inset-0 overflow-y-auto overflow-x-hidden overscroll-y-contain ${scrollPadX} [-webkit-overflow-scrolling:touch] hide-scrollbar-y ${
         bottomDockVisible ? "pb-[clamp(220px,38vh,340px)]" : "pb-[14px]"
       }`}
       onScroll={(event) => {

@@ -439,7 +439,7 @@ export function AgentCenterPane() {
         : null;
 
   const emptyState = (
-    <div className="absolute inset-0 flex items-center justify-center px-[12px] pb-[220px] sm:px-[20px]">
+    <div className="absolute inset-0 flex items-center justify-center px-[14px] pb-[220px] sm:px-[20px]">
       <div className={`${AGENT_CENTER_CONTENT_CLASS} text-center`}>
         <p className="font-sans text-[14px] font-normal text-[var(--text-primary)]">
           {activeWorkspaceGroup?.conversations.length
@@ -520,14 +520,14 @@ export function AgentCenterPane() {
           <div className="pointer-events-none absolute inset-x-0 bottom-0 z-30">
             <div className="pointer-events-auto chat-bottom-dock">
               {dockedAskSteps.length > 0 ? (
-                <div className="px-[10px] pt-[8px]">
+                <div className="pt-[8px] max-sm:px-0 sm:px-[10px]">
                   <div className={AGENT_CENTER_CONTENT_CLASS}>
                     <AskQuestionCard steps={dockedAskSteps} dockAboveComposer />
                   </div>
                 </div>
               ) : null}
               {queuedPrompts.length > 0 ? (
-                <div className="px-[10px] pt-[8px]">
+                <div className="pt-[8px] max-sm:px-0 sm:px-[10px]">
                   <div className={AGENT_CENTER_CONTENT_CLASS}>
                     <ComposerQueueDock
                       items={queuedPrompts}
@@ -537,77 +537,79 @@ export function AgentCenterPane() {
                   </div>
                 </div>
               ) : null}
-              <div className={AGENT_CENTER_CONTENT_CLASS}>
-                <ChatComposer
-                  key={composerDraftId}
-                  mode={composerState?.mode ?? draftMode}
-                  onModeChange={(next) => {
-                    if (selectedConversationId) {
-                      void setConversationMode(selectedConversationId, next as EditorMode);
-                      return;
+              <div className="max-sm:px-0 sm:px-[10px]">
+                <div className={AGENT_CENTER_CONTENT_CLASS}>
+                  <ChatComposer
+                    key={composerDraftId}
+                    mode={composerState?.mode ?? draftMode}
+                    onModeChange={(next) => {
+                      if (selectedConversationId) {
+                        void setConversationMode(selectedConversationId, next as EditorMode);
+                        return;
+                      }
+                      updateWorkspaceSession((current) => ({
+                        ...current,
+                        chat: {
+                          ...current.chat,
+                          mode: next,
+                        },
+                      }));
+                    }}
+                    model={composerState?.model ?? draftModel}
+                    onModelChange={(next) => {
+                      if (selectedConversationId) {
+                        void setConversationModel(selectedConversationId, next);
+                        return;
+                      }
+                      updateWorkspaceSession((current) => ({
+                        ...current,
+                        chat: {
+                          ...current.chat,
+                          model: next,
+                        },
+                      }));
+                    }}
+                    backendId={composerState?.backendId ?? draftBackend?.id ?? workspaceSession.chat.backendId}
+                    backends={backends}
+                    onBackendChange={(next) => {
+                      if (selectedConversationId) {
+                        void setConversationBackend(selectedConversationId, next);
+                        return;
+                      }
+                      setDraftBackend(next);
+                    }}
+                    models={composerState?.models ?? draftModels}
+                    modeOptions={composerState?.modeOptions ?? draftModeOptions}
+                    sessionConfigOptions={composerState?.sessionConfigOptions ?? []}
+                    onSessionConfigOptionChange={(configId, value) => {
+                      if (!selectedConversationId) {
+                        return;
+                      }
+                      void setConversationConfigOption(selectedConversationId, configId, value);
+                    }}
+                    value={composerDraftText}
+                    onValueChange={(next) => {
+                      upsertComposerDraft(composerDraftId, {
+                        title: composerDraftTitle,
+                        content: next,
+                      });
+                    }}
+                    selection={composerSelection}
+                    onSelectionChange={(next) =>
+                      setComposerSelection(composerDraftId, next)
                     }
-                    updateWorkspaceSession((current) => ({
-                      ...current,
-                      chat: {
-                        ...current.chat,
-                        mode: next,
-                      },
-                    }));
-                  }}
-                  model={composerState?.model ?? draftModel}
-                  onModelChange={(next) => {
-                    if (selectedConversationId) {
-                      void setConversationModel(selectedConversationId, next);
-                      return;
+                    agentShellDockHeightExpand
+                    busy={composerState?.busy ?? false}
+                    configLocked={false}
+                    onSubmit={handleSubmit}
+                    onCancel={() =>
+                      selectedConversationId
+                        ? cancelConversation(selectedConversationId)
+                        : undefined
                     }
-                    updateWorkspaceSession((current) => ({
-                      ...current,
-                      chat: {
-                        ...current.chat,
-                        model: next,
-                      },
-                    }));
-                  }}
-                  backendId={composerState?.backendId ?? draftBackend?.id ?? workspaceSession.chat.backendId}
-                  backends={backends}
-                  onBackendChange={(next) => {
-                    if (selectedConversationId) {
-                      void setConversationBackend(selectedConversationId, next);
-                      return;
-                    }
-                    setDraftBackend(next);
-                  }}
-                  models={composerState?.models ?? draftModels}
-                  modeOptions={composerState?.modeOptions ?? draftModeOptions}
-                  sessionConfigOptions={composerState?.sessionConfigOptions ?? []}
-                  onSessionConfigOptionChange={(configId, value) => {
-                    if (!selectedConversationId) {
-                      return;
-                    }
-                    void setConversationConfigOption(selectedConversationId, configId, value);
-                  }}
-                  value={composerDraftText}
-                  onValueChange={(next) => {
-                    upsertComposerDraft(composerDraftId, {
-                      title: composerDraftTitle,
-                      content: next,
-                    });
-                  }}
-                  selection={composerSelection}
-                  onSelectionChange={(next) =>
-                    setComposerSelection(composerDraftId, next)
-                  }
-                  agentShellDockHeightExpand
-                  busy={composerState?.busy ?? false}
-                  configLocked={false}
-                  onSubmit={handleSubmit}
-                  onCancel={() =>
-                    selectedConversationId
-                      ? cancelConversation(selectedConversationId)
-                      : undefined
-                  }
-                  layout="docked-bottom"
-                />
+                    layout="docked-bottom"
+                  />
+                </div>
               </div>
             </div>
           </div>
