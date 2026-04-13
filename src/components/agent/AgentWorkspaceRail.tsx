@@ -15,6 +15,7 @@ import { createPortal } from "react-dom";
 import { useWorkbenchContextMenu } from "@/components/ide/WorkbenchContextMenuProvider";
 import type { WorkbenchMenuItem } from "@/components/ide/workbench-context-menu-types";
 import { RecentChatsModal, type RecentChatOption } from "@/components/ide/RecentChatsModal";
+import { useServerConnections } from "@/components/server/ServerConnectionsProvider";
 import { AgentConversationRow } from "@/components/agent/rail/AgentConversationRow";
 import { useAgentConversations } from "@/components/chat/AgentConversationsContext";
 import { useOpenInEditor } from "@/components/editor/OpenInEditorContext";
@@ -23,6 +24,7 @@ import {
   AGENT_RAIL_FILTER_TOGGLE_KEYS,
   type AgentRailFilterToggleKey,
 } from "@/lib/agent-rail";
+import { buildServerScopedStorageKey } from "@/lib/server-connections";
 import { useClickOutside } from "@/hooks/useClickOutside";
 import { AGENT_RAIL_OPEN_SEARCH_EVENT } from "@/components/agent/agent-rail-events";
 import { useAgentShellState } from "./AgentShellStateContext";
@@ -30,14 +32,18 @@ import { useWorkspace } from "@/contexts/WorkspaceContext";
 
 const PINNED_SECTION_WORKSPACE_ID = "__agentPinned__";
 
-const COLLAPSED_WORKSPACES_STORAGE_KEY = "opencursor.agent-rail-collapsed-workspaces";
+const COLLAPSED_WORKSPACES_STORAGE_KEY = "agent-rail-collapsed-workspaces";
 
-function readCollapsedWorkspaceIdsFromStorage(): Set<string> {
+function getCollapsedWorkspacesStorageKey(serverId: string): string {
+  return buildServerScopedStorageKey(COLLAPSED_WORKSPACES_STORAGE_KEY, serverId);
+}
+
+function readCollapsedWorkspaceIdsFromStorage(serverId: string): Set<string> {
   if (typeof window === "undefined") {
     return new Set();
   }
   try {
-    const raw = window.localStorage.getItem(COLLAPSED_WORKSPACES_STORAGE_KEY);
+    const raw = window.localStorage.getItem(getCollapsedWorkspacesStorageKey(serverId));
     if (!raw) {
       return new Set();
     }
@@ -51,10 +57,10 @@ function readCollapsedWorkspaceIdsFromStorage(): Set<string> {
   }
 }
 
-function writeCollapsedWorkspaceIdsToStorage(ids: Set<string>) {
+function writeCollapsedWorkspaceIdsToStorage(ids: Set<string>, serverId: string) {
   try {
     window.localStorage.setItem(
-      COLLAPSED_WORKSPACES_STORAGE_KEY,
+      getCollapsedWorkspacesStorageKey(serverId),
       JSON.stringify([...ids])
     );
   } catch {
@@ -72,6 +78,7 @@ const FILTER_TOGGLE_LABELS: Record<AgentRailFilterToggleKey, string> = {
 };
 
 export function AgentWorkspaceRail() {
+  const { activeConnection } = useServerConnections();
   const { renameConversation } = useAgentConversations();
   const { openAgentConversation } = useOpenInEditor();
   const {
@@ -101,6 +108,7 @@ export function AgentWorkspaceRail() {
   const [filterMenuPos, setFilterMenuPos] = useState({ top: 0, left: 0 });
   const [collapsedWorkspaceIds, setCollapsedWorkspaceIds] = useState<Set<string>>(new Set());
   const [recentChatsOpen, setRecentChatsOpen] = useState(false);
+  const activeServerId = activeConnection.id;
   const [renameState, setRenameState] = useState<{
     conversationId: string;
     draft: string;
@@ -120,8 +128,8 @@ export function AgentWorkspaceRail() {
   }, [filterMenuOpen]);
 
   useLayoutEffect(() => {
-    setCollapsedWorkspaceIds(readCollapsedWorkspaceIdsFromStorage());
-  }, []);
+    setCollapsedWorkspaceIds(readCollapsedWorkspaceIdsFromStorage(activeServerId));
+  }, [activeServerId]);
 
   useClickOutside(filterPanelRef, () => setFilterMenuOpen(false), filterMenuOpen, [
     filterAnchorRef,
@@ -191,10 +199,10 @@ export function AgentWorkspaceRail() {
       } else {
         next.add(workspaceId);
       }
-      writeCollapsedWorkspaceIdsToStorage(next);
+      writeCollapsedWorkspaceIdsToStorage(next, activeServerId);
       return next;
     });
-  }, []);
+  }, [activeServerId]);
 
   const beginConversationRename = useCallback(
     (conversation: AgentRailConversationSummary) => {

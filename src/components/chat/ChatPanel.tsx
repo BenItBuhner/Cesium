@@ -61,6 +61,7 @@ import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { JsonWebSocket } from "@/lib/ws-client";
 import { useWorkbenchNotifications } from "@/components/notifications/WorkbenchNotificationProvider";
 import { WORKBENCH_NOTIFICATION_KIND } from "@/components/notifications/workbench-notification-types";
+import { useServerConnections } from "@/components/server/ServerConnectionsProvider";
 import {
   answerAgentPermission,
   buildAgentWebSocketUrl,
@@ -187,6 +188,7 @@ function mergeConversationByRecency(
 }
 
 export function ChatPanel() {
+  const { activeConnection } = useServerConnections();
   const { openAt } = useWorkbenchContextMenu();
   const {
     composerDrafts,
@@ -233,10 +235,11 @@ export function ChatPanel() {
   const hydratingConversationIdsRef = useRef(new Set<string>());
   const conversationsByIdRef = useRef(conversationsById);
   const tabs = workspaceSession.chat.tabs;
+  const activeServerId = activeConnection.id;
 
   const globalPinnedAgentConversationIds = useSyncExternalStore(
     subscribeGlobalPinnedAgentConversationIds,
-    getGlobalPinnedAgentConversationIdsSnapshot,
+    () => getGlobalPinnedAgentConversationIdsSnapshot(activeServerId),
     () => []
   );
 
@@ -245,9 +248,10 @@ export function ChatPanel() {
       return;
     }
     migrateGlobalPinnedAgentConversationIdsIfNeeded(
-      workspaceSession.agentView.pinnedAgentConversationIds
+      workspaceSession.agentView.pinnedAgentConversationIds,
+      activeServerId
     );
-  }, [workspaceSession.agentView.pinnedAgentConversationIds]);
+  }, [activeServerId, workspaceSession.agentView.pinnedAgentConversationIds]);
 
   conversationsByIdRef.current = conversationsById;
 
@@ -1595,13 +1599,13 @@ export function ChatPanel() {
             if (!isPersistedConversationTabId(tabId)) {
               return;
             }
-            const prev = getGlobalPinnedAgentConversationIdsSnapshot();
+            const prev = getGlobalPinnedAgentConversationIdsSnapshot(activeServerId);
             if (tabIsPinned) {
               if (!prev.includes(tabId)) {
                 return;
               }
               const next = prev.filter((id) => id !== tabId);
-              writeGlobalPinnedAgentConversationIds(next);
+              writeGlobalPinnedAgentConversationIds(next, activeServerId);
               updateWorkspaceSession((current) => ({
                 ...current,
                 agentView: {
@@ -1612,7 +1616,7 @@ export function ChatPanel() {
               return;
             }
             const next = [tabId, ...prev.filter((id) => id !== tabId)];
-            writeGlobalPinnedAgentConversationIds(next);
+            writeGlobalPinnedAgentConversationIds(next, activeServerId);
             updateWorkspaceSession((current) => ({
               ...current,
               agentView: {
@@ -1692,6 +1696,7 @@ export function ChatPanel() {
       openAt,
       tabs,
       updateWorkspaceSession,
+      activeServerId,
       globalPinnedAgentConversationIds,
       workspaceWindows,
     ]

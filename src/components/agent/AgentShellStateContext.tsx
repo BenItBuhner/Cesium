@@ -14,6 +14,7 @@ import {
   type ReactNode,
   type SetStateAction,
 } from "react";
+import { useServerConnections } from "@/components/server/ServerConnectionsProvider";
 import { useViewport } from "@/hooks/useViewport";
 import type {
   AgentBackendInfo,
@@ -44,6 +45,10 @@ import {
   subscribeGlobalPinnedAgentConversationIds,
   writeGlobalPinnedAgentConversationIds,
 } from "@/lib/agent-rail-pins";
+import {
+  buildServerScopedStorageKey,
+  createDefaultServerConnection,
+} from "@/lib/server-connections";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import {
   AGENT_NEW_CHAT_SESSION_ID,
@@ -120,34 +125,62 @@ const AgentShellStateContext =
 
 function getWorkspaceSessionBackupKey(
   workspaceId: string,
-  windowId: string | null
+  windowId: string | null,
+  serverId: string
 ): string {
   const sessionScopeId = windowId ? `${workspaceId}:window:${windowId}` : workspaceId;
-  return `opencursor.workspace-session.${sessionScopeId}`;
+  return buildServerScopedStorageKey(`workspace-session.${sessionScopeId}`, serverId);
 }
 
 /** One global snapshot for the agent shell (rail + composed layout); not workspace- or window-scoped. */
-const AGENT_SHELL_SHARED_STORAGE_KEY = "opencursor.agent-shell.shared";
+const AGENT_SHELL_SHARED_STORAGE_KEY = "agent-shell.shared";
+const LEGACY_AGENT_SHELL_SHARED_STORAGE_KEY = "opencursor.agent-shell.shared";
 const LEGACY_AGENT_SHELL_WINDOW_KEY_PREFIX = "opencursor.agent-shell.window.";
 
-let agentShellLegacyStorageMigrationDone = false;
+const agentShellLegacyStorageMigrationDone = new Set<string>();
 
-function migrateLegacyAgentShellWindowSnapshots(): void {
-  if (typeof window === "undefined" || agentShellLegacyStorageMigrationDone) {
+function getAgentShellSharedStorageKey(serverId: string): string {
+  return buildServerScopedStorageKey(AGENT_SHELL_SHARED_STORAGE_KEY, serverId);
+}
+
+function migrateLegacyAgentShellWindowSnapshots(serverId: string): void {
+  if (
+    typeof window === "undefined" ||
+    agentShellLegacyStorageMigrationDone.has(serverId)
+  ) {
     return;
   }
   try {
-    if (window.localStorage.getItem(AGENT_SHELL_SHARED_STORAGE_KEY)) {
+    const scopedSharedKey = getAgentShellSharedStorageKey(serverId);
+    if (window.localStorage.getItem(scopedSharedKey)) {
       for (let i = window.localStorage.length - 1; i >= 0; i -= 1) {
         const k = window.localStorage.key(i);
-        if (k?.startsWith(LEGACY_AGENT_SHELL_WINDOW_KEY_PREFIX)) {
+        if (
+          serverId === createDefaultServerConnection().id &&
+          k?.startsWith(LEGACY_AGENT_SHELL_WINDOW_KEY_PREFIX)
+        ) {
           window.localStorage.removeItem(k);
         }
       }
-      agentShellLegacyStorageMigrationDone = true;
+      agentShellLegacyStorageMigrationDone.add(serverId);
       return;
     }
+    if (serverId === createDefaultServerConnection().id) {
+      const legacySharedRaw = window.localStorage.getItem(
+        LEGACY_AGENT_SHELL_SHARED_STORAGE_KEY
+      );
+      if (legacySharedRaw) {
+        window.localStorage.setItem(scopedSharedKey, legacySharedRaw);
+        window.localStorage.removeItem(LEGACY_AGENT_SHELL_SHARED_STORAGE_KEY);
+        agentShellLegacyStorageMigrationDone.add(serverId);
+        return;
+      }
+    }
     const legacyKeys: string[] = [];
+    if (serverId !== createDefaultServerConnection().id) {
+      agentShellLegacyStorageMigrationDone.add(serverId);
+      return;
+    }
     for (let i = 0; i < window.localStorage.length; i += 1) {
       const k = window.localStorage.key(i);
       if (k?.startsWith(LEGACY_AGENT_SHELL_WINDOW_KEY_PREFIX)) {
@@ -155,7 +188,7 @@ function migrateLegacyAgentShellWindowSnapshots(): void {
       }
     }
     if (legacyKeys.length === 0) {
-      agentShellLegacyStorageMigrationDone = true;
+      agentShellLegacyStorageMigrationDone.add(serverId);
       return;
     }
     legacyKeys.sort();
@@ -178,7 +211,7 @@ function migrateLegacyAgentShellWindowSnapshots(): void {
           normalizeAgentShellDesktopLayout(parsed.agentShellDesktopLayout) ?? null,
       };
       window.localStorage.setItem(
-        AGENT_SHELL_SHARED_STORAGE_KEY,
+        scopedSharedKey,
         JSON.stringify({
           leftRailCollapsed: snapshot.leftRailCollapsed,
           agentShellDesktopLayout: snapshot.agentShellDesktopLayout,
@@ -192,19 +225,19 @@ function migrateLegacyAgentShellWindowSnapshots(): void {
         window.localStorage.removeItem(k);
       }
     }
-    agentShellLegacyStorageMigrationDone = true;
+    agentShellLegacyStorageMigrationDone.add(serverId);
   } catch {
     // ignore
   }
 }
 
-function readAgentShellSharedSnapshot(): AgentShellWindowSnapshot | null {
+function readAgentShellSharedSnapshot(serverId: string): AgentShellWindowSnapshot | null {
   if (typeof window === "undefined") {
     return null;
   }
   try {
-    migrateLegacyAgentShellWindowSnapshots();
-    const raw = window.localStorage.getItem(AGENT_SHELL_SHARED_STORAGE_KEY);
+    migrateLegacyAgentShellWindowSnapshots(serverId);
+    const raw = window.localStorage.getItem(getAgentShellSharedStorageKey(serverId));
     if (!raw) {
       return null;
     }
@@ -225,13 +258,16 @@ function readAgentShellSharedSnapshot(): AgentShellWindowSnapshot | null {
   }
 }
 
-function writeAgentShellSharedSnapshot(snapshot: AgentShellWindowSnapshot) {
+function writeAgentShellSharedSnapshot(
+  snapshot: AgentShellWindowSnapshot,
+  serverId: string
+) {
   if (typeof window === "undefined") {
     return;
   }
   try {
     window.localStorage.setItem(
-      AGENT_SHELL_SHARED_STORAGE_KEY,
+      getAgentShellSharedStorageKey(serverId),
       JSON.stringify({
         leftRailCollapsed: snapshot.leftRailCollapsed,
         agentShellDesktopLayout:
@@ -245,14 +281,17 @@ function writeAgentShellSharedSnapshot(snapshot: AgentShellWindowSnapshot) {
 
 function readWorkspaceRailArchiveSnapshot(
   workspaceId: string,
-  windowId: string | null
+  windowId: string | null,
+  serverId: string
 ): WorkspaceRailArchiveSnapshot | null {
   if (typeof window === "undefined") {
     return null;
   }
 
   try {
-    const raw = window.localStorage.getItem(getWorkspaceSessionBackupKey(workspaceId, windowId));
+    const raw = window.localStorage.getItem(
+      getWorkspaceSessionBackupKey(workspaceId, windowId, serverId)
+    );
     if (!raw) {
       return null;
     }
@@ -350,6 +389,7 @@ export function AgentShellStateProvider({
 }: {
   children: ReactNode;
 }) {
+  const { activeConnection } = useServerConnections();
   const {
     activeWorkspaceId,
     activeWindowId,
@@ -361,6 +401,7 @@ export function AgentShellStateProvider({
     updateWorkspaceSession,
   } = useWorkspace();
   const { isMobile } = useViewport();
+  const activeServerId = activeConnection.id;
   const urlConversationId =
     typeof window !== "undefined"
       ? new URL(window.location.href).searchParams.get("conversationId")?.trim() || null
@@ -501,7 +542,11 @@ export function AgentShellStateProvider({
         if (workspaceId === activeWorkspaceId) {
           continue;
         }
-        const snapshot = readWorkspaceRailArchiveSnapshot(workspaceId, activeWindowId);
+        const snapshot = readWorkspaceRailArchiveSnapshot(
+          workspaceId,
+          activeWindowId,
+          activeServerId
+        );
         if (!snapshot) {
           continue;
         }
@@ -514,7 +559,7 @@ export function AgentShellStateProvider({
       }
       return changed ? next : current;
     });
-  }, [activeWindowId, activeWorkspaceId, orderedGroups]);
+  }, [activeServerId, activeWindowId, activeWorkspaceId, orderedGroups]);
 
   const activeWorkspaceGroup = useMemo(
     () => orderedGroups.find((group) => group.workspace.id === activeWorkspaceId) ?? null,
@@ -671,7 +716,10 @@ export function AgentShellStateProvider({
     [persistedConversationId]
   );
 
-  const sidePaneSessionMap = workspaceSession.agentView.sidePaneSessionsByConversationId ?? {};
+  const sidePaneSessionMap = useMemo(
+    () => workspaceSession.agentView.sidePaneSessionsByConversationId ?? {},
+    [workspaceSession.agentView.sidePaneSessionsByConversationId]
+  );
   const hasAnySidePaneSessions = Object.keys(sidePaneSessionMap).length > 0;
   const legacySidePaneSession = useMemo(
     () => createLegacySidePaneSession(workspaceSession),
@@ -698,7 +746,7 @@ export function AgentShellStateProvider({
     if (typeof window === "undefined") {
       return;
     }
-    const snapshot = readAgentShellSharedSnapshot();
+    const snapshot = readAgentShellSharedSnapshot(activeServerId);
     if (!snapshot) {
       return;
     }
@@ -708,13 +756,13 @@ export function AgentShellStateProvider({
     if (snapshot.agentShellDesktopLayout != null) {
       setSharedAgentShellDesktopLayoutState(snapshot.agentShellDesktopLayout);
     }
-  }, []);
+  }, [activeServerId]);
 
   useEffect(() => {
     if (!sessionReady || !activeWorkspaceId || typeof window === "undefined") {
       return;
     }
-    if (readAgentShellSharedSnapshot()?.agentShellDesktopLayout != null) {
+    if (readAgentShellSharedSnapshot(activeServerId)?.agentShellDesktopLayout != null) {
       return;
     }
     const fallbackLayout =
@@ -731,8 +779,9 @@ export function AgentShellStateProvider({
     writeAgentShellSharedSnapshot({
       leftRailCollapsed: nextLeftRailCollapsed,
       agentShellDesktopLayout: fallbackLayout,
-    });
+    }, activeServerId);
   }, [
+    activeServerId,
     activeWorkspaceId,
     sessionReady,
     workspaceSession.agentView.agentShellDesktopLayout,
@@ -964,8 +1013,8 @@ export function AgentShellStateProvider({
     writeAgentShellSharedSnapshot({
       leftRailCollapsed: collapsed,
       agentShellDesktopLayout: sharedAgentShellDesktopLayoutRef.current,
-    });
-  }, []);
+    }, activeServerId);
+  }, [activeServerId]);
 
   const toggleLeftRailCollapsed = useCallback(() => {
     setLeftRailCollapsed(!sharedLeftRailCollapsed);
@@ -1064,7 +1113,7 @@ export function AgentShellStateProvider({
       writeAgentShellSharedSnapshot({
         leftRailCollapsed: sharedLeftRailCollapsedRef.current,
         agentShellDesktopLayout: nextLayout,
-      });
+      }, activeServerId);
       updateWorkspaceSession((current) => {
         const sessions = current.agentView.sidePaneSessionsByConversationId ?? {};
         const existing =
@@ -1087,7 +1136,12 @@ export function AgentShellStateProvider({
         };
       });
     },
-    [activeSidePaneSession.agentShellDesktopLayout, sidePaneScopeId, updateWorkspaceSession]
+    [
+      activeServerId,
+      activeSidePaneSession.agentShellDesktopLayout,
+      sidePaneScopeId,
+      updateWorkspaceSession,
+    ]
   );
 
   const setExpandedComposerDraft = useCallback(
@@ -1149,7 +1203,8 @@ export function AgentShellStateProvider({
     async (summary: AgentRailConversationSummary) => {
       const archiveSnapshot = readWorkspaceRailArchiveSnapshot(
         summary.workspaceId,
-        activeWindowId
+        activeWindowId,
+        activeServerId
       );
       if (archiveSnapshot) {
         setArchivedConversationIdsByWorkspaceId((current) => {
@@ -1182,7 +1237,13 @@ export function AgentShellStateProvider({
         );
       }
     },
-    [activeWindowId, activeWorkspaceId, openWorkspaceById, setSelectedConversationId]
+    [
+      activeServerId,
+      activeWindowId,
+      activeWorkspaceId,
+      openWorkspaceById,
+      setSelectedConversationId,
+    ]
   );
 
   const archiveConversation = useCallback(
@@ -1221,9 +1282,9 @@ export function AgentShellStateProvider({
 
   const pinConversation = useCallback(
     (conversationId: string) => {
-      const prev = getGlobalPinnedAgentConversationIdsSnapshot();
+      const prev = getGlobalPinnedAgentConversationIdsSnapshot(activeServerId);
       const next = [conversationId, ...prev.filter((id) => id !== conversationId)];
-      writeGlobalPinnedAgentConversationIds(next);
+      writeGlobalPinnedAgentConversationIds(next, activeServerId);
       updateWorkspaceSession((current) => ({
         ...current,
         agentView: {
@@ -1232,17 +1293,17 @@ export function AgentShellStateProvider({
         },
       }));
     },
-    [updateWorkspaceSession]
+    [activeServerId, updateWorkspaceSession]
   );
 
   const unpinConversation = useCallback(
     (conversationId: string) => {
-      const prev = getGlobalPinnedAgentConversationIdsSnapshot();
+      const prev = getGlobalPinnedAgentConversationIdsSnapshot(activeServerId);
       if (!prev.includes(conversationId)) {
         return;
       }
       const next = prev.filter((id) => id !== conversationId);
-      writeGlobalPinnedAgentConversationIds(next);
+      writeGlobalPinnedAgentConversationIds(next, activeServerId);
       updateWorkspaceSession((current) => ({
         ...current,
         agentView: {
@@ -1251,7 +1312,7 @@ export function AgentShellStateProvider({
         },
       }));
     },
-    [updateWorkspaceSession]
+    [activeServerId, updateWorkspaceSession]
   );
 
   const railFilterToggles = useMemo(
@@ -1319,10 +1380,15 @@ export function AgentShellStateProvider({
       return cached;
     }
     return (
-      readWorkspaceRailArchiveSnapshot(activeWorkspaceId, activeWindowId)?.archivedConversationIds ??
+      readWorkspaceRailArchiveSnapshot(
+        activeWorkspaceId,
+        activeWindowId,
+        activeServerId
+      )?.archivedConversationIds ??
       []
     );
   }, [
+    activeServerId,
     activeWorkspaceId,
     activeWindowId,
     archivedConversationIdsByWorkspaceId,
@@ -1338,7 +1404,7 @@ export function AgentShellStateProvider({
 
   const pinnedAgentConversationIds = useSyncExternalStore(
     subscribeGlobalPinnedAgentConversationIds,
-    getGlobalPinnedAgentConversationIdsSnapshot,
+    () => getGlobalPinnedAgentConversationIdsSnapshot(activeServerId),
     () => []
   );
 
@@ -1347,9 +1413,10 @@ export function AgentShellStateProvider({
       return;
     }
     migrateGlobalPinnedAgentConversationIdsIfNeeded(
-      workspaceSession.agentView.pinnedAgentConversationIds
+      workspaceSession.agentView.pinnedAgentConversationIds,
+      activeServerId
     );
-  }, [sessionReady, workspaceSession.agentView.pinnedAgentConversationIds]);
+  }, [activeServerId, sessionReady, workspaceSession.agentView.pinnedAgentConversationIds]);
 
   const pinnedConversationIdSet = useMemo(
     () => new Set(pinnedAgentConversationIds),

@@ -2,18 +2,45 @@
 
 export const AGENT_RAIL_PINNED_IDS_STORAGE_KEY = "opencursor.agent-rail.pinned-conversation-ids";
 
-const WORKSPACE_SESSION_PREFIX = "opencursor.workspace-session.";
+import {
+  buildServerScopedStorageKey,
+  createDefaultServerConnection,
+  getActiveServerConnectionSnapshot,
+} from "@/lib/server-connections";
 
-let pinnedIdsSnapshot: string[] = [];
-let pinnedIdsSnapshotKey = "";
+const LEGACY_WORKSPACE_SESSION_PREFIX = "opencursor.workspace-session.";
+const WORKSPACE_SESSION_PREFIX = "workspace-session.";
+
+const pinnedIdsSnapshotByServerId = new Map<string, string[]>();
+const pinnedIdsSnapshotKeyByServerId = new Map<string, string>();
 
 const listeners = new Set<() => void>();
 
 function emitPinnedIdsChanged() {
-  pinnedIdsSnapshotKey = "";
+  pinnedIdsSnapshotByServerId.clear();
+  pinnedIdsSnapshotKeyByServerId.clear();
   for (const listener of listeners) {
     listener();
   }
+}
+
+function resolveServerId(serverId?: string | null): string {
+  return serverId ?? getActiveServerConnectionSnapshot().id;
+}
+
+function isDefaultServerId(serverId: string): boolean {
+  return serverId === createDefaultServerConnection().id;
+}
+
+function getPinnedIdsStorageKey(serverId?: string | null): string {
+  return buildServerScopedStorageKey(
+    AGENT_RAIL_PINNED_IDS_STORAGE_KEY,
+    resolveServerId(serverId)
+  );
+}
+
+function getWorkspaceSessionStoragePrefix(serverId: string): string {
+  return buildServerScopedStorageKey(WORKSPACE_SESSION_PREFIX, serverId);
 }
 
 export function normalizePinnedAgentConversationIds(raw: unknown): string[] {
@@ -43,19 +70,22 @@ function parseStoredPinnedIds(raw: string | null): string[] {
   }
 }
 
-export function getGlobalPinnedAgentConversationIdsSnapshot(): string[] {
+export function getGlobalPinnedAgentConversationIdsSnapshot(
+  serverId?: string | null
+): string[] {
   if (typeof window === "undefined") {
     return [];
   }
+  const resolvedServerId = resolveServerId(serverId);
   const parsed = parseStoredPinnedIds(
-    window.localStorage.getItem(AGENT_RAIL_PINNED_IDS_STORAGE_KEY)
+    window.localStorage.getItem(getPinnedIdsStorageKey(resolvedServerId))
   );
   const key = JSON.stringify(parsed);
-  if (key !== pinnedIdsSnapshotKey) {
-    pinnedIdsSnapshotKey = key;
-    pinnedIdsSnapshot = parsed;
+  if (key !== pinnedIdsSnapshotKeyByServerId.get(resolvedServerId)) {
+    pinnedIdsSnapshotKeyByServerId.set(resolvedServerId, key);
+    pinnedIdsSnapshotByServerId.set(resolvedServerId, parsed);
   }
-  return pinnedIdsSnapshot;
+  return pinnedIdsSnapshotByServerId.get(resolvedServerId) ?? parsed;
 }
 
 export function subscribeGlobalPinnedAgentConversationIds(onStoreChange: () => void): () => void {
@@ -68,16 +98,23 @@ export function subscribeGlobalPinnedAgentConversationIds(onStoreChange: () => v
   };
 }
 
-export function writeGlobalPinnedAgentConversationIds(ids: string[]): void {
+export function writeGlobalPinnedAgentConversationIds(
+  ids: string[],
+  serverId?: string | null
+): void {
   if (typeof window === "undefined") {
     return;
   }
+  const resolvedServerId = resolveServerId(serverId);
   const normalized = normalizePinnedAgentConversationIds(ids);
   try {
     window.localStorage.setItem(
-      AGENT_RAIL_PINNED_IDS_STORAGE_KEY,
+      getPinnedIdsStorageKey(resolvedServerId),
       JSON.stringify(normalized)
     );
+    if (isDefaultServerId(resolvedServerId)) {
+      window.localStorage.removeItem(AGENT_RAIL_PINNED_IDS_STORAGE_KEY);
+    }
   } catch {
     return;
   }
@@ -89,22 +126,43 @@ export function writeGlobalPinnedAgentConversationIds(ids: string[]): void {
  * when the global key is missing or empty.
  */
 export function migrateGlobalPinnedAgentConversationIdsIfNeeded(
-  workspaceSessionPinnedFallback?: string[] | null
+  workspaceSessionPinnedFallback?: string[] | null,
+  serverId?: string | null
 ): void {
   if (typeof window === "undefined") {
     return;
   }
+  const resolvedServerId = resolveServerId(serverId);
   const existing = parseStoredPinnedIds(
-    window.localStorage.getItem(AGENT_RAIL_PINNED_IDS_STORAGE_KEY)
+    window.localStorage.getItem(getPinnedIdsStorageKey(resolvedServerId))
   );
   if (existing.length > 0) {
     return;
   }
 
+  if (isDefaultServerId(resolvedServerId)) {
+    const legacyPinned = parseStoredPinnedIds(
+      window.localStorage.getItem(AGENT_RAIL_PINNED_IDS_STORAGE_KEY)
+    );
+    if (legacyPinned.length > 0) {
+      writeGlobalPinnedAgentConversationIds(legacyPinned, resolvedServerId);
+      try {
+        window.localStorage.removeItem(AGENT_RAIL_PINNED_IDS_STORAGE_KEY);
+      } catch {
+        // Ignore cleanup failures and continue using the scoped key.
+      }
+      return;
+    }
+  }
+
   const keys: string[] = [];
+  const scopedWorkspaceSessionPrefix = getWorkspaceSessionStoragePrefix(resolvedServerId);
   for (let i = 0; i < window.localStorage.length; i += 1) {
     const k = window.localStorage.key(i);
-    if (k?.startsWith(WORKSPACE_SESSION_PREFIX)) {
+    if (
+      k?.startsWith(scopedWorkspaceSessionPrefix) ||
+      (isDefaultServerId(resolvedServerId) && k?.startsWith(LEGACY_WORKSPACE_SESSION_PREFIX))
+    ) {
       keys.push(k);
     }
   }
@@ -146,5 +204,5 @@ export function migrateGlobalPinnedAgentConversationIdsIfNeeded(
   if (ordered.length === 0) {
     return;
   }
-  writeGlobalPinnedAgentConversationIds(ordered);
+  writeGlobalPinnedAgentConversationIds(ordered, resolvedServerId);
 }

@@ -1,15 +1,26 @@
 "use client";
 
 import { useState, type FormEvent, type ReactNode } from "react";
-import { LockKeyhole, LogOut } from "lucide-react";
+import { LockKeyhole, LogOut, RefreshCw } from "lucide-react";
 import { useAuth } from "@/components/auth/AuthProvider";
+import { ServerConnectionsManager } from "@/components/server/ServerConnectionsManager";
 
 export function AuthGate({ children }: { children: ReactNode }) {
-  const { ready, enabled, authenticated, session, loginPending, error, login, logout } =
-    useAuth();
+  const {
+    ready,
+    enabled,
+    authenticated,
+    session,
+    loginPending,
+    error,
+    login,
+    logout,
+    refreshAuthStatus,
+  } = useAuth();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [remember, setRemember] = useState(true);
+  const showingConnectionError = !enabled && !authenticated && Boolean(error);
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -27,13 +38,55 @@ export function AuthGate({ children }: { children: ReactNode }) {
     );
   }
 
-  if (!enabled || authenticated) {
+  if (!showingConnectionError && (!enabled || authenticated)) {
     return <>{children}</>;
+  }
+
+  if (showingConnectionError) {
+    return (
+      <main className="flex min-h-dvh items-center justify-center bg-[var(--bg-main)] px-6 py-10">
+        <div className="w-full max-w-[880px] rounded-[var(--radius-card)] border border-[var(--border-card)] bg-[var(--bg-card)] p-6 shadow-[var(--palette-shadow)]">
+          <div className="mb-5 flex items-start gap-4">
+            <div className="inline-flex size-[40px] shrink-0 items-center justify-center rounded-[10px] border border-[var(--border-card)] bg-[var(--bg-panel)] text-[var(--text-primary)]">
+              <LockKeyhole className="size-[20px]" strokeWidth={1.8} />
+            </div>
+            <div className="min-w-0">
+              <h1 className="font-sans text-[20px] font-semibold text-[var(--text-primary)]">
+                Connect to an OpenCursor server
+              </h1>
+              <p className="mt-2 max-w-[560px] font-sans text-[13px] leading-[1.55] text-[var(--text-secondary)]">
+                The selected server could not be reached. Switch to another saved server or retry
+                after the backend becomes available.
+              </p>
+            </div>
+          </div>
+
+          {error ? (
+            <div className="mb-5 rounded-[var(--radius-tab)] border border-[color-mix(in_srgb,var(--debug-accent)_28%,transparent)] bg-[color-mix(in_srgb,var(--debug-accent-bg)_82%,transparent)] px-[11px] py-[9px] font-sans text-[12px] leading-[1.45] text-[var(--text-primary)]">
+              {error}
+            </div>
+          ) : null}
+
+          <div className="mb-5 flex flex-wrap gap-[10px]">
+            <button
+              type="button"
+              onClick={() => void refreshAuthStatus()}
+              className="inline-flex h-[36px] items-center justify-center gap-[6px] rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-[var(--bg-panel)] px-[12px] font-sans text-[12px] font-medium text-[var(--text-primary)] transition-colors hover:bg-[var(--accent-bg)]"
+            >
+              <RefreshCw className="size-[14px]" strokeWidth={1.7} />
+              Retry server
+            </button>
+          </div>
+
+          <ServerConnectionsManager />
+        </div>
+      </main>
+    );
   }
 
   return (
     <main className="flex min-h-dvh items-center justify-center bg-[var(--bg-main)] px-6 py-10">
-      <div className="w-full max-w-[420px] rounded-[var(--radius-card)] border border-[var(--border-card)] bg-[var(--bg-card)] p-6 shadow-[var(--palette-shadow)]">
+      <div className="w-full max-w-[920px] rounded-[var(--radius-card)] border border-[var(--border-card)] bg-[var(--bg-card)] p-6 shadow-[var(--palette-shadow)]">
         <div className="mb-5 flex items-start justify-between gap-4">
           <div className="min-w-0">
             <div className="mb-2 inline-flex size-[36px] items-center justify-center rounded-[10px] border border-[var(--border-card)] bg-[var(--bg-panel)] text-[var(--text-primary)]">
@@ -44,7 +97,8 @@ export function AuthGate({ children }: { children: ReactNode }) {
             </h1>
             <p className="mt-2 font-sans text-[13px] leading-[1.5] text-[var(--text-secondary)]">
               This server requires authentication before workspace files, terminals, and agent
-              events can be accessed.
+              events can be accessed. You can switch or save servers here without losing other
+              server logins stored in this browser.
             </p>
           </div>
           {session ? (
@@ -59,61 +113,67 @@ export function AuthGate({ children }: { children: ReactNode }) {
           ) : null}
         </div>
 
-        <form className="flex flex-col gap-3" onSubmit={handleSubmit}>
-          <label className="flex flex-col gap-[6px]">
-            <span className="font-sans text-[12px] font-medium text-[var(--text-secondary)]">
-              Username
-            </span>
-            <input
-              type="text"
-              autoComplete="username"
-              value={username}
-              onChange={(event) => setUsername(event.target.value)}
-              className="w-full rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-[var(--bg-main)] px-[12px] py-[10px] font-sans text-[13px] text-[var(--text-primary)] outline-none transition-colors focus:border-[var(--accent)]"
-              placeholder="Username"
-              required
-            />
-          </label>
+        <div className="grid gap-[20px] lg:grid-cols-[minmax(0,340px)_minmax(0,1fr)]">
+          <form className="flex flex-col gap-3" onSubmit={handleSubmit}>
+            <label className="flex flex-col gap-[6px]">
+              <span className="font-sans text-[12px] font-medium text-[var(--text-secondary)]">
+                Username
+              </span>
+              <input
+                type="text"
+                autoComplete="username"
+                value={username}
+                onChange={(event) => setUsername(event.target.value)}
+                className="w-full rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-[var(--bg-main)] px-[12px] py-[10px] font-sans text-[13px] text-[var(--text-primary)] outline-none transition-colors focus:border-[var(--accent)]"
+                placeholder="Username"
+                required
+              />
+            </label>
 
-          <label className="flex flex-col gap-[6px]">
-            <span className="font-sans text-[12px] font-medium text-[var(--text-secondary)]">
-              Password
-            </span>
-            <input
-              type="password"
-              autoComplete="current-password"
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-              className="w-full rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-[var(--bg-main)] px-[12px] py-[10px] font-sans text-[13px] text-[var(--text-primary)] outline-none transition-colors focus:border-[var(--accent)]"
-              placeholder="Password"
-              required
-            />
-          </label>
+            <label className="flex flex-col gap-[6px]">
+              <span className="font-sans text-[12px] font-medium text-[var(--text-secondary)]">
+                Password
+              </span>
+              <input
+                type="password"
+                autoComplete="current-password"
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                className="w-full rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-[var(--bg-main)] px-[12px] py-[10px] font-sans text-[13px] text-[var(--text-primary)] outline-none transition-colors focus:border-[var(--accent)]"
+                placeholder="Password"
+                required
+              />
+            </label>
 
-          <label className="mt-1 inline-flex items-center gap-[8px] font-sans text-[12px] text-[var(--text-secondary)]">
-            <input
-              type="checkbox"
-              checked={remember}
-              onChange={(event) => setRemember(event.target.checked)}
-              className="size-[14px] rounded-[var(--radius-checkbox)] border border-[var(--border-card)] bg-[var(--bg-main)] accent-[var(--accent)]"
-            />
-            Remember this session
-          </label>
+            <label className="mt-1 inline-flex items-center gap-[8px] font-sans text-[12px] text-[var(--text-secondary)]">
+              <input
+                type="checkbox"
+                checked={remember}
+                onChange={(event) => setRemember(event.target.checked)}
+                className="size-[14px] rounded-[var(--radius-checkbox)] border border-[var(--border-card)] bg-[var(--bg-main)] accent-[var(--accent)]"
+              />
+              Remember this session
+            </label>
 
-          {error ? (
-            <div className="rounded-[var(--radius-tab)] border border-[color-mix(in_srgb,var(--debug-accent)_28%,transparent)] bg-[color-mix(in_srgb,var(--debug-accent-bg)_82%,transparent)] px-[11px] py-[9px] font-sans text-[12px] leading-[1.45] text-[var(--text-primary)]">
-              {error}
-            </div>
-          ) : null}
+            {error ? (
+              <div className="rounded-[var(--radius-tab)] border border-[color-mix(in_srgb,var(--debug-accent)_28%,transparent)] bg-[color-mix(in_srgb,var(--debug-accent-bg)_82%,transparent)] px-[11px] py-[9px] font-sans text-[12px] leading-[1.45] text-[var(--text-primary)]">
+                {error}
+              </div>
+            ) : null}
 
-          <button
-            type="submit"
-            disabled={loginPending}
-            className="mt-2 inline-flex h-[40px] items-center justify-center rounded-[var(--radius-tab)] border border-[var(--accent)] bg-[var(--accent)] px-[12px] font-sans text-[13px] font-medium text-[var(--bg-main)] transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50 dark:text-[var(--bg-panel)]"
-          >
-            {loginPending ? "Signing in..." : "Sign in"}
-          </button>
-        </form>
+            <button
+              type="submit"
+              disabled={loginPending}
+              className="mt-2 inline-flex h-[40px] items-center justify-center rounded-[var(--radius-tab)] border border-[var(--accent)] bg-[var(--accent)] px-[12px] font-sans text-[13px] font-medium text-[var(--bg-main)] transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50 dark:text-[var(--bg-panel)]"
+            >
+              {loginPending ? "Signing in..." : "Sign in"}
+            </button>
+          </form>
+
+          <div className="min-w-0">
+            <ServerConnectionsManager />
+          </div>
+        </div>
       </div>
     </main>
   );

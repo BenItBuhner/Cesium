@@ -11,12 +11,14 @@ import {
   type ReactNode,
 } from "react";
 import type { TextSelection } from "@/components/input/text-buffer";
+import { useServerConnections } from "@/components/server/ServerConnectionsProvider";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import type {
   AgentBackendId,
   AgentBackendInfo,
   AgentConfigOption,
 } from "@/lib/agent-types";
+import { buildServerScopedStorageKey } from "@/lib/server-connections";
 import type {
   AgentModeOption,
   ChatMessage,
@@ -75,21 +77,25 @@ type PersistedComposerState = {
 };
 
 const COMPOSER_STATE_SCHEMA_VERSION = 1;
-const COMPOSER_STATE_STORAGE_PREFIX = "opencursor.composer-state.";
+const COMPOSER_STATE_STORAGE_PREFIX = "composer-state.";
 
-function getComposerStateStorageKey(workspaceId: string): string {
-  return `${COMPOSER_STATE_STORAGE_PREFIX}${workspaceId}`;
+function getComposerStateStorageKey(workspaceId: string, serverId: string): string {
+  return buildServerScopedStorageKey(
+    `${COMPOSER_STATE_STORAGE_PREFIX}${workspaceId}`,
+    serverId
+  );
 }
 
 function readPersistedComposerState(
-  workspaceId: string
+  workspaceId: string,
+  serverId: string
 ): PersistedComposerState | null {
   if (typeof window === "undefined") {
     return null;
   }
   try {
     const raw = window.localStorage.getItem(
-      getComposerStateStorageKey(workspaceId)
+      getComposerStateStorageKey(workspaceId, serverId)
     );
     if (!raw) {
       return null;
@@ -120,14 +126,15 @@ function readPersistedComposerState(
 
 function writePersistedComposerState(
   workspaceId: string,
-  state: PersistedComposerState
+  state: PersistedComposerState,
+  serverId: string
 ): void {
   if (typeof window === "undefined") {
     return;
   }
   try {
     window.localStorage.setItem(
-      getComposerStateStorageKey(workspaceId),
+      getComposerStateStorageKey(workspaceId, serverId),
       JSON.stringify(state)
     );
   } catch {
@@ -171,7 +178,9 @@ type Ctx = {
 const OpenInEditorContext = createContext<Ctx | null>(null);
 
 export function OpenInEditorProvider({ children }: { children: ReactNode }) {
+  const { activeConnection } = useServerConnections();
   const { activeWorkspaceId } = useWorkspace();
+  const activeServerId = activeConnection.id;
   const handlerRef = useRef<TranscriptHandler | null>(null);
   const pendingRef = useRef<OpenTranscriptPayload | null>(null);
   const composerHandlerRef = useRef<ComposerDraftHandler | null>(null);
@@ -323,12 +332,12 @@ export function OpenInEditorProvider({ children }: { children: ReactNode }) {
       setExpandedComposerControllerState(null);
       return;
     }
-    const persisted = readPersistedComposerState(activeWorkspaceId);
+    const persisted = readPersistedComposerState(activeWorkspaceId, activeServerId);
     setComposerDrafts(persisted?.drafts ?? {});
     setComposerSelections(persisted?.selections ?? {});
     setExpandedComposerDraftId(persisted?.expandedDraftId ?? null);
     setExpandedComposerControllerState(null);
-  }, [activeWorkspaceId]);
+  }, [activeServerId, activeWorkspaceId]);
 
   useEffect(() => {
     if (!activeWorkspaceId) {
@@ -339,8 +348,9 @@ export function OpenInEditorProvider({ children }: { children: ReactNode }) {
       drafts: composerDrafts,
       selections: composerSelections,
       expandedDraftId: expandedComposerDraftId,
-    });
+    }, activeServerId);
   }, [
+    activeServerId,
     activeWorkspaceId,
     composerDrafts,
     composerSelections,

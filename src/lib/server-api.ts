@@ -26,34 +26,7 @@ import {
   clearStoredAuth,
   syncAuthTokenFromResponse,
 } from "@/lib/auth-client";
-
-const BASE_URL =
-  process.env.NEXT_PUBLIC_SERVER_URL?.replace(/\/+$/, "") ??
-  "http://localhost:9100";
-
-function resolveClientBaseUrl(): string {
-  if (typeof window === "undefined") {
-    return BASE_URL;
-  }
-  try {
-    const configured = new URL(BASE_URL);
-    const currentHost = window.location.hostname;
-    if (
-      currentHost &&
-      (configured.hostname === "0.0.0.0" ||
-        configured.hostname === "[::]" ||
-        configured.hostname === "::") &&
-      (currentHost === "127.0.0.1" || currentHost === "localhost")
-    ) {
-      configured.hostname = currentHost;
-      configured.port = configured.port || "9100";
-      return configured.toString().replace(/\/+$/, "");
-    }
-  } catch {
-    return BASE_URL;
-  }
-  return BASE_URL;
-}
+import { getActiveServerConnectionSnapshot } from "@/lib/server-connections";
 
 let activeWorkspaceId: string | null = null;
 
@@ -106,23 +79,24 @@ async function request<T>(
   init?: RequestInit,
   options?: { skipWorkspaceHeader?: boolean }
 ): Promise<T> {
-  const response = await fetch(`${resolveClientBaseUrl()}${input}`, {
+  const server = getActiveServerConnectionSnapshot();
+  const response = await fetch(`${server.baseUrl}${input}`, {
     ...init,
     headers: Object.fromEntries(
       attachSessionToken({
         "Content-Type": "application/json",
         ...getWorkspaceHeaders(options?.skipWorkspaceHeader),
         ...(init?.headers ?? {}),
-      }).entries()
+      }, server.id).entries()
     ),
     credentials: "include",
     cache: "no-store",
   });
 
-  syncAuthTokenFromResponse(response);
+  syncAuthTokenFromResponse(response, server.id);
 
   if (response.status === 401) {
-    clearStoredAuth();
+    clearStoredAuth(server.id);
   }
 
   if (!response.ok) {
@@ -134,13 +108,14 @@ async function request<T>(
 }
 
 export function getServerBaseUrl(): string {
-  return resolveClientBaseUrl();
+  return getActiveServerConnectionSnapshot().baseUrl;
 }
 
 export function buildAgentWebSocketUrl(workspaceId: string): string {
+  const server = getActiveServerConnectionSnapshot();
   const params = new URLSearchParams({ workspaceId });
-  const base = `${toWebSocketUrl(resolveClientBaseUrl())}/ws/agent?${params.toString()}`;
-  return buildAuthenticatedUrl(base);
+  const base = `${toWebSocketUrl(server.baseUrl)}/ws/agent?${params.toString()}`;
+  return buildAuthenticatedUrl(base, server.id);
 }
 
 export async function fetchWorkspaceBootstrap(): Promise<{
@@ -473,6 +448,7 @@ export async function transcribeAudio(
   file: File,
   options?: { language?: string; prompt?: string }
 ): Promise<AudioTranscriptionResult> {
+  const server = getActiveServerConnectionSnapshot();
   const form = new FormData();
   form.set("file", file);
   if (options?.language) {
@@ -481,18 +457,18 @@ export async function transcribeAudio(
   if (options?.prompt) {
     form.set("prompt", options.prompt);
   }
-  const response = await fetch(`${resolveClientBaseUrl()}/api/audio/transcriptions`, {
+  const response = await fetch(`${server.baseUrl}/api/audio/transcriptions`, {
     method: "POST",
     body: form,
     headers: Object.fromEntries(
-      attachSessionToken(getWorkspaceHeaders()).entries()
+      attachSessionToken(getWorkspaceHeaders(), server.id).entries()
     ),
     credentials: "include",
     cache: "no-store",
   });
-  syncAuthTokenFromResponse(response);
+  syncAuthTokenFromResponse(response, server.id);
   if (response.status === 401) {
-    clearStoredAuth();
+    clearStoredAuth(server.id);
   }
   if (!response.ok) {
     const message = await response.text();
@@ -592,21 +568,22 @@ export async function renamePath(from: string, to: string): Promise<void> {
 
 /** Write a binary file (multipart). `relativePath` is workspace-relative. */
 export async function uploadFile(relativePath: string, file: File): Promise<void> {
+  const server = getActiveServerConnectionSnapshot();
   const form = new FormData();
   form.set("path", relativePath);
   form.set("file", file);
-  const response = await fetch(`${resolveClientBaseUrl()}/api/fs/upload`, {
+  const response = await fetch(`${server.baseUrl}/api/fs/upload`, {
     method: "POST",
     body: form,
     headers: Object.fromEntries(
-      attachSessionToken(getWorkspaceHeaders()).entries()
+      attachSessionToken(getWorkspaceHeaders(), server.id).entries()
     ),
     credentials: "include",
     cache: "no-store",
   });
-  syncAuthTokenFromResponse(response);
+  syncAuthTokenFromResponse(response, server.id);
   if (response.status === 401) {
-    clearStoredAuth();
+    clearStoredAuth(server.id);
   }
   if (!response.ok) {
     const message = await response.text();
@@ -623,22 +600,23 @@ export type UploadedAttachment = {
 export async function uploadAttachments(
   files: File[]
 ): Promise<UploadedAttachment[]> {
+  const server = getActiveServerConnectionSnapshot();
   const form = new FormData();
   for (const file of files) {
     form.append("files", file);
   }
-  const response = await fetch(`${resolveClientBaseUrl()}/api/agents/attachments`, {
+  const response = await fetch(`${server.baseUrl}/api/agents/attachments`, {
     method: "POST",
     body: form,
     headers: Object.fromEntries(
-      attachSessionToken(getWorkspaceHeaders()).entries()
+      attachSessionToken(getWorkspaceHeaders(), server.id).entries()
     ),
     credentials: "include",
     cache: "no-store",
   });
-  syncAuthTokenFromResponse(response);
+  syncAuthTokenFromResponse(response, server.id);
   if (response.status === 401) {
-    clearStoredAuth();
+    clearStoredAuth(server.id);
   }
   if (!response.ok) {
     const message = await response.text();

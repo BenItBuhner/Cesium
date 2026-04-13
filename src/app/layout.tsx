@@ -1,11 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import Script from "next/script";
-import { AuthProvider } from "@/components/auth/AuthProvider";
-import { AuthGate } from "@/components/auth/AuthGate";
-import { UserPreferencesProvider } from "@/components/preferences/UserPreferencesProvider";
-import { RegisterServiceWorker } from "@/components/pwa/RegisterServiceWorker";
-import { ThemeProvider } from "@/components/theme/ThemeProvider";
+import { AppClientProviders } from "@/components/app/AppClientProviders";
 import { USER_PREFERENCES_STORAGE_KEY } from "@/lib/preferences";
 import { THEME_STORAGE_KEY } from "@/lib/theme";
 import "./globals.css";
@@ -72,14 +68,7 @@ export default function RootLayout({
         <Script id="preferences-bootstrap" strategy="beforeInteractive">
           {preferencesBootstrap}
         </Script>
-        <RegisterServiceWorker />
-        <ThemeProvider>
-          <AuthProvider>
-            <AuthGate>
-              <UserPreferencesProvider>{children}</UserPreferencesProvider>
-            </AuthGate>
-          </AuthProvider>
-        </ThemeProvider>
+        <AppClientProviders>{children}</AppClientProviders>
       </body>
     </html>
   );

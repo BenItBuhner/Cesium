@@ -19,6 +19,7 @@ import {
   type AuthSession,
   type AuthStatusResponse,
 } from "@/lib/auth-client";
+import { useServerConnections } from "@/components/server/ServerConnectionsProvider";
 
 type LoginInput = {
   username: string;
@@ -40,40 +41,16 @@ type AuthContextValue = {
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
-const BASE_URL =
-  process.env.NEXT_PUBLIC_SERVER_URL?.replace(/\/+$/, "") ??
-  "http://localhost:9100";
-
-function resolveClientBaseUrl(): string {
-  if (typeof window === "undefined") {
-    return BASE_URL;
-  }
-  try {
-    const configured = new URL(BASE_URL);
-    const currentHost = window.location.hostname;
-    if (
-      currentHost &&
-      currentHost !== configured.hostname &&
-      (currentHost === "127.0.0.1" || currentHost === "localhost")
-    ) {
-      configured.hostname = currentHost;
-      configured.port = configured.port || "9100";
-      return configured.toString().replace(/\/+$/, "");
-    }
-  } catch {
-    return BASE_URL;
-  }
-  return BASE_URL;
-}
-
 async function fetchAuth(
+  serverBaseUrl: string,
+  serverId: string,
   path: string,
   init?: RequestInit
 ): Promise<Response> {
-  return fetch(`${resolveClientBaseUrl()}${path}`, {
+  return fetch(`${serverBaseUrl}${path}`, {
     ...init,
     headers: Object.fromEntries(
-      attachSessionToken(init?.headers).entries()
+      attachSessionToken(init?.headers, serverId).entries()
     ),
     credentials: "include",
     cache: "no-store",
@@ -81,16 +58,19 @@ async function fetchAuth(
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
+  const { activeConnection, ready: serverConnectionsReady } = useServerConnections();
   const [ready, setReady] = useState(false);
   const [enabled, setEnabled] = useState(false);
   const [authenticated, setAuthenticated] = useState(false);
   const [session, setSession] = useState<AuthSession | null>(null);
   const [loginPending, setLoginPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const serverId = activeConnection.id;
+  const serverBaseUrl = activeConnection.baseUrl;
 
   const refreshAuthStatus = useCallback(async () => {
-    const response = await fetchAuth("/api/auth/status");
-    syncAuthTokenFromResponse(response);
+    const response = await fetchAuth(serverBaseUrl, serverId, "/api/auth/status");
+    syncAuthTokenFromResponse(response, serverId);
     if (!response.ok) {
       let message = `Auth status request failed (${response.status})`;
       try {
@@ -108,26 +88,32 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setAuthenticated(payload.authenticated);
     setSession(payload.session);
     if (!payload.enabled) {
-      clearStoredAuth();
+      clearStoredAuth(serverId);
     } else if (payload.authenticated) {
-      updateStoredAuthSession(payload.session);
+      updateStoredAuthSession(payload.session, serverId);
     } else {
-      clearStoredAuth();
+      clearStoredAuth(serverId);
     }
     if (!payload.authenticated) {
       setSession(null);
     }
     setError(null);
-  }, []);
+  }, [serverBaseUrl, serverId]);
 
   useEffect(() => {
+    if (!serverConnectionsReady) {
+      setReady(false);
+      return;
+    }
+
     let cancelled = false;
+    setReady(false);
     void refreshAuthStatus()
       .catch((nextError) => {
         if (cancelled) {
           return;
         }
-        setEnabled(Boolean(getStoredSessionToken()));
+        setEnabled(Boolean(getStoredSessionToken(serverId)));
         setAuthenticated(false);
         setSession(null);
         setError(
@@ -144,19 +130,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [refreshAuthStatus]);
+  }, [refreshAuthStatus, serverConnectionsReady, serverId]);
 
   const login = useCallback(
     async (input: LoginInput) => {
       setLoginPending(true);
       setError(null);
       try {
-        const response = await fetchAuth("/api/auth/login", {
+        const response = await fetchAuth(serverBaseUrl, serverId, "/api/auth/login", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(input),
         });
-        syncAuthTokenFromResponse(response);
+        syncAuthTokenFromResponse(response, serverId);
         const payload = (await response.json().catch(() => ({}))) as
           | {
               authenticated?: boolean;
@@ -173,12 +159,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setSession(null);
           setError(message);
           if (response.status === 401) {
-            clearStoredAuth();
+            clearStoredAuth(serverId);
           }
           return false;
         }
-        setStoredSessionToken(getStoredSessionToken(), payload.session);
-        updateStoredAuthSession(payload.session);
+        setStoredSessionToken(getStoredSessionToken(serverId), payload.session, serverId);
+        updateStoredAuthSession(payload.session, serverId);
         setEnabled(true);
         setAuthenticated(true);
         setSession(payload.session);
@@ -195,21 +181,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setLoginPending(false);
       }
     },
-    []
+    [serverBaseUrl, serverId]
   );
 
   const logout = useCallback(async () => {
     try {
-      const response = await fetchAuth("/api/auth/logout", {
+      const response = await fetchAuth(serverBaseUrl, serverId, "/api/auth/logout", {
         method: "POST",
       });
       if (response.ok) {
-        syncAuthTokenFromResponse(response);
+        syncAuthTokenFromResponse(response, serverId);
       }
     } catch {
       // Clearing local auth state is enough for the client.
     } finally {
-      clearStoredAuth();
+      clearStoredAuth(serverId);
       setAuthenticated(false);
       setSession(null);
       setError(null);
@@ -217,7 +203,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setEnabled(true);
       }
     }
-  }, [enabled]);
+  }, [enabled, serverBaseUrl, serverId]);
 
   const value = useMemo<AuthContextValue>(
     () => ({

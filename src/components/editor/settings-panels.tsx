@@ -61,6 +61,7 @@ import {
 import { SettingsThemeSelect } from "@/components/editor/SettingsThemeSelect";
 import { ToggleSwitch } from "@/components/ui/ToggleSwitch";
 import { availableModels, currentModel } from "@/lib/mock-data";
+import { ServerConnectionsManager } from "@/components/server/ServerConnectionsManager";
 
 export const rowButtonClass =
   "inline-flex shrink-0 items-center gap-[6px] rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-transparent px-[12px] py-[5px] font-sans text-[12px] font-normal text-[var(--text-primary)] transition-colors hover:bg-[var(--accent-bg)]";
@@ -264,6 +265,27 @@ export function GeneralSettingsPanel() {
       </SettingsSection>
       <SettingsSection title="Preferences">
         <SettingsRow
+          title="Servers"
+          description="Manage saved OpenCursor servers, switch active connections, and keep authentication scoped per server."
+          trailing={
+            <button
+              type="button"
+              className={rowButtonClass}
+              onClick={() =>
+                updateWorkspaceSession((current) => ({
+                  ...current,
+                  settingsView: {
+                    ...current.settingsView,
+                    activeNav: "servers",
+                  },
+                }))
+              }
+            >
+              Open
+            </button>
+          }
+        />
+        <SettingsRow
           title="Editor Settings"
           description="Configure font, formatting, minimap and more"
           trailing={
@@ -406,6 +428,18 @@ export function GeneralSettingsPanel() {
           Log Out
         </button>
       </div>
+    </>
+  );
+}
+
+export function ServersSettingsPanel() {
+  return (
+    <>
+      <PageIntro
+        title="Servers"
+        subtitle="Save multiple OpenCursor servers locally, switch the active connection, and keep browser auth/session state isolated per server."
+      />
+      <ServerConnectionsManager />
     </>
   );
 }
@@ -2046,6 +2080,7 @@ export function ExportImportSettingsPanel() {
 
 export const SETTINGS_PANELS: Record<string, ComponentType> = {
   general: GeneralSettingsPanel,
+  servers: ServersSettingsPanel,
   appearance: AppearanceSettingsPanel,
   agents: AgentsSettingsPanel,
   models: ModelsSettingsPanel,
