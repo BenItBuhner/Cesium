@@ -8,6 +8,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type DragEvent,
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
 } from "react";
@@ -27,6 +28,8 @@ import { useClickOutside } from "@/hooks/useClickOutside";
 import { AGENT_RAIL_OPEN_SEARCH_EVENT } from "@/components/agent/agent-rail-events";
 import { useAgentShellState } from "./AgentShellStateContext";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
+import { CHAT_TAB_DND_MIME } from "@/lib/chat-tab-dnd";
+import { setMinimalTabDragImage } from "@/components/editor/tab-drag-image";
 
 const PINNED_SECTION_WORKSPACE_ID = "__agentPinned__";
 
@@ -79,6 +82,7 @@ export function AgentWorkspaceRail() {
     leftRailCollapsed,
     railLoading,
     setRightPaneOpen,
+    openConversationInCenterEditor,
     selectedConversationId,
     startNewConversation,
     toggleLeftRailCollapsed,
@@ -108,6 +112,7 @@ export function AgentWorkspaceRail() {
   } | null>(null);
   const [pendingEditorOpen, setPendingEditorOpen] = useState<{
     conversation: AgentRailConversationSummary;
+    target: "center" | "side";
     group?: "left" | "right";
   } | null>(null);
 
@@ -317,12 +322,17 @@ export function AgentWorkspaceRail() {
   );
 
   const handleOpenConversationInEditor = useCallback(
-    (conversation: AgentRailConversationSummary, group?: "left" | "right") => {
-      setPendingEditorOpen({ conversation, group });
+    (
+      conversation: AgentRailConversationSummary,
+      target: "center" | "side" = "side",
+      group?: "left" | "right"
+    ) => {
+      setPendingEditorOpen({ conversation, target, group });
       void openConversationSummary(conversation).catch(() => {
         setPendingEditorOpen((current) =>
           current?.conversation.id === conversation.id &&
-          current.group === group
+          current.group === group &&
+          current.target === target
             ? null
             : current
         );
@@ -341,12 +351,22 @@ export function AgentWorkspaceRail() {
     if (selectedConversationId !== pendingEditorOpen.conversation.id) {
       return;
     }
-    setRightPaneOpen(true);
-    openAgentConversation({
-      conversationId: pendingEditorOpen.conversation.id,
-      title: pendingEditorOpen.conversation.title,
-      ...(pendingEditorOpen.group ? { group: pendingEditorOpen.group } : {}),
-    });
+    if (pendingEditorOpen.target === "center") {
+      openConversationInCenterEditor({
+        conversationId: pendingEditorOpen.conversation.id,
+        title: pendingEditorOpen.conversation.title,
+        ...(pendingEditorOpen.group ? { group: pendingEditorOpen.group } : {}),
+      });
+    } else {
+      setRightPaneOpen(true);
+      openAgentConversation({
+        conversationId: pendingEditorOpen.conversation.id,
+        title: pendingEditorOpen.conversation.title,
+        ...(pendingEditorOpen.group
+          ? { group: pendingEditorOpen.group as "left" | "right" }
+          : {}),
+      });
+    }
     setPendingEditorOpen(null);
     if (isMobile) {
       toggleLeftRailCollapsed();
@@ -355,11 +375,21 @@ export function AgentWorkspaceRail() {
     activeWorkspaceId,
     isMobile,
     openAgentConversation,
+    openConversationInCenterEditor,
     pendingEditorOpen,
     selectedConversationId,
     setRightPaneOpen,
     toggleLeftRailCollapsed,
   ]);
+
+  const handleConversationDragStart = useCallback(
+    (event: DragEvent<HTMLButtonElement>, conversation: AgentRailConversationSummary) => {
+      event.dataTransfer.setData(CHAT_TAB_DND_MIME, JSON.stringify({ tabId: conversation.id }));
+      event.dataTransfer.effectAllowed = "move";
+      setMinimalTabDragImage(event.dataTransfer);
+    },
+    []
+  );
 
   const handleConversationContextMenu = useCallback(
     (
@@ -379,14 +409,26 @@ export function AgentWorkspaceRail() {
         {
           type: "item",
           id: "open-editor",
-          label: "Open in Editor",
-          onSelect: () => handleOpenConversationInEditor(conversation),
+          label: "Open in Center Editor",
+          onSelect: () => handleOpenConversationInEditor(conversation, "center"),
+        },
+        {
+          type: "item",
+          id: "open-editor-center-side-by-side",
+          label: "Open in Center Editor Side-by-Side",
+          onSelect: () =>
+            openConversationInCenterEditor({
+              conversationId: conversation.id,
+              title: conversation.title,
+              workspaceId: conversation.workspaceId,
+              splitOrientation: "horizontal",
+            }),
         },
         {
           type: "item",
           id: "open-editor-side",
           label: "Open in Side-by-Side Editor",
-          onSelect: () => handleOpenConversationInEditor(conversation, "right"),
+          onSelect: () => handleOpenConversationInEditor(conversation, "side", "right"),
         },
         { type: "sep" },
         inPinned
@@ -416,6 +458,7 @@ export function AgentWorkspaceRail() {
       archiveConversation,
       beginConversationRename,
       handleOpenConversationInEditor,
+      openConversationInCenterEditor,
       openAt,
       pinConversation,
       unpinConversation,
@@ -464,6 +507,9 @@ export function AgentWorkspaceRail() {
                   onCommitRename={commitConversationRename}
                   onCancelRename={cancelConversationRename}
                   onSelect={() => handleConversationSelect(conversation)}
+                  onDragStart={(event, currentConversation) =>
+                    handleConversationDragStart(event, currentConversation)
+                  }
                   onContextMenu={(e, currentConversation) =>
                     handleConversationContextMenu(e, currentConversation, {
                       inPinnedSection: true,
@@ -482,6 +528,7 @@ export function AgentWorkspaceRail() {
     cancelConversationRename,
     collapsedWorkspaceIds,
     commitConversationRename,
+    handleConversationDragStart,
     handleConversationSelect,
     handleConversationContextMenu,
     pinnedRailConversations,
@@ -618,6 +665,9 @@ export function AgentWorkspaceRail() {
                               onCommitRename={commitConversationRename}
                               onCancelRename={cancelConversationRename}
                               onSelect={() => handleConversationSelect(conversation)}
+                              onDragStart={(event, currentConversation) =>
+                                handleConversationDragStart(event, currentConversation)
+                              }
                               onContextMenu={(e, currentConversation) =>
                                 handleConversationContextMenu(e, currentConversation, {
                                   inPinnedSection: false,

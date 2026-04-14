@@ -107,6 +107,14 @@ function AgentLayoutShell() {
     applyingShellLayoutFromContextRef.current = true;
     try {
       groupRef.current?.setLayout(agentShellLayout);
+    } catch (err) {
+      console.error("Failed to apply layout, resetting to default:", err);
+      setAgentShellDesktopLayout(AGENT_SHELL_DEFAULT_LAYOUT);
+      try {
+        groupRef.current?.setLayout(AGENT_SHELL_DEFAULT_LAYOUT);
+      } catch (fallbackErr) {
+        console.error("Fallback layout also failed:", fallbackErr);
+      }
     } finally {
       queueMicrotask(() => {
         applyingShellLayoutFromContextRef.current = false;
@@ -140,6 +148,7 @@ function AgentLayoutShell() {
     leftRailCollapsed,
     railPanelRef,
     rightPaneOpen,
+    setAgentShellDesktopLayout,
     sidePanelRef,
   ]);
 

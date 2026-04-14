@@ -57,7 +57,17 @@ import { useUserPreferences } from "@/components/preferences/UserPreferencesProv
 import { useWorkbenchNotifications } from "@/components/notifications/WorkbenchNotificationProvider";
 import { WORKBENCH_NOTIFICATION_KIND } from "@/components/notifications/workbench-notification-types";
 import {
+  findEditorPaneIdByTabId,
+  getAllEditorTabs,
+  getEditorPaneActiveTab,
+  getEditorPaneIds,
+  getEditorPaneState,
+  normalizeEditorSessionState,
+  type LegacyEditorSessionShape,
+} from "@/lib/editor-session-state";
+import {
   createPersistableWorkspaceSession,
+  type EditorPaneNode,
   type EditorSessionState,
   type EditorSplitOrientation,
 } from "@/lib/workspace-session";
@@ -89,40 +99,12 @@ function fileContentLoadAction(
   };
 }
 
-const EDITOR_SPLIT_PANEL_IDS = {
-  left: "editor-split-left",
-  right: "editor-split-right",
-} as const;
-
-const DEFAULT_EDITOR_SPLIT_LAYOUT: Record<string, number> = {
-  [EDITOR_SPLIT_PANEL_IDS.left]: 50,
-  [EDITOR_SPLIT_PANEL_IDS.right]: 50,
-};
-
 function tabCanSave(tab: EditorTab): boolean {
   return Boolean(tab.filePath && tab.fileKind && tab.fileKind !== "image");
 }
 
 function isUnknownTerminalError(error: unknown): boolean {
   return error instanceof Error && error.message.includes("Unknown terminal");
-}
-
-function normalizeSplitOrientation(value: unknown): EditorSplitOrientation {
-  return value === "vertical" ? "vertical" : "horizontal";
-}
-
-function normalizeSplitLayout(value: unknown): Record<string, number> | null {
-  if (!value || typeof value !== "object") {
-    return null;
-  }
-  const entries = Object.entries(value).filter(
-    ([panelId, size]) =>
-      typeof panelId === "string" &&
-      panelId.length > 0 &&
-      typeof size === "number" &&
-      Number.isFinite(size)
-  );
-  return entries.length > 0 ? Object.fromEntries(entries) : null;
 }
 
 function EditorSplitResizeHandle({
@@ -146,16 +128,9 @@ function EditorSplitResizeHandle({
   );
 }
 
-function createEditorStateFromSession(session: {
-  split: boolean;
-  splitOrientation?: EditorSplitOrientation;
-  splitLayout?: Record<string, number> | null;
-  focusedGroup: EditorGroup;
-  leftTabs: EditorTab[];
-  rightTabs: EditorTab[];
-  leftActiveId: string | null;
-  rightActiveId: string | null;
-}) {
+function createEditorStateFromSession(
+  session: EditorSessionState | LegacyEditorSessionShape
+) {
   const normalizeTranscriptTab = (tab: EditorTab): EditorTab => {
     if (tab.transcriptSessionId || !tab.transcriptMessages?.length) {
       return tab;
@@ -165,15 +140,21 @@ function createEditorStateFromSession(session: {
       .find((value): value is string => Boolean(value));
     return inferred ? { ...tab, transcriptSessionId: inferred } : tab;
   };
+  const normalized = normalizeEditorSessionState(session);
   return {
-    split: session.split,
-    splitOrientation: normalizeSplitOrientation(session.splitOrientation),
-    splitLayout: normalizeSplitLayout(session.splitLayout),
-    focusedGroup: session.focusedGroup,
-    leftTabs: session.leftTabs.map(normalizeTranscriptTab),
-    rightTabs: session.rightTabs.map(normalizeTranscriptTab),
-    leftActiveId: session.leftActiveId,
-    rightActiveId: session.rightActiveId,
+    ...normalized,
+    panesById: Object.fromEntries(
+      getEditorPaneIds(normalized).map((paneId) => {
+        const pane = getEditorPaneState(normalized, paneId);
+        return [
+          paneId,
+          {
+            tabs: (pane?.tabs ?? []).map(normalizeTranscriptTab),
+            activeId: pane?.activeId ?? null,
+          },
+        ];
+      })
+    ),
   };
 }
 
@@ -277,7 +258,7 @@ export function EditorPanel({
   const agentTabIndicators = useMemo(() => {
     const unread = workspaceSession.chat.unreadChatCompletionByConversationId ?? {};
     const m: AgentTabIndicatorByConversationId = {};
-    for (const tab of [...state.leftTabs, ...state.rightTabs]) {
+    for (const tab of getAllEditorTabs(state)) {
       if (!tab.conversationId) continue;
       const c = conversationsById[tab.conversationId];
       if (!c) continue;
@@ -290,14 +271,19 @@ export function EditorPanel({
     }
     return m;
   }, [
-    state.leftTabs,
-    state.rightTabs,
+    state,
     conversationsById,
     workspaceSession.chat.unreadChatCompletionByConversationId,
   ]);
 
   const stateRef = useRef(state);
   const bridgeRef = useEditorBridgeRef();
+  const paneIds = useMemo(() => getEditorPaneIds(state), [state]);
+  const paneCount = paneIds.length;
+  const focusedActiveTab = useMemo(
+    () => getEditorPaneActiveTab(state, state.focusedPaneId),
+    [state]
+  );
 
   useEffect(() => {
     stateRef.current = state;
@@ -326,11 +312,11 @@ export function EditorPanel({
 
   const findTab = useCallback((tabId: string) => {
     const snapshot = stateRef.current;
-    return (
-      snapshot.leftTabs.find((tab) => tab.id === tabId) ??
-      snapshot.rightTabs.find((tab) => tab.id === tabId) ??
-      null
-    );
+    const paneId = findEditorPaneIdByTabId(snapshot, tabId);
+    if (!paneId) {
+      return null;
+    }
+    return getEditorPaneState(snapshot, paneId)?.tabs.find((tab) => tab.id === tabId) ?? null;
   }, []);
 
   const loadExplorerFile = useCallback(
@@ -404,10 +390,7 @@ export function EditorPanel({
   );
 
   const saveAllTabs = useCallback(async () => {
-    const tabs = [
-      ...stateRef.current.leftTabs,
-      ...stateRef.current.rightTabs,
-    ].filter(tabCanSave);
+    const tabs = getAllEditorTabs(stateRef.current).filter(tabCanSave);
     const dirtyTabs = tabs.filter((tab) => tab.dirty);
     if (dirtyTabs.length === 0) {
       return { savedCount: 0, attemptedCount: 0 };
@@ -430,7 +413,7 @@ export function EditorPanel({
       dispatch({
         type: "OPEN_TERMINAL_TAB",
         terminalId: terminal.id,
-        name: `Terminal ${stateRef.current.leftTabs.filter((tab) => tab.terminalId).length + stateRef.current.rightTabs.filter((tab) => tab.terminalId).length + 1}`,
+        name: `Terminal ${getAllEditorTabs(stateRef.current).filter((tab) => tab.terminalId).length + 1}`,
       });
       await refreshTerminals();
     } catch (error) {
@@ -534,9 +517,7 @@ export function EditorPanel({
   ]);
 
   useEffect(() => {
-    const openDraftTabs = [...state.leftTabs, ...state.rightTabs].filter(
-      (tab) => tab.composerDraftId
-    );
+    const openDraftTabs = getAllEditorTabs(state).filter((tab) => tab.composerDraftId);
     for (const tab of openDraftTabs) {
       const draftId = tab.composerDraftId;
       if (!draftId) {
@@ -548,14 +529,14 @@ export function EditorPanel({
       }
       dispatch({ type: "UPDATE_TAB_CONTENT", tabId: tab.id, content: draft.content });
     }
-  }, [composerDrafts, state.leftTabs, state.rightTabs]);
+  }, [composerDrafts, state]);
 
   useEffect(() => {
     if (!expandedComposerDraftId) {
       return;
     }
     const openDraftIds = new Set(
-      [...state.leftTabs, ...state.rightTabs]
+      getAllEditorTabs(state)
         .map((tab) => tab.composerDraftId)
         .filter((value): value is string => Boolean(value))
     );
@@ -565,8 +546,7 @@ export function EditorPanel({
   }, [
     expandedComposerDraftId,
     setExpandedComposerDraft,
-    state.leftTabs,
-    state.rightTabs,
+    state,
   ]);
 
   useEffect(() => {
@@ -576,10 +556,9 @@ export function EditorPanel({
     }
     handledDiskChangeAtRef.current = lastFileChange.at;
 
-    const matchingTab = [
-      ...stateRef.current.leftTabs,
-      ...stateRef.current.rightTabs,
-    ].find((tab) => tab.filePath === lastFileChange.path);
+    const matchingTab = getAllEditorTabs(stateRef.current).find(
+      (tab) => tab.filePath === lastFileChange.path
+    );
     if (!matchingTab) return;
 
     if (matchingTab.dirty) {
@@ -603,7 +582,7 @@ export function EditorPanel({
     }
     handledFsResyncTokenRef.current = fsResyncToken;
 
-    const openTabs = [...stateRef.current.leftTabs, ...stateRef.current.rightTabs];
+    const openTabs = getAllEditorTabs(stateRef.current);
     for (const tab of openTabs) {
       if (!tab.filePath || tab.dirty || tab.fileKind === "image") {
         continue;
@@ -620,22 +599,8 @@ export function EditorPanel({
   }, [fsResyncToken]);
 
   useEffect(() => {
-    const activeId =
-      state.focusedGroup === "left" ? state.leftActiveId : state.rightActiveId;
-    const activeTab =
-      state.focusedGroup === "left"
-        ? state.leftTabs.find((tab) => tab.id === activeId) ?? null
-        : state.rightTabs.find((tab) => tab.id === activeId) ?? null;
-
-    setActiveExplorerPath(activeTab?.filePath ?? null);
-  }, [
-    setActiveExplorerPath,
-    state.focusedGroup,
-    state.leftActiveId,
-    state.leftTabs,
-    state.rightActiveId,
-    state.rightTabs,
-  ]);
+    setActiveExplorerPath(focusedActiveTab?.filePath ?? null);
+  }, [focusedActiveTab, setActiveExplorerPath]);
 
   const focusEditorGroup = useCallback((group: EditorGroup) => {
     dispatch({ type: "FOCUS_EDITOR_GROUP", group });
@@ -644,9 +609,8 @@ export function EditorPanel({
   const selectTab = useCallback(
     (group: EditorGroup, id: string) => {
       const tab =
-        group === "left"
-          ? stateRef.current.leftTabs.find((t) => t.id === id)
-          : stateRef.current.rightTabs.find((t) => t.id === id);
+        getEditorPaneState(stateRef.current, group)?.tabs.find((candidate) => candidate.id === id) ??
+        null;
       dispatch({ type: "SELECT_TAB", group, id });
       const convId = tab?.conversationId;
       if (!convId) {
@@ -740,7 +704,7 @@ export function EditorPanel({
 
   const requestCloseAllInGroup = useCallback(
     (group: EditorGroup) => {
-      const tabs = group === "left" ? stateRef.current.leftTabs : stateRef.current.rightTabs;
+      const tabs = getEditorPaneState(stateRef.current, group)?.tabs ?? [];
       const dirty = tabs.filter((t) => t.dirty);
       if (dirty.length === 0) {
         void closeTabs(tabs, { type: "CLOSE_ALL_GROUP", group });
@@ -804,9 +768,9 @@ export function EditorPanel({
 
   const requestCloseOthersInGroup = useCallback(
     (group: EditorGroup) => {
-      const tabs = group === "left" ? stateRef.current.leftTabs : stateRef.current.rightTabs;
-      const activeId =
-        group === "left" ? stateRef.current.leftActiveId : stateRef.current.rightActiveId;
+      const pane = getEditorPaneState(stateRef.current, group);
+      const tabs = pane?.tabs ?? [];
+      const activeId = pane?.activeId ?? null;
       const toClose = tabs.filter((t) => t.id !== activeId);
       const dirty = toClose.filter((t) => t.dirty);
       if (dirty.length === 0) {
@@ -875,8 +839,8 @@ export function EditorPanel({
       getState: () => stateRef.current,
       saveActiveTab: async () => {
         const snapshot = stateRef.current;
-        const group = snapshot.focusedGroup;
-        const activeId = group === "left" ? snapshot.leftActiveId : snapshot.rightActiveId;
+        const group = snapshot.focusedPaneId;
+        const activeId = getEditorPaneState(snapshot, group)?.activeId ?? null;
         if (!activeId) {
           flashNotice("No active editor to save.", "info");
           return false;
@@ -914,26 +878,42 @@ export function EditorPanel({
   );
 
   const openConversationTab = useCallback(
-    (conversationId: string, group?: EditorGroup) => {
+    (payload: {
+      conversationId: string;
+      group: EditorGroup;
+      title?: string;
+      workspaceId?: string;
+    }) => {
       const title =
-        stateRef.current.leftTabs.find((tab) => tab.conversationId === conversationId)?.name ??
-        stateRef.current.rightTabs.find((tab) => tab.conversationId === conversationId)?.name ??
-        workspaceSession.chat.tabs.find((tab) => tab.id === conversationId)?.title ??
+        payload.title ??
+        getAllEditorTabs(stateRef.current).find(
+          (tab) => tab.conversationId === payload.conversationId
+        )?.name ??
+        workspaceSession.chat.tabs.find((tab) => tab.id === payload.conversationId)?.title ??
         "Chat";
+      if (onOpenConversationInPane) {
+        onOpenConversationInPane({
+          conversationId: payload.conversationId,
+          paneId: payload.group,
+          title,
+          workspaceId: payload.workspaceId,
+        });
+        return;
+      }
       dispatch({
         type: "OPEN_AGENT_CONVERSATION_TAB",
-        conversationId,
+        conversationId: payload.conversationId,
         title,
-        group,
+        group: payload.group,
       });
     },
-    [workspaceSession.chat.tabs]
+    [onOpenConversationInPane, workspaceSession.chat.tabs]
   );
 
   const setSplitMode = useCallback(
     (
       orientation: EditorSplitOrientation,
-      focus: EditorGroup = stateRef.current.focusedGroup
+      focus: EditorGroup = stateRef.current.focusedPaneId
     ) => {
       dispatch({ type: "ENABLE_SPLIT", orientation, focus });
     },
@@ -946,9 +926,7 @@ export function EditorPanel({
 
   const moveTabToNewSplit = useCallback(
     (tabId: string, from: EditorGroup, orientation: EditorSplitOrientation) => {
-      const targetGroup: EditorGroup = from === "left" ? "right" : "left";
-      dispatch({ type: "ENABLE_SPLIT", orientation, focus: targetGroup });
-      dispatch({ type: "MOVE_TAB", tabId, from, to: targetGroup });
+      dispatch({ type: "MOVE_TAB_TO_NEW_SPLIT", tabId, from, orientation });
     },
     []
   );
@@ -1008,46 +986,59 @@ export function EditorPanel({
       );
       const targetSession = normalizeWorkspaceWindowSession(targetSessionResult.session);
       const targetGroup: EditorGroup =
-        targetSession.editor.split && targetSession.editor.focusedGroup === "right"
-          ? "right"
-          : "left";
+        targetSession.editor.focusedPaneId && targetSession.editor.panesById[targetSession.editor.focusedPaneId]
+          ? targetSession.editor.focusedPaneId
+          : getEditorPaneIds(targetSession.editor)[0] ?? "left";
 
-      let nextLeftTabs = targetSession.editor.leftTabs.filter((candidate) => candidate.id !== tabId);
-      let nextRightTabs = targetSession.editor.rightTabs.filter(
-        (candidate) => candidate.id !== tabId
-      );
-      let nextLeftActiveId =
-        nextLeftTabs.find((candidate) => candidate.id === targetSession.editor.leftActiveId)?.id ??
-        nextLeftTabs[0]?.id ??
-        null;
-      let nextRightActiveId =
-        nextRightTabs.find((candidate) => candidate.id === targetSession.editor.rightActiveId)?.id ??
-        nextRightTabs[0]?.id ??
-        null;
-
-      if (targetGroup === "left") {
-        nextLeftTabs = [...nextLeftTabs, tab];
-        nextLeftActiveId = tabId;
-      } else {
-        nextRightTabs = [...nextRightTabs, tab];
-        nextRightActiveId = tabId;
-      }
+      const existingTargetPane = getEditorPaneState(targetSession.editor, targetGroup) ?? {
+        tabs: [],
+        activeId: null,
+      };
+      const existingPaneIdForTab = findEditorPaneIdByTabId(targetSession.editor, tabId);
+      const nextTargetEditor = {
+        ...targetSession.editor,
+        panesById: {
+          ...targetSession.editor.panesById,
+          ...(existingPaneIdForTab ? {
+            [existingPaneIdForTab]: {
+              tabs:
+                getEditorPaneState(targetSession.editor, existingPaneIdForTab)?.tabs.filter(
+                  (candidate) => candidate.id !== tabId
+                ) ?? [],
+              activeId:
+                (() => {
+                  const sourcePane = getEditorPaneState(targetSession.editor, existingPaneIdForTab);
+                  if (!sourcePane) {
+                    return null;
+                  }
+                  const remaining = sourcePane.tabs.filter((candidate) => candidate.id !== tabId);
+                  return sourcePane.activeId === tabId
+                    ? remaining[0]?.id ?? null
+                    : sourcePane.activeId;
+                })(),
+            },
+          } : {}),
+          [targetGroup]: {
+            tabs: [
+              ...existingTargetPane.tabs.filter((candidate) => candidate.id !== tabId),
+              tab,
+            ],
+            activeId: tabId,
+          },
+        },
+        focusedPaneId: targetGroup,
+      };
 
       const viewState = viewStateByTabIdRef.current[tabId];
       const nextTargetSession = {
         ...targetSession,
         editor: {
-          ...targetSession.editor,
-          leftTabs: nextLeftTabs,
-          rightTabs: nextRightTabs,
-          leftActiveId: nextLeftActiveId,
-          rightActiveId: nextRightActiveId,
-          focusedGroup: targetGroup,
+          ...nextTargetEditor,
           viewStateByTabId:
             viewState === undefined
-              ? targetSession.editor.viewStateByTabId
+              ? nextTargetEditor.viewStateByTabId
               : {
-                  ...targetSession.editor.viewStateByTabId,
+                  ...nextTargetEditor.viewStateByTabId,
                   [tabId]: viewState,
                 },
         },
@@ -1087,45 +1078,32 @@ export function EditorPanel({
       if (e.target !== e.currentTarget) return;
       e.preventDefault();
       const snapshot = stateRef.current;
-      const tabs = group === "left" ? snapshot.leftTabs : snapshot.rightTabs;
+      const tabs = getEditorPaneState(snapshot, group)?.tabs ?? [];
       const hasTabs = tabs.length > 0;
-      const splitItems: WorkbenchMenuItem[] = snapshot.split
-        ? [
-            {
-              type: "item",
-              id: "join-groups",
-              label: "Join Editor Groups",
-              onSelect: joinEditorGroups,
-            },
-            {
-              type: "item",
-              id: "split-right",
-              label: "Use Side-by-side Layout",
-              disabled: snapshot.splitOrientation === "horizontal",
-              onSelect: () => setSplitMode("horizontal", group),
-            },
-            {
-              type: "item",
-              id: "split-down",
-              label: "Use Stacked Layout",
-              disabled: snapshot.splitOrientation === "vertical",
-              onSelect: () => setSplitMode("vertical", group),
-            },
-          ]
-        : [
-            {
-              type: "item",
-              id: "split-right",
-              label: "Split Editor Right",
-              onSelect: () => setSplitMode("horizontal", group),
-            },
-            {
-              type: "item",
-              id: "split-down",
-              label: "Split Editor Down",
-              onSelect: () => setSplitMode("vertical", group),
-            },
-          ];
+      const splitItems: WorkbenchMenuItem[] = [
+        {
+          type: "item",
+          id: "split-right",
+          label: "Split Editor Right",
+          onSelect: () => setSplitMode("horizontal", group),
+        },
+        {
+          type: "item",
+          id: "split-down",
+          label: "Split Editor Down",
+          onSelect: () => setSplitMode("vertical", group),
+        },
+        ...(paneCount > 1
+          ? [
+              {
+                type: "item",
+                id: "join-groups",
+                label: "Join Editor Groups",
+                onSelect: joinEditorGroups,
+              } satisfies WorkbenchMenuItem,
+            ]
+          : []),
+      ];
       openAt(e, [
         {
           type: "item",
@@ -1145,13 +1123,7 @@ export function EditorPanel({
         ...splitItems,
       ]);
     },
-    [
-      joinEditorGroups,
-      openAt,
-      requestCloseAllInGroup,
-      requestCloseOthersInGroup,
-      setSplitMode,
-    ]
+    [joinEditorGroups, openAt, paneCount, requestCloseAllInGroup, requestCloseOthersInGroup]
   );
 
   const handleEditorTabContextMenu = useCallback(
@@ -1160,15 +1132,14 @@ export function EditorPanel({
       const tab = findTab(tabId);
       if (!tab) return;
       const snapshot = stateRef.current;
-      const tabsInGroup =
-        group === "left" ? snapshot.leftTabs : snapshot.rightTabs;
+      const tabsInGroup = getEditorPaneState(snapshot, group)?.tabs ?? [];
       const idx = tabsInGroup.findIndex((t) => t.id === tabId);
       const root = workspaceInfo?.root ?? "";
       const fullPath =
         tab.filePath && root
           ? `${root.replace(/\\/g, "/")}/${tab.filePath}`
           : (tab.filePath ?? "");
-      const otherGroup: EditorGroup = group === "left" ? "right" : "left";
+      const otherPaneId = paneIds.find((paneId) => paneId !== group) ?? null;
 
       const items: WorkbenchMenuItem[] = [
         {
@@ -1211,27 +1182,25 @@ export function EditorPanel({
       }
 
       items.push({ type: "sep" });
-      if (snapshot.split) {
+      if (otherPaneId) {
         items.push(
           {
             type: "item",
             id: "move-other-group",
             label: "Move to Other Editor Group",
-            onSelect: () => moveTab(tabId, group, otherGroup),
+            onSelect: () => moveTab(tabId, group, otherPaneId),
           },
           {
             type: "item",
             id: "split-right",
-            label: "Use Side-by-side Layout",
-            disabled: snapshot.splitOrientation === "horizontal",
-            onSelect: () => setSplitMode("horizontal", otherGroup),
+            label: "Split Editor Right",
+            onSelect: () => moveTabToNewSplit(tabId, group, "horizontal"),
           },
           {
             type: "item",
             id: "split-down",
-            label: "Use Stacked Layout",
-            disabled: snapshot.splitOrientation === "vertical",
-            onSelect: () => setSplitMode("vertical", otherGroup),
+            label: "Split Editor Down",
+            onSelect: () => moveTabToNewSplit(tabId, group, "vertical"),
           },
           {
             type: "item",
@@ -1284,32 +1253,24 @@ export function EditorPanel({
       }
 
       if (tab.conversationId) {
-        items.push({
-          type: "item",
-          id: "move-left",
-          label: "Move Chat to Left Editor Group",
-          disabled: group === "left",
-          onSelect: () =>
-            dispatch({
-              type: "OPEN_AGENT_CONVERSATION_TAB",
-              conversationId: tab.conversationId!,
-              title: tab.name,
-              group: "left",
-            }),
-        });
-        items.push({
-          type: "item",
-          id: "move-right",
-          label: "Move Chat to Right Editor Group",
-          disabled: group === "right",
-          onSelect: () =>
-            dispatch({
-              type: "OPEN_AGENT_CONVERSATION_TAB",
-              conversationId: tab.conversationId!,
-              title: tab.name,
-              group: "right",
-            }),
-        });
+        for (const paneId of paneIds) {
+          items.push({
+            type: "item",
+            id: `move-chat-${paneId}`,
+            label:
+              paneId === group
+                ? "Chat already in this editor group"
+                : `Move Chat to Editor Group ${paneIds.indexOf(paneId) + 1}`,
+            disabled: paneId === group,
+            onSelect: () =>
+              dispatch({
+                type: "OPEN_AGENT_CONVERSATION_TAB",
+                conversationId: tab.conversationId!,
+                title: tab.name,
+                group: paneId,
+              }),
+          });
+        }
       }
 
       if (tab.filePath) {
@@ -1343,10 +1304,10 @@ export function EditorPanel({
       moveEditorTabToWorkspaceWindow,
       moveTabToNewSplit,
       openAt,
+      paneIds,
       requestCloseOthersInGroup,
       requestCloseTab,
       saveTab,
-      setSplitMode,
       workspaceWindows,
       workspaceInfo?.root,
     ]
@@ -1550,7 +1511,6 @@ export function EditorPanel({
       activeTab: EditorTab | null;
       activeTabId: string | null;
       tabs: EditorTab[];
-      showSplitToolbar: boolean;
       emptyMessage: string;
     }
   ) {
@@ -1558,9 +1518,8 @@ export function EditorPanel({
       experimentalIpadWindowedTabInset &&
       !isMobile &&
       !primarySidebarVisible &&
-      group === "left";
-    const paneCloseSlotGroup: EditorGroup =
-      !state.split || state.splitOrientation === "vertical" ? "left" : "right";
+      paneIds[0] === group;
+    const paneCloseSlotGroup: EditorGroup = paneIds[paneIds.length - 1] ?? group;
     const trailingSpacerWidthPx =
       reserveTrailingPaneCloseSlot && group === paneCloseSlotGroup ? 18 : 0;
 
@@ -1570,9 +1529,10 @@ export function EditorPanel({
           group={group}
           tabs={options.tabs}
           activeTabId={options.activeTabId}
-          splitActive={state.split}
-          splitOrientation={state.splitOrientation}
-          showSplitToolbar={options.showSplitToolbar}
+          splitActive={paneCount > 1}
+          splitOrientation={state.root.type === "split" ? state.root.orientation : "horizontal"}
+          paneCount={paneCount}
+          showSplitToolbar
           padStripLeadingForWindowChrome={padStripLeadingForWindowChrome}
           onSelectTab={(id) => selectTab(group, id)}
           onCloseTab={(id) => requestCloseTab(group, id)}
@@ -1607,7 +1567,7 @@ export function EditorPanel({
   function editorDropHandler(targetGroup: EditorGroup) {
     return (e: DragEvent) => {
       const payload = parseTabDragPayload(e.dataTransfer.getData(TAB_DND_MIME));
-      if (state.split && payload) {
+      if (payload) {
         e.preventDefault();
         if (payload.group !== targetGroup) {
           moveTab(payload.tabId, payload.group, targetGroup);
@@ -1620,7 +1580,12 @@ export function EditorPanel({
       );
       if (chatPayload) {
         e.preventDefault();
-        openConversationTab(chatPayload.tabId, targetGroup);
+        openConversationTab({
+          conversationId: chatPayload.tabId,
+          group: targetGroup,
+          title: chatPayload.title,
+          workspaceId: chatPayload.workspaceId,
+        });
       }
     };
   }
@@ -1632,26 +1597,65 @@ export function EditorPanel({
       e.dataTransfer.dropEffect = "move";
       return;
     }
-    if (!state.split) return;
     if (!types.includes(TAB_DND_MIME)) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = "move";
   }
 
-  const leftActive =
-    state.leftTabs.find((t) => t.id === state.leftActiveId) ?? null;
-  const rightActive =
-    state.rightTabs.find((t) => t.id === state.rightActiveId) ?? null;
-  const splitLayout = state.splitLayout ?? DEFAULT_EDITOR_SPLIT_LAYOUT;
+  function renderPaneNode(node: EditorPaneNode): React.ReactNode {
+    if (node.type === "leaf") {
+      const pane = getEditorPaneState(state, node.paneId) ?? { tabs: [], activeId: null };
+      const activeTab = pane.tabs.find((tab) => tab.id === pane.activeId) ?? null;
+      const emptyMessage =
+        paneCount === 1
+          ? "No files open"
+          : "Move or drop a tab here from another editor group.";
+      return (
+        <Panel
+          key={node.paneId}
+          id={node.paneId}
+          minSize={state.root.type === "split" && state.root.orientation === "horizontal" ? "18%" : "15%"}
+          className="min-h-0 min-w-0"
+          style={{ overflow: "hidden" }}
+        >
+          {renderEditorGroup(node.paneId, {
+            activeTab,
+            activeTabId: pane.activeId,
+            tabs: pane.tabs,
+            emptyMessage,
+          })}
+        </Panel>
+      );
+    }
 
-  if (!state.split) {
+    return (
+      <Group
+        key={node.nodeId}
+        orientation={node.orientation}
+        id={`editor-split-group:${node.nodeId}`}
+        className="min-h-0 min-w-0 flex-1"
+        defaultLayout={node.layout ?? undefined}
+        onLayoutChanged={(layout) => {
+          dispatch({ type: "SET_SPLIT_LAYOUT", nodeId: node.nodeId, layout });
+        }}
+      >
+        {renderPaneNode(node.first)}
+        <EditorSplitResizeHandle orientation={node.orientation} />
+        {renderPaneNode(node.second)}
+      </Group>
+    );
+  }
+
+  if (state.root.type === "leaf") {
+    const pane = getEditorPaneState(state, state.root.paneId) ?? { tabs: [], activeId: null };
+    const activeTab = pane.tabs.find((tab) => tab.id === pane.activeId) ?? null;
+
     return (
       <div className="flex h-full flex-col overflow-hidden bg-[var(--bg-main)]">
-        {renderEditorGroup("left", {
-          activeTab: leftActive,
-          activeTabId: state.leftActiveId,
-          tabs: state.leftTabs,
-          showSplitToolbar: true,
+        {renderEditorGroup(state.root.paneId, {
+          activeTab,
+          activeTabId: pane.activeId,
+          tabs: pane.tabs,
           emptyMessage: "No files open",
         })}
       </div>
@@ -1660,46 +1664,7 @@ export function EditorPanel({
 
   return (
     <div className="flex h-full flex-col overflow-hidden bg-[var(--bg-main)]">
-      <Group
-        orientation={state.splitOrientation}
-        id="editor-split-group"
-        key={state.splitOrientation}
-        className="min-h-0 min-w-0 flex-1"
-        defaultLayout={splitLayout}
-        onLayoutChanged={(layout) => {
-          dispatch({ type: "SET_SPLIT_LAYOUT", layout });
-        }}
-      >
-        <Panel
-          id={EDITOR_SPLIT_PANEL_IDS.left}
-          minSize={state.splitOrientation === "horizontal" ? "18%" : "15%"}
-          className="min-h-0 min-w-0"
-          style={{ overflow: "hidden" }}
-        >
-          {renderEditorGroup("left", {
-            activeTab: leftActive,
-            activeTabId: state.leftActiveId,
-            tabs: state.leftTabs,
-            showSplitToolbar: true,
-            emptyMessage: "No file selected — open a tab above or move one here.",
-          })}
-        </Panel>
-        <EditorSplitResizeHandle orientation={state.splitOrientation} />
-        <Panel
-          id={EDITOR_SPLIT_PANEL_IDS.right}
-          minSize={state.splitOrientation === "horizontal" ? "18%" : "15%"}
-          className="min-h-0 min-w-0"
-          style={{ overflow: "hidden" }}
-        >
-          {renderEditorGroup("right", {
-            activeTab: rightActive,
-            activeTabId: state.rightActiveId,
-            tabs: state.rightTabs,
-            showSplitToolbar: false,
-            emptyMessage: "Move or drop a tab here from the other editor group.",
-          })}
-        </Panel>
-      </Group>
+      {renderPaneNode(state.root)}
     </div>
   );
 }

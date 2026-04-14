@@ -12,6 +12,11 @@ import {
   normalizeAgentRailFilterToggles,
 } from "@/lib/agent-rail";
 import { normalizeAgentShellDesktopLayout } from "@/components/agent/agent-shell-layout";
+import {
+  createEmptyEditorSessionState,
+  createPersistableEditorSessionState,
+  normalizeEditorSessionState,
+} from "@/lib/editor-session-state";
 
 export type SidebarView = "explorer" | "search" | "scm";
 export type MobilePanel = "sidebar" | "editor" | "chat";
@@ -37,15 +42,33 @@ export type LayoutSessionState = {
 
 export type EditorSplitOrientation = "horizontal" | "vertical";
 
+export type EditorPaneId = string;
+
+export type EditorPaneTabsState = {
+  tabs: EditorTab[];
+  activeId: string | null;
+};
+
+export type EditorPaneLeafNode = {
+  type: "leaf";
+  paneId: EditorPaneId;
+};
+
+export type EditorPaneSplitNode = {
+  type: "split";
+  nodeId: string;
+  orientation: EditorSplitOrientation;
+  layout: Record<string, number> | null;
+  first: EditorPaneNode;
+  second: EditorPaneNode;
+};
+
+export type EditorPaneNode = EditorPaneLeafNode | EditorPaneSplitNode;
+
 export type EditorSessionState = {
-  split: boolean;
-  splitOrientation: EditorSplitOrientation;
-  splitLayout: Record<string, number> | null;
-  focusedGroup: "left" | "right";
-  leftTabs: EditorTab[];
-  rightTabs: EditorTab[];
-  leftActiveId: string | null;
-  rightActiveId: string | null;
+  root: EditorPaneNode;
+  panesById: Record<EditorPaneId, EditorPaneTabsState>;
+  focusedPaneId: EditorPaneId;
   viewStateByTabId: Record<string, unknown>;
 };
 
@@ -92,6 +115,8 @@ export type AgentViewSessionState = {
   filterPreset: string;
   /** Shared agent shell layout snapshot. The left rail width stays global across chats. */
   agentShellDesktopLayout: Record<string, number> | null;
+  /** Optional tiled editor session rendered inside the agent center stage. */
+  centerPaneEditorSession?: EditorSessionState;
   /** Per-conversation right-side workbench state for the agent shell. */
   sidePaneSessionsByConversationId?: Record<string, AgentSidePaneSessionState>;
 };
@@ -107,17 +132,7 @@ export type WorkspaceSessionState = {
 };
 
 export function createEmptyEditorSession(): EditorSessionState {
-  return {
-    split: false,
-    splitOrientation: "horizontal",
-    splitLayout: null,
-    focusedGroup: "left",
-    leftTabs: [],
-    rightTabs: [],
-    leftActiveId: null,
-    rightActiveId: null,
-    viewStateByTabId: {},
-  };
+  return createEmptyEditorSessionState();
 }
 
 export function createEmptyAgentSidePaneSession(): AgentSidePaneSessionState {
@@ -177,6 +192,7 @@ export function createDefaultWorkspaceSession(
       railFilterToggles: defaultAgentRailFilterToggles(),
       filterPreset: "default",
       agentShellDesktopLayout: null,
+      centerPaneEditorSession: createEmptyEditorSession(),
       sidePaneSessionsByConversationId: {},
     },
     settingsView: {
@@ -233,11 +249,7 @@ function createPersistableEditorTab(tab: EditorTab): EditorTab {
 }
 
 function createPersistableEditorSession(session: EditorSessionState): EditorSessionState {
-  return {
-    ...session,
-    leftTabs: session.leftTabs.map(createPersistableEditorTab),
-    rightTabs: session.rightTabs.map(createPersistableEditorTab),
-  };
+  return createPersistableEditorSessionState(session, createPersistableEditorTab);
 }
 
 function createPersistableAgentSidePaneSession(
@@ -260,6 +272,9 @@ export function createPersistableWorkspaceSession(
     layout: session.layout,
     agentView: {
       ...session.agentView,
+      centerPaneEditorSession: createPersistableEditorSession(
+        session.agentView.centerPaneEditorSession ?? createEmptyEditorSession()
+      ),
       sidePaneSessionsByConversationId: Object.fromEntries(
         Object.entries(session.agentView.sidePaneSessionsByConversationId ?? {}).map(
           ([scopeId, sidePaneSession]) => [
@@ -277,16 +292,7 @@ function normalizeEditorSession(
   raw: Partial<EditorSessionState> | null | undefined,
   defaults: EditorSessionState
 ): EditorSessionState {
-  return {
-    ...defaults,
-    ...(raw ?? {}),
-    leftTabs: Array.isArray(raw?.leftTabs) ? raw.leftTabs : defaults.leftTabs,
-    rightTabs: Array.isArray(raw?.rightTabs) ? raw.rightTabs : defaults.rightTabs,
-    viewStateByTabId:
-      raw?.viewStateByTabId && typeof raw.viewStateByTabId === "object"
-        ? raw.viewStateByTabId
-        : defaults.viewStateByTabId,
-  };
+  return normalizeEditorSessionState(raw, defaults);
 }
 
 function normalizeAgentSidePaneSession(
@@ -311,6 +317,13 @@ function normalizeAgentSidePaneSession(
         ? raw.expandedComposerDraftId
         : defaults.expandedComposerDraftId,
   };
+}
+
+function normalizeAgentCenterPaneEditorSession(
+  raw: Partial<AgentViewSessionState> | null | undefined,
+  defaults: EditorSessionState
+): EditorSessionState {
+  return normalizeEditorSession(raw?.centerPaneEditorSession, defaults);
 }
 
 function normalizeAgentSidePaneSessionMap(
@@ -357,31 +370,10 @@ export function mergeWorkspaceSessionFromImport(
       : current.chat.backendId;
   const importedUnsupportedBackend =
     r.chat?.backendId != null && normalizedChatBackendId !== r.chat.backendId;
-  const normalizedSplitOrientation: EditorSplitOrientation =
-    r.editor?.splitOrientation === "vertical" ? "vertical" : current.editor.splitOrientation;
-  const normalizedSplitLayout =
-    r.editor?.splitLayout && typeof r.editor.splitLayout === "object"
-      ? Object.fromEntries(
-          Object.entries(r.editor.splitLayout).filter(
-            ([panelId, size]) =>
-              typeof panelId === "string" &&
-              panelId.length > 0 &&
-              typeof size === "number" &&
-              Number.isFinite(size)
-          )
-        )
-      : current.editor.splitLayout;
 
   return {
     schemaVersion: 1,
-    editor: normalizeEditorSession(
-      {
-        ...r.editor,
-        splitOrientation: normalizedSplitOrientation,
-        splitLayout: normalizedSplitLayout,
-      },
-      current.editor
-    ),
+    editor: normalizeEditorSession(r.editor, current.editor),
     chat: {
       ...current.chat,
       ...(r.chat ?? {}),
@@ -473,6 +465,10 @@ export function mergeWorkspaceSessionFromImport(
         normalizeAgentShellDesktopLayout(
           r.agentView?.agentShellDesktopLayout ?? current.agentView.agentShellDesktopLayout
         ) ?? null,
+      centerPaneEditorSession: normalizeAgentCenterPaneEditorSession(
+        r.agentView,
+        current.agentView.centerPaneEditorSession ?? createEmptyEditorSession()
+      ),
       sidePaneSessionsByConversationId: normalizeAgentSidePaneSessionMap(
         r.agentView?.sidePaneSessionsByConversationId,
         current.agentView.sidePaneSessionsByConversationId ?? {}

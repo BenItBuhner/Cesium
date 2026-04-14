@@ -44,15 +44,18 @@ import {
   subscribeGlobalPinnedAgentConversationIds,
   writeGlobalPinnedAgentConversationIds,
 } from "@/lib/agent-rail-pins";
+import { editorPanelReducer } from "@/components/editor/editor-panel-state";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import {
   AGENT_NEW_CHAT_SESSION_ID,
+  createEmptyEditorSession,
   createEmptyAgentSidePaneSession,
   getAgentSidePaneSessionScopeId,
   type WorkspaceSessionState,
   type AgentSidePaneSessionState,
   type EditorSessionState,
 } from "@/lib/workspace-session";
+import { countEditorTabs, getEditorPaneIds } from "@/lib/editor-session-state";
 
 export type AgentCenterStableConversationView = {
   conversationId: string;
@@ -80,6 +83,17 @@ type AgentShellStateContextValue = {
   setRightPaneOpen: (open: boolean) => void;
   toggleRightPaneOpen: () => void;
   sidePaneScopeId: string;
+  centerPaneEditorSession: EditorSessionState;
+  updateCenterPaneEditorSession: (
+    updater: (current: EditorSessionState) => EditorSessionState
+  ) => void;
+  openConversationInCenterEditor: (payload: {
+    conversationId: string;
+    title: string;
+    workspaceId?: string;
+    group?: string;
+    splitOrientation?: "horizontal" | "vertical";
+  }) => Promise<void>;
   sidePaneEditorSession: EditorSessionState;
   updateSidePaneEditorSession: (
     updater: (current: EditorSessionState) => EditorSessionState
@@ -338,8 +352,7 @@ function hasLegacySidePaneState(
   workspaceSession: ReturnType<typeof useWorkspace>["workspaceSession"]
 ): boolean {
   return (
-    workspaceSession.editor.leftTabs.length > 0 ||
-    workspaceSession.editor.rightTabs.length > 0 ||
+    countEditorTabs(workspaceSession.editor) > 0 ||
     workspaceSession.agentView.rightPaneOpen ||
     workspaceSession.agentView.agentShellDesktopLayout != null
   );
@@ -391,6 +404,13 @@ export function AgentShellStateProvider({
   const [pendingConversationSelection, setPendingConversationSelection] = useState<{
     workspaceId: string;
     conversationId: string;
+  } | null>(null);
+  const [pendingCenterEditorOpen, setPendingCenterEditorOpen] = useState<{
+    conversationId: string;
+    title: string;
+    workspaceId?: string;
+    group?: string;
+    splitOrientation?: "horizontal" | "vertical";
   } | null>(null);
   const [archivedConversationIdsByWorkspaceId, setArchivedConversationIdsByWorkspaceId] =
     useState<Record<string, string[]>>({});
@@ -675,7 +695,10 @@ export function AgentShellStateProvider({
     [persistedConversationId]
   );
 
-  const sidePaneSessionMap = workspaceSession.agentView.sidePaneSessionsByConversationId ?? {};
+  const sidePaneSessionMap = useMemo(
+    () => workspaceSession.agentView.sidePaneSessionsByConversationId ?? {},
+    [workspaceSession.agentView.sidePaneSessionsByConversationId]
+  );
   const hasAnySidePaneSessions = Object.keys(sidePaneSessionMap).length > 0;
   const legacySidePaneSession = useMemo(
     () => createLegacySidePaneSession(workspaceSession),
@@ -695,6 +718,8 @@ export function AgentShellStateProvider({
     sidePaneScopeId,
     sidePaneSessionMap,
   ]);
+  const centerPaneEditorSession =
+    workspaceSession.agentView.centerPaneEditorSession ?? createEmptyEditorSession();
 
   // Apply persisted global shell before paint. Never re-source rail/layout from per-workspace session
   // after that — session layout changes when switching workspaces and must not clobber user prefs.
@@ -896,9 +921,7 @@ export function AgentShellStateProvider({
   }, [activeWorkspaceId, sidePaneScopeId]);
 
   useEffect(() => {
-    const nextEditorTabCount =
-      activeSidePaneSession.editor.leftTabs.length +
-      activeSidePaneSession.editor.rightTabs.length;
+    const nextEditorTabCount = countEditorTabs(activeSidePaneSession.editor);
     if (!editorTabCountHydratedRef.current) {
       editorTabCountHydratedRef.current = true;
       previousEditorTabCountRef.current = nextEditorTabCount;
@@ -957,8 +980,7 @@ export function AgentShellStateProvider({
     }
     previousEditorTabCountRef.current = nextEditorTabCount;
   }, [
-    activeSidePaneSession.editor.leftTabs.length,
-    activeSidePaneSession.editor.rightTabs.length,
+    activeSidePaneSession.editor,
     sidePaneScopeId,
     updateWorkspaceSession,
   ]);
@@ -1033,6 +1055,107 @@ export function AgentShellStateProvider({
     },
     [sidePaneScopeId, updateWorkspaceSession]
   );
+
+  const updateCenterPaneEditorSession = useCallback(
+    (updater: (current: EditorSessionState) => EditorSessionState) => {
+      updateWorkspaceSession((current) => {
+        const existing = current.agentView.centerPaneEditorSession ?? createEmptyEditorSession();
+        const nextEditor = updater(existing);
+        if (nextEditor === existing) {
+          return current;
+        }
+        return {
+          ...current,
+          agentView: {
+            ...current.agentView,
+            centerPaneEditorSession: nextEditor,
+          },
+        };
+      });
+    },
+    [updateWorkspaceSession]
+  );
+
+  const openConversationInCenterEditor = useCallback(
+    async (payload: {
+      conversationId: string;
+      title: string;
+      workspaceId?: string;
+      group?: string;
+      splitOrientation?: "horizontal" | "vertical";
+    }) => {
+      if (payload.workspaceId && payload.workspaceId !== activeWorkspaceId) {
+        setPendingCenterEditorOpen(payload);
+        try {
+          await openWorkspaceById(payload.workspaceId);
+        } catch (error) {
+          setPendingCenterEditorOpen((current) =>
+            current?.conversationId === payload.conversationId ? null : current
+          );
+          throw error;
+        }
+        return;
+      }
+      updateCenterPaneEditorSession((current) => {
+        let nextState = current;
+        let targetGroup = payload.group;
+        if (payload.splitOrientation) {
+          const beforePaneIds = getEditorPaneIds(current);
+          nextState = editorPanelReducer(current, {
+            type: "ENABLE_SPLIT",
+            orientation: payload.splitOrientation,
+          });
+          if (!targetGroup) {
+            targetGroup = getEditorPaneIds(nextState).find(
+              (paneId) => !beforePaneIds.includes(paneId)
+            );
+          }
+        }
+        return editorPanelReducer(nextState, {
+          type: "OPEN_AGENT_CONVERSATION_TAB",
+          conversationId: payload.conversationId,
+          title: payload.title,
+          group: targetGroup,
+        });
+      });
+    },
+    [activeWorkspaceId, openWorkspaceById, updateCenterPaneEditorSession]
+  );
+
+  useEffect(() => {
+    if (!pendingCenterEditorOpen) {
+      return;
+    }
+    if (
+      pendingCenterEditorOpen.workspaceId &&
+      pendingCenterEditorOpen.workspaceId !== activeWorkspaceId
+    ) {
+      return;
+    }
+    updateCenterPaneEditorSession((current) => {
+      let nextState = current;
+      let targetGroup = pendingCenterEditorOpen.group;
+      if (pendingCenterEditorOpen.splitOrientation) {
+        const beforePaneIds = getEditorPaneIds(current);
+        nextState = editorPanelReducer(current, {
+          type: "ENABLE_SPLIT",
+          orientation: pendingCenterEditorOpen.splitOrientation,
+        });
+        if (!targetGroup) {
+          targetGroup = getEditorPaneIds(nextState).find(
+            (paneId) => !beforePaneIds.includes(paneId)
+          );
+        }
+      }
+      return editorPanelReducer(nextState, {
+        type: "OPEN_AGENT_CONVERSATION_TAB",
+        conversationId: pendingCenterEditorOpen.conversationId,
+        title: pendingCenterEditorOpen.title,
+        group: targetGroup,
+      });
+    });
+    setPendingCenterEditorOpen(null);
+  }, [activeWorkspaceId, pendingCenterEditorOpen, updateCenterPaneEditorSession]);
 
   const setAgentShellDesktopLayout = useCallback(
     (layout: Record<string, number> | null) => {
@@ -1461,6 +1584,9 @@ export function AgentShellStateProvider({
       setRightPaneOpen,
       toggleRightPaneOpen,
       sidePaneScopeId,
+      centerPaneEditorSession,
+      updateCenterPaneEditorSession,
+      openConversationInCenterEditor,
       sidePaneEditorSession: activeSidePaneSession.editor,
       updateSidePaneEditorSession,
       agentShellDesktopLayout: effectiveAgentShellDesktopLayout,
@@ -1495,6 +1621,7 @@ export function AgentShellStateProvider({
     }),
     [
       activeWorkspaceGroup,
+      centerPaneEditorSession,
       activeSidePaneSession.editor,
       activeSidePaneSession.expandedComposerDraftId,
       activeSidePaneSession.rightPaneOpen,
@@ -1506,6 +1633,7 @@ export function AgentShellStateProvider({
       groupsForRail,
       isMobile,
       isDraftConversationSelected,
+      openConversationInCenterEditor,
       openConversationSummary,
       pinConversation,
       pinnedRailConversations,
@@ -1529,6 +1657,7 @@ export function AgentShellStateProvider({
       toggleRightPaneOpen,
       unarchiveConversation,
       unpinConversation,
+      updateCenterPaneEditorSession,
       updateSidePaneEditorSession,
       sharedLeftRailCollapsed,
     ]

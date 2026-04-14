@@ -1,11 +1,12 @@
 "use client";
 
-import { useCallback, useDeferredValue, useEffect, useMemo, useRef } from "react";
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, type DragEvent } from "react";
 import { AskQuestionCard } from "@/components/chat/AskQuestionCard";
 import { ChatComposer } from "@/components/chat/ChatComposer";
 import { ComposerQueueDock } from "@/components/chat/ComposerQueueDock";
 import { MessageList } from "@/components/chat/MessageList";
 import { useAgentConversations } from "@/components/chat/AgentConversationsContext";
+import { EditorPanel } from "@/components/editor/EditorPanel";
 import { useOpenInEditor } from "@/components/editor/OpenInEditorContext";
 import { askStepsFromMessage } from "@/lib/ask-question-utils";
 import {
@@ -15,6 +16,8 @@ import {
   resolveDraftModelForBackend,
 } from "@/lib/agent-chat";
 import { DEFAULT_MODE_OPTIONS, resolveCanonicalModeId } from "@/lib/chat-modes";
+import { CHAT_TAB_DND_MIME, parseChatTabDragPayload } from "@/lib/chat-tab-dnd";
+import { countEditorTabs } from "@/lib/editor-session-state";
 import type { AgentBackendId, AgentBackendInfo } from "@/lib/agent-types";
 import type { EditorMode, ImageAttachment, QueuedChatPrompt } from "@/lib/types";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
@@ -78,16 +81,20 @@ export function AgentCenterPane() {
   const { workspaceSession, updateWorkspaceSession, workspaceInfo } = useWorkspace();
   const {
     activeWorkspaceGroup,
+    centerPaneEditorSession,
     conversationSelectionPending,
     expandedComposerDraftId,
     isDraftConversationSelected,
+    openConversationInCenterEditor,
     refreshConversationGroups,
     selectedConversationId,
     setStableConversationView,
+    updateCenterPaneEditorSession,
     setSelectedConversationId,
     stableConversationView,
   } = useAgentShellState();
   const previousConversationStatusRef = useRef<string | null>(null);
+  const centerPaneHasEditors = countEditorTabs(centerPaneEditorSession) > 0;
 
   const conversation = selectedConversationId
     ? conversationsById[selectedConversationId] ?? null
@@ -456,6 +463,31 @@ export function AgentCenterPane() {
     </div>
   );
 
+  const handleCenterDragOver = useCallback((event: DragEvent<HTMLDivElement>) => {
+    if ([...event.dataTransfer.types].includes(CHAT_TAB_DND_MIME)) {
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "move";
+    }
+  }, []);
+
+  const handleCenterDrop = useCallback(
+    (event: DragEvent<HTMLDivElement>) => {
+      const payload = parseChatTabDragPayload(
+        event.dataTransfer.getData(CHAT_TAB_DND_MIME)
+      );
+      if (!payload) {
+        return;
+      }
+      event.preventDefault();
+      void openConversationInCenterEditor({
+        conversationId: payload.tabId,
+        title: payload.title ?? "Chat",
+        workspaceId: payload.workspaceId,
+      });
+    },
+    [openConversationInCenterEditor]
+  );
+
   if (showLanding) {
     return (
       <div className="relative flex h-full min-h-0 w-full flex-col overflow-hidden bg-[var(--bg-main)]">
@@ -464,9 +496,39 @@ export function AgentCenterPane() {
     );
   }
 
+  if (centerPaneHasEditors) {
+    return (
+      <div className="relative flex h-full min-h-0 w-full flex-col overflow-hidden bg-[var(--bg-main)]">
+          <EditorPanel
+            session={centerPaneEditorSession}
+            onSessionChange={updateCenterPaneEditorSession}
+            expandedComposerDraftId={expandedComposerDraftId}
+            setExpandedComposerDraft={() => undefined}
+            onOpenConversationInPane={(payload) => {
+              const conversationId = payload.conversationId;
+              void openConversationInCenterEditor({
+                conversationId,
+                title:
+                  payload.title ??
+                  conversationsById[conversationId]?.title ??
+                  workspaceSession.chat.tabs.find((tab) => tab.id === conversationId)?.title ??
+                  "Chat",
+                ...(payload.paneId ? { group: payload.paneId } : {}),
+                ...(payload.workspaceId ? { workspaceId: payload.workspaceId } : {}),
+              });
+            }}
+          />
+      </div>
+    );
+  }
+
   return (
     <div className="relative flex h-full min-h-0 w-full flex-col overflow-hidden bg-[var(--bg-main)]">
-      <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
+      <div
+        className="relative min-h-0 min-w-0 flex-1 overflow-hidden"
+        onDragOver={handleCenterDragOver}
+        onDrop={handleCenterDrop}
+      >
         {visibleConversationView ? (
           <div className={showConversationTransitionState ? "pointer-events-none h-full" : "h-full"}>
             <MessageList

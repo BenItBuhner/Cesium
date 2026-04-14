@@ -1,4 +1,5 @@
 import type { EditorBridge } from "@/components/ide/EditorBridgeContext";
+import { getEditorPaneState } from "@/lib/editor-session-state";
 
 /**
  * True when the event target is inside an in-IDE browser tab surface and that
@@ -18,12 +19,15 @@ export function isFocusedBrowserSurface(
   );
   if (!surface) return false;
   const groupAttr = surface.getAttribute("data-ide-editor-group");
-  if (groupAttr !== "left" && groupAttr !== "right") return false;
+  if (!groupAttr) return false;
 
   const s = bridge.getState();
-  const activeId =
-    groupAttr === "left" ? s.leftActiveId : s.rightActiveId;
-  const tabs = groupAttr === "left" ? s.leftTabs : s.rightTabs;
+  const pane = getEditorPaneState(s, groupAttr);
+  if (!pane) {
+    return false;
+  }
+  const activeId = pane.activeId;
+  const tabs = pane.tabs;
   const tab = tabs.find((t) => t.id === activeId);
   return Boolean(tab?.browser);
 }

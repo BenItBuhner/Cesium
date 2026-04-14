@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useLayoutEffect, useRef, type MouseEvent } from "react";
 import { createPortal } from "react-dom";
-import { Columns2, MoreVertical, Rows2 } from "lucide-react";
+import { Columns2, MoreVertical, Plus, Rows2 } from "lucide-react";
 import { EditorTab } from "./EditorTab";
 import { useClickOutside } from "@/hooks/useClickOutside";
 import { useTabStripWheel } from "@/hooks/useTabStripWheel";
@@ -14,6 +14,7 @@ import type {
 import type { EditorGroup } from "./editor-panel-state";
 import { TAB_DND_MIME, parseTabDragPayload } from "./editor-panel-state";
 import type { EditorSplitOrientation } from "@/lib/workspace-session";
+import { useIDECommandRunner } from "@/components/ide/IDECommandContext";
 
 interface EditorTabsProps {
   group: EditorGroup;
@@ -21,6 +22,7 @@ interface EditorTabsProps {
   activeTabId: string | null;
   splitActive: boolean;
   splitOrientation: EditorSplitOrientation;
+  paneCount: number;
   /** Left row only: split / join + overflow. Right row when split: overflow only. */
   showSplitToolbar: boolean;
   /** When true, add leading padding on the tab strip (iPadOS window controls). */
@@ -33,7 +35,12 @@ interface EditorTabsProps {
   onCloseAllTabs: () => void;
   onCloseOtherTabs: () => void;
   onMoveTabBetweenGroups: (tabId: string, from: EditorGroup, to: EditorGroup) => void;
-  onOpenConversationTab?: (conversationId: string, group: EditorGroup) => void;
+  onOpenConversationTab?: (payload: {
+    conversationId: string;
+    group: EditorGroup;
+    title?: string;
+    workspaceId?: string;
+  }) => void;
   onTabContextMenu?: (e: MouseEvent, tabId: string) => void;
   onStripContextMenu?: (e: MouseEvent) => void;
   /** Agent chat tabs: permission pending / running; keyed by `conversationId`. */
@@ -49,7 +56,7 @@ export function EditorTabs({
   tabs,
   activeTabId,
   splitActive,
-  splitOrientation,
+  paneCount,
   showSplitToolbar,
   padStripLeadingForWindowChrome = false,
   onSelectTab,
@@ -68,6 +75,7 @@ export function EditorTabs({
 }: EditorTabsProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [menuPos, setMenuPos] = useState({ top: 0, left: 0 });
+  const runCommand = useIDECommandRunner();
   const moreTriggerRef = useRef<HTMLDivElement>(null);
   const menuPopoverRef = useRef<HTMLDivElement>(null);
   const stripRef = useRef<HTMLDivElement>(null);
@@ -91,6 +99,7 @@ export function EditorTabs({
 
   const hasTabs = tabs.length > 0;
   const canCloseOthers = tabs.length > 1;
+  const canJoinGroups = paneCount > 1;
 
   function handleStripDragOver(e: React.DragEvent) {
     const types = [...e.dataTransfer.types];
@@ -144,7 +153,12 @@ export function EditorTabs({
     );
     if (chatPayload && onOpenConversationTab) {
       e.preventDefault();
-      onOpenConversationTab(chatPayload.tabId, group);
+      onOpenConversationTab({
+        conversationId: chatPayload.tabId,
+        group,
+        title: chatPayload.title,
+        workspaceId: chatPayload.workspaceId,
+      });
     }
   }
 
@@ -197,13 +211,20 @@ export function EditorTabs({
       </div>
 
       <div className="flex h-[var(--tab-height)] shrink-0 items-center gap-[8px] px-[11px]">
+        <button
+          type="button"
+          onClick={() => runCommand?.("workbench.action.gotoFile")}
+          className="flex size-[28px] shrink-0 items-center justify-center rounded-[var(--radius-tab)] text-[var(--text-secondary)] transition-colors hover:bg-white/[0.04] hover:text-[var(--text-primary)]"
+          aria-label="Quick open file"
+        >
+          <Plus className="size-[18px]" strokeWidth={1.5} aria-hidden />
+        </button>
         {showSplitToolbar && (
           <button
             type="button"
-            onClick={splitActive ? onJoinGroups : onSplitRight}
+            onClick={onSplitRight}
             className="flex size-[28px] shrink-0 items-center justify-center rounded-[var(--radius-tab)] text-[var(--text-secondary)] transition-colors hover:bg-white/[0.04] hover:text-[var(--text-primary)]"
-            aria-label={splitActive ? "Join editor groups" : "Split editor to the right"}
-            aria-pressed={splitActive}
+            aria-label="Split editor to the right"
           >
             <Columns2 className="size-[18px]" strokeWidth={1.5} aria-hidden />
           </button>
@@ -239,60 +260,7 @@ export function EditorTabs({
             style={{ top: menuPos.top, left: menuPos.left }}
             onPointerDown={(e) => e.stopPropagation()}
           >
-            {splitActive && (
-              <>
-                <button
-                  type="button"
-                  role="menuitem"
-                  onClick={() => {
-                    onJoinGroups();
-                    closeMenu();
-                  }}
-                  className="flex w-full items-center gap-[8px] px-[12px] py-[6px] text-left font-sans text-[13px] text-[var(--text-primary)] transition-colors hover:bg-white/[0.06]"
-                >
-                  <Columns2 className="size-[14px] shrink-0 text-[var(--text-secondary)]" strokeWidth={1.5} />
-                  <span className="flex-1">Join Editor Groups</span>
-                </button>
-                <button
-                  type="button"
-                  role="menuitem"
-                  disabled={splitOrientation === "horizontal"}
-                  onClick={() => {
-                    if (splitOrientation !== "horizontal") {
-                      onSplitRight();
-                    }
-                    closeMenu();
-                  }}
-                  className="flex w-full items-center gap-[8px] px-[12px] py-[6px] text-left font-sans text-[13px] text-[var(--text-primary)] transition-colors hover:bg-white/[0.06] disabled:cursor-not-allowed disabled:opacity-40"
-                >
-                  <Columns2
-                    className="size-[14px] shrink-0 text-[var(--text-secondary)]"
-                    strokeWidth={1.5}
-                  />
-                  <span className="flex-1">Use Side-by-side Layout</span>
-                </button>
-                <button
-                  type="button"
-                  role="menuitem"
-                  disabled={splitOrientation === "vertical"}
-                  onClick={() => {
-                    if (splitOrientation !== "vertical") {
-                      onSplitDown();
-                    }
-                    closeMenu();
-                  }}
-                  className="flex w-full items-center gap-[8px] px-[12px] py-[6px] text-left font-sans text-[13px] text-[var(--text-primary)] transition-colors hover:bg-white/[0.06] disabled:cursor-not-allowed disabled:opacity-40"
-                >
-                  <Rows2
-                    className="size-[14px] shrink-0 text-[var(--text-secondary)]"
-                    strokeWidth={1.5}
-                  />
-                  <span className="flex-1">Use Stacked Layout</span>
-                </button>
-                <div className="my-[4px] h-px bg-[var(--border-subtle)]" aria-hidden />
-              </>
-            )}
-            {!splitActive && showSplitToolbar && (
+            {showSplitToolbar && (
               <>
                 <button
                   type="button"
@@ -318,6 +286,26 @@ export function EditorTabs({
                   <Rows2 className="size-[14px] shrink-0 text-[var(--text-secondary)]" strokeWidth={1.5} />
                   <span className="flex-1">Split Editor Down</span>
                 </button>
+                {splitActive ? (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    disabled={!canJoinGroups}
+                    onClick={() => {
+                      if (canJoinGroups) {
+                        onJoinGroups();
+                      }
+                      closeMenu();
+                    }}
+                    className="flex w-full items-center gap-[8px] px-[12px] py-[6px] text-left font-sans text-[13px] text-[var(--text-primary)] transition-colors hover:bg-white/[0.06] disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    <Columns2
+                      className="size-[14px] shrink-0 text-[var(--text-secondary)]"
+                      strokeWidth={1.5}
+                    />
+                    <span className="flex-1">Join Editor Groups</span>
+                  </button>
+                ) : null}
                 <div className="my-[4px] h-px bg-[var(--border-subtle)]" aria-hidden />
               </>
             )}

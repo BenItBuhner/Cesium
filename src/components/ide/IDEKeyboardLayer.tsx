@@ -9,6 +9,10 @@ import {
   type ReactNode,
 } from "react";
 import { useOpenInEditor } from "@/components/editor/OpenInEditorContext";
+import {
+  getAllEditorTabs,
+  getFocusedEditorPaneState,
+} from "@/lib/editor-session-state";
 import { buildQuickOpenIndex, type QuickOpenEntry } from "@/lib/quick-open-files";
 import { CommandPalette, type PaletteCommand } from "./CommandPalette";
 import { QuickOpen } from "./QuickOpen";
@@ -376,8 +380,8 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
         case "workbench.action.closeActiveEditor":
           runWithBridge((b) => {
             const s = b.getState();
-            const g = s.focusedGroup;
-            const tabId = g === "left" ? s.leftActiveId : s.rightActiveId;
+            const g = s.focusedPaneId;
+            const tabId = getFocusedEditorPaneState(s)?.activeId ?? null;
             if (tabId) b.requestCloseTab(g, tabId);
           });
           break;
@@ -454,12 +458,10 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
               return;
             }
             const snapshot = bridge.getState();
-            const leftTerminal = snapshot.leftTabs.find((tab) => tab.terminalId);
-            const rightTerminal = snapshot.rightTabs.find((tab) => tab.terminalId);
-            if (leftTerminal) {
-              bridge.dispatch({ type: "SELECT_TAB", group: "left", id: leftTerminal.id });
-            } else if (rightTerminal) {
-              bridge.dispatch({ type: "SELECT_TAB", group: "right", id: rightTerminal.id });
+            const terminal = getAllEditorTabs(snapshot).find((tab) => tab.terminalId);
+            if (terminal) {
+              const paneId = snapshot.focusedPaneId;
+              bridge.dispatch({ type: "SELECT_TAB", group: paneId, id: terminal.id });
             } else {
               await bridge.openTerminalTab();
             }
@@ -644,8 +646,10 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
         run: () =>
           runWithBridge((b) => {
             const s = b.getState();
-            b.requestCloseAllInGroup("left");
-            if (s.split) b.requestCloseAllInGroup("right");
+            const paneIds = Object.keys(s.panesById);
+            for (const paneId of paneIds) {
+              b.requestCloseAllInGroup(paneId);
+            }
           }),
       },
       {

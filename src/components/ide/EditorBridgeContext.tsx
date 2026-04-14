@@ -9,11 +9,8 @@ import {
   type MutableRefObject,
   type ReactNode,
 } from "react";
-import type {
-  EditorGroup,
-  EditorPanelAction,
-  EditorPanelState,
-} from "@/components/editor/editor-panel-state";
+import type { EditorPanelAction, EditorPanelState } from "@/components/editor/editor-panel-state";
+import type { EditorPaneId } from "@/lib/workspace-session";
 
 export type EditorBridge = {
   dispatch: Dispatch<EditorPanelAction>;
@@ -22,9 +19,9 @@ export type EditorBridge = {
   saveAllTabs: () => Promise<{ savedCount: number; attemptedCount: number }>;
   openTerminalTab: () => Promise<void>;
   openBrowserTab: (url: string) => void;
-  requestCloseTab: (group: EditorGroup, id: string) => void;
-  requestCloseAllInGroup: (group: EditorGroup) => void;
-  requestCloseOthersInGroup: (group: EditorGroup) => void;
+  requestCloseTab: (group: EditorPaneId, id: string) => void;
+  requestCloseAllInGroup: (group: EditorPaneId) => void;
+  requestCloseOthersInGroup: (group: EditorPaneId) => void;
 };
 
 const EditorBridgeRefContext =

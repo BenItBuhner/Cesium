@@ -3,6 +3,7 @@
 import {
   useEffect,
   useRef,
+  type DragEvent,
   type KeyboardEvent,
   type MouseEvent,
 } from "react";
@@ -11,6 +12,7 @@ import type {
   AgentConversationStatus,
   AgentRailConversationSummary,
 } from "@/lib/agent-types";
+import { setMinimalTabDragImage } from "@/components/editor/tab-drag-image";
 
 function ConversationStatusIcon({
   hasPendingPermission,
@@ -47,6 +49,7 @@ export function AgentConversationRow({
   onContextMenu,
   onEditValueChange,
   onSelect,
+  onDragStart,
   selected,
 }: {
   conversation: AgentRailConversationSummary;
@@ -61,6 +64,7 @@ export function AgentConversationRow({
   ) => void;
   onEditValueChange?: (value: string) => void;
   onSelect: () => void;
+  onDragStart?: (event: DragEvent<HTMLButtonElement>, conversation: AgentRailConversationSummary) => void;
   selected: boolean;
 }) {
   const renameInputRef = useRef<HTMLInputElement>(null);
@@ -129,6 +133,14 @@ export function AgentConversationRow({
       type="button"
       onClick={onSelect}
       onContextMenu={handleContextMenu}
+      draggable={Boolean(onDragStart)}
+      onDragStart={(event) => {
+        if (!onDragStart) {
+          return;
+        }
+        setMinimalTabDragImage(event.dataTransfer);
+        onDragStart(event, conversation);
+      }}
       className={rowClassName}
       title={conversation.title}
     >

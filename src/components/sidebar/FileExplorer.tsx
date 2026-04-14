@@ -193,16 +193,10 @@ export function FileExplorer() {
         handleOpenFile(path, node);
         return;
       }
-      const s = bridge.getState();
-      if (!s.split) {
-        bridge.dispatch({
-          type: "ENABLE_SPLIT",
-          orientation: "horizontal",
-          focus: "right",
-        });
-      } else {
-        bridge.dispatch({ type: "ENABLE_SPLIT", orientation: "horizontal", focus: "right" });
-      }
+      bridge.dispatch({
+        type: "ENABLE_SPLIT",
+        orientation: "horizontal",
+      });
       openExplorerFile({
         path,
         name: node.name,

@@ -1,4 +1,5 @@
 import type { AgentConversationRecord } from "@/lib/agent-types";
+import { getVisibleConversationIdsFromEditorSession } from "@/lib/editor-session-state";
 import type { WorkspaceSessionState } from "@/lib/workspace-session";
 
 /** True when this conversation is visible in the focused chat tab or active editor tab. */
@@ -10,16 +11,7 @@ export function isAgentConversationTabVisible(
   if (activeChat?.id === conversationId) {
     return true;
   }
-  const { leftTabs, rightTabs, leftActiveId, rightActiveId } = session.editor;
-  const leftTab = leftTabs.find((t) => t.id === leftActiveId);
-  if (leftTab?.conversationId === conversationId) {
-    return true;
-  }
-  const rightTab = rightTabs.find((t) => t.id === rightActiveId);
-  if (rightTab?.conversationId === conversationId) {
-    return true;
-  }
-  return false;
+  return getVisibleConversationIdsFromEditorSession(session.editor).includes(conversationId);
 }
 
 export type UnreadCompletionByConversationId = Record<string, true>;
