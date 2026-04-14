@@ -110,6 +110,22 @@ export type AgentToolLocation = {
   line?: number;
 };
 
+export type AgentToolEditPreviewLine = {
+  kind: "context" | "add" | "remove" | "gap";
+  text: string;
+  oldLineNumber?: number;
+  newLineNumber?: number;
+};
+
+export type AgentToolEditPreview = {
+  path?: string;
+  source: "before_after" | "patch" | "replace";
+  addedLines: number;
+  removedLines: number;
+  truncated?: boolean;
+  lines: AgentToolEditPreviewLine[];
+};
+
 export type AgentPlanEntry = {
   id: string;
   content: string;
@@ -170,6 +186,7 @@ export type AgentStoredEvent =
       status: AgentToolCallStatus;
       detail?: string;
       locations?: AgentToolLocation[];
+      editPreview?: AgentToolEditPreview;
       raw?: unknown;
     }
   | {
@@ -184,6 +201,7 @@ export type AgentStoredEvent =
       status: AgentToolCallStatus;
       detail?: string;
       locations?: AgentToolLocation[];
+      editPreview?: AgentToolEditPreview;
       raw?: unknown;
     }
   | {
@@ -251,6 +269,16 @@ export type AgentStoredEvent =
       status: "running" | "completed" | "failed";
       transcript: AgentStoredEvent[];
       recentActivity?: string;
+    }
+  | {
+      seq: number;
+      eventId: string;
+      conversationId: string;
+      createdAt: number;
+      kind: "agent_handoff";
+      fromAgent: string;
+      toAgent: string;
+      handoffMessageId?: string;
     };
 
 export type AgentConversationRecord = {

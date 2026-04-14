@@ -131,5 +131,10 @@ export function collapseAgentShellSideLayout(
 
 /** Let the center surface use the full panel width; message/content blocks handle their own centering. */
 export const AGENT_CENTER_STAGE_CLASS = "w-full";
-/** 14px each side — matches MessageList `pb-[14px]` when the bottom dock is hidden (uniform edge gutter). */
-export const AGENT_CENTER_CONTENT_CLASS = "mx-auto w-full max-w-[min(876px,calc(100%-28px))]";
+/**
+ * Default matches the original centered column everywhere (narrow split pane, resized window, full screen).
+ * Only at very narrow widths (typical phone portrait, ≤480px) drop the extra `calc(100%-28px)` gutter so
+ * content isn’t squeezed; MessageList adds safe-area on the scroll root.
+ */
+export const AGENT_CENTER_CONTENT_CLASS =
+  "mx-auto w-full max-w-[min(876px,calc(100%-28px))] max-[480px]:mx-0 max-[480px]:max-w-full";

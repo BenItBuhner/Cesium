@@ -3,6 +3,7 @@ import { promises as fs, type Dirent } from "node:fs";
 import path from "node:path";
 import { DATA_DIR, ensureDataDir, readJsonFile, writeJsonFile } from "../persistence.js";
 import { AGENT_BACKENDS } from "./providers.js";
+import { extractToolEditPreview } from "./tool-edit-preview.js";
 import {
   DEFAULT_PAGE_EVENTS_CAP,
   DEFAULT_PAGE_TURNS,
@@ -28,6 +29,124 @@ const appendQueues = new Map<string, Promise<void>>();
 const historyReadQueues = new Map<string, Promise<unknown>>();
 const listeners = new Set<(event: AgentManagerEvent) => void>();
 const FALLBACK_BACKEND_ID: AgentBackendId = "cursor-acp";
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+function pathFromFileChange(rawRecord: Record<string, unknown>): string | undefined {
+  const changes = Array.isArray(rawRecord.changes) ? rawRecord.changes : undefined;
+  if (!changes) {
+    return undefined;
+  }
+  for (const change of changes) {
+    const record = asRecord(change);
+    if (!record) {
+      continue;
+    }
+    const value = record.path;
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+  }
+  return undefined;
+}
+
+function fileChangeKinds(rawRecord: Record<string, unknown>): string[] {
+  const changes = Array.isArray(rawRecord.changes) ? rawRecord.changes : undefined;
+  if (!changes) {
+    return [];
+  }
+  return changes
+    .map((change) => {
+      const record = asRecord(change);
+      return typeof record?.kind === "string" ? record.kind.toLowerCase() : "";
+    })
+    .filter(Boolean);
+}
+
+async function enrichEventsWithDerivedEditPreview(
+  events: AgentStoredEvent[]
+): Promise<AgentStoredEvent[]> {
+  const cache = new Map<string, string | null>();
+  const readText = async (filePath: string): Promise<string | null> => {
+    if (cache.has(filePath)) {
+      return cache.get(filePath) ?? null;
+    }
+    try {
+      const text = await fs.readFile(filePath, "utf8");
+      cache.set(filePath, text);
+      return text;
+    } catch {
+      cache.set(filePath, null);
+      return null;
+    }
+  };
+
+  return Promise.all(
+    events.map(async (event) => {
+      if (
+        (event.kind !== "tool_call" && event.kind !== "tool_call_update") ||
+        event.toolKind !== "edit" ||
+        event.editPreview
+      ) {
+        return event;
+      }
+      const rawTop = asRecord(event.raw);
+      const rawRecord = asRecord(rawTop?.update) ?? rawTop;
+      if (rawRecord?.type !== "file_change") {
+        return event;
+      }
+      const path = pathFromFileChange(rawRecord) ?? event.locations?.[0]?.path;
+      if (!path) {
+        return event;
+      }
+      const current = await readText(path);
+      if (current == null) {
+        return event;
+      }
+      const kinds = fileChangeKinds(rawRecord);
+      if (!kinds.every((kind) => kind === "add" || kind === "create")) {
+        return event;
+      }
+      const syntheticResult = {
+        path,
+        changes: rawRecord.changes,
+        status: rawRecord.status,
+        beforeFullFileContent: "",
+        afterFullFileContent: current,
+      };
+      const preview = extractToolEditPreview(
+        { path, changes: rawRecord.changes },
+        syntheticResult,
+        path
+      );
+      if (!preview) {
+        return event;
+      }
+      return {
+        ...event,
+        editPreview: preview,
+        locations:
+          event.locations && event.locations.length > 0 ? event.locations : [{ path }],
+      };
+    })
+  );
+}
+
+const DEFAULT_AGENT_HANDOFF_MESSAGE_LIMIT = 25;
+function getAgentHandoffMessageLimit(): number {
+  const envVal = process.env.OPENCURSOR_AGENT_HANDOFF_MESSAGE_LIMIT?.trim();
+  if (envVal) {
+    const parsed = Number.parseInt(envVal, 10);
+    if (Number.isFinite(parsed) && parsed > 0) {
+      return parsed;
+    }
+  }
+  return DEFAULT_AGENT_HANDOFF_MESSAGE_LIMIT;
+}
 
 function enqueueHistoryRead<T>(workspaceId: string, conversationId: string, run: () => Promise<T>): Promise<T> {
   const key = `${workspaceId}:${conversationId}`;
@@ -267,12 +386,13 @@ export async function readConversationEvents(
       getConversationEventsFile(workspaceId, conversationId),
       "utf8"
     );
-    return raw
+    const events = raw
       .split(/\r?\n/)
       .map((line) => line.trim())
       .filter(Boolean)
       .map((line) => JSON.parse(line) as AgentStoredEvent)
       .sort((a, b) => a.seq - b.seq);
+    return enrichEventsWithDerivedEditPreview(events);
   } catch {
     return [];
   }
@@ -284,8 +404,25 @@ export async function readConversationEventsSince(
   since = 0
 ): Promise<AgentStoredEvent[]> {
   const filePath = getConversationEventsFile(workspaceId, conversationId);
-  return readConversationEventsSinceEfficient(filePath, since);
+  const events = await readConversationEventsSinceEfficient(filePath, since);
+  return enrichEventsWithDerivedEditPreview(events);
 }
+
+export async function readRecentConversationEvents(
+  workspaceId: string,
+  conversationId: string,
+  limitMessages?: number
+): Promise<AgentStoredEvent[]> {
+  const messageLimit = limitMessages ?? getAgentHandoffMessageLimit();
+  const events = await readConversationEvents(workspaceId, conversationId);
+  if (events.length === 0) {
+    return [];
+  }
+  const { takeLastTurnWindow } = await import("./event-log-read.js");
+  const turns = messageLimit * 2 + 10;
+  const eventsLimit = messageLimit * 50 + 100;
+    return enrichEventsWithDerivedEditPreview(takeLastTurnWindow(events, turns, eventsLimit));
+  }
 
 export async function readConversationSnapshot(
   workspaceId: string,
@@ -317,7 +454,10 @@ export async function readConversationSnapshot(
   if (!head) {
     return { conversation, events: [] };
   }
-  return { conversation: head.conversation, events: head.events };
+  return {
+    conversation: head.conversation,
+    events: await enrichEventsWithDerivedEditPreview(head.events),
+  };
 }
 
 export async function readConversationSnapshotHead(
@@ -336,12 +476,13 @@ export async function readConversationSnapshotHead(
     limitTurns,
     limitEvents,
   });
+  const events = await enrichEventsWithDerivedEditPreview(page.events);
   return {
     conversation,
-    events: page.events,
+    events,
     window: {
-      oldestSeq: page.oldestSeq,
-      newestSeq: page.newestSeq,
+      oldestSeq: events[0]?.seq ?? page.oldestSeq,
+      newestSeq: events[events.length - 1]?.seq ?? page.newestSeq,
       hasOlder: page.hasOlder,
     },
   };
@@ -365,11 +506,12 @@ export async function readConversationHistoryPage(
       limitTurns,
       limitEvents,
     });
+    const events = await enrichEventsWithDerivedEditPreview(page.events);
     return {
-      events: page.events,
+      events,
       window: {
-        oldestSeq: page.oldestSeq,
-        newestSeq: page.newestSeq,
+        oldestSeq: events[0]?.seq ?? page.oldestSeq,
+        newestSeq: events[events.length - 1]?.seq ?? page.newestSeq,
         hasOlder: page.hasOlder,
       },
     };

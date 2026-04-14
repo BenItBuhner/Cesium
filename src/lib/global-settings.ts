@@ -17,6 +17,8 @@ export type AgentsSettingsState = {
   legacyTerm: boolean;
   autoParse: boolean;
   themedDiff: boolean;
+  /** When true, file-edit diffs and permission cards render in the main chat stream; when false (default), they stay inside the worked-session tool dropdown. */
+  inlineToolDetailsInChat: boolean;
   collapseAuto: boolean;
   commitAttr: boolean;
   prAttr: boolean;
@@ -156,6 +158,7 @@ export function createDefaultGlobalSettings(
       legacyTerm: false,
       autoParse: false,
       themedDiff: true,
+      inlineToolDetailsInChat: false,
       collapseAuto: true,
       commitAttr: true,
       prAttr: true,

@@ -1,3 +1,19 @@
+export type WorkedSessionEditPreviewLine = {
+  kind: "context" | "add" | "remove" | "gap";
+  text: string;
+  oldLineNumber?: number;
+  newLineNumber?: number;
+};
+
+export type WorkedSessionEditPreview = {
+  path?: string;
+  source: "before_after" | "patch" | "replace";
+  addedLines: number;
+  removedLines: number;
+  truncated?: boolean;
+  lines: WorkedSessionEditPreviewLine[];
+};
+
 export interface FileNode {
   name: string;
   type: "file" | "folder";
@@ -18,7 +34,8 @@ export type ChatMessageType =
   | "permission-request"
   | "activity-label"
   | "worked-session"
-  | "shell-run";
+  | "shell-run"
+  | "agent-handoff";
 
 /** One block inside a collapsible “Worked for …” session. */
 export type WorkedSessionEntry =
@@ -37,7 +54,9 @@ export type WorkedSessionEntry =
       detail?: string;
       variant?: "default" | "terminal";
       status?: "pending" | "running" | "completed" | "failed" | "cancelled";
+      locations?: Array<{ path: string; line?: number }>;
       files?: string[];
+      editPreview?: WorkedSessionEditPreview;
     };
 
 export type ImageAttachment = {
@@ -132,11 +151,18 @@ export interface ChatMessage {
   /** Single collapsible trace: reads, reasoning, tool calls. */
   workedLabel?: string;
   workedEntries?: WorkedSessionEntry[];
+  /** Standalone highlighted tool row rendered outside the dropdown, e.g. edit diffs. */
+  workedHighlightedEntry?: Extract<WorkedSessionEntry, { kind: "tool" }>;
   workedDefaultOpen?: boolean;
   /** Terminal / command runner card */
   shellTitle?: string;
   /** Loading/working placeholder before any agent content arrives */
   loading?: boolean;
+  /** Agent handoff divider */
+  handoffFromAgent?: string;
+  handoffToAgent?: string;
+  /** Whether this message was created as part of a handoff operation */
+  isHandoffMessage?: boolean;
 }
 
 export interface EditorTab {

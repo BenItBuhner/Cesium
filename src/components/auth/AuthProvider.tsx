@@ -51,11 +51,13 @@ function resolveClientBaseUrl(): string {
   try {
     const configured = new URL(BASE_URL);
     const currentHost = window.location.hostname;
+    const isLocalHost = currentHost === "127.0.0.1" || currentHost === "localhost";
     if (
       currentHost &&
-      currentHost !== configured.hostname &&
-      (currentHost === "127.0.0.1" || currentHost === "localhost")
+      isLocalHost &&
+      (currentHost !== configured.hostname || configured.protocol !== window.location.protocol)
     ) {
+      configured.protocol = window.location.protocol;
       configured.hostname = currentHost;
       configured.port = configured.port || "9100";
       return configured.toString().replace(/\/+$/, "");

@@ -1,0 +1,5 @@
+{
+  "baseUrl": "https://api.groq.com/openai/v1",
+  "apiKey": "<your-api-key>",
+  "model": "whisper-large-v3"
+}

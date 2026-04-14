@@ -3,8 +3,6 @@
 import { useLayoutEffect, useMemo, useRef, type ReactNode } from "react";
 import { PanelLeftOpen, PanelRightOpen } from "lucide-react";
 import { Group, Panel, Separator, useGroupRef, usePanelRef } from "react-resizable-panels";
-import { AgentConversationsProvider } from "@/components/chat/AgentConversationsContext";
-import { OpenInEditorProvider } from "@/components/editor/OpenInEditorContext";
 import { EditorBridgeProvider } from "@/components/ide/EditorBridgeContext";
 import { IDEKeyboardLayer } from "@/components/ide/IDEKeyboardLayer";
 import { WorkbenchProvider } from "@/components/ide/WorkbenchContext";
@@ -149,7 +147,7 @@ function AgentLayoutShell() {
   // mounted, keep the existing UI visible during cross-workspace switches so chat hops feel
   // seamless instead of flashing the full-screen loader.
   const showBlockingWorkspaceLoad =
-    !activeWorkspaceId || !workspaceInfo || (fileTree == null && (loading || !sessionReady));
+    loading && (!activeWorkspaceId || !workspaceInfo || fileTree == null || !sessionReady);
 
   if (showBlockingWorkspaceLoad) {
     return (
@@ -309,16 +307,12 @@ function AgentLayoutShell() {
 
 export function AgentLayout() {
   return (
-    <OpenInEditorProvider>
-      <AgentConversationsProvider>
-        <WorkbenchContextMenuProvider>
-          <EditorBridgeProvider>
-            <AgentShellStateProvider>
-              <AgentLayoutShell />
-            </AgentShellStateProvider>
-          </EditorBridgeProvider>
-        </WorkbenchContextMenuProvider>
-      </AgentConversationsProvider>
-    </OpenInEditorProvider>
+    <WorkbenchContextMenuProvider>
+      <EditorBridgeProvider>
+        <AgentShellStateProvider>
+          <AgentLayoutShell />
+        </AgentShellStateProvider>
+      </EditorBridgeProvider>
+    </WorkbenchContextMenuProvider>
   );
 }

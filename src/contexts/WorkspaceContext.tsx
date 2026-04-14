@@ -43,6 +43,7 @@ import {
   type WorkspaceSessionState,
 } from "@/lib/workspace-session";
 import { normalizeWorkspaceScopedRoute } from "@/lib/workspace-windows";
+import { WORKBENCH_VIEW_SEARCH_PARAM } from "@/lib/workbench-view";
 import { JsonWebSocket, toWebSocketUrl } from "@/lib/ws-client";
 import { buildAuthenticatedUrl } from "@/lib/auth-client";
 import { useWorkbenchNotifications } from "@/components/notifications/WorkbenchNotificationProvider";
@@ -379,6 +380,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   );
   const sessionSaveTimerRef = useRef<number | null>(null);
   const skipNextSessionSaveRef = useRef(false);
+  /** After the first successful workspace load, cross-workspace hops keep the shell mounted. */
+  const hasCompletedWorkspaceHydrationRef = useRef(false);
   const isDedicatedWindow = windowId != null;
 
   const getSessionScopeId = useCallback(
@@ -545,12 +548,35 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
 
   const loadWorkspaceState = useCallback(
     async (workspace: WorkspaceRecord) => {
+      const isRepeatWorkspaceTransition = hasCompletedWorkspaceHydrationRef.current;
+
       setLoading(true);
-      setSessionReady(false);
+      if (!isRepeatWorkspaceTransition) {
+        setSessionReady(false);
+      }
       setLastFileChange(null);
       hasSyncedOnceRef.current = false;
       lastSeenSeqRef.current = 0;
       setServerWorkspace(workspace);
+
+      const sessionScopeId = getSessionScopeId(workspace.id);
+      if (isRepeatWorkspaceTransition) {
+        const localOptimistic = readWorkspaceSessionBackup(sessionScopeId);
+        let optimisticSession = normalizeWorkspaceSession(localOptimistic ?? undefined);
+        if (
+          !localOptimistic &&
+          typeof window !== "undefined" &&
+          new URL(window.location.href).searchParams.get(WORKBENCH_VIEW_SEARCH_PARAM) ===
+            "editor"
+        ) {
+          optimisticSession = {
+            ...optimisticSession,
+            layout: { ...optimisticSession.layout, shellView: "editor" },
+          };
+        }
+        setWorkspaceSession(optimisticSession);
+        setSessionReady(true);
+      }
 
       try {
         const sessionRequest = fetchWorkspaceSession(workspace.id, { windowId });
@@ -560,18 +586,27 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
           listTerminals(),
           fetchWorkspaceWindows(workspace.id),
         ]);
-        const localBackup = readWorkspaceSessionBackup(getSessionScopeId(workspace.id));
+        const localBackup = readWorkspaceSessionBackup(sessionScopeId);
         setFileTree(tree);
         setTerminals(terminalList);
         setWorkspaceWindows(windowsResult.windows);
         skipNextSessionSaveRef.current = true;
-        setWorkspaceSession(
-          normalizeWorkspaceSession(
-            localBackup ?? sessionResult.session
-          )
-        );
+        let normalized = normalizeWorkspaceSession(localBackup ?? sessionResult.session);
+        if (
+          !localBackup &&
+          typeof window !== "undefined" &&
+          new URL(window.location.href).searchParams.get(WORKBENCH_VIEW_SEARCH_PARAM) ===
+            "editor"
+        ) {
+          normalized = {
+            ...normalized,
+            layout: { ...normalized.layout, shellView: "editor" },
+          };
+        }
+        setWorkspaceSession(normalized);
         setSessionReady(true);
         setFsResyncToken((value) => value + 1);
+        hasCompletedWorkspaceHydrationRef.current = true;
       } catch (error) {
         throw error;
       } finally {

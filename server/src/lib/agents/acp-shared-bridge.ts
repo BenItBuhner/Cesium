@@ -125,18 +125,8 @@ export class AcpSharedBridge {
 
   private dispatchNotification(method: string, params: unknown): void {
     if (this.creationCapture && method === "session/update") {
-      const update =
-        params && typeof params === "object"
-          ? (params as Record<string, unknown>).update
-          : null;
-      if (
-        update &&
-        typeof update === "object" &&
-        ((update as Record<string, unknown>).sessionUpdate === "config_option_update" ||
-          (update as Record<string, unknown>).sessionUpdate === "current_mode_update")
-      ) {
-        this.creationCapture.push({ method, params });
-      }
+      /** `session/new` can emit tool/plan updates before the handle registers; queue and replay. */
+      this.creationCapture.push({ method, params });
       return;
     }
     const sid = extractAcpEventSessionId(params);

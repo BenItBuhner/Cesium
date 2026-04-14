@@ -34,6 +34,27 @@ function splitTableRow(line: string): string[] {
     .map((cell) => cell.trim());
 }
 
+function findNextNonBlankLineIndex(lines: readonly string[], start: number): number {
+  for (let i = start; i < lines.length; i += 1) {
+    if (lines[i]?.trim()) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+function listLineMatch(line: string): { marker: string; body: string } | null {
+  const m = line.match(/^\s*((?:[-*+])|(?:\d+\.))\s+(.+)$/);
+  if (!m) {
+    return null;
+  }
+  return { marker: m[1], body: m[2] };
+}
+
+function isIndentedListContinuation(line: string): boolean {
+  return /^(?:\t|\s{2,})\S/.test(line);
+}
+
 function parseMarkdown(source: string): MarkdownBlock[] {
   const lines = source.replace(/\r\n/g, "\n").split("\n");
   const blocks: MarkdownBlock[] = [];
@@ -115,20 +136,44 @@ function parseMarkdown(source: string): MarkdownBlock[] {
       continue;
     }
 
-    const listMatch = line.match(/^\s*((?:[-*+])|(?:\d+\.))\s+(.+)$/);
+    const listMatch = listLineMatch(line);
     if (listMatch) {
-      const ordered = /\d+\./.test(listMatch[1]);
-      const items: string[] = [];
+      const ordered = /\d+\./.test(listMatch.marker);
+      const items: string[] = [listMatch.body];
+      index += 1;
+
       while (index < lines.length) {
-        const candidate = lines[index] ?? "";
-        const candidateMatch = candidate.match(
-          /^\s*((?:[-*+])|(?:\d+\.))\s+(.+)$/
-        );
-        if (!candidateMatch || /\d+\./.test(candidateMatch[1]) !== ordered) {
+        const raw = lines[index] ?? "";
+        if (!raw.trim()) {
+          const nextIdx = findNextNonBlankLineIndex(lines, index);
+          if (nextIdx < 0) {
+            break;
+          }
+          const peek = lines[nextIdx] ?? "";
+          const peekMatch = listLineMatch(peek);
+          if (peekMatch && /\d+\./.test(peekMatch.marker) === ordered) {
+            index = nextIdx;
+            items.push(peekMatch.body);
+            index += 1;
+            continue;
+          }
           break;
         }
-        items.push(candidateMatch[2]);
-        index += 1;
+
+        const nextItem = listLineMatch(raw);
+        if (nextItem && /\d+\./.test(nextItem.marker) === ordered) {
+          items.push(nextItem.body);
+          index += 1;
+          continue;
+        }
+
+        if (items.length > 0 && isIndentedListContinuation(raw)) {
+          items[items.length - 1] = `${items[items.length - 1]}\n${raw.trimEnd()}`;
+          index += 1;
+          continue;
+        }
+
+        break;
       }
       blocks.push({ type: "list", ordered, items });
       continue;
@@ -320,11 +365,10 @@ export function ChatMarkdown({ source }: { source: string }) {
               return (
                 <ol
                   key={index}
-                  className="ml-[18px] list-none space-y-[4px] counter-reset:[counter_] [&>li]:counter-increment-[counter_] [&>li]:before:content-[counter(counter_)] [&>li]:before:mr-[8px] [&>li]:before:text-[var(--text-secondary)] [&>li]:before:align-middle"
-                  style={{ counterReset: 'counter_ -1' }}
+                  className="ml-[1.15em] list-outside list-decimal space-y-[4px] pl-[0.4em] marker:text-[var(--text-secondary)]"
                 >
                   {block.items.map((item, itemIndex) => (
-                    <li key={itemIndex} className="pl-[4px]">
+                    <li key={itemIndex} className="break-words pl-[2px]">
                       {renderInlineWithBreaks(item)}
                     </li>
                   ))}

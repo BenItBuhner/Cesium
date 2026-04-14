@@ -16,12 +16,30 @@ function inferTranscriptSessionId(messages: ChatMessage[]): string | undefined {
   return undefined;
 }
 
-/** Start loading the previous page before the user hits the top edge. */
-const OLDER_PREFETCH_SCROLL_TOP_PX = 420;
-/** After a history page finishes, auto-chain another fetch if we are still pinned near the top. */
-const OLDER_CHAIN_SCROLL_TOP_PX = 96;
-/** Release the one-shot load gate after the user scrolls away from the top band. */
-const OLDER_GATE_RELEASE_SCROLL_TOP_PX = 200;
+/** Fallback scrollport height when `clientHeight` is not yet measured. */
+const OLDER_SCROLLPORT_FALLBACK_PX = 900;
+
+function olderPrefetchScrollTopPx(root: HTMLDivElement): number {
+  const ch = root.clientHeight > 0 ? root.clientHeight : OLDER_SCROLLPORT_FALLBACK_PX;
+  return Math.max(760, Math.min(3600, Math.floor(ch * 1.5)));
+}
+
+function olderChainScrollTopPx(root: HTMLDivElement): number {
+  const ch = root.clientHeight > 0 ? root.clientHeight : OLDER_SCROLLPORT_FALLBACK_PX;
+  return Math.max(320, Math.min(2200, Math.floor(ch * 0.42)));
+}
+
+function olderGateReleaseScrollTopPx(prefetchPx: number): number {
+  return Math.max(380, prefetchPx - 480);
+}
+
+/** Max automatic "fill the viewport" history rounds per conversation (burst prefetch at bottom). */
+const OLDER_AUTO_FILL_MAX_ROUNDS = 28;
+/** Minimum excess scroll height (beyond viewport) before we stop auto-prefetching at the bottom. */
+function olderMinBottomSlackPx(root: HTMLDivElement): number {
+  const ch = root.clientHeight > 0 ? root.clientHeight : OLDER_SCROLLPORT_FALLBACK_PX;
+  return Math.max(960, Math.floor(ch * 1.2));
+}
 
 interface MessageListProps {
   messages: ChatMessage[];
@@ -56,7 +74,7 @@ export function MessageList({
   loadingOlderHistory = false,
 }: MessageListProps) {
   const { openSubagentTranscript } = useOpenInEditor();
-  const { workspaceSession, updateWorkspaceSession } = useWorkspace();
+  const { workspaceSession, updateWorkspaceSession, workspaceInfo } = useWorkspace();
   const scrollRootRef = useRef<HTMLDivElement>(null);
   const stickToBottomRef = useRef(true);
   const initialScrollTopRef = useRef(initialScrollTop);
@@ -71,6 +89,7 @@ export function MessageList({
   const prevLoadingOlderRef = useRef(false);
   const prevConversationIdRef = useRef<string | undefined>(undefined);
   const wasLoadingOlderHistoryRef = useRef(false);
+  const autoHistoryFillRoundsRef = useRef(0);
 
   const useVirtualThread = useMemo(() => messages.length >= 40, [messages.length]);
   const stickyUserHeaderEffective = !useVirtualThread;
@@ -180,6 +199,7 @@ export function MessageList({
   useEffect(() => {
     wasLoadingOlderHistoryRef.current = false;
     olderLoadGateRef.current = false;
+    autoHistoryFillRoundsRef.current = 0;
   }, [conversationId]);
 
   useEffect(() => {
@@ -212,7 +232,8 @@ export function MessageList({
         if (stickToBottomRef.current) {
           return;
         }
-        if (root.scrollTop <= OLDER_CHAIN_SCROLL_TOP_PX) {
+        const chainPx = olderChainScrollTopPx(root);
+        if (root.scrollTop <= chainPx) {
           onRequestOlderHistory();
         }
       });
@@ -223,6 +244,58 @@ export function MessageList({
       window.cancelAnimationFrame(raf2);
     };
   }, [loadingOlderHistory, hasOlderHistory, onRequestOlderHistory]);
+
+  /**
+   * While the user stays pinned to the bottom, keep requesting older pages until the transcript
+   * is taller than the viewport (or we hit a safety cap). Preloaded history is invisible until
+   * they scroll up, but avoids a long train of manual pagination after opening a chat.
+   */
+  useEffect(() => {
+    if (!onRequestOlderHistory || !hasOlderHistory || loadingOlderHistory) {
+      return;
+    }
+    const root = scrollRootRef.current;
+    if (!root || root.clientHeight < 80) {
+      return;
+    }
+    if (!stickToBottomRef.current) {
+      return;
+    }
+    if (autoHistoryFillRoundsRef.current >= OLDER_AUTO_FILL_MAX_ROUNDS) {
+      return;
+    }
+    const slack = root.scrollHeight - root.clientHeight;
+    if (slack >= olderMinBottomSlackPx(root)) {
+      return;
+    }
+    let raf = 0;
+    raf = window.requestAnimationFrame(() => {
+      if (
+        !onRequestOlderHistory ||
+        !hasOlderHistory ||
+        loadingOlderHistory ||
+        !stickToBottomRef.current
+      ) {
+        return;
+      }
+      const r = scrollRootRef.current;
+      if (!r || r.clientHeight < 80) {
+        return;
+      }
+      if (r.scrollHeight - r.clientHeight >= olderMinBottomSlackPx(r)) {
+        return;
+      }
+      autoHistoryFillRoundsRef.current += 1;
+      onRequestOlderHistory();
+    });
+    return () => window.cancelAnimationFrame(raf);
+  }, [
+    conversationId,
+    hasOlderHistory,
+    loadingOlderHistory,
+    messages.length,
+    onRequestOlderHistory,
+  ]);
 
   useEffect(() => {
     const root = scrollRootRef.current;
@@ -304,6 +377,7 @@ export function MessageList({
           sessionId: sessionId ?? inferTranscriptSessionId(transcript),
         })
       }
+      workspaceRoot={workspaceInfo?.root ?? null}
     />
   );
 
@@ -315,12 +389,13 @@ export function MessageList({
       : "pt-[10px]";
 
   /**
-   * With a centered content column: no extra scroll inset on narrow viewports (avoids double
-   * gutter with `max-w`); from `sm` up, restore the legacy `10px` scroll inset for wide layouts.
+   * With a centered content column: no extra scroll inset on phone-width viewports (avoids double
+   * gutter with full-bleed `max-w`); from 481px up, restore the legacy `10px` scroll inset (matches
+   * agent column cutoff, not `sm`, so narrow desktop windows keep the same width/inset as before).
    */
   const scrollPadX =
     contentClassName && contentClassName.length > 0
-      ? "pl-[max(0px,env(safe-area-inset-left,0px))] pr-[max(0px,env(safe-area-inset-right,0px))] sm:pl-[max(10px,env(safe-area-inset-left,0px))] sm:pr-[max(10px,env(safe-area-inset-right,0px))]"
+      ? "pl-[max(0px,env(safe-area-inset-left,0px))] pr-[max(0px,env(safe-area-inset-right,0px))] min-[481px]:pl-[max(10px,env(safe-area-inset-left,0px))] min-[481px]:pr-[max(10px,env(safe-area-inset-right,0px))]"
       : "px-[10px]";
 
   return (
@@ -338,17 +413,19 @@ export function MessageList({
         scrollSnapshotRef.current = { sh: root.scrollHeight, st: scrollTop };
         schedulePersistedScrollTop();
 
+        const prefetchPx = olderPrefetchScrollTopPx(root);
+        const releasePx = olderGateReleaseScrollTopPx(prefetchPx);
         if (
           onRequestOlderHistory &&
           hasOlderHistory &&
           !loadingOlderHistory &&
-          scrollTop < OLDER_PREFETCH_SCROLL_TOP_PX
+          scrollTop < prefetchPx
         ) {
           if (!olderLoadGateRef.current) {
             olderLoadGateRef.current = true;
             onRequestOlderHistory();
           }
-        } else if (scrollTop > OLDER_GATE_RELEASE_SCROLL_TOP_PX) {
+        } else if (scrollTop > releasePx) {
           olderLoadGateRef.current = false;
         }
       }}

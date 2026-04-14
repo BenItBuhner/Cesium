@@ -75,7 +75,7 @@ export function AgentCenterPane() {
     getConversationHistoryCursor,
     loadOlderConversationHistory,
   } = useAgentConversations();
-  const { workspaceSession, updateWorkspaceSession } = useWorkspace();
+  const { workspaceSession, updateWorkspaceSession, workspaceInfo } = useWorkspace();
   const {
     activeWorkspaceGroup,
     conversationSelectionPending,
@@ -106,9 +106,10 @@ export function AgentCenterPane() {
       conversation
         ? projectAgentEventsToChatMessages(deferredThreadEvents, {
             backendId: conversation.config.backendId,
+            workspaceRoot: workspaceInfo?.root ?? null,
           })
         : [],
-    [conversation, deferredThreadEvents]
+    [conversation, deferredThreadEvents, workspaceInfo?.root]
   );
   const { scrollMessages, dockedAsk } = useMemo(
     () => partitionMessagesForDock(threadMessages),
@@ -305,6 +306,7 @@ export function AgentCenterPane() {
         });
         targetConversationId = created.id;
         setSelectedConversationId(created.id);
+        await refreshConversationGroups();
       }
       const ok = await promptConversation(targetConversationId, text, attachments);
       if (!ok) {
@@ -439,7 +441,7 @@ export function AgentCenterPane() {
         : null;
 
   const emptyState = (
-    <div className="absolute inset-0 flex items-center justify-center px-[14px] pb-[220px] sm:px-[20px]">
+    <div className="absolute inset-0 flex items-center justify-center px-[14px] pb-[220px] sm:px-[20px] max-[480px]:px-0 max-[480px]:pl-[max(0px,env(safe-area-inset-left,0px))] max-[480px]:pr-[max(0px,env(safe-area-inset-right,0px))]">
       <div className={`${AGENT_CENTER_CONTENT_CLASS} text-center`}>
         <p className="font-sans text-[14px] font-normal text-[var(--text-primary)]">
           {activeWorkspaceGroup?.conversations.length
@@ -520,14 +522,14 @@ export function AgentCenterPane() {
           <div className="pointer-events-none absolute inset-x-0 bottom-0 z-30">
             <div className="pointer-events-auto chat-bottom-dock">
               {dockedAskSteps.length > 0 ? (
-                <div className="pt-[8px] max-sm:px-0 sm:px-[10px]">
+                <div className="pt-[8px] max-[480px]:px-0 min-[481px]:px-[10px]">
                   <div className={AGENT_CENTER_CONTENT_CLASS}>
                     <AskQuestionCard steps={dockedAskSteps} dockAboveComposer />
                   </div>
                 </div>
               ) : null}
               {queuedPrompts.length > 0 ? (
-                <div className="pt-[8px] max-sm:px-0 sm:px-[10px]">
+                <div className="pt-[8px] max-[480px]:px-0 min-[481px]:px-[10px]">
                   <div className={AGENT_CENTER_CONTENT_CLASS}>
                     <ComposerQueueDock
                       items={queuedPrompts}
@@ -537,7 +539,7 @@ export function AgentCenterPane() {
                   </div>
                 </div>
               ) : null}
-              <div className="max-sm:px-0 sm:px-[10px]">
+              <div className="max-[480px]:px-0 min-[481px]:px-[10px]">
                 <div className={AGENT_CENTER_CONTENT_CLASS}>
                   <ChatComposer
                     key={composerDraftId}

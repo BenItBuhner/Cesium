@@ -53,6 +53,7 @@ lerna-debug.log*
 .env*
 !.env.example
 !.env*.example
+server/transcription-provider.json
 
 # vercel
 .vercel

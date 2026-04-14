@@ -1,6 +1,8 @@
 "use client";
 
 import { Suspense, type ReactNode } from "react";
+import { AgentConversationsProvider } from "@/components/chat/AgentConversationsContext";
+import { OpenInEditorProvider } from "@/components/editor/OpenInEditorContext";
 import { AgentLayout } from "@/components/layout/AgentLayout";
 import { IDELayout } from "@/components/layout/IDELayout";
 import { ShellViewProvider, useShellView } from "@/components/layout/ShellViewContext";
@@ -8,6 +10,16 @@ import { ShellViewProvider, useShellView } from "@/components/layout/ShellViewCo
 function WorkbenchShell() {
   const { shellView } = useShellView();
   return shellView === "agent" ? <AgentLayout /> : <IDELayout />;
+}
+
+function WorkbenchWithConversationProviders() {
+  return (
+    <OpenInEditorProvider>
+      <AgentConversationsProvider>
+        <WorkbenchShell />
+      </AgentConversationsProvider>
+    </OpenInEditorProvider>
+  );
 }
 
 function LoadingFallback() {
@@ -27,7 +39,7 @@ export function WorkbenchApp({
   return (
     <Suspense fallback={suspenseFallback ?? <LoadingFallback />}>
       <ShellViewProvider>
-        <WorkbenchShell />
+        <WorkbenchWithConversationProviders />
       </ShellViewProvider>
     </Suspense>
   );

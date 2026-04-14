@@ -13,6 +13,7 @@ import {
 import { listWorkspaceConversationRecords } from "../lib/agents/session-store.js";
 import { listWorkspaces } from "../lib/workspace-registry.js";
 import type {
+  AgentBackendId,
   AgentConversationConfigPatch,
   AgentConversationCreateInput,
 } from "../lib/agents/types.js";
@@ -175,6 +176,27 @@ agentRoutes.post("/api/agents/conversations/:conversationId/permission", async (
     }
   );
   return c.json({ conversation });
+});
+
+agentRoutes.post("/api/agents/conversations/:conversationId/handoff", async (c) => {
+  const workspace = await requireWorkspaceFromRequest(c);
+  const conversationId = c.req.param("conversationId");
+  const body = await c.req.json<{ targetAgentBackend: string; messageLimit?: number }>();
+  if (!body.targetAgentBackend) {
+    return c.json({ error: "Expected targetAgentBackend." }, 400);
+  }
+  try {
+    const result = await agentRuntimeManager.handoffConversation(
+      workspace,
+      conversationId,
+      body.targetAgentBackend as AgentBackendId,
+      body.messageLimit
+    );
+    return c.json(result, 201);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Handoff failed.";
+    return c.json({ error: message }, 400);
+  }
 });
 
 const ATTACHMENTS_FOLDER = ".attachments";

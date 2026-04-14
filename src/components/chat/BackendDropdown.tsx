@@ -21,6 +21,7 @@ interface BackendDropdownProps {
   backendId: AgentBackendId;
   backends: AgentBackendInfo[];
   onBackendChange?: (backendId: AgentBackendId) => void;
+  onRequestHandoff?: (backendId: AgentBackendId) => void;
   popoverPlacement?: "above" | "below";
   disabled?: boolean;
 }
@@ -29,6 +30,7 @@ export function BackendDropdown({
   backendId,
   backends,
   onBackendChange,
+  onRequestHandoff,
   popoverPlacement = "above",
   disabled = false,
 }: BackendDropdownProps) {
@@ -143,40 +145,46 @@ export function BackendDropdown({
                 option.experimental && !option.available
                   ? "Experimental adapter placeholder"
                   : option.description;
+              const isDifferentBackend = option.id !== backendId;
               return (
-                <button
-                  key={option.id}
-                  type="button"
-                  disabled={unavailable}
-                  title={detail}
-                  onClick={() => {
-                    if (unavailable) return;
-                    onBackendChange?.(option.id);
-                    setOpen(false);
-                  }}
-                  className="flex w-full items-center gap-[8px] px-[12px] py-[5px] text-left transition-colors hover:bg-white/[0.06] disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {renderBackendIcon(option.id, {
-                    className: "size-[15px] shrink-0",
-                    strokeWidth: 1.5,
-                    style: {
-                      color: active
-                        ? "var(--text-primary)"
-                        : "var(--text-secondary)",
-                    },
-                  })}
-                  <span
-                    className="min-w-0 flex-1 truncate font-sans text-[13px] font-normal"
-                    style={{
-                      color: active ? "var(--text-primary)" : "var(--text-secondary)",
+                <div key={option.id} className="flex flex-col">
+                  <button
+                    type="button"
+                    disabled={unavailable}
+                    title={detail}
+                    onClick={() => {
+                      if (unavailable) return;
+                      if (isDifferentBackend && onRequestHandoff) {
+                        onRequestHandoff(option.id);
+                      } else {
+                        onBackendChange?.(option.id);
+                      }
+                      setOpen(false);
                     }}
+                    className="flex w-full items-center gap-[8px] px-[12px] py-[5px] text-left transition-colors hover:bg-white/[0.06] disabled:cursor-not-allowed disabled:opacity-50"
                   >
-                    {option.label}
-                  </span>
-                  {active && (
-                    <Check className="size-[14px] shrink-0 text-[var(--text-primary)]" strokeWidth={2} />
-                  )}
-                </button>
+                    {renderBackendIcon(option.id, {
+                      className: "size-[15px] shrink-0",
+                      strokeWidth: 1.5,
+                      style: {
+                        color: active
+                          ? "var(--text-primary)"
+                          : "var(--text-secondary)",
+                      },
+                    })}
+                    <span
+                      className="min-w-0 flex-1 truncate font-sans text-[13px] font-normal"
+                      style={{
+                        color: active ? "var(--text-primary)" : "var(--text-secondary)",
+                      }}
+                    >
+                      {option.label}
+                    </span>
+                    {active && (
+                      <Check className="size-[14px] shrink-0 text-[var(--text-primary)]" strokeWidth={2} />
+                    )}
+                  </button>
+                </div>
               );
             })}
           </div>,

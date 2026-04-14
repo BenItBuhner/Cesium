@@ -4,9 +4,7 @@ import { useEffect, useLayoutEffect, useMemo, useState } from "react";
 import { Panel, Group, Separator, usePanelRef } from "react-resizable-panels";
 import { FileExplorer } from "@/components/sidebar/FileExplorer";
 import { EditorPanel } from "@/components/editor/EditorPanel";
-import { OpenInEditorProvider } from "@/components/editor/OpenInEditorContext";
 import { ChatPanel } from "@/components/chat/ChatPanel";
-import { AgentConversationsProvider } from "@/components/chat/AgentConversationsContext";
 import { useViewport } from "@/hooks/useViewport";
 import { PanelLeft, PanelRight } from "lucide-react";
 import { EditorBridgeProvider } from "@/components/ide/EditorBridgeContext";
@@ -129,7 +127,7 @@ export function IDELayout() {
   }, [isMobile, chatVisible, chatPanelRef]);
 
   const showBlockingWorkspaceLoad =
-    !activeWorkspaceId || !workspaceInfo || (fileTree == null && (loading || !sessionReady));
+    loading && (!activeWorkspaceId || !workspaceInfo || fileTree == null || !sessionReady);
 
   if (showBlockingWorkspaceLoad) {
     return (
@@ -180,14 +178,12 @@ export function IDELayout() {
   );
 
   return (
-    <OpenInEditorProvider>
-      <AgentConversationsProvider>
-        <WorkbenchContextMenuProvider>
-          <EditorBridgeProvider>
-            <WorkbenchProvider value={workbench}>
-              <HardwareInputProvider>
-                <IDEKeyboardLayer>
-                  {isMobile ? (
+    <WorkbenchContextMenuProvider>
+      <EditorBridgeProvider>
+        <WorkbenchProvider value={workbench}>
+          <HardwareInputProvider>
+            <IDEKeyboardLayer>
+              {isMobile ? (
                     <div className="flex h-screen w-screen flex-col overflow-hidden bg-[var(--bg-main)]">
                       <div className="min-h-0 flex-1 overflow-hidden">
                         {mobilePanel === "sidebar" && <FileExplorer />}
@@ -294,12 +290,10 @@ export function IDELayout() {
                       </div>
                     </div>
                   )}
-                </IDEKeyboardLayer>
-              </HardwareInputProvider>
-            </WorkbenchProvider>
-          </EditorBridgeProvider>
-        </WorkbenchContextMenuProvider>
-      </AgentConversationsProvider>
-    </OpenInEditorProvider>
+            </IDEKeyboardLayer>
+          </HardwareInputProvider>
+        </WorkbenchProvider>
+      </EditorBridgeProvider>
+    </WorkbenchContextMenuProvider>
   );
 }

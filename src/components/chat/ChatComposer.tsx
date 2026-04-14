@@ -13,7 +13,7 @@ import {
   type PointerEvent as ReactPointerEvent,
   type ReactElement,
 } from "react";
-import { ArrowUp, Image as ImageIcon, Maximize2, Mic, Minimize2, Square } from "lucide-react";
+import { ArrowUp, Image as ImageIcon, LoaderCircle, Maximize2, Mic, Minimize2, Square } from "lucide-react";
 import { ImageCarousel } from "./ImageCarousel";
 import type { ImageAttachment, ImageAttachmentState } from "@/lib/types";
 import { useHardwareInput } from "@/components/input/HardwareInputProvider";
@@ -46,6 +46,7 @@ import {
   getCaretClientRect,
   getComposerPlainText,
   getCaretOffset,
+  getPlainTextRangeOffsets,
   parseTriggerToken,
   replaceTextRange,
 } from "./composer-editor-utils";
@@ -74,6 +75,55 @@ function normalizeDirectiveToken(value: string): string {
     .replace(/^\/+/, "")
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "");
+}
+
+/** Clipboard image files only (items first — avoids duplicate uploads when both items and `files` list them). */
+function collectClipboardImageFiles(data: DataTransfer | null): File[] {
+  if (!data) {
+    return [];
+  }
+  const fromItems: File[] = [];
+  for (let i = 0; i < data.items.length; i++) {
+    const item = data.items[i];
+    if (item?.kind === "file" && item.type.startsWith("image/")) {
+      const file = item.getAsFile();
+      if (file) {
+        fromItems.push(file);
+      }
+    }
+  }
+  if (fromItems.length > 0) {
+    return fromItems;
+  }
+  const fromFiles: File[] = [];
+  for (let i = 0; i < data.files.length; i++) {
+    const file = data.files[i];
+    if (file?.type.startsWith("image/")) {
+      fromFiles.push(file);
+    }
+  }
+  return fromFiles;
+}
+
+/** Prefer `text/plain`; if missing, strip tags from `text/html` (DOMParser does not execute scripts). */
+function clipboardPlainTextOnly(data: DataTransfer | null): string {
+  if (!data) {
+    return "";
+  }
+  const plain = data.getData("text/plain");
+  if (plain) {
+    return plain.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  }
+  const html = data.getData("text/html");
+  if (!html?.trim()) {
+    return "";
+  }
+  try {
+    const doc = new DOMParser().parseFromString(html, "text/html");
+    return (doc.body?.textContent ?? "").replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  } catch {
+    return "";
+  }
 }
 
 function pickRecordingMimeType(): string | undefined {
@@ -175,8 +225,8 @@ interface ChatComposerProps {
   layout?: "docked-bottom" | "empty-top";
   variant?: "docked" | "expanded";
   /**
-   * When set, replaces the default `mx-[10px]` shell inset (non-expanded only).
-   * Use `""` to align the composer flush inside a parent that already applies the inset.
+   * When set, replaces the default horizontal shell margin (non-expanded only).
+   * Default is `mx-0` below 481px and `mx-[10px]` from 481px up; use `""` for flush to the parent.
    */
   shellMxClass?: string;
   /**
@@ -184,6 +234,8 @@ interface ChatComposerProps {
    * instead of delegating to `onExpandComposer` (editor expanded composer).
    */
   agentShellDockHeightExpand?: boolean;
+  /** Callback when user requests handoff to a different agent */
+  onRequestHandoff?: (targetBackendId: AgentBackendId) => void;
 }
 
 function resolvePointerSelection(
@@ -336,6 +388,7 @@ export function ChatComposer({
   variant = "docked",
   shellMxClass,
   agentShellDockHeightExpand = false,
+  onRequestHandoff,
 }: ChatComposerProps) {
   const { fileTree } = useWorkspace();
   const { settings } = useGlobalSettings();
@@ -729,6 +782,7 @@ export function ChatComposer({
       return;
     }
     if (recorder.state !== "inactive") {
+      setRecordingState("transcribing");
       recorder.stop();
       return;
     }
@@ -1306,7 +1360,8 @@ export function ChatComposer({
     unregisterSurface,
   ]);
 
-  const shellMx = shellMxClass !== undefined ? shellMxClass : "mx-[10px]";
+  const shellMx =
+    shellMxClass !== undefined ? shellMxClass : "mx-0 min-[481px]:mx-[10px]";
   const shellMargin =
     isExpanded
       ? ""
@@ -1398,39 +1453,37 @@ export function ChatComposer({
             }
           }}
           onPaste={(event: ReactClipboardEvent<HTMLDivElement>) => {
-            if (!hardwareInputEnabled) return;
-            const items = event.clipboardData.items;
-            let hasImages = false;
-            for (let i = 0; i < items.length; i++) {
-              if (items[i]?.type.startsWith("image/")) {
-                hasImages = true;
-                break;
-              }
-            }
-            if (hasImages) {
+            const cd = event.clipboardData;
+            const imageFiles = collectClipboardImageFiles(cd);
+            if (imageFiles.length > 0) {
               event.preventDefault();
-              const imageFiles = new DataTransfer();
-              for (let i = 0; i < items.length; i++) {
-                if (items[i]?.type.startsWith("image/")) {
-                  const file = items[i].getAsFile();
-                  if (file) {
-                    imageFiles.items.add(file);
-                  }
-                }
+              const dt = new DataTransfer();
+              for (const file of imageFiles) {
+                dt.items.add(file);
               }
-              if (imageFiles.files.length > 0) {
-                addImagesFromFileList(imageFiles.files);
-              }
+              addImagesFromFileList(dt.files);
               return;
             }
+
+            const plain = clipboardPlainTextOnly(cd);
             event.preventDefault();
-            const next = replaceSelection(
-              value,
-              selection,
-              event.clipboardData.getData("text/plain")
-            );
-            setComposerValue(next.value);
-            setComposerSelection(next.selection);
+
+            if (hardwareInputEnabled) {
+              const next = replaceSelection(valueRef.current, selectionRef.current, plain);
+              setComposerValue(next.value);
+              setComposerSelection(next.selection);
+              return;
+            }
+
+            const el = editorRef.current;
+            if (!el) {
+              return;
+            }
+            const range = getPlainTextRangeOffsets(el);
+            const start = range?.start ?? getCaretOffset(el);
+            const end = range?.end ?? start;
+            replaceTextRange(el, start, end, plain);
+            syncNativeState();
           }}
           onDragOver={handleDragOver}
           onDragLeave={handleDragLeave}
@@ -1509,6 +1562,7 @@ export function ChatComposer({
                 backendId={backendId}
                 backends={backends}
                 onBackendChange={onBackendChange}
+                onRequestHandoff={onRequestHandoff}
                 popoverPlacement={modeModelPopoverPlacement}
                 disabled={busy || configLocked}
               />
@@ -1526,10 +1580,10 @@ export function ChatComposer({
               <ModelDropdown
                 model={model}
                 models={models}
-                onModelChange={onModelChange}
-                popoverPlacement={modeModelPopoverPlacement}
-                disabled={busy || configLocked}
-                isOpen={modelDropdownOpen}
+            onModelChange={onModelChange}
+            popoverPlacement={modeModelPopoverPlacement}
+            disabled={busy || configLocked}
+            isOpen={modelDropdownOpen}
                 onOpenChange={setModelDropdownOpen}
               />
             </div>
@@ -1618,7 +1672,7 @@ export function ChatComposer({
             }}
             disabled={recordingState === "transcribing"}
             className={`relative flex h-[20px] min-w-[20px] items-center justify-center rounded-full transition-colors ${
-              recordingState === "recording"
+              recordingState === "recording" || recordingState === "transcribing"
                 ? "bg-[var(--accent-bg)] text-[var(--text-primary)]"
                 : "text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
             } disabled:cursor-not-allowed disabled:opacity-50`}
@@ -1630,28 +1684,33 @@ export function ChatComposer({
                   : "Voice input"
             }
           >
-            {recordingState === "recording" ? (
-              <Square className="size-[9px] shrink-0" fill="currentColor" strokeWidth={2.2} aria-hidden />
-            ) : (
-              <Mic className="size-[14px] shrink-0" strokeWidth={1.5} aria-hidden />
-            )}
-            {(recordingState === "recording" || recordingState === "transcribing") && (
-              <span className="pointer-events-none absolute -bottom-[14px] left-1/2 flex -translate-x-1/2 items-end gap-[2px]">
-                {[0.45, 0.8, 0.6].map((scale, index) => (
+            {recordingState === "transcribing" ? (
+              <LoaderCircle
+                className="size-[12px] shrink-0 animate-spin text-[var(--text-primary)]"
+                strokeWidth={2.5}
+                aria-hidden
+              />
+            ) : recordingState === "recording" ? (
+              <span className="flex h-[14px] items-end justify-center gap-[2.5px]">
+                {[0.35, 0.55, 0.4].map((scale, index) => (
                   <span
                     key={index}
-                    className="w-[2px] rounded-full bg-[var(--text-secondary)] transition-[height,opacity] duration-100"
+                    className="w-[2.5px] shrink-0 rounded-full bg-current"
                     style={{
-                      height: `${
-                        recordingState === "transcribing"
-                          ? 4 + index * 2
-                          : 4 + Math.max(0.12, inputLevel * scale) * 12
-                      }px`,
-                      opacity: recordingState === "transcribing" ? 0.7 : 0.45 + inputLevel * 0.55,
+                      height: `${4 + Math.max(0.15, inputLevel * scale) * 10}px`,
+                      opacity: 0.55 + inputLevel * 0.45,
+                      transition: "height 80ms ease-out, opacity 80ms ease-out",
+                      animation:
+                        inputLevel > 0.08
+                          ? "wave-bounce 280ms ease-in-out infinite alternate"
+                          : "none",
+                      animationDelay: `${index * 55}ms`,
                     }}
                   />
                 ))}
               </span>
+            ) : (
+              <Mic className="size-[14px] shrink-0" strokeWidth={1.5} aria-hidden />
             )}
           </button>
           {primaryControlIsStop ? (

@@ -22,11 +22,14 @@ import {
 import {
   classifyToolCallAsSubagentCard,
   extractAcpToolCallEntries,
+  extractCodexSubagentStates,
+  extractSubagentSessionIds,
   extractSubagentTaskText,
   getSubagentTaskInput,
   getToolRawUpdate,
 } from "@/lib/agent-subagent-routing";
 import type { ProjectAgentEventsOptions } from "@/lib/agent-subagent-routing";
+import { formatToolFileLabel, toolPathBasename } from "@/lib/workspace-tool-path-display";
 
 export type { ProjectAgentEventsOptions };
 
@@ -96,12 +99,78 @@ function createBackendDraftConversation(
   return draftConversation;
 }
 
+function isPrimaryConfigCategory(category: AgentConversationRecord["configOptions"][number]["category"]): boolean {
+  return category === "mode" || category === "model";
+}
+
+function mergeConversationConfigOptionsWithBackend(
+  conversation: AgentConversationRecord,
+  backend: AgentBackendInfo | undefined
+): AgentConversationRecord["configOptions"] {
+  const conversationOptions = conversation.configOptions;
+  const backendOptions = backend?.cachedConfigOptions ?? [];
+  if (conversationOptions.length === 0) {
+    return backendOptions;
+  }
+  if (backendOptions.length === 0) {
+    return conversationOptions;
+  }
+
+  const usedConversationIndexes = new Set<number>();
+  const merged = backendOptions.map((backendOption) => {
+    const conversationIndex = conversationOptions.findIndex((candidate, index) => {
+      if (usedConversationIndexes.has(index)) {
+        return false;
+      }
+      if (candidate.id === backendOption.id) {
+        return true;
+      }
+      return (
+        isPrimaryConfigCategory(backendOption.category) &&
+        candidate.category === backendOption.category
+      );
+    });
+    if (conversationIndex === -1) {
+      return backendOption;
+    }
+
+    usedConversationIndexes.add(conversationIndex);
+    const conversationOption = conversationOptions[conversationIndex]!;
+    const preferBackendCatalog =
+      isPrimaryConfigCategory(backendOption.category) &&
+      backendOption.options.length >= conversationOption.options.length;
+    const baseOption = preferBackendCatalog ? backendOption : conversationOption;
+    const fallbackCurrentValue = conversationOption.currentValue || backendOption.currentValue;
+    const currentValue =
+      backendOption.category === "model"
+        ? conversation.config.modelId || fallbackCurrentValue
+        : backendOption.category === "mode"
+          ? conversation.config.mode || fallbackCurrentValue
+          : fallbackCurrentValue;
+    return {
+      ...baseOption,
+      currentValue,
+    };
+  });
+
+  for (let index = 0; index < conversationOptions.length; index += 1) {
+    if (!usedConversationIndexes.has(index)) {
+      merged.push(conversationOptions[index]!);
+    }
+  }
+
+  return merged;
+}
+
 function getEffectiveConfigOptions(
   conversation: AgentConversationRecord,
   backends: AgentBackendInfo[]
 ): AgentConversationRecord["configOptions"] {
   if (conversation.configOptions.length > 0) {
-    return conversation.configOptions;
+    return mergeConversationConfigOptionsWithBackend(
+      conversation,
+      getBackendForConversation(conversation, backends)
+    );
   }
   return getBackendForConversation(conversation, backends)?.cachedConfigOptions ?? [];
 }
@@ -197,6 +266,8 @@ type ProjectedTurn = {
   permissionCards: Map<string, ChatMessage>;
   todoCards: Map<string, ChatMessage>;
   subagentCards: Map<string, ChatMessage>;
+  /** The user message ID that should be highlighted as the handoff message */
+  handoffMessageId?: string;
 };
 
 function createTurn(id: string): ProjectedTurn {
@@ -209,6 +280,7 @@ function createTurn(id: string): ProjectedTurn {
     permissionCards: new Map(),
     todoCards: new Map(),
     subagentCards: new Map(),
+    handoffMessageId: undefined,
   };
 }
 
@@ -245,6 +317,163 @@ function capitalizeFirst(value: string): string {
     return value;
   }
   return value.charAt(0).toUpperCase() + value.slice(1);
+}
+
+const TOOL_TITLE_MAX_LEN = 56;
+const TOOL_PATH_LABEL_MAX = 80;
+const TOOL_PATTERN_QUOTED_MAX = 42;
+const TERMINAL_TITLE_MAX = 72;
+
+function truncateMiddleLabel(value: string, max: number): string {
+  if (value.length <= max) {
+    return value;
+  }
+  const ellipsis = "…";
+  const keep = max - ellipsis.length;
+  const head = Math.ceil(keep / 2);
+  const tail = Math.floor(keep / 2);
+  return value.slice(0, head) + ellipsis + value.slice(value.length - tail);
+}
+
+function conciseQuotedSearchPattern(raw: string, max = TOOL_PATTERN_QUOTED_MAX): string {
+  const t = raw.trim();
+  if (!t) {
+    return '""';
+  }
+  const inner = t.length > max ? truncateMiddleLabel(t, max) : t;
+  return `"${inner}"`;
+}
+
+/** Drop detail lines that only repeat the title (e.g. path shown twice for reads/updates). */
+function stripRedundantToolDetail(
+  detail: string | undefined,
+  title: string
+): string | undefined {
+  if (!detail?.trim()) {
+    return undefined;
+  }
+  const d = detail.trim();
+  const t = title.trim();
+  if (/^updated\s+/i.test(d)) {
+    return undefined;
+  }
+  if (d === t) {
+    return undefined;
+  }
+  const readMatch = /^Read\s+(.+)$/i.exec(t);
+  if (readMatch) {
+    const titled = readMatch[1]!.trim();
+    if (d === titled || toolPathBasename(d) === titled || titled === toolPathBasename(d)) {
+      return undefined;
+    }
+  }
+  const updateMatch = /^Update\s+(.+)$/i.exec(t);
+  if (updateMatch && d === updateMatch[1]!.trim()) {
+    return undefined;
+  }
+  const deleteMatch = /^Delete\s+(.+)$/i.exec(t);
+  if (deleteMatch && d === deleteMatch[1]!.trim()) {
+    return undefined;
+  }
+  const webMatch = /^Web ·\s+(.+)$/i.exec(t);
+  if (webMatch && d === webMatch[1]!.trim()) {
+    return undefined;
+  }
+  return detail;
+}
+
+const TOOL_PATH_STRING_KEYS = [
+  "path",
+  "filePath",
+  "filepath",
+  "relPath",
+  "relativePath",
+  "relative_path",
+  "file",
+  "targetPath",
+  "uri",
+  "file_path",
+  "fileName",
+  "filename",
+  "file_name",
+  "target_file",
+  "target",
+  "source",
+  "resourcePath",
+  "file_uri",
+] as const;
+
+function pathFromReadLikeToolTitle(...candidates: (string | undefined)[]): string | undefined {
+  for (const raw of candidates) {
+    if (!raw?.trim()) {
+      continue;
+    }
+    const m = /^(?:read|view|open)\s+(.+)$/i.exec(raw.trim());
+    if (!m) {
+      continue;
+    }
+    const rest = m[1]!.trim();
+    if (!rest || /^file$/i.test(rest)) {
+      continue;
+    }
+    return rest;
+  }
+  return undefined;
+}
+
+function queryFromFindLikeToolTitle(...candidates: (string | undefined)[]): string | undefined {
+  for (const raw of candidates) {
+    if (!raw?.trim()) {
+      continue;
+    }
+    const m = /^find\s+(.+)$/i.exec(raw.trim());
+    if (!m) {
+      continue;
+    }
+    let rest = m[1]!.trim();
+    if (!rest || /^in\s+workspace$/i.test(rest) || /^workspace$/i.test(rest)) {
+      continue;
+    }
+    if (
+      (rest.startsWith('"') && rest.endsWith('"')) ||
+      (rest.startsWith("'") && rest.endsWith("'"))
+    ) {
+      rest = rest.slice(1, -1).trim();
+    }
+    return rest;
+  }
+  return undefined;
+}
+
+function patternFromGrepLikeToolTitle(...candidates: (string | undefined)[]): string | undefined {
+  for (const raw of candidates) {
+    if (!raw?.trim()) {
+      continue;
+    }
+    const m = /^grep\s+(.+)$/i.exec(raw.trim());
+    if (!m) {
+      continue;
+    }
+    let rest = m[1]!.trim();
+    if (
+      (rest.startsWith('"') && rest.endsWith('"')) ||
+      (rest.startsWith("'") && rest.endsWith("'"))
+    ) {
+      rest = rest.slice(1, -1);
+    }
+    return rest;
+  }
+  return undefined;
+}
+
+function withConciseToolDetail<T extends Extract<WorkedSessionEntry, { kind: "tool" }>>(
+  row: T
+): T {
+  const nextDetail = stripRedundantToolDetail(row.detail, row.title);
+  if (nextDetail === row.detail) {
+    return row;
+  }
+  return { ...row, detail: nextDetail };
 }
 
 function humanizeToolCallName(value: string): string {
@@ -439,6 +668,19 @@ function looksLikeReadPayload(record: Record<string, unknown> | undefined): bool
   if (!record || looksLikeEditPayload(record)) {
     return false;
   }
+  if (
+    recordHasAnyKey(record, [
+      "path",
+      "filePath",
+      "filepath",
+      "file_path",
+      "target_file",
+      "uri",
+    ]) &&
+    !recordHasAnyKey(record, ["pattern", "query", "globPattern", "glob_pattern", "regex"])
+  ) {
+    return true;
+  }
   return recordHasAnyKey(record, [
     "content",
     "text",
@@ -450,11 +692,34 @@ function looksLikeReadPayload(record: Record<string, unknown> | undefined): bool
   ]);
 }
 
+function looksLikeWorkspaceFindPayload(record: Record<string, unknown> | undefined): boolean {
+  if (!record || looksLikeEditPayload(record)) {
+    return false;
+  }
+  return recordHasAnyKey(record, ["globPattern", "glob_pattern", "glob"]);
+}
+
+function looksLikeGrepToolPayload(record: Record<string, unknown> | undefined): boolean {
+  if (!record || looksLikeEditPayload(record)) {
+    return false;
+  }
+  if (looksLikeWorkspaceFindPayload(record)) {
+    return false;
+  }
+  return recordHasAnyKey(record, ["pattern", "query", "regex", "searchTerm", "search", "needle"]);
+}
+
 function inferToolKindFromPayloadRecords(
   values: Array<Record<string, unknown> | undefined>
 ): string | undefined {
   if (values.some((value) => looksLikeEditPayload(value))) {
     return "edit";
+  }
+  if (values.some((value) => looksLikeWorkspaceFindPayload(value))) {
+    return "search";
+  }
+  if (values.some((value) => looksLikeGrepToolPayload(value))) {
+    return "grep";
   }
   if (values.some((value) => looksLikeReadPayload(value))) {
     return "read";
@@ -536,6 +801,10 @@ function buildWorkedSessionLabel(entries: WorkedSessionEntry[]): string {
         return created;
       })();
     bucket.count += 1;
+    if (tool.editPreview?.path) {
+      bucket.files.add(tool.editPreview.path);
+      continue;
+    }
     for (const file of tool.files ?? []) {
       bucket.files.add(file);
     }
@@ -610,6 +879,18 @@ function projectTurnTimelineToMessages(turn: ProjectedTurn): ChatMessage[] {
     }
     const entry = item.entry;
     flushAssistant();
+    if (entry.kind === "tool" && entry.editPreview) {
+      flushWorked();
+      messages.push({
+        id: `turn-edit-${turn.id}-${segmentIndex++}`,
+        type: "worked-session",
+        workedLabel: buildWorkedSessionLabel([entry]),
+        workedEntries: [],
+        workedHighlightedEntry: entry,
+        workedDefaultOpen: false,
+      });
+      continue;
+    }
     workedEntries.push(entry);
   }
 
@@ -845,6 +1126,103 @@ function buildSubagentRecentActivity(
   return firstNonEmptyLine(fallback);
 }
 
+function findSubagentMessageBySessionId(
+  turn: ProjectedTurn,
+  sessionIds: string[]
+): ChatMessage | undefined {
+  if (sessionIds.length === 0) {
+    return undefined;
+  }
+  return Array.from(turn.subagentCards.values()).find(
+    (message) => message.subagentId != null && sessionIds.includes(message.subagentId)
+  );
+}
+
+function codexSubagentRuntimeStatus(
+  event: Extract<AgentStoredEvent, { kind: "tool_call" | "tool_call_update" }>
+): ChatMessage["subagentStatus"] | null {
+  const rawUpdate = getToolRawUpdate(event);
+  if (rawUpdate?.type !== "collab_tool_call") {
+    return null;
+  }
+  const tool = typeof rawUpdate.tool === "string" ? rawUpdate.tool.toLowerCase() : "";
+  const states =
+    rawUpdate.agents_states && typeof rawUpdate.agents_states === "object" && !Array.isArray(rawUpdate.agents_states)
+      ? (rawUpdate.agents_states as Record<string, unknown>)
+      : undefined;
+  const statusValues = states
+    ? Object.values(states)
+        .map((value) => {
+          if (!value || typeof value !== "object") {
+            return undefined;
+          }
+          const record = value as Record<string, unknown>;
+          return typeof record.status === "string" ? record.status.toLowerCase() : undefined;
+        })
+        .filter((value): value is string => Boolean(value))
+    : [];
+
+  if (event.status === "failed" || event.status === "cancelled") {
+    return "failed";
+  }
+  if (tool === "spawn_agent") {
+    return "running";
+  }
+  if (tool === "wait") {
+    if (
+      statusValues.some(
+        (value) => !["completed", "failed", "cancelled", "done", "finished"].includes(value)
+      )
+    ) {
+      return "running";
+    }
+    return event.status === "completed" ? "completed" : "running";
+  }
+  return null;
+}
+
+function codexCollabToolName(
+  event: Extract<AgentStoredEvent, { kind: "tool_call" | "tool_call_update" }>
+): string | null {
+  const rawUpdate = getToolRawUpdate(event);
+  if (rawUpdate?.type !== "collab_tool_call") {
+    return null;
+  }
+  return typeof rawUpdate.tool === "string" ? rawUpdate.tool.toLowerCase() : null;
+}
+
+function codexStateStatusToSubagentStatus(
+  status: string | undefined
+): ChatMessage["subagentStatus"] {
+  const normalized = status?.trim().toLowerCase();
+  if (!normalized) {
+    return "running";
+  }
+  if (["failed", "error", "cancelled", "canceled"].includes(normalized)) {
+    return "failed";
+  }
+  if (["completed", "done", "finished"].includes(normalized)) {
+    return "completed";
+  }
+  return "running";
+}
+
+function subagentStatusFromToolEventStatus(
+  status: AgentStoredEvent extends infer T
+    ? T extends { kind: "tool_call" | "tool_call_update"; status: infer S }
+      ? S
+      : never
+    : never
+): ChatMessage["subagentStatus"] {
+  if (status === "failed" || status === "cancelled") {
+    return "failed";
+  }
+  if (status === "completed") {
+    return "completed";
+  }
+  return "running";
+}
+
 function compactJsonForRejected(record: Record<string, unknown>): string | undefined {
   try {
     const compact = JSON.stringify(record);
@@ -968,81 +1346,6 @@ function findFirstStringArrayByKey(
   return undefined;
 }
 
-function countLines(text: string): number {
-  return text.length === 0 ? 0 : text.split("\n").length;
-}
-
-function summarizeReadContent(content: string): { title?: string; detail?: string } {
-  const trimmed = content.trim();
-  if (!trimmed) {
-    return {};
-  }
-  try {
-    const parsed = JSON.parse(trimmed) as Record<string, unknown>;
-    if (
-      parsed &&
-      typeof parsed === "object" &&
-      typeof parsed.name === "string" &&
-      parsed.scripts &&
-      parsed.dependencies
-    ) {
-      return {
-        title:
-          parsed.name === "opencursor-server"
-            ? "Read server package manifest"
-            : "Read package manifest",
-        detail: `${parsed.name} · ${pluralize(countLines(trimmed), "line")}`,
-      };
-    }
-  } catch {
-    // Ignore JSON parse failures.
-  }
-
-  if (trimmed.includes("export const agentRoutes = new Hono()")) {
-    return {
-      title: "Read server route source",
-      detail: `${pluralize(countLines(trimmed), "line")} of Hono route code`,
-    };
-  }
-  if (trimmed.includes('redirect("/editor")')) {
-    return {
-      title: "Read app redirect page",
-      detail: `${pluralize(countLines(trimmed), "line")} of route code`,
-    };
-  }
-  if (trimmed.includes("const WorkspaceContext = createContext")) {
-    return {
-      title: "Read workspace context source",
-      detail: `${pluralize(countLines(trimmed), "line")} of React context code`,
-    };
-  }
-  if (trimmed.includes("export function IDELayout()")) {
-    return {
-      title: "Read IDE layout source",
-      detail: `${pluralize(countLines(trimmed), "line")} of layout code`,
-    };
-  }
-  if (
-    trimmed.includes("NEXT_PUBLIC_SERVER_URL") &&
-    trimmed.includes("setActiveWorkspaceId")
-  ) {
-    return {
-      title: "Read server API client",
-      detail: `${pluralize(countLines(trimmed), "line")} of request helpers`,
-    };
-  }
-  if (/^(?:\"use client\";|import\s)/.test(trimmed)) {
-    return {
-      title: "Read source file",
-      detail: `${pluralize(countLines(trimmed), "line")} of source`,
-    };
-  }
-
-  return {
-    detail: `${pluralize(countLines(trimmed), "line")} of text`,
-  };
-}
-
 function extractToolNameFromCliRaw(raw: Record<string, unknown> | undefined): string | undefined {
   if (!raw) {
     return undefined;
@@ -1124,8 +1427,231 @@ function isGenericToolTitle(title: string | undefined): boolean {
     normalized === "tool call" ||
     normalized === "tool" ||
     normalized === "function call" ||
-    normalized === "function"
+    normalized === "function" ||
+    normalized === "read" ||
+    normalized === "grep" ||
+    normalized === "find" ||
+    normalized === "search" ||
+    normalized === "read file" ||
+    normalized === "find in workspace" ||
+    normalized === "grep workspace" ||
+    normalized === "web search"
   );
+}
+
+/** `locations` on the stored event can be empty while `raw.update.locations` still has uri/path. */
+function stripFileSchemePrefix(p: string): string {
+  if (!/^file:\/\//i.test(p)) {
+    return p;
+  }
+  try {
+    return decodeURIComponent(p.replace(/^file:\/\//i, ""));
+  } catch {
+    return p.replace(/^file:\/\//i, "");
+  }
+}
+
+function pathFromRawLocationItem(item: Record<string, unknown>): string | undefined {
+  const keys = ["path", "filePath", "file_path", "file", "uri", "href"] as const;
+  let raw: string | undefined;
+  for (const k of keys) {
+    const v = item[k];
+    if (typeof v === "string" && v.trim()) {
+      raw = v;
+      break;
+    }
+  }
+  const t = raw?.trim();
+  return t ? stripFileSchemePrefix(t) : undefined;
+}
+
+const PATH_SCAVENGE_KEYS = [
+  ...TOOL_PATH_STRING_KEYS,
+  "workspacePath",
+  "workspace_path",
+  "cwd",
+  "directory",
+  "folder",
+  "absolutePath",
+  "absolute_path",
+  "localPath",
+  "local_path",
+  "fullPath",
+  "full_path",
+  "source",
+  "destination",
+  "rootPath",
+] as const;
+
+function looksLikeFsPathString(s: string): boolean {
+  const t = s.trim();
+  if (!t || t.includes("\n") || t.length > 4096) {
+    return false;
+  }
+  if (/^file:/i.test(t)) {
+    return true;
+  }
+  if (/^[A-Za-z]:[\\/]/.test(t)) {
+    return true;
+  }
+  if (t.includes("/") || t.includes("\\")) {
+    return true;
+  }
+  return false;
+}
+
+function isLikelyBareFileReferenceString(s: string): boolean {
+  const t = s.trim();
+  if (!t || t.includes("\n") || t.length > 384 || /\s/.test(t)) {
+    return false;
+  }
+  return /^[\w./%-]+\.[A-Za-z0-9]{1,12}$/.test(t);
+}
+
+function collectPathsFromUnknown(value: unknown, depth: number, out: string[]): void {
+  if (depth > 14 || out.length >= 24) {
+    return;
+  }
+  if (typeof value === "string") {
+    const t = value.trim();
+    if (t.startsWith("{") && (t.includes("path") || t.includes("file"))) {
+      const o = parseLooseJsonObject(t);
+      if (o) {
+        collectPathsFromUnknown(o, depth + 1, out);
+      }
+    } else if (looksLikeFsPathString(t) || isLikelyBareFileReferenceString(t)) {
+      out.push(stripFileSchemePrefix(t));
+    }
+    return;
+  }
+  if (!value || typeof value !== "object") {
+    return;
+  }
+  if (Array.isArray(value)) {
+    if (
+      value.length > 0 &&
+      value.every(
+        (x): x is string =>
+          typeof x === "string" && x.trim().length > 0 && !x.includes("\n")
+      ) &&
+      value.every(
+        (x) => Boolean(looksLikeFsPathString(x) || isLikelyBareFileReferenceString(x))
+      )
+    ) {
+      for (const s of value) {
+        out.push(stripFileSchemePrefix(s.trim()));
+      }
+      return;
+    }
+    for (const item of value) {
+      collectPathsFromUnknown(item, depth + 1, out);
+    }
+    return;
+  }
+  const o = value as Record<string, unknown>;
+  for (const key of PATH_SCAVENGE_KEYS) {
+    const v = o[key];
+    if (
+      typeof v === "string" &&
+      v.trim() &&
+      (looksLikeFsPathString(v) || isLikelyBareFileReferenceString(v))
+    ) {
+      out.push(stripFileSchemePrefix(v.trim()));
+    }
+  }
+  for (const v of Object.values(o)) {
+    collectPathsFromUnknown(v, depth + 1, out);
+  }
+}
+
+function scavengePathsFromToolEventRaw(
+  event: Extract<AgentStoredEvent, { kind: "tool_call" | "tool_call_update" }>
+): string[] {
+  const raw =
+    "raw" in event && event.raw && typeof event.raw === "object"
+      ? (event.raw as Record<string, unknown>)
+      : undefined;
+  if (!raw) {
+    return [];
+  }
+  const collected: string[] = [];
+  collectPathsFromUnknown(raw, 0, collected);
+  const seen = new Set<string>();
+  const deduped: string[] = [];
+  for (const p of collected) {
+    if (!seen.has(p)) {
+      seen.add(p);
+      deduped.push(p);
+    }
+  }
+  return deduped;
+}
+
+function extractPathsFromToolEventRaw(
+  event: Extract<AgentStoredEvent, { kind: "tool_call" | "tool_call_update" }>
+): string[] | undefined {
+  const raw =
+    "raw" in event && event.raw && typeof event.raw === "object"
+      ? (event.raw as Record<string, unknown>)
+      : undefined;
+  const update =
+    raw?.update && typeof raw.update === "object" && !Array.isArray(raw.update)
+      ? (raw.update as Record<string, unknown>)
+      : undefined;
+  const out: string[] = [];
+  const pushPath = (p: string | undefined) => {
+    const t = p?.trim();
+    if (t && !out.includes(t)) {
+      out.push(stripFileSchemePrefix(t));
+    }
+  };
+  const locs = update?.locations;
+  if (Array.isArray(locs)) {
+    for (const loc of locs) {
+      if (!loc || typeof loc !== "object") {
+        continue;
+      }
+      pushPath(pathFromRawLocationItem(loc as Record<string, unknown>));
+    }
+  }
+  const singleLoc = update?.location;
+  if (singleLoc && typeof singleLoc === "object" && !Array.isArray(singleLoc)) {
+    pushPath(pathFromRawLocationItem(singleLoc as Record<string, unknown>));
+  }
+  pushPath(
+    typeof update?.path === "string"
+      ? update.path
+      : typeof update?.filePath === "string"
+        ? update.filePath
+        : typeof update?.file_path === "string"
+          ? update.file_path
+          : typeof update?.target_file === "string"
+            ? update.target_file
+            : typeof update?.uri === "string"
+              ? update.uri
+              : undefined
+  );
+  return out.length > 0 ? out : undefined;
+}
+
+function extractPathFromToolEventRaw(
+  event: Extract<AgentStoredEvent, { kind: "tool_call" | "tool_call_update" }>
+): string | undefined {
+  return extractPathsFromToolEventRaw(event)?.[0];
+}
+
+function pathFromPriorWorkedToolTitle(
+  existing: Extract<WorkedSessionEntry, { kind: "tool" }> | undefined
+): string | undefined {
+  if (!existing?.title?.trim()) {
+    return undefined;
+  }
+  const m = /^(Read|Update|Delete)\s+(.+)$/i.exec(existing.title.trim());
+  const rest = m?.[2]?.trim();
+  if (!rest || /^file$/i.test(rest)) {
+    return undefined;
+  }
+  return rest;
 }
 
 /** Stream-json `type` values that are not useful as a user-visible tool title */
@@ -1143,8 +1669,10 @@ const GENERIC_STREAM_TOOL_TYPES = new Set([
 
 function formatToolSummary(
   event: Extract<AgentStoredEvent, { kind: "tool_call" | "tool_call_update" }>,
-  existing?: Extract<WorkedSessionEntry, { kind: "tool" }>
+  existing?: Extract<WorkedSessionEntry, { kind: "tool" }>,
+  workspaceRoot?: string | null
 ): Extract<WorkedSessionEntry, { kind: "tool" }> {
+  const ws = workspaceRoot ?? undefined;
   const rawUpdate = getToolRawUpdate(event);
   const rawTop =
     "raw" in event && event.raw && typeof event.raw === "object"
@@ -1163,7 +1691,24 @@ function formatToolSummary(
     rawToolRecord.type !== "agent_message"
       ? rawToolRecord.type
       : undefined;
-  const acpToolCalls = rawToolRecord ? extractAcpToolCallEntries(rawToolRecord) : [];
+  /** ACP often sends `rawInput` / `rawOutput` as JSON strings; parse like `getSubagentTaskInput`. */
+  const rawInputRecords = [
+    parseLooseJsonObject(rawUpdate?.rawInput),
+    parseLooseJsonObject(rawUpdate?.raw_input),
+    parseLooseJsonObject(rawTop?.rawInput),
+    parseLooseJsonObject(rawTop?.raw_input),
+  ].filter((value): value is Record<string, unknown> => value != null);
+  const rawOutputRecords = [
+    parseLooseJsonObject(rawUpdate?.rawOutput),
+    parseLooseJsonObject(rawUpdate?.raw_output),
+    parseLooseJsonObject(rawTop?.rawOutput),
+    parseLooseJsonObject(rawTop?.raw_output),
+  ].filter((value): value is Record<string, unknown> => value != null);
+  const acpToolCallsBase = rawToolRecord ? extractAcpToolCallEntries(rawToolRecord) : [];
+  const acpToolCallsFromWrapped = rawInputRecords.flatMap((rec) =>
+    extractAcpToolCallEntries(rec)
+  );
+  const acpToolCalls = [...acpToolCallsBase, ...acpToolCallsFromWrapped];
   const acpToolCall = acpToolCalls[0];
   const acpToolName = acpToolCall?.rawName
     ? humanizeToolCallName(acpToolCall.rawName)
@@ -1216,9 +1761,7 @@ function formatToolSummary(
       : undefined;
   const acpKind = typeof rawToolRecord?.kind === "string" ? rawToolRecord.kind : undefined;
   const rawInputs = [
-    rawUpdate?.rawInput && typeof rawUpdate.rawInput === "object"
-      ? (rawUpdate.rawInput as Record<string, unknown>)
-      : undefined,
+    ...rawInputRecords,
     ...acpToolCalls.map((entry) => entry.args),
     nestedArgRecord,
     nestedFromFunction,
@@ -1226,41 +1769,48 @@ function formatToolSummary(
     rawTop,
   ].filter((value): value is Record<string, unknown> => value != null);
   const rawOutputs = [
-    rawUpdate?.rawOutput && typeof rawUpdate.rawOutput === "object"
-      ? (rawUpdate.rawOutput as Record<string, unknown>)
-      : undefined,
+    ...rawOutputRecords,
     acpToolResultSuccess,
     acpToolResultRejected,
     ...acpToolCalls.map((entry) => entry.result),
   ].filter((value): value is Record<string, unknown> => value != null);
 
+  const scavengedPaths = scavengePathsFromToolEventRaw(event);
+  const normalizedLocations =
+    event.locations
+      ?.flatMap((loc) => {
+        const p = typeof loc.path === "string" ? loc.path.trim() : "";
+        if (!p) {
+          return [];
+        }
+        return [{
+          path: p,
+          line: typeof loc.line === "number" ? loc.line : undefined,
+        }];
+      }) ?? existing?.locations;
+  /** `locations: []` is truthy for `??` — treat empty like missing so we still scan raw / scavenger. */
+  const locationPaths = normalizedLocations?.map((loc) => loc.path) ?? [];
+  const editPreview = event.editPreview ?? existing?.editPreview;
   const path =
-    event.locations?.[0]?.path ??
-    findFirstStringAcrossValues(rawInputs, [
-      "path",
-      "filePath",
-      "filepath",
-      "relativePath",
-      "targetPath",
-      "uri",
-    ]) ??
-    findFirstStringAcrossValues(rawOutputs, [
-      "path",
-      "filePath",
-      "filepath",
-      "relativePath",
-      "targetPath",
-      "uri",
-    ]);
+    locationPaths[0] ??
+    editPreview?.path ??
+    extractPathFromToolEventRaw(event) ??
+    findFirstStringAcrossValues(rawInputs, [...TOOL_PATH_STRING_KEYS]) ??
+    findFirstStringAcrossValues(rawOutputs, [...TOOL_PATH_STRING_KEYS]) ??
+    scavengedPaths[0] ??
+    existing?.files?.[0] ??
+    pathFromPriorWorkedToolTitle(existing);
 
   const files =
-    event.locations?.map((location) => location.path) ??
+    (locationPaths.length > 0 ? locationPaths : undefined) ??
+    extractPathsFromToolEventRaw(event) ??
     findFirstStringArrayAcrossValues(rawOutputs, [
       "files",
       "paths",
       "matchedFiles",
       "results",
     ]) ??
+    (scavengedPaths.length > 0 ? scavengedPaths : undefined) ??
     existing?.files;
 
   let status = toWorkedToolStatus(event.status);
@@ -1290,6 +1840,10 @@ function formatToolSummary(
   const resolvedTitleLabel = isGenericToolTitle(explicitTitle)
     ? rawTitleLabel
     : explicitTitle ?? rawTitleLabel;
+  const streamToolTitle =
+    typeof explicitTitle === "string" && explicitTitle.trim()
+      ? explicitTitle.trim()
+      : undefined;
   const rejectedReason = findFirstStringByKey(acpToolResultRejected, [
     "reason",
     "message",
@@ -1322,21 +1876,24 @@ function formatToolSummary(
     (toolKind === "read" ||
       payloadToolKind === "read" ||
       /\bread\b/i.test(resolvedTitleLabel ?? "") ||
+      Boolean(pathFromReadLikeToolTitle(streamToolTitle, resolvedTitleLabel, rawTitleLabel)) ||
       (Boolean(path) &&
         /\bread|cat|open|load|view\b/i.test(
           `${resolvedTitleLabel ?? ""} ${titleFromRaw ?? ""}`
         )));
 
   if (toolKind === "grep" || /\bgrep\b/i.test(acpToolName ?? "")) {
-    const query = findFirstStringAcrossValues(rawInputs, [
-      "query",
-      "pattern",
-      "regex",
-      "search",
-      "searchTerm",
-      "term",
-      "needle",
-    ]);
+    const query =
+      findFirstStringAcrossValues(rawInputs, [
+        "query",
+        "pattern",
+        "regex",
+        "search",
+        "searchTerm",
+        "term",
+        "needle",
+      ]) ??
+      patternFromGrepLikeToolTitle(streamToolTitle, resolvedTitleLabel, rawTitleLabel);
     const totalFiles = findFirstNumberAcrossValues(rawOutputs, [
       "totalFiles",
       "fileCount",
@@ -1345,19 +1902,24 @@ function formatToolSummary(
     const matchedFiles =
       findFirstStringArrayAcrossValues(rawOutputs, ["files", "matchedFiles", "results"])?.length ??
       totalFiles;
-    return {
+    const grepTitle = query?.trim()
+      ? `Grep ${conciseQuotedSearchPattern(query)}`
+      : "Grep workspace";
+    return withConciseToolDetail({
       kind: "tool",
       toolCallId: event.toolCallId,
       toolKind,
-      title: query ? `Grep "${query}"` : "Grep workspace",
+      title: grepTitle,
       detail:
         safeToolDetailText(detail, { suppressVerbosePayload: true }) ??
         (matchedFiles != null
           ? `${pluralize(matchedFiles, "file")} matched`
           : existing?.detail),
       status,
+      locations: normalizedLocations,
+      editPreview,
       files,
-    };
+    });
   }
 
   if (toolKind === "search_web") {
@@ -1367,18 +1929,28 @@ function formatToolSummary(
       "term",
       "search",
     ]);
-    return {
+    const webTitle = query?.trim()
+      ? `Web · ${truncateMiddleLabel(query.trim(), 44)}`
+      : "Web search";
+    return withConciseToolDetail({
       kind: "tool",
       toolCallId: event.toolCallId,
       toolKind,
-      title: query ? `Search web for "${query}"` : "Search web",
+      title: webTitle,
       detail: safeToolDetailText(detail, { suppressVerbosePayload: true }) ?? existing?.detail,
       status,
+      locations: normalizedLocations,
+      editPreview,
       files,
-    };
+    });
   }
 
-  if (toolKind === "search" || explicitTitle === "Find" || resolvedTitleLabel === "Find") {
+  if (
+    toolKind === "search" ||
+    explicitTitle === "Find" ||
+    resolvedTitleLabel === "Find" ||
+    (resolvedTitleLabel && /^find\b/i.test(resolvedTitleLabel.trim()))
+  ) {
     const query =
       findFirstStringAcrossValues(rawInputs, ["globPattern"]) ??
       findFirstStringAcrossValues(rawInputs, [
@@ -1389,7 +1961,9 @@ function formatToolSummary(
         "searchTerm",
         "term",
         "needle",
-      ]);
+        "include",
+      ]) ??
+      queryFromFindLikeToolTitle(streamToolTitle, resolvedTitleLabel, rawTitleLabel);
     const totalFiles = findFirstNumberAcrossValues(rawOutputs, [
       "totalFiles",
       "fileCount",
@@ -1398,47 +1972,74 @@ function formatToolSummary(
     const matchedFiles =
       findFirstStringArrayAcrossValues(rawOutputs, ["files", "matchedFiles", "results"])?.length ??
       totalFiles;
-    return {
+    const findTitle = query?.trim()
+      ? `Find ${conciseQuotedSearchPattern(query)}`
+      : "Find in workspace";
+    return withConciseToolDetail({
       kind: "tool",
       toolCallId: event.toolCallId,
       toolKind,
-      title: query ? `Find "${query}"` : "Find workspace matches",
+      title: findTitle,
       detail:
         safeToolDetailText(detail, { suppressVerbosePayload: true }) ??
         (matchedFiles != null
           ? `${pluralize(matchedFiles, "file")} matched`
           : existing?.detail),
       status,
+      locations: normalizedLocations,
+      editPreview,
       files,
-    };
+    });
   }
 
   if (likelyRead) {
-    const content = findFirstStringAcrossValues(rawOutputs, ["content", "text"]);
-    const inferred = content ? summarizeReadContent(content) : {};
     const safeReadDetail = safeToolDetailText(suppressPathOnlyDetail(detail), {
       suppressVerbosePayload: true,
     });
-    return {
+    const readPath =
+      path?.trim() ||
+      (files?.length === 1 && files[0]?.trim() ? files[0]!.trim() : undefined) ||
+      pathFromReadLikeToolTitle(streamToolTitle, resolvedTitleLabel, rawTitleLabel);
+    const readTitle = readPath
+      ? `Read ${truncateMiddleLabel(
+          formatToolFileLabel(readPath, ws) ?? toolPathBasename(readPath),
+          TOOL_PATH_LABEL_MAX
+        )}`
+      : "Read file";
+    let readFiles = readPath
+      ? [readPath, ...(files ?? []).filter((file) => file !== readPath)]
+      : files;
+    if (readFiles?.length === 1 && readPath && readFiles[0] === readPath) {
+      readFiles = undefined;
+    }
+    return withConciseToolDetail({
       kind: "tool",
       toolCallId: event.toolCallId,
       toolKind,
-      title: path ? `Read ${path}` : inferred.title ?? "Read file",
-      detail:
-        safeReadDetail ??
-        (path && inferred.detail
-          ? inferred.detail
-          : inferred.detail ?? existing?.detail),
+      title: readTitle,
+      detail: safeReadDetail ?? existing?.detail,
       status,
-      files: path ? [path, ...(files ?? []).filter((file) => file !== path)] : files,
-    };
+      locations: normalizedLocations,
+      editPreview,
+      files: readFiles,
+    });
   }
 
   if (likelyEdit) {
-    const nextTitle = path
-      ? `Update ${path}`
-      : resolvedTitleLabel ?? existing?.title ?? "Update file";
-    return {
+    const nextTitle = path?.trim()
+      ? `Update ${truncateMiddleLabel(
+          formatToolFileLabel(path, ws) ?? toolPathBasename(path),
+          TOOL_PATH_LABEL_MAX
+        )}`
+      : truncateMiddleLabel(
+          resolvedTitleLabel ?? existing?.title ?? "Update file",
+          TOOL_TITLE_MAX_LEN
+        );
+    let editFiles = path ? [path, ...(files ?? []).filter((file) => file !== path)] : files;
+    if (editFiles?.length === 1 && path && editFiles[0] === path) {
+      editFiles = undefined;
+    }
+    return withConciseToolDetail({
       kind: "tool",
       toolCallId: event.toolCallId,
       toolKind,
@@ -1447,29 +2048,46 @@ function formatToolSummary(
         safeToolDetailText(suppressPathOnlyDetail(detail), { suppressVerbosePayload: true }) ??
         existing?.detail,
       status,
-      files: path ? [path, ...(files ?? []).filter((file) => file !== path)] : files,
-    };
+      locations: normalizedLocations,
+      editPreview,
+      files: editFiles,
+    });
   }
 
   if (toolKind === "delete") {
-    return {
+    const delTitle = path?.trim()
+      ? `Delete ${truncateMiddleLabel(
+          formatToolFileLabel(path, ws) ?? toolPathBasename(path),
+          TOOL_PATH_LABEL_MAX
+        )}`
+      : truncateMiddleLabel(
+          resolvedTitleLabel ?? existing?.title ?? "Delete file",
+          TOOL_TITLE_MAX_LEN
+        );
+    let delFiles = path ? [path, ...(files ?? []).filter((file) => file !== path)] : files;
+    if (delFiles?.length === 1 && path && delFiles[0] === path) {
+      delFiles = undefined;
+    }
+    return withConciseToolDetail({
       kind: "tool",
       toolCallId: event.toolCallId,
       toolKind,
-      title: path ? `Delete ${path}` : resolvedTitleLabel ?? existing?.title ?? "Delete file",
+      title: delTitle,
       detail:
         safeToolDetailText(suppressPathOnlyDetail(detail), { suppressVerbosePayload: true }) ??
         existing?.detail,
       status,
-      files: path ? [path, ...(files ?? []).filter((file) => file !== path)] : files,
-    };
+      locations: normalizedLocations,
+      editPreview,
+      files: delFiles,
+    });
   }
 
   if (toolKind === "todo") {
     const todoCount = Array.isArray(rawInputs[0]?.todos)
       ? (rawInputs[0]?.todos as unknown[]).length
       : findFirstNumberAcrossValues(rawInputs, ["count", "total"]);
-    return {
+    return withConciseToolDetail({
       kind: "tool",
       toolCallId: event.toolCallId,
       toolKind,
@@ -1478,41 +2096,62 @@ function formatToolSummary(
         safeToolDetailText(detail, { suppressVerbosePayload: true }) ??
         (todoCount != null ? `${pluralize(todoCount, "item")} updated` : existing?.detail),
       status,
+      locations: normalizedLocations,
+      editPreview,
       files,
-    };
+    });
   }
 
   const command = findFirstStringAcrossValues(rawInputs, ["command", "cmd", "script"]);
   if (command) {
-    return {
+    return withConciseToolDetail({
       kind: "tool",
       toolCallId: event.toolCallId,
       toolKind: toolKind === "tool" ? "terminal" : toolKind,
-      title: command,
+      title: truncateMiddleLabel(command, TERMINAL_TITLE_MAX),
       detail: safeToolDetailText(detail, { suppressVerbosePayload: true }) ?? existing?.detail,
       variant: "terminal",
       status,
+      locations: normalizedLocations,
+      editPreview,
       files,
-    };
+    });
   }
 
-  return {
+  return withConciseToolDetail({
     kind: "tool",
     toolCallId: event.toolCallId,
     toolKind,
-    title: resolvedTitleLabel ?? existing?.title ?? "Tool call",
+    title: truncateMiddleLabel(
+      resolvedTitleLabel ?? existing?.title ?? "Tool call",
+      TOOL_TITLE_MAX_LEN
+    ),
     detail: safeToolDetailText(detail, { suppressVerbosePayload: true }) ?? existing?.detail,
     status,
+    locations: normalizedLocations,
+    editPreview,
     files,
     variant: existing?.variant,
-  };
+  });
 }
 
 export function projectAgentEventsToChatMessages(
   events: AgentStoredEvent[],
   options?: ProjectAgentEventsOptions
 ): ChatMessage[] {
+  const workspaceRoot = options?.workspaceRoot;
   const ordered = [...events].sort((a, b) => a.seq - b.seq);
+  const hiddenHandoffTranscriptMessageIds = new Set<string>();
+  for (let index = 0; index < ordered.length - 1; index += 1) {
+    const current = ordered[index];
+    const next = ordered[index + 1];
+    if (
+      current?.kind === "assistant_message_end" &&
+      next?.kind === "agent_handoff"
+    ) {
+      hiddenHandoffTranscriptMessageIds.add(current.messageId);
+    }
+  }
   const turns: ProjectedTurn[] = [];
   let currentTurn: ProjectedTurn | null = null;
 
@@ -1561,11 +2200,17 @@ export function projectAgentEventsToChatMessages(
         break;
       }
       case "assistant_message_chunk": {
+        if (hiddenHandoffTranscriptMessageIds.has(event.messageId)) {
+          break;
+        }
         const turn = ensureTurn();
         appendAssistantChunk(turn, event.text, event.messageId);
         break;
       }
       case "assistant_message_end": {
+        if (hiddenHandoffTranscriptMessageIds.has(event.messageId)) {
+          break;
+        }
         const turn = ensureTurn();
         const hasAssistantText = turn.timeline.some(
           (item) => item.kind === "assistant" && item.text.trim().length > 0
@@ -1592,40 +2237,95 @@ export function projectAgentEventsToChatMessages(
         const turn = ensureTurn();
         if (classifyToolCallAsSubagentCard(options?.backendId, event)) {
           const rawInput = getSubagentTaskInput(event);
+          const taskText = extractSubagentTaskText(event);
+          const sessionIds = extractSubagentSessionIds(event);
+          const codexStates =
+            options?.backendId === "codex-adapter" ? extractCodexSubagentStates(event) : [];
+          const codexTool = options?.backendId === "codex-adapter" ? codexCollabToolName(event) : null;
+          if (options?.backendId === "codex-adapter" && codexTool === "wait" && codexStates.length === 0) {
+            break;
+          }
+          if (options?.backendId === "codex-adapter" && codexStates.length > 0) {
+            const fallbackTitle =
+              (typeof rawInput?.description === "string" && rawInput.description.trim()) ||
+              (typeof rawInput?.prompt === "string" && rawInput.prompt.trim()) ||
+              "Subagent task";
+            for (const state of codexStates) {
+              const existingMessage =
+                (codexTool === "spawn_agent" ? turn.subagentCards.get(event.toolCallId) : undefined) ??
+                findSubagentMessageBySessionId(turn, [state.sessionId]);
+              const message =
+                existingMessage ??
+                ({
+                  id: `subagent-${state.sessionId}`,
+                  type: "subagent",
+                  subagentId: state.sessionId,
+                } satisfies ChatMessage);
+              const baseTranscript =
+                message.subagentTranscript?.length
+                  ? message.subagentTranscript
+                  : buildSubagentTranscriptFromTaskEvent(event, fallbackTitle);
+              const transcript = state.message
+                ? [...baseTranscript, ...parseSubagentResultMessages(state.message, state.sessionId)]
+                : baseTranscript;
+              message.subagentId = state.sessionId;
+              message.subagentTitle = message.subagentTitle ?? fallbackTitle;
+              message.subagentMeta = undefined;
+              message.subagentStatus = codexStateStatusToSubagentStatus(state.status);
+              message.subagentComplete = message.subagentStatus !== "running";
+              message.subagentTranscript = transcript;
+              message.recentActivity = buildSubagentRecentActivity(transcript, state.message);
+              if (!existingMessage) {
+                turn.subagentCards.set(
+                  codexTool === "spawn_agent" ? event.toolCallId : `${event.toolCallId}:${state.sessionId}`,
+                  message
+                );
+                appendTimelineMessage(turn, message);
+              }
+            }
+            break;
+          }
           const title =
             (typeof rawInput?.description === "string" && rawInput.description.trim()) ||
+            (typeof rawInput?.prompt === "string" && rawInput.prompt.trim()) ||
             (typeof event.title === "string" && event.title.trim() && event.title.trim().toLowerCase() !== "task"
               ? event.title.trim()
               : undefined) ||
             "Subagent task";
           const transcript = buildSubagentTranscriptFromTaskEvent(event, title);
+          const existingMessage =
+            findSubagentMessageBySessionId(turn, sessionIds) ?? turn.subagentCards.get(event.toolCallId);
           const message =
-            turn.subagentCards.get(event.toolCallId) ??
+            existingMessage ??
             ({
               id: `subagent-${event.toolCallId}`,
               type: "subagent",
-              subagentId: extractSubagentTaskText(event).taskId ?? event.toolCallId,
+              subagentId: taskText.sessionId ?? taskText.taskId ?? event.toolCallId,
             } satisfies ChatMessage);
-          message.subagentId = extractSubagentTaskText(event).taskId ?? event.toolCallId;
+          message.subagentId = taskText.sessionId ?? taskText.taskId ?? event.toolCallId;
           message.subagentTitle = title;
           message.subagentMeta = undefined;
-          message.subagentStatus = "running";
-          message.subagentComplete = false;
+          message.subagentStatus =
+            codexSubagentRuntimeStatus(event) ?? subagentStatusFromToolEventStatus(event.status);
+          message.subagentComplete = message.subagentStatus !== "running";
           message.subagentTranscript = transcript;
           message.recentActivity = buildSubagentRecentActivity(
             transcript,
-            typeof rawInput?.description === "string" ? rawInput.description : undefined
+            (typeof rawInput?.description === "string" ? rawInput.description : undefined) ??
+              (typeof rawInput?.prompt === "string" ? rawInput.prompt : undefined)
           );
-          if (!turn.subagentCards.has(event.toolCallId)) {
+          if (!existingMessage) {
             turn.subagentCards.set(event.toolCallId, message);
             appendTimelineMessage(turn, message);
+          } else {
+            turn.subagentCards.set(event.toolCallId, message);
           }
           break;
         }
         const existing = turn.toolEntryById.get(event.toolCallId) as
           | Extract<WorkedSessionEntry, { kind: "tool" }>
           | undefined;
-        const entry = formatToolSummary(event, existing);
+        const entry = formatToolSummary(event, existing, workspaceRoot);
         if (!existing) {
           appendTraceEntry(turn, entry);
           turn.toolEntryById.set(event.toolCallId, entry);
@@ -1638,41 +2338,96 @@ export function projectAgentEventsToChatMessages(
         const turn = ensureTurn();
         if (classifyToolCallAsSubagentCard(options?.backendId, event)) {
           const rawInput = getSubagentTaskInput(event);
+          const taskText = extractSubagentTaskText(event);
+          const sessionIds = extractSubagentSessionIds(event);
+          const codexStates =
+            options?.backendId === "codex-adapter" ? extractCodexSubagentStates(event) : [];
+          const codexTool = options?.backendId === "codex-adapter" ? codexCollabToolName(event) : null;
+          if (options?.backendId === "codex-adapter" && codexTool === "wait" && codexStates.length === 0) {
+            break;
+          }
+          if (options?.backendId === "codex-adapter" && codexStates.length > 0) {
+            const fallbackTitle =
+              (typeof rawInput?.description === "string" && rawInput.description.trim()) ||
+              (typeof rawInput?.prompt === "string" && rawInput.prompt.trim()) ||
+              "Subagent task";
+            for (const state of codexStates) {
+              const existingMessage =
+                (codexTool === "spawn_agent" ? turn.subagentCards.get(event.toolCallId) : undefined) ??
+                findSubagentMessageBySessionId(turn, [state.sessionId]);
+              const message =
+                existingMessage ??
+                ({
+                  id: `subagent-${state.sessionId}`,
+                  type: "subagent",
+                  subagentId: state.sessionId,
+                } satisfies ChatMessage);
+              const baseTranscript =
+                message.subagentTranscript?.length
+                  ? message.subagentTranscript
+                  : buildSubagentTranscriptFromTaskEvent(event, fallbackTitle);
+              const transcript = state.message
+                ? [...baseTranscript, ...parseSubagentResultMessages(state.message, state.sessionId)]
+                : baseTranscript;
+              message.subagentId = state.sessionId;
+              message.subagentTitle = message.subagentTitle ?? fallbackTitle;
+              message.subagentMeta = undefined;
+              message.subagentStatus = codexStateStatusToSubagentStatus(state.status);
+              message.subagentComplete = message.subagentStatus !== "running";
+              message.subagentTranscript = transcript;
+              message.recentActivity = buildSubagentRecentActivity(transcript, state.message);
+              if (!existingMessage) {
+                turn.subagentCards.set(
+                  codexTool === "spawn_agent" ? event.toolCallId : `${event.toolCallId}:${state.sessionId}`,
+                  message
+                );
+                appendTimelineMessage(turn, message);
+              }
+            }
+            break;
+          }
           const title =
             (typeof rawInput?.description === "string" && rawInput.description.trim()) ||
+            (typeof rawInput?.prompt === "string" && rawInput.prompt.trim()) ||
             (typeof event.title === "string" && event.title.trim() && event.title.trim().toLowerCase() !== "task"
               ? event.title.trim()
               : undefined) ||
             "Subagent task";
-          const taskText = extractSubagentTaskText(event);
           const transcript = buildSubagentTranscriptFromTaskEvent(event, title);
+          const existingMessage =
+            findSubagentMessageBySessionId(turn, sessionIds) ?? turn.subagentCards.get(event.toolCallId);
           const message =
-            turn.subagentCards.get(event.toolCallId) ??
+            existingMessage ??
             ({
               id: `subagent-${event.toolCallId}`,
               type: "subagent",
-              subagentId: taskText.taskId ?? event.toolCallId,
+              subagentId: taskText.sessionId ?? taskText.taskId ?? event.toolCallId,
             } satisfies ChatMessage);
-          message.subagentId = taskText.taskId ?? event.toolCallId;
+          message.subagentId = taskText.sessionId ?? taskText.taskId ?? event.toolCallId;
           message.subagentTitle = title;
-          message.subagentStatus = event.status === "completed" ? "completed" : "running";
-          message.subagentComplete = event.status === "completed";
+          message.subagentStatus =
+            codexSubagentRuntimeStatus(event) ?? subagentStatusFromToolEventStatus(event.status);
+          message.subagentComplete = message.subagentStatus !== "running";
           message.subagentMeta = undefined;
           message.subagentTranscript = transcript;
           message.recentActivity = buildSubagentRecentActivity(
             transcript,
-            taskText.resultText ?? (typeof rawInput?.description === "string" ? rawInput.description : undefined)
+            taskText.resultText ??
+              (typeof rawInput?.description === "string" ? rawInput.description : undefined) ??
+              (typeof rawInput?.prompt === "string" ? rawInput.prompt : undefined)
           );
-          if (!turn.subagentCards.has(event.toolCallId)) {
+          if (!existingMessage) {
             turn.subagentCards.set(event.toolCallId, message);
             appendTimelineMessage(turn, message);
+          } else {
+            turn.subagentCards.set(event.toolCallId, message);
           }
           break;
         }
         let existing = turn.toolEntryById.get(event.toolCallId) as
           | Extract<WorkedSessionEntry, { kind: "tool" }>
           | undefined;
-        const unmatchedEntry = !existing ? formatToolSummary(event) : undefined;
+        const unmatchedEntry = !existing ? formatToolSummary(event, undefined, workspaceRoot) : undefined;
         if (!existing) {
           const open = turn.trace.filter(
             (e): e is Extract<WorkedSessionEntry, { kind: "tool" }> =>
@@ -1723,8 +2478,8 @@ export function projectAgentEventsToChatMessages(
           }
         }
         const entry = existing
-          ? formatToolSummary(event, existing)
-          : unmatchedEntry ?? formatToolSummary(event);
+          ? formatToolSummary(event, existing, workspaceRoot)
+          : unmatchedEntry ?? formatToolSummary(event, undefined, workspaceRoot);
         if (!existing) {
           appendTraceEntry(turn, entry);
           turn.toolEntryById.set(event.toolCallId, entry);
@@ -1869,6 +2624,18 @@ export function projectAgentEventsToChatMessages(
         appendTimelineMessage(turn, message);
         break;
       }
+      case "agent_handoff": {
+        const turn = ensureTurn();
+        turn.handoffMessageId = event.handoffMessageId;
+        const message: ChatMessage = {
+          id: event.eventId,
+          type: "agent-handoff",
+          handoffFromAgent: event.fromAgent,
+          handoffToAgent: event.toAgent,
+        };
+        appendTimelineMessage(turn, message);
+        break;
+      }
       default:
         break;
     }
@@ -1880,7 +2647,11 @@ export function projectAgentEventsToChatMessages(
   const messages: ChatMessage[] = [];
   for (const turn of turns) {
     if (turn.userMessage) {
-      messages.push(turn.userMessage);
+      if (turn.handoffMessageId && turn.userMessage.id === turn.handoffMessageId) {
+        messages.push({ ...turn.userMessage, isHandoffMessage: true });
+      } else {
+        messages.push(turn.userMessage);
+      }
     }
     messages.push(...projectTurnTimelineToMessages(turn));
   }

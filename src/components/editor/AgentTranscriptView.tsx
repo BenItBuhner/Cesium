@@ -28,7 +28,7 @@ export function AgentTranscriptView({
   const scrollRootRef = useRef<HTMLDivElement>(null);
   const [liveMessages, setLiveMessages] = useState<ChatMessage[] | null>(null);
   const resolvedSessionId = sessionId ?? inferTranscriptSessionId(messages);
-  const { activeWorkspaceId } = useWorkspace();
+  const { activeWorkspaceId, workspaceInfo } = useWorkspace();
 
   useEffect(() => {
     setLiveMessages(null);
@@ -105,6 +105,7 @@ export function AgentTranscriptView({
           stickyUserHeader
           scrollRootRef={scrollRootRef}
           workedSessionSurface="editor"
+          workspaceRoot={workspaceInfo?.root ?? null}
         />
       </div>
     </div>

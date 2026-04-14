@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
-import { existsSync } from "node:fs";
+import { existsSync, promises as fs } from "node:fs";
+import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { AcpStdioClient } from "./acp-transport.js";
 import {
   type AcpSharedBridge,
@@ -16,6 +18,7 @@ import {
   readAgentBackendConfigCache,
   writeAgentBackendConfigCache,
 } from "./provider-cache-store.js";
+import { extractToolEditPreview } from "./tool-edit-preview.js";
 import type {
   AgentBackendId,
   AgentBackendInfo,
@@ -37,6 +40,17 @@ import {
   findPrimaryModeConfigOption,
 } from "./config-option-utils.js";
 import { formatRejectedToolDetail } from "./tool-rejection-utils.js";
+import {
+  formatDeleteToolTitle,
+  formatFindToolTitle,
+  formatGrepToolTitle,
+  formatReadToolTitle,
+  formatTerminalCommandTitle,
+  formatUpdateToolTitle,
+  formatWebSearchTitle,
+  truncateGenericToolTitle,
+} from "./tool-display-labels.js";
+import { inferFileKind, isDimmed } from "../workspace.js";
 
 type AcpRuntimeSpec = CliRuntimeSpec;
 
@@ -64,6 +78,16 @@ const basicCliCapabilities: AgentProviderCapabilities = {
   supportsTodos: false,
   supportsSessionResume: false,
   supportsPromptImages: false,
+};
+
+const claudeCliCapabilities: AgentProviderCapabilities = {
+  ...basicCliCapabilities,
+  supportsToolCalls: true,
+};
+
+const codexCliCapabilities: AgentProviderCapabilities = {
+  ...basicCliCapabilities,
+  supportsToolCalls: true,
 };
 
 const cursorAcpCapabilities: AgentProviderCapabilities = {
@@ -233,6 +257,369 @@ function fileExists(filePath: string): boolean {
   }
 }
 
+function backendUsesAcpPromptHints(backendId: AgentBackendId): boolean {
+  return backendId === "cursor-acp" || backendId === "opencode-acp";
+}
+
+type CursorPromptSearchHint = {
+  query: string;
+  presentation: "find" | "grep";
+};
+
+type CursorPromptToolHints = {
+  explicitPaths: string[];
+  searches: CursorPromptSearchHint[];
+  nextPathIndex: number;
+  nextSearchIndex: number;
+};
+
+type CursorToolInference = {
+  toolKind?: string;
+  path?: string;
+  query?: string;
+  searchPresentation?: "find" | "grep";
+  locations?: { path: string; line?: number }[];
+  detail?: string;
+};
+
+const CURSOR_INFERENCE_MAX_FILE_BYTES = 256 * 1024;
+const CURSOR_INFERENCE_MAX_PATH_MATCH_BYTES = 512 * 1024;
+const CURSOR_INFERENCE_MAX_LOCATIONS = 24;
+const CURSOR_INFERENCE_MAX_CONTENT_SCAN_FILES = 4000;
+
+function toWorkspaceRelativePath(workspaceRoot: string, filePath: string): string | undefined {
+  const resolvedRoot = path.resolve(workspaceRoot);
+  const resolvedPath = path.resolve(filePath);
+  const relative = path.relative(resolvedRoot, resolvedPath);
+  if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) {
+    return undefined;
+  }
+  return relative.replace(/\\/g, "/");
+}
+
+function normalizePromptToken(raw: string): string {
+  return raw
+    .trim()
+    .replace(/^[`'"(\[{<]+/, "")
+    .replace(/[`'"),.;:!?\]}>]+$/, "")
+    .trim();
+}
+
+function resolvePromptPathHint(workspaceRoot: string, rawToken: string): string | undefined {
+  const token = normalizePromptToken(rawToken);
+  if (!token) {
+    return undefined;
+  }
+  const absolute = path.isAbsolute(token)
+    ? path.resolve(token)
+    : path.resolve(workspaceRoot, token);
+  if (!fileExists(absolute)) {
+    return undefined;
+  }
+  return toWorkspaceRelativePath(workspaceRoot, absolute);
+}
+
+export function extractCursorPromptPathHints(
+  workspaceRoot: string,
+  promptText: string
+): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const push = (candidate: string | undefined) => {
+    const normalized = candidate?.trim();
+    if (!normalized || seen.has(normalized)) {
+      return;
+    }
+    seen.add(normalized);
+    out.push(normalized);
+  };
+
+  for (const match of promptText.matchAll(/`([^`\n]+)`/g)) {
+    push(resolvePromptPathHint(workspaceRoot, match[1] ?? ""));
+  }
+
+  for (const match of promptText.matchAll(
+    /(?:^|[\s([{"'])((?:\.{0,2}\/)?(?:[\w@%+~:-]+\/)*[\w@%+~:-]+\.[A-Za-z0-9]{1,12})(?=$|[\s)\]},'":;!?])/g
+  )) {
+    push(resolvePromptPathHint(workspaceRoot, match[1] ?? ""));
+  }
+
+  return out;
+}
+
+export function extractCursorPromptSearchHints(promptText: string): CursorPromptSearchHint[] {
+  const out: CursorPromptSearchHint[] = [];
+  const seen = new Set<string>();
+  const push = (rawQuery: string | undefined, presentation: "find" | "grep") => {
+    const query = normalizePromptToken(rawQuery ?? "").replace(/^references?\s+to\s+/i, "");
+    if (!query || seen.has(`${presentation}\0${query}`)) {
+      return;
+    }
+    seen.add(`${presentation}\0${query}`);
+    out.push({ query, presentation });
+  };
+
+  const patterns: Array<{ regex: RegExp; presentation: "find" | "grep" }> = [
+    {
+      regex:
+        /\bfind(?:\s+all)?\s+references?\s+to\s+`([^`\n]+)`/gi,
+      presentation: "find",
+    },
+    {
+      regex:
+        /\bfind(?:\s+all)?\s+references?\s+to\s+"([^"\n]+)"/gi,
+      presentation: "find",
+    },
+    {
+      regex:
+        /\bfind(?:\s+all)?\s+references?\s+to\s+'([^'\n]+)'/gi,
+      presentation: "find",
+    },
+    {
+      regex:
+        /\bfind(?:\s+all)?\s+references?\s+to\s+([A-Za-z_$][\w.$:-]*)/gi,
+      presentation: "find",
+    },
+    {
+      regex: /\b(?:grep|search(?:\s+for)?|find(?:\s+in\s+workspace)?(?:\s+for)?)\s+`([^`\n]+)`/gi,
+      presentation: "grep",
+    },
+    {
+      regex: /\b(?:grep|search(?:\s+for)?|find(?:\s+in\s+workspace)?(?:\s+for)?)\s+"([^"\n]+)"/gi,
+      presentation: "grep",
+    },
+    {
+      regex: /\b(?:grep|search(?:\s+for)?|find(?:\s+in\s+workspace)?(?:\s+for)?)\s+'([^'\n]+)'/gi,
+      presentation: "grep",
+    },
+  ];
+
+  for (const { regex, presentation } of patterns) {
+    for (const match of promptText.matchAll(regex)) {
+      push(match[1], presentation);
+    }
+  }
+
+  return out;
+}
+
+function buildCursorPromptToolHints(
+  workspaceRoot: string,
+  promptText: string
+): CursorPromptToolHints | null {
+  const explicitPaths = extractCursorPromptPathHints(workspaceRoot, promptText);
+  const searches = extractCursorPromptSearchHints(promptText);
+  if (explicitPaths.length === 0 && searches.length === 0) {
+    return null;
+  }
+  return {
+    explicitPaths,
+    searches,
+    nextPathIndex: 0,
+    nextSearchIndex: 0,
+  };
+}
+
+function normalizeTextForCursorInference(value: string): string {
+  return value.replace(/\r\n?/g, "\n");
+}
+
+async function readUtf8FileIfReasonable(absolutePath: string): Promise<string | undefined> {
+  try {
+    const stat = await fs.stat(absolutePath);
+    if (!stat.isFile() || stat.size > CURSOR_INFERENCE_MAX_FILE_BYTES) {
+      return undefined;
+    }
+    if (inferFileKind(absolutePath) !== "text") {
+      return undefined;
+    }
+    return await fs.readFile(absolutePath, "utf8");
+  } catch {
+    return undefined;
+  }
+}
+
+async function findWorkspaceFilesByExactContent(
+  workspaceRoot: string,
+  content: string,
+  preferredPaths: readonly string[]
+): Promise<string[]> {
+  const normalizedNeedle = normalizeTextForCursorInference(content);
+  const tryCollect = async (mode: "exact" | "includes"): Promise<string[]> => {
+    const hits: string[] = [];
+    const seen = new Set<string>();
+
+    const tryPush = async (relativePath: string | undefined) => {
+      const normalized = relativePath?.trim();
+      if (!normalized || seen.has(normalized)) {
+        return false;
+      }
+      seen.add(normalized);
+      const absolute = path.join(workspaceRoot, normalized);
+      const text = await readUtf8FileIfReasonable(absolute);
+      if (text == null) {
+        return false;
+      }
+      const normalizedHaystack = normalizeTextForCursorInference(text);
+      const matched =
+        mode === "exact"
+          ? normalizedHaystack === normalizedNeedle
+          : normalizedNeedle.length >= 64 && normalizedHaystack.includes(normalizedNeedle);
+      if (!matched) {
+        return false;
+      }
+      hits.push(normalized);
+      return hits.length >= 2;
+    };
+
+    for (const candidate of preferredPaths) {
+      if (await tryPush(candidate)) {
+        return hits;
+      }
+    }
+
+    if (Buffer.byteLength(content, "utf8") > CURSOR_INFERENCE_MAX_PATH_MATCH_BYTES) {
+      return hits;
+    }
+
+    let visited = 0;
+    async function walk(currentDir: string): Promise<boolean> {
+      if (visited >= CURSOR_INFERENCE_MAX_CONTENT_SCAN_FILES) {
+        return true;
+      }
+      let dirents;
+      try {
+        dirents = await fs.readdir(currentDir, { withFileTypes: true });
+      } catch {
+        return false;
+      }
+      for (const dirent of dirents) {
+        const absolute = path.join(currentDir, dirent.name);
+        if (dirent.isDirectory()) {
+          if (isDimmed(dirent.name)) {
+            continue;
+          }
+          if (await walk(absolute)) {
+            return true;
+          }
+          continue;
+        }
+        if (!dirent.isFile()) {
+          continue;
+        }
+        visited += 1;
+        const relative = toWorkspaceRelativePath(workspaceRoot, absolute);
+        if (!relative) {
+          continue;
+        }
+        if (await tryPush(relative)) {
+          return true;
+        }
+        if (visited >= CURSOR_INFERENCE_MAX_CONTENT_SCAN_FILES) {
+          return true;
+        }
+      }
+      return false;
+    }
+
+    await walk(workspaceRoot);
+    return hits;
+  };
+
+  const exact = await tryCollect("exact");
+  if (exact.length > 0) {
+    return exact;
+  }
+  return tryCollect("includes");
+}
+
+export async function inferCursorReadPathFromContent(
+  workspaceRoot: string,
+  content: string,
+  preferredPaths: readonly string[]
+): Promise<string | undefined> {
+  const matches = await findWorkspaceFilesByExactContent(workspaceRoot, content, preferredPaths);
+  return matches.length === 1 ? matches[0] : matches[0];
+}
+
+export async function inferCursorSearchLocations(
+  workspaceRoot: string,
+  query: string,
+  maxLocations = CURSOR_INFERENCE_MAX_LOCATIONS
+): Promise<Array<{ path: string; line?: number }>> {
+  const needle = query.trim();
+  if (!needle) {
+    return [];
+  }
+  const out: Array<{ path: string; line?: number }> = [];
+  let stopped = false;
+
+  async function walk(currentDir: string): Promise<void> {
+    if (stopped) {
+      return;
+    }
+    let dirents;
+    try {
+      dirents = await fs.readdir(currentDir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const dirent of dirents) {
+      if (stopped) {
+        return;
+      }
+      const absolute = path.join(currentDir, dirent.name);
+      if (dirent.isDirectory()) {
+        if (isDimmed(dirent.name)) {
+          continue;
+        }
+        await walk(absolute);
+        continue;
+      }
+      if (!dirent.isFile()) {
+        continue;
+      }
+      const relative = toWorkspaceRelativePath(workspaceRoot, absolute);
+      if (!relative) {
+        continue;
+      }
+      const text = await readUtf8FileIfReasonable(absolute);
+      if (!text) {
+        continue;
+      }
+      const lines = normalizeTextForCursorInference(text).split("\n");
+      for (let index = 0; index < lines.length; index += 1) {
+        if (!lines[index]?.includes(needle)) {
+          continue;
+        }
+        out.push({ path: relative, line: index + 1 });
+        if (out.length >= maxLocations) {
+          stopped = true;
+          return;
+        }
+      }
+    }
+  }
+
+  await walk(workspaceRoot);
+  return out;
+}
+
+function countUniqueLocationPaths(locations: readonly { path: string; line?: number }[]): number {
+  return new Set(locations.map((entry) => entry.path)).size;
+}
+
+function isGenericCursorSearchTitle(value: string | undefined): boolean {
+  const normalized = value?.trim().toLowerCase();
+  return (
+    !normalized ||
+    normalized === "grep" ||
+    normalized === "find" ||
+    normalized === "search" ||
+    isGenericAcpToolTitle(value)
+  );
+}
+
 function quotePreview(value: string): string {
   return /\s/.test(value) ? `"${value}"` : value;
 }
@@ -360,6 +747,39 @@ function resolveCursorCliRuntime(): CliRuntimeSpec | null {
   return null;
 }
 
+function openCodeHomeDirCandidates(): string[] {
+  const raw = process.env.OPENCURSOR_REAL_HOME?.trim();
+  const out: string[] = [];
+  const push = (value: string | undefined) => {
+    const t = value?.trim();
+    if (t && !out.includes(t)) {
+      out.push(t);
+    }
+  };
+  push(raw || undefined);
+  if (process.env.USER?.trim()) {
+    push(`/home/${process.env.USER!.trim()}`);
+  }
+  push(os.homedir());
+  return out;
+}
+
+function resolveOpenCodeBundledBinary(): string | null {
+  const names =
+    process.platform === "win32"
+      ? ["opencode.exe", "opencode.cmd", "opencode.bat", "opencode"]
+      : ["opencode"];
+  for (const home of openCodeHomeDirCandidates()) {
+    for (const name of names) {
+      const candidate = path.join(home, ".opencode", "bin", name);
+      if (fileExists(candidate)) {
+        return candidate;
+      }
+    }
+  }
+  return null;
+}
+
 function resolveOpenCodeAcpRuntime(): AcpRuntimeSpec | null {
   const configured = resolveConfiguredRuntime(
     process.env.OPENCURSOR_OPENCODE_ACP_BIN,
@@ -376,6 +796,11 @@ function resolveOpenCodeAcpRuntime(): AcpRuntimeSpec | null {
   );
   if (pathHit) {
     return buildInvocation(pathHit, ["acp"]);
+  }
+
+  const bundled = resolveOpenCodeBundledBinary();
+  if (bundled) {
+    return buildInvocation(bundled, ["acp"]);
   }
 
   if (process.platform === "win32") {
@@ -501,10 +926,10 @@ export const AGENT_BACKENDS: Record<AgentBackendId, AgentBackendInfo> = {
     experimental: false,
     commandPreview: CODEX_RUNTIME?.commandPreview ?? "Codex CLI not found",
     available: CODEX_RUNTIME !== null,
-    capabilities: basicCliCapabilities,
+    capabilities: codexCliCapabilities,
     defaultMode: "agent",
-    defaultModelId: "__default__",
-    defaultModelName: "Default",
+    defaultModelId: "gpt-5.4-mini",
+    defaultModelName: "GPT-5.4-Mini",
   }),
   "claude-adapter": createBackendInfo({
     id: "claude-adapter",
@@ -513,10 +938,10 @@ export const AGENT_BACKENDS: Record<AgentBackendId, AgentBackendInfo> = {
     experimental: false,
     commandPreview: CLAUDE_RUNTIME?.commandPreview ?? "Claude Code CLI not found",
     available: CLAUDE_RUNTIME !== null,
-    capabilities: basicCliCapabilities,
+    capabilities: claudeCliCapabilities,
     defaultMode: "agent",
-    defaultModelId: "turbo",
-    defaultModelName: "Turbo",
+    defaultModelId: "glm-5.1",
+    defaultModelName: "GLM 5.1",
   }),
 };
 
@@ -1116,7 +1541,16 @@ function isGenericAcpToolTitle(value: string | undefined): boolean {
     normalized === "tool call" ||
     normalized === "tool" ||
     normalized === "function call" ||
-    normalized === "function"
+    normalized === "function" ||
+    normalized === "read" ||
+    normalized === "grep" ||
+    normalized === "find" ||
+    normalized === "search" ||
+    /** OpenCode / ACP often send these; we replace via summarize + payload. */
+    normalized === "read file" ||
+    normalized === "find in workspace" ||
+    normalized === "grep workspace" ||
+    normalized === "web search"
   );
 }
 
@@ -1126,9 +1560,46 @@ type AcpToolCallEntry = {
   result?: Record<string, unknown>;
 };
 
-function extractAcpToolCallEntries(
-  record: Record<string, unknown>
-): AcpToolCallEntry[] {
+function parseLooseJsonObjectForAcp(value: unknown): Record<string, unknown> | undefined {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+  if (typeof value === "string" && value.trim()) {
+    try {
+      const parsed = JSON.parse(value) as unknown;
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        return parsed as Record<string, unknown>;
+      }
+    } catch {
+      return undefined;
+    }
+  }
+  return undefined;
+}
+
+function pushParsedAcpToolEntry(
+  entries: AcpToolCallEntry[],
+  rawName: string | undefined,
+  argsRaw: unknown,
+  resultRaw: unknown
+): void {
+  if (!rawName?.trim()) {
+    return;
+  }
+  const args =
+    parseLooseJsonObjectForAcp(argsRaw) ??
+    (argsRaw && typeof argsRaw === "object" && !Array.isArray(argsRaw)
+      ? (argsRaw as Record<string, unknown>)
+      : undefined);
+  const result =
+    parseLooseJsonObjectForAcp(resultRaw) ??
+    (resultRaw && typeof resultRaw === "object" && !Array.isArray(resultRaw)
+      ? (resultRaw as Record<string, unknown>)
+      : undefined);
+  entries.push({ rawName: rawName.trim(), args, result });
+}
+
+function extractClassicAcpToolCallMap(record: Record<string, unknown>): AcpToolCallEntry[] {
   const toolCall =
     record.tool_call && typeof record.tool_call === "object" && !Array.isArray(record.tool_call)
       ? (record.tool_call as Record<string, unknown>)
@@ -1144,19 +1615,204 @@ function extractAcpToolCallEntries(
       continue;
     }
     const entry = value as Record<string, unknown>;
-    const args =
-      entry.args && typeof entry.args === "object" && !Array.isArray(entry.args)
-        ? (entry.args as Record<string, unknown>)
-        : entry.input && typeof entry.input === "object" && !Array.isArray(entry.input)
-          ? (entry.input as Record<string, unknown>)
-          : undefined;
-    const result =
-      entry.result && typeof entry.result === "object" && !Array.isArray(entry.result)
-        ? (entry.result as Record<string, unknown>)
-        : undefined;
-    entries.push({ rawName, args, result });
+    pushParsedAcpToolEntry(entries, rawName, entry.args ?? entry.input, entry.result);
   }
   return entries;
+}
+
+function extractAlternateAcpToolCallEntries(
+  record: Record<string, unknown>,
+  depth = 0
+): AcpToolCallEntry[] {
+  if (depth > 4) {
+    return [];
+  }
+  const entries: AcpToolCallEntry[] = [];
+  const toolCalls = record.tool_calls ?? record.toolCalls;
+  if (Array.isArray(toolCalls)) {
+    for (const item of toolCalls) {
+      if (!item || typeof item !== "object") {
+        continue;
+      }
+      const it = item as Record<string, unknown>;
+      const fn =
+        it.function && typeof it.function === "object" && !Array.isArray(it.function)
+          ? (it.function as Record<string, unknown>)
+          : undefined;
+      const name =
+        (typeof it.name === "string" ? it.name.trim() : "") ||
+        (typeof fn?.name === "string" ? fn.name.trim() : "") ||
+        undefined;
+      const argsSrc = fn?.arguments ?? fn?.input ?? it.arguments ?? it.args ?? it.input;
+      const res = it.result ?? it.output ?? it.response;
+      pushParsedAcpToolEntry(entries, name, argsSrc, res);
+    }
+  }
+
+  const content = record.content;
+  if (Array.isArray(content)) {
+    for (const block of content) {
+      if (!block || typeof block !== "object") {
+        continue;
+      }
+      const b = block as Record<string, unknown>;
+      const t = b.type;
+      if (t === "tool_use" || t === "tool-call" || t === "tool_call") {
+        const nm = typeof b.name === "string" ? b.name : undefined;
+        pushParsedAcpToolEntry(entries, nm, b.input ?? b.arguments ?? b.args, b.result ?? b.output);
+      }
+    }
+  }
+
+  if (entries.length === 0 && typeof record.name === "string" && record.name.trim()) {
+    pushParsedAcpToolEntry(
+      entries,
+      record.name,
+      record.input ?? record.arguments ?? record.args ?? record.parameters,
+      record.result ?? record.output ?? record.response
+    );
+  }
+
+  if (entries.length > 0) {
+    return entries;
+  }
+
+  for (const key of ["message", "payload", "delta", "item", "data", "body"] as const) {
+    const v = record[key];
+    if (v && typeof v === "object" && !Array.isArray(v)) {
+      const nested = extractAlternateAcpToolCallEntries(v as Record<string, unknown>, depth + 1);
+      if (nested.length > 0) {
+        return nested;
+      }
+    }
+  }
+
+  return [];
+}
+
+function toolNameHintFromAcpRecord(record: Record<string, unknown>): string | undefined {
+  for (const key of ["toolName", "tool_name", "toolId", "tool_id", "mcpTool", "mcp_tool"] as const) {
+    const v = record[key];
+    if (typeof v === "string" && v.trim()) {
+      return v.trim();
+    }
+  }
+  return undefined;
+}
+
+function inferToolNameFromFlatArgs(
+  record: Record<string, unknown>,
+  args: Record<string, unknown>
+): string {
+  const hint = toolNameHintFromAcpRecord(record);
+  if (hint) {
+    return hint;
+  }
+  const kind = typeof record.kind === "string" ? record.kind.trim().toLowerCase() : "";
+  if (kind && kind !== "tool" && kind !== "other") {
+    if (kind === "read" || kind === "file_read") {
+      return "read_file";
+    }
+    if (kind === "edit" || kind === "write" || kind === "patch") {
+      return "write_file";
+    }
+    if (kind === "delete" || kind === "unlink") {
+      return "delete_file";
+    }
+    if (kind === "grep" || kind === "ripgrep") {
+      return "grep";
+    }
+    if (kind === "glob" || kind === "find" || kind === "file_search") {
+      return "glob_file_search";
+    }
+    if (kind === "terminal" || kind === "shell" || kind === "run") {
+      return "run_terminal_cmd";
+    }
+    if (kind.includes("web")) {
+      return "web_search";
+    }
+  }
+  const hasCmd =
+    typeof args.command === "string" ||
+    typeof args.cmd === "string" ||
+    typeof args.shell === "string";
+  if (hasCmd) {
+    return "run_terminal_cmd";
+  }
+  const hasPath =
+    typeof args.path === "string" ||
+    typeof args.filePath === "string" ||
+    typeof args.file_path === "string" ||
+    typeof args.target_file === "string" ||
+    typeof args.file === "string" ||
+    typeof args.uri === "string";
+  const hasPattern =
+    typeof args.pattern === "string" ||
+    typeof args.query === "string" ||
+    typeof args.regex === "string";
+  if (hasPattern && !hasPath) {
+    return typeof args.globPattern === "string" || typeof args.glob === "string"
+      ? "glob_file_search"
+      : "grep";
+  }
+  if (hasPath && typeof args.new_string === "string") {
+    return "write_file";
+  }
+  if (hasPath) {
+    return "read_file";
+  }
+  return "tool";
+}
+
+/** Cursor / ACP sometimes send `rawInput` as the argument object with no `tool_call` wrapper. */
+function tryExtractToolEntryFromFlatRawInput(record: Record<string, unknown>): AcpToolCallEntry[] {
+  const ri =
+    parseLooseJsonObjectForAcp(record.rawInput) ??
+    parseLooseJsonObjectForAcp(record.raw_input);
+  if (!ri) {
+    return [];
+  }
+  const args = ri as Record<string, unknown>;
+  const meaningful =
+    (typeof args.path === "string" && args.path.trim()) ||
+    (typeof args.filePath === "string" && args.filePath.trim()) ||
+    (typeof args.file_path === "string" && args.file_path.trim()) ||
+    (typeof args.target_file === "string" && args.target_file.trim()) ||
+    (typeof args.file === "string" && args.file.trim()) ||
+    (typeof args.uri === "string" && args.uri.trim()) ||
+    (typeof args.command === "string" && args.command.trim()) ||
+    (typeof args.cmd === "string" && args.cmd.trim()) ||
+    (typeof args.pattern === "string" && args.pattern.trim()) ||
+    (typeof args.query === "string" && args.query.trim()) ||
+    (typeof args.globPattern === "string" && args.globPattern.trim()) ||
+    (typeof args.glob === "string" && args.glob.trim());
+  if (!meaningful) {
+    return [];
+  }
+  const rawName = inferToolNameFromFlatArgs(record, args);
+  return [{ rawName, args }];
+}
+
+function extractAcpToolCallEntries(record: Record<string, unknown>): AcpToolCallEntry[] {
+  const classic = extractClassicAcpToolCallMap(record);
+  if (classic.length > 0) {
+    return classic;
+  }
+  const alternate = extractAlternateAcpToolCallEntries(record);
+  if (alternate.length > 0) {
+    return alternate;
+  }
+  const flatRaw = tryExtractToolEntryFromFlatRawInput(record);
+  if (flatRaw.length > 0) {
+    return flatRaw;
+  }
+  const nested =
+    parseLooseJsonObjectForAcp(record.rawInput) ??
+    parseLooseJsonObjectForAcp(record.raw_input);
+  if (nested && nested !== record) {
+    return extractAcpToolCallEntries(nested);
+  }
+  return [];
 }
 
 function extractAcpToolCallPayload(record: Record<string, unknown>): {
@@ -1355,23 +2011,49 @@ function summarizeAcpToolCallTitle(record: Record<string, unknown>): string | un
   }
   const payload = entries[0];
   if (!payload) {
-    return undefined;
+    const scav = scavengePathStringsFromAcpRecord(record)[0];
+    return scav ? formatReadToolTitle(scav) : undefined;
   }
   const args = payload.args ?? {};
-  const path =
+  let path =
     typeof args.path === "string"
       ? args.path
       : typeof args.filePath === "string"
         ? args.filePath
-        : undefined;
+        : typeof args.file_path === "string"
+          ? args.file_path
+          : typeof args.target_file === "string"
+            ? args.target_file
+            : typeof args.uri === "string"
+              ? args.uri
+              : typeof args.relPath === "string"
+                ? args.relPath
+                : typeof args.relativePath === "string"
+                  ? args.relativePath
+                  : typeof args.relative_path === "string"
+                    ? args.relative_path
+                    : typeof args.file === "string"
+                      ? args.file
+                      : undefined;
+  if (!path) {
+    path = scavengePathStringsFromAcpRecord(record)[0];
+  }
   const pattern =
     typeof args.pattern === "string"
       ? args.pattern
       : typeof args.query === "string"
         ? args.query
-        : typeof args.globPattern === "string"
-          ? args.globPattern
-          : undefined;
+        : typeof args.searchTerm === "string"
+          ? args.searchTerm
+          : typeof args.q === "string"
+            ? args.q
+            : typeof args.search_query === "string"
+              ? args.search_query
+              : typeof args.globPattern === "string"
+                ? args.globPattern
+                : typeof args.glob_pattern === "string"
+                  ? args.glob_pattern
+                  : undefined;
   const command =
     typeof args.command === "string"
       ? args.command
@@ -1379,28 +2061,38 @@ function summarizeAcpToolCallTitle(record: Record<string, unknown>): string | un
         ? args.cmd
         : undefined;
   const toolKind = inferAcpToolKindFromEntry(payload);
+  const rawNameStr =
+    typeof payload.rawName === "string" ? payload.rawName : undefined;
+  const isWebSearch =
+    toolKind === "search_web" ||
+    (rawNameStr != null && /web_search|websearch|search_web/i.test(rawNameStr));
   if (toolKind === "read") {
-    return path ? `Read ${path}` : "Read file";
+    return formatReadToolTitle(path);
   }
   if (toolKind === "grep") {
-    return pattern ? `Grep "${pattern}"` : "Grep workspace";
+    return formatGrepToolTitle(pattern);
+  }
+  if (isWebSearch) {
+    return formatWebSearchTitle(pattern);
   }
   if (toolKind === "search") {
-    return pattern ? `Find "${pattern}"` : "Find workspace matches";
+    return formatFindToolTitle(pattern);
   }
   if (toolKind === "delete") {
-    return path ? `Delete ${path}` : "Delete file";
+    return formatDeleteToolTitle(path, "Delete file");
   }
   if (toolKind === "edit") {
-    return path ? `Update ${path}` : "Update file";
+    return formatUpdateToolTitle(path, "Update file");
   }
   if (toolKind === "todo") {
     return "Update todo list";
   }
   if (command) {
-    return command;
+    return formatTerminalCommandTitle(command);
   }
-  return payload.rawName ? humanizeAcpToolCallName(payload.rawName) : undefined;
+  return payload.rawName
+    ? truncateGenericToolTitle(humanizeAcpToolCallName(payload.rawName), "Tool call")
+    : undefined;
 }
 
 function summarizeAcpToolCallDetail(record: Record<string, unknown>): string | undefined {
@@ -1665,28 +2357,248 @@ function normalizeToolCallId(record: Record<string, unknown>): string {
   return buildAcpToolCallFallbackId(record);
 }
 
-function extractAcpLocations(record: Record<string, unknown>): { path: string; line?: number }[] | undefined {
-  if (!Array.isArray(record.locations)) {
+function pathFromAcpLocationRecord(locationRecord: Record<string, unknown>): string | undefined {
+  const raw =
+    (typeof locationRecord.path === "string" && locationRecord.path) ||
+    (typeof locationRecord.filePath === "string" && locationRecord.filePath) ||
+    (typeof locationRecord.file_path === "string" && locationRecord.file_path) ||
+    (typeof locationRecord.file === "string" && locationRecord.file) ||
+    (typeof locationRecord.uri === "string" && locationRecord.uri) ||
+    (typeof locationRecord.href === "string" && locationRecord.href);
+  if (typeof raw !== "string" || !raw.trim()) {
     return undefined;
   }
-  const nextLocations: { path: string; line?: number }[] = [];
-  for (const location of record.locations) {
-    if (!location || typeof location !== "object") {
-      continue;
+  let p = raw.trim();
+  if (/^file:\/\//i.test(p)) {
+    try {
+      p = fileURLToPath(p);
+    } catch {
+      p = p.replace(/^file:\/\//i, "");
     }
-    const locationRecord = location as Record<string, unknown>;
-    if (typeof locationRecord.path !== "string") {
-      continue;
-    }
-    nextLocations.push({
-      path: locationRecord.path,
-      line:
-        typeof locationRecord.line === "number"
-          ? locationRecord.line
-          : undefined,
-    });
   }
-  return nextLocations;
+  return p;
+}
+
+function extractAcpLocations(record: Record<string, unknown>): { path: string; line?: number }[] | undefined {
+  const nextLocations: { path: string; line?: number }[] = [];
+  if (Array.isArray(record.locations)) {
+    for (const location of record.locations) {
+      if (!location || typeof location !== "object") {
+        continue;
+      }
+      const locationRecord = location as Record<string, unknown>;
+      const resolvedPath = pathFromAcpLocationRecord(locationRecord);
+      if (!resolvedPath) {
+        continue;
+      }
+      nextLocations.push({
+        path: resolvedPath,
+        line:
+          typeof locationRecord.line === "number"
+            ? locationRecord.line
+            : undefined,
+      });
+    }
+  }
+  const single = record.location;
+  if (single && typeof single === "object" && !Array.isArray(single)) {
+    const resolvedPath = pathFromAcpLocationRecord(single as Record<string, unknown>);
+    if (resolvedPath) {
+      nextLocations.push({
+        path: resolvedPath,
+        line:
+          typeof (single as Record<string, unknown>).line === "number"
+            ? ((single as Record<string, unknown>).line as number)
+            : undefined,
+      });
+    }
+  }
+  const flat =
+    (typeof record.path === "string" && record.path.trim()) ||
+    (typeof record.filePath === "string" && record.filePath.trim()) ||
+    (typeof record.file_path === "string" && record.file_path.trim()) ||
+    (typeof record.target_file === "string" && record.target_file.trim()) ||
+    (typeof record.uri === "string" && record.uri.trim());
+  if (flat && !nextLocations.some((entry) => entry.path === flat)) {
+    nextLocations.push({ path: flat });
+  }
+  return nextLocations.length > 0 ? nextLocations : undefined;
+}
+
+function extractAcpEditPreview(
+  record: Record<string, unknown>,
+  fallbackPath?: string
+) {
+  for (const payload of extractAcpToolCallEntries(record)) {
+    if (inferAcpToolKindFromEntry(payload) !== "edit") {
+      continue;
+    }
+    const preview = extractToolEditPreview(payload.args, payload.result, fallbackPath);
+    if (preview) {
+      return preview;
+    }
+  }
+  return extractToolEditPreview(record, record, fallbackPath);
+}
+
+const ACP_PATH_SCAVENGE_KEYS = [
+  "path",
+  "filePath",
+  "filepath",
+  "file_path",
+  "target_file",
+  "targetPath",
+  "relativePath",
+  "relative_path",
+  "relPath",
+  "uri",
+  "href",
+  "file",
+  "workspacePath",
+  "workspace_path",
+  "cwd",
+  "directory",
+  "folder",
+  "absolutePath",
+  "absolute_path",
+  "localPath",
+  "local_path",
+  "fullPath",
+  "full_path",
+  "source",
+  "destination",
+  "rootPath",
+] as const;
+
+function acpValueLooksLikeFsPath(s: string): boolean {
+  const t = s.trim();
+  if (!t || t.includes("\n") || t.length > 4096) {
+    return false;
+  }
+  if (/^file:/i.test(t)) {
+    return true;
+  }
+  if (/^[A-Za-z]:[\\/]/.test(t)) {
+    return true;
+  }
+  return t.includes("/") || t.includes("\\");
+}
+
+/** Single-segment `foo.ts` style references some agents send without `/`. */
+function isLikelyBareFileReferenceString(s: string): boolean {
+  const t = s.trim();
+  if (!t || t.includes("\n") || t.length > 384 || /\s/.test(t)) {
+    return false;
+  }
+  return /^[\w./%-]+\.[A-Za-z0-9]{1,12}$/.test(t);
+}
+
+function pushNormalizedScavengePath(raw: string, out: string[]): void {
+  let p = raw.trim();
+  if (/^file:\/\//i.test(p)) {
+    try {
+      p = fileURLToPath(p);
+    } catch {
+      p = p.replace(/^file:\/\//i, "");
+    }
+  }
+  out.push(p);
+}
+
+function collectAcpPathsFromUnknown(value: unknown, depth: number, out: string[]): void {
+  if (depth > 14 || out.length >= 24) {
+    return;
+  }
+  if (typeof value === "string") {
+    const t = value.trim();
+    if (t.startsWith("{") && (t.includes("path") || t.includes("file"))) {
+      const o = parseLooseJsonObjectForAcp(t);
+      if (o) {
+        collectAcpPathsFromUnknown(o, depth + 1, out);
+      }
+    } else if (acpValueLooksLikeFsPath(t) || isLikelyBareFileReferenceString(t)) {
+      pushNormalizedScavengePath(t, out);
+    }
+    return;
+  }
+  if (!value || typeof value !== "object") {
+    return;
+  }
+  if (Array.isArray(value)) {
+    if (
+      value.length > 0 &&
+      value.every(
+        (x): x is string =>
+          typeof x === "string" && x.trim().length > 0 && !x.includes("\n")
+      ) &&
+      value.every((x) =>
+        Boolean(acpValueLooksLikeFsPath(x) || isLikelyBareFileReferenceString(x))
+      )
+    ) {
+      for (const s of value) {
+        pushNormalizedScavengePath(s, out);
+      }
+      return;
+    }
+    for (const item of value) {
+      collectAcpPathsFromUnknown(item, depth + 1, out);
+    }
+    return;
+  }
+  const o = value as Record<string, unknown>;
+  for (const key of ACP_PATH_SCAVENGE_KEYS) {
+    const v = o[key];
+    if (
+      typeof v === "string" &&
+      v.trim() &&
+      (acpValueLooksLikeFsPath(v) || isLikelyBareFileReferenceString(v))
+    ) {
+      pushNormalizedScavengePath(v, out);
+    }
+  }
+  for (const v of Object.values(o)) {
+    collectAcpPathsFromUnknown(v, depth + 1, out);
+  }
+}
+
+function scavengePathStringsFromAcpRecord(record: Record<string, unknown>): string[] {
+  const collected: string[] = [];
+  collectAcpPathsFromUnknown(record, 0, collected);
+  const seen = new Set<string>();
+  const deduped: string[] = [];
+  for (const p of collected) {
+    if (!seen.has(p)) {
+      seen.add(p);
+      deduped.push(p);
+    }
+  }
+  return deduped;
+}
+
+function mergeScavengedAcpLocations(
+  record: Record<string, unknown>
+): { path: string; line?: number }[] | undefined {
+  const base = extractAcpLocations(record) ?? [];
+  const scav = scavengePathStringsFromAcpRecord(record);
+  const merged = [...base];
+  for (const p of scav) {
+    if (!merged.some((e) => e.path === p)) {
+      merged.push({ path: p });
+    }
+  }
+  return merged.length > 0 ? merged : undefined;
+}
+
+function normalizeAcpSessionUpdateKind(record: Record<string, unknown>): string | undefined {
+  const direct = record.sessionUpdate ?? record.session_update;
+  if (typeof direct === "string" && direct.trim()) {
+    return direct.trim();
+  }
+  const alt = record.updateType ?? record.update_type;
+  if (typeof alt === "string" && alt.trim()) {
+    return alt.trim();
+  }
+  return undefined;
 }
 
 function extractPermissionRequestDetail(
@@ -1744,6 +2656,8 @@ class AcpSessionHandle implements AgentSessionHandle {
   private readonly backend: AgentBackendInfo;
   private readonly seedConfigOptions: AgentConfigOption[] | undefined;
   private suppressedAssistantChunks: string[] | null = null;
+  private currentCursorPromptHints: CursorPromptToolHints | null = null;
+  private readonly cursorToolInferences = new Map<string, CursorToolInference>();
 
   private constructor(input: {
     bridge: AcpSharedBridge;
@@ -1764,6 +2678,177 @@ class AcpSessionHandle implements AgentSessionHandle {
     this.capabilities = input.capabilities;
     this.seedConfigOptions = input.seedConfigOptions;
     this.registerBridgeHandlers();
+  }
+
+  private beginCursorPromptInference(promptText: string): void {
+    if (!backendUsesAcpPromptHints(this.backend.id)) {
+      return;
+    }
+    this.currentCursorPromptHints = buildCursorPromptToolHints(
+      this.callbacks.workspace.root,
+      promptText
+    );
+    this.cursorToolInferences.clear();
+  }
+
+  private endCursorPromptInference(): void {
+    this.currentCursorPromptHints = null;
+    this.cursorToolInferences.clear();
+  }
+
+  private getCursorToolInference(toolCallId: string): CursorToolInference {
+    const existing = this.cursorToolInferences.get(toolCallId);
+    if (existing) {
+      return existing;
+    }
+    const created: CursorToolInference = {};
+    this.cursorToolInferences.set(toolCallId, created);
+    return created;
+  }
+
+  private assignCursorPromptHints(toolCallId: string, toolKind: string): CursorToolInference {
+    const inference = this.getCursorToolInference(toolCallId);
+    if (toolKind && toolKind !== "tool" && !inference.toolKind) {
+      inference.toolKind = toolKind;
+    }
+    const promptHints = this.currentCursorPromptHints;
+    if (!promptHints) {
+      return inference;
+    }
+    if (
+      toolKind === "read" &&
+      !inference.path &&
+      promptHints.nextPathIndex < promptHints.explicitPaths.length
+    ) {
+      const hintedPath = promptHints.explicitPaths[promptHints.nextPathIndex++]!;
+      inference.path = hintedPath;
+      inference.locations = [{ path: hintedPath }];
+    }
+    if (
+      (toolKind === "search" || toolKind === "grep") &&
+      !inference.query &&
+      promptHints.nextSearchIndex < promptHints.searches.length
+    ) {
+      const hint = promptHints.searches[promptHints.nextSearchIndex++]!;
+      inference.query = hint.query;
+      inference.searchPresentation = hint.presentation;
+    }
+    return inference;
+  }
+
+  private async enrichCursorToolCall(input: {
+    toolCallId: string;
+    toolKind: string;
+    title: string | undefined;
+    detail: string | undefined;
+    locations: { path: string; line?: number }[] | undefined;
+    record: Record<string, unknown>;
+    status: AgentToolCallStatus;
+  }): Promise<{
+    toolKind: string;
+    title: string | undefined;
+    detail: string | undefined;
+    locations: { path: string; line?: number }[] | undefined;
+  }> {
+    if (!backendUsesAcpPromptHints(this.backend.id)) {
+      return {
+        toolKind: input.toolKind,
+        title: input.title,
+        detail: input.detail,
+        locations: input.locations,
+      };
+    }
+
+    const next = {
+      toolKind: input.toolKind,
+      title: input.title,
+      detail: input.detail,
+      locations: input.locations,
+    };
+    const inference = this.assignCursorPromptHints(input.toolCallId, next.toolKind);
+    if (next.toolKind === "tool" && inference.toolKind) {
+      next.toolKind = inference.toolKind;
+    }
+
+    if (
+      next.toolKind === "read" &&
+      input.status === "completed" &&
+      (!inference.path || !next.locations?.length)
+    ) {
+      const rawOutput =
+        parseLooseJsonObjectForAcp(input.record.rawOutput) ??
+        parseLooseJsonObjectForAcp(input.record.raw_output) ??
+        (input.record.rawOutput &&
+        typeof input.record.rawOutput === "object" &&
+        !Array.isArray(input.record.rawOutput)
+          ? (input.record.rawOutput as Record<string, unknown>)
+          : undefined);
+      const readContent =
+        typeof rawOutput?.content === "string"
+          ? rawOutput.content
+          : typeof rawOutput?.text === "string"
+            ? rawOutput.text
+            : undefined;
+      if (readContent?.trim()) {
+        const promptPaths = this.currentCursorPromptHints?.explicitPaths ?? [];
+        const matchedPath = await inferCursorReadPathFromContent(
+          this.callbacks.workspace.root,
+          readContent,
+          inference.path ? [inference.path, ...promptPaths] : promptPaths
+        );
+        if (matchedPath) {
+          inference.path = matchedPath;
+          inference.locations = [{ path: matchedPath }];
+        }
+      }
+    }
+
+    if (next.toolKind === "read") {
+      if ((!next.locations || next.locations.length === 0) && inference.locations?.length) {
+        next.locations = inference.locations;
+      }
+      if ((!next.locations || next.locations.length === 0) && inference.path) {
+        next.locations = [{ path: inference.path }];
+      }
+      if (
+        (isGenericAcpToolTitle(next.title) || next.title === "Read file" || next.title === "Tool call") &&
+        inference.path
+      ) {
+        next.title = formatReadToolTitle(inference.path);
+      }
+    }
+
+    if (next.toolKind === "search" || next.toolKind === "grep") {
+      if (
+        input.status === "completed" &&
+        inference.query &&
+        (!inference.locations || inference.locations.length === 0)
+      ) {
+        const locations = await inferCursorSearchLocations(
+          this.callbacks.workspace.root,
+          inference.query
+        );
+        if (locations.length > 0) {
+          inference.locations = locations;
+          const uniqueFiles = countUniqueLocationPaths(locations);
+          inference.detail = `${uniqueFiles} file${uniqueFiles === 1 ? "" : "s"} matched`;
+        }
+      }
+      if ((!next.locations || next.locations.length === 0) && inference.locations?.length) {
+        next.locations = inference.locations;
+      }
+      if (!next.detail && inference.detail) {
+        next.detail = inference.detail;
+      }
+      if (isGenericCursorSearchTitle(next.title) && inference.query) {
+        next.title =
+          inference.searchPresentation === "grep"
+            ? formatGrepToolTitle(inference.query)
+            : formatFindToolTitle(inference.query);
+      }
+    }
+
+    return next;
   }
 
   static async create(input: {
@@ -1896,6 +2981,7 @@ class AcpSessionHandle implements AgentSessionHandle {
       pendingPermission: null,
       lastError: null,
     }));
+    this.beginCursorPromptInference(input.text);
 
     try {
       const promptContent: Record<string, unknown>[] = [];
@@ -1948,6 +3034,7 @@ class AcpSessionHandle implements AgentSessionHandle {
         pendingPermission: null,
         lastError: null,
       }));
+      this.endCursorPromptInference();
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "ACP prompt failed.";
@@ -1972,6 +3059,7 @@ class AcpSessionHandle implements AgentSessionHandle {
         status: "failed",
         lastError: message,
       }));
+      this.endCursorPromptInference();
       throw error;
     }
   }
@@ -2278,7 +3366,7 @@ class AcpSessionHandle implements AgentSessionHandle {
       return;
     }
     const record = update as Record<string, unknown>;
-    const sessionUpdate = record.sessionUpdate;
+    const sessionUpdate = normalizeAcpSessionUpdateKind(record);
     if (typeof sessionUpdate !== "string") {
       return;
     }
@@ -2316,9 +3404,9 @@ class AcpSessionHandle implements AgentSessionHandle {
       case "tool_call": {
         const normalizedStatus = normalizeAcpToolCallStatus(record, "pending");
         const toolCallId = normalizeToolCallId(record);
-        const detail = summarizeAcpToolCallDetail(record);
-        const locations = extractAcpLocations(record);
-        const title =
+        let detail = summarizeAcpToolCallDetail(record);
+        let locations = mergeScavengedAcpLocations(record);
+        let title =
           typeof record.title === "string" &&
           record.title.trim() &&
           !isGenericAcpToolTitle(record.title)
@@ -2328,6 +3416,32 @@ class AcpSessionHandle implements AgentSessionHandle {
           typeof record.kind === "string" && record.kind !== "tool"
             ? record.kind
             : inferAcpToolKindFromEntry(extractAcpToolCallPayload(record));
+        const enriched = await this.enrichCursorToolCall({
+          toolCallId,
+          toolKind,
+          title,
+          detail,
+          locations,
+          record,
+          status: normalizedStatus,
+        });
+        title = enriched.title ?? title;
+        detail = enriched.detail ?? detail;
+        locations = enriched.locations ?? locations;
+        const enrichedToolKind = enriched.toolKind;
+        const editPreview =
+          extractAcpEditPreview(record, locations?.[0]?.path) ??
+          extractToolEditPreview(params, params, locations?.[0]?.path);
+        if (editPreview?.path && !locations?.some((entry) => entry.path === editPreview.path)) {
+          locations = [{ path: editPreview.path }, ...(locations ?? [])];
+        }
+        if (
+          enrichedToolKind === "read" &&
+          (isGenericAcpToolTitle(title) || title === "Read file") &&
+          locations?.[0]?.path
+        ) {
+          title = formatReadToolTitle(locations[0].path);
+        }
         if (record.subtype === "completed") {
           await this.callbacks.appendEvents([
             {
@@ -2336,10 +3450,11 @@ class AcpSessionHandle implements AgentSessionHandle {
               kind: "tool_call_update",
               toolCallId,
               title,
-              toolKind,
+              toolKind: enrichedToolKind,
               status: normalizedStatus,
               detail,
               locations,
+              editPreview,
               raw: params,
             },
           ]);
@@ -2352,17 +3467,19 @@ class AcpSessionHandle implements AgentSessionHandle {
             kind: "tool_call",
             toolCallId,
             title,
-            toolKind,
+            toolKind: enrichedToolKind,
             status: normalizedStatus,
             detail,
             locations,
+            editPreview,
             raw: params,
           },
         ]);
         return;
       }
       case "tool_call_update": {
-        const title =
+        let locations = mergeScavengedAcpLocations(record);
+        let title =
           typeof record.title === "string" &&
           record.title.trim() &&
           !isGenericAcpToolTitle(record.title)
@@ -2372,6 +3489,38 @@ class AcpSessionHandle implements AgentSessionHandle {
           typeof record.kind === "string" && record.kind !== "tool"
             ? record.kind
             : inferAcpToolKindFromEntry(extractAcpToolCallPayload(record));
+        let detail = summarizeAcpToolCallDetail(record);
+        const normalizedStatus = normalizeAcpToolCallStatus(record, "in_progress");
+        const enriched = await this.enrichCursorToolCall({
+          toolCallId: normalizeToolCallId(record),
+          toolKind,
+          title,
+          detail,
+          locations,
+          record,
+          status: normalizedStatus,
+        });
+        title = enriched.title ?? title;
+        detail = enriched.detail ?? detail;
+        locations = enriched.locations ?? locations;
+        const enrichedToolKind = enriched.toolKind;
+        const editPreview =
+          extractAcpEditPreview(record, locations?.[0]?.path) ??
+          extractToolEditPreview(params, params, locations?.[0]?.path);
+        if (editPreview?.path && !locations?.some((entry) => entry.path === editPreview.path)) {
+          locations = [{ path: editPreview.path }, ...(locations ?? [])];
+        }
+        if (
+          enrichedToolKind === "read" &&
+          title &&
+          (isGenericAcpToolTitle(title) || title === "Read file") &&
+          locations?.[0]?.path
+        ) {
+          title = formatReadToolTitle(locations[0].path);
+        }
+        if (!title && enrichedToolKind === "read" && locations?.[0]?.path) {
+          title = formatReadToolTitle(locations[0].path);
+        }
         await this.callbacks.appendEvents([
           {
             eventId: randomUUID(),
@@ -2379,10 +3528,11 @@ class AcpSessionHandle implements AgentSessionHandle {
             kind: "tool_call_update",
             toolCallId: normalizeToolCallId(record),
             title,
-            toolKind,
-            status: normalizeAcpToolCallStatus(record, "in_progress"),
-            detail: summarizeAcpToolCallDetail(record),
-            locations: extractAcpLocations(record),
+            toolKind: enrichedToolKind,
+            status: normalizedStatus,
+            detail,
+            locations,
+            editPreview,
             raw: params,
           },
         ]);

@@ -8,28 +8,37 @@ import { UserMessage } from "./UserMessage";
 import { AssistantMessage } from "./AssistantMessage";
 import { TodoStatusCard } from "./TodoStatusCard";
 import { TodoCard } from "./TodoCard";
-import { SubagentCard } from "./SubagentCard";
+import { LiveSubagentCard } from "./LiveSubagentCard";
 import { AskQuestionCard } from "./AskQuestionCard";
 import { ActivityLabel } from "./ActivityLabel";
 import { WorkedSessionCard } from "./WorkedSessionCard";
 import { ShellCommandCard } from "./ShellCommandCard";
 import { PermissionRequestCard } from "./PermissionRequestCard";
+import { HandoffDivider } from "./HandoffDivider";
 import { askStepsFromMessage } from "@/lib/ask-question-utils";
 import { buildMessageThreadRows, type MessageThreadRow } from "./message-thread-rows";
+import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
 import type { ChatMessage } from "@/lib/types";
 
-/** Types that end the “live tail” worked-session; later messages must not keep prior cards in loading UI. */
+/**
+ * Types that end the “live tail” worked-session; later messages must not keep prior cards in
+ * loading UI.
+ *
+ * `permission-request` is intentionally omitted: permissions usually follow the same tool burst and
+ * are often embedded in the worked card — treating them as chain-breaking flipped `loading` off and
+ * auto-collapsed the tool dropdown, hiding the permission UI that needs a response.
+ */
 const CHAIN_BREAKING_AFTER_WORKED = new Set<ChatMessage["type"]>([
   "user",
   "assistant",
   "worked-session",
-  "permission-request",
   "ask-question",
   "shell-run",
   "subagent",
   "todo",
   "todo-status",
   "activity-label",
+  "agent-handoff",
 ]);
 
 export function workedSessionScopedKey(conversationId: string, messageId: string): string {
@@ -78,6 +87,8 @@ export interface MessageThreadContentProps {
   conversationBusy?: boolean;
   workedSessionOpenByScopedId?: Record<string, boolean>;
   onWorkedSessionOpenChange?: (scopedKey: string, open: boolean) => void;
+  /** Absolute workspace root for concise tool path lists. */
+  workspaceRoot?: string | null;
   /**
    * Window long threads with @tanstack/react-virtual. Sticky user headers are disabled
    * automatically when this is on (parent should pass stickyUserHeader=false).
@@ -98,7 +109,32 @@ export function MessageThreadContent({
   workedSessionOpenByScopedId,
   onWorkedSessionOpenChange,
   virtualize = false,
+  workspaceRoot = null,
 }: MessageThreadContentProps) {
+  const { settings } = useGlobalSettings();
+  const inlineToolDetailsInChat = settings.agents.inlineToolDetailsInChat;
+
+  const { embeddedPermissionByWorkedId, skipPermissionMessageIndex } = useMemo(() => {
+    const embedded = new Map<string, ChatMessage>();
+    const skip = new Set<number>();
+    if (inlineToolDetailsInChat) {
+      return { embeddedPermissionByWorkedId: embedded, skipPermissionMessageIndex: skip };
+    }
+    for (let i = 1; i < messages.length; i += 1) {
+      const prev = messages[i - 1];
+      const cur = messages[i];
+      if (
+        prev?.type === "worked-session" &&
+        cur?.type === "permission-request" &&
+        cur.permissionRequestId
+      ) {
+        embedded.set(prev.id, cur);
+        skip.add(i);
+      }
+    }
+    return { embeddedPermissionByWorkedId: embedded, skipPermissionMessageIndex: skip };
+  }, [inlineToolDetailsInChat, messages]);
+
   const stickyElMapRef = useRef<Map<number, HTMLDivElement>>(new Map());
   const registerStickyEl = useCallback((order: number, el: HTMLDivElement | null) => {
     const m = stickyElMapRef.current;
@@ -139,6 +175,7 @@ export function MessageThreadContent({
               segments={msg.segments}
               attachments={msg.attachments}
               showReplyCue={msg.showReplyCue}
+              highlight={msg.isHandoffMessage}
             />
             <TodoStatusCard content={next.content!} meldUserAbove />
           </div>
@@ -168,6 +205,7 @@ export function MessageThreadContent({
             segments={msg.segments}
             attachments={msg.attachments}
             showReplyCue={msg.showReplyCue}
+            highlight={msg.isHandoffMessage}
           />
         );
         return (
@@ -201,39 +239,42 @@ export function MessageThreadContent({
         case "subagent": {
           if (!onOpenSubagent) {
             return (
-              <SubagentCard
+              <LiveSubagentCard
                 key={row.key}
                 title={msg.subagentTitle!}
                 meta={msg.subagentMeta}
                 recentActivity={msg.recentActivity}
                 complete={msg.subagentStatus !== "running"}
+                transcript={msg.subagentTranscript}
+                sessionId={msg.subagentId}
               />
             );
           }
-          const transcript: ChatMessage[] =
-            msg.subagentTranscript?.length
-              ? msg.subagentTranscript
-              : [
-                  {
-                    id: `${msg.id}-subagent-trace-missing`,
-                    type: "assistant",
-                    content:
-                      "No transcript payload was attached to this subagent card. In a full product build, opening it would show the exact messages, tool calls, and edits from that run.",
-                  },
-                ];
           return (
-            <SubagentCard
+            <LiveSubagentCard
               key={row.key}
               title={msg.subagentTitle!}
               meta={msg.subagentMeta}
               recentActivity={msg.recentActivity}
               complete={msg.subagentStatus !== "running"}
-              interactive
-              onOpen={() =>
+              transcript={
+                msg.subagentTranscript?.length
+                  ? msg.subagentTranscript
+                  : [
+                      {
+                        id: `${msg.id}-subagent-trace-missing`,
+                        type: "assistant",
+                        content:
+                          "No transcript payload was attached to this subagent card. In a full product build, opening it would show the exact messages, tool calls, and edits from that run.",
+                      },
+                    ]
+              }
+              sessionId={msg.subagentId}
+              onOpenTranscript={({ transcript, sessionId }) =>
                 onOpenSubagent({
                   title: msg.subagentTitle!,
                   transcript,
-                  sessionId: msg.subagentId,
+                  sessionId,
                 })
               }
             />
@@ -247,6 +288,9 @@ export function MessageThreadContent({
           return null;
         }
         case "permission-request":
+          if (skipPermissionMessageIndex.has(i)) {
+            return null;
+          }
           return (
             <PermissionRequestCard
               key={row.key}
@@ -309,17 +353,31 @@ export function MessageThreadContent({
               key={row.key}
               label={msg.workedLabel!}
               entries={msg.workedEntries!}
+              highlightedEntry={msg.workedHighlightedEntry}
               open={openProp}
               onOpenChange={onOpenChange}
               defaultOpen={msg.workedDefaultOpen}
               loading={chainLoading}
               isLiveWorkedTail={i === lastWorkedSessionIndex && chainLoading}
               surface={workedSessionSurface}
+              workspaceRoot={workspaceRoot}
+              toolDetailsInWorkedCard={!inlineToolDetailsInChat}
+              embeddedPermission={embeddedPermissionByWorkedId.get(msg.id) ?? null}
+              onResolvePermission={onResolvePermission}
+              onCancelPermission={onCancelPermission}
             />
           );
         }
         case "shell-run":
           return <ShellCommandCard key={row.key} title={msg.shellTitle!} />;
+        case "agent-handoff":
+          return (
+            <HandoffDivider
+              key={row.key}
+              fromAgent={msg.handoffFromAgent!}
+              toAgent={msg.handoffToAgent!}
+            />
+          );
         default:
           return null;
       }
@@ -327,6 +385,8 @@ export function MessageThreadContent({
     [
       conversationBusy,
       conversationId,
+      embeddedPermissionByWorkedId,
+      inlineToolDetailsInChat,
       lastWorkedSessionIndex,
       messages,
       onCancelPermission,
@@ -335,9 +395,11 @@ export function MessageThreadContent({
       onWorkedSessionOpenChange,
       pushFor,
       registerStickyEl,
+      skipPermissionMessageIndex,
       stickyUserHeader,
       workedSessionOpenByScopedId,
       workedSessionSurface,
+      workspaceRoot,
     ]
   );
 

@@ -584,6 +584,114 @@ test("multiple conversations keep isolated event streams", async () => {
   );
 });
 
+test("handoff copies transcript and divider without a placeholder user message", async () => {
+  const workspace = await ensureWorkspaceRegistered(repoRoot, "repo");
+  const source = await testRuntimeManager.createConversation(workspace, {
+    backendId: "cursor-acp",
+    mode: "agent",
+    modelId: "test-fast",
+    modelName: "Test Fast",
+  });
+
+  await testRuntimeManager.promptConversation(workspace, source.id, "hello from cursor");
+  await waitFor(
+    "source conversation idle",
+    () => readConversationSnapshot(workspace.id, source.id),
+    (value) => value.conversation.status === "idle"
+  );
+
+  const { newConversationId } = await testRuntimeManager.handoffConversation(
+    workspace,
+    source.id,
+    "opencode-acp"
+  );
+  assert.equal(newConversationId, source.id, "expected handoff to stay in the same chat");
+
+  const snap = await readConversationSnapshot(workspace.id, newConversationId);
+  assert.ok(snap, "expected handoff target snapshot");
+  assert.equal(
+    snap.conversation.config.backendId,
+    "opencode-acp",
+    "expected handoff to update the conversation backend in place"
+  );
+  const kinds = snap.events.map((e) => e.kind);
+  assert.ok(kinds.includes("assistant_message_chunk"), "expected transcript chunk");
+  assert.ok(kinds.includes("assistant_message_end"), "expected transcript end");
+  assert.ok(kinds.includes("agent_handoff"), "expected handoff marker");
+  assert.equal(
+    snap.events.filter((e) => e.kind === "user_message").length,
+    1,
+    "handoff must not inject a synthetic user_message; the client sends the first real turn"
+  );
+  const handoff = snap.events.find((e) => e.kind === "agent_handoff");
+  assert.ok(handoff && handoff.kind === "agent_handoff");
+  const transcriptEnd = snap.events.find(
+    (e) => e.kind === "assistant_message_end" && e.seq === handoff.seq - 1
+  );
+  assert.ok(transcriptEnd, "expected hidden handoff transcript end");
+  const transcriptChunk = snap.events.find(
+    (e) =>
+      e.kind === "assistant_message_chunk" &&
+      e.messageId === transcriptEnd.messageId
+  );
+  assert.ok(transcriptChunk, "expected handoff transcript chunk");
+  assert.ok(
+    transcriptChunk.text.indexOf("User: hello from cursor") <
+      transcriptChunk.text.indexOf("Assistant: Handling: hello from cursor"),
+    "expected handoff transcript to preserve user-before-assistant order"
+  );
+  assert.ok(
+    !handoff.handoffMessageId,
+    "handoffMessageId is optional when there is no paired placeholder user message"
+  );
+
+  await testRuntimeManager.promptConversation(workspace, newConversationId, "continue as opencode");
+  const afterPrompt = await waitFor(
+    "handoff target after first user prompt",
+    () => readConversationSnapshot(workspace.id, newConversationId),
+    (value) =>
+      value.conversation.status === "idle" &&
+      value.events.some((e) => e.kind === "user_message" && e.content === "continue as opencode")
+  );
+  assert.ok(afterPrompt.events.some((e) => e.kind === "user_message"));
+  assert.equal(
+    afterPrompt.events.filter((e) => e.kind === "user_message").length,
+    2,
+    "expected the original and first post-handoff user turns in the same chat"
+  );
+  const firstRealUserMessage = afterPrompt.events.find(
+    (e) => e.kind === "user_message" && e.content === "continue as opencode"
+  );
+  assert.ok(firstRealUserMessage, "expected first real user turn after handoff");
+  const seededAssistantChunk = afterPrompt.events.find(
+    (e) =>
+      e.kind === "assistant_message_chunk" &&
+      e.seq > firstRealUserMessage.seq &&
+      e.text.includes("continuing a conversation") &&
+      e.text.includes("<transferred_conversation>")
+  );
+  assert.ok(
+    seededAssistantChunk,
+    "expected first target prompt to include the handoff seed context"
+  );
+  assert.ok(
+    seededAssistantChunk.text.includes("User: hello from cursor"),
+    "expected source user message in the seeded prompt"
+  );
+  assert.ok(
+    seededAssistantChunk.text.includes("Assistant: Handling: hello from cursor"),
+    "expected source assistant response in the seeded prompt"
+  );
+  assert.ok(
+    seededAssistantChunk.text.includes("[Tool:"),
+    "expected tool context in the seeded prompt"
+  );
+  assert.ok(
+    seededAssistantChunk.text.includes("<current_user_message>\ncontinue as opencode\n</current_user_message>"),
+    "expected the target user message to be appended after the transcript"
+  );
+});
+
 test("persisted provider sessions can be rehydrated after dropping runtime state", async () => {
   const workspace = await ensureWorkspaceRegistered(repoRoot, "repo");
   const conversation = await testRuntimeManager.createConversation(workspace, {
@@ -701,6 +809,13 @@ test("lists grouped conversation summaries across all workspaces", async () => {
     modelName: "Test Deep",
     title: "Cross workspace B",
   });
+
+  await waitFor(
+    "conversation B runtime warm before permission patch",
+    () => readConversationSnapshot(workspaceB.id, conversationB.id),
+    (snap) =>
+      snap.conversation.status === "idle" && snap.conversation.providerSessionId !== null
+  );
 
   await updateConversationRecord(workspaceB.id, conversationB.id, (current) => ({
     ...current,

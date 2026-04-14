@@ -464,8 +464,8 @@ export function AgentShellStateProvider({
     if (!activeWorkspaceId) {
       return;
     }
-    void refreshConversationGroupsWithState();
-  }, [activeWorkspaceId, refreshConversationGroupsWithState]);
+    void refreshConversationGroups().catch(() => undefined);
+  }, [activeWorkspaceId, refreshConversationGroups]);
 
   const orderedGroups = useMemo(
     () => sortConversationGroups(groups, recentWorkspaceIds),
@@ -552,9 +552,9 @@ export function AgentShellStateProvider({
       if (validActiveConversationIds.has(pendingConversationSelection.conversationId)) {
         return pendingConversationSelection.conversationId;
       }
-      if (railLoading) {
-        return pendingConversationSelection.conversationId;
-      }
+      // Keep the explicit open request until the cross-workspace rail index includes it
+      // (same race as freshly-created conversations).
+      return pendingConversationSelection.conversationId;
     }
 
     // The URL deep-link must beat stale workspace session state during reload hydration.
@@ -603,6 +603,10 @@ export function AgentShellStateProvider({
           return persistedConversationRequest;
         }
       }
+      // Rail index often lags right after POST /conversations + prompt: the new id is valid in
+      // session/URL but not yet present in the cached groups payload. Honor the selection instead
+      // of snapping to conversations[0] (which feels like "wrong chat" / missing rail row).
+      return persistedConversationRequest;
     }
 
     return activeWorkspaceGroup?.conversations[0]?.id ?? null;
@@ -1545,4 +1549,9 @@ export function useAgentShellState(): AgentShellStateContextValue {
     );
   }
   return value;
+}
+
+/** Same as `useAgentShellState` but returns null outside the agent shell (e.g. IDE-only layout). */
+export function useAgentShellStateMaybe(): AgentShellStateContextValue | null {
+  return useContext(AgentShellStateContext);
 }

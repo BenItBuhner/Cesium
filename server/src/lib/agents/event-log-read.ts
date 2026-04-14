@@ -3,8 +3,9 @@ import { open } from "node:fs/promises";
 import { createInterface } from "node:readline";
 import type { AgentStoredEvent } from "./types.js";
 
-export const DEFAULT_PAGE_TURNS = 25;
-export const DEFAULT_PAGE_EVENTS_CAP = 400;
+/** Default tail / history page sizing (websocket head, `request_history`, REST head). */
+export const DEFAULT_PAGE_TURNS = 96;
+export const DEFAULT_PAGE_EVENTS_CAP = 2000;
 export const TAIL_INITIAL_CHUNK_BYTES = 256 * 1024;
 export const TAIL_MAX_CHUNK_BYTES = 8 * 1024 * 1024;
 /** Beyond this, full read is avoided; tail uses expanding chunks and history uses streaming + trim. */
@@ -299,7 +300,7 @@ export async function readConversationEventHistoryPage(
   const stream = createReadStream(filePath, { encoding: "utf8" });
   const rl = createInterface({ input: stream, crlfDelay: Infinity });
 
-  let acc: AgentStoredEvent[] = [];
+  const acc: AgentStoredEvent[] = [];
   let globalMin = Number.MAX_SAFE_INTEGER;
   let trimmedRolling = false;
   let linesSinceYield = 0;
@@ -456,4 +457,160 @@ async function readAllEventsFromFile(filePath: string): Promise<AgentStoredEvent
   } finally {
     await fh.close();
   }
+}
+
+function formatToolCallForTranscript(event: Extract<AgentStoredEvent, { kind: "tool_call" }>): string {
+  let result = `[Tool: ${event.title}]`;
+  if (event.detail) {
+    result += ` - ${event.detail}`;
+  }
+  return result;
+}
+
+function formatToolUpdateForTranscript(event: Extract<AgentStoredEvent, { kind: "tool_call_update" }>): string {
+  let result = `[Tool Update: ${event.title ?? "tool"}]`;
+  if (event.detail) {
+    result += ` - ${event.detail}`;
+  }
+  result += ` (${event.status})`;
+  return result;
+}
+
+function collectHiddenHandoffTranscriptMessageIds(
+  events: AgentStoredEvent[]
+): Set<string> {
+  const hiddenMessageIds = new Set<string>();
+  const ordered = [...events].sort((a, b) => a.seq - b.seq);
+  for (let index = 0; index < ordered.length - 1; index += 1) {
+    const current = ordered[index];
+    const next = ordered[index + 1];
+    if (
+      current?.kind === "assistant_message_end" &&
+      next?.kind === "agent_handoff"
+    ) {
+      hiddenMessageIds.add(current.messageId);
+    }
+  }
+  return hiddenMessageIds;
+}
+
+export function generateTranscriptFromEvents(events: AgentStoredEvent[]): string {
+  const lines: string[] = [];
+  let currentUserMessage = "";
+  let currentAssistantMessage: string[] = [];
+  let inAssistantMessage = false;
+  const hiddenHandoffTranscriptMessageIds = collectHiddenHandoffTranscriptMessageIds(events);
+
+  const flushAssistant = () => {
+    if (currentAssistantMessage.length > 0) {
+      const text = currentAssistantMessage.join("");
+      if (text.trim()) {
+        lines.push(`Assistant: ${text.trim()}`);
+      }
+      currentAssistantMessage = [];
+    }
+    inAssistantMessage = false;
+  };
+
+  const flushUser = () => {
+    if (currentUserMessage.trim()) {
+      lines.push(`User: ${currentUserMessage.trim()}`);
+      currentUserMessage = "";
+    }
+  };
+
+  const ordered = [...events].sort((a, b) => a.seq - b.seq);
+
+  for (const event of ordered) {
+    switch (event.kind) {
+      case "user_message":
+        flushAssistant();
+        flushUser();
+        currentUserMessage = event.content;
+        break;
+
+      case "assistant_message_chunk":
+        if (hiddenHandoffTranscriptMessageIds.has(event.messageId)) {
+          break;
+        }
+        if (!inAssistantMessage) {
+          flushUser();
+          inAssistantMessage = true;
+        }
+        currentAssistantMessage.push(event.text);
+        break;
+
+      case "assistant_message_end":
+        if (hiddenHandoffTranscriptMessageIds.has(event.messageId)) {
+          break;
+        }
+        flushAssistant();
+        break;
+
+      case "reasoning":
+        flushUser();
+        if (event.text.trim()) {
+          lines.push(`[Thinking: ${event.text.trim()}]`);
+        }
+        break;
+
+      case "tool_call":
+        flushUser();
+        flushAssistant();
+        lines.push(formatToolCallForTranscript(event));
+        break;
+
+      case "tool_call_update":
+        flushUser();
+        flushAssistant();
+        lines.push(formatToolUpdateForTranscript(event));
+        break;
+
+      case "plan":
+        flushUser();
+        if (event.entries.length > 0) {
+          lines.push("[Plan]");
+          for (const entry of event.entries) {
+            const status = entry.status === "completed" ? "[x]" : "[ ]";
+            lines.push(`  ${status} ${entry.content}`);
+          }
+        }
+        break;
+
+      case "permission_request":
+        flushUser();
+        lines.push(`[Permission Required: ${event.title ?? "permission"}]`);
+        if (event.detail) {
+          lines.push(`  ${event.detail}`);
+        }
+        break;
+
+      case "permission_resolved":
+        flushUser();
+        lines.push(`[Permission ${event.outcome}]`);
+        break;
+
+      case "system":
+        flushUser();
+        lines.push(`[System: ${event.text}]`);
+        break;
+
+      case "status":
+        flushUser();
+        if (event.status === "failed") {
+          lines.push(`[Status: Failed]${event.detail ? ` - ${event.detail}` : ""}`);
+        } else if (event.status === "cancelled") {
+          lines.push("[Status: Cancelled]");
+        }
+        break;
+
+      default:
+        break;
+    }
+  }
+
+  flushAssistant();
+  flushUser();
+
+  return lines.join("\n");
 }

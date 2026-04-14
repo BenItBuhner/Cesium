@@ -215,6 +215,7 @@ workspaceRoutes.put("/api/workspaces/:workspaceId/session", async (c) => {
     chat: body.chat,
     explorer: body.explorer,
     layout: body.layout,
+    agentView: body.agentView,
     settingsView: body.settingsView,
   };
   if (windowId) {

@@ -5,6 +5,7 @@ import {
   readConversationRecord,
   readConversationSnapshot,
   readConversationSnapshotHead,
+  readRecentConversationEvents,
   saveConversationRecord,
   updateConversationRecord,
   listWorkspaceConversationRecords,
@@ -12,6 +13,7 @@ import {
 import {
   PROMPT_CONTEXT_LIMIT_EVENTS,
   PROMPT_CONTEXT_LIMIT_TURNS,
+  generateTranscriptFromEvents,
 } from "./event-log-read.js";
 import {
   AGENT_BACKENDS,
@@ -33,9 +35,115 @@ import type {
   AgentConversationSnapshotHead,
   AgentEventInput,
   AgentProvider,
+  AgentStoredEvent,
   AgentSessionHandle,
 } from "./types.js";
 import type { WorkspaceRecord } from "../workspace-registry.js";
+
+function extractAssistantTextForMessage(
+  events: AgentStoredEvent[],
+  messageId: string,
+  beforeSeq: number
+): string {
+  return events
+    .filter(
+      (
+        event
+      ): event is Extract<AgentStoredEvent, { kind: "assistant_message_chunk" }> =>
+        event.seq < beforeSeq &&
+        event.kind === "assistant_message_chunk" &&
+        event.messageId === messageId
+    )
+    .sort((left, right) => left.seq - right.seq)
+    .map((event) => event.text)
+    .join("")
+    .trim();
+}
+
+function resolvePendingHandoffContext(
+  events: AgentStoredEvent[]
+): { transcript: string; fromAgent: string; toAgent: string } | null {
+  const ordered = [...events].sort((left, right) => left.seq - right.seq);
+  let handoffEvent:
+    | Extract<AgentStoredEvent, { kind: "agent_handoff" }>
+    | undefined;
+  for (let index = ordered.length - 1; index >= 0; index -= 1) {
+    const event = ordered[index];
+    if (event?.kind === "agent_handoff") {
+      handoffEvent = event;
+      break;
+    }
+  }
+  if (!handoffEvent) {
+    return null;
+  }
+  if (
+    ordered.some(
+      (event) => event.seq > handoffEvent.seq && event.kind === "user_message"
+    )
+  ) {
+    return null;
+  }
+
+  let transcriptMessageId: string | undefined;
+  for (let index = ordered.length - 1; index >= 0; index -= 1) {
+    const event = ordered[index];
+    if (!event || event.seq >= handoffEvent.seq) {
+      continue;
+    }
+    if (event.kind === "assistant_message_end") {
+      transcriptMessageId = event.messageId;
+      break;
+    }
+    if (event.kind === "assistant_message_chunk") {
+      transcriptMessageId = event.messageId;
+      break;
+    }
+  }
+  if (!transcriptMessageId) {
+    return null;
+  }
+
+  const transcript = extractAssistantTextForMessage(
+    ordered,
+    transcriptMessageId,
+    handoffEvent.seq
+  );
+  if (!transcript) {
+    return null;
+  }
+  return {
+    transcript,
+    fromAgent: handoffEvent.fromAgent,
+    toAgent: handoffEvent.toAgent,
+  };
+}
+
+function buildPromptTextWithHandoffContext(input: {
+  transcript: string;
+  fromAgent: string;
+  toAgent: string;
+  userText: string;
+  hasAttachments: boolean;
+}): string {
+  const trimmedUserText = input.userText.trim();
+  const nextTurn = trimmedUserText || (input.hasAttachments ? "[User attached images without text.]" : "");
+  return [
+    `You are continuing a conversation that is being transferred from ${input.fromAgent} to ${input.toAgent}.`,
+    "The transcript below is part of the current prompt. Treat it as authoritative context that the user has provided right now.",
+    "If the next user message refers to earlier details, answer from the supplied transcript instead of saying the context is unavailable.",
+    "",
+    "<transferred_conversation>",
+    input.transcript,
+    "</transferred_conversation>",
+    "",
+    "<current_user_message>",
+    nextTurn,
+    "</current_user_message>",
+    "",
+    "Reply to the current user message directly.",
+  ].join("\n");
+}
 
 type ActiveRuntime = {
   provider: AgentProvider;
@@ -112,8 +220,34 @@ export class AgentRuntimeManager {
     workspaceId: string
   ): Promise<AgentConversationListResult> {
     const conversations = await listWorkspaceConversationRecords(workspaceId);
+    const backends = await Promise.resolve(this.listBackendsFn());
+    const enrichedBackends = backends.map((backend) => {
+      const cachedModelCount = findPrimaryModelConfigOption(
+        backend.cachedConfigOptions ?? []
+      )?.options.length ?? 0;
+      const richestConversation = conversations
+        .filter(
+          (conversation) =>
+            conversation.config.backendId === backend.id && conversation.configOptions.length > 0
+        )
+        .sort((left, right) => {
+          const leftCount = findPrimaryModelConfigOption(left.configOptions)?.options.length ?? 0;
+          const rightCount = findPrimaryModelConfigOption(right.configOptions)?.options.length ?? 0;
+          return rightCount - leftCount;
+        })[0];
+      const richestModelCount = richestConversation
+        ? findPrimaryModelConfigOption(richestConversation.configOptions)?.options.length ?? 0
+        : 0;
+      if (!richestConversation || richestModelCount <= cachedModelCount) {
+        return backend;
+      }
+      return {
+        ...backend,
+        cachedConfigOptions: richestConversation.configOptions,
+      };
+    });
     return {
-      backends: await Promise.resolve(this.listBackendsFn()),
+      backends: enrichedBackends,
       conversations: conversations.map((conversation) =>
         this.withBackendDefaults(conversation)
       ),
@@ -155,6 +289,109 @@ export class AgentRuntimeManager {
     await saveConversationRecord(record);
     this.warmConversationRuntime(workspace, record);
     return record;
+  }
+
+  async handoffConversation(
+    workspace: WorkspaceRecord,
+    sourceConversationId: string,
+    targetBackendId: AgentBackendId,
+    messageLimit?: number
+  ): Promise<{ newConversationId: string }> {
+    const sourceRecord = await readConversationRecord(workspace.id, sourceConversationId);
+    if (!sourceRecord) {
+      throw new Error(`Unknown source conversation: ${sourceConversationId}`);
+    }
+
+    if (
+      sourceRecord.status === "running" ||
+      sourceRecord.status === "awaiting_permission"
+    ) {
+      throw new Error(
+        "Wait for the current reply or cancel before handing off to another agent backend."
+      );
+    }
+
+    const resolvedTargetBackendId = this.resolveBackendId(targetBackendId);
+    this.assertRunnableBackend(resolvedTargetBackendId);
+    if (sourceRecord.config.backendId === resolvedTargetBackendId) {
+      return {
+        newConversationId: sourceConversationId,
+      };
+    }
+
+    const fromAgent = sourceRecord.config.backendId;
+    const toAgent = resolvedTargetBackendId;
+
+    const recentEvents = await readRecentConversationEvents(
+      workspace.id,
+      sourceConversationId,
+      messageLimit
+    );
+
+    const transcript = generateTranscriptFromEvents(recentEvents);
+    const targetBackend = this.backends[resolvedTargetBackendId];
+
+    const transcriptMessageId = randomUUID();
+    const handoffEventId = randomUUID();
+    const now = Date.now();
+    const handoffEvents: AgentEventInput[] = [];
+    if (transcript.trim()) {
+      handoffEvents.push(
+        {
+          eventId: randomUUID(),
+          conversationId: sourceConversationId,
+          kind: "assistant_message_chunk",
+          messageId: transcriptMessageId,
+          text: transcript,
+          createdAt: now,
+        },
+        {
+          eventId: transcriptMessageId,
+          conversationId: sourceConversationId,
+          kind: "assistant_message_end",
+          messageId: transcriptMessageId,
+          stopReason: "tool_call",
+          createdAt: now,
+        }
+      );
+    }
+    handoffEvents.push({
+      eventId: handoffEventId,
+      conversationId: sourceConversationId,
+      kind: "agent_handoff",
+      fromAgent,
+      toAgent,
+      createdAt: now + 1,
+    });
+    await appendConversationEvents(workspace.id, sourceConversationId, handoffEvents);
+
+    await this.disposeRuntime(sourceConversationId);
+    const updatedRecord = await updateConversationRecord(
+      workspace.id,
+      sourceConversationId,
+      (current) => ({
+        ...current,
+        config: {
+          ...current.config,
+          backendId: resolvedTargetBackendId,
+          mode: targetBackend.defaultMode,
+          modelId: targetBackend.defaultModelId,
+          modelName: targetBackend.defaultModelName,
+        },
+        providerSessionId: null,
+        configOptions: [],
+        capabilities: targetBackend.capabilities,
+        pendingPermission: null,
+        status: "idle",
+        experimental: Boolean(targetBackend.experimental),
+        lastError: null,
+      })
+    );
+    this.warmConversationRuntime(workspace, updatedRecord);
+
+    return {
+      newConversationId: sourceConversationId,
+    };
   }
 
   async getConversationSnapshot(
@@ -310,6 +547,20 @@ export class AgentRuntimeManager {
       });
     }
 
+    const pendingHandoffContext =
+      record.lastEventSeq > 0
+        ? resolvePendingHandoffContext(
+            (await readConversationSnapshot(workspace.id, conversationId))?.events ?? []
+          )
+        : null;
+    const runtimePromptText = pendingHandoffContext
+      ? buildPromptTextWithHandoffContext({
+          ...pendingHandoffContext,
+          userText: trimmed,
+          hasAttachments: Boolean(attachments?.length),
+        })
+      : trimmed;
+
     const userMessageId = randomUUID();
     await appendConversationEvents(workspace.id, conversationId, [
       {
@@ -329,7 +580,9 @@ export class AgentRuntimeManager {
     }));
 
     const runtime = await this.ensureRuntime(workspace, record);
-    void runtime.handle.prompt({ text: trimmed, userMessageId, attachments }).catch(() => undefined);
+    void runtime.handle
+      .prompt({ text: runtimePromptText, userMessageId, attachments })
+      .catch(() => undefined);
     const head = await readConversationSnapshotHead(workspace.id, conversationId);
     if (!head) {
       throw new Error("Conversation disappeared after prompt.");

@@ -249,6 +249,11 @@ pre {
   to { transform: rotate(360deg); }
 }
 
+@keyframes wave-bounce {
+  0% { transform: scaleY(0.7); }
+  100% { transform: scaleY(1); }
+}
+
 @keyframes tool-thinking-sweep {
   0% {
     background-position: -150px center;

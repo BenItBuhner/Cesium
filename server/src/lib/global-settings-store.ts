@@ -21,6 +21,7 @@ export type GlobalSettings = {
     legacyTerm: boolean;
     autoParse: boolean;
     themedDiff: boolean;
+    inlineToolDetailsInChat: boolean;
     collapseAuto: boolean;
     commitAttr: boolean;
     prAttr: boolean;
@@ -78,6 +79,7 @@ function createDefaultSettings(): GlobalSettings {
       legacyTerm: false,
       autoParse: false,
       themedDiff: true,
+      inlineToolDetailsInChat: false,
       collapseAuto: true,
       commitAttr: true,
       prAttr: true,

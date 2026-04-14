@@ -23,6 +23,23 @@ export function getCaretOffset(container: HTMLElement): number {
   return pre.toString().length;
 }
 
+/** Start/end offsets for the current selection inside `container` (same basis as `getCaretOffset`). */
+export function getPlainTextRangeOffsets(container: HTMLElement): { start: number; end: number } | null {
+  const sel = window.getSelection();
+  if (!sel?.rangeCount) return null;
+  const range = sel.getRangeAt(0);
+  if (!container.contains(range.commonAncestorContainer)) return null;
+  const preStart = document.createRange();
+  preStart.selectNodeContents(container);
+  preStart.setEnd(range.startContainer, range.startOffset);
+  const start = preStart.toString().length;
+  const preEnd = document.createRange();
+  preEnd.selectNodeContents(container);
+  preEnd.setEnd(range.endContainer, range.endOffset);
+  const end = preEnd.toString().length;
+  return start <= end ? { start, end } : { start: end, end: start };
+}
+
 export function setCaretOffset(container: HTMLElement, offset: number): void {
   const text = getComposerPlainText(container);
   const safe = Math.max(0, Math.min(offset, text.length));

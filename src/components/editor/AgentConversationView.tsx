@@ -101,7 +101,7 @@ export function AgentConversationView({
     getConversationHistoryCursor,
     loadOlderConversationHistory,
   } = useAgentConversations();
-  const { workspaceSession, updateWorkspaceSession } = useWorkspace();
+  const { workspaceSession, updateWorkspaceSession, workspaceInfo } = useWorkspace();
   const expandedComposerDraftId =
     expandedComposerDraftIdOverride ?? workspaceExpandedComposerDraftId;
   const setExpandedComposerDraft =
@@ -119,8 +119,9 @@ export function AgentConversationView({
     () =>
       projectAgentEventsToChatMessages(deferredThreadEvents, {
         backendId: conversation?.config.backendId,
+        workspaceRoot: workspaceInfo?.root ?? null,
       }),
-    [conversationId, conversation?.config.backendId, deferredThreadEvents]
+    [conversationId, conversation?.config.backendId, deferredThreadEvents, workspaceInfo?.root]
   );
   const { scrollMessages, dockedAsk } = useMemo(
     () => partitionMessagesForDock(threadMessages),
@@ -337,70 +338,6 @@ export function AgentConversationView({
       />
     </div>
   );
-
-  const expandedComposerState = useMemo(() => {
-    if (
-      !shouldProvideExpandedComposerController ||
-      expandedComposerDraftId !== composerDraftId ||
-      !conversation ||
-      !composerState
-    ) {
-      return null;
-    }
-    return {
-      draftId: composerDraftId,
-      title: composerDraftTitle,
-      mode: composerState.mode,
-      onModeChange: (next: EditorMode) =>
-        void setConversationMode(conversationId, next),
-      model: composerState.model,
-      onModelChange: (next: typeof composerState.model) =>
-        void setConversationModel(conversationId, next),
-      backendId: composerState.backendId,
-      backends,
-      onBackendChange: (next: AgentBackendId) =>
-        void setConversationBackend(conversationId, next),
-      models: composerState.models,
-      modeOptions: composerState.modeOptions,
-      sessionConfigOptions: composerState.sessionConfigOptions,
-      onSessionConfigOptionChange: (configId: string, value: string) =>
-        void setConversationConfigOption(conversationId, configId, value),
-      onSubmit: (text: string, attachments?: ImageAttachment[]) =>
-        promptConversation(conversationId, text, attachments),
-      onCancel: () => cancelConversation(conversationId),
-      busy: composerState.busy,
-      configLocked: false,
-    };
-  }, [
-    backends,
-    cancelConversation,
-    composerDraftId,
-    composerDraftTitle,
-    composerState,
-    conversation,
-    conversationId,
-    expandedComposerDraftId,
-    promptConversation,
-    setConversationBackend,
-    setConversationConfigOption,
-    setConversationMode,
-    setConversationModel,
-    shouldProvideExpandedComposerController,
-  ]);
-
-  useEffect(() => {
-    if (!shouldProvideExpandedComposerController) {
-      return;
-    }
-    setExpandedComposerController(expandedComposerState);
-    return () => {
-      setExpandedComposerController(null);
-    };
-  }, [
-    expandedComposerState,
-    setExpandedComposerController,
-    shouldProvideExpandedComposerController,
-  ]);
 
   return (
     <div className="flex h-full min-h-0 w-full flex-col overflow-hidden bg-[var(--bg-main)]">

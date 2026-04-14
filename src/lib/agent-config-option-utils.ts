@@ -125,6 +125,7 @@ export function listSupplementaryAgentConfigOptions(
         !lowerName.includes("reason") &&
         !lowerId.includes("effort") &&
         !lowerName.includes("effort") &&
+        lowerId !== "web_search" &&
         !skip.has(option.id) &&
         !option.id.startsWith("__acp_legacy_")
       );

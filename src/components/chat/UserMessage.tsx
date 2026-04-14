@@ -8,6 +8,7 @@ interface UserMessageProps {
   segments?: UserMessageSegment[];
   attachments?: ImageAttachment[];
   showReplyCue?: boolean;
+  highlight?: boolean;
 }
 
 export function UserMessage({
@@ -15,6 +16,7 @@ export function UserMessage({
   segments,
   attachments,
   showReplyCue,
+  highlight,
 }: UserMessageProps) {
   const hasSegments = segments && segments.length > 0;
   const bodyRef = useRef<HTMLDivElement>(null);
@@ -46,7 +48,7 @@ export function UserMessage({
 
   return (
     <div
-      className={`group relative overflow-hidden rounded-[var(--radius-card)] border border-[var(--border-card)] bg-[var(--bg-card)] p-[10px] ${showReplyCue ? "pr-[36px]" : ""} ${overflowing ? "pb-[34px]" : ""}`}
+      className={`group relative overflow-hidden rounded-[var(--radius-card)] border border-[var(--border-card)] bg-[var(--bg-card)] p-[10px] ${showReplyCue ? "pr-[36px]" : ""} ${overflowing ? "pb-[34px]" : ""} ${highlight ? "ring-2 ring-[var(--accent)] ring-opacity-50" : ""}`}
     >
       {attachments && attachments.length > 0 && (
         <div className="mb-[10px]">

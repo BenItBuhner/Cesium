@@ -68,6 +68,7 @@ import {
   createAgentConversation,
   createWorkspaceWindow,
   fetchAgentConversationSnapshot,
+  handoffAgentConversation,
   listAgentConversations,
   promptAgentConversation,
   saveWorkspaceWindowSession,
@@ -203,6 +204,7 @@ export function ChatPanel() {
   const {
     activeWindowId,
     activeWorkspaceId,
+    workspaceInfo,
     workspaceSession,
     workspaceWindows,
     updateWorkspaceSession,
@@ -226,6 +228,9 @@ export function ChatPanel() {
   const [chatTabRenameTargetId, setChatTabRenameTargetId] = useState<string | null>(
     null
   );
+  /** Pending backend switch state for in-flight handoff transitions. */
+  const [pendingHandoffBackendByConversationId, setPendingHandoffBackendByConversationId] =
+    useState<Partial<Record<string, AgentBackendId>>>({});
   const socketRef = useRef<JsonWebSocket<AgentSocketServerMessage> | null>(null);
   const chatDraftRef = useRef(workspaceSession.chat);
   const tabsRef = useRef<ChatTab[]>(workspaceSession.chat.tabs);
@@ -415,6 +420,87 @@ export function ChatPanel() {
       });
     },
     [updateWorkspaceSession]
+  );
+
+  const applyHandoffServerResult = useCallback(
+    async (result: { newConversationId: string }) => {
+      const listResult = await listAgentConversations();
+      const nextConversations = listResult.conversations;
+      const newConv = nextConversations.find((c) => c.id === result.newConversationId);
+      if (!newConv) {
+        pushNotification({
+          kind: WORKBENCH_NOTIFICATION_KIND.editorNotice,
+          severity: "error",
+          title: "Handoff Failed",
+          message: "Server did not return the new conversation in the workspace list.",
+        });
+        throw new Error("Handoff list sync failed.");
+      }
+      setBackends(listResult.backends);
+      setConversations(nextConversations);
+      setConversationsById(toConversationMap(nextConversations));
+      const snap = await fetchAgentConversationSnapshot(result.newConversationId);
+      mergeSnapshot(snap.snapshot);
+      setTabs((current) => {
+        const existingTab = current.find((tab) => tab.id === newConv.id);
+        if (existingTab) {
+          return current.map((tab) => ({ ...tab, active: tab.id === newConv.id }));
+        }
+        return [
+          ...current.map((tab) => ({ ...tab, active: false })),
+          { id: newConv.id, title: newConv.title, active: true },
+        ];
+      });
+      unhideConversationIds([newConv.id]);
+    },
+    [mergeSnapshot, pushNotification, setTabs, unhideConversationIds]
+  );
+
+  const handoffConversationInPlace = useCallback(
+    async (conversationId: string, targetBackendId: AgentBackendId) => {
+      const conversation = conversationsByIdRef.current[conversationId];
+      if (!conversation) {
+        return false;
+      }
+      if (
+        conversation.status === "running" ||
+        conversation.status === "awaiting_permission"
+      ) {
+        pushNotification({
+          kind: WORKBENCH_NOTIFICATION_KIND.editorNotice,
+          severity: "warning",
+          title: "Agent busy",
+          message:
+            "Wait for the current reply or cancel before handing off to another agent backend.",
+          autoDismissMs: 8000,
+        });
+        return false;
+      }
+      try {
+        const result = await handoffAgentConversation(conversationId, targetBackendId);
+        setPendingHandoffBackendByConversationId((prev) => {
+          if (!prev[conversationId]) {
+            return prev;
+          }
+          const next = { ...prev };
+          delete next[conversationId];
+          return next;
+        });
+        await applyHandoffServerResult(result);
+        return true;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Failed to hand off conversation.";
+        pushNotification({
+          kind: WORKBENCH_NOTIFICATION_KIND.editorNotice,
+          severity: "error",
+          title: "Handoff Failed",
+          message,
+          autoDismissMs: 8000,
+        });
+        return false;
+      }
+    },
+    [applyHandoffServerResult, pushNotification]
   );
 
   const prependHistoryPage = useCallback(
@@ -614,19 +700,31 @@ export function ChatPanel() {
         }));
         return;
       }
-      try {
-        const updated = await updateAgentConversationConfig(draftId, {
-          backendId: nextBackendId,
+      const conv = conversationsById[draftId];
+      const resolvedBackend = pickAvailableBackend(backends, nextBackendId);
+      const useBackendId = resolvedBackend?.id ?? nextBackendId;
+      if (conv && useBackendId === conv.config.backendId) {
+        setPendingHandoffBackendByConversationId((prev) => {
+          if (!prev[draftId]) {
+            return prev;
+          }
+          const next = { ...prev };
+          delete next[draftId];
+          return next;
         });
-        setConversationsById((current) => ({
-          ...current,
-          [updated.conversation.id]: updated.conversation,
-        }));
-      } catch {
-        syncConversationSnapshot(draftId);
+        return;
+      }
+      if (conv) {
+        await handoffConversationInPlace(draftId, useBackendId);
       }
     },
-    [backends, syncConversationSnapshot, updateWorkspaceSession, workspaceSession.chat.mode]
+    [
+      backends,
+      conversationsById,
+      handoffConversationInPlace,
+      updateWorkspaceSession,
+      workspaceSession.chat.mode,
+    ]
   );
 
   const appendConversationEvent = useCallback(
@@ -854,24 +952,37 @@ export function ChatPanel() {
     () =>
       projectAgentEventsToChatMessages(deferredPanelThreadEvents, {
         backendId: activeConversation?.config.backendId,
+        workspaceRoot: workspaceInfo?.root ?? null,
       }),
-    [activeConversation?.config.backendId, deferredPanelThreadEvents]
+    [activeConversation?.config.backendId, deferredPanelThreadEvents, workspaceInfo?.root]
   );
   const isEmptyThread = threadMessages.length === 0;
   const resolveComposerStateForDraft = useCallback(
     (draftId: string) => {
       const conversation = conversationsById[draftId] ?? null;
-      const backend =
+      const pendingTarget = pendingHandoffBackendByConversationId[draftId];
+      const backendFromConversation =
         conversation
           ? pickAvailableBackend(backends, conversation.config.backendId)
           : draftBackend;
-      const models = conversation
-        ? buildConversationModelOptions(conversation, backends)
-        : backend
+      const backendForPending =
+        pendingTarget != null ? pickAvailableBackend(backends, pendingTarget) : null;
+      const backend =
+        pendingTarget != null && backendForPending
+          ? backendForPending
+          : backendFromConversation;
+      const models =
+        pendingTarget != null && backend
           ? buildDraftModelOptionsForBackend(backend)
-          : [workspaceSession.chat.model];
+          : conversation
+            ? buildConversationModelOptions(conversation, backends)
+            : backend
+              ? buildDraftModelOptionsForBackend(backend)
+              : [workspaceSession.chat.model];
       const model = conversation
-        ? resolveConversationModel(conversation, backends)
+        ? pendingTarget != null && backend
+          ? resolveDraftModelForBackend(backend)
+          : resolveConversationModel(conversation, backends)
         : backend
           ? (() => {
               const currentModelValue =
@@ -883,18 +994,26 @@ export function ChatPanel() {
               );
             })()
           : workspaceSession.chat.model;
-      const modeOptions = conversation
-        ? buildConversationModeOptions(conversation, backends)
-        : backend
+      const modeOptions =
+        pendingTarget != null && backend
           ? buildDraftModeOptionsForBackend(backend)
-          : DEFAULT_MODE_OPTIONS;
+          : conversation
+            ? buildConversationModeOptions(conversation, backends)
+            : backend
+              ? buildDraftModeOptionsForBackend(backend)
+              : DEFAULT_MODE_OPTIONS;
       const mode = resolveCanonicalModeId(
-        String(conversation?.config.mode ?? workspaceSession.chat.mode ?? ""),
+        String(
+          (pendingTarget != null && backend
+            ? buildDraftModeOptionsForBackend(backend)[0]?.id
+            : conversation?.config.mode) ?? workspaceSession.chat.mode ?? ""
+        ),
         modeOptions
       ) as EditorMode;
       return {
         conversation,
         backendId:
+          (pendingTarget != null ? pickAvailableBackend(backends, pendingTarget)?.id : undefined) ??
           conversation?.config.backendId ??
           backend?.id ??
           workspaceSession.chat.backendId,
@@ -902,9 +1021,10 @@ export function ChatPanel() {
         model,
         modeOptions,
         mode,
-        sessionConfigOptions: conversation
-          ? listSupplementaryAgentConfigOptions(conversation)
-          : [],
+        sessionConfigOptions:
+          pendingTarget != null ? [] : conversation
+            ? listSupplementaryAgentConfigOptions(conversation)
+            : [],
         busy:
           conversation?.status === "running" ||
           conversation?.status === "awaiting_permission",
@@ -914,6 +1034,7 @@ export function ChatPanel() {
       backends,
       conversationsById,
       draftBackend,
+      pendingHandoffBackendByConversationId,
       workspaceSession.chat.backendId,
       workspaceSession.chat.mode,
       workspaceSession.chat.model,
@@ -1193,6 +1314,24 @@ export function ChatPanel() {
     if (!activeWorkspaceId) {
       return;
     }
+    const handleVisibilityChange = () => {
+      if (document.visibilityState !== "visible") {
+        return;
+      }
+      void listAgentConversations()
+        .then((result) => {
+          setBackends(result.backends);
+        })
+        .catch(() => undefined);
+    };
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
+  }, [activeWorkspaceId]);
+
+  useEffect(() => {
+    if (!activeWorkspaceId) {
+      return;
+    }
     if (Object.keys(conversationsById).length === 0) {
       return;
     }
@@ -1201,7 +1340,8 @@ export function ChatPanel() {
       if (!conversationsById[conversationId]) {
         continue;
       }
-      if (eventsRef.current[conversationId]) {
+      // `[]` is truthy in JS; only skip after we've actually loaded (including empty logs).
+      if (eventsRef.current[conversationId] !== undefined) {
         continue;
       }
       void fetchAgentConversationSnapshot(conversationId)
@@ -1727,6 +1867,61 @@ export function ChatPanel() {
           (draftId === activeConversation?.id ? activeConversation : null) ??
           (await createConversationAndOpen());
         conversationIdForError = conversation.id;
+
+        const pendingTarget =
+          isPersistedConversationTabId(conversation.id) &&
+          pendingHandoffBackendByConversationId[conversation.id] &&
+          pendingHandoffBackendByConversationId[conversation.id] !== conversation.config.backendId
+            ? pendingHandoffBackendByConversationId[conversation.id]!
+            : undefined;
+
+        if (pendingTarget) {
+          if (
+            conversation.status === "running" ||
+            conversation.status === "awaiting_permission"
+          ) {
+            pushNotification({
+              kind: WORKBENCH_NOTIFICATION_KIND.editorNotice,
+              severity: "warning",
+              title: "Agent busy",
+              message:
+                "Wait for the current reply or cancel before handing off to another agent backend.",
+              autoDismissMs: 8000,
+            });
+            return false;
+          }
+          try {
+            const handoffResult = await handoffAgentConversation(conversation.id, pendingTarget);
+            setPendingHandoffBackendByConversationId((prev) => {
+              if (!prev[conversation.id]) {
+                return prev;
+              }
+              const next = { ...prev };
+              delete next[conversation.id];
+              return next;
+            });
+            await applyHandoffServerResult(handoffResult);
+            const snapshot = await promptAgentConversation(
+              handoffResult.newConversationId,
+              text,
+              attachments
+            );
+            mergeSnapshot(snapshot.snapshot);
+            return true;
+          } catch (error) {
+            const message =
+              error instanceof Error ? error.message : "Failed to hand off conversation.";
+            pushNotification({
+              kind: WORKBENCH_NOTIFICATION_KIND.editorNotice,
+              severity: "error",
+              title: "Handoff Failed",
+              message,
+              autoDismissMs: 8000,
+            });
+            return false;
+          }
+        }
+
         if (
           !options?.skipQueue &&
           (conversation.status === "running" ||
@@ -1792,9 +1987,11 @@ export function ChatPanel() {
     },
     [
       activeConversation,
+      applyHandoffServerResult,
       conversationsById,
       createConversationAndOpen,
       mergeSnapshot,
+      pendingHandoffBackendByConversationId,
       pushNotification,
       updateWorkspaceSession,
     ]
@@ -1802,6 +1999,14 @@ export function ChatPanel() {
 
   const submitPromptForDraftRef = useRef(submitPromptForDraft);
   submitPromptForDraftRef.current = submitPromptForDraft;
+
+  const handleRequestHandoff = useCallback(
+    async (targetBackendId: AgentBackendId) => {
+      if (!activeConversation) return;
+      await handoffConversationInPlace(activeConversation.id, targetBackendId);
+    },
+    [activeConversation, handoffConversationInPlace]
+  );
 
   useEffect(() => {
     const queuedMap = workspaceSession.chat.queuedPromptsByConversationId ?? {};
@@ -1895,12 +2100,17 @@ export function ChatPanel() {
       onCancel: () => cancelPromptForDraft(expandedComposerDraftId),
       busy: state.busy,
       configLocked: false,
+      onRequestHandoff:
+        state.conversation && isPersistedConversationTabId(expandedComposerDraftId)
+          ? handleRequestHandoff
+          : undefined,
     };
   }, [
     backends,
     cancelPromptForDraft,
     composerDrafts,
     expandedComposerDraftId,
+    handleRequestHandoff,
     resolveComposerStateForDraft,
     setBackendForDraft,
     setModeForDraft,
@@ -1961,8 +2171,13 @@ export function ChatPanel() {
         void submitPromptForDraft(composerDraftId, text, attachments);
       }}
       onCancel={() => cancelPromptForDraft(composerDraftId)}
-      layout={isEmptyThread ? "empty-top" : "docked-bottom"}
-    />
+            onRequestHandoff={
+              activeConversation && isPersistedConversationTabId(composerDraftId)
+                ? handleRequestHandoff
+                : undefined
+            }
+            layout={isEmptyThread ? "empty-top" : "docked-bottom"}
+            />
   );
 
   const recentChatsSection = showRecentChatsSection ? (

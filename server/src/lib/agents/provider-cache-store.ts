@@ -13,6 +13,8 @@ type AgentBackendCacheRecord = {
   configOptions: AgentConfigOption[];
 };
 
+const CACHE_TTL_MS = 5 * 60 * 1000;
+
 function getBackendCacheFile(backendId: AgentBackendId): string {
   return path.join(DATA_DIR, "profile", "agent-backends", `${backendId}.json`);
 }
@@ -99,6 +101,106 @@ export async function createCursorCliConfigOptions(input?: {
       name: "Model",
       category: "model",
       currentValue,
+      options,
+    },
+  ];
+}
+
+async function createOpenCodeCliConfigOptions(input?: {
+  command?: string;
+  env?: NodeJS.ProcessEnv;
+  cwd?: string;
+}): Promise<AgentConfigOption[]> {
+  const command =
+    input?.command ?? process.env.OPENCURSOR_OPENCODE_ACP_BIN ?? "opencode";
+  const raw = await execFileText(command, ["models", "--verbose"], {
+    cwd: input?.cwd,
+    env: input?.env,
+  }).catch(() => "");
+  const lines = raw.split("\n");
+  const options: AgentConfigOption["options"] = [];
+  const formatProviderName = (value: string) => {
+    const provider = value.split("/")[0]?.trim() ?? "";
+    return provider
+      .split(/[-_]+/)
+      .filter(Boolean)
+      .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1))
+      .join(" ");
+  };
+
+  for (let index = 0; index < lines.length; ) {
+    const value = stripAnsi(lines[index] ?? "").trim();
+    if (!value) {
+      index += 1;
+      continue;
+    }
+    if (stripAnsi(lines[index + 1] ?? "").trim() !== "{") {
+      index += 1;
+      continue;
+    }
+
+    const jsonLines: string[] = [];
+    let depth = 0;
+    for (index += 1; index < lines.length; index += 1) {
+      const line = stripAnsi(lines[index] ?? "");
+      jsonLines.push(line);
+      depth += (line.match(/\{/g) ?? []).length;
+      depth -= (line.match(/\}/g) ?? []).length;
+      if (depth === 0) {
+        index += 1;
+        break;
+      }
+    }
+
+    let record: Record<string, unknown> | null = null;
+    try {
+      record = JSON.parse(jsonLines.join("\n")) as Record<string, unknown>;
+    } catch {
+      record = null;
+    }
+
+    const baseName =
+      typeof record?.name === "string" && record.name.trim()
+        ? `${formatProviderName(value)}/${record.name.trim()}`
+        : value;
+    options.push({ value, name: baseName });
+
+    const variants =
+      record?.variants && typeof record.variants === "object" && !Array.isArray(record.variants)
+        ? Object.keys(record.variants as Record<string, unknown>)
+        : [];
+    for (const variant of variants) {
+      const trimmedVariant = variant.trim();
+      if (!trimmedVariant) {
+        continue;
+      }
+      options.push({
+        value: `${value}/${trimmedVariant}`,
+        name: `${baseName} (${trimmedVariant})`,
+      });
+    }
+  }
+
+  if (options.length === 0) {
+    return [];
+  }
+
+  return [
+    {
+      id: "mode",
+      name: "Session Mode",
+      category: "mode",
+      currentValue: "build",
+      options: [
+        { value: "build", name: "build" },
+        { value: "plan", name: "plan" },
+      ],
+    },
+    {
+      id: "model",
+      name: "Model",
+      category: "model",
+      currentValue: options[0]?.value ?? "",
       options,
     },
   ];
@@ -201,11 +303,15 @@ async function createCodexSeedConfigOptions(): Promise<AgentConfigOption[]> {
     ];
   }
 
-  const selectedModel = parseTomlValue(configToml, "model") ?? modelOptions[0]?.value ?? "gpt-5.4";
+  const preferredModel = modelOptions.find((option) => option.value === "gpt-5.4-mini")?.value;
+  const preferredEffort = reasoningOptions.find((option) => option.value === "low")?.value;
+  const selectedModel = preferredModel ?? parseTomlValue(configToml, "model") ?? modelOptions[0]?.value ?? "gpt-5.4-mini";
   const selectedEffort =
+    preferredEffort ??
     parseTomlValue(configToml, "model_reasoning_effort") ??
     reasoningOptions[0]?.value ??
-    "medium";
+    "low";
+  const selectedWebSearch = parseTomlValue(configToml, "web_search") ?? "cached";
 
   const next: AgentConfigOption[] = [
     {
@@ -221,6 +327,28 @@ async function createCodexSeedConfigOptions(): Promise<AgentConfigOption[]> {
       category: "model",
       currentValue: selectedModel,
       options: modelOptions,
+    },
+    {
+      id: "permission",
+      name: "Execution Mode",
+      category: "permission",
+      currentValue: "workspace-write",
+      options: [
+        { value: "read-only", name: "Read Only" },
+        { value: "workspace-write", name: "Workspace Write" },
+        { value: "bypassPermissions", name: "Bypass Permissions" },
+      ],
+    },
+    {
+      id: "web_search",
+      name: "Web Search",
+      category: "other",
+      currentValue: selectedWebSearch,
+      options: [
+        { value: "disabled", name: "Disabled" },
+        { value: "cached", name: "Cached" },
+        { value: "live", name: "Live" },
+      ],
     },
   ];
 
@@ -241,6 +369,8 @@ async function createSeedConfigOptions(backendId: AgentBackendId): Promise<Agent
   switch (backendId) {
     case "cursor-acp":
       return createCursorCliConfigOptions();
+    case "opencode-acp":
+      return createOpenCodeCliConfigOptions();
     case "codex-adapter":
       return createCodexSeedConfigOptions();
     case "claude-adapter":
@@ -256,8 +386,16 @@ async function createSeedConfigOptions(backendId: AgentBackendId): Promise<Agent
           id: "model",
           name: "Model",
           category: "model",
-          currentValue: "turbo",
+          currentValue: "glm-5.1",
           options: [
+            {
+              value: "glm-5.1",
+              name: "GLM 5.1",
+              description: "Claude Code routed through the local model proxy.",
+              metadata: {
+                reasoningLevels: ["low", "medium", "high", "max"],
+              },
+            },
             {
               value: "turbo",
               name: "Turbo",
@@ -266,6 +404,50 @@ async function createSeedConfigOptions(backendId: AgentBackendId): Promise<Agent
                 reasoningLevels: ["low", "medium", "high", "max"],
               },
             },
+            {
+              value: "precision",
+              name: "Precision",
+              description: "Claude Code routed through the local model proxy.",
+              metadata: {
+                reasoningLevels: ["low", "medium", "high", "max"],
+              },
+            },
+            {
+              value: "complete",
+              name: "Complete",
+              description: "Claude Code routed through the local model proxy.",
+              metadata: {
+                reasoningLevels: ["low", "medium", "high", "max"],
+              },
+            },
+            {
+              value: "glm-5",
+              name: "GLM 5",
+              description: "Claude Code routed through the local model proxy.",
+              metadata: {
+                reasoningLevels: ["low", "medium", "high", "max"],
+              },
+            },
+            {
+              value: "glm-5-lightning",
+              name: "GLM 5 Lightning",
+              description: "Claude Code routed through the local model proxy.",
+              metadata: {
+                reasoningLevels: ["low", "medium", "high", "max"],
+              },
+            },
+          ],
+        },
+        {
+          id: "permission",
+          name: "Permission Mode",
+          category: "permission",
+          currentValue: "plan",
+          options: [
+            { value: "plan", name: "Plan" },
+            { value: "acceptEdits", name: "Accept Edits" },
+            { value: "dontAsk", name: "Don't Ask" },
+            { value: "bypassPermissions", name: "Bypass Permissions" },
           ],
         },
         {
@@ -306,6 +488,12 @@ function isCursorCliSeedConfigOptions(configOptions: AgentConfigOption[]): boole
 export async function readAgentBackendConfigCache(
   backendId: AgentBackendId
 ): Promise<AgentConfigOption[]> {
+  const fresh = await createSeedConfigOptions(backendId).catch(() => []);
+  if (fresh.length > 0) {
+    await writeAgentBackendConfigCache(backendId, fresh);
+    return fresh;
+  }
+
   const record = await readJsonFile<AgentBackendCacheRecord | null>(
     getBackendCacheFile(backendId),
     null
@@ -317,6 +505,11 @@ export async function readAgentBackendConfigCache(
     Array.isArray(record.configOptions) &&
     record.configOptions.length > 0
   ) {
+    if (Date.now() - record.updatedAt > CACHE_TTL_MS) {
+      const seeded = await createSeedConfigOptions(backendId);
+      await writeAgentBackendConfigCache(backendId, seeded);
+      return seeded;
+    }
     if (backendId === "cursor-acp" && !isCursorCliSeedConfigOptions(record.configOptions)) {
       const seeded = await createSeedConfigOptions(backendId);
       await writeAgentBackendConfigCache(backendId, seeded);
@@ -333,6 +526,60 @@ export async function readAgentBackendConfigCache(
               value.metadata.reasoningLevels.length > 0
           )
       )
+    ) {
+      const seeded = await createSeedConfigOptions(backendId);
+      await writeAgentBackendConfigCache(backendId, seeded);
+      return seeded;
+    }
+    if (backendId === "codex-adapter") {
+      const next = record.configOptions.map((option) => {
+        if (
+          option.id === "model" &&
+          option.options.some((value) => value.value === "gpt-5.4-mini") &&
+          option.currentValue !== "gpt-5.4-mini"
+        ) {
+          return { ...option, currentValue: "gpt-5.4-mini" };
+        }
+        if (
+          option.id === "model_reasoning_effort" &&
+          option.options.some((value) => value.value === "low") &&
+          option.currentValue !== "low"
+        ) {
+          return { ...option, currentValue: "low" };
+        }
+        if (
+          option.id === "permission" &&
+          option.options.some((value) => value.value === "workspace-write") &&
+          option.currentValue !== "workspace-write"
+        ) {
+          return { ...option, currentValue: "workspace-write" };
+        }
+        return option;
+      });
+      const hasPermissionOption = next.some((option) => option.id === "permission");
+      const hasWebSearchOption = next.some((option) => option.id === "web_search");
+      if (!hasPermissionOption || !hasWebSearchOption) {
+        const seeded = await createCodexSeedConfigOptions();
+        await writeAgentBackendConfigCache(backendId, seeded);
+        return seeded;
+      }
+      if (JSON.stringify(next) !== JSON.stringify(record.configOptions)) {
+        await writeAgentBackendConfigCache(backendId, next);
+        return next;
+      }
+    }
+    if (
+      backendId === "claude-adapter" &&
+      (!record.configOptions.some(
+        (option) =>
+          option.category === "model" &&
+          option.options.some((value) => value.value === "glm-5.1")
+      ) ||
+        !record.configOptions.some(
+          (option) =>
+            option.category === "permission" &&
+            option.options.some((value) => value.value === "bypassPermissions")
+        ))
     ) {
       const seeded = await createSeedConfigOptions(backendId);
       await writeAgentBackendConfigCache(backendId, seeded);

@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
+import { transcriptionProcessEnv } from "../lib/transcription-env.js";
 
 export const audioRoutes = new Hono();
 
@@ -33,27 +34,13 @@ audioRoutes.post("/api/audio/transcriptions", async (c) => {
     return c.json({ error: "Expected audio file upload." }, 400);
   }
 
-  const baseUrl = (
-    process.env.OPENCURSOR_TRANSCRIPTION_BASE_URL ??
-    process.env.OPENAI_BASE_URL ??
-    ""
-  ).trim();
-  const apiKey = (
-    process.env.OPENCURSOR_TRANSCRIPTION_API_KEY ??
-    process.env.OPENAI_API_KEY ??
-    process.env.GROQ_API_KEY ??
-    ""
-  ).trim();
-  const model = (
-    process.env.OPENCURSOR_TRANSCRIPTION_MODEL ??
-    ""
-  ).trim();
+  const { baseUrl, apiKey, model } = transcriptionProcessEnv();
 
   if (!baseUrl || !apiKey || !model) {
     return c.json(
       {
         error:
-          "Speech transcription is not configured. Set OPENCURSOR_TRANSCRIPTION_BASE_URL, OPENCURSOR_TRANSCRIPTION_API_KEY, and OPENCURSOR_TRANSCRIPTION_MODEL.",
+          "Speech transcription is not configured. Set OPENCURSOR_TRANSCRIPTION_BASE_URL, OPENCURSOR_TRANSCRIPTION_API_KEY, and OPENCURSOR_TRANSCRIPTION_MODEL (or use OPENCURSOR_TRANSCRIPTION_CONFIG_JSON / OPENCURSOR_TRANSCRIPTION_CONFIG_FILE / server/transcription-provider.json).",
       },
       503
     );

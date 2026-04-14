@@ -50,6 +50,7 @@ import {
   cancelAgentConversation,
   createAgentConversation,
   fetchAgentConversationSnapshot,
+  handoffAgentConversation,
   listAgentConversations,
   promptAgentConversation,
   updateAgentConversationConfig,
@@ -658,15 +659,15 @@ export function AgentConversationsProvider({
   const setConversationBackend = useCallback(
     async (conversationId: string, nextBackendId: AgentBackendId) => {
       try {
-        const updated = await updateAgentConversationConfig(conversationId, {
-          backendId: nextBackendId,
+        const result = await handoffAgentConversation(conversationId, nextBackendId);
+        await syncConversationSnapshot(result.newConversationId, {
+          hydrateRuntime: true,
         });
-        upsertConversation(updated.conversation);
       } catch {
         void syncConversationSnapshot(conversationId).catch(() => undefined);
       }
     },
-    [syncConversationSnapshot, upsertConversation]
+    [syncConversationSnapshot]
   );
 
   const setConversationConfigOption = useCallback(
@@ -897,13 +898,6 @@ export function AgentConversationsProvider({
     }
 
     let cancelled = false;
-    setConversationsById({});
-    setEventsByConversationId({});
-    setConversationLoadStatusById({});
-    setHistoryMetaById({});
-    setLoadingOlderById({});
-    loadingOlderRef.current = {};
-    setBootstrapped(false);
 
     void (async () => {
       const result = await listAgentConversations();
@@ -915,8 +909,12 @@ export function AgentConversationsProvider({
       setBackends(result.backends);
 
       setConversationsById(toConversationMap(nextConversations));
-      setConversationLoadStatusById((current) => {
-        const next = { ...current };
+      setEventsByConversationId({});
+      setHistoryMetaById({});
+      setLoadingOlderById({});
+      loadingOlderRef.current = {};
+      setConversationLoadStatusById(() => {
+        const next: Record<string, ConversationLoadStatus> = {};
         for (const conversation of nextConversations) {
           next[conversation.id] = "ready";
         }
@@ -1037,7 +1035,8 @@ export function AgentConversationsProvider({
       return;
     }
     for (const conversationId of openConversationIds) {
-      if (conversationsById[conversationId] && eventsRef.current[conversationId]) {
+      const events = eventsRef.current[conversationId];
+      if (conversationsById[conversationId] && events !== undefined) {
         continue;
       }
       void syncConversationSnapshot(conversationId).catch(() => undefined);

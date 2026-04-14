@@ -70,6 +70,7 @@ export function ExpandedComposerView({
           backendId={controller.backendId}
           backends={controller.backends}
           onBackendChange={controller.onBackendChange}
+          onRequestHandoff={controller.onRequestHandoff}
           models={controller.models}
           modeOptions={controller.modeOptions}
           sessionConfigOptions={controller.sessionConfigOptions}

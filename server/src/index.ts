@@ -20,6 +20,7 @@ import {
   buildUpgradeHttpResponse,
   SESSION_TOKEN_HEADER,
 } from "./lib/auth.js";
+import { isTranscriptionConfigured } from "./lib/transcription-env.js";
 import { handleFsUpgrade } from "./ws/filewatcher.js";
 import { handleAgentUpgrade } from "./ws/agent.js";
 import { handleTerminalUpgrade } from "./ws/terminal.js";
@@ -75,7 +76,9 @@ app.onError((error, c) => {
   return c.json({ error: error.message }, 500);
 });
 
-app.get("/health", (c) => c.json({ ok: true }));
+app.get("/health", (c) =>
+  c.json({ ok: true, transcription: { configured: isTranscriptionConfigured() } })
+);
 app.route("/", authRoutes);
 app.route("/browser", browserProxyRoutes);
 app.route("/", workspaceRoutes);

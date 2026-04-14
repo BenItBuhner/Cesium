@@ -134,6 +134,7 @@ export function AgentNewChatLanding() {
         modelName: draftModel.name,
       });
       setSelectedConversationId(created.id);
+      await refreshConversationGroups();
       const ok = await promptConversation(created.id, text, attachments);
       if (!ok) return false;
       void refreshConversationGroups();
@@ -251,7 +252,7 @@ export function AgentNewChatLanding() {
       <div
         className={`flex w-full flex-col items-stretch gap-[2px] ${AGENT_CENTER_CONTENT_CLASS}`}
       >
-        <div className="mx-[10px] flex min-w-0 flex-col gap-[2px]">
+        <div className="mx-0 flex min-w-0 flex-col gap-[2px] min-[481px]:mx-[10px]">
           <div className="w-fit max-w-full self-start">
             <button
               type="button"

@@ -7,6 +7,7 @@ export type PersistedWorkspaceSession = {
   chat?: unknown;
   explorer?: unknown;
   layout?: unknown;
+  agentView?: unknown;
   settingsView?: unknown;
 };
 

@@ -310,7 +310,7 @@ describe("exempt paths", () => {
 describe("WebSocket upgrade auth", () => {
   test("authenticateUpgradeRequest rejects without token", async () => {
     const http = await import("node:http");
-    const mockRequest = new http.IncomingMessage(null as any);
+    const mockRequest = new http.IncomingMessage(undefined as unknown as import("node:stream").Readable);
     mockRequest.headers = {
       host: "localhost:9100",
       "x-forwarded-for": nextUniqueIp(),

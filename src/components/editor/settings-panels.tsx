@@ -1069,6 +1069,18 @@ export function AgentsSettingsPanel() {
           }
         />
         <SettingsRow
+          title="Tool details in chat stream"
+          description="When on, file edit diffs and command permission prompts appear as separate blocks in the main chat. When off, they stay inside the worked-session tool dropdown (default)."
+          trailing={
+            <ToggleSwitch
+              checked={agents.inlineToolDetailsInChat}
+              onChange={(v) => patchAgents({ inlineToolDetailsInChat: v })}
+              size="md"
+              variant="green"
+            />
+          }
+        />
+        <SettingsRow
           title="Collapse Auto-Run Commands"
           description="Collapse auto-run command output by default in Terminal command previews."
           trailing={

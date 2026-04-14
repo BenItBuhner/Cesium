@@ -57,6 +57,7 @@ export type ExpandedComposerController = {
   backendId: AgentBackendId;
   backends: AgentBackendInfo[];
   onBackendChange: (backendId: AgentBackendId) => void;
+  onRequestHandoff?: (backendId: AgentBackendId) => void;
   models: ModelInfo[];
   modeOptions?: AgentModeOption[];
   sessionConfigOptions?: AgentConfigOption[];
