@@ -11,6 +11,8 @@ import {
   type ReactNode,
 } from "react";
 import type { TextSelection } from "@/components/input/text-buffer";
+import { useWorkbenchNotifications } from "@/components/notifications/WorkbenchNotificationProvider";
+import { WORKBENCH_NOTIFICATION_KIND } from "@/components/notifications/workbench-notification-types";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import type {
   AgentBackendId,
@@ -20,11 +22,14 @@ import type {
 import type {
   AgentModeOption,
   ChatMessage,
+  DesignPromptSelection,
   EditorMode,
   ExplorerOpenRequest,
   ImageAttachment,
+  ImageAttachmentState,
   ModelInfo,
 } from "@/lib/types";
+import { uploadAttachments } from "@/lib/server-api";
 
 export type OpenTranscriptPayload = {
   title: string;
@@ -47,6 +52,11 @@ export type OpenAgentConversationPayload = {
 
 export type ComposerDraftRecord = OpenComposerDraftPayload;
 
+export type ComposerDraftAssets = {
+  attachments: ImageAttachmentState[];
+  designSelections: DesignPromptSelection[];
+};
+
 export type ExpandedComposerController = {
   draftId: string;
   title: string;
@@ -62,7 +72,11 @@ export type ExpandedComposerController = {
   modeOptions?: AgentModeOption[];
   sessionConfigOptions?: AgentConfigOption[];
   onSessionConfigOptionChange?: (configId: string, value: string) => void;
-  onSubmit: (text: string, attachments?: ImageAttachment[]) => Promise<boolean | void> | boolean | void;
+  onSubmit: (
+    text: string,
+    attachments?: ImageAttachment[],
+    designSelections?: DesignPromptSelection[]
+  ) => Promise<boolean | void> | boolean | void;
   onCancel?: () => Promise<void> | void;
   busy?: boolean;
   configLocked?: boolean;
@@ -136,6 +150,85 @@ function writePersistedComposerState(
   }
 }
 
+const MAX_COMPOSER_IMAGES = 10;
+const MAX_FILE_SIZE = 10 * 1024 * 1024;
+const SLOW_UPLOAD_THRESHOLD_MS = 2500;
+
+function createEmptyComposerDraftAssets(): ComposerDraftAssets {
+  return {
+    attachments: [],
+    designSelections: [],
+  };
+}
+
+function createDraftAttachmentState(attachment: ImageAttachment): ImageAttachmentState {
+  return {
+    localId:
+      globalThis.crypto?.randomUUID?.() ??
+      `img-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    mimeType: attachment.mimeType,
+    data: attachment.data,
+    name: attachment.name,
+    uploadState: "uploaded",
+    showSlowSpinner: false,
+  };
+}
+
+function attachmentStatesEqual(
+  left: ImageAttachmentState[],
+  right: ImageAttachmentState[]
+): boolean {
+  if (left === right) {
+    return true;
+  }
+  if (left.length !== right.length) {
+    return false;
+  }
+  return left.every((entry, index) => {
+    const candidate = right[index];
+    return (
+      entry.localId === candidate?.localId &&
+      entry.mimeType === candidate?.mimeType &&
+      entry.data === candidate?.data &&
+      entry.name === candidate?.name &&
+      entry.uploadState === candidate?.uploadState &&
+      entry.serverId === candidate?.serverId &&
+      entry.error === candidate?.error &&
+      entry.showSlowSpinner === candidate?.showSlowSpinner
+    );
+  });
+}
+
+function designSelectionsEqual(
+  left: DesignPromptSelection[],
+  right: DesignPromptSelection[]
+): boolean {
+  if (left === right) {
+    return true;
+  }
+  if (left.length !== right.length) {
+    return false;
+  }
+  return left.every((entry, index) => {
+    const candidate = right[index];
+    return (
+      entry.id === candidate?.id &&
+      entry.label === candidate?.label &&
+      entry.selector === candidate?.selector &&
+      entry.targetUrl === candidate?.targetUrl &&
+      entry.html === candidate?.html &&
+      entry.css === candidate?.css &&
+      entry.javascript === candidate?.javascript
+    );
+  });
+}
+
+function normalizeDraftAttachments(
+  attachments: ImageAttachment[] | undefined
+): ImageAttachmentState[] {
+  return (attachments ?? []).map(createDraftAttachmentState);
+}
+
 type TranscriptHandler = (payload: OpenTranscriptPayload) => void;
 type ComposerDraftHandler = (payload: OpenComposerDraftPayload) => void;
 type AgentConversationHandler = (payload: OpenAgentConversationPayload) => void;
@@ -153,11 +246,36 @@ type Ctx = {
   registerOpenExplorerFile: (handler: ExplorerHandler | null) => void;
   openExplorerFile: (payload: ExplorerOpenRequest) => void;
   composerDrafts: Record<string, ComposerDraftRecord>;
+  composerDraftAssetsById: Record<string, ComposerDraftAssets>;
   composerSelections: Record<string, TextSelection>;
   upsertComposerDraft: (
     draftId: string,
     patch: Partial<ComposerDraftRecord> & Pick<ComposerDraftRecord, "content">
   ) => void;
+  registerComposerSurface: (draftId: string) => () => void;
+  markComposerDraftPreferred: (draftId: string) => void;
+  preferredComposerDraftId: string | null;
+  addFilesToComposerDraft: (draftId: string, files: File[]) => void;
+  appendSerializedAssetsToComposerDraft: (input: {
+    draftId: string;
+    attachments?: ImageAttachment[];
+    designSelections?: DesignPromptSelection[];
+  }) => void;
+  appendToPreferredComposer: (input: {
+    files?: File[];
+    designSelections?: DesignPromptSelection[];
+  }) => string | null;
+  removeComposerDraftAttachment: (draftId: string, localId: string) => void;
+  retryComposerDraftAttachment: (draftId: string, localId: string) => void;
+  appendDesignSelectionsToComposerDraft: (
+    draftId: string,
+    selections: DesignPromptSelection[]
+  ) => void;
+  removeDesignSelectionFromComposerDraft: (
+    draftId: string,
+    selectionId: string
+  ) => void;
+  clearComposerDraftAssets: (draftId: string) => void;
   setComposerSelection: (draftId: string, selection: TextSelection) => void;
   expandedComposerDraftId: string | null;
   setExpandedComposerDraft: (draftId: string | null) => void;
@@ -173,6 +291,7 @@ const OpenInEditorContext = createContext<Ctx | null>(null);
 
 export function OpenInEditorProvider({ children }: { children: ReactNode }) {
   const { activeWorkspaceId } = useWorkspace();
+  const { pushNotification } = useWorkbenchNotifications();
   const handlerRef = useRef<TranscriptHandler | null>(null);
   const pendingRef = useRef<OpenTranscriptPayload | null>(null);
   const composerHandlerRef = useRef<ComposerDraftHandler | null>(null);
@@ -181,10 +300,18 @@ export function OpenInEditorProvider({ children }: { children: ReactNode }) {
   const pendingConversationRef = useRef<OpenAgentConversationPayload | null>(null);
   const explorerRef = useRef<ExplorerHandler | null>(null);
   const pendingExplorerRef = useRef<ExplorerOpenRequest | null>(null);
+  const mountedComposerDraftIdsRef = useRef<string[]>([]);
+  const imageFilesRef = useRef<Map<string, File>>(new Map());
   const [composerDrafts, setComposerDrafts] = useState<Record<string, ComposerDraftRecord>>({});
+  const [composerDraftAssetsById, setComposerDraftAssetsById] = useState<
+    Record<string, ComposerDraftAssets>
+  >({});
   const [composerSelections, setComposerSelections] = useState<
     Record<string, TextSelection>
   >({});
+  const [preferredComposerDraftId, setPreferredComposerDraftId] = useState<string | null>(
+    null
+  );
   const [expandedComposerDraftId, setExpandedComposerDraftId] = useState<string | null>(
     null
   );
@@ -229,7 +356,7 @@ export function OpenInEditorProvider({ children }: { children: ReactNode }) {
           draftId,
           title: patch.title ?? existing?.title ?? "Composer",
           content: patch.content,
-          attachments: patch.attachments,
+          attachments: patch.attachments ?? existing?.attachments,
         };
         if (
           existing &&
@@ -281,6 +408,338 @@ export function OpenInEditorProvider({ children }: { children: ReactNode }) {
     []
   );
 
+  const updateComposerDraftAssets = useCallback(
+    (
+      draftId: string,
+      updater: (current: ComposerDraftAssets) => ComposerDraftAssets
+    ) => {
+      setComposerDraftAssetsById((current) => {
+        const existing = current[draftId] ?? createEmptyComposerDraftAssets();
+        const next = updater(existing);
+        if (
+          attachmentStatesEqual(existing.attachments, next.attachments) &&
+          designSelectionsEqual(existing.designSelections, next.designSelections)
+        ) {
+          return current;
+        }
+        if (next.attachments.length === 0 && next.designSelections.length === 0) {
+          if (!(draftId in current)) {
+            return current;
+          }
+          const reduced = { ...current };
+          delete reduced[draftId];
+          return reduced;
+        }
+        return {
+          ...current,
+          [draftId]: next,
+        };
+      });
+    },
+    []
+  );
+
+  const registerComposerSurface = useCallback((draftId: string) => {
+    mountedComposerDraftIdsRef.current = [
+      ...mountedComposerDraftIdsRef.current.filter((candidate) => candidate !== draftId),
+      draftId,
+    ];
+    setPreferredComposerDraftId((current) => current ?? draftId);
+    return () => {
+      mountedComposerDraftIdsRef.current = mountedComposerDraftIdsRef.current.filter(
+        (candidate) => candidate !== draftId
+      );
+      setPreferredComposerDraftId((current) => {
+        if (current !== draftId) {
+          return current;
+        }
+        return mountedComposerDraftIdsRef.current.at(-1) ?? null;
+      });
+    };
+  }, []);
+
+  const markComposerDraftPreferred = useCallback((draftId: string) => {
+    mountedComposerDraftIdsRef.current = [
+      ...mountedComposerDraftIdsRef.current.filter((candidate) => candidate !== draftId),
+      draftId,
+    ];
+    setPreferredComposerDraftId((current) => (current === draftId ? current : draftId));
+  }, []);
+
+  const appendDesignSelectionsToComposerDraft = useCallback(
+    (draftId: string, selections: DesignPromptSelection[]) => {
+      if (selections.length === 0) {
+        return;
+      }
+      updateComposerDraftAssets(draftId, (current) => {
+        const existingIds = new Set(current.designSelections.map((selection) => selection.id));
+        const nextSelections = [
+          ...current.designSelections,
+          ...selections.filter((selection) => !existingIds.has(selection.id)),
+        ];
+        return {
+          ...current,
+          designSelections: nextSelections,
+        };
+      });
+    },
+    [updateComposerDraftAssets]
+  );
+
+  const removeDesignSelectionFromComposerDraft = useCallback(
+    (draftId: string, selectionId: string) => {
+      updateComposerDraftAssets(draftId, (current) => ({
+        ...current,
+        designSelections: current.designSelections.filter(
+          (selection) => selection.id !== selectionId
+        ),
+      }));
+    },
+    [updateComposerDraftAssets]
+  );
+
+  const removeComposerDraftAttachment = useCallback(
+    (draftId: string, localId: string) => {
+      updateComposerDraftAssets(draftId, (current) => ({
+        ...current,
+        attachments: current.attachments.filter((attachment) => attachment.localId !== localId),
+      }));
+      imageFilesRef.current.delete(`${draftId}:${localId}`);
+    },
+    [updateComposerDraftAssets]
+  );
+
+  const appendSerializedAssetsToComposerDraft = useCallback(
+    ({
+      draftId,
+      attachments,
+      designSelections,
+    }: {
+      draftId: string;
+      attachments?: ImageAttachment[];
+      designSelections?: DesignPromptSelection[];
+    }) => {
+      updateComposerDraftAssets(draftId, (current) => ({
+        attachments: [...current.attachments, ...normalizeDraftAttachments(attachments)],
+        designSelections: [
+          ...current.designSelections,
+          ...(designSelections ?? []).filter(
+            (selection) =>
+              !current.designSelections.some((existing) => existing.id === selection.id)
+          ),
+        ],
+      }));
+    },
+    [updateComposerDraftAssets]
+  );
+
+  const addFilesToComposerDraft = useCallback(
+    (draftId: string, files: File[]) => {
+      const imageFiles = files.filter((file) => file.type.startsWith("image/"));
+      if (imageFiles.length === 0) {
+        return;
+      }
+      let entriesToAdd: Array<{ entry: ImageAttachmentState; file: File }> = [];
+      updateComposerDraftAssets(draftId, (current) => {
+        const maxImages = Math.max(0, MAX_COMPOSER_IMAGES - current.attachments.length);
+        const nextFiles = imageFiles.slice(0, maxImages);
+        const validFiles = nextFiles.filter((file) => {
+          if (file.size > MAX_FILE_SIZE) {
+            pushNotification({
+              kind: WORKBENCH_NOTIFICATION_KIND.editorNotice,
+              severity: "warning",
+              title: "Image too large",
+              message: `${file.name} is ${(file.size / 1024 / 1024).toFixed(1)}MB. Maximum size is 10MB.`,
+              autoDismissMs: 5000,
+            });
+            return false;
+          }
+          return true;
+        });
+        if (validFiles.length === 0) {
+          return current;
+        }
+        entriesToAdd = validFiles.map((file) => ({
+          file,
+          entry: {
+            localId:
+              globalThis.crypto?.randomUUID?.() ??
+              `img-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+            mimeType: file.type,
+            data: "",
+            name: file.name,
+            uploadState: "pending",
+            showSlowSpinner: false,
+          },
+        }));
+        return {
+          ...current,
+          attachments: [
+            ...current.attachments,
+            ...entriesToAdd.map(({ entry }) => entry),
+          ],
+        };
+      });
+      for (const { entry, file } of entriesToAdd) {
+        imageFilesRef.current.set(`${draftId}:${entry.localId}`, file);
+        const slowUploadTimer = window.setTimeout(() => {
+          updateComposerDraftAssets(draftId, (current) => ({
+            ...current,
+            attachments: current.attachments.map((attachment) =>
+              attachment.localId === entry.localId
+                ? { ...attachment, showSlowSpinner: true }
+                : attachment
+            ),
+          }));
+        }, SLOW_UPLOAD_THRESHOLD_MS);
+        const reader = new FileReader();
+        reader.onload = () => {
+          const base64 = (reader.result as string).split(",")[1] ?? "";
+          updateComposerDraftAssets(draftId, (current) => ({
+            ...current,
+            attachments: current.attachments.map((attachment) =>
+              attachment.localId === entry.localId
+                ? { ...attachment, data: base64, uploadState: "uploading" }
+                : attachment
+            ),
+          }));
+          uploadAttachments([file])
+            .then((results) => {
+              clearTimeout(slowUploadTimer);
+              updateComposerDraftAssets(draftId, (current) => ({
+                ...current,
+                attachments: current.attachments.map((attachment) =>
+                  attachment.localId === entry.localId
+                    ? {
+                        ...attachment,
+                        uploadState: "uploaded",
+                        serverId: results[0]?.id,
+                        showSlowSpinner: false,
+                      }
+                    : attachment
+                ),
+              }));
+            })
+            .catch(() => {
+              clearTimeout(slowUploadTimer);
+              updateComposerDraftAssets(draftId, (current) => ({
+                ...current,
+                attachments: current.attachments.map((attachment) =>
+                  attachment.localId === entry.localId
+                    ? {
+                        ...attachment,
+                        uploadState: "failed",
+                        showSlowSpinner: false,
+                      }
+                    : attachment
+                ),
+              }));
+            });
+        };
+        reader.readAsDataURL(file);
+      }
+    },
+    [pushNotification, updateComposerDraftAssets]
+  );
+
+  const retryComposerDraftAttachment = useCallback(
+    (draftId: string, localId: string) => {
+      const file = imageFilesRef.current.get(`${draftId}:${localId}`);
+      if (!file) {
+        return;
+      }
+      const slowUploadTimer = window.setTimeout(() => {
+        updateComposerDraftAssets(draftId, (current) => ({
+          ...current,
+          attachments: current.attachments.map((attachment) =>
+            attachment.localId === localId
+              ? { ...attachment, showSlowSpinner: true }
+              : attachment
+          ),
+        }));
+      }, SLOW_UPLOAD_THRESHOLD_MS);
+      updateComposerDraftAssets(draftId, (current) => ({
+        ...current,
+        attachments: current.attachments.map((attachment) =>
+          attachment.localId === localId
+            ? { ...attachment, uploadState: "uploading", showSlowSpinner: false }
+            : attachment
+        ),
+      }));
+      uploadAttachments([file])
+        .then((results) => {
+          clearTimeout(slowUploadTimer);
+          updateComposerDraftAssets(draftId, (current) => ({
+            ...current,
+            attachments: current.attachments.map((attachment) =>
+              attachment.localId === localId
+                ? {
+                    ...attachment,
+                    uploadState: "uploaded",
+                    serverId: results[0]?.id,
+                    showSlowSpinner: false,
+                  }
+                : attachment
+            ),
+          }));
+        })
+        .catch(() => {
+          clearTimeout(slowUploadTimer);
+          updateComposerDraftAssets(draftId, (current) => ({
+            ...current,
+            attachments: current.attachments.map((attachment) =>
+              attachment.localId === localId
+                ? {
+                    ...attachment,
+                    uploadState: "failed",
+                    showSlowSpinner: false,
+                  }
+                : attachment
+            ),
+          }));
+        });
+    },
+    [updateComposerDraftAssets]
+  );
+
+  const clearComposerDraftAssets = useCallback((draftId: string) => {
+    updateComposerDraftAssets(draftId, () => createEmptyComposerDraftAssets());
+  }, [updateComposerDraftAssets]);
+
+  const appendToPreferredComposer = useCallback(
+    ({
+      files,
+      designSelections,
+    }: {
+      files?: File[];
+      designSelections?: DesignPromptSelection[];
+    }) => {
+      const draftId =
+        expandedComposerDraftId ??
+        preferredComposerDraftId ??
+        mountedComposerDraftIdsRef.current.at(-1) ??
+        null;
+      if (!draftId) {
+        return null;
+      }
+      markComposerDraftPreferred(draftId);
+      if (files && files.length > 0) {
+        addFilesToComposerDraft(draftId, files);
+      }
+      if (designSelections && designSelections.length > 0) {
+        appendDesignSelectionsToComposerDraft(draftId, designSelections);
+      }
+      return draftId;
+    },
+    [
+      addFilesToComposerDraft,
+      appendDesignSelectionsToComposerDraft,
+      expandedComposerDraftId,
+      markComposerDraftPreferred,
+      preferredComposerDraftId,
+    ]
+  );
+
   const openComposerDraft = useCallback(
     (payload: OpenComposerDraftPayload) => {
       upsertComposerDraft(payload.draftId, payload);
@@ -319,16 +778,24 @@ export function OpenInEditorProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!activeWorkspaceId) {
       setComposerDrafts({});
+      setComposerDraftAssetsById({});
       setComposerSelections({});
+      setPreferredComposerDraftId(null);
       setExpandedComposerDraftId(null);
       setExpandedComposerControllerState(null);
+      mountedComposerDraftIdsRef.current = [];
+      imageFilesRef.current.clear();
       return;
     }
     const persisted = readPersistedComposerState(activeWorkspaceId);
     setComposerDrafts(persisted?.drafts ?? {});
+    setComposerDraftAssetsById({});
     setComposerSelections(persisted?.selections ?? {});
+    setPreferredComposerDraftId(null);
     setExpandedComposerDraftId(persisted?.expandedDraftId ?? null);
     setExpandedComposerControllerState(null);
+    mountedComposerDraftIdsRef.current = [];
+    imageFilesRef.current.clear();
   }, [activeWorkspaceId]);
 
   useEffect(() => {
@@ -377,8 +844,20 @@ export function OpenInEditorProvider({ children }: { children: ReactNode }) {
       registerOpenExplorerFile,
       openExplorerFile,
       composerDrafts,
+      composerDraftAssetsById,
       composerSelections,
       upsertComposerDraft,
+      registerComposerSurface,
+      markComposerDraftPreferred,
+      preferredComposerDraftId,
+      addFilesToComposerDraft,
+      appendSerializedAssetsToComposerDraft,
+      appendToPreferredComposer,
+      removeComposerDraftAttachment,
+      retryComposerDraftAttachment,
+      appendDesignSelectionsToComposerDraft,
+      removeDesignSelectionFromComposerDraft,
+      clearComposerDraftAssets,
       setComposerSelection,
       expandedComposerDraftId,
       setExpandedComposerDraft,
@@ -397,8 +876,20 @@ export function OpenInEditorProvider({ children }: { children: ReactNode }) {
       registerOpenExplorerFile,
       openExplorerFile,
       composerDrafts,
+      composerDraftAssetsById,
       composerSelections,
       upsertComposerDraft,
+      registerComposerSurface,
+      markComposerDraftPreferred,
+      preferredComposerDraftId,
+      addFilesToComposerDraft,
+      appendSerializedAssetsToComposerDraft,
+      appendToPreferredComposer,
+      removeComposerDraftAttachment,
+      retryComposerDraftAttachment,
+      appendDesignSelectionsToComposerDraft,
+      removeDesignSelectionFromComposerDraft,
+      clearComposerDraftAssets,
       setComposerSelection,
       expandedComposerDraftId,
       setExpandedComposerDraft,

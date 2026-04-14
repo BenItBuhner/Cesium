@@ -1,12 +1,18 @@
 import { useEffect, useRef, useState } from "react";
 import { AtSign, CornerUpLeft, LayoutTemplate } from "lucide-react";
-import type { ImageAttachment, UserMessageSegment } from "@/lib/types";
+import type {
+  DesignPromptSelection,
+  ImageAttachment,
+  UserMessageSegment,
+} from "@/lib/types";
 import { ImageCarousel } from "./ImageCarousel";
+import { DesignSelectionChips } from "./DesignSelectionChips";
 
 interface UserMessageProps {
   content?: string;
   segments?: UserMessageSegment[];
   attachments?: ImageAttachment[];
+  designSelections?: DesignPromptSelection[];
   showReplyCue?: boolean;
   highlight?: boolean;
 }
@@ -15,6 +21,7 @@ export function UserMessage({
   content,
   segments,
   attachments,
+  designSelections,
   showReplyCue,
   highlight,
 }: UserMessageProps) {
@@ -103,6 +110,12 @@ export function UserMessage({
           <div className="pointer-events-none absolute inset-x-0 bottom-0 h-[34px] bg-gradient-to-b from-transparent to-[var(--bg-card)]" />
         ) : null}
       </div>
+
+      {designSelections && designSelections.length > 0 ? (
+        <div className={`${overflowing ? "mt-[4px]" : "mt-[10px]"}`}>
+          <DesignSelectionChips items={designSelections} />
+        </div>
+      ) : null}
 
       {overflowing ? (
         <button

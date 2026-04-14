@@ -174,6 +174,7 @@ export function MessageThreadContent({
               content={msg.content}
               segments={msg.segments}
               attachments={msg.attachments}
+              designSelections={msg.designSelections}
               showReplyCue={msg.showReplyCue}
               highlight={msg.isHandoffMessage}
             />
@@ -204,6 +205,7 @@ export function MessageThreadContent({
             content={msg.content}
             segments={msg.segments}
             attachments={msg.attachments}
+            designSelections={msg.designSelections}
             showReplyCue={msg.showReplyCue}
             highlight={msg.isHandoffMessage}
           />

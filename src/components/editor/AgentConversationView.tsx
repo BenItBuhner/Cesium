@@ -12,7 +12,12 @@ import { projectAgentEventsToChatMessages } from "@/lib/agent-chat";
 import { askStepsFromMessage } from "@/lib/ask-question-utils";
 import { useAgentConversations } from "@/components/chat/AgentConversationsContext";
 import type { AgentBackendId } from "@/lib/agent-types";
-import type { EditorMode, ImageAttachment, QueuedChatPrompt } from "@/lib/types";
+import type {
+  DesignPromptSelection,
+  EditorMode,
+  ImageAttachment,
+  QueuedChatPrompt,
+} from "@/lib/types";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import {
   EDITOR_CHAT_CONTENT_CLASS,
@@ -275,6 +280,7 @@ export function AgentConversationView({
     <div className={EDITOR_CHAT_CONTENT_CLASS}>
       <ChatComposer
         key={composerDraftId}
+        draftId={composerDraftId}
         mode={composerState.mode}
         onModeChange={(next) => void setConversationMode(conversationId, next as EditorMode)}
         model={composerState.model}
@@ -307,8 +313,12 @@ export function AgentConversationView({
         }}
         busy={composerState.busy}
         configLocked={false}
-        onSubmit={(text, attachments?: ImageAttachment[]) => {
-          void promptConversation(conversationId, text, attachments).then((ok) => {
+        onSubmit={(
+          text,
+          attachments?: ImageAttachment[],
+          designSelections?: DesignPromptSelection[]
+        ) => {
+          void promptConversation(conversationId, text, attachments, designSelections).then((ok) => {
             if (!ok) {
               return;
             }

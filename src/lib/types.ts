@@ -76,9 +76,19 @@ export type ImageAttachmentState = {
   showSlowSpinner?: boolean;
 };
 
+export type DesignPromptSelection = {
+  id: string;
+  label: string;
+  selector?: string;
+  targetUrl?: string;
+  html: string;
+  css?: string;
+  javascript?: string;
+};
+
 /** Inline user bubble: plain text runs and file/context chips. */
 export interface UserMessageSegment {
-  type: "text" | "file" | "context" | "image";
+  type: "text" | "file" | "context" | "image" | "design";
   text: string;
   mimeType?: string;
   data?: string;
@@ -120,6 +130,8 @@ export interface ChatMessage {
   segments?: UserMessageSegment[];
   /** Image attachments for user messages. */
   attachments?: ImageAttachment[];
+  /** Structured browser design selections attached to the user turn. */
+  designSelections?: DesignPromptSelection[];
   /** Small reply/undo affordance in the user bubble corner. */
   showReplyCue?: boolean;
   todos?: TodoItem[];
@@ -294,6 +306,7 @@ export type QueuedChatPrompt = {
   id: string;
   text: string;
   attachments?: ImageAttachment[];
+  designSelections?: DesignPromptSelection[];
 };
 
 export interface ChatTab {

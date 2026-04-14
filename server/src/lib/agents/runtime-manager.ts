@@ -33,6 +33,7 @@ import type {
   AgentConversationRecord,
   AgentConversationSnapshot,
   AgentConversationSnapshotHead,
+  DesignPromptSelection,
   AgentEventInput,
   AgentProvider,
   AgentStoredEvent,
@@ -123,11 +124,8 @@ function buildPromptTextWithHandoffContext(input: {
   transcript: string;
   fromAgent: string;
   toAgent: string;
-  userText: string;
-  hasAttachments: boolean;
+  currentUserMessage: string;
 }): string {
-  const trimmedUserText = input.userText.trim();
-  const nextTurn = trimmedUserText || (input.hasAttachments ? "[User attached images without text.]" : "");
   return [
     `You are continuing a conversation that is being transferred from ${input.fromAgent} to ${input.toAgent}.`,
     "The transcript below is part of the current prompt. Treat it as authoritative context that the user has provided right now.",
@@ -138,7 +136,7 @@ function buildPromptTextWithHandoffContext(input: {
     "</transferred_conversation>",
     "",
     "<current_user_message>",
-    nextTurn,
+    input.currentUserMessage,
     "</current_user_message>",
     "",
     "Reply to the current user message directly.",
@@ -179,6 +177,77 @@ function truncateConversationTitle(text: string): string {
     return "New chat";
   }
   return normalized.length > 44 ? `${normalized.slice(0, 41)}...` : normalized;
+}
+
+function summarizePromptForTitle(input: {
+  text: string;
+  attachments?: Array<{ mimeType: string; data: string; name?: string }>;
+  designSelections?: DesignPromptSelection[];
+}): string {
+  const trimmed = input.text.trim();
+  if (trimmed) {
+    return trimmed;
+  }
+  const designLabel = input.designSelections?.[0]?.label?.trim();
+  if (designLabel) {
+    return `Design: ${designLabel}`;
+  }
+  if ((input.attachments?.length ?? 0) > 1) {
+    return `${input.attachments!.length} image attachments`;
+  }
+  if (input.attachments?.length) {
+    return input.attachments[0]?.name?.trim() || "Image attachment";
+  }
+  return "New chat";
+}
+
+function formatDesignSelectionBlock(
+  selection: DesignPromptSelection,
+  index: number
+): string {
+  return [
+    `<design_selection_${index + 1}>`,
+    `Label: ${selection.label}`,
+    selection.targetUrl ? `Target URL: ${selection.targetUrl}` : null,
+    selection.selector ? `Selector: ${selection.selector}` : null,
+    "HTML:",
+    selection.html.trim() || "<empty>",
+    selection.css?.trim() ? `CSS:\n${selection.css.trim()}` : null,
+    selection.javascript?.trim()
+      ? `JavaScript:\n${selection.javascript.trim()}`
+      : null,
+    `</design_selection_${index + 1}>`,
+  ]
+    .filter((line): line is string => Boolean(line))
+    .join("\n");
+}
+
+function buildRuntimePromptText(input: {
+  text: string;
+  attachments?: Array<{ mimeType: string; data: string; name?: string }>;
+  designSelections?: DesignPromptSelection[];
+}): string {
+  const parts: string[] = [];
+  const trimmed = input.text.trim();
+  if (trimmed) {
+    parts.push(trimmed);
+  }
+  if (input.designSelections?.length) {
+    parts.push(
+      [
+        `The user selected ${input.designSelections.length} design element${input.designSelections.length === 1 ? "" : "s"}.`,
+        "Use the following HTML/CSS/JavaScript snippets together with any attached images as the primary design context.",
+        "",
+        input.designSelections
+          .map((selection, index) => formatDesignSelectionBlock(selection, index))
+          .join("\n\n"),
+      ].join("\n")
+    );
+  }
+  if (parts.length === 0 && input.attachments?.length) {
+    parts.push("[User attached images without text.]");
+  }
+  return parts.join("\n\n").trim();
 }
 
 export class AgentRuntimeManager {
@@ -525,11 +594,16 @@ export class AgentRuntimeManager {
     workspace: WorkspaceRecord,
     conversationId: string,
     text: string,
-    attachments?: Array<{ mimeType: string; data: string; name?: string }>
+    attachments?: Array<{ mimeType: string; data: string; name?: string }>,
+    designSelections?: DesignPromptSelection[]
   ): Promise<AgentConversationSnapshotHead> {
     const trimmed = text.trim();
-    if (!trimmed && (!attachments || attachments.length === 0)) {
-      throw new Error("Prompt text or attachments are required.");
+    if (
+      !trimmed &&
+      (!attachments || attachments.length === 0) &&
+      (!designSelections || designSelections.length === 0)
+    ) {
+      throw new Error("Prompt text, design selections, or attachments are required.");
     }
 
     let record = await readConversationRecord(workspace.id, conversationId);
@@ -543,7 +617,13 @@ export class AgentRuntimeManager {
     if (record.title === "New chat" || record.lastEventSeq === 0) {
       record = await updateConversationRecord(workspace.id, conversationId, {
         ...record,
-        title: truncateConversationTitle(trimmed),
+        title: truncateConversationTitle(
+          summarizePromptForTitle({
+            text: trimmed,
+            attachments,
+            designSelections,
+          })
+        ),
       });
     }
 
@@ -553,13 +633,17 @@ export class AgentRuntimeManager {
             (await readConversationSnapshot(workspace.id, conversationId))?.events ?? []
           )
         : null;
+    const currentUserMessage = buildRuntimePromptText({
+      text: trimmed,
+      attachments,
+      designSelections,
+    });
     const runtimePromptText = pendingHandoffContext
       ? buildPromptTextWithHandoffContext({
           ...pendingHandoffContext,
-          userText: trimmed,
-          hasAttachments: Boolean(attachments?.length),
+          currentUserMessage,
         })
-      : trimmed;
+      : currentUserMessage;
 
     const userMessageId = randomUUID();
     await appendConversationEvents(workspace.id, conversationId, [
@@ -570,6 +654,7 @@ export class AgentRuntimeManager {
         messageId: userMessageId,
         content: trimmed,
         attachments,
+        designSelections,
       },
     ]);
     await updateConversationRecord(workspace.id, conversationId, (current) => ({

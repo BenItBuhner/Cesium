@@ -63,6 +63,7 @@ export function ExpandedComposerView({
     <div className="flex h-full min-h-0 flex-col overflow-hidden bg-[var(--bg-main)]">
       <div className="min-h-0 flex-1">
         <ChatComposer
+          draftId={draftId}
           mode={controller.mode}
           onModeChange={controller.onModeChange}
           model={controller.model}
@@ -85,8 +86,12 @@ export function ExpandedComposerView({
           selection={selection}
           onSelectionChange={(next) => setComposerSelection(draftId, next)}
           onCollapseComposer={minimizeComposer}
-          onSubmit={async (text, attachments) => {
-            const submitted = await controller.onSubmit(text, attachments);
+          onSubmit={async (text, attachments, designSelections) => {
+            const submitted = await controller.onSubmit(
+              text,
+              attachments,
+              designSelections
+            );
             if (submitted === false) {
               return;
             }

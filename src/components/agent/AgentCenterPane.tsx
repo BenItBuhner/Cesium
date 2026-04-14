@@ -16,7 +16,12 @@ import {
 } from "@/lib/agent-chat";
 import { DEFAULT_MODE_OPTIONS, resolveCanonicalModeId } from "@/lib/chat-modes";
 import type { AgentBackendId, AgentBackendInfo } from "@/lib/agent-types";
-import type { EditorMode, ImageAttachment, QueuedChatPrompt } from "@/lib/types";
+import type {
+  DesignPromptSelection,
+  EditorMode,
+  ImageAttachment,
+  QueuedChatPrompt,
+} from "@/lib/types";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { AGENT_CENTER_CONTENT_CLASS } from "./agent-shell-layout";
 import { AgentNewChatLanding } from "./AgentNewChatLanding";
@@ -291,7 +296,11 @@ export function AgentCenterPane() {
   );
 
   const handleSubmit = useCallback(
-    async (text: string, attachments?: ImageAttachment[]) => {
+    async (
+      text: string,
+      attachments?: ImageAttachment[],
+      designSelections?: DesignPromptSelection[]
+    ) => {
       let targetConversationId = selectedConversationId;
       if (!targetConversationId) {
         const backend = draftBackend;
@@ -308,7 +317,12 @@ export function AgentCenterPane() {
         setSelectedConversationId(created.id);
         await refreshConversationGroups();
       }
-      const ok = await promptConversation(targetConversationId, text, attachments);
+      const ok = await promptConversation(
+        targetConversationId,
+        text,
+        attachments,
+        designSelections
+      );
       if (!ok) {
         return false;
       }
@@ -543,6 +557,7 @@ export function AgentCenterPane() {
                 <div className={AGENT_CENTER_CONTENT_CLASS}>
                   <ChatComposer
                     key={composerDraftId}
+                    draftId={composerDraftId}
                     mode={composerState?.mode ?? draftMode}
                     onModeChange={(next) => {
                       if (selectedConversationId) {

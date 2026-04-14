@@ -30,7 +30,13 @@ import type {
   AgentSocketServerMessage,
   AgentStoredEvent,
 } from "@/lib/agent-types";
-import type { AgentModeOption, EditorMode, ImageAttachment, ModelInfo } from "@/lib/types";
+import type {
+  AgentModeOption,
+  DesignPromptSelection,
+  EditorMode,
+  ImageAttachment,
+  ModelInfo,
+} from "@/lib/types";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { nextUnreadCompletionMap } from "@/lib/chat-unread-completion";
 import {
@@ -160,7 +166,12 @@ type AgentConversationsContextValue = {
     configId: string,
     value: string
   ) => Promise<void>;
-  promptConversation: (conversationId: string, text: string, attachments?: ImageAttachment[]) => Promise<boolean>;
+  promptConversation: (
+    conversationId: string,
+    text: string,
+    attachments?: ImageAttachment[],
+    designSelections?: DesignPromptSelection[]
+  ) => Promise<boolean>;
   cancelConversation: (conversationId: string) => Promise<void>;
   getConversationComposerState: (
     conversationId: string
@@ -685,9 +696,19 @@ export function AgentConversationsProvider({
   );
 
   const executePrompt = useCallback(
-    async (conversationId: string, text: string, attachments?: ImageAttachment[]) => {
+    async (
+      conversationId: string,
+      text: string,
+      attachments?: ImageAttachment[],
+      designSelections?: DesignPromptSelection[]
+    ) => {
       try {
-        const snapshot = await promptAgentConversation(conversationId, text, attachments);
+        const snapshot = await promptAgentConversation(
+          conversationId,
+          text,
+          attachments,
+          designSelections
+        );
         mergeSnapshot(snapshot.snapshot);
         void markWorkspaceActivity(snapshot.snapshot.conversation.workspaceId).catch(
           () => undefined
@@ -726,7 +747,12 @@ export function AgentConversationsProvider({
   executePromptRef.current = executePrompt;
 
   const promptConversation = useCallback(
-    async (conversationId: string, text: string, attachments?: ImageAttachment[]) => {
+    async (
+      conversationId: string,
+      text: string,
+      attachments?: ImageAttachment[],
+      designSelections?: DesignPromptSelection[]
+    ) => {
       const conv = conversationsById[conversationId];
       if (
         conv &&
@@ -742,14 +768,17 @@ export function AgentConversationsProvider({
               ...current.chat,
               queuedPromptsByConversationId: {
                 ...map,
-                [conversationId]: [...prev, { id: entryId, text, attachments }],
+                [conversationId]: [
+                  ...prev,
+                  { id: entryId, text, attachments, designSelections },
+                ],
               },
             },
           };
         });
         return true;
       }
-      return executePrompt(conversationId, text, attachments);
+      return executePrompt(conversationId, text, attachments, designSelections);
     },
     [conversationsById, executePrompt, updateWorkspaceSession]
   );
@@ -795,7 +824,12 @@ export function AgentConversationsProvider({
 
       void (async () => {
         try {
-          await executePromptRef.current(conversationId, head.text, head.attachments);
+          await executePromptRef.current(
+            conversationId,
+            head.text,
+            head.attachments,
+            head.designSelections
+          );
         } finally {
           endQueuedPromptFlush(conversationId);
         }

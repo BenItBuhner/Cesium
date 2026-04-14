@@ -1,4 +1,4 @@
-import type { WorkspaceRecord } from "./types";
+import type { DesignPromptSelection, WorkspaceRecord } from "./types";
 
 export type AgentConversationMode =
   | "agent"
@@ -143,6 +143,7 @@ export type AgentStoredEvent =
       messageId: string;
       content: string;
       attachments?: Array<{ mimeType: string; data: string; name?: string }>;
+      designSelections?: DesignPromptSelection[];
     }
   | {
       seq: number;

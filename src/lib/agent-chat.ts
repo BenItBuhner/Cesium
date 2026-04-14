@@ -2176,6 +2176,7 @@ export function projectAgentEventsToChatMessages(
           segments: parseUserMessageSegments(event.content),
           showReplyCue: true,
           attachments: event.attachments,
+          designSelections: event.designSelections,
         };
         if (
           prev &&

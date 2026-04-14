@@ -52,6 +52,7 @@ import type {
   AgentTabIndicatorByConversationId,
   ChatMessage,
   ChatTab,
+  DesignPromptSelection,
   EditorMode,
   ImageAttachment,
   ModelInfo,
@@ -1859,7 +1860,13 @@ export function ChatPanel() {
   );
 
   const submitPromptForDraft = useCallback(
-    async (draftId: string, text: string, attachments?: ImageAttachment[], options?: { skipQueue?: boolean }) => {
+    async (
+      draftId: string,
+      text: string,
+      attachments?: ImageAttachment[],
+      designSelections?: DesignPromptSelection[],
+      options?: { skipQueue?: boolean }
+    ) => {
       let conversationIdForError = conversationsById[draftId]?.id;
       try {
         const conversation =
@@ -1904,7 +1911,8 @@ export function ChatPanel() {
             const snapshot = await promptAgentConversation(
               handoffResult.newConversationId,
               text,
-              attachments
+              attachments,
+              designSelections
             );
             mergeSnapshot(snapshot.snapshot);
             return true;
@@ -1938,14 +1946,21 @@ export function ChatPanel() {
                 ...current.chat,
                 queuedPromptsByConversationId: {
                   ...map,
-                  [convId]: [...prev, { id: entryId, text, attachments }],
+                  [
+                    convId
+                  ]: [...prev, { id: entryId, text, attachments, designSelections }],
                 },
               },
             };
           });
           return true;
         }
-        const snapshot = await promptAgentConversation(conversation.id, text, attachments);
+        const snapshot = await promptAgentConversation(
+          conversation.id,
+          text,
+          attachments,
+          designSelections
+        );
         mergeSnapshot(snapshot.snapshot);
         return true;
       } catch (error) {
@@ -2036,9 +2051,15 @@ export function ChatPanel() {
 
       void (async () => {
         try {
-          await submitPromptForDraftRef.current(conversationId, head.text, head.attachments, {
-            skipQueue: true,
-          });
+          await submitPromptForDraftRef.current(
+            conversationId,
+            head.text,
+            head.attachments,
+            head.designSelections,
+            {
+              skipQueue: true,
+            }
+          );
         } finally {
           endQueuedPromptFlush(conversationId);
         }
@@ -2094,8 +2115,17 @@ export function ChatPanel() {
       sessionConfigOptions: state.sessionConfigOptions,
       onSessionConfigOptionChange: (configId: string, value: string) =>
         void setSessionConfigOptionForDraft(expandedComposerDraftId, configId, value),
-      onSubmit: (text: string, attachments?: ImageAttachment[]) => {
-        void submitPromptForDraft(expandedComposerDraftId, text, attachments);
+      onSubmit: (
+        text: string,
+        attachments?: ImageAttachment[],
+        designSelections?: DesignPromptSelection[]
+      ) => {
+        void submitPromptForDraft(
+          expandedComposerDraftId,
+          text,
+          attachments,
+          designSelections
+        );
       },
       onCancel: () => cancelPromptForDraft(expandedComposerDraftId),
       busy: state.busy,
@@ -2135,6 +2165,7 @@ export function ChatPanel() {
   const composer = (
     <ChatComposer
       key={composerDraftId}
+      draftId={composerDraftId}
       mode={mode}
       onModeChange={(next) => void setModeForDraft(composerDraftId, next)}
       model={model}
@@ -2167,8 +2198,8 @@ export function ChatPanel() {
       }}
       busy={busy}
       configLocked={configLocked}
-      onSubmit={(text, attachments) => {
-        void submitPromptForDraft(composerDraftId, text, attachments);
+      onSubmit={(text, attachments, designSelections) => {
+        void submitPromptForDraft(composerDraftId, text, attachments, designSelections);
       }}
       onCancel={() => cancelPromptForDraft(composerDraftId)}
             onRequestHandoff={

@@ -51,6 +51,16 @@ export type AgentConfigOption = {
   options: AgentConfigOptionValue[];
 };
 
+export type AgentDesignPromptSelection = {
+  id: string;
+  label: string;
+  selector?: string;
+  targetUrl?: string;
+  html: string;
+  css?: string;
+  javascript?: string;
+};
+
 export type AgentPermissionOptionKind =
   | "allow_once"
   | "allow_always"
@@ -135,6 +145,16 @@ export type AgentPlanEntry = {
   status: "pending" | "in_progress" | "completed";
 };
 
+export type DesignPromptSelection = {
+  id: string;
+  label: string;
+  selector?: string;
+  targetUrl?: string;
+  html: string;
+  css?: string;
+  javascript?: string;
+};
+
 export type AgentStoredEvent =
   | {
       seq: number;
@@ -145,6 +165,7 @@ export type AgentStoredEvent =
       messageId: string;
       content: string;
       attachments?: Array<{ mimeType: string; data: string; name?: string }>;
+      designSelections?: AgentDesignPromptSelection[];
       raw?: unknown;
     }
   | {
@@ -372,6 +393,7 @@ export interface AgentSessionHandle {
     text: string;
     userMessageId: string;
     attachments?: Array<{ mimeType: string; data: string; name?: string }>;
+    designSelections?: AgentDesignPromptSelection[];
   }) => Promise<void>;
   cancel: () => Promise<void>;
   setConfigOption: (configId: string, value: string) => Promise<void>;

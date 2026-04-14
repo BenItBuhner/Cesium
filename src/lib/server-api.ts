@@ -12,6 +12,7 @@ import type {
 } from "@/lib/agent-types";
 import type { WorkspaceSessionState } from "@/lib/workspace-session";
 import type {
+  DesignPromptSelection,
   FileNode,
   ImageAttachment,
   TerminalInfo,
@@ -442,11 +443,12 @@ export async function updateAgentConversationConfig(
 export async function promptAgentConversation(
   conversationId: string,
   text: string,
-  attachments?: ImageAttachment[]
+  attachments?: ImageAttachment[],
+  designSelections?: DesignPromptSelection[]
 ): Promise<AgentConversationSnapshotResponse> {
   return request(`/api/agents/conversations/${encodeURIComponent(conversationId)}/prompt`, {
     method: "POST",
-    body: JSON.stringify({ text, attachments }),
+    body: JSON.stringify({ text, attachments, designSelections }),
   });
 }
 

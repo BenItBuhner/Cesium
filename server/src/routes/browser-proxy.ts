@@ -1,9 +1,15 @@
+import { promises as fs } from "node:fs";
+import { createRequire } from "node:module";
 import { Hono } from "hono";
 import { Agent, fetch as undiciFetch } from "undici";
 import { assertBrowserProxyHostAllowed } from "../lib/browser-proxy-allowlist.js";
 
 const MAX_RESPONSE_BYTES = 20 * 1024 * 1024;
 const UPSTREAM_TIMEOUT_MS = 60_000;
+const require = createRequire(import.meta.url);
+const HTML_TO_IMAGE_BUNDLE_PATH = require.resolve(
+  "html-to-image/dist/html-to-image.js"
+);
 
 /**
  * Direct TCP/TLS to upstream — avoids Node's global `fetch` routing through
@@ -215,10 +221,423 @@ function rewriteHtmlBody(
     }
   });
 
+  const designBridgeScript = `
+<script>
+(() => {
+  if (window.__opencursorDesignBridgeInstalled) return;
+  window.__opencursorDesignBridgeInstalled = true;
+  const htmlToImageUrl = ${JSON.stringify(`${requestOrigin}/browser/assets/html-to-image.js`)};
+  let mode = false;
+  let hovered = null;
+  let overlay = null;
+  let dragState = null;
+  let htmlToImagePromise = null;
+  const selectionColor = "rgba(99, 102, 241, 0.92)";
+  const dragColor = "rgba(236, 72, 153, 0.92)";
+
+  function ensureOverlay() {
+    if (overlay && overlay.isConnected) return overlay;
+    overlay = document.createElement("div");
+    overlay.id = "__opencursor-design-overlay";
+    overlay.style.position = "fixed";
+    overlay.style.pointerEvents = "none";
+    overlay.style.inset = "0";
+    overlay.style.zIndex = "2147483646";
+    overlay.innerHTML =
+      '<div id="__opencursor-hover-box" style="position:absolute;border:2px solid '+selectionColor+';background:rgba(99,102,241,0.12);box-shadow:0 0 0 9999px rgba(15,23,42,0.04);display:none;"></div>' +
+      '<svg id="__opencursor-drag-layer" xmlns="http://www.w3.org/2000/svg" style="position:absolute;inset:0;width:100%;height:100%;overflow:visible;"><path id="__opencursor-drag-path" fill="none" stroke="'+dragColor+'" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" style="display:none;"></path></svg>';
+    document.documentElement.appendChild(overlay);
+    return overlay;
+  }
+
+  function hoverBox() {
+    ensureOverlay();
+    return document.getElementById("__opencursor-hover-box");
+  }
+
+  function dragPath() {
+    ensureOverlay();
+    return document.getElementById("__opencursor-drag-path");
+  }
+
+  function hideHover() {
+    const box = hoverBox();
+    if (box) box.style.display = "none";
+  }
+
+  function hideDrag() {
+    const path = dragPath();
+    if (path) {
+      path.style.display = "none";
+      path.setAttribute("d", "");
+    }
+  }
+
+  function setHoveredElement(element) {
+    hovered = element;
+    if (!mode || !element) {
+      hideHover();
+      return;
+    }
+    const rect = element.getBoundingClientRect();
+    if (rect.width < 1 || rect.height < 1) {
+      hideHover();
+      return;
+    }
+    const box = hoverBox();
+    if (!box) return;
+    box.style.display = "block";
+    box.style.left = rect.left + "px";
+    box.style.top = rect.top + "px";
+    box.style.width = rect.width + "px";
+    box.style.height = rect.height + "px";
+  }
+
+  function pathFromPoints(points) {
+    if (!points.length) return "";
+    return points.map((point, index) => {
+      const prefix = index === 0 ? "M" : "L";
+      return prefix + point.x.toFixed(1) + " " + point.y.toFixed(1);
+    }).join(" ");
+  }
+
+  function cssPath(element) {
+    if (!(element instanceof Element)) return undefined;
+    const parts = [];
+    let current = element;
+    while (current && current.nodeType === Node.ELEMENT_NODE && parts.length < 7) {
+      let selector = current.tagName.toLowerCase();
+      if (current.id) {
+        selector += "#" + CSS.escape(current.id);
+        parts.unshift(selector);
+        break;
+      }
+      const classNames = Array.from(current.classList).slice(0, 2);
+      if (classNames.length) {
+        selector += "." + classNames.map((name) => CSS.escape(name)).join(".");
+      } else if (current.parentElement) {
+        const siblings = Array.from(current.parentElement.children).filter(
+          (candidate) => candidate.tagName === current.tagName
+        );
+        if (siblings.length > 1) {
+          selector += ":nth-of-type(" + (siblings.indexOf(current) + 1) + ")";
+        }
+      }
+      parts.unshift(selector);
+      current = current.parentElement;
+    }
+    return parts.join(" > ");
+  }
+
+  function labelForElement(element) {
+    const tag = element.tagName.toLowerCase();
+    const text = (element.getAttribute("aria-label") || element.getAttribute("alt") || element.textContent || "")
+      .trim()
+      .replace(/\\s+/g, " ")
+      .slice(0, 48);
+    return text ? tag + " - " + text : tag;
+  }
+
+  function collectCssRulesForElement(element) {
+    const collected = [];
+    for (const sheet of Array.from(document.styleSheets)) {
+      let rules;
+      try {
+        rules = sheet.cssRules;
+      } catch {
+        continue;
+      }
+      for (const rule of Array.from(rules)) {
+        if (!(rule instanceof CSSStyleRule)) continue;
+        try {
+          if (element.matches(rule.selectorText)) {
+            collected.push(rule.cssText);
+          }
+        } catch {
+          // ignore invalid selectors for the current element
+        }
+        if (collected.length >= 18) {
+          return collected.join("\\n");
+        }
+      }
+    }
+    return collected.join("\\n");
+  }
+
+  function collectInlineScriptsForElement(element) {
+    const scripts = Array.from(document.querySelectorAll("script"))
+      .filter((script) => !script.src && script.textContent && script.textContent.trim().length > 0)
+      .map((script) => script.textContent.trim())
+      .slice(0, 3);
+    if (scripts.length === 0) return undefined;
+    return scripts.join("\\n\\n");
+  }
+
+  async function ensureHtmlToImage() {
+    if (window.htmlToImage) return window.htmlToImage;
+    if (!htmlToImagePromise) {
+      htmlToImagePromise = new Promise((resolve, reject) => {
+        const script = document.createElement("script");
+        script.src = htmlToImageUrl;
+        script.async = true;
+        script.onload = () => resolve(window.htmlToImage);
+        script.onerror = () => reject(new Error("Failed to load html-to-image bridge."));
+        document.head.appendChild(script);
+      });
+    }
+    return htmlToImagePromise;
+  }
+
+  function dataUrlToBlob(dataUrl) {
+    const parts = dataUrl.split(",");
+    const header = parts[0] || "";
+    const mimeMatch = /data:([^;]+)/.exec(header);
+    const mimeType = mimeMatch ? mimeMatch[1] : "image/png";
+    const bytes = atob(parts[1] || "");
+    const array = new Uint8Array(bytes.length);
+    for (let i = 0; i < bytes.length; i += 1) {
+      array[i] = bytes.charCodeAt(i);
+    }
+    return new Blob([array], { type: mimeType });
+  }
+
+  async function captureNodeDataUrl(node, options) {
+    const lib = await ensureHtmlToImage();
+    return lib.toPng(node, Object.assign({ cacheBust: true, skipFonts: true }, options || {}));
+  }
+
+  async function captureElementPayload(element) {
+    const dataUrl = await captureNodeDataUrl(element, {
+      pixelRatio: Math.min(window.devicePixelRatio || 1, 2),
+      backgroundColor: "rgba(255,255,255,0)"
+    });
+    return {
+      type: "element-selection",
+      label: labelForElement(element),
+      selector: cssPath(element),
+      targetUrl: window.location.href,
+      html: element.outerHTML.slice(0, 12000),
+      css: collectCssRulesForElement(element).slice(0, 12000),
+      javascript: collectInlineScriptsForElement(element)?.slice(0, 12000),
+      imageDataUrl: dataUrl,
+    };
+  }
+
+  function circleBounds(points) {
+    let minX = Number.POSITIVE_INFINITY;
+    let minY = Number.POSITIVE_INFINITY;
+    let maxX = Number.NEGATIVE_INFINITY;
+    let maxY = Number.NEGATIVE_INFINITY;
+    for (const point of points) {
+      minX = Math.min(minX, point.x);
+      minY = Math.min(minY, point.y);
+      maxX = Math.max(maxX, point.x);
+      maxY = Math.max(maxY, point.y);
+    }
+    return { minX, minY, maxX, maxY };
+  }
+
+  async function captureCirclePayload(points) {
+    const bounds = circleBounds(points);
+    const padding = 16;
+    const left = Math.max(0, Math.floor(bounds.minX - padding));
+    const top = Math.max(0, Math.floor(bounds.minY - padding));
+    const width = Math.max(32, Math.ceil(bounds.maxX - bounds.minX + padding * 2));
+    const height = Math.max(32, Math.ceil(bounds.maxY - bounds.minY + padding * 2));
+    const root = document.documentElement;
+    const dataUrl = await captureNodeDataUrl(root, {
+      width: root.clientWidth,
+      height: root.clientHeight,
+      canvasWidth: root.clientWidth,
+      canvasHeight: root.clientHeight,
+      pixelRatio: 1,
+      style: {
+        transform: "translate(" + (-window.scrollX) + "px," + (-window.scrollY) + "px)",
+        transformOrigin: "top left",
+      },
+      filter: (node) => !(node.id && node.id.startsWith("__opencursor-design-overlay")),
+    });
+    const img = await new Promise((resolve, reject) => {
+      const image = new Image();
+      image.onload = () => resolve(image);
+      image.onerror = reject;
+      image.src = dataUrl;
+    });
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext("2d");
+    context.drawImage(img, left, top, width, height, 0, 0, width, height);
+    context.strokeStyle = dragColor;
+    context.lineWidth = 4;
+    context.lineJoin = "round";
+    context.lineCap = "round";
+    context.beginPath();
+    points.forEach((point, index) => {
+      const x = point.x - left;
+      const y = point.y - top;
+      if (index === 0) {
+        context.moveTo(x, y);
+      } else {
+        context.lineTo(x, y);
+      }
+    });
+    context.stroke();
+    return {
+      type: "circle-selection",
+      label: "Circled region",
+      targetUrl: window.location.href,
+      imageDataUrl: canvas.toDataURL("image/png"),
+    };
+  }
+
+  function postPayload(payload) {
+    window.parent.postMessage(
+      {
+        source: "opencursor-browser-design",
+        payload,
+      },
+      "*"
+    );
+  }
+
+  async function handleClickSelection() {
+    if (!hovered) return;
+    try {
+      postPayload(await captureElementPayload(hovered));
+    } catch (error) {
+      postPayload({
+        type: "selection-error",
+        message: error instanceof Error ? error.message : "Failed to capture selected element.",
+      });
+    }
+  }
+
+  async function finishDragSelection() {
+    if (!dragState || dragState.points.length < 3) {
+      dragState = null;
+      hideDrag();
+      return false;
+    }
+    const points = dragState.points.slice();
+    dragState = null;
+    hideDrag();
+    try {
+      postPayload(await captureCirclePayload(points));
+    } catch (error) {
+      postPayload({
+        type: "selection-error",
+        message: error instanceof Error ? error.message : "Failed to capture circled region.",
+      });
+    }
+    return true;
+  }
+
+  function onPointerMove(event) {
+    if (!mode) return;
+    if (dragState) {
+      dragState.points.push({ x: event.clientX, y: event.clientY });
+      const path = dragPath();
+      if (path) {
+        path.style.display = "block";
+        path.setAttribute("d", pathFromPoints(dragState.points));
+      }
+      return;
+    }
+    const target = document.elementFromPoint(event.clientX, event.clientY);
+    const element = target instanceof Element ? target.closest("body *") : null;
+    if (!element || element.id === "__opencursor-design-overlay" || element.closest("#__opencursor-design-overlay")) {
+      hideHover();
+      return;
+    }
+    setHoveredElement(element);
+  }
+
+  function onPointerDown(event) {
+    if (!mode) return;
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+    if (target.closest("#__opencursor-design-overlay")) return;
+    event.preventDefault();
+    event.stopPropagation();
+    dragState = {
+      points: [{ x: event.clientX, y: event.clientY }],
+      startedAt: performance.now(),
+    };
+  }
+
+  async function onPointerUp(event) {
+    if (!mode) return;
+    if (!dragState) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const elapsed = performance.now() - dragState.startedAt;
+    const pointCount = dragState.points.length;
+    if (pointCount > 5 && elapsed > 180) {
+      const handled = await finishDragSelection();
+      if (handled) return;
+    }
+    dragState = null;
+    hideDrag();
+    await handleClickSelection();
+  }
+
+  function teardown() {
+    hideHover();
+    hideDrag();
+    dragState = null;
+  }
+
+  window.addEventListener("message", (event) => {
+    const data = event.data;
+    if (!data || data.source !== "opencursor-browser-parent") return;
+    if (data.type === "set-design-mode") {
+      mode = Boolean(data.enabled);
+      if (!mode) {
+        teardown();
+      }
+    }
+  });
+
+  document.addEventListener("pointermove", onPointerMove, true);
+  document.addEventListener("pointerdown", onPointerDown, true);
+  document.addEventListener("pointerup", onPointerUp, true);
+  document.addEventListener("scroll", () => {
+    if (hovered) {
+      setHoveredElement(hovered);
+    }
+  }, true);
+})();
+</script>`;
+
+  if (/<\/body>/i.test(out)) {
+    out = out.replace(/<\/body>/i, `${designBridgeScript}</body>`);
+  } else {
+    out += designBridgeScript;
+  }
+
   return out;
 }
 
 export const browserProxyRoutes = new Hono();
+
+browserProxyRoutes.get("/assets/html-to-image.js", async (c) => {
+  let source = "";
+  try {
+    source = await fs.readFile(HTML_TO_IMAGE_BUNDLE_PATH, "utf8");
+  } catch {
+    source = "";
+  }
+  if (!source) {
+    return c.text("html-to-image bundle not available", 500);
+  }
+  return new Response(source, {
+    headers: {
+      "content-type": "application/javascript; charset=utf-8",
+      "cache-control": "public, max-age=3600",
+    },
+  });
+});
 
 // Phase 2: add Node `upgrade` handling (e.g. mount a `/browser/ws` route) to tunnel WebSocket
 // frames to upstream dev servers so HMR works; plain HTTP preview stays on the catch-all below.

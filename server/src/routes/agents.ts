@@ -132,15 +132,32 @@ agentRoutes.patch("/api/agents/conversations/:conversationId/config", async (c) 
 agentRoutes.post("/api/agents/conversations/:conversationId/prompt", async (c) => {
   const workspace = await requireWorkspaceFromRequest(c);
   const conversationId = c.req.param("conversationId");
-  const body = await c.req.json<{ text?: string; attachments?: Array<{ mimeType: string; data: string; name?: string }> }>();
-  if (!body.text?.trim() && (!body.attachments || body.attachments.length === 0)) {
-    return c.json({ error: "Expected prompt text or attachments." }, 400);
+  const body = await c.req.json<{
+    text?: string;
+    attachments?: Array<{ mimeType: string; data: string; name?: string }>;
+    designSelections?: Array<{
+      id: string;
+      label: string;
+      selector?: string;
+      targetUrl?: string;
+      html: string;
+      css?: string;
+      javascript?: string;
+    }>;
+  }>();
+  if (
+    !body.text?.trim() &&
+    (!body.attachments || body.attachments.length === 0) &&
+    (!body.designSelections || body.designSelections.length === 0)
+  ) {
+    return c.json({ error: "Expected prompt text, design selections, or attachments." }, 400);
   }
   const snapshot = await agentRuntimeManager.promptConversation(
     workspace,
     conversationId,
     body.text ?? "",
-    body.attachments
+    body.attachments,
+    body.designSelections
   );
   return c.json({ snapshot });
 });

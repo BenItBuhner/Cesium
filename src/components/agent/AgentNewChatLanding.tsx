@@ -17,7 +17,7 @@ import {
   detectShortcutPlatform,
   getShortcutDisplayForCommand,
 } from "@/lib/keyboard-shortcuts";
-import type { EditorMode, ImageAttachment } from "@/lib/types";
+import type { DesignPromptSelection, EditorMode, ImageAttachment } from "@/lib/types";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { useIDECommandRunner } from "@/components/ide/IDECommandContext";
 import { useWorkbenchContextMenu } from "@/components/ide/WorkbenchContextMenuProvider";
@@ -124,7 +124,11 @@ export function AgentNewChatLanding() {
   );
 
   const handleSubmit = useCallback(
-    async (text: string, attachments?: ImageAttachment[]) => {
+    async (
+      text: string,
+      attachments?: ImageAttachment[],
+      designSelections?: DesignPromptSelection[]
+    ) => {
       const backend = draftBackend;
       if (!backend) return false;
       const created = await createConversation({
@@ -135,7 +139,7 @@ export function AgentNewChatLanding() {
       });
       setSelectedConversationId(created.id);
       await refreshConversationGroups();
-      const ok = await promptConversation(created.id, text, attachments);
+      const ok = await promptConversation(created.id, text, attachments, designSelections);
       if (!ok) return false;
       void refreshConversationGroups();
       return true;
@@ -270,6 +274,7 @@ export function AgentNewChatLanding() {
             <>
               <ChatComposer
                 key={composerDraftId}
+                draftId={composerDraftId}
                 mode={draftMode}
                 onModeChange={(next) => {
                   updateWorkspaceSession((current) => ({

@@ -14,8 +14,9 @@ import {
   type ReactElement,
 } from "react";
 import { ArrowUp, Image as ImageIcon, LoaderCircle, Maximize2, Mic, Minimize2, Square } from "lucide-react";
+import { DesignSelectionChips } from "./DesignSelectionChips";
 import { ImageCarousel } from "./ImageCarousel";
-import type { ImageAttachment, ImageAttachmentState } from "@/lib/types";
+import type { DesignPromptSelection, ImageAttachment } from "@/lib/types";
 import { useHardwareInput } from "@/components/input/HardwareInputProvider";
 import { useWorkbenchNotifications } from "@/components/notifications/WorkbenchNotificationProvider";
 import { WORKBENCH_NOTIFICATION_KIND } from "@/components/notifications/workbench-notification-types";
@@ -54,7 +55,8 @@ import { getModeTone } from "@/lib/chat-modes";
 import type { AgentModeOption, EditorMode, KnownEditorMode, ModelInfo } from "@/lib/types";
 import type { AgentBackendId, AgentBackendInfo, AgentConfigOption } from "@/lib/agent-types";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
-import { transcribeAudio, uploadAttachments } from "@/lib/server-api";
+import { useOpenInEditor } from "@/components/editor/OpenInEditorContext";
+import { transcribeAudio } from "@/lib/server-api";
 import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
 
 const sendButtonBgClass: Record<KnownEditorMode, string> = {
@@ -196,6 +198,7 @@ function buildInsertedTranscription(
 }
 
 interface ChatComposerProps {
+  draftId: string;
   mode: EditorMode;
   onModeChange: (mode: EditorMode) => void;
   model: ModelInfo;
@@ -216,7 +219,8 @@ interface ChatComposerProps {
   onCollapseComposer?: () => void;
   onSubmit: (
     text: string,
-    attachments?: ImageAttachment[]
+    attachments?: ImageAttachment[],
+    designSelections?: DesignPromptSelection[]
   ) => Promise<boolean | void> | boolean | void;
   onCancel?: () => Promise<void> | void;
   busy?: boolean;
@@ -363,6 +367,7 @@ function renderComposerText(
 }
 
 export function ChatComposer({
+  draftId,
   mode,
   onModeChange,
   model,
@@ -394,6 +399,16 @@ export function ChatComposer({
   const { settings } = useGlobalSettings();
   const submitCtrlEnter = settings.agents.submitCtrlEnter;
   const { pushNotification } = useWorkbenchNotifications();
+  const {
+    composerDraftAssetsById,
+    registerComposerSurface,
+    markComposerDraftPreferred,
+    addFilesToComposerDraft,
+    removeComposerDraftAttachment,
+    retryComposerDraftAttachment,
+    removeDesignSelectionFromComposerDraft,
+    clearComposerDraftAssets,
+  } = useOpenInEditor();
   const surfaceId = useId().replace(/:/g, "_");
   const {
     enabled: hardwareInputEnabled,
@@ -415,10 +430,8 @@ export function ChatComposer({
   const [recordingState, setRecordingState] = useState<
     "idle" | "recording" | "transcribing"
   >("idle");
-  const [attachedImages, setAttachedImages] = useState<ImageAttachmentState[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const isDraggingRef = useRef(false);
-  const imageFilesRef = useRef<Map<string, File>>(new Map());
   const [inputLevel, setInputLevel] = useState(0);
   const [menuPos, setMenuPos] = useState<ComposerPopoverPosition>({
     placement: "above",
@@ -459,6 +472,12 @@ export function ChatComposer({
 
   const value = controlledValue ?? uncontrolledValue;
   const selection = controlledSelection ?? uncontrolledSelection;
+  const draftAssets = composerDraftAssetsById[draftId] ?? {
+    attachments: [],
+    designSelections: [],
+  };
+  const attachedImages = draftAssets.attachments;
+  const designSelections = draftAssets.designSelections;
   const atSuggestions = useMemo(() => getAllAtSuggestions(fileTree), [fileTree]);
   const slashSuggestions = useMemo(
     () =>
@@ -529,159 +548,18 @@ export function ChatComposer({
     setInputLevel(0);
   }, []);
 
-  const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
-  const SLOW_UPLOAD_THRESHOLD_MS = 2500;
-
-  const addImagesFromFileList = useCallback(
-    (files: FileList) => {
-      const imageFiles = Array.from(files).filter((file) => file.type.startsWith("image/"));
-      const currentCount = attachedImages.length;
-      const maxImages = 10 - currentCount;
-      const filesToAdd = imageFiles.slice(0, maxImages);
-
-      const validFiles = filesToAdd.filter((file) => {
-        if (file.size > MAX_FILE_SIZE) {
-          pushNotification({
-            kind: WORKBENCH_NOTIFICATION_KIND.editorNotice,
-            severity: "warning",
-            title: "Image too large",
-            message: `${file.name} is ${(file.size / 1024 / 1024).toFixed(1)}MB. Maximum size is 10MB.`,
-            autoDismissMs: 5000,
-          });
-          return false;
-        }
-        return true;
-      });
-
-      if (validFiles.length === 0) return;
-
-      const newImageEntries: ImageAttachmentState[] = validFiles.map((file) => ({
-        localId: globalThis.crypto?.randomUUID?.() ?? `img-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-        mimeType: file.type,
-        data: "",
-        name: file.name,
-        uploadState: "pending",
-        showSlowSpinner: false,
-      }));
-
-      // Store files in ref for retry functionality
-      newImageEntries.forEach((entry, i) => {
-        imageFilesRef.current.set(entry.localId, validFiles[i]);
-      });
-
-      setAttachedImages((prev) => [...prev, ...newImageEntries]);
-
-      void Promise.all(
-        validFiles.map((file, i) => {
-          return new Promise<void>((resolve) => {
-            const localId = newImageEntries[i].localId;
-
-            const slowUploadTimer = setTimeout(() => {
-              setAttachedImages((prev) =>
-                prev.map((img) =>
-                  img.localId === localId ? { ...img, showSlowSpinner: true } : img
-                )
-              );
-            }, SLOW_UPLOAD_THRESHOLD_MS);
-
-            const reader = new FileReader();
-            reader.onload = () => {
-              const base64 = (reader.result as string).split(",")[1] ?? "";
-
-              setAttachedImages((prev) =>
-                prev.map((img) =>
-                  img.localId === localId ? { ...img, data: base64, uploadState: "uploading" as const } : img
-                )
-              );
-
-              uploadAttachments([file])
-                .then((results) => {
-                  clearTimeout(slowUploadTimer);
-                  setAttachedImages((prev) =>
-                    prev.map((img) =>
-                      img.localId === localId
-                        ? { ...img, uploadState: "uploaded" as const, serverId: results[0]?.id, showSlowSpinner: false }
-                        : img
-                    )
-                  );
-                  resolve();
-                })
-                .catch(() => {
-                  clearTimeout(slowUploadTimer);
-                  setAttachedImages((prev) =>
-                    prev.map((img) =>
-                      img.localId === localId ? { ...img, uploadState: "failed" as const, showSlowSpinner: false } : img
-                    )
-                  );
-                  resolve();
-                });
-            };
-            reader.readAsDataURL(file);
-          });
-        })
-      );
-    },
-    [attachedImages.length, pushNotification, MAX_FILE_SIZE, SLOW_UPLOAD_THRESHOLD_MS]
-  );
-
   const handleFileInputChange = useCallback(
     (event: React.ChangeEvent<HTMLInputElement>) => {
       const files = event.target.files;
       if (files && files.length > 0) {
-        addImagesFromFileList(files);
+        markComposerDraftPreferred(draftId);
+        addFilesToComposerDraft(draftId, Array.from(files));
       }
       if (fileInputRef.current) {
         fileInputRef.current.value = "";
       }
     },
-    [addImagesFromFileList]
-  );
-
-  const handleRemoveImage = useCallback((localId: string) => {
-    setAttachedImages((prev) => prev.filter((img) => img.localId !== localId));
-    imageFilesRef.current.delete(localId);
-  }, []);
-
-  const handleRetryImage = useCallback(
-    (localId: string) => {
-      const file = imageFilesRef.current.get(localId);
-      if (!file) return;
-
-      const slowUploadTimer = setTimeout(() => {
-        setAttachedImages((prev) =>
-          prev.map((img) =>
-            img.localId === localId ? { ...img, showSlowSpinner: true } : img
-          )
-        );
-      }, SLOW_UPLOAD_THRESHOLD_MS);
-
-      setAttachedImages((prev) =>
-        prev.map((img) =>
-          img.localId === localId ? { ...img, uploadState: "uploading", showSlowSpinner: false } : img
-        )
-      );
-
-      uploadAttachments([file])
-        .then((results) => {
-          clearTimeout(slowUploadTimer);
-          setAttachedImages((prev) =>
-            prev.map((img) =>
-              img.localId === localId
-                ? { ...img, uploadState: "uploaded" as const, serverId: results[0]?.id, showSlowSpinner: false }
-                : img
-            )
-          );
-        })
-        .catch(() => {
-          clearTimeout(slowUploadTimer);
-          setAttachedImages((prev) =>
-            prev.map((img) =>
-              img.localId === localId ? { ...img, uploadState: "failed" as const, showSlowSpinner: false } : img
-            )
-          );
-        });
-    },
-    []
+    [addFilesToComposerDraft, draftId, markComposerDraftPreferred]
   );
 
   const handleDragOver = useCallback((event: React.DragEvent) => {
@@ -703,10 +581,25 @@ export function ChatComposer({
       isDraggingRef.current = false;
       const files = event.dataTransfer.files;
       if (files && files.length > 0) {
-        addImagesFromFileList(files);
+        markComposerDraftPreferred(draftId);
+        addFilesToComposerDraft(draftId, Array.from(files));
       }
     },
-    [addImagesFromFileList]
+    [addFilesToComposerDraft, draftId, markComposerDraftPreferred]
+  );
+
+  const handleRemoveImage = useCallback(
+    (localId: string) => {
+      removeComposerDraftAttachment(draftId, localId);
+    },
+    [draftId, removeComposerDraftAttachment]
+  );
+
+  const handleRetryImage = useCallback(
+    (localId: string) => {
+      retryComposerDraftAttachment(draftId, localId);
+    },
+    [draftId, retryComposerDraftAttachment]
   );
 
   const insertTranscription = useCallback(
@@ -864,10 +757,15 @@ export function ChatComposer({
     [menu, slashSuggestions]
   );
 
+  useEffect(() => registerComposerSurface(draftId), [draftId, registerComposerSurface]);
+
   const isActive = hardwareInputEnabled
     ? isSurfaceActive(surfaceId)
     : hasFocus;
-  const isEmpty = value.trim().length === 0;
+  const isEmpty =
+    value.trim().length === 0 &&
+    attachedImages.length === 0 &&
+    designSelections.length === 0;
   const isExpanded = variant === "expanded";
   const showAgentShellGrowControls = agentShellDockHeightExpand && !isExpanded;
 
@@ -1049,24 +947,73 @@ export function ChatComposer({
 
   const submitComposer = useCallback(async () => {
     const trimmed = valueRef.current.trim();
-    if (!trimmed && attachedImages.length === 0) {
+    if (!trimmed && attachedImages.length === 0 && designSelections.length === 0) {
+      return;
+    }
+    if (
+      attachedImages.some(
+        (image) =>
+          image.uploadState === "pending" ||
+          image.uploadState === "uploading" ||
+          !image.data
+      )
+    ) {
+      pushNotification({
+        kind: WORKBENCH_NOTIFICATION_KIND.editorNotice,
+        severity: "warning",
+        title: "Images still uploading",
+        message: "Wait for attachments to finish uploading before sending.",
+        autoDismissMs: 5000,
+      });
+      return;
+    }
+    if (attachedImages.some((image) => image.uploadState === "failed")) {
+      pushNotification({
+        kind: WORKBENCH_NOTIFICATION_KIND.editorNotice,
+        severity: "warning",
+        title: "Attachment upload failed",
+        message: "Retry or remove failed images before sending.",
+        autoDismissMs: 5000,
+      });
       return;
     }
     const promptText = applyComposerDirectives(trimmed);
-    const imagesToSubmit: ImageAttachment[] = attachedImages.map(({ mimeType, data, name }) => ({
-      mimeType,
-      data,
-      name,
-    }));
+    const imagesToSubmit: ImageAttachment[] = attachedImages.map(
+      ({ mimeType, data, name }) => ({
+        mimeType,
+        data,
+        name,
+      })
+    );
+    if (
+      promptText.length === 0 &&
+      imagesToSubmit.length === 0 &&
+      designSelections.length === 0
+    ) {
+      return;
+    }
+    const submitted = await Promise.resolve(
+      onSubmit(promptText, imagesToSubmit, designSelections)
+    ).catch(() => false);
+    if (submitted === false) {
+      return;
+    }
     valueRef.current = "";
     setComposerValue("");
     setComposerSelection({ start: 0, end: 0 });
     setMenu(null);
-    setAttachedImages([]);
-    if (promptText || imagesToSubmit.length > 0) {
-      void Promise.resolve(onSubmit(promptText, imagesToSubmit)).catch(() => undefined);
-    }
-  }, [applyComposerDirectives, onSubmit, setComposerSelection, setComposerValue, attachedImages]);
+    clearComposerDraftAssets(draftId);
+  }, [
+    applyComposerDirectives,
+    attachedImages,
+    clearComposerDraftAssets,
+    designSelections,
+    draftId,
+    onSubmit,
+    pushNotification,
+    setComposerSelection,
+    setComposerValue,
+  ]);
 
   const syncNativeState = useCallback(() => {
     if (hardwareInputEnabled) return;
@@ -1386,7 +1333,10 @@ export function ChatComposer({
     () => renderComposerText(value, selection, isActive, caretRef),
     [isActive, selection, value]
   );
-  const canSubmit = value.trim().length > 0 || attachedImages.length > 0;
+  const canSubmit =
+    value.trim().length > 0 ||
+    attachedImages.length > 0 ||
+    designSelections.length > 0;
   /** While the turn is running, Stop occupies the primary (send) slot until there is something to queue. */
   const primaryControlIsStop = Boolean(busy && onCancel && !canSubmit);
 
@@ -1398,6 +1348,16 @@ export function ChatComposer({
       <div
         className={`relative ${isExpanded ? "flex min-h-0 flex-1 flex-col" : ""} ${editorRegionClassName}`}
       >
+        {designSelections.length > 0 && (
+          <div className="mb-[8px]">
+            <DesignSelectionChips
+              items={designSelections}
+              onRemove={(selectionId) =>
+                removeDesignSelectionFromComposerDraft(draftId, selectionId)
+              }
+            />
+          </div>
+        )}
         {attachedImages.length > 0 && (
           <ImageCarousel
             images={attachedImages}
@@ -1419,6 +1379,7 @@ export function ChatComposer({
           suppressContentEditableWarning={!hardwareInputEnabled}
           tabIndex={hardwareInputEnabled ? 0 : undefined}
           onPointerDown={(event) => {
+            markComposerDraftPreferred(draftId);
             if (hardwareInputEnabled) {
               activateSurface(surfaceId, editorRef.current);
               setComposerSelection(resolvePointerSelection(event, value.length));
@@ -1431,6 +1392,7 @@ export function ChatComposer({
           }}
           onFocus={() => {
             setHasFocus(true);
+            markComposerDraftPreferred(draftId);
             if (hardwareInputEnabled) {
               activateSurface(surfaceId, editorRef.current);
             }
@@ -1457,11 +1419,8 @@ export function ChatComposer({
             const imageFiles = collectClipboardImageFiles(cd);
             if (imageFiles.length > 0) {
               event.preventDefault();
-              const dt = new DataTransfer();
-              for (const file of imageFiles) {
-                dt.items.add(file);
-              }
-              addImagesFromFileList(dt.files);
+              markComposerDraftPreferred(draftId);
+              addFilesToComposerDraft(draftId, imageFiles);
               return;
             }
 
