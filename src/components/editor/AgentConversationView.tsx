@@ -11,7 +11,6 @@ import { RecentChatsModal } from "@/components/ide/RecentChatsModal";
 import { projectAgentEventsToChatMessages } from "@/lib/agent-chat";
 import { askStepsFromMessage } from "@/lib/ask-question-utils";
 import { useAgentConversations } from "@/components/chat/AgentConversationsContext";
-import type { AgentBackendId } from "@/lib/agent-types";
 import type {
   DesignPromptSelection,
   EditorMode,
@@ -82,7 +81,6 @@ export function AgentConversationView({
     upsertComposerDraft,
     setComposerSelection,
     openComposerDraft,
-    setExpandedComposerController,
     expandedComposerDraftId: workspaceExpandedComposerDraftId,
     setExpandedComposerDraft: setWorkspaceExpandedComposerDraft,
   } = useOpenInEditor();
@@ -111,10 +109,6 @@ export function AgentConversationView({
     expandedComposerDraftIdOverride ?? workspaceExpandedComposerDraftId;
   const setExpandedComposerDraft =
     setExpandedComposerDraftOverride ?? setWorkspaceExpandedComposerDraft;
-  const shouldProvideExpandedComposerController =
-    expandedComposerDraftIdOverride !== undefined ||
-    setExpandedComposerDraftOverride !== undefined;
-
   const conversation = conversationsById[conversationId] ?? null;
   const loadState = getConversationLoadStatus(conversationId);
   const composerState = getConversationComposerState(conversationId);
@@ -126,7 +120,7 @@ export function AgentConversationView({
         backendId: conversation?.config.backendId,
         workspaceRoot: workspaceInfo?.root ?? null,
       }),
-    [conversationId, conversation?.config.backendId, deferredThreadEvents, workspaceInfo?.root]
+    [conversation?.config.backendId, deferredThreadEvents, workspaceInfo?.root]
   );
   const { scrollMessages, dockedAsk } = useMemo(
     () => partitionMessagesForDock(threadMessages),

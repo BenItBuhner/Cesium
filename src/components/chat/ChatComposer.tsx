@@ -1303,6 +1303,8 @@ export function ChatComposer({
     handleComposerKey,
     hardwareInputEnabled,
     registerSurface,
+    setComposerSelection,
+    setComposerValue,
     surfaceId,
     unregisterSurface,
   ]);

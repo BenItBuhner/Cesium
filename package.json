@@ -33,6 +33,7 @@
     "babel-plugin-react-compiler": "1.0.0",
     "eslint": "^9",
     "eslint-config-next": "16.1.7",
+    "playwright-core": "^1.59.1",
     "tailwindcss": "^4",
     "typescript": "^5",
     "webpack": "^5.105.4"

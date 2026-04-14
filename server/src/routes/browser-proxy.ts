@@ -301,6 +301,25 @@ function rewriteHtmlBody(
     }).join(" ");
   }
 
+  function appendDragPoint(x, y) {
+    if (!dragState) return;
+    const last = dragState.points[dragState.points.length - 1];
+    if (last && Math.hypot(last.x - x, last.y - y) < 2) {
+      return;
+    }
+    dragState.points.push({ x, y });
+  }
+
+  function pathDistance(points) {
+    let total = 0;
+    for (let index = 1; index < points.length; index += 1) {
+      const prev = points[index - 1];
+      const next = points[index];
+      total += Math.hypot(next.x - prev.x, next.y - prev.y);
+    }
+    return total;
+  }
+
   function cssPath(element) {
     if (!(element instanceof Element)) return undefined;
     const parts = [];
@@ -514,7 +533,7 @@ function rewriteHtmlBody(
   }
 
   async function finishDragSelection() {
-    if (!dragState || dragState.points.length < 3) {
+    if (!dragState || dragState.points.length < 2) {
       dragState = null;
       hideDrag();
       return false;
@@ -536,7 +555,7 @@ function rewriteHtmlBody(
   function onPointerMove(event) {
     if (!mode) return;
     if (dragState) {
-      dragState.points.push({ x: event.clientX, y: event.clientY });
+      appendDragPoint(event.clientX, event.clientY);
       const path = dragPath();
       if (path) {
         path.style.display = "block";
@@ -563,6 +582,7 @@ function rewriteHtmlBody(
     dragState = {
       points: [{ x: event.clientX, y: event.clientY }],
       startedAt: performance.now(),
+      start: { x: event.clientX, y: event.clientY },
     };
   }
 
@@ -571,11 +591,20 @@ function rewriteHtmlBody(
     if (!dragState) return;
     event.preventDefault();
     event.stopPropagation();
+    appendDragPoint(event.clientX, event.clientY);
     const elapsed = performance.now() - dragState.startedAt;
-    const pointCount = dragState.points.length;
-    if (pointCount > 5 && elapsed > 180) {
-      const handled = await finishDragSelection();
-      if (handled) return;
+    const start = dragState.start || dragState.points[0];
+    const directDistance = start
+      ? Math.hypot(event.clientX - start.x, event.clientY - start.y)
+      : 0;
+    const totalDistance = pathDistance(dragState.points);
+    const hasDragged =
+      directDistance >= 12 ||
+      totalDistance >= 24 ||
+      (elapsed >= 180 && dragState.points.length >= 3);
+    if (hasDragged) {
+      await finishDragSelection();
+      return;
     }
     dragState = null;
     hideDrag();
