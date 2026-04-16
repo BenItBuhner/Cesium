@@ -321,7 +321,7 @@ function normalizeEditorTabGroupsRecord(
       ? o.tabIds.filter((x): x is string => typeof x === "string")
       : [];
     if (tabIds.length === 0) continue;
-    const title = typeof o.title === "string" ? o.title : "Tab group";
+    const title = typeof o.title === "string" ? o.title : "New group";
     const color = typeof o.color === "string" ? o.color : "blue";
     const collapsed = o.collapsed === true;
     next[id] = {

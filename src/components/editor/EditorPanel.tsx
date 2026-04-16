@@ -1212,13 +1212,18 @@ export function EditorPanel({
           id: "tab-group-rename",
           label: "Rename…",
           onSelect: () => {
-            const t = window.prompt("Group name", g.title);
-            if (t == null || !t.trim()) return;
-            dispatch({
-              type: "UPDATE_TAB_GROUP_META",
-              pane,
-              groupId,
-              title: t.trim(),
+            queueMicrotask(() => {
+              const snap = stateRef.current;
+              const gr = snap[groupsKey][groupId];
+              if (!gr) return;
+              const t = window.prompt("Group name", gr.title);
+              if (t == null || !t.trim()) return;
+              dispatch({
+                type: "UPDATE_TAB_GROUP_META",
+                pane,
+                groupId,
+                title: t.trim(),
+              });
             });
           },
         },
@@ -1227,16 +1232,21 @@ export function EditorPanel({
           id: "tab-group-custom-color",
           label: "Custom color…",
           onSelect: () => {
-            const c = window.prompt(
-              "Hex color (#rrggbb)",
-              resolveTabGroupColorHex(g.color)
-            );
-            if (c == null || !/^#[0-9a-fA-F]{6}$/.test(c.trim())) return;
-            dispatch({
-              type: "UPDATE_TAB_GROUP_META",
-              pane,
-              groupId,
-              color: c.trim(),
+            queueMicrotask(() => {
+              const snap = stateRef.current;
+              const gr = snap[groupsKey][groupId];
+              if (!gr) return;
+              const c = window.prompt(
+                "Hex color (#rrggbb)",
+                resolveTabGroupColorHex(gr.color)
+              );
+              if (c == null || !/^#[0-9a-fA-F]{6}$/.test(c.trim())) return;
+              dispatch({
+                type: "UPDATE_TAB_GROUP_META",
+                pane,
+                groupId,
+                color: c.trim(),
+              });
             });
           },
         },
@@ -1251,7 +1261,7 @@ export function EditorPanel({
         },
       ]);
     },
-    [openAt]
+    [dispatch, openAt]
   );
 
   const handleEditorTabContextMenu = useCallback(

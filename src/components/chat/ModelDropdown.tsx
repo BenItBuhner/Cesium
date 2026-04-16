@@ -205,7 +205,7 @@ export function ModelDropdown({
         createPortal(
           <div
             ref={popoverRef}
-            className={`fixed z-[9999] flex min-w-[260px] w-[min(480px,calc(100vw-24px))] max-w-[min(480px,calc(100vw-24px))] flex-col text-left ${popoverSurface} transition-opacity`}
+            className={`fixed z-[9999] flex min-w-[260px] w-[min(320px,calc(100vw-24px))] max-w-[min(320px,calc(100vw-24px))] flex-col text-left ${popoverSurface} transition-opacity`}
             data-ide-input-sink
             data-ide-composer-floating-popover
             onPointerDown={(e) => e.stopPropagation()}

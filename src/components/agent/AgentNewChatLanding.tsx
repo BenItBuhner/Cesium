@@ -28,6 +28,7 @@ import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { useIDECommandRunner } from "@/components/ide/IDECommandContext";
 import { useWorkbenchContextMenu } from "@/components/ide/WorkbenchContextMenuProvider";
 import type { WorkbenchMenuItem } from "@/components/ide/workbench-context-menu-types";
+import { useShellView } from "@/components/layout/ShellViewContext";
 import { AGENT_CENTER_CONTENT_CLASS } from "./agent-shell-layout";
 import { useAgentShellState } from "./AgentShellStateContext";
 import {
@@ -75,6 +76,7 @@ export function AgentNewChatLanding() {
   const { settings } = useGlobalSettings();
   const { openAt, openAtPoint } = useWorkbenchContextMenu();
   const runCommand = useIDECommandRunner();
+  const { setShellView } = useShellView();
 
   const draftBackend = useMemo(
     () => pickAvailableBackend(backends, workspaceSession.chat.backendId),
@@ -349,7 +351,10 @@ export function AgentNewChatLanding() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => setRightPaneOpen(true)}
+                  onClick={() => {
+                    setRightPaneOpen(false);
+                    setShellView("editor");
+                  }}
                   className={QUICK_ACTION_BUTTON_CLASSNAME}
                 >
                   Open editor window

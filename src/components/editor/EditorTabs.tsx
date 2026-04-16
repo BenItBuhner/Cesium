@@ -278,16 +278,14 @@ export function EditorTabs({
             Boolean(activeTabId) && g.tabIds.includes(activeTabId!);
           const Chev = g.collapsed ? ChevronRight : ChevronDown;
 
+          const accentRing = groupActive ? accent : `${accent}80`;
           return (
             <div
               key={`strip-group-${item.groupId}`}
               data-strip-index={stripIndex}
               className="flex shrink-0 items-stretch rounded-[var(--radius-tab)]"
               style={{
-                boxShadow: groupActive
-                  ? `inset 0 0 0 1px var(--border-subtle), 0 0 0 1px ${accent}55`
-                  : `inset 0 0 0 1px var(--border-subtle)`,
-                borderLeft: `3px solid ${accent}`,
+                boxShadow: `0 0 0 1px ${accentRing}, inset 0 0 0 1px var(--border-subtle)`,
                 background: "var(--bg-tab-inactive)",
               }}
               data-tab-group-id={g.id}

@@ -113,17 +113,15 @@ export function AgentRailFilterMenuPortal({
       ref={filterPanelRef}
       role="dialog"
       aria-label="Conversation filters"
-      className="fixed z-[10040] min-w-[232px] rounded-[var(--radius-card)] border border-[var(--border-card)] bg-[var(--bg-card)] py-[6px] shadow-[0_8px_24px_rgba(0,0,0,0.12)] dark:shadow-[0_10px_28px_rgba(0,0,0,0.45)]"
+      className="fixed z-[10040] min-w-[220px] rounded-[var(--radius-card)] border border-[var(--border-card)] bg-[var(--bg-panel)] py-[4px] transition-opacity"
       style={{ top: filterMenuPos.top, left: filterMenuPos.left }}
+      onPointerDown={(e) => e.stopPropagation()}
     >
-      <div className="px-[10px] pb-[4px] pt-[2px] font-sans text-[11px] font-medium uppercase tracking-wide text-[var(--text-disabled)]">
-        Show conversations
-      </div>
       <div className="flex flex-col" onPointerDown={(e) => e.stopPropagation()}>
         {AGENT_RAIL_FILTER_TOGGLE_KEYS.map((key) => (
           <label
             key={key}
-            className="flex cursor-pointer items-center gap-[8px] px-[10px] py-[5px] font-sans text-[13px] text-[var(--text-primary)] transition-colors hover:bg-[var(--accent-bg)]"
+            className="flex cursor-pointer items-center gap-[8px] px-[12px] py-[5px] font-sans text-[13px] font-normal text-[var(--text-primary)] transition-colors hover:bg-white/[0.06]"
           >
             <input
               type="checkbox"
@@ -131,16 +129,16 @@ export function AgentRailFilterMenuPortal({
               onChange={(ev) => setRailFilterToggle(key, ev.target.checked)}
               className="size-[14px] shrink-0 rounded border border-[var(--border-subtle)] accent-[var(--accent)]"
             />
-            <span>{FILTER_TOGGLE_LABELS[key]}</span>
+            <span className="min-w-0 flex-1">{FILTER_TOGGLE_LABELS[key]}</span>
           </label>
         ))}
       </div>
-      <div className="mx-[8px] my-[6px] h-px bg-[var(--border-subtle)]" />
+      <div className="my-[4px] h-px bg-[var(--border-subtle)]" />
       <button
         type="button"
         disabled={!railFilterActive}
         onClick={() => clearRailFilters()}
-        className="mx-[6px] rounded-[var(--radius-tab)] px-[8px] py-[6px] text-left font-sans text-[12px] text-[var(--accent)] transition-colors hover:bg-[var(--accent-bg)] disabled:cursor-not-allowed disabled:opacity-40"
+        className="flex w-full cursor-default items-center px-[12px] py-[5px] text-left font-sans text-[13px] font-normal text-[var(--accent)] transition-colors hover:bg-white/[0.06] disabled:cursor-not-allowed disabled:opacity-40"
       >
         Clear all filters
       </button>

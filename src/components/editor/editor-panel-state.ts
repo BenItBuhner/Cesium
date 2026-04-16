@@ -1071,7 +1071,7 @@ export function editorPanelReducer(
         ...next[groupsKey],
         [gid]: {
           id: gid,
-          title: truncateTabName(tab.name),
+          title: "New group",
           color: "blue",
           collapsed: false,
           tabIds: [tabId],
