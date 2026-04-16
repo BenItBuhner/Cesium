@@ -34,6 +34,10 @@ import {
   type ShortcutChordState,
 } from "@/lib/keyboard-shortcuts";
 import { useShellView } from "@/components/layout/ShellViewContext";
+import {
+  dispatchChatComposerShortcut,
+  dispatchWorkspacePickerShortcut,
+} from "@/lib/chat-ui-shortcut-events";
 
 type PaletteMode = "closed" | "command" | "quickopen";
 
@@ -43,7 +47,7 @@ function flash(setter: (s: string | null) => void, msg: string) {
 }
 
 export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
-  const { setShellView } = useShellView();
+  const { setShellView, openSettingsView } = useShellView();
   const bridgeRef = useEditorBridgeRef();
   const { openExplorerFile } = useOpenInEditor();
   const workbench = useWorkbench();
@@ -337,14 +341,14 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
           window.dispatchEvent(new CustomEvent("opencursor:openRecentChats"));
           break;
         case "workbench.action.openGlobalSettings":
-          runWithBridge((b) => b.dispatch({ type: "OPEN_SETTINGS_TAB" }));
+          openSettingsView();
           break;
         case "workbench.action.openKeyboardShortcuts":
           updateWorkspaceSession((current) => ({
             ...current,
             settingsView: { ...current.settingsView, activeNav: "keyboardShortcuts" },
           }));
-          runWithBridge((b) => b.dispatch({ type: "OPEN_SETTINGS_TAB" }));
+          openSettingsView();
           break;
         case "workbench.action.openFile":
         case "workbench.action.gotoFile":
@@ -471,20 +475,29 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
         case "editor.action.redo":
           flash(setToast, "Redo (demo).");
           break;
-        case "editor.action.clipboardCut":
-          flash(setToast, "Cut (demo).");
-          break;
-        case "editor.action.clipboardCopy":
-          flash(setToast, "Copy (demo).");
-          break;
-        case "editor.action.clipboardPaste":
-          flash(setToast, "Paste (demo).");
-          break;
         case "editor.action.selectAll":
           flash(setToast, "Select All (demo).");
           break;
-        case "workbench.action.reloadWindow":
-          flash(setToast, "Reload Window — use the browser refresh.");
+        case "chat.action.openModelDropdown":
+          dispatchChatComposerShortcut("openModelDropdown");
+          break;
+        case "chat.action.openModeDropdown":
+          dispatchChatComposerShortcut("openModeDropdown");
+          break;
+        case "chat.action.openBackendDropdown":
+          dispatchChatComposerShortcut("openBackendDropdown");
+          break;
+        case "chat.action.toggleVoiceInput":
+          dispatchChatComposerShortcut("toggleVoiceInput");
+          break;
+        case "chat.action.toggleComposerExpand":
+          dispatchChatComposerShortcut("toggleComposerExpand");
+          break;
+        case "chat.action.attachImage":
+          dispatchChatComposerShortcut("attachImage");
+          break;
+        case "chat.action.openWorkspacePicker":
+          dispatchWorkspacePickerShortcut();
           break;
         case "workbench.action.zoomIn":
         case "workbench.action.zoomOut":
@@ -497,6 +510,7 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
     },
     [
       bridgeRef,
+      openSettingsView,
       openWorkspaceWindowsModal,
       promptForFolder,
       runWithBridge,
@@ -601,6 +615,48 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
         label: "Chat: Use Agent mode",
         keybinding: kb("workbench.action.focusChatAgentMode"),
         run: () => runShortcutCommand("workbench.action.focusChatAgentMode"),
+      },
+      {
+        id: "chat.action.openWorkspacePicker",
+        label: "Chat: Open workspace picker",
+        keybinding: kb("chat.action.openWorkspacePicker"),
+        run: () => runShortcutCommand("chat.action.openWorkspacePicker"),
+      },
+      {
+        id: "chat.action.openBackendDropdown",
+        label: "Chat: Open ACP / backend picker",
+        keybinding: kb("chat.action.openBackendDropdown"),
+        run: () => runShortcutCommand("chat.action.openBackendDropdown"),
+      },
+      {
+        id: "chat.action.openModeDropdown",
+        label: "Chat: Open mode picker",
+        keybinding: kb("chat.action.openModeDropdown"),
+        run: () => runShortcutCommand("chat.action.openModeDropdown"),
+      },
+      {
+        id: "chat.action.openModelDropdown",
+        label: "Chat: Open model picker",
+        keybinding: kb("chat.action.openModelDropdown"),
+        run: () => runShortcutCommand("chat.action.openModelDropdown"),
+      },
+      {
+        id: "chat.action.toggleVoiceInput",
+        label: "Chat: Toggle voice input",
+        keybinding: kb("chat.action.toggleVoiceInput"),
+        run: () => runShortcutCommand("chat.action.toggleVoiceInput"),
+      },
+      {
+        id: "chat.action.toggleComposerExpand",
+        label: "Chat: Toggle expand composer",
+        keybinding: kb("chat.action.toggleComposerExpand"),
+        run: () => runShortcutCommand("chat.action.toggleComposerExpand"),
+      },
+      {
+        id: "chat.action.attachImage",
+        label: "Chat: Attach image",
+        keybinding: kb("chat.action.attachImage"),
+        run: () => runShortcutCommand("chat.action.attachImage"),
       },
       {
         id: "recentChats.open",
@@ -779,24 +835,6 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
         run: () => runShortcutCommand("editor.action.redo"),
       },
       {
-        id: "editor.action.clipboardCut",
-        label: "Edit: Cut",
-        keybinding: kb("editor.action.clipboardCut"),
-        run: () => runShortcutCommand("editor.action.clipboardCut"),
-      },
-      {
-        id: "editor.action.clipboardCopy",
-        label: "Edit: Copy",
-        keybinding: kb("editor.action.clipboardCopy"),
-        run: () => runShortcutCommand("editor.action.clipboardCopy"),
-      },
-      {
-        id: "editor.action.clipboardPaste",
-        label: "Edit: Paste",
-        keybinding: kb("editor.action.clipboardPaste"),
-        run: () => runShortcutCommand("editor.action.clipboardPaste"),
-      },
-      {
         id: "editor.action.selectAll",
         label: "Edit: Select All",
         keybinding: kb("editor.action.selectAll"),
@@ -879,12 +917,6 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
         label: "View: Toggle Terminal",
         keybinding: kb("workbench.action.terminal.toggleTerminal"),
         run: () => runShortcutCommand("workbench.action.terminal.toggleTerminal"),
-      },
-      {
-        id: "workbench.action.reloadWindow",
-        label: "Developer: Reload Window",
-        keybinding: kb("workbench.action.reloadWindow"),
-        run: () => runShortcutCommand("workbench.action.reloadWindow"),
       },
       {
         id: "workbench.action.zoomIn",

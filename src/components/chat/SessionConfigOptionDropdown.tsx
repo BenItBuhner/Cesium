@@ -68,6 +68,7 @@ export function SessionConfigOptionDropdown({
             ref={popoverRef}
             className="fixed z-[9999] min-w-[200px] max-w-[280px] rounded-[var(--radius-card)] border border-[var(--border-card)] bg-[var(--bg-panel)] py-[4px] transition-opacity"
             data-ide-input-sink
+            data-ide-composer-floating-popover
             style={{
               ...(position.top != null
                 ? { top: position.top }

@@ -1,6 +1,10 @@
 import { normalizeBrowserTargetUrl } from "@/lib/browser-proxy-url";
 import type { ChatMessage, EditorTab, ExplorerOpenRequest } from "@/lib/types";
-import type { EditorSplitOrientation } from "@/lib/workspace-session";
+import type {
+  EditorSplitOrientation,
+  EditorStripItem,
+  EditorTabGroupState,
+} from "@/lib/workspace-session";
 
 function inferTranscriptSessionId(messages: ChatMessage[] | undefined): string | undefined {
   for (const message of messages ?? []) {
@@ -31,9 +35,6 @@ function newIdSegment(): string {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 11)}`;
 }
 
-/** Stable id for the in-editor Settings view (command palette, Ctrl+,). */
-export const SETTINGS_EDITOR_TAB_ID = "workbench.settings";
-
 export type EditorGroup = "left" | "right";
 
 export interface EditorPanelState {
@@ -46,6 +47,10 @@ export interface EditorPanelState {
   rightTabs: EditorTab[];
   leftActiveId: string | null;
   rightActiveId: string | null;
+  leftTabGroups: Record<string, EditorTabGroupState>;
+  rightTabGroups: Record<string, EditorTabGroupState>;
+  leftStripItems: EditorStripItem[];
+  rightStripItems: EditorStripItem[];
 }
 
 export type EditorPanelAction =
@@ -77,7 +82,6 @@ export type EditorPanelAction =
   | { type: "UPDATE_BROWSER_TAB_URL"; tabId: string; targetUrl: string }
   | { type: "UPDATE_BROWSER_TAB_FAVICON"; tabId: string; faviconUrl: string | null }
   | { type: "TOGGLE_FILE_PREVIEW" }
-  | { type: "OPEN_SETTINGS_TAB" }
   | {
       type: "LOAD_FILE_CONTENT";
       tabId: string;
@@ -94,7 +98,36 @@ export type EditorPanelAction =
   | { type: "MARK_SAVED"; tabId: string; content: string }
   | { type: "FILE_CHANGED_ON_DISK"; path: string }
   | { type: "CLEAR_EXTERNAL_CHANGE"; tabId: string }
-  | ({ type: "OPEN_EXPLORER_FILE" } & ExplorerOpenRequest);
+  | ({ type: "OPEN_EXPLORER_FILE" } & ExplorerOpenRequest)
+  | { type: "CREATE_TAB_GROUP"; pane: EditorGroup; tabId: string }
+  | { type: "REMOVE_TAB_FROM_GROUP"; pane: EditorGroup; tabId: string }
+  | { type: "TOGGLE_TAB_GROUP_COLLAPSED"; pane: EditorGroup; groupId: string }
+  | {
+      type: "UPDATE_TAB_GROUP_META";
+      pane: EditorGroup;
+      groupId: string;
+      title?: string;
+      color?: string;
+    }
+  | { type: "UNGROUP_ALL"; pane: EditorGroup; groupId: string }
+  | {
+      type: "ADD_TAB_TO_GROUP";
+      pane: EditorGroup;
+      tabId: string;
+      groupId: string;
+    }
+  | {
+      type: "REORDER_STRIP";
+      pane: EditorGroup;
+      fromIndex: number;
+      toIndex: number;
+    }
+  | {
+      type: "MOVE_TAB_TO_STRIP_INDEX";
+      pane: EditorGroup;
+      tabId: string;
+      toIndex: number;
+    };
 
 function stripActive(tab: EditorTab): EditorTab {
   // eslint-disable-next-line @typescript-eslint/no-unused-vars -- omit `active` from stored tab shape
@@ -112,10 +145,126 @@ function truncateTabName(title: string): string {
   return title.length > 40 ? `${title.slice(0, 37)}…` : title;
 }
 
+function normalizePaneStripAndGroups(
+  tabs: EditorTab[],
+  groups: Record<string, EditorTabGroupState>,
+  strip: EditorStripItem[]
+): { groups: Record<string, EditorTabGroupState>; strip: EditorStripItem[] } {
+  const tabIds = new Set(tabs.map((t) => t.id));
+
+  const nextGroups: Record<string, EditorTabGroupState> = {};
+  for (const [id, g] of Object.entries(groups)) {
+    const tabIdsInGroup = [...new Set(g.tabIds.filter((tid) => tabIds.has(tid)))];
+    if (tabIdsInGroup.length === 0) continue;
+    nextGroups[id] = { ...g, id, tabIds: tabIdsInGroup };
+  }
+
+  const groupedTabIds = new Set<string>();
+  for (const g of Object.values(nextGroups)) {
+    for (const tid of g.tabIds) groupedTabIds.add(tid);
+  }
+
+  const nextStrip: EditorStripItem[] = [];
+  const seenStandalone = new Set<string>();
+  const usedGroups = new Set<string>();
+
+  for (const item of strip) {
+    if (item.type === "group") {
+      if (nextGroups[item.groupId]) {
+        nextStrip.push(item);
+        usedGroups.add(item.groupId);
+      }
+    } else {
+      if (!tabIds.has(item.tabId)) continue;
+      if (groupedTabIds.has(item.tabId)) continue;
+      if (seenStandalone.has(item.tabId)) continue;
+      seenStandalone.add(item.tabId);
+      nextStrip.push(item);
+    }
+  }
+
+  for (const gid of Object.keys(nextGroups)) {
+    if (!usedGroups.has(gid)) {
+      nextStrip.push({ type: "group", groupId: gid });
+    }
+  }
+
+  for (const t of tabs) {
+    if (groupedTabIds.has(t.id)) continue;
+    if (!seenStandalone.has(t.id)) {
+      nextStrip.push({ type: "tab", tabId: t.id });
+      seenStandalone.add(t.id);
+    }
+  }
+
+  return { groups: nextGroups, strip: nextStrip };
+}
+
+export function normalizeEditorPanelState(state: EditorPanelState): EditorPanelState {
+  const left = normalizePaneStripAndGroups(
+    state.leftTabs,
+    state.leftTabGroups,
+    state.leftStripItems
+  );
+  const right = normalizePaneStripAndGroups(
+    state.rightTabs,
+    state.rightTabGroups,
+    state.rightStripItems
+  );
+  return {
+    ...state,
+    leftTabGroups: left.groups,
+    leftStripItems: left.strip,
+    rightTabGroups: right.groups,
+    rightStripItems: right.strip,
+  };
+}
+
+function removeTabIdFromPaneStrip(
+  state: EditorPanelState,
+  pane: EditorGroup,
+  tabId: string
+): EditorPanelState {
+  const groupsKey = pane === "left" ? "leftTabGroups" : "rightTabGroups";
+  const stripKey = pane === "left" ? "leftStripItems" : "rightStripItems";
+  const groups: Record<string, EditorTabGroupState> = { ...state[groupsKey] };
+  for (const [gid, g] of Object.entries(groups)) {
+    if (!g.tabIds.includes(tabId)) continue;
+    const tabIds = g.tabIds.filter((id) => id !== tabId);
+    if (tabIds.length === 0) {
+      delete groups[gid];
+    } else {
+      groups[gid] = { ...g, tabIds };
+    }
+  }
+  let strip = state[stripKey].filter(
+    (it) => !(it.type === "tab" && it.tabId === tabId)
+  );
+  strip = strip.filter((it) => it.type !== "group" || Boolean(groups[it.groupId]));
+  return { ...state, [groupsKey]: groups, [stripKey]: strip };
+}
+
+function appendStandaloneTabToStrip(
+  state: EditorPanelState,
+  pane: EditorGroup,
+  tabId: string
+): EditorPanelState {
+  const stripKey = pane === "left" ? "leftStripItems" : "rightStripItems";
+  const strip = [...state[stripKey]];
+  if (!strip.some((it) => it.type === "tab" && it.tabId === tabId)) {
+    strip.push({ type: "tab", tabId });
+  }
+  return { ...state, [stripKey]: strip };
+}
+
 export function createInitialEditorState(tabs: EditorTab[]): EditorPanelState {
   const leftTabs = tabs.map(stripActive);
   const leftActiveId =
     tabs.find((t) => t.active)?.id ?? tabs[0]?.id ?? null;
+  const leftStripItems: EditorStripItem[] = leftTabs.map((t) => ({
+    type: "tab",
+    tabId: t.id,
+  }));
   return {
     split: false,
     splitOrientation: "horizontal",
@@ -125,6 +274,10 @@ export function createInitialEditorState(tabs: EditorTab[]): EditorPanelState {
     rightTabs: [],
     leftActiveId,
     rightActiveId: null,
+    leftTabGroups: {},
+    rightTabGroups: {},
+    leftStripItems,
+    rightStripItems: [],
   };
 }
 
@@ -143,8 +296,11 @@ function collapseEmptySplitIfNeeded(state: EditorPanelState): EditorPanelState {
       split: false,
       focusedGroup: "left",
       rightTabs: [],
+      leftTabs: [],
       leftActiveId: null,
       rightActiveId: null,
+      rightTabGroups: {},
+      rightStripItems: [],
     };
   }
   if (leftCount === 0) {
@@ -156,6 +312,10 @@ function collapseEmptySplitIfNeeded(state: EditorPanelState): EditorPanelState {
       rightTabs: [],
       leftActiveId: state.rightActiveId ?? state.rightTabs[0]?.id ?? null,
       rightActiveId: null,
+      leftTabGroups: state.rightTabGroups,
+      rightTabGroups: {},
+      leftStripItems: state.rightStripItems,
+      rightStripItems: [],
     };
   }
   return {
@@ -165,6 +325,8 @@ function collapseEmptySplitIfNeeded(state: EditorPanelState): EditorPanelState {
     rightTabs: [],
     leftActiveId: state.leftActiveId ?? state.leftTabs[0]?.id ?? null,
     rightActiveId: null,
+    rightTabGroups: {},
+    rightStripItems: [],
   };
 }
 
@@ -172,6 +334,7 @@ export function editorPanelReducer(
   state: EditorPanelState,
   action: EditorPanelAction
 ): EditorPanelState {
+  const nextState = ((): EditorPanelState => {
   switch (action.type) {
     case "SELECT_TAB": {
       if (action.group === "left") {
@@ -255,6 +418,8 @@ export function editorPanelReducer(
         focusedGroup: nextFocus,
         rightTabs: [],
         rightActiveId: null,
+        rightTabGroups: {},
+        rightStripItems: [],
       };
     }
 
@@ -279,6 +444,10 @@ export function editorPanelReducer(
           rightTabs: [],
           leftActiveId,
           rightActiveId: null,
+          leftTabGroups: { ...state.leftTabGroups, ...state.rightTabGroups },
+          rightTabGroups: {},
+          leftStripItems: [...state.leftStripItems, ...state.rightStripItems],
+          rightStripItems: [],
         };
       }
       return {
@@ -287,6 +456,8 @@ export function editorPanelReducer(
         splitOrientation: state.splitOrientation,
         rightTabs: [],
         rightActiveId: null,
+        rightTabGroups: {},
+        rightStripItems: [],
       };
     }
 
@@ -849,45 +1020,6 @@ export function editorPanelReducer(
       };
     }
 
-    case "OPEN_SETTINGS_TAB": {
-      const tabId = SETTINGS_EDITOR_TAB_ID;
-      const existingLeft = state.leftTabs.find((t) => t.id === tabId);
-      const existingRight = state.rightTabs.find((t) => t.id === tabId);
-      if (existingLeft) {
-        return { ...state, leftActiveId: tabId, focusedGroup: "left" };
-      }
-      if (existingRight) {
-        return { ...state, rightActiveId: tabId, focusedGroup: "right" };
-      }
-      const tab: EditorTab = {
-        id: tabId,
-        name: "Settings",
-        language: "plaintext",
-        icon: "settings",
-        content: "",
-      };
-      if (!state.split) {
-        return {
-          ...state,
-          focusedGroup: "left",
-          leftTabs: [...state.leftTabs, tab],
-          leftActiveId: tabId,
-        };
-      }
-      if (state.focusedGroup === "left") {
-        return {
-          ...state,
-          leftTabs: [...state.leftTabs, tab],
-          leftActiveId: tabId,
-        };
-      }
-      return {
-        ...state,
-        rightTabs: [...state.rightTabs, tab],
-        rightActiveId: tabId,
-      };
-    }
-
     case "MOVE_TAB": {
       const { tabId, from, to } = action;
       if (from === to) return state;
@@ -897,10 +1029,11 @@ export function editorPanelReducer(
       const dst = state[dstKey];
       const tab = src.find((t) => t.id === tabId);
       if (!tab) return state;
-      const newSrc = src.filter((t) => t.id !== tabId);
-      const newDst = [...dst, tab];
-      let leftActiveId = state.leftActiveId;
-      let rightActiveId = state.rightActiveId;
+      let next = removeTabIdFromPaneStrip(state, from, tabId);
+      const newSrc = next[srcKey].filter((t) => t.id !== tabId);
+      const newDst = [...next[dstKey], tab];
+      let leftActiveId = next.leftActiveId;
+      let rightActiveId = next.rightActiveId;
       if (from === "left") {
         if (leftActiveId === tabId) {
           leftActiveId = newSrc[0]?.id ?? null;
@@ -913,34 +1046,249 @@ export function editorPanelReducer(
       } else {
         rightActiveId = tabId;
       }
-      return {
-        ...state,
+      next = {
+        ...next,
         [srcKey]: newSrc,
         [dstKey]: newDst,
         leftActiveId,
         rightActiveId,
         focusedGroup: to,
       };
+      next = appendStandaloneTabToStrip(next, to, tabId);
+      return next;
+    }
+
+    case "CREATE_TAB_GROUP": {
+      const { pane, tabId } = action;
+      const tabsKey = pane === "left" ? "leftTabs" : "rightTabs";
+      if (!state[tabsKey].some((t) => t.id === tabId)) return state;
+      const tab = state[tabsKey].find((t) => t.id === tabId)!;
+      let next = removeTabIdFromPaneStrip(state, pane, tabId);
+      const groupsKey = pane === "left" ? "leftTabGroups" : "rightTabGroups";
+      const stripKey = pane === "left" ? "leftStripItems" : "rightStripItems";
+      const gid = `tg-${newIdSegment()}`;
+      const groups = {
+        ...next[groupsKey],
+        [gid]: {
+          id: gid,
+          title: truncateTabName(tab.name),
+          color: "blue",
+          collapsed: false,
+          tabIds: [tabId],
+        } satisfies EditorTabGroupState,
+      };
+      const strip = [...next[stripKey], { type: "group" as const, groupId: gid }];
+      return { ...next, [groupsKey]: groups, [stripKey]: strip };
+    }
+
+    case "REMOVE_TAB_FROM_GROUP": {
+      const { pane, tabId } = action;
+      const tabsKey = pane === "left" ? "leftTabs" : "rightTabs";
+      if (!state[tabsKey].some((t) => t.id === tabId)) return state;
+      const groupsKey = pane === "left" ? "leftTabGroups" : "rightTabGroups";
+      const stripKey = pane === "left" ? "leftStripItems" : "rightStripItems";
+      let groupId: string | null = null;
+      let g: EditorTabGroupState | null = null;
+      for (const [gid, gr] of Object.entries(state[groupsKey])) {
+        if (gr.tabIds.includes(tabId)) {
+          groupId = gid;
+          g = gr;
+          break;
+        }
+      }
+      if (!groupId || !g) return state;
+      const stripIdx = state[stripKey].findIndex(
+        (it) => it.type === "group" && it.groupId === groupId
+      );
+      const newTabIds = g.tabIds.filter((id) => id !== tabId);
+      const groups = { ...state[groupsKey] };
+      let strip = [...state[stripKey]];
+      if (newTabIds.length === 0) {
+        delete groups[groupId];
+        strip = strip.filter((it) => !(it.type === "group" && it.groupId === groupId));
+        const insertAt = stripIdx >= 0 ? stripIdx : strip.length;
+        strip.splice(insertAt, 0, { type: "tab", tabId });
+      } else {
+        groups[groupId] = { ...g, tabIds: newTabIds };
+        const insertAt = stripIdx >= 0 ? stripIdx + 1 : strip.length;
+        strip.splice(insertAt, 0, { type: "tab", tabId });
+      }
+      return { ...state, [groupsKey]: groups, [stripKey]: strip };
+    }
+
+    case "TOGGLE_TAB_GROUP_COLLAPSED": {
+      const { pane, groupId } = action;
+      const groupsKey = pane === "left" ? "leftTabGroups" : "rightTabGroups";
+      const g = state[groupsKey][groupId];
+      if (!g) return state;
+      return {
+        ...state,
+        [groupsKey]: {
+          ...state[groupsKey],
+          [groupId]: { ...g, collapsed: !g.collapsed },
+        },
+      };
+    }
+
+    case "UPDATE_TAB_GROUP_META": {
+      const { pane, groupId, title, color } = action;
+      const groupsKey = pane === "left" ? "leftTabGroups" : "rightTabGroups";
+      const g = state[groupsKey][groupId];
+      if (!g) return state;
+      return {
+        ...state,
+        [groupsKey]: {
+          ...state[groupsKey],
+          [groupId]: {
+            ...g,
+            ...(title !== undefined ? { title } : {}),
+            ...(color !== undefined ? { color } : {}),
+          },
+        },
+      };
+    }
+
+    case "UNGROUP_ALL": {
+      const { pane, groupId } = action;
+      const groupsKey = pane === "left" ? "leftTabGroups" : "rightTabGroups";
+      const stripKey = pane === "left" ? "leftStripItems" : "rightStripItems";
+      const g = state[groupsKey][groupId];
+      if (!g) return state;
+      const stripIdx = state[stripKey].findIndex(
+        (it) => it.type === "group" && it.groupId === groupId
+      );
+      const groups = { ...state[groupsKey] };
+      delete groups[groupId];
+      let strip = state[stripKey].filter(
+        (it) => !(it.type === "group" && it.groupId === groupId)
+      );
+      const at = stripIdx >= 0 ? stripIdx : strip.length;
+      const toInsert: EditorStripItem[] = g.tabIds.map((tabId) => ({
+        type: "tab",
+        tabId,
+      }));
+      strip = [...strip.slice(0, at), ...toInsert, ...strip.slice(at)];
+      return { ...state, [groupsKey]: groups, [stripKey]: strip };
+    }
+
+    case "ADD_TAB_TO_GROUP": {
+      const { pane, tabId, groupId } = action;
+      const tabsKey = pane === "left" ? "leftTabs" : "rightTabs";
+      const groupsKey = pane === "left" ? "leftTabGroups" : "rightTabGroups";
+      const stripKey = pane === "left" ? "leftStripItems" : "rightStripItems";
+      if (!state[tabsKey].some((t) => t.id === tabId)) return state;
+      const target = state[groupsKey][groupId];
+      if (!target) return state;
+      let next = removeTabIdFromPaneStrip(state, pane, tabId);
+      const g = next[groupsKey][groupId];
+      if (!g) return state;
+      const tabIds = g.tabIds.includes(tabId) ? g.tabIds : [...g.tabIds, tabId];
+      next = {
+        ...next,
+        [groupsKey]: { ...next[groupsKey], [groupId]: { ...g, tabIds } },
+      };
+      let strip = [...next[stripKey]];
+      if (!strip.some((it) => it.type === "group" && it.groupId === groupId)) {
+        strip.push({ type: "group", groupId });
+      }
+      return { ...next, [stripKey]: strip };
+    }
+
+    case "REORDER_STRIP": {
+      const { pane, fromIndex, toIndex } = action;
+      const stripKey = pane === "left" ? "leftStripItems" : "rightStripItems";
+      const strip = [...state[stripKey]];
+      if (
+        fromIndex < 0 ||
+        fromIndex >= strip.length ||
+        toIndex < 0 ||
+        toIndex >= strip.length ||
+        fromIndex === toIndex
+      ) {
+        return state;
+      }
+      const [moved] = strip.splice(fromIndex, 1);
+      strip.splice(toIndex, 0, moved);
+      return { ...state, [stripKey]: strip };
+    }
+
+    case "MOVE_TAB_TO_STRIP_INDEX": {
+      const { pane, tabId, toIndex } = action;
+      const tabsKey = pane === "left" ? "leftTabs" : "rightTabs";
+      if (!state[tabsKey].some((t) => t.id === tabId)) return state;
+      let next = removeTabIdFromPaneStrip(state, pane, tabId);
+      const stripKey = pane === "left" ? "leftStripItems" : "rightStripItems";
+      const strip = [...next[stripKey]];
+      const clamped = Math.max(0, Math.min(toIndex, strip.length));
+      strip.splice(clamped, 0, { type: "tab", tabId });
+      return { ...next, [stripKey]: strip };
     }
 
     default:
       return state;
   }
+  })();
+  return normalizeEditorPanelState(nextState);
+}
+
+const TAB_GROUP_COLOR_HEX: Record<string, string> = {
+  blue: "#3b82f6",
+  green: "#22c55e",
+  violet: "#8b5cf6",
+  amber: "#f59e0b",
+  rose: "#f43f5e",
+  cyan: "#06b6d4",
+  orange: "#f97316",
+  slate: "#64748b",
+};
+
+export const TAB_GROUP_COLOR_PRESET_IDS = Object.keys(TAB_GROUP_COLOR_HEX);
+
+export function resolveTabGroupColorHex(color: string): string {
+  if (color.startsWith("#") && /^#[0-9a-fA-F]{6}$/.test(color)) {
+    return color;
+  }
+  return TAB_GROUP_COLOR_HEX[color] ?? TAB_GROUP_COLOR_HEX.blue;
 }
 
 export const TAB_DND_MIME = "application/x-opencursor-editor-tab";
 
 export function parseTabDragPayload(
   data: string | undefined
-): { tabId: string; group: EditorGroup } | null {
+): {
+  tabId: string;
+  group: EditorGroup;
+  fromGroupId?: string | null;
+  stripIndex?: number | null;
+} | null {
   if (!data) return null;
   try {
-    const o = JSON.parse(data) as { tabId?: string; group?: string };
+    const o = JSON.parse(data) as {
+      tabId?: string;
+      group?: string;
+      fromGroupId?: string | null;
+      stripIndex?: number | null;
+    };
     if (
       o.tabId &&
       (o.group === "left" || o.group === "right")
     ) {
-      return { tabId: o.tabId, group: o.group };
+      return {
+        tabId: o.tabId,
+        group: o.group,
+        fromGroupId:
+          typeof o.fromGroupId === "string"
+            ? o.fromGroupId
+            : o.fromGroupId === null
+              ? null
+              : undefined,
+        stripIndex:
+          typeof o.stripIndex === "number"
+            ? o.stripIndex
+            : o.stripIndex === null
+              ? null
+              : undefined,
+      };
     }
   } catch {
     /* ignore */

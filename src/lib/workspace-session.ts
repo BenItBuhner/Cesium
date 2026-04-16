@@ -24,18 +24,41 @@ export type ExplorerSessionState = {
   scrollTop: number;
 };
 
-export type WorkbenchShellView = "agent" | "editor";
+/** Agent vs IDE vs full-screen settings; URL uses `?view=editor` / `?view=settings` when not default agent. */
+export type WorkbenchShellView = "agent" | "editor" | "settings";
+
+/** Last non-settings shell; used when closing the settings overlay. */
+export type WorkbenchShellNonSettingsView = "agent" | "editor";
 
 export type LayoutSessionState = {
   sidebarOpen: boolean;
   chatOpen: boolean;
   mobilePanel: MobilePanel;
   desktopLayout: Record<string, number> | null;
-  /** Agent vs classic IDE layout; URL uses `?view=editor` when not default agent. */
   shellView: WorkbenchShellView;
+  /** Shell to restore when leaving `settings` (ignored when not on settings). */
+  priorShellView: WorkbenchShellNonSettingsView;
 };
 
+/** Legacy in-editor Settings tab id (removed; settings open as full shell). */
+export const WORKBENCH_LEGACY_SETTINGS_TAB_ID = "workbench.settings" as const;
+
 export type EditorSplitOrientation = "horizontal" | "vertical";
+
+/** Single row in the editor tab strip (left or right pane). */
+export type EditorStripItem =
+  | { type: "tab"; tabId: string }
+  | { type: "group"; groupId: string };
+
+/** Tab group metadata; membership is `tabIds` (no duplicate field on `EditorTab`). */
+export type EditorTabGroupState = {
+  id: string;
+  title: string;
+  /** Preset name (`blue`, `green`, …) or `#rrggbb`. */
+  color: string;
+  collapsed: boolean;
+  tabIds: string[];
+};
 
 export type EditorSessionState = {
   split: boolean;
@@ -46,6 +69,11 @@ export type EditorSessionState = {
   rightTabs: EditorTab[];
   leftActiveId: string | null;
   rightActiveId: string | null;
+  /** Per-pane tab groups (VS Code–style). */
+  leftTabGroups: Record<string, EditorTabGroupState>;
+  rightTabGroups: Record<string, EditorTabGroupState>;
+  leftStripItems: EditorStripItem[];
+  rightStripItems: EditorStripItem[];
   viewStateByTabId: Record<string, unknown>;
 };
 
@@ -116,6 +144,10 @@ export function createEmptyEditorSession(): EditorSessionState {
     rightTabs: [],
     leftActiveId: null,
     rightActiveId: null,
+    leftTabGroups: {},
+    rightTabGroups: {},
+    leftStripItems: [],
+    rightStripItems: [],
     viewStateByTabId: {},
   };
 }
@@ -167,6 +199,7 @@ export function createDefaultWorkspaceSession(
       mobilePanel: "editor",
       desktopLayout: null,
       shellView: "agent",
+      priorShellView: "agent",
     },
     agentView: {
       leftRailCollapsed: false,
@@ -219,7 +252,7 @@ function createPersistableEditorTab(tab: EditorTab): EditorTab {
     };
   }
 
-  if (tab.id === "workbench.settings") {
+  if (tab.id === WORKBENCH_LEGACY_SETTINGS_TAB_ID) {
     return {
       id: tab.id,
       name: tab.name,
@@ -273,20 +306,169 @@ export function createPersistableWorkspaceSession(
   };
 }
 
+function normalizeEditorTabGroupsRecord(
+  raw: unknown,
+  defaults: Record<string, EditorTabGroupState>
+): Record<string, EditorTabGroupState> {
+  if (!raw || typeof raw !== "object") {
+    return { ...defaults };
+  }
+  const next: Record<string, EditorTabGroupState> = {};
+  for (const [id, g] of Object.entries(raw)) {
+    if (!g || typeof g !== "object") continue;
+    const o = g as Record<string, unknown>;
+    const tabIds = Array.isArray(o.tabIds)
+      ? o.tabIds.filter((x): x is string => typeof x === "string")
+      : [];
+    if (tabIds.length === 0) continue;
+    const title = typeof o.title === "string" ? o.title : "Tab group";
+    const color = typeof o.color === "string" ? o.color : "blue";
+    const collapsed = o.collapsed === true;
+    next[id] = {
+      id: typeof o.id === "string" ? o.id : id,
+      title,
+      color,
+      collapsed,
+      tabIds,
+    };
+  }
+  return Object.keys(next).length > 0 ? next : { ...defaults };
+}
+
+function stripLegacySettingsEditorTab(session: EditorSessionState): EditorSessionState {
+  const LEGACY = WORKBENCH_LEGACY_SETTINGS_TAB_ID;
+  const pruneTabs = (tabs: EditorTab[]) => tabs.filter((t) => t.id !== LEGACY);
+  const leftTabs = pruneTabs(session.leftTabs);
+  const rightTabs = pruneTabs(session.rightTabs);
+
+  const pruneGroups = (
+    groups: Record<string, EditorTabGroupState>
+  ): Record<string, EditorTabGroupState> => {
+    const next: Record<string, EditorTabGroupState> = {};
+    for (const [id, g] of Object.entries(groups)) {
+      const tabIds = g.tabIds.filter((tid) => tid !== LEGACY);
+      if (tabIds.length > 0) {
+        next[id] = { ...g, tabIds };
+      }
+    }
+    return next;
+  };
+  const leftTabGroups = pruneGroups(session.leftTabGroups);
+  const rightTabGroups = pruneGroups(session.rightTabGroups);
+
+  const pruneStrip = (
+    items: EditorStripItem[],
+    groups: Record<string, EditorTabGroupState>
+  ): EditorStripItem[] =>
+    items.filter((item) => {
+      if (item.type === "tab") {
+        return item.tabId !== LEGACY;
+      }
+      return item.groupId in groups;
+    });
+
+  let leftStripItems = pruneStrip(session.leftStripItems, leftTabGroups);
+  let rightStripItems = pruneStrip(session.rightStripItems, rightTabGroups);
+
+  const fixActive = (activeId: string | null, tabs: EditorTab[]): string | null => {
+    if (activeId === LEGACY) {
+      return tabs[0]?.id ?? null;
+    }
+    if (activeId && !tabs.some((t) => t.id === activeId)) {
+      return tabs[0]?.id ?? null;
+    }
+    return activeId;
+  };
+  const leftActiveId = fixActive(session.leftActiveId, leftTabs);
+  const rightActiveId = fixActive(session.rightActiveId, rightTabs);
+
+  const viewStateByTabId = { ...session.viewStateByTabId };
+  delete viewStateByTabId[LEGACY];
+
+  return {
+    ...session,
+    leftTabs,
+    rightTabs,
+    leftTabGroups,
+    rightTabGroups,
+    leftStripItems,
+    rightStripItems,
+    leftActiveId,
+    rightActiveId,
+    viewStateByTabId,
+  };
+}
+
+function normalizeEditorStripItems(
+  raw: unknown,
+  defaults: EditorStripItem[]
+): EditorStripItem[] {
+  if (!Array.isArray(raw)) {
+    return [...defaults];
+  }
+  const out: EditorStripItem[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object") continue;
+    const o = item as Record<string, unknown>;
+    if (o.type === "tab" && typeof o.tabId === "string") {
+      out.push({ type: "tab", tabId: o.tabId });
+    } else if (o.type === "group" && typeof o.groupId === "string") {
+      out.push({ type: "group", groupId: o.groupId });
+    }
+  }
+  return out.length > 0 ? out : [...defaults];
+}
+
 function normalizeEditorSession(
   raw: Partial<EditorSessionState> | null | undefined,
   defaults: EditorSessionState
 ): EditorSessionState {
-  return {
+  const leftTabs = Array.isArray(raw?.leftTabs) ? raw.leftTabs : defaults.leftTabs;
+  const rightTabs = Array.isArray(raw?.rightTabs) ? raw.rightTabs : defaults.rightTabs;
+  const leftTabGroups = normalizeEditorTabGroupsRecord(
+    raw?.leftTabGroups,
+    defaults.leftTabGroups
+  );
+  const rightTabGroups = normalizeEditorTabGroupsRecord(
+    raw?.rightTabGroups,
+    defaults.rightTabGroups
+  );
+  let leftStripItems = normalizeEditorStripItems(
+    raw?.leftStripItems,
+    defaults.leftStripItems
+  );
+  let rightStripItems = normalizeEditorStripItems(
+    raw?.rightStripItems,
+    defaults.rightStripItems
+  );
+  if (
+    leftStripItems.length === 0 &&
+    leftTabs.length > 0 &&
+    Object.keys(leftTabGroups).length === 0
+  ) {
+    leftStripItems = leftTabs.map((t) => ({ type: "tab" as const, tabId: t.id }));
+  }
+  if (
+    rightStripItems.length === 0 &&
+    rightTabs.length > 0 &&
+    Object.keys(rightTabGroups).length === 0
+  ) {
+    rightStripItems = rightTabs.map((t) => ({ type: "tab" as const, tabId: t.id }));
+  }
+  return stripLegacySettingsEditorTab({
     ...defaults,
     ...(raw ?? {}),
-    leftTabs: Array.isArray(raw?.leftTabs) ? raw.leftTabs : defaults.leftTabs,
-    rightTabs: Array.isArray(raw?.rightTabs) ? raw.rightTabs : defaults.rightTabs,
+    leftTabs,
+    rightTabs,
+    leftTabGroups,
+    rightTabGroups,
+    leftStripItems,
+    rightStripItems,
     viewStateByTabId:
       raw?.viewStateByTabId && typeof raw.viewStateByTabId === "object"
         ? raw.viewStateByTabId
         : defaults.viewStateByTabId,
-  };
+  });
 }
 
 function normalizeAgentSidePaneSession(
@@ -425,9 +607,15 @@ export function mergeWorkspaceSessionFromImport(
       ...current.layout,
       ...(r.layout ?? {}),
       shellView:
-        r.layout?.shellView === "editor" || r.layout?.shellView === "agent"
+        r.layout?.shellView === "editor" ||
+        r.layout?.shellView === "agent" ||
+        r.layout?.shellView === "settings"
           ? r.layout.shellView
           : current.layout.shellView ?? "agent",
+      priorShellView:
+        r.layout?.priorShellView === "editor" || r.layout?.priorShellView === "agent"
+          ? r.layout.priorShellView
+          : current.layout.priorShellView ?? "agent",
       desktopLayout:
         r.layout?.desktopLayout && typeof r.layout.desktopLayout === "object"
           ? r.layout.desktopLayout

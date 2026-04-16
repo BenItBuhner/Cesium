@@ -62,6 +62,7 @@ function AgentLayoutShell() {
     isMobile,
     leftRailCollapsed,
     rightPaneOpen,
+    isDraftConversationSelected,
     agentShellDesktopLayout,
     setLeftRailCollapsed,
     setAgentShellDesktopLayout,
@@ -207,7 +208,7 @@ function AgentLayoutShell() {
                 >
                   <AgentSidePane />
                 </div>
-                {!rightPaneOpen ? (
+                {!rightPaneOpen && !isDraftConversationSelected ? (
                   <button
                     type="button"
                     onClick={toggleRightPaneOpen}
@@ -255,7 +256,7 @@ function AgentLayoutShell() {
                   minSize={`${AGENT_SHELL_CENTER_MIN_PERCENT}%`}
                   className="relative min-h-0 min-w-0 overflow-hidden"
                 >
-                  {!rightPaneOpen ? (
+                  {!rightPaneOpen && !isDraftConversationSelected ? (
                     <button
                       type="button"
                       onClick={toggleRightPaneOpen}

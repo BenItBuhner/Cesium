@@ -6,7 +6,8 @@ export function useClickOutside(
   ref: RefObject<HTMLElement | null>,
   handler: () => void,
   active = true,
-  excludeRefs?: RefObject<HTMLElement | null>[]
+  excludeRefs?: RefObject<HTMLElement | null>[],
+  excludePredicate?: (target: Node) => boolean
 ) {
   useEffect(() => {
     if (!active) return;
@@ -15,10 +16,11 @@ export function useClickOutside(
       const target = e.target as Node;
       if (ref.current && ref.current.contains(target)) return;
       if (excludeRefs?.some((r) => r.current?.contains(target))) return;
+      if (excludePredicate?.(target)) return;
       handler();
     }
 
     document.addEventListener("pointerdown", onPointerDown);
     return () => document.removeEventListener("pointerdown", onPointerDown);
-  }, [ref, handler, active, excludeRefs]);
+  }, [ref, handler, active, excludeRefs, excludePredicate]);
 }

@@ -27,8 +27,14 @@ interface EditorTabProps {
   tab: EditorTabType;
   group: EditorGroup;
   isActive: boolean;
-  /** Drag between panes only when split. */
+  /** Drag between panes / reorder / merge into tab groups. */
   dragEnabled?: boolean;
+  /** Strip index of the owning block (standalone row or tab group) for same-pane moves. */
+  stripIndex?: number;
+  /** When set, tab is rendered inside this tab group. */
+  fromGroupId?: string | null;
+  /** Slightly tighter when nested under a group header. */
+  nestedInGroup?: boolean;
   /** Agent conversation: tool permission / approval pending. */
   agentNeedsAttention?: boolean;
   /** Agent conversation: turn in flight (spinner replaces tab icon). */
@@ -45,6 +51,9 @@ export function EditorTab({
   group,
   isActive,
   dragEnabled = false,
+  stripIndex,
+  fromGroupId = null,
+  nestedInGroup = false,
   agentNeedsAttention = false,
   agentRunning = false,
   agentUnreadCompletion = false,
@@ -70,7 +79,12 @@ export function EditorTab({
   function handleDragStart(e: DragEvent) {
     e.dataTransfer.setData(
       TAB_DND_MIME,
-      JSON.stringify({ tabId: tab.id, group })
+      JSON.stringify({
+        tabId: tab.id,
+        group,
+        fromGroupId,
+        stripIndex: stripIndex ?? null,
+      })
     );
     e.dataTransfer.effectAllowed = "move";
     setMinimalTabDragImage(e.dataTransfer);
@@ -95,7 +109,7 @@ export function EditorTab({
       onClick={() => onSelect(tab.id)}
       onContextMenu={onContextMenu}
       aria-label={ariaLabel}
-      className={`group relative inline-flex h-[36px] max-w-[220px] shrink-0 items-center overflow-hidden rounded-[var(--radius-tab)] transition-colors ${dragEnabled ? "cursor-grab active:cursor-grabbing" : ""}`}
+      className={`group relative inline-flex h-[36px] shrink-0 items-center overflow-hidden rounded-[var(--radius-tab)] transition-colors ${nestedInGroup ? "max-w-[180px]" : "max-w-[220px]"} ${dragEnabled ? "cursor-grab active:cursor-grabbing" : ""}`}
       style={{ background: surface }}
     >
       <span className="ml-[9px] flex shrink-0 items-center gap-[6px]">

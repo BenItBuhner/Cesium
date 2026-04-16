@@ -43,6 +43,11 @@ import {
   type SlashSuggestion,
 } from "@/lib/composer-suggestions";
 import {
+  CHAT_UI_SHORTCUT_EVENT,
+  isChatUiShortcutEvent,
+  type ChatComposerShortcutAction,
+} from "@/lib/chat-ui-shortcut-events";
+import {
   getCaretClientRect,
   getComposerPlainText,
   getCaretOffset,
@@ -50,7 +55,12 @@ import {
   parseTriggerToken,
   replaceTextRange,
 } from "./composer-editor-utils";
-import { getModeTone } from "@/lib/chat-modes";
+import {
+  DEFAULT_MODE_OPTIONS,
+  ensureCurrentModeOption,
+  getModeTone,
+  resolveCanonicalModeId,
+} from "@/lib/chat-modes";
 import type { AgentModeOption, EditorMode, KnownEditorMode, ModelInfo } from "@/lib/types";
 import type { AgentBackendId, AgentBackendInfo, AgentConfigOption } from "@/lib/agent-types";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
@@ -412,11 +422,18 @@ export function ChatComposer({
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [modelDropdownOpen, setModelDropdownOpen] = useState(false);
+  /** Bumped when Shift+Tab cycles mode so `ModeDropdown` flashes the label. */
+  const [modeLabelPeekKey, setModeLabelPeekKey] = useState(0);
+  /** Bumped when Ctrl+Shift+Tab cycles ACP backend so `BackendDropdown` flashes the label. */
+  const [backendLabelPeekKey, setBackendLabelPeekKey] = useState(0);
+  const [modeMenuOpenKey, setModeMenuOpenKey] = useState(0);
+  const [backendMenuOpenKey, setBackendMenuOpenKey] = useState(0);
   const [recordingState, setRecordingState] = useState<
     "idle" | "recording" | "transcribing"
   >("idle");
   const [attachedImages, setAttachedImages] = useState<ImageAttachmentState[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const composerRootRef = useRef<HTMLDivElement>(null);
   const isDraggingRef = useRef(false);
   const imageFilesRef = useRef<Map<string, File>>(new Map());
   const [inputLevel, setInputLevel] = useState(0);
@@ -871,6 +888,65 @@ export function ChatComposer({
   const isExpanded = variant === "expanded";
   const showAgentShellGrowControls = agentShellDockHeightExpand && !isExpanded;
 
+  useEffect(() => {
+    const onShortcut = (event: Event) => {
+      if (!isChatUiShortcutEvent(event)) return;
+      const detail = event.detail;
+      if (detail.target !== "composer") return;
+      const root = composerRootRef.current;
+      if (!root) return;
+      const focused = document.activeElement;
+      if (!focused || !root.contains(focused)) return;
+
+      const run = (action: ChatComposerShortcutAction) => {
+        switch (action) {
+          case "openModelDropdown":
+            if (!busy && !configLocked) setModelDropdownOpen(true);
+            break;
+          case "openModeDropdown":
+            if (!busy && !configLocked) setModeMenuOpenKey((k) => k + 1);
+            break;
+          case "openBackendDropdown":
+            if (!busy && !configLocked) setBackendMenuOpenKey((k) => k + 1);
+            break;
+          case "toggleVoiceInput":
+            if (recordingState === "transcribing" || busy || configLocked) return;
+            if (recordingState === "recording") stopVoiceInput();
+            else void startVoiceInput();
+            break;
+          case "toggleComposerExpand":
+            if (busy || configLocked) return;
+            if (showAgentShellGrowControls) {
+              setAgentShellDockTall((t) => !t);
+            } else if (isExpanded && onCollapseComposer) {
+              onCollapseComposer();
+            } else if (!isExpanded && onExpandComposer) {
+              onExpandComposer();
+            }
+            break;
+          case "attachImage":
+            if (!busy && !configLocked) fileInputRef.current?.click();
+            break;
+          default:
+            break;
+        }
+      };
+      run(detail.action);
+    };
+    window.addEventListener(CHAT_UI_SHORTCUT_EVENT, onShortcut);
+    return () => window.removeEventListener(CHAT_UI_SHORTCUT_EVENT, onShortcut);
+  }, [
+    busy,
+    configLocked,
+    isExpanded,
+    onCollapseComposer,
+    onExpandComposer,
+    recordingState,
+    showAgentShellGrowControls,
+    startVoiceInput,
+    stopVoiceInput,
+  ]);
+
   const applyComposerDirectives = useCallback(
     (input: string): string => {
       const remainingLines: string[] = [];
@@ -1041,7 +1117,23 @@ export function ChatComposer({
     }
   }, [hardwareInputEnabled, menu, selection.end, value]);
 
-  useClickOutside(editorRef, () => { setMenu(null); setModelDropdownOpen(false); }, !!menu || modelDropdownOpen, [popoverRef]);
+  const pointerDownOutsideComposerEditor = useCallback((target: Node) => {
+    return (
+      target instanceof Element &&
+      Boolean(target.closest("[data-ide-composer-floating-popover]"))
+    );
+  }, []);
+
+  useClickOutside(
+    editorRef,
+    () => {
+      setMenu(null);
+      setModelDropdownOpen(false);
+    },
+    !!menu || modelDropdownOpen,
+    [popoverRef],
+    pointerDownOutsideComposerEditor
+  );
 
   useEffect(() => {
     setComposerSelection(selectionRef.current);
@@ -1128,6 +1220,89 @@ export function ChatComposer({
       setMenu(null);
     },
     [hardwareInputEnabled, setComposerSelection, setComposerValue, syncNativeState]
+  );
+
+  const tryCycleBackendWithCtrlShiftTab = useCallback(
+    (
+      event: Pick<
+        KeyboardEvent,
+        "key" | "shiftKey" | "ctrlKey" | "metaKey" | "preventDefault"
+      >,
+      obstructed: boolean
+    ): boolean => {
+      const mod = event.metaKey || event.ctrlKey;
+      if (event.key !== "Tab" || !event.shiftKey || !mod || obstructed) {
+        return false;
+      }
+      if (busy || configLocked) {
+        return false;
+      }
+      const cyclable = backends.filter((b) => b.available);
+      if (cyclable.length < 2) {
+        return false;
+      }
+      event.preventDefault();
+      let idx = cyclable.findIndex((b) => b.id === backendId);
+      if (idx < 0) {
+        idx = 0;
+      }
+      const next = cyclable[(idx + 1) % cyclable.length]!;
+      if (next.id !== backendId) {
+        if (onRequestHandoff) {
+          onRequestHandoff(next.id);
+        } else {
+          onBackendChange(next.id);
+        }
+      }
+      setBackendLabelPeekKey((k) => k + 1);
+      return true;
+    },
+    [
+      backendId,
+      backends,
+      busy,
+      configLocked,
+      onBackendChange,
+      onRequestHandoff,
+    ]
+  );
+
+  const tryCycleModeWithShiftTab = useCallback(
+    (
+      event: Pick<
+        KeyboardEvent,
+        "key" | "shiftKey" | "ctrlKey" | "metaKey" | "preventDefault"
+      >,
+      obstructed: boolean
+    ): boolean => {
+      if (event.key !== "Tab" || !event.shiftKey || obstructed) {
+        return false;
+      }
+      if (event.metaKey || event.ctrlKey) {
+        return false;
+      }
+      if (busy || configLocked) {
+        return false;
+      }
+      const opts = ensureCurrentModeOption(
+        mode,
+        modeOptions?.length ? modeOptions : DEFAULT_MODE_OPTIONS
+      );
+      if (opts.length === 0) {
+        return false;
+      }
+      event.preventDefault();
+      const canonical = resolveCanonicalModeId(String(mode), opts);
+      let idx = opts.findIndex((o) => o.id === canonical);
+      if (idx < 0) {
+        idx = 0;
+      }
+      const next = opts[(idx + 1) % opts.length]!;
+      onModeChange(next.id as EditorMode);
+      setModeLabelPeekKey((k) => k + 1);
+      return true;
+    },
+    [busy, configLocked, mode, modeOptions, onModeChange]
   );
 
   const pickSlash = useCallback(
@@ -1217,6 +1392,21 @@ export function ChatComposer({
         }
       }
 
+      if (
+        tryCycleBackendWithCtrlShiftTab(
+          event,
+          Boolean(currentMenu) || modelDropdownOpen
+        )
+      ) {
+        return true;
+      }
+
+      if (
+        tryCycleModeWithShiftTab(event, Boolean(currentMenu) || modelDropdownOpen)
+      ) {
+        return true;
+      }
+
       const next = applyTextBufferKey(
         valueRef.current,
         selectionRef.current,
@@ -1234,18 +1424,32 @@ export function ChatComposer({
       return true;
     },
     [
+      modelDropdownOpen,
       pickAt,
       pickSlash,
       setComposerSelection,
       setComposerValue,
       submitComposer,
       submitCtrlEnter,
+      tryCycleBackendWithCtrlShiftTab,
+      tryCycleModeWithShiftTab,
     ]
   );
 
   const handleNativeComposerKeyDown = useCallback(
     (event: ReactKeyboardEvent<HTMLDivElement>) => {
       if (!menu) {
+        if (
+          tryCycleBackendWithCtrlShiftTab(
+            event.nativeEvent,
+            modelDropdownOpen
+          )
+        ) {
+          return;
+        }
+        if (tryCycleModeWithShiftTab(event.nativeEvent, modelDropdownOpen)) {
+          return;
+        }
         if (event.key === "Enter") {
           const mod = event.ctrlKey || event.metaKey;
           if (submitCtrlEnter) {
@@ -1295,11 +1499,14 @@ export function ChatComposer({
       filteredAt,
       filteredSlash,
       menu,
+      modelDropdownOpen,
       pickAt,
       pickSlash,
       selectedIndex,
       submitComposer,
       submitCtrlEnter,
+      tryCycleBackendWithCtrlShiftTab,
+      tryCycleModeWithShiftTab,
     ]
   );
 
@@ -1392,6 +1599,7 @@ export function ChatComposer({
 
   return (
     <div
+      ref={composerRootRef}
       data-ide-input-sink
       className={`${shellMargin} flex ${isExpanded ? "h-full min-h-0" : "shrink-0"} flex-col ${shellChrome}`}
     >
@@ -1565,6 +1773,8 @@ export function ChatComposer({
                 onRequestHandoff={onRequestHandoff}
                 popoverPlacement={modeModelPopoverPlacement}
                 disabled={busy || configLocked}
+                labelPeekKey={backendLabelPeekKey}
+                menuOpenTriggerKey={backendMenuOpenKey}
               />
             </div>
             <div className="shrink-0">
@@ -1574,6 +1784,8 @@ export function ChatComposer({
                 popoverPlacement={modeModelPopoverPlacement}
                 disabled={busy || configLocked}
                 options={modeOptions}
+                labelPeekKey={modeLabelPeekKey}
+                menuOpenTriggerKey={modeMenuOpenKey}
               />
             </div>
             <div className="min-w-0 shrink-0">
@@ -1691,7 +1903,7 @@ export function ChatComposer({
                 aria-hidden
               />
             ) : recordingState === "recording" ? (
-              <span className="flex h-[14px] items-end justify-center gap-[2.5px]">
+              <span className="flex h-[14px] items-center justify-center gap-[2.5px]">
                 {[0.35, 0.55, 0.4].map((scale, index) => (
                   <span
                     key={index}

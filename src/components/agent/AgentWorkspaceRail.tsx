@@ -1,6 +1,14 @@
 "use client";
 
-import { ChevronRight, ListFilter, PanelLeftClose, Plus, Search } from "lucide-react";
+import {
+  ChevronRight,
+  CircleUserRound,
+  ListFilter,
+  PanelLeftClose,
+  Plus,
+  Search,
+  Settings,
+} from "lucide-react";
 import {
   useCallback,
   useEffect,
@@ -11,7 +19,6 @@ import {
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
 } from "react";
-import { createPortal } from "react-dom";
 import { useWorkbenchContextMenu } from "@/components/ide/WorkbenchContextMenuProvider";
 import type { WorkbenchMenuItem } from "@/components/ide/workbench-context-menu-types";
 import { RecentChatsModal, type RecentChatOption } from "@/components/ide/RecentChatsModal";
@@ -23,8 +30,10 @@ import {
   AGENT_RAIL_FILTER_TOGGLE_KEYS,
   type AgentRailFilterToggleKey,
 } from "@/lib/agent-rail";
-import { useClickOutside } from "@/hooks/useClickOutside";
 import { AGENT_RAIL_OPEN_SEARCH_EVENT } from "@/components/agent/agent-rail-events";
+import { AgentRailFilterMenuPortal } from "@/components/agent/AgentRailFilterMenuPortal";
+import { useAuth } from "@/components/auth/AuthProvider";
+import { useShellView } from "@/components/layout/ShellViewContext";
 import { useAgentShellState } from "./AgentShellStateContext";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 
@@ -72,6 +81,9 @@ const FILTER_TOGGLE_LABELS: Record<AgentRailFilterToggleKey, string> = {
 };
 
 export function AgentWorkspaceRail() {
+  const { session: authSession } = useAuth();
+  const { openSettingsView } = useShellView();
+  const accountLabel = authSession?.username?.trim() || "Guest";
   const { renameConversation } = useAgentConversations();
   const { openAgentConversation } = useOpenInEditor();
   const {
@@ -96,9 +108,7 @@ export function AgentWorkspaceRail() {
   const { activeWorkspaceId, openWorkspaceById } = useWorkspace();
   const { openAt } = useWorkbenchContextMenu();
   const filterAnchorRef = useRef<HTMLButtonElement>(null);
-  const filterPanelRef = useRef<HTMLDivElement>(null);
   const [filterMenuOpen, setFilterMenuOpen] = useState(false);
-  const [filterMenuPos, setFilterMenuPos] = useState({ top: 0, left: 0 });
   const [collapsedWorkspaceIds, setCollapsedWorkspaceIds] = useState<Set<string>>(new Set());
   const [recentChatsOpen, setRecentChatsOpen] = useState(false);
   const [renameState, setRenameState] = useState<{
@@ -112,33 +122,8 @@ export function AgentWorkspaceRail() {
   } | null>(null);
 
   useLayoutEffect(() => {
-    if (!filterMenuOpen || !filterAnchorRef.current) {
-      return;
-    }
-    const r = filterAnchorRef.current.getBoundingClientRect();
-    setFilterMenuPos({ top: r.bottom + 6, left: r.left });
-  }, [filterMenuOpen]);
-
-  useLayoutEffect(() => {
     setCollapsedWorkspaceIds(readCollapsedWorkspaceIdsFromStorage());
   }, []);
-
-  useClickOutside(filterPanelRef, () => setFilterMenuOpen(false), filterMenuOpen, [
-    filterAnchorRef,
-  ]);
-
-  useEffect(() => {
-    if (!filterMenuOpen) {
-      return;
-    }
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        setFilterMenuOpen(false);
-      }
-    };
-    document.addEventListener("keydown", onKey, true);
-    return () => document.removeEventListener("keydown", onKey, true);
-  }, [filterMenuOpen]);
 
   useEffect(() => {
     if (leftRailCollapsed && !isMobile) {
@@ -433,15 +418,15 @@ export function AgentWorkspaceRail() {
           <button
             type="button"
             onClick={() => toggleWorkspaceCollapsed(PINNED_SECTION_WORKSPACE_ID)}
-            className="flex min-w-0 flex-1 items-center gap-[4px] rounded-[var(--radius-tab)] py-[2px] text-left transition-colors hover:bg-[var(--bg-card)]"
+            className="group/wshead flex min-w-0 flex-1 items-center gap-[4px] rounded-[var(--radius-tab)] py-[2px] text-left"
           >
             <ChevronRight
-              className={`size-[10px] shrink-0 text-[var(--text-disabled)] transition-transform duration-150 ${
+              className={`size-[10px] shrink-0 text-[var(--text-disabled)] transition-[transform,color] duration-150 group-hover/wshead:text-[var(--text-secondary)] ${
                 isPinnedHeaderCollapsed ? "" : "rotate-90"
               }`}
               strokeWidth={2}
             />
-            <span className="truncate font-sans text-[10.5px] font-medium text-[var(--text-disabled)]">
+            <span className="truncate font-sans text-[10.5px] font-medium text-[var(--text-disabled)] transition-colors group-hover/wshead:text-[var(--text-primary)]">
               Pinned
             </span>
           </button>
@@ -518,22 +503,6 @@ export function AgentWorkspaceRail() {
               <Search className="size-[16px]" strokeWidth={1.5} />
             </button>
             <button
-              ref={filterAnchorRef}
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                setFilterMenuOpen((open) => !open);
-              }}
-              className={`flex size-[18px] shrink-0 items-center justify-center rounded-[var(--radius-tab)] transition-colors hover:bg-[var(--bg-card)] hover:text-[var(--text-primary)] ${
-                railFilterActive ? "text-[var(--accent)]" : "text-[var(--text-secondary)]"
-              }`}
-              aria-label="Filter conversations"
-              aria-expanded={filterMenuOpen}
-              title={`Filter: ${filterSummary}`}
-            >
-              <ListFilter className="size-[16px]" strokeWidth={1.5} />
-            </button>
-            <button
               type="button"
               onClick={handleNewChat}
               className="ml-auto flex size-[18px] shrink-0 items-center justify-center rounded-[var(--radius-tab)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-card)] hover:text-[var(--text-primary)]"
@@ -545,7 +514,8 @@ export function AgentWorkspaceRail() {
           </div>
 
           {!leftRailCollapsed ? (
-            <div className="hide-scrollbar-y flex min-h-0 flex-1 flex-col overflow-y-auto px-[11px] pb-[14px] pt-[12px]">
+            <>
+              <div className="hide-scrollbar-y flex min-h-0 flex-1 flex-col overflow-y-auto px-[11px] pb-[8px] pt-[12px]">
           {railLoading ? (
             <div className="flex min-h-[120px] items-center justify-center font-sans text-[13px] text-[var(--text-secondary)]">
               Loading chats...
@@ -566,15 +536,15 @@ export function AgentWorkspaceRail() {
                     <button
                       type="button"
                       onClick={() => toggleWorkspaceCollapsed(group.workspace.id)}
-                      className="flex min-w-0 flex-1 items-center gap-[4px] rounded-[var(--radius-tab)] py-[2px] text-left transition-colors hover:bg-[var(--bg-card)]"
+                      className="group/wshead flex min-w-0 flex-1 items-center gap-[4px] rounded-[var(--radius-tab)] py-[2px] text-left"
                     >
                       <ChevronRight
-                        className={`size-[10px] shrink-0 text-[var(--text-disabled)] transition-transform duration-150 ${
+                        className={`size-[10px] shrink-0 text-[var(--text-disabled)] transition-[transform,color] duration-150 group-hover/wshead:text-[var(--text-secondary)] ${
                           isWorkspaceCollapsed ? "" : "rotate-90"
                         }`}
                         strokeWidth={2}
                       />
-                      <span className="truncate font-sans text-[10.5px] font-medium text-[var(--text-disabled)]">
+                      <span className="truncate font-sans text-[10.5px] font-medium text-[var(--text-disabled)] transition-colors group-hover/wshead:text-[var(--text-primary)]">
                         {group.workspace.name}
                       </span>
                     </button>
@@ -635,6 +605,47 @@ export function AgentWorkspaceRail() {
             </>
           )}
             </div>
+              <div className="flex shrink-0 items-center gap-[8px] px-[11px] py-[10px]">
+                <div
+                  className="flex min-w-0 flex-1 items-center gap-[8px]"
+                  title={accountLabel}
+                >
+                  <CircleUserRound
+                    className="size-[18px] shrink-0 text-[var(--text-secondary)]"
+                    strokeWidth={1.5}
+                    aria-hidden
+                  />
+                  <span className="truncate font-sans text-[13px] text-[var(--text-primary)]">
+                    {accountLabel}
+                  </span>
+                </div>
+                <button
+                  ref={filterAnchorRef}
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setFilterMenuOpen((open) => !open);
+                  }}
+                  className={`flex size-[18px] shrink-0 items-center justify-center rounded-[var(--radius-tab)] transition-colors hover:bg-[var(--bg-card)] hover:text-[var(--text-primary)] ${
+                    railFilterActive ? "text-[var(--accent)]" : "text-[var(--text-secondary)]"
+                  }`}
+                  aria-label="Filter conversations"
+                  aria-expanded={filterMenuOpen}
+                  title={`Filter: ${filterSummary}`}
+                >
+                  <ListFilter className="size-[16px]" strokeWidth={1.5} />
+                </button>
+                <button
+                  type="button"
+                  onClick={openSettingsView}
+                  className="flex size-[18px] shrink-0 items-center justify-center rounded-[var(--radius-tab)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-card)] hover:text-[var(--text-primary)]"
+                  aria-label="Open settings"
+                  title="Open settings"
+                >
+                  <Settings className="size-[16px]" strokeWidth={1.5} />
+                </button>
+              </div>
+            </>
           ) : null}
         </div>
       ) : null}
@@ -650,47 +661,15 @@ export function AgentWorkspaceRail() {
         inputLabel="Search agent conversations"
       />
 
-      {filterMenuOpen
-        ? createPortal(
-            <div
-              ref={filterPanelRef}
-              role="dialog"
-              aria-label="Conversation filters"
-              className="fixed z-[10040] min-w-[232px] rounded-[var(--radius-card)] border border-[var(--border-card)] bg-[var(--bg-card)] py-[6px] shadow-[0_8px_24px_rgba(0,0,0,0.12)] dark:shadow-[0_10px_28px_rgba(0,0,0,0.45)]"
-              style={{ top: filterMenuPos.top, left: filterMenuPos.left }}
-            >
-              <div className="px-[10px] pb-[4px] pt-[2px] font-sans text-[11px] font-medium uppercase tracking-wide text-[var(--text-disabled)]">
-                Show conversations
-              </div>
-              <div className="flex flex-col" onPointerDown={(e) => e.stopPropagation()}>
-                {AGENT_RAIL_FILTER_TOGGLE_KEYS.map((key) => (
-                  <label
-                    key={key}
-                    className="flex cursor-pointer items-center gap-[8px] px-[10px] py-[5px] font-sans text-[13px] text-[var(--text-primary)] transition-colors hover:bg-[var(--accent-bg)]"
-                  >
-                    <input
-                      type="checkbox"
-                      checked={railFilterToggles[key]}
-                      onChange={(ev) => setRailFilterToggle(key, ev.target.checked)}
-                      className="size-[14px] shrink-0 rounded border border-[var(--border-subtle)] accent-[var(--accent)]"
-                    />
-                    <span>{FILTER_TOGGLE_LABELS[key]}</span>
-                  </label>
-                ))}
-              </div>
-              <div className="mx-[8px] my-[6px] h-px bg-[var(--border-subtle)]" />
-              <button
-                type="button"
-                disabled={!railFilterActive}
-                onClick={() => clearRailFilters()}
-                className="mx-[6px] rounded-[var(--radius-tab)] px-[8px] py-[6px] text-left font-sans text-[12px] text-[var(--accent)] transition-colors hover:bg-[var(--accent-bg)] disabled:cursor-not-allowed disabled:opacity-40"
-              >
-                Clear all filters
-              </button>
-            </div>,
-            document.body
-          )
-        : null}
+      <AgentRailFilterMenuPortal
+        open={filterMenuOpen}
+        onClose={() => setFilterMenuOpen(false)}
+        anchorRef={filterAnchorRef}
+        railFilterToggles={railFilterToggles}
+        setRailFilterToggle={setRailFilterToggle}
+        clearRailFilters={clearRailFilters}
+        railFilterActive={railFilterActive}
+      />
     </>
   );
 }

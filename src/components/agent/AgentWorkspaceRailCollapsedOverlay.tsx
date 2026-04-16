@@ -6,6 +6,7 @@ import { AGENT_RAIL_OPEN_SEARCH_EVENT } from "@/components/agent/agent-rail-even
 
 /**
  * When the left rail Panel is collapsed (0% width), show expand / search / new-chat above the shell.
+ * Filter, settings, and account stay in the expanded rail footer only — not duplicated here while minimized.
  */
 export function AgentWorkspaceRailCollapsedOverlay() {
   const { isMobile, leftRailCollapsed, toggleLeftRailCollapsed, startNewConversation } =

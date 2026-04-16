@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useLayoutEffect, useRef, type MouseEvent } from "react";
 import { createPortal } from "react-dom";
-import { Columns2, MoreVertical, Rows2 } from "lucide-react";
+import { ChevronDown, ChevronRight, Columns2, MoreVertical, Rows2 } from "lucide-react";
 import { EditorTab } from "./EditorTab";
 import { useClickOutside } from "@/hooks/useClickOutside";
 import { useTabStripWheel } from "@/hooks/useTabStripWheel";
@@ -12,12 +12,22 @@ import type {
   EditorTab as EditorTabType,
 } from "@/lib/types";
 import type { EditorGroup } from "./editor-panel-state";
-import { TAB_DND_MIME, parseTabDragPayload } from "./editor-panel-state";
-import type { EditorSplitOrientation } from "@/lib/workspace-session";
+import {
+  TAB_DND_MIME,
+  parseTabDragPayload,
+  resolveTabGroupColorHex,
+} from "./editor-panel-state";
+import type {
+  EditorSplitOrientation,
+  EditorStripItem,
+  EditorTabGroupState,
+} from "@/lib/workspace-session";
 
 interface EditorTabsProps {
   group: EditorGroup;
   tabs: EditorTabType[];
+  stripItems: EditorStripItem[];
+  tabGroups: Record<string, EditorTabGroupState>;
   activeTabId: string | null;
   splitActive: boolean;
   splitOrientation: EditorSplitOrientation;
@@ -36,6 +46,10 @@ interface EditorTabsProps {
   onOpenConversationTab?: (conversationId: string, group: EditorGroup) => void;
   onTabContextMenu?: (e: MouseEvent, tabId: string) => void;
   onStripContextMenu?: (e: MouseEvent) => void;
+  onToggleTabGroupCollapsed?: (groupId: string) => void;
+  onTabGroupContextMenu?: (e: MouseEvent, groupId: string) => void;
+  onAddTabToGroup?: (tabId: string, groupId: string) => void;
+  onMoveTabToStripIndex?: (tabId: string, toIndex: number) => void;
   /** Agent chat tabs: permission pending / running; keyed by `conversationId`. */
   agentTabIndicators?: AgentTabIndicatorByConversationId;
   /** Reserve a trailing slot so an external pane-level control can occupy the far-right edge. */
@@ -44,9 +58,24 @@ interface EditorTabsProps {
 
 const MENU_W = 240;
 
+function findStripInsertIndex(root: HTMLElement, clientX: number): number {
+  const children = [
+    ...root.querySelectorAll("[data-strip-index]"),
+  ] as HTMLElement[];
+  if (children.length === 0) return 0;
+  for (let i = 0; i < children.length; i++) {
+    const r = children[i].getBoundingClientRect();
+    const mid = r.left + r.width / 2;
+    if (clientX < mid) return i;
+  }
+  return children.length;
+}
+
 export function EditorTabs({
   group,
   tabs,
+  stripItems,
+  tabGroups,
   activeTabId,
   splitActive,
   splitOrientation,
@@ -63,6 +92,10 @@ export function EditorTabs({
   onOpenConversationTab,
   onTabContextMenu,
   onStripContextMenu,
+  onToggleTabGroupCollapsed,
+  onTabGroupContextMenu,
+  onAddTabToGroup,
+  onMoveTabToStripIndex,
   agentTabIndicators,
   trailingSpacerWidthPx = 0,
 }: EditorTabsProps) {
@@ -91,13 +124,15 @@ export function EditorTabs({
 
   const hasTabs = tabs.length > 0;
   const canCloseOthers = tabs.length > 1;
+  const hasStripGroups = stripItems.some((it) => it.type === "group");
+  const dragEnabled = splitActive || hasStripGroups || tabs.length >= 2;
 
   function handleStripDragOver(e: React.DragEvent) {
     const types = [...e.dataTransfer.types];
     const isTabDrag = types.includes(TAB_DND_MIME);
     const isChatTabDrag = types.includes(CHAT_TAB_DND_MIME);
 
-    if (splitActive && isTabDrag) {
+    if ((dragEnabled || splitActive) && isTabDrag) {
       e.preventDefault();
       e.dataTransfer.dropEffect = "move";
     }
@@ -131,6 +166,23 @@ export function EditorTabs({
 
   function handleStripDrop(e: React.DragEvent) {
     const tabPayload = parseTabDragPayload(e.dataTransfer.getData(TAB_DND_MIME));
+    if (tabPayload && tabPayload.group === group && dragEnabled) {
+      const target = e.target as HTMLElement | null;
+      const groupHost = target?.closest?.("[data-tab-group-id]");
+      const groupIdAttr = groupHost?.getAttribute("data-tab-group-id");
+      if (groupIdAttr && onAddTabToGroup && tabPayload.tabId !== undefined) {
+        e.preventDefault();
+        onAddTabToGroup(tabPayload.tabId, groupIdAttr);
+        return;
+      }
+      if (stripRef.current && onMoveTabToStripIndex) {
+        const dropIdx = findStripInsertIndex(stripRef.current, e.clientX);
+        e.preventDefault();
+        onMoveTabToStripIndex(tabPayload.tabId, dropIdx);
+        return;
+      }
+    }
+
     if (splitActive && tabPayload) {
       e.preventDefault();
       if (tabPayload.group !== group) {
@@ -148,11 +200,47 @@ export function EditorTabs({
     }
   }
 
+  function renderTabButton(
+    tab: EditorTabType,
+    opts: {
+      stripIndex: number;
+      fromGroupId: string | null;
+      nestedInGroup: boolean;
+    }
+  ) {
+    const convId = tab.conversationId;
+    const ind = convId ? agentTabIndicators?.[convId] : undefined;
+    const needsAttention = Boolean(ind?.needsAttention);
+    const running = Boolean(ind?.running) && !needsAttention;
+    const unreadCompletion =
+      Boolean(ind?.unreadCompletion) && !needsAttention && !running;
+    return (
+      <EditorTab
+        key={`${opts.fromGroupId ?? "s"}-${tab.id}`}
+        tab={tab}
+        group={group}
+        isActive={tab.id === activeTabId}
+        dragEnabled={dragEnabled}
+        stripIndex={opts.stripIndex}
+        fromGroupId={opts.fromGroupId}
+        nestedInGroup={opts.nestedInGroup}
+        agentNeedsAttention={needsAttention}
+        agentRunning={running}
+        agentUnreadCompletion={unreadCompletion}
+        onSelect={onSelectTab}
+        onClose={onCloseTab}
+        onContextMenu={
+          onTabContextMenu ? (ev) => onTabContextMenu(ev, tab.id) : undefined
+        }
+      />
+    );
+  }
+
   return (
     <div className="flex h-[var(--tab-height)] items-center overflow-hidden bg-[var(--bg-panel)]">
       <div
         ref={stripRef}
-        className={`hide-scrollbar-x flex min-h-[36px] min-w-0 flex-1 items-center gap-0 py-[2px] pr-[2px] ${
+        className={`hide-scrollbar-x flex min-h-[36px] min-w-0 flex-1 items-center gap-[4px] py-[2px] pr-[2px] ${
           padStripLeadingForWindowChrome
             ? "pl-[var(--editor-window-chrome-tab-inset)]"
             : "pl-[2px]"
@@ -164,29 +252,93 @@ export function EditorTabs({
           onStripContextMenu?.(e);
         }}
       >
-        {tabs.map((tab) => {
-          const convId = tab.conversationId;
-          const ind = convId ? agentTabIndicators?.[convId] : undefined;
-          const needsAttention = Boolean(ind?.needsAttention);
-          const running = Boolean(ind?.running) && !needsAttention;
-          const unreadCompletion =
-            Boolean(ind?.unreadCompletion) && !needsAttention && !running;
+        {stripItems.map((item, stripIndex) => {
+          if (item.type === "tab") {
+            const tab = tabs.find((t) => t.id === item.tabId);
+            if (!tab) return null;
+            return (
+              <div
+                key={`strip-tab-${item.tabId}`}
+                data-strip-index={stripIndex}
+                className="shrink-0"
+              >
+                {renderTabButton(tab, {
+                  stripIndex,
+                  fromGroupId: null,
+                  nestedInGroup: false,
+                })}
+              </div>
+            );
+          }
+
+          const g = tabGroups[item.groupId];
+          if (!g) return null;
+          const accent = resolveTabGroupColorHex(g.color);
+          const groupActive =
+            Boolean(activeTabId) && g.tabIds.includes(activeTabId!);
+          const Chev = g.collapsed ? ChevronRight : ChevronDown;
+
           return (
-            <EditorTab
-              key={tab.id}
-              tab={tab}
-              group={group}
-              isActive={tab.id === activeTabId}
-              dragEnabled={splitActive}
-              agentNeedsAttention={needsAttention}
-              agentRunning={running}
-              agentUnreadCompletion={unreadCompletion}
-              onSelect={onSelectTab}
-              onClose={onCloseTab}
-              onContextMenu={
-                onTabContextMenu ? (ev) => onTabContextMenu(ev, tab.id) : undefined
-              }
-            />
+            <div
+              key={`strip-group-${item.groupId}`}
+              data-strip-index={stripIndex}
+              className="flex shrink-0 items-stretch rounded-[var(--radius-tab)]"
+              style={{
+                boxShadow: groupActive
+                  ? `inset 0 0 0 1px var(--border-subtle), 0 0 0 1px ${accent}55`
+                  : `inset 0 0 0 1px var(--border-subtle)`,
+                borderLeft: `3px solid ${accent}`,
+                background: "var(--bg-tab-inactive)",
+              }}
+              data-tab-group-id={g.id}
+              onDragOver={(e) => {
+                if (dragEnabled && [...e.dataTransfer.types].includes(TAB_DND_MIME)) {
+                  e.preventDefault();
+                  e.dataTransfer.dropEffect = "move";
+                }
+              }}
+              onDrop={(e) => {
+                const p = parseTabDragPayload(e.dataTransfer.getData(TAB_DND_MIME));
+                if (p && p.group === group && onAddTabToGroup) {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  onAddTabToGroup(p.tabId, g.id);
+                }
+              }}
+            >
+              <div className="flex min-h-[36px] flex-row items-stretch">
+                <button
+                  type="button"
+                  data-tab-group-id={g.id}
+                  onClick={() => onToggleTabGroupCollapsed?.(g.id)}
+                  onContextMenu={(e) => {
+                    e.stopPropagation();
+                    onTabGroupContextMenu?.(e, g.id);
+                  }}
+                  className={`flex shrink-0 items-center gap-[4px] rounded-l-[var(--radius-tab)] px-[8px] font-sans text-[12px] transition-colors hover:bg-white/[0.06] ${
+                    groupActive ? "text-[var(--text-primary)]" : "text-[var(--text-secondary)]"
+                  }`}
+                  aria-expanded={!g.collapsed}
+                >
+                  <Chev className="size-[14px] shrink-0 opacity-70" strokeWidth={1.5} />
+                  <span className="max-w-[120px] truncate">{g.title}</span>
+                </button>
+                {!g.collapsed &&
+                  g.tabIds.map((tid) => {
+                    const tab = tabs.find((t) => t.id === tid);
+                    if (!tab) return null;
+                    return (
+                      <div key={`g-${g.id}-${tid}`} className="flex items-stretch">
+                        {renderTabButton(tab, {
+                          stripIndex,
+                          fromGroupId: g.id,
+                          nestedInGroup: true,
+                        })}
+                      </div>
+                    );
+                  })}
+              </div>
+            </div>
           );
         })}
         {tabs.length === 0 && splitActive && (

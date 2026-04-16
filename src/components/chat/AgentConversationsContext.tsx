@@ -43,6 +43,7 @@ import {
   tryBeginQueuedPromptFlush,
 } from "@/lib/queued-prompt-flush-guard";
 import { useShellView } from "@/components/layout/ShellViewContext";
+import { normalizeEditorPanelState } from "@/components/editor/editor-panel-state";
 import { JsonWebSocket } from "@/lib/ws-client";
 import {
   answerAgentPermission,
@@ -940,26 +941,45 @@ export function AgentConversationsProvider({
             ...left.nextTabs.map((tab) => tab.id),
             ...right.nextTabs.map((tab) => tab.id),
           ]);
-          return {
-            nextEditor: {
-              ...editor,
-              leftTabs: left.nextTabs,
-              rightTabs: right.nextTabs,
-              leftActiveId: left.nextActiveId,
-              rightActiveId: right.nextActiveId,
-              viewStateByTabId: Object.fromEntries(
-                Object.entries(editor.viewStateByTabId).filter(([tabId]) =>
-                  validTabIds.has(tabId)
-                )
-              ),
-            },
-            changed:
-              left.nextTabs.length !== editor.leftTabs.length ||
-              right.nextTabs.length !== editor.rightTabs.length ||
-              left.nextActiveId !== editor.leftActiveId ||
-              right.nextActiveId !== editor.rightActiveId ||
-              Object.keys(editor.viewStateByTabId).length !== validTabIds.size,
+          const viewStateByTabId = Object.fromEntries(
+            Object.entries(editor.viewStateByTabId).filter(([tabId]) =>
+              validTabIds.has(tabId)
+            )
+          );
+          const normalized = normalizeEditorPanelState({
+            split: editor.split,
+            splitOrientation: editor.splitOrientation,
+            splitLayout: editor.splitLayout,
+            focusedGroup: editor.focusedGroup,
+            leftTabs: left.nextTabs,
+            rightTabs: right.nextTabs,
+            leftActiveId: left.nextActiveId,
+            rightActiveId: right.nextActiveId,
+            leftTabGroups: editor.leftTabGroups,
+            rightTabGroups: editor.rightTabGroups,
+            leftStripItems: editor.leftStripItems,
+            rightStripItems: editor.rightStripItems,
+          });
+          const nextEditor = {
+            ...normalized,
+            viewStateByTabId,
           };
+          const changed =
+            left.nextTabs.length !== editor.leftTabs.length ||
+            right.nextTabs.length !== editor.rightTabs.length ||
+            left.nextActiveId !== editor.leftActiveId ||
+            right.nextActiveId !== editor.rightActiveId ||
+            Object.keys(editor.viewStateByTabId).length !==
+              Object.keys(viewStateByTabId).length ||
+            JSON.stringify(normalized.leftStripItems) !==
+              JSON.stringify(editor.leftStripItems) ||
+            JSON.stringify(normalized.rightStripItems) !==
+              JSON.stringify(editor.rightStripItems) ||
+            JSON.stringify(normalized.leftTabGroups) !==
+              JSON.stringify(editor.leftTabGroups) ||
+            JSON.stringify(normalized.rightTabGroups) !==
+              JSON.stringify(editor.rightTabGroups);
+          return { nextEditor, changed };
         };
 
         const { nextEditor, changed: editorChanged } = pruneEditorSession(current.editor);

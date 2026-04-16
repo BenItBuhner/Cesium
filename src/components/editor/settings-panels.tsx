@@ -79,6 +79,7 @@ const CUSTOM_THEME_ROW_CONTROL_MIN_H = "min-h-[38px]";
 
 const SECTION_ORDER: ShortcutCommandSection[] = [
   "Workbench",
+  "Chat",
   "File",
   "Editor",
   "Edit",

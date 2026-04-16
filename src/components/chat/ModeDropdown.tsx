@@ -1,6 +1,13 @@
 "use client";
 
-import { useState, useCallback, useMemo, useRef, useLayoutEffect } from "react";
+import {
+  useState,
+  useCallback,
+  useMemo,
+  useRef,
+  useLayoutEffect,
+  useEffect,
+} from "react";
 import { createPortal } from "react-dom";
 import {
   Infinity,
@@ -57,7 +64,16 @@ interface ModeDropdownProps {
   popoverPlacement?: "above" | "below";
   disabled?: boolean;
   options?: AgentModeOption[];
+  /**
+   * Increment when the mode is cycled via keyboard (e.g. Shift+Tab) so the chip briefly
+   * expands to show the label like hover, then collapses.
+   */
+  labelPeekKey?: number;
+  /** Increment to open the menu from a keyboard shortcut (settings). */
+  menuOpenTriggerKey?: number;
 }
+
+const MODE_LABEL_KEYBOARD_PEEK_MS = 560;
 
 export function ModeDropdown({
   mode,
@@ -65,6 +81,8 @@ export function ModeDropdown({
   popoverPlacement = "above",
   disabled = false,
   options,
+  labelPeekKey = 0,
+  menuOpenTriggerKey = 0,
 }: ModeDropdownProps) {
   const { settings } = useGlobalSettings();
   const platform = useMemo(() => detectShortcutPlatform(), []);
@@ -98,15 +116,34 @@ export function ModeDropdown({
     });
   }, [mode, options, platform, settings.keyboardShortcuts.bindings]);
   const [open, setOpen] = useState(false);
+  const [keyboardLabelPeek, setKeyboardLabelPeek] = useState(false);
   const [expandedWidth, setExpandedWidth] = useState(28);
   const labelMeasureRef = useRef<HTMLSpanElement>(null);
-  const triggerExpanded = open;
+  const showLabelExpanded = open || keyboardLabelPeek;
   const close = useCallback(() => setOpen(false), []);
   const { triggerRef, popoverRef, position, ready } = usePopover(open, {
     placement: popoverPlacement,
   });
 
   useClickOutside(triggerRef, close, open, [popoverRef]);
+
+  useEffect(() => {
+    if (labelPeekKey <= 0) {
+      return;
+    }
+    setKeyboardLabelPeek(true);
+    const id = window.setTimeout(() => {
+      setKeyboardLabelPeek(false);
+    }, MODE_LABEL_KEYBOARD_PEEK_MS);
+    return () => window.clearTimeout(id);
+  }, [labelPeekKey]);
+
+  useEffect(() => {
+    if (menuOpenTriggerKey <= 0) {
+      return;
+    }
+    setOpen(true);
+  }, [menuOpenTriggerKey]);
 
   const current = modes.find((candidate) => candidate.id === mode) ?? modes[0];
   const colors = modeColors[current?.tone ?? "agent"];
@@ -119,7 +156,7 @@ export function ModeDropdown({
     }
     const nextWidth = Math.max(28, Math.ceil(node.getBoundingClientRect().width));
     setExpandedWidth(nextWidth);
-  }, [current.label, triggerExpanded]);
+  }, [current.label, showLabelExpanded]);
 
   return (
     <div ref={triggerRef} className="relative inline-flex max-w-full min-w-0">
@@ -153,19 +190,19 @@ export function ModeDropdown({
         onClick={() => setOpen((v) => !v)}
         style={{
           background: colors.bg,
-          width: triggerExpanded ? `${expandedWidth}px` : undefined,
+          width: showLabelExpanded ? `${expandedWidth}px` : undefined,
           minWidth: 28,
         }}
-        className={`group inline-flex items-center overflow-hidden rounded-[var(--radius-pill)] py-[1px] transition-[padding,opacity] duration-200 hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50 ${
-          triggerExpanded ? "pl-[8px] pr-[7px]" : "pl-[7px] pr-[7px]"
+        className={`group inline-flex items-center overflow-hidden rounded-[var(--radius-pill)] py-[1px] transition-[padding,opacity,width] duration-200 hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50 ${
+          showLabelExpanded ? "pl-[8px] pr-[7px] ease-out" : "pl-[7px] pr-[7px] ease-in"
         }`}
       >
         <TriggerIcon className="size-[13px] shrink-0" style={{ color: colors.text }} strokeWidth={1.5} />
         <span
           className={`overflow-hidden whitespace-nowrap font-sans text-[13px] font-normal transition-[margin,max-width,opacity] duration-200 ${
-            triggerExpanded
-              ? "ml-[6px] max-w-[240px] opacity-100"
-              : "ml-0 max-w-0 opacity-0 group-hover:ml-[6px] group-hover:max-w-[240px] group-hover:opacity-100 group-focus-visible:ml-[6px] group-focus-visible:max-w-[240px] group-focus-visible:opacity-100"
+            showLabelExpanded
+              ? "ml-[6px] max-w-[240px] opacity-100 ease-out"
+              : "ml-0 max-w-0 opacity-0 ease-in group-hover:ml-[6px] group-hover:max-w-[240px] group-hover:opacity-100 group-hover:ease-out group-focus-visible:ml-[6px] group-focus-visible:max-w-[240px] group-focus-visible:opacity-100 group-focus-visible:ease-out"
           }`}
           style={{ color: colors.text }}
         >
@@ -173,9 +210,9 @@ export function ModeDropdown({
         </span>
         <ChevronDown
           className={`size-[8px] shrink-0 transition-[margin,opacity,width] duration-200 ${
-            triggerExpanded
-              ? "ml-[6px] w-[8px] opacity-100"
-              : "ml-0 w-0 opacity-0 group-hover:ml-[6px] group-hover:w-[8px] group-hover:opacity-100 group-focus-visible:ml-[6px] group-focus-visible:w-[8px] group-focus-visible:opacity-100"
+            showLabelExpanded
+              ? "ml-[6px] w-[8px] opacity-100 ease-out"
+              : "ml-0 w-0 opacity-0 ease-in group-hover:ml-[6px] group-hover:w-[8px] group-hover:opacity-100 group-hover:ease-out group-focus-visible:ml-[6px] group-focus-visible:w-[8px] group-focus-visible:opacity-100 group-focus-visible:ease-out"
           }`}
           style={{ color: colors.text }}
           strokeWidth={2.5}
@@ -188,6 +225,7 @@ export function ModeDropdown({
             ref={popoverRef}
             className="fixed z-[9999] w-[200px] rounded-[var(--radius-card)] border border-[var(--border-card)] bg-[var(--bg-panel)] py-[4px] transition-opacity"
             data-ide-input-sink
+            data-ide-composer-floating-popover
             style={{
               ...(position.top != null
                 ? { top: position.top }

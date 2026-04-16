@@ -2693,6 +2693,36 @@ function resolveThoughtOptionsForModel(
   return thoughtLevelOption.options.filter((option) => supported.includes(option.value));
 }
 
+function formatModelVariantDetailLabel(raw: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed) {
+    return trimmed;
+  }
+  const normalized = trimmed.toLowerCase();
+  if (normalized === "xhigh") {
+    return "Extra high";
+  }
+  if (normalized === "medium") {
+    return "Medium";
+  }
+  if (normalized === "high") {
+    return "High";
+  }
+  if (normalized === "low") {
+    return "Low";
+  }
+  if (normalized === "fast") {
+    return "Fast";
+  }
+  if (normalized === "thinking") {
+    return "Thinking";
+  }
+  if (normalized === "max") {
+    return "Max";
+  }
+  return trimmed.charAt(0).toUpperCase() + trimmed.slice(1).toLowerCase();
+}
+
 function formatModelVariantLabel(name: string, modelId: string): string {
   const trimmedName = name.trim() || modelId.trim() || "Model";
   const normalizedName = trimmedName.toLowerCase();
@@ -2728,7 +2758,7 @@ function formatModelVariantLabel(name: string, modelId: string): string {
     const slashVariant = modelId.trim().split("/").at(-1)?.trim().toLowerCase();
     if (
       slashVariant &&
-      ["low", "medium", "high", "xhigh", "thinking", "fast"].includes(slashVariant)
+      ["low", "medium", "high", "xhigh", "thinking", "fast", "max"].includes(slashVariant)
     ) {
       details.push(slashVariant);
     }
@@ -2743,9 +2773,9 @@ function formatModelVariantLabel(name: string, modelId: string): string {
     );
   });
 
-  return uniqueDetails.length > 0
-    ? `${trimmedName} (${uniqueDetails.join(", ")})`
-    : trimmedName;
+  const detailLabels = uniqueDetails.map(formatModelVariantDetailLabel);
+
+  return detailLabels.length > 0 ? `${trimmedName} (${detailLabels.join(", ")})` : trimmedName;
 }
 
 export function buildConversationModelOptions(

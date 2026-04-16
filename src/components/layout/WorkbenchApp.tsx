@@ -5,10 +5,14 @@ import { AgentConversationsProvider } from "@/components/chat/AgentConversations
 import { OpenInEditorProvider } from "@/components/editor/OpenInEditorContext";
 import { AgentLayout } from "@/components/layout/AgentLayout";
 import { IDELayout } from "@/components/layout/IDELayout";
+import { SettingsShellView } from "@/components/layout/SettingsShellView";
 import { ShellViewProvider, useShellView } from "@/components/layout/ShellViewContext";
 
 function WorkbenchShell() {
   const { shellView } = useShellView();
+  if (shellView === "settings") {
+    return <SettingsShellView />;
+  }
   return shellView === "agent" ? <AgentLayout /> : <IDELayout />;
 }
 

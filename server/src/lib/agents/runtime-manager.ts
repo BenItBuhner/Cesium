@@ -225,6 +225,9 @@ export class AgentRuntimeManager {
       const cachedModelCount = findPrimaryModelConfigOption(
         backend.cachedConfigOptions ?? []
       )?.options.length ?? 0;
+      if (cachedModelCount > 0) {
+        return backend;
+      }
       const richestConversation = conversations
         .filter(
           (conversation) =>

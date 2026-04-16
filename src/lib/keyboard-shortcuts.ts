@@ -2,6 +2,7 @@ export type ShortcutPlatform = "apple" | "other";
 
 export type ShortcutCommandSection =
   | "Workbench"
+  | "Chat"
   | "File"
   | "Editor"
   | "Edit"
@@ -135,6 +136,48 @@ export const SHORTCUT_COMMAND_DEFINITIONS: ShortcutCommandDefinition[] = [
     defaultBindings: [],
   },
   {
+    id: "chat.action.openWorkspacePicker",
+    label: "Chat: Open workspace picker",
+    section: "Chat",
+    defaultBindings: [],
+  },
+  {
+    id: "chat.action.openBackendDropdown",
+    label: "Chat: Open ACP / backend picker",
+    section: "Chat",
+    defaultBindings: [],
+  },
+  {
+    id: "chat.action.openModeDropdown",
+    label: "Chat: Open mode picker",
+    section: "Chat",
+    defaultBindings: [],
+  },
+  {
+    id: "chat.action.openModelDropdown",
+    label: "Chat: Open model picker",
+    section: "Chat",
+    defaultBindings: [],
+  },
+  {
+    id: "chat.action.toggleVoiceInput",
+    label: "Chat: Toggle voice input",
+    section: "Chat",
+    defaultBindings: [],
+  },
+  {
+    id: "chat.action.toggleComposerExpand",
+    label: "Chat: Toggle expand composer",
+    section: "Chat",
+    defaultBindings: [],
+  },
+  {
+    id: "chat.action.attachImage",
+    label: "Chat: Attach image",
+    section: "Chat",
+    defaultBindings: [],
+  },
+  {
     id: "workbench.action.openFile",
     label: "File: Open File…",
     section: "File",
@@ -249,34 +292,10 @@ export const SHORTCUT_COMMAND_DEFINITIONS: ShortcutCommandDefinition[] = [
     defaultBindings: ["Mod+Y"],
   },
   {
-    id: "editor.action.clipboardCut",
-    label: "Edit: Cut",
-    section: "Edit",
-    defaultBindings: ["Mod+X"],
-  },
-  {
-    id: "editor.action.clipboardCopy",
-    label: "Edit: Copy",
-    section: "Edit",
-    defaultBindings: ["Mod+C"],
-  },
-  {
-    id: "editor.action.clipboardPaste",
-    label: "Edit: Paste",
-    section: "Edit",
-    defaultBindings: ["Mod+V"],
-  },
-  {
     id: "editor.action.selectAll",
     label: "Edit: Select All",
     section: "Edit",
     defaultBindings: ["Mod+A"],
-  },
-  {
-    id: "workbench.action.reloadWindow",
-    label: "Developer: Reload Window",
-    section: "Developer",
-    defaultBindings: ["Mod+R"],
   },
   {
     id: "workbench.action.zoomIn",
@@ -507,9 +526,14 @@ export function getShortcutBindingsForCommand(
   return DEFAULT_KEYBOARD_SHORTCUT_BINDINGS[commandId] ?? [];
 }
 
+/** Shown in settings and shortcut hints: `Mod` matches Ctrl or ⌘ (Meta) on every OS. */
+export function primaryModifierLabel(platform: ShortcutPlatform): string {
+  return platform === "apple" ? "⌃ / ⌘" : "Ctrl";
+}
+
 function formatStep(step: ParsedShortcutStep, platform: ShortcutPlatform): string {
   const tokens: string[] = [];
-  if (step.mod) tokens.push(platform === "apple" ? "Cmd" : "Ctrl");
+  if (step.mod) tokens.push(primaryModifierLabel(platform));
   if (step.shift) tokens.push("Shift");
   if (step.alt) tokens.push(platform === "apple" ? "Option" : "Alt");
   tokens.push(DISPLAY_KEY_LABELS[step.key] ?? step.key);
@@ -606,18 +630,15 @@ export function matchesShortcutStep(
   step: ParsedShortcutStep,
   platform: ShortcutPlatform
 ): boolean {
-  const expectedMod = step.mod;
-  const actualMod = platform === "apple" ? event.metaKey : event.ctrlKey;
-  if (actualMod !== expectedMod) {
+  void platform;
+  const modPressed = event.metaKey || event.ctrlKey;
+  if (step.mod !== modPressed) {
     return false;
   }
   if (event.shiftKey !== step.shift) {
     return false;
   }
   if (event.altKey !== step.alt) {
-    return false;
-  }
-  if (platform === "apple" ? event.ctrlKey : event.metaKey) {
     return false;
   }
 
@@ -633,10 +654,6 @@ export function getShortcutDisplayForCommand(
     getShortcutBindingsForCommand(bindings, commandId),
     platform
   );
-}
-
-export function primaryModifierLabel(platform: ShortcutPlatform): string {
-  return platform === "apple" ? "Cmd" : "Ctrl";
 }
 
 const CHORD_TIMEOUT_MS = 1200;

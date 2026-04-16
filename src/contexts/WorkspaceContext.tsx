@@ -43,7 +43,10 @@ import {
   type WorkspaceSessionState,
 } from "@/lib/workspace-session";
 import { normalizeWorkspaceScopedRoute } from "@/lib/workspace-windows";
-import { WORKBENCH_VIEW_SEARCH_PARAM } from "@/lib/workbench-view";
+import {
+  WORKBENCH_VIEW_SEARCH_PARAM,
+  workbenchViewFromSearchParam,
+} from "@/lib/workbench-view";
 import { JsonWebSocket, toWebSocketUrl } from "@/lib/ws-client";
 import { buildAuthenticatedUrl } from "@/lib/auth-client";
 import { useWorkbenchNotifications } from "@/components/notifications/WorkbenchNotificationProvider";
@@ -563,16 +566,16 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       if (isRepeatWorkspaceTransition) {
         const localOptimistic = readWorkspaceSessionBackup(sessionScopeId);
         let optimisticSession = normalizeWorkspaceSession(localOptimistic ?? undefined);
-        if (
-          !localOptimistic &&
-          typeof window !== "undefined" &&
-          new URL(window.location.href).searchParams.get(WORKBENCH_VIEW_SEARCH_PARAM) ===
-            "editor"
-        ) {
-          optimisticSession = {
-            ...optimisticSession,
-            layout: { ...optimisticSession.layout, shellView: "editor" },
-          };
+        if (!localOptimistic && typeof window !== "undefined") {
+          const urlShell = workbenchViewFromSearchParam(
+            new URL(window.location.href).searchParams.get(WORKBENCH_VIEW_SEARCH_PARAM)
+          );
+          if (urlShell !== "default") {
+            optimisticSession = {
+              ...optimisticSession,
+              layout: { ...optimisticSession.layout, shellView: urlShell },
+            };
+          }
         }
         setWorkspaceSession(optimisticSession);
         setSessionReady(true);
@@ -592,16 +595,16 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         setWorkspaceWindows(windowsResult.windows);
         skipNextSessionSaveRef.current = true;
         let normalized = normalizeWorkspaceSession(localBackup ?? sessionResult.session);
-        if (
-          !localBackup &&
-          typeof window !== "undefined" &&
-          new URL(window.location.href).searchParams.get(WORKBENCH_VIEW_SEARCH_PARAM) ===
-            "editor"
-        ) {
-          normalized = {
-            ...normalized,
-            layout: { ...normalized.layout, shellView: "editor" },
-          };
+        if (!localBackup && typeof window !== "undefined") {
+          const urlShell = workbenchViewFromSearchParam(
+            new URL(window.location.href).searchParams.get(WORKBENCH_VIEW_SEARCH_PARAM)
+          );
+          if (urlShell !== "default") {
+            normalized = {
+              ...normalized,
+              layout: { ...normalized.layout, shellView: urlShell },
+            };
+          }
         }
         setWorkspaceSession(normalized);
         setSessionReady(true);

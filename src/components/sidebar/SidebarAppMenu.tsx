@@ -38,10 +38,6 @@ const EDIT_MENU: MenuBlock[] = [
   { cmd: "editor.action.undo", label: "Undo" },
   { cmd: "editor.action.redo", label: "Redo" },
   { sep: true },
-  { cmd: "editor.action.clipboardCut", label: "Cut" },
-  { cmd: "editor.action.clipboardCopy", label: "Copy" },
-  { cmd: "editor.action.clipboardPaste", label: "Paste" },
-  { sep: true },
   { cmd: "editor.action.selectAll", label: "Select All" },
 ];
 

@@ -17,7 +17,6 @@ import { SimpleMarkdownPreview } from "./SimpleMarkdownPreview";
 import { FilePreview } from "./FilePreview";
 import { AgentTranscriptView } from "./AgentTranscriptView";
 import { AgentConversationView } from "./AgentConversationView";
-import { SettingsEditorView } from "./SettingsEditorView";
 import { BrowserTab } from "./BrowserTab";
 import { ExpandedComposerView } from "./ExpandedComposerView";
 import { useEditorBridgeRef } from "@/components/ide/EditorBridgeContext";
@@ -33,8 +32,9 @@ import { CHAT_TAB_DND_MIME, parseChatTabDragPayload } from "@/lib/chat-tab-dnd";
 import type { ExplorerOpenRequest } from "@/lib/types";
 import type { AgentTabIndicatorByConversationId, EditorTab } from "@/lib/types";
 import {
-  SETTINGS_EDITOR_TAB_ID,
+  TAB_GROUP_COLOR_PRESET_IDS,
   editorPanelReducer,
+  resolveTabGroupColorHex,
   type EditorPanelAction,
   type EditorGroup,
   TAB_DND_MIME,
@@ -155,6 +155,10 @@ function createEditorStateFromSession(session: {
   rightTabs: EditorTab[];
   leftActiveId: string | null;
   rightActiveId: string | null;
+  leftTabGroups?: EditorSessionState["leftTabGroups"];
+  rightTabGroups?: EditorSessionState["rightTabGroups"];
+  leftStripItems?: EditorSessionState["leftStripItems"];
+  rightStripItems?: EditorSessionState["rightStripItems"];
 }) {
   const normalizeTranscriptTab = (tab: EditorTab): EditorTab => {
     if (tab.transcriptSessionId || !tab.transcriptMessages?.length) {
@@ -165,15 +169,39 @@ function createEditorStateFromSession(session: {
       .find((value): value is string => Boolean(value));
     return inferred ? { ...tab, transcriptSessionId: inferred } : tab;
   };
+  const leftTabs = session.leftTabs.map(normalizeTranscriptTab);
+  const rightTabs = session.rightTabs.map(normalizeTranscriptTab);
+  const leftTabGroups = session.leftTabGroups ?? {};
+  const rightTabGroups = session.rightTabGroups ?? {};
+  let leftStripItems = session.leftStripItems ?? [];
+  let rightStripItems = session.rightStripItems ?? [];
+  if (
+    leftStripItems.length === 0 &&
+    leftTabs.length > 0 &&
+    Object.keys(leftTabGroups).length === 0
+  ) {
+    leftStripItems = leftTabs.map((t) => ({ type: "tab" as const, tabId: t.id }));
+  }
+  if (
+    rightStripItems.length === 0 &&
+    rightTabs.length > 0 &&
+    Object.keys(rightTabGroups).length === 0
+  ) {
+    rightStripItems = rightTabs.map((t) => ({ type: "tab" as const, tabId: t.id }));
+  }
   return {
     split: session.split,
     splitOrientation: normalizeSplitOrientation(session.splitOrientation),
     splitLayout: normalizeSplitLayout(session.splitLayout),
     focusedGroup: session.focusedGroup,
-    leftTabs: session.leftTabs.map(normalizeTranscriptTab),
-    rightTabs: session.rightTabs.map(normalizeTranscriptTab),
+    leftTabs,
+    rightTabs,
     leftActiveId: session.leftActiveId,
     rightActiveId: session.rightActiveId,
+    leftTabGroups,
+    rightTabGroups,
+    leftStripItems,
+    rightStripItems,
   };
 }
 
@@ -1154,6 +1182,78 @@ export function EditorPanel({
     ]
   );
 
+  const handleTabGroupContextMenu = useCallback(
+    (e: MouseEvent, pane: EditorGroup, groupId: string) => {
+      e.preventDefault();
+      const snapshot = stateRef.current;
+      const groupsKey = pane === "left" ? "leftTabGroups" : "rightTabGroups";
+      const g = snapshot[groupsKey][groupId];
+      if (!g) return;
+
+      const colorItems: WorkbenchMenuItem[] = TAB_GROUP_COLOR_PRESET_IDS.map(
+        (cid) => ({
+          type: "item",
+          id: `tab-group-color-${cid}`,
+          label: cid.charAt(0).toUpperCase() + cid.slice(1),
+          onSelect: () => {
+            dispatch({
+              type: "UPDATE_TAB_GROUP_META",
+              pane,
+              groupId,
+              color: cid,
+            });
+          },
+        })
+      );
+
+      openAt(e, [
+        {
+          type: "item",
+          id: "tab-group-rename",
+          label: "Rename…",
+          onSelect: () => {
+            const t = window.prompt("Group name", g.title);
+            if (t == null || !t.trim()) return;
+            dispatch({
+              type: "UPDATE_TAB_GROUP_META",
+              pane,
+              groupId,
+              title: t.trim(),
+            });
+          },
+        },
+        {
+          type: "item",
+          id: "tab-group-custom-color",
+          label: "Custom color…",
+          onSelect: () => {
+            const c = window.prompt(
+              "Hex color (#rrggbb)",
+              resolveTabGroupColorHex(g.color)
+            );
+            if (c == null || !/^#[0-9a-fA-F]{6}$/.test(c.trim())) return;
+            dispatch({
+              type: "UPDATE_TAB_GROUP_META",
+              pane,
+              groupId,
+              color: c.trim(),
+            });
+          },
+        },
+        { type: "sep" },
+        ...colorItems,
+        { type: "sep" },
+        {
+          type: "item",
+          id: "tab-group-ungroup",
+          label: "Ungroup All",
+          onSelect: () => dispatch({ type: "UNGROUP_ALL", pane, groupId }),
+        },
+      ]);
+    },
+    [openAt]
+  );
+
   const handleEditorTabContextMenu = useCallback(
     (e: MouseEvent, group: EditorGroup, tabId: string) => {
       e.stopPropagation();
@@ -1207,6 +1307,36 @@ export function EditorPanel({
           id: "save",
           label: "Save",
           onSelect: () => void saveTab(tabId),
+        });
+      }
+
+      const tabGroupMembershipId = (() => {
+        const gk = group === "left" ? "leftTabGroups" : "rightTabGroups";
+        for (const [gid, gr] of Object.entries(snapshot[gk])) {
+          if (gr.tabIds.includes(tabId)) return gid;
+        }
+        return null;
+      })();
+
+      if (!tabGroupMembershipId) {
+        items.push({
+          type: "item",
+          id: "new-tab-group",
+          label: "New Tab Group",
+          onSelect: () =>
+            dispatch({ type: "CREATE_TAB_GROUP", pane: group, tabId }),
+        });
+      } else {
+        items.push({
+          type: "item",
+          id: "remove-from-tab-group",
+          label: "Remove from Tab Group",
+          onSelect: () =>
+            dispatch({
+              type: "REMOVE_TAB_FROM_GROUP",
+              pane: group,
+              tabId,
+            }),
         });
       }
 
@@ -1353,9 +1483,6 @@ export function EditorPanel({
   );
 
   function renderCodeForTab(tab: EditorTab, group: EditorGroup) {
-    if (tab.id === SETTINGS_EDITOR_TAB_ID) {
-      return <SettingsEditorView key={tab.id} />;
-    }
     if (tab.composerDraftId) {
       return (
         <ExpandedComposerView
@@ -1569,6 +1696,8 @@ export function EditorPanel({
         <EditorTabs
           group={group}
           tabs={options.tabs}
+          stripItems={group === "left" ? state.leftStripItems : state.rightStripItems}
+          tabGroups={group === "left" ? state.leftTabGroups : state.rightTabGroups}
           activeTabId={options.activeTabId}
           splitActive={state.split}
           splitOrientation={state.splitOrientation}
@@ -1585,6 +1714,23 @@ export function EditorPanel({
           onOpenConversationTab={openConversationTab}
           onTabContextMenu={(e, id) => handleEditorTabContextMenu(e, group, id)}
           onStripContextMenu={(e) => handleEditorStripContextMenu(e, group)}
+          onToggleTabGroupCollapsed={(groupId) =>
+            dispatch({ type: "TOGGLE_TAB_GROUP_COLLAPSED", pane: group, groupId })
+          }
+          onTabGroupContextMenu={(e, groupId) =>
+            handleTabGroupContextMenu(e, group, groupId)
+          }
+          onAddTabToGroup={(tabId, groupId) =>
+            dispatch({ type: "ADD_TAB_TO_GROUP", pane: group, tabId, groupId })
+          }
+          onMoveTabToStripIndex={(tabId, toIndex) =>
+            dispatch({
+              type: "MOVE_TAB_TO_STRIP_INDEX",
+              pane: group,
+              tabId,
+              toIndex,
+            })
+          }
           agentTabIndicators={agentTabIndicators}
           trailingSpacerWidthPx={trailingSpacerWidthPx}
         />
@@ -1632,8 +1778,14 @@ export function EditorPanel({
       e.dataTransfer.dropEffect = "move";
       return;
     }
-    if (!state.split) return;
     if (!types.includes(TAB_DND_MIME)) return;
+    const snap = stateRef.current;
+    const allowTabDrag =
+      snap.split ||
+      snap.leftStripItems.some((it) => it.type === "group") ||
+      snap.rightStripItems.some((it) => it.type === "group") ||
+      snap.leftTabs.length + snap.rightTabs.length >= 2;
+    if (!allowTabDrag) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = "move";
   }

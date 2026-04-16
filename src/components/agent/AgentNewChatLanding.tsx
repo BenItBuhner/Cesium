@@ -1,7 +1,13 @@
 "use client";
 
 import { ChevronDown } from "lucide-react";
-import { useCallback, useEffect, useMemo, type MouseEvent as ReactMouseEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  type MouseEvent as ReactMouseEvent,
+} from "react";
 import { ChatComposer } from "@/components/chat/ChatComposer";
 import { useAgentConversations } from "@/components/chat/AgentConversationsContext";
 import { useOpenInEditor } from "@/components/editor/OpenInEditorContext";
@@ -24,6 +30,10 @@ import { useWorkbenchContextMenu } from "@/components/ide/WorkbenchContextMenuPr
 import type { WorkbenchMenuItem } from "@/components/ide/workbench-context-menu-types";
 import { AGENT_CENTER_CONTENT_CLASS } from "./agent-shell-layout";
 import { useAgentShellState } from "./AgentShellStateContext";
+import {
+  CHAT_UI_SHORTCUT_EVENT,
+  isChatUiShortcutEvent,
+} from "@/lib/chat-ui-shortcut-events";
 
 function pickAvailableBackend(
   backends: AgentBackendInfo[],
@@ -63,7 +73,7 @@ export function AgentNewChatLanding() {
     setRightPaneOpen,
   } = useAgentShellState();
   const { settings } = useGlobalSettings();
-  const { openAt } = useWorkbenchContextMenu();
+  const { openAt, openAtPoint } = useWorkbenchContextMenu();
   const runCommand = useIDECommandRunner();
 
   const draftBackend = useMemo(
@@ -223,28 +233,47 @@ export function AgentNewChatLanding() {
     );
   }, [settings.keyboardShortcuts.bindings]);
 
+  const workspaceMenuItems = useMemo((): WorkbenchMenuItem[] => {
+    const items: WorkbenchMenuItem[] = groups.map((group) => ({
+      type: "item" as const,
+      id: group.workspace.id,
+      label: group.workspace.name,
+      onSelect: () => void openWorkspaceById(group.workspace.id),
+    }));
+    if (items.length > 0) {
+      items.push({ type: "sep" });
+    }
+    items.push({
+      type: "item",
+      id: "new-workspace",
+      label: "New workspace",
+      onSelect: () => {
+        runCommand?.("workbench.action.createWorkspace");
+      },
+    });
+    return items;
+  }, [groups, openWorkspaceById, runCommand]);
+
+  const workspacePickerButtonRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    const onShortcut = (e: Event) => {
+      if (!isChatUiShortcutEvent(e)) return;
+      if (e.detail.target !== "workspacePicker") return;
+      const el = workspacePickerButtonRef.current;
+      if (!el) return;
+      const r = el.getBoundingClientRect();
+      openAtPoint(r.left + r.width / 2, r.top + r.height / 2, workspaceMenuItems);
+    };
+    window.addEventListener(CHAT_UI_SHORTCUT_EVENT, onShortcut);
+    return () => window.removeEventListener(CHAT_UI_SHORTCUT_EVENT, onShortcut);
+  }, [openAtPoint, workspaceMenuItems]);
+
   const handleWorkspaceSwitch = useCallback(
     (e: ReactMouseEvent) => {
-      const items: WorkbenchMenuItem[] = groups.map((group) => ({
-        type: "item" as const,
-        id: group.workspace.id,
-        label: group.workspace.name,
-        onSelect: () => void openWorkspaceById(group.workspace.id),
-      }));
-      if (items.length > 0) {
-        items.push({ type: "sep" });
-      }
-      items.push({
-        type: "item",
-        id: "new-workspace",
-        label: "New workspace",
-        onSelect: () => {
-          runCommand?.("workbench.action.createWorkspace");
-        },
-      });
-      openAt(e, items);
+      openAt(e, workspaceMenuItems);
     },
-    [groups, openAt, openWorkspaceById, runCommand]
+    [openAt, workspaceMenuItems]
   );
 
   return (
@@ -255,6 +284,7 @@ export function AgentNewChatLanding() {
         <div className="mx-0 flex min-w-0 flex-col gap-[2px] min-[481px]:mx-[10px]">
           <div className="w-fit max-w-full self-start">
             <button
+              ref={workspacePickerButtonRef}
               type="button"
               onClick={handleWorkspaceSwitch}
               className="inline-flex min-w-0 max-w-full items-center gap-[6px] rounded-[var(--radius-pill)] px-0 py-[4px] text-left font-sans text-[13px] text-[var(--text-secondary)] transition-colors hover:text-[var(--text-primary)]"

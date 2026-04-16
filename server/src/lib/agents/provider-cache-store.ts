@@ -13,6 +13,11 @@ type AgentBackendCacheRecord = {
   configOptions: AgentConfigOption[];
 };
 
+type CommandInvocation = {
+  command: string;
+  args: string[];
+};
+
 const CACHE_TTL_MS = 5 * 60 * 1000;
 
 function getBackendCacheFile(backendId: AgentBackendId): string {
@@ -48,23 +53,91 @@ async function execFileText(
   });
 }
 
+function resolveCursorCliInvocation(inputCommand?: string): CommandInvocation {
+  const explicitCommand = inputCommand?.trim() || process.env.OPENCURSOR_CURSOR_CLI_BIN?.trim();
+  if (explicitCommand) {
+    return { command: explicitCommand, args: ["--list-models"] };
+  }
+  if (process.platform !== "win32") {
+    return { command: "agent", args: ["--list-models"] };
+  }
+
+  const localAppData = process.env.LOCALAPPDATA?.trim();
+  const systemRoot = process.env.SystemRoot?.trim() || "C:\\Windows";
+  if (localAppData) {
+    const cursorAgentScript = path.join(localAppData, "cursor-agent", "agent.ps1");
+    return {
+      command: path.join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe"),
+      args: [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        cursorAgentScript,
+        "--list-models",
+      ],
+    };
+  }
+  return { command: "agent", args: ["--list-models"] };
+}
+
+function formatCursorCliModelDisplayName(value: string, cliParsedName: string): string {
+  const name = cliParsedName.trim();
+  const v = value.trim();
+  if (name.length > 0 && name !== v && (/[A-Z]/.test(name) || name.includes(" "))) {
+    return name;
+  }
+  return v
+    .split("/")
+    .map((segment) =>
+      segment
+        .replace(/[._-]+/g, " ")
+        .split(/\s+/)
+        .filter(Boolean)
+        .map((word) => {
+          const lower = word.toLowerCase();
+          if (lower === "gpt") return "GPT";
+          if (lower === "api") return "API";
+          if (/^o\d+/i.test(word)) return word.toUpperCase();
+          if (/^\d+(\.\d+)?$/.test(word)) return word;
+          if (word.length <= 4 && word === word.toUpperCase()) return word;
+          return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
+        })
+        .join(" ")
+    )
+    .join(" · ");
+}
+
+/**
+ * The modern Cursor CLI (`agent --list-models`) emits one fully baked variant per
+ * line — `gpt-5.4-xhigh-fast - GPT-5.4 Extra High Fast  (current)`. Each effort /
+ * context / fast / thinking combination is a standalone model id, so there is no
+ * cross-product to do on our side: we surface exactly what the CLI gives us and
+ * let the user pick a concrete variant row. The old bracketed format (with per-
+ * model knob metadata + a synthetic reasoning-effort dropdown) would double-
+ * explode these rows and is no longer in use.
+ */
 export async function createCursorCliConfigOptions(input?: {
   command?: string;
   env?: NodeJS.ProcessEnv;
   cwd?: string;
 }): Promise<AgentConfigOption[]> {
-  const command = input?.command ?? process.env.OPENCURSOR_CURSOR_CLI_BIN ?? "agent";
-  const raw = await execFileText(command, ["--list-models"], {
+  const invocation = resolveCursorCliInvocation(input?.command);
+  const raw = await execFileText(invocation.command, invocation.args, {
     cwd: input?.cwd,
     env: input?.env,
   }).catch(() => "");
   const cleaned = stripAnsi(raw);
   const options: AgentConfigOption["options"] = [];
-  let currentValue = "auto";
+  let currentValue: string | null = null;
+  let defaultValue: string | null = null;
 
   for (const line of cleaned.split("\n")) {
     const trimmed = line.trim();
-    const match = /^([a-z0-9._-]+)\s+-\s+(.+?)(?:\s+\(([^)]+)\))?$/.exec(trimmed);
+    if (!trimmed || /^tip:/i.test(trimmed) || /^available models$/i.test(trimmed)) {
+      continue;
+    }
+    const match = /^(\S+)\s+-\s+(.+?)(?:\s{2,}\(([^)]+)\))?$/.exec(trimmed);
     if (!match) {
       continue;
     }
@@ -76,13 +149,25 @@ export async function createCursorCliConfigOptions(input?: {
     }
     if (flags.includes("current")) {
       currentValue = value;
+    } else if (flags.includes("default") && !defaultValue) {
+      defaultValue = value;
     }
-    options.push({ value, name });
+    options.push({
+      value,
+      name: formatCursorCliModelDisplayName(value, name),
+    });
   }
 
   if (options.length === 0) {
     return [];
   }
+
+  const resolvedCurrent =
+    currentValue ??
+    defaultValue ??
+    options.find((o) => o.value === "auto")?.value ??
+    options[0]?.value ??
+    "auto";
 
   return [
     {
@@ -100,7 +185,7 @@ export async function createCursorCliConfigOptions(input?: {
       id: "model",
       name: "Model",
       category: "model",
-      currentValue,
+      currentValue: resolvedCurrent,
       options,
     },
   ];
@@ -468,21 +553,32 @@ async function createSeedConfigOptions(backendId: AgentBackendId): Promise<Agent
   }
 }
 
-function isCursorCliSeedConfigOptions(configOptions: AgentConfigOption[]): boolean {
+/**
+ * Earlier versions of the Cursor CLI emitted bracketed knob defaults like
+ * `gpt-5.4[reasoning=medium,context=272k,fast=false]` and we used to inflate
+ * those into a synthetic `cursor_thought_level` config option. The modern CLI
+ * already enumerates each effort/context/fast combination as its own model id,
+ * so any cache that still contains brackets or a cursor thought-level option is
+ * stale and must be rebuilt from the live CLI.
+ */
+function isStaleCursorAcpCache(configOptions: AgentConfigOption[]): boolean {
   const modelOption = configOptions.find((option) => option.category === "model");
   if (!modelOption || modelOption.options.length === 0) {
-    return false;
+    return true;
   }
   if (
     configOptions.some(
       (option) =>
-        option.category === "thought_level" || option.id === "model_reasoning_effort"
+        option.id === "cursor_thought_level" ||
+        (option.category === "thought_level" && option.id !== "model_reasoning_effort")
     )
   ) {
-    return false;
+    return true;
   }
-  return !modelOption.currentValue.includes("[") &&
-    modelOption.options.every((option) => !option.value.includes("["));
+  if (modelOption.currentValue.includes("[")) {
+    return true;
+  }
+  return modelOption.options.some((option) => option.value.includes("["));
 }
 
 export async function readAgentBackendConfigCache(
@@ -510,10 +606,12 @@ export async function readAgentBackendConfigCache(
       await writeAgentBackendConfigCache(backendId, seeded);
       return seeded;
     }
-    if (backendId === "cursor-acp" && !isCursorCliSeedConfigOptions(record.configOptions)) {
+    if (backendId === "cursor-acp" && isStaleCursorAcpCache(record.configOptions)) {
       const seeded = await createSeedConfigOptions(backendId);
-      await writeAgentBackendConfigCache(backendId, seeded);
-      return seeded;
+      if (seeded.length > 0) {
+        await writeAgentBackendConfigCache(backendId, seeded);
+        return seeded;
+      }
     }
     if (
       backendId === "codex-adapter" &&

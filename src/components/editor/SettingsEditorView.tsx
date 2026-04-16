@@ -11,9 +11,11 @@ import {
 import { HardwareAwareTextInput } from "@/components/input/HardwareAwareTextField";
 import type { LucideIcon } from "lucide-react";
 import {
+  ArrowLeft,
   BookMarked,
   Bot,
   Box,
+  CircleUserRound,
   Download,
   ExternalLink,
   FlaskConical,
@@ -23,6 +25,7 @@ import {
   Settings,
   Wrench,
 } from "lucide-react";
+import { useAuth } from "@/components/auth/AuthProvider";
 import { SETTINGS_PANELS } from "@/components/editor/settings-panels";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { detectShortcutPlatform, primaryModifierLabel } from "@/lib/keyboard-shortcuts";
@@ -57,8 +60,15 @@ const searchInputClass =
 const navItemClass =
   "flex h-[32px] w-full items-center gap-[10px] rounded-[var(--radius-tab)] px-[10px] text-left font-sans text-[13px] leading-none transition-colors";
 
-export function SettingsEditorView() {
+export type SettingsEditorViewProps = {
+  /** Full-screen settings shell: icon-only back control in the sidebar footer. */
+  onCloseShell?: () => void;
+};
+
+export function SettingsEditorView({ onCloseShell }: SettingsEditorViewProps = {}) {
+  const { session: authSession } = useAuth();
   const { workspaceSession, updateWorkspaceSession } = useWorkspace();
+  const accountLabel = authSession?.username?.trim() || "Guest";
   const [activeNav, setActiveNav] = useState(workspaceSession.settingsView.activeNav);
   const [searchQuery, setSearchQuery] = useState(workspaceSession.settingsView.searchQuery);
   const scrollRootRef = useRef<HTMLElement | null>(null);
@@ -232,6 +242,33 @@ export function SettingsEditorView() {
             <span className="min-w-0 flex-1 truncate text-left">Docs</span>
           </button>
         </nav>
+
+        <div className="flex shrink-0 items-center gap-[8px] px-[10px] py-[10px]">
+          <div
+            className="flex min-w-0 flex-1 items-center gap-[10px] rounded-[var(--radius-tab)] px-[10px] py-[8px]"
+            title={accountLabel}
+          >
+            <CircleUserRound
+              className="size-[18px] shrink-0 text-[var(--text-secondary)]"
+              strokeWidth={1.5}
+              aria-hidden
+            />
+            <span className="min-w-0 truncate font-sans text-[13px] text-[var(--text-primary)]">
+              {accountLabel}
+            </span>
+          </div>
+          {onCloseShell ? (
+            <button
+              type="button"
+              onClick={onCloseShell}
+              className="flex size-[18px] shrink-0 items-center justify-center rounded-[var(--radius-tab)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-card)] hover:text-[var(--text-primary)]"
+              aria-label="Back"
+              title="Back"
+            >
+              <ArrowLeft className="size-[16px]" strokeWidth={1.5} aria-hidden />
+            </button>
+          ) : null}
+        </div>
       </aside>
 
       <main

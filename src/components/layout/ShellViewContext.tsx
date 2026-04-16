@@ -10,17 +10,35 @@ import {
 } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
-import type { WorkbenchShellView } from "@/lib/workspace-session";
-import { WORKBENCH_VIEW_SEARCH_PARAM } from "@/lib/workbench-view";
+import type {
+  WorkbenchShellNonSettingsView,
+  WorkbenchShellView,
+} from "@/lib/workspace-session";
+import {
+  WORKBENCH_VIEW_SEARCH_PARAM,
+  workbenchViewFromSearchParam,
+} from "@/lib/workbench-view";
 
 export { WORKBENCH_VIEW_SEARCH_PARAM };
 
 type ShellViewContextValue = {
   shellView: WorkbenchShellView;
   setShellView: (next: WorkbenchShellView) => void;
+  openSettingsView: () => void;
+  closeSettingsView: () => void;
 };
 
 const ShellViewContext = createContext<ShellViewContextValue | null>(null);
+
+function applyShellViewToUrl(url: URL, next: WorkbenchShellView) {
+  if (next === "editor") {
+    url.searchParams.set(WORKBENCH_VIEW_SEARCH_PARAM, "editor");
+  } else if (next === "settings") {
+    url.searchParams.set(WORKBENCH_VIEW_SEARCH_PARAM, "settings");
+  } else {
+    url.searchParams.delete(WORKBENCH_VIEW_SEARCH_PARAM);
+  }
+}
 
 export function ShellViewProvider({ children }: { children: ReactNode }) {
   const router = useRouter();
@@ -31,56 +49,93 @@ export function ShellViewProvider({ children }: { children: ReactNode }) {
 
   const shellView: WorkbenchShellView = useMemo(() => {
     if (!sessionReady) {
-      return explicitView === "editor" ? "editor" : "agent";
+      const fromUrl = workbenchViewFromSearchParam(explicitView);
+      if (fromUrl !== "default") {
+        return fromUrl;
+      }
+      return "agent";
     }
-    return workspaceSession.layout.shellView === "editor" ? "editor" : "agent";
+    return workspaceSession.layout.shellView;
   }, [explicitView, sessionReady, workspaceSession.layout.shellView]);
 
   const setShellView = useCallback(
     (next: WorkbenchShellView) => {
       const url = new URL(window.location.href);
-      if (next === "editor") {
-        url.searchParams.set(WORKBENCH_VIEW_SEARCH_PARAM, "editor");
-      } else {
-        url.searchParams.delete(WORKBENCH_VIEW_SEARCH_PARAM);
-      }
-      updateWorkspaceSession((c) => ({
-        ...c,
-        layout: { ...c.layout, shellView: next },
-      }));
+      applyShellViewToUrl(url, next);
+      updateWorkspaceSession((c) => {
+        const cur = c.layout.shellView;
+        let layout = { ...c.layout, shellView: next };
+        if (next === "settings" && cur !== "settings") {
+          const prior: WorkbenchShellNonSettingsView = cur === "editor" ? "editor" : "agent";
+          layout = { ...layout, priorShellView: prior };
+        }
+        return { ...c, layout };
+      });
       router.replace(`${url.pathname}${url.search}${url.hash}`);
     },
     [router, updateWorkspaceSession]
   );
 
+  const openSettingsView = useCallback(() => {
+    setShellView("settings");
+  }, [setShellView]);
+
+  const closeSettingsView = useCallback(() => {
+    const prior: WorkbenchShellNonSettingsView =
+      workspaceSession.layout.priorShellView ?? "agent";
+    const url = new URL(window.location.href);
+    applyShellViewToUrl(url, prior);
+    updateWorkspaceSession((c) => ({
+      ...c,
+      layout: { ...c.layout, shellView: prior },
+    }));
+    router.replace(`${url.pathname}${url.search}${url.hash}`);
+  }, [router, updateWorkspaceSession, workspaceSession.layout.priorShellView]);
+
   useEffect(() => {
     if (!sessionReady) {
       return;
     }
-    const wantsEditor = workspaceSession.layout.shellView === "editor";
-    const hasEditorParam = explicitView === "editor";
-    if (wantsEditor === hasEditorParam) {
+    const wantsParam: WorkbenchShellView | null =
+      workspaceSession.layout.shellView === "editor"
+        ? "editor"
+        : workspaceSession.layout.shellView === "settings"
+          ? "settings"
+          : null;
+
+    const url = new URL(window.location.href);
+    const curParam = url.searchParams.get(WORKBENCH_VIEW_SEARCH_PARAM);
+
+    if (wantsParam === null) {
+      if (curParam != null) {
+        url.searchParams.delete(WORKBENCH_VIEW_SEARCH_PARAM);
+        const nextUrl = `${url.pathname}${url.search}${url.hash}`;
+        const cur = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+        if (nextUrl !== cur) {
+          router.replace(nextUrl);
+        }
+      }
       return;
     }
-    const url = new URL(window.location.href);
-    if (wantsEditor) {
-      url.searchParams.set(WORKBENCH_VIEW_SEARCH_PARAM, "editor");
-    } else {
-      url.searchParams.delete(WORKBENCH_VIEW_SEARCH_PARAM);
+
+    if (curParam !== wantsParam) {
+      url.searchParams.set(WORKBENCH_VIEW_SEARCH_PARAM, wantsParam);
+      const nextUrl = `${url.pathname}${url.search}${url.hash}`;
+      const cur = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+      if (nextUrl !== cur) {
+        router.replace(nextUrl);
+      }
     }
-    const nextUrl = `${url.pathname}${url.search}${url.hash}`;
-    const cur = `${window.location.pathname}${window.location.search}${window.location.hash}`;
-    if (nextUrl !== cur) {
-      router.replace(nextUrl);
-    }
-  }, [sessionReady, explicitView, workspaceSession.layout.shellView, router]);
+  }, [sessionReady, workspaceSession.layout.shellView, router]);
 
   const value = useMemo<ShellViewContextValue>(
     () => ({
       shellView,
       setShellView,
+      openSettingsView,
+      closeSettingsView,
     }),
-    [shellView, setShellView]
+    [shellView, setShellView, openSettingsView, closeSettingsView]
   );
 
   return (

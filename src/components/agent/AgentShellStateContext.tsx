@@ -977,6 +977,9 @@ export function AgentShellStateProvider({
 
   const setRightPaneOpen = useCallback(
     (open: boolean) => {
+      if (isDraftConversationSelected && open) {
+        return;
+      }
       updateWorkspaceSession((current) => ({
         ...current,
         agentView: {
@@ -996,12 +999,23 @@ export function AgentShellStateProvider({
         },
       }));
     },
-    [sidePaneScopeId, updateWorkspaceSession]
+    [isDraftConversationSelected, sidePaneScopeId, updateWorkspaceSession]
   );
 
   const toggleRightPaneOpen = useCallback(() => {
     setRightPaneOpen(!activeSidePaneSession.rightPaneOpen);
   }, [activeSidePaneSession.rightPaneOpen, setRightPaneOpen]);
+
+  useEffect(() => {
+    if (!isDraftConversationSelected || !activeSidePaneSession.rightPaneOpen) {
+      return;
+    }
+    setRightPaneOpen(false);
+  }, [
+    activeSidePaneSession.rightPaneOpen,
+    isDraftConversationSelected,
+    setRightPaneOpen,
+  ]);
 
   const updateSidePaneEditorSession = useCallback(
     (updater: (current: EditorSessionState) => EditorSessionState) => {
@@ -1457,7 +1471,9 @@ export function AgentShellStateProvider({
       leftRailCollapsed: sharedLeftRailCollapsed,
       setLeftRailCollapsed,
       toggleLeftRailCollapsed,
-      rightPaneOpen: activeSidePaneSession.rightPaneOpen,
+      rightPaneOpen: isDraftConversationSelected
+        ? false
+        : activeSidePaneSession.rightPaneOpen,
       setRightPaneOpen,
       toggleRightPaneOpen,
       sidePaneScopeId,

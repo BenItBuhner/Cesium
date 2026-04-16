@@ -110,6 +110,12 @@ export function ModelDropdown({
     );
   }, [models, query]);
 
+  useEffect(() => {
+    setHighlightedIndex((prev) =>
+      filtered.length === 0 ? 0 : Math.min(prev, filtered.length - 1)
+    );
+  }, [filtered.length]);
+
   const listMaxHeight = Math.max(96, Math.min(220, position.maxHeight - 44));
 
   const isActiveChoice = useCallback(
@@ -199,8 +205,11 @@ export function ModelDropdown({
         createPortal(
           <div
             ref={popoverRef}
-            className={`fixed z-[9999] flex w-[260px] flex-col text-left ${popoverSurface} transition-opacity`}
+            className={`fixed z-[9999] flex min-w-[260px] w-[min(480px,calc(100vw-24px))] max-w-[min(480px,calc(100vw-24px))] flex-col text-left ${popoverSurface} transition-opacity`}
             data-ide-input-sink
+            data-ide-composer-floating-popover
+            onPointerDown={(e) => e.stopPropagation()}
+            onWheel={(e) => e.stopPropagation()}
             style={{
               ...(position.top != null
                 ? { top: position.top }
@@ -246,22 +255,25 @@ export function ModelDropdown({
                     title={detail}
                     onClick={() => selectModel(m)}
                     onMouseEnter={() => setHighlightedIndex(index)}
-                    className={`flex w-full items-center gap-[8px] px-[10px] py-[5px] text-left transition-colors ${
-                      index === highlightedIndex ? "bg-white/[0.08]" : "hover:bg-white/[0.06]"
+                    className={`flex w-full items-start gap-[8px] px-[10px] py-[5px] text-left transition-colors ${
+                      index === highlightedIndex
+                        ? "bg-[var(--accent-bg)] ring-1 ring-[var(--accent)]/35"
+                        : "hover:bg-[var(--accent-bg)]/60"
                     }`}
+                    aria-selected={index === highlightedIndex}
                   >
                     <Icon
-                      className="size-[14px] shrink-0 text-[var(--text-secondary)]"
+                      className="mt-[2px] size-[14px] shrink-0 text-[var(--text-secondary)]"
                       strokeWidth={1.5}
                     />
                     <span
-                      className="min-w-0 flex-1 truncate font-sans text-[13px] font-normal"
+                      className="min-w-0 flex-1 break-words font-sans text-[13px] font-normal leading-snug"
                       style={{ color: active ? "var(--text-primary)" : "var(--text-secondary)" }}
                     >
                       {m.name}
                     </span>
                     {active && (
-                      <Check className="size-[14px] shrink-0 text-[var(--text-primary)]" strokeWidth={2} />
+                      <Check className="mt-[2px] size-[14px] shrink-0 text-[var(--text-primary)]" strokeWidth={2} />
                     )}
                   </button>
                 );
