@@ -4,6 +4,7 @@ import Script from "next/script";
 import { AuthProvider } from "@/components/auth/AuthProvider";
 import { AuthGate } from "@/components/auth/AuthGate";
 import { UserPreferencesProvider } from "@/components/preferences/UserPreferencesProvider";
+import { ServerConnectionsProvider } from "@/components/server/ServerConnectionsProvider";
 import { RegisterServiceWorker } from "@/components/pwa/RegisterServiceWorker";
 import { ThemeProvider } from "@/components/theme/ThemeProvider";
 import { USER_PREFERENCES_STORAGE_KEY } from "@/lib/preferences";
@@ -74,11 +75,13 @@ export default function RootLayout({
         </Script>
         <RegisterServiceWorker />
         <ThemeProvider>
-          <AuthProvider>
-            <AuthGate>
-              <UserPreferencesProvider>{children}</UserPreferencesProvider>
-            </AuthGate>
-          </AuthProvider>
+          <ServerConnectionsProvider>
+            <AuthProvider>
+              <AuthGate>
+                <UserPreferencesProvider>{children}</UserPreferencesProvider>
+              </AuthGate>
+            </AuthProvider>
+          </ServerConnectionsProvider>
         </ThemeProvider>
       </body>
     </html>

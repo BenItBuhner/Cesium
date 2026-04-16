@@ -10,8 +10,10 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { useServerConnections } from "@/components/server/ServerConnectionsProvider";
 import type { TextSelection } from "@/components/input/text-buffer";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
+import { buildServerScopedStorageKey } from "@/lib/server-connections";
 import type {
   AgentBackendId,
   AgentBackendInfo,
@@ -79,7 +81,9 @@ const COMPOSER_STATE_SCHEMA_VERSION = 1;
 const COMPOSER_STATE_STORAGE_PREFIX = "opencursor.composer-state.";
 
 function getComposerStateStorageKey(workspaceId: string): string {
-  return `${COMPOSER_STATE_STORAGE_PREFIX}${workspaceId}`;
+  return buildServerScopedStorageKey(COMPOSER_STATE_STORAGE_PREFIX, {
+    suffix: workspaceId,
+  });
 }
 
 function readPersistedComposerState(
@@ -172,6 +176,7 @@ type Ctx = {
 const OpenInEditorContext = createContext<Ctx | null>(null);
 
 export function OpenInEditorProvider({ children }: { children: ReactNode }) {
+  const { activeServerId } = useServerConnections();
   const { activeWorkspaceId } = useWorkspace();
   const handlerRef = useRef<TranscriptHandler | null>(null);
   const pendingRef = useRef<OpenTranscriptPayload | null>(null);
@@ -329,7 +334,7 @@ export function OpenInEditorProvider({ children }: { children: ReactNode }) {
     setComposerSelections(persisted?.selections ?? {});
     setExpandedComposerDraftId(persisted?.expandedDraftId ?? null);
     setExpandedComposerControllerState(null);
-  }, [activeWorkspaceId]);
+  }, [activeServerId, activeWorkspaceId]);
 
   useEffect(() => {
     if (!activeWorkspaceId) {
@@ -342,6 +347,7 @@ export function OpenInEditorProvider({ children }: { children: ReactNode }) {
       expandedDraftId: expandedComposerDraftId,
     });
   }, [
+    activeServerId,
     activeWorkspaceId,
     composerDrafts,
     composerSelections,

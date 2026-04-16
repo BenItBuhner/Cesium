@@ -20,6 +20,7 @@ import {
   Keyboard,
   Palette,
   Puzzle,
+  Server,
   Settings,
   Wrench,
 } from "lucide-react";
@@ -39,6 +40,7 @@ const DOCS_PATH = "/docs";
  */
 const NAV_ENTRIES: NavEntry[] = [
   { kind: "item", id: "general", label: "General", icon: Settings },
+  { kind: "item", id: "servers", label: "Servers", icon: Server },
   { kind: "item", id: "appearance", label: "Appearance", icon: Palette },
   { kind: "item", id: "keyboardShortcuts", label: "Keyboard shortcuts", icon: Keyboard },
   { kind: "item", id: "agents", label: "Agents", icon: Bot },

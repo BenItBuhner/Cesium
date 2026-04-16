@@ -6,6 +6,7 @@ import { projectOpenCodeExportToChatMessages } from "@/lib/opencode-export-trans
 import type { ChatMessage } from "@/lib/types";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { attachSessionToken, syncAuthTokenFromResponse } from "@/lib/auth-client";
+import { getServerBaseUrl } from "@/lib/server-api";
 import { EDITOR_CHAT_TRANSCRIPT_CONTAINER_CLASS } from "./agent-chat-layout";
 
 function inferTranscriptSessionId(messages: ChatMessage[]): string | undefined {
@@ -43,20 +44,21 @@ export function AgentTranscriptView({
 
     const tick = async () => {
       try {
+        const serverBaseUrl = getServerBaseUrl();
         const subagentUrl = new URL(
           `/api/agents/subagents/${encodeURIComponent(resolvedSessionId)}`,
-          `${window.location.protocol}//${window.location.hostname}:9100`
+          serverBaseUrl
         );
         const response = await fetch(subagentUrl.toString(), {
           headers: Object.fromEntries(
             attachSessionToken({
               "x-opencursor-workspace-id": activeWorkspaceId,
-            }).entries()
+            }, serverBaseUrl).entries()
           ),
           credentials: "include",
           cache: "no-store",
         });
-        syncAuthTokenFromResponse(response);
+        syncAuthTokenFromResponse(response, serverBaseUrl);
         if (!response.ok) {
           throw new Error(`Subagent session fetch failed with status ${response.status}`);
         }

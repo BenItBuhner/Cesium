@@ -44,6 +44,8 @@ import {
   subscribeGlobalPinnedAgentConversationIds,
   writeGlobalPinnedAgentConversationIds,
 } from "@/lib/agent-rail-pins";
+import { buildServerScopedStorageKey } from "@/lib/server-connections";
+import { useServerConnections } from "@/components/server/ServerConnectionsProvider";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import {
   AGENT_NEW_CHAT_SESSION_ID,
@@ -119,11 +121,15 @@ const AgentShellStateContext =
   createContext<AgentShellStateContextValue | null>(null);
 
 function getWorkspaceSessionBackupKey(
+  serverId: string,
   workspaceId: string,
   windowId: string | null
 ): string {
   const sessionScopeId = windowId ? `${workspaceId}:window:${windowId}` : workspaceId;
-  return `opencursor.workspace-session.${sessionScopeId}`;
+  return buildServerScopedStorageKey("opencursor.workspace-session.", {
+    serverBaseUrl: serverId,
+    suffix: sessionScopeId,
+  });
 }
 
 /** One global snapshot for the agent shell (rail + composed layout); not workspace- or window-scoped. */
@@ -244,6 +250,7 @@ function writeAgentShellSharedSnapshot(snapshot: AgentShellWindowSnapshot) {
 }
 
 function readWorkspaceRailArchiveSnapshot(
+  serverId: string,
   workspaceId: string,
   windowId: string | null
 ): WorkspaceRailArchiveSnapshot | null {
@@ -252,7 +259,9 @@ function readWorkspaceRailArchiveSnapshot(
   }
 
   try {
-    const raw = window.localStorage.getItem(getWorkspaceSessionBackupKey(workspaceId, windowId));
+    const raw = window.localStorage.getItem(
+      getWorkspaceSessionBackupKey(serverId, workspaceId, windowId)
+    );
     if (!raw) {
       return null;
     }
@@ -350,6 +359,7 @@ export function AgentShellStateProvider({
 }: {
   children: ReactNode;
 }) {
+  const { activeServerId } = useServerConnections();
   const {
     activeWorkspaceId,
     activeWindowId,
@@ -501,7 +511,11 @@ export function AgentShellStateProvider({
         if (workspaceId === activeWorkspaceId) {
           continue;
         }
-        const snapshot = readWorkspaceRailArchiveSnapshot(workspaceId, activeWindowId);
+        const snapshot = readWorkspaceRailArchiveSnapshot(
+          activeServerId,
+          workspaceId,
+          activeWindowId
+        );
         if (!snapshot) {
           continue;
         }
@@ -514,7 +528,7 @@ export function AgentShellStateProvider({
       }
       return changed ? next : current;
     });
-  }, [activeWindowId, activeWorkspaceId, orderedGroups]);
+  }, [activeServerId, activeWindowId, activeWorkspaceId, orderedGroups]);
 
   const activeWorkspaceGroup = useMemo(
     () => orderedGroups.find((group) => group.workspace.id === activeWorkspaceId) ?? null,
@@ -1152,6 +1166,7 @@ export function AgentShellStateProvider({
   const openConversationSummary = useCallback(
     async (summary: AgentRailConversationSummary) => {
       const archiveSnapshot = readWorkspaceRailArchiveSnapshot(
+        activeServerId,
         summary.workspaceId,
         activeWindowId
       );
@@ -1186,7 +1201,13 @@ export function AgentShellStateProvider({
         );
       }
     },
-    [activeWindowId, activeWorkspaceId, openWorkspaceById, setSelectedConversationId]
+    [
+      activeServerId,
+      activeWindowId,
+      activeWorkspaceId,
+      openWorkspaceById,
+      setSelectedConversationId,
+    ]
   );
 
   const archiveConversation = useCallback(
@@ -1323,10 +1344,15 @@ export function AgentShellStateProvider({
       return cached;
     }
     return (
-      readWorkspaceRailArchiveSnapshot(activeWorkspaceId, activeWindowId)?.archivedConversationIds ??
+      readWorkspaceRailArchiveSnapshot(
+        activeServerId,
+        activeWorkspaceId,
+        activeWindowId
+      )?.archivedConversationIds ??
       []
     );
   }, [
+    activeServerId,
     activeWorkspaceId,
     activeWindowId,
     archivedConversationIdsByWorkspaceId,

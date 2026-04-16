@@ -15,7 +15,10 @@ import {
   ExternalLink,
   Info,
   Lock,
+  Pencil,
   RefreshCw,
+  Server,
+  Trash2,
   X,
 } from "lucide-react";
 import { HardwareAwareTextInput } from "@/components/input/HardwareAwareTextField";
@@ -35,6 +38,8 @@ import {
   fetchAgentDeploymentHints,
   type CursorAgentDeploymentHintsPayload,
 } from "@/lib/server-api";
+import { useServerConnections } from "@/components/server/ServerConnectionsProvider";
+import { normalizeServerBaseUrl } from "@/lib/server-connections";
 import {
   DEFAULT_KEYBOARD_SHORTCUT_BINDINGS,
   detectShortcutPlatform,
@@ -264,6 +269,27 @@ export function GeneralSettingsPanel() {
       </SettingsSection>
       <SettingsSection title="Preferences">
         <SettingsRow
+          title="Servers"
+          description="Save, switch, and manage OpenCursor server base URLs and their scoped auth sessions."
+          trailing={
+            <button
+              type="button"
+              className={rowButtonClass}
+              onClick={() =>
+                updateWorkspaceSession((current) => ({
+                  ...current,
+                  settingsView: {
+                    ...current.settingsView,
+                    activeNav: "servers",
+                  },
+                }))
+              }
+            >
+              Open
+            </button>
+          }
+        />
+        <SettingsRow
           title="Editor Settings"
           description="Configure font, formatting, minimap and more"
           trailing={
@@ -408,6 +434,253 @@ export function GeneralSettingsPanel() {
       </div>
     </>
   );
+}
+
+const serverInputClass =
+  "box-border min-w-[220px] rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-[var(--bg-main)] px-[10px] py-[6px] font-sans text-[12px] text-[var(--text-primary)] outline-none placeholder:text-[var(--text-disabled)]";
+
+export function ServersSettingsPanel() {
+  const {
+    activeServer,
+    activeRequestBaseUrl,
+    defaultServerBaseUrl,
+    servers,
+    activateServer,
+    saveServer,
+    updateServer,
+    removeServer,
+  } = useServerConnections();
+  const [nameDraft, setNameDraft] = useState("");
+  const [baseUrlDraft, setBaseUrlDraft] = useState("");
+  const [editingServerId, setEditingServerId] = useState<string | null>(null);
+  const [editingName, setEditingName] = useState("");
+  const [editingBaseUrl, setEditingBaseUrl] = useState("");
+  const [error, setError] = useState<string | null>(null);
+
+  const resetEditing = useCallback(() => {
+    setEditingServerId(null);
+    setEditingName("");
+    setEditingBaseUrl("");
+  }, []);
+
+  const submitAddServer = useCallback(() => {
+    try {
+      saveServer({
+        baseUrl: baseUrlDraft,
+        name: nameDraft,
+        activate: true,
+      });
+      setNameDraft("");
+      setBaseUrlDraft("");
+      setError(null);
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : "Failed to save server.");
+    }
+  }, [baseUrlDraft, nameDraft, saveServer]);
+
+  const submitEditServer = useCallback(() => {
+    if (!editingServerId) {
+      return;
+    }
+    try {
+      updateServer(editingServerId, {
+        name: editingName,
+        baseUrl: editingBaseUrl,
+        activate: true,
+      });
+      resetEditing();
+      setError(null);
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : "Failed to update server.");
+    }
+  }, [editingBaseUrl, editingName, editingServerId, resetEditing, updateServer]);
+
+  return (
+    <>
+      <PageIntro
+        title="Servers"
+        subtitle="Manage multiple OpenCursor backends from the browser. Each saved server keeps its own local auth/session state so switching backends does not smear credentials or cached workspace UI state together."
+      />
+      <SettingsSection title="Active server">
+        <SettingsRow
+          title={activeServer.name}
+          description={`Saved base URL: ${activeServer.baseUrl}`}
+          trailing={<span className={tagClass}>Active</span>}
+        />
+        <SettingsRow
+          title="Effective request base URL"
+          description="Localhost entries may mirror the current browser host/protocol for development."
+          trailing={<span className={tagClass}>{activeRequestBaseUrl}</span>}
+        />
+        <SettingsRow
+          title="Default fallback"
+          description="Used to seed the initial saved server list when no browser-local state exists yet."
+          trailing={<span className={tagClass}>{defaultServerBaseUrl}</span>}
+          border={false}
+        />
+      </SettingsSection>
+
+      <SettingsSection title="Add or activate a server">
+        <div className="space-y-[12px] border-b border-[var(--border-subtle)] px-[16px] py-[14px] last:border-b-0">
+          <div className="grid gap-[12px] lg:grid-cols-[minmax(0,220px)_minmax(0,1fr)_auto]">
+            <label className="flex min-w-0 flex-col gap-[4px] font-sans text-[11px] text-[var(--text-secondary)]">
+              Display name
+              <HardwareAwareTextInput
+                value={nameDraft}
+                onChange={setNameDraft}
+                placeholder={deriveServerConnectionNamePlaceholder(baseUrlDraft)}
+                className={serverInputClass}
+                ariaLabel="Saved server display name"
+              />
+            </label>
+            <label className="flex min-w-0 flex-col gap-[4px] font-sans text-[11px] text-[var(--text-secondary)]">
+              Base URL
+              <HardwareAwareTextInput
+                value={baseUrlDraft}
+                onChange={setBaseUrlDraft}
+                placeholder="http://localhost:9100"
+                className={serverInputClass}
+                ariaLabel="Saved server base URL"
+              />
+            </label>
+            <div className="flex items-end">
+              <button type="button" className={rowButtonClass} onClick={submitAddServer}>
+                Save & activate
+              </button>
+            </div>
+          </div>
+          <p className="font-sans text-[12px] leading-relaxed text-[var(--text-secondary)]">
+            Enter a full URL like <span className="font-mono">http://localhost:9100</span> or just
+            host:port. Query strings and credentials are stripped.
+          </p>
+          {error ? (
+            <p className="font-sans text-[12px] text-[#dc2626] dark:text-[#fca5a5]">{error}</p>
+          ) : null}
+        </div>
+      </SettingsSection>
+
+      <SettingsSection title="Saved servers">
+        <div className="divide-y divide-[var(--border-subtle)]">
+          {servers.map((server) => {
+            const active = server.id === activeServer.id;
+            const editing = editingServerId === server.id;
+            return (
+              <div key={server.id} className="px-[16px] py-[12px]">
+                {editing ? (
+                  <div className="space-y-[10px]">
+                    <div className="grid gap-[10px] lg:grid-cols-[minmax(0,220px)_minmax(0,1fr)]">
+                      <label className="flex min-w-0 flex-col gap-[4px] font-sans text-[11px] text-[var(--text-secondary)]">
+                        Display name
+                        <HardwareAwareTextInput
+                          value={editingName}
+                          onChange={setEditingName}
+                          className={serverInputClass}
+                          ariaLabel={`Display name for ${server.name}`}
+                        />
+                      </label>
+                      <label className="flex min-w-0 flex-col gap-[4px] font-sans text-[11px] text-[var(--text-secondary)]">
+                        Base URL
+                        <HardwareAwareTextInput
+                          value={editingBaseUrl}
+                          onChange={setEditingBaseUrl}
+                          className={serverInputClass}
+                          ariaLabel={`Base URL for ${server.name}`}
+                        />
+                      </label>
+                    </div>
+                    <div className="flex flex-wrap gap-[8px]">
+                      <button type="button" className={rowButtonClass} onClick={submitEditServer}>
+                        Save
+                      </button>
+                      <button type="button" className={rowButtonClass} onClick={resetEditing}>
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex flex-wrap items-start justify-between gap-[12px]">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-[8px]">
+                        <p className="font-sans text-[13px] font-medium text-[var(--text-primary)]">
+                          {server.name}
+                        </p>
+                        {active ? <span className={tagClass}>Active</span> : null}
+                      </div>
+                      <p className="mt-[3px] break-all font-mono text-[11px] text-[var(--text-secondary)]">
+                        {server.baseUrl}
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap gap-[8px]">
+                      {!active ? (
+                        <button
+                          type="button"
+                          className={rowButtonClass}
+                          onClick={() => {
+                            try {
+                              activateServer(server.id);
+                              setError(null);
+                            } catch (nextError) {
+                              setError(
+                                nextError instanceof Error
+                                  ? nextError.message
+                                  : "Failed to activate server."
+                              );
+                            }
+                          }}
+                        >
+                          <Server className="size-[14px]" strokeWidth={1.5} aria-hidden />
+                          Activate
+                        </button>
+                      ) : null}
+                      <button
+                        type="button"
+                        className={rowButtonClass}
+                        onClick={() => {
+                          setEditingServerId(server.id);
+                          setEditingName(server.name);
+                          setEditingBaseUrl(server.baseUrl);
+                        }}
+                      >
+                        <Pencil className="size-[14px]" strokeWidth={1.5} aria-hidden />
+                        Edit
+                      </button>
+                      <button
+                        type="button"
+                        className={rowButtonClass}
+                        onClick={() => {
+                          try {
+                            removeServer(server.id);
+                            setError(null);
+                          } catch (nextError) {
+                            setError(
+                              nextError instanceof Error
+                                ? nextError.message
+                                : "Failed to remove server."
+                            );
+                          }
+                        }}
+                      >
+                        <Trash2 className="size-[14px]" strokeWidth={1.5} aria-hidden />
+                        Remove
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </SettingsSection>
+    </>
+  );
+}
+
+function deriveServerConnectionNamePlaceholder(rawBaseUrl: string): string {
+  try {
+    return normalizeServerBaseUrl(rawBaseUrl);
+  } catch {
+    return "Local server";
+  }
 }
 
 const appearanceBtnBase =
@@ -2058,6 +2331,7 @@ export function ExportImportSettingsPanel() {
 
 export const SETTINGS_PANELS: Record<string, ComponentType> = {
   general: GeneralSettingsPanel,
+  servers: ServersSettingsPanel,
   appearance: AppearanceSettingsPanel,
   agents: AgentsSettingsPanel,
   models: ModelsSettingsPanel,

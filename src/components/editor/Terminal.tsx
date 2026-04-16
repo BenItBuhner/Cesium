@@ -153,11 +153,13 @@ export function Terminal({ terminalId, onAutoCloseAfterCleanExit }: TerminalProp
   const [terminalReadyNonce, setTerminalReadyNonce] = useState(0);
   const isDark = useHtmlDarkClass();
   const initialThemeRef = useRef(getTerminalTheme(isDark));
+  const serverBaseUrlRef = useRef(getServerBaseUrl());
 
   const socketUrl = useMemo(
     () =>
       buildAuthenticatedUrl(
-        `${toWebSocketUrl(getServerBaseUrl())}/ws/terminal/${terminalId}`
+        `${toWebSocketUrl(serverBaseUrlRef.current)}/ws/terminal/${terminalId}`,
+        serverBaseUrlRef.current
       ),
     [terminalId]
   );

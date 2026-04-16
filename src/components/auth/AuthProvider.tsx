@@ -19,6 +19,8 @@ import {
   type AuthSession,
   type AuthStatusResponse,
 } from "@/lib/auth-client";
+import { getServerBaseUrl } from "@/lib/server-api";
+import { useServerConnections } from "@/components/server/ServerConnectionsProvider";
 
 type LoginInput = {
   username: string;
@@ -40,42 +42,15 @@ type AuthContextValue = {
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
-const BASE_URL =
-  process.env.NEXT_PUBLIC_SERVER_URL?.replace(/\/+$/, "") ??
-  "http://localhost:9100";
-
-function resolveClientBaseUrl(): string {
-  if (typeof window === "undefined") {
-    return BASE_URL;
-  }
-  try {
-    const configured = new URL(BASE_URL);
-    const currentHost = window.location.hostname;
-    const isLocalHost = currentHost === "127.0.0.1" || currentHost === "localhost";
-    if (
-      currentHost &&
-      isLocalHost &&
-      (currentHost !== configured.hostname || configured.protocol !== window.location.protocol)
-    ) {
-      configured.protocol = window.location.protocol;
-      configured.hostname = currentHost;
-      configured.port = configured.port || "9100";
-      return configured.toString().replace(/\/+$/, "");
-    }
-  } catch {
-    return BASE_URL;
-  }
-  return BASE_URL;
-}
-
 async function fetchAuth(
+  serverBaseUrl: string,
   path: string,
   init?: RequestInit
 ): Promise<Response> {
-  return fetch(`${resolveClientBaseUrl()}${path}`, {
+  return fetch(`${serverBaseUrl}${path}`, {
     ...init,
     headers: Object.fromEntries(
-      attachSessionToken(init?.headers).entries()
+      attachSessionToken(init?.headers, serverBaseUrl).entries()
     ),
     credentials: "include",
     cache: "no-store",
@@ -83,6 +58,7 @@ async function fetchAuth(
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
+  const { activeServerId } = useServerConnections();
   const [ready, setReady] = useState(false);
   const [enabled, setEnabled] = useState(false);
   const [authenticated, setAuthenticated] = useState(false);
@@ -91,8 +67,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [error, setError] = useState<string | null>(null);
 
   const refreshAuthStatus = useCallback(async () => {
-    const response = await fetchAuth("/api/auth/status");
-    syncAuthTokenFromResponse(response);
+    const serverBaseUrl = getServerBaseUrl();
+    const response = await fetchAuth(serverBaseUrl, "/api/auth/status");
+    syncAuthTokenFromResponse(response, serverBaseUrl);
     if (!response.ok) {
       let message = `Auth status request failed (${response.status})`;
       try {
@@ -110,11 +87,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setAuthenticated(payload.authenticated);
     setSession(payload.session);
     if (!payload.enabled) {
-      clearStoredAuth();
+      clearStoredAuth(serverBaseUrl);
     } else if (payload.authenticated) {
-      updateStoredAuthSession(payload.session);
+      updateStoredAuthSession(payload.session, serverBaseUrl);
     } else {
-      clearStoredAuth();
+      clearStoredAuth(serverBaseUrl);
     }
     if (!payload.authenticated) {
       setSession(null);
@@ -124,6 +101,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     let cancelled = false;
+    setReady(false);
     void refreshAuthStatus()
       .catch((nextError) => {
         if (cancelled) {
@@ -146,19 +124,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [refreshAuthStatus]);
+  }, [activeServerId, refreshAuthStatus]);
 
   const login = useCallback(
     async (input: LoginInput) => {
       setLoginPending(true);
       setError(null);
       try {
-        const response = await fetchAuth("/api/auth/login", {
+        const serverBaseUrl = getServerBaseUrl();
+        const response = await fetchAuth(serverBaseUrl, "/api/auth/login", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(input),
         });
-        syncAuthTokenFromResponse(response);
+        syncAuthTokenFromResponse(response, serverBaseUrl);
         const payload = (await response.json().catch(() => ({}))) as
           | {
               authenticated?: boolean;
@@ -175,12 +154,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setSession(null);
           setError(message);
           if (response.status === 401) {
-            clearStoredAuth();
+            clearStoredAuth(serverBaseUrl);
           }
           return false;
         }
-        setStoredSessionToken(getStoredSessionToken(), payload.session);
-        updateStoredAuthSession(payload.session);
+        setStoredSessionToken(
+          getStoredSessionToken(serverBaseUrl),
+          payload.session,
+          serverBaseUrl
+        );
+        updateStoredAuthSession(payload.session, serverBaseUrl);
         setEnabled(true);
         setAuthenticated(true);
         setSession(payload.session);
@@ -201,17 +184,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   const logout = useCallback(async () => {
+    const serverBaseUrl = getServerBaseUrl();
     try {
-      const response = await fetchAuth("/api/auth/logout", {
+      const response = await fetchAuth(serverBaseUrl, "/api/auth/logout", {
         method: "POST",
       });
       if (response.ok) {
-        syncAuthTokenFromResponse(response);
+        syncAuthTokenFromResponse(response, serverBaseUrl);
       }
     } catch {
       // Clearing local auth state is enough for the client.
     } finally {
-      clearStoredAuth();
+      clearStoredAuth(serverBaseUrl);
       setAuthenticated(false);
       setSession(null);
       setError(null);

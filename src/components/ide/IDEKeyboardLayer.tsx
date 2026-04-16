@@ -20,6 +20,7 @@ import { useHardwareInput } from "@/components/input/HardwareInputProvider";
 import { useTheme } from "@/components/theme/ThemeProvider";
 import { IDECommandProvider } from "./IDECommandContext";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
+import { useServerConnections } from "@/components/server/ServerConnectionsProvider";
 import type { EditorTab } from "@/lib/types";
 import { isFocusedBrowserSurface } from "@/lib/browser-keyboard-passthrough";
 import { normalizeBrowserTargetUrl } from "@/lib/browser-proxy-url";
@@ -34,6 +35,7 @@ import {
   type ShortcutChordState,
 } from "@/lib/keyboard-shortcuts";
 import { useShellView } from "@/components/layout/ShellViewContext";
+import { useAgentShellStateMaybe } from "@/components/agent/AgentShellStateContext";
 
 type PaletteMode = "closed" | "command" | "quickopen";
 
@@ -47,6 +49,7 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
   const bridgeRef = useEditorBridgeRef();
   const { openExplorerFile } = useOpenInEditor();
   const workbench = useWorkbench();
+  const agentShellState = useAgentShellStateMaybe();
   const {
     enabled: hardwareInputEnabled,
     routeKeyDown,
@@ -56,6 +59,7 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
   } = useHardwareInput();
   const { setPreference: setThemePreference } = useTheme();
   const { settings } = useGlobalSettings();
+  const { activeServer, servers, activateServer } = useServerConnections();
   const shortcutBindings = settings.keyboardShortcuts.bindings;
   const shortcutPlatform = useMemo(() => detectShortcutPlatform(), []);
   const chordRef = useRef<ShortcutChordState | null>(null);
@@ -337,6 +341,7 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
           window.dispatchEvent(new CustomEvent("opencursor:openRecentChats"));
           break;
         case "workbench.action.openGlobalSettings":
+          agentShellState?.setRightPaneOpen(true);
           runWithBridge((b) => b.dispatch({ type: "OPEN_SETTINGS_TAB" }));
           break;
         case "workbench.action.openKeyboardShortcuts":
@@ -344,6 +349,15 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
             ...current,
             settingsView: { ...current.settingsView, activeNav: "keyboardShortcuts" },
           }));
+          agentShellState?.setRightPaneOpen(true);
+          runWithBridge((b) => b.dispatch({ type: "OPEN_SETTINGS_TAB" }));
+          break;
+        case "workbench.action.openServerSettings":
+          updateWorkspaceSession((current) => ({
+            ...current,
+            settingsView: { ...current.settingsView, activeNav: "servers" },
+          }));
+          agentShellState?.setRightPaneOpen(true);
           runWithBridge((b) => b.dispatch({ type: "OPEN_SETTINGS_TAB" }));
           break;
         case "workbench.action.openFile":
@@ -496,6 +510,7 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
       }
     },
     [
+      agentShellState,
       bridgeRef,
       openWorkspaceWindowsModal,
       promptForFolder,
@@ -697,6 +712,11 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
         run: () => runShortcutCommand("workbench.action.openKeyboardShortcuts"),
       },
       {
+        id: "workbench.action.openServerSettings",
+        label: "Preferences: Open Servers",
+        run: () => runShortcutCommand("workbench.action.openServerSettings"),
+      },
+      {
         id: "workbench.action.quickOpen",
         label: "File: Quick Open",
         keybinding: kb("palette.quickOpen"),
@@ -755,6 +775,15 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
         label: "Browser: Open URL…",
         run: () => openBrowserUrlPrompt(),
       },
+      ...servers.map((server) => ({
+        id: `workbench.action.server.switch.${server.id}`,
+        label: `Server: Switch to ${server.name}${server.id === activeServer.id ? " (Active)" : ""}`,
+        detail: server.baseUrl,
+        run: () => {
+          activateServer(server.id);
+          flash(setToast, `Switched to ${server.name}`);
+        },
+      })),
       {
         id: "workbench.action.exit",
         label: "File: Exit",
@@ -922,6 +951,8 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
     ],
     [
       activeWorkspaceId,
+      activeServer.id,
+      activateServer,
       bridgeRef,
       defaultWorkspaceId,
       kb,
@@ -934,6 +965,7 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
       setDefaultWorkspace,
       setShellView,
       setThemePreference,
+      servers,
       workspaces,
     ]
   );
