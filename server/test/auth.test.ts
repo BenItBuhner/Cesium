@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import { execFile } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
 import { after, before, describe, test } from "node:test";
 import { fileURLToPath } from "node:url";
+import { newDb } from "pg-mem";
 
 const TEST_DATA_DIR = path.join(
   os.tmpdir(),
@@ -15,6 +17,7 @@ process.env.OPENCURSOR_AUTH_USERNAME = "testadmin";
 process.env.OPENCURSOR_AUTH_PASSWORD = "hunter2";
 process.env.OPENCURSOR_AUTH_ROTATION_INTERVAL_MS = "500";
 process.env.OPENCURSOR_AUTH_SESSION_TTL_MS = "60000";
+process.env.OPENCURSOR_REDIS_URL = "redis://127.0.0.1:6380";
 
 const repoRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -22,14 +25,37 @@ const repoRoot = path.resolve(
   ".."
 );
 
+const db = newDb();
+const pgAdapter = db.adapters.createPg();
+const redisPort = 6380;
+const redisDataDir = path.join(TEST_DATA_DIR, "redis");
+
 const { ensureDataDir } = await import("../src/lib/persistence.js");
 await ensureDataDir();
+const {
+  configureStorageForTests,
+  resetStorageForTests,
+} = await import("../src/lib/storage.js");
+const {
+  configureRedisForTests,
+  resetRedisForTests,
+} = await import("../src/lib/redis-coordination.js");
+
+await configureStorageForTests({
+  driver: "postgres",
+  postgresPool: new pgAdapter.Pool(),
+});
+await configureRedisForTests({
+  mode: "redis",
+  url: process.env.OPENCURSOR_REDIS_URL,
+});
 
 const { Hono } = await import("hono");
 const {
   authMiddleware,
   authenticateRequest,
   checkRequestRateLimit,
+  getAuthStorageMode,
   isAuthEnabled,
   loginWithCredentials,
   SESSION_TOKEN_HEADER,
@@ -78,18 +104,64 @@ async function loginAndGetToken(
   return { token, cookie: setCookie, ip };
 }
 
+before(async () => {
+  const fs = await import("node:fs/promises");
+  await fs.mkdir(redisDataDir, { recursive: true });
+  await new Promise<void>((resolve, reject) => {
+    execFile(
+      "redis-server",
+      [
+        "--save",
+        "",
+        "--appendonly",
+        "no",
+        "--port",
+        String(redisPort),
+        "--bind",
+        "127.0.0.1",
+        "--dir",
+        redisDataDir,
+      ],
+      { cwd: repoRoot },
+      (error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        resolve();
+      }
+    );
+    setTimeout(resolve, 400);
+  });
+});
+
 after(async () => {
   const fs = await import("node:fs/promises");
+  await resetStorageForTests();
+  await resetRedisForTests();
+  await new Promise<void>((resolve) => {
+    execFile(
+      "redis-cli",
+      ["-p", String(redisPort), "shutdown", "nosave"],
+      { cwd: repoRoot },
+      () => resolve()
+    );
+  });
   await fs.rm(TEST_DATA_DIR, { recursive: true, force: true }).catch(() => {});
   delete process.env.OPENCURSOR_AUTH_USERNAME;
   delete process.env.OPENCURSOR_AUTH_PASSWORD;
   delete process.env.OPENCURSOR_AUTH_ROTATION_INTERVAL_MS;
   delete process.env.OPENCURSOR_AUTH_SESSION_TTL_MS;
+  delete process.env.OPENCURSOR_REDIS_URL;
 });
 
 describe("auth enabled detection", () => {
   test("isAuthEnabled returns true when both env vars are set", () => {
     assert.ok(isAuthEnabled());
+  });
+
+  test("auth rate limits run through redis coordination", () => {
+    assert.equal(getAuthStorageMode(), "redis");
   });
 });
 

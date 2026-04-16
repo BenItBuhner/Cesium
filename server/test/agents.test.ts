@@ -6,6 +6,7 @@ import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
+import { newDb } from "pg-mem";
 import type {
   AgentBackendId,
   AgentBackendInfo,
@@ -29,6 +30,17 @@ const repoRoot = path.resolve(
   "..",
   ".."
 );
+
+const db = newDb();
+const pgAdapter = db.adapters.createPg();
+
+const { configureStorageForTests, resetStorageForTests } = await import(
+  "../src/lib/storage.js"
+);
+await configureStorageForTests({
+  driver: "postgres",
+  postgresPool: new pgAdapter.Pool(),
+});
 
 const [
   { ensureWorkspaceRegistered },
@@ -404,6 +416,7 @@ const testRuntimeManager = new AgentRuntimeManager({
 });
 
 after(async () => {
+  await resetStorageForTests();
   await fs.rm(TEST_DATA_DIR, { recursive: true, force: true });
 });
 

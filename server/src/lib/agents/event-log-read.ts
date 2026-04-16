@@ -1,14 +1,19 @@
-import { createReadStream } from "node:fs";
-import { open } from "node:fs/promises";
-import { createInterface } from "node:readline";
 import type { AgentStoredEvent } from "./types.js";
+import {
+  getStoredConversationMinSeq,
+  hasStoredConversationEventsBefore,
+  readStoredConversationEventPrefixTail,
+  readStoredConversationEventTail,
+  readStoredConversationEvents,
+  readStoredConversationEventsSince,
+} from "../storage.js";
 
 /** Default tail / history page sizing (websocket head, `request_history`, REST head). */
 export const DEFAULT_PAGE_TURNS = 96;
 export const DEFAULT_PAGE_EVENTS_CAP = 2000;
 export const TAIL_INITIAL_CHUNK_BYTES = 256 * 1024;
 export const TAIL_MAX_CHUNK_BYTES = 8 * 1024 * 1024;
-/** Beyond this, full read is avoided; tail uses expanding chunks and history uses streaming + trim. */
+/** Legacy constant retained for compatibility with callers/tests. */
 export const EVENT_LOG_FULL_READ_MAX_BYTES = 4 * 1024 * 1024;
 
 /** CLI / provider transcript context — bounded so multimillion-event logs cannot OOM the heap. */
@@ -21,9 +26,6 @@ export const PROMPT_CONTEXT_LIMIT_EVENTS = 8000;
  */
 export const LARGE_LOG_SNAPSHOT_TURNS = 320;
 export const LARGE_LOG_SNAPSHOT_EVENTS = 16_000;
-
-/** Yield to the event loop while streaming very long history scans (reduces GC pause + starvation). */
-const HISTORY_STREAM_YIELD_EVERY_LINES = 2500;
 
 export type ConversationEventPageMeta = {
   oldestSeq: number;
@@ -93,8 +95,38 @@ export type ReadTailPageResult = {
   events: AgentStoredEvent[];
 } & ConversationEventPageMeta;
 
+function parseStoragePath(filePath: string): { workspaceId: string; conversationId: string } | null {
+  const normalized = filePath.replace(/\\/g, "/");
+  const marker = "/workspaces/";
+  const markerIndex = normalized.lastIndexOf(marker);
+  if (markerIndex === -1) {
+    return null;
+  }
+  const trailing = normalized.slice(markerIndex + marker.length);
+  const segments = trailing.split("/").filter(Boolean);
+  const workspacesIndex = segments.indexOf("conversations");
+  if (workspacesIndex !== 1) {
+    return null;
+  }
+  const workspaceId = segments[0];
+  const conversationId = segments[2];
+  if (!workspaceId || !conversationId) {
+    return null;
+  }
+  return { workspaceId, conversationId };
+}
+
+async function readAllEventsFromStoreByPath(filePath: string): Promise<AgentStoredEvent[]> {
+  const identity = parseStoragePath(filePath);
+  if (!identity) {
+    return [];
+  }
+  const rows = await readStoredConversationEvents(identity.workspaceId, identity.conversationId);
+  return rows.map((row) => parseEventLine(row.payload)).filter((event): event is AgentStoredEvent => event != null);
+}
+
 /**
- * Read the newest region of the JSONL log without loading the whole file (for large logs).
+ * Read the newest region of the stored event log.
  */
 export async function readConversationEventTailPage(
   filePath: string,
@@ -107,13 +139,8 @@ export async function readConversationEventTailPage(
 ): Promise<ReadTailPageResult & { scannedEntireFile: boolean }> {
   const limitTurns = Math.max(1, options.limitTurns);
   const limitEvents = Math.max(1, options.limitEvents);
-  const initialChunk = options.initialChunkBytes ?? TAIL_INITIAL_CHUNK_BYTES;
-  const maxAccumulated = options.maxAccumulatedBytes ?? TAIL_MAX_CHUNK_BYTES;
-
-  let fh;
-  try {
-    fh = await open(filePath, "r");
-  } catch {
+  const identity = parseStoragePath(filePath);
+  if (!identity) {
     return {
       events: [],
       oldestSeq: 0,
@@ -122,126 +149,29 @@ export async function readConversationEventTailPage(
       scannedEntireFile: true,
     };
   }
-
-  try {
-    const stat = await fh.stat();
-    const fileSize = stat.size;
-    if (fileSize === 0) {
-      return {
-        events: [],
-        oldestSeq: 0,
-        newestSeq: 0,
-        hasOlder: false,
-        scannedEntireFile: true,
-      };
-    }
-
-    if (fileSize <= EVENT_LOG_FULL_READ_MAX_BYTES) {
-      const raw = Buffer.alloc(fileSize);
-      await fh.read(raw, 0, fileSize, 0);
-      const lines = raw
-        .toString("utf8")
-        .split(/\r?\n/)
-        .map((l) => l.trim())
-        .filter(Boolean);
-      const parsed = lines
-        .map(parseEventLine)
-        .filter((e): e is AgentStoredEvent => e != null);
-      const ordered = sortEventsBySeq(parsed);
-      const slice = takeLastTurnWindow(ordered, limitTurns, limitEvents);
-      const oldestSeq = slice[0]?.seq ?? 0;
-      const newestSeq = slice[slice.length - 1]?.seq ?? 0;
-      const fileMinSeq = ordered[0]?.seq ?? oldestSeq;
-      return {
-        events: slice,
-        oldestSeq,
-        newestSeq,
-        hasOlder: ordered.length > 0 && oldestSeq > fileMinSeq,
-        scannedEntireFile: true,
-      };
-    }
-
-    let bytesFromEnd = 0;
-    let chunkSize = initialChunk;
-    const lineBuf: string[] = [];
-    let scannedEntireFile = false;
-
-    while (bytesFromEnd < fileSize) {
-      const readLen = Math.min(chunkSize, fileSize - bytesFromEnd);
-      const start = fileSize - bytesFromEnd - readLen;
-      const buf = Buffer.alloc(readLen);
-      await fh.read(buf, 0, readLen, start);
-      let text = buf.toString("utf8");
-      if (start > 0) {
-        const nl = text.indexOf("\n");
-        if (nl === -1) {
-          bytesFromEnd += readLen;
-          chunkSize = Math.min(chunkSize * 2, maxAccumulated);
-          continue;
-        }
-        text = text.slice(nl + 1);
-      }
-      const newLines = text
-        .split(/\r?\n/)
-        .map((l) => l.trim())
-        .filter(Boolean);
-      lineBuf.splice(0, 0, ...newLines);
-      bytesFromEnd += readLen;
-
-      const parsed = lineBuf
-        .map(parseEventLine)
-        .filter((e): e is AgentStoredEvent => e != null);
-      const ordered = sortEventsBySeq(parsed);
-      const slice = takeLastTurnWindow(ordered, limitTurns, limitEvents);
-      const minSeqInBuffer = ordered[0]?.seq ?? 0;
-      const oldestInSlice = slice[0]?.seq ?? 0;
-      const usersInSlice = slice.filter((e) => e.kind === "user_message").length;
-      const haveWholeFile = bytesFromEnd >= fileSize;
-      if (haveWholeFile) {
-        scannedEntireFile = true;
-      }
-
-      if (slice.length > 0 && (haveWholeFile || usersInSlice >= limitTurns)) {
-        const newestSeq = slice[slice.length - 1]?.seq ?? 0;
-        return {
-          events: slice,
-          oldestSeq: oldestInSlice,
-          newestSeq,
-          hasOlder: !haveWholeFile || oldestInSlice > minSeqInBuffer,
-          scannedEntireFile: haveWholeFile,
-        };
-      }
-
-      if (haveWholeFile) {
-        const newestSeq = slice[slice.length - 1]?.seq ?? 0;
-        return {
-          events: slice,
-          oldestSeq: oldestInSlice,
-          newestSeq,
-          hasOlder: oldestInSlice > minSeqInBuffer,
-          scannedEntireFile: true,
-        };
-      }
-
-      chunkSize = Math.min(chunkSize * 2, maxAccumulated);
-    }
-
-    scannedEntireFile = bytesFromEnd >= fileSize;
-    return {
-      events: [],
-      oldestSeq: 0,
-      newestSeq: 0,
-      hasOlder: false,
-      scannedEntireFile,
-    };
-  } finally {
-    await fh.close();
-  }
+  const rows = await readStoredConversationEventTail(
+    identity.workspaceId,
+    identity.conversationId,
+    Math.max(limitEvents * 4, limitTurns * 50, limitEvents)
+  );
+  const ordered = sortEventsBySeq(
+    rows.map((row) => parseEventLine(row.payload)).filter((event): event is AgentStoredEvent => event != null)
+  );
+  const slice = takeLastTurnWindow(ordered, limitTurns, limitEvents);
+  const oldestSeq = slice[0]?.seq ?? 0;
+  const newestSeq = slice[slice.length - 1]?.seq ?? 0;
+  const minSeq = await getStoredConversationMinSeq(identity.workspaceId, identity.conversationId);
+  return {
+    events: slice,
+    oldestSeq,
+    newestSeq,
+    hasOlder: slice.length > 0 && minSeq != null && oldestSeq > minSeq,
+    scannedEntireFile: true,
+  };
 }
 
 /**
- * Events with seq < beforeSeq, turn-windowed from the end of that prefix (chronological order).
- * Streams the file for correctness on arbitrarily large logs (bounded memory via trim during scan).
+ * Events with seq < beforeSeq, turn-windowed from the end of that prefix.
  */
 export async function readConversationEventHistoryPage(
   filePath: string,
@@ -250,87 +180,25 @@ export async function readConversationEventHistoryPage(
 ): Promise<ReadTailPageResult> {
   const limitTurns = Math.max(1, options.limitTurns);
   const limitEvents = Math.max(1, options.limitEvents);
-  const rollingCap =
-    options.rollingCap ??
-    Math.min(
-      96_000,
-      Math.max(limitEvents * 40, limitTurns * 1600, 12_000)
-    );
-
-  let statSize = 0;
-  try {
-    const fh = await open(filePath, "r");
-    const st = await fh.stat();
-    statSize = st.size;
-    await fh.close();
-  } catch {
+  const identity = parseStoragePath(filePath);
+  if (!identity || beforeSeq <= 1) {
     return { events: [], oldestSeq: 0, newestSeq: 0, hasOlder: false };
   }
-
-  if (statSize === 0 || beforeSeq <= 1) {
-    return { events: [], oldestSeq: 0, newestSeq: 0, hasOlder: false };
-  }
-
-  if (statSize <= EVENT_LOG_FULL_READ_MAX_BYTES) {
-    const fh = await open(filePath, "r");
-    const raw = Buffer.alloc(statSize);
-    await fh.read(raw, 0, statSize, 0);
-    await fh.close();
-    const lines = raw
-      .toString("utf8")
-      .split(/\r?\n/)
-      .map((l) => l.trim())
-      .filter(Boolean);
-    const ordered = sortEventsBySeq(
-      lines.map(parseEventLine).filter((e): e is AgentStoredEvent => e != null)
-    );
-    const prefix = ordered.filter((e) => e.seq < beforeSeq);
-    const slice = takeLastTurnWindow(prefix, limitTurns, limitEvents);
-    const oldestSeq = slice[0]?.seq ?? 0;
-    const newestSeq = slice[slice.length - 1]?.seq ?? 0;
-    const minSeq = prefix[0]?.seq ?? 0;
-    return {
-      events: slice,
-      oldestSeq,
-      newestSeq,
-      hasOlder: prefix.length > 0 && oldestSeq > minSeq,
-    };
-  }
-
-  const stream = createReadStream(filePath, { encoding: "utf8" });
-  const rl = createInterface({ input: stream, crlfDelay: Infinity });
-
-  const acc: AgentStoredEvent[] = [];
-  let globalMin = Number.MAX_SAFE_INTEGER;
-  let trimmedRolling = false;
-  let linesSinceYield = 0;
-
-  for await (const line of rl) {
-    linesSinceYield += 1;
-    if (linesSinceYield >= HISTORY_STREAM_YIELD_EVERY_LINES) {
-      linesSinceYield = 0;
-      await new Promise<void>((resolve) => setImmediate(resolve));
-    }
-    const ev = parseEventLine(line);
-    if (!ev) {
-      continue;
-    }
-    if (ev.seq >= beforeSeq) {
-      continue;
-    }
-    globalMin = Math.min(globalMin, ev.seq);
-    acc.push(ev);
-    while (acc.length > rollingCap) {
-      acc.shift();
-      trimmedRolling = true;
-    }
-  }
-
-  const slice = takeLastTurnWindow(acc, limitTurns, limitEvents);
+  const rows = await readStoredConversationEventPrefixTail(
+    identity.workspaceId,
+    identity.conversationId,
+    beforeSeq,
+    Math.max(limitEvents * 4, limitTurns * 50, limitEvents)
+  );
+  const ordered = sortEventsBySeq(
+    rows.map((row) => parseEventLine(row.payload)).filter((event): event is AgentStoredEvent => event != null)
+  );
+  const slice = takeLastTurnWindow(ordered, limitTurns, limitEvents);
   const oldestSeq = slice[0]?.seq ?? 0;
   const newestSeq = slice[slice.length - 1]?.seq ?? 0;
   const hasOlder =
-    slice.length > 0 && (trimmedRolling || oldestSeq > globalMin);
+    slice.length > 0 &&
+    (await hasStoredConversationEventsBefore(identity.workspaceId, identity.conversationId, oldestSeq));
   return {
     events: slice,
     oldestSeq,
@@ -340,123 +208,23 @@ export async function readConversationEventHistoryPage(
 }
 
 /**
- * Events with seq > since — optimized tail read when `since` is near the end of the log.
+ * Events with seq > since.
  */
 export async function readConversationEventsSinceEfficient(
   filePath: string,
   since: number
 ): Promise<AgentStoredEvent[]> {
-  if (since <= 0) {
-    return readAllEventsFromFile(filePath);
-  }
-
-  let fh;
-  try {
-    fh = await open(filePath, "r");
-  } catch {
+  const identity = parseStoragePath(filePath);
+  if (!identity) {
     return [];
   }
-
-  try {
-    const stat = await fh.stat();
-    const fileSize = stat.size;
-    if (fileSize === 0) {
-      return [];
-    }
-
-    if (fileSize <= EVENT_LOG_FULL_READ_MAX_BYTES) {
-      const raw = Buffer.alloc(fileSize);
-      await fh.read(raw, 0, fileSize, 0);
-      return sortEventsBySeq(
-        raw
-          .toString("utf8")
-          .split(/\r?\n/)
-          .map((l) => l.trim())
-          .filter(Boolean)
-          .map(parseEventLine)
-          .filter((e): e is AgentStoredEvent => e != null)
-      ).filter((e) => e.seq > since);
-    }
-
-    let bytesFromEnd = 0;
-    let chunkSize = TAIL_INITIAL_CHUNK_BYTES;
-    const lineBuf: string[] = [];
-
-    while (bytesFromEnd < fileSize) {
-      const readLen = Math.min(chunkSize, fileSize - bytesFromEnd);
-      const start = fileSize - bytesFromEnd - readLen;
-      const buf = Buffer.alloc(readLen);
-      await fh.read(buf, 0, readLen, start);
-      let text = buf.toString("utf8");
-      if (start > 0) {
-        const nl = text.indexOf("\n");
-        if (nl === -1) {
-          bytesFromEnd += readLen;
-          chunkSize = Math.min(chunkSize * 2, TAIL_MAX_CHUNK_BYTES);
-          continue;
-        }
-        text = text.slice(nl + 1);
-      }
-      const newLines = text
-        .split(/\r?\n/)
-        .map((l) => l.trim())
-        .filter(Boolean);
-      lineBuf.splice(0, 0, ...newLines);
-      bytesFromEnd += readLen;
-
-      const ordered = sortEventsBySeq(
-        lineBuf.map(parseEventLine).filter((e): e is AgentStoredEvent => e != null)
-      );
-      if (ordered.length === 0) {
-        if (bytesFromEnd >= fileSize) {
-          break;
-        }
-        chunkSize = Math.min(chunkSize * 2, TAIL_MAX_CHUNK_BYTES);
-        continue;
-      }
-      if (ordered[0]!.seq <= since) {
-        return ordered.filter((e) => e.seq > since);
-      }
-      if (bytesFromEnd >= fileSize) {
-        return ordered.filter((e) => e.seq > since);
-      }
-      chunkSize = Math.min(chunkSize * 2, TAIL_MAX_CHUNK_BYTES);
-    }
-
-    return sortEventsBySeq(
-      lineBuf.map(parseEventLine).filter((e): e is AgentStoredEvent => e != null)
-    ).filter((e) => e.seq > since);
-  } finally {
-    await fh.close();
-  }
-}
-
-async function readAllEventsFromFile(filePath: string): Promise<AgentStoredEvent[]> {
-  let fh;
-  try {
-    fh = await open(filePath, "r");
-  } catch {
-    return [];
-  }
-  try {
-    const stat = await fh.stat();
-    if (stat.size === 0) {
-      return [];
-    }
-    const raw = Buffer.alloc(stat.size);
-    await fh.read(raw, 0, stat.size, 0);
-    return sortEventsBySeq(
-      raw
-        .toString("utf8")
-        .split(/\r?\n/)
-        .map((l) => l.trim())
-        .filter(Boolean)
-        .map(parseEventLine)
-        .filter((e): e is AgentStoredEvent => e != null)
-    );
-  } finally {
-    await fh.close();
-  }
+  const rows =
+    since <= 0
+      ? await readStoredConversationEvents(identity.workspaceId, identity.conversationId)
+      : await readStoredConversationEventsSince(identity.workspaceId, identity.conversationId, since);
+  return sortEventsBySeq(
+    rows.map((row) => parseEventLine(row.payload)).filter((event): event is AgentStoredEvent => event != null)
+  ).filter((event) => event.seq > since);
 }
 
 function formatToolCallForTranscript(event: Extract<AgentStoredEvent, { kind: "tool_call" }>): string {

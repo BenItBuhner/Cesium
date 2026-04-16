@@ -16,13 +16,17 @@
     "dotenv": "^17.3.1",
     "hono": "^4.10.2",
     "node-pty": "^1.0.0",
+    "pg": "^8.20.0",
+    "redis": "^5.12.1",
     "undici": "^7.24.6",
     "ws": "^8.18.3"
   },
   "devDependencies": {
     "@types/node": "^24.5.2",
+    "@types/pg": "^8.20.0",
     "@types/ws": "^8.18.1",
     "cross-env": "^7.0.3",
+    "pg-mem": "^3.0.14",
     "tsx": "^4.20.5",
     "typescript": "^5.9.2"
   }

@@ -5,20 +5,29 @@ import {
   randomBytes,
   timingSafeEqual,
 } from "node:crypto";
-import path from "node:path";
 import type { IncomingMessage } from "node:http";
 import type { Context } from "hono";
 import type { MiddlewareHandler } from "hono";
 import { deleteCookie, setCookie } from "hono/cookie";
 import type { CookieOptions } from "hono/utils/cookie";
-import { DATA_DIR, readJsonFile, writeJsonFile } from "./persistence.js";
+import { readJsonFile, writeJsonFile } from "./persistence.js";
+import {
+  consumeDistributedRateLimit,
+  rateLimitStoreMode,
+} from "./redis-coordination.js";
+import {
+  deleteExpiredStoredAuthSessions,
+  deleteStoredAuthSession,
+  getStoredAuthSession,
+  listStoredAuthSessions,
+  upsertStoredAuthSession,
+} from "./storage.js";
 
 export const SESSION_COOKIE_NAME = "opencursor_session";
 export const SESSION_TOKEN_HEADER = "x-opencursor-session-token";
 export const ACCESS_TOKEN_QUERY_PARAM = "access_token";
 
-const AUTH_STATE_FILE = path.join(DATA_DIR, "profile", "auth-state.json");
-const AUTH_SESSIONS_FILE = path.join(DATA_DIR, "profile", "auth-sessions.json");
+const AUTH_STATE_FILE = "auth://state";
 
 const DEFAULT_SESSION_TTL_MS = 12 * 60 * 60 * 1000;
 const DEFAULT_REMEMBER_SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
@@ -88,11 +97,6 @@ export type AuthSessionRecord = {
   remember: boolean;
 };
 
-type PersistedAuthSessions = {
-  schemaVersion: 1;
-  sessions: AuthSessionRecord[];
-};
-
 type SessionTokenPayload = {
   sid: string;
   username: string;
@@ -127,11 +131,6 @@ type TokenExtractionResult = {
   source: "authorization" | "header" | "cookie" | "query" | null;
 };
 
-type RateLimitState = {
-  count: number;
-  resetAt: number;
-};
-
 export type RateLimitResult = {
   ok: boolean;
   limit: number;
@@ -146,9 +145,7 @@ type UpgradeAuthResult =
 
 type RequestLike = Request | IncomingMessage;
 
-const rateLimitBuckets = new Map<string, RateLimitState>();
 let authStatePromise: Promise<PersistedAuthState> | null = null;
-let sessionStoreQueue: Promise<void> = Promise.resolve();
 
 function readEnvValue(name: string): string | null {
   const value = process.env[name]?.trim();
@@ -421,43 +418,17 @@ function secureStringEquals(a: string, b: string): boolean {
   return timingSafeEqual(hashSecret(a), hashSecret(b));
 }
 
-function pruneRateLimitBuckets(now: number): void {
-  if (rateLimitBuckets.size < 2_000) {
-    return;
-  }
-  for (const [key, bucket] of rateLimitBuckets.entries()) {
-    if (bucket.resetAt <= now) {
-      rateLimitBuckets.delete(key);
-    }
-  }
-}
-
-function consumeRateLimit(
+async function consumeRateLimit(
   kind: RateLimitKind,
   key: string,
   config = getAuthConfig()
-): RateLimitResult {
+): Promise<RateLimitResult> {
   const policy = config.rateLimits[kind];
-  const now = Date.now();
-  pruneRateLimitBuckets(now);
-  const bucketKey = `${kind}:${key}`;
-  const existing = rateLimitBuckets.get(bucketKey);
-  const resetAt =
-    existing && existing.resetAt > now ? existing.resetAt : now + policy.windowMs;
-  const count =
-    existing && existing.resetAt > now ? existing.count + 1 : 1;
-  const remaining = Math.max(0, policy.limit - count);
-  const ok = count <= policy.limit;
-
-  rateLimitBuckets.set(bucketKey, { count, resetAt });
-
-  return {
-    ok,
+  return consumeDistributedRateLimit({
+    bucketKey: `${kind}:${key}`,
     limit: policy.limit,
-    remaining,
-    resetAt,
-    retryAfterSec: Math.max(1, Math.ceil((resetAt - now) / 1000)),
-  };
+    windowMs: policy.windowMs,
+  });
 }
 
 export function applyRateLimitHeaders(headers: Headers, result: RateLimitResult): void {
@@ -512,50 +483,6 @@ async function getAuthState(): Promise<PersistedAuthState> {
     })();
   }
   return authStatePromise;
-}
-
-function createEmptySessionStore(): PersistedAuthSessions {
-  return { schemaVersion: 1, sessions: [] };
-}
-
-async function loadSessionStore(): Promise<PersistedAuthSessions> {
-  const store = await readJsonFile<PersistedAuthSessions | null>(
-    AUTH_SESSIONS_FILE,
-    null
-  );
-  if (!store || store.schemaVersion !== 1 || !Array.isArray(store.sessions)) {
-    return createEmptySessionStore();
-  }
-  const now = Date.now();
-  return {
-    schemaVersion: 1,
-    sessions: store.sessions.filter(
-      (session) =>
-        session &&
-        typeof session.id === "string" &&
-        typeof session.username === "string" &&
-        typeof session.expiresAt === "number" &&
-        session.expiresAt > now
-    ),
-  };
-}
-
-async function saveSessionStore(store: PersistedAuthSessions): Promise<void> {
-  await writeJsonFile(AUTH_SESSIONS_FILE, store);
-}
-
-async function withSessionStoreLock<T>(run: () => Promise<T>): Promise<T> {
-  const previous = sessionStoreQueue;
-  let release: (() => void) | undefined;
-  sessionStoreQueue = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  await previous.catch(() => undefined);
-  try {
-    return await run();
-  } finally {
-    release?.();
-  }
 }
 
 function serializeToken(payload: SessionTokenPayload, secret: string): string {
@@ -651,23 +578,17 @@ async function writeSessionUpdate(
   sessionId: string,
   updater: (current: AuthSessionRecord) => AuthSessionRecord | null
 ): Promise<AuthSessionRecord | null> {
-  return withSessionStoreLock(async () => {
-    const store = await loadSessionStore();
-    const index = store.sessions.findIndex((session) => session.id === sessionId);
-    if (index === -1) {
-      return null;
-    }
-    const current = store.sessions[index]!;
-    const next = updater(current);
-    if (!next) {
-      store.sessions.splice(index, 1);
-      await saveSessionStore(store);
-      return null;
-    }
-    store.sessions[index] = next;
-    await saveSessionStore(store);
-    return next;
-  });
+  const current = await getStoredAuthSession(sessionId);
+  if (!current) {
+    return null;
+  }
+  const next = updater(current);
+  if (!next) {
+    await deleteStoredAuthSession(sessionId);
+    return null;
+  }
+  await upsertStoredAuthSession(next);
+  return next;
 }
 
 async function createSessionRecord(input: {
@@ -686,20 +607,12 @@ async function createSessionRecord(input: {
       now + (input.remember ? config.rememberSessionTtlMs : config.sessionTtlMs),
     remember: input.remember,
   };
-  await withSessionStoreLock(async () => {
-    const store = await loadSessionStore();
-    store.sessions.push(session);
-    await saveSessionStore(store);
-  });
+  await upsertStoredAuthSession(session);
   return session;
 }
 
 async function revokeSessionRecord(sessionId: string): Promise<void> {
-  await withSessionStoreLock(async () => {
-    const store = await loadSessionStore();
-    store.sessions = store.sessions.filter((session) => session.id !== sessionId);
-    await saveSessionStore(store);
-  });
+  await deleteStoredAuthSession(sessionId);
 }
 
 function toPublicSession(session: AuthSessionRecord): PublicAuthSession {
@@ -740,8 +653,8 @@ export async function authenticateRequest(
     return { status: "invalid", clearCookie: true };
   }
 
-  const store = await loadSessionStore();
-  const session = store.sessions.find((entry) => entry.id === payload.sid);
+  await deleteExpiredStoredAuthSessions(now);
+  const session = await getStoredAuthSession(payload.sid);
   if (
     !session ||
     session.username !== payload.username ||
@@ -856,10 +769,10 @@ export function buildRateLimitedJsonResponse(
   });
 }
 
-export function checkRequestRateLimit(
+export async function checkRequestRateLimit(
   request: RequestLike,
   kind: RateLimitKind
-): RateLimitResult {
+): Promise<RateLimitResult> {
   return consumeRateLimit(kind, rateLimitKeyForRequest(request));
 }
 
@@ -880,7 +793,7 @@ export const authMiddleware: MiddlewareHandler = async (c, next) => {
     return;
   }
 
-  const rateLimit = checkRequestRateLimit(
+  const rateLimit = await checkRequestRateLimit(
     c.req.raw,
     classifyProtectedHttpRateLimit(pathname, c.req.method)
   );
@@ -970,7 +883,7 @@ export async function authenticateUpgradeRequest(
     return { ok: true };
   }
 
-  const rateLimit = checkRequestRateLimit(request, kind);
+  const rateLimit = await checkRequestRateLimit(request, kind);
   if (!rateLimit.ok) {
     return {
       ok: false,
@@ -992,6 +905,10 @@ export async function authenticateUpgradeRequest(
     status: 401,
     message: "Authentication required.",
   };
+}
+
+export function getAuthStorageMode(): "memory" | "redis" {
+  return rateLimitStoreMode();
 }
 
 export function buildUpgradeHttpResponse(

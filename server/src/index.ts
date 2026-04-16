@@ -20,6 +20,8 @@ import {
   buildUpgradeHttpResponse,
   SESSION_TOKEN_HEADER,
 } from "./lib/auth.js";
+import { getCoordinationStatus } from "./lib/redis-coordination.js";
+import { getStorageStatus } from "./lib/storage.js";
 import { isTranscriptionConfigured } from "./lib/transcription-env.js";
 import { handleFsUpgrade } from "./ws/filewatcher.js";
 import { handleAgentUpgrade } from "./ws/agent.js";
@@ -76,8 +78,13 @@ app.onError((error, c) => {
   return c.json({ error: error.message }, 500);
 });
 
-app.get("/health", (c) =>
-  c.json({ ok: true, transcription: { configured: isTranscriptionConfigured() } })
+app.get("/health", async (c) =>
+  c.json({
+    ok: true,
+    transcription: { configured: isTranscriptionConfigured() },
+    storage: await getStorageStatus(),
+    coordination: await getCoordinationStatus(),
+  })
 );
 app.route("/", authRoutes);
 app.route("/browser", browserProxyRoutes);

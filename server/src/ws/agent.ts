@@ -14,6 +14,7 @@ import type {
 } from "../lib/agents/types.js";
 import { getWorkspaceById } from "../lib/workspace-registry.js";
 import { agentRuntimeManager } from "../lib/agents/runtime-manager.js";
+import { subscribeToWorkspaceChannel } from "../lib/redis-coordination.js";
 
 type AgentSocketState = {
   workspaceId: string;
@@ -23,6 +24,7 @@ type AgentSocketState = {
 
 const agentWebSocketServer = new WebSocketServer({ noServer: true });
 const workspaceClients = new Map<string, Set<AgentSocketState>>();
+const workspaceUnsubscribers = new Map<string, () => Promise<void>>();
 
 function send(socket: WebSocket, message: AgentSocketServerMessage): void {
   if (socket.readyState === WebSocket.OPEN) {
@@ -30,10 +32,55 @@ function send(socket: WebSocket, message: AgentSocketServerMessage): void {
   }
 }
 
+function fanOutWorkspaceEvent(workspaceId: string, event: AgentSocketServerMessage): void {
+  const clients = workspaceClients.get(workspaceId);
+  if (!clients) {
+    return;
+  }
+  for (const client of clients) {
+    if (
+      event.type !== "snapshot" &&
+      event.type !== "snapshot_head" &&
+      "conversationId" in event &&
+      event.conversationId &&
+      !client.subscribedConversationIds.has(event.conversationId)
+    ) {
+      continue;
+    }
+    if (
+      event.type === "conversation" &&
+      !client.subscribedConversationIds.has(event.conversation.id)
+    ) {
+      continue;
+    }
+    send(client.socket, event);
+  }
+}
+
+async function ensureWorkspaceSubscription(workspaceId: string): Promise<void> {
+  if (workspaceUnsubscribers.has(workspaceId)) {
+    return;
+  }
+  const unsubscribe = await subscribeToWorkspaceChannel(workspaceId, (message) => {
+    let parsed: AgentSocketServerMessage | null = null;
+    try {
+      parsed = JSON.parse(message) as AgentSocketServerMessage;
+    } catch {
+      parsed = null;
+    }
+    if (!parsed) {
+      return;
+    }
+    fanOutWorkspaceEvent(workspaceId, parsed);
+  });
+  workspaceUnsubscribers.set(workspaceId, unsubscribe);
+}
+
 function addClient(state: AgentSocketState): void {
   const set = workspaceClients.get(state.workspaceId) ?? new Set<AgentSocketState>();
   set.add(state);
   workspaceClients.set(state.workspaceId, set);
+  void ensureWorkspaceSubscription(state.workspaceId);
 }
 
 function removeClient(state: AgentSocketState): void {
@@ -44,42 +91,27 @@ function removeClient(state: AgentSocketState): void {
   set.delete(state);
   if (set.size === 0) {
     workspaceClients.delete(state.workspaceId);
+    const unsubscribe = workspaceUnsubscribers.get(state.workspaceId);
+    workspaceUnsubscribers.delete(state.workspaceId);
+    void unsubscribe?.();
   }
 }
 
 subscribeAgentStoreEvents((event) => {
   if (event.type === "event") {
-    const clients = workspaceClients.get(event.workspaceId);
-    if (!clients) {
-      return;
-    }
-    for (const client of clients) {
-      if (!client.subscribedConversationIds.has(event.conversationId)) {
-        continue;
-      }
-      send(client.socket, {
-        type: "event",
-        conversationId: event.conversationId,
-        event: event.event,
-      });
-    }
+    fanOutWorkspaceEvent(event.workspaceId, {
+      type: "event",
+      conversationId: event.conversationId,
+      event: event.event,
+    });
     return;
   }
 
   if (event.type === "conversation") {
-    const clients = workspaceClients.get(event.conversation.workspaceId);
-    if (!clients) {
-      return;
-    }
-    for (const client of clients) {
-      if (!client.subscribedConversationIds.has(event.conversation.id)) {
-        continue;
-      }
-      send(client.socket, {
-        type: "conversation",
-        conversation: event.conversation,
-      });
-    }
+    fanOutWorkspaceEvent(event.conversation.workspaceId, {
+      type: "conversation",
+      conversation: event.conversation,
+    });
   }
 });
 

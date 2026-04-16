@@ -34,7 +34,7 @@ function applyRateLimitContextHeaders(
 }
 
 authRoutes.get("/api/auth/status", async (c) => {
-  const rateLimit = checkRequestRateLimit(c.req.raw, "auth-status");
+  const rateLimit = await checkRequestRateLimit(c.req.raw, "auth-status");
   applyRateLimitContextHeaders(c, rateLimit);
   if (!rateLimit.ok) {
     return buildRateLimitedJsonResponse(
@@ -64,7 +64,7 @@ authRoutes.get("/api/auth/status", async (c) => {
 });
 
 authRoutes.post("/api/auth/login", async (c) => {
-  const rateLimit = checkRequestRateLimit(c.req.raw, "login");
+  const rateLimit = await checkRequestRateLimit(c.req.raw, "login");
   applyRateLimitContextHeaders(c, rateLimit);
   if (!rateLimit.ok) {
     return buildRateLimitedJsonResponse(

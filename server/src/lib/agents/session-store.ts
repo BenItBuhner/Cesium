@@ -1,18 +1,36 @@
 import { randomUUID } from "node:crypto";
 import { promises as fs, type Dirent } from "node:fs";
 import path from "node:path";
-import { DATA_DIR, ensureDataDir, readJsonFile, writeJsonFile } from "../persistence.js";
+import { DATA_DIR, ensureDataDir } from "../persistence.js";
+import {
+  appendStoredConversationEvents,
+  deleteStoredConversation,
+  getStoredConversation,
+  hasStoredConversationEventsBefore,
+  insertStoredConversationEvents,
+  listStoredConversations,
+  readStoredConversationEventPrefixTail,
+  readStoredConversationEventTail,
+  readStoredConversationEvents,
+  readStoredConversationEventsSince,
+  type StoredConversationEventRow,
+  type StoredConversationRow,
+  updateStoredConversation,
+  upsertStoredConversation,
+} from "../storage.js";
+import {
+  publishDistributedMessage,
+  subscribeDistributedChannel,
+} from "../redis-coordination.js";
 import { AGENT_BACKENDS } from "./providers.js";
 import { extractToolEditPreview } from "./tool-edit-preview.js";
 import {
   DEFAULT_PAGE_EVENTS_CAP,
   DEFAULT_PAGE_TURNS,
-  EVENT_LOG_FULL_READ_MAX_BYTES,
   LARGE_LOG_SNAPSHOT_EVENTS,
   LARGE_LOG_SNAPSHOT_TURNS,
-  readConversationEventHistoryPage,
-  readConversationEventsSinceEfficient,
-  readConversationEventTailPage,
+  parseEventLine,
+  takeLastTurnWindow,
 } from "./event-log-read.js";
 import type {
   AgentBackendId,
@@ -25,10 +43,15 @@ import type {
 } from "./types.js";
 
 const appendQueues = new Map<string, Promise<void>>();
-/** One in-flight paginated history read per conversation — avoids parallel full-log scans from fast scroll. */
+/** One in-flight paginated history read per conversation — avoids duplicate pagination scans. */
 const historyReadQueues = new Map<string, Promise<unknown>>();
 const listeners = new Set<(event: AgentManagerEvent) => void>();
 const FALLBACK_BACKEND_ID: AgentBackendId = "cursor-acp";
+const DEFAULT_AGENT_HANDOFF_MESSAGE_LIMIT = 25;
+const AGENT_STORE_CHANNEL = "opencursor:agent-store-events:v1";
+const AGENT_STORE_SOURCE_ID = randomUUID();
+const MAX_WINDOW_SCAN_EVENTS = 96_000;
+let distributedEventSubscriptionPromise: Promise<void> | null = null;
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -99,11 +122,11 @@ async function enrichEventsWithDerivedEditPreview(
       if (rawRecord?.type !== "file_change") {
         return event;
       }
-      const path = pathFromFileChange(rawRecord) ?? event.locations?.[0]?.path;
-      if (!path) {
+      const changedPath = pathFromFileChange(rawRecord) ?? event.locations?.[0]?.path;
+      if (!changedPath) {
         return event;
       }
-      const current = await readText(path);
+      const current = await readText(changedPath);
       if (current == null) {
         return event;
       }
@@ -112,16 +135,16 @@ async function enrichEventsWithDerivedEditPreview(
         return event;
       }
       const syntheticResult = {
-        path,
+        path: changedPath,
         changes: rawRecord.changes,
         status: rawRecord.status,
         beforeFullFileContent: "",
         afterFullFileContent: current,
       };
       const preview = extractToolEditPreview(
-        { path, changes: rawRecord.changes },
+        { path: changedPath, changes: rawRecord.changes },
         syntheticResult,
-        path
+        changedPath
       );
       if (!preview) {
         return event;
@@ -130,13 +153,14 @@ async function enrichEventsWithDerivedEditPreview(
         ...event,
         editPreview: preview,
         locations:
-          event.locations && event.locations.length > 0 ? event.locations : [{ path }],
+          event.locations && event.locations.length > 0
+            ? event.locations
+            : [{ path: changedPath }],
       };
     })
   );
 }
 
-const DEFAULT_AGENT_HANDOFF_MESSAGE_LIMIT = 25;
 function getAgentHandoffMessageLimit(): number {
   const envVal = process.env.OPENCURSOR_AGENT_HANDOFF_MESSAGE_LIMIT?.trim();
   if (envVal) {
@@ -148,7 +172,11 @@ function getAgentHandoffMessageLimit(): number {
   return DEFAULT_AGENT_HANDOFF_MESSAGE_LIMIT;
 }
 
-function enqueueHistoryRead<T>(workspaceId: string, conversationId: string, run: () => Promise<T>): Promise<T> {
+function enqueueHistoryRead<T>(
+  workspaceId: string,
+  conversationId: string,
+  run: () => Promise<T>
+): Promise<T> {
   const key = `${workspaceId}:${conversationId}`;
   const prev = historyReadQueues.get(key) ?? Promise.resolve();
   const next = prev.catch(() => undefined).then(() => run());
@@ -182,10 +210,48 @@ function queueKey(workspaceId: string, conversationId: string): string {
   return `${workspaceId}:${conversationId}`;
 }
 
-function notify(event: AgentManagerEvent): void {
+function notifyLocal(event: AgentManagerEvent): void {
   for (const listener of listeners) {
     listener(event);
   }
+}
+
+function ensureDistributedEventSubscription(): void {
+  if (distributedEventSubscriptionPromise) {
+    return;
+  }
+  distributedEventSubscriptionPromise = subscribeDistributedChannel(
+    AGENT_STORE_CHANNEL,
+    (message) => {
+      try {
+        const parsed = JSON.parse(message) as {
+          sourceId?: string;
+          event?: AgentManagerEvent;
+        };
+        if (parsed.sourceId === AGENT_STORE_SOURCE_ID || !parsed.event) {
+          return;
+        }
+        notifyLocal(parsed.event);
+      } catch {
+        // Ignore malformed distributed notifications.
+      }
+    }
+  )
+    .then(() => undefined)
+    .catch(() => {
+      distributedEventSubscriptionPromise = null;
+    });
+}
+
+function notify(event: AgentManagerEvent): void {
+  notifyLocal(event);
+  void publishDistributedMessage(
+    AGENT_STORE_CHANNEL,
+    JSON.stringify({
+      sourceId: AGENT_STORE_SOURCE_ID,
+      event,
+    })
+  ).catch(() => undefined);
 }
 
 function normalizeConversationRecord(
@@ -231,6 +297,120 @@ function normalizeConversationRecord(
   };
 }
 
+function serializeConversationRow(record: AgentConversationRecord): StoredConversationRow {
+  return {
+    workspaceId: record.workspaceId,
+    conversationId: record.id,
+    title: record.title,
+    status: record.status,
+    lastEventSeq: record.lastEventSeq,
+    updatedAt: record.updatedAt,
+    archivedAt: record.archivedAt,
+    payload: JSON.stringify(record),
+  };
+}
+
+function deserializeConversationPayload(payload: string): AgentConversationRecord | null {
+  try {
+    const parsed = JSON.parse(payload) as AgentConversationRecord;
+    if (!parsed || parsed.schemaVersion !== 1) {
+      return null;
+    }
+    return normalizeConversationRecord(parsed);
+  } catch {
+    return null;
+  }
+}
+
+function deserializeConversationRow(row: StoredConversationRow): AgentConversationRecord | null {
+  return deserializeConversationPayload(row.payload);
+}
+
+function deserializeEventRows(rows: StoredConversationEventRow[]): AgentStoredEvent[] {
+  return rows
+    .map((row) => {
+      const parsed = parseEventLine(row.payload);
+      return parsed && typeof parsed.seq === "number" ? parsed : null;
+    })
+    .filter((value): value is AgentStoredEvent => value !== null)
+    .sort((left, right) => left.seq - right.seq);
+}
+
+function countUserTurns(events: AgentStoredEvent[]): number {
+  return events.filter((event) => event.kind === "user_message").length;
+}
+
+async function migrateLegacyConversation(
+  workspaceId: string,
+  conversationId: string
+): Promise<AgentConversationRecord | null> {
+  const existing = await getStoredConversation(workspaceId, conversationId);
+  if (existing) {
+    return deserializeConversationRow(existing);
+  }
+
+  let rawRecord: string;
+  try {
+    rawRecord = await fs.readFile(getConversationMetaFile(workspaceId, conversationId), "utf8");
+  } catch {
+    return null;
+  }
+
+  let parsedRecord: AgentConversationRecord | null = null;
+  try {
+    const parsed = JSON.parse(rawRecord) as AgentConversationRecord;
+    if (parsed && parsed.schemaVersion === 1) {
+      parsedRecord = normalizeConversationRecord(parsed);
+    }
+  } catch {
+    parsedRecord = null;
+  }
+  if (!parsedRecord) {
+    return null;
+  }
+
+  await upsertStoredConversation(serializeConversationRow(parsedRecord));
+
+  let eventRows: StoredConversationEventRow[] = [];
+  try {
+    const rawEvents = await fs.readFile(getConversationEventsFile(workspaceId, conversationId), "utf8");
+    eventRows = rawEvents
+      .split(/\r?\n/)
+      .map((line) => parseEventLine(line))
+      .filter((value): value is AgentStoredEvent => value !== null)
+      .sort((left, right) => left.seq - right.seq)
+      .map((event) => ({
+        workspaceId,
+        conversationId,
+        seq: event.seq,
+        createdAt: event.createdAt,
+        payload: JSON.stringify(event),
+      }));
+  } catch {
+    eventRows = [];
+  }
+  if (eventRows.length > 0) {
+    await insertStoredConversationEvents(eventRows);
+  }
+
+  return parsedRecord;
+}
+
+async function migrateLegacyWorkspaceConversations(workspaceId: string): Promise<void> {
+  const root = getConversationRoot(workspaceId);
+  let entries: Dirent[];
+  try {
+    entries = await fs.readdir(root, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  await Promise.all(
+    entries
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => migrateLegacyConversation(workspaceId, entry.name))
+  );
+}
+
 async function withConversationQueue<T>(
   workspaceId: string,
   conversationId: string,
@@ -248,18 +428,73 @@ async function withConversationQueue<T>(
   try {
     return await run();
   } finally {
-    if (release) {
-      release();
-    }
+    release?.();
     if (appendQueues.get(key) === tail) {
       appendQueues.delete(key);
     }
   }
 }
 
+async function readTurnWindow(
+  workspaceId: string,
+  conversationId: string,
+  input: {
+    beforeSeq?: number;
+    limitTurns: number;
+    limitEvents: number;
+  }
+): Promise<{
+  events: AgentStoredEvent[];
+  oldestSeq: number;
+  newestSeq: number;
+  hasOlder: boolean;
+}> {
+  const limitTurns = Math.max(1, input.limitTurns);
+  const limitEvents = Math.max(1, input.limitEvents);
+  let fetchLimit = Math.min(
+    MAX_WINDOW_SCAN_EVENTS,
+    Math.max(limitEvents * 2, limitTurns * 32, 512)
+  );
+
+  while (true) {
+    const rows =
+      typeof input.beforeSeq === "number"
+        ? await readStoredConversationEventPrefixTail(
+            workspaceId,
+            conversationId,
+            input.beforeSeq,
+            fetchLimit
+          )
+        : await readStoredConversationEventTail(workspaceId, conversationId, fetchLimit);
+    const ordered = deserializeEventRows(rows);
+    const slice = takeLastTurnWindow(ordered, limitTurns, limitEvents);
+    const exhausted = rows.length < fetchLimit || fetchLimit >= MAX_WINDOW_SCAN_EVENTS;
+    if (exhausted || slice.length === 0 || countUserTurns(slice) >= limitTurns) {
+      const oldestSeq = slice[0]?.seq ?? 0;
+      const newestSeq = slice[slice.length - 1]?.seq ?? 0;
+      const hasOlder =
+        oldestSeq > 0
+          ? await hasStoredConversationEventsBefore(
+              workspaceId,
+              conversationId,
+              oldestSeq
+            )
+          : false;
+      return {
+        events: slice,
+        oldestSeq,
+        newestSeq,
+        hasOlder,
+      };
+    }
+    fetchLimit = Math.min(MAX_WINDOW_SCAN_EVENTS, fetchLimit * 2);
+  }
+}
+
 export function subscribeAgentStoreEvents(
   listener: (event: AgentManagerEvent) => void
 ): () => void {
+  ensureDistributedEventSubscription();
   listeners.add(listener);
   return () => listeners.delete(listener);
 }
@@ -267,10 +502,7 @@ export function subscribeAgentStoreEvents(
 export async function saveConversationRecord(
   record: AgentConversationRecord
 ): Promise<AgentConversationRecord> {
-  await writeJsonFile(
-    getConversationMetaFile(record.workspaceId, record.id),
-    record
-  );
+  await upsertStoredConversation(serializeConversationRow(record));
   notify({ type: "conversation", conversation: record });
   return record;
 }
@@ -279,35 +511,21 @@ export async function readConversationRecord(
   workspaceId: string,
   conversationId: string
 ): Promise<AgentConversationRecord | null> {
-  const fallback = null as AgentConversationRecord | null;
-  const record = await readJsonFile(
-    getConversationMetaFile(workspaceId, conversationId),
-    fallback
-  );
-  if (!record || record.schemaVersion !== 1) {
-    return null;
+  const stored = await getStoredConversation(workspaceId, conversationId);
+  const parsed = stored ? deserializeConversationRow(stored) : null;
+  if (parsed) {
+    return parsed;
   }
-  return normalizeConversationRecord(record);
+  return migrateLegacyConversation(workspaceId, conversationId);
 }
 
 export async function listWorkspaceConversationRecords(
   workspaceId: string
 ): Promise<AgentConversationRecord[]> {
-  const root = getConversationRoot(workspaceId);
-  let entries: Dirent[];
-  try {
-    entries = await fs.readdir(root, { withFileTypes: true });
-  } catch {
-    return [];
-  }
-
-  const conversations = await Promise.all(
-    entries
-      .filter((entry) => entry.isDirectory())
-      .map((entry) => readConversationRecord(workspaceId, entry.name))
-  );
-
-  return conversations
+  await migrateLegacyWorkspaceConversations(workspaceId);
+  const rows = await listStoredConversations(workspaceId);
+  return rows
+    .map((row) => deserializeConversationRow(row))
     .filter((value): value is AgentConversationRecord => value !== null)
     .sort((a, b) => b.updatedAt - a.updatedAt || a.title.localeCompare(b.title));
 }
@@ -326,43 +544,36 @@ export async function appendConversationEvents(
     if (!record) {
       throw new Error(`Unknown conversation: ${conversationId}`);
     }
-
     await ensureDataDir();
-    await fs.mkdir(getConversationDir(workspaceId, conversationId), {
-      recursive: true,
-    });
-
-    let nextSeq = record.lastEventSeq + 1;
     const now = Date.now();
-    const appended: AgentStoredEvent[] = events.map((event) => ({
-      ...event,
-      seq: nextSeq++,
-      createdAt: event.createdAt ?? now,
-    })) as AgentStoredEvent[];
-
-    const lines = appended.map((event) => JSON.stringify(event)).join("\n");
-    if (lines) {
-      await fs.appendFile(
-        getConversationEventsFile(workspaceId, conversationId),
-        `${lines}\n`,
-        "utf8"
-      );
-    }
-
-    // Re-read meta after the append so concurrent queue work (e.g. runtime
-    // startSession updating providerSessionId) cannot be overwritten by a
-    // stale snapshot captured at the start of this operation.
-    const latest = await readConversationRecord(workspaceId, conversationId);
-    const base = latest ?? record;
-    const updatedRecord: AgentConversationRecord = {
-      ...base,
-      updatedAt: appended[appended.length - 1]?.createdAt ?? now,
-      lastEventSeq: appended[appended.length - 1]?.seq ?? record.lastEventSeq,
-    };
-    await writeJsonFile(
-      getConversationMetaFile(workspaceId, conversationId),
-      updatedRecord
+    const result = await appendStoredConversationEvents(
+      workspaceId,
+      conversationId,
+      events.map((event) => ({
+        createdAt: event.createdAt ?? now,
+        buildPayload: (assigned) =>
+          JSON.stringify({
+            ...event,
+            seq: assigned.seq,
+            createdAt: assigned.createdAt,
+          }),
+      })),
+      (currentRow, assignedRows) => {
+        const current = deserializeConversationRow(currentRow) ?? record;
+        const updatedRecord: AgentConversationRecord = {
+          ...current,
+          updatedAt: assignedRows[assignedRows.length - 1]?.createdAt ?? now,
+          lastEventSeq: assignedRows[assignedRows.length - 1]?.seq ?? current.lastEventSeq,
+        };
+        return serializeConversationRow(updatedRecord);
+      }
     );
+
+    const appended = deserializeEventRows(result.events);
+    const updatedRecord = deserializeConversationRow(result.conversation);
+    if (!updatedRecord) {
+      throw new Error(`Conversation payload became invalid: ${conversationId}`);
+    }
 
     notify({ type: "conversation", conversation: updatedRecord });
     for (const event of appended) {
@@ -381,21 +592,12 @@ export async function readConversationEvents(
   workspaceId: string,
   conversationId: string
 ): Promise<AgentStoredEvent[]> {
-  try {
-    const raw = await fs.readFile(
-      getConversationEventsFile(workspaceId, conversationId),
-      "utf8"
-    );
-    const events = raw
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter(Boolean)
-      .map((line) => JSON.parse(line) as AgentStoredEvent)
-      .sort((a, b) => a.seq - b.seq);
-    return enrichEventsWithDerivedEditPreview(events);
-  } catch {
+  const conversation = await readConversationRecord(workspaceId, conversationId);
+  if (!conversation) {
     return [];
   }
+  const rows = await readStoredConversationEvents(workspaceId, conversationId);
+  return enrichEventsWithDerivedEditPreview(deserializeEventRows(rows));
 }
 
 export async function readConversationEventsSince(
@@ -403,9 +605,12 @@ export async function readConversationEventsSince(
   conversationId: string,
   since = 0
 ): Promise<AgentStoredEvent[]> {
-  const filePath = getConversationEventsFile(workspaceId, conversationId);
-  const events = await readConversationEventsSinceEfficient(filePath, since);
-  return enrichEventsWithDerivedEditPreview(events);
+  const conversation = await readConversationRecord(workspaceId, conversationId);
+  if (!conversation) {
+    return [];
+  }
+  const rows = await readStoredConversationEventsSince(workspaceId, conversationId, since);
+  return enrichEventsWithDerivedEditPreview(deserializeEventRows(rows));
 }
 
 export async function readRecentConversationEvents(
@@ -413,16 +618,17 @@ export async function readRecentConversationEvents(
   conversationId: string,
   limitMessages?: number
 ): Promise<AgentStoredEvent[]> {
-  const messageLimit = limitMessages ?? getAgentHandoffMessageLimit();
-  const events = await readConversationEvents(workspaceId, conversationId);
-  if (events.length === 0) {
+  const conversation = await readConversationRecord(workspaceId, conversationId);
+  if (!conversation || conversation.lastEventSeq === 0) {
     return [];
   }
-  const { takeLastTurnWindow } = await import("./event-log-read.js");
-  const turns = messageLimit * 2 + 10;
-  const eventsLimit = messageLimit * 50 + 100;
-    return enrichEventsWithDerivedEditPreview(takeLastTurnWindow(events, turns, eventsLimit));
-  }
+  const messageLimit = limitMessages ?? getAgentHandoffMessageLimit();
+  const page = await readTurnWindow(workspaceId, conversationId, {
+    limitTurns: messageLimit * 2 + 10,
+    limitEvents: messageLimit * 50 + 100,
+  });
+  return enrichEventsWithDerivedEditPreview(page.events);
+}
 
 export async function readConversationSnapshot(
   workspaceId: string,
@@ -432,20 +638,14 @@ export async function readConversationSnapshot(
   if (!conversation) {
     return null;
   }
-  const filePath = getConversationEventsFile(workspaceId, conversationId);
-  let size = 0;
-  try {
-    const st = await fs.stat(filePath);
-    size = st.size;
-  } catch {
+  if (conversation.lastEventSeq === 0) {
     return { conversation, events: [] };
   }
-  if (size === 0) {
-    return { conversation, events: [] };
-  }
-  if (size <= EVENT_LOG_FULL_READ_MAX_BYTES) {
-    const events = await readConversationEvents(workspaceId, conversationId);
-    return { conversation, events };
+  if (conversation.lastEventSeq <= LARGE_LOG_SNAPSHOT_EVENTS) {
+    return {
+      conversation,
+      events: await readConversationEvents(workspaceId, conversationId),
+    };
   }
   const head = await readConversationSnapshotHead(workspaceId, conversationId, {
     limitTurns: LARGE_LOG_SNAPSHOT_TURNS,
@@ -456,7 +656,7 @@ export async function readConversationSnapshot(
   }
   return {
     conversation: head.conversation,
-    events: await enrichEventsWithDerivedEditPreview(head.events),
+    events: head.events,
   };
 }
 
@@ -469,12 +669,9 @@ export async function readConversationSnapshotHead(
   if (!conversation) {
     return null;
   }
-  const filePath = getConversationEventsFile(workspaceId, conversationId);
-  const limitTurns = options?.limitTurns ?? DEFAULT_PAGE_TURNS;
-  const limitEvents = options?.limitEvents ?? DEFAULT_PAGE_EVENTS_CAP;
-  const page = await readConversationEventTailPage(filePath, {
-    limitTurns,
-    limitEvents,
+  const page = await readTurnWindow(workspaceId, conversationId, {
+    limitTurns: options?.limitTurns ?? DEFAULT_PAGE_TURNS,
+    limitEvents: options?.limitEvents ?? DEFAULT_PAGE_EVENTS_CAP,
   });
   const events = await enrichEventsWithDerivedEditPreview(page.events);
   return {
@@ -498,13 +695,11 @@ export async function readConversationHistoryPage(
   if (!conversation) {
     return null;
   }
-  const filePath = getConversationEventsFile(workspaceId, conversationId);
-  const limitTurns = options?.limitTurns ?? DEFAULT_PAGE_TURNS;
-  const limitEvents = options?.limitEvents ?? DEFAULT_PAGE_EVENTS_CAP;
   return enqueueHistoryRead(workspaceId, conversationId, async () => {
-    const page = await readConversationEventHistoryPage(filePath, beforeSeq, {
-      limitTurns,
-      limitEvents,
+    const page = await readTurnWindow(workspaceId, conversationId, {
+      beforeSeq,
+      limitTurns: options?.limitTurns ?? DEFAULT_PAGE_TURNS,
+      limitEvents: options?.limitEvents ?? DEFAULT_PAGE_EVENTS_CAP,
     });
     const events = await enrichEventsWithDerivedEditPreview(page.events);
     return {
@@ -530,21 +725,28 @@ export async function updateConversationRecord(
     if (!current) {
       throw new Error(`Unknown conversation: ${conversationId}`);
     }
-    const next =
-      typeof updater === "function"
-        ? updater(current)
-        : ({
-            ...current,
-            ...updater,
-          } satisfies AgentConversationRecord);
-    const normalized: AgentConversationRecord = {
-      ...next,
-      updatedAt: Date.now(),
-    };
-    await writeJsonFile(
-      getConversationMetaFile(workspaceId, conversationId),
-      normalized
+    const updated = await updateStoredConversation(
+      workspaceId,
+      conversationId,
+      (currentRow) => {
+        const currentRecord = deserializeConversationRow(currentRow) ?? current;
+        const next =
+          typeof updater === "function"
+            ? updater(currentRecord)
+            : ({
+                ...currentRecord,
+                ...updater,
+              } satisfies AgentConversationRecord);
+        return serializeConversationRow({
+          ...next,
+          updatedAt: Date.now(),
+        });
+      }
     );
+    const normalized = updated ? deserializeConversationRow(updated) : null;
+    if (!normalized) {
+      throw new Error(`Unknown conversation: ${conversationId}`);
+    }
     notify({ type: "conversation", conversation: normalized });
     return normalized;
   });
@@ -554,7 +756,7 @@ export function createConversationId(): string {
   return randomUUID();
 }
 
-/** Best-effort delete of persisted conversation files; notifies listeners like the in-app delete path. */
+/** Best-effort delete of persisted conversation data; notifies listeners like the in-app delete path. */
 export async function deleteConversationFromStore(
   workspaceId: string,
   conversationId: string
@@ -563,7 +765,6 @@ export async function deleteConversationFromStore(
   const previous = appendQueues.get(key) ?? Promise.resolve();
   await previous.catch(() => undefined);
   appendQueues.delete(key);
-  const dir = getConversationDir(workspaceId, conversationId);
-  await fs.rm(dir, { recursive: true, force: true }).catch(() => undefined);
+  await deleteStoredConversation(workspaceId, conversationId).catch(() => undefined);
   notify({ type: "conversation_deleted", workspaceId, conversationId });
 }
