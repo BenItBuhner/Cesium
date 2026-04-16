@@ -4,7 +4,7 @@ export const AGENT_LEFT_RAIL_COLLAPSED_WIDTH = 0;
 /** Collapsed rail takes no flex space; quick actions use `AgentWorkspaceRailCollapsedOverlay`. */
 export const AGENT_LEFT_RAIL_COLLAPSED_SIZE_PERCENT = 0;
 /** @deprecated Fixed width removed — side pane is resizable; kept for approximate defaults. */
-export const AGENT_RIGHT_PANE_WIDTH = 764;
+export const AGENT_RIGHT_PANE_WIDTH = 920;
 export const AGENT_SHELL_RAIL_MIN_PERCENT = 10;
 export const AGENT_SHELL_RAIL_MAX_PERCENT = 42;
 export const AGENT_SHELL_CENTER_MIN_PERCENT = 28;
@@ -20,8 +20,8 @@ export const AGENT_SHELL_PANEL_IDS = {
 /** Default horizontal layout (~290px rail, ~764px side on ~1660px-wide shell). */
 export const AGENT_SHELL_DEFAULT_LAYOUT: Record<string, number> = {
   [AGENT_SHELL_PANEL_IDS.rail]: 17,
-  [AGENT_SHELL_PANEL_IDS.center]: 37,
-  [AGENT_SHELL_PANEL_IDS.side]: 46,
+  [AGENT_SHELL_PANEL_IDS.center]: 31,
+  [AGENT_SHELL_PANEL_IDS.side]: 52,
 };
 
 export function normalizeAgentShellDesktopLayout(

@@ -238,7 +238,7 @@ export function SettingsEditorView() {
 
       <main
         ref={scrollRootRef}
-        className="hide-scrollbar-y min-h-0 min-w-0 flex-1 overflow-y-auto bg-[var(--bg-main)] px-[28px] py-[24px]"
+        className="hide-scrollbar-y min-h-0 min-w-0 flex-1 overflow-y-auto bg-[var(--bg-main)] px-[20px] py-[24px] xl:px-[24px]"
         onScroll={onMainScroll}
       >
         {Panel ? <Panel /> : null}
