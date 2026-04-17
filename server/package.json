@@ -8,14 +8,24 @@
     "build": "tsc -p tsconfig.json",
     "start": "cross-env NODE_ENV=production node --max-old-space-size=3072 dist/index.js",
     "test": "node --import tsx --test ./test/*.test.ts",
-    "seed:fat-conversations": "bun ./scripts/seed-fat-conversations.ts"
+    "seed:fat-conversations": "bun ./scripts/seed-fat-conversations.ts",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
+    "db:push": "drizzle-kit push",
+    "db:studio": "drizzle-kit studio",
+    "db:check": "drizzle-kit check",
+    "storage:stats": "tsx ./scripts/storage-migrate.ts --stats",
+    "storage:migrate": "tsx ./scripts/storage-migrate.ts"
   },
   "dependencies": {
     "@hono/node-server": "^1.19.6",
     "chokidar": "^4.0.3",
     "dotenv": "^17.3.1",
+    "drizzle-orm": "^0.44.7",
     "hono": "^4.10.2",
+    "ioredis": "^5.10.1",
     "node-pty": "^1.0.0",
+    "postgres": "^3.4.9",
     "undici": "^7.24.6",
     "ws": "^8.18.3"
   },
@@ -23,6 +33,7 @@
     "@types/node": "^24.5.2",
     "@types/ws": "^8.18.1",
     "cross-env": "^7.0.3",
+    "drizzle-kit": "^0.30.6",
     "tsx": "^4.20.5",
     "typescript": "^5.9.2"
   }

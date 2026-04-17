@@ -1,5 +1,8 @@
-import path from "node:path";
-import { DATA_DIR, readJsonFile, writeJsonFile } from "./persistence.js";
+import { invalidate, readThrough } from "../cache/read-through.js";
+import { getStorage } from "../storage/runtime.js";
+
+const GLOBAL_SETTINGS_CACHE_TTL_SECONDS = 120;
+const KEY_GLOBAL_SETTINGS = "opencursor:settings:global";
 
 export type GlobalSettings = {
   schemaVersion: 1;
@@ -55,8 +58,6 @@ export type GlobalSettings = {
     bindings: Record<string, string[]>;
   };
 };
-
-const GLOBAL_SETTINGS_FILE = path.join(DATA_DIR, "profile", "global-settings.json");
 
 function createDefaultSettings(): GlobalSettings {
   return {
@@ -163,9 +164,13 @@ function createDefaultSettings(): GlobalSettings {
 }
 
 export async function getGlobalSettings(): Promise<GlobalSettings> {
-  return readJsonFile(GLOBAL_SETTINGS_FILE, createDefaultSettings());
+  return readThrough(KEY_GLOBAL_SETTINGS, GLOBAL_SETTINGS_CACHE_TTL_SECONDS, async () => {
+    const row = await (await getStorage()).getGlobalSettings();
+    return row ?? createDefaultSettings();
+  });
 }
 
 export async function saveGlobalSettings(settings: GlobalSettings): Promise<void> {
-  await writeJsonFile(GLOBAL_SETTINGS_FILE, settings);
+  await (await getStorage()).saveGlobalSettings(settings);
+  await invalidate(KEY_GLOBAL_SETTINGS);
 }

@@ -5,27 +5,30 @@ import {
   randomBytes,
   timingSafeEqual,
 } from "node:crypto";
-import path from "node:path";
 import type { IncomingMessage } from "node:http";
 import type { Context } from "hono";
 import type { MiddlewareHandler } from "hono";
 import { deleteCookie, setCookie } from "hono/cookie";
 import type { CookieOptions } from "hono/utils/cookie";
-import { DATA_DIR, readJsonFile, writeJsonFile } from "./persistence.js";
+import {
+  consume as consumeRateLimitAsync,
+  peek as peekRateLimitAsync,
+  resetBucket as resetRateLimitBucket,
+} from "../cache/rate-limit.js";
+import { del as cacheDel, getJSON as cacheGetJSON, setJSON as cacheSetJSON } from "../cache/kv.js";
+import { getStorage } from "../storage/runtime.js";
 
 export const SESSION_COOKIE_NAME = "opencursor_session";
 export const SESSION_TOKEN_HEADER = "x-opencursor-session-token";
 export const ACCESS_TOKEN_QUERY_PARAM = "access_token";
-
-const AUTH_STATE_FILE = path.join(DATA_DIR, "profile", "auth-state.json");
-const AUTH_SESSIONS_FILE = path.join(DATA_DIR, "profile", "auth-sessions.json");
 
 const DEFAULT_SESSION_TTL_MS = 12 * 60 * 60 * 1000;
 const DEFAULT_REMEMBER_SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const DEFAULT_ROTATION_INTERVAL_MS = 15 * 60 * 1000;
 const DEFAULT_AUTH_STATUS_LIMIT = 60;
 const DEFAULT_AUTH_STATUS_WINDOW_MS = 60 * 1000;
-const DEFAULT_LOGIN_LIMIT = 5;
+/** Failed login attempts per window (successful login clears the bucket). */
+const DEFAULT_LOGIN_LIMIT = 15;
 const DEFAULT_LOGIN_WINDOW_MS = 10 * 60 * 1000;
 const DEFAULT_API_READ_LIMIT = 240;
 const DEFAULT_API_READ_WINDOW_MS = 60 * 1000;
@@ -127,11 +130,6 @@ type TokenExtractionResult = {
   source: "authorization" | "header" | "cookie" | "query" | null;
 };
 
-type RateLimitState = {
-  count: number;
-  resetAt: number;
-};
-
 export type RateLimitResult = {
   ok: boolean;
   limit: number;
@@ -146,9 +144,38 @@ type UpgradeAuthResult =
 
 type RequestLike = Request | IncomingMessage;
 
-const rateLimitBuckets = new Map<string, RateLimitState>();
 let authStatePromise: Promise<PersistedAuthState> | null = null;
 let sessionStoreQueue: Promise<void> = Promise.resolve();
+
+const AUTH_SESSION_CACHE_PREFIX = "auth:sess:";
+/**
+ * We cap the session hot-cache TTL at 60s so revocations, rotations, and
+ * remember-me changes propagate within a minute even under Redis. The real
+ * source of truth is still the active `StorageDriver` (Postgres or legacy JSON).
+ */
+const AUTH_SESSION_CACHE_TTL_SEC = 60;
+
+function sessionCacheKey(sessionId: string): string {
+  return `${AUTH_SESSION_CACHE_PREFIX}${sessionId}`;
+}
+
+async function cacheAuthSession(session: AuthSessionRecord): Promise<void> {
+  await cacheSetJSON(sessionCacheKey(session.id), session, AUTH_SESSION_CACHE_TTL_SEC);
+}
+
+async function invalidateAuthSession(sessionId: string): Promise<void> {
+  await cacheDel(sessionCacheKey(sessionId));
+}
+
+async function readCachedAuthSession(sessionId: string): Promise<AuthSessionRecord | null> {
+  const cached = await cacheGetJSON<AuthSessionRecord>(sessionCacheKey(sessionId));
+  if (!cached) return null;
+  if (cached.expiresAt <= Date.now()) {
+    await invalidateAuthSession(sessionId);
+    return null;
+  }
+  return cached;
+}
 
 function readEnvValue(name: string): string | null {
   const value = process.env[name]?.trim();
@@ -421,43 +448,61 @@ function secureStringEquals(a: string, b: string): boolean {
   return timingSafeEqual(hashSecret(a), hashSecret(b));
 }
 
-function pruneRateLimitBuckets(now: number): void {
-  if (rateLimitBuckets.size < 2_000) {
-    return;
-  }
-  for (const [key, bucket] of rateLimitBuckets.entries()) {
-    if (bucket.resetAt <= now) {
-      rateLimitBuckets.delete(key);
-    }
-  }
-}
-
-function consumeRateLimit(
+async function consumeRateLimit(
   kind: RateLimitKind,
   key: string,
   config = getAuthConfig()
-): RateLimitResult {
+): Promise<RateLimitResult> {
   const policy = config.rateLimits[kind];
-  const now = Date.now();
-  pruneRateLimitBuckets(now);
-  const bucketKey = `${kind}:${key}`;
-  const existing = rateLimitBuckets.get(bucketKey);
-  const resetAt =
-    existing && existing.resetAt > now ? existing.resetAt : now + policy.windowMs;
-  const count =
-    existing && existing.resetAt > now ? existing.count + 1 : 1;
-  const remaining = Math.max(0, policy.limit - count);
-  const ok = count <= policy.limit;
-
-  rateLimitBuckets.set(bucketKey, { count, resetAt });
-
+  const result = await consumeRateLimitAsync(`${kind}:${key}`, {
+    max: policy.limit,
+    windowMs: policy.windowMs,
+  });
   return {
-    ok,
-    limit: policy.limit,
-    remaining,
-    resetAt,
-    retryAfterSec: Math.max(1, Math.ceil((resetAt - now) / 1000)),
+    ok: result.ok,
+    limit: result.limit,
+    remaining: result.remaining,
+    resetAt: result.resetAt,
+    retryAfterSec: Math.max(1, result.retryAfterSec),
   };
+}
+
+async function peekRateLimit(
+  kind: RateLimitKind,
+  key: string,
+  config = getAuthConfig()
+): Promise<RateLimitResult> {
+  const policy = config.rateLimits[kind];
+  const result = await peekRateLimitAsync(`${kind}:${key}`, {
+    max: policy.limit,
+    windowMs: policy.windowMs,
+  });
+  return {
+    ok: result.ok,
+    limit: result.limit,
+    remaining: result.remaining,
+    resetAt: result.resetAt,
+    retryAfterSec: Math.max(1, result.retryAfterSec),
+  };
+}
+
+async function resetRateLimitBucketForKind(kind: RateLimitKind, key: string): Promise<void> {
+  await resetRateLimitBucket(`${kind}:${key}`);
+}
+
+/** True if another login attempt is allowed (failed-attempt budget not exhausted). */
+export async function gateLoginRateLimit(request: RequestLike): Promise<RateLimitResult> {
+  return peekRateLimit("login", rateLimitKeyForRequest(request));
+}
+
+/** Record one failed credential check against the login bucket. */
+export async function recordFailedLoginRateLimit(request: RequestLike): Promise<RateLimitResult> {
+  return consumeRateLimit("login", rateLimitKeyForRequest(request));
+}
+
+/** Clear failed-login counter after a successful sign-in. */
+export async function clearLoginRateLimitAfterSuccess(request: RequestLike): Promise<void> {
+  await resetRateLimitBucketForKind("login", rateLimitKeyForRequest(request));
 }
 
 export function applyRateLimitHeaders(headers: Headers, result: RateLimitResult): void {
@@ -489,25 +534,33 @@ function classifyProtectedHttpRateLimit(pathname: string, method: string): RateL
 async function getAuthState(): Promise<PersistedAuthState> {
   if (!authStatePromise) {
     authStatePromise = (async () => {
-      const existing = await readJsonFile<PersistedAuthState | null>(
-        AUTH_STATE_FILE,
-        null
-      );
+      const storage = await getStorage();
+      const row = await storage.getAuthState();
       if (
-        existing &&
-        existing.schemaVersion === 1 &&
-        typeof existing.secret === "string" &&
-        existing.secret.length > 0
+        row &&
+        row.schemaVersion === 1 &&
+        typeof row.secret === "string" &&
+        row.secret.length > 0
       ) {
-        return existing;
+        return {
+          schemaVersion: 1,
+          createdAt: row.createdAt,
+          secret: row.secret,
+        };
       }
 
+      const now = Date.now();
       const created: PersistedAuthState = {
         schemaVersion: 1,
-        createdAt: Date.now(),
+        createdAt: now,
         secret: randomBytes(32).toString("base64url"),
       };
-      await writeJsonFile(AUTH_STATE_FILE, created);
+      await storage.saveAuthState({
+        schemaVersion: 1,
+        secret: created.secret,
+        createdAt: created.createdAt,
+        updatedAt: now,
+      });
       return created;
     })();
   }
@@ -519,17 +572,11 @@ function createEmptySessionStore(): PersistedAuthSessions {
 }
 
 async function loadSessionStore(): Promise<PersistedAuthSessions> {
-  const store = await readJsonFile<PersistedAuthSessions | null>(
-    AUTH_SESSIONS_FILE,
-    null
-  );
-  if (!store || store.schemaVersion !== 1 || !Array.isArray(store.sessions)) {
-    return createEmptySessionStore();
-  }
+  const sessions = await (await getStorage()).listAuthSessions();
   const now = Date.now();
   return {
     schemaVersion: 1,
-    sessions: store.sessions.filter(
+    sessions: sessions.filter(
       (session) =>
         session &&
         typeof session.id === "string" &&
@@ -541,7 +588,7 @@ async function loadSessionStore(): Promise<PersistedAuthSessions> {
 }
 
 async function saveSessionStore(store: PersistedAuthSessions): Promise<void> {
-  await writeJsonFile(AUTH_SESSIONS_FILE, store);
+  await (await getStorage()).saveAuthSessions(store.sessions);
 }
 
 async function withSessionStoreLock<T>(run: () => Promise<T>): Promise<T> {
@@ -651,7 +698,7 @@ async function writeSessionUpdate(
   sessionId: string,
   updater: (current: AuthSessionRecord) => AuthSessionRecord | null
 ): Promise<AuthSessionRecord | null> {
-  return withSessionStoreLock(async () => {
+  const result = await withSessionStoreLock(async () => {
     const store = await loadSessionStore();
     const index = store.sessions.findIndex((session) => session.id === sessionId);
     if (index === -1) {
@@ -668,6 +715,12 @@ async function writeSessionUpdate(
     await saveSessionStore(store);
     return next;
   });
+  if (result) {
+    await cacheAuthSession(result);
+  } else {
+    await invalidateAuthSession(sessionId);
+  }
+  return result;
 }
 
 async function createSessionRecord(input: {
@@ -691,6 +744,7 @@ async function createSessionRecord(input: {
     store.sessions.push(session);
     await saveSessionStore(store);
   });
+  await cacheAuthSession(session);
   return session;
 }
 
@@ -700,6 +754,7 @@ async function revokeSessionRecord(sessionId: string): Promise<void> {
     store.sessions = store.sessions.filter((session) => session.id !== sessionId);
     await saveSessionStore(store);
   });
+  await invalidateAuthSession(sessionId);
 }
 
 function toPublicSession(session: AuthSessionRecord): PublicAuthSession {
@@ -740,8 +795,17 @@ export async function authenticateRequest(
     return { status: "invalid", clearCookie: true };
   }
 
-  const store = await loadSessionStore();
-  const session = store.sessions.find((entry) => entry.id === payload.sid);
+  // Hot-cache read: avoid re-parsing the full sessions JSON on every request.
+  // TTL is capped so revocation elsewhere propagates within a minute; direct
+  // write paths invalidate the cache immediately to keep the common case exact.
+  let session = await readCachedAuthSession(payload.sid);
+  if (!session) {
+    const store = await loadSessionStore();
+    session = store.sessions.find((entry) => entry.id === payload.sid) ?? null;
+    if (session) {
+      await cacheAuthSession(session);
+    }
+  }
   if (
     !session ||
     session.username !== payload.username ||
@@ -856,10 +920,10 @@ export function buildRateLimitedJsonResponse(
   });
 }
 
-export function checkRequestRateLimit(
+export async function checkRequestRateLimit(
   request: RequestLike,
   kind: RateLimitKind
-): RateLimitResult {
+): Promise<RateLimitResult> {
   return consumeRateLimit(kind, rateLimitKeyForRequest(request));
 }
 
@@ -880,7 +944,7 @@ export const authMiddleware: MiddlewareHandler = async (c, next) => {
     return;
   }
 
-  const rateLimit = checkRequestRateLimit(
+  const rateLimit = await checkRequestRateLimit(
     c.req.raw,
     classifyProtectedHttpRateLimit(pathname, c.req.method)
   );
@@ -970,7 +1034,7 @@ export async function authenticateUpgradeRequest(
     return { ok: true };
   }
 
-  const rateLimit = checkRequestRateLimit(request, kind);
+  const rateLimit = await checkRequestRateLimit(request, kind);
   if (!rateLimit.ok) {
     return {
       ok: false,

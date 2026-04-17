@@ -24,8 +24,41 @@ import {
   saveWorkspaceWindowSession,
   type PersistedWorkspaceSession,
 } from "../lib/workspace-session-store.js";
+import { WriteCoalescer } from "../storage/coalesce.js";
+import {
+  bumpRevision,
+  formatEtag,
+  getRevision,
+  parseRevisionHeader,
+} from "../storage/revisions.js";
 
 export const workspaceRoutes = new Hono();
+
+function sessionRevisionKey(
+  workspaceId: string,
+  windowId: string | null
+): string {
+  return windowId
+    ? `workspace:${workspaceId}:window:${windowId}`
+    : `workspace:${workspaceId}`;
+}
+
+// Session writes are chatty (every UI layout change triggers one). Coalesce
+// them on a 50ms idle window so bursts collapse into a single persisted
+// snapshot. Keys:
+//   - `workspace:<workspaceId>`                   - default session
+//   - `workspace:<workspaceId>:window:<windowId>` - per-window session
+const sessionCoalescer = new WriteCoalescer<{
+  workspaceId: string;
+  windowId: string | null;
+  session: PersistedWorkspaceSession;
+}>(async (_key, { workspaceId, windowId, session }) => {
+  if (windowId) {
+    await saveWorkspaceWindowSession(workspaceId, windowId, session);
+    return;
+  }
+  await saveWorkspaceSession(workspaceId, session);
+}, 50);
 
 function resolveInitialWorkspaceRoot(): string {
   const configuredRoot = process.env.WORKSPACE_ROOT?.trim();
@@ -184,16 +217,33 @@ workspaceRoutes.get("/api/workspaces/:workspaceId/session", async (c) => {
   if (!workspace) {
     return c.json({ error: `Unknown workspace: ${workspaceId}` }, 404);
   }
+
+  const revisionKey = sessionRevisionKey(workspaceId, windowId);
+  const revision = getRevision(revisionKey);
+  const etag = formatEtag(revision);
+  const ifNoneMatch = parseRevisionHeader(c.req.header("if-none-match"));
+
   if (windowId) {
     const windowRecord = await getWorkspaceWindow(workspaceId, windowId);
     if (!windowRecord) {
       return c.json({ error: `Unknown workspace window: ${windowId}` }, 404);
     }
+    if (ifNoneMatch && ifNoneMatch.value === revision) {
+      c.header("ETag", etag);
+      return c.body(null, 304);
+    }
     const session = await getWorkspaceWindowSession(workspaceId, windowId);
-    return c.json({ workspace, window: windowRecord, session });
+    c.header("ETag", etag);
+    return c.json({ workspace, window: windowRecord, session, revision });
+  }
+
+  if (ifNoneMatch && ifNoneMatch.value === revision) {
+    c.header("ETag", etag);
+    return c.body(null, 304);
   }
   const session = await getWorkspaceSession(workspaceId);
-  return c.json({ workspace, session });
+  c.header("ETag", etag);
+  return c.json({ workspace, session, revision });
 });
 
 workspaceRoutes.put("/api/workspaces/:workspaceId/session", async (c) => {
@@ -218,16 +268,56 @@ workspaceRoutes.put("/api/workspaces/:workspaceId/session", async (c) => {
     agentView: body.agentView,
     settingsView: body.settingsView,
   };
+  // Optimistic concurrency: clients may send `If-Match: W/"<rev>"` to assert
+  // they are updating the revision they last observed. A mismatch returns 412
+  // so the caller can re-fetch and retry rather than trampling concurrent
+  // writers (e.g. two browser tabs persisting layout changes simultaneously).
+  const ifMatch = parseRevisionHeader(c.req.header("if-match"));
+  const revisionKey = sessionRevisionKey(workspaceId, windowId);
+  if (ifMatch) {
+    const current = getRevision(revisionKey);
+    if (ifMatch.value !== current) {
+      c.header("ETag", formatEtag(current));
+      return c.json(
+        {
+          error: "Revision mismatch",
+          expectedRevision: ifMatch.value,
+          actualRevision: current,
+        },
+        412
+      );
+    }
+  }
+
   if (windowId) {
     const windowRecord = await getWorkspaceWindow(workspaceId, windowId);
     if (!windowRecord) {
       return c.json({ error: `Unknown workspace window: ${windowId}` }, 404);
     }
-    await saveWorkspaceWindowSession(workspaceId, windowId, nextSession);
-    return c.json({ ok: true });
+    if (process.env.NODE_ENV === "test") {
+      await saveWorkspaceWindowSession(workspaceId, windowId, nextSession);
+    } else {
+      sessionCoalescer.schedule(
+        `workspace:${workspaceId}:window:${windowId}`,
+        { workspaceId, windowId, session: nextSession }
+      );
+    }
+    const nextRevision = bumpRevision(revisionKey);
+    c.header("ETag", formatEtag(nextRevision));
+    return c.json({ ok: true, revision: nextRevision });
   }
-  await saveWorkspaceSession(workspaceId, nextSession);
-  return c.json({ ok: true });
+  if (process.env.NODE_ENV === "test") {
+    await saveWorkspaceSession(workspaceId, nextSession);
+  } else {
+    sessionCoalescer.schedule(`workspace:${workspaceId}`, {
+      workspaceId,
+      windowId: null,
+      session: nextSession,
+    });
+  }
+  const nextRevision = bumpRevision(revisionKey);
+  c.header("ETag", formatEtag(nextRevision));
+  return c.json({ ok: true, revision: nextRevision });
 });
 
 workspaceRoutes.get("/api/workspaces/:workspaceId/windows", async (c) => {

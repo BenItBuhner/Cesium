@@ -1,0 +1,94 @@
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Matrix of storage drivers so every test suite runs against both the legacy
+  # JSON driver (no external services required) and the Postgres driver (with
+  # Redis available so cache/pubsub/rate-limit tests exercise both code paths).
+  tests:
+    name: server tests (${{ matrix.driver }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        driver: [legacy-json, pg]
+    env:
+      NODE_ENV: test
+      OPENCURSOR_STORAGE_DRIVER: ${{ matrix.driver }}
+      # Empty for legacy-json; the pg job overrides below.
+      DATABASE_URL: ""
+      REDIS_URL: ""
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: opencursor
+          POSTGRES_USER: opencursor
+          POSTGRES_PASSWORD: opencursor
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U opencursor -d opencursor"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "lts/*"
+          cache: "npm"
+
+      - name: Install root deps
+        run: npm ci
+
+      - name: Install server deps
+        run: npm ci
+        working-directory: server
+
+      # Postgres driver tests need DATABASE_URL and an applied schema.
+      - name: Configure Postgres driver
+        if: matrix.driver == 'pg'
+        run: |
+          echo "DATABASE_URL=postgres://opencursor:opencursor@localhost:5432/opencursor" >> "$GITHUB_ENV"
+          echo "REDIS_URL=redis://localhost:6379" >> "$GITHUB_ENV"
+
+      - name: Apply Drizzle migrations
+        if: matrix.driver == 'pg'
+        run: npm run db:migrate
+        working-directory: server
+
+      # Typecheck both packages. Cheap but catches regressions the test runner
+      # may otherwise not exercise on the pg path.
+      - name: Typecheck client
+        run: npx tsc --noEmit -p tsconfig.json
+
+      - name: Typecheck server
+        run: npx tsc --noEmit -p tsconfig.json
+        working-directory: server
+
+      - name: Run server tests
+        run: npm test
+        working-directory: server

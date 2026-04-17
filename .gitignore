@@ -72,6 +72,9 @@ next-env.d.ts
 server/.opencursor-data/
 *.tsbuildinfo
 
+# local docker volumes (OSP-75: docker-compose.yml)
+.docker/
+
 # IDE / editors
 .idea/
 *.swp

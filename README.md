@@ -112,6 +112,29 @@ Optional tuning:
 | `OPENCURSOR_WS_AGENT_RATE_LIMIT`, `OPENCURSOR_WS_AGENT_RATE_LIMIT_WINDOW_MS` | Agent WebSocket. |
 | `OPENCURSOR_WS_TERMINAL_RATE_LIMIT`, `OPENCURSOR_WS_TERMINAL_RATE_LIMIT_WINDOW_MS` | Terminal WebSocket. |
 
+### Storage (Postgres + Redis)
+
+OpenCursor supports two storage drivers. The **legacy JSON/JSONL** driver needs
+no external services. The **Postgres** driver stores workspaces, sessions, auth
+state, and agent conversations/events in a real database and uses Redis (when
+configured) for pub/sub and cache.
+
+Driver resolution (first match wins):
+
+1. `OPENCURSOR_STORAGE_DRIVER` — explicit override. Use `legacy-json` or `pg`.
+2. `DATABASE_URL` set → `pg` driver is selected automatically.
+3. Otherwise → `legacy-json` driver (same on-disk behavior as earlier releases).
+
+| Variable | Description |
+| -------- | ----------- |
+| `OPENCURSOR_STORAGE_DRIVER` | Force `legacy-json` or `pg`. Omit to let `DATABASE_URL` choose. |
+| `DATABASE_URL` | Postgres connection string. Matches `docker-compose.yml` defaults (`postgres://opencursor:opencursor@localhost:5433/opencursor`). |
+| `DATABASE_POOL_MAX` | Max Postgres pool size (default `10`). |
+| `DATABASE_IDLE_TIMEOUT_SEC` | Pool idle timeout (default `20`). |
+| `DATABASE_CONNECT_TIMEOUT_SEC` | Pool connect timeout (default `10`). |
+| `REDIS_URL` | Optional. Enables shared pub/sub, KV cache, and rate limits across processes. Unset falls back to in-process `EventEmitter` + `Map`. |
+| `OPENCURSOR_REDIS_DEBUG` | Set to `1` to log Redis errors (otherwise suppressed; the fallback absorbs them). |
+
 ### Agent backends
 
 | Variable | Description |
@@ -155,6 +178,57 @@ The **`/browser`** routes proxy HTTP fetches with an allowlist. Relevant env:
 ## Workspace safety
 
 By default, allowed workspace roots include your **home directory**, **`WORKSPACE_ROOT`** (if set), and the **repo root** derived from `process.cwd()`. Setting **`WORKSPACE_ALLOWED_ROOTS`** narrows this to an explicit list. **`OPENCURSOR_ALLOW_ANY_WORKSPACE_ROOT=1`** disables checks entirely.
+
+## Storage backends
+
+OpenCursor ships with two interchangeable storage drivers and a tool to move
+data between them at any time.
+
+- **Legacy JSON/JSONL** (`legacy-json`) — workspaces, sessions, auth, and agent
+  events are stored as files under `OPENCURSOR_DATA_DIR`. No external services
+  required. This is the default on a fresh clone.
+- **Postgres** (`pg`) — workspaces, sessions, auth, and agent events are stored
+  in Postgres via Drizzle ORM with optimistic concurrency (`revision` column).
+  Selected automatically when `DATABASE_URL` is set (see
+  [Storage (Postgres + Redis)](#storage-postgres--redis)).
+
+### Running Postgres + Redis locally
+
+The repo root `docker-compose.yml` starts Postgres, Redis, and Adminer with the
+values baked into `.env.example`:
+
+```bash
+docker compose up -d
+npm --prefix server run db:migrate
+```
+
+### Switching drivers
+
+Flip the driver by setting `OPENCURSOR_STORAGE_DRIVER=pg|legacy-json`. When the
+variable is unset, `DATABASE_URL` decides (set → `pg`; unset → `legacy-json`).
+On boot, the server prints a one-time banner when `pg` is active but a legacy
+data directory still contains data on disk, pointing you at the migration
+command.
+
+### Moving data between drivers
+
+Use the CLI from `server/`:
+
+```bash
+npm run storage:stats                                    # counts per driver
+npm run storage:migrate -- --from legacy-json --to pg    # JSON → Postgres
+npm run storage:migrate -- --from pg --to legacy-json    # Postgres → JSON
+npm run storage:migrate -- --from legacy-json --to pg --overwrite  # source wins
+```
+
+The same flow is also available in the UI under **Settings → Storage**, which
+streams live progress and supports per-driver `Export` / `Import` of NDJSON
+archives. REST endpoints (for scripts and CI):
+
+- `GET /api/storage/status` — current driver + per-driver counts.
+- `POST /api/storage/migrate` — streams NDJSON progress events.
+- `GET /api/storage/export?driver=pg` — streams NDJSON archive.
+- `POST /api/storage/import?driver=pg&overwrite=1` — applies an archive.
 
 ## Tests (server)
 

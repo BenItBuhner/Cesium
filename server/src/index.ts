@@ -4,6 +4,17 @@ import { serve } from "@hono/node-server";
 
 /** Prefer IPv4 when connecting upstream (avoids broken IPv6 routes that make `fetch()` fail with "fetch failed"). */
 dns.setDefaultResultOrder("ipv4first");
+
+// Single place to swallow transient async failures from WS handlers,
+// `postgres` pool blips, `ioredis` reconnects, etc. Without these, one
+// unhandled Promise rejection (e.g. a CONNECT_TIMEOUT while a user is typing
+// in a chat) terminates the whole server. We log loudly instead.
+process.on("unhandledRejection", (reason) => {
+  console.error("[process] unhandledRejection:", reason);
+});
+process.on("uncaughtException", (error) => {
+  console.error("[process] uncaughtException:", error);
+});
 import { cors } from "hono/cors";
 import { Hono } from "hono";
 import { fsRoutes } from "./routes/fs.js";
@@ -14,6 +25,10 @@ import { browserProxyRoutes } from "./routes/browser-proxy.js";
 import { agentRoutes } from "./routes/agents.js";
 import { audioRoutes } from "./routes/audio.js";
 import { authRoutes } from "./routes/auth.js";
+import { storageRoutes } from "./routes/storage.js";
+import { bootstrapStorage } from "./storage/index.js";
+import { AGENT_BACKENDS } from "./lib/agents/providers.js";
+import { warmupAgentBackendCaches } from "./lib/agents/provider-cache-store.js";
 import {
   authMiddleware,
   authenticateUpgradeRequest,
@@ -87,6 +102,22 @@ app.route("/", fsRoutes);
 app.route("/", terminalRoutes);
 app.route("/", agentRoutes);
 app.route("/", audioRoutes);
+app.route("/", storageRoutes);
+
+void bootstrapStorage().catch((error) => {
+  console.error("[storage] bootstrap failed:", error);
+});
+
+// Fire-and-forget: refresh every backend's config cache in the background so
+// the first conversation-list request doesn't eat the CLI probe latency on
+// the hot path. Skipped in test/NODE_ENV to keep fixtures deterministic.
+if (process.env.NODE_ENV !== "test") {
+  void warmupAgentBackendCaches(
+    Object.keys(AGENT_BACKENDS) as Array<keyof typeof AGENT_BACKENDS>
+  ).catch((error) => {
+    console.warn("[agents] provider cache warmup failed:", error);
+  });
+}
 
 const server = serve({
   fetch: app.fetch,

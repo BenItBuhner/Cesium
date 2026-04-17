@@ -2,6 +2,7 @@ import type { IncomingMessage } from "node:http";
 import type { Duplex } from "node:stream";
 import chokidar, { type FSWatcher } from "chokidar";
 import { WebSocketServer, WebSocket } from "ws";
+import { publish, subscribeSync } from "../cache/pubsub.js";
 import {
   isDimmed,
   shouldIgnorePath,
@@ -39,11 +40,16 @@ type WorkspaceWatcherRoom = {
   pendingPayloads: Map<string, Omit<SequencedFsEvent, "seq">>;
   bufferedEvents: SequencedFsEvent[];
   nextSeq: number;
+  unsubscribe: () => void;
 };
 
 const fsWebSocketServer = new WebSocketServer({ noServer: true });
 const watcherRooms = new Map<string, WorkspaceWatcherRoom>();
 const MAX_BUFFERED_EVENTS = 500;
+
+function fsChannelForWorkspace(workspaceId: string): string {
+  return `opencursor:fs:workspace:${workspaceId}`;
+}
 
 function getLatestSeq(room: WorkspaceWatcherRoom): number {
   return Math.max(0, room.nextSeq - 1);
@@ -55,7 +61,8 @@ function sendMessage(ws: WebSocket, message: FsSocketMessage): void {
   }
 }
 
-function broadcast(room: WorkspaceWatcherRoom, message: FsSocketMessage): void {
+/** Broadcast to local WS clients only - called from the pubsub subscription. */
+function broadcastLocal(room: WorkspaceWatcherRoom, message: FsSocketMessage): void {
   for (const client of room.clients) {
     sendMessage(client, message);
   }
@@ -77,7 +84,11 @@ function emitSequencedEvent(
     seq: room.nextSeq++,
   } as SequencedFsEvent;
   appendBufferedEvent(room, nextEvent);
-  broadcast(room, nextEvent);
+  // Fan out through pubsub so cross-process subscribers receive the same
+  // stream. In single-process mode the EventEmitter fallback delivers to the
+  // local subscription we register in createWatcherRoom, which then calls
+  // broadcastLocal to push out to WS clients.
+  void publish(fsChannelForWorkspace(room.workspaceId), nextEvent);
 }
 
 function debounceBroadcast(
@@ -159,7 +170,17 @@ async function createWatcherRoom(workspaceId: string): Promise<WorkspaceWatcherR
     pendingPayloads: new Map(),
     bufferedEvents: [],
     nextSeq: 1,
+    unsubscribe: () => undefined,
   };
+
+  // Local WS clients always get events through the pubsub subscription;
+  // emitSequencedEvent publishes to this same channel.
+  room.unsubscribe = subscribeSync<SequencedFsEvent>(
+    fsChannelForWorkspace(workspaceId),
+    (event) => {
+      broadcastLocal(room, event);
+    }
+  );
 
   room.watcher
     .on("add", (absolutePath) => handleFsEvent(room, "add", absolutePath))

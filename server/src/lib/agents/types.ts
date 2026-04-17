@@ -334,6 +334,8 @@ export type AgentConversationMetadataPatch = {
 export type AgentConversationListResult = {
   backends: AgentBackendInfo[];
   conversations: AgentConversationRecord[];
+  /** Opaque pagination cursor. Present when more pages exist; `null` when exhausted. */
+  nextCursor?: string | null;
 };
 
 export type AgentManagerEvent =
@@ -420,6 +422,19 @@ export type AgentSocketServerMessage =
       window: AgentConversationEventWindow;
     }
   | { type: "event"; conversationId: string; event: AgentStoredEvent }
+  /**
+   * Broadcast to every client on the workspace channel when a conversation's
+   * metadata changes (title, updatedAt, status, backendId, etc.). Clients use
+   * this to invalidate their in-memory conversation list without a
+   * visibilitychange refetch.
+   */
+  | { type: "conversation_upserted"; conversation: AgentConversationRecord }
+  /** Same broadcast semantics as `conversation_upserted` but for deletion. */
+  | {
+      type: "conversation_deleted";
+      conversationId: string;
+      workspaceId: string;
+    }
   | { type: "pong" }
   | { type: "error"; message: string };
 

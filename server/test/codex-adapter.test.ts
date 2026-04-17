@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
+import { tmpdir } from "node:os";
 import { test } from "node:test";
 import path from "node:path";
 
@@ -179,7 +180,7 @@ test("parseCodexStdoutLine emits task events for collab tool calls", async () =>
 
 test("parseCodexStdoutLine reconstructs file_change diffs from workspace files", async () => {
   const ctx = buildCodexCallbacks();
-  const filePath = path.join("/tmp", `codex-diff-${randomUUID()}.txt`);
+  const filePath = path.join(tmpdir(), `codex-diff-${randomUUID()}.txt`);
   await fs.writeFile(filePath, "alpha\nbeta\ngamma\n", "utf8");
   parseCodexStdoutLine(
     JSON.stringify({

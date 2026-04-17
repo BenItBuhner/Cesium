@@ -25,23 +25,48 @@ agentRoutes.get("/api/agents/deployment-hints", async (c) => {
   return c.json({ cursorAgent: getCursorAgentDeploymentHints() });
 });
 
+function parsePageParams(c: {
+  req: { query(name: string): string | undefined };
+}): { limit?: number; cursor?: string | null } {
+  const limitRaw = c.req.query("limit");
+  const cursorRaw = c.req.query("cursor");
+  const limitNum = limitRaw ? Number.parseInt(limitRaw, 10) : NaN;
+  return {
+    limit: Number.isFinite(limitNum) && limitNum > 0 ? limitNum : undefined,
+    cursor: cursorRaw && cursorRaw.length > 0 ? cursorRaw : undefined,
+  };
+}
+
 agentRoutes.get("/api/agents/conversations", async (c) => {
   const workspace = await requireWorkspaceFromRequest(c);
-  const result = await agentRuntimeManager.listWorkspaceConversations(workspace.id);
+  const { limit, cursor } = parsePageParams(c);
+  const result = await agentRuntimeManager.listWorkspaceConversations(
+    workspace.id,
+    { limit, cursor }
+  );
   return c.json(result);
 });
 
 agentRoutes.get("/api/agents/conversations/all", async (c) => {
+  const { limit: limitRaw, cursor: cursorRaw } = parsePageParams(c);
+  const limit = Math.max(1, Math.min(Math.floor(limitRaw ?? 500), 1000));
+  const offset = Math.max(
+    0,
+    cursorRaw ? Number.parseInt(cursorRaw, 10) || 0 : 0
+  );
   const [workspaces, backends] = await Promise.all([
     listWorkspaces(),
     listAgentBackendsWithCache(),
   ]);
-  const groups = await Promise.all(
+  // Load per-workspace lists, project to lightweight summaries first, then
+  // sort + paginate across the flat list. Keeps payload predictable regardless
+  // of how many workspaces the user has pinned.
+  const perWorkspace = await Promise.all(
     workspaces.map(async (workspace) => {
       const conversations = await listWorkspaceConversationRecords(workspace.id);
-      return {
+      return conversations.map((conversation) => ({
         workspace,
-        conversations: conversations.map((conversation) => ({
+        summary: {
           id: conversation.id,
           workspaceId: conversation.workspaceId,
           title: conversation.title,
@@ -53,11 +78,49 @@ agentRoutes.get("/api/agents/conversations/all", async (c) => {
           mode: conversation.config.mode,
           experimental: conversation.experimental,
           hasPendingPermission: conversation.pendingPermission != null,
-        })),
-      };
+        },
+      }));
     })
   );
-  return c.json({ backends, groups });
+  const flat = perWorkspace
+    .flat()
+    .sort(
+      (a, b) =>
+        b.summary.updatedAt - a.summary.updatedAt ||
+        a.summary.title.localeCompare(b.summary.title)
+    );
+  const window = flat.slice(offset, offset + limit);
+  const nextCursor =
+    offset + window.length < flat.length
+      ? String(offset + window.length)
+      : null;
+  // Re-group the page back by workspace. Workspaces with zero conversations
+  // on this page are dropped; the client already tolerates sparse groups.
+  const groupMap = new Map<
+    string,
+    { workspace: (typeof workspaces)[number]; conversations: Array<(typeof window)[number]["summary"]> }
+  >();
+  for (const workspace of workspaces) {
+    // Pre-seed the map on the first page so callers always get every known
+    // workspace even when a workspace has zero conversations; saves a second
+    // request from the UI to populate the sidebar.
+    if (offset === 0) {
+      groupMap.set(workspace.id, { workspace, conversations: [] });
+    }
+  }
+  for (const entry of window) {
+    const existing = groupMap.get(entry.workspace.id);
+    if (existing) {
+      existing.conversations.push(entry.summary);
+    } else {
+      groupMap.set(entry.workspace.id, {
+        workspace: entry.workspace,
+        conversations: [entry.summary],
+      });
+    }
+  }
+  const groups = Array.from(groupMap.values());
+  return c.json({ backends, groups, nextCursor });
 });
 
 agentRoutes.post("/api/agents/conversations", async (c) => {

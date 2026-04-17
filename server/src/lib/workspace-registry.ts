@@ -1,13 +1,25 @@
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import {
-  DATA_DIR,
-  createWorkspaceId,
-  normalizeWorkspaceRoot,
-  readJsonFile,
-  writeJsonFile,
-} from "./persistence.js";
+import { invalidate, readThrough } from "../cache/read-through.js";
+import { getStorage } from "../storage/runtime.js";
+import { createWorkspaceId, normalizeWorkspaceRoot } from "./persistence.js";
+import { HOME_WORKSPACE_DISPLAY_NAME } from "./workspace-constants.js";
+
+// Short-lived caches for the hot read paths. Every write helper below calls
+// `invalidateWorkspaceCaches(id?)` so freshness is bounded by "next write",
+// not the TTL. The TTL is the worst-case staleness window if some other
+// process writes directly to Postgres.
+const WORKSPACE_CACHE_TTL_SECONDS = 60;
+const KEY_WORKSPACE_LIST = "opencursor:ws:list";
+const KEY_WORKSPACE_PROFILE = "opencursor:ws:profile";
+const keyWorkspaceById = (id: string) => `opencursor:ws:id:${id}`;
+
+async function invalidateWorkspaceCaches(workspaceId?: string): Promise<void> {
+  const keys = [KEY_WORKSPACE_LIST, KEY_WORKSPACE_PROFILE];
+  if (workspaceId) keys.push(keyWorkspaceById(workspaceId));
+  await invalidate(...keys);
+}
 
 export type WorkspaceRecord = {
   id: string;
@@ -18,67 +30,15 @@ export type WorkspaceRecord = {
   lastOpenedAt: number;
 };
 
-type WorkspaceRegistryFile = {
-  schemaVersion: number;
-  workspaces: WorkspaceRecord[];
-};
-
-type WorkspaceProfileFile = {
+export type WorkspaceProfileFile = {
   schemaVersion: number;
   defaultWorkspaceId: string | null;
   lastOpenedWorkspaceId: string | null;
   recentWorkspaceIds: string[];
 };
 
-const WORKSPACES_FILE = path.join(DATA_DIR, "workspaces", "index.json");
-const PROFILE_FILE = path.join(DATA_DIR, "profile", "workspace-profile.json");
-
-/** Display name for the workspace rooted at the current OS user's home directory. */
-export const HOME_WORKSPACE_DISPLAY_NAME = "Home";
-
-const EMPTY_REGISTRY: WorkspaceRegistryFile = {
-  schemaVersion: 1,
-  workspaces: [],
-};
-
-const EMPTY_PROFILE: WorkspaceProfileFile = {
-  schemaVersion: 1,
-  defaultWorkspaceId: null,
-  lastOpenedWorkspaceId: null,
-  recentWorkspaceIds: [],
-};
-
-async function readRegistry(): Promise<WorkspaceRegistryFile> {
-  const registry = await readJsonFile(WORKSPACES_FILE, EMPTY_REGISTRY);
-  return {
-    schemaVersion: 1,
-    workspaces: Array.isArray(registry.workspaces) ? registry.workspaces : [],
-  };
-}
-
-async function writeRegistry(registry: WorkspaceRegistryFile): Promise<void> {
-  await writeJsonFile(WORKSPACES_FILE, registry);
-}
-
-async function readProfile(): Promise<WorkspaceProfileFile> {
-  const profile = await readJsonFile(PROFILE_FILE, EMPTY_PROFILE);
-  return {
-    schemaVersion: 1,
-    defaultWorkspaceId:
-      typeof profile.defaultWorkspaceId === "string" ? profile.defaultWorkspaceId : null,
-    lastOpenedWorkspaceId:
-      typeof profile.lastOpenedWorkspaceId === "string"
-        ? profile.lastOpenedWorkspaceId
-        : null,
-    recentWorkspaceIds: Array.isArray(profile.recentWorkspaceIds)
-      ? profile.recentWorkspaceIds.filter((value): value is string => typeof value === "string")
-      : [],
-  };
-}
-
-async function writeProfile(profile: WorkspaceProfileFile): Promise<void> {
-  await writeJsonFile(PROFILE_FILE, profile);
-}
+/** @deprecated Import from `./workspace-constants.js` instead. */
+export { HOME_WORKSPACE_DISPLAY_NAME } from "./workspace-constants.js";
 
 function deriveWorkspaceName(root: string, preferredName?: string): string {
   const trimmed = preferredName?.trim();
@@ -88,15 +48,6 @@ function deriveWorkspaceName(root: string, preferredName?: string): string {
 
   const base = path.basename(root);
   return base || root;
-}
-
-function sortWorkspaces(workspaces: WorkspaceRecord[]): WorkspaceRecord[] {
-  return [...workspaces].sort((a, b) => {
-    const aHome = a.name === HOME_WORKSPACE_DISPLAY_NAME ? 0 : 1;
-    const bHome = b.name === HOME_WORKSPACE_DISPLAY_NAME ? 0 : 1;
-    if (aHome !== bHome) return aHome - bHome;
-    return b.lastOpenedAt - a.lastOpenedAt || a.name.localeCompare(b.name);
-  });
 }
 
 export function resolveUserHomeDirectory(): string {
@@ -123,15 +74,22 @@ export async function ensureHomeWorkspace(): Promise<WorkspaceRecord | null> {
 }
 
 export async function listWorkspaces(): Promise<WorkspaceRecord[]> {
-  const registry = await readRegistry();
-  return sortWorkspaces(registry.workspaces);
+  return readThrough(KEY_WORKSPACE_LIST, WORKSPACE_CACHE_TTL_SECONDS, async () =>
+    (await getStorage()).listWorkspaces()
+  );
 }
 
 export async function getWorkspaceById(
   workspaceId: string
 ): Promise<WorkspaceRecord | null> {
-  const registry = await readRegistry();
-  return registry.workspaces.find((workspace) => workspace.id === workspaceId) ?? null;
+  // `readThrough` will skip caching when the loader returns `null` so an
+  // unknown id doesn't pin a negative entry across subsequent `upsertWorkspace`
+  // calls.
+  return readThrough(
+    keyWorkspaceById(workspaceId),
+    WORKSPACE_CACHE_TTL_SECONDS,
+    async () => (await getStorage()).getWorkspace(workspaceId)
+  );
 }
 
 export async function ensureWorkspaceRegistered(
@@ -146,9 +104,9 @@ export async function ensureWorkspaceRegistered(
     throw new Error(`Workspace root is not a directory: ${normalizedRoot}`);
   }
 
-  const registry = await readRegistry();
+  const storage = await getStorage();
   const now = Date.now();
-  const existing = registry.workspaces.find((workspace) => workspace.root === normalizedRoot);
+  const existing = await storage.getWorkspaceByRoot(normalizedRoot);
   if (existing) {
     const next: WorkspaceRecord = {
       ...existing,
@@ -156,10 +114,8 @@ export async function ensureWorkspaceRegistered(
       updatedAt: now,
       lastOpenedAt: trackOpen ? now : existing.lastOpenedAt,
     };
-    registry.workspaces = registry.workspaces.map((workspace) =>
-      workspace.id === next.id ? next : workspace
-    );
-    await writeRegistry(registry);
+    await storage.upsertWorkspace(next);
+    await invalidateWorkspaceCaches(next.id);
     if (trackOpen) {
       await noteWorkspaceOpened(next.id);
     }
@@ -174,8 +130,8 @@ export async function ensureWorkspaceRegistered(
     updatedAt: now,
     lastOpenedAt: now,
   };
-  registry.workspaces = sortWorkspaces([...registry.workspaces, workspace]);
-  await writeRegistry(registry);
+  await storage.upsertWorkspace(workspace);
+  await invalidateWorkspaceCaches(workspace.id);
   await noteWorkspaceOpened(workspace.id);
   return workspace;
 }
@@ -205,19 +161,28 @@ export async function createWorkspace(
 }
 
 export async function noteWorkspaceOpened(workspaceId: string): Promise<void> {
-  const [registry, profile] = await Promise.all([readRegistry(), readProfile()]);
+  const storage = await getStorage();
+  const workspace = await storage.getWorkspace(workspaceId);
+  if (!workspace) {
+    return;
+  }
   const now = Date.now();
-  registry.workspaces = registry.workspaces.map((workspace) =>
-    workspace.id === workspaceId
-      ? { ...workspace, lastOpenedAt: now, updatedAt: now }
-      : workspace
-  );
+  await storage.upsertWorkspace({
+    ...workspace,
+    lastOpenedAt: now,
+    updatedAt: now,
+  });
+  const profile = await storage.getWorkspaceProfile();
   profile.lastOpenedWorkspaceId = workspaceId;
-  profile.recentWorkspaceIds = [workspaceId, ...profile.recentWorkspaceIds.filter((id) => id !== workspaceId)].slice(0, 20);
+  profile.recentWorkspaceIds = [
+    workspaceId,
+    ...profile.recentWorkspaceIds.filter((id) => id !== workspaceId),
+  ].slice(0, 20);
   if (!profile.defaultWorkspaceId) {
     profile.defaultWorkspaceId = workspaceId;
   }
-  await Promise.all([writeRegistry(registry), writeProfile(profile)]);
+  await storage.saveWorkspaceProfile(profile);
+  await invalidateWorkspaceCaches(workspaceId);
 }
 
 export async function setDefaultWorkspace(workspaceId: string): Promise<void> {
@@ -225,17 +190,24 @@ export async function setDefaultWorkspace(workspaceId: string): Promise<void> {
   if (!workspace) {
     throw new Error(`Unknown workspace: ${workspaceId}`);
   }
-  const profile = await readProfile();
+  const storage = await getStorage();
+  const profile = await storage.getWorkspaceProfile();
   profile.defaultWorkspaceId = workspaceId;
-  await writeProfile(profile);
+  await storage.saveWorkspaceProfile(profile);
+  await invalidateWorkspaceCaches(workspaceId);
 }
 
 export async function getWorkspaceProfile(): Promise<WorkspaceProfileFile> {
-  return readProfile();
+  return readThrough(KEY_WORKSPACE_PROFILE, WORKSPACE_CACHE_TTL_SECONDS, async () =>
+    (await getStorage()).getWorkspaceProfile()
+  );
 }
 
 export async function resolveStartupWorkspace(): Promise<WorkspaceRecord | null> {
-  const [workspaces, profile] = await Promise.all([listWorkspaces(), readProfile()]);
+  const [workspaces, profile] = await Promise.all([
+    listWorkspaces(),
+    getWorkspaceProfile(),
+  ]);
   if (workspaces.length === 0) {
     return null;
   }

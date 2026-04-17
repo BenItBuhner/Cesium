@@ -452,11 +452,26 @@ export function AgentShellStateProvider({
         void refreshConversationGroupsWithState();
       }
     };
+    // WS-driven push invalidation: ChatPanel dispatches this custom event
+    // whenever its agent socket receives a `conversation_upserted` /
+    // `conversation_deleted` message. Avoids round-tripping through a React
+    // context just to wake up the rail.
+    const handlePushInvalidate = () => {
+      void refreshConversationGroupsWithState();
+    };
     window.addEventListener("focus", handleFocus);
     document.addEventListener("visibilitychange", handleVisibility);
+    window.addEventListener(
+      "opencursor:conversation_changed",
+      handlePushInvalidate
+    );
     return () => {
       window.removeEventListener("focus", handleFocus);
       document.removeEventListener("visibilitychange", handleVisibility);
+      window.removeEventListener(
+        "opencursor:conversation_changed",
+        handlePushInvalidate
+      );
     };
   }, [refreshConversationGroupsWithState]);
 

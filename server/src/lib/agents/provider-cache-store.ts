@@ -2,7 +2,8 @@ import { promises as fs } from "node:fs";
 import { execFile } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
-import { DATA_DIR, readJsonFile, writeJsonFile } from "../persistence.js";
+import { readJsonFile } from "../persistence.js";
+import { getStorage } from "../../storage/runtime.js";
 import { spawnSafeEnv } from "./spawn-env.js";
 import type { AgentBackendId, AgentConfigOption } from "./types.js";
 
@@ -19,10 +20,6 @@ type CommandInvocation = {
 };
 
 const CACHE_TTL_MS = 5 * 60 * 1000;
-
-function getBackendCacheFile(backendId: AgentBackendId): string {
-  return path.join(DATA_DIR, "profile", "agent-backends", `${backendId}.json`);
-}
 
 function stripAnsi(text: string): string {
   return text.replace(/\x1b\[[0-9;]*[A-Za-z]/g, "").replace(/\r/g, "");
@@ -581,111 +578,184 @@ function isStaleCursorAcpCache(configOptions: AgentConfigOption[]): boolean {
   return modelOption.options.some((option) => option.value.includes("["));
 }
 
+/**
+ * In-flight seed refreshes keyed by backendId. We dedupe concurrent callers so
+ * only one CLI subprocess runs at a time per backend, and multiple HTTP
+ * requests can await the same Promise.
+ */
+const inFlightRefreshes = new Map<
+  AgentBackendId,
+  Promise<AgentConfigOption[]>
+>();
+
+function startSeedRefresh(
+  backendId: AgentBackendId
+): Promise<AgentConfigOption[]> {
+  const existing = inFlightRefreshes.get(backendId);
+  if (existing) {
+    return existing;
+  }
+  const promise = (async () => {
+    try {
+      const seeded = await createSeedConfigOptions(backendId);
+      if (seeded.length > 0) {
+        await writeAgentBackendConfigCache(backendId, seeded);
+      }
+      return seeded;
+    } finally {
+      inFlightRefreshes.delete(backendId);
+    }
+  })();
+  inFlightRefreshes.set(backendId, promise);
+  return promise;
+}
+
+/**
+ * Eagerly refresh every backend's config cache in the background. Intended for
+ * server boot: kicks off CLI probes without blocking startup, so the first
+ * request finds a warm cache rather than paying the CLI latency tax itself.
+ */
+export function warmupAgentBackendCaches(
+  backendIds: AgentBackendId[]
+): Promise<void> {
+  return Promise.allSettled(
+    backendIds.map((backendId) => startSeedRefresh(backendId))
+  ).then(() => undefined);
+}
+
+/**
+ * Returns the upgraded `configOptions` if the cached record is structurally
+ * stale (schema drift), or `null` when the record is fine as-is. Pure on the
+ * cached values - no CLI invocations. Actual re-seed happens via
+ * `startSeedRefresh` once we know a refresh is warranted.
+ */
+function maybeInPlaceMigrate(
+  backendId: AgentBackendId,
+  cachedOptions: AgentConfigOption[]
+): { upgraded: AgentConfigOption[]; needsReseed: boolean } | null {
+  if (backendId === "cursor-acp" && isStaleCursorAcpCache(cachedOptions)) {
+    return { upgraded: cachedOptions, needsReseed: true };
+  }
+
+  if (backendId === "codex-adapter") {
+    const hasReasoningLevels = cachedOptions.some(
+      (option) =>
+        option.category === "model" &&
+        option.options.some(
+          (value) =>
+            Array.isArray(value.metadata?.reasoningLevels) &&
+            value.metadata.reasoningLevels.length > 0
+        )
+    );
+    if (!hasReasoningLevels) {
+      return { upgraded: cachedOptions, needsReseed: true };
+    }
+    const mapped = cachedOptions.map((option) => {
+      if (
+        option.id === "model" &&
+        option.options.some((value) => value.value === "gpt-5.4-mini") &&
+        option.currentValue !== "gpt-5.4-mini"
+      ) {
+        return { ...option, currentValue: "gpt-5.4-mini" };
+      }
+      if (
+        option.id === "model_reasoning_effort" &&
+        option.options.some((value) => value.value === "low") &&
+        option.currentValue !== "low"
+      ) {
+        return { ...option, currentValue: "low" };
+      }
+      if (
+        option.id === "permission" &&
+        option.options.some((value) => value.value === "workspace-write") &&
+        option.currentValue !== "workspace-write"
+      ) {
+        return { ...option, currentValue: "workspace-write" };
+      }
+      return option;
+    });
+    const hasPermissionOption = mapped.some((option) => option.id === "permission");
+    const hasWebSearchOption = mapped.some((option) => option.id === "web_search");
+    if (!hasPermissionOption || !hasWebSearchOption) {
+      return { upgraded: cachedOptions, needsReseed: true };
+    }
+    if (JSON.stringify(mapped) !== JSON.stringify(cachedOptions)) {
+      return { upgraded: mapped, needsReseed: false };
+    }
+    return null;
+  }
+
+  if (backendId === "claude-adapter") {
+    const hasGlm51 = cachedOptions.some(
+      (option) =>
+        option.category === "model" &&
+        option.options.some((value) => value.value === "glm-5.1")
+    );
+    const hasBypassPerms = cachedOptions.some(
+      (option) =>
+        option.category === "permission" &&
+        option.options.some((value) => value.value === "bypassPermissions")
+    );
+    if (!hasGlm51 || !hasBypassPerms) {
+      return { upgraded: cachedOptions, needsReseed: true };
+    }
+  }
+
+  return null;
+}
+
 export async function readAgentBackendConfigCache(
   backendId: AgentBackendId
 ): Promise<AgentConfigOption[]> {
-  const fresh = await createSeedConfigOptions(backendId).catch(() => []);
-  if (fresh.length > 0) {
-    await writeAgentBackendConfigCache(backendId, fresh);
-    return fresh;
-  }
-
-  const record = await readJsonFile<AgentBackendCacheRecord | null>(
-    getBackendCacheFile(backendId),
-    null
-  );
-  if (
+  const driverRecord = await (await getStorage()).readProviderCache(backendId);
+  const record: AgentBackendCacheRecord | null = driverRecord
+    ? {
+        schemaVersion: 1,
+        backendId: driverRecord.backendId,
+        updatedAt: driverRecord.updatedAt,
+        configOptions: driverRecord.configOptions,
+      }
+    : null;
+  const cachedOptions =
     record &&
     record.schemaVersion === 1 &&
     record.backendId === backendId &&
     Array.isArray(record.configOptions) &&
     record.configOptions.length > 0
-  ) {
-    if (Date.now() - record.updatedAt > CACHE_TTL_MS) {
-      const seeded = await createSeedConfigOptions(backendId);
-      await writeAgentBackendConfigCache(backendId, seeded);
-      return seeded;
-    }
-    if (backendId === "cursor-acp" && isStaleCursorAcpCache(record.configOptions)) {
-      const seeded = await createSeedConfigOptions(backendId);
-      if (seeded.length > 0) {
-        await writeAgentBackendConfigCache(backendId, seeded);
-        return seeded;
+      ? record.configOptions
+      : null;
+
+  if (record && cachedOptions) {
+    const migration = maybeInPlaceMigrate(backendId, cachedOptions);
+    // Apply purely-local schema migrations without shelling out; this is
+    // cheap and keeps the returned shape stable for the caller.
+    if (migration) {
+      if (migration.upgraded !== cachedOptions) {
+        await writeAgentBackendConfigCache(backendId, migration.upgraded);
       }
-    }
-    if (
-      backendId === "codex-adapter" &&
-      !record.configOptions.some(
-        (option) =>
-          option.category === "model" &&
-          option.options.some(
-            (value) =>
-              Array.isArray(value.metadata?.reasoningLevels) &&
-              value.metadata.reasoningLevels.length > 0
-          )
-      )
-    ) {
-      const seeded = await createSeedConfigOptions(backendId);
-      await writeAgentBackendConfigCache(backendId, seeded);
-      return seeded;
-    }
-    if (backendId === "codex-adapter") {
-      const next = record.configOptions.map((option) => {
-        if (
-          option.id === "model" &&
-          option.options.some((value) => value.value === "gpt-5.4-mini") &&
-          option.currentValue !== "gpt-5.4-mini"
-        ) {
-          return { ...option, currentValue: "gpt-5.4-mini" };
-        }
-        if (
-          option.id === "model_reasoning_effort" &&
-          option.options.some((value) => value.value === "low") &&
-          option.currentValue !== "low"
-        ) {
-          return { ...option, currentValue: "low" };
-        }
-        if (
-          option.id === "permission" &&
-          option.options.some((value) => value.value === "workspace-write") &&
-          option.currentValue !== "workspace-write"
-        ) {
-          return { ...option, currentValue: "workspace-write" };
-        }
-        return option;
-      });
-      const hasPermissionOption = next.some((option) => option.id === "permission");
-      const hasWebSearchOption = next.some((option) => option.id === "web_search");
-      if (!hasPermissionOption || !hasWebSearchOption) {
-        const seeded = await createCodexSeedConfigOptions();
-        await writeAgentBackendConfigCache(backendId, seeded);
-        return seeded;
+      if (migration.needsReseed) {
+        // Schema-drift migration requires a fresh CLI probe. Schedule it in
+        // the background; serve the (possibly upgraded) cache immediately.
+        void startSeedRefresh(backendId).catch(() => undefined);
       }
-      if (JSON.stringify(next) !== JSON.stringify(record.configOptions)) {
-        await writeAgentBackendConfigCache(backendId, next);
-        return next;
-      }
+      return migration.upgraded;
     }
-    if (
-      backendId === "claude-adapter" &&
-      (!record.configOptions.some(
-        (option) =>
-          option.category === "model" &&
-          option.options.some((value) => value.value === "glm-5.1")
-      ) ||
-        !record.configOptions.some(
-          (option) =>
-            option.category === "permission" &&
-            option.options.some((value) => value.value === "bypassPermissions")
-        ))
-    ) {
-      const seeded = await createSeedConfigOptions(backendId);
-      await writeAgentBackendConfigCache(backendId, seeded);
-      return seeded;
+
+    const cacheIsFresh = Date.now() - record.updatedAt <= CACHE_TTL_MS;
+    if (cacheIsFresh) {
+      return cachedOptions;
     }
-    return record.configOptions;
+
+    // Stale-but-valid: serve it immediately and revalidate in the background
+    // so subsequent callers see fresh data without us paying the CLI cost on
+    // the hot path.
+    void startSeedRefresh(backendId).catch(() => undefined);
+    return cachedOptions;
   }
-  return createSeedConfigOptions(backendId);
+
+  // No usable cache: we must wait. Shared via `startSeedRefresh` so concurrent
+  // callers converge on a single CLI invocation.
+  return startSeedRefresh(backendId).catch(() => createSeedConfigOptions(backendId));
 }
 
 export async function writeAgentBackendConfigCache(
@@ -695,10 +765,10 @@ export async function writeAgentBackendConfigCache(
   if (configOptions.length === 0) {
     return;
   }
-  await writeJsonFile(getBackendCacheFile(backendId), {
+  await (await getStorage()).writeProviderCache(backendId, {
     schemaVersion: 1,
     backendId,
     updatedAt: Date.now(),
     configOptions,
-  } satisfies AgentBackendCacheRecord);
+  });
 }

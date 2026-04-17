@@ -1420,6 +1420,33 @@ export function ChatPanel() {
         case "conversation":
           upsertConversation(message.conversation);
           return;
+        case "conversation_upserted":
+          // Pushed to every client in the workspace (not just subscribers) so
+          // the sidebar conversation list stays fresh without polling on
+          // `visibilitychange`. Idempotent with the `conversation` case above.
+          upsertConversation(message.conversation);
+          // Nudge the cross-workspace conversation rail so it reflects the
+          // change without waiting for a focus/visibility change.
+          if (typeof window !== "undefined") {
+            window.dispatchEvent(new Event("opencursor:conversation_changed"));
+          }
+          return;
+        case "conversation_deleted":
+          setConversationsById((current) => {
+            if (!current[message.conversationId]) {
+              return current;
+            }
+            const next = { ...current };
+            delete next[message.conversationId];
+            return next;
+          });
+          setTabs((current) =>
+            current.filter((tab) => tab.id !== message.conversationId)
+          );
+          if (typeof window !== "undefined") {
+            window.dispatchEvent(new Event("opencursor:conversation_changed"));
+          }
+          return;
         case "snapshot":
           mergeSnapshot(message.snapshot);
           return;
@@ -1460,6 +1487,7 @@ export function ChatPanel() {
     mergeSnapshot,
     prependHistoryPage,
     sendSubscription,
+    setTabs,
     upsertConversation,
   ]);
 

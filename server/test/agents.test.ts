@@ -22,6 +22,10 @@ const TEST_DATA_DIR = path.join(
   `opencursor-agent-tests-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
 );
 
+delete process.env.REDIS_URL;
+delete process.env.DATABASE_URL;
+delete process.env.OPENCURSOR_STORAGE_DRIVER;
+
 process.env.OPENCURSOR_DATA_DIR = TEST_DATA_DIR;
 
 const repoRoot = path.resolve(

@@ -3,12 +3,15 @@ import {
   applySessionToHonoResponse,
   buildRateLimitedJsonResponse,
   checkRequestRateLimit,
+  clearLoginRateLimitAfterSuccess,
   clearSessionFromHonoResponse,
+  gateLoginRateLimit,
   getAuthStatusPayload,
   isAuthEnabled,
   loginWithCredentials,
   logoutRequest,
   authenticateRequest,
+  recordFailedLoginRateLimit,
 } from "../lib/auth.js";
 
 export const authRoutes = new Hono();
@@ -34,7 +37,7 @@ function applyRateLimitContextHeaders(
 }
 
 authRoutes.get("/api/auth/status", async (c) => {
-  const rateLimit = checkRequestRateLimit(c.req.raw, "auth-status");
+  const rateLimit = await checkRequestRateLimit(c.req.raw, "auth-status");
   applyRateLimitContextHeaders(c, rateLimit);
   if (!rateLimit.ok) {
     return buildRateLimitedJsonResponse(
@@ -64,11 +67,13 @@ authRoutes.get("/api/auth/status", async (c) => {
 });
 
 authRoutes.post("/api/auth/login", async (c) => {
-  const rateLimit = checkRequestRateLimit(c.req.raw, "login");
-  applyRateLimitContextHeaders(c, rateLimit);
-  if (!rateLimit.ok) {
+  // Count only failed credential checks; successes clear the bucket so typos
+  // do not block a correct password, and brute-force limits still apply.
+  const gate = await gateLoginRateLimit(c.req.raw);
+  applyRateLimitContextHeaders(c, gate);
+  if (!gate.ok) {
     return buildRateLimitedJsonResponse(
-      rateLimit,
+      gate,
       "Too many login attempts. Please try again shortly."
     );
   }
@@ -99,12 +104,16 @@ authRoutes.post("/api/auth/login", async (c) => {
     remember: body.remember === true,
   });
   if (!result.ok) {
+    const afterFail = await recordFailedLoginRateLimit(c.req.raw);
+    applyRateLimitContextHeaders(c, afterFail);
     const response = c.json({ error: "Invalid username or password." }, 401);
     c.res = response;
     c.header("cache-control", "no-store");
     c.header("x-opencursor-auth-enabled", "1");
     return c.res;
   }
+
+  await clearLoginRateLimitAfterSuccess(c.req.raw);
 
   const response = c.json({
     ok: true,

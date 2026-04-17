@@ -217,7 +217,8 @@ export class AgentRuntimeManager {
   }
 
   async listWorkspaceConversations(
-    workspaceId: string
+    workspaceId: string,
+    opts?: { limit?: number; cursor?: string | null }
   ): Promise<AgentConversationListResult> {
     const conversations = await listWorkspaceConversationRecords(workspaceId);
     const backends = await Promise.resolve(this.listBackendsFn());
@@ -249,11 +250,24 @@ export class AgentRuntimeManager {
         cachedConfigOptions: richestConversation.configOptions,
       };
     });
+
+    // Paginate after backend enrichment so the richest configOptions are still
+    // sampled from the full workspace pool, not just the first page window.
+    // This keeps `backends` useful even when the client only asks for page 2.
+    const limit = Math.max(1, Math.min(Math.floor(opts?.limit ?? 200), 500));
+    const offset = Math.max(0, Number.parseInt(opts?.cursor ?? "0", 10) || 0);
+    const page = conversations.slice(offset, offset + limit);
+    const nextCursor =
+      offset + page.length < conversations.length
+        ? String(offset + page.length)
+        : null;
+
     return {
       backends: enrichedBackends,
-      conversations: conversations.map((conversation) =>
+      conversations: page.map((conversation) =>
         this.withBackendDefaults(conversation)
       ),
+      nextCursor,
     };
   }
 

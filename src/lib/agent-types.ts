@@ -330,6 +330,8 @@ export type AgentConversationConfigPatch = Partial<AgentConversationConfig> & {
 export type AgentConversationListResult = {
   backends: AgentBackendInfo[];
   conversations: AgentConversationRecord[];
+  /** Opaque pagination cursor. Present when there are more pages; `null` when exhausted. */
+  nextCursor?: string | null;
 };
 
 export type AgentRailConversationSummary = Pick<
@@ -350,6 +352,8 @@ export type AgentConversationGroup = {
 export type AgentConversationGroupsResult = {
   backends: AgentBackendInfo[];
   groups: AgentConversationGroup[];
+  /** Opaque pagination cursor. Present when there are more pages; `null` when exhausted. */
+  nextCursor?: string | null;
 };
 
 export type AgentSocketClientMessage =
@@ -379,5 +383,21 @@ export type AgentSocketServerMessage =
       window: AgentConversationEventWindow;
     }
   | { type: "event"; conversationId: string; event: AgentStoredEvent }
+  /**
+   * Broadcast to every client on the workspace channel when a conversation's
+   * metadata (title, updatedAt, status, backendId, etc.) changes. Clients use
+   * this to invalidate their in-memory conversation list without having to
+   * refetch on `visibilitychange`.
+   */
+  | {
+      type: "conversation_upserted";
+      conversation: AgentConversationRecord;
+    }
+  /** Same broadcast semantics as `conversation_upserted` but for deletion. */
+  | {
+      type: "conversation_deleted";
+      conversationId: string;
+      workspaceId: string;
+    }
   | { type: "pong" }
   | { type: "error"; message: string };

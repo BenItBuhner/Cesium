@@ -16,6 +16,7 @@ import {
   Bot,
   Box,
   CircleUserRound,
+  Database,
   Download,
   ExternalLink,
   FlaskConical,
@@ -51,6 +52,7 @@ const NAV_ENTRIES: NavEntry[] = [
   { kind: "item", id: "rulesSkills", label: "Rules, Skills, Subagents", icon: BookMarked },
   { kind: "item", id: "tools", label: "Tools & MCPs", icon: Wrench },
   { kind: "item", id: "exportImport", label: "Import & export", icon: Download },
+  { kind: "item", id: "storage", label: "Storage", icon: Database },
   { kind: "item", id: "beta", label: "Beta", icon: FlaskConical },
 ];
 

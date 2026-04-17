@@ -10,6 +10,10 @@ const TEST_DATA_DIR = path.join(
   `opencursor-auth-tests-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
 );
 
+delete process.env.REDIS_URL;
+delete process.env.DATABASE_URL;
+delete process.env.OPENCURSOR_STORAGE_DRIVER;
+
 process.env.OPENCURSOR_DATA_DIR = TEST_DATA_DIR;
 process.env.OPENCURSOR_AUTH_USERNAME = "testadmin";
 process.env.OPENCURSOR_AUTH_PASSWORD = "hunter2";
@@ -247,28 +251,72 @@ describe("token rotation", () => {
 
 describe("rate limiting", () => {
   test("login rate limit enforced after threshold", async () => {
-    const app = makeApp();
-    const ip = "10.99.99.250";
-    const responses: number[] = [];
-    for (let i = 0; i < 8; i++) {
-      const response = await app.request("/api/auth/login", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-forwarded-for": ip,
-        },
-        body: JSON.stringify({
-          username: "wronguser",
-          password: "wrongpass",
-          remember: false,
-        }),
-      });
-      responses.push(response.status);
+    const prevLimit = process.env.OPENCURSOR_LOGIN_RATE_LIMIT;
+    process.env.OPENCURSOR_LOGIN_RATE_LIMIT = "5";
+    try {
+      const app = makeApp();
+      const ip = "10.99.99.250";
+      const responses: number[] = [];
+      for (let i = 0; i < 8; i++) {
+        const response = await app.request("/api/auth/login", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-forwarded-for": ip,
+          },
+          body: JSON.stringify({
+            username: "wronguser",
+            password: "wrongpass",
+            remember: false,
+          }),
+        });
+        responses.push(response.status);
+      }
+      assert.ok(
+        responses.includes(429),
+        `Expected at least one 429 response, got: ${responses.join(", ")}`
+      );
+    } finally {
+      if (prevLimit === undefined) {
+        delete process.env.OPENCURSOR_LOGIN_RATE_LIMIT;
+      } else {
+        process.env.OPENCURSOR_LOGIN_RATE_LIMIT = prevLimit;
+      }
     }
-    assert.ok(
-      responses.includes(429),
-      `Expected at least one 429 response, got: ${responses.join(", ")}`
-    );
+  });
+
+  test("successful logins do not exhaust the login rate limit", async () => {
+    const prevLimit = process.env.OPENCURSOR_LOGIN_RATE_LIMIT;
+    process.env.OPENCURSOR_LOGIN_RATE_LIMIT = "3";
+    try {
+      const app = makeApp();
+      const ip = "10.99.99.252";
+      for (let i = 0; i < 10; i++) {
+        const response = await app.request("/api/auth/login", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-forwarded-for": ip,
+          },
+          body: JSON.stringify({
+            username: "testadmin",
+            password: "hunter2",
+            remember: false,
+          }),
+        });
+        assert.equal(
+          response.status,
+          200,
+          `iteration ${i} should succeed (login must not consume limit)`
+        );
+      }
+    } finally {
+      if (prevLimit === undefined) {
+        delete process.env.OPENCURSOR_LOGIN_RATE_LIMIT;
+      } else {
+        process.env.OPENCURSOR_LOGIN_RATE_LIMIT = prevLimit;
+      }
+    }
   });
 });
 
