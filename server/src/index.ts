@@ -23,7 +23,6 @@ import { workspaceRoutes } from "./routes/workspaces.js";
 import { settingsRoutes } from "./routes/settings.js";
 import { terminalRoutes } from "./routes/terminals.js";
 import { browserProxyRoutes } from "./routes/browser-proxy.js";
-import { browserDebugRoutes } from "./routes/browser-debug.js";
 import { agentRoutes } from "./routes/agents.js";
 import { audioRoutes } from "./routes/audio.js";
 import { authRoutes } from "./routes/auth.js";
@@ -41,7 +40,6 @@ import { isTranscriptionConfigured } from "./lib/transcription-env.js";
 import { handleFsUpgrade } from "./ws/filewatcher.js";
 import { handleAgentUpgrade } from "./ws/agent.js";
 import { handleTerminalUpgrade } from "./ws/terminal.js";
-import { handleBrowserDebugUpgrade } from "./ws/browser-debug.js";
 import {
   isPrivateLanBrowserOrigin,
   shouldRelaxPrivateLanCors,
@@ -116,7 +114,6 @@ app.get("/health", (c) =>
 );
 app.route("/", authRoutes);
 app.route("/browser", browserProxyRoutes);
-app.route("/", browserDebugRoutes);
 app.route("/", workspaceRoutes);
 app.route("/", settingsRoutes);
 app.route("/", fsRoutes);
@@ -181,25 +178,6 @@ server.on("upgrade", (request, socket, head) => {
         return;
       }
       handleTerminalUpgrade(request, socket, head, terminalId);
-    });
-    return;
-  }
-
-  if (url.pathname.startsWith("/ws/browser-debug/")) {
-    const sessionId = url.pathname.slice("/ws/browser-debug/".length).split("/")[0]?.trim() ?? "";
-    const workspaceId = url.searchParams.get("workspaceId")?.trim() ?? "";
-    if (!sessionId || !workspaceId) {
-      socket.write("HTTP/1.1 400 Bad Request\r\n\r\nMissing session or workspace.");
-      socket.destroy();
-      return;
-    }
-    void authenticateUpgradeRequest(request, "ws-browser-debug").then((result) => {
-      if (!result.ok) {
-        socket.write(buildUpgradeHttpResponse(result));
-        socket.destroy();
-        return;
-      }
-      handleBrowserDebugUpgrade(request, socket, head, sessionId, workspaceId);
     });
     return;
   }
