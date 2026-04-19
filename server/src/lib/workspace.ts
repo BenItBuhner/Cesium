@@ -1,6 +1,61 @@
 import path from "node:path";
 
-const DIMMED_NAMES = new Set(["node_modules", ".git", ".next", "dist"]);
+/**
+ * Folders rendered dim in the explorer AND never recursed into by `fs/tree`.
+ * Keep this list aggressive — walking home-dir caches (`.npm`, `.cargo`,
+ * `snap/*`) balloons the initial tree to tens of megabytes and turns the app
+ * into a "Loading workspace..." spinner for 30-90s when a Home workspace is
+ * rooted at `$HOME`.
+ */
+const DIMMED_NAMES = new Set([
+  // Per-project build / deps
+  "node_modules",
+  ".git",
+  ".svn",
+  ".hg",
+  ".next",
+  ".nuxt",
+  ".turbo",
+  ".vercel",
+  ".parcel-cache",
+  ".rollup.cache",
+  ".wrangler",
+  "dist",
+  "build",
+  "out",
+  "target",
+  "coverage",
+  ".nyc_output",
+  "__pycache__",
+  ".pytest_cache",
+  ".tox",
+  ".mypy_cache",
+  ".venv",
+  "venv",
+  ".gradle",
+  ".idea",
+  ".vs",
+  ".vscode-test",
+  // Home-dir caches that explode on walks when the workspace is rooted at $HOME
+  ".npm",
+  ".pnpm-store",
+  ".yarn",
+  ".cache",
+  ".cargo",
+  ".rustup",
+  ".pyenv",
+  ".rbenv",
+  ".nvm",
+  ".nix",
+  ".gem",
+  ".m2",
+  ".gradle-user-home",
+  ".docker",
+  ".local",
+  "snap",
+  "Library",
+  "AppData",
+]);
 
 const LANGUAGE_BY_BASENAME = new Map<string, string>([
   [".babelrc", "json"],

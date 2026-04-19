@@ -16,12 +16,14 @@ process.on("uncaughtException", (error) => {
   console.error("[process] uncaughtException:", error);
 });
 import { cors } from "hono/cors";
+import { compress } from "hono/compress";
 import { Hono } from "hono";
 import { fsRoutes } from "./routes/fs.js";
 import { workspaceRoutes } from "./routes/workspaces.js";
 import { settingsRoutes } from "./routes/settings.js";
 import { terminalRoutes } from "./routes/terminals.js";
 import { browserProxyRoutes } from "./routes/browser-proxy.js";
+import { browserDebugRoutes } from "./routes/browser-debug.js";
 import { agentRoutes } from "./routes/agents.js";
 import { audioRoutes } from "./routes/audio.js";
 import { authRoutes } from "./routes/auth.js";
@@ -39,6 +41,7 @@ import { isTranscriptionConfigured } from "./lib/transcription-env.js";
 import { handleFsUpgrade } from "./ws/filewatcher.js";
 import { handleAgentUpgrade } from "./ws/agent.js";
 import { handleTerminalUpgrade } from "./ws/terminal.js";
+import { handleBrowserDebugUpgrade } from "./ws/browser-debug.js";
 import {
   isPrivateLanBrowserOrigin,
   shouldRelaxPrivateLanCors,
@@ -63,6 +66,12 @@ const allowedOrigins = (
 const relaxPrivateLanCors = shouldRelaxPrivateLanCors(publicHost, allowedOrigins);
 
 const app = new Hono();
+
+// Gzip/deflate JSON + text responses. A typical `/api/agents/conversations/:id`
+// payload is 800KB-1MB of tool-call history JSON; compression cuts it to
+// ~60-80KB on the wire, which is the difference between a snappy load and a
+// 5-10s stall over WAN / Cloudflare.
+app.use("*", compress());
 
 app.use(
   "*",
@@ -107,6 +116,7 @@ app.get("/health", (c) =>
 );
 app.route("/", authRoutes);
 app.route("/browser", browserProxyRoutes);
+app.route("/", browserDebugRoutes);
 app.route("/", workspaceRoutes);
 app.route("/", settingsRoutes);
 app.route("/", fsRoutes);
@@ -171,6 +181,25 @@ server.on("upgrade", (request, socket, head) => {
         return;
       }
       handleTerminalUpgrade(request, socket, head, terminalId);
+    });
+    return;
+  }
+
+  if (url.pathname.startsWith("/ws/browser-debug/")) {
+    const sessionId = url.pathname.slice("/ws/browser-debug/".length).split("/")[0]?.trim() ?? "";
+    const workspaceId = url.searchParams.get("workspaceId")?.trim() ?? "";
+    if (!sessionId || !workspaceId) {
+      socket.write("HTTP/1.1 400 Bad Request\r\n\r\nMissing session or workspace.");
+      socket.destroy();
+      return;
+    }
+    void authenticateUpgradeRequest(request, "ws-browser-debug").then((result) => {
+      if (!result.ok) {
+        socket.write(buildUpgradeHttpResponse(result));
+        socket.destroy();
+        return;
+      }
+      handleBrowserDebugUpgrade(request, socket, head, sessionId, workspaceId);
     });
     return;
   }

@@ -699,8 +699,11 @@ export async function fetchTree(depth?: number): Promise<{
   root: string;
   tree: FileNode;
 }> {
-  const query = depth ? `?depth=${depth}` : "";
-  return request(`/api/fs/tree${query}`);
+  // Shallow default avoids 30-90s workspace-bootstrap stalls on big home
+  // directories. The explorer already lazy-loads children on expand via
+  // `fetchFolderChildren`. Override by passing `depth` for tests/scripts.
+  const resolved = depth ?? 2;
+  return request(`/api/fs/tree?depth=${resolved}`);
 }
 
 export async function fetchFolderChildren(
@@ -1075,4 +1078,49 @@ export async function importStorageArchive(
     throw new Error(text || `Import failed with status ${response.status}`);
   }
   return (await response.json()) as StorageImportResponse;
+}
+
+export type BrowserDebugSessionCreateInput = {
+  targetUrl: string;
+  /** Navigate via the workspace HTML proxy (closer to in-IDE iframe). */
+  useIframeProxy?: boolean;
+};
+
+export type BrowserDebugSessionCreateResult = {
+  sessionId: string;
+  workspaceId: string;
+};
+
+export async function createBrowserDebugSession(
+  input: BrowserDebugSessionCreateInput
+): Promise<BrowserDebugSessionCreateResult> {
+  return request(`/api/browser-debug/sessions`, {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export async function deleteBrowserDebugSession(sessionId: string): Promise<void> {
+  const response = await fetch(
+    `${resolveClientServerBaseUrl()}/api/browser-debug/sessions/${encodeURIComponent(sessionId)}`,
+    {
+      method: "DELETE",
+      headers: Object.fromEntries(
+        attachSessionToken({
+          "Content-Type": "application/json",
+          ...getWorkspaceHeaders(),
+        }).entries()
+      ),
+      credentials: "include",
+      cache: "no-store",
+    }
+  );
+  syncAuthTokenFromResponse(response);
+  if (response.status === 401) {
+    clearStoredAuth();
+  }
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(message || `Request failed with status ${response.status}`);
+  }
 }

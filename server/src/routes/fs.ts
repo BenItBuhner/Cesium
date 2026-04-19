@@ -41,6 +41,9 @@ function globToRegExp(glob: string): RegExp {
   return new RegExp(`^${escaped}$`, "i");
 }
 
+/** Truncate directories with runaway child counts (e.g. Poly-Saturate-Bot/data/html-ref-cache has 50k files). */
+const MAX_CHILDREN_PER_DIR = 2000;
+
 async function readDirectoryChildren(
   workspaceRoot: string,
   absoluteDir: string,
@@ -60,8 +63,12 @@ async function readDirectoryChildren(
     }
     throw error;
   }
+
+  const truncated = dirents.length > MAX_CHILDREN_PER_DIR;
+  const slice = truncated ? dirents.slice(0, MAX_CHILDREN_PER_DIR) : dirents;
+
   const children = await Promise.all(
-    dirents.map(async (dirent): Promise<FileNode | null> => {
+    slice.map(async (dirent): Promise<FileNode | null> => {
       const absoluteChildPath = path.join(absoluteDir, dirent.name);
       const relativeChildPath = toRelativePath(workspaceRoot, absoluteChildPath);
       if (shouldIgnorePath(relativeChildPath)) {
@@ -81,13 +88,17 @@ async function readDirectoryChildren(
           };
         }
 
-        const children = await readDirectoryChildren(workspaceRoot, absoluteChildPath, depth - 1);
+        const grandChildren = await readDirectoryChildren(
+          workspaceRoot,
+          absoluteChildPath,
+          depth - 1
+        );
         return {
           name: dirent.name,
           type: "folder",
           dimmed,
-          children,
-          hasChildren: children.length > 0,
+          children: grandChildren,
+          hasChildren: grandChildren.length > 0,
           childrenLoaded: true,
         };
       }
@@ -101,7 +112,18 @@ async function readDirectoryChildren(
     })
   );
 
-  return children.filter((child): child is FileNode => child !== null).sort(compareEntries);
+  const resolved = children.filter((child): child is FileNode => child !== null).sort(compareEntries);
+  if (truncated) {
+    resolved.push({
+      name: `… (${dirents.length - MAX_CHILDREN_PER_DIR} more entries hidden)`,
+      type: "folder",
+      dimmed: true,
+      children: [],
+      hasChildren: false,
+      childrenLoaded: true,
+    });
+  }
+  return resolved;
 }
 
 async function buildTree(
@@ -192,8 +214,13 @@ async function collectFileMatches(
 export const fsRoutes = new Hono();
 
 fsRoutes.get("/api/fs/tree", async (c) => {
-  const depth = Number.parseInt(c.req.query("depth") ?? "10", 10);
-  const normalizedDepth = Number.isFinite(depth) ? depth : 10;
+  // Default to a shallow tree: the explorer lazy-loads children on expand
+  // via `/api/fs/tree/children`. A deep initial walk balloons the payload
+  // (50k+ entries in home dirs) and blocks workspace load for 30-90s.
+  const depth = Number.parseInt(c.req.query("depth") ?? "2", 10);
+  const normalizedDepth = Number.isFinite(depth)
+    ? Math.max(0, Math.min(depth, 6))
+    : 2;
   const workspace = await requireWorkspaceFromRequest(c);
   const tree = await buildTree(workspace.root, workspace.root, normalizedDepth);
   return c.json({
