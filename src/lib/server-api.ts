@@ -79,6 +79,11 @@ async function request<T>(
   init?: RequestInit,
   options?: { skipWorkspaceHeader?: boolean }
 ): Promise<T> {
+  // Mutating methods (POST/PUT/PATCH/DELETE) must never be cached; GETs rely on
+  // the server's `Cache-Control: stale-while-revalidate` headers so repeat page
+  // loads hit the browser cache first and revalidate in the background.
+  const method = (init?.method ?? "GET").toUpperCase();
+  const cacheMode: RequestCache = method === "GET" ? "default" : "no-store";
   const response = await fetch(`${resolveClientServerBaseUrl()}${input}`, {
     ...init,
     headers: Object.fromEntries(
@@ -89,7 +94,7 @@ async function request<T>(
       }).entries()
     ),
     credentials: "include",
-    cache: "no-store",
+    cache: cacheMode,
   });
 
   syncAuthTokenFromResponse(response);
@@ -1089,6 +1094,13 @@ export type BrowserDebugSessionCreateInput = {
 export type BrowserDebugSessionCreateResult = {
   sessionId: string;
   workspaceId: string;
+  targetId: string;
+  /**
+   * Absolute-path URL (starts with `/`) to load in the DevTools iframe. Points at
+   * Chromium's real DevTools frontend proxied through the workspace server, with
+   * the `?ws=` query param already rewritten to our WebSocket bridge path.
+   */
+  devtoolsPath: string;
 };
 
 export async function createBrowserDebugSession(
@@ -1123,4 +1135,40 @@ export async function deleteBrowserDebugSession(sessionId: string): Promise<void
     const message = await response.text();
     throw new Error(message || `Request failed with status ${response.status}`);
   }
+}
+
+/**
+ * Ping the server to verify a debug session is still alive (Chromium process
+ * still running, not wiped by a server restart). Returns `null` if the session
+ * is gone (HTTP 404) so callers can reset their cached state.
+ */
+export async function getBrowserDebugSession(
+  sessionId: string
+): Promise<BrowserDebugSessionCreateResult | null> {
+  const response = await fetch(
+    `${resolveClientServerBaseUrl()}/api/browser-debug/sessions/${encodeURIComponent(sessionId)}`,
+    {
+      method: "GET",
+      headers: Object.fromEntries(
+        attachSessionToken({
+          "Content-Type": "application/json",
+          ...getWorkspaceHeaders(),
+        }).entries()
+      ),
+      credentials: "include",
+      cache: "no-store",
+    }
+  );
+  syncAuthTokenFromResponse(response);
+  if (response.status === 401) {
+    clearStoredAuth();
+    return null;
+  }
+  if (response.status === 404) {
+    return null;
+  }
+  if (!response.ok) {
+    return null;
+  }
+  return (await response.json()) as BrowserDebugSessionCreateResult;
 }

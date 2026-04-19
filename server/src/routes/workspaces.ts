@@ -31,6 +31,7 @@ import {
   getRevision,
   parseRevisionHeader,
 } from "../storage/revisions.js";
+import { setShortCache } from "../lib/cache-headers.js";
 
 export const workspaceRoutes = new Hono();
 
@@ -77,6 +78,7 @@ workspaceRoutes.get("/api/workspaces/bootstrap", async (c) => {
     resolveStartupWorkspace(),
   ]);
 
+  setShortCache(c, { maxAgeSec: 5, swr: 30 });
   return c.json({
     workspaces,
     defaultWorkspaceId: profile.defaultWorkspaceId,
@@ -91,6 +93,7 @@ workspaceRoutes.get("/api/workspaces", async (c) => {
     listWorkspaces(),
     getWorkspaceProfile(),
   ]);
+  setShortCache(c, { maxAgeSec: 5, swr: 30 });
   return c.json({
     workspaces,
     defaultWorkspaceId: profile.defaultWorkspaceId,

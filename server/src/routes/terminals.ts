@@ -5,11 +5,13 @@ import {
   killTerminalSession,
   listTerminalSessions,
 } from "../ws/terminal.js";
+import { setShortCache } from "../lib/cache-headers.js";
 
 export const terminalRoutes = new Hono();
 
 terminalRoutes.get("/api/terminals", (c) => {
   const workspaceId = c.req.header("x-opencursor-workspace-id")?.trim();
+  setShortCache(c, { maxAgeSec: 5, swr: 30 });
   return c.json({
     terminals: listTerminalSessions().filter((terminal) =>
       workspaceId ? terminal.workspaceId === workspaceId : true

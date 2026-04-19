@@ -32,6 +32,13 @@ settingsRoutes.get("/api/settings/global", async (c) => {
   const etag = formatEtag(revision);
 
   const ifNoneMatch = parseRevisionHeader(c.req.header("if-none-match"));
+  // Short max-age + stale-while-revalidate means repeat tabs read instantly
+  // from the browser cache; the server still gets a conditional GET on
+  // revalidation and can 304 when the revision matches.
+  c.header(
+    "Cache-Control",
+    "private, max-age=10, stale-while-revalidate=60, must-revalidate"
+  );
   if (ifNoneMatch && ifNoneMatch.value === revision) {
     c.header("ETag", etag);
     return c.body(null, 304);

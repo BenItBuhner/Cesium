@@ -13,6 +13,7 @@ import {
 import {
   requireWorkspaceFromRequest,
 } from "../lib/request-workspace.js";
+import { setShortCache } from "../lib/cache-headers.js";
 
 type FileNode = {
   name: string;
@@ -223,6 +224,7 @@ fsRoutes.get("/api/fs/tree", async (c) => {
     : 2;
   const workspace = await requireWorkspaceFromRequest(c);
   const tree = await buildTree(workspace.root, workspace.root, normalizedDepth);
+  setShortCache(c, { maxAgeSec: 10, swr: 30 });
   return c.json({
     root: workspace.root,
     tree,
@@ -249,6 +251,7 @@ fsRoutes.get("/api/fs/tree/children", async (c) => {
     absolutePath,
     normalizedDepth - 1
   );
+  setShortCache(c, { maxAgeSec: 10, swr: 30 });
   return c.json({
     path: relativePath.replace(/\\/g, "/"),
     children,

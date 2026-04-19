@@ -44,6 +44,14 @@ agentRoutes.get("/api/agents/conversations", async (c) => {
     workspace.id,
     { limit, cursor }
   );
+  // Agent events stream over WS, so a short browser cache is safe: a fresh
+  // page load serves from cache instantly while WS catches it up with any
+  // tail events. Do NOT cache the full snapshot endpoint, which changes on
+  // every token during a running turn.
+  c.header(
+    "Cache-Control",
+    "private, max-age=5, stale-while-revalidate=30"
+  );
   return c.json(result);
 });
 
@@ -120,6 +128,10 @@ agentRoutes.get("/api/agents/conversations/all", async (c) => {
     }
   }
   const groups = Array.from(groupMap.values());
+  c.header(
+    "Cache-Control",
+    "private, max-age=5, stale-while-revalidate=30"
+  );
   return c.json({ backends, groups, nextCursor });
 });
 
@@ -142,6 +154,8 @@ agentRoutes.get("/api/agents/conversations/:conversationId", async (c) => {
   const limitEvents =
     limitEventsRaw && Number.isFinite(Number(limitEventsRaw)) ? Number(limitEventsRaw) : undefined;
 
+  // A running turn changes the snapshot on every streamed event. Never cache.
+  c.header("Cache-Control", "no-store, max-age=0");
   if (full) {
     const snapshot = await agentRuntimeManager.getConversationSnapshot(workspace, conversationId, {
       hydrateRuntime,
