@@ -19,6 +19,7 @@ import {
   type AuthSession,
   type AuthStatusResponse,
 } from "@/lib/auth-client";
+import { resolveClientServerBaseUrl } from "@/lib/resolve-server-base-url";
 
 type LoginInput = {
   username: string;
@@ -40,39 +41,11 @@ type AuthContextValue = {
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
-const BASE_URL =
-  process.env.NEXT_PUBLIC_SERVER_URL?.replace(/\/+$/, "") ??
-  "http://localhost:9100";
-
-function resolveClientBaseUrl(): string {
-  if (typeof window === "undefined") {
-    return BASE_URL;
-  }
-  try {
-    const configured = new URL(BASE_URL);
-    const currentHost = window.location.hostname;
-    const isLocalHost = currentHost === "127.0.0.1" || currentHost === "localhost";
-    if (
-      currentHost &&
-      isLocalHost &&
-      (currentHost !== configured.hostname || configured.protocol !== window.location.protocol)
-    ) {
-      configured.protocol = window.location.protocol;
-      configured.hostname = currentHost;
-      configured.port = configured.port || "9100";
-      return configured.toString().replace(/\/+$/, "");
-    }
-  } catch {
-    return BASE_URL;
-  }
-  return BASE_URL;
-}
-
 async function fetchAuth(
   path: string,
   init?: RequestInit
 ): Promise<Response> {
-  return fetch(`${resolveClientBaseUrl()}${path}`, {
+  return fetch(`${resolveClientServerBaseUrl()}${path}`, {
     ...init,
     headers: Object.fromEntries(
       attachSessionToken(init?.headers).entries()

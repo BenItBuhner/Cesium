@@ -26,34 +26,7 @@ import {
   clearStoredAuth,
   syncAuthTokenFromResponse,
 } from "@/lib/auth-client";
-
-const BASE_URL =
-  process.env.NEXT_PUBLIC_SERVER_URL?.replace(/\/+$/, "") ??
-  "http://localhost:9100";
-
-function resolveClientBaseUrl(): string {
-  if (typeof window === "undefined") {
-    return BASE_URL;
-  }
-  try {
-    const configured = new URL(BASE_URL);
-    const currentHost = window.location.hostname;
-    const isLocalHost = currentHost === "127.0.0.1" || currentHost === "localhost";
-    if (
-      currentHost &&
-      isLocalHost &&
-      (configured.hostname !== currentHost || configured.protocol !== window.location.protocol)
-    ) {
-      configured.protocol = window.location.protocol;
-      configured.hostname = currentHost;
-      configured.port = configured.port || "9100";
-      return configured.toString().replace(/\/+$/, "");
-    }
-  } catch {
-    return BASE_URL;
-  }
-  return BASE_URL;
-}
+import { resolveClientServerBaseUrl } from "@/lib/resolve-server-base-url";
 
 let activeWorkspaceId: string | null = null;
 
@@ -106,7 +79,7 @@ async function request<T>(
   init?: RequestInit,
   options?: { skipWorkspaceHeader?: boolean }
 ): Promise<T> {
-  const response = await fetch(`${resolveClientBaseUrl()}${input}`, {
+  const response = await fetch(`${resolveClientServerBaseUrl()}${input}`, {
     ...init,
     headers: Object.fromEntries(
       attachSessionToken({
@@ -159,7 +132,7 @@ async function requestWithEtag<T>(
   revisionKey: string,
   options?: { skipWorkspaceHeader?: boolean }
 ): Promise<T> {
-  const response = await fetch(`${resolveClientBaseUrl()}${input}`, {
+  const response = await fetch(`${resolveClientServerBaseUrl()}${input}`, {
     headers: Object.fromEntries(
       attachSessionToken({
         "Content-Type": "application/json",
@@ -216,7 +189,7 @@ async function mutateWithEtag(
   if (cachedEtag) {
     headers["If-Match"] = cachedEtag;
   }
-  const response = await fetch(`${resolveClientBaseUrl()}${input}`, {
+  const response = await fetch(`${resolveClientServerBaseUrl()}${input}`, {
     method: options?.method ?? "PUT",
     body,
     keepalive: options?.keepalive,
@@ -261,12 +234,12 @@ export function clearCachedRevision(revisionKey: string): void {
 }
 
 export function getServerBaseUrl(): string {
-  return resolveClientBaseUrl();
+  return resolveClientServerBaseUrl();
 }
 
 export function buildAgentWebSocketUrl(workspaceId: string): string {
   const params = new URLSearchParams({ workspaceId });
-  const base = `${toWebSocketUrl(resolveClientBaseUrl())}/ws/agent?${params.toString()}`;
+  const base = `${toWebSocketUrl(resolveClientServerBaseUrl())}/ws/agent?${params.toString()}`;
   return buildAuthenticatedUrl(base);
 }
 
@@ -667,7 +640,7 @@ export async function transcribeAudio(
   if (options?.prompt) {
     form.set("prompt", options.prompt);
   }
-  const response = await fetch(`${resolveClientBaseUrl()}/api/audio/transcriptions`, {
+  const response = await fetch(`${resolveClientServerBaseUrl()}/api/audio/transcriptions`, {
     method: "POST",
     body: form,
     headers: Object.fromEntries(
@@ -791,7 +764,7 @@ export async function uploadFile(relativePath: string, file: File): Promise<void
   const form = new FormData();
   form.set("path", relativePath);
   form.set("file", file);
-  const response = await fetch(`${resolveClientBaseUrl()}/api/fs/upload`, {
+  const response = await fetch(`${resolveClientServerBaseUrl()}/api/fs/upload`, {
     method: "POST",
     body: form,
     headers: Object.fromEntries(
@@ -823,7 +796,7 @@ export async function uploadAttachments(
   for (const file of files) {
     form.append("files", file);
   }
-  const response = await fetch(`${resolveClientBaseUrl()}/api/agents/attachments`, {
+  const response = await fetch(`${resolveClientServerBaseUrl()}/api/agents/attachments`, {
     method: "POST",
     body: form,
     headers: Object.fromEntries(
@@ -984,7 +957,7 @@ export async function runStorageMigration(
   input: StorageMigrationInput,
   callbacks: StorageMigrationCallbacks = {}
 ): Promise<void> {
-  const response = await fetch(`${resolveClientBaseUrl()}/api/storage/migrate`, {
+  const response = await fetch(`${resolveClientServerBaseUrl()}/api/storage/migrate`, {
     method: "POST",
     credentials: "include",
     cache: "no-store",
@@ -1057,7 +1030,7 @@ export async function runStorageMigration(
 }
 
 export function buildStorageExportUrl(driver?: StorageDriverKind): string {
-  const base = resolveClientBaseUrl();
+  const base = resolveClientServerBaseUrl();
   const params = new URLSearchParams();
   if (driver) params.set("driver", driver);
   const query = params.toString();
@@ -1082,7 +1055,7 @@ export async function importStorageArchive(
   if (options.overwrite) params.set("overwrite", "1");
   const query = params.toString();
   const response = await fetch(
-    `${resolveClientBaseUrl()}/api/storage/import${query ? `?${query}` : ""}`,
+    `${resolveClientServerBaseUrl()}/api/storage/import${query ? `?${query}` : ""}`,
     {
       method: "POST",
       credentials: "include",
