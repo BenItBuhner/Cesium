@@ -1,6 +1,14 @@
 "use client";
 
-import { useState, useCallback, useLayoutEffect, useRef, type MouseEvent } from "react";
+import {
+  useState,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  type KeyboardEvent,
+  type MouseEvent,
+} from "react";
 import { createPortal } from "react-dom";
 import { ChevronDown, ChevronRight, Columns2, MoreVertical, Rows2 } from "lucide-react";
 import { EditorTab } from "./EditorTab";
@@ -48,6 +56,10 @@ interface EditorTabsProps {
   onStripContextMenu?: (e: MouseEvent) => void;
   onToggleTabGroupCollapsed?: (groupId: string) => void;
   onTabGroupContextMenu?: (e: MouseEvent, groupId: string) => void;
+  /** When set, opens inline rename for that tab group (avoids `window.prompt`, which breaks in embedded/previews). */
+  renameTabGroupId?: string | null;
+  onCommitTabGroupRename?: (groupId: string, title: string) => void;
+  onCancelTabGroupRename?: () => void;
   onAddTabToGroup?: (tabId: string, groupId: string) => void;
   onMoveTabToStripIndex?: (tabId: string, toIndex: number) => void;
   /** Agent chat tabs: permission pending / running; keyed by `conversationId`. */
@@ -94,6 +106,9 @@ export function EditorTabs({
   onStripContextMenu,
   onToggleTabGroupCollapsed,
   onTabGroupContextMenu,
+  renameTabGroupId = null,
+  onCommitTabGroupRename,
+  onCancelTabGroupRename,
   onAddTabToGroup,
   onMoveTabToStripIndex,
   agentTabIndicators,
@@ -105,8 +120,60 @@ export function EditorTabs({
   const menuPopoverRef = useRef<HTMLDivElement>(null);
   const stripRef = useRef<HTMLDivElement>(null);
   const dragScrollLastTs = useRef(0);
+  const [editingGroupId, setEditingGroupId] = useState<string | null>(null);
+  const [editGroupTitle, setEditGroupTitle] = useState("");
+  const tabGroupRenameInputRef = useRef<HTMLInputElement>(null);
 
   useTabStripWheel(stripRef, { speed: 2.1 });
+
+  useEffect(() => {
+    if (!renameTabGroupId) {
+      setEditingGroupId(null);
+      setEditGroupTitle("");
+      return;
+    }
+    const g = tabGroups[renameTabGroupId];
+    if (!g) {
+      onCancelTabGroupRename?.();
+      return;
+    }
+    setEditingGroupId(renameTabGroupId);
+    setEditGroupTitle(g.title);
+    // Only re-seed when the rename target id changes — not when `tabGroups` identity updates during typing.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [renameTabGroupId]);
+
+  useEffect(() => {
+    if (!editingGroupId) {
+      return;
+    }
+    const id = requestAnimationFrame(() => {
+      tabGroupRenameInputRef.current?.focus();
+      tabGroupRenameInputRef.current?.select();
+    });
+    return () => cancelAnimationFrame(id);
+  }, [editingGroupId]);
+
+  function commitTabGroupRename() {
+    if (!editingGroupId) {
+      return;
+    }
+    const gid = editingGroupId;
+    const next = editGroupTitle.trim();
+    setEditingGroupId(null);
+    setEditGroupTitle("");
+    if (next) {
+      onCommitTabGroupRename?.(gid, next);
+    } else {
+      onCancelTabGroupRename?.();
+    }
+  }
+
+  function cancelTabGroupRenameEditing() {
+    setEditingGroupId(null);
+    setEditGroupTitle("");
+    onCancelTabGroupRename?.();
+  }
 
   const closeMenu = useCallback(() => setMenuOpen(false), []);
 
@@ -308,7 +375,12 @@ export function EditorTabs({
                 <button
                   type="button"
                   data-tab-group-id={g.id}
-                  onClick={() => onToggleTabGroupCollapsed?.(g.id)}
+                  onClick={() => {
+                    if (editingGroupId === g.id) {
+                      return;
+                    }
+                    onToggleTabGroupCollapsed?.(g.id);
+                  }}
                   onContextMenu={(e) => {
                     e.stopPropagation();
                     onTabGroupContextMenu?.(e, g.id);
@@ -319,7 +391,28 @@ export function EditorTabs({
                   aria-expanded={!g.collapsed}
                 >
                   <Chev className="size-[14px] shrink-0 opacity-70" strokeWidth={1.5} />
-                  <span className="max-w-[120px] truncate">{g.title}</span>
+                  {editingGroupId === g.id ? (
+                    <input
+                      ref={tabGroupRenameInputRef}
+                      value={editGroupTitle}
+                      aria-label="Tab group name"
+                      className="max-w-[min(200px,calc(100%-22px))] min-w-[40px] shrink bg-transparent font-sans text-[12px] outline-none"
+                      onClick={(e) => e.stopPropagation()}
+                      onChange={(e) => setEditGroupTitle(e.target.value)}
+                      onBlur={() => commitTabGroupRename()}
+                      onKeyDown={(e: KeyboardEvent<HTMLInputElement>) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          commitTabGroupRename();
+                        } else if (e.key === "Escape") {
+                          e.preventDefault();
+                          cancelTabGroupRenameEditing();
+                        }
+                      }}
+                    />
+                  ) : (
+                    <span className="max-w-[120px] truncate">{g.title}</span>
+                  )}
                 </button>
                 {!g.collapsed &&
                   g.tabIds.map((tid) => {
