@@ -41,16 +41,43 @@ export function isPrivateLanBrowserOrigin(origin: string): boolean {
 }
 
 /**
- * When the advertised `PUBLIC_HOST` is itself on RFC1918, it is almost always a
- * homelab box — allow credentialed CORS from any private-LAN browser origin
- * unless explicitly disabled with `OPENCURSOR_ALLOW_PRIVATE_LAN_ORIGINS=0`.
+ * True when any configured browser origin is on RFC1918 (but not loopback-only).
+ * Used when `HOST=0.0.0.0` makes `PUBLIC_HOST` fall back to `localhost`, which
+ * would otherwise disable LAN relaxation even though `ALLOWED_ORIGINS` lists a
+ * 192.168.x.x Next URL.
  */
-export function shouldRelaxPrivateLanCors(publicHost: string): boolean {
+function anyAllowedOriginIsPrivateLan(origins: string[]): boolean {
+  for (const o of origins) {
+    try {
+      const host = new URL(o).hostname;
+      if (host === "localhost" || host === "127.0.0.1") {
+        continue;
+      }
+      if (isRfc1918Ipv4Host(host)) {
+        return true;
+      }
+    } catch {
+      continue;
+    }
+  }
+  return false;
+}
+
+/**
+ * When the deployment is clearly homelab (RFC1918 `PUBLIC_HOST` and/or an RFC1918
+ * entry in `ALLOWED_ORIGINS`), allow credentialed CORS from any private-LAN
+ * browser `Origin` unless `OPENCURSOR_ALLOW_PRIVATE_LAN_ORIGINS=0`.
+ */
+export function shouldRelaxPrivateLanCors(
+  publicHost: string,
+  allowedOrigins: string[] = []
+): boolean {
   const explicitDeny =
     process.env.OPENCURSOR_ALLOW_PRIVATE_LAN_ORIGINS?.trim() === "0";
   if (explicitDeny) return false;
   const force =
     process.env.OPENCURSOR_ALLOW_PRIVATE_LAN_ORIGINS?.trim() === "1";
   if (force) return true;
-  return isRfc1918Ipv4Host(publicHost);
+  if (isRfc1918Ipv4Host(publicHost)) return true;
+  return anyAllowedOriginIsPrivateLan(allowedOrigins);
 }

@@ -60,7 +60,7 @@ const allowedOrigins = (
   .map((origin) => origin.trim())
   .filter(Boolean);
 
-const relaxPrivateLanCors = shouldRelaxPrivateLanCors(publicHost);
+const relaxPrivateLanCors = shouldRelaxPrivateLanCors(publicHost, allowedOrigins);
 
 const app = new Hono();
 
