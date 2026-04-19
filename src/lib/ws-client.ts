@@ -1,11 +1,21 @@
 "use client";
 
+/**
+ * Convert an HTTP(S) origin to a WebSocket origin. Empty / relative `url`
+ * means "same-origin" — fall back to the page's own origin so a WebSocket
+ * can piggyback on the reverse proxy that already handles `/api/*`.
+ */
 export function toWebSocketUrl(url: string): string {
   if (url.startsWith("https://")) {
     return `wss://${url.slice("https://".length)}`;
   }
   if (url.startsWith("http://")) {
     return `ws://${url.slice("http://".length)}`;
+  }
+  if ((url === "" || url.startsWith("/")) && typeof window !== "undefined") {
+    const scheme = window.location.protocol === "https:" ? "wss:" : "ws:";
+    const suffix = url.startsWith("/") ? url : "";
+    return `${scheme}//${window.location.host}${suffix}`;
   }
   return url;
 }
