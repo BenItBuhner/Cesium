@@ -39,6 +39,10 @@ import { isTranscriptionConfigured } from "./lib/transcription-env.js";
 import { handleFsUpgrade } from "./ws/filewatcher.js";
 import { handleAgentUpgrade } from "./ws/agent.js";
 import { handleTerminalUpgrade } from "./ws/terminal.js";
+import {
+  isPrivateLanBrowserOrigin,
+  shouldRelaxPrivateLanCors,
+} from "./lib/cors-origins.js";
 
 const port = Number.parseInt(process.env.PORT ?? "9100", 10);
 const host = process.env.HOST?.trim() || "0.0.0.0";
@@ -56,6 +60,8 @@ const allowedOrigins = (
   .map((origin) => origin.trim())
   .filter(Boolean);
 
+const relaxPrivateLanCors = shouldRelaxPrivateLanCors(publicHost);
+
 const app = new Hono();
 
 app.use(
@@ -63,7 +69,12 @@ app.use(
   cors({
     origin: (origin) => {
       if (!origin) return allowedOrigins[0] ?? "*";
-      return allowedOrigins.includes(origin) ? origin : allowedOrigins[0] ?? "*";
+      if (allowedOrigins.includes(origin)) return origin;
+      if (relaxPrivateLanCors && isPrivateLanBrowserOrigin(origin)) return origin;
+      // Do not echo a different origin — browsers reject credentialed responses
+      // when Access-Control-Allow-Origin does not match the request's Origin.
+      // Hono omits the header when the value is falsy (empty string is fine).
+      return "";
     },
     credentials: true,
     allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
