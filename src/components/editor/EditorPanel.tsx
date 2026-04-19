@@ -6,19 +6,47 @@ import {
   useEffect,
   useMemo,
   useRef,
+  useState,
   type DragEvent,
   type MouseEvent,
 } from "react";
 import { Group, Panel, Separator } from "react-resizable-panels";
+import dynamic from "next/dynamic";
 import { EditorTabs } from "./EditorTabs";
-import { CodeEditor } from "./CodeEditor";
-import { Terminal } from "./Terminal";
 import { SimpleMarkdownPreview } from "./SimpleMarkdownPreview";
 import { FilePreview } from "./FilePreview";
-import { AgentTranscriptView } from "./AgentTranscriptView";
 import { AgentConversationView } from "./AgentConversationView";
-import { BrowserTab } from "./BrowserTab";
-import { ExpandedComposerView } from "./ExpandedComposerView";
+
+// Lazy-load the heaviest editor surfaces. Monaco (`@monaco-editor/react`) alone is
+// ~500KB parsed, xterm adds another ~200KB, and most users don't open a Browser
+// tab or expanded composer on first paint. Shipping them on-demand keeps the
+// initial page chunk small (big TTI win on weaker devices / mobile).
+const PanelLoading = () => (
+  <div className="flex h-full items-center justify-center font-sans text-[12px] text-[var(--text-disabled)]">
+    Loading…
+  </div>
+);
+
+const CodeEditor = dynamic(
+  () => import("./CodeEditor").then((m) => ({ default: m.CodeEditor })),
+  { ssr: false, loading: PanelLoading }
+);
+const Terminal = dynamic(
+  () => import("./Terminal").then((m) => ({ default: m.Terminal })),
+  { ssr: false, loading: PanelLoading }
+);
+const AgentTranscriptView = dynamic(
+  () => import("./AgentTranscriptView").then((m) => ({ default: m.AgentTranscriptView })),
+  { ssr: false, loading: PanelLoading }
+);
+const BrowserTab = dynamic(
+  () => import("./BrowserTab").then((m) => ({ default: m.BrowserTab })),
+  { ssr: false, loading: PanelLoading }
+);
+const ExpandedComposerView = dynamic(
+  () => import("./ExpandedComposerView").then((m) => ({ default: m.ExpandedComposerView })),
+  { ssr: false, loading: PanelLoading }
+);
 import { useEditorBridgeRef } from "@/components/ide/EditorBridgeContext";
 import { useWorkbenchContextMenu } from "@/components/ide/WorkbenchContextMenuProvider";
 import type { WorkbenchMenuItem } from "@/components/ide/workbench-context-menu-types";
@@ -300,6 +328,10 @@ export function EditorPanel({
     persistedSession,
     createEditorStateFromSession
   );
+  const [pendingTabGroupRename, setPendingTabGroupRename] = useState<{
+    pane: EditorGroup;
+    groupId: string;
+  } | null>(null);
 
   const { conversationsById } = useAgentConversations();
   const agentTabIndicators = useMemo(() => {
@@ -1212,19 +1244,7 @@ export function EditorPanel({
           id: "tab-group-rename",
           label: "Rename…",
           onSelect: () => {
-            queueMicrotask(() => {
-              const snap = stateRef.current;
-              const gr = snap[groupsKey][groupId];
-              if (!gr) return;
-              const t = window.prompt("Group name", gr.title);
-              if (t == null || !t.trim()) return;
-              dispatch({
-                type: "UPDATE_TAB_GROUP_META",
-                pane,
-                groupId,
-                title: t.trim(),
-              });
-            });
+            setPendingTabGroupRename({ pane, groupId });
           },
         },
         {
@@ -1730,6 +1750,25 @@ export function EditorPanel({
           onTabGroupContextMenu={(e, groupId) =>
             handleTabGroupContextMenu(e, group, groupId)
           }
+          renameTabGroupId={
+            pendingTabGroupRename?.pane === group
+              ? pendingTabGroupRename.groupId
+              : null
+          }
+          onCommitTabGroupRename={(gid, title) => {
+            const groupsKey = group === "left" ? "leftTabGroups" : "rightTabGroups";
+            const gr = stateRef.current[groupsKey][gid];
+            if (gr && title !== gr.title) {
+              dispatch({
+                type: "UPDATE_TAB_GROUP_META",
+                pane: group,
+                groupId: gid,
+                title,
+              });
+            }
+            setPendingTabGroupRename(null);
+          }}
+          onCancelTabGroupRename={() => setPendingTabGroupRename(null)}
           onAddTabToGroup={(tabId, groupId) =>
             dispatch({ type: "ADD_TAB_TO_GROUP", pane: group, tabId, groupId })
           }

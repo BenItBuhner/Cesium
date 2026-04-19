@@ -582,16 +582,28 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       }
 
       try {
+        // Block first paint only on data that affects initial layout (session +
+        // windows). `fetchTree()` and `listTerminals()` are heavy/noisy and not
+        // needed for the chat / editor shell, so kick them off but settle the
+        // loading state as soon as the session is ready. They hydrate lazily.
         const sessionRequest = fetchWorkspaceSession(workspace.id, { windowId });
-        const [{ tree }, sessionResult, terminalList, windowsResult] = await Promise.all([
-          fetchTree(),
+        const treePromise = fetchTree();
+        const terminalsPromise = listTerminals();
+
+        const [sessionResult, windowsResult] = await Promise.all([
           sessionRequest,
-          listTerminals(),
           fetchWorkspaceWindows(workspace.id),
         ]);
+
+        // Hydrate explorer + terminals in the background without blocking UI.
+        void treePromise
+          .then(({ tree }) => setFileTree(tree))
+          .catch(() => undefined);
+        void terminalsPromise
+          .then((terminalList) => setTerminals(terminalList))
+          .catch(() => undefined);
+
         const localBackup = readWorkspaceSessionBackup(sessionScopeId);
-        setFileTree(tree);
-        setTerminals(terminalList);
         setWorkspaceWindows(windowsResult.windows);
         skipNextSessionSaveRef.current = true;
         let normalized = normalizeWorkspaceSession(localBackup ?? sessionResult.session);
