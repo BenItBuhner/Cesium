@@ -246,18 +246,44 @@ function buildGuestScriptSource(): string {
   }
 
   function encodeProxyHref(targetHref) {
-    var target = new URL(targetHref, decodeProxyTargetHref(location.href));
-    // If the URL is already a proxy URL on our own origin, return it as-is
-    // instead of recursively wrapping it (which produced garbage paths like
-    // \`/browser/http/localhost%3A9100/browser/https/...\` whenever a page
-    // pushed location.href or origin-relative URLs back through pushState).
-    if (target.origin === location.origin &&
-        /^\\/browser\\/(https?)\\//i.test(target.pathname)) {
-      var cleaned = new URLSearchParams(target.search || '');
-      cleaned.delete('__ocs_access');
-      var qs = cleaned.toString();
-      var q = qs ? '?' + qs : '';
-      return target.origin + target.pathname + q + target.hash;
+    // PASS 1 — treat the input as proxy-origin-relative first.
+    //
+    // Pages frequently read \`window.location.pathname\` / \`.search\` and
+    // feed the result back into \`pushState\` / \`replaceState\` / link-building
+    // (e.g. Google calls \`history.replaceState({}, '', location.pathname)\`
+    // to strip the \`?gws_rd=ssl\` param). From inside the iframe,
+    // \`location.pathname\` is our proxy path — \`/browser/https/www.google.com/\` —
+    // not \`/\`. If we resolve that against the upstream URL as base and
+    // re-wrap it, we get a NESTED proxy URL like
+    // \`/browser/https/www.google.com/browser/https/www.google.com/\`, and
+    // downstream the real upstream returns its own 404 for that literal path.
+    //
+    // So always first check: does this URL — resolved against our proxy
+    // origin — already ENCODE a proxy path? If yes, just return the normalised
+    // proxy URL. Covers:
+    //   * '/browser/https/www.google.com/?gws_rd=ssl' (relative proxy path)
+    //   * 'http://localhost:9100/browser/https/www.google.com/foo' (absolute
+    //     proxy URL on our origin)
+    try {
+      var asProxy = new URL(targetHref, location.href);
+      if (asProxy.origin === location.origin &&
+          /^\\/browser\\/(https?)\\//i.test(asProxy.pathname)) {
+        var clean = new URLSearchParams(asProxy.search || '');
+        clean.delete('__ocs_access');
+        var cq = clean.toString();
+        var cQ = cq ? '?' + cq : '';
+        return asProxy.origin + asProxy.pathname + cQ + asProxy.hash;
+      }
+    } catch (e) {
+      /* fall through to upstream-relative resolution */
+    }
+
+    // PASS 2 — resolve as an upstream URL relative to the upstream context.
+    var target;
+    try {
+      target = new URL(targetHref, decodeProxyTargetHref(location.href));
+    } catch (e) {
+      return typeof targetHref === 'string' ? targetHref : '';
     }
     var scheme = target.protocol.replace(':', '');
     var host = encodeURIComponent(target.host);

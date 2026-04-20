@@ -39,6 +39,21 @@ function unwrapNestedAbsoluteUrl(input: string): string {
     if (match?.[1]) {
       return match[1];
     }
+    // Nested proxy path — e.g.
+    //   `https://www.google.com/browser/https/www.google.com/?gws_rd=ssl`
+    // (from a previous run where pages like Google read `location.pathname`
+    // back into `pushState` and our encoder re-wrapped it). Rescue the real
+    // upstream target from the embedded proxy path so a reload heals the
+    // persisted tab state instead of perpetually 404-ing on the upstream.
+    const proxyEmbed = outer.pathname.match(
+      /^\/browser\/(https?)\/([^/]+)(\/.*)?$/i
+    );
+    if (proxyEmbed?.[1] && proxyEmbed[2]) {
+      const scheme = proxyEmbed[1].toLowerCase();
+      const host = decodeURIComponent(proxyEmbed[2]);
+      const path = proxyEmbed[3] ?? "/";
+      return `${scheme}://${host}${path}${outer.search}${outer.hash}`;
+    }
   } catch {
     // Ignore malformed outer URL; the plain string heuristic above is enough.
   }
