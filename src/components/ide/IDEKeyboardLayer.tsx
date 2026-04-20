@@ -189,7 +189,12 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
 
   const openBrowserUrlPrompt = useCallback(() => {
     setPalette("closed");
-    setBrowserPromptValue("http://localhost:3000/");
+    // On public deployments default to the current site origin, not localhost.
+    const nextDefault =
+      typeof window !== "undefined" && window.location?.origin
+        ? `${window.location.origin}/`
+        : "http://localhost:3000/";
+    setBrowserPromptValue(nextDefault);
     setBrowserPromptOpen(true);
   }, []);
 

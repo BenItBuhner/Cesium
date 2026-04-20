@@ -26,7 +26,20 @@ import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { useWorkbenchNotifications } from "@/components/notifications/WorkbenchNotificationProvider";
 import { WORKBENCH_NOTIFICATION_KIND } from "@/components/notifications/workbench-notification-types";
 
-const DEFAULT_HOME = "http://localhost:3000/";
+/**
+ * Browser-tab home URL when a brand-new browser tab is opened with no explicit
+ * target. On public deployments we should default to the current site origin,
+ * not hard-coded localhost. The old constant caused odd behavior on
+ * `https://opencursor.techlitnow.com` because the "Open URL" prompt seeded the
+ * field with `http://localhost:3000/`, and any non-full replacement could turn
+ * into a garbage URL like `http://localhost:3000/https://google.com/`.
+ */
+function getDefaultHome(): string {
+  if (typeof window !== "undefined" && window.location?.origin) {
+    return `${window.location.origin}/`;
+  }
+  return "http://localhost:3000/";
+}
 
 type HistoryStack = { entries: string[]; index: number };
 
@@ -125,7 +138,8 @@ export function BrowserTab({
     debugSessionIdRef.current = tab.browser?.debugSessionId ?? null;
   }, [tab.browser?.debugSessionId]);
 
-  const initial = tab.browser?.targetUrl ?? DEFAULT_HOME;
+  const defaultHome = getDefaultHome();
+  const initial = tab.browser?.targetUrl ?? defaultHome;
   const historyRef = useRef<HistoryStack>({ entries: [initial], index: 0 });
   const [, bump] = useState(0);
   const forceNavUi = useCallback(() => bump((x) => x + 1), []);
@@ -137,19 +151,19 @@ export function BrowserTab({
   const devtoolsOpen = tab.browser?.devtoolsOpen ?? false;
 
   useEffect(() => {
-    const u = tab.browser?.targetUrl ?? DEFAULT_HOME;
+    const u = tab.browser?.targetUrl ?? defaultHome;
     historyRef.current = { entries: [u], index: 0 };
     setUrlBar(u);
     setIframeKey((k) => k + 1);
     forceNavUi();
-  }, [tab.id, tab.browser?.targetUrl, forceNavUi]);
+  }, [defaultHome, forceNavUi, tab.id, tab.browser?.targetUrl]);
 
   useEffect(() => {
     const u = tab.browser?.targetUrl;
     if (u) setUrlBar(u);
   }, [tab.browser?.targetUrl]);
 
-  const targetUrl = tab.browser?.targetUrl ?? DEFAULT_HOME;
+  const targetUrl = tab.browser?.targetUrl ?? defaultHome;
 
   const iframeSrc = useMemo(
     // Iframe navigations cannot attach our `x-opencursor-session-token` header
@@ -169,6 +183,7 @@ export function BrowserTab({
     const normalized = devtoolsPath.startsWith("/") ? devtoolsPath : `/${devtoolsPath}`;
     return buildIframeAuthenticatedUrl(`${base}${normalized}`);
   }, [tab.browser?.devtoolsPath]);
+  const showDevtoolsPanel = Boolean(devtoolsOpen && consoleViewerSrc);
 
   const pushDesignToGuest = useCallback((enabled: boolean) => {
     const w = iframeRef.current?.contentWindow;
@@ -566,7 +581,7 @@ export function BrowserTab({
 
   useEffect(() => {
     let cancelled = false;
-    const target = tab.browser?.targetUrl ?? DEFAULT_HOME;
+    const target = tab.browser?.targetUrl ?? defaultHome;
     void (async () => {
       const fav = await resolveFaviconForPage(target, getServerBaseUrl());
       if (cancelled) return;
@@ -680,9 +695,9 @@ export function BrowserTab({
         */}
         <div
           className={`min-h-0 overflow-hidden ${
-            devtoolsOpen ? "hidden flex-[0_0_0%]" : "flex-1"
+            showDevtoolsPanel ? "hidden flex-[0_0_0%]" : "flex-1"
           }`}
-          aria-hidden={devtoolsOpen || undefined}
+          aria-hidden={showDevtoolsPanel || undefined}
         >
           <iframe
             ref={iframeRef}
@@ -693,14 +708,14 @@ export function BrowserTab({
             className="h-full w-full border-0 bg-[var(--bg-main)]"
           />
         </div>
-        {devtoolsOpen && consoleViewerSrc ? (
+        {showDevtoolsPanel ? (
           <div
             className="min-h-0 flex-1 border-t border-[var(--border-subtle)]"
             data-ide-browser-devtools
           >
             <iframe
               title="Browser debug console"
-              src={consoleViewerSrc}
+              src={consoleViewerSrc ?? undefined}
               className="h-full w-full border-0 bg-[var(--bg-main)]"
             />
           </div>
