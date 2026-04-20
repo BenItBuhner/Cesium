@@ -858,25 +858,39 @@ export function editorPanelReducer(
       // wiping `devtoolsOpen/debugSessionId/devtoolsPath` here would tear
       // down the console on every address-bar navigation. Fresh tabs start
       // clean via `OPEN_BROWSER_TAB` instead.
+      const incomingName = action.name?.trim();
       const patch = (tabs: EditorTab[]) =>
-        tabs.map((t) =>
-          t.id === action.tabId && t.browser
-            ? {
-                ...t,
-                browser: {
-                  ...t.browser,
-                  targetUrl: nextUrl,
-                  // Only clear the favicon when the URL itself changed. If the
-                  // iframe is just reporting a new page title for the SAME URL,
-                  // preserve the existing icon instead of flashing back to the
-                  // generic globe.
-                  faviconUrl:
-                    t.browser.targetUrl === nextUrl ? t.browser.faviconUrl : undefined,
-                },
-                name: action.name?.trim() || tabTitleFromUrl(nextUrl),
-              }
-            : t
-        );
+        tabs.map((t) => {
+          if (t.id !== action.tabId || !t.browser) return t;
+          const urlChanged = t.browser.targetUrl !== nextUrl;
+          // Name resolution precedence:
+          //   1. an explicit non-empty `action.name` always wins (live
+          //      document.title from the iframe);
+          //   2. when the URL itself changed, fall back to the host-derived
+          //      label (fresh tab / address-bar nav to a new site);
+          //   3. when it's a same-URL refresh from a nav message that didn't
+          //      include a title, keep whatever label we already showed —
+          //      otherwise SPA transitions that briefly null out
+          //      document.title would flash the tab back to the hostname.
+          const resolvedName = incomingName
+            ? incomingName
+            : urlChanged
+              ? tabTitleFromUrl(nextUrl)
+              : t.name;
+          return {
+            ...t,
+            browser: {
+              ...t.browser,
+              targetUrl: nextUrl,
+              // Only clear the favicon when the URL itself changed. If the
+              // iframe is just reporting a new page title for the SAME URL,
+              // preserve the existing icon instead of flashing back to the
+              // generic globe.
+              faviconUrl: urlChanged ? undefined : t.browser.faviconUrl,
+            },
+            name: resolvedName,
+          };
+        });
       return {
         ...state,
         leftTabs: patch(state.leftTabs),

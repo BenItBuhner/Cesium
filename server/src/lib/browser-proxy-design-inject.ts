@@ -287,11 +287,17 @@ function buildGuestScriptSource(): string {
   var navSyncTimer = 0;
   function postNavState() {
     try {
-      postToParent({
+      var msg = {
         kind: 'nav',
-        href: decodeProxyTargetHref(location.href),
-        title: document.title || ''
-      });
+        href: decodeProxyTargetHref(location.href)
+      };
+      var t = (document.title || '').trim();
+      // Only attach a title when it's non-empty. SPA frameworks (YouTube,
+      // Twitter, etc.) briefly blank document.title during client-side
+      // navigation; omitting the field here lets the parent preserve the
+      // last good tab label instead of flashing back to the hostname.
+      if (t) msg.title = t;
+      postToParent(msg);
     } catch (e) {}
   }
 
@@ -367,8 +373,12 @@ function buildGuestScriptSource(): string {
     } catch (e) {}
     setInterval(function() {
       try {
-        var cur = document.title || '';
-        if (cur !== lastTitle) {
+        var cur = (document.title || '').trim();
+        // Only push on non-empty transitions. An empty title is almost
+        // always a transient SPA state, not a user-meaningful value, and
+        // postNavState() drops the field anyway — but we avoid even queuing
+        // a redundant send.
+        if (cur && cur !== lastTitle) {
           lastTitle = cur;
           queueNavState();
         }
