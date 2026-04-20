@@ -335,19 +335,105 @@ function buildGuestScriptSource(): string {
   }
 
   function patchDynamicFormSubmissions() {
-    // Server-side HTML rewrite already fixes static form[action] attributes in
-    // the initial document. This catches dynamic apps that mutate the action
-    // later or submit via JS with a plain same-origin relative URL.
+    // Server-side HTML rewrite handles static form[action] in the initial
+    // document. This catches dynamic apps that mutate the action later, set
+    // it via JS with a same-origin relative URL, or omit it entirely (which
+    // means "submit to the current URL" — the proxy URL from inside the
+    // iframe, which lands on a Hono route that doesn't exist → 404).
     document.addEventListener('submit', function(ev) {
       if (enabled) return;
       var form = ev.target;
-      if (!form || !form.getAttribute) return;
-      var raw = form.getAttribute('action');
-      if (!shouldProxyRewriteUrl(raw)) return;
+      if (!form || form.nodeType !== 1 || form.tagName !== 'FORM') return;
+      var method = (form.getAttribute('method') || 'GET').toUpperCase();
+      var rawAction = form.getAttribute('action');
+      var baseHref = decodeProxyTargetHref(location.href);
+      // Resolve whatever action (or lack thereof) to the upstream URL first.
+      var upstreamAction;
       try {
-        form.setAttribute('action', encodeProxyHref(String(raw)));
+        upstreamAction = new URL(rawAction || '', baseHref).toString();
+      } catch (e) {
+        return;
+      }
+      if (method === 'GET') {
+        // Build the full GET URL manually (action + form data) so the
+        // iframe navigates to the proxy version with the query encoded. The
+        // browser's own GET submission would use the raw action against the
+        // iframe's proxy origin — producing /results?q=foo → Hono 404.
+        ev.preventDefault();
+        ev.stopPropagation();
+        var params = new URLSearchParams();
+        var fields = form.querySelectorAll('input[name], select[name], textarea[name]');
+        for (var i = 0; i < fields.length; i++) {
+          var f = fields[i];
+          if (!f.name) continue;
+          if ((f.type === 'checkbox' || f.type === 'radio') && !f.checked) continue;
+          if (f.type === 'file' || f.type === 'submit' || f.type === 'button') continue;
+          params.append(f.name, f.value == null ? '' : String(f.value));
+        }
+        try {
+          var target = new URL(upstreamAction);
+          var existing = target.search ? target.search.slice(1) + '&' : '';
+          var merged = existing + params.toString();
+          target.search = merged ? '?' + merged : '';
+          location.href = encodeProxyHref(target.toString());
+        } catch (e) {}
+        return;
+      }
+      // POST / PUT / etc — rewrite action so the browser posts to the proxy.
+      try {
+        form.setAttribute('action', encodeProxyHref(upstreamAction));
       } catch (e) {}
     }, true);
+  }
+
+  function patchAnchorClicks() {
+    // YouTube (and most React/Vue SPAs) build result cards, nav items, etc.
+    // at runtime with plain <a href="/foo"> — the initial HTML rewrite pass
+    // on the server misses these. Intercept clicks in the capture phase and
+    // rewrite href to the proxy URL before the browser dispatches the nav.
+    document.addEventListener('click', function(ev) {
+      if (enabled) return;
+      if (ev.defaultPrevented) return;
+      if (ev.button !== 0) return;
+      if (ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey) return;
+      var el = ev.target;
+      while (el && el.nodeType === 1 && el.tagName !== 'A') {
+        el = el.parentElement;
+      }
+      if (!el || el.tagName !== 'A') return;
+      var raw = el.getAttribute('href');
+      if (!shouldProxyRewriteUrl(raw)) return;
+      var abs;
+      try {
+        abs = new URL(raw, decodeProxyTargetHref(location.href)).toString();
+      } catch (e) {
+        return;
+      }
+      try {
+        var rewritten = encodeProxyHref(abs);
+        // Only touch the href if we'd actually change it — avoids fighting
+        // frameworks that already produced a proxy URL through some other
+        // path.
+        if (rewritten && rewritten !== el.href) {
+          el.setAttribute('href', rewritten);
+        }
+      } catch (e) {}
+    }, true);
+  }
+
+  function patchWindowOpen() {
+    // Pages that use window.open('/watch?v=abc') otherwise hit a blank page
+    // because the opened URL resolves against the proxy origin and lands on
+    // Hono with no route for it.
+    try {
+      var origOpen = window.open;
+      window.open = function(url, target, features) {
+        if (shouldProxyRewriteUrl(url)) {
+          try { url = encodeProxyHref(String(url)); } catch (e) {}
+        }
+        return origOpen.call(window, url, target, features);
+      };
+    } catch (e) {}
   }
 
   var lastTitle = '';
@@ -1013,6 +1099,8 @@ function buildGuestScriptSource(): string {
 
   patchHistoryApi();
   patchDynamicFormSubmissions();
+  patchAnchorClicks();
+  patchWindowOpen();
   observeTitleAndUrl();
   window.addEventListener('message', onMessage);
   window.addEventListener('resize', function() { resizeStroke(); reflowHighlight(); });
