@@ -344,16 +344,36 @@ function buildGuestScriptSource(): string {
     }, true);
   }
 
+  var lastTitle = '';
   function observeTitleAndUrl() {
     window.addEventListener('popstate', queueNavState);
     window.addEventListener('hashchange', queueNavState);
+    // Poll document.title once per second in addition to the MutationObserver.
+    // Many SPA frameworks (YouTube, Twitter, etc.) replace the entire <title>
+    // element rather than mutating its text, so a subtree observer on the
+    // original element goes deaf. Polling document.title catches both cases
+    // without any per-framework special-casing.
+    try { lastTitle = document.title || ''; } catch (e) {}
     try {
-      var titleEl = document.querySelector('title');
-      if (titleEl && typeof MutationObserver !== 'undefined') {
-        var observer = new MutationObserver(function() { queueNavState(); });
-        observer.observe(titleEl, { childList: true, characterData: true, subtree: true });
+      if (typeof MutationObserver !== 'undefined' && document.head) {
+        // Watch the entire <head> so newly-added <title> elements also fire.
+        var headObserver = new MutationObserver(function() { queueNavState(); });
+        headObserver.observe(document.head, {
+          childList: true,
+          characterData: true,
+          subtree: true
+        });
       }
     } catch (e) {}
+    setInterval(function() {
+      try {
+        var cur = document.title || '';
+        if (cur !== lastTitle) {
+          lastTitle = cur;
+          queueNavState();
+        }
+      } catch (e) {}
+    }, 1000);
   }
 
   // ---------------------------------------------------------------------------
