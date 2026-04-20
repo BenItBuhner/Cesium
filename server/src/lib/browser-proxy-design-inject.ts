@@ -221,6 +221,117 @@ function buildGuestScriptSource(): string {
   }
 
   // ---------------------------------------------------------------------------
+  // Proxy URL <-> upstream URL helpers + live page-state sync
+  // ---------------------------------------------------------------------------
+
+  function decodeProxyTargetHref(rawHref) {
+    try {
+      var u = new URL(rawHref, location.href);
+      var m = u.pathname.match(/^\\/browser\\/(https?)\\/([^\\/]+)(\\/.*)?$/i);
+      if (!m) return rawHref;
+      var scheme = m[1].toLowerCase();
+      var host = decodeURIComponent(m[2]);
+      var path = m[3] || '/';
+      return scheme + '://' + host + path + u.search + u.hash;
+    } catch (e) {
+      return rawHref;
+    }
+  }
+
+  function encodeProxyHref(targetHref) {
+    var target = new URL(targetHref, decodeProxyTargetHref(location.href));
+    var scheme = target.protocol.replace(':', '');
+    var host = encodeURIComponent(target.host);
+    var path = target.pathname === '' ? '/' : target.pathname;
+    var tail =
+      path === '/' && !target.search && !target.hash
+        ? ''
+        : path + target.search + target.hash;
+    return location.origin + '/browser/' + scheme + '/' + host + (tail === '/' ? '' : tail);
+  }
+
+  function shouldProxyRewriteUrl(raw) {
+    if (raw == null || raw === '') return false;
+    if (typeof raw !== 'string') raw = String(raw);
+    // Ignore javascript:, mailto:, tel:, hash-only, data:, blob: etc.
+    if (/^(javascript:|mailto:|tel:|data:|blob:)/i.test(raw)) return false;
+    if (raw.charAt(0) === '#') return false;
+    return true;
+  }
+
+  var navSyncTimer = 0;
+  function postNavState() {
+    try {
+      postToParent({
+        kind: 'nav',
+        href: decodeProxyTargetHref(location.href),
+        title: document.title || ''
+      });
+    } catch (e) {}
+  }
+
+  function queueNavState() {
+    if (navSyncTimer) {
+      clearTimeout(navSyncTimer);
+    }
+    navSyncTimer = setTimeout(function() {
+      navSyncTimer = 0;
+      postNavState();
+    }, 0);
+  }
+
+  function patchHistoryApi() {
+    try {
+      var origPush = history.pushState.bind(history);
+      var origReplace = history.replaceState.bind(history);
+      history.pushState = function(state, title, url) {
+        if (shouldProxyRewriteUrl(url)) {
+          try { url = encodeProxyHref(String(url)); } catch (e) {}
+        }
+        var ret = origPush(state, title, url);
+        queueNavState();
+        return ret;
+      };
+      history.replaceState = function(state, title, url) {
+        if (shouldProxyRewriteUrl(url)) {
+          try { url = encodeProxyHref(String(url)); } catch (e) {}
+        }
+        var ret = origReplace(state, title, url);
+        queueNavState();
+        return ret;
+      };
+    } catch (e) {}
+  }
+
+  function patchDynamicFormSubmissions() {
+    // Server-side HTML rewrite already fixes static form[action] attributes in
+    // the initial document. This catches dynamic apps that mutate the action
+    // later or submit via JS with a plain same-origin relative URL.
+    document.addEventListener('submit', function(ev) {
+      if (enabled) return;
+      var form = ev.target;
+      if (!form || !form.getAttribute) return;
+      var raw = form.getAttribute('action');
+      if (!shouldProxyRewriteUrl(raw)) return;
+      try {
+        form.setAttribute('action', encodeProxyHref(String(raw)));
+      } catch (e) {}
+    }, true);
+  }
+
+  function observeTitleAndUrl() {
+    window.addEventListener('popstate', queueNavState);
+    window.addEventListener('hashchange', queueNavState);
+    try {
+      var titleEl = document.querySelector('title');
+      if (titleEl && typeof MutationObserver !== 'undefined') {
+        var observer = new MutationObserver(function() { queueNavState(); });
+        observer.observe(titleEl, { childList: true, characterData: true, subtree: true });
+      }
+    } catch (e) {}
+  }
+
+  // ---------------------------------------------------------------------------
   // Element screenshot (SVG <foreignObject> with inlined computed styles)
   // ---------------------------------------------------------------------------
 
@@ -839,13 +950,20 @@ function buildGuestScriptSource(): string {
     if (d.type !== OPENCURSOR_DESIGN) return;
     if (d.op === 'enable') setEnabled(true);
     else if (d.op === 'disable') setEnabled(false);
-    else if (d.op === 'ping') postToParent({ kind: 'ready', enabled: enabled });
+    else if (d.op === 'ping') {
+      postToParent({ kind: 'ready', enabled: enabled });
+      postNavState();
+    }
   }
 
+  patchHistoryApi();
+  patchDynamicFormSubmissions();
+  observeTitleAndUrl();
   window.addEventListener('message', onMessage);
   window.addEventListener('resize', function() { resizeStroke(); reflowHighlight(); });
   window.addEventListener('scroll', reflowHighlight, true);
 
   postToParent({ kind: 'ready', enabled: false });
+  postNavState();
 })();`;
 }

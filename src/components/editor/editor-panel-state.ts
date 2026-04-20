@@ -103,7 +103,13 @@ export type EditorPanelAction =
   | { type: "OPEN_COMPOSER_DRAFT_TAB"; draftId: string; title: string; content: string }
   | { type: "OPEN_TERMINAL_TAB"; terminalId: string; name?: string }
   | { type: "OPEN_BROWSER_TAB"; url: string; name?: string }
-  | { type: "UPDATE_BROWSER_TAB_URL"; tabId: string; targetUrl: string }
+  | {
+      type: "UPDATE_BROWSER_TAB_URL";
+      tabId: string;
+      targetUrl: string;
+      /** Optional page title from the live iframe; falls back to host-derived label. */
+      name?: string;
+    }
   | { type: "UPDATE_BROWSER_TAB_FAVICON"; tabId: string; faviconUrl: string | null }
   | {
       type: "UPDATE_BROWSER_TAB_META";
@@ -860,9 +866,14 @@ export function editorPanelReducer(
                 browser: {
                   ...t.browser,
                   targetUrl: nextUrl,
-                  faviconUrl: undefined,
+                  // Only clear the favicon when the URL itself changed. If the
+                  // iframe is just reporting a new page title for the SAME URL,
+                  // preserve the existing icon instead of flashing back to the
+                  // generic globe.
+                  faviconUrl:
+                    t.browser.targetUrl === nextUrl ? t.browser.faviconUrl : undefined,
                 },
-                name: tabTitleFromUrl(nextUrl),
+                name: action.name?.trim() || tabTitleFromUrl(nextUrl),
               }
             : t
         );

@@ -53,6 +53,8 @@ function isDesignGuestMessage(data: unknown): data is {
   enabled?: boolean;
   captureId?: string;
   pageUrl?: string;
+  href?: string;
+  title?: string;
   pathIndices?: number[];
   rect?: { left: number; top: number; width: number; height: number } | null;
   viewport?: { width: number; height: number } | null;
@@ -143,6 +145,7 @@ export function BrowserTab({
   const historyRef = useRef<HistoryStack>({ entries: [initial], index: 0 });
   const [, bump] = useState(0);
   const forceNavUi = useCallback(() => bump((x) => x + 1), []);
+  const lastNavHrefRef = useRef<string>(initial);
 
   const [iframeKey, setIframeKey] = useState(0);
   const [urlBar, setUrlBar] = useState(initial);
@@ -153,10 +156,11 @@ export function BrowserTab({
   useEffect(() => {
     const u = tab.browser?.targetUrl ?? defaultHome;
     historyRef.current = { entries: [u], index: 0 };
+    lastNavHrefRef.current = u;
     setUrlBar(u);
     setIframeKey((k) => k + 1);
     forceNavUi();
-  }, [defaultHome, forceNavUi, tab.id, tab.browser?.targetUrl]);
+  }, [defaultHome, forceNavUi, tab.id]);
 
   useEffect(() => {
     const u = tab.browser?.targetUrl;
@@ -239,6 +243,31 @@ export function BrowserTab({
         pushDesignToGuest(designModeRef.current);
         return;
       }
+      if (d.kind === "nav") {
+        const href = d.href?.trim();
+        if (!href) {
+          return;
+        }
+        const current = lastNavHrefRef.current;
+        if (href !== current) {
+          const stack = historyRef.current;
+          const currentEntry = stack.entries[stack.index];
+          if (currentEntry !== href) {
+            stack.entries = [...stack.entries.slice(0, stack.index + 1), href];
+            stack.index = stack.entries.length - 1;
+            forceNavUi();
+          }
+          lastNavHrefRef.current = href;
+        }
+        setUrlBar(href);
+        dispatch({
+          type: "UPDATE_BROWSER_TAB_URL",
+          tabId: tab.id,
+          targetUrl: href,
+          name: d.title?.trim() || undefined,
+        });
+        return;
+      }
       if (d.kind === "state") {
         return;
       }
@@ -307,7 +336,10 @@ export function BrowserTab({
     attachImageToBrowserDesignCapture,
     captureRenderedFallback,
     composeAnnotationOverlay,
+    dispatch,
+    forceNavUi,
     pushDesignToGuest,
+    tab.id,
   ]);
 
   const h = historyRef.current;
@@ -352,6 +384,7 @@ export function BrowserTab({
         entries: nextEntries,
         index: nextEntries.length - 1,
       };
+      lastNavHrefRef.current = normalizedHref;
       dispatch({
         type: "UPDATE_BROWSER_TAB_URL",
         tabId: tab.id,
@@ -382,6 +415,7 @@ export function BrowserTab({
     if (stack.index <= 0) return;
     stack.index -= 1;
     const u = stack.entries[stack.index]!;
+    lastNavHrefRef.current = u;
     dispatch({
       type: "UPDATE_BROWSER_TAB_URL",
       tabId: tab.id,
@@ -401,6 +435,7 @@ export function BrowserTab({
     if (stack.index >= stack.entries.length - 1) return;
     stack.index += 1;
     const u = stack.entries[stack.index]!;
+    lastNavHrefRef.current = u;
     dispatch({
       type: "UPDATE_BROWSER_TAB_URL",
       tabId: tab.id,
