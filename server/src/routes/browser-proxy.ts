@@ -105,7 +105,12 @@ function buildProxyPathForTarget(target: URL): string {
   return `/browser/${scheme}/${enc}${tail === "/" ? "" : tail}`;
 }
 
-function rewriteLocation(location: string, upstreamBase: URL, requestOrigin: string): string {
+function rewriteLocation(
+  location: string,
+  upstreamBase: URL,
+  requestOrigin: string,
+  iframeAuthToken: string | null
+): string {
   let locUrl: URL;
   try {
     locUrl = new URL(location, upstreamBase);
@@ -113,7 +118,15 @@ function rewriteLocation(location: string, upstreamBase: URL, requestOrigin: str
     return location;
   }
   const path = buildProxyPathForTarget(locUrl);
-  return `${requestOrigin}${path}`;
+  const rewritten = new URL(path, requestOrigin);
+  // Preserve the IDE's iframe-auth token across upstream redirects. Without
+  // this, a 301 from google.com -> www.google.com lands on our proxy with no
+  // credentials and the auth middleware 401s — which is exactly the "idle
+  // iframe" symptom we saw from opencursor.techlitnow.com.
+  if (iframeAuthToken && !rewritten.searchParams.has("__ocs_access")) {
+    rewritten.searchParams.set("__ocs_access", iframeAuthToken);
+  }
+  return rewritten.toString();
 }
 
 function stripFrameBlockingHeaders(headers: Headers): void {
@@ -245,6 +258,10 @@ browserProxyRoutes.all("/*", async (c) => {
   // distinct name instead of `access_token` so we don't trample a legitimate
   // `?access_token=` in the target URL (OAuth callbacks etc.).
   const outerParams = new URLSearchParams(url.search);
+  // Snapshot the iframe-auth token before stripping it from the upstream
+  // query — we re-attach it to rewritten Location headers further down so
+  // the browser stays authenticated across upstream redirects.
+  const iframeAuthToken = outerParams.get("__ocs_access");
   outerParams.delete("__ocs_access");
   const forwardedQuery = outerParams.toString();
   const search = forwardedQuery ? `?${forwardedQuery}` : "";
@@ -297,7 +314,22 @@ browserProxyRoutes.all("/*", async (c) => {
     );
   }
 
-  const requestOrigin = `${url.protocol}//${url.host}`;
+  // Behind Cloudflare Tunnel (and any reverse proxy) the incoming request's
+  // scheme/host visible to Node is the LOCAL one (e.g. `http://127.0.0.1:9100`),
+  // not what the browser sees. Prefer `X-Forwarded-Proto` / `X-Forwarded-Host`
+  // so rewritten Location headers + HTML href/src rewrites point at the same
+  // public origin the iframe is loaded from — otherwise we emit
+  // `http://opencursor.techlitnow.com/...` from an `https://` page and the
+  // browser either blocks it as mixed content or hops through HSTS (stripping
+  // the auth query).
+  const incomingProto =
+    c.req.header("x-forwarded-proto")?.split(",")[0]?.trim().toLowerCase() ||
+    url.protocol.replace(":", "");
+  const incomingHost =
+    c.req.header("x-forwarded-host")?.split(",")[0]?.trim() ||
+    c.req.header("host") ||
+    url.host;
+  const requestOrigin = `${incomingProto}://${incomingHost}`;
   const upstreamBase = new URL(`${upstream.origin}/`);
 
   const headers = forwardableHeaders(c.req.raw.headers);
@@ -356,7 +388,7 @@ browserProxyRoutes.all("/*", async (c) => {
         403
       );
     }
-    const rewritten = rewriteLocation(loc, upstream, requestOrigin);
+    const rewritten = rewriteLocation(loc, upstream, requestOrigin, iframeAuthToken);
     return new Response(null, {
       status: res.status,
       headers: new Headers({ Location: rewritten }),
