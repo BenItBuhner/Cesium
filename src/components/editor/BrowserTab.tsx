@@ -165,6 +165,28 @@ export function BrowserTab({
 
   const targetUrl = tab.browser?.targetUrl ?? defaultHome;
 
+  // Auto-heal legacy malformed browser-tab URLs from older builds / bad prompt
+  // defaults (e.g. `http://localhost:3000/https://google.com/`). The proxy
+  // builder already normalizes strings on the fly, but dispatching an explicit
+  // UPDATE_BROWSER_TAB_URL also repairs the persisted tab title/name so the UI
+  // stops showing garbage like `localhost:3000/https://google.com/`.
+  useEffect(() => {
+    const raw = tab.browser?.targetUrl;
+    if (!raw) return;
+    try {
+      const normalized = normalizeBrowserTargetUrl(raw).href;
+      if (normalized !== raw) {
+        dispatch({
+          type: "UPDATE_BROWSER_TAB_URL",
+          tabId: tab.id,
+          targetUrl: normalized,
+        });
+      }
+    } catch {
+      /* ignore malformed legacy URL */
+    }
+  }, [dispatch, tab.id, tab.browser?.targetUrl]);
+
   const iframeSrc = useMemo(
     // Iframe navigations cannot attach our `x-opencursor-session-token` header
     // and SameSite=Lax cookies don't reliably flow cross-port on localhost, so

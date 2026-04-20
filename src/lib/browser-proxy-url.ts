@@ -1,7 +1,53 @@
 /** Build `/browser/{scheme}/{encodedHostPort}{path}` matching the OpenCursor server proxy. */
 
-export function normalizeBrowserTargetUrl(input: string): URL {
+/**
+ * Recover from an old browser-prompt failure mode where the prompt default
+ * (`http://localhost:3000/`) could get *prepended* to the user's intended URL,
+ * producing values like:
+ *
+ *   `http://localhost:3000/https://google.com/`
+ *   `https://opencursor.techlitnow.com/https://google.com/`
+ *
+ * Those are syntactically valid outer URLs, so `new URL()` happily accepts
+ * them and the browser tab then proxies the WRONG target (our own app with an
+ * embedded `https://...` path), which manifests as a blank / broken page.
+ *
+ * Heuristic: if the raw input contains a *second* absolute URL inside the
+ * pathname (or anywhere after the first character), prefer the inner URL.
+ * This is intentionally conservative: legitimate URLs very rarely embed a
+ * second unencoded `http://` / `https://` literal.
+ */
+function unwrapNestedAbsoluteUrl(input: string): string {
   const trimmed = input.trim();
+  if (!trimmed) return trimmed;
+
+  // Direct string search — catches garbage like `foo https://example.com`.
+  const laterScheme = trimmed.slice(1).match(/https?:\/\//i);
+  if (laterScheme && laterScheme.index != null) {
+    const idx = laterScheme.index + 1;
+    const candidate = trimmed.slice(idx);
+    if (/^https?:\/\//i.test(candidate)) {
+      return candidate;
+    }
+  }
+
+  // Structured path case — `http://host/https://target/...`
+  try {
+    const outer = new URL(trimmed);
+    const pathish = `${outer.pathname}${outer.search}${outer.hash}`;
+    const match = pathish.match(/\/(https?:\/\/.+)$/i);
+    if (match?.[1]) {
+      return match[1];
+    }
+  } catch {
+    // Ignore malformed outer URL; the plain string heuristic above is enough.
+  }
+
+  return trimmed;
+}
+
+export function normalizeBrowserTargetUrl(input: string): URL {
+  const trimmed = unwrapNestedAbsoluteUrl(input);
   if (!trimmed) {
     throw new Error("URL is empty");
   }
