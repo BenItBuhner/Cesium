@@ -232,7 +232,14 @@ function buildGuestScriptSource(): string {
       var scheme = m[1].toLowerCase();
       var host = decodeURIComponent(m[2]);
       var path = m[3] || '/';
-      return scheme + '://' + host + path + u.search + u.hash;
+      // Strip the IDE iframe-auth token so it never bleeds into the user-visible
+      // URL bar or into server-rewritten Location / HTML href attributes. The
+      // proxy itself reads it off the outer request before forwarding.
+      var cleaned = new URLSearchParams(u.search || '');
+      cleaned.delete('__ocs_access');
+      var qs = cleaned.toString();
+      var search = qs ? '?' + qs : '';
+      return scheme + '://' + host + path + search + u.hash;
     } catch (e) {
       return rawHref;
     }
@@ -240,13 +247,31 @@ function buildGuestScriptSource(): string {
 
   function encodeProxyHref(targetHref) {
     var target = new URL(targetHref, decodeProxyTargetHref(location.href));
+    // If the URL is already a proxy URL on our own origin, return it as-is
+    // instead of recursively wrapping it (which produced garbage paths like
+    // \`/browser/http/localhost%3A9100/browser/https/...\` whenever a page
+    // pushed location.href or origin-relative URLs back through pushState).
+    if (target.origin === location.origin &&
+        /^\\/browser\\/(https?)\\//i.test(target.pathname)) {
+      var cleaned = new URLSearchParams(target.search || '');
+      cleaned.delete('__ocs_access');
+      var qs = cleaned.toString();
+      var q = qs ? '?' + qs : '';
+      return target.origin + target.pathname + q + target.hash;
+    }
     var scheme = target.protocol.replace(':', '');
     var host = encodeURIComponent(target.host);
     var path = target.pathname === '' ? '/' : target.pathname;
+    // Drop the iframe-auth query param — it rides on the proxy URL, not the
+    // upstream one; we don't want it encoded into the /browser/... path.
+    var tp = new URLSearchParams(target.search || '');
+    tp.delete('__ocs_access');
+    var tpQs = tp.toString();
+    var targetSearch = tpQs ? '?' + tpQs : '';
     var tail =
-      path === '/' && !target.search && !target.hash
+      path === '/' && !targetSearch && !target.hash
         ? ''
-        : path + target.search + target.hash;
+        : path + targetSearch + target.hash;
     return location.origin + '/browser/' + scheme + '/' + host + (tail === '/' ? '' : tail);
   }
 
