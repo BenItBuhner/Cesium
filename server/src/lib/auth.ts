@@ -21,6 +21,12 @@ import { getStorage } from "../storage/runtime.js";
 export const SESSION_COOKIE_NAME = "opencursor_session";
 export const SESSION_TOKEN_HEADER = "x-opencursor-session-token";
 export const ACCESS_TOKEN_QUERY_PARAM = "access_token";
+/**
+ * Iframe navigation auth param. Distinct from `access_token` so the browser
+ * proxy can strip it before forwarding upstream without clobbering a legitimate
+ * `?access_token=` that may appear in the target URL (OAuth callbacks, etc.).
+ */
+export const IFRAME_ACCESS_TOKEN_QUERY_PARAM = "__ocs_access";
 
 const DEFAULT_SESSION_TTL_MS = 12 * 60 * 60 * 1000;
 const DEFAULT_REMEMBER_SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
@@ -46,6 +52,8 @@ const DEFAULT_WS_AGENT_LIMIT = 60;
 const DEFAULT_WS_AGENT_WINDOW_MS = 60 * 1000;
 const DEFAULT_WS_TERMINAL_LIMIT = 30;
 const DEFAULT_WS_TERMINAL_WINDOW_MS = 60 * 1000;
+const DEFAULT_WS_BROWSER_DEBUG_LIMIT = 30;
+const DEFAULT_WS_BROWSER_DEBUG_WINDOW_MS = 60 * 1000;
 const SESSION_TOUCH_INTERVAL_MS = 30 * 1000;
 
 type RateLimitKind =
@@ -58,7 +66,8 @@ type RateLimitKind =
   | "agent-write"
   | "ws-fs"
   | "ws-agent"
-  | "ws-terminal";
+  | "ws-terminal"
+  | "ws-browser-debug";
 
 type RateLimitPolicy = {
   limit: number;
@@ -293,6 +302,16 @@ function getAuthConfig(): AuthConfig {
           DEFAULT_WS_TERMINAL_WINDOW_MS
         ),
       },
+      "ws-browser-debug": {
+        limit: parseDurationEnv(
+          "OPENCURSOR_WS_BROWSER_DEBUG_RATE_LIMIT",
+          DEFAULT_WS_BROWSER_DEBUG_LIMIT
+        ),
+        windowMs: parseDurationEnv(
+          "OPENCURSOR_WS_BROWSER_DEBUG_RATE_LIMIT_WINDOW_MS",
+          DEFAULT_WS_BROWSER_DEBUG_WINDOW_MS
+        ),
+      },
     },
   };
 }
@@ -369,6 +388,13 @@ function extractTokenFromRequest(
               `http://${getHeaderValue(request, "host") ?? "localhost"}`
             ).toString();
       const url = new URL(requestUrl);
+      // Prefer the iframe-specific param so we pick up the IDE's auth token
+      // even when the target page carries its own `?access_token=…` in the URL.
+      const iframeToken =
+        url.searchParams.get(IFRAME_ACCESS_TOKEN_QUERY_PARAM)?.trim() ?? "";
+      if (iframeToken) {
+        return { token: iframeToken, source: "query" };
+      }
       const token = url.searchParams.get(ACCESS_TOKEN_QUERY_PARAM)?.trim() ?? "";
       if (token) {
         return { token, source: "query" };
@@ -520,6 +546,12 @@ function rateLimitKeyForRequest(request: RequestLike): string {
 
 function classifyProtectedHttpRateLimit(pathname: string, method: string): RateLimitKind {
   if (pathname.startsWith("/browser/")) {
+    return "browser-proxy";
+  }
+  // The Chromium DevTools frontend pulls hundreds of JS / CSS / image assets
+  // on first paint; classify all of `/browser-debug/…` under the browser-proxy
+  // bucket (same semantics: a single user session exploring web content).
+  if (pathname.startsWith("/browser-debug/")) {
     return "browser-proxy";
   }
   if (pathname.startsWith("/api/fs/") && method !== "GET" && method !== "HEAD") {
@@ -960,8 +992,18 @@ export const authMiddleware: MiddlewareHandler = async (c, next) => {
     return;
   }
 
+  // Iframe navigations to `/browser/*` and `/browser-debug/*` cannot attach the
+  // `x-opencursor-session-token` header (only fetch/XHR can). SameSite=Lax
+  // cookies don't reliably flow across ports on localhost for sub-document
+  // navigation either — Chromium partitions some flows that Chrome docs call
+  // "same-site" in theory. So for these two surfaces we accept the session
+  // token from `?access_token=…` (same mechanism WebSocket upgrades use) and
+  // bootstrap the session cookie on success so every subsequent same-origin
+  // sub-resource fetch from inside the iframe authenticates via cookie.
+  const isBrowserSurfacePath =
+    pathname.startsWith("/browser/") || pathname.startsWith("/browser-debug/");
   const auth = await authenticateRequest(c.req.raw, {
-    allowQuery: false,
+    allowQuery: isBrowserSurfacePath,
     rotate: true,
   });
   if (auth.status !== "authenticated") {
@@ -981,6 +1023,8 @@ export const authMiddleware: MiddlewareHandler = async (c, next) => {
   await next();
   if (auth.rotatedToken) {
     applySessionToHonoResponse(c, auth.rotatedToken, auth.session);
+  } else if (isBrowserSurfacePath && auth.source === "query") {
+    applySessionToHonoResponse(c, auth.token, auth.session);
   }
 };
 
@@ -1028,7 +1072,7 @@ export async function logoutRequest(request: RequestLike): Promise<void> {
 
 export async function authenticateUpgradeRequest(
   request: IncomingMessage,
-  kind: "ws-fs" | "ws-agent" | "ws-terminal"
+  kind: "ws-fs" | "ws-agent" | "ws-terminal" | "ws-browser-debug"
 ): Promise<UpgradeAuthResult> {
   if (!isAuthEnabled()) {
     return { ok: true };

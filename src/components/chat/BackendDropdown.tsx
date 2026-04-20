@@ -9,20 +9,11 @@ import {
   useState,
 } from "react";
 import { createPortal } from "react-dom";
-import { Bot, Check, ChevronDown, Sparkles, type LucideProps } from "lucide-react";
+import { Bot, Check, ChevronDown } from "lucide-react";
 import { useClickOutside } from "@/hooks/useClickOutside";
 import { usePopover } from "@/hooks/usePopover";
 import type { AgentBackendId, AgentBackendInfo } from "@/lib/agent-types";
-
-function renderBackendIcon(id: AgentBackendId, props: LucideProps) {
-  if (id === "cursor-acp" || id === "codex-adapter") {
-    return <Sparkles {...props} />;
-  }
-  if (id === "claude-adapter") {
-    return <Bot {...props} />;
-  }
-  return <Bot {...props} />;
-}
+import { AgentBackendIcon } from "./AgentBackendIcon";
 
 interface BackendDropdownProps {
   backendId: AgentBackendId;
@@ -99,10 +90,9 @@ export function BackendDropdown({
       >
         <span className="inline-flex items-center rounded-[var(--radius-pill)] bg-[var(--bg-panel)] py-[1px] pl-[8px] pr-[7px] font-sans text-[13px] font-normal">
           {current
-            ? renderBackendIcon(current.id, {
-                className: "size-[13px] shrink-0",
-                strokeWidth: 1.5,
-              })
+            ? (
+                <AgentBackendIcon backendId={current.id} className="size-[13px] shrink-0" />
+              )
             : (
                 <Bot className="size-[13px] shrink-0" strokeWidth={1.5} />
               )}
@@ -125,10 +115,9 @@ export function BackendDropdown({
         }`}
       >
         {current
-          ? renderBackendIcon(current.id, {
-              className: "size-[13px] shrink-0",
-              strokeWidth: 1.5,
-            })
+          ? (
+              <AgentBackendIcon backendId={current.id} className="size-[13px] shrink-0" />
+            )
           : (
               <Bot className="size-[13px] shrink-0" strokeWidth={1.5} />
             )}
@@ -196,15 +185,12 @@ export function BackendDropdown({
                     }}
                     className="flex w-full items-center gap-[8px] px-[12px] py-[5px] text-left transition-colors hover:bg-white/[0.06] disabled:cursor-not-allowed disabled:opacity-50"
                   >
-                    {renderBackendIcon(option.id, {
-                      className: "size-[15px] shrink-0",
-                      strokeWidth: 1.5,
-                      style: {
-                        color: active
-                          ? "var(--text-primary)"
-                          : "var(--text-secondary)",
-                      },
-                    })}
+                    <AgentBackendIcon
+                      backendId={option.id}
+                      className="size-[15px] shrink-0"
+                      strokeWidth={1.5}
+                      emphasized={active}
+                    />
                     <span
                       className="min-w-0 flex-1 truncate font-sans text-[13px] font-normal"
                       style={{

@@ -108,7 +108,7 @@ export function PermissionRequestCard({
               <div
                 ref={scrollRef}
                 onScroll={updateFade}
-                className="hide-scrollbar-x overflow-x-auto overflow-y-hidden whitespace-nowrap py-[2px] font-mono text-[12px] leading-tight text-[var(--text-secondary)]"
+                className="hide-scrollbar-x overflow-x-auto overflow-y-hidden whitespace-nowrap py-[2px] font-mono text-[12px] leading-tight text-[var(--text-primary)] opacity-90"
               >
                 {detail}
               </div>

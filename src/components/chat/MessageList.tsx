@@ -389,54 +389,56 @@ export function MessageList({
       : "pt-[10px]";
 
   /**
-   * With a centered content column: no extra scroll inset on phone-width viewports (avoids double
-   * gutter with full-bleed `max-w`); from 481px up, restore the legacy `10px` scroll inset (matches
-   * agent column cutoff, not `sm`, so narrow desktop windows keep the same width/inset as before).
+   * Horizontal scroll inset follows the **pane** width (`@container`), not the viewport.
+   * Uses **481px** so normal split/center panes keep the legacy 10px strip; `AGENT_CENTER_CONTENT_CLASS`
+   * separately drops the centered `max-w` gutter only when the pane is **≤640px** so you don’t stack both.
    */
   const scrollPadX =
     contentClassName && contentClassName.length > 0
-      ? "pl-[max(0px,env(safe-area-inset-left,0px))] pr-[max(0px,env(safe-area-inset-right,0px))] min-[481px]:pl-[max(10px,env(safe-area-inset-left,0px))] min-[481px]:pr-[max(10px,env(safe-area-inset-right,0px))]"
-      : "px-[10px]";
+      ? "pl-[max(0px,env(safe-area-inset-left,0px))] pr-[max(0px,env(safe-area-inset-right,0px))] @min-[481px]:pl-[max(10px,env(safe-area-inset-left,0px))] @min-[481px]:pr-[max(10px,env(safe-area-inset-right,0px))]"
+      : "pl-[max(0px,env(safe-area-inset-left,0px))] pr-[max(0px,env(safe-area-inset-right,0px))] @min-[481px]:px-[10px]";
 
   return (
-    <div
-      ref={scrollRootRef}
-      data-chat-scroll-root
-      className={`absolute inset-0 overflow-y-auto overflow-x-hidden overscroll-y-contain ${scrollPadX} [-webkit-overflow-scrolling:touch] hide-scrollbar-y ${
-        bottomDockVisible ? "pb-[clamp(220px,38vh,340px)]" : "pb-[14px]"
-      }`}
-      onScroll={(event) => {
-        const root = event.currentTarget;
-        const scrollTop = root.scrollTop;
-        stickToBottomRef.current = isNearBottom(root);
-        pendingScrollTopRef.current = Math.round(scrollTop);
-        scrollSnapshotRef.current = { sh: root.scrollHeight, st: scrollTop };
-        schedulePersistedScrollTop();
+    <div className="@container relative h-full min-w-0 w-full">
+      <div
+        ref={scrollRootRef}
+        data-chat-scroll-root
+        className={`absolute inset-0 overflow-y-auto overflow-x-hidden overscroll-y-contain ${scrollPadX} [-webkit-overflow-scrolling:touch] hide-scrollbar-y ${
+          bottomDockVisible ? "pb-[clamp(160px,24vh,240px)]" : "pb-[14px]"
+        }`}
+        onScroll={(event) => {
+          const root = event.currentTarget;
+          const scrollTop = root.scrollTop;
+          stickToBottomRef.current = isNearBottom(root);
+          pendingScrollTopRef.current = Math.round(scrollTop);
+          scrollSnapshotRef.current = { sh: root.scrollHeight, st: scrollTop };
+          schedulePersistedScrollTop();
 
-        const prefetchPx = olderPrefetchScrollTopPx(root);
-        const releasePx = olderGateReleaseScrollTopPx(prefetchPx);
-        if (
-          onRequestOlderHistory &&
-          hasOlderHistory &&
-          !loadingOlderHistory &&
-          scrollTop < prefetchPx
-        ) {
-          if (!olderLoadGateRef.current) {
-            olderLoadGateRef.current = true;
-            onRequestOlderHistory();
+          const prefetchPx = olderPrefetchScrollTopPx(root);
+          const releasePx = olderGateReleaseScrollTopPx(prefetchPx);
+          if (
+            onRequestOlderHistory &&
+            hasOlderHistory &&
+            !loadingOlderHistory &&
+            scrollTop < prefetchPx
+          ) {
+            if (!olderLoadGateRef.current) {
+              olderLoadGateRef.current = true;
+              onRequestOlderHistory();
+            }
+          } else if (scrollTop > releasePx) {
+            olderLoadGateRef.current = false;
           }
-        } else if (scrollTop > releasePx) {
-          olderLoadGateRef.current = false;
-        }
-      }}
-    >
-      <div className={innerClass}>
-        {loadingOlderHistory ? (
-          <div className="mb-[10px] rounded-[var(--radius-tab)] bg-[var(--bg-card)] px-[10px] py-[6px] font-sans text-[12px] text-[var(--text-secondary)]">
-            Loading older messages…
-          </div>
-        ) : null}
-        {thread}
+        }}
+      >
+        <div className={innerClass}>
+          {loadingOlderHistory ? (
+            <div className="mb-[10px] rounded-[var(--radius-tab)] bg-[var(--bg-card)] px-[10px] py-[6px] font-sans text-[12px] text-[var(--text-secondary)]">
+              Loading older messages…
+            </div>
+          ) : null}
+          {thread}
+        </div>
       </div>
     </div>
   );

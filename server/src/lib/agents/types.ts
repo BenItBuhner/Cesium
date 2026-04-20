@@ -10,6 +10,7 @@ export type AgentConversationMode =
 export type AgentBackendId =
   | "cursor-acp"
   | "opencode-acp"
+  | "gemini-acp"
   | "codex-adapter"
   | "claude-adapter";
 
@@ -144,6 +145,8 @@ export type AgentStoredEvent =
       kind: "user_message";
       messageId: string;
       content: string;
+      /** Shorter label for chat bubbles; full `content` is still sent to the model. */
+      displayContent?: string;
       attachments?: Array<{ mimeType: string; data: string; name?: string }>;
       raw?: unknown;
     }

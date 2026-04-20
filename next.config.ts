@@ -2,9 +2,16 @@ import type { NextConfig } from "next";
 import { fileURLToPath } from "node:url";
 import withPWAInit from "@ducanh2912/next-pwa";
 
-/** Set DISABLE_NEXT_PWA=1 when running `next start` locally to skip the service worker (avoids stale chunk / ChunkLoadError after rebuilds). */
-const pwaDisabled =
-  process.env.NODE_ENV !== "production" || process.env.DISABLE_NEXT_PWA === "1";
+/**
+ * Disable the PWA/service worker by default. It has repeatedly served stale HTML
+ * across local rebuilds, which leaves the browser loading chunk hashes that no
+ * longer exist and the app gets stuck on the SSR auth splash forever.
+ *
+ * To opt back in intentionally, build/run with:
+ *   ENABLE_NEXT_PWA=1
+ */
+const pwaEnabled = process.env.ENABLE_NEXT_PWA === "1";
+const pwaDisabled = process.env.NODE_ENV !== "production" || !pwaEnabled;
 
 const withPWA = withPWAInit({
   dest: "public",
@@ -51,6 +58,9 @@ const nextConfig: NextConfig = {
   reactCompiler: true,
   outputFileTracingRoot: workspaceRoot,
   allowedDevOrigins,
+  env: {
+    NEXT_PUBLIC_ENABLE_NEXT_PWA: pwaEnabled ? "1" : "0",
+  },
   /** Dev: stop the browser from keeping old `/_next/static` after HMR / restart (ChunkLoadError on wrong content-hash). */
   async headers() {
     if (process.env.NODE_ENV !== "production") {

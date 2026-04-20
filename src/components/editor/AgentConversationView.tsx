@@ -6,7 +6,10 @@ import { ChatComposer } from "@/components/chat/ChatComposer";
 import { ComposerQueueDock } from "@/components/chat/ComposerQueueDock";
 import { AskQuestionCard } from "@/components/chat/AskQuestionCard";
 import { MessageList } from "@/components/chat/MessageList";
-import { useOpenInEditor } from "@/components/editor/OpenInEditorContext";
+import {
+  useOpenInEditor,
+  useRegisterDesignCaptureComposer,
+} from "@/components/editor/OpenInEditorContext";
 import { RecentChatsModal } from "@/components/ide/RecentChatsModal";
 import { projectAgentEventsToChatMessages } from "@/lib/agent-chat";
 import { askStepsFromMessage } from "@/lib/ask-question-utils";
@@ -136,6 +139,7 @@ export function AgentConversationView({
     [dockedAsk]
   );
   const composerDraftId = conversationId;
+  useRegisterDesignCaptureComposer(composerDraftId, 8);
   const composerDraftTitle =
     conversation?.title && conversation.title !== "New chat"
       ? `${conversation.title} prompt`
@@ -186,6 +190,8 @@ export function AgentConversationView({
   );
   const isEmptyThread = threadMessages.length === 0;
   const composerDraftText = composerDrafts[composerDraftId]?.content ?? "";
+  const composerDraftAttachments = composerDrafts[composerDraftId]?.attachments;
+  const composerDraftCaptures = composerDrafts[composerDraftId]?.captures;
   const composerSelection = composerSelections[composerDraftId] ?? {
     start: composerDraftText.length,
     end: composerDraftText.length,
@@ -307,6 +313,22 @@ export function AgentConversationView({
         }}
         busy={composerState.busy}
         configLocked={false}
+        draftAttachments={composerDraftAttachments}
+        onDraftAttachmentsChange={(next) =>
+          upsertComposerDraft(composerDraftId, {
+            title: composerDraftTitle,
+            content: composerDraftText,
+            attachments: next,
+          })
+        }
+        draftCaptures={composerDraftCaptures}
+        onDraftCapturesChange={(next) =>
+          upsertComposerDraft(composerDraftId, {
+            title: composerDraftTitle,
+            content: composerDraftText,
+            captures: next,
+          })
+        }
         onSubmit={(text, attachments?: ImageAttachment[]) => {
           void promptConversation(conversationId, text, attachments).then((ok) => {
             if (!ok) {
@@ -335,12 +357,13 @@ export function AgentConversationView({
         }}
         onCancel={() => cancelConversation(conversationId)}
         layout={isEmptyThread ? "empty-top" : "docked-bottom"}
+        shellMxClass=""
       />
     </div>
   );
 
   return (
-    <div className="flex h-full min-h-0 w-full flex-col overflow-hidden bg-[var(--bg-main)]">
+    <div className="flex h-full min-h-0 w-full flex-col overflow-hidden bg-[var(--bg-main)] @container">
       {isEmptyThread ? (
         <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
           {!composerHiddenForExpanded ? (

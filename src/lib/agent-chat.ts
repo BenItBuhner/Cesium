@@ -15,6 +15,7 @@ import type {
   WorkedSessionEntry,
 } from "@/lib/types";
 import { DEFAULT_MODE_OPTIONS, formatModeLabel, resolveCanonicalModeId } from "@/lib/chat-modes";
+import { splitContentByDesignBlocks } from "@/lib/design-capture";
 import {
   findConversationModeConfigOptionForUi,
   findConversationModelConfigOptionForUi,
@@ -39,6 +40,8 @@ function modelProviderForBackend(backendId: AgentBackendId): ModelInfo["provider
       return "cursor";
     case "opencode-acp":
       return "opencode";
+    case "gemini-acp":
+      return "google";
     case "codex-adapter":
       return "codex";
     case "claude-adapter":
@@ -501,7 +504,15 @@ function inferUserSegmentKind(token: string): UserMessageSegment["type"] | null 
   return null;
 }
 
-function parseUserMessageSegments(content: string): UserMessageSegment[] | undefined {
+/**
+ * Build the per-slice @-chip segments for a plain text run. Split out so
+ * {@link parseUserMessageSegments} can apply it to each non-design slice
+ * returned by {@link splitContentByDesignBlocks}.
+ */
+function parseAtChipSegments(content: string): {
+  segments: UserMessageSegment[];
+  sawChip: boolean;
+} {
   const pattern = /@[^\s]+/g;
   const segments: UserMessageSegment[] = [];
   let lastIndex = 0;
@@ -547,7 +558,35 @@ function parseUserMessageSegments(content: string): UserMessageSegment[] | undef
     });
   }
 
-  return sawChip ? segments.filter((segment) => segment.text.length > 0) : undefined;
+  return { segments, sawChip };
+}
+
+function parseUserMessageSegments(content: string): UserMessageSegment[] | undefined {
+  // Design-capture XML blocks take precedence — split the message on them
+  // first so an element snippet like `<design-capture>…<code>@foo</code>…`
+  // doesn't confuse the @-chip pass.
+  const designSplit = splitContentByDesignBlocks(content);
+  if (designSplit) {
+    const out: UserMessageSegment[] = [];
+    for (const seg of designSplit) {
+      if (seg.type !== "text") {
+        out.push(seg);
+        continue;
+      }
+      const atChips = parseAtChipSegments(seg.text);
+      if (atChips.sawChip) {
+        out.push(...atChips.segments);
+      } else if (seg.text.length > 0) {
+        out.push({ type: "text", text: seg.text });
+      }
+    }
+    return out.filter((s) => s.type !== "text" || s.text.length > 0);
+  }
+
+  const atChips = parseAtChipSegments(content);
+  return atChips.sawChip
+    ? atChips.segments.filter((segment) => segment.text.length > 0)
+    : undefined;
 }
 
 function toWorkedToolStatus(
@@ -2169,11 +2208,12 @@ export function projectAgentEventsToChatMessages(
       case "user_message": {
         const prev = currentTurn;
         currentTurn = createTurn(event.messageId);
+        const bubbleText = event.displayContent ?? event.content;
         currentTurn.userMessage = {
           id: event.messageId,
           type: "user",
-          content: event.content,
-          segments: parseUserMessageSegments(event.content),
+          content: bubbleText,
+          segments: parseUserMessageSegments(bubbleText),
           showReplyCue: true,
           attachments: event.attachments,
         };

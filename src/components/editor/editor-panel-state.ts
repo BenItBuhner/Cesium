@@ -35,6 +35,30 @@ function newIdSegment(): string {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 11)}`;
 }
 
+const DEFAULT_TAB_GROUP_TITLE = "Tab Group";
+
+/**
+ * "Tab Group" by default; when that name is already in use in this pane, append
+ * the lowest free integer suffix ("Tab Group 2", "Tab Group 3", …). Any numeric
+ * suffix the user happens to already have typed is respected — we only reserve
+ * slots that look like `Tab Group`, `Tab Group 2`, `Tab Group 3`, ….
+ */
+function nextDefaultTabGroupTitle(
+  groups: Record<string, EditorTabGroupState>
+): string {
+  const existing = new Set(Object.values(groups).map((g) => g.title));
+  if (!existing.has(DEFAULT_TAB_GROUP_TITLE)) {
+    return DEFAULT_TAB_GROUP_TITLE;
+  }
+  for (let n = 2; n < 10_000; n += 1) {
+    const candidate = `${DEFAULT_TAB_GROUP_TITLE} ${n}`;
+    if (!existing.has(candidate)) {
+      return candidate;
+    }
+  }
+  return `${DEFAULT_TAB_GROUP_TITLE} ${Date.now()}`;
+}
+
 export type EditorGroup = "left" | "right";
 
 export interface EditorPanelState {
@@ -81,6 +105,14 @@ export type EditorPanelAction =
   | { type: "OPEN_BROWSER_TAB"; url: string; name?: string }
   | { type: "UPDATE_BROWSER_TAB_URL"; tabId: string; targetUrl: string }
   | { type: "UPDATE_BROWSER_TAB_FAVICON"; tabId: string; faviconUrl: string | null }
+  | {
+      type: "UPDATE_BROWSER_TAB_META";
+      tabId: string;
+      designMode?: boolean;
+      devtoolsOpen?: boolean;
+      debugSessionId?: string | null;
+      devtoolsPath?: string | null;
+    }
   | { type: "TOGGLE_FILE_PREVIEW" }
   | {
       type: "LOAD_FILE_CONTENT";
@@ -786,7 +818,13 @@ export function editorPanelReducer(
         language: "html",
         icon: "browser",
         content: "",
-        browser: { targetUrl },
+        browser: {
+          targetUrl,
+          designMode: false,
+          devtoolsOpen: false,
+          debugSessionId: null,
+          devtoolsPath: null,
+        },
       };
 
       if (!state.split || state.focusedGroup === "left") {
@@ -808,12 +846,22 @@ export function editorPanelReducer(
 
     case "UPDATE_BROWSER_TAB_URL": {
       const nextUrl = normalizeBrowserTargetUrl(action.targetUrl).href;
+      // Keep any attached DevTools session alive across URL changes — the
+      // BrowserTab component drives the Chromium page via CDP (`page.goto`)
+      // and the DevTools frontend stays attached to the same target, so
+      // wiping `devtoolsOpen/debugSessionId/devtoolsPath` here would tear
+      // down the console on every address-bar navigation. Fresh tabs start
+      // clean via `OPEN_BROWSER_TAB` instead.
       const patch = (tabs: EditorTab[]) =>
         tabs.map((t) =>
           t.id === action.tabId && t.browser
             ? {
                 ...t,
-                browser: { targetUrl: nextUrl, faviconUrl: undefined },
+                browser: {
+                  ...t.browser,
+                  targetUrl: nextUrl,
+                  faviconUrl: undefined,
+                },
                 name: tabTitleFromUrl(nextUrl),
               }
             : t
@@ -838,6 +886,26 @@ export function editorPanelReducer(
               }
             : t
         );
+      return {
+        ...state,
+        leftTabs: patch(state.leftTabs),
+        rightTabs: patch(state.rightTabs),
+      };
+    }
+
+    case "UPDATE_BROWSER_TAB_META": {
+      const { tabId, designMode, devtoolsOpen, debugSessionId, devtoolsPath } =
+        action;
+      const patch = (tabs: EditorTab[]) =>
+        tabs.map((t) => {
+          if (t.id !== tabId || !t.browser) return t;
+          const nextBrowser = { ...t.browser };
+          if (designMode !== undefined) nextBrowser.designMode = designMode;
+          if (devtoolsOpen !== undefined) nextBrowser.devtoolsOpen = devtoolsOpen;
+          if (debugSessionId !== undefined) nextBrowser.debugSessionId = debugSessionId;
+          if (devtoolsPath !== undefined) nextBrowser.devtoolsPath = devtoolsPath;
+          return { ...t, browser: nextBrowser };
+        });
       return {
         ...state,
         leftTabs: patch(state.leftTabs),
@@ -1062,16 +1130,16 @@ export function editorPanelReducer(
       const { pane, tabId } = action;
       const tabsKey = pane === "left" ? "leftTabs" : "rightTabs";
       if (!state[tabsKey].some((t) => t.id === tabId)) return state;
-      const tab = state[tabsKey].find((t) => t.id === tabId)!;
       let next = removeTabIdFromPaneStrip(state, pane, tabId);
       const groupsKey = pane === "left" ? "leftTabGroups" : "rightTabGroups";
       const stripKey = pane === "left" ? "leftStripItems" : "rightStripItems";
       const gid = `tg-${newIdSegment()}`;
+      const title = nextDefaultTabGroupTitle(next[groupsKey]);
       const groups = {
         ...next[groupsKey],
         [gid]: {
           id: gid,
-          title: "New group",
+          title,
           color: "blue",
           collapsed: false,
           tabIds: [tabId],

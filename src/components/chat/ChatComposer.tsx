@@ -13,7 +13,7 @@ import {
   type PointerEvent as ReactPointerEvent,
   type ReactElement,
 } from "react";
-import { ArrowUp, Image as ImageIcon, LoaderCircle, Maximize2, Mic, Minimize2, Square } from "lucide-react";
+import { ArrowUp, Image as ImageIcon, LayoutTemplate, LoaderCircle, Maximize2, Mic, Minimize2, Square } from "lucide-react";
 import { ImageCarousel } from "./ImageCarousel";
 import type { ImageAttachment, ImageAttachmentState } from "@/lib/types";
 import { useHardwareInput } from "@/components/input/HardwareInputProvider";
@@ -48,12 +48,15 @@ import {
   type ChatComposerShortcutAction,
 } from "@/lib/chat-ui-shortcut-events";
 import {
+  composerEditorDomInSync,
   getCaretClientRect,
   getComposerPlainText,
   getCaretOffset,
   getPlainTextRangeOffsets,
   parseTriggerToken,
+  reconcileComposerEditorDom,
   replaceTextRange,
+  type ComposerPillDescriptor,
 } from "./composer-editor-utils";
 import {
   DEFAULT_MODE_OPTIONS,
@@ -66,6 +69,12 @@ import type { AgentBackendId, AgentBackendInfo, AgentConfigOption } from "@/lib/
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { transcribeAudio, uploadAttachments } from "@/lib/server-api";
 import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
+import {
+  buildDesignCaptureBlock,
+  COMPOSER_CAPTURE_TOKEN_REGEX,
+  findComposerCaptureTokens,
+  type DesignCapture,
+} from "@/lib/design-capture";
 
 const sendButtonBgClass: Record<KnownEditorMode, string> = {
   agent: "bg-[var(--accent-dark)]",
@@ -236,8 +245,9 @@ interface ChatComposerProps {
   variant?: "docked" | "expanded";
   /**
    * When set, replaces the default horizontal shell margin (non-expanded only).
-   * Default is `mx-0` below 481px and `mx-[10px]` from 481px up; use `""` for flush to the parent.
+   * Default: `mx-0` until the pane `@container` is ≥481px wide, then `mx-[10px]`; use `""` for flush.
    */
+  /** Horizontal margin on the composer card. Use `""` when a parent already applies the chat column width (e.g. `AGENT_CENTER_CONTENT_CLASS`). */
   shellMxClass?: string;
   /**
    * Agent shell only: maximize/minimize toggles the docked input max-height in place
@@ -246,6 +256,31 @@ interface ChatComposerProps {
   agentShellDockHeightExpand?: boolean;
   /** Callback when user requests handoff to a different agent */
   onRequestHandoff?: (targetBackendId: AgentBackendId) => void;
+  /**
+   * When the OpenInEditor draft gains new image attachments (e.g. browser design mode),
+   * entries beyond the last consumed index are merged into the local attachment strip.
+   */
+  draftAttachments?: ImageAttachment[];
+  /**
+   * Called when the user removes an attachment that originated from the persisted
+   * draft (localId prefix `draft:`). Passes the filtered list so the host can
+   * upsert it back into the composer draft and prevent the image from
+   * re-hydrating on the next mount/reload.
+   */
+  onDraftAttachmentsChange?: (next: ImageAttachment[] | undefined) => void;
+  /**
+   * Metadata for each `⟦design:<id>⟧` pill that appears in `value`. The
+   * composer renders pills based on this map, and expands each token into a
+   * full `<design-capture>` XML block on submit. Tokens without a matching
+   * entry render as a generic "missing capture" pill (capture lost to
+   * storage pruning, stale undo, etc.) so the user can see and delete them.
+   */
+  draftCaptures?: Record<string, DesignCapture>;
+  /**
+   * Called when the user deletes a pill so the host can drop the corresponding
+   * metadata from the persisted draft instead of keeping an orphaned record.
+   */
+  onDraftCapturesChange?: (next: Record<string, DesignCapture> | undefined) => void;
 }
 
 function resolvePointerSelection(
@@ -270,15 +305,20 @@ function resolvePointerSelection(
   return { start: next, end: next };
 }
 
-function renderComposerText(
-  value: string,
-  selection: TextSelection,
+/**
+ * Render one plain-text slice of the composer value, char-by-char so the
+ * caret can land between any two characters and selection ranges map cleanly.
+ * Separated from {@link renderComposerText} so design pills can be interleaved
+ * as single units without disturbing the per-char selection math.
+ */
+function renderPlainSlice(
+  slice: string,
+  startOffset: number,
+  safe: TextSelection,
   active: boolean,
-  caretRef: { current: HTMLSpanElement | null }
+  caretRef: { current: HTMLSpanElement | null },
+  nodes: ReactElement[]
 ) {
-  const safe = clampSelection(value, selection);
-  const nodes: ReactElement[] = [];
-
   const pushCaret = (at: number) => {
     if (!active || safe.start !== safe.end || safe.start !== at) {
       return;
@@ -295,14 +335,9 @@ function renderComposerText(
     );
   };
 
-  if (value.length === 0) {
-    pushCaret(0);
-    return nodes;
-  }
+  const parts = slice.match(/\S+|\s+/g) ?? [];
+  let index = startOffset;
 
-  const parts = value.match(/\S+|\s+/g) ?? [];
-
-  let index = 0;
   for (let p = 0; p < parts.length; p += 1) {
     const part = parts[p]!;
     const isWhitespaceOnly = /^\s+$/.test(part);
@@ -367,8 +402,152 @@ function renderComposerText(
     }
   }
 
-  pushCaret(index);
+  return index;
+}
 
+function renderDesignPill(
+  tokenStart: number,
+  tokenEnd: number,
+  capture: DesignCapture | undefined,
+  safe: TextSelection,
+  active: boolean,
+  caretRef: { current: HTMLSpanElement | null },
+  nodes: ReactElement[]
+): void {
+  const pushCaret = (at: number) => {
+    if (!active || safe.start !== safe.end || safe.start !== at) {
+      return;
+    }
+    nodes.push(
+      <span
+        key={`caret-${at}`}
+        ref={(node) => {
+          caretRef.current = node;
+        }}
+        className="inline-block h-[1.1em] w-px align-middle bg-[var(--text-primary)]"
+        data-faux-caret
+      />
+    );
+  };
+
+  pushCaret(tokenStart);
+
+  // The pill is a single selection unit: its offset-start maps to the first
+  // char of the `⟦`, offset-end maps to one past the trailing `⟧`. That lets
+  // Shift+Arrow / click selection treat the whole token as one glyph while
+  // still allowing caret placement on either side.
+  const selected = tokenStart >= safe.start && tokenEnd <= safe.end && safe.end > safe.start;
+  const label = capture?.label ?? "element";
+  const title = capture?.snippet
+    ? `${capture.label}\n\n${capture.snippet.slice(0, 600)}${capture.snippet.length > 600 ? "…" : ""}`
+    : capture?.label;
+  nodes.push(
+    <span
+      key={`design-${tokenStart}`}
+      data-faux-offset-start={tokenStart}
+      data-faux-offset-end={tokenEnd}
+      className={`mx-[2px] inline-flex max-w-full items-center gap-[4px] rounded-[6px] border border-[var(--border-subtle)] bg-[var(--file-tag-bg)] px-[7px] py-[1px] align-baseline font-sans text-[12.5px] font-medium whitespace-nowrap ${
+        selected ? "ring-2 ring-[var(--accent)]" : ""
+      } ${capture ? "text-[var(--file-tag-text)]" : "text-[var(--text-secondary)] italic"}`}
+      title={title}
+      data-design-capture-id={capture?.id ?? ""}
+    >
+      <LayoutTemplate
+        className="size-[12px] shrink-0 text-[var(--file-tag-icon)]"
+        strokeWidth={1.75}
+        aria-hidden
+      />
+      <span className="max-w-[240px] truncate">
+        {capture ? label : "missing capture"}
+      </span>
+    </span>
+  );
+}
+
+function renderComposerText(
+  value: string,
+  selection: TextSelection,
+  active: boolean,
+  caretRef: { current: HTMLSpanElement | null },
+  captures: Record<string, DesignCapture> | undefined
+) {
+  const safe = clampSelection(value, selection);
+  const nodes: ReactElement[] = [];
+
+  if (value.length === 0) {
+    if (active && safe.start === safe.end && safe.start === 0) {
+      nodes.push(
+        <span
+          key="caret-0"
+          ref={(node) => {
+            caretRef.current = node;
+          }}
+          className="inline-block h-[1.1em] w-px align-middle bg-[var(--text-primary)]"
+          data-faux-caret
+        />
+      );
+    }
+    return nodes;
+  }
+
+  const tokens = findComposerCaptureTokens(value);
+
+  if (tokens.length === 0) {
+    renderPlainSlice(value, 0, safe, active, caretRef, nodes);
+    // Trailing caret at end of value (if caret is there).
+    if (active && safe.start === safe.end && safe.start === value.length) {
+      nodes.push(
+        <span
+          key={`caret-${value.length}`}
+          ref={(node) => {
+            caretRef.current = node;
+          }}
+          className="inline-block h-[1.1em] w-px align-middle bg-[var(--text-primary)]"
+          data-faux-caret
+        />
+      );
+    }
+    return nodes;
+  }
+
+  let cursor = 0;
+  for (const tk of tokens) {
+    if (tk.start > cursor) {
+      renderPlainSlice(
+        value.slice(cursor, tk.start),
+        cursor,
+        safe,
+        active,
+        caretRef,
+        nodes
+      );
+    }
+    renderDesignPill(
+      tk.start,
+      tk.end,
+      captures?.[tk.captureId],
+      safe,
+      active,
+      caretRef,
+      nodes
+    );
+    cursor = tk.end;
+  }
+  if (cursor < value.length) {
+    renderPlainSlice(value.slice(cursor), cursor, safe, active, caretRef, nodes);
+  }
+  if (active && safe.start === safe.end && safe.start === value.length) {
+    nodes.push(
+      <span
+        key={`caret-${value.length}`}
+        ref={(node) => {
+          caretRef.current = node;
+        }}
+        className="inline-block h-[1.1em] w-px align-middle bg-[var(--text-primary)]"
+        data-faux-caret
+      />
+    );
+  }
   return nodes;
 }
 
@@ -399,6 +578,10 @@ export function ChatComposer({
   shellMxClass,
   agentShellDockHeightExpand = false,
   onRequestHandoff,
+  draftAttachments,
+  onDraftAttachmentsChange,
+  draftCaptures,
+  onDraftCapturesChange,
 }: ChatComposerProps) {
   const { fileTree } = useWorkspace();
   const { settings } = useGlobalSettings();
@@ -432,6 +615,7 @@ export function ChatComposer({
     "idle" | "recording" | "transcribing"
   >("idle");
   const [attachedImages, setAttachedImages] = useState<ImageAttachmentState[]>([]);
+  const consumedDraftAttachmentKeysRef = useRef<Set<string>>(new Set());
   const fileInputRef = useRef<HTMLInputElement>(null);
   const composerRootRef = useRef<HTMLDivElement>(null);
   const isDraggingRef = useRef(false);
@@ -654,10 +838,104 @@ export function ChatComposer({
     [addImagesFromFileList]
   );
 
-  const handleRemoveImage = useCallback((localId: string) => {
-    setAttachedImages((prev) => prev.filter((img) => img.localId !== localId));
-    imageFilesRef.current.delete(localId);
+  /**
+   * Stable key derived purely from attachment content so the key for the same
+   * image doesn't change when sibling entries are added/removed (dropping the
+   * list index keeps existing keys intact across mutations).
+   */
+  const draftAttachmentKey = useCallback((att: ImageAttachment): string => {
+    return `${att.name ?? "image"}|${att.mimeType}|${att.data.length}|${att.data.slice(0, 64)}`;
   }, []);
+
+  useEffect(() => {
+    const list = draftAttachments ?? [];
+    const keys = list.map((att) => draftAttachmentKey(att));
+
+    // Prune keys that are no longer present so future truly-new attachments can hydrate.
+    const nextKeySet = new Set(keys);
+    for (const key of [...consumedDraftAttachmentKeysRef.current]) {
+      if (!nextKeySet.has(key)) {
+        consumedDraftAttachmentKeysRef.current.delete(key);
+      }
+    }
+
+    setAttachedImages((prev) => {
+      const existingLocalIds = new Set(prev.map((img) => img.localId));
+      const additions: ImageAttachmentState[] = [];
+
+      for (let i = 0; i < list.length; i += 1) {
+        const att = list[i]!;
+        const key = keys[i]!;
+        const localId = `draft:${key}`;
+        if (consumedDraftAttachmentKeysRef.current.has(key) || existingLocalIds.has(localId)) {
+          continue;
+        }
+        consumedDraftAttachmentKeysRef.current.add(key);
+        additions.push({
+          localId,
+          mimeType: att.mimeType,
+          data: att.data,
+          name: att.name,
+          uploadState: "uploaded",
+          showSlowSpinner: false,
+        });
+      }
+
+      return additions.length > 0 ? [...prev, ...additions] : prev;
+    });
+  }, [draftAttachments, draftAttachmentKey]);
+
+  /**
+   * Drop capture metadata whose `⟦design:<id>⟧` token is no longer present in
+   * the composer text (user backspaced over the unicode brackets and deleted
+   * the pill). Keeps persisted drafts from accumulating orphaned entries.
+   */
+  useEffect(() => {
+    if (!draftCaptures || !onDraftCapturesChange) return;
+    const liveIds = new Set(findComposerCaptureTokens(value).map((t) => t.captureId));
+    const kept: Record<string, DesignCapture> = {};
+    let changed = false;
+    for (const [id, cap] of Object.entries(draftCaptures)) {
+      if (liveIds.has(id)) {
+        kept[id] = cap;
+      } else {
+        changed = true;
+      }
+    }
+    if (changed) {
+      onDraftCapturesChange(Object.keys(kept).length > 0 ? kept : undefined);
+    }
+  }, [draftCaptures, onDraftCapturesChange, value]);
+
+  const handleRemoveImage = useCallback(
+    (localId: string) => {
+      setAttachedImages((prev) => prev.filter((img) => img.localId !== localId));
+      imageFilesRef.current.delete(localId);
+
+      // If this image was hydrated from the persisted composer draft (prefix
+      // `draft:`), also strip it from the draft so the next mount/reload
+      // doesn't resurrect the deleted image.
+      if (!localId.startsWith("draft:") || !onDraftAttachmentsChange) {
+        return;
+      }
+      const removedKey = localId.slice("draft:".length);
+      const current = draftAttachments ?? [];
+      const next = current.filter((att) => draftAttachmentKey(att) !== removedKey);
+      if (next.length === current.length) {
+        return;
+      }
+      // Keep the key in `consumedDraftAttachmentKeysRef` so the hydration
+      // effect (which runs right after `onDraftAttachmentsChange` updates the
+      // draft) can't race us back to re-importing it.
+      consumedDraftAttachmentKeysRef.current.add(removedKey);
+      // Always pass the concrete list (possibly empty) — `undefined` is
+      // interpreted as "no change" by the draft upsert reducer, which would
+      // leave the deleted image in the persisted draft and resurrect it on
+      // reload.
+      onDraftAttachmentsChange(next);
+    },
+    [draftAttachments, draftAttachmentKey, onDraftAttachmentsChange]
+  );
 
   const handleRetryImage = useCallback(
     (localId: string) => {
@@ -1139,12 +1417,35 @@ export function ChatComposer({
     setComposerSelection(selectionRef.current);
   }, [setComposerSelection, value]);
 
+  /**
+   * Expand every `⟦design:<id>⟧` compact token into its full
+   * `<design-capture>…</design-capture>` XML block so the LLM can see the
+   * element HTML. Unknown captures (metadata lost to pruning / reload) keep
+   * the raw token as a signal — better than silently sending nothing.
+   */
+  const expandDesignCaptureTokens = useCallback(
+    (text: string): string => {
+      if (!text.includes("\u27E6design:")) return text;
+      const caps = draftCaptures ?? {};
+      return text.replace(
+        new RegExp(COMPOSER_CAPTURE_TOKEN_REGEX.source, "g"),
+        (match, id: string) => {
+          const cap = caps[id];
+          if (!cap) return match;
+          return buildDesignCaptureBlock(cap);
+        }
+      );
+    },
+    [draftCaptures]
+  );
+
   const submitComposer = useCallback(async () => {
     const trimmed = valueRef.current.trim();
     if (!trimmed && attachedImages.length === 0) {
       return;
     }
-    const promptText = applyComposerDirectives(trimmed);
+    const directed = applyComposerDirectives(trimmed);
+    const promptText = expandDesignCaptureTokens(directed);
     const imagesToSubmit: ImageAttachment[] = attachedImages.map(({ mimeType, data, name }) => ({
       mimeType,
       data,
@@ -1155,10 +1456,21 @@ export function ChatComposer({
     setComposerSelection({ start: 0, end: 0 });
     setMenu(null);
     setAttachedImages([]);
+    if (onDraftCapturesChange) {
+      onDraftCapturesChange(undefined);
+    }
     if (promptText || imagesToSubmit.length > 0) {
       void Promise.resolve(onSubmit(promptText, imagesToSubmit)).catch(() => undefined);
     }
-  }, [applyComposerDirectives, onSubmit, setComposerSelection, setComposerValue, attachedImages]);
+  }, [
+    applyComposerDirectives,
+    attachedImages,
+    expandDesignCaptureTokens,
+    onDraftCapturesChange,
+    onSubmit,
+    setComposerSelection,
+    setComposerValue,
+  ]);
 
   const syncNativeState = useCallback(() => {
     if (hardwareInputEnabled) return;
@@ -1170,14 +1482,33 @@ export function ChatComposer({
     setComposerSelection({ start: caret, end: caret });
   }, [hardwareInputEnabled, setComposerSelection, setComposerValue]);
 
+  /**
+   * Map captures into the minimal shape the DOM reconciler needs. Memoized so
+   * a stable reference doesn't force an extra reconcile when the captures
+   * object is deeply equal but referentially new.
+   */
+  const pillDescriptors = useMemo<Record<string, ComposerPillDescriptor> | undefined>(() => {
+    if (!draftCaptures) return undefined;
+    const out: Record<string, ComposerPillDescriptor> = {};
+    for (const [id, cap] of Object.entries(draftCaptures)) {
+      out[id] = { captureId: cap.id, label: cap.label, snippet: cap.snippet };
+    }
+    return out;
+  }, [draftCaptures]);
+
   useEffect(() => {
     if (hardwareInputEnabled) return;
     const el = editorRef.current;
     if (!el) return;
-    if (getComposerPlainText(el) !== value) {
-      el.textContent = value;
+    // Keep the contenteditable DOM in sync with React's `value` — but render
+    // `⟦design:<id>⟧` tokens as real pill spans (`contenteditable="false"`)
+    // so the user sees a chip, backspace deletes the whole pill, and the
+    // underlying token text still round-trips through
+    // {@link getComposerPlainText} for submit expansion.
+    if (!composerEditorDomInSync(el, value)) {
+      reconcileComposerEditorDom(el, value, pillDescriptors);
     }
-  }, [hardwareInputEnabled, value]);
+  }, [hardwareInputEnabled, pillDescriptors, value]);
 
   useEffect(() => {
     if (hardwareInputEnabled) return;
@@ -1568,7 +1899,7 @@ export function ChatComposer({
   ]);
 
   const shellMx =
-    shellMxClass !== undefined ? shellMxClass : "mx-0 min-[481px]:mx-[10px]";
+    shellMxClass !== undefined ? shellMxClass : "mx-0 @min-[481px]:mx-[10px]";
   const shellMargin =
     isExpanded
       ? ""
@@ -1590,8 +1921,8 @@ export function ChatComposer({
     isExpanded ? "above" : layout === "empty-top" ? "below" : "above";
 
   const textNodes = useMemo(
-    () => renderComposerText(value, selection, isActive, caretRef),
-    [isActive, selection, value]
+    () => renderComposerText(value, selection, isActive, caretRef, draftCaptures),
+    [draftCaptures, isActive, selection, value]
   );
   const canSubmit = value.trim().length > 0 || attachedImages.length > 0;
   /** While the turn is running, Stop occupies the primary (send) slot until there is something to queue. */

@@ -25,6 +25,10 @@ import type {
   ImageAttachment,
   ModelInfo,
 } from "@/lib/types";
+import {
+  makeComposerCaptureToken,
+  type DesignCapture,
+} from "@/lib/design-capture";
 
 export type OpenTranscriptPayload = {
   title: string;
@@ -37,6 +41,8 @@ export type OpenComposerDraftPayload = {
   title: string;
   content: string;
   attachments?: ImageAttachment[];
+  /** Metadata for each `⟦design:…⟧` pill currently embedded in `content`. */
+  captures?: Record<string, DesignCapture>;
 };
 
 export type OpenAgentConversationPayload = {
@@ -46,6 +52,65 @@ export type OpenAgentConversationPayload = {
 };
 
 export type ComposerDraftRecord = OpenComposerDraftPayload;
+
+/** Highest-priority registered draft wins (see `useRegisterDesignCaptureComposer`). */
+const designCaptureRegistry = new Map<string, number>();
+
+export function getActiveDesignCaptureDraftId(): string | null {
+  let bestId: string | null = null;
+  let bestP = -Infinity;
+  for (const [id, p] of designCaptureRegistry) {
+    if (p > bestP) {
+      bestP = p;
+      bestId = id;
+    }
+  }
+  return bestId;
+}
+
+export function useRegisterDesignCaptureComposer(
+  draftId: string | null | undefined,
+  priority: number
+): void {
+  useEffect(() => {
+    if (!draftId) {
+      return;
+    }
+    designCaptureRegistry.set(draftId, priority);
+    return () => {
+      designCaptureRegistry.delete(draftId);
+    };
+  }, [draftId, priority]);
+}
+
+export type BrowserDesignGuestPayload =
+  | {
+      kind: "select";
+      label?: string;
+      snippet?: string;
+      imageDataUrl?: string | null;
+      captureId?: string;
+    }
+  | {
+      kind: "stroke";
+      caption?: string;
+      imageDataUrl?: string;
+      captureId?: string;
+    };
+
+function stripBase64FromDataUrl(dataUrl: string): string {
+  const i = dataUrl.indexOf(",");
+  return i >= 0 ? dataUrl.slice(i + 1) : dataUrl;
+}
+
+function designCaptureAttachmentName(
+  kind: "select" | "stroke",
+  label: string,
+  captureId: string
+): string {
+  const slug = label.replace(/[^a-z0-9._-]+/gi, "_").slice(0, 40);
+  return `${kind === "stroke" ? "stroke" : "design"}-${slug}-${captureId.slice(0, 8)}.png`;
+}
 
 export type ExpandedComposerController = {
   draftId: string;
@@ -167,6 +232,8 @@ type Ctx = {
   ) => void;
   activeExplorerPath: string | null;
   setActiveExplorerPath: (path: string | null) => void;
+  applyBrowserDesignCapture: (payload: BrowserDesignGuestPayload) => void;
+  attachImageToBrowserDesignCapture: (captureId: string, imageDataUrl: string) => void;
 };
 
 const OpenInEditorContext = createContext<Ctx | null>(null);
@@ -229,13 +296,17 @@ export function OpenInEditorProvider({ children }: { children: ReactNode }) {
           draftId,
           title: patch.title ?? existing?.title ?? "Composer",
           content: patch.content,
-          attachments: patch.attachments,
+          attachments:
+            patch.attachments !== undefined ? patch.attachments : existing?.attachments,
+          captures:
+            patch.captures !== undefined ? patch.captures : existing?.captures,
         };
         if (
           existing &&
           existing.title === next.title &&
           existing.content === next.content &&
-          existing.attachments === next.attachments
+          existing.attachments === next.attachments &&
+          existing.captures === next.captures
         ) {
           return current;
         }
@@ -243,6 +314,121 @@ export function OpenInEditorProvider({ children }: { children: ReactNode }) {
           ...current,
           [draftId]: next,
         };
+      });
+    },
+    []
+  );
+
+  const applyBrowserDesignCapture = useCallback((payload: BrowserDesignGuestPayload) => {
+    const draftId = getActiveDesignCaptureDraftId();
+    if (!draftId) {
+      return;
+    }
+    setComposerDrafts((current) => {
+      const ex = current[draftId];
+      const prev = ex?.content ?? "";
+      const captureId =
+        payload.captureId?.trim() ||
+        (globalThis.crypto?.randomUUID?.() ??
+          `cap-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`);
+
+      // Dedupe: if this capture is already in the draft, skip. The guest
+      // script emits a stable captureId per gesture, and BrowserTab already
+      // filters the postMessage stream, but this extra guard keeps the draft
+      // clean if a double-send ever slips through.
+      if (ex?.captures && ex.captures[captureId]) {
+        return current;
+      }
+
+      const label =
+        payload.kind === "stroke"
+          ? (payload.caption?.trim() || "Annotation")
+          : (payload.label ?? "element");
+      const safeLabel = label.slice(0, 200);
+      const snippet =
+        payload.kind === "select" && payload.snippet
+          ? payload.snippet.slice(0, 8000) +
+            (payload.snippet.length > 8000 ? "\n…" : "")
+          : undefined;
+      const caption = payload.kind === "stroke" ? safeLabel : undefined;
+
+      // Compact token: the composer renders this as a pill (see
+      // ChatComposer.renderComposerText). Expanded to a `<design-capture>`
+      // XML block at submit time so the agent gets the full HTML.
+      const token = makeComposerCaptureToken(captureId);
+      const nextContent = prev.trim() ? `${prev.trimEnd()} ${token}` : token;
+
+      const prevAtt = ex?.attachments ? [...ex.attachments] : [];
+      const dataUrl = payload.imageDataUrl;
+      if (dataUrl) {
+        const raw = stripBase64FromDataUrl(dataUrl);
+        const attachmentName = designCaptureAttachmentName(payload.kind, safeLabel, captureId);
+        if (!prevAtt.some((att) => att.name === attachmentName)) {
+          prevAtt.push({
+            mimeType: "image/png",
+            data: raw,
+            name: attachmentName,
+          });
+        }
+      }
+
+      const nextCaptures: Record<string, DesignCapture> = {
+        ...(ex?.captures ?? {}),
+        [captureId]: {
+          id: captureId,
+          kind: payload.kind,
+          label: safeLabel,
+          snippet,
+          caption,
+        },
+      };
+
+      const next: ComposerDraftRecord = {
+        draftId,
+        title: ex?.title ?? "Composer",
+        content: nextContent,
+        attachments: prevAtt,
+        captures: nextCaptures,
+      };
+      return { ...current, [draftId]: next };
+    });
+  }, []);
+
+  /**
+   * Backfill the screenshot for an existing design capture after an async
+   * fallback finishes. This lets the pill appear instantly while the heavier
+   * rendered screenshot pipeline resolves in the background.
+   */
+  const attachImageToBrowserDesignCapture = useCallback(
+    (captureId: string, imageDataUrl: string) => {
+      if (!captureId || !imageDataUrl) {
+        return;
+      }
+      setComposerDrafts((current) => {
+        let changed = false;
+        const nextDrafts: Record<string, ComposerDraftRecord> = { ...current };
+        for (const [draftId, draft] of Object.entries(current)) {
+          const cap = draft.captures?.[captureId];
+          if (!cap) {
+            continue;
+          }
+          const nextAttachments = draft.attachments ? [...draft.attachments] : [];
+          const attachmentName = designCaptureAttachmentName(cap.kind, cap.label, captureId);
+          if (nextAttachments.some((att) => att.name === attachmentName)) {
+            continue;
+          }
+          nextAttachments.push({
+            mimeType: "image/png",
+            data: stripBase64FromDataUrl(imageDataUrl),
+            name: attachmentName,
+          });
+          nextDrafts[draftId] = {
+            ...draft,
+            attachments: nextAttachments,
+          };
+          changed = true;
+        }
+        return changed ? nextDrafts : current;
       });
     },
     []
@@ -386,6 +572,8 @@ export function OpenInEditorProvider({ children }: { children: ReactNode }) {
       setExpandedComposerController,
       activeExplorerPath,
       setActiveExplorerPath,
+      applyBrowserDesignCapture,
+      attachImageToBrowserDesignCapture,
     }),
     [
       registerOpenTranscript,
@@ -405,6 +593,9 @@ export function OpenInEditorProvider({ children }: { children: ReactNode }) {
       expandedComposerController,
       setExpandedComposerController,
       activeExplorerPath,
+      setActiveExplorerPath,
+      applyBrowserDesignCapture,
+      attachImageToBrowserDesignCapture,
     ]
   );
 

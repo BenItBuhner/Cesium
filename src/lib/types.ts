@@ -76,12 +76,18 @@ export type ImageAttachmentState = {
   showSlowSpinner?: boolean;
 };
 
-/** Inline user bubble: plain text runs and file/context chips. */
+/** Inline user bubble: plain text runs, file/context chips, or design-capture pills. */
 export interface UserMessageSegment {
-  type: "text" | "file" | "context" | "image";
+  type: "text" | "file" | "context" | "image" | "design";
   text: string;
   mimeType?: string;
   data?: string;
+  /** Design pills: stable id so composer pills and history pills stay correlated. */
+  captureId?: string;
+  /** Design pills: 'select' (clicked element) or 'stroke' (lasso). */
+  captureKind?: "select" | "stroke";
+  /** Design pills: full HTML outer fragment sent to the agent (for tooltip/expanded view). */
+  captureSnippet?: string;
 }
 
 export interface TodoItem {
@@ -195,7 +201,24 @@ export interface EditorTab {
   /** Server-side terminal session id when this tab represents a PTY. */
   terminalId?: string;
   /** In-IDE browser tab proxied through the workspace server. */
-  browser?: { targetUrl: string; /** Absolute favicon URL (resolved client-side; displayed via proxy). */ faviconUrl?: string };
+  browser?: {
+    targetUrl: string;
+    /** Absolute favicon URL (resolved client-side; displayed via proxy). */
+    faviconUrl?: string;
+    /** OSP-72: element inspect / annotate mode (guest script in proxied HTML). */
+    designMode?: boolean;
+    /** DevTools console panel open (CDP sidecar). */
+    devtoolsOpen?: boolean;
+    /** Server debug session id for CDP bridge. */
+    debugSessionId?: string | null;
+    /**
+     * Absolute-path URL (starts with `/`) of the real Chromium DevTools frontend
+     * proxied through the workspace server. Set after a successful
+     * `POST /api/browser-debug/sessions`. `BrowserTab` loads this URL directly in
+     * the split devtools iframe.
+     */
+    devtoolsPath?: string | null;
+  };
   /** File classification used to drive editor vs preview rendering. */
   fileKind?: "text" | "svg" | "image";
   /** Best-effort mime type from the backend. */

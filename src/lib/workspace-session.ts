@@ -248,7 +248,12 @@ function createPersistableEditorTab(tab: EditorTab): EditorTab {
       language: tab.language,
       icon: tab.icon,
       content: "",
-      browser: tab.browser,
+      browser: {
+        ...tab.browser,
+        devtoolsOpen: false,
+        debugSessionId: null,
+        devtoolsPath: null,
+      },
     };
   }
 
@@ -533,6 +538,7 @@ export function mergeWorkspaceSessionFromImport(
   const normalizedChatBackendId =
     r.chat?.backendId === "cursor-acp" ||
     r.chat?.backendId === "opencode-acp" ||
+    r.chat?.backendId === "gemini-acp" ||
     r.chat?.backendId === "codex-adapter" ||
     r.chat?.backendId === "claude-adapter"
       ? r.chat.backendId

@@ -860,10 +860,10 @@ function renderEntry(
     case "verbatim":
       return (
         <div className="flex gap-[8px]">
-          <span className={iconWrap}>
+          <span className="mt-[2px] flex size-[14px] shrink-0 items-center justify-center text-[var(--text-primary)] opacity-90">
             <ScrollText className="size-[14px]" strokeWidth={1.5} aria-hidden />
           </span>
-          <pre className="whitespace-pre-wrap font-mono text-[12px] font-normal leading-relaxed text-[var(--text-secondary)]">
+          <pre className="whitespace-pre-wrap font-mono text-[12px] font-normal leading-relaxed text-[var(--text-primary)]">
             {entry.text}
           </pre>
         </div>

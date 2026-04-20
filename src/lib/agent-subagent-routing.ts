@@ -674,6 +674,7 @@ export const SUBAGENT_TOOL_CALL_CLASSIFIERS: Record<
 > = {
   "cursor-acp": isCursorAcpSubagentTaskToolEvent,
   "opencode-acp": isStrictAcpSubagentTaskToolEvent,
+  "gemini-acp": isStrictAcpSubagentTaskToolEvent,
   "codex-adapter": isCodexSubagentTaskToolEvent,
   "claude-adapter": isStrictAcpSubagentTaskToolEvent,
 };

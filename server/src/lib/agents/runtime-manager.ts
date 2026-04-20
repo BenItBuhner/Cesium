@@ -579,6 +579,10 @@ export class AgentRuntimeManager {
       : trimmed;
 
     const userMessageId = randomUUID();
+    const designMatch = trimmed.match(/`design:([^`]+)`/);
+    const displayContent = designMatch
+      ? `Design: ${designMatch[1]!.slice(0, 160)}${designMatch[1]!.length > 160 ? "…" : ""}`
+      : undefined;
     await appendConversationEvents(workspace.id, conversationId, [
       {
         eventId: randomUUID(),
@@ -586,6 +590,7 @@ export class AgentRuntimeManager {
         kind: "user_message",
         messageId: userMessageId,
         content: trimmed,
+        displayContent,
         attachments,
       },
     ]);

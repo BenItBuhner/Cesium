@@ -29,6 +29,8 @@ export function ExpandedComposerView({
     setExpandedComposerDraftOverride ?? setWorkspaceExpandedComposerDraft;
 
   const content = composerDrafts[draftId]?.content ?? "";
+  const draftAttachments = composerDrafts[draftId]?.attachments;
+  const draftCaptures = composerDrafts[draftId]?.captures;
   const selection = composerSelections[draftId] ?? {
     start: content.length,
     end: content.length,
@@ -97,6 +99,22 @@ export function ExpandedComposerView({
           configLocked={controller.configLocked}
           layout="empty-top"
           variant="expanded"
+          draftAttachments={draftAttachments}
+          onDraftAttachmentsChange={(next) =>
+            upsertComposerDraft(draftId, {
+              title: controller.title,
+              content,
+              attachments: next,
+            })
+          }
+          draftCaptures={draftCaptures}
+          onDraftCapturesChange={(next) =>
+            upsertComposerDraft(draftId, {
+              title: controller.title,
+              content,
+              captures: next,
+            })
+          }
         />
       </div>
     </div>

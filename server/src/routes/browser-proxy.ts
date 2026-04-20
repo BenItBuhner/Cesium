@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { Agent, fetch as undiciFetch } from "undici";
 import { assertBrowserProxyHostAllowed } from "../lib/browser-proxy-allowlist.js";
+import { appendDesignModeGuestScript } from "../lib/browser-proxy-design-inject.js";
 
 const MAX_RESPONSE_BYTES = 20 * 1024 * 1024;
 const UPSTREAM_TIMEOUT_MS = 60_000;
@@ -237,7 +238,16 @@ browserProxyRoutes.all("/*", async (c) => {
   if (!pathname.startsWith("/browser")) {
     pathname = `/browser${pathname.startsWith("/") ? "" : "/"}${pathname.replace(/^\//, "")}`;
   }
-  const search = url.search;
+  // Iframe navigation auth rides `?__ocs_access=…` on the proxy URL. Strip it
+  // here so it never reaches the upstream site (google.com, etc.) — both to
+  // avoid leaking the session token in upstream access logs and to keep the
+  // forwarded query identical to what the user actually typed. We use a
+  // distinct name instead of `access_token` so we don't trample a legitimate
+  // `?access_token=` in the target URL (OAuth callbacks etc.).
+  const outerParams = new URLSearchParams(url.search);
+  outerParams.delete("__ocs_access");
+  const forwardedQuery = outerParams.toString();
+  const search = forwardedQuery ? `?${forwardedQuery}` : "";
   const prefix = "/browser/";
   if (!pathname.startsWith(prefix)) {
     return c.json({ error: "Bad browser proxy path" }, 400);
@@ -382,6 +392,7 @@ browserProxyRoutes.all("/*", async (c) => {
 
   let text = new TextDecoder("utf-8", { fatal: false }).decode(buf);
   text = rewriteHtmlBody(text, upstreamBase.origin, requestOrigin);
+  text = appendDesignModeGuestScript(text);
   outHeaders.set("content-length", String(Buffer.byteLength(text, "utf8")));
 
   return new Response(text, { status: res.status, headers: outHeaders });

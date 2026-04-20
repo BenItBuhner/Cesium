@@ -132,9 +132,8 @@ export function collapseAgentShellSideLayout(
 /** Let the center surface use the full panel width; message/content blocks handle their own centering. */
 export const AGENT_CENTER_STAGE_CLASS = "w-full";
 /**
- * Default matches the original centered column everywhere (narrow split pane, resized window, full screen).
- * Only at very narrow widths (typical phone portrait, ≤480px) drop the extra `calc(100%-28px)` gutter so
- * content isn’t squeezed; MessageList adds safe-area on the scroll root.
+ * Centered column when the **agent center pane** is wide enough; below that (split panes, narrow stage,
+ * phones) use full width — driven by `@container` on the pane, not the viewport (see MessageList).
  */
 export const AGENT_CENTER_CONTENT_CLASS =
-  "mx-auto w-full max-w-[min(876px,calc(100%-28px))] max-[480px]:mx-0 max-[480px]:max-w-full";
+  "mx-auto w-full max-w-[min(876px,calc(100%-28px))] @max-[640px]:mx-0 @max-[640px]:max-w-full";

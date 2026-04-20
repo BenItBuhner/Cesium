@@ -10,7 +10,10 @@ import {
 } from "react";
 import { ChatComposer } from "@/components/chat/ChatComposer";
 import { useAgentConversations } from "@/components/chat/AgentConversationsContext";
-import { useOpenInEditor } from "@/components/editor/OpenInEditorContext";
+import {
+  useOpenInEditor,
+  useRegisterDesignCaptureComposer,
+} from "@/components/editor/OpenInEditorContext";
 import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
 import {
   buildDraftModeOptionsForBackend,
@@ -111,7 +114,10 @@ export function AgentNewChatLanding() {
 
   const composerDraftId = `agent-draft:${activeWorkspaceGroup?.workspace.id ?? "workspace"}`;
   const composerDraftTitle = "Agent prompt";
+  useRegisterDesignCaptureComposer(composerDraftId, 9);
   const composerDraftText = composerDrafts[composerDraftId]?.content ?? "";
+  const composerDraftAttachments = composerDrafts[composerDraftId]?.attachments;
+  const composerDraftCaptures = composerDrafts[composerDraftId]?.captures;
   const composerSelection = composerSelections[composerDraftId] ?? {
     start: composerDraftText.length,
     end: composerDraftText.length,
@@ -283,7 +289,7 @@ export function AgentNewChatLanding() {
       <div
         className={`flex w-full flex-col items-stretch gap-[2px] ${AGENT_CENTER_CONTENT_CLASS}`}
       >
-        <div className="mx-0 flex min-w-0 flex-col gap-[2px] min-[481px]:mx-[10px]">
+        <div className="mx-0 flex min-w-0 flex-col gap-[2px] @min-[481px]:mx-[10px]">
           <div className="w-fit max-w-full self-start">
             <button
               ref={workspacePickerButtonRef}
@@ -339,6 +345,22 @@ export function AgentNewChatLanding() {
                 onCancel={() => undefined}
                 layout="empty-top"
                 shellMxClass=""
+                draftAttachments={composerDraftAttachments}
+                onDraftAttachmentsChange={(next) =>
+                  upsertComposerDraft(composerDraftId, {
+                    title: composerDraftTitle,
+                    content: composerDraftText,
+                    attachments: next,
+                  })
+                }
+                draftCaptures={composerDraftCaptures}
+                onDraftCapturesChange={(next) =>
+                  upsertComposerDraft(composerDraftId, {
+                    title: composerDraftTitle,
+                    content: composerDraftText,
+                    captures: next,
+                  })
+                }
               />
               <div className="mt-[10px] flex w-full min-w-0 flex-wrap items-center gap-[10px]">
                 <button

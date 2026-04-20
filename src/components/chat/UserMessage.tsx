@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { AtSign, CornerUpLeft, LayoutTemplate } from "lucide-react";
+import { AtSign, CornerUpLeft, LayoutTemplate, MousePointerSquareDashed } from "lucide-react";
 import type { ImageAttachment, UserMessageSegment } from "@/lib/types";
 import { ImageCarousel } from "./ImageCarousel";
 
@@ -65,12 +65,37 @@ export function UserMessage({
       >
         {hasSegments ? (
           <div className="block font-sans text-[14px] font-normal leading-normal text-[var(--text-primary)]">
-            {segments!.map((s, i) =>
-              s.type === "text" ? (
-                <span key={i} className="break-words whitespace-pre-wrap">
-                  {s.text}
-                </span>
-              ) : (
+            {segments!.map((s, i) => {
+              if (s.type === "text") {
+                return (
+                  <span key={i} className="break-words whitespace-pre-wrap">
+                    {s.text}
+                  </span>
+                );
+              }
+              if (s.type === "design") {
+                const title = s.captureSnippet
+                  ? `${s.text}\n\n${s.captureSnippet.slice(0, 600)}${
+                      s.captureSnippet.length > 600 ? "…" : ""
+                    }`
+                  : s.text;
+                return (
+                  <span
+                    key={i}
+                    title={title}
+                    className="mx-[2px] inline-flex max-w-full items-center gap-[5px] rounded-[6px] border border-[var(--border-subtle)] bg-[var(--file-tag-bg)] px-[7px] py-[2px] align-baseline font-sans text-[13px] font-medium text-[var(--file-tag-text)]"
+                    data-design-capture-id={s.captureId ?? ""}
+                  >
+                    <MousePointerSquareDashed
+                      className="size-[12px] shrink-0 text-[var(--file-tag-icon)]"
+                      strokeWidth={1.75}
+                      aria-hidden
+                    />
+                    <span className="max-w-[260px] truncate">{s.text || "element"}</span>
+                  </span>
+                );
+              }
+              return (
                 <span
                   key={i}
                   className="mx-[2px] inline-flex max-w-full items-center gap-[5px] rounded-[6px] bg-[var(--file-tag-bg)] px-[7px] py-[2px] align-baseline font-sans text-[13px] font-medium text-[var(--file-tag-text)]"
@@ -90,8 +115,8 @@ export function UserMessage({
                   )}
                   <span className="truncate">{s.text}</span>
                 </span>
-              )
-            )}
+              );
+            })}
           </div>
         ) : (
           <p className="whitespace-pre-wrap font-sans text-[14px] font-normal leading-normal text-[var(--text-primary)]">

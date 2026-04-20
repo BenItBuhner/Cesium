@@ -32,7 +32,10 @@ import {
 import { DEFAULT_MODE_OPTIONS, resolveCanonicalModeId } from "@/lib/chat-modes";
 import { listSupplementaryAgentConfigOptions } from "@/lib/agent-config-option-utils";
 import { useWorkbenchContextMenu } from "@/components/ide/WorkbenchContextMenuProvider";
-import { useOpenInEditor } from "@/components/editor/OpenInEditorContext";
+import {
+  useOpenInEditor,
+  useRegisterDesignCaptureComposer,
+} from "@/components/editor/OpenInEditorContext";
 import type { WorkbenchMenuItem } from "@/components/ide/workbench-context-menu-types";
 import type {
   AgentBackendId,
@@ -910,11 +913,13 @@ export function ChatPanel() {
   const showRecentChatsSection =
     activeConversation?.title === "New chat" && recentConversationPreview.length > 0;
   const composerDraftId = activeConversation?.id ?? activeTabId;
+  useRegisterDesignCaptureComposer(composerDraftId, 5);
   const composerDraftTitle =
     activeConversation?.title && activeConversation.title !== "New chat"
       ? `${activeConversation.title} prompt`
       : "Composer";
   const composerDraftText = composerDrafts[composerDraftId]?.content ?? "";
+  const composerDraftAttachments = composerDrafts[composerDraftId]?.attachments;
   const composerSelection = composerSelections[composerDraftId] ?? {
     start: composerDraftText.length,
     end: composerDraftText.length,
@@ -2205,6 +2210,23 @@ export function ChatPanel() {
                 : undefined
             }
             layout={isEmptyThread ? "empty-top" : "docked-bottom"}
+            shellMxClass=""
+            draftAttachments={composerDraftAttachments}
+            onDraftAttachmentsChange={(next) =>
+              upsertComposerDraft(composerDraftId, {
+                title: composerDraftTitle,
+                content: composerDraftText,
+                attachments: next,
+              })
+            }
+            draftCaptures={composerDrafts[composerDraftId]?.captures}
+            onDraftCapturesChange={(next) =>
+              upsertComposerDraft(composerDraftId, {
+                title: composerDraftTitle,
+                content: composerDraftText,
+                captures: next,
+              })
+            }
             />
   );
 
@@ -2239,7 +2261,7 @@ export function ChatPanel() {
   ) : null;
 
   return (
-    <div className="flex h-full min-h-0 w-full flex-col overflow-hidden bg-[var(--bg-panel)]">
+    <div className="flex h-full min-h-0 w-full flex-col overflow-hidden bg-[var(--bg-panel)] @container">
       <div className="shrink-0">
         <ChatTabs
           tabs={tabs}

@@ -6,7 +6,10 @@ import { ChatComposer } from "@/components/chat/ChatComposer";
 import { ComposerQueueDock } from "@/components/chat/ComposerQueueDock";
 import { MessageList } from "@/components/chat/MessageList";
 import { useAgentConversations } from "@/components/chat/AgentConversationsContext";
-import { useOpenInEditor } from "@/components/editor/OpenInEditorContext";
+import {
+  useOpenInEditor,
+  useRegisterDesignCaptureComposer,
+} from "@/components/editor/OpenInEditorContext";
 import { askStepsFromMessage } from "@/lib/ask-question-utils";
 import {
   buildDraftModeOptionsForBackend,
@@ -221,7 +224,11 @@ export function AgentCenterPane() {
     conversation?.title && conversation.title !== "New chat"
       ? `${conversation.title} prompt`
       : "Agent prompt";
+  useRegisterDesignCaptureComposer(composerDraftId, 10);
+
   const composerDraftText = composerDrafts[composerDraftId]?.content ?? "";
+  const composerDraftAttachments = composerDrafts[composerDraftId]?.attachments;
+  const composerDraftCaptures = composerDrafts[composerDraftId]?.captures;
   const composerSelection = composerSelections[composerDraftId] ?? {
     start: composerDraftText.length,
     end: composerDraftText.length,
@@ -458,14 +465,14 @@ export function AgentCenterPane() {
 
   if (showLanding) {
     return (
-      <div className="relative flex h-full min-h-0 w-full flex-col overflow-hidden bg-[var(--bg-main)]">
+      <div className="relative flex h-full min-h-0 w-full flex-col overflow-hidden bg-[var(--bg-main)] @container">
         <AgentNewChatLanding />
       </div>
     );
   }
 
   return (
-    <div className="relative flex h-full min-h-0 w-full flex-col overflow-hidden bg-[var(--bg-main)]">
+    <div className="relative flex h-full min-h-0 w-full flex-col overflow-hidden bg-[var(--bg-main)] @container">
       <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
         {visibleConversationView ? (
           <div className={showConversationTransitionState ? "pointer-events-none h-full" : "h-full"}>
@@ -522,14 +529,14 @@ export function AgentCenterPane() {
           <div className="pointer-events-none absolute inset-x-0 bottom-0 z-30">
             <div className="pointer-events-auto chat-bottom-dock">
               {dockedAskSteps.length > 0 ? (
-                <div className="pt-[8px] max-[480px]:px-0 min-[481px]:px-[10px]">
+                <div className="pt-[8px] px-0 @min-[481px]:px-[10px]">
                   <div className={AGENT_CENTER_CONTENT_CLASS}>
                     <AskQuestionCard steps={dockedAskSteps} dockAboveComposer />
                   </div>
                 </div>
               ) : null}
               {queuedPrompts.length > 0 ? (
-                <div className="pt-[8px] max-[480px]:px-0 min-[481px]:px-[10px]">
+                <div className="pt-[8px] px-0 @min-[481px]:px-[10px]">
                   <div className={AGENT_CENTER_CONTENT_CLASS}>
                     <ComposerQueueDock
                       items={queuedPrompts}
@@ -539,7 +546,7 @@ export function AgentCenterPane() {
                   </div>
                 </div>
               ) : null}
-              <div className="max-[480px]:px-0 min-[481px]:px-[10px]">
+              <div className="px-0 @min-[481px]:px-[10px]">
                 <div className={AGENT_CENTER_CONTENT_CLASS}>
                   <ChatComposer
                     key={composerDraftId}
@@ -610,6 +617,23 @@ export function AgentCenterPane() {
                         : undefined
                     }
                     layout="docked-bottom"
+                    shellMxClass=""
+                    draftAttachments={composerDraftAttachments}
+                    onDraftAttachmentsChange={(next) =>
+                      upsertComposerDraft(composerDraftId, {
+                        title: composerDraftTitle,
+                        content: composerDraftText,
+                        attachments: next,
+                      })
+                    }
+                    draftCaptures={composerDraftCaptures}
+                    onDraftCapturesChange={(next) =>
+                      upsertComposerDraft(composerDraftId, {
+                        title: composerDraftTitle,
+                        content: composerDraftText,
+                        captures: next,
+                      })
+                    }
                   />
                 </div>
               </div>

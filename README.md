@@ -14,6 +14,7 @@ Legacy routes `/agent` and `/editor` redirect to the same workbench on `/`.
 - **Agent CLIs** (optional, depending on backends you want):
   - **Cursor Agent** (ACP) on your `PATH` or via `OPENCURSOR_CURSOR_CLI_BIN` / `OPENCURSOR_CURSOR_ACP_BIN`.
   - **OpenCode** ACP binary or install under `~/.opencode/bin` (see `OPENCURSOR_OPENCODE_ACP_BIN`, `OPENCURSOR_REAL_HOME`).
+  - **Gemini CLI** in ACP mode (`gemini --acp`; install via `@google/gemini-cli`, or set `OPENCURSOR_GEMINI_CLI_BIN`).
   - **Codex** / **Claude** CLIs if you use those adapter backends (`OPENCURSOR_CODEX_BIN`, `OPENCURSOR_CLAUDE_BIN`).
 
 ## Quick start (development)
@@ -58,7 +59,7 @@ This runs `next build`, builds the server with `tsc`, then starts both **Next** 
 ## Using the workbench
 
 - **Workspaces:** Register one or more directories; switching workspace sends `x-opencursor-workspace-id` on API calls.
-- **Agent view:** Create conversations, choose a **backend** (Cursor ACP, OpenCode ACP, Codex/Claude adapters when installed), send messages, approve tool permissions when the provider supports it. Live updates use **`/ws/agent`**.
+- **Agent view:** Create conversations, choose a **backend** (Cursor ACP, OpenCode ACP, Gemini CLI ACP, Codex/Claude adapters when installed), send messages, approve tool permissions when the provider supports it. Live updates use **`/ws/agent`**.
 - **IDE view:** Edit files, use integrated **xterm** terminals (**`/ws/terminal`**), file watcher (**`/ws/fs`**).
 - **Voice input (optional):** If transcription is configured, the composer can send audio to **`POST /api/audio/transcriptions`** (OpenAI-compatible multipart API).
 
@@ -145,6 +146,8 @@ Driver resolution (first match wins):
 | `OPENCURSOR_CURSOR_PERMISSION_MODE` | Passed through to the Cursor CLI permission mode (e.g. `default`); see Cursor CLI docs. |
 | `OPENCURSOR_OPENCODE_ACP_BIN` | Absolute path to **OpenCode** ACP binary; otherwise resolved via `PATH` / `~/.opencode/bin`. |
 | `OPENCURSOR_REAL_HOME` | When the server runs with a different `$HOME` (Docker/systemd), set to the real user home so `~/.opencode` resolution matches your install. |
+| `OPENCURSOR_GEMINI_CLI_BIN` | Absolute path to **Gemini CLI** for the `gemini-acp` backend; otherwise `gemini` on `PATH` / Windows `%AppData%\\npm\\gemini.cmd`. |
+| `OPENCURSOR_GEMINI_CLI_ARGS` | JSON array of argv after the Gemini binary for ACP (default `["--acp"]`). |
 | `OPENCURSOR_CODEX_BIN` | **Codex** CLI path for the `codex-adapter` backend. |
 | `OPENCURSOR_CLAUDE_BIN` | **Claude** CLI path for the `claude-adapter` backend. |
 | `OPENCURSOR_ACP_CLIENT_CAPABILITIES_JSON` | JSON merged into ACP `initialize.clientCapabilities` (e.g. `{"terminal":true}` if the CLI requires it). |

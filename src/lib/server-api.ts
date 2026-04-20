@@ -1101,6 +1101,20 @@ export type BrowserDebugSessionCreateResult = {
    * the `?ws=` query param already rewritten to our WebSocket bridge path.
    */
   devtoolsPath: string;
+  /** Current URL of the inspected Chromium page (for IDE URL bar sync). */
+  currentUrl?: string | null;
+};
+
+export type BrowserDebugNavigateInput =
+  | { op: "goto"; url: string }
+  | { op: "reload" | "back" | "forward"; url?: undefined };
+
+export type BrowserRenderedElementScreenshotInput = {
+  pageUrl: string;
+  pathIndices: number[];
+  rect?: { left: number; top: number; width: number; height: number } | null;
+  viewport?: { width: number; height: number } | null;
+  scroll?: { x: number; y: number } | null;
 };
 
 export async function createBrowserDebugSession(
@@ -1171,4 +1185,74 @@ export async function getBrowserDebugSession(
     return null;
   }
   return (await response.json()) as BrowserDebugSessionCreateResult;
+}
+
+/**
+ * Drive the headless Chromium attached to a debug session (Playwright `Page`)
+ * from the IDE URL bar / nav buttons. Returns the page URL *after* the
+ * navigation so the caller can sync the UI.
+ */
+export async function navigateBrowserDebugSession(
+  sessionId: string,
+  input: BrowserDebugNavigateInput
+): Promise<{ url: string | null } | null> {
+  const response = await fetch(
+    `${resolveClientServerBaseUrl()}/api/browser-debug/sessions/${encodeURIComponent(sessionId)}/navigate`,
+    {
+      method: "POST",
+      headers: Object.fromEntries(
+        attachSessionToken({
+          "Content-Type": "application/json",
+          ...getWorkspaceHeaders(),
+        }).entries()
+      ),
+      credentials: "include",
+      cache: "no-store",
+      body: JSON.stringify(input),
+    }
+  );
+  syncAuthTokenFromResponse(response);
+  if (response.status === 401) {
+    clearStoredAuth();
+    return null;
+  }
+  if (!response.ok) {
+    return null;
+  }
+  return (await response.json()) as { url: string | null };
+}
+
+/**
+ * Fallback screenshot for design-mode clicks when the browser-side
+ * SVG/foreignObject capture fails. Returns a data URL (or null) for the
+ * rendered element as seen in the proxied page.
+ */
+export async function captureRenderedBrowserElementScreenshot(
+  input: BrowserRenderedElementScreenshotInput
+): Promise<string | null> {
+  const response = await fetch(
+    `${resolveClientServerBaseUrl()}/api/browser-debug/rendered-element-screenshot`,
+    {
+      method: "POST",
+      headers: Object.fromEntries(
+        attachSessionToken({
+          "Content-Type": "application/json",
+          ...getWorkspaceHeaders(),
+        }).entries()
+      ),
+      credentials: "include",
+      cache: "no-store",
+      body: JSON.stringify(input),
+    }
+  );
+  syncAuthTokenFromResponse(response);
+  if (response.status === 401) {
+    clearStoredAuth();
+    return null;
+  }
+  if (!response.ok) {
+    return null;
+  }
+  const payload = (await response.json()) as { imageDataUrl?: string | null };
+  return payload.imageDataUrl ?? null;
 }

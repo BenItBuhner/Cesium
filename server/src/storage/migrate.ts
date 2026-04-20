@@ -6,6 +6,7 @@ import type { AgentBackendId } from "../lib/agents/types.js";
 const ALL_BACKEND_IDS: AgentBackendId[] = [
   "cursor-acp",
   "opencode-acp",
+  "gemini-acp",
   "codex-adapter",
   "claude-adapter",
 ];

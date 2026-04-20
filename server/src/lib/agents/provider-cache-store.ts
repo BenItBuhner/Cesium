@@ -288,6 +288,43 @@ async function createOpenCodeCliConfigOptions(input?: {
   ];
 }
 
+/**
+ * Seed model dropdown for Gemini CLI before the first ACP session lists options.
+ * Values follow Gemini CLI model aliases and common model ids (see Gemini CLI docs).
+ */
+async function createGeminiCliConfigOptions(input?: {
+  command?: string;
+  env?: NodeJS.ProcessEnv;
+  cwd?: string;
+}): Promise<AgentConfigOption[]> {
+  void input;
+  const modelOptions: AgentConfigOption["options"] = [
+    { value: "auto", name: "Auto" },
+    { value: "pro", name: "Pro" },
+    { value: "flash", name: "Flash" },
+    { value: "flash-lite", name: "Flash Lite" },
+    { value: "gemini-2.5-pro", name: "Gemini 2.5 Pro" },
+    { value: "gemini-2.5-flash", name: "Gemini 2.5 Flash" },
+    { value: "gemini-2.5-flash-lite", name: "Gemini 2.5 Flash Lite" },
+  ];
+  return [
+    {
+      id: "mode",
+      name: "Mode",
+      category: "mode",
+      currentValue: "agent",
+      options: [{ value: "agent", name: "Agent" }],
+    },
+    {
+      id: "model",
+      name: "Model",
+      category: "model",
+      currentValue: "auto",
+      options: modelOptions,
+    },
+  ];
+}
+
 function parseTomlValue(source: string, key: string): string | null {
   const match = source.match(new RegExp(`^${key}\\s*=\\s*"([^"]+)"`, "m"));
   return match?.[1] ?? null;
@@ -453,6 +490,8 @@ async function createSeedConfigOptions(backendId: AgentBackendId): Promise<Agent
       return createCursorCliConfigOptions();
     case "opencode-acp":
       return createOpenCodeCliConfigOptions();
+    case "gemini-acp":
+      return createGeminiCliConfigOptions();
     case "codex-adapter":
       return createCodexSeedConfigOptions();
     case "claude-adapter":

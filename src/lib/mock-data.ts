@@ -202,7 +202,7 @@ export const chatMessages: ChatMessage[] = [
       {
         kind: "tool",
         title: "Snapshot layout metrics",
-        detail: "Measured scroll padding pb-[clamp(220px,38vh,340px)] vs dock height.",
+        detail: "Measured scroll padding pb-[clamp(160px,24vh,240px)] vs dock height.",
       },
     ],
   },

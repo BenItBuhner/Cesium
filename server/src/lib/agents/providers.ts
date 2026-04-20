@@ -140,6 +140,25 @@ function buildAcpClientCapabilities(): Record<string, unknown> {
   }
 }
 
+/**
+ * Gemini CLI ACP invocation: default `gemini --acp` (see Gemini CLI ACP docs).
+ * Override with JSON array if your build uses different flags, e.g. `["--experimental-acp"]`.
+ */
+function parseGeminiCliAcpArgs(): string[] {
+  const rawJson = process.env.OPENCURSOR_GEMINI_CLI_ARGS?.trim();
+  if (rawJson) {
+    try {
+      const parsed = JSON.parse(rawJson) as unknown;
+      if (Array.isArray(parsed) && parsed.every((item) => typeof item === "string")) {
+        return parsed;
+      }
+    } catch {
+      // ignore invalid JSON
+    }
+  }
+  return ["--acp"];
+}
+
 /** Extra argv merged after the resolved Cursor `agent` binary (JSON string array). */
 function parseCursorAgentExtraArgs(): string[] {
   const rawJson = process.env.OPENCURSOR_CURSOR_AGENT_ARGS?.trim();
@@ -258,7 +277,11 @@ function fileExists(filePath: string): boolean {
 }
 
 function backendUsesAcpPromptHints(backendId: AgentBackendId): boolean {
-  return backendId === "cursor-acp" || backendId === "opencode-acp";
+  return (
+    backendId === "cursor-acp" ||
+    backendId === "opencode-acp" ||
+    backendId === "gemini-acp"
+  );
 }
 
 type CursorPromptSearchHint = {
@@ -780,6 +803,34 @@ function resolveOpenCodeBundledBinary(): string | null {
   return null;
 }
 
+function resolveGeminiAcpRuntime(): AcpRuntimeSpec | null {
+  const acpArgs = parseGeminiCliAcpArgs();
+  const configured = resolveConfiguredRuntime(process.env.OPENCURSOR_GEMINI_CLI_BIN, acpArgs);
+  if (configured) {
+    return configured;
+  }
+
+  const pathHit = findExecutableOnPath(
+    process.platform === "win32"
+      ? ["gemini.exe", "gemini.cmd", "gemini.bat", "gemini"]
+      : ["gemini"]
+  );
+  if (pathHit) {
+    return buildInvocation(pathHit, acpArgs);
+  }
+
+  if (process.platform === "win32") {
+    const roamingNpm = process.env.APPDATA?.trim()
+      ? path.join(process.env.APPDATA, "npm", "gemini.cmd")
+      : null;
+    if (roamingNpm && fileExists(roamingNpm)) {
+      return buildInvocation(roamingNpm, acpArgs);
+    }
+  }
+
+  return null;
+}
+
 function resolveOpenCodeAcpRuntime(): AcpRuntimeSpec | null {
   const configured = resolveConfiguredRuntime(
     process.env.OPENCURSOR_OPENCODE_ACP_BIN,
@@ -845,6 +896,7 @@ function resolveClaudeCliRuntime(): CliRuntimeSpec | null {
 
 const CURSOR_RUNTIME = resolveCursorCliRuntime();
 const OPENCODE_RUNTIME = resolveOpenCodeAcpRuntime();
+const GEMINI_RUNTIME = resolveGeminiAcpRuntime();
 const CODEX_RUNTIME = resolveCodexCliRuntime();
 const CLAUDE_RUNTIME = resolveClaudeCliRuntime();
 
@@ -914,6 +966,17 @@ export const AGENT_BACKENDS: Record<AgentBackendId, AgentBackendInfo> = {
     description: "OpenCode CLI over ACP stdio.",
     commandPreview: OPENCODE_RUNTIME?.commandPreview ?? "OpenCode CLI not found",
     available: OPENCODE_RUNTIME !== null,
+    capabilities: openCodeCapabilities,
+    defaultMode: "agent",
+    defaultModelId: "auto",
+    defaultModelName: "Auto",
+  }),
+  "gemini-acp": createBackendInfo({
+    id: "gemini-acp",
+    label: "Gemini",
+    description: "Gemini CLI over ACP stdio (`gemini --acp`).",
+    commandPreview: GEMINI_RUNTIME?.commandPreview ?? "Gemini CLI not found",
+    available: GEMINI_RUNTIME !== null,
     capabilities: openCodeCapabilities,
     defaultMode: "agent",
     defaultModelId: "auto",
@@ -3840,6 +3903,34 @@ export async function createAgentProvider(
           command: OPENCODE_RUNTIME.command,
           args: OPENCODE_RUNTIME.args,
           env: OPENCODE_RUNTIME.env,
+          callbacks,
+          loadSessionId: providerSessionId,
+        });
+      },
+    };
+  }
+
+  if (backendId === "gemini-acp") {
+    if (!GEMINI_RUNTIME) {
+      throw new Error(`${backend.label} is not installed or could not be resolved.`);
+    }
+    return {
+      backend,
+      startSession(callbacks) {
+        return AcpSessionHandle.create({
+          backend,
+          command: GEMINI_RUNTIME.command,
+          args: GEMINI_RUNTIME.args,
+          env: GEMINI_RUNTIME.env,
+          callbacks,
+        });
+      },
+      loadSession(callbacks, providerSessionId) {
+        return AcpSessionHandle.create({
+          backend,
+          command: GEMINI_RUNTIME.command,
+          args: GEMINI_RUNTIME.args,
+          env: GEMINI_RUNTIME.env,
           callbacks,
           loadSessionId: providerSessionId,
         });

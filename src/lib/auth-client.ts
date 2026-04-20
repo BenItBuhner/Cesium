@@ -3,6 +3,12 @@
 export const AUTH_STORAGE_KEY = "opencursor.auth.session";
 export const SESSION_TOKEN_HEADER = "x-opencursor-session-token";
 export const ACCESS_TOKEN_QUERY_PARAM = "access_token";
+/**
+ * Distinct query param for iframe navigations (browser proxy + DevTools). The
+ * proxy strips this before forwarding upstream so we don't clobber a real
+ * `?access_token=` that a target site might rely on.
+ */
+export const IFRAME_ACCESS_TOKEN_QUERY_PARAM = "__ocs_access";
 
 export type AuthSession = {
   username: string;
@@ -125,6 +131,28 @@ export function buildAuthenticatedUrl(url: string): string {
       typeof window !== "undefined" ? window.location.origin : "http://localhost"
     );
     resolved.searchParams.set(ACCESS_TOKEN_QUERY_PARAM, token);
+    return resolved.toString();
+  } catch {
+    return url;
+  }
+}
+
+/**
+ * Like {@link buildAuthenticatedUrl} but for iframe navigations to the server's
+ * `/browser/*` and `/browser-debug/*` surfaces. Uses a distinct query param so
+ * the proxy can safely strip it before forwarding upstream.
+ */
+export function buildIframeAuthenticatedUrl(url: string): string {
+  const token = getStoredSessionToken();
+  if (!token) {
+    return url;
+  }
+  try {
+    const resolved = new URL(
+      url,
+      typeof window !== "undefined" ? window.location.origin : "http://localhost"
+    );
+    resolved.searchParams.set(IFRAME_ACCESS_TOKEN_QUERY_PARAM, token);
     return resolved.toString();
   } catch {
     return url;
