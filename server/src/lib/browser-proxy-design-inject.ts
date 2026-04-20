@@ -462,6 +462,155 @@ function buildGuestScriptSource(): string {
     } catch (e) {}
   }
 
+  function patchFetchApi() {
+    // Sub-resource XHR/fetch from inside the iframe resolve relative URLs
+    // against the PROXY origin, not the upstream site. Bing, Reddit, GitHub,
+    // etc. call \`fetch('/api/search', {...})\` and would land on Hono with
+    // no matching route. Intercepting here rewrites them to proper proxy
+    // URLs before the network layer sees them.
+    try {
+      var origFetch = window.fetch;
+      if (typeof origFetch !== 'function') return;
+      window.fetch = function(input, init) {
+        try {
+          if (typeof input === 'string') {
+            if (shouldProxyRewriteUrl(input)) {
+              try { input = encodeProxyHref(input); } catch (e) {}
+            }
+          } else if (input && typeof input === 'object' && 'url' in input) {
+            // input is a Request object. Request.url is read-only, so clone
+            // with a new URL. Preserve everything else by passing the
+            // original Request as the init source.
+            var reqUrl = String(input.url || '');
+            if (shouldProxyRewriteUrl(reqUrl)) {
+              try {
+                var rewritten = encodeProxyHref(reqUrl);
+                if (rewritten && rewritten !== reqUrl) {
+                  input = new Request(rewritten, input);
+                }
+              } catch (e) {}
+            }
+          }
+        } catch (e) {}
+        return origFetch.call(this, input, init);
+      };
+    } catch (e) {}
+  }
+
+  function patchXhrApi() {
+    try {
+      if (typeof XMLHttpRequest === 'undefined') return;
+      var origOpen = XMLHttpRequest.prototype.open;
+      if (typeof origOpen !== 'function') return;
+      XMLHttpRequest.prototype.open = function() {
+        // XHR.open(method, url, async?, user?, password?) — walk the args
+        // array directly instead of relying on named params / arguments
+        // aliasing, which doesn't work under 'use strict'.
+        var args = Array.prototype.slice.call(arguments);
+        try {
+          if (shouldProxyRewriteUrl(args[1])) {
+            var rewritten = encodeProxyHref(String(args[1]));
+            if (rewritten) args[1] = rewritten;
+          }
+        } catch (e) {}
+        return origOpen.apply(this, args);
+      };
+    } catch (e) {}
+  }
+
+  function patchSendBeaconApi() {
+    try {
+      if (!navigator || typeof navigator.sendBeacon !== 'function') return;
+      var origBeacon = navigator.sendBeacon.bind(navigator);
+      navigator.sendBeacon = function(url, data) {
+        try {
+          if (shouldProxyRewriteUrl(url)) {
+            url = encodeProxyHref(String(url));
+          }
+        } catch (e) {}
+        return origBeacon(url, data);
+      };
+    } catch (e) {}
+  }
+
+  function patchDynamicElementSrc() {
+    // Some apps construct <script>/<link>/<img> dynamically with JS:
+    //   var s = document.createElement('script'); s.src = '/api/bundle.js';
+    //   document.head.appendChild(s);
+    // The relative src resolves against the proxy origin, so Hono 404s. We
+    // can't override every Element.prototype.setAttribute, but setAttribute
+    // specifically on src/href for elements we care about is cheap and
+    // comprehensive. Also patch the src/href property setters for the hot
+    // element classes that ship bundles.
+    try {
+      var urlAttrs = { SCRIPT: ['src'], LINK: ['href'], IFRAME: ['src'], IMG: ['src'], SOURCE: ['src', 'srcset'], VIDEO: ['src', 'poster'], AUDIO: ['src'] };
+      var origSetAttr = Element.prototype.setAttribute;
+      Element.prototype.setAttribute = function(name, value) {
+        try {
+          var tag = this.tagName;
+          var attrs = urlAttrs[tag];
+          if (attrs && value && attrs.indexOf(String(name).toLowerCase()) !== -1) {
+            if (name === 'srcset') {
+              value = rewriteSrcset(value);
+            } else if (shouldProxyRewriteUrl(value)) {
+              value = encodeProxyHref(String(value));
+            }
+          }
+        } catch (e) {}
+        return origSetAttr.call(this, name, value);
+      };
+
+      // Property-level setters (el.src = '/foo') land on a different path
+      // than setAttribute. Hook the src getters/setters on the critical
+      // element prototypes where CSS/JS bundles + imagery live.
+      var patchSrcProp = function(proto, prop) {
+        try {
+          var desc = Object.getOwnPropertyDescriptor(proto, prop);
+          if (!desc || !desc.set) return;
+          Object.defineProperty(proto, prop, {
+            configurable: desc.configurable,
+            enumerable: desc.enumerable,
+            get: desc.get,
+            set: function(v) {
+              try {
+                if (v && shouldProxyRewriteUrl(v)) {
+                  v = encodeProxyHref(String(v));
+                }
+              } catch (e) {}
+              return desc.set.call(this, v);
+            }
+          });
+        } catch (e) {}
+      };
+      if (typeof HTMLScriptElement !== 'undefined') patchSrcProp(HTMLScriptElement.prototype, 'src');
+      if (typeof HTMLImageElement !== 'undefined') patchSrcProp(HTMLImageElement.prototype, 'src');
+      if (typeof HTMLIFrameElement !== 'undefined') patchSrcProp(HTMLIFrameElement.prototype, 'src');
+      if (typeof HTMLLinkElement !== 'undefined') patchSrcProp(HTMLLinkElement.prototype, 'href');
+      if (typeof HTMLSourceElement !== 'undefined') patchSrcProp(HTMLSourceElement.prototype, 'src');
+      if (typeof HTMLMediaElement !== 'undefined') patchSrcProp(HTMLMediaElement.prototype, 'src');
+    } catch (e) {}
+  }
+
+  function rewriteSrcset(value) {
+    if (!value) return value;
+    try {
+      return String(value).split(',').map(function(seg) {
+        var s = seg.trim();
+        if (!s) return s;
+        var sp = s.indexOf(' ');
+        var urlPart = sp > 0 ? s.slice(0, sp) : s;
+        var rest = sp > 0 ? s.slice(sp) : '';
+        if (!urlPart || urlPart.indexOf('data:') === 0) return s;
+        if (shouldProxyRewriteUrl(urlPart)) {
+          try { urlPart = encodeProxyHref(urlPart); } catch (e) {}
+        }
+        return urlPart + rest;
+      }).join(', ');
+    } catch (e) {
+      return value;
+    }
+  }
+
   var lastTitle = '';
   function observeTitleAndUrl() {
     window.addEventListener('popstate', queueNavState);
@@ -1127,6 +1276,10 @@ function buildGuestScriptSource(): string {
   patchDynamicFormSubmissions();
   patchAnchorClicks();
   patchWindowOpen();
+  patchFetchApi();
+  patchXhrApi();
+  patchSendBeaconApi();
+  patchDynamicElementSrc();
   observeTitleAndUrl();
   window.addEventListener('message', onMessage);
   window.addEventListener('resize', function() { resizeStroke(); reflowHighlight(); });

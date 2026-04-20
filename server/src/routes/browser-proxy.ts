@@ -130,17 +130,33 @@ function rewriteLocation(
 }
 
 function stripFrameBlockingHeaders(headers: Headers): void {
+  // Strip every header that would prevent the proxied page from rendering
+  // inside our iframe, or that would block our injected guest script from
+  // running. We're a developer tool, not a hardened security sandbox — the
+  // user already trusts the proxy or they wouldn't be using it.
+  //
+  // Specifically we MUST drop Content-Security-Policy in full (not just
+  // frame-ancestors), because real sites like Bing, Reddit, and most of the
+  // Fortune-500 ship a strict `script-src https: 'strict-dynamic' 'nonce-...'`
+  // header that blocks both (a) our injected guest script (no nonce) and
+  // (b) every one of their OWN scripts once we've rewritten them to our
+  // `http://<proxy>/browser/...` origin, because the `https:` source
+  // expression doesn't match our scheme. Stripping the full policy lets both
+  // groups run.
   headers.delete("x-frame-options");
-  const csp = headers.get("content-security-policy");
   headers.delete("content-security-policy");
-  if (csp) {
-    const relaxed = csp
-      .split(";")
-      .map((s) => s.trim())
-      .filter((d) => !/^frame-ancestors\b/i.test(d) && !/^frame-src\b/i.test(d))
-      .join("; ");
-    if (relaxed) headers.set("content-security-policy", relaxed);
-  }
+  headers.delete("content-security-policy-report-only");
+  // Cross-origin isolation headers prevent our parent IDE origin from
+  // reading iframe state (postMessage, etc.). Design-mode + nav sync rely
+  // on cross-origin postMessage, so drop them.
+  headers.delete("cross-origin-opener-policy");
+  headers.delete("cross-origin-opener-policy-report-only");
+  headers.delete("cross-origin-embedder-policy");
+  headers.delete("cross-origin-embedder-policy-report-only");
+  headers.delete("cross-origin-resource-policy");
+  // Report-Only variants of the same families.
+  headers.delete("x-content-security-policy");
+  headers.delete("x-webkit-csp");
 }
 
 function forwardableHeaders(incoming: Headers): Headers {
@@ -391,26 +407,55 @@ browserProxyRoutes.all("/*", async (c) => {
     const rewritten = rewriteLocation(loc, upstream, requestOrigin, iframeAuthToken);
     return new Response(null, {
       status: res.status,
-      headers: new Headers({ Location: rewritten }),
+      // Explicit Content-Length: 0 so Node doesn't fall back to
+      // Transfer-Encoding: chunked for the empty redirect body — undici
+      // (and spec-strict clients) reject responses that combine both or
+      // use chunked framing for zero-length bodies.
+      headers: new Headers({
+        Location: rewritten,
+        "content-length": "0",
+      }),
     });
   }
 
   if (res.status >= 300 && res.status < 400) {
+    const redirectHeaders = new Headers([...res.headers]);
+    // Same framing cleanup as below: upstream already got auto-decompressed
+    // by undici, and keeping both content-length + transfer-encoding tips
+    // Node's HTTP parser into "HPE_UNEXPECTED_CONTENT_LENGTH".
+    redirectHeaders.delete("content-encoding");
+    redirectHeaders.delete("content-length");
+    redirectHeaders.delete("transfer-encoding");
     return new Response(res.body as BodyInit | null, {
       status: res.status,
-      headers: new Headers([...res.headers]),
+      headers: redirectHeaders,
     });
   }
 
   const outHeaders = new Headers([...res.headers]);
   stripFrameBlockingHeaders(outHeaders);
-  outHeaders.delete("content-length");
+  // Node's built-in fetch (undici) auto-decompresses the upstream body when
+  // the Content-Encoding is gzip/br/deflate, so the bytes we get via
+  // res.body / res.arrayBuffer are already plain. Forwarding the original
+  // Content-Encoding would mislabel our plain body and the downstream HTTP
+  // parser would reject the response. Drop it.
   outHeaders.delete("content-encoding");
+  // When we're going to modify + re-serialize the body we must set our OWN
+  // Content-Length, and we MUST remove Transfer-Encoding because a response
+  // with both headers violates RFC 7230 — Node's undici errors out with
+  // HPE_UNEXPECTED_CONTENT_LENGTH / "Content-Length can't be present with
+  // Transfer-Encoding" before the smoke test / real browser ever sees the
+  // body. Clear both consistently; we repopulate below where appropriate.
+  outHeaders.delete("content-length");
+  outHeaders.delete("transfer-encoding");
 
   const ct = outHeaders.get("content-type") ?? "";
   const isHtml = ct.includes("text/html");
 
   if (!isHtml || !res.body) {
+    // Stream the (already-decompressed) upstream body straight through.
+    // We've just removed both content-length and transfer-encoding so
+    // Node's HTTP layer chooses one framing strategy and sticks to it.
     return new Response(res.body as BodyInit | null, {
       status: res.status,
       headers: outHeaders,
