@@ -1,3 +1,5 @@
+import { getActiveServerBaseUrl } from "@/lib/server-connections";
+
 /**
  * Build-time API base (`NEXT_PUBLIC_*` is inlined when `next build` runs).
  */
@@ -27,20 +29,39 @@ export function getConfiguredServerBaseUrl(): string {
  *   4. Otherwise: return the configured URL untouched.
  */
 export function resolveClientServerBaseUrl(): string {
-  const raw = getConfiguredServerBaseUrl();
+  const raw = getActiveServerBaseUrl(getConfiguredServerBaseUrl());
 
-  if (typeof window === "undefined") {
+  return resolveClientServerBaseUrlForCurrentWindow(raw);
+}
+
+export function resolveClientServerBaseUrlForCurrentWindow(raw: string): string {
+  return resolveClientServerBaseUrlForLocation(raw, typeof window !== "undefined" ? window : null);
+}
+
+export function resolveClientServerBaseUrlForLocation(
+  raw: string,
+  locationSource:
+    | {
+        location: {
+          protocol: string;
+          hostname: string;
+          host: string;
+        };
+      }
+    | null
+): string {
+  if (!locationSource) {
     return raw;
   }
 
   try {
     const configured = new URL(raw);
-    const currentHost = window.location.hostname;
+    const currentHost = locationSource.location.hostname;
     const isLocalHost =
       currentHost === "127.0.0.1" || currentHost === "localhost";
 
     if (
-      window.location.protocol === "https:" &&
+      locationSource.location.protocol === "https:" &&
       configured.protocol === "http:"
     ) {
       // Use same-origin so TLS covers the request. The reverse proxy is
@@ -54,9 +75,9 @@ export function resolveClientServerBaseUrl(): string {
       currentHost &&
       isLocalHost &&
       (configured.hostname !== currentHost ||
-        configured.protocol !== window.location.protocol)
+        configured.protocol !== locationSource.location.protocol)
     ) {
-      configured.protocol = window.location.protocol;
+      configured.protocol = locationSource.location.protocol;
       configured.hostname = currentHost;
       configured.port = configured.port || "9100";
       return configured.toString().replace(/\/+$/, "");
@@ -70,7 +91,7 @@ export function resolveClientServerBaseUrl(): string {
       currentHost &&
       !isLocalHost &&
       configuredIsLoopback &&
-      window.location.protocol === "http:"
+      locationSource.location.protocol === "http:"
     ) {
       const next = new URL(raw);
       next.protocol = "http:";

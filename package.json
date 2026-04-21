@@ -9,7 +9,8 @@
     "start": "next start",
     "start:all": "bash -c 'npm run start & npm run start --prefix server & wait'",
     "prod": "npm run build && npm run build --prefix server && npm run start:all",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test": "tsx --test ./test/server-connections.test.ts"
   },
   "dependencies": {
     "@ducanh2912/next-pwa": "^10.2.9",
@@ -33,6 +34,7 @@
     "eslint": "^9",
     "eslint-config-next": "16.1.7",
     "tailwindcss": "^4",
+    "tsx": "^4.21.0",
     "typescript": "^5",
     "webpack": "^5.105.4"
   }

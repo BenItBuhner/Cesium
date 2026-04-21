@@ -23,6 +23,7 @@ import {
   Keyboard,
   Palette,
   Puzzle,
+  Server,
   Settings,
   Wrench,
 } from "lucide-react";
@@ -49,6 +50,7 @@ const NAV_ENTRIES: NavEntry[] = [
   { kind: "item", id: "models", label: "Models", icon: Box },
   { kind: "item", id: "plugins", label: "Plugins", icon: Puzzle },
   { kind: "divider" },
+  { kind: "item", id: "servers", label: "Servers", icon: Server },
   { kind: "item", id: "rulesSkills", label: "Rules, Skills, Subagents", icon: BookMarked },
   { kind: "item", id: "tools", label: "Tools & MCPs", icon: Wrench },
   { kind: "item", id: "exportImport", label: "Import & export", icon: Download },

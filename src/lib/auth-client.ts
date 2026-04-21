@@ -1,6 +1,10 @@
 "use client";
 
-export const AUTH_STORAGE_KEY = "opencursor.auth.session";
+import { getActiveServerConnection } from "@/lib/server-connections-provider-shared";
+import { getServerConnectionKey, normalizeServerBaseUrl } from "@/lib/server-connections";
+
+export const AUTH_STORAGE_KEY = "opencursor.auth.sessions";
+export const LEGACY_AUTH_STORAGE_KEY = "opencursor.auth.session";
 export const SESSION_TOKEN_HEADER = "x-opencursor-session-token";
 export const ACCESS_TOKEN_QUERY_PARAM = "access_token";
 /**
@@ -31,14 +35,21 @@ type StoredAuthState = {
   expiresAt: number | null;
 };
 
-let cachedToken: string | null = null;
+type StoredAuthMap = Record<string, StoredAuthState>;
 
-function readStoredAuthState(): StoredAuthState | null {
+let cachedAuthMap: StoredAuthMap | null = null;
+
+function getServerStorageKey(serverBaseUrl?: string): string {
+  const baseUrl = serverBaseUrl?.trim() || getActiveServerConnection().baseUrl;
+  return getServerConnectionKey(normalizeServerBaseUrl(baseUrl));
+}
+
+function readLegacyStoredAuthState(): StoredAuthState | null {
   if (typeof window === "undefined") {
     return null;
   }
   try {
-    const raw = window.localStorage.getItem(AUTH_STORAGE_KEY);
+    const raw = window.localStorage.getItem(LEGACY_AUTH_STORAGE_KEY);
     if (!raw) {
       return null;
     }
@@ -62,66 +73,116 @@ function readStoredAuthState(): StoredAuthState | null {
   }
 }
 
-function writeStoredAuthState(state: StoredAuthState | null): void {
+function readStoredAuthMap(): StoredAuthMap {
+  if (cachedAuthMap) {
+    return cachedAuthMap;
+  }
+  if (typeof window === "undefined") {
+    cachedAuthMap = {};
+    return cachedAuthMap;
+  }
+  try {
+    const raw = window.localStorage.getItem(AUTH_STORAGE_KEY);
+    if (!raw) {
+      const legacy = readLegacyStoredAuthState();
+      cachedAuthMap = legacy ? { [getServerStorageKey()]: legacy } : {};
+      return cachedAuthMap;
+    }
+    const parsed = JSON.parse(raw) as Record<string, Partial<StoredAuthState>> | null;
+    if (!parsed || typeof parsed !== "object") {
+      cachedAuthMap = {};
+      return cachedAuthMap;
+    }
+    const next: StoredAuthMap = {};
+    for (const [serverKey, value] of Object.entries(parsed)) {
+      if (!value || typeof value.token !== "string" || value.token.trim().length === 0) {
+        continue;
+      }
+      next[serverKey] = {
+        token: value.token,
+        session:
+          value.session &&
+          typeof value.session === "object" &&
+          typeof value.session.username === "string" &&
+          typeof value.session.expiresAt === "number"
+            ? (value.session as AuthSession)
+            : null,
+        expiresAt: typeof value.expiresAt === "number" ? value.expiresAt : null,
+      };
+    }
+    cachedAuthMap = next;
+    return next;
+  } catch {
+    cachedAuthMap = {};
+    return cachedAuthMap;
+  }
+}
+
+function writeStoredAuthMap(state: StoredAuthMap): void {
+  cachedAuthMap = state;
   if (typeof window === "undefined") {
     return;
   }
   try {
-    if (!state) {
+    if (Object.keys(state).length === 0) {
       window.localStorage.removeItem(AUTH_STORAGE_KEY);
-      return;
+    } else {
+      window.localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(state));
     }
-    window.localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(state));
+    window.localStorage.removeItem(LEGACY_AUTH_STORAGE_KEY);
   } catch {
     // Ignore local persistence failures and rely on cookies/in-memory state.
   }
 }
 
-export function getStoredSessionToken(): string | null {
-  if (cachedToken) {
-    return cachedToken;
-  }
-  const stored = readStoredAuthState();
-  if (stored?.token) {
-    cachedToken = stored.token;
-    return stored.token;
-  }
-  return null;
+function getStoredAuthState(serverBaseUrl?: string): StoredAuthState | null {
+  const map = readStoredAuthMap();
+  return map[getServerStorageKey(serverBaseUrl)] ?? null;
 }
 
-export function setStoredSessionToken(token: string | null, session?: AuthSession | null): void {
-  cachedToken = token?.trim() ? token.trim() : null;
-  if (!cachedToken) {
-    writeStoredAuthState(null);
+export function getStoredSessionToken(serverBaseUrl?: string): string | null {
+  return getStoredAuthState(serverBaseUrl)?.token ?? null;
+}
+
+export function setStoredSessionToken(
+  token: string | null,
+  session?: AuthSession | null,
+  serverBaseUrl?: string
+): void {
+  const serverKey = getServerStorageKey(serverBaseUrl);
+  const nextToken = token?.trim() ? token.trim() : null;
+  const map = { ...readStoredAuthMap() };
+  if (!nextToken) {
+    delete map[serverKey];
+    writeStoredAuthMap(map);
     return;
   }
-  const existing = readStoredAuthState();
-  writeStoredAuthState({
-    token: cachedToken,
+  const existing = map[serverKey] ?? null;
+  map[serverKey] = {
+    token: nextToken,
     session: session ?? existing?.session ?? null,
     expiresAt: session?.expiresAt ?? existing?.expiresAt ?? null,
-  });
+  };
+  writeStoredAuthMap(map);
 }
 
-export function updateStoredAuthSession(session: AuthSession | null): void {
-  const token = getStoredSessionToken();
+export function updateStoredAuthSession(session: AuthSession | null, serverBaseUrl?: string): void {
+  const token = getStoredSessionToken(serverBaseUrl);
   if (!token) {
     return;
   }
-  writeStoredAuthState({
-    token,
-    session,
-    expiresAt: session?.expiresAt ?? null,
-  });
+  setStoredSessionToken(token, session, serverBaseUrl);
 }
 
-export function clearStoredAuth(): void {
-  cachedToken = null;
-  writeStoredAuthState(null);
+export function clearStoredAuth(serverBaseUrl?: string): void {
+  const serverKey = getServerStorageKey(serverBaseUrl);
+  const map = { ...readStoredAuthMap() };
+  delete map[serverKey];
+  writeStoredAuthMap(map);
 }
 
-export function buildAuthenticatedUrl(url: string): string {
-  const token = getStoredSessionToken();
+export function buildAuthenticatedUrl(url: string, serverBaseUrl?: string): string {
+  const token = getStoredSessionToken(serverBaseUrl);
   if (!token) {
     return url;
   }
@@ -159,37 +220,37 @@ export function buildIframeAuthenticatedUrl(url: string): string {
   }
 }
 
-export function attachSessionToken(headers?: HeadersInit): Headers {
+export function attachSessionToken(headers?: HeadersInit, serverBaseUrl?: string): Headers {
   const next = new Headers(headers ?? {});
-  const token = getStoredSessionToken();
+  const token = getStoredSessionToken(serverBaseUrl);
   if (token) {
     next.set(SESSION_TOKEN_HEADER, token);
   }
   return next;
 }
 
-export function syncAuthTokenFromResponse(response: Response): string | null {
+export function syncAuthTokenFromResponse(response: Response, serverBaseUrl?: string): string | null {
   const hasSessionTokenHeader = response.headers.has(SESSION_TOKEN_HEADER);
   const token = response.headers.get(SESSION_TOKEN_HEADER)?.trim() || null;
   if (hasSessionTokenHeader && !token) {
-    clearStoredAuth();
+    clearStoredAuth(serverBaseUrl);
     return null;
   }
   if (!token) {
-    return getStoredSessionToken();
+    return getStoredSessionToken(serverBaseUrl);
   }
   const expiresAtHeader = response.headers.get("x-opencursor-auth-session-expires-at");
-  const existing = readStoredAuthState();
+  const existing = getStoredAuthState(serverBaseUrl);
   const nextSession =
     existing?.session && typeof existing.session.username === "string"
       ? existing.session
       : null;
-  setStoredSessionToken(token, nextSession);
+  setStoredSessionToken(token, nextSession, serverBaseUrl);
   if (expiresAtHeader && nextSession) {
     updateStoredAuthSession({
       ...nextSession,
       expiresAt: Number.parseInt(expiresAtHeader, 10) || nextSession.expiresAt,
-    });
+    }, serverBaseUrl);
   }
   return token;
 }

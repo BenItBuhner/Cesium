@@ -253,6 +253,7 @@ export async function fetchWorkspaceBootstrap(): Promise<{
   defaultWorkspaceId: string | null;
   startupWorkspaceId: string | null;
   recentWorkspaceIds: string[];
+  homeWorkspaceId: string | null;
 }> {
   return request(`/api/workspaces/bootstrap`, undefined, {
     skipWorkspaceHeader: true,
@@ -264,6 +265,7 @@ export async function fetchWorkspaces(): Promise<{
   defaultWorkspaceId: string | null;
   lastOpenedWorkspaceId: string | null;
   recentWorkspaceIds: string[];
+  homeWorkspaceId: string | null;
 }> {
   return request(`/api/workspaces`, undefined, {
     skipWorkspaceHeader: true,
@@ -280,6 +282,7 @@ export async function openWorkspaceSelection(input: {
   workspaces: WorkspaceRecord[];
   defaultWorkspaceId: string | null;
   recentWorkspaceIds: string[];
+  homeWorkspaceId: string | null;
 }> {
   return request(
     `/api/workspaces/open`,
@@ -297,6 +300,7 @@ export async function markWorkspaceActivity(workspaceId: string): Promise<{
   workspaces: WorkspaceRecord[];
   defaultWorkspaceId: string | null;
   recentWorkspaceIds: string[];
+  homeWorkspaceId: string | null;
 }> {
   return request(
     `/api/workspaces/activity`,
@@ -318,6 +322,7 @@ export async function createWorkspaceSelection(input: {
   workspaces: WorkspaceRecord[];
   defaultWorkspaceId: string | null;
   recentWorkspaceIds: string[];
+  homeWorkspaceId: string | null;
 }> {
   return request(
     `/api/workspaces/create`,
@@ -340,6 +345,62 @@ export async function setDefaultWorkspaceSelection(
     },
     { skipWorkspaceHeader: true }
   );
+}
+
+export async function browseWorkspaceHostDirectories(path?: string): Promise<
+  | {
+      roots: Array<{ path: string; label: string }>;
+      homeWorkspaceId: string | null;
+    }
+  | {
+      currentPath: string;
+      parentPath: string | null;
+      entries: Array<{ name: string; path: string }>;
+      homeWorkspaceId: string | null;
+    }
+> {
+  const q = path?.trim()
+    ? `?path=${encodeURIComponent(path.trim())}`
+    : "";
+  return request(`/api/workspaces/browse${q}`, undefined, {
+    skipWorkspaceHeader: true,
+  });
+}
+
+export async function cloneWorkspaceFromGit(input: {
+  repoUrl: string;
+  parentPath: string;
+  directoryName?: string;
+  name?: string;
+  setDefault?: boolean;
+}): Promise<{
+  workspace: WorkspaceRecord;
+  workspaces: WorkspaceRecord[];
+  defaultWorkspaceId: string | null;
+  recentWorkspaceIds: string[];
+  homeWorkspaceId: string | null;
+}> {
+  return request(
+    `/api/workspaces/clone`,
+    {
+      method: "POST",
+      body: JSON.stringify(input),
+    },
+    { skipWorkspaceHeader: true }
+  );
+}
+
+export async function deleteWorkspaceFromRegistry(workspaceId: string): Promise<{
+  ok: true;
+  deletedWorkspaceId: string;
+  workspaces: WorkspaceRecord[];
+  defaultWorkspaceId: string | null;
+  recentWorkspaceIds: string[];
+  homeWorkspaceId: string | null;
+}> {
+  return request(`/api/workspaces/${encodeURIComponent(workspaceId)}`, {
+    method: "DELETE",
+  }, { skipWorkspaceHeader: true });
 }
 
 function workspaceSessionRevisionKey(

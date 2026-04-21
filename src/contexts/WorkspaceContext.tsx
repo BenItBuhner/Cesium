@@ -19,9 +19,11 @@ import type {
   WorkspaceRecord,
 } from "@/lib/types";
 import {
+  cloneWorkspaceFromGit,
   createTerminal,
   createWorkspaceSelection,
   createWorkspaceWindow,
+  deleteWorkspaceFromRegistry,
   fetchWorkspaceWindows,
   fetchFolderChildren,
   fetchTree,
@@ -49,6 +51,8 @@ import {
 } from "@/lib/workbench-view";
 import { JsonWebSocket, toWebSocketUrl } from "@/lib/ws-client";
 import { buildAuthenticatedUrl } from "@/lib/auth-client";
+import { getActiveServerStorageKey } from "@/lib/server-connections";
+import { getConfiguredServerBaseUrl } from "@/lib/resolve-server-base-url";
 import { useWorkbenchNotifications } from "@/components/notifications/WorkbenchNotificationProvider";
 import { WORKBENCH_NOTIFICATION_KIND } from "@/components/notifications/workbench-notification-types";
 import { currentModel } from "@/lib/mock-data";
@@ -119,6 +123,15 @@ type WorkspaceContextValue = {
     directoryName: string;
     setDefault?: boolean;
   }) => Promise<void>;
+  cloneWorkspaceFromGit: (input: {
+    repoUrl: string;
+    parentPath: string;
+    directoryName?: string;
+    name?: string;
+    setDefault?: boolean;
+  }) => Promise<void>;
+  deleteWorkspace: (workspaceId: string) => Promise<void>;
+  homeWorkspaceId: string | null;
   setDefaultWorkspace: (workspaceId: string) => Promise<void>;
   createNewTerminal: (shell?: string) => Promise<{ id: string }>;
 };
@@ -179,6 +192,10 @@ function getWorkspaceSessionScopeId(
 }
 
 function getWorkspaceSessionBackupKey(sessionScopeId: string): string {
+  return `${SESSION_BACKUP_STORAGE_PREFIX}${getActiveServerStorageKey(getConfiguredServerBaseUrl())}.${sessionScopeId}`;
+}
+
+function getLegacyWorkspaceSessionBackupKey(sessionScopeId: string): string {
   return `${SESSION_BACKUP_STORAGE_PREFIX}${sessionScopeId}`;
 }
 
@@ -188,7 +205,9 @@ function readWorkspaceSessionBackup(sessionScopeId: string): WorkspaceSessionSta
   }
 
   try {
-    const raw = window.localStorage.getItem(getWorkspaceSessionBackupKey(sessionScopeId));
+    const raw =
+      window.localStorage.getItem(getWorkspaceSessionBackupKey(sessionScopeId)) ??
+      window.localStorage.getItem(getLegacyWorkspaceSessionBackupKey(sessionScopeId));
     if (!raw) {
       return null;
     }
@@ -363,6 +382,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const [workspaceWindows, setWorkspaceWindows] = useState<WorkspaceWindowRecord[]>([]);
   const [defaultWorkspaceId, setDefaultWorkspaceIdState] = useState<string | null>(null);
   const [recentWorkspaceIds, setRecentWorkspaceIds] = useState<string[]>([]);
+  const [homeWorkspaceId, setHomeWorkspaceId] = useState<string | null>(null);
   const [fileTree, setFileTree] = useState<FileNode | null>(null);
   const [loading, setLoading] = useState(true);
   const [sessionReady, setSessionReady] = useState(false);
@@ -632,10 +652,18 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   );
 
   const applyWorkspaceListingUpdate = useCallback(
-    (nextWorkspaces: WorkspaceRecord[], nextDefaultWorkspaceId: string | null, nextRecent: string[]) => {
+    (
+      nextWorkspaces: WorkspaceRecord[],
+      nextDefaultWorkspaceId: string | null,
+      nextRecent: string[],
+      nextHomeWorkspaceId?: string | null
+    ) => {
       setWorkspaces(nextWorkspaces);
       setDefaultWorkspaceIdState(nextDefaultWorkspaceId);
       setRecentWorkspaceIds(nextRecent);
+      if (nextHomeWorkspaceId !== undefined) {
+        setHomeWorkspaceId(nextHomeWorkspaceId);
+      }
     },
     []
   );
@@ -702,7 +730,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       applyWorkspaceListingUpdate(
         result.workspaces,
         result.defaultWorkspaceId,
-        result.recentWorkspaceIds
+        result.recentWorkspaceIds,
+        result.homeWorkspaceId
       );
       await loadWorkspaceState(result.workspace);
     },
@@ -719,7 +748,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       applyWorkspaceListingUpdate(
         result.workspaces,
         result.defaultWorkspaceId,
-        result.recentWorkspaceIds
+        result.recentWorkspaceIds,
+        result.homeWorkspaceId
       );
     },
     [activeWorkspaceId, applyWorkspaceListingUpdate]
@@ -732,7 +762,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       applyWorkspaceListingUpdate(
         result.workspaces,
         result.defaultWorkspaceId,
-        result.recentWorkspaceIds
+        result.recentWorkspaceIds,
+        result.homeWorkspaceId
       );
       await loadWorkspaceState(result.workspace);
     },
@@ -751,11 +782,61 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       applyWorkspaceListingUpdate(
         result.workspaces,
         result.defaultWorkspaceId,
-        result.recentWorkspaceIds
+        result.recentWorkspaceIds,
+        result.homeWorkspaceId
       );
       await loadWorkspaceState(result.workspace);
     },
     [applyWorkspaceListingUpdate, flushWorkspaceSessionNow, loadWorkspaceState]
+  );
+
+  const cloneWorkspaceFromGitHandler = useCallback(
+    async (input: {
+      repoUrl: string;
+      parentPath: string;
+      directoryName?: string;
+      name?: string;
+      setDefault?: boolean;
+    }) => {
+      await flushWorkspaceSessionNow();
+      const result = await cloneWorkspaceFromGit(input);
+      applyWorkspaceListingUpdate(
+        result.workspaces,
+        result.defaultWorkspaceId,
+        result.recentWorkspaceIds,
+        result.homeWorkspaceId
+      );
+      await loadWorkspaceState(result.workspace);
+    },
+    [applyWorkspaceListingUpdate, cloneWorkspaceFromGit, flushWorkspaceSessionNow, loadWorkspaceState]
+  );
+
+  const deleteWorkspace = useCallback(
+    async (workspaceId: string) => {
+      await flushWorkspaceSessionNow();
+      const result = await deleteWorkspaceFromRegistry(workspaceId);
+      applyWorkspaceListingUpdate(
+        result.workspaces,
+        result.defaultWorkspaceId,
+        result.recentWorkspaceIds,
+        result.homeWorkspaceId
+      );
+      if (workspaceId === activeWorkspaceId) {
+        const fallback =
+          result.workspaces.find((w) => w.id === result.homeWorkspaceId) ??
+          result.workspaces[0] ??
+          null;
+        if (fallback) {
+          await loadWorkspaceState(fallback);
+        }
+      }
+    },
+    [
+      activeWorkspaceId,
+      applyWorkspaceListingUpdate,
+      flushWorkspaceSessionNow,
+      loadWorkspaceState,
+    ]
   );
 
   const setDefaultWorkspace = useCallback(async (workspaceId: string) => {
@@ -780,7 +861,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
             applyWorkspaceListingUpdateRef.current(
               requestedResult.workspaces,
               requestedResult.defaultWorkspaceId,
-              requestedResult.recentWorkspaceIds
+              requestedResult.recentWorkspaceIds,
+              requestedResult.homeWorkspaceId
             );
             await loadWorkspaceStateRef.current(requestedResult.workspace);
             return;
@@ -791,7 +873,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         applyWorkspaceListingUpdateRef.current(
           bootstrapResult.workspaces,
           bootstrapResult.defaultWorkspaceId,
-          bootstrapResult.recentWorkspaceIds
+          bootstrapResult.recentWorkspaceIds,
+          bootstrapResult.homeWorkspaceId
         );
         const startupWorkspace = bootstrapResult.workspaces.find(
           (workspace) => workspace.id === bootstrapResult.startupWorkspaceId
@@ -1214,6 +1297,9 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       createWorkspaceWindow: createPersistentWorkspaceWindow,
       updateWorkspaceWindow: updatePersistentWorkspaceWindow,
       createWorkspace,
+      cloneWorkspaceFromGit: cloneWorkspaceFromGitHandler,
+      deleteWorkspace,
+      homeWorkspaceId,
       setDefaultWorkspace,
       createNewTerminal,
     }),
@@ -1226,6 +1312,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       workspaceWindows,
       defaultWorkspaceId,
       recentWorkspaceIds,
+      homeWorkspaceId,
       fileTree,
       loading,
       sessionReady,
@@ -1247,6 +1334,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       createPersistentWorkspaceWindow,
       updatePersistentWorkspaceWindow,
       createWorkspace,
+      cloneWorkspaceFromGitHandler,
+      deleteWorkspace,
       setDefaultWorkspace,
       createNewTerminal,
     ]

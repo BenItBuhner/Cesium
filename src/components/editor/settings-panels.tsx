@@ -24,6 +24,8 @@ import {
 } from "lucide-react";
 import { HardwareAwareTextInput } from "@/components/input/HardwareAwareTextField";
 import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
+import { ServerConnectionsManager } from "@/components/preferences/ServerConnectionsManager";
+import { useServerConnections } from "@/components/preferences/ServerConnectionsProvider";
 import { useUserPreferences } from "@/components/preferences/UserPreferencesProvider";
 import { useTheme } from "@/components/theme/ThemeProvider";
 import type { CustomThemeEntry } from "@/lib/theme-config";
@@ -1464,6 +1466,50 @@ export function PluginsSettingsPanel() {
   );
 }
 
+export function ServerConnectionsSettingsPanel() {
+  const { activeServer, setActiveServer } = useServerConnections();
+  const previousActiveServerIdRef = useRef(activeServer.id);
+
+  useEffect(() => {
+    if (previousActiveServerIdRef.current === activeServer.id) {
+      return;
+    }
+    previousActiveServerIdRef.current = activeServer.id;
+    if (typeof window !== "undefined") {
+      window.location.assign("/");
+    }
+  }, [activeServer.id]);
+
+  return (
+    <>
+      <PageIntro
+        title="Servers"
+        subtitle="Choose which OpenCursor server this browser connects to, keep multiple base URLs saved locally, and switch between them quickly."
+      />
+      <SettingsSection title="Active connection">
+        <SettingsRow
+          title="Current server"
+          description={activeServer.baseUrl}
+          trailing={
+            <span className="rounded-[999px] bg-[var(--accent-bg)] px-[8px] py-[4px] font-sans text-[11px] text-[var(--text-primary)]">
+              {activeServer.label}
+            </span>
+          }
+        />
+      </SettingsSection>
+      <SettingsSection title="Saved servers">
+        <div className="px-[16px] py-[16px]">
+          <ServerConnectionsManager
+            onActivate={(serverId) => {
+              setActiveServer(serverId);
+            }}
+          />
+        </div>
+      </SettingsSection>
+    </>
+  );
+}
+
 export function ToolsMcpSettingsPanel() {
   const { settings, updateSettings } = useGlobalSettings();
   const tools = settings.tools;
@@ -2469,6 +2515,7 @@ export const SETTINGS_PANELS: Record<string, ComponentType> = {
   agents: AgentsSettingsPanel,
   models: ModelsSettingsPanel,
   plugins: PluginsSettingsPanel,
+  servers: ServerConnectionsSettingsPanel,
   rulesSkills: RulesSkillsSubagentsPanel,
   tools: ToolsMcpSettingsPanel,
   beta: BetaSettingsPanel,

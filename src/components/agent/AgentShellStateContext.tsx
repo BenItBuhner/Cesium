@@ -53,6 +53,8 @@ import {
   type AgentSidePaneSessionState,
   type EditorSessionState,
 } from "@/lib/workspace-session";
+import { getActiveServerStorageKey } from "@/lib/server-connections";
+import { getConfiguredServerBaseUrl } from "@/lib/resolve-server-base-url";
 
 export type AgentCenterStableConversationView = {
   conversationId: string;
@@ -123,11 +125,23 @@ function getWorkspaceSessionBackupKey(
   windowId: string | null
 ): string {
   const sessionScopeId = windowId ? `${workspaceId}:window:${windowId}` : workspaceId;
+  return `opencursor.workspace-session.${getActiveServerStorageKey(getConfiguredServerBaseUrl())}.${sessionScopeId}`;
+}
+
+function getLegacyWorkspaceSessionBackupKey(
+  workspaceId: string,
+  windowId: string | null
+): string {
+  const sessionScopeId = windowId ? `${workspaceId}:window:${windowId}` : workspaceId;
   return `opencursor.workspace-session.${sessionScopeId}`;
 }
 
 /** One global snapshot for the agent shell (rail + composed layout); not workspace- or window-scoped. */
-const AGENT_SHELL_SHARED_STORAGE_KEY = "opencursor.agent-shell.shared";
+function getAgentShellSharedStorageKey(): string {
+  return `opencursor.agent-shell.shared.${getActiveServerStorageKey(getConfiguredServerBaseUrl())}`;
+}
+
+const LEGACY_AGENT_SHELL_SHARED_STORAGE_KEY = "opencursor.agent-shell.shared";
 const LEGACY_AGENT_SHELL_WINDOW_KEY_PREFIX = "opencursor.agent-shell.window.";
 
 let agentShellLegacyStorageMigrationDone = false;
@@ -137,7 +151,10 @@ function migrateLegacyAgentShellWindowSnapshots(): void {
     return;
   }
   try {
-    if (window.localStorage.getItem(AGENT_SHELL_SHARED_STORAGE_KEY)) {
+    if (
+      window.localStorage.getItem(getAgentShellSharedStorageKey()) ||
+      window.localStorage.getItem(LEGACY_AGENT_SHELL_SHARED_STORAGE_KEY)
+    ) {
       for (let i = window.localStorage.length - 1; i >= 0; i -= 1) {
         const k = window.localStorage.key(i);
         if (k?.startsWith(LEGACY_AGENT_SHELL_WINDOW_KEY_PREFIX)) {
@@ -178,7 +195,7 @@ function migrateLegacyAgentShellWindowSnapshots(): void {
           normalizeAgentShellDesktopLayout(parsed.agentShellDesktopLayout) ?? null,
       };
       window.localStorage.setItem(
-        AGENT_SHELL_SHARED_STORAGE_KEY,
+        getAgentShellSharedStorageKey(),
         JSON.stringify({
           leftRailCollapsed: snapshot.leftRailCollapsed,
           agentShellDesktopLayout: snapshot.agentShellDesktopLayout,
@@ -204,7 +221,9 @@ function readAgentShellSharedSnapshot(): AgentShellWindowSnapshot | null {
   }
   try {
     migrateLegacyAgentShellWindowSnapshots();
-    const raw = window.localStorage.getItem(AGENT_SHELL_SHARED_STORAGE_KEY);
+    const raw =
+      window.localStorage.getItem(getAgentShellSharedStorageKey()) ??
+      window.localStorage.getItem(LEGACY_AGENT_SHELL_SHARED_STORAGE_KEY);
     if (!raw) {
       return null;
     }
@@ -231,7 +250,7 @@ function writeAgentShellSharedSnapshot(snapshot: AgentShellWindowSnapshot) {
   }
   try {
     window.localStorage.setItem(
-      AGENT_SHELL_SHARED_STORAGE_KEY,
+      getAgentShellSharedStorageKey(),
       JSON.stringify({
         leftRailCollapsed: snapshot.leftRailCollapsed,
         agentShellDesktopLayout:
@@ -252,7 +271,9 @@ function readWorkspaceRailArchiveSnapshot(
   }
 
   try {
-    const raw = window.localStorage.getItem(getWorkspaceSessionBackupKey(workspaceId, windowId));
+    const raw =
+      window.localStorage.getItem(getWorkspaceSessionBackupKey(workspaceId, windowId)) ??
+      window.localStorage.getItem(getLegacyWorkspaceSessionBackupKey(workspaceId, windowId));
     if (!raw) {
       return null;
     }

@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import Script from "next/script";
 import { AuthProvider } from "@/components/auth/AuthProvider";
 import { AuthGate } from "@/components/auth/AuthGate";
+import { ServerConnectionsProvider } from "@/components/preferences/ServerConnectionsProvider";
 import { UserPreferencesProvider } from "@/components/preferences/UserPreferencesProvider";
 import { RegisterServiceWorker } from "@/components/pwa/RegisterServiceWorker";
 import { ThemeProvider } from "@/components/theme/ThemeProvider";
@@ -74,11 +75,13 @@ export default function RootLayout({
         </Script>
         <RegisterServiceWorker />
         <ThemeProvider>
-          <AuthProvider>
-            <AuthGate>
-              <UserPreferencesProvider>{children}</UserPreferencesProvider>
-            </AuthGate>
-          </AuthProvider>
+          <ServerConnectionsProvider>
+            <AuthProvider>
+              <AuthGate>
+                <UserPreferencesProvider>{children}</UserPreferencesProvider>
+              </AuthGate>
+            </AuthProvider>
+          </ServerConnectionsProvider>
         </ThemeProvider>
       </body>
     </html>
