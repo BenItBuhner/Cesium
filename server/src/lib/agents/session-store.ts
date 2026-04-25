@@ -50,7 +50,13 @@ const PG_READ_HEAD_PREFIX_CAP = 10_000;
  * After a debounced write, repopulate snapshot-head + per-workspace list Redis + the first-page
  * cross-workspace rail so cold GETs and HTTP revalidation do not repackage huge graphs from raw DB.
  */
-const agentCacheRefillDebounceByConv = new Map<string, ReturnType<typeof setTimeout>>();
+let agentCacheRefillTimer: ReturnType<typeof setTimeout> | null = null;
+let pendingAgentCacheRefill:
+  | {
+      workspaceId: string;
+      conversationId: string;
+    }
+  | null = null;
 
 const AGENT_CACHE_REFILL_DEBOUNCE_MS = 650;
 
@@ -58,19 +64,22 @@ function scheduleAgentCacheRefill(
   workspaceId: string,
   conversationId: string
 ): void {
-  const k = queueKey(workspaceId, conversationId);
-  const t = agentCacheRefillDebounceByConv.get(k);
-  if (t) {
-    clearTimeout(t);
+  pendingAgentCacheRefill = { workspaceId, conversationId };
+  if (agentCacheRefillTimer) {
+    clearTimeout(agentCacheRefillTimer);
   }
-  const next = setTimeout(() => {
-    agentCacheRefillDebounceByConv.delete(k);
-    void runAgentCacheRefill(workspaceId, conversationId).catch((err) => {
+  agentCacheRefillTimer = setTimeout(() => {
+    agentCacheRefillTimer = null;
+    const next = pendingAgentCacheRefill;
+    pendingAgentCacheRefill = null;
+    if (!next) {
+      return;
+    }
+    void runAgentCacheRefill(next.workspaceId, next.conversationId).catch((err) => {
       console.error("[agent-store] post-write cache refill failed:", err);
     });
   }, AGENT_CACHE_REFILL_DEBOUNCE_MS);
-  next.unref?.();
-  agentCacheRefillDebounceByConv.set(k, next);
+  agentCacheRefillTimer.unref?.();
 }
 
 async function runAgentCacheRefill(
