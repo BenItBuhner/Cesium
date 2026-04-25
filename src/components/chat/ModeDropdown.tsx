@@ -184,19 +184,19 @@ export function ModeDropdown({
           />
         </span>
       </span>
-      <button
-        type="button"
-        disabled={disabled}
-        onClick={() => setOpen((v) => !v)}
-        style={{
-          background: colors.bg,
-          width: showLabelExpanded ? `${expandedWidth}px` : undefined,
-          minWidth: 28,
-        }}
-        className={`group inline-flex items-center overflow-hidden rounded-[var(--radius-pill)] py-[1px] transition-[padding,opacity,width] duration-200 hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50 ${
-          showLabelExpanded ? "pl-[8px] pr-[7px] ease-out" : "pl-[7px] pr-[7px] ease-in"
-        }`}
-      >
+ <button
+ type="button"
+ disabled={disabled}
+ onClick={() => setOpen((v) => !v)}
+    style={{
+      background: colors.bg,
+      width: showLabelExpanded ? `${expandedWidth}px` : undefined,
+      minWidth: 28,
+    }}
+    className={`group inline-flex items-center overflow-hidden rounded-[var(--radius-pill)] py-[1px] transition-[padding,opacity,width] duration-200 hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50 ${
+      showLabelExpanded ? "pl-[8px] pr-[7px] ease-out" : "pl-[7px] pr-[7px] ease-in"
+    }`}
+ >
         <TriggerIcon className="size-[13px] shrink-0" style={{ color: colors.text }} strokeWidth={1.5} />
         <span
           className={`overflow-hidden whitespace-nowrap font-sans text-[13px] font-normal transition-[margin,max-width,opacity] duration-200 ${

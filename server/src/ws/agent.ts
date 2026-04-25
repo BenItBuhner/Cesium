@@ -11,6 +11,7 @@ import {
 import type {
   AgentSocketClientMessage,
   AgentSocketServerMessage,
+  AgentStoredEvent,
 } from "../lib/agents/types.js";
 import { getWorkspaceById } from "../lib/workspace-registry.js";
 import { agentRuntimeManager } from "../lib/agents/runtime-manager.js";
@@ -19,10 +20,55 @@ type AgentSocketState = {
   workspaceId: string;
   socket: WebSocket;
   subscribedConversationIds: Set<string>;
+  subscribeChain: Promise<void>;
 };
 
 const agentWebSocketServer = new WebSocketServer({ noServer: true });
 const workspaceClients = new Map<string, Set<AgentSocketState>>();
+
+/** Buffers live agent events for one I/O turn so a burst of row writes = one `event_batch` frame. */
+const eventBroadcastPending = new Map<string, AgentStoredEvent[]>();
+function keyForEventWorkspaceConversation(
+  workspaceId: string,
+  conversationId: string
+): string {
+  return `${workspaceId}\t${conversationId}`;
+}
+function pushLiveAgentEventForBatch(
+  workspaceId: string,
+  conversationId: string,
+  event: AgentStoredEvent
+): void {
+  const k = keyForEventWorkspaceConversation(workspaceId, conversationId);
+  const q = eventBroadcastPending.get(k) ?? [];
+  const first = q.length === 0;
+  q.push(event);
+  eventBroadcastPending.set(k, q);
+  if (first) {
+    setImmediate(() => {
+      const batch = eventBroadcastPending.get(k);
+      eventBroadcastPending.delete(k);
+      if (!batch || batch.length === 0) {
+        return;
+      }
+      const clients = workspaceClients.get(workspaceId);
+      if (!clients) {
+        return;
+      }
+      for (const client of clients) {
+        if (!client.subscribedConversationIds.has(conversationId)) {
+          continue;
+        }
+        send(client.socket, {
+          type: "event_batch",
+          workspaceId,
+          conversationId,
+          events: batch,
+        });
+      }
+    });
+  }
+}
 
 function send(socket: WebSocket, message: AgentSocketServerMessage): void {
   if (socket.readyState === WebSocket.OPEN) {
@@ -49,20 +95,11 @@ function removeClient(state: AgentSocketState): void {
 
 subscribeAgentStoreEvents((event) => {
   if (event.type === "event") {
-    const clients = workspaceClients.get(event.workspaceId);
-    if (!clients) {
-      return;
-    }
-    for (const client of clients) {
-      if (!client.subscribedConversationIds.has(event.conversationId)) {
-        continue;
-      }
-      send(client.socket, {
-        type: "event",
-        conversationId: event.conversationId,
-        event: event.event,
-      });
-    }
+    pushLiveAgentEventForBatch(
+      event.workspaceId,
+      event.conversationId,
+      event.event
+    );
     return;
   }
 
@@ -145,11 +182,12 @@ async function sendSubscriptionData(
         conversationId,
         since
       );
-      for (const event of replay) {
+      if (replay.length > 0) {
         send(state.socket, {
-          type: "event",
+          type: "event_batch",
+          workspaceId: state.workspaceId,
           conversationId,
-          event,
+          events: replay,
         });
       }
       continue;
@@ -188,6 +226,7 @@ export function handleAgentUpgrade(
       workspaceId,
       socket: ws,
       subscribedConversationIds: new Set(),
+      subscribeChain: Promise.resolve(),
     };
     addClient(state);
     send(ws, { type: "connected" });
@@ -245,11 +284,14 @@ export function handleAgentUpgrade(
               send(ws, {
                 type: "error",
                 message: `Unknown conversation: ${conversationId}`,
+                conversationId,
+                op: "request_history",
               });
               return;
             }
             send(ws, {
               type: "history_page",
+              workspaceId: state.workspaceId,
               conversationId,
               events: page.events,
               window: page.window,
@@ -262,6 +304,8 @@ export function handleAgentUpgrade(
                 error instanceof Error
                   ? `History fetch failed: ${error.message}`
                   : "History fetch failed.",
+              conversationId,
+              op: "request_history",
             });
           }
         })();
@@ -271,45 +315,48 @@ export function handleAgentUpgrade(
         const ids = Array.isArray(message.conversationIds)
           ? message.conversationIds.filter((value): value is string => typeof value === "string")
           : [];
-        void (async () => {
-          try {
-            const workspace = await getWorkspaceById(state.workspaceId);
-            if (!workspace) {
+        const sinceByConversationId = message.sinceByConversationId ?? {};
+        state.subscribeChain = state.subscribeChain
+          .catch(() => undefined)
+          .then(async () => {
+            try {
+              const workspace = await getWorkspaceById(state.workspaceId);
+              if (!workspace) {
+                send(ws, {
+                  type: "error",
+                  message: `Unknown workspace: ${state.workspaceId}`,
+                });
+                return;
+              }
+              const nextIds = new Set(ids);
+              const released = [...state.subscribedConversationIds].filter(
+                (conversationId) => !nextIds.has(conversationId)
+              );
+              const retained = ids.filter(
+                (conversationId) => !state.subscribedConversationIds.has(conversationId)
+              );
+              state.subscribedConversationIds = nextIds;
+              for (const conversationId of retained) {
+                await agentRuntimeManager.retainConversationRuntime(workspace, conversationId);
+              }
+              for (const conversationId of released) {
+                await agentRuntimeManager.releaseConversationRuntime(
+                  state.workspaceId,
+                  conversationId
+                );
+              }
+              await sendSubscriptionData(state, ids, sinceByConversationId);
+            } catch (error) {
+              console.error("[ws/agent] subscribe failed:", error);
               send(ws, {
                 type: "error",
-                message: `Unknown workspace: ${state.workspaceId}`,
+                message:
+                  error instanceof Error
+                    ? `Subscribe failed: ${error.message}`
+                    : "Subscribe failed.",
               });
-              return;
             }
-            const nextIds = new Set(ids);
-            const released = [...state.subscribedConversationIds].filter(
-              (conversationId) => !nextIds.has(conversationId)
-            );
-            const retained = ids.filter(
-              (conversationId) => !state.subscribedConversationIds.has(conversationId)
-            );
-            state.subscribedConversationIds = nextIds;
-            for (const conversationId of retained) {
-              await agentRuntimeManager.retainConversationRuntime(workspace, conversationId);
-            }
-            for (const conversationId of released) {
-              await agentRuntimeManager.releaseConversationRuntime(
-                state.workspaceId,
-                conversationId
-              );
-            }
-            await sendSubscriptionData(state, ids, message.sinceByConversationId ?? {});
-          } catch (error) {
-            console.error("[ws/agent] subscribe failed:", error);
-            send(ws, {
-              type: "error",
-              message:
-                error instanceof Error
-                  ? `Subscribe failed: ${error.message}`
-                  : "Subscribe failed.",
-            });
-          }
-        })();
+          });
       }
     });
 

@@ -1,4 +1,4 @@
-import type { WorkspaceRecord } from "./types";
+import type { QueuedChatPrompt, WorkspaceRecord } from "./types";
 
 export type AgentConversationMode =
   | "agent"
@@ -145,6 +145,7 @@ export type AgentStoredEvent =
       content: string;
       displayContent?: string;
       attachments?: Array<{ mimeType: string; data: string; name?: string }>;
+      inheritedInFork?: boolean;
     }
   | {
       seq: number;
@@ -189,6 +190,8 @@ export type AgentStoredEvent =
       detail?: string;
       locations?: AgentToolLocation[];
       editPreview?: AgentToolEditPreview;
+      /** OpenCode global SSE: tool ran in this child session (not the ACP root session). */
+      openCodeSubagentSessionId?: string;
       raw?: unknown;
     }
   | {
@@ -204,6 +207,7 @@ export type AgentStoredEvent =
       detail?: string;
       locations?: AgentToolLocation[];
       editPreview?: AgentToolEditPreview;
+      openCodeSubagentSessionId?: string;
       raw?: unknown;
     }
   | {
@@ -272,16 +276,29 @@ export type AgentStoredEvent =
       transcript: AgentStoredEvent[];
       recentActivity?: string;
     }
-  | {
-      seq: number;
-      eventId: string;
-      conversationId: string;
-      createdAt: number;
-      kind: "agent_handoff";
-      fromAgent: string;
-      toAgent: string;
-      handoffMessageId?: string;
-    };
+| {
+  seq: number;
+  eventId: string;
+  conversationId: string;
+  createdAt: number;
+  kind: "agent_handoff";
+  fromAgent: string;
+  toAgent: string;
+  handoffMessageId?: string;
+  turnCount?: number;
+  toolCallCount?: number;
+}
+| {
+  seq: number;
+  eventId: string;
+  conversationId: string;
+  createdAt: number;
+  kind: "chat_fork";
+  fromConversationId: string;
+  fromAgent: string;
+  transcript: string;
+  upToMessageId: string | null;
+};
 
 export type AgentConversationRecord = {
   schemaVersion: 1;
@@ -299,6 +316,11 @@ export type AgentConversationRecord = {
   pendingPermission: AgentPendingPermission | null;
   lastError: string | null;
   experimental: boolean;
+  /** Server-owned archive flag; null = visible in the default rail. */
+  archivedAt: number | null;
+  lastReadSeq: number;
+  /** FIFO follow-up prompts while a turn is running; owned by the server. */
+  queuedPrompts: QueuedChatPrompt[];
 };
 
 export type AgentConversationSnapshot = {
@@ -329,6 +351,11 @@ export type AgentConversationConfigPatch = Partial<AgentConversationConfig> & {
   setConfigOptions?: Array<{ configId: string; value: string }>;
 };
 
+export type AgentConversationMetadataPatch = {
+  archived?: boolean;
+  lastReadSeq?: number;
+};
+
 export type AgentConversationListResult = {
   backends: AgentBackendInfo[];
   conversations: AgentConversationRecord[];
@@ -338,7 +365,14 @@ export type AgentConversationListResult = {
 
 export type AgentRailConversationSummary = Pick<
   AgentConversationRecord,
-  "id" | "workspaceId" | "title" | "createdAt" | "updatedAt" | "lastEventSeq" | "status"
+  | "id"
+  | "workspaceId"
+  | "title"
+  | "createdAt"
+  | "updatedAt"
+  | "lastEventSeq"
+  | "status"
+  | "archivedAt"
 > & {
   backendId: AgentBackendId;
   mode: AgentConversationMode;
@@ -380,11 +414,23 @@ export type AgentSocketServerMessage =
   | { type: "snapshot_head"; snapshot: AgentConversationSnapshotHead }
   | {
       type: "history_page";
+      workspaceId: string;
       conversationId: string;
       events: AgentStoredEvent[];
       window: AgentConversationEventWindow;
     }
-  | { type: "event"; conversationId: string; event: AgentStoredEvent }
+  | {
+      type: "event";
+      workspaceId: string;
+      conversationId: string;
+      event: AgentStoredEvent;
+    }
+  | {
+      type: "event_batch";
+      workspaceId: string;
+      conversationId: string;
+      events: AgentStoredEvent[];
+    }
   /**
    * Broadcast to every client on the workspace channel when a conversation's
    * metadata (title, updatedAt, status, backendId, etc.) changes. Clients use
@@ -402,4 +448,9 @@ export type AgentSocketServerMessage =
       workspaceId: string;
     }
   | { type: "pong" }
-  | { type: "error"; message: string };
+  | {
+      type: "error";
+      message: string;
+      conversationId?: string;
+      op?: "request_history";
+    };

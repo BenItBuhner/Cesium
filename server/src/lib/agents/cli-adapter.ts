@@ -10,6 +10,7 @@ import { spawnSafeEnv } from "./spawn-env.js";
 import { writeAgentBackendConfigCache } from "./provider-cache-store.js";
 import { extractToolEditPreview } from "./tool-edit-preview.js";
 import { formatRejectedToolDetail } from "./tool-rejection-utils.js";
+import { extractInlineReasoning } from "./parse-inline-reasoning.js";
 import {
   formatDeleteToolTitle,
   formatFindToolTitle,
@@ -64,6 +65,8 @@ type CliToolEmitPayload = {
   input?: unknown;
   result?: unknown;
   raw?: unknown;
+  /** When true, emit `tool_call_update` even if status is not terminal (e.g. Codex `item.updated`). */
+  emitAsUpdate?: boolean;
 };
 
 type CliPromptCallbacks = {
@@ -391,7 +394,7 @@ class OneShotCliSessionHandle implements AgentSessionHandle {
       const promptCallbacks: CliPromptCallbacks = {
         workspaceRoot: this.callbacks.workspace.root,
         appendAssistantText: async (text) => {
-          if (!text.trim() || !this.currentAssistantMessageId) {
+          if (!this.currentAssistantMessageId || text === "") {
             return;
           }
           sawAssistantText = true;
@@ -801,19 +804,17 @@ function looksLikeCliEditPayload(record: Record<string, unknown> | undefined): b
   return Boolean(errorText && /failed to find context|apply patch|replace/i.test(errorText));
 }
 
-function looksLikeCliReadPayload(record: Record<string, unknown> | undefined): boolean {
+function looksLikeCliReadShape(record: Record<string, unknown> | undefined): boolean {
   if (!record || looksLikeCliEditPayload(record)) {
     return false;
   }
-  return cliRecordHasAnyKey(record, [
-    "content",
-    "text",
-    "totalLines",
-    "readRange",
-    "contentBlobId",
-    "isEmpty",
-    "exceededLimit",
-  ]);
+  return (
+    typeof record.path === "string" ||
+    typeof record.filePath === "string" ||
+    typeof record.file_path === "string" ||
+    "readRange" in record ||
+    "lineRange" in record
+  );
 }
 
 function inferCliToolKind(rawName: string, input: unknown, result?: unknown): string {
@@ -826,7 +827,7 @@ function inferCliToolKind(rawName: string, input: unknown, result?: unknown): st
   if (fromName !== "tool") {
     return fromName;
   }
-  if (looksLikeCliReadPayload(resultRecord) || looksLikeCliReadPayload(inputRecord)) {
+  if (looksLikeCliReadShape(resultRecord) || looksLikeCliReadShape(inputRecord)) {
     return "read";
   }
   return "tool";
@@ -872,10 +873,10 @@ function buildCliToolDisplayTitle(rawName: string, input: unknown, result?: unkn
   if (kind === "terminal") {
     return command ? formatTerminalCommandTitle(command) : "Run command";
   }
-  return truncateGenericToolTitle(
-    humanizeCliToolName(String(rawName)),
-    "Tool call"
-  );
+  const humanized = humanizeCliToolName(String(rawName));
+  return humanized
+    ? truncateGenericToolTitle(`Ran ${humanized}`, "Ran")
+    : "Ran";
 }
 
 function countLinesInText(text: string): number {
@@ -1352,7 +1353,8 @@ function emitCliToolEvent(
     payload.status === "completed" ||
     payload.status === "failed" ||
     payload.status === "cancelled";
-  if (terminal) {
+  const useUpdate = terminal || payload.emitAsUpdate === true;
+  if (useUpdate) {
     void callbacks.appendToolCallUpdate({
       toolCallId: payload.toolCallId,
       title: payload.title,
@@ -1395,8 +1397,10 @@ function parseCursorAssistantBlocks(
   callbacks: CliPromptCallbacks
 ): void {
   const content = message.content;
-  if (typeof content === "string" && content.trim()) {
-    void callbacks.appendAssistantText(content);
+  if (typeof content === "string") {
+    if (content !== "") {
+      void callbacks.appendAssistantText(content);
+    }
     return;
   }
   let parts: unknown[] = [];
@@ -1425,10 +1429,18 @@ function parseCursorAssistantBlocks(
       continue;
     }
 
-    if (t === "text" && typeof record.text === "string" && record.text) {
-      void callbacks.appendAssistantText(record.text);
-      continue;
-    }
+ if (t === "text" && typeof record.text === "string" && record.text) {
+ const { reasoning, text: cleaned } = extractInlineReasoning(record.text, {
+ normalizeEdges: false,
+ });
+ for (const block of reasoning) {
+ void callbacks.appendReasoningText(block.text, block.raw);
+ }
+ if (cleaned) {
+ void callbacks.appendAssistantText(cleaned);
+ }
+ continue;
+ }
 
     if (t === "function_call" || t === "function") {
       const fn =
@@ -1677,6 +1689,52 @@ export function parseCodexStdoutLine(line: string, callbacks: CliPromptCallbacks
         input: normalized.input,
         result: normalized.result,
         raw: ir,
+      });
+    }
+    return;
+  }
+  if (type === "item.updated") {
+    const item = parsed.item && typeof parsed.item === "object"
+      ? (parsed.item as Record<string, unknown>)
+      : null;
+    const itemType = typeof item?.type === "string" ? item.type : "";
+    const text = typeof item?.text === "string" ? item.text : "";
+    if (
+      itemType &&
+      SKIP_CLI_ITEM_TRACE_TYPES.has(itemType) &&
+      text.trim() &&
+      (itemType === "reasoning" || itemType === "thinking" || itemType === "redacted_thinking")
+    ) {
+      void callbacks.appendReasoningText(text, item);
+      return;
+    }
+    if (item && itemType && itemType !== "agent_message" && !SKIP_CLI_ITEM_TRACE_TYPES.has(itemType)) {
+      const ir = item;
+      if (itemType === "file_change") {
+        trackCodexFileStateBeforeChange(callbacks, ir);
+      }
+      const normalized = normalizeCodexItemToolShape(ir);
+      const normalizedKind = inferCliToolKind(String(normalized.rawName), normalized.input, normalized.result);
+      const updatedDetail =
+        text.trim() ||
+        summarizeCliToolResultDetail(String(normalized.rawName), normalized.input, normalized.result) ||
+        (normalizedKind === "task" || normalizedKind === "search_web"
+          ? undefined
+          : summarizeUnknownForToolDetail(normalized.result));
+      emitCliToolEvent(callbacks, {
+        toolCallId:
+          extractToolCallIdFromNestedItem(ir) ||
+          (typeof ir.item_id === "string" && ir.item_id) ||
+          stableCliToolCallId(String(normalized.rawName), normalized.input),
+        title: buildCliToolDisplayTitle(String(normalized.rawName), normalized.input, normalized.result),
+        toolKind: normalizedKind,
+        status: normalizeCliToolEventStatus(ir, "in_progress"),
+        detail: updatedDetail,
+        rawName: String(normalized.rawName),
+        input: normalized.input,
+        result: normalized.result,
+        raw: ir,
+        emitAsUpdate: true,
       });
     }
     return;

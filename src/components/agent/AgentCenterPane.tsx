@@ -542,6 +542,35 @@ export function AgentCenterPane() {
                       items={queuedPrompts}
                       onDelete={removeQueuedPrompt}
                       onUnqueue={unqueuePromptToComposer}
+                      collapsed={
+                        selectedConversationId
+                          ? Boolean(
+                              workspaceSession.chat.composerQueueDockCollapsedByConversationId?.[
+                                selectedConversationId
+                              ]
+                            )
+                          : false
+                      }
+                      onCollapsedChange={(collapsed) => {
+                        if (!selectedConversationId) return;
+                        updateWorkspaceSession((current) => {
+                          const prev =
+                            current.chat.composerQueueDockCollapsedByConversationId ?? {};
+                          const m = { ...prev };
+                          if (collapsed) {
+                            m[selectedConversationId] = true;
+                          } else {
+                            delete m[selectedConversationId];
+                          }
+                          return {
+                            ...current,
+                            chat: {
+                              ...current.chat,
+                              composerQueueDockCollapsedByConversationId: m,
+                            },
+                          };
+                        });
+                      }}
                     />
                   </div>
                 </div>

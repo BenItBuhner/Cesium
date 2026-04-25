@@ -1,0 +1,1 @@
+ALTER TABLE "agent_conversations" ADD COLUMN "queued_prompts" jsonb DEFAULT '[]'::jsonb NOT NULL;

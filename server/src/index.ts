@@ -31,6 +31,7 @@ import { storageRoutes } from "./routes/storage.js";
 import { bootstrapStorage } from "./storage/index.js";
 import { AGENT_BACKENDS } from "./lib/agents/providers.js";
 import { warmupAgentBackendCaches } from "./lib/agents/provider-cache-store.js";
+import { startAgentPromptQueueDrainListener } from "./lib/agents/prompt-queue-drain.js";
 import {
   authMiddleware,
   authenticateUpgradeRequest,
@@ -139,6 +140,7 @@ if (process.env.NODE_ENV !== "test") {
     console.warn("[agents] provider cache warmup failed:", error);
   });
 }
+startAgentPromptQueueDrainListener();
 
 const server = serve({
   fetch: app.fetch,

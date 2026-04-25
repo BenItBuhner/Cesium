@@ -16,7 +16,7 @@ import {
   Database,
   Download,
   ExternalLink,
-  Info,
+
   Lock,
   RefreshCw,
   Upload,
@@ -53,12 +53,14 @@ import {
 import {
   DEFAULT_KEYBOARD_SHORTCUT_BINDINGS,
   detectShortcutPlatform,
+  formatShortcutBinding,
   formatShortcutBindingsForInput,
-  parseShortcutBindingsInput,
+  normalizeKeyForCapture,
   primaryModifierLabel,
   SHORTCUT_COMMAND_DEFINITIONS,
   type ShortcutCommandSection,
   type ShortcutPlatform,
+  type VoiceInputMode,
 } from "@/lib/keyboard-shortcuts";
 import {
   buildSettingsExportBundle,
@@ -75,7 +77,9 @@ import {
 } from "@/lib/workspace-session";
 import { SettingsThemeSelect } from "@/components/editor/SettingsThemeSelect";
 import { ToggleSwitch } from "@/components/ui/ToggleSwitch";
-import { availableModels, currentModel } from "@/lib/mock-data";
+import { AgentBackendIcon } from "@/components/chat/AgentBackendIcon";
+import type { AgentBackendId } from "@/lib/agent-types";
+import type { ModelToggleState } from "@/lib/global-settings";
 
 export const rowButtonClass =
   "inline-flex shrink-0 items-center gap-[6px] rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-transparent px-[12px] py-[5px] font-sans text-[12px] font-normal text-[var(--text-primary)] transition-colors hover:bg-[var(--accent-bg)]";
@@ -102,6 +106,22 @@ const SECTION_ORDER: ShortcutCommandSection[] = [
   "Terminal",
   "Window",
   "Developer",
+];
+
+const BACKEND_LABELS: Record<string, string> = {
+  "cursor-acp": "Cursor",
+  "opencode-acp": "Opencode",
+  "gemini-acp": "Gemini",
+  "codex-adapter": "Codex",
+  "claude-adapter": "Claude Code",
+};
+
+const BACKEND_ORDER: string[] = [
+  "cursor-acp",
+  "opencode-acp",
+  "gemini-acp",
+  "codex-adapter",
+  "claude-adapter",
 ];
 
 export function SettingsSection({
@@ -356,6 +376,17 @@ export function GeneralSettingsPanel() {
       </SettingsSection>
       <SettingsSection title="Notifications">
         <SettingsRow
+          title="Do Not Disturb"
+          description="Suppress all notifications — connection alerts, warnings, file overrides, and every other notification type."
+          trailing={
+            <ToggleSwitch
+              checked={general.doNotDisturb}
+              onChange={(value) => patchGeneral({ doNotDisturb: value })}
+              size="md"
+            />
+          }
+        />
+        <SettingsRow
           title="System notifications"
           description="Show notifications for important events and completions."
           trailing={
@@ -531,7 +562,7 @@ export function AppearanceSettingsPanel() {
     <>
       <PageIntro
         title="Appearance"
-        subtitle="Choose system/light/dark behavior, a theme for each resolved appearance, and optional custom token overrides. Custom themes are stored in this browser and can be included in settings export."
+        subtitle="Choose system/light/dark behavior, a theme for each resolved appearance, and optional custom token overrides. Theming syncs to the server (and local storage as a cache); include it in settings export for backups."
       />
       <SettingsSection title="Appearance mode">
         <div className="flex flex-wrap items-center gap-[8px] border-b border-[var(--border-subtle)] px-[16px] py-[14px] last:border-b-0">
@@ -830,11 +861,24 @@ function CursorAgentServerDeploymentReadout() {
 
 export function AgentsSettingsPanel() {
   const { settings, updateSettings } = useGlobalSettings();
+  const { workspaces } = useWorkspace();
   const agents = settings.agents;
   const modLabel = useMemo(
     () => primaryModifierLabel(detectShortcutPlatform()),
     []
   );
+
+  const workspaceNameById = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const w of workspaces) {
+      m.set(w.id, w.name);
+    }
+    return m;
+  }, [workspaces]);
+
+  const sortedRemembered = useMemo(() => {
+    return [...agents.rememberedPermissions].sort((a, b) => b.updatedAt - a.updatedAt);
+  }, [agents.rememberedPermissions]);
 
   const patchAgents = (patch: Partial<typeof agents>) => {
     updateSettings((current) => ({
@@ -846,13 +890,20 @@ export function AgentsSettingsPanel() {
     }));
   };
 
-  const rm = (arr: string[], t: string) => arr.filter((x) => x !== t);
+  const removeRemembered = (id: string) => {
+    patchAgents({
+      rememberedPermissions: agents.rememberedPermissions.filter((r) => r.id !== id),
+    });
+  };
 
   return (
     <>
-      <PageIntro title="Agents" />
+      <PageIntro
+        title="Agents"
+        subtitle="Chat composer behavior, tool-permission memory, and Cursor CLI hints from the server. Other agent backends use their own CLIs; permission prompts use the shared ACP flow when supported."
+      />
       <CursorAgentServerDeploymentReadout />
-      <SettingsSection>
+      <SettingsSection title="Chat">
         <SettingsRow
           title={`Submit with ${modLabel} + Enter`}
           description={`When enabled, ${modLabel} + Enter submits chat and Enter inserts a newline.`}
@@ -866,227 +917,8 @@ export function AgentsSettingsPanel() {
           }
         />
         <SettingsRow
-          title="Queue Messages"
-          description="Adjust the default behavior of sending a message while Agent is running."
-          trailing={<SelectMock label="Send after current message" />}
-        />
-        <SettingsRow
-          title="Usage Summary"
-          description="When to show the usage summary at the bottom of the chat pane."
-          trailing={<SelectMock label="Auto" />}
-        />
-        <SettingsRow
-          title="Agent Autocomplete"
-          description="Contextual suggestions while prompting Agent."
-          trailing={
-            <ToggleSwitch
-              checked={agents.autocomplete}
-              onChange={(v) => patchAgents({ autocomplete: v })}
-              size="md"
-              variant="green"
-            />
-          }
-          border={false}
-        />
-      </SettingsSection>
-      <SettingsSection>
-        <SubsectionLabel>Context</SubsectionLabel>
-        <SettingsRow
-          title="Web Search Tool"
-          description="Allow Agent to search the web for relevant information."
-          trailing={
-            <ToggleSwitch
-              checked={agents.webSearch}
-              onChange={(v) => patchAgents({ webSearch: v })}
-              size="md"
-              variant="green"
-            />
-          }
-        />
-        <SettingsRow
-          title="Auto-Accept Web Search"
-          description="Skip approval dialog. Agent may run web searches automatically."
-          trailing={
-            <ToggleSwitch
-              checked={agents.autoWeb}
-              onChange={(v) => patchAgents({ autoWeb: v })}
-              size="md"
-              variant="green"
-            />
-          }
-        />
-        <SettingsRow
-          title="Web fetch tool"
-          description="Allow Agent to fetch content from URLs."
-          trailing={
-            <ToggleSwitch
-              checked={agents.webFetch}
-              onChange={(v) => patchAgents({ webFetch: v })}
-              size="md"
-              variant="green"
-            />
-          }
-        />
-        <SettingsRow
-          title="Hierarchical Cursor Ignore"
-          description="Apply .cursorignore files in all subdirectories. Changing this setting will require a restart."
-          trailing={
-            <ToggleSwitch
-              checked={agents.hierIgnore}
-              onChange={(v) => patchAgents({ hierIgnore: v })}
-              size="md"
-              variant="green"
-            />
-          }
-        />
-        <SettingsRow
-          title="Ignore Symlinks in Cursor Ignore Search"
-          description="Use with caution. Skip symlinks during .cursorignore file discovery."
-          titleExtra={
-            <span
-              className="rounded-[2px] bg-[#f59e0b]/20 px-[4px] font-sans text-[9px] font-semibold uppercase text-[#b45309]"
-              title="Warning"
-            >
-              !
-            </span>
-          }
-          trailing={
-            <ToggleSwitch
-              checked={agents.symlinkIgnore}
-              onChange={(v) => patchAgents({ symlinkIgnore: v })}
-              size="md"
-              variant="green"
-            />
-          }
-          border={false}
-        />
-      </SettingsSection>
-      <SettingsSection>
-        <SubsectionLabel>Auto-Run</SubsectionLabel>
-        <SettingsRow
-          title="Auto-Run Mode"
-          description="Choose how Agent runs tools like command execution, MCP, and file writes."
-          trailing={<SelectMock label="Auto-Run in Sandbox" />}
-        />
-        <SettingsRow
-          title="Auto-Run Network Access"
-          description="Control which network requests are allowed when commands run in the sandbox."
-          trailing={<SelectMock label="sandbox.json + Defaults" />}
-        />
-        <SettingsRow
-          title="Auto-Approved Mode Transitions"
-          description="Mode transitions that will be automatically approved without prompting."
-          trailing={
-            <TagList
-              tags={agents.modeTags}
-              onRemove={(t) => patchAgents({ modeTags: rm(agents.modeTags, t) })}
-            />
-          }
-        />
-        <SettingsRow
-          title="Command Allowlist"
-          description="Commands Agent may run without confirmation when auto-run is enabled."
-          trailing={
-            <TagList
-              tags={agents.cmdTags}
-              onRemove={(t) => patchAgents({ cmdTags: rm(agents.cmdTags, t) })}
-            />
-          }
-          border={false}
-        />
-      </SettingsSection>
-      <SettingsSection title="Protection">
-        <SettingsRow
-          title="Browser Protection"
-          description="Prevent Agent from automatically running Browser tools."
-          trailing={
-            <ToggleSwitch
-              checked={agents.browserProt}
-              onChange={(v) => patchAgents({ browserProt: v })}
-              size="md"
-              variant="green"
-            />
-          }
-        />
-        <SettingsRow
-          title="MCP Tools Protection"
-          description="Prevent Agent from automatically running MCP tools."
-          trailing={
-            <ToggleSwitch
-              checked={agents.mcpProt}
-              onChange={(v) => patchAgents({ mcpProt: v })}
-              size="md"
-              variant="green"
-            />
-          }
-        />
-        <SettingsRow
-          title="File Deletion Protection"
-          description="Prevent Agent from deleting files automatically."
-          trailing={
-            <ToggleSwitch
-              checked={agents.fileDel}
-              onChange={(v) => patchAgents({ fileDel: v })}
-              size="md"
-              variant="green"
-            />
-          }
-        />
-        <SettingsRow
-          title="External File Protection"
-          description="Prevent Agent from creating or modifying files outside of the workspace automatically."
-          trailing={
-            <ToggleSwitch
-              checked={agents.extFile}
-              onChange={(v) => patchAgents({ extFile: v })}
-              size="md"
-              variant="green"
-            />
-          }
-          border={false}
-        />
-      </SettingsSection>
-      <SettingsSection title="">
-        <SubsectionLabel>Inline editing & terminal</SubsectionLabel>
-        <SettingsRow
-          title="Legacy Terminal Tool"
-          description="Use the legacy terminal tool in agent mode, for use on systems with unsupported shell configurations."
-          trailing={
-            <ToggleSwitch
-              checked={agents.legacyTerm}
-              onChange={(v) => patchAgents({ legacyTerm: v })}
-              size="md"
-              variant="green"
-            />
-          }
-        />
-        <SettingsRow
-          title="Auto-Parse Links"
-          description={`Automatically parse links when pasted into Quick Edit (${modLabel}+K) input.`}
-          trailing={
-            <ToggleSwitch
-              checked={agents.autoParse}
-              onChange={(v) => patchAgents({ autoParse: v })}
-              size="md"
-              variant="green"
-            />
-          }
-        />
-        <SettingsRow
-          title="Themed Diff Backgrounds"
-          description="Use themed background colors for inline code diffs."
-          trailing={
-            <ToggleSwitch
-              checked={agents.themedDiff}
-              onChange={(v) => patchAgents({ themedDiff: v })}
-              size="md"
-              variant="green"
-            />
-          }
-        />
-        <SettingsRow
           title="Tool details in chat stream"
-          description="When on, file edit diffs and command permission prompts appear as separate blocks in the main chat. When off, they stay inside the worked-session tool dropdown (default)."
+          description="When on, file edit diffs and command permission prompts appear as separate blocks in the main chat. When off, they stay inside the worked-session tool list."
           trailing={
             <ToggleSwitch
               checked={agents.inlineToolDetailsInChat}
@@ -1095,191 +927,315 @@ export function AgentsSettingsPanel() {
               variant="green"
             />
           }
-        />
-        <SettingsRow
-          title="Collapse Auto-Run Commands"
-          description="Collapse auto-run command output by default in Terminal command previews."
-          trailing={
-            <ToggleSwitch
-              checked={agents.collapseAuto}
-              onChange={(v) => patchAgents({ collapseAuto: v })}
-              size="md"
-              variant="green"
-            />
-          }
           border={false}
         />
       </SettingsSection>
-      <SettingsSection title="Voice mode">
+      <SettingsSection title="Tool permissions">
         <SettingsRow
-          title="Submit Keywords"
-          description="Custom keywords that trigger auto-submit in voice mode. Only single words (no spaces) are allowed."
-          trailing={<TagList tags={["submit"]} />}
-          border={false}
-        />
-      </SettingsSection>
-      <SettingsSection title="Attribution">
-        <SettingsRow
-          title="Commit Attribution"
-          description="Mark Agent commits as &apos;Made with Cursor&apos;."
+          title="Auto-approve all permission prompts"
+          description="Dangerous: for ACP sessions (Cursor, Opencode, Gemini, etc.), the server answers every tool permission with Allow immediately. Remembered allow/reject rules in the list below still win when they match. This toggle does not add list entries—use the cards in chat for audited “always” choices."
           trailing={
             <ToggleSwitch
-              checked={agents.commitAttr}
-              onChange={(v) => patchAgents({ commitAttr: v })}
+              checked={agents.autoAcceptAllAgentPermissions}
+              onChange={(v) => patchAgents({ autoAcceptAllAgentPermissions: v })}
               size="md"
               variant="green"
             />
           }
         />
-        <SettingsRow
-          title="PR Attribution"
-          description="Mark pull requests as made with Cursor."
-          trailing={
-            <ToggleSwitch
-              checked={agents.prAttr}
-              onChange={(v) => patchAgents({ prAttr: v })}
-              size="md"
-              variant="green"
-            />
-          }
-          border={false}
-        />
-      </SettingsSection>
-      <SettingsSection title="Git">
-        <SettingsRow
-          title="Branch Prefix"
-          description="Prefix for new branches created by Agent (e.g. cursor/, username/)."
-          trailing={
-            <HardwareAwareTextInput
-              type="text"
-               value={agents.branchPrefix}
-               onChange={(value) => patchAgents({ branchPrefix: value })}
-              placeholder="cursor/"
-              className="w-[min(100%,200px)] rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-[var(--bg-main)] px-[10px] py-[6px] font-sans text-[12px] text-[var(--text-primary)] outline-none placeholder:text-[var(--text-disabled)]"
-              ariaLabel="Branch prefix"
-            />
-          }
-          border={false}
-        />
+        <div className="border-b border-[var(--border-subtle)] px-[16px] py-[12px] last:border-b-0">
+          <div className="mb-[10px] flex flex-wrap items-center justify-between gap-[8px]">
+            <div>
+              <p className="font-sans text-[13px] font-medium text-[var(--text-primary)]">
+                Remembered decisions
+              </p>
+              <p className="mt-[4px] max-w-[560px] font-sans text-[12px] leading-snug text-[var(--text-secondary)]">
+                “Always allow” and “always reject” choices from permission cards, per workspace and
+                backend. Removing an entry here stops automatic reuse; it does not revoke work already
+                done.
+              </p>
+            </div>
+            <button
+              type="button"
+              className={`${rowButtonClass} disabled:cursor-not-allowed disabled:opacity-45`}
+              disabled={agents.rememberedPermissions.length === 0}
+              onClick={() => patchAgents({ rememberedPermissions: [] })}
+            >
+              Clear all
+            </button>
+          </div>
+          {sortedRemembered.length === 0 ? (
+            <p className="rounded-[var(--radius-tab)] border border-[var(--border-subtle)] bg-[var(--bg-main)] px-[12px] py-[16px] text-center font-sans text-[12px] text-[var(--text-disabled)]">
+              No remembered permissions yet. Choose “always allow” or “always reject” on a permission
+              card in chat to populate this list.
+            </p>
+          ) : (
+            <ul className="max-h-[min(360px,45vh)] divide-y divide-[var(--border-subtle)] overflow-y-auto overscroll-contain rounded-[var(--radius-tab)] border border-[var(--border-card)]">
+              {sortedRemembered.map((rule) => {
+                const wsLabel =
+                  workspaceNameById.get(rule.workspaceId) ?? rule.workspaceId.slice(0, 8);
+                const backendLabel = BACKEND_LABELS[rule.backendId] ?? rule.backendId;
+                const choice =
+                  rule.optionKind === "allow_always"
+                    ? "Always allow"
+                    : rule.optionKind === "reject_always"
+                      ? "Always reject"
+                      : rule.decision === "allow"
+                        ? "Allow"
+                        : "Reject";
+                return (
+                  <li
+                    key={rule.id}
+                    className="flex flex-wrap items-start justify-between gap-[10px] px-[12px] py-[10px]"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <p className="font-sans text-[13px] font-medium text-[var(--text-primary)]">
+                        {rule.toolLabel}
+                      </p>
+                      <p className="mt-[4px] font-mono text-[11px] text-[var(--text-secondary)]">
+                        {rule.toolKey}
+                      </p>
+                      <p className="mt-[6px] flex flex-wrap items-center gap-[6px] font-sans text-[11px] text-[var(--text-secondary)]">
+                        <span className={tagClass}>{backendLabel}</span>
+                        <span className={tagClass}>{wsLabel}</span>
+                        <span
+                          className={`${tagClass} ${
+                            rule.decision === "allow"
+                              ? "border-emerald-500/40 text-emerald-700 dark:text-emerald-300"
+                              : "border-rose-500/40 text-rose-700 dark:text-rose-300"
+                          }`}
+                        >
+                          {choice}
+                        </span>
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      className={rowButtonClass}
+                      onClick={() => removeRemembered(rule.id)}
+                    >
+                      Remove
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
       </SettingsSection>
     </>
   );
 }
 
-function createModelsSettingsState(): { id: string; name: string; on: boolean }[] {
-  return availableModels.map((m) => ({
-    id: m.id,
-    name: m.name,
-    on: m.id === currentModel.id,
-  }));
-}
-
 export function ModelsSettingsPanel() {
-  const { settings, updateSettings } = useGlobalSettings();
-  const [apiOpen, setApiOpen] = useState(false);
+  const { settings, updateSettings, refreshModels, modelsRefreshing, saveModelToggleUpdates } = useGlobalSettings();
   const [modelQuery, setModelQuery] = useState("");
-  const models = settings.models.models.length
-    ? settings.models.models
-    : createModelsSettingsState();
+  const [collapsedBackends, setCollapsedBackends] = useState<Set<string>>(new Set());
 
-  const setModels = (
-    updater: (current: { id: string; name: string; on: boolean }[]) => {
-      id: string;
-      name: string;
-      on: boolean;
-    }[]
-  ) => {
-    updateSettings((current) => ({
-      ...current,
-      models: {
-        ...current.models,
-        models: updater(current.models.models),
-      },
-    }));
-  };
+  const byBackend = useMemo(
+    () => settings.models.byBackend ?? {},
+    [settings.models.byBackend]
+  );
 
-  const visibleModels = useMemo(() => {
+  const setModelsForBackend = useCallback(
+    (backendId: string, updater: (current: ModelToggleState[]) => ModelToggleState[]) => {
+      updateSettings((current) => ({
+        ...current,
+        models: {
+          ...current.models,
+          byBackend: {
+            ...current.models.byBackend,
+            [backendId]: updater(current.models.byBackend[backendId] ?? []),
+          },
+        },
+      }));
+    },
+    [updateSettings]
+  );
+
+  const toggleModel = useCallback(
+    (backendId: string, modelId: string, on: boolean) => {
+      setModelsForBackend(backendId, (rows) =>
+        rows.map((r) => (r.id === modelId ? { ...r, on } : r))
+      );
+      void saveModelToggleUpdates([{ backendId, modelId, on }]);
+    },
+    [setModelsForBackend, saveModelToggleUpdates]
+  );
+
+  const selectAllForBackend = useCallback(
+    (backendId: string) => {
+      const currentModels = byBackend[backendId] ?? [];
+      const updates = currentModels
+        .filter((m) => !m.on)
+        .map((m) => ({ backendId, modelId: m.id, on: true }));
+      setModelsForBackend(backendId, (rows) => rows.map((r) => ({ ...r, on: true })));
+      if (updates.length > 0) {
+        void saveModelToggleUpdates(updates);
+      }
+    },
+    [byBackend, setModelsForBackend, saveModelToggleUpdates]
+  );
+
+  const deselectAllForBackend = useCallback(
+    (backendId: string) => {
+      const currentModels = byBackend[backendId] ?? [];
+      const updates = currentModels
+        .filter((m) => m.on)
+        .map((m) => ({ backendId, modelId: m.id, on: false }));
+      setModelsForBackend(backendId, (rows) => rows.map((r) => ({ ...r, on: false })));
+      if (updates.length > 0) {
+        void saveModelToggleUpdates(updates);
+      }
+    },
+    [byBackend, setModelsForBackend, saveModelToggleUpdates]
+  );
+
+  const toggleCollapse = useCallback((backendId: string) => {
+    setCollapsedBackends((prev) => {
+      const next = new Set(prev);
+      if (next.has(backendId)) {
+        next.delete(backendId);
+      } else {
+        next.add(backendId);
+      }
+      return next;
+    });
+  }, []);
+
+  const filteredByBackend = useMemo(() => {
     const q = modelQuery.trim().toLowerCase();
-    if (!q) return models;
-    return models.filter((model) => model.name.toLowerCase().includes(q));
-  }, [modelQuery, models]);
+    if (!q) return byBackend;
+    const result: Record<string, ModelToggleState[]> = {};
+    for (const [backendId, models] of Object.entries(byBackend)) {
+      const filtered = models.filter((m) => m.name.toLowerCase().includes(q));
+      if (filtered.length > 0) {
+        result[backendId] = filtered;
+      }
+    }
+    return result;
+  }, [modelQuery, byBackend]);
+
+  const sortedBackendIds = useMemo(() => {
+    const present = new Set(Object.keys(filteredByBackend));
+    return BACKEND_ORDER.filter((id) => present.has(id)).concat(
+      Object.keys(filteredByBackend).filter((id) => !BACKEND_ORDER.includes(id))
+    );
+  }, [filteredByBackend]);
+
+  const totalModels = useMemo(
+    () => Object.values(byBackend).reduce((sum, list) => sum + list.length, 0),
+    [byBackend]
+  );
+
+  const onCount = useMemo(
+    () =>
+      Object.values(byBackend).reduce(
+        (sum, list) => sum + list.filter((m) => m.on).length,
+        0
+      ),
+    [byBackend]
+  );
 
   return (
     <>
-      <PageIntro title="Models" />
+      <PageIntro title="Models" subtitle={`${onCount} of ${totalModels} models visible in dropdown`} />
       <div className="mb-[16px] flex items-center gap-[8px]">
         <div className="relative min-w-0 flex-1">
           <HardwareAwareTextInput
             type="search"
             value={modelQuery}
             onChange={setModelQuery}
-            placeholder="Add or search model"
+            placeholder="Search models"
             className="box-border h-[36px] w-full rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-[var(--bg-panel)] pl-[10px] pr-[10px] font-sans text-[13px] text-[var(--text-primary)] outline-none placeholder:text-[var(--text-disabled)]"
-            ariaLabel="Add or search model"
+            ariaLabel="Search models"
           />
         </div>
         <button
           type="button"
-          className="flex size-[36px] shrink-0 items-center justify-center rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-[var(--bg-panel)] text-[var(--text-secondary)] hover:bg-[var(--accent-bg)]"
+          onClick={() => void refreshModels()}
+          disabled={modelsRefreshing}
+          className="flex size-[36px] shrink-0 items-center justify-center rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-[var(--bg-panel)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--accent-bg)] disabled:opacity-50"
           aria-label="Refresh models"
         >
-          <RefreshCw className="size-[16px]" strokeWidth={1.5} />
+          <RefreshCw
+            className={`size-[16px] ${modelsRefreshing ? "animate-spin" : ""}`}
+            strokeWidth={1.5}
+          />
         </button>
       </div>
-      <SettingsSection>
-        {visibleModels.map((m, i) => (
-          <SettingsRow
-            key={m.id}
-            title={m.name}
-            trailing={
+      {sortedBackendIds.length === 0 ? (
+        <div className="rounded-[var(--radius-card)] border border-[var(--border-card)] bg-[var(--bg-panel)] px-[16px] py-[24px] text-center font-sans text-[13px] text-[var(--text-disabled)]">
+          {modelQuery ? "No models match your search" : "No models loaded yet. Click refresh to load from servers."}
+        </div>
+      ) : null}
+      {sortedBackendIds.map((backendId) => {
+        const models = filteredByBackend[backendId] ?? [];
+  const allOn = models.length > 0 && models.every((m) => m.on);
+        const onCountForBackend = models.filter((m) => m.on).length;
+        const collapsed = collapsedBackends.has(backendId);
+        return (
+          <SettingsSection key={backendId}>
+            <div
+              className="flex min-h-[48px] cursor-pointer select-none items-center justify-between gap-[12px] px-[16px] py-[10px]"
+              onClick={() => toggleCollapse(backendId)}
+            >
+              <div className="flex min-w-0 items-center gap-[10px]">
+                <AgentBackendIcon
+                  backendId={backendId as AgentBackendId}
+                  className="size-[18px] shrink-0"
+                  strokeWidth={1.5}
+                />
+                <span className="font-sans text-[13px] font-medium text-[var(--text-primary)]">
+                  {BACKEND_LABELS[backendId] ?? backendId}
+                </span>
+                <span className="inline-flex items-center rounded-[var(--radius-tab)] bg-[var(--bg-main)] px-[6px] py-[1px] font-mono text-[11px] text-[var(--text-secondary)]">
+                  {onCountForBackend}/{models.length}
+                </span>
+              </div>
               <div className="flex items-center gap-[8px]">
                 <button
                   type="button"
-                  className="text-[var(--text-disabled)] hover:text-[var(--text-primary)]"
-                  aria-label={`About ${m.name}`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (allOn) {
+                      deselectAllForBackend(backendId);
+                    } else {
+                      selectAllForBackend(backendId);
+                    }
+                  }}
+                  className="inline-flex shrink-0 items-center gap-[4px] rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-transparent px-[8px] py-[3px] font-sans text-[11px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)]"
                 >
-                  <Info className="size-[14px]" strokeWidth={1.5} />
+                  {allOn ? "Deselect all" : "Select all"}
                 </button>
-                <ToggleSwitch
-                  checked={m.on}
-                  onChange={(v) =>
-                    setModels((rows) =>
-                      rows.map((r) => (r.id === m.id ? { ...r, on: v } : r))
-                    )
-                  }
-                  size="md"
-                  variant="green"
+                <ChevronRight
+                  className={`size-[14px] shrink-0 text-[var(--text-secondary)] transition-transform ${collapsed ? "" : "rotate-90"}`}
+                  strokeWidth={1.5}
                 />
               </div>
-            }
-            border={i < visibleModels.length - 1}
-          />
-        ))}
-        <div className="px-[16px] py-[12px]">
-          <button
-            type="button"
-            className="font-sans text-[13px] font-medium text-[#2563eb] hover:underline"
-          >
-            View All Models
-          </button>
-        </div>
-        <button
-          type="button"
-          onClick={() => setApiOpen(!apiOpen)}
-          className="flex w-full items-center gap-[6px] border-t border-[var(--border-subtle)] px-[16px] py-[10px] font-sans text-[12px] text-[var(--text-secondary)] hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)]"
-        >
-          <ChevronRight
-            className={`size-[14px] transition-transform ${apiOpen ? "rotate-90" : ""}`}
-            strokeWidth={1.5}
-          />
-          API Keys
-        </button>
-        {apiOpen ? (
-          <div className="border-t border-[var(--border-subtle)] px-[16px] py-[12px] font-sans text-[12px] text-[var(--text-secondary)]">
-            API key management would open here.
-          </div>
-        ) : null}
-      </SettingsSection>
+            </div>
+            {collapsed ? null : (
+              <div className="max-h-[min(480px,50vh)] overflow-y-auto overscroll-contain border-t border-[var(--border-subtle)]">
+                {models.map((m, i) => (
+                  <SettingsRow
+                    key={`${backendId}::${m.id}`}
+                    title={m.name}
+                    trailing={
+                      <ToggleSwitch
+                        checked={m.on}
+                        onChange={(v) => toggleModel(backendId, m.id, v)}
+                        size="sm"
+                        variant="green"
+                      />
+                    }
+                    border={i < models.length - 1}
+                  />
+                ))}
+              </div>
+            )}
+          </SettingsSection>
+        );
+      })}
     </>
   );
 }
@@ -1709,42 +1665,118 @@ export function BetaSettingsPanel() {
   );
 }
 
-function ShortcutBindingField({
+const keycapClass =
+  "inline-flex items-center rounded-[4px] border border-[var(--border-card)] bg-[var(--bg-main)] px-[6px] py-[2px] font-mono text-[11px] font-medium text-[var(--text-primary)] leading-tight";
+
+function ShortcutKeycapGroup({
+  binding,
+  platform,
+}: {
+  binding: string;
+  platform: ShortcutPlatform;
+}) {
+  const parsed = formatShortcutBinding(binding, platform);
+  if (!parsed) return null;
+  const tokens = parsed.split("+");
+  return (
+    <span className="inline-flex items-center gap-[3px]">
+      {tokens.map((token, i) => (
+        <kbd key={i} className={keycapClass}>{token}</kbd>
+      ))}
+    </span>
+  );
+}
+
+function ShortcutKeyCapture({
   commandId,
   bindings,
+  defaultBindings,
   platform,
-  onCommit,
+  onCommitBinding,
   onReset,
 }: {
   commandId: string;
   bindings: string[];
+  defaultBindings: string[];
   platform: ShortcutPlatform;
-  onCommit: (raw: string) => boolean;
+  onCommitBinding: (bindings: string[]) => void;
   onReset: () => void;
 }) {
-  const displayValue = formatShortcutBindingsForInput(bindings, platform);
-  const [draft, setDraft] = useState(displayValue);
+  const [capturing, setCapturing] = useState(false);
+  const captureRef = useRef<HTMLDivElement>(null);
+
+  const isDefault =
+    bindings.length === defaultBindings.length &&
+    bindings.every((b, i) => b === defaultBindings[i]);
+
   useEffect(() => {
-    setDraft(displayValue);
-  }, [displayValue]);
+    if (!capturing) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (["Control", "Shift", "Alt", "Meta"].includes(e.key)) return;
+      if (e.key === "Escape") {
+        setCapturing(false);
+        return;
+      }
+      const parts: string[] = [];
+      if (e.ctrlKey || e.metaKey) parts.push("Mod");
+      if (e.shiftKey) parts.push("Shift");
+      if (e.altKey) parts.push("Alt");
+      parts.push(normalizeKeyForCapture(e.key));
+      const binding = parts.join("+");
+      setCapturing(false);
+      onCommitBinding([binding]);
+    };
+    document.addEventListener("keydown", onKeyDown, true);
+    return () => document.removeEventListener("keydown", onKeyDown, true);
+  }, [capturing, onCommitBinding]);
 
   return (
     <div className="flex max-w-[min(100%,440px)] flex-wrap items-center justify-end gap-[8px]">
-      <HardwareAwareTextInput
-        value={draft}
-        onChange={setDraft}
-        onBlur={() => {
-          if (!onCommit(draft)) {
-            setDraft(displayValue);
+      <div
+        ref={captureRef}
+        role="button"
+        tabIndex={0}
+        onClick={() => setCapturing(true)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            setCapturing(true);
           }
         }}
-        placeholder={`${primaryModifierLabel(platform)}+P, F1 (comma = alternate)`}
-        className={shortcutInputClass}
-        ariaLabel={`Shortcuts for ${commandId}`}
-      />
-      <button type="button" className={rowButtonClass} onClick={onReset}>
-        Reset
-      </button>
+        className={`flex min-w-[200px] cursor-pointer items-center gap-[6px] rounded-[var(--radius-tab)] border px-[10px] py-[6px] transition-colors ${
+          capturing
+            ? "border-[var(--accent-border)] bg-[var(--accent-bg)]"
+            : "border-[var(--border-card)] bg-[var(--bg-main)] hover:bg-[var(--accent-bg)]"
+        }`}
+        aria-label={capturing ? `Press shortcut for ${commandId}` : `Shortcuts for ${commandId}. Click to change.`}
+      >
+        {capturing ? (
+          <span className="font-sans text-[11px] italic text-[var(--text-secondary)]">
+            Press shortcut…
+          </span>
+        ) : bindings.length > 0 ? (
+          <span className="flex flex-wrap items-center gap-[6px]">
+            {bindings.map((binding, i) => (
+              <ShortcutKeycapGroup
+                key={i}
+                binding={binding}
+                platform={platform}
+              />
+            ))}
+          </span>
+        ) : (
+          <span className="font-sans text-[11px] text-[var(--text-disabled)]">
+            No binding
+          </span>
+        )}
+      </div>
+      {!isDefault && (
+        <button type="button" className={rowButtonClass} onClick={onReset}>
+          Reset
+        </button>
+      )}
     </div>
   );
 }
@@ -1753,6 +1785,10 @@ export function KeyboardShortcutsSettingsPanel() {
   const { settings, updateSettings } = useGlobalSettings();
   const platform = useMemo(() => detectShortcutPlatform(), []);
   const bindings = settings.keyboardShortcuts.bindings;
+  const voiceInputMode = settings.keyboardShortcuts.voiceInputMode;
+  const [collapsedSections, setCollapsedSections] = useState<
+    Set<ShortcutCommandSection>
+  >(new Set());
 
   const bySection = useMemo(() => {
     const map = new Map<
@@ -1768,22 +1804,17 @@ export function KeyboardShortcutsSettingsPanel() {
   }, []);
 
   const commitBinding = useCallback(
-    (commandId: string, raw: string) => {
-      const parsed = parseShortcutBindingsInput(raw);
-      if (parsed === null) {
-        return false;
-      }
+    (commandId: string, newBindings: string[]) => {
       updateSettings((current) => ({
         ...current,
         keyboardShortcuts: {
           ...current.keyboardShortcuts,
           bindings: {
             ...current.keyboardShortcuts.bindings,
-            [commandId]: parsed,
+            [commandId]: newBindings,
           },
         },
       }));
-      return true;
     },
     [updateSettings]
   );
@@ -1805,6 +1836,28 @@ export function KeyboardShortcutsSettingsPanel() {
     [updateSettings]
   );
 
+  const toggleSectionCollapse = useCallback((section: ShortcutCommandSection) => {
+    setCollapsedSections((prev) => {
+      const next = new Set(prev);
+      if (next.has(section)) next.delete(section);
+      else next.add(section);
+      return next;
+    });
+  }, []);
+
+  const setVoiceInputMode = useCallback(
+    (mode: VoiceInputMode) => {
+      updateSettings((current) => ({
+        ...current,
+        keyboardShortcuts: {
+          ...current.keyboardShortcuts,
+          voiceInputMode: mode,
+        },
+      }));
+    },
+    [updateSettings]
+  );
+
   return (
     <>
       <PageIntro
@@ -1813,39 +1866,95 @@ export function KeyboardShortcutsSettingsPanel() {
       />
       {SECTION_ORDER.map((section) => {
         const defs = bySection.get(section);
-        if (!defs?.length) {
-          return null;
-        }
+        if (!defs?.length) return null;
+        const collapsed = collapsedSections.has(section);
+        const assignedCount = defs.filter((d) => {
+          const b = bindings[d.id] ?? DEFAULT_KEYBOARD_SHORTCUT_BINDINGS[d.id] ?? [];
+          return b.length > 0;
+        }).length;
         return (
-          <SettingsSection key={section} title={section}>
-            {defs.map((def, index) => (
-              <SettingsRow
-                key={def.id}
-                title={def.label}
-                description={def.id}
-                border={index < defs.length - 1}
-                titleExtra={
-                  <span className="font-mono text-[11px] font-normal text-[var(--text-disabled)]">
-                    {def.defaultBindings.length
-                      ? formatShortcutBindingsForInput(def.defaultBindings, platform)
-                      : "—"}
-                  </span>
-                }
-                trailing={
-                  <ShortcutBindingField
-                    commandId={def.id}
-                    platform={platform}
-                    bindings={
-                      bindings[def.id] ??
-                      DEFAULT_KEYBOARD_SHORTCUT_BINDINGS[def.id] ??
-                      []
+          <SettingsSection
+            key={section}
+            title={section}
+            action={
+              <button
+                type="button"
+                className="flex items-center gap-[6px] font-sans text-[12px] text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+                onClick={() => toggleSectionCollapse(section)}
+              >
+                <span>{assignedCount}/{defs.length}</span>
+                <ChevronRight
+                  className={`size-[14px] shrink-0 transition-transform ${collapsed ? "" : "rotate-90"}`}
+                  strokeWidth={1.5}
+                />
+              </button>
+            }
+          >
+            {collapsed ? null : defs.map((def) => {
+              const currentBindings =
+                bindings[def.id] ??
+                DEFAULT_KEYBOARD_SHORTCUT_BINDINGS[def.id] ??
+                [];
+              const isVoiceCommand = def.id === "chat.action.toggleVoiceInput";
+              return (
+                <div key={def.id}>
+                  <SettingsRow
+                    title={def.label}
+                    description={
+                      def.defaultBindings.length > 0
+                        ? `${def.id} · Default: ${formatShortcutBindingsForInput(def.defaultBindings, platform)}`
+                        : def.id
                     }
-                    onCommit={(raw) => commitBinding(def.id, raw)}
-                    onReset={() => resetBinding(def.id)}
+                    border={!isVoiceCommand}
+                    trailing={
+                      <ShortcutKeyCapture
+                        commandId={def.id}
+                        platform={platform}
+                        bindings={currentBindings}
+                        defaultBindings={def.defaultBindings}
+                        onCommitBinding={(b) => commitBinding(def.id, b)}
+                        onReset={() => resetBinding(def.id)}
+                      />
+                    }
                   />
-                }
-              />
-            ))}
+                  {isVoiceCommand && (
+                    <div className="flex items-center justify-between border-t border-[var(--border-subtle)] px-[16px] py-[10px]">
+                      <span className="font-sans text-[12px] text-[var(--text-secondary)]">
+                        Recording mode
+                      </span>
+                      <div className="flex items-center gap-[8px]">
+                        <span
+                          className={`font-sans text-[12px] ${
+                            voiceInputMode === "toggle"
+                              ? "text-[var(--text-primary)]"
+                              : "text-[var(--text-disabled)]"
+                          }`}
+                        >
+                          Toggle
+                        </span>
+                        <ToggleSwitch
+                          checked={voiceInputMode === "hold"}
+                          onChange={(isHold) =>
+                            setVoiceInputMode(isHold ? "hold" : "toggle")
+                          }
+                          size="sm"
+                          variant="green"
+                        />
+                        <span
+                          className={`font-sans text-[12px] ${
+                            voiceInputMode === "hold"
+                              ? "text-[var(--text-primary)]"
+                              : "text-[var(--text-disabled)]"
+                          }`}
+                        >
+                          Hold
+                        </span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </SettingsSection>
         );
       })}
@@ -1907,7 +2016,7 @@ function ExportGranularityPicker({
       {row(
         "theme",
         "Theming",
-        "Appearance mode, per-light/dark themes, and custom presets (local storage)."
+        "Appearance mode, per-light/dark themes, and custom presets (server sync + local cache)."
       )}
       {row("userPreferences", "Local preferences", "iPad experimental toggles and related UI flags.")}
       {row(
@@ -2057,7 +2166,7 @@ export function ExportImportSettingsPanel() {
     <>
       <PageIntro
         title="Import & export"
-        subtitle="Choose which parts of your setup to include in a JSON backup. Import merges selected sections into this browser and workspace; keyboard shortcuts and app settings are saved to the server."
+        subtitle="Choose which parts of your setup to include in a JSON backup. Import merges selected sections into this browser and workspace; theme, keyboard shortcuts, and app settings sync to the server."
       />
       <SettingsSection title="Export">
         <div className="space-y-[14px] border-b border-[var(--border-subtle)] px-[16px] py-[14px] last:border-b-0">
@@ -2357,13 +2466,13 @@ function StorageSettingsPanel() {
                 className={selectClass}
                 value={direction.from}
                 disabled={running}
-                onChange={(event) => {
-                  const next = event.target.value as StorageDriverKind;
-                  setDirection((prev) => ({
-                    from: next,
-                    to: next === "pg" ? "legacy-json" : "pg",
-                  }));
-                }}
+        onChange={(event) => {
+          const next = event.target.value as StorageDriverKind;
+          setDirection(() => ({
+            from: next,
+            to: next === "pg" ? "legacy-json" : "pg",
+          }));
+        }}
               >
                 <option value="legacy-json">Legacy JSON</option>
                 <option value="pg">Postgres</option>

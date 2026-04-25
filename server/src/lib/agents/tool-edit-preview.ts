@@ -542,6 +542,36 @@ export function extractToolEditPreview(
     return previewFromBeforeAfter(beforeSnippet, afterSnippet, path, "replace");
   }
 
+  const bridgeBefore =
+    firstStringIncludingEmpty(resultRecord, [
+      "oldFileContent",
+      "fileContentBefore",
+      "previousContent",
+      "oldContent",
+    ]) ??
+    firstStringIncludingEmpty(inputRecord, [
+      "oldFileContent",
+      "fileContentBefore",
+      "previousContent",
+      "oldContent",
+    ]);
+  const bridgeAfter =
+    firstStringIncludingEmpty(resultRecord, [
+      "newFileContent",
+      "fileContentAfter",
+      "writtenContent",
+      "newContent",
+    ]) ??
+    firstStringIncludingEmpty(inputRecord, [
+      "newFileContent",
+      "fileContentAfter",
+      "writtenContent",
+      "newContent",
+    ]);
+  if (bridgeBefore != null || bridgeAfter != null) {
+    return previewFromBeforeAfter(bridgeBefore ?? "", bridgeAfter ?? "", path, "before_after");
+  }
+
   const editPreview =
     previewFromEdits(resultRecord?.edits ?? resultRecord?.replacements, path) ??
     previewFromEdits(inputRecord?.edits ?? inputRecord?.replacements, path);

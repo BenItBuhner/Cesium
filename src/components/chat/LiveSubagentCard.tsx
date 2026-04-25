@@ -1,8 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { fetchOpenCodeSubagentSession } from "@/lib/server-api";
-import { projectOpenCodeExportToChatMessages } from "@/lib/opencode-export-transcript";
+import { useMemo } from "react";
 import type { ChatMessage } from "@/lib/types";
 import { SubagentCard } from "./SubagentCard";
 
@@ -52,66 +50,18 @@ export function LiveSubagentCard({
   sessionId?: string;
   onOpenTranscript?: (payload: { transcript: ChatMessage[]; sessionId?: string }) => void;
 }) {
-  const [liveTranscript, setLiveTranscript] = useState<ChatMessage[] | null>(null);
-  const [liveComplete, setLiveComplete] = useState(Boolean(complete));
-
-  useEffect(() => {
-    setLiveTranscript(null);
-    setLiveComplete(Boolean(complete));
-  }, [complete, sessionId, transcript]);
-
-  useEffect(() => {
-    if (!sessionId?.startsWith("ses_") || complete) {
-      return;
-    }
-    let cancelled = false;
-    let timer: number | null = null;
-
-    const tick = async () => {
-      try {
-        const result = await fetchOpenCodeSubagentSession(sessionId);
-        if (cancelled) {
-          return;
-        }
-        const projected = projectOpenCodeExportToChatMessages(result.session);
-        setLiveTranscript((current) => {
-          const next = projected.messages;
-          return JSON.stringify(current) === JSON.stringify(next) ? current : next;
-        });
-        setLiveComplete(projected.complete);
-        if (!projected.complete) {
-          timer = window.setTimeout(tick, 2000);
-        }
-      } catch {
-        timer = window.setTimeout(tick, 4000);
-      }
-    };
-
-    void tick();
-    return () => {
-      cancelled = true;
-      if (timer != null) {
-        window.clearTimeout(timer);
-      }
-    };
-  }, [complete, sessionId]);
-
-  const renderedTranscript = useMemo(
-    () => (liveTranscript && liveTranscript.length > 0 ? liveTranscript : transcript ?? []),
-    [liveTranscript, transcript]
-  );
+  const renderedTranscript = transcript ?? [];
   const renderedRecentActivity = useMemo(
     () => inferRecentActivity(renderedTranscript, recentActivity),
     [renderedTranscript, recentActivity]
   );
-  const finalComplete = complete ? true : liveComplete;
 
   return (
     <SubagentCard
       title={title}
       meta={meta}
       recentActivity={renderedRecentActivity}
-      complete={finalComplete}
+      complete={Boolean(complete)}
       interactive={Boolean(onOpenTranscript)}
       onOpen={
         onOpenTranscript

@@ -51,6 +51,80 @@ export function WorkbenchToast({
       item.title === "Saved" &&
       item.severity === "info");
 
+  const severityColor = accentSuccess
+    ? "var(--accent)"
+    : item.severity === "error" || item.severity === "warning"
+      ? "var(--debug-accent)"
+      : "var(--text-secondary)";
+
+  if (item.compact) {
+    return (
+      <section
+        role={item.severity === "error" ? "alert" : "status"}
+        aria-live={item.severity === "error" ? "assertive" : "polite"}
+        className={`pointer-events-auto w-[min(280px,calc(100vw-24px))] overflow-hidden rounded-[var(--radius-card)] border border-[var(--border-card)] bg-[var(--bg-card)] shadow-[var(--palette-shadow)] transition-[transform,opacity] duration-200 ease-out will-change-transform ${
+          visible ? "translate-y-0 opacity-100" : "translate-y-2 opacity-0"
+        }`}
+      >
+        <div className="flex items-start gap-[8px] px-[10px] py-[7px]">
+          <div
+            className="mt-[2px] flex size-[18px] shrink-0 items-center justify-center rounded-full"
+            style={{ color: severityColor, backgroundColor: "color-mix(in srgb, currentColor 12%, transparent)" }}
+          >
+            {accentSuccess ? (
+              <CheckCircle2 className="size-[11px]" strokeWidth={2} aria-hidden />
+            ) : (
+              <SeverityIcon severity={item.severity} className="size-[11px]" />
+            )}
+          </div>
+
+          <div className="min-w-0 flex-1">
+            <div className="flex items-start gap-[6px]">
+              <div className="min-w-0 flex-1">
+                <h2 className="font-sans text-[11px] font-semibold tracking-[0.01em] text-[var(--text-primary)]">
+                  {item.title}
+                </h2>
+                <p className="mt-[1px] font-sans text-[11px] leading-[1.4] text-[var(--text-secondary)]">
+                  {item.message}
+                </p>
+              </div>
+              <button
+                type="button"
+                aria-label="Dismiss notification"
+                onClick={onRequestDismiss}
+                className="flex size-[18px] shrink-0 items-center justify-center rounded-[var(--radius-tab)] border border-transparent text-[var(--text-secondary)] transition-colors hover:border-[var(--border-card)] hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)]"
+              >
+                <X className="size-[11px]" strokeWidth={1.8} aria-hidden />
+              </button>
+            </div>
+
+            {item.actions && item.actions.length > 0 ? (
+              <div className="mt-[5px] flex flex-wrap gap-[6px]">
+                {item.actions.map((a) => (
+                  <button
+                    key={a.id}
+                    type="button"
+                    onClick={() => {
+                      a.onClick();
+                    }}
+                    className={
+                      a.primary
+                        ? "inline-flex items-center gap-[4px] rounded-[var(--radius-tab)] border border-[var(--accent)] bg-[var(--accent)] px-[8px] py-[3px] font-sans text-[11px] font-medium transition-opacity hover:opacity-90"
+                        : "rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-[var(--bg-panel)] px-[8px] py-[3px] font-sans text-[11px] font-medium text-[var(--text-primary)] transition-colors hover:bg-[var(--accent-bg)]"
+                    }
+                    style={a.primary ? { color: "var(--bg-main)" } : undefined}
+                  >
+                    {a.label}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        </div>
+      </section>
+    );
+  }
+
   return (
     <section
       role={item.severity === "error" ? "alert" : "status"}

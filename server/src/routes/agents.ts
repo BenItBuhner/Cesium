@@ -5,17 +5,26 @@ import path from "node:path";
 import { requireWorkspaceFromRequest } from "../lib/request-workspace.js";
 import { resolveSafePath } from "../lib/workspace.js";
 import { agentRuntimeManager } from "../lib/agents/runtime-manager.js";
-import { exportOpenCodeSession } from "../lib/agents/opencode-export.js";
 import {
   getCursorAgentDeploymentHints,
   listAgentBackendsWithCache,
 } from "../lib/agents/providers.js";
-import { listWorkspaceConversationRecords } from "../lib/agents/session-store.js";
-import { listWorkspaces } from "../lib/workspace-registry.js";
+import {
+  RAIL_ALL_FIRST_PAGE_CACHE_KEY,
+  RAIL_ALL_FIRST_PAGE_CACHE_TTL_SEC,
+} from "../lib/agents/cache-keys.js";
+import {
+  type AgentConversationsAllPayload,
+  buildAgentConversationsAllPayload,
+} from "../lib/agents/rail-payload.js";
+import { getJSON, setJSON } from "../cache/kv.js";
+import { generateTitleFromText } from "../lib/agents/title-generator.js";
 import type {
   AgentBackendId,
   AgentConversationConfigPatch,
   AgentConversationCreateInput,
+  AgentConversationMetadataPatch,
+  AgentQueuedChatPrompt,
 } from "../lib/agents/types.js";
 
 export const agentRoutes = new Hono();
@@ -58,81 +67,30 @@ agentRoutes.get("/api/agents/conversations", async (c) => {
 agentRoutes.get("/api/agents/conversations/all", async (c) => {
   const { limit: limitRaw, cursor: cursorRaw } = parsePageParams(c);
   const limit = Math.max(1, Math.min(Math.floor(limitRaw ?? 500), 1000));
-  const offset = Math.max(
-    0,
-    cursorRaw ? Number.parseInt(cursorRaw, 10) || 0 : 0
-  );
-  const [workspaces, backends] = await Promise.all([
-    listWorkspaces(),
-    listAgentBackendsWithCache(),
-  ]);
-  // Load per-workspace lists, project to lightweight summaries first, then
-  // sort + paginate across the flat list. Keeps payload predictable regardless
-  // of how many workspaces the user has pinned.
-  const perWorkspace = await Promise.all(
-    workspaces.map(async (workspace) => {
-      const conversations = await listWorkspaceConversationRecords(workspace.id);
-      return conversations.map((conversation) => ({
-        workspace,
-        summary: {
-          id: conversation.id,
-          workspaceId: conversation.workspaceId,
-          title: conversation.title,
-          createdAt: conversation.createdAt,
-          updatedAt: conversation.updatedAt,
-          lastEventSeq: conversation.lastEventSeq,
-          status: conversation.status,
-          backendId: conversation.config.backendId,
-          mode: conversation.config.mode,
-          experimental: conversation.experimental,
-          hasPendingPermission: conversation.pendingPermission != null,
-        },
-      }));
-    })
-  );
-  const flat = perWorkspace
-    .flat()
-    .sort(
-      (a, b) =>
-        b.summary.updatedAt - a.summary.updatedAt ||
-        a.summary.title.localeCompare(b.summary.title)
+  const isFirstPage = !cursorRaw;
+  const railAllCacheOn =
+    isFirstPage && process.env.NODE_ENV !== "test";
+  if (railAllCacheOn) {
+    const cached = await getJSON<AgentConversationsAllPayload>(RAIL_ALL_FIRST_PAGE_CACHE_KEY);
+    if (cached) {
+      c.header("Cache-Control", "private, max-age=5, stale-while-revalidate=30");
+      return c.json(cached);
+    }
+  }
+  const offset = Math.max(0, cursorRaw ? Number.parseInt(cursorRaw, 10) || 0 : 0);
+  const body: AgentConversationsAllPayload = await buildAgentConversationsAllPayload({
+    limit,
+    offset,
+  });
+  c.header("Cache-Control", "private, max-age=5, stale-while-revalidate=30");
+  if (railAllCacheOn) {
+    await setJSON(
+      RAIL_ALL_FIRST_PAGE_CACHE_KEY,
+      body,
+      RAIL_ALL_FIRST_PAGE_CACHE_TTL_SEC
     );
-  const window = flat.slice(offset, offset + limit);
-  const nextCursor =
-    offset + window.length < flat.length
-      ? String(offset + window.length)
-      : null;
-  // Re-group the page back by workspace. Workspaces with zero conversations
-  // on this page are dropped; the client already tolerates sparse groups.
-  const groupMap = new Map<
-    string,
-    { workspace: (typeof workspaces)[number]; conversations: Array<(typeof window)[number]["summary"]> }
-  >();
-  for (const workspace of workspaces) {
-    // Pre-seed the map on the first page so callers always get every known
-    // workspace even when a workspace has zero conversations; saves a second
-    // request from the UI to populate the sidebar.
-    if (offset === 0) {
-      groupMap.set(workspace.id, { workspace, conversations: [] });
-    }
   }
-  for (const entry of window) {
-    const existing = groupMap.get(entry.workspace.id);
-    if (existing) {
-      existing.conversations.push(entry.summary);
-    } else {
-      groupMap.set(entry.workspace.id, {
-        workspace: entry.workspace,
-        conversations: [entry.summary],
-      });
-    }
-  }
-  const groups = Array.from(groupMap.values());
-  c.header(
-    "Cache-Control",
-    "private, max-age=5, stale-while-revalidate=30"
-  );
-  return c.json({ backends, groups, nextCursor });
+  return c.json(body);
 });
 
 agentRoutes.post("/api/agents/conversations", async (c) => {
@@ -140,6 +98,16 @@ agentRoutes.post("/api/agents/conversations", async (c) => {
   const body = await c.req.json<AgentConversationCreateInput>();
   const conversation = await agentRuntimeManager.createConversation(workspace, body);
   return c.json({ conversation }, 201);
+});
+
+agentRoutes.post("/api/agents/conversations/draft-title", async (c) => {
+  await requireWorkspaceFromRequest(c);
+  const body = await c.req.json<{ text: string }>();
+  if (!body.text || !body.text.trim()) {
+    return c.json({ error: "Text is required" }, 400);
+  }
+  const title = await generateTitleFromText(body.text);
+  return c.json({ title: title ?? "Untitled" });
 });
 
 agentRoutes.get("/api/agents/conversations/:conversationId", async (c) => {
@@ -177,23 +145,6 @@ agentRoutes.get("/api/agents/conversations/:conversationId", async (c) => {
   return c.json({ snapshot });
 });
 
-agentRoutes.get("/api/agents/subagents/:sessionId", async (c) => {
-  const workspace = await requireWorkspaceFromRequest(c);
-  const sessionId = c.req.param("sessionId");
-  const session = await exportOpenCodeSession(sessionId);
-  const directory =
-    session &&
-    typeof session === "object" &&
-    (session as { info?: { directory?: unknown } }).info &&
-    typeof (session as { info?: { directory?: unknown } }).info?.directory === "string"
-      ? ((session as { info?: { directory?: string } }).info?.directory as string)
-      : "";
-  if (!directory || !directory.startsWith(workspace.root)) {
-    return c.json({ error: "Subagent session does not belong to the active workspace." }, 404);
-  }
-  return c.json({ session });
-});
-
 agentRoutes.patch("/api/agents/conversations/:conversationId/config", async (c) => {
   const workspace = await requireWorkspaceFromRequest(c);
   const conversationId = c.req.param("conversationId");
@@ -206,10 +157,26 @@ agentRoutes.patch("/api/agents/conversations/:conversationId/config", async (c) 
   return c.json({ conversation });
 });
 
+agentRoutes.patch("/api/agents/conversations/:conversationId/metadata", async (c) => {
+  const workspace = await requireWorkspaceFromRequest(c);
+  const conversationId = c.req.param("conversationId");
+  const patch = await c.req.json<AgentConversationMetadataPatch>();
+  const conversation = await agentRuntimeManager.updateConversationMetadata(
+    workspace,
+    conversationId,
+    patch
+  );
+  return c.json({ conversation });
+});
+
 agentRoutes.post("/api/agents/conversations/:conversationId/prompt", async (c) => {
   const workspace = await requireWorkspaceFromRequest(c);
   const conversationId = c.req.param("conversationId");
-  const body = await c.req.json<{ text?: string; attachments?: Array<{ mimeType: string; data: string; name?: string }> }>();
+  const body = await c.req.json<{
+    text?: string;
+    attachments?: Array<{ mimeType: string; data: string; name?: string }>;
+    configOverride?: AgentQueuedChatPrompt["configOverride"];
+  }>();
   if (!body.text?.trim() && (!body.attachments || body.attachments.length === 0)) {
     return c.json({ error: "Expected prompt text or attachments." }, 400);
   }
@@ -217,10 +184,31 @@ agentRoutes.post("/api/agents/conversations/:conversationId/prompt", async (c) =
     workspace,
     conversationId,
     body.text ?? "",
-    body.attachments
+    body.attachments,
+    {
+      ...(body.configOverride ? { configOverride: body.configOverride } : {}),
+    }
   );
   return c.json({ snapshot });
 });
+
+agentRoutes.delete(
+  "/api/agents/conversations/:conversationId/queue/:itemId",
+  async (c) => {
+    const workspace = await requireWorkspaceFromRequest(c);
+    const conversationId = c.req.param("conversationId");
+    const itemId = c.req.param("itemId");
+    if (!itemId) {
+      return c.json({ error: "Expected itemId." }, 400);
+    }
+    const conversation = await agentRuntimeManager.removeQueuedPrompt(
+      workspace,
+      conversationId,
+      itemId
+    );
+    return c.json({ conversation });
+  }
+);
 
 agentRoutes.post("/api/agents/conversations/:conversationId/cancel", async (c) => {
   const workspace = await requireWorkspaceFromRequest(c);
@@ -272,6 +260,23 @@ agentRoutes.post("/api/agents/conversations/:conversationId/handoff", async (c) 
     return c.json(result, 201);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Handoff failed.";
+    return c.json({ error: message }, 400);
+  }
+});
+
+agentRoutes.post("/api/agents/conversations/:conversationId/fork", async (c) => {
+  const workspace = await requireWorkspaceFromRequest(c);
+  const conversationId = c.req.param("conversationId");
+  const body = await c.req.json<{ upToMessageId?: string }>();
+  try {
+    const result = await agentRuntimeManager.forkConversation(
+      workspace,
+      conversationId,
+      body
+    );
+    return c.json(result, 201);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Fork failed.";
     return c.json({ error: message }, 400);
   }
 });

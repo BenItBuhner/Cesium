@@ -1,15 +1,19 @@
 import path from "node:path";
 import { Hono } from "hono";
 import { resolveRepoRootFromProcessCwd } from "../lib/persistence.js";
+import { cloneGitRepository } from "../lib/git-workspace.js";
+import { listBrowseDirectories, listBrowseRoots } from "../lib/workspace-browse.js";
 import {
   createWorkspace,
   ensureHomeWorkspace,
   ensureInitialWorkspace,
   ensureWorkspaceRegistered,
+  getHomeWorkspace,
   getWorkspaceById,
   getWorkspaceProfile,
   listWorkspaces,
   noteWorkspaceOpened,
+  removeWorkspace,
   resolveStartupWorkspace,
   setDefaultWorkspace,
 } from "../lib/workspace-registry.js";
@@ -70,12 +74,18 @@ function resolveInitialWorkspaceRoot(): string {
   return resolveRepoRootFromProcessCwd();
 }
 
+async function homeWorkspaceIdPayload(): Promise<{ homeWorkspaceId: string | null }> {
+  const home = await getHomeWorkspace();
+  return { homeWorkspaceId: home?.id ?? null };
+}
+
 workspaceRoutes.get("/api/workspaces/bootstrap", async (c) => {
   await ensureInitialWorkspace(resolveInitialWorkspaceRoot());
-  const [workspaces, profile, startupWorkspace] = await Promise.all([
+  const [workspaces, profile, startupWorkspace, homePayload] = await Promise.all([
     listWorkspaces(),
     getWorkspaceProfile(),
     resolveStartupWorkspace(),
+    homeWorkspaceIdPayload(),
   ]);
 
   setShortCache(c, { maxAgeSec: 5, swr: 30 });
@@ -84,14 +94,16 @@ workspaceRoutes.get("/api/workspaces/bootstrap", async (c) => {
     defaultWorkspaceId: profile.defaultWorkspaceId,
     startupWorkspaceId: startupWorkspace?.id ?? null,
     recentWorkspaceIds: profile.recentWorkspaceIds,
+    ...homePayload,
   });
 });
 
 workspaceRoutes.get("/api/workspaces", async (c) => {
   await ensureHomeWorkspace();
-  const [workspaces, profile] = await Promise.all([
+  const [workspaces, profile, homePayload] = await Promise.all([
     listWorkspaces(),
     getWorkspaceProfile(),
+    homeWorkspaceIdPayload(),
   ]);
   setShortCache(c, { maxAgeSec: 5, swr: 30 });
   return c.json({
@@ -99,6 +111,7 @@ workspaceRoutes.get("/api/workspaces", async (c) => {
     defaultWorkspaceId: profile.defaultWorkspaceId,
     lastOpenedWorkspaceId: profile.lastOpenedWorkspaceId,
     recentWorkspaceIds: profile.recentWorkspaceIds,
+    ...homePayload,
   });
 });
 
@@ -126,9 +139,10 @@ workspaceRoutes.post("/api/workspaces/open", async (c) => {
     workspace = await ensureWorkspaceRegistered(body.root, body.name);
   }
 
-  const [workspaces, profile] = await Promise.all([
+  const [workspaces, profile, homePayload] = await Promise.all([
     listWorkspaces(),
     getWorkspaceProfile(),
+    homeWorkspaceIdPayload(),
   ]);
 
   return c.json({
@@ -136,6 +150,7 @@ workspaceRoutes.post("/api/workspaces/open", async (c) => {
     workspaces,
     defaultWorkspaceId: profile.defaultWorkspaceId,
     recentWorkspaceIds: profile.recentWorkspaceIds,
+    ...homePayload,
   });
 });
 
@@ -151,9 +166,10 @@ workspaceRoutes.post("/api/workspaces/activity", async (c) => {
   }
 
   await noteWorkspaceOpened(workspace.id);
-  const [workspaces, profile] = await Promise.all([
+  const [workspaces, profile, homePayload] = await Promise.all([
     listWorkspaces(),
     getWorkspaceProfile(),
+    homeWorkspaceIdPayload(),
   ]);
 
   return c.json({
@@ -162,6 +178,7 @@ workspaceRoutes.post("/api/workspaces/activity", async (c) => {
     workspaces,
     defaultWorkspaceId: profile.defaultWorkspaceId,
     recentWorkspaceIds: profile.recentWorkspaceIds,
+    ...homePayload,
   });
 });
 
@@ -186,9 +203,10 @@ workspaceRoutes.post("/api/workspaces/create", async (c) => {
     await setDefaultWorkspace(workspace.id);
   }
 
-  const [workspaces, profile] = await Promise.all([
+  const [workspaces, profile, homePayload] = await Promise.all([
     listWorkspaces(),
     getWorkspaceProfile(),
+    homeWorkspaceIdPayload(),
   ]);
 
   return c.json(
@@ -197,9 +215,104 @@ workspaceRoutes.post("/api/workspaces/create", async (c) => {
       workspaces,
       defaultWorkspaceId: profile.defaultWorkspaceId,
       recentWorkspaceIds: profile.recentWorkspaceIds,
+      ...homePayload,
     },
     201
   );
+});
+
+workspaceRoutes.get("/api/workspaces/browse", async (c) => {
+  const rawPath = c.req.query("path")?.trim() ?? "";
+  try {
+    if (!rawPath) {
+      const roots = await listBrowseRoots();
+      return c.json({
+        roots,
+        homeWorkspaceId: (await getHomeWorkspace())?.id ?? null,
+      });
+    }
+    const listing = await listBrowseDirectories(rawPath);
+    return c.json({
+      ...listing,
+      homeWorkspaceId: (await getHomeWorkspace())?.id ?? null,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Browse failed.";
+    return c.json({ error: message }, 400);
+  }
+});
+
+workspaceRoutes.post("/api/workspaces/clone", async (c) => {
+  const body = await c.req.json<{
+    repoUrl?: string;
+    parentPath?: string;
+    directoryName?: string;
+    name?: string;
+    setDefault?: boolean;
+  }>();
+
+  if (!body.repoUrl?.trim()) {
+    return c.json({ error: "Expected repoUrl" }, 400);
+  }
+  if (!body.parentPath?.trim()) {
+    return c.json({ error: "Expected parentPath" }, 400);
+  }
+
+  try {
+    const root = await cloneGitRepository({
+      repoUrl: body.repoUrl,
+      parentPath: body.parentPath,
+      directoryName: body.directoryName?.trim() ?? "",
+    });
+    const workspace = await ensureWorkspaceRegistered(root, body.name);
+    if (body.setDefault) {
+      await setDefaultWorkspace(workspace.id);
+    }
+    const [workspaces, profile, homePayload] = await Promise.all([
+      listWorkspaces(),
+      getWorkspaceProfile(),
+      homeWorkspaceIdPayload(),
+    ]);
+    return c.json(
+      {
+        workspace,
+        workspaces,
+        defaultWorkspaceId: profile.defaultWorkspaceId,
+        recentWorkspaceIds: profile.recentWorkspaceIds,
+        ...homePayload,
+      },
+      201
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Clone failed.";
+    return c.json({ error: message }, 400);
+  }
+});
+
+workspaceRoutes.delete("/api/workspaces/:workspaceId", async (c) => {
+  const workspaceId = c.req.param("workspaceId");
+  try {
+    await removeWorkspace(workspaceId);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Delete failed.";
+    const status = message.startsWith("Unknown workspace") ? 404 : 400;
+    return c.json({ error: message }, status);
+  }
+
+  const [workspaces, profile, homePayload] = await Promise.all([
+    listWorkspaces(),
+    getWorkspaceProfile(),
+    homeWorkspaceIdPayload(),
+  ]);
+
+  return c.json({
+    ok: true,
+    deletedWorkspaceId: workspaceId,
+    workspaces,
+    defaultWorkspaceId: profile.defaultWorkspaceId,
+    recentWorkspaceIds: profile.recentWorkspaceIds,
+    ...homePayload,
+  });
 });
 
 workspaceRoutes.patch("/api/workspaces/default", async (c) => {

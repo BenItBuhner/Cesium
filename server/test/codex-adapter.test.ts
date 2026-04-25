@@ -178,6 +178,86 @@ test("parseCodexStdoutLine emits task events for collab tool calls", async () =>
   assert.match(String(ctx.toolCalls[0]?.detail), /Inspect package\.json/);
 });
 
+test("parseCodexStdoutLine maps item.updated to tool_call_update for live collab state", async () => {
+  const ctx = buildCodexCallbacks();
+  parseCodexStdoutLine(
+    JSON.stringify({
+      type: "item.started",
+      item: {
+        id: "item_collab",
+        type: "collab_tool_call",
+        tool: "spawn_agent",
+        prompt: "Do the thing",
+        receiver_thread_ids: [],
+        agents_states: {},
+        status: "in_progress",
+      },
+    }),
+    ctx.callbacks
+  );
+  parseCodexStdoutLine(
+    JSON.stringify({
+      type: "item.updated",
+      item: {
+        id: "item_collab",
+        type: "collab_tool_call",
+        tool: "spawn_agent",
+        prompt: "Do the thing",
+        receiver_thread_ids: ["thread-child"],
+        agents_states: {
+          "thread-child": { status: "running", message: "Working…" },
+        },
+        status: "in_progress",
+      },
+    }),
+    ctx.callbacks
+  );
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(ctx.toolCalls.length, 1);
+  assert.equal(ctx.toolUpdates.length, 1);
+  assert.equal(ctx.toolUpdates[0]?.toolKind, "task");
+  assert.equal(ctx.toolUpdates[0]?.status, "in_progress");
+  const raw = ctx.toolUpdates[0]?.raw as Record<string, unknown> | undefined;
+  assert.equal(raw?.type, "collab_tool_call");
+  const states = raw?.agents_states as Record<string, unknown> | undefined;
+  assert.ok(states?.["thread-child"]);
+});
+
+test("parseCodexStdoutLine maps item.updated for Codex todo list streaming", async () => {
+  const ctx = buildCodexCallbacks();
+  parseCodexStdoutLine(
+    JSON.stringify({
+      type: "item.started",
+      item: {
+        id: "item_todo",
+        type: "todo_list",
+        items: [{ text: "Step A", completed: false }],
+      },
+    }),
+    ctx.callbacks
+  );
+  parseCodexStdoutLine(
+    JSON.stringify({
+      type: "item.updated",
+      item: {
+        id: "item_todo",
+        type: "todo_list",
+        items: [
+          { text: "Step A", completed: true },
+          { text: "Step B", completed: false },
+        ],
+      },
+    }),
+    ctx.callbacks
+  );
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(ctx.toolCalls.length, 1);
+  assert.equal(ctx.toolUpdates.length, 1);
+  assert.equal(ctx.toolCalls[0]?.toolKind, "todo");
+  assert.equal(ctx.toolUpdates[0]?.toolKind, "todo");
+  assert.equal(ctx.toolUpdates[0]?.status, "in_progress");
+});
+
 test("parseCodexStdoutLine reconstructs file_change diffs from workspace files", async () => {
   const ctx = buildCodexCallbacks();
   const filePath = path.join(tmpdir(), `codex-diff-${randomUUID()}.txt`);

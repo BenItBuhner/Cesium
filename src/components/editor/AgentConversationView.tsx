@@ -1,11 +1,11 @@
 "use client";
 
-import { useCallback, useDeferredValue, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Search } from "lucide-react";
 import { ChatComposer } from "@/components/chat/ChatComposer";
 import { ComposerQueueDock } from "@/components/chat/ComposerQueueDock";
 import { AskQuestionCard } from "@/components/chat/AskQuestionCard";
-import { MessageList } from "@/components/chat/MessageList";
+import { MessageList, type MessageListScrollPersistMeta } from "@/components/chat/MessageList";
 import {
   useOpenInEditor,
   useRegisterDesignCaptureComposer,
@@ -14,9 +14,13 @@ import { RecentChatsModal } from "@/components/ide/RecentChatsModal";
 import { projectAgentEventsToChatMessages } from "@/lib/agent-chat";
 import { askStepsFromMessage } from "@/lib/ask-question-utils";
 import { useAgentConversations } from "@/components/chat/AgentConversationsContext";
+import { deleteAgentConversationQueueItem } from "@/lib/server-api";
 import type { AgentBackendId } from "@/lib/agent-types";
 import type { EditorMode, ImageAttachment, QueuedChatPrompt } from "@/lib/types";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
+import { resolvePersistedChatScroll } from "@/lib/workspace-session";
+import { getActiveServerStorageKey } from "@/lib/server-connections";
+import { getConfiguredServerBaseUrl } from "@/lib/resolve-server-base-url";
 import {
   EDITOR_CHAT_CONTENT_CLASS,
   EDITOR_CHAT_INSET_X_CLASS,
@@ -58,6 +62,9 @@ function isRecentConversationCandidate(title: string, lastEventSeq: number, busy
   if (title === "New chat" && !busy) {
     return false;
   }
+  if (title.startsWith("Draft: ")) {
+    return true;
+  }
   return lastEventSeq > 0 || busy;
 }
 
@@ -86,25 +93,33 @@ export function AgentConversationView({
   } = useOpenInEditor();
   const {
     backends,
-    conversations,
-    conversationsById,
-    eventsByConversationId,
-    bootstrapped,
-    getConversationLoadStatus,
-    answerPermissionForConversation,
-    cancelPermissionForConversation,
-    getConversationComposerState,
-    promptConversation,
-    cancelConversation,
-    setConversationMode,
-    setConversationModel,
-    setConversationBackend,
-    setConversationConfigOption,
-    syncConversationSnapshot,
-    getConversationHistoryCursor,
-    loadOlderConversationHistory,
-  } = useAgentConversations();
-  const { workspaceSession, updateWorkspaceSession, workspaceInfo } = useWorkspace();
+conversations,
+conversationsById,
+eventsByConversationId,
+bootstrapped,
+getConversationLoadStatus,
+answerPermissionForConversation,
+getConversationComposerState,
+promptConversation,
+cancelConversation,
+setConversationMode,
+setConversationModel,
+setConversationBackend,
+setConversationConfigOption,
+syncConversationSnapshot,
+getConversationHistoryCursor,
+loadOlderConversationHistory,
+  pendingConfigByConversationId,
+  setPendingConfigForConversation,
+  upsertConversation,
+} = useAgentConversations();
+  const {
+    activeWorkspaceId,
+    activeWindowId,
+    workspaceSession,
+    updateWorkspaceSession,
+    workspaceInfo,
+  } = useWorkspace();
   const expandedComposerDraftId =
     expandedComposerDraftIdOverride ?? workspaceExpandedComposerDraftId;
   const setExpandedComposerDraft =
@@ -117,14 +132,13 @@ export function AgentConversationView({
   const loadState = getConversationLoadStatus(conversationId);
   const composerState = getConversationComposerState(conversationId);
   const rawThreadEvents = eventsByConversationId[conversationId] ?? [];
-  const deferredThreadEvents = useDeferredValue(rawThreadEvents);
   const threadMessages = useMemo(
     () =>
-      projectAgentEventsToChatMessages(deferredThreadEvents, {
+      projectAgentEventsToChatMessages(rawThreadEvents, {
         backendId: conversation?.config.backendId,
         workspaceRoot: workspaceInfo?.root ?? null,
       }),
-    [conversationId, conversation?.config.backendId, deferredThreadEvents, workspaceInfo?.root]
+    [conversationId, conversation?.config.backendId, rawThreadEvents, workspaceInfo?.root]
   );
   const { scrollMessages, dockedAsk } = useMemo(
     () => partitionMessagesForDock(threadMessages),
@@ -134,6 +148,24 @@ export function AgentConversationView({
     () => getConversationHistoryCursor(conversationId),
     [conversationId, getConversationHistoryCursor]
   );
+  const restoredEditorChatScroll = useMemo(
+    () =>
+      resolvePersistedChatScroll(
+        workspaceSession.chat.scrollTopByTabId,
+        workspaceSession.chat.scrollAnchorByTabId ?? {},
+        conversationId,
+        activeWorkspaceId,
+        activeWindowId,
+        getActiveServerStorageKey(getConfiguredServerBaseUrl())
+      ),
+    [
+      activeWindowId,
+      activeWorkspaceId,
+      conversationId,
+      workspaceSession.chat.scrollAnchorByTabId,
+      workspaceSession.chat.scrollTopByTabId,
+    ]
+  );
   const dockedAskSteps = useMemo(
     () => (dockedAsk ? askStepsFromMessage(dockedAsk) : []),
     [dockedAsk]
@@ -141,51 +173,121 @@ export function AgentConversationView({
   const composerDraftId = conversationId;
   useRegisterDesignCaptureComposer(composerDraftId, 8);
   const composerDraftTitle =
-    conversation?.title && conversation.title !== "New chat"
+    conversation?.title && conversation.title !== "New chat" && !conversation.title.startsWith("Draft: ")
       ? `${conversation.title} prompt`
       : "Composer";
-  const queuedPrompts = useMemo(
-    () => workspaceSession.chat.queuedPromptsByConversationId?.[conversationId] ?? [],
-    [conversationId, workspaceSession.chat.queuedPromptsByConversationId]
+  const queuedPrompts = conversation?.queuedPrompts ?? [];
+  const queueDockCollapsed = Boolean(
+    workspaceSession.chat.composerQueueDockCollapsedByConversationId?.[conversationId]
   );
-  const removeQueuedPrompt = useCallback(
-    (item: QueuedChatPrompt) => {
+  const onQueueDockCollapsedChange = useCallback(
+    (nextCollapsed: boolean) => {
       updateWorkspaceSession((current) => {
-        const map = { ...(current.chat.queuedPromptsByConversationId ?? {}) };
-        const list = map[conversationId];
-        if (!list) {
-          return current;
-        }
-        const next = list.filter((p) => p.id !== item.id);
-        if (next.length === 0) {
-          delete map[conversationId];
+        const prev = current.chat.composerQueueDockCollapsedByConversationId ?? {};
+        const m = { ...prev };
+        if (nextCollapsed) {
+          m[conversationId] = true;
         } else {
-          map[conversationId] = next;
+          delete m[conversationId];
         }
         return {
           ...current,
           chat: {
             ...current.chat,
-            queuedPromptsByConversationId: map,
+            composerQueueDockCollapsedByConversationId: m,
           },
         };
       });
     },
     [conversationId, updateWorkspaceSession]
   );
+
+  const removeQueuedPrompt = useCallback(
+    (item: QueuedChatPrompt) => {
+      void (async () => {
+        try {
+          const { conversation: nextConv } = await deleteAgentConversationQueueItem(
+            conversationId,
+            item.id
+          );
+          upsertConversation(nextConv);
+        } catch {
+          void syncConversationSnapshot(conversationId).catch(() => undefined);
+        }
+      })();
+    },
+    [conversationId, syncConversationSnapshot, upsertConversation]
+  );
   const unqueuePromptToComposer = useCallback(
     (item: QueuedChatPrompt) => {
-      removeQueuedPrompt(item);
-      upsertComposerDraft(composerDraftId, {
-        title: composerDraftTitle,
-        content: item.text,
-      });
+      void (async () => {
+        try {
+          const { conversation: nextConv } = await deleteAgentConversationQueueItem(
+            conversationId,
+            item.id
+          );
+          upsertConversation(nextConv);
+        } catch {
+          void syncConversationSnapshot(conversationId).catch(() => undefined);
+          return;
+        }
+        upsertComposerDraft(composerDraftId, {
+          title: composerDraftTitle,
+          content: item.text,
+        });
+      })();
     },
     [
       composerDraftId,
       composerDraftTitle,
-      removeQueuedPrompt,
+      conversationId,
+      syncConversationSnapshot,
       upsertComposerDraft,
+      upsertConversation,
+    ]
+  );
+
+  const editQueuedPrompt = useCallback(
+    (item: QueuedChatPrompt) => {
+      void (async () => {
+        try {
+          const { conversation: nextConv } = await deleteAgentConversationQueueItem(
+            conversationId,
+            item.id
+          );
+          upsertConversation(nextConv);
+        } catch {
+          void syncConversationSnapshot(conversationId).catch(() => undefined);
+          return;
+        }
+        upsertComposerDraft(composerDraftId, {
+          title: composerDraftTitle,
+          content: item.text,
+        });
+        if (item.configOverride) {
+          setPendingConfigForConversation(conversationId, item.configOverride);
+        }
+        updateWorkspaceSession((current) => ({
+          ...current,
+          chat: {
+            ...current.chat,
+            editingQueuedPromptIdByConversationId: {
+              ...(current.chat.editingQueuedPromptIdByConversationId ?? {}),
+              [conversationId]: item.id,
+            },
+          },
+        }));
+      })();
+    },
+    [
+      composerDraftId,
+      composerDraftTitle,
+      conversationId,
+      setPendingConfigForConversation,
+      syncConversationSnapshot,
+      updateWorkspaceSession,
+      upsertComposerDraft,
+      upsertConversation,
     ]
   );
   const isEmptyThread = threadMessages.length === 0;
@@ -217,15 +319,18 @@ export function AgentConversationView({
     () => recentConversations.slice(0, 5),
     [recentConversations]
   );
-  const showRecentChatsSection =
-    conversation?.title === "New chat" && recentConversationPreview.length > 0;
+const showRecentChatsSection =
+  (conversation?.title === "New chat" || conversation?.title?.startsWith("Draft: ")) && recentConversationPreview.length > 0;
 
   useEffect(() => {
-    if (conversation || loadState === "loading") {
+    if (loadState === "error") {
+      return;
+    }
+    if (loadState === "ready") {
       return;
     }
     void syncConversationSnapshot(conversationId).catch(() => undefined);
-  }, [conversation, conversationId, loadState, syncConversationSnapshot]);
+  }, [conversationId, loadState, syncConversationSnapshot]);
 
   const recentChatsSection = showRecentChatsSection ? (
     <div className={`${EDITOR_CHAT_CONTENT_CLASS} flex flex-col gap-[2px]`}>
@@ -281,13 +386,32 @@ export function AgentConversationView({
     <div className={EDITOR_CHAT_CONTENT_CLASS}>
       <ChatComposer
         key={composerDraftId}
-        mode={composerState.mode}
-        onModeChange={(next) => void setConversationMode(conversationId, next as EditorMode)}
-        model={composerState.model}
-        onModelChange={(next) => void setConversationModel(conversationId, next)}
-        backendId={composerState.backendId}
-        backends={backends}
-        onBackendChange={(next) => void setConversationBackend(conversationId, next)}
+mode={composerState.mode}
+onModeChange={(next) => {
+if (composerState.busy) {
+setPendingConfigForConversation(conversationId, { mode: next as EditorMode });
+} else {
+void setConversationMode(conversationId, next as EditorMode);
+}
+}}
+model={composerState.model}
+onModelChange={(next) => {
+if (composerState.busy) {
+const modelId = next.modelValue ?? next.id;
+setPendingConfigForConversation(conversationId, { modelId, modelName: next.name });
+} else {
+void setConversationModel(conversationId, next);
+}
+}}
+backendId={composerState.backendId}
+backends={backends}
+onBackendChange={(next) => {
+if (composerState.busy) {
+setPendingConfigForConversation(conversationId, { backendId: next });
+} else {
+void setConversationBackend(conversationId, next);
+}
+}}
         models={composerState.models}
         modeOptions={composerState.modeOptions}
         sessionConfigOptions={composerState.sessionConfigOptions}
@@ -314,23 +438,22 @@ export function AgentConversationView({
         busy={composerState.busy}
         configLocked={false}
         draftAttachments={composerDraftAttachments}
-        onDraftAttachmentsChange={(next) =>
-          upsertComposerDraft(composerDraftId, {
-            title: composerDraftTitle,
-            content: composerDraftText,
-            attachments: next,
-          })
-        }
-        draftCaptures={composerDraftCaptures}
-        onDraftCapturesChange={(next) =>
-          upsertComposerDraft(composerDraftId, {
-            title: composerDraftTitle,
-            content: composerDraftText,
-            captures: next,
-          })
-        }
-        onSubmit={(text, attachments?: ImageAttachment[]) => {
-          void promptConversation(conversationId, text, attachments).then((ok) => {
+onDraftAttachmentsChange={(next) =>
+                upsertComposerDraft(composerDraftId, {
+                  title: composerDraftTitle,
+                  attachments: next,
+                })
+              }
+              draftCaptures={composerDraftCaptures}
+              onDraftCapturesChange={(next) =>
+                upsertComposerDraft(composerDraftId, {
+                  title: composerDraftTitle,
+                  captures: next,
+                })
+              }
+onSubmit={(text, attachments?: ImageAttachment[]) => {
+const configOverride = composerState.busy ? pendingConfigByConversationId[conversationId] : undefined;
+void promptConversation(conversationId, text, attachments, configOverride).then((ok) => {
             if (!ok) {
               return;
             }
@@ -368,20 +491,27 @@ export function AgentConversationView({
         <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
           {!composerHiddenForExpanded ? (
             <div className="shrink-0">
-              {queuedPrompts.length > 0 ? (
-                <div className={EDITOR_CHAT_CONTENT_CLASS}>
-                  <ComposerQueueDock
-                    items={queuedPrompts}
-                    onDelete={removeQueuedPrompt}
-                    onUnqueue={unqueuePromptToComposer}
-                  />
-                </div>
-              ) : null}
-              {composer}
-            </div>
-          ) : null}
-          <div
-            className={`min-h-0 flex-1 bg-[var(--bg-main)] ${EDITOR_CHAT_INSET_X_CLASS} pb-[16px] pt-[12px]`}
+{queuedPrompts.length > 0 ? (
+<div className={EDITOR_CHAT_CONTENT_CLASS}>
+<ComposerQueueDock
+                        items={queuedPrompts}
+                        onDelete={removeQueuedPrompt}
+                        onUnqueue={unqueuePromptToComposer}
+                        onEdit={editQueuedPrompt}
+                        conversationConfig={conversation?.config}
+                        backendLabels={Object.fromEntries(
+                          backends.map((b) => [b.id, b.label ?? b.id])
+                        )}
+                        collapsed={queueDockCollapsed}
+                        onCollapsedChange={onQueueDockCollapsedChange}
+                      />
+</div>
+) : null}
+{composer}
+</div>
+) : null}
+<div
+className={`min-h-0 flex-1 bg-[var(--bg-main)] ${EDITOR_CHAT_INSET_X_CLASS} pb-[16px] pt-[12px]`}
           >
             {recentChatsSection ? (
               <div className="flex h-full flex-col justify-end">
@@ -405,30 +535,69 @@ export function AgentConversationView({
             hasOlderHistory={historyCursor.hasOlder}
             loadingOlderHistory={historyCursor.loadingOlder}
             onRequestOlderHistory={() => loadOlderConversationHistory(conversationId)}
-            initialScrollTop={workspaceSession.chat.scrollTopByTabId[conversationId] ?? 0}
-            onScrollTopSettled={(scrollTop) => {
-              updateWorkspaceSession((current) =>
-                Math.abs(
-                  (current.chat.scrollTopByTabId[conversationId] ?? 0) - scrollTop
-                ) < 1
-                  ? current
-                  : {
-                      ...current,
-                      chat: {
-                        ...current.chat,
-                        scrollTopByTabId: {
-                          ...current.chat.scrollTopByTabId,
-                          [conversationId]: scrollTop,
-                        },
-                      },
-                    }
-              );
+            initialScrollTop={
+              restoredEditorChatScroll.mode === "restore" &&
+              restoredEditorChatScroll.scrollTop !== undefined
+                ? restoredEditorChatScroll.scrollTop
+                : undefined
+            }
+            initialScrollAnchor={
+              restoredEditorChatScroll.mode === "restore"
+                ? restoredEditorChatScroll.anchor
+                : undefined
+            }
+            onScrollTopSettled={(scrollTop, meta: MessageListScrollPersistMeta) => {
+              updateWorkspaceSession((current) => {
+                const map = current.chat.scrollTopByTabId;
+                const anchorMap = { ...(current.chat.scrollAnchorByTabId ?? {}) };
+                const hadTop = Object.hasOwn(map, conversationId);
+                if (meta.pinnedToBottom) {
+                  if (!hadTop && !Object.hasOwn(anchorMap, conversationId)) {
+                    return current;
+                  }
+                  const nextMap = { ...map };
+                  delete nextMap[conversationId];
+                  delete anchorMap[conversationId];
+                  return {
+                    ...current,
+                    chat: {
+                      ...current.chat,
+                      scrollTopByTabId: nextMap,
+                      scrollAnchorByTabId: anchorMap,
+                    },
+                  };
+                }
+                if (meta.anchor) {
+                  anchorMap[conversationId] = meta.anchor;
+                } else {
+                  delete anchorMap[conversationId];
+                }
+                const prevTop = map[conversationId];
+                const prevAnchor = current.chat.scrollAnchorByTabId?.[conversationId];
+                const topClose = hadTop && Math.abs((prevTop ?? 0) - scrollTop) < 0.5;
+                const anchorClose =
+                  meta.anchor && prevAnchor
+                    ? meta.anchor.messageId === prevAnchor.messageId &&
+                      Math.abs(meta.anchor.delta - prevAnchor.delta) < 0.35
+                    : meta.anchor == null && prevAnchor == null;
+                if (topClose && anchorClose) {
+                  return current;
+                }
+                return {
+                  ...current,
+                  chat: {
+                    ...current.chat,
+                    scrollTopByTabId: {
+                      ...map,
+                      [conversationId]: scrollTop,
+                    },
+                    scrollAnchorByTabId: anchorMap,
+                  },
+                };
+              });
             }}
             onResolvePermission={(requestId, optionId) => {
               void answerPermissionForConversation(conversationId, requestId, optionId);
-            }}
-            onCancelPermission={(requestId) => {
-              void cancelPermissionForConversation(conversationId, requestId);
             }}
             bottomDockVisible={!composerHiddenForExpanded}
           />
@@ -450,11 +619,18 @@ export function AgentConversationView({
                 {queuedPrompts.length > 0 ? (
                   <div className={`${EDITOR_CHAT_INSET_X_CLASS} pt-[8px]`}>
                     <div className={EDITOR_CHAT_CONTENT_CLASS}>
-                      <ComposerQueueDock
-                        items={queuedPrompts}
-                        onDelete={removeQueuedPrompt}
-                        onUnqueue={unqueuePromptToComposer}
-                      />
+                <ComposerQueueDock
+                  items={queuedPrompts}
+                  onDelete={removeQueuedPrompt}
+                  onUnqueue={unqueuePromptToComposer}
+                  onEdit={editQueuedPrompt}
+                  conversationConfig={conversation?.config}
+                  backendLabels={Object.fromEntries(
+                    backends.map((b) => [b.id, b.label ?? b.id])
+                  )}
+                  collapsed={queueDockCollapsed}
+                  onCollapsedChange={onQueueDockCollapsedChange}
+                />
                     </div>
                   </div>
                 ) : null}

@@ -161,17 +161,18 @@ export function FileExplorer() {
   }, [workspaceSession.explorer.scrollTop]);
 
   const flashError = useCallback(
-    (message: string) => {
-      pushNotification({
-        kind: WORKBENCH_NOTIFICATION_KIND.editorNotice,
-        severity: "error",
-        title: "Files",
-        message,
-        persistent: false,
-        autoDismissMs: 8000,
-      });
-    },
-    [pushNotification]
+  (message: string) => {
+    pushNotification({
+      kind: WORKBENCH_NOTIFICATION_KIND.editorNotice,
+      severity: "error",
+      title: "Files",
+      message,
+      persistent: false,
+      autoDismissMs: 8000,
+      compact: true,
+    });
+  },
+  [pushNotification]
   );
 
   const handleOpenFile = useCallback(
@@ -231,13 +232,14 @@ export function FileExplorer() {
 
   const confirmDelete = useCallback(
     (label: string, relativePath: string) => {
-      const nid = pushNotification({
-        kind: WORKBENCH_NOTIFICATION_KIND.editorNotice,
-        severity: "warning",
-        title: "Delete permanently?",
-        message: label,
-        persistent: true,
-        actions: [
+    const nid = pushNotification({
+      kind: WORKBENCH_NOTIFICATION_KIND.editorNotice,
+      severity: "warning",
+      title: "Delete permanently?",
+      message: label,
+      persistent: true,
+      compact: true,
+      actions: [
           {
             id: "del",
             label: "Delete",
@@ -834,13 +836,14 @@ export function FileExplorer() {
                   id: "init",
                   label: "Initialize Repository (demo)",
                   onSelect: () =>
-                    pushNotification({
-                      kind: WORKBENCH_NOTIFICATION_KIND.editorNotice,
-                      severity: "info",
-                      title: "Source Control",
-                      message: "Git integration is not wired yet.",
-                      autoDismissMs: 4000,
-                    }),
+      pushNotification({
+        kind: WORKBENCH_NOTIFICATION_KIND.editorNotice,
+        severity: "info",
+        title: "Source Control",
+        message: "Git integration is not wired yet.",
+        autoDismissMs: 4000,
+        compact: true,
+      }),
                 },
                 {
                   type: "item",

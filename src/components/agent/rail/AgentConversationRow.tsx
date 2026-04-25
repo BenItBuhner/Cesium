@@ -6,7 +6,7 @@ import {
   type KeyboardEvent,
   type MouseEvent,
 } from "react";
-import { LoaderCircle } from "lucide-react";
+import { LoaderCircle, MoreVertical } from "lucide-react";
 import type {
   AgentConversationStatus,
   AgentRailConversationSummary,
@@ -45,9 +45,11 @@ export function AgentConversationRow({
   onCancelRename,
   onCommitRename,
   onContextMenu,
+  onOverflowMenu,
   onEditValueChange,
   onSelect,
   selected,
+  showOverflowMenu = false,
 }: {
   conversation: AgentRailConversationSummary;
   editValue?: string;
@@ -59,9 +61,12 @@ export function AgentConversationRow({
     event: MouseEvent<HTMLButtonElement>,
     conversation: AgentRailConversationSummary
   ) => void;
+  /** iPad / no native context menu: opens the same menu as `onContextMenu`. */
+  onOverflowMenu?: (anchorEl: HTMLElement) => void;
   onEditValueChange?: (value: string) => void;
   onSelect: () => void;
   selected: boolean;
+  showOverflowMenu?: boolean;
 }) {
   const renameInputRef = useRef<HTMLInputElement>(null);
 
@@ -76,7 +81,7 @@ export function AgentConversationRow({
     return () => cancelAnimationFrame(frame);
   }, [editing]);
 
-  const rowClassName = `flex h-[30px] w-full items-center gap-[8px] rounded-[var(--radius-tab)] px-[9px] text-left transition-colors ${
+  const rowClassName = `flex h-[30px] w-full items-center gap-[8px] rounded-[var(--radius-tab)] px-[9px] text-left transition-colors select-none ${
     selected ? "bg-[var(--bg-card)]" : "hover:bg-[var(--bg-card)]"
   }`;
 
@@ -125,23 +130,39 @@ export function AgentConversationRow({
   }
 
   return (
-    <button
-      type="button"
-      onClick={onSelect}
-      onContextMenu={handleContextMenu}
-      className={rowClassName}
-      title={conversation.title}
-    >
-      {statusIcon}
-      <span
-        className={titleClassName}
-        onDoubleClick={(event) => {
-          event.stopPropagation();
-          onBeginRename?.();
-        }}
+    <div className="group flex w-full min-w-0 items-center gap-[4px]">
+      <button
+        type="button"
+        onClick={onSelect}
+        onContextMenu={handleContextMenu}
+        className={`${rowClassName} min-w-0 flex-1`}
+        title={conversation.title}
       >
-        {conversation.title}
-      </span>
-    </button>
+        {statusIcon}
+        <span
+          className={titleClassName}
+          onDoubleClick={(event) => {
+            event.stopPropagation();
+            onBeginRename?.();
+          }}
+        >
+          {conversation.title}
+        </span>
+      </button>
+      {showOverflowMenu && onOverflowMenu ? (
+        <button
+          type="button"
+          className="mr-[4px] flex size-[24px] shrink-0 items-center justify-center rounded-[var(--radius-tab)] text-[var(--text-secondary)] opacity-0 pointer-events-none transition-[opacity,background-color,color] hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)] hover:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 focus-visible:pointer-events-auto focus-visible:bg-[var(--accent-bg)] focus-visible:text-[var(--text-primary)] focus-visible:opacity-100"
+          aria-label={`More actions for ${conversation.title}`}
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            onOverflowMenu(e.currentTarget);
+          }}
+        >
+          <MoreVertical className="size-[16px]" strokeWidth={1.5} aria-hidden />
+        </button>
+      ) : null}
+    </div>
   );
 }

@@ -113,3 +113,11 @@ export function isTranscriptionConfigured(env?: NodeJS.ProcessEnv): boolean {
   const { baseUrl, apiKey, model } = transcriptionProcessEnv(env);
   return Boolean(baseUrl && apiKey && model);
 }
+
+export function titleGenerationProcessEnv(
+  env: NodeJS.ProcessEnv = process.env
+): { baseUrl: string; apiKey: string; titleModel: string } {
+  const { baseUrl, apiKey } = transcriptionProcessEnv(env);
+  const titleModel = (env.OPENCURSOR_TITLE_MODEL ?? "openai/gpt-oss-20b").trim();
+  return { baseUrl, apiKey, titleModel };
+}

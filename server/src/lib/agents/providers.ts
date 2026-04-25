@@ -1,14 +1,29 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { existsSync, promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { AcpStdioClient } from "./acp-transport.js";
+import { AcpJsonRpcError, AcpStdioClient } from "./acp-transport.js";
+import {
+  acpSessionInitialToolCallKey,
+  acpSessionToolUpdateKey,
+} from "./acp-session-tool-dedup.js";
 import {
   type AcpSharedBridge,
   makeAcpPoolKey,
   retainAcpSharedBridge,
 } from "./acp-shared-bridge.js";
+import {
+  attachOpenCodeGlobalSse,
+  detachOpenCodeGlobalSse,
+  normalizeOpenCodeToolKey,
+  translateOpenCodeGlobalPayload,
+} from "./opencode-global-sse.js";
+import {
+  buildOpenCodeAcpCliArgs,
+  getOpenCodeAcpListenPort,
+  openCodeAcpInternalBaseUrl,
+} from "./opencode-acp-port.js";
 import {
   createClaudeAdapterProvider,
   createCodexAdapterProvider,
@@ -51,6 +66,172 @@ import {
   truncateGenericToolTitle,
 } from "./tool-display-labels.js";
 import { inferFileKind, isDimmed } from "../workspace.js";
+import {
+  getGlobalSettings,
+  saveRememberedAgentPermissionRule,
+} from "../global-settings-store.js";
+import { extractInlineReasoning } from "./parse-inline-reasoning.js";
+
+function tryParseJsonArrayString(value: unknown): unknown[] | undefined {
+  if (Array.isArray(value)) {
+    return value;
+  }
+  if (typeof value === "string" && value.trim()) {
+    try {
+      const parsed = JSON.parse(value) as unknown;
+      return Array.isArray(parsed) ? parsed : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+  return undefined;
+}
+
+/** ACP `plan` updates vary by server: `entries`, `todos`, stringified JSON, or nested under `data`. */
+function parseTodoLikeArrayFromPlanRecord(record: Record<string, unknown>): unknown[] | undefined {
+  const fromData =
+    record.data && typeof record.data === "object" && !Array.isArray(record.data)
+      ? (record.data as Record<string, unknown>)
+      : undefined;
+  return (
+    tryParseJsonArrayString(record.entries) ??
+    tryParseJsonArrayString(record.todos) ??
+    tryParseJsonArrayString(record.items) ??
+    (fromData
+      ? tryParseJsonArrayString(fromData.entries) ??
+        tryParseJsonArrayString(fromData.todos) ??
+        tryParseJsonArrayString(fromData.items)
+      : undefined)
+  );
+}
+
+function agentPlanEntriesFromTodoLikeList(
+  list: unknown[] | undefined,
+  conversationId: string,
+  idPrefix: string
+): AgentPlanEntry[] {
+  if (!list?.length) {
+    return [];
+  }
+  const entries: AgentPlanEntry[] = [];
+  for (const [index, todo] of list.entries()) {
+    if (!todo || typeof todo !== "object") {
+      continue;
+    }
+    const todoRecord = todo as Record<string, unknown>;
+    const content =
+      typeof todoRecord.content === "string"
+        ? todoRecord.content
+        : typeof todoRecord.text === "string"
+          ? todoRecord.text
+          : typeof todoRecord.title === "string"
+            ? todoRecord.title
+            : "";
+    const status =
+      todoRecord.status === "pending" ||
+      todoRecord.status === "in_progress" ||
+      todoRecord.status === "completed"
+        ? todoRecord.status
+        : "pending";
+    const trimmed = content.trim();
+    if (!trimmed) {
+      continue;
+    }
+    entries.push({
+      id:
+        typeof todoRecord.id === "string"
+          ? todoRecord.id
+          : `${conversationId}-${idPrefix}-${index}`,
+      content: trimmed,
+      priority:
+        typeof todoRecord.priority === "string" ? todoRecord.priority : undefined,
+      status,
+    });
+  }
+  return entries;
+}
+
+function isOpenCodeGlobalSseParams(params: unknown): boolean {
+  if (!params || typeof params !== "object") {
+    return false;
+  }
+  const meta = (params as Record<string, unknown>)._meta;
+  return Boolean(meta && typeof meta === "object" && (meta as Record<string, unknown>).openCodeSse === true);
+}
+
+function openCodeTodoArrayFromToolRecord(record: Record<string, unknown>): unknown[] | undefined {
+  const input = parseLooseJsonObjectForAcp(record.rawInput) ?? parseLooseJsonObjectForAcp(record.raw_input);
+  const output = parseLooseJsonObjectForAcp(record.rawOutput) ?? parseLooseJsonObjectForAcp(record.raw_output);
+  const pick = (obj: Record<string, unknown> | undefined): unknown[] | undefined => {
+    if (!obj) {
+      return undefined;
+    }
+    return (
+      tryParseJsonArrayString(obj.todos) ??
+      tryParseJsonArrayString(obj.items) ??
+      (Array.isArray(obj.list) ? (obj.list as unknown[]) : undefined)
+    );
+  };
+  return pick(input) ?? pick(output);
+}
+
+function shouldMirrorOpenCodeTodoToolToPlan(
+  params: unknown,
+  record: Record<string, unknown>,
+  toolKind: string,
+  status: string,
+  title: string | undefined
+): boolean {
+  if (status !== "completed") {
+    return false;
+  }
+  if (!isOpenCodeGlobalSseParams(params)) {
+    return false;
+  }
+  if (toolKind === "todo") {
+    return true;
+  }
+  const rawTitle = typeof record.title === "string" ? record.title : title;
+  const k = normalizeOpenCodeToolKey(rawTitle ?? "");
+  if (k === "todowrite" || k === "todoread") {
+    return true;
+  }
+  if (k.startsWith("todo") && (k.includes("read") || k.includes("write") || k.includes("update"))) {
+    return true;
+  }
+  return false;
+}
+
+async function appendOpenCodeTodoPlanIfNeeded(
+  callbacks: AgentRuntimeCallbacks,
+  params: unknown,
+  record: Record<string, unknown>,
+  toolKind: string,
+  status: string,
+  title: string | undefined
+): Promise<void> {
+  if (!shouldMirrorOpenCodeTodoToolToPlan(params, record, toolKind, status, title)) {
+    return;
+  }
+  const list = openCodeTodoArrayFromToolRecord(record);
+  if (!list?.length) {
+    return;
+  }
+  const entries = agentPlanEntriesFromTodoLikeList(list, callbacks.conversation.id, "todo");
+  if (entries.length === 0) {
+    return;
+  }
+  await callbacks.appendEvents([
+    {
+      eventId: randomUUID(),
+      conversationId: callbacks.conversation.id,
+      kind: "plan",
+      planId: `${callbacks.conversation.id}-todos`,
+      entries,
+      raw: params,
+    },
+  ]);
+}
 
 type AcpRuntimeSpec = CliRuntimeSpec;
 
@@ -65,6 +246,7 @@ const openCodeCapabilities: AgentProviderCapabilities = {
   supportsTodos: true,
   supportsSessionResume: true,
   supportsPromptImages: true,
+  supportsInlineReasoning: true,
 };
 
 const basicCliCapabilities: AgentProviderCapabilities = {
@@ -78,6 +260,7 @@ const basicCliCapabilities: AgentProviderCapabilities = {
   supportsTodos: false,
   supportsSessionResume: false,
   supportsPromptImages: false,
+  supportsInlineReasoning: false,
 };
 
 const claudeCliCapabilities: AgentProviderCapabilities = {
@@ -101,6 +284,7 @@ const cursorAcpCapabilities: AgentProviderCapabilities = {
   supportsTodos: true,
   supportsSessionResume: true,
   supportsPromptImages: true,
+  supportsInlineReasoning: true,
 };
 
 const LEGACY_MODE_CONFIG_ID = "__acp_legacy_mode__";
@@ -866,6 +1050,36 @@ function resolveOpenCodeAcpRuntime(): AcpRuntimeSpec | null {
   return null;
 }
 
+/** Same discovery as {@link resolveOpenCodeAcpRuntime}, but with a fixed embedded HTTP `--port` for SSE bridging. */
+function resolveOpenCodeAcpInvocationWithPort(port: number): AcpRuntimeSpec | null {
+  const args = buildOpenCodeAcpCliArgs(port);
+  const configured = resolveConfiguredRuntime(process.env.OPENCURSOR_OPENCODE_ACP_BIN, args);
+  if (configured) {
+    return configured;
+  }
+  const pathHit = findExecutableOnPath(
+    process.platform === "win32"
+      ? ["opencode.exe", "opencode.cmd", "opencode.bat", "opencode"]
+      : ["opencode"]
+  );
+  if (pathHit) {
+    return buildInvocation(pathHit, args);
+  }
+  const bundled = resolveOpenCodeBundledBinary();
+  if (bundled) {
+    return buildInvocation(bundled, args);
+  }
+  if (process.platform === "win32") {
+    const roamingNpm = process.env.APPDATA?.trim()
+      ? path.join(process.env.APPDATA, "npm", "opencode.cmd")
+      : null;
+    if (roamingNpm && fileExists(roamingNpm)) {
+      return buildInvocation(roamingNpm, args);
+    }
+  }
+  return null;
+}
+
 function resolveCodexCliRuntime(): CliRuntimeSpec | null {
   const configured = resolveConfiguredRuntime(process.env.OPENCURSOR_CODEX_BIN, []);
   if (configured) {
@@ -1605,6 +1819,7 @@ function isGenericAcpToolTitle(value: string | undefined): boolean {
     normalized === "tool" ||
     normalized === "function call" ||
     normalized === "function" ||
+    normalized === "ran" ||
     normalized === "read" ||
     normalized === "grep" ||
     normalized === "find" ||
@@ -1771,6 +1986,10 @@ function inferToolNameFromFlatArgs(
   if (hint) {
     return hint;
   }
+  const titleNorm = typeof record.title === "string" ? normalizeOpenCodeToolKey(record.title) : "";
+  if (titleNorm === "todowrite" || titleNorm === "todoread") {
+    return titleNorm;
+  }
   const kind = typeof record.kind === "string" ? record.kind.trim().toLowerCase() : "";
   if (kind && kind !== "tool" && kind !== "other") {
     if (kind === "read" || kind === "file_read") {
@@ -1848,12 +2067,17 @@ function tryExtractToolEntryFromFlatRawInput(record: Record<string, unknown>): A
     (typeof args.pattern === "string" && args.pattern.trim()) ||
     (typeof args.query === "string" && args.query.trim()) ||
     (typeof args.globPattern === "string" && args.globPattern.trim()) ||
-    (typeof args.glob === "string" && args.glob.trim());
+    (typeof args.glob === "string" && args.glob.trim()) ||
+    (Array.isArray(args.todos) && args.todos.length > 0) ||
+    (Array.isArray(args.items) && args.items.length > 0);
   if (!meaningful) {
     return [];
   }
   const rawName = inferToolNameFromFlatArgs(record, args);
-  return [{ rawName, args }];
+  const result =
+    parseLooseJsonObjectForAcp(record.rawOutput) ??
+    parseLooseJsonObjectForAcp(record.raw_output);
+  return result ? [{ rawName, args, result }] : [{ rawName, args }];
 }
 
 function extractAcpToolCallEntries(record: Record<string, unknown>): AcpToolCallEntry[] {
@@ -2008,6 +2232,12 @@ function looksLikeAcpEditPayload(record: Record<string, unknown> | undefined): b
       "contents",
       "renameTo",
       "newPath",
+      "oldFileContent",
+      "newFileContent",
+      "previousContent",
+      "writtenContent",
+      "fileContentBefore",
+      "fileContentAfter",
     ])
   ) {
     return true;
@@ -2023,19 +2253,17 @@ function looksLikeAcpEditPayload(record: Record<string, unknown> | undefined): b
   return Boolean(errorText && /failed to find context|apply patch|replace/i.test(errorText));
 }
 
-function looksLikeAcpReadPayload(record: Record<string, unknown> | undefined): boolean {
+function looksLikeAcpReadShape(record: Record<string, unknown> | undefined): boolean {
   if (!record || looksLikeAcpEditPayload(record)) {
     return false;
   }
-  return acpRecordHasAnyKey(record, [
-    "content",
-    "text",
-    "totalLines",
-    "readRange",
-    "contentBlobId",
-    "isEmpty",
-    "exceededLimit",
-  ]);
+  return (
+    typeof record.path === "string" ||
+    typeof record.filePath === "string" ||
+    typeof record.file_path === "string" ||
+    "readRange" in record ||
+    "lineRange" in record
+  );
 }
 
 function inferAcpToolKindFromEntry(payload: {
@@ -2050,7 +2278,7 @@ function inferAcpToolKindFromEntry(payload: {
   if (fromName !== "tool") {
     return fromName;
   }
-  if (looksLikeAcpReadPayload(payload.result) || looksLikeAcpReadPayload(payload.args)) {
+  if (looksLikeAcpReadShape(payload.result) || looksLikeAcpReadShape(payload.args)) {
     return "read";
   }
   return "tool";
@@ -2331,28 +2559,42 @@ function parsePermissionOptions(raw: unknown): AgentPermissionOption[] {
     .filter((value): value is AgentPermissionOption => value !== null);
 }
 
-function buildFallbackPermissionOptions(
-  backendId: AgentBackendId
+function withPersistentPermissionOptions(
+  options: AgentPermissionOption[]
 ): AgentPermissionOption[] {
-  if (backendId === "cursor-acp") {
-    return [
-      {
-        optionId: "allow-once",
-        name: "Allow once",
-        kind: "allow_once",
-      },
-      {
-        optionId: "allow-always",
-        name: "Always allow",
-        kind: "allow_always",
-      },
-      {
-        optionId: "reject-once",
-        name: "Reject",
-        kind: "reject_once",
-      },
-    ];
+  const next = [...options];
+  const hasAllowOnce = next.some((option) => option.kind === "allow_once");
+  const hasAllowAlways = next.some((option) => option.kind === "allow_always");
+  const hasRejectOnce = next.some((option) => option.kind === "reject_once");
+  const hasRejectAlways = next.some((option) => option.kind === "reject_always");
+  if (
+    hasAllowOnce &&
+    !hasAllowAlways &&
+    !next.some((option) => option.optionId === "allow_always")
+  ) {
+    next.push({
+      optionId: "allow_always",
+      name: "Allow always",
+      kind: "allow_always",
+    });
   }
+  if (
+    hasRejectOnce &&
+    !hasRejectAlways &&
+    !next.some((option) => option.optionId === "reject_always")
+  ) {
+    next.push({
+      optionId: "reject_always",
+      name: "Reject always",
+      kind: "reject_always",
+    });
+  }
+  return next;
+}
+
+function buildFallbackPermissionOptions(
+  _backendId: AgentBackendId
+): AgentPermissionOption[] {
   return [
     {
       optionId: "allow_once",
@@ -2360,11 +2602,62 @@ function buildFallbackPermissionOptions(
       kind: "allow_once",
     },
     {
+      optionId: "allow_always",
+      name: "Allow always",
+      kind: "allow_always",
+    },
+    {
       optionId: "reject_once",
       name: "Reject",
       kind: "reject_once",
     },
+    {
+      optionId: "reject_always",
+      name: "Reject always",
+      kind: "reject_always",
+    },
   ];
+}
+
+function permissionDecisionFromKind(
+  kind: AgentPermissionOption["kind"] | undefined
+): "allow" | "reject" | null {
+  if (kind === "allow_once" || kind === "allow_always") {
+    return "allow";
+  }
+  if (kind === "reject_once" || kind === "reject_always") {
+    return "reject";
+  }
+  return null;
+}
+
+function providerOptionIdForPermissionSelection(
+  options: AgentPermissionOption[],
+  selectedOptionId: string | undefined
+): string | undefined {
+  const selected = options.find((option) => option.optionId === selectedOptionId);
+  if (!selected) {
+    return selectedOptionId;
+  }
+  if (selected.kind === "allow_always") {
+    return options.find((option) => option.kind === "allow_once")?.optionId ?? selected.optionId;
+  }
+  if (selected.kind === "reject_always") {
+    return options.find((option) => option.kind === "reject_once")?.optionId ?? selected.optionId;
+  }
+  return selected.optionId;
+}
+
+function providerOptionIdForRememberedPermission(
+  options: AgentPermissionOption[],
+  decision: "allow" | "reject"
+): string | undefined {
+  const onceKind = decision === "allow" ? "allow_once" : "reject_once";
+  const alwaysKind = decision === "allow" ? "allow_always" : "reject_always";
+  return (
+    options.find((option) => option.kind === onceKind)?.optionId ??
+    options.find((option) => option.kind === alwaysKind)?.optionId
+  );
 }
 
 function normalizeToolCallId(record: Record<string, unknown>): string {
@@ -2664,6 +2957,30 @@ function normalizeAcpSessionUpdateKind(record: Record<string, unknown>): string 
   return undefined;
 }
 
+function readOpenCodeSseChildSessionId(params: unknown): string | undefined {
+  if (!params || typeof params !== "object") {
+    return undefined;
+  }
+  const pr = params as Record<string, unknown>;
+  const meta = pr._meta;
+  if (!meta || typeof meta !== "object" || Array.isArray(meta)) {
+    return undefined;
+  }
+  const id = (meta as Record<string, unknown>).openCodeChildSessionId;
+  return typeof id === "string" && id.trim() ? id.trim() : undefined;
+}
+
+/** Avoid collisions when multiple OpenCode child sessions reuse the same callID. */
+function namespaceOpenCodeSseToolCallId(baseId: string, childSessionId?: string): string {
+  if (!childSessionId || !baseId) {
+    return baseId;
+  }
+  if (baseId.startsWith("opencode-sa:")) {
+    return baseId;
+  }
+  return `opencode-sa:${childSessionId}:${baseId}`;
+}
+
 function extractPermissionRequestDetail(
   record: Record<string, unknown>,
   toolCall: Record<string, unknown>
@@ -2705,12 +3022,117 @@ function extractPermissionRequestDetail(
   return undefined;
 }
 
+const PERMISSION_SIGNATURE_STRING_MAX = 1000;
+const PERMISSION_SIGNATURE_DEPTH_MAX = 8;
+const PERMISSION_SIGNATURE_IGNORED_KEYS = new Set([
+  "id",
+  "requestId",
+  "request_id",
+  "toolCallId",
+  "tool_call_id",
+  "toolUseId",
+  "tool_use_id",
+  "callId",
+  "call_id",
+  "sessionId",
+  "session_id",
+  "timestamp",
+  "createdAt",
+  "updatedAt",
+]);
+
+function normalizePermissionSignatureValue(value: unknown, depth = 0): unknown {
+  if (depth > PERMISSION_SIGNATURE_DEPTH_MAX) {
+    return "...";
+  }
+  if (value == null || typeof value === "number" || typeof value === "boolean") {
+    return value;
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed.length > PERMISSION_SIGNATURE_STRING_MAX
+      ? `${trimmed.slice(0, PERMISSION_SIGNATURE_STRING_MAX)}...`
+      : trimmed;
+  }
+  if (Array.isArray(value)) {
+    return value.slice(0, 40).map((item) => normalizePermissionSignatureValue(item, depth + 1));
+  }
+  if (typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    const out: Record<string, unknown> = {};
+    for (const key of Object.keys(record).sort()) {
+      if (PERMISSION_SIGNATURE_IGNORED_KEYS.has(key)) {
+        continue;
+      }
+      out[key] = normalizePermissionSignatureValue(record[key], depth + 1);
+    }
+    return out;
+  }
+  return String(value);
+}
+
+function stablePermissionJson(value: unknown): string {
+  if (value == null || typeof value !== "object") {
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => stablePermissionJson(item)).join(",")}]`;
+  }
+  const record = value as Record<string, unknown>;
+  return `{${Object.keys(record)
+    .sort()
+    .map((key) => `${JSON.stringify(key)}:${stablePermissionJson(record[key])}`)
+    .join(",")}}`;
+}
+
+function buildPermissionToolSignature(input: {
+  record: Record<string, unknown>;
+  toolCall: Record<string, unknown>;
+  title: string;
+  detail?: string;
+}): { toolKey: string; toolLabel: string } {
+  const entries = extractAcpToolCallEntries(input.toolCall);
+  const fallbackEntries = entries.length > 0 ? entries : extractAcpToolCallEntries(input.record);
+  const material =
+    fallbackEntries.length > 0
+      ? {
+          entries: fallbackEntries.map((entry) => ({
+            name: entry.rawName,
+            kind: inferAcpToolKindFromEntry(entry),
+            args: normalizePermissionSignatureValue(entry.args ?? {}),
+          })),
+        }
+      : {
+          title: normalizePermissionSignatureValue(input.title),
+          detail: normalizePermissionSignatureValue(input.detail),
+          tool: normalizePermissionSignatureValue(input.toolCall),
+        };
+  const json = stablePermissionJson(material);
+  const digest = createHash("sha256").update(json).digest("hex").slice(0, 40);
+  return {
+    toolKey: `acp:${digest}`,
+    toolLabel:
+      summarizeAcpToolCallTitle(input.toolCall) ??
+      input.title ??
+      input.detail ??
+      "Tool permission",
+  };
+}
+
 class AcpSessionHandle implements AgentSessionHandle {
   readonly sessionId: string;
   configOptions: AgentConfigOption[];
   capabilities: AgentProviderCapabilities;
 
   private readonly pendingPermissionRequestIds = new Map<string, number | string>();
+  private readonly pendingPermissionContextById = new Map<
+    string,
+    {
+      options: AgentPermissionOption[];
+      toolKey: string;
+      toolLabel: string;
+    }
+  >();
   private currentAssistantMessageId: string | null = null;
   private disposed = false;
   private readonly bridge: AcpSharedBridge;
@@ -2721,6 +3143,11 @@ class AcpSessionHandle implements AgentSessionHandle {
   private suppressedAssistantChunks: string[] | null = null;
   private currentCursorPromptHints: CursorPromptToolHints | null = null;
   private readonly cursorToolInferences = new Map<string, CursorToolInference>();
+  /** Drop identical ACP re-broadcasts of the same tool announcement; avoids duplicate DB + WS. */
+  private readonly acpInitialToolCallKeys = new Set<string>();
+  private readonly acpToolUpdateKeys = new Set<string>();
+  /** Stock `opencode acp` embeds HTTP; we subscribe to `/global/event` for child-session streaming. */
+  private readonly openCodeSseDetach: { poolKey: string; regId: string } | null;
 
   private constructor(input: {
     bridge: AcpSharedBridge;
@@ -2731,6 +3158,12 @@ class AcpSessionHandle implements AgentSessionHandle {
     configOptions: AgentConfigOption[];
     capabilities: AgentProviderCapabilities;
     seedConfigOptions?: AgentConfigOption[];
+    openCodeSse?: {
+      poolKey: string;
+      regId: string;
+      baseUrl: string;
+      workspaceRoot: string;
+    };
   }) {
     this.bridge = input.bridge;
     this.releaseBridge = input.releaseBridge;
@@ -2740,7 +3173,19 @@ class AcpSessionHandle implements AgentSessionHandle {
     this.configOptions = input.configOptions;
     this.capabilities = input.capabilities;
     this.seedConfigOptions = input.seedConfigOptions;
+    this.openCodeSseDetach = input.openCodeSse
+      ? { poolKey: input.openCodeSse.poolKey, regId: input.openCodeSse.regId }
+      : null;
     this.registerBridgeHandlers();
+    if (input.openCodeSse) {
+      const ctx = input.openCodeSse;
+      attachOpenCodeGlobalSse(ctx.poolKey, ctx.regId, {
+        workspaceRoot: ctx.workspaceRoot,
+        rootSessionId: input.sessionId,
+        baseUrl: ctx.baseUrl,
+        onEvent: (directory, payload) => this.deliverOpenCodeSsePayload(directory, payload),
+      });
+    }
   }
 
   private beginCursorPromptInference(promptText: string): void {
@@ -2923,39 +3368,140 @@ class AcpSessionHandle implements AgentSessionHandle {
     loadSessionId?: string | null;
     seedConfigOptions?: AgentConfigOption[];
   }): Promise<AcpSessionHandle> {
+    let command = input.command;
+    let args = input.args;
+    let env = input.env ?? process.env;
+    let openCodeSse:
+      | { poolKey: string; regId: string; baseUrl: string; workspaceRoot: string }
+      | undefined;
+
+    if (input.backend.id === "opencode-acp") {
+      const port = await getOpenCodeAcpListenPort(input.callbacks.workspace.root);
+      const baseUrl = openCodeAcpInternalBaseUrl(port);
+      const inv = resolveOpenCodeAcpInvocationWithPort(port);
+      if (!inv) {
+        throw new Error(`${input.backend.label} is not installed or could not be resolved.`);
+      }
+      command = inv.command;
+      args = inv.args;
+      env = inv.env ?? env;
+      const poolKeyEarly = makeAcpPoolKey({
+        workspaceRoot: input.callbacks.workspace.root,
+        backendId: input.backend.id,
+        command,
+        args,
+      });
+      openCodeSse = {
+        poolKey: poolKeyEarly,
+        regId: randomUUID(),
+        baseUrl,
+        workspaceRoot: input.callbacks.workspace.root,
+      };
+    }
+
     const poolKey = makeAcpPoolKey({
       workspaceRoot: input.callbacks.workspace.root,
       backendId: input.backend.id,
-      command: input.command,
-      args: input.args,
+      command,
+      args,
     });
     const { bridge, release, bootstrapSystemMessages } = await retainAcpSharedBridge({
       poolKey,
       spawn: () =>
         AcpStdioClient.spawn({
-          command: input.command,
-          args: input.args,
+          command,
+          args,
           cwd: input.callbacks.workspace.root,
-          env: input.env ?? process.env,
+          env,
         }),
       afterSpawn: (transport) => runAcpTransportBootstrap(transport),
     });
 
+    const isInvalidParamsError = (error: unknown): boolean => {
+      if (error instanceof AcpJsonRpcError) {
+        // JSON-RPC: -32602 = Invalid params
+        return error.code === -32602;
+      }
+      const message = error instanceof Error ? error.message : String(error ?? "");
+      return /invalid params?/i.test(message);
+    };
+
+    const tryOpenSession = async (): Promise<Record<string, unknown> | null | undefined> => {
+      if (!input.loadSessionId) {
+        return (await bridge.request("session/new", {
+          cwd: input.callbacks.workspace.root,
+          mcpServers: [],
+        })) as Record<string, unknown> | null | undefined;
+      }
+
+      // IMPORTANT: Cursor's `session/load` param schema is strict. In practice:
+      // - `cwd` and `mcpServers` are required
+      // - `mcpServers` must be an array (empty is fine)
+      //
+      // Do NOT "compat" by dropping keys — that produces unrelated -32603 schema errors
+      // and makes retries look like random failures.
+      const workspaceRoot = input.callbacks.workspace.root;
+      let workspaceRootReal = workspaceRoot;
+      try {
+        workspaceRootReal = await fs.realpath(workspaceRoot);
+      } catch {
+        // best-effort; keep logical root
+      }
+
+      const loadAttempts: Array<Record<string, unknown>> = [
+        {
+          sessionId: input.loadSessionId,
+          cwd: workspaceRoot,
+          mcpServers: [],
+        },
+        ...(workspaceRootReal !== workspaceRoot
+          ? [
+              {
+                sessionId: input.loadSessionId,
+                cwd: workspaceRootReal,
+                mcpServers: [],
+              },
+            ]
+          : []),
+        {
+          sessionId: input.loadSessionId,
+          cwd: path.resolve(workspaceRoot),
+          mcpServers: [],
+        },
+      ];
+
+      let lastError: unknown;
+      for (let index = 0; index < loadAttempts.length; index += 1) {
+        try {
+          const result = (await bridge.request(
+            "session/load",
+            loadAttempts[index]
+          )) as Record<string, unknown> | null | undefined;
+          if (index > 0) {
+            await input.callbacks.appendEvents([
+              {
+                eventId: randomUUID(),
+                conversationId: input.callbacks.conversation.id,
+                kind: "system",
+                level: "warning",
+                text: `Recovered provider session load using compatibility params fallback (attempt ${index + 1}).`,
+              },
+            ]);
+          }
+          return result;
+        } catch (error) {
+          lastError = error;
+          if (!isInvalidParamsError(error)) {
+            throw error;
+          }
+        }
+      }
+      throw lastError instanceof Error ? lastError : new Error(String(lastError));
+    };
+
     bridge.startCreationCapture();
     try {
-      const openResult = (await bridge.request(
-        input.loadSessionId ? "session/load" : "session/new",
-        input.loadSessionId
-          ? {
-              sessionId: input.loadSessionId,
-              cwd: input.callbacks.workspace.root,
-              mcpServers: [],
-            }
-          : {
-              cwd: input.callbacks.workspace.root,
-              mcpServers: [],
-            }
-      )) as Record<string, unknown> | null | undefined;
+      const openResult = await tryOpenSession();
 
       const openResultRecord =
         openResult && typeof openResult === "object"
@@ -2992,6 +3538,7 @@ class AcpSessionHandle implements AgentSessionHandle {
         configOptions,
         capabilities: input.backend.capabilities,
         seedConfigOptions: input.seedConfigOptions,
+        openCodeSse: input.backend.id === "opencode-acp" && openCodeSse ? openCodeSse : undefined,
       });
 
       await input.callbacks.updateConversation((current) => ({
@@ -3025,6 +3572,35 @@ class AcpSessionHandle implements AgentSessionHandle {
       await handle.applyConversationConfig(input.callbacks.conversation);
       return handle;
     } catch (error) {
+      const detail =
+        error instanceof AcpJsonRpcError
+          ? {
+              kind: "acp_jsonrpc_error" as const,
+              method: error.method,
+              code: error.code,
+              message: error.message,
+              params: error.params,
+              data: error.data,
+            }
+          : {
+              kind: "unknown_error" as const,
+              message: error instanceof Error ? error.message : String(error),
+            };
+      const headline =
+        error instanceof AcpJsonRpcError
+          ? `ACP JSON-RPC request failed: ${error.method} (${error.code})`
+          : "ACP session initialization failed.";
+
+      await input.callbacks.appendEvents([
+        {
+          eventId: randomUUID(),
+          conversationId: input.callbacks.conversation.id,
+          kind: "system",
+          level: "error",
+          text: headline,
+          raw: detail,
+        },
+      ]);
       bridge.cancelCreationCapture();
       await release();
       throw error;
@@ -3137,6 +3713,7 @@ class AcpSessionHandle implements AgentSessionHandle {
       });
     }
     this.pendingPermissionRequestIds.clear();
+    this.pendingPermissionContextById.clear();
     await this.callbacks.appendEvents([
       {
         eventId: randomUUID(),
@@ -3238,15 +3815,41 @@ class AcpSessionHandle implements AgentSessionHandle {
     if (rawId === undefined) {
       throw new Error(`Unknown pending permission request: ${input.requestId}`);
     }
+    const context = this.pendingPermissionContextById.get(input.requestId);
+    const selected = context?.options.find((option) => option.optionId === input.optionId);
+    const providerOptionId = providerOptionIdForPermissionSelection(
+      context?.options ?? [],
+      input.optionId
+    );
     this.bridge.respond(rawId, {
       outcome: input.cancelled
         ? { outcome: "cancelled" }
         : {
             outcome: "selected",
-            optionId: input.optionId,
+            optionId: providerOptionId,
           },
     });
     this.pendingPermissionRequestIds.delete(input.requestId);
+    this.pendingPermissionContextById.delete(input.requestId);
+    if (
+      !input.cancelled &&
+      context &&
+      selected &&
+      (selected.kind === "allow_always" || selected.kind === "reject_always")
+    ) {
+      const decision = permissionDecisionFromKind(selected.kind);
+      if (decision) {
+        await saveRememberedAgentPermissionRule({
+          workspaceId: this.callbacks.workspace.id,
+          backendId: this.backend.id,
+          toolKey: context.toolKey,
+          toolLabel: context.toolLabel,
+          decision,
+          optionId: selected.optionId,
+          optionKind: selected.kind,
+        }).catch(() => undefined);
+      }
+    }
     await this.callbacks.appendEvents([
       {
         eventId: randomUUID(),
@@ -3272,8 +3875,41 @@ class AcpSessionHandle implements AgentSessionHandle {
 
   async dispose(): Promise<void> {
     this.disposed = true;
+    if (this.openCodeSseDetach) {
+      detachOpenCodeGlobalSse(this.openCodeSseDetach.poolKey, this.openCodeSseDetach.regId);
+    }
+    this.pendingPermissionContextById.clear();
     this.bridge.unregister(this.sessionId);
     await this.releaseBridge();
+  }
+
+  private async deliverOpenCodeSsePayload(
+    directory: string,
+    payload: Record<string, unknown>
+  ): Promise<void> {
+    if (this.disposed || this.backend.id !== "opencode-acp") {
+      return;
+    }
+    try {
+      if (directory && path.resolve(directory) !== path.resolve(this.callbacks.workspace.root)) {
+        return;
+      }
+    } catch {
+      return;
+    }
+    const translated = translateOpenCodeGlobalPayload({
+      conversationId: this.callbacks.conversation.id,
+      rootSessionId: this.sessionId,
+      payload,
+    });
+    if (translated.kind === "none") {
+      return;
+    }
+    if (translated.kind === "append") {
+      await this.callbacks.appendEvents(translated.events);
+      return;
+    }
+    await this.handleNotification("session/update", translated.params);
   }
 
   private async persistConfigOptions(
@@ -3360,14 +3996,30 @@ class AcpSessionHandle implements AgentSessionHandle {
             kind: "status",
             status: "interrupted",
             detail: `ACP process exited${code == null ? "" : ` with code ${code}`}.`,
+            raw: {
+              kind: "acp_process_exit",
+              code,
+            },
+          },
+          {
+            eventId: randomUUID(),
+            conversationId: this.callbacks.conversation.id,
+            kind: "system",
+            level: "warning",
+            text: `ACP transport exited${code == null ? "" : ` (code ${code})`}. Clearing stored provider session id to avoid retrying a stale ACP session handle.`,
+            raw: { kind: "acp_stale_session_handle", exitCode: code },
           },
         ]);
         void this.callbacks.updateConversation((current) => ({
           ...current,
+          providerSessionId: null,
+          // Config options are tied to a live ACP session; a dead transport invalidates them.
+          configOptions: [],
+          lastError: null,
           status:
-            current.status === "idle" || current.status === "cancelled"
-              ? current.status
-              : "interrupted",
+            current.status === "running" || current.status === "awaiting_permission"
+              ? "interrupted"
+              : current.status,
         }));
       },
     });
@@ -3415,6 +4067,50 @@ class AcpSessionHandle implements AgentSessionHandle {
     }
   }
 
+  private trimAcpDedupSet(s: Set<string>, cap: number) {
+    if (s.size < cap) {
+      return;
+    }
+    const chunk = 900;
+    let removed = 0;
+    for (const k of s) {
+      s.delete(k);
+      removed += 1;
+      if (removed >= chunk) {
+        break;
+      }
+    }
+  }
+
+  private shouldAppendNewAcpInitialTool(
+    toolCallId: string,
+    record: Record<string, unknown>,
+    params: unknown
+  ): boolean {
+    const key = acpSessionInitialToolCallKey(toolCallId, record, params);
+    if (this.acpInitialToolCallKeys.has(key)) {
+      return false;
+    }
+    this.trimAcpDedupSet(this.acpInitialToolCallKeys, 5000);
+    this.acpInitialToolCallKeys.add(key);
+    return true;
+  }
+
+  private shouldAppendNewAcpToolUpdate(
+    toolCallId: string,
+    record: Record<string, unknown>,
+    params: unknown,
+    status: string
+  ): boolean {
+    const key = acpSessionToolUpdateKey(toolCallId, record, params, status);
+    if (this.acpToolUpdateKeys.has(key)) {
+      return false;
+    }
+    this.trimAcpDedupSet(this.acpToolUpdateKeys, 8000);
+    this.acpToolUpdateKeys.add(key);
+    return true;
+  }
+
   private async handleNotification(
     method: string,
     params: unknown
@@ -3422,9 +4118,8 @@ class AcpSessionHandle implements AgentSessionHandle {
     if (method !== "session/update") {
       return;
     }
-    const update = params && typeof params === "object"
-      ? (params as Record<string, unknown>).update
-      : null;
+    const paramsRecord = params && typeof params === "object" ? (params as Record<string, unknown>) : null;
+    const update = paramsRecord?.update;
     if (!update || typeof update !== "object") {
       return;
     }
@@ -3433,40 +4128,78 @@ class AcpSessionHandle implements AgentSessionHandle {
     if (typeof sessionUpdate !== "string") {
       return;
     }
+    const sseChildSessionId = readOpenCodeSseChildSessionId(params);
+    const sseChildToolMeta =
+      sseChildSessionId != null
+        ? { openCodeSubagentSessionId: sseChildSessionId }
+        : undefined;
 
     switch (sessionUpdate) {
-      case "agent_message_chunk": {
-        const text =
-          record.content &&
-          typeof record.content === "object" &&
-          typeof (record.content as Record<string, unknown>).text === "string"
-            ? ((record.content as Record<string, unknown>).text as string)
-            : null;
-        if (!text) {
-          return;
-        }
-        if (this.suppressedAssistantChunks) {
-          this.suppressedAssistantChunks.push(text);
-          return;
-        }
-        if (!this.currentAssistantMessageId) {
-          return;
-        }
-        await this.callbacks.appendEvents([
-          {
-            eventId: randomUUID(),
-            conversationId: this.callbacks.conversation.id,
-            kind: "assistant_message_chunk",
-            messageId: this.currentAssistantMessageId,
-            text,
-            raw: params,
-          },
-        ]);
-        return;
-      }
+ case "agent_message_chunk": {
+ const text =
+ record.content &&
+ typeof record.content === "object" &&
+ typeof (record.content as Record<string, unknown>).text === "string"
+ ? ((record.content as Record<string, unknown>).text as string)
+ : null;
+ if (!text) {
+ return;
+ }
+ if (this.suppressedAssistantChunks) {
+ this.suppressedAssistantChunks.push(text);
+ return;
+ }
+ if (!this.currentAssistantMessageId) {
+ return;
+ }
+ if (this.capabilities.supportsInlineReasoning) {
+ const { reasoning, text: cleaned } = extractInlineReasoning(text, {
+ normalizeEdges: false,
+ });
+ if (reasoning.length > 0) {
+ await this.callbacks.appendEvents(
+ reasoning.map((block) => ({
+ eventId: randomUUID(),
+ conversationId: this.callbacks.conversation.id,
+ kind: "reasoning" as const,
+ messageId: this.currentAssistantMessageId!,
+ text: block.text,
+ raw: block.raw,
+ }))
+ );
+ }
+ if (cleaned) {
+ await this.callbacks.appendEvents([
+ {
+ eventId: randomUUID(),
+ conversationId: this.callbacks.conversation.id,
+ kind: "assistant_message_chunk",
+ messageId: this.currentAssistantMessageId,
+ text: cleaned,
+ raw: params,
+ },
+ ]);
+ }
+ return;
+ }
+ await this.callbacks.appendEvents([
+ {
+ eventId: randomUUID(),
+ conversationId: this.callbacks.conversation.id,
+ kind: "assistant_message_chunk",
+ messageId: this.currentAssistantMessageId,
+ text,
+ raw: params,
+ },
+ ]);
+ return;
+ }
       case "tool_call": {
         const normalizedStatus = normalizeAcpToolCallStatus(record, "pending");
-        const toolCallId = normalizeToolCallId(record);
+        const toolCallId = namespaceOpenCodeSseToolCallId(
+          normalizeToolCallId(record),
+          sseChildSessionId
+        );
         let detail = summarizeAcpToolCallDetail(record);
         let locations = mergeScavengedAcpLocations(record);
         let title =
@@ -3491,7 +4224,7 @@ class AcpSessionHandle implements AgentSessionHandle {
         title = enriched.title ?? title;
         detail = enriched.detail ?? detail;
         locations = enriched.locations ?? locations;
-        const enrichedToolKind = enriched.toolKind;
+        let enrichedToolKind = enriched.toolKind;
         const editPreview =
           extractAcpEditPreview(record, locations?.[0]?.path) ??
           extractToolEditPreview(params, params, locations?.[0]?.path);
@@ -3506,6 +4239,16 @@ class AcpSessionHandle implements AgentSessionHandle {
           title = formatReadToolTitle(locations[0].path);
         }
         if (record.subtype === "completed") {
+          if (
+            !this.shouldAppendNewAcpToolUpdate(
+              toolCallId,
+              record,
+              params,
+              String(normalizedStatus)
+            )
+          ) {
+            return;
+          }
           await this.callbacks.appendEvents([
             {
               eventId: randomUUID(),
@@ -3519,8 +4262,20 @@ class AcpSessionHandle implements AgentSessionHandle {
               locations,
               editPreview,
               raw: params,
+              ...sseChildToolMeta,
             },
           ]);
+          await appendOpenCodeTodoPlanIfNeeded(
+            this.callbacks,
+            params,
+            record,
+            enrichedToolKind,
+            normalizedStatus,
+            title
+          );
+          return;
+        }
+        if (!this.shouldAppendNewAcpInitialTool(toolCallId, record, params)) {
           return;
         }
         await this.callbacks.appendEvents([
@@ -3536,11 +4291,16 @@ class AcpSessionHandle implements AgentSessionHandle {
             locations,
             editPreview,
             raw: params,
+            ...sseChildToolMeta,
           },
         ]);
         return;
       }
       case "tool_call_update": {
+        const updateToolCallId = namespaceOpenCodeSseToolCallId(
+          normalizeToolCallId(record),
+          sseChildSessionId
+        );
         let locations = mergeScavengedAcpLocations(record);
         let title =
           typeof record.title === "string" &&
@@ -3555,7 +4315,7 @@ class AcpSessionHandle implements AgentSessionHandle {
         let detail = summarizeAcpToolCallDetail(record);
         const normalizedStatus = normalizeAcpToolCallStatus(record, "in_progress");
         const enriched = await this.enrichCursorToolCall({
-          toolCallId: normalizeToolCallId(record),
+          toolCallId: updateToolCallId,
           toolKind,
           title,
           detail,
@@ -3566,7 +4326,7 @@ class AcpSessionHandle implements AgentSessionHandle {
         title = enriched.title ?? title;
         detail = enriched.detail ?? detail;
         locations = enriched.locations ?? locations;
-        const enrichedToolKind = enriched.toolKind;
+        let enrichedToolKind = enriched.toolKind;
         const editPreview =
           extractAcpEditPreview(record, locations?.[0]?.path) ??
           extractToolEditPreview(params, params, locations?.[0]?.path);
@@ -3584,12 +4344,22 @@ class AcpSessionHandle implements AgentSessionHandle {
         if (!title && enrichedToolKind === "read" && locations?.[0]?.path) {
           title = formatReadToolTitle(locations[0].path);
         }
+        if (
+          !this.shouldAppendNewAcpToolUpdate(
+            updateToolCallId,
+            record,
+            params,
+            String(normalizedStatus)
+          )
+        ) {
+          return;
+        }
         await this.callbacks.appendEvents([
           {
             eventId: randomUUID(),
             conversationId: this.callbacks.conversation.id,
             kind: "tool_call_update",
-            toolCallId: normalizeToolCallId(record),
+            toolCallId: updateToolCallId,
             title,
             toolKind: enrichedToolKind,
             status: normalizedStatus,
@@ -3597,43 +4367,26 @@ class AcpSessionHandle implements AgentSessionHandle {
             locations,
             editPreview,
             raw: params,
+            ...sseChildToolMeta,
           },
         ]);
+        await appendOpenCodeTodoPlanIfNeeded(
+          this.callbacks,
+          params,
+          record,
+          enrichedToolKind,
+          normalizedStatus,
+          title
+        );
         return;
       }
       case "plan": {
-        const entries: AgentPlanEntry[] = [];
-        if (Array.isArray(record.entries)) {
-          for (const [index, entry] of record.entries.entries()) {
-            if (!entry || typeof entry !== "object") {
-              continue;
-            }
-            const entryRecord = entry as Record<string, unknown>;
-            const content =
-              typeof entryRecord.content === "string" ? entryRecord.content : "";
-            const status =
-              entryRecord.status === "pending" ||
-              entryRecord.status === "in_progress" ||
-              entryRecord.status === "completed"
-                ? entryRecord.status
-                : "pending";
-            if (!content) {
-              continue;
-            }
-            entries.push({
-              id:
-                typeof entryRecord.id === "string"
-                  ? entryRecord.id
-                  : `${this.callbacks.conversation.id}-plan-${index}`,
-              content,
-              priority:
-                typeof entryRecord.priority === "string"
-                  ? entryRecord.priority
-                  : undefined,
-              status,
-            });
-          }
-        }
+        const list = parseTodoLikeArrayFromPlanRecord(record);
+        const entries = agentPlanEntriesFromTodoLikeList(
+          list,
+          this.callbacks.conversation.id,
+          "plan"
+        );
         await this.callbacks.appendEvents([
           {
             eventId: randomUUID(),
@@ -3704,9 +4457,8 @@ class AcpSessionHandle implements AgentSessionHandle {
       } else if (hasConcreteToolCallId) {
         title = `Permission required for ${toolCallId}`;
       }
-      const detail = extractPermissionRequestDetail(record, toolCall);
-      const options =
-        parsePermissionOptions(
+      let detail = extractPermissionRequestDetail(record, toolCall);
+      const options = parsePermissionOptions(
         Array.isArray(record.options)
           ? record.options
           : Array.isArray(record.choices)
@@ -3716,9 +4468,109 @@ class AcpSessionHandle implements AgentSessionHandle {
               : Array.isArray(record.permissions)
                 ? record.permissions
                 : []
-        ) || [];
-      const normalizedOptions =
-        options.length > 0 ? options : buildFallbackPermissionOptions(this.backend.id);
+      );
+      const normalizedOptions = withPersistentPermissionOptions(
+        options.length > 0 ? options : buildFallbackPermissionOptions(this.backend.id)
+      );
+      const permissionSignature = buildPermissionToolSignature({
+        record,
+        toolCall,
+        title,
+        detail,
+      });
+      const settings = await getGlobalSettings().catch(() => undefined);
+      const remembered = settings?.agents.rememberedPermissions.find(
+        (rule) =>
+          rule.workspaceId === this.callbacks.workspace.id &&
+          rule.backendId === this.backend.id &&
+          rule.toolKey === permissionSignature.toolKey
+      );
+      if (remembered) {
+        const providerOptionId = providerOptionIdForRememberedPermission(
+          normalizedOptions,
+          remembered.decision
+        );
+        this.bridge.respond(requestId, {
+          outcome: providerOptionId
+            ? {
+                outcome: "selected",
+                optionId: providerOptionId,
+              }
+            : { outcome: "cancelled" },
+        });
+        this.pendingPermissionRequestIds.delete(requestKey);
+        await this.callbacks.appendEvents([
+          {
+            eventId: randomUUID(),
+            conversationId: this.callbacks.conversation.id,
+            kind: "permission_resolved",
+            requestId: requestKey,
+            outcome: providerOptionId ? "selected" : "cancelled",
+            optionId: remembered.optionId,
+            raw: {
+              rememberedPermission: {
+                id: remembered.id,
+                decision: remembered.decision,
+                toolLabel: remembered.toolLabel,
+              },
+            },
+          },
+          {
+            eventId: randomUUID(),
+            conversationId: this.callbacks.conversation.id,
+            kind: "status",
+            status: "running",
+            detail: `Used remembered permission for ${remembered.toolLabel}.`,
+          },
+        ]);
+        await this.callbacks.updateConversation((current) => ({
+          ...current,
+          status: "running",
+          pendingPermission: null,
+        }));
+        return;
+      }
+      if (settings?.agents.autoAcceptAllAgentPermissions) {
+        const providerOptionId = providerOptionIdForRememberedPermission(
+          normalizedOptions,
+          "allow"
+        );
+        if (providerOptionId) {
+          this.bridge.respond(requestId, {
+            outcome: { outcome: "selected", optionId: providerOptionId },
+          });
+          this.pendingPermissionRequestIds.delete(requestKey);
+          await this.callbacks.appendEvents([
+            {
+              eventId: randomUUID(),
+              conversationId: this.callbacks.conversation.id,
+              kind: "permission_resolved",
+              requestId: requestKey,
+              outcome: "selected",
+              optionId: providerOptionId,
+              raw: { autoAcceptedAll: true },
+            },
+            {
+              eventId: randomUUID(),
+              conversationId: this.callbacks.conversation.id,
+              kind: "status",
+              status: "running",
+              detail: "Auto-accepted (Agents → auto-approve all).",
+            },
+          ]);
+          await this.callbacks.updateConversation((current) => ({
+            ...current,
+            status: "running",
+            pendingPermission: null,
+          }));
+          return;
+        }
+      }
+      this.pendingPermissionContextById.set(requestKey, {
+        options: normalizedOptions,
+        toolKey: permissionSignature.toolKey,
+        toolLabel: permissionSignature.toolLabel,
+      });
       const statusDetail = detail ? `${title} — ${detail}` : title;
       await this.callbacks.appendEvents([
         {
@@ -3760,41 +4612,15 @@ class AcpSessionHandle implements AgentSessionHandle {
         ? (params as Record<string, unknown>)
         : {};
     if (method === "cursor/update_todos") {
-      const todos = Array.isArray(paramsRecord.todos)
-        ? paramsRecord.todos
-        : Array.isArray(paramsRecord.items)
-          ? paramsRecord.items
-          : [];
-      const entries: AgentPlanEntry[] = [];
-      for (const [index, todo] of todos.entries()) {
-        if (!todo || typeof todo !== "object") {
-          continue;
-        }
-        const todoRecord = todo as Record<string, unknown>;
-        const content =
-          typeof todoRecord.content === "string"
-            ? todoRecord.content
-            : typeof todoRecord.text === "string"
-              ? todoRecord.text
-              : "";
-        const status =
-          todoRecord.status === "pending" ||
-          todoRecord.status === "in_progress" ||
-          todoRecord.status === "completed"
-            ? todoRecord.status
-            : "pending";
-        if (!content) {
-          continue;
-        }
-        entries.push({
-          id:
-            typeof todoRecord.id === "string"
-              ? todoRecord.id
-              : `${this.callbacks.conversation.id}-todo-${index}`,
-          content,
-          status,
-        });
-      }
+      const todos =
+        tryParseJsonArrayString(paramsRecord.todos) ??
+        tryParseJsonArrayString(paramsRecord.items) ??
+        [];
+      const entries = agentPlanEntriesFromTodoLikeList(
+        todos,
+        this.callbacks.conversation.id,
+        "todo"
+      );
       await this.callbacks.appendEvents([
         {
           eventId: randomUUID(),

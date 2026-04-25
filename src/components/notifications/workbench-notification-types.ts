@@ -33,6 +33,8 @@ export type WorkbenchNotificationInput = {
   actions?: WorkbenchNotificationAction[];
   /** Called when the toast is fully removed (after exit animation for dismiss). */
   onDismiss?: () => void;
+  /** Compact layout: narrower width, no icon box, inline actions. */
+  compact?: boolean;
 };
 
 export type WorkbenchNotificationItem = WorkbenchNotificationInput & {

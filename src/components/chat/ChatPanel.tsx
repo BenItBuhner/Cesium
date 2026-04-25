@@ -2,7 +2,6 @@
 
 import {
   useCallback,
-  useDeferredValue,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -13,7 +12,7 @@ import {
 } from "react";
 import { Search } from "lucide-react";
 import { ChatTabs } from "./ChatTabs";
-import { MessageList } from "./MessageList";
+import { MessageList, type MessageListScrollPersistMeta } from "./MessageList";
 import { ChatComposer } from "./ChatComposer";
 import { ComposerQueueDock } from "./ComposerQueueDock";
 import { AskQuestionCard } from "./AskQuestionCard";
@@ -24,7 +23,6 @@ import {
   buildDraftModelOptionsForBackend,
   buildConversationModeOptions,
   buildConversationModelOptions,
-  getConversationLatestSeq,
   projectAgentEventsToChatMessages,
   resolveDraftModelForBackend,
   resolveConversationModel,
@@ -36,21 +34,15 @@ import {
   useOpenInEditor,
   useRegisterDesignCaptureComposer,
 } from "@/components/editor/OpenInEditorContext";
+import type { ComposerDraftRecord } from "@/components/editor/OpenInEditorContext";
+import { hasMeaningfulComposerContent } from "@/components/editor/OpenInEditorContext";
+import { buildQueuedConfigOverride } from "@/lib/queued-prompt-utils";
 import type { WorkbenchMenuItem } from "@/components/ide/workbench-context-menu-types";
 import type {
   AgentBackendId,
   AgentBackendInfo,
   AgentConversationRecord,
-  AgentConversationEventWindow,
-  AgentConversationSnapshot,
-  AgentConversationSnapshotHead,
-  AgentSocketServerMessage,
-  AgentStoredEvent,
 } from "@/lib/agent-types";
-import {
-  endQueuedPromptFlush,
-  tryBeginQueuedPromptFlush,
-} from "@/lib/queued-prompt-flush-guard";
 import type {
   AgentTabIndicatorByConversationId,
   ChatMessage,
@@ -61,29 +53,34 @@ import type {
   QueuedChatPrompt,
 } from "@/lib/types";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
-import { JsonWebSocket } from "@/lib/ws-client";
+import { useAgentConversations } from "@/components/chat/AgentConversationsContext";
 import { useWorkbenchNotifications } from "@/components/notifications/WorkbenchNotificationProvider";
+import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
 import { WORKBENCH_NOTIFICATION_KIND } from "@/components/notifications/workbench-notification-types";
 import {
-  answerAgentPermission,
-  buildAgentWebSocketUrl,
-  cancelAgentConversation,
-  createAgentConversation,
   createWorkspaceWindow,
+  deleteAgentConversationQueueItem,
   fetchAgentConversationSnapshot,
+  forkAgentConversation,
+  generateDraftTitle,
   handoffAgentConversation,
-  listAgentConversations,
+  patchAgentConversationMetadata,
   promptAgentConversation,
   saveWorkspaceWindowSession,
   updateAgentConversationConfig,
 } from "@/lib/server-api";
-import { createPersistableWorkspaceSession } from "@/lib/workspace-session";
+import { dispatchAgentConversationUpserted } from "@/lib/agent-conversation-events";
+import {
+  createPersistableWorkspaceSession,
+  resolvePersistedChatScroll,
+} from "@/lib/workspace-session";
+import { getActiveServerStorageKey } from "@/lib/server-connections";
+import { getConfiguredServerBaseUrl } from "@/lib/resolve-server-base-url";
 import {
   buildWorkspaceWindowUrl,
   FRESH_WORKSPACE_WINDOW_HIDDEN_CONVERSATIONS_SENTINEL,
   normalizeWorkspaceWindowSession,
 } from "@/lib/workspace-windows";
-import { nextUnreadCompletionMap } from "@/lib/chat-unread-completion";
 import {
   getGlobalPinnedAgentConversationIdsSnapshot,
   migrateGlobalPinnedAgentConversationIdsIfNeeded,
@@ -113,7 +110,8 @@ function tabsEqual(a: ChatTab[], b: ChatTab[]): boolean {
     (tab, index) =>
       tab.id === b[index]?.id &&
       tab.title === b[index]?.title &&
-      Boolean(tab.active) === Boolean(b[index]?.active)
+      Boolean(tab.active) === Boolean(b[index]?.active) &&
+      Boolean(tab.isDraft) === Boolean(b[index]?.isDraft)
   );
 }
 
@@ -124,11 +122,18 @@ function conversationRequiresVisibleTab(conversation: AgentConversationRecord): 
   );
 }
 
-function isRecentConversationCandidate(conversation: AgentConversationRecord): boolean {
-  if (conversation.title === "New chat" && !conversationRequiresVisibleTab(conversation)) {
-    return false;
+function isRecentConversationCandidate(
+  conversation: AgentConversationRecord,
+  composerDrafts: Record<string, ComposerDraftRecord>
+): boolean {
+  if (conversation.lastEventSeq > 0 || conversationRequiresVisibleTab(conversation)) {
+    return true;
   }
-  return conversation.lastEventSeq > 0 || conversationRequiresVisibleTab(conversation);
+  if (conversation.title.startsWith("Draft: ")) {
+    return true;
+  }
+  const draft = composerDrafts[conversation.id];
+  return Boolean(draft && hasMeaningfulComposerContent(draft));
 }
 
 function formatRecentConversationTime(timestamp: number): string {
@@ -147,14 +152,6 @@ function formatRecentConversationTime(timestamp: number): string {
     return `${minutes}m ago`;
   }
   return "just now";
-}
-
-function toConversationMap(
-  conversations: AgentConversationRecord[]
-): Record<string, AgentConversationRecord> {
-  return Object.fromEntries(
-    conversations.map((conversation) => [conversation.id, conversation])
-  );
 }
 
 function pickAvailableBackend(
@@ -180,29 +177,19 @@ function isPersistedConversationTabId(tabId: string): boolean {
   return true;
 }
 
-function mergeConversationByRecency(
-  existing: AgentConversationRecord | undefined,
-  incoming: AgentConversationRecord
-): AgentConversationRecord {
-  if (!existing || incoming.updatedAt > existing.updatedAt) {
-    return incoming;
-  }
-  return existing;
-}
-
 export function ChatPanel() {
   const { openAt } = useWorkbenchContextMenu();
   const {
     composerDrafts,
     composerSelections,
-    openComposerDraft,
-    openAgentConversation,
-    upsertComposerDraft,
-    setComposerSelection,
-    expandedComposerDraftId,
-    setExpandedComposerDraft,
-    setExpandedComposerController,
-  } = useOpenInEditor();
+  openComposerDraft,
+  openAgentConversation,
+  upsertComposerDraft,
+  setComposerSelection,
+  expandedComposerDraftId,
+  setExpandedComposerDraft,
+  setExpandedComposerController,
+} = useOpenInEditor();
   const { pushNotification } = useWorkbenchNotifications();
   const {
     activeWindowId,
@@ -213,32 +200,35 @@ export function ChatPanel() {
     updateWorkspaceSession,
     updateWorkspaceSessionNow,
   } = useWorkspace();
-  const [backends, setBackends] = useState<AgentBackendInfo[]>([]);
-  const [conversationsById, setConversationsById] = useState<
-    Record<string, AgentConversationRecord>
-  >({});
-  const [conversations, setConversations] = useState<AgentConversationRecord[]>([]);
-  const [eventsByConversationId, setEventsByConversationId] = useState<
-    Record<string, AgentStoredEvent[]>
-  >({});
-  const [historyMetaById, setHistoryMetaById] = useState<
-    Record<string, { hasOlder: boolean }>
-  >({});
-  const [loadingOlderById, setLoadingOlderById] = useState<Record<string, boolean>>({});
-  const historyMetaRef = useRef(historyMetaById);
-  const loadingOlderRef = useRef<Record<string, boolean>>({});
+const {
+backends,
+conversationsById,
+conversations,
+eventsByConversationId,
+bootstrapped,
+mergeConversationSnapshot,
+refreshConversations,
+syncConversationSnapshot,
+upsertConversation,
+answerPermissionForConversation,
+cancelConversation: cancelConversationFromHook,
+createConversation,
+getConversationHistoryCursor,
+loadOlderConversationHistory,
+setConversationMode,
+setConversationModel,
+setConversationConfigOption,
+pendingConfigByConversationId,
+setPendingConfigForConversation,
+clearPendingConfigForConversation,
+} = useAgentConversations();
+  const { settings: globalSettings, updateSettings } = useGlobalSettings();
   const [recentChatsModalOpen, setRecentChatsModalOpen] = useState(false);
   const [chatTabRenameTargetId, setChatTabRenameTargetId] = useState<string | null>(
-    null
-  );
-  /** Pending backend switch state for in-flight handoff transitions. */
-  const [pendingHandoffBackendByConversationId, setPendingHandoffBackendByConversationId] =
-    useState<Partial<Record<string, AgentBackendId>>>({});
-  const socketRef = useRef<JsonWebSocket<AgentSocketServerMessage> | null>(null);
-  const chatDraftRef = useRef(workspaceSession.chat);
+null
+);
+const chatDraftRef = useRef(workspaceSession.chat);
   const tabsRef = useRef<ChatTab[]>(workspaceSession.chat.tabs);
-  const eventsRef = useRef(eventsByConversationId);
-  const hydratingConversationIdsRef = useRef(new Set<string>());
   const conversationsByIdRef = useRef(conversationsById);
   const tabs = workspaceSession.chat.tabs;
 
@@ -266,14 +256,6 @@ export function ChatPanel() {
   useEffect(() => {
     tabsRef.current = tabs;
   }, [tabs]);
-
-  useEffect(() => {
-    eventsRef.current = eventsByConversationId;
-  }, [eventsByConversationId]);
-
-  useEffect(() => {
-    historyMetaRef.current = historyMetaById;
-  }, [historyMetaById]);
 
   useEffect(() => {
     const handler = () => setRecentChatsModalOpen(true);
@@ -350,100 +332,22 @@ export function ChatPanel() {
     [updateWorkspaceSession]
   );
 
-  const mergeSnapshot = useCallback(
-    (snapshot: AgentConversationSnapshot | AgentConversationSnapshotHead) => {
-      const incoming = snapshot.conversation;
-      const prev = conversationsByIdRef.current[incoming.id];
-      const merged = mergeConversationByRecency(prev, incoming);
-      setConversationsById((current) => ({
-        ...current,
-        [incoming.id]: mergeConversationByRecency(current[incoming.id], incoming),
-      }));
-
-      const isHead =
-        "window" in snapshot &&
-        snapshot.window != null &&
-        typeof snapshot.window.oldestSeq === "number";
-      if (isHead) {
-        const head = snapshot;
-        setEventsByConversationId((current) => {
-          const existing = current[incoming.id] ?? [];
-          const kept = existing.filter((e) => e.seq < head.window.oldestSeq);
-          const bySeq = new Map<number, AgentStoredEvent>();
-          for (const e of kept) {
-            bySeq.set(e.seq, e);
-          }
-          for (const e of head.events) {
-            bySeq.set(e.seq, e);
-          }
-          const mergedEvents = [...bySeq.values()].sort((a, b) => a.seq - b.seq);
-          return { ...current, [incoming.id]: mergedEvents };
-        });
-        setHistoryMetaById((c) => ({
-          ...c,
-          [incoming.id]: { hasOlder: head.window.hasOlder },
-        }));
-      } else {
-        const full = snapshot as AgentConversationSnapshot;
-        setEventsByConversationId((current) => {
-          const existing = current[full.conversation.id] ?? [];
-          const existingSeq = existing.at(-1)?.seq ?? 0;
-          const incomingSeq = full.events.at(-1)?.seq ?? 0;
-          return {
-            ...current,
-            [full.conversation.id]:
-              incomingSeq >= existingSeq ? full.events : existing,
-          };
-        });
-        setHistoryMetaById((c) => ({
-          ...c,
-          [incoming.id]: { hasOlder: false },
-        }));
-      }
-
-      updateWorkspaceSession((current) => {
-        const unreadMap = nextUnreadCompletionMap(current, prev, merged);
-        const nextTabs = current.chat.tabs.map((tab) =>
-          tab.id === incoming.id ? { ...tab, title: incoming.title } : tab
-        );
-        const tabChanged = !tabsEqual(current.chat.tabs, nextTabs);
-        if (unreadMap === null && !tabChanged) {
-          return current;
-        }
-        return {
-          ...current,
-          chat: {
-            ...current.chat,
-            ...(unreadMap === null
-              ? {}
-              : { unreadChatCompletionByConversationId: unreadMap }),
-            ...(tabChanged ? { tabs: nextTabs } : {}),
-          },
-        };
-      });
-    },
-    [updateWorkspaceSession]
-  );
-
   const applyHandoffServerResult = useCallback(
     async (result: { newConversationId: string }) => {
-      const listResult = await listAgentConversations();
-      const nextConversations = listResult.conversations;
+      const nextConversations = await refreshConversations();
       const newConv = nextConversations.find((c) => c.id === result.newConversationId);
       if (!newConv) {
-        pushNotification({
-          kind: WORKBENCH_NOTIFICATION_KIND.editorNotice,
-          severity: "error",
-          title: "Handoff Failed",
-          message: "Server did not return the new conversation in the workspace list.",
-        });
+      pushNotification({
+        kind: WORKBENCH_NOTIFICATION_KIND.editorNotice,
+        severity: "error",
+        title: "Handoff Failed",
+        message: "Server did not return the new conversation in the workspace list.",
+        compact: true,
+      });
         throw new Error("Handoff list sync failed.");
       }
-      setBackends(listResult.backends);
-      setConversations(nextConversations);
-      setConversationsById(toConversationMap(nextConversations));
       const snap = await fetchAgentConversationSnapshot(result.newConversationId);
-      mergeSnapshot(snap.snapshot);
+      mergeConversationSnapshot(snap.snapshot);
       setTabs((current) => {
         const existingTab = current.find((tab) => tab.id === newConv.id);
         if (existingTab) {
@@ -456,212 +360,94 @@ export function ChatPanel() {
       });
       unhideConversationIds([newConv.id]);
     },
-    [mergeSnapshot, pushNotification, setTabs, unhideConversationIds]
+    [mergeConversationSnapshot, pushNotification, refreshConversations, setTabs, unhideConversationIds]
   );
 
-  const handoffConversationInPlace = useCallback(
-    async (conversationId: string, targetBackendId: AgentBackendId) => {
-      const conversation = conversationsByIdRef.current[conversationId];
-      if (!conversation) {
-        return false;
-      }
-      if (
-        conversation.status === "running" ||
-        conversation.status === "awaiting_permission"
-      ) {
-        pushNotification({
-          kind: WORKBENCH_NOTIFICATION_KIND.editorNotice,
-          severity: "warning",
-          title: "Agent busy",
-          message:
-            "Wait for the current reply or cancel before handing off to another agent backend.",
-          autoDismissMs: 8000,
-        });
-        return false;
-      }
-      try {
-        const result = await handoffAgentConversation(conversationId, targetBackendId);
-        setPendingHandoffBackendByConversationId((prev) => {
-          if (!prev[conversationId]) {
-            return prev;
-          }
-          const next = { ...prev };
-          delete next[conversationId];
-          return next;
-        });
-        await applyHandoffServerResult(result);
-        return true;
-      } catch (error) {
-        const message = error instanceof Error ? error.message : "Failed to hand off conversation.";
-        pushNotification({
-          kind: WORKBENCH_NOTIFICATION_KIND.editorNotice,
-          severity: "error",
-          title: "Handoff Failed",
-          message,
-          autoDismissMs: 8000,
-        });
-        return false;
-      }
-    },
-    [applyHandoffServerResult, pushNotification]
+const handoffConversationInPlace = useCallback(
+async (conversationId: string, targetBackendId: AgentBackendId) => {
+const conversation = conversationsByIdRef.current[conversationId];
+if (!conversation) {
+return false;
+}
+if (
+conversation.status === "running" ||
+conversation.status === "awaiting_permission"
+) {
+setPendingConfigForConversation(conversationId, { backendId: targetBackendId });
+return true;
+}
+try {
+const result = await handoffAgentConversation(conversationId, targetBackendId);
+clearPendingConfigForConversation(conversationId);
+await applyHandoffServerResult(result);
+return true;
+} catch (error) {
+const message = error instanceof Error ? error.message : "Failed to hand off conversation.";
+pushNotification({
+kind: WORKBENCH_NOTIFICATION_KIND.editorNotice,
+severity: "error",
+title: "Handoff Failed",
+message,
+autoDismissMs: 8000,
+compact: true,
+});
+return false;
+}
+},
+[applyHandoffServerResult, clearPendingConfigForConversation, pushNotification, setPendingConfigForConversation]
   );
 
-  const prependHistoryPage = useCallback(
-    (
-      conversationId: string,
-      pageEvents: AgentStoredEvent[],
-      window: AgentConversationEventWindow
-    ) => {
-      loadingOlderRef.current[conversationId] = false;
-      setLoadingOlderById((c) => ({ ...c, [conversationId]: false }));
-      setEventsByConversationId((current) => {
-        const existing = current[conversationId] ?? [];
-        const bySeq = new Map<number, AgentStoredEvent>();
-        for (const e of existing) {
-          bySeq.set(e.seq, e);
-        }
-        for (const e of pageEvents) {
-          bySeq.set(e.seq, e);
-        }
-        const merged = [...bySeq.values()].sort((a, b) => a.seq - b.seq);
-        return { ...current, [conversationId]: merged };
-      });
-      setHistoryMetaById((c) => ({
-        ...c,
-        [conversationId]: { hasOlder: window.hasOlder },
-      }));
-    },
-    []
-  );
+const setModeForDraft = useCallback(
+async (draftId: string, next: EditorMode) => {
+if (!isPersistedConversationTabId(draftId)) {
+updateWorkspaceSession((current) => ({
+...current,
+chat: {
+...current.chat,
+mode: next,
+},
+}));
+return;
+}
+const conv = conversationsByIdRef.current[draftId];
+if (conv && (conv.status === "running" || conv.status === "awaiting_permission")) {
+setPendingConfigForConversation(draftId, { mode: next });
+return;
+}
+try {
+await setConversationMode(draftId, next);
+} catch {
+void syncConversationSnapshot(draftId).catch(() => undefined);
+}
+},
+[setConversationMode, setPendingConfigForConversation, syncConversationSnapshot, updateWorkspaceSession]
+);
 
-  const loadOlderConversationHistory = useCallback((conversationId: string) => {
-    const socket = socketRef.current;
-    if (!socket?.connected) {
-      return;
-    }
-    if (!historyMetaRef.current[conversationId]?.hasOlder) {
-      return;
-    }
-    if (loadingOlderRef.current[conversationId]) {
-      return;
-    }
-    const events = eventsRef.current[conversationId] ?? [];
-    const oldest = events[0]?.seq;
-    if (!oldest) {
-      return;
-    }
-    loadingOlderRef.current[conversationId] = true;
-    setLoadingOlderById((c) => ({ ...c, [conversationId]: true }));
-    socket.send({
-      type: "request_history",
-      conversationId,
-      beforeSeq: oldest,
-    });
-    window.setTimeout(() => {
-      if (loadingOlderRef.current[conversationId]) {
-        loadingOlderRef.current[conversationId] = false;
-        setLoadingOlderById((c) => ({ ...c, [conversationId]: false }));
-      }
-    }, 18_000);
-  }, []);
-
-  const syncConversationSnapshot = useCallback(
-    (conversationId: string) => {
-      void fetchAgentConversationSnapshot(conversationId)
-        .then((result) => mergeSnapshot(result.snapshot))
-        .catch(() => undefined);
-    },
-    [mergeSnapshot]
-  );
-
-  const setModeForDraft = useCallback(
-    async (draftId: string, next: EditorMode) => {
-      if (!isPersistedConversationTabId(draftId)) {
-        updateWorkspaceSession((current) => ({
-          ...current,
-          chat: {
-            ...current.chat,
-            mode: next,
-          },
-        }));
-        return;
-      }
-
-      setConversationsById((current) => {
-        const conv = current[draftId];
-        if (!conv) {
-          return current;
-        }
-        return {
-          ...current,
-          [draftId]: {
-            ...conv,
-            config: { ...conv.config, mode: next },
-          },
-        };
-      });
-
-      try {
-        const updated = await updateAgentConversationConfig(draftId, { mode: next });
-        setConversationsById((current) => ({
-          ...current,
-          [updated.conversation.id]: updated.conversation,
-        }));
-      } catch {
-        syncConversationSnapshot(draftId);
-      }
-    },
-    [syncConversationSnapshot, updateWorkspaceSession]
-  );
-
-  const setModelForDraft = useCallback(
-    async (draftId: string, next: ModelInfo) => {
-      if (!isPersistedConversationTabId(draftId)) {
-        updateWorkspaceSession((current) => ({
-          ...current,
-          chat: {
-            ...current.chat,
-            model: next,
-          },
-        }));
-        return;
-      }
-
-      const modelId = next.modelValue ?? next.id;
-
-      setConversationsById((current) => {
-        const conv = current[draftId];
-        if (!conv) {
-          return current;
-        }
-        return {
-          ...current,
-          [draftId]: {
-            ...conv,
-            config: {
-              ...conv.config,
-              modelId,
-              modelName: next.name,
-            },
-          },
-        };
-      });
-
-      try {
-        const updated = await updateAgentConversationConfig(draftId, {
-          modelId,
-          modelName: next.name,
-          setConfigOptions: next.configSelections,
-        });
-        setConversationsById((current) => ({
-          ...current,
-          [updated.conversation.id]: updated.conversation,
-        }));
-      } catch {
-        syncConversationSnapshot(draftId);
-      }
-    },
-    [syncConversationSnapshot, updateWorkspaceSession]
+const setModelForDraft = useCallback(
+async (draftId: string, next: ModelInfo) => {
+if (!isPersistedConversationTabId(draftId)) {
+updateWorkspaceSession((current) => ({
+...current,
+chat: {
+...current.chat,
+model: next,
+},
+}));
+return;
+}
+const conv = conversationsByIdRef.current[draftId];
+if (conv && (conv.status === "running" || conv.status === "awaiting_permission")) {
+const modelId = next.modelValue ?? next.id;
+setPendingConfigForConversation(draftId, { modelId, modelName: next.name });
+return;
+}
+try {
+await setConversationModel(draftId, next);
+} catch {
+void syncConversationSnapshot(draftId).catch(() => undefined);
+}
+},
+[setConversationModel, setPendingConfigForConversation, syncConversationSnapshot, updateWorkspaceSession]
   );
 
   const setSessionConfigOptionForDraft = useCallback(
@@ -670,177 +456,69 @@ export function ChatPanel() {
         return;
       }
       try {
-        const updated = await updateAgentConversationConfig(draftId, {
-          setConfigOption: { configId, value },
-        });
-        setConversationsById((current) => ({
-          ...current,
-          [updated.conversation.id]: updated.conversation,
-        }));
+        await setConversationConfigOption(draftId, configId, value);
       } catch {
-        syncConversationSnapshot(draftId);
+        void syncConversationSnapshot(draftId).catch(() => undefined);
       }
     },
-    [syncConversationSnapshot]
+    [setConversationConfigOption, syncConversationSnapshot]
   );
 
-  const setBackendForDraft = useCallback(
-    async (draftId: string, nextBackendId: AgentBackendId) => {
-      if (!isPersistedConversationTabId(draftId)) {
-        const targetBackend = pickAvailableBackend(backends, nextBackendId);
-        const targetModel = targetBackend ? resolveDraftModelForBackend(targetBackend) : null;
-        const targetMode = targetBackend
-          ? buildDraftModeOptionsForBackend(targetBackend)[0]?.id ?? workspaceSession.chat.mode
-          : workspaceSession.chat.mode;
-        updateWorkspaceSession((current) => ({
-          ...current,
-          chat: {
-            ...current.chat,
-            backendId: targetBackend?.id ?? nextBackendId,
-            mode: targetMode,
-            model: targetModel ?? current.chat.model,
-          },
-        }));
-        return;
-      }
-      const conv = conversationsById[draftId];
-      const resolvedBackend = pickAvailableBackend(backends, nextBackendId);
-      const useBackendId = resolvedBackend?.id ?? nextBackendId;
-      if (conv && useBackendId === conv.config.backendId) {
-        setPendingHandoffBackendByConversationId((prev) => {
-          if (!prev[draftId]) {
-            return prev;
-          }
-          const next = { ...prev };
-          delete next[draftId];
-          return next;
-        });
-        return;
-      }
-      if (conv) {
-        await handoffConversationInPlace(draftId, useBackendId);
-      }
-    },
-    [
-      backends,
-      conversationsById,
-      handoffConversationInPlace,
-      updateWorkspaceSession,
-      workspaceSession.chat.mode,
-    ]
-  );
-
-  const appendConversationEvent = useCallback(
-    (conversationId: string, event: AgentStoredEvent) => {
-      setEventsByConversationId((current) => {
-        const existing = current[conversationId] ?? [];
-        if (existing.some((item) => item.seq === event.seq)) {
-          return current;
-        }
-        return {
-          ...current,
-          [conversationId]: [...existing, event].sort((a, b) => a.seq - b.seq),
-        };
-      });
-    },
-    []
-  );
-
-  const upsertConversation = useCallback(
-    (conversation: AgentConversationRecord) => {
-      const prev = conversationsByIdRef.current[conversation.id];
-      const merged = mergeConversationByRecency(prev, conversation);
-      setConversationsById((current) => ({
-        ...current,
-        [conversation.id]: merged,
-      }));
-      updateWorkspaceSession((current) => {
-        const unreadMap = nextUnreadCompletionMap(current, prev, merged);
-        const nextTabs = current.chat.tabs.map((tab) =>
-          tab.id === conversation.id ? { ...tab, title: conversation.title } : tab
-        );
-        const tabChanged = !tabsEqual(current.chat.tabs, nextTabs);
-        if (unreadMap === null && !tabChanged) {
-          return current;
-        }
-        return {
-          ...current,
-          chat: {
-            ...current.chat,
-            ...(unreadMap === null
-              ? {}
-              : { unreadChatCompletionByConversationId: unreadMap }),
-            ...(tabChanged ? { tabs: nextTabs } : {}),
-          },
-        };
-      });
-    },
-    [updateWorkspaceSession]
-  );
-
-  const answerPermissionForConversation = useCallback(
-    async (conversationId: string, requestId: string, optionId: string) => {
-      try {
-        await answerAgentPermission(conversationId, {
-          requestId,
-          optionId,
-        });
-        const snapshot = await fetchAgentConversationSnapshot(conversationId);
-        mergeSnapshot(snapshot.snapshot);
-      } catch {
-        void fetchAgentConversationSnapshot(conversationId)
-          .then((result) => mergeSnapshot(result.snapshot))
-          .catch(() => undefined);
-      }
-    },
-    [mergeSnapshot]
-  );
-
-  const cancelPermissionForConversation = useCallback(
-    async (conversationId: string, requestId: string) => {
-      try {
-        await answerAgentPermission(conversationId, {
-          requestId,
-          cancelled: true,
-        });
-        const snapshot = await fetchAgentConversationSnapshot(conversationId);
-        mergeSnapshot(snapshot.snapshot);
-      } catch {
-        void fetchAgentConversationSnapshot(conversationId)
-          .then((r) => mergeSnapshot(r.snapshot))
-          .catch(() => undefined);
-      }
-    },
-    [mergeSnapshot]
+const setBackendForDraft = useCallback(
+async (draftId: string, nextBackendId: AgentBackendId) => {
+if (!isPersistedConversationTabId(draftId)) {
+const targetBackend = pickAvailableBackend(backends, nextBackendId);
+const targetModel = targetBackend ? resolveDraftModelForBackend(targetBackend) : null;
+const targetMode = targetBackend
+? buildDraftModeOptionsForBackend(targetBackend)[0]?.id ?? workspaceSession.chat.mode
+: workspaceSession.chat.mode;
+updateWorkspaceSession((current) => ({
+...current,
+chat: {
+...current.chat,
+backendId: targetBackend?.id ?? nextBackendId,
+mode: targetMode,
+model: targetModel ?? current.chat.model,
+},
+}));
+return;
+}
+const conv = conversationsById[draftId];
+const resolvedBackend = pickAvailableBackend(backends, nextBackendId);
+const useBackendId = resolvedBackend?.id ?? nextBackendId;
+if (conv && useBackendId === conv.config.backendId) {
+clearPendingConfigForConversation(draftId);
+return;
+}
+if (conv) {
+await handoffConversationInPlace(draftId, useBackendId);
+}
+},
+[
+backends,
+clearPendingConfigForConversation,
+conversationsById,
+handoffConversationInPlace,
+updateWorkspaceSession,
+workspaceSession.chat.mode,
+]
   );
 
   const createConversationAndOpen = useCallback(async () => {
     const draft = chatDraftRef.current;
-    const created = await createAgentConversation({
+    const conversation = await createConversation({
       backendId: draft.backendId,
       mode: draft.mode,
       modelId: draft.model.modelValue ?? draft.model.id,
       modelName: draft.model.name,
     });
-    const { conversation } = created;
-    setConversationsById((current) => ({
-      ...current,
-      [conversation.id]: conversation,
-    }));
-    setEventsByConversationId((current) => ({
-      ...current,
-      [conversation.id]: current[conversation.id] ?? [],
-    }));
     setTabs((current) => [
       ...current.map((tab) => ({ ...tab, active: false })),
       { id: conversation.id, title: conversation.title, active: true },
     ]);
     unhideConversationIds([conversation.id]);
     return conversation;
-  }, [
-    setTabs,
-    unhideConversationIds,
-  ]);
+  }, [createConversation, setTabs, unhideConversationIds]);
 
   const openConversationById = useCallback(
     (conversationId: string) => {
@@ -870,11 +548,26 @@ export function ChatPanel() {
     if (!activeTabId || activeTabId === "__empty__") {
       return { hasOlder: false, loadingOlder: false };
     }
-    return {
-      hasOlder: historyMetaById[activeTabId]?.hasOlder ?? false,
-      loadingOlder: loadingOlderById[activeTabId] ?? false,
-    };
-  }, [activeTabId, historyMetaById, loadingOlderById]);
+    return getConversationHistoryCursor(activeTabId);
+  }, [activeTabId, getConversationHistoryCursor]);
+  const restoredChatScroll = useMemo(
+    () =>
+      resolvePersistedChatScroll(
+        workspaceSession.chat.scrollTopByTabId,
+        workspaceSession.chat.scrollAnchorByTabId ?? {},
+        activeTabId,
+        activeWorkspaceId,
+        activeWindowId,
+        getActiveServerStorageKey(getConfiguredServerBaseUrl())
+      ),
+    [
+      activeTabId,
+      activeWorkspaceId,
+      activeWindowId,
+      workspaceSession.chat.scrollTopByTabId,
+      workspaceSession.chat.scrollAnchorByTabId,
+    ]
+  );
   const agentTabIndicators = useMemo(() => {
     const unread = workspaceSession.chat.unreadChatCompletionByConversationId ?? {};
     const m: AgentTabIndicatorByConversationId = {};
@@ -901,21 +594,22 @@ export function ChatPanel() {
         .filter(
           (conversation) =>
             conversation.id !== activeConversation?.id &&
-            isRecentConversationCandidate(conversation)
+            isRecentConversationCandidate(conversation, composerDrafts)
         )
         .sort((a, b) => b.updatedAt - a.updatedAt),
-    [activeConversation?.id, conversations]
+    [activeConversation?.id, conversations, composerDrafts]
   );
   const recentConversationPreview = useMemo(
     () => recentConversations.slice(0, 5),
     [recentConversations]
   );
   const showRecentChatsSection =
-    activeConversation?.title === "New chat" && recentConversationPreview.length > 0;
+    (activeConversation?.title === "New chat" || activeConversation?.title?.startsWith("Draft: ")) &&
+    recentConversationPreview.length > 0;
   const composerDraftId = activeConversation?.id ?? activeTabId;
   useRegisterDesignCaptureComposer(composerDraftId, 5);
   const composerDraftTitle =
-    activeConversation?.title && activeConversation.title !== "New chat"
+    activeConversation?.title && activeConversation.title !== "New chat" && !activeConversation.title.startsWith("Draft: ")
       ? `${activeConversation.title} prompt`
       : "Composer";
   const composerDraftText = composerDrafts[composerDraftId]?.content ?? "";
@@ -935,9 +629,10 @@ export function ChatPanel() {
       null
     );
   }, [backends, workspaceSession.chat.backendId]);
+  const modelVisibility = globalSettings.models.byBackend;
   const draftModels = useMemo(
-    () => (draftBackend ? buildDraftModelOptionsForBackend(draftBackend) : [workspaceSession.chat.model]),
-    [draftBackend, workspaceSession.chat.model]
+    () => (draftBackend ? buildDraftModelOptionsForBackend(draftBackend, modelVisibility) : [workspaceSession.chat.model]),
+    [draftBackend, workspaceSession.chat.model, modelVisibility]
   );
   const draftModel = useMemo(() => {
     if (!draftBackend) {
@@ -952,98 +647,104 @@ export function ChatPanel() {
   const rawPanelThreadEvents = activeTabId
     ? (eventsByConversationId[activeTabId] ?? [])
     : [];
-  const deferredPanelThreadEvents = useDeferredValue(rawPanelThreadEvents);
   const threadMessages = useMemo(
     () =>
-      projectAgentEventsToChatMessages(deferredPanelThreadEvents, {
+      projectAgentEventsToChatMessages(rawPanelThreadEvents, {
         backendId: activeConversation?.config.backendId,
         workspaceRoot: workspaceInfo?.root ?? null,
       }),
-    [activeConversation?.config.backendId, deferredPanelThreadEvents, workspaceInfo?.root]
+    [activeConversation?.config.backendId, activeTabId, rawPanelThreadEvents, workspaceInfo?.root]
   );
   const isEmptyThread = threadMessages.length === 0;
-  const resolveComposerStateForDraft = useCallback(
-    (draftId: string) => {
-      const conversation = conversationsById[draftId] ?? null;
-      const pendingTarget = pendingHandoffBackendByConversationId[draftId];
-      const backendFromConversation =
-        conversation
-          ? pickAvailableBackend(backends, conversation.config.backendId)
-          : draftBackend;
-      const backendForPending =
-        pendingTarget != null ? pickAvailableBackend(backends, pendingTarget) : null;
-      const backend =
-        pendingTarget != null && backendForPending
-          ? backendForPending
-          : backendFromConversation;
-      const models =
-        pendingTarget != null && backend
-          ? buildDraftModelOptionsForBackend(backend)
-          : conversation
-            ? buildConversationModelOptions(conversation, backends)
-            : backend
-              ? buildDraftModelOptionsForBackend(backend)
-              : [workspaceSession.chat.model];
-      const model = conversation
-        ? pendingTarget != null && backend
-          ? resolveDraftModelForBackend(backend)
-          : resolveConversationModel(conversation, backends)
-        : backend
-          ? (() => {
-              const currentModelValue =
-                workspaceSession.chat.model.modelValue ?? workspaceSession.chat.model.id;
-              return (
-                models.find(
-                  (candidate) => (candidate.modelValue ?? candidate.id) === currentModelValue
-                ) ?? resolveDraftModelForBackend(backend)
-              );
-            })()
-          : workspaceSession.chat.model;
-      const modeOptions =
-        pendingTarget != null && backend
-          ? buildDraftModeOptionsForBackend(backend)
-          : conversation
-            ? buildConversationModeOptions(conversation, backends)
-            : backend
-              ? buildDraftModeOptionsForBackend(backend)
-              : DEFAULT_MODE_OPTIONS;
-      const mode = resolveCanonicalModeId(
-        String(
-          (pendingTarget != null && backend
-            ? buildDraftModeOptionsForBackend(backend)[0]?.id
-            : conversation?.config.mode) ?? workspaceSession.chat.mode ?? ""
-        ),
-        modeOptions
-      ) as EditorMode;
-      return {
-        conversation,
-        backendId:
-          (pendingTarget != null ? pickAvailableBackend(backends, pendingTarget)?.id : undefined) ??
-          conversation?.config.backendId ??
-          backend?.id ??
-          workspaceSession.chat.backendId,
-        models,
-        model,
-        modeOptions,
-        mode,
-        sessionConfigOptions:
-          pendingTarget != null ? [] : conversation
-            ? listSupplementaryAgentConfigOptions(conversation)
-            : [],
-        busy:
-          conversation?.status === "running" ||
-          conversation?.status === "awaiting_permission",
-      };
-    },
-    [
-      backends,
-      conversationsById,
-      draftBackend,
-      pendingHandoffBackendByConversationId,
-      workspaceSession.chat.backendId,
-      workspaceSession.chat.mode,
-      workspaceSession.chat.model,
-    ]
+const resolveComposerStateForDraft = useCallback(
+(draftId: string) => {
+const conversation = conversationsById[draftId] ?? null;
+const busy =
+conversation?.status === "running" || conversation?.status === "awaiting_permission";
+const pendingConfig = pendingConfigByConversationId[draftId];
+const pendingBackendId = pendingConfig?.backendId;
+const pendingMode = pendingConfig?.mode;
+const pendingModelId = pendingConfig?.modelId;
+const pendingTarget = busy && pendingBackendId ? pendingBackendId : undefined;
+const backendFromConversation =
+conversation
+? pickAvailableBackend(backends, conversation.config.backendId)
+: draftBackend;
+const backendForPending = pendingTarget != null ? pickAvailableBackend(backends, pendingTarget) : null;
+const backend =
+pendingTarget != null && backendForPending
+? backendForPending
+: backendFromConversation;
+const models =
+pendingTarget != null && backend
+? buildDraftModelOptionsForBackend(backend, modelVisibility)
+: conversation
+? buildConversationModelOptions(conversation, backends, modelVisibility)
+: backend
+? buildDraftModelOptionsForBackend(backend, modelVisibility)
+: [workspaceSession.chat.model];
+const model = conversation
+? pendingTarget != null && backend
+? resolveDraftModelForBackend(backend)
+: pendingModelId && busy
+? models.find((m) => (m.modelValue ?? m.id) === pendingModelId) ?? resolveConversationModel(conversation, backends)
+: resolveConversationModel(conversation, backends)
+: backend
+? (() => {
+const currentModelValue = workspaceSession.chat.model.modelValue ?? workspaceSession.chat.model.id;
+return (
+models.find(
+(candidate) => (candidate.modelValue ?? candidate.id) === currentModelValue
+) ?? resolveDraftModelForBackend(backend)
+);
+})()
+: workspaceSession.chat.model;
+const modeOptions =
+pendingTarget != null && backend
+? buildDraftModeOptionsForBackend(backend)
+: conversation
+? buildConversationModeOptions(conversation, backends)
+: backend
+? buildDraftModeOptionsForBackend(backend)
+: DEFAULT_MODE_OPTIONS;
+const mode = resolveCanonicalModeId(
+String(
+(pendingTarget != null && backend
+? buildDraftModeOptionsForBackend(backend)[0]?.id
+: busy && pendingMode
+? pendingMode
+: conversation?.config.mode) ?? workspaceSession.chat.mode ?? ""
+),
+modeOptions
+) as EditorMode;
+return {
+conversation,
+backendId:
+(pendingTarget != null ? pickAvailableBackend(backends, pendingTarget)?.id : undefined) ??
+conversation?.config.backendId ??
+backend?.id ??
+workspaceSession.chat.backendId,
+models,
+model,
+modeOptions,
+mode,
+sessionConfigOptions:
+pendingTarget != null ? [] : conversation
+? listSupplementaryAgentConfigOptions(conversation)
+: [],
+busy,
+};
+},
+[
+backends,
+conversationsById,
+draftBackend,
+modelVisibility,
+pendingConfigByConversationId,
+workspaceSession.chat.backendId,
+workspaceSession.chat.mode,
+workspaceSession.chat.model,
+]
   );
   const activeComposerState = useMemo(
     () => resolveComposerStateForDraft(composerDraftId),
@@ -1059,16 +760,17 @@ export function ChatPanel() {
   const configLocked = false;
 
   const flashError = useCallback(
-    (message: string) => {
-      pushNotification({
-        kind: WORKBENCH_NOTIFICATION_KIND.editorNotice,
-        severity: "error",
-        title: "Chat",
-        message,
-        autoDismissMs: 8000,
-      });
-    },
-    [pushNotification]
+  (message: string) => {
+    pushNotification({
+      kind: WORKBENCH_NOTIFICATION_KIND.editorNotice,
+      severity: "error",
+      title: "Chat",
+      message,
+      autoDismissMs: 8000,
+      compact: true,
+    });
+  },
+  [pushNotification]
   );
 
   useEffect(() => {
@@ -1086,13 +788,10 @@ export function ChatPanel() {
     [dockedAsk]
   );
 
-  const activeQueuedPrompts = useMemo(() => {
-    const id = activeConversation?.id;
-    if (!id) {
-      return [];
-    }
-    return workspaceSession.chat.queuedPromptsByConversationId?.[id] ?? [];
-  }, [activeConversation?.id, workspaceSession.chat.queuedPromptsByConversationId]);
+  const activeQueuedPrompts = useMemo(
+    () => activeConversation?.queuedPrompts ?? [],
+    [activeConversation?.id, activeConversation?.queuedPrompts]
+  );
 
   const removeQueuedPromptForActiveChat = useCallback(
     (item: QueuedChatPrompt) => {
@@ -1100,44 +799,110 @@ export function ChatPanel() {
       if (!cid) {
         return;
       }
-      updateWorkspaceSession((current) => {
-        const map = { ...(current.chat.queuedPromptsByConversationId ?? {}) };
-        const list = map[cid];
-        if (!list) {
-          return current;
+      void (async () => {
+        try {
+          const { conversation } = await deleteAgentConversationQueueItem(cid, item.id);
+          upsertConversation(conversation);
+        } catch {
+          void syncConversationSnapshot(cid).catch(() => undefined);
         }
-        const next = list.filter((p) => p.id !== item.id);
-        if (next.length === 0) {
-          delete map[cid];
-        } else {
-          map[cid] = next;
-        }
-        return {
-          ...current,
-          chat: {
-            ...current.chat,
-            queuedPromptsByConversationId: map,
-          },
-        };
-      });
+      })();
     },
-    [activeConversation?.id, updateWorkspaceSession]
+    [activeConversation?.id, syncConversationSnapshot, upsertConversation]
   );
 
   const unqueuePromptToComposer = useCallback(
     (item: QueuedChatPrompt) => {
-      removeQueuedPromptForActiveChat(item);
-      upsertComposerDraft(composerDraftId, {
-        title: composerDraftTitle,
-        content: item.text,
-      });
+      const cid = activeConversation?.id;
+      if (!cid) {
+        return;
+      }
+      void (async () => {
+        try {
+          const { conversation } = await deleteAgentConversationQueueItem(cid, item.id);
+          upsertConversation(conversation);
+        } catch {
+          void syncConversationSnapshot(cid).catch(() => undefined);
+          return;
+        }
+        upsertComposerDraft(composerDraftId, {
+          title: composerDraftTitle,
+          content: item.text,
+        });
+      })();
     },
     [
+      activeConversation?.id,
       composerDraftId,
       composerDraftTitle,
-      removeQueuedPromptForActiveChat,
+      syncConversationSnapshot,
       upsertComposerDraft,
     ]
+  );
+
+  const editQueuedPromptForActiveChat = useCallback(
+    (item: QueuedChatPrompt) => {
+      const cid = activeConversation?.id;
+      if (!cid) {
+        return;
+      }
+      void (async () => {
+        try {
+          const { conversation } = await deleteAgentConversationQueueItem(cid, item.id);
+          upsertConversation(conversation);
+        } catch {
+          void syncConversationSnapshot(cid).catch(() => undefined);
+          return;
+        }
+        upsertComposerDraft(composerDraftId, {
+          title: composerDraftTitle,
+          content: item.text,
+        });
+        if (item.configOverride) {
+          setPendingConfigForConversation(cid, item.configOverride);
+        }
+        updateWorkspaceSession((current) => ({
+          ...current,
+          chat: {
+            ...current.chat,
+            editingQueuedPromptIdByConversationId: {
+              ...(current.chat.editingQueuedPromptIdByConversationId ?? {}),
+              [cid]: item.id,
+            },
+          },
+        }));
+      })();
+    },
+    [
+      activeConversation?.id,
+      composerDraftId,
+      composerDraftTitle,
+      setPendingConfigForConversation,
+      syncConversationSnapshot,
+      updateWorkspaceSession,
+      upsertComposerDraft,
+    ]
+  );
+
+  const clearEditingQueuedPromptForConversation = useCallback(
+    (conversationId: string) => {
+      updateWorkspaceSession((current) => {
+        const currentMap = current.chat.editingQueuedPromptIdByConversationId ?? {};
+        if (!currentMap[conversationId]) {
+          return current;
+        }
+        const nextMap = { ...currentMap };
+        delete nextMap[conversationId];
+        return {
+          ...current,
+          chat: {
+            ...current.chat,
+            editingQueuedPromptIdByConversationId: nextMap,
+          },
+        };
+      });
+    },
+    [updateWorkspaceSession]
   );
 
   useEffect(() => {
@@ -1204,116 +969,172 @@ export function ChatPanel() {
   }, [activeConversation, backends, draftBackend, draftModel, modeOptions, updateWorkspaceSession]);
 
   useEffect(() => {
-    if (!activeWorkspaceId) {
-      setBackends([]);
-      setConversationsById({});
-      setEventsByConversationId({});
-      setHistoryMetaById({});
-      setLoadingOlderById({});
-      loadingOlderRef.current = {};
+    if (!activeWorkspaceId || !bootstrapped || conversations.length > 0) {
       return;
     }
     let cancelled = false;
-    setConversationsById({});
-    setEventsByConversationId({});
-    setHistoryMetaById({});
-    setLoadingOlderById({});
-    loadingOlderRef.current = {};
-
     void (async () => {
-      const result = await listAgentConversations();
+      const draft = chatDraftRef.current;
+      const preferredBackend = pickAvailableBackend(backends, draft.backendId);
+      const preferredModel = preferredBackend
+        ? resolveDraftModelForBackend(preferredBackend)
+        : draft.model;
+      const preferredMode = preferredBackend
+        ? buildDraftModeOptionsForBackend(preferredBackend)[0]?.id ?? draft.mode
+        : draft.mode;
+      const conversation = await createConversation({
+        backendId: preferredBackend?.id ?? draft.backendId,
+        mode: preferredMode,
+        modelId: preferredModel.modelValue ?? preferredModel.id,
+        modelName: preferredModel.name,
+      });
       if (cancelled) {
         return;
       }
-
-      let conversations = result.conversations;
-      setBackends(result.backends);
-
-      if (conversations.length === 0) {
-        const draft = chatDraftRef.current;
-        const preferredBackend = pickAvailableBackend(result.backends, draft.backendId);
-        const preferredModel = preferredBackend
-          ? resolveDraftModelForBackend(preferredBackend)
-          : draft.model;
-        const preferredMode = preferredBackend
-          ? buildDraftModeOptionsForBackend(preferredBackend)[0]?.id ?? draft.mode
-          : draft.mode;
-        const created = await createAgentConversation({
-          backendId: preferredBackend?.id ?? draft.backendId,
-          mode: preferredMode,
-          modelId: preferredModel.modelValue ?? preferredModel.id,
-          modelName: preferredModel.name,
-        });
-        if (cancelled) {
-          return;
-        }
-        conversations = [created.conversation];
-      }
-
-      setConversationsById(toConversationMap(conversations));
-      setConversations(conversations);
-      updateWorkspaceSession((current) => {
-        const validIds = new Set(conversations.map((conversation) => conversation.id));
-        const hiddenConversationIds = new Set(current.chat.hiddenConversationIds);
-        const existing = current.chat.tabs
-          .filter((tab) => validIds.has(tab.id))
-          .map((tab) => ({
-            ...tab,
-            title: conversations.find((conversation) => conversation.id === tab.id)?.title ?? tab.title,
-          }));
-        const knownIds = new Set(existing.map((tab) => tab.id));
-        const missing = conversations
-          .filter(
-            (conversation) =>
-              !knownIds.has(conversation.id) &&
-              (conversation.lastEventSeq > 0 ||
-                conversationRequiresVisibleTab(conversation)) &&
-              (!hiddenConversationIds.has(conversation.id) ||
-                conversationRequiresVisibleTab(conversation))
-          )
-          .map((conversation) => ({
-            id: conversation.id,
-            title: conversation.title,
-            active: false,
-          }));
-        const fallbackVisible = conversations
-          .filter(
-            (conversation) =>
-              !hiddenConversationIds.has(conversation.id) ||
-              conversationRequiresVisibleTab(conversation)
-          )
-          .map((conversation, index) => ({
-            id: conversation.id,
-            title: conversation.title,
-            active: index === 0,
-          }));
-        const nextTabs =
-          existing.length > 0 || missing.length > 0
-            ? [...existing, ...missing]
-            : fallbackVisible;
-        const normalizedTabs =
-          nextTabs.length === 0 || nextTabs.some((tab) => tab.active)
-            ? nextTabs
-            : nextTabs.map((tab, index) => ({ ...tab, active: index === 0 }));
-        return tabsEqual(current.chat.tabs, normalizedTabs)
-          ? current
-          : {
-              ...current,
-              chat: {
-                ...current.chat,
-                tabs: normalizedTabs,
-              },
-            };
-      });
+      setTabs((current) => [
+        ...current.map((tab) => ({ ...tab, active: false })),
+        { id: conversation.id, title: conversation.title, active: true },
+      ]);
+      unhideConversationIds([conversation.id]);
     })().catch(() => undefined);
-
     return () => {
       cancelled = true;
     };
   }, [
     activeWorkspaceId,
-    updateWorkspaceSession,
+    backends,
+    bootstrapped,
+    conversations.length,
+    createConversation,
+    setTabs,
+    unhideConversationIds,
   ]);
+
+  useEffect(() => {
+    if (!activeWorkspaceId || !bootstrapped) {
+      return;
+    }
+    updateWorkspaceSession((current) => {
+      const validIds = new Set(conversations.map((c) => c.id));
+      const hiddenConversationIds = new Set(current.chat.hiddenConversationIds);
+    const existing = current.chat.tabs
+          .filter((tab) => validIds.has(tab.id))
+          .map((tab) => {
+            const serverConversation = conversations.find((c) => c.id === tab.id);
+            const serverTitle = serverConversation?.title ?? tab.title;
+            const isDraft = tab.isDraft && serverConversation?.lastEventSeq === 0;
+            return {
+              ...tab,
+              title: isDraft ? tab.title : serverTitle,
+              isDraft: isDraft || undefined,
+            };
+          });
+      const knownIds = new Set(existing.map((tab) => tab.id));
+      const missing = conversations
+        .filter(
+          (conversation) =>
+            !knownIds.has(conversation.id) &&
+            (conversation.lastEventSeq > 0 ||
+              conversationRequiresVisibleTab(conversation)) &&
+            (!hiddenConversationIds.has(conversation.id) ||
+              conversationRequiresVisibleTab(conversation))
+        )
+        .map((conversation) => ({
+          id: conversation.id,
+          title: conversation.title,
+          active: false,
+        }));
+      const fallbackVisible = conversations
+        .filter(
+          (conversation) =>
+            !hiddenConversationIds.has(conversation.id) ||
+            conversationRequiresVisibleTab(conversation)
+        )
+        .map((conversation, index) => ({
+          id: conversation.id,
+          title: conversation.title,
+          active: index === 0,
+        }));
+      const nextTabs =
+        existing.length > 0 || missing.length > 0
+          ? [...existing, ...missing]
+          : fallbackVisible;
+      const normalizedTabs =
+        nextTabs.length === 0 || nextTabs.some((tab) => tab.active)
+          ? nextTabs
+          : nextTabs.map((tab, index) => ({ ...tab, active: index === 0 }));
+      return tabsEqual(current.chat.tabs, normalizedTabs)
+        ? current
+        : {
+            ...current,
+            chat: {
+              ...current.chat,
+              tabs: normalizedTabs,
+            },
+          };
+    });
+  }, [activeWorkspaceId, bootstrapped, conversations, updateWorkspaceSession]);
+
+  const prevActiveTabIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    const prevTabId = prevActiveTabIdRef.current;
+    prevActiveTabIdRef.current = activeTabId;
+
+    if (!prevTabId || prevTabId === activeTabId || prevTabId === "__empty__") {
+      return;
+    }
+
+    const prevTab = tabs.find((t) => t.id === prevTabId);
+    if (prevTab?.isDraft) {
+      return;
+    }
+
+    const prevConversation = conversationsById[prevTabId];
+    if (!prevConversation || prevConversation.lastEventSeq > 0) {
+      return;
+    }
+
+    const draft = composerDrafts[prevTabId];
+    if (!draft || !hasMeaningfulComposerContent(draft)) {
+      return;
+    }
+
+    let cancelled = false;
+    void (async () => {
+      try {
+        const result = await generateDraftTitle(draft.content);
+        if (cancelled) return;
+        const generatedTitle = result.title ?? "Untitled";
+        const draftTabTitle = `Draft: ${generatedTitle}`;
+        setTabs((current) =>
+          current.map((tab) =>
+            tab.id === prevTabId
+              ? { ...tab, title: draftTabTitle, isDraft: true }
+              : tab
+          )
+        );
+        unhideConversationIds([prevTabId]);
+        void updateAgentConversationConfig(prevTabId, { title: draftTabTitle }).catch(() => undefined);
+      } catch {
+        if (cancelled) return;
+        const fallbackTitle = "Draft: Untitled";
+        setTabs((current) =>
+          current.map((tab) =>
+            tab.id === prevTabId
+              ? { ...tab, title: fallbackTitle, isDraft: true }
+              : tab
+          )
+        );
+        unhideConversationIds([prevTabId]);
+        void updateAgentConversationConfig(prevTabId, { title: fallbackTitle }).catch(() => undefined);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTabId, tabs, conversationsById, composerDrafts, setTabs, unhideConversationIds]);
 
   useEffect(() => {
     if (!activeWorkspaceId) {
@@ -1323,182 +1144,11 @@ export function ChatPanel() {
       if (document.visibilityState !== "visible") {
         return;
       }
-      void listAgentConversations()
-        .then((result) => {
-          setBackends(result.backends);
-        })
-        .catch(() => undefined);
+      void refreshConversations().catch(() => undefined);
     };
     document.addEventListener("visibilitychange", handleVisibilityChange);
     return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
-  }, [activeWorkspaceId]);
-
-  useEffect(() => {
-    if (!activeWorkspaceId) {
-      return;
-    }
-    if (Object.keys(conversationsById).length === 0) {
-      return;
-    }
-    const openConversationIds = tabs.map((tab) => tab.id).filter(Boolean);
-    for (const conversationId of openConversationIds) {
-      if (!conversationsById[conversationId]) {
-        continue;
-      }
-      // `[]` is truthy in JS; only skip after we've actually loaded (including empty logs).
-      if (eventsRef.current[conversationId] !== undefined) {
-        continue;
-      }
-      void fetchAgentConversationSnapshot(conversationId)
-        .then((result) => mergeSnapshot(result.snapshot))
-        .catch(() => undefined);
-    }
-  }, [activeWorkspaceId, conversationsById, mergeSnapshot, tabs]);
-
-  useEffect(() => {
-    if (!activeConversation) {
-      return;
-    }
-    const needsRuntimeHydration =
-      activeConversation.configOptions.length === 0 ||
-      activeConversation.providerSessionId == null ||
-      !activeConversation.capabilities.supportsLoadSession ||
-      (activeConversation.config.backendId === "cursor-acp" &&
-        (!activeConversation.capabilities.supportsPermissions ||
-          !activeConversation.capabilities.supportsSessionResume)) ||
-      ((activeConversation.status === "running" ||
-        activeConversation.status === "awaiting_permission") &&
-        activeConversation.providerSessionId == null);
-    if (!needsRuntimeHydration) {
-      return;
-    }
-    if (hydratingConversationIdsRef.current.has(activeConversation.id)) {
-      return;
-    }
-    hydratingConversationIdsRef.current.add(activeConversation.id);
-    void fetchAgentConversationSnapshot(activeConversation.id, { hydrateRuntime: true })
-      .then((result) => {
-        mergeSnapshot(result.snapshot);
-      })
-      .catch(() => undefined)
-      .finally(() => {
-        hydratingConversationIdsRef.current.delete(activeConversation.id);
-      });
-  }, [activeConversation, mergeSnapshot]);
-
-  const sendSubscription = useCallback(() => {
-    const socket = socketRef.current;
-    if (!socket?.connected) {
-      return;
-    }
-    const conversationIds = tabsRef.current.map((tab) => tab.id).filter(Boolean);
-    const sinceByConversationId = Object.fromEntries(
-      conversationIds.map((conversationId) => [
-        conversationId,
-        getConversationLatestSeq(eventsRef.current[conversationId] ?? []),
-      ])
-    );
-    socket.send({
-      type: "subscribe",
-      conversationIds,
-      sinceByConversationId,
-    });
-  }, []);
-
-  useEffect(() => {
-    if (!activeWorkspaceId) {
-      socketRef.current?.disconnect();
-      socketRef.current = null;
-      return;
-    }
-
-    const socket = new JsonWebSocket<AgentSocketServerMessage>(() =>
-      buildAgentWebSocketUrl(activeWorkspaceId)
-    );
-    socketRef.current = socket;
-
-    const disposeOpen = socket.onOpen(() => {
-      sendSubscription();
-    });
-    const disposeMessage = socket.onMessage((message) => {
-      switch (message.type) {
-        case "conversation":
-          upsertConversation(message.conversation);
-          return;
-        case "conversation_upserted":
-          // Pushed to every client in the workspace (not just subscribers) so
-          // the sidebar conversation list stays fresh without polling on
-          // `visibilitychange`. Idempotent with the `conversation` case above.
-          upsertConversation(message.conversation);
-          // Nudge the cross-workspace conversation rail so it reflects the
-          // change without waiting for a focus/visibility change.
-          if (typeof window !== "undefined") {
-            window.dispatchEvent(new Event("opencursor:conversation_changed"));
-          }
-          return;
-        case "conversation_deleted":
-          setConversationsById((current) => {
-            if (!current[message.conversationId]) {
-              return current;
-            }
-            const next = { ...current };
-            delete next[message.conversationId];
-            return next;
-          });
-          setTabs((current) =>
-            current.filter((tab) => tab.id !== message.conversationId)
-          );
-          if (typeof window !== "undefined") {
-            window.dispatchEvent(new Event("opencursor:conversation_changed"));
-          }
-          return;
-        case "snapshot":
-          mergeSnapshot(message.snapshot);
-          return;
-        case "snapshot_head":
-          mergeSnapshot(message.snapshot);
-          return;
-        case "history_page":
-          prependHistoryPage(
-            message.conversationId,
-            message.events,
-            message.window
-          );
-          return;
-        case "event":
-          appendConversationEvent(message.conversationId, message.event);
-          return;
-        case "error":
-          loadingOlderRef.current = {};
-          setLoadingOlderById({});
-          return;
-        default:
-          return;
-      }
-    });
-
-    socket.connect();
-    return () => {
-      disposeOpen();
-      disposeMessage();
-      socket.disconnect();
-      if (socketRef.current === socket) {
-        socketRef.current = null;
-      }
-    };
-  }, [
-    activeWorkspaceId,
-    appendConversationEvent,
-    mergeSnapshot,
-    prependHistoryPage,
-    sendSubscription,
-    setTabs,
-    upsertConversation,
-  ]);
-
-  useEffect(() => {
-    sendSubscription();
-  }, [sendSubscription, tabs]);
+  }, [activeWorkspaceId, refreshConversations]);
 
   const handleSelectTab = useCallback(
     (id: string) => {
@@ -1616,32 +1266,56 @@ export function ChatPanel() {
     [activeConversation, answerPermissionForConversation]
   );
 
-  const handleCancelActivePermission = useCallback(
-    (requestId: string) => {
-      if (!activeConversation) {
-        return;
-      }
-      void cancelPermissionForConversation(activeConversation.id, requestId);
-    },
-    [activeConversation, cancelPermissionForConversation]
-  );
-
   const handleScrollTopSettled = useCallback(
-    (scrollTop: number) => {
-      updateWorkspaceSession((current) =>
-        Math.abs((current.chat.scrollTopByTabId[activeTabId] ?? 0) - scrollTop) < 1
-          ? current
-          : {
-              ...current,
-              chat: {
-                ...current.chat,
-                scrollTopByTabId: {
-                  ...current.chat.scrollTopByTabId,
-                  [activeTabId]: scrollTop,
-                },
-              },
-            }
-      );
+    (scrollTop: number, meta: MessageListScrollPersistMeta) => {
+      updateWorkspaceSession((current) => {
+        const map = current.chat.scrollTopByTabId;
+        const anchorMap = { ...(current.chat.scrollAnchorByTabId ?? {}) };
+        const hadTop = Object.hasOwn(map, activeTabId);
+        if (meta.pinnedToBottom) {
+          if (!hadTop && !Object.hasOwn(anchorMap, activeTabId)) {
+            return current;
+          }
+          const nextMap = { ...map };
+          delete nextMap[activeTabId];
+          delete anchorMap[activeTabId];
+          return {
+            ...current,
+            chat: {
+              ...current.chat,
+              scrollTopByTabId: nextMap,
+              scrollAnchorByTabId: anchorMap,
+            },
+          };
+        }
+        if (meta.anchor) {
+          anchorMap[activeTabId] = meta.anchor;
+        } else {
+          delete anchorMap[activeTabId];
+        }
+        const prevTop = map[activeTabId];
+        const prevAnchor = current.chat.scrollAnchorByTabId?.[activeTabId];
+        const topClose = hadTop && Math.abs((prevTop ?? 0) - scrollTop) < 0.5;
+        const anchorClose =
+          meta.anchor && prevAnchor
+            ? meta.anchor.messageId === prevAnchor.messageId &&
+              Math.abs(meta.anchor.delta - prevAnchor.delta) < 0.35
+            : meta.anchor == null && prevAnchor == null;
+        if (topClose && anchorClose) {
+          return current;
+        }
+        return {
+          ...current,
+          chat: {
+            ...current.chat,
+            scrollTopByTabId: {
+              ...map,
+              [activeTabId]: scrollTop,
+            },
+            scrollAnchorByTabId: anchorMap,
+          },
+        };
+      });
     },
     [activeTabId, updateWorkspaceSession]
   );
@@ -1673,10 +1347,22 @@ export function ChatPanel() {
           hiddenConversationIds: [
             FRESH_WORKSPACE_WINDOW_HIDDEN_CONVERSATIONS_SENTINEL,
           ],
-          scrollTopByTabId: {
-            [conversationId]:
-              workspaceSession.chat.scrollTopByTabId[conversationId] ?? 0,
-          },
+          scrollTopByTabId: Object.hasOwn(
+            workspaceSession.chat.scrollTopByTabId,
+            conversationId
+          )
+            ? {
+                [conversationId]: workspaceSession.chat.scrollTopByTabId[conversationId]!,
+              }
+            : {},
+          scrollAnchorByTabId: Object.hasOwn(
+            workspaceSession.chat.scrollAnchorByTabId ?? {},
+            conversationId
+          )
+            ? {
+                [conversationId]: workspaceSession.chat.scrollAnchorByTabId![conversationId]!,
+              }
+            : {},
         },
       });
       await saveWorkspaceWindowSession(
@@ -1800,18 +1486,68 @@ export function ChatPanel() {
           id: "archive",
           label: "Archive",
           onSelect: () => {
-            updateWorkspaceSession((current) => {
-              const archived = current.agentView.archivedConversationIds ?? [];
-              if (archived.includes(tabId)) return current;
-              return {
-                ...current,
-                agentView: {
-                  ...current.agentView,
-                  archivedConversationIds: [...archived, tabId],
-                },
-              };
-            });
+            void (async () => {
+              try {
+                const { conversation } = await patchAgentConversationMetadata(tabId, {
+                  archived: true,
+                });
+                dispatchAgentConversationUpserted(conversation);
+              } catch {
+                /* list refresh in shell */
+              }
+            })();
             closeChatTab(tabId);
+          },
+        },
+        {
+          type: "item",
+          id: "fork",
+          label: "Fork",
+          disabled: !targetConversation || targetConversation.status === "running" || targetConversation.status === "awaiting_permission",
+          onSelect: () => {
+            if (!targetConversation) return;
+            void forkAgentConversation(targetConversation.id).then(
+              async (result) => {
+                const nextConversations = await refreshConversations();
+                const newConv = nextConversations.find(
+                  (c) => c.id === result.conversation.id
+                );
+                if (!newConv) {
+                  pushNotification({
+                    kind: WORKBENCH_NOTIFICATION_KIND.editorNotice,
+                    severity: "error",
+                    title: "Fork Failed",
+                    message: "Server did not return the new conversation in the workspace list.",
+                    compact: true,
+                  });
+                  return;
+                }
+                const snap = await fetchAgentConversationSnapshot(result.conversation.id);
+                mergeConversationSnapshot(snap.snapshot);
+                setTabs((current) => {
+                  const existingTab = current.find((tab) => tab.id === newConv.id);
+                  if (existingTab) {
+                    return current.map((tab) => ({ ...tab, active: tab.id === newConv.id }));
+                  }
+                  return [
+                    ...current.map((tab) => ({ ...tab, active: false })),
+                    { id: newConv.id, title: newConv.title, active: true },
+                  ];
+                });
+                unhideConversationIds([newConv.id]);
+              }
+            ).catch((error) => {
+              const message =
+                error instanceof Error ? error.message : "Failed to fork conversation.";
+              pushNotification({
+                kind: WORKBENCH_NOTIFICATION_KIND.editorNotice,
+                severity: "error",
+                title: "Fork Failed",
+                message,
+                autoDismissMs: 8000,
+                compact: true,
+              });
+            });
           },
         },
         { type: "sep" },
@@ -1856,19 +1592,24 @@ export function ChatPanel() {
       openAt(e, items);
     },
     [
-      activeWindowId,
-      closeChatTab,
-      closeOtherChatTabs,
-      conversationsById,
-      moveConversationToWorkspaceWindow,
-      openAgentConversation,
-      openAt,
-      tabs,
-      updateWorkspaceSession,
-      globalPinnedAgentConversationIds,
-      workspaceWindows,
-    ]
-  );
+    activeWindowId,
+    closeChatTab,
+    closeOtherChatTabs,
+    conversationsById,
+    mergeConversationSnapshot,
+    moveConversationToWorkspaceWindow,
+    openAgentConversation,
+    openAt,
+    pushNotification,
+    refreshConversations,
+    setTabs,
+    tabs,
+    unhideConversationIds,
+    updateWorkspaceSession,
+    globalPinnedAgentConversationIds,
+    workspaceWindows,
+  ]
+);
 
   const handleChatStripContextMenu = useCallback(
     (e: MouseEvent) => {
@@ -1892,7 +1633,7 @@ export function ChatPanel() {
   );
 
   const submitPromptForDraft = useCallback(
-    async (draftId: string, text: string, attachments?: ImageAttachment[], options?: { skipQueue?: boolean }) => {
+    async (draftId: string, text: string, attachments?: ImageAttachment[]) => {
       let conversationIdForError = conversationsById[draftId]?.id;
       try {
         const conversation =
@@ -1901,110 +1642,107 @@ export function ChatPanel() {
           (await createConversationAndOpen());
         conversationIdForError = conversation.id;
 
-        const pendingTarget =
-          isPersistedConversationTabId(conversation.id) &&
-          pendingHandoffBackendByConversationId[conversation.id] &&
-          pendingHandoffBackendByConversationId[conversation.id] !== conversation.config.backendId
-            ? pendingHandoffBackendByConversationId[conversation.id]!
-            : undefined;
+        const draftTab = tabs.find((t) => t.id === conversation.id);
+        if (draftTab?.isDraft) {
+          setTabs((current) =>
+            current.map((tab) =>
+              tab.id === conversation.id
+                ? { ...tab, title: "New chat", isDraft: undefined }
+                : tab
+            )
+          );
+        }
 
-        if (pendingTarget) {
-          if (
-            conversation.status === "running" ||
-            conversation.status === "awaiting_permission"
-          ) {
-            pushNotification({
-              kind: WORKBENCH_NOTIFICATION_KIND.editorNotice,
-              severity: "warning",
-              title: "Agent busy",
-              message:
-                "Wait for the current reply or cancel before handing off to another agent backend.",
-              autoDismissMs: 8000,
-            });
-            return false;
+        const pendingConfig = isPersistedConversationTabId(conversation.id)
+          ? pendingConfigByConversationId[conversation.id]
+          : undefined;
+        const isBusy =
+          conversation.status === "running" || conversation.status === "awaiting_permission";
+
+        if (pendingConfig && !isBusy) {
+          const pendingTarget = pendingConfig.backendId;
+          if (pendingTarget && pendingTarget !== conversation.config.backendId) {
+            try {
+              const handoffResult = await handoffAgentConversation(conversation.id, pendingTarget);
+              clearPendingConfigForConversation(conversation.id);
+              await applyHandoffServerResult(handoffResult);
+              const snapshot = await promptAgentConversation(
+                handoffResult.newConversationId,
+                text,
+                attachments
+              );
+              mergeConversationSnapshot(snapshot.snapshot);
+              clearEditingQueuedPromptForConversation(conversation.id);
+              return true;
+            } catch (error) {
+              const message =
+                error instanceof Error ? error.message : "Failed to hand off conversation.";
+              pushNotification({
+                kind: WORKBENCH_NOTIFICATION_KIND.editorNotice,
+                severity: "error",
+                title: "Handoff Failed",
+                message,
+                autoDismissMs: 8000,
+                compact: true,
+              });
+              return false;
+            }
           }
-          try {
-            const handoffResult = await handoffAgentConversation(conversation.id, pendingTarget);
-            setPendingHandoffBackendByConversationId((prev) => {
-              if (!prev[conversation.id]) {
-                return prev;
+          if (pendingConfig.mode || pendingConfig.modelId) {
+            try {
+              const patch: Record<string, unknown> = {};
+              if (pendingConfig.mode) patch.mode = pendingConfig.mode;
+              if (pendingConfig.modelId) {
+                patch.modelId = pendingConfig.modelId;
+                patch.modelName = pendingConfig.modelName;
               }
-              const next = { ...prev };
-              delete next[conversation.id];
-              return next;
-            });
-            await applyHandoffServerResult(handoffResult);
-            const snapshot = await promptAgentConversation(
-              handoffResult.newConversationId,
-              text,
-              attachments
-            );
-            mergeSnapshot(snapshot.snapshot);
-            return true;
-          } catch (error) {
-            const message =
-              error instanceof Error ? error.message : "Failed to hand off conversation.";
-            pushNotification({
-              kind: WORKBENCH_NOTIFICATION_KIND.editorNotice,
-              severity: "error",
-              title: "Handoff Failed",
-              message,
-              autoDismissMs: 8000,
-            });
-            return false;
+              const updated = await updateAgentConversationConfig(conversation.id, patch);
+              upsertConversation(updated.conversation);
+              clearPendingConfigForConversation(conversation.id);
+              clearEditingQueuedPromptForConversation(conversation.id);
+            } catch {
+              void syncConversationSnapshot(conversation.id).catch(() => undefined);
+            }
           }
         }
 
-        if (
-          !options?.skipQueue &&
-          (conversation.status === "running" ||
-            conversation.status === "awaiting_permission")
-        ) {
-          const convId = conversation.id;
-          const entryId = globalThis.crypto?.randomUUID?.() ?? `q-${Date.now()}`;
-          updateWorkspaceSession((current) => {
-            const map = { ...(current.chat.queuedPromptsByConversationId ?? {}) };
-            const prev = map[convId] ?? [];
-            return {
-              ...current,
-              chat: {
-                ...current.chat,
-                queuedPromptsByConversationId: {
-                  ...map,
-                  [convId]: [...prev, { id: entryId, text, attachments }],
-                },
-              },
-            };
-          });
+        if (isBusy) {
+          const state = resolveComposerStateForDraft(conversation.id);
+          const derivedOverride = buildQueuedConfigOverride(
+            conversation.config,
+            state.backendId,
+            state.mode,
+            state.model
+          );
+          const merged: typeof derivedOverride = { ...derivedOverride, ...pendingConfig };
+          const configOverride =
+            merged && Object.keys(merged).length > 0 ? merged : undefined;
+          const snapshot = await promptAgentConversation(
+            conversation.id,
+            text,
+            attachments,
+            configOverride
+          );
+          mergeConversationSnapshot(snapshot.snapshot);
+          clearEditingQueuedPromptForConversation(conversation.id);
           return true;
         }
+
         const snapshot = await promptAgentConversation(conversation.id, text, attachments);
-        mergeSnapshot(snapshot.snapshot);
+        mergeConversationSnapshot(snapshot.snapshot);
+        clearEditingQueuedPromptForConversation(conversation.id);
         return true;
       } catch (error) {
-        const message =
-          error instanceof Error ? error.message : "Failed to start the agent turn.";
+        const message = error instanceof Error ? error.message : "Failed to start the agent turn.";
         if (conversationIdForError) {
-          const errConvId = conversationIdForError;
-          setEventsByConversationId((current) => {
-            const existing = current[errConvId] ?? [];
-            const nextSeq = getConversationLatestSeq(existing) + 1;
-            return {
-              ...current,
-              [errConvId]: [
-                ...existing,
-                {
-                  seq: nextSeq,
-                  eventId:
-                    globalThis.crypto?.randomUUID?.() ?? `local-error-${Date.now()}`,
-                  conversationId: errConvId,
-                  createdAt: Date.now(),
-                  kind: "system",
-                  level: "error",
-                  text: message,
-                },
-              ],
-            };
+          void syncConversationSnapshot(conversationIdForError).catch(() => undefined);
+          pushNotification({
+            kind: WORKBENCH_NOTIFICATION_KIND.editorNotice,
+            severity: "error",
+            title: "Agent",
+            message,
+            autoDismissMs: 8000,
+            compact: true,
           });
           return false;
         }
@@ -2014,6 +1752,7 @@ export function ChatPanel() {
           title: "Agent",
           message,
           autoDismissMs: 8000,
+          compact: true,
         });
         return false;
       }
@@ -2021,17 +1760,20 @@ export function ChatPanel() {
     [
       activeConversation,
       applyHandoffServerResult,
+      clearEditingQueuedPromptForConversation,
+      clearPendingConfigForConversation,
       conversationsById,
       createConversationAndOpen,
-      mergeSnapshot,
-      pendingHandoffBackendByConversationId,
+      mergeConversationSnapshot,
+      pendingConfigByConversationId,
       pushNotification,
-      updateWorkspaceSession,
+      resolveComposerStateForDraft,
+      setTabs,
+      syncConversationSnapshot,
+      tabs,
+      upsertConversation,
     ]
   );
-
-  const submitPromptForDraftRef = useRef(submitPromptForDraft);
-  submitPromptForDraftRef.current = submitPromptForDraft;
 
   const handleRequestHandoff = useCallback(
     async (targetBackendId: AgentBackendId) => {
@@ -2041,62 +1783,90 @@ export function ChatPanel() {
     [activeConversation, handoffConversationInPlace]
   );
 
-  useEffect(() => {
-    const queuedMap = workspaceSession.chat.queuedPromptsByConversationId ?? {};
-    for (const conversationId of Object.keys(queuedMap)) {
-      const queue = queuedMap[conversationId];
-      if (!queue?.length) continue;
-      const conv = conversationsById[conversationId];
-      if (!conv || conv.status !== "idle") continue;
-      if (!tryBeginQueuedPromptFlush(conversationId)) continue;
-
-      const [head, ...tail] = queue;
-      updateWorkspaceSession((current) => {
-        const m = { ...(current.chat.queuedPromptsByConversationId ?? {}) };
-        if (tail.length === 0) {
-          delete m[conversationId];
-        } else {
-          m[conversationId] = tail;
-        }
-        return {
-          ...current,
-          chat: {
-            ...current.chat,
-            queuedPromptsByConversationId: m,
-          },
-        };
-      });
-
-      void (async () => {
-        try {
-          await submitPromptForDraftRef.current(conversationId, head.text, head.attachments, {
-            skipQueue: true,
+  const handleForkMessage = useCallback(
+    async (messageId: string) => {
+      if (!activeConversation) return;
+      if (
+        activeConversation.status === "running" ||
+        activeConversation.status === "awaiting_permission"
+      ) {
+        pushNotification({
+          kind: WORKBENCH_NOTIFICATION_KIND.editorNotice,
+          severity: "warning",
+          title: "Agent busy",
+          message: "Wait for the current reply or cancel before forking.",
+          autoDismissMs: 8000,
+          compact: true,
+        });
+        return;
+      }
+      try {
+        const result = await forkAgentConversation(activeConversation.id, {
+          upToMessageId: messageId,
+        });
+        const nextConversations = await refreshConversations();
+        const newConv = nextConversations.find(
+          (c) => c.id === result.conversation.id
+        );
+        if (!newConv) {
+          pushNotification({
+            kind: WORKBENCH_NOTIFICATION_KIND.editorNotice,
+            severity: "error",
+            title: "Fork Failed",
+            message: "Server did not return the new conversation in the workspace list.",
+            compact: true,
           });
-        } finally {
-          endQueuedPromptFlush(conversationId);
+          return;
         }
-      })();
-    }
-  }, [
-    conversationsById,
-    updateWorkspaceSession,
-    workspaceSession.chat.queuedPromptsByConversationId,
-  ]);
+        const snap = await fetchAgentConversationSnapshot(result.conversation.id);
+        mergeConversationSnapshot(snap.snapshot);
+        setTabs((current) => {
+          const existingTab = current.find((tab) => tab.id === newConv.id);
+          if (existingTab) {
+            return current.map((tab) => ({ ...tab, active: tab.id === newConv.id }));
+          }
+          return [
+            ...current.map((tab) => ({ ...tab, active: false })),
+            { id: newConv.id, title: newConv.title, active: true },
+          ];
+        });
+        unhideConversationIds([newConv.id]);
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : "Failed to fork conversation.";
+        pushNotification({
+          kind: WORKBENCH_NOTIFICATION_KIND.editorNotice,
+          severity: "error",
+          title: "Fork Failed",
+          message,
+          autoDismissMs: 8000,
+          compact: true,
+        });
+      }
+    },
+    [
+      activeConversation,
+      mergeConversationSnapshot,
+      pushNotification,
+      refreshConversations,
+      setTabs,
+      unhideConversationIds,
+    ]
+  );
 
-  const cancelPromptForDraft = useCallback(
+const cancelPromptForDraft = useCallback(
     async (draftId: string) => {
       const conversation = conversationsById[draftId];
       if (!conversation) {
         return;
       }
       try {
-        const result = await cancelAgentConversation(conversation.id);
-        upsertConversation(result.conversation);
+        await cancelConversationFromHook(conversation.id);
       } catch {
-        syncConversationSnapshot(conversation.id);
+        void syncConversationSnapshot(conversation.id).catch(() => undefined);
       }
     },
-    [conversationsById, syncConversationSnapshot, upsertConversation]
+    [cancelConversationFromHook, conversationsById, syncConversationSnapshot]
   );
 
   const expandedComposerState = useMemo(() => {
@@ -2212,22 +1982,50 @@ export function ChatPanel() {
             layout={isEmptyThread ? "empty-top" : "docked-bottom"}
             shellMxClass=""
             draftAttachments={composerDraftAttachments}
-            onDraftAttachmentsChange={(next) =>
-              upsertComposerDraft(composerDraftId, {
-                title: composerDraftTitle,
-                content: composerDraftText,
-                attachments: next,
-              })
-            }
-            draftCaptures={composerDrafts[composerDraftId]?.captures}
-            onDraftCapturesChange={(next) =>
-              upsertComposerDraft(composerDraftId, {
-                title: composerDraftTitle,
-                content: composerDraftText,
-                captures: next,
-              })
-            }
+onDraftAttachmentsChange={(next) =>
+                upsertComposerDraft(composerDraftId, {
+                  title: composerDraftTitle,
+                  attachments: next,
+                })
+              }
+              draftCaptures={composerDrafts[composerDraftId]?.captures}
+              onDraftCapturesChange={(next) =>
+                upsertComposerDraft(composerDraftId, {
+                  title: composerDraftTitle,
+                  captures: next,
+                })
+              }
             />
+  );
+
+  const activeQueueConversationId = activeConversation?.id;
+  const queueDockCollapsed = Boolean(
+    activeQueueConversationId &&
+      workspaceSession.chat.composerQueueDockCollapsedByConversationId?.[activeQueueConversationId]
+  );
+  const onQueueDockCollapsedChange = useCallback(
+    (nextCollapsed: boolean) => {
+      if (!activeQueueConversationId) {
+        return;
+      }
+      updateWorkspaceSession((current) => {
+        const prev = current.chat.composerQueueDockCollapsedByConversationId ?? {};
+        const m = { ...prev };
+        if (nextCollapsed) {
+          m[activeQueueConversationId] = true;
+        } else {
+          delete m[activeQueueConversationId];
+        }
+        return {
+          ...current,
+          chat: {
+            ...current.chat,
+            composerQueueDockCollapsedByConversationId: m,
+          },
+        };
+      });
+    },
+    [activeQueueConversationId, updateWorkspaceSession]
   );
 
   const recentChatsSection = showRecentChatsSection ? (
@@ -2283,10 +2081,17 @@ export function ChatPanel() {
           {!composerHiddenForExpanded ? (
             <div className="shrink-0">
               {activeQueuedPrompts.length > 0 ? (
-                <ComposerQueueDock
+<ComposerQueueDock
                   items={activeQueuedPrompts}
                   onDelete={removeQueuedPromptForActiveChat}
                   onUnqueue={unqueuePromptToComposer}
+                  onEdit={editQueuedPromptForActiveChat}
+                  conversationConfig={activeConversation?.config}
+                  backendLabels={Object.fromEntries(
+                    backends.map((b) => [b.id, b.label ?? b.id])
+                  )}
+                  collapsed={queueDockCollapsed}
+                  onCollapsedChange={onQueueDockCollapsedChange}
                 />
               ) : null}
               {composer}
@@ -2302,27 +2107,37 @@ export function ChatPanel() {
         </div>
       ) : (
         <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
-          <MessageList
-            key={activeTabId}
-            messages={scrollMessages}
-            conversationId={activeTabId}
-            conversationBusy={
-              activeConversation?.status === "running" ||
-              activeConversation?.status === "awaiting_permission"
-            }
-            hasOlderHistory={panelHistoryCursor.hasOlder}
-            loadingOlderHistory={panelHistoryCursor.loadingOlder}
-            onRequestOlderHistory={
-              activeTabId && activeTabId !== "__empty__"
-                ? () => loadOlderConversationHistory(activeTabId)
-                : undefined
-            }
-            onResolvePermission={handleResolveActivePermission}
-            onCancelPermission={handleCancelActivePermission}
-            initialScrollTop={workspaceSession.chat.scrollTopByTabId[activeTabId] ?? 0}
-            onScrollTopSettled={handleScrollTopSettled}
-            bottomDockVisible={!composerHiddenForExpanded}
-          />
+        <MessageList
+          key={activeTabId}
+          messages={scrollMessages}
+          conversationId={activeTabId}
+          conversationBusy={
+            activeConversation?.status === "running" ||
+            activeConversation?.status === "awaiting_permission"
+          }
+          hasOlderHistory={panelHistoryCursor.hasOlder}
+          loadingOlderHistory={panelHistoryCursor.loadingOlder}
+          onRequestOlderHistory={
+            activeTabId && activeTabId !== "__empty__"
+              ? () => loadOlderConversationHistory(activeTabId)
+              : undefined
+          }
+          onResolvePermission={handleResolveActivePermission}
+          onForkMessage={handleForkMessage}
+          initialScrollTop={
+            restoredChatScroll.mode === "restore" &&
+            restoredChatScroll.scrollTop !== undefined
+              ? restoredChatScroll.scrollTop
+              : undefined
+          }
+          initialScrollAnchor={
+            restoredChatScroll.mode === "restore"
+              ? restoredChatScroll.anchor
+              : undefined
+          }
+          onScrollTopSettled={handleScrollTopSettled}
+          bottomDockVisible={!composerHiddenForExpanded}
+        />
           {!composerHiddenForExpanded ? (
             <div className="pointer-events-none absolute inset-x-0 bottom-0 z-30">
               <div className="pointer-events-auto chat-bottom-dock">
@@ -2336,10 +2151,17 @@ export function ChatPanel() {
                 ) : null}
                 {activeQueuedPrompts.length > 0 ? (
                   <div className="px-[10px] pt-[8px]">
-                    <ComposerQueueDock
+<ComposerQueueDock
                       items={activeQueuedPrompts}
                       onDelete={removeQueuedPromptForActiveChat}
                       onUnqueue={unqueuePromptToComposer}
+                      onEdit={editQueuedPromptForActiveChat}
+                      conversationConfig={activeConversation?.config}
+                      backendLabels={Object.fromEntries(
+                        backends.map((b) => [b.id, b.label ?? b.id])
+                      )}
+                      collapsed={queueDockCollapsed}
+                      onCollapsedChange={onQueueDockCollapsedChange}
                     />
                   </div>
                 ) : null}

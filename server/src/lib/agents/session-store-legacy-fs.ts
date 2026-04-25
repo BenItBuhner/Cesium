@@ -147,9 +147,15 @@ export async function legacyFsAppendConversationEvents(
 
     const latest = await legacyFsReadConversationRecord(workspaceId, conversationId);
     const base = latest ?? record;
+    const bumpListRank = appended.some((e) => e.kind === "user_message");
+    const lastUser = bumpListRank
+      ? appended.filter((e) => e.kind === "user_message").at(-1)
+      : undefined;
     const updatedRecord: AgentConversationRecord = {
       ...base,
-      updatedAt: appended[appended.length - 1]?.createdAt ?? now,
+      updatedAt: bumpListRank
+        ? Math.max(base.updatedAt, lastUser?.createdAt ?? now)
+        : base.updatedAt,
       lastEventSeq: appended[appended.length - 1]?.seq ?? record.lastEventSeq,
     };
     await writeJsonFile(
@@ -211,4 +217,20 @@ export async function legacyFsDeleteConversationDir(
   appendQueues.delete(key);
   const dir = getConversationDir(workspaceId, conversationId);
   await fs.rm(dir, { recursive: true, force: true }).catch(() => undefined);
+}
+
+export async function legacyFsRewriteConversationEvents(
+  workspaceId: string,
+  conversationId: string,
+  events: AgentStoredEvent[]
+): Promise<void> {
+  return withConversationQueue(workspaceId, conversationId, async () => {
+    const lines = events.map((event) => JSON.stringify(event)).join("\n");
+    const filePath = getConversationEventsFile(workspaceId, conversationId);
+    if (lines) {
+      await fs.writeFile(filePath, `${lines}\n`, "utf8");
+    } else {
+      await fs.writeFile(filePath, "", "utf8");
+    }
+  });
 }

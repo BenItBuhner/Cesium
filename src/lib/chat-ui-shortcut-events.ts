@@ -6,6 +6,8 @@ export type ChatComposerShortcutAction =
   | "openModeDropdown"
   | "openBackendDropdown"
   | "toggleVoiceInput"
+  | "startVoiceInput"
+  | "stopVoiceInput"
   | "toggleComposerExpand"
   | "attachImage";
 

@@ -33,7 +33,10 @@ import {
   getShortcutBindingsForCommand,
   getShortcutDisplayForCommand,
   tryDispatchKeyboardShortcut,
+  matchesShortcutStep,
+  parseShortcutBinding,
   type ShortcutChordState,
+  type VoiceInputMode,
 } from "@/lib/keyboard-shortcuts";
 import { useShellView } from "@/components/layout/ShellViewContext";
 import {
@@ -42,6 +45,24 @@ import {
 } from "@/lib/chat-ui-shortcut-events";
 
 type PaletteMode = "closed" | "command" | "quickopen";
+
+/**
+ * While focus is inside `[data-ide-input-sink]` (chat composer, dropdowns, etc.),
+ * only shortcuts listed here are evaluated — all others are suppressed so keys like
+ * Mod+S don't fire save. These must include every `chat.action.*` we dispatch from
+ * the keyboard layer, or they never match when the user is typing in the composer.
+ */
+const INPUT_SINK_ALLOWED_SHORTCUT_IDS = [
+  "workbench.action.focusChatPlanMode",
+  "workbench.action.focusChatAgentMode",
+  "chat.action.openWorkspacePicker",
+  "chat.action.openBackendDropdown",
+  "chat.action.openModeDropdown",
+  "chat.action.openModelDropdown",
+  "chat.action.toggleVoiceInput",
+  "chat.action.toggleComposerExpand",
+  "chat.action.attachImage",
+] as const;
 
 function flash(setter: (s: string | null) => void, msg: string) {
   setter(msg);
@@ -66,6 +87,9 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
   const shortcutBindings = settings.keyboardShortcuts.bindings;
   const shortcutPlatform = useMemo(() => detectShortcutPlatform(), []);
   const chordRef = useRef<ShortcutChordState | null>(null);
+  const voiceHoldActiveRef = useRef(false);
+  const voiceInputModeRef = useRef<VoiceInputMode>(settings.keyboardShortcuts.voiceInputMode);
+  voiceInputModeRef.current = settings.keyboardShortcuts.voiceInputMode;
 
   const {
     activeWorkspaceId,
@@ -473,9 +497,18 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
         case "chat.action.openBackendDropdown":
           dispatchChatComposerShortcut("openBackendDropdown");
           break;
-        case "chat.action.toggleVoiceInput":
+      case "chat.action.toggleVoiceInput": {
+        const mode = voiceInputModeRef.current;
+        if (mode === "hold") {
+          if (!voiceHoldActiveRef.current) {
+            voiceHoldActiveRef.current = true;
+            dispatchChatComposerShortcut("startVoiceInput");
+          }
+        } else {
           dispatchChatComposerShortcut("toggleVoiceInput");
-          break;
+        }
+        break;
+      }
         case "chat.action.toggleComposerExpand":
           dispatchChatComposerShortcut("toggleComposerExpand");
           break;
@@ -520,25 +553,15 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
     [runShortcutCommand, shortcutBindings, shortcutPlatform]
   );
 
-  const inputSinkWorkbenchBindings = useMemo(
-    () =>
-      Object.assign(
-        Object.fromEntries(
-          SHORTCUT_COMMAND_DEFINITIONS.map((definition) => [definition.id, [] as string[]])
-        ),
-        {
-          "workbench.action.focusChatPlanMode": getShortcutBindingsForCommand(
-            shortcutBindings,
-            "workbench.action.focusChatPlanMode"
-          ),
-          "workbench.action.focusChatAgentMode": getShortcutBindingsForCommand(
-            shortcutBindings,
-            "workbench.action.focusChatAgentMode"
-          ),
-        }
-      ),
-    [shortcutBindings]
-  );
+  const inputSinkWorkbenchBindings = useMemo(() => {
+    const next = Object.fromEntries(
+      SHORTCUT_COMMAND_DEFINITIONS.map((definition) => [definition.id, [] as string[]])
+    ) as Record<string, string[]>;
+    for (const id of INPUT_SINK_ALLOWED_SHORTCUT_IDS) {
+      next[id] = getShortcutBindingsForCommand(shortcutBindings, id);
+    }
+    return next;
+  }, [shortcutBindings]);
 
   const handleInputSinkWorkbenchKeyDown = useCallback(
     (e: KeyboardEvent) =>
@@ -1077,26 +1100,53 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
       void handleCut(e);
     };
 
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (!voiceHoldActiveRef.current) return;
+      const voiceBindings = getShortcutBindingsForCommand(
+        shortcutBindings,
+        "chat.action.toggleVoiceInput"
+      );
+      for (const bindingStr of voiceBindings) {
+        const parsed = parseShortcutBinding(bindingStr);
+        if (!parsed || parsed.length !== 1) continue;
+        const step = parsed[0];
+        if (!step) continue;
+        if (matchesShortcutStep(e, step, shortcutPlatform)) {
+          voiceHoldActiveRef.current = false;
+          dispatchChatComposerShortcut("stopVoiceInput");
+          return;
+        }
+      }
+      if (e.key === "Meta" || e.key === "Control") {
+        voiceHoldActiveRef.current = false;
+        dispatchChatComposerShortcut("stopVoiceInput");
+      }
+    };
+
     document.addEventListener("keydown", onKeyDown, true);
+    document.addEventListener("keyup", onKeyUp, true);
     document.addEventListener("paste", onPaste, true);
     document.addEventListener("copy", onCopy, true);
     document.addEventListener("cut", onCut, true);
-    return () => {
-      document.removeEventListener("keydown", onKeyDown, true);
-      document.removeEventListener("paste", onPaste, true);
+  return () => {
+    document.removeEventListener("keydown", onKeyDown, true);
+    document.removeEventListener("keyup", onKeyUp, true);
+    document.removeEventListener("paste", onPaste, true);
       document.removeEventListener("copy", onCopy, true);
       document.removeEventListener("cut", onCut, true);
     };
-  }, [
-    bridgeRef,
-    handleInputSinkWorkbenchKeyDown,
-    handleWorkbenchKeyDown,
-    hardwareInputEnabled,
-    routeKeyDown,
-    handlePaste,
-    handleCopy,
-    handleCut,
-  ]);
+}, [
+  bridgeRef,
+  handleInputSinkWorkbenchKeyDown,
+  handleWorkbenchKeyDown,
+  hardwareInputEnabled,
+  routeKeyDown,
+  handlePaste,
+  handleCopy,
+  handleCut,
+  shortcutBindings,
+  shortcutPlatform,
+]);
 
   const onQuickPick = useCallback(
     (entry: QuickOpenEntry) => {

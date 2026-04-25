@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { AtSign, CornerUpLeft, LayoutTemplate, MousePointerSquareDashed } from "lucide-react";
+import { AtSign, CornerUpLeft, GitFork, LayoutTemplate, MousePointerSquareDashed } from "lucide-react";
 import type { ImageAttachment, UserMessageSegment } from "@/lib/types";
 import { ImageCarousel } from "./ImageCarousel";
 
@@ -9,6 +9,7 @@ interface UserMessageProps {
   attachments?: ImageAttachment[];
   showReplyCue?: boolean;
   highlight?: boolean;
+  onFork?: () => void;
 }
 
 export function UserMessage({
@@ -17,6 +18,7 @@ export function UserMessage({
   attachments,
   showReplyCue,
   highlight,
+  onFork,
 }: UserMessageProps) {
   const hasSegments = segments && segments.length > 0;
   const bodyRef = useRef<HTMLDivElement>(null);
@@ -46,21 +48,41 @@ export function UserMessage({
     return () => observer.disconnect();
   }, [content, segments]);
 
+  const toggleExpand = () => {
+    if (overflowing) {
+      setExpanded((current) => !current);
+    }
+  };
+
   return (
     <div
-      className={`group relative overflow-hidden rounded-[var(--radius-card)] border border-[var(--border-card)] bg-[var(--bg-card)] p-[10px] ${showReplyCue ? "pr-[36px]" : ""} ${overflowing ? "pb-[34px]" : ""} ${highlight ? "ring-2 ring-[var(--accent)] ring-opacity-50" : ""}`}
+      className={`group relative overflow-hidden rounded-[var(--radius-card)] border border-[var(--border-card)] bg-[var(--bg-card)] p-[10px] ${highlight ? "ring-2 ring-[var(--accent)] ring-opacity-50" : ""}`}
     >
       {attachments && attachments.length > 0 && (
         <div className="mb-[10px]">
-          <ImageCarousel
-            images={attachments.map((a, i) => ({ ...a, localId: `display-${i}` }))}
-            onRemove={() => {}}
-          />
+        <ImageCarousel
+          images={attachments.map((a, i) => ({ ...a, localId: `display-${i}` }))}
+          readOnly
+        />
         </div>
       )}
       <div
         ref={bodyRef}
-        className={`relative ${expanded ? "" : "overflow-hidden"}`}
+        tabIndex={overflowing ? 0 : undefined}
+        aria-expanded={overflowing ? expanded : undefined}
+        onClick={toggleExpand}
+        onKeyDown={(event) => {
+          if (!overflowing) {
+            return;
+          }
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            toggleExpand();
+          }
+        }}
+        className={`relative text-left ${
+          expanded ? "" : "overflow-hidden"
+        } ${overflowing ? "cursor-pointer" : ""}`}
         style={expanded ? undefined : { maxHeight: 100 }}
       >
         {hasSegments ? (
@@ -83,6 +105,7 @@ export function UserMessage({
                   <span
                     key={i}
                     title={title}
+                    onClick={(event) => event.stopPropagation()}
                     className="mx-[2px] inline-flex max-w-full items-center gap-[5px] rounded-[6px] border border-[var(--border-subtle)] bg-[var(--file-tag-bg)] px-[7px] py-[2px] align-baseline font-sans text-[13px] font-medium text-[var(--file-tag-text)]"
                     data-design-capture-id={s.captureId ?? ""}
                   >
@@ -98,6 +121,7 @@ export function UserMessage({
               return (
                 <span
                   key={i}
+                  onClick={(event) => event.stopPropagation()}
                   className="mx-[2px] inline-flex max-w-full items-center gap-[5px] rounded-[6px] bg-[var(--file-tag-bg)] px-[7px] py-[2px] align-baseline font-sans text-[13px] font-medium text-[var(--file-tag-text)]"
                 >
                   {s.type === "context" ? (
@@ -125,24 +149,27 @@ export function UserMessage({
         )}
 
         {!expanded && overflowing ? (
-          <div className="pointer-events-none absolute inset-x-0 bottom-0 h-[34px] bg-gradient-to-b from-transparent to-[var(--bg-card)]" />
+          <div
+            className="pointer-events-none absolute inset-x-0 bottom-0 h-[28px] bg-gradient-to-b from-transparent to-[var(--bg-card)]"
+            aria-hidden
+          />
         ) : null}
       </div>
 
-      {overflowing ? (
+      {onFork ? (
         <button
           type="button"
-          onClick={() => setExpanded((current) => !current)}
-          className="absolute bottom-[8px] left-[10px] rounded-[6px] px-[6px] py-[3px] font-sans text-[12px] font-medium text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-card-hover)] hover:text-[var(--text-primary)]"
+          onClick={onFork}
+          className="pointer-events-none absolute bottom-[4px] right-[28px] z-20 rounded-[6px] bg-[var(--bg-card)]/85 p-[4px] text-[var(--text-secondary)] opacity-0 transition-[opacity,background-color,color] duration-200 group-hover:pointer-events-auto group-hover:opacity-100 hover:bg-[var(--bg-card-hover)] hover:text-[var(--text-primary)] focus-visible:pointer-events-auto focus-visible:opacity-100"
+          aria-label="Fork chat from here"
         >
-          {expanded ? "Collapse" : "Expand"}
+          <GitFork className="size-[14px]" strokeWidth={1.75} aria-hidden />
         </button>
       ) : null}
-
       {showReplyCue ? (
         <button
           type="button"
-          className="pointer-events-none absolute bottom-[8px] right-[8px] rounded-[6px] p-[4px] text-[var(--text-secondary)] opacity-0 transition-[opacity,background-color,color] duration-200 group-hover:pointer-events-auto group-hover:opacity-100 hover:bg-[var(--bg-card-hover)] hover:text-[var(--text-primary)] focus-visible:pointer-events-auto focus-visible:opacity-100"
+          className="pointer-events-none absolute bottom-[4px] right-[6px] z-20 rounded-[6px] bg-[var(--bg-card)]/85 p-[4px] text-[var(--text-secondary)] opacity-0 transition-[opacity,background-color,color] duration-200 group-hover:pointer-events-auto group-hover:opacity-100 hover:bg-[var(--bg-card-hover)] hover:text-[var(--text-primary)] focus-visible:pointer-events-auto focus-visible:opacity-100"
           aria-label="Reply or edit message"
         >
           <CornerUpLeft className="size-[14px]" strokeWidth={1.75} aria-hidden />

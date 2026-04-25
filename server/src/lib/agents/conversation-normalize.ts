@@ -21,12 +21,14 @@ export function normalizeConversationRecord(
     return {
       ...record,
       ...normalizedMetadata,
+      queuedPrompts: Array.isArray(record.queuedPrompts) ? record.queuedPrompts : [],
     };
   }
   const fallbackBackend = AGENT_BACKENDS[FALLBACK_BACKEND_ID];
   return {
     ...record,
     ...normalizedMetadata,
+    queuedPrompts: Array.isArray(record.queuedPrompts) ? record.queuedPrompts : [],
     status:
       record.status === "running" || record.status === "awaiting_permission"
         ? "idle"

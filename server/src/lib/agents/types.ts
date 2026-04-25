@@ -85,6 +85,7 @@ export type AgentProviderCapabilities = {
   supportsTodos: boolean;
   supportsSessionResume: boolean;
   supportsPromptImages: boolean;
+  supportsInlineReasoning: boolean;
 };
 
 export type AgentBackendInfo = {
@@ -148,6 +149,11 @@ export type AgentStoredEvent =
       /** Shorter label for chat bubbles; full `content` is still sent to the model. */
       displayContent?: string;
       attachments?: Array<{ mimeType: string; data: string; name?: string }>;
+      /**
+       * `true` for events materialized from a source conversation when forking. Ignored
+       * when resolving the first *new* post-fork prompt (seed context) vs inherited rows.
+       */
+      inheritedInFork?: boolean;
       raw?: unknown;
     }
   | {
@@ -193,6 +199,7 @@ export type AgentStoredEvent =
       detail?: string;
       locations?: AgentToolLocation[];
       editPreview?: AgentToolEditPreview;
+      openCodeSubagentSessionId?: string;
       raw?: unknown;
     }
   | {
@@ -208,6 +215,7 @@ export type AgentStoredEvent =
       detail?: string;
       locations?: AgentToolLocation[];
       editPreview?: AgentToolEditPreview;
+      openCodeSubagentSessionId?: string;
       raw?: unknown;
     }
   | {
@@ -264,18 +272,41 @@ export type AgentStoredEvent =
       detail?: string;
       raw?: unknown;
     }
-  | {
-      seq: number;
-      eventId: string;
-      conversationId: string;
-      createdAt: number;
-      kind: "agent_handoff";
-      fromAgent: string;
-      toAgent: string;
-      /** When set, the following user turn with this message id is styled as the handoff message. */
-      handoffMessageId?: string;
-      raw?: unknown;
-    };
+| {
+  seq: number;
+  eventId: string;
+  conversationId: string;
+  createdAt: number;
+  kind: "agent_handoff";
+  fromAgent: string;
+  toAgent: string;
+  /** When set, the following user turn with this message id is styled as the handoff message. */
+  handoffMessageId?: string;
+  /** Number of user turns included in the handoff transcript. */
+  turnCount?: number;
+  /** Number of tool calls included in the handoff transcript. */
+  toolCallCount?: number;
+  raw?: unknown;
+}
+| {
+  seq: number;
+  eventId: string;
+  conversationId: string;
+  createdAt: number;
+  kind: "chat_fork";
+  fromConversationId: string;
+  fromAgent: string;
+  transcript: string;
+  upToMessageId: string | null;
+};
+
+/** Follow-up user prompt waiting while the turn is still running; persisted on the server. */
+export type AgentQueuedChatPrompt = {
+  id: string;
+  text: string;
+  attachments?: Array<{ mimeType: string; data: string; name?: string }>;
+  configOverride?: Partial<AgentConversationConfig> & { backendId?: AgentBackendId };
+};
 
 export type AgentConversationRecord = {
   schemaVersion: 1;
@@ -295,6 +326,8 @@ export type AgentConversationRecord = {
   experimental: boolean;
   archivedAt: number | null;
   lastReadSeq: number;
+  /** FIFO queue; applied automatically when the conversation becomes idle. */
+  queuedPrompts: AgentQueuedChatPrompt[];
 };
 
 export type AgentConversationSnapshot = {
@@ -420,11 +453,24 @@ export type AgentSocketServerMessage =
   | { type: "snapshot_head"; snapshot: AgentConversationSnapshotHead }
   | {
       type: "history_page";
+      workspaceId: string;
       conversationId: string;
       events: AgentStoredEvent[];
       window: AgentConversationEventWindow;
     }
-  | { type: "event"; conversationId: string; event: AgentStoredEvent }
+  | {
+      type: "event";
+      workspaceId: string;
+      conversationId: string;
+      event: AgentStoredEvent;
+    }
+  /** Batched `event` for lower JS parse/Redux churn; always preferred when multiple rows arrived. */
+  | {
+      type: "event_batch";
+      workspaceId: string;
+      conversationId: string;
+      events: AgentStoredEvent[];
+    }
   /**
    * Broadcast to every client on the workspace channel when a conversation's
    * metadata changes (title, updatedAt, status, backendId, etc.). Clients use
@@ -439,7 +485,13 @@ export type AgentSocketServerMessage =
       workspaceId: string;
     }
   | { type: "pong" }
-  | { type: "error"; message: string };
+  | {
+      type: "error";
+      message: string;
+      /** Set for targeted failures (e.g. history) so the client can clear a single load gate. */
+      conversationId?: string;
+      op?: "request_history";
+    };
 
 export function createUnavailableCapabilities(): AgentProviderCapabilities {
   return {
@@ -453,5 +505,6 @@ export function createUnavailableCapabilities(): AgentProviderCapabilities {
     supportsTodos: false,
     supportsSessionResume: false,
     supportsPromptImages: false,
+    supportsInlineReasoning: false,
   };
 }

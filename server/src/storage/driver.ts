@@ -56,7 +56,7 @@ export type AgentProviderCacheRecord = {
  * retry, or surface as an HTTP 409 with the current revision in `details`.
  */
 export class StorageConflictError extends Error {
-  readonly kind: "conflict" = "conflict";
+  readonly kind = "conflict" as const;
   readonly actualRevision: number;
   readonly expectedRevision: number;
 
@@ -181,6 +181,10 @@ export interface StorageDriver {
   appendAgentEvents(
     input: AppendAgentEventsInput
   ): Promise<{ events: AgentStoredEvent[]; newLastSeq: number }>;
+  deleteAgentEvents(input: {
+    conversationId: string;
+    eventIds: string[];
+  }): Promise<number>;
   readAgentEvents(input: ReadAgentEventsInput): Promise<AgentStoredEvent[]>;
   /**
    * Events with seq strictly less than `beforeSeq`, newest-first load capped by

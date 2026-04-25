@@ -59,13 +59,19 @@ export function mergeImportedGlobalAppSlice(
       ...imported.agents,
       cmdTags: imported.agents.cmdTags ?? current.agents.cmdTags,
       modeTags: imported.agents.modeTags ?? current.agents.modeTags,
+      rememberedPermissions:
+        imported.agents.rememberedPermissions ?? current.agents.rememberedPermissions,
+      autoAcceptAllAgentPermissions:
+        typeof imported.agents.autoAcceptAllAgentPermissions === "boolean"
+          ? imported.agents.autoAcceptAllAgentPermissions
+          : current.agents.autoAcceptAllAgentPermissions,
     },
-    models: {
-      models:
-        imported.models?.models && imported.models.models.length > 0
-          ? imported.models.models
-          : current.models.models,
-    },
+      models: {
+        byBackend:
+          imported.models?.byBackend && Object.keys(imported.models.byBackend).length > 0
+            ? imported.models.byBackend
+            : current.models.byBackend,
+      },
     rules: { ...current.rules, ...imported.rules },
     tools: {
       ...current.tools,

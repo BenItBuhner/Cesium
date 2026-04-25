@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, lt, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, lt, or, sql } from "drizzle-orm";
 import { getDb, hasDatabaseUrl } from "../../db/client.js";
 import * as schema from "../../db/schema.js";
 import type {
@@ -84,6 +84,12 @@ function rowToConversation(row: ConversationRow): AgentConversationRecord {
     lastError: row.lastError,
     experimental: row.experimental,
     archivedAt: row.archivedAt,
+    queuedPrompts: Array.isArray(
+      (row as ConversationRow & { queuedPrompts?: unknown }).queuedPrompts
+    )
+      ? (row as ConversationRow & { queuedPrompts: AgentConversationRecord["queuedPrompts"] })
+          .queuedPrompts
+      : [],
   };
 }
 
@@ -613,6 +619,7 @@ export class PgStorageDriver implements StorageDriver {
       lastError: record.lastError ?? null,
       experimental: record.experimental ?? false,
       archivedAt: record.archivedAt ?? null,
+      queuedPrompts: (record.queuedPrompts ?? []) as unknown as unknown[],
     };
     await getDb()
       .insert(schema.agentConversations)
@@ -633,6 +640,7 @@ export class PgStorageDriver implements StorageDriver {
           lastError: values.lastError,
           experimental: values.experimental,
           archivedAt: values.archivedAt,
+          queuedPrompts: values.queuedPrompts,
         },
       });
   }
@@ -688,19 +696,38 @@ export class PgStorageDriver implements StorageDriver {
       await tx.insert(schema.agentEvents).values(rows);
 
       const newLastSeq = stored[stored.length - 1]!.seq;
+      const bumpListRank = stored.some((e) => e.kind === "user_message");
       await tx
         .update(schema.agentConversations)
         .set({
           lastEventSeq: newLastSeq,
-          updatedAt: Math.max(meta.updatedAt, now),
+          updatedAt: bumpListRank ? Math.max(meta.updatedAt, now) : meta.updatedAt,
         })
         .where(eq(schema.agentConversations.id, input.conversationId));
 
-      return { events: stored, newLastSeq };
-    });
-  }
+    return { events: stored, newLastSeq };
+  });
+}
 
-  async readAgentEvents(input: ReadAgentEventsInput): Promise<AgentStoredEvent[]> {
+async deleteAgentEvents(input: {
+  conversationId: string;
+  eventIds: string[];
+}): Promise<number> {
+  if (input.eventIds.length === 0) {
+    return 0;
+  }
+  await getDb()
+    .delete(schema.agentEvents)
+    .where(
+      and(
+        eq(schema.agentEvents.conversationId, input.conversationId),
+        inArray(schema.agentEvents.eventId, input.eventIds)
+      )
+    );
+  return input.eventIds.length;
+}
+
+async readAgentEvents(input: ReadAgentEventsInput): Promise<AgentStoredEvent[]> {
     const limit = input.limit && input.limit > 0 ? Math.min(input.limit, 10_000) : 10_000;
     const rows = await getDb()
       .select()

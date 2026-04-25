@@ -10,7 +10,7 @@ import {
   type MouseEvent,
 } from "react";
 import { createPortal } from "react-dom";
-import { ChevronDown, ChevronRight, Columns2, MoreVertical, Rows2 } from "lucide-react";
+import { ChevronDown, ChevronRight, Columns2, Globe, MoreVertical, Plus, Rows2, Terminal } from "lucide-react";
 import { EditorTab } from "./EditorTab";
 import { useClickOutside } from "@/hooks/useClickOutside";
 import { useTabStripWheel } from "@/hooks/useTabStripWheel";
@@ -66,9 +66,13 @@ interface EditorTabsProps {
   agentTabIndicators?: AgentTabIndicatorByConversationId;
   /** Reserve a trailing slot so an external pane-level control can occupy the far-right edge. */
   trailingSpacerWidthPx?: number;
+  onOpenFilePalette?: () => void;
+  onOpenTerminal?: () => void;
+  onOpenBrowser?: () => void;
 }
 
 const MENU_W = 240;
+const ADD_MENU_W = 200;
 
 function findStripInsertIndex(root: HTMLElement, clientX: number): number {
   const children = [
@@ -113,11 +117,18 @@ export function EditorTabs({
   onMoveTabToStripIndex,
   agentTabIndicators,
   trailingSpacerWidthPx = 0,
+  onOpenFilePalette,
+  onOpenTerminal,
+  onOpenBrowser,
 }: EditorTabsProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [menuPos, setMenuPos] = useState({ top: 0, left: 0 });
   const moreTriggerRef = useRef<HTMLDivElement>(null);
   const menuPopoverRef = useRef<HTMLDivElement>(null);
+  const [addMenuOpen, setAddMenuOpen] = useState(false);
+  const [addMenuPos, setAddMenuPos] = useState({ top: 0, left: 0 });
+  const addTriggerRef = useRef<HTMLDivElement>(null);
+  const addMenuPopoverRef = useRef<HTMLDivElement>(null);
   const stripRef = useRef<HTMLDivElement>(null);
   const dragScrollLastTs = useRef(0);
   const [editingGroupId, setEditingGroupId] = useState<string | null>(null);
@@ -188,6 +199,20 @@ export function EditorTabs({
   }, [menuOpen]);
 
   useClickOutside(moreTriggerRef, closeMenu, menuOpen, [menuPopoverRef]);
+
+  const closeAddMenu = useCallback(() => setAddMenuOpen(false), []);
+
+  useLayoutEffect(() => {
+    if (!addMenuOpen || !addTriggerRef.current) return;
+    const rect = addTriggerRef.current.getBoundingClientRect();
+    const left = Math.max(
+      8,
+      Math.min(rect.right - ADD_MENU_W, window.innerWidth - ADD_MENU_W - 8)
+    );
+    setAddMenuPos({ top: rect.bottom + 4, left });
+  }, [addMenuOpen]);
+
+  useClickOutside(addTriggerRef, closeAddMenu, addMenuOpen, [addMenuPopoverRef]);
 
   const hasTabs = tabs.length > 0;
   const canCloseOthers = tabs.length > 1;
@@ -439,7 +464,34 @@ export function EditorTabs({
         )}
       </div>
 
-      <div className="flex h-[var(--tab-height)] shrink-0 items-center gap-[8px] px-[11px]">
+      <div className="flex h-[var(--tab-height)] shrink-0 items-center gap-[4px] px-[11px]">
+        {onOpenFilePalette && (
+          <div ref={addTriggerRef} className="flex shrink-0 items-center gap-[4px]">
+            <button
+              type="button"
+              onClick={() => {
+                onOpenFilePalette();
+                closeAddMenu();
+              }}
+              className="flex size-[28px] items-center justify-center rounded-[var(--radius-tab)] text-[var(--text-secondary)] transition-colors hover:bg-white/[0.04] hover:text-[var(--text-primary)]"
+              aria-label="Open file"
+            >
+              <Plus className="size-[18px]" strokeWidth={1.5} aria-hidden />
+            </button>
+            {(onOpenTerminal || onOpenBrowser) && (
+              <button
+                type="button"
+                onClick={() => setAddMenuOpen((o) => !o)}
+                className="flex size-[28px] items-center justify-center rounded-[var(--radius-tab)] text-[var(--text-secondary)] transition-colors hover:bg-white/[0.04] hover:text-[var(--text-primary)]"
+                aria-label="More new tab options"
+                aria-expanded={addMenuOpen}
+                aria-haspopup="menu"
+              >
+                <ChevronDown className="size-[14px]" strokeWidth={1.5} aria-hidden />
+              </button>
+            )}
+          </div>
+        )}
         {showSplitToolbar && (
           <button
             type="button"
@@ -472,6 +524,47 @@ export function EditorTabs({
           />
         ) : null}
       </div>
+
+      {addMenuOpen &&
+        createPortal(
+          <div
+            ref={addMenuPopoverRef}
+            role="menu"
+            className="fixed z-[9999] w-[200px] rounded-[var(--radius-card)] border border-[var(--border-card)] bg-[var(--bg-panel)] py-[4px]"
+            style={{ top: addMenuPos.top, left: addMenuPos.left }}
+            onPointerDown={(e) => e.stopPropagation()}
+          >
+            {onOpenTerminal && (
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  onOpenTerminal();
+                  closeAddMenu();
+                }}
+                className="flex w-full items-center gap-[8px] px-[12px] py-[6px] text-left font-sans text-[13px] text-[var(--text-primary)] transition-colors hover:bg-white/[0.06]"
+              >
+                <Terminal className="size-[14px] shrink-0 text-[var(--text-secondary)]" strokeWidth={1.5} />
+                <span className="flex-1">New Terminal</span>
+              </button>
+            )}
+            {onOpenBrowser && (
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  onOpenBrowser();
+                  closeAddMenu();
+                }}
+                className="flex w-full items-center gap-[8px] px-[12px] py-[6px] text-left font-sans text-[13px] text-[var(--text-primary)] transition-colors hover:bg-white/[0.06]"
+              >
+                <Globe className="size-[14px] shrink-0 text-[var(--text-secondary)]" strokeWidth={1.5} />
+                <span className="flex-1">New Browser Tab</span>
+              </button>
+            )}
+          </div>,
+          document.body
+        )}
 
       {menuOpen &&
         createPortal(

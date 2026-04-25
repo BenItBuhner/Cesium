@@ -8,7 +8,7 @@ interface HandoffDividerProps {
   toAgent: string;
 }
 
-function getAgentLabel(agentId: string): string {
+export function getAgentLabel(agentId: string): string {
   switch (agentId) {
     case "cursor-acp":
       return "Cursor";
@@ -40,7 +40,7 @@ function parseHandoffBackendId(raw: string): AgentBackendId | null {
 
 const HANDOFF_ICON_CLASS = "size-[13px] shrink-0";
 
-function HandoffAgentMark({
+export function HandoffAgentMark({
   backendIdRaw,
   label,
 }: {

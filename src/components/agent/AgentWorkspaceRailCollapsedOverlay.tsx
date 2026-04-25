@@ -3,6 +3,7 @@
 import { PanelLeftOpen, Plus, Search } from "lucide-react";
 import { useAgentShellState } from "@/components/agent/AgentShellStateContext";
 import { AGENT_RAIL_OPEN_SEARCH_EVENT } from "@/components/agent/agent-rail-events";
+import { useUserPreferences } from "@/components/preferences/UserPreferencesProvider";
 
 /**
  * When the left rail Panel is collapsed (0% width), show expand / search / new-chat above the shell.
@@ -11,6 +12,8 @@ import { AGENT_RAIL_OPEN_SEARCH_EVENT } from "@/components/agent/agent-rail-even
 export function AgentWorkspaceRailCollapsedOverlay() {
   const { isMobile, leftRailCollapsed, toggleLeftRailCollapsed, startNewConversation } =
     useAgentShellState();
+  const { experimentalIpadWindowedTabInset } = useUserPreferences();
+  const padForWindowChrome = experimentalIpadWindowedTabInset && !isMobile;
 
   if (isMobile || !leftRailCollapsed) {
     return null;
@@ -25,7 +28,11 @@ export function AgentWorkspaceRailCollapsedOverlay() {
 
   return (
     <div
-      className="pointer-events-none absolute left-[11px] top-[11px] z-[50]"
+      className={`pointer-events-none absolute top-[11px] z-[50] ${
+        padForWindowChrome
+          ? "left-0 pl-[var(--editor-window-chrome-tab-inset)]"
+          : "left-[11px]"
+      }`}
       aria-label="Workspace rail quick actions"
     >
       <div className="pointer-events-auto flex items-center gap-[5px]">

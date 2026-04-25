@@ -5,6 +5,12 @@ import { MessageThreadContent } from "./MessageThreadContent";
 import { useOpenInEditor } from "@/components/editor/OpenInEditorContext";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import type { ChatMessage } from "@/lib/types";
+import type { ChatScrollAnchor } from "@/lib/workspace-session";
+
+export type MessageListScrollPersistMeta = {
+  pinnedToBottom: boolean;
+  anchor?: { messageId: string; delta: number };
+};
 
 function inferTranscriptSessionId(messages: ChatMessage[]): string | undefined {
   for (const message of messages) {
@@ -44,9 +50,14 @@ function olderMinBottomSlackPx(root: HTMLDivElement): number {
 interface MessageListProps {
   messages: ChatMessage[];
   initialScrollTop?: number;
-  onScrollTopSettled?: (scrollTop: number) => void;
+  initialScrollAnchor?: ChatScrollAnchor;
+  onScrollTopSettled?: (
+    scrollTop: number,
+    meta: MessageListScrollPersistMeta
+  ) => void;
   onResolvePermission?: (requestId: string, optionId: string) => void;
   onCancelPermission?: (requestId: string) => void;
+  onForkMessage?: (messageId: string) => void;
   bottomDockVisible?: boolean;
   surface?: "panel" | "editor";
   contentClassName?: string;
@@ -61,9 +72,11 @@ interface MessageListProps {
 export function MessageList({
   messages,
   initialScrollTop = 0,
+  initialScrollAnchor: _initialScrollAnchor,
   onScrollTopSettled,
   onResolvePermission,
   onCancelPermission,
+  onForkMessage,
   bottomDockVisible = true,
   surface = "panel",
   contentClassName,
@@ -106,7 +119,9 @@ export function MessageList({
       return;
     }
     persistedScrollTopRef.current = nextScrollTop;
-    onScrollTopSettled(nextScrollTop);
+    onScrollTopSettled(nextScrollTop, {
+      pinnedToBottom: Boolean(stickToBottomRef.current),
+    });
   }, [onScrollTopSettled]);
 
   const schedulePersistedScrollTop = useCallback(() => {
@@ -365,7 +380,7 @@ export function MessageList({
       workedSessionSurface={surface}
       virtualize={useVirtualThread}
       onResolvePermission={onResolvePermission}
-      onCancelPermission={onCancelPermission}
+      onForkMessage={onForkMessage}
       conversationId={conversationId}
       conversationBusy={conversationBusy}
       workedSessionOpenByScopedId={conversationId ? workedMap : undefined}

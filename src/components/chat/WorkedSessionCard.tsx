@@ -4,6 +4,7 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   type ReactNode,
@@ -16,9 +17,10 @@ import {
 import { CollapsibleHeight } from "./CollapsibleHeight";
 import { useOpenInEditor } from "@/components/editor/OpenInEditorContext";
 import { inferEditorLanguageFromPath } from "@/lib/editor-language";
+import { HorizontalFadedScroll } from "./HorizontalFadedScroll";
 import { PermissionRequestCard } from "./PermissionRequestCard";
-import { useAgentShellStateMaybe } from "@/components/agent/AgentShellStateContext";
 import type { ChatMessage, WorkedSessionEntry, WorkedSessionEditPreview } from "@/lib/types";
+import { isAgentTodoJsonDetailString } from "@/lib/agent-chat";
 import {
   formatToolFileLabel,
   resolveWorkspaceToolPath,
@@ -54,11 +56,12 @@ function isToolEntryActive(entry: WorkedSessionEntry): boolean {
 interface WorkedSessionCardProps {
   label: string;
   entries: WorkedSessionEntry[];
+  /** Primary edit row: when `toolDetailsInWorkedCard` is false, diff renders in the main stream. */
   highlightedEntry?: Extract<WorkedSessionEntry, { kind: "tool" }>;
   /** When set with `onOpenChange`, expansion is controlled by the parent (persisted). */
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
-  /** @deprecated Use `open` + `onOpenChange`; still seeds uncontrolled initial state. */
+  /** Seeds uncontrolled initial open when parent does not pass `open`. */
   defaultOpen?: boolean;
   loading?: boolean;
   surface?: "panel" | "editor";
@@ -76,8 +79,7 @@ interface WorkedSessionCardProps {
   toolDetailsInWorkedCard?: boolean;
   /** Permission request message to render inside this card (adjacent in timeline). */
   embeddedPermission?: ChatMessage | null;
-  onResolvePermission?: (requestId: string, optionId: string) => void;
-  onCancelPermission?: (requestId: string) => void;
+  onResolvePermission?: (requestId: string, optionId: string, commandHint?: string) => void;
 }
 
 const ENTRY_LIST_MAX_HEIGHT = 240;
@@ -113,7 +115,7 @@ function toolTitleDisplayedPathLabels(
     entry.files?.find((p) => p?.trim());
   const derivedRead =
     firstFile &&
-    /^read file$/i.test(t) &&
+    /^read( file)?$/i.test(t) &&
     (formatToolFileLabel(firstFile, workspaceRoot ?? undefined) ?? toolPathBasename(firstFile));
   const derivedUpdate =
     firstFile &&
@@ -129,7 +131,11 @@ function toolTitleDisplayedPathLabels(
     (derivedDelete && `Delete ${derivedDelete}`) ||
     entry.title;
   const tEffective = effectiveTitle.trim();
-  if (/^read file$/i.test(tEffective) || /^update file$/i.test(tEffective) || /^delete file$/i.test(tEffective)) {
+  if (
+    /^read( file)?$/i.test(tEffective) ||
+    /^update file$/i.test(tEffective) ||
+    /^delete file$/i.test(tEffective)
+  ) {
     return labels;
   }
   const pathVerb = /^(Read|Update|Delete)\s+(.+)$/i.exec(tEffective);
@@ -152,7 +158,7 @@ function renderToolTitleLine(
     entry.files?.find((p) => p?.trim());
   const derivedRead =
     firstFile &&
-    /^read file$/i.test(t) &&
+    /^read( file)?$/i.test(t) &&
     (formatToolFileLabel(firstFile, workspaceRoot ?? undefined) ?? toolPathBasename(firstFile));
   const derivedUpdate =
     firstFile &&
@@ -169,7 +175,11 @@ function renderToolTitleLine(
     entry.title;
   const tEffective = effectiveTitle.trim();
   /** Avoid treating the literal word "file" as a path (generic "Read file" placeholder). */
-  if (/^read file$/i.test(tEffective) || /^update file$/i.test(tEffective) || /^delete file$/i.test(tEffective)) {
+  if (
+    /^read( file)?$/i.test(tEffective) ||
+    /^update file$/i.test(tEffective) ||
+    /^delete file$/i.test(tEffective)
+  ) {
     return (
       <p className={titleClass}>
         <span>{effectiveTitle}</span>
@@ -222,6 +232,9 @@ function toolBlockDetail(entry: Extract<WorkedSessionEntry, { kind: "tool" }>): 
   if (!d) {
     return undefined;
   }
+  if (isAgentTodoJsonDetailString(d)) {
+    return undefined;
+  }
   if (/^updated\s+/i.test(d)) {
     return undefined;
   }
@@ -234,11 +247,11 @@ function toolBlockDetail(entry: Extract<WorkedSessionEntry, { kind: "tool" }>): 
 function diffLineTone(kind: WorkedSessionEditPreview["lines"][number]["kind"]): string {
   switch (kind) {
     case "add":
-      return "bg-[color-mix(in_srgb,var(--ask-accent)_24%,transparent)]";
+      return "bg-[var(--ask-accent-bg)]";
     case "remove":
-      return "bg-[color-mix(in_srgb,var(--debug-accent)_20%,transparent)]";
+      return "bg-[var(--debug-accent-bg)]";
     case "gap":
-      return "bg-[color-mix(in_srgb,var(--bg-card)_88%,transparent)] italic";
+      return "bg-[color-mix(in_srgb,var(--bg-card)_72%,var(--bg-panel)_28%)]";
     default:
       return "";
   }
@@ -327,6 +340,20 @@ function ToolEditPreviewBlock({
   const showAll = expanded;
   const visibleLines = showAll ? preview.lines : preview.lines.slice(0, defaultLines);
   const hiddenLines = Math.max(0, preview.lines.length - visibleLines.length);
+
+  const isCollapsedGapOrPlaceholder = (line: WorkedSessionEditPreview["lines"][number]) => {
+    if (line.kind !== "gap") {
+      return false;
+    }
+    const t = line.text?.trim() ?? "";
+    if (!t) {
+      return true;
+    }
+    if (/^_+$/.test(t) || t === "…" || t === "..." || /^[·.]+$/.test(t)) {
+      return true;
+    }
+    return false;
+  };
   const shellClass =
     "mt-[8px] overflow-hidden rounded-[var(--radius-card)] border border-[var(--border-card)] bg-[color-mix(in_srgb,var(--bg-card)_82%,transparent)]";
   const openPath = preview.path ? resolveWorkspaceToolPath(preview.path, workspaceRoot ?? undefined) : null;
@@ -358,30 +385,41 @@ function ToolEditPreviewBlock({
       {preview.lines.length > 0 ? (
         <div className="overflow-x-auto">
           <div className="min-w-full font-mono text-[12px] leading-relaxed">
-            {visibleLines.map((line, index) => (
-              <div
-                key={`${line.kind}-${line.oldLineNumber ?? "x"}-${line.newLineNumber ?? "y"}-${index}`}
-                className={`grid grid-cols-[0.875rem_minmax(2.25rem,max-content)_minmax(0,1fr)] items-baseline gap-x-[6px] py-[2px] pl-[6px] pr-[8px] ${diffLineTone(
-                  line.kind
-                )}`}
-              >
-                <span
-                  className={`select-none text-right text-[11px] leading-[1.45] ${diffLineTextClass(line.kind)}`}
+            {visibleLines.map((line, index) => {
+              if (isCollapsedGapOrPlaceholder(line)) {
+                return (
+                  <div
+                    key={`gap-skip-${line.oldLineNumber ?? "x"}-${line.newLineNumber ?? "y"}-${index}`}
+                    className="h-[1px] bg-[var(--border-subtle)]/70"
+                    aria-hidden
+                  />
+                );
+              }
+              return (
+                <div
+                  key={`${line.kind}-${line.oldLineNumber ?? "x"}-${line.newLineNumber ?? "y"}-${index}`}
+                  className={`grid grid-cols-[0.6rem_1.75rem_minmax(0,1fr)] items-baseline gap-x-[4px] py-[1px] pl-[4px] pr-[6px] ${diffLineTone(
+                    line.kind
+                  )}`}
                 >
-                  {diffMarker(line.kind)}
-                </span>
-                <span
-                  className={`select-none text-right tabular-nums text-[11px] leading-[1.45] text-[var(--text-secondary)] ${line.kind === "context" ? "opacity-90" : "opacity-95"}`}
-                >
-                  {unifiedDiffLineNumber(line)}
-                </span>
-                <pre
-                  className={`min-w-0 whitespace-pre-wrap break-words text-[12px] leading-[1.45] text-[var(--text-primary)]`}
-                >
-                  {line.text || " "}
-                </pre>
-              </div>
-            ))}
+                  <span
+                    className={`select-none text-right text-[10px] leading-[1.45] ${diffLineTextClass(line.kind)}`}
+                  >
+                    {diffMarker(line.kind)}
+                  </span>
+                  <span
+                    className={`select-none text-right tabular-nums text-[10px] leading-[1.45] text-[var(--text-secondary)] ${line.kind === "context" ? "opacity-90" : "opacity-95"}`}
+                  >
+                    {unifiedDiffLineNumber(line)}
+                  </span>
+                  <pre
+                    className={`min-w-0 whitespace-pre-wrap break-words text-[12px] leading-[1.45] text-[var(--text-primary)]`}
+                  >
+                    {line.text || " "}
+                  </pre>
+                </div>
+              );
+            })}
           </div>
         </div>
       ) : (
@@ -428,10 +466,8 @@ export function WorkedSessionCard({
   toolDetailsInWorkedCard = true,
   embeddedPermission = null,
   onResolvePermission,
-  onCancelPermission,
 }: WorkedSessionCardProps) {
   const { openExplorerFile } = useOpenInEditor();
-  const agentShell = useAgentShellStateMaybe();
   const isControlled = controlledOpen !== undefined;
   const [uncontrolledOpen, setUncontrolledOpen] = useState(defaultOpen);
   const open = isControlled ? controlledOpen! : uncontrolledOpen;
@@ -448,8 +484,6 @@ export function WorkedSessionCard({
   const hasActiveTool = entries.some((entry) => isToolEntryActive(entry));
   const standaloneHighlighted = highlightedEntry?.editPreview ? highlightedEntry : undefined;
   const preferInside = toolDetailsInWorkedCard;
-  const suppressEditPreviewForToolCallId =
-    preferInside && standaloneHighlighted?.toolCallId ? standaloneHighlighted.toolCallId : undefined;
   const showLoadingState = loading || hasActiveTool;
   const shimmerLoading = showLoadingState && isLiveWorkedTail;
   const isWorkingPlaceholder = showLoadingState && entries.length === 0;
@@ -462,12 +496,63 @@ export function WorkedSessionCard({
     preferInside && embeddedPermission?.type === "permission-request"
       ? embeddedPermission
       : null;
+  const embeddedPermissionEl =
+    embeddedPermissionCard != null ? (
+      <PermissionRequestCard
+        title={embeddedPermissionCard.permissionTitle ?? "Permission required"}
+        detail={embeddedPermissionCard.permissionDetail}
+        options={embeddedPermissionCard.permissionOptions ?? []}
+        resolved={embeddedPermissionCard.permissionResolved}
+        selectedOptionId={embeddedPermissionCard.permissionSelectedOptionId}
+        onSelect={(optionId) => {
+          if (!embeddedPermissionCard.permissionRequestId) {
+            return;
+          }
+          onResolvePermission?.(
+            embeddedPermissionCard.permissionRequestId,
+            optionId,
+            embeddedPermissionCard.permissionDetail
+          );
+        }}
+      />
+    ) : null;
   const hasUnresolvedEmbeddedPermission = Boolean(
     embeddedPermissionCard && !embeddedPermissionCard.permissionResolved
   );
-  const insideDetailBlocks =
+  /** Permission + diffs when there is no tool list (empty worked block, not loading). */
+  const orphanInsideDetails =
     preferInside &&
     (embeddedPermissionCard != null || Boolean(standaloneHighlighted?.editPreview));
+  const workedScrollRows = useMemo(() => {
+    type Row =
+      | { kind: "entry"; entry: WorkedSessionEntry; index: number }
+      | { kind: "permission" };
+    const rows: Row[] = [];
+    if (!hasCollapsibleEntries) {
+      return rows;
+    }
+    const perm = embeddedPermissionCard;
+    const anchor = perm?.permissionLinkedToolCallId;
+    let inserted = false;
+    for (let i = 0; i < entries.length; i += 1) {
+      const entry = entries[i]!;
+      rows.push({ kind: "entry", entry, index: i });
+      if (
+        perm &&
+        !inserted &&
+        anchor &&
+        entry.kind === "tool" &&
+        entry.toolCallId === anchor
+      ) {
+        rows.push({ kind: "permission" });
+        inserted = true;
+      }
+    }
+    if (perm && !inserted) {
+      rows.push({ kind: "permission" });
+    }
+    return rows;
+  }, [hasCollapsibleEntries, entries, embeddedPermissionCard]);
   const prevMessageLoadingRef = useRef(loading);
   const scrollRef = useRef<HTMLDivElement>(null);
   const contentMeasureRef = useRef<HTMLDivElement>(null);
@@ -477,12 +562,9 @@ export function WorkedSessionCard({
   const [showTopGrad, setShowTopGrad] = useState(false);
   const [showBottomGrad, setShowBottomGrad] = useState(false);
 
-  const handleOpenToolFile = useCallback(
-    (path: string) => {
-      if (agentShell && !agentShell.rightPaneOpen) {
-        agentShell.setRightPaneOpen(true);
-      }
-      const language = inferEditorLanguageFromPath(path) ?? "plaintext";
+	const handleOpenToolFile = useCallback(
+		(path: string) => {
+			const language = inferEditorLanguageFromPath(path) ?? "plaintext";
       const lower = path.toLowerCase();
       const icon =
         language === "css"
@@ -501,7 +583,7 @@ export function WorkedSessionCard({
         icon,
       });
     },
-    [agentShell, openExplorerFile]
+	[openExplorerFile]
   );
 
   // Collapse only when the *message-level* working placeholder (`loading`) clears — not when an
@@ -697,28 +779,9 @@ export function WorkedSessionCard({
         </div>
       ) : null}
 
-      {!hasCollapsibleEntries && insideDetailBlocks ? (
+      {!hasCollapsibleEntries && orphanInsideDetails ? (
         <div className="flex flex-col gap-[10px] pt-[8px]">
-          {embeddedPermissionCard ? (
-            <PermissionRequestCard
-              title={embeddedPermissionCard.permissionTitle ?? "Permission required"}
-              detail={embeddedPermissionCard.permissionDetail}
-              options={embeddedPermissionCard.permissionOptions ?? []}
-              resolved={embeddedPermissionCard.permissionResolved}
-              selectedOptionId={embeddedPermissionCard.permissionSelectedOptionId}
-              onSelect={(optionId) => {
-                if (!embeddedPermissionCard.permissionRequestId) {
-                  return;
-                }
-                onResolvePermission?.(embeddedPermissionCard.permissionRequestId, optionId);
-              }}
-              onCancel={
-                embeddedPermissionCard.permissionRequestId && onCancelPermission
-                  ? () => onCancelPermission(embeddedPermissionCard.permissionRequestId!)
-                  : undefined
-              }
-            />
-          ) : null}
+          {embeddedPermissionEl}
           {standaloneHighlighted?.editPreview ? (
             <ToolEditPreviewBlock
               key={`inline-diff-${standaloneHighlighted.toolCallId ?? standaloneHighlighted.title}`}
@@ -733,38 +796,6 @@ export function WorkedSessionCard({
       {hasCollapsibleEntries ? (
         <CollapsibleHeight open={collapsibleOpen}>
           <div className="relative pt-[10px]">
-            {insideDetailBlocks ? (
-              <div className="mb-[10px] flex flex-col gap-[10px]">
-                {embeddedPermissionCard ? (
-                  <PermissionRequestCard
-                    title={embeddedPermissionCard.permissionTitle ?? "Permission required"}
-                    detail={embeddedPermissionCard.permissionDetail}
-                    options={embeddedPermissionCard.permissionOptions ?? []}
-                    resolved={embeddedPermissionCard.permissionResolved}
-                    selectedOptionId={embeddedPermissionCard.permissionSelectedOptionId}
-                    onSelect={(optionId) => {
-                      if (!embeddedPermissionCard.permissionRequestId) {
-                        return;
-                      }
-                      onResolvePermission?.(embeddedPermissionCard.permissionRequestId, optionId);
-                    }}
-                    onCancel={
-                      embeddedPermissionCard.permissionRequestId && onCancelPermission
-                        ? () => onCancelPermission(embeddedPermissionCard.permissionRequestId!)
-                        : undefined
-                    }
-                  />
-                ) : null}
-                {standaloneHighlighted?.editPreview ? (
-                  <ToolEditPreviewBlock
-                    key={`collapsible-diff-${standaloneHighlighted.toolCallId ?? standaloneHighlighted.title}`}
-                    preview={standaloneHighlighted.editPreview}
-                    workspaceRoot={workspaceRoot}
-                    onOpenFile={handleOpenToolFile}
-                  />
-                ) : null}
-              </div>
-            ) : null}
             <div
               ref={scrollRef}
               onScroll={handleScroll}
@@ -777,20 +808,30 @@ export function WorkedSessionCard({
               style={{ maxHeight: ENTRY_LIST_MAX_HEIGHT }}
             >
               <div ref={contentMeasureRef} className="flex flex-col gap-[14px]">
-                {entries.map((entry, i) => (
-                <WorkedEntryBlock
-                  key={
-                    entry.kind === "tool"
-                      ? entry.toolCallId ?? `tool-${i}-${entry.title}`
-                      : `${entry.kind}-${i}`
-                  }
-                  entry={entry}
-                  isLiveWorkedTail={isLiveWorkedTail}
-                  workspaceRoot={workspaceRoot}
-                  onOpenToolFile={handleOpenToolFile}
-                  suppressEditPreviewForToolCallId={suppressEditPreviewForToolCallId}
-                />
-              ))}
+                {workedScrollRows.map((row) =>
+                  row.kind === "permission" ? (
+                    <div
+                      key={`perm-${embeddedPermissionCard?.permissionRequestId ?? "embed"}`}
+                      className="flex flex-col"
+                    >
+                      {embeddedPermissionEl}
+                    </div>
+                  ) : (
+                    <WorkedEntryBlock
+                      key={
+                        row.entry.kind === "tool"
+                          ? row.entry.toolCallId ??
+                            `tool-${row.index}-${row.entry.title}`
+                          : `${row.entry.kind}-${row.index}`
+                      }
+                      entry={row.entry}
+                      isLiveWorkedTail={isLiveWorkedTail}
+                      workspaceRoot={workspaceRoot}
+                      onOpenToolFile={handleOpenToolFile}
+                      horizScrollFadeEdge={gradientVar}
+                    />
+                  )
+                )}
               </div>
             </div>
             {showTopGrad ? (
@@ -817,13 +858,13 @@ function WorkedEntryBlock({
   isLiveWorkedTail,
   workspaceRoot,
   onOpenToolFile,
-  suppressEditPreviewForToolCallId,
+  horizScrollFadeEdge,
 }: {
   entry: WorkedSessionEntry;
   isLiveWorkedTail: boolean;
   workspaceRoot: string | null;
   onOpenToolFile: (path: string) => void;
-  suppressEditPreviewForToolCallId?: string;
+  horizScrollFadeEdge: string;
 }) {
   const [visible, setVisible] = useState(false);
 
@@ -843,7 +884,7 @@ function WorkedEntryBlock({
         isLiveWorkedTail,
         workspaceRoot,
         onOpenToolFile,
-        suppressEditPreviewForToolCallId
+        horizScrollFadeEdge
       )}
     </div>
   );
@@ -854,7 +895,7 @@ function renderEntry(
   isLiveWorkedTail: boolean,
   workspaceRoot: string | null,
   onOpenToolFile: (path: string) => void,
-  suppressEditPreviewForToolCallId?: string
+  horizScrollFadeEdge: string
 ) {
   switch (entry.kind) {
     case "verbatim":
@@ -914,16 +955,6 @@ function renderEntry(
           <div className="min-w-0 flex-1">
             <p className="font-sans text-[13px] font-normal leading-relaxed text-[var(--text-primary)]">
               <span className="text-[var(--text-secondary)]">Thought: </span>
-              {entry.text}
-            </p>
-          </div>
-        </div>
-      );
-    case "assistant_inline":
-      return (
-        <div className="flex gap-[8px]">
-          <div className="min-w-0 flex-1">
-            <p className="font-sans text-[13px] font-normal leading-relaxed text-[var(--text-primary)]">
               {entry.text}
             </p>
           </div>
@@ -990,12 +1021,15 @@ function renderEntry(
               ) : null}
             </div>
             {extraDetail ? (
-              <p className="mt-[4px] line-clamp-4 font-sans text-[12px] font-normal leading-relaxed text-[var(--text-secondary)]">
+              <HorizontalFadedScroll
+                scrollClassName="hide-scrollbar-x mt-[4px] overflow-x-auto font-mono text-[12px] font-normal leading-relaxed text-[var(--text-secondary)] whitespace-pre"
+                edgeColorVar={horizScrollFadeEdge}
+                measureKey={extraDetail}
+              >
                 {extraDetail}
-              </p>
+              </HorizontalFadedScroll>
             ) : null}
-            {entry.editPreview &&
-            entry.toolCallId !== suppressEditPreviewForToolCallId ? (
+            {entry.editPreview ? (
               <ToolEditPreviewBlock
                 preview={entry.editPreview}
                 workspaceRoot={workspaceRoot}

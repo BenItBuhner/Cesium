@@ -10,11 +10,13 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
 import {
   createDefaultThemeConfig,
   loadThemeConfigFromStorage,
   normalizeThemeConfig,
   persistThemeConfigToStorage,
+  serializeThemeConfig,
   THEME_CONFIG_STORAGE_KEY,
   type CustomThemeEntry,
   type ThemeConfig,
@@ -61,7 +63,13 @@ function normalizeConfigIds(config: ThemeConfig): ThemeConfig {
   };
 }
 
+/**
+ * Renders under {@link GlobalSettingsProvider}. Theme is persisted in the same server
+ * blob as the rest of app settings and synced after flush + refetch (see provider).
+ */
 export function ThemeProvider({ children }: { children: ReactNode }) {
+  const { settings, ready, updateSettings } = useGlobalSettings();
+
   const [themeConfig, setThemeConfigState] = useState<ThemeConfig>(() =>
     normalizeConfigIds(
       typeof window === "undefined"
@@ -70,6 +78,8 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     )
   );
 
+  const lastSerializedRef = useRef(serializeThemeConfig(themeConfig));
+  const didMigrateLocalThemeToServer = useRef(false);
   const configRef = useRef(themeConfig);
   configRef.current = themeConfig;
 
@@ -77,12 +87,52 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     applyThemeConfigToDom(themeConfig);
   }, [themeConfig]);
 
-  const commit = useCallback((next: ThemeConfig) => {
-    const normalized = normalizeConfigIds(next);
-    persistThemeConfigToStorage(normalized);
+  const commit = useCallback(
+    (next: ThemeConfig) => {
+      const normalized = normalizeConfigIds(normalizeThemeConfig(next));
+      const json = serializeThemeConfig(normalized);
+      lastSerializedRef.current = json;
+      persistThemeConfigToStorage(normalized);
+      setThemeConfigState(normalized);
+      configRef.current = normalized;
+      applyThemeConfigToDom(normalized);
+      updateSettings((current) => ({ ...current, themeConfig: normalized }));
+    },
+    [updateSettings]
+  );
+
+  useEffect(() => {
+    if (!ready) {
+      return;
+    }
+    if (!didMigrateLocalThemeToServer.current) {
+      didMigrateLocalThemeToServer.current = true;
+      const fromServer = normalizeConfigIds(
+        normalizeThemeConfig(settings.themeConfig)
+      );
+      const fromLocal = loadThemeConfigFromStorage();
+      const baseline = createDefaultThemeConfig();
+      if (
+        serializeThemeConfig(fromServer) === serializeThemeConfig(baseline) &&
+        serializeThemeConfig(fromLocal) !== serializeThemeConfig(baseline)
+      ) {
+        commit(fromLocal);
+        return;
+      }
+    }
+    const normalized = normalizeConfigIds(
+      normalizeThemeConfig(settings.themeConfig)
+    );
+    const json = serializeThemeConfig(normalized);
+    if (json === lastSerializedRef.current) {
+      return;
+    }
+    lastSerializedRef.current = json;
     setThemeConfigState(normalized);
+    configRef.current = normalized;
+    persistThemeConfigToStorage(normalized);
     applyThemeConfigToDom(normalized);
-  }, []);
+  }, [ready, settings.themeConfig, commit]);
 
   const setPreference = useCallback(
     (p: ThemePreference) => {
@@ -200,15 +250,19 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
         const normalized = normalizeConfigIds(
           normalizeThemeConfig(JSON.parse(e.newValue) as unknown)
         );
+        const json = serializeThemeConfig(normalized);
+        lastSerializedRef.current = json;
         setThemeConfigState(normalized);
+        configRef.current = normalized;
         applyThemeConfigToDom(normalized);
+        updateSettings((c) => ({ ...c, themeConfig: normalized }));
       } catch {
         /* ignore */
       }
     };
     window.addEventListener("storage", onStorage);
     return () => window.removeEventListener("storage", onStorage);
-  }, []);
+  }, [updateSettings]);
 
   const value = useMemo(
     () => ({

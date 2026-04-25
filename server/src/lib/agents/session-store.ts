@@ -4,18 +4,31 @@ import { del as cacheDel, getJSON as cacheGetJSON, setJSON as cacheSetJSON } fro
 import { publish, subscribeSync } from "../../cache/pubsub.js";
 import { getStorage } from "../../storage/runtime.js";
 import { normalizeConversationRecord } from "./conversation-normalize.js";
+import { isAgentConversationRankNeutralDelta } from "./conversation-rank.js";
 import { extractToolEditPreview } from "./tool-edit-preview.js";
 import {
+  countUserMessageEvents,
   DEFAULT_PAGE_EVENTS_CAP,
   DEFAULT_PAGE_TURNS,
   EVENT_LOG_FULL_READ_MAX_BYTES,
+  expandSliceToMinUserTurns,
   LARGE_LOG_SNAPSHOT_EVENTS,
   LARGE_LOG_SNAPSHOT_TURNS,
+  MIN_USER_TURNS_IN_INITIAL_HEAD,
+  PAGINATION_MIN_USER_TURNS,
   readConversationEventHistoryPage,
   readConversationEventTailPage,
   takeLastTurnWindow,
+  trimToTurnStart,
 } from "./event-log-read.js";
 import { getConversationEventsFile } from "./session-store-legacy-fs.js";
+import {
+  CONV_LIST_CACHE_TTL_SEC,
+  CONV_SNAPSHOT_HEAD_CACHE_TTL_SEC,
+  RAIL_ALL_FIRST_PAGE_CACHE_KEY,
+  conversationListCacheKey,
+  snapshotHeadCacheKey,
+} from "./cache-keys.js";
 import type {
   AgentBackendId,
   AgentConversationRecord,
@@ -30,23 +43,56 @@ const appendQueues = new Map<string, Promise<void>>();
 const historyReadQueues = new Map<string, Promise<unknown>>();
 const AGENT_STORE_EVENTS_CHANNEL = "opencursor:agent:store-events";
 
-const CONV_LIST_CACHE_PREFIX = "agent:conv-list:";
-const CONV_LIST_CACHE_TTL_SEC = 60;
-const CONV_SNAPSHOT_HEAD_CACHE_PREFIX = "agent:snap-head:";
-const CONV_SNAPSHOT_HEAD_CACHE_TTL_SEC = 30;
+/** `readAgentEvents` caps at 10k rows; if `lastEventSeq` exceeds this, the "prefix" read cannot be the full log. */
+const PG_READ_HEAD_PREFIX_CAP = 10_000;
 
-function conversationListCacheKey(workspaceId: string): string {
-  return `${CONV_LIST_CACHE_PREFIX}${workspaceId}`;
+/**
+ * After a debounced write, repopulate snapshot-head + per-workspace list Redis + the first-page
+ * cross-workspace rail so cold GETs and HTTP revalidation do not repackage huge graphs from raw DB.
+ */
+const agentCacheRefillDebounceByConv = new Map<string, ReturnType<typeof setTimeout>>();
+
+const AGENT_CACHE_REFILL_DEBOUNCE_MS = 650;
+
+function scheduleAgentCacheRefill(
+  workspaceId: string,
+  conversationId: string
+): void {
+  const k = queueKey(workspaceId, conversationId);
+  const t = agentCacheRefillDebounceByConv.get(k);
+  if (t) {
+    clearTimeout(t);
+  }
+  const next = setTimeout(() => {
+    agentCacheRefillDebounceByConv.delete(k);
+    void runAgentCacheRefill(workspaceId, conversationId).catch((err) => {
+      console.error("[agent-store] post-write cache refill failed:", err);
+    });
+  }, AGENT_CACHE_REFILL_DEBOUNCE_MS);
+  next.unref?.();
+  agentCacheRefillDebounceByConv.set(k, next);
 }
 
-function snapshotHeadCacheKey(workspaceId: string, conversationId: string): string {
-  return `${CONV_SNAPSHOT_HEAD_CACHE_PREFIX}${workspaceId}:${conversationId}`;
+async function runAgentCacheRefill(
+  workspaceId: string,
+  conversationId: string
+): Promise<void> {
+  const conversation = await readConversationRecord(workspaceId, conversationId);
+  if (!conversation) {
+    return;
+  }
+  await readConversationSnapshotHead(workspaceId, conversationId, {
+    conversation,
+  });
+  const { repopulateAgentRailFirstPageCache } = await import("./rail-payload.js");
+  await repopulateAgentRailFirstPageCache();
 }
 
 async function invalidateConversationCaches(
   workspaceId: string,
   conversationId?: string
 ): Promise<void> {
+  await cacheDel(RAIL_ALL_FIRST_PAGE_CACHE_KEY);
   await cacheDel(conversationListCacheKey(workspaceId));
   if (conversationId) {
     await cacheDel(snapshotHeadCacheKey(workspaceId, conversationId));
@@ -90,26 +136,63 @@ function fileChangeKinds(rawRecord: Record<string, unknown>): string[] {
     .filter(Boolean);
 }
 
+/** Skip read when the on-disk file is huge (prevents OOM; stat is one syscall vs loading MB). */
+const EDIT_PREVIEW_MAX_FILE_BYTES = 400_000;
+/** Unbounded `Promise.all` on thousands of paths destroys NFS/SSHFS; cap concurrent fs ops. */
+const EDIT_PREVIEW_ENRICH_CONCURRENCY = 32;
+
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  concurrency: number,
+  mapFn: (item: T, index: number) => Promise<R>
+): Promise<R[]> {
+  if (items.length === 0) {
+    return [];
+  }
+  const n = items.length;
+  const out: R[] = new Array(n);
+  let next = 0;
+  const cap = Math.max(1, Math.min(Math.floor(concurrency), n));
+  const worker = async () => {
+    for (;;) {
+      const i = next++;
+      if (i >= n) {
+        return;
+      }
+      out[i] = await mapFn(items[i]!, i);
+    }
+  };
+  await Promise.all(Array.from({ length: cap }, () => worker()));
+  return out;
+}
+
 async function enrichEventsWithDerivedEditPreview(
   events: AgentStoredEvent[]
 ): Promise<AgentStoredEvent[]> {
-  const cache = new Map<string, string | null>();
+  const pathTextCache = new Map<string, string | null>();
   const readText = async (filePath: string): Promise<string | null> => {
-    if (cache.has(filePath)) {
-      return cache.get(filePath) ?? null;
+    if (pathTextCache.has(filePath)) {
+      return pathTextCache.get(filePath) ?? null;
     }
     try {
+      const st = await fs.stat(filePath);
+      if (st.isFile() && st.size > EDIT_PREVIEW_MAX_FILE_BYTES) {
+        pathTextCache.set(filePath, null);
+        return null;
+      }
       const text = await fs.readFile(filePath, "utf8");
-      cache.set(filePath, text);
+      pathTextCache.set(filePath, text);
       return text;
     } catch {
-      cache.set(filePath, null);
+      pathTextCache.set(filePath, null);
       return null;
     }
   };
 
-  return Promise.all(
-    events.map(async (event) => {
+  return mapWithConcurrency(
+    events,
+    EDIT_PREVIEW_ENRICH_CONCURRENCY,
+    async (event) => {
       if (
         (event.kind !== "tool_call" && event.kind !== "tool_call_update") ||
         event.toolKind !== "edit" ||
@@ -155,11 +238,11 @@ async function enrichEventsWithDerivedEditPreview(
         locations:
           event.locations && event.locations.length > 0 ? event.locations : [{ path: p }],
       };
-    })
+    }
   );
 }
 
-const DEFAULT_AGENT_HANDOFF_MESSAGE_LIMIT = 25;
+const DEFAULT_AGENT_HANDOFF_MESSAGE_LIMIT = 50;
 function getAgentHandoffMessageLimit(): number {
   const envVal = process.env.OPENCURSOR_AGENT_HANDOFF_MESSAGE_LIMIT?.trim();
   if (envVal) {
@@ -234,6 +317,7 @@ export async function saveConversationRecord(
 ): Promise<AgentConversationRecord> {
   await (await getStorage()).upsertAgentConversation(record);
   await invalidateConversationCaches(record.workspaceId, record.id);
+  scheduleAgentCacheRefill(record.workspaceId, record.id);
   notify({ type: "conversation", conversation: record });
   return record;
 }
@@ -288,6 +372,7 @@ export async function appendConversationEvents(
       throw new Error(`Unknown conversation: ${conversationId}`);
     }
     await invalidateConversationCaches(workspaceId, conversationId);
+    scheduleAgentCacheRefill(workspaceId, conversationId);
     notify({ type: "conversation", conversation: updated });
     for (const event of appended.events) {
       notify({
@@ -298,6 +383,27 @@ export async function appendConversationEvents(
       });
     }
     return appended.events;
+  });
+}
+
+export async function deleteConversationEvents(
+  workspaceId: string,
+  conversationId: string,
+  eventIds: string[]
+): Promise<void> {
+  if (eventIds.length === 0) {
+    return;
+  }
+
+  return withConversationQueue(workspaceId, conversationId, async () => {
+    const storage = await getStorage();
+    await storage.deleteAgentEvents({ conversationId, eventIds });
+    await invalidateConversationCaches(workspaceId, conversationId);
+    scheduleAgentCacheRefill(workspaceId, conversationId);
+    const updated = await storage.getAgentConversation(conversationId);
+    if (updated) {
+      notify({ type: "conversation", conversation: updated });
+    }
   });
 }
 
@@ -318,6 +424,22 @@ export async function readConversationEvents(
   return enrichEventsWithDerivedEditPreview(events);
 }
 
+function dropDuplicateEventIdsInOrder(events: AgentStoredEvent[]): AgentStoredEvent[] {
+  if (events.length <= 1) {
+    return events;
+  }
+  const seen = new Set<string>();
+  const out: AgentStoredEvent[] = [];
+  for (const e of events) {
+    if (seen.has(e.eventId)) {
+      continue;
+    }
+    seen.add(e.eventId);
+    out.push(e);
+  }
+  return out;
+}
+
 export async function readConversationEventsSince(
   workspaceId: string,
   conversationId: string,
@@ -333,7 +455,7 @@ export async function readConversationEventsSince(
     afterSeq: since,
     limit: 100_000,
   });
-  return enrichEventsWithDerivedEditPreview(events);
+  return enrichEventsWithDerivedEditPreview(dropDuplicateEventIdsInOrder(events));
 }
 
 export async function readRecentConversationEvents(
@@ -361,11 +483,54 @@ export async function readRecentConversationEvents(
   );
 }
 
+export async function readConversationEventsUpToMessage(
+  workspaceId: string,
+  conversationId: string,
+  upToMessageId: string,
+  limitMessages?: number
+): Promise<AgentStoredEvent[]> {
+  const messageLimit = limitMessages ?? getAgentHandoffMessageLimit();
+  const storage = await getStorage();
+  const rec = await storage.getAgentConversation(conversationId);
+  if (!rec || rec.workspaceId !== workspaceId) {
+    return [];
+  }
+  const events = await storage.readRecentAgentEvents(
+    conversationId,
+    messageLimit * 50 + 100
+  );
+  if (events.length === 0) {
+    return [];
+  }
+  const targetSeq = events.find(
+    (e) => e.kind === "user_message" && e.messageId === upToMessageId
+  )?.seq;
+  if (targetSeq == null) {
+    const turns = messageLimit * 2 + 10;
+    const eventsLimit = messageLimit * 50 + 100;
+    return enrichEventsWithDerivedEditPreview(
+      takeLastTurnWindow(events, turns, eventsLimit)
+    );
+  }
+  const sliced = events.filter((e) => e.seq <= targetSeq);
+  const turns = messageLimit * 2 + 10;
+  const eventsLimit = messageLimit * 50 + 100;
+  return enrichEventsWithDerivedEditPreview(
+    takeLastTurnWindow(sliced, turns, eventsLimit)
+  );
+}
+
 export async function readConversationSnapshot(
   workspaceId: string,
-  conversationId: string
+  conversationId: string,
+  preloadedConversation?: AgentConversationRecord | null
 ): Promise<AgentConversationSnapshot | null> {
-  const conversation = await readConversationRecord(workspaceId, conversationId);
+  const conversation =
+    preloadedConversation !== undefined && preloadedConversation !== null
+      ? preloadedConversation.workspaceId === workspaceId
+        ? preloadedConversation
+        : null
+      : await readConversationRecord(workspaceId, conversationId);
   if (!conversation) {
     return null;
   }
@@ -390,13 +555,14 @@ export async function readConversationSnapshot(
     const head = await readConversationSnapshotHead(workspaceId, conversationId, {
       limitTurns: LARGE_LOG_SNAPSHOT_TURNS,
       limitEvents: LARGE_LOG_SNAPSHOT_EVENTS,
+      conversation,
     });
     if (!head) {
       return { conversation, events: [] };
     }
     return {
       conversation: head.conversation,
-      events: await enrichEventsWithDerivedEditPreview(head.events),
+      events: head.events,
     };
   }
 
@@ -414,7 +580,12 @@ export async function readConversationSnapshot(
 export async function readConversationSnapshotHead(
   workspaceId: string,
   conversationId: string,
-  options?: { limitTurns?: number; limitEvents?: number }
+  options?: {
+    limitTurns?: number;
+    limitEvents?: number;
+    /** When already loaded (e.g. by `getConversationSnapshotHead`), avoids a second metadata fetch. */
+    conversation?: AgentConversationRecord | null;
+  }
 ): Promise<AgentConversationSnapshotHead | null> {
   const usingDefaults =
     options?.limitTurns === undefined && options?.limitEvents === undefined;
@@ -427,7 +598,12 @@ export async function readConversationSnapshotHead(
     }
   }
 
-  const conversation = await readConversationRecord(workspaceId, conversationId);
+  const conversation =
+    options?.conversation !== undefined && options.conversation != null
+      ? options.conversation.workspaceId === workspaceId
+        ? options.conversation
+        : null
+      : await readConversationRecord(workspaceId, conversationId);
   if (!conversation) {
     return null;
   }
@@ -461,19 +637,75 @@ export async function readConversationSnapshotHead(
     return result;
   }
 
+  if (conversation.lastEventSeq <= PG_READ_HEAD_PREFIX_CAP) {
+    const allHead = await storage.readAgentEvents({
+      conversationId,
+      afterSeq: 0,
+      limit: 10_000,
+    });
+    const haveFullEventLog =
+      allHead.length > 0 && allHead[allHead.length - 1]!.seq === conversation.lastEventSeq;
+    if (haveFullEventLog) {
+      if (countUserMessageEvents(allHead) < PAGINATION_MIN_USER_TURNS) {
+        const headEvents = await enrichEventsWithDerivedEditPreview(trimToTurnStart(allHead));
+        const result: AgentConversationSnapshotHead = {
+          conversation,
+          events: headEvents,
+          window: {
+            oldestSeq: headEvents[0]?.seq ?? 0,
+            newestSeq: headEvents[headEvents.length - 1]?.seq ?? 0,
+            hasOlder: false,
+          },
+        };
+        if (usingDefaults) {
+          await cacheSetJSON(
+            snapshotHeadCacheKey(workspaceId, conversationId),
+            result,
+            CONV_SNAPSHOT_HEAD_CACHE_TTL_SEC
+          );
+        }
+        return result;
+      }
+      let slice = takeLastTurnWindow(allHead, limitTurns, limitEvents);
+      slice = expandSliceToMinUserTurns(allHead, slice, MIN_USER_TURNS_IN_INITIAL_HEAD);
+      const events = await enrichEventsWithDerivedEditPreview(slice);
+      const result: AgentConversationSnapshotHead = {
+        conversation,
+        events,
+        window: {
+          oldestSeq: events[0]?.seq ?? 0,
+          newestSeq: events[events.length - 1]?.seq ?? 0,
+          hasOlder: (events[0]?.seq ?? 0) > (allHead[0]?.seq ?? 0),
+        },
+      };
+      if (usingDefaults) {
+        await cacheSetJSON(
+          snapshotHeadCacheKey(workspaceId, conversationId),
+          result,
+          CONV_SNAPSHOT_HEAD_CACHE_TTL_SEC
+        );
+      }
+      return result;
+    }
+  }
+
   const raw = await storage.readRecentAgentEvents(
     conversationId,
     Math.min(50_000, conversation.lastEventSeq + 200)
   );
-  const slice = takeLastTurnWindow(raw, limitTurns, limitEvents);
+  let slice = takeLastTurnWindow(raw, limitTurns, limitEvents);
+  slice = expandSliceToMinUserTurns(raw, slice, MIN_USER_TURNS_IN_INITIAL_HEAD);
   const events = await enrichEventsWithDerivedEditPreview(slice);
+  const minSeq = raw[0]?.seq ?? 0;
+  const sliceOldest = slice[0]?.seq ?? 0;
+  const hasOlder = sliceOldest > minSeq || minSeq > 1;
   const result: AgentConversationSnapshotHead = {
     conversation,
     events,
     window: {
       oldestSeq: events[0]?.seq ?? raw[0]?.seq ?? 0,
       newestSeq: events[events.length - 1]?.seq ?? raw[raw.length - 1]?.seq ?? 0,
-      hasOlder: raw.length >= Math.min(50_000, conversation.lastEventSeq + 200),
+      hasOlder,
     },
   };
   if (usingDefaults) {
@@ -533,7 +765,20 @@ export async function readConversationHistoryPage(
       beforeSeq,
       limit: rollingCap,
     });
-    const slice = takeLastTurnWindow(prefix, limitTurns, limitEvents);
+    if (countUserMessageEvents(prefix) < PAGINATION_MIN_USER_TURNS) {
+      const full = trimToTurnStart(prefix);
+      const ev = await enrichEventsWithDerivedEditPreview(full);
+      return {
+        events: ev,
+        window: {
+          oldestSeq: ev[0]?.seq ?? 0,
+          newestSeq: ev[ev.length - 1]?.seq ?? 0,
+          hasOlder: false,
+        },
+      };
+    }
+    let slice = takeLastTurnWindow(prefix, limitTurns, limitEvents);
+    slice = expandSliceToMinUserTurns(prefix, slice, MIN_USER_TURNS_IN_INITIAL_HEAD);
     const oldestSeq = slice[0]?.seq ?? 0;
     const newestSeq = slice[slice.length - 1]?.seq ?? 0;
     const minSeq = prefix[0]?.seq ?? 0;
@@ -570,12 +815,14 @@ export async function updateConversationRecord(
             ...current,
             ...updater,
           } satisfies AgentConversationRecord);
+    const touchListRank = !isAgentConversationRankNeutralDelta(current, next);
     const normalized: AgentConversationRecord = {
       ...next,
-      updatedAt: Date.now(),
+      updatedAt: touchListRank ? Date.now() : current.updatedAt,
     };
     await (await getStorage()).upsertAgentConversation(normalized);
     await invalidateConversationCaches(workspaceId, conversationId);
+    scheduleAgentCacheRefill(workspaceId, conversationId);
     notify({ type: "conversation", conversation: normalized });
     return normalized;
   });

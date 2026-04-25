@@ -35,6 +35,7 @@ build/
 dist/
 
 # misc
+.vendor/
 .DS_Store
 *.pem
 *.log

@@ -81,6 +81,7 @@ import { useAgentConversations } from "@/components/chat/AgentConversationsConte
 import { useViewport } from "@/hooks/useViewport";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { useWorkbench } from "@/components/ide/WorkbenchContext";
+import { useIDECommandRunner } from "@/components/ide/IDECommandContext";
 import { useUserPreferences } from "@/components/preferences/UserPreferencesProvider";
 import { useWorkbenchNotifications } from "@/components/notifications/WorkbenchNotificationProvider";
 import { WORKBENCH_NOTIFICATION_KIND } from "@/components/notifications/workbench-notification-types";
@@ -287,6 +288,7 @@ export function EditorPanel({
   } = useWorkspace();
   const { isMobile } = useViewport();
   const { primarySidebarVisible } = useWorkbench();
+  const runCommand = useIDECommandRunner();
   const { experimentalIpadWindowedTabInset } = useUserPreferences();
   const { openAt } = useWorkbenchContextMenu();
   const { pushNotification, dismiss, dismissByKind } = useWorkbenchNotifications();
@@ -371,17 +373,18 @@ export function EditorPanel({
   }, [state, updateEditorSession]);
 
   const flashNotice = useCallback(
-    (message: string, severity: "info" | "error" = "info") => {
-      pushNotification({
-        kind: WORKBENCH_NOTIFICATION_KIND.editorNotice,
-        severity,
-        title: severity === "error" ? "Editor" : "Notice",
-        message,
-        persistent: false,
-        autoDismissMs: severity === "error" ? 10_000 : 4000,
-      });
-    },
-    [pushNotification]
+  (message: string, severity: "info" | "error" = "info") => {
+    pushNotification({
+      kind: WORKBENCH_NOTIFICATION_KIND.editorNotice,
+      severity,
+      title: severity === "error" ? "Editor" : "Notice",
+      message,
+      persistent: false,
+      autoDismissMs: severity === "error" ? 10_000 : 4000,
+      compact: true,
+    });
+  },
+  [pushNotification]
   );
 
   const findTab = useCallback((tabId: string) => {
@@ -447,6 +450,7 @@ export function EditorPanel({
             message: tab.name,
             persistent: false,
             autoDismissMs: 4000,
+            compact: true,
           });
         }
         return true;
@@ -506,6 +510,14 @@ export function EditorPanel({
     dispatch({ type: "OPEN_BROWSER_TAB", url });
   }, []);
 
+  const openFilePalette = useCallback(() => {
+    runCommand?.("palette.quickOpen");
+  }, [runCommand]);
+
+  const openBrowserUrlPrompt = useCallback(() => {
+    runCommand?.("workbench.action.newBrowser");
+  }, [runCommand]);
+
   const closeTabs = useCallback(
     async (tabsToClose: EditorTab[], action: EditorPanelAction) => {
       const terminalIds = [
@@ -554,6 +566,7 @@ export function EditorPanel({
         title: payload.title,
         messages: payload.messages,
         sessionId: payload.sessionId,
+        conversationId: payload.conversationId,
       });
     };
     const onComposerDraft = (payload: OpenComposerDraftPayload) => {
@@ -744,15 +757,16 @@ export function EditorPanel({
 
       const canSave = tabCanSave(tab);
       dismissByKind(WORKBENCH_NOTIFICATION_KIND.editorCloseConfirm);
-      const nid = pushNotification({
-        kind: WORKBENCH_NOTIFICATION_KIND.editorCloseConfirm,
-        severity: "warning",
-        title: "Save changes?",
-        message: canSave
-          ? `Your changes to "${tab.name}" will be lost if you close the tab without saving.`
-          : `Close "${tab.name}" and discard unsaved changes?`,
-        persistent: true,
-        actions: [
+  const nid = pushNotification({
+    kind: WORKBENCH_NOTIFICATION_KIND.editorCloseConfirm,
+    severity: "warning",
+    title: "Save changes?",
+    message: canSave
+      ? `Your changes to "${tab.name}" will be lost if you close the tab without saving.`
+      : `Close "${tab.name}" and discard unsaved changes?`,
+    persistent: true,
+    compact: true,
+    actions: [
           ...(canSave
             ? [
                 {
@@ -815,16 +829,17 @@ export function EditorPanel({
           : `${dirty.length} files`;
 
       dismissByKind(WORKBENCH_NOTIFICATION_KIND.editorCloseConfirm);
-      const nid = pushNotification({
-        kind: WORKBENCH_NOTIFICATION_KIND.editorCloseConfirm,
-        severity: "warning",
-        title: "Save changes?",
-        message: canSaveAny
-          ? `Save changes to ${label} before closing all tabs in this group?`
-          : "Close all tabs in this group and discard unsaved changes?",
-        persistent: true,
-        actions: [
-          ...(canSaveAny
+  const nid = pushNotification({
+    kind: WORKBENCH_NOTIFICATION_KIND.editorCloseConfirm,
+    severity: "warning",
+    title: "Save changes?",
+    message: canSaveAny
+      ? `Save changes to ${label} before closing all tabs in this group?`
+      : "Close all tabs in this group and discard unsaved changes?",
+    persistent: true,
+    compact: true,
+    actions: [
+      ...(canSaveAny
             ? [
                 {
                   id: "save",
@@ -882,15 +897,16 @@ export function EditorPanel({
           : `${dirty.length} files`;
 
       dismissByKind(WORKBENCH_NOTIFICATION_KIND.editorCloseConfirm);
-      const nid = pushNotification({
-        kind: WORKBENCH_NOTIFICATION_KIND.editorCloseConfirm,
-        severity: "warning",
-        title: "Save changes?",
-        message: canSaveAny
-          ? `Save changes to ${label} before closing the other tabs in this group?`
-          : "Close other tabs and discard unsaved changes?",
-        persistent: true,
-        actions: [
+  const nid = pushNotification({
+    kind: WORKBENCH_NOTIFICATION_KIND.editorCloseConfirm,
+    severity: "warning",
+    title: "Save changes?",
+    message: canSaveAny
+      ? `Save changes to ${label} before closing the other tabs in this group?`
+      : "Close other tabs and discard unsaved changes?",
+    persistent: true,
+    compact: true,
+    actions: [
           ...(canSaveAny
             ? [
                 {
@@ -1540,12 +1556,16 @@ export function EditorPanel({
         />
       );
     }
-    if (tab.transcriptMessages && tab.transcriptMessages.length > 0) {
+    if (
+      tab.transcriptSessionId &&
+      (tab.transcriptLiveConversationId || (tab.transcriptMessages?.length ?? 0) > 0)
+    ) {
       return (
         <AgentTranscriptView
           key={tab.id}
-          messages={tab.transcriptMessages}
+          messages={tab.transcriptMessages ?? []}
           sessionId={tab.transcriptSessionId}
+          liveConversationId={tab.transcriptLiveConversationId}
         />
       );
     }
@@ -1782,6 +1802,9 @@ export function EditorPanel({
           }
           agentTabIndicators={agentTabIndicators}
           trailingSpacerWidthPx={trailingSpacerWidthPx}
+          onOpenFilePalette={openFilePalette}
+          onOpenTerminal={openTerminalTab}
+          onOpenBrowser={openBrowserUrlPrompt}
         />
         <div
           className="flex min-h-0 flex-1 flex-col overflow-hidden"

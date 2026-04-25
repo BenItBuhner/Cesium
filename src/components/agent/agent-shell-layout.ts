@@ -137,3 +137,37 @@ export const AGENT_CENTER_STAGE_CLASS = "w-full";
  */
 export const AGENT_CENTER_CONTENT_CLASS =
   "mx-auto w-full max-w-[min(876px,calc(100%-28px))] @max-[640px]:mx-0 @max-[640px]:max-w-full";
+
+export function getAgentShellRailPixelWidth(viewportWidth: number): number {
+  // Approximate rail width: use expanded width but clamp to viewport constraints
+  const minPercent = AGENT_SHELL_RAIL_MIN_PERCENT / 100;
+  const maxPercent = AGENT_SHELL_RAIL_MAX_PERCENT / 100;
+  const base = AGENT_LEFT_RAIL_EXPANDED_WIDTH;
+  const min = viewportWidth * minPercent;
+  const max = viewportWidth * maxPercent;
+  return Math.max(min, Math.min(base, max));
+}
+
+export function readAgentShellSharedSnapshot(): {
+  leftRailCollapsed?: boolean;
+  agentShellDesktopLayout?: Record<string, number> | null;
+} | null {
+  try {
+    const raw = sessionStorage.getItem("agent-shell-shared-snapshot");
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+export function writeAgentShellSharedSnapshot(value: {
+  leftRailCollapsed?: boolean;
+  agentShellDesktopLayout?: Record<string, number> | null;
+}): void {
+  try {
+    sessionStorage.setItem("agent-shell-shared-snapshot", JSON.stringify(value));
+  } catch {
+    // ignore
+  }
+}

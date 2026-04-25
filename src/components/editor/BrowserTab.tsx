@@ -545,15 +545,16 @@ export function BrowserTab({
       const message =
         error instanceof Error ? error.message : "Failed to open browser console.";
       setConsoleError(message);
-      pushNotification({
-        kind: WORKBENCH_NOTIFICATION_KIND.editorNotice,
-        severity: "error",
-        title: "Browser console unavailable",
-        message: message.includes("Playwright")
-          ? `${message} Run: cd server && npx playwright install chromium`
-          : message,
-        autoDismissMs: 9000,
-      });
+    pushNotification({
+      kind: WORKBENCH_NOTIFICATION_KIND.editorNotice,
+      severity: "error",
+      title: "Browser console unavailable",
+      message: message.includes("Playwright")
+        ? `${message} Run: cd server && npx playwright install chromium`
+        : message,
+      autoDismissMs: 9000,
+      compact: true,
+    });
     }
   }, [
     activeWorkspaceId,

@@ -87,10 +87,10 @@ export function ModelDropdown({
   useClickOutside(triggerRef, close, open, [popoverRef]);
 
   useEffect(() => {
-    if (open && searchInputRef.current) {
+    if (open && ready && searchInputRef.current) {
       searchInputRef.current.focus();
     }
-  }, [open]);
+  }, [open, ready]);
 
   useEffect(() => {
     setHighlightedIndex(0);
@@ -116,7 +116,7 @@ export function ModelDropdown({
     );
   }, [filtered.length]);
 
-  const listMaxHeight = Math.max(96, Math.min(220, position.maxHeight - 44));
+  const listMaxHeight = Math.max(96, Math.min(340, position.maxHeight - 44));
 
   const isActiveChoice = useCallback(
     (m: ModelInfo) => {
@@ -235,8 +235,16 @@ export function ModelDropdown({
             </div>
             <div
               ref={listRef}
-              className="hide-scrollbar-y min-h-0 flex-1 overflow-y-auto overscroll-contain py-[2px]"
-              style={{ maxHeight: listMaxHeight }}
+              className="min-h-0 flex-1 overflow-y-auto overscroll-contain py-[2px]"
+              style={{ maxHeight: listMaxHeight, overscrollBehaviorY: "contain" }}
+              onWheel={(e) => {
+                const el = e.currentTarget;
+                const atTop = el.scrollTop <= 0;
+                const atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 1;
+                if ((atTop && e.deltaY < 0) || (atBottom && e.deltaY > 0)) {
+                  e.preventDefault();
+                }
+              }}
             >
               {filtered.length === 0 && (
                 <p className="px-[10px] py-[8px] font-sans text-[13px] text-[var(--text-disabled)]">

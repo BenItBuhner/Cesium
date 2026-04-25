@@ -6,6 +6,7 @@ import type {
   AgentConversationCreateInput,
   AgentConversationGroupsResult,
   AgentConversationListResult,
+  AgentConversationMetadataPatch,
   AgentConversationRecord,
   AgentConversationSnapshot,
   AgentConversationSnapshotHead,
@@ -14,6 +15,7 @@ import type { WorkspaceSessionState } from "@/lib/workspace-session";
 import type {
   FileNode,
   ImageAttachment,
+  QueuedPromptConfigOverride,
   TerminalInfo,
   WorkspaceInfo,
   WorkspaceRecord,
@@ -606,6 +608,15 @@ export async function createAgentConversation(
   });
 }
 
+export async function generateDraftTitle(
+  text: string
+): Promise<{ title: string }> {
+  return request(`/api/agents/conversations/draft-title`, {
+    method: "POST",
+    body: JSON.stringify({ text }),
+  });
+}
+
 export type AgentConversationSnapshotResponse = {
   snapshot: AgentConversationSnapshot | AgentConversationSnapshotHead;
 };
@@ -618,6 +629,7 @@ export async function fetchAgentConversationSnapshot(
     full?: boolean;
     limitTurns?: number;
     limitEvents?: number;
+    signal?: AbortSignal;
   }
 ): Promise<AgentConversationSnapshotResponse> {
   const params = new URLSearchParams();
@@ -634,13 +646,10 @@ export async function fetchAgentConversationSnapshot(
     params.set("limitEvents", String(options.limitEvents));
   }
   const suffix = params.size > 0 ? `?${params.toString()}` : "";
-  return request(`/api/agents/conversations/${encodeURIComponent(conversationId)}${suffix}`);
-}
-
-export async function fetchOpenCodeSubagentSession(
-  sessionId: string
-): Promise<{ session: unknown }> {
-  return request(`/api/agents/subagents/${encodeURIComponent(sessionId)}`);
+  return request(
+    `/api/agents/conversations/${encodeURIComponent(conversationId)}${suffix}`,
+    options?.signal ? { signal: options.signal } : undefined
+  );
 }
 
 export async function updateAgentConversationConfig(
@@ -653,15 +662,36 @@ export async function updateAgentConversationConfig(
   });
 }
 
+export async function patchAgentConversationMetadata(
+  conversationId: string,
+  patch: AgentConversationMetadataPatch
+): Promise<{ conversation: AgentConversationRecord }> {
+  return request(`/api/agents/conversations/${encodeURIComponent(conversationId)}/metadata`, {
+    method: "PATCH",
+    body: JSON.stringify(patch),
+  });
+}
+
 export async function promptAgentConversation(
   conversationId: string,
   text: string,
-  attachments?: ImageAttachment[]
+  attachments?: ImageAttachment[],
+  configOverride?: QueuedPromptConfigOverride
 ): Promise<AgentConversationSnapshotResponse> {
   return request(`/api/agents/conversations/${encodeURIComponent(conversationId)}/prompt`, {
     method: "POST",
-    body: JSON.stringify({ text, attachments }),
+    body: JSON.stringify({ text, attachments, configOverride }),
   });
+}
+
+export async function deleteAgentConversationQueueItem(
+  conversationId: string,
+  itemId: string
+): Promise<{ conversation: AgentConversationRecord }> {
+  return request(
+    `/api/agents/conversations/${encodeURIComponent(conversationId)}/queue/${encodeURIComponent(itemId)}`,
+    { method: "DELETE" }
+  );
 }
 
 export async function cancelAgentConversation(
@@ -691,6 +721,16 @@ export async function handoffAgentConversation(
   return request(`/api/agents/conversations/${encodeURIComponent(conversationId)}/handoff`, {
     method: "POST",
     body: JSON.stringify({ targetAgentBackend, messageLimit }),
+  });
+}
+
+export async function forkAgentConversation(
+  conversationId: string,
+  options?: { upToMessageId?: string }
+): Promise<{ conversation: AgentConversationRecord }> {
+  return request(`/api/agents/conversations/${encodeURIComponent(conversationId)}/fork`, {
+    method: "POST",
+    body: JSON.stringify(options ?? {}),
   });
 }
 
@@ -759,6 +799,60 @@ export async function saveGlobalSettings(
       skipWorkspaceHeader: true,
     }
   );
+}
+
+export type ModelsByBackendResponse = {
+  byBackend: Record<string, Array<{ id: string; name: string }>>;
+};
+
+export async function fetchModelsByBackend(): Promise<ModelsByBackendResponse> {
+  return request<ModelsByBackendResponse>("/api/settings/models-by-backend", {
+    method: "GET",
+  });
+}
+
+export type ModelToggleEntry = {
+  id: string;
+  name: string;
+  on: boolean;
+  backendId?: string;
+};
+
+export type ModelToggleStateResponse = {
+  byBackend: Record<string, ModelToggleEntry[]>;
+};
+
+export type RefreshModelsResponse = {
+  byBackend: Record<string, ModelToggleEntry[]>;
+  timedOut: string[];
+  failed: string[];
+};
+
+export async function fetchModelToggleState(): Promise<ModelToggleStateResponse> {
+  return request<ModelToggleStateResponse>("/api/settings/models", {
+    method: "GET",
+  });
+}
+
+export async function refreshModelToggleState(): Promise<RefreshModelsResponse> {
+  return request<RefreshModelsResponse>("/api/settings/models/refresh", {
+    method: "POST",
+  });
+}
+
+export type ModelToggleUpdate = {
+  backendId: string;
+  modelId: string;
+  on: boolean;
+};
+
+export async function saveModelToggles(
+  toggles: ModelToggleUpdate[]
+): Promise<ModelToggleStateResponse> {
+  return request<ModelToggleStateResponse>("/api/settings/models/toggles", {
+    method: "PUT",
+    body: JSON.stringify({ toggles }),
+  });
 }
 
 export async function fetchTree(depth?: number): Promise<{

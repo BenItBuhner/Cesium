@@ -6,6 +6,58 @@ import { getStorage } from "../storage/runtime.js";
 import { createWorkspaceId, normalizeWorkspaceRoot } from "./persistence.js";
 import { HOME_WORKSPACE_DISPLAY_NAME } from "./workspace-constants.js";
 
+export async function getHomeWorkspace(): Promise<WorkspaceRecord | null> {
+  try {
+    const root = resolveUserHomeDirectory();
+    const normalized = await normalizeWorkspaceRoot(root);
+    const storage = await getStorage();
+    return storage.getWorkspaceByRoot(normalized);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Removes a workspace from storage and fixes the global workspace profile.
+ * Refuses the Home workspace entry (same rules as `ensureHomeWorkspace`).
+ */
+export async function removeWorkspace(workspaceId: string): Promise<void> {
+  const home = await getHomeWorkspace();
+  if (home && home.id === workspaceId) {
+    throw new Error("The Home workspace cannot be removed.");
+  }
+
+  const storage = await getStorage();
+  const existing = await storage.getWorkspace(workspaceId);
+  if (!existing) {
+    throw new Error(`Unknown workspace: ${workspaceId}`);
+  }
+
+  await storage.deleteWorkspace(workspaceId);
+
+  const profile = await storage.getWorkspaceProfile();
+  const homeId = home?.id ?? null;
+  const remainingRecent = profile.recentWorkspaceIds.filter((id) => id !== workspaceId);
+
+  let defaultWorkspaceId = profile.defaultWorkspaceId;
+  if (defaultWorkspaceId === workspaceId) {
+    defaultWorkspaceId = homeId ?? remainingRecent[0] ?? null;
+  }
+
+  let lastOpenedWorkspaceId = profile.lastOpenedWorkspaceId;
+  if (lastOpenedWorkspaceId === workspaceId) {
+    lastOpenedWorkspaceId = homeId ?? remainingRecent[0] ?? null;
+  }
+
+  await storage.saveWorkspaceProfile({
+    schemaVersion: 1,
+    defaultWorkspaceId,
+    lastOpenedWorkspaceId,
+    recentWorkspaceIds: remainingRecent,
+  });
+  await invalidateWorkspaceCaches(workspaceId);
+}
+
 // Short-lived caches for the hot read paths. Every write helper below calls
 // `invalidateWorkspaceCaches(id?)` so freshness is bounded by "next write",
 // not the TTL. The TTL is the worst-case staleness window if some other

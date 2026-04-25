@@ -473,7 +473,7 @@ async function migrateAgentConversations(
   let skipped = 0;
   let processed = 0;
 
-  let existingIds = new Set<string>();
+  const existingIds = new Set<string>();
   if (!ctx.overwrite) {
     let cursor: string | null | undefined = null;
     while (true) {
@@ -526,7 +526,7 @@ async function migrateAgentEvents(
 ): Promise<MigrationPhaseReport> {
   const errors: MigrationPhaseReport["errors"] = [];
   let migrated = 0;
-  let skipped = 0;
+  const skipped = 0;
 
   // Walk conversations on source, streaming events for each.
   const conversationIds: string[] = [];

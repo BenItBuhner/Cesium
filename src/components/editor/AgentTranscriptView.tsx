@@ -1,98 +1,101 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { MessageThreadContent } from "@/components/chat/MessageThreadContent";
-import { projectOpenCodeExportToChatMessages } from "@/lib/opencode-export-transcript";
 import type { ChatMessage } from "@/lib/types";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
-import { attachSessionToken, syncAuthTokenFromResponse } from "@/lib/auth-client";
 import { EDITOR_CHAT_TRANSCRIPT_CONTAINER_CLASS } from "./agent-chat-layout";
-
-function inferTranscriptSessionId(messages: ChatMessage[]): string | undefined {
-  for (const message of messages) {
-    const match = message.id.match(/(ses_[A-Za-z0-9]+)/);
-    if (match?.[1]) {
-      return match[1];
-    }
-  }
-  return undefined;
-}
+import { useAgentConversations } from "@/components/chat/AgentConversationsContext";
+import {
+  extractLiveSubagentTranscriptFromMessages,
+  projectAgentEventsToChatMessages,
+} from "@/lib/agent-chat";
 
 export function AgentTranscriptView({
   messages,
   sessionId,
+  liveConversationId,
 }: {
   messages: ChatMessage[];
+  /** Retained for tab wiring and live lookup. */
   sessionId?: string;
+  /** When set, replay this conversation so the tab tracks WebSocket / SSE updates. */
+  liveConversationId?: string;
 }) {
   const scrollRootRef = useRef<HTMLDivElement>(null);
-  const [liveMessages, setLiveMessages] = useState<ChatMessage[] | null>(null);
-  const resolvedSessionId = sessionId ?? inferTranscriptSessionId(messages);
-  const { activeWorkspaceId, workspaceInfo } = useWorkspace();
+  const { workspaceInfo } = useWorkspace();
+  const {
+    eventsByConversationId,
+    conversationsById,
+    answerPermissionForConversation,
+  } = useAgentConversations();
+
+  const conversation = liveConversationId ? conversationsById[liveConversationId] : undefined;
+  const events = liveConversationId ? eventsByConversationId[liveConversationId] ?? [] : [];
+
+  const projectedThread = useMemo(
+    () =>
+      liveConversationId
+        ? projectAgentEventsToChatMessages(events, {
+            backendId: conversation?.config.backendId,
+            workspaceRoot: workspaceInfo?.root ?? null,
+          })
+        : [],
+    [liveConversationId, events, conversation?.config.backendId, workspaceInfo?.root]
+  );
+
+  const liveSlice = useMemo(() => {
+    if (!liveConversationId || !sessionId?.trim()) {
+      return null;
+    }
+    return extractLiveSubagentTranscriptFromMessages(projectedThread, sessionId);
+  }, [liveConversationId, sessionId, projectedThread]);
+
+  const parentBusy =
+    conversation?.status === "running" || conversation?.status === "awaiting_permission";
+
+  const conversationBusy =
+    liveConversationId && sessionId?.trim()
+      ? liveSlice != null
+        ? liveSlice.subagentRunning
+        : parentBusy
+      : false;
+
+  const baseTranscript = useMemo(() => {
+    if (liveConversationId && sessionId?.trim() && liveSlice != null) {
+      return liveSlice.transcript;
+    }
+    return messages;
+  }, [liveConversationId, sessionId, liveSlice, messages]);
+
+  const displayMessages = useMemo(() => {
+    if (conversationBusy && baseTranscript.length === 0) {
+      return [
+        {
+          id: `subagent-editor-working-${sessionId ?? "unknown"}`,
+          type: "worked-session" as const,
+          workedLabel: "Working",
+          workedEntries: [],
+          workedDefaultOpen: false,
+          loading: true,
+        },
+      ];
+    }
+    return baseTranscript;
+  }, [conversationBusy, baseTranscript, sessionId]);
+
+  const workedScopeId =
+    liveConversationId && sessionId?.trim()
+      ? `${liveConversationId}::subagent::${sessionId}`
+      : `subagent-editor::${sessionId ?? "local"}`;
 
   useEffect(() => {
-    setLiveMessages(null);
-  }, [sessionId, messages]);
-
-  useEffect(() => {
-    if (!resolvedSessionId || !activeWorkspaceId || typeof window === "undefined") {
+    const el = scrollRootRef.current;
+    if (!el) {
       return;
     }
-    let cancelled = false;
-    let timer: number | null = null;
-
-    const tick = async () => {
-      try {
-        const subagentUrl = new URL(
-          `/api/agents/subagents/${encodeURIComponent(resolvedSessionId)}`,
-          `${window.location.protocol}//${window.location.hostname}:9100`
-        );
-        const response = await fetch(subagentUrl.toString(), {
-          headers: Object.fromEntries(
-            attachSessionToken({
-              "x-opencursor-workspace-id": activeWorkspaceId,
-            }).entries()
-          ),
-          credentials: "include",
-          cache: "no-store",
-        });
-        syncAuthTokenFromResponse(response);
-        if (!response.ok) {
-          throw new Error(`Subagent session fetch failed with status ${response.status}`);
-        }
-        const result = (await response.json()) as { session: unknown };
-        if (cancelled) {
-          return;
-        }
-        const projected = projectOpenCodeExportToChatMessages(result.session);
-        setLiveMessages((current) => {
-          const next = projected.messages;
-          if (JSON.stringify(current) === JSON.stringify(next)) {
-            return current;
-          }
-          return next;
-        });
-        if (!projected.complete) {
-          timer = window.setTimeout(tick, 2000);
-        }
-      } catch {
-        timer = window.setTimeout(tick, 4000);
-      }
-    };
-
-    void tick();
-    return () => {
-      cancelled = true;
-      if (timer != null) {
-        window.clearTimeout(timer);
-      }
-    };
-  }, [activeWorkspaceId, resolvedSessionId]);
-
-  const renderedMessages = useMemo(
-    () => (liveMessages && liveMessages.length > 0 ? liveMessages : messages),
-    [liveMessages, messages]
-  );
+    el.scrollTop = el.scrollHeight;
+  }, [displayMessages]);
 
   return (
     <div
@@ -101,11 +104,20 @@ export function AgentTranscriptView({
     >
       <div className={EDITOR_CHAT_TRANSCRIPT_CONTAINER_CLASS}>
         <MessageThreadContent
-          messages={renderedMessages}
-          stickyUserHeader
+          messages={displayMessages}
+          stickyUserHeader={false}
           scrollRootRef={scrollRootRef}
           workedSessionSurface="editor"
           workspaceRoot={workspaceInfo?.root ?? null}
+          conversationId={workedScopeId}
+          conversationBusy={conversationBusy}
+          onResolvePermission={
+            liveConversationId
+              ? (requestId, optionId) => {
+                  void answerPermissionForConversation(liveConversationId, requestId, optionId);
+                }
+              : undefined
+          }
         />
       </div>
     </div>

@@ -2,6 +2,9 @@ import { randomUUID } from "node:crypto";
 import {
   appendConversationEvents,
   createConversationId,
+  deleteConversationEvents,
+  readConversationEvents,
+  readConversationEventsUpToMessage,
   readConversationRecord,
   readConversationSnapshot,
   readConversationSnapshotHead,
@@ -10,6 +13,8 @@ import {
   updateConversationRecord,
   listWorkspaceConversationRecords,
 } from "./session-store.js";
+import { remapSourceEventsForFork } from "./fork-event-clone.js";
+import { generateConversationTitle } from "./title-generator.js";
 import {
   PROMPT_CONTEXT_LIMIT_EVENTS,
   PROMPT_CONTEXT_LIMIT_TURNS,
@@ -30,11 +35,13 @@ import type {
   AgentConversationConfigPatch,
   AgentConversationCreateInput,
   AgentConversationListResult,
+  AgentConversationMetadataPatch,
   AgentConversationRecord,
   AgentConversationSnapshot,
   AgentConversationSnapshotHead,
   AgentEventInput,
   AgentProvider,
+  AgentQueuedChatPrompt,
   AgentStoredEvent,
   AgentSessionHandle,
 } from "./types.js";
@@ -145,9 +152,97 @@ function buildPromptTextWithHandoffContext(input: {
   ].join("\n");
 }
 
+function resolvePendingForkContext(
+  events: AgentStoredEvent[]
+): { transcript: string; fromAgent: string; fromConversationId: string } | null {
+  const ordered = [...events].sort((left, right) => left.seq - right.seq);
+  let forkEvent: Extract<AgentStoredEvent, { kind: "chat_fork" }> | undefined;
+  for (let index = ordered.length - 1; index >= 0; index -= 1) {
+    const event = ordered[index];
+    if (event?.kind === "chat_fork") {
+      forkEvent = event;
+      break;
+    }
+  }
+  if (!forkEvent) {
+    return null;
+  }
+  if (
+    ordered.some(
+      (event) =>
+        event.seq > forkEvent!.seq &&
+        event.kind === "user_message" &&
+        !("inheritedInFork" in event && event.inheritedInFork)
+    )
+  ) {
+    return null;
+  }
+  if (!forkEvent.transcript.trim()) {
+    return null;
+  }
+  return {
+    transcript: forkEvent.transcript,
+    fromAgent: forkEvent.fromAgent,
+    fromConversationId: forkEvent.fromConversationId,
+  };
+}
+
+function buildPromptTextWithForkContext(input: {
+  transcript: string;
+  fromAgent: string;
+  userText: string;
+  hasAttachments: boolean;
+}): string {
+  const trimmedUserText = input.userText.trim();
+  const nextTurn = trimmedUserText || (input.hasAttachments ? "[User attached images without text.]" : "");
+  return [
+    `You are continuing a conversation that was forked from another chat with ${input.fromAgent}.`,
+    "The transcript below is part of the current prompt. Treat it as authoritative context that the user has provided right now.",
+    "If the next user message refers to earlier details, answer from the supplied transcript instead of saying the context is unavailable.",
+    "",
+    "<forked_conversation>",
+    input.transcript,
+    "</forked_conversation>",
+    "",
+    "<current_user_message>",
+    nextTurn,
+    "</current_user_message>",
+    "",
+    "Reply to the current user message directly.",
+  ].join("\n");
+}
+
+function buildPromptTextWithSessionRecoveryContext(input: {
+  transcript: string;
+  backendId: string;
+  userPromptText: string;
+  hasAttachments: boolean;
+}): string {
+  const trimmedUserText = input.userPromptText.trim();
+  const nextTurn =
+    trimmedUserText || (input.hasAttachments ? "[User attached images without text.]" : "");
+  return [
+    `The previous ${input.backendId} provider session could not be resumed.`,
+    "You are running in a freshly started provider session.",
+    "Use the transcript below as authoritative context from the previous session before replying.",
+    "",
+    "<recovered_conversation>",
+    input.transcript,
+    "</recovered_conversation>",
+    "",
+    "<current_user_message>",
+    nextTurn,
+    "</current_user_message>",
+    "",
+    "Reply to the current user message directly.",
+  ].join("\n");
+}
+
 type ActiveRuntime = {
+  workspaceId: string;
   provider: AgentProvider;
   handle: AgentSessionHandle;
+  sessionRecoveryTranscript?: string;
 };
 
 type AgentRuntimeManagerOptions = {
@@ -302,6 +397,7 @@ export class AgentRuntimeManager {
       experimental: Boolean(backend.experimental),
       archivedAt: null,
       lastReadSeq: 0,
+      queuedPrompts: [],
     };
     await saveConversationRecord(record);
     this.warmConversationRuntime(workspace, record);
@@ -336,51 +432,108 @@ export class AgentRuntimeManager {
       };
     }
 
-    const fromAgent = sourceRecord.config.backendId;
-    const toAgent = resolvedTargetBackendId;
+  const fromAgent = sourceRecord.config.backendId;
+  const toAgent = resolvedTargetBackendId;
 
-    const recentEvents = await readRecentConversationEvents(
-      workspace.id,
-      sourceConversationId,
-      messageLimit
+  const recentEvents = await readRecentConversationEvents(
+    workspace.id,
+    sourceConversationId,
+    messageLimit
+  );
+
+  const transcript = generateTranscriptFromEvents(recentEvents);
+  const turnCount = recentEvents.filter((e) => e.kind === "user_message").length;
+  const toolCallCount = recentEvents.filter((e) => e.kind === "tool_call").length;
+
+  const supersededEventIds: string[] = [];
+  {
+    const allEvents = await readConversationEvents(workspace.id, sourceConversationId);
+    const sorted = [...allEvents].sort((a, b) => a.seq - b.seq);
+    const lastUserSeq = sorted.reduce(
+      (max, e) => (e.kind === "user_message" && e.seq > max ? e.seq : max),
+      -1
     );
-
-    const transcript = generateTranscriptFromEvents(recentEvents);
-    const targetBackend = this.backends[resolvedTargetBackendId];
-
-    const transcriptMessageId = randomUUID();
-    const handoffEventId = randomUUID();
-    const now = Date.now();
-    const handoffEvents: AgentEventInput[] = [];
-    if (transcript.trim()) {
-      handoffEvents.push(
-        {
-          eventId: randomUUID(),
-          conversationId: sourceConversationId,
-          kind: "assistant_message_chunk",
-          messageId: transcriptMessageId,
-          text: transcript,
-          createdAt: now,
-        },
-        {
-          eventId: transcriptMessageId,
-          conversationId: sourceConversationId,
-          kind: "assistant_message_end",
-          messageId: transcriptMessageId,
-          stopReason: "tool_call",
-          createdAt: now,
+    const trailing: Array<{
+      eventId: string;
+      transcriptMessageId: string | null;
+    }> = [];
+    for (let i = sorted.length - 1; i >= 0; i -= 1) {
+      const event = sorted[i];
+      if (event.kind === "agent_handoff" && event.seq > lastUserSeq) {
+        let transcriptMessageId: string | null = null;
+        for (let j = i - 1; j >= 0; j -= 1) {
+          const prev = sorted[j];
+          if (
+            prev.kind === "assistant_message_end" &&
+            prev.seq > lastUserSeq
+          ) {
+            transcriptMessageId = prev.messageId;
+            break;
+          }
+          if (prev.kind === "user_message" || prev.seq <= lastUserSeq) {
+            break;
+          }
         }
-      );
+        trailing.unshift({ eventId: event.eventId, transcriptMessageId });
+      } else {
+        break;
+      }
     }
-    handoffEvents.push({
-      eventId: handoffEventId,
-      conversationId: sourceConversationId,
-      kind: "agent_handoff",
-      fromAgent,
-      toAgent,
-      createdAt: now + 1,
-    });
-    await appendConversationEvents(workspace.id, sourceConversationId, handoffEvents);
+    for (const { eventId, transcriptMessageId } of trailing) {
+      supersededEventIds.push(eventId);
+      if (transcriptMessageId) {
+        for (const e of sorted) {
+          if (
+            (e.kind === "assistant_message_chunk" || e.kind === "assistant_message_end") &&
+            e.messageId === transcriptMessageId
+          ) {
+            supersededEventIds.push(e.eventId);
+          }
+        }
+      }
+    }
+  }
+
+  const targetBackend = this.backends[resolvedTargetBackendId];
+
+  const transcriptMessageId = randomUUID();
+  const handoffEventId = randomUUID();
+  const now = Date.now();
+  const handoffEvents: AgentEventInput[] = [];
+  if (transcript.trim()) {
+    handoffEvents.push(
+      {
+        eventId: randomUUID(),
+        conversationId: sourceConversationId,
+        kind: "assistant_message_chunk",
+        messageId: transcriptMessageId,
+        text: transcript,
+        createdAt: now,
+      },
+      {
+        eventId: transcriptMessageId,
+        conversationId: sourceConversationId,
+        kind: "assistant_message_end",
+        messageId: transcriptMessageId,
+        stopReason: "tool_call",
+        createdAt: now,
+      }
+    );
+  }
+  handoffEvents.push({
+    eventId: handoffEventId,
+    conversationId: sourceConversationId,
+    kind: "agent_handoff",
+    fromAgent,
+    toAgent,
+    turnCount,
+    toolCallCount,
+    createdAt: now + 1,
+  });
+    if (supersededEventIds.length > 0) {
+    await deleteConversationEvents(workspace.id, sourceConversationId, supersededEventIds);
+  }
+  await appendConversationEvents(workspace.id, sourceConversationId, handoffEvents);
 
     await this.disposeRuntime(sourceConversationId);
     const updatedRecord = await updateConversationRecord(
@@ -411,24 +564,76 @@ export class AgentRuntimeManager {
     };
   }
 
+  async forkConversation(
+    workspace: WorkspaceRecord,
+    sourceConversationId: string,
+    options?: { upToMessageId?: string }
+  ): Promise<{ conversation: AgentConversationRecord }> {
+    const sourceRecord = await readConversationRecord(workspace.id, sourceConversationId);
+    if (!sourceRecord) {
+      throw new Error(`Unknown source conversation: ${sourceConversationId}`);
+    }
+    if (
+      sourceRecord.status === "running" ||
+      sourceRecord.status === "awaiting_permission"
+    ) {
+      throw new Error(
+        "Wait for the current reply or cancel before forking this conversation."
+      );
+    }
+
+    const recentEvents = options?.upToMessageId
+      ? await readConversationEventsUpToMessage(
+          workspace.id,
+          sourceConversationId,
+          options.upToMessageId
+        )
+      : await readRecentConversationEvents(workspace.id, sourceConversationId);
+
+    const transcript = generateTranscriptFromEvents(recentEvents);
+
+    const newConversation = await this.createConversation(workspace, {
+      backendId: sourceRecord.config.backendId,
+      mode: sourceRecord.config.mode,
+      modelId: sourceRecord.config.modelId,
+      modelName: sourceRecord.config.modelName,
+      title: `${sourceRecord.title} (fork)`,
+    });
+
+    const forkEventId = randomUUID();
+    const forkMarker: AgentEventInput = {
+      eventId: forkEventId,
+      conversationId: newConversation.id,
+      kind: "chat_fork",
+      fromConversationId: sourceConversationId,
+      fromAgent: sourceRecord.config.backendId,
+      transcript,
+      upToMessageId: options?.upToMessageId ?? null,
+    };
+    const inheritedEvents = remapSourceEventsForFork(recentEvents, newConversation.id);
+    await appendConversationEvents(workspace.id, newConversation.id, [
+      forkMarker,
+      ...inheritedEvents,
+    ]);
+
+    return { conversation: newConversation };
+  }
+
   async getConversationSnapshot(
     workspace: WorkspaceRecord,
     conversationId: string,
     options?: { hydrateRuntime?: boolean }
   ): Promise<AgentConversationSnapshot | null> {
-    let record = await readConversationRecord(workspace.id, conversationId);
+    const record = await readConversationRecord(workspace.id, conversationId);
     if (!record) {
       return null;
     }
     if (options?.hydrateRuntime) {
-      try {
-        await this.ensureRuntime(workspace, record);
-        record = (await readConversationRecord(workspace.id, conversationId)) ?? record;
-      } catch (error) {
+      void this.ensureRuntime(workspace, record).catch(async (error) => {
         await this.persistRuntimeFailure(workspace.id, conversationId, error);
-      }
+      });
     }
-    const snapshot = await readConversationSnapshot(workspace.id, conversationId);
+    const snapshot = await readConversationSnapshot(workspace.id, conversationId, record);
     if (!snapshot) {
       return null;
     }
@@ -447,21 +652,19 @@ export class AgentRuntimeManager {
       limitEvents?: number;
     }
   ): Promise<AgentConversationSnapshotHead | null> {
-    let record = await readConversationRecord(workspace.id, conversationId);
+    const record = await readConversationRecord(workspace.id, conversationId);
     if (!record) {
       return null;
     }
     if (options?.hydrateRuntime) {
-      try {
-        await this.ensureRuntime(workspace, record);
-        record = (await readConversationRecord(workspace.id, conversationId)) ?? record;
-      } catch (error) {
+      void this.ensureRuntime(workspace, record).catch(async (error) => {
         await this.persistRuntimeFailure(workspace.id, conversationId, error);
-      }
+      });
     }
     const head = await readConversationSnapshotHead(workspace.id, conversationId, {
       limitTurns: options?.limitTurns,
       limitEvents: options?.limitEvents,
+      conversation: record,
     });
     if (!head) {
       return null;
@@ -538,45 +741,98 @@ export class AgentRuntimeManager {
     return record;
   }
 
+  async updateConversationMetadata(
+    workspace: WorkspaceRecord,
+    conversationId: string,
+    patch: AgentConversationMetadataPatch
+  ): Promise<AgentConversationRecord> {
+    return updateConversationRecord(workspace.id, conversationId, (current) => {
+      let next: AgentConversationRecord = { ...current };
+      if (patch.archived === true) {
+        next = { ...next, archivedAt: Date.now() };
+      } else if (patch.archived === false) {
+        next = { ...next, archivedAt: null };
+      }
+      if (typeof patch.lastReadSeq === "number" && Number.isFinite(patch.lastReadSeq)) {
+        const v = Math.floor(patch.lastReadSeq);
+        next = {
+          ...next,
+          lastReadSeq: Math.max(0, Math.min(next.lastEventSeq, v)),
+        };
+      }
+      return next;
+    });
+  }
+
   async promptConversation(
     workspace: WorkspaceRecord,
     conversationId: string,
     text: string,
-    attachments?: Array<{ mimeType: string; data: string; name?: string }>
+    attachments?: Array<{ mimeType: string; data: string; name?: string }>,
+    options?: { configOverride?: AgentQueuedChatPrompt["configOverride"] }
   ): Promise<AgentConversationSnapshotHead> {
     const trimmed = text.trim();
     if (!trimmed && (!attachments || attachments.length === 0)) {
-      throw new Error("Prompt text or attachments are required.");
-    }
+    throw new Error("Prompt text or attachments are required.");
+  }
 
-    let record = await readConversationRecord(workspace.id, conversationId);
-    if (!record) {
-      throw new Error(`Unknown conversation: ${conversationId}`);
+  const record = await readConversationRecord(workspace.id, conversationId);
+  if (!record) {
+    throw new Error(`Unknown conversation: ${conversationId}`);
+  }
+  if (record.status === "running" || record.status === "awaiting_permission") {
+    const entryId = randomUUID();
+    const entry: AgentQueuedChatPrompt = {
+      id: entryId,
+      text: trimmed,
+      ...(attachments && attachments.length > 0 ? { attachments } : {}),
+      ...(options?.configOverride && Object.keys(options.configOverride).length > 0
+        ? { configOverride: options.configOverride }
+        : {}),
+    };
+    await updateConversationRecord(workspace.id, conversationId, (current) => ({
+      ...current,
+      queuedPrompts: [...(current.queuedPrompts ?? []), entry],
+    }));
+    const head = await readConversationSnapshotHead(workspace.id, conversationId);
+    if (!head) {
+      throw new Error("Conversation disappeared after queueing prompt.");
     }
-    if (record.status === "running" || record.status === "awaiting_permission") {
-      throw new Error("This conversation is already busy.");
-    }
+    return {
+      ...head,
+      conversation: this.withBackendDefaults(head.conversation),
+    };
+  }
 
-    if (record.title === "New chat" || record.lastEventSeq === 0) {
-      record = await updateConversationRecord(workspace.id, conversationId, {
-        ...record,
-        title: truncateConversationTitle(trimmed),
-      });
-    }
+  if (record.title === "New chat" || record.lastEventSeq === 0) {
+    void generateConversationTitle(workspace.id, conversationId, trimmed);
+  }
 
-    const pendingHandoffContext =
-      record.lastEventSeq > 0
-        ? resolvePendingHandoffContext(
-            (await readConversationSnapshot(workspace.id, conversationId))?.events ?? []
-          )
-        : null;
-    const runtimePromptText = pendingHandoffContext
-      ? buildPromptTextWithHandoffContext({
-          ...pendingHandoffContext,
-          userText: trimmed,
-          hasAttachments: Boolean(attachments?.length),
-        })
-      : trimmed;
+const pendingHandoffContext =
+  record.lastEventSeq > 0
+    ? resolvePendingHandoffContext(
+        (await readConversationSnapshot(workspace.id, conversationId))?.events ?? []
+      )
+    : null;
+const pendingForkContext =
+  !pendingHandoffContext && record.lastEventSeq > 0
+    ? resolvePendingForkContext(
+        (await readConversationSnapshot(workspace.id, conversationId))?.events ?? []
+      )
+    : null;
+const runtimePromptText = pendingHandoffContext
+  ? buildPromptTextWithHandoffContext({
+      ...pendingHandoffContext,
+      userText: trimmed,
+      hasAttachments: Boolean(attachments?.length),
+    })
+  : pendingForkContext
+    ? buildPromptTextWithForkContext({
+        ...pendingForkContext,
+        userText: trimmed,
+        hasAttachments: Boolean(attachments?.length),
+      })
+    : trimmed;
 
     const userMessageId = randomUUID();
     const designMatch = trimmed.match(/`design:([^`]+)`/);
@@ -602,8 +858,20 @@ export class AgentRuntimeManager {
     }));
 
     const runtime = await this.ensureRuntime(workspace, record);
+    const runtimeText =
+      runtime.sessionRecoveryTranscript && runtimePromptText.trim().length > 0
+        ? buildPromptTextWithSessionRecoveryContext({
+            transcript: runtime.sessionRecoveryTranscript,
+            backendId: record.config.backendId,
+            userPromptText: runtimePromptText,
+            hasAttachments: Boolean(attachments?.length),
+          })
+        : runtimePromptText;
+    if (runtime.sessionRecoveryTranscript) {
+      delete runtime.sessionRecoveryTranscript;
+    }
     void runtime.handle
-      .prompt({ text: runtimePromptText, userMessageId, attachments })
+      .prompt({ text: runtimeText, userMessageId, attachments })
       .catch(() => undefined);
     const head = await readConversationSnapshotHead(workspace.id, conversationId);
     if (!head) {
@@ -613,6 +881,72 @@ export class AgentRuntimeManager {
       ...head,
       conversation: this.withBackendDefaults(head.conversation),
     };
+  }
+
+  async removeQueuedPrompt(
+    workspace: WorkspaceRecord,
+    conversationId: string,
+    itemId: string
+  ): Promise<AgentConversationRecord> {
+    return updateConversationRecord(workspace.id, conversationId, (current) => ({
+      ...current,
+      queuedPrompts: (current.queuedPrompts ?? []).filter((q) => q.id !== itemId),
+    }));
+  }
+
+  /**
+   * Pops the next server-side queued prompt and starts it. Caller must only
+   * invoke when the conversation is idle; errors re-insert the item at the front.
+   */
+  async drainOneQueuedPrompt(
+    workspace: WorkspaceRecord,
+    conversationId: string
+  ): Promise<void> {
+    const record = await readConversationRecord(workspace.id, conversationId);
+    if (!record || record.status !== "idle" || !record.queuedPrompts.length) {
+      return;
+    }
+    const [head, ...rest] = record.queuedPrompts;
+    await updateConversationRecord(workspace.id, conversationId, (current) => ({
+      ...current,
+      queuedPrompts: rest,
+    }));
+
+    const reinsertHead = async (): Promise<void> => {
+      await updateConversationRecord(workspace.id, conversationId, (current) => ({
+        ...current,
+        queuedPrompts: [head, ...(current.queuedPrompts ?? [])],
+      }));
+    };
+
+    try {
+      const override = head.configOverride;
+      if (override) {
+        const rec = (await readConversationRecord(workspace.id, conversationId)) ?? record;
+        if (override.backendId && override.backendId !== rec.config.backendId) {
+          await this.handoffConversation(
+            workspace,
+            conversationId,
+            this.resolveBackendId(override.backendId)
+          );
+        }
+        if (override.mode || override.modelId) {
+          const patch: AgentConversationConfigPatch = {};
+          if (override.mode) patch.mode = override.mode;
+          if (override.modelId) {
+            patch.modelId = override.modelId;
+            patch.modelName = override.modelName;
+          }
+          if (Object.keys(patch).length > 0) {
+            await this.updateConversationConfig(workspace, conversationId, patch);
+          }
+        }
+      }
+      await this.promptConversation(workspace, conversationId, head.text, head.attachments, {});
+    } catch (error) {
+      console.error("[agent] drainOneQueuedPrompt failed; restoring queue head:", error);
+      await reinsertHead();
+    }
   }
 
   async cancelConversation(
@@ -803,6 +1137,14 @@ export class AgentRuntimeManager {
     workspace: WorkspaceRecord,
     record: AgentConversationRecord
   ): Promise<ActiveRuntime> {
+    const buildRecoveryTranscript = async (): Promise<string> => {
+      if (record.lastEventSeq <= 0) {
+        return "";
+      }
+      const recentEvents = await readRecentConversationEvents(workspace.id, record.id);
+      return generateTranscriptFromEvents(recentEvents).trim();
+    };
+
     const latest = await readConversationRecord(workspace.id, record.id);
     if (!latest) {
       throw new Error(`Unknown conversation: ${record.id}`);
@@ -811,22 +1153,26 @@ export class AgentRuntimeManager {
 
     const existing = this.runtimes.get(record.id);
     if (existing) {
-      const disk = await readConversationRecord(workspace.id, record.id);
-      if (!disk) {
-        await this.disposeRuntime(record.id);
-      } else if (existing.provider.backend.id !== disk.config.backendId) {
-        await this.disposeRuntime(record.id);
-      } else if (
-        disk.providerSessionId !== null &&
-        disk.providerSessionId !== existing.handle.sessionId
-      ) {
+      if (existing.workspaceId !== workspace.id) {
         await this.disposeRuntime(record.id);
       } else {
-        return existing;
+        const disk = await readConversationRecord(workspace.id, record.id);
+        if (!disk) {
+          await this.disposeRuntime(record.id);
+        } else if (existing.provider.backend.id !== disk.config.backendId) {
+          await this.disposeRuntime(record.id);
+        } else if (
+          disk.providerSessionId !== null &&
+          disk.providerSessionId !== existing.handle.sessionId
+        ) {
+          await this.disposeRuntime(record.id);
+        } else {
+          return existing;
+        }
       }
     }
 
-    const provider = await this.createProviderFn(record.config.backendId);
+    let provider = await this.createProviderFn(record.config.backendId);
     const callbacks = {
       workspace,
       conversation: record,
@@ -861,28 +1207,91 @@ export class AgentRuntimeManager {
       try {
         handle = await provider.loadSession(callbacks, record.providerSessionId);
       } catch (error) {
-        const message =
+        const resumeErrorMessage =
           error instanceof Error ? error.message : "Failed to resume ACP session.";
-        await updateConversationRecord(workspace.id, record.id, (current) => ({
-          ...current,
-          providerSessionId: null,
-        }));
-        await appendConversationEvents(workspace.id, record.id, [
-          {
-            eventId: randomUUID(),
-            conversationId: record.id,
-            kind: "system",
-            level: "warning",
-            text: `Could not resume the previous provider session. Starting a fresh one instead. ${message}`,
-          },
-        ]);
-        handle = await provider.startSession(callbacks);
+        let retriedHandle: AgentSessionHandle | null = null;
+        let secondAttemptErrorMessage: string | null = null;
+        try {
+          provider = await this.createProviderFn(record.config.backendId);
+          retriedHandle = await provider.loadSession(callbacks, record.providerSessionId);
+        } catch (retryError) {
+          secondAttemptErrorMessage =
+            retryError instanceof Error ? retryError.message : "Failed to resume ACP session.";
+        }
+
+        if (retriedHandle) {
+          handle = retriedHandle;
+          await appendConversationEvents(workspace.id, record.id, [
+            {
+              eventId: randomUUID(),
+              conversationId: record.id,
+              kind: "system",
+              level: "warning",
+              text: `Recovered provider session resume after retry. ${
+                secondAttemptErrorMessage ?? resumeErrorMessage
+              }`,
+            },
+          ]);
+        } else {
+          const recoveredTranscript = await buildRecoveryTranscript();
+          const fallbackReason = secondAttemptErrorMessage ?? resumeErrorMessage;
+          await updateConversationRecord(workspace.id, record.id, (current) => ({
+            ...current,
+            providerSessionId: null,
+          }));
+          await appendConversationEvents(workspace.id, record.id, [
+            {
+              eventId: randomUUID(),
+              conversationId: record.id,
+              kind: "system",
+              level: "warning",
+              text: `Could not resume the previous provider session after retry. Restarting provider session and preserving context from transcript fallback. ${fallbackReason}`,
+            },
+            ...(recoveredTranscript
+              ? [
+                  {
+                    eventId: randomUUID(),
+                    conversationId: record.id,
+                    kind: "chat_fork" as const,
+                    fromConversationId: record.id,
+                    fromAgent: record.config.backendId,
+                    transcript: recoveredTranscript,
+                    upToMessageId: null,
+                  },
+                ]
+              : []),
+          ]);
+          handle = await provider.startSession(callbacks);
+          const runtime: ActiveRuntime = {
+            workspaceId: workspace.id,
+            provider,
+            handle,
+            ...(recoveredTranscript ? { sessionRecoveryTranscript: recoveredTranscript } : {}),
+          };
+          this.runtimes.set(record.id, runtime);
+          return runtime;
+        }
       }
     } else {
       handle = await provider.startSession(callbacks);
+      const recoveredTranscript = await buildRecoveryTranscript();
+      if (recoveredTranscript) {
+        const runtime: ActiveRuntime = {
+          workspaceId: workspace.id,
+          provider,
+          handle,
+          sessionRecoveryTranscript: recoveredTranscript,
+        };
+        this.runtimes.set(record.id, runtime);
+        return runtime;
+      }
     }
 
-    const runtime: ActiveRuntime = { provider, handle };
+    const runtime: ActiveRuntime = {
+      workspaceId: workspace.id,
+      provider,
+      handle,
+    };
     this.runtimes.set(record.id, runtime);
     return runtime;
   }

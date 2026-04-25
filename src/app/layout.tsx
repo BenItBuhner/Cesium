@@ -5,6 +5,7 @@ import { AuthProvider } from "@/components/auth/AuthProvider";
 import { AuthGate } from "@/components/auth/AuthGate";
 import { ServerConnectionsProvider } from "@/components/preferences/ServerConnectionsProvider";
 import { UserPreferencesProvider } from "@/components/preferences/UserPreferencesProvider";
+import { GlobalSettingsProvider } from "@/components/preferences/GlobalSettingsProvider";
 import { RegisterServiceWorker } from "@/components/pwa/RegisterServiceWorker";
 import { ThemeProvider } from "@/components/theme/ThemeProvider";
 import { USER_PREFERENCES_STORAGE_KEY } from "@/lib/preferences";
@@ -74,15 +75,17 @@ export default function RootLayout({
           {preferencesBootstrap}
         </Script>
         <RegisterServiceWorker />
-        <ThemeProvider>
-          <ServerConnectionsProvider>
-            <AuthProvider>
-              <AuthGate>
-                <UserPreferencesProvider>{children}</UserPreferencesProvider>
-              </AuthGate>
-            </AuthProvider>
-          </ServerConnectionsProvider>
-        </ThemeProvider>
+        <GlobalSettingsProvider>
+          <ThemeProvider>
+            <ServerConnectionsProvider>
+              <AuthProvider>
+                <AuthGate>
+                  <UserPreferencesProvider>{children}</UserPreferencesProvider>
+                </AuthGate>
+              </AuthProvider>
+            </ServerConnectionsProvider>
+          </ThemeProvider>
+        </GlobalSettingsProvider>
       </body>
     </html>
   );

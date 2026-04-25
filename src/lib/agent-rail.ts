@@ -97,7 +97,6 @@ export function isAgentRailFilterActive(toggles: AgentRailFilterToggleState): bo
 }
 
 export type AgentRailFilterMatchContext = {
-  archivedConversationIds: Set<string>;
   pinnedConversationIds: Set<string>;
   unreadCompletionByConversationId: Record<string, true> | undefined;
 };
@@ -111,7 +110,7 @@ export function matchesAgentRailMultiFilter(
   toggles: AgentRailFilterToggleState,
   ctx: AgentRailFilterMatchContext
 ): boolean {
-  const isArchived = ctx.archivedConversationIds.has(conversation.id);
+  const isArchived = conversation.archivedAt != null;
   const isPinned = ctx.pinnedConversationIds.has(conversation.id);
   const isUnread = Boolean(ctx.unreadCompletionByConversationId?.[conversation.id]);
   const anyToggle = isAgentRailFilterActive(toggles);

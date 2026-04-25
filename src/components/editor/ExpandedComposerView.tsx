@@ -100,21 +100,19 @@ export function ExpandedComposerView({
           layout="empty-top"
           variant="expanded"
           draftAttachments={draftAttachments}
-          onDraftAttachmentsChange={(next) =>
-            upsertComposerDraft(draftId, {
-              title: controller.title,
-              content,
-              attachments: next,
-            })
-          }
-          draftCaptures={draftCaptures}
-          onDraftCapturesChange={(next) =>
-            upsertComposerDraft(draftId, {
-              title: controller.title,
-              content,
-              captures: next,
-            })
-          }
+onDraftAttachmentsChange={(next) =>
+              upsertComposerDraft(draftId, {
+                title: controller.title,
+                attachments: next,
+              })
+            }
+            draftCaptures={draftCaptures}
+            onDraftCapturesChange={(next) =>
+              upsertComposerDraft(draftId, {
+                title: controller.title,
+                captures: next,
+              })
+            }
         />
       </div>
     </div>

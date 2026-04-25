@@ -20,8 +20,11 @@ export type ShortcutCommandDefinition = {
 
 export type KeyboardShortcutBindingsMap = Record<string, string[]>;
 
+export type VoiceInputMode = "hold" | "toggle";
+
 export type KeyboardShortcutsSettingsState = {
   bindings: KeyboardShortcutBindingsMap;
+  voiceInputMode: VoiceInputMode;
 };
 
 export type ParsedShortcutStep = {
@@ -160,10 +163,10 @@ export const SHORTCUT_COMMAND_DEFINITIONS: ShortcutCommandDefinition[] = [
     defaultBindings: [],
   },
   {
-    id: "chat.action.toggleVoiceInput",
-    label: "Chat: Toggle voice input",
-    section: "Chat",
-    defaultBindings: [],
+  id: "chat.action.toggleVoiceInput",
+  label: "Chat: Voice Transcription",
+  section: "Chat",
+  defaultBindings: ["Mod+T"],
   },
   {
     id: "chat.action.toggleComposerExpand",
@@ -172,10 +175,10 @@ export const SHORTCUT_COMMAND_DEFINITIONS: ShortcutCommandDefinition[] = [
     defaultBindings: [],
   },
   {
-    id: "chat.action.attachImage",
-    label: "Chat: Attach image",
-    section: "Chat",
-    defaultBindings: [],
+  id: "chat.action.attachImage",
+  label: "Chat: Attach Image",
+  section: "Chat",
+  defaultBindings: ["Mod+U"],
   },
   {
     id: "workbench.action.openFile",
@@ -328,6 +331,7 @@ export const DEFAULT_KEYBOARD_SHORTCUT_BINDINGS: KeyboardShortcutBindingsMap =
 export function createDefaultKeyboardShortcutsState(): KeyboardShortcutsSettingsState {
   return {
     bindings: { ...DEFAULT_KEYBOARD_SHORTCUT_BINDINGS },
+    voiceInputMode: "toggle",
   };
 }
 
@@ -376,6 +380,19 @@ function normalizeKeyToken(raw: string): string | null {
   }
 
   return null;
+}
+
+export function normalizeKeyForCapture(key: string): string {
+  const fromAlias = KEY_ALIASES.get(key.toLowerCase());
+  if (fromAlias) return fromAlias;
+
+  if (key.startsWith("F") && /^F\d{1,2}$/i.test(key)) return key.toUpperCase();
+  if (/^[a-z]$/i.test(key)) return key.toUpperCase();
+  if (/^\d$/.test(key)) return key;
+
+  if (/^[A-Z][a-zA-Z0-9]+$/.test(key)) return key;
+
+  return key;
 }
 
 export function parseShortcutBinding(binding: string): ParsedShortcutStep[] | null {
@@ -493,10 +510,19 @@ export function normalizeShortcutBindingsMap(
       rawBindings[legacyAgentCommandId],
       []
     );
-    // Migrate the old default Mod+I binding from agent mode to the new plan mode
-    // command without clobbering users who already customized both commands.
     if (legacyBindings.length === 1 && legacyBindings[0] === "Mod+I") {
       result[legacyAgentCommandId] = [];
+    }
+  }
+
+  for (const definition of SHORTCUT_COMMAND_DEFINITIONS) {
+    if (
+      result[definition.id].length === 0 &&
+      definition.defaultBindings.length > 0 &&
+      (definition.id === "chat.action.attachImage" ||
+        definition.id === "chat.action.toggleVoiceInput")
+    ) {
+      result[definition.id] = [...definition.defaultBindings];
     }
   }
 
@@ -508,12 +534,19 @@ export function normalizeKeyboardShortcutsState(
 ): KeyboardShortcutsSettingsState {
   const bindings =
     raw && typeof raw === "object" && "bindings" in raw
-      ? normalizeShortcutBindingsMap(
-          (raw as { bindings?: unknown }).bindings
-        )
-      : normalizeShortcutBindingsMap(raw);
+    ? normalizeShortcutBindingsMap(
+      (raw as { bindings?: unknown }).bindings
+    )
+    : normalizeShortcutBindingsMap(raw);
 
-  return { bindings };
+  const rawMode =
+    raw && typeof raw === "object" && "voiceInputMode" in raw
+    ? (raw as { voiceInputMode?: unknown }).voiceInputMode
+    : undefined;
+  const voiceInputMode: VoiceInputMode =
+    rawMode === "hold" ? "hold" : "toggle";
+
+  return { bindings, voiceInputMode };
 }
 
 export function getShortcutBindingsForCommand(

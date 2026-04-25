@@ -649,7 +649,7 @@ function startSeedRefresh(
   return promise;
 }
 
-/**
+/** 
  * Eagerly refresh every backend's config cache in the background. Intended for
  * server boot: kicks off CLI probes without blocking startup, so the first
  * request finds a warm cache rather than paying the CLI latency tax itself.
@@ -660,6 +660,57 @@ export function warmupAgentBackendCaches(
   return Promise.allSettled(
     backendIds.map((backendId) => startSeedRefresh(backendId))
   ).then(() => undefined);
+}
+
+const FORCE_REFRESH_TIMEOUT_MS = 15_000;
+
+export type ForceRefreshResult = {
+  byBackend: Record<string, AgentConfigOption[]>;
+  timedOut: AgentBackendId[];
+  failed: AgentBackendId[];
+};
+
+export async function forceRefreshAllBackendCaches(
+  backendIds: AgentBackendId[]
+): Promise<ForceRefreshResult> {
+  const byBackend: Record<string, AgentConfigOption[]> = {};
+  const timedOut: AgentBackendId[] = [];
+  const failed: AgentBackendId[] = [];
+
+  const results = await Promise.allSettled(
+    backendIds.map(async (backendId) => {
+      const refreshPromise = startSeedRefresh(backendId);
+      const result = await Promise.race([
+        refreshPromise,
+        new Promise<"timeout">((resolve) =>
+          setTimeout(() => resolve("timeout"), FORCE_REFRESH_TIMEOUT_MS)
+        ),
+      ]);
+      return { backendId, result };
+    })
+  );
+
+  for (const settled of results) {
+    if (settled.status === "rejected") {
+      const backendId = backendIds[results.indexOf(settled)];
+      failed.push(backendId);
+      continue;
+    }
+    const { backendId, result } = settled.value;
+    if (result === "timeout") {
+      timedOut.push(backendId);
+      const cached = await readAgentBackendConfigCache(backendId).catch(
+        () => []
+      );
+      if (cached.length > 0) {
+        byBackend[backendId] = cached;
+      }
+    } else {
+      byBackend[backendId] = result;
+    }
+  }
+
+  return { byBackend, timedOut, failed };
 }
 
 /**

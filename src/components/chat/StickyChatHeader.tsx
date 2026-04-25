@@ -13,6 +13,8 @@ interface StickyChatHeaderProps {
   /** Pixels to shift this sticky block upward while the next user turn approaches (scroll-driven). */
   pushUpPx?: number;
   registerStickyEl?: (order: number, el: HTMLDivElement | null) => void;
+  /** User `ChatMessage.id` for scroll restore / anchor queries on the sticky root. */
+  dataChatMessageId?: string;
   children: ReactNode;
 }
 
@@ -25,6 +27,7 @@ export function StickyChatHeader({
   stackOrder,
   pushUpPx = 0,
   registerStickyEl,
+  dataChatMessageId,
   children,
 }: StickyChatHeaderProps) {
   const ref = useRef<HTMLDivElement>(null);
@@ -57,12 +60,17 @@ export function StickyChatHeader({
   }
 
   if (!enabled) {
-    return <div className="shrink-0">{children}</div>;
+    return (
+      <div className="shrink-0" data-chat-message-id={dataChatMessageId}>
+        {children}
+      </div>
+    );
   }
 
   return (
     <div
       ref={setRefs}
+      data-chat-message-id={dataChatMessageId}
       style={allowSticky ? { top: CHAT_STICKY_RAIL_INSET_PX - pushUpPx } : undefined}
       className={
         allowSticky

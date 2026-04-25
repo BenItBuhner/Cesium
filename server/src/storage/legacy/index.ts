@@ -443,6 +443,31 @@ export class LegacyJsonStorageDriver implements StorageDriver {
     };
   }
 
+  async deleteAgentEvents(input: {
+    conversationId: string;
+    eventIds: string[];
+  }): Promise<number> {
+    if (input.eventIds.length === 0) {
+      return 0;
+    }
+    const existing = await this.getAgentConversation(input.conversationId);
+    if (!existing) {
+      return 0;
+    }
+    const eventIdSet = new Set(input.eventIds);
+    const all = await legacyFs.legacyFsReadConversationEvents(
+      existing.workspaceId,
+      input.conversationId
+    );
+    const remaining = all.filter((e) => !eventIdSet.has(e.eventId));
+    await legacyFs.legacyFsRewriteConversationEvents(
+      existing.workspaceId,
+      input.conversationId,
+      remaining
+    );
+    return eventIdSet.size;
+  }
+
   async readAgentEvents(input: ReadAgentEventsInput): Promise<AgentStoredEvent[]> {
     const existing = await this.getAgentConversation(input.conversationId);
     if (!existing) return [];

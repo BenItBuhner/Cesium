@@ -15,6 +15,7 @@ delete process.env.REDIS_URL;
 delete process.env.DATABASE_URL;
 delete process.env.OPENCURSOR_STORAGE_DRIVER;
 process.env.OPENCURSOR_DATA_DIR = TEST_DATA_DIR;
+process.env.WORKSPACE_ALLOWED_ROOTS = TEST_DATA_DIR;
 process.env.NODE_ENV = "test";
 
 const { ensureDataDir } = await import("../src/lib/persistence.js");

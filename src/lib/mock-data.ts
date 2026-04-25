@@ -22,7 +22,6 @@ export const chatMessages: ChatMessage[] = [
     id: "msg-worked1",
     type: "worked-session",
     workedLabel: "Worked for 1m 52s",
-    workedDefaultOpen: false,
     workedEntries: [
       {
         kind: "verbatim",
@@ -118,7 +117,6 @@ export const chatMessages: ChatMessage[] = [
         id: "sub-tr-2",
         type: "worked-session",
         workedLabel: "Worked for 42s",
-        workedDefaultOpen: false,
         workedEntries: [
           {
             kind: "verbatim",
@@ -166,7 +164,6 @@ export const chatMessages: ChatMessage[] = [
     id: "msg-worked2",
     type: "worked-session",
     workedLabel: "Worked for 3m 08s",
-    workedDefaultOpen: false,
     workedEntries: [
       {
         kind: "verbatim",
@@ -255,7 +252,6 @@ export const chatMessages: ChatMessage[] = [
     id: "msg-worked3",
     type: "worked-session",
     workedLabel: "Worked for 48s",
-    workedDefaultOpen: false,
     workedEntries: [
       {
         kind: "verbatim",

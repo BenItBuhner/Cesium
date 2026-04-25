@@ -12,6 +12,7 @@ import type {
   PermissionChoiceOption,
   TodoItem,
   UserMessageSegment,
+  WorkedSessionEditPreview,
   WorkedSessionEntry,
 } from "@/lib/types";
 import { DEFAULT_MODE_OPTIONS, formatModeLabel, resolveCanonicalModeId } from "@/lib/chat-modes";
@@ -83,6 +84,9 @@ function createBackendDraftConversation(
     pendingPermission: null,
     lastError: null,
     experimental: Boolean(backend.experimental),
+    archivedAt: null,
+    lastReadSeq: 0,
+    queuedPrompts: [],
   };
   const modeOption = findConversationModeConfigOptionForUi(draftConversation);
   const modelOption = findConversationModelConfigOptionForUi(draftConversation);
@@ -142,7 +146,13 @@ function mergeConversationConfigOptionsWithBackend(
     const preferBackendCatalog =
       isPrimaryConfigCategory(backendOption.category) &&
       backendOption.options.length >= conversationOption.options.length;
-    const baseOption = preferBackendCatalog ? backendOption : conversationOption;
+    /** Model catalogs on the conversation snapshot can lag behind the backend; always use the backend list when present so new models show up after refresh. */
+    const baseOption =
+      backendOption.category === "model" && backendOption.options.length > 0
+        ? backendOption
+        : preferBackendCatalog
+          ? backendOption
+          : conversationOption;
     const fallbackCurrentValue = conversationOption.currentValue || backendOption.currentValue;
     const currentValue =
       backendOption.category === "model"
@@ -269,6 +279,18 @@ type ProjectedTurn = {
   permissionCards: Map<string, ChatMessage>;
   todoCards: Map<string, ChatMessage>;
   subagentCards: Map<string, ChatMessage>;
+  /**
+   * OpenCode: child `ses_*` session id → parent spawn task `toolCallId` so global SSE merges
+   * into the same subagent card as the shell/task row (avoids duplicate "Subagent" cards).
+   */
+  openCodeSpawnToolBySessionId: Map<string, string>;
+  /**
+   * Spawn task `toolCallId`s that never received a wire `ses_*` on the ACP tool payload, in order.
+   * When the first global-SSE event arrives for `ses_child`, we attach it to the next pending spawn (FIFO).
+   */
+  openCodeUnlinkedSpawnQueue: string[];
+  /** Child `ses_*` ids that received SSE before their spawn tool_call was projected (paired with spawns FIFO). */
+  openCodeOrphanSseSessionOrder: string[];
   /** The user message ID that should be highlighted as the handoff message */
   handoffMessageId?: string;
 };
@@ -283,6 +305,9 @@ function createTurn(id: string): ProjectedTurn {
     permissionCards: new Map(),
     todoCards: new Map(),
     subagentCards: new Map(),
+    openCodeSpawnToolBySessionId: new Map(),
+    openCodeUnlinkedSpawnQueue: [],
+    openCodeOrphanSseSessionOrder: [],
     handoffMessageId: undefined,
   };
 }
@@ -294,6 +319,321 @@ function appendTraceEntry(turn: ProjectedTurn, entry: WorkedSessionEntry): void 
 
 function appendTimelineMessage(turn: ProjectedTurn, message: ChatMessage): void {
   turn.timeline.push({ kind: "message", message });
+}
+
+/** OpenCode SSE bridge uses synthetic ids so sub-agent assistant deltas land in the subagent card. */
+const OPENCODE_SUBAGENT_ASSISTANT_CHUNK = /^opencode-subagent:([^:]+):(.+)$/;
+
+/** OpenCode child session ids (SSE `sessionID`); allow common token chars inside the suffix. */
+const OPENCODE_WIRE_SESSION_ID = /^ses_[A-Za-z0-9_-]+$/;
+
+function isOpenCodeWireSessionId(id: string | undefined): id is string {
+  return Boolean(id && OPENCODE_WIRE_SESSION_ID.test(id));
+}
+
+function scrubOpenCodeUnlinkedSpawn(turn: ProjectedTurn, spawnToolCallId: string): void {
+  const q = turn.openCodeUnlinkedSpawnQueue;
+  for (let i = q.length - 1; i >= 0; i -= 1) {
+    if (q[i] === spawnToolCallId) {
+      q.splice(i, 1);
+    }
+  }
+}
+
+function scrubOpenCodeOrphanSseSession(turn: ProjectedTurn, sessionId: string): void {
+  const q = turn.openCodeOrphanSseSessionOrder;
+  for (let i = q.length - 1; i >= 0; i -= 1) {
+    if (q[i] === sessionId) {
+      q.splice(i, 1);
+    }
+  }
+}
+
+function enqueueOpenCodeOrphanSseSession(turn: ProjectedTurn, sessionId: string): void {
+  if (!isOpenCodeWireSessionId(sessionId) || turn.openCodeSpawnToolBySessionId.has(sessionId)) {
+    return;
+  }
+  if (turn.openCodeOrphanSseSessionOrder.includes(sessionId)) {
+    return;
+  }
+  turn.openCodeOrphanSseSessionOrder.push(sessionId);
+}
+
+function registerOpenCodeUnlinkedSpawn(turn: ProjectedTurn, spawnToolCallId: string): void {
+  if (turn.openCodeUnlinkedSpawnQueue.includes(spawnToolCallId)) {
+    return;
+  }
+  for (const mapped of turn.openCodeSpawnToolBySessionId.values()) {
+    if (mapped === spawnToolCallId) {
+      return;
+    }
+  }
+  turn.openCodeUnlinkedSpawnQueue.push(spawnToolCallId);
+}
+
+/**
+ * When SSE uses a real `ses_*` id but the spawn task never embedded it in ACP, merge into the
+ * next unlinked spawn card (same order as spawn tool_calls).
+ */
+function tryClaimOpenCodeSpawnForChildSession(
+  turn: ProjectedTurn,
+  childSessionId: string
+): ChatMessage | undefined {
+  if (!isOpenCodeWireSessionId(childSessionId) || turn.openCodeSpawnToolBySessionId.has(childSessionId)) {
+    return undefined;
+  }
+  while (turn.openCodeUnlinkedSpawnQueue.length > 0) {
+    const spawnToolCallId = turn.openCodeUnlinkedSpawnQueue[0]!;
+    const msg = turn.subagentCards.get(spawnToolCallId);
+    if (!msg || msg.type !== "subagent") {
+      turn.openCodeUnlinkedSpawnQueue.shift();
+      continue;
+    }
+    turn.openCodeUnlinkedSpawnQueue.shift();
+    linkOpenCodeSpawnToSession(turn, spawnToolCallId, childSessionId, msg);
+    return msg;
+  }
+  return undefined;
+}
+
+/** If global SSE created an orphan card before the spawn tool_call landed, fold it into the new spawn row. */
+function tryAttachOrphanOpenCodeSseToNewSpawn(
+  turn: ProjectedTurn,
+  spawnToolCallId: string,
+  message: ChatMessage
+): boolean {
+  while (turn.openCodeOrphanSseSessionOrder.length > 0) {
+    const sessionId = turn.openCodeOrphanSseSessionOrder[0]!;
+    if (turn.openCodeSpawnToolBySessionId.has(sessionId)) {
+      turn.openCodeOrphanSseSessionOrder.shift();
+      continue;
+    }
+    const orphan = turn.subagentCards.get(`sse-${sessionId}`);
+    if (!orphan || orphan.type !== "subagent") {
+      turn.openCodeOrphanSseSessionOrder.shift();
+      continue;
+    }
+    turn.openCodeOrphanSseSessionOrder.shift();
+    linkOpenCodeSpawnToSession(turn, spawnToolCallId, sessionId, message);
+    return true;
+  }
+  return false;
+}
+
+function resolveOpenCodeSubagentMessage(
+  turn: ProjectedTurn,
+  childSessionId: string
+): ChatMessage | undefined {
+  const sid = childSessionId.trim();
+  if (!sid) {
+    return undefined;
+  }
+  const direct =
+    findSubagentMessageBySessionId(turn, [sid]) ?? turn.subagentCards.get(`sse-${sid}`);
+  if (direct) {
+    return direct;
+  }
+  const spawnToolCallId = turn.openCodeSpawnToolBySessionId.get(sid);
+  if (spawnToolCallId) {
+    return turn.subagentCards.get(spawnToolCallId);
+  }
+  return undefined;
+}
+
+function absorbOpenCodeOrphanSubagentCard(
+  turn: ProjectedTurn,
+  primary: ChatMessage,
+  orphan: ChatMessage
+): void {
+  const pTr = primary.subagentTranscript?.length ? primary.subagentTranscript : [];
+  const oTr = orphan.subagentTranscript?.length ? orphan.subagentTranscript : [];
+  const seen = new Set(pTr.map((m) => m.id));
+  const merged = [...pTr];
+  for (const row of oTr) {
+    if (!seen.has(row.id)) {
+      merged.push(row);
+      seen.add(row.id);
+    }
+  }
+  primary.subagentTranscript = merged;
+  primary.recentActivity = buildSubagentRecentActivity(merged, undefined);
+
+  turn.timeline = turn.timeline.filter(
+    (item) => !(item.kind === "message" && item.message === orphan)
+  );
+  const dropKeys: string[] = [];
+  for (const [k, v] of turn.subagentCards) {
+    if (v === orphan) {
+      dropKeys.push(k);
+    }
+  }
+  for (const k of dropKeys) {
+    turn.subagentCards.delete(k);
+  }
+}
+
+/** Attach OpenCode `ses_*` identity to the spawn-task card; merge an earlier SSE-only duplicate if any. */
+function linkOpenCodeSpawnToSession(
+  turn: ProjectedTurn,
+  spawnToolCallId: string,
+  sessionId: string,
+  message: ChatMessage
+): void {
+  if (!isOpenCodeWireSessionId(sessionId)) {
+    return;
+  }
+  scrubOpenCodeUnlinkedSpawn(turn, spawnToolCallId);
+  scrubOpenCodeOrphanSseSession(turn, sessionId);
+  turn.openCodeSpawnToolBySessionId.set(sessionId, spawnToolCallId);
+
+  const orphan = turn.subagentCards.get(`sse-${sessionId}`);
+  if (orphan && orphan !== message) {
+    absorbOpenCodeOrphanSubagentCard(turn, message, orphan);
+  }
+
+  message.subagentId = sessionId;
+  turn.subagentCards.set(spawnToolCallId, message);
+  turn.subagentCards.set(`sse-${sessionId}`, message);
+}
+
+function appendSubagentOpenCodeAssistantChunk(
+  turn: ProjectedTurn,
+  subagentSessionId: string,
+  openCodeMessageId: string,
+  text: string
+): void {
+  if (!text) {
+    return;
+  }
+  let message =
+    resolveOpenCodeSubagentMessage(turn, subagentSessionId) ??
+    tryClaimOpenCodeSpawnForChildSession(turn, subagentSessionId);
+  if (!message) {
+    message = {
+      id: `subagent-${subagentSessionId}`,
+      type: "subagent",
+      subagentId: subagentSessionId,
+      subagentTitle: "Subagent",
+      subagentStatus: "running",
+      subagentComplete: false,
+      subagentTranscript: [],
+    };
+    turn.subagentCards.set(`sse-${subagentSessionId}`, message);
+    enqueueOpenCodeOrphanSseSession(turn, subagentSessionId);
+    appendTimelineMessage(turn, message);
+  }
+  const tr = message.subagentTranscript?.length ? message.subagentTranscript : [];
+  const chunkId = `${openCodeMessageId}-assistant`;
+  const last = tr[tr.length - 1];
+  if (last?.type === "assistant" && last.id === chunkId) {
+    last.content = `${last.content ?? ""}${text}`;
+    const cleaned = stripAgentTodoJsonAssistantContent(last.content);
+    if (!cleaned.trim()) {
+      tr.pop();
+    } else {
+      last.content = cleaned;
+    }
+  } else {
+    const cleanedChunk = stripAgentTodoJsonAssistantContent(text);
+    if (cleanedChunk.trim()) {
+      tr.push({
+        id: chunkId,
+        type: "assistant",
+        content: cleanedChunk,
+      });
+    }
+  }
+  message.subagentTranscript = tr;
+  message.recentActivity = buildSubagentRecentActivity(tr, undefined);
+}
+
+/** OpenCode global SSE: merge tool rows into the child session's transcript (not the root turn trace). */
+function mergeOpenCodeSubagentToolIntoTranscript(
+  turn: ProjectedTurn,
+  event: Extract<AgentStoredEvent, { kind: "tool_call" | "tool_call_update" }>,
+  workspaceRoot: string | null | undefined
+): void {
+  const sid = event.openCodeSubagentSessionId;
+  if (!sid) {
+    return;
+  }
+  let message =
+    resolveOpenCodeSubagentMessage(turn, sid) ?? tryClaimOpenCodeSpawnForChildSession(turn, sid);
+  if (!message) {
+    message = {
+      id: `subagent-${sid}`,
+      type: "subagent",
+      subagentId: sid,
+      subagentTitle: "Subagent",
+      subagentStatus: "running",
+      subagentComplete: false,
+      subagentTranscript: [],
+    };
+    turn.subagentCards.set(`sse-${sid}`, message);
+    enqueueOpenCodeOrphanSseSession(turn, sid);
+    appendTimelineMessage(turn, message);
+  }
+  const tr = message.subagentTranscript?.length ? message.subagentTranscript : [];
+  let existingTool: Extract<WorkedSessionEntry, { kind: "tool" }> | undefined;
+  let hostIdx = -1;
+  for (let i = tr.length - 1; i >= 0; i--) {
+    const m = tr[i];
+    if (m?.type !== "worked-session" || !Array.isArray(m.workedEntries)) {
+      continue;
+    }
+    const found = m.workedEntries.find(
+      (e): e is Extract<WorkedSessionEntry, { kind: "tool" }> =>
+        e.kind === "tool" && e.toolCallId === event.toolCallId
+    );
+    if (found) {
+      existingTool = found;
+      hostIdx = i;
+      break;
+    }
+  }
+  const nextEntry = formatToolSummary(event, existingTool, workspaceRoot ?? undefined);
+  if (!existingTool) {
+    const lastTr = tr[tr.length - 1];
+    const tailEntries =
+      lastTr?.type === "worked-session" && Array.isArray(lastTr.workedEntries)
+        ? lastTr.workedEntries
+        : undefined;
+    const canBatchIntoTail =
+      message.subagentStatus === "running" &&
+      tailEntries !== undefined &&
+      lastTr !== undefined &&
+      !lastTr.loading;
+
+    if (canBatchIntoTail) {
+      tailEntries.push(nextEntry);
+      lastTr.workedLabel = buildWorkedSessionLabel(tailEntries);
+      lastTr.workedHighlightedEntry = selectWorkedHighlightEntry(tailEntries);
+    } else {
+      tr.push({
+        id: `subagent-${sid}-tool-${event.toolCallId}`,
+        type: "worked-session",
+        workedLabel: nextEntry.title,
+        workedEntries: [nextEntry],
+        workedDefaultOpen: true,
+        workedHighlightedEntry: selectWorkedHighlightEntry([nextEntry]),
+      });
+    }
+  } else if (hostIdx >= 0) {
+    const host = tr[hostIdx];
+    if (host?.type === "worked-session" && host.workedEntries) {
+      const keepId = existingTool.toolCallId;
+      Object.assign(existingTool, nextEntry);
+      if (keepId) {
+        existingTool.toolCallId = keepId;
+      }
+      host.workedLabel = buildWorkedSessionLabel(host.workedEntries);
+      host.workedHighlightedEntry = selectWorkedHighlightEntry(host.workedEntries);
+    }
+  }
+  message.subagentTranscript = tr;
+  message.recentActivity = buildSubagentRecentActivity(tr, undefined);
+  message.subagentStatus = "running";
+  message.subagentComplete = false;
 }
 
 function appendAssistantChunk(turn: ProjectedTurn, text: string, messageId: string): void {
@@ -707,28 +1047,13 @@ function looksLikeReadPayload(record: Record<string, unknown> | undefined): bool
   if (!record || looksLikeEditPayload(record)) {
     return false;
   }
-  if (
-    recordHasAnyKey(record, [
-      "path",
-      "filePath",
-      "filepath",
-      "file_path",
-      "target_file",
-      "uri",
-    ]) &&
-    !recordHasAnyKey(record, ["pattern", "query", "globPattern", "glob_pattern", "regex"])
-  ) {
-    return true;
-  }
-  return recordHasAnyKey(record, [
-    "content",
-    "text",
-    "totalLines",
-    "readRange",
-    "contentBlobId",
-    "isEmpty",
-    "exceededLimit",
-  ]);
+  return (
+    typeof record.path === "string" ||
+    typeof record.filePath === "string" ||
+    typeof record.file_path === "string" ||
+    "readRange" in record ||
+    "lineRange" in record
+  );
 }
 
 function looksLikeWorkspaceFindPayload(record: Record<string, unknown> | undefined): boolean {
@@ -775,13 +1100,17 @@ function turnToolEntries(turn: ProjectedTurn): Extract<WorkedSessionEntry, { kin
 function summarizeWorkedToolBucket(
   kind: string,
   count: number,
-  fileCount: number
+  fileCount: number,
+  allHaveEditPreview: boolean
 ): string {
   const resolvedCount = fileCount > 0 ? fileCount : count;
   switch (kind) {
     case "read":
       return resolvedCount === 1 ? "read 1 file" : `read ${resolvedCount} files`;
     case "edit":
+      if (allHaveEditPreview) {
+        return count === 1 ? "edit" : `${count} edits`;
+      }
       return resolvedCount === 1 ? "edited 1 file" : `edited ${resolvedCount} files`;
     case "delete":
       return resolvedCount === 1 ? "deleted 1 file" : `deleted ${resolvedCount} files`;
@@ -801,19 +1130,6 @@ function summarizeWorkedToolBucket(
   }
 }
 
-function nextNonAssistantTimelineItem(
-  timeline: ProjectedTurn["timeline"],
-  fromIndex: number
-): ProjectedTurn["timeline"][number] | undefined {
-  for (let j = fromIndex + 1; j < timeline.length; j += 1) {
-    const item = timeline[j]!;
-    if (item.kind !== "assistant") {
-      return item;
-    }
-  }
-  return undefined;
-}
-
 function buildWorkedSessionLabel(entries: WorkedSessionEntry[]): string {
   const tools = entries.filter(
     (entry): entry is Extract<WorkedSessionEntry, { kind: "tool" }> => entry.kind === "tool"
@@ -825,7 +1141,12 @@ function buildWorkedSessionLabel(entries: WorkedSessionEntry[]): string {
     }
     return "Tools";
   }
-  const orderedBuckets: Array<{ kind: string; count: number; files: Set<string> }> = [];
+  const orderedBuckets: Array<{
+    kind: string;
+    count: number;
+    files: Set<string>;
+    allEditPreviews: boolean;
+  }> = [];
   const bucketByKind = new Map<string, (typeof orderedBuckets)[number]>();
   for (const tool of tools) {
     const kind =
@@ -834,12 +1155,22 @@ function buildWorkedSessionLabel(entries: WorkedSessionEntry[]): string {
     const bucket =
       bucketByKind.get(kind) ??
       (() => {
-        const created = { kind, count: 0, files: new Set<string>() };
+        const created = {
+          kind,
+          count: 0,
+          files: new Set<string>(),
+          allEditPreviews: true,
+        };
         bucketByKind.set(kind, created);
         orderedBuckets.push(created);
         return created;
       })();
     bucket.count += 1;
+    if (kind === "edit") {
+      bucket.allEditPreviews = bucket.allEditPreviews && Boolean(tool.editPreview);
+    } else {
+      bucket.allEditPreviews = false;
+    }
     if (tool.editPreview?.path) {
       bucket.files.add(tool.editPreview.path);
       continue;
@@ -850,7 +1181,12 @@ function buildWorkedSessionLabel(entries: WorkedSessionEntry[]): string {
   }
   const segments = orderedBuckets
     .map((bucket) =>
-      summarizeWorkedToolBucket(bucket.kind, bucket.count, bucket.files.size)
+      summarizeWorkedToolBucket(
+        bucket.kind,
+        bucket.count,
+        bucket.files.size,
+        bucket.allEditPreviews
+      )
     )
     .concat(thoughtCount > 0 ? [thoughtCount === 1 ? "1 thought" : `${thoughtCount} thoughts`] : []);
   const label = segments.join(", ");
@@ -860,6 +1196,104 @@ function buildWorkedSessionLabel(entries: WorkedSessionEntry[]): string {
     : capitalizeFirst(label);
 }
 
+function selectWorkedHighlightEntry(
+  workedEntries: WorkedSessionEntry[]
+): Extract<WorkedSessionEntry, { kind: "tool" }> | undefined {
+  const withEdit = workedEntries.filter(
+    (e): e is Extract<WorkedSessionEntry, { kind: "tool" }> =>
+      e.kind === "tool" && Boolean(e.editPreview)
+  );
+  if (withEdit.length === 0) {
+    return undefined;
+  }
+  for (let i = withEdit.length - 1; i >= 0; i -= 1) {
+    const t = withEdit[i]!;
+    if (t.status === "pending" || t.status === "running") {
+      return t;
+    }
+  }
+  return withEdit[withEdit.length - 1];
+}
+
+/**
+ * ACP can emit `permission_request` before the matching `tool_call` lands. Reorder so
+ * work-session embed (`prev=worked, next=permission`) in MessageThreadContent matches.
+ */
+function fixPermissionPlacedAfterWorkedForTools(messages: ChatMessage[]): ChatMessage[] {
+  const out = [...messages];
+  for (let i = 0; i < out.length; i += 1) {
+    const m = out[i]!;
+    if (m.type !== "permission-request" || !m.permissionLinkedToolCallId) {
+      continue;
+    }
+    const anchor = m.permissionLinkedToolCallId;
+    let workIdx = -1;
+    for (let j = out.length - 1; j > i; j -= 1) {
+      const w = out[j]!;
+      if (w.type !== "worked-session" || !w.workedEntries?.length) {
+        continue;
+      }
+      const hasTool = w.workedEntries.some(
+        (e) => e.kind === "tool" && e.toolCallId === anchor
+      );
+      if (hasTool) {
+        workIdx = j;
+        break;
+      }
+    }
+    if (workIdx < 0 || workIdx < i) {
+      continue;
+    }
+    const [perm] = out.splice(i, 1);
+    const newIdx = workIdx > i ? workIdx - 1 : workIdx;
+    out.splice(newIdx + 1, 0, perm);
+    i -= 1;
+  }
+  return out;
+}
+
+/**
+ * `permission_request` is stored as a timeline `message` between tool trace entries. That makes
+ * {@link projectTurnTimelineToMessages} flush a worked-session before and after the permission row,
+ * which splits one tool burst into two dropdowns. Collapse those back into a single worked-session
+ * while keeping the permission message immediately after it (so {@link MessageThreadContent} can
+ * still embed it next to the linked tool).
+ */
+function mergeAdjacentWorkedSessionsAroundPermission(messages: ChatMessage[]): ChatMessage[] {
+  const out = [...messages];
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (let i = 0; i + 2 < out.length; i += 1) {
+      const a = out[i];
+      const b = out[i + 1];
+      const c = out[i + 2];
+      if (
+        a?.type === "worked-session" &&
+        b?.type === "permission-request" &&
+        c?.type === "worked-session"
+      ) {
+        const ae = a.workedEntries ?? [];
+        const ce = c.workedEntries ?? [];
+        const combined = [...ae, ...ce];
+        const merged: ChatMessage = {
+          ...a,
+          workedEntries: combined,
+          workedLabel: buildWorkedSessionLabel(combined),
+          workedHighlightedEntry: selectWorkedHighlightEntry(combined),
+          loading: Boolean(a.loading || c.loading),
+          workedDefaultOpen:
+            a.workedDefaultOpen !== false || c.workedDefaultOpen !== false ? true : false,
+        };
+        out.splice(i, 3, merged, b);
+        changed = true;
+        break;
+      }
+    }
+  }
+  return out;
+}
+
 function projectTurnTimelineToMessages(turn: ProjectedTurn): ChatMessage[] {
   const messages: ChatMessage[] = [];
   let assistantText = "";
@@ -867,28 +1301,30 @@ function projectTurnTimelineToMessages(turn: ProjectedTurn): ChatMessage[] {
   let segmentIndex = 0;
 
   const flushAssistant = () => {
-    if (assistantText.trim().length === 0) {
-      assistantText = "";
+    const cleaned = stripAgentTodoJsonAssistantContent(assistantText);
+    assistantText = "";
+    if (cleaned.trim().length === 0) {
       return;
     }
     messages.push({
       id: `${turn.assistantMessageId ?? `assistant-${turn.id}`}-${segmentIndex++}`,
       type: "assistant",
-      content: assistantText,
+      content: cleaned,
     });
-    assistantText = "";
   };
 
   const flushWorked = () => {
     if (workedEntries.length === 0) {
       return;
     }
+    const highlight = selectWorkedHighlightEntry(workedEntries);
     messages.push({
       id: `turn-worked-${turn.id}-${segmentIndex++}`,
       type: "worked-session",
       workedLabel: buildWorkedSessionLabel(workedEntries),
       workedEntries,
       workedDefaultOpen: true,
+      workedHighlightedEntry: highlight,
     });
     workedEntries = [];
   };
@@ -903,41 +1339,31 @@ function projectTurnTimelineToMessages(turn: ProjectedTurn): ChatMessage[] {
     }
     if (item.kind === "assistant") {
       const chunk = item.text;
-      if (!chunk.trim()) {
+      if (chunk === "") {
         continue;
       }
-      const upNext = nextNonAssistantTimelineItem(turn.timeline, timelineIndex);
-      if (upNext?.kind === "trace") {
-        flushAssistant();
-        workedEntries.push({ kind: "assistant_inline", text: chunk });
-      } else {
-        flushWorked();
-        assistantText += chunk;
-      }
+      flushWorked();
+      assistantText += chunk;
       continue;
     }
     const entry = item.entry;
     flushAssistant();
-    if (entry.kind === "tool" && entry.editPreview) {
-      flushWorked();
-      messages.push({
-        id: `turn-edit-${turn.id}-${segmentIndex++}`,
-        type: "worked-session",
-        workedLabel: buildWorkedSessionLabel([entry]),
-        workedEntries: [],
-        workedHighlightedEntry: entry,
-        workedDefaultOpen: false,
-      });
-      continue;
-    }
     workedEntries.push(entry);
   }
 
   flushWorked();
   flushAssistant();
 
-  if (messages.length === 0 && turn.userMessage) {
-    messages.push({
+  // Merge *before* `fixPermissionPlacedAfterWorkedForTools`. Otherwise a permission for a tool
+  // that was flushed into the *second* worked-session (e.g. web search after workspace tools)
+  // gets moved to the end: [w1, w2, perm] — the triplet [w1, perm, w2] never forms and the UI
+  // shows two "Searched workspace" dropdowns.
+  const ordered = fixPermissionPlacedAfterWorkedForTools(
+    mergeAdjacentWorkedSessionsAroundPermission(messages)
+  );
+
+  if (ordered.length === 0 && turn.userMessage) {
+    ordered.push({
       id: `turn-working-${turn.id}`,
       type: "worked-session",
       workedLabel: "Working",
@@ -947,7 +1373,7 @@ function projectTurnTimelineToMessages(turn: ProjectedTurn): ChatMessage[] {
     });
   }
 
-  return messages;
+  return ordered;
 }
 
 function parseLooseJsonObject(value: unknown): Record<string, unknown> | undefined {
@@ -965,6 +1391,56 @@ function parseLooseJsonObject(value: unknown): Record<string, unknown> | undefin
     }
   }
   return undefined;
+}
+
+/** OpenCode / plan-mode models often stream the same checklist as JSON that duplicates structured `plan` events. */
+export function isAgentTodoJsonArrayPayload(value: unknown): boolean {
+  if (!Array.isArray(value) || value.length === 0) {
+    return false;
+  }
+  return value.every((item) => {
+    if (!item || typeof item !== "object") {
+      return false;
+    }
+    const o = item as Record<string, unknown>;
+    const text = o.content ?? o.text;
+    const st = o.status;
+    return (
+      typeof text === "string" &&
+      text.trim().length > 0 &&
+      (st === "pending" || st === "in_progress" || st === "completed")
+    );
+  });
+}
+
+function tryParseLeadingJsonArray(text: string): unknown | undefined {
+  const t = text.trim();
+  if (!t.startsWith("[")) {
+    return undefined;
+  }
+  try {
+    return JSON.parse(t) as unknown;
+  } catch {
+    return undefined;
+  }
+}
+
+export function isAgentTodoJsonDetailString(text: string): boolean {
+  const parsed = tryParseLeadingJsonArray(text);
+  return parsed != null && isAgentTodoJsonArrayPayload(parsed);
+}
+
+/** Remove assistant bubbles that are only a redundant todo JSON dump (optionally in a ```json fence). */
+export function stripAgentTodoJsonAssistantContent(source: string): string {
+  const replaced = source.replace(/```(?:json)?\s*([\s\S]*?)\s*```/gi, (match, inner) => {
+    const t = String(inner).trim();
+    return isAgentTodoJsonDetailString(t) ? "" : match;
+  });
+  const trimmedAll = replaced.trim();
+  if (isAgentTodoJsonDetailString(trimmedAll)) {
+    return "";
+  }
+  return replaced.replace(/\n{3,}/g, "\n\n").trimEnd();
 }
 
 function parseVerboseToolDetail(detail: string | undefined): Record<string, unknown> | undefined {
@@ -1467,6 +1943,7 @@ function isGenericToolTitle(title: string | undefined): boolean {
     normalized === "tool" ||
     normalized === "function call" ||
     normalized === "function" ||
+    normalized === "ran" ||
     normalized === "read" ||
     normalized === "grep" ||
     normalized === "find" ||
@@ -1474,7 +1951,10 @@ function isGenericToolTitle(title: string | undefined): boolean {
     normalized === "read file" ||
     normalized === "find in workspace" ||
     normalized === "grep workspace" ||
-    normalized === "web search"
+    normalized === "web search" ||
+    /^todo ·/i.test(normalized) ||
+    normalized === "todo list" ||
+    normalized === "update todo list"
   );
 }
 
@@ -1693,6 +2173,27 @@ function pathFromPriorWorkedToolTitle(
   return rest;
 }
 
+function mergeWorkSessionEditPreview(
+  existing: WorkedSessionEditPreview | undefined,
+  incoming: WorkedSessionEditPreview | undefined
+): WorkedSessionEditPreview | undefined {
+  if (!incoming) {
+    return existing;
+  }
+  if (!existing) {
+    return incoming;
+  }
+  if (incoming.lines.length > existing.lines.length) {
+    return incoming;
+  }
+  if (incoming.lines.length < existing.lines.length) {
+    return existing;
+  }
+  const incN = (incoming.addedLines ?? 0) + (incoming.removedLines ?? 0);
+  const exN = (existing.addedLines ?? 0) + (existing.removedLines ?? 0);
+  return incN >= exN ? incoming : existing;
+}
+
 /** Stream-json `type` values that are not useful as a user-visible tool title */
 const GENERIC_STREAM_TOOL_TYPES = new Set([
   "agent_message",
@@ -1829,7 +2330,7 @@ function formatToolSummary(
       }) ?? existing?.locations;
   /** `locations: []` is truthy for `??` — treat empty like missing so we still scan raw / scavenger. */
   const locationPaths = normalizedLocations?.map((loc) => loc.path) ?? [];
-  const editPreview = event.editPreview ?? existing?.editPreview;
+  const editPreview = mergeWorkSessionEditPreview(existing?.editPreview, event.editPreview);
   const path =
     locationPaths[0] ??
     editPreview?.path ??
@@ -2044,7 +2545,7 @@ function formatToolSummary(
           formatToolFileLabel(readPath, ws) ?? toolPathBasename(readPath),
           TOOL_PATH_LABEL_MAX
         )}`
-      : "Read file";
+      : "Ran";
     let readFiles = readPath
       ? [readPath, ...(files ?? []).filter((file) => file !== readPath)]
       : files;
@@ -2126,14 +2627,16 @@ function formatToolSummary(
     const todoCount = Array.isArray(rawInputs[0]?.todos)
       ? (rawInputs[0]?.todos as unknown[]).length
       : findFirstNumberAcrossValues(rawInputs, ["count", "total"]);
+    const todoLabel =
+      todoCount != null && todoCount > 0
+        ? `Todo · ${todoCount} item${todoCount === 1 ? "" : "s"}`
+        : "Todo list";
     return withConciseToolDetail({
       kind: "tool",
       toolCallId: event.toolCallId,
       toolKind,
-      title: "Update todo list",
-      detail:
-        safeToolDetailText(detail, { suppressVerbosePayload: true }) ??
-        (todoCount != null ? `${pluralize(todoCount, "item")} updated` : existing?.detail),
+      title: todoLabel,
+      detail: safeToolDetailText(detail, { suppressVerbosePayload: true }) ?? existing?.detail,
       status,
       locations: normalizedLocations,
       editPreview,
@@ -2174,12 +2677,255 @@ function formatToolSummary(
   });
 }
 
+function isConcreteAcpToolCallId(id: string | undefined): id is string {
+  return Boolean(id && id.trim() && id !== "tool-call");
+}
+
+function toolCallInitialShapeSignature(
+  e: Extract<AgentStoredEvent, { kind: "tool_call" | "tool_call_update" }>
+): string {
+  const title = typeof e.title === "string" ? e.title : "";
+  const toolKind = typeof e.toolKind === "string" ? e.toolKind : "";
+  const loc0 = e.locations?.[0];
+  const path0 =
+    loc0 && typeof loc0 === "object" && loc0 !== null
+      ? String(
+          (loc0 as { path?: string; filePath?: string }).path ??
+            (loc0 as { path?: string; filePath?: string }).filePath ??
+            ""
+        )
+      : "";
+  const st = e.status;
+  const stBucket =
+    (st === "pending" || st === "in_progress" || st === ("running" as string)) ? "open" : st;
+  return `${title}\0${toolKind}\0${stBucket}\0${path0}`;
+}
+
+type TrackedAcpToolReplay = {
+  lastCompletedUserTurn: number;
+  initialCallShape: string;
+};
+
+function stablePlanEntriesSignature(entries: AgentPlanEntry[]): string {
+  const normalized = [...entries]
+    .map((en) => ({
+      id: en.id,
+      content: en.content,
+      status: en.status,
+      priority: en.priority ?? null,
+    }))
+    .sort((a, b) => a.id.localeCompare(b.id));
+  return JSON.stringify(normalized);
+}
+
+/**
+ * ACP clients sometimes re-announce an earlier `tool_call` (same `toolCallId` + call shape) after
+ * a new `user_message` with fresh `seq` / `eventId` even when the provider is not re-invoking the
+ * tool. Those rows are stored in the log and the UI replays them as a fake "second wave". Drop
+ * the spurious *initial* `tool_call` when that id already completed in a prior user turn and the
+ * announcement matches the prior call shape.
+ *
+ * ACP can also re-broadcast `tool_call_update` rows alone (after stripping or skipping the replay
+ * `tool_call`). The projector would otherwise synthesize fresh tool rows from those orphan updates
+ * in the new turn — same counts as the prior wave. Drop updates for an id until a new `tool_call`
+ * for that id appears after the latest `user_message`, when that id already finished in an earlier
+ * user turn.
+ *
+ * The same session sync can re-emit a full `plan` (todo checklist) identical to the snapshot at the
+ * previous turn boundary; the projector would stack that under the newest user bubble. Drop plans
+ * whose payload exactly matches what we already had when the latest `user_message` arrived.
+ */
+export function stripSpuriousAcpToolCallReplays(
+  events: AgentStoredEvent[]
+): AgentStoredEvent[] {
+  let userTurn = 0;
+  const byId = new Map<string, TrackedAcpToolReplay>();
+  /** Tool ids that have a retained `tool_call` since the latest `user_message`. */
+  const seenToolCallSinceUserMessage = new Set<string>();
+  /** Last retained `plan` fingerprint per `planId` (after replay stripping). */
+  const lastOutPlanSigById = new Map<string, string>();
+  /** At each `user_message`, copy of {@link lastOutPlanSigById} — identical incoming plans are replays. */
+  let planReplaySuppressById = new Map<string, string>();
+  const out: AgentStoredEvent[] = [];
+  for (const e of events) {
+    if (e.kind === "user_message") {
+      userTurn += 1;
+      seenToolCallSinceUserMessage.clear();
+      planReplaySuppressById = new Map(lastOutPlanSigById);
+      out.push(e);
+      continue;
+    }
+    if (e.kind === "plan") {
+      const sig = stablePlanEntriesSignature(e.entries);
+      if (planReplaySuppressById.get(e.planId) === sig) {
+        continue;
+      }
+      lastOutPlanSigById.set(e.planId, sig);
+      out.push(e);
+      continue;
+    }
+    if (e.kind !== "tool_call" && e.kind !== "tool_call_update") {
+      out.push(e);
+      continue;
+    }
+    if (
+      (e.kind === "tool_call" || e.kind === "tool_call_update") &&
+      "openCodeSubagentSessionId" in e &&
+      e.openCodeSubagentSessionId
+    ) {
+      out.push(e);
+      continue;
+    }
+    if (!isConcreteAcpToolCallId(e.toolCallId)) {
+      out.push(e);
+      continue;
+    }
+    const id = e.toolCallId;
+    const shape = toolCallInitialShapeSignature(e);
+    if (e.kind === "tool_call") {
+      const t = byId.get(id);
+      const st = e.status;
+      if (st === "completed" || st === "failed" || st === "cancelled") {
+        byId.set(id, {
+          lastCompletedUserTurn: userTurn,
+          initialCallShape: t?.initialCallShape ?? shape,
+        });
+        seenToolCallSinceUserMessage.add(id);
+        out.push(e);
+        continue;
+      }
+      if (
+        t &&
+        t.lastCompletedUserTurn > 0 &&
+        t.lastCompletedUserTurn < userTurn &&
+        t.initialCallShape === shape
+      ) {
+        continue;
+      }
+      if (!t || t.lastCompletedUserTurn < userTurn) {
+        byId.set(id, {
+          lastCompletedUserTurn: t?.lastCompletedUserTurn ?? 0,
+          initialCallShape: shape,
+        });
+      }
+      seenToolCallSinceUserMessage.add(id);
+      out.push(e);
+      continue;
+    }
+    const t = byId.get(id);
+    if (
+      !seenToolCallSinceUserMessage.has(id) &&
+      t &&
+      t.lastCompletedUserTurn > 0 &&
+      t.lastCompletedUserTurn < userTurn
+    ) {
+      continue;
+    }
+    const terminal =
+      e.status === "completed" || e.status === "failed" || e.status === "cancelled";
+    if (terminal) {
+      byId.set(id, {
+        lastCompletedUserTurn: userTurn,
+        initialCallShape: t?.initialCallShape ?? shape,
+      });
+    } else if (!t) {
+      byId.set(id, { lastCompletedUserTurn: 0, initialCallShape: shape });
+    }
+    out.push(e);
+  }
+  return out;
+}
+
+/**
+ * If the append pipeline would not retain this event after {@link stripSpuriousAcpToolCallReplays},
+ * reject it so the WebSocket layer does not grow client state with ghost tools / orphan updates.
+ */
+export function isIncomingEventDroppedByAcpToolStrip(
+  priorEvents: AgentStoredEvent[],
+  incoming: AgentStoredEvent
+): boolean {
+  if (
+    incoming.kind !== "tool_call" &&
+    incoming.kind !== "tool_call_update" &&
+    incoming.kind !== "plan"
+  ) {
+    return false;
+  }
+  const merged = stripSpuriousAcpToolCallReplays(
+    dedupeAgentStoredEvents([...priorEvents, incoming].sort((a, b) => a.seq - b.seq))
+  );
+  return !merged.some((e) => e.eventId === incoming.eventId);
+}
+
+function subagentTitleQualityScore(title: string | undefined): number {
+  const t = title?.trim() ?? "";
+  if (!t) {
+    return 0;
+  }
+  if (/^subagent$/i.test(t)) {
+    return 1;
+  }
+  if (/^subagent task$/i.test(t)) {
+    return 2;
+  }
+  return t.length + 10;
+}
+
+/**
+ * Merges all subagent rows for the same `subagentId` (defensive against duplicate timeline cards).
+ */
+export function extractLiveSubagentTranscriptFromMessages(
+  projected: ChatMessage[],
+  sessionId: string
+): {
+  transcript: ChatMessage[];
+  subagentRunning: boolean;
+  title?: string;
+} | null {
+  const sid = sessionId.trim();
+  if (!sid) {
+    return null;
+  }
+  const mergedTranscript: ChatMessage[] = [];
+  const seenRowIds = new Set<string>();
+  let bestTitle: string | undefined;
+  let bestScore = -1;
+  let lastMatch: ChatMessage | undefined;
+  for (const m of projected) {
+    if (m.type !== "subagent" || m.subagentId !== sid) {
+      continue;
+    }
+    lastMatch = m;
+    const sc = subagentTitleQualityScore(m.subagentTitle);
+    if (sc > bestScore) {
+      bestScore = sc;
+      bestTitle = m.subagentTitle;
+    }
+    for (const row of m.subagentTranscript ?? []) {
+      if (!seenRowIds.has(row.id)) {
+        mergedTranscript.push(row);
+        seenRowIds.add(row.id);
+      }
+    }
+  }
+  if (bestScore < 0) {
+    return null;
+  }
+  return {
+    transcript: mergedTranscript,
+    subagentRunning: lastMatch?.subagentStatus === "running",
+    title: bestTitle,
+  };
+}
+
 export function projectAgentEventsToChatMessages(
   events: AgentStoredEvent[],
   options?: ProjectAgentEventsOptions
 ): ChatMessage[] {
   const workspaceRoot = options?.workspaceRoot;
-  const ordered = [...events].sort((a, b) => a.seq - b.seq);
+  const ordered = stripSpuriousAcpToolCallReplays(
+    dedupeAgentStoredEvents([...events].sort((a, b) => a.seq - b.seq))
+  );
   const hiddenHandoffTranscriptMessageIds = new Set<string>();
   for (let index = 0; index < ordered.length - 1; index += 1) {
     const current = ordered[index];
@@ -2191,8 +2937,57 @@ export function projectAgentEventsToChatMessages(
       hiddenHandoffTranscriptMessageIds.add(current.messageId);
     }
   }
-  const turns: ProjectedTurn[] = [];
-  let currentTurn: ProjectedTurn | null = null;
+
+  const supersededHandoffEventIds = new Set<string>();
+  const supersededTranscriptMessageIds = new Set<string>();
+  let lastUserMessageSeq = -1;
+  for (const event of ordered) {
+    if (event.kind === "user_message" && event.seq > lastUserMessageSeq) {
+      lastUserMessageSeq = event.seq;
+    }
+  }
+  const trailingHandoffs: Array<{
+    handoff: Extract<AgentStoredEvent, { kind: "agent_handoff" }>;
+    transcriptMessageId: string | null;
+  }> = [];
+  for (let index = ordered.length - 1; index >= 0; index -= 1) {
+    const event = ordered[index];
+    if (event.kind === "agent_handoff" && event.seq > lastUserMessageSeq) {
+      let transcriptMessageId: string | null = null;
+      for (let j = index - 1; j >= 0; j -= 1) {
+        const prev = ordered[j];
+        if (
+          prev.kind === "assistant_message_end" &&
+          prev.seq > lastUserMessageSeq &&
+          hiddenHandoffTranscriptMessageIds.has(prev.messageId)
+        ) {
+          transcriptMessageId = prev.messageId;
+          break;
+        }
+        if (prev.kind === "user_message" || prev.seq <= lastUserMessageSeq) {
+          break;
+        }
+      }
+      trailingHandoffs.unshift({ handoff: event, transcriptMessageId });
+    } else {
+      break;
+    }
+  }
+  if (trailingHandoffs.length > 1) {
+    for (let i = 0; i < trailingHandoffs.length - 1; i += 1) {
+      const { handoff, transcriptMessageId } = trailingHandoffs[i];
+      supersededHandoffEventIds.add(handoff.eventId);
+      if (transcriptMessageId) {
+        supersededTranscriptMessageIds.add(transcriptMessageId);
+      }
+    }
+  }
+  const pendingHandoffEvent =
+    trailingHandoffs.length > 0
+      ? trailingHandoffs[trailingHandoffs.length - 1].handoff
+      : null;
+const turns: ProjectedTurn[] = [];
+let currentTurn: ProjectedTurn | null = null;
 
   const ensureTurn = () => {
     if (!currentTurn) {
@@ -2205,10 +3000,10 @@ export function projectAgentEventsToChatMessages(
   for (const event of ordered) {
     try {
     switch (event.kind) {
-      case "user_message": {
-        const prev = currentTurn;
-        currentTurn = createTurn(event.messageId);
-        const bubbleText = event.displayContent ?? event.content;
+    case "user_message": {
+      const prev = currentTurn;
+      currentTurn = createTurn(event.messageId);
+      const bubbleText = event.displayContent ?? event.content;
         currentTurn.userMessage = {
           id: event.messageId,
           type: "user",
@@ -2231,6 +3026,9 @@ export function projectAgentEventsToChatMessages(
           currentTurn.permissionCards = prev.permissionCards;
           currentTurn.todoCards = prev.todoCards;
           currentTurn.subagentCards = prev.subagentCards;
+          currentTurn.openCodeSpawnToolBySessionId = new Map(prev.openCodeSpawnToolBySessionId);
+          currentTurn.openCodeUnlinkedSpawnQueue = [...prev.openCodeUnlinkedSpawnQueue];
+          currentTurn.openCodeOrphanSseSessionOrder = [...prev.openCodeOrphanSseSessionOrder];
           const prevIdx = turns.indexOf(prev);
           if (prevIdx >= 0) {
             turns.splice(prevIdx, 1);
@@ -2243,12 +3041,24 @@ export function projectAgentEventsToChatMessages(
         if (hiddenHandoffTranscriptMessageIds.has(event.messageId)) {
           break;
         }
+        if (supersededTranscriptMessageIds.has(event.messageId)) {
+          break;
+        }
+        const ocSub = OPENCODE_SUBAGENT_ASSISTANT_CHUNK.exec(event.messageId);
+        if (ocSub) {
+          const turn = ensureTurn();
+          appendSubagentOpenCodeAssistantChunk(turn, ocSub[1]!, ocSub[2]!, event.text);
+          break;
+        }
         const turn = ensureTurn();
         appendAssistantChunk(turn, event.text, event.messageId);
         break;
       }
       case "assistant_message_end": {
         if (hiddenHandoffTranscriptMessageIds.has(event.messageId)) {
+          break;
+        }
+        if (supersededTranscriptMessageIds.has(event.messageId)) {
           break;
         }
         const turn = ensureTurn();
@@ -2275,6 +3085,14 @@ export function projectAgentEventsToChatMessages(
       }
       case "tool_call": {
         const turn = ensureTurn();
+        if (
+          options?.backendId === "opencode-acp" &&
+          event.openCodeSubagentSessionId &&
+          event.openCodeSubagentSessionId.trim()
+        ) {
+          mergeOpenCodeSubagentToolIntoTranscript(turn, event, options.workspaceRoot);
+          break;
+        }
         if (classifyToolCallAsSubagentCard(options?.backendId, event)) {
           const rawInput = getSubagentTaskInput(event);
           const taskText = extractSubagentTaskText(event);
@@ -2360,6 +3178,17 @@ export function projectAgentEventsToChatMessages(
           } else {
             turn.subagentCards.set(event.toolCallId, message);
           }
+          if (options?.backendId === "opencode-acp") {
+            const wireSes = taskText.sessionId?.trim();
+            if (wireSes && isOpenCodeWireSessionId(wireSes)) {
+              linkOpenCodeSpawnToSession(turn, event.toolCallId, wireSes, message);
+            } else if (
+              !existingMessage &&
+              !tryAttachOrphanOpenCodeSseToNewSpawn(turn, event.toolCallId, message)
+            ) {
+              registerOpenCodeUnlinkedSpawn(turn, event.toolCallId);
+            }
+          }
           break;
         }
         const existing = turn.toolEntryById.get(event.toolCallId) as
@@ -2376,6 +3205,14 @@ export function projectAgentEventsToChatMessages(
       }
       case "tool_call_update": {
         const turn = ensureTurn();
+        if (
+          options?.backendId === "opencode-acp" &&
+          event.openCodeSubagentSessionId &&
+          event.openCodeSubagentSessionId.trim()
+        ) {
+          mergeOpenCodeSubagentToolIntoTranscript(turn, event, options.workspaceRoot);
+          break;
+        }
         if (classifyToolCallAsSubagentCard(options?.backendId, event)) {
           const rawInput = getSubagentTaskInput(event);
           const taskText = extractSubagentTaskText(event);
@@ -2461,6 +3298,17 @@ export function projectAgentEventsToChatMessages(
             appendTimelineMessage(turn, message);
           } else {
             turn.subagentCards.set(event.toolCallId, message);
+          }
+          if (options?.backendId === "opencode-acp") {
+            const wireSes = taskText.sessionId?.trim();
+            if (wireSes && isOpenCodeWireSessionId(wireSes)) {
+              linkOpenCodeSpawnToSession(turn, event.toolCallId, wireSes, message);
+            } else if (
+              !existingMessage &&
+              !tryAttachOrphanOpenCodeSseToNewSpawn(turn, event.toolCallId, message)
+            ) {
+              registerOpenCodeUnlinkedSpawn(turn, event.toolCallId);
+            }
           }
           break;
         }
@@ -2583,6 +3431,7 @@ export function projectAgentEventsToChatMessages(
           message.permissionResolved = false;
           message.permissionSelectedOptionId = undefined;
         }
+        message.permissionLinkedToolCallId = event.toolCallId;
         if (!turn.permissionCards.has(id)) {
           turn.permissionCards.set(id, message);
           appendTimelineMessage(turn, message);
@@ -2616,13 +3465,16 @@ export function projectAgentEventsToChatMessages(
         break;
       }
       case "system": {
-        appendTimelineMessage(ensureTurn(), {
+        const turn = ensureTurn();
+        appendTimelineMessage(turn, {
           id: event.eventId,
           type: "assistant",
           content:
-            event.level === "info"
+            event.level === "error" || event.level === "warning"
               ? event.text
-              : `[${event.level}] ${event.text}`,
+              : event.level === "info"
+                ? event.text
+                : `[${event.level}] ${event.text}`,
         });
         break;
       }
@@ -2665,18 +3517,35 @@ export function projectAgentEventsToChatMessages(
         break;
       }
       case "agent_handoff": {
+        if (supersededHandoffEventIds.has(event.eventId)) {
+          break;
+        }
         const turn = ensureTurn();
         turn.handoffMessageId = event.handoffMessageId;
+        const isPending = pendingHandoffEvent?.eventId === event.eventId;
         const message: ChatMessage = {
-          id: event.eventId,
+          id: isPending ? "handoff-pending" : event.eventId,
           type: "agent-handoff",
           handoffFromAgent: event.fromAgent,
           handoffToAgent: event.toAgent,
+          handoffTurnCount: event.turnCount,
+          handoffToolCallCount: event.toolCallCount,
         };
         appendTimelineMessage(turn, message);
         break;
       }
-      default:
+    case "chat_fork": {
+      const turn = ensureTurn();
+      const message: ChatMessage = {
+        id: event.eventId,
+        type: "chat-fork",
+        forkFromAgent: event.fromAgent,
+        forkFromConversationId: event.fromConversationId,
+      };
+      appendTimelineMessage(turn, message);
+      break;
+    }
+    default:
         break;
     }
     } catch {
@@ -2684,17 +3553,25 @@ export function projectAgentEventsToChatMessages(
     }
   }
 
-  const messages: ChatMessage[] = [];
-  for (const turn of turns) {
-    if (turn.userMessage) {
-      if (turn.handoffMessageId && turn.userMessage.id === turn.handoffMessageId) {
-        messages.push({ ...turn.userMessage, isHandoffMessage: true });
-      } else {
-        messages.push(turn.userMessage);
-      }
+const messages: ChatMessage[] = [];
+for (const turn of turns) {
+  const timelineMsgs = projectTurnTimelineToMessages(turn);
+  const forkInTimeline = timelineMsgs.filter((m) => m.type === "chat-fork");
+  const otherTimeline = timelineMsgs.filter((m) => m.type !== "chat-fork");
+  if (turn.userMessage) {
+    for (const forkMsg of forkInTimeline) {
+      messages.push(forkMsg);
     }
-    messages.push(...projectTurnTimelineToMessages(turn));
+    if (turn.handoffMessageId && turn.userMessage.id === turn.handoffMessageId) {
+      messages.push({ ...turn.userMessage, isHandoffMessage: true });
+    } else {
+      messages.push(turn.userMessage);
+    }
+    messages.push(...otherTimeline);
+  } else {
+    messages.push(...forkInTimeline, ...otherTimeline);
   }
+}
   return messages;
 }
 
@@ -2702,6 +3579,37 @@ export function getConversationLatestSeq(
   events: AgentStoredEvent[]
 ): number {
   return events.reduce((max, event) => Math.max(max, event.seq), 0);
+}
+
+/**
+ * Drop duplicate rows that can appear when the same logical event is replayed
+ * twice (e.g. overlapping subscribe/replay + live push) or stored with conflicting
+ * seq/eventId pairs. Keeps the first occurrence in seq order.
+ */
+export function dedupeAgentStoredEvents(
+  events: AgentStoredEvent[]
+): AgentStoredEvent[] {
+  if (events.length <= 1) {
+    return events;
+  }
+  const sorted = [...events].sort((a, b) => a.seq - b.seq);
+  const bySeq = new Map<number, AgentStoredEvent>();
+  for (const e of sorted) {
+    if (!bySeq.has(e.seq)) {
+      bySeq.set(e.seq, e);
+    }
+  }
+  const seqDeduped = [...bySeq.values()].sort((a, b) => a.seq - b.seq);
+  const seenEventIds = new Set<string>();
+  const out: AgentStoredEvent[] = [];
+  for (const e of seqDeduped) {
+    if (seenEventIds.has(e.eventId)) {
+      continue;
+    }
+    seenEventIds.add(e.eventId);
+    out.push(e);
+  }
+  return out;
 }
 
 function normalizeModelDetailLabel(label: string): string {
@@ -2820,7 +3728,8 @@ function formatModelVariantLabel(name: string, modelId: string): string {
 
 export function buildConversationModelOptions(
   conversation: AgentConversationRecord,
-  backends: AgentBackendInfo[]
+  backends: AgentBackendInfo[],
+  modelVisibility?: Record<string, Array<{ id: string; name: string; on: boolean }>>
 ): ModelInfo[] {
   const backend =
     backends.find((candidate) => candidate.id === conversation.config.backendId) ??
@@ -2832,8 +3741,64 @@ export function buildConversationModelOptions(
     backends,
     "thought_level"
   );
+
+  const backendToggles = modelVisibility?.[conversation.config.backendId];
+  const hasAuthoritativeToggleList = (backendToggles?.length ?? 0) > 0;
+  const toggleById = hasAuthoritativeToggleList
+    ? new Map(backendToggles!.map((t) => [t.id, t]))
+    : null;
+
+  const hiddenModelIds = new Set<string>();
+  if (modelVisibility && !hasAuthoritativeToggleList) {
+    const forBackend = modelVisibility[conversation.config.backendId];
+    if (forBackend) {
+      for (const toggle of forBackend) {
+        if (!toggle.on) {
+          hiddenModelIds.add(toggle.id);
+        }
+      }
+    }
+  }
+
+  const selectedModelValue =
+    conversation.config.modelId ||
+    modelOption?.currentValue ||
+    backend?.defaultModelId ||
+    "auto";
+  /** Prefer persisted `config.modelId` so UI matches PATCH updates; option `currentValue` can lag when no runtime session. */
+  const effectiveSelectedId =
+    conversation.config.modelId || modelOption?.currentValue || backend?.defaultModelId;
+  const selectedName = conversation.config.modelName || backend?.defaultModelName;
+
+  function filterVisible<T extends ModelInfo>(rows: T[]): T[] {
+    if (hasAuthoritativeToggleList && toggleById) {
+      return rows.filter((m) => {
+        const mv = m.modelValue ?? m.id;
+        if (mv === selectedModelValue) {
+          return true;
+        }
+        const t = toggleById.get(mv);
+        if (t) {
+          return t.on;
+        }
+        /** Catalog has an id that is not in the server toggle list (e.g. stale options); do not show it. */
+        return false;
+      });
+    }
+    if (hiddenModelIds.size === 0) {
+      return rows;
+    }
+    return rows.filter((m) => {
+      const mv = m.modelValue ?? m.id;
+      if (mv === selectedModelValue) {
+        return true;
+      }
+      return !hiddenModelIds.has(mv);
+    });
+  }
+
   if (!modelOption || modelOption.options.length === 0) {
-    return [
+    return filterVisible([
       {
         id: conversation.config.modelId || backend?.defaultModelId || "auto",
         modelValue: conversation.config.modelId || backend?.defaultModelId || "auto",
@@ -2845,14 +3810,9 @@ export function buildConversationModelOptions(
         backendId: conversation.config.backendId,
         selected: true,
       },
-    ];
+    ]);
   }
-  /** Prefer persisted `config.modelId` so UI matches PATCH updates; option `currentValue` can lag when no runtime session. */
-  const selectedValue =
-    conversation.config.modelId ||
-    modelOption.currentValue ||
-    backend?.defaultModelId;
-  const selectedName = conversation.config.modelName || backend?.defaultModelName;
+
   if (thoughtLevelOption && thoughtLevelOption.options.length > 0) {
     const selectedThought = thoughtLevelOption.currentValue;
     const variantRows = modelOption.options.flatMap((option) =>
@@ -2873,37 +3833,40 @@ export function buildConversationModelOptions(
           backendId: conversation.config.backendId,
           configSelections: [{ configId: thoughtLevelOption.id, value: thought.value }],
           selected:
-            option.value === selectedValue &&
+            option.value === effectiveSelectedId &&
             (!selectedThought || thought.value === selectedThought),
         } satisfies ModelInfo;
       })
     );
     if (variantRows.length > 0) {
-      return variantRows;
+      return filterVisible(variantRows);
     }
   }
 
-  return modelOption.options.map((option) => ({
-    id: option.value,
-    modelValue: option.value,
-    name: formatModelVariantLabel(option.name, option.value),
-    description: option.description,
-    detail: backend?.label ?? conversation.config.backendId,
-    provider,
-    backendId: conversation.config.backendId,
-    selected:
-      option.value === selectedValue ||
-      (!selectedValue &&
-        !!selectedName &&
-        (option.name === selectedName ||
-          formatModelVariantLabel(option.name, option.value) === selectedName)),
-  }));
+  return filterVisible(
+    modelOption.options.map((option) => ({
+      id: option.value,
+      modelValue: option.value,
+      name: formatModelVariantLabel(option.name, option.value),
+      description: option.description,
+      detail: backend?.label ?? conversation.config.backendId,
+      provider,
+      backendId: conversation.config.backendId,
+      selected:
+        option.value === effectiveSelectedId ||
+        (!effectiveSelectedId &&
+          !!selectedName &&
+          (option.name === selectedName ||
+            formatModelVariantLabel(option.name, option.value) === selectedName)),
+    }))
+  );
 }
 
 export function buildDraftModelOptionsForBackend(
-  backend: AgentBackendInfo
+  backend: AgentBackendInfo,
+  modelVisibility?: Record<string, Array<{ id: string; name: string; on: boolean }>>
 ): ModelInfo[] {
-  return buildConversationModelOptions(createBackendDraftConversation(backend), [backend]);
+  return buildConversationModelOptions(createBackendDraftConversation(backend), [backend], modelVisibility);
 }
 
 export function resolveDraftModelForBackend(

@@ -16,17 +16,26 @@ export type StorageFixture = {
 /**
  * Returns the list of driver kinds that can actually be exercised on this
  * machine. legacy-json is always available; pg requires DATABASE_URL_TEST
- * (or DATABASE_URL as a fallback) to point at a reachable Postgres 16
- * instance with the OSP-75 schema applied.
+ * to point at a reachable Postgres 16 instance with the OSP-75 schema
+ * applied.
  */
 export function availableDriverKinds(): StorageDriverKind[] {
   const kinds: StorageDriverKind[] = ["legacy-json"];
-  const pgUrl =
-    process.env.DATABASE_URL_TEST?.trim() || process.env.DATABASE_URL?.trim();
+  const pgUrl = process.env.DATABASE_URL_TEST?.trim();
   if (pgUrl && pgUrl.length > 0) {
     kinds.push("pg");
   }
   return kinds;
+}
+
+function requireTestDatabaseUrl(): string {
+  const pgUrl = process.env.DATABASE_URL_TEST?.trim();
+  if (!pgUrl) {
+    throw new Error(
+      "pg fixture requires DATABASE_URL_TEST. Refusing to fall back to DATABASE_URL."
+    );
+  }
+  return pgUrl;
 }
 
 async function createLegacyFixture(): Promise<StorageFixture> {
@@ -53,13 +62,7 @@ async function createLegacyFixture(): Promise<StorageFixture> {
 }
 
 async function createPgFixture(): Promise<StorageFixture> {
-  const pgUrl =
-    process.env.DATABASE_URL_TEST?.trim() || process.env.DATABASE_URL?.trim();
-  if (!pgUrl) {
-    throw new Error(
-      "pg fixture requires DATABASE_URL_TEST or DATABASE_URL env var."
-    );
-  }
+  const pgUrl = requireTestDatabaseUrl();
   process.env.DATABASE_URL = pgUrl;
 
   const [{ PgStorageDriver }, { getDb }] = await Promise.all([
@@ -116,13 +119,7 @@ export function bootstrapFixtureEnv(kind: StorageDriverKind): string {
       return dataDir;
     }
     case "pg": {
-      const pgUrl =
-        process.env.DATABASE_URL_TEST?.trim() || process.env.DATABASE_URL?.trim();
-      if (!pgUrl) {
-        throw new Error(
-          "pg fixture requires DATABASE_URL_TEST or DATABASE_URL env var."
-        );
-      }
+      const pgUrl = requireTestDatabaseUrl();
       process.env.DATABASE_URL = pgUrl;
       return pgUrl;
     }

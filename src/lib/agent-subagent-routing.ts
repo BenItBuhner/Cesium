@@ -414,7 +414,7 @@ export function extractSubagentTaskText(event: SubagentToolCallEvent): {
       return undefined;
     }
     if (typeof value === "string") {
-      const match = value.match(/\b(ses_[A-Za-z0-9]+)\b/);
+      const match = value.match(/\b(ses_[A-Za-z0-9_-]+)\b/);
       return match?.[1];
     }
     if (Array.isArray(value)) {
@@ -437,7 +437,12 @@ export function extractSubagentTaskText(event: SubagentToolCallEvent): {
     }
     return undefined;
   };
-  const sessionId = findSessionId(rawUpdate) ?? findSessionId(getSubagentTaskInput(event));
+  const sessionId =
+    findSessionId(rawUpdate) ??
+    findSessionId(getSubagentTaskInput(event)) ??
+    findSessionId(event.detail) ??
+    findSessionId(event.locations) ??
+    findSessionId(event.raw);
   if (!rawText) {
     return { sessionId };
   }
@@ -623,14 +628,81 @@ export function isCursorAcpSubagentTaskToolEvent(event: SubagentToolCallEvent): 
 }
 
 /**
- * OpenCode and other ACP servers: do not treat generic `prompt` / `description` fields as subagent tasks
- * (shell tools often populate those keys).
+ * File / shell / search / checklist tools must never become subagent transcript cards.
+ * OpenCode (`todowrite`, `todoread`, …) and normal file tools often contain `ses_*` or `task_id:`
+ * substrings inside payloads, which falsely satisfy {@link extractSubagentTaskText} heuristics.
  */
+function normalizeToolTitleToken(value: string): string {
+  return value.trim().toLowerCase().replace(/[_-]+/g, "");
+}
+
+function isStructuralNonSubagentToolEvent(event: SubagentToolCallEvent): boolean {
+  const tk =
+    "toolKind" in event && typeof event.toolKind === "string"
+      ? event.toolKind.toLowerCase().trim()
+      : "";
+  if (
+    [
+      "read",
+      "edit",
+      "write",
+      "search",
+      "fetch",
+      "execute",
+      "terminal",
+      "delete",
+      "grep",
+      "todo",
+    ].includes(tk)
+  ) {
+    return true;
+  }
+  const titleRaw = "title" in event && typeof event.title === "string" ? event.title.trim() : "";
+  if (!titleRaw) {
+    return false;
+  }
+  const head = normalizeToolTitleToken(titleRaw.split(/\s+/)[0] ?? "");
+  if (
+    [
+      "read",
+      "write",
+      "edit",
+      "patch",
+      "bash",
+      "glob",
+      "grep",
+      "webfetch",
+      "fetch",
+      "delete",
+      "todowrite",
+      "todoread",
+      "question",
+      "invalid",
+      "skill",
+    ].includes(head)
+  ) {
+    return true;
+  }
+  if (head.startsWith("context7")) {
+    return true;
+  }
+  if (
+    head.startsWith("todo") &&
+    (head.includes("read") || head.includes("write") || head.includes("update"))
+  ) {
+    return true;
+  }
+  return false;
+}
+
 export function isStrictAcpSubagentTaskToolEvent(event: SubagentToolCallEvent): boolean {
   if (event.kind !== "tool_call" && event.kind !== "tool_call_update") {
     return false;
   }
   if (isLikelyTerminalToolCall(event)) {
+    return false;
+  }
+  if (isStructuralNonSubagentToolEvent(event)) {
     return false;
   }
   const rawUpdate = getToolRawUpdate(event);

@@ -36,6 +36,7 @@ import { useAuth } from "@/components/auth/AuthProvider";
 import { useShellView } from "@/components/layout/ShellViewContext";
 import { useAgentShellState } from "./AgentShellStateContext";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
+import { useUserPreferences } from "@/components/preferences/UserPreferencesProvider";
 
 const PINNED_SECTION_WORKSPACE_ID = "__agentPinned__";
 
@@ -80,21 +81,119 @@ const FILTER_TOGGLE_LABELS: Record<AgentRailFilterToggleKey, string> = {
   read: "Read",
 };
 
+/**
+ * Only the conversation list scrolls; rail header + account row stay outside this node.
+ * Fades sit in the list viewport (same idea as HorizontalFadedScroll / tool rows).
+ */
+function AgentRailConversationListScroll({
+  children,
+  measureKey,
+}: {
+  children: ReactNode;
+  measureKey: string | number;
+}) {
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [fade, setFade] = useState({
+    top: false,
+    bottom: false,
+    left: false,
+    right: false,
+  });
+
+  const updateFade = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) {
+      return;
+    }
+    const { scrollTop, scrollLeft, scrollWidth, clientWidth, scrollHeight, clientHeight } = el;
+    const maxScrollX = scrollWidth - clientWidth;
+    const maxScrollY = scrollHeight - clientHeight;
+    setFade({
+      top: scrollTop > 2,
+      bottom: maxScrollY > 2 && scrollTop < maxScrollY - 2,
+      left: scrollLeft > 2,
+      right: maxScrollX > 2 && scrollLeft < maxScrollX - 2,
+    });
+  }, []);
+
+  useLayoutEffect(() => {
+    updateFade();
+  }, [measureKey, updateFade]);
+
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    if (!el) {
+      return;
+    }
+    const ro = new ResizeObserver(() => updateFade());
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [updateFade]);
+
+  const edge = "var(--bg-panel)";
+  const gradTop = `linear-gradient(to bottom, ${edge}, transparent)`;
+  const gradBottom = `linear-gradient(to top, ${edge}, transparent)`;
+  const gradLeft = `linear-gradient(to right, ${edge}, transparent)`;
+  const gradRight = `linear-gradient(to left, ${edge}, transparent)`;
+
+  return (
+    <div className="relative min-h-0 min-w-0 flex-1">
+      {fade.top ? (
+        <div
+          className="pointer-events-none absolute inset-x-0 top-0 z-[2] h-[28px]"
+          style={{ backgroundImage: gradTop }}
+          aria-hidden
+        />
+      ) : null}
+      {fade.bottom ? (
+        <div
+          className="pointer-events-none absolute inset-x-0 bottom-0 z-[2] h-[28px]"
+          style={{ backgroundImage: gradBottom }}
+          aria-hidden
+        />
+      ) : null}
+      {fade.left ? (
+        <div
+          className="pointer-events-none absolute inset-y-0 left-0 z-[2] w-[28px]"
+          style={{ backgroundImage: gradLeft }}
+          aria-hidden
+        />
+      ) : null}
+      {fade.right ? (
+        <div
+          className="pointer-events-none absolute inset-y-0 right-0 z-[2] w-[28px]"
+          style={{ backgroundImage: gradRight }}
+          aria-hidden
+        />
+      ) : null}
+      <div
+        ref={scrollRef}
+        onScroll={updateFade}
+        className="hide-scrollbar-y relative z-0 h-full min-h-0 w-full min-w-0 overflow-auto px-[11px] pb-[8px] pt-[12px]"
+      >
+        {children}
+      </div>
+    </div>
+  );
+}
+
 export function AgentWorkspaceRail() {
   const { session: authSession } = useAuth();
   const { openSettingsView } = useShellView();
   const accountLabel = authSession?.username?.trim() || "Guest";
-  const { renameConversation } = useAgentConversations();
+  const { renameConversation, forkConversation } = useAgentConversations();
   const { openAgentConversation } = useOpenInEditor();
   const {
     groups,
     leftRailCollapsed,
     railLoading,
-    setRightPaneOpen,
     selectedConversationId,
     startNewConversation,
+    startNewChatInWorkspace,
     toggleLeftRailCollapsed,
     openConversationSummary,
+    refreshConversationGroups,
+    applyOptimisticRailTitle,
     archiveConversation,
     pinnedRailConversations,
     pinConversation,
@@ -105,8 +204,15 @@ export function AgentWorkspaceRail() {
     clearRailFilters,
     isMobile,
   } = useAgentShellState();
-  const { activeWorkspaceId, openWorkspaceById } = useWorkspace();
-  const { openAt } = useWorkbenchContextMenu();
+  const { activeWorkspaceId } = useWorkspace();
+  const { experimentalIpadCustomButtons, experimentalIpadWindowedTabInset } =
+    useUserPreferences();
+  const padRailForWindowChrome = experimentalIpadWindowedTabInset && !isMobile;
+  /** Only the top control row needs iPadOS window-chrome inset; list + footer stay full-width in the rail. */
+  const railTopBarPadClass = padRailForWindowChrome
+    ? "pl-[var(--editor-window-chrome-tab-inset)] pr-[11px]"
+    : "px-[11px]";
+  const { openAt, openAtPoint } = useWorkbenchContextMenu();
   const filterAnchorRef = useRef<HTMLButtonElement>(null);
   const [filterMenuOpen, setFilterMenuOpen] = useState(false);
   const [collapsedWorkspaceIds, setCollapsedWorkspaceIds] = useState<Set<string>>(new Set());
@@ -154,18 +260,19 @@ export function AgentWorkspaceRail() {
     [activeWorkspaceId, groups]
   );
 
+  const railListScrollMeasureKey = useMemo(
+    () =>
+      `${visibleGroups.length}:${pinnedRailConversations.length}:${railLoading ? 1 : 0}:${renameState?.conversationId ?? ""}`,
+    [visibleGroups.length, pinnedRailConversations.length, railLoading, renameState?.conversationId]
+  );
+
   const handleNewChat = useCallback(() => {
     startNewConversation();
   }, [startNewConversation]);
 
   const handleNewChatForWorkspace = useCallback(
-    async (workspaceId: string) => {
-      if (workspaceId !== activeWorkspaceId) {
-        await openWorkspaceById(workspaceId);
-      }
-      startNewConversation();
-    },
-    [activeWorkspaceId, openWorkspaceById, startNewConversation]
+    (workspaceId: string) => void startNewChatInWorkspace(workspaceId),
+    [startNewChatInWorkspace]
   );
 
   const toggleWorkspaceCollapsed = useCallback((workspaceId: string) => {
@@ -218,8 +325,16 @@ export function AgentWorkspaceRail() {
     if (!nextTitle || nextTitle === originalTitle) {
       return;
     }
-    void renameConversation(conversationId, nextTitle);
-  }, [renameConversation, renameState]);
+    applyOptimisticRailTitle(conversationId, nextTitle);
+    void renameConversation(conversationId, nextTitle).catch(() => {
+      void refreshConversationGroups();
+    });
+  }, [
+    applyOptimisticRailTitle,
+    refreshConversationGroups,
+    renameConversation,
+    renameState,
+  ]);
 
   const allConversationsForSearch = useMemo<RecentChatOption[]>(() => {
     const items: RecentChatOption[] = [];
@@ -326,8 +441,7 @@ export function AgentWorkspaceRail() {
     if (selectedConversationId !== pendingEditorOpen.conversation.id) {
       return;
     }
-    setRightPaneOpen(true);
-    openAgentConversation({
+	openAgentConversation({
       conversationId: pendingEditorOpen.conversation.id,
       title: pendingEditorOpen.conversation.title,
       ...(pendingEditorOpen.group ? { group: pendingEditorOpen.group } : {}),
@@ -337,24 +451,22 @@ export function AgentWorkspaceRail() {
       toggleLeftRailCollapsed();
     }
   }, [
-    activeWorkspaceId,
-    isMobile,
-    openAgentConversation,
-    pendingEditorOpen,
-    selectedConversationId,
-    setRightPaneOpen,
-    toggleLeftRailCollapsed,
-  ]);
+  activeWorkspaceId,
+  isMobile,
+  openAgentConversation,
+  pendingEditorOpen,
+  selectedConversationId,
+  toggleLeftRailCollapsed,
+]);
 
-  const handleConversationContextMenu = useCallback(
-    (
-      e: ReactMouseEvent,
+	const buildConversationMenuItems = useCallback(
+		(
       conversation: AgentRailConversationSummary,
       options?: { inPinnedSection?: boolean }
-    ) => {
+    ): WorkbenchMenuItem[] => {
       const inPinned = options?.inPinnedSection ?? false;
       const conversationId = conversation.id;
-      const items: WorkbenchMenuItem[] = [
+      return [
         {
           type: "item",
           id: "rename",
@@ -394,17 +506,52 @@ export function AgentWorkspaceRail() {
           label: "Archive",
           onSelect: () => archiveConversation(conversationId),
         },
+        {
+          type: "item",
+          id: "fork",
+          label: "Fork",
+          disabled: conversation.status === "running" || conversation.status === "awaiting_permission",
+          onSelect: () => {
+            void forkConversation(conversationId).catch(() => undefined);
+          },
+        },
       ];
-      openAt(e, items);
     },
     [
       archiveConversation,
       beginConversationRename,
+      forkConversation,
       handleOpenConversationInEditor,
-      openAt,
       pinConversation,
       unpinConversation,
     ]
+  );
+
+  const handleConversationContextMenu = useCallback(
+    (
+      e: ReactMouseEvent,
+      conversation: AgentRailConversationSummary,
+      options?: { inPinnedSection?: boolean }
+    ) => {
+      openAt(e, buildConversationMenuItems(conversation, options));
+    },
+    [buildConversationMenuItems, openAt]
+  );
+
+  const handleConversationOverflowMenu = useCallback(
+    (
+      conversation: AgentRailConversationSummary,
+      anchorEl: HTMLElement,
+      options?: { inPinnedSection?: boolean }
+    ) => {
+      const rect = anchorEl.getBoundingClientRect();
+      openAtPoint(
+        rect.right - 8,
+        rect.bottom + 4,
+        buildConversationMenuItems(conversation, options)
+      );
+    },
+    [buildConversationMenuItems, openAtPoint]
   );
 
   const pinnedSection: ReactNode = useMemo(() => {
@@ -454,6 +601,12 @@ export function AgentWorkspaceRail() {
                       inPinnedSection: true,
                     })
                   }
+                  showOverflowMenu={experimentalIpadCustomButtons}
+                  onOverflowMenu={(anchor) =>
+                    handleConversationOverflowMenu(conversation, anchor, {
+                      inPinnedSection: true,
+                    })
+                  }
                 />
               );
             })}
@@ -467,6 +620,8 @@ export function AgentWorkspaceRail() {
     cancelConversationRename,
     collapsedWorkspaceIds,
     commitConversationRename,
+    experimentalIpadCustomButtons,
+    handleConversationOverflowMenu,
     handleConversationSelect,
     handleConversationContextMenu,
     pinnedRailConversations,
@@ -483,7 +638,9 @@ export function AgentWorkspaceRail() {
     <>
       {!desktopRailCollapsed ? (
         <div className="flex h-full flex-col bg-[var(--bg-panel)]">
-          <div className="flex shrink-0 items-center gap-[8px] px-[11px] pt-[11px]">
+          <div
+            className={`flex shrink-0 items-center gap-[8px] pt-[11px] ${railTopBarPadClass}`}
+          >
             <button
               type="button"
               onClick={toggleLeftRailCollapsed}
@@ -515,7 +672,7 @@ export function AgentWorkspaceRail() {
 
           {!leftRailCollapsed ? (
             <>
-              <div className="hide-scrollbar-y flex min-h-0 flex-1 flex-col overflow-y-auto px-[11px] pb-[8px] pt-[12px]">
+              <AgentRailConversationListScroll measureKey={railListScrollMeasureKey}>
           {railLoading ? (
             <div className="flex min-h-[120px] items-center justify-center font-sans text-[13px] text-[var(--text-secondary)]">
               Loading chats...
@@ -593,6 +750,12 @@ export function AgentWorkspaceRail() {
                                   inPinnedSection: false,
                                 })
                               }
+                              showOverflowMenu={experimentalIpadCustomButtons}
+                              onOverflowMenu={(anchor) =>
+                                handleConversationOverflowMenu(conversation, anchor, {
+                                  inPinnedSection: false,
+                                })
+                              }
                             />
                           );
                         })
@@ -604,7 +767,7 @@ export function AgentWorkspaceRail() {
             })}
             </>
           )}
-            </div>
+              </AgentRailConversationListScroll>
               <div className="flex shrink-0 items-center gap-[8px] px-[11px] py-[10px]">
                 <div
                   className="flex min-w-0 flex-1 items-center gap-[8px]"

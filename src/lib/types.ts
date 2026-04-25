@@ -35,15 +35,14 @@ export type ChatMessageType =
   | "activity-label"
   | "worked-session"
   | "shell-run"
-  | "agent-handoff";
+  | "agent-handoff"
+  | "chat-fork";
 
 /** One block inside a collapsible “Worked for …” session. */
 export type WorkedSessionEntry =
   | { kind: "verbatim"; text: string }
   | { kind: "explore"; paths: string[]; caption?: string }
   | { kind: "reasoning"; text: string }
-  /** Model text interleaved before more tool/reasoning trace; keeps one worked-session dropdown. */
-  | { kind: "assistant_inline"; text: string }
   | {
       kind: "tool";
       /** Stable id from agent `toolCallId` for list keys + updates */
@@ -144,6 +143,8 @@ export interface ChatMessage {
   /** Multi-step questions; when set, takes precedence over `questionTitle` + `options`. */
   questionSteps?: AskQuestionStep[];
   permissionRequestId?: string;
+  /** Tie permission cards to a tool in the same turn (embedding + ordering). */
+  permissionLinkedToolCallId?: string;
   permissionTitle?: string;
   permissionDetail?: string;
   permissionOptions?: PermissionChoiceOption[];
@@ -157,8 +158,9 @@ export interface ChatMessage {
   /** Single collapsible trace: reads, reasoning, tool calls. */
   workedLabel?: string;
   workedEntries?: WorkedSessionEntry[];
-  /** Standalone highlighted tool row rendered outside the dropdown, e.g. edit diffs. */
+  /** When set, the primary edit diff is also surfaced outside the tool list (see `toolDetailsInWorkedCard`). */
   workedHighlightedEntry?: Extract<WorkedSessionEntry, { kind: "tool" }>;
+  /** Seeds initial expand; persisted `open` overrides when set. */
   workedDefaultOpen?: boolean;
   /** Terminal / command runner card */
   shellTitle?: string;
@@ -169,6 +171,13 @@ export interface ChatMessage {
   handoffToAgent?: string;
   /** Whether this message was created as part of a handoff operation */
   isHandoffMessage?: boolean;
+  /** Number of user turns included in the handoff transcript (metadata only, not rendered). */
+  handoffTurnCount?: number;
+  /** Number of tool calls included in the handoff transcript (metadata only, not rendered). */
+  handoffToolCallCount?: number;
+  /** Chat fork divider */
+  forkFromAgent?: string;
+  forkFromConversationId?: string;
 }
 
 export interface EditorTab {
@@ -192,6 +201,8 @@ export interface EditorTab {
   transcriptMessages?: ChatMessage[];
   /** Real OpenCode session id for live subagent transcript hydration. */
   transcriptSessionId?: string;
+  /** When set, {@link AgentTranscriptView} replays this conversation's events for live subagent rows. */
+  transcriptLiveConversationId?: string;
   /** Live primary agent conversation opened from the chat pane. */
   conversationId?: string;
   /** Source/preview toggle for previewable files like Markdown and SVG. */
@@ -312,17 +323,26 @@ export type AgentTabIndicatorByConversationId = Record<
   }
 >;
 
+export type QueuedPromptConfigOverride = {
+  backendId?: import("./agent-types").AgentBackendId;
+  mode?: EditorMode;
+  modelId?: string;
+  modelName?: string;
+};
+
 /** Pending follow-up prompt while the agent turn is still running. */
 export type QueuedChatPrompt = {
   id: string;
   text: string;
   attachments?: ImageAttachment[];
+  configOverride?: QueuedPromptConfigOverride;
 };
 
 export interface ChatTab {
   id: string;
   title: string;
   active?: boolean;
+  isDraft?: boolean;
 }
 
 export type KnownEditorMode = "agent" | "plan" | "debug" | "ask";

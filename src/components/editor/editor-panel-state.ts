@@ -99,6 +99,7 @@ export type EditorPanelAction =
       title: string;
       messages: ChatMessage[];
       sessionId?: string;
+      conversationId?: string;
     }
   | { type: "OPEN_COMPOSER_DRAFT_TAB"; draftId: string; title: string; content: string }
   | { type: "OPEN_TERMINAL_TAB"; terminalId: string; name?: string }
@@ -669,6 +670,7 @@ export function editorPanelReducer(
                   name,
                   transcriptMessages: action.messages,
                   transcriptSessionId: resolvedSessionId,
+                  transcriptLiveConversationId: action.conversationId,
                 }
               : tab
           ),
@@ -686,6 +688,7 @@ export function editorPanelReducer(
                   name,
                   transcriptMessages: action.messages,
                   transcriptSessionId: resolvedSessionId,
+                  transcriptLiveConversationId: action.conversationId,
                 }
               : tab
           ),
@@ -701,6 +704,7 @@ export function editorPanelReducer(
         previewMode: "source",
         transcriptMessages: action.messages,
         transcriptSessionId: resolvedSessionId,
+        transcriptLiveConversationId: action.conversationId,
       };
       return {
         ...state,
@@ -1155,7 +1159,7 @@ export function editorPanelReducer(
       const { pane, tabId } = action;
       const tabsKey = pane === "left" ? "leftTabs" : "rightTabs";
       if (!state[tabsKey].some((t) => t.id === tabId)) return state;
-      let next = removeTabIdFromPaneStrip(state, pane, tabId);
+      const next = removeTabIdFromPaneStrip(state, pane, tabId);
       const groupsKey = pane === "left" ? "leftTabGroups" : "rightTabGroups";
       const stripKey = pane === "left" ? "leftStripItems" : "rightStripItems";
       const gid = `tg-${newIdSegment()}`;
@@ -1280,7 +1284,7 @@ export function editorPanelReducer(
         ...next,
         [groupsKey]: { ...next[groupsKey], [groupId]: { ...g, tabIds } },
       };
-      let strip = [...next[stripKey]];
+      const strip = [...next[stripKey]];
       if (!strip.some((it) => it.type === "group" && it.groupId === groupId)) {
         strip.push({ type: "group", groupId });
       }
@@ -1309,7 +1313,7 @@ export function editorPanelReducer(
       const { pane, tabId, toIndex } = action;
       const tabsKey = pane === "left" ? "leftTabs" : "rightTabs";
       if (!state[tabsKey].some((t) => t.id === tabId)) return state;
-      let next = removeTabIdFromPaneStrip(state, pane, tabId);
+      const next = removeTabIdFromPaneStrip(state, pane, tabId);
       const stripKey = pane === "left" ? "leftStripItems" : "rightStripItems";
       const strip = [...next[stripKey]];
       const clamped = Math.max(0, Math.min(toIndex, strip.length));

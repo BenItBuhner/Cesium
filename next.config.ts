@@ -55,7 +55,10 @@ const allowedDevOrigins =
     .filter(Boolean) ?? ["192.168.4.150"];
 
 const nextConfig: NextConfig = {
-  reactCompiler: true,
+  // The React Compiler is currently crashing Next.js during page compilation
+  // in this deployment. Keep it off so production and dev builds can complete.
+  reactCompiler: false,
+  turbopack: {},
   outputFileTracingRoot: workspaceRoot,
   allowedDevOrigins,
   env: {
@@ -72,18 +75,6 @@ const nextConfig: NextConfig = {
       ];
     }
     return [];
-  },
-  webpack: (config, { dev }) => {
-    if (dev) {
-      config.watchOptions = {
-        ...config.watchOptions,
-        ignored: [
-          "**/.opencursor-data/**",
-          "**/server/.opencursor-data/**",
-        ],
-      };
-    }
-    return config;
   },
 };
 

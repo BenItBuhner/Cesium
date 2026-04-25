@@ -20,6 +20,7 @@ import {
   type AuthStatusResponse,
 } from "@/lib/auth-client";
 import { useServerConnections } from "@/components/preferences/ServerConnectionsProvider";
+import { resolveClientServerBaseUrl } from "@/lib/resolve-server-base-url";
 
 type LoginInput = {
   username: string;
@@ -44,10 +45,11 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 
 async function fetchAuth(
   serverBaseUrl: string,
+  resolvedBaseUrl: string,
   path: string,
   init?: RequestInit
 ): Promise<Response> {
-  return fetch(`${serverBaseUrl}${path}`, {
+  return fetch(`${resolvedBaseUrl}${path}`, {
     ...init,
     headers: Object.fromEntries(
       attachSessionToken(init?.headers, serverBaseUrl).entries()
@@ -68,7 +70,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [connectionError, setConnectionError] = useState<string | null>(null);
 
   const refreshAuthStatus = useCallback(async () => {
-    const response = await fetchAuth(activeServer.baseUrl, "/api/auth/status");
+    const resolvedBaseUrl = resolveClientServerBaseUrl();
+    const response = await fetchAuth(activeServer.baseUrl, resolvedBaseUrl, "/api/auth/status");
     syncAuthTokenFromResponse(response, activeServer.baseUrl);
     if (!response.ok) {
       let message = `Auth status request failed (${response.status})`;
@@ -134,7 +137,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setError(null);
       setConnectionError(null);
       try {
-        const response = await fetchAuth(activeServer.baseUrl, "/api/auth/login", {
+        const response = await fetchAuth(activeServer.baseUrl, resolveClientServerBaseUrl(), "/api/auth/login", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(input),
@@ -189,7 +192,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const logout = useCallback(async () => {
     try {
-      const response = await fetchAuth(activeServer.baseUrl, "/api/auth/logout", {
+      const response = await fetchAuth(activeServer.baseUrl, resolveClientServerBaseUrl(), "/api/auth/logout", {
         method: "POST",
       });
       if (response.ok) {

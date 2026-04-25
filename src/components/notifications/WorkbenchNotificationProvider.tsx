@@ -19,16 +19,31 @@ import type {
   WorkbenchNotificationInput,
   WorkbenchNotificationItem,
 } from "@/components/notifications/workbench-notification-types";
+import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
 
 export function WorkbenchNotificationProvider({ children }: { children: ReactNode }) {
+  const { settings } = useGlobalSettings();
+  const doNotDisturb = settings.general.doNotDisturb;
   const [items, setItems] = useState<WorkbenchNotificationItem[]>([]);
   const [exitingIds, setExitingIds] = useState<Set<string>>(new Set());
-  /** Browser timer handles are numeric; avoids NodeJS.Timeout vs DOM mismatch in `tsc`. */
   const timeoutsRef = useRef(new Map<string, number>());
   const itemsRef = useRef(items);
   useLayoutEffect(() => {
     itemsRef.current = items;
   }, [items]);
+
+  const clearAllTimers = useCallback(() => {
+    for (const t of timeoutsRef.current.values()) clearTimeout(t);
+    timeoutsRef.current.clear();
+  }, []);
+
+  useLayoutEffect(() => {
+    if (doNotDisturb && itemsRef.current.length > 0) {
+      clearAllTimers();
+      setItems([]);
+      setExitingIds(new Set());
+    }
+  }, [doNotDisturb, clearAllTimers]);
 
   const clearTimer = useCallback((id: string) => {
     const t = timeoutsRef.current.get(id);
@@ -80,6 +95,8 @@ export function WorkbenchNotificationProvider({ children }: { children: ReactNod
 
   const pushNotification = useCallback(
     (input: WorkbenchNotificationInput) => {
+      if (doNotDisturb) return "";
+
       const id =
         typeof crypto !== "undefined" && crypto.randomUUID
           ? crypto.randomUUID()
@@ -98,7 +115,7 @@ export function WorkbenchNotificationProvider({ children }: { children: ReactNod
 
       return id;
     },
-    [requestDismiss]
+    [requestDismiss, doNotDisturb]
   );
 
   const value = useMemo<WorkbenchNotificationContextValue>(

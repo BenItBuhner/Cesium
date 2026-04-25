@@ -39,6 +39,7 @@ const [
   { AgentRuntimeManager },
   {
     readConversationSnapshot,
+    readConversationRecord,
     readConversationEventsSince,
     updateConversationRecord,
   },
@@ -704,6 +705,63 @@ test("handoff copies transcript and divider without a placeholder user message",
   );
 });
 
+test("consecutive handoffs coalesce superseded events and only keep the latest", async () => {
+  const workspace = await ensureWorkspaceRegistered(repoRoot, "repo");
+  const source = await testRuntimeManager.createConversation(workspace, {
+    backendId: "cursor-acp",
+    mode: "agent",
+    modelId: "test-fast",
+    modelName: "Test Fast",
+  });
+
+  await testRuntimeManager.promptConversation(workspace, source.id, "hello from cursor");
+  await waitFor(
+    "source conversation idle",
+    () => readConversationSnapshot(workspace.id, source.id),
+    (value) => value.conversation.status === "idle"
+  );
+
+  await testRuntimeManager.handoffConversation(workspace, source.id, "opencode-acp");
+  const afterFirst = await readConversationSnapshot(workspace.id, source.id);
+  const firstHandoffCount = afterFirst.events.filter((e) => e.kind === "agent_handoff").length;
+  assert.equal(firstHandoffCount, 1, "expected one handoff event after first handoff");
+
+  const firstHandoff = afterFirst.events.find((e) => e.kind === "agent_handoff");
+  assert.ok(firstHandoff && firstHandoff.kind === "agent_handoff");
+  assert.equal(firstHandoff.turnCount, 1, "expected turnCount=1");
+  assert.ok(
+    typeof firstHandoff.toolCallCount === "number",
+    "expected toolCallCount to be present"
+  );
+
+  await testRuntimeManager.handoffConversation(workspace, source.id, "cursor-acp");
+  const afterSecond = await readConversationSnapshot(workspace.id, source.id);
+  const secondHandoffCount = afterSecond.events.filter((e) => e.kind === "agent_handoff").length;
+  assert.equal(secondHandoffCount, 1, "expected only one handoff event after second handoff (superseded first deleted)");
+
+  const secondHandoff = afterSecond.events.find((e) => e.kind === "agent_handoff");
+  assert.ok(secondHandoff && secondHandoff.kind === "agent_handoff");
+  assert.equal(secondHandoff.fromAgent, "opencode-acp", "expected fromAgent to be the second source");
+  assert.equal(secondHandoff.toAgent, "cursor-acp", "expected toAgent to be the second target");
+
+  await testRuntimeManager.handoffConversation(workspace, source.id, "opencode-acp");
+  const afterThird = await readConversationSnapshot(workspace.id, source.id);
+  const thirdHandoffCount = afterThird.events.filter((e) => e.kind === "agent_handoff").length;
+  assert.equal(thirdHandoffCount, 1, "expected only one handoff event after third handoff");
+
+  const thirdHandoff = afterThird.events.find((e) => e.kind === "agent_handoff");
+  assert.ok(thirdHandoff && thirdHandoff.kind === "agent_handoff");
+  assert.equal(thirdHandoff.fromAgent, "cursor-acp");
+  assert.equal(thirdHandoff.toAgent, "opencode-acp");
+
+  const hiddenTranscriptCount = afterThird.events.filter((e) => {
+    if (e.kind !== "assistant_message_end") return false;
+    const next = afterThird.events.find((n) => n.kind === "agent_handoff" && n.seq === e.seq + 1);
+    return !!next;
+  }).length;
+  assert.equal(hiddenTranscriptCount, 1, "expected only one hidden transcript pair after coalescing");
+});
+
 test("persisted provider sessions can be rehydrated after dropping runtime state", async () => {
   const workspace = await ensureWorkspaceRegistered(repoRoot, "repo");
   const conversation = await testRuntimeManager.createConversation(workspace, {
@@ -739,6 +797,168 @@ test("persisted provider sessions can be rehydrated after dropping runtime state
   assert.ok(
     resumed.conversation.providerSessionId,
     "expected persisted provider session id after rehydration"
+  );
+});
+
+test("resume retries once before falling back to fresh provider session", async () => {
+  const workspace = await ensureWorkspaceRegistered(repoRoot, "repo");
+  const loadAttempts = new Map<string, number>();
+  const flakyRuntimeManager = new AgentRuntimeManager({
+    backends: testBackends,
+    listBackends: () => Object.values(testBackends),
+    createProvider: async (backendId) => {
+      const backend = testBackends[backendId];
+      return {
+        backend,
+        async startSession(callbacks) {
+          const handle = new FakeSessionHandle(callbacks, randomUUID());
+          await callbacks.updateConversation((current) => ({
+            ...current,
+            providerSessionId: handle.sessionId,
+            configOptions: handle.configOptions,
+            capabilities: handle.capabilities,
+            status: "idle",
+            pendingPermission: null,
+            lastError: null,
+          }));
+          return handle;
+        },
+        async loadSession(callbacks, providerSessionId) {
+          const attempts = (loadAttempts.get(providerSessionId) ?? 0) + 1;
+          loadAttempts.set(providerSessionId, attempts);
+          if (attempts === 1) {
+            throw new Error("Invalid params");
+          }
+          const handle = new FakeSessionHandle(callbacks, providerSessionId);
+          await callbacks.updateConversation((current) => ({
+            ...current,
+            providerSessionId: handle.sessionId,
+            configOptions: handle.configOptions,
+            capabilities: handle.capabilities,
+            status: "idle",
+            pendingPermission: null,
+            lastError: null,
+          }));
+          return handle;
+        },
+      } satisfies AgentProvider;
+    },
+  });
+
+  const conversation = await flakyRuntimeManager.createConversation(workspace, {
+    backendId: "cursor-acp",
+    mode: "agent",
+    modelId: "test-fast",
+    modelName: "Test Fast",
+  });
+  await flakyRuntimeManager.promptConversation(workspace, conversation.id, "warm flaky runtime");
+  const warmed = await waitFor(
+    "flaky warm runtime",
+    () => readConversationSnapshot(workspace.id, conversation.id),
+    (value) =>
+      value.conversation.status === "idle" &&
+      value.conversation.providerSessionId !== null
+  );
+  await flakyRuntimeManager.disposeRuntime(conversation.id);
+  await updateConversationRecord(workspace.id, conversation.id, (current) => ({
+    ...current,
+    status: "interrupted",
+  }));
+
+  await flakyRuntimeManager.ensureConversationRuntime(workspace, conversation.id);
+  const resumed = await readConversationSnapshot(workspace.id, conversation.id);
+  assert.ok(resumed, "expected snapshot after retry resume");
+  assert.equal(loadAttempts.get(warmed.conversation.providerSessionId ?? ""), 2);
+  assert.ok(
+    resumed.events.some(
+      (event) =>
+        event.kind === "system" &&
+        event.text.includes("Recovered provider session resume after retry")
+    ),
+    "expected warning event recording the retry recovery path"
+  );
+  assert.ok(
+    !resumed.events.some((event) => event.kind === "chat_fork"),
+    "retry success should not enqueue transcript fork fallback"
+  );
+});
+
+test("failed resume falls back to transcript-seeded fresh session", async () => {
+  const workspace = await ensureWorkspaceRegistered(repoRoot, "repo");
+  const alwaysFailRuntimeManager = new AgentRuntimeManager({
+    backends: testBackends,
+    listBackends: () => Object.values(testBackends),
+    createProvider: async (backendId) => {
+      const backend = testBackends[backendId];
+      return {
+        backend,
+        async startSession(callbacks) {
+          const handle = new FakeSessionHandle(callbacks, randomUUID());
+          await callbacks.updateConversation((current) => ({
+            ...current,
+            providerSessionId: handle.sessionId,
+            configOptions: handle.configOptions,
+            capabilities: handle.capabilities,
+            status: "idle",
+            pendingPermission: null,
+            lastError: null,
+          }));
+          return handle;
+        },
+        async loadSession() {
+          throw new Error("Invalid params");
+        },
+      } satisfies AgentProvider;
+    },
+  });
+
+  const conversation = await alwaysFailRuntimeManager.createConversation(workspace, {
+    backendId: "cursor-acp",
+    mode: "agent",
+    modelId: "test-fast",
+    modelName: "Test Fast",
+  });
+  await alwaysFailRuntimeManager.promptConversation(workspace, conversation.id, "remember this detail");
+  await waitFor(
+    "always-fail warm runtime",
+    () => readConversationSnapshot(workspace.id, conversation.id),
+    (value) => value.conversation.status === "idle"
+  );
+  await alwaysFailRuntimeManager.disposeRuntime(conversation.id);
+  await updateConversationRecord(workspace.id, conversation.id, (current) => ({
+    ...current,
+    status: "interrupted",
+  }));
+
+  await alwaysFailRuntimeManager.promptConversation(
+    workspace,
+    conversation.id,
+    "continue after resume failure"
+  );
+  const recovered = await waitFor(
+    "resume fallback prompt completion",
+    () => readConversationSnapshot(workspace.id, conversation.id),
+    (value) =>
+      value.conversation.status === "idle" &&
+      value.events.some(
+        (event) =>
+          event.kind === "assistant_message_chunk" &&
+          event.text.includes("<recovered_conversation>") &&
+          event.text.includes("User: remember this detail")
+      )
+  );
+
+  assert.ok(
+    recovered.events.some(
+      (event) =>
+        event.kind === "system" &&
+        event.text.includes("Could not resume the previous provider session after retry")
+    ),
+    "expected fallback warning when both resume attempts fail"
+  );
+  assert.ok(
+    recovered.events.some((event) => event.kind === "chat_fork"),
+    "expected chat_fork marker so future prompts can reuse transcript fallback"
   );
 });
 
@@ -887,4 +1107,230 @@ test("lists grouped conversation summaries across all workspaces", async () => {
     fs.rm(workspaceRootA, { recursive: true, force: true }),
     fs.rm(workspaceRootB, { recursive: true, force: true }),
   ]);
+});
+
+test("fork creates new conversation with transcript and same backend", async () => {
+  const workspace = await ensureWorkspaceRegistered(repoRoot, "repo");
+  const source = await testRuntimeManager.createConversation(workspace, {
+    backendId: "cursor-acp",
+    mode: "agent",
+    modelId: "test-fast",
+    modelName: "Test Fast",
+  });
+
+  await testRuntimeManager.promptConversation(workspace, source.id, "hello from cursor");
+  await waitFor(
+    "source conversation idle",
+    () => readConversationSnapshot(workspace.id, source.id),
+    (value) => value.conversation.status === "idle"
+  );
+
+  const sourceSnap = await readConversationSnapshot(workspace.id, source.id);
+  const userMessage = sourceSnap.events.find((e) => e.kind === "user_message");
+  assert.ok(userMessage, "expected a user message in source");
+
+  const { conversation: forked } = await testRuntimeManager.forkConversation(
+    workspace,
+    source.id
+  );
+
+  assert.notEqual(forked.id, source.id, "fork should create a new conversation");
+  assert.equal(
+    forked.config.backendId,
+    "cursor-acp",
+    "fork should keep the same backend"
+  );
+  assert.ok(
+    forked.title.includes("(fork)"),
+    "fork title should include (fork)"
+  );
+
+  const forkedSnap = await readConversationSnapshot(workspace.id, forked.id);
+  assert.ok(forkedSnap, "expected fork snapshot");
+
+  const forkEvent = forkedSnap.events.find((e) => e.kind === "chat_fork");
+  assert.ok(forkEvent && forkEvent.kind === "chat_fork", "expected chat_fork marker");
+  assert.equal(forkEvent.fromConversationId, source.id);
+  assert.equal(forkEvent.fromAgent, "cursor-acp");
+  assert.ok(
+    forkedSnap.events.some(
+      (e) => e.kind === "user_message" && "inheritedInFork" in e && e.inheritedInFork
+    ),
+    "expected inherited source messages to be copied into the fork for display"
+  );
+  assert.ok(
+    forkEvent.transcript.length > 0,
+    "expected transcript text in fork event"
+  );
+  assert.ok(
+    forkEvent.transcript.includes("hello from cursor"),
+    "expected source user message in fork transcript"
+  );
+
+  const sourceUserMessages = sourceSnap.events.filter((e) => e.kind === "user_message");
+  assert.equal(sourceUserMessages.length, 1, "source should not be modified by fork");
+});
+
+test("fork with upToMessageId truncates transcript at that message", async () => {
+  const workspace = await ensureWorkspaceRegistered(repoRoot, "repo");
+  const source = await testRuntimeManager.createConversation(workspace, {
+    backendId: "cursor-acp",
+    mode: "agent",
+    modelId: "test-fast",
+    modelName: "Test Fast",
+  });
+
+  await testRuntimeManager.promptConversation(workspace, source.id, "first prompt");
+  await waitFor(
+    "first prompt idle",
+    () => readConversationSnapshot(workspace.id, source.id),
+    (value) => value.conversation.status === "idle"
+  );
+
+  await testRuntimeManager.promptConversation(workspace, source.id, "second prompt");
+  await waitFor(
+    "second prompt idle",
+    () => readConversationSnapshot(workspace.id, source.id),
+    (value) =>
+      value.conversation.status === "idle" &&
+      value.events.filter((e) => e.kind === "user_message").length === 2
+  );
+
+  const sourceSnap = await readConversationSnapshot(workspace.id, source.id);
+  const userMessages = sourceSnap.events.filter((e) => e.kind === "user_message");
+  assert.equal(userMessages.length, 2, "expected two user messages");
+
+  const firstUserMessageId = userMessages[0].messageId;
+
+  await waitFor(
+    "source ready to fork (idle, no server queue)",
+    () => readConversationRecord(workspace.id, source.id),
+    (record) =>
+      record != null &&
+      record.status === "idle" &&
+      (record.queuedPrompts?.length ?? 0) === 0
+  );
+
+  const { conversation: forked } = await testRuntimeManager.forkConversation(
+    workspace,
+    source.id,
+    { upToMessageId: firstUserMessageId }
+  );
+
+  const forkedSnap = await readConversationSnapshot(workspace.id, forked.id);
+  const forkEvent = forkedSnap.events.find((e) => e.kind === "chat_fork");
+  assert.ok(forkEvent && forkEvent.kind === "chat_fork");
+  assert.equal(forkEvent.upToMessageId, firstUserMessageId);
+  assert.ok(
+    forkEvent.transcript.includes("first prompt"),
+    "expected first prompt in fork transcript"
+  );
+  assert.ok(
+    !forkEvent.transcript.includes("second prompt"),
+    "second prompt should be excluded from fork transcript"
+  );
+});
+
+test("fork does not write any marker to source conversation", async () => {
+  const workspace = await ensureWorkspaceRegistered(repoRoot, "repo");
+  const source = await testRuntimeManager.createConversation(workspace, {
+    backendId: "opencode-acp",
+    mode: "agent",
+    modelId: "test-fast",
+    modelName: "Test Fast",
+  });
+
+  await testRuntimeManager.promptConversation(workspace, source.id, "hello before fork");
+  await waitFor(
+    "source idle",
+    () => readConversationSnapshot(workspace.id, source.id),
+    (value) => value.conversation.status === "idle"
+  );
+
+  const preForkSnap = await readConversationSnapshot(workspace.id, source.id);
+  const preForkKinds = preForkSnap.events.map((e) => e.kind);
+
+  await testRuntimeManager.forkConversation(workspace, source.id);
+
+  const postForkSnap = await readConversationSnapshot(workspace.id, source.id);
+  const postForkKinds = postForkSnap.events.map((e) => e.kind);
+
+  assert.deepEqual(
+    preForkKinds,
+    postForkKinds,
+    "source conversation events should be unchanged after fork"
+  );
+});
+
+test("fork injects transcript on first prompt via resolvePendingForkContext", async () => {
+  const workspace = await ensureWorkspaceRegistered(repoRoot, "repo");
+  const source = await testRuntimeManager.createConversation(workspace, {
+    backendId: "cursor-acp",
+    mode: "agent",
+    modelId: "test-fast",
+    modelName: "Test Fast",
+  });
+
+  await testRuntimeManager.promptConversation(workspace, source.id, "hello from source");
+  await waitFor(
+    "source idle",
+    () => readConversationSnapshot(workspace.id, source.id),
+    (value) => value.conversation.status === "idle"
+  );
+
+  const { conversation: forked } = await testRuntimeManager.forkConversation(
+    workspace,
+    source.id
+  );
+
+  await testRuntimeManager.promptConversation(
+    workspace,
+    forked.id,
+    "continue in fork"
+  );
+  const afterPrompt = await waitFor(
+    "fork first prompt completion",
+    () => readConversationSnapshot(workspace.id, forked.id),
+    (value) =>
+      value.conversation.status === "idle" &&
+      value.events.some((e) => e.kind === "user_message" && e.content === "continue in fork")
+  );
+
+  const forkUserMessages = afterPrompt.events.filter((e) => e.kind === "user_message");
+  const inherited = forkUserMessages.filter(
+    (e) => "inheritedInFork" in e && e.inheritedInFork
+  );
+  const newPostFork = forkUserMessages.filter(
+    (e) => !("inheritedInFork" in e) || !e.inheritedInFork
+  );
+  assert.equal(inherited.length, 1, "fork should materialize the source user turn");
+  assert.equal(
+    newPostFork.length,
+    1,
+    "expected exactly the new post-fork user message"
+  );
+  const firstNewUser = newPostFork[0]!;
+
+  const seededAssistantChunk = afterPrompt.events.find(
+    (e) =>
+      e.kind === "assistant_message_chunk" &&
+      e.seq > firstNewUser.seq &&
+      e.text.includes("<forked_conversation>")
+  );
+  assert.ok(
+    seededAssistantChunk,
+    "expected first fork prompt to include the forked_conversation seed context"
+  );
+  assert.ok(
+    seededAssistantChunk.text.includes("User: hello from source"),
+    "expected source user message in the seeded prompt"
+  );
+  assert.ok(
+    seededAssistantChunk.text.includes("Assistant: Handling: hello from source"),
+    "expected source assistant response in the seeded prompt"
+  );
+  assert.ok(
+    seededAssistantChunk.text.includes("<current_user_message>\ncontinue in fork\n</current_user_message>"),
+    "expected the fork user message to be appended after the transcript"
+  );
 });

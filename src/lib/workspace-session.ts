@@ -1,10 +1,4 @@
-import type {
-  ChatTab,
-  EditorTab,
-  EditorMode,
-  ModelInfo,
-  QueuedChatPrompt,
-} from "@/lib/types";
+import type { ChatTab, EditorTab, EditorMode, ModelInfo } from "@/lib/types";
 import type { AgentBackendId } from "@/lib/agent-types";
 import type { AgentRailFilterToggleState } from "@/lib/agent-rail";
 import {
@@ -77,21 +71,250 @@ export type EditorSessionState = {
   viewStateByTabId: Record<string, unknown>;
 };
 
+/** Scroll offset persisted for a chat tab. Missing key = open at bottom (latest messages). */
+export function getPersistedChatScrollTop(
+  map: Record<string, number>,
+  tabId: string
+): number | undefined {
+  return Object.hasOwn(map, tabId) ? map[tabId] : undefined;
+}
+
+/** Matches {@link getWorkspaceSessionScopeId} in WorkspaceContext (workspace + optional window). */
+export function getWorkspaceChatScrollScopeId(
+  workspaceId: string,
+  windowId: string | null | undefined
+): string {
+  return windowId ? `${workspaceId}:window:${windowId}` : workspaceId;
+}
+
+/**
+ * Message-anchored scroll: `delta = scrollTop - messageRowTopInScrollContent`.
+ * Stable when older history is prepended (both terms shift equally).
+ */
+export type ChatScrollAnchor = {
+  messageId: string;
+  delta: number;
+};
+
+function isChatScrollAnchor(raw: unknown): raw is ChatScrollAnchor {
+  if (!raw || typeof raw !== "object") {
+    return false;
+  }
+  const o = raw as Record<string, unknown>;
+  return (
+    typeof o.messageId === "string" &&
+    o.messageId.length > 0 &&
+    typeof o.delta === "number" &&
+    Number.isFinite(o.delta)
+  );
+}
+
+export type ChatScrollOverlayEntry =
+  | { pinBottom: true; at: number }
+  | { y: number; at: number; anchor?: ChatScrollAnchor };
+
+const CHAT_SCROLL_OVERLAY_MAX_KEYS = 400;
+
+function chatScrollOverlayStorageKey(
+  serverStorageKey: string,
+  workspaceScopeId: string
+): string {
+  return `opencursor.chat-scroll-overlay.${serverStorageKey}.${workspaceScopeId}`;
+}
+
+function readChatScrollOverlayBucketRaw(
+  serverStorageKey: string,
+  workspaceScopeId: string
+): Record<string, ChatScrollOverlayEntry> {
+  if (typeof window === "undefined") {
+    return {};
+  }
+  try {
+    const raw = window.localStorage.getItem(
+      chatScrollOverlayStorageKey(serverStorageKey, workspaceScopeId)
+    );
+    if (!raw) {
+      return {};
+    }
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== "object") {
+      return {};
+    }
+    return parsed as Record<string, ChatScrollOverlayEntry>;
+  } catch {
+    return {};
+  }
+}
+
+function pruneChatScrollOverlayBucket(
+  bucket: Record<string, ChatScrollOverlayEntry>
+): Record<string, ChatScrollOverlayEntry> {
+  const ids = Object.keys(bucket);
+  if (ids.length <= CHAT_SCROLL_OVERLAY_MAX_KEYS) {
+    return bucket;
+  }
+  const sorted = ids.sort(
+    (a, b) => (bucket[b]!.at ?? 0) - (bucket[a]!.at ?? 0)
+  );
+  const next: Record<string, ChatScrollOverlayEntry> = {};
+  for (const id of sorted.slice(0, CHAT_SCROLL_OVERLAY_MAX_KEYS)) {
+    next[id] = bucket[id]!;
+  }
+  return next;
+}
+
+/**
+ * Immediate, durable scroll position (localStorage). Survives rapid tab switches before the
+ * debounced workspace session save hits the server.
+ */
+export function writeChatScrollOverlayEntry(
+  serverStorageKey: string,
+  workspaceScopeId: string,
+  conversationId: string,
+  entry: ChatScrollOverlayEntry
+): void {
+  if (typeof window === "undefined" || !conversationId) {
+    return;
+  }
+  try {
+    const key = chatScrollOverlayStorageKey(serverStorageKey, workspaceScopeId);
+    let bucket = readChatScrollOverlayBucketRaw(serverStorageKey, workspaceScopeId);
+    bucket = pruneChatScrollOverlayBucket(bucket);
+    bucket[conversationId] = entry;
+    window.localStorage.setItem(key, JSON.stringify(bucket));
+  } catch {
+    /* quota / private mode */
+  }
+}
+
+export type ResolvedChatScroll =
+  | { mode: "bottom" }
+  | { mode: "restore"; scrollTop?: number; anchor?: ChatScrollAnchor };
+
+function normalizeScrollAnchorMap(
+  raw: unknown,
+  fallback: Record<string, ChatScrollAnchor>
+): Record<string, ChatScrollAnchor> {
+  if (!raw || typeof raw !== "object") {
+    return { ...fallback };
+  }
+  const next: Record<string, ChatScrollAnchor> = { ...fallback };
+  for (const [tabId, v] of Object.entries(raw)) {
+    if (!tabId || !isChatScrollAnchor(v)) {
+      continue;
+    }
+    next[tabId] = v;
+  }
+  return next;
+}
+
+/**
+ * Overlay (per-device) wins for immediacy; session maps sync to the server for cross-device restore.
+ */
+export function resolvePersistedChatScroll(
+  sessionMap: Record<string, number>,
+  sessionAnchors: Record<string, ChatScrollAnchor>,
+  conversationId: string | null | undefined,
+  workspaceId: string | null | undefined,
+  windowId: string | null | undefined,
+  serverStorageKey: string
+): ResolvedChatScroll {
+  if (!conversationId || !workspaceId) {
+    return { mode: "bottom" };
+  }
+  const scope = getWorkspaceChatScrollScopeId(workspaceId, windowId);
+  const row = readChatScrollOverlayBucketRaw(serverStorageKey, scope)[conversationId];
+  if (row && "pinBottom" in row && row.pinBottom) {
+    return { mode: "bottom" };
+  }
+  if (row && "y" in row && typeof row.y === "number" && Number.isFinite(row.y)) {
+    const anchor =
+      "anchor" in row && row.anchor && isChatScrollAnchor(row.anchor) ? row.anchor : undefined;
+    return { mode: "restore", scrollTop: row.y, anchor };
+  }
+  const top = getPersistedChatScrollTop(sessionMap, conversationId);
+  const anchor = sessionAnchors[conversationId];
+  if (top !== undefined) {
+    return { mode: "restore", scrollTop: top, anchor };
+  }
+  if (anchor) {
+    return { mode: "restore", anchor };
+  }
+  return { mode: "bottom" };
+}
+
+/** @deprecated Prefer {@link resolvePersistedChatScroll} for anchor-aware restore. */
+export function resolvePersistedChatScrollTop(
+  sessionMap: Record<string, number>,
+  conversationId: string | null | undefined,
+  workspaceId: string | null | undefined,
+  windowId: string | null | undefined,
+  serverStorageKey: string
+): number | undefined {
+  const r = resolvePersistedChatScroll(
+    sessionMap,
+    {},
+    conversationId,
+    workspaceId,
+    windowId,
+    serverStorageKey
+  );
+  if (r.mode === "bottom") {
+    return undefined;
+  }
+  return r.scrollTop;
+}
+
+export function persistChatScrollOverlay(
+  workspaceId: string,
+  windowId: string | null | undefined,
+  serverStorageKey: string,
+  conversationId: string,
+  scrollTop: number,
+  meta: { pinnedToBottom: boolean; anchor?: ChatScrollAnchor | null }
+): void {
+  if (!workspaceId || !conversationId) {
+    return;
+  }
+  const scope = getWorkspaceChatScrollScopeId(workspaceId, windowId);
+  writeChatScrollOverlayEntry(
+    serverStorageKey,
+    scope,
+    conversationId,
+    meta.pinnedToBottom
+      ? { pinBottom: true, at: Date.now() }
+      : {
+          y: scrollTop,
+          at: Date.now(),
+          ...(meta.anchor ? { anchor: meta.anchor } : {}),
+        }
+  );
+}
+
 export type ChatSessionState = {
   tabs: ChatTab[];
   mode: EditorMode;
   model: ModelInfo;
   backendId: AgentBackendId;
   scrollTopByTabId: Record<string, number>;
+  /** Message-anchored scroll (syncs across devices via workspace session). */
+  scrollAnchorByTabId?: Record<string, ChatScrollAnchor>;
   hiddenConversationIds: string[];
+  editingQueuedPromptIdByConversationId?: Record<string, string>;
   /**
    * Collapsed/expanded state for worked-session dropdowns.
    * Keys: `${conversationId}::${messageId}` → true = expanded.
    */
   workedSessionOpenByScopedId?: Record<string, boolean>;
-  queuedPromptsByConversationId?: Record<string, QueuedChatPrompt[]>;
+  /**
+   * When true, the follow-up message queue (composer dock) is collapsed for that
+   * conversation. Omitted = expanded. Syncs via workspace session.
+   */
+  composerQueueDockCollapsedByConversationId?: Record<string, true>;
   /** Conversation completed (idle) since last viewed; key present means show unread dot. */
   unreadChatCompletionByConversationId?: Record<string, true>;
+  /** Per-conversation queued follow-up prompts. */
+  queuedPromptsByConversationId?: Record<string, import("../lib/types").QueuedChatPrompt[]>;
 };
 
 export type AgentSidePaneSessionState = {
@@ -182,9 +405,11 @@ export function createDefaultWorkspaceSession(
       model: initialModel,
       backendId: "cursor-acp",
       scrollTopByTabId: {},
+      scrollAnchorByTabId: {},
       hiddenConversationIds: [],
+      editingQueuedPromptIdByConversationId: {},
       workedSessionOpenByScopedId: {},
-      queuedPromptsByConversationId: {},
+      composerQueueDockCollapsedByConversationId: {},
       unreadChatCompletionByConversationId: {},
     },
     explorer: {
@@ -372,8 +597,8 @@ function stripLegacySettingsEditorTab(session: EditorSessionState): EditorSessio
       return item.groupId in groups;
     });
 
-  let leftStripItems = pruneStrip(session.leftStripItems, leftTabGroups);
-  let rightStripItems = pruneStrip(session.rightStripItems, rightTabGroups);
+  const leftStripItems = pruneStrip(session.leftStripItems, leftTabGroups);
+  const rightStripItems = pruneStrip(session.rightStripItems, rightTabGroups);
 
   const fixActive = (activeId: string | null, tabs: EditorTab[]): string | null => {
     if (activeId === LEGACY) {
@@ -578,21 +803,30 @@ export function mergeWorkspaceSessionFromImport(
         r.chat?.scrollTopByTabId && typeof r.chat.scrollTopByTabId === "object"
           ? r.chat.scrollTopByTabId
           : current.chat.scrollTopByTabId,
+      scrollAnchorByTabId: normalizeScrollAnchorMap(
+        r.chat?.scrollAnchorByTabId,
+        current.chat.scrollAnchorByTabId ?? {}
+      ),
       hiddenConversationIds: Array.isArray(r.chat?.hiddenConversationIds)
         ? r.chat.hiddenConversationIds.filter(
             (value): value is string => typeof value === "string" && value.length > 0
           )
         : current.chat.hiddenConversationIds,
+      editingQueuedPromptIdByConversationId:
+        r.chat?.editingQueuedPromptIdByConversationId &&
+        typeof r.chat.editingQueuedPromptIdByConversationId === "object"
+          ? r.chat.editingQueuedPromptIdByConversationId
+          : current.chat.editingQueuedPromptIdByConversationId ?? {},
       workedSessionOpenByScopedId:
         r.chat?.workedSessionOpenByScopedId &&
         typeof r.chat.workedSessionOpenByScopedId === "object"
           ? r.chat.workedSessionOpenByScopedId
           : current.chat.workedSessionOpenByScopedId ?? {},
-      queuedPromptsByConversationId:
-        r.chat?.queuedPromptsByConversationId &&
-        typeof r.chat.queuedPromptsByConversationId === "object"
-          ? r.chat.queuedPromptsByConversationId
-          : current.chat.queuedPromptsByConversationId ?? {},
+      composerQueueDockCollapsedByConversationId:
+        r.chat?.composerQueueDockCollapsedByConversationId &&
+        typeof r.chat.composerQueueDockCollapsedByConversationId === "object"
+          ? r.chat.composerQueueDockCollapsedByConversationId
+          : current.chat.composerQueueDockCollapsedByConversationId ?? {},
       unreadChatCompletionByConversationId:
         r.chat?.unreadChatCompletionByConversationId &&
         typeof r.chat.unreadChatCompletionByConversationId === "object"

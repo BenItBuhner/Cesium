@@ -14,9 +14,16 @@ import {
   createDefaultGlobalSettings,
   normalizeLoadedGlobalSettings,
   type GlobalSettingsState,
+  type ModelToggleState,
 } from "@/lib/global-settings";
-import { availableModels, currentModel } from "@/lib/mock-data";
-import { fetchGlobalSettings, saveGlobalSettings } from "@/lib/server-api";
+import {
+  fetchGlobalSettings,
+  saveGlobalSettings,
+  fetchModelToggleState,
+  refreshModelToggleState,
+  saveModelToggles,
+  type ModelToggleUpdate,
+} from "@/lib/server-api";
 
 type GlobalSettingsContextValue = {
   settings: GlobalSettingsState;
@@ -24,26 +31,25 @@ type GlobalSettingsContextValue = {
   updateSettings: (
     updater: (current: GlobalSettingsState) => GlobalSettingsState
   ) => void;
+  refreshModels: () => Promise<void>;
+  modelsRefreshing: boolean;
+  saveModelToggleUpdates: (updates: ModelToggleUpdate[]) => Promise<void>;
 };
 
 const GlobalSettingsContext =
   createContext<GlobalSettingsContextValue | null>(null);
 
 const SAVE_DEBOUNCE_MS = 500;
+const MODEL_SYNC_INTERVAL_MS = 5 * 60 * 1000;
 
 function createDefaultState(): GlobalSettingsState {
-  return createDefaultGlobalSettings(
-    availableModels.map((model) => ({
-      id: model.id,
-      name: model.name,
-      on: model.id === currentModel.id,
-    }))
-  );
+  return createDefaultGlobalSettings();
 }
 
 export function GlobalSettingsProvider({ children }: { children: ReactNode }) {
   const [settings, setSettings] = useState<GlobalSettingsState>(createDefaultState);
   const [ready, setReady] = useState(false);
+  const [modelsRefreshing, setModelsRefreshing] = useState(false);
   const settingsRef = useRef(settings);
   const skipNextSaveRef = useRef(false);
   const saveTimerRef = useRef<number | null>(null);
@@ -63,9 +69,7 @@ export function GlobalSettingsProvider({ children }: { children: ReactNode }) {
         saveTimerRef.current = null;
       }
 
-      await saveGlobalSettings(settingsRef.current, options).catch(() => {
-        // Ignore flush failures; background saves will retry on future changes.
-      });
+      await saveGlobalSettings(settingsRef.current, options).catch(() => {});
     },
     [ready]
   );
@@ -78,16 +82,7 @@ export function GlobalSettingsProvider({ children }: { children: ReactNode }) {
         const result = await fetchGlobalSettings();
         if (!mounted) return;
         skipNextSaveRef.current = true;
-        setSettings(
-          normalizeLoadedGlobalSettings(
-            result.settings,
-            availableModels.map((model) => ({
-              id: model.id,
-              name: model.name,
-              on: model.id === currentModel.id,
-            }))
-          )
-        );
+        setSettings(normalizeLoadedGlobalSettings(result.settings));
       } finally {
         if (mounted) {
           setReady(true);
@@ -101,6 +96,67 @@ export function GlobalSettingsProvider({ children }: { children: ReactNode }) {
       mounted = false;
     };
   }, []);
+
+  const syncModelToggleState = useCallback(async () => {
+    try {
+      const result = await fetchModelToggleState();
+      setSettings((current) => ({
+        ...current,
+        models: { byBackend: result.byBackend },
+      }));
+    } catch {
+      // Silently ignore; existing state remains valid.
+    }
+  }, []);
+
+  const refetchGlobalSettingsFromServer = useCallback(async () => {
+    try {
+      const result = await fetchGlobalSettings();
+      skipNextSaveRef.current = true;
+      setSettings(normalizeLoadedGlobalSettings(result.settings));
+    } catch {
+      // Offline or auth; keep in-memory state.
+    }
+  }, []);
+
+  const refreshModels = useCallback(async () => {
+    setModelsRefreshing(true);
+    try {
+      const result = await refreshModelToggleState();
+      setSettings((current) => ({
+        ...current,
+        models: { byBackend: result.byBackend },
+      }));
+    } catch {
+      // Silently ignore refresh failures; existing state remains valid.
+    } finally {
+      setModelsRefreshing(false);
+    }
+  }, []);
+
+  const saveModelToggleUpdates = useCallback(
+    async (updates: ModelToggleUpdate[]) => {
+      if (updates.length === 0) return;
+      try {
+        const result = await saveModelToggles(updates);
+        setSettings((current) => ({
+          ...current,
+          models: { byBackend: result.byBackend },
+        }));
+      } catch {
+        // Server toggle save failed — the optimistic UI update still stands
+        // and the next global settings save cycle will persist the toggles
+        // as part of the full settings blob.
+      }
+    },
+    []
+  );
+
+  useEffect(() => {
+    if (ready) {
+      void syncModelToggleState();
+    }
+  }, [ready, syncModelToggleState]);
 
   useEffect(() => {
     if (!ready) {
@@ -117,9 +173,7 @@ export function GlobalSettingsProvider({ children }: { children: ReactNode }) {
     }
 
     saveTimerRef.current = window.setTimeout(() => {
-      void saveGlobalSettings(settingsRef.current).catch(() => {
-        // Ignore background save failures and keep the optimistic UI state.
-      });
+      void saveGlobalSettings(settingsRef.current).catch(() => {});
     }, SAVE_DEBOUNCE_MS);
 
     return () => {
@@ -141,19 +195,35 @@ export function GlobalSettingsProvider({ children }: { children: ReactNode }) {
     const handleVisibilityChange = () => {
       if (document.visibilityState === "hidden") {
         flushForPageHide();
+      } else if (document.visibilityState === "visible") {
+        void (async () => {
+          await flushGlobalSettingsNow();
+          await refetchGlobalSettingsFromServer();
+          await syncModelToggleState();
+        })();
       }
     };
+
+    const intervalId = window.setInterval(() => {
+      void syncModelToggleState();
+    }, MODEL_SYNC_INTERVAL_MS);
 
     window.addEventListener("pagehide", flushForPageHide);
     window.addEventListener("beforeunload", flushForPageHide);
     document.addEventListener("visibilitychange", handleVisibilityChange);
 
     return () => {
+      window.clearInterval(intervalId);
       window.removeEventListener("pagehide", flushForPageHide);
       window.removeEventListener("beforeunload", flushForPageHide);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
-  }, [flushGlobalSettingsNow, ready]);
+  }, [
+    flushGlobalSettingsNow,
+    ready,
+    refetchGlobalSettingsFromServer,
+    syncModelToggleState,
+  ]);
 
   const updateSettings = useCallback(
     (updater: (current: GlobalSettingsState) => GlobalSettingsState) => {
@@ -163,8 +233,15 @@ export function GlobalSettingsProvider({ children }: { children: ReactNode }) {
   );
 
   const value = useMemo(
-    () => ({ settings, ready, updateSettings }),
-    [ready, settings, updateSettings]
+    () => ({
+      settings,
+      ready,
+      updateSettings,
+      refreshModels,
+      modelsRefreshing,
+      saveModelToggleUpdates,
+    }),
+    [ready, settings, updateSettings, refreshModels, modelsRefreshing, saveModelToggleUpdates]
   );
 
   return (

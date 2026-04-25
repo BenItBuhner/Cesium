@@ -251,7 +251,10 @@ export function replaceTextRange(
   // The mutation wipes any pill spans that sat inside (start, end); the
   // reconciler in ChatComposer will restore them on the next effect pass when
   // React state catches up.
-  container.textContent = next;
+  while (container.firstChild) {
+    container.removeChild(container.firstChild);
+  }
+  appendTextWithBrBreaks(container, next);
   setCaretOffset(container, start + insert.length);
 }
 
@@ -302,6 +305,17 @@ function escapeHtml(s: string): string {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
+}
+
+function appendTextWithBrBreaks(parent: HTMLElement | DocumentFragment, text: string): void {
+  if (!text) return;
+  const segments = text.split("\n");
+  for (let i = 0; i < segments.length; i += 1) {
+    if (i > 0) parent.appendChild(document.createElement("br"));
+    if (segments[i]!.length > 0) {
+      parent.appendChild(document.createTextNode(segments[i]!));
+    }
+  }
 }
 
 /** Pill span HTML. Kept in one place so the composer and the design pill in
@@ -359,13 +373,13 @@ export function reconcileComposerEditorDom(
     const start = m.index;
     const end = start + m[0].length;
     if (start > cursor) {
-      frag.appendChild(document.createTextNode(value.slice(cursor, start)));
+      appendTextWithBrBreaks(frag, value.slice(cursor, start));
     }
     frag.appendChild(buildPillSpan(m[0], pills?.[m[1]!]));
     cursor = end;
   }
   if (cursor < value.length) {
-    frag.appendChild(document.createTextNode(value.slice(cursor)));
+    appendTextWithBrBreaks(frag, value.slice(cursor));
   }
   if (!frag.hasChildNodes()) {
     frag.appendChild(document.createTextNode(""));

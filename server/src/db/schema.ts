@@ -138,6 +138,9 @@ export const agentConversations = pgTable(
     lastError: text("last_error"),
     experimental: boolean("experimental").notNull().default(false),
     archivedAt: bigint("archived_at", { mode: "number" }),
+    queuedPrompts: jsonb("queued_prompts")
+      .notNull()
+      .default(sql`'[]'::jsonb`),
   },
   (table) => [
     index("agent_conversations_workspace_updated_idx").on(

@@ -1,7 +1,7 @@
 "use client";
 
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { useCallback, useMemo, useRef, type ReactNode, type RefObject } from "react";
+import { useCallback, useEffect, useMemo, useRef, type ReactNode, type RefObject } from "react";
 import { StickyChatHeader } from "./StickyChatHeader";
 import { useChatStickyPush } from "@/hooks/useChatStickyPush";
 import { UserMessage } from "./UserMessage";
@@ -15,10 +15,16 @@ import { WorkedSessionCard } from "./WorkedSessionCard";
 import { ShellCommandCard } from "./ShellCommandCard";
 import { PermissionRequestCard } from "./PermissionRequestCard";
 import { HandoffDivider } from "./HandoffDivider";
+import { ForkDivider } from "./ForkDivider";
 import { askStepsFromMessage } from "@/lib/ask-question-utils";
-import { buildMessageThreadRows, type MessageThreadRow } from "./message-thread-rows";
+import {
+  buildMessageThreadSegments,
+  type MessageThreadSegment,
+  type UserTurnSegment,
+} from "./message-thread-rows";
 import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
 import type { ChatMessage } from "@/lib/types";
+import { stripAgentTodoJsonAssistantContent } from "@/lib/agent-chat";
 
 /**
  * Types that end the “live tail” worked-session; later messages must not keep prior cards in
@@ -34,11 +40,9 @@ const CHAIN_BREAKING_AFTER_WORKED = new Set<ChatMessage["type"]>([
   "worked-session",
   "ask-question",
   "shell-run",
-  "subagent",
-  "todo",
-  "todo-status",
   "activity-label",
   "agent-handoff",
+  "chat-fork",
 ]);
 
 export function workedSessionScopedKey(conversationId: string, messageId: string): string {
@@ -70,7 +74,7 @@ export interface MessageThreadContentProps {
    * Transcript tab: off.
    */
   stickyUserHeader?: boolean;
-  /** Scrollport for progressive “push previous user up” math (main chat only). */
+  /** Scrollport for progressive "push previous user up" math (main chat only). */
   scrollRootRef?: RefObject<HTMLElement | null>;
   workedSessionSurface?: "panel" | "editor";
   /** When a subagent row has `subagentTranscript`, clicking opens this. */
@@ -79,8 +83,7 @@ export interface MessageThreadContentProps {
     transcript: ChatMessage[];
     sessionId?: string;
   }) => void;
-  onResolvePermission?: (requestId: string, optionId: string) => void;
-  onCancelPermission?: (requestId: string) => void;
+  onResolvePermission?: (requestId: string, optionId: string, commandHint?: string) => void;
   /** When set, worked-session expand/collapse is persisted under scoped keys. */
   conversationId?: string;
   /** Conversation is still producing output (last worked block may default-open). */
@@ -90,10 +93,12 @@ export interface MessageThreadContentProps {
   /** Absolute workspace root for concise tool path lists. */
   workspaceRoot?: string | null;
   /**
-   * Window long threads with @tanstack/react-virtual. Sticky user headers are disabled
-   * automatically when this is on (parent should pass stickyUserHeader=false).
+   * Window long threads with @tanstack/react-virtual. Turn blocks use `top` (not `transform`) so
+   * inner `position: sticky` can use the main scrollport.
    */
   virtualize?: boolean;
+  /** Callback when user clicks the fork button on a user message. messageId is the ChatMessage.id. */
+  onForkMessage?: (messageId: string) => void;
 }
 
 export function MessageThreadContent({
@@ -103,13 +108,13 @@ export function MessageThreadContent({
   workedSessionSurface = "panel",
   onOpenSubagent,
   onResolvePermission,
-  onCancelPermission,
   conversationId,
   conversationBusy = false,
   workedSessionOpenByScopedId,
   onWorkedSessionOpenChange,
   virtualize = false,
   workspaceRoot = null,
+  onForkMessage,
 }: MessageThreadContentProps) {
   const { settings } = useGlobalSettings();
   const inlineToolDetailsInChat = settings.agents.inlineToolDetailsInChat;
@@ -136,6 +141,9 @@ export function MessageThreadContent({
   }, [inlineToolDetailsInChat, messages]);
 
   const stickyElMapRef = useRef<Map<number, HTMLDivElement>>(new Map());
+  useEffect(() => {
+    stickyElMapRef.current.clear();
+  }, [conversationId]);
   const registerStickyEl = useCallback((order: number, el: HTMLDivElement | null) => {
     const m = stickyElMapRef.current;
     if (el) {
@@ -157,133 +165,95 @@ export function MessageThreadContent({
     [messages]
   );
 
-  const rows = useMemo(() => buildMessageThreadRows(messages), [messages]);
+  const segments = useMemo(() => buildMessageThreadSegments(messages), [messages]);
 
-  const renderRow = useCallback(
-    (row: MessageThreadRow): ReactNode => {
-      if (row.kind === "user_todo") {
-        const msg = messages[row.userIndex];
-        const next = messages[row.todoIndex];
-        if (!msg || !next) {
-          return null;
-        }
-        const stackOrder = row.stackOrder;
-        const block = (
-          <div className="flex flex-col">
-            <UserMessage
-              content={msg.content}
-              segments={msg.segments}
-              attachments={msg.attachments}
-              showReplyCue={msg.showReplyCue}
-              highlight={msg.isHandoffMessage}
-            />
-            <TodoStatusCard content={next.content!} meldUserAbove />
-          </div>
-        );
-        return (
-          <StickyChatHeader
-            key={row.key}
-            enabled={!!stickyUserHeader}
-            stackOrder={stackOrder}
-            pushUpPx={pushFor(stackOrder)}
-            registerStickyEl={registerStickyEl}
-          >
-            {block}
-          </StickyChatHeader>
-        );
-      }
-
-      if (row.kind === "user") {
-        const msg = messages[row.index];
-        if (!msg || msg.type !== "user") {
-          return null;
-        }
-        const stackOrder = row.stackOrder;
-        const inner = (
-          <UserMessage
-            content={msg.content}
-            segments={msg.segments}
-            attachments={msg.attachments}
-            showReplyCue={msg.showReplyCue}
-            highlight={msg.isHandoffMessage}
-          />
-        );
-        return (
-          <StickyChatHeader
-            key={row.key}
-            enabled={!!stickyUserHeader}
-            stackOrder={stackOrder}
-            pushUpPx={pushFor(stackOrder)}
-            registerStickyEl={registerStickyEl}
-          >
-            {inner}
-          </StickyChatHeader>
-        );
-      }
-
-      const i = row.index;
+  const renderMessageAtIndex = useCallback(
+    (i: number): ReactNode => {
       const msg = messages[i];
       if (!msg) {
         return null;
       }
-
+      const rowKey = msg.id;
       switch (msg.type) {
-        case "assistant":
-          return <AssistantMessage key={row.key} content={msg.content!} />;
+        case "user":
+          return null;
         case "todo-status":
-          return <TodoStatusCard key={row.key} content={msg.content!} />;
+          return (
+            <div key={rowKey} data-chat-message-id={msg.id} className="min-w-0 w-full">
+              <TodoStatusCard content={msg.content!} />
+            </div>
+          );
+        case "assistant": {
+          const assistantBody = stripAgentTodoJsonAssistantContent(msg.content ?? "");
+          if (!assistantBody.trim()) {
+            return null;
+          }
+          return (
+            <div key={rowKey} data-chat-message-id={msg.id} className="min-w-0 w-full">
+              <AssistantMessage content={assistantBody} />
+            </div>
+          );
+        }
         case "todo":
           return (
-            <TodoCard key={row.key} label={msg.todoLabel!} todos={msg.todos!} />
+            <div key={rowKey} data-chat-message-id={msg.id} className="min-w-0 w-full">
+              <TodoCard label={msg.todoLabel!} todos={msg.todos!} />
+            </div>
           );
         case "subagent": {
           if (!onOpenSubagent) {
             return (
+              <div key={rowKey} data-chat-message-id={msg.id} className="min-w-0 w-full">
+                <LiveSubagentCard
+                  title={msg.subagentTitle!}
+                  meta={msg.subagentMeta}
+                  recentActivity={msg.recentActivity}
+                  complete={msg.subagentStatus !== "running"}
+                  transcript={msg.subagentTranscript}
+                  sessionId={msg.subagentId}
+                />
+              </div>
+            );
+          }
+          return (
+            <div key={rowKey} data-chat-message-id={msg.id} className="min-w-0 w-full">
               <LiveSubagentCard
-                key={row.key}
                 title={msg.subagentTitle!}
                 meta={msg.subagentMeta}
                 recentActivity={msg.recentActivity}
                 complete={msg.subagentStatus !== "running"}
-                transcript={msg.subagentTranscript}
+                transcript={
+                  msg.subagentTranscript?.length
+                    ? msg.subagentTranscript
+                    : [
+                        {
+                          id: `${msg.id}-subagent-trace-missing`,
+                          type: "assistant",
+                          content:
+                            "No transcript payload was attached to this subagent card. In a full product build, opening it would show the exact messages, tool calls, and edits from that run.",
+                        },
+                      ]
+                }
                 sessionId={msg.subagentId}
+                onOpenTranscript={({ transcript, sessionId }) =>
+                  onOpenSubagent({
+                    title: msg.subagentTitle!,
+                    transcript,
+                    sessionId,
+                  })
+                }
               />
-            );
-          }
-          return (
-            <LiveSubagentCard
-              key={row.key}
-              title={msg.subagentTitle!}
-              meta={msg.subagentMeta}
-              recentActivity={msg.recentActivity}
-              complete={msg.subagentStatus !== "running"}
-              transcript={
-                msg.subagentTranscript?.length
-                  ? msg.subagentTranscript
-                  : [
-                      {
-                        id: `${msg.id}-subagent-trace-missing`,
-                        type: "assistant",
-                        content:
-                          "No transcript payload was attached to this subagent card. In a full product build, opening it would show the exact messages, tool calls, and edits from that run.",
-                      },
-                    ]
-              }
-              sessionId={msg.subagentId}
-              onOpenTranscript={({ transcript, sessionId }) =>
-                onOpenSubagent({
-                  title: msg.subagentTitle!,
-                  transcript,
-                  sessionId,
-                })
-              }
-            />
+            </div>
           );
         }
         case "ask-question": {
           const steps = askStepsFromMessage(msg);
           if (steps.length) {
-            return <AskQuestionCard key={row.key} steps={steps} />;
+            return (
+              <div key={rowKey} data-chat-message-id={msg.id} className="min-w-0 w-full">
+                <AskQuestionCard steps={steps} />
+              </div>
+            );
           }
           return null;
         }
@@ -292,35 +262,36 @@ export function MessageThreadContent({
             return null;
           }
           return (
-            <PermissionRequestCard
-              key={row.key}
-              title={msg.permissionTitle ?? "Permission required"}
-              detail={msg.permissionDetail}
-              options={msg.permissionOptions ?? []}
-              resolved={msg.permissionResolved}
-              selectedOptionId={msg.permissionSelectedOptionId}
-              onSelect={(optionId) => {
-                if (!msg.permissionRequestId) {
-                  return;
-                }
-                onResolvePermission?.(msg.permissionRequestId, optionId);
-              }}
-              onCancel={
-                msg.permissionRequestId && onCancelPermission
-                  ? () => onCancelPermission(msg.permissionRequestId!)
-                  : undefined
-              }
-            />
+            <div key={rowKey} data-chat-message-id={msg.id} className="min-w-0 w-full">
+              <PermissionRequestCard
+                title={msg.permissionTitle ?? "Permission required"}
+                detail={msg.permissionDetail}
+                options={msg.permissionOptions ?? []}
+                resolved={msg.permissionResolved}
+                selectedOptionId={msg.permissionSelectedOptionId}
+                onSelect={(optionId) => {
+                  if (!msg.permissionRequestId) {
+                    return;
+                  }
+                  onResolvePermission?.(
+                    msg.permissionRequestId,
+                    optionId,
+                    msg.permissionDetail
+                  );
+                }}
+              />
+            </div>
           );
         case "activity-label":
           return (
-            <ActivityLabel
-              key={row.key}
-              label={msg.activityLabel!}
-              detail={msg.activityDetail}
-              files={msg.activityFiles}
-              defaultOpen={msg.activityDefaultOpen}
-            />
+            <div key={rowKey} data-chat-message-id={msg.id} className="min-w-0 w-full">
+              <ActivityLabel
+                label={msg.activityLabel!}
+                detail={msg.activityDetail}
+                files={msg.activityFiles}
+                defaultOpen={msg.activityDefaultOpen}
+              />
+            </div>
           );
         case "worked-session": {
           const scopedKey =
@@ -330,7 +301,8 @@ export function MessageThreadContent({
           const stored =
             scopedKey != null ? workedSessionOpenByScopedId?.[scopedKey] : undefined;
           const chainLoading =
-            msg.loading || shouldKeepWorkedSessionLoading(messages, i);
+            msg.loading ||
+            (conversationBusy && shouldKeepWorkedSessionLoading(messages, i));
           const isTailForExpandDefault =
             i === lastWorkedSessionIndex &&
             conversationBusy &&
@@ -349,34 +321,45 @@ export function MessageThreadContent({
             };
           }
           return (
-            <WorkedSessionCard
-              key={row.key}
-              label={msg.workedLabel!}
-              entries={msg.workedEntries!}
-              highlightedEntry={msg.workedHighlightedEntry}
-              open={openProp}
-              onOpenChange={onOpenChange}
-              defaultOpen={msg.workedDefaultOpen}
-              loading={chainLoading}
-              isLiveWorkedTail={i === lastWorkedSessionIndex && chainLoading}
-              surface={workedSessionSurface}
-              workspaceRoot={workspaceRoot}
-              toolDetailsInWorkedCard={!inlineToolDetailsInChat}
-              embeddedPermission={embeddedPermissionByWorkedId.get(msg.id) ?? null}
-              onResolvePermission={onResolvePermission}
-              onCancelPermission={onCancelPermission}
-            />
+            <div key={rowKey} data-chat-message-id={msg.id} className="min-w-0 w-full">
+              <WorkedSessionCard
+                label={msg.workedLabel!}
+                entries={msg.workedEntries!}
+                highlightedEntry={msg.workedHighlightedEntry}
+                open={openProp}
+                onOpenChange={onOpenChange}
+                defaultOpen={msg.workedDefaultOpen}
+                loading={chainLoading}
+                isLiveWorkedTail={i === lastWorkedSessionIndex && chainLoading}
+                surface={workedSessionSurface}
+                workspaceRoot={workspaceRoot}
+                toolDetailsInWorkedCard={!inlineToolDetailsInChat}
+                embeddedPermission={embeddedPermissionByWorkedId.get(msg.id) ?? null}
+                onResolvePermission={onResolvePermission}
+              />
+            </div>
           );
         }
         case "shell-run":
-          return <ShellCommandCard key={row.key} title={msg.shellTitle!} />;
+          return (
+            <div key={rowKey} data-chat-message-id={msg.id} className="min-w-0 w-full">
+              <ShellCommandCard title={msg.shellTitle!} />
+            </div>
+          );
         case "agent-handoff":
           return (
-            <HandoffDivider
-              key={row.key}
-              fromAgent={msg.handoffFromAgent!}
-              toAgent={msg.handoffToAgent!}
-            />
+            <div key={rowKey} data-chat-message-id={msg.id} className="min-w-0 w-full">
+              <HandoffDivider
+                fromAgent={msg.handoffFromAgent!}
+                toAgent={msg.handoffToAgent!}
+              />
+            </div>
+          );
+        case "chat-fork":
+          return (
+            <div key={rowKey} data-chat-message-id={msg.id} className="min-w-0 w-full">
+              <ForkDivider fromAgent={msg.forkFromAgent!} />
+            </div>
           );
         default:
           return null;
@@ -389,28 +372,122 @@ export function MessageThreadContent({
       inlineToolDetailsInChat,
       lastWorkedSessionIndex,
       messages,
-      onCancelPermission,
       onOpenSubagent,
       onResolvePermission,
       onWorkedSessionOpenChange,
-      pushFor,
-      registerStickyEl,
       skipPermissionMessageIndex,
-      stickyUserHeader,
       workedSessionOpenByScopedId,
       workedSessionSurface,
       workspaceRoot,
     ]
   );
 
+  const renderUserTurnHeader = useCallback(
+    (turn: UserTurnSegment): ReactNode => {
+      const stackOrder = turn.stackOrder;
+      if (turn.userKind === "user_todo") {
+        const userMsg = messages[turn.userIndex];
+        const todoMsg = messages[turn.todoIndex];
+        if (!userMsg || !todoMsg) {
+          return null;
+        }
+        const block = (
+          <div className="flex flex-col">
+            <UserMessage
+              content={userMsg.content}
+              segments={userMsg.segments}
+              attachments={userMsg.attachments}
+              showReplyCue={userMsg.showReplyCue}
+              highlight={userMsg.isHandoffMessage}
+              onFork={onForkMessage ? () => onForkMessage(userMsg.id) : undefined}
+            />
+            <TodoStatusCard content={todoMsg.content!} meldUserAbove />
+          </div>
+        );
+        return (
+          <StickyChatHeader
+            enabled={!!stickyUserHeader}
+            stackOrder={stackOrder}
+            pushUpPx={pushFor(stackOrder)}
+            registerStickyEl={registerStickyEl}
+            dataChatMessageId={userMsg.id}
+          >
+            {block}
+          </StickyChatHeader>
+        );
+      }
+      const userMsg = messages[turn.userIndex];
+      if (!userMsg || userMsg.type !== "user") {
+        return null;
+      }
+      const inner = (
+        <UserMessage
+          content={userMsg.content}
+          segments={userMsg.segments}
+          attachments={userMsg.attachments}
+          showReplyCue={userMsg.showReplyCue}
+          highlight={userMsg.isHandoffMessage}
+          onFork={onForkMessage ? () => onForkMessage(userMsg.id) : undefined}
+        />
+      );
+      return (
+        <StickyChatHeader
+          enabled={!!stickyUserHeader}
+          stackOrder={stackOrder}
+          pushUpPx={pushFor(stackOrder)}
+          registerStickyEl={registerStickyEl}
+          dataChatMessageId={userMsg.id}
+        >
+          {inner}
+        </StickyChatHeader>
+      );
+    },
+    [messages, onForkMessage, pushFor, registerStickyEl, stickyUserHeader]
+  );
+
+  const renderSegment = useCallback(
+    (segment: MessageThreadSegment): ReactNode => {
+      if (segment.type === "preamble") {
+        return (
+          <div
+            key={segment.key}
+            className="flex min-w-0 w-full flex-col gap-[10px] [&>*]:shrink-0"
+          >
+            {segment.messageIndices.map((i) => renderMessageAtIndex(i))}
+          </div>
+        );
+      }
+      return (
+        <div
+          key={segment.key}
+          className="flex min-w-0 w-full flex-col gap-[10px] [&>*]:shrink-0"
+        >
+          {renderUserTurnHeader(segment)}
+          {segment.tailIndices.map((i) => renderMessageAtIndex(i))}
+        </div>
+      );
+    },
+    [renderMessageAtIndex, renderUserTurnHeader]
+  );
+
   const useVirtualList =
-    virtualize && rows.length >= 16 && scrollRootRef != null;
+    virtualize && messages.length >= 16 && scrollRootRef != null;
 
   const virtualizer = useVirtualizer({
-    count: useVirtualList ? rows.length : 0,
+    count: useVirtualList ? segments.length : 0,
     getScrollElement: () => scrollRootRef?.current ?? null,
-    estimateSize: () => 132,
-    overscan: 8,
+    estimateSize: (index) => {
+      const seg = segments[index];
+      if (!seg) {
+        return 180;
+      }
+      if (seg.type === "preamble") {
+        return Math.min(2400, 80 + seg.messageIndices.length * 72);
+      }
+      return Math.min(16000, 200 + (seg.tailIndices.length + 1) * 100);
+    },
+    overscan: 4,
+    getItemKey: (index) => `${conversationId ?? "none"}:${segments[index]?.key ?? String(index)}`,
   });
 
   if (useVirtualList) {
@@ -421,19 +498,19 @@ export function MessageThreadContent({
         style={{ height: `${virtualizer.getTotalSize()}px` }}
       >
         {items.map((item) => {
-          const row = rows[item.index];
-          if (!row) {
+          const seg = segments[item.index];
+          if (!seg) {
             return null;
           }
           return (
             <div
-              key={row.key}
+              key={seg.key}
               data-index={item.index}
               ref={virtualizer.measureElement}
-              className="absolute left-0 top-0 w-full pb-[10px] [&>*]:shrink-0"
-              style={{ transform: `translateY(${item.start}px)` }}
+              className="absolute left-0 w-full pb-[10px] [&>*]:shrink-0"
+              style={{ top: item.start }}
             >
-              {renderRow(row)}
+              {renderSegment(seg)}
             </div>
           );
         })}
@@ -441,8 +518,9 @@ export function MessageThreadContent({
     );
   }
 
-  const nodes: ReactNode[] = rows.map((row) => renderRow(row)).filter(Boolean);
   return (
-    <div className="flex flex-col gap-[10px] [&>*]:shrink-0">{nodes}</div>
+    <div className="flex flex-col gap-[10px] [&>*]:shrink-0">
+      {segments.map((seg) => renderSegment(seg))}
+    </div>
   );
 }

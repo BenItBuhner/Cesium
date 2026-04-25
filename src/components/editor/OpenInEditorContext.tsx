@@ -34,6 +34,8 @@ export type OpenTranscriptPayload = {
   title: string;
   messages: ChatMessage[];
   sessionId?: string;
+  /** Parent agent conversation; enables real-time transcript updates in the editor tab. */
+  conversationId?: string;
 };
 
 export type OpenComposerDraftPayload = {
@@ -52,6 +54,13 @@ export type OpenAgentConversationPayload = {
 };
 
 export type ComposerDraftRecord = OpenComposerDraftPayload;
+
+export function hasMeaningfulComposerContent(draft: ComposerDraftRecord): boolean {
+  if (draft.content && draft.content.trim().length > 0) return true;
+  if (draft.attachments && draft.attachments.length > 0) return true;
+  if (draft.captures && Object.keys(draft.captures).length > 0) return true;
+  return false;
+}
 
 /** Highest-priority registered draft wins (see `useRegisterDesignCaptureComposer`). */
 const designCaptureRegistry = new Map<string, number>();
@@ -221,8 +230,9 @@ type Ctx = {
   composerSelections: Record<string, TextSelection>;
   upsertComposerDraft: (
     draftId: string,
-    patch: Partial<ComposerDraftRecord> & Pick<ComposerDraftRecord, "content">
+    patch: Partial<ComposerDraftRecord>
   ) => void;
+  migrateComposerDraft: (oldDraftId: string, newDraftId: string) => void;
   setComposerSelection: (draftId: string, selection: TextSelection) => void;
   expandedComposerDraftId: string | null;
   setExpandedComposerDraft: (draftId: string | null) => void;
@@ -288,14 +298,15 @@ export function OpenInEditorProvider({ children }: { children: ReactNode }) {
   const upsertComposerDraft = useCallback(
     (
       draftId: string,
-      patch: Partial<ComposerDraftRecord> & Pick<ComposerDraftRecord, "content">
+      patch: Partial<ComposerDraftRecord>
     ) => {
       setComposerDrafts((current) => {
         const existing = current[draftId];
         const next: ComposerDraftRecord = {
           draftId,
           title: patch.title ?? existing?.title ?? "Composer",
-          content: patch.content,
+          content:
+            patch.content !== undefined ? patch.content : (existing?.content ?? ""),
           attachments:
             patch.attachments !== undefined ? patch.attachments : existing?.attachments,
           captures:
@@ -313,6 +324,34 @@ export function OpenInEditorProvider({ children }: { children: ReactNode }) {
         return {
           ...current,
           [draftId]: next,
+        };
+      });
+    },
+    []
+  );
+
+  const migrateComposerDraft = useCallback(
+    (oldDraftId: string, newDraftId: string) => {
+      setComposerDrafts((current) => {
+        const draft = current[oldDraftId];
+        if (!draft) {
+          return current;
+        }
+        const { [oldDraftId]: _, ...rest } = current;
+        return {
+          ...rest,
+          [newDraftId]: { ...draft, draftId: newDraftId },
+        };
+      });
+      setComposerSelections((current) => {
+        const selection = current[oldDraftId];
+        if (!selection) {
+          return current;
+        }
+        const { [oldDraftId]: _, ...rest } = current;
+        return {
+          ...rest,
+          [newDraftId]: selection,
         };
       });
     },
@@ -565,6 +604,7 @@ export function OpenInEditorProvider({ children }: { children: ReactNode }) {
       composerDrafts,
       composerSelections,
       upsertComposerDraft,
+      migrateComposerDraft,
       setComposerSelection,
       expandedComposerDraftId,
       setExpandedComposerDraft,
@@ -587,6 +627,7 @@ export function OpenInEditorProvider({ children }: { children: ReactNode }) {
       composerDrafts,
       composerSelections,
       upsertComposerDraft,
+      migrateComposerDraft,
       setComposerSelection,
       expandedComposerDraftId,
       setExpandedComposerDraft,

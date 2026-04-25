@@ -88,9 +88,9 @@ export function BackendDropdown({
         className="pointer-events-none absolute opacity-0"
         aria-hidden
       >
-        <span className="inline-flex items-center rounded-[var(--radius-pill)] bg-[var(--bg-panel)] py-[1px] pl-[8px] pr-[7px] font-sans text-[13px] font-normal">
-          {current
-            ? (
+ <span className="inline-flex items-center rounded-[var(--radius-pill)] bg-[var(--bg-panel)] py-[1px] pl-[8px] pr-[7px] font-sans text-[13px] font-normal">
+ {current
+ ? (
                 <AgentBackendIcon backendId={current.id} className="size-[13px] shrink-0" />
               )
             : (
@@ -102,18 +102,18 @@ export function BackendDropdown({
           <ChevronDown className="ml-[6px] size-[8px] shrink-0" strokeWidth={2.5} />
         </span>
       </span>
-      <button
-        type="button"
-        disabled={disabled || !current}
-        onClick={() => setOpen((value) => !value)}
-        style={{
-          width: showLabelExpanded ? `${expandedWidth}px` : undefined,
-          minWidth: 28,
-        }}
-        className={`group inline-flex items-center overflow-hidden rounded-[var(--radius-pill)] bg-[var(--bg-panel)] py-[1px] text-[var(--text-secondary)] transition-[padding,opacity,width] duration-200 hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50 ${
-          showLabelExpanded ? "pl-[8px] pr-[7px] ease-out" : "pl-[7px] pr-[7px] ease-in"
-        }`}
-      >
+ <button
+ type="button"
+ disabled={disabled || !current}
+ onClick={() => setOpen((value) => !value)}
+    style={{
+      width: showLabelExpanded ? `${expandedWidth}px` : undefined,
+      minWidth: 28,
+    }}
+    className={`group inline-flex items-center overflow-hidden rounded-[var(--radius-pill)] bg-[var(--bg-panel)] py-[1px] text-[var(--text-secondary)] transition-[padding,opacity,width] duration-200 hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50 ${
+      showLabelExpanded ? "pl-[8px] pr-[7px] ease-out" : "pl-[7px] pr-[7px] ease-in"
+    }`}
+ >
         {current
           ? (
               <AgentBackendIcon backendId={current.id} className="size-[13px] shrink-0" />

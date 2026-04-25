@@ -34,6 +34,7 @@ import {
   type ComposerPopoverPosition,
 } from "./ComposerAutocomplete";
 import { useClickOutside } from "@/hooks/useClickOutside";
+import { useHardwareKeyboard } from "@/hooks/useHardwareKeyboard";
 import {
   getAllAtSuggestions,
   filterAtSuggestions,
@@ -56,6 +57,7 @@ import {
   parseTriggerToken,
   reconcileComposerEditorDom,
   replaceTextRange,
+  setCaretOffset,
   type ComposerPillDescriptor,
 } from "./composer-editor-utils";
 import {
@@ -187,8 +189,9 @@ function buildInsertedTranscription(
     after = after.slice(leadingAfterNewlines);
   }
 
-  const beforeBoundary = trailingBeforeNewlines > 0 ? "\n\n" : "";
-  const afterBoundary = leadingAfterNewlines > 0 ? "\n\n" : "";
+  const visuallyEmpty = before.trim() === "" && after.trim() === "";
+  const beforeBoundary = !visuallyEmpty && trailingBeforeNewlines > 0 ? "\n\n" : "";
+  const afterBoundary = !visuallyEmpty && leadingAfterNewlines > 0 ? "\n\n" : "";
 
   const prevChar = before.at(-1) ?? "";
   const nextChar = after[0] ?? "";
@@ -203,7 +206,7 @@ function buildInsertedTranscription(
     ((after.length > 0 &&
       !/\s/.test(nextChar) &&
       !/^[,.;:!?)]/.test(nextChar)) ||
-      after.length === 0);
+      (after.length === 0 && !visuallyEmpty));
 
   const inserted = `${needsLeadingSpace ? " " : ""}${cleaned}${needsTrailingSpace ? " " : ""}`;
   const value = `${before}${beforeBoundary}${inserted}${afterBoundary}${after}`;
@@ -586,6 +589,7 @@ export function ChatComposer({
   const { fileTree } = useWorkspace();
   const { settings } = useGlobalSettings();
   const submitCtrlEnter = settings.agents.submitCtrlEnter;
+  const hasHardwareKeyboard = useHardwareKeyboard();
   const { pushNotification } = useWorkbenchNotifications();
   const surfaceId = useId().replace(/:/g, "_");
   const {
@@ -656,6 +660,7 @@ export function ChatComposer({
   const analyserRef = useRef<AnalyserNode | null>(null);
   const animationFrameRef = useRef<number | null>(null);
   const chunksRef = useRef<BlobPart[]>([]);
+  const reconcilingRef = useRef(false);
   menuRef.current = menu;
 
   const value = controlledValue ?? uncontrolledValue;
@@ -696,16 +701,17 @@ export function ChatComposer({
   );
 
   const flashComposerError = useCallback(
-    (message: string) => {
-      pushNotification({
-        kind: WORKBENCH_NOTIFICATION_KIND.editorNotice,
-        severity: "error",
-        title: "Voice input",
-        message,
-        autoDismissMs: 7000,
-      });
-    },
-    [pushNotification]
+  (message: string) => {
+    pushNotification({
+      kind: WORKBENCH_NOTIFICATION_KIND.editorNotice,
+      severity: "error",
+      title: "Voice input",
+      message,
+      autoDismissMs: 7000,
+      compact: true,
+    });
+  },
+  [pushNotification]
   );
 
   const cleanupVoiceCapture = useCallback(async (stopTracks: boolean) => {
@@ -742,13 +748,14 @@ export function ChatComposer({
 
       const validFiles = filesToAdd.filter((file) => {
         if (file.size > MAX_FILE_SIZE) {
-          pushNotification({
-            kind: WORKBENCH_NOTIFICATION_KIND.editorNotice,
-            severity: "warning",
-            title: "Image too large",
-            message: `${file.name} is ${(file.size / 1024 / 1024).toFixed(1)}MB. Maximum size is 10MB.`,
-            autoDismissMs: 5000,
-          });
+      pushNotification({
+          kind: WORKBENCH_NOTIFICATION_KIND.editorNotice,
+          severity: "warning",
+          title: "Image too large",
+          message: `${file.name} is ${(file.size / 1024 / 1024).toFixed(1)}MB. Maximum size is 10MB.`,
+          autoDismissMs: 5000,
+          compact: true,
+        });
           return false;
         }
         return true;
@@ -1015,8 +1022,13 @@ export function ChatComposer({
       setComposerSelection(next.selection);
       setMenu(null);
       if (!hardwareInputEnabled) {
+        const targetOffset = next.selection.start;
         requestAnimationFrame(() => {
-          editorRef.current?.focus();
+          const el = editorRef.current;
+          if (el) {
+            el.focus();
+            setCaretOffset(el, targetOffset);
+          }
         });
       }
     },
@@ -1178,20 +1190,27 @@ export function ChatComposer({
 
       const run = (action: ChatComposerShortcutAction) => {
         switch (action) {
-          case "openModelDropdown":
-            if (!busy && !configLocked) setModelDropdownOpen(true);
-            break;
-          case "openModeDropdown":
-            if (!busy && !configLocked) setModeMenuOpenKey((k) => k + 1);
-            break;
-          case "openBackendDropdown":
-            if (!busy && !configLocked) setBackendMenuOpenKey((k) => k + 1);
-            break;
-          case "toggleVoiceInput":
-            if (recordingState === "transcribing" || busy || configLocked) return;
-            if (recordingState === "recording") stopVoiceInput();
-            else void startVoiceInput();
-            break;
+ case "openModelDropdown":
+ if (!configLocked) setModelDropdownOpen(true);
+ break;
+ case "openModeDropdown":
+ if (!configLocked) setModeMenuOpenKey((k) => k + 1);
+ break;
+ case "openBackendDropdown":
+ if (!configLocked) setBackendMenuOpenKey((k) => k + 1);
+ break;
+        case "toggleVoiceInput":
+          if (recordingState === "transcribing" || busy || configLocked) return;
+          if (recordingState === "recording") stopVoiceInput();
+          else void startVoiceInput();
+          break;
+        case "startVoiceInput":
+          if (recordingState === "idle" && !busy && !configLocked)
+            void startVoiceInput();
+          break;
+        case "stopVoiceInput":
+          if (recordingState === "recording") stopVoiceInput();
+          break;
           case "toggleComposerExpand":
             if (busy || configLocked) return;
             if (showAgentShellGrowControls) {
@@ -1473,7 +1492,7 @@ export function ChatComposer({
   ]);
 
   const syncNativeState = useCallback(() => {
-    if (hardwareInputEnabled) return;
+    if (hardwareInputEnabled || reconcilingRef.current) return;
     const el = editorRef.current;
     if (!el) return;
     const text = getComposerPlainText(el);
@@ -1500,13 +1519,10 @@ export function ChatComposer({
     if (hardwareInputEnabled) return;
     const el = editorRef.current;
     if (!el) return;
-    // Keep the contenteditable DOM in sync with React's `value` — but render
-    // `⟦design:<id>⟧` tokens as real pill spans (`contenteditable="false"`)
-    // so the user sees a chip, backspace deletes the whole pill, and the
-    // underlying token text still round-trips through
-    // {@link getComposerPlainText} for submit expansion.
     if (!composerEditorDomInSync(el, value)) {
+      reconcilingRef.current = true;
       reconcileComposerEditorDom(el, value, pillDescriptors);
+      queueMicrotask(() => { reconcilingRef.current = false; });
     }
   }, [hardwareInputEnabled, pillDescriptors, value]);
 
@@ -1565,14 +1581,14 @@ export function ChatComposer({
       if (event.key !== "Tab" || !event.shiftKey || !mod || obstructed) {
         return false;
       }
-      if (busy || configLocked) {
-        return false;
-      }
-      const cyclable = backends.filter((b) => b.available);
-      if (cyclable.length < 2) {
-        return false;
-      }
-      event.preventDefault();
+ if (configLocked) {
+ return false;
+ }
+ const cyclable = backends.filter((b) => b.available);
+ if (cyclable.length < 2) {
+ return false;
+ }
+ event.preventDefault();
       let idx = cyclable.findIndex((b) => b.id === backendId);
       if (idx < 0) {
         idx = 0;
@@ -1588,15 +1604,14 @@ export function ChatComposer({
       setBackendLabelPeekKey((k) => k + 1);
       return true;
     },
-    [
-      backendId,
-      backends,
-      busy,
-      configLocked,
-      onBackendChange,
-      onRequestHandoff,
-    ]
-  );
+ [
+ backendId,
+ backends,
+ configLocked,
+ onBackendChange,
+ onRequestHandoff,
+ ]
+ );
 
   const tryCycleModeWithShiftTab = useCallback(
     (
@@ -1612,13 +1627,13 @@ export function ChatComposer({
       if (event.metaKey || event.ctrlKey) {
         return false;
       }
-      if (busy || configLocked) {
-        return false;
-      }
-      const opts = ensureCurrentModeOption(
-        mode,
-        modeOptions?.length ? modeOptions : DEFAULT_MODE_OPTIONS
-      );
+ if (configLocked) {
+ return false;
+ }
+ const opts = ensureCurrentModeOption(
+ mode,
+ modeOptions?.length ? modeOptions : DEFAULT_MODE_OPTIONS
+ );
       if (opts.length === 0) {
         return false;
       }
@@ -1633,7 +1648,7 @@ export function ChatComposer({
       setModeLabelPeekKey((k) => k + 1);
       return true;
     },
-    [busy, configLocked, mode, modeOptions, onModeChange]
+    [configLocked, mode, modeOptions, onModeChange]
   );
 
   const pickSlash = useCallback(
@@ -1709,19 +1724,21 @@ export function ChatComposer({
         }
         return true;
       }
-      if (!currentMenu && event.key === "Enter") {
-        const mod = event.ctrlKey || event.metaKey;
-        if (submitCtrlEnter && mod) {
-          event.preventDefault();
-          void submitComposer();
-          return true;
-        }
-        if (!submitCtrlEnter && !event.shiftKey) {
-          event.preventDefault();
-          void submitComposer();
-          return true;
-        }
-      }
+		if (!currentMenu && event.key === "Enter") {
+			if (hasHardwareKeyboard) {
+				const mod = event.ctrlKey || event.metaKey;
+				if (submitCtrlEnter && mod) {
+					event.preventDefault();
+					void submitComposer();
+					return true;
+				}
+				if (!submitCtrlEnter && !event.shiftKey) {
+					event.preventDefault();
+					void submitComposer();
+					return true;
+				}
+			}
+		}
 
       if (
         tryCycleBackendWithCtrlShiftTab(
@@ -1754,20 +1771,21 @@ export function ChatComposer({
       setComposerSelection(next.selection);
       return true;
     },
-    [
-      modelDropdownOpen,
-      pickAt,
-      pickSlash,
-      setComposerSelection,
-      setComposerValue,
-      submitComposer,
-      submitCtrlEnter,
-      tryCycleBackendWithCtrlShiftTab,
-      tryCycleModeWithShiftTab,
-    ]
-  );
+  [
+    hasHardwareKeyboard,
+    modelDropdownOpen,
+    pickAt,
+    pickSlash,
+    setComposerSelection,
+    setComposerValue,
+    submitComposer,
+    submitCtrlEnter,
+    tryCycleBackendWithCtrlShiftTab,
+    tryCycleModeWithShiftTab,
+  ]
+);
 
-  const handleNativeComposerKeyDown = useCallback(
+const handleNativeComposerKeyDown = useCallback(
     (event: ReactKeyboardEvent<HTMLDivElement>) => {
       if (!menu) {
         if (
@@ -1781,18 +1799,20 @@ export function ChatComposer({
         if (tryCycleModeWithShiftTab(event.nativeEvent, modelDropdownOpen)) {
           return;
         }
-        if (event.key === "Enter") {
-          const mod = event.ctrlKey || event.metaKey;
-          if (submitCtrlEnter) {
-            if (mod) {
-              event.preventDefault();
-              void submitComposer();
-            }
-          } else if (!event.shiftKey) {
+    if (event.key === "Enter") {
+      if (hasHardwareKeyboard) {
+        const mod = event.ctrlKey || event.metaKey;
+        if (submitCtrlEnter) {
+          if (mod) {
             event.preventDefault();
             void submitComposer();
           }
+        } else if (!event.shiftKey) {
+          event.preventDefault();
+          void submitComposer();
         }
+      }
+    }
         return;
       }
       const items = menu.kind === "at" ? filteredAt : filteredSlash;
@@ -1827,9 +1847,10 @@ export function ChatComposer({
       }
     },
     [
-      filteredAt,
-      filteredSlash,
-      menu,
+    filteredAt,
+    filteredSlash,
+    hasHardwareKeyboard,
+    menu,
       modelDropdownOpen,
       pickAt,
       pickSlash,
@@ -1945,6 +1966,11 @@ export function ChatComposer({
             size={isExpanded ? "expanded" : "compact"}
           />
         )}
+        <div
+          className={`relative min-w-0 ${
+            isExpanded ? "flex min-h-0 flex-1 flex-col" : ""
+          }`}
+        >
         {isEmpty && (
           <span
             className={`pointer-events-none absolute left-0 top-0 z-10 font-sans text-[14px] font-normal text-[var(--text-secondary)] ${textInsetClassName}`}
@@ -2066,6 +2092,7 @@ export function ChatComposer({
         >
           {hardwareInputEnabled ? textNodes : null}
         </div>
+        </div>
       </div>
 
       {menu?.kind === "at" && (
@@ -2102,9 +2129,9 @@ export function ChatComposer({
                 backends={backends}
                 onBackendChange={onBackendChange}
                 onRequestHandoff={onRequestHandoff}
-                popoverPlacement={modeModelPopoverPlacement}
-                disabled={busy || configLocked}
-                labelPeekKey={backendLabelPeekKey}
+ popoverPlacement={modeModelPopoverPlacement}
+ disabled={configLocked}
+ labelPeekKey={backendLabelPeekKey}
                 menuOpenTriggerKey={backendMenuOpenKey}
               />
             </div>
@@ -2112,9 +2139,9 @@ export function ChatComposer({
               <ModeDropdown
                 mode={mode}
                 onModeChange={onModeChange}
-                popoverPlacement={modeModelPopoverPlacement}
-                disabled={busy || configLocked}
-                options={modeOptions}
+ popoverPlacement={modeModelPopoverPlacement}
+ disabled={configLocked}
+ options={modeOptions}
                 labelPeekKey={modeLabelPeekKey}
                 menuOpenTriggerKey={modeMenuOpenKey}
               />
@@ -2124,9 +2151,9 @@ export function ChatComposer({
                 model={model}
                 models={models}
             onModelChange={onModelChange}
-            popoverPlacement={modeModelPopoverPlacement}
-            disabled={busy || configLocked}
-            isOpen={modelDropdownOpen}
+ popoverPlacement={modeModelPopoverPlacement}
+ disabled={configLocked}
+ isOpen={modelDropdownOpen}
                 onOpenChange={setModelDropdownOpen}
               />
             </div>
@@ -2139,7 +2166,7 @@ export function ChatComposer({
                   option={opt}
                   value={opt.currentValue}
                   popoverPlacement={modeModelPopoverPlacement}
-                  disabled={busy || configLocked || !onSessionConfigOptionChange}
+                  disabled={configLocked || !onSessionConfigOptionChange}
                   onChange={(next) => onSessionConfigOptionChange?.(opt.id, next)}
                 />
               ))}
