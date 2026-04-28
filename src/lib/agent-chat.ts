@@ -3582,6 +3582,40 @@ export function getConversationLatestSeq(
 }
 
 /**
+ * Newest-first list of the user's own past message text for the composer's
+ * up/down arrow history recall. Each entry is the raw `content` (what would
+ * actually be sent to the model) so resurrecting it into the composer and
+ * submitting yields the same prompt. Duplicates of consecutive identical
+ * messages are collapsed so users aren't forced to hit Up twice to skip a
+ * double-send.
+ *
+ * Callers may need to load older history pages (see
+ * `loadOlderConversationHistory`) to expand the window — this helper only
+ * projects whatever events are currently loaded.
+ */
+export function extractComposerUserMessageHistory(
+  events: AgentStoredEvent[]
+): string[] {
+  const sorted = [...events].sort((a, b) => a.seq - b.seq);
+  const newestFirst: string[] = [];
+  for (let i = sorted.length - 1; i >= 0; i -= 1) {
+    const event = sorted[i]!;
+    if (event.kind !== "user_message") {
+      continue;
+    }
+    const content = event.content ?? "";
+    if (!content.trim()) {
+      continue;
+    }
+    if (newestFirst[newestFirst.length - 1] === content) {
+      continue;
+    }
+    newestFirst.push(content);
+  }
+  return newestFirst;
+}
+
+/**
  * Drop duplicate rows that can appear when the same logical event is replayed
  * twice (e.g. overlapping subscribe/replay + live push) or stored with conflicting
  * seq/eventId pairs. Keeps the first occurrence in seq order.

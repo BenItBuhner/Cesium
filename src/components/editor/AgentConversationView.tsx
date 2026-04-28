@@ -11,7 +11,10 @@ import {
   useRegisterDesignCaptureComposer,
 } from "@/components/editor/OpenInEditorContext";
 import { RecentChatsModal } from "@/components/ide/RecentChatsModal";
-import { projectAgentEventsToChatMessages } from "@/lib/agent-chat";
+import {
+  extractComposerUserMessageHistory,
+  projectAgentEventsToChatMessages,
+} from "@/lib/agent-chat";
 import { askStepsFromMessage } from "@/lib/ask-question-utils";
 import { useAgentConversations } from "@/components/chat/AgentConversationsContext";
 import { deleteAgentConversationQueueItem } from "@/lib/server-api";
@@ -132,6 +135,10 @@ loadOlderConversationHistory,
   const loadState = getConversationLoadStatus(conversationId);
   const composerState = getConversationComposerState(conversationId);
   const rawThreadEvents = eventsByConversationId[conversationId] ?? [];
+  const composerUserMessageHistory = useMemo(
+    () => extractComposerUserMessageHistory(rawThreadEvents),
+    [rawThreadEvents]
+  );
   const threadMessages = useMemo(
     () =>
       projectAgentEventsToChatMessages(rawThreadEvents, {
@@ -481,6 +488,11 @@ void promptConversation(conversationId, text, attachments, configOverride).then(
         onCancel={() => cancelConversation(conversationId)}
         layout={isEmptyThread ? "empty-top" : "docked-bottom"}
         shellMxClass=""
+        userMessageHistory={composerUserMessageHistory}
+        hasMoreOlderUserMessageHistory={historyCursor.hasOlder}
+        onRequestOlderUserMessageHistory={() =>
+          loadOlderConversationHistory(conversationId)
+        }
       />
     </div>
   );

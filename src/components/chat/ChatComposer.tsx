@@ -284,6 +284,29 @@ interface ChatComposerProps {
    * metadata from the persisted draft instead of keeping an orphaned record.
    */
   onDraftCapturesChange?: (next: Record<string, DesignCapture> | undefined) => void;
+  /**
+   * Newest-first list of the user's previously sent messages (raw `content`)
+   * for terminal-style Up/Down arrow history recall. Pressing Up while the
+   * caret is at the start of the composer cycles older, Down cycles newer. If
+   * Down is pressed at the bottom of the stack with history active, the
+   * composer restores the in-progress draft the user had before recalling.
+   * When the list is empty or undefined the history behavior is disabled.
+   */
+  userMessageHistory?: string[];
+  /**
+   * True when there are more user messages on the server past the currently
+   * loaded window (agent events paginate); the composer will call
+   * {@link onRequestOlderUserMessageHistory} when the user attempts to step
+   * off the end of the currently loaded list so additional pages can be
+   * streamed in without the user noticing.
+   */
+  hasMoreOlderUserMessageHistory?: boolean;
+  /**
+   * Called when Up is pressed past the oldest loaded user message; the host
+   * is expected to request the next older page of conversation events and
+   * the composer will re-evaluate the history list on the next render.
+   */
+  onRequestOlderUserMessageHistory?: () => void;
 }
 
 function resolvePointerSelection(
@@ -585,6 +608,9 @@ export function ChatComposer({
   onDraftAttachmentsChange,
   draftCaptures,
   onDraftCapturesChange,
+  userMessageHistory,
+  hasMoreOlderUserMessageHistory = false,
+  onRequestOlderUserMessageHistory,
 }: ChatComposerProps) {
   const { fileTree } = useWorkspace();
   const { settings } = useGlobalSettings();
@@ -632,6 +658,26 @@ export function ChatComposer({
     maxHeight: 280,
   });
   const [agentShellDockTall, setAgentShellDockTall] = useState(false);
+  /**
+   * Terminal-style Up/Down recall state. `index` is `-1` when the user is
+   * editing their own draft, `0` points at the newest past user message, and
+   * larger values step further back. `draftSnapshot` captures the live
+   * composer value at the moment the user first stepped into history so the
+   * original draft can be restored when they step all the way back.
+   */
+  const [userHistoryIndex, setUserHistoryIndex] = useState<number>(-1);
+  const [userHistoryDraftSnapshot, setUserHistoryDraftSnapshot] =
+    useState<string | null>(null);
+  const userHistoryIndexRef = useRef(userHistoryIndex);
+  userHistoryIndexRef.current = userHistoryIndex;
+  const userHistoryDraftSnapshotRef = useRef(userHistoryDraftSnapshot);
+  userHistoryDraftSnapshotRef.current = userHistoryDraftSnapshot;
+  const userMessageHistoryRef = useRef<string[] | undefined>(userMessageHistory);
+  userMessageHistoryRef.current = userMessageHistory;
+  const hasMoreOlderUserMessageHistoryRef = useRef(hasMoreOlderUserMessageHistory);
+  hasMoreOlderUserMessageHistoryRef.current = hasMoreOlderUserMessageHistory;
+  const onRequestOlderUserMessageHistoryRef = useRef(onRequestOlderUserMessageHistory);
+  onRequestOlderUserMessageHistoryRef.current = onRequestOlderUserMessageHistory;
 
   useEffect(() => {
     if (!agentShellDockHeightExpand) {
@@ -1683,6 +1729,126 @@ export function ChatComposer({
     [hardwareInputEnabled, setComposerSelection, setComposerValue, syncNativeState]
   );
 
+  /**
+   * Replace the composer value with `next` and snap the caret to the
+   * appropriate end. For history recall we collapse the caret to the end of
+   * the recalled text when stepping older (feels like the terminal's behavior
+   * of dropping the caret right after the resurrected command), and also when
+   * stepping newer so the user can keep editing immediately. For hardware
+   * input surfaces the caret is driven from React state; for native
+   * contenteditable we also set the DOM caret so subsequent keystrokes
+   * continue typing at the right spot.
+   */
+  const setComposerContents = useCallback(
+    (next: string) => {
+      setComposerValue(next);
+      const caret = next.length;
+      setComposerSelection({ start: caret, end: caret });
+      if (!hardwareInputEnabled) {
+        const el = editorRef.current;
+        if (el) {
+          reconcilingRef.current = true;
+          reconcileComposerEditorDom(el, next, pillDescriptors);
+          setCaretOffset(el, caret);
+          queueMicrotask(() => {
+            reconcilingRef.current = false;
+          });
+        }
+      }
+    },
+    [hardwareInputEnabled, pillDescriptors, setComposerSelection, setComposerValue]
+  );
+
+  /**
+   * Reset history traversal when the user types / clicks / pastes anything
+   * that changes the composer value away from the currently-recalled entry.
+   * Without this the user could step into history, edit the recalled text,
+   * and then have ArrowDown silently discard the edit.
+   */
+  useEffect(() => {
+    if (userHistoryIndex < 0) {
+      return;
+    }
+    const history = userMessageHistoryRef.current ?? [];
+    const expected = history[userHistoryIndex];
+    if (expected === undefined || expected !== value) {
+      setUserHistoryIndex(-1);
+      setUserHistoryDraftSnapshot(null);
+    }
+  }, [userHistoryIndex, value]);
+
+  /**
+   * True when Up should pull in a past user message instead of moving the
+   * caret up a line. We only grab the key when the selection is collapsed at
+   * offset 0 (start of content) AND there is history to walk into — otherwise
+   * normal caret movement wins. Returns `"consumed"` if the event was
+   * handled, `"request-older"` to signal the host that a paginated older page
+   * should be fetched, or `"pass"` to let the default handler run.
+   */
+  const tryRecallOlderUserMessage = useCallback((): "consumed" | "request-older" | "pass" => {
+    const sel = selectionRef.current;
+    if (sel.start !== sel.end || sel.start !== 0) {
+      return "pass";
+    }
+    const history = userMessageHistoryRef.current ?? [];
+    const currentIndex = userHistoryIndexRef.current;
+    const nextIndex = currentIndex + 1;
+    if (nextIndex >= history.length) {
+      // No more loaded history. If the host can page in older messages, ask
+      // for them — the user can press Up again once the render settles.
+      if (hasMoreOlderUserMessageHistoryRef.current && onRequestOlderUserMessageHistoryRef.current) {
+        onRequestOlderUserMessageHistoryRef.current();
+        return "request-older";
+      }
+      return "pass";
+    }
+    if (currentIndex < 0) {
+      setUserHistoryDraftSnapshot(valueRef.current);
+    }
+    setUserHistoryIndex(nextIndex);
+    setComposerContents(history[nextIndex]!);
+    return "consumed";
+  }, [setComposerContents]);
+
+  /**
+   * Down arrow counterpart. When at the end of the composer content we step
+   * forward in history (older -> newer). Stepping past the newest entry
+   * restores the original draft the user was editing before they started
+   * recalling; if there was no recall active, Down at end-of-content clears
+   * the composer so the user can quickly wipe unwanted content.
+   */
+  const tryRecallNewerUserMessage = useCallback((): "consumed" | "pass" => {
+    const sel = selectionRef.current;
+    const valueLen = valueRef.current.length;
+    if (sel.start !== sel.end || sel.start !== valueLen) {
+      return "pass";
+    }
+    const history = userMessageHistoryRef.current ?? [];
+    const currentIndex = userHistoryIndexRef.current;
+    if (currentIndex < 0) {
+      // Not traversing history. Down at end with content present wipes the
+      // composer per the Linear issue spec; Down at end with an empty
+      // composer passes through (let default key handling win).
+      if (valueLen === 0) {
+        return "pass";
+      }
+      setComposerContents("");
+      return "consumed";
+    }
+    if (currentIndex === 0) {
+      // About to fall off the newest entry — restore the original draft.
+      const snapshot = userHistoryDraftSnapshotRef.current ?? "";
+      setUserHistoryIndex(-1);
+      setUserHistoryDraftSnapshot(null);
+      setComposerContents(snapshot);
+      return "consumed";
+    }
+    const nextIndex = currentIndex - 1;
+    setUserHistoryIndex(nextIndex);
+    setComposerContents(history[nextIndex]!);
+    return "consumed";
+  }, [setComposerContents]);
+
   const handleComposerKey = useCallback(
     (event: globalThis.KeyboardEvent) => {
       const currentMenu = menuRef.current;
@@ -1755,6 +1921,36 @@ export function ChatComposer({
         return true;
       }
 
+      if (
+        !currentMenu &&
+        !event.shiftKey &&
+        !event.metaKey &&
+        !event.ctrlKey &&
+        !event.altKey &&
+        event.key === "ArrowUp"
+      ) {
+        const outcome = tryRecallOlderUserMessage();
+        if (outcome !== "pass") {
+          event.preventDefault();
+          return true;
+        }
+      }
+
+      if (
+        !currentMenu &&
+        !event.shiftKey &&
+        !event.metaKey &&
+        !event.ctrlKey &&
+        !event.altKey &&
+        event.key === "ArrowDown"
+      ) {
+        const outcome = tryRecallNewerUserMessage();
+        if (outcome === "consumed") {
+          event.preventDefault();
+          return true;
+        }
+      }
+
       const next = applyTextBufferKey(
         valueRef.current,
         selectionRef.current,
@@ -1782,6 +1978,8 @@ export function ChatComposer({
     submitCtrlEnter,
     tryCycleBackendWithCtrlShiftTab,
     tryCycleModeWithShiftTab,
+    tryRecallNewerUserMessage,
+    tryRecallOlderUserMessage,
   ]
 );
 
@@ -1798,6 +1996,44 @@ const handleNativeComposerKeyDown = useCallback(
         }
         if (tryCycleModeWithShiftTab(event.nativeEvent, modelDropdownOpen)) {
           return;
+        }
+
+        if (
+          !event.shiftKey &&
+          !event.metaKey &&
+          !event.ctrlKey &&
+          !event.altKey &&
+          (event.key === "ArrowUp" || event.key === "ArrowDown")
+        ) {
+          // Sync the selection refs with the live DOM caret before running the
+          // recall predicate; React state can lag one frame behind
+          // `selectionchange`, so reading only from `selectionRef` would
+          // occasionally miss "caret at start/end" and let the browser's
+          // default line-move fire first.
+          const el = editorRef.current;
+          if (el) {
+            const plainRange = getPlainTextRangeOffsets(el);
+            if (plainRange) {
+              selectionRef.current = plainRange;
+            } else {
+              const caret = getCaretOffset(el);
+              selectionRef.current = { start: caret, end: caret };
+            }
+            valueRef.current = getComposerPlainText(el);
+          }
+          if (event.key === "ArrowUp") {
+            const outcome = tryRecallOlderUserMessage();
+            if (outcome !== "pass") {
+              event.preventDefault();
+              return;
+            }
+          } else {
+            const outcome = tryRecallNewerUserMessage();
+            if (outcome === "consumed") {
+              event.preventDefault();
+              return;
+            }
+          }
         }
     if (event.key === "Enter") {
       if (hasHardwareKeyboard) {
@@ -1859,6 +2095,8 @@ const handleNativeComposerKeyDown = useCallback(
       submitCtrlEnter,
       tryCycleBackendWithCtrlShiftTab,
       tryCycleModeWithShiftTab,
+      tryRecallNewerUserMessage,
+      tryRecallOlderUserMessage,
     ]
   );
 
