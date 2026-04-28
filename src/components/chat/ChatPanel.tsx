@@ -23,6 +23,7 @@ import {
   buildDraftModelOptionsForBackend,
   buildConversationModeOptions,
   buildConversationModelOptions,
+  extractComposerUserMessageHistory,
   projectAgentEventsToChatMessages,
   resolveDraftModelForBackend,
   resolveConversationModel,
@@ -647,6 +648,10 @@ workspaceSession.chat.mode,
   const rawPanelThreadEvents = activeTabId
     ? (eventsByConversationId[activeTabId] ?? [])
     : [];
+  const composerUserMessageHistory = useMemo(
+    () => extractComposerUserMessageHistory(rawPanelThreadEvents),
+    [rawPanelThreadEvents]
+  );
   const threadMessages = useMemo(
     () =>
       projectAgentEventsToChatMessages(rawPanelThreadEvents, {
@@ -1994,6 +1999,13 @@ onDraftAttachmentsChange={(next) =>
                   title: composerDraftTitle,
                   captures: next,
                 })
+              }
+              userMessageHistory={composerUserMessageHistory}
+              hasMoreOlderUserMessageHistory={panelHistoryCursor.hasOlder}
+              onRequestOlderUserMessageHistory={
+                activeTabId && activeTabId !== "__empty__"
+                  ? () => loadOlderConversationHistory(activeTabId)
+                  : undefined
               }
             />
   );
