@@ -313,8 +313,6 @@ export type ChatSessionState = {
   composerQueueDockCollapsedByConversationId?: Record<string, true>;
   /** Conversation completed (idle) since last viewed; key present means show unread dot. */
   unreadChatCompletionByConversationId?: Record<string, true>;
-  /** Per-conversation queued follow-up prompts. */
-  queuedPromptsByConversationId?: Record<string, import("../lib/types").QueuedChatPrompt[]>;
 };
 
 export type AgentSidePaneSessionState = {

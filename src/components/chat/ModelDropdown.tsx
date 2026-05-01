@@ -13,6 +13,8 @@ import {
 import { useClickOutside } from "@/hooks/useClickOutside";
 import { usePopover } from "@/hooks/usePopover";
 import type { ModelInfo } from "@/lib/types";
+import type { AgentBackendId, AgentBackendInfo } from "@/lib/agent-types";
+import { AgentBackendIcon } from "./AgentBackendIcon";
 
 const providerIcon: Record<ModelInfo["provider"], typeof Box> = {
   openai: Sparkles,
@@ -37,6 +39,14 @@ interface ModelDropdownProps {
   disabled?: boolean;
   isOpen?: boolean;
   onOpenChange?: (open: boolean) => void;
+  /**
+   * New-design only: when all three are provided, the menu renders a compact
+   * ACP backend selector above the search row. Classic composer omits these
+   * and the sub-section never appears there.
+   */
+  backendId?: AgentBackendId;
+  backends?: AgentBackendInfo[];
+  onBackendChange?: (backendId: AgentBackendId) => void;
 }
 
 export function ModelDropdown({
@@ -47,6 +57,9 @@ export function ModelDropdown({
   disabled = false,
   isOpen: controlledIsOpen,
   onOpenChange,
+  backendId,
+  backends,
+  onBackendChange,
 }: ModelDropdownProps) {
   const [internalOpen, setInternalOpen] = useState(false);
   const isControlled = controlledIsOpen !== undefined;
@@ -221,6 +234,54 @@ export function ModelDropdown({
             }}
             onKeyDown={handleKeyDown}
           >
+            {backends && backends.length > 1 && onBackendChange ? (
+              <div className="flex shrink-0 flex-col border-b border-[var(--border-card)] px-[6px] py-[4px]">
+                <span className="px-[6px] pb-[2px] pt-[1px] font-sans text-[10.5px] font-medium uppercase tracking-[0.06em] text-[var(--text-disabled)]">
+                  Backend
+                </span>
+                {backends.map((backend) => {
+                  const active = backend.id === backendId;
+                  const available = backend.available !== false;
+                  return (
+                    <button
+                      key={backend.id}
+                      type="button"
+                      disabled={!available}
+                      onClick={() => {
+                        onBackendChange(backend.id);
+                      }}
+                      className={`flex w-full items-center gap-[8px] rounded-[var(--radius-tab)] px-[8px] py-[4px] text-left transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+                        active
+                          ? "bg-[var(--accent-bg)]"
+                          : "hover:bg-[var(--accent-bg)]/60"
+                      }`}
+                      aria-pressed={active}
+                    >
+                      <AgentBackendIcon
+                        backendId={backend.id}
+                        className="size-[13px] shrink-0"
+                      />
+                      <span
+                        className="min-w-0 flex-1 truncate font-sans text-[12.5px] font-normal"
+                        style={{
+                          color: active
+                            ? "var(--text-primary)"
+                            : "var(--text-secondary)",
+                        }}
+                      >
+                        {backend.label}
+                      </span>
+                      {active && (
+                        <Check
+                          className="size-[13px] shrink-0 text-[var(--text-primary)]"
+                          strokeWidth={2}
+                        />
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            ) : null}
             <div className="flex shrink-0 items-center gap-[6px] border-b border-[var(--border-card)] px-[10px] py-[6px]">
               <Search className="size-[13px] shrink-0 text-[var(--text-disabled)]" strokeWidth={1.5} />
               <input

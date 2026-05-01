@@ -75,17 +75,17 @@ export default function RootLayout({
           {preferencesBootstrap}
         </Script>
         <RegisterServiceWorker />
-        <GlobalSettingsProvider>
-          <ThemeProvider>
-            <ServerConnectionsProvider>
-              <AuthProvider>
-                <AuthGate>
+        <ServerConnectionsProvider>
+          <AuthProvider>
+            <AuthGate>
+              <GlobalSettingsProvider>
+                <ThemeProvider>
                   <UserPreferencesProvider>{children}</UserPreferencesProvider>
-                </AuthGate>
-              </AuthProvider>
-            </ServerConnectionsProvider>
-          </ThemeProvider>
-        </GlobalSettingsProvider>
+                </ThemeProvider>
+              </GlobalSettingsProvider>
+            </AuthGate>
+          </AuthProvider>
+        </ServerConnectionsProvider>
       </body>
     </html>
   );

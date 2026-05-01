@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import {
   appendConversationEvents,
+  appendConversationEventsAndPatchRecord,
   createConversationId,
   deleteConversationEvents,
   readConversationEvents,
@@ -8,10 +9,11 @@ import {
   readConversationRecord,
   readConversationSnapshot,
   readConversationSnapshotHead,
+  readConversationEventPrefix,
   readRecentConversationEvents,
   saveConversationRecord,
   updateConversationRecord,
-  listWorkspaceConversationRecords,
+  listWorkspaceConversationRecordPage,
 } from "./session-store.js";
 import { remapSourceEventsForFork } from "./fork-event-clone.js";
 import { generateConversationTitle } from "./title-generator.js";
@@ -46,6 +48,14 @@ import type {
   AgentSessionHandle,
 } from "./types.js";
 import type { WorkspaceRecord } from "../workspace-registry.js";
+
+let lastConversationRankTimestamp = 0;
+
+function nextConversationRankTimestamp(): number {
+  const now = Date.now();
+  lastConversationRankTimestamp = Math.max(now, lastConversationRankTimestamp + 1);
+  return lastConversationRankTimestamp;
+}
 
 function extractAssistantTextForMessage(
   events: AgentStoredEvent[],
@@ -315,7 +325,13 @@ export class AgentRuntimeManager {
     workspaceId: string,
     opts?: { limit?: number; cursor?: string | null }
   ): Promise<AgentConversationListResult> {
-    const conversations = await listWorkspaceConversationRecords(workspaceId);
+    const limit = Math.max(1, Math.min(Math.floor(opts?.limit ?? 200), 500));
+    const pageResult = await listWorkspaceConversationRecordPage(workspaceId, {
+      limit,
+      cursor: opts?.cursor,
+      includeArchived: true,
+    });
+    const conversations = pageResult.records;
     const backends = await Promise.resolve(this.listBackendsFn());
     const enrichedBackends = backends.map((backend) => {
       const cachedModelCount = findPrimaryModelConfigOption(
@@ -346,23 +362,12 @@ export class AgentRuntimeManager {
       };
     });
 
-    // Paginate after backend enrichment so the richest configOptions are still
-    // sampled from the full workspace pool, not just the first page window.
-    // This keeps `backends` useful even when the client only asks for page 2.
-    const limit = Math.max(1, Math.min(Math.floor(opts?.limit ?? 200), 500));
-    const offset = Math.max(0, Number.parseInt(opts?.cursor ?? "0", 10) || 0);
-    const page = conversations.slice(offset, offset + limit);
-    const nextCursor =
-      offset + page.length < conversations.length
-        ? String(offset + page.length)
-        : null;
-
     return {
       backends: enrichedBackends,
-      conversations: page.map((conversation) =>
+      conversations: conversations.map((conversation) =>
         this.withBackendDefaults(conversation)
       ),
-      nextCursor,
+      nextCursor: pageResult.nextCursor,
     };
   }
 
@@ -373,7 +378,7 @@ export class AgentRuntimeManager {
     const backendId = this.resolveBackendId(input.backendId);
     this.assertRunnableBackend(backendId);
     const backend = this.backends[backendId];
-    const now = Date.now();
+    const now = nextConversationRankTimestamp();
     const record: AgentConversationRecord = {
       schemaVersion: 1,
       id: createConversationId(),
@@ -402,6 +407,29 @@ export class AgentRuntimeManager {
     await saveConversationRecord(record);
     this.warmConversationRuntime(workspace, record);
     return record;
+  }
+
+  async createConversationWithPrompt(
+    workspace: WorkspaceRecord,
+    input: AgentConversationCreateInput,
+    prompt: {
+      text: string;
+      attachments?: Array<{ mimeType: string; data: string; name?: string }>;
+      clientEventId?: string;
+      clientMessageId?: string;
+    }
+  ): Promise<AgentConversationSnapshotHead> {
+    const conversation = await this.createConversation(workspace, input);
+    return this.promptConversation(
+      workspace,
+      conversation.id,
+      prompt.text,
+      prompt.attachments,
+      {
+        ...(prompt.clientEventId ? { clientEventId: prompt.clientEventId } : {}),
+        ...(prompt.clientMessageId ? { clientMessageId: prompt.clientMessageId } : {}),
+      }
+    );
   }
 
   async handoffConversation(
@@ -769,7 +797,11 @@ export class AgentRuntimeManager {
     conversationId: string,
     text: string,
     attachments?: Array<{ mimeType: string; data: string; name?: string }>,
-    options?: { configOverride?: AgentQueuedChatPrompt["configOverride"] }
+    options?: {
+      configOverride?: AgentQueuedChatPrompt["configOverride"];
+      clientEventId?: string;
+      clientMessageId?: string;
+    }
   ): Promise<AgentConversationSnapshotHead> {
     const trimmed = text.trim();
     if (!trimmed && (!attachments || attachments.length === 0)) {
@@ -808,17 +840,28 @@ export class AgentRuntimeManager {
     void generateConversationTitle(workspace.id, conversationId, trimmed);
   }
 
-const pendingHandoffContext =
+const recentContextEvents =
   record.lastEventSeq > 0
-    ? resolvePendingHandoffContext(
-        (await readConversationSnapshot(workspace.id, conversationId))?.events ?? []
-      )
+    ? await readRecentConversationEvents(workspace.id, conversationId, 100)
+    : [];
+const prefixContextEvents =
+  record.lastEventSeq > 0
+    ? await readConversationEventPrefix(workspace.id, conversationId, 32)
+    : [];
+const promptContextEvents = [
+  ...new Map(
+    [...prefixContextEvents, ...recentContextEvents]
+      .sort((left, right) => left.seq - right.seq)
+      .map((event) => [event.eventId, event])
+  ).values(),
+];
+const pendingHandoffContext =
+  promptContextEvents.length > 0
+    ? resolvePendingHandoffContext(promptContextEvents)
     : null;
 const pendingForkContext =
-  !pendingHandoffContext && record.lastEventSeq > 0
-    ? resolvePendingForkContext(
-        (await readConversationSnapshot(workspace.id, conversationId))?.events ?? []
-      )
+  !pendingHandoffContext && promptContextEvents.length > 0
+    ? resolvePendingForkContext(promptContextEvents)
     : null;
 const runtimePromptText = pendingHandoffContext
   ? buildPromptTextWithHandoffContext({
@@ -834,52 +877,63 @@ const runtimePromptText = pendingHandoffContext
       })
     : trimmed;
 
-    const userMessageId = randomUUID();
+    const userMessageId = options?.clientMessageId?.trim() || randomUUID();
     const designMatch = trimmed.match(/`design:([^`]+)`/);
     const displayContent = designMatch
       ? `Design: ${designMatch[1]!.slice(0, 160)}${designMatch[1]!.length > 160 ? "…" : ""}`
       : undefined;
-    await appendConversationEvents(workspace.id, conversationId, [
+    const appended = await appendConversationEventsAndPatchRecord(
+      workspace.id,
+      conversationId,
+      [
+        {
+          eventId: options?.clientEventId?.trim() || randomUUID(),
+          conversationId,
+          kind: "user_message",
+          messageId: userMessageId,
+          content: trimmed,
+          displayContent,
+          attachments,
+        },
+      ],
       {
-        eventId: randomUUID(),
-        conversationId,
-        kind: "user_message",
-        messageId: userMessageId,
-        content: trimmed,
-        displayContent,
-        attachments,
-      },
-    ]);
-    await updateConversationRecord(workspace.id, conversationId, (current) => ({
-      ...current,
-      status: "running",
-      pendingPermission: null,
-      lastError: null,
-    }));
+        status: "running",
+        pendingPermission: null,
+        lastError: null,
+      }
+    );
+    const appendedEvents = appended.events;
+    const updatedRecord = appended.conversation;
 
-    const runtime = await this.ensureRuntime(workspace, record);
-    const runtimeText =
-      runtime.sessionRecoveryTranscript && runtimePromptText.trim().length > 0
-        ? buildPromptTextWithSessionRecoveryContext({
-            transcript: runtime.sessionRecoveryTranscript,
-            backendId: record.config.backendId,
-            userPromptText: runtimePromptText,
-            hasAttachments: Boolean(attachments?.length),
-          })
-        : runtimePromptText;
-    if (runtime.sessionRecoveryTranscript) {
-      delete runtime.sessionRecoveryTranscript;
-    }
-    void runtime.handle
-      .prompt({ text: runtimeText, userMessageId, attachments })
-      .catch(() => undefined);
-    const head = await readConversationSnapshotHead(workspace.id, conversationId);
-    if (!head) {
-      throw new Error("Conversation disappeared after prompt.");
-    }
+    void (async () => {
+      try {
+        const runtime = await this.ensureRuntime(workspace, record);
+        const runtimeText =
+          runtime.sessionRecoveryTranscript && runtimePromptText.trim().length > 0
+            ? buildPromptTextWithSessionRecoveryContext({
+                transcript: runtime.sessionRecoveryTranscript,
+                backendId: record.config.backendId,
+                userPromptText: runtimePromptText,
+                hasAttachments: Boolean(attachments?.length),
+              })
+            : runtimePromptText;
+        if (runtime.sessionRecoveryTranscript) {
+          delete runtime.sessionRecoveryTranscript;
+        }
+        await runtime.handle.prompt({ text: runtimeText, userMessageId, attachments });
+      } catch (error) {
+        await this.persistRuntimeFailure(workspace.id, conversationId, error);
+      }
+    })();
     return {
-      ...head,
-      conversation: this.withBackendDefaults(head.conversation),
+      conversation: this.withBackendDefaults(updatedRecord),
+      events: appendedEvents,
+      window: {
+        oldestSeq: appendedEvents[0]?.seq ?? updatedRecord.lastEventSeq,
+        newestSeq:
+          appendedEvents[appendedEvents.length - 1]?.seq ?? updatedRecord.lastEventSeq,
+        hasOlder: record.lastEventSeq > 0,
+      },
     };
   }
 

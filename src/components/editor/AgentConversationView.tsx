@@ -16,6 +16,8 @@ import {
   projectAgentEventsToChatMessages,
 } from "@/lib/agent-chat";
 import { askStepsFromMessage } from "@/lib/ask-question-utils";
+import { buildQueuedConfigOverride } from "@/lib/queued-prompt-utils";
+import { markConversationSwitchVisible } from "@/lib/dev-perf";
 import { useAgentConversations } from "@/components/chat/AgentConversationsContext";
 import { deleteAgentConversationQueueItem } from "@/lib/server-api";
 import type { AgentBackendId } from "@/lib/agent-types";
@@ -177,6 +179,14 @@ loadOlderConversationHistory,
     () => (dockedAsk ? askStepsFromMessage(dockedAsk) : []),
     [dockedAsk]
   );
+  useEffect(() => {
+    if (loadState !== "ready" || !conversation) {
+      return;
+    }
+    requestAnimationFrame(() => {
+      markConversationSwitchVisible(conversationId, "editor_thread_visible");
+    });
+  }, [conversation, conversationId, loadState]);
   const composerDraftId = conversationId;
   useRegisterDesignCaptureComposer(composerDraftId, 8);
   const composerDraftTitle =
@@ -184,6 +194,10 @@ loadOlderConversationHistory,
       ? `${conversation.title} prompt`
       : "Composer";
   const queuedPrompts = conversation?.queuedPrompts ?? [];
+  const backendLabels = useMemo(
+    () => Object.fromEntries(backends.map((backend) => [backend.id, backend.label ?? backend.id])),
+    [backends]
+  );
   const queueDockCollapsed = Boolean(
     workspaceSession.chat.composerQueueDockCollapsedByConversationId?.[conversationId]
   );
@@ -241,6 +255,7 @@ loadOlderConversationHistory,
         upsertComposerDraft(composerDraftId, {
           title: composerDraftTitle,
           content: item.text,
+          attachments: item.attachments,
         });
       })();
     },
@@ -270,6 +285,7 @@ loadOlderConversationHistory,
         upsertComposerDraft(composerDraftId, {
           title: composerDraftTitle,
           content: item.text,
+          attachments: item.attachments,
         });
         if (item.configOverride) {
           setPendingConfigForConversation(conversationId, item.configOverride);
@@ -393,32 +409,32 @@ const showRecentChatsSection =
     <div className={EDITOR_CHAT_CONTENT_CLASS}>
       <ChatComposer
         key={composerDraftId}
-mode={composerState.mode}
-onModeChange={(next) => {
-if (composerState.busy) {
-setPendingConfigForConversation(conversationId, { mode: next as EditorMode });
-} else {
-void setConversationMode(conversationId, next as EditorMode);
-}
-}}
-model={composerState.model}
-onModelChange={(next) => {
-if (composerState.busy) {
-const modelId = next.modelValue ?? next.id;
-setPendingConfigForConversation(conversationId, { modelId, modelName: next.name });
-} else {
-void setConversationModel(conversationId, next);
-}
-}}
-backendId={composerState.backendId}
-backends={backends}
-onBackendChange={(next) => {
-if (composerState.busy) {
-setPendingConfigForConversation(conversationId, { backendId: next });
-} else {
-void setConversationBackend(conversationId, next);
-}
-}}
+        mode={composerState.mode}
+        onModeChange={(next) => {
+          if (composerState.busy) {
+            setPendingConfigForConversation(conversationId, { mode: next as EditorMode });
+          } else {
+            void setConversationMode(conversationId, next as EditorMode);
+          }
+        }}
+        model={composerState.model}
+        onModelChange={(next) => {
+          if (composerState.busy) {
+            const modelId = next.modelValue ?? next.id;
+            setPendingConfigForConversation(conversationId, { modelId, modelName: next.name });
+          } else {
+            void setConversationModel(conversationId, next);
+          }
+        }}
+        backendId={composerState.backendId}
+        backends={backends}
+        onBackendChange={(next) => {
+          if (composerState.busy) {
+            setPendingConfigForConversation(conversationId, { backendId: next });
+          } else {
+            void setConversationBackend(conversationId, next);
+          }
+        }}
         models={composerState.models}
         modeOptions={composerState.modeOptions}
         sessionConfigOptions={composerState.sessionConfigOptions}
@@ -445,22 +461,36 @@ void setConversationBackend(conversationId, next);
         busy={composerState.busy}
         configLocked={false}
         draftAttachments={composerDraftAttachments}
-onDraftAttachmentsChange={(next) =>
-                upsertComposerDraft(composerDraftId, {
-                  title: composerDraftTitle,
-                  attachments: next,
-                })
-              }
-              draftCaptures={composerDraftCaptures}
-              onDraftCapturesChange={(next) =>
-                upsertComposerDraft(composerDraftId, {
-                  title: composerDraftTitle,
-                  captures: next,
-                })
-              }
-onSubmit={(text, attachments?: ImageAttachment[]) => {
-const configOverride = composerState.busy ? pendingConfigByConversationId[conversationId] : undefined;
-void promptConversation(conversationId, text, attachments, configOverride).then((ok) => {
+        onDraftAttachmentsChange={(next) =>
+          upsertComposerDraft(composerDraftId, {
+            title: composerDraftTitle,
+            attachments: next,
+          })
+        }
+        draftCaptures={composerDraftCaptures}
+        onDraftCapturesChange={(next) =>
+          upsertComposerDraft(composerDraftId, {
+            title: composerDraftTitle,
+            captures: next,
+          })
+        }
+        onSubmit={(text, attachments?: ImageAttachment[]) => {
+          const pendingConfig = pendingConfigByConversationId[conversationId];
+          const derivedOverride =
+            composerState.busy && conversation
+              ? buildQueuedConfigOverride(
+                  conversation.config,
+                  composerState.backendId,
+                  composerState.mode,
+                  composerState.model
+                )
+              : undefined;
+          const mergedOverride = { ...derivedOverride, ...pendingConfig };
+          const configOverride =
+            composerState.busy && Object.keys(mergedOverride).length > 0
+              ? mergedOverride
+              : undefined;
+          void promptConversation(conversationId, text, attachments, configOverride).then((ok) => {
             if (!ok) {
               return;
             }
@@ -503,27 +533,25 @@ void promptConversation(conversationId, text, attachments, configOverride).then(
         <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
           {!composerHiddenForExpanded ? (
             <div className="shrink-0">
-{queuedPrompts.length > 0 ? (
-<div className={EDITOR_CHAT_CONTENT_CLASS}>
-<ComposerQueueDock
-                        items={queuedPrompts}
-                        onDelete={removeQueuedPrompt}
-                        onUnqueue={unqueuePromptToComposer}
-                        onEdit={editQueuedPrompt}
-                        conversationConfig={conversation?.config}
-                        backendLabels={Object.fromEntries(
-                          backends.map((b) => [b.id, b.label ?? b.id])
-                        )}
-                        collapsed={queueDockCollapsed}
-                        onCollapsedChange={onQueueDockCollapsedChange}
-                      />
-</div>
-) : null}
-{composer}
-</div>
-) : null}
-<div
-className={`min-h-0 flex-1 bg-[var(--bg-main)] ${EDITOR_CHAT_INSET_X_CLASS} pb-[16px] pt-[12px]`}
+              {queuedPrompts.length > 0 ? (
+                <div className={EDITOR_CHAT_CONTENT_CLASS}>
+                  <ComposerQueueDock
+                    items={queuedPrompts}
+                    onDelete={removeQueuedPrompt}
+                    onUnqueue={unqueuePromptToComposer}
+                    onEdit={editQueuedPrompt}
+                    conversationConfig={conversation?.config}
+                    backendLabels={backendLabels}
+                    collapsed={queueDockCollapsed}
+                    onCollapsedChange={onQueueDockCollapsedChange}
+                  />
+                </div>
+              ) : null}
+              {composer}
+            </div>
+          ) : null}
+          <div
+            className={`min-h-0 flex-1 bg-[var(--bg-main)] ${EDITOR_CHAT_INSET_X_CLASS} pb-[16px] pt-[12px]`}
           >
             {recentChatsSection ? (
               <div className="flex h-full flex-col justify-end">
@@ -631,18 +659,16 @@ className={`min-h-0 flex-1 bg-[var(--bg-main)] ${EDITOR_CHAT_INSET_X_CLASS} pb-[
                 {queuedPrompts.length > 0 ? (
                   <div className={`${EDITOR_CHAT_INSET_X_CLASS} pt-[8px]`}>
                     <div className={EDITOR_CHAT_CONTENT_CLASS}>
-                <ComposerQueueDock
-                  items={queuedPrompts}
-                  onDelete={removeQueuedPrompt}
-                  onUnqueue={unqueuePromptToComposer}
-                  onEdit={editQueuedPrompt}
-                  conversationConfig={conversation?.config}
-                  backendLabels={Object.fromEntries(
-                    backends.map((b) => [b.id, b.label ?? b.id])
-                  )}
-                  collapsed={queueDockCollapsed}
-                  onCollapsedChange={onQueueDockCollapsedChange}
-                />
+                      <ComposerQueueDock
+                        items={queuedPrompts}
+                        onDelete={removeQueuedPrompt}
+                        onUnqueue={unqueuePromptToComposer}
+                        onEdit={editQueuedPrompt}
+                        conversationConfig={conversation?.config}
+                        backendLabels={backendLabels}
+                        collapsed={queueDockCollapsed}
+                        onCollapsedChange={onQueueDockCollapsedChange}
+                      />
                     </div>
                   </div>
                 ) : null}

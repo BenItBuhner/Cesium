@@ -22,6 +22,7 @@ import type {
   WorkspaceWindowRecord,
 } from "@/lib/types";
 import { toWebSocketUrl } from "@/lib/ws-client";
+import { recordPerfSample } from "@/lib/dev-perf";
 import {
   attachSessionToken,
   buildAuthenticatedUrl,
@@ -86,6 +87,7 @@ async function request<T>(
   // loads hit the browser cache first and revalidate in the background.
   const method = (init?.method ?? "GET").toUpperCase();
   const cacheMode: RequestCache = method === "GET" ? "default" : "no-store";
+  const startedAt = performance.now();
   const response = await fetch(`${resolveClientServerBaseUrl()}${input}`, {
     ...init,
     headers: Object.fromEntries(
@@ -97,6 +99,12 @@ async function request<T>(
     ),
     credentials: "include",
     cache: cacheMode,
+  });
+  recordPerfSample("api.request", startedAt, {
+    method,
+    path: input.split("?")[0] ?? input,
+    status: response.status,
+    serverMs: Number.parseFloat(response.headers.get("x-opencursor-perf-ms") ?? "0") || null,
   });
 
   syncAuthTokenFromResponse(response);
@@ -608,6 +616,23 @@ export async function createAgentConversation(
   });
 }
 
+export async function createAndPromptAgentConversation(
+  input: AgentConversationCreateInput,
+  text: string,
+  attachments?: ImageAttachment[],
+  ids?: { clientEventId?: string; clientMessageId?: string }
+): Promise<AgentConversationSnapshotResponse> {
+  return request(`/api/agents/conversations/create-and-prompt`, {
+    method: "POST",
+    body: JSON.stringify({
+      conversation: input,
+      text,
+      attachments,
+      ...ids,
+    }),
+  });
+}
+
 export async function generateDraftTitle(
   text: string
 ): Promise<{ title: string }> {
@@ -676,11 +701,12 @@ export async function promptAgentConversation(
   conversationId: string,
   text: string,
   attachments?: ImageAttachment[],
-  configOverride?: QueuedPromptConfigOverride
+  configOverride?: QueuedPromptConfigOverride,
+  ids?: { clientEventId?: string; clientMessageId?: string }
 ): Promise<AgentConversationSnapshotResponse> {
   return request(`/api/agents/conversations/${encodeURIComponent(conversationId)}/prompt`, {
     method: "POST",
-    body: JSON.stringify({ text, attachments, configOverride }),
+    body: JSON.stringify({ text, attachments, configOverride, ...ids }),
   });
 }
 

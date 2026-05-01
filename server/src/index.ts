@@ -47,6 +47,12 @@ import {
   isPrivateLanBrowserOrigin,
   shouldRelaxPrivateLanCors,
 } from "./lib/cors-origins.js";
+import {
+  flushServerPerfReport,
+  recordServerPerfSpan,
+  serverPerfEnabled,
+  startServerPerfSpan,
+} from "./lib/perf.js";
 
 const port = Number.parseInt(process.env.PORT ?? "9100", 10);
 const host = process.env.HOST?.trim() || "0.0.0.0";
@@ -101,9 +107,26 @@ app.use(
       "x-ratelimit-remaining",
       "x-ratelimit-reset",
       "retry-after",
+      "server-timing",
+      "x-opencursor-perf-ms",
     ],
   })
 );
+
+app.use("*", async (c, next) => {
+  const startedAt = startServerPerfSpan();
+  await next();
+  const pathname = new URL(c.req.url).pathname;
+  const ms = recordServerPerfSpan("http.request", startedAt, {
+    method: c.req.method,
+    path: pathname,
+    status: c.res.status,
+  });
+  if (serverPerfEnabled()) {
+    c.header("Server-Timing", `opencursor;dur=${ms.toFixed(1)}`);
+    c.header("x-opencursor-perf-ms", ms.toFixed(1));
+  }
+});
 
 app.use("*", authMiddleware);
 
@@ -212,3 +235,9 @@ server.on("upgrade", (request, socket, head) => {
 });
 
 console.log(`OpenCursor server listening on http://${publicHost}:${port}`);
+
+process.once("beforeExit", () => {
+  void flushServerPerfReport("beforeExit").catch((error) => {
+    console.warn("[perf] failed to flush report:", error);
+  });
+});

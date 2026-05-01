@@ -17,6 +17,7 @@ export function applyThemeConfigToDom(config: ThemeConfig): void {
   const tokens = resolveMergedTokens(config, resolvedDark);
   const el = document.documentElement;
   el.classList.toggle("dark", resolvedDark);
+  el.dataset.uiDesign = config.uiDesignMode;
   for (const key of Object.keys(tokens) as (keyof typeof tokens)[]) {
     el.style.setProperty(key, tokens[key]);
   }

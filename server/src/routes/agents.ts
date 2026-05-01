@@ -100,6 +100,31 @@ agentRoutes.post("/api/agents/conversations", async (c) => {
   return c.json({ conversation }, 201);
 });
 
+agentRoutes.post("/api/agents/conversations/create-and-prompt", async (c) => {
+  const workspace = await requireWorkspaceFromRequest(c);
+  const body = await c.req.json<{
+    conversation?: AgentConversationCreateInput;
+    text?: string;
+    attachments?: Array<{ mimeType: string; data: string; name?: string }>;
+    clientEventId?: string;
+    clientMessageId?: string;
+  }>();
+  if (!body.text?.trim() && (!body.attachments || body.attachments.length === 0)) {
+    return c.json({ error: "Expected prompt text or attachments." }, 400);
+  }
+  const snapshot = await agentRuntimeManager.createConversationWithPrompt(
+    workspace,
+    body.conversation ?? {},
+    {
+      text: body.text ?? "",
+      ...(body.attachments ? { attachments: body.attachments } : {}),
+      ...(body.clientEventId ? { clientEventId: body.clientEventId } : {}),
+      ...(body.clientMessageId ? { clientMessageId: body.clientMessageId } : {}),
+    }
+  );
+  return c.json({ snapshot }, 201);
+});
+
 agentRoutes.post("/api/agents/conversations/draft-title", async (c) => {
   await requireWorkspaceFromRequest(c);
   const body = await c.req.json<{ text: string }>();
@@ -176,6 +201,8 @@ agentRoutes.post("/api/agents/conversations/:conversationId/prompt", async (c) =
     text?: string;
     attachments?: Array<{ mimeType: string; data: string; name?: string }>;
     configOverride?: AgentQueuedChatPrompt["configOverride"];
+    clientEventId?: string;
+    clientMessageId?: string;
   }>();
   if (!body.text?.trim() && (!body.attachments || body.attachments.length === 0)) {
     return c.json({ error: "Expected prompt text or attachments." }, 400);
@@ -187,6 +214,8 @@ agentRoutes.post("/api/agents/conversations/:conversationId/prompt", async (c) =
     body.attachments,
     {
       ...(body.configOverride ? { configOverride: body.configOverride } : {}),
+      ...(body.clientEventId ? { clientEventId: body.clientEventId } : {}),
+      ...(body.clientMessageId ? { clientMessageId: body.clientMessageId } : {}),
     }
   );
   return c.json({ snapshot });

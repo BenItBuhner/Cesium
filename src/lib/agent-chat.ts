@@ -2918,10 +2918,40 @@ export function extractLiveSubagentTranscriptFromMessages(
   };
 }
 
+type ProjectionCacheEntry = {
+  key: string;
+  messages: ChatMessage[];
+};
+
+const projectionCache = new Map<string, ProjectionCacheEntry>();
+const PROJECTION_CACHE_LIMIT = 200;
+
+function projectionCacheKey(
+  events: AgentStoredEvent[],
+  options?: ProjectAgentEventsOptions
+): string {
+  const first = events[0];
+  const last = events[events.length - 1];
+  return [
+    first?.conversationId ?? "none",
+    events.length,
+    first?.seq ?? 0,
+    last?.seq ?? 0,
+    last?.eventId ?? "none",
+    options?.backendId ?? "none",
+    options?.workspaceRoot ?? "none",
+  ].join("|");
+}
+
 export function projectAgentEventsToChatMessages(
   events: AgentStoredEvent[],
   options?: ProjectAgentEventsOptions
 ): ChatMessage[] {
+  const cacheKey = projectionCacheKey(events, options);
+  const cached = projectionCache.get(cacheKey);
+  if (cached) {
+    return cached.messages;
+  }
   const workspaceRoot = options?.workspaceRoot;
   const ordered = stripSpuriousAcpToolCallReplays(
     dedupeAgentStoredEvents([...events].sort((a, b) => a.seq - b.seq))
@@ -3572,6 +3602,13 @@ for (const turn of turns) {
     messages.push(...forkInTimeline, ...otherTimeline);
   }
 }
+  projectionCache.set(cacheKey, { key: cacheKey, messages });
+  if (projectionCache.size > PROJECTION_CACHE_LIMIT) {
+    const oldest = projectionCache.keys().next().value;
+    if (oldest) {
+      projectionCache.delete(oldest);
+    }
+  }
   return messages;
 }
 

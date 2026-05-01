@@ -83,6 +83,8 @@ export function GlobalSettingsProvider({ children }: { children: ReactNode }) {
         if (!mounted) return;
         skipNextSaveRef.current = true;
         setSettings(normalizeLoadedGlobalSettings(result.settings));
+      } catch {
+        // Logged-out, offline, or stale-auth startup should keep defaults and let AuthGate own the UI.
       } finally {
         if (mounted) {
           setReady(true);

@@ -11,7 +11,10 @@ import {
 import { HardwareAwareTextInput } from "@/components/input/HardwareAwareTextField";
 import {
   AGENT_LEFT_RAIL_EXPANDED_WIDTH,
+  AGENT_SHELL_PANEL_IDS,
   getAgentShellRailPixelWidth,
+  normalizeAgentShellDesktopLayout,
+  readAgentShellSharedSnapshot,
 } from "@/components/agent/agent-shell-layout";
 import type { LucideIcon } from "lucide-react";
 import {
@@ -238,8 +241,22 @@ export function SettingsEditorView({ onCloseShell }: SettingsEditorViewProps = {
   );
 
   const desktopAsideWidth = useMemo(
-    () => getAgentShellRailPixelWidth(viewportWidth),
-    [viewportWidth]
+    () => {
+      const snapshotLayout = normalizeAgentShellDesktopLayout(
+        readAgentShellSharedSnapshot()?.agentShellDesktopLayout
+      );
+      const workspaceLayout = normalizeAgentShellDesktopLayout(
+        workspaceSession.agentView.agentShellDesktopLayout
+      );
+      const railPercent =
+        snapshotLayout?.[AGENT_SHELL_PANEL_IDS.rail] ??
+        workspaceLayout?.[AGENT_SHELL_PANEL_IDS.rail];
+      if (typeof railPercent === "number" && Number.isFinite(railPercent) && railPercent > 0) {
+        return Math.round((viewportWidth * railPercent) / 100);
+      }
+      return getAgentShellRailPixelWidth(viewportWidth);
+    },
+    [viewportWidth, workspaceSession.agentView.agentShellDesktopLayout]
   );
 
   useEffect(() => {

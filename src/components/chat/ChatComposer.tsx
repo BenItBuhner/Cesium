@@ -13,9 +13,27 @@ import {
   type PointerEvent as ReactPointerEvent,
   type ReactElement,
 } from "react";
-import { ArrowUp, Image as ImageIcon, LayoutTemplate, LoaderCircle, Maximize2, Mic, Minimize2, Square } from "lucide-react";
+import {
+  ArrowUp,
+  Bug,
+  Image as ImageIcon,
+  Infinity as InfinityIcon,
+  LayoutTemplate,
+  ListChecks,
+  LoaderCircle,
+  Maximize2,
+  MessageSquare,
+  Mic,
+  Minimize2,
+  Plus,
+  Square,
+  X,
+  type LucideIcon,
+} from "lucide-react";
 import { ImageCarousel } from "./ImageCarousel";
 import type { ImageAttachment, ImageAttachmentState } from "@/lib/types";
+import { useTheme } from "@/components/theme/ThemeProvider";
+import { useComposerTextIsMultiLine } from "./composer-multiline";
 import { useHardwareInput } from "@/components/input/HardwareInputProvider";
 import { useWorkbenchNotifications } from "@/components/notifications/WorkbenchNotificationProvider";
 import { WORKBENCH_NOTIFICATION_KIND } from "@/components/notifications/workbench-notification-types";
@@ -84,6 +102,85 @@ const sendButtonBgClass: Record<KnownEditorMode, string> = {
   debug: "bg-[var(--debug-accent-dark)]",
   ask: "bg-[var(--ask-accent-dark)]",
 };
+
+/**
+ * Shared mode accent/icon map for the new-design mode chip. Kept local so
+ * `ModeDropdown` (classic) can stay untouched and the chip renders without
+ * importing private symbols from a peer.
+ */
+const NEW_DESIGN_MODE_COLORS: Record<KnownEditorMode, { text: string; bg: string }> = {
+  agent: { text: "var(--accent)", bg: "var(--accent-bg)" },
+  plan: { text: "var(--plan-accent)", bg: "var(--plan-accent-bg)" },
+  debug: { text: "var(--debug-accent)", bg: "var(--debug-accent-bg)" },
+  ask: { text: "var(--ask-accent)", bg: "var(--ask-accent-bg)" },
+};
+
+function iconForNewDesignMode(tone: KnownEditorMode): LucideIcon {
+  switch (tone) {
+    case "plan":
+      return ListChecks;
+    case "debug":
+      return Bug;
+    case "ask":
+      return MessageSquare;
+    default:
+      return InfinityIcon;
+  }
+}
+
+interface NewDesignModeChipProps {
+  mode: EditorMode;
+  options: AgentModeOption[];
+  onModeChange: (mode: EditorMode) => void;
+  disabled?: boolean;
+}
+
+/**
+ * Cursor 3.1-style mode chip. Hidden while mode resolves to `agent` (the
+ * default); materializes with a small remove affordance for any other mode so
+ * cycling Shift+Tab into Plan/Debug/Ask surfaces an obvious chip that can be
+ * dismissed back to default without opening a menu.
+ */
+function NewDesignModeChip({
+  mode,
+  options,
+  onModeChange,
+  disabled,
+}: NewDesignModeChipProps) {
+  const tone = getModeTone(mode);
+  if (tone === "agent") {
+    return null;
+  }
+  const resolvedOptions = ensureCurrentModeOption(
+    mode,
+    options.length > 0 ? options : DEFAULT_MODE_OPTIONS
+  );
+  const current =
+    resolvedOptions.find((o) => o.id === mode) ??
+    resolvedOptions[0];
+  const label = current?.label ?? mode;
+  const Icon = iconForNewDesignMode(tone);
+  const colors = NEW_DESIGN_MODE_COLORS[tone];
+  return (
+    <span
+      className="inline-flex shrink-0 items-center gap-[4px] rounded-[var(--radius-pill)] py-[2px] pl-[8px] pr-[3px] font-sans text-[12px] font-normal"
+      style={{ background: colors.bg }}
+    >
+      <Icon className="size-[12px] shrink-0" strokeWidth={1.5} style={{ color: colors.text }} />
+      <span style={{ color: colors.text }}>{label}</span>
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => onModeChange("agent")}
+        className="ml-[2px] flex size-[14px] items-center justify-center rounded-full transition-[background-color,opacity] hover:bg-black/15 disabled:cursor-not-allowed disabled:opacity-50"
+        aria-label={`Remove ${label} mode`}
+        title={`Remove ${label} mode`}
+      >
+        <X className="size-[10px]" strokeWidth={2.25} style={{ color: colors.text }} />
+      </button>
+    </span>
+  );
+}
 
 type MenuState =
   | { kind: "at"; start: number; end: number; query: string }
@@ -1220,7 +1317,6 @@ export function ChatComposer({
   const isActive = hardwareInputEnabled
     ? isSurfaceActive(surfaceId)
     : hasFocus;
-  const isEmpty = value.trim().length === 0;
   const isExpanded = variant === "expanded";
   const showAgentShellGrowControls = agentShellDockHeightExpand && !isExpanded;
 
@@ -2167,7 +2263,7 @@ const handleNativeComposerKeyDown = useCallback(
       : `${shellMx} mb-[10px]`.trim();
   const shellChrome = isExpanded
     ? "h-full min-h-0 gap-0 rounded-none border-0 bg-[var(--bg-main)] p-0"
-    : "gap-[10px] overflow-hidden rounded-[var(--radius-card)] border border-[var(--border-card)] bg-[var(--bg-card)] p-[10px]";
+    : "gap-[10px] overflow-hidden rounded-[var(--agent-composer-radius)] border border-[var(--agent-border)] bg-[var(--agent-card-bg)] p-[10px]";
   const editorRegionClassName = isExpanded
     ? "flex min-h-0 flex-1 flex-col"
     : "";
@@ -2186,6 +2282,348 @@ const handleNativeComposerKeyDown = useCallback(
   const canSubmit = value.trim().length > 0 || attachedImages.length > 0;
   /** While the turn is running, Stop occupies the primary (send) slot until there is something to queue. */
   const primaryControlIsStop = Boolean(busy && onCancel && !canSubmit);
+
+  const { themeConfig } = useTheme();
+  const isNewDesign = themeConfig.uiDesignMode === "new";
+  /**
+   * Flips when the contenteditable wraps beyond one visual line. The hook
+   * attaches a single ResizeObserver + `input` listener on the editor ref and
+   * returns a boolean; it's a cheap no-op when the editor ref hasn't attached
+   * yet. Classic layout still reads the flag but ignores it.
+   */
+  const isMultiLine = useComposerTextIsMultiLine(editorRef);
+
+  /** `trim()` alone can't hide the overlay after Shift+Enter (`\\n`-only trims to ""). Treating lone `\\n` or phantom `<br>` as "has newline" broke empty inputs (Chrome serializes sentinel breaks as "\\n"). Hiding instead when wrapped past one line aligns with visible layout + soft breaks. */
+  const showFloatingPlaceholder =
+    value.trim().length === 0 && !isMultiLine;
+
+  if (isNewDesign && variant === "docked" && !isExpanded) {
+    const plusButton = (
+      <button
+        type="button"
+        onClick={() => fileInputRef.current?.click()}
+        disabled={configLocked}
+        className="flex size-[22px] shrink-0 items-center justify-center rounded-full border border-[var(--agent-border)] bg-[var(--agent-plus-button-bg)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--agent-plus-button-bg-hover)] hover:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-50"
+        aria-label="Attach media"
+        title="Attach media"
+      >
+        <Plus className="size-[13px] shrink-0" strokeWidth={2} aria-hidden />
+      </button>
+    );
+
+    const modeChip = (
+      <NewDesignModeChip
+        mode={mode}
+        options={modeOptions ?? DEFAULT_MODE_OPTIONS}
+        onModeChange={onModeChange}
+        disabled={configLocked}
+      />
+    );
+
+    const modelPill = (
+      <ModelDropdown
+        model={model}
+        models={models}
+        onModelChange={onModelChange}
+        popoverPlacement={modeModelPopoverPlacement}
+        disabled={configLocked}
+        isOpen={modelDropdownOpen}
+        onOpenChange={setModelDropdownOpen}
+        backendId={backendId}
+        backends={backends}
+        onBackendChange={onBackendChange}
+      />
+    );
+
+    const voiceButton = (
+      <button
+        type="button"
+        onClick={() => {
+          if (recordingState === "recording") {
+            stopVoiceInput();
+            return;
+          }
+          void startVoiceInput();
+        }}
+        disabled={recordingState === "transcribing"}
+        className={`relative flex h-[20px] min-w-[20px] items-center justify-center rounded-full transition-colors ${
+          recordingState === "recording" || recordingState === "transcribing"
+            ? "bg-[var(--accent-bg)] text-[var(--text-primary)]"
+            : "text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+        } disabled:cursor-not-allowed disabled:opacity-50`}
+        aria-label={
+          recordingState === "recording"
+            ? "Stop voice input"
+            : recordingState === "transcribing"
+              ? "Transcribing voice input"
+              : "Voice input"
+        }
+      >
+        {recordingState === "transcribing" ? (
+          <LoaderCircle
+            className="size-[12px] shrink-0 animate-spin text-[var(--text-primary)]"
+            strokeWidth={2.5}
+            aria-hidden
+          />
+        ) : recordingState === "recording" ? (
+          <span className="flex h-[14px] items-center justify-center gap-[2.5px]">
+            {[0.35, 0.55, 0.4].map((scale, index) => (
+              <span
+                key={index}
+                className="w-[2.5px] shrink-0 rounded-full bg-current"
+                style={{
+                  height: `${4 + Math.max(0.15, inputLevel * scale) * 10}px`,
+                  opacity: 0.55 + inputLevel * 0.45,
+                  transition: "height 80ms ease-out, opacity 80ms ease-out",
+                  animation:
+                    inputLevel > 0.08
+                      ? "wave-bounce 280ms ease-in-out infinite alternate"
+                      : "none",
+                  animationDelay: `${index * 55}ms`,
+                }}
+              />
+            ))}
+          </span>
+        ) : (
+          <Mic className="size-[14px] shrink-0" strokeWidth={1.5} aria-hidden />
+        )}
+      </button>
+    );
+
+    const sendButton = primaryControlIsStop ? (
+      <button
+        type="button"
+        onClick={() => void onCancel?.()}
+        className={`flex h-[20px] w-[20px] items-center justify-center rounded-full transition-opacity hover:opacity-80 ${sendButtonBgClass[getModeTone(mode)]}`}
+        aria-label="Stop"
+      >
+        <Square className="size-[9px] text-[var(--bg-main)]" fill="currentColor" strokeWidth={2.2} />
+      </button>
+    ) : (
+      <button
+        type="button"
+        onClick={() => void submitComposer()}
+        disabled={!canSubmit}
+        className={`flex h-[20px] w-[20px] items-center justify-center rounded-full transition-opacity hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-50 ${sendButtonBgClass[getModeTone(mode)]}`}
+        aria-label={busy ? "Send or queue message" : "Send"}
+      >
+        <ArrowUp className="size-3 text-[var(--bg-main)]" strokeWidth={2.5} />
+      </button>
+    );
+
+    /**
+     * Single-line pill collapses to a fully circular shell so the composer
+     * reads as one continuous capsule (Cursor 3.1). Multi-line falls back to
+     * the squarer composer-radius so the bottom row corners stay tidy under a
+     * tall editor.
+     */
+    const newDesignPillRadiusClass =
+      isMultiLine || attachedImages.length > 0
+        ? "rounded-[var(--agent-composer-radius)]"
+        : "rounded-full";
+
+    return (
+      <div
+        ref={composerRootRef}
+        data-ide-input-sink
+        className={`${shellMargin} flex shrink-0 flex-col gap-[8px] overflow-hidden ${newDesignPillRadiusClass} border border-[var(--agent-border)] bg-[var(--agent-card-bg)] p-[10px]`}
+      >
+        {attachedImages.length > 0 && (
+          <ImageCarousel
+            images={attachedImages}
+            onRemove={handleRemoveImage}
+            onRetry={handleRetryImage}
+            size="compact"
+          />
+        )}
+
+        {/* Main row: everything inline when single-line; editor-only when wrapped. */}
+        <div
+          className={
+            isMultiLine
+              ? "flex min-w-0"
+              : "flex min-w-0 items-center gap-[10px]"
+          }
+        >
+          {!isMultiLine ? plusButton : null}
+          {!isMultiLine ? modeChip : null}
+          <div
+            key="editor-wrapper"
+            className="relative min-w-0 flex-1"
+          >
+            {showFloatingPlaceholder && (
+              <span
+                className={`pointer-events-none absolute left-0 top-0 z-10 font-sans text-[14px] font-normal text-[var(--text-secondary)] ${textInsetClassName}`}
+              >
+                Ask anything, @ for files, / for commands
+              </span>
+            )}
+            <div
+              ref={editorRef}
+              contentEditable={!hardwareInputEnabled}
+              suppressContentEditableWarning={!hardwareInputEnabled}
+              tabIndex={hardwareInputEnabled ? 0 : undefined}
+              onPointerDown={(event) => {
+                if (hardwareInputEnabled) {
+                  activateSurface(surfaceId, editorRef.current);
+                  setComposerSelection(resolvePointerSelection(event, value.length));
+                }
+              }}
+              onMouseUp={() => {
+                if (!hardwareInputEnabled) {
+                  syncNativeState();
+                }
+              }}
+              onFocus={() => {
+                setHasFocus(true);
+                if (hardwareInputEnabled) {
+                  activateSurface(surfaceId, editorRef.current);
+                }
+              }}
+              onBlur={() => {
+                setHasFocus(false);
+                if (hardwareInputEnabled) {
+                  deactivateSurface(surfaceId);
+                }
+              }}
+              onKeyDown={(event: ReactKeyboardEvent<HTMLDivElement>) => {
+                if (hardwareInputEnabled) {
+                  return;
+                }
+                handleNativeComposerKeyDown(event);
+              }}
+              onInput={() => {
+                if (!hardwareInputEnabled) {
+                  syncNativeState();
+                }
+              }}
+              onPaste={(event: ReactClipboardEvent<HTMLDivElement>) => {
+                const cd = event.clipboardData;
+                const imageFiles = collectClipboardImageFiles(cd);
+                if (imageFiles.length > 0) {
+                  event.preventDefault();
+                  const dt = new DataTransfer();
+                  for (const file of imageFiles) {
+                    dt.items.add(file);
+                  }
+                  addImagesFromFileList(dt.files);
+                  return;
+                }
+
+                const plain = clipboardPlainTextOnly(cd);
+                event.preventDefault();
+
+                if (hardwareInputEnabled) {
+                  const next = replaceSelection(valueRef.current, selectionRef.current, plain);
+                  setComposerValue(next.value);
+                  setComposerSelection(next.selection);
+                  return;
+                }
+
+                const el = editorRef.current;
+                if (!el) {
+                  return;
+                }
+                const range = getPlainTextRangeOffsets(el);
+                const start = range?.start ?? getCaretOffset(el);
+                const end = range?.end ?? start;
+                replaceTextRange(el, start, end, plain);
+                syncNativeState();
+              }}
+              onDragOver={handleDragOver}
+              onDragLeave={handleDragLeave}
+              onDrop={handleDrop}
+              onCopy={(event: ReactClipboardEvent<HTMLDivElement>) => {
+                if (!hardwareInputEnabled || selection.start === selection.end) return;
+                event.preventDefault();
+                event.clipboardData.setData(
+                  "text/plain",
+                  value.slice(selection.start, selection.end)
+                );
+              }}
+              onCut={(event: ReactClipboardEvent<HTMLDivElement>) => {
+                if (!hardwareInputEnabled || selection.start === selection.end) return;
+                event.preventDefault();
+                event.clipboardData.setData(
+                  "text/plain",
+                  value.slice(selection.start, selection.end)
+                );
+                const next = replaceSelection(value, selection, "");
+                setComposerValue(next.value);
+                setComposerSelection(next.selection);
+              }}
+              className={`whitespace-pre-wrap break-words font-sans text-[14px] font-normal text-[var(--text-primary)] outline-none [scrollbar-width:thin] ${textInsetClassName} min-h-[18px] overflow-y-auto ${
+                showAgentShellGrowControls && agentShellDockTall
+                  ? "max-h-[min(70vh,560px)]"
+                  : "max-h-[min(42vh,240px)]"
+              }${showAgentShellGrowControls ? " transition-[max-height] duration-300 ease-out" : ""}`}
+              role={menu ? "combobox" : "textbox"}
+              aria-label="Chat input"
+              aria-expanded={menu ? true : undefined}
+              aria-controls={menu ? "composer-autocomplete" : undefined}
+              aria-autocomplete={menu ? "list" : undefined}
+              aria-multiline
+              data-hardware-input-surface={hardwareInputEnabled ? "" : undefined}
+              data-hardware-surface-kind={hardwareInputEnabled ? "chat" : undefined}
+            >
+              {hardwareInputEnabled ? textNodes : null}
+            </div>
+          </div>
+          {!isMultiLine ? modelPill : null}
+          {!isMultiLine ? voiceButton : null}
+          {!isMultiLine ? sendButton : null}
+        </div>
+
+        {menu?.kind === "at" && (
+          <ComposerAutocomplete
+            kind="at"
+            items={filteredAt}
+            selectedIndex={selectedIndex}
+            position={menuPos}
+            onSelect={pickAt}
+            onHighlight={setSelectedIndex}
+            listRef={listRef}
+            popoverRef={popoverRef}
+          />
+        )}
+        {menu?.kind === "slash" && (
+          <ComposerAutocomplete
+            kind="slash"
+            items={filteredSlash}
+            selectedIndex={selectedIndex}
+            position={menuPos}
+            onSelect={pickSlash}
+            onHighlight={setSelectedIndex}
+            listRef={listRef}
+            popoverRef={popoverRef}
+          />
+        )}
+
+        {isMultiLine ? (
+          <div className="flex items-center justify-between gap-[8px]">
+            <div className="flex min-w-0 items-center gap-[10px]">
+              {plusButton}
+              {modeChip}
+              <div className="min-w-0">{modelPill}</div>
+            </div>
+            <div className="flex shrink-0 items-center gap-[9px]">
+              {voiceButton}
+              {sendButton}
+            </div>
+          </div>
+        ) : null}
+
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          multiple
+          onChange={handleFileInputChange}
+          className="hidden"
+        />
+      </div>
+    );
+  }
 
   return (
     <div
@@ -2209,7 +2647,7 @@ const handleNativeComposerKeyDown = useCallback(
             isExpanded ? "flex min-h-0 flex-1 flex-col" : ""
           }`}
         >
-        {isEmpty && (
+        {showFloatingPlaceholder && (
           <span
             className={`pointer-events-none absolute left-0 top-0 z-10 font-sans text-[14px] font-normal text-[var(--text-secondary)] ${textInsetClassName}`}
           >

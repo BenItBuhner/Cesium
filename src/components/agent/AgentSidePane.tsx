@@ -16,12 +16,12 @@ export function AgentSidePane() {
   } = useAgentShellState();
 
   return (
-    <div className="agent-side-pane relative h-full w-full overflow-hidden bg-[var(--bg-panel)]">
+    <div className="agent-side-pane relative h-full w-full overflow-hidden bg-[var(--agent-panel-bg)]">
       {rightPaneOpen ? (
         <button
           type="button"
           onClick={toggleRightPaneOpen}
-          className="absolute right-[16px] top-[11px] z-40 flex size-[18px] items-center justify-center rounded-[var(--radius-tab)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-card)] hover:text-[var(--text-primary)]"
+          className="absolute right-[16px] top-[11px] z-40 flex size-[18px] items-center justify-center rounded-[var(--agent-control-radius)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--agent-card-bg)] hover:text-[var(--text-primary)]"
           aria-label="Hide workbench pane"
           title="Hide workbench pane"
         >

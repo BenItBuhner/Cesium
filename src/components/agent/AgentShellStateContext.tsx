@@ -60,6 +60,7 @@ import {
   patchAgentConversationTitleInGroups,
   removeConversationFromAgentGroups,
 } from "@/lib/agent-rail-patch";
+import { markConversationSwitchStart } from "@/lib/dev-perf";
 import type { AgentConversationRecord } from "@/lib/agent-types";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import {
@@ -977,6 +978,7 @@ export function AgentShellStateProvider({
 
   const setSelectedConversationId = useCallback(
     (conversationId: string | null) => {
+      markConversationSwitchStart(conversationId, "setSelectedConversationId");
       updateWorkspaceSession((current) => ({
         ...current,
         agentView: {
@@ -1023,6 +1025,7 @@ export function AgentShellStateProvider({
 
   const openConversationSummary = useCallback(
     async (summary: AgentRailConversationSummary) => {
+      markConversationSwitchStart(summary.id, "rail");
       setPendingConversationSelection({
         workspaceId: summary.workspaceId,
         conversationId: summary.id,

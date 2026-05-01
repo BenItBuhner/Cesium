@@ -136,7 +136,7 @@ export const AGENT_CENTER_STAGE_CLASS = "w-full";
  * phones) use full width — driven by `@container` on the pane, not the viewport (see MessageList).
  */
 export const AGENT_CENTER_CONTENT_CLASS =
-  "mx-auto w-full max-w-[min(876px,calc(100%-28px))] @max-[640px]:mx-0 @max-[640px]:max-w-full";
+  "mx-auto w-full max-w-[min(var(--agent-content-max-width),calc(100%_-_var(--agent-content-edge-gutter)))] @max-[640px]:mx-0 @max-[640px]:max-w-full";
 
 export function getAgentShellRailPixelWidth(viewportWidth: number): number {
   // Approximate rail width: use expanded width but clamp to viewport constraints

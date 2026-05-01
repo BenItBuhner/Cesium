@@ -21,6 +21,8 @@ export type CustomThemeEntry = {
   dark: ThemeTokensPartial;
 };
 
+export type UiDesignMode = "classic" | "new";
+
 export type ThemeConfig = {
   schemaVersion: 1;
   /** system | light | dark */
@@ -35,6 +37,8 @@ export type ThemeConfig = {
    * top-left control to reopen it. Hidden by default on wide layouts.
    */
   showFloatingSidebarReveal: boolean;
+  /** Visual system variant. `new` enables the next-generation UI design hooks. */
+  uiDesignMode: UiDesignMode;
 };
 
 export function createDefaultThemeConfig(): ThemeConfig {
@@ -45,11 +49,16 @@ export function createDefaultThemeConfig(): ThemeConfig {
     darkThemeId: DEFAULT_BUILTIN_THEME_ID,
     customThemes: [],
     showFloatingSidebarReveal: false,
+    uiDesignMode: "classic",
   };
 }
 
 function isThemePreference(v: unknown): v is ThemePreference {
   return v === "light" || v === "dark" || v === "system";
+}
+
+function isUiDesignMode(v: unknown): v is UiDesignMode {
+  return v === "classic" || v === "new";
 }
 
 function sanitizeCustomThemes(raw: unknown): CustomThemeEntry[] {
@@ -93,6 +102,9 @@ export function normalizeThemeConfig(raw: unknown): ThemeConfig {
       ? r.darkThemeId.trim()
       : base.darkThemeId;
   const showFloatingSidebarReveal = r.showFloatingSidebarReveal === true;
+  const uiDesignMode = isUiDesignMode(r.uiDesignMode)
+    ? r.uiDesignMode
+    : base.uiDesignMode;
   return {
     schemaVersion: 1,
     appearance,
@@ -100,6 +112,7 @@ export function normalizeThemeConfig(raw: unknown): ThemeConfig {
     darkThemeId,
     customThemes: sanitizeCustomThemes(r.customThemes),
     showFloatingSidebarReveal,
+    uiDesignMode,
   };
 }
 

@@ -833,6 +833,7 @@ workspaceSession.chat.model,
         upsertComposerDraft(composerDraftId, {
           title: composerDraftTitle,
           content: item.text,
+          attachments: item.attachments,
         });
       })();
     },
@@ -862,6 +863,7 @@ workspaceSession.chat.model,
         upsertComposerDraft(composerDraftId, {
           title: composerDraftTitle,
           content: item.text,
+          attachments: item.attachments,
         });
         if (item.configOverride) {
           setPendingConfigForConversation(cid, item.configOverride);

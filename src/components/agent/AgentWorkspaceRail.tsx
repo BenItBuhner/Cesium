@@ -580,7 +580,7 @@ export function AgentWorkspaceRail() {
         </div>
         {!isPinnedHeaderCollapsed ? (
           <div className="flex flex-col gap-[2px]">
-            {pinnedRailConversations.map((conversation) => {
+            {pinnedRailConversations.map((conversation, index) => {
               const selected =
                 conversation.id === selectedConversationId &&
                 conversation.workspaceId === activeWorkspaceId;
@@ -588,6 +588,7 @@ export function AgentWorkspaceRail() {
                 <AgentConversationRow
                   key={conversation.id}
                   conversation={conversation}
+                  rowIndex={index}
                   selected={selected}
                   editing={renameState?.conversationId === conversation.id}
                   editValue={renameState?.draft}
@@ -637,14 +638,14 @@ export function AgentWorkspaceRail() {
   return (
     <>
       {!desktopRailCollapsed ? (
-        <div className="flex h-full flex-col bg-[var(--bg-panel)]">
+        <div className="flex h-full flex-col bg-[var(--agent-panel-bg)]">
           <div
             className={`flex shrink-0 items-center gap-[8px] pt-[11px] ${railTopBarPadClass}`}
           >
             <button
               type="button"
               onClick={toggleLeftRailCollapsed}
-              className="flex size-[18px] shrink-0 items-center justify-center rounded-[var(--radius-tab)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-card)] hover:text-[var(--text-primary)]"
+              className="flex size-[18px] shrink-0 items-center justify-center rounded-[var(--agent-control-radius)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--agent-card-bg)] hover:text-[var(--text-primary)]"
               aria-label="Collapse workspace rail"
               title="Collapse workspace rail"
             >
@@ -653,7 +654,7 @@ export function AgentWorkspaceRail() {
             <button
               type="button"
               onClick={() => setRecentChatsOpen(true)}
-              className="flex size-[18px] shrink-0 items-center justify-center rounded-[var(--radius-tab)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-card)] hover:text-[var(--text-primary)]"
+              className="flex size-[18px] shrink-0 items-center justify-center rounded-[var(--agent-control-radius)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--agent-card-bg)] hover:text-[var(--text-primary)]"
               aria-label="Search all chats"
               title="Search all chats"
             >
@@ -662,7 +663,8 @@ export function AgentWorkspaceRail() {
             <button
               type="button"
               onClick={handleNewChat}
-              className="ml-auto flex size-[18px] shrink-0 items-center justify-center rounded-[var(--radius-tab)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-card)] hover:text-[var(--text-primary)]"
+              data-perf="agent-rail-new-chat"
+              className="ml-auto flex size-[18px] shrink-0 items-center justify-center rounded-[var(--agent-control-radius)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--agent-card-bg)] hover:text-[var(--text-primary)]"
               aria-label="Start new chat"
               title="Start new chat"
             >
@@ -729,7 +731,7 @@ export function AgentWorkspaceRail() {
                           </span>
                         </button>
                       ) : (
-                        conversations.map((conversation) => {
+                        conversations.map((conversation, index) => {
                           const selected =
                             conversation.id === selectedConversationId &&
                             conversation.workspaceId === activeWorkspaceId;
@@ -737,6 +739,7 @@ export function AgentWorkspaceRail() {
                             <AgentConversationRow
                               key={conversation.id}
                               conversation={conversation}
+                              rowIndex={index}
                               selected={selected}
                               editing={renameState?.conversationId === conversation.id}
                               editValue={renameState?.draft}

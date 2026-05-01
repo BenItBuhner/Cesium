@@ -22,7 +22,6 @@ import {
   type MessageThreadSegment,
   type UserTurnSegment,
 } from "./message-thread-rows";
-import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
 import type { ChatMessage } from "@/lib/types";
 import { stripAgentTodoJsonAssistantContent } from "@/lib/agent-chat";
 
@@ -116,15 +115,9 @@ export function MessageThreadContent({
   workspaceRoot = null,
   onForkMessage,
 }: MessageThreadContentProps) {
-  const { settings } = useGlobalSettings();
-  const inlineToolDetailsInChat = settings.agents.inlineToolDetailsInChat;
-
   const { embeddedPermissionByWorkedId, skipPermissionMessageIndex } = useMemo(() => {
     const embedded = new Map<string, ChatMessage>();
     const skip = new Set<number>();
-    if (inlineToolDetailsInChat) {
-      return { embeddedPermissionByWorkedId: embedded, skipPermissionMessageIndex: skip };
-    }
     for (let i = 1; i < messages.length; i += 1) {
       const prev = messages[i - 1];
       const cur = messages[i];
@@ -138,7 +131,7 @@ export function MessageThreadContent({
       }
     }
     return { embeddedPermissionByWorkedId: embedded, skipPermissionMessageIndex: skip };
-  }, [inlineToolDetailsInChat, messages]);
+  }, [messages]);
 
   const stickyElMapRef = useRef<Map<number, HTMLDivElement>>(new Map());
   useEffect(() => {
@@ -333,7 +326,7 @@ export function MessageThreadContent({
                 isLiveWorkedTail={i === lastWorkedSessionIndex && chainLoading}
                 surface={workedSessionSurface}
                 workspaceRoot={workspaceRoot}
-                toolDetailsInWorkedCard={!inlineToolDetailsInChat}
+                toolDetailsInWorkedCard
                 embeddedPermission={embeddedPermissionByWorkedId.get(msg.id) ?? null}
                 onResolvePermission={onResolvePermission}
               />
@@ -369,7 +362,6 @@ export function MessageThreadContent({
       conversationBusy,
       conversationId,
       embeddedPermissionByWorkedId,
-      inlineToolDetailsInChat,
       lastWorkedSessionIndex,
       messages,
       onOpenSubagent,

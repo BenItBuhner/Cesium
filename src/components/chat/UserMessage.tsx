@@ -56,7 +56,7 @@ export function UserMessage({
 
   return (
     <div
-      className={`group relative overflow-hidden rounded-[var(--radius-card)] border border-[var(--border-card)] bg-[var(--bg-card)] p-[10px] ${highlight ? "ring-2 ring-[var(--accent)] ring-opacity-50" : ""}`}
+      className={`group relative overflow-hidden rounded-[var(--agent-card-radius)] border border-[var(--agent-border)] bg-[var(--agent-card-bg)] p-[10px] ${highlight ? "ring-2 ring-[var(--accent)] ring-opacity-50" : ""}`}
     >
       {attachments && attachments.length > 0 && (
         <div className="mb-[10px]">

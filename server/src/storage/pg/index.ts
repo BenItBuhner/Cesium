@@ -1,6 +1,7 @@
 import { and, asc, desc, eq, inArray, lt, or, sql } from "drizzle-orm";
 import { getDb, hasDatabaseUrl } from "../../db/client.js";
 import * as schema from "../../db/schema.js";
+import { measureServerPerf } from "../../lib/perf.js";
 import type {
   AgentBackendId,
   AgentConversationConfig,
@@ -538,6 +539,16 @@ export class PgStorageDriver implements StorageDriver {
   async listAgentConversations(
     input: ListAgentConversationsInput
   ): Promise<ListAgentConversationsResult> {
+    return measureServerPerf(
+      "pg.listAgentConversations",
+      () => this.listAgentConversationsUnmeasured(input),
+      { workspaceId: input.workspaceId ?? null, limit: input.limit ?? null }
+    );
+  }
+
+  private async listAgentConversationsUnmeasured(
+    input: ListAgentConversationsInput
+  ): Promise<ListAgentConversationsResult> {
     const limit = Math.max(1, Math.min(input.limit ?? 200, 500));
     const db = getDb();
     const cursor = decodeCursor(input.cursor);
@@ -655,6 +666,16 @@ export class PgStorageDriver implements StorageDriver {
   async appendAgentEvents(
     input: AppendAgentEventsInput
   ): Promise<{ events: AgentStoredEvent[]; newLastSeq: number }> {
+    return measureServerPerf(
+      "pg.appendAgentEvents",
+      () => this.appendAgentEventsUnmeasured(input),
+      { conversationId: input.conversationId, events: input.events.length }
+    );
+  }
+
+  private async appendAgentEventsUnmeasured(
+    input: AppendAgentEventsInput
+  ): Promise<{ events: AgentStoredEvent[]; newLastSeq: number }> {
     if (input.events.length === 0) {
       return { events: [], newLastSeq: 0 };
     }
@@ -701,7 +722,21 @@ export class PgStorageDriver implements StorageDriver {
         .update(schema.agentConversations)
         .set({
           lastEventSeq: newLastSeq,
-          updatedAt: bumpListRank ? Math.max(meta.updatedAt, now) : meta.updatedAt,
+          updatedAt: bumpListRank ? Math.max(meta.updatedAt + 1, now) : meta.updatedAt,
+          ...(input.conversationPatch?.status !== undefined
+            ? { status: input.conversationPatch.status }
+            : {}),
+          ...(input.conversationPatch?.pendingPermission !== undefined
+            ? {
+                pendingPermission: input.conversationPatch.pendingPermission as unknown as Record<
+                  string,
+                  unknown
+                > | null,
+              }
+            : {}),
+          ...(input.conversationPatch?.lastError !== undefined
+            ? { lastError: input.conversationPatch.lastError }
+            : {}),
         })
         .where(eq(schema.agentConversations.id, input.conversationId));
 

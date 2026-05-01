@@ -45,6 +45,7 @@ import { resolveEffectiveConfig } from "@/lib/queued-prompt-utils";
 import { useShellView } from "@/components/layout/ShellViewContext";
 import { normalizeEditorPanelState } from "@/components/editor/editor-panel-state";
 import { JsonWebSocket } from "@/lib/ws-client";
+import { recordPerfSample } from "@/lib/dev-perf";
 import {
   dispatchAgentConversationDeleted,
   dispatchAgentConversationUpserted,
@@ -53,6 +54,7 @@ import {
   answerAgentPermission,
   buildAgentWebSocketUrl,
   cancelAgentConversation,
+  createAndPromptAgentConversation,
   createAgentConversation,
   fetchAgentConversationSnapshot,
   forkAgentConversation,
@@ -205,6 +207,11 @@ type AgentConversationsContextValue = {
   createConversation: (
     input?: AgentConversationCreateInput
   ) => Promise<AgentConversationRecord>;
+  createAndPromptConversation: (
+    input: AgentConversationCreateInput,
+    text: string,
+    attachments?: ImageAttachment[]
+  ) => Promise<AgentConversationRecord | null>;
   renameConversation: (conversationId: string, title: string) => Promise<void>;
   /** Merge a conversation record from push/HTTP (title, status, unread, tab strip). */
   upsertConversation: (conversation: AgentConversationRecord) => void;
@@ -429,26 +436,19 @@ export function AgentConversationsProvider({
     scopedEditorSession.rightTabs,
   ]);
 
-  /** Open tabs first, then a slice of recent conversations — background snapshot merge only. */
+  /** Keep background snapshot work off the critical path; selected/visible panes load explicitly. */
   const prefetchTargetConversationIds = useMemo(() => {
     const ids: string[] = [];
     const seen = new Set<string>();
-    for (const id of openConversationIds) {
+    for (const id of visibleConversationIds) {
       if (!id || seen.has(id)) {
         continue;
       }
       seen.add(id);
       ids.push(id);
     }
-    for (const record of conversations.slice(0, 14)) {
-      if (!record.id || seen.has(record.id)) {
-        continue;
-      }
-      seen.add(record.id);
-      ids.push(record.id);
-    }
     return ids;
-  }, [conversations, openConversationIds]);
+  }, [visibleConversationIds]);
 
   const mergeConversationSnapshot = useCallback(
     (snapshot: AgentConversationSnapshot | AgentConversationSnapshotHead) => {
@@ -989,13 +989,76 @@ const executePrompt = useCallback(
       attachments?: ImageAttachment[],
       configOverride?: QueuedPromptConfigOverride
     ) => {
+      const startedAt = performance.now();
+      const clientEventId =
+        globalThis.crypto?.randomUUID?.() ?? `local-user-event-${Date.now()}`;
+      const clientMessageId =
+        globalThis.crypto?.randomUUID?.() ?? `local-user-message-${Date.now()}`;
+      const createdAt = Date.now();
+      const currentConversation = conversationsByIdRef.current[conversationId];
+      const canOptimisticallyAppend =
+        currentConversation?.status !== "running" &&
+        currentConversation?.status !== "awaiting_permission";
+      if (canOptimisticallyAppend) {
+        const optimisticConversation: AgentConversationRecord | null = currentConversation
+          ? {
+              ...currentConversation,
+              status: "running",
+              updatedAt: Math.max(currentConversation.updatedAt + 1, Date.now()),
+            }
+          : null;
+        setEventsByConversationId((current) => {
+          const existing = current[conversationId] ?? [];
+          if (existing.some((event) => event.eventId === clientEventId)) {
+            return current;
+          }
+          return {
+            ...current,
+            [conversationId]: [
+              ...existing,
+              {
+                seq: getConversationLatestSeq(existing) + 1,
+                eventId: clientEventId,
+                conversationId,
+                createdAt,
+                kind: "user_message",
+                messageId: clientMessageId,
+                content: text,
+                attachments,
+              },
+            ],
+          };
+        });
+        setConversationsById((current) => {
+          if (!optimisticConversation || !current[conversationId]) {
+            return current;
+          }
+          return {
+            ...current,
+            [conversationId]: optimisticConversation,
+          };
+        });
+        if (optimisticConversation) {
+          dispatchAgentConversationUpserted(optimisticConversation);
+          recordPerfSample("rail.position_after_prompt_optimistic", startedAt, {
+            conversationId,
+          });
+        }
+        recordPerfSample("conversation.prompt.optimistic_visible", startedAt, {
+          conversationId,
+        });
+      }
       try {
         const snapshot = await promptAgentConversation(
           conversationId,
           text,
           attachments,
-          configOverride
+          configOverride,
+          { clientEventId, clientMessageId }
         );
+        recordPerfSample("conversation.prompt.ack", startedAt, {
+          conversationId,
+        });
         mergeConversationSnapshot(snapshot.snapshot);
         dispatchAgentConversationUpserted(snapshot.snapshot.conversation);
         void markWorkspaceActivity(snapshot.snapshot.conversation.workspaceId).catch(
@@ -1003,6 +1066,21 @@ const executePrompt = useCallback(
         );
         return true;
       } catch (error) {
+        if (canOptimisticallyAppend) {
+          setEventsByConversationId((current) => {
+            const existing = current[conversationId] ?? [];
+            return {
+              ...current,
+              [conversationId]: existing.filter((event) => event.eventId !== clientEventId),
+            };
+          });
+          if (currentConversation) {
+            setConversationsById((current) => ({
+              ...current,
+              [conversationId]: currentConversation,
+            }));
+          }
+        }
         const message =
           error instanceof Error ? error.message : "Failed to start the agent turn.";
         setEventsByConversationId((current) => {
@@ -1080,6 +1158,41 @@ const executePrompt = useCallback(
       return result.conversation;
     },
     [upsertConversation]
+  );
+
+  const createAndPromptConversation = useCallback(
+    async (
+      input: AgentConversationCreateInput,
+      text: string,
+      attachments?: ImageAttachment[]
+    ) => {
+      const startedAt = performance.now();
+      const clientEventId =
+        globalThis.crypto?.randomUUID?.() ?? `local-user-event-${Date.now()}`;
+      const clientMessageId =
+        globalThis.crypto?.randomUUID?.() ?? `local-user-message-${Date.now()}`;
+      try {
+        const result = await createAndPromptAgentConversation(input, text, attachments, {
+          clientEventId,
+          clientMessageId,
+        });
+        mergeConversationSnapshot(result.snapshot);
+        dispatchAgentConversationUpserted(result.snapshot.conversation);
+        recordPerfSample("conversation.create_and_prompt.ack", startedAt, {
+          conversationId: result.snapshot.conversation.id,
+        });
+        void markWorkspaceActivity(result.snapshot.conversation.workspaceId).catch(
+          () => undefined
+        );
+        return result.snapshot.conversation;
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : "Failed to create the agent turn.";
+        console.warn("[agent] create-and-prompt failed:", message);
+        return null;
+      }
+    },
+    [markWorkspaceActivity, mergeConversationSnapshot]
   );
 
   const cancelConversation = useCallback(
@@ -1709,6 +1822,7 @@ busy,
       bootstrapped,
       getConversationLoadStatus,
       createConversation,
+      createAndPromptConversation,
       renameConversation,
       upsertConversation,
       answerPermissionForConversation,
@@ -1737,6 +1851,7 @@ cancelConversation,
 cancelPermissionForConversation,
 clearPendingConfigForConversation,
 createConversation,
+createAndPromptConversation,
 conversations,
 conversationsById,
 eventsByConversationId,

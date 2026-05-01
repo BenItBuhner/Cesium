@@ -19,8 +19,16 @@ export function RegisterServiceWorker() {
       // page from a previous build. This keeps localhost from booting stale HTML
       // that references chunk hashes that no longer exist.
       void navigator.serviceWorker.getRegistrations().then((regs) => {
+        const hadController = Boolean(navigator.serviceWorker.controller);
         for (const reg of regs) {
           void reg.unregister();
+        }
+        if (hadController && regs.length > 0) {
+          const reloadKey = "opencursor:sw-unregistered-reload";
+          if (window.sessionStorage.getItem(reloadKey) !== "1") {
+            window.sessionStorage.setItem(reloadKey, "1");
+            window.location.reload();
+          }
         }
       });
       return;

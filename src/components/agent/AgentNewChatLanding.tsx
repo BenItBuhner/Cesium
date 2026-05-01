@@ -52,7 +52,7 @@ function pickAvailableBackend(
 }
 
 const QUICK_ACTION_BUTTON_CLASSNAME =
-  "inline-flex max-w-full items-center gap-[4px] rounded-[var(--radius-pill)] border border-[var(--border-card)] bg-[var(--bg-panel)] px-[14px] py-[7px] text-left font-sans text-[12px] leading-none font-normal text-[var(--text-primary)] whitespace-nowrap transition-colors hover:bg-[var(--bg-card-hover)]";
+  "inline-flex max-w-full items-center gap-[4px] rounded-[var(--agent-pill-radius)] border border-[var(--agent-border)] bg-[var(--agent-panel-bg)] px-[14px] py-[7px] text-left font-sans text-[12px] leading-none font-normal text-[var(--text-primary)] whitespace-nowrap transition-colors hover:bg-[var(--agent-card-hover-bg)]";
 
 export function AgentNewChatLanding() {
   const {
@@ -64,8 +64,7 @@ export function AgentNewChatLanding() {
   } = useOpenInEditor();
   const {
     backends,
-    createConversation,
-    promptConversation,
+    createAndPromptConversation,
   } = useAgentConversations();
   const { workspaceSession, updateWorkspaceSession, openWorkspaceById } = useWorkspace();
   const {
@@ -145,27 +144,24 @@ export function AgentNewChatLanding() {
     async (text: string, attachments?: ImageAttachment[]) => {
       const backend = draftBackend;
       if (!backend) return false;
-      const created = await createConversation({
+      const created = await createAndPromptConversation({
         backendId: backend.id,
         mode: draftMode,
         modelId: draftModel.modelValue ?? draftModel.id,
         modelName: draftModel.name,
-      });
+      }, text, attachments);
+      if (!created) return false;
       setSelectedConversationId(created.id);
-      await refreshConversationGroups();
-      const ok = await promptConversation(created.id, text, attachments);
-      if (!ok) return false;
       void refreshConversationGroups();
       return true;
     },
     [
-      createConversation,
+      createAndPromptConversation,
       draftBackend,
       draftMode,
       draftModel.id,
       draftModel.modelValue,
       draftModel.name,
-      promptConversation,
       refreshConversationGroups,
       setSelectedConversationId,
     ]

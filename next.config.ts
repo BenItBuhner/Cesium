@@ -61,6 +61,8 @@ const nextConfig: NextConfig = {
   turbopack: {},
   outputFileTracingRoot: workspaceRoot,
   allowedDevOrigins,
+  /** Hide the floating Next dev indicator so it stops covering the bottom-left rail. */
+  devIndicators: false,
   env: {
     NEXT_PUBLIC_ENABLE_NEXT_PWA: pwaEnabled ? "1" : "0",
   },

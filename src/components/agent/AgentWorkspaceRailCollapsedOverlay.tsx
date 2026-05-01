@@ -24,7 +24,7 @@ export function AgentWorkspaceRailCollapsedOverlay() {
   };
 
   const btnClass =
-    "flex size-[18px] shrink-0 items-center justify-center rounded-[var(--radius-tab)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-card)] hover:text-[var(--text-primary)]";
+    "flex size-[18px] shrink-0 items-center justify-center rounded-[var(--agent-control-radius)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--agent-card-bg)] hover:text-[var(--text-primary)]";
 
   return (
     <div

@@ -104,7 +104,7 @@ export function MessageList({
   const wasLoadingOlderHistoryRef = useRef(false);
   const autoHistoryFillRoundsRef = useRef(0);
 
-  const useVirtualThread = useMemo(() => messages.length >= 40, [messages.length]);
+  const useVirtualThread = useMemo(() => messages.length >= 16, [messages.length]);
   const stickyUserHeaderEffective = !useVirtualThread;
 
   const isNearBottom = (root: HTMLDivElement) =>

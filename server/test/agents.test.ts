@@ -472,6 +472,32 @@ test("prompt streams and replays append-only events", async () => {
   );
 });
 
+test("prompt returns fast ACK containing only the appended user event", async () => {
+  const workspace = await ensureWorkspaceRegistered(repoRoot, "repo");
+  const conversation = await testRuntimeManager.createConversation(workspace, {
+    backendId: "cursor-acp",
+    mode: "agent",
+    modelId: "test-fast",
+    modelName: "Test Fast",
+  });
+  const clientEventId = randomUUID();
+  const clientMessageId = randomUUID();
+
+  const ack = await testRuntimeManager.promptConversation(
+    workspace,
+    conversation.id,
+    "fast ack please",
+    undefined,
+    { clientEventId, clientMessageId }
+  );
+
+  assert.equal(ack.events.length, 1);
+  assert.equal(ack.events[0]?.kind, "user_message");
+  assert.equal(ack.events[0]?.eventId, clientEventId);
+  assert.equal(ack.events[0]?.messageId, clientMessageId);
+  assert.equal(ack.conversation.status, "running");
+});
+
 test("permission requests persist and can be answered", async () => {
   const workspace = await ensureWorkspaceRegistered(repoRoot, "repo");
   const conversation = await testRuntimeManager.createConversation(workspace, {

@@ -48,6 +48,7 @@ export function AgentConversationRow({
   onOverflowMenu,
   onEditValueChange,
   onSelect,
+  rowIndex,
   selected,
   showOverflowMenu = false,
 }: {
@@ -65,6 +66,7 @@ export function AgentConversationRow({
   onOverflowMenu?: (anchorEl: HTMLElement) => void;
   onEditValueChange?: (value: string) => void;
   onSelect: () => void;
+  rowIndex?: number;
   selected: boolean;
   showOverflowMenu?: boolean;
 }) {
@@ -81,8 +83,8 @@ export function AgentConversationRow({
     return () => cancelAnimationFrame(frame);
   }, [editing]);
 
-  const rowClassName = `flex h-[30px] w-full items-center gap-[8px] rounded-[var(--radius-tab)] px-[9px] text-left transition-colors select-none ${
-    selected ? "bg-[var(--bg-card)]" : "hover:bg-[var(--bg-card)]"
+  const rowClassName = `flex h-[var(--agent-rail-row-height)] w-full items-center gap-[8px] rounded-[var(--agent-control-radius)] px-[9px] text-left transition-colors select-none ${
+    selected ? "bg-[var(--agent-card-bg)]" : "hover:bg-[var(--agent-card-bg)]"
   }`;
 
   const titleClassName = `truncate font-sans text-[14px] font-normal ${
@@ -105,12 +107,19 @@ export function AgentConversationRow({
 
   if (editing) {
     return (
-      <div className={rowClassName} title={conversation.title}>
+      <div
+        className={rowClassName}
+        title={conversation.title}
+        data-perf="agent-rail-row"
+        data-conversation-id={conversation.id}
+        data-rail-row-index={rowIndex}
+      >
         {statusIcon}
         <input
           ref={renameInputRef}
           value={editValue ?? conversation.title}
           aria-label="Conversation name"
+          data-perf="agent-rail-rename-input"
           className={`min-w-0 flex-1 bg-transparent outline-none ${titleClassName}`}
           onClick={(event) => event.stopPropagation()}
           onChange={(event) => onEditValueChange?.(event.target.value)}
@@ -130,17 +139,24 @@ export function AgentConversationRow({
   }
 
   return (
-    <div className="group flex w-full min-w-0 items-center gap-[4px]">
+    <div
+      className="group flex w-full min-w-0 items-center gap-[4px]"
+      data-perf="agent-rail-row"
+      data-conversation-id={conversation.id}
+      data-rail-row-index={rowIndex}
+    >
       <button
         type="button"
         onClick={onSelect}
         onContextMenu={handleContextMenu}
+        data-perf="agent-rail-row-button"
         className={`${rowClassName} min-w-0 flex-1`}
         title={conversation.title}
       >
         {statusIcon}
         <span
           className={titleClassName}
+          data-perf="agent-rail-row-title"
           onDoubleClick={(event) => {
             event.stopPropagation();
             onBeginRename?.();
@@ -152,7 +168,7 @@ export function AgentConversationRow({
       {showOverflowMenu && onOverflowMenu ? (
         <button
           type="button"
-          className="mr-[4px] flex size-[24px] shrink-0 items-center justify-center rounded-[var(--radius-tab)] text-[var(--text-secondary)] opacity-0 pointer-events-none transition-[opacity,background-color,color] hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)] hover:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 focus-visible:pointer-events-auto focus-visible:bg-[var(--accent-bg)] focus-visible:text-[var(--text-primary)] focus-visible:opacity-100"
+          className="mr-[4px] flex size-[24px] shrink-0 items-center justify-center rounded-[var(--agent-control-radius)] text-[var(--text-secondary)] opacity-0 pointer-events-none transition-[opacity,background-color,color] hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)] hover:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 focus-visible:pointer-events-auto focus-visible:bg-[var(--accent-bg)] focus-visible:text-[var(--text-primary)] focus-visible:opacity-100"
           aria-label={`More actions for ${conversation.title}`}
           onClick={(e) => {
             e.preventDefault();

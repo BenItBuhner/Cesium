@@ -33,6 +33,9 @@ export type ListAgentConversationsResult = {
 export type AppendAgentEventsInput = {
   conversationId: string;
   events: AgentEventInput[];
+  conversationPatch?: Partial<
+    Pick<AgentConversationRecord, "status" | "pendingPermission" | "lastError">
+  >;
 };
 
 export type ReadAgentEventsInput = {

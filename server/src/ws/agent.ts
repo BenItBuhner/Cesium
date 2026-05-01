@@ -15,6 +15,7 @@ import type {
 } from "../lib/agents/types.js";
 import { getWorkspaceById } from "../lib/workspace-registry.js";
 import { agentRuntimeManager } from "../lib/agents/runtime-manager.js";
+import { measureServerPerf } from "../lib/perf.js";
 
 type AgentSocketState = {
   workspaceId: string;
@@ -149,6 +150,18 @@ subscribeAgentStoreEvents((event) => {
 });
 
 async function sendSubscriptionData(
+  state: AgentSocketState,
+  conversationIds: string[],
+  sinceByConversationId: Record<string, number>
+): Promise<void> {
+  return measureServerPerf(
+    "ws.agent.subscribeData",
+    () => sendSubscriptionDataUnmeasured(state, conversationIds, sinceByConversationId),
+    { workspaceId: state.workspaceId, conversations: conversationIds.length }
+  );
+}
+
+async function sendSubscriptionDataUnmeasured(
   state: AgentSocketState,
   conversationIds: string[],
   sinceByConversationId: Record<string, number>
@@ -336,9 +349,6 @@ export function handleAgentUpgrade(
                 (conversationId) => !state.subscribedConversationIds.has(conversationId)
               );
               state.subscribedConversationIds = nextIds;
-              for (const conversationId of retained) {
-                await agentRuntimeManager.retainConversationRuntime(workspace, conversationId);
-              }
               for (const conversationId of released) {
                 await agentRuntimeManager.releaseConversationRuntime(
                   state.workspaceId,
@@ -346,6 +356,13 @@ export function handleAgentUpgrade(
                 );
               }
               await sendSubscriptionData(state, ids, sinceByConversationId);
+              for (const conversationId of retained) {
+                void agentRuntimeManager
+                  .retainConversationRuntime(workspace, conversationId)
+                  .catch((error) => {
+                    console.warn("[ws/agent] runtime retain failed:", error);
+                  });
+              }
             } catch (error) {
               console.error("[ws/agent] subscribe failed:", error);
               send(ws, {

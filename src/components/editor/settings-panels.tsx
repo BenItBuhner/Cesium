@@ -603,6 +603,22 @@ export function AppearanceSettingsPanel() {
               size="md"
             />
           }
+        />
+        <SettingsRow
+          title="New design"
+          description="Enable the next-generation UI design hooks for agent mode. Visual changes will expand as the design system is built out."
+          trailing={
+            <ToggleSwitch
+              checked={themeConfig.uiDesignMode === "new"}
+              onChange={(value) =>
+                setThemeConfig({
+                  ...themeConfig,
+                  uiDesignMode: value ? "new" : "classic",
+                })
+              }
+              size="md"
+            />
+          }
           border={false}
         />
       </SettingsSection>
@@ -911,18 +927,6 @@ export function AgentsSettingsPanel() {
             <ToggleSwitch
               checked={agents.submitCtrlEnter}
               onChange={(v) => patchAgents({ submitCtrlEnter: v })}
-              size="md"
-              variant="green"
-            />
-          }
-        />
-        <SettingsRow
-          title="Tool details in chat stream"
-          description="When on, file edit diffs and command permission prompts appear as separate blocks in the main chat. When off, they stay inside the worked-session tool list."
-          trailing={
-            <ToggleSwitch
-              checked={agents.inlineToolDetailsInChat}
-              onChange={(v) => patchAgents({ inlineToolDetailsInChat: v })}
               size="md"
               variant="green"
             />

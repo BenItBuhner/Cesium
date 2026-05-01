@@ -19,8 +19,8 @@ export type AgentsSettingsState = {
   autoParse: boolean;
   themedDiff: boolean;
   /**
-   * When true, file-edit diffs and command permission prompts are separate blocks in the main
-   * chat. When false, they stay inside the worked-session tool area.
+   * Legacy preference retained for persisted settings. Tool details now stay inside the
+   * worked-session dropdown so collapse state and chronological order remain consistent.
    */
   inlineToolDetailsInChat: boolean;
   collapseAuto: boolean;
@@ -189,8 +189,7 @@ export function createDefaultGlobalSettings(): GlobalSettingsState {
       legacyTerm: false,
       autoParse: false,
       themedDiff: true,
-      /** Default on so edits are not hidden behind the tool dropdown. */
-      inlineToolDetailsInChat: true,
+      inlineToolDetailsInChat: false,
       collapseAuto: true,
       commitAttr: true,
       prAttr: true,

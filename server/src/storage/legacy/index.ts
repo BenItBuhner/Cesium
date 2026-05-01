@@ -437,6 +437,17 @@ export class LegacyJsonStorageDriver implements StorageDriver {
       input.events as AgentEventInput[]
     );
     const last = appended[appended.length - 1];
+    if (input.conversationPatch) {
+      await this.upsertAgentConversation({
+        ...existing,
+        ...input.conversationPatch,
+        lastEventSeq: last?.seq ?? existing.lastEventSeq,
+        updatedAt:
+          appended.some((event) => event.kind === "user_message")
+            ? Math.max(existing.updatedAt + 1, Date.now())
+            : existing.updatedAt,
+      });
+    }
     return {
       events: appended,
       newLastSeq: last?.seq ?? existing.lastEventSeq,

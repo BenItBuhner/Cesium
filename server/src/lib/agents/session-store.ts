@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
 import { del as cacheDel, getJSON as cacheGetJSON, setJSON as cacheSetJSON } from "../../cache/kv.js";
 import { publish, subscribeSync } from "../../cache/pubsub.js";
+import { measureServerPerf } from "../perf.js";
 import { getStorage } from "../../storage/runtime.js";
 import { normalizeConversationRecord } from "./conversation-normalize.js";
 import { isAgentConversationRankNeutralDelta } from "./conversation-rank.js";
@@ -346,22 +347,58 @@ export async function readConversationRecord(
 export async function listWorkspaceConversationRecords(
   workspaceId: string
 ): Promise<AgentConversationRecord[]> {
-  const cacheKey = conversationListCacheKey(workspaceId);
-  const cached = await cacheGetJSON<AgentConversationRecord[]>(cacheKey);
-  if (cached) {
-    return cached;
-  }
+  return measureServerPerf(
+    "agent.listWorkspaceConversationRecords",
+    async () => {
+      const cacheKey = conversationListCacheKey(workspaceId);
+      const cached = await cacheGetJSON<AgentConversationRecord[]>(cacheKey);
+      if (cached) {
+        return cached;
+      }
 
-  const { records } = await (await getStorage()).listAgentConversations({
-    workspaceId,
-    limit: 500,
-    includeArchived: true,
-  });
-  const sorted = records
-    .map((r) => normalizeConversationRecord(r))
-    .sort((a, b) => b.updatedAt - a.updatedAt || a.title.localeCompare(b.title));
-  await cacheSetJSON(cacheKey, sorted, CONV_LIST_CACHE_TTL_SEC);
-  return sorted;
+      const all: AgentConversationRecord[] = [];
+      let cursor: string | null | undefined = null;
+      do {
+        const page = await (await getStorage()).listAgentConversations({
+          workspaceId,
+          cursor,
+          limit: 500,
+          includeArchived: true,
+        });
+        all.push(...page.records);
+        cursor = page.nextCursor;
+      } while (cursor);
+
+      const sorted = all
+        .map((r) => normalizeConversationRecord(r))
+        .sort((a, b) => b.updatedAt - a.updatedAt || a.title.localeCompare(b.title));
+      await cacheSetJSON(cacheKey, sorted, CONV_LIST_CACHE_TTL_SEC);
+      return sorted;
+    },
+    { workspaceId }
+  );
+}
+
+export async function listWorkspaceConversationRecordPage(
+  workspaceId: string,
+  options?: { limit?: number; cursor?: string | null; includeArchived?: boolean }
+): Promise<{ records: AgentConversationRecord[]; nextCursor: string | null }> {
+  return measureServerPerf(
+    "agent.listWorkspaceConversationRecordPage",
+    async () => {
+      const page = await (await getStorage()).listAgentConversations({
+        workspaceId,
+        cursor: options?.cursor,
+        limit: options?.limit,
+        includeArchived: options?.includeArchived,
+      });
+      return {
+        records: page.records.map((r) => normalizeConversationRecord(r)),
+        nextCursor: page.nextCursor,
+      };
+    },
+    { workspaceId, limit: options?.limit ?? null, cursor: options?.cursor ?? null }
+  );
 }
 
 export async function appendConversationEvents(
@@ -373,26 +410,79 @@ export async function appendConversationEvents(
     return [];
   }
 
-  return withConversationQueue(workspaceId, conversationId, async () => {
-    const storage = await getStorage();
-    const appended = await storage.appendAgentEvents({ conversationId, events });
-    const updated = await storage.getAgentConversation(conversationId);
-    if (!updated) {
+  return measureServerPerf(
+    "agent.appendConversationEvents",
+    () =>
+      withConversationQueue(workspaceId, conversationId, async () => {
+        const storage = await getStorage();
+        const appended = await storage.appendAgentEvents({ conversationId, events });
+        const updated = await storage.getAgentConversation(conversationId);
+        if (!updated) {
+          throw new Error(`Unknown conversation: ${conversationId}`);
+        }
+        await invalidateConversationCaches(workspaceId, conversationId);
+        scheduleAgentCacheRefill(workspaceId, conversationId);
+        notify({ type: "conversation", conversation: updated });
+        for (const event of appended.events) {
+          notify({
+            type: "event",
+            workspaceId,
+            conversationId,
+            event,
+          });
+        }
+        return appended.events;
+      }),
+    { workspaceId, conversationId, events: events.length }
+  );
+}
+
+export async function appendConversationEventsAndPatchRecord(
+  workspaceId: string,
+  conversationId: string,
+  events: AgentEventInput[],
+  conversationPatch: Partial<
+    Pick<AgentConversationRecord, "status" | "pendingPermission" | "lastError">
+  >
+): Promise<{ events: AgentStoredEvent[]; conversation: AgentConversationRecord }> {
+  if (events.length === 0) {
+    const conversation = await readConversationRecord(workspaceId, conversationId);
+    if (!conversation) {
       throw new Error(`Unknown conversation: ${conversationId}`);
     }
-    await invalidateConversationCaches(workspaceId, conversationId);
-    scheduleAgentCacheRefill(workspaceId, conversationId);
-    notify({ type: "conversation", conversation: updated });
-    for (const event of appended.events) {
-      notify({
-        type: "event",
-        workspaceId,
-        conversationId,
-        event,
-      });
-    }
-    return appended.events;
-  });
+    return { events: [], conversation };
+  }
+
+  return measureServerPerf(
+    "agent.appendConversationEventsAndPatchRecord",
+    () =>
+      withConversationQueue(workspaceId, conversationId, async () => {
+        const storage = await getStorage();
+        const appended = await storage.appendAgentEvents({
+          conversationId,
+          events,
+          conversationPatch,
+        });
+        const updated = await storage.getAgentConversation(conversationId);
+        if (!updated) {
+          throw new Error(`Unknown conversation: ${conversationId}`);
+        }
+        const normalized = normalizeConversationRecord(updated);
+        await invalidateConversationCaches(workspaceId, conversationId);
+        scheduleAgentCacheRefill(workspaceId, conversationId);
+        notify({ type: "conversation", conversation: normalized });
+        for (const event of appended.events) {
+          notify({
+            type: "event",
+            workspaceId,
+            conversationId,
+            event,
+          });
+        }
+        return { events: appended.events, conversation: normalized };
+      }),
+    { workspaceId, conversationId, events: events.length }
+  );
 }
 
 export async function deleteConversationEvents(
@@ -463,6 +553,24 @@ export async function readConversationEventsSince(
     conversationId,
     afterSeq: since,
     limit: 100_000,
+  });
+  return enrichEventsWithDerivedEditPreview(dropDuplicateEventIdsInOrder(events));
+}
+
+export async function readConversationEventPrefix(
+  workspaceId: string,
+  conversationId: string,
+  limit = 32
+): Promise<AgentStoredEvent[]> {
+  const storage = await getStorage();
+  const rec = await storage.getAgentConversation(conversationId);
+  if (!rec || rec.workspaceId !== workspaceId) {
+    return [];
+  }
+  const events = await storage.readAgentEvents({
+    conversationId,
+    afterSeq: 0,
+    limit,
   });
   return enrichEventsWithDerivedEditPreview(dropDuplicateEventIdsInOrder(events));
 }
@@ -646,62 +754,11 @@ export async function readConversationSnapshotHead(
     return result;
   }
 
-  if (conversation.lastEventSeq <= PG_READ_HEAD_PREFIX_CAP) {
-    const allHead = await storage.readAgentEvents({
-      conversationId,
-      afterSeq: 0,
-      limit: 10_000,
-    });
-    const haveFullEventLog =
-      allHead.length > 0 && allHead[allHead.length - 1]!.seq === conversation.lastEventSeq;
-    if (haveFullEventLog) {
-      if (countUserMessageEvents(allHead) < PAGINATION_MIN_USER_TURNS) {
-        const headEvents = await enrichEventsWithDerivedEditPreview(trimToTurnStart(allHead));
-        const result: AgentConversationSnapshotHead = {
-          conversation,
-          events: headEvents,
-          window: {
-            oldestSeq: headEvents[0]?.seq ?? 0,
-            newestSeq: headEvents[headEvents.length - 1]?.seq ?? 0,
-            hasOlder: false,
-          },
-        };
-        if (usingDefaults) {
-          await cacheSetJSON(
-            snapshotHeadCacheKey(workspaceId, conversationId),
-            result,
-            CONV_SNAPSHOT_HEAD_CACHE_TTL_SEC
-          );
-        }
-        return result;
-      }
-      let slice = takeLastTurnWindow(allHead, limitTurns, limitEvents);
-      slice = expandSliceToMinUserTurns(allHead, slice, MIN_USER_TURNS_IN_INITIAL_HEAD);
-      const events = await enrichEventsWithDerivedEditPreview(slice);
-      const result: AgentConversationSnapshotHead = {
-        conversation,
-        events,
-        window: {
-          oldestSeq: events[0]?.seq ?? 0,
-          newestSeq: events[events.length - 1]?.seq ?? 0,
-          hasOlder: (events[0]?.seq ?? 0) > (allHead[0]?.seq ?? 0),
-        },
-      };
-      if (usingDefaults) {
-        await cacheSetJSON(
-          snapshotHeadCacheKey(workspaceId, conversationId),
-          result,
-          CONV_SNAPSHOT_HEAD_CACHE_TTL_SEC
-        );
-      }
-      return result;
-    }
-  }
-
-  const raw = await storage.readRecentAgentEvents(
-    conversationId,
-    Math.min(50_000, conversation.lastEventSeq + 200)
+  const tailReadLimit = Math.min(
+    PG_READ_HEAD_PREFIX_CAP,
+    Math.max(limitEvents, Math.min(limitEvents * 4, 8_000))
   );
+  const raw = await storage.readRecentAgentEvents(conversationId, tailReadLimit);
   let slice = takeLastTurnWindow(raw, limitTurns, limitEvents);
   slice = expandSliceToMinUserTurns(raw, slice, MIN_USER_TURNS_IN_INITIAL_HEAD);
   const events = await enrichEventsWithDerivedEditPreview(slice);
@@ -827,7 +884,7 @@ export async function updateConversationRecord(
     const touchListRank = !isAgentConversationRankNeutralDelta(current, next);
     const normalized: AgentConversationRecord = {
       ...next,
-      updatedAt: touchListRank ? Date.now() : current.updatedAt,
+      updatedAt: touchListRank ? Math.max(current.updatedAt + 1, Date.now()) : current.updatedAt,
     };
     await (await getStorage()).upsertAgentConversation(normalized);
     await invalidateConversationCaches(workspaceId, conversationId);

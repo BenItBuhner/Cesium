@@ -1,4 +1,5 @@
 import { getJSON, setJSON } from "../../cache/kv.js";
+import { getStorage } from "../../storage/runtime.js";
 import { listWorkspaces, type WorkspaceRecord } from "../workspace-registry.js";
 import { listAgentBackendsWithCache } from "./providers.js";
 import {
@@ -31,6 +32,23 @@ export type AgentConversationsAllPayload = {
   nextCursor: string | null;
 };
 
+function summarizeConversation(conversation: AgentConversationRecord): AgentConversationsAllSummary {
+  return {
+    id: conversation.id,
+    workspaceId: conversation.workspaceId,
+    title: conversation.title,
+    createdAt: conversation.createdAt,
+    updatedAt: conversation.updatedAt,
+    lastEventSeq: conversation.lastEventSeq,
+    status: conversation.status,
+    archivedAt: conversation.archivedAt ?? null,
+    backendId: conversation.config.backendId,
+    mode: conversation.config.mode,
+    experimental: conversation.experimental,
+    hasPendingPermission: conversation.pendingPermission != null,
+  };
+}
+
 /**
  * Build the same JSON the GET `/api/agents/conversations/all` handler returns.
  * Each `listWorkspaceConversationRecords` read repopulates per-workspace Redis.
@@ -47,25 +65,37 @@ export async function buildAgentConversationsAllPayload(input: {
     listWorkspaces(),
     listAgentBackendsWithCache(),
   ]);
+  const workspaceById = new Map(workspaces.map((workspace) => [workspace.id, workspace]));
+
+  if (offset === 0) {
+    const page = await (await getStorage()).listAgentConversations({
+      limit,
+      includeArchived: true,
+    });
+    const groupMap = new Map<string, AgentConversationsAllPayload["groups"][number]>();
+    for (const workspace of workspaces) {
+      groupMap.set(workspace.id, { workspace, conversations: [] });
+    }
+    for (const conversation of page.records) {
+      const workspace = workspaceById.get(conversation.workspaceId);
+      if (!workspace) {
+        continue;
+      }
+      groupMap.get(workspace.id)?.conversations.push(summarizeConversation(conversation));
+    }
+    return {
+      backends,
+      groups: Array.from(groupMap.values()),
+      nextCursor: page.nextCursor ? String(limit) : null,
+    };
+  }
+
   const perWorkspace = await Promise.all(
     workspaces.map(async (workspace) => {
       const conversations = await listWorkspaceConversationRecords(workspace.id);
       return conversations.map((conversation) => ({
         workspace,
-        summary: {
-          id: conversation.id,
-          workspaceId: conversation.workspaceId,
-          title: conversation.title,
-          createdAt: conversation.createdAt,
-          updatedAt: conversation.updatedAt,
-          lastEventSeq: conversation.lastEventSeq,
-          status: conversation.status,
-          archivedAt: conversation.archivedAt ?? null,
-          backendId: conversation.config.backendId,
-          mode: conversation.config.mode,
-          experimental: conversation.experimental,
-          hasPendingPermission: conversation.pendingPermission != null,
-        },
+        summary: summarizeConversation(conversation),
       }));
     })
   );

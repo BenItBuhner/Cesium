@@ -71,7 +71,7 @@ describe("agent cache keys and rail payload invariants", () => {
 });
 
 describe("write throughput smoke (one megaphone, not a microbench)", () => {
-  test("listWorkspaceConversationRecords tolerates 120 synthetic conversation rows in one workspace", async () => {
+  test("listWorkspaceConversationRecords paginates past the old 500-row ceiling", async () => {
     const { getStorage } = await import("../src/storage/runtime.js");
     const { randomUUID } = await import("node:crypto");
     const repo = path.join(TEST_ROOT, "many-conv");
@@ -110,7 +110,7 @@ describe("write throughput smoke (one megaphone, not a microbench)", () => {
       experimental: false,
       archivedAt: null,
     };
-    for (let i = 0; i < 120; i += 1) {
+    for (let i = 0; i < 620; i += 1) {
       const id = randomUUID();
       await upsert({
         ...base,
@@ -127,7 +127,7 @@ describe("write throughput smoke (one megaphone, not a microbench)", () => {
     const t0 = performance.now();
     const rows = await listWorkspaceConversationRecords(workspace.id);
     const ms = performance.now() - t0;
-    assert.equal(rows.length, 120, "all upserted rows are listable for this workspace");
+    assert.equal(rows.length, 620, "all upserted rows are listable for this workspace");
     assert.ok(
       ms < 10_000,
       `listWorkspaceConversationRecords should not hang: took ${ms.toFixed(0)}ms (threshold is generous for CI).`

@@ -89,6 +89,22 @@
   /* Leading inset for editor tabs under iPadOS window controls when the sidebar is collapsed. */
   --editor-window-chrome-tab-inset: 72px;
 
+  /* Agent UI design hooks. Defaults intentionally mirror the current design. */
+  --agent-content-max-width: 876px;
+  --agent-content-edge-gutter: 28px;
+  --agent-panel-bg: var(--bg-panel);
+  --agent-card-bg: var(--bg-card);
+  --agent-card-hover-bg: var(--bg-card-hover);
+  --agent-border: var(--border-card);
+  --agent-composer-radius: var(--radius-card);
+  --agent-card-radius: var(--radius-card);
+  --agent-control-radius: var(--radius-tab);
+  --agent-pill-radius: var(--radius-pill);
+  --agent-rail-row-height: 30px;
+  /** Slightly raised surface for new-design composer chip controls (e.g. media [+]). */
+  --agent-plus-button-bg: var(--agent-panel-bg);
+  --agent-plus-button-bg-hover: var(--agent-card-hover-bg);
+
   /* Command palette & quick open */
   --palette-surface: #ffffff;
   --palette-border: var(--border-card);
@@ -113,6 +129,12 @@
   --palette-icon-css: #5c5c5c;
   --palette-icon-ts: #1565c0;
   --palette-icon-fallback: #6b6b6b;
+}
+
+html[data-ui-design="new"] {
+  /* Plus / media chip on the composer pill: lifted hue against the #212121 pill. */
+  --agent-plus-button-bg: #303030;
+  --agent-plus-button-bg-hover: #3a3a3a;
 }
 
 html.dark {

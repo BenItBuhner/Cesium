@@ -355,7 +355,7 @@ function ToolEditPreviewBlock({
     return false;
   };
   const shellClass =
-    "mt-[8px] overflow-hidden rounded-[var(--radius-card)] border border-[var(--border-card)] bg-[color-mix(in_srgb,var(--bg-card)_82%,transparent)]";
+    "mt-[8px] overflow-hidden rounded-[var(--agent-card-radius)] border border-[var(--agent-border)] bg-[color-mix(in_srgb,var(--agent-card-bg)_82%,transparent)]";
   const openPath = preview.path ? resolveWorkspaceToolPath(preview.path, workspaceRoot ?? undefined) : null;
 
   return (
