@@ -205,6 +205,46 @@ async function runRailBenchmarks(page: Page): Promise<BrowserPerfSample[]> {
   return samples;
 }
 
+async function runSettingsBenchmarks(page: Page): Promise<BrowserPerfSample[]> {
+  const samples: BrowserPerfSample[] = [];
+  const settingsButton = page.getByRole("button", { name: /open settings/i }).first();
+  if (!(await settingsButton.isVisible().catch(() => false))) {
+    samples.push({
+      label: "settings.models.open_visible",
+      ms: 0,
+      at: Date.now(),
+      fields: { skipped: true, reason: "settings button not visible" },
+    });
+    return samples;
+  }
+  const openStartedAt = performance.now();
+  await settingsButton.click();
+  await page.getByText("Settings", { exact: false }).first().waitFor({ timeout: 5_000 }).catch(() => undefined);
+  const modelsNav = page.getByRole("button", { name: /^Models$/i }).first();
+  if (await modelsNav.isVisible().catch(() => false)) {
+    await modelsNav.click();
+  } else {
+    await page.getByText("Models", { exact: true }).first().click().catch(() => undefined);
+  }
+  await page.getByPlaceholder("Search models").first().waitFor({ timeout: 5_000 });
+  pushSample(samples, "settings.models.open_visible", openStartedAt);
+
+  const search = page.getByPlaceholder("Search models").first();
+  const searchStartedAt = performance.now();
+  await search.fill("composer");
+  await page.waitForTimeout(50);
+  pushSample(samples, "settings.models.search_visible", searchStartedAt);
+
+  const toggle = page.locator('[role="switch"], button[aria-pressed]').first();
+  if (await toggle.isVisible().catch(() => false)) {
+    const toggleStartedAt = performance.now();
+    await toggle.click();
+    await page.waitForTimeout(50);
+    pushSample(samples, "settings.models.toggle_visible", toggleStartedAt);
+  }
+  return samples;
+}
+
 async function main(): Promise<void> {
   await discoverTargetContext();
   const browser = await chromium.launch({ headless: true });
@@ -239,6 +279,7 @@ async function main(): Promise<void> {
   await page.waitForLoadState("networkidle", { timeout: 30_000 }).catch(() => undefined);
   await page.waitForTimeout(500);
   const railSamples = await runRailBenchmarks(page);
+  const settingsSamples = await runSettingsBenchmarks(page);
   const samples = await page.evaluate(
     () =>
       (window as Window & { __opencursorPerfSamples?: BrowserPerfSample[] })
@@ -251,7 +292,8 @@ async function main(): Promise<void> {
     frontendUrl,
     workspaceId,
     conversationId,
-    samples: [...(samples as BrowserPerfSample[]), ...railSamples],
+    samples: [...(samples as BrowserPerfSample[]), ...railSamples, ...settingsSamples],
+    settingsSamples,
     railSamples,
     consolePerf,
   };

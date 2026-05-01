@@ -75,6 +75,9 @@ const DISPLAY_KEY_LABELS: Record<string, string> = {
   Escape: "Esc",
   Minus: "-",
   Space: "Space",
+  ArrowUp: "↑",
+  ArrowDown: "↓",
+  Tab: "Tab",
 };
 
 export const SHORTCUT_COMMAND_DEFINITIONS: ShortcutCommandDefinition[] = [
@@ -163,10 +166,10 @@ export const SHORTCUT_COMMAND_DEFINITIONS: ShortcutCommandDefinition[] = [
     defaultBindings: [],
   },
   {
-  id: "chat.action.toggleVoiceInput",
-  label: "Chat: Voice Transcription",
-  section: "Chat",
-  defaultBindings: ["Mod+T"],
+    id: "chat.action.toggleVoiceInput",
+    label: "Chat: Voice Transcription",
+    section: "Chat",
+    defaultBindings: ["Mod+T"],
   },
   {
     id: "chat.action.toggleComposerExpand",
@@ -175,10 +178,22 @@ export const SHORTCUT_COMMAND_DEFINITIONS: ShortcutCommandDefinition[] = [
     defaultBindings: [],
   },
   {
-  id: "chat.action.attachImage",
-  label: "Chat: Attach Image",
-  section: "Chat",
-  defaultBindings: ["Mod+U"],
+    id: "chat.action.attachImage",
+    label: "Chat: Attach Image",
+    section: "Chat",
+    defaultBindings: ["Mod+U"],
+  },
+  {
+    id: "chat.action.agentRailPreviousConversation",
+    label: "Agent: Previous conversation in rail",
+    section: "Chat",
+    defaultBindings: ["Alt+ArrowUp", "Mod+Shift+Tab"],
+  },
+  {
+    id: "chat.action.agentRailNextConversation",
+    label: "Agent: Next conversation in rail",
+    section: "Chat",
+    defaultBindings: ["Alt+ArrowDown", "Mod+Tab"],
   },
   {
     id: "workbench.action.openFile",

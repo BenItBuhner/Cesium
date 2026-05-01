@@ -68,6 +68,75 @@ describe("agent cache keys and rail payload invariants", () => {
       cached && typeof cached === "object" && "groups" in (cached as object)
     );
   });
+
+  test("cross-workspace rail keeps older chats from less active workspaces", async () => {
+    const { getStorage } = await import("../src/storage/runtime.js");
+    const { randomUUID } = await import("node:crypto");
+    const busyRoot = path.join(TEST_ROOT, "busy-workspace");
+    const quietRoot = path.join(TEST_ROOT, "quiet-workspace");
+    await mkdir(busyRoot, { recursive: true });
+    await mkdir(quietRoot, { recursive: true });
+    const busy = await ensureWorkspaceRegistered(busyRoot, "Busy");
+    const quiet = await ensureWorkspaceRegistered(quietRoot, "Quiet");
+    const storage = await getStorage();
+    const now = Date.now();
+    const base = {
+      schemaVersion: 1 as const,
+      title: "t",
+      status: "idle" as const,
+      createdAt: now,
+      updatedAt: now,
+      lastEventSeq: 0,
+      lastReadSeq: 0,
+      config: { backendId: "cursor-acp" as const, mode: "agent" as const, modelId: "x" },
+      providerSessionId: null,
+      configOptions: [],
+      capabilities: {
+        supportsLoadSession: true,
+        supportsModeSelection: true,
+        supportsModelSelection: true,
+        supportsSlashCommands: true,
+        supportsPermissions: true,
+        supportsToolCalls: true,
+        supportsStructuredPlans: true,
+        supportsTodos: true,
+        supportsSessionResume: true,
+        supportsPromptImages: true,
+        supportsInlineReasoning: false,
+      },
+      pendingPermission: null,
+      lastError: null,
+      experimental: false,
+      archivedAt: null,
+    };
+    const quietId = randomUUID();
+    await storage.upsertAgentConversation({
+      ...base,
+      id: quietId,
+      workspaceId: quiet.id,
+      title: "quiet-old-chat",
+      createdAt: now - 10_000,
+      updatedAt: now - 10_000,
+    });
+    for (let i = 0; i < 50; i += 1) {
+      await storage.upsertAgentConversation({
+        ...base,
+        id: randomUUID(),
+        workspaceId: busy.id,
+        title: `busy-new-${i}`,
+        createdAt: now + i,
+        updatedAt: now + i,
+      });
+    }
+
+    const body = await buildAgentConversationsAllPayload({ limit: 20, offset: 0 });
+    const quietGroup = body.groups.find((group) => group.workspace.id === quiet.id);
+    assert.ok(quietGroup, "quiet workspace should be present in rail payload");
+    assert.ok(
+      quietGroup.conversations.some((conversation) => conversation.id === quietId),
+      "quiet workspace's old chat should not disappear from first-page rail"
+    );
+  });
 });
 
 describe("write throughput smoke (one megaphone, not a microbench)", () => {

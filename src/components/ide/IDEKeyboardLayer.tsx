@@ -39,6 +39,7 @@ import {
   type VoiceInputMode,
 } from "@/lib/keyboard-shortcuts";
 import { useShellView } from "@/components/layout/ShellViewContext";
+import { useAgentShellStateMaybe } from "@/components/agent/AgentShellStateContext";
 import {
   dispatchChatComposerShortcut,
   dispatchWorkspacePickerShortcut,
@@ -62,6 +63,8 @@ const INPUT_SINK_ALLOWED_SHORTCUT_IDS = [
   "chat.action.toggleVoiceInput",
   "chat.action.toggleComposerExpand",
   "chat.action.attachImage",
+  "chat.action.agentRailPreviousConversation",
+  "chat.action.agentRailNextConversation",
 ] as const;
 
 function flash(setter: (s: string | null) => void, msg: string) {
@@ -110,6 +113,7 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
     updateWorkspaceWindow,
     flushWorkspaceSessionNow,
   } = useWorkspace();
+  const agentShell = useAgentShellStateMaybe();
   const [palette, setPalette] = useState<PaletteMode>("closed");
   const [folderPromptOpen, setFolderPromptOpen] = useState(false);
   const [folderPromptValue, setFolderPromptValue] = useState("");
@@ -518,6 +522,12 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
         case "chat.action.openWorkspacePicker":
           dispatchWorkspacePickerShortcut();
           break;
+        case "chat.action.agentRailPreviousConversation":
+          agentShell?.cycleAgentConversation(-1);
+          break;
+        case "chat.action.agentRailNextConversation":
+          agentShell?.cycleAgentConversation(1);
+          break;
         case "workbench.action.zoomIn":
         case "workbench.action.zoomOut":
         case "workbench.action.zoomReset":
@@ -538,6 +548,7 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
       setToast,
       updateWorkspaceSession,
       workbench,
+      agentShell,
     ]
   );
 
@@ -666,6 +677,18 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
         label: "Chat: Attach image",
         keybinding: kb("chat.action.attachImage"),
         run: () => runShortcutCommand("chat.action.attachImage"),
+      },
+      {
+        id: "chat.action.agentRailPreviousConversation",
+        label: "Agent: Previous conversation in rail",
+        keybinding: kb("chat.action.agentRailPreviousConversation"),
+        run: () => runShortcutCommand("chat.action.agentRailPreviousConversation"),
+      },
+      {
+        id: "chat.action.agentRailNextConversation",
+        label: "Agent: Next conversation in rail",
+        keybinding: kb("chat.action.agentRailNextConversation"),
+        run: () => runShortcutCommand("chat.action.agentRailNextConversation"),
       },
       {
         id: "recentChats.open",

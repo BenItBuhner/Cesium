@@ -32,6 +32,8 @@ export type AgentConversationsAllPayload = {
   nextCursor: string | null;
 };
 
+const MIN_CONVERSATIONS_PER_WORKSPACE = 20;
+
 function summarizeConversation(conversation: AgentConversationRecord): AgentConversationsAllSummary {
   return {
     id: conversation.id,
@@ -59,7 +61,6 @@ export async function buildAgentConversationsAllPayload(input: {
   limit: number;
   offset: number;
 }): Promise<AgentConversationsAllPayload> {
-  const { listWorkspaceConversationRecords } = await import("./session-store.js");
   const { limit, offset } = input;
   const [workspaces, backends] = await Promise.all([
     listWorkspaces(),
@@ -68,34 +69,51 @@ export async function buildAgentConversationsAllPayload(input: {
   const workspaceById = new Map(workspaces.map((workspace) => [workspace.id, workspace]));
 
   if (offset === 0) {
-    const page = await (await getStorage()).listAgentConversations({
-      limit,
-      includeArchived: true,
-    });
-    const groupMap = new Map<string, AgentConversationsAllPayload["groups"][number]>();
-    for (const workspace of workspaces) {
-      groupMap.set(workspace.id, { workspace, conversations: [] });
+    const storage = await getStorage();
+    const [globalPage, perWorkspacePages] = await Promise.all([
+      storage.listAgentConversations({
+        limit,
+        includeArchived: true,
+      }),
+      Promise.all(
+        workspaces.map((workspace) =>
+          storage.listAgentConversations({
+            workspaceId: workspace.id,
+            limit: MIN_CONVERSATIONS_PER_WORKSPACE,
+            includeArchived: true,
+          })
+        )
+      ),
+    ]);
+    const byId = new Map<string, AgentConversationRecord>();
+    for (const conversation of globalPage.records) {
+      byId.set(conversation.id, conversation);
     }
-    for (const conversation of page.records) {
-      const workspace = workspaceById.get(conversation.workspaceId);
-      if (!workspace) {
-        continue;
+    for (const page of perWorkspacePages) {
+      for (const conversation of page.records) {
+        byId.set(conversation.id, conversation);
       }
-      groupMap.get(workspace.id)?.conversations.push(summarizeConversation(conversation));
     }
+    const records = [...byId.values()].sort(
+      (a, b) => b.updatedAt - a.updatedAt || a.title.localeCompare(b.title)
+    );
     return {
       backends,
-      groups: Array.from(groupMap.values()),
-      nextCursor: page.nextCursor ? String(limit) : null,
+      groups: groupConversationSummaries(workspaces, workspaceById, records),
+      nextCursor: globalPage.nextCursor ? String(limit) : null,
     };
   }
 
   const perWorkspace = await Promise.all(
     workspaces.map(async (workspace) => {
-      const conversations = await listWorkspaceConversationRecords(workspace.id);
-      return conversations.map((conversation) => ({
+      const page = await (await getStorage()).listAgentConversations({
+        workspaceId: workspace.id,
+        limit: offset === 0 ? MIN_CONVERSATIONS_PER_WORKSPACE : limit + offset,
+        includeArchived: true,
+      });
+      return page.records.map((conversation) => ({
         workspace,
-        summary: summarizeConversation(conversation),
+        conversation,
       }));
     })
   );
@@ -103,36 +121,34 @@ export async function buildAgentConversationsAllPayload(input: {
     .flat()
     .sort(
       (a, b) =>
-        b.summary.updatedAt - a.summary.updatedAt ||
-        a.summary.title.localeCompare(b.summary.title)
+        b.conversation.updatedAt - a.conversation.updatedAt ||
+        a.conversation.title.localeCompare(b.conversation.title)
     );
-  const window = flat.slice(offset, offset + limit);
-  const nextCursor =
-    offset + window.length < flat.length
-      ? String(offset + window.length)
-      : null;
-  const groupMap = new Map<string, AgentConversationsAllPayload["groups"][number]>();
-  for (const workspace of workspaces) {
-    if (offset === 0) {
-      groupMap.set(workspace.id, { workspace, conversations: [] });
-    }
-  }
-  for (const entry of window) {
-    const existing = groupMap.get(entry.workspace.id);
-    if (existing) {
-      existing.conversations.push(entry.summary);
-    } else {
-      groupMap.set(entry.workspace.id, {
-        workspace: entry.workspace,
-        conversations: [entry.summary],
-      });
-    }
-  }
+  const window = flat.slice(offset, offset + limit).map((entry) => entry.conversation);
   return {
     backends,
-    groups: Array.from(groupMap.values()),
-    nextCursor,
+    groups: groupConversationSummaries(workspaces, workspaceById, window),
+    nextCursor: offset + window.length < flat.length ? String(offset + window.length) : null,
   };
+}
+
+function groupConversationSummaries(
+  workspaces: WorkspaceRecord[],
+  workspaceById: Map<string, WorkspaceRecord>,
+  records: AgentConversationRecord[]
+): AgentConversationsAllPayload["groups"] {
+  const groupMap = new Map<string, AgentConversationsAllPayload["groups"][number]>();
+  for (const workspace of workspaces) {
+    groupMap.set(workspace.id, { workspace, conversations: [] });
+  }
+  for (const conversation of records) {
+    const workspace = workspaceById.get(conversation.workspaceId);
+    if (!workspace) {
+      continue;
+    }
+    groupMap.get(workspace.id)?.conversations.push(summarizeConversation(conversation));
+  }
+  return Array.from(groupMap.values());
 }
 
 /**

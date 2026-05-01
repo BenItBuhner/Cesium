@@ -84,6 +84,7 @@ import { ToggleSwitch } from "@/components/ui/ToggleSwitch";
 import { AgentBackendIcon } from "@/components/chat/AgentBackendIcon";
 import type { AgentBackendId } from "@/lib/agent-types";
 import type { ModelToggleState } from "@/lib/global-settings";
+import { recordPerfSample } from "@/lib/dev-perf";
 
 export const rowButtonClass =
   "inline-flex shrink-0 items-center gap-[6px] rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-transparent px-[12px] py-[5px] font-sans text-[12px] font-normal text-[var(--text-primary)] transition-colors hover:bg-[var(--accent-bg)]";
@@ -1159,7 +1160,14 @@ export function AgentsSettingsPanel() {
 }
 
 export function ModelsSettingsPanel() {
-  const { settings, updateSettings, refreshModels, modelsRefreshing, saveModelToggleUpdates } = useGlobalSettings();
+  const {
+    settings,
+    updateSettings,
+    refreshModels,
+    modelsRefreshing,
+    modelToggleSaveState,
+    saveModelToggleUpdates,
+  } = useGlobalSettings();
   const [modelQuery, setModelQuery] = useState("");
   const [collapsedBackends, setCollapsedBackends] = useState<Set<string>>(new Set());
 
@@ -1186,9 +1194,15 @@ export function ModelsSettingsPanel() {
 
   const toggleModel = useCallback(
     (backendId: string, modelId: string, on: boolean) => {
+      const startedAt = performance.now();
       setModelsForBackend(backendId, (rows) =>
         rows.map((r) => (r.id === modelId ? { ...r, on } : r))
       );
+      recordPerfSample("settings.models.toggle_visible", startedAt, {
+        backendId,
+        modelId,
+        on,
+      });
       void saveModelToggleUpdates([{ backendId, modelId, on }]);
     },
     [setModelsForBackend, saveModelToggleUpdates]
@@ -1196,6 +1210,7 @@ export function ModelsSettingsPanel() {
 
   const selectAllForBackend = useCallback(
     (backendId: string) => {
+      const startedAt = performance.now();
       const currentModels = byBackend[backendId] ?? [];
       const updates = currentModels
         .filter((m) => !m.on)
@@ -1204,12 +1219,17 @@ export function ModelsSettingsPanel() {
       if (updates.length > 0) {
         void saveModelToggleUpdates(updates);
       }
+      recordPerfSample("settings.models.select_all_visible", startedAt, {
+        backendId,
+        updates: updates.length,
+      });
     },
     [byBackend, setModelsForBackend, saveModelToggleUpdates]
   );
 
   const deselectAllForBackend = useCallback(
     (backendId: string) => {
+      const startedAt = performance.now();
       const currentModels = byBackend[backendId] ?? [];
       const updates = currentModels
         .filter((m) => m.on)
@@ -1218,11 +1238,16 @@ export function ModelsSettingsPanel() {
       if (updates.length > 0) {
         void saveModelToggleUpdates(updates);
       }
+      recordPerfSample("settings.models.deselect_all_visible", startedAt, {
+        backendId,
+        updates: updates.length,
+      });
     },
     [byBackend, setModelsForBackend, saveModelToggleUpdates]
   );
 
   const toggleCollapse = useCallback((backendId: string) => {
+    const startedAt = performance.now();
     setCollapsedBackends((prev) => {
       const next = new Set(prev);
       if (next.has(backendId)) {
@@ -1230,13 +1255,24 @@ export function ModelsSettingsPanel() {
       } else {
         next.add(backendId);
       }
+      recordPerfSample("settings.models.backend_toggle_visible", startedAt, {
+        backendId,
+        collapsed: next.has(backendId),
+      });
       return next;
     });
   }, []);
 
   const filteredByBackend = useMemo(() => {
+    const startedAt = performance.now();
     const q = modelQuery.trim().toLowerCase();
-    if (!q) return byBackend;
+    if (!q) {
+      recordPerfSample("settings.models.filter_render", startedAt, {
+        queryLength: 0,
+        backends: Object.keys(byBackend).length,
+      });
+      return byBackend;
+    }
     const result: Record<string, ModelToggleState[]> = {};
     for (const [backendId, models] of Object.entries(byBackend)) {
       const filtered = models.filter((m) => m.name.toLowerCase().includes(q));
@@ -1244,6 +1280,10 @@ export function ModelsSettingsPanel() {
         result[backendId] = filtered;
       }
     }
+    recordPerfSample("settings.models.filter_render", startedAt, {
+      queryLength: q.length,
+      backends: Object.keys(result).length,
+    });
     return result;
   }, [modelQuery, byBackend]);
 
@@ -1270,7 +1310,18 @@ export function ModelsSettingsPanel() {
 
   return (
     <>
-      <PageIntro title="Models" subtitle={`${onCount} of ${totalModels} models visible in dropdown`} />
+      <PageIntro
+        title="Models"
+        subtitle={`${onCount} of ${totalModels} models visible in dropdown${
+          modelToggleSaveState.pending > 0
+            ? ` · saving ${modelToggleSaveState.pending} change${
+                modelToggleSaveState.pending === 1 ? "" : "s"
+              }`
+            : modelToggleSaveState.error
+              ? ` · save issue: ${modelToggleSaveState.error}`
+              : ""
+        }`}
+      />
       <div className="mb-[16px] flex items-center gap-[8px]">
         <div className="relative min-w-0 flex-1">
           <HardwareAwareTextInput

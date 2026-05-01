@@ -10,9 +10,12 @@ import type {
   AgentConfigOption,
   AgentPermissionOptionKind,
 } from "./agents/types.js";
+import { measureServerPerf } from "./perf.js";
 
 const GLOBAL_SETTINGS_CACHE_TTL_SECONDS = 120;
 const KEY_GLOBAL_SETTINGS = "opencursor:settings:global";
+const MODEL_TOGGLE_CACHE_TTL_SECONDS = 30;
+const modelToggleCacheKeys = new Set<string>();
 
 export type ModelToggleEntry = {
   id: string;
@@ -214,7 +217,24 @@ export async function getGlobalSettings(): Promise<GlobalSettings> {
 
 export async function saveGlobalSettings(settings: GlobalSettings): Promise<void> {
   await (await getStorage()).saveGlobalSettings(settings);
+  await invalidateGlobalSettingsCaches();
+}
+
+function modelToggleCacheKey(backendIds: AgentBackendId[]): string {
+  return `opencursor:settings:models:${[...backendIds].sort().join(",")}`;
+}
+
+async function invalidateModelToggleStateCache(): Promise<void> {
+  const keys = [...modelToggleCacheKeys];
+  modelToggleCacheKeys.clear();
+  if (keys.length > 0) {
+    await invalidate(...keys);
+  }
+}
+
+async function invalidateGlobalSettingsCaches(): Promise<void> {
   await invalidate(KEY_GLOBAL_SETTINGS);
+  await invalidateModelToggleStateCache();
 }
 
 function isRememberedPermissionOptionKind(
@@ -450,67 +470,89 @@ async function extractModelCatalogFromBackends(
 export async function getModelToggleState(
   backendIds: AgentBackendId[]
 ): Promise<ModelToggleStateResponse> {
-  const settings = await getGlobalSettings();
-  const catalog = await extractModelCatalogFromBackends(backendIds);
-  const existing = settings.models.byBackend ?? {};
-  const merged: Record<string, ModelToggleEntry[]> = {};
+  const key = modelToggleCacheKey(backendIds);
+  modelToggleCacheKeys.add(key);
+  return readThrough(key, MODEL_TOGGLE_CACHE_TTL_SECONDS, () =>
+    measureServerPerf(
+      "settings.getModelToggleState",
+      async () => {
+        const settings = await getGlobalSettings();
+        const catalog = await measureServerPerf(
+          "settings.extractModelCatalogFromBackends",
+          () => extractModelCatalogFromBackends(backendIds),
+          { backends: backendIds.length }
+        );
+        const existing = settings.models.byBackend ?? {};
+        const merged: Record<string, ModelToggleEntry[]> = {};
 
-  for (const [backendId, models] of Object.entries(catalog)) {
-    const existingForBackend = existing[backendId] ?? [];
-    const existingMap = new Map(existingForBackend.map((m) => [m.id, m]));
-    merged[backendId] = models.map((model) => {
-      const existingEntry = existingMap.get(model.id);
-      return existingEntry
-        ? { ...existingEntry, name: model.name, backendId }
-        : { id: model.id, name: model.name, on: true, backendId };
-    });
-  }
+        for (const [backendId, models] of Object.entries(catalog)) {
+          const existingForBackend = existing[backendId] ?? [];
+          const existingMap = new Map(existingForBackend.map((m) => [m.id, m]));
+          merged[backendId] = models.map((model) => {
+            const existingEntry = existingMap.get(model.id);
+            return existingEntry
+              ? { ...existingEntry, name: model.name, backendId }
+              : { id: model.id, name: model.name, on: true, backendId };
+          });
+        }
 
-  for (const [backendId, existingList] of Object.entries(existing)) {
-    if (!catalog[backendId]) {
-      merged[backendId] = existingList;
-    }
-  }
+        for (const [backendId, existingList] of Object.entries(existing)) {
+          if (!catalog[backendId]) {
+            merged[backendId] = existingList;
+          }
+        }
 
-  return { byBackend: merged };
+        return { byBackend: merged };
+      },
+      { backends: backendIds.length }
+    )
+  );
 }
 
 export async function setModelToggles(
   updates: ModelToggleUpdate[]
 ): Promise<ModelToggleStateResponse> {
-  const settings = await getGlobalSettings();
-  /**
-   * Previously we only updated `settings.models.byBackend[backendId]` when that array
-   * already existed. On a fresh account (or before any merged catalog was persisted) the
-   * object was often empty, so `PUT /api/settings/models/toggles` was a silent no-op and
-   * devices never received stored on/off state. Rebuild the merged view the same way as
-   * `getModelToggleState` before applying diffs.
-   */
-  const { AGENT_BACKENDS } = await import("./agents/providers.js");
-  const allBackendIds = Object.keys(AGENT_BACKENDS) as AgentBackendId[];
-  const backendIds: AgentBackendId[] = [
-    ...new Set([...allBackendIds, ...updates.map((u) => u.backendId as AgentBackendId)]),
-  ];
-  const base = await getModelToggleState(backendIds);
-  const byBackend = { ...base.byBackend };
+  return measureServerPerf(
+    "settings.setModelToggles",
+    async () => {
+      const settings = await getGlobalSettings();
+      /**
+       * Previously we only updated `settings.models.byBackend[backendId]` when that array
+       * already existed. On a fresh account (or before any merged catalog was persisted) the
+       * object was often empty, so `PUT /api/settings/models/toggles` was a silent no-op and
+       * devices never received stored on/off state. Rebuild the merged view the same way as
+       * `getModelToggleState` before applying diffs.
+       */
+      const touchedBackendIds = [
+        ...new Set(updates.map((u) => u.backendId as AgentBackendId)),
+      ];
+      const byBackend = { ...(settings.models.byBackend ?? {}) };
+      const missingBackendIds = touchedBackendIds.filter((backendId) => !byBackend[backendId]);
+      if (missingBackendIds.length > 0) {
+        const base = await getModelToggleState(missingBackendIds);
+        Object.assign(byBackend, base.byBackend);
+      }
 
-  for (const update of updates) {
-    const list = byBackend[update.backendId];
-    if (!list) {
-      continue;
-    }
-    byBackend[update.backendId] = list.map((entry) =>
-      entry.id === update.modelId ? { ...entry, on: update.on } : entry
-    );
-  }
+      for (const update of updates) {
+        const list = byBackend[update.backendId];
+        if (!list) {
+          continue;
+        }
+        byBackend[update.backendId] = list.map((entry) =>
+          entry.id === update.modelId ? { ...entry, on: update.on } : entry
+        );
+      }
 
-  const next: GlobalSettings = {
-    ...settings,
-    models: { byBackend },
-  };
-  await saveGlobalSettings(next);
+      const next: GlobalSettings = {
+        ...settings,
+        models: { byBackend },
+      };
+      await saveGlobalSettings(next);
 
-  return { byBackend: next.models.byBackend };
+      return { byBackend: next.models.byBackend };
+    },
+    { updates: updates.length }
+  );
 }
 
 export type RefreshModelsResult = {

@@ -37,6 +37,7 @@ import { useShellView } from "@/components/layout/ShellViewContext";
 import { useAgentShellState } from "./AgentShellStateContext";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { useUserPreferences } from "@/components/preferences/UserPreferencesProvider";
+import { AGENT_NEW_CHAT_SESSION_ID } from "@/lib/workspace-session";
 
 const PINNED_SECTION_WORKSPACE_ID = "__agentPinned__";
 
@@ -242,6 +243,20 @@ export function AgentWorkspaceRail() {
     window.addEventListener(AGENT_RAIL_OPEN_SEARCH_EVENT, onOpenSearch);
     return () => window.removeEventListener(AGENT_RAIL_OPEN_SEARCH_EVENT, onOpenSearch);
   }, []);
+
+  useLayoutEffect(() => {
+    if (!selectedConversationId || selectedConversationId === AGENT_NEW_CHAT_SESSION_ID) {
+      return;
+    }
+    const escaped =
+      typeof CSS !== "undefined" && typeof CSS.escape === "function"
+        ? CSS.escape(selectedConversationId)
+        : selectedConversationId.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+    const row = document.querySelector(
+      `[data-perf="agent-rail-row"][data-conversation-id="${escaped}"]`
+    );
+    row?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }, [selectedConversationId]);
 
   const filterSummary = useMemo(() => {
     if (!railFilterActive) {
@@ -680,8 +695,21 @@ export function AgentWorkspaceRail() {
               Loading chats...
             </div>
           ) : visibleGroups.length === 0 && pinnedRailConversations.length === 0 ? (
-            <div className="flex min-h-[120px] items-center justify-center px-[10px] text-center font-sans text-[13px] text-[var(--text-secondary)]">
-              No agent conversations yet.
+            <div className="flex min-h-[120px] flex-col items-center justify-center gap-[8px] px-[10px] text-center font-sans text-[13px] text-[var(--text-secondary)]">
+              <span>
+                {railFilterActive
+                  ? "No conversations match the current filters."
+                  : "No agent conversations yet."}
+              </span>
+              {railFilterActive ? (
+                <button
+                  type="button"
+                  onClick={clearRailFilters}
+                  className="rounded-[var(--radius-tab)] border border-[var(--border-card)] px-[10px] py-[5px] text-[12px] text-[var(--text-primary)] transition-colors hover:bg-[var(--bg-card)]"
+                >
+                  Clear filters
+                </button>
+              ) : null}
             </div>
           ) : (
             <>

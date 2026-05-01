@@ -38,13 +38,13 @@ const DEFAULT_LOGIN_LIMIT = 15;
 const DEFAULT_LOGIN_WINDOW_MS = 10 * 60 * 1000;
 const DEFAULT_API_READ_LIMIT = 240;
 const DEFAULT_API_READ_WINDOW_MS = 60 * 1000;
-const DEFAULT_API_WRITE_LIMIT = 90;
+const DEFAULT_API_WRITE_LIMIT = 180;
 const DEFAULT_API_WRITE_WINDOW_MS = 60 * 1000;
 const DEFAULT_BROWSER_PROXY_LIMIT = 360;
 const DEFAULT_BROWSER_PROXY_WINDOW_MS = 60 * 1000;
 const DEFAULT_FS_WRITE_LIMIT = 40;
 const DEFAULT_FS_WRITE_WINDOW_MS = 60 * 1000;
-const DEFAULT_AGENT_WRITE_LIMIT = 90;
+const DEFAULT_AGENT_WRITE_LIMIT = 240;
 const DEFAULT_AGENT_WRITE_WINDOW_MS = 60 * 1000;
 const DEFAULT_WS_FS_LIMIT = 60;
 const DEFAULT_WS_FS_WINDOW_MS = 60 * 1000;
@@ -1071,7 +1071,7 @@ export async function logoutRequest(request: RequestLike): Promise<void> {
 }
 
 export async function authenticateUpgradeRequest(
-  request: IncomingMessage,
+  request: RequestLike,
   kind: "ws-fs" | "ws-agent" | "ws-terminal" | "ws-browser-debug"
 ): Promise<UpgradeAuthResult> {
   if (!isAuthEnabled()) {

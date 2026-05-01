@@ -7,11 +7,14 @@ import { WebSocket } from "ws";
 type ScenarioResult = {
   name: string;
   samples: number[];
+  bytes: number[];
   p50: number;
   p95: number;
   p99: number;
   min: number;
   max: number;
+  avgBytes: number;
+  rateLimited: number;
   failures: string[];
   baselineP95?: number;
   p95DeltaPct?: number;
@@ -22,6 +25,7 @@ type ApiTiming = {
   status: number;
   bytes: number;
   serverMs: number | null;
+  rateLimitRetries: number;
   body: unknown;
 };
 
@@ -44,9 +48,16 @@ const mutationDelayMs = Math.max(
   0,
   Number.parseInt(process.env.PERF_MUTATION_DELAY_MS ?? "125", 10) || 0
 );
+const retryRateLimits = process.env.PERF_RETRY_429 !== "0";
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function delayBeforeMutationIteration(index: number): Promise<void> {
+  if (index > 0 && mutationDelayMs > 0) {
+    await delay(mutationDelayMs);
+  }
 }
 
 function percentile(values: number[], pct: number): number {
@@ -65,12 +76,34 @@ function summarize(name: string, samples: number[], failures: string[]): Scenari
   return {
     name,
     samples,
+    bytes: [],
     p50: percentile(samples, 50),
     p95: percentile(samples, 95),
     p99: percentile(samples, 99),
     min: samples.length ? Math.min(...samples) : 0,
     max: samples.length ? Math.max(...samples) : 0,
+    avgBytes: 0,
+    rateLimited: failures.filter((failure) => failure.includes("429")).length,
     failures,
+  };
+}
+
+function summarizeTimings(
+  name: string,
+  timings: Array<{ ms: number; bytes: number; rateLimitRetries?: number }>,
+  failures: string[]
+): ScenarioResult {
+  const samples = timings.map((timing) => timing.ms);
+  const bytes = timings.map((timing) => timing.bytes);
+  return {
+    ...summarize(name, samples, failures),
+    bytes,
+    avgBytes: bytes.length
+      ? Math.round(bytes.reduce((sum, value) => sum + value, 0) / bytes.length)
+      : 0,
+    rateLimited:
+      failures.filter((failure) => failure.includes("429")).length +
+      timings.reduce((sum, timing) => sum + (timing.rateLimitRetries ?? 0), 0),
   };
 }
 
@@ -157,19 +190,34 @@ async function api(
   options?: { skipWorkspace?: boolean }
 ): Promise<ApiTiming> {
   const startedAt = performance.now();
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), requestTimeoutMs);
   let response: Response;
   let text = "";
-  try {
-    response = await fetch(`${baseUrl}${route}`, {
-      ...init,
-      headers: headers(init?.headers, options),
-      signal: controller.signal,
-    });
-    text = await response.text();
-  } finally {
-    clearTimeout(timeout);
+  let rateLimitRetries = 0;
+  for (let attempt = 0; ; attempt += 1) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), requestTimeoutMs);
+    try {
+      response = await fetch(`${baseUrl}${route}`, {
+        ...init,
+        headers: headers(init?.headers, options),
+        signal: controller.signal,
+      });
+      text = await response.text();
+    } finally {
+      clearTimeout(timeout);
+    }
+    if (response.status !== 429 || !retryRateLimits || attempt >= 1) {
+      break;
+    }
+    rateLimitRetries += 1;
+    const retryAfterMs = Math.min(
+      Math.max(
+        250,
+        Number.parseFloat(response.headers.get("retry-after") ?? "1") * 1000 || 1000
+      ),
+      10_000
+    );
+    await delay(retryAfterMs);
   }
   const ms = performance.now() - startedAt;
   let body: unknown = null;
@@ -184,6 +232,7 @@ async function api(
     bytes: Buffer.byteLength(text),
     serverMs:
       Number.parseFloat(response.headers.get("x-opencursor-perf-ms") ?? "") || null,
+    rateLimitRetries,
     body,
   };
 }
@@ -194,7 +243,7 @@ async function runApiScenario(
   init?: RequestInit,
   options?: { skipWorkspace?: boolean }
 ): Promise<ScenarioResult> {
-  const samples: number[] = [];
+  const timings: Array<{ ms: number; bytes: number }> = [];
   const failures: string[] = [];
   for (let i = 0; i < repetitions; i += 1) {
     try {
@@ -205,7 +254,11 @@ async function runApiScenario(
       if (result.status >= 400) {
         failures.push(`${result.status}: ${JSON.stringify(result.body).slice(0, 300)}`);
       } else {
-        samples.push(result.ms);
+        timings.push({
+          ms: result.ms,
+          bytes: result.bytes,
+          rateLimitRetries: result.rateLimitRetries,
+        });
       }
       if (mutationDelayMs > 0) {
         await delay(mutationDelayMs);
@@ -214,7 +267,7 @@ async function runApiScenario(
       failures.push(error instanceof Error ? error.message : String(error));
     }
   }
-  return summarize(name, samples, failures);
+  return summarizeTimings(name, timings, failures);
 }
 
 async function runWsSnapshotScenario(): Promise<ScenarioResult> {
@@ -271,6 +324,7 @@ async function runPromptAckScenario(): Promise<ScenarioResult> {
     if (i === 0) {
       console.log("[perf] conversation.prompt_ack");
     }
+    await delayBeforeMutationIteration(i);
     try {
       const created = await api("/api/agents/conversations", {
         method: "POST",
@@ -332,6 +386,7 @@ async function runRailCreatePositionScenario(): Promise<ScenarioResult> {
     if (i === 0) {
       console.log("[perf] rail.create_position");
     }
+    await delayBeforeMutationIteration(i);
     try {
       const title = `Rail create ${Date.now()}-${i}`;
       const startedAt = performance.now();
@@ -367,6 +422,7 @@ async function runRailRenameScenario(): Promise<ScenarioResult> {
     if (i === 0) {
       console.log("[perf] rail.rename");
     }
+    await delayBeforeMutationIteration(i);
     try {
       const created = await api("/api/agents/conversations", {
         method: "POST",
@@ -411,6 +467,7 @@ async function runRailPositionAfterPromptScenario(): Promise<ScenarioResult> {
     if (i === 0) {
       console.log("[perf] rail.position_after_prompt");
     }
+    await delayBeforeMutationIteration(i);
     try {
       const target = await api("/api/agents/conversations", {
         method: "POST",
@@ -464,6 +521,31 @@ async function runRailPositionAfterPromptScenario(): Promise<ScenarioResult> {
 async function main(): Promise<void> {
   await discoverTargetContext();
   const scenarios: ScenarioResult[] = [];
+  scenarios.push(
+    await runApiScenario("settings.models", "/api/settings/models")
+  );
+  scenarios.push(
+    await runApiScenario("settings.models_by_backend", "/api/settings/models-by-backend")
+  );
+  scenarios.push(
+    await runApiScenario("auth.status", "/api/auth/status", undefined, {
+      skipWorkspace: true,
+    })
+  );
+  scenarios.push(
+    await runApiScenario("workspace.windows", `/api/workspaces/${workspaceId}/windows`)
+  );
+  scenarios.push(
+    await runApiScenario("fs.tree", "/api/fs/tree?depth=2")
+  );
+  scenarios.push(
+    await runApiScenario("terminals.list", "/api/terminals")
+  );
+  scenarios.push(
+    await runApiScenario("storage.status", "/api/storage/status", undefined, {
+      skipWorkspace: true,
+    })
+  );
   scenarios.push(
     await runApiScenario("conversations.list", "/api/agents/conversations?limit=50")
   );

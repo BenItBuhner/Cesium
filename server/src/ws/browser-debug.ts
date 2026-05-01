@@ -2,8 +2,80 @@ import type { IncomingMessage } from "node:http";
 import type { Duplex } from "node:stream";
 import { WebSocketServer, WebSocket } from "ws";
 import { getDebugSession } from "../browser-debug/chromium-session.js";
+import { type RuntimeSocket, wrapNodeWebSocket } from "./runtime-socket.js";
 
 const browserDebugWss = new WebSocketServer({ noServer: true });
+
+export function attachBrowserDebugSocket(
+  clientWs: RuntimeSocket,
+  sessionId: string,
+  subPath: string
+): void {
+  const rec = getDebugSession(sessionId);
+  if (!rec) {
+    clientWs.close(1008, "Debug session not found");
+    return;
+  }
+  if (!subPath || subPath === "/") {
+    clientWs.close(1008, "Missing DevTools path");
+    return;
+  }
+
+  const upstreamUrl = `ws://127.0.0.1:${rec.debugPort}${subPath}`;
+  const upstreamWs = new WebSocket(upstreamUrl, {
+    perMessageDeflate: false,
+  });
+
+  let clientBuffer: Array<{ data: Parameters<RuntimeSocket["send"]>[0]; isBinary: boolean }> = [];
+  let upstreamOpen = false;
+
+  const flushBuffer = () => {
+    for (const msg of clientBuffer) {
+      upstreamWs.send(msg.data, { binary: msg.isBinary });
+    }
+    clientBuffer = [];
+  };
+
+  const closeBoth = () => {
+    try {
+      clientWs.close();
+    } catch {
+      /* ignore */
+    }
+    try {
+      if (upstreamWs.readyState === WebSocket.OPEN || upstreamWs.readyState === WebSocket.CONNECTING) {
+        upstreamWs.close();
+      }
+    } catch {
+      /* ignore */
+    }
+  };
+
+  upstreamWs.on("open", () => {
+    upstreamOpen = true;
+    flushBuffer();
+  });
+  upstreamWs.on("message", (data, isBinary) => {
+    clientWs.send(data as Parameters<RuntimeSocket["send"]>[0], { binary: isBinary });
+  });
+  upstreamWs.on("close", () => closeBoth());
+  upstreamWs.on("error", (err) => {
+    console.error("[browser-debug] upstream WS error:", err.message);
+    closeBoth();
+  });
+
+  clientWs.onMessage((data, isBinary) => {
+    if (!upstreamOpen) {
+      clientBuffer.push({ data, isBinary });
+      return;
+    }
+    if (upstreamWs.readyState === WebSocket.OPEN) {
+      upstreamWs.send(data, { binary: isBinary });
+    }
+  });
+  clientWs.onClose(() => closeBoth());
+  clientWs.onError(() => closeBoth());
+}
 
 /**
  * Proxy a client WebSocket connection to Chromium's local DevTools WebSocket.
@@ -33,67 +105,7 @@ export function handleBrowserDebugUpgrade(
     return;
   }
 
-  const upstreamUrl = `ws://127.0.0.1:${rec.debugPort}${subPath}`;
-
   browserDebugWss.handleUpgrade(request, socket, head, (clientWs) => {
-    const upstreamWs = new WebSocket(upstreamUrl, {
-      // Some builds of Chromium reject clients whose Origin doesn't match its
-      // allow-list; we already passed `--remote-allow-origins=*` at launch.
-      perMessageDeflate: false,
-    });
-
-    let clientBuffer: Array<{ data: WebSocket.RawData; isBinary: boolean }> = [];
-    let upstreamOpen = false;
-
-    const flushBuffer = () => {
-      for (const msg of clientBuffer) {
-        upstreamWs.send(msg.data, { binary: msg.isBinary });
-      }
-      clientBuffer = [];
-    };
-
-    const closeBoth = () => {
-      try {
-        if (clientWs.readyState === WebSocket.OPEN || clientWs.readyState === WebSocket.CONNECTING) {
-          clientWs.close();
-        }
-      } catch {
-        /* ignore */
-      }
-      try {
-        if (upstreamWs.readyState === WebSocket.OPEN || upstreamWs.readyState === WebSocket.CONNECTING) {
-          upstreamWs.close();
-        }
-      } catch {
-        /* ignore */
-      }
-    };
-
-    upstreamWs.on("open", () => {
-      upstreamOpen = true;
-      flushBuffer();
-    });
-    upstreamWs.on("message", (data, isBinary) => {
-      if (clientWs.readyState === WebSocket.OPEN) {
-        clientWs.send(data, { binary: isBinary });
-      }
-    });
-    upstreamWs.on("close", () => closeBoth());
-    upstreamWs.on("error", (err) => {
-      console.error("[browser-debug] upstream WS error:", err.message);
-      closeBoth();
-    });
-
-    clientWs.on("message", (data, isBinary) => {
-      if (!upstreamOpen) {
-        clientBuffer.push({ data, isBinary });
-        return;
-      }
-      if (upstreamWs.readyState === WebSocket.OPEN) {
-        upstreamWs.send(data, { binary: isBinary });
-      }
-    });
-    clientWs.on("close", () => closeBoth());
-    clientWs.on("error", () => closeBoth());
+    attachBrowserDebugSocket(wrapNodeWebSocket(clientWs), sessionId, subPath);
   });
 }

@@ -1,7 +1,8 @@
 import type { IncomingMessage } from "node:http";
 import type { Duplex } from "node:stream";
 import chokidar, { type FSWatcher } from "chokidar";
-import { WebSocketServer, WebSocket } from "ws";
+import { WebSocketServer } from "ws";
+import { type RuntimeSocket, wrapNodeWebSocket } from "./runtime-socket.js";
 import { publish, subscribeSync } from "../cache/pubsub.js";
 import {
   isDimmed,
@@ -35,7 +36,7 @@ type WorkspaceWatcherRoom = {
   root: string;
   name: string;
   watcher: FSWatcher;
-  clients: Set<WebSocket>;
+  clients: Set<RuntimeSocket>;
   pendingEvents: Map<string, NodeJS.Timeout>;
   pendingPayloads: Map<string, Omit<SequencedFsEvent, "seq">>;
   bufferedEvents: SequencedFsEvent[];
@@ -55,8 +56,8 @@ function getLatestSeq(room: WorkspaceWatcherRoom): number {
   return Math.max(0, room.nextSeq - 1);
 }
 
-function sendMessage(ws: WebSocket, message: FsSocketMessage): void {
-  if (ws.readyState === WebSocket.OPEN) {
+function sendMessage(ws: RuntimeSocket, message: FsSocketMessage): void {
+  if (ws.isOpen) {
     ws.send(JSON.stringify(message));
   }
 }
@@ -211,24 +212,17 @@ function canReplay(room: WorkspaceWatcherRoom, since: number): boolean {
   return since >= firstSeq - 1;
 }
 
-export function handleFsUpgrade(
-  request: IncomingMessage,
-  socket: Duplex,
-  head: Buffer
-): void {
-  const url = new URL(request.url ?? "/", "http://localhost");
-  const workspaceId = url.searchParams.get("workspaceId")?.trim();
-  const since = Number.parseInt(url.searchParams.get("since") ?? "0", 10);
-
+export async function attachFsSocket(
+  ws: RuntimeSocket,
+  workspaceId: string,
+  since = 0
+): Promise<void> {
   if (!workspaceId) {
-    socket.write("HTTP/1.1 400 Bad Request\r\n\r\nMissing workspaceId");
-    socket.destroy();
+    ws.close(1008, "Missing workspaceId");
     return;
   }
 
-  void getOrCreateWatcherRoom(workspaceId)
-    .then((room) => {
-      fsWebSocketServer.handleUpgrade(request, socket, head, (ws) => {
+  const room = await getOrCreateWatcherRoom(workspaceId);
         room.clients.add(ws);
 
         sendMessage(ws, {
@@ -256,7 +250,7 @@ export function handleFsUpgrade(
 
         sendMessage(ws, { type: "ready", latestSeq: getLatestSeq(room) });
 
-        ws.on("message", (raw) => {
+        ws.onMessage((raw) => {
           try {
             const msg = JSON.parse(String(raw)) as { type?: string };
             if (msg?.type === "ping") {
@@ -267,9 +261,30 @@ export function handleFsUpgrade(
           }
         });
 
-        ws.on("close", () => {
+        ws.onClose(() => {
           room.clients.delete(ws);
         });
+}
+
+export function handleFsUpgrade(
+  request: IncomingMessage,
+  socket: Duplex,
+  head: Buffer
+): void {
+  const url = new URL(request.url ?? "/", "http://localhost");
+  const workspaceId = url.searchParams.get("workspaceId")?.trim();
+  const since = Number.parseInt(url.searchParams.get("since") ?? "0", 10);
+
+  if (!workspaceId) {
+    socket.write("HTTP/1.1 400 Bad Request\r\n\r\nMissing workspaceId");
+    socket.destroy();
+    return;
+  }
+
+  void getOrCreateWatcherRoom(workspaceId)
+    .then(() => {
+      fsWebSocketServer.handleUpgrade(request, socket, head, (ws) => {
+        void attachFsSocket(wrapNodeWebSocket(ws), workspaceId, since);
       });
     })
     .catch(() => {

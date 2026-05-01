@@ -1,5 +1,4 @@
 import { Hono } from "hono";
-import { Cursor } from "@cursor/sdk";
 import {
   getGlobalSettings,
   saveGlobalSettings,
@@ -23,6 +22,7 @@ import {
 } from "../storage/revisions.js";
 import { AGENT_BACKENDS } from "../lib/agents/providers.js";
 import type { AgentBackendId } from "../lib/agents/types.js";
+import { measureServerPerf } from "../lib/perf.js";
 
 export const settingsRoutes = new Hono();
 
@@ -81,19 +81,15 @@ settingsRoutes.put("/api/settings/global", async (c) => {
   }
 
   let toSave = body.settings;
-  const incomingByBackend = toSave.models?.byBackend;
-  if (
-    !incomingByBackend ||
-    Object.keys(incomingByBackend).length === 0
-  ) {
-    const onDisk = await getGlobalSettings();
-    const onDiskByBackend = onDisk.models?.byBackend;
-    if (onDiskByBackend && Object.keys(onDiskByBackend).length > 0) {
-      toSave = {
-        ...toSave,
-        models: { byBackend: { ...onDiskByBackend } },
-      };
-    }
+  const onDisk = await getGlobalSettings();
+  const onDiskByBackend = onDisk.models?.byBackend;
+  if (onDiskByBackend && Object.keys(onDiskByBackend).length > 0) {
+    // Model toggles have their own diff endpoint. Preserve the server's current
+    // model state so a delayed full-settings save cannot overwrite newer toggle edits.
+    toSave = {
+      ...toSave,
+      models: { byBackend: { ...onDiskByBackend } },
+    };
   }
 
   if (process.env.NODE_ENV === "test") {
@@ -108,16 +104,24 @@ settingsRoutes.put("/api/settings/global", async (c) => {
 });
 
 settingsRoutes.get("/api/settings/models-by-backend", async (c) => {
-  const toggleState = await getModelToggleState(allBackendIds());
+  const toggleState = await measureServerPerf(
+    "http.settings.modelsByBackend",
+    () => getModelToggleState(allBackendIds())
+  );
   const byBackend: Record<string, Array<{ id: string; name: string }>> = {};
   for (const [backendId, entries] of Object.entries(toggleState.byBackend)) {
     byBackend[backendId] = entries.map(({ id, name }) => ({ id, name }));
   }
+  c.header("Cache-Control", "private, max-age=10, stale-while-revalidate=60, must-revalidate");
   return c.json({ byBackend });
 });
 
 settingsRoutes.get("/api/settings/models", async (c) => {
-  const toggleState = await getModelToggleState(allBackendIds());
+  const toggleState = await measureServerPerf(
+    "http.settings.models",
+    () => getModelToggleState(allBackendIds())
+  );
+  c.header("Cache-Control", "private, max-age=10, stale-while-revalidate=60, must-revalidate");
   return c.json(toggleState);
 });
 
@@ -133,6 +137,7 @@ settingsRoutes.put("/api/settings/cursor-sdk", async (c) => {
   }
 
   try {
+    const { Cursor } = await import("@cursor/sdk");
     const me = await Cursor.me({ apiKey });
     const status = await saveCursorSdkApiKey({
       apiKey,
@@ -152,7 +157,10 @@ settingsRoutes.delete("/api/settings/cursor-sdk", async (c) => {
 });
 
 settingsRoutes.post("/api/settings/models/refresh", async (c) => {
-  const result = await refreshAndGetModelToggleState(allBackendIds());
+  const result = await measureServerPerf(
+    "http.settings.modelsRefresh",
+    () => refreshAndGetModelToggleState(allBackendIds())
+  );
   return c.json({
     byBackend: result.toggleState.byBackend,
     timedOut: result.timedOut,
@@ -165,6 +173,10 @@ settingsRoutes.put("/api/settings/models/toggles", async (c) => {
   if (!Array.isArray(body.toggles) || body.toggles.length === 0) {
     return c.json({ error: "Expected toggles array" }, 400);
   }
-  const result = await setModelToggles(body.toggles);
+  const result = await measureServerPerf(
+    "http.settings.modelsToggles",
+    () => setModelToggles(body.toggles!),
+    { updates: body.toggles.length }
+  );
   return c.json(result);
 });

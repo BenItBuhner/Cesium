@@ -20,8 +20,8 @@ import type {
   AgentProvider,
   AgentRuntimeCallbacks,
   AgentSessionHandle,
-  AgentProviderCapabilities,
 } from "./types.js";
+import { getCursorSdkCapabilities } from "./cursor-sdk-capabilities.js";
 
 type CursorSdkHandleInput = {
   backend: AgentBackendInfo;
@@ -30,19 +30,7 @@ type CursorSdkHandleInput = {
   loadAgentId?: string | null;
 };
 
-const cursorSdkCapabilities: AgentProviderCapabilities = {
-  supportsLoadSession: true,
-  supportsModeSelection: true,
-  supportsModelSelection: true,
-  supportsSlashCommands: false,
-  supportsPermissions: false,
-  supportsToolCalls: true,
-  supportsStructuredPlans: true,
-  supportsTodos: true,
-  supportsSessionResume: true,
-  supportsPromptImages: true,
-  supportsInlineReasoning: true,
-};
+const cursorSdkCapabilities = getCursorSdkCapabilities();
 
 function optionValue(
   configOptions: AgentConfigOption[],
@@ -119,10 +107,6 @@ function modelSelectionFromConfig(
 
 function isTodoToolName(name: string): boolean {
   return /todo/i.test(name);
-}
-
-export function getCursorSdkCapabilities(): AgentProviderCapabilities {
-  return cursorSdkCapabilities;
 }
 
 class CursorSdkSessionHandle implements AgentSessionHandle {

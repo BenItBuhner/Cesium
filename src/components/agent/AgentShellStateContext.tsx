@@ -72,6 +72,74 @@ import {
   type AgentSidePaneSessionState,
   type EditorSessionState,
 } from "@/lib/workspace-session";
+
+const AGENT_RAIL_CYCLE_PINNED_SECTION_ID = "__agentPinned__";
+const AGENT_RAIL_COLLAPSED_WORKSPACES_STORAGE_KEY =
+  "opencursor.agent-rail-collapsed-workspaces";
+
+function readAgentRailCollapsedWorkspaceIdsForCycle(): Set<string> {
+  if (typeof window === "undefined") {
+    return new Set();
+  }
+  try {
+    const raw = window.localStorage.getItem(AGENT_RAIL_COLLAPSED_WORKSPACES_STORAGE_KEY);
+    if (!raw) {
+      return new Set();
+    }
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) {
+      return new Set();
+    }
+    return new Set(parsed.filter((id): id is string => typeof id === "string"));
+  } catch {
+    return new Set();
+  }
+}
+
+function buildAgentRailCycleOrder(input: {
+  activeWorkspaceId: string | null;
+  groups: AgentConversationGroup[];
+  pinnedRailConversations: AgentRailConversationSummary[];
+  collapsedWorkspaceIds: Set<string>;
+}): AgentRailConversationSummary[] {
+  const { activeWorkspaceId, groups, pinnedRailConversations, collapsedWorkspaceIds } = input;
+  const visibleGroups = groups.filter(
+    (group) => group.workspace.id === activeWorkspaceId || group.conversations.length > 0
+  );
+  const out: AgentRailConversationSummary[] = [];
+  if (!collapsedWorkspaceIds.has(AGENT_RAIL_CYCLE_PINNED_SECTION_ID)) {
+    out.push(...pinnedRailConversations);
+  }
+  for (const group of visibleGroups) {
+    if (collapsedWorkspaceIds.has(group.workspace.id)) {
+      continue;
+    }
+    out.push(...group.conversations);
+  }
+  return out;
+}
+
+function nextAgentRailCycleIndex(
+  currentId: string | null | undefined,
+  flat: AgentRailConversationSummary[],
+  delta: 1 | -1
+): number | null {
+  if (flat.length === 0) {
+    return null;
+  }
+  let idx = flat.findIndex((c) => c.id === currentId);
+  if (idx < 0) {
+    idx = delta > 0 ? -1 : flat.length;
+  }
+  let next = idx + delta;
+  while (next < 0) {
+    next += flat.length;
+  }
+  while (next >= flat.length) {
+    next -= flat.length;
+  }
+  return next;
+}
 export type AgentCenterStableConversationView = {
   conversationId: string;
   messages: ChatMessage[];
@@ -109,6 +177,8 @@ type AgentShellStateContextValue = {
   startNewConversation: () => void;
   /** Open the given workspace, then the draft new-chat session (for rail “+” on a non-active workspace). */
   startNewChatInWorkspace: (workspaceId: string) => Promise<void>;
+  /** Move selection along the visible rail (pinned, then workspaces); crosses workspaces. */
+  cycleAgentConversation: (delta: 1 | -1) => void;
   openConversationSummary: (summary: AgentRailConversationSummary) => Promise<void>;
   groups: AgentConversationGroup[];
   backends: AgentBackendInfo[];
@@ -1227,6 +1297,32 @@ export function AgentShellStateProvider({
     [filteredGroups, pinnedConversationIdSet]
   );
 
+  const cycleAgentConversation = useCallback(
+    (delta: 1 | -1) => {
+      const collapsed = readAgentRailCollapsedWorkspaceIdsForCycle();
+      const flat = buildAgentRailCycleOrder({
+        activeWorkspaceId,
+        groups: groupsForRail,
+        pinnedRailConversations,
+        collapsedWorkspaceIds: collapsed,
+      });
+      const currentId = isDraftConversationSelected ? null : selectedConversationId;
+      const nextIdx = nextAgentRailCycleIndex(currentId, flat, delta);
+      if (nextIdx == null) {
+        return;
+      }
+      void openConversationSummary(flat[nextIdx]);
+    },
+    [
+      activeWorkspaceId,
+      groupsForRail,
+      isDraftConversationSelected,
+      openConversationSummary,
+      pinnedRailConversations,
+      selectedConversationId,
+    ]
+  );
+
   const value = useMemo<AgentShellStateContextValue>(
     () => ({
       leftRailCollapsed: sharedLeftRailCollapsed,
@@ -1252,6 +1348,7 @@ export function AgentShellStateProvider({
       setSelectedConversationId,
       startNewConversation,
       startNewChatInWorkspace,
+      cycleAgentConversation,
       openConversationSummary,
       groups: groupsForRail,
       backends,
@@ -1281,6 +1378,7 @@ export function AgentShellStateProvider({
       archiveConversation,
       backends,
       clearRailFilters,
+      cycleAgentConversation,
       pendingConversationSelection,
       groupsForRail,
       isMobile,

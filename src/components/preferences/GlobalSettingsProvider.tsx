@@ -24,6 +24,7 @@ import {
   saveModelToggles,
   type ModelToggleUpdate,
 } from "@/lib/server-api";
+import { recordPerfSample } from "@/lib/dev-perf";
 
 type GlobalSettingsContextValue = {
   settings: GlobalSettingsState;
@@ -33,6 +34,7 @@ type GlobalSettingsContextValue = {
   ) => void;
   refreshModels: () => Promise<void>;
   modelsRefreshing: boolean;
+  modelToggleSaveState: { pending: number; error: string | null };
   saveModelToggleUpdates: (updates: ModelToggleUpdate[]) => Promise<void>;
 };
 
@@ -40,6 +42,7 @@ const GlobalSettingsContext =
   createContext<GlobalSettingsContextValue | null>(null);
 
 const SAVE_DEBOUNCE_MS = 500;
+const MODEL_TOGGLE_SAVE_DEBOUNCE_MS = 160;
 const MODEL_SYNC_INTERVAL_MS = 5 * 60 * 1000;
 
 function createDefaultState(): GlobalSettingsState {
@@ -50,13 +53,64 @@ export function GlobalSettingsProvider({ children }: { children: ReactNode }) {
   const [settings, setSettings] = useState<GlobalSettingsState>(createDefaultState);
   const [ready, setReady] = useState(false);
   const [modelsRefreshing, setModelsRefreshing] = useState(false);
+  const [modelToggleSaveState, setModelToggleSaveState] = useState<{
+    pending: number;
+    error: string | null;
+  }>({ pending: 0, error: null });
   const settingsRef = useRef(settings);
   const skipNextSaveRef = useRef(false);
   const saveTimerRef = useRef<number | null>(null);
+  const modelToggleQueueRef = useRef<Map<string, ModelToggleUpdate>>(new Map());
+  const modelToggleTimerRef = useRef<number | null>(null);
+  const modelToggleEpochRef = useRef(0);
 
   useEffect(() => {
     settingsRef.current = settings;
   }, [settings]);
+
+  const flushModelToggleUpdates = useCallback(async () => {
+    if (modelToggleTimerRef.current) {
+      window.clearTimeout(modelToggleTimerRef.current);
+      modelToggleTimerRef.current = null;
+    }
+    const updates = [...modelToggleQueueRef.current.values()];
+    modelToggleQueueRef.current.clear();
+    if (updates.length === 0) {
+      setModelToggleSaveState((current) =>
+        current.pending === 0 ? current : { ...current, pending: 0 }
+      );
+      return;
+    }
+    const epoch = ++modelToggleEpochRef.current;
+    const startedAt = performance.now();
+    setModelToggleSaveState({ pending: updates.length, error: null });
+    try {
+      const result = await saveModelToggles(updates);
+      recordPerfSample("settings.models.toggle_save_ack", startedAt, {
+        updates: updates.length,
+      });
+      if (epoch === modelToggleEpochRef.current) {
+        setSettings((current) => ({
+          ...current,
+          models: { byBackend: result.byBackend },
+        }));
+        setModelToggleSaveState({ pending: 0, error: null });
+      }
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Failed to save model toggle changes.";
+      setModelToggleSaveState({ pending: 0, error: message });
+    }
+  }, []);
+
+  const scheduleModelToggleFlush = useCallback(() => {
+    if (modelToggleTimerRef.current) {
+      window.clearTimeout(modelToggleTimerRef.current);
+    }
+    modelToggleTimerRef.current = window.setTimeout(() => {
+      void flushModelToggleUpdates();
+    }, MODEL_TOGGLE_SAVE_DEBOUNCE_MS);
+  }, [flushModelToggleUpdates]);
 
   const flushGlobalSettingsNow = useCallback(
     async (options?: { keepalive?: boolean }) => {
@@ -69,9 +123,10 @@ export function GlobalSettingsProvider({ children }: { children: ReactNode }) {
         saveTimerRef.current = null;
       }
 
+      await flushModelToggleUpdates();
       await saveGlobalSettings(settingsRef.current, options).catch(() => {});
     },
-    [ready]
+    [flushModelToggleUpdates, ready]
   );
 
   useEffect(() => {
@@ -123,8 +178,12 @@ export function GlobalSettingsProvider({ children }: { children: ReactNode }) {
 
   const refreshModels = useCallback(async () => {
     setModelsRefreshing(true);
+    const startedAt = performance.now();
     try {
       const result = await refreshModelToggleState();
+      recordPerfSample("settings.models.refresh_ack", startedAt, {
+        backends: Object.keys(result.byBackend).length,
+      });
       setSettings((current) => ({
         ...current,
         models: { byBackend: result.byBackend },
@@ -139,19 +198,16 @@ export function GlobalSettingsProvider({ children }: { children: ReactNode }) {
   const saveModelToggleUpdates = useCallback(
     async (updates: ModelToggleUpdate[]) => {
       if (updates.length === 0) return;
-      try {
-        const result = await saveModelToggles(updates);
-        setSettings((current) => ({
-          ...current,
-          models: { byBackend: result.byBackend },
-        }));
-      } catch {
-        // Server toggle save failed — the optimistic UI update still stands
-        // and the next global settings save cycle will persist the toggles
-        // as part of the full settings blob.
+      for (const update of updates) {
+        modelToggleQueueRef.current.set(`${update.backendId}:${update.modelId}`, update);
       }
+      setModelToggleSaveState({
+        pending: modelToggleQueueRef.current.size,
+        error: null,
+      });
+      scheduleModelToggleFlush();
     },
-    []
+    [scheduleModelToggleFlush]
   );
 
   useEffect(() => {
@@ -241,9 +297,18 @@ export function GlobalSettingsProvider({ children }: { children: ReactNode }) {
       updateSettings,
       refreshModels,
       modelsRefreshing,
+      modelToggleSaveState,
       saveModelToggleUpdates,
     }),
-    [ready, settings, updateSettings, refreshModels, modelsRefreshing, saveModelToggleUpdates]
+    [
+      ready,
+      settings,
+      updateSettings,
+      refreshModels,
+      modelsRefreshing,
+      modelToggleSaveState,
+      saveModelToggleUpdates,
+    ]
   );
 
   return (

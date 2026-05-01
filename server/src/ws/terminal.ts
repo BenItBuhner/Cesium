@@ -6,7 +6,8 @@ import type { IncomingMessage } from "node:http";
 import type { Duplex } from "node:stream";
 import type { IPty } from "node-pty";
 import pty from "node-pty";
-import { WebSocketServer, WebSocket } from "ws";
+import { WebSocketServer } from "ws";
+import { type RuntimeSocket, wrapNodeWebSocket } from "./runtime-socket.js";
 
 type TerminalSession = {
   id: string;
@@ -16,7 +17,7 @@ type TerminalSession = {
   cwd: string;
   clearCommands: string[];
   createdAt: number;
-  attachedClients: Set<WebSocket>;
+  attachedClients: Set<RuntimeSocket>;
   exited: boolean;
   exitCode: number | null;
   scrollbackChunks: Buffer[];
@@ -128,7 +129,7 @@ function sendSessionEvent(
 ): void {
   const message = JSON.stringify(payload);
   for (const client of session.attachedClients) {
-    if (client.readyState === WebSocket.OPEN) {
+    if (client.isOpen) {
       client.send(message);
     }
   }
@@ -210,7 +211,7 @@ function spawnTerminalSession(
     const chunk = Buffer.from(data, "utf8");
     appendScrollback(session, chunk);
     for (const client of session.attachedClients) {
-      if (client.readyState === WebSocket.OPEN) {
+      if (client.isOpen) {
         client.send(chunk, { binary: true });
       }
     }
@@ -263,7 +264,7 @@ export function killTerminalSession(id: string): boolean {
   return true;
 }
 
-function attachTerminalClient(session: TerminalSession, ws: WebSocket): void {
+function attachTerminalClient(session: TerminalSession, ws: RuntimeSocket): void {
   session.attachedClients.add(ws);
 
   ws.send(
@@ -283,7 +284,7 @@ function attachTerminalClient(session: TerminalSession, ws: WebSocket): void {
     return;
   }
 
-  ws.on("message", (data, isBinary) => {
+  ws.onMessage((data, isBinary) => {
     if (isBinary) {
       session.pty.write(decoder.decode(data as Buffer));
       return;
@@ -313,9 +314,18 @@ function attachTerminalClient(session: TerminalSession, ws: WebSocket): void {
     }
   });
 
-  ws.on("close", () => {
+  ws.onClose(() => {
     session.attachedClients.delete(ws);
   });
+}
+
+export function attachTerminalSocket(ws: RuntimeSocket, terminalId: string): void {
+  const session = terminalSessions.get(terminalId);
+  if (!session) {
+    ws.close(1008, "Terminal session not found");
+    return;
+  }
+  attachTerminalClient(session, ws);
 }
 
 export function handleTerminalUpgrade(
@@ -332,7 +342,7 @@ export function handleTerminalUpgrade(
   }
 
   terminalWebSocketServer.handleUpgrade(request, socket, head, (ws) => {
-    attachTerminalClient(session, ws);
+    attachTerminalClient(session, wrapNodeWebSocket(ws));
   });
 }
 

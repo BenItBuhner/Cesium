@@ -29,10 +29,7 @@ import {
   createCodexAdapterProvider,
   type CliRuntimeSpec,
 } from "./cli-adapter.js";
-import {
-  createCursorSdkProvider,
-  getCursorSdkCapabilities,
-} from "./cursor-sdk-provider.js";
+import { getCursorSdkCapabilities } from "./cursor-sdk-capabilities.js";
 import {
   readAgentBackendConfigCache,
   writeAgentBackendConfigCache,
@@ -4725,6 +4722,7 @@ export async function createAgentProvider(
   }
 
   if (backendId === "cursor-sdk") {
+    const { createCursorSdkProvider } = await import("./cursor-sdk-provider.js");
     return createCursorSdkProvider({
       backend,
       configOptions: await readAgentBackendConfigCache(backendId),

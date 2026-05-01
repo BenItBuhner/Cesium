@@ -1,6 +1,7 @@
 import type { IncomingMessage } from "node:http";
 import type { Duplex } from "node:stream";
-import { WebSocketServer, WebSocket } from "ws";
+import { WebSocketServer } from "ws";
+import { type RuntimeSocket, wrapNodeWebSocket } from "./runtime-socket.js";
 import {
   readConversationEventsSince,
   readConversationHistoryPage,
@@ -19,13 +20,14 @@ import { measureServerPerf } from "../lib/perf.js";
 
 type AgentSocketState = {
   workspaceId: string;
-  socket: WebSocket;
+  socket: RuntimeSocket;
   subscribedConversationIds: Set<string>;
   subscribeChain: Promise<void>;
 };
 
 const agentWebSocketServer = new WebSocketServer({ noServer: true });
 const workspaceClients = new Map<string, Set<AgentSocketState>>();
+const MAX_EVENT_BATCH_EVENTS = 100;
 
 /** Buffers live agent events for one I/O turn so a burst of row writes = one `event_batch` frame. */
 const eventBroadcastPending = new Map<string, AgentStoredEvent[]>();
@@ -60,19 +62,21 @@ function pushLiveAgentEventForBatch(
         if (!client.subscribedConversationIds.has(conversationId)) {
           continue;
         }
-        send(client.socket, {
-          type: "event_batch",
-          workspaceId,
-          conversationId,
-          events: batch,
-        });
+        for (let i = 0; i < batch.length; i += MAX_EVENT_BATCH_EVENTS) {
+          send(client.socket, {
+            type: "event_batch",
+            workspaceId,
+            conversationId,
+            events: batch.slice(i, i + MAX_EVENT_BATCH_EVENTS),
+          });
+        }
       }
     });
   }
 }
 
-function send(socket: WebSocket, message: AgentSocketServerMessage): void {
-  if (socket.readyState === WebSocket.OPEN) {
+function send(socket: RuntimeSocket, message: AgentSocketServerMessage): void {
+  if (socket.isOpen) {
     socket.send(JSON.stringify(message));
   }
 }
@@ -221,20 +225,12 @@ async function sendSubscriptionDataUnmeasured(
   }
 }
 
-export function handleAgentUpgrade(
-  request: IncomingMessage,
-  socket: Duplex,
-  head: Buffer
-): void {
-  const url = new URL(request.url ?? "/", "http://localhost");
-  const workspaceId = url.searchParams.get("workspaceId")?.trim();
+export function attachAgentSocket(ws: RuntimeSocket, workspaceId: string): void {
   if (!workspaceId) {
-    socket.write("HTTP/1.1 400 Bad Request\r\n\r\nMissing workspaceId");
-    socket.destroy();
+    ws.close(1008, "Missing workspaceId");
     return;
   }
 
-  agentWebSocketServer.handleUpgrade(request, socket, head, (ws) => {
     const state: AgentSocketState = {
       workspaceId,
       socket: ws,
@@ -244,7 +240,7 @@ export function handleAgentUpgrade(
     addClient(state);
     send(ws, { type: "connected" });
 
-    ws.on("message", (raw) => {
+    ws.onMessage((raw) => {
       let message: AgentSocketClientMessage | null = null;
       try {
         message = JSON.parse(String(raw)) as AgentSocketClientMessage;
@@ -377,7 +373,7 @@ export function handleAgentUpgrade(
       }
     });
 
-    ws.on("close", () => {
+    ws.onClose(() => {
       for (const conversationId of state.subscribedConversationIds) {
         void agentRuntimeManager.releaseConversationRuntime(
           state.workspaceId,
@@ -386,5 +382,22 @@ export function handleAgentUpgrade(
       }
       removeClient(state);
     });
+}
+
+export function handleAgentUpgrade(
+  request: IncomingMessage,
+  socket: Duplex,
+  head: Buffer
+): void {
+  const url = new URL(request.url ?? "/", "http://localhost");
+  const workspaceId = url.searchParams.get("workspaceId")?.trim();
+  if (!workspaceId) {
+    socket.write("HTTP/1.1 400 Bad Request\r\n\r\nMissing workspaceId");
+    socket.destroy();
+    return;
+  }
+
+  agentWebSocketServer.handleUpgrade(request, socket, head, (ws) => {
+    attachAgentSocket(wrapNodeWebSocket(ws), workspaceId);
   });
 }

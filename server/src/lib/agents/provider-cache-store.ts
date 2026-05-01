@@ -2,7 +2,6 @@ import { promises as fs } from "node:fs";
 import { execFile } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
-import { Cursor } from "@cursor/sdk";
 import { readJsonFile } from "../persistence.js";
 import { getStorage } from "../../storage/runtime.js";
 import { getCursorSdkApiKey } from "../cursor-sdk-credentials.js";
@@ -597,15 +596,35 @@ function cursorSdkConfigOptionsFromModels(
   );
 }
 
+const CURSOR_SDK_MODEL_LIST_TIMEOUT_MS = Number.parseInt(
+  process.env.OPENCURSOR_CURSOR_SDK_MODEL_LIST_TIMEOUT_MS ?? "15000",
+  10
+);
+
 async function createCursorSdkConfigOptions(): Promise<AgentConfigOption[]> {
   const apiKey = await getCursorSdkApiKey();
   if (!apiKey) {
     return createCursorSdkFallbackConfigOptions();
   }
   try {
-    const models = await Cursor.models.list({ apiKey });
+    const { Cursor } = await import("@cursor/sdk");
+    const timeoutMs =
+      Number.isFinite(CURSOR_SDK_MODEL_LIST_TIMEOUT_MS) && CURSOR_SDK_MODEL_LIST_TIMEOUT_MS > 0
+        ? CURSOR_SDK_MODEL_LIST_TIMEOUT_MS
+        : 15000;
+    const models = await Promise.race([
+      Cursor.models.list({ apiKey }),
+      new Promise<never>((_, reject) => {
+        setTimeout(
+          () => reject(new Error(`Cursor.models.list exceeded ${timeoutMs}ms`)),
+          timeoutMs
+        );
+      }),
+    ]);
     return cursorSdkConfigOptionsFromModels(models);
-  } catch {
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    console.warn("[agents] Cursor SDK model list failed (fallback catalog):", detail);
     return createCursorSdkFallbackConfigOptions();
   }
 }
@@ -777,16 +796,31 @@ function startSeedRefresh(
   return promise;
 }
 
+/** Backend ids we avoid probing during boot (optional; see `shouldWarmupBackendAtBoot`). */
+const SKIP_WARMUP_BACKENDS = new Set<AgentBackendId>(["cursor-sdk"]);
+
+function shouldWarmupBackendAtBoot(backendId: AgentBackendId): boolean {
+  if (SKIP_WARMUP_BACKENDS.has(backendId)) {
+    return process.env.OPENCURSOR_WARMUP_CURSOR_SDK === "1";
+  }
+  return true;
+}
+
 /** 
  * Eagerly refresh every backend's config cache in the background. Intended for
  * server boot: kicks off CLI probes without blocking startup, so the first
  * request finds a warm cache rather than paying the CLI latency tax itself.
+ * 
+ * **Cursor SDK** is skipped by default: `Cursor.models.list` hits Cursor cloud
+ * and can drop the Bun process on TLS blips. Enable with
+ * `OPENCURSOR_WARMUP_CURSOR_SDK=1` if you want boot-time catalog fetch anyway.
  */
 export function warmupAgentBackendCaches(
   backendIds: AgentBackendId[]
 ): Promise<void> {
+  const toWarm = backendIds.filter(shouldWarmupBackendAtBoot);
   return Promise.allSettled(
-    backendIds.map((backendId) => startSeedRefresh(backendId))
+    toWarm.map((backendId) => startSeedRefresh(backendId))
   ).then(() => undefined);
 }
 
