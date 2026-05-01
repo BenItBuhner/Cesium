@@ -112,3 +112,15 @@ storybook-static/
 # Sentry / source maps (if used)
 .sentryclirc
 .attachments/
+
+# Local scratch, perf reports, accidental CLI artifacts (never commit)
+/tmp/
+/server/tmp/
+/-w
+/server/-w
+auth-status.json
+bad-chunk.txt
+bad-page-chunk.txt
+live-root.html
+served-sw.js
+/public/sw-test.txt
