@@ -9,6 +9,7 @@ export type AgentConversationMode =
 
 export type AgentBackendId =
   | "cursor-acp"
+  | "cursor-sdk"
   | "opencode-acp"
   | "gemini-acp"
   | "codex-adapter"

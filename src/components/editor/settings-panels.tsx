@@ -39,11 +39,15 @@ import {
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import {
   buildStorageExportUrl,
+  deleteCursorSdkApiKey,
   fetchAgentDeploymentHints,
+  fetchCursorSdkCredentialStatus,
   fetchStorageStatus,
   importStorageArchive,
   runStorageMigration,
+  saveCursorSdkApiKey,
   type CursorAgentDeploymentHintsPayload,
+  type CursorSdkCredentialStatus,
   type StorageDriverKind,
   type StorageMigrationPhase,
   type StorageMigrationProgress,
@@ -110,6 +114,7 @@ const SECTION_ORDER: ShortcutCommandSection[] = [
 
 const BACKEND_LABELS: Record<string, string> = {
   "cursor-acp": "Cursor",
+  "cursor-sdk": "Cursor SDK",
   "opencode-acp": "Opencode",
   "gemini-acp": "Gemini",
   "codex-adapter": "Codex",
@@ -118,6 +123,7 @@ const BACKEND_LABELS: Record<string, string> = {
 
 const BACKEND_ORDER: string[] = [
   "cursor-acp",
+  "cursor-sdk",
   "opencode-acp",
   "gemini-acp",
   "codex-adapter",
@@ -875,6 +881,126 @@ function CursorAgentServerDeploymentReadout() {
   );
 }
 
+function CursorSdkCredentialSettings() {
+  const [status, setStatus] = useState<CursorSdkCredentialStatus | null>(null);
+  const [apiKey, setApiKey] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+
+  const refresh = useCallback(async () => {
+    try {
+      const result = await fetchCursorSdkCredentialStatus();
+      setStatus(result.status);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Failed to load Cursor SDK status.");
+    }
+  }, []);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  const saveKey = useCallback(async () => {
+    if (!apiKey.trim()) {
+      setMessage("Paste a Cursor API key first.");
+      return;
+    }
+    setBusy(true);
+    setMessage(null);
+    try {
+      const result = await saveCursorSdkApiKey(apiKey);
+      setStatus(result.status);
+      setApiKey("");
+      setMessage("Cursor SDK key verified and saved.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Cursor SDK key verification failed.");
+    } finally {
+      setBusy(false);
+    }
+  }, [apiKey]);
+
+  const deleteKey = useCallback(async () => {
+    setBusy(true);
+    setMessage(null);
+    try {
+      const result = await deleteCursorSdkApiKey();
+      setStatus(result.status);
+      setMessage(
+        result.status.source === "env"
+          ? "Stored key removed; CURSOR_API_KEY is still configured on the server."
+          : "Stored Cursor SDK key removed."
+      );
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Failed to remove Cursor SDK key.");
+    } finally {
+      setBusy(false);
+    }
+  }, []);
+
+  const statusText = !status
+    ? "Loading…"
+    : status.configured
+      ? status.source === "env"
+        ? "Configured from CURSOR_API_KEY"
+        : `Configured${status.apiKeyName ? ` as ${status.apiKeyName}` : ""}`
+      : "Not configured";
+
+  return (
+    <SettingsSection>
+      <SubsectionLabel>Cursor SDK</SubsectionLabel>
+      <div className="flex flex-col gap-[12px] px-[16px] pb-[14px] pt-[2px] font-sans text-[12px] text-[var(--text-secondary)]">
+        <div className="flex flex-wrap items-center justify-between gap-[10px]">
+          <div>
+            <p className="text-[13px] font-medium text-[var(--text-primary)]">{statusText}</p>
+            {status?.userEmail ? (
+              <p className="mt-[3px] font-mono text-[11px]">{status.userEmail}</p>
+            ) : null}
+          </div>
+          <a
+            href="https://cursor.com/dashboard/integrations"
+            target="_blank"
+            rel="noreferrer"
+            className={rowButtonClass}
+          >
+            Get API key
+            <ExternalLink className="size-[13px]" strokeWidth={1.6} />
+          </a>
+        </div>
+        <div className="flex flex-wrap items-center gap-[8px]">
+          <input
+            type="password"
+            value={apiKey}
+            onChange={(event) => setApiKey(event.currentTarget.value)}
+            placeholder="Paste Cursor API key"
+            className="box-border min-h-[32px] min-w-[260px] flex-1 rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-[var(--bg-main)] px-[10px] py-[6px] font-mono text-[11px] text-[var(--text-primary)] outline-none placeholder:text-[var(--text-disabled)]"
+          />
+          <button
+            type="button"
+            className={rowButtonClass}
+            disabled={busy}
+            onClick={saveKey}
+          >
+            Test and save
+          </button>
+          <button
+            type="button"
+            className={rowButtonClass}
+            disabled={busy || status?.source !== "stored"}
+            onClick={deleteKey}
+          >
+            Remove stored key
+          </button>
+        </div>
+        <p className="leading-relaxed">
+          The key stays server-side and is used only by the `Cursor SDK` backend. The normal global settings payload
+          only sees redacted status.
+        </p>
+        {message ? <p className="text-[var(--text-primary)]">{message}</p> : null}
+      </div>
+    </SettingsSection>
+  );
+}
+
 export function AgentsSettingsPanel() {
   const { settings, updateSettings } = useGlobalSettings();
   const { workspaces } = useWorkspace();
@@ -919,6 +1045,7 @@ export function AgentsSettingsPanel() {
         subtitle="Chat composer behavior, tool-permission memory, and Cursor CLI hints from the server. Other agent backends use their own CLIs; permission prompts use the shared ACP flow when supported."
       />
       <CursorAgentServerDeploymentReadout />
+      <CursorSdkCredentialSettings />
       <SettingsSection title="Chat">
         <SettingsRow
           title={`Submit with ${modLabel} + Enter`}

@@ -271,6 +271,7 @@ async function* streamExport(driver: StorageDriver): AsyncGenerator<ExportLine> 
 
   for (const backendId of [
     "cursor-acp",
+    "cursor-sdk",
     "opencode-acp",
     "gemini-acp",
     "codex-adapter",
@@ -328,6 +329,7 @@ type ImportLine = ExportLine | { kind: "error"; message: string };
 function isAgentBackendId(value: string): boolean {
   return (
     value === "cursor-acp" ||
+    value === "cursor-sdk" ||
     value === "opencode-acp" ||
     value === "gemini-acp" ||
     value === "codex-adapter" ||

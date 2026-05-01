@@ -38,6 +38,7 @@ export type { ProjectAgentEventsOptions };
 function modelProviderForBackend(backendId: AgentBackendId): ModelInfo["provider"] {
   switch (backendId) {
     case "cursor-acp":
+    case "cursor-sdk":
       return "cursor";
     case "opencode-acp":
       return "opencode";

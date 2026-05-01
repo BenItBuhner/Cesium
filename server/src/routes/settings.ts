@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { Cursor } from "@cursor/sdk";
 import {
   getGlobalSettings,
   saveGlobalSettings,
@@ -9,6 +10,11 @@ import {
   type ModelToggleUpdate,
 } from "../lib/global-settings-store.js";
 import { WriteCoalescer } from "../storage/coalesce.js";
+import {
+  deleteCursorSdkApiKey,
+  getCursorSdkCredentialStatus,
+  saveCursorSdkApiKey,
+} from "../lib/cursor-sdk-credentials.js";
 import {
   bumpRevision,
   formatEtag,
@@ -113,6 +119,36 @@ settingsRoutes.get("/api/settings/models-by-backend", async (c) => {
 settingsRoutes.get("/api/settings/models", async (c) => {
   const toggleState = await getModelToggleState(allBackendIds());
   return c.json(toggleState);
+});
+
+settingsRoutes.get("/api/settings/cursor-sdk", async (c) => {
+  return c.json({ status: await getCursorSdkCredentialStatus() });
+});
+
+settingsRoutes.put("/api/settings/cursor-sdk", async (c) => {
+  const body = await c.req.json<{ apiKey?: string }>();
+  const apiKey = body.apiKey?.trim();
+  if (!apiKey) {
+    return c.json({ error: "Expected Cursor API key." }, 400);
+  }
+
+  try {
+    const me = await Cursor.me({ apiKey });
+    const status = await saveCursorSdkApiKey({
+      apiKey,
+      apiKeyName: me.apiKeyName,
+      userEmail: me.userEmail,
+    });
+    return c.json({ ok: true, status });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to verify Cursor API key.";
+    return c.json({ error: message }, 400);
+  }
+});
+
+settingsRoutes.delete("/api/settings/cursor-sdk", async (c) => {
+  await deleteCursorSdkApiKey();
+  return c.json({ ok: true, status: await getCursorSdkCredentialStatus() });
 });
 
 settingsRoutes.post("/api/settings/models/refresh", async (c) => {

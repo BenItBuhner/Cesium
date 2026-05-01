@@ -12,6 +12,7 @@ export const AGENT_BACKEND_ICON_FILES: Partial<
   Record<AgentBackendId, AgentBackendIconFilenames>
 > = {
   "cursor-acp": { light: "Cursor-Light.svg", dark: "Cursor-Dark.svg" },
+  "cursor-sdk": { light: "Cursor-Light.svg", dark: "Cursor-Dark.svg" },
   "codex-adapter": { light: "Codex-Light.svg", dark: "Codex-Dark.svg" },
   "claude-adapter": {
     light: "Claude-Code-Light.svg",

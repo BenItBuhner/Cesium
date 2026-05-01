@@ -8,7 +8,7 @@ function LucideBackendFallback({
   backendId,
   ...props
 }: { backendId: AgentBackendId } & LucideProps) {
-  if (backendId === "cursor-acp" || backendId === "codex-adapter") {
+  if (backendId === "cursor-acp" || backendId === "cursor-sdk" || backendId === "codex-adapter") {
     return <Sparkles {...props} />;
   }
   return <Bot {...props} />;

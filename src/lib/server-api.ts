@@ -881,6 +881,41 @@ export async function saveModelToggles(
   });
 }
 
+export type CursorSdkCredentialStatus = {
+  configured: boolean;
+  source: "env" | "stored" | null;
+  apiKeyName?: string;
+  userEmail?: string;
+  updatedAt?: number;
+};
+
+export async function fetchCursorSdkCredentialStatus(): Promise<{
+  status: CursorSdkCredentialStatus;
+}> {
+  return request<{ status: CursorSdkCredentialStatus }>("/api/settings/cursor-sdk", {
+    method: "GET",
+  });
+}
+
+export async function saveCursorSdkApiKey(apiKey: string): Promise<{
+  ok: true;
+  status: CursorSdkCredentialStatus;
+}> {
+  return request<{ ok: true; status: CursorSdkCredentialStatus }>("/api/settings/cursor-sdk", {
+    method: "PUT",
+    body: JSON.stringify({ apiKey }),
+  });
+}
+
+export async function deleteCursorSdkApiKey(): Promise<{
+  ok: true;
+  status: CursorSdkCredentialStatus;
+}> {
+  return request<{ ok: true; status: CursorSdkCredentialStatus }>("/api/settings/cursor-sdk", {
+    method: "DELETE",
+  });
+}
+
 export async function fetchTree(depth?: number): Promise<{
   root: string;
   tree: FileNode;

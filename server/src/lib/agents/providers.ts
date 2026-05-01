@@ -30,6 +30,10 @@ import {
   type CliRuntimeSpec,
 } from "./cli-adapter.js";
 import {
+  createCursorSdkProvider,
+  getCursorSdkCapabilities,
+} from "./cursor-sdk-provider.js";
+import {
   readAgentBackendConfigCache,
   writeAgentBackendConfigCache,
 } from "./provider-cache-store.js";
@@ -1173,6 +1177,18 @@ export const AGENT_BACKENDS: Record<AgentBackendId, AgentBackendInfo> = {
     defaultMode: "agent",
     defaultModelId: "auto",
     defaultModelName: "Auto",
+  }),
+  "cursor-sdk": createBackendInfo({
+    id: "cursor-sdk",
+    label: "Cursor SDK",
+    description: "Cursor TypeScript SDK local agent runtime (beta).",
+    experimental: true,
+    commandPreview: "@cursor/sdk local agent",
+    available: true,
+    capabilities: getCursorSdkCapabilities(),
+    defaultMode: "agent",
+    defaultModelId: "composer-2",
+    defaultModelName: "Composer 2",
   }),
   "opencode-acp": createBackendInfo({
     id: "opencode-acp",
@@ -4706,6 +4722,13 @@ export async function createAgentProvider(
         });
       },
     };
+  }
+
+  if (backendId === "cursor-sdk") {
+    return createCursorSdkProvider({
+      backend,
+      configOptions: await readAgentBackendConfigCache(backendId),
+    });
   }
 
   if (backendId === "opencode-acp") {

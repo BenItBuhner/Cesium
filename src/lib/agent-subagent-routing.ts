@@ -745,6 +745,7 @@ export const SUBAGENT_TOOL_CALL_CLASSIFIERS: Record<
   (event: SubagentToolCallEvent) => boolean
 > = {
   "cursor-acp": isCursorAcpSubagentTaskToolEvent,
+  "cursor-sdk": isCursorAcpSubagentTaskToolEvent,
   "opencode-acp": isStrictAcpSubagentTaskToolEvent,
   "gemini-acp": isStrictAcpSubagentTaskToolEvent,
   "codex-adapter": isCodexSubagentTaskToolEvent,

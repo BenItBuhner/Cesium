@@ -14,6 +14,7 @@
     "seed:perf:fat": "bun ./scripts/seed-fat-conversations.ts --conversations=30 --turns=3500",
     "perf:run": "tsx ./scripts/perf-runner.ts",
     "perf:browser": "tsx ./scripts/perf-browser.ts",
+    "sdk:probe": "tsx ./scripts/cursor-sdk-probe.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:push": "drizzle-kit push",
@@ -23,6 +24,7 @@
     "storage:migrate": "tsx ./scripts/storage-migrate.ts"
   },
   "dependencies": {
+    "@cursor/sdk": "^1.0.11",
     "@hono/node-server": "^1.19.6",
     "chokidar": "^4.0.3",
     "dotenv": "^17.3.1",

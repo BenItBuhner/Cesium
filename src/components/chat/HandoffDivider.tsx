@@ -12,6 +12,8 @@ export function getAgentLabel(agentId: string): string {
   switch (agentId) {
     case "cursor-acp":
       return "Cursor";
+    case "cursor-sdk":
+      return "Cursor SDK";
     case "opencode-acp":
       return "OpenCode";
     case "gemini-acp":
@@ -28,6 +30,7 @@ export function getAgentLabel(agentId: string): string {
 function parseHandoffBackendId(raw: string): AgentBackendId | null {
   switch (raw) {
     case "cursor-acp":
+    case "cursor-sdk":
     case "opencode-acp":
     case "gemini-acp":
     case "codex-adapter":

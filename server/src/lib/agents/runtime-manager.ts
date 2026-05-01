@@ -1367,7 +1367,7 @@ const runtimePromptText = pendingHandoffContext
     };
 
     const allowCursorRaw = (configId: string) =>
-      current.config.backendId === "cursor-acp" &&
+      (current.config.backendId === "cursor-acp" || current.config.backendId === "cursor-sdk") &&
       (findPrimaryModelConfigOption(nextOptions)?.id === configId ||
         findPrimaryModeConfigOption(nextOptions)?.id === configId);
 
@@ -1394,7 +1394,8 @@ const runtimePromptText = pendingHandoffContext
     if (modeOption && nextConfig.mode) {
       const ok =
         modeOption.options.some((o) => o.value === nextConfig.mode) ||
-        current.config.backendId === "cursor-acp";
+        current.config.backendId === "cursor-acp" ||
+        current.config.backendId === "cursor-sdk";
       if (ok) {
         nextOptions = nextOptions.map((o) =>
           o.id === modeOption.id ? { ...o, currentValue: nextConfig.mode } : o
@@ -1405,7 +1406,8 @@ const runtimePromptText = pendingHandoffContext
     if (modelOption && nextConfig.modelId) {
       const ok =
         modelOption.options.some((o) => o.value === nextConfig.modelId) ||
-        current.config.backendId === "cursor-acp";
+        current.config.backendId === "cursor-acp" ||
+        current.config.backendId === "cursor-sdk";
       if (ok) {
         nextOptions = nextOptions.map((o) =>
           o.id === modelOption.id ? { ...o, currentValue: nextConfig.modelId } : o
@@ -1462,7 +1464,10 @@ const runtimePromptText = pendingHandoffContext
           ?.value;
       if (value) {
         await handle.setConfigOption(modelOption.id, value);
-      } else if (record.config.backendId === "cursor-acp" && patch.modelId) {
+      } else if (
+        (record.config.backendId === "cursor-acp" || record.config.backendId === "cursor-sdk") &&
+        patch.modelId
+      ) {
         await handle.setConfigOption(modelOption.id, patch.modelId);
       }
     }

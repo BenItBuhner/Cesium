@@ -2,8 +2,10 @@ import { promises as fs } from "node:fs";
 import { execFile } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
+import { Cursor } from "@cursor/sdk";
 import { readJsonFile } from "../persistence.js";
 import { getStorage } from "../../storage/runtime.js";
+import { getCursorSdkApiKey } from "../cursor-sdk-credentials.js";
 import { spawnSafeEnv } from "./spawn-env.js";
 import type { AgentBackendId, AgentConfigOption } from "./types.js";
 
@@ -484,10 +486,136 @@ async function createCodexSeedConfigOptions(): Promise<AgentConfigOption[]> {
   return next;
 }
 
+function createCursorSdkFallbackConfigOptions(): AgentConfigOption[] {
+  return [
+    {
+      id: "mode",
+      name: "OpenCursor Mode",
+      category: "mode",
+      currentValue: "agent",
+      options: [
+        { value: "agent", name: "Agent" },
+        {
+          value: "plan",
+          name: "Plan",
+          description: "Synthetic prompt prefix until Cursor SDK exposes native modes.",
+        },
+        {
+          value: "ask",
+          name: "Ask",
+          description: "Synthetic prompt prefix until Cursor SDK exposes native modes.",
+        },
+        {
+          value: "debug",
+          name: "Debug",
+          description: "Synthetic prompt prefix until Cursor SDK exposes native modes.",
+        },
+      ],
+    },
+    {
+      id: "model",
+      name: "Model",
+      category: "model",
+      currentValue: "composer-2",
+      options: [
+        {
+          value: "composer-2",
+          name: "Composer 2",
+          description: "Cursor SDK default local coding model.",
+        },
+      ],
+    },
+    {
+      id: "sdk_sandbox",
+      name: "Local Sandbox",
+      category: "permission",
+      currentValue: process.platform === "win32" ? "disabled" : "enabled",
+      options: [
+        { value: "enabled", name: "Enabled" },
+        { value: "disabled", name: "Disabled" },
+      ],
+    },
+    {
+      id: "setting_sources",
+      name: "Cursor Settings Sources",
+      category: "other",
+      currentValue: "project,user,plugins",
+      options: [
+        { value: "project", name: "Project" },
+        { value: "project,user,plugins", name: "Project + User + Plugins" },
+        { value: "all", name: "All" },
+      ],
+    },
+  ];
+}
+
+function cursorSdkConfigOptionsFromModels(
+  models: Array<{
+    id: string;
+    displayName: string;
+    description?: string;
+    parameters?: Array<{
+      id: string;
+      displayName?: string;
+      values: Array<{ value: string; displayName?: string }>;
+    }>;
+  }>
+): AgentConfigOption[] {
+  const fallback = createCursorSdkFallbackConfigOptions();
+  const modelRows = models
+    .filter((model) => model.id.trim())
+    .map((model) => {
+      const option: AgentConfigOption["options"][number] = {
+        value: model.id,
+        name: model.displayName || model.id,
+        ...(model.description ? { description: model.description } : {}),
+      };
+      const reasoning = model.parameters?.find((parameter) =>
+        /thinking|reasoning|effort/i.test(parameter.id)
+      );
+      const reasoningLevels =
+        reasoning?.values.map((value) => value.value).filter(Boolean) ?? [];
+      if (reasoningLevels.length > 0) {
+        option.metadata = { reasoningLevels };
+      }
+      return option;
+    });
+  if (modelRows.length === 0) {
+    return fallback;
+  }
+  return fallback.map((option) =>
+    option.id === "model"
+      ? {
+          ...option,
+          currentValue:
+            modelRows.find((model) => model.value === "composer-2")?.value ??
+            modelRows[0]?.value ??
+            "composer-2",
+          options: modelRows,
+        }
+      : option
+  );
+}
+
+async function createCursorSdkConfigOptions(): Promise<AgentConfigOption[]> {
+  const apiKey = await getCursorSdkApiKey();
+  if (!apiKey) {
+    return createCursorSdkFallbackConfigOptions();
+  }
+  try {
+    const models = await Cursor.models.list({ apiKey });
+    return cursorSdkConfigOptionsFromModels(models);
+  } catch {
+    return createCursorSdkFallbackConfigOptions();
+  }
+}
+
 async function createSeedConfigOptions(backendId: AgentBackendId): Promise<AgentConfigOption[]> {
   switch (backendId) {
     case "cursor-acp":
       return createCursorCliConfigOptions();
+    case "cursor-sdk":
+      return createCursorSdkConfigOptions();
     case "opencode-acp":
       return createOpenCodeCliConfigOptions();
     case "gemini-acp":

@@ -760,6 +760,7 @@ export function mergeWorkspaceSessionFromImport(
   }
   const normalizedChatBackendId =
     r.chat?.backendId === "cursor-acp" ||
+    r.chat?.backendId === "cursor-sdk" ||
     r.chat?.backendId === "opencode-acp" ||
     r.chat?.backendId === "gemini-acp" ||
     r.chat?.backendId === "codex-adapter" ||
