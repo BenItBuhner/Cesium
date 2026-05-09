@@ -4,6 +4,7 @@ import { test } from "node:test";
 const [
   { AGENT_BACKENDS, listAgentBackends },
   { CodexAppServerTransport },
+  { isStaleCodexAppServerCache },
   {
     codexAppServerAssistantTextFromItem,
     codexAppServerPermissionRequestFromServerRequest,
@@ -15,6 +16,7 @@ const [
 ] = await Promise.all([
   import("../src/lib/agents/providers.js"),
   import("../src/lib/agents/codex-app-server-transport.js"),
+  import("../src/lib/agents/provider-cache-store.js"),
   import("../src/lib/agents/codex-app-server-normalize.js"),
 ]);
 
@@ -28,6 +30,42 @@ test("codex app server backend is registered immediately after codex", () => {
   assert.equal(AGENT_BACKENDS["codex-app-server"].capabilities.supportsLoadSession, true);
   assert.equal(AGENT_BACKENDS["codex-app-server"].capabilities.supportsPermissions, true);
   assert.equal(AGENT_BACKENDS["codex-app-server"].capabilities.supportsStructuredPlans, true);
+});
+
+test("codex app server treats old gpt-5.1-only catalogs as stale", () => {
+  assert.equal(
+    isStaleCodexAppServerCache([
+      {
+        id: "model",
+        name: "Model",
+        category: "model",
+        currentValue: "gpt-5.1-codex",
+        options: [
+          { value: "gpt-5.1-codex", name: "gpt-5.1-codex" },
+          { value: "gpt-5.1-codex-mini", name: "gpt-5.1-codex-mini" },
+          { value: "gpt-5.1", name: "gpt-5.1" },
+        ],
+      },
+    ]),
+    true
+  );
+
+  assert.equal(
+    isStaleCodexAppServerCache([
+      {
+        id: "model",
+        name: "Model",
+        category: "model",
+        currentValue: "gpt-5.5",
+        options: [
+          { value: "gpt-5.5", name: "GPT-5.5" },
+          { value: "gpt-5.4", name: "gpt-5.4" },
+          { value: "gpt-5.2", name: "gpt-5.2" },
+        ],
+      },
+    ]),
+    false
+  );
 });
 
 test("codex app server normalizes assistant and reasoning deltas", () => {

@@ -89,6 +89,34 @@ async function resolveCodexCommand(): Promise<string> {
   }
   if (process.platform === "win32" && process.env.APPDATA?.trim()) {
     const npmShim = path.join(process.env.APPDATA, "npm", "codex.cmd");
+    const pathMatches = await new Promise<string[]>((resolve) => {
+      const child = spawn("where.exe", ["codex.cmd"], {
+        env: spawnSafeEnv(),
+        windowsHide: true,
+      });
+      let stdout = "";
+      child.stdout.on("data", (chunk) => {
+        stdout += String(chunk);
+      });
+      child.on("error", () => resolve([]));
+      child.on("exit", (code) => {
+        resolve(
+          code === 0
+            ? stdout
+                .split(/\r?\n/)
+                .map((line) => line.trim())
+                .filter(Boolean)
+            : []
+        );
+      });
+    });
+    const normalizedNpmShim = path.normalize(npmShim).toLowerCase();
+    const pathShim = pathMatches.find(
+      (match) => path.normalize(match).toLowerCase() !== normalizedNpmShim
+    );
+    if (pathShim) {
+      return pathShim;
+    }
     try {
       await fs.access(npmShim);
       return npmShim;

@@ -755,6 +755,21 @@ async function resolveCodexAppServerCommand(): Promise<string> {
   }
   if (process.platform === "win32" && process.env.APPDATA?.trim()) {
     const npmShim = path.join(process.env.APPDATA, "npm", "codex.cmd");
+    const pathMatches = await execFileText("where.exe", ["codex.cmd"])
+      .then((raw) =>
+        raw
+          .split(/\r?\n/)
+          .map((line) => line.trim())
+          .filter(Boolean)
+      )
+      .catch(() => []);
+    const normalizedNpmShim = path.normalize(npmShim).toLowerCase();
+    const pathShim = pathMatches.find(
+      (match) => path.normalize(match).toLowerCase() !== normalizedNpmShim
+    );
+    if (pathShim) {
+      return pathShim;
+    }
     try {
       await fs.access(npmShim);
       return npmShim;
@@ -1474,6 +1489,18 @@ function isStaleCursorSdkCache(configOptions: AgentConfigOption[]): boolean {
   );
 }
 
+export function isStaleCodexAppServerCache(configOptions: AgentConfigOption[]): boolean {
+  const modelOption = configOptions.find((option) => option.id === "model");
+  if (!modelOption || modelOption.options.length === 0) {
+    return true;
+  }
+
+  const modelIds = modelOption.options.map((option) => option.value);
+  const hasLegacyCodex51Catalog = modelIds.some((value) => /^gpt-5\.1(?:-|$)/.test(value));
+  const hasModernCodexCatalog = modelIds.some((value) => /^gpt-5\.[2-9](?:-|$)/.test(value));
+  return hasLegacyCodex51Catalog && !hasModernCodexCatalog;
+}
+
 /**
  * In-flight seed refreshes keyed by backendId. We dedupe concurrent callers so
  * only one CLI subprocess runs at a time per backend, and multiple HTTP
@@ -1684,7 +1711,8 @@ function maybeInPlaceMigrate(
       !hasModel ||
       !hasPermission ||
       (modelOption && modelOption.options.length > 0 && !hasServerReportedModelSource) ||
-      hasGeneratedFallbackModels
+      hasGeneratedFallbackModels ||
+      isStaleCodexAppServerCache(cachedOptions)
     ) {
       return { upgraded: cachedOptions, needsReseed: true };
     }
@@ -1784,6 +1812,10 @@ export async function readAgentBackendConfigCache(
     const cacheIsFresh = Date.now() - record.updatedAt <= CACHE_TTL_MS;
     if (cacheIsFresh) {
       return cachedOptions;
+    }
+
+    if (backendId === "codex-app-server") {
+      return startSeedRefresh(backendId).catch(() => cachedOptions);
     }
 
     // Stale-but-valid: serve it immediately and revalidate in the background
