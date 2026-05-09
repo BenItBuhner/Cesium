@@ -96,15 +96,23 @@ function splitSessionRecoveryPrompt(text: string): { transcript: string; userTex
 type ActiveOpenCodePrompt = {
   messageId: string;
   providerAssistantMessageId?: string;
-  emittedTextPartIds: Set<string>;
-  emittedReasoningPartIds: Set<string>;
+  emittedTextByPartId: Map<string, string>;
+  emittedReasoningByPartId: Map<string, string>;
   completed: boolean;
+  completionTimer?: ReturnType<typeof setTimeout>;
   promise: Promise<void>;
   resolve: () => void;
   reject: (error: Error) => void;
 };
 
-const OPENCODE_SERVER_PROMPT_TIMEOUT_MS = 10 * 60_000;
+const OPENCODE_SERVER_FINISH_QUIET_MS = 750;
+
+export function openCodeServerPartTextDelta(previous: string, next: string): string {
+  if (next === previous) {
+    return "";
+  }
+  return previous && next.startsWith(previous) ? next.slice(previous.length) : next;
+}
 
 class OpenCodeServerSessionHandle implements AgentSessionHandle {
   readonly capabilities: AgentProviderCapabilities;
@@ -244,6 +252,7 @@ class OpenCodeServerSessionHandle implements AgentSessionHandle {
       }));
     } catch (error) {
       this.acceptingPromptSse = false;
+      this.clearActivePromptCompletion(activePrompt);
       this.activePrompt = null;
       await this.connection.client.abortSession(this.sessionId).catch(() => undefined);
       const message = error instanceof Error ? error.message : "OpenCode Server prompt failed.";
@@ -275,6 +284,9 @@ class OpenCodeServerSessionHandle implements AgentSessionHandle {
 
   async cancel(): Promise<void> {
     this.acceptingPromptSse = false;
+    if (this.activePrompt) {
+      this.clearActivePromptCompletion(this.activePrompt);
+    }
     this.activePrompt?.reject(new Error("OpenCode Server session aborted."));
     this.activePrompt = null;
     await this.connection?.client.abortSession(this.sessionId).catch(() => undefined);
@@ -342,6 +354,9 @@ class OpenCodeServerSessionHandle implements AgentSessionHandle {
   async dispose(): Promise<void> {
     this.disposed = true;
     this.acceptingPromptSse = false;
+    if (this.activePrompt) {
+      this.clearActivePromptCompletion(this.activePrompt);
+    }
     this.activePrompt?.reject(new Error("OpenCode Server session disposed."));
     this.activePrompt = null;
     this.events?.close();
@@ -401,8 +416,8 @@ class OpenCodeServerSessionHandle implements AgentSessionHandle {
     });
     return {
       messageId,
-      emittedTextPartIds: new Set(),
-      emittedReasoningPartIds: new Set(),
+      emittedTextByPartId: new Map(),
+      emittedReasoningByPartId: new Map(),
       completed: false,
       promise,
       resolve,
@@ -411,29 +426,16 @@ class OpenCodeServerSessionHandle implements AgentSessionHandle {
   }
 
   private async waitForActivePrompt(active: ActiveOpenCodePrompt): Promise<void> {
-    let timeout: ReturnType<typeof setTimeout> | undefined;
-    try {
-      await Promise.race([
-        active.promise,
-        new Promise<never>((_, reject) => {
-          timeout = setTimeout(() => {
-            reject(new Error("OpenCode Server prompt timed out before session completion."));
-          }, OPENCODE_SERVER_PROMPT_TIMEOUT_MS);
-        }),
-      ]);
-    } finally {
-      if (timeout) {
-        clearTimeout(timeout);
-      }
-    }
+    await active.promise;
   }
 
   private async completeActivePrompt(active: ActiveOpenCodePrompt, raw: unknown): Promise<void> {
     if (active.completed) {
       return;
     }
+    this.clearActivePromptCompletion(active);
     active.completed = true;
-    if (active.emittedTextPartIds.size === 0 && this.connection) {
+    if (this.connection) {
       const messages = await this.connection.client.listMessages(this.sessionId).catch(() => []);
       const latestAssistant = [...messages].reverse().find((message) => {
         const info = asRecord(message.info);
@@ -445,8 +447,30 @@ class OpenCodeServerSessionHandle implements AgentSessionHandle {
           messageId: active.messageId,
           response: latestAssistant,
         });
-        if (fallbackEvents.length > 0) {
+        if (active.emittedTextByPartId.size === 0 && fallbackEvents.length > 0) {
           await this.callbacks.appendEvents(fallbackEvents);
+        } else {
+          const fallbackText = fallbackEvents
+            .filter((event) => event.kind === "assistant_message_chunk")
+            .map((event) => event.text)
+            .join("");
+          const emittedText = [...active.emittedTextByPartId.values()].join("");
+          const missingTail =
+            emittedText && fallbackText.startsWith(emittedText)
+              ? fallbackText.slice(emittedText.length)
+              : "";
+          if (missingTail) {
+            await this.callbacks.appendEvents([
+              {
+                eventId: randomUUID(),
+                conversationId: this.callbacks.conversation.id,
+                kind: "assistant_message_chunk",
+                messageId: active.messageId,
+                text: missingTail,
+                raw: latestAssistant,
+              },
+            ]);
+          }
         }
       }
     }
@@ -461,6 +485,69 @@ class OpenCodeServerSessionHandle implements AgentSessionHandle {
       },
     ]);
     active.resolve();
+  }
+
+  private clearActivePromptCompletion(active: ActiveOpenCodePrompt): void {
+    if (!active.completionTimer) {
+      return;
+    }
+    clearTimeout(active.completionTimer);
+    active.completionTimer = undefined;
+  }
+
+  private scheduleActivePromptCompletion(active: ActiveOpenCodePrompt, raw: unknown): void {
+    this.clearActivePromptCompletion(active);
+    active.completionTimer = setTimeout(() => {
+      if (this.disposed || this.activePrompt !== active || active.completed) {
+        return;
+      }
+      void this.completeActivePrompt(active, raw);
+    }, OPENCODE_SERVER_FINISH_QUIET_MS);
+  }
+
+  private async appendPartTextDelta(input: {
+    active: ActiveOpenCodePrompt;
+    partId: string;
+    text: string;
+    kind: "text" | "reasoning";
+    raw: unknown;
+  }): Promise<void> {
+    const emittedByPart =
+      input.kind === "text"
+        ? input.active.emittedTextByPartId
+        : input.active.emittedReasoningByPartId;
+    const previous = emittedByPart.get(input.partId) ?? "";
+    if (input.text === previous) {
+      return;
+    }
+    const delta = openCodeServerPartTextDelta(previous, input.text);
+    if (!delta) {
+      return;
+    }
+    emittedByPart.set(input.partId, input.text);
+    if (input.kind === "text") {
+      await this.callbacks.appendEvents([
+        {
+          eventId: randomUUID(),
+          conversationId: this.callbacks.conversation.id,
+          kind: "assistant_message_chunk",
+          messageId: input.active.messageId,
+          text: delta,
+          raw: input.raw,
+        },
+      ]);
+      return;
+    }
+    await this.callbacks.appendEvents([
+      {
+        eventId: randomUUID(),
+        conversationId: this.callbacks.conversation.id,
+        kind: "reasoning",
+        messageId: `${input.active.messageId}-reasoning`,
+        text: delta,
+        raw: input.raw,
+      },
+    ]);
   }
 
   private async handlePromptLifecycleEvent(payload: Record<string, unknown>): Promise<void> {
@@ -489,7 +576,7 @@ class OpenCodeServerSessionHandle implements AgentSessionHandle {
         providerMessageId === active.providerAssistantMessageId &&
         asString(info.finish)
       ) {
-        await this.completeActivePrompt(active, payload);
+        this.scheduleActivePromptCompletion(active, payload);
       }
       return;
     }
@@ -499,40 +586,36 @@ class OpenCodeServerSessionHandle implements AgentSessionHandle {
       if (!part || !providerMessageId || providerMessageId !== active.providerAssistantMessageId) {
         return;
       }
-      const partId = asString(part.id) ?? `${providerMessageId}-${active.emittedTextPartIds.size}`;
-      if (part.type === "text" && asString(part.text) && asRecord(part.time)?.end) {
-        if (!active.emittedTextPartIds.has(partId)) {
-          active.emittedTextPartIds.add(partId);
-          await this.callbacks.appendEvents([
-            {
-              eventId: randomUUID(),
-              conversationId: this.callbacks.conversation.id,
-              kind: "assistant_message_chunk",
-              messageId: active.messageId,
-              text: asString(part.text)!,
-              raw: payload,
-            },
-          ]);
+      const partId = asString(part.id) ?? `${providerMessageId}-${active.emittedTextByPartId.size}`;
+      if (part.type === "text" && asString(part.text)) {
+        await this.appendPartTextDelta({
+          active,
+          partId,
+          text: asString(part.text)!,
+          kind: "text",
+          raw: payload,
+        });
+        if (active.completionTimer) {
+          this.scheduleActivePromptCompletion(active, payload);
         }
         return;
       }
-      if (part.type === "reasoning" && asString(part.text) && !active.emittedReasoningPartIds.has(partId)) {
-        active.emittedReasoningPartIds.add(partId);
-        await this.callbacks.appendEvents([
-          {
-            eventId: randomUUID(),
-            conversationId: this.callbacks.conversation.id,
-            kind: "reasoning",
-            messageId: `${active.messageId}-reasoning`,
-            text: asString(part.text)!,
-            raw: payload,
-          },
-        ]);
+      if (part.type === "reasoning" && asString(part.text)) {
+        await this.appendPartTextDelta({
+          active,
+          partId,
+          text: asString(part.text)!,
+          kind: "reasoning",
+          raw: payload,
+        });
+        if (active.completionTimer) {
+          this.scheduleActivePromptCompletion(active, payload);
+        }
       }
       return;
     }
     if (type === "session.idle") {
-      await this.completeActivePrompt(active, payload);
+      this.scheduleActivePromptCompletion(active, payload);
       return;
     }
     if (type === "session.status") {

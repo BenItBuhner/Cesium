@@ -15,7 +15,6 @@ export type CodexAppServerTransportOptions = {
   args?: string[];
   cwd: string;
   env?: NodeJS.ProcessEnv;
-  requestTimeoutMs?: number;
   onNotification?: (message: CodexAppServerJsonObject) => void;
   onServerRequest?: (message: CodexAppServerRequestMessage) => void;
   onStderrLine?: (line: string) => void;
@@ -24,12 +23,9 @@ export type CodexAppServerTransportOptions = {
 
 type PendingRequest = {
   method: string;
-  timer: NodeJS.Timeout;
   resolve: (value: unknown) => void;
   reject: (error: Error) => void;
 };
-
-const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 
 function asJsonObject(value: unknown): CodexAppServerJsonObject | null {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -60,7 +56,6 @@ function isIgnorableNonJsonStdout(line: string): boolean {
 export class CodexAppServerTransport {
   private readonly child: ChildProcessWithoutNullStreams;
   private readonly pending = new Map<number, PendingRequest>();
-  private readonly requestTimeoutMs: number;
   private readonly onNotification?: (message: CodexAppServerJsonObject) => void;
   private readonly onServerRequest?: (message: CodexAppServerRequestMessage) => void;
   private readonly onStderrLine?: (line: string) => void;
@@ -69,7 +64,6 @@ export class CodexAppServerTransport {
   private disposed = false;
 
   constructor(options: CodexAppServerTransportOptions) {
-    this.requestTimeoutMs = options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
     this.onNotification = options.onNotification;
     this.onServerRequest = options.onServerRequest;
     this.onStderrLine = options.onStderrLine;
@@ -104,8 +98,7 @@ export class CodexAppServerTransport {
 
   request<T = unknown>(
     method: string,
-    params: CodexAppServerJsonObject = {},
-    timeoutMs = this.requestTimeoutMs
+    params: CodexAppServerJsonObject = {}
   ): Promise<T> {
     if (this.disposed) {
       return Promise.reject(new Error("Codex App Server transport is closed."));
@@ -113,13 +106,8 @@ export class CodexAppServerTransport {
     const id = this.nextId++;
     this.write({ id, method, params });
     return new Promise<T>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        this.pending.delete(id);
-        reject(new Error(`${method} timed out after ${timeoutMs}ms`));
-      }, timeoutMs);
       this.pending.set(id, {
         method,
-        timer,
         resolve: (value) => resolve(value as T),
         reject,
       });
@@ -179,7 +167,6 @@ export class CodexAppServerTransport {
     if (id !== null && this.pending.has(id)) {
       const pending = this.pending.get(id)!;
       this.pending.delete(id);
-      clearTimeout(pending.timer);
       if (record.error != null) {
         pending.reject(formatRpcError(record.error, `${pending.method} failed`));
       } else {
@@ -203,7 +190,6 @@ export class CodexAppServerTransport {
 
   private rejectAll(error: Error): void {
     for (const pending of this.pending.values()) {
-      clearTimeout(pending.timer);
       pending.reject(error);
     }
     this.pending.clear();

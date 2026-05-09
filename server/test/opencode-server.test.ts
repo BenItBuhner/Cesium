@@ -8,9 +8,13 @@ const [
     normalizeOpenCodeServerMessage,
     openCodeServerPermissionResponse,
   },
+  { openCodeServerPartTextDelta },
+  { extractOpenCodeEventSessionId, openCodeEventBelongsToRootSession, translateOpenCodeGlobalPayload },
 ] = await Promise.all([
   import("../src/lib/agents/providers.js"),
   import("../src/lib/agents/opencode-server-normalize.js"),
+  import("../src/lib/agents/opencode-server-provider.js"),
+  import("../src/lib/agents/opencode-global-sse.js"),
 ]);
 
 test("opencode server backend is registered immediately after opencode", () => {
@@ -93,6 +97,48 @@ test("opencode server ignores SSE text deltas and normalizes permission updates"
   });
   assert.equal(permission[0]?.kind, "permission_request");
   assert.equal("requestId" in permission[0] ? permission[0].requestId : null, "perm_1");
+});
+
+test("opencode server text-part updates append only the new tail", () => {
+  assert.equal(openCodeServerPartTextDelta("", "hello"), "hello");
+  assert.equal(openCodeServerPartTextDelta("hello", "hello world"), " world");
+  assert.equal(openCodeServerPartTextDelta("hello world", "hello world"), "");
+  assert.equal(openCodeServerPartTextDelta("old text", "replacement"), "replacement");
+});
+
+test("opencode ACP global SSE accepts root-session deltas", async () => {
+  assert.equal(
+    extractOpenCodeEventSessionId("message.updated", {
+      info: { sessionID: "ses_root", role: "assistant", finish: "stop" },
+    }),
+    "ses_root"
+  );
+  assert.equal(
+    await openCodeEventBelongsToRootSession({
+      baseUrl: "http://127.0.0.1:1",
+      directory: "/tmp",
+      eventSessionId: "ses_root",
+      rootSessionId: "ses_root",
+    }),
+    true
+  );
+  const translated = translateOpenCodeGlobalPayload({
+    conversationId: "conv",
+    rootSessionId: "ses_root",
+    payload: {
+      type: "message.part.delta",
+      properties: {
+        sessionID: "ses_root",
+        messageID: "msg_1",
+        field: "text",
+        delta: "hello",
+      },
+    },
+  });
+  assert.equal(translated.kind, "session_update");
+  if (translated.kind === "session_update") {
+    assert.equal((translated.params.update as { sessionUpdate?: string }).sessionUpdate, "agent_message_chunk");
+  }
 });
 
 test("opencode server permission response maps allow always and deny", () => {

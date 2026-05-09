@@ -5,7 +5,6 @@ export type OpenCodeServerClientOptions = {
   username?: string;
   password?: string;
   timeoutMs?: number;
-  promptTimeoutMs?: number;
 };
 
 export class OpenCodeServerError extends Error {
@@ -69,15 +68,13 @@ export class OpenCodeServerClient {
   readonly baseUrl: string;
   private readonly username?: string;
   private readonly password?: string;
-  private readonly timeoutMs: number;
-  private readonly promptTimeoutMs: number;
+  private readonly timeoutMs?: number;
 
   constructor(options: OpenCodeServerClientOptions) {
     this.baseUrl = options.baseUrl.replace(/\/$/, "");
     this.username = options.username;
     this.password = options.password;
-    this.timeoutMs = options.timeoutMs ?? 30_000;
-    this.promptTimeoutMs = options.promptTimeoutMs ?? 10 * 60_000;
+    this.timeoutMs = options.timeoutMs;
   }
 
   headers(extra?: HeadersInit): Record<string, string> {
@@ -95,13 +92,16 @@ export class OpenCodeServerClient {
     options?: { timeoutMs?: number }
   ): Promise<T> {
     const timeoutMs = options?.timeoutMs ?? this.timeoutMs;
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    const controller =
+      typeof timeoutMs === "number" && Number.isFinite(timeoutMs) && timeoutMs > 0
+        ? new AbortController()
+        : undefined;
+    const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : undefined;
     try {
       const response = await fetch(`${this.baseUrl}${pathName}`, {
         ...init,
         headers: this.headers(init?.headers),
-        signal: controller.signal,
+        ...(controller ? { signal: controller.signal } : {}),
       });
       const text = await response.text();
       if (!response.ok) {
@@ -114,7 +114,9 @@ export class OpenCodeServerClient {
       }
       return (text ? JSON.parse(text) : null) as T;
     } finally {
-      clearTimeout(timer);
+      if (timer) {
+        clearTimeout(timer);
+      }
     }
   }
 
@@ -160,7 +162,7 @@ export class OpenCodeServerClient {
     return this.request(`/session/${encodeURIComponent(id)}/message`, {
       method: "POST",
       body: JSON.stringify(body),
-    }, { timeoutMs: this.promptTimeoutMs });
+    });
   }
 
   sendPromptAsync(id: string, body: OpenCodeServerJson): Promise<null> {

@@ -353,7 +353,7 @@ class CodexAppServerSessionHandle implements AgentSessionHandle {
     this.disposed = true;
     if (this.transport && this.threadId) {
       await this.transport
-        .request("thread/unsubscribe", { threadId: this.threadId }, 2_000)
+        .request("thread/unsubscribe", { threadId: this.threadId })
         .catch(() => undefined);
     }
     this.transport?.dispose();
@@ -366,7 +366,6 @@ class CodexAppServerSessionHandle implements AgentSessionHandle {
       args: [...this.runtime.args, "app-server"],
       cwd: this.callbacks.workspace.root,
       env: this.runtime.env,
-      requestTimeoutMs: 45_000,
       onNotification: (message) => {
         void this.handleNotification(message);
       },

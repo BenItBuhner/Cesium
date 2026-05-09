@@ -787,7 +787,6 @@ async function createCodexAppServerConfigOptions(): Promise<AgentConfigOption[]>
       command: await resolveCodexAppServerCommand(),
       args: ["app-server"],
       cwd: process.cwd(),
-      requestTimeoutMs: 10_000,
     });
     await transport.request("initialize", {
       clientInfo: {

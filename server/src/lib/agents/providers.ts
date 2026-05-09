@@ -3767,6 +3767,7 @@ class AcpSessionHandle implements AgentSessionHandle {
         lastError: null,
       }));
       this.endCursorPromptInference();
+      this.currentAssistantMessageId = null;
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "ACP prompt failed.";
@@ -3792,6 +3793,7 @@ class AcpSessionHandle implements AgentSessionHandle {
         lastError: message,
       }));
       this.endCursorPromptInference();
+      this.currentAssistantMessageId = null;
       throw error;
     }
   }

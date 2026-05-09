@@ -31,6 +31,16 @@ export function extractOpenCodeEventSessionId(
   payloadType: string,
   props: Record<string, unknown>
 ): string | undefined {
+  if (payloadType === "message.updated") {
+    if (typeof props.sessionID === "string") {
+      return props.sessionID;
+    }
+    const info = props.info;
+    if (info && typeof info === "object" && !Array.isArray(info)) {
+      const sessionID = (info as Record<string, unknown>).sessionID;
+      return typeof sessionID === "string" ? sessionID : undefined;
+    }
+  }
   if (payloadType === "message.part.delta") {
     return typeof props.sessionID === "string" ? props.sessionID : undefined;
   }
@@ -77,7 +87,7 @@ export async function openCodeEventBelongsToRootSession(input: {
   rootSessionId: string;
 }): Promise<boolean> {
   if (input.eventSessionId === input.rootSessionId) {
-    return false;
+    return true;
   }
   const memoKey = `${input.baseUrl}\0${input.directory}\0${input.eventSessionId}\0${input.rootSessionId}`;
   const fast = subagentRootMemo.get(memoKey);
@@ -375,6 +385,21 @@ export function translateOpenCodeGlobalPayload(input: {
     const delta = typeof p.delta === "string" ? p.delta : "";
     if (!sid || !msgId || !delta) {
       return { kind: "none" };
+    }
+    if (sid === input.rootSessionId) {
+      return {
+        kind: "session_update",
+        params: {
+          sessionId: input.rootSessionId,
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: delta },
+          },
+          _meta: {
+            openCodeSse: true,
+          },
+        },
+      };
     }
     return {
       kind: "append",

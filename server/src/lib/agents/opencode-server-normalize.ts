@@ -214,8 +214,9 @@ export function normalizeOpenCodeServerEvent(input: {
   }
   if (type === "message.part.delta" && properties.field === "text") {
     // The native server emits text deltas for user/noReply seed messages too.
-    // The synchronous `/message` response is the authoritative assistant payload,
-    // so text SSE is intentionally ignored to avoid echoing context into replies.
+    // OpenCode Server's prompt harness handles assistant text updates only after
+    // it has identified the active assistant message, so this generic normalizer
+    // intentionally ignores raw text deltas to avoid echoing seed/user content.
     return [];
   }
   if (type === "message.part.updated") {
@@ -233,8 +234,8 @@ export function normalizeOpenCodeServerEvent(input: {
       });
       return event ? [event] : [];
     }
-    // Non-tool text updates include user/noReply seed content. Ignore text SSE;
-    // final assistant text is normalized from the REST message response.
+    // Non-tool text updates include user/noReply seed content. The provider
+    // session handles active assistant text separately once it knows the message id.
   }
   if (type === "permission.updated") {
     const permission = asRecord(properties.permission) ?? properties;

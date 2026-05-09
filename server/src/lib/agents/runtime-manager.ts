@@ -255,6 +255,8 @@ type ActiveRuntime = {
   sessionRecoveryTranscript?: string;
 };
 
+const RUNTIME_IDLE_DISPOSE_GRACE_MS = 5_000;
+
 type AgentRuntimeManagerOptions = {
   backends?: Record<AgentBackendId, AgentBackendInfo>;
   createProvider?: (backendId: AgentBackendId) => Promise<AgentProvider>;
@@ -289,6 +291,7 @@ function truncateConversationTitle(text: string): string {
 export class AgentRuntimeManager {
   private readonly runtimes = new Map<string, ActiveRuntime>();
   private readonly retainedConversationCounts = new Map<string, number>();
+  private readonly idleDisposeTimers = new Map<string, ReturnType<typeof setTimeout>>();
   /** Serializes ensureRuntime per conversation so warm + prompt cannot double-start sessions. */
   private readonly runtimeEnsureQueues = new Map<string, Promise<unknown>>();
   private readonly backends: Record<AgentBackendId, AgentBackendInfo>;
@@ -1113,6 +1116,7 @@ export class AgentRuntimeManager {
   ): Promise<void> {
     const nextCount = (this.retainedConversationCounts.get(conversationId) ?? 0) + 1;
     this.retainedConversationCounts.set(conversationId, nextCount);
+    this.clearIdleDisposeTimer(conversationId);
     const record = await readConversationRecord(workspace.id, conversationId);
     if (!record) {
       this.retainedConversationCounts.delete(conversationId);
@@ -1148,6 +1152,7 @@ export class AgentRuntimeManager {
   }
 
   async disposeRuntime(conversationId: string): Promise<void> {
+    this.clearIdleDisposeTimer(conversationId);
     const runtime = this.runtimes.get(conversationId);
     if (!runtime) {
       return;
@@ -1174,6 +1179,24 @@ export class AgentRuntimeManager {
     record: Pick<AgentConversationRecord, "id" | "status" | "pendingPermission">
   ): Promise<void> {
     if ((this.retainedConversationCounts.get(record.id) ?? 0) > 0) {
+      this.clearIdleDisposeTimer(record.id);
+      return;
+    }
+    if (record.pendingPermission) {
+      this.clearIdleDisposeTimer(record.id);
+      return;
+    }
+    if (record.status === "running" || record.status === "awaiting_permission") {
+      this.clearIdleDisposeTimer(record.id);
+      return;
+    }
+    this.scheduleIdleDispose(record.id);
+  }
+
+  private async disposeRuntimeIfStillUnused(
+    record: Pick<AgentConversationRecord, "id" | "status" | "pendingPermission">
+  ): Promise<void> {
+    if ((this.retainedConversationCounts.get(record.id) ?? 0) > 0) {
       return;
     }
     if (record.pendingPermission) {
@@ -1183,6 +1206,37 @@ export class AgentRuntimeManager {
       return;
     }
     await this.disposeRuntime(record.id);
+  }
+
+  private clearIdleDisposeTimer(conversationId: string): void {
+    const timer = this.idleDisposeTimers.get(conversationId);
+    if (!timer) {
+      return;
+    }
+    clearTimeout(timer);
+    this.idleDisposeTimers.delete(conversationId);
+  }
+
+  private scheduleIdleDispose(conversationId: string): void {
+    if (!this.runtimes.has(conversationId) || this.idleDisposeTimers.has(conversationId)) {
+      return;
+    }
+    const timer = setTimeout(() => {
+      this.idleDisposeTimers.delete(conversationId);
+      const runtime = this.runtimes.get(conversationId);
+      if (!runtime) {
+        return;
+      }
+      void readConversationRecord(runtime.workspaceId, conversationId)
+        .then((latest) => {
+          if (latest) {
+            return this.disposeRuntimeIfStillUnused(latest);
+          }
+          return this.disposeRuntime(conversationId);
+        })
+        .catch(() => undefined);
+    }, RUNTIME_IDLE_DISPOSE_GRACE_MS);
+    this.idleDisposeTimers.set(conversationId, timer);
   }
 
   private warmConversationRuntime(
@@ -1261,6 +1315,7 @@ export class AgentRuntimeManager {
         ) {
           await this.disposeRuntime(record.id);
         } else {
+          this.clearIdleDisposeTimer(record.id);
           return existing;
         }
       }
@@ -1283,6 +1338,7 @@ export class AgentRuntimeManager {
         return { conversation: head.conversation, events: head.events };
       },
       markRuntimeStale: () => {
+        this.clearIdleDisposeTimer(record.id);
         this.runtimes.delete(record.id);
       },
       updateConversation: (

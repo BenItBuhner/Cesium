@@ -201,6 +201,45 @@ class FakeSessionHandle implements AgentSessionHandle {
       return;
     }
 
+    if (input.text.toLowerCase().includes("late-tail")) {
+      await this.callbacks.appendEvents([
+        {
+          eventId: randomUUID(),
+          conversationId: this.callbacks.conversation.id,
+          kind: "status",
+          status: "idle",
+          detail: "Fake ACP request resolved before trailing provider events flushed.",
+        },
+      ]);
+      await this.callbacks.updateConversation((current) => ({
+        ...current,
+        status: "idle",
+        pendingPermission: null,
+        lastError: null,
+      }));
+      await delay(20);
+      if (this.cancelRequested || this.disposed) {
+        return;
+      }
+      await this.callbacks.appendEvents([
+        {
+          eventId: randomUUID(),
+          conversationId: this.callbacks.conversation.id,
+          kind: "assistant_message_chunk",
+          messageId: assistantMessageId,
+          text: "late provider tail.",
+        },
+        {
+          eventId: randomUUID(),
+          conversationId: this.callbacks.conversation.id,
+          kind: "assistant_message_end",
+          messageId: assistantMessageId,
+          stopReason: "end_turn",
+        },
+      ]);
+      return;
+    }
+
     if (input.text.toLowerCase().includes("permission")) {
       const requestId = randomUUID();
       const options = [
@@ -496,6 +535,35 @@ test("prompt returns fast ACK containing only the appended user event", async ()
   assert.equal(ack.events[0]?.eventId, clientEventId);
   assert.equal(ack.events[0]?.messageId, clientMessageId);
   assert.equal(ack.conversation.status, "running");
+});
+
+test("idle runtime disposal waits for trailing provider events", async () => {
+  const workspace = await ensureWorkspaceRegistered(repoRoot, "repo");
+  const conversation = await testRuntimeManager.createConversation(workspace, {
+    backendId: "opencode-acp",
+    mode: "agent",
+    modelId: "test-fast",
+    modelName: "Test Fast",
+  });
+
+  await testRuntimeManager.promptConversation(workspace, conversation.id, "late-tail please");
+
+  const snapshot = await waitFor(
+    "late provider tail",
+    () => readConversationSnapshot(workspace.id, conversation.id),
+    (value) =>
+      value.conversation.status === "idle" &&
+      value.events.some(
+        (event) =>
+          event.kind === "assistant_message_chunk" &&
+          event.text.includes("late provider tail.")
+      )
+  );
+
+  assert.ok(
+    snapshot.events.some((event) => event.kind === "assistant_message_end"),
+    "expected trailing assistant end after provider flush"
+  );
 });
 
 test("duplicate client prompt ids do not enqueue repeated follow-up prompts", async () => {
