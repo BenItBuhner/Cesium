@@ -185,6 +185,14 @@ function claudeCodeSdkEnv(): NodeJS.ProcessEnv {
   return env;
 }
 
+function claudeCodeSdkExecutablePath(): string | undefined {
+  return (
+    process.env.OPENCURSOR_CLAUDE_CODE_SDK_PATH?.trim() ||
+    process.env.OPENCURSOR_CLAUDE_BIN?.trim() ||
+    undefined
+  );
+}
+
 function permissionOptions(): Array<{
   optionId: string;
   name: string;
@@ -424,6 +432,7 @@ class ClaudeCodeSdkSessionHandle implements AgentSessionHandle {
       abortController,
       cwd: this.callbacks.workspace.root,
       env: claudeCodeSdkEnv(),
+      pathToClaudeCodeExecutable: claudeCodeSdkExecutablePath(),
       includePartialMessages: true,
       forwardSubagentText: true,
       persistSession: !proxyMode && optionValue(this.configOptions, "session_persistence", "enabled") !== "disabled",

@@ -40,10 +40,15 @@ if (!process.env.ANTHROPIC_API_KEY?.trim() && !process.env.ANTHROPIC_AUTH_TOKEN?
 }
 
 const baseUrl = process.env.ANTHROPIC_BASE_URL?.trim();
+const pathToClaudeCodeExecutable =
+  process.env.OPENCURSOR_CLAUDE_CODE_SDK_PATH?.trim() ||
+  process.env.OPENCURSOR_CLAUDE_BIN?.trim() ||
+  undefined;
 console.log("claude-code-sdk-proxy-probe:", {
   model,
   cwd,
   baseUrl: baseUrl || "(default api.anthropic.com)",
+  pathToClaudeCodeExecutable: pathToClaudeCodeExecutable ? "[configured]" : "[default]",
   anthropicApiKeyLen: process.env.ANTHROPIC_API_KEY?.length ?? 0,
   anthropicAuthTokenLen: process.env.ANTHROPIC_AUTH_TOKEN?.length ?? 0,
 });
@@ -54,6 +59,7 @@ const stream = query({
   options: {
     cwd,
     abortController,
+    pathToClaudeCodeExecutable,
     model,
     tools: [],
     permissionMode: "dontAsk",
