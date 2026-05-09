@@ -34,6 +34,10 @@ import { ImageCarousel } from "./ImageCarousel";
 import type { ImageAttachment, ImageAttachmentState } from "@/lib/types";
 import { useTheme } from "@/components/theme/ThemeProvider";
 import { useComposerTextIsMultiLine } from "./composer-multiline";
+import {
+  ComposerEditorScrollFades,
+  useComposerEditorScrollFade,
+} from "./composer-editor-scroll-fade";
 import { useHardwareInput } from "@/components/input/HardwareInputProvider";
 import { useWorkbenchNotifications } from "@/components/notifications/WorkbenchNotificationProvider";
 import { WORKBENCH_NOTIFICATION_KIND } from "@/components/notifications/workbench-notification-types";
@@ -102,6 +106,9 @@ const sendButtonBgClass: Record<KnownEditorMode, string> = {
   debug: "bg-[var(--debug-accent-dark)]",
   ask: "bg-[var(--ask-accent-dark)]",
 };
+
+const COMPOSER_PLACEHOLDER_TEXT =
+  "Ask anything, @ for files, / for commands";
 
 /**
  * Shared mode accent/icon map for the new-design mode chip. Kept local so
@@ -715,6 +722,7 @@ export function ChatComposer({
   const hasHardwareKeyboard = useHardwareKeyboard();
   const { pushNotification } = useWorkbenchNotifications();
   const surfaceId = useId().replace(/:/g, "_");
+  const submittingPromptKeyRef = useRef<string | null>(null);
   const {
     enabled: hardwareInputEnabled,
     registerSurface,
@@ -1612,6 +1620,18 @@ export function ChatComposer({
       data,
       name,
     }));
+    const promptKey = JSON.stringify({
+      text: promptText,
+      attachments: imagesToSubmit.map((image) => ({
+        mimeType: image.mimeType,
+        name: image.name,
+        dataLength: image.data.length,
+      })),
+    });
+    if (submittingPromptKeyRef.current === promptKey) {
+      return;
+    }
+    submittingPromptKeyRef.current = promptKey;
     valueRef.current = "";
     setComposerValue("");
     setComposerSelection({ start: 0, end: 0 });
@@ -1621,7 +1641,15 @@ export function ChatComposer({
       onDraftCapturesChange(undefined);
     }
     if (promptText || imagesToSubmit.length > 0) {
-      void Promise.resolve(onSubmit(promptText, imagesToSubmit)).catch(() => undefined);
+      void Promise.resolve(onSubmit(promptText, imagesToSubmit))
+        .catch(() => undefined)
+        .finally(() => {
+          if (submittingPromptKeyRef.current === promptKey) {
+            submittingPromptKeyRef.current = null;
+          }
+        });
+    } else if (submittingPromptKeyRef.current === promptKey) {
+      submittingPromptKeyRef.current = null;
     }
   }, [
     applyComposerDirectives,
@@ -2291,11 +2319,62 @@ const handleNativeComposerKeyDown = useCallback(
    * returns a boolean; it's a cheap no-op when the editor ref hasn't attached
    * yet. Classic layout still reads the flag but ignores it.
    */
-  const isMultiLine = useComposerTextIsMultiLine(editorRef);
+  const hookMeasuresMultiline = useComposerTextIsMultiLine(editorRef);
+  /**
+   * New-design docked composer: measuring multi-line while swapping layout
+   * (single-row vs stacked) changes editor width and reflow, which can flip the
+   * hook true/false in a tight loop. Once wrapped, stay in the multi-line shell
+   * until the user clears all content (`value === ""`).
+   */
+  const [newDesignMultilineLatch, setNewDesignMultilineLatch] = useState(false);
+
+  const composerTrimmedLength = value.trim().length;
+
+  useEffect(() => {
+    if (composerTrimmedLength === 0) {
+      setNewDesignMultilineLatch(false);
+    }
+  }, [composerTrimmedLength]);
+
+  useEffect(() => {
+    // After clearing, ResizeObserver can still see the old tall box until layout
+    // settles; never re-latch multiline while the field is effectively empty.
+    if (hookMeasuresMultiline && composerTrimmedLength > 0) {
+      setNewDesignMultilineLatch(true);
+    }
+  }, [hookMeasuresMultiline, composerTrimmedLength]);
+
+  const useNewDesignStickyMultiline =
+    isNewDesign && variant === "docked" && !isExpanded;
+  const isMultiLine = (() => {
+    if (!useNewDesignStickyMultiline) {
+      return hookMeasuresMultiline;
+    }
+    if (composerTrimmedLength === 0) {
+      return false;
+    }
+    if (newDesignMultilineLatch) {
+      return true;
+    }
+    return hookMeasuresMultiline;
+  })();
 
   /** `trim()` alone can't hide the overlay after Shift+Enter (`\\n`-only trims to ""). Treating lone `\\n` or phantom `<br>` as "has newline" broke empty inputs (Chrome serializes sentinel breaks as "\\n"). Hiding instead when wrapped past one line aligns with visible layout + soft breaks. */
   const showFloatingPlaceholder =
-    value.trim().length === 0 && !isMultiLine;
+    composerTrimmedLength === 0 && !isMultiLine;
+
+  const composerScrollFadeKey = [
+    layout,
+    value.length,
+    isMultiLine,
+    isExpanded,
+    attachedImages.length,
+    showAgentShellGrowControls,
+    agentShellDockTall,
+  ].join("\0");
+
+  const { fade: composerEditorFade, onScroll: onComposerEditorScroll } =
+    useComposerEditorScrollFade(editorRef, composerScrollFadeKey);
 
   if (isNewDesign && variant === "docked" && !isExpanded) {
     const plusButton = (
@@ -2303,7 +2382,7 @@ const handleNativeComposerKeyDown = useCallback(
         type="button"
         onClick={() => fileInputRef.current?.click()}
         disabled={configLocked}
-        className="flex size-[22px] shrink-0 items-center justify-center rounded-full border border-[var(--agent-border)] bg-[var(--agent-plus-button-bg)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--agent-plus-button-bg-hover)] hover:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-50"
+        className="flex size-[22px] shrink-0 items-center justify-center rounded-full border border-[var(--agent-border)] bg-[var(--agent-plus-button-bg)] text-[var(--agent-plus-button-icon)] transition-colors hover:bg-[var(--agent-plus-button-bg-hover)] hover:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-50"
         aria-label="Attach media"
         title="Attach media"
       >
@@ -2451,15 +2530,18 @@ const handleNativeComposerKeyDown = useCallback(
             key="editor-wrapper"
             className="relative min-w-0 flex-1"
           >
+            <ComposerEditorScrollFades fade={composerEditorFade} />
             {showFloatingPlaceholder && (
               <span
-                className={`pointer-events-none absolute left-0 top-0 z-10 font-sans text-[14px] font-normal text-[var(--text-secondary)] ${textInsetClassName}`}
+                className={`pointer-events-none absolute left-0 right-0 top-0 z-10 block min-w-0 truncate font-sans text-[14px] font-normal text-[var(--text-secondary)] ${textInsetClassName}`}
+                title={COMPOSER_PLACEHOLDER_TEXT}
               >
-                Ask anything, @ for files, / for commands
+                {COMPOSER_PLACEHOLDER_TEXT}
               </span>
             )}
             <div
               ref={editorRef}
+              onScroll={onComposerEditorScroll}
               contentEditable={!hardwareInputEnabled}
               suppressContentEditableWarning={!hardwareInputEnabled}
               tabIndex={hardwareInputEnabled ? 0 : undefined}
@@ -2647,15 +2729,23 @@ const handleNativeComposerKeyDown = useCallback(
             isExpanded ? "flex min-h-0 flex-1 flex-col" : ""
           }`}
         >
+        <ComposerEditorScrollFades
+          fade={composerEditorFade}
+          edgeVar={
+            isExpanded ? "var(--bg-main)" : "var(--agent-card-bg)"
+          }
+        />
         {showFloatingPlaceholder && (
           <span
-            className={`pointer-events-none absolute left-0 top-0 z-10 font-sans text-[14px] font-normal text-[var(--text-secondary)] ${textInsetClassName}`}
+            className={`pointer-events-none absolute left-0 right-0 top-0 z-10 block min-w-0 truncate font-sans text-[14px] font-normal text-[var(--text-secondary)] ${textInsetClassName}`}
+            title={COMPOSER_PLACEHOLDER_TEXT}
           >
-            Ask anything, @ for files, / for commands
+            {COMPOSER_PLACEHOLDER_TEXT}
           </span>
         )}
         <div
           ref={editorRef}
+          onScroll={onComposerEditorScroll}
           contentEditable={!hardwareInputEnabled}
           suppressContentEditableWarning={!hardwareInputEnabled}
           tabIndex={hardwareInputEnabled ? 0 : undefined}

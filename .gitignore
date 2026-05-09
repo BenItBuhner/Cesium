@@ -118,6 +118,8 @@ storybook-static/
 /server/tmp/
 /-w
 /server/-w
+/.bun-runtime-cache-*/
+/notes.txt
 auth-status.json
 bad-chunk.txt
 bad-page-chunk.txt

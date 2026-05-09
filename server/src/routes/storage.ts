@@ -273,9 +273,12 @@ async function* streamExport(driver: StorageDriver): AsyncGenerator<ExportLine> 
     "cursor-acp",
     "cursor-sdk",
     "opencode-acp",
+    "opencode-server",
     "gemini-acp",
     "codex-adapter",
+    "codex-app-server",
     "claude-adapter",
+    "claude-code-sdk",
   ] as const) {
     const entry = await driver.readProviderCache(backendId);
     if (entry) {
@@ -331,9 +334,12 @@ function isAgentBackendId(value: string): boolean {
     value === "cursor-acp" ||
     value === "cursor-sdk" ||
     value === "opencode-acp" ||
+    value === "opencode-server" ||
     value === "gemini-acp" ||
     value === "codex-adapter" ||
-    value === "claude-adapter"
+    value === "codex-app-server" ||
+    value === "claude-adapter" ||
+    value === "claude-code-sdk"
   );
 }
 

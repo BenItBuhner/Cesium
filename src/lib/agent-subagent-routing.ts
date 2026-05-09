@@ -733,7 +733,7 @@ export function isStrictAcpSubagentTaskToolEvent(event: SubagentToolCallEvent): 
 
 export function isCodexSubagentTaskToolEvent(event: SubagentToolCallEvent): boolean {
   const rawUpdate = getToolRawUpdate(event);
-  if (rawUpdate?.type !== "collab_tool_call") {
+  if (rawUpdate?.type !== "collab_tool_call" && rawUpdate?.type !== "collabToolCall") {
     return false;
   }
   const tool = typeof rawUpdate.tool === "string" ? rawUpdate.tool.toLowerCase() : "";
@@ -747,9 +747,12 @@ export const SUBAGENT_TOOL_CALL_CLASSIFIERS: Record<
   "cursor-acp": isCursorAcpSubagentTaskToolEvent,
   "cursor-sdk": isCursorAcpSubagentTaskToolEvent,
   "opencode-acp": isStrictAcpSubagentTaskToolEvent,
+  "opencode-server": isStrictAcpSubagentTaskToolEvent,
   "gemini-acp": isStrictAcpSubagentTaskToolEvent,
   "codex-adapter": isCodexSubagentTaskToolEvent,
+  "codex-app-server": isCodexSubagentTaskToolEvent,
   "claude-adapter": isStrictAcpSubagentTaskToolEvent,
+  "claude-code-sdk": isStrictAcpSubagentTaskToolEvent,
 };
 
 export function classifyToolCallAsSubagentCard(

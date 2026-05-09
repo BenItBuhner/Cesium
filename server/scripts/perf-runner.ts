@@ -48,6 +48,10 @@ const mutationDelayMs = Math.max(
   0,
   Number.parseInt(process.env.PERF_MUTATION_DELAY_MS ?? "125", 10) || 0
 );
+const concurrency = Math.max(
+  1,
+  Number.parseInt(process.env.PERF_CONCURRENCY ?? "8", 10) || 8
+);
 const retryRateLimits = process.env.PERF_RETRY_429 !== "0";
 
 function delay(ms: number): Promise<void> {
@@ -155,7 +159,19 @@ async function discoverTargetContext(): Promise<void> {
       startupWorkspace?: { id?: string };
       workspaces?: Array<{ id: string }>;
     };
-    workspaceId = body.startupWorkspace?.id ?? body.workspaces?.[0]?.id ?? "";
+    for (const workspace of body.workspaces ?? []) {
+      const status = await api(
+        `/api/workspaces/${encodeURIComponent(workspace.id)}/git/status`,
+        undefined,
+        { skipWorkspace: true }
+      ).catch(() => null);
+      const statusBody = status?.body as { status?: { isGitRepo?: boolean } } | null;
+      if (status?.status === 200 && statusBody?.status?.isGitRepo) {
+        workspaceId = workspace.id;
+        break;
+      }
+    }
+    workspaceId = workspaceId || body.startupWorkspace?.id || body.workspaces?.[0]?.id || "";
   }
   if (!workspaceId) {
     throw new Error("No workspace available for perf run.");
@@ -270,6 +286,55 @@ async function runApiScenario(
   return summarizeTimings(name, timings, failures);
 }
 
+async function runConcurrentApiScenario(
+  name: string,
+  route: string,
+  init?: RequestInit,
+  options?: { skipWorkspace?: boolean }
+): Promise<ScenarioResult> {
+  const timings: Array<{ ms: number; bytes: number; rateLimitRetries?: number }> = [];
+  const failures: string[] = [];
+  for (let i = 0; i < repetitions; i += 1) {
+    if (i === 0) {
+      console.log(`[perf] ${name} concurrency=${concurrency}`);
+    }
+    const results = await Promise.all(
+      Array.from({ length: concurrency }, async () => {
+        try {
+          const result = await api(route, init, options);
+          if (result.status >= 400) {
+            return {
+              failure: `${result.status}: ${JSON.stringify(result.body).slice(0, 300)}`,
+            };
+          }
+          return {
+            timing: {
+              ms: result.ms,
+              bytes: result.bytes,
+              rateLimitRetries: result.rateLimitRetries,
+            },
+          };
+        } catch (error) {
+          return {
+            failure: error instanceof Error ? error.message : String(error),
+          };
+        }
+      })
+    );
+    for (const result of results) {
+      if ("failure" in result && result.failure) {
+        failures.push(result.failure);
+      } else if ("timing" in result && result.timing) {
+        timings.push(result.timing);
+      }
+    }
+    if (mutationDelayMs > 0) {
+      await delay(mutationDelayMs);
+    }
+  }
+  return summarizeTimings(name, timings, failures);
+}
+
 async function runWsSnapshotScenario(): Promise<ScenarioResult> {
   if (!workspaceId || !conversationId) {
     return summarize("ws.snapshot_head", [], ["PERF_WORKSPACE_ID and PERF_CONVERSATION_ID are required"]);
@@ -357,6 +422,60 @@ async function runPromptAckScenario(): Promise<ScenarioResult> {
     }
   }
   return summarize("conversation.prompt_ack", samples, failures);
+}
+
+async function runCodexAppServerPromptScenario(): Promise<ScenarioResult> {
+  const samples: number[] = [];
+  const failures: string[] = [];
+  if (process.env.OPENCURSOR_TEST_CODEX_APP_SERVER !== "1") {
+    return {
+      ...summarize("conversation.codex_app_server_prompt_ack", samples, failures),
+      failures: ["skipped: set OPENCURSOR_TEST_CODEX_APP_SERVER=1"],
+    };
+  }
+  for (let i = 0; i < Math.min(repetitions, 3); i += 1) {
+    if (i === 0) {
+      console.log("[perf] conversation.codex_app_server_prompt_ack");
+    }
+    await delayBeforeMutationIteration(i);
+    try {
+      const created = await api("/api/agents/conversations", {
+        method: "POST",
+        body: JSON.stringify({
+          title: `Codex App Server perf ${Date.now()}-${i}`,
+          backendId: "codex-app-server",
+          mode: "agent",
+          modelId: process.env.CODEX_APP_SERVER_PERF_MODEL?.trim() || "gpt-5.4-mini",
+          modelName: process.env.CODEX_APP_SERVER_PERF_MODEL?.trim() || "GPT-5.4 Mini",
+        }),
+      });
+      if (created.status >= 400) {
+        failures.push(`create ${created.status}: ${JSON.stringify(created.body).slice(0, 300)}`);
+        continue;
+      }
+      const body = created.body as { conversation?: { id: string } };
+      const targetId = body.conversation?.id;
+      if (!targetId) {
+        failures.push("create did not return conversation id");
+        continue;
+      }
+      const result = await api(
+        `/api/agents/conversations/${encodeURIComponent(targetId)}/prompt`,
+        {
+          method: "POST",
+          body: JSON.stringify({ text: "Reply with exactly one word: pong." }),
+        }
+      );
+      if (result.status >= 400) {
+        failures.push(`${result.status}: ${JSON.stringify(result.body).slice(0, 300)}`);
+      } else {
+        samples.push(result.ms);
+      }
+    } catch (error) {
+      failures.push(error instanceof Error ? error.message : String(error));
+    }
+  }
+  return summarize("conversation.codex_app_server_prompt_ack", samples, failures);
 }
 
 async function listFirstConversation(): Promise<{ id: string; title: string } | null> {
@@ -536,6 +655,30 @@ async function main(): Promise<void> {
     await runApiScenario("workspace.windows", `/api/workspaces/${workspaceId}/windows`)
   );
   scenarios.push(
+    await runApiScenario(
+      "workspace.git.status",
+      `/api/workspaces/${encodeURIComponent(workspaceId)}/git/status`,
+      undefined,
+      { skipWorkspace: true }
+    )
+  );
+  scenarios.push(
+    await runConcurrentApiScenario(
+      "workspace.git.status.concurrent",
+      `/api/workspaces/${encodeURIComponent(workspaceId)}/git/status`,
+      undefined,
+      { skipWorkspace: true }
+    )
+  );
+  scenarios.push(
+    await runConcurrentApiScenario(
+      "workspaces.bootstrap.concurrent",
+      "/api/workspaces/bootstrap",
+      undefined,
+      { skipWorkspace: true }
+    )
+  );
+  scenarios.push(
     await runApiScenario("fs.tree", "/api/fs/tree?depth=2")
   );
   scenarios.push(
@@ -564,6 +707,7 @@ async function main(): Promise<void> {
     scenarios.push(await runWsSnapshotScenario());
   }
   scenarios.push(await runPromptAckScenario());
+  scenarios.push(await runCodexAppServerPromptScenario());
   scenarios.push(await runRailCreatePositionScenario());
   scenarios.push(await runRailRenameScenario());
   scenarios.push(await runRailPositionAfterPromptScenario());
@@ -605,6 +749,7 @@ async function main(): Promise<void> {
     repetitions,
     requestTimeoutMs,
     mutationDelayMs,
+    concurrency,
     scenarios,
   };
   const outDir = path.join(process.cwd(), "tmp", "perf-runs");

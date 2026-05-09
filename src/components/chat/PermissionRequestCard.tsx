@@ -6,7 +6,7 @@ import { HorizontalFadedScroll } from "./HorizontalFadedScroll";
 
 /** Shared metrics so reject/deny matches allow-* buttons (primary vs outline only). */
 const btnBase =
-  "inline-flex min-h-[32px] shrink-0 items-center justify-center rounded-[var(--radius-tab)] px-[12px] py-[5px] font-sans text-[12px] font-normal leading-none tracking-normal box-border transition-colors disabled:pointer-events-none disabled:opacity-45";
+  "pointer-events-auto relative z-[4] inline-flex min-h-[32px] shrink-0 items-center justify-center rounded-[var(--radius-tab)] px-[12px] py-[5px] font-sans text-[12px] font-normal leading-none tracking-normal box-border transition-colors disabled:pointer-events-none disabled:opacity-45";
 
 const btnSecondary = `${btnBase} border border-[var(--border-card)] bg-transparent text-[var(--text-primary)] hover:bg-[var(--accent-bg)]`;
 
@@ -50,7 +50,7 @@ export function PermissionRequestCard({
   })();
 
   return (
-    <div className="rounded-[var(--radius-card)] border border-[var(--border-card)] bg-[var(--bg-card)] px-[12px] py-[10px]">
+    <div className="pointer-events-auto relative z-[4] rounded-[var(--radius-card)] border border-[var(--border-card)] bg-[var(--bg-card)] px-[12px] py-[10px]">
       <div className="flex items-start gap-[10px]">
         <div className="mt-[1px] shrink-0 text-[var(--text-secondary)]">
           <ShieldAlert className="size-[15px]" strokeWidth={1.8} />

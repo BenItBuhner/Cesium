@@ -762,9 +762,12 @@ export function mergeWorkspaceSessionFromImport(
     r.chat?.backendId === "cursor-acp" ||
     r.chat?.backendId === "cursor-sdk" ||
     r.chat?.backendId === "opencode-acp" ||
+    r.chat?.backendId === "opencode-server" ||
     r.chat?.backendId === "gemini-acp" ||
     r.chat?.backendId === "codex-adapter" ||
-    r.chat?.backendId === "claude-adapter"
+    r.chat?.backendId === "codex-app-server" ||
+    r.chat?.backendId === "claude-adapter" ||
+    r.chat?.backendId === "claude-code-sdk"
       ? r.chat.backendId
       : current.chat.backendId;
   const importedUnsupportedBackend =

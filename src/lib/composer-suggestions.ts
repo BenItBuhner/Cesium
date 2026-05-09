@@ -123,6 +123,18 @@ const PROMPT_SLASH_COMMANDS: SlashSuggestion[] = [
     subtitle: "Open the model picker",
     insert: "/models",
   },
+  {
+    id: "worktree",
+    label: "Worktree",
+    subtitle: "Run this prompt in a new git worktree",
+    insert: "/worktree",
+  },
+  {
+    id: "delete-worktree",
+    label: "Delete Worktree",
+    subtitle: "Remove the current git worktree after safety checks",
+    insert: "/delete-worktree",
+  },
 ];
 
 function slugifySlashValue(value: string): string {

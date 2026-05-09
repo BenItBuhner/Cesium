@@ -159,16 +159,35 @@ export function normalizeServerConnectionsState(
         .map((entry) => sanitizeServerConnection((entry ?? {}) as PartialServerConnection))
         .filter((entry): entry is ServerConnection => Boolean(entry))
     : [];
-  const servers = dedupeServers(serverList);
+  const configuredDefault = fallback.servers[0];
+  const withConfiguredDefault =
+    configuredDefault && !serverList.some((server) => server.baseUrl === configuredDefault.baseUrl)
+      ? [configuredDefault, ...serverList]
+      : serverList;
+  const servers = dedupeServers(withConfiguredDefault);
   if (servers.length === 0) {
     return fallback;
   }
 
-  const activeServerId =
-    typeof parsed.activeServerId === "string" &&
-    servers.some((server) => server.id === parsed.activeServerId)
-      ? parsed.activeServerId
-      : servers[0]?.id ?? null;
+  const configuredServer = configuredDefault
+    ? servers.find((server) => server.baseUrl === configuredDefault.baseUrl)
+    : undefined;
+  const parsedActiveServer =
+    typeof parsed.activeServerId === "string"
+      ? servers.find((server) => server.id === parsed.activeServerId)
+      : undefined;
+  const parsedActiveLooksLikeStaleLocal =
+    parsedActiveServer?.baseUrl != null &&
+    /^http:\/\/(?:localhost|127\.0\.0\.1):(?:91|92)\d\d$/i.test(parsedActiveServer.baseUrl) &&
+    configuredServer != null &&
+    configuredServer.baseUrl !== parsedActiveServer.baseUrl;
+  let activeServerId: string | null = servers[0]?.id ?? null;
+  if (parsedActiveServer?.id) {
+    activeServerId = parsedActiveServer.id;
+  }
+  if (parsedActiveLooksLikeStaleLocal) {
+    activeServerId = configuredServer.id;
+  }
 
   return {
     version: 1,

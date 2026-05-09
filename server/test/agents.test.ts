@@ -498,6 +498,36 @@ test("prompt returns fast ACK containing only the appended user event", async ()
   assert.equal(ack.conversation.status, "running");
 });
 
+test("duplicate client prompt ids do not enqueue repeated follow-up prompts", async () => {
+  const workspace = await ensureWorkspaceRegistered(repoRoot, "repo");
+  const conversation = await testRuntimeManager.createConversation(workspace, {
+    backendId: "cursor-acp",
+    mode: "agent",
+    modelId: "test-fast",
+    modelName: "Test Fast",
+  });
+  const clientEventId = randomUUID();
+  const clientMessageId = randomUUID();
+
+  await testRuntimeManager.promptConversation(
+    workspace,
+    conversation.id,
+    "dedupe me",
+    undefined,
+    { clientEventId, clientMessageId }
+  );
+  await testRuntimeManager.promptConversation(
+    workspace,
+    conversation.id,
+    "dedupe me",
+    undefined,
+    { clientEventId, clientMessageId }
+  );
+
+  const record = await readConversationRecord(workspace.id, conversation.id);
+  assert.equal(record?.queuedPrompts.length, 0);
+});
+
 test("permission requests persist and can be answered", async () => {
   const workspace = await ensureWorkspaceRegistered(repoRoot, "repo");
   const conversation = await testRuntimeManager.createConversation(workspace, {
@@ -760,6 +790,11 @@ test("consecutive handoffs coalesce superseded events and only keep the latest",
     "expected toolCallCount to be present"
   );
 
+  await waitFor(
+    "first handoff turn idle",
+    () => readConversationSnapshot(workspace.id, source.id),
+    (value) => value.conversation.status === "idle"
+  );
   await testRuntimeManager.handoffConversation(workspace, source.id, "cursor-acp");
   const afterSecond = await readConversationSnapshot(workspace.id, source.id);
   const secondHandoffCount = afterSecond.events.filter((e) => e.kind === "agent_handoff").length;
@@ -770,6 +805,11 @@ test("consecutive handoffs coalesce superseded events and only keep the latest",
   assert.equal(secondHandoff.fromAgent, "opencode-acp", "expected fromAgent to be the second source");
   assert.equal(secondHandoff.toAgent, "cursor-acp", "expected toAgent to be the second target");
 
+  await waitFor(
+    "second handoff turn idle",
+    () => readConversationSnapshot(workspace.id, source.id),
+    (value) => value.conversation.status === "idle"
+  );
   await testRuntimeManager.handoffConversation(workspace, source.id, "opencode-acp");
   const afterThird = await readConversationSnapshot(workspace.id, source.id);
   const thirdHandoffCount = afterThird.events.filter((e) => e.kind === "agent_handoff").length;

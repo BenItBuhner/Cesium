@@ -13,6 +13,7 @@ import {
   placeMonacoCursorFromClientPoint,
 } from "@/components/editor/MonacoHardwareAdapter";
 import { resolveEditorLanguageId } from "@/lib/editor-language";
+import { readFile } from "@/lib/server-api";
 
 interface CodeEditorProps {
   content: string;
@@ -24,6 +25,188 @@ interface CodeEditorProps {
   /** Fires on every keystroke (and when `content` loads from parent). Used for save without debounce lag. */
   onLiveContentChange?: (content: string) => void;
   onSave?: (content: string) => Promise<unknown>;
+}
+
+const IMPORT_SPECIFIER_RE =
+  /(?:import|export)\s+(?:type\s+)?(?:[^"'()]*?\s+from\s+)?["']([^"']+)["']|import\s*\(\s*["']([^"']+)["']\s*\)/g;
+const LOCAL_MODULE_EXTENSIONS = [".ts", ".tsx", ".js", ".jsx", ".mts", ".cts", ".json"];
+const MAX_IMPORT_PRELOAD_DEPTH = 2;
+const MAX_IMPORT_PRELOAD_FILES = 80;
+const MAX_IMPORT_PRELOAD_BYTES = 1_500_000;
+
+let monacoTypeScriptConfigured = false;
+
+function normalizeWorkspacePath(value: string): string {
+  return value.replace(/\\/g, "/").replace(/^\/+/, "").replace(/\/+/g, "/");
+}
+
+function dirname(value: string): string {
+  const normalized = normalizeWorkspacePath(value);
+  const index = normalized.lastIndexOf("/");
+  return index >= 0 ? normalized.slice(0, index) : "";
+}
+
+function joinWorkspacePath(...parts: string[]): string {
+  const segments: string[] = [];
+  for (const part of parts.join("/").split("/")) {
+    if (!part || part === ".") {
+      continue;
+    }
+    if (part === "..") {
+      segments.pop();
+      continue;
+    }
+    segments.push(part);
+  }
+  return segments.join("/");
+}
+
+function workspacePathToModelUri(pathname: string): string {
+  return encodeURI(`file:///${normalizeWorkspacePath(pathname)}`);
+}
+
+function extractLocalImportSpecifiers(source: string): string[] {
+  const specifiers = new Set<string>();
+  for (const match of source.matchAll(IMPORT_SPECIFIER_RE)) {
+    const specifier = (match[1] ?? match[2] ?? "").trim();
+    if (specifier.startsWith(".") || specifier.startsWith("@/")) {
+      specifiers.add(specifier);
+    }
+  }
+  return [...specifiers];
+}
+
+function candidatePathsForImport(fromPath: string, specifier: string): string[] {
+  const rawBase = specifier.startsWith("@/")
+    ? joinWorkspacePath("src", specifier.slice(2))
+    : joinWorkspacePath(dirname(fromPath), specifier);
+  const base = normalizeWorkspacePath(rawBase);
+  const candidates = new Set<string>();
+  candidates.add(base);
+  const hasExtension = /\.[A-Za-z0-9]+$/.test(base);
+  if (!hasExtension) {
+    for (const extension of LOCAL_MODULE_EXTENSIONS) {
+      candidates.add(`${base}${extension}`);
+    }
+    for (const extension of LOCAL_MODULE_EXTENSIONS) {
+      candidates.add(`${base}/index${extension}`);
+    }
+  }
+  return [...candidates];
+}
+
+function configureTypeScriptWorkspace(monaco: Monaco): void {
+  if (monacoTypeScriptConfigured) {
+    return;
+  }
+  const ts = monaco.languages.typescript;
+  const compilerOptions = {
+    allowJs: true,
+    allowNonTsExtensions: true,
+    allowSyntheticDefaultImports: true,
+    baseUrl: "file:///",
+    esModuleInterop: true,
+    isolatedModules: true,
+    jsx: ts.JsxEmit.ReactJSX,
+    module: ts.ModuleKind.ESNext,
+    moduleResolution: ts.ModuleResolutionKind.NodeJs,
+    noEmit: true,
+    paths: {
+      "@/*": ["src/*"],
+    },
+    resolveJsonModule: true,
+    skipLibCheck: true,
+    strict: true,
+    target: ts.ScriptTarget.ESNext,
+  };
+  ts.typescriptDefaults.setCompilerOptions(compilerOptions);
+  ts.javascriptDefaults.setCompilerOptions(compilerOptions);
+  ts.typescriptDefaults.setDiagnosticsOptions({
+    noSemanticValidation: false,
+    noSyntaxValidation: false,
+    noSuggestionDiagnostics: false,
+  });
+  ts.javascriptDefaults.setDiagnosticsOptions({
+    noSemanticValidation: false,
+    noSyntaxValidation: false,
+    noSuggestionDiagnostics: false,
+  });
+  monacoTypeScriptConfigured = true;
+}
+
+async function readFirstExistingImportCandidate(
+  candidates: string[]
+): Promise<{ path: string; content: string; language: string } | null> {
+  for (const candidate of candidates) {
+    try {
+      const result = await readFile(candidate, { full: true });
+      if (result.fileKind === "image" || result.content.length > MAX_IMPORT_PRELOAD_BYTES) {
+        continue;
+      }
+      return {
+        path: candidate,
+        content: result.content,
+        language: resolveEditorLanguageId(result.language, candidate),
+      };
+    } catch {
+      // Try the next extension/index candidate.
+    }
+  }
+  return null;
+}
+
+async function preloadImportModels(input: {
+  monaco: Monaco;
+  rootPath: string;
+  rootContent: string;
+  signal: AbortSignal;
+}): Promise<void> {
+  const queue: Array<{ path: string; content: string; depth: number }> = [
+    {
+      path: normalizeWorkspacePath(input.rootPath),
+      content: input.rootContent,
+      depth: 0,
+    },
+  ];
+  const seen = new Set<string>([normalizeWorkspacePath(input.rootPath)]);
+  let loaded = 0;
+
+  while (queue.length > 0 && loaded < MAX_IMPORT_PRELOAD_FILES) {
+    if (input.signal.aborted) {
+      return;
+    }
+    const current = queue.shift();
+    if (!current || current.depth >= MAX_IMPORT_PRELOAD_DEPTH) {
+      continue;
+    }
+    for (const specifier of extractLocalImportSpecifiers(current.content)) {
+      if (loaded >= MAX_IMPORT_PRELOAD_FILES || input.signal.aborted) {
+        return;
+      }
+      const resolved = await readFirstExistingImportCandidate(
+        candidatePathsForImport(current.path, specifier)
+      );
+      if (!resolved || seen.has(resolved.path)) {
+        continue;
+      }
+      seen.add(resolved.path);
+      loaded += 1;
+      const uri = input.monaco.Uri.parse(workspacePathToModelUri(resolved.path));
+      const existing = input.monaco.editor.getModel(uri);
+      if (existing) {
+        if (existing.getValue() !== resolved.content) {
+          existing.setValue(resolved.content);
+        }
+      } else {
+        input.monaco.editor.createModel(resolved.content, resolved.language, uri);
+      }
+      queue.push({
+        path: resolved.path,
+        content: resolved.content,
+        depth: current.depth + 1,
+      });
+    }
+  }
 }
 
 function defineOpenCursorThemes(monaco: Monaco) {
@@ -324,6 +507,7 @@ export function CodeEditor({
 
   function handleBeforeMount(monaco: Monaco) {
     registerOpenCursorLanguages(monaco);
+    configureTypeScriptWorkspace(monaco);
     defineOpenCursorThemes(monaco);
     monacoRef.current = monaco;
   }
@@ -347,6 +531,26 @@ export function CodeEditor({
     }, 250);
     return () => window.clearTimeout(timeout);
   }, [content, onContentChange, value]);
+
+  useEffect(() => {
+    const monaco = monacoRef.current;
+    if (!monaco || !filePath || !["typescript", "javascript"].includes(editorLanguage)) {
+      return;
+    }
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      void preloadImportModels({
+        monaco,
+        rootPath: filePath,
+        rootContent: value,
+        signal: controller.signal,
+      }).catch(() => undefined);
+    }, 150);
+    return () => {
+      controller.abort();
+      window.clearTimeout(timer);
+    };
+  }, [editorLanguage, filePath, value]);
 
   const handleSave = useCallback(async () => {
     if (!onSave) return;

@@ -421,7 +421,11 @@ const showRecentChatsSection =
         onModelChange={(next) => {
           if (composerState.busy) {
             const modelId = next.modelValue ?? next.id;
-            setPendingConfigForConversation(conversationId, { modelId, modelName: next.name });
+            setPendingConfigForConversation(conversationId, {
+              modelId,
+              modelName: next.name,
+              setConfigOptions: next.configSelections,
+            });
           } else {
             void setConversationModel(conversationId, next);
           }

@@ -1,23 +1,28 @@
 # OpenCursor
 
-OpenCursor is a **local-first browser workbench**: a **Next.js** UI plus a **Node (Hono) companion server** that gives you an **editor** (Monaco), **file tree**, **terminals** (real PTYs), and **multi-backend AI agent chats** against **real folders on disk**. The server persists workspace metadata, conversation history, and optional auth under a configurable data directory.
+OpenCursor is a **local-first AI workbench** for running agent chats and a browser IDE against real folders on your machine. It pairs a **Next.js** frontend with a **Bun + Hono** backend that serves REST/WebSocket APIs for workspaces, file edits, terminals, agent conversations, optional auth, and optional speech-to-text.
 
-- **Frontend** (default `http://localhost:3000`): workbench shell with an **agent** view and a classic **IDE** view (`?view=editor`).
-- **Backend** (default `http://localhost:9100`): REST + WebSocket APIs for workspaces, FS, terminals, agents, optional speech-to-text, and an allowlisted browser fetch proxy.
+- **Frontend**: `http://localhost:3000`
+- **Backend / bot server**: `http://localhost:9100`
+- **Main UI**: `/` with agent and editor views. Legacy `/agent` and `/editor` routes redirect back to `/`.
 
-Legacy routes `/agent` and `/editor` redirect to the same workbench on `/`.
+In practice: start the backend, start the frontend, open the app, add a workspace folder, choose an agent backend/model, and send a message.
 
 ## Prerequisites
 
 - **Node.js** (current LTS recommended; the repo targets Next 16 + React 19).
-- **npm** (or compatible client).
+- **npm** for the frontend and package scripts.
+- **Bun** for the backend runtime (`server` runs with `bun src/runtime/bun-server.ts`).
+- **Docker Desktop** (optional) if you want local Postgres + Redis instead of the default file-based storage.
 - **Agent CLIs** (optional, depending on backends you want):
   - **Cursor Agent** (ACP) on your `PATH` or via `OPENCURSOR_CURSOR_CLI_BIN` / `OPENCURSOR_CURSOR_ACP_BIN`.
+  - **Cursor SDK** via `@cursor/sdk` plus a Cursor API key configured in Settings or environment.
+  - **Claude Code SDK** via `@anthropic-ai/claude-agent-sdk` plus `ANTHROPIC_API_KEY` or a supported Claude provider env.
   - **OpenCode** ACP binary or install under `~/.opencode/bin` (see `OPENCURSOR_OPENCODE_ACP_BIN`, `OPENCURSOR_REAL_HOME`).
   - **Gemini CLI** in ACP mode (`gemini --acp`; install via `@google/gemini-cli`, or set `OPENCURSOR_GEMINI_CLI_BIN`).
   - **Codex** / **Claude** CLIs if you use those adapter backends (`OPENCURSOR_CODEX_BIN`, `OPENCURSOR_CLAUDE_BIN`).
 
-## Quick start (development)
+## Quick Start
 
 From the repository root:
 
@@ -28,38 +33,102 @@ From the repository root:
    npm install --prefix server
    ```
 
-2. **Configure environment**  
-   Copy `.env.example` to `.env.local` at the repo root (and/or create `server/.env`).   The server loads variables in this order (each step overrides the previous):
+2. **Configure environment**
+
+   Copy `.env.example` to `.env.local` at the repo root and adjust the values for your machine:
+
+   ```bash
+   cp .env.example .env.local
+   ```
+
+   On Windows PowerShell:
+
+   ```powershell
+   Copy-Item .env.example .env.local
+   ```
+
+   At minimum, keep `NEXT_PUBLIC_SERVER_URL=http://localhost:9100`. Set `WORKSPACE_ROOT` to the folder you want OpenCursor to open first.
+
+   The server loads variables in this order, with later files overriding earlier ones:
 
    - repo `.env`
    - repo `.env.local`
    - `server/.env`
    - `server/.env.local`
 
-   At minimum, set **`NEXT_PUBLIC_SERVER_URL`** so the browser reaches the API (see [Environment variables](#environment-variables)).
+3. **Optional: start Postgres + Redis**
 
-3. **Run the app**
+   OpenCursor can run without Docker using the legacy JSON storage driver. For the faster Postgres/Redis-backed setup:
 
-   - **Frontend only:** `npm run dev` → [http://localhost:3000](http://localhost:3000)
-   - **Backend only:** `npm run dev:server` → listens on **`PORT`** (default `9100`)
-   - **Typical dev:** two terminals — one for `npm run dev`, one for `npm run dev:server`
+   ```bash
+   docker compose up -d
+   npm --prefix server run db:migrate
+   ```
 
-4. Open the UI, pick or add a **workspace** (folder on disk). The server restricts which roots are allowed unless you use the escape hatch env (see below).
+   Then set these in `.env.local`:
+
+   ```env
+   OPENCURSOR_STORAGE_DRIVER=pg
+   DATABASE_URL=postgres://opencursor:opencursor@localhost:5433/opencursor
+   REDIS_URL=redis://localhost:6380
+   ```
+
+4. **Run the app**
+
+   Use two terminals:
+
+   ```bash
+   npm run dev
+   ```
+
+   ```bash
+   npm run dev:server
+   ```
+
+   Open [http://localhost:3000](http://localhost:3000).
+
+5. **Start using it**
+
+   Add or select a workspace folder, open the model picker in the chat composer, choose a harness/backend such as Cursor SDK, Claude Code SDK, Codex, OpenCode, Claude, or Gemini, pick a model, and send a prompt. Use Settings to add API keys, enable/disable models, configure permission behavior, and manage storage.
 
 ## Production build
 
+Build both apps:
+
 ```bash
-npm run prod
+npm run build
+npm --prefix server run build
 ```
 
-This runs `next build`, builds the server with `tsc`, then starts both **Next** (`next start`) and the **compiled server** (`node dist/index.js` under `server/`). Adjust `PORT`, `HOST`, and `NEXT_PUBLIC_SERVER_URL` for your deployment.
+Run production locally with two long-running processes:
 
-**PWA note:** In production, a service worker is registered. If you hit stale chunks after redeploying locally, set `DISABLE_NEXT_PWA=1` for the Next process (see env table below).
+```bash
+npm run start
+```
+
+```bash
+npm --prefix server run start
+```
+
+The frontend serves Next with `next start`; the backend serves the Bun runtime on `PORT` (default `9100`). Adjust `HOST`, `PORT`, `NEXT_PUBLIC_SERVER_URL`, `ALLOWED_ORIGINS`, workspace roots, and storage variables for your deployment target.
+
+If your shell supports `bash`, `npm run prod` builds both and uses the repo `start:all` helper. On Windows PowerShell, the two-process flow above is clearer and easier to debug.
+
+**PWA note:** The service worker is disabled by default. To opt in, build/run the frontend with `ENABLE_NEXT_PWA=1`.
+
+### Deployment Checklist
+
+- Run the frontend and backend as separate long-lived processes or services.
+- Point `NEXT_PUBLIC_SERVER_URL` at the backend origin visible from the browser.
+- Set `ALLOWED_ORIGINS` to the exact frontend origin.
+- Set `WORKSPACE_ALLOWED_ROOTS` to the folders users are allowed to open.
+- Use `OPENCURSOR_AUTH_USERNAME` and `OPENCURSOR_AUTH_PASSWORD` if the app is reachable by anyone besides you.
+- Use Postgres/Redis for persistent multi-process deployments; use legacy JSON only for simple local installs.
 
 ## Using the workbench
 
 - **Workspaces:** Register one or more directories; switching workspace sends `x-opencursor-workspace-id` on API calls.
-- **Agent view:** Create conversations, choose a **backend** (Cursor ACP, OpenCode ACP, Gemini CLI ACP, Codex/Claude adapters when installed), send messages, approve tool permissions when the provider supports it. Live updates use **`/ws/agent`**.
+- **Agent view:** Create conversations, choose a **backend** (Cursor SDK, Claude Code SDK, Cursor ACP, OpenCode ACP, Gemini CLI ACP, Codex/Claude adapters when installed), send messages, approve tool permissions when the provider supports it. Live updates use **`/ws/agent`**.
 - **IDE view:** Edit files, use integrated **xterm** terminals (**`/ws/terminal`**), file watcher (**`/ws/fs`**).
 - **Voice input (optional):** If transcription is configured, the composer can send audio to **`POST /api/audio/transcriptions`** (OpenAI-compatible multipart API).
 
@@ -71,7 +140,7 @@ This runs `next build`, builds the server with `tsc`, then starts both **Next** 
 | -------- | ----------- |
 | `NEXT_PUBLIC_SERVER_URL` | Base URL of the OpenCursor API (no trailing slash), e.g. `http://localhost:9100` or `http://192.168.1.10:9100`. **Required** for a non-default host/port. |
 | `NEXT_ALLOWED_DEV_ORIGINS` | Space- or comma-separated origins allowed for dev HMR/assets when not using localhost (see `next.config.ts`). |
-| `DISABLE_NEXT_PWA` | Set to `1` with `next start` to disable the PWA service worker (helps avoid stale chunk errors after local rebuilds). |
+| `ENABLE_NEXT_PWA` | Set to `1` before building/running Next if you intentionally want the PWA service worker. It is disabled by default to avoid stale local chunks. |
 
 ### Server: listen + CORS
 
@@ -140,6 +209,12 @@ Driver resolution (first match wins):
 
 | Variable | Description |
 | -------- | ----------- |
+| `CURSOR_API_KEY` | Cursor SDK API key. If unset, configure it in the app under Settings; stored credentials are kept under `OPENCURSOR_DATA_DIR`. |
+| `ANTHROPIC_API_KEY` | Claude Code SDK API key used by `@anthropic-ai/claude-agent-sdk`. |
+| `ANTHROPIC_BASE_URL` / `ANTHROPIC_BETAS` | Optional Anthropic API overrides for Claude Code SDK. |
+| `CLAUDE_CODE_USE_BEDROCK` / `CLAUDE_CODE_USE_VERTEX` / `CLAUDE_CODE_USE_FOUNDRY` | Optional provider selectors for Claude Code SDK when not using `ANTHROPIC_API_KEY`. |
+| `CLAUDE_AGENT_SDK_CLIENT_APP` | Optional client app identifier sent by the Claude Agent SDK. Defaults internally to an OpenCursor identifier. |
+| `OPENCURSOR_CLAUDE_CODE_SDK_ALLOW_BYPASS` | Set to `1` to allow the Claude Code SDK `bypassPermissions` mode. Leave unset for normal permission safety. |
 | `OPENCURSOR_CURSOR_CLI_BIN` | Absolute path to **Cursor Agent** (overrides `PATH`; same as legacy `OPENCURSOR_CURSOR_ACP_BIN`). |
 | `OPENCURSOR_CURSOR_ACP_BIN` | Same intent as `OPENCURSOR_CURSOR_CLI_BIN` (either may be set). |
 | `OPENCURSOR_CURSOR_AGENT_ARGS` | JSON array of extra argv strings after the binary. |
@@ -244,7 +319,7 @@ npm test --prefix server
 - **Browser cannot reach API / CORS errors:** Set `NEXT_PUBLIC_SERVER_URL` to the actual server origin and add the **exact** Next.js origin (including scheme and port) to `ALLOWED_ORIGINS`.
 - **Agent backend “not available”:** Install the CLI or set the corresponding `OPENCURSOR_*_BIN` path; for OpenCode in containers, set `OPENCURSOR_REAL_HOME`.
 - **Transcription 503 / not configured:** Set transcription env vars or a config file; check `GET /health` on the server.
-- **ChunkLoadError after upgrade:** `DISABLE_NEXT_PWA=1` for Next, or hard-refresh; dev mode sets `no-store` on `/_next/static` to reduce this.
+- **ChunkLoadError after upgrade:** The PWA service worker is disabled by default. If you opted in with `ENABLE_NEXT_PWA=1`, hard-refresh or unregister the service worker after local rebuilds.
 
 ## License / project meta
 

@@ -10,7 +10,7 @@ import { HardwareAwareTextInput } from "@/components/input/HardwareAwareTextFiel
 const shell =
   "flex w-full max-w-[640px] flex-col overflow-hidden rounded-[var(--radius-card)] border border-[var(--palette-border)] bg-[var(--palette-surface)] shadow-[var(--palette-shadow)] max-h-[min(72vh,720px)]";
 
-type Mode = "clone" | "browse" | "newfolder" | "remove";
+type Mode = "clone" | "browse" | "newfolder" | "worktrees" | "remove";
 
 export function WorkspaceStudioModal({
   open,
@@ -24,6 +24,9 @@ export function WorkspaceStudioModal({
   const {
     cloneWorkspaceFromGit,
     createWorkspace,
+    deleteWorktree,
+    gitStatus,
+    refreshGitStatus,
     deleteWorkspace,
     homeWorkspaceId,
     openFolder,
@@ -49,6 +52,7 @@ export function WorkspaceStudioModal({
   const [newFolderName, setNewFolderName] = useState("");
   const [newFolderParent, setNewFolderParent] = useState("");
   const [newFolderBusy, setNewFolderBusy] = useState(false);
+  const [worktreeBusy, setWorktreeBusy] = useState<string | null>(null);
 
   const [removeBusy, setRemoveBusy] = useState<string | null>(null);
 
@@ -133,6 +137,11 @@ export function WorkspaceStudioModal({
     })();
   }, [open, mode]);
 
+  useEffect(() => {
+    if (!open || mode !== "worktrees") return;
+    void refreshGitStatus().catch(() => undefined);
+  }, [open, mode, refreshGitStatus]);
+
   const flash = (msg: string) => {
     setToast(msg);
     window.setTimeout(() => setToast(null), 3200);
@@ -215,6 +224,37 @@ export function WorkspaceStudioModal({
     }
   };
 
+  const handleOpenWorktree = async (root: string) => {
+    setWorktreeBusy(root);
+    try {
+      await openFolder(root);
+      flash("Worktree opened.");
+      onClose();
+    } catch (e) {
+      flash(e instanceof Error ? e.message : "Failed to open worktree.");
+    } finally {
+      setWorktreeBusy(null);
+    }
+  };
+
+  const handleDeleteWorktree = async (root: string, force = false) => {
+    if (
+      typeof window !== "undefined" &&
+      !window.confirm(`Remove git worktree at ${root}?`)
+    ) {
+      return;
+    }
+    setWorktreeBusy(root);
+    try {
+      await deleteWorktree({ path: root, force });
+      flash("Worktree removed.");
+    } catch (e) {
+      flash(e instanceof Error ? e.message : "Failed to remove worktree.");
+    } finally {
+      setWorktreeBusy(null);
+    }
+  };
+
   const tabClass = (m: Mode) =>
     `rounded-[var(--radius-tab)] px-3 py-1.5 text-[12px] font-medium transition-colors ${
       mode === m
@@ -266,6 +306,12 @@ export function WorkspaceStudioModal({
             </button>
             <button type="button" className={tabClass("newfolder")} onClick={() => setMode("newfolder")}>
               New empty folder
+            </button>
+            <button type="button" className={tabClass("worktrees")} onClick={() => setMode("worktrees")}>
+              <span className="inline-flex items-center gap-1">
+                <FolderGit2 className="size-[14px]" strokeWidth={1.5} />
+                Worktrees
+              </span>
             </button>
             <button type="button" className={tabClass("remove")} onClick={() => setMode("remove")}>
               <span className="inline-flex items-center gap-1">
@@ -390,6 +436,61 @@ export function WorkspaceStudioModal({
                   Open this folder
                 </button>
               </div>
+            </div>
+          )}
+
+          {mode === "worktrees" && (
+            <div className="flex flex-col gap-3">
+              {!gitStatus?.isGitRepo ? (
+                <div className="rounded-[var(--radius-tab)] border border-[var(--palette-border)] px-3 py-4 text-[12px] text-[var(--text-secondary)]">
+                  The active workspace is not a git repository.
+                </div>
+              ) : (
+                <>
+                  <div className="text-[11px] text-[var(--text-secondary)]">
+                    Current branch:{" "}
+                    <span className="font-mono text-[var(--text-primary)]">
+                      {gitStatus.currentBranch ?? "detached"}
+                    </span>
+                    {gitStatus.dirty ? " (dirty)" : ""}
+                  </div>
+                  <div className="flex flex-col rounded-[var(--radius-tab)] border border-[var(--palette-border)]">
+                    {gitStatus.worktrees.map((worktree) => (
+                      <div
+                        key={worktree.path}
+                        className="flex items-center gap-2 border-b border-[var(--palette-border)] px-3 py-2 last:border-b-0"
+                      >
+                        <FolderGit2 className="size-[15px] shrink-0 text-[var(--text-secondary)]" />
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate text-[12.5px] text-[var(--text-primary)]">
+                            {worktree.branch ?? "Detached"}
+                            {worktree.current ? " · current" : ""}
+                          </div>
+                          <div className="truncate font-mono text-[10.5px] text-[var(--text-secondary)]">
+                            {worktree.path}
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          disabled={worktreeBusy === worktree.path || worktree.current}
+                          onClick={() => void handleOpenWorktree(worktree.path)}
+                          className="rounded-[var(--radius-tab)] px-2 py-1 text-[11px] text-[var(--text-primary)] transition-colors hover:bg-[var(--bg-card)] disabled:opacity-50"
+                        >
+                          Open
+                        </button>
+                        <button
+                          type="button"
+                          disabled={worktreeBusy === worktree.path || worktree.current}
+                          onClick={() => void handleDeleteWorktree(worktree.path)}
+                          className="rounded-[var(--radius-tab)] px-2 py-1 text-[11px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-card)] hover:text-[var(--text-primary)] disabled:opacity-50"
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
             </div>
           )}
 

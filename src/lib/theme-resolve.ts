@@ -56,7 +56,7 @@ function partialForThemeId(
 /**
  * The new-design overlay only applies to the default preset so user-selected
  * themes (builtin or custom) stay untouched when `uiDesignMode === "new"`.
- * Light is a no-op for this pass; dark is the Cursor 3.1 surface palette.
+ * Dark and light each carry a Cursor 3.1 surface palette for that mode.
  */
 function newDesignOverlayForConfig(
   config: ThemeConfig,

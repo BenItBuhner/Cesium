@@ -16,12 +16,18 @@ export function getAgentLabel(agentId: string): string {
       return "Cursor SDK";
     case "opencode-acp":
       return "OpenCode";
+    case "opencode-server":
+      return "OpenCode Server";
     case "gemini-acp":
       return "Gemini";
     case "codex-adapter":
       return "Codex";
+    case "codex-app-server":
+      return "Codex App Server";
     case "claude-adapter":
       return "Claude Code";
+    case "claude-code-sdk":
+      return "Claude Code SDK";
     default:
       return agentId;
   }
@@ -32,9 +38,12 @@ function parseHandoffBackendId(raw: string): AgentBackendId | null {
     case "cursor-acp":
     case "cursor-sdk":
     case "opencode-acp":
+    case "opencode-server":
     case "gemini-acp":
     case "codex-adapter":
+    case "codex-app-server":
     case "claude-adapter":
+    case "claude-code-sdk":
       return raw;
     default:
       return null;

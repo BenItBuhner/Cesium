@@ -20,6 +20,9 @@ export function buildQueuedConfigOverride(
     override.modelId = currentModelId;
     override.modelName = currentModel.name;
   }
+  if (currentModel.configSelections?.length) {
+    override.setConfigOptions = currentModel.configSelections;
+  }
   return Object.keys(override).length > 0 ? override : undefined;
 }
 

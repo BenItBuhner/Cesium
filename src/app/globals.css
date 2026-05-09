@@ -104,6 +104,8 @@
   /** Slightly raised surface for new-design composer chip controls (e.g. media [+]). */
   --agent-plus-button-bg: var(--agent-panel-bg);
   --agent-plus-button-bg-hover: var(--agent-card-hover-bg);
+  /** Plus control icon (new design can tune separately from --text-secondary). */
+  --agent-plus-button-icon: var(--text-secondary);
 
   /* Command palette & quick open */
   --palette-surface: #ffffff;
@@ -131,8 +133,14 @@
   --palette-icon-fallback: #6b6b6b;
 }
 
-html[data-ui-design="new"] {
-  /* Plus / media chip on the composer pill: lifted hue against the #212121 pill. */
+html[data-ui-design="new"]:not(.dark) {
+  --agent-plus-button-bg: #eaeaea;
+  --agent-plus-button-bg-hover: #e0e0e0;
+  --agent-plus-button-icon: #767676;
+}
+
+html[data-ui-design="new"].dark {
+  /* Plus / media chip: slightly lifted surface on the dark composer pill only. */
   --agent-plus-button-bg: #303030;
   --agent-plus-button-bg-hover: #3a3a3a;
 }

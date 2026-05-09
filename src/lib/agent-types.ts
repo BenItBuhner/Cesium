@@ -11,9 +11,12 @@ export type AgentBackendId =
   | "cursor-acp"
   | "cursor-sdk"
   | "opencode-acp"
+  | "opencode-server"
   | "gemini-acp"
   | "codex-adapter"
-  | "claude-adapter";
+  | "codex-app-server"
+  | "claude-adapter"
+  | "claude-code-sdk";
 
 export type AgentConversationStatus =
   | "idle"

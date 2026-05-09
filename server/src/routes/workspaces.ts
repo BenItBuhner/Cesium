@@ -2,6 +2,12 @@ import path from "node:path";
 import { Hono } from "hono";
 import { resolveRepoRootFromProcessCwd } from "../lib/persistence.js";
 import { cloneGitRepository } from "../lib/git-workspace.js";
+import {
+  createWorkspaceWorktree,
+  deleteWorkspaceWorktree,
+  getGitWorkspaceStatus,
+  switchWorkspaceBranch,
+} from "../lib/git-worktrees.js";
 import { listBrowseDirectories, listBrowseRoots } from "../lib/workspace-browse.js";
 import {
   createWorkspace,
@@ -324,6 +330,163 @@ workspaceRoutes.patch("/api/workspaces/default", async (c) => {
   await setDefaultWorkspace(body.workspaceId);
   const profile = await getWorkspaceProfile();
   return c.json({ ok: true, defaultWorkspaceId: profile.defaultWorkspaceId });
+});
+
+workspaceRoutes.get("/api/workspaces/:workspaceId/git/status", async (c) => {
+  const workspaceId = c.req.param("workspaceId");
+  const workspace = await getWorkspaceById(workspaceId);
+  if (!workspace) {
+    return c.json({ error: `Unknown workspace: ${workspaceId}` }, 404);
+  }
+
+  const workspaces = await listWorkspaces();
+  const status = await getGitWorkspaceStatus(workspace, workspaces);
+  return c.json({ workspace, status });
+});
+
+workspaceRoutes.post("/api/workspaces/:workspaceId/git/switch", async (c) => {
+  const workspaceId = c.req.param("workspaceId");
+  const body = await c.req.json<{ branch?: string }>();
+  const workspace = await getWorkspaceById(workspaceId);
+  if (!workspace) {
+    return c.json({ error: `Unknown workspace: ${workspaceId}` }, 404);
+  }
+  if (!body.branch?.trim()) {
+    return c.json({ error: "Expected branch" }, 400);
+  }
+
+  try {
+    const workspaces = await listWorkspaces();
+    const result = await switchWorkspaceBranch({
+      workspace,
+      workspaces,
+      branch: body.branch,
+    });
+    if (result.checkedOutWorktree) {
+      const openedWorkspace = await ensureWorkspaceRegistered(
+        result.checkedOutWorktree.path,
+        result.checkedOutWorktree.workspaceName ?? result.checkedOutWorktree.branch ?? undefined
+      );
+      return c.json({
+        ok: true,
+        openedWorkspace,
+        checkedOutWorktree: {
+          ...result.checkedOutWorktree,
+          workspaceId: openedWorkspace.id,
+          workspaceName: openedWorkspace.name,
+        },
+        status: result.status,
+      });
+    }
+    return c.json({ ok: true, workspace, status: result.status });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Branch switch failed.";
+    return c.json({ error: message }, 400);
+  }
+});
+
+workspaceRoutes.post("/api/workspaces/:workspaceId/git/worktrees", async (c) => {
+  const workspaceId = c.req.param("workspaceId");
+  const body = await c.req.json<{
+    branch?: string;
+    baseBranch?: string;
+    newBranch?: boolean;
+    targetPath?: string;
+    runSetup?: boolean;
+    name?: string;
+  }>();
+  const workspace = await getWorkspaceById(workspaceId);
+  if (!workspace) {
+    return c.json({ error: `Unknown workspace: ${workspaceId}` }, 404);
+  }
+  if (!body.branch?.trim()) {
+    return c.json({ error: "Expected branch" }, 400);
+  }
+
+  try {
+    const workspaces = await listWorkspaces();
+    const created = await createWorkspaceWorktree({
+      workspace,
+      workspaces,
+      branch: body.branch,
+      baseBranch: body.baseBranch,
+      newBranch: body.newBranch,
+      targetPath: body.targetPath,
+      runSetup: body.runSetup,
+    });
+    const openedWorkspace = await ensureWorkspaceRegistered(
+      created.path,
+      body.name?.trim() || created.branch
+    );
+    const [nextWorkspaces, profile, homePayload] = await Promise.all([
+      listWorkspaces(),
+      getWorkspaceProfile(),
+      homeWorkspaceIdPayload(),
+    ]);
+    return c.json(
+      {
+        ok: true,
+        workspace: openedWorkspace,
+        workspaces: nextWorkspaces,
+        defaultWorkspaceId: profile.defaultWorkspaceId,
+        recentWorkspaceIds: profile.recentWorkspaceIds,
+        ...homePayload,
+        worktree: {
+          path: created.path,
+          branch: created.branch,
+          existing: Boolean(created.existingWorktree),
+        },
+        setup: created.setup,
+      },
+      created.existingWorktree ? 200 : 201
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Worktree creation failed.";
+    return c.json({ error: message }, 400);
+  }
+});
+
+workspaceRoutes.delete("/api/workspaces/:workspaceId/git/worktrees", async (c) => {
+  const workspaceId = c.req.param("workspaceId");
+  const body: { path?: string; force?: boolean } = await c.req
+    .json<{ path?: string; force?: boolean }>()
+    .catch(() => ({}));
+  const workspace = await getWorkspaceById(workspaceId);
+  if (!workspace) {
+    return c.json({ error: `Unknown workspace: ${workspaceId}` }, 404);
+  }
+  if (!body.path?.trim()) {
+    return c.json({ error: "Expected path" }, 400);
+  }
+
+  try {
+    const workspaces = await listWorkspaces();
+    await deleteWorkspaceWorktree({
+      workspace,
+      workspaces,
+      targetPath: body.path,
+      force: body.force,
+    });
+    const targetWorkspace = workspaces.find((item) => item.root === body.path);
+    if (targetWorkspace) {
+      await removeWorkspace(targetWorkspace.id);
+    }
+    const [nextWorkspaces, profile, homePayload] = await Promise.all([
+      listWorkspaces(),
+      getWorkspaceProfile(),
+      homeWorkspaceIdPayload(),
+    ]);
+    return c.json({
+      ok: true,
+      workspaces: nextWorkspaces,
+      defaultWorkspaceId: profile.defaultWorkspaceId,
+      recentWorkspaceIds: profile.recentWorkspaceIds,
+      ...homePayload,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Worktree deletion failed.";
+    return c.json({ error: message }, 400);
+  }
 });
 
 workspaceRoutes.get("/api/workspaces/:workspaceId/session", async (c) => {

@@ -14,6 +14,9 @@ import type {
 import type { WorkspaceSessionState } from "@/lib/workspace-session";
 import type {
   FileNode,
+  GitWorkspaceStatus,
+  GitWorktreeInfo,
+  GitWorktreeSetupResult,
   ImageAttachment,
   QueuedPromptConfigOverride,
   TerminalInfo,
@@ -395,6 +398,86 @@ export async function cloneWorkspaceFromGit(input: {
     {
       method: "POST",
       body: JSON.stringify(input),
+    },
+    { skipWorkspaceHeader: true }
+  );
+}
+
+export async function fetchWorkspaceGitStatus(workspaceId: string): Promise<{
+  workspace: WorkspaceRecord;
+  status: GitWorkspaceStatus;
+}> {
+  return request(
+    `/api/workspaces/${encodeURIComponent(workspaceId)}/git/status`,
+    undefined,
+    { skipWorkspaceHeader: true }
+  );
+}
+
+export async function switchWorkspaceGitBranch(input: {
+  workspaceId: string;
+  branch: string;
+}): Promise<{
+  ok: true;
+  workspace?: WorkspaceRecord;
+  openedWorkspace?: WorkspaceRecord;
+  checkedOutWorktree?: GitWorktreeInfo;
+  status: GitWorkspaceStatus;
+}> {
+  return request(
+    `/api/workspaces/${encodeURIComponent(input.workspaceId)}/git/switch`,
+    {
+      method: "POST",
+      body: JSON.stringify({ branch: input.branch }),
+    },
+    { skipWorkspaceHeader: true }
+  );
+}
+
+export async function createWorkspaceGitWorktree(input: {
+  workspaceId: string;
+  branch: string;
+  baseBranch?: string;
+  newBranch?: boolean;
+  targetPath?: string;
+  runSetup?: boolean;
+  name?: string;
+}): Promise<{
+  ok: true;
+  workspace: WorkspaceRecord;
+  workspaces: WorkspaceRecord[];
+  defaultWorkspaceId: string | null;
+  recentWorkspaceIds: string[];
+  homeWorkspaceId: string | null;
+  worktree: { path: string; branch: string; existing: boolean };
+  setup: GitWorktreeSetupResult;
+}> {
+  return request(
+    `/api/workspaces/${encodeURIComponent(input.workspaceId)}/git/worktrees`,
+    {
+      method: "POST",
+      body: JSON.stringify(input),
+    },
+    { skipWorkspaceHeader: true }
+  );
+}
+
+export async function deleteWorkspaceGitWorktree(input: {
+  workspaceId: string;
+  path: string;
+  force?: boolean;
+}): Promise<{
+  ok: true;
+  workspaces: WorkspaceRecord[];
+  defaultWorkspaceId: string | null;
+  recentWorkspaceIds: string[];
+  homeWorkspaceId: string | null;
+}> {
+  return request(
+    `/api/workspaces/${encodeURIComponent(input.workspaceId)}/git/worktrees`,
+    {
+      method: "DELETE",
+      body: JSON.stringify({ path: input.path, force: input.force }),
     },
     { skipWorkspaceHeader: true }
   );

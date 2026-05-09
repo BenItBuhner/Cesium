@@ -51,6 +51,8 @@ export type WorkedSessionEntry =
       toolKind?: string;
       title: string;
       detail?: string;
+      /** Full stdout/file/search payload kept behind a disclosure instead of inline. */
+      rawDetail?: string;
       variant?: "default" | "terminal";
       status?: "pending" | "running" | "completed" | "failed" | "cancelled";
       locations?: Array<{ path: string; line?: number }>;
@@ -276,6 +278,45 @@ export interface WorkspaceRecord {
   lastOpenedAt: number;
 }
 
+export type GitBranchInfo = {
+  name: string;
+  type: "local" | "remote";
+  current: boolean;
+  upstream?: string;
+};
+
+export type GitWorktreeInfo = {
+  path: string;
+  branch: string | null;
+  head: string | null;
+  detached: boolean;
+  bare: boolean;
+  current: boolean;
+  workspaceId?: string;
+  workspaceName?: string;
+};
+
+export type GitWorkspaceStatus = {
+  isGitRepo: boolean;
+  root: string;
+  repoRoot?: string;
+  repoKey?: string;
+  currentBranch?: string | null;
+  detached?: boolean;
+  dirty?: boolean;
+  aheadBehind?: { ahead: number; behind: number } | null;
+  branches: GitBranchInfo[];
+  worktrees: GitWorktreeInfo[];
+  error?: string;
+};
+
+export type GitWorktreeSetupResult = {
+  ran: boolean;
+  sourcePath?: string;
+  commands: string[];
+  output: string[];
+};
+
 export interface WorkspaceWindowRecord {
   id: string;
   workspaceId: string;
@@ -328,6 +369,7 @@ export type QueuedPromptConfigOverride = {
   mode?: EditorMode;
   modelId?: string;
   modelName?: string;
+  setConfigOptions?: Array<{ configId: string; value: string }>;
 };
 
 /** Pending follow-up prompt while the agent turn is still running. */
@@ -335,6 +377,8 @@ export type QueuedChatPrompt = {
   id: string;
   text: string;
   attachments?: ImageAttachment[];
+  clientEventId?: string;
+  clientMessageId?: string;
   configOverride?: QueuedPromptConfigOverride;
 };
 

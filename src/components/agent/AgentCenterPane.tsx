@@ -725,6 +725,7 @@ export function AgentCenterPane() {
                           setPendingConfigForConversation(selectedConversationId, {
                             modelId: next.modelValue ?? next.id,
                             modelName: next.name,
+                            setConfigOptions: next.configSelections,
                           });
                         } else {
                           void setConversationModel(selectedConversationId, next);

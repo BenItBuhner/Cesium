@@ -116,20 +116,129 @@ const SECTION_ORDER: ShortcutCommandSection[] = [
 const BACKEND_LABELS: Record<string, string> = {
   "cursor-acp": "Cursor",
   "cursor-sdk": "Cursor SDK",
-  "opencode-acp": "Opencode",
+  "opencode-acp": "OpenCode",
+  "opencode-server": "OpenCode Server",
   "gemini-acp": "Gemini",
   "codex-adapter": "Codex",
+  "codex-app-server": "Codex App Server",
   "claude-adapter": "Claude Code",
+  "claude-code-sdk": "Claude Code SDK",
 };
 
 const BACKEND_ORDER: string[] = [
   "cursor-acp",
   "cursor-sdk",
-  "opencode-acp",
-  "gemini-acp",
   "codex-adapter",
+  "codex-app-server",
+  "opencode-acp",
+  "opencode-server",
+  "gemini-acp",
   "claude-adapter",
+  "claude-code-sdk",
 ];
+
+type CompactModelToggleRow = {
+  id: string;
+  name: string;
+  on: boolean;
+  modelIds: string[];
+};
+
+const CURSOR_SDK_VARIANT_TOKENS = new Set([
+  "auto",
+  "default",
+  "extra",
+  "fast",
+  "high",
+  "large",
+  "long",
+  "low",
+  "max",
+  "medium",
+  "normal",
+  "short",
+  "standard",
+  "true",
+  "false",
+]);
+
+function stripCursorSdkModelParams(value: string): string {
+  return value.replace(/\[[^\]]+\]$/g, "").trim();
+}
+
+function normalizeModelVariantToken(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ");
+}
+
+function consumeSettingsModelVariantToken(words: string[]): boolean {
+  const last = words.at(-1);
+  if (!last) return false;
+  const normalizedLast = normalizeModelVariantToken(last);
+  if (normalizedLast === "true" || normalizedLast === "fast") {
+    words.pop();
+    return true;
+  }
+  if (normalizedLast === "false") {
+    words.pop();
+    if (normalizeModelVariantToken(words.at(-1) ?? "") === "fast") {
+      words.pop();
+    }
+    return true;
+  }
+  if (/^\d+\s*[km]$/i.test(last)) {
+    words.pop();
+    return true;
+  }
+  const prev = normalizeModelVariantToken(words.at(-2) ?? "");
+  if (prev === "extra" && normalizedLast === "high") {
+    words.pop();
+    words.pop();
+    return true;
+  }
+  if (CURSOR_SDK_VARIANT_TOKENS.has(normalizedLast)) {
+    words.pop();
+    return true;
+  }
+  return false;
+}
+
+function compactModelName(name: string, fallbackId: string): string {
+  const base = (name.trim() || fallbackId.trim() || "Model")
+    .replace(/\s*\([^)]*\)\s*$/g, "")
+    .trim();
+  const parts = base.split(/\s+/);
+  while (parts.length > 1 && consumeSettingsModelVariantToken(parts)) {}
+  return parts.join(" ") || base || fallbackId || "Model";
+}
+
+function compactModelRowsForBackend(
+  backendId: string,
+  models: ModelToggleState[]
+): CompactModelToggleRow[] {
+  const groups = new Map<string, CompactModelToggleRow>();
+  for (const model of models) {
+    const baseId = stripCursorSdkModelParams(model.id);
+    const baseName = compactModelName(model.name, baseId);
+    const key = baseName.toLowerCase();
+    const existing = groups.get(key);
+    if (existing) {
+      existing.on = existing.on || model.on;
+      existing.modelIds.push(model.id);
+      continue;
+    }
+    groups.set(key, {
+      id: key,
+      name: baseName,
+      on: model.on,
+      modelIds: [model.id],
+    });
+  }
+  return [...groups.values()].sort((a, b) => a.name.localeCompare(b.name));
+}
 
 export function SettingsSection({
   title,
@@ -1176,6 +1285,14 @@ export function ModelsSettingsPanel() {
     [settings.models.byBackend]
   );
 
+  const compactByBackend = useMemo(() => {
+    const result: Record<string, CompactModelToggleRow[]> = {};
+    for (const [backendId, models] of Object.entries(byBackend)) {
+      result[backendId] = compactModelRowsForBackend(backendId, models);
+    }
+    return result;
+  }, [byBackend]);
+
   const setModelsForBackend = useCallback(
     (backendId: string, updater: (current: ModelToggleState[]) => ModelToggleState[]) => {
       updateSettings((current) => ({
@@ -1192,18 +1309,21 @@ export function ModelsSettingsPanel() {
     [updateSettings]
   );
 
-  const toggleModel = useCallback(
-    (backendId: string, modelId: string, on: boolean) => {
+  const toggleModelGroup = useCallback(
+    (backendId: string, row: CompactModelToggleRow, on: boolean) => {
       const startedAt = performance.now();
+      const modelIds = new Set(row.modelIds);
       setModelsForBackend(backendId, (rows) =>
-        rows.map((r) => (r.id === modelId ? { ...r, on } : r))
+        rows.map((model) => (modelIds.has(model.id) ? { ...model, on } : model))
       );
       recordPerfSample("settings.models.toggle_visible", startedAt, {
         backendId,
-        modelId,
+        modelId: row.id,
         on,
       });
-      void saveModelToggleUpdates([{ backendId, modelId, on }]);
+      void saveModelToggleUpdates(
+        row.modelIds.map((modelId) => ({ backendId, modelId, on }))
+      );
     },
     [setModelsForBackend, saveModelToggleUpdates]
   );
@@ -1269,12 +1389,12 @@ export function ModelsSettingsPanel() {
     if (!q) {
       recordPerfSample("settings.models.filter_render", startedAt, {
         queryLength: 0,
-        backends: Object.keys(byBackend).length,
+        backends: Object.keys(compactByBackend).length,
       });
-      return byBackend;
+      return compactByBackend;
     }
-    const result: Record<string, ModelToggleState[]> = {};
-    for (const [backendId, models] of Object.entries(byBackend)) {
+    const result: Record<string, CompactModelToggleRow[]> = {};
+    for (const [backendId, models] of Object.entries(compactByBackend)) {
       const filtered = models.filter((m) => m.name.toLowerCase().includes(q));
       if (filtered.length > 0) {
         result[backendId] = filtered;
@@ -1285,7 +1405,7 @@ export function ModelsSettingsPanel() {
       backends: Object.keys(result).length,
     });
     return result;
-  }, [modelQuery, byBackend]);
+  }, [modelQuery, compactByBackend]);
 
   const sortedBackendIds = useMemo(() => {
     const present = new Set(Object.keys(filteredByBackend));
@@ -1295,17 +1415,17 @@ export function ModelsSettingsPanel() {
   }, [filteredByBackend]);
 
   const totalModels = useMemo(
-    () => Object.values(byBackend).reduce((sum, list) => sum + list.length, 0),
-    [byBackend]
+    () => Object.values(compactByBackend).reduce((sum, list) => sum + list.length, 0),
+    [compactByBackend]
   );
 
   const onCount = useMemo(
     () =>
-      Object.values(byBackend).reduce(
+      Object.values(compactByBackend).reduce(
         (sum, list) => sum + list.filter((m) => m.on).length,
         0
       ),
-    [byBackend]
+    [compactByBackend]
   );
 
   return (
@@ -1353,7 +1473,7 @@ export function ModelsSettingsPanel() {
       ) : null}
       {sortedBackendIds.map((backendId) => {
         const models = filteredByBackend[backendId] ?? [];
-  const allOn = models.length > 0 && models.every((m) => m.on);
+        const allOn = models.length > 0 && models.every((m) => m.on);
         const onCountForBackend = models.filter((m) => m.on).length;
         const collapsed = collapsedBackends.has(backendId);
         return (
@@ -1405,7 +1525,7 @@ export function ModelsSettingsPanel() {
                     trailing={
                       <ToggleSwitch
                         checked={m.on}
-                        onChange={(v) => toggleModel(backendId, m.id, v)}
+                        onChange={(v) => toggleModelGroup(backendId, m, v)}
                         size="sm"
                         variant="green"
                       />

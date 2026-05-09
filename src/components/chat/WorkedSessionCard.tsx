@@ -148,8 +148,15 @@ function toolTitleDisplayedPathLabels(
 function renderToolTitleLine(
   entry: Extract<WorkedSessionEntry, { kind: "tool" }>,
   titleClass: string,
-  workspaceRoot?: string | null
+  workspaceRoot?: string | null,
+  groupHoverMuted?: boolean
 ): ReactNode {
+  const mc = (base: string) =>
+    groupHoverMuted
+      ? `${base} transition-colors group-hover:text-[var(--text-primary)]`
+      : base;
+  const muted = mc("text-[var(--text-secondary)]");
+
   const suffix = filesFoundSuffix(entry.detail);
   const t = entry.title.trim();
   /** If we have concrete paths but a generic verb-only title, derive a readable title. */
@@ -181,12 +188,10 @@ function renderToolTitleLine(
     /^delete file$/i.test(tEffective)
   ) {
     return (
-      <p className={titleClass}>
+      <span className={`${titleClass} block min-w-0`}>
         <span>{effectiveTitle}</span>
-        {suffix ? (
-          <span className="text-[var(--text-secondary)]">{suffix}</span>
-        ) : null}
-      </p>
+        {suffix ? <span className={muted}>{suffix}</span> : null}
+      </span>
     );
   }
   const pathVerb = /^(Read|Update|Delete)\s+(.+)$/i.exec(tEffective);
@@ -194,36 +199,41 @@ function renderToolTitleLine(
     const verb = pathVerb[1]!;
     const pathPart = pathVerb[2]!;
     return (
-      <p className={titleClass}>
+      <span className={`${titleClass} block min-w-0`}>
         <span>{verb}</span>
-        <span className="text-[var(--text-secondary)]"> {pathPart}</span>
-        {suffix ? (
-          <span className="text-[var(--text-secondary)]">{suffix}</span>
-        ) : null}
-      </p>
+        <span className={muted}> {pathPart}</span>
+        {suffix ? <span className={muted}>{suffix}</span> : null}
+      </span>
     );
   }
 
   const webDot = /^Web ·\s+(.+)$/i.exec(tEffective);
   if (webDot) {
     return (
-      <p className={titleClass}>
+      <span className={`${titleClass} block min-w-0`}>
         <span>Web · </span>
-        <span className="text-[var(--text-secondary)]">{webDot[1]}</span>
-        {suffix ? (
-          <span className="text-[var(--text-secondary)]">{suffix}</span>
-        ) : null}
-      </p>
+        <span className={muted}>{webDot[1]}</span>
+        {suffix ? <span className={muted}>{suffix}</span> : null}
+      </span>
+    );
+  }
+
+  const ranCommand = /^Ran\s+(.+)$/i.exec(tEffective);
+  if (ranCommand) {
+    return (
+      <span className={`${titleClass} block min-w-0`}>
+        <span>Ran </span>
+        <span className={`${muted} font-mono text-[12px]`}>{ranCommand[1]}</span>
+        {suffix ? <span className={muted}>{suffix}</span> : null}
+      </span>
     );
   }
 
   return (
-    <p className={titleClass}>
+    <span className={`${titleClass} block min-w-0`}>
       <span>{effectiveTitle}</span>
-      {suffix ? (
-        <span className="text-[var(--text-secondary)]">{suffix}</span>
-      ) : null}
-    </p>
+      {suffix ? <span className={muted}>{suffix}</span> : null}
+    </span>
   );
 }
 
@@ -739,7 +749,7 @@ export function WorkedSessionCard({
           type="button"
           onClick={() => setOpen(!open)}
           aria-expanded={open}
-          className="flex w-full min-w-0 cursor-pointer items-center gap-[6px] text-left text-[var(--text-secondary)] transition-colors hover:text-[var(--text-primary)]"
+          className="relative z-[1] flex w-full min-w-0 cursor-pointer items-center gap-[6px] text-left text-[var(--text-secondary)] transition-colors hover:text-[var(--text-primary)]"
         >
           <span
             className={`font-sans text-[13px] font-normal leading-snug ${
@@ -812,7 +822,7 @@ export function WorkedSessionCard({
                   row.kind === "permission" ? (
                     <div
                       key={`perm-${embeddedPermissionCard?.permissionRequestId ?? "embed"}`}
-                      className="flex flex-col"
+                      className="relative z-[4] flex flex-col"
                     >
                       {embeddedPermissionEl}
                     </div>
@@ -867,6 +877,7 @@ function WorkedEntryBlock({
   horizScrollFadeEdge: string;
 }) {
   const [visible, setVisible] = useState(false);
+  const [rawDetailOpen, setRawDetailOpen] = useState(false);
 
   useEffect(() => {
     const frame = requestAnimationFrame(() => setVisible(true));
@@ -884,7 +895,9 @@ function WorkedEntryBlock({
         isLiveWorkedTail,
         workspaceRoot,
         onOpenToolFile,
-        horizScrollFadeEdge
+        horizScrollFadeEdge,
+        rawDetailOpen,
+        setRawDetailOpen
       )}
     </div>
   );
@@ -895,7 +908,9 @@ function renderEntry(
   isLiveWorkedTail: boolean,
   workspaceRoot: string | null,
   onOpenToolFile: (path: string) => void,
-  horizScrollFadeEdge: string
+  horizScrollFadeEdge: string,
+  rawDetailOpen: boolean,
+  onRawDetailOpenChange: (open: boolean) => void
 ) {
   switch (entry.kind) {
     case "verbatim":
@@ -1007,11 +1022,30 @@ function renderEntry(
                 : "text-[var(--text-primary)]";
       const titleClass = `font-sans text-[13px] font-normal leading-snug ${titleTone}`;
       const extraDetail = toolBlockDetail(entry);
+      const rawDetail = entry.rawDetail?.trim();
+      const showRawDetail = Boolean(rawDetail && rawDetail !== extraDetail?.trim());
       return (
         <div className="flex gap-[8px]">
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-[8px]">
-              {renderToolTitleLine(entry, titleClass, workspaceRoot)}
+              {showRawDetail ? (
+                <button
+                  type="button"
+                  aria-label={`${rawDetailOpen ? "Hide" : "Show"} details for ${entry.title}`}
+                  aria-expanded={rawDetailOpen}
+                  onClick={() => onRawDetailOpenChange(!rawDetailOpen)}
+                  className="group pointer-events-auto relative z-[3] flex max-w-full min-w-0 cursor-pointer flex-wrap items-center gap-[8px] rounded-[5px] text-left outline-none transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)]"
+                >
+                  {renderToolTitleLine(entry, titleClass, workspaceRoot, true)}
+                  <ChevronDown
+                    className={`size-[13px] shrink-0 text-[var(--text-secondary)] transition-colors transition-transform duration-200 group-hover:text-[var(--text-primary)] ${rawDetailOpen ? "rotate-180" : ""}`}
+                    strokeWidth={1.75}
+                    aria-hidden
+                  />
+                </button>
+              ) : (
+                renderToolTitleLine(entry, titleClass, workspaceRoot)
+              )}
               {statusKey ? (
                 <span
                   className={`rounded-full border px-[7px] py-[1px] font-sans text-[10px] font-medium uppercase tracking-[0.08em] ${toolStatusClass[statusKey]}`}
@@ -1028,6 +1062,13 @@ function renderEntry(
               >
                 {extraDetail}
               </HorizontalFadedScroll>
+            ) : null}
+            {showRawDetail && rawDetailOpen ? (
+              <div className="relative z-[2] mt-[6px] rounded-[8px] border border-[color-mix(in_srgb,var(--border-card)_70%,transparent)] bg-[color-mix(in_srgb,var(--bg-card)_62%,transparent)]">
+                <pre className="max-h-[220px] overflow-auto px-[8px] py-[7px] font-mono text-[11px] font-normal leading-relaxed text-[var(--text-secondary)]">
+                  {rawDetail}
+                </pre>
+              </div>
             ) : null}
             {entry.editPreview ? (
               <ToolEditPreviewBlock

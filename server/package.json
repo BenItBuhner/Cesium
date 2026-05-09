@@ -22,6 +22,9 @@
     "perf:bun": "bun ./scripts/perf-runner.ts",
     "perf:compare": "tsx ./scripts/perf-compare.ts",
     "sdk:probe": "tsx ./scripts/cursor-sdk-probe.ts",
+    "sdk:claude-proxy-probe": "bun ./scripts/claude-code-sdk-proxy-probe.ts",
+    "codex:app-server-probe": "bun ./scripts/codex-app-server-probe.ts",
+    "opencode:server-probe": "bun ./scripts/opencode-server-probe.ts",
     "bun:native-check": "bun ./scripts/bun-native-check.ts",
     "bun:live-smoke": "bun ./scripts/bun-live-smoke.ts",
     "db:generate": "drizzle-kit generate",
@@ -33,6 +36,7 @@
     "storage:migrate": "tsx ./scripts/storage-migrate.ts"
   },
   "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.2.126",
     "@cursor/sdk": "^1.0.11",
     "@hono/node-server": "^1.19.6",
     "chokidar": "^4.0.3",

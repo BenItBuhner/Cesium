@@ -805,79 +805,113 @@ export class AgentRuntimeManager {
   ): Promise<AgentConversationSnapshotHead> {
     const trimmed = text.trim();
     if (!trimmed && (!attachments || attachments.length === 0)) {
-    throw new Error("Prompt text or attachments are required.");
-  }
-
-  const record = await readConversationRecord(workspace.id, conversationId);
-  if (!record) {
-    throw new Error(`Unknown conversation: ${conversationId}`);
-  }
-  if (record.status === "running" || record.status === "awaiting_permission") {
-    const entryId = randomUUID();
-    const entry: AgentQueuedChatPrompt = {
-      id: entryId,
-      text: trimmed,
-      ...(attachments && attachments.length > 0 ? { attachments } : {}),
-      ...(options?.configOverride && Object.keys(options.configOverride).length > 0
-        ? { configOverride: options.configOverride }
-        : {}),
-    };
-    await updateConversationRecord(workspace.id, conversationId, (current) => ({
-      ...current,
-      queuedPrompts: [...(current.queuedPrompts ?? []), entry],
-    }));
-    const head = await readConversationSnapshotHead(workspace.id, conversationId);
-    if (!head) {
-      throw new Error("Conversation disappeared after queueing prompt.");
+      throw new Error("Prompt text or attachments are required.");
     }
-    return {
-      ...head,
-      conversation: this.withBackendDefaults(head.conversation),
-    };
-  }
 
-  if (record.title === "New chat" || record.lastEventSeq === 0) {
-    void generateConversationTitle(workspace.id, conversationId, trimmed);
-  }
+    const record = await readConversationRecord(workspace.id, conversationId);
+    if (!record) {
+      throw new Error(`Unknown conversation: ${conversationId}`);
+    }
+    const clientEventId = options?.clientEventId?.trim();
+    const clientMessageId = options?.clientMessageId?.trim();
+    if (clientEventId) {
+      const existingEvents = await readConversationEvents(workspace.id, conversationId);
+      if (existingEvents.some((event) => event.eventId === clientEventId)) {
+        const head = await readConversationSnapshotHead(workspace.id, conversationId);
+        if (!head) {
+          throw new Error("Conversation disappeared after duplicate prompt lookup.");
+        }
+        return {
+          ...head,
+          conversation: this.withBackendDefaults(head.conversation),
+        };
+      }
+    }
+    if (record.status === "running" || record.status === "awaiting_permission") {
+      if (
+        clientEventId &&
+        (record.queuedPrompts ?? []).some((queued) => queued.clientEventId === clientEventId)
+      ) {
+        const head = await readConversationSnapshotHead(workspace.id, conversationId);
+        if (!head) {
+          throw new Error("Conversation disappeared after duplicate queue lookup.");
+        }
+        return {
+          ...head,
+          conversation: this.withBackendDefaults(head.conversation),
+        };
+      }
+      const entryId = randomUUID();
+      const entry: AgentQueuedChatPrompt = {
+        id: entryId,
+        text: trimmed,
+        ...(attachments && attachments.length > 0 ? { attachments } : {}),
+        ...(clientEventId ? { clientEventId } : {}),
+        ...(clientMessageId ? { clientMessageId } : {}),
+        ...(options?.configOverride && Object.keys(options.configOverride).length > 0
+          ? { configOverride: options.configOverride }
+          : {}),
+      };
+      await updateConversationRecord(workspace.id, conversationId, (current) => ({
+        ...current,
+        queuedPrompts:
+          clientEventId &&
+          (current.queuedPrompts ?? []).some((queued) => queued.clientEventId === clientEventId)
+            ? (current.queuedPrompts ?? [])
+            : [...(current.queuedPrompts ?? []), entry],
+      }));
+      const head = await readConversationSnapshotHead(workspace.id, conversationId);
+      if (!head) {
+        throw new Error("Conversation disappeared after queueing prompt.");
+      }
+      return {
+        ...head,
+        conversation: this.withBackendDefaults(head.conversation),
+      };
+    }
 
-const recentContextEvents =
-  record.lastEventSeq > 0
-    ? await readRecentConversationEvents(workspace.id, conversationId, 100)
-    : [];
-const prefixContextEvents =
-  record.lastEventSeq > 0
-    ? await readConversationEventPrefix(workspace.id, conversationId, 32)
-    : [];
-const promptContextEvents = [
-  ...new Map(
-    [...prefixContextEvents, ...recentContextEvents]
-      .sort((left, right) => left.seq - right.seq)
-      .map((event) => [event.eventId, event])
-  ).values(),
-];
-const pendingHandoffContext =
-  promptContextEvents.length > 0
-    ? resolvePendingHandoffContext(promptContextEvents)
-    : null;
-const pendingForkContext =
-  !pendingHandoffContext && promptContextEvents.length > 0
-    ? resolvePendingForkContext(promptContextEvents)
-    : null;
-const runtimePromptText = pendingHandoffContext
-  ? buildPromptTextWithHandoffContext({
-      ...pendingHandoffContext,
-      userText: trimmed,
-      hasAttachments: Boolean(attachments?.length),
-    })
-  : pendingForkContext
-    ? buildPromptTextWithForkContext({
-        ...pendingForkContext,
-        userText: trimmed,
-        hasAttachments: Boolean(attachments?.length),
-      })
-    : trimmed;
+    if (record.title === "New chat" || record.lastEventSeq === 0) {
+      void generateConversationTitle(workspace.id, conversationId, trimmed);
+    }
 
-    const userMessageId = options?.clientMessageId?.trim() || randomUUID();
+    const recentContextEvents =
+      record.lastEventSeq > 0
+        ? await readRecentConversationEvents(workspace.id, conversationId, 100)
+        : [];
+    const prefixContextEvents =
+      record.lastEventSeq > 0
+        ? await readConversationEventPrefix(workspace.id, conversationId, 32)
+        : [];
+    const promptContextEvents = [
+      ...new Map(
+        [...prefixContextEvents, ...recentContextEvents]
+          .sort((left, right) => left.seq - right.seq)
+          .map((event) => [event.eventId, event])
+      ).values(),
+    ];
+    const pendingHandoffContext =
+      promptContextEvents.length > 0
+        ? resolvePendingHandoffContext(promptContextEvents)
+        : null;
+    const pendingForkContext =
+      !pendingHandoffContext && promptContextEvents.length > 0
+        ? resolvePendingForkContext(promptContextEvents)
+        : null;
+    const runtimePromptText = pendingHandoffContext
+      ? buildPromptTextWithHandoffContext({
+          ...pendingHandoffContext,
+          userText: trimmed,
+          hasAttachments: Boolean(attachments?.length),
+        })
+      : pendingForkContext
+        ? buildPromptTextWithForkContext({
+            ...pendingForkContext,
+            userText: trimmed,
+            hasAttachments: Boolean(attachments?.length),
+          })
+        : trimmed;
+
+    const userMessageId = clientMessageId || randomUUID();
     const designMatch = trimmed.match(/`design:([^`]+)`/);
     const displayContent = designMatch
       ? `Design: ${designMatch[1]!.slice(0, 160)}${designMatch[1]!.length > 160 ? "…" : ""}`
@@ -887,7 +921,7 @@ const runtimePromptText = pendingHandoffContext
       conversationId,
       [
         {
-          eventId: options?.clientEventId?.trim() || randomUUID(),
+          eventId: clientEventId || randomUUID(),
           conversationId,
           kind: "user_message",
           messageId: userMessageId,
@@ -984,19 +1018,25 @@ const runtimePromptText = pendingHandoffContext
             this.resolveBackendId(override.backendId)
           );
         }
-        if (override.mode || override.modelId) {
+        if (override.mode || override.modelId || override.setConfigOptions) {
           const patch: AgentConversationConfigPatch = {};
           if (override.mode) patch.mode = override.mode;
           if (override.modelId) {
             patch.modelId = override.modelId;
             patch.modelName = override.modelName;
           }
+          if (override.setConfigOptions) {
+            patch.setConfigOptions = override.setConfigOptions;
+          }
           if (Object.keys(patch).length > 0) {
             await this.updateConversationConfig(workspace, conversationId, patch);
           }
         }
       }
-      await this.promptConversation(workspace, conversationId, head.text, head.attachments, {});
+      await this.promptConversation(workspace, conversationId, head.text, head.attachments, {
+        ...(head.clientEventId ? { clientEventId: head.clientEventId } : {}),
+        ...(head.clientMessageId ? { clientMessageId: head.clientMessageId } : {}),
+      });
     } catch (error) {
       console.error("[agent] drainOneQueuedPrompt failed; restoring queue head:", error);
       await reinsertHead();

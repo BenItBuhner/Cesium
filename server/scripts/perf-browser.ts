@@ -11,6 +11,7 @@ type BrowserPerfSample = {
 };
 
 const frontendUrl = process.env.OPENCURSOR_FRONTEND?.trim() || "http://127.0.0.1:3000";
+const serverBase = process.env.OPENCURSOR_BASE?.trim() || "http://127.0.0.1:9100";
 let workspaceId = process.env.PERF_WORKSPACE_ID?.trim() || "";
 let conversationId = process.env.PERF_CONVERSATION_ID?.trim() || "";
 let authToken = process.env.OPENCURSOR_SESSION_TOKEN?.trim() || "";
@@ -34,7 +35,6 @@ async function api<T>(
   init?: RequestInit,
   options?: { workspace?: boolean }
 ): Promise<T> {
-  const serverBase = process.env.OPENCURSOR_BASE?.trim() || "http://127.0.0.1:9100";
   const response = await fetch(`${serverBase}${pathName}`, {
     ...init,
     headers: {
@@ -53,14 +53,28 @@ async function api<T>(
 }
 
 function agentUrl(): string {
-  const url = new URL("/agent", frontendUrl);
+  const url = new URL("/", frontendUrl);
   if (conversationId) {
     url.searchParams.set("conversationId", conversationId);
   }
   if (workspaceId) {
     url.searchParams.set("workspaceId", workspaceId);
   }
+  url.searchParams.set("view", "agent");
   url.searchParams.set("opencursorPerf", "1");
+  url.searchParams.set("serverUrl", serverBase);
+  return String(url);
+}
+
+function agentNewChatUrl(): string {
+  const url = new URL("/", frontendUrl);
+  if (workspaceId) {
+    url.searchParams.set("workspaceId", workspaceId);
+  }
+  url.searchParams.set("view", "agent");
+  url.searchParams.set("conversationId", "new");
+  url.searchParams.set("opencursorPerf", "1");
+  url.searchParams.set("serverUrl", serverBase);
   return String(url);
 }
 
@@ -70,7 +84,6 @@ async function loginIfNeeded(): Promise<void> {
   }
   const username = process.env.OPENCURSOR_AUTH_USERNAME?.trim();
   const password = process.env.OPENCURSOR_AUTH_PASSWORD?.trim();
-  const serverBase = process.env.OPENCURSOR_BASE?.trim() || "http://127.0.0.1:9100";
   if (!username || !password) {
     return;
   }
@@ -92,7 +105,18 @@ async function discoverTargetContext(): Promise<void> {
       startupWorkspace?: { id?: string };
       workspaces?: Array<{ id: string }>;
     }>("/api/workspaces/bootstrap", undefined, { workspace: false });
-    workspaceId = body.startupWorkspace?.id ?? body.workspaces?.[0]?.id ?? "";
+    for (const workspace of body.workspaces ?? []) {
+      const status = await api<{ status?: { isGitRepo?: boolean } }>(
+        `/api/workspaces/${encodeURIComponent(workspace.id)}/git/status`,
+        undefined,
+        { workspace: false }
+      ).catch(() => null);
+      if (status?.status?.isGitRepo) {
+        workspaceId = workspace.id;
+        break;
+      }
+    }
+    workspaceId = workspaceId || body.startupWorkspace?.id || body.workspaces?.[0]?.id || "";
   }
   if (!conversationId && workspaceId) {
     const body = await api<{ conversations?: Array<{ id: string }> }>(
@@ -245,6 +269,157 @@ async function runSettingsBenchmarks(page: Page): Promise<BrowserPerfSample[]> {
   return samples;
 }
 
+async function runAgentTargetDropdownBenchmarks(page: Page): Promise<BrowserPerfSample[]> {
+  const samples: BrowserPerfSample[] = [];
+  await page.goto(agentNewChatUrl(), { waitUntil: "domcontentloaded" });
+  await page.waitForLoadState("networkidle", { timeout: 30_000 }).catch(() => undefined);
+  const newChatButton = page.locator('[data-perf="agent-rail-new-chat"]').first();
+  if (await newChatButton.isVisible().catch(() => false)) {
+    await newChatButton.click().catch(() => undefined);
+  }
+  const codebaseButton = page.locator('[data-perf="agent-codebase-picker-button"]').first();
+  if (!(await codebaseButton.isVisible({ timeout: 5_000 }).catch(() => false))) {
+    const skipped = {
+      at: Date.now(),
+      ms: 0,
+      fields: { skipped: true, reason: "new chat target controls not visible" },
+    };
+    return [
+      { ...skipped, label: "target.codebase_picker.open_visible" },
+      { ...skipped, label: "target.branch_picker.open_visible" },
+      { ...skipped, label: "target.worktree_picker.open_visible" },
+    ];
+  }
+
+  const codebaseOpenStartedAt = performance.now();
+  await codebaseButton.click();
+  await page.getByRole("menu", { name: "Context menu" }).waitFor({ state: "visible", timeout: 5_000 });
+  pushSample(samples, "target.codebase_picker.open_visible", codebaseOpenStartedAt);
+  const codebaseCloseStartedAt = performance.now();
+  await page.keyboard.press("Escape");
+  await page.getByRole("menu", { name: "Context menu" }).waitFor({ state: "hidden", timeout: 5_000 });
+  pushSample(samples, "target.codebase_picker.close_visible", codebaseCloseStartedAt);
+
+  const branchButton = page.locator('[data-perf="agent-branch-picker-button"]').first();
+  if (await branchButton.isEnabled().catch(() => false)) {
+    const branchOpenStartedAt = performance.now();
+    await branchButton.click();
+    await page
+      .locator('[data-perf="agent-branch-picker-popover"]')
+      .first()
+      .waitFor({ state: "visible", timeout: 5_000 });
+    pushSample(samples, "target.branch_picker.open_visible", branchOpenStartedAt);
+    const branchCloseStartedAt = performance.now();
+    await page.mouse.click(4, 4);
+    await page
+      .locator('[data-perf="agent-branch-picker-popover"]')
+      .first()
+      .waitFor({ state: "hidden", timeout: 5_000 });
+    pushSample(samples, "target.branch_picker.clickaway_close_visible", branchCloseStartedAt);
+  } else {
+    samples.push({
+      label: "target.branch_picker.open_visible",
+      ms: 0,
+      at: Date.now(),
+      fields: { skipped: true, reason: "branch picker disabled for non-git workspace" },
+    });
+  }
+
+  const targetButton = page.locator('[data-perf="agent-worktree-target-picker-button"]').first();
+  const targetOpenStartedAt = performance.now();
+  await targetButton.click();
+  await page
+    .locator('[data-perf="agent-worktree-target-picker-popover"]')
+    .first()
+    .waitFor({ state: "visible", timeout: 5_000 });
+  pushSample(samples, "target.worktree_picker.open_visible", targetOpenStartedAt);
+  const targetCloseStartedAt = performance.now();
+  await page.mouse.click(4, 4);
+  await page
+    .locator('[data-perf="agent-worktree-target-picker-popover"]')
+    .first()
+    .waitFor({ state: "hidden", timeout: 5_000 });
+  pushSample(samples, "target.worktree_picker.clickaway_close_visible", targetCloseStartedAt);
+
+  return samples;
+}
+
+async function runHarnessDropdownBenchmarks(page: Page): Promise<BrowserPerfSample[]> {
+  const samples: BrowserPerfSample[] = [];
+  await page.goto(agentNewChatUrl(), { waitUntil: "domcontentloaded" });
+  await page.waitForLoadState("networkidle", { timeout: 30_000 }).catch(() => undefined);
+
+  const trigger = page.locator('[data-perf="chat-model-dropdown-trigger"]').first();
+  if (!(await trigger.isVisible({ timeout: 5_000 }).catch(() => false))) {
+    return [
+      {
+        label: "chat.model_dropdown.harness_open_visible",
+        ms: 0,
+        at: Date.now(),
+        fields: { skipped: true, reason: "model dropdown trigger not visible" },
+      },
+    ];
+  }
+
+  const dropdownStartedAt = performance.now();
+  await trigger.click();
+  await page.getByLabel("Search models").first().waitFor({ state: "visible", timeout: 5_000 });
+  pushSample(samples, "chat.model_dropdown.open_visible", dropdownStartedAt);
+
+  const harnessStartedAt = performance.now();
+  await page.locator('[data-perf="chat-model-dropdown-harness-trigger"]').first().click();
+  const harnessMenu = page.getByRole("menu", { name: "Harnesses" });
+  await harnessMenu.waitFor({ state: "visible", timeout: 5_000 });
+  await harnessMenu.getByRole("menuitem", { name: /Codex App Server/i }).waitFor({
+    state: "visible",
+    timeout: 5_000,
+  });
+  await harnessMenu.getByRole("menuitem", { name: /OpenCode Server/i }).waitFor({
+    state: "visible",
+    timeout: 5_000,
+  });
+  pushSample(samples, "chat.model_dropdown.harness_open_visible", harnessStartedAt);
+
+  const selectStartedAt = performance.now();
+  const openCodeServer = harnessMenu.getByRole("menuitem", { name: /OpenCode Server/i }).first();
+  if (await openCodeServer.isEnabled().catch(() => false)) {
+    await openCodeServer.click();
+    await page.waitForTimeout(50);
+    pushSample(samples, "chat.model_dropdown.backend_select_visible", selectStartedAt, {
+      backendId: "opencode-server",
+    });
+  } else {
+    samples.push({
+      label: "chat.model_dropdown.backend_select_visible",
+      ms: 0,
+      at: Date.now(),
+      fields: { skipped: true, reason: "opencode-server unavailable" },
+    });
+  }
+  return samples;
+}
+
+async function runBrowserBenchmarkGroup(
+  label: string,
+  fn: () => Promise<BrowserPerfSample[]>
+): Promise<BrowserPerfSample[]> {
+  try {
+    return await fn();
+  } catch (error) {
+    return [
+      {
+        label: `${label}.failed`,
+        ms: 0,
+        at: Date.now(),
+        fields: {
+          skipped: true,
+          reason: error instanceof Error ? error.message : String(error),
+        },
+      },
+    ];
+  }
+}
+
 async function main(): Promise<void> {
   await discoverTargetContext();
   const browser = await chromium.launch({ headless: true });
@@ -278,8 +453,16 @@ async function main(): Promise<void> {
   await page.goto(agentUrl(), { waitUntil: "domcontentloaded" });
   await page.waitForLoadState("networkidle", { timeout: 30_000 }).catch(() => undefined);
   await page.waitForTimeout(500);
-  const railSamples = await runRailBenchmarks(page);
-  const settingsSamples = await runSettingsBenchmarks(page);
+  const railSamples = await runBrowserBenchmarkGroup("rail", () => runRailBenchmarks(page));
+  const targetDropdownSamples = await runBrowserBenchmarkGroup("target", () =>
+    runAgentTargetDropdownBenchmarks(page)
+  );
+  const harnessDropdownSamples = await runBrowserBenchmarkGroup("harness", () =>
+    runHarnessDropdownBenchmarks(page)
+  );
+  const settingsSamples = await runBrowserBenchmarkGroup("settings", () =>
+    runSettingsBenchmarks(page)
+  );
   const samples = await page.evaluate(
     () =>
       (window as Window & { __opencursorPerfSamples?: BrowserPerfSample[] })
@@ -292,9 +475,17 @@ async function main(): Promise<void> {
     frontendUrl,
     workspaceId,
     conversationId,
-    samples: [...(samples as BrowserPerfSample[]), ...railSamples, ...settingsSamples],
+    samples: [
+      ...(samples as BrowserPerfSample[]),
+      ...railSamples,
+      ...settingsSamples,
+      ...targetDropdownSamples,
+      ...harnessDropdownSamples,
+    ],
     settingsSamples,
     railSamples,
+    targetDropdownSamples,
+    harnessDropdownSamples,
     consolePerf,
   };
 

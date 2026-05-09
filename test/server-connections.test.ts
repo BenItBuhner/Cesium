@@ -75,12 +75,30 @@ describe("server connections", () => {
       },
       "http://fallback:9100"
     );
-    assert.equal(state.servers.length, 2);
+    assert.equal(state.servers.length, 3);
     assert.deepEqual(
-      state.servers.map((server) => server.id).sort(),
-      ["three", "two"]
+      state.servers.map((server) => server.baseUrl).sort(),
+      ["http://fallback:9100", "http://localhost:9100", "https://example.com"]
     );
-    assert.ok(["three", "two"].includes(state.activeServerId ?? ""));
+    assert.equal(
+      state.servers.find((server) => server.id === state.activeServerId)?.baseUrl,
+      "http://localhost:9100"
+    );
+  });
+
+  test("normalization activates new configured default over stale local dev port", () => {
+    const state = normalizeServerConnectionsState(
+      {
+        version: 1,
+        activeServerId: "old",
+        servers: [{ id: "old", label: "Old", baseUrl: "http://localhost:9100" }],
+      },
+      "http://localhost:9200"
+    );
+    assert.equal(
+      state.servers.find((server) => server.id === state.activeServerId)?.baseUrl,
+      "http://localhost:9200"
+    );
   });
 });
 
@@ -113,14 +131,14 @@ describe("base URL resolution", () => {
 
   test("rewrites loopback server to LAN host on plain http", () => {
     assert.equal(
-      resolveClientServerBaseUrlForLocation("http://localhost:9100", {
+      resolveClientServerBaseUrlForLocation("http://localhost:9107", {
         location: {
           protocol: "http:",
           hostname: "192.168.4.172",
           host: "192.168.4.172:3000",
         },
       }),
-      "http://192.168.4.172:9100"
+      "http://192.168.4.172:9107"
     );
   });
 });

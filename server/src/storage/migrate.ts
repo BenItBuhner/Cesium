@@ -7,9 +7,12 @@ const ALL_BACKEND_IDS: AgentBackendId[] = [
   "cursor-acp",
   "cursor-sdk",
   "opencode-acp",
+  "opencode-server",
   "gemini-acp",
   "codex-adapter",
+  "codex-app-server",
   "claude-adapter",
+  "claude-code-sdk",
 ];
 
 /**

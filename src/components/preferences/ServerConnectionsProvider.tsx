@@ -131,6 +131,34 @@ export function ServerConnectionsProvider({ children }: { children: ReactNode })
     };
   }, []);
 
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    const raw = new URLSearchParams(window.location.search).get("serverUrl")?.trim();
+    if (!raw) {
+      return;
+    }
+    let baseUrl: string;
+    try {
+      baseUrl = normalizeServerBaseUrl(raw);
+    } catch {
+      return;
+    }
+    setState((current) => {
+      const upserted = upsertServerConnection(current, {
+        label: new URL(baseUrl).host,
+        baseUrl,
+      });
+      const server = upserted.servers.find((candidate) => candidate.baseUrl === baseUrl);
+      const next = server
+        ? markServerConnectionUsed(upserted, server.id)
+        : upserted;
+      writeStoredServerConnectionsState(next);
+      return next;
+    });
+  }, []);
+
   const setActiveServer = useCallback((serverId: string) => {
     setState((current) => {
       const next = markServerConnectionUsed(current, serverId);

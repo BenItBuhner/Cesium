@@ -41,16 +41,27 @@ function modelProviderForBackend(backendId: AgentBackendId): ModelInfo["provider
     case "cursor-sdk":
       return "cursor";
     case "opencode-acp":
+    case "opencode-server":
       return "opencode";
     case "gemini-acp":
       return "google";
     case "codex-adapter":
+    case "codex-app-server":
       return "codex";
     case "claude-adapter":
+    case "claude-code-sdk":
       return "claude";
     default:
       return "auto";
   }
+}
+
+function isCodexBackendId(backendId: AgentBackendId | undefined): boolean {
+  return backendId === "codex-adapter" || backendId === "codex-app-server";
+}
+
+function isOpenCodeBackendId(backendId: AgentBackendId | undefined): boolean {
+  return backendId === "opencode-acp" || backendId === "opencode-server";
 }
 
 function getBackendForConversation(
@@ -277,6 +288,8 @@ type ProjectedTurn = {
   orphanToolUpdateSlot: number;
   /** First assistant_message_chunk message id (for standalone assistant bubble id) */
   assistantMessageId?: string;
+  /** Assistant message ids that have already received a terminal end event. */
+  endedAssistantMessageIds: Set<string>;
   permissionCards: Map<string, ChatMessage>;
   todoCards: Map<string, ChatMessage>;
   subagentCards: Map<string, ChatMessage>;
@@ -303,6 +316,7 @@ function createTurn(id: string): ProjectedTurn {
     trace: [],
     toolEntryById: new Map(),
     orphanToolUpdateSlot: 0,
+    endedAssistantMessageIds: new Set(),
     permissionCards: new Map(),
     todoCards: new Map(),
     subagentCards: new Map(),
@@ -641,11 +655,14 @@ function appendAssistantChunk(turn: ProjectedTurn, text: string, messageId: stri
   if (!text) {
     return;
   }
+  if (turn.endedAssistantMessageIds.has(messageId)) {
+    return;
+  }
   if (!turn.assistantMessageId) {
     turn.assistantMessageId = messageId;
   }
   const last = turn.timeline[turn.timeline.length - 1];
-  if (last?.kind === "assistant") {
+  if (last?.kind === "assistant" && last.messageId === messageId) {
     last.text += text;
   } else {
     turn.timeline.push({ kind: "assistant", text, messageId });
@@ -677,6 +694,22 @@ function truncateMiddleLabel(value: string, max: number): string {
   const head = Math.ceil(keep / 2);
   const tail = Math.floor(keep / 2);
   return value.slice(0, head) + ellipsis + value.slice(value.length - tail);
+}
+
+function cleanTerminalCommandLabel(command: string): string {
+  const trimmed = command.trim();
+  const match = /(?:^|\s)-Command\s+(.+)$/i.exec(trimmed);
+  const commandBody = match?.[1]?.trim();
+  if (!commandBody) {
+    return trimmed;
+  }
+  if (
+    (commandBody.startsWith('"') && commandBody.endsWith('"')) ||
+    (commandBody.startsWith("'") && commandBody.endsWith("'"))
+  ) {
+    return commandBody.slice(1, -1).trim();
+  }
+  return commandBody;
 }
 
 function conciseQuotedSearchPattern(raw: string, max = TOOL_PATTERN_QUOTED_MAX): string {
@@ -813,11 +846,16 @@ function patternFromGrepLikeToolTitle(...candidates: (string | undefined)[]): st
 function withConciseToolDetail<T extends Extract<WorkedSessionEntry, { kind: "tool" }>>(
   row: T
 ): T {
-  const nextDetail = stripRedundantToolDetail(row.detail, row.title);
-  if (nextDetail === row.detail) {
+  const rawDetail =
+    row.rawDetail ??
+    (row.status !== "failed" && isVerboseToolPayloadDetail(row.detail) ? row.detail?.trim() : undefined);
+  const nextDetail = rawDetail
+    ? undefined
+    : stripRedundantToolDetail(row.detail, row.title);
+  if (nextDetail === row.detail && rawDetail === row.rawDetail) {
     return row;
   }
-  return { ...row, detail: nextDetail };
+  return { ...row, detail: nextDetail, rawDetail };
 }
 
 function humanizeToolCallName(value: string): string {
@@ -1456,11 +1494,21 @@ function isVerboseToolPayloadDetail(detail: string | undefined): boolean {
   if (!trimmed) {
     return false;
   }
+  if (
+    /<\s*(path|content|stdout|output|result|type)\s*>/i.test(trimmed) ||
+    /\bmessage\.part\.(?:updated|delta)\b/i.test(trimmed)
+  ) {
+    return true;
+  }
   const parsed = parseVerboseToolDetail(trimmed);
   if (
     parsed &&
     ["content", "text", "stdout", "output", "result"].some((key) => key in parsed)
   ) {
+    return true;
+  }
+  const nonEmptyLineCount = trimmed.split(/\r?\n/).filter((line) => line.trim()).length;
+  if (nonEmptyLineCount >= 2 && trimmed.length > 80) {
     return true;
   }
   return (
@@ -2405,6 +2453,25 @@ function formatToolSummary(
         rejectedFallback ||
         "Tool call was rejected by the current approval settings."
       : undefined);
+  const rawDetail = isVerboseToolPayloadDetail(detail) ? detail?.trim() : existing?.rawDetail;
+  const command = findFirstStringAcrossValues(rawInputs, ["command", "cmd", "script"]);
+  if (command) {
+    return withConciseToolDetail({
+      kind: "tool",
+      toolCallId: event.toolCallId,
+      toolKind: toolKind === "tool" ? "terminal" : toolKind,
+      title: `Ran ${truncateMiddleLabel(cleanTerminalCommandLabel(command), TERMINAL_TITLE_MAX)}`,
+      detail:
+        safeToolDetailText(detail, { suppressVerbosePayload: true }) ??
+        (status === "failed" ? "Command failed" : existing?.detail),
+      rawDetail,
+      variant: "terminal",
+      status,
+      locations: undefined,
+      editPreview,
+      files: undefined,
+    });
+  }
   const likelyEdit =
     toolKind === "edit" ||
     toolKind === "write" ||
@@ -2456,6 +2523,7 @@ function formatToolSummary(
         (matchedFiles != null
           ? `${pluralize(matchedFiles, "file")} matched`
           : existing?.detail),
+      rawDetail,
       status,
       locations: normalizedLocations,
       editPreview,
@@ -2479,6 +2547,7 @@ function formatToolSummary(
       toolKind,
       title: webTitle,
       detail: safeToolDetailText(detail, { suppressVerbosePayload: true }) ?? existing?.detail,
+      rawDetail,
       status,
       locations: normalizedLocations,
       editPreview,
@@ -2526,6 +2595,7 @@ function formatToolSummary(
         (matchedFiles != null
           ? `${pluralize(matchedFiles, "file")} matched`
           : existing?.detail),
+      rawDetail,
       status,
       locations: normalizedLocations,
       editPreview,
@@ -2559,6 +2629,7 @@ function formatToolSummary(
       toolKind,
       title: readTitle,
       detail: safeReadDetail ?? existing?.detail,
+      rawDetail,
       status,
       locations: normalizedLocations,
       editPreview,
@@ -2588,6 +2659,7 @@ function formatToolSummary(
       detail:
         safeToolDetailText(suppressPathOnlyDetail(detail), { suppressVerbosePayload: true }) ??
         existing?.detail,
+      rawDetail,
       status,
       locations: normalizedLocations,
       editPreview,
@@ -2617,6 +2689,7 @@ function formatToolSummary(
       detail:
         safeToolDetailText(suppressPathOnlyDetail(detail), { suppressVerbosePayload: true }) ??
         existing?.detail,
+      rawDetail,
       status,
       locations: normalizedLocations,
       editPreview,
@@ -2638,22 +2711,7 @@ function formatToolSummary(
       toolKind,
       title: todoLabel,
       detail: safeToolDetailText(detail, { suppressVerbosePayload: true }) ?? existing?.detail,
-      status,
-      locations: normalizedLocations,
-      editPreview,
-      files,
-    });
-  }
-
-  const command = findFirstStringAcrossValues(rawInputs, ["command", "cmd", "script"]);
-  if (command) {
-    return withConciseToolDetail({
-      kind: "tool",
-      toolCallId: event.toolCallId,
-      toolKind: toolKind === "tool" ? "terminal" : toolKind,
-      title: truncateMiddleLabel(command, TERMINAL_TITLE_MAX),
-      detail: safeToolDetailText(detail, { suppressVerbosePayload: true }) ?? existing?.detail,
-      variant: "terminal",
+      rawDetail,
       status,
       locations: normalizedLocations,
       editPreview,
@@ -2670,6 +2728,7 @@ function formatToolSummary(
       TOOL_TITLE_MAX_LEN
     ),
     detail: safeToolDetailText(detail, { suppressVerbosePayload: true }) ?? existing?.detail,
+    rawDetail,
     status,
     locations: normalizedLocations,
     editPreview,
@@ -3054,6 +3113,7 @@ let currentTurn: ProjectedTurn | null = null;
           currentTurn.toolEntryById = prev.toolEntryById;
           currentTurn.orphanToolUpdateSlot = prev.orphanToolUpdateSlot;
           currentTurn.assistantMessageId = prev.assistantMessageId;
+          currentTurn.endedAssistantMessageIds = new Set(prev.endedAssistantMessageIds);
           currentTurn.permissionCards = prev.permissionCards;
           currentTurn.todoCards = prev.todoCards;
           currentTurn.subagentCards = prev.subagentCards;
@@ -3103,6 +3163,7 @@ let currentTurn: ProjectedTurn | null = null;
             event.messageId
           );
         }
+        turn.endedAssistantMessageIds.add(event.messageId);
         finalizeOpenToolsInTurn(turn, event.stopReason === "failed" ? "failed" : "completed");
         break;
       }
@@ -3117,24 +3178,25 @@ let currentTurn: ProjectedTurn | null = null;
       case "tool_call": {
         const turn = ensureTurn();
         if (
-          options?.backendId === "opencode-acp" &&
+          isOpenCodeBackendId(options?.backendId) &&
           event.openCodeSubagentSessionId &&
           event.openCodeSubagentSessionId.trim()
         ) {
-          mergeOpenCodeSubagentToolIntoTranscript(turn, event, options.workspaceRoot);
+          mergeOpenCodeSubagentToolIntoTranscript(turn, event, options?.workspaceRoot ?? workspaceRoot);
           break;
         }
         if (classifyToolCallAsSubagentCard(options?.backendId, event)) {
           const rawInput = getSubagentTaskInput(event);
           const taskText = extractSubagentTaskText(event);
           const sessionIds = extractSubagentSessionIds(event);
+          const codexBackend = isCodexBackendId(options?.backendId);
           const codexStates =
-            options?.backendId === "codex-adapter" ? extractCodexSubagentStates(event) : [];
-          const codexTool = options?.backendId === "codex-adapter" ? codexCollabToolName(event) : null;
-          if (options?.backendId === "codex-adapter" && codexTool === "wait" && codexStates.length === 0) {
+            codexBackend ? extractCodexSubagentStates(event) : [];
+          const codexTool = codexBackend ? codexCollabToolName(event) : null;
+          if (codexBackend && codexTool === "wait" && codexStates.length === 0) {
             break;
           }
-          if (options?.backendId === "codex-adapter" && codexStates.length > 0) {
+          if (codexBackend && codexStates.length > 0) {
             const fallbackTitle =
               (typeof rawInput?.description === "string" && rawInput.description.trim()) ||
               (typeof rawInput?.prompt === "string" && rawInput.prompt.trim()) ||
@@ -3209,7 +3271,7 @@ let currentTurn: ProjectedTurn | null = null;
           } else {
             turn.subagentCards.set(event.toolCallId, message);
           }
-          if (options?.backendId === "opencode-acp") {
+          if (isOpenCodeBackendId(options?.backendId)) {
             const wireSes = taskText.sessionId?.trim();
             if (wireSes && isOpenCodeWireSessionId(wireSes)) {
               linkOpenCodeSpawnToSession(turn, event.toolCallId, wireSes, message);
@@ -3237,24 +3299,25 @@ let currentTurn: ProjectedTurn | null = null;
       case "tool_call_update": {
         const turn = ensureTurn();
         if (
-          options?.backendId === "opencode-acp" &&
+          isOpenCodeBackendId(options?.backendId) &&
           event.openCodeSubagentSessionId &&
           event.openCodeSubagentSessionId.trim()
         ) {
-          mergeOpenCodeSubagentToolIntoTranscript(turn, event, options.workspaceRoot);
+          mergeOpenCodeSubagentToolIntoTranscript(turn, event, options?.workspaceRoot ?? workspaceRoot);
           break;
         }
         if (classifyToolCallAsSubagentCard(options?.backendId, event)) {
           const rawInput = getSubagentTaskInput(event);
           const taskText = extractSubagentTaskText(event);
           const sessionIds = extractSubagentSessionIds(event);
+          const codexBackend = isCodexBackendId(options?.backendId);
           const codexStates =
-            options?.backendId === "codex-adapter" ? extractCodexSubagentStates(event) : [];
-          const codexTool = options?.backendId === "codex-adapter" ? codexCollabToolName(event) : null;
-          if (options?.backendId === "codex-adapter" && codexTool === "wait" && codexStates.length === 0) {
+            codexBackend ? extractCodexSubagentStates(event) : [];
+          const codexTool = codexBackend ? codexCollabToolName(event) : null;
+          if (codexBackend && codexTool === "wait" && codexStates.length === 0) {
             break;
           }
-          if (options?.backendId === "codex-adapter" && codexStates.length > 0) {
+          if (codexBackend && codexStates.length > 0) {
             const fallbackTitle =
               (typeof rawInput?.description === "string" && rawInput.description.trim()) ||
               (typeof rawInput?.prompt === "string" && rawInput.prompt.trim()) ||
@@ -3330,7 +3393,7 @@ let currentTurn: ProjectedTurn | null = null;
           } else {
             turn.subagentCards.set(event.toolCallId, message);
           }
-          if (options?.backendId === "opencode-acp") {
+          if (isOpenCodeBackendId(options?.backendId)) {
             const wireSes = taskText.sessionId?.trim();
             if (wireSes && isOpenCodeWireSessionId(wireSes)) {
               linkOpenCodeSpawnToSession(turn, event.toolCallId, wireSes, message);
@@ -3496,6 +3559,12 @@ let currentTurn: ProjectedTurn | null = null;
         break;
       }
       case "system": {
+        if (
+          event.level === "warning" &&
+          /\[Codex App Server\].*codex_core::(?:exec|tools::router):/i.test(event.text)
+        ) {
+          break;
+        }
         const turn = ensureTurn();
         appendTimelineMessage(turn, {
           id: event.eventId,
@@ -3685,7 +3754,8 @@ export function dedupeAgentStoredEvents(
 }
 
 function normalizeModelDetailLabel(label: string): string {
-  return label.trim().toLowerCase();
+  const normalized = label.trim().toLowerCase();
+  return normalized === "xhigh" ? "extra high" : normalized;
 }
 
 function titleCaseModelDetail(label: string): string {
@@ -3720,7 +3790,10 @@ function formatModelVariantDetailLabel(raw: string): string {
   }
   const normalized = trimmed.toLowerCase();
   if (normalized === "xhigh") {
-    return "Extra high";
+    return "Extra High";
+  }
+  if (normalized === "extra high" || normalized === "extra-high") {
+    return "Extra High";
   }
   if (normalized === "medium") {
     return "Medium";
@@ -3743,8 +3816,75 @@ function formatModelVariantDetailLabel(raw: string): string {
   return trimmed.charAt(0).toUpperCase() + trimmed.slice(1).toLowerCase();
 }
 
+function cleanModelVariantBaseName(name: string): string {
+  return name.replace(/\s*\(([^)]*)\)\s*$/g, (_match, inner: string) => {
+    const parts = inner
+      .split(",")
+      .map((part) => part.trim())
+      .filter(Boolean);
+    if (parts.length > 0 && parts.every(isCursorSdkStyleTuplePart)) {
+      return "";
+    }
+    return ` (${inner})`;
+  }).trim();
+}
+
+function isCursorSdkStyleTuplePart(value: string): boolean {
+  const normalized = value.trim().toLowerCase();
+  return (
+    normalized === "none" ||
+    normalized === "default" ||
+    normalized === "auto" ||
+    normalized === "false" ||
+    /^\d+\s*k$/i.test(value.trim()) ||
+    [
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "extra high",
+      "extra-high",
+      "fast",
+      "max",
+      "thinking",
+    ].includes(normalized)
+  );
+}
+
+function cursorSdkStyleVariantDetailLabel(key: string, value: string): string | null {
+  const normalizedKey = key.trim().toLowerCase();
+  const normalizedValue = value.trim().toLowerCase();
+  if (
+    !normalizedValue ||
+    normalizedValue === "none" ||
+    normalizedValue === "default" ||
+    normalizedValue === "auto" ||
+    normalizedValue === "false"
+  ) {
+    return null;
+  }
+  if (/context|length|window|token/.test(normalizedKey) || /^\d+\s*k$/i.test(value.trim())) {
+    return null;
+  }
+  if (/speed|fast/.test(normalizedKey)) {
+    return normalizedValue === "fast" || normalizedValue === "true"
+      ? "Fast"
+      : formatModelVariantDetailLabel(value);
+  }
+  if (/thinking|reason|effort/.test(normalizedKey)) {
+    return formatModelVariantDetailLabel(value);
+  }
+  if (
+    ["low", "medium", "high", "xhigh", "extra-high", "extra high", "fast", "max", "thinking"]
+      .includes(normalizedValue)
+  ) {
+    return formatModelVariantDetailLabel(value);
+  }
+  return null;
+}
+
 function formatModelVariantLabel(name: string, modelId: string): string {
-  const trimmedName = name.trim() || modelId.trim() || "Model";
+  const trimmedName = cleanModelVariantBaseName(name.trim() || modelId.trim() || "Model");
   const normalizedName = trimmedName.toLowerCase();
   const details: string[] = [];
 
@@ -3757,22 +3897,8 @@ function formatModelVariantLabel(name: string, modelId: string): string {
       if (!key || !value) {
         continue;
       }
-      if (key === "reasoning" || key === "effort") {
-        details.push(value);
-        continue;
-      }
-      if (key === "context") {
-        details.push(value.toUpperCase());
-        continue;
-      }
-      if (key === "fast" && value === "true") {
-        details.push("fast");
-        continue;
-      }
-      if (key === "thinking" && value === "true") {
-        details.push("thinking");
-        continue;
-      }
+      const label = cursorSdkStyleVariantDetailLabel(key, value);
+      if (label) details.push(label);
     }
   } else {
     const slashVariant = modelId.trim().split("/").at(-1)?.trim().toLowerCase();
@@ -3795,7 +3921,7 @@ function formatModelVariantLabel(name: string, modelId: string): string {
 
   const detailLabels = uniqueDetails.map(formatModelVariantDetailLabel);
 
-  return detailLabels.length > 0 ? `${trimmedName} (${detailLabels.join(", ")})` : trimmedName;
+  return detailLabels.length > 0 ? `${trimmedName} ${detailLabels.join(" ")}` : trimmedName;
 }
 
 export function buildConversationModelOptions(

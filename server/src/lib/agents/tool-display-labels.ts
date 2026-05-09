@@ -77,7 +77,23 @@ export function formatDeleteToolTitle(path: string | undefined, fallback: string
 }
 
 export function formatTerminalCommandTitle(command: string): string {
-  return truncateMiddleLabel(command.trim(), TERMINAL_TITLE_MAX);
+  return `Ran ${truncateMiddleLabel(cleanTerminalCommandLabel(command), TERMINAL_TITLE_MAX)}`;
+}
+
+export function cleanTerminalCommandLabel(command: string): string {
+  const trimmed = command.trim();
+  const match = /(?:^|\s)-Command\s+(.+)$/i.exec(trimmed);
+  const commandBody = match?.[1]?.trim();
+  if (!commandBody) {
+    return trimmed;
+  }
+  if (
+    (commandBody.startsWith('"') && commandBody.endsWith('"')) ||
+    (commandBody.startsWith("'") && commandBody.endsWith("'"))
+  ) {
+    return commandBody.slice(1, -1).trim();
+  }
+  return commandBody;
 }
 
 export function truncateGenericToolTitle(label: string | undefined, fallback: string): string {

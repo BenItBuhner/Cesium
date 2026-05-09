@@ -565,7 +565,7 @@ function classifyProtectedHttpRateLimit(pathname: string, method: string): RateL
 
 async function getAuthState(): Promise<PersistedAuthState> {
   if (!authStatePromise) {
-    authStatePromise = (async () => {
+    authStatePromise = (async (): Promise<PersistedAuthState> => {
       const storage = await getStorage();
       const row = await storage.getAuthState();
       if (
@@ -594,7 +594,10 @@ async function getAuthState(): Promise<PersistedAuthState> {
         updatedAt: now,
       });
       return created;
-    })();
+    })().catch((error): Promise<never> => {
+      authStatePromise = null;
+      throw error;
+    });
   }
   return authStatePromise;
 }

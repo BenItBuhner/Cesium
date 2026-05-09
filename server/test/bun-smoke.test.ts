@@ -1,15 +1,18 @@
-import { describe, expect, test } from "bun:test";
+import assert from "node:assert/strict";
+import { describe, test } from "node:test";
 import { createOpenCursorApp } from "../src/app.js";
 import { BufferedRuntimeSocket } from "../src/ws/runtime-socket.js";
 
+const bunRuntime = (globalThis as typeof globalThis & { Bun?: { version: string } }).Bun;
+
 describe("bun runtime smoke", () => {
-  test("runs under Bun and serves the shared Hono app", async () => {
-    expect(Bun.version.length).toBeGreaterThan(0);
+  test("runs under Bun and serves the shared Hono app", { skip: !bunRuntime }, async () => {
+    assert.ok(bunRuntime?.version.length);
     const app = createOpenCursorApp();
     const response = await app.request("/health");
-    expect(response.status).toBe(200);
+    assert.equal(response.status, 200);
     const body = await response.json();
-    expect(body.ok).toBe(true);
+    assert.equal(body.ok, true);
   });
 
   test("runtime socket adapter dispatches messages and close events", () => {
@@ -27,9 +30,9 @@ describe("bun runtime smoke", () => {
     socket.send("hello");
     socket.dispatchMessage("ping", false);
     socket.dispatchClose();
-    expect(sent).toEqual(["hello"]);
-    expect(messages).toEqual(["ping"]);
-    expect(closed).toBe(true);
-    expect(socket.isOpen).toBe(false);
+    assert.deepEqual(sent, ["hello"]);
+    assert.deepEqual(messages, ["ping"]);
+    assert.equal(closed, true);
+    assert.equal(socket.isOpen, false);
   });
 });

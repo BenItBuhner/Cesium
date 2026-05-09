@@ -13,6 +13,8 @@ import {
 import type {
   FileNode,
   FileWatcherEvent,
+  GitWorkspaceStatus,
+  GitWorktreeSetupResult,
   TerminalInfo,
   WorkspaceInfo,
   WorkspaceWindowRecord,
@@ -20,10 +22,13 @@ import type {
 } from "@/lib/types";
 import {
   cloneWorkspaceFromGit,
+  createWorkspaceGitWorktree,
   createTerminal,
   createWorkspaceSelection,
   createWorkspaceWindow,
+  deleteWorkspaceGitWorktree,
   deleteWorkspaceFromRegistry,
+  fetchWorkspaceGitStatus,
   fetchWorkspaceWindows,
   fetchFolderChildren,
   fetchTree,
@@ -36,6 +41,7 @@ import {
   saveWorkspaceSession,
   setActiveWorkspaceId,
   setDefaultWorkspaceSelection,
+  switchWorkspaceGitBranch,
   updateWorkspaceWindow,
 } from "@/lib/server-api";
 import {
@@ -88,6 +94,8 @@ type WorkspaceContextValue = {
   isDedicatedWindow: boolean;
   workspaces: WorkspaceRecord[];
   workspaceWindows: WorkspaceWindowRecord[];
+  gitStatus: GitWorkspaceStatus | null;
+  gitStatusLoading: boolean;
   defaultWorkspaceId: string | null;
   recentWorkspaceIds: string[];
   fileTree: FileNode | null;
@@ -111,6 +119,17 @@ type WorkspaceContextValue = {
   loadFolderChildren: (path: string) => Promise<void>;
   openFolder: (root: string, name?: string) => Promise<void>;
   openWorkspaceById: (workspaceId: string) => Promise<void>;
+  refreshGitStatus: () => Promise<GitWorkspaceStatus | null>;
+  switchBranch: (branch: string) => Promise<void>;
+  createWorktree: (input: {
+    branch: string;
+    baseBranch?: string;
+    newBranch?: boolean;
+    targetPath?: string;
+    runSetup?: boolean;
+    name?: string;
+  }) => Promise<{ workspace: WorkspaceRecord; setup: GitWorktreeSetupResult }>;
+  deleteWorktree: (input: { path: string; force?: boolean }) => Promise<void>;
   markWorkspaceActivity: (workspaceId?: string) => Promise<void>;
   refreshWorkspaceWindows: () => Promise<void>;
   createWorkspaceWindow: (input?: {
@@ -383,6 +402,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const [activeWorkspaceId, setActiveWorkspaceIdState] = useState<string | null>(null);
   const [workspaces, setWorkspaces] = useState<WorkspaceRecord[]>([]);
   const [workspaceWindows, setWorkspaceWindows] = useState<WorkspaceWindowRecord[]>([]);
+  const [gitStatus, setGitStatus] = useState<GitWorkspaceStatus | null>(null);
+  const [gitStatusLoading, setGitStatusLoading] = useState(false);
   const [defaultWorkspaceId, setDefaultWorkspaceIdState] = useState<string | null>(null);
   const [recentWorkspaceIds, setRecentWorkspaceIds] = useState<string[]>([]);
   const [homeWorkspaceId, setHomeWorkspaceId] = useState<string | null>(null);
@@ -422,6 +443,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const setServerWorkspace = useCallback((workspace: WorkspaceRecord | null) => {
     setActiveWorkspaceId(workspace?.id ?? null);
     setActiveWorkspaceIdState(workspace?.id ?? null);
+    setGitStatus(null);
     setWorkspaceInfo(
       workspace
         ? {
@@ -537,6 +559,21 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     setWorkspaceWindows(result.windows);
   }, [activeWorkspaceId]);
 
+  const refreshGitStatus = useCallback(async (): Promise<GitWorkspaceStatus | null> => {
+    if (!activeWorkspaceId) {
+      setGitStatus(null);
+      return null;
+    }
+    setGitStatusLoading(true);
+    try {
+      const result = await fetchWorkspaceGitStatus(activeWorkspaceId);
+      setGitStatus(result.status);
+      return result.status;
+    } finally {
+      setGitStatusLoading(false);
+    }
+  }, [activeWorkspaceId]);
+
   const createPersistentWorkspaceWindow = useCallback(
     async (input?: { title?: string }) => {
       if (!activeWorkspaceId) {
@@ -618,6 +655,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         const sessionRequest = fetchWorkspaceSession(workspace.id, { windowId });
         const treePromise = fetchTree();
         const terminalsPromise = listTerminals();
+        const gitStatusPromise = fetchWorkspaceGitStatus(workspace.id);
 
         const [sessionResult, windowsResult] = await Promise.all([
           sessionRequest,
@@ -631,6 +669,9 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         void terminalsPromise
           .then((terminalList) => setTerminals(terminalList))
           .catch(() => undefined);
+        void gitStatusPromise
+          .then((result) => setGitStatus(result.status))
+          .catch(() => setGitStatus(null));
 
         const localBackup = readWorkspaceSessionBackup(sessionScopeId);
         setWorkspaceWindows(windowsResult.windows);
@@ -777,6 +818,88 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       await loadWorkspaceState(result.workspace);
     },
     [applyWorkspaceListingUpdate, flushWorkspaceSessionNow, loadWorkspaceState]
+  );
+
+  const switchBranch = useCallback(
+    async (branch: string) => {
+      if (!activeWorkspaceId) {
+        throw new Error("No active workspace.");
+      }
+      await flushWorkspaceSessionNow();
+      const result = await switchWorkspaceGitBranch({ workspaceId: activeWorkspaceId, branch });
+      if (result.openedWorkspace) {
+        await loadWorkspaceState(result.openedWorkspace);
+      } else if (result.status) {
+        setGitStatus(result.status);
+        await Promise.all([
+          refreshTree().catch(() => undefined),
+          refreshTerminals().catch(() => undefined),
+        ]);
+        setFsResyncToken((value) => value + 1);
+      }
+    },
+    [
+      activeWorkspaceId,
+      flushWorkspaceSessionNow,
+      loadWorkspaceState,
+      refreshTerminals,
+      refreshTree,
+    ]
+  );
+
+  const createWorktree = useCallback(
+    async (input: {
+      branch: string;
+      baseBranch?: string;
+      newBranch?: boolean;
+      targetPath?: string;
+      runSetup?: boolean;
+      name?: string;
+    }): Promise<{ workspace: WorkspaceRecord; setup: GitWorktreeSetupResult }> => {
+      if (!activeWorkspaceId) {
+        throw new Error("No active workspace.");
+      }
+      await flushWorkspaceSessionNow();
+      const result = await createWorkspaceGitWorktree({
+        workspaceId: activeWorkspaceId,
+        ...input,
+      });
+      applyWorkspaceListingUpdate(
+        result.workspaces,
+        result.defaultWorkspaceId,
+        result.recentWorkspaceIds,
+        result.homeWorkspaceId
+      );
+      await loadWorkspaceState(result.workspace);
+      return { workspace: result.workspace, setup: result.setup };
+    },
+    [
+      activeWorkspaceId,
+      applyWorkspaceListingUpdate,
+      flushWorkspaceSessionNow,
+      loadWorkspaceState,
+    ]
+  );
+
+  const deleteWorktree = useCallback(
+    async (input: { path: string; force?: boolean }) => {
+      if (!activeWorkspaceId) {
+        throw new Error("No active workspace.");
+      }
+      const result = await deleteWorkspaceGitWorktree({
+        workspaceId: activeWorkspaceId,
+        path: input.path,
+        force: input.force,
+      });
+      applyWorkspaceListingUpdate(
+        result.workspaces,
+        result.defaultWorkspaceId,
+        result.recentWorkspaceIds,
+        result.homeWorkspaceId
+      );
+      await refreshGitStatus();
+    },
+    [activeWorkspaceId, applyWorkspaceListingUpdate, refreshGitStatus]
   );
 
   const createWorkspace = useCallback(
@@ -1294,6 +1417,8 @@ let lastHeartbeatRunAt = Date.now();
       isDedicatedWindow,
       workspaces,
       workspaceWindows,
+      gitStatus,
+      gitStatusLoading,
       defaultWorkspaceId,
       recentWorkspaceIds,
       fileTree,
@@ -1313,6 +1438,10 @@ let lastHeartbeatRunAt = Date.now();
       loadFolderChildren,
       openFolder,
       openWorkspaceById,
+      refreshGitStatus,
+      switchBranch,
+      createWorktree,
+      deleteWorktree,
       markWorkspaceActivity,
       refreshWorkspaceWindows,
       createWorkspaceWindow: createPersistentWorkspaceWindow,
@@ -1331,6 +1460,8 @@ let lastHeartbeatRunAt = Date.now();
       isDedicatedWindow,
       workspaces,
       workspaceWindows,
+      gitStatus,
+      gitStatusLoading,
       defaultWorkspaceId,
       recentWorkspaceIds,
       homeWorkspaceId,
@@ -1350,6 +1481,10 @@ let lastHeartbeatRunAt = Date.now();
       loadFolderChildren,
       openFolder,
       openWorkspaceById,
+      refreshGitStatus,
+      switchBranch,
+      createWorktree,
+      deleteWorktree,
       markWorkspaceActivity,
       refreshWorkspaceWindows,
       createPersistentWorkspaceWindow,

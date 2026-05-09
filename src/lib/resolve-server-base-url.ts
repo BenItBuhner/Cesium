@@ -6,7 +6,7 @@ import { getActiveServerBaseUrl } from "@/lib/server-connections";
 export function getConfiguredServerBaseUrl(): string {
   return (
     process.env.NEXT_PUBLIC_SERVER_URL?.replace(/\/+$/, "") ??
-    "http://localhost:9100"
+    "http://localhost:9107"
   );
 }
 
@@ -23,9 +23,9 @@ export function getConfiguredServerBaseUrl(): string {
  *      when the bundle was built for a LAN URL but served over TLS.
  *   2. Dev on localhost: keep the cookie origin aligned with the page
  *      (http vs https, 127.0.0.1 vs localhost).
- *   3. LAN plain-HTTP: if the bundle still says `http://localhost:9100` but
+ *   3. LAN plain-HTTP: if the bundle still says `http://localhost:9107` but
  *      the UI is opened as `http://192.168.x.x:3000`, rewrite to the same
- *      host as the page on port 9100.
+ *      host as the page on port 9107.
  *   4. Otherwise: return the configured URL untouched.
  */
 export function resolveClientServerBaseUrl(): string {
@@ -35,7 +35,32 @@ export function resolveClientServerBaseUrl(): string {
 }
 
 export function resolveClientServerBaseUrlForCurrentWindow(raw: string): string {
+  if (typeof window !== "undefined") {
+    const override = serverUrlOverrideFromSearch(window.location.search);
+    if (override) {
+      return override;
+    }
+  }
   return resolveClientServerBaseUrlForLocation(raw, typeof window !== "undefined" ? window : null);
+}
+
+function serverUrlOverrideFromSearch(search: string): string | null {
+  try {
+    const value = new URLSearchParams(search).get("serverUrl")?.trim();
+    if (!value) {
+      return null;
+    }
+    const url = new URL(value);
+    if (url.protocol !== "http:" && url.protocol !== "https:") {
+      return null;
+    }
+    url.username = "";
+    url.password = "";
+    url.hash = "";
+    return url.toString().replace(/\/+$/, "");
+  } catch {
+    return null;
+  }
 }
 
 export function resolveClientServerBaseUrlForLocation(
@@ -79,7 +104,7 @@ export function resolveClientServerBaseUrlForLocation(
     ) {
       configured.protocol = locationSource.location.protocol;
       configured.hostname = currentHost;
-      configured.port = configured.port || "9100";
+      configured.port = configured.port || "9107";
       return configured.toString().replace(/\/+$/, "");
     }
 
@@ -96,7 +121,7 @@ export function resolveClientServerBaseUrlForLocation(
       const next = new URL(raw);
       next.protocol = "http:";
       next.hostname = currentHost;
-      next.port = "9100";
+      next.port = "9107";
       return next.toString().replace(/\/+$/, "");
     }
   } catch {

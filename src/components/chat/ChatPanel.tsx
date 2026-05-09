@@ -66,7 +66,6 @@ import {
   generateDraftTitle,
   handoffAgentConversation,
   patchAgentConversationMetadata,
-  promptAgentConversation,
   saveWorkspaceWindowSession,
   updateAgentConversationConfig,
 } from "@/lib/server-api";
@@ -219,6 +218,7 @@ loadOlderConversationHistory,
 setConversationMode,
 setConversationModel,
 setConversationConfigOption,
+promptConversation,
 pendingConfigByConversationId,
 setPendingConfigForConversation,
 clearPendingConfigForConversation,
@@ -439,7 +439,11 @@ return;
 const conv = conversationsByIdRef.current[draftId];
 if (conv && (conv.status === "running" || conv.status === "awaiting_permission")) {
 const modelId = next.modelValue ?? next.id;
-setPendingConfigForConversation(draftId, { modelId, modelName: next.name });
+setPendingConfigForConversation(draftId, {
+modelId,
+modelName: next.name,
+setConfigOptions: next.configSelections,
+});
 return;
 }
 try {
@@ -1265,12 +1269,12 @@ workspaceSession.chat.model,
 
   const handleResolveActivePermission = useCallback(
     (requestId: string, optionId: string) => {
-      if (!activeConversation) {
+      if (!activeTabId || activeTabId === "__empty__") {
         return;
       }
-      void answerPermissionForConversation(activeConversation.id, requestId, optionId);
+      void answerPermissionForConversation(activeTabId, requestId, optionId);
     },
-    [activeConversation, answerPermissionForConversation]
+    [activeTabId, answerPermissionForConversation]
   );
 
   const handleScrollTopSettled = useCallback(
@@ -1673,14 +1677,13 @@ workspaceSession.chat.model,
               const handoffResult = await handoffAgentConversation(conversation.id, pendingTarget);
               clearPendingConfigForConversation(conversation.id);
               await applyHandoffServerResult(handoffResult);
-              const snapshot = await promptAgentConversation(
+              const ok = await promptConversation(
                 handoffResult.newConversationId,
                 text,
                 attachments
               );
-              mergeConversationSnapshot(snapshot.snapshot);
               clearEditingQueuedPromptForConversation(conversation.id);
-              return true;
+              return ok;
             } catch (error) {
               const message =
                 error instanceof Error ? error.message : "Failed to hand off conversation.";
@@ -1695,13 +1698,16 @@ workspaceSession.chat.model,
               return false;
             }
           }
-          if (pendingConfig.mode || pendingConfig.modelId) {
+          if (pendingConfig.mode || pendingConfig.modelId || pendingConfig.setConfigOptions) {
             try {
               const patch: Record<string, unknown> = {};
               if (pendingConfig.mode) patch.mode = pendingConfig.mode;
               if (pendingConfig.modelId) {
                 patch.modelId = pendingConfig.modelId;
                 patch.modelName = pendingConfig.modelName;
+              }
+              if (pendingConfig.setConfigOptions) {
+                patch.setConfigOptions = pendingConfig.setConfigOptions;
               }
               const updated = await updateAgentConversationConfig(conversation.id, patch);
               upsertConversation(updated.conversation);
@@ -1724,21 +1730,19 @@ workspaceSession.chat.model,
           const merged: typeof derivedOverride = { ...derivedOverride, ...pendingConfig };
           const configOverride =
             merged && Object.keys(merged).length > 0 ? merged : undefined;
-          const snapshot = await promptAgentConversation(
+          const ok = await promptConversation(
             conversation.id,
             text,
             attachments,
             configOverride
           );
-          mergeConversationSnapshot(snapshot.snapshot);
           clearEditingQueuedPromptForConversation(conversation.id);
-          return true;
+          return ok;
         }
 
-        const snapshot = await promptAgentConversation(conversation.id, text, attachments);
-        mergeConversationSnapshot(snapshot.snapshot);
+        const ok = await promptConversation(conversation.id, text, attachments);
         clearEditingQueuedPromptForConversation(conversation.id);
-        return true;
+        return ok;
       } catch (error) {
         const message = error instanceof Error ? error.message : "Failed to start the agent turn.";
         if (conversationIdForError) {
@@ -1773,6 +1777,7 @@ workspaceSession.chat.model,
       createConversationAndOpen,
       mergeConversationSnapshot,
       pendingConfigByConversationId,
+      promptConversation,
       pushNotification,
       resolveComposerStateForDraft,
       setTabs,

@@ -30,6 +30,7 @@ import {
   type CliRuntimeSpec,
 } from "./cli-adapter.js";
 import { getCursorSdkCapabilities } from "./cursor-sdk-capabilities.js";
+import { getClaudeCodeSdkCapabilities } from "./claude-code-sdk-capabilities.js";
 import {
   readAgentBackendConfigCache,
   writeAgentBackendConfigCache,
@@ -67,6 +68,13 @@ import {
   truncateGenericToolTitle,
 } from "./tool-display-labels.js";
 import { inferFileKind, isDimmed } from "../workspace.js";
+import {
+  describeClaudeCodeSdkAuthStatus,
+  getClaudeCodeSdkProxyModel,
+  getClaudeCodeSdkProxyModelName,
+  hasClaudeCodeSdkAuthConfig,
+  hasClaudeCodeSdkProxyConfig,
+} from "../claude-code-sdk-credentials.js";
 import {
   getGlobalSettings,
   saveRememberedAgentPermissionRule,
@@ -272,6 +280,20 @@ const claudeCliCapabilities: AgentProviderCapabilities = {
 const codexCliCapabilities: AgentProviderCapabilities = {
   ...basicCliCapabilities,
   supportsToolCalls: true,
+};
+
+const codexAppServerCapabilities: AgentProviderCapabilities = {
+  supportsLoadSession: true,
+  supportsModeSelection: true,
+  supportsModelSelection: true,
+  supportsSlashCommands: true,
+  supportsPermissions: true,
+  supportsToolCalls: true,
+  supportsStructuredPlans: true,
+  supportsTodos: true,
+  supportsSessionResume: true,
+  supportsPromptImages: true,
+  supportsInlineReasoning: true,
 };
 
 const cursorAcpCapabilities: AgentProviderCapabilities = {
@@ -1189,12 +1211,28 @@ export const AGENT_BACKENDS: Record<AgentBackendId, AgentBackendInfo> = {
   }),
   "opencode-acp": createBackendInfo({
     id: "opencode-acp",
-    label: "Opencode",
+    label: "OpenCode",
     description: "OpenCode CLI over ACP stdio.",
     commandPreview: OPENCODE_RUNTIME?.commandPreview ?? "OpenCode CLI not found",
     available: OPENCODE_RUNTIME !== null,
     capabilities: openCodeCapabilities,
     defaultMode: "agent",
+    defaultModelId: "auto",
+    defaultModelName: "Auto",
+  }),
+  "opencode-server": createBackendInfo({
+    id: "opencode-server",
+    label: "OpenCode Server",
+    description: "OpenCode native HTTP/SSE server API.",
+    experimental: true,
+    commandPreview: process.env.OPENCURSOR_OPENCODE_SERVER_URL?.trim()
+      ? `OpenCode server at ${process.env.OPENCURSOR_OPENCODE_SERVER_URL.trim()}`
+      : OPENCODE_RUNTIME
+        ? `${OPENCODE_RUNTIME.commandPreview} serve`
+        : "OpenCode server not configured",
+    available: Boolean(process.env.OPENCURSOR_OPENCODE_SERVER_URL?.trim()) || OPENCODE_RUNTIME !== null,
+    capabilities: openCodeCapabilities,
+    defaultMode: "build",
     defaultModelId: "auto",
     defaultModelName: "Auto",
   }),
@@ -1221,6 +1259,20 @@ export const AGENT_BACKENDS: Record<AgentBackendId, AgentBackendInfo> = {
     defaultModelId: "gpt-5.4-mini",
     defaultModelName: "GPT-5.4-Mini",
   }),
+  "codex-app-server": createBackendInfo({
+    id: "codex-app-server",
+    label: "Codex App Server",
+    description: "Official Codex App Server over JSON-RPC stdio.",
+    experimental: true,
+    commandPreview: CODEX_RUNTIME
+      ? `${CODEX_RUNTIME.commandPreview} app-server`
+      : "Codex CLI not found",
+    available: CODEX_RUNTIME !== null,
+    capabilities: codexAppServerCapabilities,
+    defaultMode: "agent",
+    defaultModelId: "__default__",
+    defaultModelName: "Codex App Server Default",
+  }),
   "claude-adapter": createBackendInfo({
     id: "claude-adapter",
     label: "Claude Code",
@@ -1233,18 +1285,46 @@ export const AGENT_BACKENDS: Record<AgentBackendId, AgentBackendInfo> = {
     defaultModelId: "glm-5.1",
     defaultModelName: "GLM 5.1",
   }),
+  "claude-code-sdk": createBackendInfo({
+    id: "claude-code-sdk",
+    label: "Claude Code SDK",
+    description: "Anthropic Claude Agent SDK with stock Claude Code tools.",
+    experimental: true,
+    commandPreview: `@anthropic-ai/claude-agent-sdk · ${describeClaudeCodeSdkAuthStatus()}`,
+    available: hasClaudeCodeSdkAuthConfig(),
+    capabilities: getClaudeCodeSdkCapabilities(),
+    defaultMode: "agent",
+    defaultModelId: hasClaudeCodeSdkProxyConfig() ? getClaudeCodeSdkProxyModel() : "claude-sonnet-4-5",
+    defaultModelName: hasClaudeCodeSdkProxyConfig() ? getClaudeCodeSdkProxyModelName() : "Claude Sonnet 4.5",
+  }),
 };
 
+/** Stable ordering for harness/model-picker menus (Cursor family first, then Codex, OpenCode, Claude, Gemini). */
+const AGENT_BACKEND_MENU_ORDER = [
+  "cursor-acp",
+  "cursor-sdk",
+  "codex-adapter",
+  "codex-app-server",
+  "opencode-acp",
+  "opencode-server",
+  "claude-adapter",
+  "claude-code-sdk",
+  "gemini-acp",
+] as const satisfies readonly AgentBackendId[];
+
 export function listAgentBackends(): AgentBackendInfo[] {
-  return Object.values(AGENT_BACKENDS);
+  return AGENT_BACKEND_MENU_ORDER.map((id) => AGENT_BACKENDS[id]);
 }
 
 export async function listAgentBackendsWithCache(): Promise<AgentBackendInfo[]> {
   return Promise.all(
-    Object.values(AGENT_BACKENDS).map(async (backend) => ({
-      ...backend,
-      cachedConfigOptions: await readAgentBackendConfigCache(backend.id),
-    }))
+    AGENT_BACKEND_MENU_ORDER.map(async (id) => {
+      const backend = AGENT_BACKENDS[id];
+      return {
+        ...backend,
+        cachedConfigOptions: await readAgentBackendConfigCache(backend.id),
+      };
+    })
   );
 }
 
@@ -4729,6 +4809,14 @@ export async function createAgentProvider(
     });
   }
 
+  if (backendId === "claude-code-sdk") {
+    const { createClaudeCodeSdkProvider } = await import("./claude-code-sdk-provider.js");
+    return createClaudeCodeSdkProvider({
+      backend,
+      configOptions: await readAgentBackendConfigCache(backendId),
+    });
+  }
+
   if (backendId === "opencode-acp") {
     if (!OPENCODE_RUNTIME) {
       throw new Error(`${backend.label} is not installed or could not be resolved.`);
@@ -4755,6 +4843,17 @@ export async function createAgentProvider(
         });
       },
     };
+  }
+
+  if (backendId === "opencode-server") {
+    if (!process.env.OPENCURSOR_OPENCODE_SERVER_URL?.trim() && !OPENCODE_RUNTIME) {
+      throw new Error(`${backend.label} is not installed or configured.`);
+    }
+    const { createOpenCodeServerProvider } = await import("./opencode-server-provider.js");
+    return createOpenCodeServerProvider({
+      backend,
+      configOptions: await readAgentBackendConfigCache(backendId),
+    });
   }
 
   if (backendId === "gemini-acp") {
@@ -4794,6 +4893,18 @@ export async function createAgentProvider(
       runtime: CODEX_RUNTIME,
       configOptions: await readAgentBackendConfigCache(backendId),
       capabilities: basicCliCapabilities,
+    });
+  }
+
+  if (backendId === "codex-app-server") {
+    if (!CODEX_RUNTIME) {
+      throw new Error(`${backend.label} is not installed or could not be resolved.`);
+    }
+    const { createCodexAppServerProvider } = await import("./codex-app-server-provider.js");
+    return createCodexAppServerProvider({
+      backend,
+      runtime: CODEX_RUNTIME,
+      configOptions: await readAgentBackendConfigCache(backendId),
     });
   }
 

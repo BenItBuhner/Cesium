@@ -5,8 +5,17 @@ import path from "node:path";
 import { readJsonFile } from "../persistence.js";
 import { getStorage } from "../../storage/runtime.js";
 import { getCursorSdkApiKey } from "../cursor-sdk-credentials.js";
+import {
+  getClaudeCodeSdkProxyModel,
+  getClaudeCodeSdkProxyModelName,
+  hasClaudeCodeSdkAuthConfig,
+  hasClaudeCodeSdkProxyConfig,
+} from "../claude-code-sdk-credentials.js";
 import { spawnSafeEnv } from "./spawn-env.js";
-import type { AgentBackendId, AgentConfigOption } from "./types.js";
+import { CodexAppServerTransport } from "./codex-app-server-transport.js";
+import { OpenCodeServerClient, openCodeServerAuthFromEnv } from "./opencode-server-client.js";
+import { encodeCursorSdkModelValue, type CursorSdkModelParam } from "./cursor-sdk-model-selection.js";
+import type { AgentBackendId, AgentConfigOption, AgentConfigOptionValue } from "./types.js";
 
 type AgentBackendCacheRecord = {
   schemaVersion: 1;
@@ -289,6 +298,128 @@ async function createOpenCodeCliConfigOptions(input?: {
   ];
 }
 
+function collectOpenCodeServerModelOptions(payload: unknown): AgentConfigOption["options"] {
+  const record = payload && typeof payload === "object" && !Array.isArray(payload)
+    ? (payload as Record<string, unknown>)
+    : {};
+  const providers = Array.isArray(record.providers)
+    ? record.providers
+    : Array.isArray(record.all)
+      ? record.all
+      : [];
+  const options: AgentConfigOption["options"] = [];
+  for (const provider of providers) {
+    if (!provider || typeof provider !== "object" || Array.isArray(provider)) {
+      continue;
+    }
+    const p = provider as Record<string, unknown>;
+    const providerId =
+      typeof p.id === "string"
+        ? p.id
+        : typeof p.providerID === "string"
+          ? p.providerID
+          : typeof p.name === "string"
+            ? p.name
+            : "";
+    const providerName =
+      typeof p.name === "string" && p.name.trim() ? p.name : providerId;
+    const models =
+      p.models && typeof p.models === "object" && !Array.isArray(p.models)
+        ? Object.entries(p.models as Record<string, unknown>)
+        : Array.isArray(p.models)
+          ? p.models.map((model) => {
+              const m = model && typeof model === "object" && !Array.isArray(model)
+                ? (model as Record<string, unknown>)
+                : {};
+              const id = typeof m.id === "string" ? m.id : typeof m.modelID === "string" ? m.modelID : "";
+              return [id, m] as const;
+            })
+          : [];
+    for (const [modelId, model] of models) {
+      if (!providerId || !modelId) {
+        continue;
+      }
+      const modelRecord = model && typeof model === "object" && !Array.isArray(model)
+        ? (model as Record<string, unknown>)
+        : {};
+      const modelName =
+        typeof modelRecord.name === "string" && modelRecord.name.trim()
+          ? modelRecord.name
+          : modelId;
+      options.push({
+        value: `${providerId}/${modelId}`,
+        name: `${providerName}/${modelName}`,
+      });
+    }
+  }
+  return options;
+}
+
+function collectOpenCodeServerAgentOptions(payload: unknown): AgentConfigOption["options"] {
+  const list = Array.isArray(payload)
+    ? payload
+    : payload && typeof payload === "object" && Array.isArray((payload as Record<string, unknown>).data)
+      ? ((payload as Record<string, unknown>).data as unknown[])
+      : [];
+  const options = list.flatMap((entry) => {
+    const record = entry && typeof entry === "object" && !Array.isArray(entry)
+      ? (entry as Record<string, unknown>)
+      : {};
+    const value =
+      typeof record.name === "string"
+        ? record.name
+        : typeof record.id === "string"
+          ? record.id
+          : "";
+    if (!value) {
+      return [];
+    }
+    return [{ value, name: typeof record.name === "string" ? record.name : value }];
+  });
+  return options.length > 0 ? options : [{ value: "build", name: "build" }, { value: "plan", name: "plan" }];
+}
+
+async function createOpenCodeServerConfigOptions(): Promise<AgentConfigOption[]> {
+  const baseUrl = process.env.OPENCURSOR_OPENCODE_SERVER_URL?.trim();
+  if (!baseUrl) {
+    return createOpenCodeCliConfigOptions();
+  }
+  try {
+    const client = new OpenCodeServerClient({ baseUrl, ...openCodeServerAuthFromEnv(), timeoutMs: 10_000 });
+    const [providers, provider, agents] = await Promise.all([
+      client.request("/config/providers").catch(() => null),
+      client.request("/provider").catch(() => null),
+      client.request("/agent").catch(() => null),
+    ]);
+    const modelOptions = [
+      ...collectOpenCodeServerModelOptions(providers),
+      ...collectOpenCodeServerModelOptions(provider),
+    ];
+    const uniqueModels = Array.from(
+      new Map(modelOptions.map((option) => [option.value, option])).values()
+    );
+    const agentOptions = collectOpenCodeServerAgentOptions(agents);
+    return [
+      {
+        id: "agent",
+        name: "Agent",
+        category: "mode",
+        currentValue: agentOptions[0]?.value ?? "build",
+        options: agentOptions,
+      },
+      {
+        id: "model",
+        name: "Model",
+        category: "model",
+        currentValue: uniqueModels[0]?.value ?? "auto",
+        options: uniqueModels.length > 0 ? uniqueModels : [{ value: "auto", name: "Auto" }],
+      },
+    ];
+  } catch {
+    return createOpenCodeCliConfigOptions();
+  }
+}
+
 /**
  * Seed model dropdown for Gemini CLI before the first ACP session lists options.
  * Values follow Gemini CLI model aliases and common model ids (see Gemini CLI docs).
@@ -485,6 +616,193 @@ async function createCodexSeedConfigOptions(): Promise<AgentConfigOption[]> {
   return next;
 }
 
+function titleCaseConfigValue(value: string): string {
+  if (/^xhigh$/i.test(value)) {
+    return "Extra High";
+  }
+  return value
+    .replace(/[-_]+/g, " ")
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+    .join(" ");
+}
+
+function createCodexAppServerFallbackConfigOptions(): AgentConfigOption[] {
+  return [
+    {
+      id: "mode",
+      name: "Mode",
+      category: "mode",
+      currentValue: "agent",
+      options: [
+        { value: "agent", name: "Agent" },
+        { value: "plan", name: "Plan" },
+        { value: "ask", name: "Ask" },
+        { value: "debug", name: "Debug" },
+      ],
+    },
+    {
+      id: "model",
+      name: "Model",
+      category: "model",
+      currentValue: "__default__",
+      options: [],
+    },
+    {
+      id: "permission",
+      name: "Execution Mode",
+      category: "permission",
+      currentValue: "workspace-write",
+      options: [
+        { value: "read-only", name: "Read Only" },
+        { value: "workspace-write", name: "Workspace Write" },
+        { value: "on-request", name: "Ask Every Time" },
+        {
+          value: "bypassPermissions",
+          name: "Bypass Permissions",
+          description: "Requires OPENCURSOR_CODEX_APP_SERVER_ALLOW_BYPASS=1.",
+        },
+      ],
+    },
+  ];
+}
+
+function codexAppServerEffortValues(entry: Record<string, unknown>): string[] {
+  const raw = Array.isArray(entry.supportedReasoningEfforts)
+    ? entry.supportedReasoningEfforts
+    : [];
+  return raw
+    .map((effort) => {
+      if (typeof effort === "string") {
+        return effort;
+      }
+      const record =
+        effort && typeof effort === "object" && !Array.isArray(effort)
+          ? (effort as Record<string, unknown>)
+          : null;
+      return typeof record?.reasoningEffort === "string" ? record.reasoningEffort : "";
+    })
+    .filter(Boolean);
+}
+
+function codexAppServerOptionsFromModels(
+  models: Array<Record<string, unknown>>
+): AgentConfigOption[] {
+  const modelOptions: AgentConfigOptionValue[] = models
+    .map((entry) => {
+      const value =
+        typeof entry.id === "string"
+          ? entry.id
+          : typeof entry.model === "string"
+            ? entry.model
+            : "";
+      const name =
+        typeof entry.displayName === "string" && entry.displayName.trim()
+          ? entry.displayName
+          : value;
+      if (!value || !name) {
+        return null;
+      }
+      const reasoningLevels = codexAppServerEffortValues(entry);
+      return {
+        value,
+        name,
+        metadata: reasoningLevels.length > 0 ? { reasoningLevels } : undefined,
+      };
+    })
+    .filter((value): value is NonNullable<typeof value> => Boolean(value));
+
+  const defaultModel =
+    modelOptions.find((option) => !/-codex(?:-|$)/.test(option.value))?.value ??
+    models.find((entry) => entry.isDefault === true && typeof entry.id === "string")?.id ??
+    modelOptions[0]?.value ??
+    "__default__";
+  const effortSet = new Set<string>();
+  for (const model of models) {
+    for (const effort of codexAppServerEffortValues(model)) {
+      effortSet.add(effort);
+    }
+  }
+  const efforts = Array.from(effortSet);
+  const baseOptions = createCodexAppServerFallbackConfigOptions().map((option) => {
+    if (option.id === "model") {
+      return {
+        ...option,
+        description: "Models reported by the Codex App Server model/list endpoint.",
+        currentValue: String(defaultModel),
+        options: modelOptions,
+      };
+    }
+    return option;
+  });
+  if (efforts.length > 0) {
+    baseOptions.push({
+      id: "model_reasoning_effort",
+      name: "Reasoning Effort",
+      category: "thought_level",
+      currentValue: efforts.includes("low") ? "low" : efforts[0]!,
+      options: efforts.map((effort) => ({ value: effort, name: titleCaseConfigValue(effort) })),
+    });
+  }
+  return baseOptions;
+}
+
+async function resolveCodexAppServerCommand(): Promise<string> {
+  const configured = process.env.OPENCURSOR_CODEX_BIN?.trim();
+  if (configured) {
+    return configured;
+  }
+  if (process.platform === "win32" && process.env.APPDATA?.trim()) {
+    const npmShim = path.join(process.env.APPDATA, "npm", "codex.cmd");
+    try {
+      await fs.access(npmShim);
+      return npmShim;
+    } catch {
+      // Fall through to PATH resolution by child_process.
+    }
+  }
+  return "codex";
+}
+
+async function createCodexAppServerConfigOptions(): Promise<AgentConfigOption[]> {
+  let transport: CodexAppServerTransport | null = null;
+  try {
+    transport = new CodexAppServerTransport({
+      command: await resolveCodexAppServerCommand(),
+      args: ["app-server"],
+      cwd: process.cwd(),
+      requestTimeoutMs: 10_000,
+    });
+    await transport.request("initialize", {
+      clientInfo: {
+        name: "opencursor_codex_app_server_models",
+        title: "OpenCursor Codex App Server Model Discovery",
+        version: "0.1.0",
+      },
+      capabilities: { experimentalApi: true },
+    });
+    transport.notify("initialized");
+    await transport.request("account/read", { refreshToken: false }).catch(() => undefined);
+    const models: Array<Record<string, unknown>> = [];
+    let cursor: string | null | undefined = null;
+    do {
+      const result = (await transport.request("model/list", {
+        limit: 50,
+        includeHidden: false,
+        ...(cursor ? { cursor } : {}),
+      })) as { data?: Array<Record<string, unknown>>; nextCursor?: string | null };
+      models.push(...(Array.isArray(result.data) ? result.data : []));
+      cursor = result.nextCursor;
+    } while (cursor);
+    return codexAppServerOptionsFromModels(models);
+  } catch {
+    return createCodexAppServerFallbackConfigOptions();
+  } finally {
+    transport?.dispose();
+  }
+}
+
 function createCursorSdkFallbackConfigOptions(): AgentConfigOption[] {
   return [
     {
@@ -548,7 +866,7 @@ function createCursorSdkFallbackConfigOptions(): AgentConfigOption[] {
   ];
 }
 
-function cursorSdkConfigOptionsFromModels(
+export function cursorSdkConfigOptionsFromModels(
   models: Array<{
     id: string;
     displayName: string;
@@ -558,27 +876,16 @@ function cursorSdkConfigOptionsFromModels(
       displayName?: string;
       values: Array<{ value: string; displayName?: string }>;
     }>;
+    variants?: Array<{
+      params: CursorSdkModelParam[];
+      displayName: string;
+      description?: string;
+      isDefault?: boolean;
+    }>;
   }>
 ): AgentConfigOption[] {
   const fallback = createCursorSdkFallbackConfigOptions();
-  const modelRows = models
-    .filter((model) => model.id.trim())
-    .map((model) => {
-      const option: AgentConfigOption["options"][number] = {
-        value: model.id,
-        name: model.displayName || model.id,
-        ...(model.description ? { description: model.description } : {}),
-      };
-      const reasoning = model.parameters?.find((parameter) =>
-        /thinking|reasoning|effort/i.test(parameter.id)
-      );
-      const reasoningLevels =
-        reasoning?.values.map((value) => value.value).filter(Boolean) ?? [];
-      if (reasoningLevels.length > 0) {
-        option.metadata = { reasoningLevels };
-      }
-      return option;
-    });
+  const modelRows = models.flatMap(cursorSdkModelRows);
   if (modelRows.length === 0) {
     return fallback;
   }
@@ -594,6 +901,209 @@ function cursorSdkConfigOptionsFromModels(
         }
       : option
   );
+}
+
+function cursorSdkModelRows(model: {
+  id: string;
+  displayName: string;
+  description?: string;
+  parameters?: Array<{
+    id: string;
+    displayName?: string;
+    values: Array<{ value: string; displayName?: string }>;
+  }>;
+  variants?: Array<{
+    params: CursorSdkModelParam[];
+    displayName: string;
+    description?: string;
+    isDefault?: boolean;
+  }>;
+}): AgentConfigOption["options"] {
+  const modelId = model.id.trim();
+  if (!modelId) {
+    return [];
+  }
+
+  const variants = model.variants?.filter((variant) => Array.isArray(variant.params)) ?? [];
+  if (variants.length > 0) {
+    return variants.map((variant) => {
+      const params = normalizeCursorSdkParams(variant.params);
+      const name = formatCursorSdkVariantName(model.displayName || modelId, variant.displayName, params);
+      return {
+        value: encodeCursorSdkModelValue(modelId, params),
+        name,
+        description: variant.description ?? model.description,
+        metadata: cursorSdkModelMetadata(modelId, params, variant.isDefault),
+      };
+    });
+  }
+
+  const parameterVariants = expandCursorSdkParameterVariants(model.parameters ?? []);
+  if (parameterVariants.length > 0) {
+    return parameterVariants.map((params) => ({
+      value: encodeCursorSdkModelValue(modelId, params),
+      name: formatCursorSdkVariantName(model.displayName || modelId, "", params),
+      ...(model.description ? { description: model.description } : {}),
+      metadata: cursorSdkModelMetadata(modelId, params, false),
+    }));
+  }
+
+  return [
+    {
+      value: modelId,
+      name: model.displayName || modelId,
+      ...(model.description ? { description: model.description } : {}),
+      metadata: cursorSdkModelMetadata(modelId, [], false),
+    },
+  ];
+}
+
+function normalizeCursorSdkParams(params: CursorSdkModelParam[]): CursorSdkModelParam[] {
+  return params
+    .map((param) => ({ id: param.id.trim(), value: param.value.trim() }))
+    .filter((param) => param.id.length > 0 && param.value.length > 0)
+    .sort((a, b) => a.id.localeCompare(b.id));
+}
+
+function cursorSdkModelMetadata(
+  modelId: string,
+  params: CursorSdkModelParam[],
+  isDefault?: boolean
+): Record<string, string | string[]> {
+  return {
+    cursorSdkModelId: modelId,
+    cursorSdkParams: params.map((param) => `${param.id}=${param.value}`),
+    ...(isDefault ? { cursorSdkDefault: "true" } : {}),
+  };
+}
+
+function formatCursorSdkVariantName(
+  baseName: string,
+  variantName: string,
+  params: CursorSdkModelParam[]
+): string {
+  const cleanBase = baseName.trim();
+  const cleanVariant = variantName.trim();
+  const paramLabels = cursorSdkVariantLabelsFromParams(params);
+  if (paramLabels.length > 0) {
+    return appendUniqueCursorSdkVariantLabels(cleanBase, paramLabels);
+  }
+  if (cleanVariant && !/^default$/i.test(cleanVariant)) {
+    const variantLabels = cursorSdkVariantLabelsFromDisplayName(cleanVariant);
+    if (variantLabels.length > 0) {
+      return appendUniqueCursorSdkVariantLabels(cleanBase, variantLabels);
+    }
+  }
+  if (params.length === 0) {
+    return cleanBase;
+  }
+  return cleanBase;
+}
+
+function cursorSdkParamFallbackLabel(value: string): string {
+  if (/^xhigh$/i.test(value)) {
+    return "Extra High";
+  }
+  return value
+    .replace(/[-_]+/g, " ")
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+    .join(" ");
+}
+
+function appendUniqueCursorSdkVariantLabels(baseName: string, labels: string[]): string {
+  const normalizedBase = baseName.toLowerCase();
+  const unique = labels.filter((label, index, all) => {
+    const normalized = label.toLowerCase();
+    return (
+      normalized.length > 0 &&
+      !normalizedBase.includes(normalized) &&
+      all.findIndex((candidate) => candidate.toLowerCase() === normalized) === index
+    );
+  });
+  return unique.length > 0 ? `${baseName} ${unique.join(" ")}` : baseName;
+}
+
+function cursorSdkVariantLabelsFromParams(params: CursorSdkModelParam[]): string[] {
+  return params.flatMap((param) => cursorSdkVariantLabel(param.id, param.value));
+}
+
+function cursorSdkVariantLabelsFromDisplayName(displayName: string): string[] {
+  const cleaned = displayName.replace(/[()]/g, " ");
+  return cleaned
+    .split(/[,/]+/)
+    .flatMap((part) => {
+      const trimmed = part.trim();
+      if (/^extra\s+high$/i.test(trimmed)) {
+        return ["Extra High"];
+      }
+      return trimmed.split(/\s+/).flatMap((token) => cursorSdkVariantLabel("", token));
+    });
+}
+
+function cursorSdkVariantLabel(paramId: string, rawValue: string): string[] {
+  const id = paramId.trim().toLowerCase();
+  const value = rawValue.trim();
+  const normalizedValue = value.toLowerCase();
+  if (
+    !value ||
+    normalizedValue === "none" ||
+    normalizedValue === "default" ||
+    normalizedValue === "auto" ||
+    normalizedValue === "false"
+  ) {
+    return [];
+  }
+  if (/context|length|window|token/.test(id) || /^\d+\s*k$/i.test(value)) {
+    return [];
+  }
+  if (/speed|fast/.test(id)) {
+    return normalizedValue === "fast" || normalizedValue === "true"
+      ? ["Fast"]
+      : [cursorSdkParamFallbackLabel(value)];
+  }
+  if (/thinking|reason|effort/.test(id)) {
+    return [cursorSdkParamFallbackLabel(value)];
+  }
+  if (
+    ["low", "medium", "high", "xhigh", "extra-high", "extra high", "fast", "max", "thinking"].includes(
+      normalizedValue
+    )
+  ) {
+    return [cursorSdkParamFallbackLabel(value)];
+  }
+  return [];
+}
+
+function expandCursorSdkParameterVariants(
+  parameters: Array<{
+    id: string;
+    displayName?: string;
+    values: Array<{ value: string; displayName?: string }>;
+  }>
+): CursorSdkModelParam[][] {
+  const variantParameters = parameters.filter((parameter) =>
+    /speed|fast|context|length|thinking|reason|effort/i.test(parameter.id)
+  );
+  if (variantParameters.length === 0) {
+    return [];
+  }
+
+  let rows: CursorSdkModelParam[][] = [[]];
+  for (const parameter of variantParameters) {
+    const values = parameter.values.filter((value) => value.value.trim());
+    if (values.length === 0) {
+      continue;
+    }
+    rows = rows.flatMap((row) =>
+      values.map((value) => [...row, { id: parameter.id, value: value.value }])
+    );
+    if (rows.length > 80) {
+      return [];
+    }
+  }
+  return rows.map((row) => normalizeCursorSdkParams(row));
 }
 
 const CURSOR_SDK_MODEL_LIST_TIMEOUT_MS = Number.parseInt(
@@ -629,18 +1139,206 @@ async function createCursorSdkConfigOptions(): Promise<AgentConfigOption[]> {
   }
 }
 
+const CLAUDE_CODE_SDK_FALLBACK_MODELS: AgentConfigOption["options"] = [
+  {
+    value: "claude-sonnet-4-5",
+    name: "Claude Sonnet 4.5",
+    description: "Balanced Claude Code SDK default.",
+    metadata: { reasoningLevels: ["low", "medium", "high"] },
+  },
+  {
+    value: "claude-opus-4-7",
+    name: "Claude Opus 4.7",
+    description: "Highest capability model with xhigh/max effort support.",
+    metadata: { reasoningLevels: ["low", "medium", "high", "xhigh", "max"] },
+  },
+  {
+    value: "claude-opus-4-6",
+    name: "Claude Opus 4.6",
+    description: "High capability model with max effort support.",
+    metadata: { reasoningLevels: ["low", "medium", "high", "max"] },
+  },
+  {
+    value: "claude-haiku-4-5",
+    name: "Claude Haiku 4.5",
+    description: "Fast Claude model for lighter tasks.",
+    metadata: { reasoningLevels: ["low", "medium"] },
+  },
+];
+
+function claudeCodeSdkModelOptions(): AgentConfigOption["options"] {
+  if (!hasClaudeCodeSdkProxyConfig()) {
+    return CLAUDE_CODE_SDK_FALLBACK_MODELS;
+  }
+  const proxyModel = getClaudeCodeSdkProxyModel();
+  return [
+    {
+      value: proxyModel,
+      name: getClaudeCodeSdkProxyModelName(),
+      description: "Claude Code SDK routed through the configured model proxy.",
+      metadata: { reasoningLevels: ["low", "medium", "high", "xhigh", "max"] },
+    },
+    ...CLAUDE_CODE_SDK_FALLBACK_MODELS.filter((model) => model.value !== proxyModel),
+  ];
+}
+
+function createClaudeCodeSdkFallbackConfigOptions(
+  modelOptions: AgentConfigOption["options"] = claudeCodeSdkModelOptions()
+): AgentConfigOption[] {
+  return [
+    {
+      id: "mode",
+      name: "Mode",
+      category: "mode",
+      currentValue: "agent",
+      options: [
+        { value: "agent", name: "Agent", description: "Run Claude Code SDK with normal tool permissions." },
+        { value: "plan", name: "Plan", description: "Use native Claude plan mode without executing tools." },
+        { value: "ask", name: "Ask", description: "Answer and inspect with restrictive permissions." },
+        { value: "debug", name: "Debug", description: "Debug with the standard Claude Code tool profile." },
+      ],
+    },
+    {
+      id: "model",
+      name: "Model",
+      category: "model",
+      currentValue: modelOptions[0]?.value ?? "claude-sonnet-4-5",
+      options: modelOptions,
+    },
+    {
+      id: "permission_mode",
+      name: "Permission Mode",
+      category: "permission",
+      currentValue: "default",
+      options: [
+        { value: "default", name: "Default" },
+        { value: "acceptEdits", name: "Accept Edits" },
+        { value: "plan", name: "Plan" },
+        { value: "dontAsk", name: "Don't Ask" },
+        { value: "auto", name: "Auto" },
+        {
+          value: "bypassPermissions",
+          name: "Bypass Permissions",
+          description: "Requires OPENCURSOR_CLAUDE_CODE_SDK_ALLOW_BYPASS=1.",
+        },
+      ],
+    },
+    {
+      id: "effort",
+      name: "Reasoning Effort",
+      category: "thought_level",
+      currentValue: "medium",
+      options: [
+        { value: "low", name: "Low" },
+        { value: "medium", name: "Medium" },
+        { value: "high", name: "High" },
+        { value: "xhigh", name: "Extra High" },
+        { value: "max", name: "Max" },
+      ],
+    },
+    {
+      id: "thinking",
+      name: "Thinking",
+      category: "thought_level",
+      currentValue: "adaptive",
+      options: [
+        { value: "adaptive", name: "Adaptive" },
+        { value: "disabled", name: "Disabled" },
+      ],
+    },
+    {
+      id: "tool_profile",
+      name: "Tool Profile",
+      category: "other",
+      currentValue: "standard",
+      options: [
+        { value: "standard", name: "Standard", description: "Read, edit, search, bash, todos, and Agent." },
+        { value: "safe-readonly", name: "Safe Readonly", description: "Read/search/web tools only." },
+        { value: "full", name: "Full Claude Code", description: "All stock Claude Code tools, permission gated." },
+        { value: "plan", name: "Plan Only", description: "No built-in tool execution." },
+      ],
+    },
+    {
+      id: "max_turns",
+      name: "Max Turns",
+      category: "other",
+      currentValue: "20",
+      options: [
+        { value: "10", name: "10" },
+        { value: "20", name: "20" },
+        { value: "40", name: "40" },
+        { value: "80", name: "80" },
+      ],
+    },
+    {
+      id: "session_persistence",
+      name: "Session Persistence",
+      category: "other",
+      currentValue: "enabled",
+      options: [
+        { value: "enabled", name: "Enabled" },
+        { value: "disabled", name: "Ephemeral" },
+      ],
+    },
+  ];
+}
+
+function claudeSdkOptionsFromModels(
+  models: Array<{
+    value: string;
+    displayName?: string;
+    description?: string;
+    supportedEffortLevels?: string[];
+  }>
+): AgentConfigOption[] {
+  const options = models
+    .filter((model) => model.value?.trim())
+    .map((model) => ({
+      value: model.value,
+      name: model.displayName?.trim() || model.value,
+      description: model.description,
+      metadata:
+        Array.isArray(model.supportedEffortLevels) && model.supportedEffortLevels.length > 0
+          ? { reasoningLevels: model.supportedEffortLevels }
+          : undefined,
+    }));
+  return createClaudeCodeSdkFallbackConfigOptions(
+    options.length > 0 ? options : claudeCodeSdkModelOptions()
+  );
+}
+
+export async function createClaudeCodeSdkConfigOptions(): Promise<AgentConfigOption[]> {
+  if (!hasClaudeCodeSdkAuthConfig()) {
+    return createClaudeCodeSdkFallbackConfigOptions();
+  }
+  try {
+    await import("@anthropic-ai/claude-agent-sdk");
+    return claudeSdkOptionsFromModels([]);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    console.warn("[agents] Claude Code SDK model list failed (fallback catalog):", detail);
+    return createClaudeCodeSdkFallbackConfigOptions();
+  }
+}
+
 async function createSeedConfigOptions(backendId: AgentBackendId): Promise<AgentConfigOption[]> {
   switch (backendId) {
     case "cursor-acp":
       return createCursorCliConfigOptions();
     case "cursor-sdk":
       return createCursorSdkConfigOptions();
+    case "claude-code-sdk":
+      return createClaudeCodeSdkConfigOptions();
     case "opencode-acp":
       return createOpenCodeCliConfigOptions();
+    case "opencode-server":
+      return createOpenCodeServerConfigOptions();
     case "gemini-acp":
       return createGeminiCliConfigOptions();
     case "codex-adapter":
       return createCodexSeedConfigOptions();
+    case "codex-app-server":
+      return createCodexAppServerConfigOptions();
     case "claude-adapter":
       return [
         {
@@ -764,6 +1462,18 @@ function isStaleCursorAcpCache(configOptions: AgentConfigOption[]): boolean {
   return modelOption.options.some((option) => option.value.includes("["));
 }
 
+function isStaleCursorSdkCache(configOptions: AgentConfigOption[]): boolean {
+  const modelOption = configOptions.find((option) => option.category === "model");
+  if (!modelOption || modelOption.options.length === 0) {
+    return true;
+  }
+  return modelOption.options.some(
+    (option) =>
+      option.metadata?.cursorSdkModelId == null ||
+      /\([^)]*(?:\d+\s*k|none|fast|low|medium|high|xhigh)[^)]*\)/i.test(option.name)
+  );
+}
+
 /**
  * In-flight seed refreshes keyed by backendId. We dedupe concurrent callers so
  * only one CLI subprocess runs at a time per backend, and multiple HTTP
@@ -797,10 +1507,24 @@ function startSeedRefresh(
 }
 
 /** Backend ids we avoid probing during boot (optional; see `shouldWarmupBackendAtBoot`). */
-const SKIP_WARMUP_BACKENDS = new Set<AgentBackendId>(["cursor-sdk"]);
+const SKIP_WARMUP_BACKENDS = new Set<AgentBackendId>([
+  "cursor-sdk",
+  "claude-code-sdk",
+  "codex-app-server",
+  "opencode-server",
+]);
 
 function shouldWarmupBackendAtBoot(backendId: AgentBackendId): boolean {
   if (SKIP_WARMUP_BACKENDS.has(backendId)) {
+    if (backendId === "claude-code-sdk") {
+      return process.env.OPENCURSOR_WARMUP_CLAUDE_CODE_SDK === "1";
+    }
+    if (backendId === "codex-app-server") {
+      return process.env.OPENCURSOR_WARMUP_CODEX_APP_SERVER === "1";
+    }
+    if (backendId === "opencode-server") {
+      return process.env.OPENCURSOR_WARMUP_OPENCODE_SERVER === "1";
+    }
     return process.env.OPENCURSOR_WARMUP_CURSOR_SDK === "1";
   }
   return true;
@@ -889,6 +1613,10 @@ function maybeInPlaceMigrate(
     return { upgraded: cachedOptions, needsReseed: true };
   }
 
+  if (backendId === "cursor-sdk" && isStaleCursorSdkCache(cachedOptions)) {
+    return { upgraded: cachedOptions, needsReseed: true };
+  }
+
   if (backendId === "codex-adapter") {
     const hasReasoningLevels = cachedOptions.some(
       (option) =>
@@ -937,6 +1665,39 @@ function maybeInPlaceMigrate(
     return null;
   }
 
+  if (backendId === "codex-app-server") {
+    const modelOption = cachedOptions.find((option) => option.id === "model");
+    const hasModel = Boolean(modelOption);
+    const hasPermission = cachedOptions.some((option) => option.id === "permission");
+    const hasServerReportedModelSource =
+      modelOption?.description === "Models reported by the Codex App Server model/list endpoint.";
+    const hasGeneratedFallbackModels = cachedOptions.some(
+      (option) =>
+        option.id === "model" &&
+        option.options.some(
+          (value) =>
+            value.description === "Codex App Server fallback model." ||
+            value.value === "gpt-5.5-mini"
+        )
+    );
+    if (
+      !hasModel ||
+      !hasPermission ||
+      (modelOption && modelOption.options.length > 0 && !hasServerReportedModelSource) ||
+      hasGeneratedFallbackModels
+    ) {
+      return { upgraded: cachedOptions, needsReseed: true };
+    }
+  }
+
+  if (backendId === "opencode-server") {
+    const hasModel = cachedOptions.some((option) => option.id === "model");
+    const hasAgent = cachedOptions.some((option) => option.id === "agent" || option.id === "mode");
+    if (!hasModel || !hasAgent) {
+      return { upgraded: cachedOptions, needsReseed: true };
+    }
+  }
+
   if (backendId === "claude-adapter") {
     const hasGlm51 = cachedOptions.some(
       (option) =>
@@ -949,6 +1710,24 @@ function maybeInPlaceMigrate(
         option.options.some((value) => value.value === "bypassPermissions")
     );
     if (!hasGlm51 || !hasBypassPerms) {
+      return { upgraded: cachedOptions, needsReseed: true };
+    }
+  }
+
+  if (backendId === "claude-code-sdk") {
+    const hasModel = cachedOptions.some((option) => option.id === "model");
+    const hasPermission = cachedOptions.some((option) => option.id === "permission_mode");
+    const hasTools = cachedOptions.some((option) => option.id === "tool_profile");
+    const proxyModel = getClaudeCodeSdkProxyModel();
+    const hasConfiguredProxyModel =
+      !hasClaudeCodeSdkProxyConfig() ||
+      cachedOptions.some(
+        (option) =>
+          option.id === "model" &&
+          option.options.some((value) => value.value === proxyModel) &&
+          option.currentValue === proxyModel
+      );
+    if (!hasModel || !hasPermission || !hasTools || !hasConfiguredProxyModel) {
       return { upgraded: cachedOptions, needsReseed: true };
     }
   }
@@ -986,6 +1765,15 @@ export async function readAgentBackendConfigCache(
         await writeAgentBackendConfigCache(backendId, migration.upgraded);
       }
       if (migration.needsReseed) {
+        if (
+          backendId === "cursor-sdk" ||
+          backendId === "claude-code-sdk"
+        ) {
+          return startSeedRefresh(backendId).catch(() => migration.upgraded);
+        }
+        if (backendId === "codex-app-server") {
+          return startSeedRefresh(backendId).catch(() => createCodexAppServerFallbackConfigOptions());
+        }
         // Schema-drift migration requires a fresh CLI probe. Schedule it in
         // the background; serve the (possibly upgraded) cache immediately.
         void startSeedRefresh(backendId).catch(() => undefined);

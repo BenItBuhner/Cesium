@@ -11,9 +11,12 @@ export type AgentBackendId =
   | "cursor-acp"
   | "cursor-sdk"
   | "opencode-acp"
+  | "opencode-server"
   | "gemini-acp"
   | "codex-adapter"
-  | "claude-adapter";
+  | "codex-app-server"
+  | "claude-adapter"
+  | "claude-code-sdk";
 
 export type AgentConversationStatus =
   | "idle"
@@ -306,7 +309,12 @@ export type AgentQueuedChatPrompt = {
   id: string;
   text: string;
   attachments?: Array<{ mimeType: string; data: string; name?: string }>;
-  configOverride?: Partial<AgentConversationConfig> & { backendId?: AgentBackendId };
+  clientEventId?: string;
+  clientMessageId?: string;
+  configOverride?: Partial<AgentConversationConfig> & {
+    backendId?: AgentBackendId;
+    setConfigOptions?: Array<{ configId: string; value: string }>;
+  };
 };
 
 export type AgentConversationRecord = {

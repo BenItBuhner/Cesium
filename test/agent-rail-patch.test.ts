@@ -115,4 +115,19 @@ describe("patchAgentConversationGroups", () => {
     const ids = next[0]!.conversations.map((c) => c.id);
     assert.deepEqual(ids, ["b", "a"]);
   });
+
+  test("stale updatedAt patch cannot demote a newer row", () => {
+    const ws = "ws1";
+    const a = baseRecord("a", ws, { updatedAt: 500, createdAt: 10 });
+    const b = baseRecord("b", ws, { updatedAt: 400, createdAt: 20, status: "running" });
+    const groups = [group(ws, [a, b])];
+    const bOptimistic = { ...b, updatedAt: 600, lastEventSeq: 2 };
+    const optimistic = patchAgentConversationGroups(groups, bOptimistic);
+    const bStaleAck = { ...b, updatedAt: 450, lastEventSeq: 2, status: "idle" as const };
+    const next = patchAgentConversationGroups(optimistic, bStaleAck);
+    const ids = next[0]!.conversations.map((c) => c.id);
+    assert.deepEqual(ids, ["b", "a"]);
+    assert.equal(next[0]!.conversations[0]!.updatedAt, 600);
+    assert.equal(next[0]!.conversations[0]!.status, "idle");
+  });
 });

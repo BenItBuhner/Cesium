@@ -44,6 +44,18 @@ function getServerStorageKey(serverBaseUrl?: string): string {
   return getServerConnectionKey(normalizeServerBaseUrl(baseUrl));
 }
 
+function isLoopbackServerKey(value: string): boolean {
+  try {
+    const url = new URL(decodeURIComponent(value));
+    return (
+      url.protocol === "http:" &&
+      (url.hostname === "localhost" || url.hostname === "127.0.0.1")
+    );
+  } catch {
+    return false;
+  }
+}
+
 function readLegacyStoredAuthState(): StoredAuthState | null {
   if (typeof window === "undefined") {
     return null;
@@ -137,7 +149,19 @@ function writeStoredAuthMap(state: StoredAuthMap): void {
 
 function getStoredAuthState(serverBaseUrl?: string): StoredAuthState | null {
   const map = readStoredAuthMap();
-  return map[getServerStorageKey(serverBaseUrl)] ?? null;
+  const serverKey = getServerStorageKey(serverBaseUrl);
+  const direct = map[serverKey] ?? null;
+  if (direct) {
+    return direct;
+  }
+  if (isLoopbackServerKey(serverKey)) {
+    for (const [candidateKey, state] of Object.entries(map)) {
+      if (isLoopbackServerKey(candidateKey)) {
+        return state;
+      }
+    }
+  }
+  return null;
 }
 
 export function getStoredSessionToken(serverBaseUrl?: string): string | null {

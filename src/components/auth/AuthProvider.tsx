@@ -42,6 +42,7 @@ type AuthContextValue = {
 };
 
 const AuthContext = createContext<AuthContextValue | null>(null);
+const AUTH_REQUEST_TIMEOUT_MS = 4_000;
 
 async function fetchAuth(
   serverBaseUrl: string,
@@ -49,14 +50,26 @@ async function fetchAuth(
   path: string,
   init?: RequestInit
 ): Promise<Response> {
-  return fetch(`${resolvedBaseUrl}${path}`, {
-    ...init,
-    headers: Object.fromEntries(
-      attachSessionToken(init?.headers, serverBaseUrl).entries()
-    ),
-    credentials: "include",
-    cache: "no-store",
-  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), AUTH_REQUEST_TIMEOUT_MS);
+  try {
+    return await fetch(`${resolvedBaseUrl}${path}`, {
+      ...init,
+      headers: Object.fromEntries(
+        attachSessionToken(init?.headers, serverBaseUrl).entries()
+      ),
+      credentials: "include",
+      cache: "no-store",
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new Error(`Auth request timed out after ${AUTH_REQUEST_TIMEOUT_MS}ms.`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {

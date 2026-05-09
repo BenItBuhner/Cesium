@@ -15,7 +15,7 @@ import {
 } from "@/lib/server-connections";
 
 function getConfiguredServerBaseUrl(): string {
-  return process.env.NEXT_PUBLIC_SERVER_URL?.replace(/\/+$/, "") ?? "http://localhost:9100";
+  return process.env.NEXT_PUBLIC_SERVER_URL?.replace(/\/+$/, "") ?? "http://localhost:9107";
 }
 
 export {

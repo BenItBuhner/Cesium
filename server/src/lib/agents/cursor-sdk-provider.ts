@@ -22,6 +22,7 @@ import type {
   AgentSessionHandle,
 } from "./types.js";
 import { getCursorSdkCapabilities } from "./cursor-sdk-capabilities.js";
+import { decodeCursorSdkModelValue } from "./cursor-sdk-model-selection.js";
 
 type CursorSdkHandleInput = {
   backend: AgentBackendInfo;
@@ -100,8 +101,12 @@ function modelSelectionFromConfig(
   configOptions: AgentConfigOption[]
 ): ModelSelection {
   const modelOption = findPrimaryModelConfigOption(configOptions);
+  const decoded = decodeCursorSdkModelValue(
+    conversation.config.modelId || modelOption?.currentValue || "composer-2"
+  );
   return {
-    id: conversation.config.modelId || modelOption?.currentValue || "composer-2",
+    id: decoded.id,
+    ...(decoded.params.length > 0 ? { params: decoded.params } : {}),
   };
 }
 

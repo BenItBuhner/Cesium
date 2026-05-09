@@ -41,6 +41,37 @@ function sortRailSummaries(list: AgentRailConversationSummary[]): AgentRailConve
   return [...list].sort(compareRailOrder);
 }
 
+function mergeRailSummaryByRecency(
+  existing: AgentRailConversationSummary,
+  incoming: AgentRailConversationSummary
+): AgentRailConversationSummary {
+  if (incoming.updatedAt > existing.updatedAt) {
+    return incoming;
+  }
+  if (incoming.updatedAt < existing.updatedAt) {
+    if (incoming.lastEventSeq > existing.lastEventSeq) {
+      return { ...incoming, updatedAt: existing.updatedAt };
+    }
+    const metaChanged =
+      existing.status !== incoming.status ||
+      existing.title !== incoming.title ||
+      existing.archivedAt !== incoming.archivedAt ||
+      existing.backendId !== incoming.backendId ||
+      existing.mode !== incoming.mode ||
+      existing.experimental !== incoming.experimental ||
+      existing.hasPendingPermission !== incoming.hasPendingPermission;
+    if (metaChanged) {
+      return {
+        ...existing,
+        ...incoming,
+        updatedAt: existing.updatedAt,
+      };
+    }
+    return existing;
+  }
+  return incoming;
+}
+
 /** Merge a live server record into cross-workspace rail groups (in-place copy). */
 export function patchAgentConversationGroups(
   groups: AgentConversationGroup[],
@@ -56,9 +87,10 @@ export function patchAgentConversationGroups(
     const idx = group.conversations.findIndex((c) => c.id === record.id);
     if (idx >= 0) {
       const prev = group.conversations[idx]!;
+      const merged = mergeRailSummaryByRecency(prev, summary);
       const replaced = group.conversations.slice();
-      replaced[idx] = summary;
-      if (summary.updatedAt === prev.updatedAt) {
+      replaced[idx] = merged;
+      if (merged.updatedAt === prev.updatedAt) {
         return { ...group, conversations: replaced };
       }
       return { ...group, conversations: sortRailSummaries(replaced) };

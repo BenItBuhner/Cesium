@@ -255,7 +255,7 @@ export function MessageThreadContent({
             return null;
           }
           return (
-            <div key={rowKey} data-chat-message-id={msg.id} className="min-w-0 w-full">
+            <div key={rowKey} data-chat-message-id={msg.id} className="relative z-[3] min-w-0 w-full">
               <PermissionRequestCard
                 title={msg.permissionTitle ?? "Permission required"}
                 detail={msg.permissionDetail}
@@ -314,7 +314,7 @@ export function MessageThreadContent({
             };
           }
           return (
-            <div key={rowKey} data-chat-message-id={msg.id} className="min-w-0 w-full">
+            <div key={rowKey} data-chat-message-id={msg.id} className="relative z-[2] min-w-0 w-full">
               <WorkedSessionCard
                 label={msg.workedLabel!}
                 entries={msg.workedEntries!}

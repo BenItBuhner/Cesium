@@ -205,7 +205,7 @@ export function AgentWorkspaceRail() {
     clearRailFilters,
     isMobile,
   } = useAgentShellState();
-  const { activeWorkspaceId } = useWorkspace();
+  const { activeWorkspaceId, gitStatus } = useWorkspace();
   const { experimentalIpadCustomButtons, experimentalIpadWindowedTabInset } =
     useUserPreferences();
   const padRailForWindowChrome = experimentalIpadWindowedTabInset && !isMobile;
@@ -227,6 +227,23 @@ export function AgentWorkspaceRail() {
     conversation: AgentRailConversationSummary;
     group?: "left" | "right";
   } | null>(null);
+  const workspaceBranchLabel = useCallback(
+    (workspaceId: string, root: string): string | null => {
+      if (workspaceId === activeWorkspaceId && gitStatus?.isGitRepo) {
+        return gitStatus.currentBranch
+          ? gitStatus.dirty
+            ? `${gitStatus.currentBranch} *`
+            : gitStatus.currentBranch
+          : "detached";
+      }
+      const normalized = root.replace(/\\/g, "/");
+      if (normalized.includes("/.opencursor-worktrees/")) {
+        return "worktree";
+      }
+      return null;
+    },
+    [activeWorkspaceId, gitStatus]
+  );
 
   useLayoutEffect(() => {
     setCollapsedWorkspaceIds(readCollapsedWorkspaceIdsFromStorage());
@@ -717,6 +734,7 @@ export function AgentWorkspaceRail() {
               {visibleGroups.map((group) => {
               const isWorkspaceCollapsed = collapsedWorkspaceIds.has(group.workspace.id);
               const { conversations } = group;
+              const branchLabel = workspaceBranchLabel(group.workspace.id, group.workspace.root);
               return (
                 <section key={group.workspace.id} className="pb-[12px]">
                   <div className="group flex items-center gap-[2px] px-px pb-[4px]">
@@ -734,6 +752,11 @@ export function AgentWorkspaceRail() {
                       <span className="truncate font-sans text-[10.5px] font-medium text-[var(--text-disabled)] transition-colors group-hover/wshead:text-[var(--text-primary)]">
                         {group.workspace.name}
                       </span>
+                      {branchLabel ? (
+                        <span className="max-w-[120px] shrink truncate rounded-[var(--radius-tab)] border border-[var(--border-subtle)] px-[5px] py-[1px] font-mono text-[9.5px] text-[var(--text-disabled)]">
+                          {branchLabel}
+                        </span>
+                      ) : null}
                     </button>
                     <button
                       type="button"
