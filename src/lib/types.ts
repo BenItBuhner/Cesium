@@ -123,6 +123,8 @@ export interface ChatMessage {
   id: string;
   type: ChatMessageType;
   content?: string;
+  /** Full user prompt text when `content` is a display-friendly summary. */
+  rawContent?: string;
   /** Rich user bubble; when set, overrides plain `content` for body text. */
   segments?: UserMessageSegment[];
   /** Image attachments for user messages. */

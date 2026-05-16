@@ -12,7 +12,7 @@ import { after, describe, test } from "node:test";
 
 const TEST_ROOT = path.join(
   os.tmpdir(),
-  `opencursor-perf-caches-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
+  `cesium-perf-caches-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
 );
 
 delete process.env.REDIS_URL;

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Run ON the Linux host: fixes .env.local, pulls, rebuilds, restarts Next + API.
 set -euo pipefail
-ROOT="${1:-$HOME/projects/OpenCursor}"
+ROOT="${1:-$HOME/projects/Cesium}"
 cd "$ROOT"
 ROOT="$(pwd)"
 export ROOT

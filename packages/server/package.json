@@ -1,0 +1,16 @@
+{
+  "name": "@cesium/server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "npm --prefix ../../server run dev",
+    "build": "npm --prefix ../../server run build",
+    "start": "npm --prefix ../../server run start",
+    "test": "npm --prefix ../../server run test"
+  },
+  "dependencies": {
+    "@cesium/core": "file:../core",
+    "cesium-server": "file:../../server"
+  }
+}

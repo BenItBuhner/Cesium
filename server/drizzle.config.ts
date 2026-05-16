@@ -1,7 +1,7 @@
 import type { Config } from "drizzle-kit";
 
 const DEFAULT_DEV_URL =
-  "postgres://opencursor:opencursor@localhost:5433/opencursor";
+  "postgres://cesium:cesium@localhost:5433/cesium";
 
 export default {
   schema: "./src/db/schema.ts",

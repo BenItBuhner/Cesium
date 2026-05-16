@@ -244,7 +244,7 @@ function buildTranscriptPrompt(
   }
 
   return [
-    "You are continuing an existing OpenCursor conversation.",
+    "You are continuing an existing Cesium conversation.",
     "Use the transcript below as context and answer the latest user request.",
     "",
     ...lines,

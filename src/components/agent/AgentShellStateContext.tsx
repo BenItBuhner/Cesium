@@ -37,6 +37,7 @@ import {
 } from "@/components/agent/agent-shell-layout";
 import {
   defaultAgentRailFilterToggles,
+  isRenderableAgentRailConversation,
   isAgentRailFilterActive,
   matchesAgentRailMultiFilter,
   normalizeAgentRailFilterToggles,
@@ -63,6 +64,8 @@ import {
 import { markConversationSwitchStart } from "@/lib/dev-perf";
 import type { AgentConversationRecord } from "@/lib/agent-types";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
+import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
+import type { WorkspaceSortMode } from "@/lib/global-settings";
 import {
   AGENT_NEW_CHAT_SESSION_ID,
   createEmptyAgentSidePaneSession,
@@ -206,12 +209,39 @@ const AgentShellStateContext =
 
 function sortConversationGroups(
   groups: AgentConversationGroup[],
-  recentWorkspaceIds: string[]
+  recentWorkspaceIds: string[],
+  workspaceSortMode: WorkspaceSortMode,
+  customWorkspaceOrderIds: string[]
 ): AgentConversationGroup[] {
   const recentOrder = new Map(
     recentWorkspaceIds.map((workspaceId, index) => [workspaceId, index])
   );
+  const customOrder = new Map(
+    customWorkspaceOrderIds.map((workspaceId, index) => [workspaceId, index])
+  );
+  const compareByName = (a: AgentConversationGroup, b: AgentConversationGroup) =>
+    a.workspace.name.localeCompare(b.workspace.name, undefined, { sensitivity: "base" });
+
   return [...groups].sort((a, b) => {
+    if (workspaceSortMode === "alphabetical") {
+      return compareByName(a, b);
+    }
+
+    if (workspaceSortMode === "custom") {
+      const customA = customOrder.get(a.workspace.id);
+      const customB = customOrder.get(b.workspace.id);
+      if (customA != null && customB != null && customA !== customB) {
+        return customA - customB;
+      }
+      if (customA != null) {
+        return -1;
+      }
+      if (customB != null) {
+        return 1;
+      }
+      return compareByName(a, b);
+    }
+
     const recentA = recentOrder.get(a.workspace.id);
     const recentB = recentOrder.get(b.workspace.id);
     if (recentA != null && recentB != null && recentA !== recentB) {
@@ -223,7 +253,7 @@ function sortConversationGroups(
     if (recentB != null) {
       return 1;
     }
-    return a.workspace.name.localeCompare(b.workspace.name);
+    return compareByName(a, b);
   });
 }
 
@@ -237,6 +267,15 @@ function findConversationOwnerWorkspaceId(
     }
   }
   return null;
+}
+
+function removePlaceholderRailConversations(
+  groups: AgentConversationGroup[]
+): AgentConversationGroup[] {
+  return groups.map((group) => ({
+    ...group,
+    conversations: group.conversations.filter(isRenderableAgentRailConversation),
+  }));
 }
 
 function createLegacySidePaneSession(
@@ -277,6 +316,7 @@ export function AgentShellStateProvider({
     workspaceSession,
     updateWorkspaceSession,
   } = useWorkspace();
+  const { settings } = useGlobalSettings();
   const { isMobile } = useViewport();
   const urlConversationId =
     typeof window !== "undefined"
@@ -331,7 +371,7 @@ export function AgentShellStateProvider({
   const refreshConversationGroups = useCallback(async () => {
     const result = await listCrossWorkspaceAgentConversations();
     setBackends(result.backends);
-    setGroups(result.groups);
+    setGroups(removePlaceholderRailConversations(result.groups));
   }, []);
 
   useEffect(() => {
@@ -415,8 +455,19 @@ export function AgentShellStateProvider({
   }, [activeWorkspaceId, refreshConversationGroups]);
 
   const orderedGroups = useMemo(
-    () => sortConversationGroups(groups, recentWorkspaceIds),
-    [groups, recentWorkspaceIds]
+    () =>
+      sortConversationGroups(
+        groups,
+        recentWorkspaceIds,
+        settings.general.workspaceSortMode,
+        settings.general.workspaceCustomOrderIds
+      ),
+    [
+      groups,
+      recentWorkspaceIds,
+      settings.general.workspaceCustomOrderIds,
+      settings.general.workspaceSortMode,
+    ]
   );
 
   const activeWorkspaceGroup = useMemo(
@@ -432,7 +483,7 @@ export function AgentShellStateProvider({
   const requestedConversationId =
     urlConversationId ?? workspaceSession.agentView.selectedConversationId;
   const isDraftConversationSelected =
-    requestedConversationId === AGENT_NEW_CHAT_SESSION_ID;
+    requestedConversationId == null || requestedConversationId === AGENT_NEW_CHAT_SESSION_ID;
   const persistedConversationRequest =
     workspaceSession.agentView.selectedConversationId &&
     workspaceSession.agentView.selectedConversationId !== AGENT_NEW_CHAT_SESSION_ID
@@ -512,7 +563,7 @@ export function AgentShellStateProvider({
       return persistedConversationRequest;
     }
 
-    return activeWorkspaceGroup?.conversations[0]?.id ?? null;
+    return null;
   }, [
     activeWorkspaceGroup,
     activeWorkspaceId,
@@ -993,6 +1044,8 @@ export function AgentShellStateProvider({
       });
       updateWorkspaceSession((current) => {
         const sessions = current.agentView.sidePaneSessionsByConversationId ?? {};
+        const currentSharedLayout =
+          normalizeAgentShellDesktopLayout(current.agentView.agentShellDesktopLayout) ?? {};
         const existing =
           sessions[sidePaneScopeId] ??
           (Object.keys(sessions).length > 0
@@ -1002,6 +1055,10 @@ export function AgentShellStateProvider({
           ...current,
           agentView: {
             ...current.agentView,
+            agentShellDesktopLayout: {
+              ...currentSharedLayout,
+              [AGENT_SHELL_PANEL_IDS.rail]: nextLayout[AGENT_SHELL_PANEL_IDS.rail],
+            },
             sidePaneSessionsByConversationId: {
               ...sessions,
               [sidePaneScopeId]: {

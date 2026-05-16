@@ -1,16 +1,28 @@
 "use client";
 
-import { ArrowLeft, Folder, FolderGit2, Trash2 } from "lucide-react";
+import { ArrowLeft, Folder, FolderGit2, Server, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useId, useMemo, useState } from "react";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
-import { browseWorkspaceHostDirectories } from "@/lib/server-api";
+import {
+  browseSshWorkspaceDirectories,
+  browseWorkspaceHostDirectories,
+  cloneGitRepositoryOnRemoteSsh,
+  createSshWorkspaceDirectory,
+  fetchSshWorkspaceMetadata,
+  probeSshWorkspaceConnection,
+  pullSshWorkspaceSelection,
+  pushSshWorkspaceSelection,
+  type SshWorkspaceMetadata,
+} from "@/lib/server-api";
 import type { WorkspaceRecord } from "@/lib/types";
 import { HardwareAwareTextInput } from "@/components/input/HardwareAwareTextField";
 
 const shell =
   "flex w-full max-w-[640px] flex-col overflow-hidden rounded-[var(--radius-card)] border border-[var(--palette-border)] bg-[var(--palette-surface)] shadow-[var(--palette-shadow)] max-h-[min(72vh,720px)]";
 
-type Mode = "clone" | "browse" | "newfolder" | "worktrees" | "remove";
+type Mode = "clone" | "browse" | "newfolder" | "ssh" | "worktrees" | "remove";
+type SshWizardStep = "connect" | "remote";
+type SshRemoteSetupTab = "browse" | "clone" | "newfolder";
 
 export function WorkspaceStudioModal({
   open,
@@ -22,7 +34,9 @@ export function WorkspaceStudioModal({
   initialMode?: Mode;
 }) {
   const {
+    activeWorkspaceId,
     cloneWorkspaceFromGit,
+    createSshWorkspace,
     createWorkspace,
     deleteWorktree,
     gitStatus,
@@ -30,6 +44,7 @@ export function WorkspaceStudioModal({
     deleteWorkspace,
     homeWorkspaceId,
     openFolder,
+    refreshTree,
     workspaces,
   } = useWorkspace();
 
@@ -48,19 +63,68 @@ export function WorkspaceStudioModal({
   const [browseParent, setBrowseParent] = useState<string | null>(null);
   const [browseCurrent, setBrowseCurrent] = useState<string | null>(null);
   const [browseBusy, setBrowseBusy] = useState(false);
+  const [browseOpenBusy, setBrowseOpenBusy] = useState(false);
 
   const [newFolderName, setNewFolderName] = useState("");
   const [newFolderParent, setNewFolderParent] = useState("");
   const [newFolderBusy, setNewFolderBusy] = useState(false);
+  const [sshTarget, setSshTarget] = useState("");
+  const [sshPort, setSshPort] = useState("");
+  const [sshRemotePath, setSshRemotePath] = useState("");
+  const [sshMirrorName, setSshMirrorName] = useState("");
+  const [sshWorkspaceName, setSshWorkspaceName] = useState("");
+  const [sshKeyPath, setSshKeyPath] = useState("");
+  const [sshPassword, setSshPassword] = useState("");
+  const [sshBusy, setSshBusy] = useState(false);
+  const [sshBrowseBusy, setSshBrowseBusy] = useState(false);
+  const [sshNewDirectoryName, setSshNewDirectoryName] = useState("");
+  const [sshRemoteParent, setSshRemoteParent] = useState<string | null>(null);
+  const [sshRemoteEntries, setSshRemoteEntries] = useState<
+    Array<{ name: string; path: string }>
+  >([]);
+  const [sshSyncBusy, setSshSyncBusy] = useState<"pull" | "push" | null>(null);
+  const [sshWizardStep, setSshWizardStep] = useState<SshWizardStep>("connect");
+  const [sshRemoteSetupTab, setSshRemoteSetupTab] = useState<SshRemoteSetupTab>("browse");
+  const [sshProbeBusy, setSshProbeBusy] = useState(false);
+  const [sshRemoteCloneBusy, setSshRemoteCloneBusy] = useState(false);
+  const [sshRemoteRepoUrl, setSshRemoteRepoUrl] = useState("");
+  const [sshRemoteCloneFolderName, setSshRemoteCloneFolderName] = useState("");
+  const [sshConnectedLabel, setSshConnectedLabel] = useState<string | null>(null);
+  const [activeSshMetadata, setActiveSshMetadata] =
+    useState<SshWorkspaceMetadata | null>(null);
   const [worktreeBusy, setWorktreeBusy] = useState<string | null>(null);
 
   const [removeBusy, setRemoveBusy] = useState<string | null>(null);
+
+  const preferredRoot = useCallback(
+    (roots: { path: string; label: string }[]) =>
+      roots.find((r) => /onedrive.*projects/i.test(r.label)) ??
+      roots.find((r) => /projects/i.test(r.label)) ??
+      roots.find((r) => /onedrive/i.test(r.label)) ??
+      roots[0],
+    []
+  );
 
   useEffect(() => {
     if (!open) return;
     setMode(initialMode);
     setToast(null);
   }, [open, initialMode]);
+
+  useEffect(() => {
+    if (!open || mode !== "ssh") {
+      return;
+    }
+    setSshWizardStep("connect");
+    setSshRemoteSetupTab("browse");
+    setSshConnectedLabel(null);
+    setSshRemotePath("");
+    setSshRemoteParent(null);
+    setSshRemoteEntries([]);
+    setSshNewDirectoryName("");
+    setSshRemoteRepoUrl("");
+    setSshRemoteCloneFolderName("");
+  }, [open, mode]);
 
   useEffect(() => {
     if (!open || mode !== "browse") {
@@ -113,14 +177,13 @@ export function WorkspaceStudioModal({
       try {
         const data = await browseWorkspaceHostDirectories();
         if ("roots" in data && data.roots[0]) {
-          const projects = data.roots.find((r) => r.label === "projects");
-          setCloneParent(projects?.path ?? data.roots[0]!.path);
+          setCloneParent(preferredRoot(data.roots)?.path ?? data.roots[0]!.path);
         }
       } catch {
         setCloneParent("");
       }
     })();
-  }, [open, mode]);
+  }, [open, mode, preferredRoot]);
 
   useEffect(() => {
     if (!open || mode !== "newfolder") return;
@@ -128,19 +191,40 @@ export function WorkspaceStudioModal({
       try {
         const data = await browseWorkspaceHostDirectories();
         if ("roots" in data && data.roots[0]) {
-          const projects = data.roots.find((r) => r.label === "projects");
-          setNewFolderParent(projects?.path ?? data.roots[0]!.path);
+          setNewFolderParent(preferredRoot(data.roots)?.path ?? data.roots[0]!.path);
         }
       } catch {
         setNewFolderParent("");
       }
     })();
-  }, [open, mode]);
+  }, [open, mode, preferredRoot]);
 
   useEffect(() => {
     if (!open || mode !== "worktrees") return;
     void refreshGitStatus().catch(() => undefined);
   }, [open, mode, refreshGitStatus]);
+
+  useEffect(() => {
+    if (!open || mode !== "ssh" || !activeWorkspaceId) {
+      setActiveSshMetadata(null);
+      return;
+    }
+    let cancelled = false;
+    void fetchSshWorkspaceMetadata(activeWorkspaceId)
+      .then((result) => {
+        if (!cancelled) {
+          setActiveSshMetadata(result.metadata);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setActiveSshMetadata(null);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeWorkspaceId, mode, open]);
 
   const flash = (msg: string) => {
     setToast(msg);
@@ -148,6 +232,9 @@ export function WorkspaceStudioModal({
   };
 
   const handleClone = async () => {
+    if (cloneBusy) {
+      return;
+    }
     const url = repoUrl.trim();
     const parent = cloneParent.trim();
     if (!url || !parent) {
@@ -171,17 +258,23 @@ export function WorkspaceStudioModal({
   };
 
   const handleOpenBrowseFolder = async () => {
-    if (!browseCurrent) return;
+    if (!browseCurrent || browseOpenBusy) return;
+    setBrowseOpenBusy(true);
     try {
       await openFolder(browseCurrent);
       flash("Workspace opened.");
       onClose();
     } catch (e) {
       flash(e instanceof Error ? e.message : "Failed to open folder.");
+    } finally {
+      setBrowseOpenBusy(false);
     }
   };
 
   const handleNewFolder = async () => {
+    if (newFolderBusy) {
+      return;
+    }
     const parent = newFolderParent.trim();
     const name = newFolderName.trim();
     if (!parent || !name) {
@@ -200,6 +293,218 @@ export function WorkspaceStudioModal({
     }
   };
 
+  const handleSshWorkspace = async () => {
+    if (sshBusy) {
+      return;
+    }
+    if (sshWizardStep !== "remote") {
+      flash("Connect to the host first.");
+      return;
+    }
+    const target = sshTarget.trim();
+    const remotePath = sshRemotePath.trim();
+    if (!target || !remotePath) {
+      flash("SSH target and remote folder are required.");
+      return;
+    }
+    const parsedPort = sshPort.trim() ? Number.parseInt(sshPort.trim(), 10) : undefined;
+    if (parsedPort != null && (!Number.isInteger(parsedPort) || parsedPort <= 0 || parsedPort > 65535)) {
+      flash("SSH port must be between 1 and 65535.");
+      return;
+    }
+    setSshBusy(true);
+    try {
+      await createSshWorkspace({
+        target,
+        ...(parsedPort ? { port: parsedPort } : {}),
+        remotePath,
+        mirrorName: sshMirrorName.trim() || undefined,
+        name: sshWorkspaceName.trim() || undefined,
+        keyPath: sshKeyPath.trim() || undefined,
+        password: sshPassword.trim() || undefined,
+      });
+      flash("SSH workspace synced and opened.");
+      onClose();
+    } catch (e) {
+      flash(e instanceof Error ? e.message : "SSH workspace failed.");
+    } finally {
+      setSshBusy(false);
+    }
+  };
+
+  const sshConnectionInput = () => {
+    const parsedPort = sshPort.trim() ? Number.parseInt(sshPort.trim(), 10) : undefined;
+    return {
+      target: sshTarget.trim(),
+      ...(parsedPort != null ? { port: parsedPort } : {}),
+      keyPath: sshKeyPath.trim() || undefined,
+      password: sshPassword.trim() || undefined,
+    };
+  };
+
+  const handleSshProbeConnect = async () => {
+    const target = sshTarget.trim();
+    if (!target) {
+      flash("SSH target is required.");
+      return;
+    }
+    const parsedPort = sshPort.trim() ? Number.parseInt(sshPort.trim(), 10) : undefined;
+    if (parsedPort != null && (!Number.isInteger(parsedPort) || parsedPort <= 0 || parsedPort > 65535)) {
+      flash("SSH port must be between 1 and 65535.");
+      return;
+    }
+    const connection = sshConnectionInput();
+    if (!connection.target) {
+      flash("SSH target is required.");
+      return;
+    }
+    setSshProbeBusy(true);
+    try {
+      const result = await probeSshWorkspaceConnection(connection);
+      setSshConnectedLabel(`${result.username} @ ${result.host}`);
+      setSshWizardStep("remote");
+      setSshRemoteSetupTab("browse");
+      const listing = await browseSshWorkspaceDirectories({
+        ...connection,
+        remotePath: ".",
+      });
+      setSshRemotePath(listing.currentPath);
+      setSshRemoteParent(listing.parentPath);
+      setSshRemoteEntries(listing.entries);
+      flash("Authenticated. Pick or prepare a folder on the host.");
+    } catch (e) {
+      flash(
+        e instanceof Error
+          ? e.message
+          : "SSH connection failed. Add a password, key path, or use an agent."
+      );
+    } finally {
+      setSshProbeBusy(false);
+    }
+  };
+
+  const handleSshWizardBack = () => {
+    setSshWizardStep("connect");
+    setSshConnectedLabel(null);
+  };
+
+  const handleSshRemoteClone = async () => {
+    const url = sshRemoteRepoUrl.trim();
+    if (!url) {
+      flash("Repository URL is required.");
+      return;
+    }
+    const connection = sshConnectionInput();
+    if (!connection.target) {
+      flash("SSH target is required.");
+      return;
+    }
+    setSshRemoteCloneBusy(true);
+    try {
+      const result = await cloneGitRepositoryOnRemoteSsh({
+        ...connection,
+        repoUrl: url,
+        parentRemotePath: sshRemotePath.trim() || ".",
+        directoryName: sshRemoteCloneFolderName.trim() || undefined,
+      });
+      setSshRemotePath(result.currentPath);
+      setSshRemoteParent(result.parentPath);
+      setSshRemoteEntries(result.entries);
+      setSshRemoteRepoUrl("");
+      setSshRemoteCloneFolderName("");
+      flash("Cloned repository on remote host.");
+    } catch (e) {
+      flash(e instanceof Error ? e.message : "Remote clone failed.");
+    } finally {
+      setSshRemoteCloneBusy(false);
+    }
+  };
+
+  const handleSshBrowse = async (pathOverride?: string) => {
+    const connection = sshConnectionInput();
+    if (!connection.target) {
+      flash("SSH target is required.");
+      return;
+    }
+    setSshBrowseBusy(true);
+    try {
+      const result = await browseSshWorkspaceDirectories({
+        ...connection,
+        remotePath: (pathOverride ?? sshRemotePath.trim()) || ".",
+      });
+      setSshRemotePath(result.currentPath);
+      setSshRemoteParent(result.parentPath);
+      setSshRemoteEntries(result.entries);
+    } catch (e) {
+      flash(e instanceof Error ? e.message : "SSH browse failed.");
+    } finally {
+      setSshBrowseBusy(false);
+    }
+  };
+
+  const handleSshCreateDirectory = async () => {
+    const directoryName = sshNewDirectoryName.trim();
+    if (!directoryName) {
+      flash("Remote folder name is required.");
+      return;
+    }
+    const connection = sshConnectionInput();
+    if (!connection.target) {
+      flash("SSH target is required.");
+      return;
+    }
+    setSshBrowseBusy(true);
+    try {
+      const result = await createSshWorkspaceDirectory({
+        ...connection,
+        remotePath: sshRemotePath.trim() || ".",
+        directoryName,
+      });
+      setSshNewDirectoryName("");
+      setSshRemotePath(result.currentPath);
+      setSshRemoteParent(result.parentPath);
+      setSshRemoteEntries(result.entries);
+      flash(`Created ${directoryName}`);
+    } catch (e) {
+      flash(e instanceof Error ? e.message : "Remote folder creation failed.");
+    } finally {
+      setSshBrowseBusy(false);
+    }
+  };
+
+  const handleSshPull = async () => {
+    if (!activeWorkspaceId) {
+      return;
+    }
+    setSshSyncBusy("pull");
+    try {
+      const result = await pullSshWorkspaceSelection(activeWorkspaceId);
+      setActiveSshMetadata(result.metadata);
+      await refreshTree();
+      flash("Pulled remote changes into the local mirror.");
+    } catch (e) {
+      flash(e instanceof Error ? e.message : "SSH pull failed.");
+    } finally {
+      setSshSyncBusy(null);
+    }
+  };
+
+  const handleSshPush = async () => {
+    if (!activeWorkspaceId) {
+      return;
+    }
+    setSshSyncBusy("push");
+    try {
+      const result = await pushSshWorkspaceSelection(activeWorkspaceId);
+      setActiveSshMetadata(result.metadata);
+      flash("Pushed local mirror changes to the remote host.");
+    } catch (e) {
+      flash(e instanceof Error ? e.message : "SSH push failed.");
+    } finally {
+      setSshSyncBusy(null);
+    }
+  };
+
   const handleDelete = async (workspaceId: string) => {
     if (workspaceId === homeWorkspaceId) {
       flash("The Home workspace cannot be removed.");
@@ -209,7 +514,7 @@ export function WorkspaceStudioModal({
       workspaces.find((w) => w.id === workspaceId)?.name ?? workspaceId;
     if (
       typeof window !== "undefined" &&
-      !window.confirm(`Remove workspace “${label}” from OpenCursor? This does not delete files on disk.`)
+      !window.confirm(`Remove workspace “${label}” from Cesium? This does not delete files on disk.`)
     ) {
       return;
     }
@@ -225,6 +530,9 @@ export function WorkspaceStudioModal({
   };
 
   const handleOpenWorktree = async (root: string) => {
+    if (worktreeBusy) {
+      return;
+    }
     setWorktreeBusy(root);
     try {
       await openFolder(root);
@@ -267,6 +575,20 @@ export function WorkspaceStudioModal({
     [workspaces, homeWorkspaceId]
   );
 
+  const workspaceOpenBusy =
+    cloneBusy ||
+    browseOpenBusy ||
+    newFolderBusy ||
+    sshBusy ||
+    worktreeBusy !== null;
+
+  const sshSubTabClass = (t: SshRemoteSetupTab) =>
+    `rounded-[var(--radius-tab)] px-2 py-1 text-[11px] font-medium transition-colors ${
+      sshRemoteSetupTab === t
+        ? "bg-[var(--bg-card)] text-[var(--text-primary)]"
+        : "text-[var(--text-secondary)] hover:bg-[var(--bg-card)]/60"
+    }`;
+
   if (!open) return null;
 
   return (
@@ -280,7 +602,9 @@ export function WorkspaceStudioModal({
         aria-hidden
         onPointerDown={(e) => {
           e.preventDefault();
-          onClose();
+          if (!workspaceOpenBusy) {
+            onClose();
+          }
         }}
       />
       <div className={`relative ${shell}`} role="dialog" aria-modal="true" aria-labelledby={titleId}>
@@ -306,6 +630,12 @@ export function WorkspaceStudioModal({
             </button>
             <button type="button" className={tabClass("newfolder")} onClick={() => setMode("newfolder")}>
               New empty folder
+            </button>
+            <button type="button" className={tabClass("ssh")} onClick={() => setMode("ssh")}>
+              <span className="inline-flex items-center gap-1">
+                <Server className="size-[14px]" strokeWidth={1.5} />
+                SSH
+              </span>
             </button>
             <button type="button" className={tabClass("worktrees")} onClick={() => setMode("worktrees")}>
               <span className="inline-flex items-center gap-1">
@@ -376,6 +706,16 @@ export function WorkspaceStudioModal({
           {mode === "browse" && (
             <div className="flex flex-col gap-2">
               <div className="flex items-center gap-2">
+                {browsePath && (
+                  <button
+                    type="button"
+                    className="inline-flex items-center gap-1 rounded-[var(--radius-tab)] px-2 py-1 text-[12px] text-[var(--text-secondary)] hover:bg-[var(--bg-card)]"
+                    onClick={() => setBrowsePath(null)}
+                    disabled={browseBusy}
+                  >
+                    Roots
+                  </button>
+                )}
                 {browseParent != null && browseParent !== "" && (
                   <button
                     type="button"
@@ -429,11 +769,11 @@ export function WorkspaceStudioModal({
               <div className="flex flex-wrap gap-2 pt-1">
                 <button
                   type="button"
-                  disabled={!browseCurrent || browseBusy}
+                  disabled={!browseCurrent || browseBusy || browseOpenBusy}
                   onClick={() => void handleOpenBrowseFolder()}
                   className="rounded-[var(--radius-tab)] bg-[var(--text-primary)] px-3 py-2 text-[12px] font-semibold text-[var(--bg-deep)] disabled:opacity-40"
                 >
-                  Open this folder
+                  {browseOpenBusy ? "Opening…" : "Open this folder"}
                 </button>
               </div>
             </div>
@@ -532,10 +872,387 @@ export function WorkspaceStudioModal({
             </div>
           )}
 
+          {mode === "ssh" && (
+            <div className="flex flex-col gap-3">
+              <div className="flex items-center gap-2 text-[11px] text-[var(--text-secondary)]">
+                <span
+                  className={
+                    sshWizardStep === "connect"
+                      ? "font-semibold text-[var(--text-primary)]"
+                      : ""
+                  }
+                >
+                  1 · Connect
+                </span>
+                <span aria-hidden className="text-[var(--text-secondary)] opacity-70">
+                  →
+                </span>
+                <span
+                  className={
+                    sshWizardStep === "remote"
+                      ? "font-semibold text-[var(--text-primary)]"
+                      : ""
+                  }
+                >
+                  2 · Remote folder
+                </span>
+              </div>
+
+              {sshWizardStep === "connect" ? (
+                <form
+                  className="flex flex-col gap-3"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    void handleSshProbeConnect();
+                  }}
+                >
+                  <div className="rounded-[var(--radius-tab)] border border-[var(--palette-border)] bg-[var(--bg-deep)]/60 px-3 py-2 text-[12px] leading-5 text-[var(--text-secondary)]">
+                    We open a temporary SSH/SFTP channel to validate your login. Keys, passwords,
+                    or a local SSH agent may be tried depending on how the host is locked down.
+                  </div>
+                  <label className="flex flex-col gap-1">
+                    <span className="text-[11px] text-[var(--text-secondary)]">SSH target</span>
+                    <HardwareAwareTextInput
+                      placeholder="you@192.168.1.42"
+                      value={sshTarget}
+                      onChange={setSshTarget}
+                      onNativeKeyDown={() => {}}
+                      surfaceKind="palette"
+                      className="box-border w-full rounded-[var(--radius-tab)] border border-[var(--palette-border)] bg-[var(--bg-deep)] px-2 py-1.5 font-mono text-[12px] outline-none"
+                      ariaLabel="SSH target"
+                      autoFocus
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1">
+                    <span className="text-[11px] text-[var(--text-secondary)]">Port</span>
+                    <HardwareAwareTextInput
+                      placeholder="22"
+                      value={sshPort}
+                      onChange={setSshPort}
+                      onNativeKeyDown={() => {}}
+                      surfaceKind="palette"
+                      className="box-border w-full rounded-[var(--radius-tab)] border border-[var(--palette-border)] bg-[var(--bg-deep)] px-2 py-1.5 font-mono text-[12px] outline-none"
+                      ariaLabel="SSH port"
+                    />
+                  </label>
+                  <div className="rounded-[var(--radius-tab)] border border-[var(--palette-border)] px-3 py-2">
+                    <div className="mb-2 text-[11px] font-medium text-[var(--text-primary)]">
+                      Authentication
+                    </div>
+                    <p className="mb-3 text-[11px] leading-5 text-[var(--text-secondary)]">
+                      If connecting fails without these, paste a password, set your private key
+                      path, or configure an SSH agent—the host may require credentials before the
+                      next step.
+                    </p>
+                    <label className="mb-3 flex flex-col gap-1">
+                      <span className="text-[11px] text-[var(--text-secondary)]">
+                        Password (optional)
+                      </span>
+                      <input
+                        type="password"
+                        autoComplete="off"
+                        value={sshPassword}
+                        onChange={(event) => setSshPassword(event.target.value)}
+                        placeholder="SSH password when required"
+                        className="box-border w-full rounded-[var(--radius-tab)] border border-[var(--palette-border)] bg-[var(--bg-deep)] px-2 py-1.5 text-[13px] outline-none"
+                        aria-label="SSH password"
+                      />
+                    </label>
+                    <label className="flex flex-col gap-1">
+                      <span className="text-[11px] text-[var(--text-secondary)]">
+                        SSH private key path (optional)
+                      </span>
+                      <HardwareAwareTextInput
+                        placeholder="C:\\Users\\you\\.ssh\\id_ed25519"
+                        value={sshKeyPath}
+                        onChange={setSshKeyPath}
+                        onNativeKeyDown={() => {}}
+                        surfaceKind="palette"
+                        className="box-border w-full rounded-[var(--radius-tab)] border border-[var(--palette-border)] bg-[var(--bg-deep)] px-2 py-1.5 font-mono text-[12px] outline-none"
+                        ariaLabel="SSH key path"
+                      />
+                    </label>
+                  </div>
+                  <button
+                    type="submit"
+                    disabled={sshProbeBusy}
+                    className="rounded-[var(--radius-tab)] bg-[var(--text-primary)] px-3 py-2 text-[12px] font-semibold text-[var(--bg-deep)] disabled:opacity-50"
+                  >
+                    {sshProbeBusy ? "Connecting…" : "Connect & continue"}
+                  </button>
+                </form>
+              ) : (
+                <div className="flex flex-col gap-3">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      disabled={sshProbeBusy || sshBrowseBusy || sshRemoteCloneBusy}
+                      onClick={() => handleSshWizardBack()}
+                      className="inline-flex items-center gap-1 rounded-[var(--radius-tab)] px-2 py-1 text-[11px] text-[var(--text-secondary)] hover:bg-[var(--bg-card)] disabled:opacity-50"
+                    >
+                      <ArrowLeft className="size-[13px]" />
+                      Different host
+                    </button>
+                    {sshConnectedLabel ? (
+                      <span className="text-[11px] text-[var(--text-secondary)]">
+                        Signed in as <span className="font-medium">{sshConnectedLabel}</span>
+                      </span>
+                    ) : null}
+                  </div>
+                  <div className="rounded-[var(--radius-tab)] border border-[var(--palette-border)] bg-[var(--bg-deep)]/60 px-3 py-2 text-[12px] leading-5 text-[var(--text-secondary)]">
+                    Mirrors a remote folder into a local sandbox workspace and keeps edits synced
+                    with push/pull commands. Activities below affect the SSH host—not this machine&apos;s local folder browser.
+                  </div>
+                  <div className="break-all rounded-[var(--radius-tab)] border border-dashed border-[var(--palette-border)] px-2 py-1.5 font-mono text-[10.5px] text-[var(--text-secondary)]">
+                    Current folder:{" "}
+                    <span className="text-[var(--text-primary)]">{sshRemotePath || "—"}</span>
+                  </div>
+                  <div className="flex flex-wrap gap-1">
+                    <button
+                      type="button"
+                      className={sshSubTabClass("browse")}
+                      onClick={() => setSshRemoteSetupTab("browse")}
+                    >
+                      <span className="inline-flex items-center gap-1">
+                        <Folder className="size-[13px]" strokeWidth={1.5} />
+                        Browse folders
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      className={sshSubTabClass("newfolder")}
+                      onClick={() => setSshRemoteSetupTab("newfolder")}
+                    >
+                      New folder
+                    </button>
+                    <button
+                      type="button"
+                      className={sshSubTabClass("clone")}
+                      onClick={() => setSshRemoteSetupTab("clone")}
+                    >
+                      <span className="inline-flex items-center gap-1">
+                        <FolderGit2 className="size-[13px]" strokeWidth={1.5} />
+                        Clone Git URL
+                      </span>
+                    </button>
+                  </div>
+
+                  {sshRemoteSetupTab === "browse" ? (
+                    <div className="rounded-[var(--radius-tab)] border border-[var(--palette-border)]">
+                      <div className="flex flex-wrap items-center gap-2 border-b border-[var(--palette-border)] px-3 py-2">
+                        <button
+                          type="button"
+                          disabled={sshBrowseBusy}
+                          onClick={() => void handleSshBrowse()}
+                          className="rounded-[var(--radius-tab)] border border-[var(--palette-border)] px-2 py-1 text-[11px] text-[var(--text-primary)] transition-colors hover:bg-[var(--bg-card)] disabled:opacity-50"
+                        >
+                          {sshBrowseBusy ? "Loading…" : "Refresh listing"}
+                        </button>
+                        {sshRemoteParent ? (
+                          <button
+                            type="button"
+                            disabled={sshBrowseBusy}
+                            onClick={() => void handleSshBrowse(sshRemoteParent)}
+                            className="inline-flex items-center gap-1 rounded-[var(--radius-tab)] px-2 py-1 text-[11px] text-[var(--text-secondary)] hover:bg-[var(--bg-card)] disabled:opacity-50"
+                          >
+                            <ArrowLeft className="size-[13px]" />
+                            Up
+                          </button>
+                        ) : null}
+                      </div>
+                      {sshRemoteEntries.length > 0 ? (
+                        <div className="max-h-[220px] overflow-y-auto">
+                          {sshRemoteEntries.map((entry) => (
+                            <button
+                              key={entry.path}
+                              type="button"
+                              disabled={sshBrowseBusy}
+                              onClick={() => void handleSshBrowse(entry.path)}
+                              className="flex w-full items-center gap-2 border-b border-[var(--palette-border)] px-3 py-2 text-left last:border-b-0 hover:bg-[var(--bg-card)] disabled:opacity-50"
+                            >
+                              <ChevronRightIcon />
+                              <span className="truncate text-[12px]">{entry.name}</span>
+                            </button>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="px-3 py-3 text-[11px] text-[var(--text-secondary)]">
+                          No folders listed yet—tap refresh.
+                        </div>
+                      )}
+                    </div>
+                  ) : null}
+
+                  {sshRemoteSetupTab === "newfolder" ? (
+                    <div className="flex flex-col gap-2 rounded-[var(--radius-tab)] border border-[var(--palette-border)] px-3 py-3">
+                      <p className="text-[11px] text-[var(--text-secondary)]">
+                        Adds an empty subdirectory under the current folder ({sshRemotePath || "."}
+                        ).
+                      </p>
+                      <div className="flex flex-wrap gap-2">
+                        <HardwareAwareTextInput
+                          placeholder="new-empty-folder"
+                          value={sshNewDirectoryName}
+                          onChange={setSshNewDirectoryName}
+                          onNativeKeyDown={() => {}}
+                          surfaceKind="palette"
+                          className="box-border min-w-0 flex-1 rounded-[var(--radius-tab)] border border-[var(--palette-border)] bg-[var(--bg-deep)] px-2 py-1.5 text-[12px] outline-none"
+                          ariaLabel="New remote folder name"
+                        />
+                        <button
+                          type="button"
+                          disabled={
+                            sshBrowseBusy || sshRemoteCloneBusy || !sshNewDirectoryName.trim()
+                          }
+                          onClick={() => void handleSshCreateDirectory()}
+                          className="rounded-[var(--radius-tab)] bg-[var(--text-primary)] px-3 py-1.5 text-[11px] font-semibold text-[var(--bg-deep)] disabled:opacity-50"
+                        >
+                          Create
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {sshRemoteSetupTab === "clone" ? (
+                    <div className="flex flex-col gap-2 rounded-[var(--radius-tab)] border border-[var(--palette-border)] px-3 py-3">
+                      <p className="text-[11px] leading-5 text-[var(--text-secondary)]">
+                        Runs <code className="font-mono text-[10px]">git clone</code> on the SSH
+                        host inside the highlighted folder ({sshRemotePath || "."}). Git must exist
+                        on that machine.
+                      </p>
+                      <label className="flex flex-col gap-1">
+                        <span className="text-[11px] text-[var(--text-secondary)]">
+                          Git remote
+                        </span>
+                        <HardwareAwareTextInput
+                          placeholder="https://github.com/org/repo.git"
+                          value={sshRemoteRepoUrl}
+                          onChange={setSshRemoteRepoUrl}
+                          onNativeKeyDown={() => {}}
+                          surfaceKind="palette"
+                          className="box-border w-full rounded-[var(--radius-tab)] border border-[var(--palette-border)] bg-[var(--bg-deep)] px-2 py-1.5 text-[13px] outline-none"
+                          ariaLabel="Remote git clone URL"
+                        />
+                      </label>
+                      <label className="flex flex-col gap-1">
+                        <span className="text-[11px] text-[var(--text-secondary)]">
+                          Folder name (optional)
+                        </span>
+                        <HardwareAwareTextInput
+                          placeholder="my-fork"
+                          value={sshRemoteCloneFolderName}
+                          onChange={setSshRemoteCloneFolderName}
+                          onNativeKeyDown={() => {}}
+                          surfaceKind="palette"
+                          className="box-border w-full rounded-[var(--radius-tab)] border border-[var(--palette-border)] bg-[var(--bg-deep)] px-2 py-1.5 text-[13px] outline-none"
+                          ariaLabel="Remote clone folder name"
+                        />
+                      </label>
+                      <button
+                        type="button"
+                        disabled={sshRemoteCloneBusy || !sshRemoteRepoUrl.trim()}
+                        onClick={() => void handleSshRemoteClone()}
+                        className="rounded-[var(--radius-tab)] bg-[var(--text-primary)] px-3 py-2 text-[12px] font-semibold text-[var(--bg-deep)] disabled:opacity-50"
+                      >
+                        {sshRemoteCloneBusy ? "Cloning…" : "Clone into current folder"}
+                      </button>
+                    </div>
+                  ) : null}
+
+                  <label className="flex flex-col gap-1">
+                    <span className="text-[11px] text-[var(--text-secondary)]">
+                      Remote workspace path (edit or drill using Browse)
+                    </span>
+                    <HardwareAwareTextInput
+                      placeholder="/home/you/project"
+                      value={sshRemotePath}
+                      onChange={setSshRemotePath}
+                      onNativeKeyDown={() => {}}
+                      surfaceKind="palette"
+                      className="box-border w-full rounded-[var(--radius-tab)] border border-[var(--palette-border)] bg-[var(--bg-deep)] px-2 py-1.5 font-mono text-[12px] outline-none"
+                      ariaLabel="Remote folder for workspace mirror"
+                    />
+                  </label>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <label className="flex flex-col gap-1">
+                      <span className="text-[11px] text-[var(--text-secondary)]">
+                        Workspace name (optional)
+                      </span>
+                      <HardwareAwareTextInput
+                        placeholder="Production API"
+                        value={sshWorkspaceName}
+                        onChange={setSshWorkspaceName}
+                        onNativeKeyDown={() => {}}
+                        surfaceKind="palette"
+                        className="box-border w-full rounded-[var(--radius-tab)] border border-[var(--palette-border)] bg-[var(--bg-deep)] px-2 py-1.5 text-[13px] outline-none"
+                        ariaLabel="SSH workspace name"
+                      />
+                    </label>
+                    <label className="flex flex-col gap-1">
+                      <span className="text-[11px] text-[var(--text-secondary)]">
+                        Local mirror folder (optional)
+                      </span>
+                      <HardwareAwareTextInput
+                        placeholder="api-prod"
+                        value={sshMirrorName}
+                        onChange={setSshMirrorName}
+                        onNativeKeyDown={() => {}}
+                        surfaceKind="palette"
+                        className="box-border w-full rounded-[var(--radius-tab)] border border-[var(--palette-border)] bg-[var(--bg-deep)] px-2 py-1.5 text-[13px] outline-none"
+                        ariaLabel="SSH local mirror folder"
+                      />
+                    </label>
+                  </div>
+
+                  {activeSshMetadata ? (
+                    <div className="rounded-[var(--radius-tab)] border border-[var(--palette-border)] px-3 py-2">
+                      <div className="text-[11px] font-medium text-[var(--text-primary)]">
+                        Active SSH mirror
+                      </div>
+                      <div className="mt-1 break-all font-mono text-[10.5px] text-[var(--text-secondary)]">
+                        {activeSshMetadata.target}:{activeSshMetadata.remotePath}
+                      </div>
+                      <div className="mt-1 break-all font-mono text-[10.5px] text-[var(--text-secondary)]">
+                        {activeSshMetadata.localRoot}
+                      </div>
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          disabled={sshSyncBusy !== null}
+                          onClick={() => void handleSshPull()}
+                          className="rounded-[var(--radius-tab)] border border-[var(--palette-border)] px-2 py-1 text-[11px] text-[var(--text-primary)] transition-colors hover:bg-[var(--bg-card)] disabled:opacity-50"
+                        >
+                          {sshSyncBusy === "pull" ? "Pulling…" : "Pull remote"}
+                        </button>
+                        <button
+                          type="button"
+                          disabled={sshSyncBusy !== null}
+                          onClick={() => void handleSshPush()}
+                          className="rounded-[var(--radius-tab)] border border-[var(--palette-border)] px-2 py-1 text-[11px] text-[var(--text-primary)] transition-colors hover:bg-[var(--bg-card)] disabled:opacity-50"
+                        >
+                          {sshSyncBusy === "push" ? "Pushing…" : "Push local"}
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
+
+                  <button
+                    type="button"
+                    disabled={sshBusy}
+                    onClick={() => void handleSshWorkspace()}
+                    className="rounded-[var(--radius-tab)] bg-[var(--text-primary)] px-3 py-2 text-[12px] font-semibold text-[var(--bg-deep)] disabled:opacity-50"
+                  >
+                    {sshBusy ? "Syncing…" : "Mirror & open workspace"}
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
           {mode === "remove" && (
             <div className="flex flex-col gap-2">
               <p className="text-[11px] text-[var(--text-secondary)]">
-                Removes the workspace from OpenCursor’s list. Your files stay on disk. Home cannot be removed.
+                Removes the workspace from Cesium’s list. Your files stay on disk. Home cannot be removed.
               </p>
               {removable.length === 0 ? (
                 <p className="text-[12px] text-[var(--text-secondary)]">No removable workspaces.</p>

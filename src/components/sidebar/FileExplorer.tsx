@@ -4,6 +4,7 @@ import {
   useState,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   type KeyboardEvent,
@@ -127,6 +128,19 @@ export function FileExplorer() {
     () => new Set([...expandedPaths].filter((path) => expandablePaths.has(path))),
     [expandedPaths, expandablePaths]
   );
+  const [explorerFade, setExplorerFade] = useState({ top: false, bottom: false });
+
+  const updateExplorerFade = useCallback(() => {
+    const root = scrollRootRef.current;
+    if (!root) {
+      return;
+    }
+    const maxScrollY = root.scrollHeight - root.clientHeight;
+    setExplorerFade({
+      top: root.scrollTop > 2,
+      bottom: maxScrollY > 2 && root.scrollTop < maxScrollY - 2,
+    });
+  }, []);
 
   useEffect(() => {
     setView(workspaceSession.explorer.view);
@@ -158,7 +172,28 @@ export function FileExplorer() {
     const root = scrollRootRef.current;
     if (!root) return;
     root.scrollTop = workspaceSession.explorer.scrollTop;
-  }, [workspaceSession.explorer.scrollTop]);
+    requestAnimationFrame(updateExplorerFade);
+  }, [updateExplorerFade, workspaceSession.explorer.scrollTop]);
+
+  useLayoutEffect(() => {
+    if (view !== "explorer") {
+      return;
+    }
+    updateExplorerFade();
+  }, [fileTree, loading, updateExplorerFade, view, visibleExpandedPaths]);
+
+  useLayoutEffect(() => {
+    if (view !== "explorer") {
+      return;
+    }
+    const root = scrollRootRef.current;
+    if (!root) {
+      return;
+    }
+    const ro = new ResizeObserver(() => updateExplorerFade());
+    ro.observe(root);
+    return () => ro.disconnect();
+  }, [updateExplorerFade, view]);
 
   const flashError = useCallback(
   (message: string) => {
@@ -737,50 +772,71 @@ export function FileExplorer() {
             <p className="pointer-events-none shrink-0 px-[11px] pb-[5px] pt-[6px] font-sans text-[14px] font-normal text-[var(--text-primary)]">
               {workspaceInfo?.name ?? "Workspace"}
             </p>
-            <div
-              ref={scrollRootRef}
-              className="min-h-0 flex-1 overflow-y-auto"
-              onScroll={(event) => {
-                const nextScrollTop = event.currentTarget.scrollTop;
-                updateWorkspaceSession((current) => ({
-                  ...current,
-                  explorer: {
-                    ...current.explorer,
-                    scrollTop: nextScrollTop,
-                  },
-                }));
-              }}
-            >
+            <div className="relative min-h-0 min-w-0 flex-1">
+              {explorerFade.top ? (
+                <div
+                  className="pointer-events-none absolute inset-x-0 top-0 z-[2] h-[24px]"
+                  style={{
+                    backgroundImage: "linear-gradient(to bottom, var(--bg-panel), transparent)",
+                  }}
+                  aria-hidden
+                />
+              ) : null}
+              {explorerFade.bottom ? (
+                <div
+                  className="pointer-events-none absolute inset-x-0 bottom-0 z-[2] h-[24px]"
+                  style={{
+                    backgroundImage: "linear-gradient(to top, var(--bg-panel), transparent)",
+                  }}
+                  aria-hidden
+                />
+              ) : null}
               <div
-                className="min-h-full"
-                onContextMenu={onExplorerBackgroundContextMenu}
+                ref={scrollRootRef}
+                className="hide-scrollbar-y h-full min-h-0 overflow-y-auto"
+                onScroll={(event) => {
+                  updateExplorerFade();
+                  const nextScrollTop = event.currentTarget.scrollTop;
+                  updateWorkspaceSession((current) => ({
+                    ...current,
+                    explorer: {
+                      ...current.explorer,
+                      scrollTop: nextScrollTop,
+                    },
+                  }));
+                }}
               >
-                {loading ? (
-                  <div className="space-y-[6px] px-[11px] py-[8px]">
-                    {Array.from({ length: 8 }).map((_, index) => (
-                      <div
-                        key={index}
-                        className="h-[20px] rounded-[var(--radius-tab)] bg-[var(--bg-card)] opacity-70"
+                <div
+                  className="min-h-full"
+                  onContextMenu={onExplorerBackgroundContextMenu}
+                >
+                  {loading ? (
+                    <div className="space-y-[6px] px-[11px] py-[8px]">
+                      {Array.from({ length: 8 }).map((_, index) => (
+                        <div
+                          key={index}
+                          className="h-[20px] rounded-[var(--radius-tab)] bg-[var(--bg-card)] opacity-70"
+                        />
+                      ))}
+                    </div>
+                  ) : (
+                    fileTree?.children?.map((node) => (
+                      <FileTree
+                        key={node.name}
+                        node={node}
+                        depth={0}
+                        parentPath=""
+                        activePath={activeExplorerPath}
+                        expandedPaths={visibleExpandedPaths}
+                        onToggleFolder={toggleFolder}
+                        onOpenFile={handleOpenFile}
+                        onTreeContextMenu={onTreeContextMenu}
+                        showOverflowMenu={experimentalIpadCustomButtons}
+                        onTreeOverflowMenu={onTreeOverflowMenu}
                       />
-                    ))}
-                  </div>
-                ) : (
-                  fileTree?.children?.map((node) => (
-                    <FileTree
-                      key={node.name}
-                      node={node}
-                      depth={0}
-                      parentPath=""
-                      activePath={activeExplorerPath}
-                      expandedPaths={visibleExpandedPaths}
-                      onToggleFolder={toggleFolder}
-                      onOpenFile={handleOpenFile}
-                      onTreeContextMenu={onTreeContextMenu}
-                      showOverflowMenu={experimentalIpadCustomButtons}
-                      onTreeOverflowMenu={onTreeOverflowMenu}
-                    />
-                  ))
-                )}
+                    ))
+                  )}
+                </div>
               </div>
             </div>
           </>
@@ -831,20 +887,6 @@ export function FileExplorer() {
             className="flex min-h-0 flex-1 flex-col px-[11px] pb-[11px] pt-[6px]"
             onContextMenu={(e) => {
               openAt(e, [
-                {
-                  type: "item",
-                  id: "init",
-                  label: "Initialize Repository (demo)",
-                  onSelect: () =>
-      pushNotification({
-        kind: WORKBENCH_NOTIFICATION_KIND.editorNotice,
-        severity: "info",
-        title: "Source Control",
-        message: "Git integration is not wired yet.",
-        autoDismissMs: 4000,
-        compact: true,
-      }),
-                },
                 {
                   type: "item",
                   id: "refresh-scm",

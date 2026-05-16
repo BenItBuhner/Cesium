@@ -18,7 +18,7 @@ export type ExplorerSessionState = {
   scrollTop: number;
 };
 
-/** Agent vs IDE vs full-screen settings; URL uses `?view=editor` / `?view=settings` when not default agent. */
+/** Agent vs IDE vs full-screen settings; `/workspace` uses `?view=editor` / `?view=settings` when not default agent. */
 export type WorkbenchShellView = "agent" | "editor" | "settings";
 
 /** Last non-settings shell; used when closing the settings overlay. */
@@ -54,11 +54,35 @@ export type EditorTabGroupState = {
   tabIds: string[];
 };
 
+export type EditorPaneId = string;
+
+export type EditorPaneState = {
+  id: EditorPaneId;
+  tabs: EditorTab[];
+  activeId: string | null;
+  tabGroups: Record<string, EditorTabGroupState>;
+  stripItems: EditorStripItem[];
+};
+
+export type EditorLayoutNode =
+  | { id: string; type: "leaf"; paneId: EditorPaneId }
+  | {
+      id: string;
+      type: "split";
+      orientation: EditorSplitOrientation;
+      children: string[];
+      layout: Record<string, number> | null;
+    };
+
 export type EditorSessionState = {
   split: boolean;
   splitOrientation: EditorSplitOrientation;
   splitLayout: Record<string, number> | null;
   focusedGroup: "left" | "right";
+  focusedPaneId: EditorPaneId;
+  panes: Record<EditorPaneId, EditorPaneState>;
+  layoutRootId: string;
+  layoutNodes: Record<string, EditorLayoutNode>;
   leftTabs: EditorTab[];
   rightTabs: EditorTab[];
   leftActiveId: string | null;
@@ -427,7 +451,7 @@ export function createDefaultWorkspaceSession(
     agentView: {
       leftRailCollapsed: false,
       rightPaneOpen: false,
-      selectedConversationId: null,
+      selectedConversationId: AGENT_NEW_CHAT_SESSION_ID,
       archivedConversationIds: [],
       pinnedAgentConversationIds: [],
       railFilterToggles: defaultAgentRailFilterToggles(),
@@ -758,20 +782,25 @@ export function mergeWorkspaceSessionFromImport(
   if (r.schemaVersion !== 1) {
     return current;
   }
+  const importedChatBackendRaw = r.chat?.backendId;
+  const importedChatBackendCoerced: AgentBackendId =
+    (importedChatBackendRaw as string | undefined) === "claude-code-sdk"
+      ? "claude-adapter"
+      : importedChatBackendRaw ?? current.chat.backendId;
   const normalizedChatBackendId =
-    r.chat?.backendId === "cursor-acp" ||
-    r.chat?.backendId === "cursor-sdk" ||
-    r.chat?.backendId === "opencode-acp" ||
-    r.chat?.backendId === "opencode-server" ||
-    r.chat?.backendId === "gemini-acp" ||
-    r.chat?.backendId === "codex-adapter" ||
-    r.chat?.backendId === "codex-app-server" ||
-    r.chat?.backendId === "claude-adapter" ||
-    r.chat?.backendId === "claude-code-sdk"
-      ? r.chat.backendId
+    importedChatBackendCoerced === "cursor-acp" ||
+    importedChatBackendCoerced === "cursor-sdk" ||
+    importedChatBackendCoerced === "opencode-acp" ||
+    importedChatBackendCoerced === "opencode-server" ||
+    importedChatBackendCoerced === "gemini-acp" ||
+    importedChatBackendCoerced === "codex-adapter" ||
+    importedChatBackendCoerced === "codex-app-server" ||
+    importedChatBackendCoerced === "claude-adapter"
+      ? importedChatBackendCoerced
       : current.chat.backendId;
   const importedUnsupportedBackend =
-    r.chat?.backendId != null && normalizedChatBackendId !== r.chat.backendId;
+    importedChatBackendRaw != null &&
+    normalizedChatBackendId !== importedChatBackendCoerced;
   const normalizedSplitOrientation: EditorSplitOrientation =
     r.editor?.splitOrientation === "vertical" ? "vertical" : current.editor.splitOrientation;
   const normalizedSplitLayout =

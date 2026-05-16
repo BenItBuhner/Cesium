@@ -391,7 +391,7 @@ class OpenCodeServerSessionHandle implements AgentSessionHandle {
       parts: [
         {
           type: "text",
-          text: `Prior OpenCursor conversation context:\n\n${transcript}`,
+          text: `Prior Cesium conversation context:\n\n${transcript}`,
         },
       ],
     }).catch((error) => {

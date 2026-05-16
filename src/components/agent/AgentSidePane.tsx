@@ -3,9 +3,11 @@
 import { PanelRightClose } from "lucide-react";
 import { EditorPanel } from "@/components/editor/EditorPanel";
 import { useAgentShellState } from "./AgentShellStateContext";
+import { useUserPreferences } from "@/components/preferences/UserPreferencesProvider";
 
 export function AgentSidePane() {
   const {
+    isMobile,
     rightPaneOpen,
     toggleRightPaneOpen,
     sidePaneEditorSession,
@@ -14,6 +16,8 @@ export function AgentSidePane() {
     setExpandedComposerDraft,
     sidePaneScopeId,
   } = useAgentShellState();
+  const { experimentalIpadWindowedTabInset } = useUserPreferences();
+  const padTrailingForWindowChrome = experimentalIpadWindowedTabInset && !isMobile;
 
   return (
     <div className="agent-side-pane relative h-full w-full overflow-hidden bg-[var(--agent-panel-bg)]">
@@ -21,7 +25,12 @@ export function AgentSidePane() {
         <button
           type="button"
           onClick={toggleRightPaneOpen}
-          className="absolute right-[16px] top-[11px] z-40 flex size-[18px] items-center justify-center rounded-[var(--agent-control-radius)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--agent-card-bg)] hover:text-[var(--text-primary)]"
+          data-workbench-pane-toggle
+          className={`absolute top-[11px] z-40 flex size-[18px] items-center justify-center rounded-[var(--agent-control-radius)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--agent-card-bg)] hover:text-[var(--text-primary)] ${
+            padTrailingForWindowChrome
+              ? "right-[calc(var(--editor-window-chrome-tab-inset)+16px)]"
+              : "right-[16px]"
+          }`}
           aria-label="Hide workbench pane"
           title="Hide workbench pane"
         >

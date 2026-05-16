@@ -27,13 +27,13 @@ import {
   startServerPerfSpan,
 } from "./lib/perf.js";
 
-export type OpenCursorServerConfig = {
+export type CesiumServerConfig = {
   port: number;
   host: string;
   publicHost: string;
 };
 
-export const serverConfig: OpenCursorServerConfig = (() => {
+export const serverConfig: CesiumServerConfig = (() => {
   const port = Number.parseInt(process.env.PORT ?? "9100", 10);
   const host = process.env.HOST?.trim() || "0.0.0.0";
   return {
@@ -43,7 +43,7 @@ export const serverConfig: OpenCursorServerConfig = (() => {
   };
 })();
 
-export function createOpenCursorApp(): Hono {
+export function createCesiumApp(): Hono {
   const defaultAllowedOrigins = [
     `http://${serverConfig.publicHost}:3000`,
     "http://localhost:3000",
@@ -101,7 +101,7 @@ export function createOpenCursorApp(): Hono {
       status: c.res.status,
     });
     if (serverPerfEnabled()) {
-      c.header("Server-Timing", `opencursor;dur=${ms.toFixed(1)}`);
+      c.header("Server-Timing", `cesium;dur=${ms.toFixed(1)}`);
       c.header("x-opencursor-perf-ms", ms.toFixed(1));
     }
   });
@@ -130,7 +130,7 @@ export function createOpenCursorApp(): Hono {
 
 let backgroundStarted = false;
 
-export function startOpenCursorBackgroundServices(): void {
+export function startCesiumBackgroundServices(): void {
   if (backgroundStarted) {
     return;
   }

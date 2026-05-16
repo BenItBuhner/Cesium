@@ -16,6 +16,7 @@ export type ShortcutCommandDefinition = {
   label: string;
   section: ShortcutCommandSection;
   defaultBindings: string[];
+  allowInEditableContexts?: boolean;
 };
 
 export type KeyboardShortcutBindingsMap = Record<string, string[]>;
@@ -86,12 +87,14 @@ export const SHORTCUT_COMMAND_DEFINITIONS: ShortcutCommandDefinition[] = [
     label: "Go to File…",
     section: "Workbench",
     defaultBindings: ["Mod+P"],
+    allowInEditableContexts: true,
   },
   {
     id: "palette.showCommands",
     label: "Show All Commands",
     section: "Workbench",
     defaultBindings: ["F1", "Mod+Shift+P"],
+    allowInEditableContexts: true,
   },
   {
     id: "workbench.action.toggleSidebarVisibility",
@@ -122,96 +125,105 @@ export const SHORTCUT_COMMAND_DEFINITIONS: ShortcutCommandDefinition[] = [
     label: "Chat: Use Plan mode",
     section: "Workbench",
     defaultBindings: ["Mod+I"],
+    allowInEditableContexts: true,
   },
   {
     id: "workbench.action.focusChatAgentMode",
     label: "Chat: Use Agent mode",
     section: "Workbench",
     defaultBindings: [],
+    allowInEditableContexts: true,
   },
   {
     id: "workbench.action.openGlobalSettings",
     label: "Preferences: Open User Settings",
     section: "Workbench",
     defaultBindings: ["Mod+Comma"],
+    allowInEditableContexts: true,
   },
   {
     id: "workbench.action.openKeyboardShortcuts",
     label: "Preferences: Open Keyboard Shortcuts",
     section: "Workbench",
     defaultBindings: [],
+    allowInEditableContexts: true,
   },
   {
     id: "chat.action.openWorkspacePicker",
     label: "Chat: Open workspace picker",
     section: "Chat",
     defaultBindings: [],
+    allowInEditableContexts: true,
   },
   {
     id: "chat.action.openBackendDropdown",
     label: "Chat: Open ACP / backend picker",
     section: "Chat",
     defaultBindings: [],
+    allowInEditableContexts: true,
   },
   {
     id: "chat.action.openModeDropdown",
     label: "Chat: Open mode picker",
     section: "Chat",
     defaultBindings: [],
+    allowInEditableContexts: true,
   },
   {
     id: "chat.action.openModelDropdown",
     label: "Chat: Open model picker",
     section: "Chat",
     defaultBindings: [],
+    allowInEditableContexts: true,
   },
   {
     id: "chat.action.toggleVoiceInput",
     label: "Chat: Voice Transcription",
     section: "Chat",
     defaultBindings: ["Mod+T"],
+    allowInEditableContexts: true,
   },
   {
     id: "chat.action.toggleComposerExpand",
     label: "Chat: Toggle expand composer",
     section: "Chat",
     defaultBindings: [],
+    allowInEditableContexts: true,
   },
   {
     id: "chat.action.attachImage",
     label: "Chat: Attach Image",
     section: "Chat",
     defaultBindings: ["Mod+U"],
+    allowInEditableContexts: true,
   },
   {
     id: "chat.action.agentRailPreviousConversation",
     label: "Agent: Previous conversation in rail",
     section: "Chat",
     defaultBindings: ["Alt+ArrowUp", "Mod+Shift+Tab"],
+    allowInEditableContexts: true,
   },
   {
     id: "chat.action.agentRailNextConversation",
     label: "Agent: Next conversation in rail",
     section: "Chat",
     defaultBindings: ["Alt+ArrowDown", "Mod+Tab"],
+    allowInEditableContexts: true,
   },
   {
     id: "workbench.action.openFile",
     label: "File: Open File…",
     section: "File",
     defaultBindings: ["Mod+O"],
+    allowInEditableContexts: true,
   },
   {
     id: "workbench.action.openFolder",
     label: "File: Open Folder…",
     section: "File",
     defaultBindings: ["Mod+Shift+O"],
-  },
-  {
-    id: "workbench.action.newUntitledFile",
-    label: "File: New Untitled Text File",
-    section: "File",
-    defaultBindings: ["Mod+N"],
+    allowInEditableContexts: true,
   },
   {
     id: "workbench.action.newWindow",
@@ -242,12 +254,14 @@ export const SHORTCUT_COMMAND_DEFINITIONS: ShortcutCommandDefinition[] = [
     label: "File: Save",
     section: "File",
     defaultBindings: ["Mod+S"],
+    allowInEditableContexts: true,
   },
   {
     id: "workbench.action.files.saveAll",
     label: "File: Save All",
     section: "File",
     defaultBindings: ["Mod+K Mod+S"],
+    allowInEditableContexts: true,
   },
   {
     id: "workbench.action.splitEditor",
@@ -280,12 +294,6 @@ export const SHORTCUT_COMMAND_DEFINITIONS: ShortcutCommandDefinition[] = [
     defaultBindings: ["Mod+G"],
   },
   {
-    id: "workbench.action.openChanges",
-    label: "View: Open Changes",
-    section: "Workbench",
-    defaultBindings: ["Mod+E"],
-  },
-  {
     id: "workbench.action.findInFiles",
     label: "Search: Find in Files",
     section: "Search",
@@ -296,42 +304,6 @@ export const SHORTCUT_COMMAND_DEFINITIONS: ShortcutCommandDefinition[] = [
     label: "View: Toggle Terminal",
     section: "Terminal",
     defaultBindings: ["Mod+Backquote"],
-  },
-  {
-    id: "editor.action.undo",
-    label: "Edit: Undo",
-    section: "Edit",
-    defaultBindings: ["Mod+Z"],
-  },
-  {
-    id: "editor.action.redo",
-    label: "Edit: Redo",
-    section: "Edit",
-    defaultBindings: ["Mod+Y"],
-  },
-  {
-    id: "editor.action.selectAll",
-    label: "Edit: Select All",
-    section: "Edit",
-    defaultBindings: ["Mod+A"],
-  },
-  {
-    id: "workbench.action.zoomIn",
-    label: "View: Zoom In",
-    section: "Workbench",
-    defaultBindings: ["Mod+Equal"],
-  },
-  {
-    id: "workbench.action.zoomOut",
-    label: "View: Zoom Out",
-    section: "Workbench",
-    defaultBindings: ["Mod+Minus"],
-  },
-  {
-    id: "workbench.action.zoomReset",
-    label: "View: Reset Zoom",
-    section: "Workbench",
-    defaultBindings: ["Mod+0"],
   },
 ];
 
@@ -693,6 +665,55 @@ export function matchesShortcutStep(
   return eventToKeyToken(event) === step.key;
 }
 
+const NATIVE_EDITING_SHORTCUT_KEYS = new Set(["a", "c", "v", "x", "y", "z"]);
+
+export function isNativeEditableShortcutEvent(
+  event: Pick<KeyboardEvent, "altKey" | "ctrlKey" | "key" | "metaKey">
+): boolean {
+  if (event.altKey || (!event.ctrlKey && !event.metaKey)) {
+    return false;
+  }
+  return NATIVE_EDITING_SHORTCUT_KEYS.has(event.key.toLowerCase());
+}
+
+function isTextInputElement(element: Element): boolean {
+  if (typeof HTMLInputElement === "undefined" || !(element instanceof HTMLInputElement)) {
+    return false;
+  }
+  const nonTextTypes = new Set([
+    "button",
+    "checkbox",
+    "color",
+    "file",
+    "hidden",
+    "image",
+    "radio",
+    "range",
+    "reset",
+    "submit",
+  ]);
+  return !nonTextTypes.has(element.type.toLowerCase());
+}
+
+export function isEditableShortcutTarget(target: EventTarget | null): boolean {
+  if (typeof Element === "undefined" || !(target instanceof Element)) {
+    return false;
+  }
+  const editable = target.closest(
+    "textarea, select, [contenteditable=''], [contenteditable='true'], [role='textbox'], [data-hardware-input-surface], .monaco-editor"
+  );
+  if (editable) {
+    return true;
+  }
+  if (isTextInputElement(target)) {
+    return true;
+  }
+  if (typeof HTMLElement !== "undefined" && target instanceof HTMLElement) {
+    return target.isContentEditable;
+  }
+  return false;
+}
+
 export function getShortcutDisplayForCommand(
   bindings: KeyboardShortcutBindingsMap | undefined,
   commandId: string,
@@ -734,15 +755,26 @@ export function tryDispatchKeyboardShortcut(options: {
   bindings: KeyboardShortcutBindingsMap;
   chordRef: { current: ShortcutChordState | null };
   onCommand: (commandId: string) => void;
+  editableTarget?: boolean;
   chordTimeoutMs?: number;
 }): boolean {
   const chordTimeoutMs = options.chordTimeoutMs ?? CHORD_TIMEOUT_MS;
   const { event, platform, bindings, chordRef, onCommand } = options;
+  const editableTarget = options.editableTarget === true;
   const pending = chordRef.current;
 
   if (pending) {
     const step = pending.steps[pending.nextIndex];
     if (step != null && matchesShortcutStep(event, step, platform)) {
+      const pendingDefinition = getShortcutCommandDefinition(pending.commandId);
+      if (
+        editableTarget &&
+        (!pendingDefinition?.allowInEditableContexts ||
+          isNativeEditableShortcutEvent(event))
+      ) {
+        clearShortcutChord(chordRef);
+        return false;
+      }
       event.preventDefault();
       if (pending.nextIndex >= pending.steps.length - 1) {
         const id = pending.commandId;
@@ -767,6 +799,12 @@ export function tryDispatchKeyboardShortcut(options: {
       if (!parsed || parsed.length === 0) continue;
       const first = parsed[0];
       if (!first || !matchesShortcutStep(event, first, platform)) continue;
+      if (
+        editableTarget &&
+        (!def.allowInEditableContexts || isNativeEditableShortcutEvent(event))
+      ) {
+        continue;
+      }
       event.preventDefault();
       if (parsed.length === 1) {
         onCommand(def.id);

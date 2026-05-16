@@ -101,7 +101,7 @@ async function runGit(
       clearTimeout(timeout);
       const message = error instanceof Error ? error.message : String(error);
       if (message.includes("ENOENT")) {
-        reject(new Error("`git` was not found. Install Git on the OpenCursor host."));
+        reject(new Error("`git` was not found. Install Git on the Cesium host."));
         return;
       }
       reject(error);
@@ -231,6 +231,11 @@ async function aheadBehindFor(repoRoot: string): Promise<{ ahead: number; behind
     return null;
   }
   return { ahead, behind };
+}
+
+async function localBranchExists(repoRoot: string, branch: string): Promise<boolean> {
+  const result = await tryGit(repoRoot, ["show-ref", "--verify", "--quiet", `refs/heads/${branch}`]);
+  return result !== null;
 }
 
 async function listBranches(repoRoot: string, currentBranch: string | null): Promise<GitBranchInfo[]> {
@@ -388,7 +393,28 @@ export async function switchWorkspaceBranch(input: {
 
 export function defaultWorktreePath(repoRoot: string, branch: string): string {
   const repoName = path.basename(repoRoot) || "repo";
-  return path.join(path.dirname(repoRoot), ".opencursor-worktrees", repoName, slugifyBranch(branch));
+  return path.join(repoRoot, ".cesium", `${repoName}-${slugifyBranch(branch)}`);
+}
+
+async function ensureCesiumIgnored(repoRoot: string): Promise<void> {
+  const gitignorePath = path.join(repoRoot, ".gitignore");
+  let current = "";
+  try {
+    current = await fs.readFile(gitignorePath, "utf8");
+  } catch (error) {
+    if (!error || typeof error !== "object" || !("code" in error) || error.code !== "ENOENT") {
+      throw error;
+    }
+  }
+
+  const lines = current.split(/\r?\n/).map((line) => line.trim());
+  if (lines.includes(".cesium/") || lines.includes("/.cesium/") || lines.includes(".cesium")) {
+    return;
+  }
+
+  const needsLeadingNewline = current.length > 0 && !current.endsWith("\n");
+  const prefix = needsLeadingNewline ? "\n" : "";
+  await fs.appendFile(gitignorePath, `${prefix}\n# Cesium local worktrees\n.cesium/\n`, "utf8");
 }
 
 async function readJsonIfExists(filePath: string): Promise<unknown | null> {
@@ -527,13 +553,19 @@ export async function createWorkspaceWorktree(input: {
   const targetPath = input.targetPath
     ? path.resolve(input.targetPath)
     : defaultWorktreePath(status.repoRoot, branch);
+  if (!input.targetPath) {
+    await ensureCesiumIgnored(status.repoRoot);
+  }
   await fs.mkdir(path.dirname(targetPath), { recursive: true });
+  const branchExists = await localBranchExists(status.repoRoot, branch);
   const args = ["worktree", "add"];
-  if (input.newBranch) {
+  if (input.newBranch && !branchExists) {
     args.push("-b", branch);
   }
   args.push(targetPath);
-  if (input.baseBranch?.trim()) {
+  if (input.newBranch && branchExists) {
+    args.push(branch);
+  } else if (input.baseBranch?.trim()) {
     args.push(input.baseBranch.trim());
   } else if (!input.newBranch) {
     args.push(branch);

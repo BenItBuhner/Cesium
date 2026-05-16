@@ -74,6 +74,13 @@ interface EditorTabsProps {
 const MENU_W = 240;
 const ADD_MENU_W = 200;
 
+function escapeAttributeSelectorValue(value: string): string {
+  if (typeof CSS !== "undefined" && typeof CSS.escape === "function") {
+    return CSS.escape(value);
+  }
+  return value.replace(/["\\]/g, "\\$&");
+}
+
 function findStripInsertIndex(root: HTMLElement, clientX: number): number {
   const children = [
     ...root.querySelectorAll("[data-strip-index]"),
@@ -134,8 +141,43 @@ export function EditorTabs({
   const [editingGroupId, setEditingGroupId] = useState<string | null>(null);
   const [editGroupTitle, setEditGroupTitle] = useState("");
   const tabGroupRenameInputRef = useRef<HTMLInputElement>(null);
+  const internalTrailingSpacerWidthPx = Math.max(12, trailingSpacerWidthPx + 12);
 
   useTabStripWheel(stripRef, { speed: 2.1 });
+
+  const scrollActiveTabIntoView = useCallback(() => {
+    if (!activeTabId || !stripRef.current) {
+      return;
+    }
+    const activeTab = stripRef.current.querySelector<HTMLElement>(
+      `[data-editor-tab-id="${escapeAttributeSelectorValue(activeTabId)}"]`
+    );
+    activeTab?.scrollIntoView({
+      block: "nearest",
+      inline: "nearest",
+    });
+  }, [activeTabId]);
+
+  useLayoutEffect(() => {
+    scrollActiveTabIntoView();
+  }, [scrollActiveTabIntoView, stripItems, tabs]);
+
+  useLayoutEffect(() => {
+    const strip = stripRef.current;
+    if (!strip || typeof ResizeObserver === "undefined") {
+      return;
+    }
+    let raf = 0;
+    const observer = new ResizeObserver(() => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(scrollActiveTabIntoView);
+    });
+    observer.observe(strip);
+    return () => {
+      cancelAnimationFrame(raf);
+      observer.disconnect();
+    };
+  }, [scrollActiveTabIntoView]);
 
   useEffect(() => {
     if (!renameTabGroupId) {
@@ -332,10 +374,10 @@ export function EditorTabs({
     <div className="flex h-[var(--tab-height)] items-center overflow-hidden bg-[var(--bg-panel)]">
       <div
         ref={stripRef}
-        className={`hide-scrollbar-x flex min-h-[36px] min-w-0 flex-1 items-center gap-[4px] py-[2px] pr-[2px] ${
+        className={`hide-scrollbar-x flex min-h-[36px] min-w-0 flex-1 scroll-px-[10px] items-center gap-[6px] py-[2px] pr-[2px] ${
           padStripLeadingForWindowChrome
             ? "pl-[var(--editor-window-chrome-tab-inset)]"
-            : "pl-[2px]"
+            : "pl-[6px]"
         }`}
         onDragOver={handleStripDragOver}
         onDrop={handleStripDrop}
@@ -352,6 +394,7 @@ export function EditorTabs({
               <div
                 key={`strip-tab-${item.tabId}`}
                 data-strip-index={stripIndex}
+                data-editor-tab-id={item.tabId}
                 className="shrink-0"
               >
                 {renderTabButton(tab, {
@@ -444,7 +487,11 @@ export function EditorTabs({
                     const tab = tabs.find((t) => t.id === tid);
                     if (!tab) return null;
                     return (
-                      <div key={`g-${g.id}-${tid}`} className="flex items-stretch">
+                      <div
+                        key={`g-${g.id}-${tid}`}
+                        data-editor-tab-id={tid}
+                        className="flex items-stretch"
+                      >
                         {renderTabButton(tab, {
                           stripIndex,
                           fromGroupId: g.id,
@@ -462,9 +509,17 @@ export function EditorTabs({
             Drop a tab here
           </span>
         )}
+        <div
+          aria-hidden
+          className="h-[1px] shrink-0"
+          style={{ width: `${internalTrailingSpacerWidthPx}px` }}
+        />
       </div>
 
-      <div className="flex h-[var(--tab-height)] shrink-0 items-center gap-[4px] px-[11px]">
+      <div
+        className="flex h-[var(--tab-height)] shrink-0 items-center gap-[4px] px-[11px]"
+        data-editor-tab-actions
+      >
         {onOpenFilePalette && (
           <div ref={addTriggerRef} className="flex shrink-0 items-center gap-[4px]">
             <button

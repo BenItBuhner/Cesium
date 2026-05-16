@@ -76,6 +76,12 @@ export function IDELayout() {
     ? mobilePanel === "sidebar"
     : showSidebar && sidebarOpen;
   const chatVisible = isMobile ? mobilePanel === "chat" : showChat && chatOpen;
+  const editorLeadingWindowControlsVisible =
+    !isMobile && (sideColumnsSwapped ? !chatVisible : !sidebarVisible);
+  const editorTrailingWindowControlsVisible =
+    !isMobile && (sideColumnsSwapped ? !sidebarVisible : !chatVisible);
+  const chatTrailingWindowControlsVisible =
+    !isMobile && !sideColumnsSwapped && chatVisible;
 
   const workbench = useMemo(
     () => ({
@@ -98,8 +104,17 @@ export function IDELayout() {
         else setSidebarOpen(true);
       },
       primarySidebarVisible: sidebarVisible,
+      editorLeadingWindowControlsVisible,
+      editorTrailingWindowControlsVisible,
+      chatTrailingWindowControlsVisible,
     }),
-    [isMobile, sidebarVisible]
+    [
+      chatTrailingWindowControlsVisible,
+      editorLeadingWindowControlsVisible,
+      editorTrailingWindowControlsVisible,
+      isMobile,
+      sidebarVisible,
+    ]
   );
 
   // Keep sidebar / chat in the tree at all times so the group layout does not

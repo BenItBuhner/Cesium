@@ -140,6 +140,10 @@ export type ExpandedComposerController = {
   onCancel?: () => Promise<void> | void;
   busy?: boolean;
   configLocked?: boolean;
+  /** Same terminal-style user prompt history as docked {@link ChatComposer}. */
+  userMessageHistory?: string[];
+  hasMoreOlderUserMessageHistory?: boolean;
+  onRequestOlderUserMessageHistory?: () => void;
 };
 
 type PersistedComposerState = {
@@ -215,6 +219,11 @@ type ComposerDraftHandler = (payload: OpenComposerDraftPayload) => void;
 type AgentConversationHandler = (payload: OpenAgentConversationPayload) => void;
 type ExplorerHandler = (payload: ExplorerOpenRequest) => void;
 
+export type MessageCitationPayload = {
+  label: string;
+  htmlFragment: string;
+};
+
 type Ctx = {
   registerOpenTranscript: (handler: TranscriptHandler | null) => void;
   openSubagentTranscript: (payload: OpenTranscriptPayload) => void;
@@ -244,6 +253,8 @@ type Ctx = {
   setActiveExplorerPath: (path: string | null) => void;
   applyBrowserDesignCapture: (payload: BrowserDesignGuestPayload) => void;
   attachImageToBrowserDesignCapture: (captureId: string, imageDataUrl: string) => void;
+  /** Inserts a `⟦design:…⟧` composer pill + capture metadata (expanded on submit like design mode). */
+  applyMessageCitationToDraft: (draftId: string, payload: MessageCitationPayload) => void;
 };
 
 const OpenInEditorContext = createContext<Ctx | null>(null);
@@ -433,6 +444,51 @@ export function OpenInEditorProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
+  const applyMessageCitationToDraft = useCallback(
+    (draftId: string, payload: MessageCitationPayload) => {
+      if (!draftId.trim()) {
+        return;
+      }
+      setComposerDrafts((current) => {
+        const ex = current[draftId];
+        const prev = ex?.content ?? "";
+        const captureId =
+          globalThis.crypto?.randomUUID?.() ??
+          `cap-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+
+        const safeLabel = payload.label.trim().slice(0, 200) || "Quoted message";
+        const trimmedHtml = payload.htmlFragment.trim();
+        const snippet =
+          trimmedHtml.length > 8000
+            ? `${trimmedHtml.slice(0, 8000)}\n…`
+            : trimmedHtml || undefined;
+
+        const token = makeComposerCaptureToken(captureId);
+        const nextContent = prev.trim() ? `${prev.trimEnd()} ${token}` : token;
+
+        const nextCaptures: Record<string, DesignCapture> = {
+          ...(ex?.captures ?? {}),
+          [captureId]: {
+            id: captureId,
+            kind: "select",
+            label: safeLabel,
+            snippet,
+          },
+        };
+
+        const next: ComposerDraftRecord = {
+          draftId,
+          title: ex?.title ?? "Composer",
+          content: nextContent,
+          attachments: ex?.attachments,
+          captures: nextCaptures,
+        };
+        return { ...current, [draftId]: next };
+      });
+    },
+    []
+  );
+
   /**
    * Backfill the screenshot for an existing design capture after an async
    * fallback finishes. This lets the pill appear instantly while the heavier
@@ -614,6 +670,7 @@ export function OpenInEditorProvider({ children }: { children: ReactNode }) {
       setActiveExplorerPath,
       applyBrowserDesignCapture,
       attachImageToBrowserDesignCapture,
+      applyMessageCitationToDraft,
     }),
     [
       registerOpenTranscript,
@@ -637,6 +694,7 @@ export function OpenInEditorProvider({ children }: { children: ReactNode }) {
       setActiveExplorerPath,
       applyBrowserDesignCapture,
       attachImageToBrowserDesignCapture,
+      applyMessageCitationToDraft,
     ]
   );
 

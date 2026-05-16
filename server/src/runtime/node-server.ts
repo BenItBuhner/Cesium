@@ -9,17 +9,17 @@ import { handleAgentUpgrade } from "../ws/agent.js";
 import { handleTerminalUpgrade } from "../ws/terminal.js";
 import { handleBrowserDebugUpgrade } from "../ws/browser-debug.js";
 import {
-  createOpenCursorApp,
+  createCesiumApp,
   serverConfig,
-  startOpenCursorBackgroundServices,
+  startCesiumBackgroundServices,
 } from "../app.js";
 import { flushServerPerfReport } from "../lib/perf.js";
 
 dns.setDefaultResultOrder("ipv4first");
 
 export function startNodeServer(): void {
-  const app = createOpenCursorApp();
-  startOpenCursorBackgroundServices();
+  const app = createCesiumApp();
+  startCesiumBackgroundServices();
 
   const server = serve({
     fetch: app.fetch,
@@ -90,7 +90,7 @@ export function startNodeServer(): void {
     socket.destroy();
   });
 
-  console.log(`OpenCursor server listening on http://${serverConfig.publicHost}:${serverConfig.port}`);
+  console.log(`Cesium server listening on http://${serverConfig.publicHost}:${serverConfig.port}`);
 
   process.once("beforeExit", () => {
     void flushServerPerfReport("beforeExit").catch((error) => {

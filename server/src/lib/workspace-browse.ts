@@ -1,4 +1,5 @@
 import { promises as fs } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import {
   getAllowedWorkspaceRoots,
@@ -17,14 +18,96 @@ function dirnameSafe(p: string): string | null {
   return parent;
 }
 
+function dedupeKey(p: string): string {
+  return process.platform === "win32" ? path.normalize(p).toLowerCase() : path.normalize(p);
+}
+
+function pushCandidate(
+  candidates: BrowseRootEntry[],
+  seen: Set<string>,
+  rawPath: string | undefined,
+  label: string
+): void {
+  const value = rawPath?.trim();
+  if (!value) {
+    return;
+  }
+  const resolved = path.resolve(value);
+  const key = dedupeKey(resolved);
+  if (seen.has(key)) {
+    return;
+  }
+  seen.add(key);
+  candidates.push({ path: resolved, label });
+}
+
+function discoverWindowsBrowseRoots(): BrowseRootEntry[] {
+  if (process.platform !== "win32") {
+    return [];
+  }
+
+  const candidates: BrowseRootEntry[] = [];
+  const seen = new Set<string>();
+  const homeDir = os.homedir();
+  const userProfile = process.env.USERPROFILE?.trim() || homeDir;
+
+  for (const key of ["OneDrive", "OneDriveConsumer", "OneDriveCommercial"]) {
+    const label = key.replace(/([a-z])([A-Z])/g, "$1 $2");
+    const root = process.env[key];
+    pushCandidate(candidates, seen, root, label);
+    if (root?.trim()) {
+      pushCandidate(candidates, seen, path.join(root, "Documents"), `${label} Documents`);
+      pushCandidate(candidates, seen, path.join(root, "Documents", "Projects"), `${label} Projects`);
+    }
+  }
+
+  if (userProfile) {
+    const oneDriveRoot = path.join(userProfile, "OneDrive");
+    pushCandidate(candidates, seen, oneDriveRoot, "OneDrive");
+    pushCandidate(candidates, seen, path.join(oneDriveRoot, "Documents"), "OneDrive Documents");
+    pushCandidate(candidates, seen, path.join(oneDriveRoot, "Documents", "Projects"), "OneDrive Projects");
+    pushCandidate(candidates, seen, path.join(userProfile, "Documents"), "Documents");
+    pushCandidate(candidates, seen, path.join(userProfile, "Documents", "Projects"), "Projects");
+    pushCandidate(candidates, seen, path.join(userProfile, "Desktop"), "Desktop");
+    pushCandidate(candidates, seen, path.join(userProfile, "Downloads"), "Downloads");
+  }
+
+  for (const drive of "ABCDEFGHIJKLMNOPQRSTUVWXYZ") {
+    pushCandidate(candidates, seen, `${drive}:\\`, `${drive}: drive`);
+  }
+
+  return candidates;
+}
+
+function basenameLabel(value: string): string {
+  const base = path.basename(value);
+  return base || value;
+}
+
 export async function listBrowseRoots(): Promise<BrowseRootEntry[]> {
-  const roots = getAllowedWorkspaceRoots();
+  const roots: BrowseRootEntry[] = [
+    ...discoverWindowsBrowseRoots(),
+    ...getAllowedWorkspaceRoots().map((root) => ({
+      path: root,
+      label: basenameLabel(root),
+    })),
+  ];
   const out: BrowseRootEntry[] = [];
+  const seen = new Set<string>();
   for (const root of roots) {
-    const real = await fs.realpath(root).catch(() => root);
+    const real = await fs.realpath(root.path).catch(() => root.path);
+    const stat = await fs.stat(real).catch(() => null);
+    if (!stat?.isDirectory()) {
+      continue;
+    }
+    const key = dedupeKey(real);
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
     out.push({
       path: real,
-      label: path.basename(real) || real,
+      label: root.label || basenameLabel(real),
     });
   }
   return out;

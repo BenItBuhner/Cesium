@@ -5,6 +5,7 @@ import { AskQuestionCard } from "@/components/chat/AskQuestionCard";
 import { ChatComposer } from "@/components/chat/ChatComposer";
 import { ComposerQueueDock } from "@/components/chat/ComposerQueueDock";
 import { MessageList } from "@/components/chat/MessageList";
+import { useRedoInlineUserMessage } from "@/components/chat/useRedoInlineUserMessage";
 import { useAgentConversations } from "@/components/chat/AgentConversationsContext";
 import {
   useOpenInEditor,
@@ -14,6 +15,7 @@ import { askStepsFromMessage } from "@/lib/ask-question-utils";
 import {
   buildDraftModeOptionsForBackend,
   buildDraftModelOptionsForBackend,
+  extractComposerUserMessageHistory,
   projectAgentEventsToChatMessages,
   resolveDraftModelForBackend,
 } from "@/lib/agent-chat";
@@ -24,6 +26,7 @@ import { deleteAgentConversationQueueItem } from "@/lib/server-api";
 import type { AgentBackendId, AgentBackendInfo } from "@/lib/agent-types";
 import type { EditorMode, ImageAttachment, QueuedChatPrompt } from "@/lib/types";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
+import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
 import { AGENT_CENTER_CONTENT_CLASS } from "./agent-shell-layout";
 import { AgentNewChatLanding } from "./AgentNewChatLanding";
 import { useAgentShellState } from "./AgentShellStateContext";
@@ -78,12 +81,15 @@ export function AgentCenterPane() {
     setConversationMode,
     setConversationModel,
     syncConversationSnapshot,
+    mergeConversationSnapshot,
+    refreshConversations,
     upsertConversation,
     answerPermissionForConversation,
     cancelPermissionForConversation,
     getConversationHistoryCursor,
     loadOlderConversationHistory,
   } = useAgentConversations();
+  const { settings: globalSettings } = useGlobalSettings();
   const { workspaceSession, updateWorkspaceSession, workspaceInfo } = useWorkspace();
   const {
     activeWorkspaceGroup,
@@ -130,6 +136,10 @@ export function AgentCenterPane() {
     }
     return getConversationHistoryCursor(selectedConversationId);
   }, [getConversationHistoryCursor, selectedConversationId]);
+  const composerUserMessageHistory = useMemo(
+    () => extractComposerUserMessageHistory(rawThreadEvents),
+    [rawThreadEvents]
+  );
   const dockedAskSteps = useMemo(
     () => (dockedAsk ? askStepsFromMessage(dockedAsk) : []),
     [dockedAsk]
@@ -226,6 +236,68 @@ export function AgentCenterPane() {
   );
 
   const composerState = conversation ? getConversationComposerState(conversation.id) : null;
+
+  const getRedoComposerSeed = useCallback(() => {
+    if (!conversation || !selectedConversationId) {
+      throw new Error("Composer state unavailable for redo.");
+    }
+    const state = getConversationComposerState(conversation.id);
+    if (!state) {
+      throw new Error("Composer state unavailable for redo.");
+    }
+    return {
+      backendId: state.backendId,
+      mode: state.mode,
+      model: state.model,
+    };
+  }, [conversation, selectedConversationId, getConversationComposerState]);
+
+  const exposeForkedConversationForRedo = useCallback(
+    (forkedId: string, _title: string) => {
+      updateWorkspaceSession((current) => {
+        const removeIds = new Set([forkedId]);
+        const nextHidden = current.chat.hiddenConversationIds.filter(
+          (id) => !removeIds.has(id)
+        );
+        return nextHidden.length === current.chat.hiddenConversationIds.length
+          ? current
+          : {
+              ...current,
+              chat: {
+                ...current.chat,
+                hiddenConversationIds: nextHidden,
+              },
+            };
+      });
+      setSelectedConversationId(forkedId);
+      void refreshConversationGroups();
+    },
+    [refreshConversationGroups, setSelectedConversationId, updateWorkspaceSession]
+  );
+
+  const promptRedoSubmit = useCallback(
+    async (targetId: string, text: string, attachments?: ImageAttachment[]) =>
+      promptConversation(targetId, text, attachments),
+    [promptConversation]
+  );
+
+  const redoFlow = useRedoInlineUserMessage({
+    conversation,
+    getRedoComposerSeed,
+    backends,
+    modelVisibility: globalSettings.models.byBackend,
+    composerUserMessageHistory,
+    hasOlderHistory: historyCursor.hasOlder,
+    onRequestOlderHistory: selectedConversationId
+      ? () => loadOlderConversationHistory(selectedConversationId)
+      : undefined,
+    mergeConversationSnapshot,
+    refreshConversations,
+    upsertConversation,
+    promptConversationForActive: promptRedoSubmit,
+    exposeForkedConversation: exposeForkedConversationForRedo,
+  });
+
   const composerDraftId =
     selectedConversationId ??
     `agent-draft:${activeWorkspaceGroup?.workspace.id ?? "workspace"}`;
@@ -598,6 +670,7 @@ export function AgentCenterPane() {
               surface="editor"
               contentClassName={AGENT_CENTER_CONTENT_CLASS}
               conversationId={visibleConversationView.conversationId}
+              composerDraftId={composerDraftId}
               conversationBusy={visibleConversationView.conversationBusy}
               hasOlderHistory={visibleConversationView.hasOlderHistory}
               loadingOlderHistory={visibleConversationView.loadingOlderHistory}
@@ -634,6 +707,10 @@ export function AgentCenterPane() {
               onCancelPermission={(requestId) => {
                 void cancelPermissionForConversation(visibleConversationView.conversationId, requestId);
               }}
+              onForkMessage={redoFlow.handleForkMessage}
+              onRedoMessage={redoFlow.handleStartRedoMessage}
+              renderUserMessageEditor={redoFlow.renderRedoMessageEditor}
+              editingUserMessageId={redoFlow.editingUserMessageId}
               bottomDockVisible={!composerHiddenForExpanded && !showConversationTransitionState}
             />
           </div>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, type ReactNode } from "react";
 import { MessageThreadContent } from "./MessageThreadContent";
 import { useOpenInEditor } from "@/components/editor/OpenInEditorContext";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
@@ -58,11 +58,16 @@ interface MessageListProps {
   onResolvePermission?: (requestId: string, optionId: string) => void;
   onCancelPermission?: (requestId: string) => void;
   onForkMessage?: (messageId: string) => void;
+  onRedoMessage?: (message: ChatMessage) => void;
+  renderUserMessageEditor?: (message: ChatMessage) => ReactNode;
+  editingUserMessageId?: string | null;
   bottomDockVisible?: boolean;
   surface?: "panel" | "editor";
   contentClassName?: string;
   conversationId?: string;
   conversationBusy?: boolean;
+  /** Bound to the active conversation composer draft for cite-from-selection. */
+  composerDraftId?: string | null;
   /** Paginated history: request older events when user scrolls near the top. */
   onRequestOlderHistory?: () => void;
   hasOlderHistory?: boolean;
@@ -77,11 +82,15 @@ export function MessageList({
   onResolvePermission,
   onCancelPermission,
   onForkMessage,
+  onRedoMessage,
+  renderUserMessageEditor,
+  editingUserMessageId,
   bottomDockVisible = true,
   surface = "panel",
   contentClassName,
   conversationId,
   conversationBusy = false,
+  composerDraftId,
   onRequestOlderHistory,
   hasOlderHistory = false,
   loadingOlderHistory = false,
@@ -105,7 +114,6 @@ export function MessageList({
   const autoHistoryFillRoundsRef = useRef(0);
 
   const useVirtualThread = useMemo(() => messages.length >= 16, [messages.length]);
-  const stickyUserHeaderEffective = !useVirtualThread;
 
   const isNearBottom = (root: HTMLDivElement) =>
     root.scrollHeight - (root.scrollTop + root.clientHeight) <= 48;
@@ -375,12 +383,16 @@ export function MessageList({
   const thread = (
     <MessageThreadContent
       messages={messages}
-      stickyUserHeader={stickyUserHeaderEffective}
+      stickyUserHeader
       scrollRootRef={scrollRootRef}
       workedSessionSurface={surface}
       virtualize={useVirtualThread}
       onResolvePermission={onResolvePermission}
       onForkMessage={onForkMessage}
+      onRedoMessage={onRedoMessage}
+      renderUserMessageEditor={renderUserMessageEditor}
+      editingUserMessageId={editingUserMessageId}
+      composerDraftId={composerDraftId}
       conversationId={conversationId}
       conversationBusy={conversationBusy}
       workedSessionOpenByScopedId={conversationId ? workedMap : undefined}

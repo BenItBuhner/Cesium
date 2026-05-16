@@ -3,7 +3,7 @@
  * Communicates with the parent BrowserTab via postMessage only.
  */
 
-const DESIGN_SCRIPT_MARKER = 'data-opencursor-design-guest="1"';
+const DESIGN_SCRIPT_MARKER = 'data-cesium-design-guest="1"';
 
 /** Max outerHTML / snippet length sent to parent */
 const SNIPPET_MAX = 8000;
@@ -47,11 +47,11 @@ export function appendDesignModeGuestScript(html: string): string {
  */
 function buildGuestScriptSource(): string {
   return `(function(){
-  if (window.__opencursorDesignGuestInstalled) return;
-  window.__opencursorDesignGuestInstalled = true;
+  if (window.__cesiumDesignGuestInstalled) return;
+  window.__cesiumDesignGuestInstalled = true;
 
-  var OPENCURSOR_DESIGN = 'opencursor-design';
-  var OPENCURSOR_SOURCE = 'opencursor-design-guest';
+  var CESIUM_DESIGN = 'cesium-design';
+  var CESIUM_SOURCE = 'cesium-design-guest';
   var enabled = false;
   var hoverTarget = null;
   var highlightBox = null;
@@ -71,7 +71,7 @@ function buildGuestScriptSource(): string {
   function postToParent(payload) {
     try {
       if (window.parent && window.parent !== window) {
-        window.parent.postMessage(Object.assign({ source: OPENCURSOR_SOURCE }, payload), '*');
+        window.parent.postMessage(Object.assign({ source: CESIUM_SOURCE }, payload), '*');
       }
     } catch (e) {}
   }
@@ -83,7 +83,7 @@ function buildGuestScriptSource(): string {
   function ensureHighlightBox() {
     if (highlightBox) return;
     highlightBox = document.createElement('div');
-    highlightBox.setAttribute('data-opencursor-design-overlay', '1');
+    highlightBox.setAttribute('data-cesium-design-overlay', '1');
     highlightBox.setAttribute('aria-hidden', 'true');
     highlightBox.style.cssText =
       'position:fixed;left:0;top:0;width:0;height:0;' +
@@ -149,7 +149,7 @@ function buildGuestScriptSource(): string {
       var el = list[i];
       if (!el || el.nodeType !== 1) continue;
       if (el === strokeCanvas || el === overlayBlocker || el === highlightBox) continue;
-      if (el.hasAttribute && el.hasAttribute('data-opencursor-design-overlay')) continue;
+      if (el.hasAttribute && el.hasAttribute('data-cesium-design-overlay')) continue;
       var tag = el.tagName;
       if (tag === 'SCRIPT' || tag === 'STYLE') continue;
       if (tag === 'HTML' || tag === 'BODY') continue;
@@ -443,6 +443,12 @@ function buildGuestScriptSource(): string {
         if (rewritten && rewritten !== el.href) {
           el.setAttribute('href', rewritten);
         }
+        var target = (el.getAttribute('target') || '').toLowerCase();
+        if (target && target !== '_self') {
+          ev.preventDefault();
+          ev.stopPropagation();
+          location.href = rewritten;
+        }
       } catch (e) {}
     }, true);
   }
@@ -456,6 +462,10 @@ function buildGuestScriptSource(): string {
       window.open = function(url, target, features) {
         if (shouldProxyRewriteUrl(url)) {
           try { url = encodeProxyHref(String(url)); } catch (e) {}
+        }
+        var t = target == null ? '' : String(target).toLowerCase();
+        if (url && (!t || t === '_self' || t === '_top' || t === '_parent')) {
+          try { location.href = String(url); return window; } catch (e) {}
         }
         return origOpen.call(window, url, target, features);
       };
@@ -995,7 +1005,7 @@ function buildGuestScriptSource(): string {
   function ensureStrokeCanvas() {
     if (strokeCanvas) return;
     strokeCanvas = document.createElement('canvas');
-    strokeCanvas.setAttribute('data-opencursor-design-overlay', '1');
+    strokeCanvas.setAttribute('data-cesium-design-overlay', '1');
     strokeCanvas.style.cssText = 'position:fixed;left:0;top:0;pointer-events:none;z-index:2147483647;';
     strokeCtx = strokeCanvas.getContext('2d');
     document.documentElement.appendChild(strokeCanvas);
@@ -1011,7 +1021,7 @@ function buildGuestScriptSource(): string {
   function ensureOverlayBlocker() {
     if (overlayBlocker) return;
     overlayBlocker = document.createElement('div');
-    overlayBlocker.setAttribute('data-opencursor-design-overlay', '1');
+    overlayBlocker.setAttribute('data-cesium-design-overlay', '1');
     overlayBlocker.style.cssText =
       'position:fixed;inset:0;z-index:2147483645;cursor:crosshair;background:transparent;';
     // Pointer events drive stroke detection (down/move/up). The click event
@@ -1203,7 +1213,7 @@ function buildGuestScriptSource(): string {
     }
     var el = pickTargetEl(ev.clientX, ev.clientY);
     if (!el) {
-      try { console.warn('[opencursor-design] no target element for click at', ev.clientX, ev.clientY); } catch (e) {}
+      try { console.warn('[cesium-design] no target element for click at', ev.clientX, ev.clientY); } catch (e) {}
       return;
     }
     var label = compactLabel(el);
@@ -1211,10 +1221,10 @@ function buildGuestScriptSource(): string {
     var captureId = makeCaptureId();
     var pathIndices = elementPathIndices(el);
     var rect = elementRectPayload(el);
-    try { console.log('[opencursor-design] capture start', { captureId: captureId, label: label, tag: el.tagName, x: ev.clientX, y: ev.clientY }); } catch (e) {}
+    try { console.log('[cesium-design] capture start', { captureId: captureId, label: label, tag: el.tagName, x: ev.clientX, y: ev.clientY }); } catch (e) {}
     snapshotElement(el, function(img) {
       try {
-        console.log('[opencursor-design] capture done', {
+        console.log('[cesium-design] capture done', {
           captureId: captureId,
           hasImage: !!img,
           imageBytes: img ? img.length : 0
@@ -1263,7 +1273,7 @@ function buildGuestScriptSource(): string {
   function onMessage(ev) {
     var d = ev.data;
     if (!d || typeof d !== 'object') return;
-    if (d.type !== OPENCURSOR_DESIGN) return;
+    if (d.type !== CESIUM_DESIGN) return;
     if (d.op === 'enable') setEnabled(true);
     else if (d.op === 'disable') setEnabled(false);
     else if (d.op === 'ping') {

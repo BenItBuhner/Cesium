@@ -35,7 +35,7 @@ export function AgentWorkspaceRailCollapsedOverlay() {
       }`}
       aria-label="Workspace rail quick actions"
     >
-      <div className="pointer-events-auto flex items-center gap-[5px]">
+      <div className="pointer-events-auto flex items-center gap-[8px]" data-electron-drag-host>
         <button
           type="button"
           onClick={toggleLeftRailCollapsed}

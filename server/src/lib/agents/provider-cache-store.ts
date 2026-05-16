@@ -5,12 +5,6 @@ import path from "node:path";
 import { readJsonFile } from "../persistence.js";
 import { getStorage } from "../../storage/runtime.js";
 import { getCursorSdkApiKey } from "../cursor-sdk-credentials.js";
-import {
-  getClaudeCodeSdkProxyModel,
-  getClaudeCodeSdkProxyModelName,
-  hasClaudeCodeSdkAuthConfig,
-  hasClaudeCodeSdkProxyConfig,
-} from "../claude-code-sdk-credentials.js";
 import { spawnSafeEnv } from "./spawn-env.js";
 import { CodexAppServerTransport } from "./codex-app-server-transport.js";
 import { OpenCodeServerClient, openCodeServerAuthFromEnv } from "./opencode-server-client.js";
@@ -30,6 +24,7 @@ type CommandInvocation = {
 };
 
 const CACHE_TTL_MS = 5 * 60 * 1000;
+const SERVER_STARTED_AT = Date.now();
 
 function stripAnsi(text: string): string {
   return text.replace(/\x1b\[[0-9;]*[A-Za-z]/g, "").replace(/\r/g, "");
@@ -412,7 +407,10 @@ async function createOpenCodeServerConfigOptions(): Promise<AgentConfigOption[]>
         name: "Model",
         category: "model",
         currentValue: uniqueModels[0]?.value ?? "auto",
-        options: uniqueModels.length > 0 ? uniqueModels : [{ value: "auto", name: "Auto" }],
+        description: uniqueModels.length > 0
+          ? "Models reported by the OpenCode server."
+          : "No OpenCode server models were reported. Configure/authenticate OpenCode and refresh models.",
+        options: uniqueModels,
       },
     ];
   } catch {
@@ -790,8 +788,8 @@ async function createCodexAppServerConfigOptions(): Promise<AgentConfigOption[]>
     });
     await transport.request("initialize", {
       clientInfo: {
-        name: "opencursor_codex_app_server_models",
-        title: "OpenCursor Codex App Server Model Discovery",
+        name: "cesium_codex_app_server_models",
+        title: "Cesium Codex App Server Model Discovery",
         version: "0.1.0",
       },
       capabilities: { experimentalApi: true },
@@ -821,7 +819,7 @@ function createCursorSdkFallbackConfigOptions(): AgentConfigOption[] {
   return [
     {
       id: "mode",
-      name: "OpenCursor Mode",
+      name: "Cesium Mode",
       category: "mode",
       currentValue: "agent",
       options: [
@@ -847,14 +845,9 @@ function createCursorSdkFallbackConfigOptions(): AgentConfigOption[] {
       id: "model",
       name: "Model",
       category: "model",
+      description: "Configure a Cursor API key or refresh the Cursor SDK catalog to load real models.",
       currentValue: "composer-2",
-      options: [
-        {
-          value: "composer-2",
-          name: "Composer 2",
-          description: "Cursor SDK default local coding model.",
-        },
-      ],
+      options: [],
     },
     {
       id: "sdk_sandbox",
@@ -1153,196 +1146,12 @@ async function createCursorSdkConfigOptions(): Promise<AgentConfigOption[]> {
   }
 }
 
-const CLAUDE_CODE_SDK_FALLBACK_MODELS: AgentConfigOption["options"] = [
-  {
-    value: "claude-sonnet-4-5",
-    name: "Claude Sonnet 4.5",
-    description: "Balanced Claude Code SDK default.",
-    metadata: { reasoningLevels: ["low", "medium", "high"] },
-  },
-  {
-    value: "claude-opus-4-7",
-    name: "Claude Opus 4.7",
-    description: "Highest capability model with xhigh/max effort support.",
-    metadata: { reasoningLevels: ["low", "medium", "high", "xhigh", "max"] },
-  },
-  {
-    value: "claude-opus-4-6",
-    name: "Claude Opus 4.6",
-    description: "High capability model with max effort support.",
-    metadata: { reasoningLevels: ["low", "medium", "high", "max"] },
-  },
-  {
-    value: "claude-haiku-4-5",
-    name: "Claude Haiku 4.5",
-    description: "Fast Claude model for lighter tasks.",
-    metadata: { reasoningLevels: ["low", "medium"] },
-  },
-];
-
-function claudeCodeSdkModelOptions(): AgentConfigOption["options"] {
-  if (!hasClaudeCodeSdkProxyConfig()) {
-    return CLAUDE_CODE_SDK_FALLBACK_MODELS;
-  }
-  const proxyModel = getClaudeCodeSdkProxyModel();
-  return [
-    {
-      value: proxyModel,
-      name: getClaudeCodeSdkProxyModelName(),
-      description: "Claude Code SDK routed through the configured model proxy.",
-      metadata: { reasoningLevels: ["low", "medium", "high", "xhigh", "max"] },
-    },
-    ...CLAUDE_CODE_SDK_FALLBACK_MODELS.filter((model) => model.value !== proxyModel),
-  ];
-}
-
-function createClaudeCodeSdkFallbackConfigOptions(
-  modelOptions: AgentConfigOption["options"] = claudeCodeSdkModelOptions()
-): AgentConfigOption[] {
-  return [
-    {
-      id: "mode",
-      name: "Mode",
-      category: "mode",
-      currentValue: "agent",
-      options: [
-        { value: "agent", name: "Agent", description: "Run Claude Code SDK with normal tool permissions." },
-        { value: "plan", name: "Plan", description: "Use native Claude plan mode without executing tools." },
-        { value: "ask", name: "Ask", description: "Answer and inspect with restrictive permissions." },
-        { value: "debug", name: "Debug", description: "Debug with the standard Claude Code tool profile." },
-      ],
-    },
-    {
-      id: "model",
-      name: "Model",
-      category: "model",
-      currentValue: modelOptions[0]?.value ?? "claude-sonnet-4-5",
-      options: modelOptions,
-    },
-    {
-      id: "permission_mode",
-      name: "Permission Mode",
-      category: "permission",
-      currentValue: "default",
-      options: [
-        { value: "default", name: "Default" },
-        { value: "acceptEdits", name: "Accept Edits" },
-        { value: "plan", name: "Plan" },
-        { value: "dontAsk", name: "Don't Ask" },
-        { value: "auto", name: "Auto" },
-        {
-          value: "bypassPermissions",
-          name: "Bypass Permissions",
-          description: "Requires OPENCURSOR_CLAUDE_CODE_SDK_ALLOW_BYPASS=1.",
-        },
-      ],
-    },
-    {
-      id: "effort",
-      name: "Reasoning Effort",
-      category: "thought_level",
-      currentValue: "medium",
-      options: [
-        { value: "low", name: "Low" },
-        { value: "medium", name: "Medium" },
-        { value: "high", name: "High" },
-        { value: "xhigh", name: "Extra High" },
-        { value: "max", name: "Max" },
-      ],
-    },
-    {
-      id: "thinking",
-      name: "Thinking",
-      category: "thought_level",
-      currentValue: "adaptive",
-      options: [
-        { value: "adaptive", name: "Adaptive" },
-        { value: "disabled", name: "Disabled" },
-      ],
-    },
-    {
-      id: "tool_profile",
-      name: "Tool Profile",
-      category: "other",
-      currentValue: "standard",
-      options: [
-        { value: "standard", name: "Standard", description: "Read, edit, search, bash, todos, and Agent." },
-        { value: "safe-readonly", name: "Safe Readonly", description: "Read/search/web tools only." },
-        { value: "full", name: "Full Claude Code", description: "All stock Claude Code tools, permission gated." },
-        { value: "plan", name: "Plan Only", description: "No built-in tool execution." },
-      ],
-    },
-    {
-      id: "max_turns",
-      name: "Max Turns",
-      category: "other",
-      currentValue: "20",
-      options: [
-        { value: "10", name: "10" },
-        { value: "20", name: "20" },
-        { value: "40", name: "40" },
-        { value: "80", name: "80" },
-      ],
-    },
-    {
-      id: "session_persistence",
-      name: "Session Persistence",
-      category: "other",
-      currentValue: "enabled",
-      options: [
-        { value: "enabled", name: "Enabled" },
-        { value: "disabled", name: "Ephemeral" },
-      ],
-    },
-  ];
-}
-
-function claudeSdkOptionsFromModels(
-  models: Array<{
-    value: string;
-    displayName?: string;
-    description?: string;
-    supportedEffortLevels?: string[];
-  }>
-): AgentConfigOption[] {
-  const options = models
-    .filter((model) => model.value?.trim())
-    .map((model) => ({
-      value: model.value,
-      name: model.displayName?.trim() || model.value,
-      description: model.description,
-      metadata:
-        Array.isArray(model.supportedEffortLevels) && model.supportedEffortLevels.length > 0
-          ? { reasoningLevels: model.supportedEffortLevels }
-          : undefined,
-    }));
-  return createClaudeCodeSdkFallbackConfigOptions(
-    options.length > 0 ? options : claudeCodeSdkModelOptions()
-  );
-}
-
-export async function createClaudeCodeSdkConfigOptions(): Promise<AgentConfigOption[]> {
-  if (!hasClaudeCodeSdkAuthConfig()) {
-    return createClaudeCodeSdkFallbackConfigOptions();
-  }
-  try {
-    await import("@anthropic-ai/claude-agent-sdk");
-    return claudeSdkOptionsFromModels([]);
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    console.warn("[agents] Claude Code SDK model list failed (fallback catalog):", detail);
-    return createClaudeCodeSdkFallbackConfigOptions();
-  }
-}
-
 async function createSeedConfigOptions(backendId: AgentBackendId): Promise<AgentConfigOption[]> {
   switch (backendId) {
     case "cursor-acp":
       return createCursorCliConfigOptions();
     case "cursor-sdk":
       return createCursorSdkConfigOptions();
-    case "claude-code-sdk":
-      return createClaudeCodeSdkConfigOptions();
     case "opencode-acp":
       return createOpenCodeCliConfigOptions();
     case "opencode-server":
@@ -1510,6 +1319,18 @@ const inFlightRefreshes = new Map<
   Promise<AgentConfigOption[]>
 >();
 
+function hasUsableModelOptions(configOptions: AgentConfigOption[]): boolean {
+  const modelOption = configOptions.find((option) => option.category === "model");
+  return Boolean(modelOption && modelOption.options.length > 0);
+}
+
+async function readStoredConfigOptions(
+  backendId: AgentBackendId
+): Promise<AgentConfigOption[]> {
+  const record = await (await getStorage()).readProviderCache(backendId);
+  return record && Array.isArray(record.configOptions) ? record.configOptions : [];
+}
+
 function startSeedRefresh(
   backendId: AgentBackendId
 ): Promise<AgentConfigOption[]> {
@@ -1521,7 +1342,10 @@ function startSeedRefresh(
     try {
       const seeded = await createSeedConfigOptions(backendId);
       if (seeded.length > 0) {
-        await writeAgentBackendConfigCache(backendId, seeded);
+        const existing = await readStoredConfigOptions(backendId).catch(() => []);
+        if (hasUsableModelOptions(seeded) || !hasUsableModelOptions(existing)) {
+          await writeAgentBackendConfigCache(backendId, seeded);
+        }
       }
       return seeded;
     } finally {
@@ -1533,18 +1357,10 @@ function startSeedRefresh(
 }
 
 /** Backend ids we avoid probing during boot (optional; see `shouldWarmupBackendAtBoot`). */
-const SKIP_WARMUP_BACKENDS = new Set<AgentBackendId>([
-  "cursor-sdk",
-  "claude-code-sdk",
-  "codex-app-server",
-  "opencode-server",
-]);
+const SKIP_WARMUP_BACKENDS = new Set<AgentBackendId>();
 
 function shouldWarmupBackendAtBoot(backendId: AgentBackendId): boolean {
   if (SKIP_WARMUP_BACKENDS.has(backendId)) {
-    if (backendId === "claude-code-sdk") {
-      return process.env.OPENCURSOR_WARMUP_CLAUDE_CODE_SDK === "1";
-    }
     if (backendId === "codex-app-server") {
       return process.env.OPENCURSOR_WARMUP_CODEX_APP_SERVER === "1";
     }
@@ -1561,9 +1377,9 @@ function shouldWarmupBackendAtBoot(backendId: AgentBackendId): boolean {
  * server boot: kicks off CLI probes without blocking startup, so the first
  * request finds a warm cache rather than paying the CLI latency tax itself.
  * 
- * **Cursor SDK** is skipped by default: `Cursor.models.list` hits Cursor cloud
- * and can drop the Bun process on TLS blips. Enable with
- * `OPENCURSOR_WARMUP_CURSOR_SDK=1` if you want boot-time catalog fetch anyway.
+ * Existing persisted cache entries are also treated as stale after a fresh
+ * server start, so the first UI request converges on the live provider catalog
+ * instead of re-serving a previous Electron install's partial data.
  */
 export function warmupAgentBackendCaches(
   backendIds: AgentBackendId[]
@@ -1611,9 +1427,7 @@ export async function forceRefreshAllBackendCaches(
     const { backendId, result } = settled.value;
     if (result === "timeout") {
       timedOut.push(backendId);
-      const cached = await readAgentBackendConfigCache(backendId).catch(
-        () => []
-      );
+      const cached = await readStoredConfigOptions(backendId).catch(() => []);
       if (cached.length > 0) {
         byBackend[backendId] = cached;
       }
@@ -1741,24 +1555,6 @@ function maybeInPlaceMigrate(
     }
   }
 
-  if (backendId === "claude-code-sdk") {
-    const hasModel = cachedOptions.some((option) => option.id === "model");
-    const hasPermission = cachedOptions.some((option) => option.id === "permission_mode");
-    const hasTools = cachedOptions.some((option) => option.id === "tool_profile");
-    const proxyModel = getClaudeCodeSdkProxyModel();
-    const hasConfiguredProxyModel =
-      !hasClaudeCodeSdkProxyConfig() ||
-      cachedOptions.some(
-        (option) =>
-          option.id === "model" &&
-          option.options.some((value) => value.value === proxyModel) &&
-          option.currentValue === proxyModel
-      );
-    if (!hasModel || !hasPermission || !hasTools || !hasConfiguredProxyModel) {
-      return { upgraded: cachedOptions, needsReseed: true };
-    }
-  }
-
   return null;
 }
 
@@ -1792,36 +1588,39 @@ export async function readAgentBackendConfigCache(
         await writeAgentBackendConfigCache(backendId, migration.upgraded);
       }
       if (migration.needsReseed) {
-        if (
-          backendId === "cursor-sdk" ||
-          backendId === "claude-code-sdk"
-        ) {
-          return startSeedRefresh(backendId).catch(() => migration.upgraded);
-        }
-        if (backendId === "codex-app-server") {
-          return startSeedRefresh(backendId).catch(() => createCodexAppServerFallbackConfigOptions());
-        }
-        // Schema-drift migration requires a fresh CLI probe. Schedule it in
-        // the background; serve the (possibly upgraded) cache immediately.
-        void startSeedRefresh(backendId).catch(() => undefined);
+        return startSeedRefresh(backendId)
+          .then((refreshed) => {
+            if (
+              refreshed.length === 0 ||
+              (!hasUsableModelOptions(refreshed) && hasUsableModelOptions(migration.upgraded))
+            ) {
+              return migration.upgraded;
+            }
+            return refreshed;
+          })
+          .catch(() => migration.upgraded);
       }
       return migration.upgraded;
     }
 
-    const cacheIsFresh = Date.now() - record.updatedAt <= CACHE_TTL_MS;
+    const cacheIsFresh =
+      Date.now() - record.updatedAt <= CACHE_TTL_MS &&
+      record.updatedAt >= SERVER_STARTED_AT;
     if (cacheIsFresh) {
       return cachedOptions;
     }
 
-    if (backendId === "codex-app-server") {
-      return startSeedRefresh(backendId).catch(() => cachedOptions);
-    }
-
-    // Stale-but-valid: serve it immediately and revalidate in the background
-    // so subsequent callers see fresh data without us paying the CLI cost on
-    // the hot path.
-    void startSeedRefresh(backendId).catch(() => undefined);
-    return cachedOptions;
+    return startSeedRefresh(backendId)
+      .then((refreshed) => {
+        if (
+          refreshed.length === 0 ||
+          (!hasUsableModelOptions(refreshed) && hasUsableModelOptions(cachedOptions))
+        ) {
+          return cachedOptions;
+        }
+        return refreshed;
+      })
+      .catch(() => cachedOptions);
   }
 
   // No usable cache: we must wait. Shared via `startSeedRefresh` so concurrent

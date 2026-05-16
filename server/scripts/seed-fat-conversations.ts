@@ -31,7 +31,7 @@ const FLUSH_EVENT_THRESHOLD = 4000;
 function parseArgs() {
   const raw = process.argv.slice(2);
   const out = {
-    match: ["opencursor", "polysaturate", "bot"] as string[],
+    match: ["cesium", "polysaturate", "bot"] as string[],
     conversations: DEFAULT_CONVERSATIONS,
     turns: DEFAULT_TURNS,
     dryRun: false,
@@ -42,7 +42,7 @@ function parseArgs() {
     if (a === "--help" || a === "-h") {
       console.log(`Usage: bun scripts/seed-fat-conversations.ts [options]
 
-  --match=a,b           Workspace name/root substrings (default: opencursor,polysaturate,bot)
+  --match=a,b           Workspace name/root substrings (default: cesium,polysaturate,bot)
   --conversations=N    Per workspace (default ${DEFAULT_CONVERSATIONS})
   --turns=N            Rich turns per chat (default ${DEFAULT_TURNS}; each turn is tool-dense)
   --skip-wipe          Keep existing "Stress seed …" conversations

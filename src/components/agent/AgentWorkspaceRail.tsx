@@ -1,13 +1,39 @@
 "use client";
 
 import {
+  Archive,
+  Bot,
+  Briefcase,
+  Bug,
   ChevronRight,
   CircleUserRound,
+  Cloud,
+  Code2,
+  Cpu,
+  Database,
+  FileText,
+  Flame,
+  Folder,
+  FolderOpen,
+  GitBranch,
+  Globe,
+  Hash,
+  Layers,
   ListFilter,
+  MessageSquare,
   PanelLeftClose,
+  Paintbrush,
   Plus,
+  Rocket,
+  Shield,
+  Sparkles,
+  Star,
   Search,
   Settings,
+  Terminal,
+  Wrench,
+  Zap,
+  type LucideIcon,
 } from "lucide-react";
 import {
   useCallback,
@@ -16,6 +42,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type DragEvent as ReactDragEvent,
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
 } from "react";
@@ -37,11 +64,69 @@ import { useShellView } from "@/components/layout/ShellViewContext";
 import { useAgentShellState } from "./AgentShellStateContext";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { useUserPreferences } from "@/components/preferences/UserPreferencesProvider";
+import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
+import type { ChatFolderState, WorkspaceSortMode } from "@/lib/global-settings";
 import { AGENT_NEW_CHAT_SESSION_ID } from "@/lib/workspace-session";
 
 const PINNED_SECTION_WORKSPACE_ID = "__agentPinned__";
+const AGENT_RAIL_CONVERSATION_DRAG_TYPE = "application/x-opencursor-agent-conversation";
 
 const COLLAPSED_WORKSPACES_STORAGE_KEY = "opencursor.agent-rail-collapsed-workspaces";
+const COLLAPSED_FOLDERS_STORAGE_KEY = "opencursor.agent-rail-collapsed-folders";
+
+const FOLDER_ICON_OPTIONS: Array<{ name: string; Icon: LucideIcon }> = [
+  { name: "Folder", Icon: Folder },
+  { name: "FolderOpen", Icon: FolderOpen },
+  { name: "Star", Icon: Star },
+  { name: "Sparkles", Icon: Sparkles },
+  { name: "MessageSquare", Icon: MessageSquare },
+  { name: "Briefcase", Icon: Briefcase },
+  { name: "Archive", Icon: Archive },
+  { name: "Code2", Icon: Code2 },
+  { name: "Wrench", Icon: Wrench },
+  { name: "Hash", Icon: Hash },
+  { name: "Bot", Icon: Bot },
+  { name: "Bug", Icon: Bug },
+  { name: "Cloud", Icon: Cloud },
+  { name: "Cpu", Icon: Cpu },
+  { name: "Database", Icon: Database },
+  { name: "FileText", Icon: FileText },
+  { name: "Flame", Icon: Flame },
+  { name: "GitBranch", Icon: GitBranch },
+  { name: "Globe", Icon: Globe },
+  { name: "Layers", Icon: Layers },
+  { name: "Paintbrush", Icon: Paintbrush },
+  { name: "Rocket", Icon: Rocket },
+  { name: "Shield", Icon: Shield },
+  { name: "Terminal", Icon: Terminal },
+  { name: "Zap", Icon: Zap },
+];
+
+const FOLDER_COLOR_OPTIONS = [
+  "#7c3aed",
+  "#2563eb",
+  "#0891b2",
+  "#059669",
+  "#ca8a04",
+  "#ea580c",
+  "#dc2626",
+  "#db2777",
+];
+
+function getFolderIcon(iconName: string): LucideIcon {
+  return FOLDER_ICON_OPTIONS.find((option) => option.name === iconName)?.Icon ?? Folder;
+}
+
+function isValidFolderColor(value: string): boolean {
+  return /^#[0-9a-f]{6}$/i.test(value);
+}
+
+function createChatFolderId(): string {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    return crypto.randomUUID();
+  }
+  return `folder-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
 
 function readCollapsedWorkspaceIdsFromStorage(): Set<string> {
   if (typeof window === "undefined") {
@@ -49,6 +134,25 @@ function readCollapsedWorkspaceIdsFromStorage(): Set<string> {
   }
   try {
     const raw = window.localStorage.getItem(COLLAPSED_WORKSPACES_STORAGE_KEY);
+    if (!raw) {
+      return new Set();
+    }
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) {
+      return new Set();
+    }
+    return new Set(parsed.filter((id): id is string => typeof id === "string"));
+  } catch {
+    return new Set();
+  }
+}
+
+function readCollapsedFolderIdsFromStorage(): Set<string> {
+  if (typeof window === "undefined") {
+    return new Set();
+  }
+  try {
+    const raw = window.localStorage.getItem(COLLAPSED_FOLDERS_STORAGE_KEY);
     if (!raw) {
       return new Set();
     }
@@ -73,6 +177,17 @@ function writeCollapsedWorkspaceIdsToStorage(ids: Set<string>) {
   }
 }
 
+function writeCollapsedFolderIdsToStorage(ids: Set<string>) {
+  try {
+    window.localStorage.setItem(
+      COLLAPSED_FOLDERS_STORAGE_KEY,
+      JSON.stringify([...ids])
+    );
+  } catch {
+    /* quota or private mode */
+  }
+}
+
 const FILTER_TOGGLE_LABELS: Record<AgentRailFilterToggleKey, string> = {
   archived: "Archived",
   running: "Running",
@@ -80,6 +195,12 @@ const FILTER_TOGGLE_LABELS: Record<AgentRailFilterToggleKey, string> = {
   pinned: "Pinned",
   unread: "Unread",
   read: "Read",
+};
+
+const WORKSPACE_SORT_LABELS: Record<WorkspaceSortMode, string> = {
+  recent: "Recently opened",
+  alphabetical: "Alphabetical",
+  custom: "Custom order",
 };
 
 /**
@@ -178,6 +299,108 @@ function AgentRailConversationListScroll({
   );
 }
 
+function FolderCustomizePanel({
+  folder,
+  onClose,
+  onUpdate,
+}: {
+  folder: ChatFolderState;
+  onClose: () => void;
+  onUpdate: (patch: Partial<Pick<ChatFolderState, "name" | "color" | "icon">>) => void;
+}) {
+  const ActiveIcon = getFolderIcon(folder.icon);
+  return (
+    <div className="ml-[13px] mt-[3px] rounded-[var(--radius-card)] border border-[var(--border-card)] bg-[var(--bg-panel)] p-[8px] shadow-[0_12px_40px_rgba(0,0,0,0.22)]">
+      <div className="flex items-center gap-[8px]">
+        <div
+          className="flex size-[28px] shrink-0 items-center justify-center rounded-[var(--agent-control-radius)] border border-[var(--border-subtle)]"
+          style={{ color: folder.color }}
+          aria-hidden
+        >
+          <ActiveIcon className="size-[16px]" strokeWidth={1.8} />
+        </div>
+        <input
+          value={folder.name}
+          maxLength={80}
+          aria-label="Folder name"
+          className="h-[28px] min-w-0 flex-1 rounded-[var(--agent-control-radius)] border border-[var(--border-subtle)] bg-[var(--bg-main)] px-[8px] font-sans text-[12px] text-[var(--text-primary)] outline-none transition-colors placeholder:text-[var(--text-disabled)] focus:border-[var(--accent)]"
+          onChange={(event) => {
+            const nextName = event.target.value.slice(0, 80);
+            onUpdate({ name: nextName || "Folder" });
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "Escape") {
+              event.preventDefault();
+              onClose();
+            }
+          }}
+        />
+        <button
+          type="button"
+          onClick={onClose}
+          className="h-[28px] shrink-0 rounded-[var(--agent-control-radius)] px-[8px] font-sans text-[11px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-card)] hover:text-[var(--text-primary)]"
+        >
+          Done
+        </button>
+      </div>
+
+      <div className="mt-[8px] grid grid-cols-7 gap-[4px]" aria-label="Folder icon palette">
+        {FOLDER_ICON_OPTIONS.map(({ name, Icon }) => {
+          const selected = folder.icon === name;
+          return (
+            <button
+              key={name}
+              type="button"
+              onClick={() => onUpdate({ icon: name })}
+              className={`flex size-[24px] items-center justify-center rounded-[var(--agent-control-radius)] border transition-colors ${
+                selected
+                  ? "border-[var(--accent)] bg-[var(--accent-bg)] text-[var(--text-primary)]"
+                  : "border-transparent text-[var(--text-secondary)] hover:border-[var(--border-subtle)] hover:bg-[var(--bg-card)] hover:text-[var(--text-primary)]"
+              }`}
+              title={name}
+              aria-label={`Use ${name} icon`}
+              aria-pressed={selected}
+            >
+              <Icon className="size-[14px]" strokeWidth={1.8} />
+            </button>
+          );
+        })}
+      </div>
+
+      <div className="mt-[8px] flex items-center gap-[6px]">
+        <div className="flex min-w-0 flex-1 flex-wrap gap-[4px]" aria-label="Folder color palette">
+          {FOLDER_COLOR_OPTIONS.map((color) => (
+            <button
+              key={color}
+              type="button"
+              onClick={() => onUpdate({ color })}
+              className={`size-[18px] rounded-full border transition-transform hover:scale-110 ${
+                folder.color.toLowerCase() === color.toLowerCase()
+                  ? "border-[var(--text-primary)]"
+                  : "border-[var(--border-card)]"
+              }`}
+              style={{ backgroundColor: color }}
+              title={color}
+              aria-label={`Use ${color} folder color`}
+              aria-pressed={folder.color.toLowerCase() === color.toLowerCase()}
+            />
+          ))}
+        </div>
+        <label className="flex shrink-0 items-center gap-[5px] rounded-[var(--agent-control-radius)] border border-[var(--border-subtle)] bg-[var(--bg-main)] px-[6px] py-[3px] font-sans text-[11px] text-[var(--text-secondary)]">
+          Custom
+          <input
+            type="color"
+            value={isValidFolderColor(folder.color) ? folder.color : "#7c3aed"}
+            onChange={(event) => onUpdate({ color: event.target.value })}
+            className="size-[18px] cursor-pointer border-0 bg-transparent p-0"
+            aria-label="Custom folder color"
+          />
+        </label>
+      </div>
+    </div>
+  );
+}
+
 export function AgentWorkspaceRail() {
   const { session: authSession } = useAuth();
   const { openSettingsView } = useShellView();
@@ -208,6 +431,9 @@ export function AgentWorkspaceRail() {
   const { activeWorkspaceId, gitStatus } = useWorkspace();
   const { experimentalIpadCustomButtons, experimentalIpadWindowedTabInset } =
     useUserPreferences();
+  const { settings, updateSettings } = useGlobalSettings();
+  const workspaceSortMode = settings.general.workspaceSortMode;
+  const workspaceCustomOrderIds = settings.general.workspaceCustomOrderIds;
   const padRailForWindowChrome = experimentalIpadWindowedTabInset && !isMobile;
   /** Only the top control row needs iPadOS window-chrome inset; list + footer stay full-width in the rail. */
   const railTopBarPadClass = padRailForWindowChrome
@@ -217,6 +443,10 @@ export function AgentWorkspaceRail() {
   const filterAnchorRef = useRef<HTMLButtonElement>(null);
   const [filterMenuOpen, setFilterMenuOpen] = useState(false);
   const [collapsedWorkspaceIds, setCollapsedWorkspaceIds] = useState<Set<string>>(new Set());
+  const [collapsedFolderIds, setCollapsedFolderIds] = useState<Set<string>>(new Set());
+  const [draggingWorkspaceId, setDraggingWorkspaceId] = useState<string | null>(null);
+  const [draggingConversationId, setDraggingConversationId] = useState<string | null>(null);
+  const [editingFolderId, setEditingFolderId] = useState<string | null>(null);
   const [recentChatsOpen, setRecentChatsOpen] = useState(false);
   const [renameState, setRenameState] = useState<{
     conversationId: string;
@@ -237,7 +467,7 @@ export function AgentWorkspaceRail() {
           : "detached";
       }
       const normalized = root.replace(/\\/g, "/");
-      if (normalized.includes("/.opencursor-worktrees/")) {
+      if (normalized.includes("/.cesium/")) {
         return "worktree";
       }
       return null;
@@ -247,6 +477,7 @@ export function AgentWorkspaceRail() {
 
   useLayoutEffect(() => {
     setCollapsedWorkspaceIds(readCollapsedWorkspaceIdsFromStorage());
+    setCollapsedFolderIds(readCollapsedFolderIdsFromStorage());
   }, []);
 
   useEffect(() => {
@@ -284,6 +515,9 @@ export function AgentWorkspaceRail() {
       .join(", ");
   }, [railFilterActive, railFilterToggles]);
 
+  const sortSummary = WORKSPACE_SORT_LABELS[workspaceSortMode];
+  const railControlActive = railFilterActive || workspaceSortMode !== "recent";
+
   const visibleGroups = useMemo(
     () =>
       groups.filter(
@@ -292,10 +526,173 @@ export function AgentWorkspaceRail() {
     [activeWorkspaceId, groups]
   );
 
+  const setWorkspaceSortMode = useCallback(
+    (mode: WorkspaceSortMode) => {
+      updateSettings((current) => {
+        const seededCustomOrderIds =
+          mode === "custom" && current.general.workspaceCustomOrderIds.length === 0
+            ? visibleGroups.map((group) => group.workspace.id)
+            : current.general.workspaceCustomOrderIds;
+        if (current.general.workspaceSortMode === mode) {
+          if (seededCustomOrderIds === current.general.workspaceCustomOrderIds) {
+            return current;
+          }
+        }
+        return {
+          ...current,
+          general: {
+            ...current.general,
+            workspaceSortMode: mode,
+            workspaceCustomOrderIds: seededCustomOrderIds,
+          },
+        };
+      });
+    },
+    [updateSettings, visibleGroups]
+  );
+
+  const resetWorkspaceCustomOrder = useCallback(() => {
+    updateSettings((current) => {
+      if (
+        current.general.workspaceSortMode === "recent" &&
+        current.general.workspaceCustomOrderIds.length === 0
+      ) {
+        return current;
+      }
+      return {
+        ...current,
+        general: {
+          ...current.general,
+          workspaceSortMode: "recent",
+          workspaceCustomOrderIds: [],
+        },
+      };
+    });
+  }, [updateSettings]);
+
+  const reorderWorkspaceGroups = useCallback(
+    (sourceWorkspaceId: string, targetWorkspaceId: string, placement: "before" | "after") => {
+      const visibleWorkspaceIds = visibleGroups.map((group) => group.workspace.id);
+      const visibleWorkspaceIdSet = new Set(visibleWorkspaceIds);
+      if (
+        !visibleWorkspaceIdSet.has(sourceWorkspaceId) ||
+        !visibleWorkspaceIdSet.has(targetWorkspaceId)
+      ) {
+        return;
+      }
+
+      updateSettings((current) => {
+        const order = current.general.workspaceCustomOrderIds.filter((id) =>
+          visibleWorkspaceIdSet.has(id)
+        );
+        for (const id of visibleWorkspaceIds) {
+          if (!order.includes(id)) {
+            order.push(id);
+          }
+        }
+
+        const withoutSource = order.filter((id) => id !== sourceWorkspaceId);
+        const targetIndex = withoutSource.indexOf(targetWorkspaceId);
+        const insertIndex =
+          targetIndex < 0
+            ? withoutSource.length
+            : targetIndex + (placement === "after" ? 1 : 0);
+        withoutSource.splice(insertIndex, 0, sourceWorkspaceId);
+
+        const hiddenCustomIds = current.general.workspaceCustomOrderIds.filter(
+          (id) => !visibleWorkspaceIdSet.has(id)
+        );
+        const nextCustomOrderIds = [...withoutSource, ...hiddenCustomIds];
+
+        return {
+          ...current,
+          general: {
+            ...current.general,
+            workspaceSortMode: "custom",
+            workspaceCustomOrderIds: nextCustomOrderIds,
+          },
+        };
+      });
+    },
+    [updateSettings, visibleGroups]
+  );
+
+  const handleWorkspaceDragStart = useCallback(
+    (event: ReactDragEvent<HTMLElement>, workspaceId: string) => {
+      event.dataTransfer.effectAllowed = "move";
+      event.dataTransfer.setData("text/plain", workspaceId);
+      setDraggingWorkspaceId(workspaceId);
+    },
+    []
+  );
+
+  const handleWorkspaceDragOver = useCallback(
+    (event: ReactDragEvent<HTMLElement>) => {
+      if (!draggingWorkspaceId) {
+        return;
+      }
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "move";
+    },
+    [draggingWorkspaceId]
+  );
+
+  const handleWorkspaceDrop = useCallback(
+    (event: ReactDragEvent<HTMLElement>, targetWorkspaceId: string) => {
+      event.preventDefault();
+      const sourceWorkspaceId =
+        event.dataTransfer.getData("text/plain") || draggingWorkspaceId;
+      setDraggingWorkspaceId(null);
+      if (!sourceWorkspaceId) {
+        return;
+      }
+      const rect = event.currentTarget.getBoundingClientRect();
+      const placement = event.clientY > rect.top + rect.height / 2 ? "after" : "before";
+      reorderWorkspaceGroups(sourceWorkspaceId, targetWorkspaceId, placement);
+    },
+    [draggingWorkspaceId, reorderWorkspaceGroups]
+  );
+
+  const handleWorkspaceDragEnd = useCallback(() => {
+    setDraggingWorkspaceId(null);
+  }, []);
+
+  const handleConversationDragStart = useCallback(
+    (event: ReactDragEvent<HTMLDivElement>, conversation: AgentRailConversationSummary) => {
+      setDraggingConversationId(conversation.id);
+      event.dataTransfer.effectAllowed = "move";
+      event.dataTransfer.setData(AGENT_RAIL_CONVERSATION_DRAG_TYPE, conversation.id);
+      event.dataTransfer.setData("text/plain", conversation.id);
+    },
+    []
+  );
+
+  const handleConversationDragEnd = useCallback(() => {
+    setDraggingConversationId(null);
+  }, []);
+
+  const handleConversationDropTargetDragOver = useCallback(
+    (event: ReactDragEvent<HTMLElement>) => {
+      if (!draggingConversationId) {
+        return;
+      }
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "move";
+    },
+    [draggingConversationId]
+  );
+
   const railListScrollMeasureKey = useMemo(
     () =>
-      `${visibleGroups.length}:${pinnedRailConversations.length}:${railLoading ? 1 : 0}:${renameState?.conversationId ?? ""}`,
-    [visibleGroups.length, pinnedRailConversations.length, railLoading, renameState?.conversationId]
+      `${visibleGroups.length}:${pinnedRailConversations.length}:${settings.general.chatFolders.length}:${railLoading ? 1 : 0}:${renameState?.conversationId ?? ""}:${collapsedFolderIds.size}`,
+    [
+      visibleGroups.length,
+      pinnedRailConversations.length,
+      settings.general.chatFolders.length,
+      railLoading,
+      renameState?.conversationId,
+      collapsedFolderIds.size,
+    ]
   );
 
   const handleNewChat = useCallback(() => {
@@ -319,6 +716,158 @@ export function AgentWorkspaceRail() {
       return next;
     });
   }, []);
+
+  const toggleFolderCollapsed = useCallback((folderId: string) => {
+    setCollapsedFolderIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(folderId)) {
+        next.delete(folderId);
+      } else {
+        next.add(folderId);
+      }
+      writeCollapsedFolderIdsToStorage(next);
+      return next;
+    });
+  }, []);
+
+  const createFolderForWorkspace = useCallback(
+    (workspaceId: string, options?: { conversationId?: string }) => {
+      const folderId = createChatFolderId();
+      const conversationId = options?.conversationId;
+      updateSettings((current) => {
+        const workspaceFolders = current.general.chatFolders.filter(
+          (folder) => folder.workspaceId === workspaceId
+        );
+        const nextFolder: ChatFolderState = {
+          id: folderId,
+          workspaceId,
+          name: "New folder",
+          color: FOLDER_COLOR_OPTIONS[workspaceFolders.length % FOLDER_COLOR_OPTIONS.length],
+          icon: "Folder",
+          sortOrder:
+            workspaceFolders.reduce(
+              (max, folder) => Math.max(max, folder.sortOrder),
+              -1
+            ) + 1,
+          conversationIds: conversationId ? [conversationId] : [],
+        };
+        return {
+          ...current,
+          general: {
+            ...current.general,
+            chatFolders: [
+              ...current.general.chatFolders.map((folder) =>
+                folder.workspaceId === workspaceId && conversationId
+                  ? {
+                      ...folder,
+                      conversationIds: folder.conversationIds.filter(
+                        (id) => id !== conversationId
+                      ),
+                    }
+                  : folder
+              ),
+              nextFolder,
+            ],
+          },
+        };
+      });
+      setCollapsedFolderIds((prev) => {
+        if (!prev.has(folderId)) {
+          return prev;
+        }
+        const next = new Set(prev);
+        next.delete(folderId);
+        writeCollapsedFolderIdsToStorage(next);
+        return next;
+      });
+      setEditingFolderId(folderId);
+    },
+    [updateSettings]
+  );
+
+  const updateFolder = useCallback(
+    (folderId: string, updater: (folder: ChatFolderState) => ChatFolderState) => {
+      updateSettings((current) => ({
+        ...current,
+        general: {
+          ...current.general,
+          chatFolders: current.general.chatFolders.map((folder) =>
+            folder.id === folderId ? updater(folder) : folder
+          ),
+        },
+      }));
+    },
+    [updateSettings]
+  );
+
+  const renameFolder = useCallback(
+    (folder: ChatFolderState) => {
+      setEditingFolderId(folder.id);
+    },
+    []
+  );
+
+  const deleteFolder = useCallback(
+    (folder: ChatFolderState) => {
+      const confirmed = window.confirm(
+        `Delete "${folder.name}"? Chats move back to this workspace root.`
+      );
+      if (!confirmed) {
+        return;
+      }
+      updateSettings((current) => ({
+        ...current,
+        general: {
+          ...current.general,
+          chatFolders: current.general.chatFolders.filter((item) => item.id !== folder.id),
+        },
+      }));
+      setEditingFolderId((current) => (current === folder.id ? null : current));
+    },
+    [updateSettings]
+  );
+
+  const moveConversationToFolder = useCallback(
+    (conversationId: string, workspaceId: string, folderId: string | null) => {
+      updateSettings((current) => ({
+        ...current,
+        general: {
+          ...current.general,
+          chatFolders: current.general.chatFolders.map((folder) => {
+            if (folder.workspaceId !== workspaceId) {
+              return folder;
+            }
+            const withoutConversation = folder.conversationIds.filter(
+              (id) => id !== conversationId
+            );
+            return {
+              ...folder,
+              conversationIds:
+                folder.id === folderId
+                  ? [...withoutConversation, conversationId]
+                  : withoutConversation,
+            };
+          }),
+        },
+      }));
+    },
+    [updateSettings]
+  );
+
+  const handleConversationDrop = useCallback(
+    (event: ReactDragEvent<HTMLElement>, workspaceId: string, folderId: string | null) => {
+      const conversationId =
+        event.dataTransfer.getData(AGENT_RAIL_CONVERSATION_DRAG_TYPE) || draggingConversationId;
+      if (!conversationId) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      setDraggingConversationId(null);
+      moveConversationToFolder(conversationId, workspaceId, folderId);
+    },
+    [draggingConversationId, moveConversationToFolder]
+  );
 
   const beginConversationRename = useCallback(
     (conversation: AgentRailConversationSummary) => {
@@ -491,13 +1040,53 @@ export function AgentWorkspaceRail() {
   toggleLeftRailCollapsed,
 ]);
 
-	const buildConversationMenuItems = useCallback(
-		(
+  const buildConversationMenuItems = useCallback(
+    (
       conversation: AgentRailConversationSummary,
       options?: { inPinnedSection?: boolean }
     ): WorkbenchMenuItem[] => {
       const inPinned = options?.inPinnedSection ?? false;
       const conversationId = conversation.id;
+      const workspaceFolders = settings.general.chatFolders
+        .filter((folder) => folder.workspaceId === conversation.workspaceId)
+        .sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name));
+      const currentFolder = workspaceFolders.find((folder) =>
+        folder.conversationIds.includes(conversationId)
+      );
+      const moveItems: WorkbenchMenuItem[] = [
+        { type: "sep" },
+        {
+          type: "item",
+          id: "move-new-folder",
+          label: "Move to New Folder...",
+          onSelect: () =>
+            createFolderForWorkspace(conversation.workspaceId, {
+              conversationId,
+            }),
+        },
+        ...(workspaceFolders.length > 0
+          ? [
+              {
+                type: "item" as const,
+                id: "move-root",
+                label: "Move to Workspace Root",
+                disabled: !currentFolder,
+                onSelect: () =>
+                  moveConversationToFolder(conversationId, conversation.workspaceId, null),
+              },
+              ...workspaceFolders.map(
+                (folder): WorkbenchMenuItem => ({
+                  type: "item",
+                  id: `move-folder-${folder.id}`,
+                  label: `Move to ${folder.name}`,
+                  disabled: currentFolder?.id === folder.id,
+                  onSelect: () =>
+                    moveConversationToFolder(conversationId, conversation.workspaceId, folder.id),
+                })
+              ),
+            ]
+          : []),
+      ];
       return [
         {
           type: "item",
@@ -531,6 +1120,7 @@ export function AgentWorkspaceRail() {
               label: "Pin",
               onSelect: () => pinConversation(conversationId),
             },
+        ...moveItems,
         { type: "sep" },
         {
           type: "item",
@@ -552,9 +1142,12 @@ export function AgentWorkspaceRail() {
     [
       archiveConversation,
       beginConversationRename,
+      createFolderForWorkspace,
       forkConversation,
       handleOpenConversationInEditor,
+      moveConversationToFolder,
       pinConversation,
+      settings.general.chatFolders,
       unpinConversation,
     ]
   );
@@ -584,6 +1177,32 @@ export function AgentWorkspaceRail() {
       );
     },
     [buildConversationMenuItems, openAtPoint]
+  );
+
+  const buildFolderMenuItems = useCallback(
+    (folder: ChatFolderState): WorkbenchMenuItem[] => [
+      {
+        type: "item",
+        id: "customize-folder",
+        label: "Customize Folder...",
+        onSelect: () => renameFolder(folder),
+      },
+      { type: "sep" },
+      {
+        type: "item",
+        id: "delete-folder",
+        label: "Delete Folder",
+        onSelect: () => deleteFolder(folder),
+      },
+    ],
+    [deleteFolder, renameFolder]
+  );
+
+  const handleFolderContextMenu = useCallback(
+    (event: ReactMouseEvent, folder: ChatFolderState) => {
+      openAt(event, buildFolderMenuItems(folder));
+    },
+    [buildFolderMenuItems, openAt]
   );
 
   const pinnedSection: ReactNode = useMemo(() => {
@@ -670,7 +1289,10 @@ export function AgentWorkspaceRail() {
   return (
     <>
       {!desktopRailCollapsed ? (
-        <div className="flex h-full flex-col bg-[var(--agent-panel-bg)]">
+        <div
+          className="flex h-full flex-col bg-[var(--agent-panel-bg)]"
+          data-electron-drag-host
+        >
           <div
             className={`flex shrink-0 items-center gap-[8px] pt-[11px] ${railTopBarPadClass}`}
           >
@@ -732,12 +1354,38 @@ export function AgentWorkspaceRail() {
             <>
               {pinnedSection}
               {visibleGroups.map((group) => {
-              const isWorkspaceCollapsed = collapsedWorkspaceIds.has(group.workspace.id);
-              const { conversations } = group;
-              const branchLabel = workspaceBranchLabel(group.workspace.id, group.workspace.root);
-              return (
-                <section key={group.workspace.id} className="pb-[12px]">
-                  <div className="group flex items-center gap-[2px] px-px pb-[4px]">
+                const isWorkspaceCollapsed = collapsedWorkspaceIds.has(group.workspace.id);
+                const workspaceFolders = settings.general.chatFolders
+                  .filter((folder) => folder.workspaceId === group.workspace.id)
+                  .sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name));
+                const folderIdByConversationId = new Map<string, string>();
+                for (const folder of workspaceFolders) {
+                  for (const conversationId of folder.conversationIds) {
+                    folderIdByConversationId.set(conversationId, folder.id);
+                  }
+                }
+                const conversationsById = new Map(
+                  group.conversations.map((conversation) => [conversation.id, conversation])
+                );
+                const rootConversations = group.conversations.filter(
+                  (conversation) => !folderIdByConversationId.has(conversation.id)
+                );
+                const branchLabel = workspaceBranchLabel(group.workspace.id, group.workspace.root);
+                return (
+                <section
+                  key={group.workspace.id}
+                  onDragOver={handleWorkspaceDragOver}
+                  onDrop={(event) => handleWorkspaceDrop(event, group.workspace.id)}
+                  className={`pb-[12px] ${
+                    draggingWorkspaceId === group.workspace.id ? "opacity-60" : ""
+                  }`}
+                >
+                  <div
+                    draggable
+                    onDragStart={(event) => handleWorkspaceDragStart(event, group.workspace.id)}
+                    onDragEnd={handleWorkspaceDragEnd}
+                    className="group flex items-center gap-[2px] px-px pb-[4px]"
+                  >
                     <button
                       type="button"
                       onClick={() => toggleWorkspaceCollapsed(group.workspace.id)}
@@ -769,20 +1417,143 @@ export function AgentWorkspaceRail() {
                     </button>
                   </div>
                   {!isWorkspaceCollapsed ? (
-                    <div className="flex flex-col gap-[2px]">
-                      {conversations.length === 0 ? (
-                        <button
-                          type="button"
-                          onClick={() => void handleNewChatForWorkspace(group.workspace.id)}
-                          className="flex h-[30px] items-center gap-[8px] rounded-[var(--radius-tab)] px-[9px] text-left transition-colors hover:bg-[var(--bg-card)]"
-                        >
-                          <span className="size-[6px] shrink-0 rounded-full bg-[var(--text-disabled)]" />
-                          <span className="truncate font-sans text-[13px] text-[var(--text-secondary)]">
-                            Start a new chat
-                          </span>
-                        </button>
-                      ) : (
-                        conversations.map((conversation, index) => {
+                    <div
+                      className="flex flex-col gap-[2px]"
+                      onDragOver={handleConversationDropTargetDragOver}
+                      onDrop={(event) => handleConversationDrop(event, group.workspace.id, null)}
+                    >
+                      {workspaceFolders.map((folder) => {
+                        const isFolderCollapsed = collapsedFolderIds.has(folder.id);
+                        const Icon = getFolderIcon(folder.icon);
+                        const folderConversations = folder.conversationIds
+                          .map((conversationId) => conversationsById.get(conversationId))
+                          .filter(
+                            (conversation): conversation is AgentRailConversationSummary =>
+                              Boolean(conversation)
+                          );
+                        return (
+                          <div
+                            key={folder.id}
+                            className={`rounded-[var(--agent-control-radius)] ${
+                              draggingConversationId ? "bg-[var(--bg-card)]" : ""
+                            }`}
+                            onDragOver={handleConversationDropTargetDragOver}
+                            onDrop={(event) =>
+                              handleConversationDrop(event, group.workspace.id, folder.id)
+                            }
+                          >
+                            <div
+                              className="group/folder flex h-[24px] w-full min-w-0 items-center rounded-[var(--agent-control-radius)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--agent-card-bg)] hover:text-[var(--text-primary)]"
+                              onContextMenu={(event) => handleFolderContextMenu(event, folder)}
+                            >
+                              <button
+                                type="button"
+                                onClick={() => toggleFolderCollapsed(folder.id)}
+                                className="flex h-full min-w-0 flex-1 items-center gap-[6px] px-[9px] text-left"
+                                title={`${folder.name} (${folderConversations.length})`}
+                              >
+                                <ChevronRight
+                                  className={`size-[10px] shrink-0 text-[var(--text-disabled)] transition-transform ${
+                                    isFolderCollapsed ? "" : "rotate-90"
+                                  }`}
+                                  strokeWidth={2}
+                                />
+                                <Icon
+                                  className="size-[13px] shrink-0"
+                                  color={folder.color}
+                                  strokeWidth={1.8}
+                                />
+                                <span className="min-w-0 flex-1 truncate font-sans text-[12.5px]">
+                                  {folder.name}
+                                </span>
+                                <span className="shrink-0 font-sans text-[10px] text-[var(--text-disabled)]">
+                                  {folderConversations.length}
+                                </span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={(event) => {
+                                  event.preventDefault();
+                                  event.stopPropagation();
+                                  setEditingFolderId((current) =>
+                                    current === folder.id ? null : folder.id
+                                  );
+                                }}
+                                className="mr-[3px] flex size-[18px] shrink-0 items-center justify-center rounded-[var(--agent-control-radius)] text-[var(--text-disabled)] opacity-0 transition-all hover:bg-[var(--bg-card)] hover:text-[var(--text-primary)] group-hover/folder:opacity-100 focus-visible:opacity-100"
+                                title={`Customize ${folder.name}`}
+                                aria-label={`Customize ${folder.name}`}
+                              >
+                                <Settings className="size-[12px]" strokeWidth={1.7} />
+                              </button>
+                            </div>
+                            {editingFolderId === folder.id ? (
+                              <FolderCustomizePanel
+                                folder={folder}
+                                onClose={() => setEditingFolderId(null)}
+                                onUpdate={(patch) =>
+                                  updateFolder(folder.id, (current) => ({
+                                    ...current,
+                                    ...patch,
+                                    name:
+                                      typeof patch.name === "string"
+                                        ? patch.name.trim().slice(0, 80) || "Folder"
+                                        : current.name,
+                                    color:
+                                      typeof patch.color === "string" &&
+                                      isValidFolderColor(patch.color)
+                                        ? patch.color
+                                        : current.color,
+                                  }))
+                                }
+                              />
+                            ) : null}
+                            {!isFolderCollapsed ? (
+                              <div className="ml-[13px] mt-[2px] flex flex-col gap-[2px] border-l border-[var(--border-subtle)] pl-[5px]">
+                                {folderConversations.length === 0 ? (
+                                  <div className="px-[9px] py-[5px] font-sans text-[12px] text-[var(--text-disabled)]">
+                                    Empty folder
+                                  </div>
+                                ) : (
+                                  folderConversations.map((conversation, index) => {
+                                    const selected =
+                                      conversation.id === selectedConversationId &&
+                                      conversation.workspaceId === activeWorkspaceId;
+                                    return (
+                                      <AgentConversationRow
+                                        key={conversation.id}
+                                        conversation={conversation}
+                                        rowIndex={index}
+                                        selected={selected}
+                                        editing={renameState?.conversationId === conversation.id}
+                                        editValue={renameState?.draft}
+                                        onBeginRename={() => beginConversationRename(conversation)}
+                                        onEditValueChange={updateConversationRenameDraft}
+                                        onCommitRename={commitConversationRename}
+                                        onCancelRename={cancelConversationRename}
+                                        onSelect={() => handleConversationSelect(conversation)}
+                                        onDragStart={handleConversationDragStart}
+                                        onDragEnd={handleConversationDragEnd}
+                                        onContextMenu={(e, currentConversation) =>
+                                          handleConversationContextMenu(e, currentConversation, {
+                                            inPinnedSection: false,
+                                          })
+                                        }
+                                        showOverflowMenu={experimentalIpadCustomButtons}
+                                        onOverflowMenu={(anchor) =>
+                                          handleConversationOverflowMenu(conversation, anchor, {
+                                            inPinnedSection: false,
+                                          })
+                                        }
+                                      />
+                                    );
+                                  })
+                                )}
+                              </div>
+                            ) : null}
+                          </div>
+                        );
+                      })}
+                      {rootConversations.map((conversation, index) => {
                           const selected =
                             conversation.id === selectedConversationId &&
                             conversation.workspaceId === activeWorkspaceId;
@@ -799,6 +1570,8 @@ export function AgentWorkspaceRail() {
                               onCommitRename={commitConversationRename}
                               onCancelRename={cancelConversationRename}
                               onSelect={() => handleConversationSelect(conversation)}
+                              onDragStart={handleConversationDragStart}
+                              onDragEnd={handleConversationDragEnd}
                               onContextMenu={(e, currentConversation) =>
                                 handleConversationContextMenu(e, currentConversation, {
                                   inPinnedSection: false,
@@ -812,8 +1585,7 @@ export function AgentWorkspaceRail() {
                               }
                             />
                           );
-                        })
-                      )}
+                        })}
                     </div>
                   ) : null}
                 </section>
@@ -844,11 +1616,11 @@ export function AgentWorkspaceRail() {
                     setFilterMenuOpen((open) => !open);
                   }}
                   className={`flex size-[18px] shrink-0 items-center justify-center rounded-[var(--radius-tab)] transition-colors hover:bg-[var(--bg-card)] hover:text-[var(--text-primary)] ${
-                    railFilterActive ? "text-[var(--accent)]" : "text-[var(--text-secondary)]"
+                    railControlActive ? "text-[var(--accent)]" : "text-[var(--text-secondary)]"
                   }`}
-                  aria-label="Filter conversations"
+                  aria-label="Filter and sort conversations"
                   aria-expanded={filterMenuOpen}
-                  title={`Filter: ${filterSummary}`}
+                  title={`Sort: ${sortSummary}; Filter: ${filterSummary}`}
                 >
                   <ListFilter className="size-[16px]" strokeWidth={1.5} />
                 </button>
@@ -886,6 +1658,10 @@ export function AgentWorkspaceRail() {
         setRailFilterToggle={setRailFilterToggle}
         clearRailFilters={clearRailFilters}
         railFilterActive={railFilterActive}
+        workspaceSortMode={workspaceSortMode}
+        setWorkspaceSortMode={setWorkspaceSortMode}
+        workspaceCustomOrderActive={workspaceCustomOrderIds.length > 0}
+        resetWorkspaceCustomOrder={resetWorkspaceCustomOrder}
       />
     </>
   );

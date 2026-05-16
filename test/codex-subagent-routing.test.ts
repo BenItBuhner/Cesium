@@ -80,7 +80,7 @@ test("Codex collab tool events project to subagent chat messages", async () => {
 
   const messages = projectAgentEventsToChatMessages(events as never, {
     backendId: "codex-adapter",
-    workspaceRoot: "/home/bennett/projects/OpenCursor",
+    workspaceRoot: "/home/bennett/projects/Cesium",
   });
   const subagent = messages.find((message) => message.type === "subagent");
   assert.ok(subagent, "expected a subagent card message");
@@ -180,7 +180,7 @@ test("Codex wait updates merge into the existing subagent card instead of creati
 
   const messages = projectAgentEventsToChatMessages(events as never, {
     backendId: "codex-adapter",
-    workspaceRoot: "/home/bennett/projects/OpenCursor",
+    workspaceRoot: "/home/bennett/projects/Cesium",
   });
   const subagents = messages.filter((message) => message.type === "subagent");
   assert.equal(subagents.length, 1);

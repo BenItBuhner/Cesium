@@ -4,7 +4,9 @@ import { createPortal } from "react-dom";
 import {
   Check,
   ChevronDown,
+  Cloud,
   Folder,
+  FolderGit2,
   GitBranch,
   GitFork,
   Laptop,
@@ -18,6 +20,7 @@ import {
   useState,
 } from "react";
 import { ChatComposer } from "@/components/chat/ChatComposer";
+import { VerticalFadedScroll } from "@/components/chat/VerticalFadedScroll";
 import { useAgentConversations } from "@/components/chat/AgentConversationsContext";
 import {
   useOpenInEditor,
@@ -35,7 +38,12 @@ import {
   detectShortcutPlatform,
   getShortcutDisplayForCommand,
 } from "@/lib/keyboard-shortcuts";
-import type { EditorMode, ImageAttachment } from "@/lib/types";
+import type {
+  EditorMode,
+  GitBranchInfo,
+  GitWorktreeInfo,
+  ImageAttachment,
+} from "@/lib/types";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { useIDECommandRunner } from "@/components/ide/IDECommandContext";
 import { useShellView } from "@/components/layout/ShellViewContext";
@@ -66,7 +74,20 @@ function branchNameFromPrompt(prompt: string): string {
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 48);
-  return `opencursor/${stem || `agent-${Date.now().toString(36)}`}`;
+  return `cesium/${stem || `agent-${Date.now().toString(36)}`}`;
+}
+
+type BranchPickerItem = {
+  key: string;
+  branch: GitBranchInfo;
+  localBranchName: string;
+  localBranchExists: boolean;
+  worktree: GitWorktreeInfo | null;
+  icon: "remote" | "worktree" | null;
+};
+
+function localBranchNameForRemote(branchName: string): string {
+  return branchName.replace(/^[^/]+\//, "");
 }
 
 const QUICK_ACTION_BUTTON_CLASSNAME =
@@ -160,6 +181,7 @@ export function AgentNewChatLanding() {
   const [workspaceQuery, setWorkspaceQuery] = useState("");
   const [targetPickerOpen, setTargetPickerOpen] = useState(false);
   const [gitActionBusy, setGitActionBusy] = useState<string | null>(null);
+  const [gitActionError, setGitActionError] = useState<string | null>(null);
 
   const setDraftBackend = useCallback(
     (nextBackendId: AgentBackendId) => {
@@ -300,16 +322,56 @@ export function AgentNewChatLanding() {
     );
   }, [settings.keyboardShortcuts.bindings]);
 
-  const filteredBranches = useMemo(() => {
+  const branchPickerItems = useMemo<BranchPickerItem[]>(() => {
     const branches = gitStatus?.branches ?? [];
+    const worktrees = gitStatus?.worktrees ?? [];
+    const localBranchNames = new Set(
+      branches
+        .filter((branch) => branch.type === "local")
+        .map((branch) => branch.name)
+    );
+    const worktreeByBranch = new Map<string, GitWorktreeInfo>();
+    for (const worktree of worktrees) {
+      if (worktree.branch && !worktreeByBranch.has(worktree.branch)) {
+        worktreeByBranch.set(worktree.branch, worktree);
+      }
+    }
+
+    return branches.flatMap((branch) => {
+      const localBranchName =
+        branch.type === "remote" ? localBranchNameForRemote(branch.name) : branch.name;
+      const localBranchExists = localBranchNames.has(localBranchName);
+      const worktree = worktreeByBranch.get(localBranchName) ?? null;
+      if (branch.type === "remote" && (localBranchExists || worktree)) {
+        return [];
+      }
+      return [
+        {
+          key: `${branch.type}:${branch.name}`,
+          branch,
+          localBranchName,
+          localBranchExists,
+          worktree,
+          icon:
+            branch.type === "remote"
+              ? "remote"
+              : worktree && !branch.current
+                ? "worktree"
+                : null,
+        },
+      ];
+    });
+  }, [gitStatus?.branches, gitStatus?.worktrees]);
+
+  const filteredBranchItems = useMemo(() => {
     const q = branchQuery.trim().toLowerCase();
     if (!q) {
-      return branches.slice(0, 80);
+      return branchPickerItems.slice(0, 80);
     }
-    return branches
-      .filter((branch) => branch.name.toLowerCase().includes(q))
+    return branchPickerItems
+      .filter((item) => item.branch.name.toLowerCase().includes(q))
       .slice(0, 80);
-  }, [branchQuery, gitStatus?.branches]);
+  }, [branchPickerItems, branchQuery]);
 
   const filteredWorkspaceGroups = useMemo(() => {
     const q = workspaceQuery.trim().toLowerCase();
@@ -335,8 +397,11 @@ export function AgentNewChatLanding() {
   const runGitAction = useCallback(
     async (key: string, action: () => Promise<void>) => {
       setGitActionBusy(key);
+      setGitActionError(null);
       try {
         await action();
+      } catch (error) {
+        setGitActionError(error instanceof Error ? error.message : "Git action failed.");
       } finally {
         setGitActionBusy(null);
       }
@@ -404,14 +469,12 @@ export function AgentNewChatLanding() {
   );
 
   const handleBranchWorktree = useCallback(
-    async (branchName: string, type: "local" | "remote") => {
+    async (branchName: string, localBranchName: string, localBranchExists: boolean) => {
       await runGitAction(`worktree:${branchName}`, async () => {
-        const localBranch =
-          type === "remote" ? branchName.replace(/^[^/]+\//, "") : branchName;
         await createWorktree({
-          branch: localBranch,
-          baseBranch: type === "remote" ? branchName : undefined,
-          newBranch: type === "remote",
+          branch: localBranchName,
+          baseBranch: branchName,
+          newBranch: !localBranchExists,
         });
         setBranchPickerOpen(false);
       });
@@ -507,6 +570,11 @@ export function AgentNewChatLanding() {
                 <ChevronDown className="size-[13px] shrink-0" strokeWidth={1.5} />
               </button>
             </div>
+            {gitActionError ? (
+              <div className="mt-[6px] max-w-[520px] rounded-[var(--radius-tab)] border border-[var(--palette-border)] bg-[var(--bg-card)] px-[8px] py-[6px] font-sans text-[12px] text-[var(--text-primary)]">
+                {gitActionError}
+              </div>
+            ) : null}
           </div>
 
           {!composerHiddenForExpanded ? (
@@ -613,7 +681,10 @@ export function AgentNewChatLanding() {
                   autoFocus
                 />
               </div>
-              <div className="hide-scrollbar-y max-h-[min(320px,45vh)] overflow-y-auto p-[4px]">
+              <VerticalFadedScroll
+                measureKey={`${workspaceQuery}\0${filteredWorkspaceGroups.length}`}
+                scrollClassName="hide-scrollbar-y max-h-[min(320px,45vh)] min-h-0 overflow-y-auto overscroll-contain p-[4px]"
+              >
                 {filteredWorkspaceGroups.map((group) => {
                   const current =
                     group.workspace.id === activeWorkspaceGroup?.workspace.id;
@@ -647,7 +718,7 @@ export function AgentNewChatLanding() {
                     No workspaces found
                   </div>
                 ) : null}
-              </div>
+              </VerticalFadedScroll>
               <div className="border-t border-[var(--border-card)] p-[4px]">
                 <button
                   type="button"
@@ -687,49 +758,59 @@ export function AgentNewChatLanding() {
                   autoFocus
                 />
               </div>
-              <div className="hide-scrollbar-y max-h-[min(320px,45vh)] overflow-y-auto p-[4px]">
-                {filteredBranches.map((branch) => {
+              <VerticalFadedScroll
+                measureKey={`${branchQuery}\0${filteredBranchItems.length}`}
+                scrollClassName="hide-scrollbar-y max-h-[min(320px,45vh)] min-h-0 overflow-y-auto overscroll-contain p-[4px]"
+              >
+                {filteredBranchItems.map((item) => {
+                  const Icon =
+                    item.icon === "remote"
+                      ? Cloud
+                      : item.icon === "worktree"
+                        ? FolderGit2
+                        : null;
                   const busy =
-                    gitActionBusy === `switch:${branch.name}` ||
-                    gitActionBusy === `worktree:${branch.name}`;
+                    gitActionBusy === `switch:${item.branch.name}` ||
+                    gitActionBusy === `worktree:${item.branch.name}`;
                   return (
                     <div
-                      key={`${branch.type}:${branch.name}`}
+                      key={item.key}
                       className="group flex items-center gap-[6px] rounded-[var(--radius-tab)] px-[8px] py-[5px] font-sans text-[12.5px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)]"
                     >
+                      {Icon ? <Icon className="size-[13px] shrink-0" strokeWidth={1.5} /> : null}
                       <button
                         type="button"
                         disabled={busy}
                         onClick={() =>
-                          branch.type === "remote"
-                            ? void handleBranchWorktree(branch.name, branch.type)
-                            : void handleBranchSwitch(branch.name)
+                          item.branch.type === "remote"
+                            ? void handleBranchWorktree(
+                                item.branch.name,
+                                item.localBranchName,
+                                item.localBranchExists
+                              )
+                            : void handleBranchSwitch(item.branch.name)
                         }
                         className="min-w-0 flex-1 truncate text-left disabled:cursor-not-allowed disabled:opacity-60"
                         title={
-                          branch.type === "remote"
+                          item.branch.type === "remote"
                             ? "Open this branch in a new worktree"
+                            : item.worktree && !item.branch.current
+                              ? "Open this branch's worktree"
                             : "Switch this workspace to this branch"
                         }
                       >
-                        {branch.name}
+                        {item.branch.name}
                       </button>
-                      <span
-                        className="hidden shrink-0 text-[10px] uppercase tracking-wide text-[var(--text-disabled)] group-hover:inline"
-                        aria-hidden
-                      >
-                        {branch.type === "local" ? "local" : "remote"}
-                      </span>
-                      {branch.current ? <Check className="size-[13px] shrink-0" strokeWidth={2} /> : null}
+                      {item.branch.current ? <Check className="size-[13px] shrink-0" strokeWidth={2} /> : null}
                     </div>
                   );
                 })}
-                {filteredBranches.length === 0 ? (
+                {filteredBranchItems.length === 0 ? (
                   <div className="px-[8px] py-[8px] font-sans text-[12px] text-[var(--text-disabled)]">
                     No branches found
                   </div>
                 ) : null}
-              </div>
+              </VerticalFadedScroll>
               <div className="border-t border-[var(--border-card)] p-[4px]">
                 <button
                   type="button"
@@ -750,7 +831,7 @@ export function AgentNewChatLanding() {
             <div
               ref={targetPopoverRef}
               data-perf="agent-worktree-target-picker-popover"
-              className="fixed z-[10002] w-[220px] overflow-hidden rounded-[var(--radius-card)] border border-[var(--border-card)] bg-[var(--bg-panel)] p-[4px] shadow-lg"
+              className="fixed z-[10002] w-[220px] overflow-hidden rounded-[var(--radius-card)] border border-[var(--border-card)] bg-[var(--bg-panel)] shadow-lg"
               style={{
                 top: targetPickerPosition.bottom + 6,
                 left: Math.max(8, Math.min(targetPickerPosition.left, window.innerWidth - 228)),
@@ -758,20 +839,25 @@ export function AgentNewChatLanding() {
               data-ide-input-sink
               onPointerDown={(event) => event.stopPropagation()}
             >
-              <div className="flex items-center gap-[8px] rounded-[var(--radius-tab)] px-[8px] py-[6px] font-sans text-[12.5px] text-[var(--text-primary)]">
-                <Laptop className="size-[14px] shrink-0" strokeWidth={1.5} />
-                <span className="min-w-0 flex-1">This PC</span>
-                <Check className="size-[13px] shrink-0" strokeWidth={2} />
-              </div>
-              <button
-                type="button"
-                disabled={!gitStatus?.isGitRepo || gitActionBusy != null}
-                onClick={() => void handleNewBranchWorktree()}
-                className="flex w-full items-center gap-[8px] rounded-[var(--radius-tab)] px-[8px] py-[6px] text-left font-sans text-[12.5px] text-[var(--text-primary)] transition-colors hover:bg-[var(--accent-bg)] disabled:opacity-50"
+              <VerticalFadedScroll
+                measureKey={gitActionBusy ?? "idle"}
+                scrollClassName="hide-scrollbar-y max-h-[min(320px,45vh)] min-h-0 overflow-y-auto overscroll-contain p-[4px]"
               >
-                <GitFork className="size-[14px] shrink-0" strokeWidth={1.5} />
-                New Worktree
-              </button>
+                <div className="flex items-center gap-[8px] rounded-[var(--radius-tab)] px-[8px] py-[6px] font-sans text-[12.5px] text-[var(--text-primary)]">
+                  <Laptop className="size-[14px] shrink-0" strokeWidth={1.5} />
+                  <span className="min-w-0 flex-1">This PC</span>
+                  <Check className="size-[13px] shrink-0" strokeWidth={2} />
+                </div>
+                <button
+                  type="button"
+                  disabled={!gitStatus?.isGitRepo || gitActionBusy != null}
+                  onClick={() => void handleNewBranchWorktree()}
+                  className="flex w-full items-center gap-[8px] rounded-[var(--radius-tab)] px-[8px] py-[6px] text-left font-sans text-[12.5px] text-[var(--text-primary)] transition-colors hover:bg-[var(--accent-bg)] disabled:opacity-50"
+                >
+                  <GitFork className="size-[14px] shrink-0" strokeWidth={1.5} />
+                  New Worktree
+                </button>
+              </VerticalFadedScroll>
             </div>,
             document.body
           )

@@ -209,8 +209,8 @@ async function preloadImportModels(input: {
   }
 }
 
-function defineOpenCursorThemes(monaco: Monaco) {
-  monaco.editor.defineTheme("opencursor-dark", {
+function defineCesiumThemes(monaco: Monaco) {
+  monaco.editor.defineTheme("cesium-dark", {
     base: "vs-dark",
     inherit: true,
     rules: [],
@@ -233,7 +233,7 @@ function defineOpenCursorThemes(monaco: Monaco) {
     },
   });
 
-  monaco.editor.defineTheme("opencursor-light", {
+  monaco.editor.defineTheme("cesium-light", {
     base: "vs",
     inherit: true,
     rules: [],
@@ -404,7 +404,7 @@ function registerTomlLanguage(monaco: Monaco) {
   });
 }
 
-function registerOpenCursorLanguages(monaco: Monaco) {
+function registerCesiumLanguages(monaco: Monaco) {
   registerIniLanguage(monaco);
   registerIgnoreLanguage(monaco);
   registerDotenvLanguage(monaco);
@@ -446,7 +446,7 @@ export function CodeEditor({
   );
   const captureRef = useRef<HTMLDivElement | null>(null);
   const isDark = useHtmlDarkClass();
-  const monacoTheme = isDark ? "opencursor-dark" : "opencursor-light";
+  const monacoTheme = isDark ? "cesium-dark" : "cesium-light";
   const editorLanguage = useMemo(
     () => resolveEditorLanguageId(language, filePath),
     [filePath, language]
@@ -463,16 +463,22 @@ export function CodeEditor({
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved">("idle");
   const [editorInstance, setEditorInstance] =
     useState<MonacoEditor.IStandaloneCodeEditor | null>(null);
+  const valueRef = useRef(content);
   const onLiveContentChangeRef = useRef(onLiveContentChange);
   const onViewStateChangeRef = useRef(onViewStateChange);
+  const onSaveRef = useRef(onSave);
+  const handleSaveRef = useRef<() => Promise<void>>(async () => undefined);
   const lastViewStateSignatureRef = useRef<string | null>(
     serializeViewState(initialViewState)
   );
+  valueRef.current = value;
   onLiveContentChangeRef.current = onLiveContentChange;
   onViewStateChangeRef.current = onViewStateChange;
+  onSaveRef.current = onSave;
 
   useEffect(() => {
     setValue(content);
+    valueRef.current = content;
   }, [content]);
 
   useEffect(() => {
@@ -485,6 +491,7 @@ export function CodeEditor({
 
   const onChange = useCallback((v: string | undefined) => {
     const next = v ?? "";
+    valueRef.current = next;
     setValue(next);
     onLiveContentChangeRef.current?.(next);
   }, []);
@@ -506,9 +513,9 @@ export function CodeEditor({
   }, []);
 
   function handleBeforeMount(monaco: Monaco) {
-    registerOpenCursorLanguages(monaco);
+    registerCesiumLanguages(monaco);
     configureTypeScriptWorkspace(monaco);
-    defineOpenCursorThemes(monaco);
+    defineCesiumThemes(monaco);
     monacoRef.current = monaco;
   }
 
@@ -553,12 +560,24 @@ export function CodeEditor({
   }, [editorLanguage, filePath, value]);
 
   const handleSave = useCallback(async () => {
-    if (!onSave) return;
+    const save = onSaveRef.current;
+    if (!save) return;
+    const latestContent = editorInstanceRef.current?.getValue() ?? valueRef.current;
+    valueRef.current = latestContent;
     setSaveState("saving");
-    await onSave(value);
-    setSaveState("saved");
-    window.setTimeout(() => setSaveState("idle"), 1200);
-  }, [onSave, value]);
+    try {
+      const result = await save(latestContent);
+      if (result === false) {
+        setSaveState("idle");
+        return;
+      }
+      setSaveState("saved");
+      window.setTimeout(() => setSaveState("idle"), 1200);
+    } catch {
+      setSaveState("idle");
+    }
+  }, []);
+  handleSaveRef.current = handleSave;
 
   const handleMount = useCallback(
     (editorInstance: MonacoEditor.IStandaloneCodeEditor, monaco: Monaco) => {
@@ -568,7 +587,7 @@ export function CodeEditor({
       editorInstance.addCommand(
         monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS,
         () => {
-          void handleSave();
+          void handleSaveRef.current();
         }
       );
       if (initialViewState) {
@@ -580,7 +599,7 @@ export function CodeEditor({
         editorInstance.saveViewState()
       );
     },
-    [handleSave, initialViewState]
+    [initialViewState]
   );
 
   useEffect(() => {

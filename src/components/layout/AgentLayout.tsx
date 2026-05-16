@@ -29,6 +29,7 @@ import { AgentSidePane } from "@/components/agent/AgentSidePane";
 import { AgentWorkspaceRail } from "@/components/agent/AgentWorkspaceRail";
 import { AgentWorkspaceRailCollapsedOverlay } from "@/components/agent/AgentWorkspaceRailCollapsedOverlay";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
+import { useUserPreferences } from "@/components/preferences/UserPreferencesProvider";
 
 function AgentShellResizeHandle() {
   return (
@@ -69,6 +70,9 @@ function AgentLayoutShell() {
     setRightPaneOpen,
     toggleRightPaneOpen,
   } = useAgentShellState();
+  const { experimentalIpadWindowedTabInset } = useUserPreferences();
+  const padTrailingForWindowChrome =
+    experimentalIpadWindowedTabInset && !isMobile && !rightPaneOpen;
 
   const groupRef = useGroupRef();
   const railPanelRef = usePanelRef();
@@ -91,6 +95,9 @@ function AgentLayoutShell() {
       toggleChat: () => setRightPaneOpen(!rightPaneOpen),
       revealExplorer: () => setLeftRailCollapsed(false),
       primarySidebarVisible: !leftRailCollapsed && !isMobile,
+      editorLeadingWindowControlsVisible: false,
+      editorTrailingWindowControlsVisible: rightPaneOpen && !isMobile,
+      chatTrailingWindowControlsVisible: false,
     }),
     [
       isMobile,
@@ -212,7 +219,12 @@ function AgentLayoutShell() {
                   <button
                     type="button"
                     onClick={toggleRightPaneOpen}
-                    className="absolute right-[11px] top-[11px] z-40 flex size-[18px] items-center justify-center rounded-[var(--radius-tab)] bg-[var(--bg-panel)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-card)] hover:text-[var(--text-primary)]"
+                    data-workbench-pane-toggle
+                    className={`absolute top-[11px] z-40 flex size-[18px] items-center justify-center rounded-[var(--radius-tab)] bg-[var(--bg-panel)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-card)] hover:text-[var(--text-primary)] ${
+                      padTrailingForWindowChrome
+                        ? "right-[calc(var(--editor-window-chrome-tab-inset)+11px)]"
+                        : "right-[11px]"
+                    }`}
                     aria-label="Show workbench pane"
                   >
                     <PanelRightOpen className="size-[16px]" strokeWidth={1.5} />
@@ -260,7 +272,12 @@ function AgentLayoutShell() {
                     <button
                       type="button"
                       onClick={toggleRightPaneOpen}
-                      className="absolute right-[11px] top-[11px] z-40 flex size-[18px] items-center justify-center rounded-[var(--radius-tab)] bg-[var(--bg-panel)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-card)] hover:text-[var(--text-primary)]"
+                        data-workbench-pane-toggle
+                        className={`absolute top-[11px] z-40 flex size-[18px] items-center justify-center rounded-[var(--radius-tab)] bg-[var(--bg-panel)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-card)] hover:text-[var(--text-primary)] ${
+                          padTrailingForWindowChrome
+                            ? "right-[calc(var(--editor-window-chrome-tab-inset)+11px)]"
+                            : "right-[11px]"
+                        }`}
                       aria-label="Show workbench pane"
                     >
                       <PanelRightOpen className="size-[16px]" strokeWidth={1.5} />

@@ -11,6 +11,8 @@ import {
   useRegisterDesignCaptureComposer,
 } from "@/components/editor/OpenInEditorContext";
 import { RecentChatsModal } from "@/components/ide/RecentChatsModal";
+import { useRedoInlineUserMessage } from "@/components/chat/useRedoInlineUserMessage";
+import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
 import {
   extractComposerUserMessageHistory,
   projectAgentEventsToChatMessages,
@@ -106,6 +108,8 @@ getConversationLoadStatus,
 answerPermissionForConversation,
 getConversationComposerState,
 promptConversation,
+mergeConversationSnapshot,
+refreshConversations,
 cancelConversation,
 setConversationMode,
 setConversationModel,
@@ -117,7 +121,8 @@ loadOlderConversationHistory,
   pendingConfigByConversationId,
   setPendingConfigForConversation,
   upsertConversation,
-} = useAgentConversations();
+  } = useAgentConversations();
+  const { settings: globalSettings } = useGlobalSettings();
   const {
     activeWorkspaceId,
     activeWindowId,
@@ -179,6 +184,61 @@ loadOlderConversationHistory,
     () => (dockedAsk ? askStepsFromMessage(dockedAsk) : []),
     [dockedAsk]
   );
+
+  const getRedoComposerSeed = useCallback(() => {
+    const state = getConversationComposerState(conversationId);
+    if (!state || !conversation) {
+      throw new Error("Composer state unavailable for redo.");
+    }
+    return {
+      backendId: state.backendId,
+      mode: state.mode,
+      model: state.model,
+    };
+  }, [conversation, conversationId, getConversationComposerState]);
+
+  const exposeForkedConversationForRedo = useCallback(
+    (forkedId: string, title: string) => {
+      openAgentConversation({ conversationId: forkedId, title });
+      updateWorkspaceSession((current) => {
+        const removeIds = new Set([forkedId]);
+        const nextHidden = current.chat.hiddenConversationIds.filter(
+          (id) => !removeIds.has(id)
+        );
+        return nextHidden.length === current.chat.hiddenConversationIds.length
+          ? current
+          : {
+              ...current,
+              chat: {
+                ...current.chat,
+                hiddenConversationIds: nextHidden,
+              },
+            };
+      });
+    },
+    [openAgentConversation, updateWorkspaceSession]
+  );
+
+  const promptRedoSubmit = useCallback(
+    async (targetId: string, text: string, attachments?: ImageAttachment[]) =>
+      promptConversation(targetId, text, attachments),
+    [promptConversation]
+  );
+
+  const redoFlow = useRedoInlineUserMessage({
+    conversation,
+    getRedoComposerSeed,
+    backends,
+    modelVisibility: globalSettings.models.byBackend,
+    composerUserMessageHistory,
+    hasOlderHistory: historyCursor.hasOlder,
+    onRequestOlderHistory: () => loadOlderConversationHistory(conversationId),
+    mergeConversationSnapshot,
+    refreshConversations,
+    upsertConversation,
+    promptConversationForActive: promptRedoSubmit,
+    exposeForkedConversation: exposeForkedConversationForRedo,
+  });
   useEffect(() => {
     if (loadState !== "ready" || !conversation) {
       return;
@@ -572,6 +632,7 @@ const showRecentChatsSection =
             surface="editor"
             contentClassName={EDITOR_CHAT_CONTENT_CLASS}
             conversationId={conversationId}
+            composerDraftId={composerDraftId}
             conversationBusy={
               conversation?.status === "running" ||
               conversation?.status === "awaiting_permission"
@@ -643,6 +704,10 @@ const showRecentChatsSection =
             onResolvePermission={(requestId, optionId) => {
               void answerPermissionForConversation(conversationId, requestId, optionId);
             }}
+            onForkMessage={redoFlow.handleForkMessage}
+            onRedoMessage={redoFlow.handleStartRedoMessage}
+            renderUserMessageEditor={redoFlow.renderRedoMessageEditor}
+            editingUserMessageId={redoFlow.editingUserMessageId}
             bottomDockVisible={!composerHiddenForExpanded}
           />
           {!composerHiddenForExpanded ? (

@@ -5,6 +5,7 @@ import {
   createConversationId,
   deleteConversationEvents,
   readConversationEvents,
+  readConversationEventsBeforeMessage,
   readConversationEventsUpToMessage,
   readConversationRecord,
   readConversationSnapshot,
@@ -598,7 +599,7 @@ export class AgentRuntimeManager {
   async forkConversation(
     workspace: WorkspaceRecord,
     sourceConversationId: string,
-    options?: { upToMessageId?: string }
+    options?: { upToMessageId?: string; beforeMessageId?: string }
   ): Promise<{ conversation: AgentConversationRecord }> {
     const sourceRecord = await readConversationRecord(workspace.id, sourceConversationId);
     if (!sourceRecord) {
@@ -613,13 +614,19 @@ export class AgentRuntimeManager {
       );
     }
 
-    const recentEvents = options?.upToMessageId
-      ? await readConversationEventsUpToMessage(
+    const recentEvents = options?.beforeMessageId
+      ? await readConversationEventsBeforeMessage(
           workspace.id,
           sourceConversationId,
-          options.upToMessageId
+          options.beforeMessageId
         )
-      : await readRecentConversationEvents(workspace.id, sourceConversationId);
+      : options?.upToMessageId
+        ? await readConversationEventsUpToMessage(
+            workspace.id,
+            sourceConversationId,
+            options.upToMessageId
+          )
+        : await readRecentConversationEvents(workspace.id, sourceConversationId);
 
     const transcript = generateTranscriptFromEvents(recentEvents);
 

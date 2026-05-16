@@ -12,7 +12,6 @@ const ALL_BACKEND_IDS: AgentBackendId[] = [
   "codex-adapter",
   "codex-app-server",
   "claude-adapter",
-  "claude-code-sdk",
 ];
 
 /**

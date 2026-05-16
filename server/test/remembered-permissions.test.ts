@@ -5,7 +5,7 @@ import { after, test } from "node:test";
 
 const TEST_DATA_DIR = path.join(
   os.tmpdir(),
-  `opencursor-remembered-permissions-${Date.now()}-${Math.random()
+  `cesium-remembered-permissions-${Date.now()}-${Math.random()
     .toString(36)
     .slice(2, 10)}`
 );

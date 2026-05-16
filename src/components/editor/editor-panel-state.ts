@@ -239,19 +239,67 @@ function normalizePaneStripAndGroups(
   return { groups: nextGroups, strip: nextStrip };
 }
 
+function dedupeEditorTabs(
+  tabs: EditorTab[],
+  seenTabIds: Set<string>,
+  seenConversationIds: Set<string>
+): EditorTab[] {
+  const next: EditorTab[] = [];
+  for (const tab of tabs) {
+    if (seenTabIds.has(tab.id)) {
+      continue;
+    }
+    if (tab.conversationId) {
+      if (seenConversationIds.has(tab.conversationId)) {
+        continue;
+      }
+      seenConversationIds.add(tab.conversationId);
+    }
+    seenTabIds.add(tab.id);
+    next.push(tab);
+  }
+  return next;
+}
+
+function normalizeActiveTabId(
+  activeId: string | null,
+  tabs: EditorTab[]
+): string | null {
+  if (activeId && tabs.some((tab) => tab.id === activeId)) {
+    return activeId;
+  }
+  return tabs[0]?.id ?? null;
+}
+
 export function normalizeEditorPanelState(state: EditorPanelState): EditorPanelState {
-  const left = normalizePaneStripAndGroups(
+  const seenTabIds = new Set<string>();
+  const seenConversationIds = new Set<string>();
+  const leftTabs = dedupeEditorTabs(
     state.leftTabs,
+    seenTabIds,
+    seenConversationIds
+  );
+  const rightTabs = dedupeEditorTabs(
+    state.rightTabs,
+    seenTabIds,
+    seenConversationIds
+  );
+  const left = normalizePaneStripAndGroups(
+    leftTabs,
     state.leftTabGroups,
     state.leftStripItems
   );
   const right = normalizePaneStripAndGroups(
-    state.rightTabs,
+    rightTabs,
     state.rightTabGroups,
     state.rightStripItems
   );
   return {
     ...state,
+    leftTabs,
+    rightTabs,
+    leftActiveId: normalizeActiveTabId(state.leftActiveId, leftTabs),
+    rightActiveId: normalizeActiveTabId(state.rightActiveId, rightTabs),
     leftTabGroups: left.groups,
     leftStripItems: left.strip,
     rightTabGroups: right.groups,
@@ -304,7 +352,7 @@ export function createInitialEditorState(tabs: EditorTab[]): EditorPanelState {
     type: "tab",
     tabId: t.id,
   }));
-  return {
+  return normalizeEditorPanelState({
     split: false,
     splitOrientation: "horizontal",
     splitLayout: null,
@@ -317,7 +365,7 @@ export function createInitialEditorState(tabs: EditorTab[]): EditorPanelState {
     rightTabGroups: {},
     leftStripItems,
     rightStripItems: [],
-  };
+  });
 }
 
 function collapseEmptySplitIfNeeded(state: EditorPanelState): EditorPanelState {

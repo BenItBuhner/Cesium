@@ -28,7 +28,6 @@ import {
   Plus,
   Square,
   X,
-  type LucideIcon,
 } from "lucide-react";
 import { ImageCarousel } from "./ImageCarousel";
 import type { ImageAttachment, ImageAttachmentState } from "@/lib/types";
@@ -44,6 +43,8 @@ import { WORKBENCH_NOTIFICATION_KIND } from "@/components/notifications/workbenc
 import {
   applyTextBufferKey,
   clampSelection,
+  isArrowDownKey,
+  isArrowUpKey,
   replaceSelection,
   type TextSelection,
 } from "@/components/input/text-buffer";
@@ -57,6 +58,7 @@ import {
 } from "./ComposerAutocomplete";
 import { useClickOutside } from "@/hooks/useClickOutside";
 import { useHardwareKeyboard } from "@/hooks/useHardwareKeyboard";
+import { shouldSubmitComposerOnEnter } from "@/lib/composer-submit-key";
 import {
   getAllAtSuggestions,
   filterAtSuggestions,
@@ -122,17 +124,51 @@ const NEW_DESIGN_MODE_COLORS: Record<KnownEditorMode, { text: string; bg: string
   ask: { text: "var(--ask-accent)", bg: "var(--ask-accent-bg)" },
 };
 
-function iconForNewDesignMode(tone: KnownEditorMode): LucideIcon {
+function renderNewDesignModeIcon(tone: KnownEditorMode, color: string): ReactElement {
+  const className = "size-[13px] shrink-0";
+  const strokeWidth = 1.5;
   switch (tone) {
     case "plan":
-      return ListChecks;
+      return <ListChecks className={className} strokeWidth={strokeWidth} style={{ color }} />;
     case "debug":
-      return Bug;
+      return <Bug className={className} strokeWidth={strokeWidth} style={{ color }} />;
     case "ask":
-      return MessageSquare;
-    default:
-      return InfinityIcon;
+      return <MessageSquare className={className} strokeWidth={strokeWidth} style={{ color }} />;
+    case "agent":
+      return <InfinityIcon className={className} strokeWidth={strokeWidth} style={{ color }} />;
+    default: {
+      const exhaustive: never = tone;
+      return exhaustive;
+    }
   }
+}
+
+function isNewDesignModeChipVisible(mode: EditorMode): boolean {
+  return getModeTone(mode) !== "agent";
+}
+
+function resolveDefaultModeForOptions(options?: AgentModeOption[]): EditorMode {
+  const candidates = options?.length ? options : DEFAULT_MODE_OPTIONS;
+  return (
+    candidates.find((option) => getModeTone(option.id) === "agent")?.id ??
+    candidates[0]?.id ??
+    "agent"
+  );
+}
+
+function isPlainBackspaceKey(
+  event: Pick<
+    KeyboardEvent,
+    "key" | "shiftKey" | "ctrlKey" | "metaKey" | "altKey"
+  >
+): boolean {
+  return (
+    event.key === "Backspace" &&
+    !event.shiftKey &&
+    !event.ctrlKey &&
+    !event.metaKey &&
+    !event.altKey
+  );
 }
 
 interface NewDesignModeChipProps {
@@ -155,9 +191,10 @@ function NewDesignModeChip({
   disabled,
 }: NewDesignModeChipProps) {
   const tone = getModeTone(mode);
-  if (tone === "agent") {
+  if (!isNewDesignModeChipVisible(mode)) {
     return null;
   }
+  const defaultMode = resolveDefaultModeForOptions(options);
   const resolvedOptions = ensureCurrentModeOption(
     mode,
     options.length > 0 ? options : DEFAULT_MODE_OPTIONS
@@ -166,19 +203,18 @@ function NewDesignModeChip({
     resolvedOptions.find((o) => o.id === mode) ??
     resolvedOptions[0];
   const label = current?.label ?? mode;
-  const Icon = iconForNewDesignMode(tone);
   const colors = NEW_DESIGN_MODE_COLORS[tone];
   return (
     <span
-      className="inline-flex shrink-0 items-center gap-[4px] rounded-[var(--radius-pill)] py-[2px] pl-[8px] pr-[3px] font-sans text-[12px] font-normal"
+      className="inline-flex h-[22px] shrink-0 items-center gap-[3px] rounded-[var(--radius-pill)] pl-[7px] pr-[4px] font-sans text-[13px] font-normal leading-none"
       style={{ background: colors.bg }}
     >
-      <Icon className="size-[12px] shrink-0" strokeWidth={1.5} style={{ color: colors.text }} />
+      {renderNewDesignModeIcon(tone, colors.text)}
       <span style={{ color: colors.text }}>{label}</span>
       <button
         type="button"
         disabled={disabled}
-        onClick={() => onModeChange("agent")}
+        onClick={() => onModeChange(defaultMode)}
         className="ml-[2px] flex size-[14px] items-center justify-center rounded-full transition-[background-color,opacity] hover:bg-black/15 disabled:cursor-not-allowed disabled:opacity-50"
         aria-label={`Remove ${label} mode`}
         title={`Remove ${label} mode`}
@@ -802,6 +838,10 @@ export function ChatComposer({
       end: 0,
     }
   );
+  const modeRef = useRef(mode);
+  const modeOptionsRef = useRef<AgentModeOption[] | undefined>(modeOptions);
+  const configLockedRef = useRef(configLocked);
+  const canBackspaceClearModeChipRef = useRef(false);
   const filteredAtRef = useRef<AtSuggestion[]>([]);
   const filteredSlashRef = useRef<SlashSuggestion[]>([]);
   const selectedIndexRef = useRef(selectedIndex);
@@ -813,6 +853,9 @@ export function ChatComposer({
   const chunksRef = useRef<BlobPart[]>([]);
   const reconcilingRef = useRef(false);
   menuRef.current = menu;
+  modeRef.current = mode;
+  modeOptionsRef.current = modeOptions;
+  configLockedRef.current = configLocked;
 
   const value = controlledValue ?? uncontrolledValue;
   const selection = controlledSelection ?? uncontrolledSelection;
@@ -1632,11 +1675,24 @@ export function ChatComposer({
       return;
     }
     submittingPromptKeyRef.current = promptKey;
+    // Empty the contenteditable synchronously so selection/input handlers cannot
+    // push stale text into controlled draft state before the next reconcile.
+    if (!hardwareInputEnabled) {
+      const el = editorRef.current;
+      if (el) {
+        reconcilingRef.current = true;
+        reconcileComposerEditorDom(el, "", undefined);
+        queueMicrotask(() => {
+          reconcilingRef.current = false;
+        });
+      }
+    }
     valueRef.current = "";
     setComposerValue("");
     setComposerSelection({ start: 0, end: 0 });
     setMenu(null);
     setAttachedImages([]);
+    onDraftAttachmentsChange?.([]);
     if (onDraftCapturesChange) {
       onDraftCapturesChange(undefined);
     }
@@ -1655,6 +1711,8 @@ export function ChatComposer({
     applyComposerDirectives,
     attachedImages,
     expandDesignCaptureTokens,
+    hardwareInputEnabled,
+    onDraftAttachmentsChange,
     onDraftCapturesChange,
     onSubmit,
     setComposerSelection,
@@ -1899,7 +1957,7 @@ export function ChatComposer({
       setUserHistoryIndex(-1);
       setUserHistoryDraftSnapshot(null);
     }
-  }, [userHistoryIndex, value]);
+  }, [userHistoryIndex, userMessageHistory, value]);
 
   /**
    * True when Up should pull in a past user message instead of moving the
@@ -1973,6 +2031,52 @@ export function ChatComposer({
     return "consumed";
   }, [setComposerContents]);
 
+  const refreshNativeComposerRefs = useCallback(() => {
+    if (hardwareInputEnabled) {
+      return;
+    }
+    const el = editorRef.current;
+    if (!el) {
+      return;
+    }
+    valueRef.current = getComposerPlainText(el);
+    const plainRange = getPlainTextRangeOffsets(el);
+    if (plainRange) {
+      selectionRef.current = plainRange;
+      return;
+    }
+    const caret = getCaretOffset(el);
+    selectionRef.current = { start: caret, end: caret };
+  }, [hardwareInputEnabled]);
+
+  const tryClearModeChipWithBackspace = useCallback(
+    (
+      event: Pick<
+        KeyboardEvent,
+        "key" | "shiftKey" | "ctrlKey" | "metaKey" | "altKey" | "preventDefault"
+      >
+    ): boolean => {
+      const currentMode = modeRef.current;
+      if (
+        !isPlainBackspaceKey(event) ||
+        configLockedRef.current ||
+        !canBackspaceClearModeChipRef.current ||
+        !isNewDesignModeChipVisible(currentMode) ||
+        valueRef.current.length !== 0
+      ) {
+        return false;
+      }
+      const defaultMode = resolveDefaultModeForOptions(modeOptionsRef.current);
+      if (currentMode === defaultMode) {
+        return false;
+      }
+      event.preventDefault();
+      onModeChange(defaultMode);
+      return true;
+    },
+    [onModeChange]
+  );
+
   const handleComposerKey = useCallback(
     (event: globalThis.KeyboardEvent) => {
       const currentMenu = menuRef.current;
@@ -1987,13 +2091,13 @@ export function ChatComposer({
         setModelDropdownOpen(false);
         return true;
       }
-      if (currentMenu && event.key === "ArrowDown") {
+      if (currentMenu && isArrowDownKey(event)) {
         event.preventDefault();
         if (items.length === 0) return true;
         setSelectedIndex((i) => Math.min(i + 1, items.length - 1));
         return true;
       }
-      if (currentMenu && event.key === "ArrowUp") {
+      if (currentMenu && isArrowUpKey(event)) {
         event.preventDefault();
         if (items.length === 0) return true;
         setSelectedIndex((i) => Math.max(0, i - 1));
@@ -2014,21 +2118,18 @@ export function ChatComposer({
         }
         return true;
       }
-		if (!currentMenu && event.key === "Enter") {
-			if (hasHardwareKeyboard) {
-				const mod = event.ctrlKey || event.metaKey;
-				if (submitCtrlEnter && mod) {
-					event.preventDefault();
-					void submitComposer();
-					return true;
-				}
-				if (!submitCtrlEnter && !event.shiftKey) {
-					event.preventDefault();
-					void submitComposer();
-					return true;
-				}
-			}
-		}
+      if (
+        !currentMenu &&
+        event.key === "Enter" &&
+        shouldSubmitComposerOnEnter(event, {
+          hasHardwareKeyboard,
+          submitCtrlEnter,
+        })
+      ) {
+        event.preventDefault();
+        void submitComposer();
+        return true;
+      }
 
       if (
         tryCycleBackendWithCtrlShiftTab(
@@ -2045,13 +2146,17 @@ export function ChatComposer({
         return true;
       }
 
+      if (!currentMenu && tryClearModeChipWithBackspace(event)) {
+        return true;
+      }
+
       if (
         !currentMenu &&
         !event.shiftKey &&
         !event.metaKey &&
         !event.ctrlKey &&
         !event.altKey &&
-        event.key === "ArrowUp"
+        isArrowUpKey(event)
       ) {
         const outcome = tryRecallOlderUserMessage();
         if (outcome !== "pass") {
@@ -2066,7 +2171,7 @@ export function ChatComposer({
         !event.metaKey &&
         !event.ctrlKey &&
         !event.altKey &&
-        event.key === "ArrowDown"
+        isArrowDownKey(event)
       ) {
         const outcome = tryRecallNewerUserMessage();
         if (outcome === "consumed") {
@@ -2100,6 +2205,7 @@ export function ChatComposer({
     setComposerValue,
     submitComposer,
     submitCtrlEnter,
+    tryClearModeChipWithBackspace,
     tryCycleBackendWithCtrlShiftTab,
     tryCycleModeWithShiftTab,
     tryRecallNewerUserMessage,
@@ -2109,17 +2215,26 @@ export function ChatComposer({
 
 const handleNativeComposerKeyDown = useCallback(
     (event: ReactKeyboardEvent<HTMLDivElement>) => {
-      if (!menu) {
+      const native = event.nativeEvent;
+      const currentMenu = menuRef.current;
+      if (!currentMenu) {
         if (
           tryCycleBackendWithCtrlShiftTab(
-            event.nativeEvent,
+            native,
             modelDropdownOpen
           )
         ) {
           return;
         }
-        if (tryCycleModeWithShiftTab(event.nativeEvent, modelDropdownOpen)) {
+        if (tryCycleModeWithShiftTab(native, modelDropdownOpen)) {
           return;
+        }
+
+        if (isPlainBackspaceKey(native)) {
+          refreshNativeComposerRefs();
+          if (tryClearModeChipWithBackspace(native)) {
+            return;
+          }
         }
 
         if (
@@ -2127,7 +2242,7 @@ const handleNativeComposerKeyDown = useCallback(
           !event.metaKey &&
           !event.ctrlKey &&
           !event.altKey &&
-          (event.key === "ArrowUp" || event.key === "ArrowDown")
+          (isArrowUpKey(native) || isArrowDownKey(native))
         ) {
           // Sync the selection refs with the live DOM caret before running the
           // recall predicate; React state can lag one frame behind
@@ -2145,7 +2260,7 @@ const handleNativeComposerKeyDown = useCallback(
             }
             valueRef.current = getComposerPlainText(el);
           }
-          if (event.key === "ArrowUp") {
+          if (isArrowUpKey(native)) {
             const outcome = tryRecallOlderUserMessage();
             if (outcome !== "pass") {
               event.preventDefault();
@@ -2159,23 +2274,20 @@ const handleNativeComposerKeyDown = useCallback(
             }
           }
         }
-    if (event.key === "Enter") {
-      if (hasHardwareKeyboard) {
-        const mod = event.ctrlKey || event.metaKey;
-        if (submitCtrlEnter) {
-          if (mod) {
-            event.preventDefault();
-            void submitComposer();
-          }
-        } else if (!event.shiftKey) {
+        if (
+          event.key === "Enter" &&
+          shouldSubmitComposerOnEnter(event.nativeEvent, {
+            hasHardwareKeyboard,
+            submitCtrlEnter,
+          })
+        ) {
           event.preventDefault();
           void submitComposer();
         }
-      }
-    }
         return;
       }
-      const items = menu.kind === "at" ? filteredAt : filteredSlash;
+      const items =
+        currentMenu.kind === "at" ? filteredAt : filteredSlash;
 
       if (event.key === "Escape") {
         event.preventDefault();
@@ -2183,13 +2295,13 @@ const handleNativeComposerKeyDown = useCallback(
         setModelDropdownOpen(false);
         return;
       }
-      if (event.key === "ArrowDown") {
+      if (isArrowDownKey(native)) {
         event.preventDefault();
         if (items.length === 0) return;
         setSelectedIndex((i) => Math.min(i + 1, items.length - 1));
         return;
       }
-      if (event.key === "ArrowUp") {
+      if (isArrowUpKey(native)) {
         event.preventDefault();
         if (items.length === 0) return;
         setSelectedIndex((i) => Math.max(0, i - 1));
@@ -2198,7 +2310,7 @@ const handleNativeComposerKeyDown = useCallback(
       if (event.key === "Enter" && !event.shiftKey && items.length > 0) {
         event.preventDefault();
         const idx = Math.min(selectedIndex, items.length - 1);
-        if (menu.kind === "at") {
+        if (currentMenu.kind === "at") {
           pickAt(items[idx] as AtSuggestion);
         } else {
           pickSlash(items[idx] as SlashSuggestion);
@@ -2210,13 +2322,14 @@ const handleNativeComposerKeyDown = useCallback(
     filteredAt,
     filteredSlash,
     hasHardwareKeyboard,
-    menu,
       modelDropdownOpen,
       pickAt,
       pickSlash,
       selectedIndex,
       submitComposer,
       submitCtrlEnter,
+      refreshNativeComposerRefs,
+      tryClearModeChipWithBackspace,
       tryCycleBackendWithCtrlShiftTab,
       tryCycleModeWithShiftTab,
       tryRecallNewerUserMessage,
@@ -2277,6 +2390,8 @@ const handleNativeComposerKeyDown = useCallback(
     handleComposerKey,
     hardwareInputEnabled,
     registerSurface,
+    setComposerSelection,
+    setComposerValue,
     surfaceId,
     unregisterSurface,
   ]);
@@ -2307,9 +2422,11 @@ const handleNativeComposerKeyDown = useCallback(
     () => renderComposerText(value, selection, isActive, caretRef, draftCaptures),
     [draftCaptures, isActive, selection, value]
   );
-  const canSubmit = value.trim().length > 0 || attachedImages.length > 0;
+  const composerTrimmedLength = value.trim().length;
+  const canSubmit = composerTrimmedLength > 0 || attachedImages.length > 0;
   /** While the turn is running, Stop occupies the primary (send) slot until there is something to queue. */
   const primaryControlIsStop = Boolean(busy && onCancel && !canSubmit);
+  const primaryControlIsVoice = !primaryControlIsStop && !canSubmit;
 
   const { themeConfig } = useTheme();
   const isNewDesign = themeConfig.uiDesignMode === "new";
@@ -2327,8 +2444,6 @@ const handleNativeComposerKeyDown = useCallback(
    * until the user clears all content (`value === ""`).
    */
   const [newDesignMultilineLatch, setNewDesignMultilineLatch] = useState(false);
-
-  const composerTrimmedLength = value.trim().length;
 
   useEffect(() => {
     if (composerTrimmedLength === 0) {
@@ -2358,6 +2473,13 @@ const handleNativeComposerKeyDown = useCallback(
     }
     return hookMeasuresMultiline;
   })();
+  canBackspaceClearModeChipRef.current =
+    isNewDesign &&
+    variant === "docked" &&
+    !isExpanded &&
+    !isMultiLine &&
+    attachedImages.length === 0 &&
+    !(showAgentShellGrowControls && agentShellDockTall);
 
   /** `trim()` alone can't hide the overlay after Shift+Enter (`\\n`-only trims to ""). Treating lone `\\n` or phantom `<br>` as "has newline" broke empty inputs (Chrome serializes sentinel breaks as "\\n"). Hiding instead when wrapped past one line aligns with visible layout + soft breaks. */
   const showFloatingPlaceholder =
@@ -2375,6 +2497,75 @@ const handleNativeComposerKeyDown = useCallback(
 
   const { fade: composerEditorFade, onScroll: onComposerEditorScroll } =
     useComposerEditorScrollFade(editorRef, composerScrollFadeKey);
+
+  const voiceButtonLabel =
+    recordingState === "recording"
+      ? "Stop voice input"
+      : recordingState === "transcribing"
+        ? "Transcribing voice input"
+        : "Voice input";
+
+  const handleVoiceButtonClick = () => {
+    if (recordingState === "recording") {
+      stopVoiceInput();
+      return;
+    }
+    void startVoiceInput();
+  };
+
+  const renderVoiceButton = (variant: "primary" | "secondary"): ReactElement => {
+    const isPrimary = variant === "primary";
+    const buttonClassName = isPrimary
+      ? `relative flex h-[20px] w-[20px] items-center justify-center rounded-full transition-opacity hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-50 ${sendButtonBgClass[getModeTone(mode)]}`
+      : `relative flex h-[20px] min-w-[20px] items-center justify-center rounded-full transition-colors ${
+          recordingState === "recording" || recordingState === "transcribing"
+            ? "bg-[var(--accent-bg)] text-[var(--text-primary)]"
+            : "text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+        } disabled:cursor-not-allowed disabled:opacity-50`;
+    const primaryIconClassName = isPrimary ? "text-[var(--bg-main)]" : "";
+
+    return (
+      <button
+        type="button"
+        onClick={handleVoiceButtonClick}
+        disabled={recordingState === "transcribing"}
+        className={buttonClassName}
+        aria-label={voiceButtonLabel}
+        title={voiceButtonLabel}
+      >
+        {recordingState === "transcribing" ? (
+          <LoaderCircle
+            className={`size-[12px] shrink-0 animate-spin ${
+              isPrimary ? "text-[var(--bg-main)]" : "text-[var(--text-primary)]"
+            }`}
+            strokeWidth={2.5}
+            aria-hidden
+          />
+        ) : recordingState === "recording" ? (
+          <span className={`flex h-[14px] items-center justify-center gap-[2.5px] ${primaryIconClassName}`}>
+            {[0.35, 0.55, 0.4].map((scale, index) => (
+              <span
+                key={index}
+                className="w-[2.5px] shrink-0 rounded-full bg-current"
+                style={{
+                  height: `${4 + Math.max(0.15, inputLevel * scale) * 10}px`,
+                  opacity: 0.55 + inputLevel * 0.45,
+                  transition: "height 80ms ease-out, opacity 80ms ease-out",
+                  animation:
+                    inputLevel > 0.08
+                      ? "wave-bounce 280ms ease-in-out infinite alternate"
+                      : "none",
+                  animationDelay: `${index * 55}ms`,
+                }}
+              />
+            ))}
+          </span>
+        ) : (
+          <Mic className={`size-[14px] shrink-0 ${primaryIconClassName}`} strokeWidth={1.5} aria-hidden />
+        )}
+      </button>
+    );
+  };
 
   if (isNewDesign && variant === "docked" && !isExpanded) {
     const plusButton = (
@@ -2399,6 +2590,13 @@ const handleNativeComposerKeyDown = useCallback(
       />
     );
 
+    const leadingModeControls = (
+      <div className="flex shrink-0 items-center gap-[6px]">
+        {plusButton}
+        {modeChip}
+      </div>
+    );
+
     const modelPill = (
       <ModelDropdown
         model={model}
@@ -2414,59 +2612,8 @@ const handleNativeComposerKeyDown = useCallback(
       />
     );
 
-    const voiceButton = (
-      <button
-        type="button"
-        onClick={() => {
-          if (recordingState === "recording") {
-            stopVoiceInput();
-            return;
-          }
-          void startVoiceInput();
-        }}
-        disabled={recordingState === "transcribing"}
-        className={`relative flex h-[20px] min-w-[20px] items-center justify-center rounded-full transition-colors ${
-          recordingState === "recording" || recordingState === "transcribing"
-            ? "bg-[var(--accent-bg)] text-[var(--text-primary)]"
-            : "text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
-        } disabled:cursor-not-allowed disabled:opacity-50`}
-        aria-label={
-          recordingState === "recording"
-            ? "Stop voice input"
-            : recordingState === "transcribing"
-              ? "Transcribing voice input"
-              : "Voice input"
-        }
-      >
-        {recordingState === "transcribing" ? (
-          <LoaderCircle
-            className="size-[12px] shrink-0 animate-spin text-[var(--text-primary)]"
-            strokeWidth={2.5}
-            aria-hidden
-          />
-        ) : recordingState === "recording" ? (
-          <span className="flex h-[14px] items-center justify-center gap-[2.5px]">
-            {[0.35, 0.55, 0.4].map((scale, index) => (
-              <span
-                key={index}
-                className="w-[2.5px] shrink-0 rounded-full bg-current"
-                style={{
-                  height: `${4 + Math.max(0.15, inputLevel * scale) * 10}px`,
-                  opacity: 0.55 + inputLevel * 0.45,
-                  transition: "height 80ms ease-out, opacity 80ms ease-out",
-                  animation:
-                    inputLevel > 0.08
-                      ? "wave-bounce 280ms ease-in-out infinite alternate"
-                      : "none",
-                  animationDelay: `${index * 55}ms`,
-                }}
-              />
-            ))}
-          </span>
-        ) : (
-          <Mic className="size-[14px] shrink-0" strokeWidth={1.5} aria-hidden />
-        )}
-      </button>
+    const voiceButton = renderVoiceButton(
+      primaryControlIsVoice ? "primary" : "secondary"
     );
 
     const sendButton = primaryControlIsStop ? (
@@ -2489,6 +2636,7 @@ const handleNativeComposerKeyDown = useCallback(
         <ArrowUp className="size-3 text-[var(--bg-main)]" strokeWidth={2.5} />
       </button>
     );
+    const primaryActionButton = primaryControlIsVoice ? voiceButton : sendButton;
 
     /**
      * Single-line pill collapses to a fully circular shell so the composer
@@ -2524,8 +2672,7 @@ const handleNativeComposerKeyDown = useCallback(
               : "flex min-w-0 items-center gap-[10px]"
           }
         >
-          {!isMultiLine ? plusButton : null}
-          {!isMultiLine ? modeChip : null}
+          {!isMultiLine ? leadingModeControls : null}
           <div
             key="editor-wrapper"
             className="relative min-w-0 flex-1"
@@ -2652,8 +2799,8 @@ const handleNativeComposerKeyDown = useCallback(
             </div>
           </div>
           {!isMultiLine ? modelPill : null}
-          {!isMultiLine ? voiceButton : null}
-          {!isMultiLine ? sendButton : null}
+          {!isMultiLine && !primaryControlIsVoice ? voiceButton : null}
+          {!isMultiLine ? primaryActionButton : null}
         </div>
 
         {menu?.kind === "at" && (
@@ -2684,13 +2831,12 @@ const handleNativeComposerKeyDown = useCallback(
         {isMultiLine ? (
           <div className="flex items-center justify-between gap-[8px]">
             <div className="flex min-w-0 items-center gap-[10px]">
-              {plusButton}
-              {modeChip}
+              {leadingModeControls}
               <div className="min-w-0">{modelPill}</div>
             </div>
             <div className="flex shrink-0 items-center gap-[9px]">
-              {voiceButton}
-              {sendButton}
+              {!primaryControlIsVoice ? voiceButton : null}
+              {primaryActionButton}
             </div>
           </div>
         ) : null}
@@ -2706,6 +2852,31 @@ const handleNativeComposerKeyDown = useCallback(
       </div>
     );
   }
+
+  const voiceButton = renderVoiceButton(
+    primaryControlIsVoice ? "primary" : "secondary"
+  );
+  const sendButton = primaryControlIsStop ? (
+    <button
+      type="button"
+      onClick={() => void onCancel?.()}
+      className={`flex h-[20px] w-[20px] items-center justify-center rounded-full transition-opacity hover:opacity-80 ${sendButtonBgClass[getModeTone(mode)]}`}
+      aria-label="Stop"
+    >
+      <Square className="size-[9px] text-[var(--bg-main)]" fill="currentColor" strokeWidth={2.2} />
+    </button>
+  ) : (
+    <button
+      type="button"
+      onClick={() => void submitComposer()}
+      disabled={!canSubmit}
+      className={`flex h-[20px] w-[20px] items-center justify-center rounded-full transition-opacity hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-50 ${sendButtonBgClass[getModeTone(mode)]}`}
+      aria-label={busy ? "Send or queue message" : "Send"}
+    >
+      <ArrowUp className="size-3 text-[var(--bg-main)]" strokeWidth={2.5} />
+    </button>
+  );
+  const primaryActionButton = primaryControlIsVoice ? voiceButton : sendButton;
 
   return (
     <div
@@ -2997,78 +3168,8 @@ const handleNativeComposerKeyDown = useCallback(
             onChange={handleFileInputChange}
             className="hidden"
           />
-          <button
-            type="button"
-            onClick={() => {
-              if (recordingState === "recording") {
-                stopVoiceInput();
-                return;
-              }
-              void startVoiceInput();
-            }}
-            disabled={recordingState === "transcribing"}
-            className={`relative flex h-[20px] min-w-[20px] items-center justify-center rounded-full transition-colors ${
-              recordingState === "recording" || recordingState === "transcribing"
-                ? "bg-[var(--accent-bg)] text-[var(--text-primary)]"
-                : "text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
-            } disabled:cursor-not-allowed disabled:opacity-50`}
-            aria-label={
-              recordingState === "recording"
-                ? "Stop voice input"
-                : recordingState === "transcribing"
-                  ? "Transcribing voice input"
-                  : "Voice input"
-            }
-          >
-            {recordingState === "transcribing" ? (
-              <LoaderCircle
-                className="size-[12px] shrink-0 animate-spin text-[var(--text-primary)]"
-                strokeWidth={2.5}
-                aria-hidden
-              />
-            ) : recordingState === "recording" ? (
-              <span className="flex h-[14px] items-center justify-center gap-[2.5px]">
-                {[0.35, 0.55, 0.4].map((scale, index) => (
-                  <span
-                    key={index}
-                    className="w-[2.5px] shrink-0 rounded-full bg-current"
-                    style={{
-                      height: `${4 + Math.max(0.15, inputLevel * scale) * 10}px`,
-                      opacity: 0.55 + inputLevel * 0.45,
-                      transition: "height 80ms ease-out, opacity 80ms ease-out",
-                      animation:
-                        inputLevel > 0.08
-                          ? "wave-bounce 280ms ease-in-out infinite alternate"
-                          : "none",
-                      animationDelay: `${index * 55}ms`,
-                    }}
-                  />
-                ))}
-              </span>
-            ) : (
-              <Mic className="size-[14px] shrink-0" strokeWidth={1.5} aria-hidden />
-            )}
-          </button>
-          {primaryControlIsStop ? (
-            <button
-              type="button"
-              onClick={() => void onCancel?.()}
-              className={`flex h-[20px] w-[20px] items-center justify-center rounded-full transition-opacity hover:opacity-80 ${sendButtonBgClass[getModeTone(mode)]}`}
-              aria-label="Stop"
-            >
-              <Square className="size-[9px] text-[var(--bg-main)]" fill="currentColor" strokeWidth={2.2} />
-            </button>
-          ) : (
-            <button
-              type="button"
-              onClick={() => void submitComposer()}
-              disabled={!canSubmit}
-              className={`flex h-[20px] w-[20px] items-center justify-center rounded-full transition-opacity hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-50 ${sendButtonBgClass[getModeTone(mode)]}`}
-              aria-label={busy ? "Send or queue message" : "Send"}
-            >
-              <ArrowUp className="size-3 text-[var(--bg-main)]" strokeWidth={2.5} />
-            </button>
-          )}
+          {!primaryControlIsVoice ? voiceButton : null}
+          {primaryActionButton}
         </div>
       </div>
     </div>

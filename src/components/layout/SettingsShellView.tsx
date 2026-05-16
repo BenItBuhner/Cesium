@@ -16,6 +16,9 @@ export function SettingsShellView() {
       toggleChat: () => {},
       revealExplorer: () => {},
       primarySidebarVisible: false,
+      editorLeadingWindowControlsVisible: false,
+      editorTrailingWindowControlsVisible: false,
+      chatTrailingWindowControlsVisible: false,
     }),
     []
   );

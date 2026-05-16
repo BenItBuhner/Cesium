@@ -87,7 +87,7 @@ async function spawnChromium(pw: typeof import("playwright")): Promise<ChromiumP
   if (!executablePath) {
     throw new Error("Playwright Chromium is not installed. Run: cd server && npx playwright install chromium");
   }
-  const userDataDir = await mkdtemp(path.join(tmpdir(), "opencursor-cdp-"));
+  const userDataDir = await mkdtemp(path.join(tmpdir(), "cesium-cdp-"));
 
   const child = spawn(
     executablePath,

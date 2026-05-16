@@ -278,7 +278,6 @@ async function* streamExport(driver: StorageDriver): AsyncGenerator<ExportLine> 
     "codex-adapter",
     "codex-app-server",
     "claude-adapter",
-    "claude-code-sdk",
   ] as const) {
     const entry = await driver.readProviderCache(backendId);
     if (entry) {
@@ -316,7 +315,7 @@ storageRoutes.get("/api/storage/export", async (c) => {
     },
   });
 
-  const filename = `opencursor-storage-${kind}-${Date.now()}.ndjson`;
+  const filename = `cesium-storage-${kind}-${Date.now()}.ndjson`;
   return new Response(stream, {
     status: 200,
     headers: {
@@ -338,8 +337,7 @@ function isAgentBackendId(value: string): boolean {
     value === "gemini-acp" ||
     value === "codex-adapter" ||
     value === "codex-app-server" ||
-    value === "claude-adapter" ||
-    value === "claude-code-sdk"
+    value === "claude-adapter"
   );
 }
 

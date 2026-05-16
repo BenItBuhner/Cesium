@@ -34,15 +34,7 @@ const FILE_MENU: MenuBlock[] = [
   { cmd: "workbench.action.exit", label: "Exit" },
 ];
 
-const EDIT_MENU: MenuBlock[] = [
-  { cmd: "editor.action.undo", label: "Undo" },
-  { cmd: "editor.action.redo", label: "Redo" },
-  { sep: true },
-  { cmd: "editor.action.selectAll", label: "Select All" },
-];
-
 const VIEW_MENU: MenuBlock[] = [
-  { cmd: "workbench.action.openChanges", label: "Open Changes" },
   { cmd: "workbench.action.toggleAgentPanel", label: "Open Browser" },
   { cmd: "workbench.action.gotoFile", label: "Open File" },
   { cmd: "workbench.action.togglePanel", label: "Open Terminal" },
@@ -144,39 +136,6 @@ function FileSubmenu({
       >
         <SubmenuItems
           blocks={FILE_MENU}
-          onPick={onPick}
-          bindings={bindings}
-          platform={platform}
-        />
-      </div>
-    </div>
-  );
-}
-
-function EditSubmenu({
-  onPick,
-  bindings,
-  platform,
-}: {
-  onPick: (cmd: string) => void;
-  bindings: Record<string, string[]>;
-  platform: ShortcutPlatform;
-}) {
-  return (
-    <div className="group/edit relative w-full">
-      <div className={rowTrigger} role="presentation">
-        <span>Edit</span>
-        <ChevronRight
-          className="size-[14px] shrink-0 text-[var(--text-secondary)]"
-          strokeWidth={1.5}
-          aria-hidden
-        />
-      </div>
-      <div
-        className={`${subWrapBase} group-hover/edit:visible group-hover/edit:block`}
-      >
-        <SubmenuItems
-          blocks={EDIT_MENU}
           onPick={onPick}
           bindings={bindings}
           platform={platform}
@@ -333,7 +292,6 @@ export function SidebarAppMenu() {
         data-ide-sidebar-app-menu
       >
         <FileSubmenu onPick={onPick} bindings={bindings} platform={platform} />
-        <EditSubmenu onPick={onPick} bindings={bindings} platform={platform} />
         <ViewSubmenu onPick={onPick} bindings={bindings} platform={platform} />
         <WindowSubmenu onPick={onPick} bindings={bindings} platform={platform} />
       </div>

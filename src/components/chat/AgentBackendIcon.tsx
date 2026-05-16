@@ -3,6 +3,7 @@
 import { Bot, Sparkles, type LucideProps } from "lucide-react";
 import type { AgentBackendId } from "@/lib/agent-types";
 import { AGENT_BACKEND_ICON_FILES } from "@/lib/agent-backend-icons";
+import { publicAssetUrl } from "@/lib/public-asset-url";
 
 function LucideBackendFallback({
   backendId,
@@ -69,8 +70,8 @@ export function AgentBackendIcon({
     );
   }
 
-  const lightSrc = `/agent-backend-icons/${encodeURIComponent(files.light)}`;
-  const darkSrc = `/agent-backend-icons/${encodeURIComponent(files.dark)}`;
+  const lightSrc = publicAssetUrl(`/agent-backend-icons/${encodeURIComponent(files.light)}`);
+  const darkSrc = publicAssetUrl(`/agent-backend-icons/${encodeURIComponent(files.dark)}`);
 
   if (tone === "text") {
     // Paint the SVG as a mask filled with the parent's `currentColor` so the

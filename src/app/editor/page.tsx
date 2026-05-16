@@ -1,5 +1,8 @@
 import { redirect } from "next/navigation";
-import { WORKBENCH_VIEW_SEARCH_PARAM } from "@/lib/workbench-view";
+import {
+  WORKBENCH_VIEW_SEARCH_PARAM,
+  WORKSPACE_ROUTE,
+} from "@/lib/workbench-view";
 
 type SearchParamsInput = Record<string, string | string[] | undefined>;
 
@@ -21,12 +24,12 @@ function buildEditorRedirectQuery(sp: SearchParamsInput): string {
   return qs.toString();
 }
 
-/** Legacy URL; classic IDE is `/?view=editor` on the same workbench route. */
+/** Legacy URL; classic IDE is `/workspace?view=editor` on the same workbench route. */
 export default async function LegacyEditorPage({
   searchParams,
 }: {
   searchParams: Promise<SearchParamsInput>;
 }) {
   const sp = await searchParams;
-  redirect(`/?${buildEditorRedirectQuery(sp)}`);
+  redirect(`${WORKSPACE_ROUTE}?${buildEditorRedirectQuery(sp)}`);
 }

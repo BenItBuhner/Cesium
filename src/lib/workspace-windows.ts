@@ -1,4 +1,7 @@
-import { WORKBENCH_VIEW_SEARCH_PARAM } from "@/lib/workbench-view";
+import {
+  WORKBENCH_VIEW_SEARCH_PARAM,
+  WORKSPACE_ROUTE,
+} from "@/lib/workbench-view";
 import { currentModel } from "@/lib/mock-data";
 import {
   createDefaultWorkspaceSession,
@@ -9,14 +12,37 @@ import {
 export const FRESH_WORKSPACE_WINDOW_HIDDEN_CONVERSATIONS_SENTINEL =
   "__workspace_window_fresh__";
 
-/** Workbench lives at `/`; editor mode uses `?view=editor`. */
-export type WorkspaceScopedRoute = "/";
+/** Next web workbench lives at `/workspace`; desktop file renderer keeps its current file path. */
+export type WorkspaceScopedRoute = string;
+
+function isDesktopFileRenderer(): boolean {
+  return (
+    typeof window !== "undefined" &&
+    window.location.protocol === "file:" &&
+    Boolean(
+      (
+        window as Window & {
+          cesiumDesktop?: { isElectron?: boolean };
+        }
+      ).cesiumDesktop?.isElectron
+    )
+  );
+}
+
+function defaultWorkspaceRoute(): WorkspaceScopedRoute {
+  if (isDesktopFileRenderer()) {
+    return window.location.pathname || "/";
+  }
+  return WORKSPACE_ROUTE;
+}
 
 export function normalizeWorkspaceScopedRoute(
   pathname: string | null | undefined
 ): WorkspaceScopedRoute {
-  void pathname;
-  return "/";
+  if (isDesktopFileRenderer()) {
+    return pathname || window.location.pathname || "/";
+  }
+  return WORKSPACE_ROUTE;
 }
 
 export function buildWorkspaceScopedUrl(
@@ -26,7 +52,11 @@ export function buildWorkspaceScopedUrl(
   windowId: string,
   extraParams?: Record<string, string | null | undefined>
 ): string {
-  const url = new URL(route, origin);
+  const base =
+    origin === "null" && typeof window !== "undefined"
+      ? window.location.href
+      : origin;
+  const url = new URL(route, base);
   url.searchParams.set("workspaceId", workspaceId);
   url.searchParams.set("windowId", windowId);
   if (extraParams) {
@@ -47,7 +77,7 @@ export function buildWorkspaceWindowUrl(
   windowId: string,
   route?: WorkspaceScopedRoute
 ): string {
-  const effectiveRoute: WorkspaceScopedRoute = route ?? "/";
+  const effectiveRoute = route ?? defaultWorkspaceRoute();
   const extra: Record<string, string> = {};
   if (typeof window !== "undefined") {
     const v = new URL(window.location.href).searchParams.get(WORKBENCH_VIEW_SEARCH_PARAM);

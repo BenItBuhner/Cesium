@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """
 Add ingress rules to /DATA/AppData/cloudflared/config.json for the new
-browser-proxy / browser-debug / health endpoints on the OpenCursor API server,
+browser-proxy / browser-debug / health endpoints on the Cesium API server,
 before the catch-all Next.js rule. Idempotent — re-runs don't duplicate rules.
 """
 import json
 import sys
 
 CONFIG = "/DATA/AppData/cloudflared/config.json"
-HOST = "opencursor.techlitnow.com"
+HOST = "cesium.techlitnow.com"
 API = "http://127.0.0.1:9100"
 # Order matters: cloudflared ingress is evaluated top to bottom and must place
 # path-scoped rules BEFORE the path-less catch-all for the same hostname,

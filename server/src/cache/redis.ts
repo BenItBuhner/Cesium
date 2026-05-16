@@ -29,7 +29,7 @@ async function createClient(role: "primary" | "subscriber"): Promise<IORedisClie
       enableReadyCheck: true,
       connectTimeout: 5_000,
       reconnectOnError: () => true,
-      name: `opencursor-${role}`,
+      name: `cesium-${role}`,
     });
     client.on("error", (err: Error) => {
       // Keep noise low: the fallback path absorbs the failure elsewhere.

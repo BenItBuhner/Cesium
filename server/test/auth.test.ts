@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 
 const TEST_DATA_DIR = path.join(
   os.tmpdir(),
-  `opencursor-auth-tests-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+  `cesium-auth-tests-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
 );
 
 delete process.env.REDIS_URL;

@@ -7,7 +7,7 @@ import { after, before, describe, test } from "node:test";
 // drivers / caches hit their in-process fallbacks.
 const TEST_DATA_DIR = path.join(
   os.tmpdir(),
-  `opencursor-revisions-tests-${Date.now()}-${Math.random()
+  `cesium-revisions-tests-${Date.now()}-${Math.random()
     .toString(36)
     .slice(2, 10)}`
 );

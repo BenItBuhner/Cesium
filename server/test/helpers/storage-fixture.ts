@@ -113,7 +113,7 @@ export function bootstrapFixtureEnv(kind: StorageDriverKind): string {
     case "legacy-json": {
       const dataDir = path.join(
         os.tmpdir(),
-        `opencursor-storage-test-${Date.now()}-${randomUUID().slice(0, 8)}`
+        `cesium-storage-test-${Date.now()}-${randomUUID().slice(0, 8)}`
       );
       process.env.OPENCURSOR_DATA_DIR = dataDir;
       return dataDir;

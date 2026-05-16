@@ -2,7 +2,7 @@
 /**
  * Browser-proxy compatibility smoke test.
  *
- * Runs each URL in `SITES` through our OpenCursor browser proxy and records
+ * Runs each URL in `SITES` through our Cesium browser proxy and records
  * basic health signals: HTTP status, byte count, HTML title, required-text
  * markers, latency, and any 4xx/5xx on the first redirect chain. A site is
  * considered PASS when:
@@ -13,11 +13,11 @@
  *
  * Usage:
  *   node scripts/browser-proxy-smoke.mjs
- *   node scripts/browser-proxy-smoke.mjs --base https://opencursor.techlitnow.com
+ *   node scripts/browser-proxy-smoke.mjs --base https://cesium.techlitnow.com
  *   node scripts/browser-proxy-smoke.mjs --filter github,wikipedia
  *
  * Environment:
- *   OCS_USERNAME, OCS_PASSWORD — defaults: admin / opencursor2026 (server/.env)
+ *   OCS_USERNAME, OCS_PASSWORD — defaults: admin / cesium2026 (server/.env)
  *   OCS_BASE_URL             — proxy base (default http://localhost:9100)
  */
 
@@ -42,7 +42,7 @@ const BASE_URL = (
   "http://localhost:9100"
 ).replace(/\/+$/, "");
 const USERNAME = argv.user || process.env.OCS_USERNAME || "admin";
-const PASSWORD = argv.password || process.env.OCS_PASSWORD || "opencursor2026";
+const PASSWORD = argv.password || process.env.OCS_PASSWORD || "cesium2026";
 const FILTER = argv.filter ? String(argv.filter).toLowerCase().split(",") : null;
 const CONCURRENCY = Math.max(1, Math.min(Number(argv.concurrency) || 4, 12));
 
@@ -260,7 +260,7 @@ function renderReport(results) {
   const pass = results.filter((r) => r.pass).length;
   const total = results.length;
   const lines = [];
-  lines.push(`OpenCursor browser-proxy smoke report`);
+  lines.push(`Cesium browser-proxy smoke report`);
   lines.push(`Base: ${BASE_URL}`);
   lines.push(`Time: ${new Date().toISOString()}`);
   lines.push(`Pass: ${pass}/${total} (${Math.round((pass / total) * 100)}%)`);

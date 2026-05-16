@@ -33,6 +33,21 @@ export type AgentConversationsAllPayload = {
 };
 
 const MIN_CONVERSATIONS_PER_WORKSPACE = 20;
+const PLACEHOLDER_CONVERSATION_TITLES = new Set([
+  "new chat",
+  "start new chat",
+  "start a new chat",
+]);
+
+function isRenderableRailConversation(conversation: AgentConversationRecord): boolean {
+  return !(
+    conversation.lastEventSeq === 0 &&
+    conversation.status === "idle" &&
+    conversation.archivedAt == null &&
+    conversation.pendingPermission == null &&
+    PLACEHOLDER_CONVERSATION_TITLES.has(conversation.title.trim().toLowerCase())
+  );
+}
 
 function summarizeConversation(conversation: AgentConversationRecord): AgentConversationsAllSummary {
   return {
@@ -142,6 +157,9 @@ function groupConversationSummaries(
     groupMap.set(workspace.id, { workspace, conversations: [] });
   }
   for (const conversation of records) {
+    if (!isRenderableRailConversation(conversation)) {
+      continue;
+    }
     const workspace = workspaceById.get(conversation.workspaceId);
     if (!workspace) {
       continue;

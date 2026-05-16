@@ -10,6 +10,16 @@ import {
 } from "../lib/git-worktrees.js";
 import { listBrowseDirectories, listBrowseRoots } from "../lib/workspace-browse.js";
 import {
+  browseSshDirectories,
+  cloneRemoteGitDirectoryOverSsh,
+  createRemoteSshDirectory,
+  createSshWorkspace,
+  getSshWorkspaceMetadata,
+  probeSshConnection,
+  pullSshWorkspace,
+  pushSshWorkspace,
+} from "../lib/ssh-workspaces.js";
+import {
   createWorkspace,
   ensureHomeWorkspace,
   ensureInitialWorkspace,
@@ -133,16 +143,21 @@ workspaceRoutes.post("/api/workspaces/open", async (c) => {
   }
 
   let workspace = null;
-  if (body.workspaceId) {
-    workspace = await getWorkspaceById(body.workspaceId);
-    if (!workspace) {
-      return c.json({ error: `Unknown workspace: ${body.workspaceId}` }, 404);
+  try {
+    if (body.workspaceId) {
+      workspace = await getWorkspaceById(body.workspaceId);
+      if (!workspace) {
+        return c.json({ error: `Unknown workspace: ${body.workspaceId}` }, 404);
+      }
+      if (body.trackRecent) {
+        await noteWorkspaceOpened(workspace.id);
+      }
+    } else if (body.root) {
+      workspace = await ensureWorkspaceRegistered(body.root, body.name);
     }
-    if (body.trackRecent) {
-      await noteWorkspaceOpened(workspace.id);
-    }
-  } else if (body.root) {
-    workspace = await ensureWorkspaceRegistered(body.root, body.name);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Workspace open failed.";
+    return c.json({ error: message }, 400);
   }
 
   const [workspaces, profile, homePayload] = await Promise.all([
@@ -200,31 +215,36 @@ workspaceRoutes.post("/api/workspaces/create", async (c) => {
     return c.json({ error: "Expected parentPath and directoryName" }, 400);
   }
 
-  const workspace = await createWorkspace(
-    body.parentPath,
-    body.directoryName,
-    body.name
-  );
-  if (body.setDefault) {
-    await setDefaultWorkspace(workspace.id);
+  try {
+    const workspace = await createWorkspace(
+      body.parentPath,
+      body.directoryName,
+      body.name
+    );
+    if (body.setDefault) {
+      await setDefaultWorkspace(workspace.id);
+    }
+
+    const [workspaces, profile, homePayload] = await Promise.all([
+      listWorkspaces(),
+      getWorkspaceProfile(),
+      homeWorkspaceIdPayload(),
+    ]);
+
+    return c.json(
+      {
+        workspace,
+        workspaces,
+        defaultWorkspaceId: profile.defaultWorkspaceId,
+        recentWorkspaceIds: profile.recentWorkspaceIds,
+        ...homePayload,
+      },
+      201
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Workspace creation failed.";
+    return c.json({ error: message }, 400);
   }
-
-  const [workspaces, profile, homePayload] = await Promise.all([
-    listWorkspaces(),
-    getWorkspaceProfile(),
-    homeWorkspaceIdPayload(),
-  ]);
-
-  return c.json(
-    {
-      workspace,
-      workspaces,
-      defaultWorkspaceId: profile.defaultWorkspaceId,
-      recentWorkspaceIds: profile.recentWorkspaceIds,
-      ...homePayload,
-    },
-    201
-  );
 });
 
 workspaceRoutes.get("/api/workspaces/browse", async (c) => {
@@ -292,6 +312,218 @@ workspaceRoutes.post("/api/workspaces/clone", async (c) => {
   } catch (error) {
     const message = error instanceof Error ? error.message : "Clone failed.";
     return c.json({ error: message }, 400);
+  }
+});
+
+workspaceRoutes.post("/api/workspaces/ssh", async (c) => {
+  const body = await c.req.json<{
+    target?: string;
+    port?: number;
+    remotePath?: string;
+    mirrorName?: string;
+    name?: string;
+    keyPath?: string;
+    password?: string;
+    setDefault?: boolean;
+  }>();
+
+  const target = body.target?.trim() ?? "";
+  const remotePath = body.remotePath?.trim() ?? "";
+  if (!target) {
+    return c.json({ error: "Expected SSH target" }, 400);
+  }
+  if (!remotePath) {
+    return c.json({ error: "Expected remotePath" }, 400);
+  }
+
+  try {
+    const { workspace, metadata } = await createSshWorkspace({
+      target,
+      port: body.port,
+      remotePath,
+      mirrorName: body.mirrorName,
+      name: body.name,
+      keyPath: body.keyPath,
+      password: body.password,
+      setDefault: body.setDefault,
+    });
+    const [workspaces, profile, homePayload] = await Promise.all([
+      listWorkspaces(),
+      getWorkspaceProfile(),
+      homeWorkspaceIdPayload(),
+    ]);
+    return c.json(
+      {
+        workspace,
+        metadata,
+        workspaces,
+        defaultWorkspaceId: profile.defaultWorkspaceId,
+        recentWorkspaceIds: profile.recentWorkspaceIds,
+        ...homePayload,
+      },
+      201
+    );
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "SSH workspace creation failed.";
+    return c.json({ error: message }, 400);
+  }
+});
+
+workspaceRoutes.post("/api/workspaces/ssh/probe", async (c) => {
+  const body = await c.req.json<{
+    target?: string;
+    port?: number;
+    keyPath?: string;
+    password?: string;
+  }>();
+  const target = body.target?.trim() ?? "";
+  if (!target) {
+    return c.json({ error: "Expected SSH target" }, 400);
+  }
+  try {
+    const result = await probeSshConnection({
+      target,
+      port: body.port,
+      keyPath: body.keyPath,
+      password: body.password,
+    });
+    return c.json(result);
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "SSH connection probe failed.";
+    return c.json({ error: message }, 400);
+  }
+});
+
+workspaceRoutes.post("/api/workspaces/ssh/clone", async (c) => {
+  const body = await c.req.json<{
+    target?: string;
+    port?: number;
+    repoUrl?: string;
+    parentRemotePath?: string;
+    directoryName?: string;
+    keyPath?: string;
+    password?: string;
+  }>();
+  const target = body.target?.trim() ?? "";
+  if (!target) {
+    return c.json({ error: "Expected SSH target" }, 400);
+  }
+  if (!body.repoUrl?.trim()) {
+    return c.json({ error: "Expected repoUrl" }, 400);
+  }
+  const parentRemotePath = body.parentRemotePath?.trim();
+  if (parentRemotePath === undefined || parentRemotePath === "") {
+    return c.json({ error: "Expected parentRemotePath" }, 400);
+  }
+  try {
+    const listing = await cloneRemoteGitDirectoryOverSsh({
+      target,
+      port: body.port,
+      repoUrl: body.repoUrl.trim(),
+      parentRemotePath,
+      directoryName: body.directoryName?.trim() || undefined,
+      keyPath: body.keyPath,
+      password: body.password,
+    });
+    return c.json(listing, 201);
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "Remote git clone failed.";
+    return c.json({ error: message }, 400);
+  }
+});
+
+workspaceRoutes.post("/api/workspaces/ssh/browse", async (c) => {
+  const body = await c.req.json<{
+    target?: string;
+    port?: number;
+    remotePath?: string;
+    keyPath?: string;
+    password?: string;
+  }>();
+  const target = body.target?.trim() ?? "";
+  if (!target) {
+    return c.json({ error: "Expected SSH target" }, 400);
+  }
+  try {
+    const listing = await browseSshDirectories({
+      target,
+      port: body.port,
+      remotePath: body.remotePath,
+      keyPath: body.keyPath,
+      password: body.password,
+    });
+    return c.json(listing);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "SSH browse failed.";
+    return c.json({ error: message }, 400);
+  }
+});
+
+workspaceRoutes.post("/api/workspaces/ssh/mkdir", async (c) => {
+  const body = await c.req.json<{
+    target?: string;
+    port?: number;
+    remotePath?: string;
+    directoryName?: string;
+    keyPath?: string;
+    password?: string;
+  }>();
+  const target = body.target?.trim() ?? "";
+  if (!target) {
+    return c.json({ error: "Expected SSH target" }, 400);
+  }
+  if (!body.directoryName?.trim()) {
+    return c.json({ error: "Expected directoryName" }, 400);
+  }
+  try {
+    const listing = await createRemoteSshDirectory({
+      target,
+      port: body.port,
+      remotePath: body.remotePath,
+      directoryName: body.directoryName,
+      keyPath: body.keyPath,
+      password: body.password,
+    });
+    return c.json(listing, 201);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "SSH mkdir failed.";
+    return c.json({ error: message }, 400);
+  }
+});
+
+workspaceRoutes.get("/api/workspaces/:workspaceId/ssh", async (c) => {
+  const workspaceId = c.req.param("workspaceId");
+  const metadata = await getSshWorkspaceMetadata(workspaceId);
+  if (!metadata) {
+    return c.json({ error: `Workspace is not SSH-backed: ${workspaceId}` }, 404);
+  }
+  return c.json({ metadata });
+});
+
+workspaceRoutes.post("/api/workspaces/:workspaceId/ssh/pull", async (c) => {
+  const workspaceId = c.req.param("workspaceId");
+  try {
+    const metadata = await pullSshWorkspace(workspaceId);
+    return c.json({ ok: true, metadata });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "SSH pull failed.";
+    const status = message.includes("not SSH-backed") ? 404 : 400;
+    return c.json({ error: message }, status);
+  }
+});
+
+workspaceRoutes.post("/api/workspaces/:workspaceId/ssh/push", async (c) => {
+  const workspaceId = c.req.param("workspaceId");
+  try {
+    const metadata = await pushSshWorkspace(workspaceId);
+    return c.json({ ok: true, metadata });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "SSH push failed.";
+    const status = message.includes("not SSH-backed") ? 404 : 400;
+    return c.json({ error: message }, status);
   }
 });
 
@@ -365,7 +597,7 @@ workspaceRoutes.post("/api/workspaces/:workspaceId/git/switch", async (c) => {
     if (result.checkedOutWorktree) {
       const openedWorkspace = await ensureWorkspaceRegistered(
         result.checkedOutWorktree.path,
-        result.checkedOutWorktree.workspaceName ?? result.checkedOutWorktree.branch ?? undefined
+        result.checkedOutWorktree.workspaceName ?? path.basename(result.checkedOutWorktree.path)
       );
       return c.json({
         ok: true,
@@ -416,7 +648,7 @@ workspaceRoutes.post("/api/workspaces/:workspaceId/git/worktrees", async (c) => 
     });
     const openedWorkspace = await ensureWorkspaceRegistered(
       created.path,
-      body.name?.trim() || created.branch
+      body.name?.trim() || path.basename(created.path)
     );
     const [nextWorkspaces, profile, homePayload] = await Promise.all([
       listWorkspaces(),

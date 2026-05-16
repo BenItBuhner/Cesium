@@ -1,10 +1,32 @@
+import {
+  createDefaultKeyboardShortcutsState,
+  normalizeKeyboardShortcutsState,
+  type KeyboardShortcutsSettingsState,
+} from "@/lib/keyboard-shortcuts";
+import {
+  createDefaultThemeConfig,
+  normalizeThemeConfig,
+  type ThemeConfig,
+} from "@/lib/theme-config";
+
+export type WorkspaceSortMode = "recent" | "alphabetical" | "custom";
+
+export type ChatFolderState = {
+  id: string;
+  workspaceId: string;
+  name: string;
+  color: string;
+  icon: string;
+  sortOrder: number;
+  conversationIds: string[];
+};
+
 export type GeneralSettingsState = {
   doNotDisturb: boolean;
-  sysNotify: boolean;
-  warnNotify: boolean;
-  trayIcon: boolean;
-  completionSound: boolean;
   sideColumnsSwapped: boolean;
+  workspaceSortMode: WorkspaceSortMode;
+  workspaceCustomOrderIds: string[];
+  chatFolders: ChatFolderState[];
 };
 
 export type AgentsSettingsState = {
@@ -65,41 +87,13 @@ export type ModelsSettingsState = {
   byBackend: Record<string, ModelToggleState[]>;
 };
 
-export type RulesSettingsState = {
-  thirdParty: boolean;
-};
-
-export type PluginMcpState = {
-  id: string;
-  name: string;
-  status: string;
-  on: boolean;
-  connect?: boolean;
-};
-
-export type ToolsSettingsState = {
-  localhost: boolean;
-  mcpTags: string[];
-  domainTags: string[];
-  pluginState: PluginMcpState[];
-};
-
-import {
-  createDefaultKeyboardShortcutsState,
-  normalizeKeyboardShortcutsState,
-  type KeyboardShortcutsSettingsState,
-} from "@/lib/keyboard-shortcuts";
-import {
-  createDefaultThemeConfig,
-  normalizeThemeConfig,
-  type ThemeConfig,
-} from "@/lib/theme-config";
+/** Reserved for future tool/MCP preferences; persisted object is always empty today. */
+export type ToolsSettingsState = Record<string, never>;
 
 export type GlobalAppSettingsSlice = {
   general: GeneralSettingsState;
   agents: AgentsSettingsState;
   models: ModelsSettingsState;
-  rules: RulesSettingsState;
   tools: ToolsSettingsState;
 };
 
@@ -123,48 +117,6 @@ export const DEFAULT_CMD_TAGS = [
 
 export const DEFAULT_MODE_TAGS = ["agent-plan"];
 
-export const DEFAULT_MCP_TAGS = [
-  "figma:get_design_context",
-  "figma:get_screenshot",
-  "linear:get_issue",
-  "linear:list_issues",
-  "notion:notion-search",
-  "slack:slack_read_channel",
-];
-
-export const DEFAULT_DOMAIN_TAGS = [
-  "raw.githubusercontent.com",
-  "github.com",
-  "docs.polymarket.com",
-  "api.github.com",
-  "developer.notion.com",
-  "www.todoist.com",
-];
-
-export const DEFAULT_PLUGIN_MCP_STATE: PluginMcpState[] = [
-  { id: "c7", name: "context7", status: "2 tools enabled", on: true },
-  {
-    id: "fg",
-    name: "Figma",
-    status: "13 tools, 1 prompts, 25 resources enabled",
-    on: true,
-  },
-  { id: "ln", name: "Linear", status: "34 tools enabled", on: true },
-  {
-    id: "nt",
-    name: "Notion",
-    status: "needs authentication",
-    on: false,
-    connect: true,
-  },
-  {
-    id: "sl",
-    name: "Slack",
-    status: "13 tools, 1 resources enabled",
-    on: true,
-  },
-];
-
 export function createDefaultGlobalSettings(): GlobalSettingsState {
   return {
     schemaVersion: 1,
@@ -172,11 +124,10 @@ export function createDefaultGlobalSettings(): GlobalSettingsState {
     keyboardShortcuts: createDefaultKeyboardShortcutsState(),
     general: {
       doNotDisturb: false,
-      sysNotify: true,
-      warnNotify: false,
-      trayIcon: true,
-      completionSound: true,
       sideColumnsSwapped: false,
+      workspaceSortMode: "recent",
+      workspaceCustomOrderIds: [],
+      chatFolders: [],
     },
     agents: {
       submitCtrlEnter: false,
@@ -206,16 +157,78 @@ export function createDefaultGlobalSettings(): GlobalSettingsState {
     models: {
       byBackend: {},
     },
-    rules: {
-      thirdParty: true,
-    },
-    tools: {
-      localhost: true,
-      mcpTags: DEFAULT_MCP_TAGS,
-      domainTags: DEFAULT_DOMAIN_TAGS,
-      pluginState: DEFAULT_PLUGIN_MCP_STATE,
-    },
+    tools: {},
   };
+}
+
+function normalizeWorkspaceSortMode(raw: unknown): WorkspaceSortMode {
+  return raw === "recent" || raw === "alphabetical" || raw === "custom"
+    ? raw
+    : "recent";
+}
+
+function normalizeWorkspaceCustomOrderIds(raw: unknown): string[] {
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const value of raw) {
+    if (typeof value !== "string" || value.length === 0 || seen.has(value)) {
+      continue;
+    }
+    seen.add(value);
+    out.push(value);
+  }
+  return out.slice(0, 500);
+}
+
+function normalizeChatFolders(raw: unknown): ChatFolderState[] {
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+  const seenFolderIds = new Set<string>();
+  const folders: ChatFolderState[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object") {
+      continue;
+    }
+    const record = item as Partial<ChatFolderState>;
+    const id = typeof record.id === "string" ? record.id.trim() : "";
+    const workspaceId = typeof record.workspaceId === "string" ? record.workspaceId.trim() : "";
+    if (!id || !workspaceId || seenFolderIds.has(id)) {
+      continue;
+    }
+    seenFolderIds.add(id);
+    const seenConversationIds = new Set<string>();
+    const conversationIds = Array.isArray(record.conversationIds)
+      ? record.conversationIds.flatMap((value): string[] => {
+          if (typeof value !== "string" || !value || seenConversationIds.has(value)) {
+            return [];
+          }
+          seenConversationIds.add(value);
+          return [value];
+        })
+      : [];
+    const rawColor = typeof record.color === "string" ? record.color.trim() : "";
+    const rawIcon = typeof record.icon === "string" ? record.icon.trim() : "";
+    folders.push({
+      id,
+      workspaceId,
+      name:
+        typeof record.name === "string" && record.name.trim()
+          ? record.name.trim().slice(0, 80)
+          : "Folder",
+      color: /^#[0-9a-f]{6}$/i.test(rawColor) ? rawColor : "#7c3aed",
+      icon: rawIcon || "Folder",
+      sortOrder:
+        typeof record.sortOrder === "number" && Number.isFinite(record.sortOrder)
+          ? record.sortOrder
+          : folders.length,
+      conversationIds,
+    });
+  }
+  return folders.slice(0, 500);
 }
 
 function normalizeRememberedPermissions(raw: unknown): RememberedAgentPermissionRule[] {
@@ -293,7 +306,19 @@ export function normalizeLoadedGlobalSettings(
     schemaVersion: 1,
     themeConfig: normalizeThemeConfig((r as { themeConfig?: unknown }).themeConfig),
     keyboardShortcuts: normalizeKeyboardShortcutsState(r.keyboardShortcuts),
-    general: { ...base.general, ...(r.general ?? {}) },
+    general: {
+      ...base.general,
+      ...(r.general ?? {}),
+      workspaceSortMode: normalizeWorkspaceSortMode(
+        (r.general as Record<string, unknown> | undefined)?.workspaceSortMode
+      ),
+      workspaceCustomOrderIds: normalizeWorkspaceCustomOrderIds(
+        (r.general as Record<string, unknown> | undefined)?.workspaceCustomOrderIds
+      ),
+      chatFolders: normalizeChatFolders(
+        (r.general as Record<string, unknown> | undefined)?.chatFolders
+      ),
+    },
     agents: {
       ...base.agents,
       ...(r.agents ?? {}),
@@ -313,13 +338,6 @@ export function normalizeLoadedGlobalSettings(
           ? (r.models.byBackend as Record<string, ModelToggleState[]>)
           : base.models.byBackend,
     },
-    rules: { ...base.rules, ...(r.rules ?? {}) },
-    tools: {
-      ...base.tools,
-      ...(r.tools ?? {}),
-      mcpTags: r.tools?.mcpTags ?? base.tools.mcpTags,
-      domainTags: r.tools?.domainTags ?? base.tools.domainTags,
-      pluginState: r.tools?.pluginState ?? base.tools.pluginState,
-    },
+    tools: {},
   };
 }

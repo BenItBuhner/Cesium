@@ -23,6 +23,8 @@ const testCaps: AgentProviderCapabilities = {
   supportsStructuredPlans: true,
   supportsTodos: true,
   supportsSessionResume: true,
+  supportsPromptImages: true,
+  supportsInlineReasoning: true,
 };
 
 function baseRecord(
@@ -129,5 +131,27 @@ describe("patchAgentConversationGroups", () => {
     assert.deepEqual(ids, ["b", "a"]);
     assert.equal(next[0]!.conversations[0]!.updatedAt, 600);
     assert.equal(next[0]!.conversations[0]!.status, "idle");
+  });
+
+  test("placeholder new-chat records are not inserted into rail groups", () => {
+    const ws = "ws1";
+    const placeholder = baseRecord("draft-record", ws, {
+      title: "Start New Chat",
+      lastEventSeq: 0,
+      status: "idle",
+    });
+    const next = patchAgentConversationGroups([group(ws, [])], placeholder);
+    assert.deepEqual(next[0]!.conversations, []);
+  });
+
+  test("placeholder new-chat patches remove stale rail rows", () => {
+    const ws = "ws1";
+    const placeholder = baseRecord("draft-record", ws, {
+      title: "Start a new chat",
+      lastEventSeq: 0,
+      status: "idle",
+    });
+    const next = patchAgentConversationGroups([group(ws, [placeholder])], placeholder);
+    assert.deepEqual(next[0]!.conversations, []);
   });
 });

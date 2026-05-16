@@ -78,7 +78,7 @@ function parseArgs(argv: string[]): Args {
 function printHelp(): void {
   console.log(
     [
-      "storage-migrate - copy data between opencursor storage drivers",
+      "storage-migrate - copy data between Cesium storage drivers",
       "",
       "  --from <driver>      source driver (legacy-json | pg)",
       "  --to <driver>        target driver (legacy-json | pg)",

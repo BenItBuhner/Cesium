@@ -4,6 +4,11 @@ import { Agent, fetch as undiciFetch } from "undici";
 import { buildBrowserProxyPathFromHref } from "../lib/browser-proxy-path.js";
 import { requireWorkspaceFromRequest } from "../lib/request-workspace.js";
 import {
+  ACCESS_TOKEN_QUERY_PARAM,
+  IFRAME_ACCESS_TOKEN_QUERY_PARAM,
+  SESSION_TOKEN_HEADER,
+} from "../lib/auth.js";
+import {
   captureRenderedElementScreenshot,
   createDebugSession,
   destroyDebugSession,
@@ -33,6 +38,25 @@ function requestHost(c: { req: { header: (name: string) => string | undefined } 
   );
 }
 
+function requestAccessToken(c: Context): string | null {
+  const headerToken = c.req.header(SESSION_TOKEN_HEADER)?.trim();
+  if (headerToken) {
+    return headerToken;
+  }
+
+  const iframeToken = c.req.query(IFRAME_ACCESS_TOKEN_QUERY_PARAM)?.trim();
+  if (iframeToken) {
+    return iframeToken;
+  }
+
+  const queryToken = c.req.query(ACCESS_TOKEN_QUERY_PARAM)?.trim();
+  if (queryToken) {
+    return queryToken;
+  }
+
+  return null;
+}
+
 /**
  * Build the iframe URL that loads Chromium's **local** DevTools frontend
  * (bundled inside the Chromium binary, served at /devtools/devtools_app.html
@@ -47,13 +71,21 @@ function rewriteDevtoolsFrontendUrl(
   rawFrontendUrl: string,
   sessionId: string,
   targetId: string,
-  host: string
+  host: string,
+  accessToken: string | null
 ): string {
   const htmlFile = (() => {
     const match = rawFrontendUrl.match(/([A-Za-z0-9_]+\.html)(?:\?|$)/);
     return match?.[1] ?? "devtools_app.html";
   })();
-  const wsPath = `${host}/ws/browser-debug/${sessionId}/devtools/page/${targetId}`;
+  const wsPathParams = new URLSearchParams();
+  if (accessToken) {
+    wsPathParams.set(ACCESS_TOKEN_QUERY_PARAM, accessToken);
+  }
+  const wsPathQuery = wsPathParams.toString();
+  const wsPath = `${host}/ws/browser-debug/${sessionId}/devtools/page/${targetId}${
+    wsPathQuery ? `?${wsPathQuery}` : ""
+  }`;
   const path = `/browser-debug/${sessionId}/devtools/${htmlFile}`;
   return `${path}?ws=${wsPath}`;
 }
@@ -80,11 +112,13 @@ browserDebugRoutes.post("/api/browser-debug/sessions", async (c) => {
     }
     const session = await createDebugSession(workspace.id, navigateUrl);
     const host = requestHost(c);
+    const accessToken = requestAccessToken(c);
     const devtoolsPath = rewriteDevtoolsFrontendUrl(
       session.rawDevtoolsFrontendUrl,
       session.id,
       session.targetId,
-      host
+      host,
+      accessToken
     );
     return c.json(
       {
@@ -143,11 +177,13 @@ browserDebugRoutes.get("/api/browser-debug/sessions/:sessionId", async (c) => {
       return c.json({ error: "Unknown session." }, 404);
     }
     const host = requestHost(c);
+    const accessToken = requestAccessToken(c);
     const devtoolsPath = rewriteDevtoolsFrontendUrl(
       rec.rawDevtoolsFrontendUrl,
       rec.id,
       rec.targetId,
-      host
+      host,
+      accessToken
     );
     // Best-effort current URL — used by the client to sync the IDE URL bar
     // with the user's last in-DevTools navigation when they close the console.
@@ -426,11 +462,13 @@ browserDebugRoutes.get("/browser-debug/console", (c) => {
     return c.text("Unknown or expired debug session.", 404);
   }
   const host = requestHost(c);
+  const accessToken = requestAccessToken(c);
   const devtoolsPath = rewriteDevtoolsFrontendUrl(
     rec.rawDevtoolsFrontendUrl,
     rec.id,
     rec.targetId,
-    host
+    host,
+    accessToken
   );
   return c.redirect(devtoolsPath, 302);
 });

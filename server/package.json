@@ -1,5 +1,5 @@
 {
-  "name": "opencursor-server",
+  "name": "cesium-server",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -22,7 +22,6 @@
     "perf:bun": "bun ./scripts/perf-runner.ts",
     "perf:compare": "tsx ./scripts/perf-compare.ts",
     "sdk:probe": "tsx ./scripts/cursor-sdk-probe.ts",
-    "sdk:claude-proxy-probe": "bun ./scripts/claude-code-sdk-proxy-probe.ts",
     "codex:app-server-probe": "bun ./scripts/codex-app-server-probe.ts",
     "opencode:server-probe": "bun ./scripts/opencode-server-probe.ts",
     "bun:native-check": "bun ./scripts/bun-native-check.ts",
@@ -36,23 +35,25 @@
     "storage:migrate": "tsx ./scripts/storage-migrate.ts"
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.2.126",
+    "@cesium/core": "file:../packages/core",
     "@cursor/sdk": "^1.0.11",
     "@hono/node-server": "^1.19.6",
+    "cesium": "file:..",
     "chokidar": "^4.0.3",
     "dotenv": "^17.3.1",
     "drizzle-orm": "^0.44.7",
     "hono": "^4.10.2",
     "ioredis": "^5.10.1",
     "node-pty": "^1.0.0",
-    "opencursor": "file:..",
     "playwright": "^1.56.0",
     "postgres": "^3.4.9",
+    "ssh2": "^1.17.0",
     "undici": "^7.24.6",
     "ws": "^8.18.3"
   },
   "devDependencies": {
     "@types/node": "^24.12.2",
+    "@types/ssh2": "^1.15.5",
     "@types/ws": "^8.18.1",
     "cross-env": "^7.0.3",
     "drizzle-kit": "^0.30.6",

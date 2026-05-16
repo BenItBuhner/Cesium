@@ -27,13 +27,16 @@ export function getAgentLabel(agentId: string): string {
     case "claude-adapter":
       return "Claude Code";
     case "claude-code-sdk":
-      return "Claude Code SDK";
+      return "Claude Code";
     default:
       return agentId;
   }
 }
 
 function parseHandoffBackendId(raw: string): AgentBackendId | null {
+  if (raw === "claude-code-sdk") {
+    return "claude-adapter";
+  }
   switch (raw) {
     case "cursor-acp":
     case "cursor-sdk":
@@ -43,7 +46,6 @@ function parseHandoffBackendId(raw: string): AgentBackendId | null {
     case "codex-adapter":
     case "codex-app-server":
     case "claude-adapter":
-    case "claude-code-sdk":
       return raw;
     default:
       return null;

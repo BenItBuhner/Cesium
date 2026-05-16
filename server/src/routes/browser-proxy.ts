@@ -122,7 +122,7 @@ function rewriteLocation(
   // Preserve the IDE's iframe-auth token across upstream redirects. Without
   // this, a 301 from google.com -> www.google.com lands on our proxy with no
   // credentials and the auth middleware 401s — which is exactly the "idle
-  // iframe" symptom we saw from opencursor.techlitnow.com.
+  // iframe" symptom we saw from cesium.techlitnow.com.
   if (iframeAuthToken && !rewritten.searchParams.has("__ocs_access")) {
     rewritten.searchParams.set("__ocs_access", iframeAuthToken);
   }
@@ -335,7 +335,7 @@ browserProxyRoutes.all("/*", async (c) => {
   // not what the browser sees. Prefer `X-Forwarded-Proto` / `X-Forwarded-Host`
   // so rewritten Location headers + HTML href/src rewrites point at the same
   // public origin the iframe is loaded from — otherwise we emit
-  // `http://opencursor.techlitnow.com/...` from an `https://` page and the
+  // `http://cesium.techlitnow.com/...` from an `https://` page and the
   // browser either blocks it as mixed content or hops through HSTS (stripping
   // the auth query).
   const incomingProto =

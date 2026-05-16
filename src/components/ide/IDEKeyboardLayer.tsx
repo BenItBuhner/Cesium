@@ -26,12 +26,14 @@ import { isFocusedBrowserSurface } from "@/lib/browser-keyboard-passthrough";
 import { normalizeBrowserTargetUrl } from "@/lib/browser-proxy-url";
 import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
 import { useServerConnections } from "@/components/preferences/ServerConnectionsProvider";
+import { WORKSPACE_ROUTE } from "@/lib/workbench-view";
 import { buildWorkspaceWindowUrl } from "@/lib/workspace-windows";
 import {
   SHORTCUT_COMMAND_DEFINITIONS,
   detectShortcutPlatform,
   getShortcutBindingsForCommand,
   getShortcutDisplayForCommand,
+  isEditableShortcutTarget,
   tryDispatchKeyboardShortcut,
   matchesShortcutStep,
   parseShortcutBinding,
@@ -70,6 +72,17 @@ const INPUT_SINK_ALLOWED_SHORTCUT_IDS = [
 function flash(setter: (s: string | null) => void, msg: string) {
   setter(msg);
   window.setTimeout(() => setter(null), 2200);
+}
+
+function isHardwareInputTarget(target: EventTarget | null): boolean {
+  return (
+    target instanceof Element &&
+    Boolean(target.closest("[data-hardware-input-surface]"))
+  );
+}
+
+function shouldUseNativeEditableHandling(target: EventTarget | null): boolean {
+  return isEditableShortcutTarget(target) && !isHardwareInputTarget(target);
 }
 
 export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
@@ -193,7 +206,9 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
     setPalette("closed");
     // On public deployments default to the current site origin, not localhost.
     const nextDefault =
-      typeof window !== "undefined" && window.location?.origin
+      typeof window !== "undefined" &&
+      window.location?.origin &&
+      /^https?:\/\//i.test(window.location.origin)
         ? `${window.location.origin}/`
         : "http://localhost:3000/";
     setBrowserPromptValue(nextDefault);
@@ -371,9 +386,6 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
         case "workbench.action.openFolder":
           promptForFolder();
           break;
-        case "workbench.action.newUntitledFile":
-          flash(setToast, "New file (demo).");
-          break;
         case "workbench.action.newWindow":
           openWorkspaceWindowsModal({ initialSelectionId: "action:create-window" });
           break;
@@ -457,9 +469,6 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
         case "workbench.action.openPreview":
           runWithBridge((b) => b.dispatch({ type: "TOGGLE_FILE_PREVIEW" }));
           break;
-        case "workbench.action.openChanges":
-          flash(setToast, "Open Changes (demo — no SCM diff yet).");
-          break;
         case "workbench.action.findInFiles":
           workbench.revealExplorer();
           flash(setToast, "Find in Files — use the sidebar Search view.");
@@ -482,15 +491,6 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
               await bridge.openTerminalTab();
             }
           })();
-          break;
-        case "editor.action.undo":
-          flash(setToast, "Undo (demo).");
-          break;
-        case "editor.action.redo":
-          flash(setToast, "Redo (demo).");
-          break;
-        case "editor.action.selectAll":
-          flash(setToast, "Select All (demo).");
           break;
         case "chat.action.openModelDropdown":
           dispatchChatComposerShortcut("openModelDropdown");
@@ -528,11 +528,6 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
         case "chat.action.agentRailNextConversation":
           agentShell?.cycleAgentConversation(1);
           break;
-        case "workbench.action.zoomIn":
-        case "workbench.action.zoomOut":
-        case "workbench.action.zoomReset":
-          flash(setToast, "Zoom (demo).");
-          break;
         default:
           break;
       }
@@ -560,6 +555,7 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
         bindings: shortcutBindings,
         chordRef,
         onCommand: runShortcutCommand,
+        editableTarget: isEditableShortcutTarget(e.target),
       }),
     [runShortcutCommand, shortcutBindings, shortcutPlatform]
   );
@@ -582,6 +578,7 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
         bindings: inputSinkWorkbenchBindings,
         chordRef,
         onCommand: runShortcutCommand,
+        editableTarget: isEditableShortcutTarget(e.target),
       }),
     [inputSinkWorkbenchBindings, runShortcutCommand, shortcutPlatform]
   );
@@ -802,12 +799,6 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
         run: () => runShortcutCommand("workbench.action.gotoFile"),
       },
       {
-        id: "workbench.action.newUntitledFile",
-        label: "File: New Untitled Text File",
-        keybinding: kb("workbench.action.newUntitledFile"),
-        run: () => runShortcutCommand("workbench.action.newUntitledFile"),
-      },
-      {
         id: "workbench.action.newAgent",
         label: "File: New Agent",
         keybinding: kb("workbench.action.newAgent"),
@@ -847,35 +838,6 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
         id: "browser.openUrl",
         label: "Browser: Open URL…",
         run: () => openBrowserUrlPrompt(),
-      },
-      {
-        id: "workbench.action.exit",
-        label: "File: Exit",
-        run: () => flash(setToast, "Exit (demo — this tab stays open)."),
-      },
-      {
-        id: "workbench.action.openChanges",
-        label: "View: Open Changes",
-        keybinding: kb("workbench.action.openChanges"),
-        run: () => runShortcutCommand("workbench.action.openChanges"),
-      },
-      {
-        id: "editor.action.undo",
-        label: "Edit: Undo",
-        keybinding: kb("editor.action.undo"),
-        run: () => runShortcutCommand("editor.action.undo"),
-      },
-      {
-        id: "editor.action.redo",
-        label: "Edit: Redo",
-        keybinding: kb("editor.action.redo"),
-        run: () => runShortcutCommand("editor.action.redo"),
-      },
-      {
-        id: "editor.action.selectAll",
-        label: "Edit: Select All",
-        keybinding: kb("editor.action.selectAll"),
-        run: () => runShortcutCommand("editor.action.selectAll"),
       },
       {
         id: "workbench.action.openFile",
@@ -939,18 +901,6 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
           })(),
       },
       {
-        id: "editor.action.revealDefinition",
-        label: "Go to Definition",
-        keybinding: "F12",
-        run: () => flash(setToast, "Go to Definition (demo)."),
-      },
-      {
-        id: "editor.action.goToReferences",
-        label: "Go to References",
-        keybinding: "Shift+F12",
-        run: () => flash(setToast, "Find all references (demo)."),
-      },
-      {
         id: "workbench.action.findInFiles",
         label: "Search: Find in Files",
         keybinding: kb("workbench.action.findInFiles"),
@@ -961,29 +911,6 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
         label: "View: Toggle Terminal",
         keybinding: kb("workbench.action.terminal.toggleTerminal"),
         run: () => runShortcutCommand("workbench.action.terminal.toggleTerminal"),
-      },
-      {
-        id: "workbench.action.zoomIn",
-        label: "View: Zoom In",
-        keybinding: kb("workbench.action.zoomIn"),
-        run: () => runShortcutCommand("workbench.action.zoomIn"),
-      },
-      {
-        id: "workbench.action.zoomOut",
-        label: "View: Zoom Out",
-        keybinding: kb("workbench.action.zoomOut"),
-        run: () => runShortcutCommand("workbench.action.zoomOut"),
-      },
-      {
-        id: "workbench.action.zoomReset",
-        label: "View: Reset Zoom",
-        keybinding: kb("workbench.action.zoomReset"),
-        run: () => runShortcutCommand("workbench.action.zoomReset"),
-      },
-      {
-        id: "workbench.action.showCommands",
-        label: "Help: Welcome",
-        run: () => flash(setToast, "Welcome page (demo)."),
       },
       ...workspaces.map((workspace) => ({
         id: `workbench.action.workspace.switch.${workspace.id}`,
@@ -1006,7 +933,7 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
           }
           setActiveServer(server.id);
           flash(setToast, `Switching to ${server.label}`);
-          window.location.assign("/");
+          window.location.assign(WORKSPACE_ROUTE);
         },
       })),
     ],
@@ -1051,9 +978,10 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
         t instanceof Element && Boolean(t.closest("[data-ide-palette]"));
       const insideInputSink =
         t instanceof Element && Boolean(t.closest("[data-ide-input-sink]"));
+      const nativeEditableTarget = shouldUseNativeEditableHandling(t);
 
       if (insidePalette) {
-        if (hardwareInputEnabled) {
+        if (hardwareInputEnabled && !nativeEditableTarget) {
           const routed = routeKeyDown(e);
           if (routed.handled) return;
         }
@@ -1064,7 +992,7 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
         bridgeRef.current &&
         isFocusedBrowserSurface(bridgeRef.current, t)
       ) {
-        if (hardwareInputEnabled) {
+        if (hardwareInputEnabled && !nativeEditableTarget) {
           const routed = routeKeyDown(e);
           if (routed.handled) return;
         }
@@ -1072,7 +1000,9 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
       }
 
       if (hardwareInputEnabled) {
-        const routed = routeKeyDown(e);
+        const routed = nativeEditableTarget
+          ? { handled: false, allowWorkbenchShortcuts: true }
+          : routeKeyDown(e);
         if (routed.handled) return;
         if (insideInputSink) {
           if (handleInputSinkWorkbenchKeyDown(e)) {
@@ -1094,6 +1024,9 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
     };
 
     const onPaste = (e: ClipboardEvent) => {
+      if (shouldUseNativeEditableHandling(e.target)) {
+        return;
+      }
       if (
         bridgeRef.current &&
         isFocusedBrowserSurface(bridgeRef.current, e.target)
@@ -1104,6 +1037,9 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
     };
 
     const onCopy = (e: ClipboardEvent) => {
+      if (shouldUseNativeEditableHandling(e.target)) {
+        return;
+      }
       if (
         bridgeRef.current &&
         isFocusedBrowserSurface(bridgeRef.current, e.target)
@@ -1114,6 +1050,9 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
     };
 
     const onCut = (e: ClipboardEvent) => {
+      if (shouldUseNativeEditableHandling(e.target)) {
+        return;
+      }
       if (
         bridgeRef.current &&
         isFocusedBrowserSurface(bridgeRef.current, e.target)
@@ -1273,7 +1212,7 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
         }}
       >
         <div className="border-t border-[var(--palette-divider)] px-[10px] py-[8px] font-sans text-[12px] text-[var(--palette-footer-text)]">
-          Loads through the OpenCursor server proxy. Public HTTPS is allowed by default; set BROWSER_PROXY_ALLOW_PUBLIC=0 on the API server to restrict to private/local hosts only.
+          Loads through the Cesium server proxy. Public HTTPS is allowed by default; set BROWSER_PROXY_ALLOW_PUBLIC=0 on the API server to restrict to private/local hosts only.
         </div>
       </VSCodeQuickInputShell>
       <WorkspaceWindowsModal

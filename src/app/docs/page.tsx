@@ -1,10 +1,11 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { ArrowLeft, BookOpen, Keyboard, MessageSquare, Terminal } from "lucide-react";
+import { WORKSPACE_ROUTE } from "@/lib/workbench-view";
 
 export const metadata: Metadata = {
-  title: "Documentation — OpenCursor",
-  description: "How to use OpenCursor — guides and reference (template).",
+  title: "Documentation — Cesium",
+  description: "How to use Cesium — guides and reference (template).",
 };
 
 const sections = [
@@ -36,13 +37,13 @@ export default function DocsPage() {
       <div className="mx-auto min-h-full max-w-[720px] px-[24px] py-[40px] pb-[72px] sm:px-[32px] sm:py-[56px]">
         <nav className="mb-[32px] flex flex-wrap items-center justify-between gap-[16px]">
           <Link
-            href="/?view=editor"
+            href={`${WORKSPACE_ROUTE}?view=editor`}
             className="inline-flex items-center gap-[8px] rounded-[var(--radius-tab)] px-[10px] py-[6px] font-sans text-[13px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)]"
           >
             <ArrowLeft className="size-[14px] shrink-0" strokeWidth={1.5} aria-hidden />
             Back to editor
           </Link>
-          <span className="font-sans text-[12px] text-[var(--text-disabled)]">OpenCursor</span>
+          <span className="font-sans text-[12px] text-[var(--text-disabled)]">Cesium</span>
         </nav>
 
         <header className="mb-[40px]">
@@ -50,7 +51,7 @@ export default function DocsPage() {
             Documentation
           </p>
           <h1 className="font-sans text-[28px] font-semibold leading-tight tracking-tight text-[var(--text-primary)] sm:text-[32px]">
-            How to use OpenCursor
+            How to use Cesium
           </h1>
           <p className="mt-[14px] max-w-[560px] font-sans text-[15px] leading-relaxed text-[var(--text-secondary)]">
             This is a layout template: same typography and tokens as the IDE. Replace sections with real guides when

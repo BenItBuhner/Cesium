@@ -3,6 +3,7 @@ import type {
   AgentConversationRecord,
   AgentRailConversationSummary,
 } from "@/lib/agent-types";
+import { isRenderableAgentRailConversation } from "@/lib/agent-rail";
 
 export function agentRecordToRailSummary(
   c: AgentConversationRecord
@@ -78,6 +79,9 @@ export function patchAgentConversationGroups(
   record: AgentConversationRecord
 ): AgentConversationGroup[] {
   const summary = agentRecordToRailSummary(record);
+  if (!isRenderableAgentRailConversation(summary)) {
+    return removeConversationFromAgentGroups(groups, record.id, record.workspaceId);
+  }
   let touched = false;
   const next = groups.map((group) => {
     if (group.workspace.id !== record.workspaceId) {

@@ -25,7 +25,7 @@ test("Cursor SDK assistant text blocks concatenate into visible assistant text",
   assert.equal(text, "Hello world");
 });
 
-test("Cursor SDK tool events normalize into OpenCursor tool call rows", () => {
+test("Cursor SDK tool events normalize into Cesium tool call rows", () => {
   const event = cursorSdkToolEventToAgentEvent({
     conversationId: "c1",
     eventId: "e1",
@@ -109,7 +109,7 @@ test("Cursor SDK todo payloads become plan entries", () => {
   ]);
 });
 
-test("Cursor SDK lifecycle status maps to OpenCursor conversation status", () => {
+test("Cursor SDK lifecycle status maps to Cesium conversation status", () => {
   assert.equal(
     cursorSdkStatusToAgentStatus({
       type: "status",

@@ -19,7 +19,7 @@ import type {
 
 const TEST_DATA_DIR = path.join(
   os.tmpdir(),
-  `opencursor-agent-tests-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+  `cesium-agent-tests-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
 );
 
 delete process.env.REDIS_URL;

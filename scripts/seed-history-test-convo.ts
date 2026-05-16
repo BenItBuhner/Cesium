@@ -10,7 +10,7 @@ import os from "node:os";
 
 async function main() {
 const workspaceId = process.argv[2] ?? "8af22c44f404";
-const dataDir = path.resolve(os.homedir(), ".local/state/opencursor");
+const dataDir = path.resolve(os.homedir(), ".local/state/cesium");
 const conversationId = `seed-${randomUUID().slice(0, 8)}`;
 const conversationDir = path.join(
   dataDir,
@@ -109,7 +109,7 @@ console.log(
   `Seeded conversation ${conversationId} with ${userMessages.length} user messages.`
 );
 console.log(
-  `Open: http://localhost:3000/?view=editor&conversationId=${conversationId}`
+  `Open: http://localhost:3000/workspace?view=editor&conversationId=${conversationId}`
 );
 }
 

@@ -752,7 +752,6 @@ export const SUBAGENT_TOOL_CALL_CLASSIFIERS: Record<
   "codex-adapter": isCodexSubagentTaskToolEvent,
   "codex-app-server": isCodexSubagentTaskToolEvent,
   "claude-adapter": isStrictAcpSubagentTaskToolEvent,
-  "claude-code-sdk": isStrictAcpSubagentTaskToolEvent,
 };
 
 export function classifyToolCallAsSubagentCard(

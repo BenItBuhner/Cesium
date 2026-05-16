@@ -1,0 +1,26 @@
+{
+  "name": "@cesium/core",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./platform-surfaces": {
+      "types": "./dist/platform-surfaces.d.ts",
+      "import": "./dist/platform-surfaces.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "@cesium/config": "file:../config",
+    "typescript": "^5"
+  }
+}

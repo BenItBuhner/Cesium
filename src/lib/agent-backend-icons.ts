@@ -19,10 +19,6 @@ export const AGENT_BACKEND_ICON_FILES: Partial<
     light: "Claude-Code-Light.svg",
     dark: "Claude-Code-Dark.svg",
   },
-  "claude-code-sdk": {
-    light: "Claude-Code-Light.svg",
-    dark: "Claude-Code-Dark.svg",
-  },
   "opencode-acp": { light: "OpenCode-Light.svg", dark: "OpenCode-Dark.svg" },
   "opencode-server": { light: "OpenCode-Light.svg", dark: "OpenCode-Dark.svg" },
   "gemini-acp": { light: "Gemini-CLI-Light.svg", dark: "Gemini-CLI-Dark.svg" },

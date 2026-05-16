@@ -1,8 +1,18 @@
 "use client";
 
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { useCallback, useEffect, useMemo, useRef, type ReactNode, type RefObject } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+  type RefObject,
+} from "react";
 import { StickyChatHeader } from "./StickyChatHeader";
+import { CHAT_STICKY_RAIL_INSET_PX } from "./chat-sticky-rail";
 import { useChatStickyPush } from "@/hooks/useChatStickyPush";
 import { UserMessage } from "./UserMessage";
 import { AssistantMessage } from "./AssistantMessage";
@@ -43,6 +53,137 @@ const CHAIN_BREAKING_AFTER_WORKED = new Set<ChatMessage["type"]>([
   "agent-handoff",
   "chat-fork",
 ]);
+
+type ChatVirtualItem = {
+  index: number;
+  start: number;
+  size: number;
+  end: number;
+};
+
+export function findVirtualStickyUserTurn(
+  segments: MessageThreadSegment[],
+  virtualItems: readonly ChatVirtualItem[],
+  scrollTop: number,
+  railInsetPx = CHAT_STICKY_RAIL_INSET_PX
+): number | null {
+  const anchor = scrollTop + railInsetPx;
+  let activeIndex: number | null = null;
+  let activeStart = -Infinity;
+
+  for (const item of virtualItems) {
+    const segment = segments[item.index];
+    if (segment?.type !== "turn") {
+      continue;
+    }
+    const end = item.end ?? item.start + item.size;
+    if (item.start <= anchor && end > anchor && item.start >= activeStart) {
+      activeIndex = item.index;
+      activeStart = item.start;
+    }
+  }
+
+  return activeIndex;
+}
+
+function useStickyScrollTop(
+  enabled: boolean,
+  scrollRootRef: RefObject<HTMLElement | null> | undefined
+): number {
+  const [scrollTop, setScrollTop] = useState(0);
+  const rafRef = useRef<number | null>(null);
+
+  useLayoutEffect(() => {
+    if (!enabled || !scrollRootRef) {
+      setScrollTop(0);
+      return;
+    }
+
+    const root = scrollRootRef.current;
+    if (!root) {
+      return;
+    }
+
+    const syncNow = () => {
+      setScrollTop((current) => {
+        const next = Math.round(root.scrollTop);
+        return current === next ? current : next;
+      });
+    };
+    const scheduleSync = () => {
+      if (rafRef.current != null) {
+        return;
+      }
+      rafRef.current = requestAnimationFrame(() => {
+        rafRef.current = null;
+        syncNow();
+      });
+    };
+
+    syncNow();
+    root.addEventListener("scroll", scheduleSync, { passive: true });
+    window.addEventListener("resize", scheduleSync);
+    const resizeObserver =
+      typeof ResizeObserver === "undefined" ? null : new ResizeObserver(scheduleSync);
+    resizeObserver?.observe(root);
+
+    return () => {
+      root.removeEventListener("scroll", scheduleSync);
+      window.removeEventListener("resize", scheduleSync);
+      resizeObserver?.disconnect();
+      if (rafRef.current != null) {
+        cancelAnimationFrame(rafRef.current);
+        rafRef.current = null;
+      }
+    };
+  }, [enabled, scrollRootRef]);
+
+  return scrollTop;
+}
+
+function VirtualStickyUserHeader({
+  turn,
+  messages,
+}: {
+  turn: UserTurnSegment;
+  messages: ChatMessage[];
+}) {
+  const userMsg = messages[turn.userIndex];
+  if (!userMsg || userMsg.type !== "user") {
+    return null;
+  }
+
+  const userMessage = (
+    <UserMessage
+      content={userMsg.content}
+      segments={userMsg.segments}
+      attachments={userMsg.attachments}
+      showReplyCue={userMsg.showReplyCue}
+      highlight={userMsg.isHandoffMessage}
+      displayOnly
+    />
+  );
+
+  return (
+    <div
+      aria-hidden="true"
+      inert
+      className="pointer-events-none sticky z-30 h-0"
+      style={{ top: CHAT_STICKY_RAIL_INSET_PX }}
+    >
+      <div className="pb-[10px]">
+        {turn.userKind === "user_todo" ? (
+          <div className="flex flex-col">
+            {userMessage}
+            <TodoStatusCard content={messages[turn.todoIndex]?.content ?? ""} meldUserAbove />
+          </div>
+        ) : (
+          userMessage
+        )}
+      </div>
+    </div>
+  );
+}
 
 export function workedSessionScopedKey(conversationId: string, messageId: string): string {
   return `${conversationId}::${messageId}`;
@@ -98,6 +239,13 @@ export interface MessageThreadContentProps {
   virtualize?: boolean;
   /** Callback when user clicks the fork button on a user message. messageId is the ChatMessage.id. */
   onForkMessage?: (messageId: string) => void;
+  /** Callback when user clicks the return arrow on a user message. */
+  onRedoMessage?: (message: ChatMessage) => void;
+  /** Render an inline composer for the user message currently being redone. */
+  renderUserMessageEditor?: (message: ChatMessage) => ReactNode;
+  editingUserMessageId?: string | null;
+  /** Active chat composer draft; enables cite-from-selection into the composer. */
+  composerDraftId?: string | null;
 }
 
 export function MessageThreadContent({
@@ -114,6 +262,10 @@ export function MessageThreadContent({
   virtualize = false,
   workspaceRoot = null,
   onForkMessage,
+  onRedoMessage,
+  renderUserMessageEditor,
+  editingUserMessageId,
+  composerDraftId,
 }: MessageThreadContentProps) {
   const { embeddedPermissionByWorkedId, skipPermissionMessageIndex } = useMemo(() => {
     const embedded = new Map<string, ChatMessage>();
@@ -146,11 +298,15 @@ export function MessageThreadContent({
     }
   }, []);
 
+  const useVirtualStickyOverlay =
+    !!stickyUserHeader && virtualize && messages.length >= 16 && scrollRootRef != null;
+  const useInlineStickyHeaders = !!stickyUserHeader && !useVirtualStickyOverlay;
+
   const pushFor = useChatStickyPush(
     scrollRootRef,
     stickyElMapRef,
     messages,
-    !!stickyUserHeader
+    useInlineStickyHeaders
   );
 
   const lastWorkedSessionIndex = useMemo(
@@ -183,7 +339,7 @@ export function MessageThreadContent({
           }
           return (
             <div key={rowKey} data-chat-message-id={msg.id} className="min-w-0 w-full">
-              <AssistantMessage content={assistantBody} />
+              <AssistantMessage content={assistantBody} composerDraftId={composerDraftId} />
             </div>
           );
         }
@@ -359,6 +515,7 @@ export function MessageThreadContent({
       }
     },
     [
+      composerDraftId,
       conversationBusy,
       conversationId,
       embeddedPermissionByWorkedId,
@@ -385,20 +542,26 @@ export function MessageThreadContent({
         }
         const block = (
           <div className="flex flex-col">
-            <UserMessage
-              content={userMsg.content}
-              segments={userMsg.segments}
-              attachments={userMsg.attachments}
-              showReplyCue={userMsg.showReplyCue}
-              highlight={userMsg.isHandoffMessage}
-              onFork={onForkMessage ? () => onForkMessage(userMsg.id) : undefined}
-            />
+            {editingUserMessageId === userMsg.id && renderUserMessageEditor ? (
+              renderUserMessageEditor(userMsg)
+            ) : (
+              <UserMessage
+                content={userMsg.content}
+                segments={userMsg.segments}
+                attachments={userMsg.attachments}
+                showReplyCue={userMsg.showReplyCue}
+                highlight={userMsg.isHandoffMessage}
+                composerDraftId={composerDraftId}
+                onFork={onForkMessage ? () => onForkMessage(userMsg.id) : undefined}
+                onRedo={onRedoMessage ? () => onRedoMessage(userMsg) : undefined}
+              />
+            )}
             <TodoStatusCard content={todoMsg.content!} meldUserAbove />
           </div>
         );
         return (
           <StickyChatHeader
-            enabled={!!stickyUserHeader}
+            enabled={useInlineStickyHeaders}
             stackOrder={stackOrder}
             pushUpPx={pushFor(stackOrder)}
             registerStickyEl={registerStickyEl}
@@ -413,18 +576,24 @@ export function MessageThreadContent({
         return null;
       }
       const inner = (
-        <UserMessage
-          content={userMsg.content}
-          segments={userMsg.segments}
-          attachments={userMsg.attachments}
-          showReplyCue={userMsg.showReplyCue}
-          highlight={userMsg.isHandoffMessage}
-          onFork={onForkMessage ? () => onForkMessage(userMsg.id) : undefined}
-        />
+        editingUserMessageId === userMsg.id && renderUserMessageEditor ? (
+          renderUserMessageEditor(userMsg)
+        ) : (
+          <UserMessage
+            content={userMsg.content}
+            segments={userMsg.segments}
+            attachments={userMsg.attachments}
+            showReplyCue={userMsg.showReplyCue}
+            highlight={userMsg.isHandoffMessage}
+            composerDraftId={composerDraftId}
+            onFork={onForkMessage ? () => onForkMessage(userMsg.id) : undefined}
+            onRedo={onRedoMessage ? () => onRedoMessage(userMsg) : undefined}
+          />
+        )
       );
       return (
         <StickyChatHeader
-          enabled={!!stickyUserHeader}
+          enabled={useInlineStickyHeaders}
           stackOrder={stackOrder}
           pushUpPx={pushFor(stackOrder)}
           registerStickyEl={registerStickyEl}
@@ -434,7 +603,17 @@ export function MessageThreadContent({
         </StickyChatHeader>
       );
     },
-    [messages, onForkMessage, pushFor, registerStickyEl, stickyUserHeader]
+    [
+      composerDraftId,
+      editingUserMessageId,
+      messages,
+      onForkMessage,
+      onRedoMessage,
+      pushFor,
+      registerStickyEl,
+      renderUserMessageEditor,
+      useInlineStickyHeaders,
+    ]
   );
 
   const renderSegment = useCallback(
@@ -482,14 +661,35 @@ export function MessageThreadContent({
     getItemKey: (index) => `${conversationId ?? "none"}:${segments[index]?.key ?? String(index)}`,
   });
 
+  const virtualItems = useVirtualList ? virtualizer.getVirtualItems() : [];
+  const virtualStickyScrollTop = useStickyScrollTop(
+    useVirtualStickyOverlay && useVirtualList,
+    scrollRootRef
+  );
+  const activeVirtualStickyIndex = useMemo(
+    () =>
+      useVirtualStickyOverlay && useVirtualList
+        ? findVirtualStickyUserTurn(segments, virtualItems, virtualStickyScrollTop)
+        : null,
+    [segments, useVirtualList, useVirtualStickyOverlay, virtualItems, virtualStickyScrollTop]
+  );
+  const activeVirtualStickyTurn =
+    activeVirtualStickyIndex == null
+      ? null
+      : segments[activeVirtualStickyIndex]?.type === "turn"
+        ? segments[activeVirtualStickyIndex]
+        : null;
+
   if (useVirtualList) {
-    const items = virtualizer.getVirtualItems();
     return (
       <div
         className="relative w-full"
         style={{ height: `${virtualizer.getTotalSize()}px` }}
       >
-        {items.map((item) => {
+        {activeVirtualStickyTurn ? (
+          <VirtualStickyUserHeader turn={activeVirtualStickyTurn} messages={messages} />
+        ) : null}
+        {virtualItems.map((item) => {
           const seg = segments[item.index];
           if (!seg) {
             return null;

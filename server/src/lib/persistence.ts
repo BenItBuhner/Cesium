@@ -19,20 +19,44 @@ function resolveDefaultDataDir(): string {
   if (process.platform === "win32") {
     const localAppData = process.env.LOCALAPPDATA?.trim();
     if (localAppData) {
-      return path.resolve(localAppData, "OpenCursor", "data");
+      return path.resolve(localAppData, "Cesium", "data");
     }
   }
 
   if (process.platform === "darwin") {
-    return path.resolve(os.homedir(), "Library", "Application Support", "OpenCursor", "data");
+    return path.resolve(os.homedir(), "Library", "Application Support", "Cesium", "data");
   }
 
   const xdgStateHome = process.env.XDG_STATE_HOME?.trim();
   if (xdgStateHome) {
-    return path.resolve(xdgStateHome, "opencursor");
+    return path.resolve(xdgStateHome, "cesium");
   }
 
-  return path.resolve(os.homedir(), ".local", "state", "opencursor");
+  return path.resolve(os.homedir(), ".local", "state", "cesium");
+}
+
+function resolveLegacyDefaultDataDirs(): string[] {
+  const dirs: string[] = [];
+  if (process.platform === "win32") {
+    const localAppData = process.env.LOCALAPPDATA?.trim();
+    if (localAppData) {
+      dirs.push(path.resolve(localAppData, "OpenCursor", "data"));
+    }
+  }
+
+  if (process.platform === "darwin") {
+    dirs.push(
+      path.resolve(os.homedir(), "Library", "Application Support", "OpenCursor", "data")
+    );
+  }
+
+  const xdgStateHome = process.env.XDG_STATE_HOME?.trim();
+  if (xdgStateHome) {
+    dirs.push(path.resolve(xdgStateHome, "opencursor"));
+  }
+  dirs.push(path.resolve(os.homedir(), ".local", "state", "opencursor"));
+
+  return dirs;
 }
 
 function resolveDataDir(): string {
@@ -47,9 +71,13 @@ function resolveDataDir(): string {
 function getLegacyDataDirs(): string[] {
   const repoRoot = resolveRepoRootFromProcessCwd();
   return [
+    path.resolve(process.cwd(), ".cesium-data"),
+    path.resolve(repoRoot, ".cesium-data"),
+    path.resolve(repoRoot, "server", ".cesium-data"),
     path.resolve(process.cwd(), ".opencursor-data"),
     path.resolve(repoRoot, ".opencursor-data"),
     path.resolve(repoRoot, "server", ".opencursor-data"),
+    ...resolveLegacyDefaultDataDirs(),
   ].filter((value, index, all) => all.indexOf(value) === index && value !== DATA_DIR);
 }
 
@@ -89,7 +117,13 @@ async function migrateLegacyDataDir(sourceDir: string, targetDir: string): Promi
 
 async function ensureResolvedDataDir(): Promise<void> {
   const targetExists = await pathExists(DATA_DIR);
-  if (!targetExists) {
+  const isDesktopSidecar = process.env.OPENCURSOR_DESKTOP_BACKEND === "1";
+  const allowLegacyImport =
+    process.env.OPENCURSOR_DESKTOP_IMPORT_LEGACY_DATA?.trim() === "1";
+  const shouldImportLegacy =
+    !targetExists && !(isDesktopSidecar && !allowLegacyImport);
+
+  if (shouldImportLegacy) {
     for (const legacyDir of getLegacyDataDirs()) {
       if (!(await hasDirectoryEntries(legacyDir))) {
         continue;
@@ -184,6 +218,34 @@ export function getAllowedWorkspaceRoots(): string[] {
   if (homeDir) {
     defaults.push(path.resolve(homeDir));
   }
+  if (process.platform === "win32") {
+    const userProfile = process.env.USERPROFILE?.trim() || homeDir;
+    for (const key of ["OneDrive", "OneDriveConsumer", "OneDriveCommercial"]) {
+      const oneDriveRoot = process.env[key]?.trim();
+      if (oneDriveRoot) {
+        defaults.push(path.resolve(oneDriveRoot));
+        defaults.push(
+          path.resolve(oneDriveRoot, "Documents"),
+          path.resolve(oneDriveRoot, "Documents", "Projects")
+        );
+      }
+    }
+    if (userProfile) {
+      const oneDriveRoot = path.resolve(userProfile, "OneDrive");
+      defaults.push(
+        oneDriveRoot,
+        path.resolve(oneDriveRoot, "Documents"),
+        path.resolve(oneDriveRoot, "Documents", "Projects"),
+        path.resolve(userProfile, "Documents"),
+        path.resolve(userProfile, "Documents", "Projects"),
+        path.resolve(userProfile, "Desktop"),
+        path.resolve(userProfile, "Downloads")
+      );
+    }
+    for (const drive of "ABCDEFGHIJKLMNOPQRSTUVWXYZ") {
+      defaults.push(`${drive}:\\`);
+    }
+  }
   const workspaceRoot = process.env.WORKSPACE_ROOT?.trim();
   if (workspaceRoot) {
     defaults.push(path.resolve(workspaceRoot));
@@ -193,7 +255,10 @@ export function getAllowedWorkspaceRoots(): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
   for (const value of defaults) {
-    const key = path.normalize(value);
+    const key =
+      process.platform === "win32"
+        ? path.normalize(value).toLowerCase()
+        : path.normalize(value);
     if (seen.has(key)) continue;
     seen.add(key);
     out.push(value);

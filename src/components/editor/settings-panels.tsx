@@ -11,16 +11,13 @@ import {
   type ReactNode,
 } from "react";
 import {
-  ChevronDown,
   ChevronRight,
   Database,
   Download,
   ExternalLink,
 
-  Lock,
   RefreshCw,
   Upload,
-  X,
 } from "lucide-react";
 import { HardwareAwareTextInput } from "@/components/input/HardwareAwareTextField";
 import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
@@ -31,6 +28,7 @@ import { useTheme } from "@/components/theme/ThemeProvider";
 import type { CustomThemeEntry } from "@/lib/theme-config";
 import { DEFAULT_BUILTIN_THEME_ID, BUILTIN_THEME_CATALOG } from "@/lib/theme-presets";
 import type { ThemePreference } from "@/lib/theme";
+import { WORKSPACE_ROUTE } from "@/lib/workbench-view";
 import {
   THEME_TOKEN_GROUPS,
   sanitizeThemeTokensPartial,
@@ -122,7 +120,6 @@ const BACKEND_LABELS: Record<string, string> = {
   "codex-adapter": "Codex",
   "codex-app-server": "Codex App Server",
   "claude-adapter": "Claude Code",
-  "claude-code-sdk": "Claude Code SDK",
 };
 
 const BACKEND_ORDER: string[] = [
@@ -134,7 +131,6 @@ const BACKEND_ORDER: string[] = [
   "opencode-server",
   "gemini-acp",
   "claude-adapter",
-  "claude-code-sdk",
 ];
 
 type CompactModelToggleRow = {
@@ -316,54 +312,6 @@ function SubsectionLabel({ children }: { children: ReactNode }) {
   );
 }
 
-function SelectMock({ label }: { label: string }) {
-  return (
-    <button type="button" className={selectClass}>
-      <span className="truncate">{label}</span>
-      <ChevronDown className="size-[14px] shrink-0 text-[var(--text-disabled)]" strokeWidth={1.5} />
-    </button>
-  );
-}
-
-function TagList({ tags, onRemove }: { tags: string[]; onRemove?: (t: string) => void }) {
-  return (
-    <div className="flex max-w-[min(100%,420px)] flex-wrap justify-end gap-[6px]">
-      {tags.map((t) => (
-        <span key={t} className={tagClass}>
-          <span className="max-w-[200px] truncate">{t}</span>
-          {onRemove ? (
-            <button
-              type="button"
-              className="rounded p-[1px] text-[var(--text-disabled)] hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)]"
-              aria-label={`Remove ${t}`}
-              onClick={() => onRemove(t)}
-            >
-              <X className="size-[12px]" strokeWidth={2} />
-            </button>
-          ) : null}
-        </span>
-      ))}
-    </div>
-  );
-}
-
-function EmptyWell({
-  children,
-  action,
-}: {
-  children: ReactNode;
-  action?: ReactNode;
-}) {
-  return (
-    <div className="flex min-h-[120px] flex-col items-center justify-center gap-[12px] rounded-[var(--radius-card)] border border-[var(--border-subtle)] bg-[var(--bg-main)] px-[16px] py-[24px] text-center">
-      <p className="max-w-[360px] font-sans text-[13px] leading-relaxed text-[var(--text-secondary)]">
-        {children}
-      </p>
-      {action}
-    </div>
-  );
-}
-
 function PageIntro({ title, subtitle }: { title: string; subtitle?: string }) {
   return (
     <>
@@ -400,31 +348,9 @@ export function GeneralSettingsPanel() {
     <>
       <PageIntro
         title="General"
-        subtitle="Account, editor links, notifications, and privacy (demo UI)."
+        subtitle="Quick links to appearance, shortcuts, and data export. Do Not Disturb controls in-app workbench notifications."
       />
-      <SettingsSection title="Manage Account">
-        <SettingsRow
-          title="Manage Account"
-          description="Manage your account and billing."
-          trailing={
-            <button type="button" className={rowButtonClass}>
-              Open
-              <ExternalLink className="size-[14px]" strokeWidth={1.5} aria-hidden />
-            </button>
-          }
-        />
-      </SettingsSection>
       <SettingsSection title="Preferences">
-        <SettingsRow
-          title="Editor Settings"
-          description="Configure font, formatting, minimap and more"
-          trailing={
-            <button type="button" className={rowButtonClass}>
-              Open
-              <ExternalLink className="size-[14px]" strokeWidth={1.5} aria-hidden />
-            </button>
-          }
-        />
         <SettingsRow
           title="Appearance & themes"
           description="System, light, or dark mode; per-appearance themes; custom token presets."
@@ -501,74 +427,9 @@ export function GeneralSettingsPanel() {
               size="md"
             />
           }
-        />
-        <SettingsRow
-          title="System notifications"
-          description="Show notifications for important events and completions."
-          trailing={
-            <ToggleSwitch
-              checked={general.sysNotify}
-              onChange={(value) => patchGeneral({ sysNotify: value })}
-              size="md"
-            />
-          }
-        />
-        <SettingsRow
-          title="Warning Notifications"
-          description="Surface warnings and non-fatal issues as notifications."
-          trailing={
-            <ToggleSwitch
-              checked={general.warnNotify}
-              onChange={(value) => patchGeneral({ warnNotify: value })}
-              size="md"
-            />
-          }
-        />
-        <SettingsRow
-          title="System Tray Icon"
-          description="Keep an icon in the system tray while the app runs."
-          trailing={
-            <ToggleSwitch
-              checked={general.trayIcon}
-              onChange={(value) => patchGeneral({ trayIcon: value })}
-              size="md"
-            />
-          }
-        />
-        <SettingsRow
-          title="Completion Sound"
-          description="Play a short sound when a generation completes."
-          trailing={
-            <ToggleSwitch
-              checked={general.completionSound}
-              onChange={(value) => patchGeneral({ completionSound: value })}
-              size="md"
-            />
-          }
           border={false}
         />
       </SettingsSection>
-      <SettingsSection title="Privacy">
-        <SettingsRow
-          title="Privacy Mode"
-          description="When enabled, your code is not used to train models. Some cloud features may be limited in this demo."
-          trailing={
-            <button type="button" className={rowButtonClass}>
-              <Lock className="size-[14px]" strokeWidth={1.5} aria-hidden />
-              Privacy Mode
-            </button>
-          }
-          border={false}
-        />
-      </SettingsSection>
-      <div className="mt-[8px] px-[2px]">
-        <button
-          type="button"
-          className="font-sans text-[13px] text-[var(--text-secondary)] transition-colors hover:text-[var(--text-primary)]"
-        >
-          Log Out
-        </button>
-      </div>
     </>
   );
 }
@@ -950,7 +811,7 @@ function CursorAgentServerDeploymentReadout() {
 
   return (
     <SettingsSection>
-      <SubsectionLabel>Cursor CLI (OpenCursor server)</SubsectionLabel>
+      <SubsectionLabel>Cursor CLI (Cesium server)</SubsectionLabel>
       <div className="px-[16px] pb-[14px] pt-[2px] font-sans text-[12px] leading-relaxed text-[var(--text-secondary)]">
         {loadError ? (
           <p className="text-[var(--text-primary)]">Could not load server hints: {loadError}</p>
@@ -1543,112 +1404,17 @@ export function ModelsSettingsPanel() {
 }
 
 export function RulesSkillsSubagentsPanel() {
-  const { settings, updateSettings } = useGlobalSettings();
   return (
     <>
       <PageIntro
         title="Rules, Skills, Subagents"
-        subtitle="Provide domain-specific knowledge and workflows for the agent."
+        subtitle="Project rules, agent skills, and subagent presets are defined as files in your workspace (for example under .cursor). This screen does not list or edit them yet."
       />
-      <SettingsSection>
-        <SettingsRow
-          title="Include third-party Plugins, Skills, and other configs"
-           description="Automatically import agent configs from other tools."
-           trailing={
-            <ToggleSwitch
-              checked={settings.rules.thirdParty}
-              onChange={(value) =>
-                updateSettings((current) => ({
-                  ...current,
-                  rules: {
-                    ...current.rules,
-                    thirdParty: value,
-                  },
-                }))
-              }
-              size="md"
-              variant="green"
-            />
-           }
-           border={false}
-         />
-      </SettingsSection>
-      <SettingsSection
-        title="Rules"
-        action={
-          <button type="button" className="font-sans text-[12px] font-medium text-[#2563eb] hover:underline">
-            + New
-          </button>
-        }
-      >
-        <div className="space-y-[8px] p-[12px]">
-          {["Markdown Files", "Issue Resolution & Debugging", "Hospitality & Tech"].map((n) => (
-            <div
-              key={n}
-              className="rounded-[var(--radius-tab)] border border-[var(--border-subtle)] bg-[var(--bg-main)] px-[12px] py-[10px] font-sans text-[12px] font-medium text-[var(--text-primary)]"
-            >
-              {n}
-            </div>
-          ))}
-        </div>
-      </SettingsSection>
-      <SettingsSection
-        title="Skills"
-        action={
-          <button type="button" className="font-sans text-[12px] font-medium text-[#2563eb] hover:underline">
-            + New
-          </button>
-        }
-      >
-        <div className="divide-y divide-[var(--border-subtle)]">
-          {[
-            ["code-simplifier", "Simplifies and refines code for clarity."],
-            ["frontend-ninja", "Distinctive production-grade UI work."],
-            ["make-docs", "Documentation updates across the repo."],
-            ["push", "Git push workflows."],
-            ["openai-docs", "OpenAI product and API references."],
-          ].map(([id, d]) => (
-            <div key={id} className="px-[16px] py-[10px]">
-              <p className="font-mono text-[12px] font-semibold text-[var(--text-primary)]">{id}</p>
-              <p className="mt-[2px] font-sans text-[12px] text-[var(--text-secondary)]">{d}</p>
-            </div>
-          ))}
-        </div>
-        <div className="border-t border-[var(--border-subtle)] px-[16px] py-[10px]">
-          <button type="button" className="font-sans text-[12px] text-[#2563eb] hover:underline">
-            Show all (10 more)
-          </button>
-        </div>
-      </SettingsSection>
-      <SettingsSection
-        title="Subagents"
-        action={
-          <button type="button" className="font-sans text-[12px] font-medium text-[#2563eb] hover:underline">
-            + New
-          </button>
-        }
-      >
-        <div className="px-[16px] py-[12px]">
-          <p className="font-mono text-[12px] font-semibold text-[var(--text-primary)]">docs-researcher</p>
-          <p className="mt-[2px] font-sans text-[12px] text-[var(--text-secondary)]">
-            Fetches library documentation on demand.
+      <SettingsSection title="Workspace files">
+        <div className="px-[16px] py-[16px]">
+          <p className="font-sans text-[13px] leading-relaxed text-[var(--text-secondary)]">
+            Add or update instruction files in your repository; agents consume them when the connected backend supports loading rules and skills from disk.
           </p>
-        </div>
-      </SettingsSection>
-      <SettingsSection
-        title="Community"
-        action={
-          <button type="button" className="font-sans text-[12px] font-medium text-[#2563eb] hover:underline">
-            + New
-          </button>
-        }
-      >
-        <div className="divide-y divide-[var(--border-subtle)]">
-          {["no-edit", "test-debug-and-iterate", "docs"].map((n) => (
-            <div key={n} className="px-[16px] py-[10px] font-mono text-[12px] text-[var(--text-primary)]">
-              {n}
-            </div>
-          ))}
         </div>
       </SettingsSection>
     </>
@@ -1662,7 +1428,7 @@ export function PluginsSettingsPanel() {
     <>
       <PageIntro
         title="Plugins"
-        subtitle="Extensions for agents: reusable skills, MCP-backed tools, and related capabilities. This page is the hub for ACP-style agents; detailed editors live in Rules, Skills, Subagents and Tools & MCPs until a unified manifest is wired up."
+        subtitle="Jump to rules and skills or MCP-related settings. There is no separate plugin registry in this app yet."
       />
       <SettingsSection title="Manage">
         <SettingsRow
@@ -1688,7 +1454,7 @@ export function PluginsSettingsPanel() {
         />
         <SettingsRow
           title="Tools & MCP servers"
-          description="MCP connections, browser automation, and allowlists for what tools may run automatically."
+          description="Tooling configuration for agents."
           trailing={
             <button
               type="button"
@@ -1709,17 +1475,6 @@ export function PluginsSettingsPanel() {
           border={false}
         />
       </SettingsSection>
-      <SettingsSection title="Roadmap">
-        <div className="p-[12px]">
-          <p className="mb-[10px] font-sans text-[12px] text-[var(--text-secondary)]">
-            Future work: one place to enable or scope skills and MCP servers per agent backend, shared across
-            ACP-supported providers.
-          </p>
-          <EmptyWell>
-            No unified plugin registry yet—use the links above to configure skills and MCP for now.
-          </EmptyWell>
-        </div>
-      </SettingsSection>
     </>
   );
 }
@@ -1734,7 +1489,7 @@ export function ServerConnectionsSettingsPanel() {
     }
     previousActiveServerIdRef.current = activeServer.id;
     if (typeof window !== "undefined") {
-      window.location.assign("/");
+      window.location.assign(WORKSPACE_ROUTE);
     }
   }, [activeServer.id]);
 
@@ -1742,7 +1497,7 @@ export function ServerConnectionsSettingsPanel() {
     <>
       <PageIntro
         title="Servers"
-        subtitle="Choose which OpenCursor server this browser connects to, keep multiple base URLs saved locally, and switch between them quickly."
+        subtitle="Choose which Cesium server this browser connects to, keep multiple base URLs saved locally, and switch between them quickly."
       />
       <SettingsSection title="Active connection">
         <SettingsRow
@@ -1769,140 +1524,18 @@ export function ServerConnectionsSettingsPanel() {
 }
 
 export function ToolsMcpSettingsPanel() {
-  const { settings, updateSettings } = useGlobalSettings();
-  const tools = settings.tools;
-
   return (
     <>
-      <PageIntro title="Tools" subtitle="Browser automation, MCP servers, and allowlists." />
-      <div className="mb-[16px] flex flex-wrap gap-[6px] border-b border-[var(--border-subtle)] pb-[10px]">
-        {["Home", "opencursor", "Cloud"].map((t, i) => (
-          <button
-            key={t}
-            type="button"
-            className={`border-b-2 px-[10px] pb-[8px] font-sans text-[12px] ${
-              i === 0
-                ? "border-[#2563eb] font-medium text-[var(--text-primary)]"
-                : "border-transparent text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
-            }`}
-          >
-            {t}
-          </button>
-        ))}
-      </div>
-      <SettingsSection title="Browser">
-        <SettingsRow
-          title="Browser Automation"
-          description="Connected to Browser Tab."
-          trailing={<SelectMock label="Browser Tab" />}
-        />
-        <SettingsRow
-          title="Show Localhost Links in Browser"
-          description="Automatically open localhost links in the Browser Tab."
-          trailing={
-            <ToggleSwitch
-              checked={tools.localhost}
-              onChange={(value) =>
-                updateSettings((current) => ({
-                  ...current,
-                  tools: {
-                    ...current.tools,
-                    localhost: value,
-                  },
-                }))
-              }
-              size="md"
-              variant="green"
-            />
-          }
-          border={false}
-        />
-      </SettingsSection>
-      <SettingsSection title="User MCP Servers">
-        <div className="p-[12px]">
-          <p className="mb-[10px] font-sans text-[12px] text-[var(--text-secondary)]">
-            Servers available in this workspace.
+      <PageIntro
+        title="Tools & MCPs"
+        subtitle="MCP servers, browser automation hooks, and tool allowlists are not configured from this preferences UI. Use the Servers tab for the Cesium backend URL; MCP and fetch policy live in workspace or server configuration."
+      />
+      <SettingsSection title="Overview">
+        <div className="px-[16px] py-[16px]">
+          <p className="font-sans text-[13px] leading-relaxed text-[var(--text-secondary)]">
+            Nothing here changes tool execution yet—this page is intentionally minimal until those settings are wired end-to-end.
           </p>
-          <EmptyWell action={<button type="button" className={rowButtonClass}>Add Custom MCP</button>}>
-            No User MCP tools. Add a custom MCP tool in your user MCP config.
-          </EmptyWell>
         </div>
-      </SettingsSection>
-      <SettingsSection
-        title="Team MCP Servers"
-        action={
-          <button type="button" className="font-sans text-[12px] text-[#2563eb] hover:underline">
-            Manage
-          </button>
-        }
-      >
-        <div className="p-[12px]">
-          <p className="mb-[10px] font-sans text-[12px] text-[var(--text-secondary)]">
-            Configured on the dashboard.
-          </p>
-          <EmptyWell
-            action={
-              <button type="button" className={rowButtonClass}>
-                Configure Team MCP Servers
-              </button>
-            }
-          >
-            No Team MCP Servers. Configure MCP servers in the dashboard to make them available on desktop and in the cloud.
-          </EmptyWell>
-        </div>
-      </SettingsSection>
-      <SettingsSection title="Plugin MCP Servers">
-        {tools.pluginState.map((p, i) => (
-          <div
-            key={p.id}
-            className={`flex min-h-[56px] items-center justify-between gap-[12px] px-[16px] py-[12px] ${
-              i < tools.pluginState.length - 1 ? "border-b border-[var(--border-subtle)]" : ""
-            }`}
-          >
-            <div className="min-w-0">
-              <p className="font-sans text-[13px] font-semibold text-[var(--text-primary)]">{p.name}</p>
-              <p className="mt-[2px] font-sans text-[12px] text-[var(--text-secondary)]">{p.status}</p>
-            </div>
-            {p.connect ? (
-              <button
-                type="button"
-                className="rounded-[var(--radius-tab)] bg-[#2563eb] px-[12px] py-[5px] font-sans text-[12px] font-medium text-white hover:bg-[#1d4ed8]"
-              >
-                Connect
-              </button>
-            ) : (
-              <ToggleSwitch
-                checked={p.on}
-                onChange={(v) =>
-                  updateSettings((current) => ({
-                    ...current,
-                    tools: {
-                      ...current.tools,
-                      pluginState: current.tools.pluginState.map((row) =>
-                        row.id === p.id ? { ...row, on: v } : row
-                      ),
-                    },
-                  }))
-                }
-                size="md"
-                variant="green"
-              />
-            )}
-          </div>
-        ))}
-      </SettingsSection>
-      <SettingsSection title="Allowlists">
-        <SettingsRow
-          title="MCP Allowlist"
-          description="MCP tools that can run automatically. Format: &apos;server:tool&apos;, &apos;server:*&apos;, &apos;tool&apos;, or &apos;*&apos;."
-          trailing={<TagList tags={tools.mcpTags} />}
-        />
-        <SettingsRow
-          title="Fetch Domain Allowlist"
-          description="Domains that Agent can fetch from automatically. Use &apos;*&apos; for all domains."
-          trailing={<TagList tags={tools.domainTags} />}
-          border={false}
-        />
       </SettingsSection>
     </>
   );
@@ -2329,7 +1962,7 @@ function ExportGranularityPicker({
       {row(
         "globalApp",
         "App settings",
-        "General, Agents, Models, Plugins, Rules, Tools — demo settings from the settings API."
+        "General, agents, and models (synced via the settings API)."
       )}
       {row(
         "workspaceSession",
@@ -2371,7 +2004,7 @@ export function ExportImportSettingsPanel() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `opencursor-settings-${new Date().toISOString().slice(0, 10)}.json`;
+    a.download = `cesium-settings-${new Date().toISOString().slice(0, 10)}.json`;
     a.click();
     URL.revokeObjectURL(url);
   }, [exportSelection, themeConfig, preferences, settings, workspaceSession]);
@@ -2391,7 +2024,7 @@ export function ExportImportSettingsPanel() {
         const parsed = parseSettingsImportBundle(raw);
         if (!parsed) {
           setImportError(
-            "Not a valid OpenCursor settings export (need schemaVersion 1 or 2)."
+            "Not a valid Cesium settings export (need schemaVersion 1 or 2)."
           );
           return;
         }

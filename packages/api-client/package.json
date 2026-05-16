@@ -1,0 +1,29 @@
+{
+  "name": "@cesium/api-client",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./web-runtime": {
+      "types": "./dist/web-runtime.d.ts",
+      "import": "./dist/web-runtime.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@cesium/core": "file:../core"
+  },
+  "devDependencies": {
+    "@cesium/config": "file:../config",
+    "typescript": "^5"
+  }
+}

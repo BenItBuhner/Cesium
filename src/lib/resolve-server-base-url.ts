@@ -1,17 +1,21 @@
 import { getActiveServerBaseUrl } from "@/lib/server-connections";
+import {
+  getNativeShellServerBaseUrl,
+  isLoopbackServerBaseUrl,
+} from "@/lib/native-shell";
 
 /**
  * Build-time API base (`NEXT_PUBLIC_*` is inlined when `next build` runs).
  */
 export function getConfiguredServerBaseUrl(): string {
-  return (
+  return getNativeShellServerBaseUrl() ?? (
     process.env.NEXT_PUBLIC_SERVER_URL?.replace(/\/+$/, "") ??
     "http://localhost:9107"
   );
 }
 
 /**
- * URL the browser should use for HTTP and WebSocket calls to the OpenCursor API.
+ * URL the browser should use for HTTP and WebSocket calls to the Cesium API.
  *
  * Goal: never trip mixed-content, and never hit the browser's own loopback
  * when the page is opened from another host.
@@ -39,6 +43,10 @@ export function resolveClientServerBaseUrlForCurrentWindow(raw: string): string 
     const override = serverUrlOverrideFromSearch(window.location.search);
     if (override) {
       return override;
+    }
+    const nativeServerBaseUrl = getNativeShellServerBaseUrl();
+    if (nativeServerBaseUrl && isLoopbackServerBaseUrl(raw)) {
+      return nativeServerBaseUrl;
     }
   }
   return resolveClientServerBaseUrlForLocation(raw, typeof window !== "undefined" ? window : null);

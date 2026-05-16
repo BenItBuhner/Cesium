@@ -1,0 +1,9 @@
+@source "../../../src";
+@source "../../../packages/ui-web/src";
+@source "../../../packages/design/src";
+@import "../../../src/app/globals.css";
+
+:root {
+  --font-geist-sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-geist-mono: "Cascadia Mono", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+}

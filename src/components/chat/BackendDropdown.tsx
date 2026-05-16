@@ -9,9 +9,11 @@ import {
   useState,
 } from "react";
 import { createPortal } from "react-dom";
-import { Bot, Check, ChevronDown } from "lucide-react";
+import { Bot, Check, ChevronDown, Settings } from "lucide-react";
 import { useClickOutside } from "@/hooks/useClickOutside";
 import { usePopover } from "@/hooks/usePopover";
+import { useShellView } from "@/components/layout/ShellViewContext";
+import { useWorkspace } from "@/contexts/WorkspaceContext";
 import type { AgentBackendId, AgentBackendInfo } from "@/lib/agent-types";
 import { AgentBackendIcon } from "./AgentBackendIcon";
 
@@ -30,6 +32,10 @@ interface BackendDropdownProps {
 
 const BACKEND_LABEL_KEYBOARD_PEEK_MS = 560;
 
+function settingsNavForBackend(_backendId: AgentBackendId): string {
+  return "agents";
+}
+
 export function BackendDropdown({
   backendId,
   backends,
@@ -40,6 +46,8 @@ export function BackendDropdown({
   labelPeekKey = 0,
   menuOpenTriggerKey = 0,
 }: BackendDropdownProps) {
+  const { openSettingsView } = useShellView();
+  const { updateWorkspaceSession } = useWorkspace();
   const [open, setOpen] = useState(false);
   const [keyboardLabelPeek, setKeyboardLabelPeek] = useState(false);
   const [expandedWidth, setExpandedWidth] = useState(28);
@@ -53,6 +61,20 @@ export function BackendDropdown({
   const options = useMemo(() => backends, [backends]);
   const current = options.find((option) => option.id === backendId) ?? null;
   const showLabelExpanded = open || keyboardLabelPeek;
+  const openBackendSettings = useCallback(
+    (targetBackendId: AgentBackendId) => {
+      updateWorkspaceSession((current) => ({
+        ...current,
+        settingsView: {
+          ...current.settingsView,
+          activeNav: settingsNavForBackend(targetBackendId),
+        },
+      }));
+      openSettingsView();
+      setOpen(false);
+    },
+    [openSettingsView, updateWorkspaceSession]
+  );
 
   useEffect(() => {
     if (labelPeekKey <= 0) {
@@ -170,39 +192,54 @@ export function BackendDropdown({
               const isDifferentBackend = option.id !== backendId;
               return (
                 <div key={option.id} className="flex flex-col">
-                  <button
-                    type="button"
-                    disabled={unavailable}
+                  <div
                     title={detail}
-                    onClick={() => {
-                      if (unavailable) return;
-                      if (isDifferentBackend && onRequestHandoff) {
-                        onRequestHandoff(option.id);
-                      } else {
-                        onBackendChange?.(option.id);
-                      }
-                      setOpen(false);
-                    }}
-                    className="flex w-full items-center gap-[8px] px-[12px] py-[5px] text-left transition-colors hover:bg-white/[0.06] disabled:cursor-not-allowed disabled:opacity-50"
+                    className={`flex w-full items-center gap-[4px] px-[8px] py-[2px] transition-colors ${
+                      unavailable ? "opacity-55" : "hover:bg-white/[0.06]"
+                    }`}
                   >
-                    <AgentBackendIcon
-                      backendId={option.id}
-                      className="size-[15px] shrink-0"
-                      strokeWidth={1.5}
-                      emphasized={active}
-                    />
-                    <span
-                      className="min-w-0 flex-1 truncate font-sans text-[13px] font-normal"
-                      style={{
-                        color: active ? "var(--text-primary)" : "var(--text-secondary)",
+                    <button
+                      type="button"
+                      disabled={unavailable}
+                      onClick={() => {
+                        if (isDifferentBackend && onRequestHandoff) {
+                          onRequestHandoff(option.id);
+                        } else {
+                          onBackendChange?.(option.id);
+                        }
+                        setOpen(false);
                       }}
+                      className="flex min-w-0 flex-1 items-center gap-[8px] rounded-[var(--radius-tab)] px-[4px] py-[3px] text-left disabled:cursor-not-allowed"
                     >
-                      {option.label}
-                    </span>
-                    {active && (
+                      <AgentBackendIcon
+                        backendId={option.id}
+                        className="size-[15px] shrink-0"
+                        strokeWidth={1.5}
+                        emphasized={active}
+                      />
+                      <span
+                        className="min-w-0 flex-1 truncate font-sans text-[13px] font-normal"
+                        style={{
+                          color: active ? "var(--text-primary)" : "var(--text-secondary)",
+                        }}
+                      >
+                        {option.label}
+                      </span>
+                    </button>
+                    {unavailable ? (
+                      <button
+                        type="button"
+                        aria-label={`Configure ${option.label}`}
+                        title={`Configure ${option.label}`}
+                        onClick={() => openBackendSettings(option.id)}
+                        className="flex size-[24px] shrink-0 items-center justify-center rounded-[var(--radius-tab)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)]"
+                      >
+                        <Settings className="size-[13px]" strokeWidth={1.7} />
+                      </button>
+                    ) : active ? (
                       <Check className="size-[14px] shrink-0 text-[var(--text-primary)]" strokeWidth={2} />
-                    )}
-                  </button>
+                    ) : null}
+                  </div>
                 </div>
               );
             })}

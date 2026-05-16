@@ -14,6 +14,7 @@ import {
   requireWorkspaceFromRequest,
 } from "../lib/request-workspace.js";
 import { setShortCache } from "../lib/cache-headers.js";
+import { scheduleSshWorkspacePush } from "../lib/ssh-workspaces.js";
 
 type FileNode = {
   name: string;
@@ -367,6 +368,7 @@ fsRoutes.post("/api/fs/write", async (c) => {
   const absolutePath = resolveSafePath(workspace.root, body.path);
   await fs.mkdir(path.dirname(absolutePath), { recursive: true });
   await fs.writeFile(absolutePath, body.content, "utf8");
+  scheduleSshWorkspacePush(workspace.id);
   return c.json({ ok: true, size: Buffer.byteLength(body.content, "utf8") });
 });
 
@@ -407,6 +409,7 @@ fsRoutes.post("/api/fs/mkdir", async (c) => {
 
   const absolutePath = resolveSafePath(workspace.root, body.path);
   await fs.mkdir(absolutePath, { recursive: true });
+  scheduleSshWorkspacePush(workspace.id);
   return c.json({ ok: true });
 });
 
@@ -419,6 +422,7 @@ fsRoutes.post("/api/fs/delete", async (c) => {
 
   const absolutePath = resolveSafePath(workspace.root, body.path);
   await fs.rm(absolutePath, { recursive: true, force: true });
+  scheduleSshWorkspacePush(workspace.id);
   return c.json({ ok: true });
 });
 
@@ -433,6 +437,7 @@ fsRoutes.post("/api/fs/rename", async (c) => {
   const toAbsolutePath = resolveSafePath(workspace.root, body.to);
   await fs.mkdir(path.dirname(toAbsolutePath), { recursive: true });
   await fs.rename(fromAbsolutePath, toAbsolutePath);
+  scheduleSshWorkspacePush(workspace.id);
   return c.json({ ok: true });
 });
 
@@ -456,6 +461,7 @@ fsRoutes.post("/api/fs/upload", async (c) => {
   const buf = Buffer.from(await (file as File).arrayBuffer());
   await fs.mkdir(path.dirname(absolutePath), { recursive: true });
   await fs.writeFile(absolutePath, buf);
+  scheduleSshWorkspacePush(workspace.id);
   return c.json({ ok: true, size: buf.byteLength });
 });
 

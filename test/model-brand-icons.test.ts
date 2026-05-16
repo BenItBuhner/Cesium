@@ -5,6 +5,7 @@ import {
   isAutoModel,
   modelIconHaystack,
   resolveModelBrandIcon,
+  stripLeadingIconProviderSlashPrefix,
 } from "../src/lib/model-brand-icons";
 
 function m(partial: Partial<ModelInfo> & Pick<ModelInfo, "name" | "id">): ModelInfo {
@@ -66,6 +67,23 @@ describe("model-brand-icons", () => {
     );
   });
 
+  test("provider-slash display names defer to underlying model family", () => {
+    assert.deepEqual(
+      resolveModelBrandIcon(m({ name: "Nvidia/DeepSeek V4 Flash Free", id: "a" })),
+      { kind: "brand", brand: "deepseek" }
+    );
+    assert.deepEqual(
+      resolveModelBrandIcon(m({ name: "Nvidia/Qwen2.5 72B Free", id: "b" })),
+      { kind: "brand", brand: "qwen" }
+    );
+    assert.deepEqual(
+      resolveModelBrandIcon(
+        m({ name: "OpenRouter/openai gpt-4.1-mini", id: "c" })
+      ),
+      { kind: "brand", brand: "openai" }
+    );
+  });
+
   test("hunyuan: Hy3 series matches hy+digit, not whole-word hy (hybrid stays default)", () => {
     assert.deepEqual(resolveModelBrandIcon(m({ name: "Openrouter/Hy3 preview", id: "a" })), {
       kind: "brand",
@@ -86,5 +104,16 @@ describe("model-brand-icons", () => {
   test("modelIconHaystack folds id and modelValue", () => {
     const h = modelIconHaystack(m({ name: "X", id: "y", modelValue: "z-grok-beta" }));
     assert.ok(h.includes("grok"));
+  });
+
+  test("stripLeadingIconProviderSlashPrefix trims one host segment only", () => {
+    assert.equal(stripLeadingIconProviderSlashPrefix("  Nvidia/DeepSeek Foo  "), "DeepSeek Foo");
+    assert.equal(stripLeadingIconProviderSlashPrefix("no-slash"), "no-slash");
+    assert.equal(stripLeadingIconProviderSlashPrefix("/oops"), "/oops");
+    assert.equal(stripLeadingIconProviderSlashPrefix("only/"), "only/");
+    assert.equal(
+      stripLeadingIconProviderSlashPrefix("local/wants/ambiguous"),
+      "wants/ambiguous"
+    );
   });
 });

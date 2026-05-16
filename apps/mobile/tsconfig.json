@@ -1,0 +1,29 @@
+{
+  "extends": "expo/tsconfig.base",
+  "compilerOptions": {
+    "strict": true,
+    "paths": {
+      "@/*": [
+        "./src/*"
+      ],
+      "@cesium/core": [
+        "../../packages/core/src/index.ts"
+      ],
+      "@cesium/core/platform-surfaces": [
+        "../../packages/core/src/platform-surfaces.ts"
+      ],
+      "@cesium/design": [
+        "../../packages/design/src/index.ts"
+      ],
+      "@/assets/*": [
+        "./assets/*"
+      ]
+    }
+  },
+  "include": [
+    "src/app/**/*.ts",
+    "src/app/**/*.tsx",
+    "src/cesium/**/*.ts",
+    "src/cesium/**/*.tsx"
+  ]
+}

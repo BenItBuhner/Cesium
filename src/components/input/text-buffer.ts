@@ -50,6 +50,18 @@ export function collapseSelectionToEnd(
   return { start: safe.end, end: safe.end };
 }
 
+/**
+ * Some mobile/WebView IMEs emit `key === "Unidentified"` while still setting
+ * `code` to ArrowUp/ArrowDown. Prefer checking both for caret/history routing.
+ */
+export function isArrowUpKey(event: Pick<KeyboardEvent, "key" | "code">): boolean {
+  return event.key === "ArrowUp" || event.code === "ArrowUp";
+}
+
+export function isArrowDownKey(event: Pick<KeyboardEvent, "key" | "code">): boolean {
+  return event.key === "ArrowDown" || event.code === "ArrowDown";
+}
+
 export function replaceSelection(
   value: string,
   selection: TextSelection,
@@ -272,7 +284,7 @@ export function applyTextBufferKey(
     };
   }
 
-  if (multiline && event.key === "ArrowUp") {
+  if (multiline && isArrowUpKey(event)) {
     return {
       handled: true,
       value,
@@ -285,7 +297,7 @@ export function applyTextBufferKey(
     };
   }
 
-  if (multiline && event.key === "ArrowDown") {
+  if (multiline && isArrowDownKey(event)) {
     return {
       handled: true,
       value,

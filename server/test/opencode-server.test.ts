@@ -62,7 +62,7 @@ test("opencode server does not render user text message responses as assistant o
     messageId: "msg",
     response: {
       info: { role: "user" },
-      parts: [{ type: "text", text: "Prior OpenCursor conversation context" }],
+      parts: [{ type: "text", text: "Prior Cesium conversation context" }],
     },
   });
   assert.equal(events.length, 0);

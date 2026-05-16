@@ -44,7 +44,7 @@ function makeWorkspace(
   return {
     id: overrides.id ?? `ws-${randomUUID().slice(0, 8)}`,
     name: overrides.name ?? "Test Workspace",
-    root: overrides.root ?? `/tmp/opencursor-${randomUUID().slice(0, 8)}`,
+    root: overrides.root ?? `/tmp/cesium-${randomUUID().slice(0, 8)}`,
     createdAt: overrides.createdAt ?? now,
     updatedAt: overrides.updatedAt ?? now,
     lastOpenedAt: overrides.lastOpenedAt ?? now,

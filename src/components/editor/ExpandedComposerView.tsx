@@ -113,6 +113,13 @@ onDraftAttachmentsChange={(next) =>
                 captures: next,
               })
             }
+            userMessageHistory={controller.userMessageHistory}
+            hasMoreOlderUserMessageHistory={
+              controller.hasMoreOlderUserMessageHistory ?? false
+            }
+            onRequestOlderUserMessageHistory={
+              controller.onRequestOlderUserMessageHistory
+            }
         />
       </div>
     </div>

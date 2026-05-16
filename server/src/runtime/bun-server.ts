@@ -3,9 +3,9 @@ import {
   authenticateUpgradeRequest,
 } from "../lib/auth.js";
 import {
-  createOpenCursorApp,
+  createCesiumApp,
   serverConfig,
-  startOpenCursorBackgroundServices,
+  startCesiumBackgroundServices,
 } from "../app.js";
 import { flushServerPerfReport } from "../lib/perf.js";
 import { attachAgentSocket } from "../ws/agent.js";
@@ -131,8 +131,8 @@ export function startBunServer(): void {
   if (!BunRuntime) {
     throw new Error("Bun runtime is required for startBunServer().");
   }
-  const app = createOpenCursorApp();
-  startOpenCursorBackgroundServices();
+  const app = createCesiumApp();
+  startCesiumBackgroundServices();
   const server = BunRuntime.serve({
     port: serverConfig.port,
     hostname: serverConfig.host,
@@ -179,7 +179,7 @@ export function startBunServer(): void {
     },
   });
 
-  console.log(`OpenCursor Bun server listening on ${server.url}`);
+  console.log(`Cesium Bun server listening on ${server.url}`);
 
   process.once("beforeExit", () => {
     void flushServerPerfReport("beforeExit").catch((error) => {

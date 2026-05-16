@@ -48,11 +48,10 @@ export type GlobalSettings = {
   themeConfig?: unknown;
   general: {
     doNotDisturb: boolean;
-    sysNotify: boolean;
-    warnNotify: boolean;
-    trayIcon: boolean;
-    completionSound: boolean;
     sideColumnsSwapped: boolean;
+    workspaceSortMode: WorkspaceSortMode;
+    workspaceCustomOrderIds: string[];
+    chatFolders: ChatFolderState[];
   };
   agents: {
     submitCtrlEnter: boolean;
@@ -86,25 +85,24 @@ export type GlobalSettings = {
   models: {
     byBackend: Record<string, ModelToggleEntry[]>;
   };
-  rules: {
-    thirdParty: boolean;
-  };
-  tools: {
-    localhost: boolean;
-    mcpTags: string[];
-    domainTags: string[];
-    pluginState: Array<{
-      id: string;
-      name: string;
-      status: string;
-      on: boolean;
-      connect?: boolean;
-    }>;
-  };
+  /** Placeholder; always empty until tool prefs are modeled. */
+  tools: Record<string, never>;
   keyboardShortcuts: {
     bindings: Record<string, string[]>;
     voiceInputMode?: "hold" | "toggle";
   };
+};
+
+export type WorkspaceSortMode = "recent" | "alphabetical" | "custom";
+
+export type ChatFolderState = {
+  id: string;
+  workspaceId: string;
+  name: string;
+  color: string;
+  icon: string;
+  sortOrder: number;
+  conversationIds: string[];
 };
 
 function createDefaultSettings(): GlobalSettings {
@@ -112,11 +110,10 @@ function createDefaultSettings(): GlobalSettings {
     schemaVersion: 1,
     general: {
       doNotDisturb: false,
-      sysNotify: true,
-      warnNotify: false,
-      trayIcon: true,
-      completionSound: true,
       sideColumnsSwapped: false,
+      workspaceSortMode: "recent",
+      workspaceCustomOrderIds: [],
+      chatFolders: [],
     },
     agents: {
       submitCtrlEnter: false,
@@ -155,51 +152,7 @@ function createDefaultSettings(): GlobalSettings {
     models: {
       byBackend: {},
     },
-    rules: {
-      thirdParty: true,
-    },
-    tools: {
-      localhost: true,
-      mcpTags: [
-        "figma:get_design_context",
-        "figma:get_screenshot",
-        "linear:get_issue",
-        "linear:list_issues",
-        "notion:notion-search",
-        "slack:slack_read_channel",
-      ],
-      domainTags: [
-        "raw.githubusercontent.com",
-        "github.com",
-        "docs.polymarket.com",
-        "api.github.com",
-        "developer.notion.com",
-        "www.todoist.com",
-      ],
-      pluginState: [
-        { id: "c7", name: "context7", status: "2 tools enabled", on: true },
-        {
-          id: "fg",
-          name: "Figma",
-          status: "13 tools, 1 prompts, 25 resources enabled",
-          on: true,
-        },
-        { id: "ln", name: "Linear", status: "34 tools enabled", on: true },
-        {
-          id: "nt",
-          name: "Notion",
-          status: "needs authentication",
-          on: false,
-          connect: true,
-        },
-        {
-          id: "sl",
-          name: "Slack",
-          status: "13 tools, 1 resources enabled",
-          on: true,
-        },
-      ],
-    },
+    tools: {},
     keyboardShortcuts: {
       bindings: {},
       voiceInputMode: "toggle",
@@ -298,6 +251,76 @@ function normalizeRememberedAgentPermissionRules(
     });
   }
   return rules;
+}
+
+function normalizeWorkspaceSortMode(raw: unknown): WorkspaceSortMode {
+  return raw === "recent" || raw === "alphabetical" || raw === "custom"
+    ? raw
+    : "recent";
+}
+
+function normalizeWorkspaceCustomOrderIds(raw: unknown): string[] {
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const value of raw) {
+    if (typeof value !== "string" || value.length === 0 || seen.has(value)) {
+      continue;
+    }
+    seen.add(value);
+    out.push(value);
+  }
+  return out.slice(0, 500);
+}
+
+function normalizeChatFolders(raw: unknown): ChatFolderState[] {
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+  const seenFolderIds = new Set<string>();
+  const folders: ChatFolderState[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object") {
+      continue;
+    }
+    const record = item as Partial<ChatFolderState>;
+    const id = typeof record.id === "string" ? record.id.trim() : "";
+    const workspaceId = typeof record.workspaceId === "string" ? record.workspaceId.trim() : "";
+    if (!id || !workspaceId || seenFolderIds.has(id)) {
+      continue;
+    }
+    seenFolderIds.add(id);
+    const seenConversationIds = new Set<string>();
+    const conversationIds = Array.isArray(record.conversationIds)
+      ? record.conversationIds.flatMap((value): string[] => {
+          if (typeof value !== "string" || !value || seenConversationIds.has(value)) {
+            return [];
+          }
+          seenConversationIds.add(value);
+          return [value];
+        })
+      : [];
+    const rawColor = typeof record.color === "string" ? record.color.trim() : "";
+    const rawIcon = typeof record.icon === "string" ? record.icon.trim() : "";
+    folders.push({
+      id,
+      workspaceId,
+      name:
+        typeof record.name === "string" && record.name.trim()
+          ? record.name.trim().slice(0, 80)
+          : "Folder",
+      color: /^#[0-9a-f]{6}$/i.test(rawColor) ? rawColor : "#7c3aed",
+      icon: rawIcon || "Folder",
+      sortOrder:
+        typeof record.sortOrder === "number" && Number.isFinite(record.sortOrder)
+          ? record.sortOrder
+          : folders.length,
+      conversationIds,
+    });
+  }
+  return folders.slice(0, 500);
 }
 
 export async function getRememberedAgentPermissionRule(input: {
@@ -399,7 +422,19 @@ function migrateGlobalSettings(raw: Record<string, unknown>): GlobalSettings {
     ...(r.themeConfig !== undefined && r.themeConfig !== null
       ? { themeConfig: r.themeConfig }
       : {}),
-    general: { ...defaults.general, ...(r.general ?? {}) },
+    general: {
+      ...defaults.general,
+      ...(r.general ?? {}),
+      workspaceSortMode: normalizeWorkspaceSortMode(
+        (r.general as Record<string, unknown> | undefined)?.workspaceSortMode
+      ),
+      workspaceCustomOrderIds: normalizeWorkspaceCustomOrderIds(
+        (r.general as Record<string, unknown> | undefined)?.workspaceCustomOrderIds
+      ),
+      chatFolders: normalizeChatFolders(
+        (r.general as Record<string, unknown> | undefined)?.chatFolders
+      ),
+    },
     agents: {
       ...defaults.agents,
       ...(r.agents ?? {}),
@@ -416,14 +451,7 @@ function migrateGlobalSettings(raw: Record<string, unknown>): GlobalSettings {
     models: {
       byBackend: migratedByBackend,
     },
-    rules: { ...defaults.rules, ...(r.rules ?? {}) },
-    tools: {
-      ...defaults.tools,
-      ...(r.tools ?? {}),
-      mcpTags: (r.tools as Record<string, unknown>)?.mcpTags as string[] ?? defaults.tools.mcpTags,
-      domainTags: (r.tools as Record<string, unknown>)?.domainTags as string[] ?? defaults.tools.domainTags,
-      pluginState: (r.tools as Record<string, unknown>)?.pluginState as GlobalSettings["tools"]["pluginState"] ?? defaults.tools.pluginState,
-    },
+    tools: {},
     keyboardShortcuts: {
       bindings: typeof r.keyboardShortcuts === "object" && r.keyboardShortcuts
         ? (r.keyboardShortcuts as GlobalSettings["keyboardShortcuts"]).bindings ?? {}
@@ -444,6 +472,28 @@ export type ModelToggleUpdate = {
   modelId: string;
   on: boolean;
 };
+
+function isKnownPlaceholderModelToggle(
+  backendId: string,
+  entry: ModelToggleEntry
+): boolean {
+  const id = entry.id.trim().toLowerCase();
+  const name = entry.name.trim().toLowerCase();
+  if (backendId === "cursor-sdk") {
+    return id === "composer-2" && name === "composer 2";
+  }
+  if (backendId === "opencode-server") {
+    return id === "auto" && name === "auto";
+  }
+  return false;
+}
+
+function prunePlaceholderModelToggles(
+  backendId: string,
+  entries: ModelToggleEntry[]
+): ModelToggleEntry[] {
+  return entries.filter((entry) => !isKnownPlaceholderModelToggle(backendId, entry));
+}
 
 async function extractModelCatalogFromBackends(
   backendIds: AgentBackendId[]
@@ -498,7 +548,10 @@ export async function getModelToggleState(
 
         for (const [backendId, existingList] of Object.entries(existing)) {
           if (!catalog[backendId]) {
-            merged[backendId] = existingList;
+            const pruned = prunePlaceholderModelToggles(backendId, existingList);
+            if (pruned.length > 0) {
+              merged[backendId] = pruned;
+            }
           }
         }
 
@@ -604,13 +657,19 @@ export async function refreshAndGetModelToggleState(
           : { id: model.id, name: model.name, on: true, backendId };
       });
     } else if (existing[backendId]) {
-      merged[backendId] = existing[backendId];
+      const pruned = prunePlaceholderModelToggles(backendId, existing[backendId]);
+      if (pruned.length > 0) {
+        merged[backendId] = pruned;
+      }
     }
   }
 
   for (const [backendId, existingList] of Object.entries(existing)) {
     if (!merged[backendId]) {
-      merged[backendId] = existingList;
+      const pruned = prunePlaceholderModelToggles(backendId, existingList);
+      if (pruned.length > 0) {
+        merged[backendId] = pruned;
+      }
     }
   }
 

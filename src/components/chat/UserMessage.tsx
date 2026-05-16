@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type MouseEvent } from "react";
 import { AtSign, CornerUpLeft, GitFork, LayoutTemplate, MousePointerSquareDashed } from "lucide-react";
 import type { ImageAttachment, UserMessageSegment } from "@/lib/types";
 import { ImageCarousel } from "./ImageCarousel";
+import { MessageTextSelectionCite } from "./MessageTextSelectionCite";
 
 interface UserMessageProps {
   content?: string;
@@ -9,7 +10,11 @@ interface UserMessageProps {
   attachments?: ImageAttachment[];
   showReplyCue?: boolean;
   highlight?: boolean;
+  /** When set, selected text in the bubble can be cited into this composer draft. */
+  composerDraftId?: string | null;
+  displayOnly?: boolean;
   onFork?: () => void;
+  onRedo?: () => void;
 }
 
 export function UserMessage({
@@ -18,12 +23,16 @@ export function UserMessage({
   attachments,
   showReplyCue,
   highlight,
+  composerDraftId,
+  displayOnly = false,
   onFork,
+  onRedo,
 }: UserMessageProps) {
   const hasSegments = segments && segments.length > 0;
   const bodyRef = useRef<HTMLDivElement>(null);
   const [expanded, setExpanded] = useState(false);
   const [overflowing, setOverflowing] = useState(false);
+  const [singleLineOrLess, setSingleLineOrLess] = useState(true);
 
   useEffect(() => {
     setExpanded(false);
@@ -37,7 +46,11 @@ export function UserMessage({
     }
     const collapsedMaxHeight = 100;
     const measure = () => {
+      const style = window.getComputedStyle(node);
+      const lineHeight = Number.parseFloat(style.lineHeight);
+      const oneLineHeight = Number.isFinite(lineHeight) ? lineHeight : 20;
       setOverflowing(node.scrollHeight > collapsedMaxHeight + 4);
+      setSingleLineOrLess(node.scrollHeight <= oneLineHeight + 6);
     };
     measure();
     if (typeof ResizeObserver === "undefined") {
@@ -52,6 +65,17 @@ export function UserMessage({
     if (overflowing) {
       setExpanded((current) => !current);
     }
+  };
+  const compactSingleLine = !attachments?.length && singleLineOrLess;
+  const handleForkClick = (event: MouseEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    onFork?.();
+  };
+  const handleRedoClick = (event: MouseEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    onRedo?.();
   };
 
   return (
@@ -68,11 +92,11 @@ export function UserMessage({
       )}
       <div
         ref={bodyRef}
-        tabIndex={overflowing ? 0 : undefined}
-        aria-expanded={overflowing ? expanded : undefined}
-        onClick={toggleExpand}
+        tabIndex={!displayOnly && overflowing ? 0 : undefined}
+        aria-expanded={!displayOnly && overflowing ? expanded : undefined}
+        onClick={displayOnly ? undefined : toggleExpand}
         onKeyDown={(event) => {
-          if (!overflowing) {
+          if (displayOnly || !overflowing) {
             return;
           }
           if (event.key === "Enter" || event.key === " ") {
@@ -82,9 +106,15 @@ export function UserMessage({
         }}
         className={`relative text-left ${
           expanded ? "" : "overflow-hidden"
-        } ${overflowing ? "cursor-pointer" : ""}`}
+        } ${compactSingleLine ? "flex min-h-[22px] items-center pr-[44px]" : ""} ${
+          !displayOnly && overflowing ? "cursor-pointer" : ""
+        }`}
         style={expanded ? undefined : { maxHeight: 100 }}
       >
+        <MessageTextSelectionCite
+          composerDraftId={composerDraftId}
+          className={`min-w-0 select-text ${compactSingleLine ? "flex-1" : ""}`}
+        >
         {hasSegments ? (
           <div className="block font-sans text-[14px] font-normal leading-normal text-[var(--text-primary)]">
             {segments!.map((s, i) => {
@@ -147,6 +177,7 @@ export function UserMessage({
             {content ?? ""}
           </p>
         )}
+        </MessageTextSelectionCite>
 
         {!expanded && overflowing ? (
           <div
@@ -156,21 +187,22 @@ export function UserMessage({
         ) : null}
       </div>
 
-      {onFork ? (
+      {!displayOnly && onFork ? (
         <button
           type="button"
-          onClick={onFork}
+          onClick={handleForkClick}
           className="pointer-events-none absolute bottom-[4px] right-[28px] z-20 rounded-[6px] bg-[var(--bg-card)]/85 p-[4px] text-[var(--text-secondary)] opacity-0 transition-[opacity,background-color,color] duration-200 group-hover:pointer-events-auto group-hover:opacity-100 hover:bg-[var(--bg-card-hover)] hover:text-[var(--text-primary)] focus-visible:pointer-events-auto focus-visible:opacity-100"
           aria-label="Fork chat from here"
         >
           <GitFork className="size-[14px]" strokeWidth={1.75} aria-hidden />
         </button>
       ) : null}
-      {showReplyCue ? (
+      {!displayOnly && showReplyCue !== false && onRedo ? (
         <button
           type="button"
+          onClick={handleRedoClick}
           className="pointer-events-none absolute bottom-[4px] right-[6px] z-20 rounded-[6px] bg-[var(--bg-card)]/85 p-[4px] text-[var(--text-secondary)] opacity-0 transition-[opacity,background-color,color] duration-200 group-hover:pointer-events-auto group-hover:opacity-100 hover:bg-[var(--bg-card-hover)] hover:text-[var(--text-primary)] focus-visible:pointer-events-auto focus-visible:opacity-100"
-          aria-label="Reply or edit message"
+          aria-label="Redo message from here"
         >
           <CornerUpLeft className="size-[14px]" strokeWidth={1.75} aria-hidden />
         </button>

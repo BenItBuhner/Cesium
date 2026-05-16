@@ -5,7 +5,7 @@ import { after, test } from "node:test";
 
 const TEST_DATA_DIR = path.join(
   os.tmpdir(),
-  `opencursor-settings-models-${Date.now()}-${Math.random()
+  `cesium-settings-models-${Date.now()}-${Math.random()
     .toString(36)
     .slice(2, 10)}`
 );

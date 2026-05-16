@@ -296,7 +296,7 @@ agentRoutes.post("/api/agents/conversations/:conversationId/handoff", async (c) 
 agentRoutes.post("/api/agents/conversations/:conversationId/fork", async (c) => {
   const workspace = await requireWorkspaceFromRequest(c);
   const conversationId = c.req.param("conversationId");
-  const body = await c.req.json<{ upToMessageId?: string }>();
+  const body = await c.req.json<{ upToMessageId?: string; beforeMessageId?: string }>();
   try {
     const result = await agentRuntimeManager.forkConversation(
       workspace,

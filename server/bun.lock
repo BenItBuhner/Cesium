@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "opencursor-server",
+      "name": "cesium-server",
       "dependencies": {
         "@cursor/sdk": "^1.0.11",
         "@hono/node-server": "^1.19.6",

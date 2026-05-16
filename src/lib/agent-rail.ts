@@ -96,6 +96,30 @@ export function isAgentRailFilterActive(toggles: AgentRailFilterToggleState): bo
   return AGENT_RAIL_FILTER_TOGGLE_KEYS.some((k) => toggles[k]);
 }
 
+const AGENT_PLACEHOLDER_TITLES = new Set([
+  "new chat",
+  "start new chat",
+  "start a new chat",
+]);
+
+export function isPlaceholderAgentRailConversation(
+  conversation: AgentRailConversationSummary
+): boolean {
+  return (
+    conversation.lastEventSeq === 0 &&
+    conversation.status === "idle" &&
+    conversation.archivedAt == null &&
+    !conversation.hasPendingPermission &&
+    AGENT_PLACEHOLDER_TITLES.has(conversation.title.trim().toLowerCase())
+  );
+}
+
+export function isRenderableAgentRailConversation(
+  conversation: AgentRailConversationSummary
+): boolean {
+  return !isPlaceholderAgentRailConversation(conversation);
+}
+
 export type AgentRailFilterMatchContext = {
   pinnedConversationIds: Set<string>;
   unreadCompletionByConversationId: Record<string, true> | undefined;

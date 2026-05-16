@@ -43,8 +43,8 @@ export type SettingsExportBundleV1 = SettingsExportBundle;
 export function sliceGlobalAppFromSettings(
   settings: GlobalSettingsState
 ): GlobalAppSettingsSlice {
-  const { general, agents, models, rules, tools } = settings;
-  return { general, agents, models, rules, tools };
+  const { general, agents, models } = settings;
+  return { general, agents, models, tools: {} };
 }
 
 export function mergeImportedGlobalAppSlice(
@@ -66,20 +66,13 @@ export function mergeImportedGlobalAppSlice(
           ? imported.agents.autoAcceptAllAgentPermissions
           : current.agents.autoAcceptAllAgentPermissions,
     },
-      models: {
-        byBackend:
-          imported.models?.byBackend && Object.keys(imported.models.byBackend).length > 0
-            ? imported.models.byBackend
-            : current.models.byBackend,
-      },
-    rules: { ...current.rules, ...imported.rules },
-    tools: {
-      ...current.tools,
-      ...imported.tools,
-      mcpTags: imported.tools.mcpTags ?? current.tools.mcpTags,
-      domainTags: imported.tools.domainTags ?? current.tools.domainTags,
-      pluginState: imported.tools.pluginState ?? current.tools.pluginState,
+    models: {
+      byBackend:
+        imported.models?.byBackend && Object.keys(imported.models.byBackend).length > 0
+          ? imported.models.byBackend
+          : current.models.byBackend,
     },
+    tools: {},
   };
 }
 

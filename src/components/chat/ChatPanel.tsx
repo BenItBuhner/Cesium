@@ -31,6 +31,7 @@ import {
 import { DEFAULT_MODE_OPTIONS, resolveCanonicalModeId } from "@/lib/chat-modes";
 import { listSupplementaryAgentConfigOptions } from "@/lib/agent-config-option-utils";
 import { useWorkbenchContextMenu } from "@/components/ide/WorkbenchContextMenuProvider";
+import { useWorkbench } from "@/components/ide/WorkbenchContext";
 import {
   useOpenInEditor,
   useRegisterDesignCaptureComposer,
@@ -57,6 +58,7 @@ import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { useAgentConversations } from "@/components/chat/AgentConversationsContext";
 import { useWorkbenchNotifications } from "@/components/notifications/WorkbenchNotificationProvider";
 import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
+import { useUserPreferences } from "@/components/preferences/UserPreferencesProvider";
 import { WORKBENCH_NOTIFICATION_KIND } from "@/components/notifications/workbench-notification-types";
 import {
   createWorkspaceWindow,
@@ -115,6 +117,79 @@ function tabsEqual(a: ChatTab[], b: ChatTab[]): boolean {
   );
 }
 
+function createDraftChatTab(): ChatTab {
+  const id =
+    typeof crypto !== "undefined" && "randomUUID" in crypto
+      ? `draft-${crypto.randomUUID()}`
+      : `draft-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  return {
+    id,
+    title: "New chat",
+    active: true,
+    isDraft: true,
+  };
+}
+
+function isLocalDraftChatTab(tab: ChatTab): boolean {
+  return Boolean(tab.isDraft) && tab.id.startsWith("draft-");
+}
+
+function isEmptyLocalDraftChatTab(
+  tab: ChatTab,
+  composerDrafts: Record<string, ComposerDraftRecord>
+): boolean {
+  const draft = composerDrafts[tab.id];
+  return (
+    isLocalDraftChatTab(tab) &&
+    tab.title === "New chat" &&
+    (!draft || !hasMeaningfulComposerContent(draft))
+  );
+}
+
+function normalizeChatTabs(
+  tabs: ChatTab[],
+  composerDrafts: Record<string, ComposerDraftRecord>
+): ChatTab[] {
+  const emptyDraftTabs = tabs.filter((tab) =>
+    isEmptyLocalDraftChatTab(tab, composerDrafts)
+  );
+  const keepEmptyDraftId =
+    emptyDraftTabs.find((tab) => tab.active)?.id ?? emptyDraftTabs[0]?.id ?? null;
+  const seenIds = new Set<string>();
+  const deduped: ChatTab[] = [];
+  let activeId: string | null = null;
+
+  for (const tab of tabs) {
+    if (
+      isEmptyLocalDraftChatTab(tab, composerDrafts) &&
+      tab.id !== keepEmptyDraftId
+    ) {
+      continue;
+    }
+    if (seenIds.has(tab.id)) {
+      if (tab.active) {
+        activeId = tab.id;
+      }
+      continue;
+    }
+    seenIds.add(tab.id);
+    deduped.push(tab);
+    if (tab.active) {
+      activeId = tab.id;
+    }
+  }
+
+  if (deduped.length === 0) {
+    return deduped;
+  }
+
+  const resolvedActiveId = activeId ?? deduped[0]?.id ?? null;
+  return deduped.map((tab) => ({
+    ...tab,
+    active: tab.id === resolvedActiveId,
+  }));
+}
+
 function conversationRequiresVisibleTab(conversation: AgentConversationRecord): boolean {
   return (
     conversation.status === "running" ||
@@ -135,6 +210,15 @@ function isRecentConversationCandidate(
   const draft = composerDrafts[conversation.id];
   return Boolean(draft && hasMeaningfulComposerContent(draft));
 }
+
+type RedoMessageDraft = {
+  messageId: string;
+  content: string;
+  attachments?: ImageAttachment[];
+  backendId: AgentBackendId;
+  mode: EditorMode;
+  model: ModelInfo;
+};
 
 function formatRecentConversationTime(timestamp: number): string {
   const diff = Date.now() - timestamp;
@@ -179,6 +263,7 @@ function isPersistedConversationTabId(tabId: string): boolean {
 
 export function ChatPanel() {
   const { openAt } = useWorkbenchContextMenu();
+  const { chatTrailingWindowControlsVisible } = useWorkbench();
   const {
     composerDrafts,
     composerSelections,
@@ -223,13 +308,18 @@ pendingConfigByConversationId,
 setPendingConfigForConversation,
 clearPendingConfigForConversation,
 } = useAgentConversations();
-  const { settings: globalSettings, updateSettings } = useGlobalSettings();
+  const { settings: globalSettings } = useGlobalSettings();
+  const { experimentalIpadWindowedTabInset } = useUserPreferences();
+  const padTabsForWindowChrome =
+    experimentalIpadWindowedTabInset && chatTrailingWindowControlsVisible;
   const [recentChatsModalOpen, setRecentChatsModalOpen] = useState(false);
   const [chatTabRenameTargetId, setChatTabRenameTargetId] = useState<string | null>(
 null
 );
+  const [redoMessageDraft, setRedoMessageDraft] = useState<RedoMessageDraft | null>(null);
 const chatDraftRef = useRef(workspaceSession.chat);
   const tabsRef = useRef<ChatTab[]>(workspaceSession.chat.tabs);
+  const composerDraftsRef = useRef(composerDrafts);
   const conversationsByIdRef = useRef(conversationsById);
   const tabs = workspaceSession.chat.tabs;
 
@@ -259,6 +349,10 @@ const chatDraftRef = useRef(workspaceSession.chat);
   }, [tabs]);
 
   useEffect(() => {
+    composerDraftsRef.current = composerDrafts;
+  }, [composerDrafts]);
+
+  useEffect(() => {
     const handler = () => setRecentChatsModalOpen(true);
     window.addEventListener("opencursor:openRecentChats", handler);
     return () => window.removeEventListener("opencursor:openRecentChats", handler);
@@ -270,7 +364,10 @@ const chatDraftRef = useRef(workspaceSession.chat);
         ...current,
         chat: {
           ...current.chat,
-          tabs: updater(current.chat.tabs),
+          tabs: normalizeChatTabs(
+            updater(current.chat.tabs),
+            composerDraftsRef.current
+          ),
         },
       }));
     },
@@ -509,7 +606,7 @@ workspaceSession.chat.mode,
 ]
   );
 
-  const createConversationAndOpen = useCallback(async () => {
+  const createConversationAndOpen = useCallback(async (options?: { replaceTabId?: string }) => {
     const draft = chatDraftRef.current;
     const conversation = await createConversation({
       backendId: draft.backendId,
@@ -517,10 +614,20 @@ workspaceSession.chat.mode,
       modelId: draft.model.modelValue ?? draft.model.id,
       modelName: draft.model.name,
     });
-    setTabs((current) => [
-      ...current.map((tab) => ({ ...tab, active: false })),
-      { id: conversation.id, title: conversation.title, active: true },
-    ]);
+    setTabs((current) => {
+      const replaceTabId = options?.replaceTabId;
+      if (replaceTabId && current.some((tab) => tab.id === replaceTabId)) {
+        return current.map((tab) =>
+          tab.id === replaceTabId
+            ? { id: conversation.id, title: conversation.title, active: true }
+            : { ...tab, active: false }
+        );
+      }
+      return [
+        ...current.map((tab) => ({ ...tab, active: false })),
+        { id: conversation.id, title: conversation.title, active: true },
+      ];
+    });
     unhideConversationIds([conversation.id]);
     return conversation;
   }, [createConversation, setTabs, unhideConversationIds]);
@@ -593,6 +700,9 @@ workspaceSession.chat.mode,
     workspaceSession.chat.unreadChatCompletionByConversationId,
   ]);
   const activeConversation = activeTabId ? conversationsById[activeTabId] ?? null : null;
+  useEffect(() => {
+    setRedoMessageDraft(null);
+  }, [activeConversation?.id]);
   const recentConversations = useMemo(
     () =>
       conversations
@@ -980,66 +1090,28 @@ workspaceSession.chat.model,
   }, [activeConversation, backends, draftBackend, draftModel, modeOptions, updateWorkspaceSession]);
 
   useEffect(() => {
-    if (!activeWorkspaceId || !bootstrapped || conversations.length > 0) {
-      return;
-    }
-    let cancelled = false;
-    void (async () => {
-      const draft = chatDraftRef.current;
-      const preferredBackend = pickAvailableBackend(backends, draft.backendId);
-      const preferredModel = preferredBackend
-        ? resolveDraftModelForBackend(preferredBackend)
-        : draft.model;
-      const preferredMode = preferredBackend
-        ? buildDraftModeOptionsForBackend(preferredBackend)[0]?.id ?? draft.mode
-        : draft.mode;
-      const conversation = await createConversation({
-        backendId: preferredBackend?.id ?? draft.backendId,
-        mode: preferredMode,
-        modelId: preferredModel.modelValue ?? preferredModel.id,
-        modelName: preferredModel.name,
-      });
-      if (cancelled) {
-        return;
-      }
-      setTabs((current) => [
-        ...current.map((tab) => ({ ...tab, active: false })),
-        { id: conversation.id, title: conversation.title, active: true },
-      ]);
-      unhideConversationIds([conversation.id]);
-    })().catch(() => undefined);
-    return () => {
-      cancelled = true;
-    };
-  }, [
-    activeWorkspaceId,
-    backends,
-    bootstrapped,
-    conversations.length,
-    createConversation,
-    setTabs,
-    unhideConversationIds,
-  ]);
-
-  useEffect(() => {
     if (!activeWorkspaceId || !bootstrapped) {
       return;
     }
     updateWorkspaceSession((current) => {
       const validIds = new Set(conversations.map((c) => c.id));
       const hiddenConversationIds = new Set(current.chat.hiddenConversationIds);
-    const existing = current.chat.tabs
-          .filter((tab) => validIds.has(tab.id))
-          .map((tab) => {
-            const serverConversation = conversations.find((c) => c.id === tab.id);
-            const serverTitle = serverConversation?.title ?? tab.title;
-            const isDraft = tab.isDraft && serverConversation?.lastEventSeq === 0;
-            return {
-              ...tab,
-              title: isDraft ? tab.title : serverTitle,
-              isDraft: isDraft || undefined,
-            };
-          });
+      const currentComposerDrafts = composerDraftsRef.current;
+      const existing = current.chat.tabs
+        .filter((tab) => validIds.has(tab.id) || isLocalDraftChatTab(tab))
+        .map((tab) => {
+          if (isLocalDraftChatTab(tab)) {
+            return tab;
+          }
+          const serverConversation = conversations.find((c) => c.id === tab.id);
+          const serverTitle = serverConversation?.title ?? tab.title;
+          const isDraft = tab.isDraft && serverConversation?.lastEventSeq === 0;
+          return {
+            ...tab,
+            title: isDraft ? tab.title : serverTitle,
+            isDraft: isDraft || undefined,
+          };
+        });
       const knownIds = new Set(existing.map((tab) => tab.id));
       const missing = conversations
         .filter(
@@ -1058,7 +1130,8 @@ workspaceSession.chat.model,
       const fallbackVisible = conversations
         .filter(
           (conversation) =>
-            !hiddenConversationIds.has(conversation.id) ||
+            (isRecentConversationCandidate(conversation, currentComposerDrafts) &&
+              !hiddenConversationIds.has(conversation.id)) ||
             conversationRequiresVisibleTab(conversation)
         )
         .map((conversation, index) => ({
@@ -1074,13 +1147,14 @@ workspaceSession.chat.model,
         nextTabs.length === 0 || nextTabs.some((tab) => tab.active)
           ? nextTabs
           : nextTabs.map((tab, index) => ({ ...tab, active: index === 0 }));
-      return tabsEqual(current.chat.tabs, normalizedTabs)
+      const dedupedTabs = normalizeChatTabs(normalizedTabs, currentComposerDrafts);
+      return tabsEqual(current.chat.tabs, dedupedTabs)
         ? current
         : {
             ...current,
             chat: {
               ...current.chat,
-              tabs: normalizedTabs,
+              tabs: dedupedTabs,
             },
           };
     });
@@ -1221,8 +1295,22 @@ workspaceSession.chat.model,
     if (expandedComposerDraftId) {
       setExpandedComposerDraft(null);
     }
-    void createConversationAndOpen();
-  }, [createConversationAndOpen, expandedComposerDraftId, setExpandedComposerDraft]);
+    setTabs((current) => {
+      const existingEmptyDraft = current.find((tab) =>
+        isEmptyLocalDraftChatTab(tab, composerDraftsRef.current)
+      );
+      if (existingEmptyDraft) {
+        return current.map((tab) => ({
+          ...tab,
+          active: tab.id === existingEmptyDraft.id,
+        }));
+      }
+      return [
+        ...current.map((tab) => ({ ...tab, active: false })),
+        createDraftChatTab(),
+      ];
+    });
+  }, [expandedComposerDraftId, setExpandedComposerDraft, setTabs]);
 
   const closeChatTab = useCallback((tabId: string) => {
     const currentTabs = tabsRef.current;
@@ -1232,7 +1320,6 @@ workspaceSession.chat.model,
     }
     if (remaining.length === 0) {
       void persistClosedTabsNow([], [tabId]);
-      void createConversationAndOpen();
       return;
     }
     const closingActive = currentTabs.find((tab) => tab.id === tabId)?.active;
@@ -1240,7 +1327,7 @@ workspaceSession.chat.model,
       ? remaining
       : remaining.map((tab, index) => ({ ...tab, active: index === 0 }));
     void persistClosedTabsNow(nextTabs, [tabId]);
-  }, [createConversationAndOpen, expandedComposerDraftId, persistClosedTabsNow, setExpandedComposerDraft]);
+  }, [expandedComposerDraftId, persistClosedTabsNow, setExpandedComposerDraft]);
 
   const closeOtherChatTabs = useCallback(
     (tabId: string) => {
@@ -1264,8 +1351,7 @@ workspaceSession.chat.model,
       setExpandedComposerDraft(null);
     }
     void persistClosedTabsNow([], tabsRef.current.map((tab) => tab.id));
-    void createConversationAndOpen();
-  }, [createConversationAndOpen, expandedComposerDraftId, persistClosedTabsNow, setExpandedComposerDraft]);
+  }, [expandedComposerDraftId, persistClosedTabsNow, setExpandedComposerDraft]);
 
   const handleResolveActivePermission = useCallback(
     (requestId: string, optionId: string) => {
@@ -1650,7 +1736,9 @@ workspaceSession.chat.model,
         const conversation =
           conversationsById[draftId] ??
           (draftId === activeConversation?.id ? activeConversation : null) ??
-          (await createConversationAndOpen());
+          (await createConversationAndOpen(
+            draftId.startsWith("draft-") ? { replaceTabId: draftId } : undefined
+          ));
         conversationIdForError = conversation.id;
 
         const draftTab = tabs.find((t) => t.id === conversation.id);
@@ -1795,6 +1883,276 @@ workspaceSession.chat.model,
     [activeConversation, handoffConversationInPlace]
   );
 
+  const handleStartRedoMessage = useCallback(
+    (message: ChatMessage) => {
+      if (!activeConversation) {
+        return;
+      }
+      if (
+        activeConversation.status === "running" ||
+        activeConversation.status === "awaiting_permission"
+      ) {
+        pushNotification({
+          kind: WORKBENCH_NOTIFICATION_KIND.editorNotice,
+          severity: "warning",
+          title: "Agent busy",
+          message: "Wait for the current reply or cancel before redoing a message.",
+          autoDismissMs: 8000,
+          compact: true,
+        });
+        return;
+      }
+      const state = resolveComposerStateForDraft(activeConversation.id);
+      setRedoMessageDraft({
+        messageId: message.id,
+        content: message.rawContent ?? message.content ?? "",
+        attachments: message.attachments?.map((attachment) => ({ ...attachment })),
+        backendId: state.backendId,
+        mode: state.mode,
+        model: state.model,
+      });
+    },
+    [activeConversation, pushNotification, resolveComposerStateForDraft]
+  );
+
+  const submitRedoMessageDraft = useCallback(
+    async (text: string, attachments?: ImageAttachment[]) => {
+      if (!activeConversation || !redoMessageDraft) {
+        return false;
+      }
+      if (
+        activeConversation.status === "running" ||
+        activeConversation.status === "awaiting_permission"
+      ) {
+        pushNotification({
+          kind: WORKBENCH_NOTIFICATION_KIND.editorNotice,
+          severity: "warning",
+          title: "Agent busy",
+          message: "Wait for the current reply or cancel before redoing a message.",
+          autoDismissMs: 8000,
+          compact: true,
+        });
+        return false;
+      }
+
+      try {
+        const result = await forkAgentConversation(activeConversation.id, {
+          beforeMessageId: redoMessageDraft.messageId,
+        });
+        let nextConversationId = result.conversation.id;
+        let nextConversation = result.conversation;
+
+        const forkedConversations = await refreshConversations();
+        nextConversation =
+          forkedConversations.find((conversation) => conversation.id === nextConversationId) ??
+          nextConversation;
+
+        if (redoMessageDraft.backendId !== nextConversation.config.backendId) {
+          const handoffResult = await handoffAgentConversation(
+            nextConversationId,
+            redoMessageDraft.backendId
+          );
+          nextConversationId = handoffResult.newConversationId;
+          const handedOffConversations = await refreshConversations();
+          nextConversation =
+            handedOffConversations.find(
+              (conversation) => conversation.id === nextConversationId
+            ) ?? nextConversation;
+        }
+
+        const modelId = redoMessageDraft.model.modelValue ?? redoMessageDraft.model.id;
+        const configPatch: Record<string, unknown> = {};
+        if (redoMessageDraft.mode !== nextConversation.config.mode) {
+          configPatch.mode = redoMessageDraft.mode;
+        }
+        if (
+          modelId !== nextConversation.config.modelId ||
+          redoMessageDraft.model.name !== nextConversation.config.modelName
+        ) {
+          configPatch.modelId = modelId;
+          configPatch.modelName = redoMessageDraft.model.name;
+          if (redoMessageDraft.model.configSelections?.length) {
+            configPatch.setConfigOptions = redoMessageDraft.model.configSelections;
+          }
+        }
+        if (Object.keys(configPatch).length > 0) {
+          const updated = await updateAgentConversationConfig(
+            nextConversationId,
+            configPatch
+          );
+          nextConversation = updated.conversation;
+          upsertConversation(updated.conversation);
+        }
+
+        const snapshot = await fetchAgentConversationSnapshot(nextConversationId);
+        mergeConversationSnapshot(snapshot.snapshot);
+        setTabs((current) => {
+          const existingTab = current.find((tab) => tab.id === nextConversationId);
+          if (existingTab) {
+            return current.map((tab) => ({
+              ...tab,
+              active: tab.id === nextConversationId,
+            }));
+          }
+          return [
+            ...current.map((tab) => ({ ...tab, active: false })),
+            {
+              id: nextConversationId,
+              title: nextConversation.title,
+              active: true,
+            },
+          ];
+        });
+        unhideConversationIds([nextConversationId]);
+        setRedoMessageDraft(null);
+        return await promptConversation(nextConversationId, text, attachments);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Failed to redo message.";
+        pushNotification({
+          kind: WORKBENCH_NOTIFICATION_KIND.editorNotice,
+          severity: "error",
+          title: "Redo Failed",
+          message,
+          autoDismissMs: 8000,
+          compact: true,
+        });
+        return false;
+      }
+    },
+    [
+      activeConversation,
+      mergeConversationSnapshot,
+      promptConversation,
+      pushNotification,
+      redoMessageDraft,
+      refreshConversations,
+      setTabs,
+      unhideConversationIds,
+      upsertConversation,
+    ]
+  );
+
+  const renderRedoMessageEditor = useCallback(
+    (message: ChatMessage) => {
+      if (!redoMessageDraft || redoMessageDraft.messageId !== message.id) {
+        return null;
+      }
+      const targetBackend =
+        pickAvailableBackend(backends, redoMessageDraft.backendId) ??
+        pickAvailableBackend(backends, activeConversation?.config.backendId);
+      const redoModels = targetBackend
+        ? buildDraftModelOptionsForBackend(targetBackend, modelVisibility)
+        : models;
+      const redoModeOptions = targetBackend
+        ? buildDraftModeOptionsForBackend(targetBackend)
+        : modeOptions;
+      const redoMode = resolveCanonicalModeId(
+        String(redoMessageDraft.mode),
+        redoModeOptions
+      ) as EditorMode;
+
+      return (
+        <div className="flex flex-col gap-[6px]">
+          <div className="flex items-center justify-between px-[2px]">
+            <span className="font-sans text-[11px] text-[var(--text-secondary)]">
+              Redo message
+            </span>
+            <button
+              type="button"
+              onClick={() => setRedoMessageDraft(null)}
+              className="rounded-[5px] px-[6px] py-[2px] font-sans text-[11px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-card-hover)] hover:text-[var(--text-primary)]"
+            >
+              Cancel
+            </button>
+          </div>
+          <ChatComposer
+            key={`redo-${redoMessageDraft.messageId}`}
+            mode={redoMode}
+            onModeChange={(next) =>
+              setRedoMessageDraft((current) =>
+                current && current.messageId === redoMessageDraft.messageId
+                  ? { ...current, mode: next }
+                  : current
+              )
+            }
+            model={redoMessageDraft.model}
+            onModelChange={(next) =>
+              setRedoMessageDraft((current) =>
+                current && current.messageId === redoMessageDraft.messageId
+                  ? { ...current, model: next }
+                  : current
+              )
+            }
+            backendId={targetBackend?.id ?? redoMessageDraft.backendId}
+            backends={backends}
+            onBackendChange={(nextBackendId) => {
+              const nextBackend = pickAvailableBackend(backends, nextBackendId);
+              const nextModel = nextBackend
+                ? resolveDraftModelForBackend(nextBackend)
+                : redoMessageDraft.model;
+              const nextMode = nextBackend
+                ? buildDraftModeOptionsForBackend(nextBackend)[0]?.id ?? redoMessageDraft.mode
+                : redoMessageDraft.mode;
+              setRedoMessageDraft((current) =>
+                current && current.messageId === redoMessageDraft.messageId
+                  ? {
+                      ...current,
+                      backendId: nextBackend?.id ?? nextBackendId,
+                      mode: nextMode as EditorMode,
+                      model: nextModel,
+                    }
+                  : current
+              );
+            }}
+            models={redoModels.length > 0 ? redoModels : [redoMessageDraft.model]}
+            modeOptions={redoModeOptions}
+            value={redoMessageDraft.content}
+            onValueChange={(next) =>
+              setRedoMessageDraft((current) =>
+                current && current.messageId === redoMessageDraft.messageId
+                  ? { ...current, content: next }
+                  : current
+              )
+            }
+            busy={false}
+            configLocked={false}
+            onSubmit={(text, attachments) => submitRedoMessageDraft(text, attachments)}
+            layout="empty-top"
+            shellMxClass=""
+            draftAttachments={redoMessageDraft.attachments}
+            onDraftAttachmentsChange={(next) =>
+              setRedoMessageDraft((current) =>
+                current && current.messageId === redoMessageDraft.messageId
+                  ? { ...current, attachments: next }
+                  : current
+              )
+            }
+            userMessageHistory={composerUserMessageHistory}
+            hasMoreOlderUserMessageHistory={panelHistoryCursor.hasOlder}
+            onRequestOlderUserMessageHistory={
+              activeTabId && activeTabId !== "__empty__"
+                ? () => loadOlderConversationHistory(activeTabId)
+                : undefined
+            }
+          />
+        </div>
+      );
+    },
+    [
+      activeConversation?.config.backendId,
+      activeTabId,
+      backends,
+      composerUserMessageHistory,
+      loadOlderConversationHistory,
+      modeOptions,
+      modelVisibility,
+      models,
+      panelHistoryCursor.hasOlder,
+      redoMessageDraft,
+      submitRedoMessageDraft,
+    ]
+  );
+
   const handleForkMessage = useCallback(
     async (messageId: string) => {
       if (!activeConversation) return;
@@ -1919,13 +2277,23 @@ const cancelPromptForDraft = useCallback(
         state.conversation && isPersistedConversationTabId(expandedComposerDraftId)
           ? handleRequestHandoff
           : undefined,
+      userMessageHistory: composerUserMessageHistory,
+      hasMoreOlderUserMessageHistory: panelHistoryCursor.hasOlder,
+      onRequestOlderUserMessageHistory:
+        activeTabId && activeTabId !== "__empty__"
+          ? () => loadOlderConversationHistory(activeTabId)
+          : undefined,
     };
   }, [
     backends,
+    activeTabId,
     cancelPromptForDraft,
     composerDrafts,
+    composerUserMessageHistory,
     expandedComposerDraftId,
     handleRequestHandoff,
+    loadOlderConversationHistory,
+    panelHistoryCursor.hasOlder,
     resolveComposerStateForDraft,
     setBackendForDraft,
     setModeForDraft,
@@ -2090,6 +2458,7 @@ onDraftAttachmentsChange={(next) =>
           onStripContextMenu={handleChatStripContextMenu}
           onReorderTabs={handleReorderChatTabs}
           onRenameTab={handleRenameChatTab}
+          padTrailingForWindowChrome={padTabsForWindowChrome}
           externalRenameTabId={chatTabRenameTargetId}
           onExternalRenameConsumed={() => setChatTabRenameTargetId(null)}
         />
@@ -2130,6 +2499,7 @@ onDraftAttachmentsChange={(next) =>
           key={activeTabId}
           messages={scrollMessages}
           conversationId={activeTabId}
+          composerDraftId={composerDraftId}
           conversationBusy={
             activeConversation?.status === "running" ||
             activeConversation?.status === "awaiting_permission"
@@ -2143,6 +2513,9 @@ onDraftAttachmentsChange={(next) =>
           }
           onResolvePermission={handleResolveActivePermission}
           onForkMessage={handleForkMessage}
+          onRedoMessage={handleStartRedoMessage}
+          renderUserMessageEditor={renderRedoMessageEditor}
+          editingUserMessageId={redoMessageDraft?.messageId ?? null}
           initialScrollTop={
             restoredChatScroll.mode === "restore" &&
             restoredChatScroll.scrollTop !== undefined

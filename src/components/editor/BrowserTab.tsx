@@ -30,12 +30,16 @@ import { WORKBENCH_NOTIFICATION_KIND } from "@/components/notifications/workbenc
  * Browser-tab home URL when a brand-new browser tab is opened with no explicit
  * target. On public deployments we should default to the current site origin,
  * not hard-coded localhost. The old constant caused odd behavior on
- * `https://opencursor.techlitnow.com` because the "Open URL" prompt seeded the
+ * `https://cesium.techlitnow.com` because the "Open URL" prompt seeded the
  * field with `http://localhost:3000/`, and any non-full replacement could turn
  * into a garbage URL like `http://localhost:3000/https://google.com/`.
  */
 function getDefaultHome(): string {
-  if (typeof window !== "undefined" && window.location?.origin) {
+  if (
+    typeof window !== "undefined" &&
+    window.location?.origin &&
+    /^https?:\/\//i.test(window.location.origin)
+  ) {
     return `${window.location.origin}/`;
   }
   return "http://localhost:3000/";
@@ -62,7 +66,7 @@ function isDesignGuestMessage(data: unknown): data is {
 } {
   if (!data || typeof data !== "object") return false;
   const d = data as Record<string, unknown>;
-  return d.source === "opencursor-design-guest" && typeof d.kind === "string";
+  return d.source === "cesium-design-guest" && typeof d.kind === "string";
 }
 
 export function BrowserTab({
@@ -146,12 +150,17 @@ export function BrowserTab({
   const [, bump] = useState(0);
   const forceNavUi = useCallback(() => bump((x) => x + 1), []);
   const lastNavHrefRef = useRef<string>(initial);
+  const currentTargetUrlRef = useRef(initial);
 
   const [iframeKey, setIframeKey] = useState(0);
   const [urlBar, setUrlBar] = useState(initial);
 
   const designMode = tab.browser?.designMode ?? false;
   const devtoolsOpen = tab.browser?.devtoolsOpen ?? false;
+
+  useEffect(() => {
+    currentTargetUrlRef.current = tab.browser?.targetUrl ?? defaultHome;
+  }, [defaultHome, tab.browser?.targetUrl]);
 
   useEffect(() => {
     const u = tab.browser?.targetUrl ?? defaultHome;
@@ -216,7 +225,7 @@ export function BrowserTab({
     if (!w) return;
     try {
       w.postMessage(
-        { type: "opencursor-design", op: enabled ? "enable" : "disable" },
+        { type: "cesium-design", op: enabled ? "enable" : "disable" },
         "*"
       );
     } catch {
@@ -248,6 +257,7 @@ export function BrowserTab({
         if (!href) {
           return;
         }
+        const title = d.title?.trim() || undefined;
         const current = lastNavHrefRef.current;
         if (href !== current) {
           const stack = historyRef.current;
@@ -260,12 +270,15 @@ export function BrowserTab({
           lastNavHrefRef.current = href;
         }
         setUrlBar(href);
-        dispatch({
-          type: "UPDATE_BROWSER_TAB_URL",
-          tabId: tab.id,
-          targetUrl: href,
-          name: d.title?.trim() || undefined,
-        });
+        if (href !== currentTargetUrlRef.current || title) {
+          currentTargetUrlRef.current = href;
+          dispatch({
+            type: "UPDATE_BROWSER_TAB_URL",
+            tabId: tab.id,
+            targetUrl: href,
+            name: title,
+          });
+        }
         return;
       }
       if (d.kind === "state") {
@@ -375,6 +388,10 @@ export function BrowserTab({
 
   const pushUrl = useCallback(
     (normalizedHref: string) => {
+      if (normalizedHref === currentTargetUrlRef.current) {
+        setUrlBar(normalizedHref);
+        return;
+      }
       const stack = historyRef.current;
       const nextEntries = [
         ...stack.entries.slice(0, stack.index + 1),
@@ -385,6 +402,7 @@ export function BrowserTab({
         index: nextEntries.length - 1,
       };
       lastNavHrefRef.current = normalizedHref;
+      currentTargetUrlRef.current = normalizedHref;
       dispatch({
         type: "UPDATE_BROWSER_TAB_URL",
         tabId: tab.id,
@@ -416,6 +434,7 @@ export function BrowserTab({
     stack.index -= 1;
     const u = stack.entries[stack.index]!;
     lastNavHrefRef.current = u;
+    currentTargetUrlRef.current = u;
     dispatch({
       type: "UPDATE_BROWSER_TAB_URL",
       tabId: tab.id,
@@ -436,6 +455,7 @@ export function BrowserTab({
     stack.index += 1;
     const u = stack.entries[stack.index]!;
     lastNavHrefRef.current = u;
+    currentTargetUrlRef.current = u;
     dispatch({
       type: "UPDATE_BROWSER_TAB_URL",
       tabId: tab.id,
@@ -492,6 +512,7 @@ export function BrowserTab({
       stack.entries = [...stack.entries.slice(0, stack.index + 1), endedAt];
       stack.index = stack.entries.length - 1;
       setUrlBar(endedAt);
+      currentTargetUrlRef.current = endedAt;
       dispatch({
         type: "UPDATE_BROWSER_TAB_URL",
         tabId: tab.id,
@@ -762,6 +783,7 @@ export function BrowserTab({
             key={iframeKey}
             title="Browser preview"
             src={iframeSrc}
+            sandbox="allow-downloads allow-forms allow-modals allow-popups allow-popups-to-escape-sandbox allow-same-origin allow-scripts"
             onLoad={() => pushDesignToGuest(designModeRef.current)}
             className="h-full w-full border-0 bg-[var(--bg-main)]"
           />

@@ -3,18 +3,26 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
   type UIEvent,
 } from "react";
+import { Group, Panel, Separator, useGroupRef } from "react-resizable-panels";
 import { HardwareAwareTextInput } from "@/components/input/HardwareAwareTextField";
 import {
   AGENT_LEFT_RAIL_EXPANDED_WIDTH,
+  AGENT_SHELL_CENTER_MIN_PERCENT,
+  AGENT_SHELL_DEFAULT_LAYOUT,
   AGENT_SHELL_PANEL_IDS,
-  getAgentShellRailPixelWidth,
+  AGENT_SHELL_RAIL_MAX_PERCENT,
+  AGENT_SHELL_RAIL_MIN_PERCENT,
+  collapseAgentShellSideLayout,
+  composeAgentShellDesktopLayout,
   normalizeAgentShellDesktopLayout,
   readAgentShellSharedSnapshot,
+  writeAgentShellSharedSnapshot,
 } from "@/components/agent/agent-shell-layout";
 import type { LucideIcon } from "lucide-react";
 import {
@@ -74,6 +82,21 @@ const searchInputClass =
 
 const navItemClass =
   "flex h-[32px] w-full items-center gap-[10px] rounded-[var(--radius-tab)] px-[10px] text-left font-sans text-[13px] leading-none transition-colors";
+
+/**
+ * Readable column on wide desktops (centered max width) while staying full-width when
+ * the settings pane is narrow (e.g. dragged rail). Padding scales up on larger viewports.
+ */
+const SETTINGS_MAIN_CONTENT_SHELL_CLASS =
+  "mx-auto w-full max-w-5xl px-7 sm:px-8 md:px-10 lg:px-12 xl:px-16";
+
+function SettingsShellResizeHandle() {
+  return (
+    <Separator className="group relative w-[1px] bg-[var(--border-subtle)] transition-colors hover:bg-[var(--accent)] active:bg-[var(--accent)]">
+      <div className="absolute inset-y-0 -left-1 -right-1 z-10" />
+    </Separator>
+  );
+}
 
 export type SettingsEditorViewProps = {
   /** Full-screen settings shell: icon-only back control in the sidebar footer. */
@@ -189,9 +212,9 @@ function SettingsNavContent({
         </button>
       </nav>
 
-      <div className="flex shrink-0 items-center gap-[8px] px-[10px] py-[10px]">
+      <div className="flex shrink-0 items-center gap-[8px] px-[11px] py-[10px]">
         <div
-          className="flex min-w-0 flex-1 items-center gap-[10px] rounded-[var(--radius-tab)] px-[10px] py-[8px]"
+          className="flex min-w-0 flex-1 items-center gap-[8px]"
           title={accountLabel}
         >
           <CircleUserRound
@@ -199,7 +222,7 @@ function SettingsNavContent({
             strokeWidth={1.5}
             aria-hidden
           />
-          <span className="min-w-0 truncate font-sans text-[13px] text-[var(--text-primary)]">
+          <span className="truncate font-sans text-[13px] text-[var(--text-primary)]">
             {accountLabel}
           </span>
         </div>
@@ -223,7 +246,9 @@ export function SettingsEditorView({ onCloseShell }: SettingsEditorViewProps = {
   const { session: authSession } = useAuth();
   const { workspaceSession, updateWorkspaceSession } = useWorkspace();
   const { experimentalIpadWindowedTabInset } = useUserPreferences();
-  const { width: viewportWidth, isMobile } = useViewport();
+  const { isMobile } = useViewport();
+  const groupRef = useGroupRef();
+  const applyingSettingsLayoutFromContextRef = useRef(false);
   /** iPad/tablet use width ≥768 (“desktop” settings layout); still need inset when window controls overlap the nav. */
   const padSettingsSearchForWindowChrome = experimentalIpadWindowedTabInset;
   const accountLabel = authSession?.username?.trim() || "Guest";
@@ -234,13 +259,13 @@ export function SettingsEditorView({ onCloseShell }: SettingsEditorViewProps = {
   const scrollPersistTimerRef = useRef<number | null>(null);
   const pendingScrollTopRef = useRef(workspaceSession.settingsView.scrollTop);
   const persistedScrollTopRef = useRef<number | null>(null);
-  const Panel = SETTINGS_PANELS[activeNav] ?? SETTINGS_PANELS.general;
+  const SettingsPanel = SETTINGS_PANELS[activeNav] ?? SETTINGS_PANELS.general;
   const searchModLabel = useMemo(
     () => primaryModifierLabel(detectShortcutPlatform()),
     []
   );
 
-  const desktopAsideWidth = useMemo(
+  const sharedAgentShellLayout = useMemo(
     () => {
       const snapshotLayout = normalizeAgentShellDesktopLayout(
         readAgentShellSharedSnapshot()?.agentShellDesktopLayout
@@ -248,15 +273,70 @@ export function SettingsEditorView({ onCloseShell }: SettingsEditorViewProps = {
       const workspaceLayout = normalizeAgentShellDesktopLayout(
         workspaceSession.agentView.agentShellDesktopLayout
       );
-      const railPercent =
-        snapshotLayout?.[AGENT_SHELL_PANEL_IDS.rail] ??
-        workspaceLayout?.[AGENT_SHELL_PANEL_IDS.rail];
-      if (typeof railPercent === "number" && Number.isFinite(railPercent) && railPercent > 0) {
-        return Math.round((viewportWidth * railPercent) / 100);
-      }
-      return getAgentShellRailPixelWidth(viewportWidth);
+      return snapshotLayout ?? workspaceLayout ?? AGENT_SHELL_DEFAULT_LAYOUT;
     },
-    [viewportWidth, workspaceSession.agentView.agentShellDesktopLayout]
+    [workspaceSession.agentView.agentShellDesktopLayout]
+  );
+
+  const settingsDesktopLayout = useMemo(() => {
+    const collapsedLayout = collapseAgentShellSideLayout(sharedAgentShellLayout);
+    return {
+      [AGENT_SHELL_PANEL_IDS.rail]: collapsedLayout[AGENT_SHELL_PANEL_IDS.rail],
+      [AGENT_SHELL_PANEL_IDS.center]: collapsedLayout[AGENT_SHELL_PANEL_IDS.center],
+    };
+  }, [sharedAgentShellLayout]);
+
+  useLayoutEffect(() => {
+    if (isMobile) {
+      return;
+    }
+    applyingSettingsLayoutFromContextRef.current = true;
+    try {
+      groupRef.current?.setLayout(settingsDesktopLayout);
+    } finally {
+      queueMicrotask(() => {
+        applyingSettingsLayoutFromContextRef.current = false;
+      });
+    }
+  }, [groupRef, isMobile, settingsDesktopLayout]);
+
+  const persistSettingsRailWidth = useCallback(
+    (railPercent: number) => {
+      const baseLayout =
+        normalizeAgentShellDesktopLayout(
+          readAgentShellSharedSnapshot()?.agentShellDesktopLayout
+        ) ??
+        normalizeAgentShellDesktopLayout(workspaceSession.agentView.agentShellDesktopLayout) ??
+        AGENT_SHELL_DEFAULT_LAYOUT;
+      const nextLayout =
+        composeAgentShellDesktopLayout(
+          {
+            ...baseLayout,
+            [AGENT_SHELL_PANEL_IDS.rail]: railPercent,
+          },
+          baseLayout
+        ) ?? AGENT_SHELL_DEFAULT_LAYOUT;
+      const previousSnapshot = readAgentShellSharedSnapshot();
+      writeAgentShellSharedSnapshot({
+        leftRailCollapsed: previousSnapshot?.leftRailCollapsed,
+        agentShellDesktopLayout: nextLayout,
+      });
+      updateWorkspaceSession((current) => {
+        const currentLayout =
+          normalizeAgentShellDesktopLayout(current.agentView.agentShellDesktopLayout) ?? {};
+        return {
+          ...current,
+          agentView: {
+            ...current.agentView,
+            agentShellDesktopLayout: {
+              ...currentLayout,
+              [AGENT_SHELL_PANEL_IDS.rail]: nextLayout[AGENT_SHELL_PANEL_IDS.rail],
+            },
+          },
+        };
+      });
+    },
+    [updateWorkspaceSession, workspaceSession.agentView.agentShellDesktopLayout]
   );
 
   useEffect(() => {
@@ -384,7 +464,7 @@ export function SettingsEditorView({ onCloseShell }: SettingsEditorViewProps = {
 
   if (isMobile) {
     return (
-          <div className="relative flex h-full min-h-0 w-full flex-col bg-[var(--bg-main)]">
+      <div className="relative flex h-full min-h-0 w-full flex-col bg-[var(--bg-main)]">
         {navDrawerOpen ? (
           <>
             <div
@@ -411,31 +491,57 @@ export function SettingsEditorView({ onCloseShell }: SettingsEditorViewProps = {
 
         <main
           ref={scrollRootRef}
-          className="hide-scrollbar-y min-h-0 min-w-0 flex-1 overflow-y-auto bg-[var(--bg-main)] px-[28px] py-[24px]"
+          className="hide-scrollbar-y min-h-0 min-w-0 flex-1 overflow-y-auto bg-[var(--bg-main)] py-[24px]"
           onScroll={onMainScroll}
         >
-          {Panel ? <Panel /> : null}
+          <div className={SETTINGS_MAIN_CONTENT_SHELL_CLASS}>
+            {SettingsPanel ? <SettingsPanel /> : null}
+          </div>
         </main>
       </div>
     );
   }
 
   return (
-    <div className="flex h-full min-h-0 w-full bg-[var(--bg-main)]">
-      <aside
-        className="flex shrink-0 flex-col"
-        style={{ width: desktopAsideWidth }}
+    <Group
+      id="settings-shell-panels"
+      groupRef={groupRef}
+      key="settings-shell-desktop"
+      orientation="horizontal"
+      className="h-full min-w-0 bg-[var(--bg-main)]"
+      defaultLayout={settingsDesktopLayout}
+    >
+      <Panel
+        id={AGENT_SHELL_PANEL_IDS.rail}
+        minSize={`${AGENT_SHELL_RAIL_MIN_PERCENT}%`}
+        maxSize={`${AGENT_SHELL_RAIL_MAX_PERCENT}%`}
+        onResize={(panelSize) => {
+          if (applyingSettingsLayoutFromContextRef.current) {
+            return;
+          }
+          persistSettingsRailWidth(panelSize.asPercentage);
+        }}
+        className="min-h-0 overflow-hidden border-r border-[var(--border-subtle)]"
       >
-        {navContent}
-      </aside>
+        <aside className="flex h-full min-h-0 w-full flex-col">{navContent}</aside>
+      </Panel>
+      <SettingsShellResizeHandle />
 
-      <main
-        ref={scrollRootRef}
-        className="hide-scrollbar-y min-h-0 min-w-0 flex-1 overflow-y-auto bg-[var(--bg-main)] px-[28px] py-[24px]"
-        onScroll={onMainScroll}
+      <Panel
+        id={AGENT_SHELL_PANEL_IDS.center}
+        minSize={`${AGENT_SHELL_CENTER_MIN_PERCENT}%`}
+        className="min-h-0 min-w-0 overflow-hidden"
       >
-        {Panel ? <Panel /> : null}
-      </main>
-    </div>
+        <main
+          ref={scrollRootRef}
+          className="hide-scrollbar-y h-full min-h-0 min-w-0 overflow-y-auto bg-[var(--bg-main)] py-[24px]"
+          onScroll={onMainScroll}
+        >
+          <div className={SETTINGS_MAIN_CONTENT_SHELL_CLASS}>
+            {SettingsPanel ? <SettingsPanel /> : null}
+          </div>
+        </main>
+      </Panel>
+    </Group>
   );
 }

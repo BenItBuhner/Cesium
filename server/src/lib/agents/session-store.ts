@@ -637,6 +637,39 @@ export async function readConversationEventsUpToMessage(
   );
 }
 
+export async function readConversationEventsBeforeMessage(
+  workspaceId: string,
+  conversationId: string,
+  beforeMessageId: string,
+  limitMessages?: number
+): Promise<AgentStoredEvent[]> {
+  const messageLimit = limitMessages ?? getAgentHandoffMessageLimit();
+  const storage = await getStorage();
+  const rec = await storage.getAgentConversation(conversationId);
+  if (!rec || rec.workspaceId !== workspaceId) {
+    return [];
+  }
+  const events = await storage.readRecentAgentEvents(
+    conversationId,
+    messageLimit * 50 + 100
+  );
+  if (events.length === 0) {
+    return [];
+  }
+  const targetSeq = events.find(
+    (e) => e.kind === "user_message" && e.messageId === beforeMessageId
+  )?.seq;
+  if (targetSeq == null) {
+    throw new Error("Could not find the selected user message to redo.");
+  }
+  const sliced = events.filter((e) => e.seq < targetSeq);
+  const turns = messageLimit * 2 + 10;
+  const eventsLimit = messageLimit * 50 + 100;
+  return enrichEventsWithDerivedEditPreview(
+    takeLastTurnWindow(sliced, turns, eventsLimit)
+  );
+}
+
 export async function readConversationSnapshot(
   workspaceId: string,
   conversationId: string,

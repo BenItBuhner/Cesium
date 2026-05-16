@@ -62,6 +62,7 @@ import type { AgentTabIndicatorByConversationId, EditorTab } from "@/lib/types";
 import {
   TAB_GROUP_COLOR_PRESET_IDS,
   editorPanelReducer,
+  normalizeEditorPanelState,
   resolveTabGroupColorHex,
   type EditorPanelAction,
   type EditorGroup,
@@ -127,6 +128,8 @@ const DEFAULT_EDITOR_SPLIT_LAYOUT: Record<string, number> = {
   [EDITOR_SPLIT_PANEL_IDS.left]: 50,
   [EDITOR_SPLIT_PANEL_IDS.right]: 50,
 };
+
+const EDITOR_WINDOW_CHROME_TAB_INSET_PX = 72;
 
 function tabCanSave(tab: EditorTab): boolean {
   return Boolean(tab.filePath && tab.fileKind && tab.fileKind !== "image");
@@ -218,7 +221,7 @@ function createEditorStateFromSession(session: {
   ) {
     rightStripItems = rightTabs.map((t) => ({ type: "tab" as const, tabId: t.id }));
   }
-  return {
+  return normalizeEditorPanelState({
     split: session.split,
     splitOrientation: normalizeSplitOrientation(session.splitOrientation),
     splitLayout: normalizeSplitLayout(session.splitLayout),
@@ -231,7 +234,7 @@ function createEditorStateFromSession(session: {
     rightTabGroups,
     leftStripItems,
     rightStripItems,
-  };
+  });
 }
 
 function areViewStatesEqual(a: unknown, b: unknown): boolean {
@@ -287,7 +290,10 @@ export function EditorPanel({
     updateWorkspaceSession,
   } = useWorkspace();
   const { isMobile } = useViewport();
-  const { primarySidebarVisible } = useWorkbench();
+  const {
+    editorLeadingWindowControlsVisible,
+    editorTrailingWindowControlsVisible,
+  } = useWorkbench();
   const runCommand = useIDECommandRunner();
   const { experimentalIpadWindowedTabInset } = useUserPreferences();
   const { openAt } = useWorkbenchContextMenu();
@@ -1590,8 +1596,24 @@ export function EditorPanel({
       );
       if (!terminalStillAvailable) {
         return (
-          <div className="flex h-full items-center justify-center px-6 text-center font-sans text-[13px] text-[var(--text-secondary)]">
-            This terminal session is no longer running. Create a new terminal to continue.
+          <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center font-sans text-[13px] text-[var(--text-secondary)]">
+            <p>This terminal session is no longer running.</p>
+            <div className="flex flex-wrap justify-center gap-2">
+              <button
+                type="button"
+                onClick={() => void refreshTerminals()}
+                className="rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-[var(--bg-panel)] px-3 py-1.5 text-[12px] text-[var(--text-primary)] transition-colors hover:bg-[var(--accent-bg)]"
+              >
+                Retry
+              </button>
+              <button
+                type="button"
+                onClick={() => void openTerminalTab()}
+                className="rounded-[var(--radius-tab)] border border-[var(--accent)] bg-[var(--accent)] px-3 py-1.5 text-[12px] font-medium text-[var(--bg-main)] transition-opacity hover:opacity-90 dark:text-[var(--bg-panel)]"
+              >
+                New terminal
+              </button>
+            </div>
           </div>
         );
       }
@@ -1734,12 +1756,19 @@ export function EditorPanel({
     const padStripLeadingForWindowChrome =
       experimentalIpadWindowedTabInset &&
       !isMobile &&
-      !primarySidebarVisible &&
+      editorLeadingWindowControlsVisible &&
       group === "left";
+    const padTrailingForWindowChrome =
+      reserveTrailingPaneCloseSlot &&
+      experimentalIpadWindowedTabInset &&
+      !isMobile &&
+      editorTrailingWindowControlsVisible;
     const paneCloseSlotGroup: EditorGroup =
       !state.split || state.splitOrientation === "vertical" ? "left" : "right";
     const trailingSpacerWidthPx =
-      reserveTrailingPaneCloseSlot && group === paneCloseSlotGroup ? 18 : 0;
+      group === paneCloseSlotGroup
+        ? 18 + (padTrailingForWindowChrome ? EDITOR_WINDOW_CHROME_TAB_INSET_PX : 0)
+        : 0;
 
     return (
       <div className="flex h-full min-h-0 min-w-0 flex-col">

@@ -1,13 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import Script from "next/script";
-import { AuthProvider } from "@/components/auth/AuthProvider";
-import { AuthGate } from "@/components/auth/AuthGate";
-import { ServerConnectionsProvider } from "@/components/preferences/ServerConnectionsProvider";
-import { UserPreferencesProvider } from "@/components/preferences/UserPreferencesProvider";
-import { GlobalSettingsProvider } from "@/components/preferences/GlobalSettingsProvider";
 import { RegisterServiceWorker } from "@/components/pwa/RegisterServiceWorker";
-import { ThemeProvider } from "@/components/theme/ThemeProvider";
 import { USER_PREFERENCES_STORAGE_KEY } from "@/lib/preferences";
 import { THEME_STORAGE_KEY } from "@/lib/theme";
 import "./globals.css";
@@ -23,13 +17,13 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "OpenCursor",
+  title: "Cesium",
   description: "An open-source AI-powered IDE",
-  applicationName: "OpenCursor",
+  applicationName: "Cesium",
   manifest: "/manifest.json",
   appleWebApp: {
     capable: true,
-    title: "OpenCursor",
+    title: "Cesium",
     statusBarStyle: "black-translucent",
   },
   formatDetection: {
@@ -75,17 +69,7 @@ export default function RootLayout({
           {preferencesBootstrap}
         </Script>
         <RegisterServiceWorker />
-        <ServerConnectionsProvider>
-          <AuthProvider>
-            <AuthGate>
-              <GlobalSettingsProvider>
-                <ThemeProvider>
-                  <UserPreferencesProvider>{children}</UserPreferencesProvider>
-                </ThemeProvider>
-              </GlobalSettingsProvider>
-            </AuthGate>
-          </AuthProvider>
-        </ServerConnectionsProvider>
+        {children}
       </body>
     </html>
   );

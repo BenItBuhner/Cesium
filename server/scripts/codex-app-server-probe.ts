@@ -361,8 +361,8 @@ async function main(): Promise<void> {
     });
     const init = await client.request("initialize", {
       clientInfo: {
-        name: "opencursor_codex_app_server_probe",
-        title: "OpenCursor Codex App Server Probe",
+        name: "cesium_codex_app_server_probe",
+        title: "Cesium Codex App Server Probe",
         version: "0.1.0",
       },
       capabilities: { experimentalApi: true },
@@ -392,7 +392,7 @@ async function main(): Promise<void> {
     const started = (await client.request("thread/start", {
       cwd: args.cwd,
       ...(selectedModel ? { model: selectedModel } : {}),
-      serviceName: "opencursor_codex_app_server_probe",
+      serviceName: "cesium_codex_app_server_probe",
     })) as { thread?: { id?: unknown } };
     await appendJsonLine(args.out, { type: "thread_start_result", result: started });
     const threadId = typeof started.thread?.id === "string" ? started.thread.id : "";

@@ -6,6 +6,7 @@ import { ArrowUp, ChevronDown, Plus, Sparkles } from "lucide-react";
 import { HardwareAwareTextArea } from "@/components/input/HardwareAwareTextField";
 import { agentContextLine } from "@/lib/agent-mock";
 import { currentModel } from "@/lib/mock-data";
+import { WORKSPACE_ROUTE } from "@/lib/workbench-view";
 
 export function AgentMain() {
   const [prompt, setPrompt] = useState("");
@@ -46,7 +47,7 @@ export function AgentMain() {
                 <button
                   type="button"
                   className="flex min-w-0 items-center gap-[4px] rounded-[var(--radius-tab)] py-[4px] pl-[2px] pr-[4px] transition-opacity hover:opacity-80"
-                  aria-label="Model (demo)"
+                  aria-label="Model"
                 >
                   <Sparkles className="size-[14px] shrink-0 text-[var(--text-secondary)]" strokeWidth={1.5} aria-hidden />
                   <span className="truncate font-sans text-[13px] font-normal text-[var(--text-secondary)]">
@@ -74,7 +75,7 @@ export function AgentMain() {
               <span className="text-[var(--text-secondary)]">(Cmd I)</span>
             </button>
             <Link
-              href="/?view=editor"
+              href={`${WORKSPACE_ROUTE}?view=editor`}
               className="rounded-[var(--radius-pill)] border border-[var(--border-card)] bg-[var(--bg-panel)] px-[14px] py-[7px] font-sans text-[12px] font-normal text-[var(--text-primary)] transition-colors hover:bg-[var(--bg-card-hover)]"
             >
               Open editor

@@ -63,8 +63,30 @@ export function isAutoModel(model: ModelInfo): boolean {
   );
 }
 
+/**
+ * Some harnesses show models as `Provider/Display Name`. For brand matching we must
+ * not let the routed host (ex. Nvidia) steal the earliest keyword index from the
+ * actual family (DeepSeek, Qwen). Only the first slash segment is trimmed — repeats
+ * are avoided so IDs like `local/llama/custom` remain valid for matching.
+ */
+export function stripLeadingIconProviderSlashPrefix(segment: string): string {
+  const t = segment.trim();
+  const i = t.indexOf("/");
+  if (i <= 0) {
+    return t;
+  }
+  const before = t.slice(0, i).trim();
+  const rest = t.slice(i + 1).trim();
+  if (!before || !rest) {
+    return t;
+  }
+  return rest;
+}
+
 export function modelIconHaystack(model: ModelInfo): string {
-  const parts = [model.name, model.id, model.modelValue ?? ""].filter(Boolean);
+  const parts = [model.name, model.id, model.modelValue ?? ""]
+    .filter(Boolean)
+    .map(stripLeadingIconProviderSlashPrefix);
   return parts.join("\n").toLowerCase();
 }
 

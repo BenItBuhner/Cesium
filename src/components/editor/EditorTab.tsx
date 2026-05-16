@@ -109,7 +109,8 @@ export function EditorTab({
       onClick={() => onSelect(tab.id)}
       onContextMenu={onContextMenu}
       aria-label={ariaLabel}
-      className={`group relative inline-flex h-[36px] shrink-0 items-center overflow-hidden rounded-[var(--radius-tab)] transition-colors ${nestedInGroup ? "max-w-[180px]" : "max-w-[220px]"} ${dragEnabled ? "cursor-grab active:cursor-grabbing" : ""}`}
+      title={tab.name}
+      className={`group relative inline-flex h-[36px] shrink-0 items-center overflow-hidden rounded-[var(--radius-tab)] transition-colors ${nestedInGroup ? "min-w-[128px] max-w-[200px]" : "min-w-[148px] max-w-[260px]"} ${dragEnabled ? "cursor-grab active:cursor-grabbing" : ""}`}
       style={{ background: surface }}
     >
       <span className="ml-[9px] flex shrink-0 items-center gap-[6px]">
@@ -147,7 +148,10 @@ export function EditorTab({
           )}
         </span>
       </span>
-      <span className="ml-[7px] min-w-0 flex-1 truncate text-left font-sans text-[14px] font-normal text-[var(--text-secondary)]">
+      <span
+        title={tab.name}
+        className="ml-[7px] min-w-0 flex-1 truncate text-left font-sans text-[14px] font-normal text-[var(--text-secondary)]"
+      >
         {tab.name}
       </span>
       <div className="relative mr-[6px] flex size-[22px] shrink-0 items-center justify-center">

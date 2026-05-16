@@ -1,6 +1,6 @@
-# OpenCursor
+# Cesium
 
-OpenCursor is a **local-first AI workbench** for running agent chats and a browser IDE against real folders on your machine. It pairs a **Next.js** frontend with a **Bun + Hono** backend that serves REST/WebSocket APIs for workspaces, file edits, terminals, agent conversations, optional auth, and optional speech-to-text.
+Cesium is a **local-first AI workbench** for running agent chats and a browser IDE against real folders on your machine. It pairs a **Next.js** frontend with a **Bun + Hono** backend that serves REST/WebSocket APIs for workspaces, file edits, terminals, agent conversations, optional auth, and optional speech-to-text.
 
 - **Frontend**: `http://localhost:3000`
 - **Backend / bot server**: `http://localhost:9100`
@@ -17,7 +17,6 @@ In practice: start the backend, start the frontend, open the app, add a workspac
 - **Agent CLIs** (optional, depending on backends you want):
   - **Cursor Agent** (ACP) on your `PATH` or via `OPENCURSOR_CURSOR_CLI_BIN` / `OPENCURSOR_CURSOR_ACP_BIN`.
   - **Cursor SDK** via `@cursor/sdk` plus a Cursor API key configured in Settings or environment.
-  - **Claude Code SDK** via `@anthropic-ai/claude-agent-sdk` plus `ANTHROPIC_API_KEY` or a supported Claude provider env.
   - **OpenCode** ACP binary or install under `~/.opencode/bin` (see `OPENCURSOR_OPENCODE_ACP_BIN`, `OPENCURSOR_REAL_HOME`).
   - **Gemini CLI** in ACP mode (`gemini --acp`; install via `@google/gemini-cli`, or set `OPENCURSOR_GEMINI_CLI_BIN`).
   - **Codex** / **Claude** CLIs if you use those adapter backends (`OPENCURSOR_CODEX_BIN`, `OPENCURSOR_CLAUDE_BIN`).
@@ -47,7 +46,7 @@ From the repository root:
    Copy-Item .env.example .env.local
    ```
 
-   At minimum, keep `NEXT_PUBLIC_SERVER_URL=http://localhost:9100`. Set `WORKSPACE_ROOT` to the folder you want OpenCursor to open first.
+   At minimum, keep `NEXT_PUBLIC_SERVER_URL=http://localhost:9100`. Set `WORKSPACE_ROOT` to the folder you want Cesium to open first.
 
    The server loads variables in this order, with later files overriding earlier ones:
 
@@ -58,7 +57,7 @@ From the repository root:
 
 3. **Optional: start Postgres + Redis**
 
-   OpenCursor can run without Docker using the legacy JSON storage driver. For the faster Postgres/Redis-backed setup:
+   Cesium can run without Docker using the legacy JSON storage driver. For the faster Postgres/Redis-backed setup:
 
    ```bash
    docker compose up -d
@@ -69,7 +68,7 @@ From the repository root:
 
    ```env
    OPENCURSOR_STORAGE_DRIVER=pg
-   DATABASE_URL=postgres://opencursor:opencursor@localhost:5433/opencursor
+   DATABASE_URL=postgres://cesium:cesium@localhost:5433/cesium
    REDIS_URL=redis://localhost:6380
    ```
 
@@ -89,7 +88,7 @@ From the repository root:
 
 5. **Start using it**
 
-   Add or select a workspace folder, open the model picker in the chat composer, choose a harness/backend such as Cursor SDK, Claude Code SDK, Codex, OpenCode, Claude, or Gemini, pick a model, and send a prompt. Use Settings to add API keys, enable/disable models, configure permission behavior, and manage storage.
+   Add or select a workspace folder, open the model picker in the chat composer, choose a harness/backend such as Cursor SDK, Codex, OpenCode, Claude Code, or Gemini, pick a model, and send a prompt. Use Settings to add API keys, enable/disable models, configure permission behavior, and manage storage.
 
 ## Production build
 
@@ -128,7 +127,7 @@ If your shell supports `bash`, `npm run prod` builds both and uses the repo `sta
 ## Using the workbench
 
 - **Workspaces:** Register one or more directories; switching workspace sends `x-opencursor-workspace-id` on API calls.
-- **Agent view:** Create conversations, choose a **backend** (Cursor SDK, Claude Code SDK, Cursor ACP, OpenCode ACP, Gemini CLI ACP, Codex/Claude adapters when installed), send messages, approve tool permissions when the provider supports it. Live updates use **`/ws/agent`**.
+- **Agent view:** Create conversations, choose a **backend** (Cursor SDK, Cursor ACP, OpenCode ACP, Gemini CLI ACP, Codex / Claude Code adapters when installed), send messages, approve tool permissions when the provider supports it. Live updates use **`/ws/agent`**.
 - **IDE view:** Edit files, use integrated **xterm** terminals (**`/ws/terminal`**), file watcher (**`/ws/fs`**).
 - **Voice input (optional):** If transcription is configured, the composer can send audio to **`POST /api/audio/transcriptions`** (OpenAI-compatible multipart API).
 
@@ -138,7 +137,7 @@ If your shell supports `bash`, `npm run prod` builds both and uses the repo `sta
 
 | Variable | Description |
 | -------- | ----------- |
-| `NEXT_PUBLIC_SERVER_URL` | Base URL of the OpenCursor API (no trailing slash), e.g. `http://localhost:9100` or `http://192.168.1.10:9100`. **Required** for a non-default host/port. |
+| `NEXT_PUBLIC_SERVER_URL` | Base URL of the Cesium API (no trailing slash), e.g. `http://localhost:9100` or `http://192.168.1.10:9100`. **Required** for a non-default host/port. |
 | `NEXT_ALLOWED_DEV_ORIGINS` | Space- or comma-separated origins allowed for dev HMR/assets when not using localhost (see `next.config.ts`). |
 | `ENABLE_NEXT_PWA` | Set to `1` before building/running Next if you intentionally want the PWA service worker. It is disabled by default to avoid stale local chunks. |
 
@@ -158,11 +157,13 @@ If your shell supports `bash`, `npm run prod` builds both and uses the repo `sta
 | `WORKSPACE_ROOT` | Default folder opened on first bootstrap. Must fall under an [allowed root](#workspace-safety). If unset, the server uses the **repository root** (parent of `server/` when cwd is `server/`). |
 | `WORKSPACE_ALLOWED_ROOTS` | Comma-separated **absolute** directories. When set, **only** these paths may be used as workspace roots (no automatic repo-root fallback). |
 | `OPENCURSOR_ALLOW_ANY_WORKSPACE_ROOT` | Set to `1` to disable allowed-root checks (**dangerous**; avoid on shared or public networks). |
-| `OPENCURSOR_DATA_DIR` | Override persisted data directory (workspaces profile, auth state, agent sessions, etc.). Default: OS-specific app data path (e.g. `~/.local/state/opencursor` on Linux, `%LOCALAPPDATA%\OpenCursor\data` on Windows). |
+| `OPENCURSOR_DATA_DIR` | Override persisted data directory (workspaces profile, auth state, agent sessions, etc.). Default: OS-specific app data path (e.g. `~/.local/state/cesium` on Linux, `%LOCALAPPDATA%\Cesium\data` on Windows). |
 
 ### Authentication (optional)
 
 If **`OPENCURSOR_AUTH_USERNAME`** and **`OPENCURSOR_AUTH_PASSWORD`** are both set, the server enables login, session cookies, and the `x-opencursor-session-token` header flow.
+
+The `OPENCURSOR_*` environment variable names remain supported for compatibility.
 
 Optional tuning:
 
@@ -184,7 +185,7 @@ Optional tuning:
 
 ### Storage (Postgres + Redis)
 
-OpenCursor supports two storage drivers. The **legacy JSON/JSONL** driver needs
+Cesium supports two storage drivers. The **legacy JSON/JSONL** driver needs
 no external services. The **Postgres** driver stores workspaces, sessions, auth
 state, and agent conversations/events in a real database and uses Redis (when
 configured) for pub/sub and cache.
@@ -198,7 +199,7 @@ Driver resolution (first match wins):
 | Variable | Description |
 | -------- | ----------- |
 | `OPENCURSOR_STORAGE_DRIVER` | Force `legacy-json` or `pg`. Omit to let `DATABASE_URL` choose. |
-| `DATABASE_URL` | Postgres connection string. Matches `docker-compose.yml` defaults (`postgres://opencursor:opencursor@localhost:5433/opencursor`). |
+| `DATABASE_URL` | Postgres connection string. Matches `docker-compose.yml` defaults (`postgres://cesium:cesium@localhost:5433/cesium`). |
 | `DATABASE_POOL_MAX` | Max Postgres pool size (default `10`). |
 | `DATABASE_IDLE_TIMEOUT_SEC` | Pool idle timeout (default `20`). |
 | `DATABASE_CONNECT_TIMEOUT_SEC` | Pool connect timeout (default `10`). |
@@ -210,11 +211,6 @@ Driver resolution (first match wins):
 | Variable | Description |
 | -------- | ----------- |
 | `CURSOR_API_KEY` | Cursor SDK API key. If unset, configure it in the app under Settings; stored credentials are kept under `OPENCURSOR_DATA_DIR`. |
-| `ANTHROPIC_API_KEY` | Claude Code SDK API key used by `@anthropic-ai/claude-agent-sdk`. |
-| `ANTHROPIC_BASE_URL` / `ANTHROPIC_BETAS` | Optional Anthropic API overrides for Claude Code SDK. |
-| `CLAUDE_CODE_USE_BEDROCK` / `CLAUDE_CODE_USE_VERTEX` / `CLAUDE_CODE_USE_FOUNDRY` | Optional provider selectors for Claude Code SDK when not using `ANTHROPIC_API_KEY`. |
-| `CLAUDE_AGENT_SDK_CLIENT_APP` | Optional client app identifier sent by the Claude Agent SDK. Defaults internally to an OpenCursor identifier. |
-| `OPENCURSOR_CLAUDE_CODE_SDK_ALLOW_BYPASS` | Set to `1` to allow the Claude Code SDK `bypassPermissions` mode. Leave unset for normal permission safety. |
 | `OPENCURSOR_CURSOR_CLI_BIN` | Absolute path to **Cursor Agent** (overrides `PATH`; same as legacy `OPENCURSOR_CURSOR_ACP_BIN`). |
 | `OPENCURSOR_CURSOR_ACP_BIN` | Same intent as `OPENCURSOR_CURSOR_CLI_BIN` (either may be set). |
 | `OPENCURSOR_CURSOR_AGENT_ARGS` | JSON array of extra argv strings after the binary. |
@@ -259,7 +255,7 @@ By default, allowed workspace roots include your **home directory**, **`WORKSPAC
 
 ## Storage backends
 
-OpenCursor ships with two interchangeable storage drivers and a tool to move
+Cesium ships with two interchangeable storage drivers and a tool to move
 data between them at any time.
 
 - **Legacy JSON/JSONL** (`legacy-json`) — workspaces, sessions, auth, and agent

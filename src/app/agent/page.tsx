@@ -1,4 +1,5 @@
 import { redirect } from "next/navigation";
+import { WORKSPACE_ROUTE } from "@/lib/workbench-view";
 
 type SearchParamsInput = Record<string, string | string[] | undefined>;
 
@@ -16,7 +17,7 @@ function toQueryString(sp: SearchParamsInput): string {
   return qs.toString();
 }
 
-/** Legacy URL; workbench is a single `/` route (agent is the default when `view` is omitted). */
+/** Legacy URL; workbench is a single `/workspace` route (agent is the default when `view` is omitted). */
 export default async function LegacyAgentPage({
   searchParams,
 }: {
@@ -24,5 +25,5 @@ export default async function LegacyAgentPage({
 }) {
   const sp = await searchParams;
   const q = toQueryString(sp);
-  redirect(q ? `/?${q}` : "/");
+  redirect(q ? `${WORKSPACE_ROUTE}?${q}` : WORKSPACE_ROUTE);
 }

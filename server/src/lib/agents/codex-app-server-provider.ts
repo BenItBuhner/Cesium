@@ -196,8 +196,8 @@ class CodexAppServerSessionHandle implements AgentSessionHandle {
     this.transport = transport;
     await transport.request("initialize", {
       clientInfo: {
-        name: process.env.CODEX_APP_SERVER_CLIENT_NAME?.trim() || "opencursor_codex_app_server",
-        title: "OpenCursor Codex App Server",
+        name: process.env.CODEX_APP_SERVER_CLIENT_NAME?.trim() || "cesium_codex_app_server",
+        title: "Cesium Codex App Server",
         version: "0.1.0",
       },
       capabilities: { experimentalApi: true },
@@ -402,7 +402,7 @@ class CodexAppServerSessionHandle implements AgentSessionHandle {
     const result = (await this.transport.request("thread/start", {
       cwd: this.callbacks.workspace.root,
       ...(model && model !== "__default__" && model !== "auto" ? { model } : {}),
-      serviceName: "opencursor_codex_app_server",
+      serviceName: "cesium_codex_app_server",
     })) as CodexAppServerJsonObject;
     this.applyThreadResult(result);
   }

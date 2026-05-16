@@ -60,7 +60,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
               )}
             </div>
             <h1 className="font-sans text-[20px] font-semibold text-[var(--text-primary)]">
-              {showConnectionIssue ? "Check OpenCursor server" : "Sign in to OpenCursor"}
+              {showConnectionIssue ? "Check Cesium server" : "Sign in to Cesium"}
             </h1>
             <p className="mt-2 font-sans text-[13px] leading-[1.5] text-[var(--text-secondary)]">
               {showConnectionIssue

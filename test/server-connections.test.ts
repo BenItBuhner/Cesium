@@ -9,7 +9,10 @@ import {
   createDefaultServerConnectionsState,
   normalizeServerConnectionsState,
 } from "../src/lib/server-connections.ts";
-import { resolveClientServerBaseUrlForLocation } from "../src/lib/resolve-server-base-url.ts";
+import {
+  resolveClientServerBaseUrlForCurrentWindow,
+  resolveClientServerBaseUrlForLocation,
+} from "../src/lib/resolve-server-base-url.ts";
 
 class MemoryStorage {
   private readonly data = new Map<string, string>();
@@ -40,6 +43,7 @@ function installMockWindow() {
       hostname: "localhost",
       host: "localhost:3000",
       origin: "http://localhost:3000",
+      search: "",
     },
   };
   Object.defineProperty(globalThis, "window", {
@@ -108,8 +112,8 @@ describe("base URL resolution", () => {
       resolveClientServerBaseUrlForLocation("http://192.168.1.22:9100", {
         location: {
           protocol: "https:",
-          hostname: "opencursor.example.com",
-          host: "opencursor.example.com",
+          hostname: "cesium.example.com",
+          host: "cesium.example.com",
         },
       }),
       ""
@@ -139,6 +143,44 @@ describe("base URL resolution", () => {
         },
       }),
       "http://192.168.4.172:9107"
+    );
+  });
+
+  test("uses native shell server URL for loopback active servers", () => {
+    const mockWindow = installMockWindow() as ReturnType<typeof installMockWindow> & {
+      __CESIUM_NATIVE_SHELL__?: unknown;
+    };
+    mockWindow.location.hostname = "10.0.2.2";
+    mockWindow.location.host = "10.0.2.2:3000";
+    mockWindow.location.origin = "http://10.0.2.2:3000";
+    mockWindow.__CESIUM_NATIVE_SHELL__ = {
+      platform: "android",
+      serverBaseUrl: "http://10.0.2.2:9100",
+      source: "react-native-webview",
+    };
+
+    assert.equal(
+      resolveClientServerBaseUrlForCurrentWindow("http://localhost:9107"),
+      "http://10.0.2.2:9100"
+    );
+  });
+
+  test("keeps non-loopback active servers in native shell", () => {
+    const mockWindow = installMockWindow() as ReturnType<typeof installMockWindow> & {
+      __CESIUM_NATIVE_SHELL__?: unknown;
+    };
+    mockWindow.location.hostname = "10.0.2.2";
+    mockWindow.location.host = "10.0.2.2:3000";
+    mockWindow.location.origin = "http://10.0.2.2:3000";
+    mockWindow.__CESIUM_NATIVE_SHELL__ = {
+      platform: "android",
+      serverBaseUrl: "http://10.0.2.2:9100",
+      source: "react-native-webview",
+    };
+
+    assert.equal(
+      resolveClientServerBaseUrlForCurrentWindow("https://cesium.example.com"),
+      "https://cesium.example.com"
     );
   });
 });

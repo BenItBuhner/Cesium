@@ -1,0 +1,79 @@
+{
+  "name": "@cesium/desktop",
+  "version": "0.1.0",
+  "description": "Cesium desktop shell",
+  "author": "Cesium",
+  "private": true,
+  "type": "module",
+  "main": "./src/electron-main.mjs",
+  "scripts": {
+    "dev": "node ./src/dev.mjs",
+    "check": "node ./src/main.mjs --check && electron --version",
+    "build": "npm run build -w @cesium/desktop-renderer && npm run build -w cesium-server && npm run check",
+    "smoke": "node ./src/main.mjs --smoke",
+    "package": "npm run build && node ../../node_modules/electron-builder/cli.js --dir",
+    "install:unpacked": "npm run package && node ../../scripts/install-desktop-unpacked.cjs",
+    "package:win": "npm run build && node ../../node_modules/electron-builder/cli.js --win --publish never"
+  },
+  "dependencies": {
+    "@cesium/api-client": "file:../../packages/api-client",
+    "@cesium/core": "file:../../packages/core",
+    "@cesium/design": "file:../../packages/design",
+    "@cesium/ui-web": "file:../../packages/ui-web"
+  },
+  "devDependencies": {
+    "electron": "42.0.1",
+    "electron-builder": "^26.8.1"
+  },
+  "build": {
+    "appId": "com.cesium.desktop",
+    "productName": "Cesium",
+    "npmRebuild": false,
+    "directories": {
+      "output": "out"
+    },
+    "compression": "store",
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "../../server/dist",
+        "to": "server/dist"
+      },
+      {
+        "from": "../../server/package.json",
+        "to": "server/package.json"
+      },
+      {
+        "from": "../../server/node_modules",
+        "to": "server/node_modules",
+        "filter": [
+          "**/*",
+          "!**/.cache/**",
+          "!**/node_modules/.cache/**",
+          "!**/.local-browsers/**"
+        ]
+      },
+      {
+        "from": "../desktop-renderer/dist",
+        "to": "desktop-renderer"
+      }
+    ],
+    "win": {
+      "signAndEditExecutable": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "runAfterFinish": true,
+      "shortcutName": "Cesium",
+      "uninstallDisplayName": "Cesium",
+      "license": "build/terms.txt"
+    }
+  }
+}

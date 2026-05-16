@@ -24,6 +24,7 @@ import {
   cloneWorkspaceFromGit,
   createWorkspaceGitWorktree,
   createTerminal,
+  createSshWorkspaceSelection,
   createWorkspaceSelection,
   createWorkspaceWindow,
   deleteWorkspaceGitWorktree,
@@ -143,6 +144,16 @@ type WorkspaceContextValue = {
     name?: string;
     parentPath: string;
     directoryName: string;
+    setDefault?: boolean;
+  }) => Promise<void>;
+  createSshWorkspace: (input: {
+    target: string;
+    port?: number;
+    remotePath: string;
+    mirrorName?: string;
+    name?: string;
+    keyPath?: string;
+    password?: string;
     setDefault?: boolean;
   }) => Promise<void>;
   cloneWorkspaceFromGit: (input: {
@@ -429,6 +440,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const skipNextSessionSaveRef = useRef(false);
   /** After the first successful workspace load, cross-workspace hops keep the shell mounted. */
   const hasCompletedWorkspaceHydrationRef = useRef(false);
+  const workspaceLoadSeqRef = useRef(0);
   const isDedicatedWindow = windowId != null;
 
   const getSessionScopeId = useCallback(
@@ -611,13 +623,19 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
 
   const loadWorkspaceState = useCallback(
     async (workspace: WorkspaceRecord) => {
+      const loadSeq = workspaceLoadSeqRef.current + 1;
+      workspaceLoadSeqRef.current = loadSeq;
+      const isCurrentLoad = () => workspaceLoadSeqRef.current === loadSeq;
       const isRepeatWorkspaceTransition = hasCompletedWorkspaceHydrationRef.current;
 
-      setLoading(true);
+      setLoading(!isRepeatWorkspaceTransition);
       if (!isRepeatWorkspaceTransition) {
         setSessionReady(false);
       }
       setLastFileChange(null);
+      setFileTree(null);
+      setTerminals([]);
+      setWorkspaceWindows([]);
       hasSyncedOnceRef.current = false;
       lastSeenSeqRef.current = 0;
       setServerWorkspace(workspace);
@@ -645,35 +663,55 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         }
         setWorkspaceSession(optimisticSession);
         setSessionReady(true);
+        setLoading(false);
       }
 
-      try {
+      const hydrateWorkspace = async () => {
         // Block first paint only on data that affects initial layout (session +
         // windows). `fetchTree()` and `listTerminals()` are heavy/noisy and not
         // needed for the chat / editor shell, so kick them off but settle the
         // loading state as soon as the session is ready. They hydrate lazily.
         const sessionRequest = fetchWorkspaceSession(workspace.id, { windowId });
-        const treePromise = fetchTree();
-        const terminalsPromise = listTerminals();
-        const gitStatusPromise = fetchWorkspaceGitStatus(workspace.id);
+        const treePromise = fetchTree()
+          .then(({ tree }) => {
+            if (isCurrentLoad()) {
+              setFileTree(tree);
+            }
+          })
+          .catch(() => undefined);
+        const terminalsPromise = listTerminals()
+          .then((terminalList) => {
+            if (isCurrentLoad()) {
+              setTerminals(terminalList);
+            }
+          })
+          .catch(() => undefined);
+        const gitStatusPromise = fetchWorkspaceGitStatus(workspace.id)
+          .then((result) => {
+            if (isCurrentLoad()) {
+              setGitStatus(result.status);
+            }
+          })
+          .catch(() => {
+            if (isCurrentLoad()) {
+              setGitStatus(null);
+            }
+          });
 
         const [sessionResult, windowsResult] = await Promise.all([
           sessionRequest,
           fetchWorkspaceWindows(workspace.id),
         ]);
 
-        // Hydrate explorer + terminals in the background without blocking UI.
-        void treePromise
-          .then(({ tree }) => setFileTree(tree))
-          .catch(() => undefined);
-        void terminalsPromise
-          .then((terminalList) => setTerminals(terminalList))
-          .catch(() => undefined);
-        void gitStatusPromise
-          .then((result) => setGitStatus(result.status))
-          .catch(() => setGitStatus(null));
+        // Keep these requests detached from the modal/open promise.
+        void treePromise;
+        void terminalsPromise;
+        void gitStatusPromise;
 
         const localBackup = readWorkspaceSessionBackup(sessionScopeId);
+        if (!isCurrentLoad()) {
+          return;
+        }
         setWorkspaceWindows(windowsResult.windows);
         skipNextSessionSaveRef.current = true;
         let normalized = normalizeWorkspaceSession(localBackup ?? sessionResult.session);
@@ -692,10 +730,44 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         setSessionReady(true);
         setFsResyncToken((value) => value + 1);
         hasCompletedWorkspaceHydrationRef.current = true;
+      };
+
+      if (isRepeatWorkspaceTransition) {
+        void hydrateWorkspace()
+          .catch((error) => {
+            if (!isCurrentLoad()) {
+              return;
+            }
+            const msg =
+              error instanceof Error ? error.message : "Failed to finish loading workspace.";
+            pushNotificationRef.current({
+              kind: WORKBENCH_NOTIFICATION_KIND.workspaceLoadError,
+              severity: "error",
+              title: "Workspace error",
+              message: msg,
+              persistent: false,
+              autoDismissMs: 10_000,
+              compact: true,
+            });
+          })
+          .finally(() => {
+            if (isCurrentLoad()) {
+              setLoading(false);
+            }
+          });
+        return;
+      }
+
+      try {
+        await hydrateWorkspace();
       } catch (error) {
-        throw error;
+        if (isCurrentLoad()) {
+          throw error;
+        }
       } finally {
-        setLoading(false);
+        if (isCurrentLoad()) {
+          setLoading(false);
+        }
       }
     },
     [getSessionScopeId, setServerWorkspace, windowId]
@@ -911,6 +983,30 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     }) => {
       await flushWorkspaceSessionNow();
       const result = await createWorkspaceSelection(input);
+      applyWorkspaceListingUpdate(
+        result.workspaces,
+        result.defaultWorkspaceId,
+        result.recentWorkspaceIds,
+        result.homeWorkspaceId
+      );
+      await loadWorkspaceState(result.workspace);
+    },
+    [applyWorkspaceListingUpdate, flushWorkspaceSessionNow, loadWorkspaceState]
+  );
+
+  const createSshWorkspace = useCallback(
+    async (input: {
+      target: string;
+      port?: number;
+      remotePath: string;
+      mirrorName?: string;
+      name?: string;
+      keyPath?: string;
+      password?: string;
+      setDefault?: boolean;
+    }) => {
+      await flushWorkspaceSessionNow();
+      const result = await createSshWorkspaceSelection(input);
       applyWorkspaceListingUpdate(
         result.workspaces,
         result.defaultWorkspaceId,
@@ -1447,6 +1543,7 @@ let lastHeartbeatRunAt = Date.now();
       createWorkspaceWindow: createPersistentWorkspaceWindow,
       updateWorkspaceWindow: updatePersistentWorkspaceWindow,
       createWorkspace,
+      createSshWorkspace,
       cloneWorkspaceFromGit: cloneWorkspaceFromGitHandler,
       deleteWorkspace,
       homeWorkspaceId,
@@ -1490,6 +1587,7 @@ let lastHeartbeatRunAt = Date.now();
       createPersistentWorkspaceWindow,
       updatePersistentWorkspaceWindow,
       createWorkspace,
+      createSshWorkspace,
       cloneWorkspaceFromGitHandler,
       deleteWorkspace,
       setDefaultWorkspace,

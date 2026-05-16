@@ -49,7 +49,6 @@ function modelProviderForBackend(backendId: AgentBackendId): ModelInfo["provider
     case "codex-app-server":
       return "codex";
     case "claude-adapter":
-    case "claude-code-sdk":
       return "claude";
     default:
       return "auto";
@@ -3098,6 +3097,7 @@ let currentTurn: ProjectedTurn | null = null;
           id: event.messageId,
           type: "user",
           content: bubbleText,
+          rawContent: event.content,
           segments: parseUserMessageSegments(bubbleText),
           showReplyCue: true,
           attachments: event.attachments,

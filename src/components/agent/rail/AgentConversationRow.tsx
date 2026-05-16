@@ -4,6 +4,7 @@ import {
   useEffect,
   useRef,
   type KeyboardEvent,
+  type DragEvent,
   type MouseEvent,
 } from "react";
 import { LoaderCircle, MoreVertical } from "lucide-react";
@@ -48,6 +49,8 @@ export function AgentConversationRow({
   onOverflowMenu,
   onEditValueChange,
   onSelect,
+  onDragStart,
+  onDragEnd,
   rowIndex,
   selected,
   showOverflowMenu = false,
@@ -66,6 +69,8 @@ export function AgentConversationRow({
   onOverflowMenu?: (anchorEl: HTMLElement) => void;
   onEditValueChange?: (value: string) => void;
   onSelect: () => void;
+  onDragStart?: (event: DragEvent<HTMLDivElement>, conversation: AgentRailConversationSummary) => void;
+  onDragEnd?: (event: DragEvent<HTMLDivElement>, conversation: AgentRailConversationSummary) => void;
   rowIndex?: number;
   selected: boolean;
   showOverflowMenu?: boolean;
@@ -141,6 +146,11 @@ export function AgentConversationRow({
   return (
     <div
       className="group flex w-full min-w-0 items-center gap-[4px]"
+      draggable={Boolean(onDragStart)}
+      onDragStart={
+        onDragStart ? (event) => onDragStart(event, conversation) : undefined
+      }
+      onDragEnd={onDragEnd ? (event) => onDragEnd(event, conversation) : undefined}
       data-perf="agent-rail-row"
       data-conversation-id={conversation.id}
       data-rail-row-index={rowIndex}

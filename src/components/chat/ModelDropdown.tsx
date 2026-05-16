@@ -8,10 +8,13 @@ import {
   Check,
   Search,
   Pencil,
+  Settings,
 } from "lucide-react";
 import { useClickOutside } from "@/hooks/useClickOutside";
 import { usePopover } from "@/hooks/usePopover";
 import { ToggleSwitch } from "@/components/ui/ToggleSwitch";
+import { useShellView } from "@/components/layout/ShellViewContext";
+import { useWorkspace } from "@/contexts/WorkspaceContext";
 import type { ModelInfo } from "@/lib/types";
 import type { AgentBackendId, AgentBackendInfo } from "@/lib/agent-types";
 import { isAutoModel } from "@/lib/model-brand-icons";
@@ -21,6 +24,10 @@ import { recordPerfSample } from "@/lib/dev-perf";
 
 const popoverSurface =
   "rounded-[var(--radius-card)] border border-[var(--border-card)] bg-[var(--bg-panel)]";
+
+function settingsNavForBackend(_backendId: AgentBackendId): string {
+  return "agents";
+}
 
 /** Shared pill row chrome for harness + model rows (new design consistency). */
 function pickerOptionRowClass(active: boolean, keyboardHighlight: boolean): string {
@@ -358,6 +365,8 @@ export function ModelDropdown({
   backends,
   onBackendChange,
 }: ModelDropdownProps) {
+  const { openSettingsView } = useShellView();
+  const { updateWorkspaceSession } = useWorkspace();
   const [internalOpen, setInternalOpen] = useState(false);
   const isControlled = controlledIsOpen !== undefined;
   const open = isControlled ? controlledIsOpen ?? false : internalOpen;
@@ -430,6 +439,21 @@ export function ModelDropdown({
 
   const showHarnessFlyoutUi = Boolean(
     backends && backends.length > 1 && onBackendChange
+  );
+
+  const openBackendSettings = useCallback(
+    (targetBackendId: AgentBackendId) => {
+      updateWorkspaceSession((current) => ({
+        ...current,
+        settingsView: {
+          ...current.settingsView,
+          activeNav: settingsNavForBackend(targetBackendId),
+        },
+      }));
+      openSettingsView();
+      handleOpenChange(false);
+    },
+    [handleOpenChange, openSettingsView, updateWorkspaceSession]
   );
 
   const activeHarness = useMemo(() => {
@@ -1084,43 +1108,60 @@ export function ModelDropdown({
                 const harnessActive = backend.id === backendId;
                 const available = backend.available !== false;
                 return (
-                  <button
+                  <div
                     key={backend.id}
                     role="menuitem"
-                    type="button"
-                    disabled={!available}
-                    onClick={() => {
-                      recordPerfSample(
-                        "chat.model_dropdown.backend_select_visible",
-                        performance.now(),
-                        { backendId: backend.id }
-                      );
-                      onBackendChange?.(backend.id);
-                    }}
-                    className={`my-[1px] items-center ${pickerOptionRowClass(harnessActive, false)} disabled:cursor-not-allowed disabled:opacity-50`}
+                    className={`my-[1px] items-center ${pickerOptionRowClass(harnessActive, false)} ${
+                      available ? "" : "opacity-55"
+                    }`}
                     aria-pressed={harnessActive}
+                    title={backend.description}
                   >
-                    <AgentBackendIcon
-                      backendId={backend.id}
-                      className="size-[13px] shrink-0"
-                    />
-                    <span
-                      className="min-w-0 flex-1 truncate font-sans text-[12.5px] font-normal"
-                      style={{
-                        color: harnessActive
-                          ? "var(--text-primary)"
-                          : "var(--text-secondary)",
+                    <button
+                      type="button"
+                      disabled={!available}
+                      onClick={() => {
+                        recordPerfSample(
+                          "chat.model_dropdown.backend_select_visible",
+                          performance.now(),
+                          { backendId: backend.id }
+                        );
+                        onBackendChange?.(backend.id);
                       }}
+                      className="flex min-w-0 flex-1 items-center gap-[8px] text-left disabled:cursor-not-allowed"
                     >
-                      {backend.label}
-                    </span>
-                    {harnessActive ? (
+                      <AgentBackendIcon
+                        backendId={backend.id}
+                        className="size-[13px] shrink-0"
+                      />
+                      <span
+                        className="min-w-0 flex-1 truncate font-sans text-[12.5px] font-normal"
+                        style={{
+                          color: harnessActive
+                            ? "var(--text-primary)"
+                            : "var(--text-secondary)",
+                        }}
+                      >
+                        {backend.label}
+                      </span>
+                    </button>
+                    {!available ? (
+                      <button
+                        type="button"
+                        aria-label={`Configure ${backend.label}`}
+                        title={`Configure ${backend.label}`}
+                        onClick={() => openBackendSettings(backend.id)}
+                        className="flex size-[22px] shrink-0 items-center justify-center rounded-[var(--radius-tab)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)]"
+                      >
+                        <Settings className="size-[12px]" strokeWidth={1.7} />
+                      </button>
+                    ) : harnessActive ? (
                       <Check
                         className="size-[13px] shrink-0 text-[var(--text-primary)]"
                         strokeWidth={2}
                       />
                     ) : null}
-                  </button>
+                  </div>
                 );
               })}
               </div>

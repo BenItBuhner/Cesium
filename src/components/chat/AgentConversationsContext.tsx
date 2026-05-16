@@ -261,7 +261,7 @@ type AgentConversationsContextValue = {
   refreshConversations: () => Promise<AgentConversationRecord[]>;
   forkConversation: (
     conversationId: string,
-    options?: { upToMessageId?: string }
+    options?: { upToMessageId?: string; beforeMessageId?: string }
   ) => Promise<AgentConversationRecord>;
   getConversationHistoryCursor: (conversationId: string) => ConversationHistoryCursor;
   loadOlderConversationHistory: (conversationId: string) => void;
@@ -1343,7 +1343,7 @@ busy,
   const forkConversation = useCallback(
     async (
       conversationId: string,
-      options?: { upToMessageId?: string }
+      options?: { upToMessageId?: string; beforeMessageId?: string }
     ): Promise<AgentConversationRecord> => {
       const result = await forkAgentConversation(conversationId, options);
       upsertConversation(result.conversation);

@@ -19,7 +19,11 @@
       }
     ],
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": ["./src/*"],
+      "@cesium/core": ["./packages/core/src/index.ts"],
+      "@cesium/api-client": ["./packages/api-client/src/index.ts"],
+      "@cesium/design": ["./packages/design/src/index.ts"],
+      "@cesium/ui-web": ["./packages/ui-web/src/index.ts"]
     }
   },
   "include": [
@@ -30,5 +34,10 @@
     ".next/dev/types/**/*.ts",
     "**/*.mts"
   ],
-  "exclude": ["node_modules", "server/**/*", "test/**/*"]
+  "exclude": [
+    "node_modules",
+    "server/**/*",
+    "test/**/*",
+    "apps/mobile/**/*"
+  ]
 }

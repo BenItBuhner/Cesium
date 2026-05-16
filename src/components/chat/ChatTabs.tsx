@@ -25,6 +25,7 @@ interface ChatTabsProps {
   onStripContextMenu?: (e: MouseEvent) => void;
   onReorderTabs?: (tabId: string, toIndex: number) => void;
   onRenameTab?: (tabId: string, title: string) => void;
+  padTrailingForWindowChrome?: boolean;
   /** When set, opens inline rename for that tab once, then calls consume. */
   externalRenameTabId?: string | null;
   onExternalRenameConsumed?: () => void;
@@ -51,6 +52,7 @@ export function ChatTabs({
   onStripContextMenu,
   onReorderTabs,
   onRenameTab,
+  padTrailingForWindowChrome = false,
   externalRenameTabId,
   onExternalRenameConsumed,
 }: ChatTabsProps) {
@@ -175,7 +177,7 @@ export function ChatTabs({
         onDragOver={handleStripDragOver}
         onDrop={handleStripDrop}
         onContextMenu={handleStripContextMenu}
-        className="hide-scrollbar-x flex min-w-0 flex-1 items-center gap-0 p-[2px]"
+        className="hide-scrollbar-x flex min-w-0 flex-1 scroll-px-[4px] items-center gap-[4px] px-[4px] py-[2px]"
       >
         {tabs.map((tab) => {
           const ind = agentTabIndicators?.[tab.id];
@@ -202,12 +204,13 @@ export function ChatTabs({
             data-chat-tab-id={tab.id}
             aria-selected={tab.active}
             aria-label={`${tab.title}${ariaSuffix}`}
+            title={tab.title}
             onClick={() => onSelectTab(tab.id)}
             onContextMenu={(e) => {
               e.stopPropagation();
               onTabContextMenu?.(e, tab.id);
             }}
-            className={`group relative inline-flex h-[36px] max-w-[220px] shrink-0 items-center overflow-hidden rounded-[var(--radius-tab)] transition-colors ${onReorderTabs ? "cursor-grab active:cursor-grabbing" : ""}`}
+            className={`group relative inline-flex h-[36px] min-w-[132px] max-w-[240px] shrink-0 items-center overflow-hidden rounded-[var(--radius-tab)] transition-colors ${onReorderTabs ? "cursor-grab active:cursor-grabbing" : ""}`}
             style={{
               background: tab.active ? "var(--bg-tab-active)" : "transparent",
             }}
@@ -256,6 +259,7 @@ export function ChatTabs({
               />
             ) : (
               <span
+                title={tab.title}
                 className={`${titleMarginClass} min-w-0 flex-1 truncate text-left font-sans text-[14px] font-normal text-[var(--text-secondary)]`}
                 onDoubleClick={(e) => {
                   e.stopPropagation();
@@ -298,7 +302,11 @@ export function ChatTabs({
       <button
         type="button"
         onClick={onNewChat}
-        className="mr-[9px] shrink-0 text-[var(--text-secondary)] transition-colors hover:text-[var(--text-primary)]"
+        className={`shrink-0 text-[var(--text-secondary)] transition-colors hover:text-[var(--text-primary)] ${
+          padTrailingForWindowChrome
+            ? "mr-[calc(var(--editor-window-chrome-tab-inset)+9px)]"
+            : "mr-[9px]"
+        }`}
         aria-label="New chat"
       >
         <Plus className="size-[18px]" strokeWidth={1.5} />

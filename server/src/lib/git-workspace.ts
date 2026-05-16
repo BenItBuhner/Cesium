@@ -99,7 +99,7 @@ async function runGitClone(repoUrl: string, targetDir: string): Promise<void> {
       clearTimeout(timeout);
       const message = err instanceof Error ? err.message : String(err);
       if (message.includes("ENOENT")) {
-        reject(new Error("`git` was not found. Install Git on the OpenCursor host."));
+        reject(new Error("`git` was not found. Install Git on the Cesium host."));
         return;
       }
       reject(err);

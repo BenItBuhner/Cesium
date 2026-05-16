@@ -6,6 +6,7 @@ import {
   MODEL_BRAND_ICON_FILES,
   resolveModelBrandIcon,
 } from "@/lib/model-brand-icons";
+import { publicAssetUrl } from "@/lib/public-asset-url";
 
 type ModelBrandIconProps = {
   model: ModelInfo;
@@ -50,8 +51,8 @@ export function ModelBrandIcon({
   }
 
   const files = MODEL_BRAND_ICON_FILES[resolved.brand];
-  const lightSrc = `/model-icons/${encodeURIComponent(files.light)}`;
-  const darkSrc = `/model-icons/${encodeURIComponent(files.dark)}`;
+  const lightSrc = publicAssetUrl(`/model-icons/${encodeURIComponent(files.light)}`);
+  const darkSrc = publicAssetUrl(`/model-icons/${encodeURIComponent(files.dark)}`);
 
   return (
     <span

@@ -49,6 +49,23 @@ function getWorkspaceHeaders(skipWorkspaceHeader?: boolean): HeadersInit {
   };
 }
 
+async function readErrorMessage(response: Response): Promise<string> {
+  const text = await response.text();
+  if (!text) {
+    return `Request failed with status ${response.status}`;
+  }
+  try {
+    const parsed = JSON.parse(text) as { error?: unknown; message?: unknown };
+    const message = parsed.error ?? parsed.message;
+    if (typeof message === "string" && message.trim()) {
+      return message;
+    }
+  } catch {
+    // Fall through to the raw response body.
+  }
+  return text;
+}
+
 export type FileReadResult = {
   content: string;
   language: string;
@@ -83,7 +100,7 @@ export type AudioTranscriptionResult = {
 async function request<T>(
   input: string,
   init?: RequestInit,
-  options?: { skipWorkspaceHeader?: boolean }
+  options?: { skipWorkspaceHeader?: boolean; cache?: RequestCache }
 ): Promise<T> {
   // Mutating methods (POST/PUT/PATCH/DELETE) must never be cached; GETs rely on
   // the server's `Cache-Control: stale-while-revalidate` headers so repeat page
@@ -101,7 +118,7 @@ async function request<T>(
       }).entries()
     ),
     credentials: "include",
-    cache: cacheMode,
+    cache: options?.cache ?? cacheMode,
   });
   recordPerfSample("api.request", startedAt, {
     method,
@@ -117,8 +134,7 @@ async function request<T>(
   }
 
   if (!response.ok) {
-    const message = await response.text();
-    throw new Error(message || `Request failed with status ${response.status}`);
+    throw new Error(await readErrorMessage(response));
   }
 
   return (await response.json()) as T;
@@ -168,8 +184,7 @@ async function requestWithEtag<T>(
   }
 
   if (!response.ok) {
-    const message = await response.text();
-    throw new Error(message || `Request failed with status ${response.status}`);
+    throw new Error(await readErrorMessage(response));
   }
 
   const etag = response.headers.get("etag");
@@ -234,8 +249,7 @@ async function mutateWithEtag(
   }
 
   if (!response.ok) {
-    const message = await response.text();
-    throw new Error(message || `Request failed with status ${response.status}`);
+    throw new Error(await readErrorMessage(response));
   }
 
   const etag = response.headers.get("etag");
@@ -343,6 +357,167 @@ export async function createWorkspaceSelection(input: {
       method: "POST",
       body: JSON.stringify(input),
     },
+    { skipWorkspaceHeader: true }
+  );
+}
+
+export type SshWorkspaceMetadata = {
+  schemaVersion: 1;
+  workspaceId: string;
+  target: string;
+  user: string | null;
+  host: string;
+  port: number | null;
+  remotePath: string;
+  localRoot: string;
+  keyPath: string | null;
+  createdAt: number;
+  updatedAt: number;
+  lastPulledAt: number | null;
+  lastPushedAt: number | null;
+};
+
+export async function createSshWorkspaceSelection(input: {
+  target: string;
+  port?: number;
+  remotePath: string;
+  mirrorName?: string;
+  name?: string;
+  keyPath?: string;
+  password?: string;
+  setDefault?: boolean;
+}): Promise<{
+  workspace: WorkspaceRecord;
+  metadata: SshWorkspaceMetadata;
+  workspaces: WorkspaceRecord[];
+  defaultWorkspaceId: string | null;
+  recentWorkspaceIds: string[];
+  homeWorkspaceId: string | null;
+}> {
+  return request(
+    `/api/workspaces/ssh`,
+    {
+      method: "POST",
+      body: JSON.stringify(input),
+    },
+    { skipWorkspaceHeader: true }
+  );
+}
+
+export async function probeSshWorkspaceConnection(input: {
+  target: string;
+  port?: number;
+  keyPath?: string;
+  password?: string;
+}): Promise<{
+  ok: true;
+  target: string;
+  username: string;
+  host: string;
+  port: number | null;
+}> {
+  return request(
+    `/api/workspaces/ssh/probe`,
+    {
+      method: "POST",
+      body: JSON.stringify(input),
+    },
+    { skipWorkspaceHeader: true }
+  );
+}
+
+export async function cloneGitRepositoryOnRemoteSsh(input: {
+  target: string;
+  port?: number;
+  repoUrl: string;
+  parentRemotePath: string;
+  directoryName?: string;
+  keyPath?: string;
+  password?: string;
+}): Promise<{
+  currentPath: string;
+  parentPath: string | null;
+  entries: Array<{ name: string; path: string }>;
+}> {
+  return request(
+    `/api/workspaces/ssh/clone`,
+    {
+      method: "POST",
+      body: JSON.stringify(input),
+    },
+    { skipWorkspaceHeader: true }
+  );
+}
+
+export async function browseSshWorkspaceDirectories(input: {
+  target: string;
+  port?: number;
+  remotePath?: string;
+  keyPath?: string;
+  password?: string;
+}): Promise<{
+  currentPath: string;
+  parentPath: string | null;
+  entries: Array<{ name: string; path: string }>;
+}> {
+  return request(
+    `/api/workspaces/ssh/browse`,
+    {
+      method: "POST",
+      body: JSON.stringify(input),
+    },
+    { skipWorkspaceHeader: true }
+  );
+}
+
+export async function createSshWorkspaceDirectory(input: {
+  target: string;
+  port?: number;
+  remotePath?: string;
+  directoryName: string;
+  keyPath?: string;
+  password?: string;
+}): Promise<{
+  currentPath: string;
+  parentPath: string | null;
+  entries: Array<{ name: string; path: string }>;
+}> {
+  return request(
+    `/api/workspaces/ssh/mkdir`,
+    {
+      method: "POST",
+      body: JSON.stringify(input),
+    },
+    { skipWorkspaceHeader: true }
+  );
+}
+
+export async function fetchSshWorkspaceMetadata(
+  workspaceId: string
+): Promise<{ metadata: SshWorkspaceMetadata }> {
+  return request(
+    `/api/workspaces/${encodeURIComponent(workspaceId)}/ssh`,
+    undefined,
+    { skipWorkspaceHeader: true }
+  );
+}
+
+export async function pullSshWorkspaceSelection(
+  workspaceId: string
+): Promise<{ ok: true; metadata: SshWorkspaceMetadata }> {
+  return request(
+    `/api/workspaces/${encodeURIComponent(workspaceId)}/ssh/pull`,
+    { method: "POST", body: JSON.stringify({}) },
+    { skipWorkspaceHeader: true }
+  );
+}
+
+export async function pushSshWorkspaceSelection(
+  workspaceId: string
+): Promise<{ ok: true; metadata: SshWorkspaceMetadata }> {
+  return request(
+    `/api/workspaces/${encodeURIComponent(workspaceId)}/ssh/push`,
+    { method: "POST", body: JSON.stringify({}) },
     { skipWorkspaceHeader: true }
   );
 }
@@ -835,7 +1010,7 @@ export async function handoffAgentConversation(
 
 export async function forkAgentConversation(
   conversationId: string,
-  options?: { upToMessageId?: string }
+  options?: { upToMessageId?: string; beforeMessageId?: string }
 ): Promise<{ conversation: AgentConversationRecord }> {
   return request(`/api/agents/conversations/${encodeURIComponent(conversationId)}/fork`, {
     method: "POST",
@@ -1152,7 +1327,11 @@ export async function getWorkspace(): Promise<WorkspaceInfo> {
 }
 
 export async function listTerminals(): Promise<TerminalInfo[]> {
-  const result = await request<{ terminals: TerminalInfo[] }>(`/api/terminals`);
+  const result = await request<{ terminals: TerminalInfo[] }>(
+    `/api/terminals`,
+    undefined,
+    { cache: "no-store" }
+  );
   return result.terminals;
 }
 

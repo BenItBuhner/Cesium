@@ -55,7 +55,7 @@ function parseArgs(argv: string[]): ProbeArgs {
       index += 1;
     }
   }
-  const cwd = out.cwd ?? path.join(os.tmpdir(), "opencursor-cursor-sdk-probe");
+  const cwd = out.cwd ?? path.join(os.tmpdir(), "cesium-cursor-sdk-probe");
   return {
     cwd,
     model: out.model ?? "composer-2",
@@ -86,7 +86,7 @@ async function ensureProbeWorkspace(cwd: string): Promise<void> {
   );
   await fs.writeFile(
     path.join(cwd, "README.md"),
-    "# Cursor SDK Probe\n\nDisposable workspace for OpenCursor SDK event schema capture.\n",
+    "# Cursor SDK Probe\n\nDisposable workspace for Cesium SDK event schema capture.\n",
     "utf8"
   );
 }
@@ -203,7 +203,7 @@ async function main(): Promise<void> {
   await fs.rm(args.out, { force: true }).catch(() => undefined);
   const apiKey = await getCursorSdkApiKey();
   if (!apiKey) {
-    throw new Error("Set CURSOR_API_KEY or save a Cursor SDK key in OpenCursor settings.");
+    throw new Error("Set CURSOR_API_KEY or save a Cursor SDK key in Cesium settings.");
   }
   const me = await Cursor.me({ apiKey });
   await appendJsonLine(args.out, {

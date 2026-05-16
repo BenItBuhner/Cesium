@@ -15,8 +15,7 @@ export type AgentBackendId =
   | "gemini-acp"
   | "codex-adapter"
   | "codex-app-server"
-  | "claude-adapter"
-  | "claude-code-sdk";
+  | "claude-adapter";
 
 export type AgentConversationStatus =
   | "idle"

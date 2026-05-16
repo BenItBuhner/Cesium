@@ -326,7 +326,7 @@ function buildPillSpan(token: string, pill: ComposerPillDescriptor | undefined):
   span.setAttribute("contenteditable", "false");
   span.setAttribute("data-design-capture-id", pill?.captureId ?? "");
   span.className =
-    "opencursor-design-pill mx-[2px] inline-flex max-w-full items-center gap-[4px] " +
+    "cesium-design-pill mx-[2px] inline-flex max-w-full items-center gap-[4px] " +
     "rounded-[6px] border border-[var(--border-subtle)] bg-[var(--file-tag-bg)] " +
     "px-[7px] py-[1px] align-baseline font-sans text-[12.5px] font-medium " +
     "whitespace-nowrap select-none cursor-default " +

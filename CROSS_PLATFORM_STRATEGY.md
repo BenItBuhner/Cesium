@@ -1,8 +1,8 @@
-# OpenCursor: Cross-Platform Strategy Document
+# Cesium: Cross-Platform Strategy Document
 
 ## Executive Summary
 
-This document outlines a strategy for porting OpenCursor from a web-only Next.js application to a cross-platform architecture targeting web, iOS, Android, and future desktop platforms — while maximizing code reuse and preserving the existing investment.
+This document outlines a strategy for porting Cesium from a web-only Next.js application to a cross-platform architecture targeting web, iOS, Android, and future desktop platforms — while maximizing code reuse and preserving the existing investment.
 
 **Current stack:** Next.js 16, React 19, Tailwind CSS 4, Hono server, Drizzle ORM, WebSocket-based agent communication.
 
@@ -14,7 +14,7 @@ This document outlines a strategy for porting OpenCursor from a web-only Next.js
 
 ### 1.1 Framework Comparison
 
-| Approach | Strategy | Code Reuse | Web SSR | Maturity | Fit for OpenCursor |
+| Approach | Strategy | Code Reuse | Web SSR | Maturity | Fit for Cesium |
 |---|---|---|---|---|---|
 | **react-native-web** | RN components render on web via RNW | 60-70% | Limited/complex | Production (Twitter, Flipkart) | Low — requires rewriting web from scratch |
 | **Solito** | Unified Next.js + RN navigation layer | 70-80% | Full (Next.js) | Production (BeatGig) | **High** — preserves Next.js, adds native |
@@ -47,7 +47,7 @@ This document outlines a strategy for porting OpenCursor from a web-only Next.js
 - **What it does:** Aliases `react-native` imports to web-compatible DOM components. `View` → `div`, `Text` → `span`, etc.
 - **Strengths:** Production-proven (Twitter/X uses it). Full React Native API compatibility on web.
 - **Weaknesses:** You write RN-style code for web too — loses CSS flexibility, SSR is tricky, bundle size larger than needed.
-- **Verdict for OpenCursor:** Don't use as the primary approach. We already have a web app with Tailwind. Rewriting the web UI into RN components would be a large regression. Use it indirectly via Tamagui (which can replace RNW's role more efficiently at ~28KB vs RNW's ~80KB).
+- **Verdict for Cesium:** Don't use as the primary approach. We already have a web app with Tailwind. Rewriting the web UI into RN components would be a large regression. Use it indirectly via Tamagui (which can replace RNW's role more efficiently at ~28KB vs RNW's ~80KB).
 
 ### 1.4 Solito
 
@@ -55,15 +55,15 @@ This document outlines a strategy for porting OpenCursor from a web-only Next.js
 - **Strengths:** Preserves Next.js for web (SSR, ISR, SSG). Minimal API surface. Works with Expo Router. Battle-tested at BeatGig.
 - **Weaknesses:** Requires monorepo setup. Some navigation patterns need adaptation. Community-maintained (one primary author).
 - **How to use:** Install `solito` in the shared UI package. Replace `next/link` and `next/router` usage with Solito's `<Link>` and `useRouter()`. On web, these delegate to Next.js; on native, to React Navigation / Expo Router.
-- **Migration path for OpenCursor:** Gradual — start by wrapping existing Next.js navigation calls in Solito's API, then add the native app shell.
+- **Migration path for Cesium:** Gradual — start by wrapping existing Next.js navigation calls in Solito's API, then add the native app shell.
 
 ### 1.5 Tamagui
 
 - **What it does:** Universal `styled()` API and component library that works identically on web and native. Includes an optimizing compiler that hoists/flattens styles at build time for near-zero runtime cost.
 - **Strengths:** Best-in-class performance via compiler. Replaces both RNW and CSS-in-JS. Typed design tokens. SSR-friendly. Works with Next.js and Expo.
 - **Weaknesses:** Learning curve for the token/theme system. Some community libraries don't integrate well. Requires build plugin configuration.
-- **How to use:** Create a `@opencursor/ui` package with Tamagui config (tokens, themes, fonts). Build universal components there. Both web and native apps consume this package.
-- **Key for OpenCursor:** Since we use Tailwind, use Tamagui for structural/primitive components (View, Text, Stack, etc.) and NativeWind for Tailwind-style utility classes. They compose well together.
+- **How to use:** Create a `@cesium/ui` package with Tamagui config (tokens, themes, fonts). Build universal components there. Both web and native apps consume this package.
+- **Key for Cesium:** Since we use Tailwind, use Tamagui for structural/primitive components (View, Text, Stack, etc.) and NativeWind for Tailwind-style utility classes. They compose well together.
 
 ### 1.6 NativeWind (v5)
 
@@ -71,7 +71,7 @@ This document outlines a strategy for porting OpenCursor from a web-only Next.js
 - **Strengths:** Preserves existing Tailwind knowledge and classes. Platform-specific prefixes (`ios:pt-8`, `android:pt-4`). Dark mode, P3 colors, CSS variables. v5 is stable and performant.
 - **Weaknesses:** Not all Tailwind utilities map to RN (no `grid`, limited `position:fixed`, etc.). Requires Babel/SWC plugin. Some edge cases with dynamic classes.
 - **How to use:** Configure NativeWind in the Expo app. Existing Tailwind classes from the web app can be reused in native components with minimal adaptation. Replace web-only CSS (`grid`, `position:sticky`) with RN equivalents (`FlatList`, `ScrollView` sticky headers).
-- **Key for OpenCursor:** This is the highest-value adoption path. Our entire web UI uses Tailwind. NativeWind lets us reuse ~70% of those class names directly on native.
+- **Key for Cesium:** This is the highest-value adoption path. Our entire web UI uses Tailwind. NativeWind lets us reuse ~70% of those class names directly on native.
 
 ### 1.7 Realistic Code Sharing Estimates
 
@@ -112,18 +112,18 @@ This document outlines a strategy for porting OpenCursor from a web-only Next.js
 ### 2.2 Recommended Package Structure
 
 ```
-opencursor/
+cesium/
 ├── apps/
-│   ├── web/                    # Next.js app (current OpenCursor)
+│   ├── web/                    # Next.js app (current Cesium)
 │   ├── native/                 # Expo Router app (iOS + Android)
 │   └── desktop/                # Future: react-native-macos or Electron/Bun
 ├── packages/
-│   ├── ui/                     # @opencursor/ui - Shared Tamagui + NativeWind components
-│   ├── core/                   # @opencursor/core - Business logic, state, types
-│   ├── api-client/             # @opencursor/api-client - tRPC client, HTTP utils
-│   ├── agent/                  # @opencursor/agent - Agent logic, conversation engine
-│   ├── server/                 # @opencursor/server - Hono API server (current server/)
-│   └── tsconfig/               # @opencursor/tsconfig - Shared TypeScript configs
+│   ├── ui/                     # @cesium/ui - Shared Tamagui + NativeWind components
+│   ├── core/                   # @cesium/core - Business logic, state, types
+│   ├── api-client/             # @cesium/api-client - tRPC client, HTTP utils
+│   ├── agent/                  # @cesium/agent - Agent logic, conversation engine
+│   ├── server/                 # @cesium/server - Hono API server (current server/)
+│   └── tsconfig/               # @cesium/tsconfig - Shared TypeScript configs
 ├── turbo.json
 ├── package.json
 └── pnpm-workspace.yaml
@@ -131,24 +131,24 @@ opencursor/
 
 ### 2.3 Package Responsibilities
 
-#### `@opencursor/core`
+#### `@cesium/core`
 - All current `src/lib/` files that are platform-agnostic
 - Agent types, config options, conversation events, chat modes
 - State stores (Zustand) — workspace session, preferences, settings
 - Utility functions (path-utils, queued-prompt-utils, etc.)
 - **Extraction from current codebase:** Move these files with minimal changes:
-  - `agent-types.ts` → `@opencursor/core`
-  - `agent-config-option-utils.ts` → `@opencursor/core`
-  - `agent-conversation-events.ts` → `@opencursor/core`
-  - `agent-chat.ts` → `@opencursor/core`
-  - `agent-subagent-routing.ts` → `@opencursor/core`
-  - `chat-modes.ts` → `@opencursor/core`
-  - `preferences.ts` → `@opencursor/core`
-  - `global-settings.ts` → `@opencursor/core`
-  - `types.ts` → `@opencursor/core`
-  - `workbench-view.ts` → `@opencursor/core`
+  - `agent-types.ts` → `@cesium/core`
+  - `agent-config-option-utils.ts` → `@cesium/core`
+  - `agent-conversation-events.ts` → `@cesium/core`
+  - `agent-chat.ts` → `@cesium/core`
+  - `agent-subagent-routing.ts` → `@cesium/core`
+  - `chat-modes.ts` → `@cesium/core`
+  - `preferences.ts` → `@cesium/core`
+  - `global-settings.ts` → `@cesium/core`
+  - `types.ts` → `@cesium/core`
+  - `workbench-view.ts` → `@cesium/core`
 
-#### `@opencursor/api-client`
+#### `@cesium/api-client`
 - tRPC client setup
 - Shared TypeScript types and interfaces
 - HTTP client abstraction (fetch wrapper)
@@ -156,30 +156,30 @@ opencursor/
 - Server connection logic (from `server-connections.ts`, `server-connections-provider-shared.ts`)
 - Auth client (from `auth-client.ts`)
 
-#### `@opencursor/agent`
+#### `@cesium/agent`
 - Agent rail logic (`agent-rail.ts`, `agent-rail-pins.ts`, `agent-rail-patch.ts`)
 - Agent mock data
 - Agent backend icons (needs platform abstraction for icon rendering)
 - Sub-agent routing
 
-#### `@opencursor/ui`
+#### `@cesium/ui`
 - Tamagui configuration (tokens, themes, fonts)
 - Shared primitive components (Button, Card, Input, etc.)
 - Layout components that work on both platforms
 - NativeWind + Tamagui styled components
 - **Does NOT include:** Monaco editor, xterm.js, resizable panels (these are web-only and stay in `apps/web`)
 
-#### `@opencursor/server`
+#### `@cesium/server`
 - Current `server/` directory moves here as-is
 - Hono routes, Drizzle ORM, WebSocket server, storage
 - No changes needed — server is already platform-independent
 
 ### 2.4 Shared Agent Logic Strategy
 
-The agent system is OpenCursor's core value. Here's how to share it:
+The agent system is Cesium's core value. Here's how to share it:
 
 ```
-@opencursor/agent/
+@cesium/agent/
 ├── core/
 │   ├── rail.ts              # Agent rail orchestration (shared)
 │   ├── rail-pins.ts         # Pin management (shared)
@@ -223,11 +223,11 @@ iOS is the natural first native target after web. Key considerations:
 - **Components:** Supports core RN components + Windows-specific ones (Flyout, Popup, Pivot, etc.).
 - **Best for:** Enterprise Windows apps, Xbox apps, Surface tablet apps.
 - **Setup:** `npx react-native-windows-init` after standard RN project setup.
-- **Recommendation:** Consider if enterprise Windows deployment is needed. Low priority for OpenCursor unless specifically requested.
+- **Recommendation:** Consider if enterprise Windows deployment is needed. Low priority for Cesium unless specifically requested.
 
 ### 3.4 Electron Alternative: Bun Runtime
 
-Current desktop options for OpenCursor:
+Current desktop options for Cesium:
 
 | Approach | Bundle Size | Startup | Memory | Native Feel | Complexity |
 |---|---|---|---|---|---|
@@ -238,7 +238,7 @@ Current desktop options for OpenCursor:
 
 **Recommendation for desktop:** **Tauri v2** is the best Electron alternative today — small bundle, system webview, Rust backend. If you want a JS-only backend, use **Bun** as the runtime with a system webview (via `webview_deno` or similar), but this is more experimental.
 
-**For OpenCursor specifically:** The server already runs on Node/Hono. A Tauri wrapper that embeds the web app + runs the Hono server locally would be the cleanest desktop path. Bun could replace Node as the runtime for the server component.
+**For Cesium specifically:** The server already runs on Node/Hono. A Tauri wrapper that embeds the web app + runs the Hono server locally would be the cleanest desktop path. Bun could replace Node as the runtime for the server component.
 
 ### 3.5 Expo Multi-Platform Support
 
@@ -256,7 +256,7 @@ Expo now supports:
 - **Continuous Native Generation (CNG):** Native projects generated from `app.json` — easier upgrades and maintenance
 - **Module API:** Write native modules in Swift/Kotlin with JS interop
 
-**OpenCursor migration path with Expo:**
+**Cesium migration path with Expo:**
 
 1. **Phase 1:** Keep Next.js for web. Create Expo app for mobile. Share business logic via monorepo packages.
 2. **Phase 2:** Evaluate Expo Router for web (replacing Next.js) if SSR isn't critical. This gives unified routing.
@@ -304,7 +304,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
 **Why not Jotai as primary:**
 - Requires Provider wrapping (`<JotaiProvider>`)
 - More boilerplate for simple state
-- Less straightforward for large state trees (OpenCursor has many interconnected stores)
+- Less straightforward for large state trees (Cesium has many interconnected stores)
 
 **Hybrid approach:** Use Zustand as primary state management. Use Jotai atoms for derived/computed state where atomic composition is beneficial (e.g., agent status derived from multiple stores).
 
@@ -352,14 +352,14 @@ export const usePersistedStore = create(
       // state
     }),
     {
-      name: 'opencursor-store',
+      name: 'cesium-store',
       storage: createJSONStorage(() => storageAdapter),
     }
   )
 )
 ```
 
-**Key principle:** Stores are defined in `@opencursor/core` with platform-agnostic logic. Platform-specific adapters (storage, networking) are injected at app initialization.
+**Key principle:** Stores are defined in `@cesium/core` with platform-agnostic logic. Platform-specific adapters (storage, networking) are injected at app initialization.
 
 ---
 
@@ -401,7 +401,7 @@ export async function apiFetch<T>(
 ```typescript
 // packages/api-client/src/trpc.ts
 import { createTRPCClient, httpBatchLink } from '@trpc/client'
-import type { AppRouter } from '@opencursor/server/src/router'
+import type { AppRouter } from '@cesium/server/src/router'
 
 export const trpc = createTRPCClient<AppRouter>({
   links: [
@@ -417,7 +417,7 @@ const conversations = await trpc.conversations.list.query({ limit: 20 })
 const result = await trpc.agents.chat.mutate({ message, agentId })
 ```
 
-**Why tRPC for OpenCursor:**
+**Why tRPC for Cesium:**
 - End-to-end type safety — server router types flow to all clients
 - No code generation step (unlike GraphQL)
 - Works with Hono (adapter: `@trpc/server/adapters/hono`)
@@ -428,7 +428,7 @@ const result = await trpc.agents.chat.mutate({ message, agentId })
 **Migration path:**
 1. Add tRPC to existing Hono server as a mounted route
 2. Create tRPC router wrapping existing Hono endpoints
-3. Build tRPC client in `@opencursor/api-client`
+3. Build tRPC client in `@cesium/api-client`
 4. Gradually migrate frontend from direct fetch to tRPC calls
 
 ### 5.3 Shared TypeScript Types
@@ -516,7 +516,7 @@ packages/core/src/types/
 }
 ```
 
-**EAS Services for OpenCursor:**
+**EAS Services for Cesium:**
 - **EAS Build:** Cloud builds for iOS/Android — no Mac required for iOS builds
 - **EAS Submit:** One-command store uploads (`eas submit --platform ios`)
 - **EAS Update:** Push JS updates without app store review (critical for agent logic hotfixes)
@@ -531,13 +531,13 @@ default_platform(:ios)
 platform :ios do
   desc "Build and deploy to TestFlight"
   lane :beta do
-    build_app(workspace: "OpenCursor.xcworkspace", scheme: "OpenCursor")
+    build_app(workspace: "Cesium.xcworkspace", scheme: "Cesium")
     upload_to_testflight(skip_waiting_for_build_processing: true)
   end
 
   desc "Deploy to App Store"
   lane :release do
-    build_app(workspace: "OpenCursor.xcworkspace", scheme: "OpenCursor")
+    build_app(workspace: "Cesium.xcworkspace", scheme: "Cesium")
     deliver
   end
 end
@@ -573,12 +573,12 @@ end
 APP_ENV=development|staging|production
 
 # Web-specific (prefixed NEXT_PUBLIC_)
-NEXT_PUBLIC_API_URL=https://api.opencursor.dev
-NEXT_PUBLIC_WS_URL=wss://api.opencursor.dev/ws
+NEXT_PUBLIC_API_URL=https://api.cesium.dev
+NEXT_PUBLIC_WS_URL=wss://api.cesium.dev/ws
 
 # Native-specific (prefixed EXPO_PUBLIC_)
-EXPO_PUBLIC_API_URL=https://api.opencursor.dev
-EXPO_PUBLIC_WS_URL=wss://api.opencursor.dev/ws
+EXPO_PUBLIC_API_URL=https://api.cesium.dev
+EXPO_PUBLIC_WS_URL=wss://api.cesium.dev/ws
 
 # Server-only (never exposed to client)
 DATABASE_URL=postgres://...
@@ -652,24 +652,24 @@ jobs:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v2
       - run: pnpm install --frozen-lockfile
-      - run: pnpm turbo test --filter=@opencursor/core --filter=@opencursor/api-client --filter=@opencursor/agent
+      - run: pnpm turbo test --filter=@cesium/core --filter=@cesium/api-client --filter=@cesium/agent
 
   web-tests:
     runs-on: ubuntu-latest
     steps:
-      - run: pnpm turbo test --filter=@opencursor/web
-      - run: pnpm turbo lint --filter=@opencursor/web
-      - run: pnpm turbo build --filter=@opencursor/web
+      - run: pnpm turbo test --filter=@cesium/web
+      - run: pnpm turbo lint --filter=@cesium/web
+      - run: pnpm turbo build --filter=@cesium/web
 
   server-tests:
     runs-on: ubuntu-latest
     steps:
-      - run: pnpm turbo test --filter=@opencursor/server
+      - run: pnpm turbo test --filter=@cesium/server
 
   native-build:
     runs-on: macos-latest  # Need macOS for iOS builds
     steps:
-      - run: pnpm turbo build --filter=@opencursor/native
+      - run: pnpm turbo build --filter=@cesium/native
       - uses: expo/eas-build@v1  # Optional: cloud build on CI
 ```
 
@@ -690,7 +690,7 @@ jobs:
 
 1. **Create `apps/native`** — Expo Router app with Solito
 2. **Set up Tamagui + NativeWind** — configure design tokens matching current Tailwind theme
-3. **Build `@opencursor/ui`** — universal primitive components (Text, View, Button, Card, Input)
+3. **Build `@cesium/ui`** — universal primitive components (Text, View, Button, Card, Input)
 4. **Create native navigation** — mirror web app routes using Expo Router
 5. **Implement core screens** — Chat, Agent list, Settings, Workspace
 6. **Web-only components stay in `apps/web`:** Monaco editor, xterm.js, resizable panels, PWA features
@@ -698,7 +698,7 @@ jobs:
 
 ### Phase 3: State & API Unification (Weeks 8-10)
 
-1. **Migrate state to Zustand** in `@opencursor/core`
+1. **Migrate state to Zustand** in `@cesium/core`
 2. **Add tRPC** to server and client packages
 3. **Share WebSocket client** with platform adapters
 4. **Add EAS Update** for OTA JS updates
@@ -751,4 +751,4 @@ jobs:
 
 ---
 
-*Generated for OpenCursor — a React/Next.js web application with Hono server, agent-based AI coding assistant, WebSocket communication, and Monaco/xterm editing interfaces.*
+*Generated for Cesium — a React/Next.js web application with Hono server, agent-based AI coding assistant, WebSocket communication, and Monaco/xterm editing interfaces.*

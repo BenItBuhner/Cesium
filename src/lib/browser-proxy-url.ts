@@ -1,4 +1,4 @@
-/** Build `/browser/{scheme}/{encodedHostPort}{path}` matching the OpenCursor server proxy. */
+/** Build `/browser/{scheme}/{encodedHostPort}{path}` matching the Cesium server proxy. */
 
 /**
  * Recover from an old browser-prompt failure mode where the prompt default
@@ -6,7 +6,7 @@
  * producing values like:
  *
  *   `http://localhost:3000/https://google.com/`
- *   `https://opencursor.techlitnow.com/https://google.com/`
+ *   `https://cesium.techlitnow.com/https://google.com/`
  *
  * Those are syntactically valid outer URLs, so `new URL()` happily accepts
  * them and the browser tab then proxies the WRONG target (our own app with an

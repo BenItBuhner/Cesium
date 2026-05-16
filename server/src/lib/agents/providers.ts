@@ -30,7 +30,7 @@ import {
   type CliRuntimeSpec,
 } from "./cli-adapter.js";
 import { getCursorSdkCapabilities } from "./cursor-sdk-capabilities.js";
-import { getClaudeCodeSdkCapabilities } from "./claude-code-sdk-capabilities.js";
+import { getCursorSdkCredentialStatus } from "../cursor-sdk-credentials.js";
 import {
   readAgentBackendConfigCache,
   writeAgentBackendConfigCache,
@@ -68,13 +68,6 @@ import {
   truncateGenericToolTitle,
 } from "./tool-display-labels.js";
 import { inferFileKind, isDimmed } from "../workspace.js";
-import {
-  describeClaudeCodeSdkAuthStatus,
-  getClaudeCodeSdkProxyModel,
-  getClaudeCodeSdkProxyModelName,
-  hasClaudeCodeSdkAuthConfig,
-  hasClaudeCodeSdkProxyConfig,
-} from "../claude-code-sdk-credentials.js";
 import {
   getGlobalSettings,
   saveRememberedAgentPermissionRule,
@@ -314,7 +307,7 @@ const LEGACY_MODE_CONFIG_ID = "__acp_legacy_mode__";
 const LEGACY_MODEL_CONFIG_ID = "__acp_legacy_model__";
 
 /**
- * Declares what the OpenCursor Node client can delegate when the agent asks.
+ * Declares what the Cesium Node client can delegate when the agent asks.
  * Defaults are conservative. For headless / CI, Cursor may require overrides —
  * set `OPENCURSOR_ACP_CLIENT_CAPABILITIES_JSON` (partial JSON merged on top).
  */
@@ -423,8 +416,8 @@ async function runAcpTransportBootstrap(transport: AcpStdioClient): Promise<stri
     protocolVersion: 1,
     clientCapabilities: buildAcpClientCapabilities(),
     clientInfo: {
-      name: "opencursor-server",
-      title: "OpenCursor Server",
+      name: "cesium-server",
+      title: "Cesium Server",
       version: "0.1.0",
     },
   })) as Record<string, unknown> | undefined;
@@ -468,7 +461,7 @@ async function runAcpTransportBootstrap(transport: AcpStdioClient): Promise<stri
       }
     } else {
       messages.push(
-        `ACP lists authentication method "${id}". If the agent stalls, complete any login this method requires on the server (TTY or documented OAuth); OpenCursor only bridges stdio.`
+        `ACP lists authentication method "${id}". If the agent stalls, complete any login this method requires on the server (TTY or documented OAuth); Cesium only bridges stdio.`
       );
     }
   }
@@ -974,6 +967,16 @@ function resolveCursorCliRuntime(): CliRuntimeSpec | null {
     return buildInvocation(pathHit, extraArgs, envOverrides);
   }
 
+  if (process.platform === "win32") {
+    const localAppData = process.env.LOCALAPPDATA?.trim();
+    const cursorAgentScript = localAppData
+      ? path.join(localAppData, "cursor-agent", "agent.ps1")
+      : null;
+    if (cursorAgentScript && fileExists(cursorAgentScript)) {
+      return buildInvocation(cursorAgentScript, extraArgs, envOverrides);
+    }
+  }
+
   return null;
 }
 
@@ -1285,18 +1288,6 @@ export const AGENT_BACKENDS: Record<AgentBackendId, AgentBackendInfo> = {
     defaultModelId: "glm-5.1",
     defaultModelName: "GLM 5.1",
   }),
-  "claude-code-sdk": createBackendInfo({
-    id: "claude-code-sdk",
-    label: "Claude Code SDK",
-    description: "Anthropic Claude Agent SDK with stock Claude Code tools.",
-    experimental: true,
-    commandPreview: `@anthropic-ai/claude-agent-sdk · ${describeClaudeCodeSdkAuthStatus()}`,
-    available: hasClaudeCodeSdkAuthConfig(),
-    capabilities: getClaudeCodeSdkCapabilities(),
-    defaultMode: "agent",
-    defaultModelId: hasClaudeCodeSdkProxyConfig() ? getClaudeCodeSdkProxyModel() : "claude-sonnet-4-5",
-    defaultModelName: hasClaudeCodeSdkProxyConfig() ? getClaudeCodeSdkProxyModelName() : "Claude Sonnet 4.5",
-  }),
 };
 
 /** Stable ordering for harness/model-picker menus (Cursor family first, then Codex, OpenCode, Claude, Gemini). */
@@ -1308,7 +1299,6 @@ const AGENT_BACKEND_MENU_ORDER = [
   "opencode-acp",
   "opencode-server",
   "claude-adapter",
-  "claude-code-sdk",
   "gemini-acp",
 ] as const satisfies readonly AgentBackendId[];
 
@@ -1317,12 +1307,25 @@ export function listAgentBackends(): AgentBackendInfo[] {
 }
 
 export async function listAgentBackendsWithCache(): Promise<AgentBackendInfo[]> {
+  const cursorSdkStatus = await getCursorSdkCredentialStatus().catch(() => ({
+    configured: false,
+    source: null,
+  }));
   return Promise.all(
     AGENT_BACKEND_MENU_ORDER.map(async (id) => {
       const backend = AGENT_BACKENDS[id];
+      const cachedConfigOptions = await readAgentBackendConfigCache(backend.id);
       return {
         ...backend,
-        cachedConfigOptions: await readAgentBackendConfigCache(backend.id),
+        available:
+          backend.id === "cursor-sdk"
+            ? cursorSdkStatus.configured
+            : backend.available,
+        description:
+          backend.id === "cursor-sdk" && !cursorSdkStatus.configured
+            ? "Cursor SDK requires a Cursor API key. Open Settings -> Agents to configure it."
+            : backend.description,
+        cachedConfigOptions,
       };
     })
   );
@@ -4806,14 +4809,6 @@ export async function createAgentProvider(
   if (backendId === "cursor-sdk") {
     const { createCursorSdkProvider } = await import("./cursor-sdk-provider.js");
     return createCursorSdkProvider({
-      backend,
-      configOptions: await readAgentBackendConfigCache(backendId),
-    });
-  }
-
-  if (backendId === "claude-code-sdk") {
-    const { createClaudeCodeSdkProvider } = await import("./claude-code-sdk-provider.js");
-    return createClaudeCodeSdkProvider({
       backend,
       configOptions: await readAgentBackendConfigCache(backendId),
     });
