@@ -293,6 +293,26 @@ agentRoutes.post("/api/agents/conversations/:conversationId/handoff", async (c) 
   }
 });
 
+agentRoutes.post("/api/agents/conversations/:conversationId/redo", async (c) => {
+  const workspace = await requireWorkspaceFromRequest(c);
+  const conversationId = c.req.param("conversationId");
+  const body = await c.req.json<{ beforeMessageId?: string }>();
+  if (!body.beforeMessageId) {
+    return c.json({ error: "Expected beforeMessageId." }, 400);
+  }
+  try {
+    const conversation = await agentRuntimeManager.prepareRedoConversation(
+      workspace,
+      conversationId,
+      body.beforeMessageId
+    );
+    return c.json({ conversation });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Redo failed.";
+    return c.json({ error: message }, 400);
+  }
+});
+
 agentRoutes.post("/api/agents/conversations/:conversationId/fork", async (c) => {
   const workspace = await requireWorkspaceFromRequest(c);
   const conversationId = c.req.param("conversationId");

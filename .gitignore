@@ -69,9 +69,9 @@ next-env.d.ts
 .parcel-cache/
 .eslintcache
 .stylelintcache
-apps/mobile/.expo/
-apps/mobile/android/
-apps/mobile/ios/
+.gradle/
+g/caches/
+**/g/caches/
 .cesium-data/
 server/.cesium-data/
 .opencursor-data/

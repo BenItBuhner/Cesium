@@ -2,6 +2,7 @@
 
 import {
   useEffect,
+  useMemo,
   useRef,
   useState,
   type DragEvent,
@@ -9,6 +10,10 @@ import {
   type MouseEvent,
 } from "react";
 import { LoaderCircle, Plus, X } from "lucide-react";
+import {
+  HorizontalScrollFadeOverlays,
+  useHorizontalScrollFade,
+} from "@/components/chat/HorizontalFadedScroll";
 import { setMinimalTabDragImage } from "@/components/editor/tab-drag-image";
 import { CHAT_TAB_DND_MIME, parseChatTabDragPayload } from "@/lib/chat-tab-dnd";
 import { useTabStripWheel } from "@/hooks/useTabStripWheel";
@@ -26,6 +31,8 @@ interface ChatTabsProps {
   onReorderTabs?: (tabId: string, toIndex: number) => void;
   onRenameTab?: (tabId: string, title: string) => void;
   padTrailingForWindowChrome?: boolean;
+  /** Electron-only: opt the new-chat button into preload CSS trailing-chrome margin. iPad mode keeps using the className-based margin via `padTrailingForWindowChrome`. */
+  electronTrailingChromeMargin?: boolean;
   /** When set, opens inline rename for that tab once, then calls consume. */
   externalRenameTabId?: string | null;
   onExternalRenameConsumed?: () => void;
@@ -53,6 +60,7 @@ export function ChatTabs({
   onReorderTabs,
   onRenameTab,
   padTrailingForWindowChrome = false,
+  electronTrailingChromeMargin = false,
   externalRenameTabId,
   onExternalRenameConsumed,
 }: ChatTabsProps) {
@@ -63,6 +71,10 @@ export function ChatTabs({
   const renameInputRef = useRef<HTMLInputElement>(null);
 
   useTabStripWheel(stripRef, { speed: 2.1 });
+
+  const tabsMeasureKey = useMemo(() => tabs.map((t) => t.id).join("|"), [tabs]);
+  const { fade: stripScrollFade, updateFade: updateStripScrollFade } =
+    useHorizontalScrollFade(stripRef, tabsMeasureKey);
 
   useEffect(() => {
     if (!externalRenameTabId) {
@@ -170,15 +182,24 @@ export function ChatTabs({
   }
 
   return (
-    <div className="flex h-[var(--tab-height)] min-w-0 items-center overflow-hidden">
-      <div
-        ref={stripRef}
-        role="tablist"
-        onDragOver={handleStripDragOver}
-        onDrop={handleStripDrop}
-        onContextMenu={handleStripContextMenu}
-        className="hide-scrollbar-x flex min-w-0 flex-1 scroll-px-[4px] items-center gap-[4px] px-[4px] py-[2px]"
-      >
+    <div
+      className="flex h-[var(--tab-height)] min-w-0 items-center overflow-hidden"
+      data-electron-drag-host
+    >
+      <div className="relative flex min-w-0 flex-1">
+        <HorizontalScrollFadeOverlays
+          fade={stripScrollFade}
+          edgeColorVar="var(--bg-panel)"
+        />
+        <div
+          ref={stripRef}
+          role="tablist"
+          onScroll={updateStripScrollFade}
+          onDragOver={handleStripDragOver}
+          onDrop={handleStripDrop}
+          onContextMenu={handleStripContextMenu}
+          className="relative z-0 hide-scrollbar-x flex min-w-0 flex-1 scroll-px-[4px] items-center gap-[4px] px-[4px] py-[2px]"
+        >
         {tabs.map((tab) => {
           const ind = agentTabIndicators?.[tab.id];
           const needsAttention = Boolean(ind?.needsAttention);
@@ -298,10 +319,14 @@ export function ChatTabs({
           </button>
         );
         })}
+        </div>
       </div>
       <button
         type="button"
         onClick={onNewChat}
+        data-electron-trailing-chrome={
+          electronTrailingChromeMargin ? "true" : undefined
+        }
         className={`shrink-0 text-[var(--text-secondary)] transition-colors hover:text-[var(--text-primary)] ${
           padTrailingForWindowChrome
             ? "mr-[calc(var(--editor-window-chrome-tab-inset)+9px)]"

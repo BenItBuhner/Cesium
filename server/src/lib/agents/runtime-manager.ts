@@ -657,6 +657,46 @@ export class AgentRuntimeManager {
     return { conversation: newConversation };
   }
 
+  async prepareRedoConversation(
+    workspace: WorkspaceRecord,
+    conversationId: string,
+    beforeMessageId: string
+  ): Promise<AgentConversationRecord> {
+    const record = await readConversationRecord(workspace.id, conversationId);
+    if (!record) {
+      throw new Error(`Unknown conversation: ${conversationId}`);
+    }
+    if (record.status === "running" || record.status === "awaiting_permission") {
+      throw new Error(
+        "Wait for the current reply or cancel before redoing this conversation."
+      );
+    }
+
+    const events = await readConversationEvents(workspace.id, conversationId);
+    const target = events.find(
+      (event) => event.kind === "user_message" && event.messageId === beforeMessageId
+    );
+    if (!target) {
+      throw new Error("Could not find the selected user message to redo.");
+    }
+
+    const tailEventIds = events
+      .filter((event) => event.seq >= target.seq)
+      .map((event) => event.eventId);
+
+    await this.disposeRuntime(conversationId);
+    await deleteConversationEvents(workspace.id, conversationId, tailEventIds);
+
+    return updateConversationRecord(workspace.id, conversationId, (current) => ({
+      ...current,
+      providerSessionId: null,
+      pendingPermission: null,
+      queuedPrompts: [],
+      status: "idle",
+      lastError: null,
+    }));
+  }
+
   async getConversationSnapshot(
     workspace: WorkspaceRecord,
     conversationId: string,

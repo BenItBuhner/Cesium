@@ -13,11 +13,9 @@ import {
   upsertServerConnection,
   writeStoredServerConnectionsState,
 } from "@/lib/server-connections";
-import { getNativeShellServerBaseUrl } from "@/lib/native-shell";
 
 function getConfiguredServerBaseUrl(): string {
   return (
-    getNativeShellServerBaseUrl() ??
     process.env.NEXT_PUBLIC_SERVER_URL?.replace(/\/+$/, "") ??
     "http://localhost:9107"
   );

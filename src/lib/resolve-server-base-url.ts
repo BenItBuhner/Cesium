@@ -1,14 +1,10 @@
 import { getActiveServerBaseUrl } from "@/lib/server-connections";
-import {
-  getNativeShellServerBaseUrl,
-  isLoopbackServerBaseUrl,
-} from "@/lib/native-shell";
 
 /**
  * Build-time API base (`NEXT_PUBLIC_*` is inlined when `next build` runs).
  */
 export function getConfiguredServerBaseUrl(): string {
-  return getNativeShellServerBaseUrl() ?? (
+  return (
     process.env.NEXT_PUBLIC_SERVER_URL?.replace(/\/+$/, "") ??
     "http://localhost:9107"
   );
@@ -43,10 +39,6 @@ export function resolveClientServerBaseUrlForCurrentWindow(raw: string): string 
     const override = serverUrlOverrideFromSearch(window.location.search);
     if (override) {
       return override;
-    }
-    const nativeServerBaseUrl = getNativeShellServerBaseUrl();
-    if (nativeServerBaseUrl && isLoopbackServerBaseUrl(raw)) {
-      return nativeServerBaseUrl;
     }
   }
   return resolveClientServerBaseUrlForLocation(raw, typeof window !== "undefined" ? window : null);

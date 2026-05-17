@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { ChatComposer } from "@/components/chat/ChatComposer";
 import { WORKBENCH_NOTIFICATION_KIND } from "@/components/notifications/workbench-notification-types";
 import { useWorkbenchNotifications } from "@/components/notifications/WorkbenchNotificationProvider";
@@ -29,7 +29,7 @@ import type {
 import {
   fetchAgentConversationSnapshot,
   forkAgentConversation,
-  handoffAgentConversation,
+  prepareRedoAgentConversation,
   updateAgentConversationConfig,
 } from "@/lib/server-api";
 
@@ -130,10 +130,39 @@ export function useRedoInlineUserMessage(args: UseRedoInlineUserMessageArgs): {
   };
 
   const [redoMessageDraft, setRedoMessageDraft] = useState<RedoDraft | null>(null);
+  const redoEditorRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     setRedoMessageDraft(null);
   }, [conversation?.id]);
+
+  useEffect(() => {
+    if (!redoMessageDraft) {
+      return;
+    }
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Node)) {
+        return;
+      }
+      const editor = redoEditorRef.current;
+      if (editor?.contains(target)) {
+        return;
+      }
+      if (
+        target instanceof Element &&
+        (target.closest("[data-ide-composer-floating-popover]") ||
+          target.closest("#composer-autocomplete"))
+      ) {
+        return;
+      }
+      setRedoMessageDraft(null);
+    };
+
+    document.addEventListener("pointerdown", handlePointerDown, true);
+    return () => document.removeEventListener("pointerdown", handlePointerDown, true);
+  }, [redoMessageDraft]);
 
   const handleStartRedoMessage = useCallback(
     (message: ChatMessage) => {
@@ -222,33 +251,34 @@ export function useRedoInlineUserMessage(args: UseRedoInlineUserMessageArgs): {
       }
 
       try {
-        const result = await forkAgentConversation(conv.id, {
+        const result = await prepareRedoAgentConversation(conv.id, {
           beforeMessageId: redoMessageDraft.messageId,
         });
-        let nextConversationId = result.conversation.id;
+        const nextConversationId = conv.id;
         let nextConversation = result.conversation;
-
-        const refreshed = await refreshConversations();
-        nextConversation =
-          refreshed.find((c) => c.id === nextConversationId) ?? nextConversation;
 
         if (
           redoMessageDraft.backendId &&
           redoMessageDraft.backendId !== nextConversation.config.backendId
         ) {
-          const handoffResult = await handoffAgentConversation(
-            nextConversationId,
-            redoMessageDraft.backendId
-          );
-          nextConversationId = handoffResult.newConversationId;
-          const handedOff = await refreshConversations();
-          nextConversation =
-            handedOff.find((c) => c.id === nextConversationId) ?? nextConversation;
+          nextConversation = {
+            ...nextConversation,
+            config: {
+              ...nextConversation.config,
+              backendId: redoMessageDraft.backendId,
+            },
+          };
         }
 
         const modelId =
           redoMessageDraft.model.modelValue ?? redoMessageDraft.model.id;
         const configPatch: Record<string, unknown> = {};
+        if (
+          redoMessageDraft.backendId &&
+          redoMessageDraft.backendId !== result.conversation.config.backendId
+        ) {
+          configPatch.backendId = redoMessageDraft.backendId;
+        }
         if (redoMessageDraft.mode !== nextConversation.config.mode) {
           configPatch.mode = redoMessageDraft.mode;
         }
@@ -273,10 +303,6 @@ export function useRedoInlineUserMessage(args: UseRedoInlineUserMessageArgs): {
 
         const snapshot = await fetchAgentConversationSnapshot(nextConversationId);
         mergeConversationSnapshot(snapshot.snapshot);
-        exposeForkedConversation?.(
-          nextConversationId,
-          nextConversation.title ?? "Forked conversation"
-        );
         setRedoMessageDraft(null);
         return await promptConversationForActive(nextConversationId, text, attachments);
       } catch (error) {
@@ -294,7 +320,6 @@ export function useRedoInlineUserMessage(args: UseRedoInlineUserMessageArgs): {
     },
     [
       conversation,
-      exposeForkedConversation,
       mergeConversationSnapshot,
       promptConversationForActive,
       pushNotification,
@@ -396,19 +421,7 @@ export function useRedoInlineUserMessage(args: UseRedoInlineUserMessageArgs): {
       }
 
       return (
-        <div className="flex flex-col gap-[6px]">
-          <div className="flex items-center justify-between px-[2px]">
-            <span className="font-sans text-[11px] text-[var(--text-secondary)]">
-              Redo message
-            </span>
-            <button
-              type="button"
-              onClick={() => setRedoMessageDraft(null)}
-              className="rounded-[5px] px-[6px] py-[2px] font-sans text-[11px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-card-hover)] hover:text-[var(--text-primary)]"
-            >
-              Cancel
-            </button>
-          </div>
+        <div ref={redoEditorRef} className="flex min-h-[180px] flex-col">
           <ChatComposer
             key={`redo-${redoMessageDraft.messageId}`}
             mode={redoMode}
@@ -463,6 +476,8 @@ export function useRedoInlineUserMessage(args: UseRedoInlineUserMessageArgs): {
             configLocked={false}
             onSubmit={(text, attachments) => submitRedoMessageDraft(text, attachments)}
             layout="empty-top"
+            variant="docked"
+            forceMultiline
             shellMxClass=""
             draftAttachments={redoMessageDraft.attachments}
             onDraftAttachmentsChange={(next) =>

@@ -30,6 +30,7 @@ import { AgentWorkspaceRail } from "@/components/agent/AgentWorkspaceRail";
 import { AgentWorkspaceRailCollapsedOverlay } from "@/components/agent/AgentWorkspaceRailCollapsedOverlay";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { useUserPreferences } from "@/components/preferences/UserPreferencesProvider";
+import { useIsCesiumDesktopApp } from "@/lib/desktop-environment";
 
 function AgentShellResizeHandle() {
   return (
@@ -48,7 +49,7 @@ function AgentCenterStage({
 }) {
   return (
     <div
-      className={`relative flex h-full min-w-0 justify-center overflow-hidden ${
+      className={`relative z-[21] flex h-full min-w-0 justify-center overflow-hidden ${
         compact ? "px-[8px]" : "px-0"
       }`}
     >
@@ -71,8 +72,11 @@ function AgentLayoutShell() {
     toggleRightPaneOpen,
   } = useAgentShellState();
   const { experimentalIpadWindowedTabInset } = useUserPreferences();
+  const isDesktopApp = useIsCesiumDesktopApp();
   const padTrailingForWindowChrome =
     experimentalIpadWindowedTabInset && !isMobile && !rightPaneOpen;
+  const electronTrailingChromeForToggle =
+    isDesktopApp && !isMobile && !rightPaneOpen;
 
   const groupRef = useGroupRef();
   const railPanelRef = usePanelRef();
@@ -220,6 +224,9 @@ function AgentLayoutShell() {
                     type="button"
                     onClick={toggleRightPaneOpen}
                     data-workbench-pane-toggle
+                    data-electron-trailing-chrome={
+                      electronTrailingChromeForToggle ? "true" : undefined
+                    }
                     className={`absolute top-[11px] z-40 flex size-[18px] items-center justify-center rounded-[var(--radius-tab)] bg-[var(--bg-panel)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-card)] hover:text-[var(--text-primary)] ${
                       padTrailingForWindowChrome
                         ? "right-[calc(var(--editor-window-chrome-tab-inset)+11px)]"
@@ -268,11 +275,20 @@ function AgentLayoutShell() {
                   minSize={`${AGENT_SHELL_CENTER_MIN_PERCENT}%`}
                   className="relative min-h-0 min-w-0 overflow-hidden"
                 >
+                  {/* z-20 drag host; keep AgentCenterStage above (`z-[21]`) so sticky chat headers and controls receive clicks in Electron. */}
+                  <div
+                    aria-hidden
+                    className="absolute left-0 right-[148px] top-0 z-20 h-[32px]"
+                    data-electron-drag-host
+                  />
                   {!rightPaneOpen && !isDraftConversationSelected ? (
                     <button
                       type="button"
                       onClick={toggleRightPaneOpen}
                         data-workbench-pane-toggle
+                        data-electron-trailing-chrome={
+                          electronTrailingChromeForToggle ? "true" : undefined
+                        }
                         className={`absolute top-[11px] z-40 flex size-[18px] items-center justify-center rounded-[var(--radius-tab)] bg-[var(--bg-panel)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-card)] hover:text-[var(--text-primary)] ${
                           padTrailingForWindowChrome
                             ? "right-[calc(var(--editor-window-chrome-tab-inset)+11px)]"

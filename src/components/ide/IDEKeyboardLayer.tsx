@@ -27,6 +27,7 @@ import { normalizeBrowserTargetUrl } from "@/lib/browser-proxy-url";
 import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
 import { useServerConnections } from "@/components/preferences/ServerConnectionsProvider";
 import { WORKSPACE_ROUTE } from "@/lib/workbench-view";
+import { reloadAppWindow } from "@/lib/desktop-environment";
 import { buildWorkspaceWindowUrl } from "@/lib/workspace-windows";
 import {
   SHORTCUT_COMMAND_DEFINITIONS,
@@ -388,6 +389,10 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
           break;
         case "workbench.action.newWindow":
           openWorkspaceWindowsModal({ initialSelectionId: "action:create-window" });
+          break;
+        case "workbench.action.reloadWindow":
+          setPalette("closed");
+          reloadAppWindow();
           break;
         case "workbench.action.window.manage":
           openWorkspaceWindowsModal();
@@ -823,6 +828,12 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
         label: "File: New Window...",
         keybinding: kb("workbench.action.newWindow"),
         run: () => runShortcutCommand("workbench.action.newWindow"),
+      },
+      {
+        id: "workbench.action.reloadWindow",
+        label: "Window: Reload Window",
+        keybinding: kb("workbench.action.reloadWindow"),
+        run: () => runShortcutCommand("workbench.action.reloadWindow"),
       },
       {
         id: "workbench.action.window.manage",

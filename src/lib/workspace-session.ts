@@ -79,10 +79,6 @@ export type EditorSessionState = {
   splitOrientation: EditorSplitOrientation;
   splitLayout: Record<string, number> | null;
   focusedGroup: "left" | "right";
-  focusedPaneId: EditorPaneId;
-  panes: Record<EditorPaneId, EditorPaneState>;
-  layoutRootId: string;
-  layoutNodes: Record<string, EditorLayoutNode>;
   leftTabs: EditorTab[];
   rightTabs: EditorTab[];
   leftActiveId: string | null;

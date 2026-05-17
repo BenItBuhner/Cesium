@@ -5,6 +5,7 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   type KeyboardEvent,
   type MouseEvent,
@@ -12,6 +13,10 @@ import {
 import { createPortal } from "react-dom";
 import { ChevronDown, ChevronRight, Columns2, Globe, MoreVertical, Plus, Rows2, Terminal } from "lucide-react";
 import { EditorTab } from "./EditorTab";
+import {
+  HorizontalScrollFadeOverlays,
+  useHorizontalScrollFade,
+} from "@/components/chat/HorizontalFadedScroll";
 import { useClickOutside } from "@/hooks/useClickOutside";
 import { useTabStripWheel } from "@/hooks/useTabStripWheel";
 import { CHAT_TAB_DND_MIME, parseChatTabDragPayload } from "@/lib/chat-tab-dnd";
@@ -66,6 +71,8 @@ interface EditorTabsProps {
   agentTabIndicators?: AgentTabIndicatorByConversationId;
   /** Reserve a trailing slot so an external pane-level control can occupy the far-right edge. */
   trailingSpacerWidthPx?: number;
+  /** When true, mark the actions container so the Electron preload CSS applies its trailing window-chrome margin. */
+  electronTrailingChromeOnActions?: boolean;
   onOpenFilePalette?: () => void;
   onOpenTerminal?: () => void;
   onOpenBrowser?: () => void;
@@ -124,6 +131,7 @@ export function EditorTabs({
   onMoveTabToStripIndex,
   agentTabIndicators,
   trailingSpacerWidthPx = 0,
+  electronTrailingChromeOnActions = false,
   onOpenFilePalette,
   onOpenTerminal,
   onOpenBrowser,
@@ -141,12 +149,22 @@ export function EditorTabs({
   const [editingGroupId, setEditingGroupId] = useState<string | null>(null);
   const [editGroupTitle, setEditGroupTitle] = useState("");
   const tabGroupRenameInputRef = useRef<HTMLInputElement>(null);
-  const internalTrailingSpacerWidthPx = Math.max(12, trailingSpacerWidthPx + 12);
 
   useTabStripWheel(stripRef, { speed: 2.1 });
 
+  const stripMeasureKey = useMemo(
+    () =>
+      stripItems
+        .map((it) => (it.type === "tab" ? `t:${it.tabId}` : `g:${it.groupId}`))
+        .join("|"),
+    [stripItems]
+  );
+  const { fade: stripScrollFade, updateFade: updateStripScrollFade } =
+    useHorizontalScrollFade(stripRef, stripMeasureKey);
+
   const scrollActiveTabIntoView = useCallback(() => {
     if (!activeTabId || !stripRef.current) {
+      queueMicrotask(updateStripScrollFade);
       return;
     }
     const activeTab = stripRef.current.querySelector<HTMLElement>(
@@ -156,7 +174,8 @@ export function EditorTabs({
       block: "nearest",
       inline: "nearest",
     });
-  }, [activeTabId]);
+    queueMicrotask(updateStripScrollFade);
+  }, [activeTabId, updateStripScrollFade]);
 
   useLayoutEffect(() => {
     scrollActiveTabIntoView();
@@ -371,21 +390,30 @@ export function EditorTabs({
   }
 
   return (
-    <div className="flex h-[var(--tab-height)] items-center overflow-hidden bg-[var(--bg-panel)]">
-      <div
-        ref={stripRef}
-        className={`hide-scrollbar-x flex min-h-[36px] min-w-0 flex-1 scroll-px-[10px] items-center gap-[6px] py-[2px] pr-[2px] ${
-          padStripLeadingForWindowChrome
-            ? "pl-[var(--editor-window-chrome-tab-inset)]"
-            : "pl-[6px]"
-        }`}
-        onDragOver={handleStripDragOver}
-        onDrop={handleStripDrop}
-        onContextMenu={(e) => {
-          if (e.target !== e.currentTarget) return;
-          onStripContextMenu?.(e);
-        }}
-      >
+    <div
+      className="flex h-[var(--tab-height)] items-center overflow-hidden bg-[var(--bg-panel)]"
+      data-electron-drag-host
+    >
+      <div className="relative flex min-h-[36px] min-w-0 flex-1">
+        <HorizontalScrollFadeOverlays
+          fade={stripScrollFade}
+          edgeColorVar="var(--bg-panel)"
+        />
+        <div
+          ref={stripRef}
+          className={`relative z-0 hide-scrollbar-x flex min-h-[36px] min-w-0 flex-1 scroll-px-[4px] items-center gap-[4px] py-[2px] pr-[2px] ${
+            padStripLeadingForWindowChrome
+              ? "pl-[var(--editor-window-chrome-tab-inset)]"
+              : "pl-[2px]"
+          }`}
+          onScroll={updateStripScrollFade}
+          onDragOver={handleStripDragOver}
+          onDrop={handleStripDrop}
+          onContextMenu={(e) => {
+            if (e.target !== e.currentTarget) return;
+            onStripContextMenu?.(e);
+          }}
+        >
         {stripItems.map((item, stripIndex) => {
           if (item.type === "tab") {
             const tab = tabs.find((t) => t.id === item.tabId);
@@ -509,16 +537,15 @@ export function EditorTabs({
             Drop a tab here
           </span>
         )}
-        <div
-          aria-hidden
-          className="h-[1px] shrink-0"
-          style={{ width: `${internalTrailingSpacerWidthPx}px` }}
-        />
+        </div>
       </div>
 
       <div
         className="flex h-[var(--tab-height)] shrink-0 items-center gap-[4px] px-[11px]"
         data-editor-tab-actions
+        data-electron-trailing-chrome={
+          electronTrailingChromeOnActions ? "true" : undefined
+        }
       >
         {onOpenFilePalette && (
           <div ref={addTriggerRef} className="flex shrink-0 items-center gap-[4px]">

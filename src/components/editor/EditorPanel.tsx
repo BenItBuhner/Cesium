@@ -84,6 +84,7 @@ import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { useWorkbench } from "@/components/ide/WorkbenchContext";
 import { useIDECommandRunner } from "@/components/ide/IDECommandContext";
 import { useUserPreferences } from "@/components/preferences/UserPreferencesProvider";
+import { useIsCesiumDesktopApp } from "@/lib/desktop-environment";
 import { useWorkbenchNotifications } from "@/components/notifications/WorkbenchNotificationProvider";
 import { WORKBENCH_NOTIFICATION_KIND } from "@/components/notifications/workbench-notification-types";
 import {
@@ -296,6 +297,7 @@ export function EditorPanel({
   } = useWorkbench();
   const runCommand = useIDECommandRunner();
   const { experimentalIpadWindowedTabInset } = useUserPreferences();
+  const isDesktopApp = useIsCesiumDesktopApp();
   const { openAt } = useWorkbenchContextMenu();
   const { pushNotification, dismiss, dismissByKind } = useWorkbenchNotifications();
   const persistedSession = sessionOverride ?? workspaceSession.editor;
@@ -1753,22 +1755,28 @@ export function EditorPanel({
       emptyMessage: string;
     }
   ) {
+    const paneCloseSlotGroup: EditorGroup =
+      !state.split || state.splitOrientation === "vertical" ? "left" : "right";
     const padStripLeadingForWindowChrome =
       experimentalIpadWindowedTabInset &&
       !isMobile &&
       editorLeadingWindowControlsVisible &&
       group === "left";
     const padTrailingForWindowChrome =
-      reserveTrailingPaneCloseSlot &&
       experimentalIpadWindowedTabInset &&
       !isMobile &&
-      editorTrailingWindowControlsVisible;
-    const paneCloseSlotGroup: EditorGroup =
-      !state.split || state.splitOrientation === "vertical" ? "left" : "right";
+      editorTrailingWindowControlsVisible &&
+      group === paneCloseSlotGroup;
     const trailingSpacerWidthPx =
       group === paneCloseSlotGroup
-        ? 18 + (padTrailingForWindowChrome ? EDITOR_WINDOW_CHROME_TAB_INSET_PX : 0)
+        ? (reserveTrailingPaneCloseSlot ? 18 : 0) +
+          (padTrailingForWindowChrome ? EDITOR_WINDOW_CHROME_TAB_INSET_PX : 0)
         : 0;
+    const electronTrailingChromeOnActions =
+      isDesktopApp &&
+      !isMobile &&
+      editorTrailingWindowControlsVisible &&
+      group === paneCloseSlotGroup;
 
     return (
       <div className="flex h-full min-h-0 min-w-0 flex-col">
@@ -1831,6 +1839,7 @@ export function EditorPanel({
           }
           agentTabIndicators={agentTabIndicators}
           trailingSpacerWidthPx={trailingSpacerWidthPx}
+          electronTrailingChromeOnActions={electronTrailingChromeOnActions}
           onOpenFilePalette={openFilePalette}
           onOpenTerminal={openTerminalTab}
           onOpenBrowser={openBrowserUrlPrompt}

@@ -232,6 +232,12 @@ export const SHORTCUT_COMMAND_DEFINITIONS: ShortcutCommandDefinition[] = [
     defaultBindings: ["Mod+Shift+N"],
   },
   {
+    id: "workbench.action.reloadWindow",
+    label: "Window: Reload Window",
+    section: "Window",
+    defaultBindings: ["Mod+R"],
+  },
+  {
     id: "workbench.action.window.manage",
     label: "Window: Workspace Windows...",
     section: "Window",

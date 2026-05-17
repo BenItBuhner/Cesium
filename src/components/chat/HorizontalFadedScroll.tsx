@@ -6,7 +6,89 @@ import {
   useRef,
   useState,
   type ReactNode,
+  type RefObject,
 } from "react";
+
+export type HorizontalScrollFadeState = {
+  left: boolean;
+  right: boolean;
+};
+
+/**
+ * Tracks left/right edge fades for a horizontally scrollable element (same thresholds as
+ * `AgentWorkspaceRail` / `HorizontalFadedScroll`).
+ */
+export function useHorizontalScrollFade(
+  scrollRef: RefObject<HTMLElement | null>,
+  measureKey?: string | number | boolean | null
+): {
+  fade: HorizontalScrollFadeState;
+  updateFade: () => void;
+} {
+  const [fade, setFade] = useState<HorizontalScrollFadeState>({
+    left: false,
+    right: false,
+  });
+
+  const updateFade = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) {
+      return;
+    }
+    const { scrollLeft, scrollWidth, clientWidth } = el;
+    const maxScroll = scrollWidth - clientWidth;
+    setFade({
+      left: scrollLeft > 2,
+      right: maxScroll > 2 && scrollLeft < maxScroll - 2,
+    });
+  }, [scrollRef]);
+
+  useLayoutEffect(() => {
+    updateFade();
+  }, [measureKey, updateFade]);
+
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    if (!el || typeof ResizeObserver === "undefined") {
+      return;
+    }
+    const ro = new ResizeObserver(() => updateFade());
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [scrollRef, updateFade]);
+
+  return { fade, updateFade };
+}
+
+export function HorizontalScrollFadeOverlays({
+  fade,
+  edgeColorVar,
+}: {
+  fade: HorizontalScrollFadeState;
+  edgeColorVar: string;
+}) {
+  const gradLeft = `linear-gradient(to right, ${edgeColorVar}, transparent)`;
+  const gradRight = `linear-gradient(to left, ${edgeColorVar}, transparent)`;
+
+  return (
+    <>
+      {fade.left ? (
+        <div
+          className="pointer-events-none absolute inset-y-0 left-0 z-[1] w-[28px]"
+          style={{ backgroundImage: gradLeft }}
+          aria-hidden
+        />
+      ) : null}
+      {fade.right ? (
+        <div
+          className="pointer-events-none absolute inset-y-0 right-0 z-[1] w-[28px]"
+          style={{ backgroundImage: gradRight }}
+          aria-hidden
+        />
+      ) : null}
+    </>
+  );
+}
 
 type HorizontalFadedScrollProps = {
   children: ReactNode;
@@ -29,54 +111,11 @@ export function HorizontalFadedScroll({
   measureKey,
 }: HorizontalFadedScrollProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
-  const [fade, setFade] = useState({ left: false, right: false });
-
-  const updateFade = useCallback(() => {
-    const el = scrollRef.current;
-    if (!el) {
-      return;
-    }
-    const { scrollLeft, scrollWidth, clientWidth } = el;
-    const maxScroll = scrollWidth - clientWidth;
-    setFade({
-      left: scrollLeft > 2,
-      right: maxScroll > 2 && scrollLeft < maxScroll - 2,
-    });
-  }, []);
-
-  useLayoutEffect(() => {
-    updateFade();
-  }, [measureKey, updateFade]);
-
-  useLayoutEffect(() => {
-    const el = scrollRef.current;
-    if (!el) {
-      return;
-    }
-    const ro = new ResizeObserver(() => updateFade());
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [updateFade]);
-
-  const gradLeft = `linear-gradient(to right, ${edgeColorVar}, transparent)`;
-  const gradRight = `linear-gradient(to left, ${edgeColorVar}, transparent)`;
+  const { fade, updateFade } = useHorizontalScrollFade(scrollRef, measureKey);
 
   return (
     <div className="relative min-h-[1.25rem] min-w-0">
-      {fade.left ? (
-        <div
-          className="pointer-events-none absolute inset-y-0 left-0 z-[1] w-[28px]"
-          style={{ backgroundImage: gradLeft }}
-          aria-hidden
-        />
-      ) : null}
-      {fade.right ? (
-        <div
-          className="pointer-events-none absolute inset-y-0 right-0 z-[1] w-[28px]"
-          style={{ backgroundImage: gradRight }}
-          aria-hidden
-        />
-      ) : null}
+      <HorizontalScrollFadeOverlays fade={fade} edgeColorVar={edgeColorVar} />
       <div
         ref={scrollRef}
         onScroll={updateFade}

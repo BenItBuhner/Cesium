@@ -80,6 +80,7 @@ export function UserMessage({
 
   return (
     <div
+      data-electron-no-drag
       className={`group relative overflow-hidden rounded-[var(--agent-card-radius)] border border-[var(--agent-border)] bg-[var(--agent-card-bg)] p-[10px] ${highlight ? "ring-2 ring-[var(--accent)] ring-opacity-50" : ""}`}
     >
       {attachments && attachments.length > 0 && (

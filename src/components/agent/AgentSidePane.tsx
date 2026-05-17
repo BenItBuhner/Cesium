@@ -4,6 +4,7 @@ import { PanelRightClose } from "lucide-react";
 import { EditorPanel } from "@/components/editor/EditorPanel";
 import { useAgentShellState } from "./AgentShellStateContext";
 import { useUserPreferences } from "@/components/preferences/UserPreferencesProvider";
+import { useIsCesiumDesktopApp } from "@/lib/desktop-environment";
 
 export function AgentSidePane() {
   const {
@@ -17,7 +18,10 @@ export function AgentSidePane() {
     sidePaneScopeId,
   } = useAgentShellState();
   const { experimentalIpadWindowedTabInset } = useUserPreferences();
-  const padTrailingForWindowChrome = experimentalIpadWindowedTabInset && !isMobile;
+  const isDesktopApp = useIsCesiumDesktopApp();
+  const padTrailingForWindowChrome =
+    experimentalIpadWindowedTabInset && !isMobile;
+  const electronTrailingChrome = isDesktopApp && !isMobile;
 
   return (
     <div className="agent-side-pane relative h-full w-full overflow-hidden bg-[var(--agent-panel-bg)]">
@@ -26,6 +30,9 @@ export function AgentSidePane() {
           type="button"
           onClick={toggleRightPaneOpen}
           data-workbench-pane-toggle
+          data-electron-trailing-chrome={
+            electronTrailingChrome ? "true" : undefined
+          }
           className={`absolute top-[11px] z-40 flex size-[18px] items-center justify-center rounded-[var(--agent-control-radius)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--agent-card-bg)] hover:text-[var(--text-primary)] ${
             padTrailingForWindowChrome
               ? "right-[calc(var(--editor-window-chrome-tab-inset)+16px)]"

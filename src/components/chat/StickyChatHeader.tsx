@@ -61,7 +61,11 @@ export function StickyChatHeader({
 
   if (!enabled) {
     return (
-      <div className="shrink-0" data-chat-message-id={dataChatMessageId}>
+      <div
+        className="shrink-0"
+        data-chat-message-id={dataChatMessageId}
+        data-electron-no-drag
+      >
         {children}
       </div>
     );
@@ -71,6 +75,7 @@ export function StickyChatHeader({
     <div
       ref={setRefs}
       data-chat-message-id={dataChatMessageId}
+      data-electron-no-drag
       style={allowSticky ? { top: CHAT_STICKY_RAIL_INSET_PX - pushUpPx } : undefined}
       className={
         allowSticky

@@ -144,34 +144,49 @@ function useStickyScrollTop(
 function VirtualStickyUserHeader({
   turn,
   messages,
+  onForkMessage,
+  onRedoMessage,
+  renderUserMessageEditor,
+  editingUserMessageId,
+  composerDraftId,
 }: {
   turn: UserTurnSegment;
   messages: ChatMessage[];
+  onForkMessage?: (messageId: string) => void;
+  onRedoMessage?: (message: ChatMessage) => void;
+  renderUserMessageEditor?: (message: ChatMessage) => ReactNode;
+  editingUserMessageId?: string | null;
+  composerDraftId?: string | null;
 }) {
   const userMsg = messages[turn.userIndex];
   if (!userMsg || userMsg.type !== "user") {
     return null;
   }
 
-  const userMessage = (
-    <UserMessage
-      content={userMsg.content}
-      segments={userMsg.segments}
-      attachments={userMsg.attachments}
-      showReplyCue={userMsg.showReplyCue}
-      highlight={userMsg.isHandoffMessage}
-      displayOnly
-    />
-  );
+  const userMessage =
+    editingUserMessageId === userMsg.id && renderUserMessageEditor ? (
+      renderUserMessageEditor(userMsg)
+    ) : (
+      <UserMessage
+        content={userMsg.content}
+        segments={userMsg.segments}
+        attachments={userMsg.attachments}
+        showReplyCue={userMsg.showReplyCue}
+        highlight={userMsg.isHandoffMessage}
+        composerDraftId={composerDraftId}
+        onFork={onForkMessage ? () => onForkMessage(userMsg.id) : undefined}
+        onRedo={onRedoMessage ? () => onRedoMessage(userMsg) : undefined}
+      />
+    );
 
   return (
     <div
-      aria-hidden="true"
-      inert
-      className="pointer-events-none sticky z-30 h-0"
+      data-chat-message-id={userMsg.id}
+      data-electron-no-drag
+      className="sticky z-30 h-0"
       style={{ top: CHAT_STICKY_RAIL_INSET_PX }}
     >
-      <div className="pb-[10px]">
+      <div className="pb-[10px]" data-electron-no-drag>
         {turn.userKind === "user_todo" ? (
           <div className="flex flex-col">
             {userMessage}
@@ -687,7 +702,15 @@ export function MessageThreadContent({
         style={{ height: `${virtualizer.getTotalSize()}px` }}
       >
         {activeVirtualStickyTurn ? (
-          <VirtualStickyUserHeader turn={activeVirtualStickyTurn} messages={messages} />
+          <VirtualStickyUserHeader
+            turn={activeVirtualStickyTurn}
+            messages={messages}
+            onForkMessage={onForkMessage}
+            onRedoMessage={onRedoMessage}
+            renderUserMessageEditor={renderUserMessageEditor}
+            editingUserMessageId={editingUserMessageId}
+            composerDraftId={composerDraftId}
+          />
         ) : null}
         {virtualItems.map((item) => {
           const seg = segments[item.index];

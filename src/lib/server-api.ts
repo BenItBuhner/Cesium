@@ -1008,6 +1008,16 @@ export async function handoffAgentConversation(
   });
 }
 
+export async function prepareRedoAgentConversation(
+  conversationId: string,
+  options: { beforeMessageId: string }
+): Promise<{ conversation: AgentConversationRecord }> {
+  return request(`/api/agents/conversations/${encodeURIComponent(conversationId)}/redo`, {
+    method: "POST",
+    body: JSON.stringify(options),
+  });
+}
+
 export async function forkAgentConversation(
   conversationId: string,
   options?: { upToMessageId?: string; beforeMessageId?: string }

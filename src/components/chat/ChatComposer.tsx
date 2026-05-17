@@ -386,6 +386,8 @@ interface ChatComposerProps {
   /** Empty thread: composer sits under tabs; otherwise docked above bottom. */
   layout?: "docked-bottom" | "empty-top";
   variant?: "docked" | "expanded";
+  /** Force the docked composer into its stacked multi-line layout without using the legacy expanded shell. */
+  forceMultiline?: boolean;
   /**
    * When set, replaces the default horizontal shell margin (non-expanded only).
    * Default: `mx-0` until the pane `@container` is ≥481px wide, then `mx-[10px]`; use `""` for flush.
@@ -741,6 +743,7 @@ export function ChatComposer({
   configLocked = false,
   layout = "docked-bottom",
   variant = "docked",
+  forceMultiline = false,
   shellMxClass,
   agentShellDockHeightExpand = false,
   onRequestHandoff,
@@ -2462,6 +2465,9 @@ const handleNativeComposerKeyDown = useCallback(
   const useNewDesignStickyMultiline =
     isNewDesign && variant === "docked" && !isExpanded;
   const isMultiLine = (() => {
+    if (forceMultiline) {
+      return true;
+    }
     if (!useNewDesignStickyMultiline) {
       return hookMeasuresMultiline;
     }
@@ -2477,6 +2483,7 @@ const handleNativeComposerKeyDown = useCallback(
     isNewDesign &&
     variant === "docked" &&
     !isExpanded &&
+    !forceMultiline &&
     !isMultiLine &&
     attachedImages.length === 0 &&
     !(showAgentShellGrowControls && agentShellDockTall);

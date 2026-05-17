@@ -146,43 +146,6 @@ describe("base URL resolution", () => {
     );
   });
 
-  test("uses native shell server URL for loopback active servers", () => {
-    const mockWindow = installMockWindow() as ReturnType<typeof installMockWindow> & {
-      __CESIUM_NATIVE_SHELL__?: unknown;
-    };
-    mockWindow.location.hostname = "10.0.2.2";
-    mockWindow.location.host = "10.0.2.2:3000";
-    mockWindow.location.origin = "http://10.0.2.2:3000";
-    mockWindow.__CESIUM_NATIVE_SHELL__ = {
-      platform: "android",
-      serverBaseUrl: "http://10.0.2.2:9100",
-      source: "react-native-webview",
-    };
-
-    assert.equal(
-      resolveClientServerBaseUrlForCurrentWindow("http://localhost:9107"),
-      "http://10.0.2.2:9100"
-    );
-  });
-
-  test("keeps non-loopback active servers in native shell", () => {
-    const mockWindow = installMockWindow() as ReturnType<typeof installMockWindow> & {
-      __CESIUM_NATIVE_SHELL__?: unknown;
-    };
-    mockWindow.location.hostname = "10.0.2.2";
-    mockWindow.location.host = "10.0.2.2:3000";
-    mockWindow.location.origin = "http://10.0.2.2:3000";
-    mockWindow.__CESIUM_NATIVE_SHELL__ = {
-      platform: "android",
-      serverBaseUrl: "http://10.0.2.2:9100",
-      source: "react-native-webview",
-    };
-
-    assert.equal(
-      resolveClientServerBaseUrlForCurrentWindow("https://cesium.example.com"),
-      "https://cesium.example.com"
-    );
-  });
 });
 
 describe("per-server auth storage", () => {

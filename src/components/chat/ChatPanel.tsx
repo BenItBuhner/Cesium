@@ -59,6 +59,7 @@ import { useAgentConversations } from "@/components/chat/AgentConversationsConte
 import { useWorkbenchNotifications } from "@/components/notifications/WorkbenchNotificationProvider";
 import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
 import { useUserPreferences } from "@/components/preferences/UserPreferencesProvider";
+import { useIsCesiumDesktopApp } from "@/lib/desktop-environment";
 import { WORKBENCH_NOTIFICATION_KIND } from "@/components/notifications/workbench-notification-types";
 import {
   createWorkspaceWindow,
@@ -68,6 +69,7 @@ import {
   generateDraftTitle,
   handoffAgentConversation,
   patchAgentConversationMetadata,
+  prepareRedoAgentConversation,
   saveWorkspaceWindowSession,
   updateAgentConversationConfig,
 } from "@/lib/server-api";
@@ -264,6 +266,7 @@ function isPersistedConversationTabId(tabId: string): boolean {
 export function ChatPanel() {
   const { openAt } = useWorkbenchContextMenu();
   const { chatTrailingWindowControlsVisible } = useWorkbench();
+  const isDesktopApp = useIsCesiumDesktopApp();
   const {
     composerDrafts,
     composerSelections,
@@ -312,11 +315,14 @@ clearPendingConfigForConversation,
   const { experimentalIpadWindowedTabInset } = useUserPreferences();
   const padTabsForWindowChrome =
     experimentalIpadWindowedTabInset && chatTrailingWindowControlsVisible;
+  const electronChatTrailingChrome =
+    isDesktopApp && chatTrailingWindowControlsVisible;
   const [recentChatsModalOpen, setRecentChatsModalOpen] = useState(false);
   const [chatTabRenameTargetId, setChatTabRenameTargetId] = useState<string | null>(
 null
 );
   const [redoMessageDraft, setRedoMessageDraft] = useState<RedoMessageDraft | null>(null);
+  const redoEditorRef = useRef<HTMLDivElement>(null);
 const chatDraftRef = useRef(workspaceSession.chat);
   const tabsRef = useRef<ChatTab[]>(workspaceSession.chat.tabs);
   const composerDraftsRef = useRef(composerDrafts);
@@ -703,6 +709,33 @@ workspaceSession.chat.mode,
   useEffect(() => {
     setRedoMessageDraft(null);
   }, [activeConversation?.id]);
+  useEffect(() => {
+    if (!redoMessageDraft) {
+      return;
+    }
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Node)) {
+        return;
+      }
+      const editor = redoEditorRef.current;
+      if (editor?.contains(target)) {
+        return;
+      }
+      if (
+        target instanceof Element &&
+        (target.closest("[data-ide-composer-floating-popover]") ||
+          target.closest("#composer-autocomplete"))
+      ) {
+        return;
+      }
+      setRedoMessageDraft(null);
+    };
+
+    document.addEventListener("pointerdown", handlePointerDown, true);
+    return () => document.removeEventListener("pointerdown", handlePointerDown, true);
+  }, [redoMessageDraft]);
   const recentConversations = useMemo(
     () =>
       conversations
@@ -1936,32 +1969,27 @@ workspaceSession.chat.model,
       }
 
       try {
-        const result = await forkAgentConversation(activeConversation.id, {
+        const result = await prepareRedoAgentConversation(activeConversation.id, {
           beforeMessageId: redoMessageDraft.messageId,
         });
-        let nextConversationId = result.conversation.id;
+        let nextConversationId = activeConversation.id;
         let nextConversation = result.conversation;
 
-        const forkedConversations = await refreshConversations();
-        nextConversation =
-          forkedConversations.find((conversation) => conversation.id === nextConversationId) ??
-          nextConversation;
-
         if (redoMessageDraft.backendId !== nextConversation.config.backendId) {
-          const handoffResult = await handoffAgentConversation(
-            nextConversationId,
-            redoMessageDraft.backendId
-          );
-          nextConversationId = handoffResult.newConversationId;
-          const handedOffConversations = await refreshConversations();
-          nextConversation =
-            handedOffConversations.find(
-              (conversation) => conversation.id === nextConversationId
-            ) ?? nextConversation;
+          nextConversation = {
+            ...nextConversation,
+            config: {
+              ...nextConversation.config,
+              backendId: redoMessageDraft.backendId,
+            },
+          };
         }
 
         const modelId = redoMessageDraft.model.modelValue ?? redoMessageDraft.model.id;
         const configPatch: Record<string, unknown> = {};
+        if (redoMessageDraft.backendId !== result.conversation.config.backendId) {
+          configPatch.backendId = redoMessageDraft.backendId;
+        }
         if (redoMessageDraft.mode !== nextConversation.config.mode) {
           configPatch.mode = redoMessageDraft.mode;
         }
@@ -1986,24 +2014,6 @@ workspaceSession.chat.model,
 
         const snapshot = await fetchAgentConversationSnapshot(nextConversationId);
         mergeConversationSnapshot(snapshot.snapshot);
-        setTabs((current) => {
-          const existingTab = current.find((tab) => tab.id === nextConversationId);
-          if (existingTab) {
-            return current.map((tab) => ({
-              ...tab,
-              active: tab.id === nextConversationId,
-            }));
-          }
-          return [
-            ...current.map((tab) => ({ ...tab, active: false })),
-            {
-              id: nextConversationId,
-              title: nextConversation.title,
-              active: true,
-            },
-          ];
-        });
-        unhideConversationIds([nextConversationId]);
         setRedoMessageDraft(null);
         return await promptConversation(nextConversationId, text, attachments);
       } catch (error) {
@@ -2025,9 +2035,6 @@ workspaceSession.chat.model,
       promptConversation,
       pushNotification,
       redoMessageDraft,
-      refreshConversations,
-      setTabs,
-      unhideConversationIds,
       upsertConversation,
     ]
   );
@@ -2052,19 +2059,7 @@ workspaceSession.chat.model,
       ) as EditorMode;
 
       return (
-        <div className="flex flex-col gap-[6px]">
-          <div className="flex items-center justify-between px-[2px]">
-            <span className="font-sans text-[11px] text-[var(--text-secondary)]">
-              Redo message
-            </span>
-            <button
-              type="button"
-              onClick={() => setRedoMessageDraft(null)}
-              className="rounded-[5px] px-[6px] py-[2px] font-sans text-[11px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-card-hover)] hover:text-[var(--text-primary)]"
-            >
-              Cancel
-            </button>
-          </div>
+        <div ref={redoEditorRef} className="flex min-h-[180px] flex-col">
           <ChatComposer
             key={`redo-${redoMessageDraft.messageId}`}
             mode={redoMode}
@@ -2118,6 +2113,7 @@ workspaceSession.chat.model,
             configLocked={false}
             onSubmit={(text, attachments) => submitRedoMessageDraft(text, attachments)}
             layout="empty-top"
+            variant="expanded"
             shellMxClass=""
             draftAttachments={redoMessageDraft.attachments}
             onDraftAttachmentsChange={(next) =>
@@ -2459,6 +2455,7 @@ onDraftAttachmentsChange={(next) =>
           onReorderTabs={handleReorderChatTabs}
           onRenameTab={handleRenameChatTab}
           padTrailingForWindowChrome={padTabsForWindowChrome}
+          electronTrailingChromeMargin={electronChatTrailingChrome}
           externalRenameTabId={chatTabRenameTargetId}
           onExternalRenameConsumed={() => setChatTabRenameTargetId(null)}
         />
