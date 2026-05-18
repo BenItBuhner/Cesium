@@ -16,6 +16,7 @@ import {
   createSshWorkspace,
   getSshWorkspaceMetadata,
   probeSshConnection,
+  removeSshWorkspaceMetadata,
   pullSshWorkspace,
   pushSshWorkspace,
 } from "../lib/ssh-workspaces.js";
@@ -531,6 +532,7 @@ workspaceRoutes.delete("/api/workspaces/:workspaceId", async (c) => {
   const workspaceId = c.req.param("workspaceId");
   try {
     await removeWorkspace(workspaceId);
+    await removeSshWorkspaceMetadata(workspaceId);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Delete failed.";
     const status = message.startsWith("Unknown workspace") ? 404 : 400;

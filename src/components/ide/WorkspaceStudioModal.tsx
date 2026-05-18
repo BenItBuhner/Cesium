@@ -90,6 +90,8 @@ export function WorkspaceStudioModal({
   const [sshRemoteRepoUrl, setSshRemoteRepoUrl] = useState("");
   const [sshRemoteCloneFolderName, setSshRemoteCloneFolderName] = useState("");
   const [sshConnectedLabel, setSshConnectedLabel] = useState<string | null>(null);
+  const [sshAuthExpanded, setSshAuthExpanded] = useState(false);
+  const [sshAuthError, setSshAuthError] = useState<string | null>(null);
   const [activeSshMetadata, setActiveSshMetadata] =
     useState<SshWorkspaceMetadata | null>(null);
   const [worktreeBusy, setWorktreeBusy] = useState<string | null>(null);
@@ -124,6 +126,8 @@ export function WorkspaceStudioModal({
     setSshNewDirectoryName("");
     setSshRemoteRepoUrl("");
     setSshRemoteCloneFolderName("");
+    setSshAuthExpanded(false);
+    setSshAuthError(null);
   }, [open, mode]);
 
   useEffect(() => {
@@ -362,6 +366,7 @@ export function WorkspaceStudioModal({
     try {
       const result = await probeSshWorkspaceConnection(connection);
       setSshConnectedLabel(`${result.username} @ ${result.host}`);
+      setSshAuthError(null);
       setSshWizardStep("remote");
       setSshRemoteSetupTab("browse");
       const listing = await browseSshWorkspaceDirectories({
@@ -373,11 +378,13 @@ export function WorkspaceStudioModal({
       setSshRemoteEntries(listing.entries);
       flash("Authenticated. Pick or prepare a folder on the host.");
     } catch (e) {
-      flash(
+      const message =
         e instanceof Error
           ? e.message
-          : "SSH connection failed. Add a password, key path, or use an agent."
-      );
+          : "SSH connection failed. Add a password, key path, or use an agent.";
+      setSshAuthError(message);
+      setSshAuthExpanded(true);
+      flash(message);
     } finally {
       setSshProbeBusy(false);
     }
@@ -907,8 +914,8 @@ export function WorkspaceStudioModal({
                   }}
                 >
                   <div className="rounded-[var(--radius-tab)] border border-[var(--palette-border)] bg-[var(--bg-deep)]/60 px-3 py-2 text-[12px] leading-5 text-[var(--text-secondary)]">
-                    We open a temporary SSH/SFTP channel to validate your login. Keys, passwords,
-                    or a local SSH agent may be tried depending on how the host is locked down.
+                    Enter a host and continue. We will try your SSH agent first, then ask for a
+                    password or key path only if the host requires one.
                   </div>
                   <label className="flex flex-col gap-1">
                     <span className="text-[11px] text-[var(--text-secondary)]">SSH target</span>
@@ -936,49 +943,68 @@ export function WorkspaceStudioModal({
                     />
                   </label>
                   <div className="rounded-[var(--radius-tab)] border border-[var(--palette-border)] px-3 py-2">
-                    <div className="mb-2 text-[11px] font-medium text-[var(--text-primary)]">
-                      Authentication
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <div className="text-[11px] font-medium text-[var(--text-primary)]">
+                          Authentication
+                        </div>
+                        <p className="mt-1 text-[11px] leading-5 text-[var(--text-secondary)]">
+                          Leave this closed for agent-based SSH. Open it after a failed attempt, or
+                          when you already know the host needs a password or key file.
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setSshAuthExpanded((value) => !value)}
+                        className="shrink-0 rounded-[var(--radius-tab)] border border-[var(--palette-border)] px-2 py-1 text-[11px] text-[var(--text-primary)] transition-colors hover:bg-[var(--bg-card)]"
+                      >
+                        {sshAuthExpanded ? "Hide" : "Add credentials"}
+                      </button>
                     </div>
-                    <p className="mb-3 text-[11px] leading-5 text-[var(--text-secondary)]">
-                      If connecting fails without these, paste a password, set your private key
-                      path, or configure an SSH agent—the host may require credentials before the
-                      next step.
-                    </p>
-                    <label className="mb-3 flex flex-col gap-1">
-                      <span className="text-[11px] text-[var(--text-secondary)]">
-                        Password (optional)
-                      </span>
-                      <input
-                        type="password"
-                        autoComplete="off"
-                        value={sshPassword}
-                        onChange={(event) => setSshPassword(event.target.value)}
-                        placeholder="SSH password when required"
-                        className="box-border w-full rounded-[var(--radius-tab)] border border-[var(--palette-border)] bg-[var(--bg-deep)] px-2 py-1.5 text-[13px] outline-none"
-                        aria-label="SSH password"
-                      />
-                    </label>
-                    <label className="flex flex-col gap-1">
-                      <span className="text-[11px] text-[var(--text-secondary)]">
-                        SSH private key path (optional)
-                      </span>
-                      <HardwareAwareTextInput
-                        placeholder="C:\\Users\\you\\.ssh\\id_ed25519"
-                        value={sshKeyPath}
-                        onChange={setSshKeyPath}
-                        onNativeKeyDown={() => {}}
-                        surfaceKind="palette"
-                        className="box-border w-full rounded-[var(--radius-tab)] border border-[var(--palette-border)] bg-[var(--bg-deep)] px-2 py-1.5 font-mono text-[12px] outline-none"
-                        ariaLabel="SSH key path"
-                      />
-                    </label>
+                    {sshAuthError ? (
+                      <div className="mt-2 rounded-[var(--radius-tab)] border border-[var(--palette-border)] bg-[var(--bg-deep)] px-2 py-1.5 text-[11px] leading-5 text-[var(--text-secondary)]">
+                        Connection failed: {sshAuthError}
+                      </div>
+                    ) : null}
+                    {sshAuthExpanded ? (
+                      <div className="mt-3 flex flex-col gap-3">
+                        <label className="flex flex-col gap-1">
+                          <span className="text-[11px] text-[var(--text-secondary)]">
+                            Password (optional)
+                          </span>
+                          <input
+                            type="password"
+                            autoComplete="off"
+                            value={sshPassword}
+                            onChange={(event) => setSshPassword(event.target.value)}
+                            placeholder="SSH password when required"
+                            className="box-border w-full rounded-[var(--radius-tab)] border border-[var(--palette-border)] bg-[var(--bg-deep)] px-2 py-1.5 text-[13px] outline-none"
+                            aria-label="SSH password"
+                          />
+                        </label>
+                        <label className="flex flex-col gap-1">
+                          <span className="text-[11px] text-[var(--text-secondary)]">
+                            SSH private key path (optional)
+                          </span>
+                          <HardwareAwareTextInput
+                            placeholder="C:\\Users\\you\\.ssh\\id_ed25519"
+                            value={sshKeyPath}
+                            onChange={setSshKeyPath}
+                            onNativeKeyDown={() => {}}
+                            surfaceKind="palette"
+                            className="box-border w-full rounded-[var(--radius-tab)] border border-[var(--palette-border)] bg-[var(--bg-deep)] px-2 py-1.5 font-mono text-[12px] outline-none"
+                            ariaLabel="SSH key path"
+                          />
+                        </label>
+                      </div>
+                    ) : null}
                   </div>
                   <button
                     type="submit"
                     disabled={sshProbeBusy}
                     className="rounded-[var(--radius-tab)] bg-[var(--text-primary)] px-3 py-2 text-[12px] font-semibold text-[var(--bg-deep)] disabled:opacity-50"
                   >
-                    {sshProbeBusy ? "Connecting…" : "Connect & continue"}
+                    {sshProbeBusy ? "Connecting…" : "Connect to host"}
                   </button>
                 </form>
               ) : (

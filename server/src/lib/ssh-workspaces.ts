@@ -267,6 +267,20 @@ export async function getSshWorkspaceMetadata(
   return metadata ? toPublicMetadata(metadata) : null;
 }
 
+export async function removeSshWorkspaceMetadata(workspaceId: string): Promise<void> {
+  const store = await readStore();
+  const nextWorkspaces = store.workspaces.filter(
+    (item) => item.workspaceId !== workspaceId
+  );
+  if (nextWorkspaces.length === store.workspaces.length) {
+    return;
+  }
+  await writeStore({
+    schemaVersion: 1,
+    workspaces: nextWorkspaces,
+  });
+}
+
 async function buildConnectConfig(input: {
   parsedTarget: ParsedSshTarget;
   keyPath?: string | null;
@@ -771,7 +785,7 @@ export async function cloneRemoteGitDirectoryOverSsh(
         throw new Error(detail);
       }
 
-      return listSshDirectories(sftp, parentRemotePath);
+      return listSshDirectories(sftp, destPath);
     }
   );
 }
@@ -815,8 +829,9 @@ export async function createRemoteSshDirectory(
     },
     async (client) => {
       const sftp = await openSftp(client);
-      await ensureRemoteDirectory(sftp, remoteJoin(remotePath, name));
-      return listSshDirectories(sftp, remotePath);
+      const createdPath = remoteJoin(remotePath, name);
+      await ensureRemoteDirectory(sftp, createdPath);
+      return listSshDirectories(sftp, createdPath);
     }
   );
 }
