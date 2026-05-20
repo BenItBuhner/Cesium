@@ -25,7 +25,7 @@ test("Codex collab tool raw is exposed through getToolRawUpdate", async () => {
   const raw = getToolRawUpdate(event);
   assert.ok(raw);
   assert.equal(raw?.type, "collab_tool_call");
-  assert.equal(classifyToolCallAsSubagentCard("codex-adapter", event), true);
+  assert.equal(classifyToolCallAsSubagentCard("codex-app-server", event), true);
 });
 
 test("Codex collab tool events project to subagent chat messages", async () => {
@@ -79,7 +79,7 @@ test("Codex collab tool events project to subagent chat messages", async () => {
   ] as const;
 
   const messages = projectAgentEventsToChatMessages(events as never, {
-    backendId: "codex-adapter",
+    backendId: "codex-app-server",
     workspaceRoot: "/home/bennett/projects/Cesium",
   });
   const subagent = messages.find((message) => message.type === "subagent");
@@ -179,7 +179,7 @@ test("Codex wait updates merge into the existing subagent card instead of creati
   ] as const;
 
   const messages = projectAgentEventsToChatMessages(events as never, {
-    backendId: "codex-adapter",
+    backendId: "codex-app-server",
     workspaceRoot: "/home/bennett/projects/Cesium",
   });
   const subagents = messages.filter((message) => message.type === "subagent");

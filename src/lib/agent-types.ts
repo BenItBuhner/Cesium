@@ -8,19 +8,21 @@ export type AgentConversationMode =
   | (string & {});
 
 export type AgentBackendId =
-  | "cursor-acp"
+  | "cesium-agent"
   | "cursor-sdk"
-  | "opencode-acp"
   | "opencode-server"
   | "gemini-acp"
-  | "codex-adapter"
   | "codex-app-server"
-  | "claude-adapter";
+  | "claude-code-sdk";
 
 export type AgentConversationStatus =
   | "idle"
   | "running"
+  | "pause_requested"
+  | "pausing"
+  | "paused"
   | "awaiting_permission"
+  | "awaiting_question"
   | "cancelled"
   | "failed"
   | "interrupted";
@@ -76,6 +78,11 @@ export type AgentPendingPermission = {
   options: AgentPermissionOption[];
 };
 
+export type AgentPendingQuestion = {
+  questionId: string;
+  requestedAt: number;
+};
+
 export type AgentProviderCapabilities = {
   supportsLoadSession: boolean;
   supportsModeSelection: boolean;
@@ -86,6 +93,9 @@ export type AgentProviderCapabilities = {
   supportsStructuredPlans: boolean;
   supportsTodos: boolean;
   supportsSessionResume: boolean;
+  supportsPromptImages: boolean;
+  supportsInlineReasoning: boolean;
+  supportsCompletionRetry: boolean;
 };
 
 export type AgentBackendInfo = {
@@ -279,6 +289,32 @@ export type AgentStoredEvent =
       transcript: AgentStoredEvent[];
       recentActivity?: string;
     }
+  | {
+      seq: number;
+      eventId: string;
+      conversationId: string;
+      createdAt: number;
+      kind: "question";
+      questionId: string;
+      prompt: string;
+      options: Array<{ id: string; label: string }>;
+      allowMultiple?: boolean;
+      status: "pending" | "answered" | "cancelled";
+      answer?: string | string[];
+      raw?: unknown;
+    }
+  | {
+      seq: number;
+      eventId: string;
+      conversationId: string;
+      createdAt: number;
+      kind: "compression_summary";
+      messageId: string;
+      summary: string;
+      retainedTurnCount: number;
+      compressedTurnCount: number;
+      raw?: unknown;
+    }
 | {
   seq: number;
   eventId: string;
@@ -317,6 +353,7 @@ export type AgentConversationRecord = {
   configOptions: AgentConfigOption[];
   capabilities: AgentProviderCapabilities;
   pendingPermission: AgentPendingPermission | null;
+  pendingQuestion: AgentPendingQuestion | null;
   lastError: string | null;
   experimental: boolean;
   /** Server-owned archive flag; null = visible in the default rail. */
@@ -381,11 +418,31 @@ export type AgentRailConversationSummary = Pick<
   mode: AgentConversationMode;
   experimental: boolean;
   hasPendingPermission: boolean;
+  serverId?: string;
+  serverLabel?: string;
+  workspaceKey?: string;
+  conversationKey?: string;
+  repositoryKey?: string;
+  repository?: AgentRailRepositoryInfo;
+};
+
+export type AgentRailRepositoryInfo = {
+  isGitRepo: boolean;
+  repoRoot?: string;
+  repoKey?: string;
+  currentBranch?: string | null;
+  worktreeBaseRoot?: string;
 };
 
 export type AgentConversationGroup = {
   workspace: WorkspaceRecord;
   conversations: AgentRailConversationSummary[];
+  serverId?: string;
+  serverLabel?: string;
+  workspaceKey?: string;
+  repositoryKey?: string;
+  repository?: AgentRailRepositoryInfo;
+  serverAuthRequired?: boolean;
 };
 
 export type AgentConversationGroupsResult = {

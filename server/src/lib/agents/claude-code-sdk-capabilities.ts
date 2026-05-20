@@ -12,6 +12,7 @@ const claudeCodeSdkCapabilities: AgentProviderCapabilities = {
   supportsSessionResume: true,
   supportsPromptImages: false,
   supportsInlineReasoning: true,
+  supportsCompletionRetry: false,
 };
 
 export function getClaudeCodeSdkCapabilities(): AgentProviderCapabilities {

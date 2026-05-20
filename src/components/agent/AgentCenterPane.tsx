@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useDeferredValue, useEffect, useMemo, useRef } from "react";
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { AskQuestionCard } from "@/components/chat/AskQuestionCard";
 import { ChatComposer } from "@/components/chat/ChatComposer";
 import { ComposerQueueDock } from "@/components/chat/ComposerQueueDock";
@@ -11,7 +11,10 @@ import {
   useOpenInEditor,
   useRegisterDesignCaptureComposer,
 } from "@/components/editor/OpenInEditorContext";
-import { askStepsFromMessage } from "@/lib/ask-question-utils";
+import {
+  findDockedAskQuestion,
+  hideDockedAskFromScroll,
+} from "@/lib/ask-question-dock";
 import {
   buildDraftModeOptionsForBackend,
   buildDraftModelOptionsForBackend,
@@ -30,20 +33,6 @@ import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvid
 import { AGENT_CENTER_CONTENT_CLASS } from "./agent-shell-layout";
 import { AgentNewChatLanding } from "./AgentNewChatLanding";
 import { useAgentShellState } from "./AgentShellStateContext";
-
-function partitionMessagesForDock(messages: ReturnType<typeof projectAgentEventsToChatMessages>): {
-  scrollMessages: ReturnType<typeof projectAgentEventsToChatMessages>;
-  dockedAsk: ReturnType<typeof projectAgentEventsToChatMessages>[number] | null;
-} {
-  const last = messages[messages.length - 1];
-  if (last?.type === "ask-question") {
-    return {
-      scrollMessages: messages.slice(0, -1),
-      dockedAsk: last,
-    };
-  }
-  return { scrollMessages: messages, dockedAsk: null };
-}
 
 function pickAvailableBackend(
   backends: AgentBackendInfo[],
@@ -74,6 +63,8 @@ export function AgentCenterPane() {
     createAndPromptConversation,
     promptConversation,
     cancelConversation,
+    pauseConversation,
+    resumeConversation,
     pendingConfigByConversationId,
     setPendingConfigForConversation,
     setConversationBackend,
@@ -85,6 +76,7 @@ export function AgentCenterPane() {
     refreshConversations,
     upsertConversation,
     answerPermissionForConversation,
+    answerQuestionForConversation,
     cancelPermissionForConversation,
     getConversationHistoryCursor,
     loadOlderConversationHistory,
@@ -126,10 +118,19 @@ export function AgentCenterPane() {
         : [],
     [conversation, deferredThreadEvents, workspaceInfo?.root]
   );
-  const { scrollMessages, dockedAsk } = useMemo(
-    () => partitionMessagesForDock(threadMessages),
-    [threadMessages]
+  const dockedAsk = useMemo(
+    () =>
+      findDockedAskQuestion({
+        events: rawThreadEvents,
+        conversation,
+      }),
+    [conversation, rawThreadEvents]
   );
+  const scrollMessages = useMemo(
+    () => hideDockedAskFromScroll(threadMessages, dockedAsk),
+    [dockedAsk, threadMessages]
+  );
+  const [submittingQuestion, setSubmittingQuestion] = useState(false);
   const historyCursor = useMemo(() => {
     if (!selectedConversationId) {
       return { hasOlder: false, loadingOlder: false };
@@ -139,10 +140,6 @@ export function AgentCenterPane() {
   const composerUserMessageHistory = useMemo(
     () => extractComposerUserMessageHistory(rawThreadEvents),
     [rawThreadEvents]
-  );
-  const dockedAskSteps = useMemo(
-    () => (dockedAsk ? askStepsFromMessage(dockedAsk) : []),
-    [dockedAsk]
   );
   const hasConversationHistoryLoaded =
     !!conversation && (conversation.lastEventSeq === 0 || rawThreadEvents.length > 0);
@@ -721,10 +718,26 @@ export function AgentCenterPane() {
         {!composerHiddenForExpanded && !showConversationTransitionState ? (
           <div className="pointer-events-none absolute inset-x-0 bottom-0 z-30">
             <div className="pointer-events-auto chat-bottom-dock">
-              {dockedAskSteps.length > 0 ? (
+              {dockedAsk && visibleConversationView ? (
                 <div className="pt-[8px] px-0 @min-[481px]:px-[10px]">
                   <div className={AGENT_CENTER_CONTENT_CLASS}>
-                    <AskQuestionCard steps={dockedAskSteps} dockAboveComposer />
+                    <AskQuestionCard
+                      steps={dockedAsk.steps}
+                      dockAboveComposer
+                      submitting={submittingQuestion}
+                      onSubmit={async (answer) => {
+                        setSubmittingQuestion(true);
+                        try {
+                          await answerQuestionForConversation(
+                            visibleConversationView.conversationId,
+                            dockedAsk.questionId,
+                            answer
+                          );
+                        } finally {
+                          setSubmittingQuestion(false);
+                        }
+                      }}
+                    />
                   </div>
                 </div>
               ) : null}
@@ -861,6 +874,17 @@ export function AgentCenterPane() {
                         ? cancelConversation(selectedConversationId)
                         : undefined
                     }
+                    onPause={() =>
+                      selectedConversationId
+                        ? pauseConversation(selectedConversationId)
+                        : undefined
+                    }
+                    onResume={() =>
+                      selectedConversationId
+                        ? resumeConversation(selectedConversationId)
+                        : undefined
+                    }
+                    conversationStatus={conversation?.status}
                     layout="docked-bottom"
                     shellMxClass=""
                     draftAttachments={composerDraftAttachments}

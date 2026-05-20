@@ -30,9 +30,35 @@ import {
   attachSessionToken,
   buildAuthenticatedUrl,
   clearStoredAuth,
+  getStoredSessionToken,
   syncAuthTokenFromResponse,
 } from "@/lib/auth-client";
-import { resolveClientServerBaseUrl } from "@/lib/resolve-server-base-url";
+import {
+  resolveClientServerBaseUrl,
+  resolveExplicitServerBaseUrlForCurrentWindow,
+} from "@/lib/resolve-server-base-url";
+import type {
+  McpConnectionStatus,
+  McpPresetDefinition,
+  McpServerConfig,
+  McpServerPublic,
+} from "@/lib/mcp-types";
+
+export type ServerRequestContext = {
+  serverId?: string;
+  baseUrl: string;
+  workspaceId?: string | null;
+};
+
+export function toServerRequestContext(input: {
+  id: string;
+  baseUrl: string;
+}): ServerRequestContext {
+  return {
+    serverId: input.id,
+    baseUrl: input.baseUrl,
+  };
+}
 
 let activeWorkspaceId: string | null = null;
 
@@ -40,13 +66,27 @@ export function setActiveWorkspaceId(workspaceId: string | null): void {
   activeWorkspaceId = workspaceId;
 }
 
-function getWorkspaceHeaders(skipWorkspaceHeader?: boolean): HeadersInit {
-  if (skipWorkspaceHeader || !activeWorkspaceId) {
+function getWorkspaceHeaders(
+  skipWorkspaceHeader?: boolean,
+  workspaceIdOverride?: string | null
+): HeadersInit {
+  const workspaceId = workspaceIdOverride !== undefined ? workspaceIdOverride : activeWorkspaceId;
+  if (skipWorkspaceHeader || !workspaceId) {
     return {};
   }
   return {
-    "x-opencursor-workspace-id": activeWorkspaceId,
+    "x-opencursor-workspace-id": workspaceId,
   };
+}
+
+function resolveServerRequestBaseUrl(server?: ServerRequestContext): string {
+  return server?.baseUrl
+    ? resolveExplicitServerBaseUrlForCurrentWindow(server.baseUrl)
+    : resolveClientServerBaseUrl();
+}
+
+function revisionKeyForServer(revisionKey: string, server?: ServerRequestContext): string {
+  return server?.baseUrl ? `${server.baseUrl}\0${revisionKey}` : revisionKey;
 }
 
 async function readErrorMessage(response: Response): Promise<string> {
@@ -100,7 +140,7 @@ export type AudioTranscriptionResult = {
 async function request<T>(
   input: string,
   init?: RequestInit,
-  options?: { skipWorkspaceHeader?: boolean; cache?: RequestCache }
+  options?: { skipWorkspaceHeader?: boolean; cache?: RequestCache; server?: ServerRequestContext }
 ): Promise<T> {
   // Mutating methods (POST/PUT/PATCH/DELETE) must never be cached; GETs rely on
   // the server's `Cache-Control: stale-while-revalidate` headers so repeat page
@@ -108,14 +148,17 @@ async function request<T>(
   const method = (init?.method ?? "GET").toUpperCase();
   const cacheMode: RequestCache = method === "GET" ? "default" : "no-store";
   const startedAt = performance.now();
-  const response = await fetch(`${resolveClientServerBaseUrl()}${input}`, {
+  const baseUrl = resolveServerRequestBaseUrl(options?.server);
+  const serverBaseUrl = options?.server?.baseUrl;
+  const hadSessionToken = Boolean(getStoredSessionToken(serverBaseUrl));
+  const response = await fetch(`${baseUrl}${input}`, {
     ...init,
     headers: Object.fromEntries(
       attachSessionToken({
         "Content-Type": "application/json",
-        ...getWorkspaceHeaders(options?.skipWorkspaceHeader),
+        ...getWorkspaceHeaders(options?.skipWorkspaceHeader, options?.server?.workspaceId),
         ...(init?.headers ?? {}),
-      }).entries()
+      }, serverBaseUrl).entries()
     ),
     credentials: "include",
     cache: options?.cache ?? cacheMode,
@@ -127,10 +170,10 @@ async function request<T>(
     serverMs: Number.parseFloat(response.headers.get("x-opencursor-perf-ms") ?? "0") || null,
   });
 
-  syncAuthTokenFromResponse(response);
+  syncAuthTokenFromResponse(response, serverBaseUrl);
 
-  if (response.status === 401) {
-    clearStoredAuth();
+  if (response.status === 401 && hadSessionToken) {
+    clearStoredAuth(serverBaseUrl);
   }
 
   if (!response.ok) {
@@ -164,23 +207,27 @@ function parseEtagToRevision(headerValue: string | null): number | null {
 async function requestWithEtag<T>(
   input: string,
   revisionKey: string,
-  options?: { skipWorkspaceHeader?: boolean }
+  options?: { skipWorkspaceHeader?: boolean; server?: ServerRequestContext }
 ): Promise<T> {
-  const response = await fetch(`${resolveClientServerBaseUrl()}${input}`, {
+  const baseUrl = resolveServerRequestBaseUrl(options?.server);
+  const serverBaseUrl = options?.server?.baseUrl;
+  const scopedRevisionKey = revisionKeyForServer(revisionKey, options?.server);
+  const hadSessionToken = Boolean(getStoredSessionToken(serverBaseUrl));
+  const response = await fetch(`${baseUrl}${input}`, {
     headers: Object.fromEntries(
       attachSessionToken({
         "Content-Type": "application/json",
-        ...getWorkspaceHeaders(options?.skipWorkspaceHeader),
-      }).entries()
+        ...getWorkspaceHeaders(options?.skipWorkspaceHeader, options?.server?.workspaceId),
+      }, serverBaseUrl).entries()
     ),
     credentials: "include",
     cache: "no-store",
   });
 
-  syncAuthTokenFromResponse(response);
+  syncAuthTokenFromResponse(response, serverBaseUrl);
 
-  if (response.status === 401) {
-    clearStoredAuth();
+  if (response.status === 401 && hadSessionToken) {
+    clearStoredAuth(serverBaseUrl);
   }
 
   if (!response.ok) {
@@ -189,7 +236,7 @@ async function requestWithEtag<T>(
 
   const etag = response.headers.get("etag");
   if (etag) {
-    etagRegistry.set(revisionKey, etag);
+    etagRegistry.set(scopedRevisionKey, etag);
   }
 
   return (await response.json()) as T;
@@ -209,12 +256,17 @@ async function mutateWithEtag(
     method?: "PUT" | "POST" | "PATCH";
     keepalive?: boolean;
     skipWorkspaceHeader?: boolean;
+    server?: ServerRequestContext;
   }
 ): Promise<{ revision?: number; etag: string | null }> {
-  const cachedEtag = etagRegistry.get(revisionKey);
+  const baseUrl = resolveServerRequestBaseUrl(options?.server);
+  const serverBaseUrl = options?.server?.baseUrl;
+  const scopedRevisionKey = revisionKeyForServer(revisionKey, options?.server);
+  const cachedEtag = etagRegistry.get(scopedRevisionKey);
+  const hadSessionToken = Boolean(getStoredSessionToken(serverBaseUrl));
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
-    ...(getWorkspaceHeaders(options?.skipWorkspaceHeader) as Record<
+    ...(getWorkspaceHeaders(options?.skipWorkspaceHeader, options?.server?.workspaceId) as Record<
       string,
       string
     >),
@@ -222,26 +274,26 @@ async function mutateWithEtag(
   if (cachedEtag) {
     headers["If-Match"] = cachedEtag;
   }
-  const response = await fetch(`${resolveClientServerBaseUrl()}${input}`, {
+  const response = await fetch(`${baseUrl}${input}`, {
     method: options?.method ?? "PUT",
     body,
     keepalive: options?.keepalive,
-    headers: Object.fromEntries(attachSessionToken(headers).entries()),
+    headers: Object.fromEntries(attachSessionToken(headers, serverBaseUrl).entries()),
     credentials: "include",
     cache: "no-store",
   });
 
-  syncAuthTokenFromResponse(response);
+  syncAuthTokenFromResponse(response, serverBaseUrl);
 
-  if (response.status === 401) {
-    clearStoredAuth();
+  if (response.status === 401 && hadSessionToken) {
+    clearStoredAuth(serverBaseUrl);
   }
 
   if (response.status === 412) {
     // Stale revision — drop the cached tag so the next write succeeds (or a
     // fresh GET primes the registry). Consumers may choose to re-fetch and
     // retry; the default behaviour here is to surface the conflict.
-    etagRegistry.delete(revisionKey);
+    etagRegistry.delete(scopedRevisionKey);
     const etag = response.headers.get("etag");
     throw new Error(
       `Revision conflict: server rejected If-Match (current: ${etag ?? "unknown"})`
@@ -254,7 +306,7 @@ async function mutateWithEtag(
 
   const etag = response.headers.get("etag");
   if (etag) {
-    etagRegistry.set(revisionKey, etag);
+    etagRegistry.set(scopedRevisionKey, etag);
   }
   const revision = parseEtagToRevision(etag) ?? undefined;
   return { revision, etag };
@@ -275,6 +327,15 @@ export function buildAgentWebSocketUrl(workspaceId: string): string {
   return buildAuthenticatedUrl(base);
 }
 
+export function buildAgentWebSocketUrlForServer(
+  workspaceId: string,
+  server: ServerRequestContext
+): string {
+  const params = new URLSearchParams({ workspaceId });
+  const base = `${toWebSocketUrl(resolveServerRequestBaseUrl(server))}/ws/agent?${params.toString()}`;
+  return buildAuthenticatedUrl(base, server.baseUrl);
+}
+
 export async function fetchWorkspaceBootstrap(): Promise<{
   workspaces: WorkspaceRecord[];
   defaultWorkspaceId: string | null;
@@ -287,6 +348,21 @@ export async function fetchWorkspaceBootstrap(): Promise<{
   });
 }
 
+export async function fetchWorkspaceBootstrapForServer(
+  server: ServerRequestContext
+): Promise<{
+  workspaces: WorkspaceRecord[];
+  defaultWorkspaceId: string | null;
+  startupWorkspaceId: string | null;
+  recentWorkspaceIds: string[];
+  homeWorkspaceId: string | null;
+}> {
+  return request(`/api/workspaces/bootstrap`, undefined, {
+    skipWorkspaceHeader: true,
+    server,
+  });
+}
+
 export async function fetchWorkspaces(): Promise<{
   workspaces: WorkspaceRecord[];
   defaultWorkspaceId: string | null;
@@ -296,6 +372,21 @@ export async function fetchWorkspaces(): Promise<{
 }> {
   return request(`/api/workspaces`, undefined, {
     skipWorkspaceHeader: true,
+  });
+}
+
+export async function fetchWorkspacesForServer(
+  server: ServerRequestContext
+): Promise<{
+  workspaces: WorkspaceRecord[];
+  defaultWorkspaceId: string | null;
+  lastOpenedWorkspaceId: string | null;
+  recentWorkspaceIds: string[];
+  homeWorkspaceId: string | null;
+}> {
+  return request(`/api/workspaces`, undefined, {
+    skipWorkspaceHeader: true,
+    server,
   });
 }
 
@@ -589,6 +680,21 @@ export async function fetchWorkspaceGitStatus(workspaceId: string): Promise<{
   );
 }
 
+export async function initializeWorkspaceGitRepo(workspaceId: string): Promise<{
+  ok: true;
+  workspace: WorkspaceRecord;
+  status: GitWorkspaceStatus;
+}> {
+  return request(
+    `/api/workspaces/${encodeURIComponent(workspaceId)}/git/init`,
+    {
+      method: "POST",
+      body: JSON.stringify({}),
+    },
+    { skipWorkspaceHeader: true }
+  );
+}
+
 export async function switchWorkspaceGitBranch(input: {
   workspaceId: string;
   branch: string;
@@ -850,8 +956,25 @@ function buildPageQuery(params?: {
 export async function listAgentConversations(params?: {
   limit?: number;
   cursor?: string | null;
+  cache?: RequestCache;
 }): Promise<AgentConversationListResult> {
-  return request(`/api/agents/conversations${buildPageQuery(params)}`);
+  return request(
+    `/api/agents/conversations${buildPageQuery(params)}`,
+    undefined,
+    params?.cache ? { cache: params.cache } : undefined
+  );
+}
+
+export async function listAgentConversationsForServer(
+  server: ServerRequestContext,
+  params?: {
+    limit?: number;
+    cursor?: string | null;
+  }
+): Promise<AgentConversationListResult> {
+  return request(`/api/agents/conversations${buildPageQuery(params)}`, undefined, {
+    server,
+  });
 }
 
 export async function listCrossWorkspaceAgentConversations(params?: {
@@ -862,6 +985,20 @@ export async function listCrossWorkspaceAgentConversations(params?: {
     `/api/agents/conversations/all${buildPageQuery(params)}`,
     undefined,
     { skipWorkspaceHeader: true }
+  );
+}
+
+export async function listCrossWorkspaceAgentConversationsForServer(
+  server: ServerRequestContext,
+  params?: {
+    limit?: number;
+    cursor?: string | null;
+  }
+): Promise<AgentConversationGroupsResult> {
+  return request(
+    `/api/agents/conversations/all${buildPageQuery(params)}`,
+    undefined,
+    { skipWorkspaceHeader: true, server }
   );
 }
 
@@ -947,12 +1084,13 @@ export async function updateAgentConversationConfig(
 
 export async function patchAgentConversationMetadata(
   conversationId: string,
-  patch: AgentConversationMetadataPatch
+  patch: AgentConversationMetadataPatch,
+  options?: { server?: ServerRequestContext }
 ): Promise<{ conversation: AgentConversationRecord }> {
   return request(`/api/agents/conversations/${encodeURIComponent(conversationId)}/metadata`, {
     method: "PATCH",
     body: JSON.stringify(patch),
-  });
+  }, options);
 }
 
 export async function promptAgentConversation(
@@ -965,6 +1103,15 @@ export async function promptAgentConversation(
   return request(`/api/agents/conversations/${encodeURIComponent(conversationId)}/prompt`, {
     method: "POST",
     body: JSON.stringify({ text, attachments, configOverride, ...ids }),
+  });
+}
+
+export async function retryAgentConversation(
+  conversationId: string
+): Promise<AgentConversationSnapshotResponse> {
+  return request(`/api/agents/conversations/${encodeURIComponent(conversationId)}/retry`, {
+    method: "POST",
+    body: JSON.stringify({}),
   });
 }
 
@@ -987,11 +1134,39 @@ export async function cancelAgentConversation(
   });
 }
 
+export async function pauseAgentConversation(
+  conversationId: string
+): Promise<{ conversation: AgentConversationRecord }> {
+  return request(`/api/agents/conversations/${encodeURIComponent(conversationId)}/pause`, {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+}
+
+export async function resumeAgentConversation(
+  conversationId: string
+): Promise<{ conversation: AgentConversationRecord }> {
+  return request(`/api/agents/conversations/${encodeURIComponent(conversationId)}/resume`, {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+}
+
 export async function answerAgentPermission(
   conversationId: string,
   input: { requestId: string; optionId?: string; cancelled?: boolean }
 ): Promise<{ conversation: AgentConversationRecord }> {
   return request(`/api/agents/conversations/${encodeURIComponent(conversationId)}/permission`, {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export async function answerAgentQuestion(
+  conversationId: string,
+  input: { questionId: string; answer: string }
+): Promise<{ conversation: AgentConversationRecord }> {
+  return request(`/api/agents/conversations/${encodeURIComponent(conversationId)}/question`, {
     method: "POST",
     body: JSON.stringify(input),
   });
@@ -1068,20 +1243,22 @@ export async function transcribeAudio(
 
 const GLOBAL_SETTINGS_REVISION_KEY = "settings:global";
 
-export async function fetchGlobalSettings(): Promise<{
+export async function fetchGlobalSettings(options?: {
+  server?: ServerRequestContext;
+}): Promise<{
   settings: GlobalSettingsState;
   revision?: number;
 }> {
   return requestWithEtag(
     `/api/settings/global`,
     GLOBAL_SETTINGS_REVISION_KEY,
-    { skipWorkspaceHeader: true }
+    { skipWorkspaceHeader: true, server: options?.server }
   );
 }
 
 export async function saveGlobalSettings(
   settings: GlobalSettingsState,
-  options?: { keepalive?: boolean }
+  options?: { keepalive?: boolean; server?: ServerRequestContext }
 ): Promise<void> {
   await mutateWithEtag(
     `/api/settings/global`,
@@ -1091,6 +1268,7 @@ export async function saveGlobalSettings(
       method: "PUT",
       keepalive: options?.keepalive,
       skipWorkspaceHeader: true,
+      server: options?.server,
     }
   );
 }
@@ -1122,16 +1300,24 @@ export type RefreshModelsResponse = {
   failed: string[];
 };
 
-export async function fetchModelToggleState(): Promise<ModelToggleStateResponse> {
-  return request<ModelToggleStateResponse>("/api/settings/models", {
-    method: "GET",
-  });
+export async function fetchModelToggleState(options?: {
+  server?: ServerRequestContext;
+}): Promise<ModelToggleStateResponse> {
+  return request<ModelToggleStateResponse>(
+    "/api/settings/models",
+    { method: "GET" },
+    { server: options?.server }
+  );
 }
 
-export async function refreshModelToggleState(): Promise<RefreshModelsResponse> {
-  return request<RefreshModelsResponse>("/api/settings/models/refresh", {
-    method: "POST",
-  });
+export async function refreshModelToggleState(options?: {
+  server?: ServerRequestContext;
+}): Promise<RefreshModelsResponse> {
+  return request<RefreshModelsResponse>(
+    "/api/settings/models/refresh",
+    { method: "POST" },
+    { server: options?.server }
+  );
 }
 
 export type ModelToggleUpdate = {
@@ -1141,12 +1327,17 @@ export type ModelToggleUpdate = {
 };
 
 export async function saveModelToggles(
-  toggles: ModelToggleUpdate[]
+  toggles: ModelToggleUpdate[],
+  options?: { server?: ServerRequestContext }
 ): Promise<ModelToggleStateResponse> {
-  return request<ModelToggleStateResponse>("/api/settings/models/toggles", {
-    method: "PUT",
-    body: JSON.stringify({ toggles }),
-  });
+  return request<ModelToggleStateResponse>(
+    "/api/settings/models/toggles",
+    {
+      method: "PUT",
+      body: JSON.stringify({ toggles }),
+    },
+    { server: options?.server }
+  );
 }
 
 export type CursorSdkCredentialStatus = {
@@ -1182,6 +1373,170 @@ export async function deleteCursorSdkApiKey(): Promise<{
   return request<{ ok: true; status: CursorSdkCredentialStatus }>("/api/settings/cursor-sdk", {
     method: "DELETE",
   });
+}
+
+export type CesiumProviderKind =
+  | "openai-chat-completions"
+  | "openai-responses"
+  | "openai-realtime"
+  | "anthropic"
+  | "google-genai"
+  | "openai-compatible";
+
+export type CesiumProviderKeyStatus = {
+  id: string;
+  providerId: string;
+  label: string;
+  apiKind: CesiumProviderKind;
+  baseUrl?: string;
+  source: "env" | "stored";
+  createdAt: number;
+  updatedAt: number;
+  lastFour?: string;
+};
+
+export type CesiumCustomProvider = {
+  id: string;
+  name: string;
+  apiKind: CesiumProviderKind;
+  baseUrl?: string;
+  models: Array<{
+    id: string;
+    name: string;
+    contextWindow?: number;
+    supportsTools?: boolean;
+    supportsReasoning?: boolean;
+  }>;
+};
+
+export type CesiumAgentSettingsPayload = {
+  schemaVersion: 1;
+  updatedAt: number;
+  configured: boolean;
+  defaultProviderKeyId: string | null;
+  defaultModelId: string;
+  defaultApiKind: CesiumProviderKind;
+  compression: {
+    enabled: boolean;
+    modelId: string | null;
+    thresholdRatio: number;
+  };
+  toolPermissions: {
+    editFile: "ask" | "allow" | "deny";
+    terminal: "ask" | "allow" | "deny";
+  };
+  providerKeys: CesiumProviderKeyStatus[];
+  customProviders: CesiumCustomProvider[];
+};
+
+export type CesiumModelCatalogEntry = {
+  providerId: string;
+  providerName: string;
+  providerApiBaseUrl?: string;
+  providerDocUrl?: string;
+  modelId: string;
+  modelName: string;
+  apiKind: CesiumProviderKind;
+  supportsTools: boolean;
+  supportsReasoning: boolean;
+  supportsStructuredOutput: boolean;
+  contextWindow?: number;
+  outputLimit?: number;
+};
+
+export async function fetchCesiumAgentSettings(): Promise<{
+  settings: CesiumAgentSettingsPayload;
+}> {
+  return request<{ settings: CesiumAgentSettingsPayload }>("/api/settings/cesium-agent", {
+    method: "GET",
+  });
+}
+
+export async function patchCesiumAgentSettings(
+  patch: Partial<
+    Pick<
+      CesiumAgentSettingsPayload,
+      | "defaultProviderKeyId"
+      | "defaultModelId"
+      | "defaultApiKind"
+      | "compression"
+      | "toolPermissions"
+      | "customProviders"
+    >
+  >
+): Promise<{ ok: true; settings: CesiumAgentSettingsPayload }> {
+  return request<{ ok: true; settings: CesiumAgentSettingsPayload }>("/api/settings/cesium-agent", {
+    method: "PATCH",
+    body: JSON.stringify(patch),
+  });
+}
+
+export async function saveCesiumProviderKey(input: {
+  id?: string;
+  providerId: string;
+  label?: string;
+  apiKind: CesiumProviderKind;
+  apiKey: string;
+  baseUrl?: string;
+}): Promise<{ ok: true; settings: CesiumAgentSettingsPayload }> {
+  return request<{ ok: true; settings: CesiumAgentSettingsPayload }>(
+    "/api/settings/cesium-agent/provider-key",
+    {
+      method: "PUT",
+      body: JSON.stringify(input),
+    }
+  );
+}
+
+export async function deleteCesiumProviderKey(
+  id: string
+): Promise<{ ok: true; settings: CesiumAgentSettingsPayload }> {
+  return request<{ ok: true; settings: CesiumAgentSettingsPayload }>(
+    `/api/settings/cesium-agent/provider-key/${encodeURIComponent(id)}`,
+    {
+      method: "DELETE",
+    }
+  );
+}
+
+export async function fetchCesiumModelCatalog(): Promise<{
+  models: CesiumModelCatalogEntry[];
+}> {
+  return request<{ models: CesiumModelCatalogEntry[] }>("/api/settings/cesium-agent/models", {
+    method: "GET",
+  });
+}
+
+export async function refreshCesiumModelCatalog(): Promise<{
+  ok: true;
+  models: CesiumModelCatalogEntry[];
+}> {
+  return request<{ ok: true; models: CesiumModelCatalogEntry[] }>(
+    "/api/settings/cesium-agent/models/refresh",
+    {
+      method: "POST",
+    }
+  );
+}
+
+export type CesiumDiscoveredProviderModel = {
+  id: string;
+  name: string;
+  contextWindow?: number;
+};
+
+export async function discoverCesiumProviderModels(input: {
+  apiKind: CesiumProviderKind;
+  apiKey: string;
+  baseUrl: string;
+}): Promise<{ ok: true; models: CesiumDiscoveredProviderModel[] }> {
+  return request<{ ok: true; models: CesiumDiscoveredProviderModel[] }>(
+    "/api/settings/cesium-agent/providers/discover",
+    {
+      method: "POST",
+      body: JSON.stringify(input),
+    }
+  );
 }
 
 export async function fetchTree(depth?: number): Promise<{
@@ -1743,4 +2098,105 @@ export async function captureRenderedBrowserElementScreenshot(
   }
   const payload = (await response.json()) as { imageDataUrl?: string | null };
   return payload.imageDataUrl ?? null;
+}
+
+async function mcpJsonRequest<T>(
+  path: string,
+  init?: RequestInit & { workspaceId?: string | null }
+): Promise<T> {
+  const response = await fetch(`${resolveClientServerBaseUrl()}${path}`, {
+    ...init,
+    headers: Object.fromEntries(
+      attachSessionToken({
+        ...(init?.headers ?? {}),
+        ...getWorkspaceHeaders(false, init?.workspaceId),
+        ...(init?.body ? { "Content-Type": "application/json" } : {}),
+      }).entries()
+    ),
+    credentials: "include",
+    cache: "no-store",
+  });
+  syncAuthTokenFromResponse(response);
+  if (response.status === 401) {
+    clearStoredAuth();
+    throw new Error("Unauthorized");
+  }
+  if (!response.ok) {
+    const payload = (await response.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(payload?.error ?? `Request failed (${response.status})`);
+  }
+  return (await response.json()) as T;
+}
+
+export async function fetchMcpPresets(): Promise<McpPresetDefinition[]> {
+  const result = await mcpJsonRequest<{ presets: McpPresetDefinition[] }>("/api/mcp/presets");
+  return result.presets;
+}
+
+export async function fetchMcpServers(workspaceId: string): Promise<McpServerPublic[]> {
+  const result = await mcpJsonRequest<{ servers: McpServerPublic[] }>(
+    `/api/workspaces/${encodeURIComponent(workspaceId)}/mcp/servers`,
+    { workspaceId }
+  );
+  return result.servers;
+}
+
+export async function upsertMcpServer(
+  workspaceId: string,
+  input: {
+    presetId?: string;
+    server?: Partial<McpServerConfig> & { label: string };
+    secretValues?: Record<string, string>;
+  }
+): Promise<McpServerPublic> {
+  const result = await mcpJsonRequest<{ server: McpServerPublic }>(
+    `/api/workspaces/${encodeURIComponent(workspaceId)}/mcp/servers`,
+    {
+      method: "PUT",
+      workspaceId,
+      body: JSON.stringify(input),
+    }
+  );
+  return result.server;
+}
+
+export async function deleteMcpServer(
+  workspaceId: string,
+  serverId: string
+): Promise<void> {
+  await mcpJsonRequest(`/api/workspaces/${encodeURIComponent(workspaceId)}/mcp/servers/${encodeURIComponent(serverId)}`, {
+    method: "DELETE",
+    workspaceId,
+  });
+}
+
+export async function testMcpServerConnection(
+  workspaceId: string,
+  serverId: string
+): Promise<McpConnectionStatus> {
+  const result = await mcpJsonRequest<{ status: McpConnectionStatus }>(
+    `/api/workspaces/${encodeURIComponent(workspaceId)}/mcp/servers/${encodeURIComponent(serverId)}/test`,
+    { method: "POST", workspaceId }
+  );
+  return result.status;
+}
+
+export async function refreshMcpServerMirror(
+  workspaceId: string,
+  serverId: string
+): Promise<void> {
+  await mcpJsonRequest(
+    `/api/workspaces/${encodeURIComponent(workspaceId)}/mcp/servers/${encodeURIComponent(serverId)}/refresh`,
+    { method: "POST", workspaceId }
+  );
+}
+
+export async function startMcpOAuth(
+  workspaceId: string,
+  serverId: string
+): Promise<{ authorizationUrl: string; state: string }> {
+  return await mcpJsonRequest(
+    `/api/workspaces/${encodeURIComponent(workspaceId)}/mcp/oauth/${encodeURIComponent(serverId)}/start`,
+    { workspaceId }
+  );
 }

@@ -15,7 +15,9 @@ import {
   ScrollText,
 } from "lucide-react";
 import { CollapsibleHeight } from "./CollapsibleHeight";
+import { useTheme } from "@/components/theme/ThemeProvider";
 import { useOpenInEditor } from "@/components/editor/OpenInEditorContext";
+import { TOOL_CALL_DROPDOWN_MAX_HEIGHT_DEFAULT_PX } from "@/lib/theme-config";
 import { inferEditorLanguageFromPath } from "@/lib/editor-language";
 import { HorizontalFadedScroll } from "./HorizontalFadedScroll";
 import { PermissionRequestCard } from "./PermissionRequestCard";
@@ -82,7 +84,6 @@ interface WorkedSessionCardProps {
   onResolvePermission?: (requestId: string, optionId: string, commandHint?: string) => void;
 }
 
-const ENTRY_LIST_MAX_HEIGHT = 240;
 const TOOL_FILE_PREVIEW = 5;
 
 const NEAR_BOTTOM_PX = 48;
@@ -477,6 +478,9 @@ export function WorkedSessionCard({
   embeddedPermission = null,
   onResolvePermission,
 }: WorkedSessionCardProps) {
+  const { themeConfig } = useTheme();
+  const entryListMaxHeightPx =
+    themeConfig.toolCallDropdownMaxHeightPx ?? TOOL_CALL_DROPDOWN_MAX_HEIGHT_DEFAULT_PX;
   const { openExplorerFile } = useOpenInEditor();
   const isControlled = controlledOpen !== undefined;
   const [uncontrolledOpen, setUncontrolledOpen] = useState(defaultOpen);
@@ -815,7 +819,7 @@ export function WorkedSessionCard({
               onTouchEnd={handleTouchEnd}
               onTouchCancel={handleTouchEnd}
               className="ml-[2px] border-l border-[var(--border-subtle)] pl-[10px] overflow-y-auto hide-scrollbar-y"
-              style={{ maxHeight: ENTRY_LIST_MAX_HEIGHT }}
+              style={{ maxHeight: entryListMaxHeightPx }}
             >
               <div ref={contentMeasureRef} className="flex flex-col gap-[14px]">
                 {workedScrollRows.map((row) =>

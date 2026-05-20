@@ -9,20 +9,17 @@ import {
   type ServerConnectionsState,
   SERVER_CONNECTIONS_EVENT,
   normalizeServerBaseUrl,
+  getServerConnectionKey,
   markServerConnectionUsed,
   upsertServerConnection,
   writeStoredServerConnectionsState,
 } from "@/lib/server-connections";
 
-function getConfiguredServerBaseUrl(): string {
-  return (
-    process.env.NEXT_PUBLIC_SERVER_URL?.replace(/\/+$/, "") ??
-    "http://localhost:9107"
-  );
-}
+import { getConfiguredServerBaseUrl } from "@/lib/configured-server-base-url";
 
 export {
   SERVER_CONNECTIONS_EVENT,
+  getServerConnectionKey,
   normalizeServerBaseUrl,
   markServerConnectionUsed,
   upsertServerConnection,

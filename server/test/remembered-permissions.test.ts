@@ -36,7 +36,7 @@ test("global settings default remembered permissions to an empty list", async ()
 test("remembered agent permission rules are scoped and upserted", async () => {
   await saveRememberedAgentPermissionRule({
     workspaceId: "workspace-a",
-    backendId: "cursor-acp",
+    backendId: "cursor-sdk",
     toolKey: "acp:abc123",
     toolLabel: "Read package.json",
     decision: "allow",
@@ -46,7 +46,7 @@ test("remembered agent permission rules are scoped and upserted", async () => {
 
   const saved = await getRememberedAgentPermissionRule({
     workspaceId: "workspace-a",
-    backendId: "cursor-acp",
+    backendId: "cursor-sdk",
     toolKey: "acp:abc123",
   });
   assert.equal(saved?.decision, "allow");
@@ -54,7 +54,7 @@ test("remembered agent permission rules are scoped and upserted", async () => {
 
   await saveRememberedAgentPermissionRule({
     workspaceId: "workspace-a",
-    backendId: "cursor-acp",
+    backendId: "cursor-sdk",
     toolKey: "acp:abc123",
     toolLabel: "Read package.json",
     decision: "reject",
@@ -68,8 +68,44 @@ test("remembered agent permission rules are scoped and upserted", async () => {
 
   const wrongWorkspace = await getRememberedAgentPermissionRule({
     workspaceId: "workspace-b",
-    backendId: "cursor-acp",
+    backendId: "cursor-sdk",
     toolKey: "acp:abc123",
   });
   assert.equal(wrongWorkspace, undefined);
+});
+
+test("remembered permission backend ids are normalized from legacy harness ids", async () => {
+  await saveRememberedAgentPermissionRule({
+    workspaceId: "workspace-legacy",
+    backendId: "cesium",
+    toolKey: "cesium:terminal:npm test",
+    toolLabel: "Run npm test",
+    decision: "allow",
+    optionId: "allow_always",
+    optionKind: "allow_always",
+  });
+
+  const cesiumRule = await getRememberedAgentPermissionRule({
+    workspaceId: "workspace-legacy",
+    backendId: "cesium-agent",
+    toolKey: "cesium:terminal:npm test",
+  });
+  assert.equal(cesiumRule?.backendId, "cesium-agent");
+
+  await saveRememberedAgentPermissionRule({
+    workspaceId: "workspace-legacy",
+    backendId: "cursor-acp",
+    toolKey: "acp:legacy",
+    toolLabel: "Legacy cursor rule",
+    decision: "reject",
+    optionId: "reject_always",
+    optionKind: "reject_always",
+  });
+
+  const cursorRule = await getRememberedAgentPermissionRule({
+    workspaceId: "workspace-legacy",
+    backendId: "cursor-sdk",
+    toolKey: "acp:legacy",
+  });
+  assert.equal(cursorRule?.backendId, "cursor-sdk");
 });

@@ -4,14 +4,12 @@ import type { StorageDriver, StorageDriverKind } from "./driver.js";
 import type { AgentBackendId } from "../lib/agents/types.js";
 
 const ALL_BACKEND_IDS: AgentBackendId[] = [
-  "cursor-acp",
+  "cesium-agent",
   "cursor-sdk",
-  "opencode-acp",
   "opencode-server",
   "gemini-acp",
-  "codex-adapter",
   "codex-app-server",
-  "claude-adapter",
+  "claude-code-sdk",
 ];
 
 /**

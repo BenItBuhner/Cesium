@@ -49,6 +49,8 @@ export type WorkedSessionEntry =
       toolCallId?: string;
       /** Normalized action class for dropdown summaries and UI affordances. */
       toolKind?: string;
+      /** MCP config id when {@link toolKind} is `mcp` (Cesium `call_mcp_tool`, etc.). */
+      mcpServerId?: string;
       title: string;
       detail?: string;
       /** Full stdout/file/search payload kept behind a disclosure instead of inline. */

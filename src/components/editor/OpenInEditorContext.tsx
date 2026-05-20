@@ -138,6 +138,9 @@ export type ExpandedComposerController = {
   onSessionConfigOptionChange?: (configId: string, value: string) => void;
   onSubmit: (text: string, attachments?: ImageAttachment[]) => Promise<boolean | void> | boolean | void;
   onCancel?: () => Promise<void> | void;
+  onPause?: () => Promise<void> | void;
+  onResume?: () => Promise<void> | void;
+  conversationStatus?: import("@/lib/agent-types").AgentConversationStatus;
   busy?: boolean;
   configLocked?: boolean;
   /** Same terminal-style user prompt history as docked {@link ChatComposer}. */

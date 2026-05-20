@@ -19,11 +19,13 @@ export function AuthGate({ children }: { children: ReactNode }) {
     logout,
     refreshAuthStatus,
   } = useAuth();
-  const { activeServer, setActiveServer } = useServerConnections();
+  const { activeServer, serverStatusById, setActiveServer } = useServerConnections();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [remember, setRemember] = useState(true);
   const [manageServersOpen, setManageServersOpen] = useState(false);
+  const activeServerHealth = serverStatusById[activeServer.id]?.health ?? "unknown";
+  const activeServerRequiresAuth = activeServerHealth === "auth_required";
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -41,7 +43,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
     );
   }
 
-  if ((!enabled && !connectionError) || authenticated) {
+  if ((!enabled && !activeServerRequiresAuth && !connectionError) || authenticated) {
     return <>{children}</>;
   }
 

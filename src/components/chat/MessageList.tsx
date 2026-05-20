@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, type ReactNode } from "react";
+import { useComposerEditorScrollFade } from "./composer-editor-scroll-fade";
 import { MessageThreadContent } from "./MessageThreadContent";
 import { useOpenInEditor } from "@/components/editor/OpenInEditorContext";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
@@ -415,6 +416,15 @@ export function MessageList({
       ? `pt-[10px] ${contentClassName}`
       : "pt-[10px]";
 
+  const fadeMeasureKey = `${messages.length}:${bottomDockVisible ? 1 : 0}:${loadingOlderHistory ? 1 : 0}`;
+  const { fade, onScroll: updateScrollFade } = useComposerEditorScrollFade(
+    scrollRootRef,
+    fadeMeasureKey
+  );
+  const scrollFadeEdgeVar = surface === "editor" ? "var(--bg-main)" : "var(--bg-panel)";
+  const scrollFadeGradTop = `linear-gradient(to bottom, ${scrollFadeEdgeVar}, transparent)`;
+  const scrollFadeGradBottom = `linear-gradient(to top, ${scrollFadeEdgeVar}, transparent)`;
+
   /**
    * Horizontal scroll inset follows the **pane** width (`@container`), not the viewport.
    * Uses **481px** so normal split/center panes keep the legacy 10px strip; `AGENT_CENTER_CONTENT_CLASS`
@@ -435,6 +445,7 @@ export function MessageList({
         }`}
         onScroll={(event) => {
           const root = event.currentTarget;
+          updateScrollFade();
           const scrollTop = root.scrollTop;
           stickToBottomRef.current = isNearBottom(root);
           pendingScrollTopRef.current = Math.round(scrollTop);
@@ -458,13 +469,27 @@ export function MessageList({
           }
         }}
       >
-        <div className={innerClass}>
+        <div className={`relative ${innerClass}`}>
+          {fade.top ? (
+            <div
+              className="pointer-events-none sticky top-0 z-[5] -mb-[28px] h-[28px] w-full shrink-0"
+              style={{ backgroundImage: scrollFadeGradTop }}
+              aria-hidden
+            />
+          ) : null}
           {loadingOlderHistory ? (
             <div className="mb-[10px] rounded-[var(--radius-tab)] bg-[var(--bg-card)] px-[10px] py-[6px] font-sans text-[12px] text-[var(--text-secondary)]">
               Loading older messages…
             </div>
           ) : null}
           {thread}
+          {fade.bottom ? (
+            <div
+              className="pointer-events-none sticky bottom-0 z-[5] mt-[-28px] h-[28px] w-full shrink-0"
+              style={{ backgroundImage: scrollFadeGradBottom }}
+              aria-hidden
+            />
+          ) : null}
         </div>
       </div>
     </div>

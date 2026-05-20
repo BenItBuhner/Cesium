@@ -5,6 +5,13 @@ import path from "node:path";
 import { readJsonFile } from "../persistence.js";
 import { getStorage } from "../../storage/runtime.js";
 import { getCursorSdkApiKey } from "../cursor-sdk-credentials.js";
+import {
+  getClaudeCodeSdkProxyModel,
+  getClaudeCodeSdkProxyModelName,
+  hasClaudeCodeSdkAuthConfig,
+  hasClaudeCodeSdkProxyConfig,
+} from "../claude-code-sdk-credentials.js";
+import { createCesiumAgentConfigOptions } from "../cesium-agent-settings.js";
 import { spawnSafeEnv } from "./spawn-env.js";
 import { CodexAppServerTransport } from "./codex-app-server-transport.js";
 import { OpenCodeServerClient, openCodeServerAuthFromEnv } from "./opencode-server-client.js";
@@ -1146,112 +1153,202 @@ async function createCursorSdkConfigOptions(): Promise<AgentConfigOption[]> {
   }
 }
 
+const CLAUDE_CODE_SDK_FALLBACK_MODELS: AgentConfigOption["options"] = [
+  {
+    value: "claude-sonnet-4-5",
+    name: "Claude Sonnet 4.5",
+    description: "Balanced Claude Code SDK default.",
+    metadata: { reasoningLevels: ["low", "medium", "high"] },
+  },
+  {
+    value: "claude-opus-4-7",
+    name: "Claude Opus 4.7",
+    description: "Highest capability model with xhigh/max effort support.",
+    metadata: { reasoningLevels: ["low", "medium", "high", "xhigh", "max"] },
+  },
+  {
+    value: "claude-opus-4-6",
+    name: "Claude Opus 4.6",
+    description: "High capability model with max effort support.",
+    metadata: { reasoningLevels: ["low", "medium", "high", "max"] },
+  },
+  {
+    value: "claude-haiku-4-5",
+    name: "Claude Haiku 4.5",
+    description: "Fast Claude model for lighter tasks.",
+    metadata: { reasoningLevels: ["low", "medium"] },
+  },
+];
+
+function claudeCodeSdkModelOptions(): AgentConfigOption["options"] {
+  if (!hasClaudeCodeSdkProxyConfig()) {
+    return CLAUDE_CODE_SDK_FALLBACK_MODELS;
+  }
+  const proxyModel = getClaudeCodeSdkProxyModel();
+  return [
+    {
+      value: proxyModel,
+      name: getClaudeCodeSdkProxyModelName(),
+      description: "Claude Code SDK routed through the configured model proxy.",
+      metadata: { reasoningLevels: ["low", "medium", "high", "xhigh", "max"] },
+    },
+    ...CLAUDE_CODE_SDK_FALLBACK_MODELS.filter((model) => model.value !== proxyModel),
+  ];
+}
+
+function createClaudeCodeSdkFallbackConfigOptions(
+  modelOptions: AgentConfigOption["options"] = claudeCodeSdkModelOptions()
+): AgentConfigOption[] {
+  return [
+    {
+      id: "mode",
+      name: "Mode",
+      category: "mode",
+      currentValue: "agent",
+      options: [
+        { value: "agent", name: "Agent", description: "Run Claude Code SDK with normal tool permissions." },
+        { value: "plan", name: "Plan", description: "Use native Claude plan mode without executing tools." },
+        { value: "ask", name: "Ask", description: "Answer and inspect with restrictive permissions." },
+        { value: "debug", name: "Debug", description: "Debug with the standard Claude Code tool profile." },
+      ],
+    },
+    {
+      id: "model",
+      name: "Model",
+      category: "model",
+      currentValue: modelOptions[0]?.value ?? "claude-sonnet-4-5",
+      options: modelOptions,
+    },
+    {
+      id: "permission_mode",
+      name: "Permission Mode",
+      category: "permission",
+      currentValue: "default",
+      options: [
+        { value: "default", name: "Default" },
+        { value: "acceptEdits", name: "Accept Edits" },
+        { value: "plan", name: "Plan" },
+        { value: "dontAsk", name: "Don't Ask" },
+        { value: "auto", name: "Auto" },
+        {
+          value: "bypassPermissions",
+          name: "Bypass Permissions",
+          description: "Requires OPENCURSOR_CLAUDE_CODE_SDK_ALLOW_BYPASS=1.",
+        },
+      ],
+    },
+    {
+      id: "effort",
+      name: "Reasoning Effort",
+      category: "thought_level",
+      currentValue: "medium",
+      options: [
+        { value: "low", name: "Low" },
+        { value: "medium", name: "Medium" },
+        { value: "high", name: "High" },
+        { value: "xhigh", name: "Extra High" },
+        { value: "max", name: "Max" },
+      ],
+    },
+    {
+      id: "thinking",
+      name: "Thinking",
+      category: "thought_level",
+      currentValue: "adaptive",
+      options: [
+        { value: "adaptive", name: "Adaptive" },
+        { value: "disabled", name: "Disabled" },
+      ],
+    },
+    {
+      id: "tool_profile",
+      name: "Tool Profile",
+      category: "other",
+      currentValue: "standard",
+      options: [
+        { value: "standard", name: "Standard", description: "Read, edit, search, bash, todos, and Agent." },
+        { value: "safe-readonly", name: "Safe Readonly", description: "Read/search/web tools only." },
+        { value: "full", name: "Full Claude Code", description: "All stock Claude Code tools, permission gated." },
+        { value: "plan", name: "Plan Only", description: "No built-in tool execution." },
+      ],
+    },
+    {
+      id: "max_turns",
+      name: "Max Turns",
+      category: "other",
+      currentValue: "20",
+      options: [
+        { value: "10", name: "10" },
+        { value: "20", name: "20" },
+        { value: "40", name: "40" },
+        { value: "80", name: "80" },
+      ],
+    },
+    {
+      id: "session_persistence",
+      name: "Session Persistence",
+      category: "other",
+      currentValue: "enabled",
+      options: [
+        { value: "enabled", name: "Enabled" },
+        { value: "disabled", name: "Ephemeral" },
+      ],
+    },
+  ];
+}
+
+function claudeSdkOptionsFromModels(
+  models: Array<{
+    value: string;
+    displayName?: string;
+    description?: string;
+    supportedEffortLevels?: string[];
+  }>
+): AgentConfigOption[] {
+  const options = models
+    .filter((model) => model.value?.trim())
+    .map((model) => ({
+      value: model.value,
+      name: model.displayName?.trim() || model.value,
+      description: model.description,
+      metadata:
+        Array.isArray(model.supportedEffortLevels) && model.supportedEffortLevels.length > 0
+          ? { reasoningLevels: model.supportedEffortLevels }
+          : undefined,
+    }));
+  return createClaudeCodeSdkFallbackConfigOptions(
+    options.length > 0 ? options : claudeCodeSdkModelOptions()
+  );
+}
+
+export async function createClaudeCodeSdkConfigOptions(): Promise<AgentConfigOption[]> {
+  if (!hasClaudeCodeSdkAuthConfig()) {
+    return createClaudeCodeSdkFallbackConfigOptions();
+  }
+  try {
+    await import("@anthropic-ai/claude-agent-sdk");
+    return claudeSdkOptionsFromModels([]);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    console.warn("[agents] Claude Code SDK model list failed (fallback catalog):", detail);
+    return createClaudeCodeSdkFallbackConfigOptions();
+  }
+}
+
 async function createSeedConfigOptions(backendId: AgentBackendId): Promise<AgentConfigOption[]> {
   switch (backendId) {
-    case "cursor-acp":
-      return createCursorCliConfigOptions();
+    case "cesium-agent":
+      return createCesiumAgentConfigOptions();
     case "cursor-sdk":
       return createCursorSdkConfigOptions();
-    case "opencode-acp":
-      return createOpenCodeCliConfigOptions();
     case "opencode-server":
       return createOpenCodeServerConfigOptions();
     case "gemini-acp":
       return createGeminiCliConfigOptions();
-    case "codex-adapter":
-      return createCodexSeedConfigOptions();
     case "codex-app-server":
       return createCodexAppServerConfigOptions();
-    case "claude-adapter":
-      return [
-        {
-          id: "mode",
-          name: "Mode",
-          category: "mode",
-          currentValue: "agent",
-          options: [{ value: "agent", name: "Agent" }],
-        },
-        {
-          id: "model",
-          name: "Model",
-          category: "model",
-          currentValue: "glm-5.1",
-          options: [
-            {
-              value: "glm-5.1",
-              name: "GLM 5.1",
-              description: "Claude Code routed through the local model proxy.",
-              metadata: {
-                reasoningLevels: ["low", "medium", "high", "max"],
-              },
-            },
-            {
-              value: "turbo",
-              name: "Turbo",
-              description: "Claude Code routed through the local model proxy.",
-              metadata: {
-                reasoningLevels: ["low", "medium", "high", "max"],
-              },
-            },
-            {
-              value: "precision",
-              name: "Precision",
-              description: "Claude Code routed through the local model proxy.",
-              metadata: {
-                reasoningLevels: ["low", "medium", "high", "max"],
-              },
-            },
-            {
-              value: "complete",
-              name: "Complete",
-              description: "Claude Code routed through the local model proxy.",
-              metadata: {
-                reasoningLevels: ["low", "medium", "high", "max"],
-              },
-            },
-            {
-              value: "glm-5",
-              name: "GLM 5",
-              description: "Claude Code routed through the local model proxy.",
-              metadata: {
-                reasoningLevels: ["low", "medium", "high", "max"],
-              },
-            },
-            {
-              value: "glm-5-lightning",
-              name: "GLM 5 Lightning",
-              description: "Claude Code routed through the local model proxy.",
-              metadata: {
-                reasoningLevels: ["low", "medium", "high", "max"],
-              },
-            },
-          ],
-        },
-        {
-          id: "permission",
-          name: "Permission Mode",
-          category: "permission",
-          currentValue: "plan",
-          options: [
-            { value: "plan", name: "Plan" },
-            { value: "acceptEdits", name: "Accept Edits" },
-            { value: "dontAsk", name: "Don't Ask" },
-            { value: "bypassPermissions", name: "Bypass Permissions" },
-          ],
-        },
-        {
-          id: "effort",
-          name: "Reasoning Effort",
-          category: "thought_level",
-          currentValue: "medium",
-          options: [
-            { value: "low", name: "Low" },
-            { value: "medium", name: "Medium" },
-            { value: "high", name: "High" },
-            { value: "max", name: "Max" },
-          ],
-        },
-      ];
+    case "claude-code-sdk":
+      return createClaudeCodeSdkConfigOptions();
     default:
       return [];
   }
@@ -1449,60 +1546,8 @@ function maybeInPlaceMigrate(
   backendId: AgentBackendId,
   cachedOptions: AgentConfigOption[]
 ): { upgraded: AgentConfigOption[]; needsReseed: boolean } | null {
-  if (backendId === "cursor-acp" && isStaleCursorAcpCache(cachedOptions)) {
-    return { upgraded: cachedOptions, needsReseed: true };
-  }
-
   if (backendId === "cursor-sdk" && isStaleCursorSdkCache(cachedOptions)) {
     return { upgraded: cachedOptions, needsReseed: true };
-  }
-
-  if (backendId === "codex-adapter") {
-    const hasReasoningLevels = cachedOptions.some(
-      (option) =>
-        option.category === "model" &&
-        option.options.some(
-          (value) =>
-            Array.isArray(value.metadata?.reasoningLevels) &&
-            value.metadata.reasoningLevels.length > 0
-        )
-    );
-    if (!hasReasoningLevels) {
-      return { upgraded: cachedOptions, needsReseed: true };
-    }
-    const mapped = cachedOptions.map((option) => {
-      if (
-        option.id === "model" &&
-        option.options.some((value) => value.value === "gpt-5.4-mini") &&
-        option.currentValue !== "gpt-5.4-mini"
-      ) {
-        return { ...option, currentValue: "gpt-5.4-mini" };
-      }
-      if (
-        option.id === "model_reasoning_effort" &&
-        option.options.some((value) => value.value === "low") &&
-        option.currentValue !== "low"
-      ) {
-        return { ...option, currentValue: "low" };
-      }
-      if (
-        option.id === "permission" &&
-        option.options.some((value) => value.value === "workspace-write") &&
-        option.currentValue !== "workspace-write"
-      ) {
-        return { ...option, currentValue: "workspace-write" };
-      }
-      return option;
-    });
-    const hasPermissionOption = mapped.some((option) => option.id === "permission");
-    const hasWebSearchOption = mapped.some((option) => option.id === "web_search");
-    if (!hasPermissionOption || !hasWebSearchOption) {
-      return { upgraded: cachedOptions, needsReseed: true };
-    }
-    if (JSON.stringify(mapped) !== JSON.stringify(cachedOptions)) {
-      return { upgraded: mapped, needsReseed: false };
-    }
-    return null;
   }
 
   if (backendId === "codex-app-server") {
@@ -1539,18 +1584,20 @@ function maybeInPlaceMigrate(
     }
   }
 
-  if (backendId === "claude-adapter") {
-    const hasGlm51 = cachedOptions.some(
-      (option) =>
-        option.category === "model" &&
-        option.options.some((value) => value.value === "glm-5.1")
-    );
-    const hasBypassPerms = cachedOptions.some(
-      (option) =>
-        option.category === "permission" &&
-        option.options.some((value) => value.value === "bypassPermissions")
-    );
-    if (!hasGlm51 || !hasBypassPerms) {
+  if (backendId === "claude-code-sdk") {
+    const hasModel = cachedOptions.some((option) => option.id === "model");
+    const hasPermission = cachedOptions.some((option) => option.id === "permission_mode");
+    const hasTools = cachedOptions.some((option) => option.id === "tool_profile");
+    const proxyModel = getClaudeCodeSdkProxyModel();
+    const hasConfiguredProxyModel =
+      !hasClaudeCodeSdkProxyConfig() ||
+      cachedOptions.some(
+        (option) =>
+          option.id === "model" &&
+          option.options.some((value) => value.value === proxyModel) &&
+          option.currentValue === proxyModel
+      );
+    if (!hasModel || !hasPermission || !hasTools || !hasConfiguredProxyModel) {
       return { upgraded: cachedOptions, needsReseed: true };
     }
   }

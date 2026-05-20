@@ -11,15 +11,12 @@ export type AgentBackendIconFilenames = {
 export const AGENT_BACKEND_ICON_FILES: Partial<
   Record<AgentBackendId, AgentBackendIconFilenames>
 > = {
-  "cursor-acp": { light: "Cursor-Light.svg", dark: "Cursor-Dark.svg" },
   "cursor-sdk": { light: "Cursor-Light.svg", dark: "Cursor-Dark.svg" },
-  "codex-adapter": { light: "Codex-Light.svg", dark: "Codex-Dark.svg" },
   "codex-app-server": { light: "Codex-Light.svg", dark: "Codex-Dark.svg" },
-  "claude-adapter": {
+  "claude-code-sdk": {
     light: "Claude-Code-Light.svg",
     dark: "Claude-Code-Dark.svg",
   },
-  "opencode-acp": { light: "OpenCode-Light.svg", dark: "OpenCode-Dark.svg" },
   "opencode-server": { light: "OpenCode-Light.svg", dark: "OpenCode-Dark.svg" },
   "gemini-acp": { light: "Gemini-CLI-Light.svg", dark: "Gemini-CLI-Dark.svg" },
 };

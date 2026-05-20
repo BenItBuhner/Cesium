@@ -1,5 +1,7 @@
 "use client";
 
+import { isLoopbackServerBaseUrl } from "@/lib/configured-server-base-url";
+
 export const SERVER_CONNECTIONS_STORAGE_KEY = "opencursor.server-connections";
 export const SERVER_CONNECTIONS_EVENT = "opencursor:server-connections-changed";
 
@@ -15,6 +17,8 @@ export type ServerConnection = {
 export type ServerConnectionsState = {
   version: 1;
   activeServerId: string | null;
+  /** Stores theme, shortcuts, models, and other cross-server preferences. */
+  defaultServerId: string | null;
   servers: ServerConnection[];
 };
 
@@ -61,7 +65,23 @@ export function normalizeServerBaseUrl(input: string): string {
 }
 
 export function getServerConnectionKey(baseUrl: string): string {
-  return normalizeServerBaseUrl(baseUrl);
+  const normalized = normalizeServerBaseUrl(baseUrl);
+  try {
+    const url = new URL(normalized);
+    const host = canonicalServerHost(url.hostname);
+    const port = url.port || (url.protocol === "https:" ? "443" : "80");
+    return `${url.protocol}//${host}:${port}`;
+  } catch {
+    return normalized;
+  }
+}
+
+function canonicalServerHost(hostname: string): string {
+  const lower = hostname.toLowerCase();
+  if (lower === "localhost" || lower === "::1" || /^127(?:\.\d{1,3}){3}$/.test(lower)) {
+    return "localhost";
+  }
+  return lower;
 }
 
 function deriveServerLabel(baseUrl: string): string {
@@ -98,7 +118,13 @@ function sanitizeServerConnection(raw: PartialServerConnection): ServerConnectio
   }
   try {
     const baseUrl = normalizeServerBaseUrl(raw.baseUrl);
-    const now = Date.now();
+    const updatedAt =
+      typeof raw.updatedAt === "number"
+        ? raw.updatedAt
+        : typeof raw.createdAt === "number"
+          ? raw.createdAt
+          : 0;
+    const createdAt = typeof raw.createdAt === "number" ? raw.createdAt : updatedAt;
     return {
       id: typeof raw.id === "string" && raw.id.trim() ? raw.id.trim() : fallbackId(),
       label:
@@ -106,9 +132,9 @@ function sanitizeServerConnection(raw: PartialServerConnection): ServerConnectio
           ? raw.label.trim()
           : deriveServerLabel(baseUrl),
       baseUrl,
-      createdAt: typeof raw.createdAt === "number" ? raw.createdAt : now,
-      updatedAt: typeof raw.updatedAt === "number" ? raw.updatedAt : now,
-      lastUsedAt: typeof raw.lastUsedAt === "number" ? raw.lastUsedAt : now,
+      createdAt,
+      updatedAt,
+      lastUsedAt: typeof raw.lastUsedAt === "number" ? raw.lastUsedAt : updatedAt,
     };
   } catch {
     return null;
@@ -118,9 +144,10 @@ function sanitizeServerConnection(raw: PartialServerConnection): ServerConnectio
 function dedupeServers(servers: ServerConnection[]): ServerConnection[] {
   const seenByBaseUrl = new Map<string, ServerConnection>();
   for (const server of servers) {
-    const existing = seenByBaseUrl.get(server.baseUrl);
+    const key = getServerConnectionKey(server.baseUrl);
+    const existing = seenByBaseUrl.get(key);
     if (!existing || existing.updatedAt < server.updatedAt) {
-      seenByBaseUrl.set(server.baseUrl, server);
+      seenByBaseUrl.set(key, server);
     }
   }
   return [...seenByBaseUrl.values()].sort((a, b) => {
@@ -131,11 +158,138 @@ function dedupeServers(servers: ServerConnection[]): ServerConnection[] {
   });
 }
 
+function pickDefaultServerId(
+  servers: ServerConnection[],
+  preferredDefaultId: unknown,
+  activeServerId: string | null
+): string | null {
+  if (servers.length === 0) {
+    return null;
+  }
+  if (servers.length === 1) {
+    return servers[0]?.id ?? null;
+  }
+  if (typeof preferredDefaultId === "string") {
+    const preferred = servers.find((server) => server.id === preferredDefaultId);
+    if (preferred) {
+      return preferred.id;
+    }
+  }
+  if (typeof activeServerId === "string") {
+    const active = servers.find((server) => server.id === activeServerId);
+    if (active) {
+      return active.id;
+    }
+  }
+  return null;
+}
+
+export function requiresDefaultServerSelection(state: ServerConnectionsState): boolean {
+  return state.servers.length > 1 && !getSettingsServerConnection(state);
+}
+
+export function getSettingsServerConnection(
+  state: ServerConnectionsState
+): ServerConnection | null {
+  if (state.servers.length === 0) {
+    return null;
+  }
+  if (state.servers.length === 1) {
+    return state.servers[0] ?? null;
+  }
+  if (!state.defaultServerId) {
+    return null;
+  }
+  return state.servers.find((server) => server.id === state.defaultServerId) ?? null;
+}
+
+function pickActiveServerId(
+  servers: ServerConnection[],
+  preferredActiveId: unknown
+): string | null {
+  if (servers.length === 0) {
+    return null;
+  }
+  if (typeof preferredActiveId === "string") {
+    const preferred = servers.find((server) => server.id === preferredActiveId);
+    if (preferred) {
+      return preferred.id;
+    }
+  }
+  return servers.reduce((best, server) =>
+    server.lastUsedAt > best.lastUsedAt ? server : best
+  ).id;
+}
+
+export function shouldApplyServerUrlFromSearch(
+  state: ServerConnectionsState,
+  candidateBaseUrl: string,
+  options?: { isElectron?: boolean }
+): boolean {
+  if (options?.isElectron) {
+    return true;
+  }
+  const normalized = normalizeServerBaseUrl(candidateBaseUrl);
+  const candidateKey = getServerConnectionKey(normalized);
+  const active =
+    state.servers.find((server) => server.id === state.activeServerId) ?? null;
+  if (active && getServerConnectionKey(active.baseUrl) === candidateKey) {
+    return false;
+  }
+  const existingServer =
+    state.servers.find((server) => getServerConnectionKey(server.baseUrl) === candidateKey) ?? null;
+  const isNewServer = !existingServer;
+  if (active && existingServer) {
+    const activeIsLoopback = isLoopbackServerBaseUrl(active.baseUrl);
+    const candidateIsLoopback = isLoopbackServerBaseUrl(normalized);
+    return !candidateIsLoopback || !activeIsLoopback;
+  }
+  if (active && isNewServer) {
+    const activeIsLoopback = isLoopbackServerBaseUrl(active.baseUrl);
+    const candidateIsLoopback = isLoopbackServerBaseUrl(normalized);
+    if (!candidateIsLoopback || !activeIsLoopback) {
+      return true;
+    }
+    return false;
+  }
+  if (active) {
+    return false;
+  }
+  if (isNewServer) {
+    return true;
+  }
+  return false;
+}
+
+export function applyServerUrlBootstrap(
+  state: ServerConnectionsState,
+  candidateBaseUrl: string,
+  options?: { force?: boolean; isElectron?: boolean }
+): ServerConnectionsState {
+  const normalized = normalizeServerBaseUrl(candidateBaseUrl);
+  const candidateKey = getServerConnectionKey(normalized);
+  if (
+    !options?.force &&
+    !shouldApplyServerUrlFromSearch(state, normalized, { isElectron: options?.isElectron })
+  ) {
+    return state;
+  }
+  const upserted = upsertServerConnection(state, {
+    label: deriveServerLabel(normalized),
+    baseUrl: normalized,
+  });
+  const server = upserted.servers.find(
+    (entry) => getServerConnectionKey(entry.baseUrl) === candidateKey
+  );
+  return server ? markServerConnectionUsed(upserted, server.id) : upserted;
+}
+
 export function createDefaultServerConnectionsState(configuredDefaultBaseUrl: string): ServerConnectionsState {
   const initial = createServerConnection({ baseUrl: configuredDefaultBaseUrl });
   return {
     version: 1,
     activeServerId: initial.id,
+    defaultServerId: initial.id,
     servers: [initial],
   };
 }
@@ -152,6 +306,7 @@ export function normalizeServerConnectionsState(
   const parsed = raw as {
     version?: unknown;
     activeServerId?: unknown;
+    defaultServerId?: unknown;
     servers?: unknown;
   };
   const serverList = Array.isArray(parsed.servers)
@@ -159,9 +314,16 @@ export function normalizeServerConnectionsState(
         .map((entry) => sanitizeServerConnection((entry ?? {}) as PartialServerConnection))
         .filter((entry): entry is ServerConnection => Boolean(entry))
     : [];
-  const configuredDefault = fallback.servers[0];
+  const configuredDefault = createServerConnection({
+    baseUrl: configuredDefaultBaseUrl,
+    now: 0,
+  });
   const withConfiguredDefault =
-    configuredDefault && !serverList.some((server) => server.baseUrl === configuredDefault.baseUrl)
+    configuredDefault &&
+    !serverList.some(
+      (server) =>
+        getServerConnectionKey(server.baseUrl) === getServerConnectionKey(configuredDefault.baseUrl)
+    )
       ? [configuredDefault, ...serverList]
       : serverList;
   const servers = dedupeServers(withConfiguredDefault);
@@ -169,29 +331,20 @@ export function normalizeServerConnectionsState(
     return fallback;
   }
 
-  const configuredServer = configuredDefault
-    ? servers.find((server) => server.baseUrl === configuredDefault.baseUrl)
-    : undefined;
-  const parsedActiveServer =
-    typeof parsed.activeServerId === "string"
-      ? servers.find((server) => server.id === parsed.activeServerId)
-      : undefined;
-  const parsedActiveLooksLikeStaleLocal =
-    parsedActiveServer?.baseUrl != null &&
-    /^http:\/\/(?:localhost|127\.0\.0\.1):(?:91|92)\d\d$/i.test(parsedActiveServer.baseUrl) &&
-    configuredServer != null &&
-    configuredServer.baseUrl !== parsedActiveServer.baseUrl;
-  let activeServerId: string | null = servers[0]?.id ?? null;
-  if (parsedActiveServer?.id) {
-    activeServerId = parsedActiveServer.id;
-  }
-  if (parsedActiveLooksLikeStaleLocal) {
-    activeServerId = configuredServer.id;
-  }
+  const activeServerId = pickActiveServerId(
+    servers,
+    parsed.activeServerId
+  );
+  const defaultServerId = pickDefaultServerId(
+    servers,
+    parsed.defaultServerId,
+    activeServerId
+  );
 
   return {
     version: 1,
     activeServerId,
+    defaultServerId,
     servers,
   };
 }
@@ -222,6 +375,7 @@ export function readStoredServerConnectionsState(
       return fallback;
     }
     cachedState = normalizeServerConnectionsState(JSON.parse(raw), configuredDefaultBaseUrl);
+    window.localStorage.setItem(SERVER_CONNECTIONS_STORAGE_KEY, JSON.stringify(cachedState));
     return cachedState;
   } catch {
     cachedState = fallback;
@@ -266,9 +420,12 @@ export function upsertServerConnection(
   input: { id?: string; label?: string; baseUrl: string }
 ): ServerConnectionsState {
   const normalizedBaseUrl = normalizeServerBaseUrl(input.baseUrl);
+  const normalizedKey = getServerConnectionKey(normalizedBaseUrl);
   const now = Date.now();
   const existingById = input.id ? state.servers.find((server) => server.id === input.id) : null;
-  const existingByBaseUrl = state.servers.find((server) => server.baseUrl === normalizedBaseUrl);
+  const existingByBaseUrl = state.servers.find(
+    (server) => getServerConnectionKey(server.baseUrl) === normalizedKey
+  );
   const target = existingById ?? existingByBaseUrl;
   const nextServer: ServerConnection = target
     ? {
@@ -280,13 +437,34 @@ export function upsertServerConnection(
     : createServerConnection({ label: input.label, baseUrl: normalizedBaseUrl, now });
 
   const remaining = state.servers.filter(
-    (server) => server.id !== target?.id && server.baseUrl !== normalizedBaseUrl
+    (server) => server.id !== target?.id && getServerConnectionKey(server.baseUrl) !== normalizedKey
   );
   const servers = dedupeServers([nextServer, ...remaining]);
+  const defaultServerId =
+    state.defaultServerId &&
+    servers.some((server) => server.id === state.defaultServerId)
+      ? state.defaultServerId
+      : servers.length === 1
+        ? (servers[0]?.id ?? null)
+        : state.defaultServerId;
   return {
     version: 1,
     activeServerId: state.activeServerId ?? nextServer.id,
+    defaultServerId,
     servers,
+  };
+}
+
+export function setDefaultServerConnection(
+  state: ServerConnectionsState,
+  serverId: string
+): ServerConnectionsState {
+  if (!state.servers.some((server) => server.id === serverId)) {
+    return state;
+  }
+  return {
+    ...state,
+    defaultServerId: serverId,
   };
 }
 
@@ -299,10 +477,19 @@ export function removeServerConnection(
   if (servers.length === 0) {
     return createDefaultServerConnectionsState(configuredDefaultBaseUrl);
   }
+  const activeServerId =
+    state.activeServerId === serverId ? (servers[0]?.id ?? null) : state.activeServerId;
+  let defaultServerId = state.defaultServerId;
+  if (defaultServerId === serverId) {
+    defaultServerId = servers.length === 1 ? (servers[0]?.id ?? null) : null;
+  }
+  if (servers.length === 1) {
+    defaultServerId = servers[0]?.id ?? null;
+  }
   return {
     version: 1,
-    activeServerId:
-      state.activeServerId === serverId ? (servers[0]?.id ?? null) : state.activeServerId,
+    activeServerId,
+    defaultServerId,
     servers,
   };
 }
@@ -315,15 +502,23 @@ export function markServerConnectionUsed(
     return state;
   }
   const now = Date.now();
+  const servers = dedupeServers(
+    state.servers.map((server) =>
+      server.id === serverId
+        ? { ...server, lastUsedAt: now, updatedAt: now }
+        : server
+    )
+  );
+  const defaultServerId =
+    state.defaultServerId && servers.some((server) => server.id === state.defaultServerId)
+      ? state.defaultServerId
+      : servers.length === 1
+        ? (servers[0]?.id ?? null)
+        : state.defaultServerId;
   return {
     version: 1,
     activeServerId: serverId,
-    servers: dedupeServers(
-      state.servers.map((server) =>
-        server.id === serverId
-          ? { ...server, lastUsedAt: now, updatedAt: now }
-          : server
-      )
-    ),
+    defaultServerId,
+    servers,
   };
 }

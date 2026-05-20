@@ -252,7 +252,7 @@ async function enrichEventsWithDerivedEditPreview(
   );
 }
 
-const DEFAULT_AGENT_HANDOFF_MESSAGE_LIMIT = 50;
+const DEFAULT_AGENT_HANDOFF_MESSAGE_LIMIT = 250;
 function getAgentHandoffMessageLimit(): number {
   const envVal = process.env.OPENCURSOR_AGENT_HANDOFF_MESSAGE_LIMIT?.trim();
   if (envVal) {

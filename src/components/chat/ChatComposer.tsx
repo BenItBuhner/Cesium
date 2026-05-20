@@ -56,16 +56,18 @@ import {
   ComposerAutocomplete,
   type ComposerPopoverPosition,
 } from "./ComposerAutocomplete";
+import { ComposerSlashMenu } from "./ComposerSlashMenu";
 import { useClickOutside } from "@/hooks/useClickOutside";
 import { useHardwareKeyboard } from "@/hooks/useHardwareKeyboard";
 import { shouldSubmitComposerOnEnter } from "@/lib/composer-submit-key";
 import {
   getAllAtSuggestions,
   filterAtSuggestions,
-  getSlashSuggestions,
-  filterSlashSuggestions,
+  getSlashMenuSections,
+  filterSlashMenuSections,
+  flattenSlashMenuSections,
   type AtSuggestion,
-  type SlashSuggestion,
+  type SlashMenuItem,
 } from "@/lib/composer-suggestions";
 import {
   CHAT_UI_SHORTCUT_EVENT,
@@ -91,7 +93,9 @@ import {
   resolveCanonicalModeId,
 } from "@/lib/chat-modes";
 import type { AgentModeOption, EditorMode, KnownEditorMode, ModelInfo } from "@/lib/types";
-import type { AgentBackendId, AgentBackendInfo, AgentConfigOption } from "@/lib/agent-types";
+import type { AgentBackendId, AgentBackendInfo, AgentConfigOption, AgentConversationStatus } from "@/lib/agent-types";
+import { isAgentCesiumTurnActive, isAgentCesiumPauseDraining } from "@/lib/agent-chat";
+import { CesiumTurnControlPill } from "@/components/chat/CesiumTurnControlPill";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { transcribeAudio, uploadAttachments } from "@/lib/server-api";
 import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
@@ -381,6 +385,9 @@ interface ChatComposerProps {
     attachments?: ImageAttachment[]
   ) => Promise<boolean | void> | boolean | void;
   onCancel?: () => Promise<void> | void;
+  onPause?: () => Promise<void> | void;
+  onResume?: () => Promise<void> | void;
+  conversationStatus?: AgentConversationStatus;
   busy?: boolean;
   configLocked?: boolean;
   /** Empty thread: composer sits under tabs; otherwise docked above bottom. */
@@ -401,6 +408,8 @@ interface ChatComposerProps {
   agentShellDockHeightExpand?: boolean;
   /** Callback when user requests handoff to a different agent */
   onRequestHandoff?: (targetBackendId: AgentBackendId) => void;
+  /** When true, expose git worktree slash commands wired by the host submit handler. */
+  gitSlashCommands?: boolean;
   /**
    * When the OpenInEditor draft gains new image attachments (e.g. browser design mode),
    * entries beyond the last consumed index are merged into the local attachment strip.
@@ -739,6 +748,9 @@ export function ChatComposer({
   onCollapseComposer,
   onSubmit,
   onCancel,
+  onPause,
+  onResume,
+  conversationStatus,
   busy = false,
   configLocked = false,
   layout = "docked-bottom",
@@ -747,6 +759,7 @@ export function ChatComposer({
   shellMxClass,
   agentShellDockHeightExpand = false,
   onRequestHandoff,
+  gitSlashCommands = false,
   draftAttachments,
   onDraftAttachmentsChange,
   draftCaptures,
@@ -846,7 +859,7 @@ export function ChatComposer({
   const configLockedRef = useRef(configLocked);
   const canBackspaceClearModeChipRef = useRef(false);
   const filteredAtRef = useRef<AtSuggestion[]>([]);
-  const filteredSlashRef = useRef<SlashSuggestion[]>([]);
+  const filteredSlashRef = useRef<SlashMenuItem[]>([]);
   const selectedIndexRef = useRef(selectedIndex);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
@@ -863,15 +876,30 @@ export function ChatComposer({
   const value = controlledValue ?? uncontrolledValue;
   const selection = controlledSelection ?? uncontrolledSelection;
   const atSuggestions = useMemo(() => getAllAtSuggestions(fileTree), [fileTree]);
-  const slashSuggestions = useMemo(
+  const activeBackend = useMemo(
+    () => backends.find((entry) => entry.id === backendId) ?? backends[0] ?? null,
+    [backendId, backends]
+  );
+  const slashMenuSections = useMemo(
     () =>
-      getSlashSuggestions({
+      getSlashMenuSections({
+        activeBackend,
         modeOptions,
         models,
         backends,
         sessionConfigOptions,
+        gitSlashCommands,
+        configLocked,
       }),
-    [backends, modeOptions, models, sessionConfigOptions]
+    [
+      activeBackend,
+      backends,
+      configLocked,
+      gitSlashCommands,
+      modeOptions,
+      models,
+      sessionConfigOptions,
+    ]
   );
 
   const setComposerValue = useCallback(
@@ -1360,12 +1388,16 @@ export function ChatComposer({
     () => (menu?.kind === "at" ? filterAtSuggestions(atSuggestions, menu.query) : []),
     [atSuggestions, menu]
   );
-  const filteredSlash = useMemo(
+  const filteredSlashSections = useMemo(
     () =>
       menu?.kind === "slash"
-        ? filterSlashSuggestions(slashSuggestions, menu.query)
+        ? filterSlashMenuSections(slashMenuSections, menu.query)
         : [],
-    [menu, slashSuggestions]
+    [menu, slashMenuSections]
+  );
+  const flatSlashItems = useMemo(
+    () => flattenSlashMenuSections(filteredSlashSections),
+    [filteredSlashSections]
   );
 
   const isActive = hardwareInputEnabled
@@ -1537,8 +1569,8 @@ export function ChatComposer({
 
   useEffect(() => {
     filteredAtRef.current = filteredAt;
-    filteredSlashRef.current = filteredSlash;
-  }, [filteredAt, filteredSlash]);
+    filteredSlashRef.current = flatSlashItems;
+  }, [filteredAt, flatSlashItems]);
 
   useEffect(() => {
     return () => {
@@ -1882,21 +1914,66 @@ export function ChatComposer({
     [configLocked, mode, modeOptions, onModeChange]
   );
 
-  const pickSlash = useCallback(
-    (item: SlashSuggestion) => {
+  const clearSlashTrigger = useCallback(() => {
+    const currentMenu = menuRef.current;
+    if (!currentMenu || currentMenu.kind !== "slash") return;
+    if (!hardwareInputEnabled && editorRef.current) {
+      replaceTextRange(editorRef.current, currentMenu.start, currentMenu.end, "");
+      syncNativeState();
+    } else {
+      const next = replaceSelection(
+        valueRef.current,
+        { start: currentMenu.start, end: currentMenu.end },
+        ""
+      );
+      setComposerValue(next.value);
+      setComposerSelection(next.selection);
+    }
+    setMenu(null);
+  }, [hardwareInputEnabled, setComposerSelection, setComposerValue, syncNativeState]);
+
+  const pickSlashItem = useCallback(
+    (item: SlashMenuItem) => {
       const currentMenu = menuRef.current;
       if (!currentMenu || currentMenu.kind !== "slash") return;
-      if (item.id === "models") {
-        setMenu(null);
-        setModelDropdownOpen(true);
-        return;
+      if (configLocked || item.disabled) return;
+
+      const action = item.action;
+      switch (action.kind) {
+        case "mode":
+          onModeChange(action.modeId);
+          clearSlashTrigger();
+          return;
+        case "model":
+          onModelChange(action.model);
+          clearSlashTrigger();
+          return;
+        case "backend": {
+          const match = backends.find((entry) => entry.id === action.backendId);
+          if (match?.available) {
+            onBackendChange(action.backendId);
+          }
+          clearSlashTrigger();
+          return;
+        }
+        case "config":
+          onSessionConfigOptionChange?.(action.configId, action.value);
+          clearSlashTrigger();
+          return;
+        case "insert":
+          break;
+        default: {
+          const exhaustive: never = action;
+          return exhaustive;
+        }
       }
+
       if (!hardwareInputEnabled && editorRef.current) {
         replaceTextRange(
           editorRef.current,
           currentMenu.start,
           currentMenu.end,
-          `${item.insert} `
+          `${action.insert}`
         );
         syncNativeState();
         setMenu(null);
@@ -1905,13 +1982,25 @@ export function ChatComposer({
       const next = replaceSelection(
         valueRef.current,
         { start: currentMenu.start, end: currentMenu.end },
-        `${item.insert} `
+        `${action.insert}`
       );
       setComposerValue(next.value);
       setComposerSelection(next.selection);
       setMenu(null);
     },
-    [hardwareInputEnabled, setComposerSelection, setComposerValue, syncNativeState]
+    [
+      backends,
+      clearSlashTrigger,
+      configLocked,
+      hardwareInputEnabled,
+      onBackendChange,
+      onModeChange,
+      onModelChange,
+      onSessionConfigOptionChange,
+      setComposerSelection,
+      setComposerValue,
+      syncNativeState,
+    ]
   );
 
   /**
@@ -2117,7 +2206,7 @@ export function ChatComposer({
         if (currentMenu.kind === "at") {
           pickAt(items[idx] as AtSuggestion);
         } else {
-          pickSlash(items[idx] as SlashSuggestion);
+          pickSlashItem(items[idx] as SlashMenuItem);
         }
         return true;
       }
@@ -2203,7 +2292,7 @@ export function ChatComposer({
     hasHardwareKeyboard,
     modelDropdownOpen,
     pickAt,
-    pickSlash,
+    pickSlashItem,
     setComposerSelection,
     setComposerValue,
     submitComposer,
@@ -2290,7 +2379,7 @@ const handleNativeComposerKeyDown = useCallback(
         return;
       }
       const items =
-        currentMenu.kind === "at" ? filteredAt : filteredSlash;
+        currentMenu.kind === "at" ? filteredAt : flatSlashItems;
 
       if (event.key === "Escape") {
         event.preventDefault();
@@ -2316,18 +2405,18 @@ const handleNativeComposerKeyDown = useCallback(
         if (currentMenu.kind === "at") {
           pickAt(items[idx] as AtSuggestion);
         } else {
-          pickSlash(items[idx] as SlashSuggestion);
+          pickSlashItem(items[idx] as SlashMenuItem);
         }
         return;
       }
     },
     [
     filteredAt,
-    filteredSlash,
+    flatSlashItems,
     hasHardwareKeyboard,
       modelDropdownOpen,
       pickAt,
-      pickSlash,
+      pickSlashItem,
       selectedIndex,
       submitComposer,
       submitCtrlEnter,
@@ -2427,9 +2516,29 @@ const handleNativeComposerKeyDown = useCallback(
   );
   const composerTrimmedLength = value.trim().length;
   const canSubmit = composerTrimmedLength > 0 || attachedImages.length > 0;
+  const isCesiumAgent = backendId === "cesium-agent";
+  const cesiumPausing =
+    conversationStatus != null && isAgentCesiumPauseDraining(conversationStatus);
+  const cesiumPaused = conversationStatus === "paused";
+  const showCesiumTurnPill =
+    isCesiumAgent &&
+    Boolean(onCancel) &&
+    Boolean(conversationStatus && isAgentCesiumTurnActive(conversationStatus)) &&
+    ((busy && !canSubmit) || cesiumPaused || cesiumPausing);
+  const cesiumTurnPill = showCesiumTurnPill ? (
+    <CesiumTurnControlPill
+      conversationStatus={conversationStatus}
+      toneClass={sendButtonBgClass[getModeTone(mode)]}
+      onPause={onPause}
+      onResume={onResume}
+      onStop={onCancel}
+    />
+  ) : null;
   /** While the turn is running, Stop occupies the primary (send) slot until there is something to queue. */
-  const primaryControlIsStop = Boolean(busy && onCancel && !canSubmit);
-  const primaryControlIsVoice = !primaryControlIsStop && !canSubmit;
+  const primaryControlIsStop = Boolean(
+    busy && onCancel && !canSubmit && !showCesiumTurnPill
+  );
+  const primaryControlIsVoice = !primaryControlIsStop && !showCesiumTurnPill && !canSubmit;
 
   const { themeConfig } = useTheme();
   const isNewDesign = themeConfig.uiDesignMode === "new";
@@ -2623,27 +2732,31 @@ const handleNativeComposerKeyDown = useCallback(
       primaryControlIsVoice ? "primary" : "secondary"
     );
 
-    const sendButton = primaryControlIsStop ? (
-      <button
-        type="button"
-        onClick={() => void onCancel?.()}
-        className={`flex h-[20px] w-[20px] items-center justify-center rounded-full transition-opacity hover:opacity-80 ${sendButtonBgClass[getModeTone(mode)]}`}
-        aria-label="Stop"
-      >
-        <Square className="size-[9px] text-[var(--bg-main)]" fill="currentColor" strokeWidth={2.2} />
-      </button>
-    ) : (
-      <button
-        type="button"
-        onClick={() => void submitComposer()}
-        disabled={!canSubmit}
-        className={`flex h-[20px] w-[20px] items-center justify-center rounded-full transition-opacity hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-50 ${sendButtonBgClass[getModeTone(mode)]}`}
-        aria-label={busy ? "Send or queue message" : "Send"}
-      >
-        <ArrowUp className="size-3 text-[var(--bg-main)]" strokeWidth={2.5} />
-      </button>
+    const sendButton = cesiumTurnPill ?? (
+      primaryControlIsStop ? (
+        <button
+          type="button"
+          onClick={() => void onCancel?.()}
+          className={`flex h-[20px] w-[20px] items-center justify-center rounded-full transition-opacity hover:opacity-80 ${sendButtonBgClass[getModeTone(mode)]}`}
+          aria-label="Stop"
+        >
+          <Square className="size-[9px] text-[var(--bg-main)]" fill="currentColor" strokeWidth={2.2} />
+        </button>
+      ) : (
+        <button
+          type="button"
+          onClick={() => void submitComposer()}
+          disabled={!canSubmit}
+          className={`flex h-[20px] w-[20px] items-center justify-center rounded-full transition-opacity hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-50 ${sendButtonBgClass[getModeTone(mode)]}`}
+          aria-label={busy ? "Send or queue message" : "Send"}
+        >
+          <ArrowUp className="size-3 text-[var(--bg-main)]" strokeWidth={2.5} />
+        </button>
+      )
     );
-    const primaryActionButton = primaryControlIsVoice ? voiceButton : sendButton;
+    const primaryActionButton = cesiumTurnPill ?? (
+      primaryControlIsVoice ? voiceButton : sendButton
+    );
 
     /**
      * Single-line pill collapses to a fully circular shell so the composer
@@ -2812,7 +2925,6 @@ const handleNativeComposerKeyDown = useCallback(
 
         {menu?.kind === "at" && (
           <ComposerAutocomplete
-            kind="at"
             items={filteredAt}
             selectedIndex={selectedIndex}
             position={menuPos}
@@ -2823,12 +2935,15 @@ const handleNativeComposerKeyDown = useCallback(
           />
         )}
         {menu?.kind === "slash" && (
-          <ComposerAutocomplete
-            kind="slash"
-            items={filteredSlash}
+          <ComposerSlashMenu
+            sections={filteredSlashSections}
+            flatItems={flatSlashItems}
             selectedIndex={selectedIndex}
+            mode={mode}
+            model={model}
+            backendId={backendId}
             position={menuPos}
-            onSelect={pickSlash}
+            onSelect={pickSlashItem}
             onHighlight={setSelectedIndex}
             listRef={listRef}
             popoverRef={popoverRef}
@@ -2839,9 +2954,9 @@ const handleNativeComposerKeyDown = useCallback(
           <div className="flex items-center justify-between gap-[8px]">
             <div className="flex min-w-0 items-center gap-[10px]">
               {leadingModeControls}
-              <div className="min-w-0">{modelPill}</div>
             </div>
             <div className="flex shrink-0 items-center gap-[9px]">
+              <div className="min-w-0">{modelPill}</div>
               {!primaryControlIsVoice ? voiceButton : null}
               {primaryActionButton}
             </div>
@@ -2863,27 +2978,31 @@ const handleNativeComposerKeyDown = useCallback(
   const voiceButton = renderVoiceButton(
     primaryControlIsVoice ? "primary" : "secondary"
   );
-  const sendButton = primaryControlIsStop ? (
-    <button
-      type="button"
-      onClick={() => void onCancel?.()}
-      className={`flex h-[20px] w-[20px] items-center justify-center rounded-full transition-opacity hover:opacity-80 ${sendButtonBgClass[getModeTone(mode)]}`}
-      aria-label="Stop"
-    >
-      <Square className="size-[9px] text-[var(--bg-main)]" fill="currentColor" strokeWidth={2.2} />
-    </button>
-  ) : (
-    <button
-      type="button"
-      onClick={() => void submitComposer()}
-      disabled={!canSubmit}
-      className={`flex h-[20px] w-[20px] items-center justify-center rounded-full transition-opacity hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-50 ${sendButtonBgClass[getModeTone(mode)]}`}
-      aria-label={busy ? "Send or queue message" : "Send"}
-    >
-      <ArrowUp className="size-3 text-[var(--bg-main)]" strokeWidth={2.5} />
-    </button>
+  const sendButton = cesiumTurnPill ?? (
+    primaryControlIsStop ? (
+      <button
+        type="button"
+        onClick={() => void onCancel?.()}
+        className={`flex h-[20px] w-[20px] items-center justify-center rounded-full transition-opacity hover:opacity-80 ${sendButtonBgClass[getModeTone(mode)]}`}
+        aria-label="Stop"
+      >
+        <Square className="size-[9px] text-[var(--bg-main)]" fill="currentColor" strokeWidth={2.2} />
+      </button>
+    ) : (
+      <button
+        type="button"
+        onClick={() => void submitComposer()}
+        disabled={!canSubmit}
+        className={`flex h-[20px] w-[20px] items-center justify-center rounded-full transition-opacity hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-50 ${sendButtonBgClass[getModeTone(mode)]}`}
+        aria-label={busy ? "Send or queue message" : "Send"}
+      >
+        <ArrowUp className="size-3 text-[var(--bg-main)]" strokeWidth={2.5} />
+      </button>
+    )
   );
-  const primaryActionButton = primaryControlIsVoice ? voiceButton : sendButton;
+  const primaryActionButton = cesiumTurnPill ?? (
+    primaryControlIsVoice ? voiceButton : sendButton
+  );
 
   return (
     <div
@@ -3041,7 +3160,6 @@ const handleNativeComposerKeyDown = useCallback(
 
       {menu?.kind === "at" && (
         <ComposerAutocomplete
-          kind="at"
           items={filteredAt}
           selectedIndex={selectedIndex}
           position={menuPos}
@@ -3052,12 +3170,15 @@ const handleNativeComposerKeyDown = useCallback(
         />
       )}
       {menu?.kind === "slash" && (
-        <ComposerAutocomplete
-          kind="slash"
-          items={filteredSlash}
+        <ComposerSlashMenu
+          sections={filteredSlashSections}
+          flatItems={flatSlashItems}
           selectedIndex={selectedIndex}
+          mode={mode}
+          model={model}
+          backendId={backendId}
           position={menuPos}
-          onSelect={pickSlash}
+          onSelect={pickSlashItem}
           onHighlight={setSelectedIndex}
           listRef={listRef}
           popoverRef={popoverRef}

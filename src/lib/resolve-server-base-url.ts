@@ -1,14 +1,7 @@
+import { getConfiguredServerBaseUrl, getConfiguredServerPort } from "@/lib/configured-server-base-url";
 import { getActiveServerBaseUrl } from "@/lib/server-connections";
 
-/**
- * Build-time API base (`NEXT_PUBLIC_*` is inlined when `next build` runs).
- */
-export function getConfiguredServerBaseUrl(): string {
-  return (
-    process.env.NEXT_PUBLIC_SERVER_URL?.replace(/\/+$/, "") ??
-    "http://localhost:9107"
-  );
-}
+export { getConfiguredServerBaseUrl } from "@/lib/configured-server-base-url";
 
 /**
  * URL the browser should use for HTTP and WebSocket calls to the Cesium API.
@@ -23,9 +16,9 @@ export function getConfiguredServerBaseUrl(): string {
  *      when the bundle was built for a LAN URL but served over TLS.
  *   2. Dev on localhost: keep the cookie origin aligned with the page
  *      (http vs https, 127.0.0.1 vs localhost).
- *   3. LAN plain-HTTP: if the bundle still says `http://localhost:9107` but
- *      the UI is opened as `http://192.168.x.x:3000`, rewrite to the same
- *      host as the page on port 9107.
+ *   3. LAN plain-HTTP: if the bundle still says loopback but the UI is opened
+ *      as `http://192.168.x.x:3000`, rewrite to the same host as the page on
+ *      the configured API port.
  *   4. Otherwise: return the configured URL untouched.
  */
 export function resolveClientServerBaseUrl(): string {
@@ -35,16 +28,18 @@ export function resolveClientServerBaseUrl(): string {
 }
 
 export function resolveClientServerBaseUrlForCurrentWindow(raw: string): string {
-  if (typeof window !== "undefined") {
-    const override = serverUrlOverrideFromSearch(window.location.search);
-    if (override) {
-      return override;
-    }
-  }
   return resolveClientServerBaseUrlForLocation(raw, typeof window !== "undefined" ? window : null);
 }
 
-function serverUrlOverrideFromSearch(search: string): string | null {
+/** Resolve an explicitly chosen server without collapsing it to the page origin. */
+export function resolveExplicitServerBaseUrlForCurrentWindow(raw: string): string {
+  return resolveClientServerBaseUrlForLocation(raw, typeof window !== "undefined" ? window : null, {
+    explicitTarget: true,
+  });
+}
+
+/** Parse `?serverUrl=` for one-time bootstrap (not used for every API call). */
+export function parseServerUrlSearchParam(search: string): string | null {
   try {
     const value = new URLSearchParams(search).get("serverUrl")?.trim();
     if (!value) {
@@ -63,6 +58,25 @@ function serverUrlOverrideFromSearch(search: string): string | null {
   }
 }
 
+export function stripServerUrlSearchParamFromLocation(): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+  const url = new URL(window.location.href);
+  if (!url.searchParams.has("serverUrl")) {
+    return;
+  }
+  url.searchParams.delete("serverUrl");
+  const next =
+    `${url.pathname}${url.searchParams.toString() ? `?${url.searchParams}` : ""}${url.hash}`;
+  window.history.replaceState(window.history.state, "", next);
+}
+
+export type ResolveServerBaseUrlOptions = {
+  /** Preserve the configured host for multi-server requests (no same-origin collapse). */
+  explicitTarget?: boolean;
+};
+
 export function resolveClientServerBaseUrlForLocation(
   raw: string,
   locationSource:
@@ -73,7 +87,8 @@ export function resolveClientServerBaseUrlForLocation(
           host: string;
         };
       }
-    | null
+    | null,
+  options?: ResolveServerBaseUrlOptions
 ): string {
   if (!locationSource) {
     return raw;
@@ -84,8 +99,11 @@ export function resolveClientServerBaseUrlForLocation(
     const currentHost = locationSource.location.hostname;
     const isLocalHost =
       currentHost === "127.0.0.1" || currentHost === "localhost";
+    const configuredIsLoopback =
+      configured.hostname === "localhost" || configured.hostname === "127.0.0.1";
 
     if (
+      !options?.explicitTarget &&
       locationSource.location.protocol === "https:" &&
       configured.protocol === "http:"
     ) {
@@ -97,6 +115,7 @@ export function resolveClientServerBaseUrlForLocation(
     }
 
     if (
+      !options?.explicitTarget &&
       currentHost &&
       isLocalHost &&
       (configured.hostname !== currentHost ||
@@ -104,13 +123,20 @@ export function resolveClientServerBaseUrlForLocation(
     ) {
       configured.protocol = locationSource.location.protocol;
       configured.hostname = currentHost;
-      configured.port = configured.port || "9107";
+      configured.port = configured.port || getConfiguredServerPort();
       return configured.toString().replace(/\/+$/, "");
     }
 
-    const configuredIsLoopback =
-      configured.hostname === "localhost" ||
-      configured.hostname === "127.0.0.1";
+    if (
+      options?.explicitTarget &&
+      currentHost &&
+      isLocalHost &&
+      configuredIsLoopback &&
+      configured.hostname !== currentHost
+    ) {
+      configured.hostname = currentHost;
+      return configured.toString().replace(/\/+$/, "");
+    }
 
     if (
       currentHost &&
@@ -121,7 +147,7 @@ export function resolveClientServerBaseUrlForLocation(
       const next = new URL(raw);
       next.protocol = "http:";
       next.hostname = currentHost;
-      next.port = "9107";
+      next.port = getConfiguredServerPort();
       return next.toString().replace(/\/+$/, "");
     }
   } catch {

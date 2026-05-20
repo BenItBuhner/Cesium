@@ -1,11 +1,14 @@
 import { AGENT_BACKENDS } from "./providers.js";
 import type { AgentBackendId, AgentConversationRecord } from "./types.js";
 
-const FALLBACK_BACKEND_ID: AgentBackendId = "cursor-acp";
+const FALLBACK_BACKEND_ID: AgentBackendId = "cesium-agent";
 
 /** Stored rows may still reference harness backends removed from `AgentBackendId`. */
 const LEGACY_BACKEND_REMAP: Record<string, AgentBackendId> = {
-  "claude-code-sdk": "claude-adapter",
+  "claude-adapter": "claude-code-sdk",
+  "cursor-acp": "cursor-sdk",
+  "opencode-acp": "opencode-server",
+  "codex-adapter": "codex-app-server",
 };
 
 export function normalizeConversationRecord(

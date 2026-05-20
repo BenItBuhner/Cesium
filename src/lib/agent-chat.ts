@@ -2,9 +2,70 @@ import type {
   AgentBackendId,
   AgentBackendInfo,
   AgentConversationRecord,
+  AgentConversationStatus,
   AgentPlanEntry,
   AgentStoredEvent,
 } from "@/lib/agent-types";
+
+/** Agent is actively working or waiting on user mid-turn (not paused). */
+export function isAgentConversationBusy(status: AgentConversationStatus): boolean {
+  return (
+    status === "running" ||
+    status === "pause_requested" ||
+    status === "pausing" ||
+    status === "awaiting_permission" ||
+    status === "awaiting_question"
+  );
+}
+
+/** Cesium pause drain / paused — turn still open but model loop is halted. */
+export function isAgentConversationPaused(status: AgentConversationStatus): boolean {
+  return status === "paused";
+}
+
+/** Composer shows Cesium pause/stop pill (running drain or paused mid-turn). */
+export function isAgentCesiumTurnActive(status: AgentConversationStatus): boolean {
+  return isAgentConversationBusy(status) || isAgentConversationPaused(status);
+}
+
+export function isAgentCesiumPauseDraining(status: AgentConversationStatus): boolean {
+  return status === "pause_requested" || status === "pausing";
+}
+
+/** Apply a streamed `status` event to a conversation record (null = no change). */
+export function mergeAgentConversationStatusFromEvent(
+  conversation: AgentConversationRecord,
+  event: Extract<AgentStoredEvent, { kind: "status" }>
+): AgentConversationRecord | null {
+  const detail = event.detail?.trim() ?? null;
+  if (event.status === "failed") {
+    if (conversation.status === "failed" && (detail ?? conversation.lastError) === conversation.lastError) {
+      return null;
+    }
+    return {
+      ...conversation,
+      status: "failed",
+      lastError: detail ?? conversation.lastError,
+    };
+  }
+  if (event.status === "idle") {
+    if (conversation.status === "idle" && conversation.lastError === null) {
+      return null;
+    }
+    return {
+      ...conversation,
+      status: "idle",
+      lastError: null,
+    };
+  }
+  if (conversation.status === event.status) {
+    return null;
+  }
+  return {
+    ...conversation,
+    status: event.status,
+  };
+}
 import type {
   AgentModeOption,
   ChatMessage,
@@ -15,6 +76,7 @@ import type {
   WorkedSessionEditPreview,
   WorkedSessionEntry,
 } from "@/lib/types";
+import { questionEventToChatMessage } from "@/lib/ask-question-dock";
 import { DEFAULT_MODE_OPTIONS, formatModeLabel, resolveCanonicalModeId } from "@/lib/chat-modes";
 import { splitContentByDesignBlocks } from "@/lib/design-capture";
 import {
@@ -32,23 +94,35 @@ import {
 } from "@/lib/agent-subagent-routing";
 import type { ProjectAgentEventsOptions } from "@/lib/agent-subagent-routing";
 import { formatToolFileLabel, toolPathBasename } from "@/lib/workspace-tool-path-display";
+import {
+  isCesiumFailureAssistantChunk,
+  isCompletionFailureThreadContent,
+  shouldHideCompletionFailureInThread,
+} from "@/lib/agent-completion-error";
+import {
+  extractMcpServerIdFromRecords,
+  extractMcpServerIdFromTitle,
+  extractMcpServerIdFromWorkedTool,
+  formatMcpServerDisplayName,
+  isMcpWorkedTool,
+  summarizeMcpServerCounts,
+} from "@/lib/mcp-server-display";
 
 export type { ProjectAgentEventsOptions };
 
 function modelProviderForBackend(backendId: AgentBackendId): ModelInfo["provider"] {
   switch (backendId) {
-    case "cursor-acp":
+    case "cesium-agent":
+      return "auto";
     case "cursor-sdk":
       return "cursor";
-    case "opencode-acp":
     case "opencode-server":
       return "opencode";
     case "gemini-acp":
       return "google";
-    case "codex-adapter":
     case "codex-app-server":
       return "codex";
-    case "claude-adapter":
+    case "claude-code-sdk":
       return "claude";
     default:
       return "auto";
@@ -56,11 +130,11 @@ function modelProviderForBackend(backendId: AgentBackendId): ModelInfo["provider
 }
 
 function isCodexBackendId(backendId: AgentBackendId | undefined): boolean {
-  return backendId === "codex-adapter" || backendId === "codex-app-server";
+  return backendId === "codex-app-server";
 }
 
 function isOpenCodeBackendId(backendId: AgentBackendId | undefined): boolean {
-  return backendId === "opencode-acp" || backendId === "opencode-server";
+  return backendId === "opencode-server";
 }
 
 function getBackendForConversation(
@@ -93,6 +167,7 @@ function createBackendDraftConversation(
     configOptions,
     capabilities: backend.capabilities,
     pendingPermission: null,
+    pendingQuestion: null,
     lastError: null,
     experimental: Boolean(backend.experimental),
     archivedAt: null,
@@ -654,6 +729,9 @@ function appendAssistantChunk(turn: ProjectedTurn, text: string, messageId: stri
   if (!text) {
     return;
   }
+  if (isCesiumFailureAssistantChunk(text)) {
+    return;
+  }
   if (turn.endedAssistantMessageIds.has(messageId)) {
     return;
   }
@@ -988,8 +1066,14 @@ function toWorkedToolStatus(
 
 function inferToolKindFromTitle(name: string): string {
   const n = name.toLowerCase();
+  if (n.includes("call_mcp") || n.includes("refresh_mcp") || /^mcp\s/.test(n)) {
+    return "mcp";
+  }
   if (n.includes("todo")) {
     return "todo";
+  }
+  if (n.includes("ask question") || n.includes("asked question")) {
+    return "question";
   }
   if (n.includes("search web") || n.includes("web search") || n.includes("websearch")) {
     return "search_web";
@@ -1139,7 +1223,8 @@ function summarizeWorkedToolBucket(
   kind: string,
   count: number,
   fileCount: number,
-  allHaveEditPreview: boolean
+  allHaveEditPreview: boolean,
+  mcpServerCounts?: Map<string, number>
 ): string {
   const resolvedCount = fileCount > 0 ? fileCount : count;
   switch (kind) {
@@ -1163,6 +1248,14 @@ function summarizeWorkedToolBucket(
       return count === 1 ? "ran a command" : `ran ${count} commands`;
     case "todo":
       return count === 1 ? "updated todo list" : `updated todo list ${count} times`;
+    case "question":
+    case "ask":
+      return count === 1 ? "asked question" : "asked questions";
+    case "mcp":
+      if (mcpServerCounts && mcpServerCounts.size > 0) {
+        return summarizeMcpServerCounts(mcpServerCounts);
+      }
+      return count === 1 ? "called MCP tool" : "called MCP tools";
     default:
       return count === 1 ? "used a tool" : `used ${count} tools`;
   }
@@ -1184,26 +1277,35 @@ function buildWorkedSessionLabel(entries: WorkedSessionEntry[]): string {
     count: number;
     files: Set<string>;
     allEditPreviews: boolean;
+    mcpServerCounts?: Map<string, number>;
   }> = [];
   const bucketByKind = new Map<string, (typeof orderedBuckets)[number]>();
   for (const tool of tools) {
-    const kind =
+    const inferredKind =
       tool.toolKind ??
       (tool.variant === "terminal" ? "terminal" : inferToolKindFromTitle(tool.title));
+    const kind = isMcpWorkedTool(tool) ? "mcp" : inferredKind;
+    const bucketKey = kind;
     const bucket =
-      bucketByKind.get(kind) ??
+      bucketByKind.get(bucketKey) ??
       (() => {
         const created = {
           kind,
           count: 0,
           files: new Set<string>(),
           allEditPreviews: true,
+          mcpServerCounts: kind === "mcp" ? new Map<string, number>() : undefined,
         };
-        bucketByKind.set(kind, created);
+        bucketByKind.set(bucketKey, created);
         orderedBuckets.push(created);
         return created;
       })();
     bucket.count += 1;
+    if (kind === "mcp" && bucket.mcpServerCounts) {
+      const serverId = extractMcpServerIdFromWorkedTool(tool) ?? "";
+      const key = serverId || "__unknown__";
+      bucket.mcpServerCounts.set(key, (bucket.mcpServerCounts.get(key) ?? 0) + 1);
+    }
     if (kind === "edit") {
       bucket.allEditPreviews = bucket.allEditPreviews && Boolean(tool.editPreview);
     } else {
@@ -1223,7 +1325,8 @@ function buildWorkedSessionLabel(entries: WorkedSessionEntry[]): string {
         bucket.kind,
         bucket.count,
         bucket.files.size,
-        bucket.allEditPreviews
+        bucket.allEditPreviews,
+        bucket.mcpServerCounts
       )
     )
     .concat(thoughtCount > 0 ? [thoughtCount === 1 ? "1 thought" : `${thoughtCount} thoughts`] : []);
@@ -1341,7 +1444,7 @@ function projectTurnTimelineToMessages(turn: ProjectedTurn): ChatMessage[] {
   const flushAssistant = () => {
     const cleaned = stripAgentTodoJsonAssistantContent(assistantText);
     assistantText = "";
-    if (cleaned.trim().length === 0) {
+    if (cleaned.trim().length === 0 || isCompletionFailureThreadContent(cleaned)) {
       return;
     }
     messages.push({
@@ -2718,6 +2821,71 @@ function formatToolSummary(
     });
   }
 
+  const mcpToolName = acpToolCalls
+    .map((entry) => entry.rawName)
+    .find((name) => /call_mcp_tool|refresh_mcp_servers/i.test(name ?? ""));
+  const isMcpTool =
+    toolKind === "mcp" ||
+    toolKindFromEvent === "mcp" ||
+    Boolean(mcpToolName) ||
+    /^MCP\s+/i.test(resolvedTitleLabel ?? "") ||
+    /refresh mcp servers/i.test(resolvedTitleLabel ?? "");
+  if (isMcpTool) {
+    if (/refresh mcp servers/i.test(resolvedTitleLabel ?? streamToolTitle ?? "")) {
+      return withConciseToolDetail({
+        kind: "tool",
+        toolCallId: event.toolCallId,
+        toolKind: "mcp",
+        title: "Refresh MCP servers",
+        detail: safeToolDetailText(detail, { suppressVerbosePayload: true }) ?? existing?.detail,
+        rawDetail,
+        status,
+        locations: normalizedLocations,
+        editPreview,
+        files,
+      });
+    }
+    const mcpServerId =
+      existing?.mcpServerId ??
+      extractMcpServerIdFromRecords([
+        ...rawInputs,
+        rawToolRecord,
+        rawTop,
+        ...(rawToolRecord?.request && typeof rawToolRecord.request === "object"
+          ? [rawToolRecord.request as Record<string, unknown>]
+          : []),
+      ]) ??
+      extractMcpServerIdFromTitle(resolvedTitleLabel) ??
+      extractMcpServerIdFromTitle(streamToolTitle) ??
+      extractMcpServerIdFromTitle(existing?.title);
+    const mcpToolNameFromTitle =
+      resolvedTitleLabel?.match(/^MCP\s+.+?\s+-\s+(.+)$/i)?.[1]?.trim() ??
+      findFirstStringAcrossValues(rawInputs, ["toolName", "tool_name"]) ??
+      undefined;
+    const mcpTitle = mcpServerId
+      ? mcpToolNameFromTitle
+        ? `${formatMcpServerDisplayName(mcpServerId)} · ${mcpToolNameFromTitle}`
+        : formatMcpServerDisplayName(mcpServerId)
+      : truncateMiddleLabel(
+          resolvedTitleLabel ?? existing?.title ?? "MCP tool",
+          TOOL_TITLE_MAX_LEN
+        );
+    return withConciseToolDetail({
+      kind: "tool",
+      toolCallId: event.toolCallId,
+      toolKind: "mcp",
+      mcpServerId,
+      title: mcpTitle,
+      detail: safeToolDetailText(detail, { suppressVerbosePayload: true }) ?? existing?.detail,
+      rawDetail,
+      status,
+      locations: normalizedLocations,
+      editPreview,
+      files,
+      variant: existing?.variant,
+    });
+  }
+
   return withConciseToolDetail({
     kind: "tool",
     toolCallId: event.toolCallId,
@@ -2991,12 +3159,14 @@ function projectionCacheKey(
 ): string {
   const first = events[0];
   const last = events[events.length - 1];
+  const fingerprint = events.map((event) => `${event.seq}:${event.eventId}:${event.kind}`).join(",");
   return [
     first?.conversationId ?? "none",
     events.length,
     first?.seq ?? 0,
     last?.seq ?? 0,
     last?.eventId ?? "none",
+    fingerprint,
     options?.backendId ?? "none",
     options?.workspaceRoot ?? "none",
   ].join("|");
@@ -3173,6 +3343,40 @@ let currentTurn: ProjectedTurn | null = null;
           kind: "reasoning",
           text: event.text,
         });
+        break;
+      }
+      case "compression_summary": {
+        const turn = ensureTurn();
+        appendTraceEntry(turn, {
+          kind: "reasoning",
+          text: `Compressed ${event.compressedTurnCount} earlier turns; retained ${event.retainedTurnCount} recent turns.\n\n${event.summary}`,
+        });
+        break;
+      }
+      case "question": {
+        const turn = ensureTurn();
+        appendTimelineMessage(turn, questionEventToChatMessage(event));
+        break;
+      }
+      case "subagent": {
+        const turn = ensureTurn();
+        const transcript = event.transcript?.length
+          ? projectAgentEventsToChatMessages(event.transcript, {
+              ...options,
+              backendId: options?.backendId,
+            })
+          : [];
+        appendTimelineMessage(turn, {
+          id: `subagent-${event.subagentId}`,
+          type: "subagent",
+          subagentId: event.subagentId,
+          subagentTitle: event.title,
+          subagentMeta: event.meta,
+          subagentStatus: event.status,
+          subagentComplete: event.status !== "running",
+          subagentTranscript: transcript,
+          recentActivity: event.recentActivity,
+        } satisfies ChatMessage);
         break;
       }
       case "tool_call": {
@@ -3566,11 +3770,16 @@ let currentTurn: ProjectedTurn | null = null;
           break;
         }
         const turn = ensureTurn();
+        if (event.level === "error" && isCompletionFailureThreadContent(event.text)) {
+          break;
+        }
         appendTimelineMessage(turn, {
           id: event.eventId,
           type: "assistant",
           content:
-            event.level === "error" || event.level === "warning"
+            event.level === "error"
+              ? event.text
+              : event.level === "warning"
               ? event.text
               : event.level === "info"
                 ? event.text
@@ -3589,6 +3798,9 @@ let currentTurn: ProjectedTurn | null = null;
           event.status === "idle" ||
           event.status === "awaiting_permission"
         ) {
+          break;
+        }
+        if (event.status === "failed") {
           break;
         }
         appendTimelineMessage(ensureTurn(), {

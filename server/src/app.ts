@@ -10,6 +10,7 @@ import { browserDebugRoutes } from "./routes/browser-debug.js";
 import { agentRoutes } from "./routes/agents.js";
 import { audioRoutes } from "./routes/audio.js";
 import { authRoutes } from "./routes/auth.js";
+import { mcpRoutes } from "./routes/mcp.js";
 import { storageRoutes } from "./routes/storage.js";
 import { bootstrapStorage } from "./storage/index.js";
 import { AGENT_BACKENDS } from "./lib/agents/providers.js";
@@ -116,6 +117,7 @@ export function createCesiumApp(): Hono {
     c.json({ ok: true, transcription: { configured: isTranscriptionConfigured() } })
   );
   app.route("/", authRoutes);
+  app.route("/", mcpRoutes);
   app.route("/browser", browserProxyRoutes);
   app.route("/", browserDebugRoutes);
   app.route("/", workspaceRoutes);

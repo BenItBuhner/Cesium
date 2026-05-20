@@ -95,6 +95,9 @@ export function ExpandedComposerView({
             minimizeComposer();
           }}
           onCancel={controller.onCancel}
+          onPause={controller.onPause}
+          onResume={controller.onResume}
+          conversationStatus={controller.conversationStatus}
           busy={controller.busy}
           configLocked={controller.configLocked}
           layout="empty-top"

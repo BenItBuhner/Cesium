@@ -16,6 +16,7 @@ import {
   Minimize2,
 } from "lucide-react";
 import { HardwareAwareTextInput } from "@/components/input/HardwareAwareTextField";
+import { formatAskQuestionSubmission } from "@/lib/ask-question-dock";
 import type { AskQuestionOption, AskQuestionStep } from "@/lib/types";
 import { CollapsibleHeight } from "./CollapsibleHeight";
 
@@ -200,12 +201,16 @@ interface AskQuestionCardProps {
   dockAboveComposer?: boolean;
   /** Bottom section of combined dock when stacked with other chrome. */
   embeddedInDock?: boolean;
+  onSubmit?: (answer: string) => void | Promise<void>;
+  submitting?: boolean;
 }
 
 export function AskQuestionCard({
   steps,
   dockAboveComposer,
   embeddedInDock,
+  onSubmit,
+  submitting = false,
 }: AskQuestionCardProps) {
   const [stepIndex, setStepIndex] = useState(0);
   const [stepUi, setStepUi] = useState<Record<string, StepUi>>({});
@@ -369,6 +374,28 @@ export function AskQuestionCard({
   const stepWidthPercent = 100 / steps.length;
   const currentUi = getUi(step.id);
 
+  const allStepsComplete = steps.every((entry) => {
+    const ui = stepUi[entry.id] ?? { letter: null, otherDraft: "" };
+    if (!ui.letter) {
+      return false;
+    }
+    const selected = entry.options.find((option) => option.letter === ui.letter);
+    if (!selected) {
+      return false;
+    }
+    if (selected.isOther && !ui.otherDraft.trim()) {
+      return false;
+    }
+    return true;
+  });
+
+  const handleSubmit = useCallback(() => {
+    if (!onSubmit || submitting || !allStepsComplete) {
+      return;
+    }
+    void onSubmit(formatAskQuestionSubmission(steps, stepUi));
+  }, [allStepsComplete, onSubmit, stepUi, steps, submitting]);
+
   function moveOptionSelection(direction: -1 | 1) {
     const currentIndex = step.options.findIndex(
       (opt) => opt.letter === currentUi.letter
@@ -425,6 +452,10 @@ export function AskQuestionCard({
             return;
           }
           e.preventDefault();
+          if (onSubmit && stepIndex >= steps.length - 1 && allStepsComplete) {
+            handleSubmit();
+            return;
+          }
           tryAdvance();
         }
       }}
@@ -510,6 +541,21 @@ export function AskQuestionCard({
           </div>
         </div>
       </CollapsibleHeight>
+
+      {onSubmit && !minimized ? (
+        <div
+          className={`flex justify-end border-t border-[var(--border-card)] pt-[8px] ${transitionSnappy}`}
+        >
+          <button
+            type="button"
+            onClick={handleSubmit}
+            disabled={!allStepsComplete || submitting}
+            className="rounded-[var(--radius-tab)] bg-[var(--plan-accent)] px-[14px] py-[6px] font-sans text-[11px] font-medium text-[var(--bg-panel)] outline-none ring-0 transition-opacity duration-150 ease-out hover:opacity-90 focus-visible:outline-none focus-visible:ring-0 disabled:pointer-events-none disabled:opacity-40 motion-reduce:transition-none"
+          >
+            {submitting ? "Submitting…" : "Submit"}
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }

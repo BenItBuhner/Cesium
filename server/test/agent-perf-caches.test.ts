@@ -88,7 +88,7 @@ describe("agent cache keys and rail payload invariants", () => {
       updatedAt: now,
       lastEventSeq: 0,
       lastReadSeq: 0,
-      config: { backendId: "cursor-acp" as const, mode: "agent" as const, modelId: "x" },
+      config: { backendId: "cursor-sdk" as const, mode: "agent" as const, modelId: "x" },
       providerSessionId: null,
       configOptions: [],
       capabilities: {
@@ -103,6 +103,7 @@ describe("agent cache keys and rail payload invariants", () => {
         supportsSessionResume: true,
         supportsPromptImages: true,
         supportsInlineReasoning: false,
+        supportsCompletionRetry: false,
       },
       pendingPermission: null,
       lastError: null,
@@ -158,7 +159,7 @@ describe("write throughput smoke (one megaphone, not a microbench)", () => {
       updatedAt: Date.now(),
       lastEventSeq: 0,
       lastReadSeq: 0,
-      config: { backendId: "cursor-acp" as const, mode: "agent" as const, modelId: "x" },
+      config: { backendId: "cursor-sdk" as const, mode: "agent" as const, modelId: "x" },
       providerSessionId: null,
       configOptions: [],
       capabilities: {
@@ -173,6 +174,7 @@ describe("write throughput smoke (one megaphone, not a microbench)", () => {
         supportsSessionResume: true,
         supportsPromptImages: true,
         supportsInlineReasoning: false,
+        supportsCompletionRetry: false,
       },
       pendingPermission: null,
       lastError: null,

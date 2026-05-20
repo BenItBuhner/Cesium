@@ -10,6 +10,7 @@ import type {
   AgentConfigOption,
   AgentPermissionOptionKind,
 } from "./agents/types.js";
+import { refreshCesiumModelCatalog } from "./cesium-agent-settings.js";
 import { measureServerPerf } from "./perf.js";
 
 const GLOBAL_SETTINGS_CACHE_TTL_SECONDS = 120;
@@ -51,7 +52,9 @@ export type GlobalSettings = {
     sideColumnsSwapped: boolean;
     workspaceSortMode: WorkspaceSortMode;
     workspaceCustomOrderIds: string[];
+    workspaceRailAppearances: Record<string, WorkspaceRailAppearance>;
     chatFolders: ChatFolderState[];
+    agentRail: AgentRailSettingsState;
   };
   agents: {
     submitCtrlEnter: boolean;
@@ -76,7 +79,7 @@ export type GlobalSettings = {
     modeTags: string[];
     branchPrefix: string;
     /**
-     * When true, ACP `session/request_permission` is answered with Allow without showing a prompt.
+     * When true, the server auto-approves agent tool permission prompts across harnesses.
      * Remembered rules still win when they match. Does not persist new remembered entries.
      */
     autoAcceptAllAgentPermissions: boolean;
@@ -94,6 +97,7 @@ export type GlobalSettings = {
 };
 
 export type WorkspaceSortMode = "recent" | "alphabetical" | "custom";
+export type AgentRailGroupByMode = "workspace" | "repository" | "server" | "updated" | "status";
 
 export type ChatFolderState = {
   id: string;
@@ -105,6 +109,21 @@ export type ChatFolderState = {
   conversationIds: string[];
 };
 
+/** Per server-scoped workspace key (`serverId:workspaceId`). */
+export type WorkspaceRailAppearance = {
+  icon: string;
+  color: string;
+};
+
+export type AgentRailSettingsState = {
+  groupBy: AgentRailGroupByMode;
+  visibleStatusFilters: string[];
+  /** Legacy allow-list kept only so old persisted settings can be read. New filtering uses hiddenServerIds. */
+  visibleServerIds: string[];
+  hiddenServerIds: string[];
+  showIcons: boolean;
+};
+
 function createDefaultSettings(): GlobalSettings {
   return {
     schemaVersion: 1,
@@ -113,7 +132,15 @@ function createDefaultSettings(): GlobalSettings {
       sideColumnsSwapped: false,
       workspaceSortMode: "recent",
       workspaceCustomOrderIds: [],
+      workspaceRailAppearances: {},
       chatFolders: [],
+      agentRail: {
+        groupBy: "workspace",
+        visibleStatusFilters: [],
+        visibleServerIds: [],
+        hiddenServerIds: [],
+        showIcons: true,
+      },
     },
     agents: {
       submitCtrlEnter: false,
@@ -196,6 +223,18 @@ function isRememberedPermissionOptionKind(
   return value === "allow_always" || value === "reject_always";
 }
 
+const REMEMBERED_PERMISSION_BACKEND_REMAP: Record<string, string> = {
+  cesium: "cesium-agent",
+  "cursor-acp": "cursor-sdk",
+  "claude-adapter": "claude-code-sdk",
+  "opencode-acp": "opencode-server",
+  "codex-adapter": "codex-app-server",
+};
+
+function normalizeRememberedPermissionBackendId(backendId: string): string {
+  return REMEMBERED_PERMISSION_BACKEND_REMAP[backendId] ?? backendId;
+}
+
 function normalizeRememberedAgentPermissionRules(
   raw: unknown
 ): RememberedAgentPermissionRule[] {
@@ -209,7 +248,9 @@ function normalizeRememberedAgentPermissionRules(
     }
     const record = item as Partial<RememberedAgentPermissionRule>;
     const workspaceId = typeof record.workspaceId === "string" ? record.workspaceId.trim() : "";
-    const backendId = typeof record.backendId === "string" ? record.backendId.trim() : "";
+    const backendId = normalizeRememberedPermissionBackendId(
+      typeof record.backendId === "string" ? record.backendId.trim() : ""
+    );
     const toolKey = typeof record.toolKey === "string" ? record.toolKey.trim() : "";
     const decision = record.decision === "allow" || record.decision === "reject" ? record.decision : null;
     const optionKind = isRememberedPermissionOptionKind(record.optionKind)
@@ -275,6 +316,37 @@ function normalizeWorkspaceCustomOrderIds(raw: unknown): string[] {
   return out.slice(0, 500);
 }
 
+function normalizeWorkspaceRailAppearances(
+  raw: unknown
+): Record<string, WorkspaceRailAppearance> {
+  if (!raw || typeof raw !== "object") {
+    return {};
+  }
+  const out: Record<string, WorkspaceRailAppearance> = {};
+  let count = 0;
+  for (const [key, value] of Object.entries(raw)) {
+    if (count >= 500) {
+      break;
+    }
+    const workspaceKey = typeof key === "string" ? key.trim() : "";
+    if (!workspaceKey || !value || typeof value !== "object") {
+      continue;
+    }
+    const record = value as Partial<WorkspaceRailAppearance>;
+    const rawColor = typeof record.color === "string" ? record.color.trim() : "";
+    const rawIcon = typeof record.icon === "string" ? record.icon.trim() : "";
+    if (!rawIcon && !/^#[0-9a-f]{6}$/i.test(rawColor)) {
+      continue;
+    }
+    out[workspaceKey] = {
+      icon: rawIcon || "Folder",
+      color: /^#[0-9a-f]{6}$/i.test(rawColor) ? rawColor : "#7c3aed",
+    };
+    count += 1;
+  }
+  return out;
+}
+
 function normalizeChatFolders(raw: unknown): ChatFolderState[] {
   if (!Array.isArray(raw)) {
     return [];
@@ -323,16 +395,48 @@ function normalizeChatFolders(raw: unknown): ChatFolderState[] {
   return folders.slice(0, 500);
 }
 
+function normalizeAgentRailSettings(raw: unknown): AgentRailSettingsState {
+  const defaults = createDefaultSettings().general.agentRail;
+  if (!raw || typeof raw !== "object") {
+    return defaults;
+  }
+  const record = raw as Partial<AgentRailSettingsState>;
+  const rawGroupBy =
+    record.groupBy === "workspace" ||
+    record.groupBy === "repository" ||
+    record.groupBy === "server" ||
+    record.groupBy === "updated" ||
+    record.groupBy === "status"
+      ? record.groupBy
+      : defaults.groupBy;
+  const groupBy = rawGroupBy === "server" ? "workspace" : rawGroupBy;
+  const strings = (value: unknown): string[] =>
+    Array.isArray(value)
+      ? value.filter((item): item is string => typeof item === "string")
+      : [];
+  return {
+    groupBy,
+    visibleStatusFilters: strings(record.visibleStatusFilters),
+    // Do not preserve legacy allow-lists. They hide newly added servers forever,
+    // which is catastrophic for a dynamic multi-server rail.
+    visibleServerIds: [],
+    hiddenServerIds: strings(record.hiddenServerIds),
+    showIcons:
+      typeof record.showIcons === "boolean" ? record.showIcons : defaults.showIcons,
+  };
+}
+
 export async function getRememberedAgentPermissionRule(input: {
   workspaceId: string;
   backendId: string;
   toolKey: string;
 }): Promise<RememberedAgentPermissionRule | undefined> {
   const settings = await getGlobalSettings();
+  const backendId = normalizeRememberedPermissionBackendId(input.backendId.trim());
   return settings.agents.rememberedPermissions.find(
     (rule) =>
       rule.workspaceId === input.workspaceId &&
-      rule.backendId === input.backendId &&
+      rule.backendId === backendId &&
       rule.toolKey === input.toolKey
   );
 }
@@ -348,17 +452,18 @@ export async function saveRememberedAgentPermissionRule(input: {
 }): Promise<RememberedAgentPermissionRule> {
   const settings = await getGlobalSettings();
   const now = Date.now();
-  const id = `${input.workspaceId}:${input.backendId}:${input.toolKey}`;
+  const backendId = normalizeRememberedPermissionBackendId(input.backendId.trim());
+  const id = `${input.workspaceId}:${backendId}:${input.toolKey}`;
   const existing = settings.agents.rememberedPermissions.find(
     (rule) =>
       rule.workspaceId === input.workspaceId &&
-      rule.backendId === input.backendId &&
+      rule.backendId === backendId &&
       rule.toolKey === input.toolKey
   );
   const nextRule: RememberedAgentPermissionRule = {
     id: existing?.id ?? id,
     workspaceId: input.workspaceId,
-    backendId: input.backendId,
+    backendId,
     toolKey: input.toolKey,
     toolLabel: input.toolLabel.trim().slice(0, 160) || "Tool permission",
     decision: input.decision,
@@ -371,7 +476,7 @@ export async function saveRememberedAgentPermissionRule(input: {
     (rule) =>
       !(
         rule.workspaceId === input.workspaceId &&
-        rule.backendId === input.backendId &&
+        rule.backendId === backendId &&
         rule.toolKey === input.toolKey
       )
   );
@@ -431,8 +536,14 @@ function migrateGlobalSettings(raw: Record<string, unknown>): GlobalSettings {
       workspaceCustomOrderIds: normalizeWorkspaceCustomOrderIds(
         (r.general as Record<string, unknown> | undefined)?.workspaceCustomOrderIds
       ),
+      workspaceRailAppearances: normalizeWorkspaceRailAppearances(
+        (r.general as Record<string, unknown> | undefined)?.workspaceRailAppearances
+      ),
       chatFolders: normalizeChatFolders(
         (r.general as Record<string, unknown> | undefined)?.chatFolders
+      ),
+      agentRail: normalizeAgentRailSettings(
+        (r.general as Record<string, unknown> | undefined)?.agentRail
       ),
     },
     agents: {
@@ -617,6 +728,13 @@ export type RefreshModelsResult = {
 export async function refreshAndGetModelToggleState(
   backendIds: AgentBackendId[]
 ): Promise<RefreshModelsResult> {
+  if (backendIds.includes("cesium-agent")) {
+    await refreshCesiumModelCatalog().catch((error) => {
+      const detail = error instanceof Error ? error.message : String(error);
+      console.warn("[settings] Cesium models.dev catalog refresh failed:", detail);
+    });
+  }
+
   const refreshResult: ForceRefreshResult = await forceRefreshAllBackendCaches(backendIds);
 
   const settings = await getGlobalSettings();

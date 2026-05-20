@@ -22,13 +22,18 @@ import {
   fetchModelToggleState,
   refreshModelToggleState,
   saveModelToggles,
+  toServerRequestContext,
   type ModelToggleUpdate,
+  type ServerRequestContext,
 } from "@/lib/server-api";
+import { useServerConnections } from "@/components/preferences/ServerConnectionsProvider";
 import { recordPerfSample } from "@/lib/dev-perf";
 
 type GlobalSettingsContextValue = {
   settings: GlobalSettingsState;
   ready: boolean;
+  settingsServerId: string | null;
+  settingsServerMissing: boolean;
   updateSettings: (
     updater: (current: GlobalSettingsState) => GlobalSettingsState
   ) => void;
@@ -50,8 +55,10 @@ function createDefaultState(): GlobalSettingsState {
 }
 
 export function GlobalSettingsProvider({ children }: { children: ReactNode }) {
+  const { settingsServer, requiresDefaultServer } = useServerConnections();
   const [settings, setSettings] = useState<GlobalSettingsState>(createDefaultState);
   const [ready, setReady] = useState(false);
+  const settingsServerRef = useRef<ServerRequestContext | null>(null);
   const [modelsRefreshing, setModelsRefreshing] = useState(false);
   const [modelToggleSaveState, setModelToggleSaveState] = useState<{
     pending: number;
@@ -63,6 +70,15 @@ export function GlobalSettingsProvider({ children }: { children: ReactNode }) {
   const modelToggleQueueRef = useRef<Map<string, ModelToggleUpdate>>(new Map());
   const modelToggleTimerRef = useRef<number | null>(null);
   const modelToggleEpochRef = useRef(0);
+
+  const settingsRequestContext = useMemo(
+    () => (settingsServer ? toServerRequestContext(settingsServer) : null),
+    [settingsServer]
+  );
+
+  useEffect(() => {
+    settingsServerRef.current = settingsRequestContext;
+  }, [settingsRequestContext]);
 
   useEffect(() => {
     settingsRef.current = settings;
@@ -85,7 +101,12 @@ export function GlobalSettingsProvider({ children }: { children: ReactNode }) {
     const startedAt = performance.now();
     setModelToggleSaveState({ pending: updates.length, error: null });
     try {
-      const result = await saveModelToggles(updates);
+      const server = settingsServerRef.current;
+      if (!server) {
+        setModelToggleSaveState({ pending: 0, error: "Choose a default server for shared settings." });
+        return;
+      }
+      const result = await saveModelToggles(updates, { server });
       recordPerfSample("settings.models.toggle_save_ack", startedAt, {
         updates: updates.length,
       });
@@ -124,7 +145,11 @@ export function GlobalSettingsProvider({ children }: { children: ReactNode }) {
       }
 
       await flushModelToggleUpdates();
-      await saveGlobalSettings(settingsRef.current, options).catch(() => {});
+      const server = settingsServerRef.current;
+      if (!server) {
+        return;
+      }
+      await saveGlobalSettings(settingsRef.current, { ...options, server }).catch(() => {});
     },
     [flushModelToggleUpdates, ready]
   );
@@ -133,8 +158,16 @@ export function GlobalSettingsProvider({ children }: { children: ReactNode }) {
     let mounted = true;
 
     async function load(): Promise<void> {
+      if (!settingsRequestContext) {
+        if (mounted) {
+          skipNextSaveRef.current = true;
+          setSettings(createDefaultState());
+          setReady(true);
+        }
+        return;
+      }
       try {
-        const result = await fetchGlobalSettings();
+        const result = await fetchGlobalSettings({ server: settingsRequestContext });
         if (!mounted) return;
         skipNextSaveRef.current = true;
         setSettings(normalizeLoadedGlobalSettings(result.settings));
@@ -147,16 +180,21 @@ export function GlobalSettingsProvider({ children }: { children: ReactNode }) {
       }
     }
 
+    setReady(false);
     void load();
 
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [settingsRequestContext]);
 
   const syncModelToggleState = useCallback(async () => {
+    const server = settingsServerRef.current;
+    if (!server) {
+      return;
+    }
     try {
-      const result = await fetchModelToggleState();
+      const result = await fetchModelToggleState({ server });
       setSettings((current) => ({
         ...current,
         models: { byBackend: result.byBackend },
@@ -167,8 +205,12 @@ export function GlobalSettingsProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const refetchGlobalSettingsFromServer = useCallback(async () => {
+    const server = settingsServerRef.current;
+    if (!server) {
+      return;
+    }
     try {
-      const result = await fetchGlobalSettings();
+      const result = await fetchGlobalSettings({ server });
       skipNextSaveRef.current = true;
       setSettings(normalizeLoadedGlobalSettings(result.settings));
     } catch {
@@ -177,10 +219,14 @@ export function GlobalSettingsProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const refreshModels = useCallback(async () => {
+    const server = settingsServerRef.current;
+    if (!server) {
+      return;
+    }
     setModelsRefreshing(true);
     const startedAt = performance.now();
     try {
-      const result = await refreshModelToggleState();
+      const result = await refreshModelToggleState({ server });
       recordPerfSample("settings.models.refresh_ack", startedAt, {
         backends: Object.keys(result.byBackend).length,
       });
@@ -217,7 +263,7 @@ export function GlobalSettingsProvider({ children }: { children: ReactNode }) {
   }, [ready, syncModelToggleState]);
 
   useEffect(() => {
-    if (!ready) {
+    if (!ready || !settingsServerRef.current) {
       return;
     }
 
@@ -231,7 +277,11 @@ export function GlobalSettingsProvider({ children }: { children: ReactNode }) {
     }
 
     saveTimerRef.current = window.setTimeout(() => {
-      void saveGlobalSettings(settingsRef.current).catch(() => {});
+      const server = settingsServerRef.current;
+      if (!server) {
+        return;
+      }
+      void saveGlobalSettings(settingsRef.current, { server }).catch(() => {});
     }, SAVE_DEBOUNCE_MS);
 
     return () => {
@@ -294,6 +344,8 @@ export function GlobalSettingsProvider({ children }: { children: ReactNode }) {
     () => ({
       settings,
       ready,
+      settingsServerId: settingsServer?.id ?? null,
+      settingsServerMissing: requiresDefaultServer,
       updateSettings,
       refreshModels,
       modelsRefreshing,
@@ -302,7 +354,9 @@ export function GlobalSettingsProvider({ children }: { children: ReactNode }) {
     }),
     [
       ready,
+      requiresDefaultServer,
       settings,
+      settingsServer?.id,
       updateSettings,
       refreshModels,
       modelsRefreshing,

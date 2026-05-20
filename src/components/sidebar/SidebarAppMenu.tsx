@@ -17,6 +17,13 @@ import {
   getShortcutDisplayForCommand,
   type ShortcutPlatform,
 } from "@/lib/keyboard-shortcuts";
+import {
+  popoverMenuItemClass,
+  popoverMenuItemShortcutClass,
+  popoverMenuListClass,
+  popoverMenuPanelClass,
+  popoverMenuSeparatorClass,
+} from "@/components/ui/popover-menu-ui";
 
 type MenuLeaf = { cmd: string; label: string };
 type MenuBlock = { sep: true } | MenuLeaf;
@@ -51,15 +58,6 @@ function isSep(b: MenuBlock): b is { sep: true } {
   return "sep" in b && b.sep === true;
 }
 
-const rowTrigger =
-  "flex w-full cursor-default items-center justify-between gap-[8px] px-[10px] py-[6px] font-sans text-[13px] text-[var(--text-primary)] outline-none transition-colors hover:bg-[var(--accent-bg)]";
-
-const subItemBtn =
-  "flex w-full cursor-pointer items-center gap-[10px] px-[10px] py-[5px] text-left font-sans text-[13px] text-[var(--text-primary)] outline-none transition-colors hover:bg-[var(--accent-bg)] focus-visible:bg-[var(--accent-bg)]";
-
-const shortcutCls =
-  "ml-auto shrink-0 font-mono text-[11px] tabular-nums text-[var(--text-secondary)]";
-
 const subWrapBase =
   "invisible absolute left-full top-0 z-[60] hidden min-h-full pl-[6px]";
 
@@ -75,39 +73,34 @@ function SubmenuItems({
   platform: ShortcutPlatform;
 }) {
   return (
-    <div
-      className="min-w-[248px] overflow-hidden rounded-[var(--radius-card)] border border-[var(--border-card)] bg-[var(--bg-card)] py-[4px] shadow-[0_8px_24px_rgba(0,0,0,0.12)] dark:shadow-[0_10px_28px_rgba(0,0,0,0.45)]"
-      role="presentation"
-    >
-      {blocks.map((b, i) =>
-        isSep(b) ? (
-          <div
-            key={`s-${i}`}
-            className="my-[4px] h-px bg-[var(--border-subtle)]"
-            role="separator"
-          />
-        ) : (
-          <button
-            key={b.cmd}
-            type="button"
-            role="menuitem"
-            className={subItemBtn}
-            onClick={() => onPick(b.cmd)}
-          >
-            <span className="min-w-0 flex-1">{b.label}</span>
-            {(() => {
-              const shortcut = getShortcutDisplayForCommand(
-                bindings,
-                b.cmd,
-                platform
-              );
-              return shortcut ? (
-                <span className={shortcutCls}>{shortcut}</span>
-              ) : null;
-            })()}
-          </button>
-        )
-      )}
+    <div className={`min-w-[248px] ${popoverMenuPanelClass}`} role="presentation">
+      <div className={popoverMenuListClass}>
+        {blocks.map((b, i) =>
+          isSep(b) ? (
+            <div key={`s-${i}`} className={popoverMenuSeparatorClass} role="separator" />
+          ) : (
+            <button
+              key={b.cmd}
+              type="button"
+              role="menuitem"
+              className={popoverMenuItemClass}
+              onClick={() => onPick(b.cmd)}
+            >
+              <span className="min-w-0 flex-1">{b.label}</span>
+              {(() => {
+                const shortcut = getShortcutDisplayForCommand(
+                  bindings,
+                  b.cmd,
+                  platform
+                );
+                return shortcut ? (
+                  <span className={popoverMenuItemShortcutClass}>{shortcut}</span>
+                ) : null;
+              })()}
+            </button>
+          )
+        )}
+      </div>
     </div>
   );
 }
@@ -123,7 +116,7 @@ function FileSubmenu({
 }) {
   return (
     <div className="group/file relative w-full">
-      <div className={rowTrigger} role="presentation">
+      <div className={popoverMenuItemClass} role="presentation">
         <span>File</span>
         <ChevronRight
           className="size-[14px] shrink-0 text-[var(--text-secondary)]"
@@ -156,7 +149,7 @@ function ViewSubmenu({
 }) {
   return (
     <div className="group/view relative w-full">
-      <div className={rowTrigger} role="presentation">
+      <div className={popoverMenuItemClass} role="presentation">
         <span>View</span>
         <ChevronRight
           className="size-[14px] shrink-0 text-[var(--text-secondary)]"
@@ -189,7 +182,7 @@ function WindowSubmenu({
 }) {
   return (
     <div className="group/window relative w-full">
-      <div className={rowTrigger} role="presentation">
+      <div className={popoverMenuItemClass} role="presentation">
         <span>Window</span>
         <ChevronRight
           className="size-[14px] shrink-0 text-[var(--text-secondary)]"
@@ -285,15 +278,17 @@ export function SidebarAppMenu() {
     open && mounted ? (
       <div
         ref={portalRef}
-        className="fixed w-[132px] overflow-visible rounded-[var(--radius-card)] border border-[var(--border-card)] bg-[var(--bg-card)] py-[4px] shadow-[0_8px_24px_rgba(0,0,0,0.12)] dark:shadow-[0_10px_28px_rgba(0,0,0,0.45)]"
+        className={`fixed w-[132px] overflow-visible ${popoverMenuPanelClass}`}
         style={{ top: pos.top, left: pos.left, zIndex: PORTAL_Z }}
         role="menu"
         aria-label="Application menu"
         data-ide-sidebar-app-menu
       >
+        <div className={popoverMenuListClass}>
         <FileSubmenu onPick={onPick} bindings={bindings} platform={platform} />
         <ViewSubmenu onPick={onPick} bindings={bindings} platform={platform} />
         <WindowSubmenu onPick={onPick} bindings={bindings} platform={platform} />
+        </div>
       </div>
     ) : null;
 

@@ -28,7 +28,7 @@ after(async () => {
 });
 
 test("model toggle saves survive later stale full global settings PUT", async () => {
-  await writeAgentBackendConfigCache("cursor-acp", [
+  await writeAgentBackendConfigCache("cursor-sdk", [
     {
       id: "model",
       name: "Model",
@@ -42,15 +42,15 @@ test("model toggle saves survive later stale full global settings PUT", async ()
   ]);
 
   await store.setModelToggles([
-    { backendId: "cursor-acp", modelId: "model-a", on: false },
+    { backendId: "cursor-sdk", modelId: "model-a", on: false },
   ]);
 
   const staleGlobal = await store.getGlobalSettings();
   staleGlobal.models = {
     byBackend: {
-      "cursor-acp": [
-        { backendId: "cursor-acp", id: "model-a", name: "Model A", on: true },
-        { backendId: "cursor-acp", id: "model-b", name: "Model B", on: true },
+      "cursor-sdk": [
+        { backendId: "cursor-sdk", id: "model-a", name: "Model A", on: true },
+        { backendId: "cursor-sdk", id: "model-b", name: "Model B", on: true },
       ],
     },
   };
@@ -62,7 +62,7 @@ test("model toggle saves survive later stale full global settings PUT", async ()
   });
   assert.equal(response.status, 200);
 
-  const toggles = await store.getModelToggleState(["cursor-acp"]);
-  const modelA = toggles.byBackend["cursor-acp"]?.find((model) => model.id === "model-a");
+  const toggles = await store.getModelToggleState(["cursor-sdk"]);
+  const modelA = toggles.byBackend["cursor-sdk"]?.find((model) => model.id === "model-a");
   assert.equal(modelA?.on, false);
 });

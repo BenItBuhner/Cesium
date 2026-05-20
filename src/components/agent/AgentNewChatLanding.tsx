@@ -27,6 +27,8 @@ import {
   useRegisterDesignCaptureComposer,
 } from "@/components/editor/OpenInEditorContext";
 import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
+import { usePersistHomeWorkspaceRailAppearances } from "@/hooks/usePersistHomeWorkspaceRailAppearances";
+import type { WorkspaceRailAppearance } from "@/lib/global-settings";
 import {
   buildDraftModeOptionsForBackend,
   buildDraftModelOptionsForBackend,
@@ -44,7 +46,9 @@ import type {
   GitWorktreeInfo,
   ImageAttachment,
 } from "@/lib/types";
+import { useWorkspaceDirectory } from "@/contexts/WorkspaceDirectoryContext";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
+import { useServerConnections } from "@/components/preferences/ServerConnectionsProvider";
 import { useIDECommandRunner } from "@/components/ide/IDECommandContext";
 import { useShellView } from "@/components/layout/ShellViewContext";
 import { AGENT_CENTER_CONTENT_CLASS } from "./agent-shell-layout";
@@ -53,6 +57,11 @@ import {
   CHAT_UI_SHORTCUT_EVENT,
   isChatUiShortcutEvent,
 } from "@/lib/chat-ui-shortcut-events";
+import {
+  getWorkspaceRailAppearance,
+  resolveWorkspaceAppearanceKey,
+  WorkspaceFolderIcon,
+} from "@/lib/workspace-rail-appearance";
 
 function pickAvailableBackend(
   backends: AgentBackendInfo[],
@@ -93,6 +102,32 @@ function localBranchNameForRemote(branchName: string): string {
 const QUICK_ACTION_BUTTON_CLASSNAME =
   "inline-flex max-w-full items-center gap-[4px] rounded-[var(--agent-pill-radius)] border border-[var(--agent-border)] bg-[var(--agent-panel-bg)] px-[14px] py-[7px] text-left font-sans text-[12px] leading-none font-normal text-[var(--text-primary)] whitespace-nowrap transition-colors hover:bg-[var(--agent-card-hover-bg)]";
 
+function WorkspacePickerIcon({
+  appearances,
+  workspaceKey,
+  index,
+  isHome,
+  className = "size-[13px] shrink-0",
+  strokeWidth = 1.5,
+}: {
+  appearances: Record<string, WorkspaceRailAppearance>;
+  workspaceKey: string;
+  index: number;
+  isHome: boolean;
+  className?: string;
+  strokeWidth?: number;
+}) {
+  const appearance = getWorkspaceRailAppearance(appearances, workspaceKey, index, { isHome });
+  return (
+    <WorkspaceFolderIcon
+      iconName={appearance.icon}
+      color={appearance.color}
+      className={className}
+      strokeWidth={strokeWidth}
+    />
+  );
+}
+
 export function AgentNewChatLanding() {
   const {
     composerDrafts,
@@ -111,9 +146,11 @@ export function AgentNewChatLanding() {
     openWorkspaceById,
     gitStatus,
     refreshGitStatus,
+    initializeGitRepo,
     switchBranch,
     createWorktree,
     deleteWorktree,
+    homeWorkspaceId,
   } = useWorkspace();
   const {
     activeWorkspaceGroup,
@@ -123,7 +160,9 @@ export function AgentNewChatLanding() {
     setSelectedConversationId,
     setRightPaneOpen,
   } = useAgentShellState();
-  const { settings } = useGlobalSettings();
+  const { settings, updateSettings } = useGlobalSettings();
+  const { activeServer, setActiveServer } = useServerConnections();
+  const { workspaces: directoryWorkspaces } = useWorkspaceDirectory();
   const runCommand = useIDECommandRunner();
   const { setShellView } = useShellView();
 
@@ -157,6 +196,11 @@ export function AgentNewChatLanding() {
       ) as EditorMode,
     [draftModeOptions, workspaceSession.chat.mode]
   );
+
+  const isHomeWorkspace = Boolean(
+    homeWorkspaceId && activeWorkspaceGroup?.workspace.id === homeWorkspaceId
+  );
+  const workspaceRailAppearances = settings.general.workspaceRailAppearances;
 
   const composerDraftId = `agent-draft:${activeWorkspaceGroup?.workspace.id ?? "workspace"}`;
   const composerDraftTitle = "Agent prompt";
@@ -306,6 +350,14 @@ export function AgentNewChatLanding() {
   ]);
 
   useEffect(() => {
+    if (!isHomeWorkspace) {
+      return;
+    }
+    setBranchPickerOpen(false);
+    setTargetPickerOpen(false);
+  }, [isHomeWorkspace]);
+
+  useEffect(() => {
     setExpandedComposerController(expandedComposerState);
     return () => {
       setExpandedComposerController(null);
@@ -373,11 +425,78 @@ export function AgentNewChatLanding() {
       .slice(0, 80);
   }, [branchPickerItems, branchQuery]);
 
+  const workspacePickerOptions = useMemo(() => {
+    const fromDirectory = directoryWorkspaces
+      .filter((workspace) => workspace.serverId === activeServer.id)
+      .map((workspace) => ({
+        workspace,
+        workspaceKey: workspace.workspaceKey,
+        serverId: workspace.serverId,
+        serverLabel: workspace.serverLabel,
+      }));
+    if (fromDirectory.length > 0) {
+      return fromDirectory;
+    }
+    return groups
+      .filter((group) => !group.serverId || group.serverId === activeServer.id)
+      .map((group) => ({
+        workspace: group.workspace,
+        workspaceKey: resolveWorkspaceAppearanceKey({
+          workspaceKey: group.workspaceKey,
+          serverId: group.serverId,
+          workspaceId: group.workspace.id,
+          fallbackServerId: activeServer.id,
+        }),
+        serverId: group.serverId,
+        serverLabel: group.serverLabel,
+      }));
+  }, [activeServer.id, directoryWorkspaces, groups]);
+
+  const homeAppearancePersistEntries = useMemo(
+    () =>
+      workspacePickerOptions.map((group) => ({
+        workspaceKey: group.workspaceKey,
+        isHome: Boolean(homeWorkspaceId && group.workspace.id === homeWorkspaceId),
+      })),
+    [workspacePickerOptions, homeWorkspaceId]
+  );
+  usePersistHomeWorkspaceRailAppearances(
+    workspaceRailAppearances,
+    homeAppearancePersistEntries,
+    updateSettings
+  );
+
+  const activeWorkspaceAppearanceKey = useMemo(() => {
+    if (!activeWorkspaceGroup) {
+      return null;
+    }
+    return resolveWorkspaceAppearanceKey({
+      workspaceKey: activeWorkspaceGroup.workspaceKey,
+      serverId: activeWorkspaceGroup.serverId,
+      workspaceId: activeWorkspaceGroup.workspace.id,
+      fallbackServerId: activeServer.id,
+    });
+  }, [activeServer.id, activeWorkspaceGroup]);
+
+  const activeWorkspacePickerIndex = useMemo(() => {
+    if (!activeWorkspaceAppearanceKey) {
+      return 0;
+    }
+    const index = workspacePickerOptions.findIndex(
+      (group) => group.workspaceKey === activeWorkspaceAppearanceKey
+    );
+    return index >= 0 ? index : 0;
+  }, [activeWorkspaceAppearanceKey, workspacePickerOptions]);
+
   const filteredWorkspaceGroups = useMemo(() => {
     const q = workspaceQuery.trim().toLowerCase();
-    if (!q) return groups;
-    return groups.filter((g) => g.workspace.name.toLowerCase().includes(q));
-  }, [groups, workspaceQuery]);
+    if (!q) return workspacePickerOptions;
+    return workspacePickerOptions.filter(
+      (g) =>
+        g.workspace.name.toLowerCase().includes(q) ||
+        g.serverLabel?.toLowerCase().includes(q)
+    );
+  }, [workspacePickerOptions, workspaceQuery]);
 
   const activeBranchLabel = gitStatus?.isGitRepo
     ? gitStatus.currentBranch ?? "Detached"
@@ -458,6 +577,14 @@ export function AgentNewChatLanding() {
     }
   }, [workspacePickerOpen]);
 
+  const handleInitializeGitRepo = useCallback(async () => {
+    await runGitAction("git-init", async () => {
+      await initializeGitRepo();
+      setBranchPickerOpen(false);
+      setBranchQuery("");
+    });
+  }, [initializeGitRepo, runGitAction]);
+
   const handleBranchSwitch = useCallback(
     async (branchName: string) => {
       await runGitAction(`switch:${branchName}`, async () => {
@@ -530,30 +657,41 @@ export function AgentNewChatLanding() {
                 }}
                 className="inline-flex min-w-0 max-w-[220px] items-center gap-[5px] rounded-[var(--radius-pill)] px-[6px] py-[4px] text-left font-sans text-[13px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)]"
               >
-                <Folder className="size-[13px] shrink-0" strokeWidth={1.5} />
+                {activeWorkspaceAppearanceKey ? (
+                  <WorkspacePickerIcon
+                    appearances={workspaceRailAppearances}
+                    workspaceKey={activeWorkspaceAppearanceKey}
+                    index={activeWorkspacePickerIndex}
+                    isHome={isHomeWorkspace}
+                  />
+                ) : (
+                  <Folder className="size-[13px] shrink-0" strokeWidth={1.5} />
+                )}
                 <span className="max-w-[260px] min-w-0 shrink truncate">
                   {activeWorkspaceGroup?.workspace.name ?? "Select workspace"}
                 </span>
                 <ChevronDown className="size-[13px] shrink-0" strokeWidth={1.5} />
               </button>
+              {!isHomeWorkspace ? (
               <button
                 ref={branchPickerRef}
                 type="button"
                 aria-label="Open branch picker"
                 data-perf="agent-branch-picker-button"
-                disabled={!gitStatus?.isGitRepo}
                 onClick={() => {
                   setWorkspacePickerOpen(false);
                   setTargetPickerOpen(false);
                   setBranchPickerOpen((open) => !open);
                   void refreshGitStatus().catch(() => undefined);
                 }}
-                className="inline-flex min-w-0 max-w-[220px] items-center gap-[5px] rounded-[var(--radius-pill)] px-[6px] py-[4px] text-left font-sans text-[13px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)] disabled:opacity-50"
+                className="inline-flex min-w-0 max-w-[220px] items-center gap-[5px] rounded-[var(--radius-pill)] px-[6px] py-[4px] text-left font-sans text-[13px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)]"
               >
                 <GitBranch className="size-[13px] shrink-0" strokeWidth={1.5} />
                 <span className="truncate">{activeBranchLabel}</span>
                 <ChevronDown className="size-[13px] shrink-0" strokeWidth={1.5} />
               </button>
+              ) : null}
+              {!isHomeWorkspace ? (
               <button
                 ref={targetPickerRef}
                 type="button"
@@ -569,6 +707,7 @@ export function AgentNewChatLanding() {
                 <Laptop className="size-[13px] shrink-0" strokeWidth={1.5} />
                 <ChevronDown className="size-[13px] shrink-0" strokeWidth={1.5} />
               </button>
+              ) : null}
             </div>
             {gitActionError ? (
               <div className="mt-[6px] max-w-[520px] rounded-[var(--radius-tab)] border border-[var(--palette-border)] bg-[var(--bg-card)] px-[8px] py-[6px] font-sans text-[12px] text-[var(--text-primary)]">
@@ -616,6 +755,7 @@ export function AgentNewChatLanding() {
                 configLocked={false}
                 onSubmit={handleSubmit}
                 onCancel={() => undefined}
+                gitSlashCommands={Boolean(gitStatus)}
                 layout="empty-top"
                 shellMxClass=""
                 draftAttachments={composerDraftAttachments}
@@ -685,25 +825,34 @@ export function AgentNewChatLanding() {
                 measureKey={`${workspaceQuery}\0${filteredWorkspaceGroups.length}`}
                 scrollClassName="hide-scrollbar-y max-h-[min(320px,45vh)] min-h-0 overflow-y-auto overscroll-contain p-[4px]"
               >
-                {filteredWorkspaceGroups.map((group) => {
-                  const current =
-                    group.workspace.id === activeWorkspaceGroup?.workspace.id;
+                {filteredWorkspaceGroups.map((group, groupIndex) => {
+                  const groupKey = group.workspaceKey;
+                  const current = groupKey === activeWorkspaceAppearanceKey;
+                  const isHomeRow =
+                    Boolean(homeWorkspaceId) && group.workspace.id === homeWorkspaceId;
                   return (
                     <div
-                      key={group.workspace.id}
+                      key={groupKey}
                       className="group flex items-center gap-[6px] rounded-[var(--radius-tab)] px-[8px] py-[5px] font-sans text-[12.5px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)]"
                     >
                       <button
                         type="button"
                         onClick={() => {
-                          void openWorkspaceById(group.workspace.id);
+                          void (async () => {
+                            if (group.serverId && group.serverId !== activeServer.id) {
+                              setActiveServer(group.serverId);
+                            }
+                            await openWorkspaceById(group.workspace.id);
+                          })();
                           setWorkspacePickerOpen(false);
                         }}
                         className="flex min-w-0 flex-1 items-center gap-[8px] truncate text-left"
                       >
-                        <Folder
-                          className="size-[13px] shrink-0 text-[var(--text-secondary)]"
-                          strokeWidth={1.5}
+                        <WorkspacePickerIcon
+                          appearances={workspaceRailAppearances}
+                          workspaceKey={groupKey}
+                          index={groupIndex}
+                          isHome={isHomeRow}
                         />
                         <span className="min-w-0 flex-1 truncate">{group.workspace.name}</span>
                       </button>
@@ -749,79 +898,104 @@ export function AgentNewChatLanding() {
               data-ide-input-sink
               onPointerDown={(event) => event.stopPropagation()}
             >
-              <div className="border-b border-[var(--border-card)] px-[10px] py-[7px]">
-                <input
-                  value={branchQuery}
-                  onChange={(event) => setBranchQuery(event.target.value)}
-                  placeholder="Search branches..."
-                  className="w-full bg-transparent font-sans text-[13px] text-[var(--text-primary)] outline-none placeholder:text-[var(--text-disabled)]"
-                  autoFocus
-                />
-              </div>
-              <VerticalFadedScroll
-                measureKey={`${branchQuery}\0${filteredBranchItems.length}`}
-                scrollClassName="hide-scrollbar-y max-h-[min(320px,45vh)] min-h-0 overflow-y-auto overscroll-contain p-[4px]"
-              >
-                {filteredBranchItems.map((item) => {
-                  const Icon =
-                    item.icon === "remote"
-                      ? Cloud
-                      : item.icon === "worktree"
-                        ? FolderGit2
-                        : null;
-                  const busy =
-                    gitActionBusy === `switch:${item.branch.name}` ||
-                    gitActionBusy === `worktree:${item.branch.name}`;
-                  return (
-                    <div
-                      key={item.key}
-                      className="group flex items-center gap-[6px] rounded-[var(--radius-tab)] px-[8px] py-[5px] font-sans text-[12.5px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)]"
-                    >
-                      {Icon ? <Icon className="size-[13px] shrink-0" strokeWidth={1.5} /> : null}
-                      <button
-                        type="button"
-                        disabled={busy}
-                        onClick={() =>
-                          item.branch.type === "remote"
-                            ? void handleBranchWorktree(
-                                item.branch.name,
-                                item.localBranchName,
-                                item.localBranchExists
-                              )
-                            : void handleBranchSwitch(item.branch.name)
-                        }
-                        className="min-w-0 flex-1 truncate text-left disabled:cursor-not-allowed disabled:opacity-60"
-                        title={
-                          item.branch.type === "remote"
-                            ? "Open this branch in a new worktree"
-                            : item.worktree && !item.branch.current
-                              ? "Open this branch's worktree"
-                            : "Switch this workspace to this branch"
-                        }
-                      >
-                        {item.branch.name}
-                      </button>
-                      {item.branch.current ? <Check className="size-[13px] shrink-0" strokeWidth={2} /> : null}
-                    </div>
-                  );
-                })}
-                {filteredBranchItems.length === 0 ? (
-                  <div className="px-[8px] py-[8px] font-sans text-[12px] text-[var(--text-disabled)]">
-                    No branches found
+              {gitStatus === null ? (
+                <div className="px-[10px] py-[12px] font-sans text-[12px] text-[var(--text-secondary)]">
+                  Loading git status...
+                </div>
+              ) : gitStatus.isGitRepo ? (
+                <>
+                  <div className="border-b border-[var(--border-card)] px-[10px] py-[7px]">
+                    <input
+                      value={branchQuery}
+                      onChange={(event) => setBranchQuery(event.target.value)}
+                      placeholder="Search branches..."
+                      className="w-full bg-transparent font-sans text-[13px] text-[var(--text-primary)] outline-none placeholder:text-[var(--text-disabled)]"
+                      autoFocus
+                    />
                   </div>
-                ) : null}
-              </VerticalFadedScroll>
-              <div className="border-t border-[var(--border-card)] p-[4px]">
-                <button
-                  type="button"
-                  disabled={gitActionBusy != null}
-                  onClick={() => void handleNewBranchWorktree()}
-                  className="flex w-full items-center gap-[8px] rounded-[var(--radius-tab)] px-[8px] py-[6px] text-left font-sans text-[12.5px] text-[var(--text-primary)] transition-colors hover:bg-[var(--accent-bg)] disabled:opacity-50"
-                >
-                  <GitFork className="size-[13px] shrink-0" strokeWidth={1.5} />
-                  New branch in worktree...
-                </button>
-              </div>
+                  <VerticalFadedScroll
+                    measureKey={`${branchQuery}\0${filteredBranchItems.length}`}
+                    scrollClassName="hide-scrollbar-y max-h-[min(320px,45vh)] min-h-0 overflow-y-auto overscroll-contain p-[4px]"
+                  >
+                    {filteredBranchItems.map((item) => {
+                      const Icon =
+                        item.icon === "remote"
+                          ? Cloud
+                          : item.icon === "worktree"
+                            ? FolderGit2
+                            : null;
+                      const busy =
+                        gitActionBusy === `switch:${item.branch.name}` ||
+                        gitActionBusy === `worktree:${item.branch.name}`;
+                      return (
+                        <div
+                          key={item.key}
+                          className="group flex items-center gap-[6px] rounded-[var(--radius-tab)] px-[8px] py-[5px] font-sans text-[12.5px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)]"
+                        >
+                          {Icon ? <Icon className="size-[13px] shrink-0" strokeWidth={1.5} /> : null}
+                          <button
+                            type="button"
+                            disabled={busy}
+                            onClick={() =>
+                              item.branch.type === "remote"
+                                ? void handleBranchWorktree(
+                                    item.branch.name,
+                                    item.localBranchName,
+                                    item.localBranchExists
+                                  )
+                                : void handleBranchSwitch(item.branch.name)
+                            }
+                            className="min-w-0 flex-1 truncate text-left disabled:cursor-not-allowed disabled:opacity-60"
+                            title={
+                              item.branch.type === "remote"
+                                ? "Open this branch in a new worktree"
+                                : item.worktree && !item.branch.current
+                                  ? "Open this branch's worktree"
+                                  : "Switch this workspace to this branch"
+                            }
+                          >
+                            {item.branch.name}
+                          </button>
+                          {item.branch.current ? <Check className="size-[13px] shrink-0" strokeWidth={2} /> : null}
+                        </div>
+                      );
+                    })}
+                    {filteredBranchItems.length === 0 ? (
+                      <div className="px-[8px] py-[8px] font-sans text-[12px] text-[var(--text-disabled)]">
+                        No branches found
+                      </div>
+                    ) : null}
+                  </VerticalFadedScroll>
+                  <div className="border-t border-[var(--border-card)] p-[4px]">
+                    <button
+                      type="button"
+                      disabled={gitActionBusy != null}
+                      onClick={() => void handleNewBranchWorktree()}
+                      className="flex w-full items-center gap-[8px] rounded-[var(--radius-tab)] px-[8px] py-[6px] text-left font-sans text-[12.5px] text-[var(--text-primary)] transition-colors hover:bg-[var(--accent-bg)] disabled:opacity-50"
+                    >
+                      <GitFork className="size-[13px] shrink-0" strokeWidth={1.5} />
+                      New branch in worktree...
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="px-[10px] py-[10px] font-sans text-[12.5px] leading-snug text-[var(--text-secondary)]">
+                    This folder is not a git repository yet.
+                  </div>
+                  <div className="border-t border-[var(--border-card)] p-[4px]">
+                    <button
+                      type="button"
+                      disabled={gitActionBusy != null}
+                      onClick={() => void handleInitializeGitRepo()}
+                      className="flex w-full items-center gap-[8px] rounded-[var(--radius-tab)] px-[8px] py-[6px] text-left font-sans text-[12.5px] text-[var(--text-primary)] transition-colors hover:bg-[var(--accent-bg)] disabled:opacity-50"
+                    >
+                      <GitBranch className="size-[13px] shrink-0" strokeWidth={1.5} />
+                      Initialize repository
+                    </button>
+                  </div>
+                </>
+              )}
             </div>,
             document.body
           )
@@ -845,7 +1019,7 @@ export function AgentNewChatLanding() {
               >
                 <div className="flex items-center gap-[8px] rounded-[var(--radius-tab)] px-[8px] py-[6px] font-sans text-[12.5px] text-[var(--text-primary)]">
                   <Laptop className="size-[14px] shrink-0" strokeWidth={1.5} />
-                  <span className="min-w-0 flex-1">This PC</span>
+                  <span className="min-w-0 flex-1">This device</span>
                   <Check className="size-[13px] shrink-0" strokeWidth={2} />
                 </div>
                 <button
@@ -855,7 +1029,7 @@ export function AgentNewChatLanding() {
                   className="flex w-full items-center gap-[8px] rounded-[var(--radius-tab)] px-[8px] py-[6px] text-left font-sans text-[12.5px] text-[var(--text-primary)] transition-colors hover:bg-[var(--accent-bg)] disabled:opacity-50"
                 >
                   <GitFork className="size-[14px] shrink-0" strokeWidth={1.5} />
-                  New Worktree
+                  New worktree
                 </button>
               </VerticalFadedScroll>
             </div>,

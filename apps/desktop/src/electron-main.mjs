@@ -9,6 +9,125 @@ let mainWindow = null;
 const smokeMode = process.argv.includes("--smoke");
 let cleanupStarted = false;
 const WORKSPACE_ROUTE = "/workspace";
+const DOCS_PATH = "/docs";
+const DOCS_ROUTE_QUERY_PARAM = "cesiumRoute";
+const DOCS_ROUTE_QUERY_VALUE = "docs";
+let docsWindow = null;
+
+function attachRendererNavigationGuards(webContents) {
+  webContents.on("will-navigate", (event, url) => {
+    if (isExpectedRendererNavigation(url)) {
+      return;
+    }
+    console.warn("[cesium-desktop] blocked top-level navigation", url);
+    event.preventDefault();
+  });
+  webContents.setWindowOpenHandler(({ url }) => {
+    console.warn("[cesium-desktop] blocked renderer popup", url);
+    if (/^https?:\/\//i.test(url)) {
+      void shell.openExternal(url).catch(() => undefined);
+    }
+    return { action: "deny" };
+  });
+}
+
+function createRendererBrowserWindow(options = {}) {
+  return new BrowserWindow({
+    show: options.show ?? true,
+    width: options.width ?? 1440,
+    height: options.height ?? 960,
+    minWidth: options.minWidth ?? 980,
+    minHeight: options.minHeight ?? 640,
+    frame: false,
+    autoHideMenuBar: true,
+    backgroundColor: "#191919",
+    webPreferences: {
+      preload: resolve(here, "preload.cjs"),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+}
+
+function resolvePackagedRendererIndexPath() {
+  return resolve(process.resourcesPath, "desktop-renderer/index.html");
+}
+
+function buildDocsRendererUrl(sourceWebContents) {
+  const configuredRendererUrl = process.env.OPENCURSOR_DESKTOP_RENDERER_URL;
+  if (configuredRendererUrl) {
+    const url = new URL(configuredRendererUrl);
+    url.pathname = DOCS_PATH;
+    url.hash = "";
+    if (backend?.baseUrl) {
+      url.searchParams.set("serverUrl", backend.baseUrl);
+    } else {
+      url.search = "";
+    }
+    return url.toString();
+  }
+
+  try {
+    const url = new URL(sourceWebContents.getURL());
+    if (url.protocol === "http:" || url.protocol === "https:") {
+      url.pathname = DOCS_PATH;
+      url.search = "";
+      url.hash = "";
+      return url.toString();
+    }
+  } catch {
+    // Fall through to packaged file renderer.
+  }
+
+  return null;
+}
+
+function docsUrlLooksLoaded(rawUrl) {
+  if (!rawUrl) {
+    return false;
+  }
+  return (
+    rawUrl.includes(DOCS_PATH) ||
+    rawUrl.includes(`${DOCS_ROUTE_QUERY_PARAM}=${DOCS_ROUTE_QUERY_VALUE}`)
+  );
+}
+
+async function loadDocsInWindow(targetWindow, sourceWebContents) {
+  const docsUrl = buildDocsRendererUrl(sourceWebContents);
+  if (docsUrl) {
+    await targetWindow.loadURL(docsUrl);
+    return;
+  }
+
+  const rendererIndex = resolvePackagedRendererIndexPath();
+  await targetWindow.loadFile(rendererIndex, {
+    query: { [DOCS_ROUTE_QUERY_PARAM]: DOCS_ROUTE_QUERY_VALUE },
+  });
+}
+
+async function openDocsWindow(sourceWebContents) {
+  if (docsWindow && !docsWindow.isDestroyed()) {
+    docsWindow.focus();
+    const currentUrl = docsWindow.webContents.getURL();
+    if (!docsUrlLooksLoaded(currentUrl)) {
+      await loadDocsInWindow(docsWindow, sourceWebContents);
+    }
+    return;
+  }
+
+  docsWindow = createRendererBrowserWindow({
+    width: 1080,
+    height: 820,
+    minWidth: 720,
+    minHeight: 520,
+  });
+  Menu.setApplicationMenu(null);
+  attachRendererNavigationGuards(docsWindow.webContents);
+  docsWindow.on("closed", () => {
+    docsWindow = null;
+  });
+  await loadDocsInWindow(docsWindow, sourceWebContents);
+}
 
 function isExpectedRendererNavigation(rawUrl) {
   try {
@@ -56,21 +175,7 @@ async function createMainWindow(options = {}) {
   });
   console.log("[cesium-desktop] backend ready", backend.baseUrl);
 
-  mainWindow = new BrowserWindow({
-    show: options.show ?? true,
-    width: 1440,
-    height: 960,
-    minWidth: 980,
-    minHeight: 640,
-    frame: false,
-    autoHideMenuBar: true,
-    backgroundColor: "#191919",
-    webPreferences: {
-      preload: resolve(here, "preload.cjs"),
-      contextIsolation: true,
-      nodeIntegration: false,
-    },
-  });
+  mainWindow = createRendererBrowserWindow({ show: options.show ?? true });
   Menu.setApplicationMenu(null);
 
   const rendererUrl =
@@ -79,20 +184,7 @@ async function createMainWindow(options = {}) {
   mainWindow.webContents.on("preload-error", (_event, preloadPath, error) => {
     console.error("[cesium-desktop] preload failed", preloadPath, error);
   });
-  mainWindow.webContents.on("will-navigate", (event, url) => {
-    if (isExpectedRendererNavigation(url)) {
-      return;
-    }
-    console.warn("[cesium-desktop] blocked top-level navigation", url);
-    event.preventDefault();
-  });
-  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    console.warn("[cesium-desktop] blocked renderer popup", url);
-    if (/^https?:\/\//i.test(url)) {
-      void shell.openExternal(url).catch(() => undefined);
-    }
-    return { action: "deny" };
-  });
+  attachRendererNavigationGuards(mainWindow.webContents);
   if (rendererUrl) {
     console.log("[cesium-desktop] loading renderer", rendererUrl);
     const url =
@@ -106,7 +198,7 @@ async function createMainWindow(options = {}) {
     return;
   }
 
-  const rendererIndex = resolve(process.resourcesPath, "desktop-renderer/index.html");
+  const rendererIndex = resolvePackagedRendererIndexPath();
   console.log("[cesium-desktop] loading packaged renderer", rendererIndex);
   await mainWindow.loadFile(rendererIndex);
   if (options.closeAfterLoad) {
@@ -155,6 +247,16 @@ ipcMain.handle("cesium:open-external", async (_event, url) => {
   if (typeof url !== "string") return false;
   await shell.openExternal(url);
   return true;
+});
+
+ipcMain.handle("cesium:open-docs-window", async (event) => {
+  try {
+    await openDocsWindow(event.sender);
+    return true;
+  } catch (error) {
+    console.error("[cesium-desktop] failed to open docs window", error);
+    return false;
+  }
 });
 
 ipcMain.handle("cesium:window-minimize", (event) => {

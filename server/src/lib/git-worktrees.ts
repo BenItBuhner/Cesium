@@ -303,6 +303,23 @@ async function listWorktrees(
   return items;
 }
 
+export async function initializeGitRepoForWorkspace(input: {
+  workspace: WorkspaceRecord;
+  workspaces: WorkspaceRecord[];
+  homeWorkspaceId: string | null;
+}): Promise<GitWorkspaceStatus> {
+  const { workspace, workspaces, homeWorkspaceId } = input;
+  if (homeWorkspaceId && workspace.id === homeWorkspaceId) {
+    throw new Error("Cannot initialize a git repository in the Home workspace.");
+  }
+  const existingRoot = await repoRootFor(workspace.root);
+  if (existingRoot) {
+    return getGitWorkspaceStatus(workspace, workspaces);
+  }
+  await runGit(workspace.root, ["init"], GIT_MUTATION_TIMEOUT_MS);
+  return getGitWorkspaceStatus(workspace, workspaces);
+}
+
 export async function getGitWorkspaceStatus(
   workspace: WorkspaceRecord,
   workspaces: WorkspaceRecord[]

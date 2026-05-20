@@ -973,7 +973,8 @@ export const authMiddleware: MiddlewareHandler = async (c, next) => {
     pathname === "/health" ||
     pathname === "/api/auth/status" ||
     pathname === "/api/auth/login" ||
-    pathname === "/api/auth/logout"
+    pathname === "/api/auth/logout" ||
+    pathname === "/api/mcp/oauth/callback"
   ) {
     await next();
     return;

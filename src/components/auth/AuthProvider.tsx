@@ -118,7 +118,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     let cancelled = false;
-    setReady(false);
+    const hasCachedSession = Boolean(getStoredSessionToken(activeServer.baseUrl));
+    if (!hasCachedSession) {
+      setReady(false);
+    }
     void refreshAuthStatus()
       .catch((nextError) => {
         if (cancelled) {
@@ -160,6 +163,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           | {
               authenticated?: boolean;
               session?: AuthSession | null;
+              token?: string;
               error?: string;
             }
           | Record<string, never>;
@@ -177,7 +181,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           return false;
         }
         setStoredSessionToken(
-          getStoredSessionToken(activeServer.baseUrl),
+          typeof payload.token === "string"
+            ? payload.token
+            : getStoredSessionToken(activeServer.baseUrl),
           payload.session,
           activeServer.baseUrl
         );

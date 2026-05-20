@@ -7,6 +7,7 @@ const r = (path: string) => fileURLToPath(new URL(path, import.meta.url));
 
 export default defineConfig({
   base: "./",
+  appType: "spa",
   plugins: [react(), tailwindcss()],
   server: {
     host: "127.0.0.1",

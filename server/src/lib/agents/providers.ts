@@ -13,24 +13,13 @@ import {
   makeAcpPoolKey,
   retainAcpSharedBridge,
 } from "./acp-shared-bridge.js";
-import {
-  attachOpenCodeGlobalSse,
-  detachOpenCodeGlobalSse,
-  normalizeOpenCodeToolKey,
-  translateOpenCodeGlobalPayload,
-} from "./opencode-global-sse.js";
-import {
-  buildOpenCodeAcpCliArgs,
-  getOpenCodeAcpListenPort,
-  openCodeAcpInternalBaseUrl,
-} from "./opencode-acp-port.js";
-import {
-  createClaudeAdapterProvider,
-  createCodexAdapterProvider,
-  type CliRuntimeSpec,
-} from "./cli-adapter.js";
+import { type CliRuntimeSpec } from "./cli-adapter.js";
+import { normalizeOpenCodeToolKey } from "./opencode-global-sse.js";
 import { getCursorSdkCapabilities } from "./cursor-sdk-capabilities.js";
+import { getClaudeCodeSdkCapabilities } from "./claude-code-sdk-capabilities.js";
 import { getCursorSdkCredentialStatus } from "../cursor-sdk-credentials.js";
+import { getCesiumCapabilities } from "./cesium-capabilities.js";
+import { getCesiumCredentialStatus } from "../cesium-agent-settings.js";
 import {
   readAgentBackendConfigCache,
   writeAgentBackendConfigCache,
@@ -68,6 +57,13 @@ import {
   truncateGenericToolTitle,
 } from "./tool-display-labels.js";
 import { inferFileKind, isDimmed } from "../workspace.js";
+import {
+  describeClaudeCodeSdkAuthStatus,
+  getClaudeCodeSdkProxyModel,
+  getClaudeCodeSdkProxyModelName,
+  hasClaudeCodeSdkAuthConfig,
+  hasClaudeCodeSdkProxyConfig,
+} from "../claude-code-sdk-credentials.js";
 import {
   getGlobalSettings,
   saveRememberedAgentPermissionRule,
@@ -249,6 +245,7 @@ const openCodeCapabilities: AgentProviderCapabilities = {
   supportsSessionResume: true,
   supportsPromptImages: true,
   supportsInlineReasoning: true,
+  supportsCompletionRetry: false,
 };
 
 const basicCliCapabilities: AgentProviderCapabilities = {
@@ -263,11 +260,7 @@ const basicCliCapabilities: AgentProviderCapabilities = {
   supportsSessionResume: false,
   supportsPromptImages: false,
   supportsInlineReasoning: false,
-};
-
-const claudeCliCapabilities: AgentProviderCapabilities = {
-  ...basicCliCapabilities,
-  supportsToolCalls: true,
+  supportsCompletionRetry: false,
 };
 
 const codexCliCapabilities: AgentProviderCapabilities = {
@@ -287,6 +280,7 @@ const codexAppServerCapabilities: AgentProviderCapabilities = {
   supportsSessionResume: true,
   supportsPromptImages: true,
   supportsInlineReasoning: true,
+  supportsCompletionRetry: false,
 };
 
 const cursorAcpCapabilities: AgentProviderCapabilities = {
@@ -301,6 +295,7 @@ const cursorAcpCapabilities: AgentProviderCapabilities = {
   supportsSessionResume: true,
   supportsPromptImages: true,
   supportsInlineReasoning: true,
+  supportsCompletionRetry: false,
 };
 
 const LEGACY_MODE_CONFIG_ID = "__acp_legacy_mode__";
@@ -477,11 +472,7 @@ function fileExists(filePath: string): boolean {
 }
 
 function backendUsesAcpPromptHints(backendId: AgentBackendId): boolean {
-  return (
-    backendId === "cursor-acp" ||
-    backendId === "opencode-acp" ||
-    backendId === "gemini-acp"
-  );
+  return backendId === "gemini-acp";
 }
 
 type CursorPromptSearchHint = {
@@ -943,43 +934,6 @@ function resolveConfiguredRuntime(
   return buildInvocation(direct, args, env);
 }
 
-function resolveCursorCliRuntime(): CliRuntimeSpec | null {
-  const envOverrides = {
-    ...process.env,
-    CURSOR_INVOKED_AS: process.env.CURSOR_INVOKED_AS || "agent.cmd",
-  };
-  const extraArgs = [...parseCursorAgentExtraArgs(), "acp"];
-  const configured = resolveConfiguredRuntime(
-    process.env.OPENCURSOR_CURSOR_CLI_BIN ?? process.env.OPENCURSOR_CURSOR_ACP_BIN,
-    extraArgs,
-    envOverrides
-  );
-  if (configured) {
-    return configured;
-  }
-
-  const pathHit = findExecutableOnPath(
-    process.platform === "win32"
-      ? ["agent.exe", "agent.cmd", "cursor-agent.cmd", "agent"]
-      : ["agent"]
-  );
-  if (pathHit) {
-    return buildInvocation(pathHit, extraArgs, envOverrides);
-  }
-
-  if (process.platform === "win32") {
-    const localAppData = process.env.LOCALAPPDATA?.trim();
-    const cursorAgentScript = localAppData
-      ? path.join(localAppData, "cursor-agent", "agent.ps1")
-      : null;
-    if (cursorAgentScript && fileExists(cursorAgentScript)) {
-      return buildInvocation(cursorAgentScript, extraArgs, envOverrides);
-    }
-  }
-
-  return null;
-}
-
 function openCodeHomeDirCandidates(): string[] {
   const raw = process.env.OPENCURSOR_REAL_HOME?.trim();
   const out: string[] = [];
@@ -1041,10 +995,11 @@ function resolveGeminiAcpRuntime(): AcpRuntimeSpec | null {
   return null;
 }
 
-function resolveOpenCodeAcpRuntime(): AcpRuntimeSpec | null {
+function resolveOpenCodeCliRuntime(): CliRuntimeSpec | null {
   const configured = resolveConfiguredRuntime(
-    process.env.OPENCURSOR_OPENCODE_ACP_BIN,
-    ["acp"]
+    process.env.OPENCURSOR_OPENCODE_SERVER_BIN?.trim() ||
+      process.env.OPENCURSOR_OPENCODE_ACP_BIN?.trim(),
+    []
   );
   if (configured) {
     return configured;
@@ -1056,12 +1011,12 @@ function resolveOpenCodeAcpRuntime(): AcpRuntimeSpec | null {
       : ["opencode"]
   );
   if (pathHit) {
-    return buildInvocation(pathHit, ["acp"]);
+    return buildInvocation(pathHit, []);
   }
 
   const bundled = resolveOpenCodeBundledBinary();
   if (bundled) {
-    return buildInvocation(bundled, ["acp"]);
+    return buildInvocation(bundled, []);
   }
 
   if (process.platform === "win32") {
@@ -1069,40 +1024,10 @@ function resolveOpenCodeAcpRuntime(): AcpRuntimeSpec | null {
       ? path.join(process.env.APPDATA, "npm", "opencode.cmd")
       : null;
     if (roamingNpm && fileExists(roamingNpm)) {
-      return buildInvocation(roamingNpm, ["acp"]);
+      return buildInvocation(roamingNpm, []);
     }
   }
 
-  return null;
-}
-
-/** Same discovery as {@link resolveOpenCodeAcpRuntime}, but with a fixed embedded HTTP `--port` for SSE bridging. */
-function resolveOpenCodeAcpInvocationWithPort(port: number): AcpRuntimeSpec | null {
-  const args = buildOpenCodeAcpCliArgs(port);
-  const configured = resolveConfiguredRuntime(process.env.OPENCURSOR_OPENCODE_ACP_BIN, args);
-  if (configured) {
-    return configured;
-  }
-  const pathHit = findExecutableOnPath(
-    process.platform === "win32"
-      ? ["opencode.exe", "opencode.cmd", "opencode.bat", "opencode"]
-      : ["opencode"]
-  );
-  if (pathHit) {
-    return buildInvocation(pathHit, args);
-  }
-  const bundled = resolveOpenCodeBundledBinary();
-  if (bundled) {
-    return buildInvocation(bundled, args);
-  }
-  if (process.platform === "win32") {
-    const roamingNpm = process.env.APPDATA?.trim()
-      ? path.join(process.env.APPDATA, "npm", "opencode.cmd")
-      : null;
-    if (roamingNpm && fileExists(roamingNpm)) {
-      return buildInvocation(roamingNpm, args);
-    }
-  }
   return null;
 }
 
@@ -1120,47 +1045,9 @@ function resolveCodexCliRuntime(): CliRuntimeSpec | null {
   return pathHit ? buildInvocation(pathHit, []) : null;
 }
 
-function resolveClaudeCliRuntime(): CliRuntimeSpec | null {
-  const configured = resolveConfiguredRuntime(process.env.OPENCURSOR_CLAUDE_BIN, []);
-  if (configured) {
-    return configured;
-  }
-
-  const pathHit = findExecutableOnPath(
-    process.platform === "win32"
-      ? ["claude.exe", "claude.cmd", "claude.bat", "claude"]
-      : ["claude"]
-  );
-  return pathHit ? buildInvocation(pathHit, []) : null;
-}
-
-const CURSOR_RUNTIME = resolveCursorCliRuntime();
-const OPENCODE_RUNTIME = resolveOpenCodeAcpRuntime();
+const OPENCODE_RUNTIME = resolveOpenCodeCliRuntime();
 const GEMINI_RUNTIME = resolveGeminiAcpRuntime();
 const CODEX_RUNTIME = resolveCodexCliRuntime();
-const CLAUDE_RUNTIME = resolveClaudeCliRuntime();
-
-export type CursorAgentDeploymentHints = {
-  resolved: boolean;
-  commandPreview: string | null;
-  extraArgs: string[];
-  permissionModeEnv: string | null;
-  acpCapabilitiesJsonSet: boolean;
-  cursorBinEnvSet: boolean;
-};
-
-export function getCursorAgentDeploymentHints(): CursorAgentDeploymentHints {
-  return {
-    resolved: CURSOR_RUNTIME !== null,
-    commandPreview: CURSOR_RUNTIME?.commandPreview ?? null,
-    extraArgs: parseCursorAgentExtraArgs(),
-    permissionModeEnv: process.env.OPENCURSOR_CURSOR_PERMISSION_MODE?.trim() || null,
-    acpCapabilitiesJsonSet: Boolean(process.env.OPENCURSOR_ACP_CLIENT_CAPABILITIES_JSON?.trim()),
-    cursorBinEnvSet: Boolean(
-      (process.env.OPENCURSOR_CURSOR_CLI_BIN ?? process.env.OPENCURSOR_CURSOR_ACP_BIN)?.trim()
-    ),
-  };
-}
 
 function createBackendInfo(input: {
   id: AgentBackendId;
@@ -1189,16 +1076,17 @@ function createBackendInfo(input: {
 }
 
 export const AGENT_BACKENDS: Record<AgentBackendId, AgentBackendInfo> = {
-  "cursor-acp": createBackendInfo({
-    id: "cursor-acp",
-    label: "Cursor",
-    description: "Cursor CLI over ACP stdio with full model variants.",
-    commandPreview: CURSOR_RUNTIME?.commandPreview ?? "Cursor CLI not found",
-    available: CURSOR_RUNTIME !== null,
-    capabilities: cursorAcpCapabilities,
+  "cesium-agent": createBackendInfo({
+    id: "cesium-agent",
+    label: "Cesium Agent (Beta)",
+    description: "First-party Cesium harness with direct provider APIs, tools, subagents, and compression.",
+    experimental: true,
+    commandPreview: "Cesium first-party runtime",
+    available: true,
+    capabilities: getCesiumCapabilities(),
     defaultMode: "agent",
-    defaultModelId: "auto",
-    defaultModelName: "Auto",
+    defaultModelId: "openai/gpt-5.1",
+    defaultModelName: "OpenAI/GPT-5.1",
   }),
   "cursor-sdk": createBackendInfo({
     id: "cursor-sdk",
@@ -1211,17 +1099,6 @@ export const AGENT_BACKENDS: Record<AgentBackendId, AgentBackendInfo> = {
     defaultMode: "agent",
     defaultModelId: "composer-2",
     defaultModelName: "Composer 2",
-  }),
-  "opencode-acp": createBackendInfo({
-    id: "opencode-acp",
-    label: "OpenCode",
-    description: "OpenCode CLI over ACP stdio.",
-    commandPreview: OPENCODE_RUNTIME?.commandPreview ?? "OpenCode CLI not found",
-    available: OPENCODE_RUNTIME !== null,
-    capabilities: openCodeCapabilities,
-    defaultMode: "agent",
-    defaultModelId: "auto",
-    defaultModelName: "Auto",
   }),
   "opencode-server": createBackendInfo({
     id: "opencode-server",
@@ -1250,18 +1127,6 @@ export const AGENT_BACKENDS: Record<AgentBackendId, AgentBackendInfo> = {
     defaultModelId: "auto",
     defaultModelName: "Auto",
   }),
-  "codex-adapter": createBackendInfo({
-    id: "codex-adapter",
-    label: "Codex",
-    description: "Official Codex CLI via non-interactive adapter.",
-    experimental: false,
-    commandPreview: CODEX_RUNTIME?.commandPreview ?? "Codex CLI not found",
-    available: CODEX_RUNTIME !== null,
-    capabilities: codexCliCapabilities,
-    defaultMode: "agent",
-    defaultModelId: "gpt-5.4-mini",
-    defaultModelName: "GPT-5.4-Mini",
-  }),
   "codex-app-server": createBackendInfo({
     id: "codex-app-server",
     label: "Codex App Server",
@@ -1276,30 +1141,28 @@ export const AGENT_BACKENDS: Record<AgentBackendId, AgentBackendInfo> = {
     defaultModelId: "__default__",
     defaultModelName: "Codex App Server Default",
   }),
-  "claude-adapter": createBackendInfo({
-    id: "claude-adapter",
-    label: "Claude Code",
-    description: "Official Claude Code CLI routed through the local model proxy.",
-    experimental: false,
-    commandPreview: CLAUDE_RUNTIME?.commandPreview ?? "Claude Code CLI not found",
-    available: CLAUDE_RUNTIME !== null,
-    capabilities: claudeCliCapabilities,
+  "claude-code-sdk": createBackendInfo({
+    id: "claude-code-sdk",
+    label: "Claude Code SDK",
+    description: "Anthropic Claude Agent SDK with stock Claude Code tools.",
+    experimental: true,
+    commandPreview: `@anthropic-ai/claude-agent-sdk · ${describeClaudeCodeSdkAuthStatus()}`,
+    available: hasClaudeCodeSdkAuthConfig(),
+    capabilities: getClaudeCodeSdkCapabilities(),
     defaultMode: "agent",
-    defaultModelId: "glm-5.1",
-    defaultModelName: "GLM 5.1",
+    defaultModelId: hasClaudeCodeSdkProxyConfig() ? getClaudeCodeSdkProxyModel() : "claude-sonnet-4-5",
+    defaultModelName: hasClaudeCodeSdkProxyConfig() ? getClaudeCodeSdkProxyModelName() : "Claude Sonnet 4.5",
   }),
 };
 
-/** Stable ordering for harness/model-picker menus (Cursor family first, then Codex, OpenCode, Claude, Gemini). */
+/** Stable ordering for harness/model-picker menus (Cesium first, then Cursor, Codex, OpenCode, Claude, Gemini). */
 const AGENT_BACKEND_MENU_ORDER = [
-  "cursor-acp",
+  "cesium-agent",
   "cursor-sdk",
-  "codex-adapter",
   "codex-app-server",
-  "opencode-acp",
   "opencode-server",
-  "claude-adapter",
   "gemini-acp",
+  "claude-code-sdk",
 ] as const satisfies readonly AgentBackendId[];
 
 export function listAgentBackends(): AgentBackendInfo[] {
@@ -1307,10 +1170,16 @@ export function listAgentBackends(): AgentBackendInfo[] {
 }
 
 export async function listAgentBackendsWithCache(): Promise<AgentBackendInfo[]> {
-  const cursorSdkStatus = await getCursorSdkCredentialStatus().catch(() => ({
-    configured: false,
-    source: null,
-  }));
+  const [cursorSdkStatus, cesiumStatus] = await Promise.all([
+    getCursorSdkCredentialStatus().catch(() => ({
+      configured: false,
+      source: null,
+    })),
+    getCesiumCredentialStatus().catch(() => ({
+      configured: false,
+      providerKeys: [],
+    })),
+  ]);
   return Promise.all(
     AGENT_BACKEND_MENU_ORDER.map(async (id) => {
       const backend = AGENT_BACKENDS[id];
@@ -1318,11 +1187,15 @@ export async function listAgentBackendsWithCache(): Promise<AgentBackendInfo[]> 
       return {
         ...backend,
         available:
-          backend.id === "cursor-sdk"
+          backend.id === "cesium-agent"
+            ? cesiumStatus.configured
+            : backend.id === "cursor-sdk"
             ? cursorSdkStatus.configured
             : backend.available,
         description:
-          backend.id === "cursor-sdk" && !cursorSdkStatus.configured
+          backend.id === "cesium-agent" && !cesiumStatus.configured
+            ? "Cesium Agent requires at least one OpenAI, Anthropic, Google, or custom provider API key. Open Settings -> Agents to configure it."
+            : backend.id === "cursor-sdk" && !cursorSdkStatus.configured
             ? "Cursor SDK requires a Cursor API key. Open Settings -> Agents to configure it."
             : backend.description,
         cachedConfigOptions,
@@ -3242,9 +3115,6 @@ class AcpSessionHandle implements AgentSessionHandle {
   /** Drop identical ACP re-broadcasts of the same tool announcement; avoids duplicate DB + WS. */
   private readonly acpInitialToolCallKeys = new Set<string>();
   private readonly acpToolUpdateKeys = new Set<string>();
-  /** Stock `opencode acp` embeds HTTP; we subscribe to `/global/event` for child-session streaming. */
-  private readonly openCodeSseDetach: { poolKey: string; regId: string } | null;
-
   private constructor(input: {
     bridge: AcpSharedBridge;
     releaseBridge: () => Promise<void>;
@@ -3254,12 +3124,6 @@ class AcpSessionHandle implements AgentSessionHandle {
     configOptions: AgentConfigOption[];
     capabilities: AgentProviderCapabilities;
     seedConfigOptions?: AgentConfigOption[];
-    openCodeSse?: {
-      poolKey: string;
-      regId: string;
-      baseUrl: string;
-      workspaceRoot: string;
-    };
   }) {
     this.bridge = input.bridge;
     this.releaseBridge = input.releaseBridge;
@@ -3269,19 +3133,7 @@ class AcpSessionHandle implements AgentSessionHandle {
     this.configOptions = input.configOptions;
     this.capabilities = input.capabilities;
     this.seedConfigOptions = input.seedConfigOptions;
-    this.openCodeSseDetach = input.openCodeSse
-      ? { poolKey: input.openCodeSse.poolKey, regId: input.openCodeSse.regId }
-      : null;
     this.registerBridgeHandlers();
-    if (input.openCodeSse) {
-      const ctx = input.openCodeSse;
-      attachOpenCodeGlobalSse(ctx.poolKey, ctx.regId, {
-        workspaceRoot: ctx.workspaceRoot,
-        rootSessionId: input.sessionId,
-        baseUrl: ctx.baseUrl,
-        onEvent: (directory, payload) => this.deliverOpenCodeSsePayload(directory, payload),
-      });
-    }
   }
 
   private beginCursorPromptInference(promptText: string): void {
@@ -3464,36 +3316,9 @@ class AcpSessionHandle implements AgentSessionHandle {
     loadSessionId?: string | null;
     seedConfigOptions?: AgentConfigOption[];
   }): Promise<AcpSessionHandle> {
-    let command = input.command;
-    let args = input.args;
-    let env = input.env ?? process.env;
-    let openCodeSse:
-      | { poolKey: string; regId: string; baseUrl: string; workspaceRoot: string }
-      | undefined;
-
-    if (input.backend.id === "opencode-acp") {
-      const port = await getOpenCodeAcpListenPort(input.callbacks.workspace.root);
-      const baseUrl = openCodeAcpInternalBaseUrl(port);
-      const inv = resolveOpenCodeAcpInvocationWithPort(port);
-      if (!inv) {
-        throw new Error(`${input.backend.label} is not installed or could not be resolved.`);
-      }
-      command = inv.command;
-      args = inv.args;
-      env = inv.env ?? env;
-      const poolKeyEarly = makeAcpPoolKey({
-        workspaceRoot: input.callbacks.workspace.root,
-        backendId: input.backend.id,
-        command,
-        args,
-      });
-      openCodeSse = {
-        poolKey: poolKeyEarly,
-        regId: randomUUID(),
-        baseUrl,
-        workspaceRoot: input.callbacks.workspace.root,
-      };
-    }
+    const command = input.command;
+    const args = input.args;
+    const env = input.env ?? process.env;
 
     const poolKey = makeAcpPoolKey({
       workspaceRoot: input.callbacks.workspace.root,
@@ -3616,14 +3441,7 @@ class AcpSessionHandle implements AgentSessionHandle {
         parseConfigOptions(openResultRecord.configOptions),
         parseLegacySessionConfigOptions(openResultRecord)
       );
-      const configOptions =
-        input.backend.id === "cursor-acp"
-          ? mergeCursorSeedConfigOptions(
-              input.seedConfigOptions,
-              liveConfigOptions,
-              input.callbacks.conversation.config
-            )
-          : liveConfigOptions;
+      const configOptions = liveConfigOptions;
 
       const handle = new AcpSessionHandle({
         bridge,
@@ -3634,7 +3452,6 @@ class AcpSessionHandle implements AgentSessionHandle {
         configOptions,
         capabilities: input.backend.capabilities,
         seedConfigOptions: input.seedConfigOptions,
-        openCodeSse: input.backend.id === "opencode-acp" && openCodeSse ? openCodeSse : undefined,
       });
 
       await input.callbacks.updateConversation((current) => ({
@@ -3829,35 +3646,6 @@ class AcpSessionHandle implements AgentSessionHandle {
   }
 
   async setConfigOption(configId: string, value: string): Promise<void> {
-    const modelOption = findPrimaryModelConfigOption(this.configOptions);
-    if (
-      this.backend.id === "cursor-acp" &&
-      modelOption &&
-      modelOption.id === configId
-    ) {
-      const trimmedValue = value.trim();
-      if (isCursorCliModelId(trimmedValue)) {
-        await this.runCursorModelSlashCommand(trimmedValue);
-        await this.persistConfigOptions(
-          this.configOptions.map((option) =>
-            option.id === configId ? { ...option, currentValue: trimmedValue } : option
-          )
-        );
-        return;
-      }
-      if (trimmedValue.includes("[")) {
-        await this.bridge.request("session/set_model", {
-          sessionId: this.sessionId,
-          modelId: trimmedValue,
-        });
-        await this.persistConfigOptions(
-          this.configOptions.map((option) =>
-            option.id === configId ? { ...option, currentValue: trimmedValue } : option
-          )
-        );
-        return;
-      }
-    }
     if (configId === LEGACY_MODE_CONFIG_ID) {
       await this.bridge.request("session/set_mode", {
         sessionId: this.sessionId,
@@ -3973,41 +3761,9 @@ class AcpSessionHandle implements AgentSessionHandle {
 
   async dispose(): Promise<void> {
     this.disposed = true;
-    if (this.openCodeSseDetach) {
-      detachOpenCodeGlobalSse(this.openCodeSseDetach.poolKey, this.openCodeSseDetach.regId);
-    }
     this.pendingPermissionContextById.clear();
     this.bridge.unregister(this.sessionId);
     await this.releaseBridge();
-  }
-
-  private async deliverOpenCodeSsePayload(
-    directory: string,
-    payload: Record<string, unknown>
-  ): Promise<void> {
-    if (this.disposed || this.backend.id !== "opencode-acp") {
-      return;
-    }
-    try {
-      if (directory && path.resolve(directory) !== path.resolve(this.callbacks.workspace.root)) {
-        return;
-      }
-    } catch {
-      return;
-    }
-    const translated = translateOpenCodeGlobalPayload({
-      conversationId: this.callbacks.conversation.id,
-      rootSessionId: this.sessionId,
-      payload,
-    });
-    if (translated.kind === "none") {
-      return;
-    }
-    if (translated.kind === "append") {
-      await this.callbacks.appendEvents(translated.events);
-      return;
-    }
-    await this.handleNotification("session/update", translated.params);
   }
 
   private async persistConfigOptions(
@@ -4018,10 +3774,7 @@ class AcpSessionHandle implements AgentSessionHandle {
     }
     let persistedConfigOptions = nextConfigOptions;
     await this.callbacks.updateConversation((current) => {
-      persistedConfigOptions =
-        this.backend.id === "cursor-acp"
-          ? mergeCursorSeedConfigOptions(this.seedConfigOptions, nextConfigOptions, current.config)
-          : nextConfigOptions;
+      persistedConfigOptions = nextConfigOptions;
       this.configOptions = persistedConfigOptions;
       const modeOption = findPrimaryModeConfigOption(persistedConfigOptions);
       const modelOption = findPrimaryModelConfigOption(persistedConfigOptions);
@@ -4155,13 +3908,6 @@ class AcpSessionHandle implements AgentSessionHandle {
       if (modelValue && modelOption.currentValue !== modelValue) {
         await this.setConfigOption(modelOption.id, modelValue);
       }
-    } else if (
-      modelOption &&
-      conversation.config.backendId === "cursor-acp" &&
-      conversation.config.modelId &&
-      modelOption.currentValue !== conversation.config.modelId
-    ) {
-      await this.setConfigOption(modelOption.id, conversation.config.modelId);
     }
   }
 
@@ -4775,37 +4521,6 @@ export async function createAgentProvider(
     throw new Error(`Unknown backend: ${backendId}`);
   }
 
-  if (backendId === "cursor-acp") {
-    if (!CURSOR_RUNTIME) {
-      throw new Error(`${backend.label} is not installed or could not be resolved.`);
-    }
-    const cursorSeedConfigOptions = await readAgentBackendConfigCache(backendId);
-    return {
-      backend,
-      startSession(callbacks) {
-        return AcpSessionHandle.create({
-          backend,
-          command: CURSOR_RUNTIME.command,
-          args: CURSOR_RUNTIME.args,
-          env: CURSOR_RUNTIME.env,
-          callbacks,
-          seedConfigOptions: cursorSeedConfigOptions,
-        });
-      },
-      loadSession(callbacks, providerSessionId) {
-        return AcpSessionHandle.create({
-          backend,
-          command: CURSOR_RUNTIME.command,
-          args: CURSOR_RUNTIME.args,
-          env: CURSOR_RUNTIME.env,
-          callbacks,
-          loadSessionId: providerSessionId,
-          seedConfigOptions: cursorSeedConfigOptions,
-        });
-      },
-    };
-  }
-
   if (backendId === "cursor-sdk") {
     const { createCursorSdkProvider } = await import("./cursor-sdk-provider.js");
     return createCursorSdkProvider({
@@ -4814,32 +4529,12 @@ export async function createAgentProvider(
     });
   }
 
-  if (backendId === "opencode-acp") {
-    if (!OPENCODE_RUNTIME) {
-      throw new Error(`${backend.label} is not installed or could not be resolved.`);
-    }
-    return {
+  if (backendId === "cesium-agent") {
+    const { createCesiumAgentProvider } = await import("./cesium-provider.js");
+    return createCesiumAgentProvider({
       backend,
-      startSession(callbacks) {
-        return AcpSessionHandle.create({
-          backend,
-          command: OPENCODE_RUNTIME.command,
-          args: OPENCODE_RUNTIME.args,
-          env: OPENCODE_RUNTIME.env,
-          callbacks,
-        });
-      },
-      loadSession(callbacks, providerSessionId) {
-        return AcpSessionHandle.create({
-          backend,
-          command: OPENCODE_RUNTIME.command,
-          args: OPENCODE_RUNTIME.args,
-          env: OPENCODE_RUNTIME.env,
-          callbacks,
-          loadSessionId: providerSessionId,
-        });
-      },
-    };
+      configOptions: await readAgentBackendConfigCache(backendId),
+    });
   }
 
   if (backendId === "opencode-server") {
@@ -4881,18 +4576,6 @@ export async function createAgentProvider(
     };
   }
 
-  if (backendId === "codex-adapter") {
-    if (!CODEX_RUNTIME) {
-      throw new Error(`${backend.label} is not installed or could not be resolved.`);
-    }
-    return createCodexAdapterProvider({
-      backend,
-      runtime: CODEX_RUNTIME,
-      configOptions: await readAgentBackendConfigCache(backendId),
-      capabilities: basicCliCapabilities,
-    });
-  }
-
   if (backendId === "codex-app-server") {
     if (!CODEX_RUNTIME) {
       throw new Error(`${backend.label} is not installed or could not be resolved.`);
@@ -4905,15 +4588,11 @@ export async function createAgentProvider(
     });
   }
 
-  if (backendId === "claude-adapter") {
-    if (!CLAUDE_RUNTIME) {
-      throw new Error(`${backend.label} is not installed or could not be resolved.`);
-    }
-    return createClaudeAdapterProvider({
+  if (backendId === "claude-code-sdk") {
+    const { createClaudeCodeSdkProvider } = await import("./claude-code-sdk-provider.js");
+    return createClaudeCodeSdkProvider({
       backend,
-      runtime: CLAUDE_RUNTIME,
       configOptions: await readAgentBackendConfigCache(backendId),
-      capabilities: basicCliCapabilities,
     });
   }
 

@@ -7,6 +7,8 @@ type CesiumDesktopGlobal = {
     isElectron?: boolean;
     /** Electron main-process reload of this BrowserWindow; absent in plain web builds. */
     reloadWindow?: () => void | Promise<void>;
+    /** Opens in-app docs in a dedicated Electron BrowserWindow. */
+    openDocsWindow?: () => void | Promise<void>;
   };
 };
 

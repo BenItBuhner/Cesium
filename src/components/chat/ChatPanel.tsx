@@ -15,15 +15,21 @@ import { ChatTabs } from "./ChatTabs";
 import { MessageList, type MessageListScrollPersistMeta } from "./MessageList";
 import { ChatComposer } from "./ChatComposer";
 import { ComposerQueueDock } from "./ComposerQueueDock";
+import { AgentCompletionErrorDock } from "./AgentCompletionErrorDock";
+import { useAgentCompletionErrorDock } from "./useAgentCompletionErrorDock";
 import { AskQuestionCard } from "./AskQuestionCard";
 import { RecentChatsModal } from "@/components/ide/RecentChatsModal";
-import { askStepsFromMessage } from "@/lib/ask-question-utils";
+import {
+  findDockedAskQuestion,
+  hideDockedAskFromScroll,
+} from "@/lib/ask-question-dock";
 import {
   buildDraftModeOptionsForBackend,
   buildDraftModelOptionsForBackend,
   buildConversationModeOptions,
   buildConversationModelOptions,
   extractComposerUserMessageHistory,
+  isAgentConversationBusy,
   projectAgentEventsToChatMessages,
   resolveDraftModelForBackend,
   resolveConversationModel,
@@ -299,7 +305,10 @@ refreshConversations,
 syncConversationSnapshot,
 upsertConversation,
 answerPermissionForConversation,
+answerQuestionForConversation,
 cancelConversation: cancelConversationFromHook,
+pauseConversation: pauseConversationFromHook,
+resumeConversation: resumeConversationFromHook,
 createConversation,
 getConversationHistoryCursor,
 loadOlderConversationHistory,
@@ -307,6 +316,7 @@ setConversationMode,
 setConversationModel,
 setConversationConfigOption,
 promptConversation,
+retryConversation,
 pendingConfigByConversationId,
 setPendingConfigForConversation,
 clearPendingConfigForConversation,
@@ -706,6 +716,40 @@ workspaceSession.chat.mode,
     workspaceSession.chat.unreadChatCompletionByConversationId,
   ]);
   const activeConversation = activeTabId ? conversationsById[activeTabId] ?? null : null;
+  const activeBackend = useMemo(
+    () =>
+      backends.find((backend) => backend.id === activeConversation?.config.backendId) ?? null,
+    [activeConversation?.config.backendId, backends]
+  );
+  const dismissedCompletionErrorKey = activeConversation?.id
+    ? workspaceSession.chat.dismissedCompletionErrorKeyByConversationId?.[
+        activeConversation.id
+      ]
+    : undefined;
+  const completionErrorDock = useAgentCompletionErrorDock({
+    conversation: activeConversation,
+    events: activeTabId ? eventsByConversationId[activeTabId] : undefined,
+    backend: activeBackend,
+    dismissedKey: dismissedCompletionErrorKey,
+    onDismiss: (dismissKey) => {
+      if (!activeConversation?.id) {
+        return;
+      }
+      updateWorkspaceSession((current) => ({
+        ...current,
+        chat: {
+          ...current.chat,
+          dismissedCompletionErrorKeyByConversationId: {
+            ...current.chat.dismissedCompletionErrorKeyByConversationId,
+            [activeConversation.id]: dismissKey,
+          },
+        },
+      }));
+    },
+    onRetry: async (conversationId) => {
+      await retryConversation(conversationId);
+    },
+  });
   useEffect(() => {
     setRedoMessageDraft(null);
   }, [activeConversation?.id]);
@@ -811,8 +855,7 @@ workspaceSession.chat.mode,
 const resolveComposerStateForDraft = useCallback(
 (draftId: string) => {
 const conversation = conversationsById[draftId] ?? null;
-const busy =
-conversation?.status === "running" || conversation?.status === "awaiting_permission";
+const busy = conversation ? isAgentConversationBusy(conversation.status) : false;
 const pendingConfig = pendingConfigByConversationId[draftId];
 const pendingBackendId = pendingConfig?.backendId;
 const pendingMode = pendingConfig?.mode;
@@ -932,13 +975,19 @@ workspaceSession.chat.model,
     });
   }, [composerDraftId, composerDraftText, composerDraftTitle, upsertComposerDraft]);
 
-  const { scrollMessages, dockedAsk } =
-    partitionMessagesForDock(threadMessages);
-
-  const dockedAskSteps = useMemo(
-    () => (dockedAsk ? askStepsFromMessage(dockedAsk) : []),
-    [dockedAsk]
+  const dockedAsk = useMemo(
+    () =>
+      findDockedAskQuestion({
+        events: rawPanelThreadEvents,
+        conversation: activeConversation,
+      }),
+    [activeConversation, rawPanelThreadEvents]
   );
+  const scrollMessages = useMemo(
+    () => hideDockedAskFromScroll(threadMessages, dockedAsk),
+    [dockedAsk, threadMessages]
+  );
+  const [submittingQuestion, setSubmittingQuestion] = useState(false);
 
   const activeQueuedPrompts = useMemo(
     () => activeConversation?.queuedPrompts ?? [],
@@ -1344,6 +1393,12 @@ workspaceSession.chat.model,
       ];
     });
   }, [expandedComposerDraftId, setExpandedComposerDraft, setTabs]);
+
+  useEffect(() => {
+    const handler = () => handleNewChat();
+    window.addEventListener("opencursor:newChat", handler);
+    return () => window.removeEventListener("opencursor:newChat", handler);
+  }, [handleNewChat]);
 
   const closeChatTab = useCallback((tabId: string) => {
     const currentTabs = tabsRef.current;
@@ -2235,6 +2290,36 @@ const cancelPromptForDraft = useCallback(
     [cancelConversationFromHook, conversationsById, syncConversationSnapshot]
   );
 
+  const pausePromptForDraft = useCallback(
+    async (draftId: string) => {
+      const conversation = conversationsById[draftId];
+      if (!conversation) {
+        return;
+      }
+      try {
+        await pauseConversationFromHook(conversation.id);
+      } catch {
+        void syncConversationSnapshot(conversation.id).catch(() => undefined);
+      }
+    },
+    [conversationsById, pauseConversationFromHook, syncConversationSnapshot]
+  );
+
+  const resumePromptForDraft = useCallback(
+    async (draftId: string) => {
+      const conversation = conversationsById[draftId];
+      if (!conversation) {
+        return;
+      }
+      try {
+        await resumeConversationFromHook(conversation.id);
+      } catch {
+        void syncConversationSnapshot(conversation.id).catch(() => undefined);
+      }
+    },
+    [conversationsById, resumeConversationFromHook, syncConversationSnapshot]
+  );
+
   const expandedComposerState = useMemo(() => {
     if (!expandedComposerDraftId) {
       return null;
@@ -2267,6 +2352,9 @@ const cancelPromptForDraft = useCallback(
         void submitPromptForDraft(expandedComposerDraftId, text, attachments);
       },
       onCancel: () => cancelPromptForDraft(expandedComposerDraftId),
+      onPause: () => pausePromptForDraft(expandedComposerDraftId),
+      onResume: () => resumePromptForDraft(expandedComposerDraftId),
+      conversationStatus: state.conversation?.status,
       busy: state.busy,
       configLocked: false,
       onRequestHandoff:
@@ -2284,6 +2372,8 @@ const cancelPromptForDraft = useCallback(
     backends,
     activeTabId,
     cancelPromptForDraft,
+    pausePromptForDraft,
+    resumePromptForDraft,
     composerDrafts,
     composerUserMessageHistory,
     expandedComposerDraftId,
@@ -2350,12 +2440,15 @@ const cancelPromptForDraft = useCallback(
         void submitPromptForDraft(composerDraftId, text, attachments);
       }}
       onCancel={() => cancelPromptForDraft(composerDraftId)}
-            onRequestHandoff={
-              activeConversation && isPersistedConversationTabId(composerDraftId)
-                ? handleRequestHandoff
-                : undefined
-            }
-            layout={isEmptyThread ? "empty-top" : "docked-bottom"}
+      onPause={() => pausePromptForDraft(composerDraftId)}
+      onResume={() => resumePromptForDraft(composerDraftId)}
+      conversationStatus={activeConversation?.status}
+      onRequestHandoff={
+        activeConversation && isPersistedConversationTabId(composerDraftId)
+          ? handleRequestHandoff
+          : undefined
+      }
+      layout={isEmptyThread ? "empty-top" : "docked-bottom"}
             shellMxClass=""
             draftAttachments={composerDraftAttachments}
 onDraftAttachmentsChange={(next) =>
@@ -2479,6 +2572,7 @@ onDraftAttachmentsChange={(next) =>
                   onCollapsedChange={onQueueDockCollapsedChange}
                 />
               ) : null}
+              <AgentCompletionErrorDock dock={completionErrorDock} />
               {composer}
             </div>
           ) : null}
@@ -2533,9 +2627,29 @@ onDraftAttachmentsChange={(next) =>
                 {recentChatsSection ? (
                   <div className="px-[10px] pt-[8px]">{recentChatsSection}</div>
                 ) : null}
-                {dockedAskSteps.length > 0 ? (
-                  <div className="px-[10px] pt-[8px]">
-                    <AskQuestionCard steps={dockedAskSteps} dockAboveComposer />
+                <AgentCompletionErrorDock dock={completionErrorDock} />
+                {dockedAsk ? (
+                  <div className="pt-[8px]">
+                    <AskQuestionCard
+                      steps={dockedAsk.steps}
+                      dockAboveComposer
+                      submitting={submittingQuestion}
+                      onSubmit={async (answer) => {
+                        if (!activeConversation?.id) {
+                          return;
+                        }
+                        setSubmittingQuestion(true);
+                        try {
+                          await answerQuestionForConversation(
+                            activeConversation.id,
+                            dockedAsk.questionId,
+                            answer
+                          );
+                        } finally {
+                          setSubmittingQuestion(false);
+                        }
+                      }}
+                    />
                   </div>
                 ) : null}
                 {activeQueuedPrompts.length > 0 ? (

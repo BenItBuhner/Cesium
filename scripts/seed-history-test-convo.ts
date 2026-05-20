@@ -72,7 +72,7 @@ const meta = {
   lastEventSeq: lastSeq,
   providerSessionId: null,
   config: {
-    backendId: "cursor-acp",
+    backendId: "cursor-sdk",
     mode: "agent",
     modelId: "auto",
     modelName: "Auto",
@@ -91,6 +91,7 @@ const meta = {
     supportsSessionResume: true,
     supportsPromptImages: true,
     supportsInlineReasoning: true,
+    supportsCompletionRetry: false,
   },
   experimental: false,
   archivedAt: null,

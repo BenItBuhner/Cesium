@@ -118,6 +118,7 @@ authRoutes.post("/api/auth/login", async (c) => {
   const response = c.json({
     ok: true,
     authenticated: true,
+    token: result.token,
     session: {
       username: result.session.username,
       createdAt: result.session.createdAt,

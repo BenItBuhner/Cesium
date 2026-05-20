@@ -6,6 +6,7 @@ import {
   createWorkspaceWorktree,
   deleteWorkspaceWorktree,
   getGitWorkspaceStatus,
+  initializeGitRepoForWorkspace,
   switchWorkspaceBranch,
 } from "../lib/git-worktrees.js";
 import { listBrowseDirectories, listBrowseRoots } from "../lib/workspace-browse.js";
@@ -576,6 +577,27 @@ workspaceRoutes.get("/api/workspaces/:workspaceId/git/status", async (c) => {
   const workspaces = await listWorkspaces();
   const status = await getGitWorkspaceStatus(workspace, workspaces);
   return c.json({ workspace, status });
+});
+
+workspaceRoutes.post("/api/workspaces/:workspaceId/git/init", async (c) => {
+  const workspaceId = c.req.param("workspaceId");
+  const workspace = await getWorkspaceById(workspaceId);
+  if (!workspace) {
+    return c.json({ error: `Unknown workspace: ${workspaceId}` }, 404);
+  }
+
+  try {
+    const [workspaces, home] = await Promise.all([listWorkspaces(), getHomeWorkspace()]);
+    const status = await initializeGitRepoForWorkspace({
+      workspace,
+      workspaces,
+      homeWorkspaceId: home?.id ?? null,
+    });
+    return c.json({ ok: true, workspace, status });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Git init failed.";
+    return c.json({ error: message }, 400);
+  }
 });
 
 workspaceRoutes.post("/api/workspaces/:workspaceId/git/switch", async (c) => {

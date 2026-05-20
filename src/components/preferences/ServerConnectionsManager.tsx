@@ -3,6 +3,12 @@
 import { useCallback, useMemo, useState } from "react";
 import { Check, Pencil, Plus, RefreshCw, Server, Trash2 } from "lucide-react";
 import { useServerConnections } from "@/components/preferences/ServerConnectionsProvider";
+import {
+  setStoredSessionToken,
+  syncAuthTokenFromResponse,
+  updateStoredAuthSession,
+  type AuthSession,
+} from "@/lib/auth-client";
 
 const inputClass =
   "box-border h-[36px] w-full rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-[var(--bg-main)] px-[10px] font-sans text-[12px] text-[var(--text-primary)] outline-none placeholder:text-[var(--text-disabled)]";
@@ -17,18 +23,35 @@ type ProbeState = {
 
 export function ServerConnectionsManager({
   onActivate,
+  onSetDefault,
   compact = false,
 }: {
   onActivate?: (serverId: string) => void;
+  onSetDefault?: (serverId: string) => void;
   compact?: boolean;
 }) {
-  const { activeServer, servers, saveServer, removeServer, probeServer } = useServerConnections();
+  const {
+    activeServer,
+    settingsServer,
+    servers,
+    onlineServers,
+    serverStatusById,
+    saveServer,
+    removeServer,
+    probeServer,
+    refreshServerHealth,
+  } = useServerConnections();
   const [editingId, setEditingId] = useState<string | null>(null);
   const [label, setLabel] = useState("");
   const [baseUrl, setBaseUrl] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
   const [probeByServerId, setProbeByServerId] = useState<Record<string, ProbeState>>({});
   const [savePending, setSavePending] = useState(false);
+  const [authServerId, setAuthServerId] = useState<string | null>(null);
+  const [authUsername, setAuthUsername] = useState("");
+  const [authPassword, setAuthPassword] = useState("");
+  const [authPending, setAuthPending] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
 
   const isEditing = editingId !== null;
 
@@ -84,35 +107,108 @@ export function ServerConnectionsManager({
     [probeServer]
   );
 
+  const handleServerLogin = useCallback(
+    async (serverId: string, candidateBaseUrl: string) => {
+      setAuthPending(true);
+      setAuthError(null);
+      try {
+        const response = await fetch(`${candidateBaseUrl}/api/auth/login`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          cache: "no-store",
+          body: JSON.stringify({
+            username: authUsername,
+            password: authPassword,
+            remember: true,
+          }),
+        });
+        syncAuthTokenFromResponse(response, candidateBaseUrl);
+        const payload = (await response.json().catch(() => ({}))) as
+          | {
+              authenticated?: boolean;
+              session?: AuthSession | null;
+              token?: string;
+              error?: string;
+            }
+          | Record<string, never>;
+        if (!response.ok || payload.authenticated !== true || !payload.session) {
+          throw new Error(
+            typeof payload.error === "string" ? payload.error : "Invalid username or password."
+          );
+        }
+        if (typeof payload.token === "string" && payload.token.trim()) {
+          setStoredSessionToken(payload.token, payload.session, candidateBaseUrl);
+        }
+        updateStoredAuthSession(payload.session, candidateBaseUrl);
+        setAuthServerId(null);
+        setAuthUsername("");
+        setAuthPassword("");
+        await refreshServerHealth();
+        await runProbe(serverId, candidateBaseUrl);
+      } catch (error) {
+        setAuthError(error instanceof Error ? error.message : "Sign in failed.");
+      } finally {
+        setAuthPending(false);
+      }
+    },
+    [authPassword, authUsername, refreshServerHealth, runProbe]
+  );
+
   const rows = useMemo(
     () =>
       servers.map((server) => {
         const probe = probeByServerId[server.id] ?? { status: "idle", message: null };
-        const isActive = server.id === activeServer.id;
-        return { isActive, probe, server };
+        const isActiveChat = server.id === activeServer.id;
+        const isDefaultSettings = server.id === settingsServer?.id;
+        const runtimeStatus = serverStatusById[server.id];
+        const isRuntimeConnected = onlineServers.some((candidate) => candidate.id === server.id);
+        return { isActiveChat, isDefaultSettings, isRuntimeConnected, probe, runtimeStatus, server };
       }),
-    [activeServer.id, probeByServerId, servers]
+    [
+      activeServer.id,
+      onlineServers,
+      probeByServerId,
+      serverStatusById,
+      servers,
+      settingsServer?.id,
+    ]
   );
 
   return (
     <div className="flex flex-col gap-[14px]">
-      <div className="rounded-[var(--radius-card)] border border-[var(--border-card)] bg-[var(--bg-panel)]">
-        {rows.map(({ isActive, probe, server }, index) => (
-          <div
-            key={server.id}
-            className={`flex flex-col gap-[10px] px-[14px] py-[12px] ${
-              index < rows.length - 1 ? "border-b border-[var(--border-subtle)]" : ""
-            }`}
-          >
+      {rows.length > 0 ? (
+        <div className="flex flex-col">
+          {rows.map(({ isActiveChat, isDefaultSettings, isRuntimeConnected, probe, runtimeStatus, server }, index) => (
+            <div
+              key={server.id}
+              className={`flex flex-col gap-[10px] py-[12px] ${
+                index < rows.length - 1 ? "border-b border-[var(--border-subtle)]" : ""
+              }`}
+            >
             <div className="flex items-start justify-between gap-[12px]">
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-[8px]">
                   <p className="truncate font-sans text-[13px] font-medium text-[var(--text-primary)]">
                     {server.label}
                   </p>
-                  {isActive ? (
+                  {isDefaultSettings ? (
                     <span className="rounded-[999px] bg-[var(--accent-bg)] px-[8px] py-[2px] font-sans text-[11px] text-[var(--text-primary)]">
-                      Active
+                      Default settings
+                    </span>
+                  ) : null}
+                  {isActiveChat ? (
+                    <span className="rounded-[999px] border border-[var(--border-subtle)] px-[8px] py-[2px] font-sans text-[11px] text-[var(--text-secondary)]">
+                      Active chat
+                    </span>
+                  ) : null}
+                  {isRuntimeConnected ? (
+                    <span className="rounded-[999px] border border-[var(--border-subtle)] px-[8px] py-[2px] font-sans text-[11px] text-[var(--text-secondary)]">
+                      {runtimeStatus?.health === "auth_required" ? "Auth needed" : "Connected"}
+                    </span>
+                  ) : runtimeStatus?.health === "offline" ? (
+                    <span className="rounded-[999px] border border-[var(--border-subtle)] px-[8px] py-[2px] font-sans text-[11px] text-[var(--text-disabled)]">
+                      Offline
                     </span>
                   ) : null}
                 </div>
@@ -132,15 +228,44 @@ export function ServerConnectionsManager({
                 ) : null}
               </div>
               <div className="flex shrink-0 flex-wrap justify-end gap-[8px]">
+                {onSetDefault ? (
+                  <button
+                    type="button"
+                    className={buttonClass}
+                    disabled={isDefaultSettings}
+                    onClick={() => onSetDefault(server.id)}
+                  >
+                    <Check className="size-[14px]" strokeWidth={1.5} aria-hidden />
+                    {isDefaultSettings ? "Default" : "Set default"}
+                  </button>
+                ) : null}
                 {onActivate ? (
                   <button
                     type="button"
                     className={buttonClass}
-                    disabled={isActive}
+                    disabled={isActiveChat}
                     onClick={() => onActivate(server.id)}
                   >
                     <Check className="size-[14px]" strokeWidth={1.5} aria-hidden />
-                    {isActive ? "Connected" : "Connect"}
+                    {onSetDefault
+                      ? isActiveChat
+                        ? "Active chat"
+                        : "Use for chats"
+                      : isActiveChat
+                        ? "Selected"
+                        : "Use for settings"}
+                  </button>
+                ) : null}
+                {runtimeStatus?.health === "auth_required" ? (
+                  <button
+                    type="button"
+                    className={buttonClass}
+                    onClick={() => {
+                      setAuthServerId((current) => (current === server.id ? null : server.id));
+                      setAuthError(null);
+                    }}
+                  >
+                    Sign in
                   </button>
                 ) : null}
                 <button
@@ -180,14 +305,61 @@ export function ServerConnectionsManager({
                 </button>
               </div>
             </div>
+            {authServerId === server.id ? (
+              <form
+                className={`grid gap-[8px] rounded-[var(--radius-tab)] border border-[var(--border-subtle)] bg-[var(--bg-main)] p-[10px] ${
+                  compact ? "grid-cols-1" : "grid-cols-1 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]"
+                }`}
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void handleServerLogin(server.id, server.baseUrl);
+                }}
+              >
+                <input
+                  type="text"
+                  value={authUsername}
+                  onChange={(event) => setAuthUsername(event.target.value)}
+                  placeholder="Username"
+                  autoComplete="username"
+                  className={inputClass}
+                  required
+                />
+                <input
+                  type="password"
+                  value={authPassword}
+                  onChange={(event) => setAuthPassword(event.target.value)}
+                  placeholder="Password"
+                  autoComplete="current-password"
+                  className={inputClass}
+                  required
+                />
+                <button type="submit" className={buttonClass} disabled={authPending}>
+                  {authPending ? "Signing in..." : "Sign in"}
+                </button>
+                {authError ? (
+                  <p className="font-sans text-[11px] text-[var(--debug-accent)] md:col-span-3">
+                    {authError}
+                  </p>
+                ) : null}
+              </form>
+            ) : null}
           </div>
         ))}
-      </div>
+        </div>
+      ) : null}
+      <button
+        type="button"
+        className={buttonClass}
+        onClick={() => void refreshServerHealth()}
+      >
+        <RefreshCw className="size-[14px]" strokeWidth={1.5} aria-hidden />
+        Refresh all server status
+      </button>
 
-      <div className="rounded-[var(--radius-card)] border border-[var(--border-card)] bg-[var(--bg-panel)] px-[14px] py-[14px]">
-        <div className="mb-[10px] flex items-center gap-[8px]">
+      <div className="border-t border-[var(--border-subtle)] pt-[16px]">
+        <div className="mb-[10px] flex items-center gap-[8px] px-[2px]">
           <Server className="size-[15px] text-[var(--text-secondary)]" strokeWidth={1.6} />
-          <h3 className="font-sans text-[13px] font-medium text-[var(--text-primary)]">
+          <h3 className="font-sans text-[15px] font-semibold text-[var(--text-primary)]">
             {isEditing ? "Edit server" : "Add server"}
           </h3>
         </div>

@@ -4,6 +4,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Search } from "lucide-react";
 import { ChatComposer } from "@/components/chat/ChatComposer";
 import { ComposerQueueDock } from "@/components/chat/ComposerQueueDock";
+import { AgentCompletionErrorDock } from "@/components/chat/AgentCompletionErrorDock";
+import { useAgentCompletionErrorDock } from "@/components/chat/useAgentCompletionErrorDock";
 import { AskQuestionCard } from "@/components/chat/AskQuestionCard";
 import { MessageList, type MessageListScrollPersistMeta } from "@/components/chat/MessageList";
 import {
@@ -17,7 +19,10 @@ import {
   extractComposerUserMessageHistory,
   projectAgentEventsToChatMessages,
 } from "@/lib/agent-chat";
-import { askStepsFromMessage } from "@/lib/ask-question-utils";
+import {
+  findDockedAskQuestion,
+  hideDockedAskFromScroll,
+} from "@/lib/ask-question-dock";
 import { buildQueuedConfigOverride } from "@/lib/queued-prompt-utils";
 import { markConversationSwitchVisible } from "@/lib/dev-perf";
 import { useAgentConversations } from "@/components/chat/AgentConversationsContext";
@@ -32,20 +37,6 @@ import {
   EDITOR_CHAT_CONTENT_CLASS,
   EDITOR_CHAT_INSET_X_CLASS,
 } from "./agent-chat-layout";
-
-function partitionMessagesForDock(messages: ReturnType<typeof projectAgentEventsToChatMessages>): {
-  scrollMessages: ReturnType<typeof projectAgentEventsToChatMessages>;
-  dockedAsk: ReturnType<typeof projectAgentEventsToChatMessages>[number] | null;
-} {
-  const last = messages[messages.length - 1];
-  if (last?.type === "ask-question") {
-    return {
-      scrollMessages: messages.slice(0, -1),
-      dockedAsk: last,
-    };
-  }
-  return { scrollMessages: messages, dockedAsk: null };
-}
 
 function formatRecentConversationTime(timestamp: number): string {
   const diff = Date.now() - timestamp;
@@ -106,11 +97,14 @@ eventsByConversationId,
 bootstrapped,
 getConversationLoadStatus,
 answerPermissionForConversation,
+answerQuestionForConversation,
 getConversationComposerState,
 promptConversation,
 mergeConversationSnapshot,
 refreshConversations,
 cancelConversation,
+pauseConversation,
+resumeConversation,
 setConversationMode,
 setConversationModel,
 setConversationBackend,
@@ -121,6 +115,7 @@ loadOlderConversationHistory,
   pendingConfigByConversationId,
   setPendingConfigForConversation,
   upsertConversation,
+  retryConversation,
   } = useAgentConversations();
   const { settings: globalSettings } = useGlobalSettings();
   const {
@@ -154,14 +149,50 @@ loadOlderConversationHistory,
       }),
     [conversationId, conversation?.config.backendId, rawThreadEvents, workspaceInfo?.root]
   );
-  const { scrollMessages, dockedAsk } = useMemo(
-    () => partitionMessagesForDock(threadMessages),
-    [threadMessages]
+  const dockedAsk = useMemo(
+    () =>
+      findDockedAskQuestion({
+        events: rawThreadEvents,
+        conversation,
+      }),
+    [conversation, rawThreadEvents]
   );
+  const scrollMessages = useMemo(
+    () => hideDockedAskFromScroll(threadMessages, dockedAsk),
+    [dockedAsk, threadMessages]
+  );
+  const [submittingQuestion, setSubmittingQuestion] = useState(false);
   const historyCursor = useMemo(
     () => getConversationHistoryCursor(conversationId),
     [conversationId, getConversationHistoryCursor]
   );
+  const activeBackend = useMemo(
+    () => backends.find((backend) => backend.id === conversation?.config.backendId) ?? null,
+    [backends, conversation?.config.backendId]
+  );
+  const dismissedCompletionErrorKey =
+    workspaceSession.chat.dismissedCompletionErrorKeyByConversationId?.[conversationId];
+  const completionErrorDock = useAgentCompletionErrorDock({
+    conversation,
+    events: rawThreadEvents,
+    backend: activeBackend,
+    dismissedKey: dismissedCompletionErrorKey,
+    onDismiss: (dismissKey) => {
+      updateWorkspaceSession((current) => ({
+        ...current,
+        chat: {
+          ...current.chat,
+          dismissedCompletionErrorKeyByConversationId: {
+            ...current.chat.dismissedCompletionErrorKeyByConversationId,
+            [conversationId]: dismissKey,
+          },
+        },
+      }));
+    },
+    onRetry: async (targetConversationId) => {
+      await retryConversation(targetConversationId);
+    },
+  });
   const restoredEditorChatScroll = useMemo(
     () =>
       resolvePersistedChatScroll(
@@ -179,10 +210,6 @@ loadOlderConversationHistory,
       workspaceSession.chat.scrollAnchorByTabId,
       workspaceSession.chat.scrollTopByTabId,
     ]
-  );
-  const dockedAskSteps = useMemo(
-    () => (dockedAsk ? askStepsFromMessage(dockedAsk) : []),
-    [dockedAsk]
   );
 
   const getRedoComposerSeed = useCallback(() => {
@@ -580,6 +607,9 @@ const showRecentChatsSection =
           });
         }}
         onCancel={() => cancelConversation(conversationId)}
+        onPause={() => pauseConversation(conversationId)}
+        onResume={() => resumeConversation(conversationId)}
+        conversationStatus={conversation.status}
         layout={isEmptyThread ? "empty-top" : "docked-bottom"}
         shellMxClass=""
         userMessageHistory={composerUserMessageHistory}
@@ -611,6 +641,11 @@ const showRecentChatsSection =
                   />
                 </div>
               ) : null}
+              <AgentCompletionErrorDock
+                dock={completionErrorDock}
+                insetClassName={EDITOR_CHAT_INSET_X_CLASS}
+                contentClassName={EDITOR_CHAT_CONTENT_CLASS}
+              />
               {composer}
             </div>
           ) : null}
@@ -718,10 +753,26 @@ const showRecentChatsSection =
                     {recentChatsSection}
                   </div>
                 ) : null}
-                {dockedAskSteps.length > 0 ? (
+                {dockedAsk ? (
                   <div className={`${EDITOR_CHAT_INSET_X_CLASS} pt-[8px]`}>
                     <div className={EDITOR_CHAT_CONTENT_CLASS}>
-                      <AskQuestionCard steps={dockedAskSteps} dockAboveComposer />
+                      <AskQuestionCard
+                        steps={dockedAsk.steps}
+                        dockAboveComposer
+                        submitting={submittingQuestion}
+                        onSubmit={async (answer) => {
+                          setSubmittingQuestion(true);
+                          try {
+                            await answerQuestionForConversation(
+                              conversationId,
+                              dockedAsk.questionId,
+                              answer
+                            );
+                          } finally {
+                            setSubmittingQuestion(false);
+                          }
+                        }}
+                      />
                     </div>
                   </div>
                 ) : null}
@@ -741,6 +792,11 @@ const showRecentChatsSection =
                     </div>
                   </div>
                 ) : null}
+                <AgentCompletionErrorDock
+                  dock={completionErrorDock}
+                  insetClassName={EDITOR_CHAT_INSET_X_CLASS}
+                  contentClassName={EDITOR_CHAT_CONTENT_CLASS}
+                />
                 {composer}
               </div>
             </div>

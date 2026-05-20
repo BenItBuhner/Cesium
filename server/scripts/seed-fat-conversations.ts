@@ -20,7 +20,7 @@ import type { AgentConversationRecord, AgentEventInput } from "../src/lib/agents
 import { ensureDataDir } from "../src/lib/persistence.js";
 import { listWorkspaces } from "../src/lib/workspace-registry.js";
 
-const backend = AGENT_BACKENDS["cursor-acp"];
+const backend = AGENT_BACKENDS["cursor-sdk"];
 const STRESS_TITLE_PREFIX = "Stress seed";
 
 /** Rich turns per chat — same marathon depth as the legacy megascript, now tool-dense. */

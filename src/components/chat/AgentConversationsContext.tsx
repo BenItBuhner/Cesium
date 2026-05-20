@@ -15,6 +15,8 @@ import {
   buildConversationModelOptions,
   dedupeAgentStoredEvents,
   getConversationLatestSeq,
+  isAgentConversationBusy,
+  mergeAgentConversationStatusFromEvent,
   isIncomingEventDroppedByAcpToolStrip,
   resolveConversationModel,
 } from "@/lib/agent-chat";
@@ -50,8 +52,10 @@ import {
   dispatchAgentConversationDeleted,
   dispatchAgentConversationUpserted,
 } from "@/lib/agent-conversation-events";
+import { AGENT_BACKENDS_CHANGED_EVENT } from "@/lib/agent-backend-events";
 import {
   answerAgentPermission,
+  answerAgentQuestion,
   buildAgentWebSocketUrl,
   cancelAgentConversation,
   createAndPromptAgentConversation,
@@ -60,7 +64,10 @@ import {
   forkAgentConversation,
   handoffAgentConversation,
   listAgentConversations,
+  pauseAgentConversation,
   promptAgentConversation,
+  resumeAgentConversation,
+  retryAgentConversation,
   updateAgentConversationConfig,
 } from "@/lib/server-api";
 
@@ -126,6 +133,8 @@ function mergeConversationByRecency(
       existing.status !== incomingWithQueue.status ||
       JSON.stringify(existing.pendingPermission) !==
         JSON.stringify(incomingWithQueue.pendingPermission) ||
+      JSON.stringify(existing.pendingQuestion) !==
+        JSON.stringify(incomingWithQueue.pendingQuestion) ||
       existing.title !== incomingWithQueue.title ||
       existing.lastError !== incomingWithQueue.lastError ||
       existing.archivedAt !== incomingWithQueue.archivedAt ||
@@ -153,7 +162,7 @@ function conversationNeedsRuntimeHydration(
     conversation.configOptions.length === 0 ||
     conversation.providerSessionId == null ||
     !conversation.capabilities.supportsLoadSession ||
-    (conversation.config.backendId === "cursor-acp" &&
+    (conversation.config.backendId === "cursor-sdk" &&
       (!conversation.capabilities.supportsPermissions ||
         !conversation.capabilities.supportsSessionResume)) ||
     ((conversation.status === "running" ||
@@ -224,6 +233,11 @@ type AgentConversationsContextValue = {
     conversationId: string,
     requestId: string
   ) => Promise<void>;
+  answerQuestionForConversation: (
+    conversationId: string,
+    questionId: string,
+    answer: string
+  ) => Promise<void>;
   setConversationMode: (
     conversationId: string,
     mode: EditorMode
@@ -242,7 +256,10 @@ type AgentConversationsContextValue = {
     value: string
   ) => Promise<void>;
   promptConversation: (conversationId: string, text: string, attachments?: ImageAttachment[], configOverride?: QueuedPromptConfigOverride) => Promise<boolean>;
+  retryConversation: (conversationId: string) => Promise<boolean>;
   cancelConversation: (conversationId: string) => Promise<void>;
+  pauseConversation: (conversationId: string) => Promise<void>;
+  resumeConversation: (conversationId: string) => Promise<void>;
   pendingConfigByConversationId: Record<string, QueuedPromptConfigOverride>;
   setPendingConfigForConversation: (conversationId: string, patch: Partial<QueuedPromptConfigOverride>) => void;
   clearPendingConfigForConversation: (conversationId: string) => void;
@@ -253,6 +270,8 @@ type AgentConversationsContextValue = {
     conversationId: string,
     options?: { hydrateRuntime?: boolean }
   ) => Promise<void>;
+  /** Subscribe immediately (no debounce) so new turns do not miss early events. */
+  flushAgentSubscription: (extraConversationIds?: string[]) => void;
   /** Merge a snapshot from HTTP or WebSocket (prompt result, snapshot_head, etc.). */
   mergeConversationSnapshot: (
     snapshot: AgentConversationSnapshot | AgentConversationSnapshotHead
@@ -306,6 +325,8 @@ export function AgentConversationsProvider({
   const loadingOlderRef = useRef<Record<string, boolean>>({});
   const socketRef = useRef<JsonWebSocket<AgentSocketServerMessage> | null>(null);
   const subscribeDebounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const flushAgentSubscriptionRef = useRef<(extraConversationIds?: string[]) => void>(() => {});
+  const scheduleConversationCatchUpRef = useRef<(conversationId: string) => void>(() => {});
   const openConversationsSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const chatDraftRef = useRef(workspaceSession.chat);
   const eventsRef = useRef(eventsByConversationId);
@@ -668,8 +689,52 @@ updateWorkspaceSession((current) => {
     [historyMetaById, loadingOlderById]
   );
 
+  const patchConversationStatus = useCallback(
+    (conversationId: string, status: AgentConversationRecord["status"]) => {
+      setConversationsById((current) => {
+        const conversation = current[conversationId];
+        if (!conversation || conversation.status === status) {
+          return current;
+        }
+        return {
+          ...current,
+          [conversationId]: {
+            ...conversation,
+            status,
+            updatedAt: Math.max(conversation.updatedAt, Date.now()),
+          },
+        };
+      });
+    },
+    []
+  );
+
+  const applyConversationStatusFromEvent = useCallback(
+    (conversationId: string, event: AgentStoredEvent) => {
+      if (event.kind !== "status") {
+        return;
+      }
+      setConversationsById((current) => {
+        const conversation = current[conversationId];
+        if (!conversation) {
+          return current;
+        }
+        const merged = mergeAgentConversationStatusFromEvent(conversation, event);
+        if (!merged) {
+          return current;
+        }
+        return {
+          ...current,
+          [conversationId]: merged,
+        };
+      });
+    },
+    []
+  );
+
   const appendConversationEvent = useCallback(
     (conversationId: string, event: AgentStoredEvent) => {
+      applyConversationStatusFromEvent(conversationId, event);
       setEventsByConversationId((current) => {
         const existing = current[conversationId] ?? [];
         if (
@@ -690,13 +755,16 @@ updateWorkspaceSession((current) => {
         };
       });
     },
-    []
+    [applyConversationStatusFromEvent]
   );
 
   const appendConversationEventBatch = useCallback(
     (conversationId: string, incoming: AgentStoredEvent[]) => {
       if (incoming.length === 0) {
         return;
+      }
+      for (const event of incoming) {
+        applyConversationStatusFromEvent(conversationId, event);
       }
       setEventsByConversationId((current) => {
         const existing = current[conversationId] ?? [];
@@ -728,7 +796,7 @@ updateWorkspaceSession((current) => {
         };
       });
     },
-    []
+    [applyConversationStatusFromEvent]
   );
 
   const upsertConversation = useCallback(
@@ -821,6 +889,35 @@ updateWorkspaceSession((current) => {
     [mergeConversationSnapshot]
   );
 
+  const scheduleConversationCatchUp = useCallback(
+    (conversationId: string) => {
+      const delaysMs = [0, 250, 1500, 5000];
+      for (const delayMs of delaysMs) {
+        window.setTimeout(() => {
+          const current = conversationsByIdRef.current[conversationId];
+          if (!current) {
+            return;
+          }
+          if (
+            current.status !== "running" &&
+            current.status !== "awaiting_permission" &&
+            current.status !== "awaiting_question"
+          ) {
+            return;
+          }
+          void syncConversationSnapshot(conversationId, { hydrateRuntime: true }).catch(
+            () => undefined
+          );
+        }, delayMs);
+      }
+    },
+    [syncConversationSnapshot]
+  );
+
+  useEffect(() => {
+    scheduleConversationCatchUpRef.current = scheduleConversationCatchUp;
+  }, [scheduleConversationCatchUp]);
+
   const renameConversation = useCallback(
     async (conversationId: string, title: string) => {
       const trimmed = title.trim();
@@ -859,6 +956,23 @@ updateWorkspaceSession((current) => {
         await answerAgentPermission(conversationId, {
           requestId,
           cancelled: true,
+        });
+        const result = await fetchAgentConversationSnapshot(conversationId);
+        mergeConversationSnapshot(result.snapshot);
+        dispatchAgentConversationUpserted(result.snapshot.conversation);
+      } catch {
+        void syncConversationSnapshot(conversationId).catch(() => undefined);
+      }
+    },
+    [mergeConversationSnapshot, syncConversationSnapshot]
+  );
+
+  const answerQuestionForConversation = useCallback(
+    async (conversationId: string, questionId: string, answer: string) => {
+      try {
+        await answerAgentQuestion(conversationId, {
+          questionId,
+          answer,
         });
         const result = await fetchAgentConversationSnapshot(conversationId);
         mergeConversationSnapshot(result.snapshot);
@@ -1061,6 +1175,8 @@ const executePrompt = useCallback(
         });
         mergeConversationSnapshot(snapshot.snapshot);
         dispatchAgentConversationUpserted(snapshot.snapshot.conversation);
+        flushAgentSubscriptionRef.current();
+        scheduleConversationCatchUpRef.current(conversationId);
         void markWorkspaceActivity(snapshot.snapshot.conversation.workspaceId).catch(
           () => undefined
         );
@@ -1146,6 +1262,23 @@ const executePrompt = useCallback(
     [clearEditingQueuedPromptForConversation, executePrompt]
   );
 
+  const retryConversation = useCallback(
+    async (conversationId: string) => {
+      try {
+        const snapshot = await retryAgentConversation(conversationId);
+        mergeConversationSnapshot(snapshot.snapshot);
+        dispatchAgentConversationUpserted(snapshot.snapshot.conversation);
+        void markWorkspaceActivity(snapshot.snapshot.conversation.workspaceId).catch(
+          () => undefined
+        );
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    [markWorkspaceActivity, mergeConversationSnapshot]
+  );
+
   const createConversation = useCallback(
     async (input?: AgentConversationCreateInput) => {
       const result = await createAgentConversation(input ?? {});
@@ -1178,6 +1311,8 @@ const executePrompt = useCallback(
         });
         mergeConversationSnapshot(result.snapshot);
         dispatchAgentConversationUpserted(result.snapshot.conversation);
+        flushAgentSubscriptionRef.current();
+        scheduleConversationCatchUpRef.current(result.snapshot.conversation.id);
         recordPerfSample("conversation.create_and_prompt.ack", startedAt, {
           conversationId: result.snapshot.conversation.id,
         });
@@ -1197,6 +1332,7 @@ const executePrompt = useCallback(
 
   const cancelConversation = useCallback(
     async (conversationId: string) => {
+      patchConversationStatus(conversationId, "cancelled");
       try {
         const result = await cancelAgentConversation(conversationId);
         upsertConversation(result.conversation);
@@ -1205,8 +1341,36 @@ const executePrompt = useCallback(
         void syncConversationSnapshot(conversationId).catch(() => undefined);
       }
     },
-[syncConversationSnapshot, upsertConversation]
-);
+    [patchConversationStatus, syncConversationSnapshot, upsertConversation]
+  );
+
+  const pauseConversation = useCallback(
+    async (conversationId: string) => {
+      patchConversationStatus(conversationId, "pause_requested");
+      try {
+        const result = await pauseAgentConversation(conversationId);
+        upsertConversation(result.conversation);
+        dispatchAgentConversationUpserted(result.conversation);
+      } catch {
+        void syncConversationSnapshot(conversationId).catch(() => undefined);
+      }
+    },
+    [patchConversationStatus, syncConversationSnapshot, upsertConversation]
+  );
+
+  const resumeConversation = useCallback(
+    async (conversationId: string) => {
+      patchConversationStatus(conversationId, "running");
+      try {
+        const result = await resumeAgentConversation(conversationId);
+        upsertConversation(result.conversation);
+        dispatchAgentConversationUpserted(result.conversation);
+      } catch {
+        void syncConversationSnapshot(conversationId).catch(() => undefined);
+      }
+    },
+    [patchConversationStatus, syncConversationSnapshot, upsertConversation]
+  );
 
 useEffect(() => {
 const pendingIds = Object.keys(pendingConfigByConversationId);
@@ -1214,7 +1378,7 @@ if (pendingIds.length === 0) return;
 const toClear: string[] = [];
 for (const id of pendingIds) {
 const conv = conversationsById[id];
-if (conv && conv.status !== "running" && conv.status !== "awaiting_permission") {
+if (conv && !isAgentConversationBusy(conv.status) && conv.status !== "paused") {
 toClear.push(id);
 }
 }
@@ -1235,8 +1399,7 @@ const conversation = conversationsById[conversationId] ?? null;
 if (!conversation) {
 return null;
 }
-const busy =
-conversation.status === "running" || conversation.status === "awaiting_permission";
+const busy = isAgentConversationBusy(conversation.status);
 const pending = pendingConfigByConversationId[conversationId];
 const effectiveConfig = busy && pending
 ? resolveEffectiveConfig(conversation.config, pending)
@@ -1297,7 +1460,7 @@ busy,
     [conversationLoadStatusById, conversationsById, eventsByConversationId]
   );
 
-  const flushSubscription = useCallback(() => {
+  const flushAgentSubscription = useCallback((extraConversationIds: string[] = []) => {
     const socket = socketRef.current;
     if (!socket?.connected) {
       return;
@@ -1307,9 +1470,15 @@ busy,
       return;
     }
     const convMap = conversationsByIdRef.current;
-    const conversationIds = openConversationIdsRef.current
-      .filter(Boolean)
-      .filter((id) => convMap[id]?.workspaceId === ws);
+    const extraIds = extraConversationIds.filter(Boolean);
+    const conversationIds = [
+      ...new Set([
+        ...openConversationIdsRef.current
+          .filter(Boolean)
+          .filter((id) => convMap[id]?.workspaceId === ws),
+        ...extraIds,
+      ]),
+    ];
     const sinceByConversationId = Object.fromEntries(
       conversationIds.map((conversationId) => [
         conversationId,
@@ -1323,22 +1492,36 @@ busy,
     });
   }, []);
 
+  useEffect(() => {
+    flushAgentSubscriptionRef.current = flushAgentSubscription;
+  }, [flushAgentSubscription]);
+
   const scheduleSubscription = useCallback(() => {
     if (subscribeDebounceTimerRef.current != null) {
       clearTimeout(subscribeDebounceTimerRef.current);
     }
     subscribeDebounceTimerRef.current = setTimeout(() => {
       subscribeDebounceTimerRef.current = null;
-      flushSubscription();
+      flushAgentSubscription();
     }, 100);
-  }, [flushSubscription]);
+  }, [flushAgentSubscription]);
 
   const refreshConversations = useCallback(async () => {
-    const result = await listAgentConversations();
+    const result = await listAgentConversations({ cache: "no-store" });
     setBackends(result.backends);
     setConversationsById(toConversationMap(result.conversations));
     return result.conversations;
   }, []);
+
+  useEffect(() => {
+    const onBackendsChanged = () => {
+      void refreshConversations().catch(() => undefined);
+    };
+    window.addEventListener(AGENT_BACKENDS_CHANGED_EVENT, onBackendsChanged);
+    return () => {
+      window.removeEventListener(AGENT_BACKENDS_CHANGED_EVENT, onBackendsChanged);
+    };
+  }, [refreshConversations]);
 
   const forkConversation = useCallback(
     async (
@@ -1662,7 +1845,7 @@ busy,
     socketRef.current = socket;
 
     const disposeOpen = socket.onOpen(() => {
-      flushSubscription();
+      flushAgentSubscription();
     });
     const disposeClose = socket.onClose(() => {
       loadingOlderRef.current = {};
@@ -1793,7 +1976,7 @@ busy,
     bootstrapped,
     appendConversationEvent,
     appendConversationEventBatch,
-    flushSubscription,
+    flushAgentSubscription,
     mergeConversationSnapshot,
     prependHistoryPage,
     updateWorkspaceSession,
@@ -1827,14 +2010,19 @@ busy,
       upsertConversation,
       answerPermissionForConversation,
       cancelPermissionForConversation,
+      answerQuestionForConversation,
       setConversationMode,
       setConversationModel,
       setConversationBackend,
       setConversationConfigOption,
       promptConversation,
-cancelConversation,
+      retryConversation,
+      cancelConversation,
+      pauseConversation,
+      resumeConversation,
 getConversationComposerState,
 syncConversationSnapshot,
+flushAgentSubscription,
 mergeConversationSnapshot,
 refreshConversations,
 forkConversation,
@@ -1849,6 +2037,7 @@ backends,
 bootstrapped,
 cancelConversation,
 cancelPermissionForConversation,
+answerQuestionForConversation,
 clearPendingConfigForConversation,
 createConversation,
 createAndPromptConversation,
@@ -1861,6 +2050,9 @@ getConversationComposerState,
 mergeConversationSnapshot,
 pendingConfigByConversationId,
 promptConversation,
+pauseConversation,
+resumeConversation,
+retryConversation,
 refreshConversations,
 renameConversation,
 upsertConversation,
@@ -1870,6 +2062,7 @@ setConversationMode,
 setConversationModel,
 setPendingConfigForConversation,
 syncConversationSnapshot,
+flushAgentSubscription,
 answerPermissionForConversation,
 getConversationHistoryCursor,
 loadOlderConversationHistory,

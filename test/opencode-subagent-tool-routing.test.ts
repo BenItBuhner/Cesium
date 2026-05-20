@@ -41,7 +41,7 @@ test("OpenCode SSE tool_call with openCodeSubagentSessionId stays off root worke
     },
   ];
   const messages = projectAgentEventsToChatMessages(events as never, {
-    backendId: "opencode-acp",
+    backendId: "opencode-server",
     workspaceRoot: "/tmp",
   });
   const worked = messages.filter((m) => m.type === "worked-session");
@@ -126,7 +126,7 @@ test("OpenCode spawn without embedded ses_* merges child SSE tools into the titl
         raw: {},
       },
     ] as never,
-    { backendId: "opencode-acp", workspaceRoot: "/tmp" }
+    { backendId: "opencode-server", workspaceRoot: "/tmp" }
   );
   const subs = messages.filter((m) => m.type === "subagent");
   assert.equal(subs.length, 2, "expected no duplicate generic Subagent cards");
@@ -189,7 +189,7 @@ test("OpenCode child SSE before spawn tool_call still yields one titled subagent
         },
       },
     ] as never,
-    { backendId: "opencode-acp", workspaceRoot: "/tmp" }
+    { backendId: "opencode-server", workspaceRoot: "/tmp" }
   );
   const subs = messages.filter((m) => m.type === "subagent");
   assert.equal(subs.length, 1);

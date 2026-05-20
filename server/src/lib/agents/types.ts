@@ -8,19 +8,21 @@ export type AgentConversationMode =
   | (string & {});
 
 export type AgentBackendId =
-  | "cursor-acp"
+  | "cesium-agent"
   | "cursor-sdk"
-  | "opencode-acp"
   | "opencode-server"
   | "gemini-acp"
-  | "codex-adapter"
   | "codex-app-server"
-  | "claude-adapter";
+  | "claude-code-sdk";
 
 export type AgentConversationStatus =
   | "idle"
   | "running"
+  | "pause_requested"
+  | "pausing"
+  | "paused"
   | "awaiting_permission"
+  | "awaiting_question"
   | "cancelled"
   | "failed"
   | "interrupted";
@@ -77,6 +79,11 @@ export type AgentPendingPermission = {
   options: AgentPermissionOption[];
 };
 
+export type AgentPendingQuestion = {
+  questionId: string;
+  requestedAt: number;
+};
+
 export type AgentProviderCapabilities = {
   supportsLoadSession: boolean;
   supportsModeSelection: boolean;
@@ -89,6 +96,7 @@ export type AgentProviderCapabilities = {
   supportsSessionResume: boolean;
   supportsPromptImages: boolean;
   supportsInlineReasoning: boolean;
+  supportsCompletionRetry: boolean;
 };
 
 export type AgentBackendInfo = {
@@ -236,6 +244,46 @@ export type AgentStoredEvent =
       eventId: string;
       conversationId: string;
       createdAt: number;
+      kind: "subagent";
+      subagentId: string;
+      title: string;
+      meta?: string;
+      status: "running" | "completed" | "failed";
+      transcript: AgentStoredEvent[];
+      recentActivity?: string;
+      raw?: unknown;
+    }
+  | {
+      seq: number;
+      eventId: string;
+      conversationId: string;
+      createdAt: number;
+      kind: "question";
+      questionId: string;
+      prompt: string;
+      options: Array<{ id: string; label: string }>;
+      allowMultiple?: boolean;
+      status: "pending" | "answered" | "cancelled";
+      answer?: string | string[];
+      raw?: unknown;
+    }
+  | {
+      seq: number;
+      eventId: string;
+      conversationId: string;
+      createdAt: number;
+      kind: "compression_summary";
+      messageId: string;
+      summary: string;
+      retainedTurnCount: number;
+      compressedTurnCount: number;
+      raw?: unknown;
+    }
+  | {
+      seq: number;
+      eventId: string;
+      conversationId: string;
+      createdAt: number;
       kind: "permission_request";
       requestId: string;
       title?: string;
@@ -330,6 +378,7 @@ export type AgentConversationRecord = {
   configOptions: AgentConfigOption[];
   capabilities: AgentProviderCapabilities;
   pendingPermission: AgentPendingPermission | null;
+  pendingQuestion: AgentPendingQuestion | null;
   lastError: string | null;
   experimental: boolean;
   archivedAt: number | null;
@@ -418,14 +467,18 @@ export interface AgentSessionHandle {
     text: string;
     userMessageId: string;
     attachments?: Array<{ mimeType: string; data: string; name?: string }>;
+    isRetry?: boolean;
   }) => Promise<void>;
   cancel: () => Promise<void>;
+  pause?: () => Promise<void>;
+  resume?: () => Promise<void>;
   setConfigOption: (configId: string, value: string) => Promise<void>;
   answerPermission: (input: {
     requestId: string;
     optionId?: string;
     cancelled?: boolean;
   }) => Promise<void>;
+  answerQuestion?: (input: { questionId: string; answer: string }) => Promise<void>;
   dispose: () => Promise<void>;
 }
 
@@ -514,5 +567,6 @@ export function createUnavailableCapabilities(): AgentProviderCapabilities {
     supportsSessionResume: false,
     supportsPromptImages: false,
     supportsInlineReasoning: false,
+    supportsCompletionRetry: false,
   };
 }

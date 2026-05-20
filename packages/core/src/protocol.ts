@@ -6,18 +6,19 @@ export type AgentConversationMode =
   | (string & {});
 
 export type AgentBackendId =
-  | "cursor-acp"
+  | "cesium-agent"
   | "cursor-sdk"
-  | "opencode-acp"
   | "opencode-server"
   | "gemini-acp"
-  | "codex-adapter"
   | "codex-app-server"
-  | "claude-adapter";
+  | "claude-code-sdk";
 
 export type AgentConversationStatus =
   | "idle"
   | "running"
+  | "pause_requested"
+  | "pausing"
+  | "paused"
   | "awaiting_permission"
   | "cancelled"
   | "failed"

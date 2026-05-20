@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 
 type JsonRecord = Record<string, unknown>;
 
-type BackendId = "opencode-acp" | "opencode-server";
+type BackendId = "opencode-server";
 
 type StressResult = {
   backendId: BackendId;
@@ -32,10 +32,10 @@ const requestTimeoutMs = Number.parseInt(process.env.OPENCURSOR_PROBE_REQUEST_TI
 const settleMs = Number.parseInt(process.env.OPENCURSOR_PROBE_SETTLE_MS ?? "7000", 10);
 const workspaceRoot = path.resolve(process.env.OPENCURSOR_PROBE_WORKSPACE_ROOT ?? defaultWorkspaceRoot);
 const requestedModel = process.env.OPENCURSOR_PROBE_MODEL?.trim() || "big-pickle";
-const backendList = (process.env.OPENCURSOR_PROBE_BACKENDS ?? "opencode-acp,opencode-server")
+const backendList = (process.env.OPENCURSOR_PROBE_BACKENDS ?? "opencode-server")
   .split(",")
   .map((value) => value.trim())
-  .filter((value): value is BackendId => value === "opencode-acp" || value === "opencode-server");
+  .filter((value): value is BackendId => value === "opencode-server");
 
 function loadEnvFile(filePath: string): void {
   try {

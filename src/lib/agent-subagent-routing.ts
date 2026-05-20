@@ -744,14 +744,12 @@ export const SUBAGENT_TOOL_CALL_CLASSIFIERS: Record<
   AgentBackendId,
   (event: SubagentToolCallEvent) => boolean
 > = {
-  "cursor-acp": isCursorAcpSubagentTaskToolEvent,
+  "cesium-agent": isStrictAcpSubagentTaskToolEvent,
   "cursor-sdk": isCursorAcpSubagentTaskToolEvent,
-  "opencode-acp": isStrictAcpSubagentTaskToolEvent,
   "opencode-server": isStrictAcpSubagentTaskToolEvent,
   "gemini-acp": isStrictAcpSubagentTaskToolEvent,
-  "codex-adapter": isCodexSubagentTaskToolEvent,
   "codex-app-server": isCodexSubagentTaskToolEvent,
-  "claude-adapter": isStrictAcpSubagentTaskToolEvent,
+  "claude-code-sdk": isStrictAcpSubagentTaskToolEvent,
 };
 
 export function classifyToolCallAsSubagentCard(

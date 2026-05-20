@@ -10,6 +10,8 @@ interface HandoffDividerProps {
 
 export function getAgentLabel(agentId: string): string {
   switch (agentId) {
+    case "cesium-agent":
+      return "Cesium Agent";
     case "cursor-acp":
       return "Cursor";
     case "cursor-sdk":
@@ -24,8 +26,6 @@ export function getAgentLabel(agentId: string): string {
       return "Codex";
     case "codex-app-server":
       return "Codex App Server";
-    case "claude-adapter":
-      return "Claude Code";
     case "claude-code-sdk":
       return "Claude Code";
     default:
@@ -34,19 +34,23 @@ export function getAgentLabel(agentId: string): string {
 }
 
 function parseHandoffBackendId(raw: string): AgentBackendId | null {
-  if (raw === "claude-code-sdk") {
-    return "claude-adapter";
+  if (raw === "claude-adapter") {
+    return "claude-code-sdk";
   }
   switch (raw) {
-    case "cursor-acp":
+    case "cesium-agent":
     case "cursor-sdk":
-    case "opencode-acp":
     case "opencode-server":
     case "gemini-acp":
-    case "codex-adapter":
     case "codex-app-server":
-    case "claude-adapter":
+    case "claude-code-sdk":
       return raw;
+    case "cursor-acp":
+      return "cursor-sdk";
+    case "opencode-acp":
+      return "opencode-server";
+    case "codex-adapter":
+      return "codex-app-server";
     default:
       return null;
   }

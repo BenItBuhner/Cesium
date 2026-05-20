@@ -19,10 +19,11 @@ const capabilities: AgentProviderCapabilities = {
   supportsSessionResume: true,
   supportsPromptImages: true,
   supportsInlineReasoning: true,
+  supportsCompletionRetry: false,
 };
 
 const backend: AgentBackendInfo = {
-  id: "cursor-acp",
+  id: "cursor-sdk",
   label: "Cursor",
   description: "Cursor agent",
   available: true,
@@ -67,7 +68,7 @@ function conversation(
     lastEventSeq: 3,
     status: "idle",
     config: {
-      backendId: "cursor-acp",
+      backendId: "cursor-sdk",
       mode: "ask",
       modelId: "gpt-5.5",
       modelName: "GPT-5.5",
@@ -88,7 +89,7 @@ function conversation(
 test("redo composer seed falls back to conversation config", () => {
   const seed = buildRedoComposerSeedFromConversation(conversation(), [backend], {});
 
-  assert.equal(seed.backendId, "cursor-acp");
+  assert.equal(seed.backendId, "cursor-sdk");
   assert.equal(seed.mode, "ask");
   assert.equal(seed.model.modelValue, "gpt-5.5");
   assert.equal(seed.model.name, "GPT-5.5");

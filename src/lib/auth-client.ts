@@ -227,8 +227,8 @@ export function buildAuthenticatedUrl(url: string, serverBaseUrl?: string): stri
  * `/browser/*` and `/browser-debug/*` surfaces. Uses a distinct query param so
  * the proxy can safely strip it before forwarding upstream.
  */
-export function buildIframeAuthenticatedUrl(url: string): string {
-  const token = getStoredSessionToken();
+export function buildIframeAuthenticatedUrl(url: string, serverBaseUrl?: string): string {
+  const token = getStoredSessionToken(serverBaseUrl);
   if (!token) {
     return url;
   }

@@ -42,6 +42,7 @@ import type {
   AgentConversationRecord,
   AgentConversationSnapshot,
   AgentConversationSnapshotHead,
+  AgentConversationStatus,
   AgentEventInput,
   AgentProvider,
   AgentQueuedChatPrompt,
@@ -56,6 +57,17 @@ function nextConversationRankTimestamp(): number {
   const now = Date.now();
   lastConversationRankTimestamp = Math.max(now, lastConversationRankTimestamp + 1);
   return lastConversationRankTimestamp;
+}
+
+function isConversationTurnInProgress(status: AgentConversationStatus): boolean {
+  return (
+    status === "running" ||
+    status === "pause_requested" ||
+    status === "pausing" ||
+    status === "paused" ||
+    status === "awaiting_permission" ||
+    status === "awaiting_question"
+  );
 }
 
 function extractAssistantTextForMessage(
@@ -277,7 +289,10 @@ function sameCapabilities(
     left.supportsToolCalls === right.supportsToolCalls &&
     left.supportsStructuredPlans === right.supportsStructuredPlans &&
     left.supportsTodos === right.supportsTodos &&
-    left.supportsSessionResume === right.supportsSessionResume
+    left.supportsSessionResume === right.supportsSessionResume &&
+    left.supportsPromptImages === right.supportsPromptImages &&
+    left.supportsInlineReasoning === right.supportsInlineReasoning &&
+    left.supportsCompletionRetry === right.supportsCompletionRetry
   );
 }
 
@@ -402,6 +417,7 @@ export class AgentRuntimeManager {
       configOptions: [],
       capabilities: backend.capabilities,
       pendingPermission: null,
+      pendingQuestion: null,
       lastError: null,
       experimental: Boolean(backend.experimental),
       archivedAt: null,
@@ -447,10 +463,7 @@ export class AgentRuntimeManager {
       throw new Error(`Unknown source conversation: ${sourceConversationId}`);
     }
 
-    if (
-      sourceRecord.status === "running" ||
-      sourceRecord.status === "awaiting_permission"
-    ) {
+    if (isConversationTurnInProgress(sourceRecord.status)) {
       throw new Error(
         "Wait for the current reply or cancel before handing off to another agent backend."
       );
@@ -605,10 +618,7 @@ export class AgentRuntimeManager {
     if (!sourceRecord) {
       throw new Error(`Unknown source conversation: ${sourceConversationId}`);
     }
-    if (
-      sourceRecord.status === "running" ||
-      sourceRecord.status === "awaiting_permission"
-    ) {
+    if (isConversationTurnInProgress(sourceRecord.status)) {
       throw new Error(
         "Wait for the current reply or cancel before forking this conversation."
       );
@@ -666,7 +676,7 @@ export class AgentRuntimeManager {
     if (!record) {
       throw new Error(`Unknown conversation: ${conversationId}`);
     }
-    if (record.status === "running" || record.status === "awaiting_permission") {
+    if (isConversationTurnInProgress(record.status)) {
       throw new Error(
         "Wait for the current reply or cancel before redoing this conversation."
       );
@@ -877,7 +887,7 @@ export class AgentRuntimeManager {
         };
       }
     }
-    if (record.status === "running" || record.status === "awaiting_permission") {
+    if (isConversationTurnInProgress(record.status)) {
       if (
         clientEventId &&
         (record.queuedPrompts ?? []).some((queued) => queued.clientEventId === clientEventId)
@@ -926,7 +936,11 @@ export class AgentRuntimeManager {
 
     const recentContextEvents =
       record.lastEventSeq > 0
-        ? await readRecentConversationEvents(workspace.id, conversationId, 100)
+        ? await readRecentConversationEvents(
+            workspace.id,
+            conversationId,
+            PROMPT_CONTEXT_LIMIT_TURNS
+          )
         : [];
     const prefixContextEvents =
       record.lastEventSeq > 0
@@ -1018,6 +1032,66 @@ export class AgentRuntimeManager {
           appendedEvents[appendedEvents.length - 1]?.seq ?? updatedRecord.lastEventSeq,
         hasOlder: record.lastEventSeq > 0,
       },
+    };
+  }
+
+  async retryConversationTurn(
+    workspace: WorkspaceRecord,
+    conversationId: string
+  ): Promise<AgentConversationSnapshotHead> {
+    const record = await readConversationRecord(workspace.id, conversationId);
+    if (!record) {
+      throw new Error(`Unknown conversation: ${conversationId}`);
+    }
+    if (record.status !== "failed") {
+      throw new Error("Conversation is not in a failed state.");
+    }
+    if (!record.lastError?.trim()) {
+      throw new Error("No completion error to retry.");
+    }
+    const backendId = this.resolveBackendId(record.config.backendId);
+    const backend = AGENT_BACKENDS[backendId];
+    if (!backend?.capabilities.supportsCompletionRetry) {
+      throw new Error("This agent does not support completion retry.");
+    }
+    const events = await readConversationEvents(workspace.id, conversationId);
+    const lastUser = [...events]
+      .reverse()
+      .find((event): event is Extract<AgentStoredEvent, { kind: "user_message" }> => {
+        return event.kind === "user_message";
+      });
+    if (!lastUser) {
+      throw new Error("No user message found to retry.");
+    }
+
+    const updatedRecord = await updateConversationRecord(workspace.id, conversationId, (current) => ({
+      ...current,
+      status: "running",
+      lastError: null,
+      pendingPermission: null,
+    }));
+
+    void (async () => {
+      try {
+        const runtime = await this.ensureRuntime(workspace, updatedRecord);
+        await runtime.handle.prompt({
+          text: lastUser.content,
+          userMessageId: lastUser.messageId,
+          attachments: lastUser.attachments,
+          isRetry: true,
+        });
+      } catch (error) {
+        await this.persistRuntimeFailure(workspace.id, conversationId, error);
+      }
+    })();
+
+    const head = await readConversationSnapshotHead(workspace.id, conversationId);
+    if (!head) {
+      throw new Error("Conversation disappeared after starting retry.");
+    }
+    return {
+      ...head,
+      conversation: this.withBackendDefaults(head.conversation),
     };
   }
 
@@ -1119,6 +1193,97 @@ export class AgentRuntimeManager {
     return record;
   }
 
+  async pauseConversation(
+    workspace: WorkspaceRecord,
+    conversationId: string
+  ): Promise<AgentConversationRecord> {
+    let runtime = this.runtimes.get(conversationId);
+    if (!runtime) {
+      const record = await readConversationRecord(workspace.id, conversationId);
+      if (record && (record.providerSessionId || record.status !== "idle")) {
+        runtime = await this.ensureRuntime(workspace, record).catch(() => undefined);
+      }
+    }
+    if (!runtime) {
+      throw new Error(
+        "No active runtime for this conversation. The provider session may have ended."
+      );
+    }
+    const handle = runtime.handle as AgentSessionHandle & {
+      pause?: () => Promise<void>;
+    };
+    if (typeof handle.pause !== "function") {
+      throw new Error("This agent does not support pause.");
+    }
+    await handle.pause();
+    const record = await readConversationRecord(workspace.id, conversationId);
+    if (!record) {
+      throw new Error(`Unknown conversation: ${conversationId}`);
+    }
+    return record;
+  }
+
+  async resumeConversation(
+    workspace: WorkspaceRecord,
+    conversationId: string
+  ): Promise<AgentConversationRecord> {
+    let runtime = this.runtimes.get(conversationId);
+    if (!runtime) {
+      const record = await readConversationRecord(workspace.id, conversationId);
+      if (record && (record.providerSessionId || record.status !== "idle")) {
+        runtime = await this.ensureRuntime(workspace, record).catch(() => undefined);
+      }
+    }
+    if (!runtime) {
+      throw new Error(
+        "No active runtime for this conversation. The provider session may have ended."
+      );
+    }
+    const handle = runtime.handle as AgentSessionHandle & {
+      resume?: () => Promise<void>;
+    };
+    if (typeof handle.resume !== "function") {
+      throw new Error("This agent does not support resume.");
+    }
+    await handle.resume();
+    const record = await readConversationRecord(workspace.id, conversationId);
+    if (!record) {
+      throw new Error(`Unknown conversation: ${conversationId}`);
+    }
+    return record;
+  }
+
+  async answerQuestion(
+    workspace: WorkspaceRecord,
+    conversationId: string,
+    input: { questionId: string; answer: string }
+  ): Promise<AgentConversationRecord> {
+    let runtime = this.runtimes.get(conversationId);
+    if (!runtime) {
+      const record = await readConversationRecord(workspace.id, conversationId);
+      if (record && (record.providerSessionId || record.status !== "idle")) {
+        runtime = await this.ensureRuntime(workspace, record).catch(() => undefined);
+      }
+    }
+    if (!runtime) {
+      throw new Error(
+        "No active runtime for this conversation. The provider session may have ended."
+      );
+    }
+    const handle = runtime.handle as AgentSessionHandle & {
+      answerQuestion?: (payload: { questionId: string; answer: string }) => Promise<void>;
+    };
+    if (typeof handle.answerQuestion !== "function") {
+      throw new Error("This agent does not support answering structured questions.");
+    }
+    await handle.answerQuestion(input);
+    const record = await readConversationRecord(workspace.id, conversationId);
+    if (!record) {
+      throw new Error(`Unknown conversation: ${conversationId}`);
+    }
+    return record;
+  }
+
   async answerPermission(
     workspace: WorkspaceRecord,
     conversationId: string,
@@ -1212,7 +1377,7 @@ export class AgentRuntimeManager {
     if (raw && raw in this.backends) {
       return raw as AgentBackendId;
     }
-    return "cursor-acp";
+    return "cesium-agent";
   }
 
   private assertRunnableBackend(backendId: AgentBackendId): void {
@@ -1233,7 +1398,7 @@ export class AgentRuntimeManager {
       this.clearIdleDisposeTimer(record.id);
       return;
     }
-    if (record.status === "running" || record.status === "awaiting_permission") {
+    if (isConversationTurnInProgress(record.status)) {
       this.clearIdleDisposeTimer(record.id);
       return;
     }
@@ -1249,7 +1414,7 @@ export class AgentRuntimeManager {
     if (record.pendingPermission) {
       return;
     }
-    if (record.status === "running" || record.status === "awaiting_permission") {
+    if (isConversationTurnInProgress(record.status)) {
       return;
     }
     await this.disposeRuntime(record.id);
@@ -1510,7 +1675,7 @@ export class AgentRuntimeManager {
     };
 
     const allowCursorRaw = (configId: string) =>
-      (current.config.backendId === "cursor-acp" || current.config.backendId === "cursor-sdk") &&
+      current.config.backendId === "cursor-sdk" &&
       (findPrimaryModelConfigOption(nextOptions)?.id === configId ||
         findPrimaryModeConfigOption(nextOptions)?.id === configId);
 
@@ -1537,7 +1702,6 @@ export class AgentRuntimeManager {
     if (modeOption && nextConfig.mode) {
       const ok =
         modeOption.options.some((o) => o.value === nextConfig.mode) ||
-        current.config.backendId === "cursor-acp" ||
         current.config.backendId === "cursor-sdk";
       if (ok) {
         nextOptions = nextOptions.map((o) =>
@@ -1549,7 +1713,6 @@ export class AgentRuntimeManager {
     if (modelOption && nextConfig.modelId) {
       const ok =
         modelOption.options.some((o) => o.value === nextConfig.modelId) ||
-        current.config.backendId === "cursor-acp" ||
         current.config.backendId === "cursor-sdk";
       if (ok) {
         nextOptions = nextOptions.map((o) =>
@@ -1608,7 +1771,7 @@ export class AgentRuntimeManager {
       if (value) {
         await handle.setConfigOption(modelOption.id, value);
       } else if (
-        (record.config.backendId === "cursor-acp" || record.config.backendId === "cursor-sdk") &&
+        record.config.backendId === "cursor-sdk" &&
         patch.modelId
       ) {
         await handle.setConfigOption(modelOption.id, patch.modelId);

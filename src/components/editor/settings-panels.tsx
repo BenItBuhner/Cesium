@@ -3,6 +3,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -10,25 +11,37 @@ import {
   type ComponentType,
   type ReactNode,
 } from "react";
+import { createPortal } from "react-dom";
 import {
+  Check,
+  ChevronDown,
   ChevronRight,
   Database,
   Download,
-  ExternalLink,
 
   RefreshCw,
   Upload,
 } from "lucide-react";
+import { VerticalFadedScroll } from "@/components/chat/VerticalFadedScroll";
 import { HardwareAwareTextInput } from "@/components/input/HardwareAwareTextField";
+import { DefaultServerSettingsBanner } from "@/components/preferences/DefaultServerSettingsBanner";
 import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
 import { ServerConnectionsManager } from "@/components/preferences/ServerConnectionsManager";
 import { useServerConnections } from "@/components/preferences/ServerConnectionsProvider";
 import { useUserPreferences } from "@/components/preferences/UserPreferencesProvider";
 import { useTheme } from "@/components/theme/ThemeProvider";
-import type { CustomThemeEntry } from "@/lib/theme-config";
+import {
+  serverHealthColorClass,
+  serverHealthIndicator,
+} from "@/lib/server-health-display";
+import {
+  TOOL_CALL_DROPDOWN_MAX_HEIGHT_MAX_PX,
+  TOOL_CALL_DROPDOWN_MAX_HEIGHT_MIN_PX,
+  type CustomThemeEntry,
+} from "@/lib/theme-config";
 import { DEFAULT_BUILTIN_THEME_ID, BUILTIN_THEME_CATALOG } from "@/lib/theme-presets";
+import { McpServersSettingsPanel } from "./mcp-servers-settings";
 import type { ThemePreference } from "@/lib/theme";
-import { WORKSPACE_ROUTE } from "@/lib/workbench-view";
 import {
   THEME_TOKEN_GROUPS,
   sanitizeThemeTokensPartial,
@@ -37,15 +50,9 @@ import {
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import {
   buildStorageExportUrl,
-  deleteCursorSdkApiKey,
-  fetchAgentDeploymentHints,
-  fetchCursorSdkCredentialStatus,
   fetchStorageStatus,
   importStorageArchive,
   runStorageMigration,
-  saveCursorSdkApiKey,
-  type CursorAgentDeploymentHintsPayload,
-  type CursorSdkCredentialStatus,
   type StorageDriverKind,
   type StorageMigrationPhase,
   type StorageMigrationProgress,
@@ -58,7 +65,6 @@ import {
   formatShortcutBinding,
   formatShortcutBindingsForInput,
   normalizeKeyForCapture,
-  primaryModifierLabel,
   SHORTCUT_COMMAND_DEFINITIONS,
   type ShortcutCommandSection,
   type ShortcutPlatform,
@@ -77,6 +83,20 @@ import {
   createPersistableWorkspaceSession,
   mergeWorkspaceSessionFromImport,
 } from "@/lib/workspace-session";
+import {
+  AgentsHarnessSettingsPanel,
+  HARNESS_LABELS,
+  HARNESS_ORDER,
+} from "@/components/editor/agent-harness-settings";
+import {
+  PageIntro,
+  SettingsBreadcrumbs,
+  SettingsPxRangeControl,
+  SettingsRadioList,
+  SettingsRow,
+  SettingsSection,
+  rowButtonClass,
+} from "@/components/editor/settings-ui";
 import { SettingsThemeSelect } from "@/components/editor/SettingsThemeSelect";
 import { ToggleSwitch } from "@/components/ui/ToggleSwitch";
 import { AgentBackendIcon } from "@/components/chat/AgentBackendIcon";
@@ -84,14 +104,10 @@ import type { AgentBackendId } from "@/lib/agent-types";
 import type { ModelToggleState } from "@/lib/global-settings";
 import { recordPerfSample } from "@/lib/dev-perf";
 
-export const rowButtonClass =
-  "inline-flex shrink-0 items-center gap-[6px] rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-transparent px-[12px] py-[5px] font-sans text-[12px] font-normal text-[var(--text-primary)] transition-colors hover:bg-[var(--accent-bg)]";
+export { rowButtonClass, SettingsPxRangeControl, SettingsRow, SettingsSection };
 
 const selectClass =
   "inline-flex min-w-[160px] max-w-[240px] shrink-0 items-center justify-between gap-[8px] rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-[var(--bg-main)] px-[10px] py-[6px] font-sans text-[12px] text-[var(--text-primary)] transition-colors hover:bg-[var(--accent-bg)]";
-
-const tagClass =
-  "inline-flex items-center gap-[6px] rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-[var(--bg-main)] px-[8px] py-[3px] font-mono text-[11px] text-[var(--text-primary)]";
 
 const shortcutInputClass =
   "box-border min-w-[200px] max-w-[min(100%,380px)] rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-[var(--bg-main)] px-[10px] py-[6px] font-mono text-[11px] text-[var(--text-primary)] outline-none placeholder:text-[var(--text-disabled)]";
@@ -109,28 +125,6 @@ const SECTION_ORDER: ShortcutCommandSection[] = [
   "Terminal",
   "Window",
   "Developer",
-];
-
-const BACKEND_LABELS: Record<string, string> = {
-  "cursor-acp": "Cursor",
-  "cursor-sdk": "Cursor SDK",
-  "opencode-acp": "OpenCode",
-  "opencode-server": "OpenCode Server",
-  "gemini-acp": "Gemini",
-  "codex-adapter": "Codex",
-  "codex-app-server": "Codex App Server",
-  "claude-adapter": "Claude Code",
-};
-
-const BACKEND_ORDER: string[] = [
-  "cursor-acp",
-  "cursor-sdk",
-  "codex-adapter",
-  "codex-app-server",
-  "opencode-acp",
-  "opencode-server",
-  "gemini-acp",
-  "claude-adapter",
 ];
 
 type CompactModelToggleRow = {
@@ -236,72 +230,6 @@ function compactModelRowsForBackend(
   return [...groups.values()].sort((a, b) => a.name.localeCompare(b.name));
 }
 
-export function SettingsSection({
-  title,
-  children,
-  action,
-}: {
-  title?: string;
-  children: ReactNode;
-  action?: ReactNode;
-}) {
-  const showHeader = Boolean((title && title.length > 0) || action);
-  return (
-    <section className="mb-[20px]">
-      {showHeader ? (
-        <div className="mb-[10px] flex items-center justify-between gap-[12px] px-[2px]">
-          {title ? (
-            <h2 className="font-sans text-[15px] font-semibold text-[var(--text-primary)]">
-              {title}
-            </h2>
-          ) : (
-            <span />
-          )}
-          {action}
-        </div>
-      ) : null}
-      <div className="overflow-hidden rounded-[var(--radius-card)] border border-[var(--border-card)] bg-[var(--bg-panel)]">
-        {children}
-      </div>
-    </section>
-  );
-}
-
-export function SettingsRow({
-  title,
-  description,
-  trailing,
-  border = true,
-  titleExtra,
-}: {
-  title: string;
-  description?: string;
-  trailing: ReactNode;
-  border?: boolean;
-  titleExtra?: ReactNode;
-}) {
-  return (
-    <div
-      className={`flex min-h-[56px] items-center justify-between gap-[16px] px-[16px] py-[12px] ${
-        border ? "border-b border-[var(--border-subtle)] last:border-b-0" : ""
-      }`}
-    >
-      <div className="min-w-0 flex-1">
-        <p className="flex flex-wrap items-center gap-[8px] font-sans text-[13px] font-medium text-[var(--text-primary)]">
-          {title}
-          {titleExtra}
-        </p>
-        {description ? (
-          <p className="mt-[4px] font-sans text-[12px] leading-snug text-[var(--text-secondary)]">
-            {description}
-          </p>
-        ) : null}
-      </div>
-      <div className="shrink-0">{trailing}</div>
-    </div>
-  );
-}
-
 function SubsectionLabel({ children }: { children: ReactNode }) {
   return (
     <div className="border-b border-[var(--border-subtle)] bg-[var(--bg-main)] px-[16px] py-[8px]">
@@ -309,21 +237,6 @@ function SubsectionLabel({ children }: { children: ReactNode }) {
         {children}
       </p>
     </div>
-  );
-}
-
-function PageIntro({ title, subtitle }: { title: string; subtitle?: string }) {
-  return (
-    <>
-      <h1 className="mb-[6px] font-sans text-[22px] font-semibold tracking-tight text-[var(--text-primary)]">
-        {title}
-      </h1>
-      {subtitle ? (
-        <p className="mb-[22px] max-w-[560px] font-sans text-[13px] leading-relaxed text-[var(--text-secondary)]">
-          {subtitle}
-        </p>
-      ) : null}
-    </>
   );
 }
 
@@ -346,10 +259,7 @@ export function GeneralSettingsPanel() {
 
   return (
     <>
-      <PageIntro
-        title="General"
-        subtitle="Quick links to appearance, shortcuts, and data export. Do Not Disturb controls in-app workbench notifications."
-      />
+      <PageIntro title="General" />
       <SettingsSection title="Preferences">
         <SettingsRow
           title="Appearance & themes"
@@ -418,6 +328,7 @@ export function GeneralSettingsPanel() {
       </SettingsSection>
       <SettingsSection title="Notifications">
         <SettingsRow
+          searchId="do-not-disturb"
           title="Do Not Disturb"
           description="Suppress all notifications — connection alerts, warnings, file overrides, and every other notification type."
           trailing={
@@ -434,8 +345,11 @@ export function GeneralSettingsPanel() {
   );
 }
 
-const appearanceBtnBase =
-  "rounded-[var(--radius-tab)] px-[12px] py-[6px] font-sans text-[12px] transition-colors";
+const APPEARANCE_MODE_OPTIONS: Array<{ value: ThemePreference; label: string }> = [
+  { value: "system", label: "System" },
+  { value: "light", label: "Light" },
+  { value: "dark", label: "Dark" },
+];
 
 export function AppearanceSettingsPanel() {
   const { settings, updateSettings } = useGlobalSettings();
@@ -483,24 +397,6 @@ export function AppearanceSettingsPanel() {
     }
   }, [editingId, themeConfig.customThemes]);
 
-  const appearanceChoice = (value: ThemePreference, label: string) => {
-    const on = themeConfig.appearance === value;
-    return (
-      <button
-        key={value}
-        type="button"
-        className={`${appearanceBtnBase} ${
-          on
-            ? "border-2 border-[var(--accent)] bg-[var(--accent-bg)] font-medium text-[var(--text-primary)]"
-            : "border border-[var(--border-card)] bg-transparent text-[var(--text-primary)] hover:bg-[var(--accent-bg)]"
-        }`}
-        onClick={() => setPreference(value)}
-      >
-        {label}
-      </button>
-    );
-  };
-
   const saveDraft = () => {
     if (!draft) return;
     upsertCustomTheme({
@@ -537,16 +433,14 @@ export function AppearanceSettingsPanel() {
 
   return (
     <>
-      <PageIntro
-        title="Appearance"
-        subtitle="Choose system/light/dark behavior, a theme for each resolved appearance, and optional custom token overrides. Theming syncs to the server (and local storage as a cache); include it in settings export for backups."
-      />
-      <SettingsSection title="Appearance mode">
-        <div className="flex flex-wrap items-center gap-[8px] border-b border-[var(--border-subtle)] px-[16px] py-[14px] last:border-b-0">
-          {appearanceChoice("system", "System")}
-          {appearanceChoice("light", "Light")}
-          {appearanceChoice("dark", "Dark")}
-        </div>
+      <PageIntro title="Appearance" />
+      <SettingsSection title="Appearance mode" bordered={false}>
+        <SettingsRadioList
+          aria-label="Appearance mode"
+          value={themeConfig.appearance}
+          onChange={setPreference}
+          options={APPEARANCE_MODE_OPTIONS}
+        />
       </SettingsSection>
       <SettingsSection title="Layout">
         <SettingsRow
@@ -598,6 +492,30 @@ export function AppearanceSettingsPanel() {
           }
           border={false}
         />
+      </SettingsSection>
+      <SettingsSection title="Chat">
+        <div
+          data-settings-search-id="tool-call-dropdown-height"
+          className="border-b border-[var(--border-subtle)] px-[16px] py-[14px] last:border-b-0"
+        >
+          <p className="font-sans text-[13px] font-medium text-[var(--text-primary)]">
+            Tool call dropdown height
+          </p>
+          <p className="mt-[4px] font-sans text-[12px] leading-snug text-[var(--text-secondary)]">
+            Maximum height of expanded agent tool-call blocks in chat (for example &quot;Read 1
+            file, called MCP tool&quot;). Content scrolls inside the limit.
+          </p>
+          <SettingsPxRangeControl
+            className="mt-[12px]"
+            ariaLabel="Tool call dropdown max height"
+            min={TOOL_CALL_DROPDOWN_MAX_HEIGHT_MIN_PX}
+            max={TOOL_CALL_DROPDOWN_MAX_HEIGHT_MAX_PX}
+            value={themeConfig.toolCallDropdownMaxHeightPx}
+            onChange={(toolCallDropdownMaxHeightPx) =>
+              setThemeConfig({ ...themeConfig, toolCallDropdownMaxHeightPx })
+            }
+          />
+        </div>
       </SettingsSection>
       <SettingsSection title="Light theme">
         <div className="border-b border-[var(--border-subtle)] px-[16px] py-[14px] last:border-b-0">
@@ -784,349 +702,9 @@ export function AppearanceSettingsPanel() {
   );
 }
 
-function CursorAgentServerDeploymentReadout() {
-  const [payload, setPayload] = useState<CursorAgentDeploymentHintsPayload | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    fetchAgentDeploymentHints()
-      .then((data) => {
-        if (!cancelled) {
-          setPayload(data);
-          setLoadError(null);
-        }
-      })
-      .catch((error) => {
-        if (!cancelled) {
-          setLoadError(error instanceof Error ? error.message : String(error));
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  const h = payload?.cursorAgent;
-
-  return (
-    <SettingsSection>
-      <SubsectionLabel>Cursor CLI (Cesium server)</SubsectionLabel>
-      <div className="px-[16px] pb-[14px] pt-[2px] font-sans text-[12px] leading-relaxed text-[var(--text-secondary)]">
-        {loadError ? (
-          <p className="text-[var(--text-primary)]">Could not load server hints: {loadError}</p>
-        ) : !h ? (
-          <p>Loading server configuration…</p>
-        ) : (
-          <div className="flex flex-col gap-[10px]">
-            <p>
-              <span className="text-[var(--text-primary)]">Binary: </span>
-              {h.resolved
-                ? h.commandPreview ?? "(resolved)"
-                : "Not found. Set OPENCURSOR_CURSOR_CLI_BIN on the machine that runs the API."}
-            </p>
-            <p>
-              <span className="text-[var(--text-primary)]">Path override env: </span>
-              {h.cursorBinEnvSet ? "set" : "not set (using PATH)"}
-            </p>
-            <p>
-              <span className="text-[var(--text-primary)]">Extra argv: </span>
-              {h.extraArgs.length > 0 ? h.extraArgs.join(" ") : "—"}
-            </p>
-            <p>
-              <span className="text-[var(--text-primary)]">Permission mode env: </span>
-              {h.permissionModeEnv ?? "—"}
-            </p>
-            <p>
-              <span className="text-[var(--text-primary)]">ACP capabilities JSON override: </span>
-              {h.acpCapabilitiesJsonSet ? "set" : "not set"}
-            </p>
-            <p className="text-[11px] opacity-90">
-              When the Cursor backend needs approval, choose an action on the permission card in the chat transcript.
-              After a new chat session, check the transcript for Cursor CLI authentication notes from the server.
-            </p>
-          </div>
-        )}
-      </div>
-    </SettingsSection>
-  );
-}
-
-function CursorSdkCredentialSettings() {
-  const [status, setStatus] = useState<CursorSdkCredentialStatus | null>(null);
-  const [apiKey, setApiKey] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
-
-  const refresh = useCallback(async () => {
-    try {
-      const result = await fetchCursorSdkCredentialStatus();
-      setStatus(result.status);
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Failed to load Cursor SDK status.");
-    }
-  }, []);
-
-  useEffect(() => {
-    void refresh();
-  }, [refresh]);
-
-  const saveKey = useCallback(async () => {
-    if (!apiKey.trim()) {
-      setMessage("Paste a Cursor API key first.");
-      return;
-    }
-    setBusy(true);
-    setMessage(null);
-    try {
-      const result = await saveCursorSdkApiKey(apiKey);
-      setStatus(result.status);
-      setApiKey("");
-      setMessage("Cursor SDK key verified and saved.");
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Cursor SDK key verification failed.");
-    } finally {
-      setBusy(false);
-    }
-  }, [apiKey]);
-
-  const deleteKey = useCallback(async () => {
-    setBusy(true);
-    setMessage(null);
-    try {
-      const result = await deleteCursorSdkApiKey();
-      setStatus(result.status);
-      setMessage(
-        result.status.source === "env"
-          ? "Stored key removed; CURSOR_API_KEY is still configured on the server."
-          : "Stored Cursor SDK key removed."
-      );
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Failed to remove Cursor SDK key.");
-    } finally {
-      setBusy(false);
-    }
-  }, []);
-
-  const statusText = !status
-    ? "Loading…"
-    : status.configured
-      ? status.source === "env"
-        ? "Configured from CURSOR_API_KEY"
-        : `Configured${status.apiKeyName ? ` as ${status.apiKeyName}` : ""}`
-      : "Not configured";
-
-  return (
-    <SettingsSection>
-      <SubsectionLabel>Cursor SDK</SubsectionLabel>
-      <div className="flex flex-col gap-[12px] px-[16px] pb-[14px] pt-[2px] font-sans text-[12px] text-[var(--text-secondary)]">
-        <div className="flex flex-wrap items-center justify-between gap-[10px]">
-          <div>
-            <p className="text-[13px] font-medium text-[var(--text-primary)]">{statusText}</p>
-            {status?.userEmail ? (
-              <p className="mt-[3px] font-mono text-[11px]">{status.userEmail}</p>
-            ) : null}
-          </div>
-          <a
-            href="https://cursor.com/dashboard/integrations"
-            target="_blank"
-            rel="noreferrer"
-            className={rowButtonClass}
-          >
-            Get API key
-            <ExternalLink className="size-[13px]" strokeWidth={1.6} />
-          </a>
-        </div>
-        <div className="flex flex-wrap items-center gap-[8px]">
-          <input
-            type="password"
-            value={apiKey}
-            onChange={(event) => setApiKey(event.currentTarget.value)}
-            placeholder="Paste Cursor API key"
-            className="box-border min-h-[32px] min-w-[260px] flex-1 rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-[var(--bg-main)] px-[10px] py-[6px] font-mono text-[11px] text-[var(--text-primary)] outline-none placeholder:text-[var(--text-disabled)]"
-          />
-          <button
-            type="button"
-            className={rowButtonClass}
-            disabled={busy}
-            onClick={saveKey}
-          >
-            Test and save
-          </button>
-          <button
-            type="button"
-            className={rowButtonClass}
-            disabled={busy || status?.source !== "stored"}
-            onClick={deleteKey}
-          >
-            Remove stored key
-          </button>
-        </div>
-        <p className="leading-relaxed">
-          The key stays server-side and is used only by the `Cursor SDK` backend. The normal global settings payload
-          only sees redacted status.
-        </p>
-        {message ? <p className="text-[var(--text-primary)]">{message}</p> : null}
-      </div>
-    </SettingsSection>
-  );
-}
 
 export function AgentsSettingsPanel() {
-  const { settings, updateSettings } = useGlobalSettings();
-  const { workspaces } = useWorkspace();
-  const agents = settings.agents;
-  const modLabel = useMemo(
-    () => primaryModifierLabel(detectShortcutPlatform()),
-    []
-  );
-
-  const workspaceNameById = useMemo(() => {
-    const m = new Map<string, string>();
-    for (const w of workspaces) {
-      m.set(w.id, w.name);
-    }
-    return m;
-  }, [workspaces]);
-
-  const sortedRemembered = useMemo(() => {
-    return [...agents.rememberedPermissions].sort((a, b) => b.updatedAt - a.updatedAt);
-  }, [agents.rememberedPermissions]);
-
-  const patchAgents = (patch: Partial<typeof agents>) => {
-    updateSettings((current) => ({
-      ...current,
-      agents: {
-        ...current.agents,
-        ...patch,
-      },
-    }));
-  };
-
-  const removeRemembered = (id: string) => {
-    patchAgents({
-      rememberedPermissions: agents.rememberedPermissions.filter((r) => r.id !== id),
-    });
-  };
-
-  return (
-    <>
-      <PageIntro
-        title="Agents"
-        subtitle="Chat composer behavior, tool-permission memory, and Cursor CLI hints from the server. Other agent backends use their own CLIs; permission prompts use the shared ACP flow when supported."
-      />
-      <CursorAgentServerDeploymentReadout />
-      <CursorSdkCredentialSettings />
-      <SettingsSection title="Chat">
-        <SettingsRow
-          title={`Submit with ${modLabel} + Enter`}
-          description={`When enabled, ${modLabel} + Enter submits chat and Enter inserts a newline.`}
-          trailing={
-            <ToggleSwitch
-              checked={agents.submitCtrlEnter}
-              onChange={(v) => patchAgents({ submitCtrlEnter: v })}
-              size="md"
-              variant="green"
-            />
-          }
-          border={false}
-        />
-      </SettingsSection>
-      <SettingsSection title="Tool permissions">
-        <SettingsRow
-          title="Auto-approve all permission prompts"
-          description="Dangerous: for ACP sessions (Cursor, Opencode, Gemini, etc.), the server answers every tool permission with Allow immediately. Remembered allow/reject rules in the list below still win when they match. This toggle does not add list entries—use the cards in chat for audited “always” choices."
-          trailing={
-            <ToggleSwitch
-              checked={agents.autoAcceptAllAgentPermissions}
-              onChange={(v) => patchAgents({ autoAcceptAllAgentPermissions: v })}
-              size="md"
-              variant="green"
-            />
-          }
-        />
-        <div className="border-b border-[var(--border-subtle)] px-[16px] py-[12px] last:border-b-0">
-          <div className="mb-[10px] flex flex-wrap items-center justify-between gap-[8px]">
-            <div>
-              <p className="font-sans text-[13px] font-medium text-[var(--text-primary)]">
-                Remembered decisions
-              </p>
-              <p className="mt-[4px] max-w-[560px] font-sans text-[12px] leading-snug text-[var(--text-secondary)]">
-                “Always allow” and “always reject” choices from permission cards, per workspace and
-                backend. Removing an entry here stops automatic reuse; it does not revoke work already
-                done.
-              </p>
-            </div>
-            <button
-              type="button"
-              className={`${rowButtonClass} disabled:cursor-not-allowed disabled:opacity-45`}
-              disabled={agents.rememberedPermissions.length === 0}
-              onClick={() => patchAgents({ rememberedPermissions: [] })}
-            >
-              Clear all
-            </button>
-          </div>
-          {sortedRemembered.length === 0 ? (
-            <p className="rounded-[var(--radius-tab)] border border-[var(--border-subtle)] bg-[var(--bg-main)] px-[12px] py-[16px] text-center font-sans text-[12px] text-[var(--text-disabled)]">
-              No remembered permissions yet. Choose “always allow” or “always reject” on a permission
-              card in chat to populate this list.
-            </p>
-          ) : (
-            <ul className="max-h-[min(360px,45vh)] divide-y divide-[var(--border-subtle)] overflow-y-auto overscroll-contain rounded-[var(--radius-tab)] border border-[var(--border-card)]">
-              {sortedRemembered.map((rule) => {
-                const wsLabel =
-                  workspaceNameById.get(rule.workspaceId) ?? rule.workspaceId.slice(0, 8);
-                const backendLabel = BACKEND_LABELS[rule.backendId] ?? rule.backendId;
-                const choice =
-                  rule.optionKind === "allow_always"
-                    ? "Always allow"
-                    : rule.optionKind === "reject_always"
-                      ? "Always reject"
-                      : rule.decision === "allow"
-                        ? "Allow"
-                        : "Reject";
-                return (
-                  <li
-                    key={rule.id}
-                    className="flex flex-wrap items-start justify-between gap-[10px] px-[12px] py-[10px]"
-                  >
-                    <div className="min-w-0 flex-1">
-                      <p className="font-sans text-[13px] font-medium text-[var(--text-primary)]">
-                        {rule.toolLabel}
-                      </p>
-                      <p className="mt-[4px] font-mono text-[11px] text-[var(--text-secondary)]">
-                        {rule.toolKey}
-                      </p>
-                      <p className="mt-[6px] flex flex-wrap items-center gap-[6px] font-sans text-[11px] text-[var(--text-secondary)]">
-                        <span className={tagClass}>{backendLabel}</span>
-                        <span className={tagClass}>{wsLabel}</span>
-                        <span
-                          className={`${tagClass} ${
-                            rule.decision === "allow"
-                              ? "border-emerald-500/40 text-emerald-700 dark:text-emerald-300"
-                              : "border-rose-500/40 text-rose-700 dark:text-rose-300"
-                          }`}
-                        >
-                          {choice}
-                        </span>
-                      </p>
-                    </div>
-                    <button
-                      type="button"
-                      className={rowButtonClass}
-                      onClick={() => removeRemembered(rule.id)}
-                    >
-                      Remove
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-        </div>
-      </SettingsSection>
-    </>
-  );
+  return <AgentsHarnessSettingsPanel />;
 }
 
 export function ModelsSettingsPanel() {
@@ -1135,11 +713,33 @@ export function ModelsSettingsPanel() {
     updateSettings,
     refreshModels,
     modelsRefreshing,
-    modelToggleSaveState,
     saveModelToggleUpdates,
   } = useGlobalSettings();
+  const { workspaceSession, updateWorkspaceSession } = useWorkspace();
   const [modelQuery, setModelQuery] = useState("");
-  const [collapsedBackends, setCollapsedBackends] = useState<Set<string>>(new Set());
+  const [expandedBackends, setExpandedBackends] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    const focus = workspaceSession.settingsView.panelSearchFocus;
+    if (focus?.kind !== "models") {
+      return;
+    }
+    setModelQuery(focus.query);
+    if (focus.backendId) {
+      setExpandedBackends((prev) => {
+        const next = new Set(prev);
+        next.add(focus.backendId!);
+        return next;
+      });
+    }
+    updateWorkspaceSession((current) => ({
+      ...current,
+      settingsView: {
+        ...current.settingsView,
+        panelSearchFocus: null,
+      },
+    }));
+  }, [updateWorkspaceSession, workspaceSession.settingsView.panelSearchFocus]);
 
   const byBackend = useMemo(
     () => settings.models.byBackend ?? {},
@@ -1229,7 +829,7 @@ export function ModelsSettingsPanel() {
 
   const toggleCollapse = useCallback((backendId: string) => {
     const startedAt = performance.now();
-    setCollapsedBackends((prev) => {
+    setExpandedBackends((prev) => {
       const next = new Set(prev);
       if (next.has(backendId)) {
         next.delete(backendId);
@@ -1238,20 +838,15 @@ export function ModelsSettingsPanel() {
       }
       recordPerfSample("settings.models.backend_toggle_visible", startedAt, {
         backendId,
-        collapsed: next.has(backendId),
+        collapsed: !next.has(backendId),
       });
       return next;
     });
   }, []);
 
   const filteredByBackend = useMemo(() => {
-    const startedAt = performance.now();
     const q = modelQuery.trim().toLowerCase();
     if (!q) {
-      recordPerfSample("settings.models.filter_render", startedAt, {
-        queryLength: 0,
-        backends: Object.keys(compactByBackend).length,
-      });
       return compactByBackend;
     }
     const result: Record<string, CompactModelToggleRow[]> = {};
@@ -1261,48 +856,20 @@ export function ModelsSettingsPanel() {
         result[backendId] = filtered;
       }
     }
-    recordPerfSample("settings.models.filter_render", startedAt, {
-      queryLength: q.length,
-      backends: Object.keys(result).length,
-    });
     return result;
   }, [modelQuery, compactByBackend]);
 
   const sortedBackendIds = useMemo(() => {
     const present = new Set(Object.keys(filteredByBackend));
-    return BACKEND_ORDER.filter((id) => present.has(id)).concat(
-      Object.keys(filteredByBackend).filter((id) => !BACKEND_ORDER.includes(id))
-    );
+    const extras = Object.keys(filteredByBackend).filter(
+      (id) => !HARNESS_ORDER.includes(id as AgentBackendId)
+    ) as AgentBackendId[];
+    return HARNESS_ORDER.filter((id) => present.has(id)).concat(extras);
   }, [filteredByBackend]);
-
-  const totalModels = useMemo(
-    () => Object.values(compactByBackend).reduce((sum, list) => sum + list.length, 0),
-    [compactByBackend]
-  );
-
-  const onCount = useMemo(
-    () =>
-      Object.values(compactByBackend).reduce(
-        (sum, list) => sum + list.filter((m) => m.on).length,
-        0
-      ),
-    [compactByBackend]
-  );
 
   return (
     <>
-      <PageIntro
-        title="Models"
-        subtitle={`${onCount} of ${totalModels} models visible in dropdown${
-          modelToggleSaveState.pending > 0
-            ? ` · saving ${modelToggleSaveState.pending} change${
-                modelToggleSaveState.pending === 1 ? "" : "s"
-              }`
-            : modelToggleSaveState.error
-              ? ` · save issue: ${modelToggleSaveState.error}`
-              : ""
-        }`}
-      />
+      <PageIntro title="Models" />
       <div className="mb-[16px] flex items-center gap-[8px]">
         <div className="relative min-w-0 flex-1">
           <HardwareAwareTextInput
@@ -1336,7 +903,7 @@ export function ModelsSettingsPanel() {
         const models = filteredByBackend[backendId] ?? [];
         const allOn = models.length > 0 && models.every((m) => m.on);
         const onCountForBackend = models.filter((m) => m.on).length;
-        const collapsed = collapsedBackends.has(backendId);
+        const collapsed = !expandedBackends.has(backendId);
         return (
           <SettingsSection key={backendId}>
             <div
@@ -1350,7 +917,7 @@ export function ModelsSettingsPanel() {
                   strokeWidth={1.5}
                 />
                 <span className="font-sans text-[13px] font-medium text-[var(--text-primary)]">
-                  {BACKEND_LABELS[backendId] ?? backendId}
+                  {HARNESS_LABELS[backendId as AgentBackendId] ?? backendId}
                 </span>
                 <span className="inline-flex items-center rounded-[var(--radius-tab)] bg-[var(--bg-main)] px-[6px] py-[1px] font-mono text-[11px] text-[var(--text-secondary)]">
                   {onCountForBackend}/{models.length}
@@ -1406,136 +973,339 @@ export function ModelsSettingsPanel() {
 export function RulesSkillsSubagentsPanel() {
   return (
     <>
-      <PageIntro
-        title="Rules, Skills, Subagents"
-        subtitle="Project rules, agent skills, and subagent presets are defined as files in your workspace (for example under .cursor). This screen does not list or edit them yet."
-      />
-      <SettingsSection title="Workspace files">
-        <div className="px-[16px] py-[16px]">
-          <p className="font-sans text-[13px] leading-relaxed text-[var(--text-secondary)]">
-            Add or update instruction files in your repository; agents consume them when the connected backend supports loading rules and skills from disk.
-          </p>
-        </div>
+      <PageIntro title="Rules, Skills, Subagents" />
+    </>
+  );
+}
+
+export function usePluginsMcpNavigation() {
+  const { workspaceSession, updateWorkspaceSession } = useWorkspace();
+
+  const mcpsOpen = workspaceSession.settingsView.mcpsOpen === true;
+
+  const openMcpServers = useCallback(() => {
+    updateWorkspaceSession((current) => ({
+      ...current,
+      settingsView: {
+        ...current.settingsView,
+        activeNav: "plugins",
+        mcpsOpen: true,
+      },
+    }));
+  }, [updateWorkspaceSession]);
+
+  const closeMcpServers = useCallback(() => {
+    updateWorkspaceSession((current) => ({
+      ...current,
+      settingsView: {
+        ...current.settingsView,
+        mcpsOpen: false,
+      },
+    }));
+  }, [updateWorkspaceSession]);
+
+  const openRulesSkills = useCallback(() => {
+    updateWorkspaceSession((current) => ({
+      ...current,
+      settingsView: {
+        ...current.settingsView,
+        activeNav: "rulesSkills",
+        mcpsOpen: false,
+      },
+    }));
+  }, [updateWorkspaceSession]);
+
+  return { mcpsOpen, openMcpServers, closeMcpServers, openRulesSkills };
+}
+
+export function PluginsSettingsPanel() {
+  const { mcpsOpen, openMcpServers, closeMcpServers, openRulesSkills } =
+    usePluginsMcpNavigation();
+
+  if (mcpsOpen) {
+    return (
+      <>
+        <SettingsBreadcrumbs
+          segments={[
+            { label: "Plugins", onClick: closeMcpServers },
+            { label: "MCP servers" },
+          ]}
+        />
+        <McpServersSettingsPanel />
+      </>
+    );
+  }
+
+  return (
+    <>
+      <SettingsBreadcrumbs segments={[{ label: "Plugins" }]} />
+      <SettingsSection title="Related">
+        <button
+          type="button"
+          className="flex min-h-[48px] w-full items-center justify-between gap-[12px] border-b border-[var(--border-subtle)] px-[16px] py-[12px] text-left transition-colors hover:bg-[var(--accent-bg)]"
+          onClick={openMcpServers}
+        >
+          <span className="font-sans text-[13px] font-medium text-[var(--text-primary)]">
+            MCP servers
+          </span>
+          <ChevronRight className="size-[14px] shrink-0 text-[var(--text-secondary)]" strokeWidth={1.5} />
+        </button>
+        <button
+          type="button"
+          className="flex min-h-[48px] w-full items-center justify-between gap-[12px] px-[16px] py-[12px] text-left transition-colors hover:bg-[var(--accent-bg)]"
+          onClick={openRulesSkills}
+        >
+          <span className="font-sans text-[13px] font-medium text-[var(--text-primary)]">
+            Rules, skills, and subagents
+          </span>
+          <ChevronRight className="size-[14px] shrink-0 text-[var(--text-secondary)]" strokeWidth={1.5} />
+        </button>
       </SettingsSection>
     </>
   );
 }
 
-export function PluginsSettingsPanel() {
-  const { updateWorkspaceSession } = useWorkspace();
+function SettingsServerPicker({
+  label,
+  title,
+  selectedServerId,
+  servers,
+  serverStatusById,
+  onSelect,
+  disabled = false,
+}: {
+  label: string;
+  title?: string;
+  selectedServerId: string | null;
+  servers: Array<{ id: string; label: string; baseUrl: string }>;
+  serverStatusById: Record<string, { health: string } | undefined>;
+  onSelect: (serverId: string) => void;
+  disabled?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const [popoverPos, setPopoverPos] = useState({ top: 0, left: 0, width: 280 });
+  const buttonRef = useRef<HTMLButtonElement | null>(null);
+  const popoverRef = useRef<HTMLDivElement | null>(null);
+  const selectedServer =
+    servers.find((server) => server.id === selectedServerId) ?? servers[0] ?? null;
+  const selectedHealth = selectedServer
+    ? (serverStatusById[selectedServer.id]?.health ?? "unknown")
+    : "unknown";
+
+  useLayoutEffect(() => {
+    if (!open || !buttonRef.current) {
+      return;
+    }
+    const update = () => {
+      const rect = buttonRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      const width = Math.max(240, Math.min(320, window.innerWidth - 16));
+      setPopoverPos({
+        top: rect.bottom + 6,
+        left: Math.max(8, Math.min(rect.right - width, window.innerWidth - width - 8)),
+        width,
+      });
+    };
+    update();
+    window.addEventListener("resize", update);
+    window.addEventListener("scroll", update, true);
+    return () => {
+      window.removeEventListener("resize", update);
+      window.removeEventListener("scroll", update, true);
+    };
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target as Node | null;
+      if (
+        target &&
+        (popoverRef.current?.contains(target) || buttonRef.current?.contains(target))
+      ) {
+        return;
+      }
+      setOpen(false);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("pointerdown", onPointerDown, true);
+    document.addEventListener("keydown", onKeyDown, true);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown, true);
+      document.removeEventListener("keydown", onKeyDown, true);
+    };
+  }, [open]);
 
   return (
     <>
-      <PageIntro
-        title="Plugins"
-        subtitle="Jump to rules and skills or MCP-related settings. There is no separate plugin registry in this app yet."
-      />
-      <SettingsSection title="Manage">
-        <SettingsRow
-          title="Rules, skills, and subagents"
-          description="Instruction files, skills, and subagent presets that agents load for domain-specific behavior."
-          trailing={
-            <button
-              type="button"
-              className={rowButtonClass}
-              onClick={() =>
-                updateWorkspaceSession((current) => ({
-                  ...current,
-                  settingsView: {
-                    ...current.settingsView,
-                    activeNav: "rulesSkills",
-                  },
-                }))
-              }
+      <button
+        ref={buttonRef}
+        type="button"
+        aria-label={label}
+        title={title}
+        aria-expanded={open}
+        aria-haspopup="menu"
+        disabled={disabled || servers.length === 0}
+        onClick={() => setOpen((current) => !current)}
+        className="inline-flex min-w-0 max-w-[240px] items-center gap-[6px] rounded-[var(--radius-pill)] border border-[var(--border-card)] bg-[var(--bg-main)] px-[10px] py-[6px] text-left font-sans text-[12px] text-[var(--text-primary)] transition-colors hover:bg-[var(--accent-bg)] disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        <span
+          className={`shrink-0 text-[10px] ${serverHealthColorClass(selectedHealth)}`}
+          aria-hidden
+        >
+          {serverHealthIndicator(selectedHealth)}
+        </span>
+        <span className="min-w-0 flex-1 truncate">{selectedServer?.label ?? "Select server"}</span>
+        <ChevronDown className="size-[13px] shrink-0 text-[var(--text-secondary)]" strokeWidth={1.5} />
+      </button>
+      {open
+        ? createPortal(
+            <div
+              ref={popoverRef}
+              role="menu"
+              aria-label={label}
+              className="fixed z-[10050] overflow-hidden rounded-[var(--radius-card)] border border-[var(--border-card)] bg-[var(--bg-panel)] shadow-lg"
+              style={{
+                top: popoverPos.top,
+                left: popoverPos.left,
+                width: popoverPos.width,
+              }}
+              data-ide-input-sink
+              onPointerDown={(event) => event.stopPropagation()}
             >
-              Open
-            </button>
-          }
-        />
-        <SettingsRow
-          title="Tools & MCP servers"
-          description="Tooling configuration for agents."
-          trailing={
-            <button
-              type="button"
-              className={rowButtonClass}
-              onClick={() =>
-                updateWorkspaceSession((current) => ({
-                  ...current,
-                  settingsView: {
-                    ...current.settingsView,
-                    activeNav: "tools",
-                  },
-                }))
-              }
-            >
-              Open
-            </button>
-          }
-          border={false}
-        />
-      </SettingsSection>
+              <div className="border-b border-[var(--border-card)] px-[10px] py-[7px]">
+                <p className="font-sans text-[11px] font-medium text-[var(--text-secondary)]">
+                  {label}
+                </p>
+              </div>
+              <VerticalFadedScroll
+                measureKey={servers.length}
+                edgeColorVar="var(--bg-panel)"
+                scrollClassName="hide-scrollbar-y max-h-[min(320px,45vh)] min-h-0 overflow-y-auto overscroll-contain p-[4px]"
+              >
+                {servers.map((server) => {
+                  const selected = server.id === selectedServerId;
+                  const health = serverStatusById[server.id]?.health ?? "unknown";
+                  return (
+                    <button
+                      key={server.id}
+                      type="button"
+                      role="menuitemradio"
+                      aria-checked={selected}
+                      onClick={() => {
+                        onSelect(server.id);
+                        setOpen(false);
+                      }}
+                      className="flex w-full items-center gap-[8px] rounded-[var(--radius-tab)] px-[8px] py-[7px] text-left transition-colors hover:bg-[var(--accent-bg)]"
+                    >
+                      <span
+                        className={`shrink-0 text-[10px] ${serverHealthColorClass(health)}`}
+                        aria-hidden
+                      >
+                        {serverHealthIndicator(health)}
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate font-sans text-[12.5px] text-[var(--text-primary)]">
+                          {server.label}
+                        </span>
+                        <span className="mt-[2px] block truncate font-mono text-[10.5px] text-[var(--text-secondary)]">
+                          {server.baseUrl}
+                        </span>
+                      </span>
+                      {selected ? (
+                        <Check className="size-[13px] shrink-0 text-[var(--text-primary)]" strokeWidth={2} />
+                      ) : null}
+                    </button>
+                  );
+                })}
+              </VerticalFadedScroll>
+            </div>,
+            document.body
+          )
+        : null}
     </>
   );
 }
 
 export function ServerConnectionsSettingsPanel() {
-  const { activeServer, setActiveServer } = useServerConnections();
-  const previousActiveServerIdRef = useRef(activeServer.id);
-
-  useEffect(() => {
-    if (previousActiveServerIdRef.current === activeServer.id) {
-      return;
-    }
-    previousActiveServerIdRef.current = activeServer.id;
-    if (typeof window !== "undefined") {
-      window.location.assign(WORKSPACE_ROUTE);
-    }
-  }, [activeServer.id]);
+  const {
+    activeServer,
+    settingsServer,
+    servers,
+    onlineServers,
+    serverStatusById,
+    requiresDefaultServer,
+    setActiveServer,
+    setDefaultServer,
+  } = useServerConnections();
 
   return (
     <>
-      <PageIntro
-        title="Servers"
-        subtitle="Choose which Cesium server this browser connects to, keep multiple base URLs saved locally, and switch between them quickly."
-      />
-      <SettingsSection title="Active connection">
+      <PageIntro title="Servers" />
+      <DefaultServerSettingsBanner className="mx-[16px] mb-[12px] mt-[4px]" />
+      <SettingsSection title="Default settings server">
         <SettingsRow
-          title="Current server"
-          description={activeServer.baseUrl}
+          title="Home server for shared preferences"
+          description={
+            settingsServer
+              ? `${settingsServer.baseUrl} · ${serverStatusById[settingsServer.id]?.health ?? "checking"}`
+              : requiresDefaultServer
+                ? "Pick which server stores theme, keyboard shortcuts, and model toggles."
+                : "Unavailable"
+          }
           trailing={
-            <span className="rounded-[999px] bg-[var(--accent-bg)] px-[8px] py-[4px] font-sans text-[11px] text-[var(--text-primary)]">
-              {activeServer.label}
-            </span>
+            <SettingsServerPicker
+              label="Default settings server"
+              title="Theme, shortcuts, and models are stored on this server for all chats"
+              selectedServerId={settingsServer?.id ?? null}
+              servers={servers}
+              serverStatusById={serverStatusById}
+              onSelect={setDefaultServer}
+              disabled={servers.length === 0}
+            />
           }
         />
+        <SettingsRow
+          title="Active chat server"
+          description={`${activeServer.baseUrl} · ${serverStatusById[activeServer.id]?.health ?? "checking"}`}
+          trailing={
+            <SettingsServerPicker
+              label="Active chat server"
+              title="New chats and workspace actions use this server until you switch workspaces"
+              selectedServerId={activeServer.id}
+              servers={servers}
+              serverStatusById={serverStatusById}
+              onSelect={setActiveServer}
+              disabled={servers.length === 0}
+            />
+          }
+        />
+        <SettingsRow
+          title="Connected runtimes"
+          description={
+            onlineServers.length > 0
+              ? onlineServers.map((server) => server.label).join(", ")
+              : "No reachable saved servers yet."
+          }
+          trailing={
+            <span className="rounded-[999px] border border-[var(--border-subtle)] px-[8px] py-[4px] font-sans text-[11px] text-[var(--text-secondary)]">
+              {onlineServers.length}
+            </span>
+          }
+          border={false}
+        />
       </SettingsSection>
-      <SettingsSection title="Saved servers">
-        <div className="px-[16px] py-[16px]">
-          <ServerConnectionsManager
-            onActivate={(serverId) => {
-              setActiveServer(serverId);
-            }}
-          />
-        </div>
-      </SettingsSection>
-    </>
-  );
-}
-
-export function ToolsMcpSettingsPanel() {
-  return (
-    <>
-      <PageIntro
-        title="Tools & MCPs"
-        subtitle="MCP servers, browser automation hooks, and tool allowlists are not configured from this preferences UI. Use the Servers tab for the Cesium backend URL; MCP and fetch policy live in workspace or server configuration."
-      />
-      <SettingsSection title="Overview">
-        <div className="px-[16px] py-[16px]">
-          <p className="font-sans text-[13px] leading-relaxed text-[var(--text-secondary)]">
-            Nothing here changes tool execution yet—this page is intentionally minimal until those settings are wired end-to-end.
-          </p>
-        </div>
+      <SettingsSection title="Saved servers" bordered={false}>
+        <ServerConnectionsManager
+          onActivate={(serverId) => {
+            setActiveServer(serverId);
+          }}
+          onSetDefault={(serverId) => {
+            setDefaultServer(serverId);
+          }}
+        />
       </SettingsSection>
     </>
   );
@@ -1668,7 +1438,7 @@ function ShortcutKeyCapture({
   }, [capturing, onCommitBinding]);
 
   return (
-    <div className="flex max-w-[min(100%,440px)] flex-wrap items-center justify-end gap-[8px]">
+    <div className="flex flex-wrap items-center justify-end gap-[8px]">
       <div
         ref={captureRef}
         role="button"
@@ -1680,27 +1450,23 @@ function ShortcutKeyCapture({
             setCapturing(true);
           }
         }}
-        className={`flex min-w-[200px] cursor-pointer items-center gap-[6px] rounded-[var(--radius-tab)] border px-[10px] py-[6px] transition-colors ${
-          capturing
-            ? "border-[var(--accent-border)] bg-[var(--accent-bg)]"
-            : "border-[var(--border-card)] bg-[var(--bg-main)] hover:bg-[var(--accent-bg)]"
+        className={`inline-flex cursor-pointer flex-wrap items-center justify-end gap-[6px] rounded-[var(--radius-tab)] outline-none transition-opacity focus-visible:ring-2 focus-visible:ring-[var(--accent)] ${
+          capturing ? "opacity-100" : "hover:opacity-80"
         }`}
         aria-label={capturing ? `Press shortcut for ${commandId}` : `Shortcuts for ${commandId}. Click to change.`}
       >
         {capturing ? (
-          <span className="font-sans text-[11px] italic text-[var(--text-secondary)]">
+          <span className="font-sans text-[11px] italic text-[var(--accent)]">
             Press shortcut…
           </span>
         ) : bindings.length > 0 ? (
-          <span className="flex flex-wrap items-center gap-[6px]">
-            {bindings.map((binding, i) => (
-              <ShortcutKeycapGroup
-                key={i}
-                binding={binding}
-                platform={platform}
-              />
-            ))}
-          </span>
+          bindings.map((binding, i) => (
+            <ShortcutKeycapGroup
+              key={i}
+              binding={binding}
+              platform={platform}
+            />
+          ))
         ) : (
           <span className="font-sans text-[11px] text-[var(--text-disabled)]">
             No binding
@@ -1716,20 +1482,77 @@ function ShortcutKeyCapture({
   );
 }
 
+type ShortcutCommandDef = (typeof SHORTCUT_COMMAND_DEFINITIONS)[number];
+
+function shortcutBindingsHaystack(
+  bindingList: string[],
+  platform: ShortcutPlatform
+): string {
+  return bindingList
+    .flatMap((binding) => [binding, formatShortcutBinding(binding, platform)])
+    .join(" ")
+    .toLowerCase();
+}
+
+function shortcutDefinitionMatchesQuery(
+  def: ShortcutCommandDef,
+  bindings: Record<string, string[]>,
+  platform: ShortcutPlatform,
+  query: string
+): boolean {
+  const q = query.trim().toLowerCase();
+  if (!q) return true;
+
+  if (def.label.toLowerCase().includes(q)) return true;
+  if (def.id.toLowerCase().includes(q)) return true;
+  if (def.section.toLowerCase().includes(q)) return true;
+
+  const currentBindings =
+    bindings[def.id] ?? DEFAULT_KEYBOARD_SHORTCUT_BINDINGS[def.id] ?? [];
+  if (shortcutBindingsHaystack(currentBindings, platform).includes(q)) {
+    return true;
+  }
+  if (shortcutBindingsHaystack(def.defaultBindings, platform).includes(q)) {
+    return true;
+  }
+
+  const formattedCurrent = formatShortcutBindingsForInput(
+    currentBindings,
+    platform
+  );
+  if (formattedCurrent.toLowerCase().includes(q)) return true;
+
+  return false;
+}
+
 export function KeyboardShortcutsSettingsPanel() {
   const { settings, updateSettings } = useGlobalSettings();
+  const { workspaceSession, updateWorkspaceSession } = useWorkspace();
   const platform = useMemo(() => detectShortcutPlatform(), []);
   const bindings = settings.keyboardShortcuts.bindings;
   const voiceInputMode = settings.keyboardShortcuts.voiceInputMode;
-  const [collapsedSections, setCollapsedSections] = useState<
+  const [shortcutQuery, setShortcutQuery] = useState("");
+
+  useEffect(() => {
+    const focus = workspaceSession.settingsView.panelSearchFocus;
+    if (focus?.kind !== "keyboardShortcuts") {
+      return;
+    }
+    setShortcutQuery(focus.query);
+    updateWorkspaceSession((current) => ({
+      ...current,
+      settingsView: {
+        ...current.settingsView,
+        panelSearchFocus: null,
+      },
+    }));
+  }, [updateWorkspaceSession, workspaceSession.settingsView.panelSearchFocus]);
+  const [expandedCategories, setExpandedCategories] = useState<
     Set<ShortcutCommandSection>
   >(new Set());
 
   const bySection = useMemo(() => {
-    const map = new Map<
-      ShortcutCommandSection,
-      (typeof SHORTCUT_COMMAND_DEFINITIONS)[number][]
-    >();
+    const map = new Map<ShortcutCommandSection, ShortcutCommandDef[]>();
     for (const def of SHORTCUT_COMMAND_DEFINITIONS) {
       const list = map.get(def.section) ?? [];
       list.push(def);
@@ -1737,6 +1560,29 @@ export function KeyboardShortcutsSettingsPanel() {
     }
     return map;
   }, []);
+
+  const isFiltering = shortcutQuery.trim().length > 0;
+
+  const filteredBySection = useMemo(() => {
+    if (!isFiltering) {
+      return bySection;
+    }
+    const result = new Map<ShortcutCommandSection, ShortcutCommandDef[]>();
+    for (const [section, defs] of bySection) {
+      const filtered = defs.filter((def) =>
+        shortcutDefinitionMatchesQuery(def, bindings, platform, shortcutQuery)
+      );
+      if (filtered.length > 0) {
+        result.set(section, filtered);
+      }
+    }
+    return result;
+  }, [bindings, bySection, isFiltering, platform, shortcutQuery]);
+
+  const visibleSections = useMemo(
+    () => SECTION_ORDER.filter((section) => filteredBySection.has(section)),
+    [filteredBySection]
+  );
 
   const commitBinding = useCallback(
     (commandId: string, newBindings: string[]) => {
@@ -1771,8 +1617,8 @@ export function KeyboardShortcutsSettingsPanel() {
     [updateSettings]
   );
 
-  const toggleSectionCollapse = useCallback((section: ShortcutCommandSection) => {
-    setCollapsedSections((prev) => {
+  const toggleCategoryCollapse = useCallback((section: ShortcutCommandSection) => {
+    setExpandedCategories((prev) => {
       const next = new Set(prev);
       if (next.has(section)) next.delete(section);
       else next.add(section);
@@ -1795,15 +1641,28 @@ export function KeyboardShortcutsSettingsPanel() {
 
   return (
     <>
-      <PageIntro
-        title="Keyboard shortcuts"
-        subtitle={`Bindings use Mod as the primary modifier (${primaryModifierLabel(platform)} on this device). Separate chord steps with spaces (e.g. ${primaryModifierLabel(platform)}+K ${primaryModifierLabel(platform)}+S). Changes sync to the server with other settings.`}
-      />
-      {SECTION_ORDER.map((section) => {
-        const defs = bySection.get(section);
+      <PageIntro title="Keyboard shortcuts" />
+      <div className="mb-[16px]">
+        <HardwareAwareTextInput
+          type="search"
+          value={shortcutQuery}
+          onChange={setShortcutQuery}
+          placeholder="Search shortcuts"
+          className="box-border h-[36px] w-full rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-[var(--bg-panel)] pl-[10px] pr-[10px] font-sans text-[13px] text-[var(--text-primary)] outline-none placeholder:text-[var(--text-disabled)]"
+          ariaLabel="Search keyboard shortcuts"
+        />
+      </div>
+      {isFiltering && visibleSections.length === 0 ? (
+        <div className="rounded-[var(--radius-card)] border border-[var(--border-card)] bg-[var(--bg-panel)] px-[16px] py-[24px] text-center font-sans text-[13px] text-[var(--text-disabled)]">
+          No shortcuts match your search
+        </div>
+      ) : null}
+      {visibleSections.map((section) => {
+        const defs = filteredBySection.get(section);
         if (!defs?.length) return null;
-        const collapsed = collapsedSections.has(section);
-        const assignedCount = defs.filter((d) => {
+        const allDefs = bySection.get(section) ?? defs;
+        const collapsed = isFiltering ? false : !expandedCategories.has(section);
+        const assignedCount = allDefs.filter((d) => {
           const b = bindings[d.id] ?? DEFAULT_KEYBOARD_SHORTCUT_BINDINGS[d.id] ?? [];
           return b.length > 0;
         }).length;
@@ -1812,17 +1671,25 @@ export function KeyboardShortcutsSettingsPanel() {
             key={section}
             title={section}
             action={
-              <button
-                type="button"
-                className="flex items-center gap-[6px] font-sans text-[12px] text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
-                onClick={() => toggleSectionCollapse(section)}
-              >
-                <span>{assignedCount}/{defs.length}</span>
-                <ChevronRight
-                  className={`size-[14px] shrink-0 transition-transform ${collapsed ? "" : "rotate-90"}`}
-                  strokeWidth={1.5}
-                />
-              </button>
+              isFiltering ? (
+                <span className="font-sans text-[12px] text-[var(--text-secondary)]">
+                  {defs.length} {defs.length === 1 ? "match" : "matches"}
+                </span>
+              ) : (
+                <button
+                  type="button"
+                  className="flex items-center gap-[6px] font-sans text-[12px] text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+                  onClick={() => toggleCategoryCollapse(section)}
+                >
+                  <span>
+                    {assignedCount}/{allDefs.length}
+                  </span>
+                  <ChevronRight
+                    className={`size-[14px] shrink-0 transition-transform ${collapsed ? "" : "rotate-90"}`}
+                    strokeWidth={1.5}
+                  />
+                </button>
+              )
             }
           >
             {collapsed ? null : defs.map((def) => {
@@ -2099,10 +1966,7 @@ export function ExportImportSettingsPanel() {
 
   return (
     <>
-      <PageIntro
-        title="Import & export"
-        subtitle="Choose which parts of your setup to include in a JSON backup. Import merges selected sections into this browser and workspace; theme, keyboard shortcuts, and app settings sync to the server."
-      />
+      <PageIntro title="Import & export" />
       <SettingsSection title="Export">
         <div className="space-y-[14px] border-b border-[var(--border-subtle)] px-[16px] py-[14px] last:border-b-0">
           <ExportGranularityPicker
@@ -2313,10 +2177,7 @@ function StorageSettingsPanel() {
 
   return (
     <>
-      <PageIntro
-        title="Storage"
-        subtitle="Switch between the legacy JSON/JSONL driver and Postgres, port data between them, and export or import NDJSON archives."
-      />
+      <PageIntro title="Storage" />
       <SettingsSection
         title="Storage drivers"
         action={
@@ -2561,7 +2422,6 @@ export const SETTINGS_PANELS: Record<string, ComponentType> = {
   plugins: PluginsSettingsPanel,
   servers: ServerConnectionsSettingsPanel,
   rulesSkills: RulesSkillsSubagentsPanel,
-  tools: ToolsMcpSettingsPanel,
   beta: BetaSettingsPanel,
   keyboardShortcuts: KeyboardShortcutsSettingsPanel,
   exportImport: ExportImportSettingsPanel,

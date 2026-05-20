@@ -6,110 +6,105 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
 import {
-  SERVER_CONNECTIONS_EVENT,
+  applyServerUrlBootstrap,
+  getSettingsServerConnection,
+  requiresDefaultServerSelection,
+  setDefaultServerConnection,
+  upsertServerConnection,
   type ServerConnection,
   type ServerConnectionsState,
+} from "@/lib/server-connections";
+import {
+  SERVER_CONNECTIONS_EVENT,
   getActiveServerConnection,
+  getServerConnectionKey,
   markServerConnectionUsed,
   normalizeServerBaseUrl,
   readStoredServerConnectionsState,
   removeServerConnection,
-  upsertServerConnection,
   writeStoredServerConnectionsState,
 } from "@/lib/server-connections-provider-shared";
-
-type ServerProbeResult = {
-  ok: boolean;
-  healthOk: boolean;
-  authEnabled: boolean | null;
-  authenticated: boolean | null;
-  error: string | null;
-};
+import {
+  parseServerUrlSearchParam,
+  stripServerUrlSearchParamFromLocation,
+} from "@/lib/resolve-server-base-url";
+import {
+  probeServerBaseUrl,
+  type ServerProbeResult,
+} from "@/lib/server-connection-health";
 
 type ServerConnectionsContextValue = {
   ready: boolean;
   state: ServerConnectionsState;
   servers: ServerConnection[];
+  serverStatusById: Record<string, ServerRuntimeStatus>;
+  onlineServers: ServerConnection[];
   activeServer: ServerConnection;
+  settingsServer: ServerConnection | null;
+  requiresDefaultServer: boolean;
   setActiveServer: (serverId: string) => void;
+  setDefaultServer: (serverId: string) => void;
   saveServer: (input: { id?: string; label?: string; baseUrl: string }) => ServerConnection;
   removeServer: (serverId: string) => void;
   probeServer: (baseUrl: string) => Promise<ServerProbeResult>;
+  refreshServerHealth: () => Promise<Record<string, ServerRuntimeStatus>>;
 };
 
 const ServerConnectionsContext = createContext<ServerConnectionsContextValue | null>(null);
 
-async function probeServerBaseUrl(baseUrl: string): Promise<ServerProbeResult> {
-  const normalizedBaseUrl = normalizeServerBaseUrl(baseUrl);
-  try {
-    const healthResponse = await fetch(`${normalizedBaseUrl}/health`, {
-      method: "GET",
-      cache: "no-store",
-    });
-    if (!healthResponse.ok) {
-      return {
-        ok: false,
-        healthOk: false,
-        authEnabled: null,
-        authenticated: null,
-        error: `Health check failed (${healthResponse.status}).`,
-      };
-    }
+export type ServerRuntimeHealth = "unknown" | "online" | "offline" | "auth_required" | "degraded";
 
-    try {
-      const authResponse = await fetch(`${normalizedBaseUrl}/api/auth/status`, {
-        method: "GET",
-        credentials: "include",
-        cache: "no-store",
-      });
-      if (!authResponse.ok) {
-        return {
-          ok: true,
-          healthOk: true,
-          authEnabled: null,
-          authenticated: null,
-          error: null,
-        };
-      }
-      const payload = (await authResponse.json()) as {
-        enabled?: boolean;
-        authenticated?: boolean;
-      };
-      return {
-        ok: true,
-        healthOk: true,
-        authEnabled: payload.enabled === true,
-        authenticated:
-          typeof payload.authenticated === "boolean" ? payload.authenticated : null,
-        error: null,
-      };
-    } catch {
-      return {
-        ok: true,
-        healthOk: true,
-        authEnabled: null,
-        authenticated: null,
-        error: null,
-      };
+export type ServerRuntimeStatus = {
+  health: ServerRuntimeHealth;
+  lastCheckedAt: number | null;
+  lastOnlineAt: number | null;
+  error: string | null;
+  authEnabled: boolean | null;
+  authenticated: boolean | null;
+};
+
+function statusFromProbe(probe: ServerProbeResult, now = Date.now()): ServerRuntimeStatus {
+  const health: ServerRuntimeHealth = probe.ok
+    ? probe.authEnabled && probe.authenticated === false
+      ? "auth_required"
+      : "online"
+    : "offline";
+  return {
+    health,
+    lastCheckedAt: now,
+    lastOnlineAt: probe.ok ? now : null,
+    error: probe.error,
+    authEnabled: probe.authEnabled,
+    authenticated: probe.authenticated,
+  };
+}
+
+function connectionDedupeKey(server: ServerConnection): string {
+  return getServerConnectionKey(server.baseUrl);
+}
+
+function dedupeServersByResolvedBaseUrl(servers: ServerConnection[]): ServerConnection[] {
+  const byResolved = new Map<string, ServerConnection>();
+  for (const server of servers) {
+    const key = connectionDedupeKey(server);
+    const existing = byResolved.get(key);
+    if (!existing || server.lastUsedAt > existing.lastUsedAt) {
+      byResolved.set(key, server);
     }
-  } catch (error) {
-    return {
-      ok: false,
-      healthOk: false,
-      authEnabled: null,
-      authenticated: null,
-      error: error instanceof Error ? error.message : "Failed to reach server.",
-    };
   }
+  return [...byResolved.values()];
 }
 
 export function ServerConnectionsProvider({ children }: { children: ReactNode }) {
   const [ready, setReady] = useState(false);
   const [state, setState] = useState<ServerConnectionsState>(() => readStoredServerConnectionsState());
+  const [serverStatusById, setServerStatusById] = useState<Record<string, ServerRuntimeStatus>>({});
+  const healthRecoveryRanRef = useRef(false);
 
   useEffect(() => {
     const sync = () => {
@@ -135,33 +130,116 @@ export function ServerConnectionsProvider({ children }: { children: ReactNode })
     if (typeof window === "undefined") {
       return;
     }
-    const raw = new URLSearchParams(window.location.search).get("serverUrl")?.trim();
-    if (!raw) {
+    const candidate = parseServerUrlSearchParam(window.location.search);
+    if (!candidate) {
       return;
     }
-    let baseUrl: string;
-    try {
-      baseUrl = normalizeServerBaseUrl(raw);
-    } catch {
-      return;
-    }
+    const isElectron = Boolean(
+      (window as Window & { cesiumDesktop?: { isElectron?: boolean } }).cesiumDesktop?.isElectron
+    );
     setState((current) => {
-      const upserted = upsertServerConnection(current, {
-        label: new URL(baseUrl).host,
-        baseUrl,
+      const next = applyServerUrlBootstrap(current, candidate, {
+        force: isElectron,
+        isElectron,
       });
-      const server = upserted.servers.find((candidate) => candidate.baseUrl === baseUrl);
-      const next = server
-        ? markServerConnectionUsed(upserted, server.id)
-        : upserted;
+      if (next !== current) {
+        writeStoredServerConnectionsState(next);
+      }
+      return next;
+    });
+    stripServerUrlSearchParamFromLocation();
+  }, []);
+
+  useEffect(() => {
+    if (!ready || healthRecoveryRanRef.current) {
+      return;
+    }
+    healthRecoveryRanRef.current = true;
+    let cancelled = false;
+
+    void (async () => {
+      await new Promise<void>((resolve) => {
+        queueMicrotask(resolve);
+      });
+      const current = readStoredServerConnectionsState();
+      const active =
+        current.servers.find((server) => server.id === current.activeServerId) ??
+        current.servers[0];
+      if (!active) {
+        return;
+      }
+      const activeProbe = await probeServerBaseUrl(active.baseUrl);
+      setServerStatusById((current) => ({
+        ...current,
+        [active.id]: statusFromProbe(activeProbe),
+      }));
+      if (cancelled || activeProbe.ok) {
+        return;
+      }
+      const candidates = [...current.servers].sort((a, b) => b.lastUsedAt - a.lastUsedAt);
+      for (const candidate of candidates) {
+        if (candidate.id === active.id) {
+          continue;
+        }
+        const probe = await probeServerBaseUrl(candidate.baseUrl);
+        setServerStatusById((current) => ({
+          ...current,
+          [candidate.id]: statusFromProbe(probe),
+        }));
+        if (!probe.ok) {
+          continue;
+        }
+        if (cancelled) {
+          return;
+        }
+        setState((current) => {
+          const next = markServerConnectionUsed(current, candidate.id);
+          writeStoredServerConnectionsState(next);
+          return next;
+        });
+        return;
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [ready]);
+
+  const refreshServerHealth = useCallback(async () => {
+    const entries = await Promise.all(
+      state.servers.map(async (server) => {
+        const probe = await probeServerBaseUrl(server.baseUrl);
+        return [server.id, statusFromProbe(probe)] as const;
+      })
+    );
+    const next = Object.fromEntries(entries);
+    setServerStatusById(next);
+    return next;
+  }, [state.servers]);
+
+  useEffect(() => {
+    if (!ready) {
+      return;
+    }
+    void refreshServerHealth().catch(() => undefined);
+    const interval = window.setInterval(() => {
+      void refreshServerHealth().catch(() => undefined);
+    }, 30_000);
+    return () => window.clearInterval(interval);
+  }, [ready, refreshServerHealth]);
+
+  const setActiveServer = useCallback((serverId: string) => {
+    setState((current) => {
+      const next = markServerConnectionUsed(current, serverId);
       writeStoredServerConnectionsState(next);
       return next;
     });
   }, []);
 
-  const setActiveServer = useCallback((serverId: string) => {
+  const setDefaultServer = useCallback((serverId: string) => {
     setState((current) => {
-      const next = markServerConnectionUsed(current, serverId);
+      const next = setDefaultServerConnection(current, serverId);
       writeStoredServerConnectionsState(next);
       return next;
     });
@@ -173,7 +251,11 @@ export function ServerConnectionsProvider({ children }: { children: ReactNode })
       const next = upsertServerConnection(current, input);
       savedServer =
         next.servers.find((server) => server.id === input.id) ??
-        next.servers.find((server) => server.baseUrl === normalizeServerBaseUrl(input.baseUrl)) ??
+        next.servers.find(
+          (server) =>
+            getServerConnectionKey(server.baseUrl) ===
+            getServerConnectionKey(normalizeServerBaseUrl(input.baseUrl))
+        ) ??
         next.servers[0] ??
         null;
       writeStoredServerConnectionsState(next);
@@ -195,17 +277,37 @@ export function ServerConnectionsProvider({ children }: { children: ReactNode })
       state.servers.find((server) => server.id === state.activeServerId) ??
       state.servers[0] ??
       getActiveServerConnection();
+    const onlineServers = dedupeServersByResolvedBaseUrl(state.servers).filter((server) => {
+      const health = serverStatusById[server.id]?.health ?? "unknown";
+      return health === "online" || health === "auth_required" || health === "unknown";
+    });
+    const settingsServer = getSettingsServerConnection(state);
     return {
       ready,
       state,
       servers: state.servers,
+      serverStatusById,
+      onlineServers,
       activeServer,
+      settingsServer,
+      requiresDefaultServer: requiresDefaultServerSelection(state),
       setActiveServer,
+      setDefaultServer,
       saveServer,
       removeServer: deleteServer,
       probeServer: probeServerBaseUrl,
+      refreshServerHealth,
     };
-  }, [deleteServer, ready, saveServer, setActiveServer, state]);
+  }, [
+    deleteServer,
+    ready,
+    refreshServerHealth,
+    saveServer,
+    serverStatusById,
+    setActiveServer,
+    setDefaultServer,
+    state,
+  ]);
 
   return (
     <ServerConnectionsContext.Provider value={value}>

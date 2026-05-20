@@ -64,20 +64,30 @@ const testCapabilities: AgentProviderCapabilities = {
   supportsTodos: true,
   supportsSessionResume: true,
   supportsPromptImages: false,
+  supportsInlineReasoning: false,
+  supportsCompletionRetry: false,
 };
 
 const testBackends: Record<AgentBackendId, AgentBackendInfo> = {
   ...AGENT_BACKENDS,
-  "cursor-acp": {
-    ...AGENT_BACKENDS["cursor-acp"],
+  "cesium-agent": {
+    ...AGENT_BACKENDS["cesium-agent"],
     available: true,
     capabilities: testCapabilities,
     defaultMode: "agent",
     defaultModelId: "test-fast",
     defaultModelName: "Test Fast",
   },
-  "opencode-acp": {
-    ...AGENT_BACKENDS["opencode-acp"],
+  "cursor-sdk": {
+    ...AGENT_BACKENDS["cursor-sdk"],
+    available: true,
+    capabilities: testCapabilities,
+    defaultMode: "agent",
+    defaultModelId: "test-fast",
+    defaultModelName: "Test Fast",
+  },
+  "opencode-server": {
+    ...AGENT_BACKENDS["opencode-server"],
     available: true,
     capabilities: testCapabilities,
     defaultMode: "agent",
@@ -479,7 +489,7 @@ async function waitFor<T>(
 test("prompt streams and replays append-only events", async () => {
   const workspace = await ensureWorkspaceRegistered(repoRoot, "repo");
   const conversation = await testRuntimeManager.createConversation(workspace, {
-    backendId: "cursor-acp",
+    backendId: "cursor-sdk",
     mode: "agent",
     modelId: "test-fast",
     modelName: "Test Fast",
@@ -514,7 +524,7 @@ test("prompt streams and replays append-only events", async () => {
 test("prompt returns fast ACK containing only the appended user event", async () => {
   const workspace = await ensureWorkspaceRegistered(repoRoot, "repo");
   const conversation = await testRuntimeManager.createConversation(workspace, {
-    backendId: "cursor-acp",
+    backendId: "cursor-sdk",
     mode: "agent",
     modelId: "test-fast",
     modelName: "Test Fast",
@@ -540,7 +550,7 @@ test("prompt returns fast ACK containing only the appended user event", async ()
 test("idle runtime disposal waits for trailing provider events", async () => {
   const workspace = await ensureWorkspaceRegistered(repoRoot, "repo");
   const conversation = await testRuntimeManager.createConversation(workspace, {
-    backendId: "opencode-acp",
+    backendId: "opencode-server",
     mode: "agent",
     modelId: "test-fast",
     modelName: "Test Fast",
@@ -569,7 +579,7 @@ test("idle runtime disposal waits for trailing provider events", async () => {
 test("duplicate client prompt ids do not enqueue repeated follow-up prompts", async () => {
   const workspace = await ensureWorkspaceRegistered(repoRoot, "repo");
   const conversation = await testRuntimeManager.createConversation(workspace, {
-    backendId: "cursor-acp",
+    backendId: "cursor-sdk",
     mode: "agent",
     modelId: "test-fast",
     modelName: "Test Fast",
@@ -599,7 +609,7 @@ test("duplicate client prompt ids do not enqueue repeated follow-up prompts", as
 test("permission requests persist and can be answered", async () => {
   const workspace = await ensureWorkspaceRegistered(repoRoot, "repo");
   const conversation = await testRuntimeManager.createConversation(workspace, {
-    backendId: "cursor-acp",
+    backendId: "cursor-sdk",
     mode: "agent",
     modelId: "test-fast",
     modelName: "Test Fast",
@@ -648,7 +658,7 @@ test("permission requests persist and can be answered", async () => {
 test("cancellation stops the pending turn without completion tail", async () => {
   const workspace = await ensureWorkspaceRegistered(repoRoot, "repo");
   const conversation = await testRuntimeManager.createConversation(workspace, {
-    backendId: "cursor-acp",
+    backendId: "cursor-sdk",
     mode: "agent",
     modelId: "test-fast",
     modelName: "Test Fast",
@@ -683,13 +693,13 @@ test("cancellation stops the pending turn without completion tail", async () => 
 test("multiple conversations keep isolated event streams", async () => {
   const workspace = await ensureWorkspaceRegistered(repoRoot, "repo");
   const first = await testRuntimeManager.createConversation(workspace, {
-    backendId: "cursor-acp",
+    backendId: "cursor-sdk",
     mode: "agent",
     modelId: "test-fast",
     modelName: "Test Fast",
   });
   const second = await testRuntimeManager.createConversation(workspace, {
-    backendId: "opencode-acp",
+    backendId: "opencode-server",
     mode: "plan",
     modelId: "test-deep",
     modelName: "Test Deep",
@@ -724,7 +734,7 @@ test("multiple conversations keep isolated event streams", async () => {
 test("handoff copies transcript and divider without a placeholder user message", async () => {
   const workspace = await ensureWorkspaceRegistered(repoRoot, "repo");
   const source = await testRuntimeManager.createConversation(workspace, {
-    backendId: "cursor-acp",
+    backendId: "cursor-sdk",
     mode: "agent",
     modelId: "test-fast",
     modelName: "Test Fast",
@@ -740,7 +750,7 @@ test("handoff copies transcript and divider without a placeholder user message",
   const { newConversationId } = await testRuntimeManager.handoffConversation(
     workspace,
     source.id,
-    "opencode-acp"
+    "opencode-server"
   );
   assert.equal(newConversationId, source.id, "expected handoff to stay in the same chat");
 
@@ -748,7 +758,7 @@ test("handoff copies transcript and divider without a placeholder user message",
   assert.ok(snap, "expected handoff target snapshot");
   assert.equal(
     snap.conversation.config.backendId,
-    "opencode-acp",
+    "opencode-server",
     "expected handoff to update the conversation backend in place"
   );
   const kinds = snap.events.map((e) => e.kind);
@@ -832,7 +842,7 @@ test("handoff copies transcript and divider without a placeholder user message",
 test("consecutive handoffs coalesce superseded events and only keep the latest", async () => {
   const workspace = await ensureWorkspaceRegistered(repoRoot, "repo");
   const source = await testRuntimeManager.createConversation(workspace, {
-    backendId: "cursor-acp",
+    backendId: "cursor-sdk",
     mode: "agent",
     modelId: "test-fast",
     modelName: "Test Fast",
@@ -845,7 +855,7 @@ test("consecutive handoffs coalesce superseded events and only keep the latest",
     (value) => value.conversation.status === "idle"
   );
 
-  await testRuntimeManager.handoffConversation(workspace, source.id, "opencode-acp");
+  await testRuntimeManager.handoffConversation(workspace, source.id, "opencode-server");
   const afterFirst = await readConversationSnapshot(workspace.id, source.id);
   const firstHandoffCount = afterFirst.events.filter((e) => e.kind === "agent_handoff").length;
   assert.equal(firstHandoffCount, 1, "expected one handoff event after first handoff");
@@ -863,30 +873,30 @@ test("consecutive handoffs coalesce superseded events and only keep the latest",
     () => readConversationSnapshot(workspace.id, source.id),
     (value) => value.conversation.status === "idle"
   );
-  await testRuntimeManager.handoffConversation(workspace, source.id, "cursor-acp");
+  await testRuntimeManager.handoffConversation(workspace, source.id, "cursor-sdk");
   const afterSecond = await readConversationSnapshot(workspace.id, source.id);
   const secondHandoffCount = afterSecond.events.filter((e) => e.kind === "agent_handoff").length;
   assert.equal(secondHandoffCount, 1, "expected only one handoff event after second handoff (superseded first deleted)");
 
   const secondHandoff = afterSecond.events.find((e) => e.kind === "agent_handoff");
   assert.ok(secondHandoff && secondHandoff.kind === "agent_handoff");
-  assert.equal(secondHandoff.fromAgent, "opencode-acp", "expected fromAgent to be the second source");
-  assert.equal(secondHandoff.toAgent, "cursor-acp", "expected toAgent to be the second target");
+  assert.equal(secondHandoff.fromAgent, "opencode-server", "expected fromAgent to be the second source");
+  assert.equal(secondHandoff.toAgent, "cursor-sdk", "expected toAgent to be the second target");
 
   await waitFor(
     "second handoff turn idle",
     () => readConversationSnapshot(workspace.id, source.id),
     (value) => value.conversation.status === "idle"
   );
-  await testRuntimeManager.handoffConversation(workspace, source.id, "opencode-acp");
+  await testRuntimeManager.handoffConversation(workspace, source.id, "opencode-server");
   const afterThird = await readConversationSnapshot(workspace.id, source.id);
   const thirdHandoffCount = afterThird.events.filter((e) => e.kind === "agent_handoff").length;
   assert.equal(thirdHandoffCount, 1, "expected only one handoff event after third handoff");
 
   const thirdHandoff = afterThird.events.find((e) => e.kind === "agent_handoff");
   assert.ok(thirdHandoff && thirdHandoff.kind === "agent_handoff");
-  assert.equal(thirdHandoff.fromAgent, "cursor-acp");
-  assert.equal(thirdHandoff.toAgent, "opencode-acp");
+  assert.equal(thirdHandoff.fromAgent, "cursor-sdk");
+  assert.equal(thirdHandoff.toAgent, "opencode-server");
 
   const hiddenTranscriptCount = afterThird.events.filter((e) => {
     if (e.kind !== "assistant_message_end") return false;
@@ -899,7 +909,7 @@ test("consecutive handoffs coalesce superseded events and only keep the latest",
 test("persisted provider sessions can be rehydrated after dropping runtime state", async () => {
   const workspace = await ensureWorkspaceRegistered(repoRoot, "repo");
   const conversation = await testRuntimeManager.createConversation(workspace, {
-    backendId: "cursor-acp",
+    backendId: "cursor-sdk",
     mode: "agent",
     modelId: "test-fast",
     modelName: "Test Fast",
@@ -980,7 +990,7 @@ test("resume retries once before falling back to fresh provider session", async 
   });
 
   const conversation = await flakyRuntimeManager.createConversation(workspace, {
-    backendId: "cursor-acp",
+    backendId: "cursor-sdk",
     mode: "agent",
     modelId: "test-fast",
     modelName: "Test Fast",
@@ -1047,7 +1057,7 @@ test("failed resume falls back to transcript-seeded fresh session", async () => 
   });
 
   const conversation = await alwaysFailRuntimeManager.createConversation(workspace, {
-    backendId: "cursor-acp",
+    backendId: "cursor-sdk",
     mode: "agent",
     modelId: "test-fast",
     modelName: "Test Fast",
@@ -1096,10 +1106,10 @@ test("failed resume falls back to transcript-seeded fresh session", async () => 
   );
 });
 
-test("unsupported backends fall back to cursor defaults when legacy conversations are read", async () => {
+test("unsupported backends fall back to cesium defaults when legacy conversations are read", async () => {
   const workspace = await ensureWorkspaceRegistered(repoRoot, "repo");
   const conversation = await testRuntimeManager.createConversation(workspace, {
-    backendId: "opencode-acp",
+    backendId: "opencode-server",
     mode: "plan",
     modelId: "test-deep",
     modelName: "Test Deep",
@@ -1133,8 +1143,8 @@ test("unsupported backends fall back to cursor defaults when legacy conversation
 
   const migrated = await readConversationSnapshot(workspace.id, conversation.id);
   assert.ok(migrated, "expected migrated snapshot");
-  const fallbackBackend = AGENT_BACKENDS["cursor-acp"];
-  assert.equal(migrated.conversation.config.backendId, "cursor-acp");
+  const fallbackBackend = AGENT_BACKENDS["cesium-agent"];
+  assert.equal(migrated.conversation.config.backendId, "cesium-agent");
   assert.equal(migrated.conversation.config.modelId, fallbackBackend.defaultModelId);
   assert.equal(migrated.conversation.config.modelName, fallbackBackend.defaultModelName);
   assert.equal(migrated.conversation.config.mode, fallbackBackend.defaultMode);
@@ -1147,10 +1157,10 @@ test("unsupported backends fall back to cursor defaults when legacy conversation
   await testRuntimeManager.ensureConversationRuntime(workspace, conversation.id);
   const resumed = await readConversationSnapshot(workspace.id, conversation.id);
   assert.ok(resumed, "expected resumed snapshot after fallback runtime");
-  assert.equal(resumed.conversation.config.backendId, "cursor-acp");
+  assert.equal(resumed.conversation.config.backendId, "cesium-agent");
   assert.ok(
     resumed.conversation.providerSessionId,
-    "expected a fallback cursor runtime session to start"
+    "expected a fallback cesium runtime session to start"
   );
 });
 
@@ -1162,14 +1172,14 @@ test("lists grouped conversation summaries across all workspaces", async () => {
   const workspaceA = await ensureWorkspaceRegistered(workspaceRootA, "workspace-a");
   const workspaceB = await ensureWorkspaceRegistered(workspaceRootB, "workspace-b");
   const conversationA = await testRuntimeManager.createConversation(workspaceA, {
-    backendId: "cursor-acp",
+    backendId: "cursor-sdk",
     mode: "agent",
     modelId: "test-fast",
     modelName: "Test Fast",
     title: "Cross workspace A",
   });
   const conversationB = await testRuntimeManager.createConversation(workspaceB, {
-    backendId: "opencode-acp",
+    backendId: "opencode-server",
     mode: "plan",
     modelId: "test-deep",
     modelName: "Test Deep",
@@ -1226,14 +1236,14 @@ test("lists grouped conversation summaries across all workspaces", async () => {
   assert.equal(groupA.conversations[0]?.id, conversationA.id);
   assert.equal(groupA.conversations[0]?.workspaceId, workspaceA.id);
   assert.equal(groupA.conversations[0]?.title, "Cross workspace A");
-  assert.equal(groupA.conversations[0]?.backendId, "cursor-acp");
+  assert.equal(groupA.conversations[0]?.backendId, "cursor-sdk");
   assert.equal(groupA.conversations[0]?.mode, "agent");
   assert.equal(groupA.conversations[0]?.hasPendingPermission, false);
   assert.equal(groupB.conversations[0]?.id, conversationB.id);
   assert.equal(groupB.conversations[0]?.workspaceId, workspaceB.id);
   assert.equal(groupB.conversations[0]?.title, "Cross workspace B");
   assert.equal(groupB.conversations[0]?.status, "awaiting_permission");
-  assert.equal(groupB.conversations[0]?.backendId, "opencode-acp");
+  assert.equal(groupB.conversations[0]?.backendId, "opencode-server");
   assert.equal(groupB.conversations[0]?.mode, "plan");
   assert.equal(groupB.conversations[0]?.hasPendingPermission, true);
 
@@ -1246,7 +1256,7 @@ test("lists grouped conversation summaries across all workspaces", async () => {
 test("fork creates new conversation with transcript and same backend", async () => {
   const workspace = await ensureWorkspaceRegistered(repoRoot, "repo");
   const source = await testRuntimeManager.createConversation(workspace, {
-    backendId: "cursor-acp",
+    backendId: "cursor-sdk",
     mode: "agent",
     modelId: "test-fast",
     modelName: "Test Fast",
@@ -1271,7 +1281,7 @@ test("fork creates new conversation with transcript and same backend", async () 
   assert.notEqual(forked.id, source.id, "fork should create a new conversation");
   assert.equal(
     forked.config.backendId,
-    "cursor-acp",
+    "cursor-sdk",
     "fork should keep the same backend"
   );
   assert.ok(
@@ -1285,7 +1295,7 @@ test("fork creates new conversation with transcript and same backend", async () 
   const forkEvent = forkedSnap.events.find((e) => e.kind === "chat_fork");
   assert.ok(forkEvent && forkEvent.kind === "chat_fork", "expected chat_fork marker");
   assert.equal(forkEvent.fromConversationId, source.id);
-  assert.equal(forkEvent.fromAgent, "cursor-acp");
+  assert.equal(forkEvent.fromAgent, "cursor-sdk");
   assert.ok(
     forkedSnap.events.some(
       (e) => e.kind === "user_message" && "inheritedInFork" in e && e.inheritedInFork
@@ -1308,7 +1318,7 @@ test("fork creates new conversation with transcript and same backend", async () 
 test("fork with upToMessageId truncates transcript at that message", async () => {
   const workspace = await ensureWorkspaceRegistered(repoRoot, "repo");
   const source = await testRuntimeManager.createConversation(workspace, {
-    backendId: "cursor-acp",
+    backendId: "cursor-sdk",
     mode: "agent",
     modelId: "test-fast",
     modelName: "Test Fast",
@@ -1368,7 +1378,7 @@ test("fork with upToMessageId truncates transcript at that message", async () =>
 test("fork does not write any marker to source conversation", async () => {
   const workspace = await ensureWorkspaceRegistered(repoRoot, "repo");
   const source = await testRuntimeManager.createConversation(workspace, {
-    backendId: "opencode-acp",
+    backendId: "opencode-server",
     mode: "agent",
     modelId: "test-fast",
     modelName: "Test Fast",
@@ -1399,7 +1409,7 @@ test("fork does not write any marker to source conversation", async () => {
 test("fork injects transcript on first prompt via resolvePendingForkContext", async () => {
   const workspace = await ensureWorkspaceRegistered(repoRoot, "repo");
   const source = await testRuntimeManager.createConversation(workspace, {
-    backendId: "cursor-acp",
+    backendId: "cursor-sdk",
     mode: "agent",
     modelId: "test-fast",
     modelName: "Test Fast",

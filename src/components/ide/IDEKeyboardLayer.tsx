@@ -45,6 +45,7 @@ import { useShellView } from "@/components/layout/ShellViewContext";
 import { useAgentShellStateMaybe } from "@/components/agent/AgentShellStateContext";
 import {
   dispatchChatComposerShortcut,
+  dispatchNewChatShortcut,
   dispatchWorkspacePickerShortcut,
 } from "@/lib/chat-ui-shortcut-events";
 
@@ -66,6 +67,7 @@ const INPUT_SINK_ALLOWED_SHORTCUT_IDS = [
   "chat.action.toggleVoiceInput",
   "chat.action.toggleComposerExpand",
   "chat.action.attachImage",
+  "chat.action.newChat",
   "chat.action.agentRailPreviousConversation",
   "chat.action.agentRailNextConversation",
 ] as const;
@@ -524,6 +526,13 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
         case "chat.action.attachImage":
           dispatchChatComposerShortcut("attachImage");
           break;
+        case "chat.action.newChat":
+          if (agentShell) {
+            agentShell.startNewConversation();
+          } else {
+            dispatchNewChatShortcut();
+          }
+          break;
         case "chat.action.openWorkspacePicker":
           dispatchWorkspacePickerShortcut();
           break;
@@ -679,6 +688,12 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
         label: "Chat: Attach image",
         keybinding: kb("chat.action.attachImage"),
         run: () => runShortcutCommand("chat.action.attachImage"),
+      },
+      {
+        id: "chat.action.newChat",
+        label: "New chat",
+        keybinding: kb("chat.action.newChat"),
+        run: () => runShortcutCommand("chat.action.newChat"),
       },
       {
         id: "chat.action.agentRailPreviousConversation",

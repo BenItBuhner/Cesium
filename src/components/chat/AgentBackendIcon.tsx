@@ -10,9 +10,8 @@ function LucideBackendFallback({
   ...props
 }: { backendId: AgentBackendId } & LucideProps) {
   if (
-    backendId === "cursor-acp" ||
+    backendId === "cesium-agent" ||
     backendId === "cursor-sdk" ||
-    backendId === "codex-adapter" ||
     backendId === "codex-app-server"
   ) {
     return <Sparkles {...props} />;

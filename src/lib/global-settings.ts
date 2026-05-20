@@ -10,6 +10,7 @@ import {
 } from "@/lib/theme-config";
 
 export type WorkspaceSortMode = "recent" | "alphabetical" | "custom";
+export type AgentRailGroupByMode = "workspace" | "repository" | "server" | "updated" | "status";
 
 export type ChatFolderState = {
   id: string;
@@ -21,12 +22,29 @@ export type ChatFolderState = {
   conversationIds: string[];
 };
 
+/** Per server-scoped workspace key (`serverId:workspaceId`). */
+export type WorkspaceRailAppearance = {
+  icon: string;
+  color: string;
+};
+
 export type GeneralSettingsState = {
   doNotDisturb: boolean;
   sideColumnsSwapped: boolean;
   workspaceSortMode: WorkspaceSortMode;
   workspaceCustomOrderIds: string[];
+  workspaceRailAppearances: Record<string, WorkspaceRailAppearance>;
   chatFolders: ChatFolderState[];
+  agentRail: AgentRailSettingsState;
+};
+
+export type AgentRailSettingsState = {
+  groupBy: AgentRailGroupByMode;
+  visibleStatusFilters: string[];
+  /** Legacy allow-list kept only so old persisted settings can be read. New filtering uses hiddenServerIds. */
+  visibleServerIds: string[];
+  hiddenServerIds: string[];
+  showIcons: boolean;
 };
 
 export type AgentsSettingsState = {
@@ -56,7 +74,7 @@ export type AgentsSettingsState = {
   modeTags: string[];
   branchPrefix: string;
   /**
-   * When true, the server auto-approves agent tool permission prompts (ACP). Explicit “always allow”
+   * When true, the server auto-approves agent tool permission prompts. Explicit “always allow”
    * rules still apply first. Turning this on is risky; it does not add entries to the list below.
    */
   autoAcceptAllAgentPermissions: boolean;
@@ -127,7 +145,15 @@ export function createDefaultGlobalSettings(): GlobalSettingsState {
       sideColumnsSwapped: false,
       workspaceSortMode: "recent",
       workspaceCustomOrderIds: [],
+      workspaceRailAppearances: {},
       chatFolders: [],
+      agentRail: {
+        groupBy: "workspace",
+        visibleStatusFilters: [],
+        visibleServerIds: [],
+        hiddenServerIds: [],
+        showIcons: true,
+      },
     },
     agents: {
       submitCtrlEnter: false,
@@ -183,6 +209,37 @@ function normalizeWorkspaceCustomOrderIds(raw: unknown): string[] {
   return out.slice(0, 500);
 }
 
+function normalizeWorkspaceRailAppearances(
+  raw: unknown
+): Record<string, WorkspaceRailAppearance> {
+  if (!raw || typeof raw !== "object") {
+    return {};
+  }
+  const out: Record<string, WorkspaceRailAppearance> = {};
+  let count = 0;
+  for (const [key, value] of Object.entries(raw)) {
+    if (count >= 500) {
+      break;
+    }
+    const workspaceKey = typeof key === "string" ? key.trim() : "";
+    if (!workspaceKey || !value || typeof value !== "object") {
+      continue;
+    }
+    const record = value as Partial<WorkspaceRailAppearance>;
+    const rawColor = typeof record.color === "string" ? record.color.trim() : "";
+    const rawIcon = typeof record.icon === "string" ? record.icon.trim() : "";
+    if (!rawIcon && !/^#[0-9a-f]{6}$/i.test(rawColor)) {
+      continue;
+    }
+    out[workspaceKey] = {
+      icon: rawIcon || "Folder",
+      color: /^#[0-9a-f]{6}$/i.test(rawColor) ? rawColor : "#7c3aed",
+    };
+    count += 1;
+  }
+  return out;
+}
+
 function normalizeChatFolders(raw: unknown): ChatFolderState[] {
   if (!Array.isArray(raw)) {
     return [];
@@ -231,17 +288,59 @@ function normalizeChatFolders(raw: unknown): ChatFolderState[] {
   return folders.slice(0, 500);
 }
 
+function normalizeAgentRailSettings(raw: unknown): AgentRailSettingsState {
+  const defaults = createDefaultGlobalSettings().general.agentRail;
+  if (!raw || typeof raw !== "object") {
+    return defaults;
+  }
+  const record = raw as Partial<AgentRailSettingsState>;
+  const rawGroupBy =
+    record.groupBy === "workspace" ||
+    record.groupBy === "repository" ||
+    record.groupBy === "server" ||
+    record.groupBy === "updated" ||
+    record.groupBy === "status"
+      ? record.groupBy
+      : defaults.groupBy;
+  const groupBy = rawGroupBy === "server" ? "workspace" : rawGroupBy;
+  const strings = (value: unknown): string[] =>
+    Array.isArray(value)
+      ? value.filter((item): item is string => typeof item === "string")
+      : [];
+  return {
+    groupBy,
+    visibleStatusFilters: strings(record.visibleStatusFilters),
+    // Do not preserve legacy allow-lists. They hide newly added servers forever,
+    // which is catastrophic for a dynamic multi-server rail.
+    visibleServerIds: [],
+    hiddenServerIds: strings(record.hiddenServerIds),
+    showIcons:
+      typeof record.showIcons === "boolean" ? record.showIcons : defaults.showIcons,
+  };
+}
+
 function normalizeRememberedPermissions(raw: unknown): RememberedAgentPermissionRule[] {
   if (!Array.isArray(raw)) {
     return [];
   }
+  const REMEMBERED_PERMISSION_BACKEND_REMAP: Record<string, string> = {
+    cesium: "cesium-agent",
+    "cursor-acp": "cursor-sdk",
+    "claude-adapter": "claude-code-sdk",
+    "opencode-acp": "opencode-server",
+    "codex-adapter": "codex-app-server",
+  };
+  const normalizeBackendId = (backendId: string): string =>
+    REMEMBERED_PERMISSION_BACKEND_REMAP[backendId] ?? backendId;
   return raw.flatMap((item): RememberedAgentPermissionRule[] => {
     if (!item || typeof item !== "object") {
       return [];
     }
     const record = item as Partial<RememberedAgentPermissionRule>;
     const workspaceId = typeof record.workspaceId === "string" ? record.workspaceId.trim() : "";
-    const backendId = typeof record.backendId === "string" ? record.backendId.trim() : "";
+    const backendId = normalizeBackendId(
+      typeof record.backendId === "string" ? record.backendId.trim() : ""
+    );
     const toolKey = typeof record.toolKey === "string" ? record.toolKey.trim() : "";
     const decision = record.decision === "allow" || record.decision === "reject" ? record.decision : null;
     const optionKind =
@@ -315,8 +414,14 @@ export function normalizeLoadedGlobalSettings(
       workspaceCustomOrderIds: normalizeWorkspaceCustomOrderIds(
         (r.general as Record<string, unknown> | undefined)?.workspaceCustomOrderIds
       ),
+      workspaceRailAppearances: normalizeWorkspaceRailAppearances(
+        (r.general as Record<string, unknown> | undefined)?.workspaceRailAppearances
+      ),
       chatFolders: normalizeChatFolders(
         (r.general as Record<string, unknown> | undefined)?.chatFolders
+      ),
+      agentRail: normalizeAgentRailSettings(
+        (r.general as Record<string, unknown> | undefined)?.agentRail
       ),
     },
     agents: {

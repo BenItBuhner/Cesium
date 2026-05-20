@@ -19,14 +19,12 @@ import { AssistantMessage } from "./AssistantMessage";
 import { TodoStatusCard } from "./TodoStatusCard";
 import { TodoCard } from "./TodoCard";
 import { LiveSubagentCard } from "./LiveSubagentCard";
-import { AskQuestionCard } from "./AskQuestionCard";
 import { ActivityLabel } from "./ActivityLabel";
 import { WorkedSessionCard } from "./WorkedSessionCard";
 import { ShellCommandCard } from "./ShellCommandCard";
 import { PermissionRequestCard } from "./PermissionRequestCard";
 import { HandoffDivider } from "./HandoffDivider";
 import { ForkDivider } from "./ForkDivider";
-import { askStepsFromMessage } from "@/lib/ask-question-utils";
 import {
   buildMessageThreadSegments,
   type MessageThreadSegment,
@@ -34,6 +32,7 @@ import {
 } from "./message-thread-rows";
 import type { ChatMessage } from "@/lib/types";
 import { stripAgentTodoJsonAssistantContent } from "@/lib/agent-chat";
+import { shouldHideCompletionFailureInThread } from "@/lib/agent-completion-error";
 
 /**
  * Types that end the “live tail” worked-session; later messages must not keep prior cards in
@@ -285,14 +284,35 @@ export function MessageThreadContent({
   const { embeddedPermissionByWorkedId, skipPermissionMessageIndex } = useMemo(() => {
     const embedded = new Map<string, ChatMessage>();
     const skip = new Set<number>();
-    for (let i = 1; i < messages.length; i += 1) {
-      const prev = messages[i - 1];
+    const workedIdByToolCallId = new Map<string, string>();
+    for (const message of messages) {
+      if (message.type !== "worked-session") {
+        continue;
+      }
+      for (const entry of message.workedEntries ?? []) {
+        if (entry.kind === "tool" && entry.toolCallId) {
+          workedIdByToolCallId.set(entry.toolCallId, message.id);
+        }
+      }
+    }
+    for (let i = 0; i < messages.length; i += 1) {
       const cur = messages[i];
-      if (
-        prev?.type === "worked-session" &&
-        cur?.type === "permission-request" &&
-        cur.permissionRequestId
-      ) {
+      if (cur?.type !== "permission-request" || !cur.permissionRequestId) {
+        continue;
+      }
+      const linkedWorkedId = cur.permissionLinkedToolCallId
+        ? workedIdByToolCallId.get(cur.permissionLinkedToolCallId)
+        : undefined;
+      if (linkedWorkedId) {
+        const existing = embedded.get(linkedWorkedId);
+        if (!existing || existing.permissionResolved || !cur.permissionResolved) {
+          embedded.set(linkedWorkedId, cur);
+        }
+        skip.add(i);
+        continue;
+      }
+      const prev = messages[i - 1];
+      if (prev?.type === "worked-session") {
         embedded.set(prev.id, cur);
         skip.add(i);
       }
@@ -410,17 +430,8 @@ export function MessageThreadContent({
             </div>
           );
         }
-        case "ask-question": {
-          const steps = askStepsFromMessage(msg);
-          if (steps.length) {
-            return (
-              <div key={rowKey} data-chat-message-id={msg.id} className="min-w-0 w-full">
-                <AskQuestionCard steps={steps} />
-              </div>
-            );
-          }
+        case "ask-question":
           return null;
-        }
         case "permission-request":
           if (skipPermissionMessageIndex.has(i)) {
             return null;
@@ -447,6 +458,9 @@ export function MessageThreadContent({
             </div>
           );
         case "activity-label":
+          if (shouldHideCompletionFailureInThread(msg.activityLabel, msg.activityDetail)) {
+            return null;
+          }
           return (
             <div key={rowKey} data-chat-message-id={msg.id} className="min-w-0 w-full">
               <ActivityLabel

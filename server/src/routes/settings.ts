@@ -15,6 +15,17 @@ import {
   saveCursorSdkApiKey,
 } from "../lib/cursor-sdk-credentials.js";
 import {
+  deleteCesiumProviderKey,
+  getCesiumAgentSettingsPublic,
+  getCesiumModelCatalog,
+  patchCesiumAgentSettings,
+  refreshCesiumModelCatalog,
+  upsertCesiumProviderKey,
+  type CesiumProviderKind,
+  type CesiumCustomProvider,
+  type CesiumAgentSettings,
+} from "../lib/cesium-agent-settings.js";
+import {
   bumpRevision,
   formatEtag,
   getRevision,
@@ -154,6 +165,102 @@ settingsRoutes.put("/api/settings/cursor-sdk", async (c) => {
 settingsRoutes.delete("/api/settings/cursor-sdk", async (c) => {
   await deleteCursorSdkApiKey();
   return c.json({ ok: true, status: await getCursorSdkCredentialStatus() });
+});
+
+function isCesiumProviderKind(value: unknown): value is CesiumProviderKind {
+  return (
+    value === "openai-chat-completions" ||
+    value === "openai-responses" ||
+    value === "openai-realtime" ||
+    value === "anthropic" ||
+    value === "google-genai" ||
+    value === "openai-compatible"
+  );
+}
+
+settingsRoutes.get("/api/settings/cesium-agent", async (c) => {
+  return c.json({ settings: await getCesiumAgentSettingsPublic() });
+});
+
+settingsRoutes.patch("/api/settings/cesium-agent", async (c) => {
+  const body = await c.req.json<{
+    defaultProviderKeyId?: string | null;
+    defaultModelId?: string;
+    defaultApiKind?: unknown;
+    compression?: Record<string, unknown>;
+    toolPermissions?: Record<string, unknown>;
+    customProviders?: CesiumCustomProvider[];
+  }>();
+  const settings = await patchCesiumAgentSettings({
+    ...(body.defaultProviderKeyId !== undefined
+      ? { defaultProviderKeyId: body.defaultProviderKeyId }
+      : {}),
+    ...(typeof body.defaultModelId === "string" ? { defaultModelId: body.defaultModelId } : {}),
+    ...(isCesiumProviderKind(body.defaultApiKind) ? { defaultApiKind: body.defaultApiKind } : {}),
+    ...(body.compression
+      ? { compression: body.compression as Partial<CesiumAgentSettings["compression"]> }
+      : {}),
+    ...(body.toolPermissions
+      ? { toolPermissions: body.toolPermissions as Partial<CesiumAgentSettings["toolPermissions"]> }
+      : {}),
+    ...(Array.isArray(body.customProviders) ? { customProviders: body.customProviders } : {}),
+  });
+  return c.json({ ok: true, settings });
+});
+
+settingsRoutes.put("/api/settings/cesium-agent/provider-key", async (c) => {
+  const body = await c.req.json<{
+    id?: string;
+    providerId?: string;
+    label?: string;
+    apiKind?: unknown;
+    apiKey?: string;
+    baseUrl?: string;
+  }>();
+  if (!body.providerId?.trim() || !body.apiKey?.trim() || !isCesiumProviderKind(body.apiKind)) {
+    return c.json({ error: "Expected providerId, apiKind, and apiKey." }, 400);
+  }
+  const settings = await upsertCesiumProviderKey({
+    id: body.id,
+    providerId: body.providerId,
+    label: body.label,
+    apiKind: body.apiKind,
+    apiKey: body.apiKey,
+    baseUrl: body.baseUrl,
+  });
+  return c.json({ ok: true, settings });
+});
+
+settingsRoutes.delete("/api/settings/cesium-agent/provider-key/:id", async (c) => {
+  const settings = await deleteCesiumProviderKey(c.req.param("id"));
+  return c.json({ ok: true, settings });
+});
+
+settingsRoutes.get("/api/settings/cesium-agent/models", async (c) => {
+  return c.json({ models: await getCesiumModelCatalog() });
+});
+
+settingsRoutes.post("/api/settings/cesium-agent/models/refresh", async (c) => {
+  const models = await refreshCesiumModelCatalog();
+  return c.json({ ok: true, models });
+});
+
+settingsRoutes.post("/api/settings/cesium-agent/providers/discover", async (c) => {
+  const body = await c.req.json<{
+    apiKind?: unknown;
+    apiKey?: string;
+    baseUrl?: string;
+  }>();
+  if (!isCesiumProviderKind(body.apiKind) || !body.apiKey?.trim() || !body.baseUrl?.trim()) {
+    return c.json({ error: "Expected apiKind, apiKey, and baseUrl." }, 400);
+  }
+  const { discoverCesiumProviderModels } = await import("../lib/cesium-agent-settings.js");
+  const models = await discoverCesiumProviderModels({
+    apiKind: body.apiKind,
+    apiKey: body.apiKey,
+    baseUrl: body.baseUrl,
+  });
+  return c.json({ ok: true, models });
 });
 
 settingsRoutes.post("/api/settings/models/refresh", async (c) => {

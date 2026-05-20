@@ -107,6 +107,19 @@ test("commands not allowed in editable targets still run elsewhere", () => {
   assert.equal(result.commandId, "workbench.action.toggleSidebarVisibility");
 });
 
+test("new chat defaults to Mod+N and runs in editable targets", () => {
+  assert.deepEqual(DEFAULT_KEYBOARD_SHORTCUT_BINDINGS["chat.action.newChat"], ["Mod+N"]);
+
+  const result = dispatchShortcut({
+    event: keyEvent({ key: "n", ctrlKey: true }),
+    editableTarget: true,
+  });
+
+  assert.equal(result.consumed, true);
+  assert.equal(result.defaultPrevented, true);
+  assert.equal(result.commandId, "chat.action.newChat");
+});
+
 test("native editing shortcut detector covers common edit commands", () => {
   for (const key of ["a", "c", "v", "x", "y", "z"]) {
     assert.equal(

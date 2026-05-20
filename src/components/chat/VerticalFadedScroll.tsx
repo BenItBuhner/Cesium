@@ -6,12 +6,17 @@ import {
   useRef,
   useState,
   type ReactNode,
+  type RefObject,
 } from "react";
 
 type VerticalFadedScrollProps = {
   children: ReactNode;
+  /** Classes on the outer wrapper (e.g. `min-h-0 flex-1` inside a flex popover). */
+  wrapperClassName?: string;
   /** Classes for the scrollport (overflow-y, max-height, scrollbar hide, padding, etc.). */
   scrollClassName: string;
+  /** Optional external ref for the scrollport (keyboard nav scroll-into-view). */
+  scrollRef?: RefObject<HTMLDivElement | null>;
   /** CSS color for the fade, e.g. `var(--bg-panel)` (match the popover surface). */
   edgeColorVar?: string;
   /** Bust fade layout when content changes (filter text, list length, etc.). */
@@ -24,7 +29,9 @@ type VerticalFadedScrollProps = {
  */
 export function VerticalFadedScroll({
   children,
+  wrapperClassName,
   scrollClassName,
+  scrollRef: externalScrollRef,
   edgeColorVar = "var(--bg-panel)",
   measureKey,
 }: VerticalFadedScrollProps) {
@@ -61,8 +68,12 @@ export function VerticalFadedScroll({
   const gradTop = `linear-gradient(to bottom, ${edgeColorVar}, transparent)`;
   const gradBottom = `linear-gradient(to top, ${edgeColorVar}, transparent)`;
 
+  const wrapperClass = wrapperClassName
+    ? `relative min-h-0 min-w-0 ${wrapperClassName}`
+    : "relative min-h-0 min-w-0";
+
   return (
-    <div className="relative min-h-0 min-w-0">
+    <div className={wrapperClass}>
       {fade.top ? (
         <div
           className="pointer-events-none absolute inset-x-0 top-0 z-[2] h-[24px]"
@@ -78,7 +89,12 @@ export function VerticalFadedScroll({
         />
       ) : null}
       <div
-        ref={scrollRef}
+        ref={(node) => {
+          scrollRef.current = node;
+          if (externalScrollRef) {
+            externalScrollRef.current = node;
+          }
+        }}
         onScroll={updateFade}
         className={scrollClassName}
       >

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { Check, ChevronDown } from "lucide-react";
+import { VerticalFadedScroll } from "@/components/chat/VerticalFadedScroll";
 import { useClickOutside } from "@/hooks/useClickOutside";
 import { usePopover, type PopoverPlacement } from "@/hooks/usePopover";
 
@@ -100,7 +101,7 @@ export function SettingsThemeSelect({
             data-ide-input-sink
             role="listbox"
             aria-label={ariaLabel}
-            className={`fixed z-[9999] ${popoverClass}`}
+            className={`fixed z-[9999] overflow-hidden ${popoverClass}`}
             style={{
               ...(position.top != null
                 ? { top: position.top }
@@ -109,34 +110,41 @@ export function SettingsThemeSelect({
               width: menuWidth > 0 ? menuWidth : undefined,
               minWidth: menuWidth > 0 ? menuWidth : 200,
               maxHeight: position.maxHeight,
-              overflowY: "auto",
               opacity: ready ? 1 : 0,
             }}
             onPointerDown={(e) => e.stopPropagation()}
           >
-            {options.map((o) => {
-              const active = o.value === value;
-              return (
-                <button
-                  key={o.value}
-                  type="button"
-                  role="option"
-                  aria-selected={active}
-                  onClick={() => {
-                    onChange(o.value);
-                    close();
-                  }}
-                  className="flex w-full items-center gap-[8px] px-[12px] py-[6px] text-left font-sans text-[12px] text-[var(--text-primary)] transition-colors hover:bg-[var(--accent-bg)]"
-                >
-                  <span className="min-w-0 flex-1 truncate">{o.label}</span>
-                  {active ? (
-                    <Check className="size-[14px] shrink-0 text-[var(--text-primary)]" strokeWidth={2} />
-                  ) : (
-                    <span className="size-[14px] shrink-0" aria-hidden />
-                  )}
-                </button>
-              );
-            })}
+            <div className="min-h-0" style={{ maxHeight: position.maxHeight }}>
+              <VerticalFadedScroll
+                measureKey={`${options.length}:${value}`}
+                edgeColorVar="var(--bg-panel)"
+                scrollClassName="hide-scrollbar-y max-h-full min-h-0 overflow-y-auto overscroll-contain py-[4px]"
+              >
+                {options.map((o) => {
+                  const active = o.value === value;
+                  return (
+                    <button
+                      key={o.value}
+                      type="button"
+                      role="option"
+                      aria-selected={active}
+                      onClick={() => {
+                        onChange(o.value);
+                        close();
+                      }}
+                      className="flex w-full items-center gap-[8px] px-[12px] py-[6px] text-left font-sans text-[12px] text-[var(--text-primary)] transition-colors hover:bg-[var(--accent-bg)]"
+                    >
+                      <span className="min-w-0 flex-1 truncate">{o.label}</span>
+                      {active ? (
+                        <Check className="size-[14px] shrink-0 text-[var(--text-primary)]" strokeWidth={2} />
+                      ) : (
+                        <span className="size-[14px] shrink-0" aria-hidden />
+                      )}
+                    </button>
+                  );
+                })}
+              </VerticalFadedScroll>
+            </div>
           </div>,
           document.body
         )}

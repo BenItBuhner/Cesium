@@ -35,6 +35,13 @@ import type {
   EditorStripItem,
   EditorTabGroupState,
 } from "@/lib/workspace-session";
+import {
+  popoverMenuIconItemClass,
+  popoverMenuItemClass,
+  popoverMenuListClass,
+  popoverMenuPanelClass,
+  popoverMenuSeparatorClass,
+} from "@/components/ui/popover-menu-ui";
 
 interface EditorTabsProps {
   group: EditorGroup;
@@ -612,10 +619,11 @@ export function EditorTabs({
           <div
             ref={addMenuPopoverRef}
             role="menu"
-            className="fixed z-[9999] w-[200px] rounded-[var(--radius-card)] border border-[var(--border-card)] bg-[var(--bg-panel)] py-[4px]"
+            className={`fixed z-[9999] w-[200px] ${popoverMenuPanelClass}`}
             style={{ top: addMenuPos.top, left: addMenuPos.left }}
             onPointerDown={(e) => e.stopPropagation()}
           >
+            <div className={popoverMenuListClass}>
             {onOpenTerminal && (
               <button
                 type="button"
@@ -624,7 +632,7 @@ export function EditorTabs({
                   onOpenTerminal();
                   closeAddMenu();
                 }}
-                className="flex w-full items-center gap-[8px] px-[12px] py-[6px] text-left font-sans text-[13px] text-[var(--text-primary)] transition-colors hover:bg-white/[0.06]"
+                className={popoverMenuIconItemClass}
               >
                 <Terminal className="size-[14px] shrink-0 text-[var(--text-secondary)]" strokeWidth={1.5} />
                 <span className="flex-1">New Terminal</span>
@@ -638,12 +646,13 @@ export function EditorTabs({
                   onOpenBrowser();
                   closeAddMenu();
                 }}
-                className="flex w-full items-center gap-[8px] px-[12px] py-[6px] text-left font-sans text-[13px] text-[var(--text-primary)] transition-colors hover:bg-white/[0.06]"
+                className={popoverMenuIconItemClass}
               >
                 <Globe className="size-[14px] shrink-0 text-[var(--text-secondary)]" strokeWidth={1.5} />
                 <span className="flex-1">New Browser Tab</span>
               </button>
             )}
+            </div>
           </div>,
           document.body
         )}
@@ -653,10 +662,11 @@ export function EditorTabs({
           <div
             ref={menuPopoverRef}
             role="menu"
-            className="fixed z-[9999] w-[240px] rounded-[var(--radius-card)] border border-[var(--border-card)] bg-[var(--bg-panel)] py-[4px]"
+            className={`fixed z-[9999] w-[240px] ${popoverMenuPanelClass}`}
             style={{ top: menuPos.top, left: menuPos.left }}
             onPointerDown={(e) => e.stopPropagation()}
           >
+            <div className={popoverMenuListClass}>
             {splitActive && (
               <>
                 <button
@@ -666,7 +676,7 @@ export function EditorTabs({
                     onJoinGroups();
                     closeMenu();
                   }}
-                  className="flex w-full items-center gap-[8px] px-[12px] py-[6px] text-left font-sans text-[13px] text-[var(--text-primary)] transition-colors hover:bg-white/[0.06]"
+                  className={popoverMenuIconItemClass}
                 >
                   <Columns2 className="size-[14px] shrink-0 text-[var(--text-secondary)]" strokeWidth={1.5} />
                   <span className="flex-1">Join Editor Groups</span>
@@ -681,7 +691,7 @@ export function EditorTabs({
                     }
                     closeMenu();
                   }}
-                  className="flex w-full items-center gap-[8px] px-[12px] py-[6px] text-left font-sans text-[13px] text-[var(--text-primary)] transition-colors hover:bg-white/[0.06] disabled:cursor-not-allowed disabled:opacity-40"
+                  className={popoverMenuIconItemClass}
                 >
                   <Columns2
                     className="size-[14px] shrink-0 text-[var(--text-secondary)]"
@@ -699,7 +709,7 @@ export function EditorTabs({
                     }
                     closeMenu();
                   }}
-                  className="flex w-full items-center gap-[8px] px-[12px] py-[6px] text-left font-sans text-[13px] text-[var(--text-primary)] transition-colors hover:bg-white/[0.06] disabled:cursor-not-allowed disabled:opacity-40"
+                  className={popoverMenuIconItemClass}
                 >
                   <Rows2
                     className="size-[14px] shrink-0 text-[var(--text-secondary)]"
@@ -707,7 +717,7 @@ export function EditorTabs({
                   />
                   <span className="flex-1">Use Stacked Layout</span>
                 </button>
-                <div className="my-[4px] h-px bg-[var(--border-subtle)]" aria-hidden />
+                <div className={popoverMenuSeparatorClass} aria-hidden />
               </>
             )}
             {!splitActive && showSplitToolbar && (
@@ -719,7 +729,7 @@ export function EditorTabs({
                     onSplitRight();
                     closeMenu();
                   }}
-                  className="flex w-full items-center gap-[8px] px-[12px] py-[6px] text-left font-sans text-[13px] text-[var(--text-primary)] transition-colors hover:bg-white/[0.06]"
+                  className={popoverMenuIconItemClass}
                 >
                   <Columns2 className="size-[14px] shrink-0 text-[var(--text-secondary)]" strokeWidth={1.5} />
                   <span className="flex-1">Split Editor Right</span>
@@ -731,12 +741,12 @@ export function EditorTabs({
                     onSplitDown();
                     closeMenu();
                   }}
-                  className="flex w-full items-center gap-[8px] px-[12px] py-[6px] text-left font-sans text-[13px] text-[var(--text-primary)] transition-colors hover:bg-white/[0.06]"
+                  className={popoverMenuIconItemClass}
                 >
                   <Rows2 className="size-[14px] shrink-0 text-[var(--text-secondary)]" strokeWidth={1.5} />
                   <span className="flex-1">Split Editor Down</span>
                 </button>
-                <div className="my-[4px] h-px bg-[var(--border-subtle)]" aria-hidden />
+                <div className={popoverMenuSeparatorClass} aria-hidden />
               </>
             )}
 
@@ -748,7 +758,7 @@ export function EditorTabs({
                 if (canCloseOthers) onCloseOtherTabs();
                 closeMenu();
               }}
-              className="flex w-full px-[12px] py-[6px] text-left font-sans text-[13px] text-[var(--text-primary)] transition-colors hover:bg-white/[0.06] disabled:cursor-not-allowed disabled:opacity-40"
+              className={popoverMenuItemClass}
             >
               Close Other Editors in Group
             </button>
@@ -760,10 +770,11 @@ export function EditorTabs({
                 if (hasTabs) onCloseAllTabs();
                 closeMenu();
               }}
-              className="flex w-full px-[12px] py-[6px] text-left font-sans text-[13px] text-[var(--text-primary)] transition-colors hover:bg-white/[0.06] disabled:cursor-not-allowed disabled:opacity-40"
+              className={popoverMenuItemClass}
             >
               Close All Editors in Group
             </button>
+            </div>
           </div>,
           document.body
         )}

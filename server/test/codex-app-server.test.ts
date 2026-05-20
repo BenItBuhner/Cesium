@@ -20,12 +20,10 @@ const [
   import("../src/lib/agents/codex-app-server-normalize.js"),
 ]);
 
-test("codex app server backend is registered immediately after codex", () => {
+test("codex app server backend is registered in the harness menu", () => {
   const backends = listAgentBackends();
-  const codexIndex = backends.findIndex((backend) => backend.id === "codex-adapter");
   const appServerIndex = backends.findIndex((backend) => backend.id === "codex-app-server");
-  assert.ok(codexIndex >= 0);
-  assert.equal(appServerIndex, codexIndex + 1);
+  assert.ok(appServerIndex >= 0);
   assert.equal(AGENT_BACKENDS["codex-app-server"].label, "Codex App Server");
   assert.equal(AGENT_BACKENDS["codex-app-server"].capabilities.supportsLoadSession, true);
   assert.equal(AGENT_BACKENDS["codex-app-server"].capabilities.supportsPermissions, true);

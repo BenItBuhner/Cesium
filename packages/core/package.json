@@ -13,6 +13,10 @@
     "./platform-surfaces": {
       "types": "./dist/platform-surfaces.d.ts",
       "import": "./dist/platform-surfaces.js"
+    },
+    "./mcp": {
+      "types": "./dist/mcp.d.ts",
+      "import": "./dist/mcp.js"
     }
   },
   "scripts": {

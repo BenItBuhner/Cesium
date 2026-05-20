@@ -35,6 +35,8 @@ const testCapabilities: AgentProviderCapabilities = {
   supportsTodos: true,
   supportsSessionResume: true,
   supportsPromptImages: false,
+  supportsInlineReasoning: false,
+  supportsCompletionRetry: false,
 };
 
 function makeWorkspace(
@@ -66,7 +68,7 @@ function makeConversation(
     lastEventSeq: overrides.lastEventSeq ?? 0,
     lastReadSeq: overrides.lastReadSeq ?? 0,
     config: overrides.config ?? {
-      backendId: "cursor-acp",
+      backendId: "cursor-sdk",
       mode: "agent",
       modelId: "test-fast",
       modelName: "Test Fast",
@@ -779,15 +781,15 @@ for (const kind of DRIVERS) {
     );
 
     await t.test("writeProviderCache round-trips", async () => {
-      await fixture.driver.writeProviderCache("cursor-acp", {
+      await fixture.driver.writeProviderCache("cursor-sdk", {
         schemaVersion: 1,
-        backendId: "cursor-acp",
+        backendId: "cursor-sdk",
         updatedAt: Date.now(),
         configOptions: [
           { id: "gpt-alpha", name: "GPT Alpha", kind: "model" } as never,
         ],
       });
-      const cached = await fixture.driver.readProviderCache("cursor-acp");
+      const cached = await fixture.driver.readProviderCache("cursor-sdk");
       assert.ok(cached, "expected provider cache to exist");
       assert.equal(cached?.configOptions.length, 1);
     });

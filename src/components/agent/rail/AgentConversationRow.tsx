@@ -7,7 +7,7 @@ import {
   type DragEvent,
   type MouseEvent,
 } from "react";
-import { LoaderCircle, MoreVertical } from "lucide-react";
+import { CheckSquare, LoaderCircle, MoreVertical, Square } from "lucide-react";
 import type {
   AgentConversationStatus,
   AgentRailConversationSummary,
@@ -53,6 +53,8 @@ export function AgentConversationRow({
   onDragEnd,
   rowIndex,
   selected,
+  bulkSelectMode = false,
+  bulkSelected = false,
   showOverflowMenu = false,
 }: {
   conversation: AgentRailConversationSummary;
@@ -68,11 +70,13 @@ export function AgentConversationRow({
   /** iPad / no native context menu: opens the same menu as `onContextMenu`. */
   onOverflowMenu?: (anchorEl: HTMLElement) => void;
   onEditValueChange?: (value: string) => void;
-  onSelect: () => void;
+  onSelect: (event: MouseEvent<HTMLButtonElement>) => void;
   onDragStart?: (event: DragEvent<HTMLDivElement>, conversation: AgentRailConversationSummary) => void;
   onDragEnd?: (event: DragEvent<HTMLDivElement>, conversation: AgentRailConversationSummary) => void;
   rowIndex?: number;
   selected: boolean;
+  bulkSelectMode?: boolean;
+  bulkSelected?: boolean;
   showOverflowMenu?: boolean;
 }) {
   const renameInputRef = useRef<HTMLInputElement>(null);
@@ -88,15 +92,30 @@ export function AgentConversationRow({
     return () => cancelAnimationFrame(frame);
   }, [editing]);
 
+  const rowHighlighted = bulkSelectMode ? bulkSelected : selected;
   const rowClassName = `flex h-[var(--agent-rail-row-height)] w-full items-center gap-[8px] rounded-[var(--agent-control-radius)] px-[9px] text-left transition-colors select-none ${
-    selected ? "bg-[var(--agent-card-bg)]" : "hover:bg-[var(--agent-card-bg)]"
-  }`;
+    rowHighlighted ? "bg-[var(--agent-card-bg)]" : "hover:bg-[var(--agent-card-bg)]"
+  } ${bulkSelectMode && bulkSelected ? "ring-1 ring-[var(--border-subtle)]" : ""}`;
 
   const titleClassName = `truncate font-sans text-[14px] font-normal ${
-    selected ? "text-[var(--text-primary)]" : "text-[var(--text-secondary)]"
+    rowHighlighted ? "text-[var(--text-primary)]" : "text-[var(--text-secondary)]"
   }`;
 
-  const statusIcon = (
+  const statusIcon = bulkSelectMode ? (
+    bulkSelected ? (
+      <CheckSquare
+        className="size-[14px] shrink-0 text-[var(--text-primary)]"
+        strokeWidth={1.6}
+        aria-hidden
+      />
+    ) : (
+      <Square
+        className="size-[14px] shrink-0 text-[var(--text-disabled)]"
+        strokeWidth={1.6}
+        aria-hidden
+      />
+    )
+  ) : (
     <ConversationStatusIcon
       status={conversation.status}
       selected={selected}
@@ -146,7 +165,7 @@ export function AgentConversationRow({
   return (
     <div
       className="group flex w-full min-w-0 items-center gap-[4px]"
-      draggable={Boolean(onDragStart)}
+      draggable={Boolean(onDragStart) && !bulkSelectMode}
       onDragStart={
         onDragStart ? (event) => onDragStart(event, conversation) : undefined
       }
@@ -158,6 +177,7 @@ export function AgentConversationRow({
       <button
         type="button"
         onClick={onSelect}
+        aria-pressed={bulkSelectMode ? bulkSelected : undefined}
         onContextMenu={handleContextMenu}
         data-perf="agent-rail-row-button"
         className={`${rowClassName} min-w-0 flex-1`}

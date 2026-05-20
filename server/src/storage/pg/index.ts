@@ -82,6 +82,7 @@ function rowToConversation(row: ConversationRow): AgentConversationRecord {
     capabilities: row.capabilities as AgentProviderCapabilities,
     pendingPermission:
       (row.pendingPermission as AgentPendingPermission | null) ?? null,
+    pendingQuestion: null,
     lastError: row.lastError,
     experimental: row.experimental,
     archivedAt: row.archivedAt,

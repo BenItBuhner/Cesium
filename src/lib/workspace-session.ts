@@ -331,6 +331,8 @@ export type ChatSessionState = {
    * conversation. Omitted = expanded. Syncs via workspace session.
    */
   composerQueueDockCollapsedByConversationId?: Record<string, true>;
+  /** Dismissed completion error cards keyed by completionErrorDismissKey. */
+  dismissedCompletionErrorKeyByConversationId?: Record<string, string>;
   /** Conversation completed (idle) since last viewed; key present means show unread dot. */
   unreadChatCompletionByConversationId?: Record<string, true>;
 };
@@ -343,11 +345,66 @@ export type AgentSidePaneSessionState = {
   expandedComposerDraftId: string | null;
 };
 
+export type SettingsPanelSearchFocus =
+  | { kind: "models"; query: string; backendId?: string }
+  | { kind: "keyboardShortcuts"; query: string }
+  | { kind: "scroll"; navId: string; rowId: string };
+
 export type SettingsViewSessionState = {
   activeNav: string;
   searchQuery: string;
   scrollTop: number;
+  /** When set with activeNav "agents", shows that harness's settings subpage (hidden from main nav). */
+  agentsHarnessId?: string | null;
+  /** When true with activeNav "plugins", shows MCP servers subpage (hidden from main nav). */
+  mcpsOpen?: boolean | null;
+  /** One-shot navigation target from global settings search (consumed by the destination panel). */
+  panelSearchFocus?: SettingsPanelSearchFocus | null;
 };
+
+/** Normalize settings nav; migrates legacy `mcps` / `tools` top-level nav to Plugins subpage. */
+export function normalizeSettingsViewSession(
+  raw: Partial<SettingsViewSessionState> | undefined,
+  fallback: SettingsViewSessionState
+): SettingsViewSessionState {
+  const activeNavRaw =
+    typeof raw?.activeNav === "string" && raw.activeNav.length > 0
+      ? raw.activeNav
+      : fallback.activeNav;
+  const legacyMcpNav = activeNavRaw === "mcps" || activeNavRaw === "tools";
+  const activeNav = legacyMcpNav ? "plugins" : activeNavRaw;
+  const mcpsOpenRaw =
+    raw?.mcpsOpen === true || legacyMcpNav
+      ? true
+      : raw?.mcpsOpen === false
+        ? false
+        : fallback.mcpsOpen === true;
+  const mcpsOpen = activeNav === "plugins" && mcpsOpenRaw ? true : false;
+  return {
+    activeNav,
+    searchQuery:
+      typeof raw?.searchQuery === "string" ? raw.searchQuery : fallback.searchQuery,
+    scrollTop:
+      typeof raw?.scrollTop === "number" && Number.isFinite(raw.scrollTop)
+        ? raw.scrollTop
+        : fallback.scrollTop,
+    agentsHarnessId:
+      activeNav === "agents"
+        ? typeof raw?.agentsHarnessId === "string"
+          ? raw.agentsHarnessId
+          : raw?.agentsHarnessId === null
+            ? null
+            : fallback.agentsHarnessId ?? null
+        : null,
+    mcpsOpen,
+    panelSearchFocus:
+      raw?.panelSearchFocus === null
+        ? null
+        : raw?.panelSearchFocus && typeof raw.panelSearchFocus === "object"
+          ? raw.panelSearchFocus
+          : fallback.panelSearchFocus ?? null,
+  };
+}
 
 export type AgentViewSessionState = {
   leftRailCollapsed: boolean;
@@ -421,13 +478,14 @@ export function createDefaultWorkspaceSession(
       tabs: initialChatTabs,
       mode: "agent",
       model: initialModel,
-      backendId: "cursor-acp",
+      backendId: "cesium-agent",
       scrollTopByTabId: {},
       scrollAnchorByTabId: {},
       hiddenConversationIds: [],
       editingQueuedPromptIdByConversationId: {},
       workedSessionOpenByScopedId: {},
       composerQueueDockCollapsedByConversationId: {},
+      dismissedCompletionErrorKeyByConversationId: {},
       unreadChatCompletionByConversationId: {},
     },
     explorer: {
@@ -779,19 +837,25 @@ export function mergeWorkspaceSessionFromImport(
     return current;
   }
   const importedChatBackendRaw = r.chat?.backendId;
+  const legacyChatBackendRemap: Record<string, AgentBackendId> = {
+    "claude-adapter": "claude-code-sdk",
+    "cursor-acp": "cursor-sdk",
+    "opencode-acp": "opencode-server",
+    "codex-adapter": "codex-app-server",
+  };
+  const importedChatBackendRawMapped =
+    typeof importedChatBackendRaw === "string"
+      ? legacyChatBackendRemap[importedChatBackendRaw] ?? importedChatBackendRaw
+      : importedChatBackendRaw;
   const importedChatBackendCoerced: AgentBackendId =
-    (importedChatBackendRaw as string | undefined) === "claude-code-sdk"
-      ? "claude-adapter"
-      : importedChatBackendRaw ?? current.chat.backendId;
+    (importedChatBackendRawMapped as AgentBackendId | undefined) ?? current.chat.backendId;
   const normalizedChatBackendId =
-    importedChatBackendCoerced === "cursor-acp" ||
+    importedChatBackendCoerced === "cesium-agent" ||
     importedChatBackendCoerced === "cursor-sdk" ||
-    importedChatBackendCoerced === "opencode-acp" ||
     importedChatBackendCoerced === "opencode-server" ||
     importedChatBackendCoerced === "gemini-acp" ||
-    importedChatBackendCoerced === "codex-adapter" ||
     importedChatBackendCoerced === "codex-app-server" ||
-    importedChatBackendCoerced === "claude-adapter"
+    importedChatBackendCoerced === "claude-code-sdk"
       ? importedChatBackendCoerced
       : current.chat.backendId;
   const importedUnsupportedBackend =
@@ -854,6 +918,11 @@ export function mergeWorkspaceSessionFromImport(
         typeof r.chat.composerQueueDockCollapsedByConversationId === "object"
           ? r.chat.composerQueueDockCollapsedByConversationId
           : current.chat.composerQueueDockCollapsedByConversationId ?? {},
+      dismissedCompletionErrorKeyByConversationId:
+        r.chat?.dismissedCompletionErrorKeyByConversationId &&
+        typeof r.chat.dismissedCompletionErrorKeyByConversationId === "object"
+          ? r.chat.dismissedCompletionErrorKeyByConversationId
+          : current.chat.dismissedCompletionErrorKeyByConversationId ?? {},
       unreadChatCompletionByConversationId:
         r.chat?.unreadChatCompletionByConversationId &&
         typeof r.chat.unreadChatCompletionByConversationId === "object"
@@ -933,9 +1002,6 @@ export function mergeWorkspaceSessionFromImport(
         current.agentView.sidePaneSessionsByConversationId ?? {}
       ),
     },
-    settingsView: {
-      ...current.settingsView,
-      ...(r.settingsView ?? {}),
-    },
+    settingsView: normalizeSettingsViewSession(r.settingsView, current.settingsView),
   };
 }

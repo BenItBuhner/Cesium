@@ -30,6 +30,7 @@ import {
   BookMarked,
   Bot,
   Box,
+  ChevronDown,
   CircleUserRound,
   Database,
   Download,
@@ -42,21 +43,33 @@ import {
   Puzzle,
   Server,
   Settings,
-  Wrench,
 } from "lucide-react";
-import { useAuth } from "@/components/auth/AuthProvider";
+import { ServerPickerPopover } from "@/components/preferences/ServerPickerPopover";
+import { useServerConnections } from "@/components/preferences/ServerConnectionsProvider";
 import { SETTINGS_PANELS } from "@/components/editor/settings-panels";
+import { DefaultServerSettingsBanner } from "@/components/preferences/DefaultServerSettingsBanner";
+import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
 import { useUserPreferences } from "@/components/preferences/UserPreferencesProvider";
+import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { useViewport } from "@/hooks/useViewport";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
+import { useWorkspaceDirectory } from "@/contexts/WorkspaceDirectoryContext";
+import {
+  getLastWorkspaceForServer,
+  rememberLastWorkspaceForServer,
+} from "@/lib/per-server-workspace-memory";
 import { detectShortcutPlatform, primaryModifierLabel } from "@/lib/keyboard-shortcuts";
+import { openDocumentation } from "@/lib/open-documentation";
+import {
+  buildSettingsSearchIndex,
+  searchSettingsIndex,
+  settingsSearchHitToFocus,
+  type SettingsSearchEntry,
+} from "@/lib/settings-search-index";
 
 type NavEntry =
   | { kind: "item"; id: string; label: string; icon: LucideIcon }
   | { kind: "divider" };
-
-/** In-app documentation (template); opened in a new browser tab so the IDE tab stays put. */
-const DOCS_PATH = "/docs";
 
 /**
  * Settings categories we actually use in this shell (trimmed from full Cursor parity).
@@ -71,7 +84,6 @@ const NAV_ENTRIES: NavEntry[] = [
   { kind: "divider" },
   { kind: "item", id: "servers", label: "Servers", icon: Server },
   { kind: "item", id: "rulesSkills", label: "Rules, Skills, Subagents", icon: BookMarked },
-  { kind: "item", id: "tools", label: "Tools & MCPs", icon: Wrench },
   { kind: "item", id: "exportImport", label: "Import & export", icon: Download },
   { kind: "item", id: "storage", label: "Storage", icon: Database },
   { kind: "item", id: "beta", label: "Beta", icon: FlaskConical },
@@ -82,6 +94,26 @@ const searchInputClass =
 
 const navItemClass =
   "flex h-[32px] w-full items-center gap-[10px] rounded-[var(--radius-tab)] px-[10px] text-left font-sans text-[13px] leading-none transition-colors";
+
+const searchResultClass =
+  "flex w-full flex-col gap-[2px] rounded-[var(--radius-tab)] px-[10px] py-[7px] text-left transition-colors hover:bg-[var(--accent-bg)]";
+
+function searchResultKindLabel(kind: SettingsSearchEntry["kind"]): string {
+  switch (kind) {
+    case "model":
+      return "Model";
+    case "shortcut":
+      return "Shortcut";
+    case "harness":
+      return "Harness";
+    case "row":
+      return "Setting";
+    case "section":
+      return "Section";
+    default:
+      return "Category";
+  }
+}
 
 /**
  * Readable column on wide desktops (centered max width) while staying full-width when
@@ -107,10 +139,15 @@ function SettingsNavContent({
   activeNav,
   searchQuery,
   searchModLabel,
-  accountLabel,
+  searchResults,
+  isSearching,
+  selectedResultIndex,
+  searchInputRef,
   onCloseShell,
   onNavChange,
   onSearchChange,
+  onSearchKeyDown,
+  onSelectSearchResult,
   onOpenDocs,
   closeMobileDrawer,
   isMobile,
@@ -119,19 +156,63 @@ function SettingsNavContent({
   activeNav: string;
   searchQuery: string;
   searchModLabel: string;
-  accountLabel: string;
+  searchResults: SettingsSearchEntry[];
+  isSearching: boolean;
+  selectedResultIndex: number;
+  searchInputRef: React.MutableRefObject<HTMLInputElement | null>;
   onCloseShell?: () => void;
   onNavChange: (id: string) => void;
   onSearchChange: (query: string) => void;
+  onSearchKeyDown: (
+    event: React.KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>
+  ) => void;
+  onSelectSearchResult: (hit: SettingsSearchEntry) => void;
   onOpenDocs: () => void;
   closeMobileDrawer?: () => void;
   isMobile: boolean;
   /** Windowed tab inset (beta): extra leading padding on the search field only (mobile drawer + desktop aside). */
   padSettingsSearchForWindowChrome: boolean;
 }) {
+  const { activeServer, servers, serverStatusById, setActiveServer } = useServerConnections();
+  const { activeWorkspaceId, openWorkspaceById } = useWorkspace();
+  const { byServerId: directoryByServerId } = useWorkspaceDirectory();
+  const serverPickerAnchorRef = useRef<HTMLButtonElement>(null);
+  const [serverPickerOpen, setServerPickerOpen] = useState(false);
+
+  const handleActiveServerChange = useCallback(
+    (serverId: string) => {
+      if (serverId === activeServer.id) {
+        setServerPickerOpen(false);
+        return;
+      }
+      if (activeWorkspaceId) {
+        rememberLastWorkspaceForServer(activeServer.id, activeWorkspaceId);
+      }
+      setActiveServer(serverId);
+      setServerPickerOpen(false);
+      const restoredWorkspaceId = getLastWorkspaceForServer(serverId);
+      const directoryWorkspaces = directoryByServerId.get(serverId) ?? [];
+      const targetWorkspaceId =
+        restoredWorkspaceId &&
+        directoryWorkspaces.some((workspace) => workspace.id === restoredWorkspaceId)
+          ? restoredWorkspaceId
+          : directoryWorkspaces[0]?.id;
+      if (targetWorkspaceId) {
+        void openWorkspaceById(targetWorkspaceId).catch(() => undefined);
+      }
+    },
+    [
+      activeServer.id,
+      activeWorkspaceId,
+      directoryByServerId,
+      openWorkspaceById,
+      setActiveServer,
+    ]
+  );
+
   return (
     <div className="flex h-full flex-col bg-[var(--bg-panel)]">
-      <div className="flex shrink-0 items-center gap-[8px] px-[11px] pt-[11px]">
+      <div className="flex shrink-0 items-center gap-[8px] px-[11px] pt-[12px]">
         {isMobile ? (
           <button
             type="button"
@@ -146,19 +227,23 @@ function SettingsNavContent({
         <div
           className={
             padSettingsSearchForWindowChrome
-              ? `${isMobile ? "min-w-0 flex-1" : "w-full"} pl-[var(--editor-window-chrome-tab-inset)]`
+              ? `${isMobile ? "min-w-0 flex-1" : "min-w-0 flex-1"} pl-[var(--editor-window-chrome-tab-inset)]`
               : isMobile
                 ? "min-w-0 flex-1"
-                : "w-full"
+                : "min-w-0 flex-1"
           }
         >
           <HardwareAwareTextInput
+            inputRef={searchInputRef}
             type="search"
             value={searchQuery}
             onChange={onSearchChange}
+            onNativeKeyDown={onSearchKeyDown}
             placeholder={`Search settings ${searchModLabel}+F`}
             className={searchInputClass}
             ariaLabel="Search settings"
+            ariaControls="settings-search-results"
+            ariaExpanded={isSearching}
           />
         </div>
       </div>
@@ -167,65 +252,123 @@ function SettingsNavContent({
         className="hide-scrollbar-y min-h-0 flex-1 overflow-y-auto px-[10px] pb-[8px] pt-[12px]"
         aria-label="Settings categories"
       >
-        {NAV_ENTRIES.map((entry, i) => {
-          if (entry.kind === "divider") {
-            return (
-              <div
-                key={`d-${i}`}
-                className="my-[8px] h-px bg-[var(--border-subtle)]"
-                role="separator"
-              />
-            );
-          }
-          const Icon = entry.icon;
-          const sel = activeNav === entry.id;
-          return (
+        {isSearching ? (
+          <div
+            id="settings-search-results"
+            role="listbox"
+            aria-label="Settings search results"
+            className="mb-[8px]"
+          >
+            {searchResults.length === 0 ? (
+              <p className="px-[10px] py-[8px] font-sans text-[12px] text-[var(--text-disabled)]">
+                No settings match &ldquo;{searchQuery.trim()}&rdquo;
+              </p>
+            ) : (
+              searchResults.map((hit, index) => (
+                <button
+                  key={hit.id}
+                  id={`settings-search-result-${hit.id}`}
+                  type="button"
+                  role="option"
+                  aria-selected={index === selectedResultIndex}
+                  onClick={() => onSelectSearchResult(hit)}
+                  className={`${searchResultClass} ${
+                    index === selectedResultIndex
+                      ? "bg-[var(--accent-bg)] text-[var(--text-primary)]"
+                      : "text-[var(--text-secondary)]"
+                  }`}
+                >
+                  <span className="flex min-w-0 items-center gap-[6px]">
+                    <span className="min-w-0 flex-1 truncate font-sans text-[13px] text-[var(--text-primary)]">
+                      {hit.label}
+                    </span>
+                    <span className="shrink-0 font-sans text-[10px] uppercase tracking-wide text-[var(--text-disabled)]">
+                      {searchResultKindLabel(hit.kind)}
+                    </span>
+                  </span>
+                  <span className="truncate font-sans text-[11px] text-[var(--text-disabled)]">
+                    {hit.subtitle}
+                  </span>
+                </button>
+              ))
+            )}
+          </div>
+        ) : (
+          <>
+            {NAV_ENTRIES.map((entry, i) => {
+              if (entry.kind === "divider") {
+                return (
+                  <div
+                    key={`d-${i}`}
+                    className="my-[8px] h-px bg-[var(--border-subtle)]"
+                    role="separator"
+                  />
+                );
+              }
+              const Icon = entry.icon;
+              const sel = activeNav === entry.id;
+              return (
+                <button
+                  key={entry.id}
+                  type="button"
+                  onClick={() => {
+                    onNavChange(entry.id);
+                    if (isMobile && closeMobileDrawer) {
+                      closeMobileDrawer();
+                    }
+                  }}
+                  className={`${navItemClass} ${
+                    sel
+                      ? "bg-[var(--bg-panel)] font-medium text-[var(--text-primary)]"
+                      : "font-normal text-[var(--text-secondary)] hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)]"
+                  }`}
+                >
+                  <Icon className="size-[16px] shrink-0" strokeWidth={1.5} aria-hidden />
+                  <span className="min-w-0 flex-1 truncate">{entry.label}</span>
+                </button>
+              );
+            })}
+            <div className="my-[8px] h-px bg-[var(--border-subtle)]" role="separator" />
             <button
-              key={entry.id}
               type="button"
-              onClick={() => {
-                onNavChange(entry.id);
-                if (isMobile && closeMobileDrawer) {
-                  closeMobileDrawer();
-                }
-              }}
-              className={`${navItemClass} ${
-                sel
-                  ? "bg-[var(--bg-panel)] font-medium text-[var(--text-primary)]"
-                  : "font-normal text-[var(--text-secondary)] hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)]"
-              }`}
+              onClick={onOpenDocs}
+              className={`${navItemClass} font-normal text-[var(--text-secondary)] hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)]`}
+              title="Open documentation in a new browser tab"
             >
-              <Icon className="size-[16px] shrink-0" strokeWidth={1.5} aria-hidden />
-              <span className="min-w-0 flex-1 truncate">{entry.label}</span>
+              <ExternalLink className="size-[16px] shrink-0" strokeWidth={1.5} aria-hidden />
+              <span className="min-w-0 flex-1 truncate text-left">Docs</span>
             </button>
-          );
-        })}
-        <div className="my-[8px] h-px bg-[var(--border-subtle)]" role="separator" />
-        <button
-          type="button"
-          onClick={onOpenDocs}
-          className={`${navItemClass} font-normal text-[var(--text-secondary)] hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)]`}
-          title="Open documentation in a new browser tab"
-        >
-          <ExternalLink className="size-[16px] shrink-0" strokeWidth={1.5} aria-hidden />
-          <span className="min-w-0 flex-1 truncate text-left">Docs</span>
-        </button>
+          </>
+        )}
       </nav>
 
       <div className="flex shrink-0 items-center gap-[8px] px-[11px] py-[10px]">
-        <div
-          className="flex min-w-0 flex-1 items-center gap-[8px]"
-          title={accountLabel}
+        <button
+          ref={serverPickerAnchorRef}
+          type="button"
+          onClick={() => setServerPickerOpen((open) => !open)}
+          className="flex min-w-0 flex-1 items-center gap-[8px] rounded-[var(--radius-tab)] py-[2px] text-left transition-colors hover:bg-[var(--bg-card)]"
+          aria-label={`Switch server (${activeServer.label})`}
+          aria-expanded={serverPickerOpen}
+          aria-haspopup="menu"
+          title={activeServer.label}
         >
           <CircleUserRound
             className="size-[18px] shrink-0 text-[var(--text-secondary)]"
             strokeWidth={1.5}
             aria-hidden
           />
-          <span className="truncate font-sans text-[13px] text-[var(--text-primary)]">
-            {accountLabel}
+          <span className="min-w-0 flex-1 truncate font-sans text-[13px] text-[var(--text-primary)]">
+            {activeServer.label}
           </span>
-        </div>
+          <ChevronDown
+            className={`size-[14px] shrink-0 text-[var(--text-secondary)] transition-transform ${
+              serverPickerOpen ? "rotate-180" : ""
+            }`}
+            strokeWidth={1.5}
+            aria-hidden
+          />
+        </button>
         {onCloseShell ? (
           <button
             type="button"
@@ -238,32 +381,91 @@ function SettingsNavContent({
           </button>
         ) : null}
       </div>
+
+      <ServerPickerPopover
+        open={serverPickerOpen}
+        onClose={() => setServerPickerOpen(false)}
+        anchorRef={serverPickerAnchorRef}
+        label="Switch server"
+        selectedServerId={activeServer.id}
+        servers={servers}
+        serverStatusById={serverStatusById}
+        onSelect={handleActiveServerChange}
+        placement="above"
+      />
     </div>
   );
 }
 
 export function SettingsEditorView({ onCloseShell }: SettingsEditorViewProps = {}) {
-  const { session: authSession } = useAuth();
   const { workspaceSession, updateWorkspaceSession } = useWorkspace();
+  const { settings } = useGlobalSettings();
   const { experimentalIpadWindowedTabInset } = useUserPreferences();
   const { isMobile } = useViewport();
   const groupRef = useGroupRef();
   const applyingSettingsLayoutFromContextRef = useRef(false);
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
   /** iPad/tablet use width ≥768 (“desktop” settings layout); still need inset when window controls overlap the nav. */
   const padSettingsSearchForWindowChrome = experimentalIpadWindowedTabInset;
-  const accountLabel = authSession?.username?.trim() || "Guest";
   const [activeNav, setActiveNav] = useState(workspaceSession.settingsView.activeNav);
   const [searchQuery, setSearchQuery] = useState(workspaceSession.settingsView.searchQuery);
+  const [selectedResultIndex, setSelectedResultIndex] = useState(0);
   const [navDrawerOpen, setNavDrawerOpen] = useState(false);
   const scrollRootRef = useRef<HTMLElement | null>(null);
+  const debouncedSearchQuery = useDebouncedValue(searchQuery, 150);
   const scrollPersistTimerRef = useRef<number | null>(null);
   const pendingScrollTopRef = useRef(workspaceSession.settingsView.scrollTop);
   const persistedScrollTopRef = useRef<number | null>(null);
-  const SettingsPanel = SETTINGS_PANELS[activeNav] ?? SETTINGS_PANELS.general;
+  const resolvedNav = activeNav;
+  const SettingsPanel = SETTINGS_PANELS[resolvedNav] ?? SETTINGS_PANELS.general;
   const searchModLabel = useMemo(
     () => primaryModifierLabel(detectShortcutPlatform()),
     []
   );
+
+  const settingsSearchIndex = useMemo(
+    () => buildSettingsSearchIndex(settings.models.byBackend ?? {}),
+    [settings.models.byBackend]
+  );
+
+  const searchResults = useMemo(
+    () => searchSettingsIndex(settingsSearchIndex, debouncedSearchQuery),
+    [settingsSearchIndex, debouncedSearchQuery]
+  );
+
+  const isSearching = debouncedSearchQuery.trim().length > 0;
+
+  useEffect(() => {
+    setSelectedResultIndex(0);
+  }, [debouncedSearchQuery]);
+
+  useEffect(() => {
+    const focus = workspaceSession.settingsView.panelSearchFocus;
+    if (!focus || focus.kind !== "scroll" || focus.navId !== resolvedNav) {
+      return;
+    }
+    const rowId = focus.rowId;
+    const root = scrollRootRef.current;
+    if (!root) {
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      const target = root.querySelector(`[data-settings-search-id="${rowId}"]`);
+      target?.scrollIntoView({ block: "center", behavior: "smooth" });
+      updateWorkspaceSession((current) => ({
+        ...current,
+        settingsView: {
+          ...current.settingsView,
+          panelSearchFocus: null,
+        },
+      }));
+    }, 80);
+    return () => window.clearTimeout(timer);
+  }, [
+    resolvedNav,
+    updateWorkspaceSession,
+    workspaceSession.settingsView.panelSearchFocus,
+  ]);
 
   const sharedAgentShellLayout = useMemo(
     () => {
@@ -340,9 +542,26 @@ export function SettingsEditorView({ onCloseShell }: SettingsEditorViewProps = {
   );
 
   useEffect(() => {
-    setActiveNav(workspaceSession.settingsView.activeNav);
+    const persistedNav = workspaceSession.settingsView.activeNav;
+    if (persistedNav === "tools" || persistedNav === "mcps") {
+      updateWorkspaceSession((current) => ({
+        ...current,
+        settingsView: {
+          ...current.settingsView,
+          activeNav: "plugins",
+          mcpsOpen: true,
+        },
+      }));
+      setActiveNav("plugins");
+    } else {
+      setActiveNav(persistedNav);
+    }
     setSearchQuery(workspaceSession.settingsView.searchQuery);
-  }, [workspaceSession.settingsView.activeNav, workspaceSession.settingsView.searchQuery]);
+  }, [
+    updateWorkspaceSession,
+    workspaceSession.settingsView.activeNav,
+    workspaceSession.settingsView.searchQuery,
+  ]);
 
   useEffect(() => {
     updateWorkspaceSession((current) => ({
@@ -398,14 +617,6 @@ export function SettingsEditorView({ onCloseShell }: SettingsEditorViewProps = {
     persistedScrollTopRef.current = workspaceSession.settingsView.scrollTop;
   }, [workspaceSession.settingsView.scrollTop]);
 
-  const openDocsInNewTab = useCallback(() => {
-    const url =
-      typeof window !== "undefined"
-        ? `${window.location.origin}${DOCS_PATH}`
-        : DOCS_PATH;
-    window.open(url, "_blank", "noopener,noreferrer");
-  }, []);
-
   const onMainScroll = useCallback(
     (event: UIEvent<HTMLElement>) => {
       const el = event.currentTarget ?? scrollRootRef.current;
@@ -446,16 +657,136 @@ export function SettingsEditorView({ onCloseShell }: SettingsEditorViewProps = {
     setNavDrawerOpen(false);
   }, []);
 
+  const handleNavChange = useCallback(
+    (id: string) => {
+      setActiveNav(id);
+      if (id === "agents" && activeNav !== "agents") {
+        updateWorkspaceSession((current) => ({
+          ...current,
+          settingsView: {
+            ...current.settingsView,
+            agentsHarnessId: null,
+          },
+        }));
+      }
+      if (id === "plugins" && activeNav !== "plugins") {
+        updateWorkspaceSession((current) => ({
+          ...current,
+          settingsView: {
+            ...current.settingsView,
+            mcpsOpen: false,
+          },
+        }));
+      }
+      if (id !== "plugins") {
+        updateWorkspaceSession((current) =>
+          current.settingsView.mcpsOpen
+            ? {
+                ...current,
+                settingsView: {
+                  ...current.settingsView,
+                  mcpsOpen: false,
+                },
+              }
+            : current
+        );
+      }
+    },
+    [activeNav, updateWorkspaceSession]
+  );
+
+  const applySearchHit = useCallback(
+    (hit: SettingsSearchEntry) => {
+      const focus = settingsSearchHitToFocus(hit);
+      const legacyMcpNav = hit.navId === "mcps" || hit.navId === "tools";
+      const nextNav = legacyMcpNav ? "plugins" : hit.navId;
+      const opensMcpsSubview =
+        legacyMcpNav ||
+        (nextNav === "plugins" &&
+          (hit.rowId === "mcp-link" ||
+            hit.id === "plugins::section::mcp-presets" ||
+            hit.id === "plugins::section::mcp-custom" ||
+            hit.id === "plugins::section::mcp-connected"));
+      setActiveNav(nextNav);
+      updateWorkspaceSession((current) => ({
+        ...current,
+        settingsView: {
+          ...current.settingsView,
+          activeNav: nextNav,
+          agentsHarnessId:
+            hit.kind === "harness" && hit.agentsHarnessId
+              ? hit.agentsHarnessId
+              : hit.navId === "agents" && hit.kind !== "harness"
+                ? null
+                : current.settingsView.agentsHarnessId ?? null,
+          mcpsOpen: opensMcpsSubview,
+          panelSearchFocus: focus
+            ? focus.kind === "scroll"
+              ? {
+                  ...focus,
+                  navId: legacyMcpNav ? "plugins" : focus.navId,
+                }
+              : focus
+            : focus,
+        },
+      }));
+      if (isMobile) {
+        setNavDrawerOpen(false);
+      }
+    },
+    [isMobile, updateWorkspaceSession]
+  );
+
+  const onSearchKeyDown = useCallback(
+    (event: React.KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+      if (!isSearching || searchResults.length === 0) {
+        return;
+      }
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        setSelectedResultIndex((index) => Math.min(index + 1, searchResults.length - 1));
+        return;
+      }
+      if (event.key === "ArrowUp") {
+        event.preventDefault();
+        setSelectedResultIndex((index) => Math.max(index - 1, 0));
+        return;
+      }
+      if (event.key === "Enter") {
+        event.preventDefault();
+        const hit = searchResults[selectedResultIndex];
+        if (hit) {
+          applySearchHit(hit);
+        }
+      }
+    },
+    [applySearchHit, isSearching, searchResults, selectedResultIndex]
+  );
+
+  useEffect(() => {
+    const onFocusSearch = () => {
+      searchInputRef.current?.focus();
+      searchInputRef.current?.select();
+    };
+    window.addEventListener("opencursor:focusSettingsSearch", onFocusSearch);
+    return () => window.removeEventListener("opencursor:focusSettingsSearch", onFocusSearch);
+  }, []);
+
   const navContent = (
     <SettingsNavContent
       activeNav={activeNav}
       searchQuery={searchQuery}
       searchModLabel={searchModLabel}
-      accountLabel={accountLabel}
+      searchResults={searchResults}
+      isSearching={isSearching}
+      selectedResultIndex={selectedResultIndex}
+      searchInputRef={searchInputRef}
       onCloseShell={onCloseShell}
-      onNavChange={setActiveNav}
+      onNavChange={handleNavChange}
       onSearchChange={setSearchQuery}
-      onOpenDocs={openDocsInNewTab}
+      onSearchKeyDown={onSearchKeyDown}
+      onSelectSearchResult={applySearchHit}
+      onOpenDocs={openDocumentation}
       closeMobileDrawer={closeMobileDrawer}
       isMobile={isMobile}
       padSettingsSearchForWindowChrome={padSettingsSearchForWindowChrome}
@@ -495,6 +826,7 @@ export function SettingsEditorView({ onCloseShell }: SettingsEditorViewProps = {
           onScroll={onMainScroll}
         >
           <div className={SETTINGS_MAIN_CONTENT_SHELL_CLASS}>
+            <DefaultServerSettingsBanner className="mb-[16px]" />
             {SettingsPanel ? <SettingsPanel /> : null}
           </div>
         </main>
@@ -538,6 +870,7 @@ export function SettingsEditorView({ onCloseShell }: SettingsEditorViewProps = {
           onScroll={onMainScroll}
         >
           <div className={SETTINGS_MAIN_CONTENT_SHELL_CLASS}>
+            <DefaultServerSettingsBanner className="mb-[16px]" />
             {SettingsPanel ? <SettingsPanel /> : null}
           </div>
         </main>

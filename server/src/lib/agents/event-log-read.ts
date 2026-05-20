@@ -22,8 +22,8 @@ export const TAIL_MAX_CHUNK_BYTES = 8 * 1024 * 1024;
 export const EVENT_LOG_FULL_READ_MAX_BYTES = 4 * 1024 * 1024;
 
 /** CLI / provider transcript context — bounded so multimillion-event logs cannot OOM the heap. */
-export const PROMPT_CONTEXT_LIMIT_TURNS = 100;
-export const PROMPT_CONTEXT_LIMIT_EVENTS = 8000;
+export const PROMPT_CONTEXT_LIMIT_TURNS = 250;
+export const PROMPT_CONTEXT_LIMIT_EVENTS = 20_000;
 
 /**
  * When `GET …?full=1` or `readConversationSnapshot` hits a log larger than
@@ -666,6 +666,26 @@ export function generateTranscriptFromEvents(events: AgentStoredEvent[]): string
           lines.push(` ${status} ${entry.content.trim()}`);
           }
         }
+        break;
+
+      case "subagent":
+        flushUser();
+        flushAssistant();
+        lines.push(
+          `[Subagent ${event.status}: ${event.title}]${event.recentActivity ? ` ${event.recentActivity}` : ""}`
+        );
+        break;
+
+      case "question":
+        flushUser();
+        flushAssistant();
+        lines.push(`[Question ${event.status}: ${event.prompt.trim()}]`);
+        break;
+
+      case "compression_summary":
+        flushUser();
+        flushAssistant();
+        lines.push(`[Compressed conversation summary]\n${event.summary.trim()}`);
         break;
 
   case "permission_request":

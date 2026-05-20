@@ -1,6 +1,13 @@
 /** Dispatched from keyboard shortcut layer; composer / workspace UI subscribe. */
 export const CHAT_UI_SHORTCUT_EVENT = "opencursor:chatUiShortcut" as const;
 
+/** IDE editor layout: ChatPanel listens and opens a new local chat tab. */
+export const NEW_CHAT_SHORTCUT_EVENT = "opencursor:newChat" as const;
+
+export function dispatchNewChatShortcut(): void {
+  window.dispatchEvent(new CustomEvent(NEW_CHAT_SHORTCUT_EVENT));
+}
+
 export type ChatComposerShortcutAction =
   | "openModelDropdown"
   | "openModeDropdown"

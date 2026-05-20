@@ -76,6 +76,7 @@ g/caches/
 server/.cesium-data/
 .opencursor-data/
 server/.opencursor-data/
+apps/desktop/.server-runtime/
 *.tsbuildinfo
 
 # local docker volumes (OSP-75: docker-compose.yml)
@@ -138,3 +139,5 @@ bad-page-chunk.txt
 live-root.html
 served-sw.js
 /public/sw-test.txt
+
+mcp-servers/

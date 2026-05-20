@@ -36,6 +36,7 @@ import {
   fetchWorkspaceBootstrap,
   fetchWorkspaceSession,
   getServerBaseUrl,
+  initializeWorkspaceGitRepo,
   listTerminals,
   markWorkspaceActivity as postWorkspaceActivity,
   openWorkspaceSelection,
@@ -121,6 +122,7 @@ type WorkspaceContextValue = {
   openFolder: (root: string, name?: string) => Promise<void>;
   openWorkspaceById: (workspaceId: string) => Promise<void>;
   refreshGitStatus: () => Promise<GitWorkspaceStatus | null>;
+  initializeGitRepo: () => Promise<void>;
   switchBranch: (branch: string) => Promise<void>;
   createWorktree: (input: {
     branch: string;
@@ -585,6 +587,29 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       setGitStatusLoading(false);
     }
   }, [activeWorkspaceId]);
+
+  const initializeGitRepo = useCallback(async () => {
+    if (!activeWorkspaceId) {
+      throw new Error("No active workspace.");
+    }
+    if (homeWorkspaceId && activeWorkspaceId === homeWorkspaceId) {
+      throw new Error("Cannot initialize a git repository in the Home workspace.");
+    }
+    await flushWorkspaceSessionNow();
+    const result = await initializeWorkspaceGitRepo(activeWorkspaceId);
+    setGitStatus(result.status);
+    await Promise.all([
+      refreshTree().catch(() => undefined),
+      refreshTerminals().catch(() => undefined),
+    ]);
+    setFsResyncToken((value) => value + 1);
+  }, [
+    activeWorkspaceId,
+    flushWorkspaceSessionNow,
+    homeWorkspaceId,
+    refreshTerminals,
+    refreshTree,
+  ]);
 
   const createPersistentWorkspaceWindow = useCallback(
     async (input?: { title?: string }) => {
@@ -1535,6 +1560,7 @@ let lastHeartbeatRunAt = Date.now();
       openFolder,
       openWorkspaceById,
       refreshGitStatus,
+      initializeGitRepo,
       switchBranch,
       createWorktree,
       deleteWorktree,
@@ -1579,6 +1605,7 @@ let lastHeartbeatRunAt = Date.now();
       openFolder,
       openWorkspaceById,
       refreshGitStatus,
+      initializeGitRepo,
       switchBranch,
       createWorktree,
       deleteWorktree,

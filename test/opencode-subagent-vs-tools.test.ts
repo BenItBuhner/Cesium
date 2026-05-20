@@ -20,7 +20,7 @@ test("OpenCode structural tools are never subagent cards (even with ses_* / task
       },
     },
   };
-  assert.equal(classifyToolCallAsSubagentCard("opencode-acp", event as never), false);
+  assert.equal(classifyToolCallAsSubagentCard("opencode-server", event as never), false);
 });
 
 test("OpenCode todowrite / todo kind is never a subagent card", async () => {
@@ -33,5 +33,5 @@ test("OpenCode todowrite / todo kind is never a subagent card", async () => {
     status: "pending" as const,
     raw: {},
   };
-  assert.equal(classifyToolCallAsSubagentCard("opencode-acp", event as never), false);
+  assert.equal(classifyToolCallAsSubagentCard("opencode-server", event as never), false);
 });

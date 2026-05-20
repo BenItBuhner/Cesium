@@ -15,6 +15,13 @@ import {
 import { createPortal } from "react-dom";
 import { useClickOutside } from "@/hooks/useClickOutside";
 import type { WorkbenchMenuItem } from "@/components/ide/workbench-context-menu-types";
+import {
+  popoverMenuFixedPanelClass,
+  popoverMenuItemClass,
+  popoverMenuItemShortcutClass,
+  popoverMenuListClass,
+  popoverMenuSeparatorClass,
+} from "@/components/ui/popover-menu-ui";
 
 function isSep(item: WorkbenchMenuItem): item is { type: "sep" } {
   return item.type === "sep";
@@ -120,41 +127,41 @@ export function WorkbenchContextMenuProvider({ children }: { children: ReactNode
               ref={menuRef}
               role="menu"
               aria-label="Context menu"
-              className="fixed z-[10050] min-w-[var(--menu-min-w)] max-w-[var(--menu-max-w)] overflow-hidden rounded-[var(--radius-card)] border border-[var(--border-card)] bg-[var(--bg-card)] py-[4px] shadow-[0_8px_24px_rgba(0,0,0,0.12)] dark:shadow-[0_10px_28px_rgba(0,0,0,0.45)]"
+              className={`${popoverMenuFixedPanelClass} min-w-[var(--menu-min-w)] max-w-[var(--menu-max-w)]`}
               style={panelStyle}
             >
-              {state.items.map((item, i) => {
-                if (isSep(item)) {
+              <div className={popoverMenuListClass}>
+                {state.items.map((item, i) => {
+                  if (isSep(item)) {
+                    return (
+                      <div
+                        key={`sep-${i}`}
+                        role="separator"
+                        className={popoverMenuSeparatorClass}
+                      />
+                    );
+                  }
                   return (
-                    <div
-                      key={`sep-${i}`}
-                      role="separator"
-                      className="my-[4px] h-px bg-[var(--border-subtle)]"
-                    />
+                    <button
+                      key={item.id}
+                      type="button"
+                      role="menuitem"
+                      disabled={item.disabled}
+                      onClick={() => {
+                        if (item.disabled) return;
+                        item.onSelect();
+                        close();
+                      }}
+                      className={popoverMenuItemClass}
+                    >
+                      <span>{item.label}</span>
+                      {item.shortcut ? (
+                        <span className={popoverMenuItemShortcutClass}>{item.shortcut}</span>
+                      ) : null}
+                    </button>
                   );
-                }
-                return (
-                  <button
-                    key={item.id}
-                    type="button"
-                    role="menuitem"
-                    disabled={item.disabled}
-                    onClick={() => {
-                      if (item.disabled) return;
-                      item.onSelect();
-                      close();
-                    }}
-                    className="flex w-full cursor-default items-center justify-between gap-[8px] px-[10px] py-[6px] text-left font-sans text-[13px] text-[var(--text-primary)] outline-none transition-colors hover:bg-[var(--accent-bg)] focus-visible:bg-[var(--accent-bg)] disabled:cursor-not-allowed disabled:opacity-40"
-                  >
-                    <span>{item.label}</span>
-                    {item.shortcut ? (
-                      <span className="ml-auto shrink-0 font-mono text-[11px] tabular-nums text-[var(--text-secondary)]">
-                        {item.shortcut}
-                      </span>
-                    ) : null}
-                  </button>
-                );
-              })}
+                })}
+              </div>
             </div>,
             document.body
           )

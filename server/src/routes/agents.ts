@@ -5,10 +5,7 @@ import path from "node:path";
 import { requireWorkspaceFromRequest } from "../lib/request-workspace.js";
 import { resolveSafePath } from "../lib/workspace.js";
 import { agentRuntimeManager } from "../lib/agents/runtime-manager.js";
-import {
-  getCursorAgentDeploymentHints,
-  listAgentBackendsWithCache,
-} from "../lib/agents/providers.js";
+import { listAgentBackendsWithCache } from "../lib/agents/providers.js";
 import {
   RAIL_ALL_FIRST_PAGE_CACHE_KEY,
   RAIL_ALL_FIRST_PAGE_CACHE_TTL_SEC,
@@ -28,11 +25,6 @@ import type {
 } from "../lib/agents/types.js";
 
 export const agentRoutes = new Hono();
-
-agentRoutes.get("/api/agents/deployment-hints", async (c) => {
-  await requireWorkspaceFromRequest(c);
-  return c.json({ cursorAgent: getCursorAgentDeploymentHints() });
-});
 
 function parsePageParams(c: {
   req: { query(name: string): string | undefined };
@@ -221,6 +213,16 @@ agentRoutes.post("/api/agents/conversations/:conversationId/prompt", async (c) =
   return c.json({ snapshot });
 });
 
+agentRoutes.post("/api/agents/conversations/:conversationId/retry", async (c) => {
+  const workspace = await requireWorkspaceFromRequest(c);
+  const conversationId = c.req.param("conversationId");
+  const snapshot = await agentRuntimeManager.retryConversationTurn(
+    workspace,
+    conversationId
+  );
+  return c.json({ snapshot });
+});
+
 agentRoutes.delete(
   "/api/agents/conversations/:conversationId/queue/:itemId",
   async (c) => {
@@ -246,6 +248,56 @@ agentRoutes.post("/api/agents/conversations/:conversationId/cancel", async (c) =
     workspace,
     conversationId
   );
+  return c.json({ conversation });
+});
+
+agentRoutes.post("/api/agents/conversations/:conversationId/pause", async (c) => {
+  const workspace = await requireWorkspaceFromRequest(c);
+  const conversationId = c.req.param("conversationId");
+  try {
+    const conversation = await agentRuntimeManager.pauseConversation(
+      workspace,
+      conversationId
+    );
+    return c.json({ conversation });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Pause failed.";
+    return c.json({ error: message }, 400);
+  }
+});
+
+agentRoutes.post("/api/agents/conversations/:conversationId/resume", async (c) => {
+  const workspace = await requireWorkspaceFromRequest(c);
+  const conversationId = c.req.param("conversationId");
+  try {
+    const conversation = await agentRuntimeManager.resumeConversation(
+      workspace,
+      conversationId
+    );
+    return c.json({ conversation });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Resume failed.";
+    return c.json({ error: message }, 400);
+  }
+});
+
+agentRoutes.post("/api/agents/conversations/:conversationId/question", async (c) => {
+  const workspace = await requireWorkspaceFromRequest(c);
+  const conversationId = c.req.param("conversationId");
+  const body = await c.req.json<{
+    questionId?: string;
+    answer?: string;
+  }>();
+  if (!body.questionId?.trim()) {
+    return c.json({ error: "Expected questionId." }, 400);
+  }
+  if (!body.answer?.trim()) {
+    return c.json({ error: "Expected answer." }, 400);
+  }
+  const conversation = await agentRuntimeManager.answerQuestion(workspace, conversationId, {
+    questionId: body.questionId.trim(),
+    answer: body.answer.trim(),
+  });
   return c.json({ conversation });
 });
 

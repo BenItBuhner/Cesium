@@ -270,14 +270,12 @@ async function* streamExport(driver: StorageDriver): AsyncGenerator<ExportLine> 
   }
 
   for (const backendId of [
-    "cursor-acp",
+    "cesium-agent",
     "cursor-sdk",
-    "opencode-acp",
     "opencode-server",
     "gemini-acp",
-    "codex-adapter",
     "codex-app-server",
-    "claude-adapter",
+    "claude-code-sdk",
   ] as const) {
     const entry = await driver.readProviderCache(backendId);
     if (entry) {
@@ -330,14 +328,12 @@ type ImportLine = ExportLine | { kind: "error"; message: string };
 
 function isAgentBackendId(value: string): boolean {
   return (
-    value === "cursor-acp" ||
+    value === "cesium-agent" ||
     value === "cursor-sdk" ||
-    value === "opencode-acp" ||
     value === "opencode-server" ||
     value === "gemini-acp" ||
-    value === "codex-adapter" ||
     value === "codex-app-server" ||
-    value === "claude-adapter"
+    value === "claude-code-sdk"
   );
 }
 

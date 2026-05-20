@@ -1,6 +1,6 @@
 export type AgentConversationMode = "agent" | "plan" | "debug" | "ask" | (string & {});
-export type AgentBackendId = "cursor-acp" | "cursor-sdk" | "opencode-acp" | "opencode-server" | "gemini-acp" | "codex-adapter" | "codex-app-server" | "claude-adapter";
-export type AgentConversationStatus = "idle" | "running" | "awaiting_permission" | "cancelled" | "failed" | "interrupted";
+export type AgentBackendId = "cesium-agent" | "cursor-sdk" | "opencode-server" | "gemini-acp" | "codex-app-server" | "claude-code-sdk";
+export type AgentConversationStatus = "idle" | "running" | "pause_requested" | "pausing" | "paused" | "awaiting_permission" | "cancelled" | "failed" | "interrupted";
 export type AgentToolCallStatus = "pending" | "in_progress" | "completed" | "failed" | "cancelled";
 export type AgentProviderCapabilities = {
     supportsLoadSession: boolean;

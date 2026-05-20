@@ -13,6 +13,7 @@ const cursorSdkCapabilities: AgentProviderCapabilities = {
   supportsSessionResume: true,
   supportsPromptImages: true,
   supportsInlineReasoning: true,
+  supportsCompletionRetry: false,
 };
 
 export function getCursorSdkCapabilities(): AgentProviderCapabilities {

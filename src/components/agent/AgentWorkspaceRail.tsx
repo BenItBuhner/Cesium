@@ -1,39 +1,15 @@
 "use client";
 
 import {
-  Archive,
-  Bot,
-  Briefcase,
-  Bug,
+  ChevronDown,
   ChevronRight,
   CircleUserRound,
-  Cloud,
-  Code2,
-  Cpu,
-  Database,
-  FileText,
-  Flame,
-  Folder,
-  FolderOpen,
-  GitBranch,
-  Globe,
-  Hash,
-  Layers,
   ListFilter,
-  MessageSquare,
   PanelLeftClose,
-  Paintbrush,
+  Pin,
   Plus,
-  Rocket,
-  Shield,
-  Sparkles,
-  Star,
   Search,
   Settings,
-  Terminal,
-  Wrench,
-  Zap,
-  type LucideIcon,
 } from "lucide-react";
 import {
   useCallback,
@@ -50,6 +26,14 @@ import { useWorkbenchContextMenu } from "@/components/ide/WorkbenchContextMenuPr
 import type { WorkbenchMenuItem } from "@/components/ide/workbench-context-menu-types";
 import { RecentChatsModal, type RecentChatOption } from "@/components/ide/RecentChatsModal";
 import { AgentConversationRow } from "@/components/agent/rail/AgentConversationRow";
+import { AgentRailBulkSelectBar } from "@/components/agent/rail/AgentRailBulkSelectBar";
+import {
+  applyRailBulkClick,
+  buildRailBulkSectionId,
+  getRailConversationKey,
+  orderedRailConversationKeys,
+  railBulkClickModifierFromMouseEvent,
+} from "@/lib/agent-rail-bulk-select";
 import { useAgentConversations } from "@/components/chat/AgentConversationsContext";
 import { useOpenInEditor } from "@/components/editor/OpenInEditorContext";
 import type { AgentRailConversationSummary } from "@/lib/agent-types";
@@ -59,14 +43,34 @@ import {
 } from "@/lib/agent-rail";
 import { AGENT_RAIL_OPEN_SEARCH_EVENT } from "@/components/agent/agent-rail-events";
 import { AgentRailFilterMenuPortal } from "@/components/agent/AgentRailFilterMenuPortal";
-import { useAuth } from "@/components/auth/AuthProvider";
 import { useShellView } from "@/components/layout/ShellViewContext";
 import { useAgentShellState } from "./AgentShellStateContext";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { useUserPreferences } from "@/components/preferences/UserPreferencesProvider";
 import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
-import type { ChatFolderState, WorkspaceSortMode } from "@/lib/global-settings";
+import { ServerPickerPopover } from "@/components/preferences/ServerPickerPopover";
+import { useServerConnections } from "@/components/preferences/ServerConnectionsProvider";
+import { useWorkspaceDirectory } from "@/contexts/WorkspaceDirectoryContext";
+import type {
+  AgentRailGroupByMode,
+  ChatFolderState,
+  WorkspaceRailAppearance,
+  WorkspaceSortMode,
+} from "@/lib/global-settings";
+import {
+  getLastWorkspaceForServer,
+  rememberLastWorkspaceForServer,
+} from "@/lib/per-server-workspace-memory";
+import { usePersistHomeWorkspaceRailAppearances } from "@/hooks/usePersistHomeWorkspaceRailAppearances";
 import { AGENT_NEW_CHAT_SESSION_ID } from "@/lib/workspace-session";
+import {
+  FOLDER_COLOR_OPTIONS,
+  FOLDER_ICON_OPTIONS,
+  getFolderIcon,
+  getWorkspaceRailAppearance,
+  isValidFolderColor,
+  WorkspaceFolderIcon,
+} from "@/lib/workspace-rail-appearance";
 
 const PINNED_SECTION_WORKSPACE_ID = "__agentPinned__";
 const AGENT_RAIL_CONVERSATION_DRAG_TYPE = "application/x-opencursor-agent-conversation";
@@ -74,51 +78,38 @@ const AGENT_RAIL_CONVERSATION_DRAG_TYPE = "application/x-opencursor-agent-conver
 const COLLAPSED_WORKSPACES_STORAGE_KEY = "opencursor.agent-rail-collapsed-workspaces";
 const COLLAPSED_FOLDERS_STORAGE_KEY = "opencursor.agent-rail-collapsed-folders";
 
-const FOLDER_ICON_OPTIONS: Array<{ name: string; Icon: LucideIcon }> = [
-  { name: "Folder", Icon: Folder },
-  { name: "FolderOpen", Icon: FolderOpen },
-  { name: "Star", Icon: Star },
-  { name: "Sparkles", Icon: Sparkles },
-  { name: "MessageSquare", Icon: MessageSquare },
-  { name: "Briefcase", Icon: Briefcase },
-  { name: "Archive", Icon: Archive },
-  { name: "Code2", Icon: Code2 },
-  { name: "Wrench", Icon: Wrench },
-  { name: "Hash", Icon: Hash },
-  { name: "Bot", Icon: Bot },
-  { name: "Bug", Icon: Bug },
-  { name: "Cloud", Icon: Cloud },
-  { name: "Cpu", Icon: Cpu },
-  { name: "Database", Icon: Database },
-  { name: "FileText", Icon: FileText },
-  { name: "Flame", Icon: Flame },
-  { name: "GitBranch", Icon: GitBranch },
-  { name: "Globe", Icon: Globe },
-  { name: "Layers", Icon: Layers },
-  { name: "Paintbrush", Icon: Paintbrush },
-  { name: "Rocket", Icon: Rocket },
-  { name: "Shield", Icon: Shield },
-  { name: "Terminal", Icon: Terminal },
-  { name: "Zap", Icon: Zap },
-];
-
-const FOLDER_COLOR_OPTIONS = [
-  "#7c3aed",
-  "#2563eb",
-  "#0891b2",
-  "#059669",
-  "#ca8a04",
-  "#ea580c",
-  "#dc2626",
-  "#db2777",
-];
-
-function getFolderIcon(iconName: string): LucideIcon {
-  return FOLDER_ICON_OPTIONS.find((option) => option.name === iconName)?.Icon ?? Folder;
-}
-
-function isValidFolderColor(value: string): boolean {
-  return /^#[0-9a-f]{6}$/i.test(value);
+function WorkspaceRailHeaderIcon({
+  appearance,
+  collapsed,
+  onCustomize,
+}: {
+  appearance: WorkspaceRailAppearance;
+  collapsed: boolean;
+  onCustomize: () => void;
+}) {
+  return (
+    <span
+      className="relative grid size-[10px] shrink-0 place-items-center"
+      onContextMenu={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        onCustomize();
+      }}
+    >
+      <WorkspaceFolderIcon
+        iconName={appearance.icon}
+        color={appearance.color}
+        className="col-start-1 row-start-1 size-[10px] transition-opacity duration-150 group-hover/wshead:opacity-0"
+        strokeWidth={2}
+      />
+      <ChevronRight
+        className={`col-start-1 row-start-1 size-[10px] text-[var(--text-disabled)] opacity-0 transition-[transform,opacity,color] duration-150 group-hover/wshead:opacity-100 group-hover/wshead:text-[var(--text-secondary)] ${
+          collapsed ? "" : "rotate-90"
+        }`}
+        strokeWidth={2}
+      />
+    </span>
+  );
 }
 
 function createChatFolderId(): string {
@@ -299,42 +290,55 @@ function AgentRailConversationListScroll({
   );
 }
 
-function FolderCustomizePanel({
-  folder,
+function RailIconCustomizePanel({
+  title,
+  icon,
+  color,
+  showNameField,
+  name,
   onClose,
   onUpdate,
 }: {
-  folder: ChatFolderState;
+  title: string;
+  icon: string;
+  color: string;
+  showNameField: boolean;
+  name?: string;
   onClose: () => void;
-  onUpdate: (patch: Partial<Pick<ChatFolderState, "name" | "color" | "icon">>) => void;
+  onUpdate: (patch: { icon?: string; color?: string; name?: string }) => void;
 }) {
-  const ActiveIcon = getFolderIcon(folder.icon);
   return (
     <div className="ml-[13px] mt-[3px] rounded-[var(--radius-card)] border border-[var(--border-card)] bg-[var(--bg-panel)] p-[8px] shadow-[0_12px_40px_rgba(0,0,0,0.22)]">
       <div className="flex items-center gap-[8px]">
         <div
           className="flex size-[28px] shrink-0 items-center justify-center rounded-[var(--agent-control-radius)] border border-[var(--border-subtle)]"
-          style={{ color: folder.color }}
+          style={{ color }}
           aria-hidden
         >
-          <ActiveIcon className="size-[16px]" strokeWidth={1.8} />
+          <WorkspaceFolderIcon iconName={icon} className="size-[16px]" strokeWidth={1.8} />
         </div>
-        <input
-          value={folder.name}
-          maxLength={80}
-          aria-label="Folder name"
-          className="h-[28px] min-w-0 flex-1 rounded-[var(--agent-control-radius)] border border-[var(--border-subtle)] bg-[var(--bg-main)] px-[8px] font-sans text-[12px] text-[var(--text-primary)] outline-none transition-colors placeholder:text-[var(--text-disabled)] focus:border-[var(--accent)]"
-          onChange={(event) => {
-            const nextName = event.target.value.slice(0, 80);
-            onUpdate({ name: nextName || "Folder" });
-          }}
-          onKeyDown={(event) => {
-            if (event.key === "Escape") {
-              event.preventDefault();
-              onClose();
-            }
-          }}
-        />
+        {showNameField ? (
+          <input
+            value={name ?? ""}
+            maxLength={80}
+            aria-label="Folder name"
+            className="h-[28px] min-w-0 flex-1 rounded-[var(--agent-control-radius)] border border-[var(--border-subtle)] bg-[var(--bg-main)] px-[8px] font-sans text-[12px] text-[var(--text-primary)] outline-none transition-colors placeholder:text-[var(--text-disabled)] focus:border-[var(--accent)]"
+            onChange={(event) => {
+              const nextName = event.target.value.slice(0, 80);
+              onUpdate({ name: nextName || "Folder" });
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "Escape") {
+                event.preventDefault();
+                onClose();
+              }
+            }}
+          />
+        ) : (
+          <span className="min-w-0 flex-1 truncate font-sans text-[12px] font-medium text-[var(--text-primary)]">
+            {title}
+          </span>
+        )}
         <button
           type="button"
           onClick={onClose}
@@ -344,21 +348,21 @@ function FolderCustomizePanel({
         </button>
       </div>
 
-      <div className="mt-[8px] grid grid-cols-7 gap-[4px]" aria-label="Folder icon palette">
-        {FOLDER_ICON_OPTIONS.map(({ name, Icon }) => {
-          const selected = folder.icon === name;
+      <div className="mt-[8px] grid grid-cols-7 gap-[4px]" aria-label="Icon palette">
+        {FOLDER_ICON_OPTIONS.map(({ name: iconName, Icon }) => {
+          const selected = icon === iconName;
           return (
             <button
-              key={name}
+              key={iconName}
               type="button"
-              onClick={() => onUpdate({ icon: name })}
+              onClick={() => onUpdate({ icon: iconName })}
               className={`flex size-[24px] items-center justify-center rounded-[var(--agent-control-radius)] border transition-colors ${
                 selected
                   ? "border-[var(--accent)] bg-[var(--accent-bg)] text-[var(--text-primary)]"
                   : "border-transparent text-[var(--text-secondary)] hover:border-[var(--border-subtle)] hover:bg-[var(--bg-card)] hover:text-[var(--text-primary)]"
               }`}
-              title={name}
-              aria-label={`Use ${name} icon`}
+              title={iconName}
+              aria-label={`Use ${iconName} icon`}
               aria-pressed={selected}
             >
               <Icon className="size-[14px]" strokeWidth={1.8} />
@@ -368,21 +372,21 @@ function FolderCustomizePanel({
       </div>
 
       <div className="mt-[8px] flex items-center gap-[6px]">
-        <div className="flex min-w-0 flex-1 flex-wrap gap-[4px]" aria-label="Folder color palette">
-          {FOLDER_COLOR_OPTIONS.map((color) => (
+        <div className="flex min-w-0 flex-1 flex-wrap gap-[4px]" aria-label="Color palette">
+          {FOLDER_COLOR_OPTIONS.map((swatchColor) => (
             <button
-              key={color}
+              key={swatchColor}
               type="button"
-              onClick={() => onUpdate({ color })}
+              onClick={() => onUpdate({ color: swatchColor })}
               className={`size-[18px] rounded-full border transition-transform hover:scale-110 ${
-                folder.color.toLowerCase() === color.toLowerCase()
+                color.toLowerCase() === swatchColor.toLowerCase()
                   ? "border-[var(--text-primary)]"
                   : "border-[var(--border-card)]"
               }`}
-              style={{ backgroundColor: color }}
-              title={color}
-              aria-label={`Use ${color} folder color`}
-              aria-pressed={folder.color.toLowerCase() === color.toLowerCase()}
+              style={{ backgroundColor: swatchColor }}
+              title={swatchColor}
+              aria-label={`Use ${swatchColor} color`}
+              aria-pressed={color.toLowerCase() === swatchColor.toLowerCase()}
             />
           ))}
         </div>
@@ -390,10 +394,10 @@ function FolderCustomizePanel({
           Custom
           <input
             type="color"
-            value={isValidFolderColor(folder.color) ? folder.color : "#7c3aed"}
+            value={isValidFolderColor(color) ? color : "#7c3aed"}
             onChange={(event) => onUpdate({ color: event.target.value })}
             className="size-[18px] cursor-pointer border-0 bg-transparent p-0"
-            aria-label="Custom folder color"
+            aria-label="Custom color"
           />
         </label>
       </div>
@@ -402,9 +406,7 @@ function FolderCustomizePanel({
 }
 
 export function AgentWorkspaceRail() {
-  const { session: authSession } = useAuth();
   const { openSettingsView } = useShellView();
-  const accountLabel = authSession?.username?.trim() || "Guest";
   const { renameConversation, forkConversation } = useAgentConversations();
   const { openAgentConversation } = useOpenInEditor();
   const {
@@ -428,12 +430,15 @@ export function AgentWorkspaceRail() {
     clearRailFilters,
     isMobile,
   } = useAgentShellState();
-  const { activeWorkspaceId, gitStatus } = useWorkspace();
+  const { activeWorkspaceId, gitStatus, homeWorkspaceId, openWorkspaceById } = useWorkspace();
   const { experimentalIpadCustomButtons, experimentalIpadWindowedTabInset } =
     useUserPreferences();
   const { settings, updateSettings } = useGlobalSettings();
+  const { activeServer, servers, serverStatusById, setActiveServer } = useServerConnections();
+  const { byServerId: directoryByServerId } = useWorkspaceDirectory();
   const workspaceSortMode = settings.general.workspaceSortMode;
   const workspaceCustomOrderIds = settings.general.workspaceCustomOrderIds;
+  const agentRailSettings = settings.general.agentRail;
   const padRailForWindowChrome = experimentalIpadWindowedTabInset && !isMobile;
   /** Only the top control row needs iPadOS window-chrome inset; list + footer stay full-width in the rail. */
   const railTopBarPadClass = padRailForWindowChrome
@@ -441,12 +446,34 @@ export function AgentWorkspaceRail() {
     : "px-[11px]";
   const { openAt, openAtPoint } = useWorkbenchContextMenu();
   const filterAnchorRef = useRef<HTMLButtonElement>(null);
+  const accountAnchorRef = useRef<HTMLButtonElement>(null);
   const [filterMenuOpen, setFilterMenuOpen] = useState(false);
+  const [serverPickerOpen, setServerPickerOpen] = useState(false);
   const [collapsedWorkspaceIds, setCollapsedWorkspaceIds] = useState<Set<string>>(new Set());
   const [collapsedFolderIds, setCollapsedFolderIds] = useState<Set<string>>(new Set());
   const [draggingWorkspaceId, setDraggingWorkspaceId] = useState<string | null>(null);
   const [draggingConversationId, setDraggingConversationId] = useState<string | null>(null);
   const [editingFolderId, setEditingFolderId] = useState<string | null>(null);
+  const [editingWorkspaceKey, setEditingWorkspaceKey] = useState<string | null>(null);
+  const workspaceRailAppearances = settings.general.workspaceRailAppearances;
+  const homeAppearancePersistEntries = useMemo(
+    () =>
+      groups.map((group) => {
+        const workspaceKey =
+          group.workspaceKey ??
+          `${group.serverId ?? "local"}:${group.workspace.id}`;
+        return {
+          workspaceKey,
+          isHome: Boolean(homeWorkspaceId && group.workspace.id === homeWorkspaceId),
+        };
+      }),
+    [groups, homeWorkspaceId]
+  );
+  usePersistHomeWorkspaceRailAppearances(
+    workspaceRailAppearances,
+    homeAppearancePersistEntries,
+    updateSettings
+  );
   const [recentChatsOpen, setRecentChatsOpen] = useState(false);
   const [renameState, setRenameState] = useState<{
     conversationId: string;
@@ -457,6 +484,11 @@ export function AgentWorkspaceRail() {
     conversation: AgentRailConversationSummary;
     group?: "left" | "right";
   } | null>(null);
+  const [bulkSelectMode, setBulkSelectMode] = useState(false);
+  const [bulkSectionId, setBulkSectionId] = useState<string | null>(null);
+  const [bulkSelectedKeys, setBulkSelectedKeys] = useState<Set<string>>(() => new Set());
+  const [bulkAnchorIndex, setBulkAnchorIndex] = useState<number | null>(null);
+  const [bulkSectionPinned, setBulkSectionPinned] = useState(false);
   const workspaceBranchLabel = useCallback(
     (workspaceId: string, root: string): string | null => {
       if (workspaceId === activeWorkspaceId && gitStatus?.isGitRepo) {
@@ -518,20 +550,64 @@ export function AgentWorkspaceRail() {
   const sortSummary = WORKSPACE_SORT_LABELS[workspaceSortMode];
   const railControlActive = railFilterActive || workspaceSortMode !== "recent";
 
-  const visibleGroups = useMemo(
-    () =>
-      groups.filter(
-        (group) => group.workspace.id === activeWorkspaceId || group.conversations.length > 0
-      ),
-    [activeWorkspaceId, groups]
+  const visibleGroups = useMemo(() => {
+    const seenKeys = new Set<string>();
+    const result: typeof groups = [];
+    for (const group of groups) {
+      const key = group.workspaceKey ?? `${group.serverId ?? ""}:${group.workspace.id}`;
+      if (seenKeys.has(key)) {
+        continue;
+      }
+      seenKeys.add(key);
+      result.push(group);
+    }
+    return result;
+  }, [groups]);
+
+  const handleActiveServerChange = useCallback(
+    (serverId: string) => {
+      if (serverId === activeServer.id) {
+        setServerPickerOpen(false);
+        return;
+      }
+      if (activeWorkspaceId) {
+        rememberLastWorkspaceForServer(activeServer.id, activeWorkspaceId);
+      }
+      setActiveServer(serverId);
+      setServerPickerOpen(false);
+      const restoredWorkspaceId = getLastWorkspaceForServer(serverId);
+      const directoryWorkspaces = directoryByServerId.get(serverId) ?? [];
+      const targetWorkspaceId =
+        restoredWorkspaceId &&
+        directoryWorkspaces.some((workspace) => workspace.id === restoredWorkspaceId)
+          ? restoredWorkspaceId
+          : directoryWorkspaces[0]?.id;
+      if (targetWorkspaceId) {
+        void openWorkspaceById(targetWorkspaceId).catch(() => undefined);
+      }
+    },
+    [
+      activeServer.id,
+      activeWorkspaceId,
+      directoryByServerId,
+      openWorkspaceById,
+      setActiveServer,
+    ]
   );
+
+  useEffect(() => {
+    if (!activeWorkspaceId) {
+      return;
+    }
+    rememberLastWorkspaceForServer(activeServer.id, activeWorkspaceId);
+  }, [activeServer.id, activeWorkspaceId]);
 
   const setWorkspaceSortMode = useCallback(
     (mode: WorkspaceSortMode) => {
       updateSettings((current) => {
         const seededCustomOrderIds =
           mode === "custom" && current.general.workspaceCustomOrderIds.length === 0
-            ? visibleGroups.map((group) => group.workspace.id)
+            ? visibleGroups.map((group) => group.workspaceKey ?? group.workspace.id)
             : current.general.workspaceCustomOrderIds;
         if (current.general.workspaceSortMode === mode) {
           if (seededCustomOrderIds === current.general.workspaceCustomOrderIds) {
@@ -570,9 +646,43 @@ export function AgentWorkspaceRail() {
     });
   }, [updateSettings]);
 
+  const setAgentRailGroupBy = useCallback(
+    (mode: AgentRailGroupByMode) => {
+      updateSettings((current) => ({
+        ...current,
+        general: {
+          ...current.general,
+          agentRail: {
+            ...current.general.agentRail,
+            groupBy: mode,
+          },
+        },
+      }));
+    },
+    [updateSettings]
+  );
+
+  const patchAgentRailSettings = useCallback(
+    (patch: Partial<typeof agentRailSettings>) => {
+      updateSettings((current) => ({
+        ...current,
+        general: {
+          ...current.general,
+          agentRail: {
+            ...current.general.agentRail,
+            ...patch,
+          },
+        },
+      }));
+    },
+    [updateSettings]
+  );
+
   const reorderWorkspaceGroups = useCallback(
     (sourceWorkspaceId: string, targetWorkspaceId: string, placement: "before" | "after") => {
-      const visibleWorkspaceIds = visibleGroups.map((group) => group.workspace.id);
+      const visibleWorkspaceIds = visibleGroups.map(
+        (group) => group.workspaceKey ?? group.workspace.id
+      );
       const visibleWorkspaceIdSet = new Set(visibleWorkspaceIds);
       if (
         !visibleWorkspaceIdSet.has(sourceWorkspaceId) ||
@@ -684,7 +794,7 @@ export function AgentWorkspaceRail() {
 
   const railListScrollMeasureKey = useMemo(
     () =>
-      `${visibleGroups.length}:${pinnedRailConversations.length}:${settings.general.chatFolders.length}:${railLoading ? 1 : 0}:${renameState?.conversationId ?? ""}:${collapsedFolderIds.size}`,
+      `${visibleGroups.length}:${pinnedRailConversations.length}:${settings.general.chatFolders.length}:${railLoading ? 1 : 0}:${renameState?.conversationId ?? ""}:${collapsedFolderIds.size}:${editingWorkspaceKey ?? ""}`,
     [
       visibleGroups.length,
       pinnedRailConversations.length,
@@ -692,6 +802,7 @@ export function AgentWorkspaceRail() {
       railLoading,
       renameState?.conversationId,
       collapsedFolderIds.size,
+      editingWorkspaceKey,
     ]
   );
 
@@ -798,6 +909,47 @@ export function AgentWorkspaceRail() {
       }));
     },
     [updateSettings]
+  );
+
+  const updateWorkspaceAppearance = useCallback(
+    (workspaceKey: string, patch: Partial<WorkspaceRailAppearance>, fallbackIndex: number) => {
+      updateSettings((current) => {
+        const previous = getWorkspaceRailAppearance(
+          current.general.workspaceRailAppearances,
+          workspaceKey,
+          fallbackIndex,
+          {
+            isHome: Boolean(
+              homeWorkspaceId &&
+                groups.some(
+                  (group) =>
+                    (group.workspaceKey ?? group.workspace.id) === workspaceKey &&
+                    group.workspace.id === homeWorkspaceId
+                )
+            ),
+          }
+        );
+        const nextIcon = typeof patch.icon === "string" && patch.icon.trim() ? patch.icon.trim() : previous.icon;
+        const nextColor =
+          typeof patch.color === "string" && isValidFolderColor(patch.color)
+            ? patch.color
+            : previous.color;
+        return {
+          ...current,
+          general: {
+            ...current.general,
+            workspaceRailAppearances: {
+              ...current.general.workspaceRailAppearances,
+              [workspaceKey]: {
+                icon: nextIcon,
+                color: nextColor,
+              },
+            },
+          },
+        };
+      });
+    },
+    [groups, homeWorkspaceId, updateSettings]
   );
 
   const renameFolder = useCallback(
@@ -921,6 +1073,9 @@ export function AgentWorkspaceRail() {
     const items: RecentChatOption[] = [];
     const seen = new Set<string>();
     for (const group of groups) {
+      if (group.serverId && group.serverId !== activeServer.id) {
+        continue;
+      }
       for (const c of group.conversations) {
         if (seen.has(c.id)) continue;
         seen.add(c.id);
@@ -947,7 +1102,7 @@ export function AgentWorkspaceRail() {
       });
     }
     return items.sort((a, b) => b.updatedAt - a.updatedAt);
-  }, [groups, pinnedRailConversations]);
+  }, [activeServer.id, groups, pinnedRailConversations]);
 
   const visibleConversationIds = useMemo(() => {
     const ids = new Set<string>();
@@ -997,6 +1152,160 @@ export function AgentWorkspaceRail() {
     [isMobile, openConversationSummary, toggleLeftRailCollapsed]
   );
 
+  const exitBulkSelect = useCallback(() => {
+    setBulkSelectMode(false);
+    setBulkSectionId(null);
+    setBulkSelectedKeys(new Set());
+    setBulkAnchorIndex(null);
+    setBulkSectionPinned(false);
+  }, []);
+
+  useEffect(() => {
+    if (!bulkSelectMode) {
+      return;
+    }
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") {
+        return;
+      }
+      event.preventDefault();
+      exitBulkSelect();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [bulkSelectMode, exitBulkSelect]);
+
+  const enterBulkSelect = useCallback(
+    (
+      conversation: AgentRailConversationSummary,
+      section: {
+        inPinnedSection?: boolean;
+        workspaceId: string;
+        folderId?: string | null;
+        orderedConversations: AgentRailConversationSummary[];
+      }
+    ) => {
+      const sectionId = buildRailBulkSectionId({
+        inPinnedSection: section.inPinnedSection,
+        workspaceId: section.workspaceId,
+        folderId: section.folderId,
+      });
+      const orderedKeys = orderedRailConversationKeys(section.orderedConversations);
+      const targetKey = getRailConversationKey(conversation);
+      const targetIndex = orderedKeys.indexOf(targetKey);
+      setBulkSelectMode(true);
+      setBulkSectionId(sectionId);
+      setBulkSectionPinned(Boolean(section.inPinnedSection));
+      setBulkSelectedKeys(new Set([targetKey]));
+      setBulkAnchorIndex(targetIndex >= 0 ? targetIndex : 0);
+    },
+    []
+  );
+
+  const handleBulkRowClick = useCallback(
+    (
+      event: ReactMouseEvent<HTMLButtonElement>,
+      conversation: AgentRailConversationSummary,
+      section: {
+        inPinnedSection?: boolean;
+        workspaceId: string;
+        folderId?: string | null;
+        orderedConversations: AgentRailConversationSummary[];
+      }
+    ) => {
+      const sectionId = buildRailBulkSectionId({
+        inPinnedSection: section.inPinnedSection,
+        workspaceId: section.workspaceId,
+        folderId: section.folderId,
+      });
+      const orderedKeys = orderedRailConversationKeys(section.orderedConversations);
+      const targetKey = getRailConversationKey(conversation);
+      const targetIndex = orderedKeys.indexOf(targetKey);
+      if (targetIndex < 0) {
+        return;
+      }
+
+      const modifier = railBulkClickModifierFromMouseEvent(event);
+      if (sectionId !== bulkSectionId) {
+        setBulkSectionId(sectionId);
+        setBulkSectionPinned(Boolean(section.inPinnedSection));
+        setBulkSelectedKeys(new Set([targetKey]));
+        setBulkAnchorIndex(targetIndex);
+        return;
+      }
+
+      const { selectedKeys, anchorIndex } = applyRailBulkClick({
+        orderedKeys,
+        selectedKeys: bulkSelectedKeys,
+        anchorIndex: bulkAnchorIndex,
+        targetIndex,
+        modifier,
+      });
+      setBulkSelectedKeys(selectedKeys);
+      setBulkAnchorIndex(anchorIndex);
+    },
+    [bulkAnchorIndex, bulkSectionId, bulkSelectedKeys]
+  );
+
+  const railConversationByKey = useMemo(() => {
+    const map = new Map<string, AgentRailConversationSummary>();
+    for (const conversation of pinnedRailConversations) {
+      map.set(getRailConversationKey(conversation), conversation);
+    }
+    for (const group of groups) {
+      for (const conversation of group.conversations) {
+        map.set(getRailConversationKey(conversation), conversation);
+      }
+    }
+    return map;
+  }, [groups, pinnedRailConversations]);
+
+  const bulkSelectedConversations = useMemo(
+    () =>
+      [...bulkSelectedKeys]
+        .map((key) => railConversationByKey.get(key))
+        .filter((conversation): conversation is AgentRailConversationSummary =>
+          Boolean(conversation)
+        ),
+    [bulkSelectedKeys, railConversationByKey]
+  );
+
+  const handleBulkArchive = useCallback(() => {
+    for (const conversation of bulkSelectedConversations) {
+      archiveConversation(conversation.id);
+    }
+    exitBulkSelect();
+  }, [archiveConversation, bulkSelectedConversations, exitBulkSelect]);
+
+  const handleBulkPin = useCallback(() => {
+    for (const conversation of bulkSelectedConversations) {
+      pinConversation(conversation.id);
+    }
+    exitBulkSelect();
+  }, [bulkSelectedConversations, exitBulkSelect, pinConversation]);
+
+  const handleBulkUnpin = useCallback(() => {
+    for (const conversation of bulkSelectedConversations) {
+      unpinConversation(conversation.id);
+    }
+    exitBulkSelect();
+  }, [bulkSelectedConversations, exitBulkSelect, unpinConversation]);
+
+  type RailConversationRowSection = {
+    inPinnedSection?: boolean;
+    workspaceId: string;
+    folderId?: string | null;
+    orderedConversations: AgentRailConversationSummary[];
+  };
+
+  const isConversationChatSelected = useCallback(
+    (conversation: AgentRailConversationSummary) =>
+      !bulkSelectMode &&
+      conversation.id === selectedConversationId &&
+      conversation.workspaceId === activeWorkspaceId,
+    [activeWorkspaceId, bulkSelectMode, selectedConversationId]
+  );
+
   const handleOpenConversationInEditor = useCallback(
     (conversation: AgentRailConversationSummary, group?: "left" | "right") => {
       setPendingEditorOpen({ conversation, group });
@@ -1043,9 +1352,14 @@ export function AgentWorkspaceRail() {
   const buildConversationMenuItems = useCallback(
     (
       conversation: AgentRailConversationSummary,
-      options?: { inPinnedSection?: boolean }
+      options?: {
+        inPinnedSection?: boolean;
+        folderId?: string | null;
+        orderedConversations?: AgentRailConversationSummary[];
+      }
     ): WorkbenchMenuItem[] => {
       const inPinned = options?.inPinnedSection ?? false;
+      const orderedConversations = options?.orderedConversations ?? [conversation];
       const conversationId = conversation.id;
       const workspaceFolders = settings.general.chatFolders
         .filter((folder) => folder.workspaceId === conversation.workspaceId)
@@ -1124,6 +1438,18 @@ export function AgentWorkspaceRail() {
         { type: "sep" },
         {
           type: "item",
+          id: "bulk-select",
+          label: "Bulk select",
+          onSelect: () =>
+            enterBulkSelect(conversation, {
+              inPinnedSection: inPinned,
+              workspaceId: conversation.workspaceId,
+              folderId: options?.folderId ?? null,
+              orderedConversations,
+            }),
+        },
+        {
+          type: "item",
           id: "archive",
           label: "Archive",
           onSelect: () => archiveConversation(conversationId),
@@ -1143,6 +1469,7 @@ export function AgentWorkspaceRail() {
       archiveConversation,
       beginConversationRename,
       createFolderForWorkspace,
+      enterBulkSelect,
       forkConversation,
       handleOpenConversationInEditor,
       moveConversationToFolder,
@@ -1156,7 +1483,11 @@ export function AgentWorkspaceRail() {
     (
       e: ReactMouseEvent,
       conversation: AgentRailConversationSummary,
-      options?: { inPinnedSection?: boolean }
+      options?: {
+        inPinnedSection?: boolean;
+        folderId?: string | null;
+        orderedConversations?: AgentRailConversationSummary[];
+      }
     ) => {
       openAt(e, buildConversationMenuItems(conversation, options));
     },
@@ -1167,7 +1498,11 @@ export function AgentWorkspaceRail() {
     (
       conversation: AgentRailConversationSummary,
       anchorEl: HTMLElement,
-      options?: { inPinnedSection?: boolean }
+      options?: {
+        inPinnedSection?: boolean;
+        folderId?: string | null;
+        orderedConversations?: AgentRailConversationSummary[];
+      }
     ) => {
       const rect = anchorEl.getBoundingClientRect();
       openAtPoint(
@@ -1218,12 +1553,18 @@ export function AgentWorkspaceRail() {
             onClick={() => toggleWorkspaceCollapsed(PINNED_SECTION_WORKSPACE_ID)}
             className="group/wshead flex min-w-0 flex-1 items-center gap-[4px] rounded-[var(--radius-tab)] py-[2px] text-left"
           >
-            <ChevronRight
-              className={`size-[10px] shrink-0 text-[var(--text-disabled)] transition-[transform,color] duration-150 group-hover/wshead:text-[var(--text-secondary)] ${
-                isPinnedHeaderCollapsed ? "" : "rotate-90"
-              }`}
-              strokeWidth={2}
-            />
+            <span className="relative grid size-[10px] shrink-0 place-items-center">
+              <Pin
+                className="col-start-1 row-start-1 size-[10px] text-[var(--text-disabled)] transition-opacity duration-150 group-hover/wshead:opacity-0"
+                strokeWidth={2}
+              />
+              <ChevronRight
+                className={`col-start-1 row-start-1 size-[10px] text-[var(--text-disabled)] opacity-0 transition-[transform,opacity,color] duration-150 group-hover/wshead:opacity-100 group-hover/wshead:text-[var(--text-secondary)] ${
+                  isPinnedHeaderCollapsed ? "" : "rotate-90"
+                }`}
+                strokeWidth={2}
+              />
+            </span>
             <span className="truncate font-sans text-[10.5px] font-medium text-[var(--text-disabled)] transition-colors group-hover/wshead:text-[var(--text-primary)]">
               Pinned
             </span>
@@ -1232,31 +1573,44 @@ export function AgentWorkspaceRail() {
         {!isPinnedHeaderCollapsed ? (
           <div className="flex flex-col gap-[2px]">
             {pinnedRailConversations.map((conversation, index) => {
-              const selected =
-                conversation.id === selectedConversationId &&
-                conversation.workspaceId === activeWorkspaceId;
+              const pinnedSection: RailConversationRowSection = {
+                inPinnedSection: true,
+                workspaceId: conversation.workspaceId,
+                orderedConversations: pinnedRailConversations,
+              };
+              const railKey = getRailConversationKey(conversation);
               return (
                 <AgentConversationRow
-                  key={conversation.id}
+                  key={conversation.conversationKey ?? conversation.id}
                   conversation={conversation}
                   rowIndex={index}
-                  selected={selected}
+                  selected={isConversationChatSelected(conversation)}
+                  bulkSelectMode={bulkSelectMode}
+                  bulkSelected={bulkSelectMode && bulkSelectedKeys.has(railKey)}
                   editing={renameState?.conversationId === conversation.id}
                   editValue={renameState?.draft}
                   onBeginRename={() => beginConversationRename(conversation)}
                   onEditValueChange={updateConversationRenameDraft}
                   onCommitRename={commitConversationRename}
                   onCancelRename={cancelConversationRename}
-                  onSelect={() => handleConversationSelect(conversation)}
+                  onSelect={(event) => {
+                    if (bulkSelectMode) {
+                      handleBulkRowClick(event, conversation, pinnedSection);
+                      return;
+                    }
+                    handleConversationSelect(conversation);
+                  }}
                   onContextMenu={(e, currentConversation) =>
                     handleConversationContextMenu(e, currentConversation, {
                       inPinnedSection: true,
+                      orderedConversations: pinnedRailConversations,
                     })
                   }
                   showOverflowMenu={experimentalIpadCustomButtons}
                   onOverflowMenu={(anchor) =>
                     handleConversationOverflowMenu(conversation, anchor, {
                       inPinnedSection: true,
+                      orderedConversations: pinnedRailConversations,
                     })
                   }
                 />
@@ -1274,8 +1628,12 @@ export function AgentWorkspaceRail() {
     commitConversationRename,
     experimentalIpadCustomButtons,
     handleConversationOverflowMenu,
+    bulkSelectMode,
+    bulkSelectedKeys,
+    handleBulkRowClick,
     handleConversationSelect,
     handleConversationContextMenu,
+    isConversationChatSelected,
     pinnedRailConversations,
     renameState?.conversationId,
     renameState?.draft,
@@ -1293,38 +1651,51 @@ export function AgentWorkspaceRail() {
           className="flex h-full flex-col bg-[var(--agent-panel-bg)]"
           data-electron-drag-host
         >
-          <div
-            className={`flex shrink-0 items-center gap-[8px] pt-[11px] ${railTopBarPadClass}`}
-          >
-            <button
-              type="button"
-              onClick={toggleLeftRailCollapsed}
-              className="flex size-[18px] shrink-0 items-center justify-center rounded-[var(--agent-control-radius)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--agent-card-bg)] hover:text-[var(--text-primary)]"
-              aria-label="Collapse workspace rail"
-              title="Collapse workspace rail"
+          {bulkSelectMode ? (
+            <AgentRailBulkSelectBar
+              selectedCount={bulkSelectedKeys.size}
+              showPin={!bulkSectionPinned}
+              showUnpin={bulkSectionPinned}
+              topBarPadClass={railTopBarPadClass}
+              onArchive={handleBulkArchive}
+              onPin={handleBulkPin}
+              onUnpin={handleBulkUnpin}
+              onCancel={exitBulkSelect}
+            />
+          ) : (
+            <div
+              className={`flex shrink-0 items-center gap-[8px] pt-[11px] ${railTopBarPadClass}`}
             >
-              <PanelLeftClose className="size-[16px]" strokeWidth={1.5} />
-            </button>
-            <button
-              type="button"
-              onClick={() => setRecentChatsOpen(true)}
-              className="flex size-[18px] shrink-0 items-center justify-center rounded-[var(--agent-control-radius)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--agent-card-bg)] hover:text-[var(--text-primary)]"
-              aria-label="Search all chats"
-              title="Search all chats"
-            >
-              <Search className="size-[16px]" strokeWidth={1.5} />
-            </button>
-            <button
-              type="button"
-              onClick={handleNewChat}
-              data-perf="agent-rail-new-chat"
-              className="ml-auto flex size-[18px] shrink-0 items-center justify-center rounded-[var(--agent-control-radius)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--agent-card-bg)] hover:text-[var(--text-primary)]"
-              aria-label="Start new chat"
-              title="Start new chat"
-            >
-              <Plus className="size-[16px]" strokeWidth={1.5} />
-            </button>
-          </div>
+              <button
+                type="button"
+                onClick={toggleLeftRailCollapsed}
+                className="flex size-[18px] shrink-0 items-center justify-center rounded-[var(--agent-control-radius)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--agent-card-bg)] hover:text-[var(--text-primary)]"
+                aria-label="Collapse workspace rail"
+                title="Collapse workspace rail"
+              >
+                <PanelLeftClose className="size-[16px]" strokeWidth={1.5} />
+              </button>
+              <button
+                type="button"
+                onClick={() => setRecentChatsOpen(true)}
+                className="flex size-[18px] shrink-0 items-center justify-center rounded-[var(--agent-control-radius)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--agent-card-bg)] hover:text-[var(--text-primary)]"
+                aria-label="Search all chats"
+                title="Search all chats"
+              >
+                <Search className="size-[16px]" strokeWidth={1.5} />
+              </button>
+              <button
+                type="button"
+                onClick={handleNewChat}
+                data-perf="agent-rail-new-chat"
+                className="ml-auto flex size-[18px] shrink-0 items-center justify-center rounded-[var(--agent-control-radius)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--agent-card-bg)] hover:text-[var(--text-primary)]"
+                aria-label="Start new chat"
+                title="Start new chat"
+              >
+                <Plus className="size-[16px]" strokeWidth={1.5} />
+              </button>
+            </div>
+          )}
 
           {!leftRailCollapsed ? (
             <>
@@ -1353,8 +1724,20 @@ export function AgentWorkspaceRail() {
           ) : (
             <>
               {pinnedSection}
-              {visibleGroups.map((group) => {
-                const isWorkspaceCollapsed = collapsedWorkspaceIds.has(group.workspace.id);
+              {visibleGroups.map((group, groupIndex) => {
+                const groupKey = group.workspaceKey ?? group.workspace.id;
+                const isHomeWorkspace = Boolean(
+                  homeWorkspaceId && group.workspace.id === homeWorkspaceId
+                );
+                const workspaceAppearance = getWorkspaceRailAppearance(
+                  workspaceRailAppearances,
+                  groupKey,
+                  groupIndex,
+                  { isHome: isHomeWorkspace }
+                );
+                const workspaceActionsEnabled =
+                  agentRailSettings.groupBy === "workspace" && !group.serverAuthRequired;
+                const isWorkspaceCollapsed = collapsedWorkspaceIds.has(groupKey);
                 const workspaceFolders = settings.general.chatFolders
                   .filter((folder) => folder.workspaceId === group.workspace.id)
                   .sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name));
@@ -1373,29 +1756,32 @@ export function AgentWorkspaceRail() {
                 const branchLabel = workspaceBranchLabel(group.workspace.id, group.workspace.root);
                 return (
                 <section
-                  key={group.workspace.id}
+                  key={groupKey}
                   onDragOver={handleWorkspaceDragOver}
-                  onDrop={(event) => handleWorkspaceDrop(event, group.workspace.id)}
+                  onDrop={(event) => handleWorkspaceDrop(event, groupKey)}
                   className={`pb-[12px] ${
-                    draggingWorkspaceId === group.workspace.id ? "opacity-60" : ""
+                    draggingWorkspaceId === groupKey ? "opacity-60" : ""
                   }`}
                 >
                   <div
                     draggable
-                    onDragStart={(event) => handleWorkspaceDragStart(event, group.workspace.id)}
+                    onDragStart={(event) => handleWorkspaceDragStart(event, groupKey)}
                     onDragEnd={handleWorkspaceDragEnd}
                     className="group flex items-center gap-[2px] px-px pb-[4px]"
                   >
                     <button
                       type="button"
-                      onClick={() => toggleWorkspaceCollapsed(group.workspace.id)}
+                      onClick={() => toggleWorkspaceCollapsed(groupKey)}
                       className="group/wshead flex min-w-0 flex-1 items-center gap-[4px] rounded-[var(--radius-tab)] py-[2px] text-left"
                     >
-                      <ChevronRight
-                        className={`size-[10px] shrink-0 text-[var(--text-disabled)] transition-[transform,color] duration-150 group-hover/wshead:text-[var(--text-secondary)] ${
-                          isWorkspaceCollapsed ? "" : "rotate-90"
-                        }`}
-                        strokeWidth={2}
+                      <WorkspaceRailHeaderIcon
+                        appearance={workspaceAppearance}
+                        collapsed={isWorkspaceCollapsed}
+                        onCustomize={() => {
+                          setEditingWorkspaceKey((current) =>
+                            current === groupKey ? null : groupKey
+                          );
+                        }}
                       />
                       <span className="truncate font-sans text-[10.5px] font-medium text-[var(--text-disabled)] transition-colors group-hover/wshead:text-[var(--text-primary)]">
                         {group.workspace.name}
@@ -1406,16 +1792,30 @@ export function AgentWorkspaceRail() {
                         </span>
                       ) : null}
                     </button>
-                    <button
-                      type="button"
-                      onClick={() => void handleNewChatForWorkspace(group.workspace.id)}
-                      className="flex size-[16px] shrink-0 items-center justify-center rounded-[var(--radius-tab)] text-[var(--text-disabled)] opacity-0 transition-all group-hover:opacity-100 hover:bg-[var(--bg-card)] hover:text-[var(--text-primary)]"
-                      aria-label={`New chat in ${group.workspace.name}`}
-                      title={`New chat in ${group.workspace.name}`}
-                    >
-                      <Plus className="size-[12px]" strokeWidth={2} />
-                    </button>
+                    {workspaceActionsEnabled ? (
+                      <button
+                        type="button"
+                        onClick={() => void handleNewChatForWorkspace(group.workspace.id)}
+                        className="flex size-[16px] shrink-0 items-center justify-center rounded-[var(--radius-tab)] text-[var(--text-disabled)] opacity-0 transition-all group-hover:opacity-100 hover:bg-[var(--bg-card)] hover:text-[var(--text-primary)]"
+                        aria-label={`New chat in ${group.workspace.name}`}
+                        title={`New chat in ${group.workspace.name}`}
+                      >
+                        <Plus className="size-[12px]" strokeWidth={2} />
+                      </button>
+                    ) : null}
                   </div>
+                  {editingWorkspaceKey === groupKey ? (
+                    <RailIconCustomizePanel
+                      title={group.workspace.name}
+                      icon={workspaceAppearance.icon}
+                      color={workspaceAppearance.color}
+                      showNameField={false}
+                      onClose={() => setEditingWorkspaceKey(null)}
+                      onUpdate={(patch) =>
+                        updateWorkspaceAppearance(groupKey, patch, groupIndex)
+                      }
+                    />
+                  ) : null}
                   {!isWorkspaceCollapsed ? (
                     <div
                       className="flex flex-col gap-[2px]"
@@ -1487,8 +1887,12 @@ export function AgentWorkspaceRail() {
                               </button>
                             </div>
                             {editingFolderId === folder.id ? (
-                              <FolderCustomizePanel
-                                folder={folder}
+                              <RailIconCustomizePanel
+                                title={folder.name}
+                                icon={folder.icon}
+                                color={folder.color}
+                                showNameField
+                                name={folder.name}
                                 onClose={() => setEditingFolderId(null)}
                                 onUpdate={(patch) =>
                                   updateFolder(folder.id, (current) => ({
@@ -1515,33 +1919,52 @@ export function AgentWorkspaceRail() {
                                   </div>
                                 ) : (
                                   folderConversations.map((conversation, index) => {
-                                    const selected =
-                                      conversation.id === selectedConversationId &&
-                                      conversation.workspaceId === activeWorkspaceId;
+                                    const folderSection: RailConversationRowSection = {
+                                      workspaceId: group.workspace.id,
+                                      folderId: folder.id,
+                                      orderedConversations: folderConversations,
+                                    };
+                                    const railKey = getRailConversationKey(conversation);
                                     return (
                                       <AgentConversationRow
-                                        key={conversation.id}
+                                        key={conversation.conversationKey ?? conversation.id}
                                         conversation={conversation}
                                         rowIndex={index}
-                                        selected={selected}
+                                        selected={isConversationChatSelected(conversation)}
+                                        bulkSelectMode={bulkSelectMode}
+                                        bulkSelected={bulkSelectMode && bulkSelectedKeys.has(railKey)}
                                         editing={renameState?.conversationId === conversation.id}
                                         editValue={renameState?.draft}
                                         onBeginRename={() => beginConversationRename(conversation)}
                                         onEditValueChange={updateConversationRenameDraft}
                                         onCommitRename={commitConversationRename}
                                         onCancelRename={cancelConversationRename}
-                                        onSelect={() => handleConversationSelect(conversation)}
-                                        onDragStart={handleConversationDragStart}
-                                        onDragEnd={handleConversationDragEnd}
+                                        onSelect={(event) => {
+                                          if (bulkSelectMode) {
+                                            handleBulkRowClick(event, conversation, folderSection);
+                                            return;
+                                          }
+                                          handleConversationSelect(conversation);
+                                        }}
+                                        onDragStart={
+                                          bulkSelectMode ? undefined : handleConversationDragStart
+                                        }
+                                        onDragEnd={
+                                          bulkSelectMode ? undefined : handleConversationDragEnd
+                                        }
                                         onContextMenu={(e, currentConversation) =>
                                           handleConversationContextMenu(e, currentConversation, {
                                             inPinnedSection: false,
+                                            folderId: folder.id,
+                                            orderedConversations: folderConversations,
                                           })
                                         }
                                         showOverflowMenu={experimentalIpadCustomButtons}
                                         onOverflowMenu={(anchor) =>
                                           handleConversationOverflowMenu(conversation, anchor, {
                                             inPinnedSection: false,
+                                            folderId: folder.id,
+                                            orderedConversations: folderConversations,
                                           })
                                         }
                                       />
@@ -1554,33 +1977,50 @@ export function AgentWorkspaceRail() {
                         );
                       })}
                       {rootConversations.map((conversation, index) => {
-                          const selected =
-                            conversation.id === selectedConversationId &&
-                            conversation.workspaceId === activeWorkspaceId;
+                          const rootSection: RailConversationRowSection = {
+                            workspaceId: group.workspace.id,
+                            folderId: null,
+                            orderedConversations: rootConversations,
+                          };
+                          const railKey = getRailConversationKey(conversation);
                           return (
                             <AgentConversationRow
-                              key={conversation.id}
+                              key={conversation.conversationKey ?? conversation.id}
                               conversation={conversation}
                               rowIndex={index}
-                              selected={selected}
+                              selected={isConversationChatSelected(conversation)}
+                              bulkSelectMode={bulkSelectMode}
+                              bulkSelected={bulkSelectMode && bulkSelectedKeys.has(railKey)}
                               editing={renameState?.conversationId === conversation.id}
                               editValue={renameState?.draft}
                               onBeginRename={() => beginConversationRename(conversation)}
                               onEditValueChange={updateConversationRenameDraft}
                               onCommitRename={commitConversationRename}
                               onCancelRename={cancelConversationRename}
-                              onSelect={() => handleConversationSelect(conversation)}
-                              onDragStart={handleConversationDragStart}
-                              onDragEnd={handleConversationDragEnd}
+                              onSelect={(event) => {
+                                if (bulkSelectMode) {
+                                  handleBulkRowClick(event, conversation, rootSection);
+                                  return;
+                                }
+                                handleConversationSelect(conversation);
+                              }}
+                              onDragStart={
+                                bulkSelectMode ? undefined : handleConversationDragStart
+                              }
+                              onDragEnd={bulkSelectMode ? undefined : handleConversationDragEnd}
                               onContextMenu={(e, currentConversation) =>
                                 handleConversationContextMenu(e, currentConversation, {
                                   inPinnedSection: false,
+                                  folderId: null,
+                                  orderedConversations: rootConversations,
                                 })
                               }
                               showOverflowMenu={experimentalIpadCustomButtons}
                               onOverflowMenu={(anchor) =>
                                 handleConversationOverflowMenu(conversation, anchor, {
                                   inPinnedSection: false,
+                                  folderId: null,
+                                  orderedConversations: rootConversations,
                                 })
                               }
                             />
@@ -1595,19 +2035,35 @@ export function AgentWorkspaceRail() {
           )}
               </AgentRailConversationListScroll>
               <div className="flex shrink-0 items-center gap-[8px] px-[11px] py-[10px]">
-                <div
-                  className="flex min-w-0 flex-1 items-center gap-[8px]"
-                  title={accountLabel}
+                <button
+                  ref={accountAnchorRef}
+                  type="button"
+                  onClick={() => {
+                    setFilterMenuOpen(false);
+                    setServerPickerOpen((open) => !open);
+                  }}
+                  className="flex min-w-0 flex-1 items-center gap-[8px] rounded-[var(--radius-tab)] py-[2px] text-left transition-colors hover:bg-[var(--bg-card)]"
+                  aria-label={`Switch server (${activeServer.label})`}
+                  aria-expanded={serverPickerOpen}
+                  aria-haspopup="menu"
+                  title={activeServer.label}
                 >
                   <CircleUserRound
                     className="size-[18px] shrink-0 text-[var(--text-secondary)]"
                     strokeWidth={1.5}
                     aria-hidden
                   />
-                  <span className="truncate font-sans text-[13px] text-[var(--text-primary)]">
-                    {accountLabel}
+                  <span className="min-w-0 flex-1 truncate font-sans text-[13px] text-[var(--text-primary)]">
+                    {activeServer.label}
                   </span>
-                </div>
+                  <ChevronDown
+                    className={`size-[14px] shrink-0 text-[var(--text-secondary)] transition-transform ${
+                      serverPickerOpen ? "rotate-180" : ""
+                    }`}
+                    strokeWidth={1.5}
+                    aria-hidden
+                  />
+                </button>
                 <button
                   ref={filterAnchorRef}
                   type="button"
@@ -1639,12 +2095,24 @@ export function AgentWorkspaceRail() {
         </div>
       ) : null}
 
+      <ServerPickerPopover
+        open={serverPickerOpen}
+        onClose={() => setServerPickerOpen(false)}
+        anchorRef={accountAnchorRef}
+        label="Switch server"
+        selectedServerId={activeServer.id}
+        servers={servers}
+        serverStatusById={serverStatusById}
+        onSelect={handleActiveServerChange}
+        placement="above"
+      />
+
       <RecentChatsModal
         items={allConversationsForSearch}
         open={recentChatsOpen}
         onClose={() => setRecentChatsOpen(false)}
         onSelectConversation={handleSearchSelect}
-        placeholder="Search across all workspaces..."
+        placeholder="Search conversations on this server..."
         emptyLabel="No conversations found"
         screenReaderTitle="Search agent conversations"
         inputLabel="Search agent conversations"
@@ -1662,6 +2130,10 @@ export function AgentWorkspaceRail() {
         setWorkspaceSortMode={setWorkspaceSortMode}
         workspaceCustomOrderActive={workspaceCustomOrderIds.length > 0}
         resetWorkspaceCustomOrder={resetWorkspaceCustomOrder}
+        groupBy={agentRailSettings.groupBy}
+        setGroupBy={setAgentRailGroupBy}
+        showIcons={agentRailSettings.showIcons}
+        setShowIcons={(value) => patchAgentRailSettings({ showIcons: value })}
       />
     </>
   );

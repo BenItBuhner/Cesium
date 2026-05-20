@@ -1,6 +1,7 @@
 import { getJSON, setJSON } from "../../cache/kv.js";
 import { getStorage } from "../../storage/runtime.js";
 import { listWorkspaces, type WorkspaceRecord } from "../workspace-registry.js";
+import { getGitWorkspaceStatus } from "../git-worktrees.js";
 import { listAgentBackendsWithCache } from "./providers.js";
 import {
   RAIL_ALL_FIRST_PAGE_CACHE_KEY,
@@ -21,12 +22,22 @@ export type AgentConversationsAllSummary = {
   mode: AgentConversationRecord["config"]["mode"];
   experimental: boolean;
   hasPendingPermission: boolean;
+  repository?: AgentRailRepositoryInfo;
+};
+
+export type AgentRailRepositoryInfo = {
+  isGitRepo: boolean;
+  repoRoot?: string;
+  repoKey?: string;
+  currentBranch?: string | null;
+  worktreeBaseRoot?: string;
 };
 
 export type AgentConversationsAllPayload = {
   backends: Awaited<ReturnType<typeof listAgentBackendsWithCache>>;
   groups: Array<{
     workspace: WorkspaceRecord;
+    repository?: AgentRailRepositoryInfo;
     conversations: AgentConversationsAllSummary[];
   }>;
   nextCursor: string | null;
@@ -49,7 +60,20 @@ function isRenderableRailConversation(conversation: AgentConversationRecord): bo
   );
 }
 
-function summarizeConversation(conversation: AgentConversationRecord): AgentConversationsAllSummary {
+function worktreeBaseRoot(root: string, repoRoot?: string): string | undefined {
+  const normalized = root.replace(/\\/g, "/");
+  const marker = "/.cesium/";
+  const idx = normalized.indexOf(marker);
+  if (idx >= 0) {
+    return normalized.slice(0, idx);
+  }
+  return repoRoot;
+}
+
+function summarizeConversation(
+  conversation: AgentConversationRecord,
+  repository?: AgentRailRepositoryInfo
+): AgentConversationsAllSummary {
   return {
     id: conversation.id,
     workspaceId: conversation.workspaceId,
@@ -63,7 +87,31 @@ function summarizeConversation(conversation: AgentConversationRecord): AgentConv
     mode: conversation.config.mode,
     experimental: conversation.experimental,
     hasPendingPermission: conversation.pendingPermission != null,
+    repository,
   };
+}
+
+async function buildRepositoryInfoByWorkspace(
+  workspaces: WorkspaceRecord[]
+): Promise<Map<string, AgentRailRepositoryInfo>> {
+  const entries = await Promise.all(
+    workspaces.map(async (workspace) => {
+      try {
+        const status = await getGitWorkspaceStatus(workspace, workspaces);
+        const info: AgentRailRepositoryInfo = {
+          isGitRepo: status.isGitRepo,
+          repoRoot: status.repoRoot,
+          repoKey: status.repoKey,
+          currentBranch: status.currentBranch,
+          worktreeBaseRoot: worktreeBaseRoot(workspace.root, status.repoRoot),
+        };
+        return [workspace.id, info] as const;
+      } catch {
+        return [workspace.id, { isGitRepo: false } satisfies AgentRailRepositoryInfo] as const;
+      }
+    })
+  );
+  return new Map(entries);
 }
 
 /**
@@ -82,6 +130,7 @@ export async function buildAgentConversationsAllPayload(input: {
     listAgentBackendsWithCache(),
   ]);
   const workspaceById = new Map(workspaces.map((workspace) => [workspace.id, workspace]));
+  const repositoryByWorkspaceId = await buildRepositoryInfoByWorkspace(workspaces);
 
   if (offset === 0) {
     const storage = await getStorage();
@@ -114,7 +163,7 @@ export async function buildAgentConversationsAllPayload(input: {
     );
     return {
       backends,
-      groups: groupConversationSummaries(workspaces, workspaceById, records),
+      groups: groupConversationSummaries(workspaces, workspaceById, records, repositoryByWorkspaceId),
       nextCursor: globalPage.nextCursor ? String(limit) : null,
     };
   }
@@ -142,7 +191,7 @@ export async function buildAgentConversationsAllPayload(input: {
   const window = flat.slice(offset, offset + limit).map((entry) => entry.conversation);
   return {
     backends,
-    groups: groupConversationSummaries(workspaces, workspaceById, window),
+    groups: groupConversationSummaries(workspaces, workspaceById, window, repositoryByWorkspaceId),
     nextCursor: offset + window.length < flat.length ? String(offset + window.length) : null,
   };
 }
@@ -150,11 +199,16 @@ export async function buildAgentConversationsAllPayload(input: {
 function groupConversationSummaries(
   workspaces: WorkspaceRecord[],
   workspaceById: Map<string, WorkspaceRecord>,
-  records: AgentConversationRecord[]
+  records: AgentConversationRecord[],
+  repositoryByWorkspaceId: Map<string, AgentRailRepositoryInfo> = new Map()
 ): AgentConversationsAllPayload["groups"] {
   const groupMap = new Map<string, AgentConversationsAllPayload["groups"][number]>();
   for (const workspace of workspaces) {
-    groupMap.set(workspace.id, { workspace, conversations: [] });
+    groupMap.set(workspace.id, {
+      workspace,
+      repository: repositoryByWorkspaceId.get(workspace.id),
+      conversations: [],
+    });
   }
   for (const conversation of records) {
     if (!isRenderableRailConversation(conversation)) {
@@ -164,7 +218,11 @@ function groupConversationSummaries(
     if (!workspace) {
       continue;
     }
-    groupMap.get(workspace.id)?.conversations.push(summarizeConversation(conversation));
+    groupMap
+      .get(workspace.id)
+      ?.conversations.push(
+        summarizeConversation(conversation, repositoryByWorkspaceId.get(workspace.id))
+      );
   }
   return Array.from(groupMap.values());
 }

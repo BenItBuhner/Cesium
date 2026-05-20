@@ -10,7 +10,7 @@ import type {
 import { patchAgentConversationGroups } from "../src/lib/agent-rail-patch";
 import type { WorkspaceRecord } from "../src/lib/types";
 
-const backendId = "cursor-acp" as AgentBackendId;
+const backendId = "cursor-sdk" as AgentBackendId;
 const mode = "agent" as AgentConversationMode;
 
 const testCaps: AgentProviderCapabilities = {
@@ -25,6 +25,7 @@ const testCaps: AgentProviderCapabilities = {
   supportsSessionResume: true,
   supportsPromptImages: true,
   supportsInlineReasoning: true,
+  supportsCompletionRetry: false,
 };
 
 function baseRecord(

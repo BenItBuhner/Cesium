@@ -1,6 +1,10 @@
 import type { FileNode } from "@/lib/types";
-import type { AgentBackendInfo, AgentConfigOption } from "@/lib/agent-types";
-import type { AgentModeOption, ModelInfo } from "@/lib/types";
+import type {
+  AgentBackendId,
+  AgentBackendInfo,
+  AgentConfigOption,
+} from "@/lib/agent-types";
+import type { AgentModeOption, EditorMode, ModelInfo } from "@/lib/types";
 
 export type AtSuggestion = {
   id: string;
@@ -10,11 +14,25 @@ export type AtSuggestion = {
   category: "file" | "tool";
 };
 
-export type SlashSuggestion = {
+export type SlashMenuAction =
+  | { kind: "mode"; modeId: EditorMode }
+  | { kind: "model"; model: ModelInfo }
+  | { kind: "backend"; backendId: AgentBackendId }
+  | { kind: "config"; configId: string; value: string }
+  | { kind: "insert"; insert: string };
+
+export type SlashMenuItem = {
   id: string;
   label: string;
-  subtitle: string;
-  insert: string;
+  searchText: string;
+  disabled?: boolean;
+  action: SlashMenuAction;
+};
+
+export type SlashMenuSection = {
+  id: string;
+  label?: string;
+  items: SlashMenuItem[];
 };
 
 function walkFiles(node: FileNode, base: string): AtSuggestion[] {
@@ -74,131 +92,126 @@ export function getAllAtSuggestions(root?: FileNode | null): AtSuggestion[] {
   return [...TOOL_AT, ...filesFromTree(root ?? { name: "", type: "folder", children: [] })];
 }
 
-const PROMPT_SLASH_COMMANDS: SlashSuggestion[] = [
-  {
-    id: "plan",
-    label: "Plan",
-    subtitle: "Draft a structured implementation plan",
-    insert: "/plan",
-  },
-  {
-    id: "edit",
-    label: "Edit",
-    subtitle: "Edit the selected code",
-    insert: "/edit",
-  },
-  {
-    id: "fix",
-    label: "Fix",
-    subtitle: "Fix problems in the selection",
-    insert: "/fix",
-  },
-  {
-    id: "explain",
-    label: "Explain",
-    subtitle: "Explain how the code works",
-    insert: "/explain",
-  },
-  {
-    id: "tests",
-    label: "Tests",
-    subtitle: "Generate or update tests",
-    insert: "/tests",
-  },
-  {
-    id: "search",
-    label: "Search",
-    subtitle: "Search the codebase for a symbol",
-    insert: "/search",
-  },
-  {
-    id: "summarize",
-    label: "Summarize",
-    subtitle: "Summarize recent changes or context",
-    insert: "/summarize",
-  },
-  {
-    id: "models",
-    label: "Models",
-    subtitle: "Open the model picker",
-    insert: "/models",
-  },
-  {
-    id: "worktree",
-    label: "Worktree",
-    subtitle: "Run this prompt in a new git worktree",
-    insert: "/worktree",
-  },
-  {
-    id: "delete-worktree",
-    label: "Delete Worktree",
-    subtitle: "Remove the current git worktree after safety checks",
-    insert: "/delete-worktree",
-  },
-];
-
-function slugifySlashValue(value: string): string {
-  return value
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-}
-
-function summarizeBackendLabel(backend: AgentBackendInfo): string {
-  return backend.experimental ? `${backend.label} (experimental)` : backend.label;
-}
-
-export function getSlashSuggestions(input: {
+export function getSlashMenuSections(input: {
+  activeBackend?: AgentBackendInfo | null;
   modeOptions?: AgentModeOption[];
   models?: ModelInfo[];
   backends?: AgentBackendInfo[];
   sessionConfigOptions?: AgentConfigOption[];
-}): SlashSuggestion[] {
-  const suggestions: SlashSuggestion[] = [...PROMPT_SLASH_COMMANDS];
+  gitSlashCommands?: boolean;
+  configLocked?: boolean;
+}): SlashMenuSection[] {
+  const sections: SlashMenuSection[] = [];
+  const backend = input.activeBackend;
+  const caps = backend?.capabilities;
+  const locked = input.configLocked ?? false;
 
-  for (const mode of input.modeOptions ?? []) {
-    suggestions.push({
-      id: `mode:${mode.id}`,
-      label: `Mode: ${mode.label}`,
-      subtitle: mode.description ?? "Switch the active chat mode",
-      insert: `/mode ${mode.id}`,
+  if (!locked && caps?.supportsModeSelection !== false && (input.modeOptions?.length ?? 0) > 0) {
+    sections.push({
+      id: "modes",
+      label: "Modes",
+      items: (input.modeOptions ?? []).map((mode) => ({
+        id: `mode:${mode.id}`,
+        label: mode.label,
+        searchText: `${mode.label} ${mode.id} mode`,
+        action: { kind: "mode", modeId: mode.id },
+      })),
     });
   }
 
-  for (const model of input.models ?? []) {
-    const modelValue = model.modelValue ?? model.id;
-    suggestions.push({
-      id: `model:${modelValue}`,
-      label: `Model: ${model.name}`,
-      subtitle: model.description ?? "Switch the active model",
-      insert: `/model ${modelValue}`,
+  if (!locked && caps?.supportsModelSelection !== false && (input.models?.length ?? 0) > 0) {
+    sections.push({
+      id: "models",
+      label: "Models",
+      items: (input.models ?? []).map((model) => {
+        const modelValue = model.modelValue ?? model.id;
+        return {
+          id: `model:${modelValue}`,
+          label: model.name,
+          searchText: `${model.name} ${modelValue} model`,
+          action: { kind: "model", model },
+        };
+      }),
     });
   }
 
-  for (const backend of input.backends ?? []) {
-    suggestions.push({
-      id: `backend:${backend.id}`,
-      label: `Backend: ${backend.label}`,
-      subtitle: summarizeBackendLabel(backend),
-      insert: `/backend ${backend.id}`,
+  const backends = input.backends ?? [];
+  if (!locked && backends.length > 1) {
+    sections.push({
+      id: "harnesses",
+      label: "Harnesses",
+      items: backends.map((entry) => ({
+        id: `backend:${entry.id}`,
+        label: entry.experimental ? `${entry.label} (experimental)` : entry.label,
+        searchText: `${entry.label} ${entry.id} harness backend`,
+        disabled: !entry.available,
+        action: { kind: "backend", backendId: entry.id },
+      })),
     });
   }
 
-  for (const option of input.sessionConfigOptions ?? []) {
-    for (const choice of option.options) {
-      const normalizedConfigId = slugifySlashValue(option.id || option.name);
-      const choiceValue = choice.value || choice.name;
-      suggestions.push({
-        id: `config:${option.id}:${choice.value}`,
-        label: `${option.name}: ${choice.name}`,
-        subtitle: option.description ?? `Set ${option.name}`,
-        insert: `/set ${normalizedConfigId} ${choiceValue}`,
-      });
+  const commandItems: SlashMenuItem[] = [];
+
+  if (!locked) {
+    for (const option of input.sessionConfigOptions ?? []) {
+      for (const choice of option.options) {
+        const choiceValue = choice.value || choice.name;
+        commandItems.push({
+          id: `config:${option.id}:${choice.value}`,
+          label: `${option.name}: ${choice.name}`,
+          searchText: `${option.name} ${choice.name} ${option.id} ${choiceValue}`,
+          action: { kind: "config", configId: option.id, value: choiceValue },
+        });
+      }
     }
   }
 
-  return suggestions;
+  if (input.gitSlashCommands) {
+    commandItems.push({
+      id: "worktree",
+      label: "Worktree",
+      searchText: "worktree git branch checkout",
+      action: { kind: "insert", insert: "/worktree " },
+    });
+    commandItems.push({
+      id: "delete-worktree",
+      label: "Delete Worktree",
+      searchText: "delete worktree git checkout",
+      action: { kind: "insert", insert: "/delete-worktree " },
+    });
+  }
+
+  if (commandItems.length > 0) {
+    sections.push({
+      id: "commands",
+      label: "Commands",
+      items: commandItems,
+    });
+  }
+
+  return sections;
+}
+
+export function flattenSlashMenuSections(sections: SlashMenuSection[]): SlashMenuItem[] {
+  return sections.flatMap((section) => section.items);
+}
+
+export function filterSlashMenuSections(
+  sections: SlashMenuSection[],
+  query: string
+): SlashMenuSection[] {
+  const q = query.toLowerCase().trim();
+  if (!q) return sections;
+  return sections
+    .map((section) => ({
+      ...section,
+      items: section.items.filter(
+        (item) =>
+          item.label.toLowerCase().includes(q) ||
+          item.searchText.toLowerCase().includes(q)
+      ),
+    }))
+    .filter((section) => section.items.length > 0);
 }
 
 export function filterAtSuggestions(list: AtSuggestion[], query: string): AtSuggestion[] {
@@ -212,15 +225,4 @@ export function filterAtSuggestions(list: AtSuggestion[], query: string): AtSugg
         s.insert.toLowerCase().includes(q)
     )
     .slice(0, 40);
-}
-
-export function filterSlashSuggestions(list: SlashSuggestion[], query: string): SlashSuggestion[] {
-  const q = query.toLowerCase().trim();
-  if (!q) return list;
-  return list.filter(
-    (s) =>
-      s.label.toLowerCase().includes(q) ||
-      s.subtitle.toLowerCase().includes(q) ||
-      s.insert.toLowerCase().includes(q)
-  );
 }

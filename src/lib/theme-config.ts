@@ -23,6 +23,22 @@ export type CustomThemeEntry = {
 
 export type UiDesignMode = "classic" | "new";
 
+/** Min/max for expanded worked-session tool-call list height in chat (px). */
+export const TOOL_CALL_DROPDOWN_MAX_HEIGHT_MIN_PX = 120;
+export const TOOL_CALL_DROPDOWN_MAX_HEIGHT_MAX_PX = 800;
+export const TOOL_CALL_DROPDOWN_MAX_HEIGHT_DEFAULT_PX = 240;
+
+export function normalizeToolCallDropdownMaxHeightPx(raw: unknown): number {
+  const n =
+    typeof raw === "number" && Number.isFinite(raw)
+      ? Math.round(raw)
+      : TOOL_CALL_DROPDOWN_MAX_HEIGHT_DEFAULT_PX;
+  return Math.min(
+    TOOL_CALL_DROPDOWN_MAX_HEIGHT_MAX_PX,
+    Math.max(TOOL_CALL_DROPDOWN_MAX_HEIGHT_MIN_PX, n)
+  );
+}
+
 export type ThemeConfig = {
   schemaVersion: 1;
   /** system | light | dark */
@@ -39,6 +55,8 @@ export type ThemeConfig = {
   showFloatingSidebarReveal: boolean;
   /** Visual system variant. `new` enables the next-generation UI design hooks. */
   uiDesignMode: UiDesignMode;
+  /** Max height of expanded worked-session tool-call dropdown bodies in chat (px). */
+  toolCallDropdownMaxHeightPx: number;
 };
 
 export function createDefaultThemeConfig(): ThemeConfig {
@@ -50,6 +68,7 @@ export function createDefaultThemeConfig(): ThemeConfig {
     customThemes: [],
     showFloatingSidebarReveal: false,
     uiDesignMode: "classic",
+    toolCallDropdownMaxHeightPx: TOOL_CALL_DROPDOWN_MAX_HEIGHT_DEFAULT_PX,
   };
 }
 
@@ -113,6 +132,9 @@ export function normalizeThemeConfig(raw: unknown): ThemeConfig {
     customThemes: sanitizeCustomThemes(r.customThemes),
     showFloatingSidebarReveal,
     uiDesignMode,
+    toolCallDropdownMaxHeightPx: normalizeToolCallDropdownMaxHeightPx(
+      r.toolCallDropdownMaxHeightPx
+    ),
   };
 }
 

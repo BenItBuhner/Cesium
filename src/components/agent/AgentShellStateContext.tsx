@@ -23,8 +23,11 @@ import type {
 import type { ChatMessage } from "@/lib/types";
 import {
   listCrossWorkspaceAgentConversations,
+  listCrossWorkspaceAgentConversationsForServer,
   patchAgentConversationMetadata,
 } from "@/lib/server-api";
+import { useServerConnections } from "@/components/preferences/ServerConnectionsProvider";
+import type { ServerRuntimeStatus } from "@/components/preferences/ServerConnectionsProvider";
 import {
   AGENT_SHELL_DEFAULT_LAYOUT,
   AGENT_SHELL_PANEL_IDS,
@@ -61,11 +64,14 @@ import {
   patchAgentConversationTitleInGroups,
   removeConversationFromAgentGroups,
 } from "@/lib/agent-rail-patch";
+import { groupAgentRailGroups } from "@/lib/agent-rail-groups";
 import { markConversationSwitchStart } from "@/lib/dev-perf";
 import type { AgentConversationRecord } from "@/lib/agent-types";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
+import { useWorkspaceDirectory } from "@/contexts/WorkspaceDirectoryContext";
 import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
 import type { WorkspaceSortMode } from "@/lib/global-settings";
+import type { ServerConnection } from "@/lib/server-connections";
 import {
   AGENT_NEW_CHAT_SESSION_ID,
   createEmptyAgentSidePaneSession,
@@ -213,6 +219,7 @@ function sortConversationGroups(
   workspaceSortMode: WorkspaceSortMode,
   customWorkspaceOrderIds: string[]
 ): AgentConversationGroup[] {
+  const groupId = (group: AgentConversationGroup) => group.workspaceKey ?? group.workspace.id;
   const recentOrder = new Map(
     recentWorkspaceIds.map((workspaceId, index) => [workspaceId, index])
   );
@@ -228,8 +235,8 @@ function sortConversationGroups(
     }
 
     if (workspaceSortMode === "custom") {
-      const customA = customOrder.get(a.workspace.id);
-      const customB = customOrder.get(b.workspace.id);
+      const customA = customOrder.get(groupId(a));
+      const customB = customOrder.get(groupId(b));
       if (customA != null && customB != null && customA !== customB) {
         return customA - customB;
       }
@@ -278,6 +285,130 @@ function removePlaceholderRailConversations(
   }));
 }
 
+function annotateRailGroupsForServer(
+  groups: AgentConversationGroup[],
+  server: Pick<ServerConnection, "id" | "label" | "baseUrl">
+): AgentConversationGroup[] {
+  return groups.map((group) => {
+    const workspaceKey = `${server.id}:${group.workspace.id}`;
+    const repositoryKey = group.repository?.repoKey
+      ? `${server.id}:${group.repository.repoKey}`
+      : group.repository?.repoRoot
+        ? `${server.id}:${group.repository.repoRoot}`
+        : undefined;
+    return {
+      ...group,
+      serverId: server.id,
+      serverLabel: server.label,
+      workspaceKey,
+      repositoryKey,
+      conversations: group.conversations.map((conversation) => ({
+        ...conversation,
+        serverId: server.id,
+        serverLabel: server.label,
+        workspaceKey,
+        conversationKey: `${server.id}:${conversation.id}`,
+        repositoryKey,
+        repository: conversation.repository ?? group.repository,
+      })),
+    };
+  });
+}
+
+/**
+ * Ensure every workspace returned by the live directory has at least an empty
+ * group in the rail. Without this, workspaces whose owning server has no
+ * conversations (or returned an error) would silently disappear from the
+ * cross-server rail and the user would think one of their servers vanished.
+ */
+function mergeDirectoryPlaceholders(
+  liveGroups: AgentConversationGroup[],
+  directory: ReadonlyArray<{
+    id: string;
+    name: string;
+    root: string;
+    createdAt: number;
+    updatedAt: number;
+    lastOpenedAt: number;
+    serverId: string;
+    serverLabel: string;
+    workspaceKey: string;
+  }>
+): AgentConversationGroup[] {
+  const seenKeys = new Set(
+    liveGroups
+      .map((group) => group.workspaceKey ?? group.workspace.id)
+      .filter((key): key is string => Boolean(key))
+  );
+  const result = [...liveGroups];
+  for (const workspace of directory) {
+    if (seenKeys.has(workspace.workspaceKey)) {
+      continue;
+    }
+    seenKeys.add(workspace.workspaceKey);
+    result.push({
+      workspace: {
+        id: workspace.id,
+        name: workspace.name,
+        root: workspace.root,
+        createdAt: workspace.createdAt,
+        updatedAt: workspace.updatedAt,
+        lastOpenedAt: workspace.lastOpenedAt,
+      },
+      conversations: [],
+      serverId: workspace.serverId,
+      serverLabel: workspace.serverLabel,
+      workspaceKey: workspace.workspaceKey,
+    });
+  }
+  return result;
+}
+
+function mergeAuthRequiredServerPlaceholders(
+  liveGroups: AgentConversationGroup[],
+  servers: ReadonlyArray<Pick<ServerConnection, "id" | "label" | "baseUrl">>,
+  serverStatusById: Record<string, ServerRuntimeStatus>
+): AgentConversationGroup[] {
+  const seenServerIds = new Set(liveGroups.map((group) => group.serverId).filter(Boolean));
+  const result = [...liveGroups];
+  for (const server of servers) {
+    if (serverStatusById[server.id]?.health !== "auth_required" || seenServerIds.has(server.id)) {
+      continue;
+    }
+    const workspaceId = `__server_auth_required:${server.id}`;
+    result.push({
+      workspace: {
+        id: workspaceId,
+        name: server.label,
+        root: server.baseUrl,
+        createdAt: 0,
+        updatedAt: 0,
+        lastOpenedAt: 0,
+      },
+      conversations: [],
+      serverId: server.id,
+      serverLabel: "Auth required",
+      workspaceKey: `${server.id}:${workspaceId}`,
+      serverAuthRequired: true,
+    });
+  }
+  return result;
+}
+
+function mergeAgentBackends(
+  lists: AgentBackendInfo[][]
+): AgentBackendInfo[] {
+  const byId = new Map<string, AgentBackendInfo>();
+  for (const list of lists) {
+    for (const backend of list) {
+      if (!byId.has(backend.id)) {
+        byId.set(backend.id, backend);
+      }
+    }
+  }
+  return [...byId.values()];
+}
+
 function createLegacySidePaneSession(
   workspaceSession: ReturnType<typeof useWorkspace>["workspaceSession"]
 ): AgentSidePaneSessionState {
@@ -317,6 +448,8 @@ export function AgentShellStateProvider({
     updateWorkspaceSession,
   } = useWorkspace();
   const { settings } = useGlobalSettings();
+  const { activeServer, onlineServers, serverStatusById, setActiveServer } = useServerConnections();
+  const { workspaces: directoryWorkspaces } = useWorkspaceDirectory();
   const { isMobile } = useViewport();
   const urlConversationId =
     typeof window !== "undefined"
@@ -359,6 +492,7 @@ export function AgentShellStateProvider({
   const editorTabScopeRef = useRef<string | null>(null);
   const sharedLeftRailCollapsedRef = useRef(sharedLeftRailCollapsed);
   const sharedAgentShellDesktopLayoutRef = useRef(sharedAgentShellDesktopLayout);
+  const railInitialLoadCompletedRef = useRef(false);
 
   useEffect(() => {
     sharedLeftRailCollapsedRef.current = sharedLeftRailCollapsed;
@@ -369,19 +503,82 @@ export function AgentShellStateProvider({
   }, [sharedAgentShellDesktopLayout]);
 
   const refreshConversationGroups = useCallback(async () => {
-    const result = await listCrossWorkspaceAgentConversations();
-    setBackends(result.backends);
-    setGroups(removePlaceholderRailConversations(result.groups));
-  }, []);
+    const servers = onlineServers.length > 0 ? onlineServers : [activeServer];
+    const results = await Promise.all(
+      servers.map(async (server) => {
+        try {
+          const result = await listCrossWorkspaceAgentConversationsForServer({
+            serverId: server.id,
+            baseUrl: server.baseUrl,
+          });
+          return {
+            server,
+            backends: result.backends,
+            groups: annotateRailGroupsForServer(
+              removePlaceholderRailConversations(result.groups),
+              server
+            ),
+          };
+        } catch (error) {
+          // Don't silently lose a whole server's rail; log so the user can see
+          // the actual failure in DevTools and we still render its workspaces
+          // via the directory placeholders below.
+          if (typeof console !== "undefined") {
+            console.warn(
+              `[rail] Failed to fetch conversations for ${server.label} (${server.baseUrl}):`,
+              error
+            );
+          }
+          return null;
+        }
+      })
+    );
+    const successful = results.filter((result): result is NonNullable<typeof result> =>
+      Boolean(result)
+    );
+    if (successful.length === 0) {
+      const result = await listCrossWorkspaceAgentConversations();
+      setBackends(result.backends);
+      setGroups(
+        mergeAuthRequiredServerPlaceholders(
+          mergeDirectoryPlaceholders(
+            removePlaceholderRailConversations(result.groups),
+            directoryWorkspaces
+          ),
+          servers,
+          serverStatusById
+        )
+      );
+      return;
+    }
+    setBackends(mergeAgentBackends(successful.map((result) => result.backends)));
+    setGroups(
+      mergeAuthRequiredServerPlaceholders(
+        mergeDirectoryPlaceholders(
+          successful.flatMap((result) => result.groups),
+          directoryWorkspaces
+        ),
+        servers,
+        serverStatusById
+      )
+    );
+  }, [activeServer, directoryWorkspaces, onlineServers, serverStatusById]);
 
   useEffect(() => {
     let active = true;
-    setRailLoading(true);
+    const initialLoad = !railInitialLoadCompletedRef.current;
+    if (initialLoad) {
+      setRailLoading(true);
+    } else {
+      setRailRefreshing(true);
+    }
     void refreshConversationGroups()
       .catch(() => undefined)
       .finally(() => {
         if (active) {
+          railInitialLoadCompletedRef.current = true;
           setRailLoading(false);
+          setRailRefreshing(false);
         }
       });
     return () => {
@@ -423,6 +620,13 @@ export function AgentShellStateProvider({
   }, [refreshConversationGroupsWithState]);
 
   useEffect(() => {
+    const interval = window.setInterval(() => {
+      void refreshConversationGroupsWithState();
+    }, 20_000);
+    return () => window.clearInterval(interval);
+  }, [refreshConversationGroupsWithState]);
+
+  useEffect(() => {
     const onUpsert = (ev: Event) => {
       const detail = (ev as CustomEvent<AgentConversationRecord>).detail;
       if (!detail?.id || !detail.workspaceId) {
@@ -454,16 +658,31 @@ export function AgentShellStateProvider({
     void refreshConversationGroups().catch(() => undefined);
   }, [activeWorkspaceId, refreshConversationGroups]);
 
+  useEffect(() => {
+    void refreshConversationGroupsWithState();
+  }, [activeServer.id, refreshConversationGroupsWithState]);
+
+  const activeServerGroups = useMemo(
+    () =>
+      groups.filter((group) => !group.serverId || group.serverId === activeServer.id),
+    [activeServer.id, groups]
+  );
+
+  const groupedByRailMode = useMemo(
+    () => groupAgentRailGroups(activeServerGroups, settings.general.agentRail.groupBy),
+    [activeServerGroups, settings.general.agentRail.groupBy]
+  );
+
   const orderedGroups = useMemo(
     () =>
       sortConversationGroups(
-        groups,
+        groupedByRailMode,
         recentWorkspaceIds,
         settings.general.workspaceSortMode,
         settings.general.workspaceCustomOrderIds
       ),
     [
-      groups,
+      groupedByRailMode,
       recentWorkspaceIds,
       settings.general.workspaceCustomOrderIds,
       settings.general.workspaceSortMode,
@@ -471,8 +690,21 @@ export function AgentShellStateProvider({
   );
 
   const activeWorkspaceGroup = useMemo(
-    () => orderedGroups.find((group) => group.workspace.id === activeWorkspaceId) ?? null,
-    [activeWorkspaceId, orderedGroups]
+    () =>
+      orderedGroups.find(
+        (group) =>
+          group.workspace.id === activeWorkspaceId &&
+          (!group.serverId || group.serverId === activeServer.id)
+      ) ??
+      orderedGroups.find((group) =>
+        group.conversations.some(
+          (conversation) =>
+            conversation.workspaceId === activeWorkspaceId &&
+            (!conversation.serverId || conversation.serverId === activeServer.id)
+        )
+      ) ??
+      null,
+    [activeServer.id, activeWorkspaceId, orderedGroups]
   );
 
   const validActiveConversationIds = useMemo(
@@ -1153,6 +1385,9 @@ export function AgentShellStateProvider({
   const openConversationSummary = useCallback(
     async (summary: AgentRailConversationSummary) => {
       markConversationSwitchStart(summary.id, "rail");
+      if (summary.serverId && summary.serverId !== activeServer.id) {
+        setActiveServer(summary.serverId);
+      }
       setPendingConversationSelection({
         workspaceId: summary.workspaceId,
         conversationId: summary.id,
@@ -1172,7 +1407,7 @@ export function AgentShellStateProvider({
         );
       }
     },
-    [activeWorkspaceId, openWorkspaceById, setSelectedConversationId]
+    [activeServer.id, activeWorkspaceId, openWorkspaceById, setActiveServer, setSelectedConversationId]
   );
 
   const archiveConversation = useCallback(
