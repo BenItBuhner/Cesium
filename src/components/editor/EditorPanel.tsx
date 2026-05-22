@@ -609,16 +609,6 @@ export function EditorPanel({
     []
   );
 
-  const closeBridgeBrowserTab = useCallback(
-    async (tabId: string) => {
-      const snapshot = stateRef.current;
-      const group = snapshot.leftTabs.some((tab) => tab.id === tabId) ? "left" : "right";
-      await closeBrowserControlTab(tabId).catch(() => undefined);
-      return requestCloseTab(group, tabId);
-    },
-    [requestCloseTab]
-  );
-
   const focusBridgeBrowserTab = useCallback(async (tabId: string) => {
     const snapshot = stateRef.current;
     const group = snapshot.leftTabs.some((tab) => tab.id === tabId) ? "left" : "right";
@@ -1018,6 +1008,16 @@ export function EditorPanel({
       setExpandedComposerDraft,
       closeTabs,
     ]
+  );
+
+  const closeBridgeBrowserTab = useCallback(
+    async (tabId: string) => {
+      const snapshot = stateRef.current;
+      const group = snapshot.leftTabs.some((tab) => tab.id === tabId) ? "left" : "right";
+      await closeBrowserControlTab(tabId).catch(() => undefined);
+      return requestCloseTab(group, tabId);
+    },
+    [requestCloseTab]
   );
 
   const requestCloseAllInGroup = useCallback(
