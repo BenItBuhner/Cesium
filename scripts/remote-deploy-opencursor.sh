@@ -50,11 +50,11 @@ fi
 sleep 2
 
 echo "==> Start API"
-nohup npm run start --prefix server >> "$ROOT/logs/server.log" 2>&1 &
+setsid npm run start --prefix server >> "$ROOT/logs/server.log" 2>&1 < /dev/null &
 echo "API npm pid $!"
 
 echo "==> Start Next (port 3000)"
-nohup env PORT=3000 npm run start >> "$ROOT/logs/next.log" 2>&1 &
+setsid env PORT=3000 npm run start >> "$ROOT/logs/next.log" 2>&1 < /dev/null &
 echo "Next npm pid $!"
 
 sleep 5
