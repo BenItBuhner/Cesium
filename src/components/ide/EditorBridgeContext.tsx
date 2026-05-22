@@ -14,6 +14,7 @@ import type {
   EditorPanelAction,
   EditorPanelState,
 } from "@/components/editor/editor-panel-state";
+import type { BrowserControlTab, BrowserControlViewport } from "@/lib/server-api";
 
 export type EditorBridge = {
   dispatch: Dispatch<EditorPanelAction>;
@@ -21,7 +22,31 @@ export type EditorBridge = {
   saveActiveTab: () => Promise<boolean>;
   saveAllTabs: () => Promise<{ savedCount: number; attemptedCount: number }>;
   openTerminalTab: () => Promise<void>;
-  openBrowserTab: (url: string) => void;
+  openBrowserTab: (
+    url: string,
+    options?: { group?: EditorGroup; activate?: boolean; engine?: "proxy" | "server-chromium" }
+  ) => Promise<string | null> | string | null | void;
+  listBrowserTabs?: () => BrowserControlTab[];
+  closeBrowserTab?: (tabId: string) => Promise<boolean> | boolean;
+  focusBrowserTab?: (tabId: string) => Promise<boolean> | boolean;
+  moveBrowserTab?: (tabId: string, group: EditorGroup) => Promise<boolean> | boolean;
+  navigateBrowserTab?: (
+    tabId: string,
+    input: { op: "goto"; url: string } | { op: "reload" | "back" | "forward" }
+  ) => Promise<boolean> | boolean;
+  updateBrowserLock?: (
+    tabId: string,
+    input: { locked: boolean; conversationId?: string | null; reason?: string | null }
+  ) => Promise<boolean> | boolean;
+  setBrowserViewport?: (
+    tabId: string,
+    viewport: Partial<BrowserControlViewport>
+  ) => Promise<boolean> | boolean;
+  openOrchestrationBoardTab: (
+    boardId: string,
+    title: string,
+    group?: EditorGroup
+  ) => void;
   requestCloseTab: (group: EditorGroup, id: string) => void;
   requestCloseAllInGroup: (group: EditorGroup) => void;
   requestCloseOthersInGroup: (group: EditorGroup) => void;

@@ -32,7 +32,11 @@ import {
 import { ImageCarousel } from "./ImageCarousel";
 import type { ImageAttachment, ImageAttachmentState } from "@/lib/types";
 import { useTheme } from "@/components/theme/ThemeProvider";
-import { useComposerTextIsMultiLine } from "./composer-multiline";
+import {
+  resolveComposerIsMultiLine,
+  shouldLatchComposerMultiline,
+  useComposerTextIsMultiLine,
+} from "./composer-multiline";
 import {
   ComposerEditorScrollFades,
   useComposerEditorScrollFade,
@@ -74,6 +78,7 @@ import {
   isChatUiShortcutEvent,
   type ChatComposerShortcutAction,
 } from "@/lib/chat-ui-shortcut-events";
+import { shouldAutoFocusTextInput } from "@/lib/mobile-autofocus";
 import {
   composerEditorDomInSync,
   getCaretClientRect,
@@ -180,6 +185,7 @@ interface NewDesignModeChipProps {
   options: AgentModeOption[];
   onModeChange: (mode: EditorMode) => void;
   disabled?: boolean;
+  removable?: boolean;
 }
 
 /**
@@ -193,6 +199,7 @@ function NewDesignModeChip({
   options,
   onModeChange,
   disabled,
+  removable = true,
 }: NewDesignModeChipProps) {
   const tone = getModeTone(mode);
   if (!isNewDesignModeChipVisible(mode)) {
@@ -215,16 +222,18 @@ function NewDesignModeChip({
     >
       {renderNewDesignModeIcon(tone, colors.text)}
       <span style={{ color: colors.text }}>{label}</span>
-      <button
-        type="button"
-        disabled={disabled}
-        onClick={() => onModeChange(defaultMode)}
-        className="ml-[2px] flex size-[14px] items-center justify-center rounded-full transition-[background-color,opacity] hover:bg-black/15 disabled:cursor-not-allowed disabled:opacity-50"
-        aria-label={`Remove ${label} mode`}
-        title={`Remove ${label} mode`}
-      >
-        <X className="size-[10px]" strokeWidth={2.25} style={{ color: colors.text }} />
-      </button>
+      {removable ? (
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={() => onModeChange(defaultMode)}
+          className="ml-[2px] flex size-[14px] items-center justify-center rounded-full transition-[background-color,opacity] hover:bg-black/15 disabled:cursor-not-allowed disabled:opacity-50"
+          aria-label={`Remove ${label} mode`}
+          title={`Remove ${label} mode`}
+        >
+          <X className="size-[10px]" strokeWidth={2.25} style={{ color: colors.text }} />
+        </button>
+      ) : null}
     </span>
   );
 }
@@ -382,7 +391,8 @@ interface ChatComposerProps {
   onCollapseComposer?: () => void;
   onSubmit: (
     text: string,
-    attachments?: ImageAttachment[]
+    attachments?: ImageAttachment[],
+    options?: { delivery?: "normal" | "steer" }
   ) => Promise<boolean | void> | boolean | void;
   onCancel?: () => Promise<void> | void;
   onPause?: () => Promise<void> | void;
@@ -390,6 +400,8 @@ interface ChatComposerProps {
   conversationStatus?: AgentConversationStatus;
   busy?: boolean;
   configLocked?: boolean;
+  /** When true, mode cannot be changed or removed (orchestration lock-in). */
+  modeLocked?: boolean;
   /** Empty thread: composer sits under tabs; otherwise docked above bottom. */
   layout?: "docked-bottom" | "empty-top";
   variant?: "docked" | "expanded";
@@ -753,6 +765,7 @@ export function ChatComposer({
   conversationStatus,
   busy = false,
   configLocked = false,
+  modeLocked = false,
   layout = "docked-bottom",
   variant = "docked",
   forceMultiline = false,
@@ -771,6 +784,7 @@ export function ChatComposer({
   const { fileTree } = useWorkspace();
   const { settings } = useGlobalSettings();
   const submitCtrlEnter = settings.agents.submitCtrlEnter;
+  const steerCtrlEnter = settings.agents.steerCtrlEnter;
   const hasHardwareKeyboard = useHardwareKeyboard();
   const { pushNotification } = useWorkbenchNotifications();
   const surfaceId = useId().replace(/:/g, "_");
@@ -857,6 +871,7 @@ export function ChatComposer({
   const modeRef = useRef(mode);
   const modeOptionsRef = useRef<AgentModeOption[] | undefined>(modeOptions);
   const configLockedRef = useRef(configLocked);
+  const modeLockedRef = useRef(modeLocked);
   const canBackspaceClearModeChipRef = useRef(false);
   const filteredAtRef = useRef<AtSuggestion[]>([]);
   const filteredSlashRef = useRef<SlashMenuItem[]>([]);
@@ -872,6 +887,7 @@ export function ChatComposer({
   modeRef.current = mode;
   modeOptionsRef.current = modeOptions;
   configLockedRef.current = configLocked;
+  modeLockedRef.current = modeLocked;
 
   const value = controlledValue ?? uncontrolledValue;
   const selection = controlledSelection ?? uncontrolledSelection;
@@ -890,12 +906,14 @@ export function ChatComposer({
         sessionConfigOptions,
         gitSlashCommands,
         configLocked,
+        modeLocked,
       }),
     [
       activeBackend,
       backends,
       configLocked,
       gitSlashCommands,
+      modeLocked,
       modeOptions,
       models,
       sessionConfigOptions,
@@ -1246,7 +1264,7 @@ export function ChatComposer({
       setComposerValue(next.value);
       setComposerSelection(next.selection);
       setMenu(null);
-      if (!hardwareInputEnabled) {
+      if (!hardwareInputEnabled && shouldAutoFocusTextInput()) {
         const targetOffset = next.selection.start;
         requestAnimationFrame(() => {
           const el = editorRef.current;
@@ -1422,7 +1440,7 @@ export function ChatComposer({
  if (!configLocked) setModelDropdownOpen(true);
  break;
  case "openModeDropdown":
- if (!configLocked) setModeMenuOpenKey((k) => k + 1);
+ if (!configLocked && !modeLocked) setModeMenuOpenKey((k) => k + 1);
  break;
  case "openBackendDropdown":
  if (!configLocked) setBackendMenuOpenKey((k) => k + 1);
@@ -1464,6 +1482,7 @@ export function ChatComposer({
     busy,
     configLocked,
     isExpanded,
+    modeLocked,
     onCollapseComposer,
     onExpandComposer,
     recordingState,
@@ -1484,6 +1503,10 @@ export function ChatComposer({
 
         const modeMatch = line.match(/^\/mode\s+(.+)$/i);
         if (modeMatch) {
+          if (modeLockedRef.current) {
+            remainingLines.push(rawLine);
+            continue;
+          }
           const wanted = normalizeDirectiveToken(modeMatch[1] ?? "");
           const match = modeOptions?.find(
             (option) =>
@@ -1686,7 +1709,7 @@ export function ChatComposer({
     [draftCaptures]
   );
 
-  const submitComposer = useCallback(async () => {
+  const submitComposer = useCallback(async (delivery: "normal" | "steer" = "normal") => {
     const trimmed = valueRef.current.trim();
     if (!trimmed && attachedImages.length === 0) {
       return;
@@ -1700,6 +1723,7 @@ export function ChatComposer({
     }));
     const promptKey = JSON.stringify({
       text: promptText,
+      delivery,
       attachments: imagesToSubmit.map((image) => ({
         mimeType: image.mimeType,
         name: image.name,
@@ -1732,7 +1756,7 @@ export function ChatComposer({
       onDraftCapturesChange(undefined);
     }
     if (promptText || imagesToSubmit.length > 0) {
-      void Promise.resolve(onSubmit(promptText, imagesToSubmit))
+      void Promise.resolve(onSubmit(promptText, imagesToSubmit, { delivery }))
         .catch(() => undefined)
         .finally(() => {
           if (submittingPromptKeyRef.current === promptKey) {
@@ -1890,7 +1914,7 @@ export function ChatComposer({
       if (event.metaKey || event.ctrlKey) {
         return false;
       }
- if (configLocked) {
+ if (configLocked || modeLocked) {
  return false;
  }
  const opts = ensureCurrentModeOption(
@@ -1911,7 +1935,7 @@ export function ChatComposer({
       setModeLabelPeekKey((k) => k + 1);
       return true;
     },
-    [configLocked, mode, modeOptions, onModeChange]
+    [configLocked, mode, modeLocked, modeOptions, onModeChange]
   );
 
   const clearSlashTrigger = useCallback(() => {
@@ -1936,7 +1960,7 @@ export function ChatComposer({
     (item: SlashMenuItem) => {
       const currentMenu = menuRef.current;
       if (!currentMenu || currentMenu.kind !== "slash") return;
-      if (configLocked || item.disabled) return;
+      if (configLocked || modeLocked || item.disabled) return;
 
       const action = item.action;
       switch (action.kind) {
@@ -1992,6 +2016,7 @@ export function ChatComposer({
       backends,
       clearSlashTrigger,
       configLocked,
+      modeLocked,
       hardwareInputEnabled,
       onBackendChange,
       onModeChange,
@@ -2152,6 +2177,7 @@ export function ChatComposer({
       if (
         !isPlainBackspaceKey(event) ||
         configLockedRef.current ||
+        modeLockedRef.current ||
         !canBackspaceClearModeChipRef.current ||
         !isNewDesignModeChipVisible(currentMode) ||
         valueRef.current.length !== 0
@@ -2219,7 +2245,9 @@ export function ChatComposer({
         })
       ) {
         event.preventDefault();
-        void submitComposer();
+        void submitComposer(
+          steerCtrlEnter && (event.ctrlKey || event.metaKey) ? "steer" : "normal"
+        );
         return true;
       }
 
@@ -2297,6 +2325,7 @@ export function ChatComposer({
     setComposerValue,
     submitComposer,
     submitCtrlEnter,
+    steerCtrlEnter,
     tryClearModeChipWithBackspace,
     tryCycleBackendWithCtrlShiftTab,
     tryCycleModeWithShiftTab,
@@ -2374,7 +2403,9 @@ const handleNativeComposerKeyDown = useCallback(
           })
         ) {
           event.preventDefault();
-          void submitComposer();
+          void submitComposer(
+            steerCtrlEnter && (event.ctrlKey || event.metaKey) ? "steer" : "normal"
+          );
         }
         return;
       }
@@ -2420,6 +2451,7 @@ const handleNativeComposerKeyDown = useCallback(
       selectedIndex,
       submitComposer,
       submitCtrlEnter,
+      steerCtrlEnter,
       refreshNativeComposerRefs,
       tryClearModeChipWithBackspace,
       tryCycleBackendWithCtrlShiftTab,
@@ -2558,36 +2590,28 @@ const handleNativeComposerKeyDown = useCallback(
   const [newDesignMultilineLatch, setNewDesignMultilineLatch] = useState(false);
 
   useEffect(() => {
-    if (composerTrimmedLength === 0) {
+    if (!shouldLatchComposerMultiline(value, hookMeasuresMultiline)) {
       setNewDesignMultilineLatch(false);
     }
-  }, [composerTrimmedLength]);
+  }, [hookMeasuresMultiline, value]);
 
   useEffect(() => {
     // After clearing, ResizeObserver can still see the old tall box until layout
     // settles; never re-latch multiline while the field is effectively empty.
-    if (hookMeasuresMultiline && composerTrimmedLength > 0) {
+    if (shouldLatchComposerMultiline(value, hookMeasuresMultiline)) {
       setNewDesignMultilineLatch(true);
     }
-  }, [hookMeasuresMultiline, composerTrimmedLength]);
+  }, [hookMeasuresMultiline, value]);
 
   const useNewDesignStickyMultiline =
     isNewDesign && variant === "docked" && !isExpanded;
-  const isMultiLine = (() => {
-    if (forceMultiline) {
-      return true;
-    }
-    if (!useNewDesignStickyMultiline) {
-      return hookMeasuresMultiline;
-    }
-    if (composerTrimmedLength === 0) {
-      return false;
-    }
-    if (newDesignMultilineLatch) {
-      return true;
-    }
-    return hookMeasuresMultiline;
-  })();
+  const isMultiLine = resolveComposerIsMultiLine({
+    forceMultiline,
+    useStickyMultiline: useNewDesignStickyMultiline,
+    hookMeasuresMultiline,
+    latchedMultiline: newDesignMultilineLatch,
+    value,
+  });
   canBackspaceClearModeChipRef.current =
     isNewDesign &&
     variant === "docked" &&
@@ -2702,7 +2726,8 @@ const handleNativeComposerKeyDown = useCallback(
         mode={mode}
         options={modeOptions ?? DEFAULT_MODE_OPTIONS}
         onModeChange={onModeChange}
-        disabled={configLocked}
+        disabled={configLocked || modeLocked}
+        removable={!modeLocked}
       />
     );
 
@@ -3206,6 +3231,7 @@ const handleNativeComposerKeyDown = useCallback(
                 onModeChange={onModeChange}
  popoverPlacement={modeModelPopoverPlacement}
  disabled={configLocked}
+ modeLocked={modeLocked}
  options={modeOptions}
                 labelPeekKey={modeLabelPeekKey}
                 menuOpenTriggerKey={modeMenuOpenKey}

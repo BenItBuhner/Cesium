@@ -53,6 +53,7 @@ export type GlobalSettings = {
     workspaceSortMode: WorkspaceSortMode;
     workspaceCustomOrderIds: string[];
     workspaceRailAppearances: Record<string, WorkspaceRailAppearance>;
+    serverRailAppearances: Record<string, ServerRailAppearance>;
     chatFolders: ChatFolderState[];
     agentRail: AgentRailSettingsState;
   };
@@ -115,6 +116,13 @@ export type WorkspaceRailAppearance = {
   color: string;
 };
 
+/** Per server id (`ServerConnection.id`). */
+export type ServerRailAppearance = {
+  icon: string;
+  color: string;
+  nickname?: string;
+};
+
 export type AgentRailSettingsState = {
   groupBy: AgentRailGroupByMode;
   visibleStatusFilters: string[];
@@ -133,6 +141,7 @@ function createDefaultSettings(): GlobalSettings {
       workspaceSortMode: "recent",
       workspaceCustomOrderIds: [],
       workspaceRailAppearances: {},
+      serverRailAppearances: {},
       chatFolders: [],
       agentRail: {
         groupBy: "workspace",
@@ -314,6 +323,40 @@ function normalizeWorkspaceCustomOrderIds(raw: unknown): string[] {
     out.push(value);
   }
   return out.slice(0, 500);
+}
+
+function normalizeServerRailAppearances(
+  raw: unknown
+): Record<string, ServerRailAppearance> {
+  if (!raw || typeof raw !== "object") {
+    return {};
+  }
+  const out: Record<string, ServerRailAppearance> = {};
+  let count = 0;
+  for (const [key, value] of Object.entries(raw)) {
+    if (count >= 100) {
+      break;
+    }
+    const serverId = typeof key === "string" ? key.trim() : "";
+    if (!serverId || !value || typeof value !== "object") {
+      continue;
+    }
+    const record = value as Partial<ServerRailAppearance>;
+    const rawColor = typeof record.color === "string" ? record.color.trim() : "";
+    const rawIcon = typeof record.icon === "string" ? record.icon.trim() : "";
+    const rawNickname =
+      typeof record.nickname === "string" ? record.nickname.trim().slice(0, 80) : "";
+    if (!rawIcon && !/^#[0-9a-f]{6}$/i.test(rawColor) && !rawNickname) {
+      continue;
+    }
+    out[serverId] = {
+      icon: rawIcon || "Globe",
+      color: /^#[0-9a-f]{6}$/i.test(rawColor) ? rawColor : "#2563eb",
+      ...(rawNickname ? { nickname: rawNickname } : {}),
+    };
+    count += 1;
+  }
+  return out;
 }
 
 function normalizeWorkspaceRailAppearances(
@@ -538,6 +581,9 @@ function migrateGlobalSettings(raw: Record<string, unknown>): GlobalSettings {
       ),
       workspaceRailAppearances: normalizeWorkspaceRailAppearances(
         (r.general as Record<string, unknown> | undefined)?.workspaceRailAppearances
+      ),
+      serverRailAppearances: normalizeServerRailAppearances(
+        (r.general as Record<string, unknown> | undefined)?.serverRailAppearances
       ),
       chatFolders: normalizeChatFolders(
         (r.general as Record<string, unknown> | undefined)?.chatFolders

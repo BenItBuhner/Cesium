@@ -14,6 +14,7 @@ import {
 } from "react";
 import { useHardwareInput } from "@/components/input/HardwareInputProvider";
 import type { HardwareSurfaceKind } from "@/components/input/hardware-input-types";
+import { shouldAutoFocusTextInput } from "@/lib/mobile-autofocus";
 import {
   applyTextBufferKey,
   clampSelection,
@@ -191,6 +192,7 @@ function HardwareAwareTextSurface({
   const selectionRef = useRef(selection);
   const onChangeRef = useRef(onChange);
   const onHardwareKeyDownRef = useRef(onHardwareKeyDown);
+  const autoFocusEnabled = autoFocus && shouldAutoFocusTextInput();
 
   const setSelection = useCallback(
     (next: TextSelection) => {
@@ -311,9 +313,9 @@ function HardwareAwareTextSurface({
   ]);
 
   useEffect(() => {
-    if (!enabled || !autoFocus) return;
+    if (!enabled || !autoFocusEnabled) return;
     activateSurface(surfaceId, fauxRef.current);
-  }, [activateSurface, autoFocus, enabled, surfaceId]);
+  }, [activateSurface, autoFocusEnabled, enabled, surfaceId]);
 
   const active = enabled && isSurfaceActive(surfaceId);
   const nodes = useMemo(
@@ -342,7 +344,7 @@ function HardwareAwareTextSurface({
           placeholder={placeholder}
           className={className}
           aria-label={ariaLabel}
-          autoFocus={autoFocus}
+          autoFocus={autoFocusEnabled}
           onKeyDown={onNativeKeyDown as KeyboardEventHandler<HTMLTextAreaElement>}
           onFocus={onFocus}
           onBlur={onBlur}
@@ -366,7 +368,7 @@ function HardwareAwareTextSurface({
         placeholder={placeholder}
         className={className}
         aria-label={ariaLabel}
-        autoFocus={autoFocus}
+        autoFocus={autoFocusEnabled}
         onKeyDown={onNativeKeyDown as KeyboardEventHandler<HTMLInputElement>}
         onFocus={onFocus}
         onBlur={onBlur}

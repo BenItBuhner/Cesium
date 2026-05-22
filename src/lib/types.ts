@@ -118,6 +118,7 @@ export interface AskQuestionStep {
   title: string;
   /** Shown above the answer list (body copy for the step). */
   content?: string;
+  allowMultiple?: boolean;
   options: AskQuestionOption[];
 }
 
@@ -200,7 +201,8 @@ export interface EditorTab {
     | "css"
     | "default"
     | "settings"
-    | "browser";
+    | "browser"
+    | "kanban";
   content: string;
   active?: boolean;
   /** Renders agent-style transcript instead of Monaco (e.g. subagent detail tab). */
@@ -217,9 +219,11 @@ export interface EditorTab {
   filePath?: string;
   /** Server-side terminal session id when this tab represents a PTY. */
   terminalId?: string;
-  /** In-IDE browser tab proxied through the workspace server. */
+  /** In-IDE browser tab. Native desktop/server-Chromium engines replace the legacy proxy when available. */
   browser?: {
     targetUrl: string;
+    /** Active browser engine for this tab; absent means legacy proxy. */
+    engine?: "proxy" | "electron-native" | "server-chromium";
     /** Absolute favicon URL (resolved client-side; displayed via proxy). */
     faviconUrl?: string;
     /** OSP-72: element inspect / annotate mode (guest script in proxied HTML). */
@@ -228,6 +232,8 @@ export interface EditorTab {
     devtoolsOpen?: boolean;
     /** Server debug session id for CDP bridge. */
     debugSessionId?: string | null;
+    /** Electron main-process WebContentsView session id. Ephemeral across reloads. */
+    nativeSessionId?: string | null;
     /**
      * Absolute-path URL (starts with `/`) of the real Chromium DevTools frontend
      * proxied through the workspace server. Set after a successful
@@ -235,6 +241,29 @@ export interface EditorTab {
      * the split devtools iframe.
      */
     devtoolsPath?: string | null;
+    /** Durable OSP-96 browser-control session id, distinct from engine-specific sessions. */
+    controlSessionId?: string | null;
+    lockState?: {
+      locked: boolean;
+      lockVersion: number;
+      lockedByConversationId?: string | null;
+      lockReason?: string | null;
+      lockedAt?: number | null;
+      userUnlockedAt?: number | null;
+      userAlteredAt?: number | null;
+    };
+    viewport?: {
+      preset: "watch" | "mobile" | "tablet" | "laptop" | "desktop" | "custom";
+      width: number;
+      height: number;
+      deviceScaleFactor?: number;
+      mobile?: boolean;
+      touch?: boolean;
+    };
+  };
+  /** Server-owned Orchestration Mode board rendered as a kanban surface. */
+  orchestrationBoard?: {
+    boardId: string;
   };
   /** File classification used to drive editor vs preview rendering. */
   fileKind?: "text" | "svg" | "image";
@@ -380,6 +409,7 @@ export type QueuedPromptConfigOverride = {
 export type QueuedChatPrompt = {
   id: string;
   text: string;
+  delivery?: "normal" | "steer";
   attachments?: ImageAttachment[];
   clientEventId?: string;
   clientMessageId?: string;

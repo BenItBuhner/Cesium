@@ -9,6 +9,8 @@ type CesiumDesktopGlobal = {
     reloadWindow?: () => void | Promise<void>;
     /** Opens in-app docs in a dedicated Electron BrowserWindow. */
     openDocsWindow?: () => void | Promise<void>;
+    /** Native Electron embedded browser engine, when available. */
+    browser?: unknown;
   };
 };
 

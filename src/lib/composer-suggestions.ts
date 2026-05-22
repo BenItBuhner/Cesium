@@ -100,13 +100,20 @@ export function getSlashMenuSections(input: {
   sessionConfigOptions?: AgentConfigOption[];
   gitSlashCommands?: boolean;
   configLocked?: boolean;
+  modeLocked?: boolean;
 }): SlashMenuSection[] {
   const sections: SlashMenuSection[] = [];
   const backend = input.activeBackend;
   const caps = backend?.capabilities;
   const locked = input.configLocked ?? false;
+  const modeLocked = input.modeLocked ?? false;
 
-  if (!locked && caps?.supportsModeSelection !== false && (input.modeOptions?.length ?? 0) > 0) {
+  if (
+    !locked &&
+    !modeLocked &&
+    caps?.supportsModeSelection !== false &&
+    (input.modeOptions?.length ?? 0) > 0
+  ) {
     sections.push({
       id: "modes",
       label: "Modes",

@@ -184,6 +184,13 @@ export const SHORTCUT_COMMAND_DEFINITIONS: ShortcutCommandDefinition[] = [
     allowInEditableContexts: true,
   },
   {
+    id: "workbench.action.newOrchestrationBoard",
+    label: "Orchestration: New Board",
+    section: "Workbench",
+    defaultBindings: [],
+    allowInEditableContexts: true,
+  },
+  {
     id: "chat.action.toggleVoiceInput",
     label: "Chat: Voice Transcription",
     section: "Chat",

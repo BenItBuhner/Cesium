@@ -76,7 +76,13 @@ export function StickyChatHeader({
       ref={setRefs}
       data-chat-message-id={dataChatMessageId}
       data-electron-no-drag
-      style={allowSticky ? { top: CHAT_STICKY_RAIL_INSET_PX - pushUpPx } : undefined}
+      style={
+        allowSticky
+          ? {
+              top: `calc(var(--opencursor-mobile-safe-area-top, 0px) + ${CHAT_STICKY_RAIL_INSET_PX}px - ${pushUpPx}px)`,
+            }
+          : undefined
+      }
       className={
         allowSticky
           ? "sticky z-10 shrink-0 bg-transparent pb-[10px]"

@@ -3,7 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import Script from "next/script";
 import { RegisterServiceWorker } from "@/components/pwa/RegisterServiceWorker";
 import { USER_PREFERENCES_STORAGE_KEY } from "@/lib/preferences";
-import { THEME_STORAGE_KEY } from "@/lib/theme";
+import { buildThemeBootstrapScript } from "@/lib/theme-bootstrap";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -49,7 +49,7 @@ export const viewport: Viewport = {
   ],
 };
 
-const themeBootstrap = `(()=>{try{var K=${JSON.stringify(THEME_STORAGE_KEY)};function pref(){var v=localStorage.getItem(K);return v==="light"||v==="dark"||v==="system"?v:"system"}function apply(){var p=pref();var d=p==="dark"||(p==="system"&&window.matchMedia("(prefers-color-scheme: dark)").matches);document.documentElement.classList.toggle("dark",d)}apply();window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change",function(){if(pref()==="system")apply()})}catch(e){}})();`;
+const themeBootstrap = buildThemeBootstrapScript();
 const preferencesBootstrap = `(()=>{try{var K=${JSON.stringify(USER_PREFERENCES_STORAGE_KEY)};var enabled=false;try{var raw=localStorage.getItem(K);var parsed=raw?JSON.parse(raw):null;enabled=!!(parsed&&parsed.experimentalIpadMode===true)}catch(e){}document.documentElement.setAttribute("data-experimental-ipad-mode",enabled?"true":"false");document.documentElement.classList.toggle("experimental-ipad-mode",enabled)}catch(e){}})();`;
 
 export default function RootLayout({

@@ -29,10 +29,36 @@ export type DebugSessionRecord = {
   /** Raw `devtoolsFrontendUrl` from Chromium's `/json/list` (unrewritten). */
   rawDevtoolsFrontendUrl: string;
   createdAt: number;
+  eventSeq: number;
+  events: BrowserDebugEvent[];
 };
+
+export type BrowserDebugEvent =
+  | {
+      seq: number;
+      ts: number;
+      type: "console";
+      level: "log" | "info" | "warning" | "error" | "debug";
+      source: "console" | "exception" | "log";
+      text: string;
+      url?: string;
+      lineNumber?: number;
+      columnNumber?: number;
+    }
+  | {
+      seq: number;
+      ts: number;
+      type: "network";
+      url: string;
+      method?: string;
+      status?: number;
+      statusText?: string;
+      resourceType?: string;
+    };
 
 const sessions = new Map<string, DebugSessionRecord>();
 const MAX_SESSIONS = 4;
+const MAX_SESSION_EVENTS = 500;
 const CHROMIUM_START_TIMEOUT_MS = 30_000;
 
 let playwrightModule: typeof import("playwright") | null = null;
@@ -158,6 +184,96 @@ async function fetchChromiumTargets(debugPort: number): Promise<ChromiumTarget[]
 function sanitizeViewport(n: number, fallback: number): number {
   const parsed = Number.isFinite(n) ? Math.floor(n) : fallback;
   return Math.max(64, Math.min(parsed, 2400));
+}
+
+function pushDebugSessionEvent(
+  rec: DebugSessionRecord,
+  event:
+    | (Omit<Extract<BrowserDebugEvent, { type: "console" }>, "seq" | "ts"> & {
+        ts?: number;
+      })
+    | (Omit<Extract<BrowserDebugEvent, { type: "network" }>, "seq" | "ts"> & {
+        ts?: number;
+      })
+): void {
+  rec.eventSeq += 1;
+  rec.events.push({
+    ...event,
+    seq: rec.eventSeq,
+    ts: event.ts ?? Date.now(),
+  } as BrowserDebugEvent);
+  if (rec.events.length > MAX_SESSION_EVENTS) {
+    rec.events.splice(0, rec.events.length - MAX_SESSION_EVENTS);
+  }
+}
+
+function installSessionEventCapture(rec: DebugSessionRecord): void {
+  rec.cdp.on("Runtime.consoleAPICalled", (params) => {
+    const text = (params.args ?? [])
+      .map((arg: { value?: unknown; description?: string; type?: string }) =>
+        arg.value != null ? String(arg.value) : arg.description ?? arg.type ?? ""
+      )
+      .filter(Boolean)
+      .join(" ");
+    const frame = params.stackTrace?.callFrames?.[0];
+    pushDebugSessionEvent(rec, {
+      type: "console",
+      level:
+        params.type === "error"
+          ? "error"
+          : params.type === "warning"
+            ? "warning"
+            : params.type === "debug"
+              ? "debug"
+              : "log",
+      source: "console",
+      text,
+      url: frame?.url,
+      lineNumber: frame?.lineNumber,
+      columnNumber: frame?.columnNumber,
+    });
+  });
+  rec.cdp.on("Runtime.exceptionThrown", (params) => {
+    const details = params.exceptionDetails ?? {};
+    pushDebugSessionEvent(rec, {
+      type: "console",
+      level: "error",
+      source: "exception",
+      text:
+        details.text ??
+        details.exception?.description ??
+        "Uncaught exception",
+      url: details.url,
+      lineNumber: details.lineNumber,
+      columnNumber: details.columnNumber,
+    });
+  });
+  rec.cdp.on("Log.entryAdded", (params) => {
+    const entry = params.entry ?? {};
+    pushDebugSessionEvent(rec, {
+      type: "console",
+      level:
+        entry.level === "error"
+          ? "error"
+          : entry.level === "warning"
+            ? "warning"
+            : "info",
+      source: "log",
+      text: entry.text ?? "",
+      url: entry.url,
+      lineNumber: entry.lineNumber,
+    });
+  });
+  rec.cdp.on("Network.responseReceived", (params) => {
+    const response = params.response ?? {};
+    pushDebugSessionEvent(rec, {
+      type: "network",
+      url: response.url ?? "",
+      status: response.status,
+      statusText: response.statusText,
+      resourceType: params.type,
+    });
+  });
 }
 
 function sanitizeClipRect(
@@ -415,6 +531,7 @@ export async function createDebugSession(
     const cdp = await context.newCDPSession(page);
     await cdp.send("Runtime.enable");
     await cdp.send("Log.enable");
+    await cdp.send("Network.enable");
 
     await page
       .goto(navigateUrl, { waitUntil: "domcontentloaded", timeout: 120_000 })
@@ -442,7 +559,10 @@ export async function createDebugSession(
       targetId: pageTarget.id,
       rawDevtoolsFrontendUrl: pageTarget.devtoolsFrontendUrl,
       createdAt: Date.now(),
+      eventSeq: 0,
+      events: [],
     };
+    installSessionEventCapture(rec);
     sessions.set(id, rec);
     return rec;
   } catch (err) {
@@ -462,6 +582,197 @@ export async function createDebugSession(
 
 export function getDebugSession(sessionId: string): DebugSessionRecord | undefined {
   return sessions.get(sessionId);
+}
+
+export function readDebugSessionEvents(
+  sessionId: string,
+  afterSeq = 0
+): { events: BrowserDebugEvent[]; cursor: number } | null {
+  const rec = sessions.get(sessionId);
+  if (!rec) return null;
+  const events = rec.events.filter((event) => event.seq > afterSeq);
+  return { events, cursor: rec.eventSeq };
+}
+
+export async function captureDebugSessionViewport(
+  sessionId: string,
+  viewport?: { width?: number; height?: number } | null
+): Promise<string | null> {
+  const rec = sessions.get(sessionId);
+  if (!rec) return null;
+  if (viewport?.width || viewport?.height) {
+    await rec.page
+      .setViewportSize({
+        width: sanitizeViewport(viewport.width ?? 1280, 1280),
+        height: sanitizeViewport(viewport.height ?? 900, 900),
+      })
+      .catch(() => undefined);
+  }
+  const png = await rec.page.screenshot({
+    type: "png",
+    animations: "disabled",
+    timeout: 15_000,
+  });
+  return `data:image/png;base64,${png.toString("base64")}`;
+}
+
+export async function dispatchDebugSessionInput(
+  sessionId: string,
+  input:
+    | { type: "mouse"; action: "move" | "down" | "up" | "click"; x: number; y: number; button?: "left" | "middle" | "right" }
+    | { type: "wheel"; deltaX?: number; deltaY?: number }
+    | { type: "key"; action: "down" | "up" | "press" | "type"; key: string }
+): Promise<boolean> {
+  const rec = sessions.get(sessionId);
+  if (!rec) return false;
+  if (input.type === "mouse") {
+    const x = Math.max(0, Math.floor(input.x));
+    const y = Math.max(0, Math.floor(input.y));
+    const button = input.button ?? "left";
+    if (input.action === "move") await rec.page.mouse.move(x, y);
+    else if (input.action === "down") await rec.page.mouse.down({ button });
+    else if (input.action === "up") await rec.page.mouse.up({ button });
+    else await rec.page.mouse.click(x, y, { button });
+    return true;
+  }
+  if (input.type === "wheel") {
+    await rec.page.mouse.wheel(input.deltaX ?? 0, input.deltaY ?? 0);
+    return true;
+  }
+  if (input.type === "key") {
+    if (input.action === "type") await rec.page.keyboard.type(input.key);
+    else if (input.action === "down") await rec.page.keyboard.down(input.key);
+    else if (input.action === "up") await rec.page.keyboard.up(input.key);
+    else await rec.page.keyboard.press(input.key);
+    return true;
+  }
+  return false;
+}
+
+export async function navigateDebugSession(
+  sessionId: string,
+  input:
+    | { op: "goto"; url: string }
+    | { op: "reload" | "back" | "forward"; url?: undefined }
+): Promise<string | null> {
+  const rec = sessions.get(sessionId);
+  if (!rec) return null;
+  const navOpts = { waitUntil: "commit" as const, timeout: 15_000 };
+  if (input.op === "goto") {
+    await rec.page.goto(input.url, navOpts).catch(() => undefined);
+  } else if (input.op === "reload") {
+    await rec.page.reload(navOpts).catch(() => undefined);
+  } else if (input.op === "back") {
+    await rec.page.goBack(navOpts).catch(() => undefined);
+  } else if (input.op === "forward") {
+    await rec.page.goForward(navOpts).catch(() => undefined);
+  }
+  return rec.page.url() || null;
+}
+
+export async function evaluateDebugSession(
+  sessionId: string,
+  script: string
+): Promise<{ result: unknown; exception?: string }> {
+  const rec = sessions.get(sessionId);
+  if (!rec) {
+    throw new Error("Unknown browser debug session.");
+  }
+  return await rec.page.evaluate((source) => {
+    try {
+      const value = (0, eval)(source);
+      return { result: value };
+    } catch (error) {
+      return {
+        result: null,
+        exception: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }, script);
+}
+
+export async function snapshotDebugSession(sessionId: string): Promise<{
+  title: string | null;
+  url: string | null;
+  visibleText: string;
+  html: string;
+  accessibilityText: string;
+  elementRefs: Array<{
+    ref: string;
+    tag: string;
+    text?: string;
+    role?: string;
+    selector?: string;
+    rect?: { x: number; y: number; width: number; height: number };
+  }>;
+  truncated: boolean;
+} | null> {
+  const rec = sessions.get(sessionId);
+  if (!rec) return null;
+  const dom = await rec.page.evaluate(() => {
+    const MAX_TEXT = 30_000;
+    const MAX_HTML = 50_000;
+    const MAX_ELEMENTS = 80;
+    const selectorFor = (el: Element): string => {
+      if (el.id) return `#${CSS.escape(el.id)}`;
+      const parts: string[] = [];
+      let current: Element | null = el;
+      while (current && parts.length < 4) {
+        const tag = current.tagName.toLowerCase();
+        const parent: Element | null = current.parentElement;
+        if (!parent) {
+          parts.unshift(tag);
+          break;
+        }
+        const siblings = [...parent.children].filter((child) => child.tagName === current?.tagName);
+        const index = siblings.indexOf(current) + 1;
+        parts.unshift(`${tag}:nth-of-type(${Math.max(1, index)})`);
+        current = parent;
+      }
+      return parts.join(" > ");
+    };
+    const candidates = [...document.querySelectorAll("a,button,input,textarea,select,[role],summary")]
+      .slice(0, MAX_ELEMENTS)
+      .map((el, index) => {
+        const rect = el.getBoundingClientRect();
+        const text =
+          (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement
+            ? el.placeholder || el.value
+            : el.textContent || ""
+          ).trim().replace(/\s+/g, " ").slice(0, 160);
+        return {
+          ref: `e${index + 1}`,
+          tag: el.tagName.toLowerCase(),
+          text: text || undefined,
+          role: el.getAttribute("role") || undefined,
+          selector: selectorFor(el),
+          rect:
+            rect.width > 0 && rect.height > 0
+              ? { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
+              : undefined,
+        };
+      });
+    const text = (document.body?.innerText || "").slice(0, MAX_TEXT);
+    const html = (document.documentElement?.outerHTML || "").slice(0, MAX_HTML);
+    return {
+      title: document.title || null,
+      url: location.href,
+      visibleText: text,
+      html,
+      elementRefs: candidates,
+      truncated:
+        (document.body?.innerText || "").length > MAX_TEXT ||
+        (document.documentElement?.outerHTML || "").length > MAX_HTML,
+    };
+  });
+  let accessibilityText = "";
+  try {
+    const ax = await rec.cdp.send("Accessibility.getFullAXTree", {});
+    accessibilityText = JSON.stringify(ax ?? null).slice(0, 30_000);
+  } catch {
+    accessibilityText = "";
+  }
+  return { ...dom, accessibilityText };
 }
 
 export async function destroyDebugSession(sessionId: string): Promise<void> {

@@ -1,0 +1,143 @@
+import assert from "node:assert/strict";
+import { describe, test } from "node:test";
+import {
+  deriveMobileAgentProjection,
+  getMobileNotificationChip,
+  isMobileAgentRunActive,
+} from "../src/lib/mobile-agent-projection.ts";
+import type { AgentConversationRecord, AgentStoredEvent } from "../src/lib/agent-types.ts";
+
+describe("mobile agent projection", () => {
+  test("projects the active todo and running notification chip", () => {
+    const conversation = createConversation({
+      status: "running",
+      lastEventSeq: 3,
+      updatedAt: 3000,
+    });
+    const events: AgentStoredEvent[] = [
+      {
+        seq: 1,
+        eventId: "u1",
+        conversationId: "c1",
+        createdAt: 1000,
+        kind: "user_message",
+        messageId: "m1",
+        content: "Ship it",
+      },
+      {
+        seq: 2,
+        eventId: "s1",
+        conversationId: "c1",
+        createdAt: 1100,
+        kind: "status",
+        status: "running",
+      },
+      {
+        seq: 3,
+        eventId: "p1",
+        conversationId: "c1",
+        createdAt: 1200,
+        kind: "plan",
+        planId: "plan",
+        entries: [
+          { id: "todo-1", content: "Wire mobile bridge", status: "completed" },
+          { id: "todo-2", content: "Update Live Update", status: "in_progress" },
+        ],
+      },
+    ];
+
+    const projection = deriveMobileAgentProjection(conversation, events, { now: 4000 });
+    assert.equal(projection.currentTodoId, "todo-2");
+    assert.equal(projection.currentActivity, "Update Live Update");
+    assert.equal(projection.startedAt, 1100);
+    assert.equal(projection.elapsedMs, 2900);
+    assert.equal(isMobileAgentRunActive(projection.status), true);
+    assert.equal(getMobileNotificationChip(projection.status), "RUN");
+  });
+
+  test("surfaces pending intervention over todo activity", () => {
+    const conversation = createConversation({
+      status: "awaiting_permission",
+      pendingPermission: {
+        requestId: "perm",
+        requestedAt: 2000,
+        title: "Allow terminal command?",
+        options: [],
+      },
+    });
+    const projection = deriveMobileAgentProjection(conversation, [], { now: 2500 });
+    assert.equal(projection.pendingIntervention, "permission");
+    assert.equal(projection.currentActivity, "Allow terminal command?");
+    assert.equal(getMobileNotificationChip(projection.status), "INPUT");
+  });
+
+  test("treats idle status event as completed for final notifications", () => {
+    const conversation = createConversation({
+      status: "idle",
+      updatedAt: 5000,
+      lastEventSeq: 2,
+    });
+    const projection = deriveMobileAgentProjection(
+      conversation,
+      [
+        {
+          seq: 2,
+          eventId: "done",
+          conversationId: "c1",
+          createdAt: 5000,
+          kind: "status",
+          status: "idle",
+        },
+      ],
+      { now: 6000 }
+    );
+    assert.equal(projection.status, "completed");
+    assert.equal(projection.completedAt, 5000);
+    assert.equal(getMobileNotificationChip(projection.status), "DONE");
+  });
+});
+
+function createConversation(
+  overrides: Partial<AgentConversationRecord>
+): AgentConversationRecord {
+  return {
+    schemaVersion: 1,
+    id: "c1",
+    workspaceId: "w1",
+    title: "Mobile run",
+    createdAt: 1000,
+    updatedAt: 1000,
+    lastEventSeq: 0,
+    status: "idle",
+    config: {
+      backendId: "cesium-agent",
+      mode: "agent",
+      modelId: "m",
+      modelName: "Model",
+    },
+    providerSessionId: null,
+    configOptions: [],
+    capabilities: {
+      supportsLoadSession: true,
+      supportsModeSelection: true,
+      supportsModelSelection: true,
+      supportsSlashCommands: true,
+      supportsPermissions: true,
+      supportsToolCalls: true,
+      supportsStructuredPlans: true,
+      supportsTodos: true,
+      supportsSessionResume: true,
+      supportsPromptImages: true,
+      supportsInlineReasoning: true,
+      supportsCompletionRetry: true,
+    },
+    pendingPermission: null,
+    pendingQuestion: null,
+    lastError: null,
+    experimental: false,
+    archivedAt: null,
+    lastReadSeq: 0,
+    queuedPrompts: [],
+    ...overrides,
+  };
+}

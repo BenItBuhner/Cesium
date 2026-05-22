@@ -25,6 +25,10 @@ import type {
   WorkspaceWindowRecord,
 } from "../../lib/workspace-session-store.js";
 import type {
+  OrchestrationBoardListResult,
+  OrchestrationBoardSnapshot,
+} from "../../lib/orchestration/types.js";
+import type {
   AgentProviderCacheRecord,
   AppendAgentEventsInput,
   ListAgentConversationsInput,
@@ -51,6 +55,14 @@ const AUTH_SESSIONS_FILE = path.join(DATA_DIR, "profile", "auth-sessions.json");
 
 function getProviderCacheFile(backendId: string): string {
   return path.join(DATA_DIR, "profile", "agent-backends", `${backendId}.json`);
+}
+
+function getOrchestrationBoardsDir(workspaceId: string): string {
+  return path.join(DATA_DIR, "workspaces", workspaceId, "orchestration");
+}
+
+function getOrchestrationBoardFile(workspaceId: string, boardId: string): string {
+  return path.join(getOrchestrationBoardsDir(workspaceId), `${boardId}.json`);
 }
 
 type WorkspaceRegistryFile = {
@@ -563,5 +575,67 @@ export class LegacyJsonStorageDriver implements StorageDriver {
       updatedAt: record.updatedAt,
       configOptions: record.configOptions,
     } satisfies AgentProviderCacheRecord);
+  }
+
+  // ---------- orchestration ----------
+  async listOrchestrationBoards(
+    workspaceId: string
+  ): Promise<OrchestrationBoardListResult> {
+    const dir = getOrchestrationBoardsDir(workspaceId);
+    const entries = await fs.readdir(dir, { withFileTypes: true }).catch(() => []);
+    const snapshots = await Promise.all(
+      entries
+        .filter((entry) => entry.isFile() && entry.name.endsWith(".json"))
+        .map((entry) =>
+          readJsonFile<OrchestrationBoardSnapshot | null>(
+            path.join(dir, entry.name),
+            null
+          )
+        )
+    );
+    const boards = snapshots
+      .map((snapshot) => snapshot?.board)
+      .filter((board): board is OrchestrationBoardSnapshot["board"] =>
+        Boolean(board && !board.archivedAt)
+      )
+      .sort((a, b) => b.updatedAt - a.updatedAt || a.title.localeCompare(b.title));
+    return { boards };
+  }
+
+  async getOrchestrationBoardSnapshot(
+    boardId: string
+  ): Promise<OrchestrationBoardSnapshot | null> {
+    const { workspaces } = await readRegistry();
+    for (const workspace of workspaces) {
+      const snapshot = await readJsonFile<OrchestrationBoardSnapshot | null>(
+        getOrchestrationBoardFile(workspace.id, boardId),
+        null
+      );
+      if (snapshot?.board?.id === boardId) {
+        return snapshot;
+      }
+    }
+    return null;
+  }
+
+  async saveOrchestrationBoardSnapshot(
+    snapshot: OrchestrationBoardSnapshot
+  ): Promise<void> {
+    await writeJsonFile(
+      getOrchestrationBoardFile(snapshot.board.workspaceId, snapshot.board.id),
+      snapshot
+    );
+  }
+
+  async deleteOrchestrationBoard(boardId: string): Promise<void> {
+    const existing = await this.getOrchestrationBoardSnapshot(boardId);
+    if (!existing) {
+      return;
+    }
+    await fs
+      .rm(getOrchestrationBoardFile(existing.board.workspaceId, boardId), {
+        force: true,
+      })
+      .catch(() => undefined);
   }
 }

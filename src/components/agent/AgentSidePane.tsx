@@ -33,7 +33,7 @@ export function AgentSidePane() {
           data-electron-trailing-chrome={
             electronTrailingChrome ? "true" : undefined
           }
-          className={`absolute top-[11px] z-40 flex size-[18px] items-center justify-center rounded-[var(--agent-control-radius)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--agent-card-bg)] hover:text-[var(--text-primary)] ${
+          className={`mobile-safe-top-offset absolute top-[11px] z-40 flex size-[18px] items-center justify-center rounded-[var(--agent-control-radius)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--agent-card-bg)] hover:text-[var(--text-primary)] ${
             padTrailingForWindowChrome
               ? "right-[calc(var(--editor-window-chrome-tab-inset)+16px)]"
               : "right-[16px]"
@@ -44,14 +44,16 @@ export function AgentSidePane() {
           <PanelRightClose className="size-[16px]" strokeWidth={1.5} />
         </button>
       ) : null}
-      <EditorPanel
-        key={sidePaneScopeId}
-        session={sidePaneEditorSession}
-        onSessionChange={updateSidePaneEditorSession}
-        expandedComposerDraftId={expandedComposerDraftId}
-        setExpandedComposerDraft={setExpandedComposerDraft}
-        reserveTrailingPaneCloseSlot
-      />
+      <div className="mobile-safe-top-content h-full min-h-0 w-full overflow-hidden">
+        <EditorPanel
+          key={sidePaneScopeId}
+          session={sidePaneEditorSession}
+          onSessionChange={updateSidePaneEditorSession}
+          expandedComposerDraftId={expandedComposerDraftId}
+          setExpandedComposerDraft={setExpandedComposerDraft}
+          reserveTrailingPaneCloseSlot
+        />
+      </div>
       <style jsx global>{`
         .agent-side-pane button[aria-label="Split editor to the right"],
         .agent-side-pane button[aria-label="Join editor groups"] {

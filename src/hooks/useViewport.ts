@@ -6,28 +6,35 @@ export type Breakpoint = "desktop" | "tablet" | "mobile";
 
 function subscribe(onStoreChange: () => void) {
   window.addEventListener("resize", onStoreChange);
-  return () => window.removeEventListener("resize", onStoreChange);
+  return () => {
+    window.removeEventListener("resize", onStoreChange);
+  };
 }
 
-function getSnapshot(): number {
-  return window.innerWidth;
+function getSnapshot(): string {
+  return [window.innerWidth, window.innerHeight].join(":");
 }
 
-function getServerSnapshot(): number {
-  return 1920;
+function getServerSnapshot(): string {
+  return "1920:1080:web";
 }
 
 export function useViewport() {
-  const width = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
+  const snapshot = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
+  const [widthText, heightText] = snapshot.split(":");
+  const width = Number(widthText) || 1920;
+  const height = Number(heightText) || 1080;
+  const isMobile = width < 768;
 
   const breakpoint: Breakpoint =
-    width >= 1024 ? "desktop" : width >= 768 ? "tablet" : "mobile";
+    isMobile ? "mobile" : width >= 1024 ? "desktop" : "tablet";
 
   return {
     width,
+    height,
     breakpoint,
-    showSidebar: width >= 1024,
-    showChat: width >= 768,
-    isMobile: width < 768,
+    showSidebar: !isMobile && width >= 1024,
+    showChat: !isMobile && width >= 768,
+    isMobile,
   };
 }

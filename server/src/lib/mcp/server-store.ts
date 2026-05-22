@@ -4,6 +4,7 @@ import path from "node:path";
 import type { McpServerConfig } from "@cesium/core/mcp";
 import { readJsonFile, writeJsonFile } from "../persistence.js";
 import { mcpSecretsPath, mcpServersConfigPath, slugifyMcpServerId } from "./paths.js";
+import { BROWSER_MCP_SERVER_ID } from "./builtin-browser-tools.js";
 import type {
   McpConnectionStatus,
   McpSecretsFile,
@@ -206,9 +207,17 @@ export async function getMcpSummariesForPrompt(
   workspaceId: string
 ): Promise<Array<{ id: string; label: string; summary: string }>> {
   const servers = await listEnabledMcpServers(workspaceId);
-  return servers.map((server) => ({
-    id: server.id,
-    label: server.label,
-    summary: server.summary?.trim() || `${server.transport} MCP server`,
-  }));
+  return [
+    {
+      id: BROWSER_MCP_SERVER_ID,
+      label: "Browser",
+      summary:
+        "Built-in browser-tab tools for opening, locking, inspecting, screenshotting, viewport testing, and interacting with IDE browser tabs.",
+    },
+    ...servers.map((server) => ({
+      id: server.id,
+      label: server.label,
+      summary: server.summary?.trim() || `${server.transport} MCP server`,
+    })),
+  ];
 }

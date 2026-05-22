@@ -22,11 +22,12 @@ const [
     getCesiumAgentSettingsPublic,
     upsertCesiumProviderKey,
     deleteCesiumProviderKey,
+    patchCesiumAgentSettings,
     resolveCesiumModelRuntime,
     resolveCesiumAuth,
     refreshCesiumModelCatalog,
   },
-  { normalizeEventsToHistory, openAiMessages, cesiumPermissionToolKey, createCesiumAgentProvider },
+  { normalizeEventsToHistory, openAiMessages, cesiumPermissionToolKey, createCesiumAgentProvider, buildOpenAiToolDefinitions, sanitizeOpenAiCompatibleJsonSchema },
 ] = await Promise.all([
   import("../src/lib/agents/providers.js"),
   import("../src/lib/cesium-agent-settings.js"),
@@ -58,6 +59,10 @@ test("cesiumPermissionToolKey scopes remembered rules by tool shape", () => {
   assert.equal(
     cesiumPermissionToolKey("mcpCall", { serverId: "linear", toolName: "search" }),
     "cesium:mcp:linear:search"
+  );
+  assert.equal(
+    cesiumPermissionToolKey("mcpCall", { serverId: "browser", toolName: "browser_click" }),
+    "cesium:mcp:browser:browser_click"
   );
 });
 
@@ -290,6 +295,36 @@ test("resolveCesiumAuth prefers provider-specific keys over unrelated defaults",
   assert.equal(auth.baseUrl, "https://integrate.api.nvidia.com/v1");
 });
 
+test("resolveCesiumAuth matches custom provider keys without custom prefix", async () => {
+  await upsertCesiumProviderKey({
+    providerId: "model-proxy",
+    label: "Model Proxy",
+    apiKind: "openai-compatible",
+    apiKey: "model-proxy-test-key",
+    baseUrl: "https://infer.example.test/v1",
+  });
+  await patchCesiumAgentSettings({
+    customProviders: [
+      {
+        id: "custom-model-proxy",
+        name: "Model Proxy",
+        apiKind: "openai-chat-completions",
+        baseUrl: "https://infer.example.test/v1",
+        models: [{ id: "glm-5.1-precision", name: "GLM 5.1 Precision" }],
+      },
+    ],
+  });
+
+  const auth = await resolveCesiumAuth({
+    modelId: "custom-model-proxy/glm-5.1-precision",
+  });
+
+  assert.equal(auth.providerId, "custom-model-proxy");
+  assert.equal(auth.apiKey, "model-proxy-test-key");
+  assert.equal(auth.apiKind, "openai-chat-completions");
+  assert.equal(auth.baseUrl, "https://infer.example.test/v1");
+});
+
 test("Cesium session handle exposes pause and resume", async () => {
   const backend = AGENT_BACKENDS["cesium-agent"];
   const provider = await createCesiumAgentProvider({ backend });
@@ -391,6 +426,97 @@ test("Cesium resume is a no-op until the session reaches paused", async () => {
   assert.equal(conversation.status, "pause_requested");
 });
 
+test("Cesium session initialize preserves orchestration mode in configOptions", async () => {
+  const backend = AGENT_BACKENDS["cesium-agent"];
+  const provider = await createCesiumAgentProvider({ backend });
+  let conversation = {
+    schemaVersion: 1 as const,
+    id: "cesium-orchestration-init",
+    workspaceId: "ws-1",
+    title: "Orchestration init",
+    createdAt: 1,
+    updatedAt: 1,
+    lastEventSeq: 0,
+    status: "idle" as const,
+    config: {
+      backendId: "cesium-agent" as const,
+      mode: "orchestration",
+      modelId: "openai/gpt-5.1",
+      modelName: "GPT-5.1",
+    },
+    providerSessionId: null,
+    configOptions: [],
+    capabilities: backend.capabilities,
+    pendingPermission: null,
+    pendingQuestion: null,
+    lastError: null,
+    experimental: true,
+    archivedAt: null,
+    lastReadSeq: 0,
+    queuedPrompts: [],
+  };
+  await provider.startSession({
+    conversation,
+    workspace: { id: "ws-1", root: TEST_DATA_DIR, name: "test", createdAt: 1 },
+    appendEvents: async () => undefined,
+    readSnapshot: async () => null,
+    updateConversation: async (patch) => {
+      conversation =
+        typeof patch === "function" ? patch(conversation) : { ...conversation, ...patch };
+      return conversation;
+    },
+  });
+  assert.equal(conversation.config.mode, "orchestration");
+  assert.equal(
+    conversation.configOptions.find((option) => option.id === "mode")?.currentValue,
+    "orchestration"
+  );
+});
+
+test("Cesium setConfigOption does not clobber orchestration mode when changing model", async () => {
+  const backend = AGENT_BACKENDS["cesium-agent"];
+  const provider = await createCesiumAgentProvider({ backend });
+  let conversation = {
+    schemaVersion: 1 as const,
+    id: "cesium-orchestration-model",
+    workspaceId: "ws-1",
+    title: "Orchestration model",
+    createdAt: 1,
+    updatedAt: 1,
+    lastEventSeq: 0,
+    status: "idle" as const,
+    config: {
+      backendId: "cesium-agent" as const,
+      mode: "orchestration",
+      modelId: "openai/gpt-5.1",
+      modelName: "GPT-5.1",
+    },
+    providerSessionId: null,
+    configOptions: [],
+    capabilities: backend.capabilities,
+    pendingPermission: null,
+    pendingQuestion: null,
+    lastError: null,
+    experimental: true,
+    archivedAt: null,
+    lastReadSeq: 0,
+    queuedPrompts: [],
+  };
+  const handle = await provider.startSession({
+    conversation,
+    workspace: { id: "ws-1", root: TEST_DATA_DIR, name: "test", createdAt: 1 },
+    appendEvents: async () => undefined,
+    readSnapshot: async () => null,
+    updateConversation: async (patch) => {
+      conversation =
+        typeof patch === "function" ? patch(conversation) : { ...conversation, ...patch };
+      return conversation;
+    },
+  });
+  await handle.setConfigOption!("model", "anthropic/claude-sonnet-4-5-20250929");
+  assert.equal(conversation.config.mode, "orchestration");
+});
+
 test("Cesium cancel always emits cancelled status", async () => {
   const backend = AGENT_BACKENDS["cesium-agent"];
   const provider = await createCesiumAgentProvider({ backend });
@@ -442,4 +568,19 @@ test("Cesium cancel always emits cancelled status", async () => {
   await handle.cancel!();
   assert.equal(conversation.status, "cancelled");
   assert.ok(statusEvents.includes("cancelled"));
+});
+
+test("buildOpenAiToolDefinitions avoids JSON Schema union type arrays for OpenAI-compatible hosts", () => {
+  const tools = buildOpenAiToolDefinitions();
+  assert.ok(tools.length > 0);
+  const serialized = JSON.stringify(tools);
+  assert.equal(serialized.includes('"type":["string","null"]'), false);
+  assert.deepEqual(sanitizeOpenAiCompatibleJsonSchema({ type: ["string", "null"] }), {
+    type: "string",
+  });
+  const updateIssue = tools.find((tool) => tool.function.name === "orchestration_update_issue");
+  assert.ok(updateIssue);
+  const blockedReason = (updateIssue!.function.parameters as { properties?: Record<string, unknown> })
+    .properties?.blockedReason as { type?: unknown } | undefined;
+  assert.equal(blockedReason?.type, "string");
 });

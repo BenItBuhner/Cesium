@@ -39,11 +39,11 @@ function keyEventTargetIsInTextField(target: EventTarget | null): boolean {
   );
 }
 
-type StepUi = { letter: string | null; otherDraft: string };
+type StepUi = { letters: string[]; otherDraft: string };
 
 function QuestionStepColumn({
   step,
-  selectedLetter,
+  selectedLetters,
   otherDraft,
   patchUi,
   selectOption,
@@ -52,7 +52,7 @@ function QuestionStepColumn({
   registerOptionButton,
 }: {
   step: AskQuestionStep;
-  selectedLetter: string | null;
+  selectedLetters: string[];
   otherDraft: string;
   patchUi: (id: string, patch: Partial<StepUi>) => void;
   selectOption: (stepId: string, opt: AskQuestionOption) => void;
@@ -67,9 +67,14 @@ function QuestionStepColumn({
           {step.content}
         </p>
       ) : null}
+      {step.allowMultiple ? (
+        <p className="mb-[6px] font-sans text-[10px] font-normal uppercase tracking-[0.08em] text-[var(--text-tertiary)]">
+          Select all that apply
+        </p>
+      ) : null}
       <div className="flex flex-col gap-[6px]">
         {step.options.map((opt) => {
-          const selected = selectedLetter === opt.letter;
+          const selected = selectedLetters.includes(opt.letter);
           const rowClass = selected
             ? "rounded-[6px] bg-[var(--plan-accent-selected-bg)] transition-[background-color] duration-150 ease-out motion-reduce:transition-none"
             : "rounded-[6px] transition-[background-color] duration-150 ease-out motion-reduce:transition-none hover:bg-[var(--accent-bg)]";
@@ -91,13 +96,15 @@ function QuestionStepColumn({
           const optionKeyHandlers = (e: KeyboardEvent) => {
             if (e.key !== "Enter") return;
             e.preventDefault();
-            if (selectedLetter !== opt.letter) {
+            if (!selected) {
               selectOption(step.id, opt);
               return;
             }
             if (opt.isOther) {
               if (otherDraft.trim()) goNext();
               else otherRefs.current[step.id]?.focus();
+            } else if (step.allowMultiple) {
+              goNext();
             } else {
               goNext();
             }
@@ -106,7 +113,7 @@ function QuestionStepColumn({
           const labelInner = (
             <>
               <span
-                className={`flex h-[14px] w-[14px] shrink-0 items-center justify-center rounded-[var(--radius-checkbox)] border font-sans text-[7px] font-normal leading-none transition-[color,background-color,border-color] duration-150 ease-out motion-reduce:transition-none ${badgeClass}`}
+                className={`flex h-[16px] min-w-[16px] shrink-0 items-center justify-center rounded-[var(--radius-checkbox)] border px-[3px] font-sans text-[8px] font-medium leading-none transition-[color,background-color,border-color] duration-150 ease-out motion-reduce:transition-none ${badgeClass}`}
               >
                 {opt.letter}
               </span>
@@ -239,13 +246,13 @@ export function AskQuestionCard({
   }, [stepIndex]);
 
   const getUi = useCallback(
-    (id: string): StepUi => stepUi[id] ?? { letter: null, otherDraft: "" },
+    (id: string): StepUi => stepUi[id] ?? { letters: [], otherDraft: "" },
     [stepUi]
   );
 
   const patchUi = useCallback((id: string, patch: Partial<StepUi>) => {
     setStepUi((prev) => {
-      const cur = prev[id] ?? { letter: null, otherDraft: "" };
+      const cur = prev[id] ?? { letters: [], otherDraft: "" };
       return { ...prev, [id]: { ...cur, ...patch } };
     });
   }, []);
@@ -266,22 +273,31 @@ export function AskQuestionCard({
       opt: AskQuestionOption,
       options?: { focusOther?: boolean }
     ) => {
-      patchUi(stepId, { letter: opt.letter });
+      const step = steps.find((entry) => entry.id === stepId);
+      const current = stepUiRef.current[stepId] ?? { letters: [], otherDraft: "" };
+      const letters = step?.allowMultiple
+        ? current.letters.includes(opt.letter)
+          ? current.letters.filter((letter) => letter !== opt.letter)
+          : [...current.letters, opt.letter]
+        : [opt.letter];
+      patchUi(stepId, { letters });
       if (opt.isOther && options?.focusOther !== false) {
         requestAnimationFrame(() => otherRefs.current[stepId]?.focus());
       }
     },
-    [patchUi]
+    [patchUi, steps]
   );
 
   const tryAdvance = useCallback(() => {
     const st = steps[stepIndex];
     if (!st) return;
-    const u = stepUiRef.current[st.id] ?? { letter: null, otherDraft: "" };
-    if (!u.letter) return;
-    const opt = st.options.find((o) => o.letter === u.letter);
-    if (!opt) return;
-    if (opt.isOther && !u.otherDraft.trim()) return;
+    const u = stepUiRef.current[st.id] ?? { letters: [], otherDraft: "" };
+    if (u.letters.length === 0) return;
+    const selected = u.letters
+      .map((letter) => st.options.find((o) => o.letter === letter))
+      .filter((option): option is AskQuestionOption => Boolean(option));
+    if (!selected.length) return;
+    if (selected.some((opt) => opt.isOther) && !u.otherDraft.trim()) return;
     goNext();
   }, [stepIndex, steps, goNext]);
 
@@ -375,15 +391,17 @@ export function AskQuestionCard({
   const currentUi = getUi(step.id);
 
   const allStepsComplete = steps.every((entry) => {
-    const ui = stepUi[entry.id] ?? { letter: null, otherDraft: "" };
-    if (!ui.letter) {
+    const ui = stepUi[entry.id] ?? { letters: [], otherDraft: "" };
+    if (ui.letters.length === 0) {
       return false;
     }
-    const selected = entry.options.find((option) => option.letter === ui.letter);
-    if (!selected) {
+    const selected = ui.letters
+      .map((letter) => entry.options.find((option) => option.letter === letter))
+      .filter((option): option is AskQuestionOption => Boolean(option));
+    if (!selected.length) {
       return false;
     }
-    if (selected.isOther && !ui.otherDraft.trim()) {
+    if (selected.some((option) => option.isOther) && !ui.otherDraft.trim()) {
       return false;
     }
     return true;
@@ -397,8 +415,9 @@ export function AskQuestionCard({
   }, [allStepsComplete, onSubmit, stepUi, steps, submitting]);
 
   function moveOptionSelection(direction: -1 | 1) {
+    const lastSelectedLetter = currentUi.letters[currentUi.letters.length - 1];
     const currentIndex = step.options.findIndex(
-      (opt) => opt.letter === currentUi.letter
+      (opt) => opt.letter === lastSelectedLetter
     );
     const fallbackIndex = direction > 0 ? 0 : step.options.length - 1;
     const nextIndex =
@@ -524,7 +543,7 @@ export function AskQuestionCard({
                   >
                     <QuestionStepColumn
                       step={s}
-                      selectedLetter={u.letter}
+                      selectedLetters={u.letters}
                       otherDraft={u.otherDraft}
                       patchUi={patchUi}
                       selectOption={selectOption}

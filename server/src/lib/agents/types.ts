@@ -73,6 +73,7 @@ export type AgentPendingPermission = {
   requestId: string;
   requestedAt: number;
   toolCallId?: string;
+  permission?: "editFile" | "terminal" | "mcpCall";
   title?: string;
   /** Human-readable context from the provider (tool summary, CLI text, etc.). */
   detail?: string;
@@ -262,6 +263,12 @@ export type AgentStoredEvent =
       questionId: string;
       prompt: string;
       options: Array<{ id: string; label: string }>;
+      questions?: Array<{
+        id: string;
+        prompt: string;
+        options: Array<{ id: string; label: string }>;
+        allowMultiple?: boolean;
+      }>;
       allowMultiple?: boolean;
       status: "pending" | "answered" | "cancelled";
       answer?: string | string[];
@@ -355,6 +362,7 @@ export type AgentStoredEvent =
 export type AgentQueuedChatPrompt = {
   id: string;
   text: string;
+  delivery?: "normal" | "steer";
   attachments?: Array<{ mimeType: string; data: string; name?: string }>;
   clientEventId?: string;
   clientMessageId?: string;
@@ -408,6 +416,7 @@ export type AgentConversationSnapshotHead = {
 
 export type AgentConversationCreateInput = Partial<AgentConversationConfig> & {
   title?: string;
+  archived?: boolean;
 };
 
 export type AgentConversationConfigPatch = Partial<AgentConversationConfig> & {

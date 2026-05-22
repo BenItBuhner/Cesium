@@ -381,6 +381,8 @@ type ProjectedTurn = {
   openCodeOrphanSseSessionOrder: string[];
   /** The user message ID that should be highlighted as the handoff message */
   handoffMessageId?: string;
+  /** Set when a terminal status event ends the turn before assistant output. */
+  turnEndedWithFailure?: boolean;
 };
 
 function createTurn(id: string): ProjectedTurn {
@@ -1503,7 +1505,7 @@ function projectTurnTimelineToMessages(turn: ProjectedTurn): ChatMessage[] {
     mergeAdjacentWorkedSessionsAroundPermission(messages)
   );
 
-  if (ordered.length === 0 && turn.userMessage) {
+  if (ordered.length === 0 && turn.userMessage && !turn.turnEndedWithFailure) {
     ordered.push({
       id: `turn-working-${turn.id}`,
       type: "worked-session",
@@ -3789,7 +3791,9 @@ let currentTurn: ProjectedTurn | null = null;
       }
       case "status": {
         if (event.status === "failed" || event.status === "cancelled") {
-          finalizeOpenToolsInTurn(ensureTurn(), event.status);
+          const turn = ensureTurn();
+          turn.turnEndedWithFailure = true;
+          finalizeOpenToolsInTurn(turn, event.status);
         } else if (event.status === "idle") {
           finalizeOpenToolsInTurn(ensureTurn(), "completed");
         }

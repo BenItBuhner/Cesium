@@ -5,6 +5,16 @@ import type {
 } from "@/lib/agent-types";
 import type { AskQuestionStep, ChatMessage } from "@/lib/types";
 
+function displayLetter(index: number): string {
+  return index >= 0 && index < 26 ? String.fromCharCode(65 + index) : `${index + 1}`;
+}
+
+function stripDuplicatedChoicePrefix(label: string, index: number): string {
+  const letter = displayLetter(index);
+  const pattern = new RegExp(`^\\s*${letter}[\\).,:-]\\s*`, "i");
+  return label.replace(pattern, "").trim();
+}
+
 export type DockedAskQuestion = {
   questionId: string;
   steps: AskQuestionStep[];
@@ -39,13 +49,29 @@ export function findLatestPendingQuestionEvent(
 export function questionEventToChatMessage(
   event: Extract<AgentStoredEvent, { kind: "question" }>
 ): ChatMessage {
+  const questions =
+    event.questions?.length
+      ? event.questions
+      : [
+          {
+            id: "single",
+            prompt: event.prompt,
+            options: event.options,
+            allowMultiple: event.allowMultiple,
+          },
+        ];
   return {
     id: `question-${event.questionId}`,
     type: "ask-question",
     questionTitle: event.prompt,
-    options: event.options.map((option, index) => ({
-      letter: option.id || String.fromCharCode(65 + index),
-      text: option.label,
+    questionSteps: questions.map((question, questionIndex) => ({
+      id: question.id || `question-${questionIndex + 1}`,
+      title: question.prompt,
+      allowMultiple: question.allowMultiple,
+      options: question.options.map((option, optionIndex) => ({
+        letter: displayLetter(optionIndex),
+        text: stripDuplicatedChoicePrefix(option.label, optionIndex),
+      })),
     })),
   };
 }
@@ -103,18 +129,21 @@ export function hideDockedAskFromScroll(
 
 export function formatAskQuestionSubmission(
   steps: AskQuestionStep[],
-  stepUi: Record<string, { letter: string | null; otherDraft: string }>
+  stepUi: Record<string, { letter?: string | null; letters?: string[]; otherDraft: string }>
 ): string {
   return steps
     .map((step, index) => {
-      const ui = stepUi[step.id] ?? { letter: null, otherDraft: "" };
-      const option = step.options.find((entry) => entry.letter === ui.letter);
-      if (!option) {
+      const ui = stepUi[step.id] ?? { letters: [], otherDraft: "" };
+      const selectedLetters = ui.letters?.length ? ui.letters : ui.letter ? [ui.letter] : [];
+      const selectedOptions = selectedLetters
+        .map((letter) => step.options.find((entry) => entry.letter === letter))
+        .filter((option): option is AskQuestionStep["options"][number] => Boolean(option));
+      if (selectedOptions.length === 0) {
         return `Question ${index + 1}: (no selection)`;
       }
-      const answerText = option.isOther
-        ? ui.otherDraft.trim() || option.text
-        : option.text;
+      const answerText = selectedOptions
+        .map((option) => (option.isOther ? ui.otherDraft.trim() || option.text : option.text))
+        .join(", ");
       const label = step.title.trim() || `Question ${index + 1}`;
       return `${label}: ${answerText}`;
     })

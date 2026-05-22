@@ -169,6 +169,124 @@ export const agentEvents = pgTable(
   ]
 );
 
+export const orchestrationBoards = pgTable(
+  "orchestration_boards",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    schemaVersion: smallint("schema_version").notNull().default(1),
+    title: text("title").notNull(),
+    description: text("description").notNull().default(""),
+    headConversationId: text("head_conversation_id").references(
+      () => agentConversations.id,
+      { onDelete: "set null" }
+    ),
+    createdAt: bigint("created_at", { mode: "number" }).notNull(),
+    updatedAt: bigint("updated_at", { mode: "number" }).notNull(),
+    archivedAt: bigint("archived_at", { mode: "number" }),
+    settings: jsonb("settings").notNull(),
+  },
+  (table) => [
+    index("orchestration_boards_workspace_updated_idx").on(
+      table.workspaceId,
+      table.updatedAt
+    ),
+  ]
+);
+
+export const orchestrationIssues = pgTable(
+  "orchestration_issues",
+  {
+    id: text("id").primaryKey(),
+    boardId: text("board_id")
+      .notNull()
+      .references(() => orchestrationBoards.id, { onDelete: "cascade" }),
+    schemaVersion: smallint("schema_version").notNull().default(1),
+    title: text("title").notNull(),
+    description: text("description").notNull().default(""),
+    columnId: text("column_id").notNull(),
+    priority: text("priority").notNull(),
+    sortOrder: bigint("sort_order", { mode: "number" }).notNull(),
+    acceptanceCriteria: jsonb("acceptance_criteria")
+      .$type<string[]>()
+      .notNull()
+      .default(sql`'[]'::jsonb`),
+    dependencyIssueIds: jsonb("dependency_issue_ids")
+      .$type<string[]>()
+      .notNull()
+      .default(sql`'[]'::jsonb`),
+    blockedReason: text("blocked_reason"),
+    verification: jsonb("verification").notNull(),
+    createdAt: bigint("created_at", { mode: "number" }).notNull(),
+    updatedAt: bigint("updated_at", { mode: "number" }).notNull(),
+    completedAt: bigint("completed_at", { mode: "number" }),
+  },
+  (table) => [
+    index("orchestration_issues_board_column_sort_idx").on(
+      table.boardId,
+      table.columnId,
+      table.sortOrder
+    ),
+  ]
+);
+
+export const orchestrationAssignments = pgTable(
+  "orchestration_assignments",
+  {
+    id: text("id").primaryKey(),
+    boardId: text("board_id")
+      .notNull()
+      .references(() => orchestrationBoards.id, { onDelete: "cascade" }),
+    issueId: text("issue_id")
+      .notNull()
+      .references(() => orchestrationIssues.id, { onDelete: "cascade" }),
+    conversationId: text("conversation_id")
+      .notNull()
+      .references(() => agentConversations.id, { onDelete: "cascade" }),
+    schemaVersion: smallint("schema_version").notNull().default(1),
+    role: text("role").notNull(),
+    status: text("status").notNull(),
+    createdAt: bigint("created_at", { mode: "number" }).notNull(),
+    updatedAt: bigint("updated_at", { mode: "number" }).notNull(),
+    config: jsonb("config").notNull(),
+    lastKnownConversationStatus: text("last_known_conversation_status"),
+  },
+  (table) => [
+    index("orchestration_assignments_board_issue_idx").on(
+      table.boardId,
+      table.issueId
+    ),
+    index("orchestration_assignments_conversation_idx").on(table.conversationId),
+  ]
+);
+
+export const orchestrationEvents = pgTable(
+  "orchestration_events",
+  {
+    id: text("id").primaryKey(),
+    boardId: text("board_id")
+      .notNull()
+      .references(() => orchestrationBoards.id, { onDelete: "cascade" }),
+    issueId: text("issue_id"),
+    assignmentId: text("assignment_id"),
+    schemaVersion: smallint("schema_version").notNull().default(1),
+    kind: text("kind").notNull(),
+    actor: jsonb("actor").notNull(),
+    message: text("message").notNull(),
+    payload: jsonb("payload").notNull(),
+    createdAt: bigint("created_at", { mode: "number" }).notNull(),
+  },
+  (table) => [
+    index("orchestration_events_board_created_idx").on(
+      table.boardId,
+      table.createdAt
+    ),
+    index("orchestration_events_issue_idx").on(table.issueId),
+  ]
+);
+
 export const providerCache = pgTable("provider_cache", {
   backendId: text("backend_id").primaryKey(),
   schemaVersion: smallint("schema_version").notNull().default(1),

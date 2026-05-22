@@ -14,7 +14,7 @@ const inputClass =
   "box-border h-[36px] w-full rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-[var(--bg-main)] px-[10px] font-sans text-[12px] text-[var(--text-primary)] outline-none placeholder:text-[var(--text-disabled)]";
 
 const buttonClass =
-  "inline-flex h-[32px] items-center gap-[6px] rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-[var(--bg-main)] px-[10px] font-sans text-[12px] text-[var(--text-primary)] transition-colors hover:bg-[var(--accent-bg)] disabled:cursor-not-allowed disabled:opacity-50";
+  "inline-flex h-[36px] min-w-0 items-center justify-center gap-[6px] rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-[var(--bg-main)] px-[10px] text-center font-sans text-[12px] leading-none text-[var(--text-primary)] transition-colors hover:bg-[var(--accent-bg)] disabled:cursor-not-allowed disabled:opacity-50 sm:h-[32px]";
 
 type ProbeState = {
   status: "idle" | "running" | "ok" | "error";
@@ -176,43 +176,50 @@ export function ServerConnectionsManager({
   );
 
   return (
-    <div className="flex flex-col gap-[14px]">
-      {rows.length > 0 ? (
-        <div className="flex flex-col">
-          {rows.map(({ isActiveChat, isDefaultSettings, isRuntimeConnected, probe, runtimeStatus, server }, index) => (
+    <div className="min-w-0 overflow-hidden">
+      <div className="flex min-w-0 flex-col gap-[12px] sm:gap-[14px]">
+        {rows.length > 0 ? (
+          <div className="flex min-w-0 flex-col">
+            {rows.map(({ isActiveChat, isDefaultSettings, isRuntimeConnected, probe, runtimeStatus, server }, index) => (
+              <div
+                key={server.id}
+                className={`flex min-w-0 flex-col gap-[10px] py-[10px] sm:py-[12px] ${
+                  index < rows.length - 1 ? "border-b border-[var(--border-subtle)]" : ""
+                }`}
+              >
             <div
-              key={server.id}
-              className={`flex flex-col gap-[10px] py-[12px] ${
-                index < rows.length - 1 ? "border-b border-[var(--border-subtle)]" : ""
-              }`}
+              className={
+                compact
+                  ? "flex min-w-0 flex-col gap-[9px]"
+                  : "flex min-w-0 flex-col gap-[9px] sm:flex-row sm:items-start sm:justify-between sm:gap-[12px]"
+              }
             >
-            <div className="flex items-start justify-between gap-[12px]">
               <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-[8px]">
-                  <p className="truncate font-sans text-[13px] font-medium text-[var(--text-primary)]">
+                <div className="flex min-w-0 flex-wrap items-center gap-[6px] sm:gap-[8px]">
+                  <p className="min-w-0 max-w-full truncate font-sans text-[13px] font-medium text-[var(--text-primary)]">
                     {server.label}
                   </p>
                   {isDefaultSettings ? (
-                    <span className="rounded-[999px] bg-[var(--accent-bg)] px-[8px] py-[2px] font-sans text-[11px] text-[var(--text-primary)]">
+                    <span className="shrink-0 rounded-[999px] bg-[var(--accent-bg)] px-[8px] py-[2px] font-sans text-[11px] text-[var(--text-primary)]">
                       Default settings
                     </span>
                   ) : null}
                   {isActiveChat ? (
-                    <span className="rounded-[999px] border border-[var(--border-subtle)] px-[8px] py-[2px] font-sans text-[11px] text-[var(--text-secondary)]">
+                    <span className="shrink-0 rounded-[999px] border border-[var(--border-subtle)] px-[8px] py-[2px] font-sans text-[11px] text-[var(--text-secondary)]">
                       Active chat
                     </span>
                   ) : null}
                   {isRuntimeConnected ? (
-                    <span className="rounded-[999px] border border-[var(--border-subtle)] px-[8px] py-[2px] font-sans text-[11px] text-[var(--text-secondary)]">
+                    <span className="shrink-0 rounded-[999px] border border-[var(--border-subtle)] px-[8px] py-[2px] font-sans text-[11px] text-[var(--text-secondary)]">
                       {runtimeStatus?.health === "auth_required" ? "Auth needed" : "Connected"}
                     </span>
                   ) : runtimeStatus?.health === "offline" ? (
-                    <span className="rounded-[999px] border border-[var(--border-subtle)] px-[8px] py-[2px] font-sans text-[11px] text-[var(--text-disabled)]">
+                    <span className="shrink-0 rounded-[999px] border border-[var(--border-subtle)] px-[8px] py-[2px] font-sans text-[11px] text-[var(--text-disabled)]">
                       Offline
                     </span>
                   ) : null}
                 </div>
-                <p className="mt-[4px] break-all font-mono text-[11px] text-[var(--text-secondary)]">
+                <p className="mt-[4px] overflow-hidden text-ellipsis whitespace-nowrap font-mono text-[11px] text-[var(--text-secondary)]" title={server.baseUrl}>
                   {server.baseUrl}
                 </p>
                 {probe.message ? (
@@ -227,7 +234,13 @@ export function ServerConnectionsManager({
                   </p>
                 ) : null}
               </div>
-              <div className="flex shrink-0 flex-wrap justify-end gap-[8px]">
+              <div
+                className={
+                  compact
+                    ? "grid w-full grid-cols-2 gap-[8px]"
+                    : "grid w-full grid-cols-2 gap-[8px] sm:flex sm:w-auto sm:shrink-0 sm:flex-wrap sm:justify-end"
+                }
+              >
                 {onSetDefault ? (
                   <button
                     type="button"
@@ -343,27 +356,27 @@ export function ServerConnectionsManager({
                 ) : null}
               </form>
             ) : null}
+            </div>
+          ))}
           </div>
-        ))}
-        </div>
-      ) : null}
-      <button
-        type="button"
-        className={buttonClass}
-        onClick={() => void refreshServerHealth()}
-      >
-        <RefreshCw className="size-[14px]" strokeWidth={1.5} aria-hidden />
-        Refresh all server status
-      </button>
+        ) : null}
+        <button
+          type="button"
+          className={`${buttonClass} w-full sm:w-auto`}
+          onClick={() => void refreshServerHealth()}
+        >
+          <RefreshCw className="size-[14px]" strokeWidth={1.5} aria-hidden />
+          Refresh all server status
+        </button>
 
-      <div className="border-t border-[var(--border-subtle)] pt-[16px]">
+        <div className="border-t border-[var(--border-subtle)] pt-[16px]">
         <div className="mb-[10px] flex items-center gap-[8px] px-[2px]">
           <Server className="size-[15px] text-[var(--text-secondary)]" strokeWidth={1.6} />
           <h3 className="font-sans text-[15px] font-semibold text-[var(--text-primary)]">
             {isEditing ? "Edit server" : "Add server"}
           </h3>
         </div>
-        <div className={`grid gap-[10px] ${compact ? "grid-cols-1" : "grid-cols-1 md:grid-cols-2"}`}>
+        <div className={`grid min-w-0 gap-[10px] ${compact ? "grid-cols-1" : "grid-cols-1 md:grid-cols-2"}`}>
           <label className="flex flex-col gap-[6px]">
             <span className="font-sans text-[11px] text-[var(--text-secondary)]">Label</span>
             <input
@@ -388,7 +401,7 @@ export function ServerConnectionsManager({
         {formError ? (
           <p className="mt-[10px] font-sans text-[11px] text-[var(--debug-accent)]">{formError}</p>
         ) : null}
-        <div className="mt-[12px] flex flex-wrap gap-[8px]">
+        <div className="mt-[12px] grid grid-cols-2 gap-[8px] sm:flex sm:flex-wrap">
           <button type="button" className={buttonClass} onClick={() => void handleSave()} disabled={savePending}>
             <Plus className="size-[14px]" strokeWidth={1.5} aria-hidden />
             {isEditing ? "Save changes" : "Save server"}
@@ -398,6 +411,7 @@ export function ServerConnectionsManager({
               Cancel
             </button>
           ) : null}
+        </div>
         </div>
       </div>
     </div>

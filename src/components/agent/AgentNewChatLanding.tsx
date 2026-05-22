@@ -62,6 +62,7 @@ import {
   resolveWorkspaceAppearanceKey,
   WorkspaceFolderIcon,
 } from "@/lib/workspace-rail-appearance";
+import { shouldAutoFocusTextInput } from "@/lib/mobile-autofocus";
 
 function pickAvailableBackend(
   backends: AgentBackendInfo[],
@@ -818,7 +819,7 @@ export function AgentNewChatLanding() {
                   onChange={(event) => setWorkspaceQuery(event.target.value)}
                   placeholder="Search workspaces..."
                   className="w-full bg-transparent font-sans text-[13px] text-[var(--text-primary)] outline-none placeholder:text-[var(--text-disabled)]"
-                  autoFocus
+                  autoFocus={shouldAutoFocusTextInput()}
                 />
               </div>
               <VerticalFadedScroll
@@ -910,7 +911,7 @@ export function AgentNewChatLanding() {
                       onChange={(event) => setBranchQuery(event.target.value)}
                       placeholder="Search branches..."
                       className="w-full bg-transparent font-sans text-[13px] text-[var(--text-primary)] outline-none placeholder:text-[var(--text-disabled)]"
-                      autoFocus
+                      autoFocus={shouldAutoFocusTextInput()}
                     />
                   </div>
                   <VerticalFadedScroll

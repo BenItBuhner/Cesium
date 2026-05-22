@@ -690,6 +690,56 @@ test("cancellation stops the pending turn without completion tail", async () => 
   );
 });
 
+test("prompt after cancellation starts a fresh runtime turn", async () => {
+  const workspace = await ensureWorkspaceRegistered(repoRoot, "repo");
+  const conversation = await testRuntimeManager.createConversation(workspace, {
+    backendId: "cursor-sdk",
+    mode: "orchestration",
+    modelId: "test-fast",
+    modelName: "Test Fast",
+  });
+
+  await testRuntimeManager.promptConversation(
+    workspace,
+    conversation.id,
+    "permission then stop"
+  );
+
+  const awaiting = await waitFor(
+    "permission before stop",
+    () => readConversationSnapshot(workspace.id, conversation.id),
+    (value) => value.conversation.pendingPermission !== null
+  );
+  const stoppedSessionId = awaiting.conversation.providerSessionId;
+  assert.ok(stoppedSessionId, "expected active provider session before stop");
+
+  const stopped = await testRuntimeManager.cancelConversation(workspace, conversation.id);
+  assert.equal(stopped.providerSessionId, null);
+  assert.equal(stopped.queuedPrompts.length, 0);
+
+  await testRuntimeManager.promptConversation(
+    workspace,
+    conversation.id,
+    "continue after stop"
+  );
+
+  const completed = await waitFor(
+    "fresh prompt after stop",
+    () => readConversationSnapshot(workspace.id, conversation.id),
+    (value) =>
+      value.conversation.status === "idle" &&
+      value.conversation.providerSessionId !== null &&
+      value.conversation.providerSessionId !== stoppedSessionId &&
+      value.events.some(
+        (event) =>
+          event.kind === "assistant_message_chunk" &&
+          event.text.includes("Handling: continue after stop")
+      )
+  );
+
+  assert.equal(completed.conversation.pendingPermission, null);
+});
+
 test("multiple conversations keep isolated event streams", async () => {
   const workspace = await ensureWorkspaceRegistered(repoRoot, "repo");
   const first = await testRuntimeManager.createConversation(workspace, {

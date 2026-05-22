@@ -6,6 +6,10 @@ export type {
   ListAgentConversationsResult,
   ReadAgentEventsInput,
 } from "./driver.js";
+export type {
+  OrchestrationBoardListResult,
+  OrchestrationBoardSnapshot,
+} from "../lib/orchestration/types.js";
 export { StorageConflictError } from "./driver.js";
 
 export {

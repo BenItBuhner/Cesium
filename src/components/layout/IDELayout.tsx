@@ -200,7 +200,7 @@ export function IDELayout() {
             <IDEKeyboardLayer>
               {isMobile ? (
                     <div className="flex h-screen w-screen flex-col overflow-hidden bg-[var(--bg-main)]">
-                      <div className="min-h-0 flex-1 overflow-hidden">
+                      <div className="mobile-safe-top-content min-h-0 flex-1 overflow-hidden">
                         {mobilePanel === "sidebar" && <FileExplorer />}
                         {mobilePanel === "editor" && (
                           <EditorPanel key={`ide-mobile:${activeWorkspaceId ?? "workspace"}`} />

@@ -193,7 +193,7 @@ function AgentLayoutShell() {
                   <button
                     type="button"
                     onClick={() => setLeftRailCollapsed(false)}
-                    className="absolute left-[11px] top-[11px] z-40 flex size-[18px] items-center justify-center rounded-[var(--radius-tab)] bg-[var(--bg-panel)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-card)] hover:text-[var(--text-primary)]"
+                    className="mobile-safe-top-offset absolute left-[11px] top-[11px] z-40 flex size-[18px] items-center justify-center rounded-[var(--radius-tab)] bg-[var(--bg-panel)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-card)] hover:text-[var(--text-primary)]"
                     aria-label="Show workspace rail"
                   >
                     <PanelLeftOpen className="size-[16px]" strokeWidth={1.5} />
@@ -227,7 +227,7 @@ function AgentLayoutShell() {
                     data-electron-trailing-chrome={
                       electronTrailingChromeForToggle ? "true" : undefined
                     }
-                    className={`absolute top-[11px] z-40 flex size-[18px] items-center justify-center rounded-[var(--radius-tab)] bg-[var(--bg-panel)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-card)] hover:text-[var(--text-primary)] ${
+                    className={`mobile-safe-top-offset absolute top-[11px] z-40 flex size-[18px] items-center justify-center rounded-[var(--radius-tab)] bg-[var(--bg-panel)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-card)] hover:text-[var(--text-primary)] ${
                       padTrailingForWindowChrome
                         ? "right-[calc(var(--editor-window-chrome-tab-inset)+11px)]"
                         : "right-[11px]"
@@ -275,7 +275,7 @@ function AgentLayoutShell() {
                   minSize={`${AGENT_SHELL_CENTER_MIN_PERCENT}%`}
                   className="relative min-h-0 min-w-0 overflow-hidden"
                 >
-                  {/* z-20 drag host; keep AgentCenterStage above (`z-[21]`) so sticky chat headers and controls receive clicks in Electron. */}
+                  {/* z-20 drag host for window dragging; AgentCenterStage at z-[21] layers chat content above. */}
                   <div
                     aria-hidden
                     className="absolute left-0 right-[148px] top-0 z-20 h-[32px]"
@@ -286,6 +286,7 @@ function AgentLayoutShell() {
                       type="button"
                       onClick={toggleRightPaneOpen}
                         data-workbench-pane-toggle
+                        data-electron-no-drag
                         data-electron-trailing-chrome={
                           electronTrailingChromeForToggle ? "true" : undefined
                         }

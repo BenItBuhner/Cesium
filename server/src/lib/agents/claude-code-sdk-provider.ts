@@ -141,8 +141,12 @@ function effortForConfig(configOptions: AgentConfigOption[]): Options["effort"] 
 }
 
 function maxTurnsForConfig(configOptions: AgentConfigOption[]): number | undefined {
-  const raw = Number.parseInt(optionValue(configOptions, "max_turns", "20"), 10);
-  return Number.isFinite(raw) && raw > 0 ? raw : undefined;
+  const raw = optionValue(configOptions, "max_turns", "unlimited").trim().toLowerCase();
+  if (!raw || raw === "unlimited" || raw === "none" || raw === "0") {
+    return undefined;
+  }
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
 }
 
 function maxBudgetForConfig(configOptions: AgentConfigOption[]): number | undefined {

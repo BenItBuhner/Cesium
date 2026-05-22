@@ -1320,10 +1320,38 @@ export function BetaSettingsPanel() {
     setExperimentalIpadCustomButtons,
     setExperimentalIpadWindowedTabInset,
   } = useUserPreferences();
+  const { settings, updateSettings } = useGlobalSettings();
+  const newBrowserEnabled = settings.agents.newBrowser;
 
   return (
     <>
       <PageIntro title="Beta" />
+      <h2 className="mt-[24px] font-sans text-[13px] font-semibold text-[var(--text-secondary)]">
+        Browser
+      </h2>
+      <SettingsSection>
+        <SettingsRow
+          title="New browser"
+          description="Use the experimental Chromium-backed browser engine. This improves real browser API fidelity, but is still being tuned for hover states, animation smoothness, and response timing. The classic proxy browser remains the default."
+          trailing={
+            <ToggleSwitch
+              checked={newBrowserEnabled}
+              onChange={(checked) =>
+                updateSettings((current) => ({
+                  ...current,
+                  agents: {
+                    ...current.agents,
+                    newBrowser: checked,
+                  },
+                }))
+              }
+              size="md"
+              variant="green"
+            />
+          }
+          border={false}
+        />
+      </SettingsSection>
       <h2 className="mt-[24px] font-sans text-[13px] font-semibold text-[var(--text-secondary)]">
         iPad
       </h2>

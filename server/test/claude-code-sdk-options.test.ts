@@ -38,4 +38,5 @@ test("Claude Code SDK config exposes native modes, model, permissions, effort, t
   assert.ok(byId.get("effort")?.options.some((option) => option.value === "xhigh"));
   assert.ok(byId.get("thinking")?.options.some((option) => option.value === "adaptive"));
   assert.ok(byId.get("tool_profile")?.options.some((option) => option.value === "safe-readonly"));
+  assert.equal(byId.get("max_turns")?.currentValue, "unlimited");
 });

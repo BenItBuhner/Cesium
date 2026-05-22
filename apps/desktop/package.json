@@ -9,7 +9,7 @@
   "scripts": {
     "dev": "node ./src/dev.mjs",
     "check": "node ./src/main.mjs --check && electron --version",
-    "build": "npm run build -w @cesium/desktop-renderer && npm run build -w cesium-server && npm run check",
+    "build": "npm run build -w @cesium/core && npm run build -w @cesium/desktop-renderer && npm run build -w cesium-server && npm run check",
     "smoke": "node ./src/main.mjs --smoke",
     "package": "npm run build && node ../../scripts/prepare-desktop-server-runtime.cjs && node ../../scripts/assert-desktop-package-safe.cjs && node ../../node_modules/electron-builder/cli.js --dir",
     "install:unpacked": "npm run package && node ../../scripts/install-desktop-unpacked.cjs",

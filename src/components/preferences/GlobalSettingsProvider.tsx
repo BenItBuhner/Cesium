@@ -54,7 +54,13 @@ function createDefaultState(): GlobalSettingsState {
   return createDefaultGlobalSettings();
 }
 
-export function GlobalSettingsProvider({ children }: { children: ReactNode }) {
+export function GlobalSettingsProvider({
+  children,
+  serverSettingsEnabled = true,
+}: {
+  children: ReactNode;
+  serverSettingsEnabled?: boolean;
+}) {
   const { settingsServer, requiresDefaultServer } = useServerConnections();
   const [settings, setSettings] = useState<GlobalSettingsState>(createDefaultState);
   const [ready, setReady] = useState(false);
@@ -166,6 +172,12 @@ export function GlobalSettingsProvider({ children }: { children: ReactNode }) {
         }
         return;
       }
+      if (!serverSettingsEnabled) {
+        if (mounted) {
+          setReady(false);
+        }
+        return;
+      }
       try {
         const result = await fetchGlobalSettings({ server: settingsRequestContext });
         if (!mounted) return;
@@ -186,7 +198,7 @@ export function GlobalSettingsProvider({ children }: { children: ReactNode }) {
     return () => {
       mounted = false;
     };
-  }, [settingsRequestContext]);
+  }, [serverSettingsEnabled, settingsRequestContext]);
 
   const syncModelToggleState = useCallback(async () => {
     const server = settingsServerRef.current;

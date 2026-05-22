@@ -8,6 +8,11 @@ import {
 } from "./server-store.js";
 import type { McpConnectionStatus } from "./types.js";
 import { ensureMcpGitignore, writeMcpWorkspaceMirror } from "./workspace-mirror.js";
+import {
+  BROWSER_MCP_SERVER_ID,
+  BROWSER_MCP_TOOLS,
+  callBuiltInBrowserTool,
+} from "./builtin-browser-tools.js";
 
 type ActiveSession = {
   session: McpClientSession;
@@ -110,12 +115,30 @@ export async function refreshWorkspaceMcpMirror(input: {
   workspaceRoot: string;
 }): Promise<void> {
   const servers = await listEnabledMcpServers(input.workspaceId);
+  const browserConfig: McpServerConfig = {
+    id: BROWSER_MCP_SERVER_ID,
+    label: "Browser",
+    summary: "Built-in browser-tab control tools for opening, locking, inspecting, and driving IDE browser tabs.",
+    transport: "stdio",
+    stdio: { command: "builtin:browser", args: [] },
+    enabled: true,
+    auth: { kind: "none" },
+    createdAt: 0,
+    updatedAt: 0,
+  };
   const catalogs: Array<{
     config: McpServerConfig;
     status: McpConnectionStatus;
     instructions?: string;
     tools: Tool[];
   }> = [];
+  catalogs.push({
+    config: browserConfig,
+    status: { connected: true, lastCheckedAt: Date.now(), toolCount: BROWSER_MCP_TOOLS.length },
+    instructions:
+      "Use these tools to control IDE browser tabs. Prefer locking before mutating page state, and check browser_events for user unlocks or interventions.",
+    tools: BROWSER_MCP_TOOLS,
+  });
 
   await Promise.all(
     servers.map(async (config) => {
@@ -135,7 +158,7 @@ export async function refreshWorkspaceMcpMirror(input: {
 
   await writeMcpWorkspaceMirror({
     workspaceRoot: input.workspaceRoot,
-    servers,
+    servers: [browserConfig, ...servers],
     catalogs,
   });
   await ensureMcpGitignore(input.workspaceRoot);
@@ -166,6 +189,13 @@ export async function callMcpTool(input: {
   toolName: string;
   arguments: Record<string, unknown>;
 }): Promise<string> {
+  if (input.serverId === BROWSER_MCP_SERVER_ID) {
+    return await callBuiltInBrowserTool({
+      workspaceId: input.workspaceId,
+      toolName: input.toolName,
+      arguments: input.arguments,
+    });
+  }
   const config = await getMcpServer(input.workspaceId, input.serverId);
   if (!config || !config.enabled) {
     throw new Error(`MCP server is not enabled: ${input.serverId}`);

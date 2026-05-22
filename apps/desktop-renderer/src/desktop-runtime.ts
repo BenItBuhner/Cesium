@@ -1,3 +1,5 @@
+import { bootstrapStoredServerConnection } from "@/lib/server-connections";
+
 type CesiumDesktopBridge = {
   isElectron?: boolean;
   getBackendInfo?: () => Promise<{ baseUrl: string | null; port: number | null }>;
@@ -15,24 +17,16 @@ export async function initializeDesktopRuntime() {
     return;
   }
 
-  const now = Date.now();
-  const baseUrl = backendInfo.baseUrl.replace(/\/+$/, "");
-  const server = {
-    id: "desktop-sidecar",
-    label: "This device",
-    baseUrl,
-    createdAt: now,
-    updatedAt: now,
-    lastUsedAt: now,
-  };
-
-  window.localStorage.setItem(
-    "opencursor.server-connections",
-    JSON.stringify({
-      version: 1,
-      activeServerId: server.id,
-      servers: [server],
-    })
+  bootstrapStoredServerConnection(
+    {
+      id: "desktop-sidecar",
+      label: "This device",
+      baseUrl: backendInfo.baseUrl,
+    },
+    {
+      // Packaged Electron always spawns a fresh loopback sidecar on a new port.
+      // Preserve other saved servers, but force API/WebSocket traffic to this device.
+      activate: "always",
+    }
   );
-  window.dispatchEvent(new CustomEvent("opencursor:server-connections-changed"));
 }

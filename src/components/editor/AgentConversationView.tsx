@@ -27,6 +27,7 @@ import { buildQueuedConfigOverride } from "@/lib/queued-prompt-utils";
 import { markConversationSwitchVisible } from "@/lib/dev-perf";
 import { useAgentConversations } from "@/components/chat/AgentConversationsContext";
 import { deleteAgentConversationQueueItem } from "@/lib/server-api";
+import { isOrchestrationModeLocked } from "@/lib/chat-modes";
 import type { AgentBackendId } from "@/lib/agent-types";
 import type { EditorMode, ImageAttachment, QueuedChatPrompt } from "@/lib/types";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
@@ -498,6 +499,9 @@ const showRecentChatsSection =
         key={composerDraftId}
         mode={composerState.mode}
         onModeChange={(next) => {
+          if (isOrchestrationModeLocked(composerState.mode, true)) {
+            return;
+          }
           if (composerState.busy) {
             setPendingConfigForConversation(conversationId, { mode: next as EditorMode });
           } else {
@@ -551,6 +555,7 @@ const showRecentChatsSection =
         }}
         busy={composerState.busy}
         configLocked={false}
+        modeLocked={isOrchestrationModeLocked(composerState.mode, true)}
         draftAttachments={composerDraftAttachments}
         onDraftAttachmentsChange={(next) =>
           upsertComposerDraft(composerDraftId, {
@@ -565,7 +570,7 @@ const showRecentChatsSection =
             captures: next,
           })
         }
-        onSubmit={(text, attachments?: ImageAttachment[]) => {
+        onSubmit={(text, attachments?: ImageAttachment[], options?: { delivery?: "normal" | "steer" }) => {
           const pendingConfig = pendingConfigByConversationId[conversationId];
           const derivedOverride =
             composerState.busy && conversation
@@ -581,7 +586,13 @@ const showRecentChatsSection =
             composerState.busy && Object.keys(mergedOverride).length > 0
               ? mergedOverride
               : undefined;
-          void promptConversation(conversationId, text, attachments, configOverride).then((ok) => {
+          void promptConversation(
+            conversationId,
+            text,
+            attachments,
+            configOverride,
+            options?.delivery
+          ).then((ok) => {
             if (!ok) {
               return;
             }

@@ -2,6 +2,15 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, ArrowRight, Pen, RefreshCw, SquareTerminal } from "lucide-react";
+import type { BrowserConsoleEntry, BrowserEngineEvent } from "@/lib/browser-engine";
+import {
+  REMOTE_BROWSER_EVENT_POLL_INTERVAL_MS,
+  REMOTE_BROWSER_HOVER_REFRESH_DELAY_MS,
+  REMOTE_BROWSER_INPUT_REFRESH_DELAY_MS,
+  REMOTE_BROWSER_NAVIGATION_REFRESH_DELAY_MS,
+  REMOTE_BROWSER_POINTER_MOVE_THROTTLE_MS,
+} from "@/lib/browser-engine";
+import { getDesktopBrowserBridge } from "@/lib/desktop-browser-bridge";
 import {
   buildBrowserProxyUrl,
   normalizeBrowserTargetUrl,
@@ -9,12 +18,17 @@ import {
 import { resolveFaviconForPage } from "@/lib/browser-favicon";
 import { buildIframeAuthenticatedUrl } from "@/lib/auth-client";
 import {
+  captureBrowserDebugViewport,
   captureRenderedBrowserElementScreenshot,
   createBrowserDebugSession,
   deleteBrowserDebugSession,
+  getBrowserDebugEvents,
   getBrowserDebugSession,
   getServerBaseUrl,
+  markBrowserControlUserIntervention,
   navigateBrowserDebugSession,
+  sendBrowserDebugInput,
+  setBrowserControlLock,
 } from "@/lib/server-api";
 import type { EditorTab } from "@/lib/types";
 import type {
@@ -23,6 +37,7 @@ import type {
 } from "@/components/editor/editor-panel-state";
 import { useOpenInEditor } from "@/components/editor/OpenInEditorContext";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
+import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
 import { useWorkbenchNotifications } from "@/components/notifications/WorkbenchNotificationProvider";
 import { WORKBENCH_NOTIFICATION_KIND } from "@/components/notifications/workbench-notification-types";
 
@@ -69,6 +84,22 @@ function isDesignGuestMessage(data: unknown): data is {
   return d.source === "cesium-design-guest" && typeof d.kind === "string";
 }
 
+function elementViewportBounds(el: HTMLElement | null): {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+} | null {
+  if (!el) return null;
+  const rect = el.getBoundingClientRect();
+  return {
+    x: rect.left,
+    y: rect.top,
+    width: rect.width,
+    height: rect.height,
+  };
+}
+
 export function BrowserTab({
   tab,
   dispatch,
@@ -80,11 +111,25 @@ export function BrowserTab({
 }) {
   const { applyBrowserDesignCapture, attachImageToBrowserDesignCapture } = useOpenInEditor();
   const { activeWorkspaceId } = useWorkspace();
+  const { settings } = useGlobalSettings();
   const { pushNotification } = useWorkbenchNotifications();
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
+  const nativeViewportRef = useRef<HTMLDivElement | null>(null);
+  const nativeDevtoolsRef = useRef<HTMLDivElement | null>(null);
+  const nativeSessionIdRef = useRef<string | null>(null);
+  const remoteViewportRef = useRef<HTMLDivElement | null>(null);
+  const remoteEventCursorRef = useRef(0);
+  const remoteViewportTimerRef = useRef<number | null>(null);
+  const remoteViewportInFlightRef = useRef(false);
+  const remoteLastPointerMoveRef = useRef(0);
   const debugSessionIdRef = useRef<string | null>(null);
   const processedCaptureIdsRef = useRef<string[]>([]);
   const [consoleError, setConsoleError] = useState<string | null>(null);
+  const [nativeBrowserReady, setNativeBrowserReady] = useState(false);
+  const [nativeProbeComplete, setNativeProbeComplete] = useState(false);
+  const [remoteBrowserReady, setRemoteBrowserReady] = useState(false);
+  const [remoteViewportImage, setRemoteViewportImage] = useState<string | null>(null);
+  const [consoleEntries, setConsoleEntries] = useState<BrowserConsoleEntry[]>([]);
 
   const captureRenderedFallback = useCallback(
     async (payload: {
@@ -144,6 +189,10 @@ export function BrowserTab({
     debugSessionIdRef.current = tab.browser?.debugSessionId ?? null;
   }, [tab.browser?.debugSessionId]);
 
+  useEffect(() => {
+    nativeSessionIdRef.current = tab.browser?.nativeSessionId ?? null;
+  }, [tab.browser?.nativeSessionId]);
+
   const defaultHome = getDefaultHome();
   const initial = tab.browser?.targetUrl ?? defaultHome;
   const historyRef = useRef<HistoryStack>({ entries: [initial], index: 0 });
@@ -157,6 +206,16 @@ export function BrowserTab({
 
   const designMode = tab.browser?.designMode ?? false;
   const devtoolsOpen = tab.browser?.devtoolsOpen ?? false;
+  const newBrowserEnabled = settings.agents.newBrowser;
+  const nativeSessionId = tab.browser?.nativeSessionId ?? null;
+  const usingNativeBrowser =
+    nativeBrowserReady &&
+    tab.browser?.engine === "electron-native" &&
+    Boolean(nativeSessionId);
+  const usingRemoteBrowser =
+    remoteBrowserReady &&
+    tab.browser?.engine === "server-chromium" &&
+    Boolean(tab.browser?.debugSessionId);
 
   useEffect(() => {
     currentTargetUrlRef.current = tab.browser?.targetUrl ?? defaultHome;
@@ -177,6 +236,356 @@ export function BrowserTab({
   }, [tab.browser?.targetUrl]);
 
   const targetUrl = tab.browser?.targetUrl ?? defaultHome;
+  const initialNativeTargetUrlRef = useRef(targetUrl);
+
+  useEffect(() => {
+    setNativeProbeComplete(false);
+    if (!newBrowserEnabled && tab.browser?.engine !== "server-chromium") {
+      setNativeBrowserReady(false);
+      setNativeProbeComplete(true);
+      dispatch({
+        type: "UPDATE_BROWSER_TAB_META",
+        tabId: tab.id,
+        engine: "proxy",
+        nativeSessionId: null,
+        debugSessionId: null,
+        devtoolsPath: null,
+      });
+      return;
+    }
+    if (tab.browser?.engine === "server-chromium") {
+      setNativeBrowserReady(false);
+      setNativeProbeComplete(true);
+      return;
+    }
+    const bridge = getDesktopBrowserBridge();
+    if (!bridge) {
+      setNativeBrowserReady(false);
+      setNativeProbeComplete(true);
+      return;
+    }
+    let cancelled = false;
+    let unsubscribe: (() => void) | null = null;
+    let createdSessionId: string | null = null;
+
+    const handleEvent = (event: BrowserEngineEvent & { sessionId: string }) => {
+      if (event.sessionId !== nativeSessionIdRef.current) return;
+      if (event.type === "navigation") {
+        if (event.url) {
+          const title = event.title?.trim() || undefined;
+          if (event.url !== lastNavHrefRef.current) {
+            const stack = historyRef.current;
+            stack.entries = [...stack.entries.slice(0, stack.index + 1), event.url];
+            stack.index = stack.entries.length - 1;
+          }
+          setUrlBar(event.url);
+          currentTargetUrlRef.current = event.url;
+          lastNavHrefRef.current = event.url;
+          dispatch({
+            type: "UPDATE_BROWSER_TAB_URL",
+            tabId: tab.id,
+            targetUrl: event.url,
+            name: title,
+          });
+        }
+        if (event.faviconUrl) {
+          dispatch({
+            type: "UPDATE_BROWSER_TAB_FAVICON",
+            tabId: tab.id,
+            faviconUrl: event.faviconUrl,
+          });
+        }
+        forceNavUi();
+      } else if (event.type === "console") {
+        setConsoleEntries((entries) => [...entries.slice(-199), event.entry]);
+      } else if (event.type === "network") {
+        setConsoleEntries((entries) => [
+          ...entries.slice(-199),
+          {
+            id: `network-${event.entry.id}`,
+            ts: event.entry.ts,
+            level:
+              event.entry.status && event.entry.status >= 400
+                ? "warning"
+                : "info",
+            source: "network",
+            text: `${event.entry.status ?? ""} ${event.entry.url}`.trim(),
+            url: event.entry.url,
+          },
+        ]);
+      } else if (event.type === "error") {
+        setConsoleError(event.message);
+      }
+    };
+
+    void (async () => {
+      const available = await Promise.resolve(bridge.isAvailable?.() ?? true).catch(
+        () => false
+      );
+      if (cancelled || !available) {
+        setNativeBrowserReady(false);
+        setNativeProbeComplete(true);
+        return;
+      }
+      unsubscribe = bridge.onEvent(handleEvent);
+      try {
+        const session = await bridge.createSession({
+          tabId: tab.id,
+          url: initialNativeTargetUrlRef.current,
+        });
+        if (cancelled) {
+          await bridge.destroySession(session.id).catch(() => undefined);
+          return;
+        }
+        createdSessionId = session.id;
+        nativeSessionIdRef.current = session.id;
+        setNativeBrowserReady(true);
+        setNativeProbeComplete(true);
+        dispatch({
+          type: "UPDATE_BROWSER_TAB_META",
+          tabId: tab.id,
+          engine: "electron-native",
+          nativeSessionId: session.id,
+        });
+      } catch (error) {
+        setNativeBrowserReady(false);
+        setNativeProbeComplete(true);
+        setConsoleError(
+          error instanceof Error ? error.message : "Native browser unavailable."
+        );
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      unsubscribe?.();
+      const sid = createdSessionId ?? nativeSessionIdRef.current;
+      if (sid) {
+        void bridge.destroySession(sid).catch(() => undefined);
+      }
+    };
+  }, [dispatch, forceNavUi, newBrowserEnabled, tab.id]);
+
+  useEffect(() => {
+    if (!usingNativeBrowser || !nativeSessionId) return;
+    const bridge = getDesktopBrowserBridge();
+    if (!bridge) return;
+
+    let raf = 0;
+    const syncBounds = () => {
+      if (raf) cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => {
+        raf = 0;
+        void bridge.setBounds(
+          nativeSessionId,
+          elementViewportBounds(nativeViewportRef.current)
+        );
+        if (bridge.setDevtoolsBounds) {
+          void bridge.setDevtoolsBounds(
+            nativeSessionId,
+            devtoolsOpen
+              ? elementViewportBounds(nativeDevtoolsRef.current)
+              : null
+          );
+        }
+      });
+    };
+
+    const resizeObserver = new ResizeObserver(syncBounds);
+    if (nativeViewportRef.current) resizeObserver.observe(nativeViewportRef.current);
+    if (nativeDevtoolsRef.current) resizeObserver.observe(nativeDevtoolsRef.current);
+    window.addEventListener("resize", syncBounds);
+    syncBounds();
+
+    return () => {
+      if (raf) cancelAnimationFrame(raf);
+      resizeObserver.disconnect();
+      window.removeEventListener("resize", syncBounds);
+      void bridge.setBounds(nativeSessionId, null);
+      if (bridge.setDevtoolsBounds) {
+        void bridge.setDevtoolsBounds(nativeSessionId, null);
+      }
+    };
+  }, [devtoolsOpen, nativeSessionId, usingNativeBrowser]);
+
+  useEffect(() => {
+    if (tab.browser?.engine === "server-chromium" && tab.browser?.debugSessionId) {
+      debugSessionIdRef.current = tab.browser.debugSessionId;
+      setRemoteBrowserReady(true);
+      setConsoleError(null);
+      return;
+    }
+    if (!newBrowserEnabled || !nativeProbeComplete || nativeBrowserReady || !activeWorkspaceId) {
+      return;
+    }
+    let cancelled = false;
+    let sessionId: string | null = null;
+    void (async () => {
+      try {
+        const session = await createBrowserDebugSession({
+          targetUrl: initialNativeTargetUrlRef.current,
+          useIframeProxy: false,
+        });
+        if (cancelled) {
+          await deleteBrowserDebugSession(session.sessionId).catch(() => undefined);
+          return;
+        }
+        sessionId = session.sessionId;
+        debugSessionIdRef.current = session.sessionId;
+        setRemoteBrowserReady(true);
+        setConsoleError(null);
+        dispatch({
+          type: "UPDATE_BROWSER_TAB_META",
+          tabId: tab.id,
+          engine: "server-chromium",
+          debugSessionId: session.sessionId,
+          devtoolsPath: session.devtoolsPath,
+        });
+      } catch {
+        setRemoteBrowserReady(false);
+        dispatch({
+          type: "UPDATE_BROWSER_TAB_META",
+          tabId: tab.id,
+          engine: "proxy",
+          debugSessionId: null,
+          devtoolsPath: null,
+        });
+      }
+    })();
+    return () => {
+      cancelled = true;
+      const sid = sessionId ?? debugSessionIdRef.current;
+      if (sid) {
+        void deleteBrowserDebugSession(sid).catch(() => undefined);
+      }
+    };
+  }, [
+    activeWorkspaceId,
+    dispatch,
+    nativeBrowserReady,
+    nativeProbeComplete,
+    newBrowserEnabled,
+    tab.browser?.debugSessionId,
+    tab.browser?.engine,
+    tab.id,
+  ]);
+
+  const refreshRemoteViewport = useCallback(async () => {
+    const sid = debugSessionIdRef.current;
+    if (!usingRemoteBrowser || !sid || remoteViewportInFlightRef.current) return;
+    const bounds = elementViewportBounds(remoteViewportRef.current);
+    const viewport =
+      bounds && bounds.width >= 4 && bounds.height >= 4
+        ? { width: Math.floor(bounds.width), height: Math.floor(bounds.height) }
+        : { width: 1280, height: 720 };
+
+    remoteViewportInFlightRef.current = true;
+    try {
+      const captured = await captureBrowserDebugViewport(sid, viewport);
+      if (captured?.imageDataUrl) {
+        setRemoteViewportImage(captured.imageDataUrl);
+        if (captured.currentUrl && captured.currentUrl !== currentTargetUrlRef.current) {
+          setUrlBar(captured.currentUrl);
+          currentTargetUrlRef.current = captured.currentUrl;
+          lastNavHrefRef.current = captured.currentUrl;
+          dispatch({
+            type: "UPDATE_BROWSER_TAB_URL",
+            tabId: tab.id,
+            targetUrl: captured.currentUrl,
+          });
+        }
+      }
+    } finally {
+      remoteViewportInFlightRef.current = false;
+    }
+  }, [dispatch, tab.id, usingRemoteBrowser]);
+
+  const scheduleRemoteViewportRefresh = useCallback(
+    (delayMs = 0) => {
+      if (!usingRemoteBrowser) return;
+      if (remoteViewportTimerRef.current != null) {
+        window.clearTimeout(remoteViewportTimerRef.current);
+      }
+      remoteViewportTimerRef.current = window.setTimeout(() => {
+        remoteViewportTimerRef.current = null;
+        void refreshRemoteViewport();
+      }, delayMs);
+    },
+    [refreshRemoteViewport, usingRemoteBrowser]
+  );
+
+  useEffect(() => {
+    if (!usingRemoteBrowser || !tab.browser?.debugSessionId) return;
+    let cancelled = false;
+    let timer: number | null = null;
+    const bootstrapViewportTimers: number[] = [];
+    const sid = tab.browser.debugSessionId;
+    remoteEventCursorRef.current = 0;
+
+    const readEvents = async () => {
+      const events = await getBrowserDebugEvents(sid, remoteEventCursorRef.current);
+      if (!cancelled && events) {
+        remoteEventCursorRef.current = events.cursor;
+        for (const event of events.events) {
+          if (event.type === "console") {
+            setConsoleEntries((entries) => [
+              ...entries.slice(-199),
+              {
+                id: `remote-${event.seq}`,
+                ts: event.ts,
+                level: event.level,
+                source: event.source,
+                text: event.text,
+                url: event.url,
+                lineNumber: event.lineNumber,
+                columnNumber: event.columnNumber,
+              },
+            ]);
+          } else {
+            setConsoleEntries((entries) => [
+              ...entries.slice(-199),
+              {
+                id: `remote-network-${event.seq}`,
+                ts: event.ts,
+                level: event.status && event.status >= 400 ? "warning" : "info",
+                source: "network",
+                text: `${event.status ?? ""} ${event.url}`.trim(),
+                url: event.url,
+              },
+            ]);
+          }
+        }
+      }
+      if (!cancelled) {
+        timer = window.setTimeout(readEvents, REMOTE_BROWSER_EVENT_POLL_INTERVAL_MS);
+      }
+    };
+
+    for (const delay of [0, 150, 600]) {
+      bootstrapViewportTimers.push(
+        window.setTimeout(() => {
+          void refreshRemoteViewport();
+        }, delay)
+      );
+    }
+    void readEvents();
+    return () => {
+      cancelled = true;
+      if (timer != null) window.clearTimeout(timer);
+      for (const bootstrapTimer of bootstrapViewportTimers) {
+        window.clearTimeout(bootstrapTimer);
+      }
+      if (remoteViewportTimerRef.current != null) {
+        window.clearTimeout(remoteViewportTimerRef.current);
+        remoteViewportTimerRef.current = null;
+      }
+    };
+  }, [
+    refreshRemoteViewport,
+    scheduleRemoteViewportRefresh,
+    tab.browser?.debugSessionId,
+    usingRemoteBrowser,
+  ]);
 
   // Auto-heal legacy malformed browser-tab URLs from older builds / bad prompt
   // defaults (e.g. `http://localhost:3000/https://google.com/`). The proxy
@@ -218,7 +627,8 @@ export function BrowserTab({
     const normalized = devtoolsPath.startsWith("/") ? devtoolsPath : `/${devtoolsPath}`;
     return buildIframeAuthenticatedUrl(`${base}${normalized}`);
   }, [tab.browser?.devtoolsPath]);
-  const showDevtoolsPanel = Boolean(devtoolsOpen && consoleViewerSrc);
+  const showServerDevtoolsPanel = Boolean(!usingNativeBrowser && devtoolsOpen && consoleViewerSrc);
+  const showNativeDevtoolsPanel = Boolean(usingNativeBrowser && devtoolsOpen);
 
   const pushDesignToGuest = useCallback((enabled: boolean) => {
     const w = iframeRef.current?.contentWindow;
@@ -409,14 +819,23 @@ export function BrowserTab({
         targetUrl: normalizedHref,
       });
       setUrlBar(normalizedHref);
-      if (devtoolsOpenRef.current) {
+      const nativeSid = nativeSessionIdRef.current;
+      if (nativeSid && nativeBrowserReady) {
+        void getDesktopBrowserBridge()?.command(nativeSid, {
+          op: "goto",
+          url: normalizedHref,
+        });
+      } else if (debugSessionIdRef.current && remoteBrowserReady) {
+        void navigateChromium({ op: "goto", url: normalizedHref });
+        scheduleRemoteViewportRefresh(REMOTE_BROWSER_NAVIGATION_REFRESH_DELAY_MS);
+      } else if (devtoolsOpenRef.current) {
         void navigateChromium({ op: "goto", url: normalizedHref });
       } else {
         setIframeKey((k) => k + 1);
       }
       forceNavUi();
     },
-    [dispatch, forceNavUi, navigateChromium, tab.id]
+    [dispatch, forceNavUi, nativeBrowserReady, navigateChromium, remoteBrowserReady, scheduleRemoteViewportRefresh, tab.id]
   );
 
   const go = useCallback(() => {
@@ -441,13 +860,19 @@ export function BrowserTab({
       targetUrl: u,
     });
     setUrlBar(u);
-    if (devtoolsOpenRef.current) {
+    const nativeSid = nativeSessionIdRef.current;
+    if (nativeSid && nativeBrowserReady) {
+      void getDesktopBrowserBridge()?.command(nativeSid, { op: "back" });
+    } else if (debugSessionIdRef.current && remoteBrowserReady) {
+      void navigateChromium({ op: "back" });
+      scheduleRemoteViewportRefresh(REMOTE_BROWSER_NAVIGATION_REFRESH_DELAY_MS);
+    } else if (devtoolsOpenRef.current) {
       void navigateChromium({ op: "back" });
     } else {
       setIframeKey((k) => k + 1);
     }
     forceNavUi();
-  }, [dispatch, forceNavUi, navigateChromium, tab.id]);
+  }, [dispatch, forceNavUi, nativeBrowserReady, navigateChromium, remoteBrowserReady, scheduleRemoteViewportRefresh, tab.id]);
 
   const forward = useCallback(() => {
     const stack = historyRef.current;
@@ -462,21 +887,37 @@ export function BrowserTab({
       targetUrl: u,
     });
     setUrlBar(u);
-    if (devtoolsOpenRef.current) {
+    const nativeSid = nativeSessionIdRef.current;
+    if (nativeSid && nativeBrowserReady) {
+      void getDesktopBrowserBridge()?.command(nativeSid, { op: "forward" });
+    } else if (debugSessionIdRef.current && remoteBrowserReady) {
+      void navigateChromium({ op: "forward" });
+      scheduleRemoteViewportRefresh(REMOTE_BROWSER_NAVIGATION_REFRESH_DELAY_MS);
+    } else if (devtoolsOpenRef.current) {
       void navigateChromium({ op: "forward" });
     } else {
       setIframeKey((k) => k + 1);
     }
     forceNavUi();
-  }, [dispatch, forceNavUi, navigateChromium, tab.id]);
+  }, [dispatch, forceNavUi, nativeBrowserReady, navigateChromium, remoteBrowserReady, scheduleRemoteViewportRefresh, tab.id]);
 
   const reload = useCallback(() => {
+    const nativeSid = nativeSessionIdRef.current;
+    if (nativeSid && nativeBrowserReady) {
+      void getDesktopBrowserBridge()?.command(nativeSid, { op: "reload" });
+      return;
+    }
+    if (debugSessionIdRef.current && remoteBrowserReady) {
+      void navigateChromium({ op: "reload" });
+      scheduleRemoteViewportRefresh(REMOTE_BROWSER_NAVIGATION_REFRESH_DELAY_MS);
+      return;
+    }
     if (devtoolsOpenRef.current) {
       void navigateChromium({ op: "reload" });
       return;
     }
     setIframeKey((k) => k + 1);
-  }, [navigateChromium]);
+  }, [nativeBrowserReady, navigateChromium, remoteBrowserReady, scheduleRemoteViewportRefresh]);
 
   const toggleDesignMode = useCallback(() => {
     dispatch({
@@ -532,6 +973,33 @@ export function BrowserTab({
   }, [dispatch, tab.id, tab.browser?.debugSessionId, tab.browser?.targetUrl]);
 
   const toggleDevtools = useCallback(async () => {
+    const nativeSid = nativeSessionIdRef.current;
+    if (nativeSid && nativeBrowserReady) {
+      const nextOpen = !devtoolsOpen;
+      try {
+        await getDesktopBrowserBridge()?.setDevtoolsOpen(nativeSid, nextOpen);
+        dispatch({
+          type: "UPDATE_BROWSER_TAB_META",
+          tabId: tab.id,
+          devtoolsOpen: nextOpen,
+        });
+        setConsoleError(null);
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : "Failed to toggle native DevTools.";
+        setConsoleError(message);
+      }
+      return;
+    }
+    if (remoteBrowserReady && debugSessionIdRef.current) {
+      dispatch({
+        type: "UPDATE_BROWSER_TAB_META",
+        tabId: tab.id,
+        devtoolsOpen: !devtoolsOpen,
+      });
+      setConsoleError(null);
+      return;
+    }
     if (devtoolsOpen) {
       await tearDownDebugSession();
       setConsoleError(null);
@@ -581,7 +1049,9 @@ export function BrowserTab({
     activeWorkspaceId,
     devtoolsOpen,
     dispatch,
+    nativeBrowserReady,
     pushNotification,
+    remoteBrowserReady,
     tab.id,
     targetUrl,
     tearDownDebugSession,
@@ -675,6 +1145,28 @@ export function BrowserTab({
     };
   }, [dispatch, tab.id, tab.browser?.targetUrl]);
 
+  const browserLockState = tab.browser?.lockState;
+  const browserLocked = Boolean(browserLockState?.locked);
+  const browserViewport = tab.browser?.viewport;
+
+  const unlockBrowser = () => {
+    void setBrowserControlLock(tab.id, { locked: false, userInitiated: true })
+      .then((result) => {
+        dispatch({ type: "UPDATE_BROWSER_TAB_META", tabId: tab.id, lockState: result.tab.lockState });
+      })
+      .catch(() => undefined);
+  };
+
+  const markUserIntervention = (detail: string) => {
+    if (browserLocked) return;
+    if (!tab.browser?.controlSessionId) return;
+    void markBrowserControlUserIntervention(tab.id, detail)
+      .then((result) => {
+        dispatch({ type: "UPDATE_BROWSER_TAB_META", tabId: tab.id, lockState: result.tab.lockState });
+      })
+      .catch(() => undefined);
+  };
+
   return (
     <div
       className="flex h-full min-h-0 flex-col bg-[var(--bg-main)]"
@@ -744,7 +1236,7 @@ export function BrowserTab({
           type="button"
           aria-label={devtoolsOpen ? "Close console" : "Open console"}
           aria-pressed={devtoolsOpen}
-          disabled={!activeWorkspaceId}
+          disabled={!activeWorkspaceId && !usingNativeBrowser}
           title={devtoolsOpen ? "Close console" : "Open browser console"}
           onClick={() => void toggleDevtools()}
           className={`flex size-[28px] shrink-0 items-center justify-center rounded-[var(--radius-tab)] border border-transparent transition-colors hover:bg-[var(--accent-bg)] disabled:opacity-30 ${
@@ -764,7 +1256,33 @@ export function BrowserTab({
           Browser console unavailable: {consoleError}
         </div>
       ) : null}
-      <div className="flex min-h-0 flex-1 flex-col">
+      <div
+        className="relative flex min-h-0 flex-1 flex-col"
+        onPointerDownCapture={() => markUserIntervention("User pointer input")}
+        onWheelCapture={() => markUserIntervention("User wheel input")}
+        onKeyDownCapture={() => markUserIntervention("User keyboard input")}
+      >
+        {browserViewport ? (
+          <div className="pointer-events-none absolute left-[10px] top-[10px] z-20 rounded-full border border-[var(--border-subtle)] bg-[var(--bg-panel)]/85 px-[8px] py-[3px] font-mono text-[10px] text-[var(--text-secondary)]">
+            {browserViewport.preset} {browserViewport.width}x{browserViewport.height}
+          </div>
+        ) : null}
+        {browserLocked ? (
+          <div className="absolute inset-0 z-30 flex items-start justify-end bg-transparent">
+            <div className="m-[10px] flex items-center gap-[8px] rounded-full border border-[var(--border-subtle)] bg-[var(--bg-panel)]/95 px-[10px] py-[6px] shadow-lg">
+              <span className="font-sans text-[12px] text-[var(--text-secondary)]">
+                Browser locked for agent control
+              </span>
+              <button
+                type="button"
+                onClick={unlockBrowser}
+                className="rounded-full bg-[var(--accent-bg)] px-[9px] py-[4px] font-sans text-[12px] text-[var(--text-primary)] transition-colors hover:bg-[var(--bg-card-hover)]"
+              >
+                Unlock
+              </button>
+            </div>
+          </div>
+        ) : null}
         {/*
           When the console is open, the real page is rendered by the Chromium
           attached to DevTools — showing the outer proxy iframe on top of it
@@ -774,21 +1292,139 @@ export function BrowserTab({
         */}
         <div
           className={`min-h-0 overflow-hidden ${
-            showDevtoolsPanel ? "hidden flex-[0_0_0%]" : "flex-1"
+            showServerDevtoolsPanel || showNativeDevtoolsPanel ? "hidden flex-[0_0_0%]" : "flex-1"
           }`}
-          aria-hidden={showDevtoolsPanel || undefined}
+          aria-hidden={showServerDevtoolsPanel || showNativeDevtoolsPanel || undefined}
         >
-          <iframe
-            ref={iframeRef}
-            key={iframeKey}
-            title="Browser preview"
-            src={iframeSrc}
-            sandbox="allow-downloads allow-forms allow-modals allow-popups allow-popups-to-escape-sandbox allow-same-origin allow-scripts"
-            onLoad={() => pushDesignToGuest(designModeRef.current)}
-            className="h-full w-full border-0 bg-[var(--bg-main)]"
-          />
+          {usingNativeBrowser ? (
+            <div
+              ref={nativeViewportRef}
+              className="h-full w-full bg-[var(--bg-main)]"
+              onMouseDown={() => {
+                const sid = nativeSessionIdRef.current;
+                if (sid) void getDesktopBrowserBridge()?.command(sid, { op: "focus" });
+              }}
+            />
+          ) : usingRemoteBrowser ? (
+            <div
+              ref={remoteViewportRef}
+              tabIndex={0}
+              className="flex h-full w-full items-center justify-center overflow-hidden bg-[var(--bg-main)] outline-none"
+              onMouseMove={(event) => {
+                const now = performance.now();
+                if (now - remoteLastPointerMoveRef.current < REMOTE_BROWSER_POINTER_MOVE_THROTTLE_MS) return;
+                remoteLastPointerMoveRef.current = now;
+                const sid = debugSessionIdRef.current;
+                const rect = event.currentTarget.getBoundingClientRect();
+                if (sid) {
+                  void sendBrowserDebugInput(sid, {
+                    type: "mouse",
+                    action: "move",
+                    x: event.clientX - rect.left,
+                    y: event.clientY - rect.top,
+                  }).then(() => scheduleRemoteViewportRefresh(REMOTE_BROWSER_HOVER_REFRESH_DELAY_MS));
+                }
+              }}
+              onMouseDown={(event) => {
+                const sid = debugSessionIdRef.current;
+                const rect = event.currentTarget.getBoundingClientRect();
+                if (sid) {
+                  void sendBrowserDebugInput(sid, {
+                    type: "mouse",
+                    action: "down",
+                    x: event.clientX - rect.left,
+                    y: event.clientY - rect.top,
+                  }).then(() => scheduleRemoteViewportRefresh(REMOTE_BROWSER_INPUT_REFRESH_DELAY_MS));
+                }
+              }}
+              onMouseUp={(event) => {
+                const sid = debugSessionIdRef.current;
+                const rect = event.currentTarget.getBoundingClientRect();
+                if (sid) {
+                  void sendBrowserDebugInput(sid, {
+                    type: "mouse",
+                    action: "up",
+                    x: event.clientX - rect.left,
+                    y: event.clientY - rect.top,
+                  }).then(() => scheduleRemoteViewportRefresh(REMOTE_BROWSER_INPUT_REFRESH_DELAY_MS));
+                }
+              }}
+              onClick={(event) => {
+                const sid = debugSessionIdRef.current;
+                const rect = event.currentTarget.getBoundingClientRect();
+                if (designMode && remoteViewportImage) {
+                  applyBrowserDesignCapture({
+                    kind: "select",
+                    label: `Viewport at ${Math.round(event.clientX - rect.left)}, ${Math.round(event.clientY - rect.top)}`,
+                    snippet: currentTargetUrlRef.current,
+                    imageDataUrl: remoteViewportImage,
+                    captureId: `remote-${Date.now()}`,
+                  });
+                  return;
+                }
+                if (sid) {
+                  void sendBrowserDebugInput(sid, {
+                    type: "mouse",
+                    action: "click",
+                    x: event.clientX - rect.left,
+                    y: event.clientY - rect.top,
+                  }).then(() => scheduleRemoteViewportRefresh(REMOTE_BROWSER_INPUT_REFRESH_DELAY_MS));
+                }
+              }}
+              onWheel={(event) => {
+                const sid = debugSessionIdRef.current;
+                if (sid) {
+                  void sendBrowserDebugInput(sid, {
+                    type: "wheel",
+                    deltaX: event.deltaX,
+                    deltaY: event.deltaY,
+                  }).then(() => scheduleRemoteViewportRefresh(REMOTE_BROWSER_INPUT_REFRESH_DELAY_MS));
+                }
+              }}
+              onKeyDown={(event) => {
+                const sid = debugSessionIdRef.current;
+                if (!sid) return;
+                if (event.key.length === 1) {
+                  void sendBrowserDebugInput(sid, {
+                    type: "key",
+                    action: "type",
+                    key: event.key,
+                  }).then(() => scheduleRemoteViewportRefresh(REMOTE_BROWSER_INPUT_REFRESH_DELAY_MS));
+                } else {
+                  void sendBrowserDebugInput(sid, {
+                    type: "key",
+                    action: "press",
+                    key: event.key,
+                  }).then(() => scheduleRemoteViewportRefresh(REMOTE_BROWSER_INPUT_REFRESH_DELAY_MS));
+                }
+              }}
+            >
+              {remoteViewportImage ? (
+                <img
+                  src={remoteViewportImage}
+                  alt="Browser viewport"
+                  className="h-full w-full object-fill"
+                  draggable={false}
+                />
+              ) : (
+                <span className="font-sans text-[12px] text-[var(--text-secondary)]">
+                  Starting Chromium browser...
+                </span>
+              )}
+            </div>
+          ) : (
+            <iframe
+              ref={iframeRef}
+              key={iframeKey}
+              title="Browser preview"
+              src={iframeSrc}
+              sandbox="allow-downloads allow-forms allow-modals allow-popups allow-popups-to-escape-sandbox allow-same-origin allow-scripts"
+              onLoad={() => pushDesignToGuest(designModeRef.current)}
+              className="h-full w-full border-0 bg-[var(--bg-main)]"
+            />
+          )}
         </div>
-        {showDevtoolsPanel ? (
+        {showServerDevtoolsPanel ? (
           <div
             className="min-h-0 flex-1 border-t border-[var(--border-subtle)]"
             data-ide-browser-devtools
@@ -798,6 +1434,28 @@ export function BrowserTab({
               src={consoleViewerSrc ?? undefined}
               className="h-full w-full border-0 bg-[var(--bg-main)]"
             />
+          </div>
+        ) : null}
+        {showNativeDevtoolsPanel ? (
+          <div className="flex min-h-0 flex-1 border-t border-[var(--border-subtle)]">
+            <div ref={nativeViewportRef} className="min-h-0 flex-1 bg-[var(--bg-main)]" />
+            <div
+              ref={nativeDevtoolsRef}
+              className="min-h-0 flex-1 border-l border-[var(--border-subtle)] bg-[var(--bg-panel)]"
+              data-ide-browser-devtools
+            />
+          </div>
+        ) : null}
+        {(usingNativeBrowser || usingRemoteBrowser) &&
+        consoleEntries.length > 0 &&
+        !showNativeDevtoolsPanel &&
+        !showServerDevtoolsPanel ? (
+          <div className="max-h-[132px] shrink-0 overflow-auto border-t border-[var(--border-subtle)] bg-[var(--bg-panel)] px-[10px] py-[6px] font-mono text-[11px] text-[var(--text-secondary)]">
+            {consoleEntries.slice(-5).map((entry) => (
+              <div key={entry.id} className={entry.level === "error" ? "text-[var(--danger,#f48771)]" : ""}>
+                [{entry.source}] {entry.text}
+              </div>
+            ))}
           </div>
         ) : null}
       </div>

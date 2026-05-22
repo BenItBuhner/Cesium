@@ -51,6 +51,7 @@ export function askStepsFromMessage(
       normalizeStep({
         id: "single",
         title: msg.questionTitle,
+        allowMultiple: false,
         options: msg.options,
       }),
     ];

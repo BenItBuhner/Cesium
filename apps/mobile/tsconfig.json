@@ -1,0 +1,23 @@
+{
+  "extends": "../../packages/config/tsconfig/react.json",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "jsx": "react-jsx",
+    "lib": ["es2022", "dom"],
+    "types": ["node", "react", "react-native"],
+    "paths": {
+      "@mobile/*": ["src/*"],
+      "@/*": ["../../src/*"],
+      "@cesium/core": ["../../packages/core/src/index.ts"],
+      "@cesium/api-client": ["../../packages/api-client/src/index.ts"],
+      "@cesium/design": ["../../packages/design/src/index.ts"]
+    }
+  },
+  "include": [
+    "index.js",
+    "src/**/*.ts",
+    "src/**/*.tsx",
+    "../../src/lib/mobile-*.ts",
+    "../../packages/**/*.ts"
+  ]
+}

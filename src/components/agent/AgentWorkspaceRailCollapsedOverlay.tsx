@@ -39,6 +39,7 @@ export function AgentWorkspaceRailCollapsedOverlay() {
         <button
           type="button"
           onClick={toggleLeftRailCollapsed}
+          data-electron-no-drag
           className={btnClass}
           aria-label="Expand workspace rail"
           title="Expand workspace rail"
@@ -48,6 +49,7 @@ export function AgentWorkspaceRailCollapsedOverlay() {
         <button
           type="button"
           onClick={openSearch}
+          data-electron-no-drag
           className={btnClass}
           aria-label="Search all chats"
           title="Search all chats"
@@ -57,6 +59,7 @@ export function AgentWorkspaceRailCollapsedOverlay() {
         <button
           type="button"
           onClick={startNewConversation}
+          data-electron-no-drag
           className={btnClass}
           aria-label="Start new chat"
           title="Start new chat"

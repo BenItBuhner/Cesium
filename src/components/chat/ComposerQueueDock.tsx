@@ -90,6 +90,11 @@ export function ComposerQueueDock({
                     />
                   </span>
                 )}
+                {item.delivery === "steer" ? (
+                  <span className="shrink-0 rounded-full border border-[var(--border-subtle)] px-[6px] py-[2px] font-sans text-[10px] uppercase tracking-[0.04em] text-[var(--text-secondary)]">
+                    Steer
+                  </span>
+                ) : null}
                 <span
                   className="min-w-0 flex-1 truncate font-sans text-[12px] font-normal text-[var(--text-primary)]"
                   title={item.text}

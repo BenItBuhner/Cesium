@@ -21,6 +21,7 @@ const tabIconToKind: Record<EditorTabType["icon"], FileTypeIconKind> = {
   default: "default",
   settings: "settings",
   browser: "browser",
+  kanban: "kanban",
 };
 
 interface EditorTabProps {

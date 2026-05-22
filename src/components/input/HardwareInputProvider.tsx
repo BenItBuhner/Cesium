@@ -10,6 +10,7 @@ import {
   type ReactNode,
 } from "react";
 import { useUserPreferences } from "@/components/preferences/UserPreferencesProvider";
+import { isCesiumDesktopApp } from "@/lib/desktop-environment";
 import type {
   HardwareInputSurfaceAdapter,
   HardwareKeyRoutingResult,
@@ -65,12 +66,20 @@ function normalizeRoutingResult(
   };
 }
 
+export function shouldEnableHardwareInputSurfaces(
+  experimentalIpadMode: boolean
+): boolean {
+  return experimentalIpadMode && !isCesiumDesktopApp();
+}
+
 export function HardwareInputProvider({
   children,
 }: {
   children: ReactNode;
 }) {
   const { experimentalIpadMode } = useUserPreferences();
+  const hardwareInputSurfacesEnabled =
+    shouldEnableHardwareInputSurfaces(experimentalIpadMode);
   const surfacesRef = useRef(new Map<string, HardwareInputSurfaceAdapter>());
   const fallbackFocusRef = useRef<HTMLDivElement>(null);
   const activeSurfaceIdRef = useRef<string | null>(null);
@@ -121,15 +130,15 @@ export function HardwareInputProvider({
       setActiveSurfaceId(id);
       next.onActivate?.();
 
-      if (!experimentalIpadMode) return;
+      if (!hardwareInputSurfacesEnabled) return;
       focusElement(focusTarget ?? next.focusTarget ?? fallbackFocusRef.current);
     },
-    [experimentalIpadMode]
+    [hardwareInputSurfacesEnabled]
   );
 
   const routeKeyDown = useCallback(
     (event: KeyboardEvent): HardwareKeyRoutingResult => {
-      if (!experimentalIpadMode) {
+      if (!hardwareInputSurfacesEnabled) {
         return { handled: false, allowWorkbenchShortcuts: true };
       }
 
@@ -153,12 +162,12 @@ export function HardwareInputProvider({
         allowWorkbenchShortcuts
       );
     },
-    [experimentalIpadMode]
+    [hardwareInputSurfacesEnabled]
   );
 
   const handlePaste = useCallback(
     (event: ClipboardEvent) => {
-      if (!experimentalIpadMode) return false;
+      if (!hardwareInputSurfacesEnabled) return false;
 
       const surface = activeSurfaceIdRef.current
         ? surfacesRef.current.get(activeSurfaceIdRef.current)
@@ -171,7 +180,7 @@ export function HardwareInputProvider({
       event.preventDefault();
       return true;
     },
-    [experimentalIpadMode]
+    [hardwareInputSurfacesEnabled]
   );
 
   const writeClipboardText = useCallback(
@@ -179,7 +188,7 @@ export function HardwareInputProvider({
       event: ClipboardEvent,
       reader: ((surface: HardwareInputSurfaceAdapter) => string | null) | null
     ) => {
-      if (!experimentalIpadMode || !reader) return false;
+      if (!hardwareInputSurfacesEnabled || !reader) return false;
 
       const surface = activeSurfaceIdRef.current
         ? surfacesRef.current.get(activeSurfaceIdRef.current)
@@ -193,7 +202,7 @@ export function HardwareInputProvider({
       event.preventDefault();
       return true;
     },
-    [experimentalIpadMode]
+    [hardwareInputSurfacesEnabled]
   );
 
   const handleCopy = useCallback(
@@ -215,7 +224,7 @@ export function HardwareInputProvider({
 
   const value = useMemo(
     () => ({
-      enabled: experimentalIpadMode,
+      enabled: hardwareInputSurfacesEnabled,
       activeSurfaceId,
       registerSurface,
       unregisterSurface,
@@ -228,7 +237,7 @@ export function HardwareInputProvider({
       isSurfaceActive,
     }),
     [
-      experimentalIpadMode,
+      hardwareInputSurfacesEnabled,
       activeSurfaceId,
       registerSurface,
       unregisterSurface,

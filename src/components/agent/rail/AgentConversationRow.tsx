@@ -93,7 +93,7 @@ export function AgentConversationRow({
   }, [editing]);
 
   const rowHighlighted = bulkSelectMode ? bulkSelected : selected;
-  const rowClassName = `flex h-[var(--agent-rail-row-height)] w-full items-center gap-[8px] rounded-[var(--agent-control-radius)] px-[9px] text-left transition-colors select-none ${
+  const rowClassName = `flex h-[var(--agent-rail-row-height)] w-full items-center gap-[8px] rounded-[var(--agent-control-radius)] px-[9px] text-left select-none ${
     rowHighlighted ? "bg-[var(--agent-card-bg)]" : "hover:bg-[var(--agent-card-bg)]"
   } ${bulkSelectMode && bulkSelected ? "ring-1 ring-[var(--border-subtle)]" : ""}`;
 
@@ -122,6 +122,8 @@ export function AgentConversationRow({
       hasPendingPermission={conversation.hasPendingPermission}
     />
   );
+  const isOrchestrationMode =
+    String(conversation.mode).trim().toLowerCase() === "orchestration";
 
   const handleContextMenu = onContextMenu
     ? (event: MouseEvent<HTMLButtonElement>) => {
@@ -189,16 +191,24 @@ export function AgentConversationRow({
           data-perf="agent-rail-row-title"
           onDoubleClick={(event) => {
             event.stopPropagation();
+            if (bulkSelectMode) {
+              return;
+            }
             onBeginRename?.();
           }}
         >
           {conversation.title}
         </span>
+        {isOrchestrationMode ? (
+          <span className="shrink-0 rounded-[var(--radius-tab)] border border-[var(--plan-accent)]/35 bg-[var(--plan-accent-bg)] px-[5px] py-px font-mono text-[9px] font-medium uppercase tracking-[0.04em] text-[var(--plan-accent)]">
+            ORCH
+          </span>
+        ) : null}
       </button>
       {showOverflowMenu && onOverflowMenu ? (
         <button
           type="button"
-          className="mr-[4px] flex size-[24px] shrink-0 items-center justify-center rounded-[var(--agent-control-radius)] text-[var(--text-secondary)] opacity-0 pointer-events-none transition-[opacity,background-color,color] hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)] hover:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 focus-visible:pointer-events-auto focus-visible:bg-[var(--accent-bg)] focus-visible:text-[var(--text-primary)] focus-visible:opacity-100"
+          className="mr-[4px] flex size-[24px] shrink-0 items-center justify-center rounded-[var(--agent-control-radius)] text-[var(--text-secondary)] opacity-0 pointer-events-none hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)] group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 focus-visible:pointer-events-auto focus-visible:bg-[var(--accent-bg)] focus-visible:text-[var(--text-primary)] focus-visible:opacity-100"
           aria-label={`More actions for ${conversation.title}`}
           onClick={(e) => {
             e.preventDefault();

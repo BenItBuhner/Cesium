@@ -34,7 +34,7 @@ import {
   resolveDraftModelForBackend,
   resolveConversationModel,
 } from "@/lib/agent-chat";
-import { DEFAULT_MODE_OPTIONS, resolveCanonicalModeId } from "@/lib/chat-modes";
+import { DEFAULT_MODE_OPTIONS, isOrchestrationModeLocked, resolveCanonicalModeId } from "@/lib/chat-modes";
 import { listSupplementaryAgentConfigOptions } from "@/lib/agent-config-option-utils";
 import { useWorkbenchContextMenu } from "@/components/ide/WorkbenchContextMenuProvider";
 import { useWorkbench } from "@/components/ide/WorkbenchContext";
@@ -524,6 +524,13 @@ mode: next,
 return;
 }
 const conv = conversationsByIdRef.current[draftId];
+const currentMode = resolveCanonicalModeId(
+  String(conv?.config.mode ?? workspaceSession.chat.mode ?? ""),
+  conv ? buildConversationModeOptions(conv, backends) : DEFAULT_MODE_OPTIONS
+) as EditorMode;
+if (isOrchestrationModeLocked(currentMode, true)) {
+  return;
+}
 if (conv && (conv.status === "running" || conv.status === "awaiting_permission")) {
 setPendingConfigForConversation(draftId, { mode: next });
 return;
@@ -534,7 +541,7 @@ await setConversationMode(draftId, next);
 void syncConversationSnapshot(draftId).catch(() => undefined);
 }
 },
-[setConversationMode, setPendingConfigForConversation, syncConversationSnapshot, updateWorkspaceSession]
+[backends, setConversationMode, setPendingConfigForConversation, syncConversationSnapshot, updateWorkspaceSession, workspaceSession.chat.mode]
 );
 
 const setModelForDraft = useCallback(
@@ -953,6 +960,10 @@ workspaceSession.chat.model,
   const sessionConfigOptions = activeComposerState.sessionConfigOptions;
   const busy = activeComposerState.busy;
   const configLocked = false;
+  const modeLocked = isOrchestrationModeLocked(
+    mode,
+    isPersistedConversationTabId(composerDraftId)
+  );
 
   const flashError = useCallback(
   (message: string) => {
@@ -1818,7 +1829,12 @@ workspaceSession.chat.model,
   );
 
   const submitPromptForDraft = useCallback(
-    async (draftId: string, text: string, attachments?: ImageAttachment[]) => {
+    async (
+      draftId: string,
+      text: string,
+      attachments?: ImageAttachment[],
+      options?: { delivery?: "normal" | "steer" }
+    ) => {
       let conversationIdForError = conversationsById[draftId]?.id;
       try {
         const conversation =
@@ -1856,7 +1872,9 @@ workspaceSession.chat.model,
               const ok = await promptConversation(
                 handoffResult.newConversationId,
                 text,
-                attachments
+                attachments,
+                undefined,
+                options?.delivery
               );
               clearEditingQueuedPromptForConversation(conversation.id);
               return ok;
@@ -1910,13 +1928,20 @@ workspaceSession.chat.model,
             conversation.id,
             text,
             attachments,
-            configOverride
+            configOverride,
+            options?.delivery
           );
           clearEditingQueuedPromptForConversation(conversation.id);
           return ok;
         }
 
-        const ok = await promptConversation(conversation.id, text, attachments);
+        const ok = await promptConversation(
+          conversation.id,
+          text,
+          attachments,
+          undefined,
+          options?.delivery
+        );
         clearEditingQueuedPromptForConversation(conversation.id);
         return ok;
       } catch (error) {
@@ -2027,7 +2052,7 @@ workspaceSession.chat.model,
         const result = await prepareRedoAgentConversation(activeConversation.id, {
           beforeMessageId: redoMessageDraft.messageId,
         });
-        let nextConversationId = activeConversation.id;
+        const nextConversationId = activeConversation.id;
         let nextConversation = result.conversation;
 
         if (redoMessageDraft.backendId !== nextConversation.config.backendId) {
@@ -2112,19 +2137,23 @@ workspaceSession.chat.model,
         String(redoMessageDraft.mode),
         redoModeOptions
       ) as EditorMode;
+      const redoModeLocked = isOrchestrationModeLocked(redoMode, true);
 
       return (
         <div ref={redoEditorRef} className="flex min-h-[180px] flex-col">
           <ChatComposer
             key={`redo-${redoMessageDraft.messageId}`}
             mode={redoMode}
-            onModeChange={(next) =>
+            onModeChange={(next) => {
+              if (isOrchestrationModeLocked(redoMode, true)) {
+                return;
+              }
               setRedoMessageDraft((current) =>
                 current && current.messageId === redoMessageDraft.messageId
                   ? { ...current, mode: next }
                   : current
-              )
-            }
+              );
+            }}
             model={redoMessageDraft.model}
             onModelChange={(next) =>
               setRedoMessageDraft((current) =>
@@ -2166,6 +2195,7 @@ workspaceSession.chat.model,
             }
             busy={false}
             configLocked={false}
+            modeLocked={redoModeLocked}
             onSubmit={(text, attachments) => submitRedoMessageDraft(text, attachments)}
             layout="empty-top"
             variant="expanded"
@@ -2348,8 +2378,12 @@ const cancelPromptForDraft = useCallback(
       sessionConfigOptions: state.sessionConfigOptions,
       onSessionConfigOptionChange: (configId: string, value: string) =>
         void setSessionConfigOptionForDraft(expandedComposerDraftId, configId, value),
-      onSubmit: (text: string, attachments?: ImageAttachment[]) => {
-        void submitPromptForDraft(expandedComposerDraftId, text, attachments);
+      onSubmit: (
+        text: string,
+        attachments?: ImageAttachment[],
+        options?: { delivery?: "normal" | "steer" }
+      ) => {
+        void submitPromptForDraft(expandedComposerDraftId, text, attachments, options);
       },
       onCancel: () => cancelPromptForDraft(expandedComposerDraftId),
       onPause: () => pausePromptForDraft(expandedComposerDraftId),
@@ -2357,6 +2391,10 @@ const cancelPromptForDraft = useCallback(
       conversationStatus: state.conversation?.status,
       busy: state.busy,
       configLocked: false,
+      modeLocked: isOrchestrationModeLocked(
+        state.mode,
+        isPersistedConversationTabId(expandedComposerDraftId)
+      ),
       onRequestHandoff:
         state.conversation && isPersistedConversationTabId(expandedComposerDraftId)
           ? handleRequestHandoff
@@ -2436,8 +2474,9 @@ const cancelPromptForDraft = useCallback(
       }}
       busy={busy}
       configLocked={configLocked}
-      onSubmit={(text, attachments) => {
-        void submitPromptForDraft(composerDraftId, text, attachments);
+      modeLocked={modeLocked}
+      onSubmit={(text, attachments, options) => {
+        void submitPromptForDraft(composerDraftId, text, attachments, options);
       }}
       onCancel={() => cancelPromptForDraft(composerDraftId)}
       onPause={() => pausePromptForDraft(composerDraftId)}

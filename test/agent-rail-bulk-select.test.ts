@@ -6,6 +6,7 @@ import {
   buildRailBulkSectionId,
   getRailConversationKey,
   orderedRailConversationKeys,
+  railBulkClickModifierInBulkMode,
 } from "../src/lib/agent-rail-bulk-select.ts";
 
 function summary(
@@ -113,6 +114,21 @@ describe("agent rail bulk select", () => {
         summary("two", "srv:two"),
       ]),
       ["srv:one", "srv:two"]
+    );
+  });
+
+  test("bulk mode maps plain click to toggle", () => {
+    assert.equal(
+      railBulkClickModifierInBulkMode({ shiftKey: false, metaKey: false, ctrlKey: false }),
+      "toggle"
+    );
+    assert.equal(
+      railBulkClickModifierInBulkMode({ shiftKey: true, metaKey: false, ctrlKey: false }),
+      "shift"
+    );
+    assert.equal(
+      railBulkClickModifierInBulkMode({ shiftKey: false, metaKey: true, ctrlKey: false }),
+      "toggle"
     );
   });
 });

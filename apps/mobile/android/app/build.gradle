@@ -1,0 +1,46 @@
+plugins {
+  id("com.android.application")
+  id("org.jetbrains.kotlin.android")
+  id("com.facebook.react")
+}
+
+def jscFlavor = "io.github.react-native-community:jsc-android:2026004.+"
+
+react {
+  entryFile = file("../../index.js")
+  reactNativeDir = file("../../../../node_modules/react-native")
+  codegenDir = file("../../../../node_modules/@react-native/codegen")
+  debuggableVariants = ["debug", "debugOptimized", "release"]
+  autolinkLibrariesWithApp()
+}
+
+android {
+  namespace = "com.cesium.mobile"
+  compileSdk = 36
+
+  defaultConfig {
+    applicationId = "com.cesium.mobile"
+    minSdk = 26
+    targetSdk = 36
+    versionCode = 1
+    versionName = "0.1.0"
+    testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    missingDimensionStrategy "detox", "full"
+  }
+}
+
+dependencies {
+  implementation("com.facebook.react:react-android")
+  implementation("androidx.core:core-ktx:1.17.0")
+  implementation("androidx.work:work-runtime-ktx:2.10.3")
+  androidTestImplementation(project(":detox"))
+  androidTestImplementation("androidx.test:runner:1.6.2")
+  androidTestImplementation("androidx.test.ext:junit:1.2.1")
+  androidTestImplementation("androidx.test:rules:1.6.1")
+
+  if (hermesEnabled.toBoolean()) {
+    implementation("com.facebook.react:hermes-android")
+  } else {
+    implementation jscFlavor
+  }
+}

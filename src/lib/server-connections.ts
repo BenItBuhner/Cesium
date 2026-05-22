@@ -22,6 +22,16 @@ export type ServerConnectionsState = {
   servers: ServerConnection[];
 };
 
+export type ServerConnectionBootstrapOptions = {
+  /**
+   * Runtime bootstraps should usually preserve a user's active server. Use
+   * "always" only for explicit user navigation or a trusted one-shot launch.
+   */
+  activate?: "always" | "if-missing" | "never";
+  defaultServer?: "always" | "if-missing" | "never";
+  configuredDefaultBaseUrl?: string;
+};
+
 type PartialServerConnection = {
   id?: unknown;
   label?: unknown;
@@ -294,6 +304,80 @@ export function createDefaultServerConnectionsState(configuredDefaultBaseUrl: st
   };
 }
 
+export function mergeServerConnectionBootstrap(
+  state: ServerConnectionsState,
+  input: { id: string; label?: string; baseUrl: string; now?: number },
+  options?: ServerConnectionBootstrapOptions
+): ServerConnectionsState {
+  const normalizedBaseUrl = normalizeServerBaseUrl(input.baseUrl);
+  const normalizedKey = getServerConnectionKey(normalizedBaseUrl);
+  const now = input.now ?? Date.now();
+  const trimmedLabel = input.label?.trim();
+  const existingActive =
+    typeof state.activeServerId === "string" &&
+    state.servers.some((server) => server.id === state.activeServerId);
+  const activateMode = options?.activate ?? "if-missing";
+  const shouldActivate =
+    activateMode === "always" || (activateMode === "if-missing" && !existingActive);
+  const existingById = state.servers.find((server) => server.id === input.id) ?? null;
+  const existingByBaseUrl =
+    state.servers.find((server) => getServerConnectionKey(server.baseUrl) === normalizedKey) ??
+    null;
+  const target = existingById ?? existingByBaseUrl;
+  const nextServer: ServerConnection = target
+    ? {
+        ...target,
+        id: existingById?.id ?? input.id ?? target.id,
+        label: target.label || trimmedLabel || deriveServerLabel(normalizedBaseUrl),
+        baseUrl: normalizedBaseUrl,
+        updatedAt: now,
+        lastUsedAt: shouldActivate ? now : target.lastUsedAt,
+      }
+    : createServerConnection({
+        id: input.id,
+        label: trimmedLabel,
+        baseUrl: normalizedBaseUrl,
+        now,
+      });
+
+  const servers = dedupeServers([
+    nextServer,
+    ...state.servers.filter(
+      (server) =>
+        server.id !== target?.id && getServerConnectionKey(server.baseUrl) !== normalizedKey
+    ),
+  ]);
+  const bootstrappedServer =
+    servers.find((server) => server.id === nextServer.id) ??
+    servers.find((server) => getServerConnectionKey(server.baseUrl) === normalizedKey) ??
+    null;
+  const activeServerId = shouldActivate
+    ? (bootstrappedServer?.id ?? state.activeServerId)
+    : existingActive
+      ? state.activeServerId
+      : (bootstrappedServer?.id ?? servers[0]?.id ?? null);
+  const existingDefault =
+    typeof state.defaultServerId === "string" &&
+    servers.some((server) => server.id === state.defaultServerId)
+      ? state.defaultServerId
+      : null;
+  const defaultMode = options?.defaultServer ?? "if-missing";
+  const defaultServerId =
+    defaultMode === "always"
+      ? (bootstrappedServer?.id ?? existingDefault)
+      : existingDefault ??
+        (defaultMode === "if-missing" && servers.length === 1
+          ? (servers[0]?.id ?? null)
+          : null);
+
+  return {
+    version: 1,
+    activeServerId,
+    defaultServerId,
+    servers,
+  };
+}
+
 export function normalizeServerConnectionsState(
   raw: unknown,
   configuredDefaultBaseUrl: string
@@ -381,6 +465,37 @@ export function readStoredServerConnectionsState(
     cachedState = fallback;
     return fallback;
   }
+}
+
+export function bootstrapStoredServerConnection(
+  input: { id: string; label?: string; baseUrl: string },
+  options?: ServerConnectionBootstrapOptions
+): ServerConnectionsState {
+  const configuredDefaultBaseUrl = options?.configuredDefaultBaseUrl ?? input.baseUrl;
+  let current: ServerConnectionsState = {
+    version: 1,
+    activeServerId: null,
+    defaultServerId: null,
+    servers: [],
+  };
+  if (typeof window !== "undefined") {
+    try {
+      const raw = window.localStorage.getItem(SERVER_CONNECTIONS_STORAGE_KEY);
+      if (raw) {
+        current = normalizeServerConnectionsState(JSON.parse(raw), configuredDefaultBaseUrl);
+      }
+    } catch {
+      current = {
+        version: 1,
+        activeServerId: null,
+        defaultServerId: null,
+        servers: [],
+      };
+    }
+  }
+  const next = mergeServerConnectionBootstrap(current, input, options);
+  writeStoredServerConnectionsState(next);
+  return next;
 }
 
 export function writeStoredServerConnectionsState(state: ServerConnectionsState): void {

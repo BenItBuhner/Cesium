@@ -113,12 +113,14 @@ export function SettingsThemeSelect({
               opacity: ready ? 1 : 0,
             }}
             onPointerDown={(e) => e.stopPropagation()}
+            onWheel={(e) => e.stopPropagation()}
           >
-            <div className="min-h-0" style={{ maxHeight: position.maxHeight }}>
+            <div className="min-h-0">
               <VerticalFadedScroll
                 measureKey={`${options.length}:${value}`}
                 edgeColorVar="var(--bg-panel)"
                 scrollClassName="hide-scrollbar-y max-h-full min-h-0 overflow-y-auto overscroll-contain py-[4px]"
+                scrollStyle={{ maxHeight: position.maxHeight }}
               >
                 {options.map((o) => {
                   const active = o.value === value;

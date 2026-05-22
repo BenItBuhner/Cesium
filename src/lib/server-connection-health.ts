@@ -15,6 +15,7 @@ export async function probeServerBaseUrl(baseUrl: string): Promise<ServerProbeRe
     const healthResponse = await fetch(`${normalizedBaseUrl}/health`, {
       method: "GET",
       cache: "no-store",
+      signal: AbortSignal.timeout(8_000),
     });
     if (!healthResponse.ok) {
       return {
@@ -32,6 +33,7 @@ export async function probeServerBaseUrl(baseUrl: string): Promise<ServerProbeRe
         headers: attachSessionToken(undefined, normalizedBaseUrl),
         credentials: "include",
         cache: "no-store",
+        signal: AbortSignal.timeout(8_000),
       });
       if (!authResponse.ok) {
         return {

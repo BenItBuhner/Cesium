@@ -26,6 +26,7 @@ import { useShellView } from "@/components/layout/ShellViewContext";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import type { ModelInfo } from "@/lib/types";
 import type { AgentBackendId, AgentBackendInfo } from "@/lib/agent-types";
+import { shouldAutoFocusTextInput } from "@/lib/mobile-autofocus";
 import { isAutoModel } from "@/lib/model-brand-icons";
 import { AgentBackendIcon } from "./AgentBackendIcon";
 import { ModelBrandIcon } from "./ModelBrandIcon";
@@ -713,7 +714,7 @@ export function ModelDropdown({
   useClickOutside(triggerRef, close, open, [popoverRef, harnessFlyoutRef, modelEditFlyoutRef]);
 
   useEffect(() => {
-    if (open && ready && searchInputRef.current) {
+    if (open && ready && searchInputRef.current && shouldAutoFocusTextInput()) {
       searchInputRef.current.focus();
     }
   }, [open, ready]);

@@ -17,7 +17,7 @@ type CesiumTurnControlPillProps = {
 };
 
 const SQUARE_BUTTON_CLASS =
-  "flex h-8 w-8 shrink-0 items-center justify-center transition-opacity hover:opacity-80 disabled:cursor-default";
+  "flex h-[20px] w-[20px] shrink-0 items-center justify-center transition-opacity hover:opacity-80 disabled:cursor-default";
 
 export function CesiumTurnControlPill({
   conversationStatus,
@@ -87,8 +87,8 @@ export function CesiumTurnControlPill({
 
   return (
     <div
-      className={`flex h-8 shrink-0 items-center gap-0.5 overflow-hidden rounded-full transition-[width] duration-300 ease-out ${toneClass} ${
-        expanded ? "w-[66px]" : "w-8"
+      className={`flex h-[20px] shrink-0 items-center gap-0 overflow-hidden rounded-full transition-[width] duration-300 ease-out ${toneClass} ${
+        expanded ? "w-[40px]" : "w-[20px]"
       }`}
       aria-label="Cesium agent controls"
     >
@@ -110,20 +110,20 @@ export function CesiumTurnControlPill({
       >
         {showPauseLoader ? (
           <LoaderCircle
-            className="size-[14px] shrink-0 animate-spin text-[var(--bg-main)]"
+            className="size-[10px] shrink-0 animate-spin text-[var(--bg-main)]"
             strokeWidth={2.5}
             aria-hidden
           />
         ) : paused ? (
           <Play
-            className="size-[12px] shrink-0 text-[var(--bg-main)]"
+            className="size-[9px] shrink-0 text-[var(--bg-main)]"
             fill="currentColor"
             strokeWidth={2.2}
             aria-hidden
           />
         ) : (
           <Pause
-            className="size-[12px] shrink-0 text-[var(--bg-main)]"
+            className="size-[9px] shrink-0 text-[var(--bg-main)]"
             fill="currentColor"
             strokeWidth={2.2}
             aria-hidden
@@ -140,13 +140,13 @@ export function CesiumTurnControlPill({
       >
         {stopPending ? (
           <LoaderCircle
-            className="size-[14px] shrink-0 animate-spin text-[var(--bg-main)]"
+            className="size-[10px] shrink-0 animate-spin text-[var(--bg-main)]"
             strokeWidth={2.5}
             aria-hidden
           />
         ) : (
           <Square
-            className="size-[11px] text-[var(--bg-main)]"
+            className="size-[9px] text-[var(--bg-main)]"
             fill="currentColor"
             strokeWidth={2.2}
             aria-hidden

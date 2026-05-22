@@ -1,0 +1,221 @@
+"use client";
+
+export const MOBILE_BRIDGE_MESSAGE_EVENT = "cesium:mobile-bridge-message";
+export const MOBILE_IDLE_CLASS = "opencursor-mobile-idle";
+
+const MOBILE_THEME_CONFIG_STORAGE_KEY = "opencursor-theme-config";
+const MOBILE_LEGACY_THEME_STORAGE_KEY = "opencursor-theme";
+
+export type MobileLifecycleState = "active" | "background" | "inactive";
+
+export type MobileServerConfig = {
+  baseUrl: string;
+  label?: string;
+  authToken?: string | null;
+  safeAreaTop?: number;
+  systemColorScheme?: "light" | "dark" | null;
+};
+
+export type MobileFocusedConversation = {
+  workspaceId: string | null;
+  conversationId: string | null;
+  lastEventSeq?: number;
+};
+
+export type MobileAgentProjectionMessage = {
+  type: "agentProjection";
+  projection: unknown;
+};
+
+export type MobileNativeToWebMessage =
+  | { type: "nativeReady"; server: MobileServerConfig }
+  | { type: "lifecycle"; state: MobileLifecycleState }
+  | { type: "notificationAction"; actionId: string; workspaceId?: string | null; conversationId?: string | null }
+  | { type: "resumeCatchUp"; workspaceId?: string | null; conversationId?: string | null; lastEventSeq?: number };
+
+export type MobileWebToNativeMessage =
+  | { type: "webReady"; workspaceId: string | null; focusedConversationId: string | null; authToken?: string | null }
+  | ({ type: "focusedConversationChanged" } & MobileFocusedConversation)
+  | MobileAgentProjectionMessage
+  | { type: "webIdleMode"; enabled: boolean }
+  | { type: "serverConfigured"; server: MobileServerConfig };
+
+export function encodeMobileBridgeMessage(message: MobileNativeToWebMessage | MobileWebToNativeMessage): string {
+  return JSON.stringify(message);
+}
+
+export function parseMobileBridgeMessage<TMessage>(raw: unknown): TMessage | null {
+  if (typeof raw !== "string" || raw.trim().length === 0) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(raw) as Partial<{ type: unknown }>;
+    return typeof parsed?.type === "string" ? (parsed as TMessage) : null;
+  } catch {
+    return null;
+  }
+}
+
+export function postMobileBridgeMessage(message: MobileWebToNativeMessage): boolean {
+  const bridge = typeof window !== "undefined" ? window.ReactNativeWebView : undefined;
+  if (!bridge?.postMessage) {
+    return false;
+  }
+  bridge.postMessage(encodeMobileBridgeMessage(message));
+  return true;
+}
+
+export function dispatchMobileBridgeMessage(message: MobileNativeToWebMessage): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+  window.dispatchEvent(
+    new CustomEvent<MobileNativeToWebMessage>(MOBILE_BRIDGE_MESSAGE_EVENT, {
+      detail: message,
+    })
+  );
+}
+
+export function buildMobileBootstrapScript(server: MobileServerConfig): string {
+  const safeAreaTop =
+    Number.isFinite(server.safeAreaTop) && (server.safeAreaTop ?? 0) > 0
+      ? Math.ceil(server.safeAreaTop ?? 0)
+      : 0;
+  const normalizedServer = {
+    baseUrl: server.baseUrl.replace(/\/+$/, ""),
+    label: server.label ?? "Mobile server",
+    authToken: server.authToken ?? null,
+    safeAreaTop,
+    systemColorScheme:
+      server.systemColorScheme === "dark" || server.systemColorScheme === "light"
+        ? server.systemColorScheme
+        : null,
+  };
+  const payload = JSON.stringify(normalizedServer);
+  const message = JSON.stringify({ type: "nativeReady", server: normalizedServer });
+  const themeConfigStorageKey = JSON.stringify(MOBILE_THEME_CONFIG_STORAGE_KEY);
+  const legacyThemeStorageKey = JSON.stringify(MOBILE_LEGACY_THEME_STORAGE_KEY);
+  return `
+(() => {
+  const server = ${payload};
+  window.__CESIUM_MOBILE_SERVER__ = server;
+  const readThemePreference = () => {
+    try {
+      const rawConfig = window.localStorage.getItem(${themeConfigStorageKey});
+      if (rawConfig) {
+        const config = JSON.parse(rawConfig);
+        const appearance = config && config.appearance;
+        if (appearance === "light" || appearance === "dark" || appearance === "system") {
+          return appearance;
+        }
+      }
+    } catch {}
+    try {
+      const legacy = window.localStorage.getItem(${legacyThemeStorageKey});
+      if (legacy === "light" || legacy === "dark" || legacy === "system") {
+        return legacy;
+      }
+    } catch {}
+    return "system";
+  };
+  const systemPrefersDark = () => {
+    const currentServer = window.__CESIUM_MOBILE_SERVER__ || server;
+    if (currentServer.systemColorScheme === "dark") return true;
+    if (currentServer.systemColorScheme === "light") return false;
+    return !!(window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches);
+  };
+  const applyStartupTheme = () => {
+    const preference = readThemePreference();
+    const dark = preference === "dark" || (preference === "system" && systemPrefersDark());
+    document.documentElement.classList.toggle("dark", dark);
+    document.documentElement.style.colorScheme = dark ? "dark" : "light";
+  };
+  const ensureMobileSafeAreaStyle = () => {
+    const styleId = "opencursor-mobile-safe-area-style";
+    let style = document.getElementById(styleId);
+    if (!style) {
+      style = document.createElement("style");
+      style.id = styleId;
+      (document.head || document.documentElement).appendChild(style);
+    }
+    style.textContent = [
+      ".opencursor-mobile-native{--opencursor-mobile-safe-area-top:0px;}",
+      ".opencursor-mobile-native .mobile-safe-top-pad{padding-top:var(--opencursor-mobile-safe-area-top)!important;}",
+      ".opencursor-mobile-native .mobile-safe-top-content{padding-top:var(--opencursor-mobile-safe-area-top)!important;}",
+      ".opencursor-mobile-native .mobile-safe-top-offset{top:var(--opencursor-mobile-safe-area-top)!important;}",
+      ".opencursor-mobile-native .mobile-safe-top-scroll{scroll-padding-top:var(--opencursor-mobile-safe-area-top)!important;}"
+    ].join("\\n");
+  };
+  const applyMobileSafeArea = () => {
+    ensureMobileSafeAreaStyle();
+    const root = document.documentElement;
+    root.classList.add("opencursor-mobile-native");
+    root.style.setProperty("--opencursor-mobile-safe-area-top", server.safeAreaTop + "px");
+  };
+  applyStartupTheme();
+  applyMobileSafeArea();
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", () => {
+      applyStartupTheme();
+      applyMobileSafeArea();
+    }, { once: true });
+  }
+  const themeMedia = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)");
+  if (!server.systemColorScheme && themeMedia && themeMedia.addEventListener && !window.__CESIUM_MOBILE_THEME_LISTENER__) {
+    window.__CESIUM_MOBILE_THEME_LISTENER__ = true;
+    themeMedia.addEventListener("change", () => {
+      if (readThemePreference() === "system") applyStartupTheme();
+    });
+  }
+  requestAnimationFrame(applyStartupTheme);
+  requestAnimationFrame(applyMobileSafeArea);
+  setTimeout(applyStartupTheme, 0);
+  setTimeout(applyMobileSafeArea, 0);
+  setTimeout(applyStartupTheme, 250);
+  setTimeout(applyMobileSafeArea, 250);
+  window.__CESIUM_MOBILE_SERVER__ = server;
+  window.cesiumMobile = {
+    isReactNative: true,
+    server,
+    getBackendInfo: () => Promise.resolve(server)
+  };
+  window.__CESIUM_MOBILE_NATIVE_READY__ = ${message};
+  if (!window.__CESIUM_MOBILE_BRIDGE_LISTENERS__) {
+    window.__CESIUM_MOBILE_BRIDGE_LISTENERS__ = true;
+    window.addEventListener("message", (event) => {
+      try {
+        const data = typeof event.data === "string" ? JSON.parse(event.data) : event.data;
+        if (data && typeof data.type === "string") {
+          window.dispatchEvent(new CustomEvent("${MOBILE_BRIDGE_MESSAGE_EVENT}", { detail: data }));
+        }
+      } catch {}
+    });
+    document.addEventListener("message", (event) => {
+      try {
+        const data = typeof event.data === "string" ? JSON.parse(event.data) : event.data;
+        if (data && typeof data.type === "string") {
+          window.dispatchEvent(new CustomEvent("${MOBILE_BRIDGE_MESSAGE_EVENT}", { detail: data }));
+        }
+      } catch {}
+    });
+  }
+  true;
+})();`;
+}
+
+declare global {
+  interface Window {
+    ReactNativeWebView?: {
+      postMessage(message: string): void;
+    };
+    __CESIUM_MOBILE_NATIVE_READY__?: string;
+    __CESIUM_MOBILE_SERVER__?: MobileServerConfig;
+    __CESIUM_MOBILE_BRIDGE_LISTENERS__?: boolean;
+    __CESIUM_MOBILE_THEME_LISTENER__?: boolean;
+    cesiumMobile?: {
+      isReactNative?: boolean;
+      server?: MobileServerConfig;
+      getBackendInfo?: () => Promise<MobileServerConfig>;
+    };
+  }
+}

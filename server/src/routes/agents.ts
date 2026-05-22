@@ -195,6 +195,7 @@ agentRoutes.post("/api/agents/conversations/:conversationId/prompt", async (c) =
     configOverride?: AgentQueuedChatPrompt["configOverride"];
     clientEventId?: string;
     clientMessageId?: string;
+    delivery?: AgentQueuedChatPrompt["delivery"];
   }>();
   if (!body.text?.trim() && (!body.attachments || body.attachments.length === 0)) {
     return c.json({ error: "Expected prompt text or attachments." }, 400);
@@ -208,6 +209,7 @@ agentRoutes.post("/api/agents/conversations/:conversationId/prompt", async (c) =
       ...(body.configOverride ? { configOverride: body.configOverride } : {}),
       ...(body.clientEventId ? { clientEventId: body.clientEventId } : {}),
       ...(body.clientMessageId ? { clientMessageId: body.clientMessageId } : {}),
+      ...(body.delivery ? { delivery: body.delivery } : {}),
     }
   );
   return c.json({ snapshot });

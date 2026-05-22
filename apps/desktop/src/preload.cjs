@@ -17,19 +17,29 @@ function injectDesktopChrome() {
       pointer-events: auto;
     }
 
-    html[data-cesium-desktop="true"] #cesium-electron-drag-main {
+    html[data-cesium-desktop="true"] [data-electron-drag-host] {
       -webkit-app-region: drag;
-      position: fixed;
-      top: 0;
-      left: 0;
-      width: 0;
-      height: 0;
-      z-index: 2147483500;
-      pointer-events: none;
+      cursor: default;
     }
 
-    html[data-cesium-desktop="true"] #cesium-electron-drag-main[data-active="true"] {
-      pointer-events: auto;
+    html[data-cesium-desktop="true"] [data-electron-drag-host] button,
+    html[data-cesium-desktop="true"] [data-electron-drag-host] a,
+    html[data-cesium-desktop="true"] [data-electron-drag-host] input,
+    html[data-cesium-desktop="true"] [data-electron-drag-host] textarea,
+    html[data-cesium-desktop="true"] [data-electron-drag-host] select,
+    html[data-cesium-desktop="true"] [data-electron-drag-host] summary,
+    html[data-cesium-desktop="true"] [data-electron-drag-host] [contenteditable],
+    html[data-cesium-desktop="true"] [data-electron-drag-host] [role="button"],
+    html[data-cesium-desktop="true"] [data-electron-drag-host] [role="tab"],
+    html[data-cesium-desktop="true"] [data-electron-drag-host] [role="menuitem"],
+    html[data-cesium-desktop="true"] [data-electron-drag-host] [role="switch"],
+    html[data-cesium-desktop="true"] [data-electron-drag-host] [role="searchbox"],
+    html[data-cesium-desktop="true"] [data-electron-drag-host] [role="combobox"],
+    html[data-cesium-desktop="true"] [data-electron-drag-host] [data-workbench-pane-toggle],
+    html[data-cesium-desktop="true"] [data-electron-drag-host] [data-editor-tab-actions],
+    html[data-cesium-desktop="true"] [data-electron-drag-host] [data-electron-no-drag],
+    html[data-cesium-desktop="true"] [data-electron-no-drag] {
+      -webkit-app-region: no-drag;
     }
 
     html[data-cesium-desktop="true"] #cesium-electron-window-controls {
@@ -131,10 +141,6 @@ function injectDesktopChrome() {
   dragTop.id = "cesium-electron-drag-top";
   dragTop.setAttribute("aria-hidden", "true");
 
-  const dragMain = document.createElement("div");
-  dragMain.id = "cesium-electron-drag-main";
-  dragMain.setAttribute("aria-hidden", "true");
-
   const controls = document.createElement("div");
   controls.id = "cesium-electron-window-controls";
   controls.setAttribute("aria-label", "Window controls");
@@ -168,121 +174,7 @@ function injectDesktopChrome() {
   }
 
   document.head.appendChild(style);
-  document.body.append(dragTop, dragMain, controls);
-  installDynamicDragZones(dragMain);
-}
-
-function installDynamicDragZones(dragMain) {
-  const interactiveSelector = [
-    "button",
-    "a",
-    "input",
-    "textarea",
-    "select",
-    "summary",
-    "[contenteditable]",
-    "[role='button']",
-    "[role='tab']",
-    "[role='menuitem']",
-    "[role^='menuitem']",
-    "[role='switch']",
-    "[role='searchbox']",
-    "[role='combobox']",
-    "[data-editor-tab-actions]",
-    "[data-strip-index]",
-    "[data-tab-group-id]",
-    "[data-workbench-pane-toggle]",
-    "#cesium-electron-window-controls",
-  ].join(",");
-
-  const dragOverlayIds = new Set(["cesium-electron-drag-main", "cesium-electron-drag-top"]);
-
-  let raf = 0;
-  let lastTarget = null;
-
-  function isInteractive(target) {
-    return target instanceof Element && Boolean(target.closest(interactiveSelector));
-  }
-
-  /** Top-down hit list with injected drag overlays stripped (see updateForPointer). */
-  function elementsUnderPointer(x, y) {
-    const out = [];
-    for (const node of document.elementsFromPoint(x, y)) {
-      if (!(node instanceof Element)) continue;
-      if (dragOverlayIds.has(node.id)) continue;
-      out.push(node);
-    }
-    return out;
-  }
-
-  function setRect(rect) {
-    dragMain.style.left = `${Math.max(0, Math.round(rect.left))}px`;
-    dragMain.style.top = `${Math.max(0, Math.round(rect.top))}px`;
-    dragMain.style.width = `${Math.max(0, Math.round(rect.width))}px`;
-    dragMain.style.height = `${Math.max(0, Math.round(rect.height))}px`;
-    dragMain.dataset.active = rect.width > 0 && rect.height > 0 ? "true" : "false";
-  }
-
-  function clearRect() {
-    dragMain.dataset.active = "false";
-    dragMain.style.width = "0px";
-    dragMain.style.height = "0px";
-  }
-
-  function updateForPointer(event) {
-    if (raf) cancelAnimationFrame(raf);
-    raf = requestAnimationFrame(() => {
-      raf = 0;
-      const under = elementsUnderPointer(event.clientX, event.clientY);
-      for (const el of under) {
-        if (isInteractive(el)) {
-          lastTarget = el;
-          clearRect();
-          return;
-        }
-      }
-
-      const target = under[0] ?? null;
-      lastTarget = target;
-
-      if (!target) {
-        clearRect();
-        return;
-      }
-
-      const header = target.closest?.(
-        ".agent-side-pane, [data-ide-browser-surface], [data-cesium-workbench-root], [data-electron-drag-host]"
-      );
-      const host = header instanceof Element ? header : document.body;
-      const rect = host.getBoundingClientRect();
-      const windowControlsLeft = window.innerWidth - 110;
-      const left = Math.max(rect.left, 0);
-      const right = Math.min(rect.right, windowControlsLeft);
-      const top = Math.max(rect.top, 0);
-      const height = Math.min(32, Math.max(0, rect.bottom - top));
-
-      if (event.clientY > top + height || right <= left) {
-        clearRect();
-        return;
-      }
-
-      setRect({ left, top, width: right - left, height });
-    });
-  }
-
-  window.addEventListener("pointermove", updateForPointer, true);
-  window.addEventListener("pointerdown", (event) => {
-    for (const el of elementsUnderPointer(event.clientX, event.clientY)) {
-      if (isInteractive(el)) {
-        lastTarget = el;
-        clearRect();
-        return;
-      }
-    }
-    updateForPointer(event);
-  }, true);
-  window.addEventListener("pointerleave", clearRect, true);
-  window.addEventListener("blur", clearRect);
+  document.body.append(dragTop, controls);
 }
 
 window.addEventListener("DOMContentLoaded", injectDesktopChrome, { once: true });
@@ -296,4 +188,30 @@ contextBridge.exposeInMainWorld("cesiumDesktop", {
   toggleMaximizeWindow: () => ipcRenderer.invoke("cesium:window-toggle-maximize"),
   closeWindow: () => ipcRenderer.invoke("cesium:window-close"),
   isMaximized: () => ipcRenderer.invoke("cesium:window-is-maximized"),
+  browser: {
+    isAvailable: () => ipcRenderer.invoke("cesium:browser-available"),
+    createSession: (input) => ipcRenderer.invoke("cesium:browser-create", input),
+    destroySession: (sessionId) => ipcRenderer.invoke("cesium:browser-destroy", sessionId),
+    setBounds: (sessionId, bounds) =>
+      ipcRenderer.invoke("cesium:browser-set-bounds", sessionId, bounds),
+    setDevtoolsBounds: (sessionId, bounds) =>
+      ipcRenderer.invoke("cesium:browser-set-devtools-bounds", sessionId, bounds),
+    setDevtoolsOpen: (sessionId, open) =>
+      ipcRenderer.invoke("cesium:browser-devtools", sessionId, open),
+    command: (sessionId, command) =>
+      ipcRenderer.invoke("cesium:browser-command", sessionId, command),
+    cdpCommand: (sessionId, method, params) =>
+      ipcRenderer.invoke("cesium:browser-cdp-command", sessionId, method, params),
+    capturePage: (sessionId) => ipcRenderer.invoke("cesium:browser-capture-page", sessionId),
+    dispatchInput: (sessionId, input) =>
+      ipcRenderer.invoke("cesium:browser-dispatch-input", sessionId, input),
+    setEmulation: (sessionId, metrics) =>
+      ipcRenderer.invoke("cesium:browser-set-emulation", sessionId, metrics),
+    onEvent: (listener) => {
+      if (typeof listener !== "function") return () => undefined;
+      const wrapped = (_event, payload) => listener(payload);
+      ipcRenderer.on("cesium:browser-event", wrapped);
+      return () => ipcRenderer.removeListener("cesium:browser-event", wrapped);
+    },
+  },
 });

@@ -12,7 +12,7 @@ import {
   type RefObject,
 } from "react";
 import { StickyChatHeader } from "./StickyChatHeader";
-import { CHAT_STICKY_RAIL_INSET_PX } from "./chat-sticky-rail";
+import { CHAT_STICKY_RAIL_INSET_PX, getChatStickyRailInsetPx } from "./chat-sticky-rail";
 import { useChatStickyPush } from "@/hooks/useChatStickyPush";
 import { UserMessage } from "./UserMessage";
 import { AssistantMessage } from "./AssistantMessage";
@@ -64,7 +64,7 @@ export function findVirtualStickyUserTurn(
   segments: MessageThreadSegment[],
   virtualItems: readonly ChatVirtualItem[],
   scrollTop: number,
-  railInsetPx = CHAT_STICKY_RAIL_INSET_PX
+  railInsetPx = getChatStickyRailInsetPx()
 ): number | null {
   const anchor = scrollTop + railInsetPx;
   let activeIndex: number | null = null;
@@ -183,7 +183,7 @@ function VirtualStickyUserHeader({
       data-chat-message-id={userMsg.id}
       data-electron-no-drag
       className="sticky z-30 h-0"
-      style={{ top: CHAT_STICKY_RAIL_INSET_PX }}
+      style={{ top: `calc(var(--opencursor-mobile-safe-area-top, 0px) + ${CHAT_STICKY_RAIL_INSET_PX}px)` }}
     >
       <div className="pb-[10px]" data-electron-no-drag>
         {turn.userKind === "user_todo" ? (

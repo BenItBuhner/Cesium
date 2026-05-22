@@ -469,27 +469,27 @@ export function MessageList({
           }
         }}
       >
-        <div className={`relative ${innerClass}`}>
-          {fade.top ? (
-            <div
-              className="pointer-events-none sticky top-0 z-[5] -mb-[28px] h-[28px] w-full shrink-0"
-              style={{ backgroundImage: scrollFadeGradTop }}
-              aria-hidden
-            />
-          ) : null}
+        {fade.top ? (
+          <div
+            className="pointer-events-none absolute inset-x-0 top-0 z-[1] h-[28px]"
+            style={{ backgroundImage: scrollFadeGradTop }}
+            aria-hidden
+          />
+        ) : null}
+        {fade.bottom ? (
+          <div
+            className="pointer-events-none absolute inset-x-0 bottom-0 z-[1] h-[28px]"
+            style={{ backgroundImage: scrollFadeGradBottom }}
+            aria-hidden
+          />
+        ) : null}
+        <div className={`relative z-[2] ${innerClass}`}>
           {loadingOlderHistory ? (
             <div className="mb-[10px] rounded-[var(--radius-tab)] bg-[var(--bg-card)] px-[10px] py-[6px] font-sans text-[12px] text-[var(--text-secondary)]">
               Loading older messages…
             </div>
           ) : null}
           {thread}
-          {fade.bottom ? (
-            <div
-              className="pointer-events-none sticky bottom-0 z-[5] mt-[-28px] h-[28px] w-full shrink-0"
-              style={{ backgroundImage: scrollFadeGradBottom }}
-              aria-hidden
-            />
-          ) : null}
         </div>
       </div>
     </div>

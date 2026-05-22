@@ -9,10 +9,13 @@ import {
   SESSION_TOKEN_HEADER,
 } from "../lib/auth.js";
 import {
+  captureDebugSessionViewport,
   captureRenderedElementScreenshot,
   createDebugSession,
   destroyDebugSession,
+  dispatchDebugSessionInput,
   getDebugSession,
+  readDebugSessionEvents,
 } from "../browser-debug/chromium-session.js";
 
 export const browserDebugRoutes = new Hono();
@@ -269,6 +272,79 @@ browserDebugRoutes.post(
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "Failed to navigate session.";
+      return c.json({ error: message }, 400);
+    }
+  }
+);
+
+browserDebugRoutes.get(
+  "/api/browser-debug/sessions/:sessionId/viewport",
+  async (c) => {
+    try {
+      const workspace = await requireWorkspaceFromRequest(c);
+      const sessionId = c.req.param("sessionId")?.trim();
+      const rec = sessionId ? getDebugSession(sessionId) : undefined;
+      if (!sessionId || !rec || rec.workspaceId !== workspace.id) {
+        return c.json({ error: "Unknown session." }, 404);
+      }
+      const width = Number.parseInt(c.req.query("width") ?? "", 10);
+      const height = Number.parseInt(c.req.query("height") ?? "", 10);
+      const imageDataUrl = await captureDebugSessionViewport(sessionId, {
+        width: Number.isFinite(width) ? width : undefined,
+        height: Number.isFinite(height) ? height : undefined,
+      });
+      return c.json({
+        imageDataUrl,
+        currentUrl: rec.page.url() || null,
+      });
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Failed to capture browser viewport.";
+      return c.json({ error: message }, 400);
+    }
+  }
+);
+
+browserDebugRoutes.post(
+  "/api/browser-debug/sessions/:sessionId/input",
+  async (c) => {
+    try {
+      const workspace = await requireWorkspaceFromRequest(c);
+      const sessionId = c.req.param("sessionId")?.trim();
+      const rec = sessionId ? getDebugSession(sessionId) : undefined;
+      if (!sessionId || !rec || rec.workspaceId !== workspace.id) {
+        return c.json({ error: "Unknown session." }, 404);
+      }
+      const body = await c.req.json<Parameters<typeof dispatchDebugSessionInput>[1]>();
+      const ok = await dispatchDebugSessionInput(sessionId, body);
+      return c.json({ ok });
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Failed to dispatch browser input.";
+      return c.json({ error: message }, 400);
+    }
+  }
+);
+
+browserDebugRoutes.get(
+  "/api/browser-debug/sessions/:sessionId/events",
+  async (c) => {
+    try {
+      const workspace = await requireWorkspaceFromRequest(c);
+      const sessionId = c.req.param("sessionId")?.trim();
+      const rec = sessionId ? getDebugSession(sessionId) : undefined;
+      if (!sessionId || !rec || rec.workspaceId !== workspace.id) {
+        return c.json({ error: "Unknown session." }, 404);
+      }
+      const after = Number.parseInt(c.req.query("after") ?? "0", 10);
+      const payload = readDebugSessionEvents(
+        sessionId,
+        Number.isFinite(after) ? after : 0
+      );
+      return c.json(payload ?? { events: [], cursor: 0 });
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Failed to read browser events.";
       return c.json({ error: message }, 400);
     }
   }

@@ -54,6 +54,12 @@ describe("completion failure projection", () => {
       messages.filter((entry) => entry.type === "assistant").length,
       0
     );
+    assert.equal(
+      messages.filter(
+        (entry) => entry.type === "worked-session" && entry.workedLabel === "Working"
+      ).length,
+      0
+    );
   });
 
   test("drops legacy Cesium failure assistant chunks", () => {

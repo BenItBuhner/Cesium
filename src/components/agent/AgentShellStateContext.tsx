@@ -73,6 +73,11 @@ import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvid
 import type { WorkspaceSortMode } from "@/lib/global-settings";
 import type { ServerConnection } from "@/lib/server-connections";
 import {
+  RAIL_INITIAL_LOAD_FAILSAFE_MS,
+  resolveRailFetchServers,
+  withRailFetchTimeout,
+} from "@/lib/rail-fetch";
+import {
   AGENT_NEW_CHAT_SESSION_ID,
   createEmptyAgentSidePaneSession,
   getAgentSidePaneSessionScopeId,
@@ -195,6 +200,7 @@ type AgentShellStateContextValue = {
   selectedConversationSummary: AgentRailConversationSummary | null;
   railLoading: boolean;
   railRefreshing: boolean;
+  railLoadError: string | null;
   refreshConversationGroups: () => Promise<void>;
   /** Instant rail label while PATCH round-trips; callers should refresh on failure. */
   applyOptimisticRailTitle: (conversationId: string, title: string) => void;
@@ -448,7 +454,8 @@ export function AgentShellStateProvider({
     updateWorkspaceSession,
   } = useWorkspace();
   const { settings } = useGlobalSettings();
-  const { activeServer, onlineServers, serverStatusById, setActiveServer } = useServerConnections();
+  const { activeServer, onlineServers, serverStatusById, setActiveServer, ready: connectionsReady } =
+    useServerConnections();
   const { workspaces: directoryWorkspaces } = useWorkspaceDirectory();
   const { isMobile } = useViewport();
   const urlConversationId =
@@ -478,6 +485,7 @@ export function AgentShellStateProvider({
   const [backends, setBackends] = useState<AgentBackendInfo[]>([]);
   const [railLoading, setRailLoading] = useState(true);
   const [railRefreshing, setRailRefreshing] = useState(false);
+  const [railLoadError, setRailLoadError] = useState<string | null>(null);
   const [pendingConversationSelection, setPendingConversationSelection] = useState<{
     workspaceId: string;
     conversationId: string;
@@ -493,6 +501,8 @@ export function AgentShellStateProvider({
   const sharedLeftRailCollapsedRef = useRef(sharedLeftRailCollapsed);
   const sharedAgentShellDesktopLayoutRef = useRef(sharedAgentShellDesktopLayout);
   const railInitialLoadCompletedRef = useRef(false);
+  const serverStatusByIdRef = useRef(serverStatusById);
+  serverStatusByIdRef.current = serverStatusById;
 
   useEffect(() => {
     sharedLeftRailCollapsedRef.current = sharedLeftRailCollapsed;
@@ -502,15 +512,50 @@ export function AgentShellStateProvider({
     sharedAgentShellDesktopLayoutRef.current = sharedAgentShellDesktopLayout;
   }, [sharedAgentShellDesktopLayout]);
 
+  const applyRailGroupsResult = useCallback(
+    (
+      servers: ServerConnection[],
+      successful: Array<{
+        server: ServerConnection;
+        backends: AgentBackendInfo[];
+        groups: AgentConversationGroup[];
+      }>
+    ) => {
+      if (successful.length === 0) {
+        return false;
+      }
+      setBackends(mergeAgentBackends(successful.map((result) => result.backends)));
+      setGroups(
+        mergeAuthRequiredServerPlaceholders(
+          mergeDirectoryPlaceholders(
+            successful.flatMap((result) => result.groups),
+            directoryWorkspaces
+          ),
+          servers,
+          serverStatusByIdRef.current
+        )
+      );
+      return true;
+    },
+    [directoryWorkspaces]
+  );
+
   const refreshConversationGroups = useCallback(async () => {
-    const servers = onlineServers.length > 0 ? onlineServers : [activeServer];
+    const servers = resolveRailFetchServers({
+      activeServer,
+      onlineServers,
+      serverStatusById: serverStatusByIdRef.current,
+    });
     const results = await Promise.all(
       servers.map(async (server) => {
         try {
-          const result = await listCrossWorkspaceAgentConversationsForServer({
-            serverId: server.id,
-            baseUrl: server.baseUrl,
-          });
+          const result = await withRailFetchTimeout(
+            listCrossWorkspaceAgentConversationsForServer({
+              serverId: server.id,
+              baseUrl: server.baseUrl,
+            }),
+            `Rail fetch for ${server.label}`
+          );
           return {
             server,
             backends: result.backends,
@@ -520,9 +565,6 @@ export function AgentShellStateProvider({
             ),
           };
         } catch (error) {
-          // Don't silently lose a whole server's rail; log so the user can see
-          // the actual failure in DevTools and we still render its workspaces
-          // via the directory placeholders below.
           if (typeof console !== "undefined") {
             console.warn(
               `[rail] Failed to fetch conversations for ${server.label} (${server.baseUrl}):`,
@@ -536,8 +578,15 @@ export function AgentShellStateProvider({
     const successful = results.filter((result): result is NonNullable<typeof result> =>
       Boolean(result)
     );
-    if (successful.length === 0) {
-      const result = await listCrossWorkspaceAgentConversations();
+    if (applyRailGroupsResult(servers, successful)) {
+      return;
+    }
+
+    try {
+      const result = await withRailFetchTimeout(
+        listCrossWorkspaceAgentConversations(),
+        "Rail fetch for active server"
+      );
       setBackends(result.backends);
       setGroups(
         mergeAuthRequiredServerPlaceholders(
@@ -546,35 +595,57 @@ export function AgentShellStateProvider({
             directoryWorkspaces
           ),
           servers,
-          serverStatusById
+          serverStatusByIdRef.current
         )
       );
-      return;
+    } catch (error) {
+      if (typeof console !== "undefined") {
+        console.warn("[rail] Failed to fetch conversations from active server:", error);
+      }
+      throw error;
     }
-    setBackends(mergeAgentBackends(successful.map((result) => result.backends)));
-    setGroups(
-      mergeAuthRequiredServerPlaceholders(
-        mergeDirectoryPlaceholders(
-          successful.flatMap((result) => result.groups),
-          directoryWorkspaces
-        ),
-        servers,
-        serverStatusById
-      )
-    );
-  }, [activeServer, directoryWorkspaces, onlineServers, serverStatusById]);
+  }, [activeServer, applyRailGroupsResult, directoryWorkspaces, onlineServers]);
 
   useEffect(() => {
+    if (!connectionsReady) {
+      return;
+    }
     let active = true;
     const initialLoad = !railInitialLoadCompletedRef.current;
     if (initialLoad) {
       setRailLoading(true);
+      setRailLoadError(null);
     } else {
       setRailRefreshing(true);
     }
+
+    const failSafeTimer = initialLoad
+      ? window.setTimeout(() => {
+          if (!active || railInitialLoadCompletedRef.current) {
+            return;
+          }
+          railInitialLoadCompletedRef.current = true;
+          setRailLoading(false);
+          setRailRefreshing(false);
+          setRailLoadError("Timed out loading conversations. Check your server connection and retry.");
+        }, RAIL_INITIAL_LOAD_FAILSAFE_MS)
+      : null;
+
     void refreshConversationGroups()
-      .catch(() => undefined)
+      .then(() => {
+        if (active) {
+          setRailLoadError(null);
+        }
+      })
+      .catch(() => {
+        if (active) {
+          setRailLoadError("Could not load conversations. Check your server connection and retry.");
+        }
+      })
       .finally(() => {
+        if (failSafeTimer != null) {
+          window.clearTimeout(failSafeTimer);
+        }
         if (active) {
           railInitialLoadCompletedRef.current = true;
           setRailLoading(false);
@@ -583,13 +654,20 @@ export function AgentShellStateProvider({
       });
     return () => {
       active = false;
+      if (failSafeTimer != null) {
+        window.clearTimeout(failSafeTimer);
+      }
     };
-  }, [refreshConversationGroups]);
+  }, [connectionsReady, refreshConversationGroups]);
 
   const refreshConversationGroupsWithState = useCallback(async () => {
     setRailRefreshing(true);
+    setRailLoadError(null);
     try {
       await refreshConversationGroups();
+      setRailLoadError(null);
+    } catch {
+      setRailLoadError("Could not load conversations. Check your server connection and retry.");
     } finally {
       setRailRefreshing(false);
     }
@@ -1648,6 +1726,7 @@ export function AgentShellStateProvider({
       selectedConversationSummary,
       railLoading,
       railRefreshing,
+      railLoadError,
       refreshConversationGroups: refreshConversationGroupsWithState,
       applyOptimisticRailTitle,
       archiveConversation,
@@ -1683,6 +1762,7 @@ export function AgentShellStateProvider({
       railFilterToggles,
       railLoading,
       railRefreshing,
+      railLoadError,
       refreshConversationGroupsWithState,
       applyOptimisticRailTitle,
       selectedConversationId,

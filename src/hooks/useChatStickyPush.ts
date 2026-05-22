@@ -10,7 +10,7 @@ import {
   type RefObject,
 } from "react";
 import type { ChatMessage } from "@/lib/types";
-import { CHAT_STICKY_RAIL_INSET_PX } from "@/components/chat/chat-sticky-rail";
+import { getChatStickyRailInsetPx } from "@/components/chat/chat-sticky-rail";
 
 /** How far (px) before the anchor the previous user header begins sliding up. Larger = more gradual. */
 const PUSH_ZONE_PX = 220;
@@ -86,7 +86,7 @@ export function useChatStickyPush(
 
     const rootRect = root.getBoundingClientRect();
     // Sticky `top` is relative to the scrollport (padding box), not the content box after padding-top.
-    const anchorY = rootRect.top + root.clientTop + CHAT_STICKY_RAIL_INSET_PX;
+    const anchorY = rootRect.top + root.clientTop + getChatStickyRailInsetPx();
 
     const next: Record<number, number> = {};
     for (let o = 1; o < userTurnCount; o++) {

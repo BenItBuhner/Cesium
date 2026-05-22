@@ -13,6 +13,9 @@ export function isAgentConversationRankNeutralDelta(
   if (prev.lastEventSeq !== next.lastEventSeq) {
     return false;
   }
+  if (prev.status !== next.status || prev.lastError !== next.lastError) {
+    return false;
+  }
   if (prev.archivedAt !== next.archivedAt) {
     return false;
   }

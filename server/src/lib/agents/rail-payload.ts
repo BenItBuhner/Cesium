@@ -2,6 +2,7 @@ import { getJSON, setJSON } from "../../cache/kv.js";
 import { getStorage } from "../../storage/runtime.js";
 import { listWorkspaces, type WorkspaceRecord } from "../workspace-registry.js";
 import { getGitWorkspaceStatus } from "../git-worktrees.js";
+import { listOrchestrationChildConversationIds } from "../orchestration/store.js";
 import { listAgentBackendsWithCache } from "./providers.js";
 import {
   RAIL_ALL_FIRST_PAGE_CACHE_KEY,
@@ -131,6 +132,14 @@ export async function buildAgentConversationsAllPayload(input: {
   ]);
   const workspaceById = new Map(workspaces.map((workspace) => [workspace.id, workspace]));
   const repositoryByWorkspaceId = await buildRepositoryInfoByWorkspace(workspaces);
+  const hiddenChildIdsByWorkspace = new Map(
+    await Promise.all(
+      workspaces.map(async (workspace) => [
+        workspace.id,
+        await listOrchestrationChildConversationIds(workspace.id),
+      ] as const)
+    )
+  );
 
   if (offset === 0) {
     const storage = await getStorage();
@@ -163,7 +172,13 @@ export async function buildAgentConversationsAllPayload(input: {
     );
     return {
       backends,
-      groups: groupConversationSummaries(workspaces, workspaceById, records, repositoryByWorkspaceId),
+      groups: groupConversationSummaries(
+        workspaces,
+        workspaceById,
+        records,
+        repositoryByWorkspaceId,
+        hiddenChildIdsByWorkspace
+      ),
       nextCursor: globalPage.nextCursor ? String(limit) : null,
     };
   }
@@ -191,7 +206,13 @@ export async function buildAgentConversationsAllPayload(input: {
   const window = flat.slice(offset, offset + limit).map((entry) => entry.conversation);
   return {
     backends,
-    groups: groupConversationSummaries(workspaces, workspaceById, window, repositoryByWorkspaceId),
+    groups: groupConversationSummaries(
+      workspaces,
+      workspaceById,
+      window,
+      repositoryByWorkspaceId,
+      hiddenChildIdsByWorkspace
+    ),
     nextCursor: offset + window.length < flat.length ? String(offset + window.length) : null,
   };
 }
@@ -200,7 +221,8 @@ function groupConversationSummaries(
   workspaces: WorkspaceRecord[],
   workspaceById: Map<string, WorkspaceRecord>,
   records: AgentConversationRecord[],
-  repositoryByWorkspaceId: Map<string, AgentRailRepositoryInfo> = new Map()
+  repositoryByWorkspaceId: Map<string, AgentRailRepositoryInfo> = new Map(),
+  hiddenChildIdsByWorkspace: Map<string, Set<string>> = new Map()
 ): AgentConversationsAllPayload["groups"] {
   const groupMap = new Map<string, AgentConversationsAllPayload["groups"][number]>();
   for (const workspace of workspaces) {
@@ -211,6 +233,9 @@ function groupConversationSummaries(
     });
   }
   for (const conversation of records) {
+    if (hiddenChildIdsByWorkspace.get(conversation.workspaceId)?.has(conversation.id)) {
+      continue;
+    }
     if (!isRenderableRailConversation(conversation)) {
       continue;
     }

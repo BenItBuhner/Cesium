@@ -1276,8 +1276,9 @@ function createClaudeCodeSdkFallbackConfigOptions(
       id: "max_turns",
       name: "Max Turns",
       category: "other",
-      currentValue: "20",
+      currentValue: "unlimited",
       options: [
+        { value: "unlimited", name: "Unlimited", description: "No turn cap." },
         { value: "10", name: "10" },
         { value: "20", name: "20" },
         { value: "40", name: "40" },

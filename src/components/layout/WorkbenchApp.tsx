@@ -6,6 +6,7 @@ import { AgentConversationsProvider } from "@/components/chat/AgentConversations
 import { OpenInEditorProvider } from "@/components/editor/OpenInEditorContext";
 import { AgentLayout } from "@/components/layout/AgentLayout";
 import { IDELayout } from "@/components/layout/IDELayout";
+import { MobileBridgeSync } from "@/components/mobile/MobileBridgeSync";
 import { SettingsShellView } from "@/components/layout/SettingsShellView";
 import { ShellViewProvider, useShellView } from "@/components/layout/ShellViewContext";
 import { isDocsRoute } from "@/lib/open-documentation";
@@ -40,6 +41,7 @@ function WorkbenchWithConversationProviders() {
   return (
     <OpenInEditorProvider>
       <AgentConversationsProvider>
+        <MobileBridgeSync />
         <WorkbenchShell />
       </AgentConversationsProvider>
     </OpenInEditorProvider>

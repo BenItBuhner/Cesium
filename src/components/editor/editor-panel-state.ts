@@ -1,4 +1,9 @@
 import { normalizeBrowserTargetUrl } from "@/lib/browser-proxy-url";
+import type { BrowserEngineKind } from "@/lib/browser-engine";
+import type {
+  BrowserControlLockState,
+  BrowserControlViewport,
+} from "@/lib/browser-control-types";
 import type { ChatMessage, EditorTab, ExplorerOpenRequest } from "@/lib/types";
 import type {
   EditorSplitOrientation,
@@ -102,8 +107,26 @@ export type EditorPanelAction =
       conversationId?: string;
     }
   | { type: "OPEN_COMPOSER_DRAFT_TAB"; draftId: string; title: string; content: string }
+  | {
+      type: "OPEN_ORCHESTRATION_BOARD_TAB";
+      boardId: string;
+      title: string;
+      group?: EditorGroup;
+    }
   | { type: "OPEN_TERMINAL_TAB"; terminalId: string; name?: string }
-  | { type: "OPEN_BROWSER_TAB"; url: string; name?: string }
+  | {
+      type: "OPEN_BROWSER_TAB";
+      url: string;
+      name?: string;
+      tabId?: string;
+      group?: EditorGroup;
+      engine?: BrowserEngineKind;
+      debugSessionId?: string | null;
+      nativeSessionId?: string | null;
+      controlSessionId?: string | null;
+      lockState?: BrowserControlLockState;
+      viewport?: BrowserControlViewport;
+    }
   | {
       type: "UPDATE_BROWSER_TAB_URL";
       tabId: string;
@@ -115,10 +138,15 @@ export type EditorPanelAction =
   | {
       type: "UPDATE_BROWSER_TAB_META";
       tabId: string;
+      engine?: BrowserEngineKind;
       designMode?: boolean;
       devtoolsOpen?: boolean;
       debugSessionId?: string | null;
+      nativeSessionId?: string | null;
       devtoolsPath?: string | null;
+      controlSessionId?: string | null;
+      lockState?: BrowserControlLockState;
+      viewport?: BrowserControlViewport;
     }
   | { type: "TOGGLE_FILE_PREVIEW" }
   | {
@@ -830,6 +858,58 @@ export function editorPanelReducer(
       };
     }
 
+    case "OPEN_ORCHESTRATION_BOARD_TAB": {
+      const tabId = `orchestration:${action.boardId}`;
+      const existingLeft = state.leftTabs.find((tab) => tab.id === tabId);
+      const existingRight = state.rightTabs.find((tab) => tab.id === tabId);
+      const name = truncateTabName(action.title);
+      if (existingLeft && action.group !== "right") {
+        return {
+          ...state,
+          focusedGroup: "left",
+          leftActiveId: tabId,
+          leftTabs: state.leftTabs.map((tab) =>
+            tab.id === tabId ? { ...tab, name } : tab
+          ),
+        };
+      }
+      if (existingRight && action.group !== "left") {
+        return {
+          ...state,
+          focusedGroup: "right",
+          rightActiveId: tabId,
+          rightTabs: state.rightTabs.map((tab) =>
+            tab.id === tabId ? { ...tab, name } : tab
+          ),
+        };
+      }
+      const tab: EditorTab = {
+        id: tabId,
+        name,
+        language: "json",
+        icon: "kanban",
+        content: "",
+        orchestrationBoard: { boardId: action.boardId },
+      };
+      const targetGroup =
+        action.group ?? (state.split && state.focusedGroup === "right" ? "right" : "left");
+      if (targetGroup === "right") {
+        const splitState = state.split ? state : { ...state, split: true };
+        return {
+          ...splitState,
+          focusedGroup: "right",
+          rightTabs: [...splitState.rightTabs, tab],
+          rightActiveId: tabId,
+        };
+      }
+      return {
+        ...state,
+        focusedGroup: "left",
+        leftTabs: [...state.leftTabs, tab],
+        leftActiveId: tabId,
+      };
+    }
+
     case "OPEN_TERMINAL_TAB": {
       const tabId = `terminal:${action.terminalId}`;
       const existingLeft = state.leftTabs.find((tab) => tab.id === tabId);
@@ -868,7 +948,7 @@ export function editorPanelReducer(
     }
 
     case "OPEN_BROWSER_TAB": {
-      const tabId = `browser:${newIdSegment()}`;
+      const tabId = action.tabId ?? `browser:${newIdSegment()}`;
       const targetUrl = normalizeBrowserTargetUrl(action.url).href;
       const tab: EditorTab = {
         id: tabId,
@@ -878,14 +958,20 @@ export function editorPanelReducer(
         content: "",
         browser: {
           targetUrl,
+          engine: action.engine ?? "proxy",
           designMode: false,
           devtoolsOpen: false,
-          debugSessionId: null,
+          debugSessionId: action.debugSessionId ?? null,
+          nativeSessionId: action.nativeSessionId ?? null,
           devtoolsPath: null,
+          controlSessionId: action.controlSessionId ?? null,
+          lockState: action.lockState,
+          viewport: action.viewport,
         },
       };
 
-      if (!state.split || state.focusedGroup === "left") {
+      const targetGroup = action.group ?? state.focusedGroup;
+      if (!state.split || targetGroup === "left") {
         return {
           ...state,
           focusedGroup: "left",
@@ -971,16 +1057,21 @@ export function editorPanelReducer(
     }
 
     case "UPDATE_BROWSER_TAB_META": {
-      const { tabId, designMode, devtoolsOpen, debugSessionId, devtoolsPath } =
+      const { tabId, engine, designMode, devtoolsOpen, debugSessionId, nativeSessionId, devtoolsPath } =
         action;
       const patch = (tabs: EditorTab[]) =>
         tabs.map((t) => {
           if (t.id !== tabId || !t.browser) return t;
           const nextBrowser = { ...t.browser };
+          if (engine !== undefined) nextBrowser.engine = engine;
           if (designMode !== undefined) nextBrowser.designMode = designMode;
           if (devtoolsOpen !== undefined) nextBrowser.devtoolsOpen = devtoolsOpen;
           if (debugSessionId !== undefined) nextBrowser.debugSessionId = debugSessionId;
+          if (nativeSessionId !== undefined) nextBrowser.nativeSessionId = nativeSessionId;
           if (devtoolsPath !== undefined) nextBrowser.devtoolsPath = devtoolsPath;
+          if (action.controlSessionId !== undefined) nextBrowser.controlSessionId = action.controlSessionId;
+          if (action.lockState !== undefined) nextBrowser.lockState = action.lockState;
+          if (action.viewport !== undefined) nextBrowser.viewport = action.viewport;
           return { ...t, browser: nextBrowser };
         });
       return {

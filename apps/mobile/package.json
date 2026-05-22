@@ -1,0 +1,41 @@
+{
+  "name": "@cesium/mobile",
+  "version": "0.1.0",
+  "private": true,
+  "main": "index.js",
+  "scripts": {
+    "dev": "react-native start",
+    "android": "react-native run-android",
+    "build": "npm run build:web-assets && npm run build:android:debug",
+    "build:web-assets": "npm run build --workspace @cesium/desktop-renderer && node ./scripts/copy-web-assets.mjs",
+    "bundle:android": "react-native bundle --platform android --dev false --entry-file index.js --bundle-output android/app/src/main/assets/index.android.bundle --assets-dest android/app/src/main/res",
+    "build:android:debug": "npm run bundle:android && cd android && gradlew.bat assembleDebug",
+    "build:android:release": "npm run bundle:android && cd android && gradlew.bat assembleRelease",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "tsx --test ./src/**/*.test.ts",
+    "e2e:detox:android": "detox test --configuration android.emu.debug",
+    "e2e:maestro:android": "maestro test e2e/maestro"
+  },
+  "dependencies": {
+    "@cesium/api-client": "file:../../packages/api-client",
+    "@cesium/core": "file:../../packages/core",
+    "@cesium/design": "file:../../packages/design",
+    "@notifee/react-native": "latest",
+    "@react-native-community/netinfo": "latest",
+    "react": "^19.1.0",
+    "react-native": "^0.81.5",
+    "react-native-webview": "latest"
+  },
+  "devDependencies": {
+    "@react-native-community/cli": "latest",
+    "@react-native/babel-preset": "^0.81.5",
+    "@react-native/metro-config": "^0.81.5",
+    "@react-native/typescript-config": "latest",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "detox": "latest",
+    "jest": "^29.7.0",
+    "tsx": "^4.21.0",
+    "typescript": "^5"
+  }
+}

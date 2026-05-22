@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  type CSSProperties,
   useCallback,
   useLayoutEffect,
   useRef,
@@ -15,6 +16,8 @@ type VerticalFadedScrollProps = {
   wrapperClassName?: string;
   /** Classes for the scrollport (overflow-y, max-height, scrollbar hide, padding, etc.). */
   scrollClassName: string;
+  /** Inline styles for the scrollport, e.g. fixed popover max height. */
+  scrollStyle?: CSSProperties;
   /** Optional external ref for the scrollport (keyboard nav scroll-into-view). */
   scrollRef?: RefObject<HTMLDivElement | null>;
   /** CSS color for the fade, e.g. `var(--bg-panel)` (match the popover surface). */
@@ -31,6 +34,7 @@ export function VerticalFadedScroll({
   children,
   wrapperClassName,
   scrollClassName,
+  scrollStyle,
   scrollRef: externalScrollRef,
   edgeColorVar = "var(--bg-panel)",
   measureKey,
@@ -97,6 +101,7 @@ export function VerticalFadedScroll({
         }}
         onScroll={updateFade}
         className={scrollClassName}
+        style={scrollStyle}
       >
         {children}
       </div>

@@ -82,3 +82,13 @@ export function railBulkClickModifierFromMouseEvent(event: {
   }
   return "none";
 }
+
+/** In active bulk-select mode, plain clicks toggle items; modifiers keep desktop conventions. */
+export function railBulkClickModifierInBulkMode(event: {
+  shiftKey: boolean;
+  metaKey: boolean;
+  ctrlKey: boolean;
+}): RailBulkClickModifier {
+  const modifier = railBulkClickModifierFromMouseEvent(event);
+  return modifier === "none" ? "toggle" : modifier;
+}

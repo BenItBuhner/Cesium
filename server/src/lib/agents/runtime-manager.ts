@@ -28,6 +28,7 @@ import {
   createAgentProvider,
   listAgentBackendsWithCache,
 } from "./providers.js";
+import { listOrchestrationChildConversationIds } from "../orchestration/store.js";
 import {
   findPrimaryModelConfigOption,
   findPrimaryModeConfigOption,
@@ -350,7 +351,10 @@ export class AgentRuntimeManager {
       cursor: opts?.cursor,
       includeArchived: true,
     });
-    const conversations = pageResult.records;
+    const orchestrationChildIds = await listOrchestrationChildConversationIds(workspaceId);
+    const conversations = pageResult.records.filter(
+      (conversation) => !orchestrationChildIds.has(conversation.id)
+    );
     const backends = await Promise.resolve(this.listBackendsFn());
     const enrichedBackends = backends.map((backend) => {
       const cachedModelCount = findPrimaryModelConfigOption(
@@ -420,7 +424,7 @@ export class AgentRuntimeManager {
       pendingQuestion: null,
       lastError: null,
       experimental: Boolean(backend.experimental),
-      archivedAt: null,
+      archivedAt: input.archived ? now : null,
       lastReadSeq: 0,
       queuedPrompts: [],
     };
@@ -861,6 +865,7 @@ export class AgentRuntimeManager {
       configOverride?: AgentQueuedChatPrompt["configOverride"];
       clientEventId?: string;
       clientMessageId?: string;
+      delivery?: AgentQueuedChatPrompt["delivery"];
     }
   ): Promise<AgentConversationSnapshotHead> {
     const trimmed = text.trim();
@@ -874,6 +879,7 @@ export class AgentRuntimeManager {
     }
     const clientEventId = options?.clientEventId?.trim();
     const clientMessageId = options?.clientMessageId?.trim();
+    const delivery = options?.delivery === "steer" ? "steer" : "normal";
     if (clientEventId) {
       const existingEvents = await readConversationEvents(workspace.id, conversationId);
       if (existingEvents.some((event) => event.eventId === clientEventId)) {
@@ -905,6 +911,7 @@ export class AgentRuntimeManager {
       const entry: AgentQueuedChatPrompt = {
         id: entryId,
         text: trimmed,
+        ...(delivery !== "normal" ? { delivery } : {}),
         ...(attachments && attachments.length > 0 ? { attachments } : {}),
         ...(clientEventId ? { clientEventId } : {}),
         ...(clientMessageId ? { clientMessageId } : {}),
@@ -961,7 +968,7 @@ export class AgentRuntimeManager {
       !pendingHandoffContext && promptContextEvents.length > 0
         ? resolvePendingForkContext(promptContextEvents)
         : null;
-    const runtimePromptText = pendingHandoffContext
+    const baseRuntimePromptText = pendingHandoffContext
       ? buildPromptTextWithHandoffContext({
           ...pendingHandoffContext,
           userText: trimmed,
@@ -974,10 +981,21 @@ export class AgentRuntimeManager {
             hasAttachments: Boolean(attachments?.length),
           })
         : trimmed;
+    const runtimePromptText =
+      delivery === "steer"
+        ? [
+            "Steering message from the user.",
+            "Apply this guidance after the current completed turn and continue from the existing context.",
+            "",
+            trimmed,
+          ].join("\n")
+        : baseRuntimePromptText;
 
     const userMessageId = clientMessageId || randomUUID();
     const designMatch = trimmed.match(/`design:([^`]+)`/);
-    const displayContent = designMatch
+    const displayContent = delivery === "steer"
+      ? `Steer: ${trimmed}`
+      : designMatch
       ? `Design: ${designMatch[1]!.slice(0, 160)}${designMatch[1]!.length > 160 ? "…" : ""}`
       : undefined;
     const appended = await appendConversationEventsAndPatchRecord(
@@ -989,7 +1007,7 @@ export class AgentRuntimeManager {
           conversationId,
           kind: "user_message",
           messageId: userMessageId,
-          content: trimmed,
+          content: runtimePromptText,
           displayContent,
           attachments,
         },
@@ -1160,6 +1178,7 @@ export class AgentRuntimeManager {
       await this.promptConversation(workspace, conversationId, head.text, head.attachments, {
         ...(head.clientEventId ? { clientEventId: head.clientEventId } : {}),
         ...(head.clientMessageId ? { clientMessageId: head.clientMessageId } : {}),
+        ...(head.delivery ? { delivery: head.delivery } : {}),
       });
     } catch (error) {
       console.error("[agent] drainOneQueuedPrompt failed; restoring queue head:", error);
@@ -1182,15 +1201,25 @@ export class AgentRuntimeManager {
       return updateConversationRecord(workspace.id, conversationId, (current) => ({
         ...current,
         status: "idle",
+        providerSessionId: null,
         pendingPermission: null,
+        pendingQuestion: null,
+        queuedPrompts: [],
       }));
     }
     await runtime.handle.cancel();
+    await this.disposeRuntime(conversationId);
     const record = await readConversationRecord(workspace.id, conversationId);
     if (!record) {
       throw new Error(`Unknown conversation: ${conversationId}`);
     }
-    return record;
+    return updateConversationRecord(workspace.id, conversationId, (current) => ({
+      ...current,
+      providerSessionId: null,
+      queuedPrompts: [],
+      pendingPermission: null,
+      pendingQuestion: null,
+    }));
   }
 
   async pauseConversation(
@@ -1752,11 +1781,13 @@ export class AgentRuntimeManager {
               )?.value
             : patchKey === "ask"
               ? modeOption.options.find((option) => option.value === "ask")?.value
-              : modeOption.options.find((option) =>
-                  option.value === "debug" ||
-                  option.value === "agent" ||
-                  option.value === "code"
-                )?.value);
+              : patchKey === "orchestration"
+                ? modeOption.options.find((option) => option.value === "orchestration")?.value
+                : modeOption.options.find((option) =>
+                    option.value === "debug" ||
+                    option.value === "agent" ||
+                    option.value === "code"
+                  )?.value);
       if (value) {
         await handle.setConfigOption(modeOption.id, value);
       }
@@ -1815,6 +1846,7 @@ export class AgentRuntimeManager {
     if (current.lastError === message && current.status === "failed") {
       return;
     }
+    const messageId = `runtime-failure-${randomUUID()}`;
     await appendConversationEvents(workspaceId, conversationId, [
       {
         eventId: randomUUID(),
@@ -1829,6 +1861,20 @@ export class AgentRuntimeManager {
         kind: "status",
         status: "failed",
         detail: message,
+      },
+      {
+        eventId: randomUUID(),
+        conversationId,
+        kind: "assistant_message_chunk",
+        messageId,
+        text: `The agent failed to start: ${message}`,
+      },
+      {
+        eventId: randomUUID(),
+        conversationId,
+        kind: "assistant_message_end",
+        messageId,
+        stopReason: "failed",
       },
     ]);
     await updateConversationRecord(workspaceId, conversationId, (record) => ({

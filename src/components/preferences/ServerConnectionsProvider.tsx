@@ -279,7 +279,7 @@ export function ServerConnectionsProvider({ children }: { children: ReactNode })
       getActiveServerConnection();
     const onlineServers = dedupeServersByResolvedBaseUrl(state.servers).filter((server) => {
       const health = serverStatusById[server.id]?.health ?? "unknown";
-      return health === "online" || health === "auth_required" || health === "unknown";
+      return health === "online" || health === "auth_required";
     });
     const settingsServer = getSettingsServerConnection(state);
     return {

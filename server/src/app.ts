@@ -7,14 +7,17 @@ import { settingsRoutes } from "./routes/settings.js";
 import { terminalRoutes } from "./routes/terminals.js";
 import { browserProxyRoutes } from "./routes/browser-proxy.js";
 import { browserDebugRoutes } from "./routes/browser-debug.js";
+import { browserControlRoutes } from "./routes/browser-control.js";
 import { agentRoutes } from "./routes/agents.js";
 import { audioRoutes } from "./routes/audio.js";
 import { authRoutes } from "./routes/auth.js";
 import { mcpRoutes } from "./routes/mcp.js";
 import { storageRoutes } from "./routes/storage.js";
+import { orchestrationRoutes } from "./routes/orchestration.js";
 import { bootstrapStorage } from "./storage/index.js";
 import { AGENT_BACKENDS } from "./lib/agents/providers.js";
 import { warmupAgentBackendCaches } from "./lib/agents/provider-cache-store.js";
+import { startOrchestrationAgentControlListener } from "./lib/agents/orchestration-auto-continue.js";
 import { startAgentPromptQueueDrainListener } from "./lib/agents/prompt-queue-drain.js";
 import { authMiddleware, SESSION_TOKEN_HEADER } from "./lib/auth.js";
 import { isTranscriptionConfigured } from "./lib/transcription-env.js";
@@ -120,11 +123,13 @@ export function createCesiumApp(): Hono {
   app.route("/", mcpRoutes);
   app.route("/browser", browserProxyRoutes);
   app.route("/", browserDebugRoutes);
+  app.route("/", browserControlRoutes);
   app.route("/", workspaceRoutes);
   app.route("/", settingsRoutes);
   app.route("/", fsRoutes);
   app.route("/", terminalRoutes);
   app.route("/", agentRoutes);
+  app.route("/", orchestrationRoutes);
   app.route("/", audioRoutes);
   app.route("/", storageRoutes);
   return app;
@@ -148,4 +153,5 @@ export function startCesiumBackgroundServices(): void {
     });
   }
   startAgentPromptQueueDrainListener();
+  startOrchestrationAgentControlListener();
 }

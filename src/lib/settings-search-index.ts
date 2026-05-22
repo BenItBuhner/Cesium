@@ -239,6 +239,8 @@ const STATIC_SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
   section("servers", "saved", "Saved servers"),
 
   // —— Beta ——
+  section("beta", "browser", "Browser", "new browser beta experimental chromium"),
+  row("beta", "new-browser", "New browser", "Experimental Chromium-backed browser engine."),
   section("beta", "ipad", "iPad", "experimental beta"),
   row(
     "beta",

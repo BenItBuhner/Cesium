@@ -22,7 +22,7 @@ import {
   projectAgentEventsToChatMessages,
   resolveDraftModelForBackend,
 } from "@/lib/agent-chat";
-import { DEFAULT_MODE_OPTIONS, resolveCanonicalModeId } from "@/lib/chat-modes";
+import { DEFAULT_MODE_OPTIONS, isOrchestrationModeLocked, resolveCanonicalModeId } from "@/lib/chat-modes";
 import { markConversationSwitchVisible } from "@/lib/dev-perf";
 import { buildQueuedConfigOverride } from "@/lib/queued-prompt-utils";
 import { deleteAgentConversationQueueItem } from "@/lib/server-api";
@@ -233,6 +233,8 @@ export function AgentCenterPane() {
   );
 
   const composerState = conversation ? getConversationComposerState(conversation.id) : null;
+  const composerMode = composerState?.mode ?? draftMode;
+  const modeLocked = isOrchestrationModeLocked(composerMode, !!selectedConversationId);
 
   const getRedoComposerSeed = useCallback(() => {
     if (!conversation || !selectedConversationId) {
@@ -439,7 +441,11 @@ export function AgentCenterPane() {
   );
 
   const handleSubmit = useCallback(
-    async (text: string, attachments?: ImageAttachment[]) => {
+    async (
+      text: string,
+      attachments?: ImageAttachment[],
+      options?: { delivery?: "normal" | "steer" }
+    ) => {
       let targetConversationId = selectedConversationId;
       if (!targetConversationId) {
         const backend = draftBackend;
@@ -480,7 +486,13 @@ export function AgentCenterPane() {
       const mergedOverride = { ...derivedOverride, ...pendingConfig };
       const configOverride =
         targetBusy && Object.keys(mergedOverride).length > 0 ? mergedOverride : undefined;
-      const ok = await promptConversation(targetConversationId, text, attachments, configOverride);
+      const ok = await promptConversation(
+        targetConversationId,
+        text,
+        attachments,
+        configOverride,
+        options?.delivery
+      );
       if (!ok) {
         return false;
       }
@@ -512,8 +524,11 @@ export function AgentCenterPane() {
     return {
       draftId: composerDraftId,
       title: composerDraftTitle,
-      mode: composerState?.mode ?? draftMode,
+      mode: composerMode,
       onModeChange: (next: EditorMode) => {
+        if (isOrchestrationModeLocked(composerMode, !!selectedConversationId)) {
+          return;
+        }
         if (selectedConversationId) {
           if (composerState?.busy) {
             setPendingConfigForConversation(selectedConversationId, { mode: next });
@@ -581,12 +596,14 @@ export function AgentCenterPane() {
           : undefined,
       busy: composerState?.busy ?? false,
       configLocked: false,
+      modeLocked,
     };
   }, [
     backends,
     cancelConversation,
     composerDraftId,
     composerDraftTitle,
+    composerMode,
     composerState,
     draftBackend?.id,
     draftMode,
@@ -595,6 +612,7 @@ export function AgentCenterPane() {
     draftModels,
     expandedComposerDraftId,
     handleSubmit,
+    modeLocked,
     selectedConversationId,
     setPendingConfigForConversation,
     setConversationBackend,
@@ -631,7 +649,6 @@ export function AgentCenterPane() {
       : showConversationTransitionState
         ? stableConversationView
         : null;
-
   const emptyState = (
     <div className="absolute inset-0 flex items-center justify-center px-[14px] pb-[220px] sm:px-[20px] max-[480px]:px-0 max-[480px]:pl-[max(0px,env(safe-area-inset-left,0px))] max-[480px]:pr-[max(0px,env(safe-area-inset-right,0px))]">
       <div className={`${AGENT_CENTER_CONTENT_CLASS} text-center`}>
@@ -788,8 +805,11 @@ export function AgentCenterPane() {
                 <div className={AGENT_CENTER_CONTENT_CLASS}>
                   <ChatComposer
                     key={composerDraftId}
-                    mode={composerState?.mode ?? draftMode}
+                    mode={composerMode}
                     onModeChange={(next) => {
+                      if (isOrchestrationModeLocked(composerMode, !!selectedConversationId)) {
+                        return;
+                      }
                       if (selectedConversationId) {
                         if (composerState?.busy) {
                           setPendingConfigForConversation(selectedConversationId, {
@@ -868,6 +888,7 @@ export function AgentCenterPane() {
                     agentShellDockHeightExpand
                     busy={composerState?.busy ?? false}
                     configLocked={false}
+                    modeLocked={modeLocked}
                     onSubmit={handleSubmit}
                     onCancel={() =>
                       selectedConversationId

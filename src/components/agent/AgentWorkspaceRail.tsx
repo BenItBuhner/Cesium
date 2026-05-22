@@ -4,6 +4,7 @@ import {
   ChevronDown,
   ChevronRight,
   CircleUserRound,
+  GitBranchPlus,
   ListFilter,
   PanelLeftClose,
   Pin,
@@ -23,6 +24,7 @@ import {
   type ReactNode,
 } from "react";
 import { useWorkbenchContextMenu } from "@/components/ide/WorkbenchContextMenuProvider";
+import { useEditorBridgeRef } from "@/components/ide/EditorBridgeContext";
 import type { WorkbenchMenuItem } from "@/components/ide/workbench-context-menu-types";
 import { RecentChatsModal, type RecentChatOption } from "@/components/ide/RecentChatsModal";
 import { AgentConversationRow } from "@/components/agent/rail/AgentConversationRow";
@@ -32,7 +34,7 @@ import {
   buildRailBulkSectionId,
   getRailConversationKey,
   orderedRailConversationKeys,
-  railBulkClickModifierFromMouseEvent,
+  railBulkClickModifierInBulkMode,
 } from "@/lib/agent-rail-bulk-select";
 import { useAgentConversations } from "@/components/chat/AgentConversationsContext";
 import { useOpenInEditor } from "@/components/editor/OpenInEditorContext";
@@ -54,13 +56,25 @@ import { useWorkspaceDirectory } from "@/contexts/WorkspaceDirectoryContext";
 import type {
   AgentRailGroupByMode,
   ChatFolderState,
+  ServerRailAppearance,
   WorkspaceRailAppearance,
   WorkspaceSortMode,
 } from "@/lib/global-settings";
 import {
+  getServerDisplayLabel,
+  getServerRailAppearance,
+  isLocalDeviceServer,
+} from "@/lib/server-rail-appearance";
+import {
   getLastWorkspaceForServer,
   rememberLastWorkspaceForServer,
 } from "@/lib/per-server-workspace-memory";
+import {
+  createWorkspaceGitWorktree,
+  startOrchestrationMode,
+} from "@/lib/server-api";
+import { dispatchAgentConversationUpserted } from "@/lib/agent-conversation-events";
+import { agentRecordToRailSummary } from "@/lib/agent-rail-patch";
 import { usePersistHomeWorkspaceRailAppearances } from "@/hooks/usePersistHomeWorkspaceRailAppearances";
 import { AGENT_NEW_CHAT_SESSION_ID } from "@/lib/workspace-session";
 import {
@@ -99,11 +113,11 @@ function WorkspaceRailHeaderIcon({
       <WorkspaceFolderIcon
         iconName={appearance.icon}
         color={appearance.color}
-        className="col-start-1 row-start-1 size-[10px] transition-opacity duration-150 group-hover/wshead:opacity-0"
+        className="col-start-1 row-start-1 size-[10px] group-hover/wshead:opacity-0"
         strokeWidth={2}
       />
       <ChevronRight
-        className={`col-start-1 row-start-1 size-[10px] text-[var(--text-disabled)] opacity-0 transition-[transform,opacity,color] duration-150 group-hover/wshead:opacity-100 group-hover/wshead:text-[var(--text-secondary)] ${
+        className={`col-start-1 row-start-1 size-[10px] text-[var(--text-disabled)] opacity-0 group-hover/wshead:opacity-100 group-hover/wshead:text-[var(--text-secondary)] ${
           collapsed ? "" : "rotate-90"
         }`}
         strokeWidth={2}
@@ -206,12 +220,17 @@ function AgentRailConversationListScroll({
   measureKey: string | number;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
-  const [fade, setFade] = useState({
+  const topFadeRef = useRef<HTMLDivElement>(null);
+  const bottomFadeRef = useRef<HTMLDivElement>(null);
+  const leftFadeRef = useRef<HTMLDivElement>(null);
+  const rightFadeRef = useRef<HTMLDivElement>(null);
+  const fadeStateRef = useRef({
     top: false,
     bottom: false,
     left: false,
     right: false,
   });
+  const scrollRafRef = useRef<number | null>(null);
 
   const updateFade = useCallback(() => {
     const el = scrollRef.current;
@@ -221,13 +240,37 @@ function AgentRailConversationListScroll({
     const { scrollTop, scrollLeft, scrollWidth, clientWidth, scrollHeight, clientHeight } = el;
     const maxScrollX = scrollWidth - clientWidth;
     const maxScrollY = scrollHeight - clientHeight;
-    setFade({
+    const next = {
       top: scrollTop > 2,
       bottom: maxScrollY > 2 && scrollTop < maxScrollY - 2,
       left: scrollLeft > 2,
       right: maxScrollX > 2 && scrollLeft < maxScrollX - 2,
-    });
+    };
+    const prev = fadeStateRef.current;
+    if (
+      prev.top === next.top &&
+      prev.bottom === next.bottom &&
+      prev.left === next.left &&
+      prev.right === next.right
+    ) {
+      return;
+    }
+    fadeStateRef.current = next;
+    topFadeRef.current?.toggleAttribute("hidden", !next.top);
+    bottomFadeRef.current?.toggleAttribute("hidden", !next.bottom);
+    leftFadeRef.current?.toggleAttribute("hidden", !next.left);
+    rightFadeRef.current?.toggleAttribute("hidden", !next.right);
   }, []);
+
+  const scheduleUpdateFade = useCallback(() => {
+    if (scrollRafRef.current != null) {
+      return;
+    }
+    scrollRafRef.current = requestAnimationFrame(() => {
+      scrollRafRef.current = null;
+      updateFade();
+    });
+  }, [updateFade]);
 
   useLayoutEffect(() => {
     updateFade();
@@ -238,10 +281,16 @@ function AgentRailConversationListScroll({
     if (!el) {
       return;
     }
-    const ro = new ResizeObserver(() => updateFade());
+    const ro = new ResizeObserver(() => scheduleUpdateFade());
     ro.observe(el);
-    return () => ro.disconnect();
-  }, [updateFade]);
+    return () => {
+      ro.disconnect();
+      if (scrollRafRef.current != null) {
+        cancelAnimationFrame(scrollRafRef.current);
+        scrollRafRef.current = null;
+      }
+    };
+  }, [scheduleUpdateFade]);
 
   const edge = "var(--bg-panel)";
   const gradTop = `linear-gradient(to bottom, ${edge}, transparent)`;
@@ -251,37 +300,37 @@ function AgentRailConversationListScroll({
 
   return (
     <div className="relative min-h-0 min-w-0 flex-1">
-      {fade.top ? (
-        <div
-          className="pointer-events-none absolute inset-x-0 top-0 z-[2] h-[28px]"
-          style={{ backgroundImage: gradTop }}
-          aria-hidden
-        />
-      ) : null}
-      {fade.bottom ? (
-        <div
-          className="pointer-events-none absolute inset-x-0 bottom-0 z-[2] h-[28px]"
-          style={{ backgroundImage: gradBottom }}
-          aria-hidden
-        />
-      ) : null}
-      {fade.left ? (
-        <div
-          className="pointer-events-none absolute inset-y-0 left-0 z-[2] w-[28px]"
-          style={{ backgroundImage: gradLeft }}
-          aria-hidden
-        />
-      ) : null}
-      {fade.right ? (
-        <div
-          className="pointer-events-none absolute inset-y-0 right-0 z-[2] w-[28px]"
-          style={{ backgroundImage: gradRight }}
-          aria-hidden
-        />
-      ) : null}
+      <div
+        ref={topFadeRef}
+        hidden
+        className="pointer-events-none absolute inset-x-0 top-0 z-[2] h-[28px]"
+        style={{ backgroundImage: gradTop }}
+        aria-hidden
+      />
+      <div
+        ref={bottomFadeRef}
+        hidden
+        className="pointer-events-none absolute inset-x-0 bottom-0 z-[2] h-[28px]"
+        style={{ backgroundImage: gradBottom }}
+        aria-hidden
+      />
+      <div
+        ref={leftFadeRef}
+        hidden
+        className="pointer-events-none absolute inset-y-0 left-0 z-[2] w-[28px]"
+        style={{ backgroundImage: gradLeft }}
+        aria-hidden
+      />
+      <div
+        ref={rightFadeRef}
+        hidden
+        className="pointer-events-none absolute inset-y-0 right-0 z-[2] w-[28px]"
+        style={{ backgroundImage: gradRight }}
+        aria-hidden
+      />
       <div
         ref={scrollRef}
-        onScroll={updateFade}
+        onScroll={scheduleUpdateFade}
         className="hide-scrollbar-y relative z-0 h-full min-h-0 w-full min-w-0 overflow-auto px-[11px] pb-[8px] pt-[12px]"
       >
         {children}
@@ -296,6 +345,8 @@ function RailIconCustomizePanel({
   color,
   showNameField,
   name,
+  nameFieldLabel = "Folder name",
+  allowEmptyName = false,
   onClose,
   onUpdate,
 }: {
@@ -304,6 +355,8 @@ function RailIconCustomizePanel({
   color: string;
   showNameField: boolean;
   name?: string;
+  nameFieldLabel?: string;
+  allowEmptyName?: boolean;
   onClose: () => void;
   onUpdate: (patch: { icon?: string; color?: string; name?: string }) => void;
 }) {
@@ -321,11 +374,11 @@ function RailIconCustomizePanel({
           <input
             value={name ?? ""}
             maxLength={80}
-            aria-label="Folder name"
+            aria-label={nameFieldLabel}
             className="h-[28px] min-w-0 flex-1 rounded-[var(--agent-control-radius)] border border-[var(--border-subtle)] bg-[var(--bg-main)] px-[8px] font-sans text-[12px] text-[var(--text-primary)] outline-none transition-colors placeholder:text-[var(--text-disabled)] focus:border-[var(--accent)]"
             onChange={(event) => {
               const nextName = event.target.value.slice(0, 80);
-              onUpdate({ name: nextName || "Folder" });
+              onUpdate({ name: allowEmptyName ? nextName : nextName || "Folder" });
             }}
             onKeyDown={(event) => {
               if (event.key === "Escape") {
@@ -413,6 +466,7 @@ export function AgentWorkspaceRail() {
     groups,
     leftRailCollapsed,
     railLoading,
+    railLoadError,
     selectedConversationId,
     startNewConversation,
     startNewChatInWorkspace,
@@ -430,7 +484,13 @@ export function AgentWorkspaceRail() {
     clearRailFilters,
     isMobile,
   } = useAgentShellState();
-  const { activeWorkspaceId, gitStatus, homeWorkspaceId, openWorkspaceById } = useWorkspace();
+  const {
+    activeWorkspaceId,
+    gitStatus,
+    homeWorkspaceId,
+    openWorkspaceById,
+  } = useWorkspace();
+  const editorBridgeRef = useEditorBridgeRef();
   const { experimentalIpadCustomButtons, experimentalIpadWindowedTabInset } =
     useUserPreferences();
   const { settings, updateSettings } = useGlobalSettings();
@@ -441,9 +501,9 @@ export function AgentWorkspaceRail() {
   const agentRailSettings = settings.general.agentRail;
   const padRailForWindowChrome = experimentalIpadWindowedTabInset && !isMobile;
   /** Only the top control row needs iPadOS window-chrome inset; list + footer stay full-width in the rail. */
-  const railTopBarPadClass = padRailForWindowChrome
+  const railTopBarPadClass = `${padRailForWindowChrome
     ? "pl-[var(--editor-window-chrome-tab-inset)] pr-[11px]"
-    : "px-[11px]";
+    : "px-[11px]"} ${isMobile ? "mobile-safe-top-pad" : ""}`;
   const { openAt, openAtPoint } = useWorkbenchContextMenu();
   const filterAnchorRef = useRef<HTMLButtonElement>(null);
   const accountAnchorRef = useRef<HTMLButtonElement>(null);
@@ -455,7 +515,22 @@ export function AgentWorkspaceRail() {
   const [draggingConversationId, setDraggingConversationId] = useState<string | null>(null);
   const [editingFolderId, setEditingFolderId] = useState<string | null>(null);
   const [editingWorkspaceKey, setEditingWorkspaceKey] = useState<string | null>(null);
+  const [editingServerId, setEditingServerId] = useState<string | null>(null);
   const workspaceRailAppearances = settings.general.workspaceRailAppearances;
+  const serverRailAppearances = settings.general.serverRailAppearances;
+  const activeServerAppearance = useMemo(
+    () =>
+      getServerRailAppearance(
+        serverRailAppearances,
+        activeServer.id,
+        servers.findIndex((server) => server.id === activeServer.id)
+      ),
+    [activeServer.id, serverRailAppearances, servers]
+  );
+  const activeServerDisplayLabel = useMemo(
+    () => getServerDisplayLabel(activeServer, activeServerAppearance),
+    [activeServer, activeServerAppearance]
+  );
   const homeAppearancePersistEntries = useMemo(
     () =>
       groups.map((group) => {
@@ -810,6 +885,69 @@ export function AgentWorkspaceRail() {
     startNewConversation();
   }, [startNewConversation]);
 
+  const handleNewOrchestrationWorktree = useCallback(async (
+    workspaceId: string,
+    workspaceName: string,
+    baseBranch?: string | null,
+    isGitRepo?: boolean
+  ) => {
+    if (isGitRepo === false) {
+      window.alert("Orchestration Mode worktrees require a Git repository.");
+      return;
+    }
+    const defaultBranch = `orchestration/${Date.now().toString(36)}`;
+    const branch = window.prompt(
+      `New orchestration branch name for ${workspaceName}`,
+      defaultBranch
+    );
+    const trimmed = branch?.trim();
+    if (!trimmed) {
+      return;
+    }
+    try {
+      const result = await createWorkspaceGitWorktree({
+        workspaceId,
+        branch: trimmed,
+        baseBranch: baseBranch ?? undefined,
+        newBranch: true,
+        name: trimmed.split(/[\\/]/).filter(Boolean).at(-1) ?? trimmed,
+      });
+      await openWorkspaceById(result.workspace.id);
+      const { snapshot, headConversation } = await startOrchestrationMode({
+        title: `Orchestration: ${trimmed}`,
+        prompt:
+          `Start Orchestration Mode for branch ${trimmed}. ` +
+          "Create or refine the kanban board, identify the work, assign child agents where useful, and keep going until the board is complete and verified.",
+      });
+      dispatchAgentConversationUpserted(headConversation);
+      editorBridgeRef.current?.openOrchestrationBoardTab(
+        snapshot.board.id,
+        snapshot.board.title
+      );
+      await openConversationSummary({
+        ...agentRecordToRailSummary(headConversation),
+        serverId: activeServer.id,
+        serverLabel: activeServer.label,
+        workspaceKey: `${activeServer.id}:${headConversation.workspaceId}`,
+        conversationKey: `${activeServer.id}:${headConversation.id}`,
+      });
+      void refreshConversationGroups();
+    } catch (error) {
+      window.alert(
+        error instanceof Error
+          ? `Failed to start Orchestration Mode: ${error.message}`
+          : "Failed to start Orchestration Mode."
+      );
+    }
+  }, [
+    activeServer.id,
+    activeServer.label,
+    editorBridgeRef,
+    openConversationSummary,
+    openWorkspaceById,
+    refreshConversationGroups,
+  ]);
+
   const handleNewChatForWorkspace = useCallback(
     (workspaceId: string) => void startNewChatInWorkspace(workspaceId),
     [startNewChatInWorkspace]
@@ -950,6 +1088,43 @@ export function AgentWorkspaceRail() {
       });
     },
     [groups, homeWorkspaceId, updateSettings]
+  );
+
+  const updateServerAppearance = useCallback(
+    (serverId: string, patch: Partial<ServerRailAppearance>, fallbackIndex: number) => {
+      updateSettings((current) => {
+        const previous = getServerRailAppearance(
+          current.general.serverRailAppearances,
+          serverId,
+          fallbackIndex
+        );
+        const nextIcon =
+          typeof patch.icon === "string" && patch.icon.trim() ? patch.icon.trim() : previous.icon;
+        const nextColor =
+          typeof patch.color === "string" && isValidFolderColor(patch.color)
+            ? patch.color
+            : previous.color;
+        const nextNickname =
+          patch.nickname === undefined
+            ? previous.nickname
+            : patch.nickname.trim().slice(0, 80) || undefined;
+        return {
+          ...current,
+          general: {
+            ...current.general,
+            serverRailAppearances: {
+              ...current.general.serverRailAppearances,
+              [serverId]: {
+                icon: nextIcon,
+                color: nextColor,
+                ...(nextNickname ? { nickname: nextNickname } : {}),
+              },
+            },
+          },
+        };
+      });
+    },
+    [updateSettings]
   );
 
   const renameFolder = useCallback(
@@ -1213,6 +1388,7 @@ export function AgentWorkspaceRail() {
         orderedConversations: AgentRailConversationSummary[];
       }
     ) => {
+      event.preventDefault();
       const sectionId = buildRailBulkSectionId({
         inPinnedSection: section.inPinnedSection,
         workspaceId: section.workspaceId,
@@ -1225,7 +1401,7 @@ export function AgentWorkspaceRail() {
         return;
       }
 
-      const modifier = railBulkClickModifierFromMouseEvent(event);
+      const modifier = railBulkClickModifierInBulkMode(event);
       if (sectionId !== bulkSectionId) {
         setBulkSectionId(sectionId);
         setBulkSectionPinned(Boolean(section.inPinnedSection));
@@ -1245,6 +1421,54 @@ export function AgentWorkspaceRail() {
       setBulkAnchorIndex(anchorIndex);
     },
     [bulkAnchorIndex, bulkSectionId, bulkSelectedKeys]
+  );
+
+  const toggleBulkSelectConversation = useCallback(
+    (
+      conversation: AgentRailConversationSummary,
+      section: {
+        inPinnedSection?: boolean;
+        workspaceId: string;
+        folderId?: string | null;
+        orderedConversations: AgentRailConversationSummary[];
+      }
+    ) => {
+      const sectionId = buildRailBulkSectionId({
+        inPinnedSection: section.inPinnedSection,
+        workspaceId: section.workspaceId,
+        folderId: section.folderId,
+      });
+      const orderedKeys = orderedRailConversationKeys(section.orderedConversations);
+      const targetKey = getRailConversationKey(conversation);
+      const targetIndex = orderedKeys.indexOf(targetKey);
+      if (targetIndex < 0) {
+        return;
+      }
+
+      if (!bulkSelectMode) {
+        enterBulkSelect(conversation, section);
+        return;
+      }
+
+      if (sectionId !== bulkSectionId) {
+        setBulkSectionId(sectionId);
+        setBulkSectionPinned(Boolean(section.inPinnedSection));
+        setBulkSelectedKeys(new Set([targetKey]));
+        setBulkAnchorIndex(targetIndex);
+        return;
+      }
+
+      const { selectedKeys, anchorIndex } = applyRailBulkClick({
+        orderedKeys,
+        selectedKeys: bulkSelectedKeys,
+        anchorIndex: bulkAnchorIndex,
+        targetIndex,
+        modifier: "toggle",
+      });
+      setBulkSelectedKeys(selectedKeys);
+      setBulkAnchorIndex(anchorIndex);
+    },
+    [bulkAnchorIndex, bulkSectionId, bulkSelectMode, bulkSelectedKeys, enterBulkSelect]
   );
 
   const railConversationByKey = useMemo(() => {
@@ -1439,9 +1663,13 @@ export function AgentWorkspaceRail() {
         {
           type: "item",
           id: "bulk-select",
-          label: "Bulk select",
+          label: bulkSelectMode
+            ? bulkSelectedKeys.has(getRailConversationKey(conversation))
+              ? "Remove from selection"
+              : "Add to selection"
+            : "Bulk select",
           onSelect: () =>
-            enterBulkSelect(conversation, {
+            toggleBulkSelectConversation(conversation, {
               inPinnedSection: inPinned,
               workspaceId: conversation.workspaceId,
               folderId: options?.folderId ?? null,
@@ -1468,8 +1696,10 @@ export function AgentWorkspaceRail() {
     [
       archiveConversation,
       beginConversationRename,
+      bulkSelectMode,
+      bulkSelectedKeys,
       createFolderForWorkspace,
-      enterBulkSelect,
+      toggleBulkSelectConversation,
       forkConversation,
       handleOpenConversationInEditor,
       moveConversationToFolder,
@@ -1555,17 +1785,17 @@ export function AgentWorkspaceRail() {
           >
             <span className="relative grid size-[10px] shrink-0 place-items-center">
               <Pin
-                className="col-start-1 row-start-1 size-[10px] text-[var(--text-disabled)] transition-opacity duration-150 group-hover/wshead:opacity-0"
+                className="col-start-1 row-start-1 size-[10px] text-[var(--text-disabled)] group-hover/wshead:opacity-0"
                 strokeWidth={2}
               />
               <ChevronRight
-                className={`col-start-1 row-start-1 size-[10px] text-[var(--text-disabled)] opacity-0 transition-[transform,opacity,color] duration-150 group-hover/wshead:opacity-100 group-hover/wshead:text-[var(--text-secondary)] ${
+                className={`col-start-1 row-start-1 size-[10px] text-[var(--text-disabled)] opacity-0 group-hover/wshead:opacity-100 group-hover/wshead:text-[var(--text-secondary)] ${
                   isPinnedHeaderCollapsed ? "" : "rotate-90"
                 }`}
                 strokeWidth={2}
               />
             </span>
-            <span className="truncate font-sans text-[10.5px] font-medium text-[var(--text-disabled)] transition-colors group-hover/wshead:text-[var(--text-primary)]">
+            <span className="truncate font-sans text-[10.5px] font-medium text-[var(--text-disabled)] group-hover/wshead:text-[var(--text-primary)]">
               Pinned
             </span>
           </button>
@@ -1621,7 +1851,6 @@ export function AgentWorkspaceRail() {
       </section>
     );
   }, [
-    activeWorkspaceId,
     beginConversationRename,
     cancelConversationRename,
     collapsedWorkspaceIds,
@@ -1637,7 +1866,6 @@ export function AgentWorkspaceRail() {
     pinnedRailConversations,
     renameState?.conversationId,
     renameState?.draft,
-    selectedConversationId,
     toggleWorkspaceCollapsed,
     updateConversationRenameDraft,
   ]);
@@ -1649,7 +1877,6 @@ export function AgentWorkspaceRail() {
       {!desktopRailCollapsed ? (
         <div
           className="flex h-full flex-col bg-[var(--agent-panel-bg)]"
-          data-electron-drag-host
         >
           {bulkSelectMode ? (
             <AgentRailBulkSelectBar
@@ -1665,10 +1892,12 @@ export function AgentWorkspaceRail() {
           ) : (
             <div
               className={`flex shrink-0 items-center gap-[8px] pt-[11px] ${railTopBarPadClass}`}
+              data-electron-drag-host
             >
               <button
                 type="button"
                 onClick={toggleLeftRailCollapsed}
+                data-electron-no-drag
                 className="flex size-[18px] shrink-0 items-center justify-center rounded-[var(--agent-control-radius)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--agent-card-bg)] hover:text-[var(--text-primary)]"
                 aria-label="Collapse workspace rail"
                 title="Collapse workspace rail"
@@ -1678,6 +1907,7 @@ export function AgentWorkspaceRail() {
               <button
                 type="button"
                 onClick={() => setRecentChatsOpen(true)}
+                data-electron-no-drag
                 className="flex size-[18px] shrink-0 items-center justify-center rounded-[var(--agent-control-radius)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--agent-card-bg)] hover:text-[var(--text-primary)]"
                 aria-label="Search all chats"
                 title="Search all chats"
@@ -1688,6 +1918,7 @@ export function AgentWorkspaceRail() {
                 type="button"
                 onClick={handleNewChat}
                 data-perf="agent-rail-new-chat"
+                data-electron-no-drag
                 className="ml-auto flex size-[18px] shrink-0 items-center justify-center rounded-[var(--agent-control-radius)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--agent-card-bg)] hover:text-[var(--text-primary)]"
                 aria-label="Start new chat"
                 title="Start new chat"
@@ -1701,8 +1932,31 @@ export function AgentWorkspaceRail() {
             <>
               <AgentRailConversationListScroll measureKey={railListScrollMeasureKey}>
           {railLoading ? (
-            <div className="flex min-h-[120px] items-center justify-center font-sans text-[13px] text-[var(--text-secondary)]">
-              Loading chats...
+            <div className="flex min-h-[120px] flex-col items-center justify-center gap-[8px] px-[10px] text-center font-sans text-[13px] text-[var(--text-secondary)]">
+              <span>Loading chats...</span>
+              {railLoadError ? (
+                <>
+                  <span className="text-[12px] text-[var(--text-disabled)]">{railLoadError}</span>
+                  <button
+                    type="button"
+                    onClick={() => void refreshConversationGroups()}
+                    className="rounded-[var(--radius-tab)] border border-[var(--border-card)] px-[10px] py-[5px] text-[12px] text-[var(--text-primary)] transition-colors hover:bg-[var(--bg-card)]"
+                  >
+                    Retry
+                  </button>
+                </>
+              ) : null}
+            </div>
+          ) : railLoadError ? (
+            <div className="flex min-h-[120px] flex-col items-center justify-center gap-[8px] px-[10px] text-center font-sans text-[13px] text-[var(--text-secondary)]">
+              <span>{railLoadError}</span>
+              <button
+                type="button"
+                onClick={() => void refreshConversationGroups()}
+                className="rounded-[var(--radius-tab)] border border-[var(--border-card)] px-[10px] py-[5px] text-[12px] text-[var(--text-primary)] transition-colors hover:bg-[var(--bg-card)]"
+              >
+                Retry
+              </button>
             </div>
           ) : visibleGroups.length === 0 && pinnedRailConversations.length === 0 ? (
             <div className="flex min-h-[120px] flex-col items-center justify-center gap-[8px] px-[10px] text-center font-sans text-[13px] text-[var(--text-secondary)]">
@@ -1754,6 +2008,14 @@ export function AgentWorkspaceRail() {
                   (conversation) => !folderIdByConversationId.has(conversation.id)
                 );
                 const branchLabel = workspaceBranchLabel(group.workspace.id, group.workspace.root);
+                const workspaceIsGitRepo =
+                  group.workspace.id === activeWorkspaceId
+                    ? gitStatus?.isGitRepo
+                    : group.repository?.isGitRepo;
+                const workspaceCurrentBranch =
+                  group.workspace.id === activeWorkspaceId
+                    ? gitStatus?.currentBranch
+                    : group.repository?.currentBranch;
                 return (
                 <section
                   key={groupKey}
@@ -1783,7 +2045,7 @@ export function AgentWorkspaceRail() {
                           );
                         }}
                       />
-                      <span className="truncate font-sans text-[10.5px] font-medium text-[var(--text-disabled)] transition-colors group-hover/wshead:text-[var(--text-primary)]">
+                      <span className="truncate font-sans text-[10.5px] font-medium text-[var(--text-disabled)] group-hover/wshead:text-[var(--text-primary)]">
                         {group.workspace.name}
                       </span>
                       {branchLabel ? (
@@ -1793,15 +2055,33 @@ export function AgentWorkspaceRail() {
                       ) : null}
                     </button>
                     {workspaceActionsEnabled ? (
-                      <button
-                        type="button"
-                        onClick={() => void handleNewChatForWorkspace(group.workspace.id)}
-                        className="flex size-[16px] shrink-0 items-center justify-center rounded-[var(--radius-tab)] text-[var(--text-disabled)] opacity-0 transition-all group-hover:opacity-100 hover:bg-[var(--bg-card)] hover:text-[var(--text-primary)]"
-                        aria-label={`New chat in ${group.workspace.name}`}
-                        title={`New chat in ${group.workspace.name}`}
-                      >
-                        <Plus className="size-[12px]" strokeWidth={2} />
-                      </button>
+                      <>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            void handleNewOrchestrationWorktree(
+                              group.workspace.id,
+                              group.workspace.name,
+                              workspaceCurrentBranch,
+                              workspaceIsGitRepo
+                            )
+                          }
+                          className="flex size-[16px] shrink-0 items-center justify-center rounded-[var(--radius-tab)] text-[var(--text-disabled)] opacity-0 group-hover:opacity-100 hover:bg-[var(--bg-card)] hover:text-[var(--text-primary)]"
+                          aria-label={`Start Orchestration Mode in a new worktree for ${group.workspace.name}`}
+                          title={`Start Orchestration Mode in a new worktree for ${group.workspace.name}`}
+                        >
+                          <GitBranchPlus className="size-[12px]" strokeWidth={2} />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void handleNewChatForWorkspace(group.workspace.id)}
+                          className="flex size-[16px] shrink-0 items-center justify-center rounded-[var(--radius-tab)] text-[var(--text-disabled)] opacity-0 group-hover:opacity-100 hover:bg-[var(--bg-card)] hover:text-[var(--text-primary)]"
+                          aria-label={`New chat in ${group.workspace.name}`}
+                          title={`New chat in ${group.workspace.name}`}
+                        >
+                          <Plus className="size-[12px]" strokeWidth={2} />
+                        </button>
+                      </>
                     ) : null}
                   </div>
                   {editingWorkspaceKey === groupKey ? (
@@ -1843,7 +2123,7 @@ export function AgentWorkspaceRail() {
                             }
                           >
                             <div
-                              className="group/folder flex h-[24px] w-full min-w-0 items-center rounded-[var(--agent-control-radius)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--agent-card-bg)] hover:text-[var(--text-primary)]"
+                              className="group/folder flex h-[24px] w-full min-w-0 items-center rounded-[var(--agent-control-radius)] text-[var(--text-secondary)] hover:bg-[var(--agent-card-bg)] hover:text-[var(--text-primary)]"
                               onContextMenu={(event) => handleFolderContextMenu(event, folder)}
                             >
                               <button
@@ -1879,7 +2159,7 @@ export function AgentWorkspaceRail() {
                                     current === folder.id ? null : folder.id
                                   );
                                 }}
-                                className="mr-[3px] flex size-[18px] shrink-0 items-center justify-center rounded-[var(--agent-control-radius)] text-[var(--text-disabled)] opacity-0 transition-all hover:bg-[var(--bg-card)] hover:text-[var(--text-primary)] group-hover/folder:opacity-100 focus-visible:opacity-100"
+                                className="mr-[3px] flex size-[18px] shrink-0 items-center justify-center rounded-[var(--agent-control-radius)] text-[var(--text-disabled)] opacity-0 hover:bg-[var(--bg-card)] hover:text-[var(--text-primary)] group-hover/folder:opacity-100 focus-visible:opacity-100"
                                 title={`Customize ${folder.name}`}
                                 aria-label={`Customize ${folder.name}`}
                               >
@@ -2034,6 +2314,31 @@ export function AgentWorkspaceRail() {
             </>
           )}
               </AgentRailConversationListScroll>
+              {editingServerId === activeServer.id && !isLocalDeviceServer(activeServer) ? (
+                <div className="shrink-0 px-[11px] pb-[4px]">
+                  <RailIconCustomizePanel
+                    title={activeServer.label}
+                    icon={activeServerAppearance.icon}
+                    color={activeServerAppearance.color}
+                    showNameField
+                    name={activeServerAppearance.nickname ?? ""}
+                    nameFieldLabel="Server nickname"
+                    allowEmptyName
+                    onClose={() => setEditingServerId(null)}
+                    onUpdate={(patch) =>
+                      updateServerAppearance(
+                        activeServer.id,
+                        {
+                          icon: patch.icon,
+                          color: patch.color,
+                          nickname: patch.name,
+                        },
+                        servers.findIndex((server) => server.id === activeServer.id)
+                      )
+                    }
+                  />
+                </div>
+              ) : null}
               <div className="flex shrink-0 items-center gap-[8px] px-[11px] py-[10px]">
                 <button
                   ref={accountAnchorRef}
@@ -2042,24 +2347,43 @@ export function AgentWorkspaceRail() {
                     setFilterMenuOpen(false);
                     setServerPickerOpen((open) => !open);
                   }}
-                  className="flex min-w-0 flex-1 items-center gap-[8px] rounded-[var(--radius-tab)] py-[2px] text-left transition-colors hover:bg-[var(--bg-card)]"
-                  aria-label={`Switch server (${activeServer.label})`}
+                  onContextMenu={(event) => {
+                    if (isLocalDeviceServer(activeServer)) {
+                      return;
+                    }
+                    event.preventDefault();
+                    event.stopPropagation();
+                    setFilterMenuOpen(false);
+                    setServerPickerOpen(false);
+                    setEditingServerId((current) =>
+                      current === activeServer.id ? null : activeServer.id
+                    );
+                  }}
+                  className="flex min-w-0 flex-1 items-center gap-[8px] rounded-[var(--radius-tab)] py-[2px] text-left hover:bg-[var(--bg-card)]"
+                  aria-label={`Switch server (${activeServerDisplayLabel})`}
                   aria-expanded={serverPickerOpen}
                   aria-haspopup="menu"
-                  title={activeServer.label}
+                  title={activeServerDisplayLabel}
                 >
-                  <CircleUserRound
-                    className="size-[18px] shrink-0 text-[var(--text-secondary)]"
-                    strokeWidth={1.5}
-                    aria-hidden
-                  />
+                  {isLocalDeviceServer(activeServer) ? (
+                    <CircleUserRound
+                      className="size-[18px] shrink-0 text-[var(--text-secondary)]"
+                      strokeWidth={1.5}
+                      aria-hidden
+                    />
+                  ) : (
+                    <WorkspaceFolderIcon
+                      iconName={activeServerAppearance.icon}
+                      color={activeServerAppearance.color}
+                      className="size-[18px] shrink-0"
+                      strokeWidth={1.5}
+                    />
+                  )}
                   <span className="min-w-0 flex-1 truncate font-sans text-[13px] text-[var(--text-primary)]">
-                    {activeServer.label}
+                    {activeServerDisplayLabel}
                   </span>
                   <ChevronDown
-                    className={`size-[14px] shrink-0 text-[var(--text-secondary)] transition-transform ${
-                      serverPickerOpen ? "rotate-180" : ""
-                    }`}
+                    className="size-[14px] shrink-0 text-[var(--text-secondary)]"
                     strokeWidth={1.5}
                     aria-hidden
                   />
@@ -2103,6 +2427,7 @@ export function AgentWorkspaceRail() {
         selectedServerId={activeServer.id}
         servers={servers}
         serverStatusById={serverStatusById}
+        serverRailAppearances={serverRailAppearances}
         onSelect={handleActiveServerChange}
         placement="above"
       />

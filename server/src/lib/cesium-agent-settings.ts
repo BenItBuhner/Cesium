@@ -176,6 +176,15 @@ function providerLabelFromId(providerId: string): string {
     .join(" ");
 }
 
+function providerKeyLookupIds(providerId: string): string[] {
+  const normalized = normalizeProviderId(providerId);
+  const ids = [normalized];
+  if (normalized.startsWith("custom-")) {
+    ids.push(normalized.slice("custom-".length));
+  }
+  return [...new Set(ids.filter(Boolean))];
+}
+
 function formatApiKeyMismatchError(apiKey: string, expectedProviderId: string): string {
   const inferred = inferProviderIdFromApiKey(apiKey);
   const expected = normalizeProviderId(expectedProviderId);
@@ -998,7 +1007,14 @@ export async function createCesiumAgentConfigOptions(): Promise<AgentConfigOptio
       name: "Mode",
       category: "mode",
       currentValue: "agent",
-      options: [{ value: "agent", name: "Agent" }],
+      options: [
+        { value: "agent", name: "Agent" },
+        {
+          value: "orchestration",
+          name: "Orchestration",
+          description: "Coordinate a kanban board and delegate work to child agents.",
+        },
+      ],
     },
     {
       id: "model",
@@ -1029,8 +1045,22 @@ export function findCesiumModelCatalogEntry(
 
 export async function resolveProviderApiBaseUrl(providerId: string): Promise<string | undefined> {
   const normalized = normalizeProviderId(providerId);
+  const providerIds = providerKeyLookupIds(normalized);
+  const settings = await getCesiumAgentSettings();
+  const customProvider = settings.customProviders.find((provider) =>
+    providerIds.includes(normalizeProviderId(provider.id))
+  );
+  if (customProvider?.baseUrl?.trim()) {
+    return customProvider.baseUrl.trim();
+  }
+  const providerKey = settings.providerKeys.find((key) =>
+    providerIds.includes(normalizeProviderId(key.providerId))
+  );
+  if (providerKey?.baseUrl?.trim()) {
+    return providerKey.baseUrl.trim();
+  }
   const catalog = await getCesiumModelCatalog();
-  const entry = catalog.find((item) => normalizeProviderId(item.providerId) === normalized);
+  const entry = catalog.find((item) => providerIds.includes(normalizeProviderId(item.providerId)));
   return entry?.providerApiBaseUrl ?? BUILTIN_PROVIDER_BASE_URLS[normalized];
 }
 
@@ -1088,11 +1118,12 @@ export async function resolveCesiumApiKey(input: {
 }): Promise<{ apiKey: string; baseUrl?: string; providerId: string; apiKind: CesiumProviderKind }> {
   const settings = await getCesiumAgentSettings();
   const providerId = normalizeProviderId(input.providerId);
+  const providerIds = providerKeyLookupIds(providerId);
   const byProvider = settings.providerKeys.find(
-    (key) => normalizeProviderId(key.providerId) === providerId
+    (key) => providerIds.includes(normalizeProviderId(key.providerId))
   );
   if (byProvider) {
-    assertApiKeyMatchesProvider(byProvider.apiKey, providerId);
+    assertApiKeyMatchesProvider(byProvider.apiKey, normalizeProviderId(byProvider.providerId));
     return {
       apiKey: byProvider.apiKey,
       baseUrl: byProvider.baseUrl,
@@ -1101,7 +1132,10 @@ export async function resolveCesiumApiKey(input: {
     };
   }
   const byInferredPrefix = settings.providerKeys.find(
-    (key) => inferProviderIdFromApiKey(key.apiKey) === providerId
+    (key) => {
+      const inferred = inferProviderIdFromApiKey(key.apiKey);
+      return inferred ? providerIds.includes(inferred) : false;
+    }
   );
   if (byInferredPrefix) {
     return {
@@ -1124,7 +1158,7 @@ export async function resolveCesiumApiKey(input: {
     }
   }
   throw new Error(
-    `No Cesium API key configured for ${providerLabelFromId(providerId)}. Add one in Settings → Agents → Cesium Agent.`
+    `No API key configured for ${providerLabelFromId(providerId)}. Add one in Settings → Agents → Cesium Agent.`
   );
 }
 

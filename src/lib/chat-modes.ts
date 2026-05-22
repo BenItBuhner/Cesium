@@ -7,6 +7,21 @@ export const DEFAULT_MODE_OPTIONS: AgentModeOption[] = [
   { id: "ask", label: "Ask" },
 ];
 
+export function isOrchestrationMode(mode: string): boolean {
+  return String(mode).trim().toLowerCase() === "orchestration";
+}
+
+/**
+ * Orchestration mode is fixed once a chat has been initiated (server-backed
+ * conversation). Draft/new-chat composers may still change mode beforehand.
+ */
+export function isOrchestrationModeLocked(
+  mode: string,
+  chatInitiated: boolean
+): boolean {
+  return chatInitiated && isOrchestrationMode(mode);
+}
+
 export function formatModeLabel(mode: string): string {
   const trimmed = mode.trim();
   if (!trimmed) {
@@ -68,6 +83,9 @@ export function resolveCanonicalModeId(rawMode: string, options: AgentModeOption
 
 export function getModeTone(mode: string): KnownEditorMode {
   const normalized = mode.trim().toLowerCase();
+  if (isOrchestrationMode(normalized) || normalized.includes("orchestration")) {
+    return "plan";
+  }
   if (
     normalized === "plan" ||
     normalized === "architect" ||

@@ -43,6 +43,12 @@ import type {
   McpServerConfig,
   McpServerPublic,
 } from "@/lib/mcp-types";
+import type {
+  OrchestrationBoardRecord,
+  OrchestrationBoardSnapshot,
+  OrchestrationColumnId,
+  OrchestrationIssuePriority,
+} from "@/lib/orchestration-types";
 
 export type ServerRequestContext = {
   serverId?: string;
@@ -324,6 +330,12 @@ export function getServerBaseUrl(): string {
 export function buildAgentWebSocketUrl(workspaceId: string): string {
   const params = new URLSearchParams({ workspaceId });
   const base = `${toWebSocketUrl(resolveClientServerBaseUrl())}/ws/agent?${params.toString()}`;
+  return buildAuthenticatedUrl(base);
+}
+
+export function buildOrchestrationWebSocketUrl(workspaceId: string): string {
+  const params = new URLSearchParams({ workspaceId });
+  const base = `${toWebSocketUrl(resolveClientServerBaseUrl())}/ws/orchestration?${params.toString()}`;
   return buildAuthenticatedUrl(base);
 }
 
@@ -1098,7 +1110,11 @@ export async function promptAgentConversation(
   text: string,
   attachments?: ImageAttachment[],
   configOverride?: QueuedPromptConfigOverride,
-  ids?: { clientEventId?: string; clientMessageId?: string }
+  ids?: {
+    clientEventId?: string;
+    clientMessageId?: string;
+    delivery?: "normal" | "steer";
+  }
 ): Promise<AgentConversationSnapshotResponse> {
   return request(`/api/agents/conversations/${encodeURIComponent(conversationId)}/prompt`, {
     method: "POST",
@@ -1201,6 +1217,124 @@ export async function forkAgentConversation(
     method: "POST",
     body: JSON.stringify(options ?? {}),
   });
+}
+
+export async function listOrchestrationBoards(): Promise<{
+  boards: OrchestrationBoardRecord[];
+}> {
+  return request("/api/orchestration/boards");
+}
+
+export async function createOrchestrationBoard(input?: {
+  title?: string;
+  description?: string;
+  headConversationId?: string | null;
+}): Promise<{ snapshot: OrchestrationBoardSnapshot }> {
+  return request("/api/orchestration/boards", {
+    method: "POST",
+    body: JSON.stringify(input ?? {}),
+  });
+}
+
+export async function startOrchestrationMode(input?: {
+  title?: string;
+  description?: string;
+  prompt?: string;
+}): Promise<{
+  snapshot: OrchestrationBoardSnapshot;
+  headConversation: AgentConversationRecord;
+}> {
+  return request("/api/orchestration/start", {
+    method: "POST",
+    body: JSON.stringify(input ?? {}),
+  });
+}
+
+export async function fetchOrchestrationBoardSnapshot(
+  boardId: string
+): Promise<{ snapshot: OrchestrationBoardSnapshot }> {
+  return request(`/api/orchestration/boards/${encodeURIComponent(boardId)}`);
+}
+
+export async function patchOrchestrationBoard(
+  boardId: string,
+  patch: {
+    title?: string;
+    description?: string;
+    headConversationId?: string | null;
+    archived?: boolean;
+  }
+): Promise<{ snapshot: OrchestrationBoardSnapshot }> {
+  return request(`/api/orchestration/boards/${encodeURIComponent(boardId)}`, {
+    method: "PATCH",
+    body: JSON.stringify(patch),
+  });
+}
+
+export async function createOrchestrationIssue(
+  boardId: string,
+  input: {
+    title: string;
+    description?: string;
+    columnId?: OrchestrationColumnId;
+    priority?: OrchestrationIssuePriority;
+    acceptanceCriteria?: string[];
+  }
+): Promise<{ snapshot: OrchestrationBoardSnapshot }> {
+  return request(
+    `/api/orchestration/boards/${encodeURIComponent(boardId)}/issues`,
+    {
+      method: "POST",
+      body: JSON.stringify(input),
+    }
+  );
+}
+
+export async function patchOrchestrationIssue(
+  boardId: string,
+  issueId: string,
+  patch: {
+    title?: string;
+    description?: string;
+    columnId?: OrchestrationColumnId;
+    priority?: OrchestrationIssuePriority;
+    sortOrder?: number;
+    acceptanceCriteria?: string[];
+    dependencyIssueIds?: string[];
+    blockedReason?: string | null;
+  }
+): Promise<{ snapshot: OrchestrationBoardSnapshot }> {
+  return request(
+    `/api/orchestration/boards/${encodeURIComponent(boardId)}/issues/${encodeURIComponent(issueId)}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify(patch),
+    }
+  );
+}
+
+export async function deleteOrchestrationIssue(
+  boardId: string,
+  issueId: string
+): Promise<{ snapshot: OrchestrationBoardSnapshot }> {
+  return request(
+    `/api/orchestration/boards/${encodeURIComponent(boardId)}/issues/${encodeURIComponent(issueId)}`,
+    { method: "DELETE" }
+  );
+}
+
+export async function addOrchestrationIssueComment(
+  boardId: string,
+  issueId: string,
+  message: string
+): Promise<{ snapshot: OrchestrationBoardSnapshot }> {
+  return request(
+    `/api/orchestration/boards/${encodeURIComponent(boardId)}/issues/${encodeURIComponent(issueId)}/comments`,
+    {
+      method: "POST",
+      body: JSON.stringify({ message }),
+    }
+  );
 }
 
 export async function transcribeAudio(
@@ -1952,12 +2086,105 @@ export type BrowserDebugNavigateInput =
   | { op: "goto"; url: string }
   | { op: "reload" | "back" | "forward"; url?: undefined };
 
+export type BrowserDebugViewportResult = {
+  imageDataUrl: string | null;
+  currentUrl?: string | null;
+};
+
+export type BrowserDebugInputEvent =
+  | { type: "mouse"; action: "move" | "down" | "up" | "click"; x: number; y: number; button?: "left" | "middle" | "right" }
+  | { type: "wheel"; deltaX?: number; deltaY?: number }
+  | { type: "key"; action: "down" | "up" | "press" | "type"; key: string };
+
+export type BrowserDebugEvent =
+  | {
+      seq: number;
+      ts: number;
+      type: "console";
+      level: "log" | "info" | "warning" | "error" | "debug";
+      source: "console" | "exception" | "log";
+      text: string;
+      url?: string;
+      lineNumber?: number;
+      columnNumber?: number;
+    }
+  | {
+      seq: number;
+      ts: number;
+      type: "network";
+      url: string;
+      method?: string;
+      status?: number;
+      statusText?: string;
+      resourceType?: string;
+    };
+
 export type BrowserRenderedElementScreenshotInput = {
   pageUrl: string;
   pathIndices: number[];
   rect?: { left: number; top: number; width: number; height: number } | null;
   viewport?: { width: number; height: number } | null;
   scroll?: { x: number; y: number } | null;
+};
+
+export type BrowserControlGroup = "left" | "right";
+export type BrowserControlViewportPreset =
+  | "watch"
+  | "mobile"
+  | "tablet"
+  | "laptop"
+  | "desktop"
+  | "custom";
+export type BrowserControlViewport = {
+  preset: BrowserControlViewportPreset;
+  width: number;
+  height: number;
+  deviceScaleFactor?: number;
+  mobile?: boolean;
+  touch?: boolean;
+};
+export type BrowserControlTab = {
+  tabId: string;
+  workspaceId: string;
+  group: BrowserControlGroup;
+  title: string;
+  targetUrl: string;
+  currentUrl?: string | null;
+  engine: "proxy" | "electron-native" | "server-chromium";
+  debugSessionId?: string | null;
+  nativeSessionId?: string | null;
+  active: boolean;
+  focused: boolean;
+  capabilities: Record<string, boolean>;
+  viewport: BrowserControlViewport;
+  lockState: {
+    locked: boolean;
+    lockVersion: number;
+    lockedByConversationId?: string | null;
+    lockReason?: string | null;
+    lockedAt?: number | null;
+    userUnlockedAt?: number | null;
+    userAlteredAt?: number | null;
+  };
+  createdAt: number;
+  updatedAt: number;
+};
+export type BrowserControlSnapshot = {
+  tab: BrowserControlTab;
+  title?: string | null;
+  url?: string | null;
+  visibleText: string;
+  html?: string;
+  accessibilityText?: string;
+  elementRefs: Array<{
+    ref: string;
+    tag: string;
+    text?: string;
+    role?: string;
+    selector?: string;
+    rect?: { x: number; y: number; width: number; height: number };
+  }>;
+  truncated?: boolean;
 };
 
 export async function createBrowserDebugSession(
@@ -1967,6 +2194,123 @@ export async function createBrowserDebugSession(
     method: "POST",
     body: JSON.stringify(input),
   });
+}
+
+export async function listBrowserControlTabs(): Promise<{ tabs: BrowserControlTab[] }> {
+  return request("/api/browser-control/tabs", undefined, { skipWorkspaceHeader: false });
+}
+
+export async function openBrowserControlTab(input: {
+  url: string;
+  title?: string;
+  group?: BrowserControlGroup;
+  engine?: "proxy" | "server-chromium";
+  active?: boolean;
+  viewport?: Partial<BrowserControlViewport>;
+}): Promise<{ tab: BrowserControlTab }> {
+  return request("/api/browser-control/tabs", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export async function closeBrowserControlTab(tabId: string): Promise<void> {
+  await request(`/api/browser-control/tabs/${encodeURIComponent(tabId)}`, {
+    method: "DELETE",
+  });
+}
+
+export async function focusBrowserControlTab(tabId: string): Promise<{ tab: BrowserControlTab }> {
+  return request(`/api/browser-control/tabs/${encodeURIComponent(tabId)}/focus`, {
+    method: "POST",
+  });
+}
+
+export async function moveBrowserControlTab(
+  tabId: string,
+  group: BrowserControlGroup
+): Promise<{ tab: BrowserControlTab }> {
+  return request(`/api/browser-control/tabs/${encodeURIComponent(tabId)}/move`, {
+    method: "POST",
+    body: JSON.stringify({ group }),
+  });
+}
+
+export async function navigateBrowserControlTab(
+  tabId: string,
+  input: BrowserDebugNavigateInput
+): Promise<{ tab: BrowserControlTab }> {
+  return request(`/api/browser-control/tabs/${encodeURIComponent(tabId)}/navigate`, {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export async function setBrowserControlLock(
+  tabId: string,
+  input: {
+    locked?: boolean;
+    conversationId?: string | null;
+    reason?: string | null;
+    userInitiated?: boolean;
+  }
+): Promise<{ tab: BrowserControlTab }> {
+  return request(`/api/browser-control/tabs/${encodeURIComponent(tabId)}/lock`, {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export async function markBrowserControlUserIntervention(
+  tabId: string,
+  detail?: string
+): Promise<{ tab: BrowserControlTab }> {
+  return request(`/api/browser-control/tabs/${encodeURIComponent(tabId)}/user-intervention`, {
+    method: "POST",
+    body: JSON.stringify({ detail }),
+  });
+}
+
+export async function setBrowserControlViewport(
+  tabId: string,
+  viewport: Partial<BrowserControlViewport>
+): Promise<{ tab: BrowserControlTab }> {
+  return request(`/api/browser-control/tabs/${encodeURIComponent(tabId)}/viewport`, {
+    method: "POST",
+    body: JSON.stringify(viewport),
+  });
+}
+
+export async function sendBrowserControlInput(
+  tabId: string,
+  input: BrowserDebugInputEvent
+): Promise<{ ok: boolean }> {
+  return request(`/api/browser-control/tabs/${encodeURIComponent(tabId)}/input`, {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export async function evaluateBrowserControlTab(
+  tabId: string,
+  script: string
+): Promise<{ result: unknown; exception?: string }> {
+  return request(`/api/browser-control/tabs/${encodeURIComponent(tabId)}/evaluate`, {
+    method: "POST",
+    body: JSON.stringify({ script }),
+  });
+}
+
+export async function snapshotBrowserControlTab(
+  tabId: string
+): Promise<{ snapshot: BrowserControlSnapshot }> {
+  return request(`/api/browser-control/tabs/${encodeURIComponent(tabId)}/snapshot`);
+}
+
+export async function screenshotBrowserControlTab(
+  tabId: string
+): Promise<{ imageDataUrl: string | null; tab: BrowserControlTab }> {
+  return request(`/api/browser-control/tabs/${encodeURIComponent(tabId)}/screenshot`);
 }
 
 export async function deleteBrowserDebugSession(sessionId: string): Promise<void> {
@@ -2063,6 +2407,94 @@ export async function navigateBrowserDebugSession(
     return null;
   }
   return (await response.json()) as { url: string | null };
+}
+
+export async function captureBrowserDebugViewport(
+  sessionId: string,
+  viewport: { width: number; height: number }
+): Promise<BrowserDebugViewportResult | null> {
+  const params = new URLSearchParams({
+    width: String(Math.max(1, Math.floor(viewport.width))),
+    height: String(Math.max(1, Math.floor(viewport.height))),
+  });
+  const response = await fetch(
+    `${resolveClientServerBaseUrl()}/api/browser-debug/sessions/${encodeURIComponent(sessionId)}/viewport?${params.toString()}`,
+    {
+      method: "GET",
+      headers: Object.fromEntries(
+        attachSessionToken({
+          "Content-Type": "application/json",
+          ...getWorkspaceHeaders(),
+        }).entries()
+      ),
+      credentials: "include",
+      cache: "no-store",
+    }
+  );
+  syncAuthTokenFromResponse(response);
+  if (response.status === 401) {
+    clearStoredAuth();
+    return null;
+  }
+  if (!response.ok) return null;
+  return (await response.json()) as BrowserDebugViewportResult;
+}
+
+export async function sendBrowserDebugInput(
+  sessionId: string,
+  input: BrowserDebugInputEvent
+): Promise<boolean> {
+  const response = await fetch(
+    `${resolveClientServerBaseUrl()}/api/browser-debug/sessions/${encodeURIComponent(sessionId)}/input`,
+    {
+      method: "POST",
+      headers: Object.fromEntries(
+        attachSessionToken({
+          "Content-Type": "application/json",
+          ...getWorkspaceHeaders(),
+        }).entries()
+      ),
+      credentials: "include",
+      cache: "no-store",
+      body: JSON.stringify(input),
+    }
+  );
+  syncAuthTokenFromResponse(response);
+  if (response.status === 401) {
+    clearStoredAuth();
+    return false;
+  }
+  if (!response.ok) return false;
+  const payload = (await response.json()) as { ok?: boolean };
+  return Boolean(payload.ok);
+}
+
+export async function getBrowserDebugEvents(
+  sessionId: string,
+  after = 0
+): Promise<{ events: BrowserDebugEvent[]; cursor: number } | null> {
+  const params = new URLSearchParams({ after: String(Math.max(0, Math.floor(after))) });
+  const response = await fetch(
+    `${resolveClientServerBaseUrl()}/api/browser-debug/sessions/${encodeURIComponent(sessionId)}/events?${params.toString()}`,
+    {
+      method: "GET",
+      headers: Object.fromEntries(
+        attachSessionToken({
+          "Content-Type": "application/json",
+          ...getWorkspaceHeaders(),
+        }).entries()
+      ),
+      credentials: "include",
+      cache: "no-store",
+    }
+  );
+  syncAuthTokenFromResponse(response);
+  if (response.status === 401) {
+    clearStoredAuth();
+    return null;
+  }
+  if (!response.ok) return null;
+  return (await response.json()) as { events: BrowserDebugEvent[]; cursor: number };
 }
 
 /**

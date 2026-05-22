@@ -36,6 +36,7 @@ import type {
 } from "@/lib/agent-types";
 import type { AgentModeOption, EditorMode, ImageAttachment, ModelInfo, QueuedPromptConfigOverride } from "@/lib/types";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
+import { useServerConnections } from "@/components/preferences/ServerConnectionsProvider";
 import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
 import { nextUnreadCompletionMap } from "@/lib/chat-unread-completion";
 import {
@@ -255,7 +256,13 @@ type AgentConversationsContextValue = {
     configId: string,
     value: string
   ) => Promise<void>;
-  promptConversation: (conversationId: string, text: string, attachments?: ImageAttachment[], configOverride?: QueuedPromptConfigOverride) => Promise<boolean>;
+  promptConversation: (
+    conversationId: string,
+    text: string,
+    attachments?: ImageAttachment[],
+    configOverride?: QueuedPromptConfigOverride,
+    delivery?: "normal" | "steer"
+  ) => Promise<boolean>;
   retryConversation: (conversationId: string) => Promise<boolean>;
   cancelConversation: (conversationId: string) => Promise<void>;
   pauseConversation: (conversationId: string) => Promise<void>;
@@ -300,6 +307,8 @@ export function AgentConversationsProvider({
     workspaceSession,
     updateWorkspaceSession,
   } = useWorkspace();
+  const { activeServer } = useServerConnections();
+  const agentSocketServerKey = activeServer.baseUrl;
   const activeWorkspaceIdRef = useRef<string | null>(activeWorkspaceId);
   activeWorkspaceIdRef.current = activeWorkspaceId;
   const { settings: globalSettings } = useGlobalSettings();
@@ -1101,7 +1110,8 @@ const executePrompt = useCallback(
       conversationId: string,
       text: string,
       attachments?: ImageAttachment[],
-      configOverride?: QueuedPromptConfigOverride
+      configOverride?: QueuedPromptConfigOverride,
+      delivery: "normal" | "steer" = "normal"
     ) => {
       const startedAt = performance.now();
       const clientEventId =
@@ -1111,6 +1121,7 @@ const executePrompt = useCallback(
       const createdAt = Date.now();
       const currentConversation = conversationsByIdRef.current[conversationId];
       const canOptimisticallyAppend =
+        delivery !== "steer" &&
         currentConversation?.status !== "running" &&
         currentConversation?.status !== "awaiting_permission";
       if (canOptimisticallyAppend) {
@@ -1168,7 +1179,7 @@ const executePrompt = useCallback(
           text,
           attachments,
           configOverride,
-          { clientEventId, clientMessageId }
+          { clientEventId, clientMessageId, delivery }
         );
         recordPerfSample("conversation.prompt.ack", startedAt, {
           conversationId,
@@ -1251,9 +1262,16 @@ const executePrompt = useCallback(
       conversationId: string,
       text: string,
       attachments?: ImageAttachment[],
-      configOverride?: QueuedPromptConfigOverride
+      configOverride?: QueuedPromptConfigOverride,
+      delivery?: "normal" | "steer"
     ) => {
-      const ok = await executePrompt(conversationId, text, attachments, configOverride);
+      const ok = await executePrompt(
+        conversationId,
+        text,
+        attachments,
+        configOverride,
+        delivery
+      );
       if (ok) {
         clearEditingQueuedPromptForConversation(conversationId);
       }
@@ -1973,6 +1991,7 @@ busy,
     };
   }, [
     activeWorkspaceId,
+    agentSocketServerKey,
     bootstrapped,
     appendConversationEvent,
     appendConversationEventBatch,

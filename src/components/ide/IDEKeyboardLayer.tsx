@@ -48,6 +48,12 @@ import {
   dispatchNewChatShortcut,
   dispatchWorkspacePickerShortcut,
 } from "@/lib/chat-ui-shortcut-events";
+import {
+  createOrchestrationBoard,
+  fetchOrchestrationBoardSnapshot,
+  listOrchestrationBoards,
+} from "@/lib/server-api";
+import type { OrchestrationBoardRecord } from "@/lib/orchestration-types";
 
 type PaletteMode = "closed" | "command" | "quickopen";
 
@@ -147,11 +153,36 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
   const [renameWindowOpen, setRenameWindowOpen] = useState(false);
   const [renameWindowValue, setRenameWindowValue] = useState("");
   const [toast, setToast] = useState<string | null>(null);
+  const [orchestrationBoards, setOrchestrationBoards] = useState<
+    OrchestrationBoardRecord[]
+  >([]);
 
   const quickEntries = useMemo(
     () => (fileTree ? buildQuickOpenIndex(fileTree) : []),
     [fileTree]
   );
+
+  useEffect(() => {
+    if (!activeWorkspaceId) {
+      setOrchestrationBoards([]);
+      return;
+    }
+    let cancelled = false;
+    listOrchestrationBoards()
+      .then(({ boards }) => {
+        if (!cancelled) {
+          setOrchestrationBoards(boards);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setOrchestrationBoards([]);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeWorkspaceId]);
 
   const inferEditorIcon = useCallback((entry: QuickOpenEntry): EditorTab["icon"] => {
     const lower = entry.name.toLowerCase();
@@ -283,6 +314,45 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
     },
     []
   );
+
+  const openCurrentConversationBoard = useCallback(() => {
+    const bridge = bridgeRef.current;
+    if (!bridge) {
+      flash(setToast, "Editor is not ready yet.");
+      return;
+    }
+    const conversationId = agentShell?.selectedConversationId;
+    if (!conversationId) {
+      flash(setToast, "No active agent conversation.");
+      return;
+    }
+    void listOrchestrationBoards()
+      .then(({ boards }) => {
+        setOrchestrationBoards(boards);
+        const board = boards.find(
+          (candidate) => candidate.headConversationId === conversationId
+        );
+        if (!board) {
+          flash(setToast, "No Kanban board is attached to the active chat.");
+          return null;
+        }
+        return fetchOrchestrationBoardSnapshot(board.id);
+      })
+      .then((result) => {
+        if (!result) return;
+        const { snapshot } = result;
+        bridge.openOrchestrationBoardTab(snapshot.board.id, snapshot.board.title);
+        flash(setToast, "Opened orchestration board.");
+      })
+      .catch((error) => {
+        flash(
+          setToast,
+          error instanceof Error
+            ? `Failed to open board: ${error.message}`
+            : "Failed to open board."
+        );
+      });
+  }, [agentShell?.selectedConversationId, bridgeRef]);
 
   const promptRenameCurrentWindow = useCallback(() => {
     if (!isDedicatedWindow || !activeWindowId) {
@@ -861,6 +931,53 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
         run: () => openBrowserUrlPrompt(),
       },
       {
+        id: "workbench.action.newOrchestrationBoard",
+        label: "Orchestration: New Board",
+        run: () =>
+          void (async () => {
+            const bridge = bridgeRef.current;
+            if (!bridge) {
+              flash(setToast, "Editor is not ready yet.");
+              return;
+            }
+            try {
+              const { snapshot } = await createOrchestrationBoard();
+              setOrchestrationBoards((current) => [
+                snapshot.board,
+                ...current.filter((board) => board.id !== snapshot.board.id),
+              ]);
+              bridge.openOrchestrationBoardTab(snapshot.board.id, snapshot.board.title);
+              flash(setToast, "Created orchestration board.");
+            } catch (error) {
+              flash(
+                setToast,
+                error instanceof Error
+                  ? `Failed to create board: ${error.message}`
+                  : "Failed to create board."
+              );
+            }
+          })(),
+      },
+      {
+        id: "workbench.action.openCurrentOrchestrationBoard",
+        label: "Orchestration: Open Current Chat Board",
+        detail: "Open the Kanban board attached to the active orchestration chat.",
+        run: () => openCurrentConversationBoard(),
+      },
+      ...orchestrationBoards.map((board) => ({
+        id: `workbench.action.openOrchestrationBoard.${board.id}`,
+        label: `Orchestration: Open ${board.title}`,
+        detail: board.description || "Kanban board",
+        run: () => {
+          const bridge = bridgeRef.current;
+          if (!bridge) {
+            flash(setToast, "Editor is not ready yet.");
+            return;
+          }
+          bridge.openOrchestrationBoardTab(board.id, board.title);
+        },
+      })),
+      {
         id: "browser.openUrl",
         label: "Browser: Open URL…",
         run: () => openBrowserUrlPrompt(),
@@ -971,6 +1088,8 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
       kb,
       openWorkspaceById,
       openBrowserUrlPrompt,
+      openCurrentConversationBoard,
+      orchestrationBoards,
       promptForCreateWorkspace,
       promptToRemoveWorkspace,
       refreshTree,

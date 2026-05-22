@@ -377,3 +377,31 @@ pre {
 [contenteditable]:focus {
   outline: none;
 }
+
+.opencursor-mobile-native {
+  --opencursor-mobile-safe-area-top: 0px;
+}
+
+.opencursor-mobile-native .mobile-safe-top-pad {
+  padding-top: var(--opencursor-mobile-safe-area-top) !important;
+}
+
+.opencursor-mobile-native .mobile-safe-top-content {
+  padding-top: var(--opencursor-mobile-safe-area-top) !important;
+}
+
+.opencursor-mobile-native .mobile-safe-top-offset {
+  top: var(--opencursor-mobile-safe-area-top) !important;
+}
+
+.opencursor-mobile-native .mobile-safe-top-scroll {
+  scroll-padding-top: var(--opencursor-mobile-safe-area-top) !important;
+}
+
+.opencursor-mobile-idle *,
+.opencursor-mobile-idle *::before,
+.opencursor-mobile-idle *::after {
+  animation-play-state: paused !important;
+  transition-property: none !important;
+  caret-color: transparent !important;
+}

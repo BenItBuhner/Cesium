@@ -27,25 +27,32 @@ const PanelLoading = () => (
   </div>
 );
 
-const CodeEditor = dynamic(
+const CodeEditor = dynamic<any>(
   () => import("./CodeEditor").then((m) => ({ default: m.CodeEditor })),
-  { ssr: false, loading: PanelLoading }
+  { ssr: false, loading: PanelLoading } as any
 );
-const Terminal = dynamic(
+const Terminal = dynamic<any>(
   () => import("./Terminal").then((m) => ({ default: m.Terminal })),
-  { ssr: false, loading: PanelLoading }
+  { ssr: false, loading: PanelLoading } as any
 );
-const AgentTranscriptView = dynamic(
+const AgentTranscriptView = dynamic<any>(
   () => import("./AgentTranscriptView").then((m) => ({ default: m.AgentTranscriptView })),
-  { ssr: false, loading: PanelLoading }
+  { ssr: false, loading: PanelLoading } as any
 );
-const BrowserTab = dynamic(
+const BrowserTab = dynamic<any>(
   () => import("./BrowserTab").then((m) => ({ default: m.BrowserTab })),
-  { ssr: false, loading: PanelLoading }
+  { ssr: false, loading: PanelLoading } as any
 );
-const ExpandedComposerView = dynamic(
+const ExpandedComposerView = dynamic<any>(
   () => import("./ExpandedComposerView").then((m) => ({ default: m.ExpandedComposerView })),
-  { ssr: false, loading: PanelLoading }
+  { ssr: false, loading: PanelLoading } as any
+);
+const KanbanBoardView = dynamic<any>(
+  () =>
+    import("@/components/orchestration/KanbanBoardView").then((m) => ({
+      default: m.KanbanBoardView,
+    })),
+  { ssr: false, loading: PanelLoading } as any
 );
 import { useEditorBridgeRef } from "@/components/ide/EditorBridgeContext";
 import { useWorkbenchContextMenu } from "@/components/ide/WorkbenchContextMenuProvider";
@@ -74,6 +81,14 @@ import {
   saveWorkspaceWindowSession,
   createTerminal,
   deleteTerminal,
+  closeBrowserControlTab,
+  focusBrowserControlTab,
+  listBrowserControlTabs,
+  moveBrowserControlTab,
+  navigateBrowserControlTab,
+  openBrowserControlTab,
+  setBrowserControlLock,
+  setBrowserControlViewport,
   readFile,
   writeFile,
   type FileReadResult,
@@ -514,8 +529,193 @@ export function EditorPanel({
     }
   }, [flashNotice, refreshTerminals]);
 
-  const openBrowserTab = useCallback((url: string) => {
-    dispatch({ type: "OPEN_BROWSER_TAB", url });
+  const openBrowserTab = useCallback(
+    async (
+      url: string,
+      options?: { group?: EditorGroup; activate?: boolean; engine?: "proxy" | "server-chromium" }
+    ) => {
+      try {
+        const result = await openBrowserControlTab({
+          url,
+          group: options?.group ?? "right",
+          active: options?.activate ?? true,
+          engine: options?.engine ?? "proxy",
+        });
+        dispatch({
+          type: "OPEN_BROWSER_TAB",
+          url: result.tab.targetUrl,
+          name: result.tab.title,
+          tabId: result.tab.tabId,
+          group: result.tab.group,
+          engine: result.tab.engine === "electron-native" ? "server-chromium" : result.tab.engine,
+          controlSessionId: result.tab.tabId,
+          debugSessionId: result.tab.debugSessionId,
+          nativeSessionId: result.tab.nativeSessionId,
+          lockState: result.tab.lockState,
+          viewport: result.tab.viewport,
+        });
+        return result.tab.tabId;
+      } catch (error) {
+        flashNotice(
+          error instanceof Error
+            ? `Failed to open browser tab: ${error.message}`
+            : "Failed to open browser tab.",
+          "error"
+        );
+        dispatch({ type: "OPEN_BROWSER_TAB", url, group: options?.group, engine: "proxy" });
+        return null;
+      }
+    },
+    [flashNotice]
+  );
+
+  const listBridgeBrowserTabs = useCallback(
+    () =>
+      [
+        ...stateRef.current.leftTabs.map((tab) => ({ tab, group: "left" as const })),
+        ...stateRef.current.rightTabs.map((tab) => ({ tab, group: "right" as const })),
+      ]
+        .filter(({ tab }) => Boolean(tab.browser))
+        .map(({ tab, group }) => ({
+          tabId: tab.id,
+          workspaceId: "",
+          group,
+          title: tab.name,
+          targetUrl: tab.browser?.targetUrl ?? "",
+          currentUrl: tab.browser?.targetUrl ?? null,
+          engine: tab.browser?.engine ?? "proxy",
+          active:
+            (group === "left" && stateRef.current.leftActiveId === tab.id) ||
+            (group === "right" && stateRef.current.rightActiveId === tab.id),
+          focused:
+            stateRef.current.focusedGroup === group &&
+            ((group === "left" && stateRef.current.leftActiveId === tab.id) ||
+              (group === "right" && stateRef.current.rightActiveId === tab.id)),
+          capabilities: {},
+          viewport:
+            tab.browser?.viewport ?? {
+              preset: "desktop" as const,
+              width: 1440,
+              height: 900,
+            },
+          lockState:
+            tab.browser?.lockState ?? {
+              locked: false,
+              lockVersion: 0,
+            },
+          createdAt: 0,
+          updatedAt: 0,
+        })),
+    []
+  );
+
+  const closeBridgeBrowserTab = useCallback(
+    async (tabId: string) => {
+      const snapshot = stateRef.current;
+      const group = snapshot.leftTabs.some((tab) => tab.id === tabId) ? "left" : "right";
+      await closeBrowserControlTab(tabId).catch(() => undefined);
+      return requestCloseTab(group, tabId);
+    },
+    [requestCloseTab]
+  );
+
+  const focusBridgeBrowserTab = useCallback(async (tabId: string) => {
+    const snapshot = stateRef.current;
+    const group = snapshot.leftTabs.some((tab) => tab.id === tabId) ? "left" : "right";
+    await focusBrowserControlTab(tabId).catch(() => undefined);
+    dispatch({ type: "SELECT_TAB", group, id: tabId });
+    return true;
+  }, []);
+
+  const moveBridgeBrowserTab = useCallback(async (tabId: string, group: EditorGroup) => {
+    const snapshot = stateRef.current;
+    const from = snapshot.leftTabs.some((tab) => tab.id === tabId) ? "left" : "right";
+    await moveBrowserControlTab(tabId, group).catch(() => undefined);
+    if (from !== group) {
+      dispatch({ type: "MOVE_TAB", tabId, from, to: group });
+    }
+    return true;
+  }, []);
+
+  const navigateBridgeBrowserTab = useCallback(async (tabId: string, input: Parameters<typeof navigateBrowserControlTab>[1]) => {
+    const result = await navigateBrowserControlTab(tabId, input);
+    dispatch({
+      type: "UPDATE_BROWSER_TAB_URL",
+      tabId,
+      targetUrl: result.tab.currentUrl ?? result.tab.targetUrl,
+      name: result.tab.title,
+    });
+    return true;
+  }, []);
+
+  const updateBridgeBrowserLock = useCallback(
+    async (
+      tabId: string,
+      input: { locked: boolean; conversationId?: string | null; reason?: string | null }
+    ) => {
+      const result = await setBrowserControlLock(tabId, input);
+      dispatch({ type: "UPDATE_BROWSER_TAB_META", tabId, lockState: result.tab.lockState });
+      return true;
+    },
+    []
+  );
+
+  const setBridgeBrowserViewport = useCallback(
+    async (tabId: string, viewport: Parameters<typeof setBrowserControlViewport>[1]) => {
+      const result = await setBrowserControlViewport(tabId, viewport);
+      dispatch({ type: "UPDATE_BROWSER_TAB_META", tabId, viewport: result.tab.viewport });
+      return true;
+    },
+    []
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    const syncBrowserControlTabs = async () => {
+      const result = await listBrowserControlTabs().catch(() => null);
+      if (cancelled || !result) return;
+      const snapshot = stateRef.current;
+      const known = new Set([
+        ...snapshot.leftTabs.map((tab) => tab.id),
+        ...snapshot.rightTabs.map((tab) => tab.id),
+      ]);
+      for (const browserTab of result.tabs) {
+        if (known.has(browserTab.tabId)) {
+          dispatch({
+            type: "UPDATE_BROWSER_TAB_META",
+            tabId: browserTab.tabId,
+            engine: browserTab.engine === "electron-native" ? "server-chromium" : browserTab.engine,
+            controlSessionId: browserTab.tabId,
+            debugSessionId: browserTab.debugSessionId,
+            nativeSessionId: browserTab.nativeSessionId,
+            lockState: browserTab.lockState,
+            viewport: browserTab.viewport,
+          });
+          continue;
+        }
+        dispatch({
+          type: "OPEN_BROWSER_TAB",
+          url: browserTab.currentUrl ?? browserTab.targetUrl,
+          name: browserTab.title,
+          tabId: browserTab.tabId,
+          group: browserTab.group,
+          engine: browserTab.engine === "electron-native" ? "server-chromium" : browserTab.engine,
+          controlSessionId: browserTab.tabId,
+          debugSessionId: browserTab.debugSessionId,
+          nativeSessionId: browserTab.nativeSessionId,
+          lockState: browserTab.lockState,
+          viewport: browserTab.viewport,
+        });
+      }
+    };
+    void syncBrowserControlTabs();
+    const timer = window.setInterval(() => {
+      void syncBrowserControlTabs();
+    }, 1_500);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
   }, []);
 
   const openFilePalette = useCallback(() => {
@@ -970,6 +1170,21 @@ export function EditorPanel({
       saveAllTabs,
       openTerminalTab,
       openBrowserTab,
+      listBrowserTabs: listBridgeBrowserTabs,
+      closeBrowserTab: closeBridgeBrowserTab,
+      focusBrowserTab: focusBridgeBrowserTab,
+      moveBrowserTab: moveBridgeBrowserTab,
+      navigateBrowserTab: navigateBridgeBrowserTab,
+      updateBrowserLock: updateBridgeBrowserLock,
+      setBrowserViewport: setBridgeBrowserViewport,
+      openOrchestrationBoardTab: (boardId: string, title: string, group?: EditorGroup) => {
+        dispatch({
+          type: "OPEN_ORCHESTRATION_BOARD_TAB",
+          boardId,
+          title,
+          group,
+        });
+      },
       requestCloseTab,
       requestCloseAllInGroup,
       requestCloseOthersInGroup,
@@ -982,12 +1197,19 @@ export function EditorPanel({
     dispatch,
     flashNotice,
     openBrowserTab,
+    closeBridgeBrowserTab,
+    focusBridgeBrowserTab,
+    listBridgeBrowserTabs,
+    moveBridgeBrowserTab,
+    navigateBridgeBrowserTab,
     openTerminalTab,
     requestCloseAllInGroup,
     requestCloseOthersInGroup,
     requestCloseTab,
     saveAllTabs,
     saveTab,
+    setBridgeBrowserViewport,
+    updateBridgeBrowserLock,
   ]);
 
   const moveTab = useCallback(
@@ -1582,6 +1804,14 @@ export function EditorPanel({
         <BrowserTab key={tab.id} tab={tab} dispatch={dispatch} editorGroup={group} />
       );
     }
+    if (tab.orchestrationBoard) {
+      return (
+        <KanbanBoardView
+          key={tab.id}
+          boardId={tab.orchestrationBoard.boardId}
+        />
+      );
+    }
     if (tab.language === "markdown" && tab.previewMode === "preview") {
       return <SimpleMarkdownPreview key={tab.id} source={tab.content} />;
     }
@@ -1692,7 +1922,7 @@ export function EditorPanel({
           language={tab.language}
           filePath={tab.filePath}
           initialViewState={viewStateByTabIdRef.current[tab.id]}
-          onViewStateChange={(viewState) => {
+          onViewStateChange={(viewState: unknown) => {
             if (
               areViewStatesEqual(viewStateByTabIdRef.current[tab.id], viewState)
             ) {
@@ -1715,10 +1945,10 @@ export function EditorPanel({
               };
             });
           }}
-          onContentChange={(content) =>
+          onContentChange={(content: string) =>
             dispatch({ type: "UPDATE_TAB_CONTENT", tabId: tab.id, content })
           }
-          onLiveContentChange={(content) => {
+          onLiveContentChange={(content: string) => {
             liveTabContentRef.current.set(tab.id, content);
             if (tab.composerDraftId) {
               upsertComposerDraft(tab.composerDraftId, {
@@ -1730,7 +1960,7 @@ export function EditorPanel({
           onSave={
             tab.composerDraftId
               ? undefined
-              : (content) => saveTab(tab.id, content)
+              : (content: string) => saveTab(tab.id, content)
           }
         />
       </div>

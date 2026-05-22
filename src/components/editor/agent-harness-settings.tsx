@@ -1454,6 +1454,19 @@ function HarnessListView({
           }
           border={false}
         />
+        <SettingsRow
+          title={`Steer with ${modLabel} + Enter`}
+          description="When enabled, modified Enter queues the message as steering guidance after the current response and tool calls settle."
+          trailing={
+            <ToggleSwitch
+              checked={agents.steerCtrlEnter}
+              onChange={(value) => onPatchAgents({ steerCtrlEnter: value })}
+              size="md"
+              variant="green"
+            />
+          }
+          border={false}
+        />
       </SettingsSection>
 
       <SettingsSection title="Tool permissions (all harnesses)">

@@ -3,7 +3,14 @@ import { randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import WebSocket from "ws";
-import { buildCesiumSystemPrompt } from "@cesium/core/mcp";
+import {
+  buildCesiumOrchestrationSystemPrompt,
+  buildCesiumSystemPrompt,
+  formatGitSummaryForPrompt,
+  type BuildCesiumSystemPromptInput,
+  type McpServerSummary,
+} from "@cesium/core/mcp";
+import { getGitWorkspaceStatus } from "../git-worktrees.js";
 import {
   createCesiumAgentConfigOptions,
   getCesiumAgentSettings,
@@ -19,8 +26,29 @@ import {
   refreshWorkspaceMcpMirror,
 } from "../mcp/connection-manager.js";
 import { getMcpSummariesForPrompt } from "../mcp/server-store.js";
+import { BROWSER_MCP_SERVER_ID } from "../mcp/builtin-browser-tools.js";
 import { extractToolEditPreview } from "./tool-edit-preview.js";
+import {
+  addOrchestrationComment,
+  createOrchestrationIssue,
+  deleteOrchestrationIssue,
+  findOrchestrationAssignmentForConversation,
+  readOrchestrationBoardSnapshot,
+  resolveOrCreateOrchestrationBoardForHeadConversation,
+  upsertOrchestrationAssignment,
+  upsertOrchestrationIssue,
+} from "../orchestration/store.js";
 import type {
+  OrchestrationAssignmentRecord,
+  OrchestrationAssignmentPermissionPolicy,
+  OrchestrationAssignmentStatus,
+  OrchestrationBoardSnapshot,
+  OrchestrationColumnId,
+  OrchestrationIssuePriority,
+  OrchestrationPermissionDecision,
+} from "../orchestration/types.js";
+import type {
+  AgentBackendId,
   AgentBackendInfo,
   AgentConfigOption,
   AgentConversationStatus,
@@ -76,6 +104,18 @@ type ActivePermission = {
 type ActiveQuestion = {
   resolve: (value: string) => void;
   reject: (error: Error) => void;
+  prompt: string;
+  options: Array<{ id: string; label: string }>;
+  questions: CesiumQuestionStep[];
+  allowMultiple: boolean;
+  raw: Record<string, unknown>;
+};
+
+type CesiumQuestionStep = {
+  id: string;
+  prompt: string;
+  options: Array<{ id: string; label: string }>;
+  allowMultiple?: boolean;
 };
 
 type TerminalRun = {
@@ -89,7 +129,6 @@ type TerminalRun = {
 
 const CESIUM_SYSTEM_PROMPT = buildCesiumSystemPrompt();
 
-const MAX_TOOL_ITERATIONS = 24;
 const DEFAULT_MAX_OUTPUT_TOKENS = 8192;
 /** Slow third-party hosts (Cerebras, Nvidia NIM, etc.) can take a long time on large tool prompts. */
 const CESIUM_RESPONSE_WARNING_MS = 10 * 60 * 1000;
@@ -100,6 +139,13 @@ const MAX_READ_LINES = 2000;
 const MAX_GREP_RESULTS = 5000;
 const DEFAULT_GREP_RESULTS = 100;
 const TERMINAL_OUTPUT_CAP = 80_000;
+const ORCHESTRATION_WAIT_HEARTBEAT_MS = 15_000;
+const ORCHESTRATION_WAIT_DEFAULT_MS = 30_000;
+const ORCHESTRATION_ASSIGNMENT_TERMINAL_STATUSES: OrchestrationAssignmentStatus[] = [
+  "completed",
+  "failed",
+  "cancelled",
+];
 
 const PERMISSION_OPTIONS: AgentPermissionOption[] = [
   { optionId: "allow_once", name: "Allow", kind: "allow_once" },
@@ -189,8 +235,24 @@ const CESIUM_TOOLS = [
         prompt: { type: "string" },
         options: { type: "array" },
         allowMultiple: { type: "boolean" },
+        allow_multiple: { type: "boolean" },
+        questions: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              id: { type: "string" },
+              prompt: { type: "string" },
+              title: { type: "string" },
+              options: { type: "array" },
+              allowMultiple: { type: "boolean" },
+              allow_multiple: { type: "boolean" },
+            },
+            required: ["options"],
+            additionalProperties: false,
+          },
+        },
       },
-      required: ["prompt", "options"],
       additionalProperties: false,
     },
   },
@@ -274,6 +336,212 @@ const CESIUM_TOOLS = [
       additionalProperties: false,
     },
   },
+  {
+    name: "orchestration_board_snapshot",
+    description: "Read the current Orchestration Mode board snapshot.",
+    parameters: {
+      type: "object",
+      properties: {
+        boardId: { type: "string" },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "orchestration_create_issue",
+    description: "Create a kanban issue with optional description and acceptance criteria.",
+    parameters: {
+      type: "object",
+      properties: {
+        boardId: { type: "string" },
+        title: { type: "string" },
+        description: { type: "string" },
+        columnId: {
+          type: "string",
+          enum: ["backlog", "ready", "in_progress", "review", "blocked", "done"],
+        },
+        priority: {
+          type: "string",
+          enum: ["none", "low", "medium", "high", "urgent"],
+        },
+        acceptanceCriteria: { type: "array", items: { type: "string" } },
+      },
+      required: ["title"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "orchestration_update_issue",
+    description: "Update or move an existing kanban issue.",
+    parameters: {
+      type: "object",
+      properties: {
+        boardId: { type: "string" },
+        issueId: { type: "string" },
+        title: { type: "string" },
+        description: { type: "string" },
+        columnId: {
+          type: "string",
+          enum: ["backlog", "ready", "in_progress", "review", "blocked", "done"],
+        },
+        priority: {
+          type: "string",
+          enum: ["none", "low", "medium", "high", "urgent"],
+        },
+        acceptanceCriteria: { type: "array", items: { type: "string" } },
+        blockedReason: { type: "string" },
+      },
+      required: ["issueId"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "orchestration_comment_issue",
+    description: "Add a board comment or nudge to an issue.",
+    parameters: {
+      type: "object",
+      properties: {
+        boardId: { type: "string" },
+        issueId: { type: "string" },
+        message: { type: "string" },
+      },
+      required: ["issueId", "message"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "orchestration_delete_issue",
+    description: "Delete a kanban issue and cancel any child agents assigned to it.",
+    parameters: {
+      type: "object",
+      properties: {
+        boardId: { type: "string" },
+        issueId: { type: "string" },
+        reason: { type: "string" },
+      },
+      required: ["issueId"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "orchestration_assign_agent",
+    description: "Start a durable child agent conversation for an issue and assign it on the board.",
+    parameters: {
+      type: "object",
+      properties: {
+        boardId: { type: "string" },
+        issueId: { type: "string" },
+        instructions: { type: "string" },
+        title: { type: "string" },
+        backendId: { type: "string" },
+        modelId: { type: "string" },
+        role: { type: "string" },
+        permissions: {
+          type: "object",
+          properties: {
+            editFile: { type: "string", enum: ["allow", "ask", "deny"] },
+            terminal: { type: "string", enum: ["allow", "ask", "deny"] },
+            mcpCall: { type: "string", enum: ["allow", "ask", "deny"] },
+          },
+          additionalProperties: false,
+        },
+      },
+      required: ["issueId", "instructions"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "orchestration_update_agent_permissions",
+    description:
+      "Update granular permission policy for an existing child agent assignment.",
+    parameters: {
+      type: "object",
+      properties: {
+        boardId: { type: "string" },
+        assignmentId: { type: "string" },
+        conversationId: { type: "string" },
+        permissions: {
+          type: "object",
+          properties: {
+            editFile: { type: "string", enum: ["allow", "ask", "deny"] },
+            terminal: { type: "string", enum: ["allow", "ask", "deny"] },
+            mcpCall: { type: "string", enum: ["allow", "ask", "deny"] },
+          },
+          additionalProperties: false,
+        },
+      },
+      required: ["permissions"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "orchestration_control_agent",
+    description:
+      "Pause, resume, stop, or steer an existing child agent assignment from the board.",
+    parameters: {
+      type: "object",
+      properties: {
+        boardId: { type: "string" },
+        assignmentId: { type: "string" },
+        conversationId: { type: "string" },
+        action: {
+          type: "string",
+          enum: ["pause", "resume", "stop", "steer"],
+        },
+        instructions: { type: "string" },
+        reason: { type: "string" },
+        resumeAfterSteer: { type: "boolean" },
+      },
+      required: ["action"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "orchestration_wait",
+    description: "Wait for a specific board, issue, or child-agent condition instead of spinning.",
+    parameters: {
+      type: "object",
+      properties: {
+        reason: { type: "string" },
+        timeoutMs: { type: "number" },
+        pollMs: { type: "number" },
+        waitFor: {
+          type: "string",
+          enum: [
+            "board_update",
+            "issue_update",
+            "issue_comment",
+            "issue_done",
+            "assignment_update",
+            "assignment_status",
+            "assignment_finished",
+            "any_assignment_finished",
+            "all_issue_assignments_finished",
+          ],
+        },
+        issueId: { type: "string" },
+        assignmentId: { type: "string" },
+        conversationId: { type: "string" },
+        statuses: {
+          type: "array",
+          items: {
+            type: "string",
+            enum: [
+              "assigned",
+              "running",
+              "waiting",
+              "blocked",
+              "reviewing",
+              "completed",
+              "failed",
+              "cancelled",
+            ],
+          },
+        },
+      },
+      additionalProperties: false,
+    },
+  },
 ] as const;
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -288,6 +556,110 @@ function asString(value: unknown): string | undefined {
 
 function asNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function asStringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((entry): entry is string => typeof entry === "string")
+    : [];
+}
+
+function asOrchestrationColumnId(value: unknown): OrchestrationColumnId | undefined {
+  return value === "backlog" ||
+    value === "ready" ||
+    value === "in_progress" ||
+    value === "review" ||
+    value === "blocked" ||
+    value === "done"
+    ? value
+    : undefined;
+}
+
+function asOrchestrationPriority(
+  value: unknown
+): OrchestrationIssuePriority | undefined {
+  return value === "none" ||
+    value === "low" ||
+    value === "medium" ||
+    value === "high" ||
+    value === "urgent"
+    ? value
+    : undefined;
+}
+
+function asOrchestrationPermissionDecision(
+  value: unknown
+): OrchestrationPermissionDecision | undefined {
+  return value === "allow" || value === "ask" || value === "deny" ? value : undefined;
+}
+
+function asOrchestrationPermissionPolicy(
+  value: unknown
+): OrchestrationAssignmentPermissionPolicy {
+  const record = asRecord(value);
+  return {
+    editFile: asOrchestrationPermissionDecision(record?.editFile) ?? "allow",
+    terminal: asOrchestrationPermissionDecision(record?.terminal) ?? "allow",
+    mcpCall: asOrchestrationPermissionDecision(record?.mcpCall) ?? "allow",
+  };
+}
+
+type OrchestrationWaitFor =
+  | "board_update"
+  | "issue_update"
+  | "issue_comment"
+  | "issue_done"
+  | "assignment_update"
+  | "assignment_status"
+  | "assignment_finished"
+  | "any_assignment_finished"
+  | "all_issue_assignments_finished";
+
+function asOrchestrationAssignmentStatus(
+  value: unknown
+): OrchestrationAssignmentStatus | undefined {
+  return value === "assigned" ||
+    value === "running" ||
+    value === "waiting" ||
+    value === "blocked" ||
+    value === "reviewing" ||
+    value === "completed" ||
+    value === "failed" ||
+    value === "cancelled"
+    ? value
+    : undefined;
+}
+
+function asOrchestrationAssignmentStatuses(
+  value: unknown
+): OrchestrationAssignmentStatus[] {
+  const statuses = asStringArray(value)
+    .map(asOrchestrationAssignmentStatus)
+    .filter((status): status is OrchestrationAssignmentStatus => Boolean(status));
+  return [...new Set(statuses)];
+}
+
+function asOrchestrationWaitFor(value: unknown): OrchestrationWaitFor {
+  return value === "issue_update" ||
+    value === "issue_comment" ||
+    value === "issue_done" ||
+    value === "assignment_update" ||
+    value === "assignment_status" ||
+    value === "assignment_finished" ||
+    value === "any_assignment_finished" ||
+    value === "all_issue_assignments_finished"
+    ? value
+    : "board_update";
+}
+
+type OrchestrationControlAction = "pause" | "resume" | "stop" | "steer";
+
+function asOrchestrationControlAction(
+  value: unknown
+): OrchestrationControlAction | undefined {
+  return value === "pause" || value === "resume" || value === "stop" || value === "steer"
+    ? value
+    : undefined;
 }
 
 function safeJson(value: unknown): string {
@@ -361,6 +733,16 @@ function toolKind(name: string): string {
     case "call_mcp_tool":
     case "refresh_mcp_servers":
       return "mcp";
+    case "orchestration_board_snapshot":
+    case "orchestration_create_issue":
+    case "orchestration_update_issue":
+    case "orchestration_comment_issue":
+    case "orchestration_delete_issue":
+    case "orchestration_assign_agent":
+    case "orchestration_update_agent_permissions":
+    case "orchestration_control_agent":
+    case "orchestration_wait":
+      return "orchestration";
     default:
       return "tool";
   }
@@ -407,12 +789,49 @@ function toolTitle(name: string, args: Record<string, unknown>): string {
     case "read_history_page":
       return "Read history";
     case "call_mcp_tool":
+      if (asString(args.serverId) === BROWSER_MCP_SERVER_ID) {
+        return `Browser ${asString(args.toolName) ?? "tool"}`;
+      }
       return `MCP ${asString(args.serverId) ?? "server"} - ${asString(args.toolName) ?? "tool"}`;
     case "refresh_mcp_servers":
       return "Refresh MCP servers";
+    case "orchestration_board_snapshot":
+      return "Read orchestration board";
+    case "orchestration_create_issue":
+      return `Create issue ${asString(args.title) ?? ""}`.trim();
+    case "orchestration_update_issue":
+      return `Update issue ${asString(args.issueId) ?? ""}`.trim();
+    case "orchestration_comment_issue":
+      return `Comment on issue ${asString(args.issueId) ?? ""}`.trim();
+    case "orchestration_delete_issue":
+      return `Delete issue ${asString(args.issueId) ?? ""}`.trim();
+    case "orchestration_assign_agent":
+      return `Assign agent to ${asString(args.issueId) ?? "issue"}`;
+    case "orchestration_update_agent_permissions":
+      return `Update agent permissions ${asString(args.assignmentId) ?? asString(args.conversationId) ?? ""}`.trim();
+    case "orchestration_control_agent":
+      return `${asString(args.action) ?? "Control"} agent ${asString(args.assignmentId) ?? asString(args.conversationId) ?? ""}`.trim();
+    case "orchestration_wait":
+      return "Wait for orchestration changes";
     default:
       return name;
   }
+}
+
+function isOrchestrationToolName(name: string): boolean {
+  return name.startsWith("orchestration_");
+}
+
+function isAllowedInOrchestrationMode(name: string): boolean {
+  return (
+    isOrchestrationToolName(name) ||
+    name === "ask_question" ||
+    name === "search_history" ||
+    name === "read_history_page" ||
+    name === "todo" ||
+    name === "call_mcp_tool" ||
+    name === "refresh_mcp_servers"
+  );
 }
 
 function statusFromError(error: unknown): { status: AgentToolCallStatus; detail: string } {
@@ -664,15 +1083,42 @@ async function fetchJson(url: string, init: RequestInit): Promise<unknown> {
   }
 }
 
-function openAiTools() {
+/** OpenAI-compatible hosts (Nvidia NIM, etc.) reject JSON Schema union `type` arrays. */
+export function sanitizeOpenAiCompatibleJsonSchema<T>(value: T): T {
+  if (Array.isArray(value)) {
+    return value.map((entry) => sanitizeOpenAiCompatibleJsonSchema(entry)) as T;
+  }
+  if (!value || typeof value !== "object") {
+    return value;
+  }
+  const record = value as Record<string, unknown>;
+  const next: Record<string, unknown> = {};
+  for (const [key, entry] of Object.entries(record)) {
+    if (key === "type" && Array.isArray(entry)) {
+      const preferred =
+        entry.find((item) => typeof item === "string" && item !== "null") ??
+        entry.find((item) => typeof item === "string");
+      next.type = typeof preferred === "string" ? preferred : "string";
+      continue;
+    }
+    next[key] = sanitizeOpenAiCompatibleJsonSchema(entry);
+  }
+  return next as T;
+}
+
+export function buildOpenAiToolDefinitions() {
   return CESIUM_TOOLS.map((tool) => ({
-    type: "function",
+    type: "function" as const,
     function: {
       name: tool.name,
       description: tool.description,
-      parameters: tool.parameters,
+      parameters: sanitizeOpenAiCompatibleJsonSchema(tool.parameters),
     },
   }));
+}
+
+function openAiTools() {
+  return buildOpenAiToolDefinitions();
 }
 
 function responseTools() {
@@ -1178,6 +1624,10 @@ class CesiumSessionHandle implements AgentSessionHandle {
     if (modelId) {
       this.configOptions = updateConfigOption(this.configOptions, "model", modelId);
     }
+    const mode = this.callbacks.conversation.config.mode?.trim();
+    if (mode) {
+      this.configOptions = updateConfigOption(this.configOptions, "mode", mode);
+    }
     await this.callbacks.updateConversation((current) => ({
       ...current,
       providerSessionId: this.sessionId,
@@ -1196,6 +1646,52 @@ class CesiumSessionHandle implements AgentSessionHandle {
       pendingQuestion: null,
       lastError: null,
     }));
+  }
+
+  private async resolveSystemPromptContext(
+    mcpSummaries: McpServerSummary[]
+  ): Promise<BuildCesiumSystemPromptInput> {
+    const workspaceRoot = this.callbacks.workspace.root;
+    let gitSummary = "not a git repository";
+    try {
+      const status = await getGitWorkspaceStatus(this.callbacks.workspace, []);
+      gitSummary = formatGitSummaryForPrompt(status);
+    } catch {
+      gitSummary = "not a git repository";
+    }
+    let agentsMarkdown = "(No AGENTS.md file is present in this workspace.)";
+    try {
+      const content = await fs.readFile(path.join(workspaceRoot, "AGENTS.md"), "utf8");
+      if (content.trim()) {
+        agentsMarkdown = content.trim();
+      }
+    } catch {
+      // keep default placeholder
+    }
+    return {
+      mcpSummaries,
+      modelName: this.callbacks.conversation.config.modelName ?? "configured model",
+      workspaceRoot,
+      dateLabel: new Date().toLocaleString("en-US", {
+        dateStyle: "full",
+        timeStyle: "short",
+      }),
+      gitSummary,
+      agentsMarkdown,
+    };
+  }
+
+  private isOrchestrationMode(): boolean {
+    return this.callbacks.conversation.config.mode === "orchestration";
+  }
+
+  private async resolveCurrentOrchestrationBoard() {
+    return resolveOrCreateOrchestrationBoardForHeadConversation({
+      workspace: this.callbacks.workspace,
+      conversationId: this.callbacks.conversation.id,
+      title: this.callbacks.conversation.title || "Orchestration Mode",
+      allowedBackendIds: ["cesium-agent"],
+    });
   }
 
   async prompt(input: {
@@ -1258,7 +1754,24 @@ class CesiumSessionHandle implements AgentSessionHandle {
         ]);
       });
       const summaries = await getMcpSummariesForPrompt(this.callbacks.workspace.id);
-      this.activeSystemPrompt = buildCesiumSystemPrompt({ mcpSummaries: summaries });
+      if (this.isOrchestrationMode()) {
+        const orchestrationSummaries = summaries.filter(
+          (summary) => summary.id !== BROWSER_MCP_SERVER_ID
+        );
+        const board = await this.resolveCurrentOrchestrationBoard();
+        const promptContext = await this.resolveSystemPromptContext(orchestrationSummaries);
+        this.activeSystemPrompt = buildCesiumOrchestrationSystemPrompt({
+          ...promptContext,
+          workspaceRoot: this.callbacks.workspace.root,
+          boardId: board?.board.id,
+          maxConcurrentIssues: board?.board.settings.maxConcurrentIssues,
+          maxConcurrentAgents: board?.board.settings.maxConcurrentAgents,
+        });
+      } else {
+        this.activeSystemPrompt = buildCesiumSystemPrompt(
+          await this.resolveSystemPromptContext(summaries)
+        );
+      }
       await this.callbacks.appendEvents([
         {
           eventId: randomUUID(),
@@ -1273,8 +1786,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
         history.push({ role: "user", content: input.text });
       }
       const toolResultMessages: CesiumHistoryMessage[] = [];
-      let emittedAnyAssistantText = false;
-      for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration += 1) {
+      for (let iteration = 0; ; iteration += 1) {
         if (this.cancelled) {
           return;
         }
@@ -1306,7 +1818,6 @@ class CesiumSessionHandle implements AgentSessionHandle {
           ]);
         }
         if (result.text.trim()) {
-          emittedAnyAssistantText = true;
           await this.callbacks.appendEvents([
             {
               eventId: randomUUID(),
@@ -1351,27 +1862,6 @@ class CesiumSessionHandle implements AgentSessionHandle {
           return;
         }
       }
-      await this.callbacks.appendEvents([
-        {
-          eventId: randomUUID(),
-          conversationId: this.callbacks.conversation.id,
-          kind: "system",
-          level: "warning",
-          text: `Cesium stopped after ${MAX_TOOL_ITERATIONS} tool iterations.`,
-        },
-      ]);
-      if (!emittedAnyAssistantText) {
-        await this.callbacks.appendEvents([
-          {
-            eventId: randomUUID(),
-            conversationId: this.callbacks.conversation.id,
-            kind: "assistant_message_chunk",
-            messageId: assistantMessageId,
-            text: "I hit the maximum Cesium tool-iteration limit before producing a final response.",
-          },
-        ]);
-      }
-      await this.finishAssistant(assistantMessageId);
     } catch (error) {
       const message =
         error instanceof Error
@@ -1492,6 +1982,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
     await this.callbacks.updateConversation((current) => ({
       ...current,
       status: "cancelled",
+      providerSessionId: null,
       pendingPermission: null,
       pendingQuestion: null,
     }));
@@ -1558,7 +2049,10 @@ class CesiumSessionHandle implements AgentSessionHandle {
         modelName:
           modelOption?.options.find((option) => option.value === modelOption.currentValue)?.name ??
           current.config.modelName,
-        mode: modeOption?.currentValue ?? current.config.mode,
+        mode:
+          configId === "mode"
+            ? value
+            : (modeOption?.currentValue ?? current.config.mode),
       },
     }));
   }
@@ -1617,7 +2111,35 @@ class CesiumSessionHandle implements AgentSessionHandle {
       return;
     }
     this.pendingQuestions.delete(input.questionId);
-    pending.resolve(input.answer.trim());
+    const answer = input.answer.trim();
+    await this.callbacks.appendEvents([
+      {
+        eventId: randomUUID(),
+        conversationId: this.callbacks.conversation.id,
+        kind: "question",
+        questionId: input.questionId,
+        prompt: pending.prompt,
+        options: pending.options,
+        questions: pending.questions,
+        allowMultiple: pending.allowMultiple,
+        status: "answered",
+        answer,
+        raw: pending.raw,
+      },
+      {
+        eventId: randomUUID(),
+        conversationId: this.callbacks.conversation.id,
+        kind: "status",
+        status: "running",
+        detail: "Question answered.",
+      },
+    ]);
+    await this.callbacks.updateConversation((current) => ({
+      ...current,
+      status: "running",
+      pendingQuestion: null,
+    }));
+    pending.resolve(answer);
   }
 
   async dispose(): Promise<void> {
@@ -1717,6 +2239,29 @@ class CesiumSessionHandle implements AgentSessionHandle {
     toolKey: string;
     toolLabel: string;
   }): Promise<void> {
+    const assignment = await findOrchestrationAssignmentForConversation(
+      this.callbacks.workspace.id,
+      this.callbacks.conversation.id
+    ).catch(() => null);
+    const orchestrationPolicy = assignment
+      ? assignment.config.permissionPolicy?.[input.permission] ?? "allow"
+      : undefined;
+    if (orchestrationPolicy === "allow") {
+      await this.callbacks.appendEvents([
+        {
+          eventId: randomUUID(),
+          conversationId: this.callbacks.conversation.id,
+          kind: "status",
+          status: "running",
+          detail: `Allowed ${input.title} by orchestration assignment policy.`,
+        },
+      ]);
+      return;
+    }
+    if (orchestrationPolicy === "deny") {
+      throw new Error(`${input.title} blocked by orchestration assignment policy.`);
+    }
+
     const [settings, globalSettings] = await Promise.all([
       getCesiumAgentSettings(),
       getGlobalSettings().catch(() => null),
@@ -1797,6 +2342,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
         requestId,
         requestedAt: Date.now(),
         toolCallId: input.toolCallId,
+        permission: input.permission,
         title: input.title,
         detail: input.detail,
         options: PERMISSION_OPTIONS,
@@ -1831,6 +2377,14 @@ class CesiumSessionHandle implements AgentSessionHandle {
     await this.callbacks.appendEvents([callEvent]);
     try {
       let result: string;
+      if (this.isOrchestrationMode() && !isAllowedInOrchestrationMode(request.name)) {
+        throw new Error(
+          `Tool ${request.name} is not available in Orchestration Mode. Manage work through the kanban and agent orchestration tools.`
+        );
+      }
+      if (!this.isOrchestrationMode() && isOrchestrationToolName(request.name)) {
+        throw new Error(`Tool ${request.name} is only available in Orchestration Mode.`);
+      }
       if (request.name === "edit_file") {
         await this.requirePermission({
           toolCallId: request.id,
@@ -1886,6 +2440,33 @@ class CesiumSessionHandle implements AgentSessionHandle {
           break;
         case "refresh_mcp_servers":
           result = await this.toolRefreshMcpServers();
+          break;
+        case "orchestration_board_snapshot":
+          result = await this.toolOrchestrationBoardSnapshot(request.arguments);
+          break;
+        case "orchestration_create_issue":
+          result = await this.toolOrchestrationCreateIssue(request.arguments);
+          break;
+        case "orchestration_update_issue":
+          result = await this.toolOrchestrationUpdateIssue(request.arguments);
+          break;
+        case "orchestration_comment_issue":
+          result = await this.toolOrchestrationCommentIssue(request.arguments);
+          break;
+        case "orchestration_delete_issue":
+          result = await this.toolOrchestrationDeleteIssue(request.arguments);
+          break;
+        case "orchestration_assign_agent":
+          result = await this.toolOrchestrationAssignAgent(request.arguments);
+          break;
+        case "orchestration_update_agent_permissions":
+          result = await this.toolOrchestrationUpdateAgentPermissions(request.arguments);
+          break;
+        case "orchestration_control_agent":
+          result = await this.toolOrchestrationControlAgent(request.arguments);
+          break;
+        case "orchestration_wait":
+          result = await this.toolOrchestrationWait(request.arguments);
           break;
         default:
           throw new Error(`Unknown Cesium tool: ${request.name}`);
@@ -2080,6 +2661,68 @@ class CesiumSessionHandle implements AgentSessionHandle {
   private async toolTodo(args: Record<string, unknown>): Promise<string> {
     const action = asString(args.action) ?? "list";
     const items = Array.isArray(args.items) ? args.items : [];
+    if (this.isOrchestrationMode()) {
+      const snapshot = await this.resolveCurrentOrchestrationBoard();
+      if (action === "list") {
+        const lines = snapshot.issues.map(
+          (issue) =>
+            `${issue.columnId}: ${issue.title}${
+              issue.acceptanceCriteria.length
+                ? ` (${issue.acceptanceCriteria.length} acceptance criteria)`
+                : ""
+            }`
+        );
+        return lines.length
+          ? lines.join("\n")
+          : "No orchestration issues yet. Use orchestration_create_issue or provide todo items to create board issues.";
+      }
+
+      const parsedItems = items.flatMap((item) => {
+        const record = asRecord(item);
+        const content = asString(record?.content) ?? asString(item);
+        if (!content) return [];
+        const status = record?.status;
+        const columnId: OrchestrationColumnId =
+          status === "completed"
+            ? "done"
+            : status === "in_progress"
+              ? "in_progress"
+              : "backlog";
+        return [{ content, columnId }];
+      });
+      let current = snapshot;
+      const touchedIssues: string[] = [];
+      for (const item of parsedItems) {
+        const existing = current.issues.find(
+          (issue) => issue.title.trim().toLowerCase() === item.content.trim().toLowerCase()
+        );
+        if (existing) {
+          current = await upsertOrchestrationIssue(
+            current.board.id,
+            { id: existing.id, columnId: item.columnId },
+            { type: "head_agent", conversationId: this.callbacks.conversation.id }
+          );
+          touchedIssues.push(existing.id);
+          continue;
+        }
+        current = await createOrchestrationIssue({
+          boardId: current.board.id,
+          title: item.content,
+          columnId: item.columnId,
+          actor: { type: "head_agent", conversationId: this.callbacks.conversation.id },
+        });
+        const created = current.issues[current.issues.length - 1];
+        if (created) {
+          touchedIssues.push(created.id);
+        }
+      }
+      return safeJson({
+        boardId: current.board.id,
+        message:
+          "Mapped todo items onto orchestration board issues. Continue managing work with orchestration_* issue tools.",
+        issueIds: touchedIssues,
+      });
+    }
     if (action === "list") {
       const snapshot = await this.callbacks.readSnapshot();
       const latest = [...(snapshot?.events ?? [])].reverse().find((event) => event.kind === "plan");
@@ -2111,18 +2754,47 @@ class CesiumSessionHandle implements AgentSessionHandle {
   }
 
   private async toolAskQuestion(args: Record<string, unknown>): Promise<string> {
-    const prompt = asString(args.prompt);
-    if (!prompt) throw new Error("ask_question.prompt is required.");
-    const options = Array.isArray(args.options)
-      ? args.options.flatMap((option, index) => {
-          const record = asRecord(option);
-          const label = asString(record?.label) ?? asString(option);
-          if (!label) return [];
-          return [{ id: asString(record?.id) ?? `option-${index + 1}`, label }];
+    const parseOptions = (value: unknown): Array<{ id: string; label: string }> =>
+      Array.isArray(value)
+        ? value.flatMap((option, index) => {
+            const record = asRecord(option);
+            const label = asString(record?.label) ?? asString(record?.text) ?? asString(option);
+            if (!label) return [];
+            return [{ id: asString(record?.id) ?? `option-${index + 1}`, label }];
+          })
+        : [];
+    const questionsFromArgs = Array.isArray(args.questions)
+      ? args.questions.flatMap((question, index): CesiumQuestionStep[] => {
+          const record = asRecord(question);
+          if (!record) return [];
+          const prompt = asString(record.prompt) ?? asString(record.title);
+          const options = parseOptions(record.options);
+          if (!prompt || options.length === 0) return [];
+          return [
+            {
+              id: asString(record.id) ?? `question-${index + 1}`,
+              prompt,
+              options,
+              allowMultiple: record.allowMultiple === true || record.allow_multiple === true,
+            },
+          ];
         })
       : [];
+    const prompt = asString(args.prompt) ?? (questionsFromArgs.length > 1 ? "Questions" : questionsFromArgs[0]?.prompt);
+    const options = parseOptions(args.options);
+    const allowMultiple = args.allowMultiple === true || args.allow_multiple === true;
+    const questions =
+      questionsFromArgs.length > 0
+        ? questionsFromArgs
+        : prompt && options.length > 0
+          ? [{ id: "single", prompt, options, allowMultiple }]
+          : [];
+    if (!prompt || questions.length === 0) {
+      throw new Error("ask_question requires either prompt/options or a non-empty questions array.");
+    }
+    const primaryOptions = questions[0]?.options ?? options;
+    const primaryAllowMultiple = questions.length === 1 ? Boolean(questions[0]?.allowMultiple) : false;
     const questionId = randomUUID();
-    const allowMultiple = args.allowMultiple === true;
     await this.callbacks.appendEvents([
       {
         eventId: randomUUID(),
@@ -2130,8 +2802,9 @@ class CesiumSessionHandle implements AgentSessionHandle {
         kind: "question",
         questionId,
         prompt,
-        options,
-        allowMultiple,
+        options: primaryOptions,
+        questions,
+        allowMultiple: primaryAllowMultiple,
         status: "pending",
         raw: args,
       },
@@ -2152,34 +2825,16 @@ class CesiumSessionHandle implements AgentSessionHandle {
       },
     }));
     const answer = await new Promise<string>((resolve, reject) => {
-      this.pendingQuestions.set(questionId, { resolve, reject });
-    });
-    await this.callbacks.appendEvents([
-      {
-        eventId: randomUUID(),
-        conversationId: this.callbacks.conversation.id,
-        kind: "question",
-        questionId,
+      this.pendingQuestions.set(questionId, {
+        resolve,
+        reject,
         prompt,
-        options,
-        allowMultiple,
-        status: "answered",
-        answer,
+        options: primaryOptions,
+        questions,
+        allowMultiple: primaryAllowMultiple,
         raw: args,
-      },
-      {
-        eventId: randomUUID(),
-        conversationId: this.callbacks.conversation.id,
-        kind: "status",
-        status: "running",
-        detail: "Question answered.",
-      },
-    ]);
-    await this.callbacks.updateConversation((current) => ({
-      ...current,
-      status: "running",
-      pendingQuestion: null,
-    }));
+      });
+    });
     return `User answer:\n${answer}`;
   }
 
@@ -2192,6 +2847,9 @@ class CesiumSessionHandle implements AgentSessionHandle {
     const toolName = asString(args.toolName);
     if (!serverId || !toolName) {
       throw new Error("call_mcp_tool requires serverId and toolName.");
+    }
+    if (serverId === BROWSER_MCP_SERVER_ID && this.isOrchestrationMode()) {
+      throw new Error("Browser MCP tools are only available to normal Cesium Agent conversations.");
     }
     const toolArgs =
       args.arguments && typeof args.arguments === "object" && !Array.isArray(args.arguments)
@@ -2220,8 +2878,666 @@ class CesiumSessionHandle implements AgentSessionHandle {
       workspaceRoot: this.callbacks.workspace.root,
     });
     const summaries = await getMcpSummariesForPrompt(this.callbacks.workspace.id);
-    this.activeSystemPrompt = buildCesiumSystemPrompt({ mcpSummaries: summaries });
+    if (this.isOrchestrationMode()) {
+      const orchestrationSummaries = summaries.filter(
+        (summary) => summary.id !== BROWSER_MCP_SERVER_ID
+      );
+      const board = await this.resolveCurrentOrchestrationBoard();
+      const promptContext = await this.resolveSystemPromptContext(orchestrationSummaries);
+      this.activeSystemPrompt = buildCesiumOrchestrationSystemPrompt({
+        ...promptContext,
+        workspaceRoot: this.callbacks.workspace.root,
+        boardId: board?.board.id,
+        maxConcurrentIssues: board?.board.settings.maxConcurrentIssues,
+        maxConcurrentAgents: board?.board.settings.maxConcurrentAgents,
+      });
+    } else {
+      this.activeSystemPrompt = buildCesiumSystemPrompt(
+        await this.resolveSystemPromptContext(summaries)
+      );
+    }
     return `Refreshed ${summaries.length} MCP server mirror(s) under mcp-servers/.`;
+  }
+
+  private async resolveOrchestrationBoardFromArgs(args: Record<string, unknown>) {
+    const boardId = asString(args.boardId);
+    if (boardId) {
+      const snapshot = await readOrchestrationBoardSnapshot(boardId);
+      if (!snapshot || snapshot.board.workspaceId !== this.callbacks.workspace.id) {
+        throw new Error(`Unknown orchestration board: ${boardId}`);
+      }
+      return snapshot;
+    }
+    const snapshot = await this.resolveCurrentOrchestrationBoard();
+    if (!snapshot) {
+      throw new Error("No orchestration board is linked to this head conversation.");
+    }
+    return snapshot;
+  }
+
+  private async toolOrchestrationBoardSnapshot(
+    args: Record<string, unknown>
+  ): Promise<string> {
+    const snapshot = await this.resolveOrchestrationBoardFromArgs(args);
+    return safeJson({
+      board: snapshot.board,
+      issues: snapshot.issues,
+      assignments: snapshot.assignments,
+      recentEvents: snapshot.events.slice(-30),
+    });
+  }
+
+  private async toolOrchestrationCreateIssue(
+    args: Record<string, unknown>
+  ): Promise<string> {
+    const current = await this.resolveOrchestrationBoardFromArgs(args);
+    const title = asString(args.title);
+    if (!title) {
+      throw new Error("orchestration_create_issue.title is required.");
+    }
+    const snapshot = await createOrchestrationIssue({
+      boardId: current.board.id,
+      title,
+      description: asString(args.description),
+      columnId: asOrchestrationColumnId(args.columnId),
+      priority: asOrchestrationPriority(args.priority),
+      acceptanceCriteria: asStringArray(args.acceptanceCriteria),
+      actor: { type: "head_agent", conversationId: this.callbacks.conversation.id },
+    });
+    const issue = snapshot.issues[snapshot.issues.length - 1];
+    return safeJson({ issue, boardId: snapshot.board.id });
+  }
+
+  private async toolOrchestrationUpdateIssue(
+    args: Record<string, unknown>
+  ): Promise<string> {
+    const current = await this.resolveOrchestrationBoardFromArgs(args);
+    const issueId = asString(args.issueId);
+    if (!issueId) {
+      throw new Error("orchestration_update_issue.issueId is required.");
+    }
+    const columnId = asOrchestrationColumnId(args.columnId);
+    const priority = asOrchestrationPriority(args.priority);
+    const snapshot = await upsertOrchestrationIssue(
+      current.board.id,
+      {
+        id: issueId,
+        ...(asString(args.title) ? { title: asString(args.title)! } : {}),
+        ...(typeof args.description === "string"
+          ? { description: args.description }
+          : {}),
+        ...(columnId ? { columnId } : {}),
+        ...(priority ? { priority } : {}),
+        ...(Array.isArray(args.acceptanceCriteria)
+          ? { acceptanceCriteria: asStringArray(args.acceptanceCriteria) }
+          : {}),
+        ...(typeof args.blockedReason === "string" || args.blockedReason === null
+          ? { blockedReason: args.blockedReason }
+          : {}),
+      },
+      { type: "head_agent", conversationId: this.callbacks.conversation.id }
+    );
+    return safeJson({
+      issue: snapshot.issues.find((issue) => issue.id === issueId),
+      boardId: snapshot.board.id,
+    });
+  }
+
+  private async toolOrchestrationCommentIssue(
+    args: Record<string, unknown>
+  ): Promise<string> {
+    const current = await this.resolveOrchestrationBoardFromArgs(args);
+    const issueId = asString(args.issueId);
+    const message = asString(args.message);
+    if (!issueId || !message) {
+      throw new Error("orchestration_comment_issue requires issueId and message.");
+    }
+    const snapshot = await addOrchestrationComment({
+      boardId: current.board.id,
+      issueId,
+      message,
+      actor: { type: "head_agent", conversationId: this.callbacks.conversation.id },
+    });
+    return safeJson({ boardId: snapshot.board.id, issueId, message });
+  }
+
+  private async toolOrchestrationDeleteIssue(args: Record<string, unknown>): Promise<string> {
+    const current = await this.resolveOrchestrationBoardFromArgs(args);
+    const issueId = asString(args.issueId);
+    if (!issueId) {
+      throw new Error("orchestration_delete_issue.issueId is required.");
+    }
+    const issue = current.issues.find((candidate) => candidate.id === issueId);
+    if (!issue) {
+      throw new Error(`Unknown orchestration issue: ${issueId}`);
+    }
+    const assignments = current.assignments.filter(
+      (assignment) => assignment.issueId === issueId
+    );
+    const reason = asString(args.reason);
+    const { agentRuntimeManager } = await import("./runtime-manager.js");
+    await Promise.all(
+      assignments.map((assignment) =>
+        agentRuntimeManager
+          .cancelConversation(this.callbacks.workspace, assignment.conversationId)
+          .catch(() => undefined)
+      )
+    );
+    const snapshot = await deleteOrchestrationIssue(
+      current.board.id,
+      issueId,
+      { type: "head_agent", conversationId: this.callbacks.conversation.id }
+    );
+    return safeJson({
+      boardId: snapshot.board.id,
+      deletedIssue: issue,
+      cancelledAssignments: assignments.map((assignment) => assignment.id),
+      reason: reason ?? null,
+    });
+  }
+
+  private async toolOrchestrationAssignAgent(
+    args: Record<string, unknown>
+  ): Promise<string> {
+    const current = await this.resolveOrchestrationBoardFromArgs(args);
+    const issueId = asString(args.issueId);
+    const instructions = asString(args.instructions);
+    if (!issueId || !instructions) {
+      throw new Error("orchestration_assign_agent requires issueId and instructions.");
+    }
+    const issue = current.issues.find((candidate) => candidate.id === issueId);
+    if (!issue) {
+      throw new Error(`Unknown orchestration issue: ${issueId}`);
+    }
+    const backendId =
+      (asString(args.backendId) as AgentBackendId | undefined) ??
+      current.board.settings.defaultChildBackendId ??
+      "cesium-agent";
+    const modelId =
+      asString(args.modelId) ??
+      current.board.settings.defaultModelByBackend[backendId] ??
+      (backendId === this.callbacks.conversation.config.backendId
+        ? this.callbacks.conversation.config.modelId
+        : undefined);
+    const modelName =
+      modelId === this.callbacks.conversation.config.modelId
+        ? this.callbacks.conversation.config.modelName
+        : undefined;
+    const { agentRuntimeManager } = await import("./runtime-manager.js");
+    const child = await agentRuntimeManager.createConversation(this.callbacks.workspace, {
+      title: asString(args.title) ?? `Issue: ${issue.title}`,
+      archived: true,
+      backendId,
+      mode: "agent",
+      ...(modelId ? { modelId } : {}),
+      ...(modelName ? { modelName } : {}),
+    });
+    const permissionPolicy = asOrchestrationPermissionPolicy(args.permissions);
+    const assignment: OrchestrationAssignmentRecord = {
+      schemaVersion: 1,
+      id: randomUUID(),
+      boardId: current.board.id,
+      issueId,
+      conversationId: child.id,
+      role: asString(args.role) ?? "implementation",
+      status: "running",
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      config: { ...child.config, permissionPolicy },
+      lastKnownConversationStatus: child.status,
+    };
+    const promptText = [
+      `You are assigned to Orchestration Mode issue "${issue.title}".`,
+      "",
+      issue.description ? `Description:\n${issue.description}` : "",
+      issue.acceptanceCriteria.length
+        ? `Acceptance criteria:\n${issue.acceptanceCriteria.map((item) => `- ${item}`).join("\n")}`
+        : "",
+      "",
+      "Manager instructions:",
+      instructions,
+      "",
+      "Work end-to-end, verify your result, and report blockers clearly.",
+    ]
+      .filter(Boolean)
+      .join("\n");
+    await upsertOrchestrationAssignment(
+      current.board.id,
+      assignment,
+      { type: "head_agent", conversationId: this.callbacks.conversation.id }
+    );
+    void agentRuntimeManager
+      .promptConversation(this.callbacks.workspace, child.id, promptText)
+      .catch((error) => {
+        console.warn("[orchestration] child prompt failed:", error);
+      });
+    return safeJson({ assignment, childConversation: child });
+  }
+
+  private async toolOrchestrationUpdateAgentPermissions(
+    args: Record<string, unknown>
+  ): Promise<string> {
+    const current = await this.resolveCurrentOrchestrationBoard();
+    const assignmentId = asString(args.assignmentId);
+    const conversationId = asString(args.conversationId);
+    if (!assignmentId && !conversationId) {
+      throw new Error(
+        "orchestration_update_agent_permissions requires assignmentId or conversationId."
+      );
+    }
+    const assignment = current.assignments.find((candidate) =>
+      assignmentId
+        ? candidate.id === assignmentId
+        : candidate.conversationId === conversationId
+    );
+    if (!assignment) {
+      throw new Error(
+        `Unknown orchestration assignment: ${assignmentId ?? conversationId}`
+      );
+    }
+    const requestedPermissions = asRecord(args.permissions);
+    const existingPolicy = assignment.config.permissionPolicy;
+    const permissionPolicy: OrchestrationAssignmentPermissionPolicy = {
+      editFile:
+        asOrchestrationPermissionDecision(requestedPermissions?.editFile) ??
+        existingPolicy?.editFile ??
+        "allow",
+      terminal:
+        asOrchestrationPermissionDecision(requestedPermissions?.terminal) ??
+        existingPolicy?.terminal ??
+        "allow",
+      mcpCall:
+        asOrchestrationPermissionDecision(requestedPermissions?.mcpCall) ??
+        existingPolicy?.mcpCall ??
+        "allow",
+    };
+    const nextAssignment: OrchestrationAssignmentRecord = {
+      ...assignment,
+      config: {
+        ...assignment.config,
+        permissionPolicy,
+      },
+    };
+    const snapshot = await upsertOrchestrationAssignment(
+      current.board.id,
+      nextAssignment,
+      { type: "head_agent", conversationId: this.callbacks.conversation.id }
+    );
+    return safeJson({
+      assignment: snapshot.assignments.find(
+        (candidate) => candidate.id === assignment.id
+      ),
+    });
+  }
+
+  private async toolOrchestrationControlAgent(args: Record<string, unknown>): Promise<string> {
+    const current = await this.resolveCurrentOrchestrationBoard();
+    const action = asOrchestrationControlAction(args.action);
+    if (!action) {
+      throw new Error("orchestration_control_agent requires action.");
+    }
+    const assignmentId = asString(args.assignmentId);
+    const conversationId = asString(args.conversationId);
+    if (!assignmentId && !conversationId) {
+      throw new Error("orchestration_control_agent requires assignmentId or conversationId.");
+    }
+    const assignment = current.assignments.find((candidate) =>
+      assignmentId
+        ? candidate.id === assignmentId
+        : candidate.conversationId === conversationId
+    );
+    if (!assignment) {
+      throw new Error(`Unknown orchestration assignment: ${assignmentId ?? conversationId}`);
+    }
+    const issue = current.issues.find((candidate) => candidate.id === assignment.issueId);
+    const reason = asString(args.reason);
+    const instructions = asString(args.instructions);
+    const resumeAfterSteer = args.resumeAfterSteer === true;
+    const { agentRuntimeManager } = await import("./runtime-manager.js");
+
+    let nextAssignmentStatus: OrchestrationAssignmentStatus = assignment.status;
+    let childConversationStatus: AgentConversationStatus | null =
+      assignment.lastKnownConversationStatus;
+    let message: string;
+
+    switch (action) {
+      case "pause": {
+        const conversation = await agentRuntimeManager.pauseConversation(
+          this.callbacks.workspace,
+          assignment.conversationId
+        );
+        nextAssignmentStatus = "waiting";
+        childConversationStatus = conversation.status;
+        message = `Paused child agent ${assignment.conversationId}${
+          reason ? `: ${reason}` : "."
+        }`;
+        break;
+      }
+      case "resume": {
+        const conversation = await agentRuntimeManager.resumeConversation(
+          this.callbacks.workspace,
+          assignment.conversationId
+        );
+        nextAssignmentStatus = "running";
+        childConversationStatus = conversation.status;
+        message = `Resumed child agent ${assignment.conversationId}${
+          reason ? `: ${reason}` : "."
+        }`;
+        break;
+      }
+      case "stop": {
+        const conversation = await agentRuntimeManager.cancelConversation(
+          this.callbacks.workspace,
+          assignment.conversationId
+        );
+        nextAssignmentStatus = "cancelled";
+        childConversationStatus = conversation.status;
+        message = `Stopped child agent ${assignment.conversationId}${
+          reason ? `: ${reason}` : "."
+        }`;
+        break;
+      }
+      case "steer": {
+        if (!instructions) {
+          throw new Error("orchestration_control_agent steer requires instructions.");
+        }
+        const steerText = [
+          issue ? `Steering update for Orchestration Mode issue "${issue.title}".` : "Steering update.",
+          reason ? `Reason: ${reason}` : "",
+          "",
+          instructions,
+        ]
+          .filter(Boolean)
+          .join("\n");
+        const snapshot = await agentRuntimeManager.promptConversation(
+          this.callbacks.workspace,
+          assignment.conversationId,
+          steerText,
+          undefined,
+          { delivery: "steer" }
+        );
+        if (resumeAfterSteer) {
+          try {
+            const conversation = await agentRuntimeManager.resumeConversation(
+              this.callbacks.workspace,
+              assignment.conversationId
+            );
+            childConversationStatus = conversation.status;
+            nextAssignmentStatus = "running";
+          } catch {
+            childConversationStatus = snapshot.conversation.status;
+            nextAssignmentStatus =
+              snapshot.conversation.status === "paused" ? "waiting" : "running";
+          }
+        } else {
+          childConversationStatus = snapshot.conversation.status;
+          nextAssignmentStatus =
+            snapshot.conversation.status === "paused" ? "waiting" : "running";
+        }
+        message = `Steered child agent ${assignment.conversationId}${
+          reason ? `: ${reason}` : "."
+        }`;
+        break;
+      }
+    }
+
+    const commented = await addOrchestrationComment({
+      boardId: current.board.id,
+      issueId: assignment.issueId,
+      actor: { type: "head_agent", conversationId: this.callbacks.conversation.id },
+      message,
+    });
+    const updated = await upsertOrchestrationAssignment(
+      current.board.id,
+      {
+        ...assignment,
+        status: nextAssignmentStatus,
+        lastKnownConversationStatus: childConversationStatus,
+      },
+      { type: "head_agent", conversationId: this.callbacks.conversation.id }
+    );
+    return safeJson({
+      action,
+      message,
+      assignment:
+        updated.assignments.find((candidate) => candidate.id === assignment.id) ??
+        commented.assignments.find((candidate) => candidate.id === assignment.id) ??
+        null,
+    });
+  }
+
+  private async toolOrchestrationWait(args: Record<string, unknown>): Promise<string> {
+    const timeoutMs = Math.max(1000, Math.floor(asNumber(args.timeoutMs) ?? ORCHESTRATION_WAIT_DEFAULT_MS));
+    const pollMs = Math.max(
+      1000,
+      Math.min(
+        ORCHESTRATION_WAIT_HEARTBEAT_MS,
+        Math.floor(asNumber(args.pollMs) ?? 5000)
+      )
+    );
+    const waitFor = asOrchestrationWaitFor(args.waitFor);
+    const reason = asString(args.reason) ?? "No reason provided.";
+    const issueId = asString(args.issueId);
+    const assignmentId = asString(args.assignmentId);
+    const conversationId = asString(args.conversationId);
+    if (
+      (waitFor === "issue_update" ||
+        waitFor === "issue_comment" ||
+        waitFor === "issue_done" ||
+        waitFor === "all_issue_assignments_finished") &&
+      !issueId
+    ) {
+      throw new Error(`orchestration_wait ${waitFor} requires issueId.`);
+    }
+    if (
+      (waitFor === "assignment_update" ||
+        waitFor === "assignment_status" ||
+        waitFor === "assignment_finished") &&
+      !assignmentId &&
+      !conversationId
+    ) {
+      throw new Error(
+        `orchestration_wait ${waitFor} requires assignmentId or conversationId.`
+      );
+    }
+    const requestedStatuses = asOrchestrationAssignmentStatuses(args.statuses);
+    const targetStatuses =
+      requestedStatuses.length > 0
+        ? requestedStatuses
+        : ORCHESTRATION_ASSIGNMENT_TERMINAL_STATUSES;
+    const initialSnapshot = await this.resolveCurrentOrchestrationBoard();
+    const initialEventIds = new Set(initialSnapshot.events.map((event) => event.id));
+    const initialAssignmentStatusById = new Map(
+      initialSnapshot.assignments.map((assignment) => [assignment.id, assignment.status])
+    );
+    const initialIssue = issueId
+      ? initialSnapshot.issues.find((issue) => issue.id === issueId)
+      : undefined;
+    const initialAssignment = initialSnapshot.assignments.find((assignment) =>
+      assignmentId
+        ? assignment.id === assignmentId
+        : conversationId
+          ? assignment.conversationId === conversationId
+          : false
+    );
+
+    const evaluate = (snapshot: OrchestrationBoardSnapshot) => {
+      const newEvents = snapshot.events.filter((event) => !initialEventIds.has(event.id));
+      const assignment = snapshot.assignments.find((candidate) =>
+        assignmentId
+          ? candidate.id === assignmentId
+          : conversationId
+            ? candidate.conversationId === conversationId
+            : false
+      );
+      const issue = issueId
+        ? snapshot.issues.find((candidate) => candidate.id === issueId)
+        : assignment
+          ? snapshot.issues.find((candidate) => candidate.id === assignment.issueId)
+          : undefined;
+      const assignmentsForIssue = issueId
+        ? snapshot.assignments.filter((candidate) => candidate.issueId === issueId)
+        : snapshot.assignments;
+      const relatedEvents = newEvents.filter((event) => {
+        if (assignment && event.assignmentId === assignment.id) {
+          return true;
+        }
+        if (issue && event.issueId === issue.id) {
+          return true;
+        }
+        return false;
+      });
+
+      switch (waitFor) {
+        case "issue_update":
+          return {
+            matched:
+              Boolean(issue && initialIssue && issue.updatedAt > initialIssue.updatedAt) ||
+              relatedEvents.some((event) => event.issueId === issue?.id),
+            matchedEvents: relatedEvents,
+            issue,
+            assignment,
+          };
+        case "issue_comment":
+          return {
+            matched: relatedEvents.some((event) => event.kind === "comment_added"),
+            matchedEvents: relatedEvents.filter((event) => event.kind === "comment_added"),
+            issue,
+            assignment,
+          };
+        case "issue_done":
+          return {
+            matched: issue?.columnId === "done",
+            matchedEvents: relatedEvents,
+            issue,
+            assignment,
+          };
+        case "assignment_update":
+          return {
+            matched:
+              Boolean(
+                assignment &&
+                  initialAssignment &&
+                  (assignment.updatedAt > initialAssignment.updatedAt ||
+                    assignment.status !== initialAssignment.status)
+              ) || relatedEvents.some((event) => event.assignmentId === assignment?.id),
+            matchedEvents: relatedEvents,
+            issue,
+            assignment,
+          };
+        case "assignment_status":
+          return {
+            matched: Boolean(assignment && targetStatuses.includes(assignment.status)),
+            matchedEvents: relatedEvents,
+            issue,
+            assignment,
+          };
+        case "assignment_finished":
+          return {
+            matched: Boolean(
+              assignment &&
+                ORCHESTRATION_ASSIGNMENT_TERMINAL_STATUSES.includes(assignment.status)
+            ),
+            matchedEvents: relatedEvents,
+            issue,
+            assignment,
+          };
+        case "any_assignment_finished": {
+          const matchedAssignment = assignmentsForIssue.find((candidate) => {
+            if (!ORCHESTRATION_ASSIGNMENT_TERMINAL_STATUSES.includes(candidate.status)) {
+              return false;
+            }
+            const initialStatus = initialAssignmentStatusById.get(candidate.id);
+            return (
+              !initialStatus ||
+              !ORCHESTRATION_ASSIGNMENT_TERMINAL_STATUSES.includes(initialStatus)
+            );
+          });
+          return {
+            matched: Boolean(matchedAssignment),
+            matchedEvents: newEvents.filter(
+              (event) => event.assignmentId === matchedAssignment?.id
+            ),
+            issue: matchedAssignment
+              ? snapshot.issues.find((candidate) => candidate.id === matchedAssignment.issueId)
+              : issue,
+            assignment: matchedAssignment,
+          };
+        }
+        case "all_issue_assignments_finished":
+          return {
+            matched:
+              assignmentsForIssue.length > 0 &&
+              assignmentsForIssue.every((candidate) =>
+                ORCHESTRATION_ASSIGNMENT_TERMINAL_STATUSES.includes(candidate.status)
+              ),
+            matchedEvents: newEvents.filter((event) => event.issueId === issueId),
+            issue,
+            assignment,
+          };
+        case "board_update":
+        default:
+          return {
+            matched:
+              snapshot.board.updatedAt > initialSnapshot.board.updatedAt ||
+              newEvents.length > 0,
+            matchedEvents: newEvents,
+            issue,
+            assignment,
+          };
+      }
+    };
+
+    let elapsedMs = 0;
+    let statusElapsedMs = 0;
+    let snapshot = initialSnapshot;
+    while (elapsedMs < timeoutMs) {
+      if (this.cancelled || this.disposed) {
+        throw new Error("Orchestration wait interrupted.");
+      }
+      const immediate = evaluate(snapshot);
+      if (immediate.matched) {
+        return safeJson({
+          conditionMet: true,
+          waitedMs: elapsedMs,
+          waitFor,
+          reason,
+          issue: immediate.issue ?? null,
+          assignment: immediate.assignment ?? null,
+          matchedEvents: immediate.matchedEvents.slice(-10),
+          boardUpdatedAt: snapshot.board.updatedAt,
+        });
+      }
+      const chunkMs = Math.min(pollMs, timeoutMs - elapsedMs);
+      await new Promise((resolve) => setTimeout(resolve, chunkMs));
+      elapsedMs += chunkMs;
+      statusElapsedMs += chunkMs;
+      snapshot = await this.resolveCurrentOrchestrationBoard();
+      if (statusElapsedMs >= ORCHESTRATION_WAIT_HEARTBEAT_MS || elapsedMs >= timeoutMs) {
+        statusElapsedMs = 0;
+        await this.callbacks.appendEvents([
+          {
+            eventId: randomUUID(),
+            conversationId: this.callbacks.conversation.id,
+            kind: "status",
+            status: "running",
+            detail: `Waiting for ${waitFor} (${Math.round(elapsedMs / 1000)}s / ${Math.round(timeoutMs / 1000)}s): ${reason}`,
+          },
+        ]);
+      }
+    }
+    const final = evaluate(snapshot);
+    return safeJson({
+      conditionMet: final.matched,
+      waitedMs: timeoutMs,
+      waitFor,
+      reason,
+      issue: final.issue ?? null,
+      assignment: final.assignment ?? null,
+      matchedEvents: final.matchedEvents.slice(-10),
+      boardUpdatedAt: snapshot.board.updatedAt,
+      recentEvents: snapshot.events.slice(-10),
+    });
   }
 
   private async toolSubagent(args: Record<string, unknown>): Promise<string> {

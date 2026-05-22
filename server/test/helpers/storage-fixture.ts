@@ -78,6 +78,10 @@ async function createPgFixture(): Promise<StorageFixture> {
   const db = getDb();
   await db.execute(sql`
     TRUNCATE TABLE
+      orchestration_events,
+      orchestration_assignments,
+      orchestration_issues,
+      orchestration_boards,
       agent_events,
       agent_conversations,
       fs_attachments,

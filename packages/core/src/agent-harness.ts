@@ -125,15 +125,30 @@ export const CESIUM_TOOL_DEFINITIONS: CesiumToolDefinition[] = [
   },
   {
     name: "ask_question",
-    description: "Ask the user a structured question with selectable options.",
+    description: "Ask the user one or more structured questions with selectable options.",
     parameters: {
       type: "object",
       properties: {
         prompt: { type: "string" },
         options: { type: "array" },
         allowMultiple: { type: "boolean" },
+        allow_multiple: { type: "boolean" },
+        questions: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              id: { type: "string" },
+              prompt: { type: "string" },
+              title: { type: "string" },
+              options: { type: "array" },
+              allowMultiple: { type: "boolean" },
+              allow_multiple: { type: "boolean" },
+            },
+            required: ["options"],
+          },
+        },
       },
-      required: ["prompt", "options"],
     },
   },
   {

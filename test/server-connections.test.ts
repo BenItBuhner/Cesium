@@ -7,14 +7,17 @@ import {
 } from "../src/lib/auth-client.ts";
 import {
   applyServerUrlBootstrap,
+  bootstrapStoredServerConnection,
   createDefaultServerConnectionsState,
   getServerConnectionKey,
   getSettingsServerConnection,
   markServerConnectionUsed,
+  mergeServerConnectionBootstrap,
   normalizeServerConnectionsState,
   requiresDefaultServerSelection,
   setDefaultServerConnection,
   shouldApplyServerUrlFromSearch,
+  writeStoredServerConnectionsState,
 } from "../src/lib/server-connections.ts";
 import { getConfiguredServerBaseUrl } from "../src/lib/configured-server-base-url.ts";
 import {
@@ -46,6 +49,9 @@ function installMockWindow() {
   const storage = new MemoryStorage();
   const mockWindow = {
     localStorage: storage,
+    dispatchEvent() {
+      return true;
+    },
     location: {
       protocol: "http:",
       hostname: "localhost",
@@ -257,6 +263,149 @@ describe("server connections", () => {
 
     assert.equal(next.servers.length, 1);
     assert.equal(getServerConnectionKey(next.servers[0]!.baseUrl), "http://localhost:9100");
+  });
+
+  test("runtime bootstrap merges without replacing manually saved servers", () => {
+    const saved = normalizeServerConnectionsState(
+      {
+        version: 1,
+        activeServerId: "remote",
+        defaultServerId: "remote",
+        servers: [
+          {
+            id: "mobile-server",
+            label: "This device",
+            baseUrl: "http://10.0.2.2:9100",
+            createdAt: 1,
+            updatedAt: 1,
+            lastUsedAt: 1,
+          },
+          {
+            id: "remote",
+            label: "Prod",
+            baseUrl: "https://opencursor.example.com",
+            createdAt: 2,
+            updatedAt: 2,
+            lastUsedAt: 2,
+          },
+        ],
+      },
+      "http://10.0.2.2:9100"
+    );
+
+    const next = mergeServerConnectionBootstrap(
+      saved,
+      {
+        id: "mobile-server",
+        label: "This device",
+        baseUrl: "http://10.0.2.2:9100/",
+        now: 3,
+      },
+      { activate: "if-missing", defaultServer: "if-missing" }
+    );
+
+    assert.equal(next.activeServerId, "remote");
+    assert.equal(next.defaultServerId, "remote");
+    assert.deepEqual(
+      next.servers.map((server) => server.baseUrl).sort(),
+      ["http://10.0.2.2:9100", "https://opencursor.example.com"]
+    );
+  });
+
+  test("runtime bootstrap seeds the native server when storage is empty", () => {
+    installMockWindow();
+
+    const next = bootstrapStoredServerConnection({
+      id: "mobile-server",
+      label: "This device",
+      baseUrl: "http://10.0.2.2:9100/",
+    });
+
+    assert.equal(next.servers.length, 1);
+    assert.equal(next.servers[0]?.baseUrl, "http://10.0.2.2:9100");
+    assert.equal(next.activeServerId, "mobile-server");
+    assert.equal(next.defaultServerId, "mobile-server");
+  });
+
+  test("runtime bootstrap keeps auth lookup on the saved active server", () => {
+    installMockWindow();
+    const saved = normalizeServerConnectionsState(
+      {
+        version: 1,
+        activeServerId: "remote",
+        defaultServerId: "remote",
+        servers: [
+          {
+            id: "remote",
+            label: "Prod",
+            baseUrl: "https://opencursor.example.com",
+            createdAt: 1,
+            updatedAt: 1,
+            lastUsedAt: 2,
+          },
+        ],
+      },
+      "http://10.0.2.2:9100"
+    );
+    writeStoredServerConnectionsState(saved);
+    setStoredSessionToken(
+      "remote-token",
+      {
+        username: "user",
+        createdAt: 1,
+        expiresAt: 2,
+        lastSeenAt: 3,
+        remember: true,
+      },
+      "https://opencursor.example.com"
+    );
+
+    bootstrapStoredServerConnection({
+      id: "mobile-server",
+      label: "This device",
+      baseUrl: "http://10.0.2.2:9100",
+    });
+
+    assert.equal(getStoredSessionToken(), "remote-token");
+  });
+
+  test("desktop runtime bootstrap always activates the local sidecar server", () => {
+    installMockWindow();
+    writeStoredServerConnectionsState(
+      normalizeServerConnectionsState(
+        {
+          version: 1,
+          activeServerId: "remote",
+          defaultServerId: "remote",
+          servers: [
+            {
+              id: "remote",
+              label: "Prod",
+              baseUrl: "https://opencursor.example.com",
+              createdAt: 1,
+              updatedAt: 1,
+              lastUsedAt: 2,
+            },
+          ],
+        },
+        "http://127.0.0.1:54320"
+      )
+    );
+
+    const next = bootstrapStoredServerConnection(
+      {
+        id: "desktop-sidecar",
+        label: "This device",
+        baseUrl: "http://127.0.0.1:54321",
+      },
+      { activate: "always" }
+    );
+
+    assert.equal(next.activeServerId, "desktop-sidecar");
+    assert.equal(
+      next.servers.find((server) => server.id === "desktop-sidecar")?.baseUrl,
+      "http://127.0.0.1:54321"
+    );
   });
 });
 

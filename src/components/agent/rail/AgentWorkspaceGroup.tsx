@@ -22,7 +22,7 @@ export function AgentWorkspaceGroup({
         <button
           type="button"
           onClick={onToggleCollapsed}
-          className="flex min-w-0 flex-1 items-center gap-[4px] rounded-[var(--radius-tab)] py-[1px] pl-px pr-[6px] text-left transition-colors hover:bg-[var(--accent-bg)]"
+          className="flex min-w-0 flex-1 items-center gap-[4px] rounded-[var(--radius-tab)] py-[1px] pl-px pr-[6px] text-left hover:bg-[var(--accent-bg)]"
           aria-expanded={!collapsed}
         >
           <ChevronRight

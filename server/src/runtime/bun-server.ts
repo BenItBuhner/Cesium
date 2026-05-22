@@ -9,6 +9,7 @@ import {
 } from "../app.js";
 import { flushServerPerfReport } from "../lib/perf.js";
 import { attachAgentSocket } from "../ws/agent.js";
+import { attachOrchestrationSocket } from "../ws/orchestration.js";
 import { attachFsSocket } from "../ws/filewatcher.js";
 import { attachTerminalSocket } from "../ws/terminal.js";
 import { attachBrowserDebugSocket } from "../ws/browser-debug.js";
@@ -23,7 +24,7 @@ process.on("uncaughtException", (error) => {
 });
 
 type BunSocketData = {
-  kind: "agent" | "fs" | "terminal" | "browser-debug";
+  kind: "agent" | "orchestration" | "fs" | "terminal" | "browser-debug";
   workspaceId?: string;
   since?: number;
   terminalId?: string;
@@ -83,9 +84,11 @@ async function upgradeOrReject(
       ? "ws-fs"
       : kind === "agent"
         ? "ws-agent"
-        : kind === "terminal"
-          ? "ws-terminal"
-          : "ws-browser-debug";
+        : kind === "orchestration"
+          ? "ws-agent"
+          : kind === "terminal"
+            ? "ws-terminal"
+            : "ws-browser-debug";
   const auth = responseFromUpgradeAuth(await authenticateUpgradeRequest(request, authKind));
   if (auth) {
     return auth;
@@ -103,6 +106,9 @@ function attachSocket(ws: BunServerWebSocket): void {
   switch (ws.data.kind) {
     case "agent":
       attachAgentSocket(runtimeSocket, ws.data.workspaceId ?? "");
+      break;
+    case "orchestration":
+      attachOrchestrationSocket(runtimeSocket, ws.data.workspaceId ?? "");
       break;
     case "fs":
       void attachFsSocket(runtimeSocket, ws.data.workspaceId ?? "", ws.data.since ?? 0).catch(
@@ -149,6 +155,11 @@ export function startBunServer(): void {
       }
       if (url.pathname === "/ws/agent") {
         return upgradeOrReject(request, bunServer, "agent", {
+          workspaceId: url.searchParams.get("workspaceId")?.trim() || "",
+        });
+      }
+      if (url.pathname === "/ws/orchestration") {
+        return upgradeOrReject(request, bunServer, "orchestration", {
           workspaceId: url.searchParams.get("workspaceId")?.trim() || "",
         });
       }

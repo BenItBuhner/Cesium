@@ -14,6 +14,10 @@ import type {
   PersistedWorkspaceSession,
   WorkspaceWindowRecord,
 } from "../lib/workspace-session-store.js";
+import type {
+  OrchestrationBoardListResult,
+  OrchestrationBoardSnapshot,
+} from "../lib/orchestration/types.js";
 
 export type StorageDriverKind = "legacy-json" | "pg";
 
@@ -211,4 +215,14 @@ export interface StorageDriver {
     backendId: AgentBackendId,
     record: AgentProviderCacheRecord
   ): Promise<void>;
+
+  // ---------- orchestration ----------
+  listOrchestrationBoards(workspaceId: string): Promise<OrchestrationBoardListResult>;
+  getOrchestrationBoardSnapshot(
+    boardId: string
+  ): Promise<OrchestrationBoardSnapshot | null>;
+  saveOrchestrationBoardSnapshot(
+    snapshot: OrchestrationBoardSnapshot
+  ): Promise<void>;
+  deleteOrchestrationBoard(boardId: string): Promise<void>;
 }

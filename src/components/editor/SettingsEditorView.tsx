@@ -46,6 +46,12 @@ import {
 } from "lucide-react";
 import { ServerPickerPopover } from "@/components/preferences/ServerPickerPopover";
 import { useServerConnections } from "@/components/preferences/ServerConnectionsProvider";
+import {
+  getServerDisplayLabel,
+  getServerRailAppearance,
+  isLocalDeviceServer,
+} from "@/lib/server-rail-appearance";
+import { WorkspaceFolderIcon } from "@/lib/workspace-rail-appearance";
 import { SETTINGS_PANELS } from "@/components/editor/settings-panels";
 import { DefaultServerSettingsBanner } from "@/components/preferences/DefaultServerSettingsBanner";
 import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
@@ -174,10 +180,25 @@ function SettingsNavContent({
   padSettingsSearchForWindowChrome: boolean;
 }) {
   const { activeServer, servers, serverStatusById, setActiveServer } = useServerConnections();
+  const { settings } = useGlobalSettings();
   const { activeWorkspaceId, openWorkspaceById } = useWorkspace();
   const { byServerId: directoryByServerId } = useWorkspaceDirectory();
   const serverPickerAnchorRef = useRef<HTMLButtonElement>(null);
   const [serverPickerOpen, setServerPickerOpen] = useState(false);
+  const serverRailAppearances = settings.general.serverRailAppearances;
+  const activeServerAppearance = useMemo(
+    () =>
+      getServerRailAppearance(
+        serverRailAppearances,
+        activeServer.id,
+        servers.findIndex((server) => server.id === activeServer.id)
+      ),
+    [activeServer.id, serverRailAppearances, servers]
+  );
+  const activeServerDisplayLabel = useMemo(
+    () => getServerDisplayLabel(activeServer, activeServerAppearance),
+    [activeServer, activeServerAppearance]
+  );
 
   const handleActiveServerChange = useCallback(
     (serverId: string) => {
@@ -212,7 +233,7 @@ function SettingsNavContent({
 
   return (
     <div className="flex h-full flex-col bg-[var(--bg-panel)]">
-      <div className="flex shrink-0 items-center gap-[8px] px-[11px] pt-[12px]">
+      <div className="mobile-safe-top-pad flex shrink-0 items-center gap-[8px] px-[11px] pt-[12px]">
         {isMobile ? (
           <button
             type="button"
@@ -347,24 +368,31 @@ function SettingsNavContent({
           ref={serverPickerAnchorRef}
           type="button"
           onClick={() => setServerPickerOpen((open) => !open)}
-          className="flex min-w-0 flex-1 items-center gap-[8px] rounded-[var(--radius-tab)] py-[2px] text-left transition-colors hover:bg-[var(--bg-card)]"
-          aria-label={`Switch server (${activeServer.label})`}
+          className="flex min-w-0 flex-1 items-center gap-[8px] rounded-[var(--radius-tab)] py-[2px] text-left hover:bg-[var(--bg-card)]"
+          aria-label={`Switch server (${activeServerDisplayLabel})`}
           aria-expanded={serverPickerOpen}
           aria-haspopup="menu"
-          title={activeServer.label}
+          title={activeServerDisplayLabel}
         >
-          <CircleUserRound
-            className="size-[18px] shrink-0 text-[var(--text-secondary)]"
-            strokeWidth={1.5}
-            aria-hidden
-          />
+          {isLocalDeviceServer(activeServer) ? (
+            <CircleUserRound
+              className="size-[18px] shrink-0 text-[var(--text-secondary)]"
+              strokeWidth={1.5}
+              aria-hidden
+            />
+          ) : (
+            <WorkspaceFolderIcon
+              iconName={activeServerAppearance.icon}
+              color={activeServerAppearance.color}
+              className="size-[18px] shrink-0"
+              strokeWidth={1.5}
+            />
+          )}
           <span className="min-w-0 flex-1 truncate font-sans text-[13px] text-[var(--text-primary)]">
-            {activeServer.label}
+            {activeServerDisplayLabel}
           </span>
           <ChevronDown
-            className={`size-[14px] shrink-0 text-[var(--text-secondary)] transition-transform ${
-              serverPickerOpen ? "rotate-180" : ""
-            }`}
+            className="size-[14px] shrink-0 text-[var(--text-secondary)]"
             strokeWidth={1.5}
             aria-hidden
           />
@@ -390,6 +418,7 @@ function SettingsNavContent({
         selectedServerId={activeServer.id}
         servers={servers}
         serverStatusById={serverStatusById}
+        serverRailAppearances={serverRailAppearances}
         onSelect={handleActiveServerChange}
         placement="above"
       />
@@ -813,7 +842,7 @@ export function SettingsEditorView({ onCloseShell }: SettingsEditorViewProps = {
           <button
             type="button"
             onClick={() => setNavDrawerOpen(true)}
-            className="absolute left-[11px] top-[11px] z-40 flex size-[18px] items-center justify-center rounded-[var(--radius-tab)] bg-[var(--bg-panel)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-card)] hover:text-[var(--text-primary)]"
+            className="mobile-safe-top-offset absolute left-[11px] top-[11px] z-40 flex size-[18px] items-center justify-center rounded-[var(--radius-tab)] bg-[var(--bg-panel)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-card)] hover:text-[var(--text-primary)]"
             aria-label="Show settings nav"
           >
             <PanelLeftOpen className="size-[16px]" strokeWidth={1.5} />
@@ -822,7 +851,7 @@ export function SettingsEditorView({ onCloseShell }: SettingsEditorViewProps = {
 
         <main
           ref={scrollRootRef}
-          className="hide-scrollbar-y min-h-0 min-w-0 flex-1 overflow-y-auto bg-[var(--bg-main)] py-[24px]"
+          className="mobile-safe-top-pad mobile-safe-top-scroll hide-scrollbar-y min-h-0 min-w-0 flex-1 overflow-y-auto bg-[var(--bg-main)] py-[24px]"
           onScroll={onMainScroll}
         >
           <div className={SETTINGS_MAIN_CONTENT_SHELL_CLASS}>

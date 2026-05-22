@@ -5,6 +5,38 @@ const { spawnSync } = require("node:child_process");
 const repoRoot = path.resolve(__dirname, "..");
 const serverPackagePath = path.join(repoRoot, "server", "package.json");
 const stagingRoot = path.join(repoRoot, "apps", "desktop", ".server-runtime");
+const localWorkspacePackages = {
+  "@cesium/core": path.join(repoRoot, "packages", "core"),
+};
+
+async function copyLocalWorkspacePackage(packageName, sourceRoot) {
+  const packageJsonPath = path.join(sourceRoot, "package.json");
+  const distPath = path.join(sourceRoot, "dist");
+  const packageJson = JSON.parse(await fs.readFile(packageJsonPath, "utf8"));
+  const targetRoot = path.join(stagingRoot, "node_modules", ...packageName.split("/"));
+
+  await fs.rm(targetRoot, { recursive: true, force: true });
+  await fs.mkdir(targetRoot, { recursive: true });
+  await fs.writeFile(
+    path.join(targetRoot, "package.json"),
+    JSON.stringify(
+      {
+        name: packageJson.name,
+        version: packageJson.version,
+        type: packageJson.type,
+        main: packageJson.main,
+        types: packageJson.types,
+        exports: packageJson.exports,
+      },
+      null,
+      2
+    )
+  );
+  await fs.cp(distPath, path.join(targetRoot, "dist"), {
+    recursive: true,
+    force: true,
+  });
+}
 
 async function main() {
   const serverPackage = JSON.parse(await fs.readFile(serverPackagePath, "utf8"));
@@ -37,6 +69,12 @@ async function main() {
   });
   if (result.status !== 0) {
     process.exit(result.status ?? 1);
+  }
+
+  for (const [packageName, sourceRoot] of Object.entries(localWorkspacePackages)) {
+    if (serverPackage.dependencies?.[packageName]?.startsWith("file:")) {
+      await copyLocalWorkspacePackage(packageName, sourceRoot);
+    }
   }
 }
 

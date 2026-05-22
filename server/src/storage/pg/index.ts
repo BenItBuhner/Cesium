@@ -23,6 +23,16 @@ import type {
   PersistedWorkspaceSession,
   WorkspaceWindowRecord,
 } from "../../lib/workspace-session-store.js";
+import type {
+  OrchestrationAssignmentRecord,
+  OrchestrationBoardListResult,
+  OrchestrationBoardRecord,
+  OrchestrationBoardSnapshot,
+  OrchestrationEventKind,
+  OrchestrationEventRecord,
+  OrchestrationIssuePriority,
+  OrchestrationIssueRecord,
+} from "../../lib/orchestration/types.js";
 import {
   StorageConflictError,
   type AgentProviderCacheRecord,
@@ -38,6 +48,11 @@ const WORKSPACE_SESSION_WINDOW_ID = "";
 
 type ConversationRow = typeof schema.agentConversations.$inferSelect;
 type EventRow = typeof schema.agentEvents.$inferSelect;
+type OrchestrationBoardRow = typeof schema.orchestrationBoards.$inferSelect;
+type OrchestrationIssueRow = typeof schema.orchestrationIssues.$inferSelect;
+type OrchestrationAssignmentRow =
+  typeof schema.orchestrationAssignments.$inferSelect;
+type OrchestrationEventRow = typeof schema.orchestrationEvents.$inferSelect;
 
 function rowToWorkspace(row: typeof schema.workspaces.$inferSelect): WorkspaceRecord {
   return {
@@ -108,6 +123,85 @@ function rowToEvent(row: EventRow): AgentStoredEvent {
     kind: row.kind,
     createdAt: row.createdAt,
   } as AgentStoredEvent;
+}
+
+function rowToOrchestrationBoard(
+  row: OrchestrationBoardRow
+): OrchestrationBoardRecord {
+  return {
+    schemaVersion: 1,
+    id: row.id,
+    workspaceId: row.workspaceId,
+    title: row.title,
+    description: row.description,
+    headConversationId: row.headConversationId,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+    archivedAt: row.archivedAt,
+    settings: row.settings as OrchestrationBoardRecord["settings"],
+  };
+}
+
+function rowToOrchestrationIssue(
+  row: OrchestrationIssueRow
+): OrchestrationIssueRecord {
+  return {
+    schemaVersion: 1,
+    id: row.id,
+    boardId: row.boardId,
+    title: row.title,
+    description: row.description,
+    columnId: row.columnId as OrchestrationIssueRecord["columnId"],
+    priority: row.priority as OrchestrationIssuePriority,
+    sortOrder: row.sortOrder,
+    acceptanceCriteria: Array.isArray(row.acceptanceCriteria)
+      ? row.acceptanceCriteria
+      : [],
+    dependencyIssueIds: Array.isArray(row.dependencyIssueIds)
+      ? row.dependencyIssueIds
+      : [],
+    blockedReason: row.blockedReason,
+    verification: row.verification as OrchestrationIssueRecord["verification"],
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+    completedAt: row.completedAt,
+  };
+}
+
+function rowToOrchestrationAssignment(
+  row: OrchestrationAssignmentRow
+): OrchestrationAssignmentRecord {
+  return {
+    schemaVersion: 1,
+    id: row.id,
+    boardId: row.boardId,
+    issueId: row.issueId,
+    conversationId: row.conversationId,
+    role: row.role,
+    status: row.status as OrchestrationAssignmentRecord["status"],
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+    config: row.config as OrchestrationAssignmentRecord["config"],
+    lastKnownConversationStatus:
+      row.lastKnownConversationStatus as OrchestrationAssignmentRecord["lastKnownConversationStatus"],
+  };
+}
+
+function rowToOrchestrationEvent(
+  row: OrchestrationEventRow
+): OrchestrationEventRecord {
+  return {
+    schemaVersion: 1,
+    id: row.id,
+    boardId: row.boardId,
+    issueId: row.issueId,
+    assignmentId: row.assignmentId,
+    kind: row.kind as OrchestrationEventKind,
+    actor: row.actor as OrchestrationEventRecord["actor"],
+    message: row.message,
+    payload: row.payload as Record<string, unknown>,
+    createdAt: row.createdAt,
+  };
 }
 
 function buildEventPayload(event: AgentEventInput): Record<string, unknown> {
@@ -856,6 +950,169 @@ async readAgentEvents(input: ReadAgentEventsInput): Promise<AgentStoredEvent[]> 
           fetchedAt: record.updatedAt,
         },
       });
+  }
+
+  // ---------- orchestration ----------
+  async listOrchestrationBoards(
+    workspaceId: string
+  ): Promise<OrchestrationBoardListResult> {
+    const rows = await getDb()
+      .select()
+      .from(schema.orchestrationBoards)
+      .where(
+        and(
+          eq(schema.orchestrationBoards.workspaceId, workspaceId),
+          sql`${schema.orchestrationBoards.archivedAt} IS NULL`
+        )
+      )
+      .orderBy(desc(schema.orchestrationBoards.updatedAt));
+    return { boards: rows.map(rowToOrchestrationBoard) };
+  }
+
+  async getOrchestrationBoardSnapshot(
+    boardId: string
+  ): Promise<OrchestrationBoardSnapshot | null> {
+    const db = getDb();
+    const [boardRow] = await db
+      .select()
+      .from(schema.orchestrationBoards)
+      .where(eq(schema.orchestrationBoards.id, boardId))
+      .limit(1);
+    if (!boardRow) {
+      return null;
+    }
+    const [issueRows, assignmentRows, eventRows] = await Promise.all([
+      db
+        .select()
+        .from(schema.orchestrationIssues)
+        .where(eq(schema.orchestrationIssues.boardId, boardId))
+        .orderBy(
+          asc(schema.orchestrationIssues.columnId),
+          asc(schema.orchestrationIssues.sortOrder)
+        ),
+      db
+        .select()
+        .from(schema.orchestrationAssignments)
+        .where(eq(schema.orchestrationAssignments.boardId, boardId))
+        .orderBy(asc(schema.orchestrationAssignments.createdAt)),
+      db
+        .select()
+        .from(schema.orchestrationEvents)
+        .where(eq(schema.orchestrationEvents.boardId, boardId))
+        .orderBy(asc(schema.orchestrationEvents.createdAt)),
+    ]);
+    return {
+      board: rowToOrchestrationBoard(boardRow),
+      issues: issueRows.map(rowToOrchestrationIssue),
+      assignments: assignmentRows.map(rowToOrchestrationAssignment),
+      events: eventRows.map(rowToOrchestrationEvent),
+    };
+  }
+
+  async saveOrchestrationBoardSnapshot(
+    snapshot: OrchestrationBoardSnapshot
+  ): Promise<void> {
+    const db = getDb();
+    await db.transaction(async (tx) => {
+      await tx
+        .insert(schema.orchestrationBoards)
+        .values({
+          id: snapshot.board.id,
+          workspaceId: snapshot.board.workspaceId,
+          schemaVersion: snapshot.board.schemaVersion,
+          title: snapshot.board.title,
+          description: snapshot.board.description,
+          headConversationId: snapshot.board.headConversationId,
+          createdAt: snapshot.board.createdAt,
+          updatedAt: snapshot.board.updatedAt,
+          archivedAt: snapshot.board.archivedAt,
+          settings: snapshot.board.settings as unknown as Record<string, unknown>,
+        })
+        .onConflictDoUpdate({
+          target: schema.orchestrationBoards.id,
+          set: {
+            title: snapshot.board.title,
+            description: snapshot.board.description,
+            headConversationId: snapshot.board.headConversationId,
+            updatedAt: snapshot.board.updatedAt,
+            archivedAt: snapshot.board.archivedAt,
+            settings: snapshot.board.settings as unknown as Record<string, unknown>,
+          },
+        });
+
+      await tx
+        .delete(schema.orchestrationEvents)
+        .where(eq(schema.orchestrationEvents.boardId, snapshot.board.id));
+      await tx
+        .delete(schema.orchestrationAssignments)
+        .where(eq(schema.orchestrationAssignments.boardId, snapshot.board.id));
+      await tx
+        .delete(schema.orchestrationIssues)
+        .where(eq(schema.orchestrationIssues.boardId, snapshot.board.id));
+
+      if (snapshot.issues.length > 0) {
+        await tx.insert(schema.orchestrationIssues).values(
+          snapshot.issues.map((issue) => ({
+            id: issue.id,
+            boardId: issue.boardId,
+            schemaVersion: issue.schemaVersion,
+            title: issue.title,
+            description: issue.description,
+            columnId: issue.columnId,
+            priority: issue.priority,
+            sortOrder: issue.sortOrder,
+            acceptanceCriteria: issue.acceptanceCriteria,
+            dependencyIssueIds: issue.dependencyIssueIds,
+            blockedReason: issue.blockedReason,
+            verification: issue.verification as unknown as Record<string, unknown>,
+            createdAt: issue.createdAt,
+            updatedAt: issue.updatedAt,
+            completedAt: issue.completedAt,
+          }))
+        );
+      }
+
+      if (snapshot.assignments.length > 0) {
+        await tx.insert(schema.orchestrationAssignments).values(
+          snapshot.assignments.map((assignment) => ({
+            id: assignment.id,
+            boardId: assignment.boardId,
+            issueId: assignment.issueId,
+            conversationId: assignment.conversationId,
+            schemaVersion: assignment.schemaVersion,
+            role: assignment.role,
+            status: assignment.status,
+            createdAt: assignment.createdAt,
+            updatedAt: assignment.updatedAt,
+            config: assignment.config as unknown as Record<string, unknown>,
+            lastKnownConversationStatus: assignment.lastKnownConversationStatus,
+          }))
+        );
+      }
+
+      if (snapshot.events.length > 0) {
+        await tx.insert(schema.orchestrationEvents).values(
+          snapshot.events.map((event) => ({
+            id: event.id,
+            boardId: event.boardId,
+            issueId: event.issueId,
+            assignmentId: event.assignmentId,
+            schemaVersion: event.schemaVersion,
+            kind: event.kind,
+            actor: event.actor as unknown as Record<string, unknown>,
+            message: event.message,
+            payload: event.payload,
+            createdAt: event.createdAt,
+          }))
+        );
+      }
+    });
+  }
+
+  async deleteOrchestrationBoard(boardId: string): Promise<void> {
+    await getDb()
+      .delete(schema.orchestrationBoards)
+      .where(eq(schema.orchestrationBoards.id, boardId));
   }
 }
 

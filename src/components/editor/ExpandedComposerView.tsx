@@ -100,6 +100,7 @@ export function ExpandedComposerView({
           conversationStatus={controller.conversationStatus}
           busy={controller.busy}
           configLocked={controller.configLocked}
+          modeLocked={controller.modeLocked}
           layout="empty-top"
           variant="expanded"
           draftAttachments={draftAttachments}
