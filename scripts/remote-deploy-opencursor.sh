@@ -31,6 +31,9 @@ p.write_text("\n".join(out) + "\n", encoding="utf-8")
 print(f"Updated {key} in .env.local")
 PY
 
+echo "==> Build packages"
+npm run build --workspace @cesium/core
+
 echo "==> Build server"
 npm run build --prefix server
 

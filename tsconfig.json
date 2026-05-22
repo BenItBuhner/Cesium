@@ -37,6 +37,10 @@
   "exclude": [
     "node_modules",
     "server/**/*",
-    "test/**/*"
+    "test/**/*",
+    "apps/mobile/**/*",
+    "apps/desktop/**/*",
+    "apps/desktop-renderer/**/*",
+    "apps/web/**/*"
   ]
 }
