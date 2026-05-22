@@ -1015,7 +1015,8 @@ export function EditorPanel({
       const snapshot = stateRef.current;
       const group = snapshot.leftTabs.some((tab) => tab.id === tabId) ? "left" : "right";
       await closeBrowserControlTab(tabId).catch(() => undefined);
-      return requestCloseTab(group, tabId);
+      requestCloseTab(group, tabId);
+      return true;
     },
     [requestCloseTab]
   );
