@@ -261,6 +261,14 @@ export interface EditorTab {
       touch?: boolean;
     };
   };
+  /** Sandboxed HTML surface created by a VS Code-compatible extension webview. */
+  vscodeWebview?: {
+    panelId: string;
+    extensionId: string;
+    viewType: string;
+    html: string;
+    options?: Record<string, unknown>;
+  };
   /** Server-owned Orchestration Mode board rendered as a kanban surface. */
   orchestrationBoard?: {
     boardId: string;

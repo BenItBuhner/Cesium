@@ -14,6 +14,12 @@ import {
 } from "@/components/editor/MonacoHardwareAdapter";
 import { resolveEditorLanguageId } from "@/lib/editor-language";
 import { readFile } from "@/lib/server-api";
+import {
+  BUILT_IN_VSCODE_COMPAT_EXTENSIONS,
+  createVSCodeCompatibilityRuntime,
+  resolveVSCodeCompatibilityTheme,
+  type VSCodeCompatibilityRuntime,
+} from "@/lib/vscode-compat";
 
 interface CodeEditorProps {
   content: string;
@@ -444,9 +450,12 @@ export function CodeEditor({
   const editorInstanceRef = useRef<MonacoEditor.IStandaloneCodeEditor | null>(
     null
   );
+  const vscodeCompatibilityRef = useRef<VSCodeCompatibilityRuntime | null>(null);
   const captureRef = useRef<HTMLDivElement | null>(null);
   const isDark = useHtmlDarkClass();
   const monacoTheme = isDark ? "cesium-dark" : "cesium-light";
+  const [compatibilityTheme, setCompatibilityTheme] = useState<string | null>(null);
+  const activeMonacoTheme = compatibilityTheme ?? monacoTheme;
   const editorLanguage = useMemo(
     () => resolveEditorLanguageId(language, filePath),
     [filePath, language]
@@ -516,11 +525,31 @@ export function CodeEditor({
     registerCesiumLanguages(monaco);
     configureTypeScriptWorkspace(monaco);
     defineCesiumThemes(monaco);
+    const runtime = createVSCodeCompatibilityRuntime(monaco);
+    runtime.installExtensions([
+      ...BUILT_IN_VSCODE_COMPAT_EXTENSIONS,
+      ...(window.cesiumVSCodeExtensions ?? []),
+    ]);
+    window.cesiumVSCodeCompatibility = runtime;
+    vscodeCompatibilityRef.current = runtime;
+    const preferredThemeId = window.localStorage.getItem("cesium-vscode-theme");
+    const nextTheme = resolveVSCodeCompatibilityTheme({
+      availableThemeIds: runtime.getThemeIds(),
+      preferredThemeId,
+      fallbackThemeId: monacoTheme,
+    });
+    setCompatibilityTheme(preferredThemeId && nextTheme !== monacoTheme ? nextTheme : null);
     monacoRef.current = monaco;
   }
 
   useEffect(() => {
     return () => {
+      const runtime = vscodeCompatibilityRef.current;
+      runtime?.dispose();
+      if (window.cesiumVSCodeCompatibility === runtime) {
+        window.cesiumVSCodeCompatibility = undefined;
+      }
+      vscodeCompatibilityRef.current = null;
       monacoRef.current = null;
       editorInstanceRef.current = null;
     };
@@ -528,8 +557,8 @@ export function CodeEditor({
 
   useEffect(() => {
     const m = monacoRef.current;
-    if (m) m.editor.setTheme(monacoTheme);
-  }, [monacoTheme]);
+    if (m) m.editor.setTheme(activeMonacoTheme);
+  }, [activeMonacoTheme]);
 
   useEffect(() => {
     if (!onContentChange || value === content) return;
@@ -558,6 +587,23 @@ export function CodeEditor({
       window.clearTimeout(timer);
     };
   }, [editorLanguage, filePath, value]);
+
+  useEffect(() => {
+    const runtime = vscodeCompatibilityRef.current;
+    const editor = editorInstanceRef.current;
+    const monaco = monacoRef.current;
+    const model = editor?.getModel();
+    if (!runtime || !editor || !monaco || !model) {
+      return;
+    }
+    const document = {
+      uri: model.uri,
+      fileName: filePath ?? model.uri.path ?? "",
+      languageId: editorLanguage,
+      getText: () => editor.getValue(),
+    };
+    void runtime.activateForDocument(document).catch(() => undefined);
+  }, [editorInstance, editorLanguage, filePath, value]);
 
   const handleSave = useCallback(async () => {
     const save = onSaveRef.current;
@@ -731,7 +777,7 @@ export function CodeEditor({
         path={editorModelPath}
         value={value}
         onChange={onChange}
-        theme={monacoTheme}
+        theme={activeMonacoTheme}
         beforeMount={handleBeforeMount}
         onMount={handleMount}
         options={{

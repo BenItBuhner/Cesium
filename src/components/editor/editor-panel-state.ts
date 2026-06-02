@@ -128,6 +128,23 @@ export type EditorPanelAction =
       viewport?: BrowserControlViewport;
     }
   | {
+      type: "OPEN_VSCODE_WEBVIEW_TAB";
+      panelId: string;
+      extensionId: string;
+      viewType: string;
+      title: string;
+      html: string;
+      options?: Record<string, unknown>;
+      group?: EditorGroup;
+    }
+  | {
+      type: "UPDATE_VSCODE_WEBVIEW_TAB";
+      panelId: string;
+      title?: string;
+      html?: string;
+      options?: Record<string, unknown>;
+    }
+  | {
       type: "UPDATE_BROWSER_TAB_URL";
       tabId: string;
       targetUrl: string;
@@ -985,6 +1002,98 @@ export function editorPanelReducer(
         focusedGroup: "right",
         rightTabs: [...state.rightTabs, tab],
         rightActiveId: tabId,
+      };
+    }
+
+    case "OPEN_VSCODE_WEBVIEW_TAB": {
+      const tabId = action.panelId;
+      const name = truncateTabName(action.title);
+      const patch = (tab: EditorTab): EditorTab =>
+        tab.id === tabId
+          ? {
+              ...tab,
+              name,
+              vscodeWebview: {
+                panelId: action.panelId,
+                extensionId: action.extensionId,
+                viewType: action.viewType,
+                html: action.html,
+                options: action.options,
+              },
+            }
+          : tab;
+      const existingLeft = state.leftTabs.some((tab) => tab.id === tabId);
+      if (existingLeft && action.group !== "right") {
+        return {
+          ...state,
+          focusedGroup: "left",
+          leftActiveId: tabId,
+          leftTabs: state.leftTabs.map(patch),
+        };
+      }
+      const existingRight = state.rightTabs.some((tab) => tab.id === tabId);
+      if (existingRight && action.group !== "left") {
+        return {
+          ...state,
+          focusedGroup: "right",
+          rightActiveId: tabId,
+          rightTabs: state.rightTabs.map(patch),
+        };
+      }
+      const tab: EditorTab = {
+        id: tabId,
+        name,
+        language: "html",
+        icon: "browser",
+        content: action.html,
+        vscodeWebview: {
+          panelId: action.panelId,
+          extensionId: action.extensionId,
+          viewType: action.viewType,
+          html: action.html,
+          options: action.options,
+        },
+      };
+      const targetGroup = action.group ?? state.focusedGroup;
+      if (!state.split || targetGroup === "left") {
+        return {
+          ...state,
+          focusedGroup: "left",
+          leftTabs: [...state.leftTabs, tab],
+          leftActiveId: tabId,
+        };
+      }
+      return {
+        ...state,
+        focusedGroup: "right",
+        rightTabs: [...state.rightTabs, tab],
+        rightActiveId: tabId,
+      };
+    }
+
+    case "UPDATE_VSCODE_WEBVIEW_TAB": {
+      const patch = (tabs: EditorTab[]) =>
+        tabs.map((tab) => {
+          if (tab.id !== action.panelId || !tab.vscodeWebview) {
+            return tab;
+          }
+          const name = action.title ? truncateTabName(action.title) : tab.name;
+          const html = action.html ?? tab.vscodeWebview.html;
+          return {
+            ...tab,
+            name,
+            content: html,
+            vscodeWebview: {
+              ...tab.vscodeWebview,
+              html,
+              ...(action.options ? { options: action.options } : {}),
+            },
+          };
+        });
+      return {
+        ...state,
+        leftTabs: patch(state.leftTabs),
+        rightTabs: patch(state.rightTabs),
       };
     }
 

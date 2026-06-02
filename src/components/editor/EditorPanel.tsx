@@ -16,6 +16,7 @@ import { EditorTabs } from "./EditorTabs";
 import { SimpleMarkdownPreview } from "./SimpleMarkdownPreview";
 import { FilePreview } from "./FilePreview";
 import { AgentConversationView } from "./AgentConversationView";
+import { VSCodeWebviewSurface } from "./VSCodeWebviewSurface";
 
 // Lazy-load the heaviest editor surfaces. Monaco (`@monaco-editor/react`) alone is
 // ~500KB parsed, xterm adds another ~200KB, and most users don't open a Browser
@@ -111,6 +112,12 @@ import {
   buildWorkspaceWindowUrl,
   normalizeWorkspaceWindowSession,
 } from "@/lib/workspace-windows";
+import {
+  VSCODE_WEBVIEW_DISPOSE_EVENT,
+  VSCODE_WEBVIEW_OPEN_EVENT,
+  VSCODE_WEBVIEW_REVEAL_EVENT,
+  VSCODE_WEBVIEW_UPDATE_EVENT,
+} from "@/lib/vscode-compat";
 
 function fileContentLoadAction(
   tabId: string,
@@ -803,6 +810,82 @@ export function EditorPanel({
     registerOpenTranscript,
     registerOpenExplorerFile,
   ]);
+
+  useEffect(() => {
+    const openOrUpdateWebview = (event: Event) => {
+      const detail = (event as CustomEvent).detail ?? {};
+      if (
+        typeof detail.panelId !== "string" ||
+        typeof detail.extensionId !== "string" ||
+        typeof detail.viewType !== "string" ||
+        typeof detail.title !== "string"
+      ) {
+        return;
+      }
+      dispatch({
+        type: "OPEN_VSCODE_WEBVIEW_TAB",
+        panelId: detail.panelId,
+        extensionId: detail.extensionId,
+        viewType: detail.viewType,
+        title: detail.title,
+        html: typeof detail.html === "string" ? detail.html : "",
+        options:
+          detail.options && typeof detail.options === "object"
+            ? (detail.options as Record<string, unknown>)
+            : undefined,
+      });
+    };
+    const updateWebview = (event: Event) => {
+      const detail = (event as CustomEvent).detail ?? {};
+      if (typeof detail.panelId !== "string") {
+        return;
+      }
+      dispatch({
+        type: "UPDATE_VSCODE_WEBVIEW_TAB",
+        panelId: detail.panelId,
+        title: typeof detail.title === "string" ? detail.title : undefined,
+        html: typeof detail.html === "string" ? detail.html : undefined,
+        options:
+          detail.options && typeof detail.options === "object"
+            ? (detail.options as Record<string, unknown>)
+            : undefined,
+      });
+    };
+    const revealWebview = (event: Event) => {
+      const panelId = (event as CustomEvent).detail?.panelId;
+      if (typeof panelId !== "string") {
+        return;
+      }
+      const snapshot = stateRef.current;
+      if (snapshot.leftTabs.some((tab) => tab.id === panelId)) {
+        dispatch({ type: "SELECT_TAB", group: "left", id: panelId });
+      } else if (snapshot.rightTabs.some((tab) => tab.id === panelId)) {
+        dispatch({ type: "SELECT_TAB", group: "right", id: panelId });
+      }
+    };
+    const disposeWebview = (event: Event) => {
+      const panelId = (event as CustomEvent).detail?.panelId;
+      if (typeof panelId !== "string") {
+        return;
+      }
+      const snapshot = stateRef.current;
+      if (snapshot.leftTabs.some((tab) => tab.id === panelId)) {
+        dispatch({ type: "CLOSE_TAB", group: "left", id: panelId });
+      } else if (snapshot.rightTabs.some((tab) => tab.id === panelId)) {
+        dispatch({ type: "CLOSE_TAB", group: "right", id: panelId });
+      }
+    };
+    window.addEventListener(VSCODE_WEBVIEW_OPEN_EVENT, openOrUpdateWebview);
+    window.addEventListener(VSCODE_WEBVIEW_UPDATE_EVENT, updateWebview);
+    window.addEventListener(VSCODE_WEBVIEW_REVEAL_EVENT, revealWebview);
+    window.addEventListener(VSCODE_WEBVIEW_DISPOSE_EVENT, disposeWebview);
+    return () => {
+      window.removeEventListener(VSCODE_WEBVIEW_OPEN_EVENT, openOrUpdateWebview);
+      window.removeEventListener(VSCODE_WEBVIEW_UPDATE_EVENT, updateWebview);
+      window.removeEventListener(VSCODE_WEBVIEW_REVEAL_EVENT, revealWebview);
+      window.removeEventListener(VSCODE_WEBVIEW_DISPOSE_EVENT, disposeWebview);
+    };
+  }, []);
 
   useEffect(() => {
     const openDraftTabs = [...state.leftTabs, ...state.rightTabs].filter(
@@ -1804,6 +1887,9 @@ export function EditorPanel({
       return (
         <BrowserTab key={tab.id} tab={tab} dispatch={dispatch} editorGroup={group} />
       );
+    }
+    if (tab.vscodeWebview) {
+      return <VSCodeWebviewSurface key={tab.id} tab={tab} />;
     }
     if (tab.orchestrationBoard) {
       return (
