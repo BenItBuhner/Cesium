@@ -135,11 +135,11 @@ describe("VS Code compatibility layer", () => {
     runtime.installExtension(extension);
 
     assert.ok(fake.languages.some((language) => language.id === "demo-lang"));
-    assert.deepEqual(runtime.getThemeIds().sort(), ["demo.dark", "demo.light"]);
-    assert.equal(fake.themes.has("demo.dark"), true);
-    assert.equal(fake.themes.has("demo.light"), true);
-    assert.equal(runtime.setTheme("demo.light"), true);
-    assert.equal(fake.themes.get("active"), "demo.light");
+    assert.deepEqual(runtime.getThemeIds().sort(), ["demo-dark", "demo-light"]);
+    assert.equal(fake.themes.has("demo-dark"), true);
+    assert.equal(fake.themes.has("demo-light"), true);
+    assert.equal(runtime.setTheme("demo-light"), true);
+    assert.equal(fake.themes.get("active"), "demo-light");
   });
 
   test("activates extension diagnostics for Monaco documents", async () => {
@@ -206,14 +206,23 @@ describe("VS Code compatibility layer", () => {
         name: "webviews",
         publisher: "demo",
         activationEvents: ["onStartupFinished"],
+        contributes: {
+          commands: [{ command: "demo.openWebview", title: "Open Demo Webview" }],
+        },
       },
-      activate(vscode) {
-        const panel = vscode.window.createWebviewPanel("demoView", "Demo Webview");
-        panel.webview.html = "<h1>Rendered extension</h1>";
+      activate(vscode, context) {
+        context.subscriptions.push(
+          vscode.commands.registerCommand("demo.openWebview", () => {
+            const panel = vscode.window.createWebviewPanel("demoView", "Demo Webview");
+            panel.webview.html = "<h1>Rendered extension</h1>";
+            return panel;
+          })
+        );
       },
     });
 
     await runtime.activateExtension("demo.webviews");
+    runtime.executeCommand("demo.openWebview");
 
     assert.equal(events[0]?.type, VSCODE_WEBVIEW_OPEN_EVENT);
     assert.equal(events[1]?.type, VSCODE_WEBVIEW_UPDATE_EVENT);

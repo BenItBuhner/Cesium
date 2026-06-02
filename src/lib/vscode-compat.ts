@@ -234,6 +234,7 @@ export type VSCodeCompatibilityRuntime = {
   installExtensions: (extensions: VSCodeCompatExtension[]) => InstalledExtension[];
   activateExtension: (extensionId: string, reason?: string) => Promise<void>;
   activateForDocument: (document: VSCodeCompatTextDocument) => Promise<void>;
+  executeCommand: (command: string, ...args: unknown[]) => unknown;
   setTheme: (themeId: string) => boolean;
   getThemeIds: () => string[];
   getInstalledExtensions: () => InstalledExtension[];
@@ -328,7 +329,10 @@ function hasLanguage(monaco: MonacoLike, languageId: string): boolean {
 }
 
 function normalizeThemeId(extensionId: string, contribution: VSCodeThemeContribution): string {
-  return contribution.id ?? `${extensionId}.${contribution.label ?? contribution.path ?? "theme"}`;
+  const rawThemeId =
+    contribution.id ?? `${extensionId}.${contribution.label ?? contribution.path ?? "theme"}`;
+  const monacoThemeId = rawThemeId.trim().replace(/[^A-Za-z0-9_-]+/g, "-");
+  return monacoThemeId || `${extensionId.replace(/[^A-Za-z0-9_-]+/g, "-")}-theme`;
 }
 
 function resolveContributionTheme(
@@ -680,6 +684,9 @@ export function createVSCodeCompatibilityRuntime(monaco: MonacoLike): VSCodeComp
         const diagnostics = await registration.provider(document);
         applyMarkers(monaco, registration.extensionId, document.uri, diagnostics);
       }
+    },
+    executeCommand(command, ...args) {
+      return commands.get(command)?.(...args);
     },
     setTheme(themeId) {
       if (!themeIds.has(themeId)) {

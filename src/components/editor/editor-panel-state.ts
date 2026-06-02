@@ -1371,7 +1371,6 @@ export function editorPanelReducer(
       const srcKey = from === "left" ? "leftTabs" : "rightTabs";
       const dstKey = to === "left" ? "leftTabs" : "rightTabs";
       const src = state[srcKey];
-      const dst = state[dstKey];
       const tab = src.find((t) => t.id === tabId);
       if (!tab) return state;
       let next = removeTabIdFromPaneStrip(state, from, tabId);
