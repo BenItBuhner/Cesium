@@ -16,7 +16,7 @@
     "server"
   ],
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev --webpack",
     "dev:web": "npm run dev --workspace @cesium/web",
     "dev:desktop": "npm run dev --workspace @cesium/desktop",
     "dev:mobile": "npm run dev --workspace @cesium/mobile",
