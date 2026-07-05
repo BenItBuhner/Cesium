@@ -47,6 +47,7 @@ type BunServeOptions = {
   port: number;
   hostname: string;
   maxRequestBodySize: number;
+  idleTimeout?: number;
   fetch(request: Request, server: BunServer): Response | Promise<Response | undefined> | undefined;
   websocket: {
     open(ws: BunServerWebSocket): void;
@@ -145,6 +146,8 @@ export function startBunServer(): void {
     maxRequestBodySize:
       Number.parseInt(process.env.BUN_MAX_REQUEST_BODY_SIZE ?? "", 10) ||
       1024 * 1024 * 200,
+    idleTimeout:
+      Number.parseInt(process.env.BUN_IDLE_TIMEOUT_SEC ?? "", 10) || 120,
     async fetch(request, bunServer) {
       const url = new URL(request.url);
       if (url.pathname === "/ws/fs") {
