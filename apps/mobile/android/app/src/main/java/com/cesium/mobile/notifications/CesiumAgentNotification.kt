@@ -9,7 +9,8 @@ import android.content.Intent
 import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
-import androidx.annotation.RequiresApi
+import androidx.core.app.NotificationCompat
+import androidx.core.app.NotificationManagerCompat
 import com.cesium.mobile.MainActivity
 
 object CesiumAgentNotification {
@@ -45,12 +46,7 @@ object CesiumAgentNotification {
     val ongoing = extras.getBoolean("ongoing", true)
     val requestPromotion = extras.getBoolean("promote", false) && ongoing
 
-    val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-      Notification.Builder(context, CHANNEL_ID)
-    } else {
-      @Suppress("DEPRECATION")
-      Notification.Builder(context)
-    }
+    val builder = NotificationCompat.Builder(context, CHANNEL_ID)
 
     builder
       .setSmallIcon(android.R.drawable.stat_notify_sync)
@@ -65,11 +61,11 @@ object CesiumAgentNotification {
       .setDeleteIntent(deleteIntent(context, extras))
 
     if (Build.VERSION.SDK_INT >= 31 && ongoing) {
-      builder.setForegroundServiceBehavior(Notification.FOREGROUND_SERVICE_IMMEDIATE)
+      builder.setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
     }
 
     if (Build.VERSION.SDK_INT >= 36) {
-      applyProgressStyleApi36(
+      applyProgressStyle(
         builder,
         extras,
         progressMax,
@@ -117,14 +113,11 @@ object CesiumAgentNotification {
   }
 
   fun canPostPromoted(context: Context): Boolean {
-    if (Build.VERSION.SDK_INT < 36) return false
-    val manager = context.getSystemService(NotificationManager::class.java)
-    return manager.canPostPromotedNotifications()
+    return NotificationManagerCompat.from(context).canPostPromotedNotifications()
   }
 
-  @RequiresApi(36)
-  private fun applyProgressStyleApi36(
-    builder: Notification.Builder,
+  private fun applyProgressStyle(
+    builder: NotificationCompat.Builder,
     extras: Bundle,
     max: Int,
     current: Int,
@@ -133,7 +126,7 @@ object CesiumAgentNotification {
     val safeMax = max.coerceIn(1, MAX_PROGRESS_SEGMENTS)
     val safeProgress = current.coerceIn(0, safeMax)
     val progressKind = extras.getString("progressKind") ?: "indeterminate"
-    val style = Notification.ProgressStyle()
+    val style = NotificationCompat.ProgressStyle()
       .setProgressIndeterminate(indeterminate)
     if (!indeterminate) {
       style
@@ -144,7 +137,7 @@ object CesiumAgentNotification {
           val completed = extras.getInt("todoCompleted", safeProgress)
           val currentIndex = extras.getInt("todoCurrentIndex", completed + 1)
           val segments = (1..safeMax).map { index ->
-            Notification.ProgressStyle.Segment(1).setColor(
+            NotificationCompat.ProgressStyle.Segment(1).setColor(
               when {
                 index <= completed -> COLOR_COMPLETED
                 index == currentIndex -> COLOR_ACTIVE
@@ -157,7 +150,7 @@ object CesiumAgentNotification {
         "burn" -> {
           style.setProgressSegments(
             listOf(
-              Notification.ProgressStyle.Segment(safeMax).setColor(COLOR_BURN)
+              NotificationCompat.ProgressStyle.Segment(safeMax).setColor(COLOR_BURN)
             )
           )
         }
@@ -167,14 +160,14 @@ object CesiumAgentNotification {
   }
 
   private fun addAction(
-    builder: Notification.Builder,
+    builder: NotificationCompat.Builder,
     context: Context,
     extras: Bundle,
     action: String,
     title: String
   ) {
     builder.addAction(
-      Notification.Action.Builder(
+      NotificationCompat.Action.Builder(
         android.R.drawable.ic_menu_view,
         title,
         openIntent(context, extras, action)
