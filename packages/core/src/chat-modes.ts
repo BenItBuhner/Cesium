@@ -4,6 +4,7 @@ export const DEFAULT_MODE_OPTIONS: AgentModeOption[] = [
   { id: "agent", label: "Agent" },
   { id: "plan", label: "Plan" },
   { id: "orchestration", label: "Orchestration" },
+  { id: "workflow", label: "Workflow" },
   { id: "ask", label: "Ask" },
 ];
 
@@ -13,6 +14,10 @@ export function isOrchestrationMode(mode: string): boolean {
 
 export function isBurnMode(mode: string): boolean {
   return String(mode).trim().toLowerCase() === "burn";
+}
+
+export function isWorkflowMode(mode: string): boolean {
+  return String(mode).trim().toLowerCase() === "workflow";
 }
 
 export function isGoalMode(mode: string): boolean {
@@ -100,6 +105,8 @@ export function resolveCanonicalModeId(rawMode: string, options: AgentModeOption
             ? ["debug", "build", "agent", "code"]
             : requestedLower === "burn"
               ? ["burn"]
+              : requestedLower === "workflow"
+                ? ["workflow"]
               : [trimmed];
   const idSet = new Set(ids);
   for (const candidate of rawCandidates) {
@@ -120,6 +127,9 @@ export function getModeTone(mode: string): KnownEditorMode {
   const normalized = mode.trim().toLowerCase();
   if (isGoalMode(normalized)) {
     return "burn";
+  }
+  if (isWorkflowMode(normalized) || normalized.includes("workflow")) {
+    return "workflow";
   }
   if (isOrchestrationMode(normalized) || normalized.includes("orchestration")) {
     return "orchestration";

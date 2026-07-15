@@ -1079,6 +1079,12 @@ export async function createCesiumAgentConfigOptions(): Promise<AgentConfigOptio
           description: "Run a DB-backed long-running goal with planning, milestones, continuation, and final verification.",
         },
         {
+          value: "workflow",
+          name: "Workflow",
+          description:
+            "Write and execute JavaScript orchestration scripts that fan work across subagents with parallel/pipeline primitives.",
+        },
+        {
           value: "ask",
           name: "Ask",
           description: "Read-only Q&A mode for inspecting the workspace without side effects.",

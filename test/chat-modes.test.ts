@@ -29,6 +29,14 @@ describe("chat modes", () => {
     assert.equal(resolveCanonicalModeId("Burn", [{ id: "burn", label: "Burn" }]), "burn");
   });
 
+  test("uses workflow emphasis for Workflow mode", () => {
+    assert.equal(getModeTone("workflow"), "workflow");
+    assert.equal(
+      resolveCanonicalModeId("Workflow", [{ id: "workflow", label: "Workflow" }]),
+      "workflow"
+    );
+  });
+
   test("detects orchestration mode case-insensitively", () => {
     assert.equal(isOrchestrationMode("orchestration"), true);
     assert.equal(isOrchestrationMode(" Orchestration "), true);

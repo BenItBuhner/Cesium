@@ -18,6 +18,7 @@ import {
   Bug,
   FileText,
   Flame,
+  GitBranch,
   Image as ImageIcon,
   Infinity as InfinityIcon,
   Layers,
@@ -178,6 +179,7 @@ const sendButtonBgClass: Record<KnownEditorMode, string> = {
   ask: "bg-[var(--ask-accent-dark)]",
   goal: "bg-[var(--burn-accent-dark)]",
   burn: "bg-[var(--burn-accent-dark)]",
+  workflow: "bg-[var(--workflow-accent-dark)]",
   orchestration: "bg-[var(--orchestration-accent-dark)]",
 };
 
@@ -196,6 +198,7 @@ const NEW_DESIGN_MODE_COLORS: Record<KnownEditorMode, { text: string; bg: string
   ask: { text: "var(--ask-accent)", bg: "var(--ask-accent-bg)" },
   goal: { text: "var(--burn-accent)", bg: "var(--burn-accent-bg)" },
   burn: { text: "var(--burn-accent)", bg: "var(--burn-accent-bg)" },
+  workflow: { text: "var(--workflow-accent)", bg: "var(--workflow-accent-bg)" },
   orchestration: { text: "var(--orchestration-accent)", bg: "var(--orchestration-accent-bg)" },
 };
 
@@ -212,6 +215,8 @@ function renderNewDesignModeIcon(tone: KnownEditorMode, color: string): ReactEle
     case "goal":
     case "burn":
       return <Flame className={className} strokeWidth={strokeWidth} style={{ color }} />;
+    case "workflow":
+      return <GitBranch className={className} strokeWidth={strokeWidth} style={{ color }} />;
     case "orchestration":
       return <Layers className={className} strokeWidth={strokeWidth} style={{ color }} />;
     case "agent":

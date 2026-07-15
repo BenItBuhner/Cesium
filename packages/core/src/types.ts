@@ -513,6 +513,7 @@ export type KnownEditorMode =
   | "ask"
   | "goal"
   | "burn"
+  | "workflow"
   | "orchestration";
 
 export type EditorMode = KnownEditorMode | (string & {});

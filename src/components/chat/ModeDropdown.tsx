@@ -18,6 +18,7 @@ import {
   MessageSquare,
   ChevronDown,
   Check,
+  GitBranch,
   type LucideIcon,
 } from "lucide-react";
 import { useClickOutside } from "@/hooks/useClickOutside";
@@ -46,6 +47,7 @@ const modeColors: Record<KnownEditorMode, { text: string; bg: string }> = {
   ask: { text: "var(--ask-accent)", bg: "var(--ask-accent-bg)" },
   goal: { text: "var(--burn-accent)", bg: "var(--burn-accent-bg)" },
   burn: { text: "var(--burn-accent)", bg: "var(--burn-accent-bg)" },
+  workflow: { text: "var(--workflow-accent)", bg: "var(--workflow-accent-bg)" },
   orchestration: { text: "var(--orchestration-accent)", bg: "var(--orchestration-accent-bg)" },
 };
 
@@ -58,7 +60,10 @@ function iconForModeTone(tone: KnownEditorMode): LucideIcon {
     case "ask":
       return MessageSquare;
     case "burn":
+    case "goal":
       return Flame;
+    case "workflow":
+      return GitBranch;
     case "orchestration":
       return Layers;
     default:

@@ -36,6 +36,9 @@
   --burn-accent: #c43d32;
   --burn-accent-dark: #9f2f27;
   --burn-accent-bg: #f1dedb;
+  --workflow-accent: #0f7a72;
+  --workflow-accent-dark: #0b5f59;
+  --workflow-accent-bg: #d7eeeb;
   --orchestration-accent: #7c4cc2;
   --orchestration-accent-dark: #623aa0;
   --orchestration-accent-bg: #e8def4;
@@ -110,6 +113,9 @@ html.dark {
   --burn-accent: #ff8a7a;
   --burn-accent-dark: #c94f43;
   --burn-accent-bg: #3a2927;
+  --workflow-accent: #4fd1c5;
+  --workflow-accent-dark: #2a9f94;
+  --workflow-accent-bg: #243634;
   --orchestration-accent: #b894ff;
   --orchestration-accent-dark: #7d5acb;
   --orchestration-accent-bg: #312a3f;
@@ -180,6 +186,9 @@ html.dark {
   --color-burn-accent: var(--burn-accent);
   --color-burn-accent-dark: var(--burn-accent-dark);
   --color-burn-accent-bg: var(--burn-accent-bg);
+  --color-workflow-accent: var(--workflow-accent);
+  --color-workflow-accent-dark: var(--workflow-accent-dark);
+  --color-workflow-accent-bg: var(--workflow-accent-bg);
   --color-orchestration-accent: var(--orchestration-accent);
   --color-orchestration-accent-dark: var(--orchestration-accent-dark);
   --color-orchestration-accent-bg: var(--orchestration-accent-bg);
