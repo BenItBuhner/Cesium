@@ -1193,7 +1193,7 @@ function WorkbenchBody({
         setSelectedConversationId((current) =>
           current && ordered.some((conversation) => conversation.id === current)
             ? current
-            : current
+            : null
         );
       }
     } catch (nextError) {
