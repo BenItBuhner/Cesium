@@ -13,11 +13,13 @@ import {
   textFromCursorSdkAssistantMessage,
 } from "../src/lib/agents/cursor-sdk-normalize.js";
 import { getCursorSdkApiKey } from "../src/lib/cursor-sdk-credentials.js";
+import { withCursorSdkMode } from "../src/lib/agents/cursor-sdk-mode.js";
 import type { AgentEventInput } from "../src/lib/agents/types.js";
 
 type ProbeArgs = {
   cwd: string;
   model: string;
+  mode: string;
   scenario: string;
   out: string;
 };
@@ -32,6 +34,7 @@ const DEFAULT_SCENARIOS: Record<string, string> = {
   shell: "Run a harmless command to print the current working directory.",
   question:
     "If you have an ask-question or request-user-input tool available, use it to ask one multiple-choice question. If not, explain that no such tool is exposed.",
+  plan: "Create a short plan in markdown for adding a README section. If you can write a *.plan.md file, do so.",
   subagent:
     "If subagents are available, start a small subagent to inspect package.json. If unavailable, explain that subagents are not exposed in this environment.",
 };
@@ -47,6 +50,9 @@ function parseArgs(argv: string[]): ProbeArgs {
     } else if (arg === "--model" && next) {
       out.model = next;
       index += 1;
+    } else if (arg === "--mode" && next) {
+      out.mode = next;
+      index += 1;
     } else if (arg === "--scenario" && next) {
       out.scenario = next;
       index += 1;
@@ -58,7 +64,8 @@ function parseArgs(argv: string[]): ProbeArgs {
   const cwd = out.cwd ?? path.join(os.tmpdir(), "cesium-cursor-sdk-probe");
   return {
     cwd,
-    model: out.model ?? "composer-2",
+    model: out.model ?? "composer-2.5",
+    mode: out.mode ?? "agent",
     scenario: out.scenario ?? "all",
     out: out.out ?? path.join(cwd, "cursor-sdk-probe-events.jsonl"),
   };
@@ -210,33 +217,45 @@ async function main(): Promise<void> {
     type: "probe_start",
     cwd: args.cwd,
     model: args.model,
+    mode: args.mode,
     apiKeyName: me.apiKeyName,
     userEmail: me.userEmail,
   });
-  const agent = await Agent.create({
-    apiKey,
-    model: { id: args.model },
-    local: {
-      cwd: args.cwd,
-      settingSources: ["project", "user", "plugins"],
-      sandboxOptions: { enabled: false },
-    },
-  });
+  const agent = await Agent.create(
+    withCursorSdkMode(
+      {
+        apiKey,
+        model: { id: args.model },
+        local: {
+          cwd: args.cwd,
+          settingSources: ["project", "user", "plugins"],
+          sandboxOptions: { enabled: false },
+        },
+      },
+      args.mode
+    )
+  );
   try {
     for (const name of scenarioNames(args.scenario)) {
       const conversationId = `probe-${name}`;
-      await appendJsonLine(args.out, { type: "scenario_start", name });
-      const run = await agent.send(DEFAULT_SCENARIOS[name]!, {
-        onDelta: async ({ update }) => {
-          const normalized = cursorSdkDeltaText(update);
-          await appendJsonLine(args.out, {
-            type: "delta",
-            scenario: name,
-            update,
-            normalized,
-          });
-        },
-      });
+      await appendJsonLine(args.out, { type: "scenario_start", name, mode: args.mode });
+      const run = await agent.send(
+        DEFAULT_SCENARIOS[name]!,
+        withCursorSdkMode(
+          {
+            onDelta: async ({ update }) => {
+              const normalized = cursorSdkDeltaText(update);
+              await appendJsonLine(args.out, {
+                type: "delta",
+                scenario: name,
+                update,
+                normalized,
+              });
+            },
+          },
+          args.mode
+        )
+      );
       for await (const event of run.stream()) {
         await appendJsonLine(args.out, {
           type: "stream",

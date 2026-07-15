@@ -1,0 +1,156 @@
+import type { AgentModeOption, EditorMode, KnownEditorMode } from "./types";
+
+export const DEFAULT_MODE_OPTIONS: AgentModeOption[] = [
+  { id: "agent", label: "Agent" },
+  { id: "plan", label: "Plan" },
+  { id: "orchestration", label: "Orchestration" },
+  { id: "ask", label: "Ask" },
+];
+
+export function isOrchestrationMode(mode: string): boolean {
+  return String(mode).trim().toLowerCase() === "orchestration";
+}
+
+export function isBurnMode(mode: string): boolean {
+  return String(mode).trim().toLowerCase() === "burn";
+}
+
+export function isGoalMode(mode: string): boolean {
+  const normalized = String(mode).trim().toLowerCase();
+  return normalized === "burn";
+}
+
+export function filterGoalModeOptions(
+  options: AgentModeOption[],
+  _goalModeBetaEnabled: boolean
+): AgentModeOption[] {
+  return options.filter((option) => {
+    const normalized = String(option.id).trim().toLowerCase();
+    return normalized !== "goal";
+  });
+}
+
+export function coerceUnavailableGoalMode(
+  mode: string,
+  options: AgentModeOption[]
+): string {
+  const normalized = mode.trim().toLowerCase();
+  if (normalized === "goal") {
+    return options.find((option) => getModeTone(option.id) === "agent")?.id ?? options[0]?.id ?? "agent";
+  }
+  if (normalized === "burn" && !options.some((option) => isGoalMode(option.id))) {
+    return options.find((option) => getModeTone(option.id) === "agent")?.id ?? options[0]?.id ?? "agent";
+  }
+  return mode;
+}
+
+export function isOrchestrationModeLocked(): boolean {
+  return false;
+}
+
+export function formatModeLabel(mode: string): string {
+  const trimmed = mode.trim();
+  if (!trimmed) {
+    return "Mode";
+  }
+  return trimmed
+    .replace(/[-_]+/g, " ")
+    .replace(/\s+/g, " ")
+    .replace(/\b\w/g, (match) => match.toUpperCase());
+}
+
+/**
+ * Map UI / persisted mode strings to the concrete `option.value` id exposed by the
+ * active backend (case- and alias-aware, aligned with server mode resolution).
+ */
+export function resolveCanonicalModeId(rawMode: string, options: AgentModeOption[]): string {
+  const trimmed = rawMode.trim();
+  if (!trimmed) {
+    return options[0]?.id ?? "agent";
+  }
+  if (options.length === 0) {
+    return trimmed;
+  }
+  const ids = options.map((o) => o.id);
+  if (ids.includes(trimmed)) {
+    return trimmed;
+  }
+  const lower = trimmed.toLowerCase();
+  for (const id of ids) {
+    if (id.toLowerCase() === lower) {
+      return id;
+    }
+  }
+  const requestedLower = lower;
+  if (requestedLower === "goal") {
+    return (
+      ids.find((id) => getModeTone(id) === "agent") ??
+      ids[0] ??
+      "agent"
+    );
+  }
+  const rawCandidates =
+    requestedLower === "agent" || requestedLower === "code"
+      ? ["agent", "code", "build"]
+      : requestedLower === "plan"
+        ? ["plan", "architect"]
+        : requestedLower === "ask"
+          ? ["ask", "review", "readonly", "read-only"]
+          : requestedLower === "debug"
+            ? ["debug", "build", "agent", "code"]
+            : requestedLower === "burn"
+              ? ["burn"]
+              : [trimmed];
+  const idSet = new Set(ids);
+  for (const candidate of rawCandidates) {
+    if (idSet.has(candidate)) {
+      return candidate;
+    }
+  }
+  for (const candidate of rawCandidates) {
+    const found = ids.find((id) => id.toLowerCase() === candidate.toLowerCase());
+    if (found) {
+      return found;
+    }
+  }
+  return trimmed;
+}
+
+export function getModeTone(mode: string): KnownEditorMode {
+  const normalized = mode.trim().toLowerCase();
+  if (isGoalMode(normalized)) {
+    return "burn";
+  }
+  if (isOrchestrationMode(normalized) || normalized.includes("orchestration")) {
+    return "orchestration";
+  }
+  if (
+    normalized === "plan" ||
+    normalized === "architect" ||
+    normalized.includes("plan")
+  ) {
+    return "plan";
+  }
+  if (normalized === "debug" || normalized.includes("debug")) {
+    return "debug";
+  }
+  if (
+    normalized === "ask" ||
+    normalized === "review" ||
+    normalized === "readonly" ||
+    normalized === "read-only"
+  ) {
+    return "ask";
+  }
+  return "agent";
+}
+
+export function ensureCurrentModeOption(
+  mode: EditorMode,
+  options: AgentModeOption[]
+): AgentModeOption[] {
+  if (!mode || options.some((option) => option.id === mode)) {
+    return options;
+  }
+  return [{ id: mode, label: formatModeLabel(mode) }, ...options];
+}

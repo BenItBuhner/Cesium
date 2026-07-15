@@ -4,11 +4,15 @@ import {
   COMPLETION_AUTO_RETRY_MAX_ATTEMPTS,
   COMPLETION_RETRY_DELAYS_MS,
   completionErrorDismissKey,
+  computeCompletionAutoRetryActive,
   conversationHasCompletionFailure,
+  isAgentComposerBusy,
   deriveConversationCompletionError,
   isCesiumFailureAssistantChunk,
   isCompletionFailureThreadContent,
   isRetryableError,
+  isTakingLongerStatusDetail,
+  isCompressingContextStatusDetail,
   shouldHideCompletionFailureInThread,
   normalizeCompletionFailureText,
   parseAgentCompletionError,
@@ -83,5 +87,57 @@ describe("agent completion error parsing", () => {
       "429 Too Many Requests"
     );
     assert.equal(conversationHasCompletionFailure(conversation, events), true);
+  });
+
+  test("recognizes taking longer provider retry status detail", () => {
+    assert.equal(
+      isTakingLongerStatusDetail("Taking longer — retrying provider request (2/3)…"),
+      true
+    );
+    assert.equal(isTakingLongerStatusDetail("Cesium is connecting to openai…"), false);
+  });
+
+  test("recognizes compressing context status detail", () => {
+    assert.equal(isCompressingContextStatusDetail("Compressing context…"), true);
+    assert.equal(isCompressingContextStatusDetail("Cesium is connecting to openai…"), false);
+  });
+
+  test("isAgentComposerBusy treats stale running with failure as idle", () => {
+    const conversation = {
+      id: "c1",
+      status: "running",
+      lastError: "rate limited",
+    } as AgentConversationRecord;
+    const events: AgentStoredEvent[] = [
+      {
+        kind: "status",
+        status: "failed",
+        detail: "rate limited",
+        seq: 1,
+        createdAt: 1,
+      },
+    ];
+    assert.equal(isAgentComposerBusy(conversation, events), false);
+    assert.equal(isAgentComposerBusy({ ...conversation, status: "failed" }, events), false);
+    assert.equal(
+      isAgentComposerBusy({ ...conversation, status: "running", lastError: null }, []),
+      true
+    );
+  });
+
+  test("client auto-retry owns the visible retry countdown", () => {
+    assert.equal(
+      computeCompletionAutoRetryActive({
+        visible: true,
+        supportsRetry: true,
+        autoRetryEnabled: true,
+        halted: false,
+        retryable: true,
+        attemptIndex: 0,
+        retryBusy: false,
+        serverHandlesAutoRetry: true,
+      }),
+      true
+    );
   });
 });

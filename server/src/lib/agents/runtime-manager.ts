@@ -28,7 +28,18 @@ import {
   createAgentProvider,
   listAgentBackendsWithCache,
 } from "./providers.js";
+import { AGENT_CAPABILITY_KEYS } from "./agent-contract.js";
+import {
+  computeCesiumAgentContextUsage,
+  unsupportedContextUsageSnapshot,
+} from "./cesium-context-usage.js";
 import { listOrchestrationChildConversationIds } from "../orchestration/store.js";
+import { burnContinuationContext } from "./burn-goal-steering.js";
+import {
+  ensureBurnGoalForConversation,
+  readBurnGoalForConversation,
+  updateBurnGoalPlan,
+} from "./burn-goal-store.js";
 import {
   findPrimaryModelConfigOption,
   findPrimaryModeConfigOption,
@@ -44,6 +55,7 @@ import type {
   AgentConversationSnapshot,
   AgentConversationSnapshotHead,
   AgentConversationStatus,
+  AgentContextUsageSnapshot,
   AgentEventInput,
   AgentProvider,
   AgentQueuedChatPrompt,
@@ -281,20 +293,7 @@ function sameCapabilities(
   left: AgentConversationRecord["capabilities"],
   right: AgentBackendInfo["capabilities"]
 ): boolean {
-  return (
-    left.supportsLoadSession === right.supportsLoadSession &&
-    left.supportsModeSelection === right.supportsModeSelection &&
-    left.supportsModelSelection === right.supportsModelSelection &&
-    left.supportsSlashCommands === right.supportsSlashCommands &&
-    left.supportsPermissions === right.supportsPermissions &&
-    left.supportsToolCalls === right.supportsToolCalls &&
-    left.supportsStructuredPlans === right.supportsStructuredPlans &&
-    left.supportsTodos === right.supportsTodos &&
-    left.supportsSessionResume === right.supportsSessionResume &&
-    left.supportsPromptImages === right.supportsPromptImages &&
-    left.supportsInlineReasoning === right.supportsInlineReasoning &&
-    left.supportsCompletionRetry === right.supportsCompletionRetry
-  );
+  return AGENT_CAPABILITY_KEYS.every((key) => left[key] === right[key]);
 }
 
 function truncateConversationTitle(text: string): string {
@@ -309,8 +308,16 @@ export class AgentRuntimeManager {
   private readonly runtimes = new Map<string, ActiveRuntime>();
   private readonly retainedConversationCounts = new Map<string, number>();
   private readonly idleDisposeTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  /**
+   * Conversations whose next fresh session must NOT be seeded with a recovery
+   * transcript: a deliberate user stop is not a lost session, and seeding it
+   * re-feeds the cancelled turn (including permission prompts) to the provider.
+   */
+  private readonly skipRecoverySeedOnce = new Set<string>();
   /** Serializes ensureRuntime per conversation so warm + prompt cannot double-start sessions. */
   private readonly runtimeEnsureQueues = new Map<string, Promise<unknown>>();
+  /** Serializes promptConversation per conversation so two prompts cannot both observe `idle`. */
+  private readonly promptGateQueues = new Map<string, Promise<unknown>>();
   private readonly backends: Record<AgentBackendId, AgentBackendInfo>;
   private readonly createProviderFn: (backendId: AgentBackendId) => Promise<AgentProvider>;
   private readonly listBackendsFn: () => AgentBackendInfo[] | Promise<AgentBackendInfo[]>;
@@ -319,6 +326,69 @@ export class AgentRuntimeManager {
     this.backends = options.backends ?? AGENT_BACKENDS;
     this.createProviderFn = options.createProvider ?? createAgentProvider;
     this.listBackendsFn = options.listBackends ?? listAgentBackendsWithCache;
+  }
+
+  private async buildBurnRuntimePrompt(input: {
+    workspace: WorkspaceRecord;
+    record: AgentConversationRecord;
+    userText: string;
+    continuation?: boolean;
+  }): Promise<string> {
+    const nativeBurn =
+      input.record.config.backendId === "cesium-agent" &&
+      String(input.record.config.mode).trim().toLowerCase() === "burn";
+    if (!nativeBurn) {
+      return input.userText;
+    }
+    if (input.continuation !== true) {
+      return input.userText;
+    }
+    const existing = await readBurnGoalForConversation({
+      workspace: input.workspace,
+      conversationId: input.record.id,
+    });
+    const burnGoal =
+      existing ??
+      (await ensureBurnGoalForConversation({
+        workspace: input.workspace,
+        conversationId: input.record.id,
+        objective: input.userText,
+      }));
+    return [
+      burnContinuationContext(burnGoal),
+      "",
+      "<current_user_message>",
+      input.userText,
+      "</current_user_message>",
+    ].join("\n");
+  }
+
+  private async processBurnSignals(input: {
+    workspace: WorkspaceRecord;
+    conversation: AgentConversationRecord;
+    events: AgentEventInput[];
+  }): Promise<void> {
+    const nativeBurn =
+      input.conversation.config.backendId === "cesium-agent" &&
+      String(input.conversation.config.mode).trim().toLowerCase() === "burn";
+    if (!nativeBurn) {
+      return;
+    }
+    const planEvent = [...input.events]
+      .reverse()
+      .find((event) => event.kind === "plan");
+    if (planEvent && planEvent.kind === "plan") {
+      await updateBurnGoalPlan({
+        workspace: input.workspace,
+        conversationId: input.conversation.id,
+        planSummary: `Latest ${planEvent.planId} plan from ${input.conversation.config.backendId}.`,
+        todos: planEvent.entries.map((entry) => ({
+          id: entry.id,
+          content: entry.content,
+          status: entry.status,
+        })),
+      }).catch(() => undefined);
+    }
   }
 
   private withBackendDefaults(
@@ -735,6 +805,21 @@ export class AgentRuntimeManager {
     };
   }
 
+  async getConversationContextUsage(
+    workspace: WorkspaceRecord,
+    conversationId: string
+  ): Promise<AgentContextUsageSnapshot | null> {
+    const record = await readConversationRecord(workspace.id, conversationId);
+    if (!record) {
+      return null;
+    }
+    const conversation = this.withBackendDefaults(record);
+    if (conversation.config.backendId !== "cesium-agent") {
+      return unsupportedContextUsageSnapshot();
+    }
+    return computeCesiumAgentContextUsage({ workspace, conversation });
+  }
+
   async getConversationSnapshotHead(
     workspace: WorkspaceRecord,
     conversationId: string,
@@ -863,9 +948,33 @@ export class AgentRuntimeManager {
     attachments?: Array<{ mimeType: string; data: string; name?: string }>,
     options?: {
       configOverride?: AgentQueuedChatPrompt["configOverride"];
+      planHandoff?: AgentQueuedChatPrompt["planHandoff"];
       clientEventId?: string;
       clientMessageId?: string;
       delivery?: AgentQueuedChatPrompt["delivery"];
+      hidden?: boolean;
+    }
+  ): Promise<AgentConversationSnapshotHead> {
+    // Serialize per conversation: two near-simultaneous prompts could both
+    // observe `idle` between the status read and the running transition and
+    // double-start a turn on the same provider session (TOCTOU).
+    return this.withConversationQueue(this.promptGateQueues, conversationId, () =>
+      this.promptConversationLocked(workspace, conversationId, text, attachments, options)
+    );
+  }
+
+  private async promptConversationLocked(
+    workspace: WorkspaceRecord,
+    conversationId: string,
+    text: string,
+    attachments?: Array<{ mimeType: string; data: string; name?: string }>,
+    options?: {
+      configOverride?: AgentQueuedChatPrompt["configOverride"];
+      planHandoff?: AgentQueuedChatPrompt["planHandoff"];
+      clientEventId?: string;
+      clientMessageId?: string;
+      delivery?: AgentQueuedChatPrompt["delivery"];
+      hidden?: boolean;
     }
   ): Promise<AgentConversationSnapshotHead> {
     const trimmed = text.trim();
@@ -873,7 +982,7 @@ export class AgentRuntimeManager {
       throw new Error("Prompt text or attachments are required.");
     }
 
-    const record = await readConversationRecord(workspace.id, conversationId);
+    let record = await readConversationRecord(workspace.id, conversationId);
     if (!record) {
       throw new Error(`Unknown conversation: ${conversationId}`);
     }
@@ -918,6 +1027,8 @@ export class AgentRuntimeManager {
         ...(options?.configOverride && Object.keys(options.configOverride).length > 0
           ? { configOverride: options.configOverride }
           : {}),
+        ...(options?.planHandoff ? { planHandoff: options.planHandoff } : {}),
+        ...(options?.hidden ? { hidden: true } : {}),
       };
       await updateConversationRecord(workspace.id, conversationId, (current) => ({
         ...current,
@@ -935,6 +1046,30 @@ export class AgentRuntimeManager {
         ...head,
         conversation: this.withBackendDefaults(head.conversation),
       };
+    }
+
+    const override = options?.configOverride;
+    if (override?.backendId && override.backendId !== record.config.backendId) {
+      await this.handoffConversation(
+        workspace,
+        conversationId,
+        this.resolveBackendId(override.backendId)
+      );
+      record = await readConversationRecord(workspace.id, conversationId) ?? record;
+    }
+    if (override?.mode || override?.modelId || override?.setConfigOptions) {
+      const patch: AgentConversationConfigPatch = {};
+      if (override.mode) patch.mode = override.mode;
+      if (override.modelId) {
+        patch.modelId = override.modelId;
+        patch.modelName = override.modelName;
+      }
+      if (override.setConfigOptions) {
+        patch.setConfigOptions = override.setConfigOptions;
+      }
+      if (Object.keys(patch).length > 0) {
+        record = await this.updateConversationConfig(workspace, conversationId, patch);
+      }
     }
 
     if (record.title === "New chat" || record.lastEventSeq === 0) {
@@ -993,11 +1128,13 @@ export class AgentRuntimeManager {
 
     const userMessageId = clientMessageId || randomUUID();
     const designMatch = trimmed.match(/`design:([^`]+)`/);
-    const displayContent = delivery === "steer"
-      ? `Steer: ${trimmed}`
-      : designMatch
-      ? `Design: ${designMatch[1]!.slice(0, 160)}${designMatch[1]!.length > 160 ? "…" : ""}`
-      : undefined;
+    const displayContent = options?.planHandoff
+      ? `Build: ${options.planHandoff.planTitle ?? options.planHandoff.planPath}`
+      : delivery === "steer"
+        ? `Steer: ${trimmed}`
+        : designMatch
+          ? `Design: ${designMatch[1]!.slice(0, 160)}${designMatch[1]!.length > 160 ? "…" : ""}`
+          : undefined;
     const appended = await appendConversationEventsAndPatchRecord(
       workspace.id,
       conversationId,
@@ -1007,8 +1144,11 @@ export class AgentRuntimeManager {
           conversationId,
           kind: "user_message",
           messageId: userMessageId,
-          content: runtimePromptText,
+          // Persist what the user typed; handoff/fork/steer wrappers in
+          // `runtimePromptText` are provider-only context, not thread content.
+          content: trimmed,
           displayContent,
+          ...(options?.hidden ? { hidden: true } : {}),
           attachments,
         },
       ],
@@ -1023,20 +1163,34 @@ export class AgentRuntimeManager {
 
     void (async () => {
       try {
-        const runtime = await this.ensureRuntime(workspace, record);
+        const runtime = await this.ensureRuntime(workspace, updatedRecord);
+        const providerPromptText = await this.buildBurnRuntimePrompt({
+          workspace,
+          record: updatedRecord,
+          userText: runtimePromptText,
+          continuation: options?.hidden === true,
+        });
+        // Handoff/fork seed prompts already embed the transcript; wrapping them
+        // again in recovery context would duplicate the same conversation twice.
+        const alreadySeeded = pendingHandoffContext != null || pendingForkContext != null;
         const runtimeText =
-          runtime.sessionRecoveryTranscript && runtimePromptText.trim().length > 0
+          runtime.sessionRecoveryTranscript && !alreadySeeded && runtimePromptText.trim().length > 0
             ? buildPromptTextWithSessionRecoveryContext({
                 transcript: runtime.sessionRecoveryTranscript,
-                backendId: record.config.backendId,
-                userPromptText: runtimePromptText,
+                backendId: updatedRecord.config.backendId,
+                userPromptText: providerPromptText,
                 hasAttachments: Boolean(attachments?.length),
               })
-            : runtimePromptText;
+            : providerPromptText;
         if (runtime.sessionRecoveryTranscript) {
           delete runtime.sessionRecoveryTranscript;
         }
-        await runtime.handle.prompt({ text: runtimeText, userMessageId, attachments });
+        await runtime.handle.prompt({
+          text: runtimeText,
+          userMessageId,
+          attachments,
+          ...(options?.planHandoff ? { planHandoff: options.planHandoff } : {}),
+        });
       } catch (error) {
         await this.persistRuntimeFailure(workspace.id, conversationId, error);
       }
@@ -1092,8 +1246,13 @@ export class AgentRuntimeManager {
     void (async () => {
       try {
         const runtime = await this.ensureRuntime(workspace, updatedRecord);
+        const retryText = await this.buildBurnRuntimePrompt({
+          workspace,
+          record: updatedRecord,
+          userText: lastUser.content,
+        });
         await runtime.handle.prompt({
-          text: lastUser.content,
+          text: retryText,
           userMessageId: lastUser.messageId,
           attachments: lastUser.attachments,
           isRetry: true,
@@ -1150,35 +1309,13 @@ export class AgentRuntimeManager {
     };
 
     try {
-      const override = head.configOverride;
-      if (override) {
-        const rec = (await readConversationRecord(workspace.id, conversationId)) ?? record;
-        if (override.backendId && override.backendId !== rec.config.backendId) {
-          await this.handoffConversation(
-            workspace,
-            conversationId,
-            this.resolveBackendId(override.backendId)
-          );
-        }
-        if (override.mode || override.modelId || override.setConfigOptions) {
-          const patch: AgentConversationConfigPatch = {};
-          if (override.mode) patch.mode = override.mode;
-          if (override.modelId) {
-            patch.modelId = override.modelId;
-            patch.modelName = override.modelName;
-          }
-          if (override.setConfigOptions) {
-            patch.setConfigOptions = override.setConfigOptions;
-          }
-          if (Object.keys(patch).length > 0) {
-            await this.updateConversationConfig(workspace, conversationId, patch);
-          }
-        }
-      }
       await this.promptConversation(workspace, conversationId, head.text, head.attachments, {
         ...(head.clientEventId ? { clientEventId: head.clientEventId } : {}),
         ...(head.clientMessageId ? { clientMessageId: head.clientMessageId } : {}),
         ...(head.delivery ? { delivery: head.delivery } : {}),
+        ...(head.configOverride ? { configOverride: head.configOverride } : {}),
+        ...(head.planHandoff ? { planHandoff: head.planHandoff } : {}),
+        ...(head.hidden ? { hidden: true } : {}),
       });
     } catch (error) {
       console.error("[agent] drainOneQueuedPrompt failed; restoring queue head:", error);
@@ -1186,10 +1323,10 @@ export class AgentRuntimeManager {
     }
   }
 
-  async cancelConversation(
+  private async resolveActiveRuntime(
     workspace: WorkspaceRecord,
     conversationId: string
-  ): Promise<AgentConversationRecord> {
+  ): Promise<ActiveRuntime | undefined> {
     let runtime = this.runtimes.get(conversationId);
     if (!runtime) {
       const record = await readConversationRecord(workspace.id, conversationId);
@@ -1197,6 +1334,14 @@ export class AgentRuntimeManager {
         runtime = await this.ensureRuntime(workspace, record).catch(() => undefined);
       }
     }
+    return runtime;
+  }
+
+  async cancelConversation(
+    workspace: WorkspaceRecord,
+    conversationId: string
+  ): Promise<AgentConversationRecord> {
+    const runtime = await this.resolveActiveRuntime(workspace, conversationId);
     if (!runtime) {
       return updateConversationRecord(workspace.id, conversationId, (current) => ({
         ...current,
@@ -1209,6 +1354,7 @@ export class AgentRuntimeManager {
     }
     await runtime.handle.cancel();
     await this.disposeRuntime(conversationId);
+    this.skipRecoverySeedOnce.add(conversationId);
     const record = await readConversationRecord(workspace.id, conversationId);
     if (!record) {
       throw new Error(`Unknown conversation: ${conversationId}`);
@@ -1226,25 +1372,16 @@ export class AgentRuntimeManager {
     workspace: WorkspaceRecord,
     conversationId: string
   ): Promise<AgentConversationRecord> {
-    let runtime = this.runtimes.get(conversationId);
-    if (!runtime) {
-      const record = await readConversationRecord(workspace.id, conversationId);
-      if (record && (record.providerSessionId || record.status !== "idle")) {
-        runtime = await this.ensureRuntime(workspace, record).catch(() => undefined);
-      }
-    }
+    const runtime = await this.resolveActiveRuntime(workspace, conversationId);
     if (!runtime) {
       throw new Error(
         "No active runtime for this conversation. The provider session may have ended."
       );
     }
-    const handle = runtime.handle as AgentSessionHandle & {
-      pause?: () => Promise<void>;
-    };
-    if (typeof handle.pause !== "function") {
+    if (typeof runtime.handle.pause !== "function") {
       throw new Error("This agent does not support pause.");
     }
-    await handle.pause();
+    await runtime.handle.pause();
     const record = await readConversationRecord(workspace.id, conversationId);
     if (!record) {
       throw new Error(`Unknown conversation: ${conversationId}`);
@@ -1256,25 +1393,16 @@ export class AgentRuntimeManager {
     workspace: WorkspaceRecord,
     conversationId: string
   ): Promise<AgentConversationRecord> {
-    let runtime = this.runtimes.get(conversationId);
-    if (!runtime) {
-      const record = await readConversationRecord(workspace.id, conversationId);
-      if (record && (record.providerSessionId || record.status !== "idle")) {
-        runtime = await this.ensureRuntime(workspace, record).catch(() => undefined);
-      }
-    }
+    const runtime = await this.resolveActiveRuntime(workspace, conversationId);
     if (!runtime) {
       throw new Error(
         "No active runtime for this conversation. The provider session may have ended."
       );
     }
-    const handle = runtime.handle as AgentSessionHandle & {
-      resume?: () => Promise<void>;
-    };
-    if (typeof handle.resume !== "function") {
+    if (typeof runtime.handle.resume !== "function") {
       throw new Error("This agent does not support resume.");
     }
-    await handle.resume();
+    await runtime.handle.resume();
     const record = await readConversationRecord(workspace.id, conversationId);
     if (!record) {
       throw new Error(`Unknown conversation: ${conversationId}`);
@@ -1287,25 +1415,16 @@ export class AgentRuntimeManager {
     conversationId: string,
     input: { questionId: string; answer: string }
   ): Promise<AgentConversationRecord> {
-    let runtime = this.runtimes.get(conversationId);
-    if (!runtime) {
-      const record = await readConversationRecord(workspace.id, conversationId);
-      if (record && (record.providerSessionId || record.status !== "idle")) {
-        runtime = await this.ensureRuntime(workspace, record).catch(() => undefined);
-      }
-    }
+    const runtime = await this.resolveActiveRuntime(workspace, conversationId);
     if (!runtime) {
       throw new Error(
         "No active runtime for this conversation. The provider session may have ended."
       );
     }
-    const handle = runtime.handle as AgentSessionHandle & {
-      answerQuestion?: (payload: { questionId: string; answer: string }) => Promise<void>;
-    };
-    if (typeof handle.answerQuestion !== "function") {
+    if (typeof runtime.handle.answerQuestion !== "function") {
       throw new Error("This agent does not support answering structured questions.");
     }
-    await handle.answerQuestion(input);
+    await runtime.handle.answerQuestion(input);
     const record = await readConversationRecord(workspace.id, conversationId);
     if (!record) {
       throw new Error(`Unknown conversation: ${conversationId}`);
@@ -1318,13 +1437,7 @@ export class AgentRuntimeManager {
     conversationId: string,
     input: { requestId: string; optionId?: string; cancelled?: boolean }
   ): Promise<AgentConversationRecord> {
-    let runtime = this.runtimes.get(conversationId);
-    if (!runtime) {
-      const record = await readConversationRecord(workspace.id, conversationId);
-      if (record && (record.providerSessionId || record.status !== "idle")) {
-        runtime = await this.ensureRuntime(workspace, record).catch(() => undefined);
-      }
-    }
+    const runtime = await this.resolveActiveRuntime(workspace, conversationId);
     if (!runtime) {
       throw new Error(
         "No active runtime for this conversation. The provider session may have ended."
@@ -1489,17 +1602,19 @@ export class AgentRuntimeManager {
     });
   }
 
-  private async withRuntimeEnsureQueue<T>(
+  /** Per-conversation mutex: chains `run` behind whatever holds `queues[id]`. */
+  private async withConversationQueue<T>(
+    queues: Map<string, Promise<unknown>>,
     conversationId: string,
     run: () => Promise<T>
   ): Promise<T> {
-    const previous = this.runtimeEnsureQueues.get(conversationId) ?? Promise.resolve();
+    const previous = queues.get(conversationId) ?? Promise.resolve();
     let release: (() => void) | undefined;
     const gate = new Promise<void>((resolve) => {
       release = () => resolve();
     });
     const tail = previous.catch(() => undefined).then(() => gate);
-    this.runtimeEnsureQueues.set(conversationId, tail);
+    queues.set(conversationId, tail);
     await previous.catch(() => undefined);
     try {
       return await run();
@@ -1507,8 +1622,8 @@ export class AgentRuntimeManager {
       if (release) {
         release();
       }
-      if (this.runtimeEnsureQueues.get(conversationId) === tail) {
-        this.runtimeEnsureQueues.delete(conversationId);
+      if (queues.get(conversationId) === tail) {
+        queues.delete(conversationId);
       }
     }
   }
@@ -1517,9 +1632,35 @@ export class AgentRuntimeManager {
     workspace: WorkspaceRecord,
     record: AgentConversationRecord
   ): Promise<ActiveRuntime> {
-    return this.withRuntimeEnsureQueue(record.id, () =>
+    return this.withConversationQueue(this.runtimeEnsureQueues, record.id, () =>
       this.ensureRuntimeImpl(workspace, record)
     );
+  }
+
+  private async resolveConversationRecordForRuntime(
+    workspace: WorkspaceRecord,
+    record: AgentConversationRecord
+  ): Promise<AgentConversationRecord> {
+    const maxAttempts = 5;
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+      const latest = await readConversationRecord(workspace.id, record.id);
+      if (latest) {
+        return latest;
+      }
+      if (attempt < maxAttempts - 1) {
+        await new Promise((resolve) => setTimeout(resolve, 25 * (attempt + 1)));
+      }
+    }
+
+    if (record.workspaceId === workspace.id) {
+      await saveConversationRecord(record);
+      const recovered = await readConversationRecord(workspace.id, record.id);
+      if (recovered) {
+        return recovered;
+      }
+    }
+
+    throw new Error(`Unknown conversation: ${record.id}`);
   }
 
   private async ensureRuntimeImpl(
@@ -1534,10 +1675,7 @@ export class AgentRuntimeManager {
       return generateTranscriptFromEvents(recentEvents).trim();
     };
 
-    const latest = await readConversationRecord(workspace.id, record.id);
-    if (!latest) {
-      throw new Error(`Unknown conversation: ${record.id}`);
-    }
+    const latest = await this.resolveConversationRecordForRuntime(workspace, record);
     record = latest;
 
     const existing = this.runtimes.get(record.id);
@@ -1563,11 +1701,18 @@ export class AgentRuntimeManager {
     }
 
     let provider = await this.createProviderFn(record.config.backendId);
-    const callbacks = {
+    const callbacks: Parameters<AgentProvider["startSession"]>[0] = {
       workspace,
       conversation: record,
-      appendEvents: (events: AgentEventInput[]) =>
-        appendConversationEvents(workspace.id, record.id, events),
+      appendEvents: async (events: AgentEventInput[]) => {
+        const appended = await appendConversationEvents(workspace.id, record.id, events);
+        await this.processBurnSignals({
+          workspace,
+          conversation: callbacks.conversation,
+          events,
+        });
+        return appended;
+      },
       readSnapshot: async () => {
         const head = await readConversationSnapshotHead(workspace.id, record.id, {
           limitTurns: PROMPT_CONTEXT_LIMIT_TURNS,
@@ -1588,10 +1733,11 @@ export class AgentRuntimeManager {
           | ((current: AgentConversationRecord) => AgentConversationRecord)
       ) =>
         updateConversationRecord(workspace.id, record.id, patch).then(async (updated) => {
+          callbacks.conversation = updated;
           await this.disposeRuntimeIfUnused(updated);
           return updated;
         }),
-    } satisfies Parameters<AgentProvider["startSession"]>[0];
+    };
 
     let handle: AgentSessionHandle;
     if (record.providerSessionId && provider.backend.capabilities.supportsLoadSession) {
@@ -1665,7 +1811,8 @@ export class AgentRuntimeManager {
       }
     } else {
       handle = await provider.startSession(callbacks);
-      const recoveredTranscript = await buildRecoveryTranscript();
+      const skipRecoverySeed = this.skipRecoverySeedOnce.delete(record.id);
+      const recoveredTranscript = skipRecoverySeed ? "" : await buildRecoveryTranscript();
       if (recoveredTranscript) {
         const runtime: ActiveRuntime = {
           workspaceId: workspace.id,
@@ -1783,6 +1930,10 @@ export class AgentRuntimeManager {
               ? modeOption.options.find((option) => option.value === "ask")?.value
               : patchKey === "orchestration"
                 ? modeOption.options.find((option) => option.value === "orchestration")?.value
+                : patchKey === "burn"
+                  ? modeOption.options.find(
+                      (option) => option.value === "burn"
+                    )?.value
                 : modeOption.options.find((option) =>
                     option.value === "debug" ||
                     option.value === "agent" ||

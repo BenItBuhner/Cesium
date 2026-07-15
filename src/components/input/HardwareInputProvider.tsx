@@ -10,7 +10,7 @@ import {
   type ReactNode,
 } from "react";
 import { useUserPreferences } from "@/components/preferences/UserPreferencesProvider";
-import { isCesiumDesktopApp } from "@/lib/desktop-environment";
+import { areIpadBetaFeaturesEnabled } from "@/lib/platform-feature-flags";
 import type {
   HardwareInputSurfaceAdapter,
   HardwareKeyRoutingResult,
@@ -69,7 +69,7 @@ function normalizeRoutingResult(
 export function shouldEnableHardwareInputSurfaces(
   experimentalIpadMode: boolean
 ): boolean {
-  return experimentalIpadMode && !isCesiumDesktopApp();
+  return experimentalIpadMode && areIpadBetaFeaturesEnabled();
 }
 
 export function HardwareInputProvider({

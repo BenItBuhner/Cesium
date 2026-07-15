@@ -83,6 +83,7 @@ import {
   getFolderIcon,
   getWorkspaceRailAppearance,
   isValidFolderColor,
+  resolveGroupWorkspaceAppearanceKey,
   WorkspaceFolderIcon,
 } from "@/lib/workspace-rail-appearance";
 
@@ -534,21 +535,20 @@ export function AgentWorkspaceRail() {
   const homeAppearancePersistEntries = useMemo(
     () =>
       groups.map((group) => {
-        const workspaceKey =
-          group.workspaceKey ??
-          `${group.serverId ?? "local"}:${group.workspace.id}`;
+        const workspaceKey = resolveGroupWorkspaceAppearanceKey(group, activeServer.id);
         return {
           workspaceKey,
           isHome: Boolean(homeWorkspaceId && group.workspace.id === homeWorkspaceId),
         };
       }),
-    [groups, homeWorkspaceId]
+    [activeServer.id, groups, homeWorkspaceId]
   );
   usePersistHomeWorkspaceRailAppearances(
     workspaceRailAppearances,
     homeAppearancePersistEntries,
     updateSettings
   );
+
   const [recentChatsOpen, setRecentChatsOpen] = useState(false);
   const [renameState, setRenameState] = useState<{
     conversationId: string;
@@ -629,7 +629,7 @@ export function AgentWorkspaceRail() {
     const seenKeys = new Set<string>();
     const result: typeof groups = [];
     for (const group of groups) {
-      const key = group.workspaceKey ?? `${group.serverId ?? ""}:${group.workspace.id}`;
+      const key = resolveGroupWorkspaceAppearanceKey(group, activeServer.id);
       if (seenKeys.has(key)) {
         continue;
       }
@@ -637,7 +637,7 @@ export function AgentWorkspaceRail() {
       result.push(group);
     }
     return result;
-  }, [groups]);
+  }, [activeServer.id, groups]);
 
   const handleActiveServerChange = useCallback(
     (serverId: string) => {
@@ -682,7 +682,9 @@ export function AgentWorkspaceRail() {
       updateSettings((current) => {
         const seededCustomOrderIds =
           mode === "custom" && current.general.workspaceCustomOrderIds.length === 0
-            ? visibleGroups.map((group) => group.workspaceKey ?? group.workspace.id)
+            ? visibleGroups.map((group) =>
+                resolveGroupWorkspaceAppearanceKey(group, activeServer.id)
+              )
             : current.general.workspaceCustomOrderIds;
         if (current.general.workspaceSortMode === mode) {
           if (seededCustomOrderIds === current.general.workspaceCustomOrderIds) {
@@ -699,7 +701,7 @@ export function AgentWorkspaceRail() {
         };
       });
     },
-    [updateSettings, visibleGroups]
+    [activeServer.id, updateSettings, visibleGroups]
   );
 
   const resetWorkspaceCustomOrder = useCallback(() => {
@@ -755,8 +757,8 @@ export function AgentWorkspaceRail() {
 
   const reorderWorkspaceGroups = useCallback(
     (sourceWorkspaceId: string, targetWorkspaceId: string, placement: "before" | "after") => {
-      const visibleWorkspaceIds = visibleGroups.map(
-        (group) => group.workspaceKey ?? group.workspace.id
+      const visibleWorkspaceIds = visibleGroups.map((group) =>
+        resolveGroupWorkspaceAppearanceKey(group, activeServer.id)
       );
       const visibleWorkspaceIdSet = new Set(visibleWorkspaceIds);
       if (
@@ -799,7 +801,7 @@ export function AgentWorkspaceRail() {
         };
       });
     },
-    [updateSettings, visibleGroups]
+    [activeServer.id, updateSettings, visibleGroups]
   );
 
   const handleWorkspaceDragStart = useCallback(
@@ -1050,18 +1052,17 @@ export function AgentWorkspaceRail() {
   );
 
   const updateWorkspaceAppearance = useCallback(
-    (workspaceKey: string, patch: Partial<WorkspaceRailAppearance>, fallbackIndex: number) => {
+    (workspaceKey: string, patch: Partial<WorkspaceRailAppearance>) => {
       updateSettings((current) => {
         const previous = getWorkspaceRailAppearance(
           current.general.workspaceRailAppearances,
           workspaceKey,
-          fallbackIndex,
           {
             isHome: Boolean(
               homeWorkspaceId &&
                 groups.some(
                   (group) =>
-                    (group.workspaceKey ?? group.workspace.id) === workspaceKey &&
+                    resolveGroupWorkspaceAppearanceKey(group, activeServer.id) === workspaceKey &&
                     group.workspace.id === homeWorkspaceId
                 )
             ),
@@ -1087,7 +1088,7 @@ export function AgentWorkspaceRail() {
         };
       });
     },
-    [groups, homeWorkspaceId, updateSettings]
+    [activeServer.id, groups, homeWorkspaceId, updateSettings]
   );
 
   const updateServerAppearance = useCallback(
@@ -1978,15 +1979,14 @@ export function AgentWorkspaceRail() {
           ) : (
             <>
               {pinnedSection}
-              {visibleGroups.map((group, groupIndex) => {
-                const groupKey = group.workspaceKey ?? group.workspace.id;
+              {visibleGroups.map((group) => {
+                const groupKey = resolveGroupWorkspaceAppearanceKey(group, activeServer.id);
                 const isHomeWorkspace = Boolean(
                   homeWorkspaceId && group.workspace.id === homeWorkspaceId
                 );
                 const workspaceAppearance = getWorkspaceRailAppearance(
                   workspaceRailAppearances,
                   groupKey,
-                  groupIndex,
                   { isHome: isHomeWorkspace }
                 );
                 const workspaceActionsEnabled =
@@ -2092,7 +2092,7 @@ export function AgentWorkspaceRail() {
                       showNameField={false}
                       onClose={() => setEditingWorkspaceKey(null)}
                       onUpdate={(patch) =>
-                        updateWorkspaceAppearance(groupKey, patch, groupIndex)
+                        updateWorkspaceAppearance(groupKey, patch)
                       }
                     />
                   ) : null}

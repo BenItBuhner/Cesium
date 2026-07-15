@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef } from "react";
+import { useDeferredValue, useEffect, useMemo, useRef } from "react";
 import { MessageThreadContent } from "@/components/chat/MessageThreadContent";
 import type { ChatMessage } from "@/lib/types";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
@@ -32,16 +32,16 @@ export function AgentTranscriptView({
 
   const conversation = liveConversationId ? conversationsById[liveConversationId] : undefined;
   const events = liveConversationId ? eventsByConversationId[liveConversationId] ?? [] : [];
+  const deferredEvents = useDeferredValue(events);
+  const backendId = conversation?.config.backendId;
+  const workspaceRoot = workspaceInfo?.root ?? null;
 
   const projectedThread = useMemo(
     () =>
       liveConversationId
-        ? projectAgentEventsToChatMessages(events, {
-            backendId: conversation?.config.backendId,
-            workspaceRoot: workspaceInfo?.root ?? null,
-          })
+        ? projectAgentEventsToChatMessages(deferredEvents, { backendId, workspaceRoot })
         : [],
-    [liveConversationId, events, conversation?.config.backendId, workspaceInfo?.root]
+    [liveConversationId, deferredEvents, backendId, workspaceRoot]
   );
 
   const liveSlice = useMemo(() => {

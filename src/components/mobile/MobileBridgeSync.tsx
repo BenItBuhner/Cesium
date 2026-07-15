@@ -5,6 +5,7 @@ import { useAgentConversations } from "@/components/chat/AgentConversationsConte
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { AGENT_NEW_CHAT_SESSION_ID } from "@/lib/workspace-session";
 import { getStoredSessionToken } from "@/lib/auth-client";
+import { getConfiguredServerBaseUrl } from "@/lib/configured-server-base-url";
 import {
   dispatchMobileBridgeMessage,
   MOBILE_BRIDGE_MESSAGE_EVENT,
@@ -17,6 +18,7 @@ import {
   deriveMobileAgentProjection,
   type MobileAgentProjection,
 } from "@/lib/mobile-agent-projection";
+import { toWatchAgentProjection, toWatchSyncEnvelope } from "@/lib/watch-agent-contract";
 
 function readNativeReadyMessage(): MobileNativeToWebMessage | null {
   if (typeof window === "undefined") {
@@ -37,6 +39,7 @@ export function MobileBridgeSync() {
     workspaceSession,
   } = useWorkspace();
   const {
+    cancelConversation,
     conversationsById,
     eventsByConversationId,
     flushAgentSubscription,
@@ -89,6 +92,40 @@ export function MobileBridgeSync() {
   }, [activeWorkspaceId, focusedConversationId, projection?.lastEventSeq]);
 
   useEffect(() => {
+    const serverBaseUrl = getConfiguredServerBaseUrl();
+    const watchProjection = projection
+      ? toWatchAgentProjection(projection, {
+          source: "phone_companion",
+        })
+      : null;
+    postMobileBridgeMessage({
+      type: "wearSyncEnvelope",
+      envelopeJson: JSON.stringify(
+        toWatchSyncEnvelope({
+          projection: watchProjection,
+          source: "phone_companion",
+          server: {
+            label: "This device",
+            baseUrl: serverBaseUrl,
+          },
+          focused: {
+            workspaceId: activeWorkspaceId,
+            conversationId: focusedConversationId,
+            lastEventSeq: projection?.lastEventSeq ?? 0,
+          },
+        })
+      ),
+      config: {
+        serverBaseUrl,
+        serverLabel: "This device",
+        authToken: getStoredSessionToken(serverBaseUrl),
+        workspaceId: activeWorkspaceId,
+        conversationId: focusedConversationId,
+      },
+    });
+  }, [activeWorkspaceId, focusedConversationId, projection]);
+
+  useEffect(() => {
     if (!projection) {
       previousProjectionRef.current = null;
       return;
@@ -118,6 +155,20 @@ export function MobileBridgeSync() {
             hydrateRuntime: true,
           }).catch(() => undefined);
         }
+        return;
+      }
+
+      if (message.type === "notificationAction" && message.actionId === "cancel") {
+        const conversationId = message.conversationId ?? focusedConversationId;
+        if (!conversationId) {
+          return;
+        }
+        void cancelConversation(conversationId).finally(() => {
+          flushAgentSubscription([conversationId]);
+          void syncConversationSnapshot(conversationId, {
+            hydrateRuntime: true,
+          }).catch(() => undefined);
+        });
         return;
       }
 
@@ -159,6 +210,7 @@ export function MobileBridgeSync() {
       window.removeEventListener(MOBILE_BRIDGE_MESSAGE_EVENT, onNativeMessage);
     };
   }, [
+    cancelConversation,
     conversationsById,
     flushAgentSubscription,
     flushWorkspaceSessionNow,

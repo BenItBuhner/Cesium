@@ -2,16 +2,28 @@ import { Suspense, lazy, type ComponentType, type ReactNode } from "react";
 
 type DynamicOptions = {
   loading?: ComponentType;
+  /** Accepted for next/dynamic parity; the renderer is always client-side. */
+  ssr?: boolean;
 };
 
-export default function dynamic<TProps extends object>(
-  loader: () => Promise<{ default: ComponentType<TProps> }>,
+/** next/dynamic accepts both module-shaped and direct-component loader results. */
+type LoaderResult<P> = ComponentType<P> | { default: ComponentType<P> };
+
+export default function dynamic<P extends object>(
+  loader: () => Promise<LoaderResult<P>>,
   options: DynamicOptions = {}
-): ComponentType<TProps> {
-  const LazyComponent = lazy(loader);
+): ComponentType<P> {
+  const LazyComponent = lazy(async () => {
+    const resolved = await loader();
+    // memo/forwardRef components are objects too; only a `default` key marks a module shape.
+    if (typeof resolved === "object" && resolved !== null && "default" in resolved) {
+      return resolved;
+    }
+    return { default: resolved as ComponentType<P> };
+  });
   const Loading = options.loading;
 
-  return function DynamicComponent(props: TProps) {
+  return function DynamicComponent(props: P) {
     return (
       <Suspense fallback={Loading ? <Loading /> : null}>
         <LazyComponent {...props} />

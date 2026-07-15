@@ -7,9 +7,12 @@ import {
 } from "./agents/provider-cache-store.js";
 import type {
   AgentBackendId,
-  AgentConfigOption,
   AgentPermissionOptionKind,
 } from "./agents/types.js";
+import {
+  isActiveAgentBackendId,
+  pruneModelToggleByBackend,
+} from "./active-agent-backends.js";
 import { refreshCesiumModelCatalog } from "./cesium-agent-settings.js";
 import { measureServerPerf } from "./perf.js";
 
@@ -91,6 +94,10 @@ export type GlobalSettings = {
   };
   /** Placeholder; always empty until tool prefs are modeled. */
   tools: Record<string, never>;
+  features: {
+    vscodeExtensionsBeta: boolean;
+    goalModeBeta: boolean;
+  };
   keyboardShortcuts: {
     bindings: Record<string, string[]>;
     voiceInputMode?: "hold" | "toggle";
@@ -189,6 +196,10 @@ function createDefaultSettings(): GlobalSettings {
       byBackend: {},
     },
     tools: {},
+    features: {
+      vscodeExtensionsBeta: false,
+      goalModeBeta: false,
+    },
     keyboardShortcuts: {
       bindings: {},
       voiceInputMode: "toggle",
@@ -196,11 +207,23 @@ function createDefaultSettings(): GlobalSettings {
   };
 }
 
+function hadLegacyModelBackendKeys(raw: Record<string, unknown>): boolean {
+  const byBackend = (raw.models as { byBackend?: Record<string, unknown> } | undefined)?.byBackend;
+  if (!byBackend || typeof byBackend !== "object") {
+    return false;
+  }
+  return Object.keys(byBackend).some((backendId) => !isActiveAgentBackendId(backendId));
+}
+
 export async function getGlobalSettings(): Promise<GlobalSettings> {
   return readThrough(KEY_GLOBAL_SETTINGS, GLOBAL_SETTINGS_CACHE_TTL_SECONDS, async () => {
     const row = await (await getStorage()).getGlobalSettings();
     if (!row) return createDefaultSettings();
-    return migrateGlobalSettings(row);
+    const migrated = migrateGlobalSettings(row);
+    if (hadLegacyModelBackendKeys(row)) {
+      await saveGlobalSettings(migrated);
+    }
+    return migrated;
   });
 }
 
@@ -609,6 +632,19 @@ function migrateGlobalSettings(raw: Record<string, unknown>): GlobalSettings {
       byBackend: migratedByBackend,
     },
     tools: {},
+    features: {
+      vscodeExtensionsBeta:
+        typeof (r as { features?: { vscodeExtensionsBeta?: unknown } }).features
+          ?.vscodeExtensionsBeta === "boolean"
+          ? (r as { features: { vscodeExtensionsBeta: boolean } }).features
+              .vscodeExtensionsBeta
+          : defaults.features.vscodeExtensionsBeta,
+      goalModeBeta:
+        typeof (r as { features?: { goalModeBeta?: unknown } }).features
+          ?.goalModeBeta === "boolean"
+          ? (r as { features: { goalModeBeta: boolean } }).features.goalModeBeta
+          : defaults.features.goalModeBeta,
+    },
     keyboardShortcuts: {
       bindings: typeof r.keyboardShortcuts === "object" && r.keyboardShortcuts
         ? (r.keyboardShortcuts as GlobalSettings["keyboardShortcuts"]).bindings ?? {}
@@ -640,6 +676,9 @@ function isKnownPlaceholderModelToggle(
     return id === "composer-2" && name === "composer 2";
   }
   if (backendId === "opencode-server") {
+    return id === "auto" && name === "auto";
+  }
+  if (backendId === "pi-agent") {
     return id === "auto" && name === "auto";
   }
   return false;
@@ -712,7 +751,7 @@ export async function getModelToggleState(
           }
         }
 
-        return { byBackend: merged };
+        return { byBackend: pruneModelToggleByBackend(merged) };
       },
       { backends: backendIds.length }
     )
@@ -828,23 +867,16 @@ export async function refreshAndGetModelToggleState(
     }
   }
 
-  for (const [backendId, existingList] of Object.entries(existing)) {
-    if (!merged[backendId]) {
-      const pruned = prunePlaceholderModelToggles(backendId, existingList);
-      if (pruned.length > 0) {
-        merged[backendId] = pruned;
-      }
-    }
-  }
+  const prunedMerged = pruneModelToggleByBackend(merged);
 
   const next: GlobalSettings = {
     ...settings,
-    models: { byBackend: merged },
+    models: { byBackend: prunedMerged },
   };
   await saveGlobalSettings(next);
 
   return {
-    toggleState: { byBackend: merged },
+    toggleState: { byBackend: prunedMerged },
     timedOut: refreshResult.timedOut,
     failed: refreshResult.failed,
   };

@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { WorkbenchApp } from "@/components/layout/WorkbenchApp";
 import { WorkbenchRouteProviders } from "@/components/layout/WorkbenchRouteProviders";
 import { initializeRendererRuntime } from "./renderer-runtime";
+import { DesktopErrorBoundary } from "./DesktopErrorBoundary";
 import "./styles.css";
 
 function DesktopRoot() {
@@ -13,14 +14,17 @@ function DesktopRoot() {
   );
 }
 
-void initializeRendererRuntime().finally(() => {
-  const root = document.getElementById("root");
-  if (!root) {
-    throw new Error("Missing root element.");
-  }
-  createRoot(root).render(
-    <React.StrictMode>
+const root = document.getElementById("root");
+if (!root) {
+  throw new Error("Missing root element.");
+}
+
+createRoot(root).render(
+  <React.StrictMode>
+    <DesktopErrorBoundary>
       <DesktopRoot />
-    </React.StrictMode>
-  );
-});
+    </DesktopErrorBoundary>
+  </React.StrictMode>
+);
+
+void initializeRendererRuntime();

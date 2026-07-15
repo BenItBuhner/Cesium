@@ -14,6 +14,7 @@ import {
   fetchMcpPresets,
   fetchMcpServers,
   refreshMcpServerMirror,
+  setBuiltInMcpServerEnabled,
   startMcpOAuth,
   testMcpServerConnection,
   upsertMcpServer,
@@ -132,6 +133,19 @@ export function McpServersSettingsPanel() {
       await reload();
     } catch (deleteError) {
       setError(deleteError instanceof Error ? deleteError.message : String(deleteError));
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const toggleBuiltInServer = async (server: McpServerPublic) => {
+    if (!activeWorkspaceId) return;
+    setBusyId(server.id);
+    try {
+      await setBuiltInMcpServerEnabled(activeWorkspaceId, server.id, !server.enabled);
+      await reload();
+    } catch (toggleError) {
+      setError(toggleError instanceof Error ? toggleError.message : String(toggleError));
     } finally {
       setBusyId(null);
     }
@@ -366,9 +380,19 @@ export function McpServersSettingsPanel() {
             <SettingsRow
               key={server.id}
               title={server.label}
-              description={`${server.transport} · ${statusLabel(server)} · mcp-servers/${server.id}/`}
+              description={`${server.builtIn ? "Built-in" : server.transport} · ${statusLabel(server)} · mcp-servers/${server.id}/`}
               trailing={
                 <div className="flex flex-wrap items-center justify-end gap-[6px]">
+                  {server.builtIn ? (
+                    <button
+                      type="button"
+                      className={rowButtonClass}
+                      disabled={busyId === server.id}
+                      onClick={() => void toggleBuiltInServer(server)}
+                    >
+                      {server.enabled ? "Disable" : "Enable"}
+                    </button>
+                  ) : null}
                   {server.auth.kind === "oauth" ? (
                     <button
                       type="button"
@@ -395,14 +419,16 @@ export function McpServersSettingsPanel() {
                   >
                     Refresh
                   </button>
-                  <button
-                    type="button"
-                    className={rowButtonClass}
-                    disabled={busyId === server.id}
-                    onClick={() => void removeServer(server.id)}
-                  >
-                    <Trash2 className="size-[14px]" strokeWidth={1.5} />
-                  </button>
+                  {server.removable !== false ? (
+                    <button
+                      type="button"
+                      className={rowButtonClass}
+                      disabled={busyId === server.id}
+                      onClick={() => void removeServer(server.id)}
+                    >
+                      <Trash2 className="size-[14px]" strokeWidth={1.5} />
+                    </button>
+                  ) : null}
                 </div>
               }
             />

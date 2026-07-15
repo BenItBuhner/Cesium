@@ -14,6 +14,7 @@ import { Group, Panel, Separator } from "react-resizable-panels";
 import dynamic from "next/dynamic";
 import { EditorTabs } from "./EditorTabs";
 import { SimpleMarkdownPreview } from "./SimpleMarkdownPreview";
+import { PlanMarkdownPreview } from "./PlanMarkdownPreview";
 import { FilePreview } from "./FilePreview";
 import { AgentConversationView } from "./AgentConversationView";
 
@@ -27,32 +28,33 @@ const PanelLoading = () => (
   </div>
 );
 
-const CodeEditor = dynamic<any>(
-  () => import("./CodeEditor").then((m) => ({ default: m.CodeEditor })),
-  { ssr: false, loading: PanelLoading } as any
+const CodeEditor = dynamic(
+  () => import("./CodeEditor").then((m) => m.CodeEditor),
+  { ssr: false, loading: PanelLoading }
 );
-const Terminal = dynamic<any>(
-  () => import("./Terminal").then((m) => ({ default: m.Terminal })),
-  { ssr: false, loading: PanelLoading } as any
+const Terminal = dynamic(
+  () => import("./Terminal").then((m) => m.Terminal),
+  { ssr: false, loading: PanelLoading }
 );
-const AgentTranscriptView = dynamic<any>(
-  () => import("./AgentTranscriptView").then((m) => ({ default: m.AgentTranscriptView })),
-  { ssr: false, loading: PanelLoading } as any
+const AgentTranscriptView = dynamic(
+  () => import("./AgentTranscriptView").then((m) => m.AgentTranscriptView),
+  { ssr: false, loading: PanelLoading }
 );
-const BrowserTab = dynamic<any>(
-  () => import("./BrowserTab").then((m) => ({ default: m.BrowserTab })),
-  { ssr: false, loading: PanelLoading } as any
+const BrowserTab = dynamic(
+  () => import("./BrowserTab").then((m) => m.BrowserTab),
+  { ssr: false, loading: PanelLoading }
 );
-const ExpandedComposerView = dynamic<any>(
-  () => import("./ExpandedComposerView").then((m) => ({ default: m.ExpandedComposerView })),
-  { ssr: false, loading: PanelLoading } as any
+const ExpandedComposerView = dynamic(
+  () => import("./ExpandedComposerView").then((m) => m.ExpandedComposerView),
+  { ssr: false, loading: PanelLoading }
 );
-const KanbanBoardView = dynamic<any>(
-  () =>
-    import("@/components/orchestration/KanbanBoardView").then((m) => ({
-      default: m.KanbanBoardView,
-    })),
-  { ssr: false, loading: PanelLoading } as any
+const KanbanBoardView = dynamic(
+  () => import("@/components/orchestration/KanbanBoardView").then((m) => m.KanbanBoardView),
+  { ssr: false, loading: PanelLoading }
+);
+const ExtensionSurfaceView = dynamic(
+  () => import("./ExtensionSurfaceView").then((m) => m.ExtensionSurfaceView),
+  { ssr: false, loading: PanelLoading }
 );
 import { useEditorBridgeRef } from "@/components/ide/EditorBridgeContext";
 import { useWorkbenchContextMenu } from "@/components/ide/WorkbenchContextMenuProvider";
@@ -149,6 +151,27 @@ const EDITOR_WINDOW_CHROME_TAB_INSET_PX = 72;
 
 function tabCanSave(tab: EditorTab): boolean {
   return Boolean(tab.filePath && tab.fileKind && tab.fileKind !== "image");
+}
+
+function browserControlIdForTab(tab: EditorTab): string | null {
+  return tab.browser?.controlSessionId ?? (tab.browser ? tab.id : null);
+}
+
+function browserTabMetaNeedsUpdate(
+  local: EditorTab | undefined,
+  remote: Awaited<ReturnType<typeof listBrowserControlTabs>>["tabs"][number]
+): boolean {
+  if (!local?.browser) {
+    return true;
+  }
+  return (
+    local.browser.engine !== remote.engine ||
+    local.browser.controlSessionId !== remote.tabId ||
+    local.browser.debugSessionId !== remote.debugSessionId ||
+    (remote.nativeSessionId != null && local.browser.nativeSessionId !== remote.nativeSessionId) ||
+    JSON.stringify(local.browser.lockState ?? null) !== JSON.stringify(remote.lockState ?? null) ||
+    JSON.stringify(local.browser.viewport ?? null) !== JSON.stringify(remote.viewport ?? null)
+  );
 }
 
 function isUnknownTerminalError(error: unknown): boolean {
@@ -311,7 +334,7 @@ export function EditorPanel({
     editorTrailingWindowControlsVisible,
   } = useWorkbench();
   const runCommand = useIDECommandRunner();
-  const { experimentalIpadWindowedTabInset } = useUserPreferences();
+  const { experimentalIpadWindowedTabInset, vscodeExtensionsBeta } = useUserPreferences();
   const isDesktopApp = useIsCesiumDesktopApp();
   const { openAt } = useWorkbenchContextMenu();
   const { pushNotification, dismiss, dismissByKind } = useWorkbenchNotifications();
@@ -358,7 +381,11 @@ export function EditorPanel({
     groupId: string;
   } | null>(null);
 
-  const { conversationsById } = useAgentConversations();
+  const { conversationsById, getConversationComposerState } = useAgentConversations();
+  const activeChatConversationId = workspaceSession.chat.tabs.find((tab) => tab.active)?.id;
+  const activePlanComposerState = activeChatConversationId
+    ? getConversationComposerState(activeChatConversationId)
+    : null;
   const agentTabIndicators = useMemo(() => {
     const unread = workspaceSession.chat.unreadChatCompletionByConversationId ?? {};
     const m: AgentTabIndicatorByConversationId = {};
@@ -532,7 +559,11 @@ export function EditorPanel({
   const openBrowserTab = useCallback(
     async (
       url: string,
-      options?: { group?: EditorGroup; activate?: boolean; engine?: "proxy" | "server-chromium" }
+      options?: {
+        group?: EditorGroup;
+        activate?: boolean;
+        engine?: "proxy" | "electron-native" | "server-chromium";
+      }
     ) => {
       try {
         const result = await openBrowserControlTab({
@@ -547,7 +578,7 @@ export function EditorPanel({
           name: result.tab.title,
           tabId: result.tab.tabId,
           group: result.tab.group,
-          engine: result.tab.engine === "electron-native" ? "server-chromium" : result.tab.engine,
+          engine: result.tab.engine,
           controlSessionId: result.tab.tabId,
           debugSessionId: result.tab.debugSessionId,
           nativeSessionId: result.tab.nativeSessionId,
@@ -661,7 +692,11 @@ export function EditorPanel({
 
   useEffect(() => {
     let cancelled = false;
+    let timer: number | null = null;
     const syncBrowserControlTabs = async () => {
+      if (document.visibilityState === "hidden") {
+        return;
+      }
       const result = await listBrowserControlTabs().catch(() => null);
       if (cancelled || !result) return;
       const snapshot = stateRef.current;
@@ -670,41 +705,85 @@ export function EditorPanel({
         ...snapshot.rightTabs.map((tab) => tab.id),
       ]);
       for (const browserTab of result.tabs) {
-        if (known.has(browserTab.tabId)) {
+        if (!known.has(browserTab.tabId)) {
+          if (browserTab.engine === "server-chromium") {
+            continue;
+          }
           dispatch({
-            type: "UPDATE_BROWSER_TAB_META",
+            type: "OPEN_BROWSER_TAB",
+            url: browserTab.currentUrl ?? browserTab.targetUrl,
+            name: browserTab.title,
             tabId: browserTab.tabId,
-            engine: browserTab.engine === "electron-native" ? "server-chromium" : browserTab.engine,
+            group: browserTab.group,
+            engine: browserTab.engine === "electron-native" ? "electron-native" : "proxy",
             controlSessionId: browserTab.tabId,
-            debugSessionId: browserTab.debugSessionId,
-            nativeSessionId: browserTab.nativeSessionId,
             lockState: browserTab.lockState,
             viewport: browserTab.viewport,
           });
           continue;
         }
-        dispatch({
-          type: "OPEN_BROWSER_TAB",
-          url: browserTab.currentUrl ?? browserTab.targetUrl,
-          name: browserTab.title,
-          tabId: browserTab.tabId,
-          group: browserTab.group,
-          engine: browserTab.engine === "electron-native" ? "server-chromium" : browserTab.engine,
-          controlSessionId: browserTab.tabId,
-          debugSessionId: browserTab.debugSessionId,
-          nativeSessionId: browserTab.nativeSessionId,
-          lockState: browserTab.lockState,
-          viewport: browserTab.viewport,
-        });
+        const localBrowserTab =
+          snapshot.leftTabs.find((tab) => tab.id === browserTab.tabId) ??
+          snapshot.rightTabs.find((tab) => tab.id === browserTab.tabId);
+        const engine =
+          browserTab.engine === "server-chromium"
+            ? "server-chromium"
+            : browserTab.engine === "electron-native"
+              ? "electron-native"
+              : undefined;
+        if (browserTabMetaNeedsUpdate(localBrowserTab, browserTab)) {
+          dispatch({
+            tabId: browserTab.tabId,
+            type: "UPDATE_BROWSER_TAB_META",
+            engine,
+            controlSessionId: browserTab.tabId,
+            debugSessionId:
+              browserTab.engine === "server-chromium"
+                ? browserTab.debugSessionId
+                : localBrowserTab?.browser?.debugSessionId,
+            nativeSessionId:
+              browserTab.engine === "electron-native"
+                ? browserTab.nativeSessionId ?? localBrowserTab?.browser?.nativeSessionId
+                : localBrowserTab?.browser?.nativeSessionId,
+            lockState: browserTab.lockState,
+            viewport: browserTab.viewport,
+          });
+        }
+        const nextUrl = browserTab.currentUrl ?? browserTab.targetUrl;
+        if (nextUrl && nextUrl !== localBrowserTab?.browser?.targetUrl) {
+          dispatch({
+            type: "UPDATE_BROWSER_TAB_URL",
+            tabId: browserTab.tabId,
+            targetUrl: nextUrl,
+            name: browserTab.title,
+          });
+        }
       }
     };
-    void syncBrowserControlTabs();
-    const timer = window.setInterval(() => {
+    const schedule = (delayMs: number) => {
+      timer = window.setTimeout(async () => {
+        await syncBrowserControlTabs();
+        if (cancelled) return;
+        const snapshot = stateRef.current;
+        const localBrowserTabs = [...snapshot.leftTabs, ...snapshot.rightTabs].filter((tab) =>
+          Boolean(tab.browser)
+        );
+        schedule(localBrowserTabs.length > 0 ? 2_500 : 2_000);
+      }, delayMs);
+    };
+    const onVisibilityChange = () => {
+      if (document.visibilityState !== "visible") return;
+      if (timer != null) window.clearTimeout(timer);
       void syncBrowserControlTabs();
-    }, 1_500);
+      schedule(2_500);
+    };
+    void syncBrowserControlTabs();
+    schedule(2_500);
+    document.addEventListener("visibilitychange", onVisibilityChange);
     return () => {
       cancelled = true;
-      window.clearInterval(timer);
+      if (timer != null) window.clearTimeout(timer);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
     };
   }, []);
 
@@ -718,6 +797,13 @@ export function EditorPanel({
 
   const closeTabs = useCallback(
     async (tabsToClose: EditorTab[], action: EditorPanelAction) => {
+      const browserControlIds = [
+        ...new Set(
+          tabsToClose
+            .map(browserControlIdForTab)
+            .filter((tabId): tabId is string => Boolean(tabId))
+        ),
+      ];
       const terminalIds = [
         ...new Set(
           tabsToClose
@@ -742,6 +828,10 @@ export function EditorPanel({
           );
           return false;
         }
+      }
+
+      for (const tabId of browserControlIds) {
+        await closeBrowserControlTab(tabId).catch(() => undefined);
       }
 
       dispatch(action);
@@ -1184,6 +1274,20 @@ export function EditorPanel({
           boardId,
           title,
           group,
+        });
+      },
+      openExtensionSurfaceTab: (input) => {
+        dispatch({
+          type: "OPEN_EXTENSION_SURFACE_TAB",
+          extensionId: input.extensionId,
+          surfaceId: input.surfaceId,
+          title: input.title,
+          surfaceKind: input.surfaceKind,
+          surfaceSessionId: input.surfaceSessionId,
+          placement: input.placement ?? "editor",
+          html: input.html,
+          viewType: input.viewType,
+          group: input.group,
         });
       },
       requestCloseTab,
@@ -1810,6 +1914,32 @@ export function EditorPanel({
         <KanbanBoardView
           key={tab.id}
           boardId={tab.orchestrationBoard.boardId}
+        />
+      );
+    }
+    if (tab.extensionSurface) {
+      if (!vscodeExtensionsBeta) {
+        return (
+          <div
+            key={tab.id}
+            className="flex h-full items-center justify-center px-[20px] text-center font-sans text-[13px] text-[var(--text-secondary)]"
+          >
+            VS Code extension surfaces are disabled. Enable the Beta extension marketplace in
+            Settings to load this tab.
+          </div>
+        );
+      }
+      return <ExtensionSurfaceView key={tab.id} tab={tab} />;
+    }
+    if (tab.planFile && tab.language === "markdown" && tab.previewMode === "preview") {
+      return (
+        <PlanMarkdownPreview
+          key={tab.id}
+          source={tab.content}
+          path={tab.filePath}
+          title={tab.name}
+          models={activePlanComposerState?.models ?? []}
+          currentModel={activePlanComposerState?.model ?? null}
         />
       );
     }

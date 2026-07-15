@@ -35,6 +35,11 @@ export function resolveConfiguredDriverKind(): StorageDriverKind {
   return "legacy-json";
 }
 
+function explicitlyConfiguredDriverKind(): StorageDriverKind | null {
+  const raw = process.env.OPENCURSOR_STORAGE_DRIVER?.trim().toLowerCase() ?? "";
+  return (VALID_KINDS as string[]).includes(raw) ? (raw as StorageDriverKind) : null;
+}
+
 /**
  * Resolves the active storage driver, initializing it on first call. Safe to
  * call repeatedly; subsequent callers receive the same instance.
@@ -50,9 +55,28 @@ export async function getStorage(): Promise<StorageDriver> {
       const kind = resolveConfiguredDriverKind();
       const { instantiateDriver } = await import("./bootstrap-drivers.js");
       const driver = instantiateDriver(kind);
-      await driver.init();
-      activeDriver = driver;
-      return driver;
+      try {
+        await driver.init();
+        activeDriver = driver;
+        return driver;
+      } catch (error) {
+        const explicitKind = explicitlyConfiguredDriverKind();
+        if (kind !== "pg" || explicitKind === "pg") {
+          throw error;
+        }
+        console.warn(
+          "[storage] DATABASE_URL is configured but Postgres is unreachable; falling back to legacy-json. " +
+            "Set OPENCURSOR_STORAGE_DRIVER=pg to fail fast instead.",
+          error
+        );
+        await import("../db/client.js")
+          .then(({ closeDb }) => closeDb())
+          .catch(() => undefined);
+        const fallback = instantiateDriver("legacy-json");
+        await fallback.init();
+        activeDriver = fallback;
+        return fallback;
+      }
     })();
   }
   return initPromise;

@@ -113,6 +113,18 @@ export type EditorPanelAction =
       title: string;
       group?: EditorGroup;
     }
+  | {
+      type: "OPEN_EXTENSION_SURFACE_TAB";
+      extensionId: string;
+      surfaceId: string;
+      title: string;
+      surfaceKind: NonNullable<EditorTab["extensionSurface"]>["kind"];
+      surfaceSessionId?: string;
+      placement?: "sidebar" | "editor";
+      html?: string;
+      viewType?: string;
+      group?: EditorGroup;
+    }
   | { type: "OPEN_TERMINAL_TAB"; terminalId: string; name?: string }
   | {
       type: "OPEN_BROWSER_TAB";
@@ -910,6 +922,81 @@ export function editorPanelReducer(
       };
     }
 
+    case "OPEN_EXTENSION_SURFACE_TAB": {
+      const tabId = `extension:${action.extensionId}:${action.surfaceId}`;
+      const existingLeft = state.leftTabs.find((tab) => tab.id === tabId);
+      const existingRight = state.rightTabs.find((tab) => tab.id === tabId);
+      const name = truncateTabName(action.title);
+      const patchTab = (tab: EditorTab): EditorTab =>
+        tab.id === tabId
+          ? {
+              ...tab,
+              name,
+              extensionSurface: {
+                kind: action.surfaceKind,
+                extensionId: action.extensionId,
+                surfaceId: action.surfaceId,
+                title: action.title,
+                surfaceSessionId: action.surfaceSessionId,
+                placement: action.placement ?? "editor",
+                html: action.html,
+                viewType: action.viewType,
+              },
+            }
+          : tab;
+      if (existingLeft && action.group !== "right") {
+        return {
+          ...state,
+          focusedGroup: "left",
+          leftActiveId: tabId,
+          leftTabs: state.leftTabs.map(patchTab),
+        };
+      }
+      if (existingRight && action.group !== "left") {
+        return {
+          ...state,
+          focusedGroup: "right",
+          rightActiveId: tabId,
+          rightTabs: state.rightTabs.map(patchTab),
+        };
+      }
+      const tab: EditorTab = {
+        id: tabId,
+        name,
+        language: "html",
+        icon: "extension",
+        content: "",
+        kind: "extension",
+        extensionSurface: {
+          kind: action.surfaceKind,
+          extensionId: action.extensionId,
+          surfaceId: action.surfaceId,
+          title: action.title,
+          surfaceSessionId: action.surfaceSessionId,
+          placement: action.placement ?? "editor",
+          html: action.html,
+          viewType: action.viewType,
+        },
+      };
+      const targetGroup =
+        action.group ?? (state.split && state.focusedGroup === "right" ? "right" : "left");
+      if (targetGroup === "right") {
+        const splitState = state.split ? state : { ...state, split: true };
+        return {
+          ...splitState,
+          focusedGroup: "right",
+          rightTabs: [...splitState.rightTabs, tab],
+          rightActiveId: tabId,
+        };
+      }
+      return {
+        ...state,
+        focusedGroup: "left",
+        leftTabs: [...state.leftTabs, tab],
+        leftActiveId: tabId,
+      };
+    }
+
     case "OPEN_TERMINAL_TAB": {
       const tabId = `terminal:${action.terminalId}`;
       const existingLeft = state.leftTabs.find((tab) => tab.id === tabId);
@@ -970,20 +1057,28 @@ export function editorPanelReducer(
         },
       };
 
-      const targetGroup = action.group ?? state.focusedGroup;
-      if (!state.split || targetGroup === "left") {
+      const shouldSplitForRight = action.group === "right" && !state.split;
+      const splitState = shouldSplitForRight
+        ? {
+            ...state,
+            split: true,
+            focusedGroup: "right" as const,
+          }
+        : state;
+      const targetGroup = action.group ?? splitState.focusedGroup;
+      if (!splitState.split || targetGroup === "left") {
         return {
-          ...state,
+          ...splitState,
           focusedGroup: "left",
-          leftTabs: [...state.leftTabs, tab],
+          leftTabs: [...splitState.leftTabs, tab],
           leftActiveId: tabId,
         };
       }
 
       return {
-        ...state,
+        ...splitState,
         focusedGroup: "right",
-        rightTabs: [...state.rightTabs, tab],
+        rightTabs: [...splitState.rightTabs, tab],
         rightActiveId: tabId,
       };
     }
@@ -1117,10 +1212,28 @@ export function editorPanelReducer(
       const existingLeft = state.leftTabs.find((t) => t.id === tabId);
       const existingRight = state.rightTabs.find((t) => t.id === tabId);
       if (existingLeft) {
-        return { ...state, leftActiveId: tabId, focusedGroup: "left" };
+        return {
+          ...state,
+          leftTabs: state.leftTabs.map((tab) =>
+            tab.id === tabId
+              ? { ...tab, previewMode: action.previewMode ?? tab.previewMode, planFile: action.planFile ?? tab.planFile }
+              : tab
+          ),
+          leftActiveId: tabId,
+          focusedGroup: "left",
+        };
       }
       if (existingRight) {
-        return { ...state, rightActiveId: tabId, focusedGroup: "right" };
+        return {
+          ...state,
+          rightTabs: state.rightTabs.map((tab) =>
+            tab.id === tabId
+              ? { ...tab, previewMode: action.previewMode ?? tab.previewMode, planFile: action.planFile ?? tab.planFile }
+              : tab
+          ),
+          rightActiveId: tabId,
+          focusedGroup: "right",
+        };
       }
       const tab: EditorTab = {
         id: tabId,
@@ -1129,6 +1242,8 @@ export function editorPanelReducer(
         icon: action.icon,
         content: action.content ?? "",
         filePath: action.path,
+        previewMode: action.previewMode,
+        planFile: action.planFile,
         loading: action.content == null,
         dirty: false,
         savedContent: action.content,
@@ -1262,7 +1377,6 @@ export function editorPanelReducer(
       const srcKey = from === "left" ? "leftTabs" : "rightTabs";
       const dstKey = to === "left" ? "leftTabs" : "rightTabs";
       const src = state[srcKey];
-      const dst = state[dstKey];
       const tab = src.find((t) => t.id === tabId);
       if (!tab) return state;
       let next = removeTabIdFromPaneStrip(state, from, tabId);

@@ -71,6 +71,32 @@ describe("mobile agent projection", () => {
     assert.equal(getMobileNotificationChip(projection.status), "INPUT");
   });
 
+  test("projects blocked todo when no item is in progress", () => {
+    const conversation = createConversation({
+      status: "running",
+      lastEventSeq: 1,
+      updatedAt: 3000,
+    });
+    const events: AgentStoredEvent[] = [
+      {
+        seq: 1,
+        eventId: "p1",
+        conversationId: "c1",
+        createdAt: 1200,
+        kind: "plan",
+        planId: "plan",
+        entries: [
+          { id: "todo-1", content: "Wait for credentials", status: "blocked" },
+          { id: "todo-2", content: "Verify deploy", status: "pending" },
+        ],
+      },
+    ];
+
+    const projection = deriveMobileAgentProjection(conversation, events, { now: 4000 });
+    assert.equal(projection.currentTodoId, "todo-1");
+    assert.equal(projection.currentActivity, "Wait for credentials");
+  });
+
   test("treats idle status event as completed for final notifications", () => {
     const conversation = createConversation({
       status: "idle",

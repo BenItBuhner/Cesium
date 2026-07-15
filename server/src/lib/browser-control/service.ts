@@ -15,8 +15,12 @@ import {
   normalizeBrowserControlViewport,
 } from "./capabilities.js";
 import type {
+  BrowserControlCommand,
+  BrowserControlCommandPayload,
+  BrowserControlCommandResult,
   BrowserControlEvent,
   BrowserControlEventInput,
+  BrowserControlEngineKind,
   BrowserControlGroup,
   BrowserControlInput,
   BrowserControlLockState,
@@ -29,7 +33,53 @@ import type {
 const tabs = new Map<string, BrowserControlTab>();
 const sessions = new Map<string, BrowserControlSession>();
 let eventSeq = 0;
+let commandSeq = 0;
 const events: BrowserControlEvent[] = [];
+const commands: BrowserControlCommand[] = [];
+const commandResults = new Map<number, BrowserControlCommandResult>();
+const commandWaiters = new Map<number, (result: BrowserControlCommandResult) => void>();
+const COMMAND_RESULT_TTL_MS = 30_000;
+const VISIBLE_TAB_OBSERVATION_TIMEOUT_MS = 12_000;
+const VISIBLE_TAB_INPUT_TIMEOUT_MS = 6_000;
+
+function pruneCommandResults(now = Date.now()): void {
+  for (const [seq, result] of commandResults) {
+    if (now - result.ts > COMMAND_RESULT_TTL_MS) {
+      commandResults.delete(seq);
+    }
+  }
+}
+
+function cleanupCommandsForTab(tabId: string): void {
+  const tabCommandSeqs = new Set(
+    commands
+      .filter((command) => command.tabId === tabId)
+      .map((command) => command.seq)
+  );
+  for (let index = commands.length - 1; index >= 0; index -= 1) {
+    if (commands[index]?.tabId === tabId) {
+      commands.splice(index, 1);
+    }
+  }
+  for (const [seq, result] of commandResults) {
+    if (result.tabId === tabId) {
+      commandResults.delete(seq);
+    }
+  }
+  for (const [seq, waiter] of commandWaiters) {
+    if (!tabCommandSeqs.has(seq)) {
+      continue;
+    }
+    waiter({
+      seq,
+      tabId,
+      ok: false,
+      ts: Date.now(),
+      error: "Browser tab closed before the command completed.",
+    });
+    commandWaiters.delete(seq);
+  }
+}
 
 function pushEvent(event: BrowserControlEventInput & { ts?: number }): void {
   eventSeq += 1;
@@ -37,6 +87,47 @@ function pushEvent(event: BrowserControlEventInput & { ts?: number }): void {
   if (events.length > 1_000) {
     events.splice(0, events.length - 1_000);
   }
+}
+
+function pushCommand(
+  tabId: string,
+  command: BrowserControlCommandPayload
+): BrowserControlCommand {
+  commandSeq += 1;
+  const next: BrowserControlCommand = {
+    ...command,
+    seq: commandSeq,
+    ts: Date.now(),
+    tabId,
+  };
+  commands.push(next);
+  if (commands.length > 1_000) {
+    commands.splice(0, commands.length - 1_000);
+  }
+  return next;
+}
+
+async function waitForCommandResult(
+  command: BrowserControlCommand,
+  timeoutMs: number
+): Promise<BrowserControlCommandResult | null> {
+  pruneCommandResults();
+  const existing = commandResults.get(command.seq);
+  if (existing) {
+    commandResults.delete(command.seq);
+    return existing;
+  }
+  return await new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      commandWaiters.delete(command.seq);
+      resolve(null);
+    }, timeoutMs);
+    commandWaiters.set(command.seq, (result) => {
+      clearTimeout(timer);
+      commandResults.delete(command.seq);
+      resolve(result);
+    });
+  });
 }
 
 function defaultLockState(): BrowserControlLockState {
@@ -121,12 +212,18 @@ export async function openBrowserControlTab(input: {
   url: string;
   group?: BrowserControlGroup;
   title?: string;
-  engine?: "proxy" | "server-chromium";
+  engine?: BrowserControlEngineKind;
   active?: boolean;
   viewport?: Partial<BrowserControlViewport>;
 }): Promise<BrowserControlTab> {
   const now = Date.now();
-  const engine = input.engine ?? "server-chromium";
+  const engine = input.engine ?? "electron-native";
+  const active = input.active ?? true;
+  if (active) {
+    for (const existing of listBrowserControlTabs(input.workspaceId)) {
+      patchTab(existing.tabId, { active: false, focused: false });
+    }
+  }
   const tab: BrowserControlTab = {
     tabId: `browser:${randomUUID()}`,
     workspaceId: input.workspaceId,
@@ -137,8 +234,8 @@ export async function openBrowserControlTab(input: {
     engine,
     debugSessionId: null,
     nativeSessionId: null,
-    active: input.active ?? true,
-    focused: input.active ?? true,
+    active,
+    focused: active,
     capabilities: browserControlCapabilitiesForEngine(engine),
     viewport: normalizeBrowserControlViewport(input.viewport),
     lockState: defaultLockState(),
@@ -147,7 +244,22 @@ export async function openBrowserControlTab(input: {
   };
   tabs.set(tab.tabId, tab);
   if (tab.engine === "server-chromium") {
-    await ensureServerChromiumSession(tab);
+    try {
+      await ensureServerChromiumSession(tab);
+    } catch {
+      const fallback = patchTab(tab.tabId, {
+        engine: "electron-native",
+        debugSessionId: null,
+        capabilities: browserControlCapabilitiesForEngine("electron-native"),
+      });
+      pushEvent({
+        type: "agent_action",
+        tabId: tab.tabId,
+        detail:
+          "Fell back to visible editor browser tab because server Chromium is unavailable.",
+      });
+      return fallback;
+    }
   }
   pushEvent({ type: "agent_action", tabId: tab.tabId, detail: `Opened ${input.url}` });
   return tabs.get(tab.tabId) ?? tab;
@@ -160,6 +272,7 @@ export async function closeBrowserControlTab(workspaceId: string, tabId: string)
     await destroyDebugSession(session.debugSessionId).catch(() => undefined);
   }
   if (session) sessions.delete(session.controlSessionId);
+  cleanupCommandsForTab(tab.tabId);
   tabs.delete(tab.tabId);
   pushEvent({ type: "agent_action", tabId, detail: "Closed tab" });
 }
@@ -193,6 +306,14 @@ export async function navigateBrowserControlTab(
 ): Promise<BrowserControlTab> {
   const tab = requireTab(workspaceId, tabId);
   assertCapability(tab, "navigation");
+  if (tab.engine !== "server-chromium") {
+    const next = patchTab(tabId, {
+      currentUrl: input.op === "goto" ? input.url : tab.currentUrl,
+      targetUrl: input.op === "goto" ? input.url : tab.targetUrl,
+    });
+    pushEvent({ type: "agent_action", tabId, detail: `Navigation ${input.op}` });
+    return next;
+  }
   const session = await ensureServerChromiumSession(tab);
   const currentUrl = session.debugSessionId
     ? await navigateDebugSession(session.debugSessionId, input)
@@ -256,8 +377,16 @@ export async function setBrowserControlViewport(
   viewport: Partial<BrowserControlViewport>
 ): Promise<BrowserControlTab> {
   const tab = requireTab(workspaceId, tabId);
-  assertCapability(tab, "viewportEmulation");
   const nextViewport = normalizeBrowserControlViewport(viewport);
+  if (tab.engine !== "server-chromium") {
+    pushEvent({
+      type: "agent_action",
+      tabId,
+      detail: `Set viewport ${nextViewport.width}x${nextViewport.height}`,
+    });
+    return patchTab(tabId, { viewport: nextViewport });
+  }
+  assertCapability(tab, "viewportEmulation");
   const session = await ensureServerChromiumSession(tab);
   if (session.debugSessionId) {
     await captureDebugSessionViewport(session.debugSessionId, nextViewport).catch(() => null);
@@ -272,6 +401,19 @@ export async function screenshotBrowserControlTab(
   tabId: string
 ): Promise<{ imageDataUrl: string | null; tab: BrowserControlTab }> {
   const tab = requireTab(workspaceId, tabId);
+  if (tab.engine !== "server-chromium") {
+    const command = pushCommand(tabId, { type: "screenshot" });
+    pushEvent({
+      type: "agent_action",
+      tabId,
+      detail: "Screenshot requested for visible editor tab.",
+    });
+    const result = await waitForCommandResult(command, VISIBLE_TAB_OBSERVATION_TIMEOUT_MS);
+    const payload = result?.ok && result.result && typeof result.result === "object"
+      ? (result.result as { imageDataUrl?: string | null; url?: string | null })
+      : null;
+    return { imageDataUrl: payload?.imageDataUrl ?? null, tab: tabs.get(tabId) ?? tab };
+  }
   assertCapability(tab, "screenshot");
   const session = await ensureServerChromiumSession(tab);
   const imageDataUrl = session.debugSessionId
@@ -286,6 +428,35 @@ export async function snapshotBrowserControlTab(
   tabId: string
 ): Promise<BrowserControlSnapshot> {
   const tab = requireTab(workspaceId, tabId);
+  if (tab.engine !== "server-chromium") {
+    const command = pushCommand(tabId, { type: "snapshot" });
+    const result = await waitForCommandResult(command, VISIBLE_TAB_OBSERVATION_TIMEOUT_MS);
+    const payload =
+      result?.ok && result.result && typeof result.result === "object"
+        ? (result.result as Partial<BrowserControlSnapshot>)
+        : null;
+    const nextTab =
+      payload?.url || payload?.title
+        ? patchTab(tabId, {
+            currentUrl: payload?.url ?? tab.currentUrl,
+            title: payload?.title ?? tab.title,
+          })
+        : tabs.get(tabId) ?? tab;
+    return {
+      tab: nextTab,
+      title: payload?.title ?? nextTab.title,
+      url: payload?.url ?? nextTab.currentUrl ?? nextTab.targetUrl,
+      visibleText:
+        typeof payload?.visibleText === "string"
+          ? payload.visibleText
+          : "Visible editor tab observation bridge did not respond yet. The tab may still be mounting in the editor, but this does not prove the page is still loading; use the current URL/title metadata or retry observation shortly.",
+      html: typeof payload?.html === "string" ? payload.html : undefined,
+      accessibilityText:
+        typeof payload?.accessibilityText === "string" ? payload.accessibilityText : undefined,
+      elementRefs: Array.isArray(payload?.elementRefs) ? payload.elementRefs : [],
+      truncated: payload?.truncated,
+    };
+  }
   assertCapability(tab, "snapshot");
   const session = await ensureServerChromiumSession(tab);
   const snapshot = session.debugSessionId
@@ -307,6 +478,22 @@ export async function evaluateBrowserControlTab(
   script: string
 ): Promise<{ result: unknown; exception?: string }> {
   const tab = requireTab(workspaceId, tabId);
+  if (tab.engine !== "server-chromium") {
+    const command = pushCommand(tabId, { type: "evaluate", script });
+    pushEvent({
+      type: "agent_action",
+      tabId,
+      detail: "Evaluate requested for visible editor tab.",
+    });
+    const result = await waitForCommandResult(command, VISIBLE_TAB_OBSERVATION_TIMEOUT_MS);
+    if (!result) {
+      return { result: null, exception: "Visible editor tab evaluation bridge did not respond yet. This does not prove the page is still loading; retry shortly after the editor tab mounts." };
+    }
+    if (!result.ok) {
+      return { result: null, exception: result.error ?? "Visible editor tab evaluation failed." };
+    }
+    return { result: result.result ?? null };
+  }
   assertCapability(tab, "jsEvaluate");
   const session = await ensureServerChromiumSession(tab);
   if (!session.debugSessionId) {
@@ -323,6 +510,16 @@ export async function dispatchBrowserControlInput(
   input: BrowserControlInput
 ): Promise<boolean> {
   const tab = requireTab(workspaceId, tabId);
+  if (tab.engine !== "server-chromium") {
+    const command = pushCommand(tabId, { type: "input", input });
+    pushEvent({
+      type: "agent_action",
+      tabId,
+      detail: input.type === "mouse" ? `${input.action} ${input.x},${input.y}` : input.type,
+    });
+    const result = await waitForCommandResult(command, VISIBLE_TAB_INPUT_TIMEOUT_MS);
+    return result?.ok ?? false;
+  }
   assertCapability(tab, input.type === "key" ? "keyboardInput" : "mouseInput");
   const session = await ensureServerChromiumSession(tab);
   if (!session.debugSessionId) return false;
@@ -333,6 +530,55 @@ export async function dispatchBrowserControlInput(
     detail: input.type === "mouse" ? `${input.action} ${input.x},${input.y}` : input.type,
   });
   return await dispatchDebugSessionInput(session.debugSessionId, input);
+}
+
+export function readBrowserControlCommands(
+  workspaceId: string,
+  tabId: string,
+  afterSeq = 0
+): { commands: BrowserControlCommand[]; cursor: number } {
+  requireTab(workspaceId, tabId);
+  const nextCommands = commands.filter(
+    (command) => command.tabId === tabId && command.seq > afterSeq
+  );
+  return {
+    commands: nextCommands,
+    cursor: Math.max(commandSeq, afterSeq),
+  };
+}
+
+export function completeBrowserControlCommand(input: {
+  workspaceId: string;
+  tabId: string;
+  seq: number;
+  ok: boolean;
+  result?: unknown;
+  error?: string;
+}): BrowserControlCommandResult {
+  requireTab(input.workspaceId, input.tabId);
+  const result: BrowserControlCommandResult = {
+    seq: input.seq,
+    tabId: input.tabId,
+    ok: input.ok,
+    ts: Date.now(),
+    ...(input.result !== undefined ? { result: input.result } : {}),
+    ...(input.error ? { error: input.error } : {}),
+  };
+  commandResults.set(input.seq, result);
+  pruneCommandResults();
+  if (commandResults.size > 1_000) {
+    const oldest = [...commandResults.keys()].sort((a, b) => a - b).slice(0, commandResults.size - 1_000);
+    for (const seq of oldest) {
+      commandResults.delete(seq);
+    }
+  }
+  const waiter = commandWaiters.get(input.seq);
+  if (waiter) {
+    commandWaiters.delete(input.seq);
+    waiter(result);
+    commandResults.delete(input.seq);
+  }
+  return result;
 }
 
 export function readBrowserControlEvents(
@@ -391,5 +637,9 @@ export function resetBrowserControlForTests(): void {
   tabs.clear();
   sessions.clear();
   events.splice(0, events.length);
+  commands.splice(0, commands.length);
+  commandResults.clear();
+  commandWaiters.clear();
   eventSeq = 0;
+  commandSeq = 0;
 }

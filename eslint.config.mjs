@@ -6,15 +6,20 @@ const eslintConfig = defineConfig([
   ...nextVitals,
   ...nextTs,
   // Override default ignores of eslint-config-next.
+  // Patterns must be recursive (**/) so nested workspace build output
+  // (apps/web/.next, apps/desktop/out, apps/*/dist, android intermediates)
+  // is excluded; linting those took minutes and produced nothing.
   globalIgnores([
-    // Default ignores of eslint-config-next:
-    ".next/**",
-    "out/**",
-    "build/**",
-    "server/dist/**",
+    "**/.next/**",
+    "**/out/**",
+    "**/build/**",
+    "**/dist/**",
     ".docker/**",
-    "next-env.d.ts",
-    "public/**",
+    ".tmp/**",
+    "**/next-env.d.ts",
+    "**/public/**",
+    "apps/mobile/android/**",
+    "apps/desktop/.server-runtime/**",
   ]),
   {
     rules: {
@@ -22,6 +27,21 @@ const eslintConfig = defineConfig([
       // disabling keeps `npm run lint` usable without rewriting half the tree.
       "react-hooks/set-state-in-effect": "off",
       "react-hooks/refs": "off",
+    },
+  },
+  {
+    // Node-side code: React hook naming/call rules don't apply outside React trees.
+    files: ["server/**", "scripts/**", "apps/desktop/src/**", "apps/mobile/scripts/**"],
+    rules: {
+      "react-hooks/rules-of-hooks": "off",
+      "react-hooks/exhaustive-deps": "off",
+    },
+  },
+  {
+    // CommonJS by definition; `require()` is the import mechanism.
+    files: ["**/*.cjs", "**/metro.config.js"],
+    rules: {
+      "@typescript-eslint/no-require-imports": "off",
     },
   },
 ]);

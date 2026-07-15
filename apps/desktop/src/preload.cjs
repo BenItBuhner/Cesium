@@ -8,15 +8,6 @@ function injectDesktopChrome() {
   const style = document.createElement("style");
   style.id = "cesium-electron-chrome-style";
   style.textContent = `
-    html[data-cesium-desktop="true"] #cesium-electron-drag-top {
-      -webkit-app-region: drag;
-      position: fixed;
-      inset: 0 148px auto 0;
-      height: 4px;
-      z-index: 2147483600;
-      pointer-events: auto;
-    }
-
     html[data-cesium-desktop="true"] [data-electron-drag-host] {
       -webkit-app-region: drag;
       cursor: default;
@@ -137,10 +128,6 @@ function injectDesktopChrome() {
     }
   `;
 
-  const dragTop = document.createElement("div");
-  dragTop.id = "cesium-electron-drag-top";
-  dragTop.setAttribute("aria-hidden", "true");
-
   const controls = document.createElement("div");
   controls.id = "cesium-electron-window-controls";
   controls.setAttribute("aria-label", "Window controls");
@@ -174,16 +161,27 @@ function injectDesktopChrome() {
   }
 
   document.head.appendChild(style);
-  document.body.append(dragTop, controls);
+  document.body.appendChild(controls);
 }
 
-window.addEventListener("DOMContentLoaded", injectDesktopChrome, { once: true });
+function scheduleDesktopChromeInjection() {
+  if (document.readyState === "loading") {
+    window.addEventListener("DOMContentLoaded", injectDesktopChrome, { once: true });
+    return;
+  }
+  injectDesktopChrome();
+}
+
+scheduleDesktopChromeInjection();
 
 contextBridge.exposeInMainWorld("cesiumDesktop", {
   isElectron: true,
   getBackendInfo: () => ipcRenderer.invoke("cesium:get-backend-info"),
   openExternal: (url) => ipcRenderer.invoke("cesium:open-external", url),
   openDocsWindow: () => ipcRenderer.invoke("cesium:open-docs-window"),
+  setTaskbarGoalProgress: (input) =>
+    ipcRenderer.invoke("cesium:set-taskbar-goal-progress", input),
+  reloadWindow: () => ipcRenderer.invoke("cesium:window-reload"),
   minimizeWindow: () => ipcRenderer.invoke("cesium:window-minimize"),
   toggleMaximizeWindow: () => ipcRenderer.invoke("cesium:window-toggle-maximize"),
   closeWindow: () => ipcRenderer.invoke("cesium:window-close"),

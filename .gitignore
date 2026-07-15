@@ -125,6 +125,7 @@ storybook-static/
 /.gradle-home/
 /.tmp-apk-download/
 /.tmp-rn-verify/
+/.tmp/
 /mobile-download/
 /agent-docs/
 /tmp/

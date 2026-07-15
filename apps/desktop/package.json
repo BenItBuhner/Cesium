@@ -1,7 +1,7 @@
 {
   "name": "@cesium/desktop",
   "version": "0.1.0",
-  "description": "Cesium desktop shell",
+  "description": "Cesium Desktop",
   "author": "Cesium",
   "private": true,
   "type": "module",
@@ -11,23 +11,23 @@
     "check": "node ./src/main.mjs --check && electron --version",
     "build": "npm run build -w @cesium/core && npm run build -w @cesium/desktop-renderer && npm run build -w cesium-server && npm run check",
     "smoke": "node ./src/main.mjs --smoke",
-    "package": "npm run build && node ../../scripts/prepare-desktop-server-runtime.cjs && node ../../scripts/assert-desktop-package-safe.cjs && node ../../node_modules/electron-builder/cli.js --dir",
+    "package": "npm run build && node ../../scripts/prepare-desktop-server-runtime.cjs && node ../../scripts/assert-desktop-package-safe.cjs && node ../../node_modules/electron-builder/cli.js --dir && node ../../scripts/edit-desktop-exe-metadata.cjs",
     "install:unpacked": "npm run package && node ../../scripts/install-desktop-unpacked.cjs",
-    "package:win": "npm run build && node ../../node_modules/electron-builder/cli.js --win --publish never"
+    "package:win": "npm run build && node ../../scripts/prepare-desktop-server-runtime.cjs && node ../../scripts/assert-desktop-package-safe.cjs && node ../../node_modules/electron-builder/cli.js --win --publish never"
   },
   "dependencies": {
-    "@cesium/api-client": "file:../../packages/api-client",
     "@cesium/core": "file:../../packages/core",
     "@cesium/design": "file:../../packages/design",
     "@cesium/ui-web": "file:../../packages/ui-web"
   },
   "devDependencies": {
     "electron": "42.0.1",
-    "electron-builder": "^26.8.1"
+    "electron-builder": "^26.8.1",
+    "rcedit": "^5.0.2"
   },
   "build": {
     "appId": "com.cesium.desktop",
-    "productName": "Cesium",
+    "productName": "Cesium Desktop",
     "npmRebuild": false,
     "directories": {
       "output": "out"
@@ -35,9 +35,19 @@
     "compression": "store",
     "files": [
       "src/**/*",
+      "build/**/*",
       "package.json"
     ],
+    "icon": "build/icon.ico",
     "extraResources": [
+      {
+        "from": "build/icon.png",
+        "to": "build/icon.png"
+      },
+      {
+        "from": "build/icon.ico",
+        "to": "build/icon.ico"
+      },
       {
         "from": "../../server/dist",
         "to": "server/dist"
@@ -62,11 +72,17 @@
         ]
       },
       {
+        "from": ".server-runtime/node.exe",
+        "to": "server/node.exe"
+      },
+      {
         "from": "../desktop-renderer/dist",
         "to": "desktop-renderer"
       }
     ],
     "win": {
+      "executableName": "Cesium",
+      "icon": "build/icon.ico",
       "signAndEditExecutable": false
     },
     "nsis": {

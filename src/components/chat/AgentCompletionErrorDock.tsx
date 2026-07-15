@@ -5,13 +5,15 @@ import type { AgentCompletionErrorDockState } from "./useAgentCompletionErrorDoc
 
 type AgentCompletionErrorDockProps = {
   dock: AgentCompletionErrorDockState;
+  dockAboveComposer?: boolean;
   insetClassName?: string;
   contentClassName?: string;
 };
 
 export function AgentCompletionErrorDock({
   dock,
-  insetClassName = "px-[10px]",
+  dockAboveComposer = true,
+  insetClassName,
   contentClassName,
 }: AgentCompletionErrorDockProps) {
   if (!dock.visible) {
@@ -23,16 +25,24 @@ export function AgentCompletionErrorDock({
       error={dock.error}
       supportsRetry={dock.supportsRetry}
       retryDelayMs={dock.retryDelayMs}
+      retriesRemaining={dock.retriesRemaining}
       autoRetryActive={dock.autoRetryActive}
       retryBusy={dock.retryBusy}
-      onRetry={() => void dock.retry()}
+      dockAboveComposer={dockAboveComposer}
+      onManualRetry={() => void dock.retry("manual")}
       onDismiss={dock.dismiss}
-      onCancelAutoRetry={dock.cancelAutoRetry}
     />
   );
 
+  const wrapperClass =
+    insetClassName ??
+    (dockAboveComposer ? "pt-[8px]" : "px-[10px] pb-[8px] pt-[8px]");
+
   return (
-    <div className={`${insetClassName} pb-[8px] pt-[8px]`} data-agent-completion-error-dock>
+    <div
+      className={wrapperClass}
+      data-agent-completion-error-dock
+    >
       {contentClassName ? <div className={contentClassName}>{card}</div> : card}
     </div>
   );

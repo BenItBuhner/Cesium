@@ -16,8 +16,11 @@ import {
 import {
   ArrowUp,
   Bug,
+  FileText,
+  Flame,
   Image as ImageIcon,
   Infinity as InfinityIcon,
+  Layers,
   LayoutTemplate,
   ListChecks,
   LoaderCircle,
@@ -33,10 +36,41 @@ import { ImageCarousel } from "./ImageCarousel";
 import type { ImageAttachment, ImageAttachmentState } from "@/lib/types";
 import { useTheme } from "@/components/theme/ThemeProvider";
 import {
+  isComposerEffectivelyEmptyForMultiline,
   resolveComposerIsMultiLine,
   shouldLatchComposerMultiline,
   useComposerTextIsMultiLine,
+  useComposerVisualLineCount,
 } from "./composer-multiline";
+
+const COMPOSER_DOCK_HEIGHT_OVERLAY_MIN_LINES = 3;
+const COMPOSER_DOCK_MAX_HEIGHT_DEFAULT = "max-h-[min(42vh,240px)]";
+const COMPOSER_DOCK_MAX_HEIGHT_EXPANDED = "max-h-[min(70vh,560px)]";
+const COMPOSER_BOTTOM_GAP_CLASS = "mb-[8px]";
+
+function ComposerDockHeightOverlayButton({
+  expanded,
+  onToggle,
+}: {
+  expanded: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      className="pointer-events-auto absolute right-[2px] top-[2px] z-20 flex size-[24px] items-center justify-center border-0 bg-transparent p-0 text-[var(--text-secondary)] shadow-none outline-none ring-0 transition-colors hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-0"
+      aria-label={expanded ? "Shrink composer" : "Expand composer height"}
+      title={expanded ? "Shrink composer" : "Expand composer height"}
+    >
+      {expanded ? (
+        <Minimize2 className="size-[14px] shrink-0" strokeWidth={1.5} aria-hidden />
+      ) : (
+        <Maximize2 className="size-[14px] shrink-0" strokeWidth={1.5} aria-hidden />
+      )}
+    </button>
+  );
+}
 import {
   ComposerEditorScrollFades,
   useComposerEditorScrollFade,
@@ -56,6 +90,9 @@ import { ModeDropdown } from "./ModeDropdown";
 import { ModelDropdown } from "./ModelDropdown";
 import { BackendDropdown } from "./BackendDropdown";
 import { SessionConfigOptionDropdown } from "./SessionConfigOptionDropdown";
+import { ComposerStatusBar } from "./ComposerStatusBar";
+import { ContextBreakdownDock } from "./ContextBreakdownDock";
+import { dockedComposerCardSlot } from "./docked-card";
 import {
   ComposerAutocomplete,
   type ComposerPopoverPosition,
@@ -68,7 +105,7 @@ import {
   getAllAtSuggestions,
   filterAtSuggestions,
   getSlashMenuSections,
-  filterSlashMenuSections,
+  filterSlashMenuSectionsForDisplay,
   flattenSlashMenuSections,
   type AtSuggestion,
   type SlashMenuItem,
@@ -95,11 +132,27 @@ import {
   DEFAULT_MODE_OPTIONS,
   ensureCurrentModeOption,
   getModeTone,
+  isGoalMode,
   resolveCanonicalModeId,
 } from "@/lib/chat-modes";
+import {
+  clearDesktopTaskbarGoalProgress,
+  markDesktopTaskbarGoalProgressSourceOpen,
+  publishDesktopTaskbarGoalProgress,
+  resolveDesktopTaskbarGoalProgress,
+} from "@/lib/desktop-taskbar-progress";
 import type { AgentModeOption, EditorMode, KnownEditorMode, ModelInfo } from "@/lib/types";
 import type { AgentBackendId, AgentBackendInfo, AgentConfigOption, AgentConversationStatus } from "@/lib/agent-types";
-import { isAgentCesiumTurnActive, isAgentCesiumPauseDraining } from "@/lib/agent-chat";
+import {
+  isAgentCesiumTurnActive,
+  isAgentCesiumPauseDraining,
+  type BurnProgressStatus,
+} from "@/lib/agent-chat";
+import {
+  composerStatusBarHasVisibleItems,
+  normalizeComposerStatusBarVisibility,
+} from "@/lib/composer-status-bar";
+import { useAgentContextUsage } from "@/hooks/useAgentContextUsage";
 import { CesiumTurnControlPill } from "@/components/chat/CesiumTurnControlPill";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { transcribeAudio, uploadAttachments } from "@/lib/server-api";
@@ -110,12 +163,23 @@ import {
   findComposerCaptureTokens,
   type DesignCapture,
 } from "@/lib/design-capture";
+import {
+  buildTextReferenceBlock,
+  COMPOSER_TEXT_REFERENCE_TOKEN_REGEX,
+  findComposerTextReferenceTokens,
+  LONG_PASTE_REFERENCE_THRESHOLD_CHARS,
+  makeComposerTextReferenceToken,
+  type TextReference,
+} from "@/lib/text-reference";
 
 const sendButtonBgClass: Record<KnownEditorMode, string> = {
   agent: "bg-[var(--accent-dark)]",
   plan: "bg-[var(--plan-accent-dark)]",
   debug: "bg-[var(--debug-accent-dark)]",
   ask: "bg-[var(--ask-accent-dark)]",
+  goal: "bg-[var(--burn-accent-dark)]",
+  burn: "bg-[var(--burn-accent-dark)]",
+  orchestration: "bg-[var(--orchestration-accent-dark)]",
 };
 
 const COMPOSER_PLACEHOLDER_TEXT =
@@ -131,6 +195,9 @@ const NEW_DESIGN_MODE_COLORS: Record<KnownEditorMode, { text: string; bg: string
   plan: { text: "var(--plan-accent)", bg: "var(--plan-accent-bg)" },
   debug: { text: "var(--debug-accent)", bg: "var(--debug-accent-bg)" },
   ask: { text: "var(--ask-accent)", bg: "var(--ask-accent-bg)" },
+  goal: { text: "var(--burn-accent)", bg: "var(--burn-accent-bg)" },
+  burn: { text: "var(--burn-accent)", bg: "var(--burn-accent-bg)" },
+  orchestration: { text: "var(--orchestration-accent)", bg: "var(--orchestration-accent-bg)" },
 };
 
 function renderNewDesignModeIcon(tone: KnownEditorMode, color: string): ReactElement {
@@ -143,6 +210,11 @@ function renderNewDesignModeIcon(tone: KnownEditorMode, color: string): ReactEle
       return <Bug className={className} strokeWidth={strokeWidth} style={{ color }} />;
     case "ask":
       return <MessageSquare className={className} strokeWidth={strokeWidth} style={{ color }} />;
+    case "goal":
+    case "burn":
+      return <Flame className={className} strokeWidth={strokeWidth} style={{ color }} />;
+    case "orchestration":
+      return <Layers className={className} strokeWidth={strokeWidth} style={{ color }} />;
     case "agent":
       return <InfinityIcon className={className} strokeWidth={strokeWidth} style={{ color }} />;
     default: {
@@ -398,9 +470,10 @@ interface ChatComposerProps {
   onPause?: () => Promise<void> | void;
   onResume?: () => Promise<void> | void;
   conversationStatus?: AgentConversationStatus;
+  burnProgress?: BurnProgressStatus | null;
   busy?: boolean;
   configLocked?: boolean;
-  /** When true, mode cannot be changed or removed (orchestration lock-in). */
+  /** When true, mode cannot be changed or removed. */
   modeLocked?: boolean;
   /** Empty thread: composer sits under tabs; otherwise docked above bottom. */
   layout?: "docked-bottom" | "empty-top";
@@ -447,6 +520,10 @@ interface ChatComposerProps {
    * metadata from the persisted draft instead of keeping an orphaned record.
    */
   onDraftCapturesChange?: (next: Record<string, DesignCapture> | undefined) => void;
+  /** Metadata for each `⟦textref:<id>⟧` pill currently embedded in `value`. */
+  draftTextReferences?: Record<string, TextReference>;
+  /** Called when long pasted text references are added or their tokens are deleted. */
+  onDraftTextReferencesChange?: (next: Record<string, TextReference> | undefined) => void;
   /**
    * Newest-first list of the user's previously sent messages (raw `content`)
    * for terminal-style Up/Down arrow history recall. Pressing Up while the
@@ -470,6 +547,12 @@ interface ChatComposerProps {
    * the composer will re-evaluate the history list on the next render.
    */
   onRequestOlderUserMessageHistory?: () => void;
+  /** Active conversation for context usage footer (omit on ephemeral drafts). */
+  conversationId?: string | null;
+  /** Bumps every ~1–2 assistant completions for context usage refresh. */
+  contextUsageRefreshGeneration?: number;
+  /** Show repo/branch/context footer below the composer card. */
+  showStatusBar?: boolean;
 }
 
 function resolvePointerSelection(
@@ -653,12 +736,70 @@ function renderDesignPill(
   );
 }
 
+function renderTextReferencePill(
+  tokenStart: number,
+  tokenEnd: number,
+  reference: TextReference | undefined,
+  safe: TextSelection,
+  active: boolean,
+  caretRef: { current: HTMLSpanElement | null },
+  nodes: ReactElement[]
+): void {
+  const pushCaret = (at: number) => {
+    if (!active || safe.start !== safe.end || safe.start !== at) {
+      return;
+    }
+    nodes.push(
+      <span
+        key={`caret-${at}`}
+        ref={(node) => {
+          caretRef.current = node;
+        }}
+        className="inline-block h-[1.1em] w-px align-middle bg-[var(--text-primary)]"
+        data-faux-caret
+      />
+    );
+  };
+
+  pushCaret(tokenStart);
+  const selected = tokenStart >= safe.start && tokenEnd <= safe.end && safe.end > safe.start;
+  const charCount = reference?.charCount ?? reference?.text.length ?? 0;
+  const label = reference?.label ?? "pasted text";
+  const title = reference?.text
+    ? `${label}\n${charCount.toLocaleString()} characters\n\n${reference.text.slice(0, 600)}${
+        reference.text.length > 600 ? "…" : ""
+      }`
+    : label;
+  nodes.push(
+    <span
+      key={`textref-${tokenStart}`}
+      data-faux-offset-start={tokenStart}
+      data-faux-offset-end={tokenEnd}
+      className={`mx-[2px] inline-flex max-w-full items-center gap-[4px] rounded-[6px] border border-[var(--border-subtle)] bg-[var(--file-tag-bg)] px-[7px] py-[1px] align-baseline font-sans text-[12.5px] font-medium whitespace-nowrap ${
+        selected ? "ring-2 ring-[var(--accent)]" : ""
+      } ${reference ? "text-[var(--file-tag-text)]" : "text-[var(--text-secondary)] italic"}`}
+      title={title}
+      data-text-reference-id={reference?.id ?? ""}
+    >
+      <FileText
+        className="size-[12px] shrink-0 text-[var(--file-tag-icon)]"
+        strokeWidth={1.75}
+        aria-hidden
+      />
+      <span className="max-w-[240px] truncate">
+        {reference ? label : "missing text"}
+      </span>
+    </span>
+  );
+}
+
 function renderComposerText(
   value: string,
   selection: TextSelection,
   active: boolean,
   caretRef: { current: HTMLSpanElement | null },
-  captures: Record<string, DesignCapture> | undefined
+  captures: Record<string, DesignCapture> | undefined,
+  textReferences: Record<string, TextReference> | undefined
 ) {
   const safe = clampSelection(value, selection);
   const nodes: ReactElement[] = [];
@@ -679,7 +820,16 @@ function renderComposerText(
     return nodes;
   }
 
-  const tokens = findComposerCaptureTokens(value);
+  const tokens = [
+    ...findComposerCaptureTokens(value).map((token) => ({
+      ...token,
+      kind: "design" as const,
+    })),
+    ...findComposerTextReferenceTokens(value).map((token) => ({
+      ...token,
+      kind: "text-reference" as const,
+    })),
+  ].sort((left, right) => left.start - right.start);
 
   if (tokens.length === 0) {
     renderPlainSlice(value, 0, safe, active, caretRef, nodes);
@@ -711,15 +861,27 @@ function renderComposerText(
         nodes
       );
     }
-    renderDesignPill(
-      tk.start,
-      tk.end,
-      captures?.[tk.captureId],
-      safe,
-      active,
-      caretRef,
-      nodes
-    );
+    if (tk.kind === "design") {
+      renderDesignPill(
+        tk.start,
+        tk.end,
+        captures?.[tk.captureId],
+        safe,
+        active,
+        caretRef,
+        nodes
+      );
+    } else {
+      renderTextReferencePill(
+        tk.start,
+        tk.end,
+        textReferences?.[tk.referenceId],
+        safe,
+        active,
+        caretRef,
+        nodes
+      );
+    }
     cursor = tk.end;
   }
   if (cursor < value.length) {
@@ -763,6 +925,7 @@ export function ChatComposer({
   onPause,
   onResume,
   conversationStatus,
+  burnProgress = null,
   busy = false,
   configLocked = false,
   modeLocked = false,
@@ -777,11 +940,16 @@ export function ChatComposer({
   onDraftAttachmentsChange,
   draftCaptures,
   onDraftCapturesChange,
+  draftTextReferences,
+  onDraftTextReferencesChange,
   userMessageHistory,
   hasMoreOlderUserMessageHistory = false,
   onRequestOlderUserMessageHistory,
+  conversationId = null,
+  contextUsageRefreshGeneration,
+  showStatusBar = true,
 }: ChatComposerProps) {
-  const { fileTree } = useWorkspace();
+  const { fileTree, gitStatus, workspaceSession } = useWorkspace();
   const { settings } = useGlobalSettings();
   const submitCtrlEnter = settings.agents.submitCtrlEnter;
   const steerCtrlEnter = settings.agents.steerCtrlEnter;
@@ -789,6 +957,22 @@ export function ChatComposer({
   const { pushNotification } = useWorkbenchNotifications();
   const surfaceId = useId().replace(/:/g, "_");
   const submittingPromptKeyRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (conversationId && isGoalMode(mode)) {
+      markDesktopTaskbarGoalProgressSourceOpen(surfaceId);
+    }
+  }, [conversationId, mode, surfaceId]);
+  useEffect(() => {
+    publishDesktopTaskbarGoalProgress(
+      surfaceId,
+      resolveDesktopTaskbarGoalProgress({
+        mode,
+        burnProgress,
+        conversationStatus,
+      })
+    );
+    return () => clearDesktopTaskbarGoalProgress(surfaceId);
+  }, [burnProgress, conversationStatus, mode, surfaceId]);
   const {
     enabled: hardwareInputEnabled,
     registerSurface,
@@ -808,7 +992,7 @@ export function ChatComposer({
   const [modelDropdownOpen, setModelDropdownOpen] = useState(false);
   /** Bumped when Shift+Tab cycles mode so `ModeDropdown` flashes the label. */
   const [modeLabelPeekKey, setModeLabelPeekKey] = useState(0);
-  /** Bumped when Ctrl+Shift+Tab cycles ACP backend so `BackendDropdown` flashes the label. */
+  /** Bumped when Mod+Alt+Tab cycles ACP backend so `BackendDropdown` flashes the label. */
   const [backendLabelPeekKey, setBackendLabelPeekKey] = useState(0);
   const [modeMenuOpenKey, setModeMenuOpenKey] = useState(0);
   const [backendMenuOpenKey, setBackendMenuOpenKey] = useState(0);
@@ -816,6 +1000,9 @@ export function ChatComposer({
     "idle" | "recording" | "transcribing"
   >("idle");
   const [attachedImages, setAttachedImages] = useState<ImageAttachmentState[]>([]);
+  const [localTextReferences, setLocalTextReferences] = useState<
+    Record<string, TextReference> | undefined
+  >();
   const consumedDraftAttachmentKeysRef = useRef<Set<string>>(new Set());
   const fileInputRef = useRef<HTMLInputElement>(null);
   const composerRootRef = useRef<HTMLDivElement>(null);
@@ -828,7 +1015,7 @@ export function ChatComposer({
     left: 8,
     maxHeight: 280,
   });
-  const [agentShellDockTall, setAgentShellDockTall] = useState(false);
+  const [dockComposerHeightExpanded, setDockComposerHeightExpanded] = useState(false);
   /**
    * Terminal-style Up/Down recall state. `index` is `-1` when the user is
    * editing their own draft, `0` points at the newest past user message, and
@@ -852,7 +1039,7 @@ export function ChatComposer({
 
   useEffect(() => {
     if (!agentShellDockHeightExpand) {
-      setAgentShellDockTall(false);
+      setDockComposerHeightExpanded(false);
     }
   }, [agentShellDockHeightExpand]);
 
@@ -891,6 +1078,17 @@ export function ChatComposer({
 
   const value = controlledValue ?? uncontrolledValue;
   const selection = controlledSelection ?? uncontrolledSelection;
+  const effectiveTextReferences = draftTextReferences ?? localTextReferences;
+  const updateTextReferences = useCallback(
+    (next: Record<string, TextReference> | undefined) => {
+      if (onDraftTextReferencesChange) {
+        onDraftTextReferencesChange(next);
+      } else {
+        setLocalTextReferences(next);
+      }
+    },
+    [onDraftTextReferencesChange]
+  );
   const atSuggestions = useMemo(() => getAllAtSuggestions(fileTree), [fileTree]);
   const activeBackend = useMemo(
     () => backends.find((entry) => entry.id === backendId) ?? backends[0] ?? null,
@@ -941,6 +1139,34 @@ export function ChatComposer({
       onSelectionChange?.(safe);
     },
     [controlledSelection, onSelectionChange]
+  );
+
+  const textForPaste = useCallback(
+    (plain: string): string => {
+      if (
+        !settings.themeConfig.longPasteReferencesEnabled ||
+        plain.length < LONG_PASTE_REFERENCE_THRESHOLD_CHARS
+      ) {
+        return plain;
+      }
+      const id =
+        typeof crypto !== "undefined" && "randomUUID" in crypto
+          ? crypto.randomUUID()
+          : `textref-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+      const label = `Pasted text (${plain.length.toLocaleString()} chars)`;
+      const reference: TextReference = {
+        id,
+        label,
+        text: plain,
+        charCount: plain.length,
+      };
+      updateTextReferences({
+        ...(effectiveTextReferences ?? {}),
+        [id]: reference,
+      });
+      return makeComposerTextReferenceToken(id);
+    },
+    [effectiveTextReferences, settings.themeConfig.longPasteReferencesEnabled, updateTextReferences]
   );
 
   const flashComposerError = useCallback(
@@ -1156,6 +1382,23 @@ export function ChatComposer({
       onDraftCapturesChange(Object.keys(kept).length > 0 ? kept : undefined);
     }
   }, [draftCaptures, onDraftCapturesChange, value]);
+
+  useEffect(() => {
+    if (!effectiveTextReferences) return;
+    const liveIds = new Set(findComposerTextReferenceTokens(value).map((t) => t.referenceId));
+    const kept: Record<string, TextReference> = {};
+    let changed = false;
+    for (const [id, reference] of Object.entries(effectiveTextReferences)) {
+      if (liveIds.has(id)) {
+        kept[id] = reference;
+      } else {
+        changed = true;
+      }
+    }
+    if (changed) {
+      updateTextReferences(Object.keys(kept).length > 0 ? kept : undefined);
+    }
+  }, [effectiveTextReferences, updateTextReferences, value]);
 
   const handleRemoveImage = useCallback(
     (localId: string) => {
@@ -1406,13 +1649,14 @@ export function ChatComposer({
     () => (menu?.kind === "at" ? filterAtSuggestions(atSuggestions, menu.query) : []),
     [atSuggestions, menu]
   );
-  const filteredSlashSections = useMemo(
+  const filteredSlashResult = useMemo(
     () =>
       menu?.kind === "slash"
-        ? filterSlashMenuSections(slashMenuSections, menu.query)
-        : [],
+        ? filterSlashMenuSectionsForDisplay(slashMenuSections, menu.query)
+        : { sections: [], totalCount: 0, visibleCount: 0, truncated: false },
     [menu, slashMenuSections]
   );
+  const filteredSlashSections = filteredSlashResult.sections;
   const flatSlashItems = useMemo(
     () => flattenSlashMenuSections(filteredSlashSections),
     [filteredSlashSections]
@@ -1422,7 +1666,28 @@ export function ChatComposer({
     ? isSurfaceActive(surfaceId)
     : hasFocus;
   const isExpanded = variant === "expanded";
-  const showAgentShellGrowControls = agentShellDockHeightExpand && !isExpanded;
+  const visualLineCount = useComposerVisualLineCount(editorRef);
+  const showComposerHeightOverlay =
+    agentShellDockHeightExpand &&
+    variant === "docked" &&
+    !isExpanded &&
+    visualLineCount >= COMPOSER_DOCK_HEIGHT_OVERLAY_MIN_LINES;
+  const dockEditorMaxHeightClass = `${
+    dockComposerHeightExpanded ? COMPOSER_DOCK_MAX_HEIGHT_EXPANDED : COMPOSER_DOCK_MAX_HEIGHT_DEFAULT
+  } transition-[max-height] duration-300 ease-out`;
+
+  useEffect(() => {
+    if (!showComposerHeightOverlay && dockComposerHeightExpanded) {
+      setDockComposerHeightExpanded(false);
+    }
+  }, [dockComposerHeightExpanded, showComposerHeightOverlay]);
+
+  const composerHeightOverlayButton = showComposerHeightOverlay ? (
+    <ComposerDockHeightOverlayButton
+      expanded={dockComposerHeightExpanded}
+      onToggle={() => setDockComposerHeightExpanded((current) => !current)}
+    />
+  ) : null;
 
   useEffect(() => {
     const onShortcut = (event: Event) => {
@@ -1459,8 +1724,8 @@ export function ChatComposer({
           break;
           case "toggleComposerExpand":
             if (busy || configLocked) return;
-            if (showAgentShellGrowControls) {
-              setAgentShellDockTall((t) => !t);
+            if (showComposerHeightOverlay) {
+              setDockComposerHeightExpanded((t) => !t);
             } else if (isExpanded && onCollapseComposer) {
               onCollapseComposer();
             } else if (!isExpanded && onExpandComposer) {
@@ -1486,7 +1751,7 @@ export function ChatComposer({
     onCollapseComposer,
     onExpandComposer,
     recordingState,
-    showAgentShellGrowControls,
+    showComposerHeightOverlay,
     startVoiceInput,
     stopVoiceInput,
   ]);
@@ -1510,12 +1775,36 @@ export function ChatComposer({
           const wanted = normalizeDirectiveToken(modeMatch[1] ?? "");
           const match = modeOptions?.find(
             (option) =>
-              normalizeDirectiveToken(option.id) === wanted ||
-              normalizeDirectiveToken(option.label) === wanted
+              (normalizeDirectiveToken(option.id) === wanted ||
+                normalizeDirectiveToken(option.label) === wanted)
           );
           if (match) {
             onModeChange(match.id);
             continue;
+          }
+        }
+
+        const bareModeMatch = line.match(/^\/([^\s/]+)$/i);
+        if (bareModeMatch && !modeLockedRef.current) {
+          const token = normalizeDirectiveToken(bareModeMatch[1] ?? "");
+          const reservedSlashCommands = new Set([
+            "model",
+            "backend",
+            "set",
+            "mode",
+            "worktree",
+            "delete-worktree",
+          ]);
+          if (!reservedSlashCommands.has(token)) {
+            const match = modeOptions?.find(
+              (option) =>
+                (normalizeDirectiveToken(option.id) === token ||
+                  normalizeDirectiveToken(option.label) === token)
+            );
+            if (match) {
+              onModeChange(match.id);
+              continue;
+            }
           }
         }
 
@@ -1688,16 +1977,15 @@ export function ChatComposer({
   }, [setComposerSelection, value]);
 
   /**
-   * Expand every `⟦design:<id>⟧` compact token into its full
-   * `<design-capture>…</design-capture>` XML block so the LLM can see the
-   * element HTML. Unknown captures (metadata lost to pruning / reload) keep
+   * Expand compact reference tokens into their full XML blocks so the LLM can
+   * see the hidden content. Unknown references (metadata lost to pruning / reload) keep
    * the raw token as a signal — better than silently sending nothing.
    */
-  const expandDesignCaptureTokens = useCallback(
+  const expandComposerReferenceTokens = useCallback(
     (text: string): string => {
-      if (!text.includes("\u27E6design:")) return text;
+      if (!text.includes("\u27E6design:") && !text.includes("\u27E6textref:")) return text;
       const caps = draftCaptures ?? {};
-      return text.replace(
+      const expandedDesign = text.replace(
         new RegExp(COMPOSER_CAPTURE_TOKEN_REGEX.source, "g"),
         (match, id: string) => {
           const cap = caps[id];
@@ -1705,8 +1993,17 @@ export function ChatComposer({
           return buildDesignCaptureBlock(cap);
         }
       );
+      const textRefs = effectiveTextReferences ?? {};
+      return expandedDesign.replace(
+        new RegExp(COMPOSER_TEXT_REFERENCE_TOKEN_REGEX.source, "g"),
+        (match, id: string) => {
+          const reference = textRefs[id];
+          if (!reference) return match;
+          return buildTextReferenceBlock(reference);
+        }
+      );
     },
-    [draftCaptures]
+    [draftCaptures, effectiveTextReferences]
   );
 
   const submitComposer = useCallback(async (delivery: "normal" | "steer" = "normal") => {
@@ -1715,12 +2012,19 @@ export function ChatComposer({
       return;
     }
     const directed = applyComposerDirectives(trimmed);
-    const promptText = expandDesignCaptureTokens(directed);
-    const imagesToSubmit: ImageAttachment[] = attachedImages.map(({ mimeType, data, name }) => ({
-      mimeType,
-      data,
-      name,
-    }));
+    const promptText = expandComposerReferenceTokens(directed);
+    // Base64 `data` is the attachment contract; a "pending" entry's data stays
+    // "" until its FileReader completes and would submit a zero-byte image.
+    const imagesToSubmit: ImageAttachment[] = attachedImages
+      .filter((image) => image.data.length > 0)
+      .map(({ mimeType, data, name }) => ({
+        mimeType,
+        data,
+        name,
+      }));
+    if (!trimmed && imagesToSubmit.length === 0) {
+      return;
+    }
     const promptKey = JSON.stringify({
       text: promptText,
       delivery,
@@ -1755,6 +2059,7 @@ export function ChatComposer({
     if (onDraftCapturesChange) {
       onDraftCapturesChange(undefined);
     }
+    updateTextReferences(undefined);
     if (promptText || imagesToSubmit.length > 0) {
       void Promise.resolve(onSubmit(promptText, imagesToSubmit, { delivery }))
         .catch(() => undefined)
@@ -1769,10 +2074,11 @@ export function ChatComposer({
   }, [
     applyComposerDirectives,
     attachedImages,
-    expandDesignCaptureTokens,
+    expandComposerReferenceTokens,
     hardwareInputEnabled,
     onDraftAttachmentsChange,
     onDraftCapturesChange,
+    updateTextReferences,
     onSubmit,
     setComposerSelection,
     setComposerValue,
@@ -1789,18 +2095,31 @@ export function ChatComposer({
   }, [hardwareInputEnabled, setComposerSelection, setComposerValue]);
 
   /**
-   * Map captures into the minimal shape the DOM reconciler needs. Memoized so
-   * a stable reference doesn't force an extra reconcile when the captures
-   * object is deeply equal but referentially new.
+   * Map compact references into the minimal shape the DOM reconciler needs.
+   * Memoized so a stable reference doesn't force an extra reconcile when the
+   * backing metadata is deeply equal but referentially new.
    */
   const pillDescriptors = useMemo<Record<string, ComposerPillDescriptor> | undefined>(() => {
-    if (!draftCaptures) return undefined;
+    if (!draftCaptures && !effectiveTextReferences) return undefined;
     const out: Record<string, ComposerPillDescriptor> = {};
-    for (const [id, cap] of Object.entries(draftCaptures)) {
-      out[id] = { captureId: cap.id, label: cap.label, snippet: cap.snippet };
+    for (const [id, cap] of Object.entries(draftCaptures ?? {})) {
+      out[`design:${id}`] = {
+        kind: "design",
+        id: cap.id,
+        label: cap.label,
+        snippet: cap.snippet,
+      };
+    }
+    for (const [id, reference] of Object.entries(effectiveTextReferences ?? {})) {
+      out[`textref:${id}`] = {
+        kind: "text-reference",
+        id: reference.id,
+        label: reference.label,
+        snippet: `${reference.charCount.toLocaleString()} characters\n\n${reference.text.slice(0, 600)}`,
+      };
     }
     return out;
-  }, [draftCaptures]);
+  }, [draftCaptures, effectiveTextReferences]);
 
   useEffect(() => {
     if (hardwareInputEnabled) return;
@@ -1856,16 +2175,16 @@ export function ChatComposer({
     [hardwareInputEnabled, setComposerSelection, setComposerValue, syncNativeState]
   );
 
-  const tryCycleBackendWithCtrlShiftTab = useCallback(
+  const tryCycleBackendWithModAltTab = useCallback(
     (
       event: Pick<
         KeyboardEvent,
-        "key" | "shiftKey" | "ctrlKey" | "metaKey" | "preventDefault"
+        "key" | "shiftKey" | "ctrlKey" | "metaKey" | "altKey" | "preventDefault"
       >,
       obstructed: boolean
     ): boolean => {
       const mod = event.metaKey || event.ctrlKey;
-      if (event.key !== "Tab" || !event.shiftKey || !mod || obstructed) {
+      if (event.key !== "Tab" || !mod || !event.altKey || event.shiftKey || obstructed) {
         return false;
       }
  if (configLocked) {
@@ -2252,7 +2571,7 @@ export function ChatComposer({
       }
 
       if (
-        tryCycleBackendWithCtrlShiftTab(
+        tryCycleBackendWithModAltTab(
           event,
           Boolean(currentMenu) || modelDropdownOpen
         )
@@ -2327,7 +2646,7 @@ export function ChatComposer({
     submitCtrlEnter,
     steerCtrlEnter,
     tryClearModeChipWithBackspace,
-    tryCycleBackendWithCtrlShiftTab,
+    tryCycleBackendWithModAltTab,
     tryCycleModeWithShiftTab,
     tryRecallNewerUserMessage,
     tryRecallOlderUserMessage,
@@ -2340,7 +2659,7 @@ const handleNativeComposerKeyDown = useCallback(
       const currentMenu = menuRef.current;
       if (!currentMenu) {
         if (
-          tryCycleBackendWithCtrlShiftTab(
+          tryCycleBackendWithModAltTab(
             native,
             modelDropdownOpen
           )
@@ -2454,7 +2773,7 @@ const handleNativeComposerKeyDown = useCallback(
       steerCtrlEnter,
       refreshNativeComposerRefs,
       tryClearModeChipWithBackspace,
-      tryCycleBackendWithCtrlShiftTab,
+      tryCycleBackendWithModAltTab,
       tryCycleModeWithShiftTab,
       tryRecallNewerUserMessage,
       tryRecallOlderUserMessage,
@@ -2474,10 +2793,11 @@ const handleNativeComposerKeyDown = useCallback(
       focusTarget: editorRef.current,
       onKeyDown: (event) => handleComposerKey(event),
       onPaste: (text) => {
+        const insert = textForPaste(text);
         const next = replaceSelection(
           valueRef.current,
           selectionRef.current,
-          text
+          insert
         );
         setComposerValue(next.value);
         setComposerSelection(next.selection);
@@ -2517,17 +2837,74 @@ const handleNativeComposerKeyDown = useCallback(
     setComposerSelection,
     setComposerValue,
     surfaceId,
+    textForPaste,
     unregisterSurface,
   ]);
 
   const shellMx =
     shellMxClass !== undefined ? shellMxClass : "mx-0 @min-[481px]:mx-[10px]";
+  const statusBarMounted =
+    showStatusBar && variant !== "expanded" && layout !== "empty-top";
+  const composerStatusBarVisibility = normalizeComposerStatusBarVisibility(
+    workspaceSession.chat.composerStatusBarVisibility
+  );
+  const statusBarHasVisibleItems =
+    statusBarMounted &&
+    composerStatusBarHasVisibleItems(composerStatusBarVisibility, gitStatus, {
+      goalProgress: burnProgress != null,
+    });
+  const showContextUsage = composerStatusBarVisibility.context;
+  const [contextBreakdownOpen, setContextBreakdownOpen] = useState(false);
+  const {
+    usage: contextUsage,
+    loading: contextLoading,
+    error: contextError,
+  } = useAgentContextUsage({
+    conversationId: statusBarMounted && showContextUsage ? conversationId : null,
+    backendId,
+    modelId: model.id,
+    conversationStatus,
+    refreshGeneration: contextUsageRefreshGeneration,
+  });
+
+  useEffect(() => {
+    setContextBreakdownOpen(false);
+  }, [conversationId]);
+
+  useEffect(() => {
+    if (!showContextUsage) {
+      setContextBreakdownOpen(false);
+    }
+  }, [showContextUsage]);
+
+  const statusBarEl = statusBarMounted ? (
+    <ComposerStatusBar
+      backendId={backendId}
+      usage={contextUsage}
+      contextLoading={contextLoading}
+      contextBreakdownOpen={contextBreakdownOpen}
+      onContextBreakdownOpenChange={setContextBreakdownOpen}
+      burnProgress={burnProgress}
+      shellInsetClass={shellMx}
+    />
+  ) : null;
+  const contextBreakdownDock =
+    contextBreakdownOpen && statusBarMounted && showContextUsage ? (
+      <div className={dockedComposerCardSlot}>
+        <ContextBreakdownDock
+          usage={contextUsage}
+          loading={contextLoading}
+          error={contextError}
+          onClose={() => setContextBreakdownOpen(false)}
+        />
+      </div>
+    ) : null;
   const shellMargin =
     isExpanded
       ? ""
       : layout === "empty-top"
       ? `${shellMx} mt-[2px] mb-0`.trim()
-      : `${shellMx} mb-[10px]`.trim();
+      : `${shellMx} ${statusBarHasVisibleItems ? "mb-0" : COMPOSER_BOTTOM_GAP_CLASS}`.trim();
   const shellChrome = isExpanded
     ? "h-full min-h-0 gap-0 rounded-none border-0 bg-[var(--bg-main)] p-0"
     : "gap-[10px] overflow-hidden rounded-[var(--agent-composer-radius)] border border-[var(--agent-border)] bg-[var(--agent-card-bg)] p-[10px]";
@@ -2543,8 +2920,16 @@ const handleNativeComposerKeyDown = useCallback(
     isExpanded ? "above" : layout === "empty-top" ? "below" : "above";
 
   const textNodes = useMemo(
-    () => renderComposerText(value, selection, isActive, caretRef, draftCaptures),
-    [draftCaptures, isActive, selection, value]
+    () =>
+      renderComposerText(
+        value,
+        selection,
+        isActive,
+        caretRef,
+        draftCaptures,
+        effectiveTextReferences
+      ),
+    [draftCaptures, effectiveTextReferences, isActive, selection, value]
   );
   const composerTrimmedLength = value.trim().length;
   const canSubmit = composerTrimmedLength > 0 || attachedImages.length > 0;
@@ -2590,12 +2975,10 @@ const handleNativeComposerKeyDown = useCallback(
   const [newDesignMultilineLatch, setNewDesignMultilineLatch] = useState(false);
 
   useEffect(() => {
-    if (!shouldLatchComposerMultiline(value, hookMeasuresMultiline)) {
+    if (isComposerEffectivelyEmptyForMultiline(value, hookMeasuresMultiline)) {
       setNewDesignMultilineLatch(false);
+      return;
     }
-  }, [hookMeasuresMultiline, value]);
-
-  useEffect(() => {
     // After clearing, ResizeObserver can still see the old tall box until layout
     // settles; never re-latch multiline while the field is effectively empty.
     if (shouldLatchComposerMultiline(value, hookMeasuresMultiline)) {
@@ -2619,7 +3002,7 @@ const handleNativeComposerKeyDown = useCallback(
     !forceMultiline &&
     !isMultiLine &&
     attachedImages.length === 0 &&
-    !(showAgentShellGrowControls && agentShellDockTall);
+    !(showComposerHeightOverlay && dockComposerHeightExpanded);
 
   /** `trim()` alone can't hide the overlay after Shift+Enter (`\\n`-only trims to ""). Treating lone `\\n` or phantom `<br>` as "has newline" broke empty inputs (Chrome serializes sentinel breaks as "\\n"). Hiding instead when wrapped past one line aligns with visible layout + soft breaks. */
   const showFloatingPlaceholder =
@@ -2631,8 +3014,8 @@ const handleNativeComposerKeyDown = useCallback(
     isMultiLine,
     isExpanded,
     attachedImages.length,
-    showAgentShellGrowControls,
-    agentShellDockTall,
+    showComposerHeightOverlay,
+    dockComposerHeightExpanded,
   ].join("\0");
 
   const { fade: composerEditorFade, onScroll: onComposerEditorScroll } =
@@ -2795,6 +3178,8 @@ const handleNativeComposerKeyDown = useCallback(
         : "rounded-full";
 
     return (
+      <>
+      {contextBreakdownDock}
       <div
         ref={composerRootRef}
         data-ide-input-sink
@@ -2823,6 +3208,7 @@ const handleNativeComposerKeyDown = useCallback(
             className="relative min-w-0 flex-1"
           >
             <ComposerEditorScrollFades fade={composerEditorFade} />
+            {composerHeightOverlayButton}
             {showFloatingPlaceholder && (
               <span
                 className={`pointer-events-none absolute left-0 right-0 top-0 z-10 block min-w-0 truncate font-sans text-[14px] font-normal text-[var(--text-secondary)] ${textInsetClassName}`}
@@ -2885,10 +3271,11 @@ const handleNativeComposerKeyDown = useCallback(
                 }
 
                 const plain = clipboardPlainTextOnly(cd);
+                const insert = textForPaste(plain);
                 event.preventDefault();
 
                 if (hardwareInputEnabled) {
-                  const next = replaceSelection(valueRef.current, selectionRef.current, plain);
+                  const next = replaceSelection(valueRef.current, selectionRef.current, insert);
                   setComposerValue(next.value);
                   setComposerSelection(next.selection);
                   return;
@@ -2901,7 +3288,7 @@ const handleNativeComposerKeyDown = useCallback(
                 const range = getPlainTextRangeOffsets(el);
                 const start = range?.start ?? getCaretOffset(el);
                 const end = range?.end ?? start;
-                replaceTextRange(el, start, end, plain);
+                replaceTextRange(el, start, end, insert);
                 syncNativeState();
               }}
               onDragOver={handleDragOver}
@@ -2927,10 +3314,8 @@ const handleNativeComposerKeyDown = useCallback(
                 setComposerSelection(next.selection);
               }}
               className={`whitespace-pre-wrap break-words font-sans text-[14px] font-normal text-[var(--text-primary)] outline-none [scrollbar-width:thin] ${textInsetClassName} min-h-[18px] overflow-y-auto ${
-                showAgentShellGrowControls && agentShellDockTall
-                  ? "max-h-[min(70vh,560px)]"
-                  : "max-h-[min(42vh,240px)]"
-              }${showAgentShellGrowControls ? " transition-[max-height] duration-300 ease-out" : ""}`}
+                showComposerHeightOverlay ? dockEditorMaxHeightClass : COMPOSER_DOCK_MAX_HEIGHT_DEFAULT
+              }`}
               role={menu ? "combobox" : "textbox"}
               aria-label="Chat input"
               aria-expanded={menu ? true : undefined}
@@ -2963,6 +3348,8 @@ const handleNativeComposerKeyDown = useCallback(
           <ComposerSlashMenu
             sections={filteredSlashSections}
             flatItems={flatSlashItems}
+            totalItems={filteredSlashResult.totalCount}
+            truncated={filteredSlashResult.truncated}
             selectedIndex={selectedIndex}
             mode={mode}
             model={model}
@@ -2997,6 +3384,8 @@ const handleNativeComposerKeyDown = useCallback(
           className="hidden"
         />
       </div>
+      {statusBarEl}
+      </>
     );
   }
 
@@ -3030,6 +3419,8 @@ const handleNativeComposerKeyDown = useCallback(
   );
 
   return (
+    <>
+    {contextBreakdownDock}
     <div
       ref={composerRootRef}
       data-ide-input-sink
@@ -3057,6 +3448,7 @@ const handleNativeComposerKeyDown = useCallback(
             isExpanded ? "var(--bg-main)" : "var(--agent-card-bg)"
           }
         />
+        {composerHeightOverlayButton}
         {showFloatingPlaceholder && (
           <span
             className={`pointer-events-none absolute left-0 right-0 top-0 z-10 block min-w-0 truncate font-sans text-[14px] font-normal text-[var(--text-secondary)] ${textInsetClassName}`}
@@ -3119,10 +3511,11 @@ const handleNativeComposerKeyDown = useCallback(
             }
 
             const plain = clipboardPlainTextOnly(cd);
+            const insert = textForPaste(plain);
             event.preventDefault();
 
             if (hardwareInputEnabled) {
-              const next = replaceSelection(valueRef.current, selectionRef.current, plain);
+              const next = replaceSelection(valueRef.current, selectionRef.current, insert);
               setComposerValue(next.value);
               setComposerSelection(next.selection);
               return;
@@ -3135,7 +3528,7 @@ const handleNativeComposerKeyDown = useCallback(
             const range = getPlainTextRangeOffsets(el);
             const start = range?.start ?? getCaretOffset(el);
             const end = range?.end ?? start;
-            replaceTextRange(el, start, end, plain);
+            replaceTextRange(el, start, end, insert);
             syncNativeState();
           }}
           onDragOver={handleDragOver}
@@ -3164,10 +3557,8 @@ const handleNativeComposerKeyDown = useCallback(
             isExpanded
               ? "flex-1 overflow-y-auto pb-[2px]"
               : `min-h-[18px] overflow-y-auto ${
-                  showAgentShellGrowControls && agentShellDockTall
-                    ? "max-h-[min(70vh,560px)]"
-                    : "max-h-[min(42vh,240px)]"
-                }${showAgentShellGrowControls ? " transition-[max-height] duration-300 ease-out" : ""}`
+                  showComposerHeightOverlay ? dockEditorMaxHeightClass : COMPOSER_DOCK_MAX_HEIGHT_DEFAULT
+                }`
           }`}
           role={menu ? "combobox" : "textbox"}
           aria-label="Chat input"
@@ -3198,6 +3589,8 @@ const handleNativeComposerKeyDown = useCallback(
         <ComposerSlashMenu
           sections={filteredSlashSections}
           flatItems={flatSlashItems}
+          totalItems={filteredSlashResult.totalCount}
+          truncated={filteredSlashResult.truncated}
           selectedIndex={selectedIndex}
           mode={mode}
           model={model}
@@ -3266,27 +3659,7 @@ const handleNativeComposerKeyDown = useCallback(
         </div>
 
         <div className="flex shrink-0 items-center gap-[9px]">
-          {showAgentShellGrowControls ? (
-            agentShellDockTall ? (
-              <button
-                type="button"
-                onClick={() => setAgentShellDockTall(false)}
-                className="text-[var(--text-secondary)] transition-colors hover:text-[var(--text-primary)]"
-                aria-label="Shrink composer"
-              >
-                <Minimize2 className="size-[14px] shrink-0" strokeWidth={1.5} aria-hidden />
-              </button>
-            ) : (
-              <button
-                type="button"
-                onClick={() => setAgentShellDockTall(true)}
-                className="text-[var(--text-secondary)] transition-colors hover:text-[var(--text-primary)]"
-                aria-label="Expand composer height"
-              >
-                <Maximize2 className="size-[14px] shrink-0" strokeWidth={1.5} aria-hidden />
-              </button>
-            )
-          ) : isExpanded && onCollapseComposer ? (
+          {isExpanded && onCollapseComposer ? (
             <button
               type="button"
               onClick={onCollapseComposer}
@@ -3327,5 +3700,7 @@ const handleNativeComposerKeyDown = useCallback(
         </div>
       </div>
     </div>
+    {statusBarEl}
+    </>
   );
 }

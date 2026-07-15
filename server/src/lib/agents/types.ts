@@ -5,6 +5,7 @@ export type AgentConversationMode =
   | "plan"
   | "debug"
   | "ask"
+  | "goal"
   | (string & {});
 
 export type AgentBackendId =
@@ -13,7 +14,9 @@ export type AgentBackendId =
   | "opencode-server"
   | "gemini-acp"
   | "codex-app-server"
-  | "claude-code-sdk";
+  | "claude-code-sdk"
+  | "pi-agent"
+  | "google-antigravity-cli";
 
 export type AgentConversationStatus =
   | "idle"
@@ -146,7 +149,7 @@ export type AgentPlanEntry = {
   id: string;
   content: string;
   priority?: string;
-  status: "pending" | "in_progress" | "completed";
+  status: "pending" | "in_progress" | "blocked" | "completed";
 };
 
 export type AgentStoredEvent =
@@ -160,12 +163,26 @@ export type AgentStoredEvent =
       content: string;
       /** Shorter label for chat bubbles; full `content` is still sent to the model. */
       displayContent?: string;
+      /** Runtime-owned prompt context that should be sent to the model but hidden from normal chat UI. */
+      hidden?: boolean;
       attachments?: Array<{ mimeType: string; data: string; name?: string }>;
       /**
        * `true` for events materialized from a source conversation when forking. Ignored
        * when resolving the first *new* post-fork prompt (seed context) vs inherited rows.
        */
       inheritedInFork?: boolean;
+      raw?: unknown;
+    }
+  | {
+      seq: number;
+      eventId: string;
+      conversationId: string;
+      createdAt: number;
+      kind: "system_reminder";
+      reminderId: string;
+      targetMessageId?: string;
+      reason: "mode" | "plan_handoff" | "compaction" | "burn" | "goal" | "other";
+      text: string;
       raw?: unknown;
     }
   | {
@@ -211,6 +228,9 @@ export type AgentStoredEvent =
       detail?: string;
       locations?: AgentToolLocation[];
       editPreview?: AgentToolEditPreview;
+      pluginId?: string;
+      pluginName?: string;
+      pluginIconUrl?: string;
       openCodeSubagentSessionId?: string;
       raw?: unknown;
     }
@@ -227,6 +247,9 @@ export type AgentStoredEvent =
       detail?: string;
       locations?: AgentToolLocation[];
       editPreview?: AgentToolEditPreview;
+      pluginId?: string;
+      pluginName?: string;
+      pluginIconUrl?: string;
       openCodeSubagentSessionId?: string;
       raw?: unknown;
     }
@@ -238,6 +261,17 @@ export type AgentStoredEvent =
       kind: "plan";
       planId: string;
       entries: AgentPlanEntry[];
+      raw?: unknown;
+    }
+  | {
+      seq: number;
+      eventId: string;
+      conversationId: string;
+      createdAt: number;
+      kind: "plan_file";
+      path: string;
+      title?: string;
+      previewMode?: "preview" | "source";
       raw?: unknown;
     }
   | {
@@ -284,6 +318,10 @@ export type AgentStoredEvent =
       summary: string;
       retainedTurnCount: number;
       compressedTurnCount: number;
+      sourceRange?: { fromSeq: number; toSeq: number };
+      estimatedTokensBefore?: number;
+      estimatedTokensAfter?: number;
+      generation?: number;
       raw?: unknown;
     }
   | {
@@ -370,6 +408,14 @@ export type AgentQueuedChatPrompt = {
     backendId?: AgentBackendId;
     setConfigOptions?: Array<{ configId: string; value: string }>;
   };
+  planHandoff?: {
+    planPath: string;
+    planTitle?: string;
+    targetMode?: AgentConversationMode;
+    targetModelId?: string;
+    targetModelName?: string;
+  };
+  hidden?: boolean;
 };
 
 export type AgentConversationRecord = {
@@ -412,6 +458,29 @@ export type AgentConversationSnapshotHead = {
   conversation: AgentConversationRecord;
   events: AgentStoredEvent[];
   window: AgentConversationEventWindow;
+};
+
+export type AgentContextUsageCategoryId =
+  | "system_prompt"
+  | "tool_definitions"
+  | "mcp"
+  | "summarized_conversation"
+  | "conversation";
+
+export type AgentContextUsageCategory = {
+  id: AgentContextUsageCategoryId;
+  label: string;
+  tokens: number;
+  colorKey: string;
+};
+
+export type AgentContextUsageSnapshot = {
+  supported: boolean;
+  limitTokens: number;
+  usedTokens: number;
+  percentFull: number;
+  categories: AgentContextUsageCategory[];
+  approximate?: boolean;
 };
 
 export type AgentConversationCreateInput = Partial<AgentConversationConfig> & {
@@ -477,6 +546,7 @@ export interface AgentSessionHandle {
     userMessageId: string;
     attachments?: Array<{ mimeType: string; data: string; name?: string }>;
     isRetry?: boolean;
+    planHandoff?: AgentQueuedChatPrompt["planHandoff"];
   }) => Promise<void>;
   cancel: () => Promise<void>;
   pause?: () => Promise<void>;

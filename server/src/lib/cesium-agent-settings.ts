@@ -54,6 +54,10 @@ export type CesiumAgentSettings = {
     modelId: string | null;
     thresholdRatio: number;
   };
+  orchestration: {
+    /** Prompt the agent to continue when it stops with incomplete todos or open kanban issues. */
+    continueWhenIncomplete: boolean;
+  };
   toolPermissions: {
     editFile: "ask" | "allow" | "deny";
     terminal: "ask" | "allow" | "deny";
@@ -102,6 +106,7 @@ const CATALOG_TTL_MS = 1000 * 60 * 60 * 12;
 const CROFAI_PROVIDER_ID = "crofai";
 const CROFAI_PROVIDER_NAME = "CrofAI";
 const CROFAI_BASE_URL = "https://crof.ai/v1";
+export const DEFAULT_CESIUM_CONTEXT_WINDOW = 100_000;
 
 const BUILTIN_PROVIDER_KINDS: Record<string, CesiumProviderKind> = {
   openai: "openai-responses",
@@ -243,6 +248,9 @@ function defaultSettings(): CesiumAgentSettings {
       modelId: null,
       thresholdRatio: 0.82,
     },
+    orchestration: {
+      continueWhenIncomplete: true,
+    },
     toolPermissions: {
       editFile: "ask",
       terminal: "ask",
@@ -265,6 +273,30 @@ function asString(value: unknown): string | undefined {
 
 function asNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+/** Provider-reported context windows that are missing or unusable fall back to 100k tokens. */
+export function normalizeCesiumContextWindow(value: unknown): number {
+  let parsed: number | undefined;
+  if (typeof value === "number" && Number.isFinite(value)) {
+    parsed = value;
+  } else if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (trimmed) {
+      const numeric = Number(trimmed);
+      if (Number.isFinite(numeric)) {
+        parsed = numeric;
+      }
+    }
+  }
+  return parsed != null && parsed > 0 ? parsed : DEFAULT_CESIUM_CONTEXT_WINDOW;
+}
+
+function normalizeCatalogEntry(entry: CesiumModelCatalogEntry): CesiumModelCatalogEntry {
+  return {
+    ...entry,
+    contextWindow: normalizeCesiumContextWindow(entry.contextWindow),
+  };
 }
 
 function isProviderKind(value: unknown): value is CesiumProviderKind {
@@ -319,7 +351,7 @@ function normalizeCustomProvider(raw: unknown): CesiumCustomProvider | null {
           {
             id: modelId,
             name: asString(model.name) ?? modelId,
-            contextWindow: asNumber(model.contextWindow),
+            contextWindow: normalizeCesiumContextWindow(model.contextWindow),
             supportsTools:
               typeof model.supportsTools === "boolean" ? model.supportsTools : undefined,
             supportsReasoning:
@@ -346,6 +378,7 @@ function normalizeSettings(raw: unknown): CesiumAgentSettings {
     return defaults;
   }
   const compression = asRecord(record.compression);
+  const orchestration = asRecord(record.orchestration);
   const toolPermissions = asRecord(record.toolPermissions);
   return {
     schemaVersion: 1,
@@ -363,6 +396,12 @@ function normalizeSettings(raw: unknown): CesiumAgentSettings {
       modelId: asString(compression?.modelId) ?? null,
       thresholdRatio:
         asNumber(compression?.thresholdRatio) ?? defaults.compression.thresholdRatio,
+    },
+    orchestration: {
+      continueWhenIncomplete:
+        typeof orchestration?.continueWhenIncomplete === "boolean"
+          ? orchestration.continueWhenIncomplete
+          : defaults.orchestration.continueWhenIncomplete,
     },
     toolPermissions: {
       editFile:
@@ -575,6 +614,7 @@ export async function patchCesiumAgentSettings(input: {
   defaultModelId?: string;
   defaultApiKind?: CesiumProviderKind;
   compression?: Partial<CesiumAgentSettings["compression"]>;
+  orchestration?: Partial<CesiumAgentSettings["orchestration"]>;
   toolPermissions?: Partial<CesiumAgentSettings["toolPermissions"]>;
   customProviders?: CesiumCustomProvider[];
 }): Promise<CesiumAgentSettingsPublic> {
@@ -591,6 +631,10 @@ export async function patchCesiumAgentSettings(input: {
       ...settings.compression,
       ...(input.compression ?? {}),
     },
+    orchestration: {
+      ...settings.orchestration,
+      ...(input.orchestration ?? {}),
+    },
     toolPermissions: {
       ...settings.toolPermissions,
       ...(input.toolPermissions ?? {}),
@@ -603,7 +647,7 @@ export async function patchCesiumAgentSettings(input: {
 export type CesiumDiscoveredProviderModel = {
   id: string;
   name: string;
-  contextWindow?: number;
+  contextWindow: number;
 };
 
 function resolveModelsListUrl(baseUrl: string, apiKind: CesiumProviderKind): string {
@@ -677,14 +721,15 @@ export async function discoverCesiumProviderModels(input: {
       continue;
     }
     const name = asString(item?.name) ?? id;
-    const context =
+    const context = normalizeCesiumContextWindow(
       asNumber(item?.context_window) ??
-      asNumber(asRecord(item?.limit)?.context) ??
-      asNumber(item?.context_length);
+        asNumber(asRecord(item?.limit)?.context) ??
+        asNumber(item?.context_length)
+    );
     models.push({
       id,
       name,
-      ...(context ? { contextWindow: context } : {}),
+      contextWindow: context,
     });
   }
 
@@ -739,20 +784,22 @@ function parseModelsDevPayload(payload: unknown): CesiumModelCatalogEntry[] {
         continue;
       }
       const limit = asRecord(model.limit);
-      entries.push({
-        providerId,
-        providerName,
-        providerApiBaseUrl,
-        providerDocUrl,
-        modelId: `${providerId}/${modelId}`,
-        modelName: `${providerName}/${asString(model.name) ?? modelId}`,
-        apiKind,
-        supportsTools: model.tool_call === true,
-        supportsReasoning: model.reasoning === true,
-        supportsStructuredOutput: model.structured_output === true,
-        contextWindow: asNumber(limit?.context),
-        outputLimit: asNumber(limit?.output),
-      });
+      entries.push(
+        normalizeCatalogEntry({
+          providerId,
+          providerName,
+          providerApiBaseUrl,
+          providerDocUrl,
+          modelId: `${providerId}/${modelId}`,
+          modelName: `${providerName}/${asString(model.name) ?? modelId}`,
+          apiKind,
+          supportsTools: model.tool_call === true,
+          supportsReasoning: model.reasoning === true,
+          supportsStructuredOutput: model.structured_output === true,
+          contextWindow: asNumber(limit?.context),
+          outputLimit: asNumber(limit?.output),
+        })
+      );
     }
   }
   return entries.sort((a, b) => a.modelName.localeCompare(b.modelName));
@@ -769,7 +816,7 @@ function parseCrofAiModelsPayload(payload: unknown): CesiumModelCatalogEntry[] {
         return [];
       }
       return [
-        {
+        normalizeCatalogEntry({
           providerId: CROFAI_PROVIDER_ID,
           providerName: CROFAI_PROVIDER_NAME,
           providerApiBaseUrl: CROFAI_BASE_URL,
@@ -785,7 +832,7 @@ function parseCrofAiModelsPayload(payload: unknown): CesiumModelCatalogEntry[] {
           supportsStructuredOutput: false,
           contextWindow: asNumber(model.context_length),
           outputLimit: asNumber(model.max_completion_tokens),
-        },
+        }),
       ];
     })
     .sort((a, b) => a.modelName.localeCompare(b.modelName));
@@ -821,20 +868,22 @@ function fallbackCrofAiCatalog(): CesiumModelCatalogEntry[] {
     { id: "qwen3.5-397b-a17b", name: "Qwen: Qwen3.5 397B A17B", contextWindow: 262_144, outputLimit: 262_144, reasoning: true },
     { id: "qwen3.5-9b", name: "Qwen: Qwen3.5 9B", contextWindow: 262_144, outputLimit: 262_144, reasoning: true },
   ];
-  return models.map((model) => ({
-    providerId: CROFAI_PROVIDER_ID,
-    providerName: CROFAI_PROVIDER_NAME,
-    providerApiBaseUrl: CROFAI_BASE_URL,
-    providerDocUrl: "https://crof.ai/",
-    modelId: `${CROFAI_PROVIDER_ID}/${model.id}`,
-    modelName: `${CROFAI_PROVIDER_NAME}/${model.name}`,
-    apiKind: "openai-compatible",
-    supportsTools: true,
-    supportsReasoning: model.reasoning ?? false,
-    supportsStructuredOutput: false,
-    contextWindow: model.contextWindow,
-    outputLimit: model.outputLimit,
-  }));
+  return models.map((model) =>
+    normalizeCatalogEntry({
+      providerId: CROFAI_PROVIDER_ID,
+      providerName: CROFAI_PROVIDER_NAME,
+      providerApiBaseUrl: CROFAI_BASE_URL,
+      providerDocUrl: "https://crof.ai/",
+      modelId: `${CROFAI_PROVIDER_ID}/${model.id}`,
+      modelName: `${CROFAI_PROVIDER_NAME}/${model.name}`,
+      apiKind: "openai-compatible",
+      supportsTools: true,
+      supportsReasoning: model.reasoning ?? false,
+      supportsStructuredOutput: false,
+      contextWindow: model.contextWindow,
+      outputLimit: model.outputLimit,
+    })
+  );
 }
 
 async function getCrofAiCatalog(): Promise<CesiumModelCatalogEntry[]> {
@@ -856,8 +905,9 @@ async function getCrofAiCatalog(): Promise<CesiumModelCatalogEntry[]> {
 function mergeCatalogEntries(entries: CesiumModelCatalogEntry[]): CesiumModelCatalogEntry[] {
   const byModelId = new Map<string, CesiumModelCatalogEntry>();
   for (const entry of entries) {
-    if (!byModelId.has(entry.modelId)) {
-      byModelId.set(entry.modelId, entry);
+    const normalized = normalizeCatalogEntry(entry);
+    if (!byModelId.has(normalized.modelId)) {
+      byModelId.set(normalized.modelId, normalized);
     }
   }
   return [...byModelId.values()].sort((a, b) => a.modelName.localeCompare(b.modelName));
@@ -872,10 +922,12 @@ async function readCatalogCache(): Promise<PersistedModelsDevCache | null> {
   return {
     schemaVersion: 1,
     updatedAt: asNumber(record.updatedAt) ?? 0,
-    entries: record.entries.filter((entry): entry is CesiumModelCatalogEntry => {
-      const item = asRecord(entry);
-      return Boolean(item && asString(item.modelId) && asString(item.modelName));
-    }) as CesiumModelCatalogEntry[],
+    entries: record.entries
+      .filter((entry): entry is CesiumModelCatalogEntry => {
+        const item = asRecord(entry);
+        return Boolean(item && asString(item.modelId) && asString(item.modelName));
+      })
+      .map((entry) => normalizeCatalogEntry(entry as CesiumModelCatalogEntry)),
   };
 }
 
@@ -926,7 +978,7 @@ export async function getCesiumModelCatalog(options?: {
 
 function fallbackCatalog(): CesiumModelCatalogEntry[] {
   return [
-    {
+    normalizeCatalogEntry({
       providerId: "openai",
       providerName: "OpenAI",
       modelId: "openai/gpt-5.1",
@@ -935,8 +987,8 @@ function fallbackCatalog(): CesiumModelCatalogEntry[] {
       supportsTools: true,
       supportsReasoning: true,
       supportsStructuredOutput: true,
-    },
-    {
+    }),
+    normalizeCatalogEntry({
       providerId: "anthropic",
       providerName: "Anthropic",
       modelId: "anthropic/claude-sonnet-4-5-20250929",
@@ -945,8 +997,8 @@ function fallbackCatalog(): CesiumModelCatalogEntry[] {
       supportsTools: true,
       supportsReasoning: true,
       supportsStructuredOutput: false,
-    },
-    {
+    }),
+    normalizeCatalogEntry({
       providerId: "google",
       providerName: "Google",
       modelId: "google/gemini-2.5-pro",
@@ -955,7 +1007,7 @@ function fallbackCatalog(): CesiumModelCatalogEntry[] {
       supportsTools: true,
       supportsReasoning: true,
       supportsStructuredOutput: true,
-    },
+    }),
   ];
 }
 
@@ -965,17 +1017,19 @@ export async function createCesiumAgentConfigOptions(): Promise<AgentConfigOptio
     getCesiumModelCatalog(),
   ]);
   const customModels = settings.customProviders.flatMap((provider) =>
-    provider.models.map((model): CesiumModelCatalogEntry => ({
-      providerId: provider.id,
-      providerName: provider.name,
-      modelId: `${provider.id}/${model.id}`,
-      modelName: `${provider.name}/${model.name}`,
-      apiKind: provider.apiKind,
-      supportsTools: model.supportsTools ?? true,
-      supportsReasoning: model.supportsReasoning ?? false,
-      supportsStructuredOutput: false,
-      contextWindow: model.contextWindow,
-    }))
+    provider.models.map((model): CesiumModelCatalogEntry =>
+      normalizeCatalogEntry({
+        providerId: provider.id,
+        providerName: provider.name,
+        modelId: `${provider.id}/${model.id}`,
+        modelName: `${provider.name}/${model.name}`,
+        apiKind: provider.apiKind,
+        supportsTools: model.supportsTools ?? true,
+        supportsReasoning: model.supportsReasoning ?? false,
+        supportsStructuredOutput: false,
+        contextWindow: model.contextWindow,
+      })
+    )
   );
   const modelEntries = [...catalog, ...customModels].filter((model) => model.supportsTools);
   const modelOptions = modelEntries.map((model) => ({
@@ -983,13 +1037,13 @@ export async function createCesiumAgentConfigOptions(): Promise<AgentConfigOptio
     name: model.modelName,
     description: [
       model.apiKind,
-      model.contextWindow ? `${model.contextWindow.toLocaleString()} ctx` : "",
+      `${normalizeCesiumContextWindow(model.contextWindow).toLocaleString()} ctx`,
       model.supportsReasoning ? "reasoning" : "",
     ].filter(Boolean).join(" · "),
     metadata: {
       providerId: model.providerId,
       apiKind: model.apiKind,
-      ...(model.contextWindow ? { contextWindow: String(model.contextWindow) } : {}),
+      contextWindow: String(normalizeCesiumContextWindow(model.contextWindow)),
       supportsReasoning: String(model.supportsReasoning),
     },
   }));
@@ -1010,9 +1064,24 @@ export async function createCesiumAgentConfigOptions(): Promise<AgentConfigOptio
       options: [
         { value: "agent", name: "Agent" },
         {
+          value: "plan",
+          name: "Plan",
+          description: "Research and draft a reviewable implementation plan before building.",
+        },
+        {
           value: "orchestration",
           name: "Orchestration",
           description: "Coordinate a kanban board and delegate work to child agents.",
+        },
+        {
+          value: "burn",
+          name: "Burn",
+          description: "Run a DB-backed long-running goal with planning, milestones, continuation, and final verification.",
+        },
+        {
+          value: "ask",
+          name: "Ask",
+          description: "Read-only Q&A mode for inspecting the workspace without side effects.",
         },
       ],
     },
@@ -1040,7 +1109,27 @@ export function findCesiumModelCatalogEntry(
   modelId: string,
   catalog: CesiumModelCatalogEntry[]
 ): CesiumModelCatalogEntry | undefined {
-  return catalog.find((entry) => entry.modelId === modelId);
+  const entry = catalog.find((item) => item.modelId === modelId);
+  return entry ? normalizeCatalogEntry(entry) : undefined;
+}
+
+export async function resolveCesiumModelContextWindow(modelId: string): Promise<number> {
+  const catalog = await getCesiumModelCatalog();
+  const entry = findCesiumModelCatalogEntry(modelId, catalog);
+  if (entry?.contextWindow != null) {
+    return entry.contextWindow;
+  }
+  const settings = await getCesiumAgentSettings();
+  const [providerId, localModelId] = modelId.includes("/")
+    ? modelId.split("/", 2)
+    : [modelId, modelId];
+  const customProvider = settings.customProviders.find(
+    (provider) => normalizeProviderId(provider.id) === normalizeProviderId(providerId ?? "")
+  );
+  const customModel = customProvider?.models.find(
+    (model) => model.id === (localModelId ?? modelId)
+  );
+  return normalizeCesiumContextWindow(customModel?.contextWindow);
 }
 
 export async function resolveProviderApiBaseUrl(providerId: string): Promise<string | undefined> {

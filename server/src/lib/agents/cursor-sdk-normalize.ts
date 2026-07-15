@@ -14,6 +14,13 @@ import type {
   AgentToolCallStatus,
   AgentToolLocation,
 } from "./types.js";
+import { asRecord, firstString } from "./json-coerce.js";
+import {
+  detailForToolPayload,
+  inferCanonicalToolKind,
+  locationsForToolPayload,
+  titleForCanonicalTool,
+} from "./tool-normalize.js";
 
 type CursorSdkToolPayload = {
   name?: string;
@@ -33,25 +40,6 @@ const PATH_KEYS = [
   "relativePath",
 ];
 
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined;
-}
-
-function firstString(record: Record<string, unknown> | undefined, keys: string[]): string | undefined {
-  if (!record) {
-    return undefined;
-  }
-  for (const key of keys) {
-    const value = record[key];
-    if (typeof value === "string" && value.trim()) {
-      return value.trim();
-    }
-  }
-  return undefined;
-}
-
 function nestedValue(record: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
   return asRecord(record?.value);
 }
@@ -68,31 +56,12 @@ function compactJson(value: unknown, limit = 360): string | undefined {
   return trimmed.length > limit ? `${trimmed.slice(0, limit - 1)}…` : trimmed;
 }
 
-function humanizeToolName(name: string): string {
-  return name
-    .replace(/([a-z])([A-Z])/g, "$1 $2")
-    .replace(/[_-]+/g, " ")
-    .replace(/\s+/g, " ")
-    .trim()
-    .replace(/^./, (char) => char.toUpperCase());
-}
-
 function inferToolKind(name: string, payload: CursorSdkToolPayload): string {
-  const lowered = name.toLowerCase();
-  const haystack = `${lowered} ${compactJson(payload.args, 240) ?? ""} ${
-    compactJson(payload.result, 240) ?? ""
-  }`.toLowerCase();
-  if (lowered.includes("todo")) return "todo";
-  if (lowered.includes("task") || lowered.includes("agent")) return "task";
-  if (lowered.includes("grep")) return "grep";
-  if (lowered.includes("semsearch") || lowered.includes("semantic")) return "search";
-  if (lowered.includes("glob") || lowered.includes("search") || lowered.includes("find")) return "search";
-  if (lowered.includes("web")) return "search_web";
-  if (lowered.includes("shell") || lowered.includes("terminal") || lowered.includes("bash")) return "terminal";
-  if (/\b(delete|remove|rm)\b/.test(haystack)) return "delete";
-  if (/\b(edit|write|patch|replace|update|create)\b/.test(haystack)) return "edit";
-  if (/\b(read|open|view|cat)\b/.test(haystack)) return "read";
-  return "tool";
+  return inferCanonicalToolKind({
+    name,
+    input: payload.args,
+    result: payload.result,
+  });
 }
 
 function statusFromSdk(status: SDKToolUseMessage["status"]): AgentToolCallStatus {
@@ -111,96 +80,19 @@ function statusFromSdk(status: SDKToolUseMessage["status"]): AgentToolCallStatus
 }
 
 function titleForTool(name: string, kind: string, payload: CursorSdkToolPayload): string {
-  const args = asRecord(payload.args);
-  const result = asRecord(payload.result);
-  const path = firstString(args, PATH_KEYS) ?? firstString(result, PATH_KEYS);
-  const query =
-    firstString(args, ["query", "pattern", "regex", "search", "term", "globPattern"]) ??
-    firstString(result, ["query", "pattern", "regex", "search", "term", "globPattern"]);
-  const command = firstString(args, ["command", "cmd", "script"]);
-  switch (kind) {
-    case "read":
-      return path ? `Read ${path}` : "Read file";
-    case "edit":
-      return path ? `Update ${path}` : "Update file";
-    case "delete":
-      return path ? `Delete ${path}` : "Delete file";
-    case "grep":
-      return query ? `Grep ${query}` : "Grep workspace";
-    case "search":
-      return query ? `Find ${query}` : "Find in workspace";
-    case "search_web":
-      return query ? `Web · ${query}` : "Web search";
-    case "terminal":
-      return command ? `Run ${command}` : "Run command";
-    case "todo":
-      return "Update todos";
-    case "task":
-      return "Task";
-    default:
-      return humanizeToolName(name);
-  }
+  return titleForCanonicalTool({
+    name,
+    kind,
+    payload: { input: payload.args, result: payload.result },
+  });
 }
 
 function locationsForTool(payload: CursorSdkToolPayload): AgentToolLocation[] | undefined {
-  const result = asRecord(payload.result);
-  const records = [asRecord(payload.args), result, nestedValue(result)].filter(
-    (value): value is Record<string, unknown> => value != null
-  );
-  const paths = new Set<string>();
-  for (const record of records) {
-    const path = firstString(record, PATH_KEYS);
-    if (path) {
-      paths.add(path);
-    }
-    for (const key of ["files", "paths", "matchedFiles", "results"]) {
-      const value = record[key];
-      if (Array.isArray(value)) {
-        for (const item of value) {
-          if (typeof item === "string" && item.trim()) {
-            paths.add(item.trim());
-          } else {
-            const itemPath = firstString(asRecord(item), PATH_KEYS);
-            if (itemPath) {
-              paths.add(itemPath);
-            }
-          }
-        }
-      }
-    }
-  }
-  const locations = [...paths].slice(0, 24).map((path) => ({ path }));
-  return locations.length > 0 ? locations : undefined;
+  return locationsForToolPayload({ input: payload.args, result: payload.result });
 }
 
 function detailForTool(payload: CursorSdkToolPayload): string | undefined {
-  const result = asRecord(payload.result);
-  const value = nestedValue(result);
-  const args = asRecord(payload.args);
-  const totalFiles =
-    typeof value?.totalFiles === "number"
-      ? value.totalFiles
-      : typeof result?.totalFiles === "number"
-        ? result.totalFiles
-        : undefined;
-  if (totalFiles != null) {
-    return `${totalFiles} files matched`;
-  }
-  const totalLines =
-    typeof value?.totalLines === "number"
-      ? value.totalLines
-      : typeof result?.totalLines === "number"
-        ? result.totalLines
-        : undefined;
-  if (totalLines != null) {
-    return `${totalLines} lines`;
-  }
-  return (
-    firstString(result, ["message", "summary", "error", "stderr", "stdout", "output"]) ??
-    firstString(value, ["message", "summary", "error", "stderr", "stdout", "output"]) ??
-    firstString(args, ["description", "prompt", "query", "command"]) ??
-    compactJson(payload.result)
-  );
+  return detailForToolPayload({ input: payload.args, result: payload.result });
 }
 
 export function textFromCursorSdkAssistantMessage(event: SDKAssistantMessage): string {
@@ -247,8 +139,147 @@ function todoLikeText(value: Record<string, unknown>): string {
 function todoLikeStatus(value: Record<string, unknown>): AgentPlanEntry["status"] {
   const raw = firstString(value, ["status", "state"])?.toLowerCase();
   if (raw === "completed" || raw === "done") return "completed";
-  if (raw === "in_progress" || raw === "in progress" || raw === "running") return "in_progress";
+  if (raw === "blocked" || raw === "stuck") return "blocked";
+  if (
+    raw === "in_progress" ||
+    raw === "inprogress" ||
+    raw === "in progress" ||
+    raw === "running"
+  ) return "in_progress";
   return "pending";
+}
+
+export function isTodoToolName(name: string): boolean {
+  return /todo/i.test(name);
+}
+
+export function isCreatePlanToolName(name: string): boolean {
+  const lowered = name.toLowerCase();
+  return lowered.includes("create_plan") || lowered === "createplan" || lowered === "cursor/create_plan";
+}
+
+export function isAskQuestionToolName(name: string): boolean {
+  const lowered = name.toLowerCase();
+  return (
+    lowered.includes("ask_question") ||
+    lowered.includes("askquestion") ||
+    lowered === "cursor/ask_question"
+  );
+}
+
+export function isPlanMarkdownPath(path: string): boolean {
+  const normalized = path.replace(/\\/g, "/").toLowerCase();
+  return (
+    normalized.endsWith(".plan.md") ||
+    normalized.includes("/.cursor/plans/") ||
+    normalized.startsWith(".cursor/plans/") ||
+    normalized.includes("/plans/") && normalized.endsWith(".md")
+  );
+}
+
+export function detectPlanFilePathFromToolPayload(payload: CursorSdkToolPayload): string | undefined {
+  const records = [asRecord(payload.args), asRecord(payload.result), nestedValue(asRecord(payload.result))].filter(
+    (value): value is Record<string, unknown> => value != null
+  );
+  for (const record of records) {
+    const path =
+      firstString(record, PATH_KEYS) ??
+      firstString(record, ["planUri", "plan_uri", "uri", "filePath", "filepath"]);
+    if (path && isPlanMarkdownPath(path)) {
+      return path;
+    }
+  }
+  return undefined;
+}
+
+export type CursorSdkCreatePlanPayload = {
+  name?: string;
+  overview?: string;
+  planMarkdown?: string;
+  planUri?: string;
+  entries: AgentPlanEntry[];
+};
+
+export function parseCursorSdkCreatePlanPayload(payload: unknown): CursorSdkCreatePlanPayload | null {
+  const record = asRecord(payload);
+  if (!record) {
+    return null;
+  }
+  const planMarkdown =
+    firstString(record, ["plan", "markdown", "content", "body"]) ??
+    (typeof record.plan === "string" ? record.plan : undefined);
+  const entries = planEntriesFromCursorSdkToolPayload(record);
+  const name = firstString(record, ["name", "title"]);
+  const overview = firstString(record, ["overview", "summary"]);
+  const planUri = firstString(record, ["planUri", "plan_uri", "uri"]);
+  if (!planMarkdown && entries.length === 0 && !name && !overview) {
+    return null;
+  }
+  return {
+    name,
+    overview,
+    planMarkdown,
+    planUri,
+    entries,
+  };
+}
+
+export type CursorSdkAskQuestionPayload = {
+  prompt: string;
+  options: Array<{ id: string; label: string }>;
+  questions?: Array<{
+    id: string;
+    prompt: string;
+    options: Array<{ id: string; label: string }>;
+    allowMultiple?: boolean;
+  }>;
+  allowMultiple?: boolean;
+};
+
+export function parseCursorSdkAskQuestionPayload(payload: unknown): CursorSdkAskQuestionPayload | null {
+  const record = asRecord(payload);
+  if (!record) {
+    return null;
+  }
+  const prompt =
+    firstString(record, ["prompt", "question", "title", "text"]) ??
+    firstString(asRecord(record.question), ["prompt", "text"]);
+  if (!prompt) {
+    return null;
+  }
+  const rawOptions =
+    (Array.isArray(record.options) && record.options) ||
+    (Array.isArray(record.choices) && record.choices) ||
+    [];
+  const options = rawOptions.flatMap((item, index) => {
+    if (typeof item === "string" && item.trim()) {
+      return [{ id: `option-${index}`, label: item.trim() }];
+    }
+    const optionRecord = asRecord(item);
+    if (!optionRecord) {
+      return [];
+    }
+    const label =
+      firstString(optionRecord, ["label", "text", "name", "title"]) ??
+      firstString(optionRecord, ["id"]);
+    if (!label) {
+      return [];
+    }
+    return [
+      {
+        id: firstString(optionRecord, ["id"]) ?? `option-${index}`,
+        label,
+      },
+    ];
+  });
+  if (options.length === 0) {
+    return null;
+  }
+  return {
+    prompt,
+    options,
+    allowMultiple: record.allowMultiple === true || record.allow_multiple === true,
+  };
 }
 
 export function planEntriesFromCursorSdkToolPayload(payload: unknown): AgentPlanEntry[] {

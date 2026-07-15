@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { asRecord, asString } from "./json-coerce.js";
 import type {
   AgentBackendInfo,
   AgentConfigOption,
@@ -24,6 +25,15 @@ import {
   codexAppServerTextDelta,
   codexAppServerToolEventFromItem,
 } from "./codex-app-server-normalize.js";
+import {
+  providerPlanEvents,
+  writeProviderPlanArtifact,
+} from "./plan-artifacts.js";
+import { materializeImageAttachments } from "./prompt-attachments.js";
+import {
+  appendAgentPluginPrompt,
+  resolveAgentPluginAttachments,
+} from "../plugins/attachments.js";
 
 type PendingTurn = {
   turnId: string | null;
@@ -35,16 +45,6 @@ type PendingServerRequest = {
   rpcId: number | string;
   method: string;
 };
-
-function asRecord(value: unknown): CodexAppServerJsonObject | undefined {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as CodexAppServerJsonObject)
-    : undefined;
-}
-
-function asString(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim() ? value : undefined;
-}
 
 function currentValueFor(options: AgentConfigOption[], id: string): string | undefined {
   return options.find((option) => option.id === id)?.currentValue;
@@ -228,21 +228,30 @@ class CodexAppServerSessionHandle implements AgentSessionHandle {
       currentValueFor(this.configOptions, "effort");
     const permission = currentValueFor(this.configOptions, "permission") || "workspace-write";
     const mode = currentValueFor(this.configOptions, "mode") || this.callbacks.conversation.config.mode || "agent";
+    const imageAttachments = await materializeImageAttachments(
+      input.attachments,
+      "codex-app-server"
+    );
+    const pluginAttachments = await resolveAgentPluginAttachments({
+      workspaceId: this.callbacks.workspace.id,
+      workspaceRoot: this.callbacks.workspace.root,
+      backendId: "codex-app-server",
+    });
+    const promptText = appendAgentPluginPrompt(input.text, pluginAttachments);
     const turnParams: CodexAppServerJsonObject = {
       threadId: this.threadId,
       mode,
       input: [
-        { type: "text", text: input.text },
-        ...(input.attachments ?? []).flatMap((attachment) =>
-          attachment.mimeType.startsWith("image/") && attachment.name
-            ? [{ type: "localImage", path: attachment.name }]
-            : []
-        ),
+        { type: "text", text: promptText },
+        ...imageAttachments.paths.map((path) => ({ type: "localImage", path })),
       ],
       cwd: this.callbacks.workspace.root,
       approvalPolicy: approvalPolicyForPermission(permission),
       sandboxPolicy: sandboxPolicyForPermission(permission, this.callbacks.workspace.root),
     };
+    if (Object.keys(pluginAttachments.sdkMcp.servers).length > 0) {
+      turnParams.mcpServers = pluginAttachments.sdkMcp.servers;
+    }
     if (model && model !== "__default__" && model !== "auto") {
       turnParams.model = model;
     }
@@ -260,16 +269,26 @@ class CodexAppServerSessionHandle implements AgentSessionHandle {
       configOptions: this.configOptions,
     }));
 
-    const turnPromise = new Promise<void>((resolve, reject) => {
-      this.pendingTurn = { turnId: null, resolve, reject };
-    });
-    const result = (await this.transport.request("turn/start", turnParams)) as CodexAppServerJsonObject;
-    const turn = asRecord(result.turn);
-    const turnId = asString(turn?.id) ?? null;
-    if (this.pendingTurn) {
-      this.pendingTurn.turnId = turnId;
+    try {
+      const turnPromise = new Promise<void>((resolve, reject) => {
+        this.pendingTurn = { turnId: null, resolve, reject };
+      });
+      let result: CodexAppServerJsonObject;
+      try {
+        result = (await this.transport.request("turn/start", turnParams)) as CodexAppServerJsonObject;
+      } catch (error) {
+        this.pendingTurn = null;
+        throw error;
+      }
+      const turn = asRecord(result.turn);
+      const turnId = asString(turn?.id) ?? null;
+      if (this.pendingTurn) {
+        this.pendingTurn.turnId = turnId;
+      }
+      await turnPromise;
+    } finally {
+      await imageAttachments.cleanup();
     }
-    await turnPromise;
   }
 
   async cancel(): Promise<void> {
@@ -295,6 +314,7 @@ class CodexAppServerSessionHandle implements AgentSessionHandle {
       status: "cancelled",
       pendingPermission: null,
     }));
+    this.settlePendingTurn();
   }
 
   async setConfigOption(configId: string, value: string): Promise<void> {
@@ -366,6 +386,7 @@ class CodexAppServerSessionHandle implements AgentSessionHandle {
       args: [...this.runtime.args, "app-server"],
       cwd: this.callbacks.workspace.root,
       env: this.runtime.env,
+      processName: "Cesium Agent - Codex App Server",
       onNotification: (message) => {
         void this.handleNotification(message);
       },
@@ -389,9 +410,23 @@ class CodexAppServerSessionHandle implements AgentSessionHandle {
       onExit: () => {
         if (!this.disposed) {
           this.callbacks.markRuntimeStale?.();
+          this.settlePendingTurn(new Error("Codex App Server transport exited during a turn."));
         }
       },
     });
+  }
+
+  private settlePendingTurn(error?: Error): void {
+    const pending = this.pendingTurn;
+    if (!pending) {
+      return;
+    }
+    this.pendingTurn = null;
+    if (error) {
+      pending.reject(error);
+      return;
+    }
+    pending.resolve();
   }
 
   private async startThread(): Promise<void> {
@@ -464,19 +499,7 @@ class CodexAppServerSessionHandle implements AgentSessionHandle {
         return;
       }
       case "turn/plan/updated": {
-        const entries = codexAppServerPlanEntriesFromTurnPlan(params);
-        if (entries.length > 0) {
-          await this.callbacks.appendEvents([
-            {
-              eventId: randomUUID(),
-              conversationId: this.callbacks.conversation.id,
-              kind: "plan",
-              planId: `${this.callbacks.conversation.id}-codex-app-server-plan`,
-              entries,
-              raw: message,
-            },
-          ]);
-        }
+        await this.handlePlanUpdated(params, message);
         return;
       }
       case "item/started":
@@ -642,8 +665,29 @@ class CodexAppServerSessionHandle implements AgentSessionHandle {
       lastError: status.status === "failed" ? status.detail ?? "Codex App Server turn failed." : null,
       providerSessionId: this.sessionId,
     }));
-    this.pendingTurn?.resolve();
-    this.pendingTurn = null;
+    this.settlePendingTurn();
+  }
+
+  private async handlePlanUpdated(
+    params: CodexAppServerJsonObject,
+    raw: CodexAppServerJsonObject
+  ): Promise<void> {
+    const entries = codexAppServerPlanEntriesFromTurnPlan(params);
+    if (entries.length === 0) {
+      return;
+    }
+    const artifact = await writeProviderPlanArtifact({
+      workspaceRoot: this.callbacks.workspace.root,
+      backendId: "codex-app-server",
+      title: "Codex plan",
+      entries,
+    });
+    await this.callbacks.appendEvents(providerPlanEvents({
+      conversationId: this.callbacks.conversation.id,
+      planId: `${this.callbacks.conversation.id}-codex-app-server-plan`,
+      artifact,
+      raw,
+    }));
   }
 
   private async handleServerRequestResolved(
@@ -689,6 +733,7 @@ class CodexAppServerSessionHandle implements AgentSessionHandle {
         raw,
       },
     ]);
+    this.settlePendingTurn(new Error(message));
   }
 
   private async handleLegacyCodexEvent(
@@ -823,8 +868,7 @@ class CodexAppServerSessionHandle implements AgentSessionHandle {
         lastError: this.lastCodexEventError,
         providerSessionId: this.sessionId,
       }));
-      this.pendingTurn?.resolve();
-      this.pendingTurn = null;
+      this.settlePendingTurn();
     }
   }
 

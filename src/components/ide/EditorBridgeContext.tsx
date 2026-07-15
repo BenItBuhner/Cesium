@@ -24,7 +24,11 @@ export type EditorBridge = {
   openTerminalTab: () => Promise<void>;
   openBrowserTab: (
     url: string,
-    options?: { group?: EditorGroup; activate?: boolean; engine?: "proxy" | "server-chromium" }
+    options?: {
+      group?: EditorGroup;
+      activate?: boolean;
+      engine?: "proxy" | "electron-native" | "server-chromium";
+    }
   ) => Promise<string | null> | string | null | void;
   listBrowserTabs?: () => BrowserControlTab[];
   closeBrowserTab?: (tabId: string) => Promise<boolean> | boolean;
@@ -47,6 +51,17 @@ export type EditorBridge = {
     title: string,
     group?: EditorGroup
   ) => void;
+  openExtensionSurfaceTab: (input: {
+    extensionId: string;
+    surfaceId: string;
+    title: string;
+    surfaceKind: "marketplace" | "webview" | "customEditor" | "view" | "output";
+    surfaceSessionId?: string;
+    placement?: "sidebar" | "editor";
+    html?: string;
+    viewType?: string;
+    group?: EditorGroup;
+  }) => void;
   requestCloseTab: (group: EditorGroup, id: string) => void;
   requestCloseAllInGroup: (group: EditorGroup) => void;
   requestCloseOthersInGroup: (group: EditorGroup) => void;

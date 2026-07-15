@@ -2,9 +2,17 @@
 
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { AskQuestionCard } from "@/components/chat/AskQuestionCard";
+import { AgentCompletionErrorDock } from "@/components/chat/AgentCompletionErrorDock";
 import { ChatComposer } from "@/components/chat/ChatComposer";
 import { ComposerQueueDock } from "@/components/chat/ComposerQueueDock";
 import { MessageList } from "@/components/chat/MessageList";
+import { PlanReviewDock, type DockedPlanFile } from "@/components/chat/PlanReviewDock";
+import {
+  modelChoiceToOverride,
+  type PlanBuildModelChoice,
+  type PlanBuildRequest,
+} from "@/components/chat/PlanBuildControls";
+import { useAgentCompletionErrorDock } from "@/components/chat/useAgentCompletionErrorDock";
 import { useRedoInlineUserMessage } from "@/components/chat/useRedoInlineUserMessage";
 import { useAgentConversations } from "@/components/chat/AgentConversationsContext";
 import {
@@ -19,9 +27,12 @@ import {
   buildDraftModeOptionsForBackend,
   buildDraftModelOptionsForBackend,
   extractComposerUserMessageHistory,
+  latestBurnProgressStatus,
   projectAgentEventsToChatMessages,
   resolveDraftModelForBackend,
 } from "@/lib/agent-chat";
+import { isAgentComposerBusy } from "@/lib/agent-completion-error";
+import { computeContextUsageRefreshGeneration } from "@/lib/context-usage-refresh";
 import { DEFAULT_MODE_OPTIONS, isOrchestrationModeLocked, resolveCanonicalModeId } from "@/lib/chat-modes";
 import { markConversationSwitchVisible } from "@/lib/dev-perf";
 import { buildQueuedConfigOverride } from "@/lib/queued-prompt-utils";
@@ -46,6 +57,9 @@ function pickAvailableBackend(
   );
 }
 
+/** Stable identity for the no-events case so memos/effects keyed on it don't re-fire every render. */
+const EMPTY_THREAD_EVENTS: never[] = [];
+
 export function AgentCenterPane() {
   const {
     composerDrafts,
@@ -53,6 +67,7 @@ export function AgentCenterPane() {
     setComposerSelection,
     setExpandedComposerController,
     upsertComposerDraft,
+    openExplorerFile,
   } = useOpenInEditor();
   const {
     backends,
@@ -77,11 +92,12 @@ export function AgentCenterPane() {
     upsertConversation,
     answerPermissionForConversation,
     answerQuestionForConversation,
-    cancelPermissionForConversation,
     getConversationHistoryCursor,
     loadOlderConversationHistory,
+    retryConversation,
   } = useAgentConversations();
   const { settings: globalSettings } = useGlobalSettings();
+  const goalModeBetaEnabled = globalSettings.features.goalModeBeta;
   const { workspaceSession, updateWorkspaceSession, workspaceInfo } = useWorkspace();
   const {
     activeWorkspaceGroup,
@@ -99,14 +115,71 @@ export function AgentCenterPane() {
   const conversation = selectedConversationId
     ? conversationsById[selectedConversationId] ?? null
     : null;
+  const activeBackend = useMemo(
+    () => backends.find((backend) => backend.id === conversation?.config.backendId) ?? null,
+    [backends, conversation?.config.backendId]
+  );
+  const dismissedCompletionErrorKey = selectedConversationId
+    ? workspaceSession.chat.dismissedCompletionErrorKeyByConversationId?.[selectedConversationId]
+    : undefined;
+  const completionErrorDock = useAgentCompletionErrorDock({
+    conversation,
+    events: selectedConversationId ? eventsByConversationId[selectedConversationId] : undefined,
+    backend: activeBackend,
+    dismissedKey: dismissedCompletionErrorKey,
+    onDismiss: (dismissKey) => {
+      if (!selectedConversationId) {
+        return;
+      }
+      updateWorkspaceSession((current) => ({
+        ...current,
+        chat: {
+          ...current.chat,
+          dismissedCompletionErrorKeyByConversationId: {
+            ...current.chat.dismissedCompletionErrorKeyByConversationId,
+            [selectedConversationId]: dismissKey,
+          },
+        },
+      }));
+    },
+    onRetry: async (conversationId) => {
+      await retryConversation(conversationId);
+    },
+  });
   const loadState = selectedConversationId
     ? getConversationLoadStatus(selectedConversationId)
     : "idle";
 
   const rawThreadEvents = conversation
-    ? (eventsByConversationId[conversation.id] ?? [])
-    : [];
+    ? (eventsByConversationId[conversation.id] ?? EMPTY_THREAD_EVENTS)
+    : EMPTY_THREAD_EVENTS;
+  const openedPlanFilesRef = useRef(new Set<string>());
+  useEffect(() => {
+    for (const event of rawThreadEvents) {
+      if (event.kind !== "plan_file" || openedPlanFilesRef.current.has(event.eventId)) {
+        continue;
+      }
+      openedPlanFilesRef.current.add(event.eventId);
+      const normalizedPath = event.path.replace(/\\/g, "/");
+      openExplorerFile({
+        path: normalizedPath,
+        name: event.title ?? normalizedPath.split("/").pop() ?? normalizedPath,
+        language: "markdown",
+        icon: "plan",
+        previewMode: event.previewMode ?? "preview",
+        planFile: true,
+      });
+    }
+  }, [openExplorerFile, rawThreadEvents]);
   const deferredThreadEvents = useDeferredValue(rawThreadEvents);
+  const contextUsageRefreshGeneration = useMemo(
+    () => computeContextUsageRefreshGeneration(rawThreadEvents),
+    [rawThreadEvents]
+  );
+  const burnProgress = useMemo(
+    () => latestBurnProgressStatus(rawThreadEvents, conversation?.status),
+    [conversation?.status, rawThreadEvents]
+  );
 
   const threadMessages = useMemo(
     () =>
@@ -126,6 +199,35 @@ export function AgentCenterPane() {
       }),
     [conversation, rawThreadEvents]
   );
+  const latestPlanFile = useMemo(() => {
+    for (let index = rawThreadEvents.length - 1; index >= 0; index -= 1) {
+      const event = rawThreadEvents[index];
+      if (event?.kind === "plan_file") {
+        const normalizedPath = event.path.replace(/\\/g, "/");
+        return {
+          eventId: event.eventId,
+          seq: event.seq,
+          path: normalizedPath,
+          title: event.title ?? normalizedPath.split("/").pop() ?? normalizedPath,
+        };
+      }
+    }
+    return null;
+  }, [rawThreadEvents]);
+  const dismissedPlanEventByConversationId =
+    workspaceSession.chat.dismissedPlanEventByConversationId ?? {};
+  const planSuperseded =
+    latestPlanFile && rawThreadEvents.some((event) => {
+      if (event.seq <= latestPlanFile.seq) return false;
+      return event.kind === "user_message" || event.kind === "assistant_message_end";
+    });
+  const dockedPlan: DockedPlanFile | null =
+    conversation &&
+    latestPlanFile &&
+    !planSuperseded &&
+    dismissedPlanEventByConversationId[conversation.id] !== latestPlanFile.eventId
+      ? { path: latestPlanFile.path, title: latestPlanFile.title }
+      : null;
   const scrollMessages = useMemo(
     () => hideDockedAskFromScroll(threadMessages, dockedAsk),
     [dockedAsk, threadMessages]
@@ -178,7 +280,8 @@ export function AgentCenterPane() {
       conversationId: selectedConversationId,
       messages: scrollMessages,
       conversationBusy:
-        conversation.status === "running" || conversation.status === "awaiting_permission",
+        isAgentComposerBusy(conversation, eventsByConversationId[selectedConversationId]) ||
+        conversation.status === "awaiting_permission",
       hasOlderHistory: historyCursor.hasOlder,
       loadingOlderHistory: historyCursor.loadingOlder,
       initialScrollTop: workspaceSession.chat.scrollTopByTabId[selectedConversationId] ?? 0,
@@ -220,8 +323,11 @@ export function AgentCenterPane() {
     );
   }, [draftBackend, draftModels, workspaceSession.chat.model]);
   const draftModeOptions = useMemo(
-    () => (draftBackend ? buildDraftModeOptionsForBackend(draftBackend) : DEFAULT_MODE_OPTIONS),
-    [draftBackend]
+    () =>
+      draftBackend
+        ? buildDraftModeOptionsForBackend(draftBackend, { goalModeBetaEnabled })
+        : DEFAULT_MODE_OPTIONS,
+    [draftBackend, goalModeBetaEnabled]
   );
   const draftMode = useMemo(
     () =>
@@ -234,7 +340,7 @@ export function AgentCenterPane() {
 
   const composerState = conversation ? getConversationComposerState(conversation.id) : null;
   const composerMode = composerState?.mode ?? draftMode;
-  const modeLocked = isOrchestrationModeLocked(composerMode, !!selectedConversationId);
+  const modeLocked = isOrchestrationModeLocked();
 
   const getRedoComposerSeed = useCallback(() => {
     if (!conversation || !selectedConversationId) {
@@ -285,6 +391,7 @@ export function AgentCenterPane() {
     getRedoComposerSeed,
     backends,
     modelVisibility: globalSettings.models.byBackend,
+    goalModeBetaEnabled,
     composerUserMessageHistory,
     hasOlderHistory: historyCursor.hasOlder,
     onRequestOlderHistory: selectedConversationId
@@ -309,10 +416,109 @@ export function AgentCenterPane() {
   const composerDraftText = composerDrafts[composerDraftId]?.content ?? "";
   const composerDraftAttachments = composerDrafts[composerDraftId]?.attachments;
   const composerDraftCaptures = composerDrafts[composerDraftId]?.captures;
+  const composerDraftTextReferences = composerDrafts[composerDraftId]?.textReferences;
   const composerSelection = composerSelections[composerDraftId] ?? {
     start: composerDraftText.length,
     end: composerDraftText.length,
   };
+  const [planBuildModelChoice, setPlanBuildModelChoice] =
+    useState<PlanBuildModelChoice>("inherit");
+  const planBuildModels = composerState?.models ?? draftModels;
+  const planBuildCurrentModel = composerState?.model ?? draftModel;
+  const dismissLatestPlan = useCallback(() => {
+    if (!selectedConversationId || !latestPlanFile) {
+      return;
+    }
+    updateWorkspaceSession((current) => ({
+      ...current,
+      chat: {
+        ...current.chat,
+        dismissedPlanEventByConversationId: {
+          ...current.chat.dismissedPlanEventByConversationId,
+          [selectedConversationId]: latestPlanFile.eventId,
+        },
+      },
+    }));
+  }, [latestPlanFile, selectedConversationId, updateWorkspaceSession]);
+  const buildFromPlan = useCallback(
+    async (plan: DockedPlanFile, request: PlanBuildRequest = { mode: "agent", modelChoice: "inherit" }) => {
+      if (!selectedConversationId) {
+        return;
+      }
+      const selectedModel = modelChoiceToOverride(
+        request.modelChoice,
+        planBuildModels,
+        planBuildCurrentModel
+      );
+      const configOverride = {
+        mode: request.mode as EditorMode,
+        ...(selectedModel
+          ? {
+              modelId: selectedModel.modelValue ?? selectedModel.id,
+              modelName: selectedModel.name,
+            }
+          : {}),
+      };
+      setPendingConfigForConversation(selectedConversationId, configOverride);
+      const ok = await promptConversation(
+        selectedConversationId,
+        `Implement \`${plan.path}\` end-to-end, preserving the plan's requirements and checklist as the source of truth.`,
+        undefined,
+        configOverride,
+        "normal",
+        {
+          planPath: plan.path,
+          planTitle: plan.title,
+          targetMode: request.mode as EditorMode,
+          ...(selectedModel
+            ? {
+                targetModelId: selectedModel.modelValue ?? selectedModel.id,
+                targetModelName: selectedModel.name,
+              }
+            : {}),
+        }
+      );
+      if (ok) {
+        dismissLatestPlan();
+      }
+    },
+    [
+      dismissLatestPlan,
+      planBuildCurrentModel,
+      planBuildModels,
+      promptConversation,
+      selectedConversationId,
+      setPendingConfigForConversation,
+    ]
+  );
+  useEffect(() => {
+    const handleBuild = (event: Event) => {
+      const detail = (event as CustomEvent).detail as Partial<DockedPlanFile> & {
+        mode?: string;
+        modelChoice?: PlanBuildModelChoice;
+      };
+      if (!detail?.path) return;
+      void buildFromPlan(
+        {
+          path: detail.path,
+          title: detail.title ?? detail.path.split("/").pop() ?? detail.path,
+        },
+        {
+          mode:
+            detail.mode === "orchestration"
+              ? "orchestration"
+              : detail.mode === "burn"
+                ? "burn"
+                : "agent",
+          modelChoice: detail.modelChoice ?? planBuildModelChoice,
+        }
+      );
+    };
+    window.addEventListener("opencursor:plan-build", handleBuild);
+    return () => {
+      window.removeEventListener("opencursor:plan-build", handleBuild);
+    };
+  }, [buildFromPlan, planBuildModelChoice]);
   const composerHiddenForExpanded = expandedComposerDraftId === composerDraftId;
   const queuedPrompts = conversation?.queuedPrompts ?? [];
   const backendLabels = useMemo(
@@ -432,12 +638,14 @@ export function AgentCenterPane() {
         chat: {
           ...current.chat,
           backendId: nextBackend.id,
-          mode: buildDraftModeOptionsForBackend(nextBackend)[0]?.id ?? current.chat.mode,
+          mode:
+            buildDraftModeOptionsForBackend(nextBackend, { goalModeBetaEnabled })[0]?.id ??
+            current.chat.mode,
           model: resolveDraftModelForBackend(nextBackend),
         },
       }));
     },
-    [backends, updateWorkspaceSession]
+    [backends, goalModeBetaEnabled, updateWorkspaceSession]
   );
 
   const handleSubmit = useCallback(
@@ -526,7 +734,7 @@ export function AgentCenterPane() {
       title: composerDraftTitle,
       mode: composerMode,
       onModeChange: (next: EditorMode) => {
-        if (isOrchestrationModeLocked(composerMode, !!selectedConversationId)) {
+        if (isOrchestrationModeLocked()) {
           return;
         }
         if (selectedConversationId) {
@@ -594,13 +802,17 @@ export function AgentCenterPane() {
         selectedConversationId
           ? cancelConversation(selectedConversationId)
           : undefined,
+      conversationStatus: conversation?.status,
+      burnProgress,
       busy: composerState?.busy ?? false,
       configLocked: false,
       modeLocked,
     };
   }, [
     backends,
+    burnProgress,
     cancelConversation,
+    conversation?.status,
     composerDraftId,
     composerDraftTitle,
     composerMode,
@@ -641,7 +853,8 @@ export function AgentCenterPane() {
           conversationId: selectedConversationId,
           messages: scrollMessages,
           conversationBusy:
-            conversation.status === "running" || conversation.status === "awaiting_permission",
+            isAgentComposerBusy(conversation, eventsByConversationId[selectedConversationId]) ||
+            conversation.status === "awaiting_permission",
           hasOlderHistory: historyCursor.hasOlder,
           loadingOlderHistory: historyCursor.loadingOlder,
           initialScrollTop: workspaceSession.chat.scrollTopByTabId[selectedConversationId] ?? 0,
@@ -718,9 +931,6 @@ export function AgentCenterPane() {
                   optionId
                 );
               }}
-              onCancelPermission={(requestId) => {
-                void cancelPermissionForConversation(visibleConversationView.conversationId, requestId);
-              }}
               onForkMessage={redoFlow.handleForkMessage}
               onRedoMessage={redoFlow.handleStartRedoMessage}
               renderUserMessageEditor={redoFlow.renderRedoMessageEditor}
@@ -754,6 +964,21 @@ export function AgentCenterPane() {
                           setSubmittingQuestion(false);
                         }
                       }}
+                    />
+                  </div>
+                </div>
+              ) : null}
+              {dockedPlan ? (
+                <div className="pt-[8px] px-0 @min-[481px]:px-[10px]">
+                  <div className={AGENT_CENTER_CONTENT_CLASS}>
+                    <PlanReviewDock
+                      plan={dockedPlan}
+                      models={planBuildModels}
+                      currentModel={planBuildCurrentModel}
+                      modelChoice={planBuildModelChoice}
+                      onModelChoiceChange={setPlanBuildModelChoice}
+                      onBuild={(request) => void buildFromPlan(dockedPlan, request)}
+                      onDismiss={dismissLatestPlan}
                     />
                   </div>
                 </div>
@@ -803,11 +1028,14 @@ export function AgentCenterPane() {
               ) : null}
               <div className="px-0 @min-[481px]:px-[10px]">
                 <div className={AGENT_CENTER_CONTENT_CLASS}>
+                  {visibleConversationView ? (
+                    <AgentCompletionErrorDock dock={completionErrorDock} />
+                  ) : null}
                   <ChatComposer
                     key={composerDraftId}
                     mode={composerMode}
                     onModeChange={(next) => {
-                      if (isOrchestrationModeLocked(composerMode, !!selectedConversationId)) {
+                      if (isOrchestrationModeLocked()) {
                         return;
                       }
                       if (selectedConversationId) {
@@ -906,8 +1134,10 @@ export function AgentCenterPane() {
                         : undefined
                     }
                     conversationStatus={conversation?.status}
+                    burnProgress={burnProgress}
+                    conversationId={selectedConversationId}
+                    contextUsageRefreshGeneration={contextUsageRefreshGeneration}
                     layout="docked-bottom"
-                    shellMxClass=""
                     draftAttachments={composerDraftAttachments}
                     onDraftAttachmentsChange={(next) =>
                       upsertComposerDraft(composerDraftId, {
@@ -922,6 +1152,14 @@ export function AgentCenterPane() {
                         title: composerDraftTitle,
                         content: composerDraftText,
                         captures: next,
+                      })
+                    }
+                    draftTextReferences={composerDraftTextReferences}
+                    onDraftTextReferencesChange={(next) =>
+                      upsertComposerDraft(composerDraftId, {
+                        title: composerDraftTitle,
+                        content: composerDraftText,
+                        textReferences: next,
                       })
                     }
                   />

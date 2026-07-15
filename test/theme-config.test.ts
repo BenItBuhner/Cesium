@@ -15,6 +15,26 @@ describe("theme config", () => {
   test("defaults tool call dropdown max height", () => {
     const config = createDefaultThemeConfig();
     assert.equal(config.toolCallDropdownMaxHeightPx, TOOL_CALL_DROPDOWN_MAX_HEIGHT_DEFAULT_PX);
+    assert.equal(config.editDiffRenderingMode, "full");
+  });
+
+  test("normalizes edit diff rendering mode", () => {
+    assert.equal(
+      normalizeThemeConfig({
+        schemaVersion: 1,
+        appearance: "system",
+        editDiffRenderingMode: "counts",
+      }).editDiffRenderingMode,
+      "counts"
+    );
+    assert.equal(
+      normalizeThemeConfig({
+        schemaVersion: 1,
+        appearance: "system",
+        editDiffRenderingMode: "invalid",
+      }).editDiffRenderingMode,
+      "full"
+    );
   });
 
   test("clamps tool call dropdown max height", () => {

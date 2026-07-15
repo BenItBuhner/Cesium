@@ -22,15 +22,32 @@ function readLineHeightPx(style: CSSStyleDeclaration): number {
   return readFirstPxNumber(style.lineHeight, DEFAULT_LINE_HEIGHT_PX);
 }
 
+function readContentHeightPx(el: HTMLElement): number {
+  const style = getComputedStyle(el);
+  const paddingTop = readFirstPxNumber(style.paddingTop, 0);
+  const paddingBottom = readFirstPxNumber(style.paddingBottom, 0);
+  const contentHeight = el.scrollHeight - paddingTop - paddingBottom;
+  if (!Number.isFinite(contentHeight) || contentHeight <= 0) {
+    return 0;
+  }
+  return contentHeight;
+}
+
+export function measureComposerVisualLineCount(el: HTMLElement): number {
+  const style = getComputedStyle(el);
+  const lineHeight = readLineHeightPx(style);
+  const contentHeight = readContentHeightPx(el);
+  if (contentHeight <= 0) {
+    return 1;
+  }
+  return Math.max(1, Math.round(contentHeight / lineHeight));
+}
+
 export function measureIsMultiLine(el: HTMLElement): boolean {
   const style = getComputedStyle(el);
   const lineHeight = readLineHeightPx(style);
-  const paddingTop = readFirstPxNumber(style.paddingTop, 0);
-  const paddingBottom = readFirstPxNumber(style.paddingBottom, 0);
-  // `scrollHeight` includes the padding; subtract it so single-line editors
-  // with min-height still measure as ~1 line of content.
-  const contentHeight = el.scrollHeight - paddingTop - paddingBottom;
-  if (!Number.isFinite(contentHeight) || contentHeight <= 0) {
+  const contentHeight = readContentHeightPx(el);
+  if (contentHeight <= 0) {
     return false;
   }
   return contentHeight > lineHeight * MULTILINE_RATIO;
@@ -134,4 +151,38 @@ export function useComposerTextIsMultiLine(
   }, [ref]);
 
   return isMultiLine;
+}
+
+/**
+ * Estimates wrapped visual line count for the composer editor (soft breaks + wrap).
+ */
+export function useComposerVisualLineCount(
+  ref: RefObject<HTMLElement | null>
+): number {
+  const [lineCount, setLineCount] = useState(1);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) {
+      return;
+    }
+
+    const update = () => {
+      const next = measureComposerVisualLineCount(el);
+      setLineCount((prev) => (prev === next ? prev : next));
+    };
+
+    update();
+
+    const observer = new ResizeObserver(update);
+    observer.observe(el);
+    el.addEventListener("input", update);
+
+    return () => {
+      observer.disconnect();
+      el.removeEventListener("input", update);
+    };
+  }, [ref]);
+
+  return lineCount;
 }

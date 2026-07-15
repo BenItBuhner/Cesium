@@ -8,6 +8,7 @@ import {
   type Query,
 } from "@anthropic-ai/claude-agent-sdk";
 import {
+  getClaudeCodeSdkPathToExecutable,
   getClaudeCodeSdkProxyApiKey,
   getClaudeCodeSdkProxyBaseUrl,
   hasClaudeCodeSdkAuthConfig,
@@ -23,7 +24,7 @@ import {
   toolResultFromClaudeUserMessage,
   toolUsesFromClaudeAssistantMessage,
 } from "./claude-code-sdk-normalize.js";
-import { getClaudeCodeSdkCapabilities } from "./claude-code-sdk-capabilities.js";
+import { AGENT_CAPABILITIES } from "./agent-contract.js";
 import {
   findPrimaryModeConfigOption,
   findPrimaryModelConfigOption,
@@ -42,6 +43,14 @@ import type {
   AgentRuntimeCallbacks,
   AgentSessionHandle,
 } from "./types.js";
+import {
+  appendAgentPluginPrompt,
+  resolveAgentPluginAttachments,
+} from "../plugins/attachments.js";
+import {
+  providerPlanEvents,
+  writeProviderPlanArtifact,
+} from "./plan-artifacts.js";
 
 type ClaudeCodeSdkHandleInput = {
   backend: AgentBackendInfo;
@@ -58,11 +67,11 @@ type PendingPermission = {
   toolLabel: string;
 };
 
-const capabilities = getClaudeCodeSdkCapabilities();
+const capabilities = AGENT_CAPABILITIES["claude-code-sdk"];
 
 const TOOL_PROFILES: Record<string, string[] | { type: "preset"; preset: "claude_code" }> = {
-  standard: ["Read", "Write", "Edit", "MultiEdit", "Bash", "Glob", "Grep", "TodoWrite", "Agent", "AskUserQuestion"],
-  "safe-readonly": ["Read", "Glob", "Grep", "WebSearch", "WebFetch", "AskUserQuestion"],
+  standard: ["Read", "Write", "Edit", "MultiEdit", "Bash", "Glob", "Grep", "TodoWrite", "Agent"],
+  "safe-readonly": ["Read", "Glob", "Grep", "WebSearch", "WebFetch"],
   full: { type: "preset", preset: "claude_code" },
 };
 
@@ -154,10 +163,25 @@ function maxBudgetForConfig(configOptions: AgentConfigOption[]): number | undefi
   return Number.isFinite(raw) && raw > 0 ? raw : undefined;
 }
 
-function toolProfileForConfig(configOptions: AgentConfigOption[]): Options["tools"] {
+function modeForConfig(
+  conversation: AgentConversationRecord,
+  configOptions: AgentConfigOption[]
+): string {
+  const modeOption = findPrimaryModeConfigOption(configOptions);
+  return modeOption?.currentValue || conversation.config.mode;
+}
+
+function toolProfileForConfig(
+  conversation: AgentConversationRecord,
+  configOptions: AgentConfigOption[]
+): Options["tools"] {
+  const mode = modeForConfig(conversation, configOptions);
+  if (mode === "ask") {
+    return TOOL_PROFILES["safe-readonly"];
+  }
   const profile = optionValue(configOptions, "tool_profile", "standard");
   if (profile === "plan") {
-    return [];
+    return ["Read", "Glob", "Grep", "TodoWrite"];
   }
   return TOOL_PROFILES[profile] ?? TOOL_PROFILES.standard;
 }
@@ -190,11 +214,7 @@ function claudeCodeSdkEnv(): NodeJS.ProcessEnv {
 }
 
 function claudeCodeSdkExecutablePath(): string | undefined {
-  return (
-    process.env.OPENCURSOR_CLAUDE_CODE_SDK_PATH?.trim() ||
-    process.env.OPENCURSOR_CLAUDE_BIN?.trim() ||
-    undefined
-  );
+  return getClaudeCodeSdkPathToExecutable();
 }
 
 function permissionOptions(): Array<{
@@ -318,8 +338,16 @@ class ClaudeCodeSdkSessionHandle implements AgentSessionHandle {
     let emittedAssistantText = false;
     let emittedAssistantEnd = false;
 
-    const options = this.buildQueryOptions(abortController);
-    const active = query({ prompt: input.text, options });
+    const pluginAttachments = await resolveAgentPluginAttachments({
+      workspaceId: this.callbacks.workspace.id,
+      workspaceRoot: this.callbacks.workspace.root,
+      backendId: "claude-code-sdk",
+    });
+    const options = await this.buildQueryOptions(abortController);
+    const active = query({
+      prompt: appendAgentPluginPrompt(input.text, pluginAttachments),
+      options,
+    });
     this.activeQuery = active;
 
     try {
@@ -429,9 +457,28 @@ class ClaudeCodeSdkSessionHandle implements AgentSessionHandle {
     }
   }
 
-  private buildQueryOptions(abortController: AbortController): Options {
+  private async buildQueryOptions(abortController: AbortController): Promise<Options> {
     const permissionMode = permissionModeForConfig(this.callbacks.conversation, this.configOptions);
     const proxyMode = hasClaudeCodeSdkProxyConfig();
+    const pluginAttachments = await resolveAgentPluginAttachments({
+      workspaceId: this.callbacks.workspace.id,
+      workspaceRoot: this.callbacks.workspace.root,
+      backendId: "claude-code-sdk",
+    });
+    const mcpExport = pluginAttachments.sdkMcp;
+    if (mcpExport.skipped.length > 0) {
+      await this.callbacks.appendEvents([
+        {
+          eventId: randomUUID(),
+          conversationId: this.callbacks.conversation.id,
+          kind: "system",
+          level: "warning",
+          text: `Claude Code SDK skipped ${mcpExport.skipped.length} MCP server(s): ${mcpExport.skipped
+            .map((server) => `${server.label}: ${server.reason}`)
+            .join("; ")}`,
+        },
+      ]);
+    }
     return {
       abortController,
       cwd: this.callbacks.workspace.root,
@@ -445,7 +492,8 @@ class ClaudeCodeSdkSessionHandle implements AgentSessionHandle {
       allowDangerouslySkipPermissions:
         permissionMode === "bypassPermissions" &&
         process.env.OPENCURSOR_CLAUDE_CODE_SDK_ALLOW_BYPASS === "1",
-      tools: toolProfileForConfig(this.configOptions),
+      tools: toolProfileForConfig(this.callbacks.conversation, this.configOptions),
+      ...(Object.keys(mcpExport.servers).length > 0 ? { mcpServers: mcpExport.servers } : {}),
       systemPrompt: proxyMode
         ? { type: "preset", preset: "claude_code", append: PROXY_SYSTEM_APPEND }
         : undefined,
@@ -633,14 +681,18 @@ class ClaudeCodeSdkSessionHandle implements AgentSessionHandle {
         );
         const entries = planEntriesFromClaudeToolPayload(tool.input);
         if (entries.length > 0) {
-          events.push({
-            eventId: randomUUID(),
-            conversationId: this.callbacks.conversation.id,
-            kind: "plan",
-            planId: `${this.callbacks.conversation.id}-claude-code-sdk-todos`,
+          const artifact = await writeProviderPlanArtifact({
+            workspaceRoot: this.callbacks.workspace.root,
+            backendId: "claude-code-sdk",
+            title: "Claude plan",
             entries,
-            raw: tool,
           });
+          events.push(...providerPlanEvents({
+            conversationId: this.callbacks.conversation.id,
+            planId: `${this.callbacks.conversation.id}-claude-code-sdk-todos`,
+            artifact,
+            raw: tool,
+          }));
         }
       }
       if (events.length > 0) {

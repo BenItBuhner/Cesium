@@ -3,6 +3,7 @@ import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { connectMcpClient, type McpClientSession } from "./client-factory.js";
 import {
   getMcpServer,
+  isBuiltInBrowserMcpEnabled,
   listEnabledMcpServers,
   setMcpConnectionStatus,
 } from "./server-store.js";
@@ -115,10 +116,12 @@ export async function refreshWorkspaceMcpMirror(input: {
   workspaceRoot: string;
 }): Promise<void> {
   const servers = await listEnabledMcpServers(input.workspaceId);
+  const includeBrowser = await isBuiltInBrowserMcpEnabled(input.workspaceId);
   const browserConfig: McpServerConfig = {
     id: BROWSER_MCP_SERVER_ID,
     label: "Browser",
-    summary: "Built-in browser-tab control tools for opening, locking, inspecting, and driving IDE browser tabs.",
+    summary:
+      "Built-in browser-tab control tools for opening visible IDE editor browser tabs, locking them, clicking, typing, inspecting page state, and optionally using the legacy server Chromium engine.",
     transport: "stdio",
     stdio: { command: "builtin:browser", args: [] },
     enabled: true,
@@ -132,13 +135,15 @@ export async function refreshWorkspaceMcpMirror(input: {
     instructions?: string;
     tools: Tool[];
   }> = [];
-  catalogs.push({
-    config: browserConfig,
-    status: { connected: true, lastCheckedAt: Date.now(), toolCount: BROWSER_MCP_TOOLS.length },
-    instructions:
-      "Use these tools to control IDE browser tabs. Prefer locking before mutating page state, and check browser_events for user unlocks or interventions.",
-    tools: BROWSER_MCP_TOOLS,
-  });
+  if (includeBrowser) {
+    catalogs.push({
+      config: browserConfig,
+      status: { connected: true, lastCheckedAt: Date.now(), toolCount: BROWSER_MCP_TOOLS.length },
+      instructions:
+        "Use these tools to control browser tabs in the editor. Open tabs with the default electron-native engine for visible desktop tabs; use proxy only for the legacy iframe path and server-chromium only when the user explicitly needs the legacy headless browser. Prefer locking before mutating page state, and check browser_events for user unlocks or interventions.",
+      tools: BROWSER_MCP_TOOLS,
+    });
+  }
 
   await Promise.all(
     servers.map(async (config) => {
@@ -158,7 +163,7 @@ export async function refreshWorkspaceMcpMirror(input: {
 
   await writeMcpWorkspaceMirror({
     workspaceRoot: input.workspaceRoot,
-    servers: [browserConfig, ...servers],
+    servers: includeBrowser ? [browserConfig, ...servers] : servers,
     catalogs,
   });
   await ensureMcpGitignore(input.workspaceRoot);
@@ -170,6 +175,12 @@ export async function testMcpServer(input: {
   serverId: string;
 }): Promise<McpConnectionStatus> {
   const config = await getMcpServer(input.workspaceId, input.serverId);
+  if (input.serverId.toLowerCase() === BROWSER_MCP_SERVER_ID) {
+    const enabled = await isBuiltInBrowserMcpEnabled(input.workspaceId);
+    return enabled
+      ? { connected: true, lastCheckedAt: Date.now(), toolCount: BROWSER_MCP_TOOLS.length }
+      : { connected: false, lastCheckedAt: Date.now(), error: "Browser MCP is disabled." };
+  }
   if (!config) {
     throw new Error(`Unknown MCP server: ${input.serverId}`);
   }
@@ -189,18 +200,23 @@ export async function callMcpTool(input: {
   toolName: string;
   arguments: Record<string, unknown>;
 }): Promise<string> {
-  if (input.serverId === BROWSER_MCP_SERVER_ID) {
+  const serverId =
+    input.serverId.toLowerCase() === BROWSER_MCP_SERVER_ID ? BROWSER_MCP_SERVER_ID : input.serverId;
+  if (serverId === BROWSER_MCP_SERVER_ID) {
+    if (!(await isBuiltInBrowserMcpEnabled(input.workspaceId))) {
+      throw new Error("Browser MCP is disabled for this workspace.");
+    }
     return await callBuiltInBrowserTool({
       workspaceId: input.workspaceId,
       toolName: input.toolName,
       arguments: input.arguments,
     });
   }
-  const config = await getMcpServer(input.workspaceId, input.serverId);
+  const config = await getMcpServer(input.workspaceId, serverId);
   if (!config || !config.enabled) {
-    throw new Error(`MCP server is not enabled: ${input.serverId}`);
+    throw new Error(`MCP server is not enabled: ${serverId}`);
   }
-  const key = sessionKey(input.workspaceId, input.serverId);
+  const key = sessionKey(input.workspaceId, serverId);
   let active = sessionsByKey.get(key);
   if (!active) {
     await refreshWorkspaceMcpMirror({
@@ -210,7 +226,7 @@ export async function callMcpTool(input: {
     active = sessionsByKey.get(key);
   }
   if (!active) {
-    throw new Error(`MCP server is not connected: ${input.serverId}`);
+    throw new Error(`MCP server is not connected: ${serverId}`);
   }
   const result = await active.session.client.callTool({
     name: input.toolName,

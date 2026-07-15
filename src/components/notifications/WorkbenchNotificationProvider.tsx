@@ -21,12 +21,25 @@ import type {
 } from "@/components/notifications/workbench-notification-types";
 import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
 
+const DUPLICATE_NOTIFICATION_WINDOW_MS = 750;
+
+function notificationDedupeKey(input: WorkbenchNotificationInput): string {
+  return [
+    input.kind,
+    input.severity,
+    input.title,
+    input.message ?? "",
+    input.compact ? "compact" : "full",
+  ].join("\u0000");
+}
+
 export function WorkbenchNotificationProvider({ children }: { children: ReactNode }) {
   const { settings } = useGlobalSettings();
   const doNotDisturb = settings.general.doNotDisturb;
   const [items, setItems] = useState<WorkbenchNotificationItem[]>([]);
   const [exitingIds, setExitingIds] = useState<Set<string>>(new Set());
   const timeoutsRef = useRef(new Map<string, number>());
+  const recentNotificationsRef = useRef(new Map<string, number>());
   const itemsRef = useRef(items);
   useLayoutEffect(() => {
     itemsRef.current = items;
@@ -97,11 +110,24 @@ export function WorkbenchNotificationProvider({ children }: { children: ReactNod
     (input: WorkbenchNotificationInput) => {
       if (doNotDisturb) return "";
 
+      const now = Date.now();
+      const dedupeKey = notificationDedupeKey(input);
+      const lastSeen = recentNotificationsRef.current.get(dedupeKey);
+      if (lastSeen && now - lastSeen < DUPLICATE_NOTIFICATION_WINDOW_MS) {
+        return "";
+      }
+      recentNotificationsRef.current.set(dedupeKey, now);
+      for (const [key, seenAt] of recentNotificationsRef.current) {
+        if (now - seenAt > DUPLICATE_NOTIFICATION_WINDOW_MS) {
+          recentNotificationsRef.current.delete(key);
+        }
+      }
+
       const id =
         typeof crypto !== "undefined" && crypto.randomUUID
           ? crypto.randomUUID()
           : `n-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-      const item: WorkbenchNotificationItem = { ...input, id, createdAt: Date.now() };
+      const item: WorkbenchNotificationItem = { ...input, id, createdAt: now };
       setItems((prev) => [...prev, item]);
 
       if (!input.persistent) {

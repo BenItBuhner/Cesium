@@ -41,6 +41,7 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Puzzle,
+  Blocks,
   Server,
   Settings,
 } from "lucide-react";
@@ -66,6 +67,7 @@ import {
 } from "@/lib/per-server-workspace-memory";
 import { detectShortcutPlatform, primaryModifierLabel } from "@/lib/keyboard-shortcuts";
 import { openDocumentation } from "@/lib/open-documentation";
+import { useCesiumRendererFeatureFlags } from "@/lib/desktop-environment";
 import {
   buildSettingsSearchIndex,
   searchSettingsIndex,
@@ -87,6 +89,7 @@ const NAV_ENTRIES: NavEntry[] = [
   { kind: "item", id: "agents", label: "Agents", icon: Bot },
   { kind: "item", id: "models", label: "Models", icon: Box },
   { kind: "item", id: "plugins", label: "Plugins", icon: Puzzle },
+  { kind: "item", id: "extensions", label: "Extensions", icon: Blocks },
   { kind: "divider" },
   { kind: "item", id: "servers", label: "Servers", icon: Server },
   { kind: "item", id: "rulesSkills", label: "Rules, Skills, Subagents", icon: BookMarked },
@@ -430,6 +433,7 @@ export function SettingsEditorView({ onCloseShell }: SettingsEditorViewProps = {
   const { workspaceSession, updateWorkspaceSession } = useWorkspace();
   const { settings } = useGlobalSettings();
   const { experimentalIpadWindowedTabInset } = useUserPreferences();
+  const { ipadBetaSettings } = useCesiumRendererFeatureFlags();
   const { isMobile } = useViewport();
   const groupRef = useGroupRef();
   const applyingSettingsLayoutFromContextRef = useRef(false);
@@ -453,8 +457,11 @@ export function SettingsEditorView({ onCloseShell }: SettingsEditorViewProps = {
   );
 
   const settingsSearchIndex = useMemo(
-    () => buildSettingsSearchIndex(settings.models.byBackend ?? {}),
-    [settings.models.byBackend]
+    () =>
+      buildSettingsSearchIndex(settings.models.byBackend ?? {}, {
+        includeIpadBeta: ipadBetaSettings,
+      }),
+    [ipadBetaSettings, settings.models.byBackend]
   );
 
   const searchResults = useMemo(

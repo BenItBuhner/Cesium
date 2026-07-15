@@ -47,6 +47,7 @@ type WorkspaceWatcherRoom = {
 const fsWebSocketServer = new WebSocketServer({ noServer: true });
 const watcherRooms = new Map<string, WorkspaceWatcherRoom>();
 const MAX_BUFFERED_EVENTS = 500;
+const MAX_PENDING_EVENTS = 2_000;
 
 function fsChannelForWorkspace(workspaceId: string): string {
   return `opencursor:fs:workspace:${workspaceId}`;
@@ -100,6 +101,18 @@ function debounceBroadcast(
   const existing = room.pendingEvents.get(key);
   if (existing) {
     clearTimeout(existing);
+  }
+
+  if (room.pendingEvents.size > MAX_PENDING_EVENTS) {
+    for (const timer of room.pendingEvents.values()) {
+      clearTimeout(timer);
+    }
+    room.pendingEvents.clear();
+    room.pendingPayloads.clear();
+    broadcastLocal(room, {
+      type: "resync_required",
+      latestSeq: getLatestSeq(room),
+    });
   }
 
   room.pendingPayloads.set(key, event);
@@ -204,6 +217,20 @@ async function getOrCreateWatcherRoom(
   return createWatcherRoom(workspaceId);
 }
 
+async function closeWatcherRoomIfIdle(room: WorkspaceWatcherRoom): Promise<void> {
+  if (room.clients.size > 0) {
+    return;
+  }
+  watcherRooms.delete(room.workspaceId);
+  for (const timer of room.pendingEvents.values()) {
+    clearTimeout(timer);
+  }
+  room.pendingEvents.clear();
+  room.pendingPayloads.clear();
+  room.unsubscribe();
+  await room.watcher.close().catch(() => undefined);
+}
+
 function canReplay(room: WorkspaceWatcherRoom, since: number): boolean {
   if (since <= 0) {
     return true;
@@ -263,6 +290,7 @@ export async function attachFsSocket(
 
         ws.onClose(() => {
           room.clients.delete(ws);
+          void closeWatcherRoomIfIdle(room);
         });
 }
 

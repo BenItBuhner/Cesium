@@ -52,7 +52,13 @@ const workspaceRoot = fileURLToPath(new URL(".", import.meta.url));
 const allowedDevOrigins =
   process.env.NEXT_ALLOWED_DEV_ORIGINS?.split(/[\s,]+/)
     .map((origin) => origin.trim())
-    .filter(Boolean) ?? ["192.168.4.150"];
+    .filter(Boolean) ?? [
+      "localhost",
+      "localhost:3000",
+      "127.0.0.1",
+      "127.0.0.1:3000",
+      "192.168.4.150",
+    ];
 
 const nextConfig: NextConfig = {
   // The React Compiler is currently crashing Next.js during page compilation

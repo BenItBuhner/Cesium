@@ -28,6 +28,10 @@ export function getAgentLabel(agentId: string): string {
       return "Codex App Server";
     case "claude-code-sdk":
       return "Claude Code";
+    case "pi-agent":
+      return "Pi Agent";
+    case "google-antigravity-cli":
+      return "Google Antigravity";
     default:
       return agentId;
   }
@@ -44,6 +48,8 @@ function parseHandoffBackendId(raw: string): AgentBackendId | null {
     case "gemini-acp":
     case "codex-app-server":
     case "claude-code-sdk":
+    case "pi-agent":
+    case "google-antigravity-cli":
       return raw;
     case "cursor-acp":
       return "cursor-sdk";

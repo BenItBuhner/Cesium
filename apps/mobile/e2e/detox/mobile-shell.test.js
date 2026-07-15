@@ -6,13 +6,13 @@ describe("Cesium mobile shell", () => {
         notifications: "YES",
       },
       launchArgs: {
-        CESIUM_MOBILE_WEB_URL: "http://10.0.2.2:5173",
         CESIUM_MOBILE_SERVER_URL: "http://10.0.2.2:9100",
       },
     });
   });
 
-  it("launches the WebView host without crashing", async () => {
-    await device.takeScreenshot("mobile-webview-host");
+  it("launches the native shell without crashing", async () => {
+    await expect(element(by.id("cesium-mobile-root"))).toBeVisible();
+    await device.takeScreenshot("mobile-native-shell");
   });
 });

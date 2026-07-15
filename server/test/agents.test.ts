@@ -133,6 +133,17 @@ function buildConfigOptions(
   ];
 }
 
+/**
+ * Runtime wrappers (session recovery, goal mode, fork/handoff injection) embed
+ * the actual user prompt inside <current_user_message> markers. Match fake
+ * directives against that block only, the way a real model would, so transcript
+ * context echoing words like "permission" cannot re-trigger directive branches.
+ */
+function directiveTextFromPrompt(text: string): string {
+  const match = /<current_user_message>\r?\n?([\s\S]*?)\r?\n?<\/current_user_message>/.exec(text);
+  return (match?.[1] ?? text).trim();
+}
+
 class FakeSessionHandle implements AgentSessionHandle {
   readonly sessionId: string;
   configOptions: AgentConfigOption[];
@@ -163,6 +174,7 @@ class FakeSessionHandle implements AgentSessionHandle {
       throw new Error("Fake ACP session has been disposed.");
     }
     this.cancelRequested = false;
+    const directiveText = directiveTextFromPrompt(input.text);
     const assistantMessageId = randomUUID();
     const toolCallId = randomUUID();
     await this.callbacks.updateConversation((current) => ({
@@ -211,7 +223,7 @@ class FakeSessionHandle implements AgentSessionHandle {
       return;
     }
 
-    if (input.text.toLowerCase().includes("late-tail")) {
+    if (directiveText.toLowerCase().includes("late-tail")) {
       await this.callbacks.appendEvents([
         {
           eventId: randomUUID(),
@@ -250,7 +262,7 @@ class FakeSessionHandle implements AgentSessionHandle {
       return;
     }
 
-    if (input.text.toLowerCase().includes("permission")) {
+    if (directiveText.toLowerCase().includes("permission")) {
       const requestId = randomUUID();
       const options = [
         {
@@ -1526,5 +1538,42 @@ test("fork injects transcript on first prompt via resolvePendingForkContext", as
   assert.ok(
     seededAssistantChunk.text.includes("<current_user_message>\ncontinue in fork\n</current_user_message>"),
     "expected the fork user message to be appended after the transcript"
+  );
+});
+
+test("archived createConversationWithPrompt does not fail with unknown conversation", async () => {
+  const workspace = await ensureWorkspaceRegistered(repoRoot, "repo");
+  const childSnapshot = await testRuntimeManager.createConversationWithPrompt(
+    workspace,
+    {
+      title: "Issue child",
+      archived: true,
+      backendId: "cursor-sdk",
+      mode: "agent",
+      modelId: "test-fast",
+      modelName: "Test Fast",
+    },
+    { text: "Work on the assigned issue." }
+  );
+
+  const record = await readConversationRecord(workspace.id, childSnapshot.conversation.id);
+  assert.ok(record, "expected archived child conversation to persist");
+  assert.ok(record.archivedAt != null, "expected archived child conversation");
+
+  const snapshot = await waitFor(
+    "archived child prompt",
+    () => readConversationSnapshot(workspace.id, childSnapshot.conversation.id),
+    (value) =>
+      value.events.some((event) => event.kind === "user_message") &&
+      !value.events.some(
+        (event) =>
+          event.kind === "assistant_message_chunk" &&
+          /failed to start: Unknown conversation/i.test(event.text)
+      )
+  );
+
+  assert.ok(
+    snapshot.events.some((event) => event.kind === "user_message"),
+    "expected child prompt to be stored"
   );
 });

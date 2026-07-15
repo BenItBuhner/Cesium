@@ -29,6 +29,8 @@ import {
   makeComposerCaptureToken,
   type DesignCapture,
 } from "@/lib/design-capture";
+import type { TextReference } from "@/lib/text-reference";
+import type { BurnProgressStatus } from "@/lib/agent-chat";
 
 export type OpenTranscriptPayload = {
   title: string;
@@ -45,6 +47,8 @@ export type OpenComposerDraftPayload = {
   attachments?: ImageAttachment[];
   /** Metadata for each `⟦design:…⟧` pill currently embedded in `content`. */
   captures?: Record<string, DesignCapture>;
+  /** Metadata for each `⟦textref:…⟧` pill currently embedded in `content`. */
+  textReferences?: Record<string, TextReference>;
 };
 
 export type OpenAgentConversationPayload = {
@@ -59,6 +63,7 @@ export function hasMeaningfulComposerContent(draft: ComposerDraftRecord): boolea
   if (draft.content && draft.content.trim().length > 0) return true;
   if (draft.attachments && draft.attachments.length > 0) return true;
   if (draft.captures && Object.keys(draft.captures).length > 0) return true;
+  if (draft.textReferences && Object.keys(draft.textReferences).length > 0) return true;
   return false;
 }
 
@@ -145,6 +150,7 @@ export type ExpandedComposerController = {
   onPause?: () => Promise<void> | void;
   onResume?: () => Promise<void> | void;
   conversationStatus?: import("@/lib/agent-types").AgentConversationStatus;
+  burnProgress?: BurnProgressStatus | null;
   busy?: boolean;
   configLocked?: boolean;
   modeLocked?: boolean;
@@ -330,13 +336,18 @@ export function OpenInEditorProvider({ children }: { children: ReactNode }) {
             patch.attachments !== undefined ? patch.attachments : existing?.attachments,
           captures:
             patch.captures !== undefined ? patch.captures : existing?.captures,
+          textReferences:
+            patch.textReferences !== undefined
+              ? patch.textReferences
+              : existing?.textReferences,
         };
         if (
           existing &&
           existing.title === next.title &&
           existing.content === next.content &&
           existing.attachments === next.attachments &&
-          existing.captures === next.captures
+          existing.captures === next.captures &&
+          existing.textReferences === next.textReferences
         ) {
           return current;
         }
@@ -356,9 +367,10 @@ export function OpenInEditorProvider({ children }: { children: ReactNode }) {
         if (!draft) {
           return current;
         }
-        const { [oldDraftId]: _, ...rest } = current;
+        const next = { ...current };
+        delete next[oldDraftId];
         return {
-          ...rest,
+          ...next,
           [newDraftId]: { ...draft, draftId: newDraftId },
         };
       });
@@ -367,9 +379,10 @@ export function OpenInEditorProvider({ children }: { children: ReactNode }) {
         if (!selection) {
           return current;
         }
-        const { [oldDraftId]: _, ...rest } = current;
+        const next = { ...current };
+        delete next[oldDraftId];
         return {
-          ...rest,
+          ...next,
           [newDraftId]: selection,
         };
       });
@@ -447,6 +460,7 @@ export function OpenInEditorProvider({ children }: { children: ReactNode }) {
         content: nextContent,
         attachments: prevAtt,
         captures: nextCaptures,
+        textReferences: ex?.textReferences,
       };
       return { ...current, [draftId]: next };
     });
@@ -490,6 +504,7 @@ export function OpenInEditorProvider({ children }: { children: ReactNode }) {
           content: nextContent,
           attachments: ex?.attachments,
           captures: nextCaptures,
+          textReferences: ex?.textReferences,
         };
         return { ...current, [draftId]: next };
       });

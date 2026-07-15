@@ -9,6 +9,7 @@ export type RuntimeSocketMessageHandler = (
 
 export interface RuntimeSocket {
   readonly isOpen: boolean;
+  readonly bufferedAmount?: number;
   send(data: RuntimeSocketData, options?: { binary?: boolean }): void;
   close(code?: number, reason?: string): void;
   onMessage(handler: RuntimeSocketMessageHandler): void;
@@ -20,6 +21,9 @@ export function wrapNodeWebSocket(ws: WebSocket): RuntimeSocket {
   return {
     get isOpen() {
       return ws.readyState === WebSocket.OPEN;
+    },
+    get bufferedAmount() {
+      return ws.bufferedAmount;
     },
     send(data, options) {
       if (ws.readyState !== WebSocket.OPEN) {

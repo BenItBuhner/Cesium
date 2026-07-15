@@ -200,7 +200,7 @@ export function AgentConversationRow({
           {conversation.title}
         </span>
         {isOrchestrationMode ? (
-          <span className="shrink-0 rounded-[var(--radius-tab)] border border-[var(--plan-accent)]/35 bg-[var(--plan-accent-bg)] px-[5px] py-px font-mono text-[9px] font-medium uppercase tracking-[0.04em] text-[var(--plan-accent)]">
+          <span className="shrink-0 rounded-[var(--radius-tab)] border border-[color-mix(in_srgb,var(--orchestration-accent)_35%,transparent)] bg-[var(--orchestration-accent-bg)] px-[5px] py-px font-mono text-[9px] font-medium uppercase tracking-[0.04em] text-[var(--orchestration-accent)]">
             ORCH
           </span>
         ) : null}

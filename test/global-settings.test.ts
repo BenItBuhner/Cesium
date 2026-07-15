@@ -54,6 +54,25 @@ describe("global settings", () => {
     assert.equal(settings.general.agentRail.groupBy, "workspace");
   });
 
+  test("drops retired harness ids from model toggle settings", () => {
+    const base = createDefaultGlobalSettings();
+    const settings = normalizeLoadedGlobalSettings({
+      ...base,
+      models: {
+        byBackend: {
+          "cursor-sdk": [{ id: "composer-2.5", name: "Composer 2.5", on: true }],
+          "cursor-acp": [{ id: "auto", name: "Auto", on: true }],
+          "codex-adapter": [{ id: "gpt-5", name: "GPT-5", on: true }],
+          "opencode-acp": [{ id: "auto", name: "Auto", on: true }],
+        },
+      },
+    });
+    assert.equal(settings.models.byBackend["cursor-sdk"]?.length, 1);
+    assert.equal(settings.models.byBackend["cursor-acp"], undefined);
+    assert.equal(settings.models.byBackend["codex-adapter"], undefined);
+    assert.equal(settings.models.byBackend["opencode-acp"], undefined);
+  });
+
   test("normalizes agent rail grouping settings", () => {
     const base = createDefaultGlobalSettings();
     const settings = normalizeLoadedGlobalSettings({

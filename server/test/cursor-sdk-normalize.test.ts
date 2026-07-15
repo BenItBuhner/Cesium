@@ -4,6 +4,8 @@ import { test } from "node:test";
 const {
   cursorSdkStatusToAgentStatus,
   cursorSdkToolEventToAgentEvent,
+  detectPlanFilePathFromToolPayload,
+  parseCursorSdkCreatePlanPayload,
   planEntriesFromCursorSdkToolPayload,
   textFromCursorSdkAssistantMessage,
 } = await import("../src/lib/agents/cursor-sdk-normalize.js");
@@ -101,12 +103,33 @@ test("Cursor SDK todo payloads become plan entries", () => {
     todos: [
       { id: "a", content: "Create file", status: "completed" },
       { id: "b", text: "Run tests", status: "in_progress" },
+      { id: "c", title: "Wait for auth", status: "blocked" },
     ],
   });
   assert.deepEqual(entries, [
     { id: "a", content: "Create file", status: "completed" },
     { id: "b", content: "Run tests", status: "in_progress" },
+    { id: "c", content: "Wait for auth", status: "blocked" },
   ]);
+});
+
+test("Cursor SDK create_plan payloads parse markdown and todos", () => {
+  const parsed = parseCursorSdkCreatePlanPayload({
+    name: "Harness cleanup",
+    plan: "## Step 1\nDo things",
+    todos: [{ id: "a", content: "Inspect", status: "pending" }],
+  });
+  assert.ok(parsed);
+  assert.equal(parsed?.name, "Harness cleanup");
+  assert.match(parsed?.planMarkdown ?? "", /Step 1/);
+  assert.equal(parsed?.entries.length, 1);
+});
+
+test("Cursor SDK plan markdown paths are detected from tool payloads", () => {
+  const path = detectPlanFilePathFromToolPayload({
+    args: { path: ".cursor/plans/harness.plan.md" },
+  });
+  assert.equal(path, ".cursor/plans/harness.plan.md");
 });
 
 test("Cursor SDK lifecycle status maps to Cesium conversation status", () => {

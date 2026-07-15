@@ -1,5 +1,12 @@
 import type { AgentEventInput, AgentPlanEntry, AgentToolCallStatus, AgentToolLocation } from "./types.js";
+import { asRecord, firstString } from "./json-coerce.js";
 import { extractToolEditPreview } from "./tool-edit-preview.js";
+import {
+  detailForToolPayload,
+  inferCanonicalToolKind,
+  locationsForToolPayload,
+  titleForCanonicalTool,
+} from "./tool-normalize.js";
 
 type ToolPayload = {
   id?: string;
@@ -8,68 +15,6 @@ type ToolPayload = {
   result?: unknown;
   isError?: boolean;
 };
-
-const PATH_KEYS = [
-  "path",
-  "file",
-  "file_path",
-  "filepath",
-  "filePath",
-  "targetFile",
-  "target_file",
-  "absolutePath",
-  "relativePath",
-];
-
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined;
-}
-
-function firstString(record: Record<string, unknown> | undefined, keys: string[]): string | undefined {
-  if (!record) {
-    return undefined;
-  }
-  for (const key of keys) {
-    const value = record[key];
-    if (typeof value === "string" && value.trim()) {
-      return value.trim();
-    }
-  }
-  return undefined;
-}
-
-function compactJson(value: unknown, limit = 520): string | undefined {
-  if (value == null) {
-    return undefined;
-  }
-  const text = typeof value === "string" ? value : JSON.stringify(value);
-  const trimmed = text.trim();
-  if (!trimmed) {
-    return undefined;
-  }
-  return trimmed.length > limit ? `${trimmed.slice(0, limit - 1)}…` : trimmed;
-}
-
-function shellSearchPattern(command: string | undefined): string | undefined {
-  if (!command) {
-    return undefined;
-  }
-  const match =
-    command.match(/\b(?:rg|grep)\b\s+(?:-[^\s]+\s+)*(?:"([^"]+)"|'([^']+)'|([^\s|&;]+))/i) ??
-    command.match(/\b(?:rg|grep)\b.*?(?:"([^"]+)"|'([^']+)')/i);
-  return match?.[1] ?? match?.[2] ?? match?.[3];
-}
-
-function humanizeToolName(name: string): string {
-  return name
-    .replace(/([a-z])([A-Z])/g, "$1 $2")
-    .replace(/[_-]+/g, " ")
-    .replace(/\s+/g, " ")
-    .trim()
-    .replace(/^./, (char) => char.toUpperCase());
-}
 
 export function textFromClaudeAssistantMessage(message: unknown): string {
   const content = asRecord(message)?.message;
@@ -156,92 +101,27 @@ export function streamEventKind(message: unknown): "text" | "thinking" | "stop" 
 }
 
 export function inferClaudeToolKind(name: string, payload: ToolPayload): string {
-  const lowered = name.toLowerCase();
-  const input = asRecord(payload.input);
-  const command = firstString(input, ["command", "cmd", "script"]);
-  const haystack = `${lowered} ${compactJson(payload.input, 240) ?? ""} ${
-    compactJson(payload.result, 240) ?? ""
-  }`.toLowerCase();
-  if (lowered.includes("todo")) return "todo";
-  if (lowered === "agent" || lowered.includes("task")) return "task";
-  if (lowered.includes("grep")) return "grep";
-  if (lowered.includes("glob") || lowered.includes("search")) return "search";
-  if (command && /\b(?:rg|grep)\b/i.test(command)) return "grep";
-  if (lowered.includes("web")) return "search_web";
-  if (lowered.includes("bash") || lowered.includes("shell")) return "terminal";
-  if (/\b(write|edit|multiedit|patch|replace|update|create)\b/.test(haystack)) return "edit";
-  if (/\b(read|open|view|cat)\b/.test(haystack)) return "read";
-  return "tool";
+  return inferCanonicalToolKind({
+    name,
+    input: payload.input,
+    result: payload.result,
+  });
 }
 
 function locationsForTool(payload: ToolPayload): AgentToolLocation[] | undefined {
-  const records = [asRecord(payload.input), asRecord(payload.result)].filter(
-    (value): value is Record<string, unknown> => value != null
-  );
-  const paths = new Set<string>();
-  for (const record of records) {
-    const path = firstString(record, PATH_KEYS);
-    if (path) {
-      paths.add(path);
-    }
-    for (const key of ["files", "paths", "matchedFiles", "results"]) {
-      const value = record[key];
-      if (!Array.isArray(value)) {
-        continue;
-      }
-      for (const item of value) {
-        if (typeof item === "string" && item.trim()) {
-          paths.add(item.trim());
-        } else {
-          const itemPath = firstString(asRecord(item), PATH_KEYS);
-          if (itemPath) {
-            paths.add(itemPath);
-          }
-        }
-      }
-    }
-  }
-  const locations = [...paths].slice(0, 24).map((path) => ({ path }));
-  return locations.length > 0 ? locations : undefined;
+  return locationsForToolPayload({ input: payload.input, result: payload.result });
 }
 
 function titleForTool(name: string, kind: string, payload: ToolPayload): string {
-  const input = asRecord(payload.input);
-  const path = firstString(input, PATH_KEYS) ?? firstString(asRecord(payload.result), PATH_KEYS);
-  const command = firstString(input, ["command", "cmd", "script"]);
-  const query =
-    firstString(input, ["query", "pattern", "regex", "glob", "search", "term"]) ??
-    shellSearchPattern(command);
-  switch (kind) {
-    case "read":
-      return path ? `Read ${path}` : "Read file";
-    case "edit":
-      return path ? `Update ${path}` : "Update file";
-    case "grep":
-      return query ? `Grep ${query}` : "Grep workspace";
-    case "search":
-      return query ? `Find ${query}` : "Find in workspace";
-    case "search_web":
-      return query ? `Web · ${query}` : "Web search";
-    case "terminal":
-      return command ? `Run ${command}` : "Run command";
-    case "todo":
-      return "Update todos";
-    case "task":
-      return "Task";
-    default:
-      return humanizeToolName(name);
-  }
+  return titleForCanonicalTool({
+    name,
+    kind,
+    payload: { input: payload.input, result: payload.result },
+  });
 }
 
 function detailForTool(payload: ToolPayload): string | undefined {
-  const result = asRecord(payload.result);
-  const input = asRecord(payload.input);
-  return (
-    firstString(result, ["message", "summary", "error", "stderr", "stdout", "output"]) ??
-    firstString(input, ["description", "prompt", "query", "command"]) ??
-    compactJson(payload.result ?? payload.input)
-  );
+  return detailForToolPayload({ input: payload.input, result: payload.result });
 }
 
 export function claudeToolUseToAgentEvent(input: {
@@ -313,10 +193,16 @@ export function planEntriesFromClaudeToolPayload(payload: unknown): AgentPlanEnt
     if (!trimmed) {
       return [];
     }
-    const statusValue = firstString(itemRecord, ["status"]);
+    const statusValue = firstString(itemRecord, ["status"])?.toLowerCase();
     const status =
-      statusValue === "in_progress" || statusValue === "completed" || statusValue === "pending"
-        ? statusValue
+      statusValue === "in_progress" ||
+      statusValue === "blocked" ||
+      statusValue === "stuck" ||
+      statusValue === "completed" ||
+      statusValue === "pending"
+        ? statusValue === "stuck"
+          ? "blocked"
+          : statusValue
         : "pending";
     return [
       {

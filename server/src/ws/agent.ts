@@ -28,9 +28,11 @@ type AgentSocketState = {
 const agentWebSocketServer = new WebSocketServer({ noServer: true });
 const workspaceClients = new Map<string, Set<AgentSocketState>>();
 const MAX_EVENT_BATCH_EVENTS = 100;
+const MAX_SOCKET_BUFFERED_BYTES = 2 * 1024 * 1024;
 
 /** Buffers live agent events for one I/O turn so a burst of row writes = one `event_batch` frame. */
 const eventBroadcastPending = new Map<string, AgentStoredEvent[]>();
+const conversationUpsertPending = new Map<string, Map<string, AgentSocketServerMessage & { type: "conversation_upserted" }>>();
 function keyForEventWorkspaceConversation(
   workspaceId: string,
   conversationId: string
@@ -75,10 +77,42 @@ function pushLiveAgentEventForBatch(
   }
 }
 
-function send(socket: RuntimeSocket, message: AgentSocketServerMessage): void {
-  if (socket.isOpen) {
-    socket.send(JSON.stringify(message));
+function pushConversationUpsertForBatch(
+  workspaceId: string,
+  message: AgentSocketServerMessage & { type: "conversation_upserted" }
+): void {
+  const pending = conversationUpsertPending.get(workspaceId) ?? new Map();
+  const first = pending.size === 0;
+  pending.set(message.conversation.id, message);
+  conversationUpsertPending.set(workspaceId, pending);
+  if (!first) {
+    return;
   }
+  setTimeout(() => {
+    const batch = conversationUpsertPending.get(workspaceId);
+    conversationUpsertPending.delete(workspaceId);
+    const clients = workspaceClients.get(workspaceId);
+    if (!batch || !clients) {
+      return;
+    }
+    for (const client of clients) {
+      for (const queued of batch.values()) {
+        send(client.socket, queued);
+      }
+    }
+  }, 100);
+}
+
+function send(socket: RuntimeSocket, message: AgentSocketServerMessage): void {
+  if (!socket.isOpen) {
+    return;
+  }
+  if ((socket.bufferedAmount ?? 0) > MAX_SOCKET_BUFFERED_BYTES) {
+    if (message.type === "event_batch" || message.type === "conversation_upserted") {
+      return;
+    }
+  }
+  socket.send(JSON.stringify(message));
 }
 
 function addClient(state: AgentSocketState): void {
@@ -127,11 +161,11 @@ subscribeAgentStoreEvents((event) => {
           conversation: event.conversation,
         });
       }
-      send(client.socket, {
-        type: "conversation_upserted",
-        conversation: event.conversation,
-      });
     }
+    pushConversationUpsertForBatch(event.conversation.workspaceId, {
+      type: "conversation_upserted",
+      conversation: event.conversation,
+    });
     return;
   }
 

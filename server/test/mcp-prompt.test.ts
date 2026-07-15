@@ -4,8 +4,8 @@ import {
   buildCesiumOrchestrationSystemPrompt,
   buildCesiumSystemPrompt,
   buildMcpPopulatedSection,
-  CESIUM_MCP_EMPTY_SECTION,
 } from "@cesium/core/mcp";
+import { buildCesiumModeReminder } from "../src/lib/agents/cesium-mode-reminders.js";
 
 test("buildCesiumSystemPrompt appends empty MCP section when no servers", () => {
   const prompt = buildCesiumSystemPrompt();
@@ -54,6 +54,8 @@ test("buildCesiumOrchestrationSystemPrompt describes board-first management", ()
   assert.match(prompt, /hidden from the main rail/);
   assert.match(prompt, /permissions default to allow/);
   assert.match(prompt, /orchestration_control_agent/);
+  assert.match(prompt, /orchestration_read_agent_transcript/);
+  assert.match(prompt, /not read_subagent_transcript/);
   assert.match(prompt, /orchestration_delete_issue/);
   assert.match(prompt, /pause, resume, stop, or steer/);
   assert.match(prompt, /does not force itself to continue/);
@@ -61,4 +63,20 @@ test("buildCesiumOrchestrationSystemPrompt describes board-first management", ()
   assert.match(prompt, /orchestration_create_issue/);
   assert.match(prompt, /board-1/);
   assert.match(prompt, /Maximum concurrent agents: 3/);
+});
+
+test("buildCesiumModeReminder carries MCP change notices outside the base prompt", () => {
+  const reminder = buildCesiumModeReminder({
+    mode: "agent",
+    workspaceRoot: "/tmp/workspace",
+    dateLabel: "Sunday, May 31, 2026",
+    gitSummary: "main clean",
+    mcpSummaries: [{ id: "browser", label: "Browser", summary: "Built-in browser tools" }],
+    mcpChangeNotice: "- MCP server enabled: Browser.",
+  });
+  assert.match(reminder, /MCP Changes Since Last Turn/);
+  assert.match(reminder, /MCP server enabled: Browser/);
+
+  const basePrompt = buildCesiumSystemPrompt();
+  assert.doesNotMatch(basePrompt, /MCP Changes Since Last Turn/);
 });

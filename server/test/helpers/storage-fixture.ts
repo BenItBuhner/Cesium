@@ -82,6 +82,8 @@ async function createPgFixture(): Promise<StorageFixture> {
       orchestration_assignments,
       orchestration_issues,
       orchestration_boards,
+      burn_goals,
+      extension_installs,
       agent_events,
       agent_conversations,
       fs_attachments,

@@ -2,7 +2,6 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import type { McpServerConfig } from "@cesium/core/mcp";
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
-import { workspaceMcpMirrorRoot } from "./paths.js";
 import type { McpConnectionStatus } from "./types.js";
 
 const MAX_TOOL_MD_CHARS = 12_000;
@@ -57,6 +56,13 @@ export async function writeMcpWorkspaceMirror(input: {
 }): Promise<void> {
   const root = resolveMirrorPath(input.workspaceRoot, "mcp-servers");
   await fs.mkdir(root, { recursive: true });
+  const activeServerIds = new Set(input.catalogs.map((entry) => entry.config.id));
+  for (const dirent of await fs.readdir(root, { withFileTypes: true })) {
+    if (!dirent.isDirectory() || activeServerIds.has(dirent.name)) {
+      continue;
+    }
+    await fs.rm(path.join(root, dirent.name), { recursive: true, force: true });
+  }
 
   const indexLines = [
     "# MCP servers",
@@ -76,6 +82,22 @@ export async function writeMcpWorkspaceMirror(input: {
       entry.config.summary?.trim() ||
       `${entry.config.label} (${entry.config.transport})`;
     await fs.writeFile(path.join(serverDir, "summary.txt"), `${summary}\n`, "utf8");
+    if (entry.config.pluginId) {
+      await fs.writeFile(
+        path.join(serverDir, "plugin.json"),
+        `${JSON.stringify(
+          {
+            pluginId: entry.config.pluginId,
+            pluginContributionId: entry.config.pluginContributionId,
+            displayName: entry.config.displayName,
+            iconUrl: entry.config.iconUrl,
+          },
+          null,
+          2
+        )}\n`,
+        "utf8"
+      );
+    }
 
     await fs.writeFile(
       path.join(serverDir, "status.json"),
@@ -110,7 +132,11 @@ export async function writeMcpWorkspaceMirror(input: {
       );
     }
 
-    indexLines.push(`- **${entry.config.label}** (\`${entry.config.id}\`): ${summary}`);
+    indexLines.push(
+      `- **${entry.config.label}** (\`${entry.config.id}\`): ${summary}${
+        entry.config.pluginId ? ` _(managed by ${entry.config.displayName ?? entry.config.pluginId})_` : ""
+      }`
+    );
   }
 
   await fs.writeFile(path.join(root, "_index.md"), `${indexLines.join("\n")}\n`, "utf8");

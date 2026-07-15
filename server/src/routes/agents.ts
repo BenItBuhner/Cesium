@@ -5,7 +5,6 @@ import path from "node:path";
 import { requireWorkspaceFromRequest } from "../lib/request-workspace.js";
 import { resolveSafePath } from "../lib/workspace.js";
 import { agentRuntimeManager } from "../lib/agents/runtime-manager.js";
-import { listAgentBackendsWithCache } from "../lib/agents/providers.js";
 import {
   RAIL_ALL_FIRST_PAGE_CACHE_KEY,
   RAIL_ALL_FIRST_PAGE_CACHE_TTL_SEC,
@@ -127,6 +126,20 @@ agentRoutes.post("/api/agents/conversations/draft-title", async (c) => {
   return c.json({ title: title ?? "Untitled" });
 });
 
+agentRoutes.get("/api/agents/conversations/:conversationId/context-usage", async (c) => {
+  const workspace = await requireWorkspaceFromRequest(c);
+  const conversationId = c.req.param("conversationId");
+  c.header("Cache-Control", "no-store, max-age=0");
+  const usage = await agentRuntimeManager.getConversationContextUsage(
+    workspace,
+    conversationId
+  );
+  if (!usage) {
+    return c.json({ error: `Unknown conversation: ${conversationId}` }, 404);
+  }
+  return c.json({ usage });
+});
+
 agentRoutes.get("/api/agents/conversations/:conversationId", async (c) => {
   const workspace = await requireWorkspaceFromRequest(c);
   const conversationId = c.req.param("conversationId");
@@ -193,6 +206,7 @@ agentRoutes.post("/api/agents/conversations/:conversationId/prompt", async (c) =
     text?: string;
     attachments?: Array<{ mimeType: string; data: string; name?: string }>;
     configOverride?: AgentQueuedChatPrompt["configOverride"];
+    planHandoff?: AgentQueuedChatPrompt["planHandoff"];
     clientEventId?: string;
     clientMessageId?: string;
     delivery?: AgentQueuedChatPrompt["delivery"];
@@ -207,6 +221,7 @@ agentRoutes.post("/api/agents/conversations/:conversationId/prompt", async (c) =
     body.attachments,
     {
       ...(body.configOverride ? { configOverride: body.configOverride } : {}),
+      ...(body.planHandoff ? { planHandoff: body.planHandoff } : {}),
       ...(body.clientEventId ? { clientEventId: body.clientEventId } : {}),
       ...(body.clientMessageId ? { clientMessageId: body.clientMessageId } : {}),
       ...(body.delivery ? { delivery: body.delivery } : {}),

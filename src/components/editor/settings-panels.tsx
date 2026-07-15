@@ -29,6 +29,7 @@ import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvid
 import { ServerConnectionsManager } from "@/components/preferences/ServerConnectionsManager";
 import { useServerConnections } from "@/components/preferences/ServerConnectionsProvider";
 import { useUserPreferences } from "@/components/preferences/UserPreferencesProvider";
+import { useCesiumRendererFeatureFlags } from "@/lib/desktop-environment";
 import { useTheme } from "@/components/theme/ThemeProvider";
 import {
   serverHealthColorClass,
@@ -50,15 +51,21 @@ import {
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import {
   buildStorageExportUrl,
+  createCustomAgentPlugin,
+  fetchAgentPlugins,
   fetchStorageStatus,
   importStorageArchive,
   runStorageMigration,
+  installAgentPlugin,
+  setAgentPluginEnabled,
+  setAgentPluginHarnessOverride,
   type StorageDriverKind,
   type StorageMigrationPhase,
   type StorageMigrationProgress,
   type StorageMigrationResult,
   type StorageStatusResponse,
 } from "@/lib/server-api";
+import type { AgentPluginDefinition, AgentPluginPublic } from "@/lib/plugin-types";
 import {
   DEFAULT_KEYBOARD_SHORTCUT_BINDINGS,
   detectShortcutPlatform,
@@ -88,6 +95,7 @@ import {
   HARNESS_LABELS,
   HARNESS_ORDER,
 } from "@/components/editor/agent-harness-settings";
+import { VscodeExtensionsSettingsPanel } from "@/components/editor/vscode-extensions-settings";
 import {
   PageIntro,
   SettingsBreadcrumbs,
@@ -475,6 +483,8 @@ export function AppearanceSettingsPanel() {
             />
           }
         />
+      </SettingsSection>
+      <SettingsSection title="Design">
         <SettingsRow
           title="New design"
           description="Enable the next-generation UI design hooks for agent mode. Visual changes will expand as the design system is built out."
@@ -485,6 +495,39 @@ export function AppearanceSettingsPanel() {
                 setThemeConfig({
                   ...themeConfig,
                   uiDesignMode: value ? "new" : "classic",
+                })
+              }
+              size="md"
+            />
+          }
+        />
+        <SettingsRow
+          searchId="long-paste-references"
+          title="Long paste references"
+          description="Collapse text pasted into the chat composer as a compact reference when it is about 10K characters or longer."
+          trailing={
+            <ToggleSwitch
+              checked={themeConfig.longPasteReferencesEnabled}
+              onChange={(value) =>
+                setThemeConfig({
+                  ...themeConfig,
+                  longPasteReferencesEnabled: value,
+                })
+              }
+              size="md"
+            />
+          }
+        />
+        <SettingsRow
+          title="Minimal edit diff"
+          description="Show file edits as a single line with added and removed line counts instead of the full inline diff."
+          trailing={
+            <ToggleSwitch
+              checked={themeConfig.editDiffRenderingMode === "counts"}
+              onChange={(value) =>
+                setThemeConfig({
+                  ...themeConfig,
+                  editDiffRenderingMode: value ? "counts" : "full",
                 })
               }
               size="md"
@@ -741,10 +784,17 @@ export function ModelsSettingsPanel() {
     }));
   }, [updateWorkspaceSession, workspaceSession.settingsView.panelSearchFocus]);
 
-  const byBackend = useMemo(
-    () => settings.models.byBackend ?? {},
-    [settings.models.byBackend]
-  );
+  const byBackend = useMemo(() => {
+    const raw = settings.models.byBackend ?? {};
+    const activeOnly: Record<string, ModelToggleState[]> = {};
+    for (const backendId of HARNESS_ORDER) {
+      const rows = raw[backendId];
+      if (rows && rows.length > 0) {
+        activeOnly[backendId] = rows;
+      }
+    }
+    return activeOnly;
+  }, [settings.models.byBackend]);
 
   const compactByBackend = useMemo(() => {
     const result: Record<string, CompactModelToggleRow[]> = {};
@@ -861,10 +911,7 @@ export function ModelsSettingsPanel() {
 
   const sortedBackendIds = useMemo(() => {
     const present = new Set(Object.keys(filteredByBackend));
-    const extras = Object.keys(filteredByBackend).filter(
-      (id) => !HARNESS_ORDER.includes(id as AgentBackendId)
-    ) as AgentBackendId[];
-    return HARNESS_ORDER.filter((id) => present.has(id)).concat(extras);
+    return HARNESS_ORDER.filter((id) => present.has(id));
   }, [filteredByBackend]);
 
   return (
@@ -1021,6 +1068,94 @@ export function usePluginsMcpNavigation() {
 export function PluginsSettingsPanel() {
   const { mcpsOpen, openMcpServers, closeMcpServers, openRulesSkills } =
     usePluginsMcpNavigation();
+  const { workspaceInfo } = useWorkspace();
+  const [plugins, setPlugins] = useState<AgentPluginPublic[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [pendingAction, setPendingAction] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [customName, setCustomName] = useState("");
+  const [customSkill, setCustomSkill] = useState("");
+  const [customMcpUrl, setCustomMcpUrl] = useState("");
+
+  const workspaceId = workspaceInfo?.id ?? null;
+
+  const refreshPlugins = useCallback(async () => {
+    if (!workspaceId) {
+      setPlugins([]);
+      return;
+    }
+    setLoading(true);
+    setError(null);
+    try {
+      setPlugins(await fetchAgentPlugins(workspaceId));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load plugins.");
+    } finally {
+      setLoading(false);
+    }
+  }, [workspaceId]);
+
+  useEffect(() => {
+    void refreshPlugins();
+  }, [refreshPlugins]);
+
+  const runPluginAction = useCallback(
+    async (actionId: string, action: () => Promise<AgentPluginPublic[]>) => {
+      if (!workspaceId) return;
+      setPendingAction(actionId);
+      setError(null);
+      try {
+        setPlugins(await action());
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Plugin action failed.");
+      } finally {
+        setPendingAction(null);
+      }
+    },
+    [workspaceId]
+  );
+
+  const createCustomPlugin = useCallback(async () => {
+    if (!workspaceId || !customName.trim()) return;
+    const pluginId = customName.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+    const definition: AgentPluginDefinition = {
+      schemaVersion: 1,
+      pluginId: pluginId || "custom-plugin",
+      displayName: customName.trim(),
+      description: "Custom workspace plugin",
+      mcp: customMcpUrl.trim()
+        ? [
+            {
+              id: "custom-mcp",
+              server: {
+                label: customName.trim(),
+                transport: "streamable-http",
+                remote: { url: customMcpUrl.trim() },
+                auth: { kind: "none" },
+                summary: `${customName.trim()} custom MCP server`,
+              },
+            },
+          ]
+        : [],
+      skills: customSkill.trim()
+        ? [
+            {
+              id: "custom-skill",
+              title: `${customName.trim()} skill`,
+              description: "Custom plugin skill instructions",
+              body: customSkill.trim(),
+            },
+          ]
+        : [],
+    };
+    await runPluginAction("custom:create", async () => {
+      const next = await createCustomAgentPlugin(workspaceId, definition);
+      setCustomName("");
+      setCustomSkill("");
+      setCustomMcpUrl("");
+      return next;
+    });
+  }, [customMcpUrl, customName, customSkill, runPluginAction, workspaceId]);
 
   if (mcpsOpen) {
     return (
@@ -1039,6 +1174,150 @@ export function PluginsSettingsPanel() {
   return (
     <>
       <SettingsBreadcrumbs segments={[{ label: "Plugins" }]} />
+      <SettingsSection title="Agent Plugins">
+        <div className="space-y-[10px] px-[16px] py-[12px]">
+          <p className="font-sans text-[12px] leading-[18px] text-[var(--text-secondary)]">
+            Plugins bundle MCP servers, skill instructions, and branding. Installed plugins are
+            enabled for compatible harnesses by default, with per-harness overrides below.
+          </p>
+          {error ? (
+            <div className="rounded-[var(--radius-card)] border border-[var(--danger-border)] bg-[var(--danger-bg)] px-[10px] py-[8px] font-sans text-[12px] text-[var(--danger)]">
+              {error}
+            </div>
+          ) : null}
+          {loading ? (
+            <div className="font-sans text-[12px] text-[var(--text-secondary)]">Loading plugins...</div>
+          ) : null}
+          {plugins.map((plugin) => {
+            const installed = Boolean(plugin.install);
+            const enabled = plugin.enabled;
+            return (
+              <div
+                key={plugin.definition.pluginId}
+                className="rounded-[var(--radius-card)] border border-[var(--border-card)] bg-[var(--bg-card)] p-[12px]"
+              >
+                <div className="flex items-start justify-between gap-[12px]">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-[8px]">
+                      {plugin.definition.iconUrl ? (
+                        <img
+                          alt=""
+                          src={plugin.definition.iconUrl}
+                          className="size-[18px] rounded-[4px]"
+                        />
+                      ) : (
+                        <Database className="size-[18px] text-[var(--text-secondary)]" strokeWidth={1.5} />
+                      )}
+                      <div className="font-sans text-[13px] font-semibold text-[var(--text-primary)]">
+                        {plugin.definition.displayName}
+                      </div>
+                      <span className="rounded-full bg-[var(--accent-bg)] px-[7px] py-[2px] font-sans text-[10px] uppercase tracking-[0.08em] text-[var(--accent)]">
+                        {enabled ? "Enabled" : installed ? "Installed" : "Catalog"}
+                      </span>
+                    </div>
+                    <p className="mt-[6px] font-sans text-[12px] leading-[18px] text-[var(--text-secondary)]">
+                      {plugin.definition.description}
+                    </p>
+                    <div className="mt-[8px] flex flex-wrap gap-[6px] font-sans text-[11px] text-[var(--text-secondary)]">
+                      <span>{plugin.definition.skills.length} skill(s)</span>
+                      <span>{plugin.definition.mcp.length} MCP contribution(s)</span>
+                      {plugin.managedMcpServerIds.length > 0 ? (
+                        <span>MCP: {plugin.managedMcpServerIds.join(", ")}</span>
+                      ) : null}
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    className={selectClass}
+                    disabled={pendingAction !== null || !workspaceId}
+                    onClick={() =>
+                      runPluginAction(plugin.definition.pluginId, () =>
+                        installed
+                          ? setAgentPluginEnabled(workspaceId!, plugin.definition.pluginId, !enabled)
+                          : installAgentPlugin(workspaceId!, plugin.definition.pluginId)
+                      )
+                    }
+                  >
+                    {pendingAction === plugin.definition.pluginId
+                      ? "Working..."
+                      : installed
+                        ? enabled
+                          ? "Disable"
+                          : "Enable"
+                        : "Install"}
+                  </button>
+                </div>
+                {installed ? (
+                  <div className="mt-[12px] grid gap-[6px] sm:grid-cols-2">
+                    {HARNESS_ORDER.map((backendId) => {
+                      const override = plugin.install?.harnessOverrides.find(
+                        (entry) => entry.backendId === backendId
+                      );
+                      const harnessEnabled = override?.enabled ?? plugin.enabled;
+                      return (
+                        <button
+                          key={backendId}
+                          type="button"
+                          className="flex items-center justify-between rounded-[var(--radius-tab)] border border-[var(--border-subtle)] px-[9px] py-[7px] font-sans text-[11px] text-[var(--text-secondary)] hover:bg-[var(--accent-bg)]"
+                          disabled={pendingAction !== null || !workspaceId}
+                          onClick={() =>
+                            runPluginAction(`${plugin.definition.pluginId}:${backendId}`, () =>
+                              setAgentPluginHarnessOverride(
+                                workspaceId!,
+                                plugin.definition.pluginId,
+                                backendId as AgentBackendId,
+                                !harnessEnabled
+                              )
+                            )
+                          }
+                        >
+                          <span className="flex items-center gap-[6px]">
+                            <AgentBackendIcon backendId={backendId as AgentBackendId} className="size-[13px]" />
+                            {HARNESS_LABELS[backendId as AgentBackendId] ?? backendId}
+                          </span>
+                          <span>{harnessEnabled ? "On" : "Off"}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : null}
+              </div>
+            );
+          })}
+        </div>
+      </SettingsSection>
+
+      <SettingsSection title="Custom Plugin">
+        <div className="space-y-[8px] px-[16px] py-[12px]">
+          <input
+            className={shortcutInputClass}
+            placeholder="Plugin name"
+            value={customName}
+            onChange={(event) => setCustomName(event.target.value)}
+          />
+          <input
+            className={shortcutInputClass}
+            placeholder="Optional streamable HTTP MCP URL"
+            value={customMcpUrl}
+            onChange={(event) => setCustomMcpUrl(event.target.value)}
+          />
+          <textarea
+            className={`${shortcutInputClass} min-h-[82px] w-full max-w-none resize-y`}
+            placeholder="Optional skill instructions"
+            value={customSkill}
+            onChange={(event) => setCustomSkill(event.target.value)}
+          />
+          <button
+            type="button"
+            className={selectClass}
+            disabled={!workspaceId || !customName.trim() || pendingAction !== null}
+            onClick={() => void createCustomPlugin()}
+          >
+            Create custom plugin
+          </button>
+        </div>
+      </SettingsSection>
+
       <SettingsSection title="Related">
         <button
           type="button"
@@ -1316,10 +1595,15 @@ export function BetaSettingsPanel() {
     experimentalIpadMode,
     experimentalIpadCustomButtons,
     experimentalIpadWindowedTabInset,
+    experimentalIpadResumeCache,
+    vscodeExtensionsBeta,
     setExperimentalIpadMode,
     setExperimentalIpadCustomButtons,
     setExperimentalIpadWindowedTabInset,
+    setExperimentalIpadResumeCache,
+    setVscodeExtensionsBeta,
   } = useUserPreferences();
+  const { ipadBetaSettings, vscodeExtensionsBetaSettings } = useCesiumRendererFeatureFlags();
   const { settings, updateSettings } = useGlobalSettings();
   const newBrowserEnabled = settings.agents.newBrowser;
 
@@ -1352,48 +1636,86 @@ export function BetaSettingsPanel() {
           border={false}
         />
       </SettingsSection>
-      <h2 className="mt-[24px] font-sans text-[13px] font-semibold text-[var(--text-secondary)]">
-        iPad
-      </h2>
-      <SettingsSection>
-        <SettingsRow
-          title="Text Input Abstraction"
-          description="Use hardware-keyboard-first input surfaces on iPad and avoid native text fields where possible. Experimental and intended for iPad web app sessions with a connected physical keyboard."
-          trailing={
-            <ToggleSwitch
-              checked={experimentalIpadMode}
-              onChange={setExperimentalIpadMode}
-              size="md"
-              variant="green"
+      {vscodeExtensionsBetaSettings ? (
+        <>
+          <h2 className="mt-[24px] font-sans text-[13px] font-semibold text-[var(--text-secondary)]">
+            Extensions
+          </h2>
+          <SettingsSection>
+            <SettingsRow
+              title="VS Code Extension Marketplace"
+              description="Enable the desktop-only VS Code extension marketplace Beta. Installed extensions can run Node code in a separate host process; keep this off unless you trust the extensions and want the runtime."
+              trailing={
+                <ToggleSwitch
+                  checked={vscodeExtensionsBeta}
+                  onChange={setVscodeExtensionsBeta}
+                  size="md"
+                  variant="green"
+                />
+              }
+              border={false}
             />
-          }
-        />
-        <SettingsRow
-          title="Custom Menu Buttons"
-          description="Show explicit three-dot menu buttons for iPad-specific workarounds, starting with files and folders in the explorer tree."
-          trailing={
-            <ToggleSwitch
-              checked={experimentalIpadCustomButtons}
-              onChange={setExperimentalIpadCustomButtons}
-              size="md"
-              variant="green"
+          </SettingsSection>
+        </>
+      ) : null}
+      {ipadBetaSettings ? (
+        <>
+          <h2 className="mt-[24px] font-sans text-[13px] font-semibold text-[var(--text-secondary)]">
+            iPad
+          </h2>
+          <SettingsSection>
+            <SettingsRow
+              title="Text Input Abstraction"
+              description="Use hardware-keyboard-first input surfaces on iPad and avoid native text fields where possible. Experimental and intended for iPad web app sessions with a connected physical keyboard."
+              trailing={
+                <ToggleSwitch
+                  checked={experimentalIpadMode}
+                  onChange={setExperimentalIpadMode}
+                  size="md"
+                  variant="green"
+                />
+              }
             />
-          }
-        />
-        <SettingsRow
-          title="Windowed mode tab inset"
-          description="When the primary sidebar is hidden, add extra left padding to the editor tab strip so tabs sit clear of iPadOS window controls (close, minimize, maximize) in multitasking windows."
-          trailing={
-            <ToggleSwitch
-              checked={experimentalIpadWindowedTabInset}
-              onChange={setExperimentalIpadWindowedTabInset}
-              size="md"
-              variant="green"
+            <SettingsRow
+              title="Custom Menu Buttons"
+              description="Show explicit three-dot menu buttons for iPad-specific workarounds, starting with files and folders in the explorer tree."
+              trailing={
+                <ToggleSwitch
+                  checked={experimentalIpadCustomButtons}
+                  onChange={setExperimentalIpadCustomButtons}
+                  size="md"
+                  variant="green"
+                />
+              }
             />
-          }
-          border={false}
-        />
-      </SettingsSection>
+            <SettingsRow
+              title="Windowed mode tab inset"
+              description="When the primary sidebar is hidden, add extra left padding to the editor tab strip so tabs sit clear of iPadOS window controls (close, minimize, maximize) in multitasking windows."
+              trailing={
+                <ToggleSwitch
+                  checked={experimentalIpadWindowedTabInset}
+                  onChange={setExperimentalIpadWindowedTabInset}
+                  size="md"
+                  variant="green"
+                />
+              }
+            />
+            <SettingsRow
+              title="Fast resume cache"
+              description="Cache the app shell and restore the last workspace snapshot before backend reconnect so iPadOS reloads feel closer to app resume."
+              trailing={
+                <ToggleSwitch
+                  checked={experimentalIpadResumeCache}
+                  onChange={setExperimentalIpadResumeCache}
+                  size="md"
+                  variant="green"
+                />
+              }
+              border={false}
+            />
+          </SettingsSection>
+        </>
+      ) : null}
     </>
   );
 }
@@ -2068,6 +2390,8 @@ const STORAGE_PHASE_LABELS: Record<StorageMigrationPhase, string> = {
   "workspace-window-sessions": "Workspace window sessions",
   "agent-conversations": "Agent conversations",
   "agent-events": "Agent events",
+  "burn-goals": "Burn goals",
+  extensions: "Extensions",
   "provider-cache": "Provider cache",
 };
 
@@ -2448,6 +2772,7 @@ export const SETTINGS_PANELS: Record<string, ComponentType> = {
   agents: AgentsSettingsPanel,
   models: ModelsSettingsPanel,
   plugins: PluginsSettingsPanel,
+  extensions: VscodeExtensionsSettingsPanel,
   servers: ServerConnectionsSettingsPanel,
   rulesSkills: RulesSkillsSubagentsPanel,
   beta: BetaSettingsPanel,

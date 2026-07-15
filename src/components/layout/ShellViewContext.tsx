@@ -14,6 +14,7 @@ import type {
   WorkbenchShellNonSettingsView,
   WorkbenchShellView,
 } from "@/lib/workspace-session";
+import { safeWindowLocationUrl } from "@/lib/safe-url";
 import {
   WORKBENCH_VIEW_SEARCH_PARAM,
   workbenchViewFromSearchParam,
@@ -60,7 +61,10 @@ export function ShellViewProvider({ children }: { children: ReactNode }) {
 
   const setShellView = useCallback(
     (next: WorkbenchShellView) => {
-      const url = new URL(window.location.href);
+      const url = safeWindowLocationUrl();
+      if (!url) {
+        return;
+      }
       applyShellViewToUrl(url, next);
       updateWorkspaceSession((c) => {
         const cur = c.layout.shellView;
@@ -83,7 +87,10 @@ export function ShellViewProvider({ children }: { children: ReactNode }) {
   const closeSettingsView = useCallback(() => {
     const prior: WorkbenchShellNonSettingsView =
       workspaceSession.layout.priorShellView ?? "agent";
-    const url = new URL(window.location.href);
+    const url = safeWindowLocationUrl();
+    if (!url) {
+      return;
+    }
     applyShellViewToUrl(url, prior);
     updateWorkspaceSession((c) => ({
       ...c,
@@ -103,7 +110,10 @@ export function ShellViewProvider({ children }: { children: ReactNode }) {
           ? "settings"
           : null;
 
-    const url = new URL(window.location.href);
+    const url = safeWindowLocationUrl();
+    if (!url) {
+      return;
+    }
     const curParam = url.searchParams.get(WORKBENCH_VIEW_SEARCH_PARAM);
 
     if (wantsParam === null) {

@@ -1,0 +1,16 @@
+{
+  "extends": "../config/tsconfig/react.json",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "jsx": "react-jsx",
+    "lib": ["es2022", "dom"],
+    "noEmit": true,
+    "paths": {
+      "@cesium/core": ["../core/src/index.ts"],
+      "@cesium/client": ["../client/src/index.ts"],
+      "@cesium/client/react": ["../client/src/react.ts"],
+      "@cesium/design": ["../design/src/index.ts"]
+    }
+  },
+  "include": ["src/**/*.ts", "src/**/*.tsx", "../core/src/**/*.ts", "../client/src/**/*.ts", "../client/src/**/*.tsx", "../design/src/**/*.ts"]
+}

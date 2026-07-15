@@ -310,6 +310,32 @@ export function AskQuestionCard({
     []
   );
 
+  const allStepsComplete = steps.every((entry) => {
+    const ui = stepUi[entry.id] ?? { letters: [], otherDraft: "" };
+    if (ui.letters.length === 0) {
+      return false;
+    }
+    const selected = ui.letters
+      .map((letter) => entry.options.find((option) => option.letter === letter))
+      .filter((option): option is AskQuestionOption => Boolean(option));
+    if (!selected.length) {
+      return false;
+    }
+    if (selected.some((option) => option.isOther) && !ui.otherDraft.trim()) {
+      return false;
+    }
+    return true;
+  });
+
+  // Must stay above the `steps.length === 0` early return: hooks after a
+  // conditional return crash React when the step list toggles empty/non-empty.
+  const handleSubmit = useCallback(() => {
+    if (!onSubmit || submitting || !allStepsComplete) {
+      return;
+    }
+    void onSubmit(formatAskQuestionSubmission(steps, stepUi));
+  }, [allStepsComplete, onSubmit, stepUi, steps, submitting]);
+
   if (steps.length === 0) return null;
 
   const step = steps[stepIndex];
@@ -389,30 +415,6 @@ export function AskQuestionCard({
   const trackOffsetPercent = (stepIndex * 100) / steps.length;
   const stepWidthPercent = 100 / steps.length;
   const currentUi = getUi(step.id);
-
-  const allStepsComplete = steps.every((entry) => {
-    const ui = stepUi[entry.id] ?? { letters: [], otherDraft: "" };
-    if (ui.letters.length === 0) {
-      return false;
-    }
-    const selected = ui.letters
-      .map((letter) => entry.options.find((option) => option.letter === letter))
-      .filter((option): option is AskQuestionOption => Boolean(option));
-    if (!selected.length) {
-      return false;
-    }
-    if (selected.some((option) => option.isOther) && !ui.otherDraft.trim()) {
-      return false;
-    }
-    return true;
-  });
-
-  const handleSubmit = useCallback(() => {
-    if (!onSubmit || submitting || !allStepsComplete) {
-      return;
-    }
-    void onSubmit(formatAskQuestionSubmission(steps, stepUi));
-  }, [allStepsComplete, onSubmit, stepUi, steps, submitting]);
 
   function moveOptionSelection(direction: -1 | 1) {
     const lastSelectedLetter = currentUi.letters[currentUi.letters.length - 1];

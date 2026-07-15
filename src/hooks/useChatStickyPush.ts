@@ -33,7 +33,7 @@ function countUserTurns(messages: ChatMessage[]): number {
   for (let i = 0; i < messages.length; i++) {
     if (messages[i].type !== "user") continue;
     c++;
-    if (messages[i + 1]?.type === "todo-status") i++;
+    if (messages[i + 1]?.type === "todo-status" || messages[i + 1]?.type === "todo") i++;
   }
   return c;
 }

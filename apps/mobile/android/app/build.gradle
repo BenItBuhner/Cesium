@@ -18,6 +18,15 @@ android {
   namespace = "com.cesium.mobile"
   compileSdk = 36
 
+  // CMake 3.31 bundles ninja 1.12 (long-path aware). The 3.22 default ships
+  // ninja 1.10, which fails to Stat() the >260-char object paths produced by
+  // the autolinked codegen builds on Windows.
+  externalNativeBuild {
+    cmake {
+      version = "3.31.6"
+    }
+  }
+
   defaultConfig {
     applicationId = "com.cesium.mobile"
     minSdk = 26
@@ -33,6 +42,8 @@ dependencies {
   implementation("com.facebook.react:react-android")
   implementation("androidx.core:core-ktx:1.17.0")
   implementation("androidx.work:work-runtime-ktx:2.10.3")
+  implementation("com.google.android.gms:play-services-wearable:19.0.0")
+  implementation("com.squareup.okhttp3:okhttp:4.12.0")
   androidTestImplementation(project(":detox"))
   androidTestImplementation("androidx.test:runner:1.6.2")
   androidTestImplementation("androidx.test.ext:junit:1.2.1")

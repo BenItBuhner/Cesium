@@ -264,10 +264,11 @@ export function replaceTextRange(
 
 const DESIGN_TOKEN_OPEN = "\u27E6";
 const DESIGN_TOKEN_CLOSE = "\u27E7";
-const DESIGN_TOKEN_PATTERN = /\u27E6design:([A-Za-z0-9_-]+)\u27E7/g;
+const COMPOSER_PILL_TOKEN_PATTERN = /\u27E6(design|textref):([A-Za-z0-9_-]+)\u27E7/g;
 
 export interface ComposerPillDescriptor {
-  captureId: string;
+  kind: "design" | "text-reference";
+  id: string;
   label: string;
   snippet?: string;
 }
@@ -285,10 +286,10 @@ export function composerEditorDomInSync(
   const pillSpans = container.querySelectorAll(`[${DESIGN_TOKEN_ATTR}]`);
   let i = 0;
   const expected: string[] = [];
-  DESIGN_TOKEN_PATTERN.lastIndex = 0;
+  COMPOSER_PILL_TOKEN_PATTERN.lastIndex = 0;
   let m: RegExpExecArray | null;
-  while ((m = DESIGN_TOKEN_PATTERN.exec(value))) {
-    expected.push(`${DESIGN_TOKEN_OPEN}design:${m[1]!}${DESIGN_TOKEN_CLOSE}`);
+  while ((m = COMPOSER_PILL_TOKEN_PATTERN.exec(value))) {
+    expected.push(`${DESIGN_TOKEN_OPEN}${m[1]!}:${m[2]!}${DESIGN_TOKEN_CLOSE}`);
   }
   if (pillSpans.length !== expected.length) return false;
   for (i = 0; i < pillSpans.length; i += 1) {
@@ -324,7 +325,9 @@ function buildPillSpan(token: string, pill: ComposerPillDescriptor | undefined):
   const span = document.createElement("span");
   span.setAttribute(DESIGN_TOKEN_ATTR, token);
   span.setAttribute("contenteditable", "false");
-  span.setAttribute("data-design-capture-id", pill?.captureId ?? "");
+  span.setAttribute("data-composer-pill-kind", pill?.kind ?? "");
+  span.setAttribute("data-design-capture-id", pill?.kind === "design" ? pill.id : "");
+  span.setAttribute("data-text-reference-id", pill?.kind === "text-reference" ? pill.id : "");
   span.className =
     "cesium-design-pill mx-[2px] inline-flex max-w-full items-center gap-[4px] " +
     "rounded-[6px] border border-[var(--border-subtle)] bg-[var(--file-tag-bg)] " +
@@ -340,12 +343,19 @@ function buildPillSpan(token: string, pill: ComposerPillDescriptor | undefined):
     span.setAttribute("title", pill.label);
   }
   const iconSvg =
-    '<svg class="size-[12px] shrink-0" viewBox="0 0 24 24" fill="none" ' +
-    'stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
-    '<rect width="18" height="7" x="3" y="3" rx="1"/>' +
-    '<rect width="9" height="7" x="3" y="14" rx="1"/>' +
-    '<rect width="5" height="7" x="16" y="14" rx="1"/>' +
-    "</svg>";
+    pill?.kind === "text-reference"
+      ? '<svg class="size-[12px] shrink-0" viewBox="0 0 24 24" fill="none" ' +
+        'stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+        '<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/>' +
+        '<path d="M14 2v4a2 2 0 0 0 2 2h4"/>' +
+        '<path d="M8 13h8"/><path d="M8 17h5"/>' +
+        "</svg>"
+      : '<svg class="size-[12px] shrink-0" viewBox="0 0 24 24" fill="none" ' +
+        'stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+        '<rect width="18" height="7" x="3" y="3" rx="1"/>' +
+        '<rect width="9" height="7" x="3" y="14" rx="1"/>' +
+        '<rect width="5" height="7" x="16" y="14" rx="1"/>' +
+        "</svg>";
   const label = escapeHtml(pill?.label ?? "missing capture");
   span.innerHTML = `${iconSvg}<span class="max-w-[240px] truncate">${label}</span>`;
   return span;
@@ -353,7 +363,7 @@ function buildPillSpan(token: string, pill: ComposerPillDescriptor | undefined):
 
 /**
  * Rebuild the contenteditable's children from `value`, replacing each
- * `⟦design:<id>⟧` token with a pill span. Preserves caret position by
+ * compact composer reference tokens with pill spans. Preserves caret position by
  * measuring before and restoring after.
  */
 export function reconcileComposerEditorDom(
@@ -367,15 +377,16 @@ export function reconcileComposerEditorDom(
   // flashes and to keep MutationObservers calm.
   const frag = document.createDocumentFragment();
   let cursor = 0;
-  DESIGN_TOKEN_PATTERN.lastIndex = 0;
+  COMPOSER_PILL_TOKEN_PATTERN.lastIndex = 0;
   let m: RegExpExecArray | null;
-  while ((m = DESIGN_TOKEN_PATTERN.exec(value))) {
+  while ((m = COMPOSER_PILL_TOKEN_PATTERN.exec(value))) {
     const start = m.index;
     const end = start + m[0].length;
     if (start > cursor) {
       appendTextWithBrBreaks(frag, value.slice(cursor, start));
     }
-    frag.appendChild(buildPillSpan(m[0], pills?.[m[1]!]));
+    const key = `${m[1]!}:${m[2]!}`;
+    frag.appendChild(buildPillSpan(m[0], pills?.[key]));
     cursor = end;
   }
   if (cursor < value.length) {

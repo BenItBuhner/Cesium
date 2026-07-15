@@ -39,6 +39,14 @@ describe("settings search index", () => {
     );
   });
 
+  test("indexes VS Code extension settings", () => {
+    const index = buildSettingsSearchIndex({});
+    const navHits = searchSettingsIndex(index, "extensions");
+    assert.ok(navHits.some((hit) => hit.kind === "nav" && hit.navId === "extensions"));
+
+    assert.ok(index.some((hit) => hit.navId === "beta" && hit.rowId === "vscode-extensions"));
+  });
+
   test("finds keyboard shortcut commands", () => {
     const index = buildSettingsSearchIndex({});
     const openSettings = searchSettingsIndex(index, "open settings");
@@ -53,6 +61,18 @@ describe("settings search index", () => {
       newChat.some(
         (hit) => hit.kind === "shortcut" && hit.id === "shortcut::chat.action.newChat"
       )
+    );
+  });
+
+  test("can omit iPad beta rows for desktop shells", () => {
+    const index = buildSettingsSearchIndex({}, { includeIpadBeta: false });
+    assert.equal(
+      index.some((hit) => hit.id === "beta::section::ipad"),
+      false
+    );
+    assert.equal(
+      index.some((hit) => hit.id === "beta::ipad-text-input"),
+      false
     );
   });
 });

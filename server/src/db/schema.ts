@@ -287,6 +287,60 @@ export const orchestrationEvents = pgTable(
   ]
 );
 
+export const burnGoals = pgTable(
+  "burn_goals",
+  {
+    goalId: text("goal_id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    conversationId: text("conversation_id")
+      .notNull()
+      .references(() => agentConversations.id, { onDelete: "cascade" }),
+    schemaVersion: smallint("schema_version").notNull().default(1),
+    objective: text("objective").notNull(),
+    status: text("status").notNull(),
+    phase: text("phase").notNull(),
+    tokenBudget: bigint("token_budget", { mode: "number" }),
+    tokensUsed: bigint("tokens_used", { mode: "number" }).notNull().default(0),
+    timeUsedSeconds: bigint("time_used_seconds", { mode: "number" }).notNull().default(0),
+    payload: jsonb("payload").notNull(),
+    createdAt: bigint("created_at", { mode: "number" }).notNull(),
+    updatedAt: bigint("updated_at", { mode: "number" }).notNull(),
+    completedAt: bigint("completed_at", { mode: "number" }),
+  },
+  (table) => [
+    unique("burn_goals_conversation_key").on(table.conversationId),
+    index("burn_goals_workspace_updated_idx").on(table.workspaceId, table.updatedAt),
+    index("burn_goals_status_idx").on(table.status),
+  ]
+);
+
+export const extensionInstalls = pgTable(
+  "extension_installs",
+  {
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    extensionId: text("extension_id").notNull(),
+    enabled: boolean("enabled").notNull().default(true),
+    publisher: text("publisher").notNull(),
+    name: text("name").notNull(),
+    version: text("version").notNull(),
+    compatibility: text("compatibility").notNull(),
+    payload: jsonb("payload").notNull(),
+    createdAt: bigint("created_at", { mode: "number" }).notNull(),
+    updatedAt: bigint("updated_at", { mode: "number" }).notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.workspaceId, table.extensionId] }),
+    index("extension_installs_workspace_updated_idx").on(
+      table.workspaceId,
+      table.updatedAt
+    ),
+  ]
+);
+
 export const providerCache = pgTable("provider_cache", {
   backendId: text("backend_id").primaryKey(),
   schemaVersion: smallint("schema_version").notNull().default(1),

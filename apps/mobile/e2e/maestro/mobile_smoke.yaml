@@ -2,4 +2,4 @@ appId: com.cesium.mobile
 ---
 - launchApp
 - assertVisible:
-    id: cesium-mobile-webview
+    id: cesium-mobile-root

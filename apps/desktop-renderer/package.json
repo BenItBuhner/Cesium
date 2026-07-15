@@ -10,7 +10,6 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@cesium/api-client": "file:../../packages/api-client",
     "@cesium/core": "file:../../packages/core",
     "@cesium/design": "file:../../packages/design",
     "@cesium/ui-web": "file:../../packages/ui-web",

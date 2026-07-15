@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ChevronDown } from "lucide-react";
 import { CollapsibleHeight } from "./CollapsibleHeight";
 
@@ -9,6 +9,10 @@ interface ActivityLabelProps {
   detail?: string;
   files?: string[];
   defaultOpen?: boolean;
+  /** When false, body uses flat layout without left rail indent. */
+  contentRail?: boolean;
+  /** Turn finished — collapse when this becomes true. */
+  settled?: boolean;
 }
 
 export function ActivityLabel({
@@ -16,18 +20,28 @@ export function ActivityLabel({
   detail,
   files,
   defaultOpen = false,
+  contentRail = true,
+  settled = false,
 }: ActivityLabelProps) {
   const expandable = Boolean(
     (detail && detail.trim()) || (files && files.length > 0)
   );
   const [open, setOpen] = useState(expandable && defaultOpen);
+  const prevSettledRef = useRef(settled);
+
+  useEffect(() => {
+    if (settled && !prevSettledRef.current) {
+      setOpen(false);
+    }
+    prevSettledRef.current = settled;
+  }, [settled]);
 
   return (
     <div className="min-w-0 px-[1px]">
       {expandable ? (
         <button
           type="button"
-          onClick={() => setOpen((v) => !v)}
+          onClick={() => setOpen((value) => !value)}
           aria-expanded={open}
           className="flex w-full min-w-0 cursor-pointer items-center gap-[6px] text-left text-[var(--text-secondary)] transition-colors hover:text-[var(--text-primary)]"
         >
@@ -50,7 +64,7 @@ export function ActivityLabel({
 
       <CollapsibleHeight open={expandable && open}>
         <div className="pt-[8px]">
-          <div className="ml-[2px] border-l border-[var(--border-subtle)] pl-[10px]">
+          <div className={contentRail ? "ml-[2px] border-l border-[var(--border-subtle)] pl-[10px]" : ""}>
             {detail?.trim() ? (
               <p className="font-sans text-[13px] font-normal leading-normal text-[var(--text-primary)]">
                 {detail}

@@ -9,7 +9,8 @@
       "next/link": ["./src/next-shims/link.tsx"],
       "next/navigation": ["./src/next-shims/navigation.tsx"],
       "@cesium/core": ["../../packages/core/src/index.ts"],
-      "@cesium/api-client": ["../../packages/api-client/src/index.ts"],
+      "@cesium/client": ["../../packages/client/src/index.ts"],
+      "@cesium/client/react": ["../../packages/client/src/react.ts"],
       "@cesium/design": ["../../packages/design/src/index.ts"],
       "@cesium/ui-web": ["../../packages/ui-web/src/index.ts"]
     }

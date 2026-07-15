@@ -34,6 +34,7 @@ const NAV_LABELS: Record<string, string> = {
   agents: "Agents",
   models: "Models",
   plugins: "Plugins",
+  extensions: "Extensions",
   servers: "Servers",
   rulesSkills: "Rules, Skills, Subagents",
   exportImport: "Import & export",
@@ -147,12 +148,27 @@ const STATIC_SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
     "Floating sidebar reveal",
     "Show the floating control over the editor when the file sidebar is collapsed."
   ),
+  section("appearance", "design", "Design"),
   row(
     "appearance",
     "new-design",
     "New design",
     "Enable the next-generation UI design hooks for agent mode.",
     ["ui", "classic"]
+  ),
+  row(
+    "appearance",
+    "long-paste-references",
+    "Long paste references",
+    "Collapse very large pasted chat composer text into a compact reference.",
+    ["paste", "clipboard", "composer", "reference", "large text", "10k"]
+  ),
+  row(
+    "appearance",
+    "minimal-edit-diff",
+    "Minimal edit diff",
+    "Show file edits as added and removed line counts instead of the full inline diff.",
+    ["edit diff", "diff", "counts", "lines added", "lines removed"]
   ),
   section("appearance", "chat", "Chat"),
   row(
@@ -198,6 +214,13 @@ const STATIC_SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
     "Summarize older turns when the session approaches the model context limit.",
     ["cesium", "context"]
   ),
+  row(
+    "agents",
+    "cesium-orchestration-continue",
+    "Continue when work remains",
+    "Orchestration Agent",
+    ["cesium", "orchestration", "kanban", "todo"]
+  ),
   row("agents", "cesium-edit-file", "Edit file", "Cesium tool permissions"),
   row("agents", "cesium-terminal", "Terminal", "Cesium tool permissions"),
   row("agents", "cesium-custom-providers", "Custom providers", "Cesium Agent"),
@@ -208,7 +231,15 @@ const STATIC_SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
   section("models", "catalog", "Model catalog", "visibility toggle refresh"),
 
   // —— Plugins ——
-  section("plugins", "related", "Related"),
+  section("plugins", "catalog", "Agent Plugins", "catalog install enable disable harness"),
+  section("plugins", "custom", "Custom Plugin", "custom mcp skill plugin"),
+  row(
+    "plugins",
+    "harness-overrides",
+    "Per-harness plugin overrides",
+    "Enable or disable installed plugins for individual agent harnesses.",
+    ["cesium", "cursor sdk", "claude", "opencode", "codex", "antigravity", "pi agent"]
+  ),
   row("plugins", "mcp-link", "MCP servers", "Plugins · MCP"),
   row(
     "plugins",
@@ -221,6 +252,16 @@ const STATIC_SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
   section("plugins", "mcp-presets", "Presets", "mcp"),
   section("plugins", "mcp-custom", "Custom server", "mcp oauth url"),
   section("plugins", "mcp-connected", "Connected servers", "mcp"),
+
+  // —— Extensions ——
+  section("extensions", "runtime", "Beta Runtime", "vscode extensions marketplace host"),
+  row(
+    "extensions",
+    "marketplace",
+    "VS Code Extension Marketplace",
+    "Open VSX install activate permissions host runtime."
+  ),
+  section("extensions", "installed", "Installed", "extensions installed workspace"),
 
   // —— Rules ——
   section("rulesSkills", "workspace-files", "Workspace files", "rules skills subagents"),
@@ -241,6 +282,16 @@ const STATIC_SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
   // —— Beta ——
   section("beta", "browser", "Browser", "new browser beta experimental chromium"),
   row("beta", "new-browser", "New browser", "Experimental Chromium-backed browser engine."),
+  section("beta", "extensions", "Extensions", "vscode extension marketplace beta"),
+  row(
+    "beta",
+    "vscode-extensions",
+    "VS Code Extension Marketplace",
+    "Desktop-only extension marketplace and runtime Beta."
+  ),
+];
+
+const IPAD_BETA_SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
   section("beta", "ipad", "iPad", "experimental beta"),
   row(
     "beta",
@@ -257,8 +308,16 @@ const STATIC_SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
     "Extra left padding for iPadOS window controls.",
     ["windowed", "tab inset"]
   ),
+  row(
+    "beta",
+    "ipad-resume-cache",
+    "Fast resume cache",
+    "Restore a cached workspace snapshot and app shell before backend reconnect on iPad.",
+    ["ipad", "pwa", "indexeddb", "resume", "cache"]
+  ),
+];
 
-  // —— Keyboard shortcuts (commands indexed separately) ——
+const STATIC_SETTINGS_SEARCH_ENTRIES_TAIL: SettingsSearchEntry[] = [
   section("keyboardShortcuts", "voice", "Voice input", "hold toggle"),
 
   // —— Import & export ——
@@ -404,10 +463,14 @@ function buildModelSearchEntries(
 }
 
 export function buildSettingsSearchIndex(
-  modelsByBackend: Record<string, ModelToggleState[]>
+  modelsByBackend: Record<string, ModelToggleState[]>,
+  options?: { includeIpadBeta?: boolean }
 ): SettingsSearchEntry[] {
+  const includeIpadBeta = options?.includeIpadBeta !== false;
   return [
     ...STATIC_SETTINGS_SEARCH_ENTRIES,
+    ...(includeIpadBeta ? IPAD_BETA_SETTINGS_SEARCH_ENTRIES : []),
+    ...STATIC_SETTINGS_SEARCH_ENTRIES_TAIL,
     ...SHORTCUT_SEARCH_ENTRIES,
     ...buildModelSearchEntries(modelsByBackend),
   ];

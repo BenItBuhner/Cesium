@@ -14,6 +14,16 @@ export type MobileServerConfig = {
   authToken?: string | null;
   safeAreaTop?: number;
   systemColorScheme?: "light" | "dark" | null;
+  runtime?: MobileRuntimeConfig | null;
+};
+
+export type MobileRuntimeConfig = {
+  projectsDir?: string | null;
+  serverDataDir?: string | null;
+  defaultWorkspaceRoot?: string | null;
+  allowedWorkspaceRoots?: string[];
+  backendEnvironment?: Record<string, string>;
+  localBackendReady?: boolean;
 };
 
 export type MobileFocusedConversation = {
@@ -38,7 +48,18 @@ export type MobileWebToNativeMessage =
   | ({ type: "focusedConversationChanged" } & MobileFocusedConversation)
   | MobileAgentProjectionMessage
   | { type: "webIdleMode"; enabled: boolean }
-  | { type: "serverConfigured"; server: MobileServerConfig };
+  | { type: "serverConfigured"; server: MobileServerConfig }
+  | {
+      type: "wearSyncEnvelope";
+      envelopeJson: string;
+      config: {
+        serverBaseUrl: string;
+        serverLabel: string;
+        authToken?: string | null;
+        workspaceId?: string | null;
+        conversationId?: string | null;
+      };
+    };
 
 export function encodeMobileBridgeMessage(message: MobileNativeToWebMessage | MobileWebToNativeMessage): string {
   return JSON.stringify(message);
@@ -90,9 +111,11 @@ export function buildMobileBootstrapScript(server: MobileServerConfig): string {
       server.systemColorScheme === "dark" || server.systemColorScheme === "light"
         ? server.systemColorScheme
         : null,
+    runtime: normalizeMobileRuntimeConfig(server.runtime),
   };
   const payload = JSON.stringify(normalizedServer);
   const message = JSON.stringify({ type: "nativeReady", server: normalizedServer });
+  const serializedMessage = JSON.stringify(message);
   const themeConfigStorageKey = JSON.stringify(MOBILE_THEME_CONFIG_STORAGE_KEY);
   const legacyThemeStorageKey = JSON.stringify(MOBILE_LEGACY_THEME_STORAGE_KEY);
   return `
@@ -179,7 +202,7 @@ export function buildMobileBootstrapScript(server: MobileServerConfig): string {
     server,
     getBackendInfo: () => Promise.resolve(server)
   };
-  window.__CESIUM_MOBILE_NATIVE_READY__ = ${message};
+  window.__CESIUM_MOBILE_NATIVE_READY__ = ${serializedMessage};
   if (!window.__CESIUM_MOBILE_BRIDGE_LISTENERS__) {
     window.__CESIUM_MOBILE_BRIDGE_LISTENERS__ = true;
     window.addEventListener("message", (event) => {
@@ -201,6 +224,39 @@ export function buildMobileBootstrapScript(server: MobileServerConfig): string {
   }
   true;
 })();`;
+}
+
+function normalizeMobileRuntimeConfig(runtime: MobileRuntimeConfig | null | undefined) {
+  if (!runtime) {
+    return null;
+  }
+
+  const backendEnvironment =
+    runtime.backendEnvironment && typeof runtime.backendEnvironment === "object"
+      ? Object.fromEntries(
+          Object.entries(runtime.backendEnvironment).filter(
+            (entry): entry is [string, string] =>
+              typeof entry[0] === "string" && typeof entry[1] === "string" && entry[1].length > 0
+          )
+        )
+      : {};
+
+  return {
+    projectsDir: normalizeRuntimeString(runtime.projectsDir),
+    serverDataDir: normalizeRuntimeString(runtime.serverDataDir),
+    defaultWorkspaceRoot: normalizeRuntimeString(runtime.defaultWorkspaceRoot),
+    allowedWorkspaceRoots: Array.isArray(runtime.allowedWorkspaceRoots)
+      ? runtime.allowedWorkspaceRoots.filter(
+          (value): value is string => typeof value === "string" && value.length > 0
+        )
+      : [],
+    backendEnvironment,
+    localBackendReady: runtime.localBackendReady === true,
+  };
+}
+
+function normalizeRuntimeString(value: unknown) {
+  return typeof value === "string" && value.length > 0 ? value : null;
 }
 
 declare global {

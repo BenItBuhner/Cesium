@@ -76,6 +76,9 @@ async function main() {
       await copyLocalWorkspacePackage(packageName, sourceRoot);
     }
   }
+
+  await fs.copyFile(process.execPath, path.join(stagingRoot, "node.exe"));
+  console.log("Bundled Node.js runtime for desktop backend startup.");
 }
 
 main().catch((error) => {

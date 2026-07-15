@@ -12,6 +12,11 @@ import {
   hasClaudeCodeSdkProxyConfig,
 } from "../claude-code-sdk-credentials.js";
 import { createCesiumAgentConfigOptions } from "../cesium-agent-settings.js";
+import {
+  buildPiAgentSeedConfigOptions,
+  hasPiAgentRichModelCatalog,
+  isPiAgentPlaceholderModelCatalog,
+} from "../pi-agent-model-catalog.js";
 import { spawnSafeEnv } from "./spawn-env.js";
 import { CodexAppServerTransport } from "./codex-app-server-transport.js";
 import { OpenCodeServerClient, openCodeServerAuthFromEnv } from "./opencode-server-client.js";
@@ -462,165 +467,6 @@ async function createGeminiCliConfigOptions(input?: {
   ];
 }
 
-function parseTomlValue(source: string, key: string): string | null {
-  const match = source.match(new RegExp(`^${key}\\s*=\\s*"([^"]+)"`, "m"));
-  return match?.[1] ?? null;
-}
-
-async function createCodexSeedConfigOptions(): Promise<AgentConfigOption[]> {
-  const codexHome = path.join(os.homedir(), ".codex");
-  const [modelsCache, configToml] = await Promise.all([
-    readJsonFile<{ models?: Array<Record<string, unknown>> } | null>(
-      path.join(codexHome, "models_cache.json"),
-      null
-    ),
-    fs.readFile(path.join(codexHome, "config.toml"), "utf8").catch(() => ""),
-  ]);
-
-  const modelOptions: AgentConfigOption["options"] = [];
-  if (Array.isArray(modelsCache?.models)) {
-    for (const entry of modelsCache.models) {
-      const slug = typeof entry.slug === "string" ? entry.slug : "";
-      const name = typeof entry.display_name === "string" ? entry.display_name : slug;
-      const description = typeof entry.description === "string" ? entry.description : undefined;
-      if (!slug || !name) {
-        continue;
-      }
-      modelOptions.push({ value: slug, name, description });
-    }
-  }
-
-  if (Array.isArray(modelsCache?.models)) {
-    for (const option of modelOptions) {
-      const entry = modelsCache.models.find(
-        (candidate) => candidate && typeof candidate === "object" && candidate.slug === option.value
-      ) as Record<string, unknown> | undefined;
-      const reasoningLevels = Array.isArray(entry?.supported_reasoning_levels)
-        ? entry.supported_reasoning_levels
-            .map((level) =>
-              level && typeof level === "object" && typeof level.effort === "string"
-                ? level.effort
-                : null
-            )
-            .filter((value): value is string => Boolean(value))
-        : [];
-      if (reasoningLevels.length > 0) {
-        option.metadata = {
-          reasoningLevels,
-        };
-      }
-    }
-  }
-
-  const reasoningOptions = Array.isArray(modelsCache?.models)
-    ? Array.from(
-        new Set(
-          modelsCache.models.flatMap((entry) => {
-            const levels = Array.isArray(entry.supported_reasoning_levels)
-              ? entry.supported_reasoning_levels
-              : [];
-            return levels
-              .map((level) =>
-                level && typeof level === "object" && typeof level.effort === "string"
-                  ? level.effort
-                  : null
-              )
-              .filter((value): value is string => Boolean(value));
-          })
-        )
-      ).map((effort) => ({
-        value: effort,
-        name: effort.charAt(0).toUpperCase() + effort.slice(1),
-      }))
-    : [];
-
-  if (modelOptions.length === 0) {
-    return [
-      {
-        id: "mode",
-        name: "Mode",
-        category: "mode",
-        currentValue: "agent",
-        options: [{ value: "agent", name: "Agent" }],
-      },
-      {
-        id: "model",
-        name: "Model",
-        category: "model",
-        currentValue: "__default__",
-        options: [
-          {
-            value: "__default__",
-            name: "Default",
-            description: "Use the Codex CLI default model selection.",
-          },
-        ],
-      },
-    ];
-  }
-
-  const preferredModel = modelOptions.find((option) => option.value === "gpt-5.4-mini")?.value;
-  const preferredEffort = reasoningOptions.find((option) => option.value === "low")?.value;
-  const selectedModel = preferredModel ?? parseTomlValue(configToml, "model") ?? modelOptions[0]?.value ?? "gpt-5.4-mini";
-  const selectedEffort =
-    preferredEffort ??
-    parseTomlValue(configToml, "model_reasoning_effort") ??
-    reasoningOptions[0]?.value ??
-    "low";
-  const selectedWebSearch = parseTomlValue(configToml, "web_search") ?? "cached";
-
-  const next: AgentConfigOption[] = [
-    {
-      id: "mode",
-      name: "Mode",
-      category: "mode",
-      currentValue: "agent",
-      options: [{ value: "agent", name: "Agent" }],
-    },
-    {
-      id: "model",
-      name: "Model",
-      category: "model",
-      currentValue: selectedModel,
-      options: modelOptions,
-    },
-    {
-      id: "permission",
-      name: "Execution Mode",
-      category: "permission",
-      currentValue: "workspace-write",
-      options: [
-        { value: "read-only", name: "Read Only" },
-        { value: "workspace-write", name: "Workspace Write" },
-        { value: "bypassPermissions", name: "Bypass Permissions" },
-      ],
-    },
-    {
-      id: "web_search",
-      name: "Web Search",
-      category: "other",
-      currentValue: selectedWebSearch,
-      options: [
-        { value: "disabled", name: "Disabled" },
-        { value: "cached", name: "Cached" },
-        { value: "live", name: "Live" },
-      ],
-    },
-  ];
-
-  if (reasoningOptions.length > 0) {
-    next.push({
-      id: "model_reasoning_effort",
-      name: "Reasoning Effort",
-      category: "thought_level",
-      currentValue: selectedEffort,
-      options: reasoningOptions,
-    });
-  }
-
-  return next;
-}
-
 function titleCaseConfigValue(value: string): string {
   if (/^xhigh$/i.test(value)) {
     return "Extra High";
@@ -792,6 +638,7 @@ async function createCodexAppServerConfigOptions(): Promise<AgentConfigOption[]>
       command: await resolveCodexAppServerCommand(),
       args: ["app-server"],
       cwd: process.cwd(),
+      processName: "Cesium Agent - Codex Model Discovery",
     });
     await transport.request("initialize", {
       clientInfo: {
@@ -834,17 +681,17 @@ function createCursorSdkFallbackConfigOptions(): AgentConfigOption[] {
         {
           value: "plan",
           name: "Plan",
-          description: "Synthetic prompt prefix until Cursor SDK exposes native modes.",
+          description: "Native Cursor SDK plan mode (explore and plan before editing).",
         },
         {
           value: "ask",
           name: "Ask",
-          description: "Synthetic prompt prefix until Cursor SDK exposes native modes.",
+          description: "Read-only guidance via a synthetic prompt prefix.",
         },
         {
           value: "debug",
           name: "Debug",
-          description: "Synthetic prompt prefix until Cursor SDK exposes native modes.",
+          description: "Debug-focused guidance via a synthetic prompt prefix.",
         },
       ],
     },
@@ -853,7 +700,7 @@ function createCursorSdkFallbackConfigOptions(): AgentConfigOption[] {
       name: "Model",
       category: "model",
       description: "Configure a Cursor API key or refresh the Cursor SDK catalog to load real models.",
-      currentValue: "composer-2",
+      currentValue: "composer-2.5",
       options: [],
     },
     {
@@ -885,6 +732,7 @@ export function cursorSdkConfigOptionsFromModels(
     id: string;
     displayName: string;
     description?: string;
+    aliases?: string[];
     parameters?: Array<{
       id: string;
       displayName?: string;
@@ -907,20 +755,36 @@ export function cursorSdkConfigOptionsFromModels(
     option.id === "model"
       ? {
           ...option,
-          currentValue:
-            modelRows.find((model) => model.value === "composer-2")?.value ??
-            modelRows[0]?.value ??
-            "composer-2",
+          currentValue: pickDefaultCursorSdkModelValue(modelRows),
           options: modelRows,
         }
       : option
   );
 }
 
+function pickDefaultCursorSdkModelValue(
+  rows: AgentConfigOption["options"]
+): string {
+  const values = rows.map((row) => row.value);
+  const preferredIds = ["composer-2.5", "composer-latest", "composer-2"];
+  for (const preferred of preferredIds) {
+    const exact = values.find((value) => value === preferred);
+    if (exact) {
+      return exact;
+    }
+    const prefixed = values.find((value) => value.startsWith(`${preferred}[`));
+    if (prefixed) {
+      return prefixed;
+    }
+  }
+  return values[0] ?? "composer-2.5";
+}
+
 function cursorSdkModelRows(model: {
   id: string;
   displayName: string;
   description?: string;
+  aliases?: string[];
   parameters?: Array<{
     id: string;
     displayName?: string;
@@ -969,6 +833,18 @@ function cursorSdkModelRows(model: {
       ...(model.description ? { description: model.description } : {}),
       metadata: cursorSdkModelMetadata(modelId, [], false),
     },
+    ...(model.aliases ?? [])
+      .map((alias) => alias.trim())
+      .filter((alias) => alias.length > 0 && alias !== modelId)
+      .map((alias) => ({
+        value: alias,
+        name: `${model.displayName || modelId} (${alias})`,
+        ...(model.description ? { description: model.description } : {}),
+        metadata: {
+          ...cursorSdkModelMetadata(modelId, [], false),
+          cursorSdkAlias: alias,
+        },
+      })),
   ];
 }
 
@@ -1130,6 +1006,7 @@ async function createCursorSdkConfigOptions(): Promise<AgentConfigOption[]> {
   if (!apiKey) {
     return createCursorSdkFallbackConfigOptions();
   }
+  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     const { Cursor } = await import("@cursor/sdk");
     const timeoutMs =
@@ -1139,10 +1016,11 @@ async function createCursorSdkConfigOptions(): Promise<AgentConfigOption[]> {
     const models = await Promise.race([
       Cursor.models.list({ apiKey }),
       new Promise<never>((_, reject) => {
-        setTimeout(
+        timer = setTimeout(
           () => reject(new Error(`Cursor.models.list exceeded ${timeoutMs}ms`)),
           timeoutMs
         );
+        timer.unref?.();
       }),
     ]);
     return cursorSdkConfigOptionsFromModels(models);
@@ -1150,6 +1028,8 @@ async function createCursorSdkConfigOptions(): Promise<AgentConfigOption[]> {
     const detail = error instanceof Error ? error.message : String(error);
     console.warn("[agents] Cursor SDK model list failed (fallback catalog):", detail);
     return createCursorSdkFallbackConfigOptions();
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -1336,6 +1216,76 @@ export async function createClaudeCodeSdkConfigOptions(): Promise<AgentConfigOpt
   }
 }
 
+async function createPiAgentConfigOptions(): Promise<AgentConfigOption[]> {
+  return buildPiAgentSeedConfigOptions();
+}
+
+async function createGoogleAntigravityCliConfigOptions(): Promise<AgentConfigOption[]> {
+  const settingsPath = path.join(os.homedir(), ".gemini", "antigravity-cli", "settings.json");
+  const settings = await readJsonFile<Record<string, unknown> | null>(settingsPath, null).catch(() => null);
+  const configuredModel = typeof settings?.model === "string" && settings.model.trim()
+    ? settings.model.trim()
+    : "auto";
+  const configuredPermission =
+    typeof settings?.toolPermission === "string" && settings.toolPermission.trim()
+      ? settings.toolPermission.trim()
+      : "request-review";
+
+  const modelOptions: AgentConfigOptionValue[] = [
+    { value: "auto", name: "Auto" },
+    configuredModel !== "auto"
+      ? { value: configuredModel, name: configuredModel }
+      : null,
+    { value: "gemini-3-pro", name: "Gemini 3 Pro" },
+    { value: "gemini-2.5-pro", name: "Gemini 2.5 Pro" },
+    { value: "gemini-2.5-flash", name: "Gemini 2.5 Flash" },
+  ].filter((option): option is AgentConfigOptionValue => option !== null);
+  const uniqueModelOptions = Array.from(
+    new Map(modelOptions.map((option) => [option.value, option])).values()
+  );
+
+  return [
+    {
+      id: "mode",
+      name: "Mode",
+      category: "mode",
+      currentValue: "agent",
+      options: [
+        { value: "agent", name: "Agent" },
+        { value: "plan", name: "Plan" },
+        { value: "ask", name: "Ask" },
+      ],
+    },
+    {
+      id: "model",
+      name: "Model",
+      category: "model",
+      currentValue: configuredModel,
+      description:
+        "Seeded from Antigravity CLI settings when available. The agy CLI owns the final model selection.",
+      options: uniqueModelOptions,
+    },
+    {
+      id: "permission",
+      name: "Tool permission",
+      category: "permission",
+      currentValue: ["request-review", "proceed-in-sandbox", "always-proceed", "strict"].includes(
+        configuredPermission
+      )
+        ? configuredPermission
+        : "request-review",
+      description:
+        "Mapped to Antigravity CLI permission settings; OpenCursor does not manage Google OAuth tokens.",
+      options: [
+        { value: "request-review", name: "Request review" },
+        { value: "proceed-in-sandbox", name: "Proceed in sandbox" },
+        { value: "always-proceed", name: "Always proceed" },
+        { value: "strict", name: "Strict" },
+      ],
+    },
+  ];
+}
+
 async function createSeedConfigOptions(backendId: AgentBackendId): Promise<AgentConfigOption[]> {
   switch (backendId) {
     case "cesium-agent":
@@ -1350,37 +1300,13 @@ async function createSeedConfigOptions(backendId: AgentBackendId): Promise<Agent
       return createCodexAppServerConfigOptions();
     case "claude-code-sdk":
       return createClaudeCodeSdkConfigOptions();
+    case "pi-agent":
+      return createPiAgentConfigOptions();
+    case "google-antigravity-cli":
+      return createGoogleAntigravityCliConfigOptions();
     default:
       return [];
   }
-}
-
-/**
- * Earlier versions of the Cursor CLI emitted bracketed knob defaults like
- * `gpt-5.4[reasoning=medium,context=272k,fast=false]` and we used to inflate
- * those into a synthetic `cursor_thought_level` config option. The modern CLI
- * already enumerates each effort/context/fast combination as its own model id,
- * so any cache that still contains brackets or a cursor thought-level option is
- * stale and must be rebuilt from the live CLI.
- */
-function isStaleCursorAcpCache(configOptions: AgentConfigOption[]): boolean {
-  const modelOption = configOptions.find((option) => option.category === "model");
-  if (!modelOption || modelOption.options.length === 0) {
-    return true;
-  }
-  if (
-    configOptions.some(
-      (option) =>
-        option.id === "cursor_thought_level" ||
-        (option.category === "thought_level" && option.id !== "model_reasoning_effort")
-    )
-  ) {
-    return true;
-  }
-  if (modelOption.currentValue.includes("[")) {
-    return true;
-  }
-  return modelOption.options.some((option) => option.value.includes("["));
 }
 
 function isStaleCursorSdkCache(configOptions: AgentConfigOption[]): boolean {
@@ -1422,6 +1348,13 @@ function hasUsableModelOptions(configOptions: AgentConfigOption[]): boolean {
   return Boolean(modelOption && modelOption.options.length > 0);
 }
 
+function hasRichModelCatalog(configOptions: AgentConfigOption[], backendId: AgentBackendId): boolean {
+  if (backendId === "pi-agent") {
+    return hasPiAgentRichModelCatalog(configOptions);
+  }
+  return hasUsableModelOptions(configOptions);
+}
+
 async function readStoredConfigOptions(
   backendId: AgentBackendId
 ): Promise<AgentConfigOption[]> {
@@ -1441,7 +1374,7 @@ function startSeedRefresh(
       const seeded = await createSeedConfigOptions(backendId);
       if (seeded.length > 0) {
         const existing = await readStoredConfigOptions(backendId).catch(() => []);
-        if (hasUsableModelOptions(seeded) || !hasUsableModelOptions(existing)) {
+        if (hasRichModelCatalog(seeded, backendId) || !hasRichModelCatalog(existing, backendId)) {
           await writeAgentBackendConfigCache(backendId, seeded);
         }
       }
@@ -1506,20 +1439,27 @@ export async function forceRefreshAllBackendCaches(
   const results = await Promise.allSettled(
     backendIds.map(async (backendId) => {
       const refreshPromise = startSeedRefresh(backendId);
-      const result = await Promise.race([
-        refreshPromise,
-        new Promise<"timeout">((resolve) =>
-          setTimeout(() => resolve("timeout"), FORCE_REFRESH_TIMEOUT_MS)
-        ),
-      ]);
-      return { backendId, result };
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        const result = await Promise.race([
+          refreshPromise,
+          new Promise<"timeout">((resolve) => {
+            timer = setTimeout(() => resolve("timeout"), FORCE_REFRESH_TIMEOUT_MS);
+            timer.unref?.();
+          }),
+        ]);
+        return { backendId, result };
+      } finally {
+        // A won race must not leave the loser's timer pinning the event loop.
+        clearTimeout(timer);
+      }
     })
   );
 
-  for (const settled of results) {
+  for (let index = 0; index < results.length; index += 1) {
+    const settled = results[index]!;
     if (settled.status === "rejected") {
-      const backendId = backendIds[results.indexOf(settled)];
-      failed.push(backendId);
+      failed.push(backendIds[index]!);
       continue;
     }
     const { backendId, result } = settled.value;
@@ -1548,6 +1488,10 @@ function maybeInPlaceMigrate(
   cachedOptions: AgentConfigOption[]
 ): { upgraded: AgentConfigOption[]; needsReseed: boolean } | null {
   if (backendId === "cursor-sdk" && isStaleCursorSdkCache(cachedOptions)) {
+    return { upgraded: cachedOptions, needsReseed: true };
+  }
+
+  if (backendId === "pi-agent" && isPiAgentPlaceholderModelCatalog(cachedOptions)) {
     return { upgraded: cachedOptions, needsReseed: true };
   }
 
@@ -1640,7 +1584,8 @@ export async function readAgentBackendConfigCache(
           .then((refreshed) => {
             if (
               refreshed.length === 0 ||
-              (!hasUsableModelOptions(refreshed) && hasUsableModelOptions(migration.upgraded))
+              (!hasRichModelCatalog(refreshed, backendId) &&
+                hasRichModelCatalog(migration.upgraded, backendId))
             ) {
               return migration.upgraded;
             }
@@ -1654,7 +1599,7 @@ export async function readAgentBackendConfigCache(
     const cacheIsFresh =
       Date.now() - record.updatedAt <= CACHE_TTL_MS &&
       record.updatedAt >= SERVER_STARTED_AT;
-    if (cacheIsFresh) {
+    if (cacheIsFresh && hasRichModelCatalog(cachedOptions, backendId)) {
       return cachedOptions;
     }
 
@@ -1662,7 +1607,8 @@ export async function readAgentBackendConfigCache(
       .then((refreshed) => {
         if (
           refreshed.length === 0 ||
-          (!hasUsableModelOptions(refreshed) && hasUsableModelOptions(cachedOptions))
+          (!hasRichModelCatalog(refreshed, backendId) &&
+            hasRichModelCatalog(cachedOptions, backendId))
         ) {
           return cachedOptions;
         }

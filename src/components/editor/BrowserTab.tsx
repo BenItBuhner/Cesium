@@ -5,7 +5,6 @@ import { ArrowLeft, ArrowRight, Pen, RefreshCw, SquareTerminal } from "lucide-re
 import type { BrowserConsoleEntry, BrowserEngineEvent } from "@/lib/browser-engine";
 import {
   REMOTE_BROWSER_EVENT_POLL_INTERVAL_MS,
-  REMOTE_BROWSER_HOVER_REFRESH_DELAY_MS,
   REMOTE_BROWSER_INPUT_REFRESH_DELAY_MS,
   REMOTE_BROWSER_NAVIGATION_REFRESH_DELAY_MS,
   REMOTE_BROWSER_POINTER_MOVE_THROTTLE_MS,
@@ -20,6 +19,7 @@ import { buildIframeAuthenticatedUrl } from "@/lib/auth-client";
 import {
   captureBrowserDebugViewport,
   captureRenderedBrowserElementScreenshot,
+  completeBrowserControlCommand,
   createBrowserDebugSession,
   deleteBrowserDebugSession,
   getBrowserDebugEvents,
@@ -27,8 +27,10 @@ import {
   getServerBaseUrl,
   markBrowserControlUserIntervention,
   navigateBrowserDebugSession,
+  readBrowserControlCommands,
   sendBrowserDebugInput,
   setBrowserControlLock,
+  type BrowserControlCommand,
 } from "@/lib/server-api";
 import type { EditorTab } from "@/lib/types";
 import type {
@@ -40,6 +42,12 @@ import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
 import { useWorkbenchNotifications } from "@/components/notifications/WorkbenchNotificationProvider";
 import { WORKBENCH_NOTIFICATION_KIND } from "@/components/notifications/workbench-notification-types";
+
+const BROWSER_COMMAND_ACTIVE_POLL_MS = 150;
+const BROWSER_COMMAND_IDLE_POLL_MS = 1_000;
+const BROWSER_COMMAND_HIDDEN_POLL_MS = 5_000;
+const BROWSER_USER_INTERVENTION_THROTTLE_MS = 2_500;
+const NATIVE_BROWSER_COMMAND_TIMEOUT_MS = 8_000;
 
 /**
  * Browser-tab home URL when a brand-new browser tab is opened with no explicit
@@ -92,12 +100,51 @@ function elementViewportBounds(el: HTMLElement | null): {
 } | null {
   if (!el) return null;
   const rect = el.getBoundingClientRect();
+  if (rect.width < 8 || rect.height < 8) {
+    return null;
+  }
+  const maxW = window.innerWidth;
+  const maxH = window.innerHeight;
+  if (rect.width > maxW * 0.92 || rect.height > maxH * 0.92) {
+    return null;
+  }
   return {
     x: rect.left,
     y: rect.top,
     width: rect.width,
     height: rect.height,
   };
+}
+
+function sameViewportBounds(
+  a: ReturnType<typeof elementViewportBounds>,
+  b: ReturnType<typeof elementViewportBounds>
+): boolean {
+  if (!a || !b) return a === b;
+  return (
+    Math.round(a.x) === Math.round(b.x) &&
+    Math.round(a.y) === Math.round(b.y) &&
+    Math.round(a.width) === Math.round(b.width) &&
+    Math.round(a.height) === Math.round(b.height)
+  );
+}
+
+function withBrowserTimeout<T>(promise: Promise<T>, label: string): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = window.setTimeout(() => {
+      reject(new Error(`${label} timed out.`));
+    }, NATIVE_BROWSER_COMMAND_TIMEOUT_MS);
+    promise.then(
+      (value) => {
+        window.clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        window.clearTimeout(timer);
+        reject(error);
+      }
+    );
+  });
 }
 
 export function BrowserTab({
@@ -122,14 +169,22 @@ export function BrowserTab({
   const remoteViewportTimerRef = useRef<number | null>(null);
   const remoteViewportInFlightRef = useRef(false);
   const remoteLastPointerMoveRef = useRef(0);
+  const browserControlCommandCursorRef = useRef(0);
+  const lastBrowserCommandAtRef = useRef(0);
+  const lastUserInterventionAtRef = useRef(0);
+  const lastNativeBoundsRef = useRef<ReturnType<typeof elementViewportBounds>>(null);
+  const lastNativeDevtoolsBoundsRef = useRef<ReturnType<typeof elementViewportBounds>>(null);
+  const nativeSessionRestartCountRef = useRef(0);
+  const nativeInitialLoadCompleteRef = useRef(false);
   const debugSessionIdRef = useRef<string | null>(null);
   const processedCaptureIdsRef = useRef<string[]>([]);
   const [consoleError, setConsoleError] = useState<string | null>(null);
   const [nativeBrowserReady, setNativeBrowserReady] = useState(false);
   const [nativeProbeComplete, setNativeProbeComplete] = useState(false);
+  const [nativeSessionRestartKey, setNativeSessionRestartKey] = useState(0);
   const [remoteBrowserReady, setRemoteBrowserReady] = useState(false);
   const [remoteViewportImage, setRemoteViewportImage] = useState<string | null>(null);
-  const [consoleEntries, setConsoleEntries] = useState<BrowserConsoleEntry[]>([]);
+  const [, setConsoleEntries] = useState<BrowserConsoleEntry[]>([]);
 
   const captureRenderedFallback = useCallback(
     async (payload: {
@@ -240,7 +295,11 @@ export function BrowserTab({
 
   useEffect(() => {
     setNativeProbeComplete(false);
-    if (!newBrowserEnabled && tab.browser?.engine !== "server-chromium") {
+    if (
+      !newBrowserEnabled &&
+      tab.browser?.engine !== "electron-native" &&
+      tab.browser?.engine !== "server-chromium"
+    ) {
       setNativeBrowserReady(false);
       setNativeProbeComplete(true);
       dispatch({
@@ -271,6 +330,10 @@ export function BrowserTab({
     const handleEvent = (event: BrowserEngineEvent & { sessionId: string }) => {
       if (event.sessionId !== nativeSessionIdRef.current) return;
       if (event.type === "navigation") {
+        setConsoleError(null);
+        if (event.isLoading === false) {
+          nativeInitialLoadCompleteRef.current = true;
+        }
         if (event.url) {
           const title = event.title?.trim() || undefined;
           if (event.url !== lastNavHrefRef.current) {
@@ -315,6 +378,21 @@ export function BrowserTab({
         ]);
       } else if (event.type === "error") {
         setConsoleError(event.message);
+        if (
+          (event.message.startsWith("Browser renderer exited") ||
+            event.message.startsWith("Browser renderer stayed unresponsive")) &&
+          nativeSessionRestartCountRef.current < 3
+        ) {
+          nativeSessionRestartCountRef.current += 1;
+          setNativeBrowserReady(false);
+          nativeSessionIdRef.current = null;
+          dispatch({
+            type: "UPDATE_BROWSER_TAB_META",
+            tabId: tab.id,
+            nativeSessionId: null,
+          });
+          setNativeSessionRestartKey((key) => key + 1);
+        }
       }
     };
 
@@ -329,9 +407,10 @@ export function BrowserTab({
       }
       unsubscribe = bridge.onEvent(handleEvent);
       try {
+        nativeInitialLoadCompleteRef.current = false;
         const session = await bridge.createSession({
           tabId: tab.id,
-          url: initialNativeTargetUrlRef.current,
+          url: currentTargetUrlRef.current || initialNativeTargetUrlRef.current,
         });
         if (cancelled) {
           await bridge.destroySession(session.id).catch(() => undefined);
@@ -339,6 +418,8 @@ export function BrowserTab({
         }
         createdSessionId = session.id;
         nativeSessionIdRef.current = session.id;
+        nativeSessionRestartCountRef.current = 0;
+        setConsoleError(null);
         setNativeBrowserReady(true);
         setNativeProbeComplete(true);
         dispatch({
@@ -347,6 +428,28 @@ export function BrowserTab({
           engine: "electron-native",
           nativeSessionId: session.id,
         });
+        window.setTimeout(() => {
+          if (
+            cancelled ||
+            nativeSessionIdRef.current !== session.id ||
+            nativeInitialLoadCompleteRef.current
+          ) {
+            return;
+          }
+          nativeSessionIdRef.current = null;
+          setNativeBrowserReady(false);
+          setNativeProbeComplete(true);
+          setConsoleError("Native browser view did not finish loading; falling back to server browser.");
+          void bridge.destroySession(session.id).catch(() => undefined);
+          dispatch({
+            type: "UPDATE_BROWSER_TAB_META",
+            tabId: tab.id,
+            engine: "server-chromium",
+            nativeSessionId: null,
+            debugSessionId: null,
+            devtoolsPath: null,
+          });
+        }, 10_000);
       } catch (error) {
         setNativeBrowserReady(false);
         setNativeProbeComplete(true);
@@ -364,7 +467,7 @@ export function BrowserTab({
         void bridge.destroySession(sid).catch(() => undefined);
       }
     };
-  }, [dispatch, forceNavUi, newBrowserEnabled, tab.id]);
+  }, [dispatch, forceNavUi, nativeSessionRestartKey, newBrowserEnabled, tab.id]);
 
   useEffect(() => {
     if (!usingNativeBrowser || !nativeSessionId) return;
@@ -376,17 +479,23 @@ export function BrowserTab({
       if (raf) cancelAnimationFrame(raf);
       raf = requestAnimationFrame(() => {
         raf = 0;
-        void bridge.setBounds(
-          nativeSessionId,
-          elementViewportBounds(nativeViewportRef.current)
-        );
+        if (document.visibilityState === "hidden") {
+          void bridge.setBounds(nativeSessionId, null);
+          return;
+        }
+        const nextBounds = elementViewportBounds(nativeViewportRef.current);
+        if (!sameViewportBounds(lastNativeBoundsRef.current, nextBounds)) {
+          lastNativeBoundsRef.current = nextBounds;
+          void bridge.setBounds(nativeSessionId, nextBounds);
+        }
         if (bridge.setDevtoolsBounds) {
-          void bridge.setDevtoolsBounds(
-            nativeSessionId,
-            devtoolsOpen
-              ? elementViewportBounds(nativeDevtoolsRef.current)
-              : null
-          );
+          const nextDevtoolsBounds = devtoolsOpen
+            ? elementViewportBounds(nativeDevtoolsRef.current)
+            : null;
+          if (!sameViewportBounds(lastNativeDevtoolsBoundsRef.current, nextDevtoolsBounds)) {
+            lastNativeDevtoolsBoundsRef.current = nextDevtoolsBounds;
+            void bridge.setDevtoolsBounds(nativeSessionId, nextDevtoolsBounds);
+          }
         }
       });
     };
@@ -401,12 +510,278 @@ export function BrowserTab({
       if (raf) cancelAnimationFrame(raf);
       resizeObserver.disconnect();
       window.removeEventListener("resize", syncBounds);
+      lastNativeBoundsRef.current = null;
+      lastNativeDevtoolsBoundsRef.current = null;
       void bridge.setBounds(nativeSessionId, null);
       if (bridge.setDevtoolsBounds) {
         void bridge.setDevtoolsBounds(nativeSessionId, null);
       }
     };
   }, [devtoolsOpen, nativeSessionId, usingNativeBrowser]);
+
+  useEffect(() => {
+    if (!usingNativeBrowser || !nativeSessionId) return;
+    const target = tab.browser?.targetUrl;
+    if (!target || target === lastNavHrefRef.current) return;
+    lastNavHrefRef.current = target;
+    currentTargetUrlRef.current = target;
+    void getDesktopBrowserBridge()?.command(nativeSessionId, {
+      op: "goto",
+      url: target,
+    });
+  }, [nativeSessionId, tab.browser?.targetUrl, usingNativeBrowser]);
+
+  useEffect(() => {
+    browserControlCommandCursorRef.current = 0;
+  }, [tab.id]);
+
+  useEffect(() => {
+    if (!tab.browser?.controlSessionId || !usingNativeBrowser || !nativeSessionId) return;
+    let cancelled = false;
+    let timer: number | null = null;
+
+    type NativeDispatchInput = Exclude<
+      Extract<BrowserControlCommand, { type: "input" }>["input"],
+      { type: "wheel" }
+    >;
+
+    const mapBrowserControlInput = (input: NativeDispatchInput): NativeDispatchInput => {
+      if (input.type !== "mouse") {
+        return input;
+      }
+      const bounds = nativeViewportRef.current?.getBoundingClientRect();
+      const declaredViewport = tab.browser?.viewport;
+      if (
+        !bounds ||
+        !declaredViewport ||
+        declaredViewport.width <= 0 ||
+        declaredViewport.height <= 0
+      ) {
+        return input;
+      }
+      return {
+        ...input,
+        x: Math.max(0, Math.min(bounds.width - 1, (input.x / declaredViewport.width) * bounds.width)),
+        y: Math.max(0, Math.min(bounds.height - 1, (input.y / declaredViewport.height) * bounds.height)),
+      };
+    };
+
+    const captureNativeSnapshot = async () => {
+      const bridge = getDesktopBrowserBridge();
+      if (!bridge?.cdpCommand) {
+        throw new Error("Native browser CDP bridge is unavailable.");
+      }
+      const evaluated = await withBrowserTimeout(
+        bridge.cdpCommand(nativeSessionId, "Runtime.evaluate", {
+          returnByValue: true,
+          awaitPromise: true,
+          expression: `(() => {
+          const escapeCss = globalThis.CSS?.escape ?? ((value) => String(value).replace(/"/g, '\\\\"'));
+          const textOf = (el) => (el.innerText || el.textContent || el.getAttribute('aria-label') || el.getAttribute('title') || '').trim().replace(/\\s+/g, ' ').slice(0, 500);
+          const selectorFor = (el) => {
+            if (el.id) return '#' + escapeCss(el.id);
+            const testId = el.getAttribute('data-testid') || el.getAttribute('data-test');
+            if (testId) return '[' + (el.getAttribute('data-testid') ? 'data-testid' : 'data-test') + '="' + escapeCss(testId) + '"]';
+            const name = el.getAttribute('name');
+            if (name) return el.tagName.toLowerCase() + '[name="' + escapeCss(name) + '"]';
+            return el.tagName.toLowerCase();
+          };
+          const refs = Array.from(document.querySelectorAll('input, textarea, select, button, a, [role="button"], [role="link"], [role="textbox"], [contenteditable="true"], [tabindex]'))
+            .filter((el) => {
+              const rect = el.getBoundingClientRect();
+              const style = getComputedStyle(el);
+              return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
+            })
+            .slice(0, 120)
+            .map((el, index) => {
+              const rect = el.getBoundingClientRect();
+              return {
+                ref: 'e' + index,
+                tag: el.tagName.toLowerCase(),
+                text: textOf(el),
+                role: el.getAttribute('role') || undefined,
+                selector: selectorFor(el),
+                rect: { x: Math.round(rect.x), y: Math.round(rect.y), width: Math.round(rect.width), height: Math.round(rect.height) }
+              };
+            });
+          const visibleText = (document.body?.innerText || '').trim();
+          const html = document.documentElement?.outerHTML || '';
+          return {
+            title: document.title || null,
+            url: location.href,
+            visibleText: visibleText.slice(0, 20000),
+            html: html.slice(0, 20000),
+            accessibilityText: visibleText.slice(0, 12000),
+            elementRefs: refs,
+            truncated: visibleText.length > 20000 || html.length > 20000
+          };
+          })()`,
+        }),
+        "Native browser snapshot"
+      );
+      const value =
+        evaluated &&
+        typeof evaluated === "object" &&
+        "result" in evaluated &&
+        evaluated.result &&
+        typeof evaluated.result === "object" &&
+        "value" in evaluated.result
+          ? (evaluated.result as { value?: unknown }).value
+          : null;
+      if (!value || typeof value !== "object") {
+        throw new Error("Native browser snapshot returned no page value.");
+      }
+      return value;
+    };
+
+    const evaluateNativeScript = async (script: string) => {
+      const bridge = getDesktopBrowserBridge();
+      if (!bridge?.cdpCommand) {
+        throw new Error("Native browser CDP bridge is unavailable.");
+      }
+      const evaluated = await withBrowserTimeout(
+        bridge.cdpCommand(nativeSessionId, "Runtime.evaluate", {
+          returnByValue: true,
+          awaitPromise: true,
+          expression: script,
+        }),
+        "Native browser evaluation"
+      );
+      const response = evaluated as
+        | {
+            exceptionDetails?: { text?: string; exception?: { description?: string } };
+            result?: { value?: unknown; unserializableValue?: string; description?: string };
+          }
+        | null;
+      if (response?.exceptionDetails) {
+        throw new Error(
+          response.exceptionDetails.exception?.description ??
+            response.exceptionDetails.text ??
+            "Native browser evaluation failed."
+        );
+      }
+      return response?.result?.value ?? response?.result?.unserializableValue ?? response?.result?.description ?? null;
+    };
+
+    const pollCommands = async () => {
+      const result = await readBrowserControlCommands(
+        tab.id,
+        browserControlCommandCursorRef.current
+      ).catch(() => null);
+      if (cancelled) return;
+      if (result) {
+        browserControlCommandCursorRef.current = result.cursor;
+        const bridge = getDesktopBrowserBridge();
+        if (result.commands.length > 0) {
+          lastBrowserCommandAtRef.current = Date.now();
+        }
+        for (const command of result.commands) {
+          if (command.type === "input") {
+            if (bridge?.dispatchInput && command.input.type !== "wheel") {
+              try {
+                await bridge.command(nativeSessionId, { op: "focus" }).catch(() => null);
+                const ok = await bridge.dispatchInput(
+                  nativeSessionId,
+                  mapBrowserControlInput(command.input)
+                );
+                await completeBrowserControlCommand(tab.id, command.seq, { ok }).catch(() => null);
+              } catch (error) {
+                await completeBrowserControlCommand(tab.id, command.seq, {
+                  ok: false,
+                  error: error instanceof Error ? error.message : String(error),
+                }).catch(() => null);
+              }
+            } else {
+              void completeBrowserControlCommand(tab.id, command.seq, {
+                ok: false,
+                error: "Native browser input bridge is unavailable for this command.",
+              }).catch(() => null);
+            }
+            continue;
+          }
+          if (command.type === "snapshot") {
+            try {
+              const snapshot = await captureNativeSnapshot();
+              await completeBrowserControlCommand(tab.id, command.seq, {
+                ok: true,
+                result: snapshot,
+              }).catch(() => null);
+            } catch (error) {
+              await completeBrowserControlCommand(tab.id, command.seq, {
+                ok: false,
+                error: error instanceof Error ? error.message : String(error),
+              }).catch(() => null);
+            }
+            continue;
+          }
+          if (command.type === "evaluate") {
+            try {
+              const evaluated = await evaluateNativeScript(command.script);
+              await completeBrowserControlCommand(tab.id, command.seq, {
+                ok: true,
+                result: evaluated,
+              }).catch(() => null);
+            } catch (error) {
+              await completeBrowserControlCommand(tab.id, command.seq, {
+                ok: false,
+                error: error instanceof Error ? error.message : String(error),
+              }).catch(() => null);
+            }
+            continue;
+          }
+          if (command.type === "screenshot") {
+            if (!bridge?.capturePage) {
+              await completeBrowserControlCommand(tab.id, command.seq, {
+                ok: false,
+                error: "Native browser screenshot bridge is unavailable.",
+              }).catch(() => null);
+              continue;
+            }
+            try {
+              const screenshot = await withBrowserTimeout(
+                bridge.capturePage(nativeSessionId),
+                "Native browser screenshot"
+              );
+              await completeBrowserControlCommand(tab.id, command.seq, {
+                ok: Boolean(screenshot?.imageDataUrl),
+                result: screenshot,
+                error: screenshot?.error,
+              }).catch(() => null);
+            } catch (error) {
+              await completeBrowserControlCommand(tab.id, command.seq, {
+                ok: false,
+                error: error instanceof Error ? error.message : String(error),
+              }).catch(() => null);
+            }
+          }
+        }
+      }
+      if (!cancelled) {
+        const recentlyActive =
+          Date.now() - lastBrowserCommandAtRef.current < 5_000 || tab.browser?.lockState?.locked;
+        const delay =
+          document.visibilityState === "hidden"
+            ? BROWSER_COMMAND_HIDDEN_POLL_MS
+            : recentlyActive
+              ? BROWSER_COMMAND_ACTIVE_POLL_MS
+              : BROWSER_COMMAND_IDLE_POLL_MS;
+        timer = window.setTimeout(pollCommands, delay);
+      }
+    };
+
+    void pollCommands();
+    return () => {
+      cancelled = true;
+      if (timer != null) window.clearTimeout(timer);
+    };
+  }, [
+    nativeSessionId,
+    tab.browser?.controlSessionId,
+    tab.browser?.lockState?.locked,
+    tab.browser?.viewport,
+    tab.id,
+    usingNativeBrowser,
+  ]);
 
   useEffect(() => {
     if (tab.browser?.engine === "server-chromium" && tab.browser?.debugSessionId) {
@@ -503,6 +878,7 @@ export function BrowserTab({
   const scheduleRemoteViewportRefresh = useCallback(
     (delayMs = 0) => {
       if (!usingRemoteBrowser) return;
+      if (document.visibilityState === "hidden") return;
       if (remoteViewportTimerRef.current != null) {
         window.clearTimeout(remoteViewportTimerRef.current);
       }
@@ -523,6 +899,12 @@ export function BrowserTab({
     remoteEventCursorRef.current = 0;
 
     const readEvents = async () => {
+      if (document.visibilityState === "hidden") {
+        if (!cancelled) {
+          timer = window.setTimeout(readEvents, REMOTE_BROWSER_EVENT_POLL_INTERVAL_MS * 3);
+        }
+        return;
+      }
       const events = await getBrowserDebugEvents(sid, remoteEventCursorRef.current);
       if (!cancelled && events) {
         remoteEventCursorRef.current = events.cursor;
@@ -564,6 +946,7 @@ export function BrowserTab({
     for (const delay of [0, 150, 600]) {
       bootstrapViewportTimers.push(
         window.setTimeout(() => {
+          if (document.visibilityState === "hidden") return;
           void refreshRemoteViewport();
         }, delay)
       );
@@ -629,6 +1012,8 @@ export function BrowserTab({
   }, [tab.browser?.devtoolsPath]);
   const showServerDevtoolsPanel = Boolean(!usingNativeBrowser && devtoolsOpen && consoleViewerSrc);
   const showNativeDevtoolsPanel = Boolean(usingNativeBrowser && devtoolsOpen);
+  const waitingForNativeBrowser =
+    tab.browser?.engine === "electron-native" && !usingNativeBrowser;
 
   const pushDesignToGuest = useCallback((enabled: boolean) => {
     const w = iframeRef.current?.contentWindow;
@@ -1160,6 +1545,11 @@ export function BrowserTab({
   const markUserIntervention = (detail: string) => {
     if (browserLocked) return;
     if (!tab.browser?.controlSessionId) return;
+    const now = Date.now();
+    if (now - lastUserInterventionAtRef.current < BROWSER_USER_INTERVENTION_THROTTLE_MS) {
+      return;
+    }
+    lastUserInterventionAtRef.current = now;
     void markBrowserControlUserIntervention(tab.id, detail)
       .then((result) => {
         dispatch({ type: "UPDATE_BROWSER_TAB_META", tabId: tab.id, lockState: result.tab.lockState });
@@ -1305,6 +1695,31 @@ export function BrowserTab({
                 if (sid) void getDesktopBrowserBridge()?.command(sid, { op: "focus" });
               }}
             />
+          ) : waitingForNativeBrowser ? (
+            <div className="flex h-full w-full flex-col items-center justify-center gap-[10px] bg-[var(--bg-main)] px-[24px] text-center font-sans">
+              <div className="text-[13px] text-[var(--text-secondary)]">
+                {nativeProbeComplete
+                  ? "Recovering native browser view..."
+                  : "Starting native browser view..."}
+              </div>
+              {consoleError ? (
+                <div className="max-w-[520px] text-[12px] text-[var(--text-disabled)]">
+                  {consoleError}
+                </div>
+              ) : null}
+              <button
+                type="button"
+                className="rounded-[var(--radius-tab)] border border-[var(--border-subtle)] px-[10px] py-[5px] text-[12px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)]"
+                onClick={() => {
+                  nativeSessionIdRef.current = null;
+                  setNativeBrowserReady(false);
+                  setNativeProbeComplete(false);
+                  setNativeSessionRestartKey((key) => key + 1);
+                }}
+              >
+                Restart browser view
+              </button>
+            </div>
           ) : usingRemoteBrowser ? (
             <div
               ref={remoteViewportRef}
@@ -1322,7 +1737,7 @@ export function BrowserTab({
                     action: "move",
                     x: event.clientX - rect.left,
                     y: event.clientY - rect.top,
-                  }).then(() => scheduleRemoteViewportRefresh(REMOTE_BROWSER_HOVER_REFRESH_DELAY_MS));
+                  });
                 }
               }}
               onMouseDown={(event) => {
@@ -1444,18 +1859,6 @@ export function BrowserTab({
               className="min-h-0 flex-1 border-l border-[var(--border-subtle)] bg-[var(--bg-panel)]"
               data-ide-browser-devtools
             />
-          </div>
-        ) : null}
-        {(usingNativeBrowser || usingRemoteBrowser) &&
-        consoleEntries.length > 0 &&
-        !showNativeDevtoolsPanel &&
-        !showServerDevtoolsPanel ? (
-          <div className="max-h-[132px] shrink-0 overflow-auto border-t border-[var(--border-subtle)] bg-[var(--bg-panel)] px-[10px] py-[6px] font-mono text-[11px] text-[var(--text-secondary)]">
-            {consoleEntries.slice(-5).map((entry) => (
-              <div key={entry.id} className={entry.level === "error" ? "text-[var(--danger,#f48771)]" : ""}>
-                [{entry.source}] {entry.text}
-              </div>
-            ))}
           </div>
         ) : null}
       </div>

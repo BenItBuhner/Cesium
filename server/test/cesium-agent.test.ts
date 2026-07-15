@@ -26,12 +26,29 @@ const [
     resolveCesiumModelRuntime,
     resolveCesiumAuth,
     refreshCesiumModelCatalog,
+    normalizeCesiumContextWindow,
+    DEFAULT_CESIUM_CONTEXT_WINDOW,
+    findCesiumModelCatalogEntry,
+    resolveCesiumModelContextWindow,
+    createCesiumAgentConfigOptions,
   },
-  { normalizeEventsToHistory, openAiMessages, cesiumPermissionToolKey, createCesiumAgentProvider, buildOpenAiToolDefinitions, sanitizeOpenAiCompatibleJsonSchema },
+  { normalizeEventsToHistory, openAiMessages, cesiumPermissionToolKey, createCesiumAgentProvider, buildOpenAiToolDefinitions, sanitizeOpenAiCompatibleJsonSchema, normalizeCesiumToolResultForModel, isEmptyCesiumAdapterResult, normalizeCallMcpToolArgs },
+  { buildCesiumBaseSystemPrompt },
+  { resolveCesiumModeToolPolicy },
+  { parsePlanEntriesFromMarkdown },
+  { createBurnGoalRecord, formatBurnGoalForModel, validateBurnGoalSnapshotSummary },
+  { burnCompactionRecoveryContext, burnContinuationContext },
+  { buildCesiumModeReminder },
 ] = await Promise.all([
   import("../src/lib/agents/providers.js"),
   import("../src/lib/cesium-agent-settings.js"),
   import("../src/lib/agents/cesium-provider.js"),
+  import("@cesium/core/mcp"),
+  import("../src/lib/agents/cesium-mode-policy.js"),
+  import("../src/lib/agents/cesium-plan-files.js"),
+  import("../src/lib/agents/burn-goal-store.js"),
+  import("../src/lib/agents/burn-goal-steering.js"),
+  import("../src/lib/agents/cesium-mode-reminders.js"),
 ]);
 
 after(async () => {
@@ -63,6 +80,170 @@ test("cesiumPermissionToolKey scopes remembered rules by tool shape", () => {
   assert.equal(
     cesiumPermissionToolKey("mcpCall", { serverId: "browser", toolName: "browser_click" }),
     "cesium:mcp:browser:browser_click"
+  );
+});
+
+test("normalizeCallMcpToolArgs accepts nested, snake_case, and flat MCP tool shapes", () => {
+  assert.deepEqual(
+    normalizeCallMcpToolArgs({
+      arguments: {
+        server_id: "browser",
+        tool_name: "browser_tabs",
+        action: "list",
+      },
+    }),
+    {
+      serverId: "browser",
+      toolName: "browser_tabs",
+      arguments: { action: "list" },
+    }
+  );
+  assert.deepEqual(
+    normalizeCallMcpToolArgs({
+      serverId: "linear",
+      toolName: "search",
+      query: "opencursor",
+    }),
+    {
+      serverId: "linear",
+      toolName: "search",
+      arguments: { query: "opencursor" },
+    }
+  );
+  assert.deepEqual(
+    normalizeCallMcpToolArgs({
+      serverId: "browser",
+      toolName: "browser_snapshot",
+      arguments: { tabId: "tab-1" },
+    }),
+    {
+      serverId: "browser",
+      toolName: "browser_snapshot",
+      arguments: { tabId: "tab-1" },
+    }
+  );
+});
+
+test("normalizeEventsToHistory preserves call_mcp_tool routing after failed tool updates", () => {
+  const history = normalizeEventsToHistory([
+    {
+      seq: 1,
+      eventId: "e1",
+      conversationId: "c1",
+      createdAt: 1,
+      kind: "user_message",
+      messageId: "u1",
+      content: "Use browser MCP",
+    },
+    {
+      seq: 2,
+      eventId: "e2",
+      conversationId: "c1",
+      createdAt: 2,
+      kind: "tool_call",
+      toolCallId: "call-mcp-1",
+      title: "Browser browser_tabs",
+      toolKind: "mcp",
+      status: "in_progress",
+      raw: {
+        id: "call-mcp-1",
+        name: "call_mcp_tool",
+        arguments: {
+          serverId: "browser",
+          toolName: "browser_tabs",
+          arguments: { action: "list" },
+        },
+      },
+    },
+    {
+      seq: 3,
+      eventId: "e3",
+      conversationId: "c1",
+      createdAt: 3,
+      kind: "tool_call_update",
+      toolCallId: "call-mcp-1",
+      title: "Browser browser_tabs",
+      toolKind: "mcp",
+      status: "failed",
+      detail: "call_mcp_tool requires serverId and toolName.",
+      raw: {
+        request: {
+          id: "call-mcp-1",
+          name: "call_mcp_tool",
+          arguments: {
+            arguments: {
+              server_id: "browser",
+              tool_name: "browser_tabs",
+              action: "list",
+            },
+          },
+        },
+        error: "call_mcp_tool requires serverId and toolName.",
+      },
+    },
+  ] as never);
+  const assistant = openAiMessages(history).find(
+    (message) => (message as { role?: string }).role === "assistant" && "tool_calls" in message
+  ) as { tool_calls?: Array<{ function?: { name?: string; arguments?: string } }> } | undefined;
+  const call = assistant?.tool_calls?.[0];
+  assert.equal(call?.function?.name, "call_mcp_tool");
+  const parsed = JSON.parse(call?.function?.arguments ?? "{}") as {
+    serverId?: string;
+    toolName?: string;
+    arguments?: { action?: string };
+  };
+  assert.equal(parsed.serverId, "browser");
+  assert.equal(parsed.toolName, "browser_tabs");
+  assert.equal(parsed.arguments?.action, "list");
+});
+
+test("Cesium compacts long tool outputs before feeding the next model call", () => {
+  const first = normalizeCesiumToolResultForModel({
+    toolName: "read_file",
+    result: "a".repeat(50),
+    usedToolResultChars: 0,
+    perToolLimit: 10,
+    totalLimit: 25,
+  });
+  assert.equal(first.content.length > 10, true);
+  assert.equal(first.usedToolResultChars, 10);
+  assert.equal(first.truncated, true);
+  assert.match(first.content, /Full output is preserved/);
+
+  const exhausted = normalizeCesiumToolResultForModel({
+    toolName: "grep",
+    result: "still large",
+    usedToolResultChars: 25,
+    perToolLimit: 10,
+    totalLimit: 25,
+  });
+  assert.equal(exhausted.usedToolResultChars, 25);
+  assert.equal(exhausted.truncated, true);
+  assert.match(exhausted.content, /omitted from model context/);
+});
+
+test("Cesium detects upstream empty model responses without blocking text-only turns", () => {
+  assert.equal(
+    isEmptyCesiumAdapterResult({
+      text: "",
+      toolRequests: [],
+      raw: { choices: [{ message: { content: "" } }] },
+    }),
+    true
+  );
+  assert.equal(
+    isEmptyCesiumAdapterResult({
+      text: "Here is a normal text-only response.",
+      toolRequests: [],
+    }),
+    false
+  );
+  assert.equal(
+    isEmptyCesiumAdapterResult({
+      text: "",
+      toolRequests: [{ id: "call-1", name: "orchestration_wait", arguments: {} }],
+    }),
+    false
   );
 });
 
@@ -473,6 +654,283 @@ test("Cesium session initialize preserves orchestration mode in configOptions", 
   );
 });
 
+test("Cesium config options include dynamic prompt modes", async () => {
+  const options = await createCesiumAgentConfigOptions();
+  const modeOption = options.find((option) => option.id === "mode");
+  assert.equal(modeOption?.options.some((option) => option.value === "ask"), true);
+  assert.equal(modeOption?.options.some((option) => option.value === "plan"), true);
+  assert.deepEqual(modeOption?.options.map((option) => option.value), [
+    "agent",
+    "plan",
+    "orchestration",
+    "burn",
+    "ask",
+  ]);
+  assert.equal(modeOption?.options.some((option) => option.value === "burn"), true);
+});
+
+test("Burn goal records start in planning with durable milestones and todos", () => {
+  const goal = createBurnGoalRecord({
+    workspace: {
+      id: "ws-burn",
+      root: TEST_DATA_DIR,
+      name: "Burn workspace",
+      createdAt: 1,
+      updatedAt: 1,
+      lastOpenedAt: 1,
+    },
+    conversationId: "conv-burn",
+    objective: "Ship the hybrid Burn goal mode.",
+  });
+  assert.equal(goal.status, "planning");
+  assert.equal(goal.phase, "planning");
+  assert.equal(goal.objective, "Ship the hybrid Burn goal mode.");
+  assert.deepEqual(goal.milestones, []);
+  assert.deepEqual(goal.todos, []);
+  assert.equal(goal.progressPercent, null);
+  assert.equal(goal.headline, null);
+  assert.equal(goal.revision, 0);
+  assert.deepEqual(goal.snapshots, []);
+  assert.equal(goal.compaction.generation, 0);
+});
+
+test("Burn progress snapshots require the OpenCode-style markdown sections", () => {
+  assert.doesNotThrow(() =>
+    validateBurnGoalSnapshotSummary([
+      "## Progress",
+      "- Implemented snapshot storage.",
+      "## Current State",
+      "- Burn is still active.",
+      "## Blockers",
+      "- None.",
+      "## Next Steps",
+      "- Add verification.",
+    ].join("\n"))
+  );
+  assert.throws(
+    () => validateBurnGoalSnapshotSummary("## Progress\n- Only one section."),
+    /missing the ## Current State section/
+  );
+});
+
+test("Burn continuation context preserves objective and blocker audit rules", () => {
+  const goal = createBurnGoalRecord({
+    workspace: {
+      id: "ws-burn",
+      root: TEST_DATA_DIR,
+      name: "Burn workspace",
+      createdAt: 1,
+      updatedAt: 1,
+      lastOpenedAt: 1,
+    },
+    conversationId: "conv-burn",
+    objective: "Finish <all> requirements & verify them.",
+  });
+  const context = burnContinuationContext({
+    ...goal,
+    progressPercent: 42,
+    headline: "Halfway through Burn verification",
+    revision: 3,
+    snapshots: [
+      {
+        id: "snapshot-1",
+        createdAt: 1,
+        progressPercent: 42,
+        headline: "Halfway through Burn verification",
+        summary: [
+          "## Progress",
+          "- Wrote snapshot plumbing.",
+          "## Current State",
+          "- Verification remains.",
+          "## Blockers",
+          "- None.",
+          "## Next Steps",
+          "- Run focused tests.",
+        ].join("\n"),
+        revision: 3,
+      },
+    ],
+  });
+  assert.match(context, /<burn_context>/);
+  assert.match(context, /Finish &lt;all&gt; requirements &amp; verify them\./);
+  assert.match(context, /at least three Burn turns/);
+  assert.match(context, /Do not call burn_goal_complete/);
+  assert.match(context, /Latest progress snapshot:/);
+  assert.match(context, /Progress: 42%/);
+  assert.match(context, /Halfway through Burn verification/);
+  assert.match(context, /Freshness: stale/);
+  assert.match(context, /Recent progress summary history:/);
+  assert.match(context, /Do not stop after a progress snapshot/);
+  const recovery = burnCompactionRecoveryContext({
+    ...goal,
+    progressPercent: 42,
+    headline: "Halfway through Burn verification",
+    revision: 3,
+    snapshots: [
+      {
+        id: "snapshot-1",
+        createdAt: 1,
+        progressPercent: 42,
+        headline: "Halfway through Burn verification",
+        summary: [
+          "## Progress",
+          "- Wrote snapshot plumbing.",
+          "## Current State",
+          "- Verification remains.",
+          "## Blockers",
+          "- None.",
+          "## Next Steps",
+          "- Run focused tests.",
+        ].join("\n"),
+        revision: 3,
+      },
+    ],
+  });
+  assert.match(recovery, /Latest progress snapshot:/);
+  assert.match(recovery, /Progress: 42%/);
+  assert.match(recovery, /Recent progress summary history:/);
+});
+
+test("Burn goal model summary includes snapshot freshness and recent history", () => {
+  const goal = createBurnGoalRecord({
+    workspace: {
+      id: "ws-burn-model",
+      root: TEST_DATA_DIR,
+      name: "Burn workspace",
+      createdAt: 1,
+      updatedAt: 1,
+      lastOpenedAt: 1,
+    },
+    conversationId: "conv-burn-model",
+    objective: "Ship the Burn UI summary view.",
+  });
+  const summary = formatBurnGoalForModel({
+    ...goal,
+    progressPercent: 70,
+    headline: "Summary view is underway",
+    revision: 2,
+    snapshots: [
+      {
+        id: "snapshot-old",
+        createdAt: 1,
+        progressPercent: 35,
+        headline: "Backend summary stored",
+        summary: [
+          "## Progress",
+          "- Stored backend summary.",
+          "## Current State",
+          "- UI remains.",
+          "## Blockers",
+          "- None.",
+          "## Next Steps",
+          "- Add UI.",
+        ].join("\n"),
+        revision: 1,
+      },
+      {
+        id: "snapshot-new",
+        createdAt: Date.now(),
+        progressPercent: 70,
+        headline: "Summary view is underway",
+        summary: [
+          "## Progress",
+          "- Added UI shell.",
+          "## Current State",
+          "- Tests remain.",
+          "## Blockers",
+          "- None.",
+          "## Next Steps",
+          "- Verify.",
+        ].join("\n"),
+        revision: 2,
+      },
+    ],
+  });
+
+  assert.match(summary, /Latest summary freshness: fresh/);
+  assert.match(summary, /## Recent Progress Snapshot History/);
+  assert.match(summary, /Previous Progress Snapshot/);
+  assert.match(summary, /Latest Progress Snapshot/);
+  assert.match(summary, /Summary view is underway/);
+});
+
+test("Cesium base prompt and tool schema are stable across dynamic modes", () => {
+  const base = buildCesiumBaseSystemPrompt();
+  assert.equal(base, buildCesiumBaseSystemPrompt());
+  assert.doesNotMatch(base, /current mode is \*\*/i);
+  const tools = buildOpenAiToolDefinitions();
+  assert.deepEqual(tools, buildOpenAiToolDefinitions());
+  const names = tools.map((tool) => tool.function.name);
+  assert.equal(names.includes("burn_goal_set"), true);
+  assert.equal(names.includes("burn_goal_summarize"), true);
+  assert.equal(names.includes("burn_goal_pause"), true);
+  assert.equal(names.includes("burn_goal_block"), true);
+  assert.equal(names.includes("burn_goal_complete"), true);
+  assert.equal(names.includes("burn_goal_update_plan"), false);
+  assert.equal(names.includes("burn_goal_update_progress"), false);
+  assert.equal(names.includes("burn_goal_summarize_state"), false);
+  assert.equal(names.includes("burn_goal_resume"), false);
+});
+
+test("Cesium Burn reminder uses Burn tools instead of generic Goal state phrases", () => {
+  const reminder = buildCesiumModeReminder({
+    mode: "burn",
+    workspaceRoot: TEST_DATA_DIR,
+    dateLabel: "today",
+    gitSummary: "clean",
+    mcpSummaries: [],
+  });
+  assert.match(reminder, /burn_goal_set/);
+  assert.match(reminder, /burn_goal_summarize/);
+  assert.match(reminder, /burn_goal_complete/);
+  assert.match(reminder, /latest summary is missing or materially stale/);
+  assert.match(reminder, /Do not call it every turn/);
+  assert.doesNotMatch(reminder, /GOAL_STATE:/);
+});
+
+test("Cesium system reminders are injected into targeted user turns", () => {
+  const history = normalizeEventsToHistory([
+    {
+      seq: 1,
+      eventId: "u1",
+      conversationId: "c1",
+      createdAt: 1,
+      kind: "user_message",
+      messageId: "m1",
+      content: "What mode am I in?",
+    },
+    {
+      seq: 2,
+      eventId: "r1",
+      conversationId: "c1",
+      createdAt: 2,
+      kind: "system_reminder",
+      reminderId: "mode-m1",
+      targetMessageId: "m1",
+      reason: "mode",
+      text: "<system-reminder>You are now in **ask mode**.</system-reminder>",
+    },
+  ] as never);
+  const user = history.find((message) => message.role === "user");
+  assert.match(user?.content as string, /system-reminder/);
+  assert.match(user?.content as string, /What mode am I in/);
+});
+
+test("Cesium mode policy blocks write tools in Ask and permits plan tools in Plan", () => {
+  assert.equal(resolveCesiumModeToolPolicy({ mode: "ask", toolName: "edit_file" }).allowed, false);
+  assert.equal(resolveCesiumModeToolPolicy({ mode: "ask", toolName: "read_file" }).allowed, true);
+  assert.equal(resolveCesiumModeToolPolicy({ mode: "plan", toolName: "create_plan" }).allowed, true);
+  assert.equal(resolveCesiumModeToolPolicy({ mode: "agent", toolName: "orchestration_create_issue" }).allowed, false);
+});
+
+test("Cesium plan markdown parser projects checklist statuses", () => {
+  const entries = parsePlanEntriesFromMarkdown(
+    ["# Example", "", "- [ ] Discover files", "- [x] Draft plan", "- [!] Blocked by auth"].join("\n")
+  );
+  assert.deepEqual(entries.map((entry) => entry.status), ["pending", "completed", "blocked"]);
+  assert.equal(entries[0]?.content, "Discover files");
+});
+
 test("Cesium setConfigOption does not clobber orchestration mode when changing model", async () => {
   const backend = AGENT_BACKENDS["cesium-agent"];
   const provider = await createCesiumAgentProvider({ backend });
@@ -583,4 +1041,73 @@ test("buildOpenAiToolDefinitions avoids JSON Schema union type arrays for OpenAI
   const blockedReason = (updateIssue!.function.parameters as { properties?: Record<string, unknown> })
     .properties?.blockedReason as { type?: unknown } | undefined;
   assert.equal(blockedReason?.type, "string");
+});
+
+test("default Cesium orchestration settings continue when work remains", async () => {
+  const settings = await getCesiumAgentSettingsPublic();
+  assert.equal(settings.orchestration.continueWhenIncomplete, true);
+});
+
+test("patchCesiumAgentSettings persists orchestration continue toggle", async () => {
+  const patched = await patchCesiumAgentSettings({
+    orchestration: { continueWhenIncomplete: false },
+  });
+  assert.equal(patched.orchestration.continueWhenIncomplete, false);
+  await patchCesiumAgentSettings({
+    orchestration: { continueWhenIncomplete: true },
+  });
+});
+
+test("normalizeCesiumContextWindow defaults invalid provider values to 100k", () => {
+  assert.equal(DEFAULT_CESIUM_CONTEXT_WINDOW, 100_000);
+  assert.equal(normalizeCesiumContextWindow(undefined), 100_000);
+  assert.equal(normalizeCesiumContextWindow(null), 100_000);
+  assert.equal(normalizeCesiumContextWindow(0), 100_000);
+  assert.equal(normalizeCesiumContextWindow(-1), 100_000);
+  assert.equal(normalizeCesiumContextWindow({ context: 128_000 }), 100_000);
+  assert.equal(normalizeCesiumContextWindow("not-a-number"), 100_000);
+  assert.equal(normalizeCesiumContextWindow(128_000), 128_000);
+  assert.equal(normalizeCesiumContextWindow("262144"), 262_144);
+});
+
+test("findCesiumModelCatalogEntry applies default context window for missing values", () => {
+  const entry = findCesiumModelCatalogEntry("custom/host-model", [
+    {
+      providerId: "custom",
+      providerName: "Custom",
+      modelId: "custom/host-model",
+      modelName: "Custom/Host Model",
+      apiKind: "openai-compatible",
+      supportsTools: true,
+      supportsReasoning: false,
+      supportsStructuredOutput: false,
+    },
+  ]);
+  assert.ok(entry);
+  assert.equal(entry!.contextWindow, 100_000);
+});
+
+test("createCesiumAgentConfigOptions includes default context window metadata", async () => {
+  await patchCesiumAgentSettings({
+    customProviders: [
+      {
+        id: "custom-host",
+        name: "Custom Host",
+        apiKind: "openai-compatible",
+        baseUrl: "https://example.com/v1",
+        models: [{ id: "plain-model", name: "Plain Model" }],
+      },
+    ],
+  });
+  const options = await createCesiumAgentConfigOptions();
+  const modelOption = options
+    .find((option) => option.id === "model")
+    ?.options.find((option) => option.value === "custom-host/plain-model");
+  assert.ok(modelOption);
+  assert.match(modelOption!.description ?? "", /100,000 ctx/);
+  assert.equal(modelOption!.metadata?.contextWindow, "100000");
+});
+
+test("resolveCesiumModelContextWindow falls back to default for unknown models", async () => {
+  assert.equal(await resolveCesiumModelContextWindow("missing/provider-model"), 100_000);
 });

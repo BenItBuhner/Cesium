@@ -25,6 +25,7 @@ export type SlashMenuItem = {
   id: string;
   label: string;
   searchText: string;
+  searchKey?: string;
   disabled?: boolean;
   action: SlashMenuAction;
 };
@@ -34,6 +35,19 @@ export type SlashMenuSection = {
   label?: string;
   items: SlashMenuItem[];
 };
+
+export const SLASH_MENU_MAX_VISIBLE_ITEMS = 80;
+
+export type SlashMenuFilterResult = {
+  sections: SlashMenuSection[];
+  totalCount: number;
+  visibleCount: number;
+  truncated: boolean;
+};
+
+function slashSearchKey(label: string, searchText: string): string {
+  return `${label} ${searchText}`.toLowerCase();
+}
 
 function walkFiles(node: FileNode, base: string): AtSuggestion[] {
   if (node.type === "file") {
@@ -118,11 +132,12 @@ export function getSlashMenuSections(input: {
       id: "modes",
       label: "Modes",
       items: (input.modeOptions ?? []).map((mode) => ({
-        id: `mode:${mode.id}`,
-        label: mode.label,
-        searchText: `${mode.label} ${mode.id} mode`,
-        action: { kind: "mode", modeId: mode.id },
-      })),
+          id: `mode:${mode.id}`,
+          label: mode.label,
+          searchText: `${mode.label} ${mode.id} /${mode.id} mode`,
+          searchKey: slashSearchKey(mode.label, `${mode.label} ${mode.id} /${mode.id} mode`),
+          action: { kind: "mode", modeId: mode.id },
+        })),
     });
   }
 
@@ -136,6 +151,7 @@ export function getSlashMenuSections(input: {
           id: `model:${modelValue}`,
           label: model.name,
           searchText: `${model.name} ${modelValue} model`,
+          searchKey: slashSearchKey(model.name, `${model.name} ${modelValue} model`),
           action: { kind: "model", model },
         };
       }),
@@ -151,6 +167,10 @@ export function getSlashMenuSections(input: {
         id: `backend:${entry.id}`,
         label: entry.experimental ? `${entry.label} (experimental)` : entry.label,
         searchText: `${entry.label} ${entry.id} harness backend`,
+        searchKey: slashSearchKey(
+          entry.experimental ? `${entry.label} (experimental)` : entry.label,
+          `${entry.label} ${entry.id} harness backend`
+        ),
         disabled: !entry.available,
         action: { kind: "backend", backendId: entry.id },
       })),
@@ -163,10 +183,13 @@ export function getSlashMenuSections(input: {
     for (const option of input.sessionConfigOptions ?? []) {
       for (const choice of option.options) {
         const choiceValue = choice.value || choice.name;
+        const label = `${option.name}: ${choice.name}`;
+        const searchText = `${option.name} ${choice.name} ${option.id} ${choiceValue}`;
         commandItems.push({
           id: `config:${option.id}:${choice.value}`,
-          label: `${option.name}: ${choice.name}`,
-          searchText: `${option.name} ${choice.name} ${option.id} ${choiceValue}`,
+          label,
+          searchText,
+          searchKey: slashSearchKey(label, searchText),
           action: { kind: "config", configId: option.id, value: choiceValue },
         });
       }
@@ -178,12 +201,14 @@ export function getSlashMenuSections(input: {
       id: "worktree",
       label: "Worktree",
       searchText: "worktree git branch checkout",
+      searchKey: slashSearchKey("Worktree", "worktree git branch checkout"),
       action: { kind: "insert", insert: "/worktree " },
     });
     commandItems.push({
       id: "delete-worktree",
       label: "Delete Worktree",
       searchText: "delete worktree git checkout",
+      searchKey: slashSearchKey("Delete Worktree", "delete worktree git checkout"),
       action: { kind: "insert", insert: "/delete-worktree " },
     });
   }
@@ -203,22 +228,68 @@ export function flattenSlashMenuSections(sections: SlashMenuSection[]): SlashMen
   return sections.flatMap((section) => section.items);
 }
 
+export function filterSlashMenuSectionsForDisplay(
+  sections: SlashMenuSection[],
+  query: string,
+  maxVisibleItems = SLASH_MENU_MAX_VISIBLE_ITEMS
+): SlashMenuFilterResult {
+  const q = query.toLowerCase().trim();
+  const visibleLimit = Math.max(0, maxVisibleItems);
+  const nextSections: SlashMenuSection[] = [];
+  let totalCount = 0;
+  let visibleCount = 0;
+
+  if (!q) {
+    for (const section of sections) {
+      totalCount += section.items.length;
+      if (visibleCount >= visibleLimit) {
+        continue;
+      }
+      const remaining = visibleLimit - visibleCount;
+      const visibleItems = section.items.slice(0, remaining);
+      visibleCount += visibleItems.length;
+      if (visibleItems.length > 0) {
+        nextSections.push({ ...section, items: visibleItems });
+      }
+    }
+    return {
+      sections: nextSections,
+      totalCount,
+      visibleCount,
+      truncated: totalCount > visibleCount,
+    };
+  }
+
+  for (const section of sections) {
+    const visibleItems: SlashMenuItem[] = [];
+    for (const item of section.items) {
+      if (!(item.searchKey ?? slashSearchKey(item.label, item.searchText)).includes(q)) {
+        continue;
+      }
+      totalCount += 1;
+      if (visibleCount < visibleLimit) {
+        visibleItems.push(item);
+        visibleCount += 1;
+      }
+    }
+    if (visibleItems.length > 0) {
+      nextSections.push({ ...section, items: visibleItems });
+    }
+  }
+
+  return {
+    sections: nextSections,
+    totalCount,
+    visibleCount,
+    truncated: totalCount > visibleCount,
+  };
+}
+
 export function filterSlashMenuSections(
   sections: SlashMenuSection[],
   query: string
 ): SlashMenuSection[] {
-  const q = query.toLowerCase().trim();
-  if (!q) return sections;
-  return sections
-    .map((section) => ({
-      ...section,
-      items: section.items.filter(
-        (item) =>
-          item.label.toLowerCase().includes(q) ||
-          item.searchText.toLowerCase().includes(q)
-      ),
-    }))
-    .filter((section) => section.items.length > 0);
+  return filterSlashMenuSectionsForDisplay(sections, query).sections;
 }
 
 export function filterAtSuggestions(list: AtSuggestion[], query: string): AtSuggestion[] {

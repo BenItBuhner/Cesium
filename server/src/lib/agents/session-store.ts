@@ -6,6 +6,7 @@ import { measureServerPerf } from "../perf.js";
 import { getStorage } from "../../storage/runtime.js";
 import { normalizeConversationRecord } from "./conversation-normalize.js";
 import { isAgentConversationRankNeutralDelta } from "./conversation-rank.js";
+import { asRecord } from "./json-coerce.js";
 import { extractToolEditPreview } from "./tool-edit-preview.js";
 import {
   countUserMessageEvents,
@@ -31,7 +32,6 @@ import {
   snapshotHeadCacheKey,
 } from "./cache-keys.js";
 import type {
-  AgentBackendId,
   AgentConversationRecord,
   AgentConversationSnapshot,
   AgentConversationSnapshotHead,
@@ -107,12 +107,6 @@ async function invalidateConversationCaches(
   if (conversationId) {
     await cacheDel(snapshotHeadCacheKey(workspaceId, conversationId));
   }
-}
-
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined;
 }
 
 function pathFromFileChange(rawRecord: Record<string, unknown>): string | undefined {

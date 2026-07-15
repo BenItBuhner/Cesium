@@ -90,6 +90,23 @@ test("Cursor SDK model variants become concrete selectable rows", () => {
   );
 });
 
+test("Cursor SDK aliases become selectable model rows", () => {
+  const options = cursorSdkConfigOptionsFromModels([
+    {
+      id: "composer-2.5",
+      displayName: "Composer 2.5",
+      aliases: ["composer-latest"],
+    },
+  ]);
+  const modelOption = options.find((option) => option.id === "model");
+  assert.ok(modelOption);
+  assert.equal(modelOption.currentValue, "composer-2.5");
+  assert.deepEqual(
+    modelOption.options.map((option) => option.value),
+    ["composer-2.5", "composer-latest"]
+  );
+});
+
 test("Cursor SDK encoded model values decode into ModelSelection params", () => {
   const encoded = encodeCursorSdkModelValue("codex-5.3", [
     { id: "reasoning_effort", value: "high" },

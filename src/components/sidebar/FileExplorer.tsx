@@ -10,7 +10,9 @@ import {
   type KeyboardEvent,
   type MouseEvent,
 } from "react";
-import { Files, GitBranch, Search, type LucideIcon } from "lucide-react";
+import { Blocks, Files, GitBranch, Search, type LucideIcon } from "lucide-react";
+import dynamic from "next/dynamic";
+import { ExtensionIcon } from "@/components/extensions/ExtensionIcon";
 import { HardwareAwareTextInput } from "@/components/input/HardwareAwareTextField";
 import { useOpenInEditor } from "@/components/editor/OpenInEditorContext";
 import { useEditorBridgeRef } from "@/components/ide/EditorBridgeContext";
@@ -27,13 +29,35 @@ import {
   renamePath,
   uploadFile,
   writeFile,
+  fetchInstalledExtensions,
+  getServerBaseUrl,
+  type ExtensionActivitySurfaceCapability,
+  type ExtensionIconDescriptor,
+  type ExtensionInstallRecord,
+  type ExtensionSurfaceSession,
 } from "@/lib/server-api";
 import { FileTree, collectExpandableFolderPaths } from "./FileTree";
 import { SidebarAppMenu } from "./SidebarAppMenu";
 import { useUserPreferences } from "@/components/preferences/UserPreferencesProvider";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 
-type SidebarView = "explorer" | "search" | "scm";
+type SidebarView = "explorer" | "search" | "scm" | "extensions";
+
+type ExtensionActivityContainer = {
+  id: string;
+  title: string;
+  icon: ExtensionIconDescriptor;
+  iconUrl?: string;
+  extension: ExtensionInstallRecord;
+};
+
+type SidebarExtensionSurface = {
+  extensionId: string;
+  surfaceId: string;
+  title: string;
+  kind: "view" | "webview";
+  viewType?: string;
+};
 
 type FsPromptKind = "rename" | "newFile" | "newFolder";
 
@@ -87,16 +111,105 @@ function samePathSet(current: Set<string>, next: string[]): boolean {
   return true;
 }
 
+function extensionResourceUrl(
+  workspaceId: string,
+  extensionId: string,
+  resourcePath: string
+): string {
+  return `${getServerBaseUrl()}/api/workspaces/${encodeURIComponent(workspaceId)}/extensions/${encodeURIComponent(extensionId)}/resource?path=${encodeURIComponent(resourcePath)}`;
+}
+
+function getExtensionActivityContainers(
+  extensions: ExtensionInstallRecord[],
+  workspaceId: string | null
+): ExtensionActivityContainer[] {
+  if (!workspaceId) return [];
+  const containers: ExtensionActivityContainer[] = [];
+  for (const extension of extensions) {
+    const surfaces = extension.manifest.capabilities?.activitySurfaces ?? [];
+    const byContainer = new Map<string, ExtensionActivitySurfaceCapability>();
+    for (const surface of surfaces) {
+      if (surface.visibility !== "always") continue;
+      if (surface.kind !== "activity.webviewView" && surface.kind !== "activity.treeView") continue;
+      if (!byContainer.has(surface.containerId)) {
+        byContainer.set(surface.containerId, surface);
+      }
+    }
+    for (const surface of byContainer.values()) {
+      containers.push({
+        id: surface.containerId,
+        title: surface.title || extension.displayName,
+        icon: surface.icon,
+        iconUrl: surface.icon.kind === "resource"
+          ? extensionResourceUrl(workspaceId, extension.extensionId, surface.icon.path)
+          : undefined,
+        extension,
+      });
+    }
+  }
+  return containers;
+}
+
+function getExtensionViewEntries(extension: ExtensionInstallRecord): SidebarExtensionSurface[] {
+  const normalized = extension.manifest.capabilities?.activitySurfaces;
+  if (normalized?.length) {
+    return normalized
+      .filter((surface) => surface.visibility === "always")
+      .map((surface) => ({
+        extensionId: extension.extensionId,
+        surfaceId: surface.surfaceId,
+        title: surface.title || extension.displayName,
+        viewType: surface.containerId,
+        kind: surface.kind === "activity.webviewView" ? "webview" : "view",
+      }));
+  }
+  const contributes = extension.manifest.raw.contributes;
+  const views =
+    contributes && typeof contributes === "object" && "views" in contributes
+      ? (contributes as { views?: unknown }).views
+      : undefined;
+  const entries: SidebarExtensionSurface[] = [];
+  if (!views || typeof views !== "object") return entries;
+  for (const [containerId, viewList] of Object.entries(views as Record<string, unknown>)) {
+    if (!Array.isArray(viewList)) continue;
+    for (const contributedView of viewList) {
+      if (!contributedView || typeof contributedView !== "object") continue;
+      const id = (contributedView as { id?: unknown }).id;
+      const name = (contributedView as { name?: unknown }).name;
+      const type = (contributedView as { type?: unknown }).type;
+      if (typeof id !== "string" || !id.trim()) continue;
+      entries.push({
+        extensionId: extension.extensionId,
+        surfaceId: id,
+        title: typeof name === "string" && name.trim() ? name : extension.displayName,
+        viewType: containerId,
+        kind: type === "webview" ? "webview" : "view",
+      });
+    }
+  }
+  return entries;
+}
+
+// A static import of ExtensionSurfaceView here would drag the whole extension
+// surface module (and the settings panel tree it pulls) into the main chunk,
+// defeating EditorPanel's dynamic import of the same module.
+const ExtensionSurfaceFrame = dynamic(
+  () => import("@/components/editor/ExtensionSurfaceView").then((m) => m.ExtensionSurfaceFrame),
+  { ssr: false }
+);
+
 export function FileExplorer() {
   const { openExplorerFile, activeExplorerPath } = useOpenInEditor();
   const bridgeRef = useEditorBridgeRef();
   const { openAt, openAtPoint } = useWorkbenchContextMenu();
-  const { experimentalIpadCustomButtons } = useUserPreferences();
+  const { experimentalIpadCustomButtons, vscodeExtensionsBeta } = useUserPreferences();
   const { pushNotification, dismiss } = useWorkbenchNotifications();
   const {
+    activeWorkspaceId,
     fileTree,
     workspaceInfo,
     loading,
+    sessionReady,
     loadFolderChildren,
     refreshTree,
     workspaceSession,
@@ -108,6 +221,7 @@ export function FileExplorer() {
     () => new Set(workspaceSession.explorer.expandedPaths)
   );
   const pendingRevealLoadsRef = useRef(new Set<string>());
+  const lastSessionSyncKeyRef = useRef<string | null>(null);
   const uploadInputRef = useRef<HTMLInputElement>(null);
   const uploadFolderRef = useRef<string>("");
   const scrollRootRef = useRef<HTMLDivElement>(null);
@@ -119,6 +233,10 @@ export function FileExplorer() {
     initialValue: string;
   } | null>(null);
   const [fsPromptValue, setFsPromptValue] = useState("");
+  const [installedExtensions, setInstalledExtensions] = useState<ExtensionInstallRecord[]>([]);
+  const [selectedExtensionContainerId, setSelectedExtensionContainerId] = useState<string | null>(null);
+  const [activeSidebarExtensionSurface, setActiveSidebarExtensionSurface] =
+    useState<SidebarExtensionSurface | null>(null);
 
   const expandablePaths = useMemo(
     () => new Set(collectExpandableFolderPaths(fileTree?.children, "")),
@@ -129,6 +247,36 @@ export function FileExplorer() {
     [expandedPaths, expandablePaths]
   );
   const [explorerFade, setExplorerFade] = useState({ top: false, bottom: false });
+  const explorerFadeRef = useRef(explorerFade);
+  const extensionActivityContainers = useMemo(
+    () => getExtensionActivityContainers(installedExtensions, activeWorkspaceId),
+    [activeWorkspaceId, installedExtensions]
+  );
+  const selectedExtensionContainer = useMemo(
+    () =>
+      selectedExtensionContainerId
+        ? extensionActivityContainers.find((container) => container.id === selectedExtensionContainerId) ?? null
+        : null,
+    [extensionActivityContainers, selectedExtensionContainerId]
+  );
+  const selectedExtensionSurfaces = useMemo(() => {
+    if (!selectedExtensionContainerId || !selectedExtensionContainer) return [];
+    const entries = getExtensionViewEntries(selectedExtensionContainer.extension);
+    const exact = entries
+      .filter((surface) => surface.viewType === selectedExtensionContainerId);
+    return exact.length > 0 ? exact : entries;
+  }, [selectedExtensionContainer, selectedExtensionContainerId]);
+  const activeSidebarFrameSurface = useMemo(() => {
+    if (!activeSidebarExtensionSurface) return null;
+    return {
+      kind: activeSidebarExtensionSurface.kind,
+      extensionId: activeSidebarExtensionSurface.extensionId,
+      surfaceId: activeSidebarExtensionSurface.surfaceId,
+      title: activeSidebarExtensionSurface.title,
+      viewType: activeSidebarExtensionSurface.viewType,
+      placement: "sidebar" as const,
+    };
+  }, [activeSidebarExtensionSurface]);
 
   const updateExplorerFade = useCallback(() => {
     const root = scrollRootRef.current;
@@ -136,13 +284,47 @@ export function FileExplorer() {
       return;
     }
     const maxScrollY = root.scrollHeight - root.clientHeight;
-    setExplorerFade({
+    const next = {
       top: root.scrollTop > 2,
       bottom: maxScrollY > 2 && root.scrollTop < maxScrollY - 2,
-    });
+    };
+    const current = explorerFadeRef.current;
+    if (current.top === next.top && current.bottom === next.bottom) {
+      return;
+    }
+    explorerFadeRef.current = next;
+    setExplorerFade(next);
   }, []);
 
   useEffect(() => {
+    explorerFadeRef.current = explorerFade;
+  }, [explorerFade]);
+
+  const setSidebarView = useCallback(
+    (nextView: SidebarView) => {
+      setView(nextView);
+      updateWorkspaceSession((current) => {
+        if (current.explorer.view === nextView) {
+          return current;
+        }
+        return {
+          ...current,
+          explorer: {
+            ...current.explorer,
+            view: nextView,
+          },
+        };
+      });
+    },
+    [updateWorkspaceSession]
+  );
+
+  useEffect(() => {
+    const syncKey = `${activeWorkspaceId ?? "none"}:${sessionReady ? "ready" : "loading"}`;
+    if (lastSessionSyncKeyRef.current === syncKey) {
+      return;
+    }
+    lastSessionSyncKeyRef.current = syncKey;
     setView(workspaceSession.explorer.view);
     setSearchQuery(workspaceSession.explorer.searchQuery);
     setExpandedPaths((current) =>
@@ -151,27 +333,104 @@ export function FileExplorer() {
         : new Set(workspaceSession.explorer.expandedPaths)
     );
   }, [
+    activeWorkspaceId,
+    sessionReady,
     workspaceSession.explorer.expandedPaths,
     workspaceSession.explorer.searchQuery,
     workspaceSession.explorer.view,
   ]);
 
   useEffect(() => {
-    updateWorkspaceSession((current) => ({
-      ...current,
-      explorer: {
-        ...current.explorer,
-        view,
-        searchQuery,
-        expandedPaths: [...expandedPaths],
-      },
-    }));
+    if (!vscodeExtensionsBeta && view === "extensions") {
+      setSidebarView("explorer");
+    }
+  }, [setSidebarView, view, vscodeExtensionsBeta]);
+
+  useEffect(() => {
+    if (!vscodeExtensionsBeta || !activeWorkspaceId) {
+      setInstalledExtensions([]);
+      setSelectedExtensionContainerId(null);
+      return;
+    }
+    let cancelled = false;
+    fetchInstalledExtensions(activeWorkspaceId)
+      .then(({ extensions }) => {
+        if (!cancelled) {
+          setInstalledExtensions(extensions.filter((extension) => extension.enabled));
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setInstalledExtensions([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeWorkspaceId, vscodeExtensionsBeta]);
+
+  useEffect(() => {
+    if (
+      selectedExtensionContainerId &&
+      !extensionActivityContainers.some((container) => container.id === selectedExtensionContainerId)
+    ) {
+      setSelectedExtensionContainerId(null);
+    }
+  }, [extensionActivityContainers, selectedExtensionContainerId]);
+
+  useEffect(() => {
+    if (!selectedExtensionContainerId) {
+      setActiveSidebarExtensionSurface(null);
+      return;
+    }
+    if (
+      activeSidebarExtensionSurface &&
+      activeSidebarExtensionSurface.viewType === selectedExtensionContainerId &&
+      selectedExtensionSurfaces.some(
+        (surface) =>
+          surface.extensionId === activeSidebarExtensionSurface.extensionId &&
+          surface.surfaceId === activeSidebarExtensionSurface.surfaceId
+      )
+    ) {
+      return;
+    }
+    setActiveSidebarExtensionSurface(selectedExtensionSurfaces[0] ?? null);
+  }, [
+    activeSidebarExtensionSurface,
+    selectedExtensionContainerId,
+    selectedExtensionSurfaces,
+  ]);
+
+  useEffect(() => {
+    const nextExpanded = [...expandedPaths];
+    updateWorkspaceSession((current) => {
+      const explorer = current.explorer;
+      const sameExpanded =
+        explorer.expandedPaths.length === nextExpanded.length &&
+        explorer.expandedPaths.every((path, index) => path === nextExpanded[index]);
+      if (
+        explorer.view === view &&
+        explorer.searchQuery === searchQuery &&
+        sameExpanded
+      ) {
+        return current;
+      }
+      return {
+        ...current,
+        explorer: {
+          ...explorer,
+          view,
+          searchQuery,
+          expandedPaths: nextExpanded,
+        },
+      };
+    });
   }, [expandedPaths, searchQuery, updateWorkspaceSession, view]);
 
   useEffect(() => {
     const root = scrollRootRef.current;
     if (!root) return;
-    root.scrollTop = workspaceSession.explorer.scrollTop;
+    if (root.scrollTop !== workspaceSession.explorer.scrollTop) {
+      root.scrollTop = workspaceSession.explorer.scrollTop;
+    }
     requestAnimationFrame(updateExplorerFade);
   }, [updateExplorerFade, workspaceSession.explorer.scrollTop]);
 
@@ -680,19 +939,19 @@ export function FileExplorer() {
               type: "item",
               id: "v-ex",
               label: "Show Explorer",
-              onSelect: () => setView("explorer"),
+              onSelect: () => setSidebarView("explorer"),
             },
             {
               type: "item",
               id: "v-search",
               label: "Show Search",
-              onSelect: () => setView("search"),
+              onSelect: () => setSidebarView("search"),
             },
             {
               type: "item",
               id: "v-scm",
               label: "Show Source Control",
-              onSelect: () => setView("scm"),
+              onSelect: () => setSidebarView("scm"),
             },
             { type: "sep" },
             {
@@ -713,7 +972,7 @@ export function FileExplorer() {
           >
             <ActivityButton
               active={view === "explorer"}
-              onClick={() => setView("explorer")}
+              onClick={() => setSidebarView("explorer")}
               label="Explorer"
               icon={Files}
               onContextMenu={(e) => {
@@ -723,14 +982,14 @@ export function FileExplorer() {
                     type: "item",
                     id: "focus-ex",
                     label: "Focus Explorer",
-                    onSelect: () => setView("explorer"),
+                    onSelect: () => setSidebarView("explorer"),
                   },
                 ]);
               }}
             />
             <ActivityButton
               active={view === "search"}
-              onClick={() => setView("search")}
+              onClick={() => setSidebarView("search")}
               label="Search"
               icon={Search}
               onContextMenu={(e) => {
@@ -740,14 +999,14 @@ export function FileExplorer() {
                     type: "item",
                     id: "focus-search",
                     label: "Focus Search",
-                    onSelect: () => setView("search"),
+                    onSelect: () => setSidebarView("search"),
                   },
                 ]);
               }}
             />
             <ActivityButton
               active={view === "scm"}
-              onClick={() => setView("scm")}
+              onClick={() => setSidebarView("scm")}
               label="Source Control"
               icon={GitBranch}
               onContextMenu={(e) => {
@@ -757,11 +1016,73 @@ export function FileExplorer() {
                     type: "item",
                     id: "focus-scm",
                     label: "Focus Source Control",
-                    onSelect: () => setView("scm"),
+                    onSelect: () => setSidebarView("scm"),
                   },
                 ]);
               }}
             />
+            {vscodeExtensionsBeta ? (
+              <>
+                <ActivityButton
+                  active={view === "extensions" && !selectedExtensionContainerId}
+                  onClick={() => {
+                    setSelectedExtensionContainerId(null);
+                    setActiveSidebarExtensionSurface(null);
+                    setSidebarView("extensions");
+                  }}
+                  label="Extensions"
+                  icon={Blocks}
+                  onContextMenu={(e) => {
+                    e.stopPropagation();
+                    openAt(e, [
+                      {
+                        type: "item",
+                        id: "focus-extensions",
+                        label: "Focus Extensions",
+                        onSelect: () => {
+                          setSelectedExtensionContainerId(null);
+                          setActiveSidebarExtensionSurface(null);
+                          setSidebarView("extensions");
+                        },
+                      },
+                    ]);
+                  }}
+                />
+                {extensionActivityContainers.map((container) => (
+                  <ExtensionActivityButton
+                    key={`${container.extension.extensionId}:${container.id}`}
+                    active={view === "extensions" && selectedExtensionContainerId === container.id}
+                    label={container.title}
+                    icon={container.icon}
+                    iconUrl={container.iconUrl}
+                    onClick={() => {
+                      const entries = getExtensionViewEntries(container.extension);
+                      const exact = entries.filter((surface) => surface.viewType === container.id);
+                      setSelectedExtensionContainerId(container.id);
+                      setActiveSidebarExtensionSurface(exact[0] ?? entries[0] ?? null);
+                      setSidebarView("extensions");
+                    }}
+                    onContextMenu={(e) => {
+                      e.stopPropagation();
+                      openAt(e, [
+                        {
+                          type: "item",
+                          id: `focus-${container.id}`,
+                          label: `Focus ${container.title}`,
+                          onSelect: () => {
+                            const entries = getExtensionViewEntries(container.extension);
+                            const exact = entries.filter((surface) => surface.viewType === container.id);
+                            setSelectedExtensionContainerId(container.id);
+                            setActiveSidebarExtensionSurface(exact[0] ?? entries[0] ?? null);
+                            setSidebarView("extensions");
+                          },
+                        },
+                      ]);
+                    }}
+                  />
+                ))}
+              </>
+            ) : null}
           </div>
         </div>
       </div>
@@ -797,13 +1118,17 @@ export function FileExplorer() {
                 onScroll={(event) => {
                   updateExplorerFade();
                   const nextScrollTop = event.currentTarget.scrollTop;
-                  updateWorkspaceSession((current) => ({
-                    ...current,
-                    explorer: {
-                      ...current.explorer,
-                      scrollTop: nextScrollTop,
-                    },
-                  }));
+                  updateWorkspaceSession((current) =>
+                    current.explorer.scrollTop === nextScrollTop
+                      ? current
+                      : {
+                          ...current,
+                          explorer: {
+                            ...current.explorer,
+                            scrollTop: nextScrollTop,
+                          },
+                        }
+                  );
                 }}
               >
                 <div
@@ -908,6 +1233,144 @@ export function FileExplorer() {
             </p>
           </div>
         )}
+
+        {vscodeExtensionsBeta && (
+          <div
+            className={[
+              "min-h-0 flex-1 flex-col px-[11px] pb-[11px] pt-[6px]",
+              view === "extensions" ? "flex" : "hidden",
+            ].join(" ")}
+          >
+            <div className="flex shrink-0 items-center justify-between gap-[8px]">
+              <p className="min-w-0 truncate font-sans text-[14px] font-normal text-[var(--text-primary)]">
+                {selectedExtensionContainerId
+                  ? selectedExtensionContainer?.title ?? "Extension"
+                  : "Extensions"}
+              </p>
+            </div>
+            {selectedExtensionContainerId && activeSidebarExtensionSurface ? (
+              <div className="mt-[8px] flex min-h-0 flex-1 flex-col overflow-hidden rounded-[var(--radius-card)] border border-[var(--border-subtle)] bg-[var(--bg-main)]">
+                {selectedExtensionSurfaces.length > 1 ? (
+                  <div className="flex shrink-0 gap-[4px] overflow-x-auto border-b border-[var(--border-subtle)] px-[7px] py-[6px]">
+                    {selectedExtensionSurfaces.map((surface) => {
+                      const active =
+                        surface.extensionId === activeSidebarExtensionSurface.extensionId &&
+                        surface.surfaceId === activeSidebarExtensionSurface.surfaceId;
+                      return (
+                        <button
+                          key={`${surface.extensionId}:${surface.surfaceId}`}
+                          type="button"
+                          className={[
+                            "shrink-0 rounded-[var(--radius-tab)] px-[7px] py-[4px] font-sans text-[11px] transition-colors",
+                            active
+                              ? "bg-[var(--accent-bg)] text-[var(--text-primary)]"
+                              : "text-[var(--text-secondary)] hover:bg-[var(--bg-panel)] hover:text-[var(--text-primary)]",
+                          ].join(" ")}
+                          onClick={() => setActiveSidebarExtensionSurface(surface)}
+                        >
+                          {surface.title}
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : null}
+                <div className="min-h-0 flex-1">
+                  {activeSidebarFrameSurface ? (
+                  <ExtensionSurfaceFrame
+                    surface={activeSidebarFrameSurface}
+                    placement="sidebar"
+                    showPopOut
+                    onPopOut={(session: ExtensionSurfaceSession | null) => {
+                      bridgeRef.current?.openExtensionSurfaceTab({
+                        extensionId: activeSidebarExtensionSurface.extensionId,
+                        surfaceId: activeSidebarExtensionSurface.surfaceId,
+                        title: activeSidebarExtensionSurface.title,
+                        surfaceKind: activeSidebarExtensionSurface.kind,
+                        viewType: activeSidebarExtensionSurface.viewType,
+                        surfaceSessionId: session?.sessionId,
+                        placement: "editor",
+                      });
+                    }}
+                  />
+                  ) : null}
+                </div>
+              </div>
+            ) : !selectedExtensionContainerId ? (
+              <div className="mt-[10px] rounded-[var(--radius-card)] border border-[var(--border-card)] bg-[var(--bg-panel)] px-[10px] py-[10px]">
+                <p className="font-sans text-[12px] leading-snug text-[var(--text-secondary)]">
+                  Search Open VSX, install extensions, and manage installed extensions.
+                </p>
+                <button
+                  type="button"
+                  className="mt-[10px] inline-flex items-center gap-[6px] rounded-[var(--radius-tab)] border border-[var(--border-card)] px-[9px] py-[5px] font-sans text-[12px] text-[var(--text-primary)] transition-colors hover:bg-[var(--accent-bg)]"
+                  onClick={() => {
+                    bridgeRef.current?.openExtensionSurfaceTab({
+                      extensionId: "opencursor.marketplace",
+                      surfaceId: "sidebar-marketplace",
+                      title: "Extension Marketplace",
+                      surfaceKind: "marketplace",
+                      placement: "editor",
+                    });
+                  }}
+                >
+                  Open marketplace tab
+                </button>
+              </div>
+            ) : (
+              <p className="mt-[10px] rounded-[var(--radius-card)] border border-[var(--border-subtle)] px-[10px] py-[8px] font-sans text-[12px] text-[var(--text-disabled)]">
+                This extension container has no sidebar view contributions.
+              </p>
+            )}
+            {!selectedExtensionContainerId ? (
+            <div className="mt-[10px] flex min-h-0 flex-1 flex-col gap-[8px] overflow-auto">
+              {installedExtensions.length === 0 ? (
+                <p className="rounded-[var(--radius-card)] border border-[var(--border-subtle)] px-[10px] py-[8px] font-sans text-[12px] text-[var(--text-disabled)]">
+                  No enabled extensions are installed in this workspace.
+                </p>
+              ) : (
+                installedExtensions.map((extension) => {
+                  const visibleViewEntries = getExtensionViewEntries(extension);
+                  return (
+                    <div
+                      key={extension.extensionId}
+                      className="rounded-[var(--radius-card)] border border-[var(--border-subtle)] bg-[var(--bg-main)] px-[10px] py-[8px]"
+                    >
+                      <p className="truncate font-sans text-[12px] font-medium text-[var(--text-primary)]">
+                        {extension.displayName}
+                      </p>
+                      <div className="mt-[7px] flex flex-col gap-[6px]">
+                        {visibleViewEntries.length > 0 ? (
+                          visibleViewEntries.map((surface) => (
+                            <button
+                              key={`${extension.extensionId}:${surface.surfaceId}`}
+                              type="button"
+                              className="inline-flex items-center justify-between rounded-[var(--radius-tab)] border border-[var(--border-card)] px-[8px] py-[5px] text-left font-sans text-[12px] text-[var(--text-primary)] transition-colors hover:bg-[var(--accent-bg)]"
+                              onClick={() => {
+                                setSelectedExtensionContainerId(surface.viewType ?? null);
+                                setActiveSidebarExtensionSurface(surface);
+                              }}
+                            >
+                              <span className="truncate">{surface.title}</span>
+                              <span className="ml-[8px] shrink-0 text-[10px] uppercase tracking-[0.08em] text-[var(--text-disabled)]">
+                                View
+                              </span>
+                            </button>
+                          ))
+                        ) : (
+                          <div className="rounded-[var(--radius-tab)] border border-[var(--border-subtle)] px-[8px] py-[6px] font-sans text-[11px] leading-snug text-[var(--text-disabled)]">
+                            No sidebar view contribution. Manage activation, commands, themes, and
+                            settings from the marketplace tab.
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+            ) : null}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -941,6 +1404,41 @@ function ActivityButton({
       }`}
     >
       <Icon className="size-[18px]" strokeWidth={active ? 2 : 1.5} aria-hidden />
+    </button>
+  );
+}
+
+function ExtensionActivityButton({
+  active,
+  onClick,
+  onContextMenu,
+  label,
+  icon,
+  iconUrl,
+}: {
+  active: boolean;
+  onClick: () => void;
+  onContextMenu?: (e: MouseEvent) => void;
+  label: string;
+  icon?: ExtensionIconDescriptor;
+  iconUrl?: string;
+}) {
+  return (
+    <button
+      type="button"
+      role="tab"
+      aria-selected={active}
+      aria-label={label}
+      title={label}
+      onClick={onClick}
+      onContextMenu={onContextMenu}
+      className={`flex size-[30px] shrink-0 items-center justify-center rounded-[4px] outline-none transition-colors focus-visible:outline-none ${
+        active
+          ? "bg-[var(--accent-bg)] text-[var(--text-primary)]"
+          : "text-[var(--text-secondary)] hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)]"
+      }`}
+    >
+      <ExtensionIcon icon={icon} resourceUrl={iconUrl} label={label} />
     </button>
   );
 }

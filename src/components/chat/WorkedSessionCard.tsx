@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { CollapsibleHeight } from "./CollapsibleHeight";
 import { useTheme } from "@/components/theme/ThemeProvider";
+import type { EditDiffRenderingMode } from "@/lib/theme-config";
 import { useOpenInEditor } from "@/components/editor/OpenInEditorContext";
 import { TOOL_CALL_DROPDOWN_MAX_HEIGHT_DEFAULT_PX } from "@/lib/theme-config";
 import { inferEditorLanguageFromPath } from "@/lib/editor-language";
@@ -82,9 +83,17 @@ interface WorkedSessionCardProps {
   /** Permission request message to render inside this card (adjacent in timeline). */
   embeddedPermission?: ChatMessage | null;
   onResolvePermission?: (requestId: string, optionId: string, commandHint?: string) => void;
+  /** When false, tool list uses flat layout without left rail indent (settled turn). */
+  contentRail?: boolean;
+  /** Turn finished — card should collapse when this becomes true. */
+  settled?: boolean;
 }
 
 const TOOL_FILE_PREVIEW = 5;
+
+function isContextCompressionLabel(label: string): boolean {
+  return label === "Compressing context" || label === "Compressed context";
+}
 
 const NEAR_BOTTOM_PX = 48;
 const STICK_SETTLE_MS = 80;
@@ -336,7 +345,42 @@ function filterFileRowsForEditPreview(
   return rows.filter((row) => row.label !== primary);
 }
 
-function ToolEditPreviewBlock({
+function MinimalToolEditPreviewBlock({
+  preview,
+  workspaceRoot,
+  onOpenFile,
+}: {
+  preview: WorkedSessionEditPreview;
+  workspaceRoot?: string | null;
+  onOpenFile?: (path: string) => void;
+}) {
+  const pathLabel = editPreviewPathLabel(preview, workspaceRoot) ?? "file";
+  const openPath = preview.path ? resolveWorkspaceToolPath(preview.path, workspaceRoot ?? undefined) : null;
+
+  return (
+    <div className="mt-[6px] flex min-w-0 flex-wrap items-baseline gap-x-[6px] font-sans text-[12px] leading-snug">
+      <span className="shrink-0 text-[var(--text-secondary)]">Edited</span>
+      {openPath && onOpenFile ? (
+        <button
+          type="button"
+          onClick={() => onOpenFile(openPath)}
+          className="min-w-0 truncate text-[var(--text-primary)] transition-colors hover:text-[var(--text-secondary)]"
+          title={pathLabel}
+        >
+          {pathLabel}
+        </button>
+      ) : (
+        <span className="min-w-0 truncate text-[var(--text-primary)]" title={pathLabel}>
+          {pathLabel}
+        </span>
+      )}
+      <span className="shrink-0 font-mono text-[var(--ask-accent)]">+{preview.addedLines}</span>
+      <span className="shrink-0 font-mono text-[var(--debug-accent)]">-{preview.removedLines}</span>
+    </div>
+  );
+}
+
+function FullToolEditPreviewBlock({
   preview,
   workspaceRoot,
   onOpenFile,
@@ -456,6 +500,35 @@ function ToolEditPreviewBlock({
   );
 }
 
+function ToolEditPreviewBlock({
+  preview,
+  workspaceRoot,
+  onOpenFile,
+  renderingMode = "full",
+}: {
+  preview: WorkedSessionEditPreview;
+  workspaceRoot?: string | null;
+  onOpenFile?: (path: string) => void;
+  renderingMode?: EditDiffRenderingMode;
+}) {
+  if (renderingMode === "counts") {
+    return (
+      <MinimalToolEditPreviewBlock
+        preview={preview}
+        workspaceRoot={workspaceRoot}
+        onOpenFile={onOpenFile}
+      />
+    );
+  }
+  return (
+    <FullToolEditPreviewBlock
+      preview={preview}
+      workspaceRoot={workspaceRoot}
+      onOpenFile={onOpenFile}
+    />
+  );
+}
+
 function prefersScrollInstant(): boolean {
   if (typeof window === "undefined") {
     return true;
@@ -477,10 +550,13 @@ export function WorkedSessionCard({
   toolDetailsInWorkedCard = true,
   embeddedPermission = null,
   onResolvePermission,
+  contentRail = true,
+  settled = false,
 }: WorkedSessionCardProps) {
   const { themeConfig } = useTheme();
   const entryListMaxHeightPx =
     themeConfig.toolCallDropdownMaxHeightPx ?? TOOL_CALL_DROPDOWN_MAX_HEIGHT_DEFAULT_PX;
+  const editDiffRenderingMode = themeConfig.editDiffRenderingMode ?? "full";
   const { openExplorerFile } = useOpenInEditor();
   const isControlled = controlledOpen !== undefined;
   const [uncontrolledOpen, setUncontrolledOpen] = useState(defaultOpen);
@@ -500,14 +576,21 @@ export function WorkedSessionCard({
   const preferInside = toolDetailsInWorkedCard;
   const showLoadingState = loading || hasActiveTool;
   const shimmerLoading = showLoadingState && isLiveWorkedTail;
-  const isWorkingPlaceholder = showLoadingState && entries.length === 0;
+  const isContextCompression =
+    isContextCompressionLabel(label) ||
+    entries.some((entry) => entry.kind === "compression");
+  const isWorkingPlaceholder =
+    showLoadingState && entries.length === 0 && !isContextCompression;
   const collapsibleOpen = isWorkingPlaceholder ? true : open;
   const gradientVar = surface === "editor" ? "var(--bg-main)" : "var(--bg-panel)";
   const inlineEditEntries =
     !preferInside && standaloneHighlighted ? [standaloneHighlighted] : [];
-  const hasCollapsibleEntries = entries.length > 0 || isWorkingPlaceholder;
+  const hasCollapsibleEntries =
+    entries.length > 0 || isWorkingPlaceholder || isContextCompression;
   const embeddedPermissionCard =
-    preferInside && embeddedPermission?.type === "permission-request"
+    preferInside &&
+    embeddedPermission?.type === "permission-request" &&
+    !embeddedPermission.permissionResolved
       ? embeddedPermission
       : null;
   const embeddedPermissionEl =
@@ -568,6 +651,7 @@ export function WorkedSessionCard({
     return rows;
   }, [hasCollapsibleEntries, entries, embeddedPermissionCard]);
   const prevMessageLoadingRef = useRef(loading);
+  const prevSettledRef = useRef(settled);
   const scrollRef = useRef<HTMLDivElement>(null);
   const contentMeasureRef = useRef<HTMLDivElement>(null);
   const stickToBottomRef = useRef(true);
@@ -608,8 +692,12 @@ export function WorkedSessionCard({
         setOpen(false);
       }
     }
+    if (settled && !prevSettledRef.current && !hasUnresolvedEmbeddedPermission && !loading) {
+      setOpen(false);
+    }
     prevMessageLoadingRef.current = loading;
-  }, [hasUnresolvedEmbeddedPermission, loading, setOpen]);
+    prevSettledRef.current = settled;
+  }, [hasUnresolvedEmbeddedPermission, loading, settled, setOpen]);
 
   const updateGradients = useCallback(() => {
     const el = scrollRef.current;
@@ -784,6 +872,7 @@ export function WorkedSessionCard({
             entry.editPreview ? (
               <ToolEditPreviewBlock
                 key={`inline-diff-${entry.toolCallId ?? entry.title}`}
+                renderingMode={editDiffRenderingMode}
                 preview={entry.editPreview}
                 workspaceRoot={workspaceRoot}
                 onOpenFile={handleOpenToolFile}
@@ -799,6 +888,7 @@ export function WorkedSessionCard({
           {standaloneHighlighted?.editPreview ? (
             <ToolEditPreviewBlock
               key={`inline-diff-${standaloneHighlighted.toolCallId ?? standaloneHighlighted.title}`}
+              renderingMode={editDiffRenderingMode}
               preview={standaloneHighlighted.editPreview}
               workspaceRoot={workspaceRoot}
               onOpenFile={handleOpenToolFile}
@@ -818,10 +908,17 @@ export function WorkedSessionCard({
               onTouchMove={handleTouchMove}
               onTouchEnd={handleTouchEnd}
               onTouchCancel={handleTouchEnd}
-              className="ml-[2px] border-l border-[var(--border-subtle)] pl-[10px] overflow-y-auto hide-scrollbar-y"
+              className={`${contentRail ? "ml-[2px] border-l border-[var(--border-subtle)] pl-[10px]" : ""} overflow-y-auto hide-scrollbar-y`}
               style={{ maxHeight: entryListMaxHeightPx }}
             >
               <div ref={contentMeasureRef} className="flex flex-col gap-[14px]">
+                {isContextCompression && entries.length === 0 ? (
+                  <p className="font-sans text-[13px] font-normal leading-relaxed text-[var(--text-secondary)]">
+                    Summarizing earlier conversation turns to fit the context window. Open this
+                    row again when compression finishes to see what was kept and what was
+                    summarized.
+                  </p>
+                ) : null}
                 {workedScrollRows.map((row) =>
                   row.kind === "permission" ? (
                     <div
@@ -843,6 +940,7 @@ export function WorkedSessionCard({
                       workspaceRoot={workspaceRoot}
                       onOpenToolFile={handleOpenToolFile}
                       horizScrollFadeEdge={gradientVar}
+                      editDiffRenderingMode={editDiffRenderingMode}
                     />
                   )
                 )}
@@ -850,13 +948,13 @@ export function WorkedSessionCard({
             </div>
             {showTopGrad ? (
               <div
-                className="pointer-events-none absolute inset-x-0 top-[10px] ml-[2px] h-[28px] z-[1] bg-gradient-to-b to-transparent"
+                className={`pointer-events-none absolute inset-x-0 top-[10px] ${contentRail ? "ml-[2px]" : ""} h-[28px] z-[1] bg-gradient-to-b to-transparent`}
                 style={{ backgroundImage: `linear-gradient(to bottom, ${gradientVar}, transparent)` }}
               />
             ) : null}
             {showBottomGrad ? (
               <div
-                className="pointer-events-none absolute inset-x-0 bottom-0 ml-[2px] h-[28px] z-[1] bg-gradient-to-b from-transparent"
+                className={`pointer-events-none absolute inset-x-0 bottom-0 ${contentRail ? "ml-[2px]" : ""} h-[28px] z-[1] bg-gradient-to-b from-transparent`}
                 style={{ backgroundImage: `linear-gradient(to bottom, transparent, ${gradientVar})` }}
               />
             ) : null}
@@ -873,12 +971,14 @@ function WorkedEntryBlock({
   workspaceRoot,
   onOpenToolFile,
   horizScrollFadeEdge,
+  editDiffRenderingMode,
 }: {
   entry: WorkedSessionEntry;
   isLiveWorkedTail: boolean;
   workspaceRoot: string | null;
   onOpenToolFile: (path: string) => void;
   horizScrollFadeEdge: string;
+  editDiffRenderingMode: EditDiffRenderingMode;
 }) {
   const [visible, setVisible] = useState(false);
   const [rawDetailOpen, setRawDetailOpen] = useState(false);
@@ -901,7 +1001,8 @@ function WorkedEntryBlock({
         onOpenToolFile,
         horizScrollFadeEdge,
         rawDetailOpen,
-        setRawDetailOpen
+        setRawDetailOpen,
+        editDiffRenderingMode
       )}
     </div>
   );
@@ -914,7 +1015,8 @@ function renderEntry(
   onOpenToolFile: (path: string) => void,
   horizScrollFadeEdge: string,
   rawDetailOpen: boolean,
-  onRawDetailOpenChange: (open: boolean) => void
+  onRawDetailOpenChange: (open: boolean) => void,
+  editDiffRenderingMode: EditDiffRenderingMode
 ) {
   switch (entry.kind) {
     case "verbatim":
@@ -979,6 +1081,34 @@ function renderEntry(
           </div>
         </div>
       );
+    case "compression":
+      return (
+        <div className="flex flex-col gap-[10px] font-sans text-[13px] font-normal leading-relaxed text-[var(--text-primary)]">
+          <div className="flex flex-col gap-[4px] text-[var(--text-secondary)]">
+            <p>
+              Summarized{" "}
+              <span className="text-[var(--text-primary)]">
+                {entry.compressedTurnCount}
+              </span>{" "}
+              earlier user turn{entry.compressedTurnCount === 1 ? "" : "s"}; kept{" "}
+              <span className="text-[var(--text-primary)]">
+                {entry.retainedTurnCount}
+              </span>{" "}
+              recent turn{entry.retainedTurnCount === 1 ? "" : "s"} in full.
+            </p>
+          </div>
+          {entry.summary.trim() ? (
+            <div className="rounded-[8px] border border-[color-mix(in_srgb,var(--border-card)_70%,transparent)] bg-[color-mix(in_srgb,var(--bg-card)_62%,transparent)]">
+              <p className="border-b border-[color-mix(in_srgb,var(--border-card)_55%,transparent)] px-[10px] py-[6px] text-[11px] font-medium uppercase tracking-wide text-[var(--text-secondary)]">
+                Summary
+              </p>
+              <pre className="max-h-[280px] overflow-auto whitespace-pre-wrap px-[10px] py-[8px] font-mono text-[12px] font-normal leading-relaxed text-[var(--text-primary)]">
+                {entry.summary}
+              </pre>
+            </div>
+          ) : null}
+        </div>
+      );
     case "tool": {
       const active = isToolEntryActive(entry);
       const statusKey =
@@ -1028,6 +1158,14 @@ function renderEntry(
       const extraDetail = toolBlockDetail(entry);
       const rawDetail = entry.rawDetail?.trim();
       const showRawDetail = Boolean(rawDetail && rawDetail !== extraDetail?.trim());
+      const pluginBadge = entry.pluginName ? (
+        <span className="inline-flex items-center gap-[5px] rounded-full border border-[var(--border-subtle)] bg-[var(--bg-card)] px-[7px] py-[2px] font-sans text-[10px] text-[var(--text-secondary)]">
+          {entry.pluginIconUrl ? (
+            <img alt="" src={entry.pluginIconUrl} className="size-[12px] rounded-[3px]" />
+          ) : null}
+          {entry.pluginName}
+        </span>
+      ) : null;
       return (
         <div className="flex gap-[8px]">
           <div className="min-w-0 flex-1">
@@ -1050,6 +1188,7 @@ function renderEntry(
               ) : (
                 renderToolTitleLine(entry, titleClass, workspaceRoot)
               )}
+              {pluginBadge}
               {statusKey ? (
                 <span
                   className={`rounded-full border px-[7px] py-[1px] font-sans text-[10px] font-medium uppercase tracking-[0.08em] ${toolStatusClass[statusKey]}`}
@@ -1076,6 +1215,7 @@ function renderEntry(
             ) : null}
             {entry.editPreview ? (
               <ToolEditPreviewBlock
+                renderingMode={editDiffRenderingMode}
                 preview={entry.editPreview}
                 workspaceRoot={workspaceRoot}
                 onOpenFile={onOpenToolFile}

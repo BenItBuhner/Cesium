@@ -8,7 +8,8 @@ import {
 test("stripAgentTodoJsonAssistantContent removes bare todo JSON arrays", () => {
   const raw = `[
   {"content":"One","priority":"high","status":"completed"},
-  {"content":"Two","priority":"high","status":"in_progress"}
+  {"content":"Two","priority":"high","status":"in_progress"},
+  {"content":"Three","priority":"high","status":"blocked"}
 ]`;
   assert.equal(stripAgentTodoJsonAssistantContent(raw).trim(), "");
 });
@@ -22,7 +23,13 @@ test("stripAgentTodoJsonAssistantContent removes fenced todo JSON", () => {
 test("isAgentTodoJsonDetailString detects checklist payloads", () => {
   assert.equal(
     isAgentTodoJsonDetailString(
-      '[{"content":"Synthesize plan","priority":"high","status":"completed"}]'
+      '[{"content":"Synthesize plan","priority":"high","status":"blocked"}]'
+    ),
+    true
+  );
+  assert.equal(
+    isAgentTodoJsonDetailString(
+      '[{"title":"Open new browser tab","status":"completed"}]'
     ),
     true
   );

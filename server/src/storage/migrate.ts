@@ -10,6 +10,8 @@ const ALL_BACKEND_IDS: AgentBackendId[] = [
   "gemini-acp",
   "codex-app-server",
   "claude-code-sdk",
+  "pi-agent",
+  "google-antigravity-cli",
 ];
 
 /**
@@ -28,6 +30,8 @@ export type MigrationPhase =
   | "workspace-window-sessions"
   | "agent-conversations"
   | "agent-events"
+  | "burn-goals"
+  | "extensions"
   | "provider-cache";
 
 export const ALL_MIGRATION_PHASES: MigrationPhase[] = [
@@ -41,6 +45,8 @@ export const ALL_MIGRATION_PHASES: MigrationPhase[] = [
   "workspace-window-sessions",
   "agent-conversations",
   "agent-events",
+  "burn-goals",
+  "extensions",
   "provider-cache",
 ];
 
@@ -597,6 +603,84 @@ async function migrateAgentEvents(
   return { phase: "agent-events", migrated, skipped, errors };
 }
 
+async function migrateBurnGoals(ctx: PhaseContext): Promise<MigrationPhaseReport> {
+  const errors: MigrationPhaseReport["errors"] = [];
+  let migrated = 0;
+  let skipped = 0;
+  const workspaces = await ctx.from.listWorkspaces();
+  for (let index = 0; index < workspaces.length; index += 1) {
+    const workspace = workspaces[index]!;
+    ctx.emitProgress({
+      completed: index,
+      total: workspaces.length,
+      currentKey: workspace.id,
+    });
+    const goals = await ctx.from.listBurnGoals(workspace.id);
+    for (const goal of goals) {
+      if (!ctx.overwrite) {
+        const existing = await ctx.to.getBurnGoalByConversation(
+          workspace.id,
+          goal.conversationId
+        );
+        if (existing) {
+          skipped += 1;
+          continue;
+        }
+      }
+      try {
+        await ctx.to.upsertBurnGoal(goal);
+        migrated += 1;
+      } catch (error) {
+        errors.push({ key: goal.goalId, message: (error as Error).message });
+      }
+    }
+  }
+  ctx.emitProgress({
+    completed: workspaces.length,
+    total: workspaces.length,
+  });
+  return { phase: "burn-goals", migrated, skipped, errors };
+}
+
+async function migrateExtensions(ctx: PhaseContext): Promise<MigrationPhaseReport> {
+  const errors: MigrationPhaseReport["errors"] = [];
+  let migrated = 0;
+  let skipped = 0;
+  const workspaces = await ctx.from.listWorkspaces();
+  for (let index = 0; index < workspaces.length; index += 1) {
+    const workspace = workspaces[index]!;
+    ctx.emitProgress({
+      completed: index,
+      total: workspaces.length,
+      currentKey: workspace.id,
+    });
+    const extensions = await ctx.from.listInstalledExtensions(workspace.id);
+    for (const extension of extensions) {
+      if (!ctx.overwrite) {
+        const existing = await ctx.to.getInstalledExtension(
+          workspace.id,
+          extension.extensionId
+        );
+        if (existing) {
+          skipped += 1;
+          continue;
+        }
+      }
+      try {
+        await ctx.to.upsertInstalledExtension(extension);
+        migrated += 1;
+      } catch (error) {
+        errors.push({ key: extension.extensionId, message: (error as Error).message });
+      }
+    }
+  }
+  ctx.emitProgress({
+    completed: workspaces.length,
+    total: workspaces.length,
+  });
+  return { phase: "extensions", migrated, skipped, errors };
+}
+
 async function migrateProviderCache(
   ctx: PhaseContext
 ): Promise<MigrationPhaseReport> {
@@ -650,6 +734,8 @@ const PHASE_HANDLERS: Record<
   "workspace-window-sessions": migrateWorkspaceWindowSessions,
   "agent-conversations": migrateAgentConversations,
   "agent-events": migrateAgentEvents,
+  "burn-goals": migrateBurnGoals,
+  extensions: migrateExtensions,
   "provider-cache": migrateProviderCache,
 };
 

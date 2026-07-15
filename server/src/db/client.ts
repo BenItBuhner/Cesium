@@ -83,12 +83,17 @@ export function getDb(): DrizzleClient {
 export async function warmupDb(): Promise<void> {
   if (!hasDatabaseUrl()) return;
   try {
-    const client = getDb();
-    // A tiny round-trip to force the pool to establish its first connection.
-    await client.execute("select 1");
+    await verifyDbConnection();
   } catch (error) {
     console.warn("[db] warmup failed (will retry on first query):", error);
   }
+}
+
+export async function verifyDbConnection(): Promise<void> {
+  if (!hasDatabaseUrl()) return;
+  const client = getDb();
+  // A tiny round-trip to force the pool to establish its first connection.
+  await client.execute("select 1");
 }
 
 export function getPgPool(): Sql {

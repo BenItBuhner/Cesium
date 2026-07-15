@@ -13,8 +13,16 @@ import type { AgentConversationRecord, AgentStoredEvent } from "../src/lib/agent
 
 describe("Cesium Agent frontend integration", () => {
   test("lists Cesium Agent first in harness settings", () => {
-    assert.equal(HARNESS_ORDER[0], "cesium-agent");
-    assert.equal(HARNESS_ORDER.length, 6);
+    assert.deepEqual(HARNESS_ORDER, [
+      "cesium-agent",
+      "cursor-sdk",
+      "codex-app-server",
+      "opencode-server",
+      "gemini-acp",
+      "claude-code-sdk",
+      "pi-agent",
+      "google-antigravity-cli",
+    ]);
     assert.equal(HARNESS_LABELS["cesium-agent"], "Cesium Agent (Beta)");
   });
 
@@ -104,9 +112,20 @@ describe("Cesium Agent frontend integration", () => {
       },
       {
         seq: 2,
-        eventId: "q1",
+        eventId: "r1",
         conversationId: "c1",
         createdAt: 2,
+        kind: "system_reminder",
+        reminderId: "mode-m1",
+        targetMessageId: "m1",
+        reason: "mode",
+        text: "<system-reminder>You are now in **ask mode**.</system-reminder>",
+      },
+      {
+        seq: 3,
+        eventId: "q1",
+        conversationId: "c1",
+        createdAt: 3,
         kind: "question",
         questionId: "question-1",
         prompt: "Choose a path",
@@ -114,10 +133,10 @@ describe("Cesium Agent frontend integration", () => {
         status: "pending",
       },
       {
-        seq: 3,
+        seq: 4,
         eventId: "s1",
         conversationId: "c1",
-        createdAt: 3,
+        createdAt: 4,
         kind: "subagent",
         subagentId: "sub-1",
         title: "Research",
@@ -126,10 +145,10 @@ describe("Cesium Agent frontend integration", () => {
         recentActivity: "Done",
       },
       {
-        seq: 4,
+        seq: 5,
         eventId: "cs1",
         conversationId: "c1",
-        createdAt: 4,
+        createdAt: 5,
         kind: "compression_summary",
         messageId: "summary-1",
         summary: "Important previous context.",
@@ -144,13 +163,89 @@ describe("Cesium Agent frontend integration", () => {
 
     assert.ok(messages.some((message) => message.type === "ask-question"));
     assert.ok(messages.some((message) => message.type === "subagent"));
+    assert.equal(messages.some((message) => message.content?.includes("system-reminder")), false);
     assert.ok(
       messages.some(
         (message) =>
           message.type === "worked-session" &&
+          message.workedLabel === "Compressed context" &&
           message.workedEntries?.some(
-            (entry) => entry.kind === "reasoning" && entry.text.includes("Compressed 12")
+            (entry) =>
+              entry.kind === "compression" &&
+              entry.compressedTurnCount === 12 &&
+              entry.summary.includes("Important previous context")
           )
+      )
+    );
+  });
+
+  test("shows Compressed context after compression_summary", () => {
+    const events: AgentStoredEvent[] = [
+      {
+        seq: 1,
+        eventId: "u2",
+        conversationId: "c2",
+        createdAt: 1,
+        kind: "user_message",
+        messageId: "m2",
+        content: "Continue",
+      },
+      {
+        seq: 2,
+        eventId: "cs2",
+        conversationId: "c2",
+        createdAt: 2,
+        kind: "compression_summary",
+        messageId: "summary-2",
+        summary: "Earlier work on auth.",
+        retainedTurnCount: 2,
+        compressedTurnCount: 5,
+      },
+    ];
+
+    const messages = projectAgentEventsToChatMessages(events, {
+      backendId: "cesium-agent",
+    });
+
+    assert.ok(
+      messages.some(
+        (message) =>
+          message.type === "worked-session" &&
+          message.workedLabel === "Compressed context" &&
+          message.workedEntries?.some((entry) => entry.kind === "compression")
+      )
+    );
+  });
+
+  test("shows Compressing context during Cesium compression status", () => {
+    const events: AgentStoredEvent[] = [
+      {
+        seq: 1,
+        eventId: "u1",
+        conversationId: "c1",
+        createdAt: 1,
+        kind: "user_message",
+        messageId: "m1",
+        content: "Continue",
+      },
+      {
+        seq: 2,
+        eventId: "st1",
+        conversationId: "c1",
+        createdAt: 2,
+        kind: "status",
+        status: "running",
+        detail: "Compressing context…",
+      },
+    ];
+
+    const messages = projectAgentEventsToChatMessages(events, {
+      backendId: "cesium-agent",
+    });
+
+    assert.ok(
+      messages.some(
+        (message) => message.type === "worked-session" && message.workedLabel === "Compressing context"
       )
     );
   });

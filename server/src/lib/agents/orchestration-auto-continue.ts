@@ -1,13 +1,138 @@
 import {
   addOrchestrationComment,
   findOrchestrationAssignmentForConversation,
+  findOrchestrationBoardForHeadConversation,
+  orchestrationBoardNeedsManagement,
   upsertOrchestrationAssignment,
 } from "../orchestration/store.js";
+import { getCesiumAgentSettings } from "../cesium-agent-settings.js";
 import { getWorkspaceById } from "../workspace-registry.js";
 import { agentRuntimeManager } from "./runtime-manager.js";
 import { readConversationSnapshotHead, subscribeAgentStoreEvents } from "./session-store.js";
+import { readBurnGoalForConversation } from "./burn-goal-store.js";
+import { burnGoalHasRunnableWork } from "./burn-goal-types.js";
 import type { OrchestrationAssignmentStatus } from "../orchestration/types.js";
-import type { AgentStoredEvent } from "./types.js";
+import type { AgentConversationRecord, AgentStoredEvent } from "./types.js";
+
+const AUTO_CONTINUE_MARKER = "[Auto-continue]";
+const MAX_AUTO_CONTINUE_ROUNDS = 40;
+
+function countTrailingAutoContinues(events: AgentStoredEvent[]): number {
+  let count = 0;
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index]!;
+    if (event.kind !== "user_message") {
+      continue;
+    }
+    if (
+      event.content.includes(AUTO_CONTINUE_MARKER) ||
+      event.content.includes("<burn_context>")
+    ) {
+      count += 1;
+      continue;
+    }
+    break;
+  }
+  return count;
+}
+
+function latestPlanHasIncompleteEntries(events: AgentStoredEvent[]): boolean {
+  const latest = [...events].reverse().find((event) => event.kind === "plan");
+  if (!latest || latest.kind !== "plan") {
+    return false;
+  }
+  return latest.entries.some(
+    (entry) => entry.status === "pending" || entry.status === "in_progress"
+  );
+}
+
+function buildAutoContinuePrompt(mode: AgentConversationRecord["config"]["mode"]): string {
+  if (mode === "orchestration") {
+    return `${AUTO_CONTINUE_MARKER} You stopped while kanban orchestration work is still incomplete. Inspect orchestration_board_snapshot, resume managing open issues and child agents, and continue toward the user's core goals until verified complete or you need a material user decision.`;
+  }
+  return `${AUTO_CONTINUE_MARKER} You stopped while your todo list still has runnable incomplete items. Continue working through pending and in-progress tasks toward the user's goals before stopping again. If only blocked tasks remain, explain the blocker to the user instead of spinning.`;
+}
+
+function isNativeBurnConversation(conversation: AgentConversationRecord): boolean {
+  return (
+    conversation.config.backendId === "cesium-agent" &&
+    String(conversation.config.mode).trim().toLowerCase() === "burn"
+  );
+}
+
+async function maybeAutoContinueBurnConversation(
+  conversation: AgentConversationRecord
+): Promise<void> {
+  if (
+    conversation.archivedAt != null ||
+    (conversation.queuedPrompts?.length ?? 0) > 0
+  ) {
+    return;
+  }
+  const burnMode = isNativeBurnConversation(conversation);
+  if (!burnMode && conversation.config.backendId !== "cesium-agent") {
+    return;
+  }
+  const settings = await getCesiumAgentSettings();
+  if (!settings.orchestration.continueWhenIncomplete) {
+    return;
+  }
+  const workspace = await getWorkspaceById(conversation.workspaceId);
+  if (!workspace) {
+    return;
+  }
+  const childAssignment = await findOrchestrationAssignmentForConversation(
+    workspace.id,
+    conversation.id
+  );
+  if (childAssignment) {
+    return;
+  }
+  const snapshot = await readConversationSnapshotHead(workspace.id, conversation.id, {
+    conversation,
+    limitTurns: 12,
+    limitEvents: 240,
+  });
+  if (!snapshot) {
+    return;
+  }
+  if (countTrailingAutoContinues(snapshot.events) >= MAX_AUTO_CONTINUE_ROUNDS) {
+    return;
+  }
+  let shouldContinue = false;
+  let hiddenContinuation = false;
+  if (conversation.config.mode === "orchestration") {
+    const board = await findOrchestrationBoardForHeadConversation(
+      workspace.id,
+      conversation.id
+    );
+    shouldContinue = board ? orchestrationBoardNeedsManagement(board) : false;
+  } else if (burnMode) {
+    const goal = await readBurnGoalForConversation({
+      workspace,
+      conversationId: conversation.id,
+    });
+    if (!goal || (goal.status !== "planning" && goal.status !== "active")) {
+      return;
+    }
+    shouldContinue =
+      burnGoalHasRunnableWork(goal) ||
+      latestPlanHasIncompleteEntries(snapshot.events);
+    hiddenContinuation = true;
+  } else {
+    shouldContinue = latestPlanHasIncompleteEntries(snapshot.events);
+  }
+  if (!shouldContinue) {
+    return;
+  }
+  await agentRuntimeManager.promptConversation(
+    workspace,
+    conversation.id,
+    buildAutoContinuePrompt(conversation.config.mode),
+    undefined,
+    hiddenContinuation ? { hidden: true } : undefined
+  );
+}
 
 function lastAssistantText(events: AgentStoredEvent[]): string | null {
   const textByMessageId = new Map<string, string>();
@@ -43,6 +168,26 @@ export function startOrchestrationAgentControlListener(): void {
       conversation.status === "cancelled" ||
       conversation.status === "interrupted"
     ) {
+      if (conversation.status === "idle") {
+        const autoContinueKey = `auto-continue:${conversation.id}:${conversation.lastEventSeq}`;
+        if (!inFlight.has(autoContinueKey)) {
+          setImmediate(() => {
+            void (async () => {
+              if (inFlight.has(autoContinueKey)) {
+                return;
+              }
+              inFlight.add(autoContinueKey);
+              try {
+                await maybeAutoContinueBurnConversation(conversation);
+              } catch (error) {
+                console.warn("[orchestration] auto-continue failed:", error);
+              } finally {
+                inFlight.delete(autoContinueKey);
+              }
+            })();
+          });
+        }
+      }
       const key = `completion:${conversation.id}:${conversation.lastEventSeq}:${conversation.status}`;
       if (!inFlight.has(key)) {
         setImmediate(() => {

@@ -29,6 +29,7 @@ export function VSCodeQuickInputShell({
   inputRef: inputRefProp,
   children,
   footer,
+  hideInput = false,
 }: {
   open: boolean;
   onClose: () => void;
@@ -45,6 +46,8 @@ export function VSCodeQuickInputShell({
   inputRef?: MutableRefObject<HTMLElement | null>;
   children: ReactNode;
   footer?: ReactNode;
+  /** List-only quick pick (e.g. agent switcher hold-cycle). */
+  hideInput?: boolean;
 }) {
   const inputId = useId();
   const titleId = useId();
@@ -108,27 +111,35 @@ export function VSCodeQuickInputShell({
         <h2 id={titleId} className="sr-only">
           {screenReaderTitle}
         </h2>
-        <div className="border-b border-[var(--palette-divider)] px-[10px] py-[6px]">
-          <label htmlFor={inputId} className="sr-only">
-            {inputLabel}
-          </label>
-          <HardwareAwareTextInput
-            inputRef={inputRef}
-            id={inputId}
-            placeholder={placeholder}
-            value={value}
-            onChange={onChange}
-            onNativeKeyDown={onKeyDown}
-            onHardwareKeyDown={onHardwareKeyDown}
-            type="text"
-            autoComplete="off"
-            spellCheck={false}
-            autoFocus
-            surfaceKind="palette"
-            className="box-border w-full border-0 bg-transparent py-[6px] font-sans text-[13px] text-[var(--palette-input-text)] outline-none ring-0 placeholder:text-[var(--palette-placeholder)] focus:outline-none focus:ring-0"
-            ariaLabel={inputLabel}
-          />
-        </div>
+        {hideInput ? (
+          <div className="border-b border-[var(--palette-divider)] px-[10px] py-[8px]">
+            <p className="font-sans text-[12px] text-[var(--palette-footer-text)]">
+              {inputLabel}
+            </p>
+          </div>
+        ) : (
+          <div className="border-b border-[var(--palette-divider)] px-[10px] py-[6px]">
+            <label htmlFor={inputId} className="sr-only">
+              {inputLabel}
+            </label>
+            <HardwareAwareTextInput
+              inputRef={inputRef}
+              id={inputId}
+              placeholder={placeholder}
+              value={value}
+              onChange={onChange}
+              onNativeKeyDown={onKeyDown}
+              onHardwareKeyDown={onHardwareKeyDown}
+              type="text"
+              autoComplete="off"
+              spellCheck={false}
+              autoFocus
+              surfaceKind="palette"
+              className="box-border w-full border-0 bg-transparent py-[6px] font-sans text-[13px] text-[var(--palette-input-text)] outline-none ring-0 placeholder:text-[var(--palette-placeholder)] focus:outline-none focus:ring-0"
+              ariaLabel={inputLabel}
+            />
+          </div>
+        )}
         {children}
         {footer ? (
           <div className="border-t border-[var(--palette-divider)] px-[10px] py-[6px]">

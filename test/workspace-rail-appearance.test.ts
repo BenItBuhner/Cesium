@@ -92,13 +92,41 @@ describe("workspace rail appearance", () => {
 
 
 
-  test("falls back to palette color by index for non-home workspaces", () => {
+  test("falls back to stable palette color for non-home workspaces", () => {
 
-    const appearance = getWorkspaceRailAppearance({}, "missing:key", 1);
+    const key = "srv-1:ws-a";
+
+    const appearance = getWorkspaceRailAppearance({}, key);
 
     assert.equal(appearance.icon, "Folder");
 
-    assert.equal(appearance.color, "#2563eb");
+    assert.equal(appearance.color, pickStableWorkspaceColor(key));
+
+    assert.equal(
+
+      getWorkspaceRailAppearance({}, key).color,
+
+      appearance.color
+
+    );
+
+  });
+
+
+
+  test("reads legacy bare workspace id saved appearances", () => {
+
+    const saved = { icon: "Rocket", color: "#2563eb" };
+
+    const appearance = getWorkspaceRailAppearance(
+
+      { "ws-a": saved },
+
+      "srv-1:ws-a"
+
+    );
+
+    assert.deepEqual(appearance, saved);
 
   });
 
@@ -108,7 +136,7 @@ describe("workspace rail appearance", () => {
 
     const key = "srv-1:home-ws";
 
-    const appearance = getWorkspaceRailAppearance({}, key, 0, { isHome: true });
+    const appearance = getWorkspaceRailAppearance({}, key, { isHome: true });
 
     assert.equal(appearance.icon, "Home");
 
@@ -116,7 +144,7 @@ describe("workspace rail appearance", () => {
 
     assert.equal(
 
-      getWorkspaceRailAppearance({}, key, 99, { isHome: true }).color,
+      getWorkspaceRailAppearance({}, key, { isHome: true }).color,
 
       appearance.color
 
@@ -135,8 +163,6 @@ describe("workspace rail appearance", () => {
       { "srv-1:home": saved },
 
       "srv-1:home",
-
-      0,
 
       { isHome: true }
 

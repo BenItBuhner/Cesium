@@ -33,6 +33,19 @@ import type {
   OrchestrationIssuePriority,
   OrchestrationIssueRecord,
 } from "../../lib/orchestration/types.js";
+import type {
+  BurnGoalPatch,
+  BurnGoalRecord,
+} from "../../lib/agents/burn-goal-types.js";
+import {
+  normalizeBurnGoalProgressPercent,
+  normalizeBurnGoalRevision,
+  normalizeBurnGoalSnapshots,
+} from "../../lib/agents/burn-goal-types.js";
+import type {
+  ExtensionInstallRecord,
+  ExtensionPermissionGrant,
+} from "../../lib/extensions/types.js";
 import {
   StorageConflictError,
   type AgentProviderCacheRecord,
@@ -53,6 +66,8 @@ type OrchestrationIssueRow = typeof schema.orchestrationIssues.$inferSelect;
 type OrchestrationAssignmentRow =
   typeof schema.orchestrationAssignments.$inferSelect;
 type OrchestrationEventRow = typeof schema.orchestrationEvents.$inferSelect;
+type BurnGoalRow = typeof schema.burnGoals.$inferSelect;
+type ExtensionInstallRow = typeof schema.extensionInstalls.$inferSelect;
 
 function rowToWorkspace(row: typeof schema.workspaces.$inferSelect): WorkspaceRecord {
   return {
@@ -204,6 +219,61 @@ function rowToOrchestrationEvent(
   };
 }
 
+function rowToBurnGoal(row: BurnGoalRow): BurnGoalRecord {
+  const payload = row.payload as Partial<BurnGoalRecord>;
+  return {
+    schemaVersion: 1,
+    goalId: row.goalId,
+    workspaceId: row.workspaceId,
+    conversationId: row.conversationId,
+    objective: row.objective,
+    status: row.status as BurnGoalRecord["status"],
+    phase: row.phase as BurnGoalRecord["phase"],
+    tokenBudget: row.tokenBudget,
+    tokensUsed: row.tokensUsed,
+    timeUsedSeconds: row.timeUsedSeconds,
+    progressPercent: normalizeBurnGoalProgressPercent(payload.progressPercent),
+    headline: typeof payload.headline === "string" && payload.headline.trim()
+      ? payload.headline.trim()
+      : null,
+    revision: normalizeBurnGoalRevision(payload.revision),
+    planSummary: typeof payload.planSummary === "string" ? payload.planSummary : "",
+    milestones: Array.isArray(payload.milestones) ? payload.milestones : [],
+    todos: Array.isArray(payload.todos) ? payload.todos : [],
+    blockerHistory: Array.isArray(payload.blockerHistory) ? payload.blockerHistory : [],
+    verificationEvidence: Array.isArray(payload.verificationEvidence)
+      ? payload.verificationEvidence
+      : [],
+    snapshots: normalizeBurnGoalSnapshots(payload.snapshots),
+    compaction:
+      payload.compaction && typeof payload.compaction === "object"
+        ? payload.compaction as BurnGoalRecord["compaction"]
+        : { generation: 0 },
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+    completedAt: row.completedAt,
+  };
+}
+
+function burnGoalPayload(record: BurnGoalRecord): Record<string, unknown> {
+  return {
+    planSummary: record.planSummary,
+    progressPercent: record.progressPercent,
+    headline: record.headline,
+    revision: record.revision,
+    milestones: record.milestones,
+    todos: record.todos,
+    blockerHistory: record.blockerHistory,
+    verificationEvidence: record.verificationEvidence,
+    snapshots: record.snapshots,
+    compaction: record.compaction,
+  };
+}
+
+function rowToExtensionInstall(row: ExtensionInstallRow): ExtensionInstallRecord {
+  return row.payload as ExtensionInstallRecord;
+}
+
 function buildEventPayload(event: AgentEventInput): Record<string, unknown> {
   const { conversationId: _cid, eventId: _eid, kind: _kind, createdAt: _cat, ...rest } =
     event as AgentEventInput & { createdAt?: number };
@@ -246,8 +316,8 @@ export class PgStorageDriver implements StorageDriver {
     // Open the pool AND run a lightweight probe so the first real query
     // (often from a WS handler) doesn't eat a full connect-timeout window
     // when Docker/WSL is warming up.
-    const { warmupDb } = await import("../../db/client.js");
-    await warmupDb();
+    const { verifyDbConnection } = await import("../../db/client.js");
+    await verifyDbConnection();
   }
 
   async close(): Promise<void> {
@@ -907,6 +977,201 @@ async readAgentEvents(input: ReadAgentEventsInput): Promise<AgentStoredEvent[]> 
     // We fetched newest-first; flip to ascending seq for the caller so
     // consumers can iterate in event-log order like the legacy driver does.
     return rows.reverse().map(rowToEvent);
+  }
+
+  // ---------- Burn goals ----------
+  async getBurnGoalByConversation(
+    workspaceId: string,
+    conversationId: string
+  ): Promise<BurnGoalRecord | null> {
+    const [row] = await getDb()
+      .select()
+      .from(schema.burnGoals)
+      .where(
+        and(
+          eq(schema.burnGoals.workspaceId, workspaceId),
+          eq(schema.burnGoals.conversationId, conversationId)
+        )
+      )
+      .limit(1);
+    return row ? rowToBurnGoal(row) : null;
+  }
+
+  async upsertBurnGoal(record: BurnGoalRecord): Promise<void> {
+    const values = {
+      goalId: record.goalId,
+      workspaceId: record.workspaceId,
+      conversationId: record.conversationId,
+      schemaVersion: record.schemaVersion,
+      objective: record.objective,
+      status: record.status,
+      phase: record.phase,
+      tokenBudget: record.tokenBudget,
+      tokensUsed: record.tokensUsed,
+      timeUsedSeconds: record.timeUsedSeconds,
+      payload: burnGoalPayload(record),
+      createdAt: record.createdAt,
+      updatedAt: record.updatedAt,
+      completedAt: record.completedAt,
+    };
+    await getDb()
+      .insert(schema.burnGoals)
+      .values(values)
+      .onConflictDoUpdate({
+        target: schema.burnGoals.conversationId,
+        set: {
+          objective: values.objective,
+          status: values.status,
+          phase: values.phase,
+          tokenBudget: values.tokenBudget,
+          tokensUsed: values.tokensUsed,
+          timeUsedSeconds: values.timeUsedSeconds,
+          payload: values.payload,
+          updatedAt: values.updatedAt,
+          completedAt: values.completedAt,
+        },
+      });
+  }
+
+  async updateBurnGoal(
+    workspaceId: string,
+    conversationId: string,
+    patch: BurnGoalPatch
+  ): Promise<BurnGoalRecord | null> {
+    const current = await this.getBurnGoalByConversation(workspaceId, conversationId);
+    if (!current) {
+      return null;
+    }
+    const next: BurnGoalRecord = {
+      ...current,
+      ...patch,
+      revision:
+        patch.revision !== undefined
+          ? patch.revision
+          : current.revision + 1,
+      updatedAt: Date.now(),
+    };
+    await this.upsertBurnGoal(next);
+    return next;
+  }
+
+  async listBurnGoals(workspaceId: string): Promise<BurnGoalRecord[]> {
+    const rows = await getDb()
+      .select()
+      .from(schema.burnGoals)
+      .where(eq(schema.burnGoals.workspaceId, workspaceId))
+      .orderBy(desc(schema.burnGoals.updatedAt));
+    return rows.map(rowToBurnGoal);
+  }
+
+  // ---------- VS Code extensions ----------
+  async listInstalledExtensions(workspaceId: string): Promise<ExtensionInstallRecord[]> {
+    const rows = await getDb()
+      .select()
+      .from(schema.extensionInstalls)
+      .where(eq(schema.extensionInstalls.workspaceId, workspaceId))
+      .orderBy(desc(schema.extensionInstalls.updatedAt));
+    return rows.map(rowToExtensionInstall);
+  }
+
+  async getInstalledExtension(
+    workspaceId: string,
+    extensionId: string
+  ): Promise<ExtensionInstallRecord | null> {
+    const [row] = await getDb()
+      .select()
+      .from(schema.extensionInstalls)
+      .where(
+        and(
+          eq(schema.extensionInstalls.workspaceId, workspaceId),
+          eq(schema.extensionInstalls.extensionId, extensionId.toLowerCase())
+        )
+      )
+      .limit(1);
+    return row ? rowToExtensionInstall(row) : null;
+  }
+
+  async upsertInstalledExtension(record: ExtensionInstallRecord): Promise<void> {
+    await getDb()
+      .insert(schema.extensionInstalls)
+      .values({
+        workspaceId: record.workspaceId,
+        extensionId: record.extensionId.toLowerCase(),
+        enabled: record.enabled,
+        publisher: record.publisher,
+        name: record.name,
+        version: record.version,
+        compatibility: record.compatibility,
+        payload: record,
+        createdAt: record.installedAt,
+        updatedAt: record.updatedAt,
+      })
+      .onConflictDoUpdate({
+        target: [
+          schema.extensionInstalls.workspaceId,
+          schema.extensionInstalls.extensionId,
+        ],
+        set: {
+          enabled: record.enabled,
+          publisher: record.publisher,
+          name: record.name,
+          version: record.version,
+          compatibility: record.compatibility,
+          payload: record,
+          updatedAt: record.updatedAt,
+        },
+      });
+  }
+
+  async deleteInstalledExtension(
+    workspaceId: string,
+    extensionId: string
+  ): Promise<boolean> {
+    const deleted = await getDb()
+      .delete(schema.extensionInstalls)
+      .where(
+        and(
+          eq(schema.extensionInstalls.workspaceId, workspaceId),
+          eq(schema.extensionInstalls.extensionId, extensionId.toLowerCase())
+        )
+      )
+      .returning({ extensionId: schema.extensionInstalls.extensionId });
+    return deleted.length > 0;
+  }
+
+  async patchExtensionSettings(
+    workspaceId: string,
+    extensionId: string,
+    settings: Record<string, unknown>
+  ): Promise<ExtensionInstallRecord | null> {
+    const record = await this.getInstalledExtension(workspaceId, extensionId);
+    if (!record) {
+      return null;
+    }
+    const next: ExtensionInstallRecord = {
+      ...record,
+      settings: {
+        ...record.settings,
+        ...settings,
+      },
+      updatedAt: Date.now(),
+    };
+    await this.upsertInstalledExtension(next);
+    return next;
+  }
+
+  async upsertExtensionPermissionGrant(grant: ExtensionPermissionGrant): Promise<void> {
+    const record = await this.getInstalledExtension(grant.workspaceId, grant.extensionId);
+    if (!record) {
+      throw new Error(`Unknown extension: ${grant.extensionId}`);
+    }
+    const grants = record.permissions.filter((existing) => existing.id !== grant.id);
+    grants.push(grant);
+    await this.upsertInstalledExtension({
+      ...record,
+      permissions: grants,
+      updatedAt: Date.now(),
+    });
   }
 
   // ---------- provider cache ----------

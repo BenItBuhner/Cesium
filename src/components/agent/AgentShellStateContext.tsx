@@ -26,6 +26,10 @@ import {
   listCrossWorkspaceAgentConversationsForServer,
   patchAgentConversationMetadata,
 } from "@/lib/server-api";
+import {
+  safeReadLocationSearchParam,
+  safeReplaceLocationSearchParams,
+} from "@/lib/safe-url";
 import { useServerConnections } from "@/components/preferences/ServerConnectionsProvider";
 import type { ServerRuntimeStatus } from "@/components/preferences/ServerConnectionsProvider";
 import {
@@ -65,6 +69,12 @@ import {
   removeConversationFromAgentGroups,
 } from "@/lib/agent-rail-patch";
 import { groupAgentRailGroups } from "@/lib/agent-rail-groups";
+import {
+  buildAgentSwitcherList,
+  bumpAgentConversationMru,
+  isValidAgentConversationMruId,
+  type AgentSwitcherCandidate,
+} from "@/lib/agent-conversation-mru";
 import { markConversationSwitchStart } from "@/lib/dev-perf";
 import type { AgentConversationRecord } from "@/lib/agent-types";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
@@ -82,7 +92,6 @@ import {
   createEmptyAgentSidePaneSession,
   getAgentSidePaneSessionScopeId,
   type ChatScrollAnchor,
-  type WorkspaceSessionState,
   type AgentSidePaneSessionState,
   type EditorSessionState,
 } from "@/lib/workspace-session";
@@ -194,6 +203,10 @@ type AgentShellStateContextValue = {
   /** Move selection along the visible rail (pinned, then workspaces); crosses workspaces. */
   cycleAgentConversation: (delta: 1 | -1) => void;
   openConversationSummary: (summary: AgentRailConversationSummary) => Promise<void>;
+  /** MRU-ordered rows for the Ctrl+Tab agent switcher palette. */
+  agentSwitcherItems: AgentSwitcherCandidate[];
+  findConversationSummaryById: (conversationId: string) => AgentRailConversationSummary | null;
+  bumpAgentConversationMruForServer: (conversationId: string) => void;
   groups: AgentConversationGroup[];
   backends: AgentBackendInfo[];
   activeWorkspaceGroup: AgentConversationGroup | null;
@@ -449,35 +462,30 @@ export function AgentShellStateProvider({
     openWorkspaceById,
     recentWorkspaceIds,
     sessionReady,
-    workspaceInfo,
     workspaceSession,
     updateWorkspaceSession,
   } = useWorkspace();
-  const { settings } = useGlobalSettings();
+  const { settings, updateSettings } = useGlobalSettings();
   const { activeServer, onlineServers, serverStatusById, setActiveServer, ready: connectionsReady } =
     useServerConnections();
   const { workspaces: directoryWorkspaces } = useWorkspaceDirectory();
   const { isMobile } = useViewport();
   const urlConversationId =
     typeof window !== "undefined"
-      ? new URL(window.location.href).searchParams.get("conversationId")?.trim() || null
+      ? safeReadLocationSearchParam("conversationId")
       : null;
   const replaceConversationIdInLocation = useCallback(
     (conversationId: string | null) => {
       if (typeof window === "undefined") {
         return;
       }
-      const url = new URL(window.location.href);
-      if (conversationId) {
-        url.searchParams.set("conversationId", conversationId);
-      } else {
-        url.searchParams.delete("conversationId");
-      }
-      const nextUrl = `${url.pathname}${url.search}${url.hash}`;
-      const currentUrl = `${window.location.pathname}${window.location.search}${window.location.hash}`;
-      if (nextUrl !== currentUrl) {
-        window.history.replaceState(null, "", nextUrl);
-      }
+      safeReplaceLocationSearchParams((params) => {
+        if (conversationId) {
+          params.set("conversationId", conversationId);
+        } else {
+          params.delete("conversationId");
+        }
+      });
     },
     []
   );
@@ -502,6 +510,7 @@ export function AgentShellStateProvider({
   const sharedAgentShellDesktopLayoutRef = useRef(sharedAgentShellDesktopLayout);
   const railInitialLoadCompletedRef = useRef(false);
   const serverStatusByIdRef = useRef(serverStatusById);
+  const railRefreshInFlightRef = useRef<Promise<void> | null>(null);
   serverStatusByIdRef.current = serverStatusById;
 
   useEffect(() => {
@@ -661,14 +670,22 @@ export function AgentShellStateProvider({
   }, [connectionsReady, refreshConversationGroups]);
 
   const refreshConversationGroupsWithState = useCallback(async () => {
+    if (railRefreshInFlightRef.current) {
+      return railRefreshInFlightRef.current;
+    }
     setRailRefreshing(true);
     setRailLoadError(null);
-    try {
+    const refreshPromise = (async () => {
       await refreshConversationGroups();
       setRailLoadError(null);
+    })();
+    railRefreshInFlightRef.current = refreshPromise;
+    try {
+      await refreshPromise;
     } catch {
       setRailLoadError("Could not load conversations. Check your server connection and retry.");
     } finally {
+      railRefreshInFlightRef.current = null;
       setRailRefreshing(false);
     }
   }, [refreshConversationGroups]);
@@ -682,6 +699,7 @@ export function AgentShellStateProvider({
 
   useEffect(() => {
     const handleFocus = () => {
+      if (document.visibilityState === "hidden") return;
       void refreshConversationGroupsWithState();
     };
     const handleVisibility = () => {
@@ -699,6 +717,9 @@ export function AgentShellStateProvider({
 
   useEffect(() => {
     const interval = window.setInterval(() => {
+      if (document.visibilityState === "hidden") {
+        return;
+      }
       void refreshConversationGroupsWithState();
     }, 20_000);
     return () => window.clearInterval(interval);
@@ -939,7 +960,12 @@ export function AgentShellStateProvider({
     [persistedConversationId]
   );
 
-  const sidePaneSessionMap = workspaceSession.agentView.sidePaneSessionsByConversationId ?? {};
+  const sidePaneSessionsByConversationId =
+    workspaceSession.agentView.sidePaneSessionsByConversationId;
+  const sidePaneSessionMap = useMemo(
+    () => sidePaneSessionsByConversationId ?? {},
+    [sidePaneSessionsByConversationId]
+  );
   const hasAnySidePaneSessions = Object.keys(sidePaneSessionMap).length > 0;
   const legacySidePaneSession = useMemo(
     () => createLegacySidePaneSession(workspaceSession),
@@ -1413,9 +1439,42 @@ export function AgentShellStateProvider({
     [sidePaneScopeId, updateWorkspaceSession]
   );
 
+  const bumpAgentConversationMruForServer = useCallback(
+    (conversationId: string) => {
+      if (!isValidAgentConversationMruId(conversationId)) {
+        return;
+      }
+      const serverId = activeServer.id;
+      updateSettings((current) => {
+        const prevStack = current.general.agentConversationMruByServer[serverId] ?? [];
+        const nextStack = bumpAgentConversationMru(conversationId, prevStack);
+        if (
+          nextStack.length === prevStack.length &&
+          nextStack.every((id, index) => id === prevStack[index])
+        ) {
+          return current;
+        }
+        return {
+          ...current,
+          general: {
+            ...current.general,
+            agentConversationMruByServer: {
+              ...current.general.agentConversationMruByServer,
+              [serverId]: nextStack,
+            },
+          },
+        };
+      });
+    },
+    [activeServer.id, updateSettings]
+  );
+
   const setSelectedConversationId = useCallback(
     (conversationId: string | null) => {
       markConversationSwitchStart(conversationId, "setSelectedConversationId");
+      if (conversationId && isValidAgentConversationMruId(conversationId)) {
+        bumpAgentConversationMruForServer(conversationId);
+      }
       updateWorkspaceSession((current) => ({
         ...current,
         agentView: {
@@ -1425,7 +1484,7 @@ export function AgentShellStateProvider({
       }));
       replaceConversationIdInLocation(conversationId);
     },
-    [replaceConversationIdInLocation, updateWorkspaceSession]
+    [bumpAgentConversationMruForServer, replaceConversationIdInLocation, updateWorkspaceSession]
   );
 
   const startNewConversation = useCallback(() => {
@@ -1463,6 +1522,7 @@ export function AgentShellStateProvider({
   const openConversationSummary = useCallback(
     async (summary: AgentRailConversationSummary) => {
       markConversationSwitchStart(summary.id, "rail");
+      bumpAgentConversationMruForServer(summary.id);
       if (summary.serverId && summary.serverId !== activeServer.id) {
         setActiveServer(summary.serverId);
       }
@@ -1485,7 +1545,14 @@ export function AgentShellStateProvider({
         );
       }
     },
-    [activeServer.id, activeWorkspaceId, openWorkspaceById, setActiveServer, setSelectedConversationId]
+    [
+      activeServer.id,
+      activeWorkspaceId,
+      bumpAgentConversationMruForServer,
+      openWorkspaceById,
+      setActiveServer,
+      setSelectedConversationId,
+    ]
   );
 
   const archiveConversation = useCallback(
@@ -1667,6 +1734,95 @@ export function AgentShellStateProvider({
     [filteredGroups, pinnedConversationIdSet]
   );
 
+  const agentSwitcherCandidates = useMemo(() => {
+    const items: AgentSwitcherCandidate[] = [];
+    const seen = new Set<string>();
+    const pushSummary = (
+      summary: AgentRailConversationSummary,
+      workspaceId: string,
+      workspaceName: string,
+      serverId?: string
+    ) => {
+      if (seen.has(summary.id) || !isRenderableAgentRailConversation(summary)) {
+        return;
+      }
+      seen.add(summary.id);
+      items.push({
+        id: summary.id,
+        title: summary.title,
+        updatedAt: summary.updatedAt,
+        workspaceId,
+        workspaceName,
+        serverId,
+        badge:
+          summary.status === "running"
+            ? "running"
+            : summary.hasPendingPermission
+              ? "needs attention"
+              : undefined,
+      });
+    };
+
+    for (const group of orderedGroups) {
+      if (group.serverId && group.serverId !== activeServer.id) {
+        continue;
+      }
+      for (const conversation of group.conversations) {
+        pushSummary(
+          conversation,
+          group.workspace.id,
+          group.workspace.name,
+          group.serverId
+        );
+      }
+    }
+
+    for (const pinnedId of pinnedAgentConversationIds) {
+      for (const group of orderedGroups) {
+        const conversation = group.conversations.find((c) => c.id === pinnedId);
+        if (!conversation) {
+          continue;
+        }
+        if (group.serverId && group.serverId !== activeServer.id) {
+          continue;
+        }
+        pushSummary(
+          conversation,
+          group.workspace.id,
+          group.workspace.name,
+          group.serverId
+        );
+      }
+    }
+
+    return items;
+  }, [activeServer.id, orderedGroups, pinnedAgentConversationIds]);
+
+  const agentSwitcherItems = useMemo(() => {
+    const mruIds = settings.general.agentConversationMruByServer[activeServer.id] ?? [];
+    return buildAgentSwitcherList({
+      mruIds,
+      candidates: agentSwitcherCandidates,
+    });
+  }, [
+    activeServer.id,
+    agentSwitcherCandidates,
+    settings.general.agentConversationMruByServer,
+  ]);
+
+  const findConversationSummaryById = useCallback(
+    (conversationId: string): AgentRailConversationSummary | null => {
+      for (const group of orderedGroups) {
+        const match = group.conversations.find((c) => c.id === conversationId);
+        if (match) {
+          return match;
+        }
+      }
+      return null;
+    },
+    [orderedGroups]
+  );
+
   const cycleAgentConversation = useCallback(
     (delta: 1 | -1) => {
       const collapsed = readAgentRailCollapsedWorkspaceIdsForCycle();
@@ -1720,6 +1876,9 @@ export function AgentShellStateProvider({
       startNewChatInWorkspace,
       cycleAgentConversation,
       openConversationSummary,
+      agentSwitcherItems,
+      findConversationSummaryById,
+      bumpAgentConversationMruForServer,
       groups: groupsForRail,
       backends,
       activeWorkspaceGroup,
@@ -1749,7 +1908,10 @@ export function AgentShellStateProvider({
       archiveConversation,
       backends,
       clearRailFilters,
+      agentSwitcherItems,
+      bumpAgentConversationMruForServer,
       cycleAgentConversation,
+      findConversationSummaryById,
       pendingConversationSelection,
       groupsForRail,
       isMobile,

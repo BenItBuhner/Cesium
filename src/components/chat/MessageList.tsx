@@ -6,7 +6,6 @@ import { MessageThreadContent } from "./MessageThreadContent";
 import { useOpenInEditor } from "@/components/editor/OpenInEditorContext";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import type { ChatMessage } from "@/lib/types";
-import type { ChatScrollAnchor } from "@/lib/workspace-session";
 
 export type MessageListScrollPersistMeta = {
   pinnedToBottom: boolean;
@@ -41,7 +40,7 @@ function olderGateReleaseScrollTopPx(prefetchPx: number): number {
 }
 
 /** Max automatic "fill the viewport" history rounds per conversation (burst prefetch at bottom). */
-const OLDER_AUTO_FILL_MAX_ROUNDS = 28;
+const OLDER_AUTO_FILL_MAX_ROUNDS = 8;
 /** Minimum excess scroll height (beyond viewport) before we stop auto-prefetching at the bottom. */
 function olderMinBottomSlackPx(root: HTMLDivElement): number {
   const ch = root.clientHeight > 0 ? root.clientHeight : OLDER_SCROLLPORT_FALLBACK_PX;
@@ -51,13 +50,11 @@ function olderMinBottomSlackPx(root: HTMLDivElement): number {
 interface MessageListProps {
   messages: ChatMessage[];
   initialScrollTop?: number;
-  initialScrollAnchor?: ChatScrollAnchor;
   onScrollTopSettled?: (
     scrollTop: number,
     meta: MessageListScrollPersistMeta
   ) => void;
   onResolvePermission?: (requestId: string, optionId: string) => void;
-  onCancelPermission?: (requestId: string) => void;
   onForkMessage?: (messageId: string) => void;
   onRedoMessage?: (message: ChatMessage) => void;
   renderUserMessageEditor?: (message: ChatMessage) => ReactNode;
@@ -78,10 +75,8 @@ interface MessageListProps {
 export function MessageList({
   messages,
   initialScrollTop = 0,
-  initialScrollAnchor: _initialScrollAnchor,
   onScrollTopSettled,
   onResolvePermission,
-  onCancelPermission,
   onForkMessage,
   onRedoMessage,
   renderUserMessageEditor,

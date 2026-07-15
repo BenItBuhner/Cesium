@@ -4,7 +4,7 @@ import path from "node:path";
 import type { McpServerConfig } from "@cesium/core/mcp";
 import { readJsonFile, writeJsonFile } from "../persistence.js";
 import { mcpSecretsPath, mcpServersConfigPath, slugifyMcpServerId } from "./paths.js";
-import { BROWSER_MCP_SERVER_ID } from "./builtin-browser-tools.js";
+import { BROWSER_MCP_SERVER_ID, BROWSER_MCP_TOOLS } from "./builtin-browser-tools.js";
 import type {
   McpConnectionStatus,
   McpSecretsFile,
@@ -15,6 +15,8 @@ import type {
 import { decryptForWorkspace, encryptForWorkspace } from "./secret-crypto.js";
 
 const connectionStatusByKey = new Map<string, McpConnectionStatus>();
+const BROWSER_MCP_SUMMARY =
+  "Built-in browser-tab tools for opening visible IDE editor browser tabs, locking them, clicking, typing, inspecting metadata, viewport testing, and optionally using legacy server Chromium automation.";
 
 function statusKey(workspaceId: string, serverId: string): string {
   return `${workspaceId}:${serverId}`;
@@ -99,10 +101,64 @@ async function writeSecretsFile(workspaceId: string, secrets: McpSecretsFile): P
 
 export async function listMcpServers(workspaceId: string): Promise<McpServerPublic[]> {
   const file = await readServersFile(workspaceId);
-  return file.servers.map((server) => ({
+  const browserEnabled = file.builtins?.browser?.enabled !== false;
+  const browserServer: McpServerPublic = {
+    id: BROWSER_MCP_SERVER_ID,
+    label: "Browser",
+    enabled: browserEnabled,
+    transport: "stdio",
+    stdio: { command: "builtin:browser", args: [] },
+    auth: { kind: "none" },
+    summary: BROWSER_MCP_SUMMARY,
+    createdAt: 0,
+    updatedAt: file.builtins?.browser?.updatedAt ?? 0,
+    builtIn: true,
+    removable: false,
+    connectionStatus: browserEnabled
+      ? { connected: true, lastCheckedAt: Date.now(), toolCount: BROWSER_MCP_TOOLS.length }
+      : { connected: false, lastCheckedAt: Date.now(), error: "Disabled" },
+  };
+  return [browserServer, ...file.servers.map((server) => ({
     ...server,
+    removable: true,
     connectionStatus: getMcpConnectionStatus(workspaceId, server.id),
-  }));
+  }))];
+}
+
+export async function isBuiltInBrowserMcpEnabled(workspaceId: string): Promise<boolean> {
+  const file = await readServersFile(workspaceId);
+  return file.builtins?.browser?.enabled !== false;
+}
+
+export async function setBuiltInBrowserMcpEnabled(
+  workspaceId: string,
+  enabled: boolean
+): Promise<void> {
+  const file = await readServersFile(workspaceId);
+  const now = Date.now();
+  await writeServersFile(workspaceId, {
+    ...file,
+    updatedAt: now,
+    builtins: {
+      ...file.builtins,
+      browser: { enabled, updatedAt: now },
+    },
+  });
+}
+
+export async function getMcpCatalogRevision(workspaceId: string): Promise<number> {
+  const file = await readServersFile(workspaceId);
+  return file.updatedAt;
+}
+
+export async function touchMcpCatalogRevision(workspaceId: string): Promise<number> {
+  const file = await readServersFile(workspaceId);
+  const now = Date.now();
+  await writeServersFile(workspaceId, {
+    ...file,
+    updatedAt: now,
+  });
+  return now;
 }
 
 export async function getMcpServer(
@@ -132,6 +188,7 @@ export async function upsertMcpServer(
   const servers = file.servers.filter((server) => server.id !== next.id);
   servers.push(next);
   await writeServersFile(workspaceId, {
+    ...file,
     schemaVersion: 1,
     updatedAt: now,
     servers,
@@ -146,6 +203,7 @@ export async function deleteMcpServer(workspaceId: string, serverId: string): Pr
     return false;
   }
   await writeServersFile(workspaceId, {
+    ...file,
     schemaVersion: 1,
     updatedAt: Date.now(),
     servers: nextServers,
@@ -207,13 +265,13 @@ export async function getMcpSummariesForPrompt(
   workspaceId: string
 ): Promise<Array<{ id: string; label: string; summary: string }>> {
   const servers = await listEnabledMcpServers(workspaceId);
+  const includeBrowser = await isBuiltInBrowserMcpEnabled(workspaceId);
   return [
-    {
+    ...(includeBrowser ? [{
       id: BROWSER_MCP_SERVER_ID,
       label: "Browser",
-      summary:
-        "Built-in browser-tab tools for opening, locking, inspecting, screenshotting, viewport testing, and interacting with IDE browser tabs.",
-    },
+      summary: BROWSER_MCP_SUMMARY,
+    }] : []),
     ...servers.map((server) => ({
       id: server.id,
       label: server.label,

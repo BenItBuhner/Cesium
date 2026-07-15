@@ -18,6 +18,7 @@ import { UserMessage } from "./UserMessage";
 import { AssistantMessage } from "./AssistantMessage";
 import { TodoStatusCard } from "./TodoStatusCard";
 import { TodoCard } from "./TodoCard";
+import { TodoUpdateCard } from "./TodoUpdateCard";
 import { LiveSubagentCard } from "./LiveSubagentCard";
 import { ActivityLabel } from "./ActivityLabel";
 import { WorkedSessionCard } from "./WorkedSessionCard";
@@ -25,11 +26,17 @@ import { ShellCommandCard } from "./ShellCommandCard";
 import { PermissionRequestCard } from "./PermissionRequestCard";
 import { HandoffDivider } from "./HandoffDivider";
 import { ForkDivider } from "./ForkDivider";
+import { TurnCompletionFooter } from "./TurnCompletionFooter";
 import {
   buildMessageThreadSegments,
   type MessageThreadSegment,
   type UserTurnSegment,
 } from "./message-thread-rows";
+import {
+  getSettledTurnContext,
+  isSettledWorkIndex,
+  extractFinalAssistantResponseForTurn,
+} from "./turn-settle";
 import type { ChatMessage } from "@/lib/types";
 import { stripAgentTodoJsonAssistantContent } from "@/lib/agent-chat";
 import { shouldHideCompletionFailureInThread } from "@/lib/agent-completion-error";
@@ -51,6 +58,7 @@ const CHAIN_BREAKING_AFTER_WORKED = new Set<ChatMessage["type"]>([
   "activity-label",
   "agent-handoff",
   "chat-fork",
+  "turn-footer",
 ]);
 
 type ChatVirtualItem = {
@@ -143,7 +151,7 @@ function useStickyScrollTop(
 function VirtualStickyUserHeader({
   turn,
   messages,
-  onForkMessage,
+  pushUpPx = 0,
   onRedoMessage,
   renderUserMessageEditor,
   editingUserMessageId,
@@ -151,7 +159,7 @@ function VirtualStickyUserHeader({
 }: {
   turn: UserTurnSegment;
   messages: ChatMessage[];
-  onForkMessage?: (messageId: string) => void;
+  pushUpPx?: number;
   onRedoMessage?: (message: ChatMessage) => void;
   renderUserMessageEditor?: (message: ChatMessage) => ReactNode;
   editingUserMessageId?: string | null;
@@ -173,7 +181,6 @@ function VirtualStickyUserHeader({
         showReplyCue={userMsg.showReplyCue}
         highlight={userMsg.isHandoffMessage}
         composerDraftId={composerDraftId}
-        onFork={onForkMessage ? () => onForkMessage(userMsg.id) : undefined}
         onRedo={onRedoMessage ? () => onRedoMessage(userMsg) : undefined}
       />
     );
@@ -182,14 +189,25 @@ function VirtualStickyUserHeader({
     <div
       data-chat-message-id={userMsg.id}
       data-electron-no-drag
-      className="sticky z-30 h-0"
-      style={{ top: `calc(var(--opencursor-mobile-safe-area-top, 0px) + ${CHAT_STICKY_RAIL_INSET_PX}px)` }}
+      className="sticky z-30 h-0 transition-[top] duration-75"
+      style={{
+        top: `calc(var(--opencursor-mobile-safe-area-top, 0px) + ${CHAT_STICKY_RAIL_INSET_PX}px - ${pushUpPx}px)`,
+      }}
     >
       <div className="pb-[10px]" data-electron-no-drag>
         {turn.userKind === "user_todo" ? (
           <div className="flex flex-col">
             {userMessage}
-            <TodoStatusCard content={messages[turn.todoIndex]?.content ?? ""} meldUserAbove />
+            {messages[turn.todoIndex]?.type === "todo" ? (
+              <TodoCard
+                label={messages[turn.todoIndex]?.todoLabel ?? "Todo list"}
+                todos={messages[turn.todoIndex]?.todos ?? []}
+                meldUserAbove
+                embeddedInSticky
+              />
+            ) : (
+              <TodoStatusCard content={messages[turn.todoIndex]?.content ?? ""} meldUserAbove />
+            )}
           </div>
         ) : (
           userMessage
@@ -197,6 +215,31 @@ function VirtualStickyUserHeader({
       </div>
     </div>
   );
+}
+
+function smoothstep01(t: number): number {
+  const x = Math.min(1, Math.max(0, t));
+  return x * x * (3 - 2 * x);
+}
+
+function virtualStickyPushPx(
+  activeIndex: number | null,
+  segments: MessageThreadSegment[],
+  virtualItems: readonly ChatVirtualItem[],
+  scrollTop: number
+): number {
+  if (activeIndex == null) return 0;
+  const nextTurnIndex = segments.findIndex(
+    (segment, index) => index > activeIndex && segment.type === "turn"
+  );
+  if (nextTurnIndex < 0) return 0;
+  const nextItem = virtualItems.find((item) => item.index === nextTurnIndex);
+  if (!nextItem) return 0;
+  const pushZonePx = 220;
+  const anchor = scrollTop + getChatStickyRailInsetPx();
+  const dist = nextItem.start - anchor;
+  if (dist >= pushZonePx) return 0;
+  return Math.round(smoothstep01((pushZonePx - dist) / pushZonePx) * 90);
 }
 
 export function workedSessionScopedKey(conversationId: string, messageId: string): string {
@@ -262,6 +305,9 @@ export interface MessageThreadContentProps {
   composerDraftId?: string | null;
 }
 
+/** Stable identity for the non-virtualized case so downstream memos don't re-fire every render. */
+const EMPTY_VIRTUAL_ITEMS: never[] = [];
+
 export function MessageThreadContent({
   messages,
   stickyUserHeader = false,
@@ -298,6 +344,10 @@ export function MessageThreadContent({
     for (let i = 0; i < messages.length; i += 1) {
       const cur = messages[i];
       if (cur?.type !== "permission-request" || !cur.permissionRequestId) {
+        continue;
+      }
+      if (cur.permissionResolved) {
+        skip.add(i);
         continue;
       }
       const linkedWorkedId = cur.permissionLinkedToolCallId
@@ -350,6 +400,50 @@ export function MessageThreadContent({
   );
 
   const segments = useMemo(() => buildMessageThreadSegments(messages), [messages]);
+  const lastUserMessageId = useMemo(() => {
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      const message = messages[index];
+      if (message?.type === "user") {
+        return message.id;
+      }
+    }
+    return null;
+  }, [messages]);
+  const settledTurnContext = useMemo(
+    () => getSettledTurnContext(segments, messages, conversationBusy),
+    [conversationBusy, messages, segments]
+  );
+  const prevConversationBusyRef = useRef(conversationBusy);
+
+  useEffect(() => {
+    const wasBusy = prevConversationBusyRef.current;
+    prevConversationBusyRef.current = conversationBusy;
+    if (!wasBusy || conversationBusy || !settledTurnContext.settled) {
+      return;
+    }
+    if (!conversationId || !onWorkedSessionOpenChange) {
+      return;
+    }
+    for (const index of settledTurnContext.tailIndexSet) {
+      if (index >= settledTurnContext.lastAssistantIndex) {
+        continue;
+      }
+      const message = messages[index];
+      if (message?.type !== "worked-session") {
+        continue;
+      }
+      onWorkedSessionOpenChange(
+        workedSessionScopedKey(conversationId, message.id),
+        false
+      );
+    }
+  }, [
+    conversationBusy,
+    conversationId,
+    messages,
+    onWorkedSessionOpenChange,
+    settledTurnContext,
+  ]);
 
   const renderMessageAtIndex = useCallback(
     (i: number): ReactNode => {
@@ -382,6 +476,12 @@ export function MessageThreadContent({
           return (
             <div key={rowKey} data-chat-message-id={msg.id} className="min-w-0 w-full">
               <TodoCard label={msg.todoLabel!} todos={msg.todos!} />
+            </div>
+          );
+        case "todo-update":
+          return (
+            <div key={rowKey} data-chat-message-id={msg.id} className="min-w-0 w-full">
+              <TodoUpdateCard todo={msg.todos![0]!} />
             </div>
           );
         case "subagent": {
@@ -433,7 +533,7 @@ export function MessageThreadContent({
         case "ask-question":
           return null;
         case "permission-request":
-          if (skipPermissionMessageIndex.has(i)) {
+          if (skipPermissionMessageIndex.has(i) || msg.permissionResolved) {
             return null;
           }
           return (
@@ -458,6 +558,12 @@ export function MessageThreadContent({
             </div>
           );
         case "activity-label":
+          if (
+            msg.activityLabel === "Permission resolved" ||
+            msg.activityLabel === "Permission cancelled"
+          ) {
+            return null;
+          }
           if (shouldHideCompletionFailureInThread(msg.activityLabel, msg.activityDetail)) {
             return null;
           }
@@ -468,6 +574,8 @@ export function MessageThreadContent({
                 detail={msg.activityDetail}
                 files={msg.activityFiles}
                 defaultOpen={msg.activityDefaultOpen}
+                contentRail={!isSettledWorkIndex(i, settledTurnContext)}
+                settled={isSettledWorkIndex(i, settledTurnContext)}
               />
             </div>
           );
@@ -498,6 +606,7 @@ export function MessageThreadContent({
               onWorkedSessionOpenChange(scopedKey, v);
             };
           }
+          const isSettledWork = isSettledWorkIndex(i, settledTurnContext);
           return (
             <div key={rowKey} data-chat-message-id={msg.id} className="relative z-[2] min-w-0 w-full">
               <WorkedSessionCard
@@ -514,6 +623,8 @@ export function MessageThreadContent({
                 toolDetailsInWorkedCard
                 embeddedPermission={embeddedPermissionByWorkedId.get(msg.id) ?? null}
                 onResolvePermission={onResolvePermission}
+                contentRail={!isSettledWork}
+                settled={isSettledWork}
               />
             </div>
           );
@@ -539,6 +650,34 @@ export function MessageThreadContent({
               <ForkDivider fromAgent={msg.forkFromAgent!} />
             </div>
           );
+        case "turn-footer": {
+          if (
+            conversationBusy &&
+            msg.turnFooterUserMessageId &&
+            msg.turnFooterUserMessageId === lastUserMessageId
+          ) {
+            return null;
+          }
+          if (msg.turnDurationMs == null || !msg.turnFooterUserMessageId) {
+            return null;
+          }
+          return (
+            <div key={rowKey} data-chat-message-id={msg.id} className="min-w-0 w-full">
+              <TurnCompletionFooter
+                durationMs={msg.turnDurationMs}
+                onFork={
+                  onForkMessage
+                    ? () => onForkMessage(msg.turnFooterUserMessageId!)
+                    : undefined
+                }
+                copyText={extractFinalAssistantResponseForTurn(
+                  messages,
+                  msg.turnFooterUserMessageId!
+                )}
+              />
+            </div>
+          );
+        }
         default:
           return null;
       }
@@ -548,11 +687,14 @@ export function MessageThreadContent({
       conversationBusy,
       conversationId,
       embeddedPermissionByWorkedId,
+      lastUserMessageId,
       lastWorkedSessionIndex,
       messages,
+      onForkMessage,
       onOpenSubagent,
       onResolvePermission,
       onWorkedSessionOpenChange,
+      settledTurnContext,
       skipPermissionMessageIndex,
       workedSessionOpenByScopedId,
       workedSessionSurface,
@@ -569,6 +711,17 @@ export function MessageThreadContent({
         if (!userMsg || !todoMsg) {
           return null;
         }
+        const todoBlock =
+          todoMsg.type === "todo" ? (
+            <TodoCard
+              label={todoMsg.todoLabel ?? "Todo list"}
+              todos={todoMsg.todos ?? []}
+              meldUserAbove
+              embeddedInSticky
+            />
+          ) : (
+            <TodoStatusCard content={todoMsg.content ?? ""} meldUserAbove />
+          );
         const block = (
           <div className="flex flex-col">
             {editingUserMessageId === userMsg.id && renderUserMessageEditor ? (
@@ -581,11 +734,10 @@ export function MessageThreadContent({
                 showReplyCue={userMsg.showReplyCue}
                 highlight={userMsg.isHandoffMessage}
                 composerDraftId={composerDraftId}
-                onFork={onForkMessage ? () => onForkMessage(userMsg.id) : undefined}
                 onRedo={onRedoMessage ? () => onRedoMessage(userMsg) : undefined}
               />
             )}
-            <TodoStatusCard content={todoMsg.content!} meldUserAbove />
+            {todoBlock}
           </div>
         );
         return (
@@ -615,7 +767,6 @@ export function MessageThreadContent({
             showReplyCue={userMsg.showReplyCue}
             highlight={userMsg.isHandoffMessage}
             composerDraftId={composerDraftId}
-            onFork={onForkMessage ? () => onForkMessage(userMsg.id) : undefined}
             onRedo={onRedoMessage ? () => onRedoMessage(userMsg) : undefined}
           />
         )
@@ -636,7 +787,6 @@ export function MessageThreadContent({
       composerDraftId,
       editingUserMessageId,
       messages,
-      onForkMessage,
       onRedoMessage,
       pushFor,
       registerStickyEl,
@@ -684,13 +834,22 @@ export function MessageThreadContent({
       if (seg.type === "preamble") {
         return Math.min(2400, 80 + seg.messageIndices.length * 72);
       }
-      return Math.min(16000, 200 + (seg.tailIndices.length + 1) * 100);
+      const todoItems =
+        seg.userKind === "user_todo" && messages[seg.todoIndex]?.type === "todo"
+          ? messages[seg.todoIndex]!.todos?.length ?? 0
+          : 0;
+      const userTextLength =
+        messages[seg.userIndex]?.type === "user" ? messages[seg.userIndex]!.content?.length ?? 0 : 0;
+      return Math.min(
+        16000,
+        220 + Math.ceil(userTextLength / 160) * 22 + todoItems * 28 + seg.tailIndices.length * 110
+      );
     },
     overscan: 4,
     getItemKey: (index) => `${conversationId ?? "none"}:${segments[index]?.key ?? String(index)}`,
   });
 
-  const virtualItems = useVirtualList ? virtualizer.getVirtualItems() : [];
+  const virtualItems = useVirtualList ? virtualizer.getVirtualItems() : EMPTY_VIRTUAL_ITEMS;
   const virtualStickyScrollTop = useStickyScrollTop(
     useVirtualStickyOverlay && useVirtualList,
     scrollRootRef
@@ -708,6 +867,16 @@ export function MessageThreadContent({
       : segments[activeVirtualStickyIndex]?.type === "turn"
         ? segments[activeVirtualStickyIndex]
         : null;
+  const activeVirtualStickyPushPx = useMemo(
+    () =>
+      virtualStickyPushPx(
+        activeVirtualStickyIndex,
+        segments,
+        virtualItems,
+        virtualStickyScrollTop
+      ),
+    [activeVirtualStickyIndex, segments, virtualItems, virtualStickyScrollTop]
+  );
 
   if (useVirtualList) {
     return (
@@ -719,7 +888,7 @@ export function MessageThreadContent({
           <VirtualStickyUserHeader
             turn={activeVirtualStickyTurn}
             messages={messages}
-            onForkMessage={onForkMessage}
+            pushUpPx={activeVirtualStickyPushPx}
             onRedoMessage={onRedoMessage}
             renderUserMessageEditor={renderUserMessageEditor}
             editingUserMessageId={editingUserMessageId}

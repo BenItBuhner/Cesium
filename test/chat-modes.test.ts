@@ -20,8 +20,13 @@ describe("chat modes", () => {
     );
   });
 
-  test("uses plan-style emphasis for orchestration mode", () => {
-    assert.equal(getModeTone("orchestration"), "plan");
+  test("uses purple orchestration emphasis for orchestration mode", () => {
+    assert.equal(getModeTone("orchestration"), "orchestration");
+  });
+
+  test("uses burn emphasis for Burn mode", () => {
+    assert.equal(getModeTone("burn"), "burn");
+    assert.equal(resolveCanonicalModeId("Burn", [{ id: "burn", label: "Burn" }]), "burn");
   });
 
   test("detects orchestration mode case-insensitively", () => {
@@ -30,9 +35,9 @@ describe("chat modes", () => {
     assert.equal(isOrchestrationMode("plan"), false);
   });
 
-  test("locks orchestration mode only after chat initiation", () => {
+  test("does not lock orchestration mode after chat initiation", () => {
     assert.equal(isOrchestrationModeLocked("orchestration", false), false);
-    assert.equal(isOrchestrationModeLocked("orchestration", true), true);
+    assert.equal(isOrchestrationModeLocked("orchestration", true), false);
     assert.equal(isOrchestrationModeLocked("plan", true), false);
     assert.equal(isOrchestrationModeLocked("agent", false), false);
   });

@@ -32,7 +32,7 @@ interface BackendDropdownProps {
 
 const BACKEND_LABEL_KEYBOARD_PEEK_MS = 560;
 
-function settingsNavForBackend(_backendId: AgentBackendId): string {
+function settingsNavForBackend(): string {
   return "agents";
 }
 
@@ -62,12 +62,12 @@ export function BackendDropdown({
   const current = options.find((option) => option.id === backendId) ?? null;
   const showLabelExpanded = open || keyboardLabelPeek;
   const openBackendSettings = useCallback(
-    (targetBackendId: AgentBackendId) => {
+    () => {
       updateWorkspaceSession((current) => ({
         ...current,
         settingsView: {
           ...current.settingsView,
-          activeNav: settingsNavForBackend(targetBackendId),
+          activeNav: settingsNavForBackend(),
         },
       }));
       openSettingsView();
@@ -231,7 +231,7 @@ export function BackendDropdown({
                         type="button"
                         aria-label={`Configure ${option.label}`}
                         title={`Configure ${option.label}`}
-                        onClick={() => openBackendSettings(option.id)}
+                        onClick={() => openBackendSettings()}
                         className="flex size-[24px] shrink-0 items-center justify-center rounded-[var(--radius-tab)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)]"
                       >
                         <Settings className="size-[13px]" strokeWidth={1.7} />

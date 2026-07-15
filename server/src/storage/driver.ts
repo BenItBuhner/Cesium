@@ -18,6 +18,14 @@ import type {
   OrchestrationBoardListResult,
   OrchestrationBoardSnapshot,
 } from "../lib/orchestration/types.js";
+import type {
+  BurnGoalPatch,
+  BurnGoalRecord,
+} from "../lib/agents/burn-goal-types.js";
+import type {
+  ExtensionInstallRecord,
+  ExtensionPermissionGrant,
+} from "../lib/extensions/types.js";
 
 export type StorageDriverKind = "legacy-json" | "pg";
 
@@ -206,6 +214,34 @@ export interface StorageDriver {
     conversationId: string,
     limit: number
   ): Promise<AgentStoredEvent[]>;
+
+  // ---------- Burn goals ----------
+  getBurnGoalByConversation(
+    workspaceId: string,
+    conversationId: string
+  ): Promise<BurnGoalRecord | null>;
+  upsertBurnGoal(record: BurnGoalRecord): Promise<void>;
+  updateBurnGoal(
+    workspaceId: string,
+    conversationId: string,
+    patch: BurnGoalPatch
+  ): Promise<BurnGoalRecord | null>;
+  listBurnGoals(workspaceId: string): Promise<BurnGoalRecord[]>;
+
+  // ---------- VS Code extensions ----------
+  listInstalledExtensions(workspaceId: string): Promise<ExtensionInstallRecord[]>;
+  getInstalledExtension(
+    workspaceId: string,
+    extensionId: string
+  ): Promise<ExtensionInstallRecord | null>;
+  upsertInstalledExtension(record: ExtensionInstallRecord): Promise<void>;
+  deleteInstalledExtension(workspaceId: string, extensionId: string): Promise<boolean>;
+  patchExtensionSettings(
+    workspaceId: string,
+    extensionId: string,
+    settings: Record<string, unknown>
+  ): Promise<ExtensionInstallRecord | null>;
+  upsertExtensionPermissionGrant(grant: ExtensionPermissionGrant): Promise<void>;
 
   // ---------- provider cache ----------
   readProviderCache(

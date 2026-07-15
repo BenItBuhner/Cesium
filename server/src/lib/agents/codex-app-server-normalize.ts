@@ -1,3 +1,4 @@
+import { asRecord, asString } from "./json-coerce.js";
 import { extractToolEditPreview } from "./tool-edit-preview.js";
 import {
   formatDeleteToolTitle,
@@ -7,6 +8,11 @@ import {
   toolPathBasename,
   truncateGenericToolTitle,
 } from "./tool-display-labels.js";
+import {
+  inferCanonicalToolKind,
+  locationsForToolPayload,
+  titleForCanonicalTool,
+} from "./tool-normalize.js";
 import type {
   AgentEventInput,
   AgentPermissionOption,
@@ -31,16 +37,6 @@ type PermissionRequestInput = {
   conversationId: string;
   eventId: string;
 };
-
-function asRecord(value: unknown): CodexAppServerRecord | undefined {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as CodexAppServerRecord)
-    : undefined;
-}
-
-function asString(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim() ? value : undefined;
-}
 
 function compactJson(value: unknown, max = 1_200): string | undefined {
   if (value == null) {
@@ -121,6 +117,42 @@ function commandText(command: unknown): string {
   return "Command";
 }
 
+export function canonicalizeCodexAppServerItem(
+  item: CodexAppServerRecord
+): CodexAppServerRecord {
+  const type = asString(item.type);
+  const out: CodexAppServerRecord = { ...item };
+  if (type === "collabToolCall") {
+    out.type = "collab_tool_call";
+    const receiverIds =
+      Array.isArray(item.receiverThreadIds)
+        ? item.receiverThreadIds
+        : Array.isArray(item.receiver_thread_ids)
+          ? item.receiver_thread_ids
+          : asString(item.receiverThreadId) || asString(item.receiver_thread_id)
+            ? [asString(item.receiverThreadId) ?? asString(item.receiver_thread_id)]
+            : undefined;
+    if (receiverIds) {
+      out.receiver_thread_ids = receiverIds.filter(
+        (value): value is string => typeof value === "string" && value.trim().length > 0
+      );
+    }
+    const receiverThreadId = asString(item.receiverThreadId) ?? asString(item.receiver_thread_id);
+    if (receiverThreadId) {
+      out.receiver_thread_id = receiverThreadId;
+    }
+    const newThreadId = asString(item.newThreadId) ?? asString(item.new_thread_id);
+    if (newThreadId) {
+      out.new_thread_id = newThreadId;
+    }
+  } else if (type === "mcpToolCall") {
+    out.type = "mcp_tool_call";
+  } else if (type === "dynamicToolCall") {
+    out.type = "dynamic_tool_call";
+  }
+  return out;
+}
+
 function itemToolKind(item: CodexAppServerRecord): string {
   switch (item.type) {
     case "commandExecution":
@@ -136,8 +168,13 @@ function itemToolKind(item: CodexAppServerRecord): string {
     case "contextCompaction":
       return "context";
     case "mcpToolCall":
+      return "mcp";
     case "dynamicToolCall":
-      return "tool";
+      return inferCanonicalToolKind({
+        name: asString(item.tool) ?? "dynamic_tool",
+        input: item.arguments,
+        result: item.result ?? item.contentItems,
+      });
     case "enteredReviewMode":
     case "exitedReviewMode":
       return "review";
@@ -170,7 +207,11 @@ function itemTitle(item: CodexAppServerRecord): string {
       return truncateGenericToolTitle([server, tool].filter(Boolean).join(" · "), "MCP tool");
     }
     case "dynamicToolCall":
-      return truncateGenericToolTitle(asString(item.tool), "Dynamic tool");
+      return titleForCanonicalTool({
+        name: asString(item.tool) ?? "Dynamic tool",
+        kind: itemToolKind(item),
+        payload: { input: item.arguments, result: item.result ?? item.contentItems },
+      });
     case "enteredReviewMode":
       return "Review started";
     case "exitedReviewMode":
@@ -180,6 +221,20 @@ function itemTitle(item: CodexAppServerRecord): string {
     default:
       return truncateGenericToolTitle(asString(item.type), "Tool");
   }
+}
+
+function itemLocations(item: CodexAppServerRecord): Array<{ path: string }> | undefined {
+  const changesPath = firstChangePath(item.changes);
+  if (changesPath) {
+    return [{ path: changesPath }];
+  }
+  if (item.type === "dynamicToolCall") {
+    return locationsForToolPayload({
+      input: item.arguments,
+      result: item.result ?? item.contentItems,
+    });
+  }
+  return undefined;
 }
 
 function itemDetail(item: CodexAppServerRecord): string | undefined {
@@ -223,11 +278,13 @@ export function codexAppServerPlanEntriesFromTurnPlan(params: CodexAppServerReco
     if (!content) {
       return [];
     }
-    const rawStatus = record?.status;
+    const rawStatus = asString(record?.status)?.toLowerCase();
     const status =
       rawStatus === "completed"
         ? "completed"
-        : rawStatus === "inProgress" || rawStatus === "in_progress"
+        : rawStatus === "blocked" || rawStatus === "stuck"
+          ? "blocked"
+        : rawStatus === "inprogress" || rawStatus === "in_progress"
           ? "in_progress"
           : "pending";
     return [
@@ -277,9 +334,9 @@ export function codexAppServerToolEventFromItem(input: NormalizeToolInput): Agen
     toolKind: itemToolKind(input.item),
     status,
     detail: itemDetail(input.item),
-    locations: changesPath ? [{ path: changesPath }] : undefined,
+    locations: itemLocations(input.item),
     editPreview,
-    raw: input.item,
+    raw: canonicalizeCodexAppServerItem(input.item),
   };
   return input.emitAsUpdate
     ? { ...common, kind: "tool_call_update" }

@@ -1,17 +1,55 @@
+import { getStoredClaudeCodeSdkSettingsSync } from "./claude-code-sdk-settings.js";
+
 function readEnvValue(name: string): string {
   return process.env[name]?.trim() ?? "";
 }
 
+function resolveStoredOrEnv(
+  storedValue: string | undefined,
+  envNames: string[]
+): string {
+  if (storedValue?.trim()) {
+    return storedValue.trim();
+  }
+  for (const name of envNames) {
+    const value = readEnvValue(name);
+    if (value) {
+      return value;
+    }
+  }
+  return "";
+}
+
 export function getClaudeCodeSdkProxyBaseUrl(): string {
-  return readEnvValue("OPENCURSOR_CLAUDE_CODE_SDK_BASE_URL") || readEnvValue("ANTHROPIC_BASE_URL");
+  const stored = getStoredClaudeCodeSdkSettingsSync();
+  return resolveStoredOrEnv(stored?.baseUrl, [
+    "OPENCURSOR_CLAUDE_CODE_SDK_BASE_URL",
+    "ANTHROPIC_BASE_URL",
+  ]);
 }
 
 export function getClaudeCodeSdkProxyApiKey(): string {
-  return readEnvValue("OPENCURSOR_CLAUDE_CODE_SDK_API_KEY") || readEnvValue("ANTHROPIC_API_KEY");
+  const stored = getStoredClaudeCodeSdkSettingsSync();
+  return resolveStoredOrEnv(stored?.apiKey, [
+    "OPENCURSOR_CLAUDE_CODE_SDK_API_KEY",
+    "ANTHROPIC_API_KEY",
+  ]);
 }
 
 export function getClaudeCodeSdkProxyModel(): string {
-  return readEnvValue("OPENCURSOR_CLAUDE_CODE_SDK_MODEL") || "glm-5.1-precision";
+  const stored = getStoredClaudeCodeSdkSettingsSync();
+  return (
+    resolveStoredOrEnv(stored?.model, ["OPENCURSOR_CLAUDE_CODE_SDK_MODEL"]) || "glm-5.1-precision"
+  );
+}
+
+export function getClaudeCodeSdkPathToExecutable(): string | undefined {
+  const stored = getStoredClaudeCodeSdkSettingsSync();
+  const resolved = resolveStoredOrEnv(stored?.pathToExecutable, [
+    "OPENCURSOR_CLAUDE_CODE_SDK_PATH",
+    "OPENCURSOR_CLAUDE_BIN",
+  ]);
+  return resolved || undefined;
 }
 
 export function getClaudeCodeSdkProxyModelName(): string {
@@ -40,8 +78,10 @@ export function hasClaudeCodeSdkAuthConfig(): boolean {
 }
 
 export function describeClaudeCodeSdkAuthStatus(): string {
+  const stored = getStoredClaudeCodeSdkSettingsSync();
   if (hasClaudeCodeSdkProxyConfig()) {
-    return `proxy configured (${getClaudeCodeSdkProxyBaseUrl()})`;
+    const source = stored?.baseUrl || stored?.apiKey ? "stored settings" : "env";
+    return `proxy configured (${getClaudeCodeSdkProxyBaseUrl()}, ${source})`;
   }
   if (readEnvValue("ANTHROPIC_API_KEY")) {
     return "ANTHROPIC_API_KEY configured";
@@ -58,5 +98,5 @@ export function describeClaudeCodeSdkAuthStatus(): string {
   if (readEnvValue("CLAUDE_CODE_USE_FOUNDRY") === "1") {
     return "Foundry provider configured";
   }
-  return "Set OPENCURSOR_CLAUDE_CODE_SDK_API_KEY + OPENCURSOR_CLAUDE_CODE_SDK_BASE_URL, ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, or a supported Claude provider env var";
+  return "Set Claude Code SDK settings, OPENCURSOR_CLAUDE_CODE_SDK_API_KEY + OPENCURSOR_CLAUDE_CODE_SDK_BASE_URL, ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, or a supported Claude provider env var";
 }

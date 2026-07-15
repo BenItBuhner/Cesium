@@ -19,15 +19,23 @@ import type { AgentBackendId } from "@/lib/agent-types";
 import type { AgentsSettingsState, RememberedAgentPermissionRule } from "@/lib/global-settings";
 import {
   deleteCursorSdkApiKey,
+  deleteClaudeCodeSdkSettings,
   deleteCesiumProviderKey,
+  disconnectPiAgentOAuth,
   discoverCesiumProviderModels,
+  fetchClaudeCodeSdkSettings,
   fetchCesiumAgentSettings,
   fetchCesiumModelCatalog,
   fetchCursorSdkCredentialStatus,
+  fetchPiAgentSettings,
   patchCesiumAgentSettings,
   refreshCesiumModelCatalog,
+  saveClaudeCodeSdkSettings,
   saveCursorSdkApiKey,
   saveCesiumProviderKey,
+  savePiAgentProviderKey,
+  startPiAgentOAuth,
+  type ClaudeCodeSdkSettingsPayload,
   type CesiumAgentSettingsPayload,
   type CesiumCustomProvider,
   type CesiumDiscoveredProviderModel,
@@ -35,6 +43,8 @@ import {
   type CesiumProviderKeyStatus,
   type CesiumProviderKind,
   type CursorSdkCredentialStatus,
+  type PiAgentProviderStatus,
+  type PiAgentSettingsResponse,
 } from "@/lib/server-api";
 import {
   detectShortcutPlatform,
@@ -60,6 +70,8 @@ export const HARNESS_ORDER: AgentBackendId[] = [
   "opencode-server",
   "gemini-acp",
   "claude-code-sdk",
+  "pi-agent",
+  "google-antigravity-cli",
 ];
 
 export const HARNESS_LABELS: Record<AgentBackendId, string> = {
@@ -69,16 +81,25 @@ export const HARNESS_LABELS: Record<AgentBackendId, string> = {
   "gemini-acp": "Gemini",
   "codex-app-server": "Codex App Server",
   "claude-code-sdk": "Claude Code",
+  "pi-agent": "Pi Agent",
+  "google-antigravity-cli": "Google Antigravity",
 };
 
 const HARNESS_DESCRIPTIONS: Record<AgentBackendId, string> = {
   "cesium-agent":
     "First-party Cesium harness with direct inference APIs, tools, subagents, and compression.",
-  "cursor-sdk": "Cursor TypeScript SDK runtime. API key is stored on the server.",
-  "opencode-server": "OpenCode native HTTP/SSE server API.",
+  "cursor-sdk":
+    "Cursor TypeScript SDK runtime. Uses the server-stored API key and enabled MCP servers from Plugins.",
+  "opencode-server":
+    "OpenCode native HTTP/SSE server API. Uses ambient OpenCode auth or the configured external server.",
   "gemini-acp": "Gemini CLI over ACP (`gemini --acp`).",
-  "codex-app-server": "Codex App Server over JSON-RPC stdio.",
-  "claude-code-sdk": "Anthropic Claude Agent SDK with stock Claude Code tools.",
+  "codex-app-server":
+    "Codex App Server over JSON-RPC stdio. Uses ambient Codex auth and mirrors native plans into OpenCursor plan files.",
+  "claude-code-sdk":
+    "Anthropic Claude Agent SDK with stock Claude Code tools. Uses configured API/proxy auth and enabled MCP servers from Plugins.",
+  "pi-agent": "Pi coding agent SDK with built-in read, edit, grep, and bash tools.",
+  "google-antigravity-cli":
+    "Google Antigravity CLI harness. Requires `agy` installed and ambient CLI auth; MCP comes from `.agents/mcp_config.json`, and prompt images are not exposed yet.",
 };
 
 /** Custom endpoints support the same four inference APIs as model discovery. */
@@ -421,6 +442,163 @@ function CursorSdkCredentialSettings() {
         </div>
         <p className="leading-relaxed">
           The key stays server-side and is used only by the Cursor SDK harness.
+        </p>
+        {message ? <p className="text-[var(--text-primary)]">{message}</p> : null}
+      </div>
+    </HarnessDetailBlock>
+  );
+}
+
+function ClaudeCodeSdkHarnessSettings() {
+  const [settings, setSettings] = useState<ClaudeCodeSdkSettingsPayload | null>(null);
+  const [baseUrl, setBaseUrl] = useState("");
+  const [apiKey, setApiKey] = useState("");
+  const [model, setModel] = useState("");
+  const [pathToExecutable, setPathToExecutable] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+
+  const refresh = useCallback(async () => {
+    try {
+      const result = await fetchClaudeCodeSdkSettings();
+      setSettings(result.settings);
+      setBaseUrl(result.settings.baseUrl ?? "");
+      setModel(result.settings.model ?? "");
+      setPathToExecutable(result.settings.pathToExecutable ?? "");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Failed to load Claude Code SDK settings.");
+    }
+  }, []);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  const saveSettings = useCallback(async () => {
+    setBusy(true);
+    setMessage(null);
+    try {
+      const result = await saveClaudeCodeSdkSettings({
+        baseUrl: baseUrl.trim() || null,
+        ...(apiKey.trim() ? { apiKey: apiKey.trim() } : {}),
+        model: model.trim() || null,
+        pathToExecutable: pathToExecutable.trim() || null,
+      });
+      setSettings(result.settings);
+      setApiKey("");
+      setBaseUrl(result.settings.baseUrl ?? "");
+      setModel(result.settings.model ?? "");
+      setPathToExecutable(result.settings.pathToExecutable ?? "");
+      notifyAgentBackendsChanged();
+      setMessage("Claude Code SDK settings verified and saved.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Claude Code SDK settings save failed.");
+    } finally {
+      setBusy(false);
+    }
+  }, [apiKey, baseUrl, model, pathToExecutable]);
+
+  const clearStoredSettings = useCallback(async () => {
+    setBusy(true);
+    setMessage(null);
+    try {
+      const result = await deleteClaudeCodeSdkSettings();
+      setSettings(result.settings);
+      setApiKey("");
+      setBaseUrl(result.settings.baseUrl ?? "");
+      setModel(result.settings.model ?? "");
+      setPathToExecutable(result.settings.pathToExecutable ?? "");
+      notifyAgentBackendsChanged();
+      setMessage(
+        result.settings.source === "env"
+          ? "Stored settings removed; Claude Code SDK env vars are still configured on the server."
+          : "Stored Claude Code SDK settings removed."
+      );
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Failed to remove Claude Code SDK settings.");
+    } finally {
+      setBusy(false);
+    }
+  }, []);
+
+  const statusText = !settings
+    ? "Loading…"
+    : settings.configured
+      ? settings.source === "env"
+        ? "Configured from server environment variables"
+        : `Configured${settings.apiKeyLastFour ? ` · key ···${settings.apiKeyLastFour}` : ""}`
+      : "Not configured";
+
+  return (
+    <HarnessDetailBlock>
+      <SettingsSubsectionHeading>Proxy and credentials</SettingsSubsectionHeading>
+      <div className="mt-[10px] flex flex-col gap-[12px] font-sans text-[12px] text-[var(--text-secondary)]">
+        <div>
+          <p className="text-[13px] font-medium text-[var(--text-primary)]">{statusText}</p>
+          {settings?.baseUrl ? (
+            <p className="mt-[3px] font-mono text-[11px]">{settings.baseUrl}</p>
+          ) : null}
+        </div>
+        <div className="flex flex-col gap-[8px]">
+          <SettingsFieldLabel>Base URL</SettingsFieldLabel>
+          <input
+            type="url"
+            value={baseUrl}
+            onChange={(event) => setBaseUrl(event.currentTarget.value)}
+            placeholder="https://your-proxy.example/v1"
+            className={monoInputClass}
+          />
+        </div>
+        <div className="flex flex-col gap-[8px]">
+          <SettingsFieldLabel>API key</SettingsFieldLabel>
+          <input
+            type="password"
+            value={apiKey}
+            onChange={(event) => setApiKey(event.currentTarget.value)}
+            placeholder={
+              settings?.apiKeyLastFour
+                ? `Stored key ends with ${settings.apiKeyLastFour}`
+                : "Paste Anthropic or proxy API key"
+            }
+            className={monoInputClass}
+          />
+        </div>
+        <div className="flex flex-col gap-[8px]">
+          <SettingsFieldLabel>Model</SettingsFieldLabel>
+          <input
+            type="text"
+            value={model}
+            onChange={(event) => setModel(event.currentTarget.value)}
+            placeholder="glm-5.1-precision"
+            className={monoInputClass}
+          />
+        </div>
+        <div className="flex flex-col gap-[8px]">
+          <SettingsFieldLabel>Claude Code binary path (optional)</SettingsFieldLabel>
+          <input
+            type="text"
+            value={pathToExecutable}
+            onChange={(event) => setPathToExecutable(event.currentTarget.value)}
+            placeholder="C:\\path\\to\\claude.exe"
+            className={monoInputClass}
+          />
+        </div>
+        <div className="flex flex-wrap items-center gap-[8px]">
+          <button type="button" className={rowButtonClass} disabled={busy} onClick={saveSettings}>
+            Test and save
+          </button>
+          <button
+            type="button"
+            className={rowButtonClass}
+            disabled={busy || settings?.source !== "stored"}
+            onClick={clearStoredSettings}
+          >
+            Remove stored settings
+          </button>
+        </div>
+        <p className="leading-relaxed">
+          Credentials stay server-side and are used only by the Claude Code SDK harness. Stored
+          settings override OPENCURSOR_CLAUDE_CODE_SDK_* and ANTHROPIC_* env vars.
         </p>
         {message ? <p className="text-[var(--text-primary)]">{message}</p> : null}
       </div>
@@ -1158,6 +1336,29 @@ function CesiumAgentHarnessSettings() {
           </HarnessDetailBlock>
 
           <HarnessDetailBlock>
+            <SettingsSubsectionHeading>Orchestration Agent</SettingsSubsectionHeading>
+            <HarnessDetailToggleRow
+              title="Continue when work remains"
+              description="When a Cesium agent stops with incomplete todos or open kanban issues, automatically prompt it to continue toward the user's core goals."
+              trailing={
+                <ToggleSwitch
+                  checked={settings.orchestration.continueWhenIncomplete}
+                  onChange={(continueWhenIncomplete) =>
+                    void patchSettings({
+                      orchestration: {
+                        ...settings.orchestration,
+                        continueWhenIncomplete,
+                      },
+                    })
+                  }
+                  size="md"
+                  variant="green"
+                />
+              }
+            />
+          </HarnessDetailBlock>
+
+          <HarnessDetailBlock>
             <SettingsSubsectionHeading>Tool permissions</SettingsSubsectionHeading>
             <div className="mt-[10px] grid gap-[12px] md:grid-cols-2">
               <label className="flex flex-col gap-[5px]">
@@ -1241,6 +1442,244 @@ function CesiumAgentHarnessSettings() {
   );
 }
 
+function PiAgentHarnessSettings() {
+  const { refreshModels } = useGlobalSettings();
+  const [payload, setPayload] = useState<PiAgentSettingsResponse | null>(null);
+  const [apiKeysByProvider, setApiKeysByProvider] = useState<Record<string, string>>({});
+  const [busyProviderId, setBusyProviderId] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+
+  const refresh = useCallback(async () => {
+    try {
+      const result = await fetchPiAgentSettings();
+      setPayload(result);
+      setMessage(null);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Failed to load Pi Agent settings.");
+    }
+  }, []);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  useEffect(() => {
+    const onMessage = (event: MessageEvent) => {
+      if (event.data?.type === "opencursor-pi-agent-oauth") {
+        void refresh()
+          .then(() => refreshModels())
+          .then(() => notifyAgentBackendsChanged());
+        setMessage("Pi Agent provider connected.");
+      }
+    };
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, [refresh, refreshModels]);
+
+  const connectOAuth = useCallback(
+    async (provider: PiAgentProviderStatus) => {
+      setBusyProviderId(provider.id);
+      setMessage(null);
+      try {
+        const result = await startPiAgentOAuth(provider.id);
+        if (result.authUrl) {
+          window.open(result.authUrl, "_blank", "noopener,noreferrer,width=520,height=720");
+          setMessage(
+            result.instructions ??
+              `Complete sign-in for ${provider.name} in your browser, then return here.`
+          );
+          window.setTimeout(() => {
+            void refresh()
+              .then(() => refreshModels())
+              .then(() => notifyAgentBackendsChanged());
+          }, 4000);
+          return;
+        }
+        if (result.verificationUri && result.userCode) {
+          window.open(result.verificationUri, "_blank", "noopener,noreferrer,width=520,height=720");
+          setMessage(`Enter code ${result.userCode} at ${result.verificationUri}`);
+          window.setTimeout(() => {
+            void refresh()
+              .then(() => refreshModels())
+              .then(() => notifyAgentBackendsChanged());
+          }, 4000);
+          return;
+        }
+        setMessage("OAuth flow started. Refreshing provider status…");
+        await refresh();
+        await refreshModels();
+        notifyAgentBackendsChanged();
+      } catch (error) {
+        setMessage(error instanceof Error ? error.message : "Pi Agent OAuth failed.");
+      } finally {
+        setBusyProviderId(null);
+      }
+    },
+    [refresh, refreshModels]
+  );
+
+  const disconnectProvider = useCallback(
+    async (providerId: string) => {
+      setBusyProviderId(providerId);
+      setMessage(null);
+      try {
+        const result = await disconnectPiAgentOAuth(providerId);
+        setPayload(result);
+        await refreshModels();
+        notifyAgentBackendsChanged();
+        setMessage("Provider disconnected.");
+      } catch (error) {
+        setMessage(error instanceof Error ? error.message : "Failed to disconnect provider.");
+      } finally {
+        setBusyProviderId(null);
+      }
+    },
+    [refreshModels]
+  );
+
+  const saveApiKey = useCallback(
+    async (provider: PiAgentProviderStatus) => {
+      const apiKey = apiKeysByProvider[provider.id]?.trim();
+      if (!apiKey) {
+        setMessage(`Paste an API key for ${provider.name}.`);
+        return;
+      }
+      setBusyProviderId(provider.id);
+      setMessage(null);
+      try {
+        const result = await savePiAgentProviderKey({
+          providerId: provider.id,
+          label: provider.name,
+          apiKey,
+        });
+        setPayload(result);
+        setApiKeysByProvider((current) => ({ ...current, [provider.id]: "" }));
+        await refreshModels();
+        notifyAgentBackendsChanged();
+        setMessage(`${provider.name} API key saved.`);
+      } catch (error) {
+        setMessage(error instanceof Error ? error.message : "Failed to save API key.");
+      } finally {
+        setBusyProviderId(null);
+      }
+    },
+    [apiKeysByProvider, refreshModels]
+  );
+
+  const providers = payload?.providers ?? [];
+  const configuredCount = providers.filter((provider) => provider.configured).length;
+
+  return (
+    <HarnessDetailBlock>
+      <SettingsSubsectionHeading>Provider credentials</SettingsSubsectionHeading>
+      <div className="mt-[10px] flex flex-col gap-[12px] font-sans text-[12px] text-[var(--text-secondary)]">
+        <p className="text-[13px] font-medium text-[var(--text-primary)]">
+          {payload
+            ? configuredCount > 0
+              ? `${configuredCount} provider${configuredCount === 1 ? "" : "s"} configured`
+              : "No Pi Agent providers configured"
+            : "Loading…"}
+        </p>
+        <p className="leading-relaxed">
+          Connect OAuth providers or paste API keys as a fallback. Credentials are stored in an
+          isolated Pi Agent auth directory on the server.
+        </p>
+        <ul className="divide-y divide-[var(--border-subtle)] rounded-[8px] border border-[var(--border-subtle)]">
+          {providers.map((provider) => {
+            const busy = busyProviderId === provider.id;
+            const statusLabel = provider.configured
+              ? provider.authLabel ??
+                (provider.authMethod === "oauth"
+                  ? "OAuth connected"
+                  : provider.authMethod === "env"
+                    ? "Environment variable"
+                    : provider.apiKeyLastFour
+                      ? `API key ···${provider.apiKeyLastFour}`
+                      : "Configured")
+              : "Not connected";
+            return (
+              <li key={provider.id} className="flex flex-col gap-[10px] px-[12px] py-[12px]">
+                <div className="flex flex-wrap items-start justify-between gap-[10px]">
+                  <div className="min-w-0">
+                    <p className="font-sans text-[13px] font-medium text-[var(--text-primary)]">
+                      {provider.name}
+                    </p>
+                    <p className="mt-[3px] font-mono text-[11px] text-[var(--text-secondary)]">
+                      {provider.id}
+                      {provider.modelCount > 0
+                        ? ` · ${provider.modelCount} model${provider.modelCount === 1 ? "" : "s"}`
+                        : ""}
+                      {provider.modelsAvailable ? " · available" : ""}
+                    </p>
+                    <p className="mt-[4px] font-sans text-[12px] text-[var(--text-secondary)]">
+                      {statusLabel}
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-[8px]">
+                    {provider.oauthSupported ? (
+                      <button
+                        type="button"
+                        className={rowButtonClass}
+                        disabled={busy}
+                        onClick={() => void connectOAuth(provider)}
+                      >
+                        Connect
+                      </button>
+                    ) : null}
+                    {provider.configured ? (
+                      <button
+                        type="button"
+                        className={rowButtonClass}
+                        disabled={busy}
+                        onClick={() => void disconnectProvider(provider.id)}
+                      >
+                        Disconnect
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
+                <div className="flex flex-col gap-[8px] sm:flex-row sm:items-center">
+                  <input
+                    type="password"
+                    value={apiKeysByProvider[provider.id] ?? ""}
+                    onChange={(event) =>
+                      setApiKeysByProvider((current) => ({
+                        ...current,
+                        [provider.id]: event.currentTarget.value,
+                      }))
+                    }
+                    placeholder={
+                      provider.apiKeyLastFour
+                        ? `Stored key ends with ${provider.apiKeyLastFour}`
+                        : "API key fallback"
+                    }
+                    className={`${monoInputClass} min-w-0 flex-1`}
+                  />
+                  <button
+                    type="button"
+                    className={rowButtonClass}
+                    disabled={busy}
+                    onClick={() => void saveApiKey(provider)}
+                  >
+                    Save key
+                  </button>
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+        <div className="flex flex-wrap items-center gap-[8px]">
+          <button type="button" className={rowButtonClass} onClick={() => void refresh()}>
+            <RefreshCw className="size-[14px]" strokeWidth={1.5} />
+            Refresh status
+          </button>
+        </div>
+        {message ? <p className="text-[var(--text-primary)]">{message}</p> : null}
+      </div>
+    </HarnessDetailBlock>
+  );
+}
+
 function HarnessGenericSettings() {
   return (
     <HarnessDetailBlock>
@@ -1259,6 +1698,10 @@ function HarnessSpecificSettings({ backendId }: { backendId: AgentBackendId }) {
       return <CesiumAgentHarnessSettings />;
     case "cursor-sdk":
       return <CursorSdkCredentialSettings />;
+    case "claude-code-sdk":
+      return <ClaudeCodeSdkHarnessSettings />;
+    case "pi-agent":
+      return <PiAgentHarnessSettings />;
     default:
       return <HarnessGenericSettings />;
   }

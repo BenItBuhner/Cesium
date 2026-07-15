@@ -34,7 +34,11 @@ import {
   buildDraftModelOptionsForBackend,
   resolveDraftModelForBackend,
 } from "@/lib/agent-chat";
-import { DEFAULT_MODE_OPTIONS, resolveCanonicalModeId } from "@/lib/chat-modes";
+import {
+  DEFAULT_MODE_OPTIONS,
+  filterGoalModeOptions,
+  resolveCanonicalModeId,
+} from "@/lib/chat-modes";
 import type { AgentBackendId, AgentBackendInfo } from "@/lib/agent-types";
 import {
   detectShortcutPlatform,
@@ -59,7 +63,7 @@ import {
 } from "@/lib/chat-ui-shortcut-events";
 import {
   getWorkspaceRailAppearance,
-  resolveWorkspaceAppearanceKey,
+  resolveGroupWorkspaceAppearanceKey,
   WorkspaceFolderIcon,
 } from "@/lib/workspace-rail-appearance";
 import { shouldAutoFocusTextInput } from "@/lib/mobile-autofocus";
@@ -106,19 +110,17 @@ const QUICK_ACTION_BUTTON_CLASSNAME =
 function WorkspacePickerIcon({
   appearances,
   workspaceKey,
-  index,
   isHome,
   className = "size-[13px] shrink-0",
   strokeWidth = 1.5,
 }: {
   appearances: Record<string, WorkspaceRailAppearance>;
   workspaceKey: string;
-  index: number;
   isHome: boolean;
   className?: string;
   strokeWidth?: number;
 }) {
-  const appearance = getWorkspaceRailAppearance(appearances, workspaceKey, index, { isHome });
+  const appearance = getWorkspaceRailAppearance(appearances, workspaceKey, { isHome });
   return (
     <WorkspaceFolderIcon
       iconName={appearance.icon}
@@ -162,6 +164,7 @@ export function AgentNewChatLanding() {
     setRightPaneOpen,
   } = useAgentShellState();
   const { settings, updateSettings } = useGlobalSettings();
+  const goalModeBetaEnabled = settings.features.goalModeBeta;
   const { activeServer, setActiveServer } = useServerConnections();
   const { workspaces: directoryWorkspaces } = useWorkspaceDirectory();
   const runCommand = useIDECommandRunner();
@@ -186,8 +189,11 @@ export function AgentNewChatLanding() {
     );
   }, [draftBackend, draftModels, workspaceSession.chat.model]);
   const draftModeOptions = useMemo(
-    () => (draftBackend ? buildDraftModeOptionsForBackend(draftBackend) : DEFAULT_MODE_OPTIONS),
-    [draftBackend]
+    () =>
+      draftBackend
+        ? buildDraftModeOptionsForBackend(draftBackend, { goalModeBetaEnabled })
+        : filterGoalModeOptions(DEFAULT_MODE_OPTIONS, goalModeBetaEnabled),
+    [draftBackend, goalModeBetaEnabled]
   );
   const draftMode = useMemo(
     () =>
@@ -209,6 +215,7 @@ export function AgentNewChatLanding() {
   const composerDraftText = composerDrafts[composerDraftId]?.content ?? "";
   const composerDraftAttachments = composerDrafts[composerDraftId]?.attachments;
   const composerDraftCaptures = composerDrafts[composerDraftId]?.captures;
+  const composerDraftTextReferences = composerDrafts[composerDraftId]?.textReferences;
   const composerSelection = composerSelections[composerDraftId] ?? {
     start: composerDraftText.length,
     end: composerDraftText.length,
@@ -237,12 +244,14 @@ export function AgentNewChatLanding() {
         chat: {
           ...current.chat,
           backendId: nextBackend.id,
-          mode: buildDraftModeOptionsForBackend(nextBackend)[0]?.id ?? current.chat.mode,
+          mode:
+            buildDraftModeOptionsForBackend(nextBackend, { goalModeBetaEnabled })[0]?.id ??
+            current.chat.mode,
           model: resolveDraftModelForBackend(nextBackend),
         },
       }));
     },
-    [backends, updateWorkspaceSession]
+    [backends, goalModeBetaEnabled, updateWorkspaceSession]
   );
 
   const handleSubmit = useCallback(
@@ -442,12 +451,7 @@ export function AgentNewChatLanding() {
       .filter((group) => !group.serverId || group.serverId === activeServer.id)
       .map((group) => ({
         workspace: group.workspace,
-        workspaceKey: resolveWorkspaceAppearanceKey({
-          workspaceKey: group.workspaceKey,
-          serverId: group.serverId,
-          workspaceId: group.workspace.id,
-          fallbackServerId: activeServer.id,
-        }),
+        workspaceKey: resolveGroupWorkspaceAppearanceKey(group, activeServer.id),
         serverId: group.serverId,
         serverLabel: group.serverLabel,
       }));
@@ -471,23 +475,8 @@ export function AgentNewChatLanding() {
     if (!activeWorkspaceGroup) {
       return null;
     }
-    return resolveWorkspaceAppearanceKey({
-      workspaceKey: activeWorkspaceGroup.workspaceKey,
-      serverId: activeWorkspaceGroup.serverId,
-      workspaceId: activeWorkspaceGroup.workspace.id,
-      fallbackServerId: activeServer.id,
-    });
+    return resolveGroupWorkspaceAppearanceKey(activeWorkspaceGroup, activeServer.id);
   }, [activeServer.id, activeWorkspaceGroup]);
-
-  const activeWorkspacePickerIndex = useMemo(() => {
-    if (!activeWorkspaceAppearanceKey) {
-      return 0;
-    }
-    const index = workspacePickerOptions.findIndex(
-      (group) => group.workspaceKey === activeWorkspaceAppearanceKey
-    );
-    return index >= 0 ? index : 0;
-  }, [activeWorkspaceAppearanceKey, workspacePickerOptions]);
 
   const filteredWorkspaceGroups = useMemo(() => {
     const q = workspaceQuery.trim().toLowerCase();
@@ -662,7 +651,6 @@ export function AgentNewChatLanding() {
                   <WorkspacePickerIcon
                     appearances={workspaceRailAppearances}
                     workspaceKey={activeWorkspaceAppearanceKey}
-                    index={activeWorkspacePickerIndex}
                     isHome={isHomeWorkspace}
                   />
                 ) : (
@@ -775,6 +763,14 @@ export function AgentNewChatLanding() {
                     captures: next,
                   })
                 }
+                draftTextReferences={composerDraftTextReferences}
+                onDraftTextReferencesChange={(next) =>
+                  upsertComposerDraft(composerDraftId, {
+                    title: composerDraftTitle,
+                    content: composerDraftText,
+                    textReferences: next,
+                  })
+                }
               />
               <div className="mt-[10px] flex w-full min-w-0 flex-wrap items-center gap-[10px]">
                 <button
@@ -826,7 +822,7 @@ export function AgentNewChatLanding() {
                 measureKey={`${workspaceQuery}\0${filteredWorkspaceGroups.length}`}
                 scrollClassName="hide-scrollbar-y max-h-[min(320px,45vh)] min-h-0 overflow-y-auto overscroll-contain p-[4px]"
               >
-                {filteredWorkspaceGroups.map((group, groupIndex) => {
+                {filteredWorkspaceGroups.map((group) => {
                   const groupKey = group.workspaceKey;
                   const current = groupKey === activeWorkspaceAppearanceKey;
                   const isHomeRow =
@@ -852,7 +848,6 @@ export function AgentNewChatLanding() {
                         <WorkspacePickerIcon
                           appearances={workspaceRailAppearances}
                           workspaceKey={groupKey}
-                          index={groupIndex}
                           isHome={isHomeRow}
                         />
                         <span className="min-w-0 flex-1 truncate">{group.workspace.name}</span>

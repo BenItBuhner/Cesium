@@ -51,7 +51,7 @@ test("opencode server normalizes message text and tool parts", () => {
   assert.equal(events[0]?.kind, "assistant_message_chunk");
   assert.equal(events[1]?.kind, "reasoning");
   assert.equal(events[2]?.kind, "tool_call_update");
-  assert.equal("toolKind" in events[2] ? events[2].toolKind : null, "execute");
+  assert.equal("toolKind" in events[2] ? events[2].toolKind : null, "terminal");
 });
 
 test("opencode server does not render user text message responses as assistant output", () => {
@@ -96,6 +96,36 @@ test("opencode server ignores SSE text deltas and normalizes permission updates"
   assert.equal(permission[0]?.kind, "permission_request");
   assert.equal("requestId" in permission[0] ? permission[0].requestId : null, "perm_1");
 });
+
+test("opencode server can tag child-session tool events for subagent rendering", () => {
+  const events = normalizeOpenCodeServerEvent({
+    conversationId: "conv",
+    rootSessionId: "ses_root",
+    allowChildSessionEvents: true,
+    payload: {
+      type: "message.part.updated",
+      properties: {
+        part: {
+          type: "tool",
+          sessionID: "ses_child",
+          tool: "bash",
+          callId: "call_child",
+          state: {
+            status: "running",
+            input: { command: "pwd" },
+          },
+        },
+      },
+    },
+  });
+  assert.equal(events[0]?.kind, "tool_call_update");
+  assert.equal(
+    "openCodeSubagentSessionId" in events[0] ? events[0].openCodeSubagentSessionId : null,
+    "ses_child"
+  );
+  assert.equal("toolCallId" in events[0] ? events[0].toolCallId : null, "call_child");
+});
+
 
 test("opencode server text-part updates append only the new tail", () => {
   assert.equal(openCodeServerPartTextDelta("", "hello"), "hello");

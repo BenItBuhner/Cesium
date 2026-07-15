@@ -10,6 +10,7 @@ import {
 } from "react";
 import { useOpenInEditor } from "@/components/editor/OpenInEditorContext";
 import { buildQuickOpenIndex, type QuickOpenEntry } from "@/lib/quick-open-files";
+import { AgentSwitcherPalette } from "./AgentSwitcherPalette";
 import { CommandPalette, type PaletteCommand } from "./CommandPalette";
 import { QuickOpen } from "./QuickOpen";
 import { VSCodeQuickInputShell } from "./VSCodeQuickInputShell";
@@ -26,6 +27,9 @@ import { isFocusedBrowserSurface } from "@/lib/browser-keyboard-passthrough";
 import { normalizeBrowserTargetUrl } from "@/lib/browser-proxy-url";
 import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
 import { useServerConnections } from "@/components/preferences/ServerConnectionsProvider";
+import { useUserPreferences } from "@/components/preferences/UserPreferencesProvider";
+import { useWorkbenchNotifications } from "@/components/notifications/WorkbenchNotificationProvider";
+import { WORKBENCH_NOTIFICATION_KIND } from "@/components/notifications/workbench-notification-types";
 import { WORKSPACE_ROUTE } from "@/lib/workbench-view";
 import { reloadAppWindow } from "@/lib/desktop-environment";
 import { buildWorkspaceWindowUrl } from "@/lib/workspace-windows";
@@ -36,11 +40,17 @@ import {
   getShortcutDisplayForCommand,
   isEditableShortcutTarget,
   tryDispatchKeyboardShortcut,
+  eventMatchesAgentSwitcherChord,
   matchesShortcutStep,
   parseShortcutBinding,
   type ShortcutChordState,
   type VoiceInputMode,
 } from "@/lib/keyboard-shortcuts";
+import {
+  initialAgentSwitcherIndex,
+  nextAgentSwitcherIndex,
+  seedAgentConversationMruFromCandidates,
+} from "@/lib/agent-conversation-mru";
 import { useShellView } from "@/components/layout/ShellViewContext";
 import { useAgentShellStateMaybe } from "@/components/agent/AgentShellStateContext";
 import {
@@ -50,12 +60,14 @@ import {
 } from "@/lib/chat-ui-shortcut-events";
 import {
   createOrchestrationBoard,
+  executeInstalledExtensionCommand,
+  fetchInstalledExtensions,
   fetchOrchestrationBoardSnapshot,
   listOrchestrationBoards,
 } from "@/lib/server-api";
 import type { OrchestrationBoardRecord } from "@/lib/orchestration-types";
 
-type PaletteMode = "closed" | "command" | "quickopen";
+type PaletteMode = "closed" | "command" | "quickopen" | "agentSwitcher";
 
 /**
  * While focus is inside `[data-ide-input-sink]` (chat composer, dropdowns, etc.),
@@ -76,6 +88,8 @@ const INPUT_SINK_ALLOWED_SHORTCUT_IDS = [
   "chat.action.newChat",
   "chat.action.agentRailPreviousConversation",
   "chat.action.agentRailNextConversation",
+  "palette.agentSwitcherPrevious",
+  "palette.agentSwitcherNext",
 ] as const;
 
 function flash(setter: (s: string | null) => void, msg: string) {
@@ -107,7 +121,9 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
     handleCut,
   } = useHardwareInput();
   const { setPreference: setThemePreference } = useTheme();
-  const { settings } = useGlobalSettings();
+  const { settings, updateSettings } = useGlobalSettings();
+  const { vscodeExtensionsBeta } = useUserPreferences();
+  const { pushNotification } = useWorkbenchNotifications();
   const { activeServer, servers, setActiveServer } = useServerConnections();
   const shortcutBindings = settings.keyboardShortcuts.bindings;
   const shortcutPlatform = useMemo(() => detectShortcutPlatform(), []);
@@ -137,6 +153,12 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
   } = useWorkspace();
   const agentShell = useAgentShellStateMaybe();
   const [palette, setPalette] = useState<PaletteMode>("closed");
+  const paletteRef = useRef<PaletteMode>("closed");
+  paletteRef.current = palette;
+  const [agentSwitcherSelectedIndex, setAgentSwitcherSelectedIndex] = useState(0);
+  const conversationAtAgentSwitcherOpenRef = useRef<string | null>(null);
+  const agentSwitcherItemsRef = useRef(agentShell?.agentSwitcherItems ?? []);
+  agentSwitcherItemsRef.current = agentShell?.agentSwitcherItems ?? [];
   const [folderPromptOpen, setFolderPromptOpen] = useState(false);
   const [folderPromptValue, setFolderPromptValue] = useState("");
   const [workspaceStudioOpen, setWorkspaceStudioOpen] = useState(false);
@@ -153,6 +175,7 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
   const [renameWindowOpen, setRenameWindowOpen] = useState(false);
   const [renameWindowValue, setRenameWindowValue] = useState("");
   const [toast, setToast] = useState<string | null>(null);
+  const [extensionPaletteCommands, setExtensionPaletteCommands] = useState<PaletteCommand[]>([]);
   const [orchestrationBoards, setOrchestrationBoards] = useState<
     OrchestrationBoardRecord[]
   >([]);
@@ -161,6 +184,20 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
     () => (fileTree ? buildQuickOpenIndex(fileTree) : []),
     [fileTree]
   );
+
+  useEffect(() => {
+    if (!toast) return;
+    pushNotification({
+      kind: WORKBENCH_NOTIFICATION_KIND.editorNotice,
+      severity: /error|fail|invalid|blocked|not ready|no active|cannot/i.test(toast)
+        ? "error"
+        : "info",
+      title: "Workbench",
+      message: toast,
+      compact: true,
+      autoDismissMs: 4000,
+    });
+  }, [pushNotification, toast]);
 
   useEffect(() => {
     if (!activeWorkspaceId) {
@@ -183,6 +220,111 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
       cancelled = true;
     };
   }, [activeWorkspaceId]);
+
+  useEffect(() => {
+    if (!activeWorkspaceId || !vscodeExtensionsBeta) {
+      setExtensionPaletteCommands([]);
+      return;
+    }
+    let cancelled = false;
+    fetchInstalledExtensions(activeWorkspaceId)
+      .then(({ extensions }) => {
+        if (cancelled) return;
+        const next: PaletteCommand[] = [];
+        for (const extension of extensions) {
+          if (!extension.enabled) continue;
+          const contributes = extension.manifest.raw.contributes;
+          const commands =
+            contributes && typeof contributes === "object" && "commands" in contributes
+              ? (contributes as { commands?: unknown }).commands
+              : undefined;
+          if (!Array.isArray(commands)) continue;
+          const rawViews =
+            contributes && typeof contributes === "object" && "views" in contributes
+              ? (contributes as { views?: unknown }).views
+              : undefined;
+          if (rawViews && typeof rawViews === "object") {
+            for (const [containerId, viewList] of Object.entries(rawViews as Record<string, unknown>)) {
+              if (!Array.isArray(viewList)) continue;
+              for (const view of viewList) {
+                if (!view || typeof view !== "object") continue;
+                const viewId = (view as { id?: unknown }).id;
+                const viewName = (view as { name?: unknown }).name;
+                const viewType = (view as { type?: unknown }).type;
+                if (typeof viewId !== "string" || !viewId.trim()) continue;
+                const title =
+                  typeof viewName === "string" && viewName.trim()
+                    ? viewName
+                    : extension.displayName;
+                next.push({
+                  id: `extension.openView.${extension.extensionId}.${viewId}`,
+                  label: `Extensions: Open ${extension.displayName}${title !== extension.displayName ? ` — ${title}` : ""}`,
+                  run: () => {
+                    const bridge = bridgeRef.current;
+                    if (!bridge) {
+                      flash(setToast, "Editor is not ready yet.");
+                      return;
+                    }
+                    bridge.openExtensionSurfaceTab({
+                      extensionId: extension.extensionId,
+                      surfaceId: viewId,
+                      title,
+                      surfaceKind: viewType === "webview" ? "webview" : "view",
+                      viewType: containerId,
+                      placement: "editor",
+                    });
+                  },
+                });
+              }
+            }
+          }
+
+          for (const item of commands) {
+            if (!item || typeof item !== "object") continue;
+            const command = (item as { command?: unknown }).command;
+            const title = (item as { title?: unknown }).title;
+            const category = (item as { category?: unknown }).category;
+            if (typeof command !== "string" || !command.trim()) continue;
+            const label =
+              typeof title === "string" && title.trim()
+                ? `${typeof category === "string" && category.trim() ? `${category}: ` : ""}${title}`
+                : `${extension.displayName}: ${command}`;
+            next.push({
+              id: `extension.${command}`,
+              label,
+              run: () => {
+                const bridge = bridgeRef.current;
+                void executeInstalledExtensionCommand({
+                  workspaceId: activeWorkspaceId,
+                  command,
+                })
+                  .then((result) => {
+                    for (const url of result.externalUrls ?? []) {
+                      if (/^https?:\/\//i.test(url)) {
+                        void bridge?.openBrowserTab(url, { activate: true, engine: "proxy" });
+                      }
+                    }
+                    flash(setToast, `Ran ${label}`);
+                  })
+                  .catch((error) =>
+                    flash(
+                      setToast,
+                      error instanceof Error ? error.message : "Extension command failed."
+                    )
+                  );
+              },
+            });
+          }
+        }
+        setExtensionPaletteCommands(next);
+      })
+      .catch(() => {
+        if (!cancelled) setExtensionPaletteCommands([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeWorkspaceId, bridgeRef, setToast, vscodeExtensionsBeta]);
 
   const inferEditorIcon = useCallback((entry: QuickOpenEntry): EditorTab["icon"] => {
     const lower = entry.name.toLowerCase();
@@ -399,6 +541,85 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
     [shortcutBindings, shortcutPlatform]
   );
 
+  const closeAgentSwitcher = useCallback(() => {
+    conversationAtAgentSwitcherOpenRef.current = null;
+    setPalette((current) => (current === "agentSwitcher" ? "closed" : current));
+  }, []);
+
+  const cancelAgentSwitcher = useCallback(() => {
+    closeAgentSwitcher();
+  }, [closeAgentSwitcher]);
+
+  const confirmAgentSwitcher = useCallback(() => {
+    const items = agentSwitcherItemsRef.current;
+    const selected = items[agentSwitcherSelectedIndex];
+    closeAgentSwitcher();
+    if (!selected) {
+      return;
+    }
+    if (!agentShell) {
+      window.dispatchEvent(new CustomEvent("opencursor:openRecentChats"));
+      return;
+    }
+    const summary = agentShell.findConversationSummaryById(selected.id);
+    if (summary) {
+      void agentShell.openConversationSummary(summary);
+    }
+  }, [agentShell, agentSwitcherSelectedIndex, closeAgentSwitcher]);
+
+  const stepAgentSwitcher = useCallback(
+    (direction: 1 | -1) => {
+      if (!agentShell) {
+        window.dispatchEvent(new CustomEvent("opencursor:openRecentChats"));
+        return;
+      }
+
+      const items = agentSwitcherItemsRef.current;
+      if (items.length === 0) {
+        flash(setToast, "No agents to switch.");
+        return;
+      }
+
+      const serverId = activeServer.id;
+      const mruStack = settings.general.agentConversationMruByServer[serverId] ?? [];
+      if (mruStack.length === 0) {
+        const seed = seedAgentConversationMruFromCandidates(items);
+        if (seed.length > 0) {
+          updateSettings((current) => ({
+            ...current,
+            general: {
+              ...current.general,
+              agentConversationMruByServer: {
+                ...current.general.agentConversationMruByServer,
+                [serverId]: seed,
+              },
+            },
+          }));
+        }
+      }
+
+      if (paletteRef.current !== "agentSwitcher") {
+        setPalette("agentSwitcher");
+        const currentId = agentShell.isDraftConversationSelected
+          ? null
+          : agentShell.selectedConversationId;
+        conversationAtAgentSwitcherOpenRef.current = currentId;
+        setAgentSwitcherSelectedIndex(initialAgentSwitcherIndex(currentId, items, direction));
+        return;
+      }
+
+      setAgentSwitcherSelectedIndex((current) =>
+        nextAgentSwitcherIndex(current, items.length, direction)
+      );
+    },
+    [
+      activeServer.id,
+      agentShell,
+      settings.general.agentConversationMruByServer,
+      updateSettings,
+    ]
+  );
+
   const runShortcutCommand = useCallback(
     (id: string) => {
       switch (id) {
@@ -451,6 +672,24 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
             settingsView: { ...current.settingsView, activeNav: "servers" },
           }));
           openSettingsView();
+          break;
+        case "workbench.action.openExtensions":
+          updateWorkspaceSession((current) => ({
+            ...current,
+            settingsView: { ...current.settingsView, activeNav: "extensions" },
+          }));
+          openSettingsView();
+          break;
+        case "extensions.openMarketplace":
+          runWithBridge((bridge) =>
+            bridge.openExtensionSurfaceTab({
+              extensionId: "opencursor.marketplace",
+              surfaceId: "command-marketplace",
+              title: "Extension Marketplace",
+              surfaceKind: "marketplace",
+              placement: "editor",
+            })
+          );
           break;
         case "workbench.action.openFile":
         case "workbench.action.gotoFile":
@@ -578,18 +817,18 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
         case "chat.action.openBackendDropdown":
           dispatchChatComposerShortcut("openBackendDropdown");
           break;
-      case "chat.action.toggleVoiceInput": {
-        const mode = voiceInputModeRef.current;
-        if (mode === "hold") {
-          if (!voiceHoldActiveRef.current) {
-            voiceHoldActiveRef.current = true;
-            dispatchChatComposerShortcut("startVoiceInput");
+        case "chat.action.toggleVoiceInput": {
+          const mode = voiceInputModeRef.current;
+          if (mode === "hold") {
+            if (!voiceHoldActiveRef.current) {
+              voiceHoldActiveRef.current = true;
+              dispatchChatComposerShortcut("startVoiceInput");
+            }
+          } else {
+            dispatchChatComposerShortcut("toggleVoiceInput");
           }
-        } else {
-          dispatchChatComposerShortcut("toggleVoiceInput");
+          break;
         }
-        break;
-      }
         case "chat.action.toggleComposerExpand":
           dispatchChatComposerShortcut("toggleComposerExpand");
           break;
@@ -605,6 +844,12 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
           break;
         case "chat.action.openWorkspacePicker":
           dispatchWorkspacePickerShortcut();
+          break;
+        case "palette.agentSwitcherPrevious":
+          stepAgentSwitcher(-1);
+          break;
+        case "palette.agentSwitcherNext":
+          stepAgentSwitcher(1);
           break;
         case "chat.action.agentRailPreviousConversation":
           agentShell?.cycleAgentConversation(-1);
@@ -628,6 +873,7 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
       updateWorkspaceSession,
       workbench,
       agentShell,
+      stepAgentSwitcher,
     ]
   );
 
@@ -766,6 +1012,18 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
         run: () => runShortcutCommand("chat.action.newChat"),
       },
       {
+        id: "palette.agentSwitcherPrevious",
+        label: "Agent: Quick switch backward",
+        keybinding: kb("palette.agentSwitcherPrevious"),
+        run: () => runShortcutCommand("palette.agentSwitcherPrevious"),
+      },
+      {
+        id: "palette.agentSwitcherNext",
+        label: "Agent: Quick switch forward",
+        keybinding: kb("palette.agentSwitcherNext"),
+        run: () => runShortcutCommand("palette.agentSwitcherNext"),
+      },
+      {
         id: "chat.action.agentRailPreviousConversation",
         label: "Agent: Previous conversation in rail",
         keybinding: kb("chat.action.agentRailPreviousConversation"),
@@ -845,6 +1103,16 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
         id: "workbench.action.openServers",
         label: "Preferences: Open Servers",
         run: () => runShortcutCommand("workbench.action.openServers"),
+      },
+      {
+        id: "workbench.action.openExtensions",
+        label: "Extensions: Manage Extensions",
+        run: () => runShortcutCommand("workbench.action.openExtensions"),
+      },
+      {
+        id: "extensions.openMarketplace",
+        label: "Extensions: Open Marketplace Tab",
+        run: () => runShortcutCommand("extensions.openMarketplace"),
       },
       {
         id: "workbench.colorTheme.light",
@@ -1079,12 +1347,14 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
           window.location.assign(WORKSPACE_ROUTE);
         },
       })),
+      ...extensionPaletteCommands,
     ],
     [
       activeServer.id,
       activeWorkspaceId,
       bridgeRef,
       defaultWorkspaceId,
+      extensionPaletteCommands,
       kb,
       openWorkspaceById,
       openBrowserUrlPrompt,
@@ -1124,6 +1394,49 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
       const insideInputSink =
         t instanceof Element && Boolean(t.closest("[data-ide-input-sink]"));
       const nativeEditableTarget = shouldUseNativeEditableHandling(t);
+
+      if (
+        bridgeRef.current &&
+        isFocusedBrowserSurface(bridgeRef.current, t) &&
+        (eventMatchesAgentSwitcherChord(e, "forward", shortcutBindings, shortcutPlatform) ||
+          eventMatchesAgentSwitcherChord(e, "backward", shortcutBindings, shortcutPlatform))
+      ) {
+        return;
+      }
+
+      const agentSwitcherForward = eventMatchesAgentSwitcherChord(
+        e,
+        "forward",
+        shortcutBindings,
+        shortcutPlatform
+      );
+      const agentSwitcherBackward = eventMatchesAgentSwitcherChord(
+        e,
+        "backward",
+        shortcutBindings,
+        shortcutPlatform
+      );
+      if (agentSwitcherForward || agentSwitcherBackward) {
+        e.preventDefault();
+        if (e.repeat && palette === "agentSwitcher") {
+          return;
+        }
+        stepAgentSwitcher(agentSwitcherForward ? 1 : -1);
+        return;
+      }
+
+      if (palette === "agentSwitcher") {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          confirmAgentSwitcher();
+          return;
+        }
+        if (e.key === "Escape") {
+          e.preventDefault();
+          cancelAgentSwitcher();
+          return;
+        }
+      }
 
       if (insidePalette) {
         if (hardwareInputEnabled && !nativeEditableTarget) {
@@ -1208,6 +1521,15 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
     };
 
     const onKeyUp = (e: KeyboardEvent) => {
+      if (
+        paletteRef.current === "agentSwitcher" &&
+        (e.key === "Meta" || e.key === "Control")
+      ) {
+        e.preventDefault();
+        confirmAgentSwitcher();
+        return;
+      }
+
       if (!voiceHoldActiveRef.current) return;
       const voiceBindings = getShortcutBindingsForCommand(
         shortcutBindings,
@@ -1244,15 +1566,19 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
     };
 }, [
   bridgeRef,
+  cancelAgentSwitcher,
+  confirmAgentSwitcher,
   handleInputSinkWorkbenchKeyDown,
   handleWorkbenchKeyDown,
   hardwareInputEnabled,
+  palette,
   routeKeyDown,
   handlePaste,
   handleCopy,
   handleCut,
   shortcutBindings,
   shortcutPlatform,
+  stepAgentSwitcher,
 ]);
 
   const onQuickPick = useCallback(
@@ -1280,6 +1606,13 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
         onClose={() => setPalette("closed")}
         entries={quickEntries}
         onPick={onQuickPick}
+      />
+      <AgentSwitcherPalette
+        open={palette === "agentSwitcher"}
+        items={agentShell?.agentSwitcherItems ?? []}
+        selectedIndex={agentSwitcherSelectedIndex}
+        onSelectedIndexChange={setAgentSwitcherSelectedIndex}
+        onClose={cancelAgentSwitcher}
       />
       <VSCodeQuickInputShell
         open={folderPromptOpen}
@@ -1411,14 +1744,6 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
           Give this workspace window a persistent name so it is easy to find and reopen later.
         </div>
       </VSCodeQuickInputShell>
-      {toast ? (
-        <div
-          className="pointer-events-none fixed bottom-[24px] left-1/2 z-[10060] max-w-[90vw] -translate-x-1/2 rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-[var(--bg-card)] px-[14px] py-[8px] font-sans text-[12px] text-[var(--text-primary)] shadow-[var(--palette-shadow)]"
-          role="status"
-        >
-          {toast}
-        </div>
-      ) : null}
     </IDECommandProvider>
   );
 }

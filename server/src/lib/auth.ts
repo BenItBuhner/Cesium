@@ -602,10 +602,6 @@ async function getAuthState(): Promise<PersistedAuthState> {
   return authStatePromise;
 }
 
-function createEmptySessionStore(): PersistedAuthSessions {
-  return { schemaVersion: 1, sessions: [] };
-}
-
 async function loadSessionStore(): Promise<PersistedAuthSessions> {
   const sessions = await (await getStorage()).listAuthSessions();
   const now = Date.now();
@@ -974,7 +970,8 @@ export const authMiddleware: MiddlewareHandler = async (c, next) => {
     pathname === "/api/auth/status" ||
     pathname === "/api/auth/login" ||
     pathname === "/api/auth/logout" ||
-    pathname === "/api/mcp/oauth/callback"
+    pathname === "/api/mcp/oauth/callback" ||
+    pathname === "/api/settings/pi-agent/oauth/callback"
   ) {
     await next();
     return;

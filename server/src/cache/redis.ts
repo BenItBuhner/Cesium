@@ -17,6 +17,35 @@ export function hasRedisUrl(): boolean {
   return Boolean(raw && raw.length > 0);
 }
 
+/**
+ * ioredis' default retryStrategy retries forever, so `connect()` never settles
+ * while the host is unreachable (`connectTimeout` only bounds each attempt).
+ * Bound the *initial* connect; once connected, the default strategy still
+ * handles reconnects indefinitely.
+ */
+const INITIAL_CONNECT_TIMEOUT_MS = 8_000;
+
+async function connectWithinDeadline(client: IORedisClient): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () => reject(new Error(`initial connect timed out after ${INITIAL_CONNECT_TIMEOUT_MS}ms`)),
+      INITIAL_CONNECT_TIMEOUT_MS
+    );
+    timer.unref?.();
+  });
+  try {
+    await Promise.race([client.connect(), deadline]);
+  } catch (error) {
+    // Stop the background retry loop so the failed client cannot keep the
+    // process alive or reconnect after we've fallen back to in-process mode.
+    client.disconnect();
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function createClient(role: "primary" | "subscriber"): Promise<IORedisClient | null> {
   const url = process.env.REDIS_URL?.trim();
   if (!url) return null;
@@ -37,7 +66,7 @@ async function createClient(role: "primary" | "subscriber"): Promise<IORedisClie
         console.warn(`[redis:${role}]`, err.message);
       }
     });
-    await client.connect();
+    await connectWithinDeadline(client);
     // Under `node --test` Node sets NODE_ENV=test. Unref the underlying TCP
     // socket so a lingering Redis connection does not keep the event loop
     // alive after all tests complete. Production callers (NODE_ENV !== test)

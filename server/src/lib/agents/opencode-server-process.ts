@@ -22,6 +22,19 @@ type ManagedServerPoolRow = {
 
 const managedServerPool = new Map<string, ManagedServerPoolRow>();
 
+function releaseManagedOpenCodeServer(poolKey: string, row: ManagedServerPoolRow): void {
+  row.refs = Math.max(0, row.refs - 1);
+  if (row.refs > 0) {
+    return;
+  }
+  if (managedServerPool.get(poolKey) === row) {
+    managedServerPool.delete(poolKey);
+  }
+  if (!row.child.killed) {
+    row.child.kill();
+  }
+}
+
 async function resolveOpenCodeCommand(): Promise<string> {
   const configured =
     process.env.OPENCURSOR_OPENCODE_SERVER_BIN?.trim() ||
@@ -82,7 +95,7 @@ export async function connectOpenCodeServer(input: {
       client: existing.client,
       managed: true,
       dispose: async () => {
-        existing.refs = Math.max(0, existing.refs - 1);
+        releaseManagedOpenCodeServer(poolKey, existing);
       },
     };
   }
@@ -95,9 +108,12 @@ export async function connectOpenCodeServer(input: {
     ["serve", "--hostname", "127.0.0.1", "--port", String(port)],
     {
       cwd: input.workspaceRoot,
-      env: spawnSafeEnv(),
+      env: spawnSafeEnv({
+        OPENCURSOR_PROCESS_NAME: `Cesium Agent - OpenCode Server :${port}`,
+      }),
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
+      argv0: `Cesium Agent - OpenCode Server :${port}`,
     }
   );
   child.stderr.on("data", (chunk) => {
@@ -135,7 +151,7 @@ export async function connectOpenCodeServer(input: {
     client,
     managed: true,
     dispose: async () => {
-      row.refs = Math.max(0, row.refs - 1);
+      releaseManagedOpenCodeServer(poolKey, row);
     },
   };
 }

@@ -15,6 +15,25 @@ import {
   saveCursorSdkApiKey,
 } from "../lib/cursor-sdk-credentials.js";
 import {
+  deleteClaudeCodeSdkSettings,
+  getClaudeCodeSdkSettings,
+  getClaudeCodeSdkSettingsPublic,
+  patchClaudeCodeSdkSettings,
+  verifyClaudeCodeSdkSettings,
+} from "../lib/claude-code-sdk-settings.js";
+import { forceRefreshAllBackendCaches } from "../lib/agents/provider-cache-store.js";
+import {
+  buildPiAgentOAuthCallbackUrl,
+  completePiAgentOAuthCallback,
+  disconnectPiAgentOAuth,
+  getPiAgentSettingsResponse,
+  piAgentOAuthFailureHtml,
+  piAgentOAuthSuccessHtml,
+  providerLabelForId,
+  startPiAgentOAuth,
+} from "../lib/pi-agent-oauth.js";
+import { upsertPiAgentProviderKey } from "../lib/pi-agent-settings.js";
+import {
   deleteCesiumProviderKey,
   getCesiumAgentSettingsPublic,
   getCesiumModelCatalog,
@@ -31,7 +50,7 @@ import {
   getRevision,
   parseRevisionHeader,
 } from "../storage/revisions.js";
-import { AGENT_BACKENDS } from "../lib/agents/providers.js";
+import { ACTIVE_AGENT_BACKEND_IDS } from "../lib/active-agent-backends.js";
 import type { AgentBackendId } from "../lib/agents/types.js";
 import { measureServerPerf } from "../lib/perf.js";
 
@@ -47,7 +66,19 @@ const globalSettingsCoalescer = new WriteCoalescer<GlobalSettings>(
 );
 
 function allBackendIds(): AgentBackendId[] {
-  return Object.keys(AGENT_BACKENDS) as AgentBackendId[];
+  return [...ACTIVE_AGENT_BACKEND_IDS];
+}
+
+function publicOriginFromRequest(c: {
+  req: { url: string; header: (name: string) => string | undefined };
+}): string {
+  const forwardedProto = c.req.header("x-forwarded-proto")?.split(",")[0]?.trim();
+  const forwardedHost = c.req.header("x-forwarded-host")?.split(",")[0]?.trim();
+  if (forwardedProto && forwardedHost) {
+    return `${forwardedProto}://${forwardedHost}`;
+  }
+  const url = new URL(c.req.url);
+  return `${url.protocol}//${url.host}`;
 }
 
 settingsRoutes.get("/api/settings/global", async (c) => {
@@ -155,6 +186,7 @@ settingsRoutes.put("/api/settings/cursor-sdk", async (c) => {
       apiKeyName: me.apiKeyName,
       userEmail: me.userEmail,
     });
+    await forceRefreshAllBackendCaches(["cursor-sdk"]);
     return c.json({ ok: true, status });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to verify Cursor API key.";
@@ -165,6 +197,146 @@ settingsRoutes.put("/api/settings/cursor-sdk", async (c) => {
 settingsRoutes.delete("/api/settings/cursor-sdk", async (c) => {
   await deleteCursorSdkApiKey();
   return c.json({ ok: true, status: await getCursorSdkCredentialStatus() });
+});
+
+settingsRoutes.get("/api/settings/claude-code-sdk", async (c) => {
+  return c.json({ settings: await getClaudeCodeSdkSettingsPublic() });
+});
+
+settingsRoutes.put("/api/settings/claude-code-sdk", async (c) => {
+  const body = await c.req.json<{
+    baseUrl?: string | null;
+    apiKey?: string | null;
+    model?: string | null;
+    pathToExecutable?: string | null;
+  }>();
+
+  try {
+    const currentStored = await getClaudeCodeSdkSettings();
+    const verifyBaseUrl =
+      (body.baseUrl !== undefined ? body.baseUrl?.trim() : currentStored?.baseUrl) || undefined;
+    const verifyApiKey = body.apiKey?.trim() || currentStored?.apiKey;
+    const verifyModel =
+      (body.model !== undefined ? body.model?.trim() : currentStored?.model) || undefined;
+    const shouldVerify =
+      Boolean(verifyBaseUrl && verifyApiKey) &&
+      (body.apiKey?.trim() || body.baseUrl !== undefined);
+    if (shouldVerify && verifyBaseUrl && verifyApiKey) {
+      await verifyClaudeCodeSdkSettings({
+        baseUrl: verifyBaseUrl,
+        apiKey: verifyApiKey,
+        model: verifyModel,
+      });
+    } else if (body.apiKey?.trim() && !verifyBaseUrl) {
+      return c.json({ error: "Base URL is required when saving an API key." }, 400);
+    }
+
+    const settings = await patchClaudeCodeSdkSettings({
+      ...(body.baseUrl !== undefined ? { baseUrl: body.baseUrl } : {}),
+      ...(body.apiKey !== undefined ? { apiKey: body.apiKey } : {}),
+      ...(body.model !== undefined ? { model: body.model } : {}),
+      ...(body.pathToExecutable !== undefined ? { pathToExecutable: body.pathToExecutable } : {}),
+    });
+    const refresh = await forceRefreshAllBackendCaches(["claude-code-sdk"]);
+    return c.json({ ok: true, settings, refresh });
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "Failed to save Claude Code SDK settings.";
+    return c.json({ error: message }, 400);
+  }
+});
+
+settingsRoutes.delete("/api/settings/claude-code-sdk", async (c) => {
+  await deleteClaudeCodeSdkSettings();
+  const refresh = await forceRefreshAllBackendCaches(["claude-code-sdk"]);
+  return c.json({ ok: true, settings: await getClaudeCodeSdkSettingsPublic(), refresh });
+});
+
+settingsRoutes.get("/api/settings/pi-agent", async (c) => {
+  return c.json(await getPiAgentSettingsResponse());
+});
+
+settingsRoutes.get("/api/settings/pi-agent/oauth/:providerId/start", async (c) => {
+  const providerId = c.req.param("providerId");
+  try {
+    const origin = publicOriginFromRequest(c);
+    const result = await startPiAgentOAuth({ providerId, publicOrigin: origin });
+    return c.json({
+      ...result,
+      callbackUrl: result.callbackUrl ?? buildPiAgentOAuthCallbackUrl(origin),
+    });
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "Failed to start Pi Agent OAuth.";
+    return c.json({ error: message }, 400);
+  }
+});
+
+settingsRoutes.get("/api/settings/pi-agent/oauth/callback", async (c) => {
+  const redirect = c.req.query("redirect")?.trim();
+  const code = c.req.query("code")?.trim();
+  const state = c.req.query("state")?.trim();
+  const providerId = c.req.query("providerId")?.trim();
+  const error = c.req.query("error")?.trim();
+  if (error) {
+    return c.html(piAgentOAuthFailureHtml(error), 400);
+  }
+  if (!redirect && !code) {
+    return c.html(piAgentOAuthFailureHtml("Missing redirect URL or authorization code."), 400);
+  }
+  try {
+    const result = await completePiAgentOAuthCallback({
+      ...(providerId ? { providerId } : {}),
+      ...(redirect ? { redirect } : {}),
+      ...(code ? { code } : {}),
+      ...(state ? { state } : {}),
+    });
+    await forceRefreshAllBackendCaches(["pi-agent"]);
+    return c.html(piAgentOAuthSuccessHtml(providerLabelForId(result.providerId)));
+  } catch (callbackError) {
+    const message =
+      callbackError instanceof Error ? callbackError.message : "Pi Agent OAuth callback failed.";
+    return c.html(piAgentOAuthFailureHtml(message), 400);
+  }
+});
+
+settingsRoutes.delete("/api/settings/pi-agent/oauth/:providerId", async (c) => {
+  try {
+    const payload = await disconnectPiAgentOAuth(c.req.param("providerId"));
+    const refresh = await forceRefreshAllBackendCaches(["pi-agent"]);
+    return c.json({ ok: true, ...payload, refresh });
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "Failed to disconnect Pi Agent provider.";
+    return c.json({ error: message }, 400);
+  }
+});
+
+settingsRoutes.put("/api/settings/pi-agent/provider-key", async (c) => {
+  const body = await c.req.json<{
+    id?: string;
+    providerId?: string;
+    label?: string;
+    apiKey?: string;
+  }>();
+  if (!body.providerId?.trim() || !body.apiKey?.trim()) {
+    return c.json({ error: "Expected providerId and apiKey." }, 400);
+  }
+  try {
+    await upsertPiAgentProviderKey({
+      id: body.id,
+      providerId: body.providerId,
+      label: body.label,
+      apiKey: body.apiKey,
+    });
+    const payload = await getPiAgentSettingsResponse();
+    const refresh = await forceRefreshAllBackendCaches(["pi-agent"]);
+    return c.json({ ok: true, ...payload, refresh });
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "Failed to save Pi Agent provider key.";
+    return c.json({ error: message }, 400);
+  }
 });
 
 function isCesiumProviderKind(value: unknown): value is CesiumProviderKind {
@@ -188,6 +360,7 @@ settingsRoutes.patch("/api/settings/cesium-agent", async (c) => {
     defaultModelId?: string;
     defaultApiKind?: unknown;
     compression?: Record<string, unknown>;
+    orchestration?: Record<string, unknown>;
     toolPermissions?: Record<string, unknown>;
     customProviders?: CesiumCustomProvider[];
   }>();
@@ -199,6 +372,9 @@ settingsRoutes.patch("/api/settings/cesium-agent", async (c) => {
     ...(isCesiumProviderKind(body.defaultApiKind) ? { defaultApiKind: body.defaultApiKind } : {}),
     ...(body.compression
       ? { compression: body.compression as Partial<CesiumAgentSettings["compression"]> }
+      : {}),
+    ...(body.orchestration
+      ? { orchestration: body.orchestration as Partial<CesiumAgentSettings["orchestration"]> }
       : {}),
     ...(body.toolPermissions
       ? { toolPermissions: body.toolPermissions as Partial<CesiumAgentSettings["toolPermissions"]> }

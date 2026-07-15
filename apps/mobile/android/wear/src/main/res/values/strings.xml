@@ -1,0 +1,5 @@
+<resources>
+  <string name="app_name">Cesium Wear</string>
+  <string name="agent_status_tile_label">Agent Status</string>
+  <string name="agent_status_complication_label">Cesium Agent</string>
+</resources>

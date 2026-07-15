@@ -50,6 +50,18 @@ describe("composer multiline layout", () => {
     );
   });
 
+  test("sticky multiline stays latched while content remains even if hook measures single line", () => {
+    assert.equal(
+      resolveComposerIsMultiLine({
+        useStickyMultiline: true,
+        hookMeasuresMultiline: false,
+        latchedMultiline: true,
+        value: "hello world",
+      }),
+      true
+    );
+  });
+
   test("non-sticky layout follows hook measurement directly", () => {
     assert.equal(
       resolveComposerIsMultiLine({

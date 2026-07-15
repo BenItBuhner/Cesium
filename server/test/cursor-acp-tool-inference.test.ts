@@ -15,7 +15,7 @@ const {
   extractCursorPromptSearchHints,
   inferCursorReadPathFromContent,
   inferCursorSearchLocations,
-} = await import("../src/lib/agents/providers.js");
+} = await import("../src/lib/agents/cursor-prompt-inference.js");
 
 test("extractCursorPromptPathHints preserves explicit workspace file order", () => {
   const hints = extractCursorPromptPathHints(
@@ -56,10 +56,10 @@ test("inferCursorSearchLocations returns concrete file locations for symbol refe
   assert.ok(
     locations.some(
       (location) =>
-        location.path === "server/src/lib/agents/providers.ts" &&
+        location.path === "server/src/lib/agents/acp/acp-tool-parse.ts" &&
         typeof location.line === "number" &&
         location.line > 0
     ),
-    "expected providers.ts to appear in inferred locations"
+    "expected acp-tool-parse.ts to appear in inferred locations"
   );
 });

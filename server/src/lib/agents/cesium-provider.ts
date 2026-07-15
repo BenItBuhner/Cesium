@@ -2,10 +2,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import WebSocket from "ws";
 import {
-  buildCesiumOrchestrationSystemPrompt,
-  buildCesiumSystemPrompt,
   formatGitSummaryForPrompt,
   type BuildCesiumSystemPromptInput,
   type McpServerSummary,
@@ -14,6 +11,7 @@ import { getGitWorkspaceStatus } from "../git-worktrees.js";
 import {
   createCesiumAgentConfigOptions,
   getCesiumAgentSettings,
+  resolveCesiumModelContextWindow,
   resolveCesiumAuth,
   type CesiumProviderKind,
 } from "../cesium-agent-settings.js";
@@ -25,9 +23,33 @@ import {
   callMcpTool,
   refreshWorkspaceMcpMirror,
 } from "../mcp/connection-manager.js";
-import { getMcpSummariesForPrompt } from "../mcp/server-store.js";
+import { getMcpCatalogRevision, getMcpServer, getMcpSummariesForPrompt } from "../mcp/server-store.js";
+import { resolveAgentPluginAttachments } from "../plugins/attachments.js";
 import { BROWSER_MCP_SERVER_ID } from "../mcp/builtin-browser-tools.js";
+import { generateTranscriptFromEvents } from "./event-log-read.js";
+import { asNumber } from "./json-coerce.js";
+import { readConversationEvents } from "./session-store.js";
 import { extractToolEditPreview } from "./tool-edit-preview.js";
+import { buildCesiumModeReminder } from "./cesium-mode-reminders.js";
+import { resolveCesiumModeToolPolicy } from "./cesium-mode-policy.js";
+import {
+  readCesiumPlanFile,
+  writeCesiumPlanFile,
+} from "./cesium-plan-files.js";
+import {
+  appendBurnGoalSnapshot,
+  blockBurnGoal,
+  completeBurnGoal,
+  ensureBurnGoalForConversation,
+  formatBurnGoalForModel,
+  pauseBurnGoal,
+  readBurnGoalForConversation,
+  resumeBurnGoal,
+  updateBurnGoal,
+  updateBurnGoalPlan,
+  updateBurnGoalProgress,
+} from "./burn-goal-store.js";
+import { burnCompactionRecoveryContext } from "./burn-goal-steering.js";
 import {
   addOrchestrationComment,
   createOrchestrationIssue,
@@ -47,12 +69,21 @@ import type {
   OrchestrationIssuePriority,
   OrchestrationPermissionDecision,
 } from "../orchestration/types.js";
+import {
+  COMPLETION_AUTO_RETRY_MAX_ATTEMPTS,
+  COMPLETION_RETRY_DELAYS_MS,
+  formatCompressingContextStatusDetail,
+  formatTakingLongerStatusDetail,
+  isTransientProviderCompletionError,
+  sleepMs,
+} from "./completion-retry.js";
 import type {
   AgentBackendId,
   AgentBackendInfo,
   AgentConfigOption,
   AgentConversationStatus,
   AgentEventInput,
+  AgentQueuedChatPrompt,
   AgentPermissionOption,
   AgentProvider,
   AgentRuntimeCallbacks,
@@ -60,39 +91,90 @@ import type {
   AgentStoredEvent,
   AgentToolCallStatus,
 } from "./types.js";
+import {
+  asRecord,
+  asString,
+  asStringArray,
+  safeJson,
+  truncate,
+} from "./cesium/cesium-coerce.js";
+import {
+  CESIUM_MAX_TOOL_ITERATIONS,
+  CESIUM_RESPONSE_WARNING_MS,
+  CESIUM_SYSTEM_PROMPT,
+  DEFAULT_GREP_RESULTS,
+  HISTORY_COMPACTION_TARGET_TURNS,
+  HISTORY_COMPACTION_THRESHOLD_RATIO,
+  HISTORY_TURN_LIMIT,
+  LARGE_FILE_LINE_LIMIT,
+  MAX_GREP_RESULTS,
+  MAX_READ_LINES,
+  ORCHESTRATION_ASSIGNMENT_TERMINAL_STATUSES,
+  ORCHESTRATION_WAIT_DEFAULT_MS,
+  ORCHESTRATION_WAIT_HEARTBEAT_MS,
+  PERMISSION_OPTIONS,
+  TERMINAL_OUTPUT_CAP,
+} from "./cesium/cesium-prompt.js";
+import {
+  cesiumPermissionToolKey,
+  normalizeCallMcpToolArgs,
+  normalizeCesiumToolRequestArguments,
+  permissionDecisionFromOption,
+  toolKind,
+  toolTitle,
+} from "./cesium/cesium-tools.js";
+import {
+  estimateHistoryTokens,
+  isEmptyCesiumAdapterResult,
+  latestMcpReminderSnapshot,
+  mcpReminderChangeNotice,
+  mcpReminderSnapshot,
+  normalizeCesiumToolResultForModel,
+  normalizeEventsToHistory,
+  summarizeForCompression,
+} from "./cesium/cesium-history.js";
+import {
+  modelPart,
+  providerPart,
+  runAdapter,
+  streamAdapter,
+  type RunAdapterInput,
+} from "./cesium/cesium-model-adapters.js";
+import {
+  asOrchestrationAssignmentStatuses,
+  asOrchestrationColumnId,
+  asOrchestrationControlAction,
+  asOrchestrationPermissionDecision,
+  asOrchestrationPermissionPolicy,
+  asOrchestrationPriority,
+  asOrchestrationWaitFor,
+} from "./cesium/cesium-orchestration-args.js";
+import type {
+  CesiumAdapterResult,
+  CesiumHistoryMessage,
+  CesiumToolRequest,
+} from "./cesium/cesium-types.js";
 
-type CesiumRole = "system" | "user" | "assistant" | "tool";
+export {
+  buildOpenAiToolDefinitions,
+  cesiumPermissionToolKey,
+  normalizeCallMcpToolArgs,
+  sanitizeOpenAiCompatibleJsonSchema,
+} from "./cesium/cesium-tools.js";
+export type { NormalizedCallMcpToolArgs } from "./cesium/cesium-tools.js";
+export {
+  isEmptyCesiumAdapterResult,
+  normalizeCesiumToolResultForModel,
+  normalizeEventsToHistory,
+} from "./cesium/cesium-history.js";
+export { openAiMessages } from "./cesium/cesium-model-adapters.js";
 
-type CesiumHistoryToolCall = {
-  id: string;
-  name: string;
-  arguments: string;
-};
-
-type CesiumHistoryMessage = {
-  role: CesiumRole;
-  content: string;
-  toolCallId?: string;
-  name?: string;
-  toolCalls?: CesiumHistoryToolCall[];
-};
-
-type PendingHistoryToolCall = CesiumHistoryToolCall & {
-  result?: string;
-};
-
-type CesiumToolRequest = {
-  id: string;
-  name: string;
-  arguments: Record<string, unknown>;
-};
-
-type CesiumAdapterResult = {
-  text: string;
-  reasoning?: string;
-  toolRequests: CesiumToolRequest[];
-  raw?: unknown;
-};
+class CesiumTurnCancelledError extends Error {
+  constructor() {
+    super("Cesium turn cancelled.");
+    this.name = "CesiumTurnCancelledError";
+  }
+}
 
 type ActivePermission = {
   resolve: (value: "allow" | "reject") => void;
@@ -127,562 +209,6 @@ type TerminalRun = {
   exitCode?: number | null;
 };
 
-const CESIUM_SYSTEM_PROMPT = buildCesiumSystemPrompt();
-
-const DEFAULT_MAX_OUTPUT_TOKENS = 8192;
-/** Slow third-party hosts (Cerebras, Nvidia NIM, etc.) can take a long time on large tool prompts. */
-const CESIUM_RESPONSE_WARNING_MS = 10 * 60 * 1000;
-const HISTORY_TURN_LIMIT = 250;
-const HISTORY_EVENT_LIMIT = 20_000;
-const LARGE_FILE_LINE_LIMIT = 3500;
-const MAX_READ_LINES = 2000;
-const MAX_GREP_RESULTS = 5000;
-const DEFAULT_GREP_RESULTS = 100;
-const TERMINAL_OUTPUT_CAP = 80_000;
-const ORCHESTRATION_WAIT_HEARTBEAT_MS = 15_000;
-const ORCHESTRATION_WAIT_DEFAULT_MS = 30_000;
-const ORCHESTRATION_ASSIGNMENT_TERMINAL_STATUSES: OrchestrationAssignmentStatus[] = [
-  "completed",
-  "failed",
-  "cancelled",
-];
-
-const PERMISSION_OPTIONS: AgentPermissionOption[] = [
-  { optionId: "allow_once", name: "Allow", kind: "allow_once" },
-  { optionId: "allow_always", name: "Always allow", kind: "allow_always" },
-  { optionId: "reject_once", name: "Reject", kind: "reject_once" },
-  { optionId: "reject_always", name: "Always reject", kind: "reject_always" },
-];
-
-const CESIUM_TOOLS = [
-  {
-    name: "read_file",
-    description: "Read all or part of a workspace file. Use offset and limit for large files.",
-    parameters: {
-      type: "object",
-      properties: {
-        path: { type: "string" },
-        offset: { type: "number" },
-        limit: { type: "number" },
-      },
-      required: ["path"],
-      additionalProperties: false,
-    },
-  },
-  {
-    name: "grep",
-    description: "Search workspace files by JavaScript regular expression.",
-    parameters: {
-      type: "object",
-      properties: {
-        pattern: { type: "string" },
-        path: { type: "string" },
-        context: { type: "number" },
-        maxResults: { type: "number" },
-      },
-      required: ["pattern"],
-      additionalProperties: false,
-    },
-  },
-  {
-    name: "edit_file",
-    description: "Replace one exact string in a file. Returns a precise error if the match is missing or duplicated.",
-    parameters: {
-      type: "object",
-      properties: {
-        path: { type: "string" },
-        oldString: { type: "string" },
-        newString: { type: "string" },
-      },
-      required: ["path", "oldString", "newString"],
-      additionalProperties: false,
-    },
-  },
-  {
-    name: "terminal",
-    description: "Run a workspace command. waitUntil can be complete, background, or pattern.",
-    parameters: {
-      type: "object",
-      properties: {
-        command: { type: "string" },
-        waitUntil: { type: "string", enum: ["complete", "background", "pattern"] },
-        pattern: { type: "string" },
-        timeoutMs: { type: "number" },
-      },
-      required: ["command"],
-      additionalProperties: false,
-    },
-  },
-  {
-    name: "todo",
-    description: "Replace or patch the current todo list.",
-    parameters: {
-      type: "object",
-      properties: {
-        action: { type: "string", enum: ["list", "replace", "patch"] },
-        items: { type: "array" },
-      },
-      required: ["action"],
-      additionalProperties: false,
-    },
-  },
-  {
-    name: "ask_question",
-    description: "Ask the user a structured question with selectable options.",
-    parameters: {
-      type: "object",
-      properties: {
-        prompt: { type: "string" },
-        options: { type: "array" },
-        allowMultiple: { type: "boolean" },
-        allow_multiple: { type: "boolean" },
-        questions: {
-          type: "array",
-          items: {
-            type: "object",
-            properties: {
-              id: { type: "string" },
-              prompt: { type: "string" },
-              title: { type: "string" },
-              options: { type: "array" },
-              allowMultiple: { type: "boolean" },
-              allow_multiple: { type: "boolean" },
-            },
-            required: ["options"],
-            additionalProperties: false,
-          },
-        },
-      },
-      additionalProperties: false,
-    },
-  },
-  {
-    name: "subagent",
-    description: "Start a child Cesium subagent. The first pass runs it as a bounded child task and stores a transcript card.",
-    parameters: {
-      type: "object",
-      properties: {
-        title: { type: "string" },
-        instructions: { type: "string" },
-        modelId: { type: "string" },
-        wait: { type: "boolean" },
-        allowedTools: { type: "array" },
-      },
-      required: ["instructions"],
-      additionalProperties: false,
-    },
-  },
-  {
-    name: "read_subagent_transcript",
-    description: "Read transcript content from a subagent card by id.",
-    parameters: {
-      type: "object",
-      properties: {
-        subagentId: { type: "string" },
-        offset: { type: "number" },
-        limit: { type: "number" },
-      },
-      required: ["subagentId"],
-      additionalProperties: false,
-    },
-  },
-  {
-    name: "search_history",
-    description: "Search older or compressed conversation history.",
-    parameters: {
-      type: "object",
-      properties: {
-        query: { type: "string" },
-        maxResults: { type: "number" },
-      },
-      required: ["query"],
-      additionalProperties: false,
-    },
-  },
-  {
-    name: "read_history_page",
-    description: "Read a bounded page of recent normalized history.",
-    parameters: {
-      type: "object",
-      properties: {
-        beforeSeq: { type: "number" },
-        limitTurns: { type: "number" },
-      },
-      required: ["beforeSeq"],
-      additionalProperties: false,
-    },
-  },
-  {
-    name: "call_mcp_tool",
-    description:
-      "Invoke a tool on a connected MCP server. Read mcp-servers/<serverId>/tools/ first.",
-    parameters: {
-      type: "object",
-      properties: {
-        serverId: { type: "string" },
-        toolName: { type: "string" },
-        arguments: { type: "object" },
-      },
-      required: ["serverId", "toolName"],
-      additionalProperties: false,
-    },
-  },
-  {
-    name: "refresh_mcp_servers",
-    description: "Reconnect MCP servers and regenerate the mcp-servers/ mirror.",
-    parameters: {
-      type: "object",
-      properties: {},
-      additionalProperties: false,
-    },
-  },
-  {
-    name: "orchestration_board_snapshot",
-    description: "Read the current Orchestration Mode board snapshot.",
-    parameters: {
-      type: "object",
-      properties: {
-        boardId: { type: "string" },
-      },
-      additionalProperties: false,
-    },
-  },
-  {
-    name: "orchestration_create_issue",
-    description: "Create a kanban issue with optional description and acceptance criteria.",
-    parameters: {
-      type: "object",
-      properties: {
-        boardId: { type: "string" },
-        title: { type: "string" },
-        description: { type: "string" },
-        columnId: {
-          type: "string",
-          enum: ["backlog", "ready", "in_progress", "review", "blocked", "done"],
-        },
-        priority: {
-          type: "string",
-          enum: ["none", "low", "medium", "high", "urgent"],
-        },
-        acceptanceCriteria: { type: "array", items: { type: "string" } },
-      },
-      required: ["title"],
-      additionalProperties: false,
-    },
-  },
-  {
-    name: "orchestration_update_issue",
-    description: "Update or move an existing kanban issue.",
-    parameters: {
-      type: "object",
-      properties: {
-        boardId: { type: "string" },
-        issueId: { type: "string" },
-        title: { type: "string" },
-        description: { type: "string" },
-        columnId: {
-          type: "string",
-          enum: ["backlog", "ready", "in_progress", "review", "blocked", "done"],
-        },
-        priority: {
-          type: "string",
-          enum: ["none", "low", "medium", "high", "urgent"],
-        },
-        acceptanceCriteria: { type: "array", items: { type: "string" } },
-        blockedReason: { type: "string" },
-      },
-      required: ["issueId"],
-      additionalProperties: false,
-    },
-  },
-  {
-    name: "orchestration_comment_issue",
-    description: "Add a board comment or nudge to an issue.",
-    parameters: {
-      type: "object",
-      properties: {
-        boardId: { type: "string" },
-        issueId: { type: "string" },
-        message: { type: "string" },
-      },
-      required: ["issueId", "message"],
-      additionalProperties: false,
-    },
-  },
-  {
-    name: "orchestration_delete_issue",
-    description: "Delete a kanban issue and cancel any child agents assigned to it.",
-    parameters: {
-      type: "object",
-      properties: {
-        boardId: { type: "string" },
-        issueId: { type: "string" },
-        reason: { type: "string" },
-      },
-      required: ["issueId"],
-      additionalProperties: false,
-    },
-  },
-  {
-    name: "orchestration_assign_agent",
-    description: "Start a durable child agent conversation for an issue and assign it on the board.",
-    parameters: {
-      type: "object",
-      properties: {
-        boardId: { type: "string" },
-        issueId: { type: "string" },
-        instructions: { type: "string" },
-        title: { type: "string" },
-        backendId: { type: "string" },
-        modelId: { type: "string" },
-        role: { type: "string" },
-        permissions: {
-          type: "object",
-          properties: {
-            editFile: { type: "string", enum: ["allow", "ask", "deny"] },
-            terminal: { type: "string", enum: ["allow", "ask", "deny"] },
-            mcpCall: { type: "string", enum: ["allow", "ask", "deny"] },
-          },
-          additionalProperties: false,
-        },
-      },
-      required: ["issueId", "instructions"],
-      additionalProperties: false,
-    },
-  },
-  {
-    name: "orchestration_update_agent_permissions",
-    description:
-      "Update granular permission policy for an existing child agent assignment.",
-    parameters: {
-      type: "object",
-      properties: {
-        boardId: { type: "string" },
-        assignmentId: { type: "string" },
-        conversationId: { type: "string" },
-        permissions: {
-          type: "object",
-          properties: {
-            editFile: { type: "string", enum: ["allow", "ask", "deny"] },
-            terminal: { type: "string", enum: ["allow", "ask", "deny"] },
-            mcpCall: { type: "string", enum: ["allow", "ask", "deny"] },
-          },
-          additionalProperties: false,
-        },
-      },
-      required: ["permissions"],
-      additionalProperties: false,
-    },
-  },
-  {
-    name: "orchestration_control_agent",
-    description:
-      "Pause, resume, stop, or steer an existing child agent assignment from the board.",
-    parameters: {
-      type: "object",
-      properties: {
-        boardId: { type: "string" },
-        assignmentId: { type: "string" },
-        conversationId: { type: "string" },
-        action: {
-          type: "string",
-          enum: ["pause", "resume", "stop", "steer"],
-        },
-        instructions: { type: "string" },
-        reason: { type: "string" },
-        resumeAfterSteer: { type: "boolean" },
-      },
-      required: ["action"],
-      additionalProperties: false,
-    },
-  },
-  {
-    name: "orchestration_wait",
-    description: "Wait for a specific board, issue, or child-agent condition instead of spinning.",
-    parameters: {
-      type: "object",
-      properties: {
-        reason: { type: "string" },
-        timeoutMs: { type: "number" },
-        pollMs: { type: "number" },
-        waitFor: {
-          type: "string",
-          enum: [
-            "board_update",
-            "issue_update",
-            "issue_comment",
-            "issue_done",
-            "assignment_update",
-            "assignment_status",
-            "assignment_finished",
-            "any_assignment_finished",
-            "all_issue_assignments_finished",
-          ],
-        },
-        issueId: { type: "string" },
-        assignmentId: { type: "string" },
-        conversationId: { type: "string" },
-        statuses: {
-          type: "array",
-          items: {
-            type: "string",
-            enum: [
-              "assigned",
-              "running",
-              "waiting",
-              "blocked",
-              "reviewing",
-              "completed",
-              "failed",
-              "cancelled",
-            ],
-          },
-        },
-      },
-      additionalProperties: false,
-    },
-  },
-] as const;
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null;
-}
-
-function asString(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim() ? value.trim() : undefined;
-}
-
-function asNumber(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
-}
-
-function asStringArray(value: unknown): string[] {
-  return Array.isArray(value)
-    ? value.filter((entry): entry is string => typeof entry === "string")
-    : [];
-}
-
-function asOrchestrationColumnId(value: unknown): OrchestrationColumnId | undefined {
-  return value === "backlog" ||
-    value === "ready" ||
-    value === "in_progress" ||
-    value === "review" ||
-    value === "blocked" ||
-    value === "done"
-    ? value
-    : undefined;
-}
-
-function asOrchestrationPriority(
-  value: unknown
-): OrchestrationIssuePriority | undefined {
-  return value === "none" ||
-    value === "low" ||
-    value === "medium" ||
-    value === "high" ||
-    value === "urgent"
-    ? value
-    : undefined;
-}
-
-function asOrchestrationPermissionDecision(
-  value: unknown
-): OrchestrationPermissionDecision | undefined {
-  return value === "allow" || value === "ask" || value === "deny" ? value : undefined;
-}
-
-function asOrchestrationPermissionPolicy(
-  value: unknown
-): OrchestrationAssignmentPermissionPolicy {
-  const record = asRecord(value);
-  return {
-    editFile: asOrchestrationPermissionDecision(record?.editFile) ?? "allow",
-    terminal: asOrchestrationPermissionDecision(record?.terminal) ?? "allow",
-    mcpCall: asOrchestrationPermissionDecision(record?.mcpCall) ?? "allow",
-  };
-}
-
-type OrchestrationWaitFor =
-  | "board_update"
-  | "issue_update"
-  | "issue_comment"
-  | "issue_done"
-  | "assignment_update"
-  | "assignment_status"
-  | "assignment_finished"
-  | "any_assignment_finished"
-  | "all_issue_assignments_finished";
-
-function asOrchestrationAssignmentStatus(
-  value: unknown
-): OrchestrationAssignmentStatus | undefined {
-  return value === "assigned" ||
-    value === "running" ||
-    value === "waiting" ||
-    value === "blocked" ||
-    value === "reviewing" ||
-    value === "completed" ||
-    value === "failed" ||
-    value === "cancelled"
-    ? value
-    : undefined;
-}
-
-function asOrchestrationAssignmentStatuses(
-  value: unknown
-): OrchestrationAssignmentStatus[] {
-  const statuses = asStringArray(value)
-    .map(asOrchestrationAssignmentStatus)
-    .filter((status): status is OrchestrationAssignmentStatus => Boolean(status));
-  return [...new Set(statuses)];
-}
-
-function asOrchestrationWaitFor(value: unknown): OrchestrationWaitFor {
-  return value === "issue_update" ||
-    value === "issue_comment" ||
-    value === "issue_done" ||
-    value === "assignment_update" ||
-    value === "assignment_status" ||
-    value === "assignment_finished" ||
-    value === "any_assignment_finished" ||
-    value === "all_issue_assignments_finished"
-    ? value
-    : "board_update";
-}
-
-type OrchestrationControlAction = "pause" | "resume" | "stop" | "steer";
-
-function asOrchestrationControlAction(
-  value: unknown
-): OrchestrationControlAction | undefined {
-  return value === "pause" || value === "resume" || value === "stop" || value === "steer"
-    ? value
-    : undefined;
-}
-
-function safeJson(value: unknown): string {
-  try {
-    return JSON.stringify(value);
-  } catch {
-    return String(value);
-  }
-}
-
-function truncate(value: string, max = 40_000): string {
-  return value.length > max ? `${value.slice(0, max)}\n...[truncated ${value.length - max} chars]` : value;
-}
-
-function modelPart(modelId: string): string {
-  const slash = modelId.indexOf("/");
-  return slash >= 0 ? modelId.slice(slash + 1) : modelId;
-}
-
-function providerPart(modelId: string): string {
-  return modelId.includes("/") ? modelId.split("/", 1)[0]! : "openai";
-}
-
 function optionValue(options: AgentConfigOption[], id: string, fallback: string): string {
   return options.find((option) => option.id === id)?.currentValue || fallback;
 }
@@ -711,129 +237,6 @@ function resolveWorkspacePath(workspaceRoot: string, inputPath: string): string 
   return resolved;
 }
 
-function toolKind(name: string): string {
-  switch (name) {
-    case "read_file":
-      return "read";
-    case "edit_file":
-      return "edit";
-    case "terminal":
-      return "terminal";
-    case "grep":
-      return "grep";
-    case "todo":
-      return "todo";
-    case "ask_question":
-      return "question";
-    case "subagent":
-      return "subagent";
-    case "search_history":
-    case "read_history_page":
-      return "search";
-    case "call_mcp_tool":
-    case "refresh_mcp_servers":
-      return "mcp";
-    case "orchestration_board_snapshot":
-    case "orchestration_create_issue":
-    case "orchestration_update_issue":
-    case "orchestration_comment_issue":
-    case "orchestration_delete_issue":
-    case "orchestration_assign_agent":
-    case "orchestration_update_agent_permissions":
-    case "orchestration_control_agent":
-    case "orchestration_wait":
-      return "orchestration";
-    default:
-      return "tool";
-  }
-}
-
-function permissionDecisionFromOption(optionId: string | undefined): "allow" | "reject" {
-  return optionId === "allow_once" || optionId === "allow_always" ? "allow" : "reject";
-}
-
-export function cesiumPermissionToolKey(
-  permission: "editFile" | "terminal" | "mcpCall",
-  args: Record<string, unknown>
-): string {
-  switch (permission) {
-    case "editFile":
-      return `cesium:edit_file:${asString(args.path) ?? ""}`;
-    case "terminal":
-      return `cesium:terminal:${asString(args.command) ?? ""}`;
-    case "mcpCall":
-      return `cesium:mcp:${asString(args.serverId) ?? ""}:${asString(args.toolName) ?? ""}`;
-  }
-}
-
-function toolTitle(name: string, args: Record<string, unknown>): string {
-  switch (name) {
-    case "read_file":
-      return `Read ${asString(args.path) ?? "file"}`;
-    case "edit_file":
-      return `Edit ${asString(args.path) ?? "file"}`;
-    case "terminal":
-      return `Run ${asString(args.command) ?? "command"}`;
-    case "grep":
-      return `Grep ${asString(args.pattern) ?? "workspace"}`;
-    case "todo":
-      return "Update todos";
-    case "ask_question":
-      return "Ask question";
-    case "subagent":
-      return `Subagent ${asString(args.title) ?? ""}`.trim();
-    case "read_subagent_transcript":
-      return "Read subagent transcript";
-    case "search_history":
-      return "Search history";
-    case "read_history_page":
-      return "Read history";
-    case "call_mcp_tool":
-      if (asString(args.serverId) === BROWSER_MCP_SERVER_ID) {
-        return `Browser ${asString(args.toolName) ?? "tool"}`;
-      }
-      return `MCP ${asString(args.serverId) ?? "server"} - ${asString(args.toolName) ?? "tool"}`;
-    case "refresh_mcp_servers":
-      return "Refresh MCP servers";
-    case "orchestration_board_snapshot":
-      return "Read orchestration board";
-    case "orchestration_create_issue":
-      return `Create issue ${asString(args.title) ?? ""}`.trim();
-    case "orchestration_update_issue":
-      return `Update issue ${asString(args.issueId) ?? ""}`.trim();
-    case "orchestration_comment_issue":
-      return `Comment on issue ${asString(args.issueId) ?? ""}`.trim();
-    case "orchestration_delete_issue":
-      return `Delete issue ${asString(args.issueId) ?? ""}`.trim();
-    case "orchestration_assign_agent":
-      return `Assign agent to ${asString(args.issueId) ?? "issue"}`;
-    case "orchestration_update_agent_permissions":
-      return `Update agent permissions ${asString(args.assignmentId) ?? asString(args.conversationId) ?? ""}`.trim();
-    case "orchestration_control_agent":
-      return `${asString(args.action) ?? "Control"} agent ${asString(args.assignmentId) ?? asString(args.conversationId) ?? ""}`.trim();
-    case "orchestration_wait":
-      return "Wait for orchestration changes";
-    default:
-      return name;
-  }
-}
-
-function isOrchestrationToolName(name: string): boolean {
-  return name.startsWith("orchestration_");
-}
-
-function isAllowedInOrchestrationMode(name: string): boolean {
-  return (
-    isOrchestrationToolName(name) ||
-    name === "ask_question" ||
-    name === "search_history" ||
-    name === "read_history_page" ||
-    name === "todo" ||
-    name === "call_mcp_tool" ||
-    name === "refresh_mcp_servers"
-  );
-}
-
 function statusFromError(error: unknown): { status: AgentToolCallStatus; detail: string } {
   return {
     status: "failed",
@@ -841,752 +244,15 @@ function statusFromError(error: unknown): { status: AgentToolCallStatus; detail:
   };
 }
 
-function toolCallFromStoredEvent(event: Extract<AgentStoredEvent, { kind: "tool_call" }>): CesiumHistoryToolCall {
-  const raw = asRecord(event.raw);
-  const request = asRecord(raw);
-  const name = asString(request?.name) ?? event.title.split(" ")[0] ?? "tool";
-  const args = request?.arguments;
-  const argumentsJson =
-    typeof args === "string"
-      ? args
-      : JSON.stringify(asRecord(args) ?? parseJsonArgs(event.detail));
-  return {
-    id: event.toolCallId,
-    name,
-    arguments: argumentsJson,
-  };
-}
+const USER_REFUSED_TOOL_CALL_RESULT =
+  "The user refused this tool call. Continue in a different fashion that is either less intrusive or destructive.";
+const CESIUM_STREAM_CHUNK_FLUSH_MS = 120;
+const CESIUM_STREAM_CHUNK_MIN_CHARS = 512;
 
-const MISSING_TOOL_RESULT_MESSAGE =
-  "Tool call did not complete or was interrupted before returning a result.";
-
-function flushPendingToolCalls(
-  messages: CesiumHistoryMessage[],
-  pending: PendingHistoryToolCall[]
-): void {
-  if (pending.length === 0) {
-    return;
-  }
-  const resolved = pending.map((call) => ({
-    ...call,
-    result: call.result?.trim() ? call.result : MISSING_TOOL_RESULT_MESSAGE,
-  }));
-  messages.push({
-    role: "assistant",
-    content: "",
-    toolCalls: resolved.map(({ id, name, arguments: args }) => ({ id, name, arguments: args })),
-  });
-  for (const call of resolved) {
-    messages.push({
-      role: "tool",
-      toolCallId: call.id,
-      name: call.name,
-      content: call.result!,
-    });
-  }
-  pending.length = 0;
-}
-
-function satisfyOpenAiToolProtocol(messages: CesiumHistoryMessage[]): CesiumHistoryMessage[] {
-  const out: CesiumHistoryMessage[] = [];
-  let index = 0;
-  while (index < messages.length) {
-    const message = messages[index]!;
-    if (message.role !== "assistant" || !message.toolCalls?.length) {
-      out.push(message);
-      index += 1;
-      continue;
-    }
-    out.push(message);
-    const missing = new Map(message.toolCalls.map((call) => [call.id, call]));
-    index += 1;
-    while (index < messages.length && messages[index]!.role === "tool") {
-      const tool = messages[index]!;
-      out.push(tool);
-      if (tool.toolCallId) {
-        missing.delete(tool.toolCallId);
-      }
-      index += 1;
-    }
-    for (const call of missing.values()) {
-      out.push({
-        role: "tool",
-        toolCallId: call.id,
-        name: call.name,
-        content: MISSING_TOOL_RESULT_MESSAGE,
-      });
-    }
-  }
-  return out;
-}
-
-export function normalizeEventsToHistory(events: AgentStoredEvent[]): CesiumHistoryMessage[] {
-  const messages: CesiumHistoryMessage[] = [{ role: "system", content: CESIUM_SYSTEM_PROMPT }];
-  const assistantTextById = new Map<string, string>();
-  const pendingToolCalls: PendingHistoryToolCall[] = [];
-  const sorted = [...events].sort((a, b) => a.seq - b.seq);
-  for (const event of sorted) {
-    switch (event.kind) {
-      case "user_message":
-        flushPendingToolCalls(messages, pendingToolCalls);
-        messages.push({ role: "user", content: event.content });
-        break;
-      case "assistant_message_chunk":
-        assistantTextById.set(event.messageId, `${assistantTextById.get(event.messageId) ?? ""}${event.text}`);
-        break;
-      case "assistant_message_end": {
-        flushPendingToolCalls(messages, pendingToolCalls);
-        const text = assistantTextById.get(event.messageId)?.trim();
-        if (text) {
-          messages.push({ role: "assistant", content: text });
-        }
-        assistantTextById.delete(event.messageId);
-        break;
-      }
-      case "reasoning":
-        flushPendingToolCalls(messages, pendingToolCalls);
-        if (event.text.trim()) {
-          messages.push({ role: "assistant", content: `[Reasoning]\n${event.text.trim()}` });
-        }
-        break;
-      case "tool_call":
-        pendingToolCalls.push(toolCallFromStoredEvent(event));
-        break;
-      case "tool_call_update":
-        if (event.status === "completed" || event.status === "failed") {
-          const detail =
-            event.detail?.trim() ??
-            (event.status === "failed" ? "Tool call failed." : "Tool call completed with no output.");
-          const pending = pendingToolCalls.find((call) => call.id === event.toolCallId);
-          if (pending) {
-            pending.result = detail;
-          } else {
-            pendingToolCalls.push({
-              id: event.toolCallId,
-              name: (event.title ?? "tool").split(" ")[0] ?? "tool",
-              arguments: "{}",
-              result: detail,
-            });
-          }
-        }
-        break;
-      case "plan":
-        flushPendingToolCalls(messages, pendingToolCalls);
-        messages.push({
-          role: "assistant",
-          content: event.entries.map((entry) => `- [${entry.status}] ${entry.content}`).join("\n"),
-        });
-        break;
-      case "compression_summary":
-        flushPendingToolCalls(messages, pendingToolCalls);
-        messages.push({
-          role: "user",
-          content: `[Compressed earlier conversation]\n${event.summary}`,
-        });
-        break;
-      case "agent_handoff":
-        flushPendingToolCalls(messages, pendingToolCalls);
-        messages.push({
-          role: "assistant",
-          content: `[Handoff from ${event.fromAgent} to ${event.toAgent}]`,
-        });
-        break;
-      case "chat_fork":
-        flushPendingToolCalls(messages, pendingToolCalls);
-        messages.push({
-          role: "user",
-          content: `[Forked chat]\n${event.transcript}`,
-        });
-        break;
-      default:
-        break;
-    }
-  }
-  flushPendingToolCalls(messages, pendingToolCalls);
-  for (const text of assistantTextById.values()) {
-    if (text.trim()) {
-      messages.push({ role: "assistant", content: text.trim() });
-    }
-  }
-  return satisfyOpenAiToolProtocol(repairOpenAiMessageSequence(messages)).slice(
-    -HISTORY_EVENT_LIMIT
-  );
-}
-
-function repairOpenAiMessageSequence(messages: CesiumHistoryMessage[]): CesiumHistoryMessage[] {
-  const repaired: CesiumHistoryMessage[] = [];
-  for (const message of messages) {
-    if (message.role === "tool") {
-      const previous = repaired[repaired.length - 1];
-      const hasMatchingCall =
-        previous?.role === "assistant" &&
-        previous.toolCalls?.some((call) => call.id === message.toolCallId);
-      if (!hasMatchingCall && message.toolCallId) {
-        repaired.push({
-          role: "assistant",
-          content: "",
-          toolCalls: [
-            {
-              id: message.toolCallId,
-              name: message.name ?? "tool",
-              arguments: "{}",
-            },
-          ],
-        });
-      }
-    }
-    repaired.push(message);
-  }
-  return repaired;
-}
-
-function summarizeForCompression(events: AgentStoredEvent[]): string {
-  const lines: string[] = [];
-  for (const event of events) {
-    switch (event.kind) {
-      case "user_message":
-        lines.push(`User: ${truncate(event.content, 1000)}`);
-        break;
-      case "assistant_message_chunk":
-        if (event.text.trim()) {
-          lines.push(`Assistant: ${truncate(event.text.trim(), 1000)}`);
-        }
-        break;
-      case "tool_call":
-        lines.push(`Tool: ${event.title}${event.detail ? ` - ${truncate(event.detail, 400)}` : ""}`);
-        break;
-      case "tool_call_update":
-        if (event.status === "failed") {
-          lines.push(`Tool failed: ${event.title ?? event.toolCallId}${event.detail ? ` - ${truncate(event.detail, 400)}` : ""}`);
-        }
-        break;
-      case "plan":
-        lines.push(`Plan: ${event.entries.map((entry) => `${entry.status}: ${entry.content}`).join("; ")}`);
-        break;
-      default:
-        break;
-    }
-  }
-  return truncate(lines.join("\n"), 16_000);
-}
-
-async function fetchJson(url: string, init: RequestInit): Promise<unknown> {
-  const response = await fetch(url, init);
-  const text = await response.text();
-  if (!response.ok) {
-    throw new Error(`${response.status} ${response.statusText}: ${text.slice(0, 1000)}`);
-  }
-  try {
-    return JSON.parse(text) as unknown;
-  } catch {
-    return text;
-  }
-}
-
-/** OpenAI-compatible hosts (Nvidia NIM, etc.) reject JSON Schema union `type` arrays. */
-export function sanitizeOpenAiCompatibleJsonSchema<T>(value: T): T {
-  if (Array.isArray(value)) {
-    return value.map((entry) => sanitizeOpenAiCompatibleJsonSchema(entry)) as T;
-  }
-  if (!value || typeof value !== "object") {
-    return value;
-  }
-  const record = value as Record<string, unknown>;
-  const next: Record<string, unknown> = {};
-  for (const [key, entry] of Object.entries(record)) {
-    if (key === "type" && Array.isArray(entry)) {
-      const preferred =
-        entry.find((item) => typeof item === "string" && item !== "null") ??
-        entry.find((item) => typeof item === "string");
-      next.type = typeof preferred === "string" ? preferred : "string";
-      continue;
-    }
-    next[key] = sanitizeOpenAiCompatibleJsonSchema(entry);
-  }
-  return next as T;
-}
-
-export function buildOpenAiToolDefinitions() {
-  return CESIUM_TOOLS.map((tool) => ({
-    type: "function" as const,
-    function: {
-      name: tool.name,
-      description: tool.description,
-      parameters: sanitizeOpenAiCompatibleJsonSchema(tool.parameters),
-    },
-  }));
-}
-
-function openAiTools() {
-  return buildOpenAiToolDefinitions();
-}
-
-function responseTools() {
-  return CESIUM_TOOLS.map((tool) => ({
-    type: "function",
-    name: tool.name,
-    description: tool.description,
-    parameters: tool.parameters,
-  }));
-}
-
-function anthropicTools() {
-  return CESIUM_TOOLS.map((tool) => ({
-    name: tool.name,
-    description: tool.description,
-    input_schema: tool.parameters,
-  }));
-}
-
-function googleTools() {
-  return [
-    {
-      functionDeclarations: CESIUM_TOOLS.map((tool) => ({
-        name: tool.name,
-        description: tool.description,
-        parametersJsonSchema: tool.parameters,
-      })),
-    },
-  ];
-}
-
-export function openAiMessages(messages: CesiumHistoryMessage[]) {
-  return satisfyOpenAiToolProtocol(repairOpenAiMessageSequence(messages)).map((message) => {
-    if (message.role === "tool") {
-      return {
-        role: "tool",
-        tool_call_id: message.toolCallId ?? message.name ?? randomUUID(),
-        content: message.content,
-      };
-    }
-    if (message.role === "assistant" && message.toolCalls?.length) {
-      return {
-        role: "assistant",
-        content: message.content || null,
-        tool_calls: message.toolCalls.map((call) => ({
-          id: call.id,
-          type: "function",
-          function: {
-            name: call.name,
-            arguments: call.arguments,
-          },
-        })),
-      };
-    }
-    return {
-      role: message.role,
-      content: message.content,
-    };
-  });
-}
-
-function parseJsonArgs(value: unknown): Record<string, unknown> {
-  if (asRecord(value)) {
-    return value as Record<string, unknown>;
-  }
-  if (typeof value !== "string") {
-    return {};
-  }
-  try {
-    return asRecord(JSON.parse(value)) ?? {};
-  } catch {
-    return {};
-  }
-}
-
-function resolveOpenAiCompatibleBaseUrl(baseUrl: string | undefined, providerId: string): string {
-  const trimmed = baseUrl?.trim();
-  if (trimmed) {
-    return trimmed.replace(/\/+$/, "");
-  }
-  if (providerPart(providerId) === "openai") {
-    return "https://api.openai.com/v1";
-  }
-  throw new Error(
-    `No API base URL for provider ${providerId}. Save a ${providerId} key in Cesium settings and refresh models.dev.`
-  );
-}
-
-async function runOpenAiChat(input: {
-  apiKey: string;
-  baseUrl?: string;
-  providerId: string;
-  model: string;
-  messages: CesiumHistoryMessage[];
-}): Promise<CesiumAdapterResult> {
-  const baseUrl = resolveOpenAiCompatibleBaseUrl(input.baseUrl, input.providerId);
-  const payload = await fetchJson(`${baseUrl.replace(/\/+$/, "")}/chat/completions`, {
-    method: "POST",
-    headers: {
-      authorization: `Bearer ${input.apiKey}`,
-      "content-type": "application/json",
-    },
-    body: JSON.stringify({
-      model: input.model,
-      messages: openAiMessages(input.messages),
-      tools: openAiTools(),
-      tool_choice: "auto",
-      max_tokens: DEFAULT_MAX_OUTPUT_TOKENS,
-    }),
-  });
-  const root = asRecord(payload);
-  const choices = Array.isArray(root?.choices) ? root.choices : [];
-  const choice = asRecord(choices[0]);
-  const message = asRecord(choice?.message);
-  const toolCalls = Array.isArray(message?.tool_calls) ? message.tool_calls : [];
-  return {
-    text: asString(message?.content) ?? "",
-    reasoning: asString(message?.reasoning),
-    toolRequests: toolCalls.flatMap((toolCall): CesiumToolRequest[] => {
-      const record = asRecord(toolCall);
-      const fn = asRecord(record?.function);
-      const name = asString(fn?.name);
-      if (!record || !name) {
-        return [];
-      }
-      return [{
-        id: asString(record.id) ?? randomUUID(),
-        name,
-        arguments: parseJsonArgs(fn?.arguments),
-      }];
-    }),
-    raw: payload,
-  };
-}
-
-async function runOpenAiResponses(input: {
-  apiKey: string;
-  baseUrl?: string;
-  providerId: string;
-  model: string;
-  messages: CesiumHistoryMessage[];
-}): Promise<CesiumAdapterResult> {
-  const baseUrl = resolveOpenAiCompatibleBaseUrl(input.baseUrl, input.providerId);
-  const response = await fetch(`${baseUrl.replace(/\/+$/, "")}/responses`, {
-    method: "POST",
-    headers: {
-      authorization: `Bearer ${input.apiKey}`,
-      "content-type": "application/json",
-    },
-    body: JSON.stringify({
-      model: input.model,
-      input: input.messages.map((message) => ({
-        role: message.role === "system" ? "developer" : message.role,
-        content: message.content,
-      })),
-      tools: responseTools(),
-      max_output_tokens: DEFAULT_MAX_OUTPUT_TOKENS,
-      stream: true,
-    }),
-  });
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`${response.status} ${response.statusText}: ${text.slice(0, 1000)}`);
-  }
-  if (response.body) {
-    const decoder = new TextDecoder();
-    const reader = response.body.getReader();
-    let buffer = "";
-    const textParts: string[] = [];
-    const toolRequests: CesiumToolRequest[] = [];
-    const rawEvents: unknown[] = [];
-    for (;;) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const frames = buffer.split(/\n\n/);
-      buffer = frames.pop() ?? "";
-      for (const frame of frames) {
-        const dataLines = frame
-          .split(/\n/)
-          .filter((line) => line.startsWith("data:"))
-          .map((line) => line.slice("data:".length).trim());
-        for (const dataLine of dataLines) {
-          if (!dataLine || dataLine === "[DONE]") {
-            continue;
-          }
-          const event = parseJsonArgs(dataLine);
-          rawEvents.push(event);
-          if (event.type === "response.output_text.delta" && typeof event.delta === "string") {
-            textParts.push(event.delta);
-          }
-          const item = asRecord(event.item);
-          if (item?.type === "function_call") {
-            const name = asString(item.name);
-            if (name) {
-              toolRequests.push({
-                id: asString(item.call_id) ?? asString(item.id) ?? randomUUID(),
-                name,
-                arguments: parseJsonArgs(item.arguments),
-              });
-            }
-          }
-        }
-      }
-    }
-    return {
-      text: textParts.join(""),
-      toolRequests,
-      raw: rawEvents,
-    };
-  }
-  const payload = await response.json();
-  const record = asRecord(payload);
-  const output = Array.isArray(record?.output) ? record.output : [];
-  const toolRequests: CesiumToolRequest[] = [];
-  const textParts: string[] = [];
-  for (const item of output) {
-    const out = asRecord(item);
-    if (!out) continue;
-    if (out.type === "function_call") {
-      const name = asString(out.name);
-      if (name) {
-        toolRequests.push({
-          id: asString(out.call_id) ?? asString(out.id) ?? randomUUID(),
-          name,
-          arguments: parseJsonArgs(out.arguments),
-        });
-      }
-    }
-    if (Array.isArray(out.content)) {
-      for (const content of out.content) {
-        const c = asRecord(content);
-        const text = asString(c?.text);
-        if (text) textParts.push(text);
-      }
-    }
-  }
-  return {
-    text: asString(record?.output_text) ?? textParts.join(""),
-    reasoning: asString(record?.reasoning),
-    toolRequests,
-    raw: payload,
-  };
-}
-
-async function runOpenAiRealtime(input: {
-  apiKey: string;
-  model: string;
-  messages: CesiumHistoryMessage[];
-}): Promise<CesiumAdapterResult> {
-  return new Promise((resolve, reject) => {
-    const ws = new WebSocket(`wss://api.openai.com/v1/realtime?model=${encodeURIComponent(input.model)}`, {
-      headers: {
-        authorization: `Bearer ${input.apiKey}`,
-        "openai-beta": "realtime=v1",
-      },
-    });
-    const text: string[] = [];
-    ws.on("open", () => {
-      ws.send(JSON.stringify({
-        type: "session.update",
-        session: {
-          modalities: ["text"],
-          instructions: CESIUM_SYSTEM_PROMPT,
-          tools: responseTools(),
-        },
-      }));
-      ws.send(JSON.stringify({
-        type: "conversation.item.create",
-        item: {
-          type: "message",
-          role: "user",
-          content: [{ type: "input_text", text: input.messages.map((m) => `${m.role}: ${m.content}`).join("\n\n") }],
-        },
-      }));
-      ws.send(JSON.stringify({ type: "response.create" }));
-    });
-    ws.on("message", (data) => {
-      const event = parseJsonArgs(data.toString());
-      if (event.type === "response.text.delta" && typeof event.delta === "string") {
-        text.push(event.delta);
-      }
-      if (event.type === "response.done") {
-        ws.close();
-        resolve({ text: text.join(""), toolRequests: [], raw: event });
-      }
-    });
-    ws.on("error", (error) => {
-      reject(error);
-    });
-  });
-}
-
-function anthropicMessages(messages: CesiumHistoryMessage[]) {
-  return repairOpenAiMessageSequence(messages)
-    .filter((message) => message.role !== "system")
-    .map((message) => {
-      if (message.role === "tool") {
-        return {
-          role: "user",
-          content: [
-            {
-              type: "tool_result",
-              tool_use_id: message.toolCallId ?? message.name ?? randomUUID(),
-              content: message.content,
-            },
-          ],
-        };
-      }
-      if (message.role === "assistant" && message.toolCalls?.length) {
-        const blocks: Array<Record<string, unknown>> = [];
-        if (message.content.trim()) {
-          blocks.push({ type: "text", text: message.content });
-        }
-        for (const call of message.toolCalls) {
-          blocks.push({
-            type: "tool_use",
-            id: call.id,
-            name: call.name,
-            input: parseJsonArgs(call.arguments),
-          });
-        }
-        return { role: "assistant", content: blocks };
-      }
-      return {
-        role: message.role === "assistant" ? "assistant" : "user",
-        content: message.content,
-      };
-    });
-}
-
-async function runAnthropic(input: {
-  apiKey: string;
-  model: string;
-  messages: CesiumHistoryMessage[];
-}): Promise<CesiumAdapterResult> {
-  const payload = await fetchJson("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "x-api-key": input.apiKey,
-      "anthropic-version": "2023-06-01",
-      "content-type": "application/json",
-    },
-    body: JSON.stringify({
-      model: input.model,
-      system: CESIUM_SYSTEM_PROMPT,
-      max_tokens: DEFAULT_MAX_OUTPUT_TOKENS,
-      messages: anthropicMessages(input.messages),
-      tools: anthropicTools(),
-    }),
-  });
-  const root = asRecord(payload);
-  const content = Array.isArray(root?.content) ? root.content : [];
-  const toolRequests: CesiumToolRequest[] = [];
-  const text: string[] = [];
-  for (const block of content) {
-    const item = asRecord(block);
-    if (!item) continue;
-    if (item.type === "text" && typeof item.text === "string") {
-      text.push(item.text);
-    } else if (item.type === "tool_use") {
-      const name = asString(item.name);
-      if (name) {
-        toolRequests.push({
-          id: asString(item.id) ?? randomUUID(),
-          name,
-          arguments: asRecord(item.input) ?? {},
-        });
-      }
-    }
-  }
-  return { text: text.join(""), toolRequests, raw: payload };
-}
-
-function googleContents(messages: CesiumHistoryMessage[]) {
-  return messages
-    .filter((message) => message.role !== "system")
-    .map((message) => ({
-      role: message.role === "assistant" ? "model" : "user",
-      parts: [{ text: message.content }],
-    }));
-}
-
-async function runGoogle(input: {
-  apiKey: string;
-  model: string;
-  messages: CesiumHistoryMessage[];
-}): Promise<CesiumAdapterResult> {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(input.model)}:generateContent?key=${encodeURIComponent(input.apiKey)}`;
-  const payload = await fetchJson(url, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      contents: googleContents(input.messages),
-      systemInstruction: { parts: [{ text: CESIUM_SYSTEM_PROMPT }] },
-      tools: googleTools(),
-      generationConfig: {
-        maxOutputTokens: DEFAULT_MAX_OUTPUT_TOKENS,
-      },
-    }),
-  });
-  const root = asRecord(payload);
-  const candidates = Array.isArray(root?.candidates)
-    ? root.candidates
-    : [];
-  const candidate = asRecord(candidates[0]);
-  const content = asRecord(candidate?.content);
-  const parts = Array.isArray(content?.parts)
-    ? content.parts
-    : [];
-  const text: string[] = [];
-  const toolRequests: CesiumToolRequest[] = [];
-  for (const part of parts) {
-    const record = asRecord(part);
-    if (!record) continue;
-    if (typeof record.text === "string") {
-      text.push(record.text);
-    }
-    const call = asRecord(record.functionCall);
-    const name = asString(call?.name);
-    if (name) {
-      toolRequests.push({
-        id: randomUUID(),
-        name,
-        arguments: asRecord(call?.args) ?? {},
-      });
-    }
-  }
-  return { text: text.join(""), toolRequests, raw: payload };
-}
-
-type RunAdapterInput = {
-  apiKind: CesiumProviderKind;
-  apiKey: string;
-  baseUrl?: string;
-  providerId: string;
-  modelId: string;
-  messages: CesiumHistoryMessage[];
-};
-
-async function runAdapter(input: RunAdapterInput): Promise<CesiumAdapterResult> {
-  const model = modelPart(input.modelId);
-  const providerId = providerPart(input.modelId);
-  switch (input.apiKind) {
-    case "openai-chat-completions":
-    case "openai-compatible":
-      return runOpenAiChat({
-        apiKey: input.apiKey,
-        baseUrl: input.baseUrl,
-        providerId,
-        model,
-        messages: input.messages,
-      });
-    case "openai-realtime":
-      return runOpenAiRealtime({ apiKey: input.apiKey, model, messages: input.messages });
-    case "anthropic":
-      return runAnthropic({ apiKey: input.apiKey, model, messages: input.messages });
-    case "google-genai":
-      return runGoogle({ apiKey: input.apiKey, model, messages: input.messages });
-    case "openai-responses":
-    default:
-      return runOpenAiResponses({
-        apiKey: input.apiKey,
-        baseUrl: input.baseUrl,
-        providerId,
-        model,
-        messages: input.messages,
-      });
+class PermissionRefusedToolCallError extends Error {
+  constructor() {
+    super(USER_REFUSED_TOOL_CALL_RESULT);
+    this.name = "PermissionRefusedToolCallError";
   }
 }
 
@@ -1682,7 +348,60 @@ class CesiumSessionHandle implements AgentSessionHandle {
   }
 
   private isOrchestrationMode(): boolean {
-    return this.callbacks.conversation.config.mode === "orchestration";
+    return this.currentMode() === "orchestration";
+  }
+
+  private isBurnMode(): boolean {
+    return this.currentMode() === "burn";
+  }
+
+  private currentMode(): string {
+    return optionValue(
+      this.configOptions,
+      "mode",
+      this.callbacks.conversation.config.mode ?? "agent"
+    );
+  }
+
+  private createAssistantChunkFlusher(messageId: string): {
+    push: (text: string) => Promise<void>;
+    flush: () => Promise<void>;
+  } {
+    let pending = "";
+    let lastFlushAt = 0;
+    const flush = async () => {
+      if (!pending) {
+        return;
+      }
+      const text = pending;
+      pending = "";
+      lastFlushAt = Date.now();
+      await this.callbacks.appendEvents([
+        {
+          eventId: randomUUID(),
+          conversationId: this.callbacks.conversation.id,
+          kind: "assistant_message_chunk",
+          messageId,
+          text,
+        },
+      ]);
+    };
+    return {
+      push: async (text: string) => {
+        if (!text) {
+          return;
+        }
+        pending += text;
+        const now = Date.now();
+        if (
+          pending.length >= CESIUM_STREAM_CHUNK_MIN_CHARS ||
+          now - lastFlushAt >= CESIUM_STREAM_CHUNK_FLUSH_MS
+        ) {
+          await flush();
+        }
+      },
+      flush,
+    };
   }
 
   private async resolveCurrentOrchestrationBoard() {
@@ -1699,6 +418,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
     userMessageId: string;
     attachments?: Array<{ mimeType: string; data: string; name?: string }>;
     isRetry?: boolean;
+    planHandoff?: AgentQueuedChatPrompt["planHandoff"];
   }): Promise<void> {
     if (this.disposed) {
       throw new Error("Cesium session has been disposed.");
@@ -1754,25 +474,81 @@ class CesiumSessionHandle implements AgentSessionHandle {
         ]);
       });
       const summaries = await getMcpSummariesForPrompt(this.callbacks.workspace.id);
-      if (this.isOrchestrationMode()) {
-        const orchestrationSummaries = summaries.filter(
-          (summary) => summary.id !== BROWSER_MCP_SERVER_ID
-        );
-        const board = await this.resolveCurrentOrchestrationBoard();
-        const promptContext = await this.resolveSystemPromptContext(orchestrationSummaries);
-        this.activeSystemPrompt = buildCesiumOrchestrationSystemPrompt({
-          ...promptContext,
-          workspaceRoot: this.callbacks.workspace.root,
-          boardId: board?.board.id,
-          maxConcurrentIssues: board?.board.settings.maxConcurrentIssues,
-          maxConcurrentAgents: board?.board.settings.maxConcurrentAgents,
-        });
-      } else {
-        this.activeSystemPrompt = buildCesiumSystemPrompt(
-          await this.resolveSystemPromptContext(summaries)
-        );
+      const pluginAttachments = await resolveAgentPluginAttachments({
+        workspaceId: this.callbacks.workspace.id,
+        workspaceRoot: this.callbacks.workspace.root,
+        backendId: "cesium-agent",
+      });
+      if (pluginAttachments.warnings.length > 0) {
+        await this.callbacks.appendEvents([
+          {
+            eventId: randomUUID(),
+            conversationId: this.callbacks.conversation.id,
+            kind: "system",
+            level: "warning",
+            text: `Agent plugins: ${pluginAttachments.warnings
+              .map((warning) => `${warning.pluginName}: ${warning.reason}`)
+              .join("; ")}`,
+          },
+        ]);
       }
+      const currentMode = this.currentMode();
+      const board = this.isOrchestrationMode()
+        ? await this.resolveCurrentOrchestrationBoard()
+        : null;
+      const burnState = this.isBurnMode()
+        ? await ensureBurnGoalForConversation({
+            workspace: this.callbacks.workspace,
+            conversationId: this.callbacks.conversation.id,
+            objective: input.text,
+          })
+        : null;
+      const promptContext = await this.resolveSystemPromptContext(summaries);
+      this.activeSystemPrompt = CESIUM_SYSTEM_PROMPT;
+      const previousSnapshot = await this.callbacks.readSnapshot().catch(() => null);
+      const mcpCatalogRevision = await getMcpCatalogRevision(this.callbacks.workspace.id);
+      const currentMcpSnapshot = mcpReminderSnapshot({
+        revision: mcpCatalogRevision,
+        dateLabel: promptContext.dateLabel,
+        summaries,
+      });
+      const mcpChangeNotice = mcpReminderChangeNotice(
+        previousSnapshot ? latestMcpReminderSnapshot(previousSnapshot.events) : null,
+        currentMcpSnapshot
+      );
+      const reminderText = buildCesiumModeReminder({
+        mode: currentMode,
+        modelName: promptContext.modelName,
+        workspaceRoot: promptContext.workspaceRoot ?? this.callbacks.workspace.root,
+        dateLabel: promptContext.dateLabel ?? new Date().toLocaleString("en-US"),
+        gitSummary: promptContext.gitSummary ?? "not a git repository",
+        agentsMarkdown: promptContext.agentsMarkdown,
+        skillsList: [promptContext.skillsList, pluginAttachments.skillsList]
+          .filter((value) => value?.trim())
+          .join("\n"),
+        mcpSummaries: summaries,
+        mcpChangeNotice,
+        orchestrationBoard: board,
+        handoffPlanPath: input.planHandoff?.planPath,
+        burnGoalSummary: burnState ? formatBurnGoalForModel(burnState) : null,
+      });
       await this.callbacks.appendEvents([
+        {
+          eventId: randomUUID(),
+          conversationId: this.callbacks.conversation.id,
+          kind: "system_reminder",
+          reminderId: `mode-${input.userMessageId}`,
+          targetMessageId: input.userMessageId,
+          reason: input.planHandoff ? "plan_handoff" : "mode",
+          text: reminderText,
+          raw: {
+            mode: currentMode,
+            planHandoff: input.planHandoff,
+            modelId,
+            mcpServerCount: summaries.length,
+            mcpReminderSnapshot: currentMcpSnapshot,
+          },
+        },
         {
           eventId: randomUUID(),
           conversationId: this.callbacks.conversation.id,
@@ -1781,12 +557,20 @@ class CesiumSessionHandle implements AgentSessionHandle {
           detail: `Cesium is connecting to ${modelProviderId}…`,
         },
       ]);
-      let history = await this.buildHistory(input.userMessageId);
+      const history = await this.buildHistory(input.userMessageId);
       if (!history.some((message) => message.role === "user" && message.content === input.text)) {
         history.push({ role: "user", content: input.text });
       }
       const toolResultMessages: CesiumHistoryMessage[] = [];
+      let usedToolResultChars = 0;
+      let completedToolCallCount = 0;
       for (let iteration = 0; ; iteration += 1) {
+        if (iteration >= CESIUM_MAX_TOOL_ITERATIONS) {
+          throw new Error(
+            `Cesium stopped after ${CESIUM_MAX_TOOL_ITERATIONS} tool-response iterations to avoid an infinite tool loop. ` +
+              "Send a follow-up prompt to continue from the current state."
+          );
+        }
         if (this.cancelled) {
           return;
         }
@@ -1794,17 +578,29 @@ class CesiumSessionHandle implements AgentSessionHandle {
         if (this.cancelled) {
           return;
         }
-        const result = await this.runAdapterWithWarning(
-          {
-            apiKind: auth.apiKind,
-            apiKey: auth.apiKey,
-            baseUrl: auth.baseUrl,
-            providerId: auth.providerId,
-            modelId,
-            messages: [...history, ...toolResultMessages],
-          },
-          iteration
-        );
+        const assistantChunks = this.createAssistantChunkFlusher(assistantMessageId);
+        let result: CesiumAdapterResult | null = null;
+        try {
+          result = await this.runAdapterWithWarning(
+            {
+              apiKind: auth.apiKind,
+              apiKey: auth.apiKey,
+              baseUrl: auth.baseUrl,
+              providerId: auth.providerId,
+              modelId,
+              messages: [...history, ...toolResultMessages],
+            },
+            iteration,
+            {
+              onTextDelta: (text) => assistantChunks.push(text),
+            }
+          );
+        } finally {
+          await assistantChunks.flush();
+        }
+        if (!result) {
+          throw new Error("Cesium streaming adapter did not produce a result.");
+        }
         if (result.reasoning) {
           await this.callbacks.appendEvents([
             {
@@ -1817,22 +613,15 @@ class CesiumSessionHandle implements AgentSessionHandle {
             },
           ]);
         }
-        if (result.text.trim()) {
-          await this.callbacks.appendEvents([
-            {
-              eventId: randomUUID(),
-              conversationId: this.callbacks.conversation.id,
-              kind: "assistant_message_chunk",
-              messageId: assistantMessageId,
-              text: result.text,
-              raw: result.raw,
-            },
-          ]);
-          if (result.toolRequests.length === 0) {
-            history.push({ role: "assistant", content: result.text });
-          }
-        }
         if (result.toolRequests.length === 0) {
+          if (isEmptyCesiumAdapterResult(result)) {
+            throw new Error(
+              `Cesium received an empty model response from ${modelProviderId}/${modelPart(modelId)} with no text and no tool calls. ` +
+                "Treating this as an upstream provider failure instead of a completed turn. " +
+                `Raw response: ${truncate(safeJson(result.raw), 2000)}`
+            );
+          }
+          history.push({ role: "assistant", content: result.text });
           await this.finishAssistant(assistantMessageId, result.raw);
           return;
         }
@@ -1850,12 +639,25 @@ class CesiumSessionHandle implements AgentSessionHandle {
             return;
           }
           const toolResult = await this.executeTool(request);
+          const normalizedToolResult = normalizeCesiumToolResultForModel({
+            toolName: request.name,
+            result: toolResult,
+            usedToolResultChars,
+          });
+          usedToolResultChars = normalizedToolResult.usedToolResultChars;
           toolResultMessages.push({
             role: "tool",
             toolCallId: request.id,
             name: request.name,
-            content: toolResult,
+            content: normalizedToolResult.content,
           });
+          completedToolCallCount += 1;
+          if (completedToolCallCount % 8 === 0) {
+            await this.emitConversationStatus(
+              "running",
+              `Cesium is continuing after ${completedToolCallCount} tool calls…`
+            );
+          }
         }
         await this.waitAtPauseCheckpoint();
         if (this.cancelled) {
@@ -1863,11 +665,21 @@ class CesiumSessionHandle implements AgentSessionHandle {
         }
       }
     } catch (error) {
+      if (this.cancelled || error instanceof CesiumTurnCancelledError) {
+        return;
+      }
       const message =
         error instanceof Error
           ? error.message
           : String(error);
       console.warn("[cesium-agent] turn failed:", message);
+      if (this.isBurnMode()) {
+        await pauseBurnGoal({
+          workspace: this.callbacks.workspace,
+          conversationId: this.callbacks.conversation.id,
+          reason: `Provider error: ${message}`,
+        }).catch(() => undefined);
+      }
       await this.callbacks.appendEvents([
         {
           eventId: randomUUID(),
@@ -1896,7 +708,10 @@ class CesiumSessionHandle implements AgentSessionHandle {
 
   private async runAdapterWithWarning(
     input: RunAdapterInput,
-    iteration: number
+    iteration: number,
+    handlers: {
+      onTextDelta?: (text: string) => Promise<void>;
+    } = {}
   ): Promise<CesiumAdapterResult> {
     const providerId = providerPart(input.modelId);
     const timer = setTimeout(() => {
@@ -1915,7 +730,75 @@ class CesiumSessionHandle implements AgentSessionHandle {
       ]).catch(() => undefined);
     }, CESIUM_RESPONSE_WARNING_MS);
     try {
-      return await runAdapter(input);
+      for (let retryIndex = 0; ; retryIndex += 1) {
+        if (this.cancelled) {
+          throw new CesiumTurnCancelledError();
+        }
+        let emittedDelta = false;
+        try {
+          const textParts: string[] = [];
+          const reasoningParts: string[] = [];
+          const toolRequests: CesiumToolRequest[] = [];
+          const rawEvents: unknown[] = [];
+          let finalRaw: unknown;
+          for await (const event of streamAdapter(input)) {
+            if (this.cancelled) {
+              throw new CesiumTurnCancelledError();
+            }
+            if ("raw" in event && event.raw !== undefined) {
+              finalRaw = event.raw;
+              rawEvents.push(event.raw);
+            }
+            switch (event.kind) {
+              case "text_delta":
+                textParts.push(event.text);
+                emittedDelta = emittedDelta || event.text.length > 0;
+                await handlers.onTextDelta?.(event.text);
+                break;
+              case "reasoning_delta":
+                reasoningParts.push(event.text);
+                break;
+              case "tool_request":
+                toolRequests.push(event.request);
+                break;
+              case "raw":
+              case "done":
+                break;
+            }
+          }
+          return {
+            text: textParts.join(""),
+            reasoning: reasoningParts.join("") || undefined,
+            toolRequests,
+            raw: rawEvents.length > 1 ? rawEvents : finalRaw,
+          };
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          const canRetry =
+            retryIndex < COMPLETION_AUTO_RETRY_MAX_ATTEMPTS &&
+            !emittedDelta &&
+            isTransientProviderCompletionError(message);
+          if (!canRetry) {
+            throw error;
+          }
+          const delayMs =
+            COMPLETION_RETRY_DELAYS_MS[
+              Math.min(retryIndex, COMPLETION_RETRY_DELAYS_MS.length - 1)
+            ] ?? COMPLETION_RETRY_DELAYS_MS[0]!;
+          console.warn(
+            `[cesium-agent] transient provider error (attempt ${retryIndex + 1}/${COMPLETION_AUTO_RETRY_MAX_ATTEMPTS}), retrying in ${delayMs}ms:`,
+            message
+          );
+          await this.emitConversationStatus(
+            "running",
+            formatTakingLongerStatusDetail(retryIndex + 1, COMPLETION_AUTO_RETRY_MAX_ATTEMPTS)
+          );
+          await sleepMs(delayMs);
+          if (this.cancelled) {
+            throw new CesiumTurnCancelledError();
+          }
+        }
+      }
     } finally {
       clearTimeout(timer);
     }
@@ -1965,11 +848,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
       question.reject(new Error("Cesium turn cancelled."));
     }
     this.pendingQuestions.clear();
-    for (const run of this.terminalRuns.values()) {
-      if (run.exitCode === undefined) {
-        run.process.kill();
-      }
-    }
+    this.killTerminalRuns();
     await this.callbacks.appendEvents([
       {
         eventId: randomUUID(),
@@ -2156,6 +1035,17 @@ class CesiumSessionHandle implements AgentSessionHandle {
       question.reject(new Error("Cesium session disposed."));
     }
     this.pendingQuestions.clear();
+    // Background terminal runs would otherwise outlive the session as zombies.
+    this.killTerminalRuns();
+  }
+
+  private killTerminalRuns(): void {
+    for (const run of this.terminalRuns.values()) {
+      if (run.exitCode === undefined) {
+        run.process.kill();
+      }
+    }
+    this.terminalRuns.clear();
   }
 
   private async finishAssistant(messageId: string, raw?: unknown): Promise<void> {
@@ -2189,24 +1079,54 @@ class CesiumSessionHandle implements AgentSessionHandle {
 
   private async buildHistory(currentUserMessageId: string): Promise<CesiumHistoryMessage[]> {
     const snapshot = await this.callbacks.readSnapshot();
-    const events = snapshot?.events ?? [];
-    const userTurns = events.filter((event) => event.kind === "user_message").length;
-    if (userTurns > HISTORY_TURN_LIMIT) {
+    const snapshotEvents = snapshot?.events ?? [];
+    const fullEvents = await readConversationEvents(
+      this.callbacks.workspace.id,
+      this.callbacks.conversation.id
+    ).catch(() => snapshotEvents);
+    const events = fullEvents.length > snapshotEvents.length ? fullEvents : snapshotEvents;
+    const visibleUserTurns = events.filter(
+      (event) => event.kind === "user_message" && !event.hidden
+    ).length;
+    const currentMessages = this.normalizeEventsToHistory(events);
+    const contextWindow = await resolveCesiumModelContextWindow(
+      optionValue(
+        this.configOptions,
+        "model",
+        this.callbacks.conversation.config.modelId || "openai/gpt-5.1"
+      )
+    ).catch(() => 100_000);
+    const estimatedTokensBefore = estimateHistoryTokens(currentMessages);
+    const shouldCompact =
+      visibleUserTurns > HISTORY_TURN_LIMIT ||
+      estimatedTokensBefore >= contextWindow * HISTORY_COMPACTION_THRESHOLD_RATIO;
+    if (shouldCompact) {
       const sorted = [...events].sort((a, b) => a.seq - b.seq);
       let retainedUsers = 0;
       let splitIndex = 0;
       for (let index = sorted.length - 1; index >= 0; index -= 1) {
-        if (sorted[index]!.kind === "user_message") {
+        const event = sorted[index]!;
+        if (event.kind === "user_message" && !event.hidden) {
           retainedUsers += 1;
           splitIndex = index;
-          if (retainedUsers >= HISTORY_TURN_LIMIT) {
+          if (retainedUsers >= HISTORY_COMPACTION_TARGET_TURNS) {
             break;
           }
         }
       }
       const compressed = sorted.slice(0, splitIndex);
       const retained = sorted.slice(splitIndex);
-      if (!retained.some((event) => event.kind === "compression_summary")) {
+      const compressedFromSeq = compressed[0]?.seq ?? 0;
+      const compressedToSeq = compressed[compressed.length - 1]?.seq ?? 0;
+      const latestSummary = [...sorted].reverse().find(
+        (event): event is Extract<AgentStoredEvent, { kind: "compression_summary" }> =>
+          event.kind === "compression_summary"
+      );
+      const latestSummaryToSeq = latestSummary?.sourceRange?.toSeq ?? 0;
+      if (compressed.length > 0 && compressedToSeq > latestSummaryToSeq) {
+        await this.emitConversationStatus("running", formatCompressingContextStatusDetail());
+        const retainedMessages = this.normalizeEventsToHistory(retained);
+        const estimatedTokensAfter = estimateHistoryTokens(retainedMessages);
         await this.callbacks.appendEvents([
           {
             eventId: randomUUID(),
@@ -2215,14 +1135,36 @@ class CesiumSessionHandle implements AgentSessionHandle {
             messageId: `cesium-compression-${randomUUID()}`,
             summary: summarizeForCompression(compressed),
             retainedTurnCount: retainedUsers,
-            compressedTurnCount: compressed.filter((event) => event.kind === "user_message").length,
+            compressedTurnCount: compressed.filter(
+              (event) => event.kind === "user_message" && !event.hidden
+            ).length,
+            sourceRange: { fromSeq: compressedFromSeq, toSeq: compressedToSeq },
+            estimatedTokensBefore,
+            estimatedTokensAfter,
+            generation: (latestSummary?.generation ?? 0) + 1,
           },
         ]);
       }
-      return this.normalizeEventsToHistory(retained);
+      const visibleRetained = retained.filter(
+        (event) => event.kind !== "user_message" || !event.hidden
+      );
+      const history = this.normalizeEventsToHistory(visibleRetained);
+      if (this.isBurnMode()) {
+        const burnGoal = await readBurnGoalForConversation({
+          workspace: this.callbacks.workspace,
+          conversationId: this.callbacks.conversation.id,
+        });
+        if (burnGoal) {
+          history.push({ role: "user", content: burnCompactionRecoveryContext(burnGoal) });
+        }
+      }
+      return history;
     }
     return this.normalizeEventsToHistory(
-      events.filter((event) => event.kind !== "user_message" || event.messageId !== currentUserMessageId || event.seq > 0)
+      events.filter((event) =>
+        event.kind !== "user_message" ||
+        (!event.hidden && (event.messageId !== currentUserMessageId || event.seq > 0))
+      )
     );
   }
 
@@ -2357,33 +1299,49 @@ class CesiumSessionHandle implements AgentSessionHandle {
       });
     });
     if (decision !== "allow") {
-      throw new Error(`${input.title} rejected by user.`);
+      throw new PermissionRefusedToolCallError();
     }
   }
 
   private async executeTool(request: CesiumToolRequest): Promise<string> {
-    const title = toolTitle(request.name, request.arguments);
+    const effectiveRequest =
+      request.name === "call_mcp_tool"
+        ? {
+            ...request,
+            arguments: normalizeCesiumToolRequestArguments(request.name, request.arguments),
+          }
+        : request;
+    const title = toolTitle(effectiveRequest.name, effectiveRequest.arguments);
+    const mcpServerForTool =
+      effectiveRequest.name === "call_mcp_tool"
+        ? await getMcpServer(
+            this.callbacks.workspace.id,
+            normalizeCallMcpToolArgs(effectiveRequest.arguments).serverId ?? ""
+          )
+        : null;
     const callEvent: AgentEventInput = {
       eventId: randomUUID(),
       conversationId: this.callbacks.conversation.id,
       kind: "tool_call",
-      toolCallId: request.id,
+      toolCallId: effectiveRequest.id,
       title,
-      toolKind: toolKind(request.name),
+      toolKind: toolKind(effectiveRequest.name),
       status: "in_progress",
-      detail: safeJson(request.arguments),
-      raw: request,
+      detail: safeJson(effectiveRequest.arguments),
+      pluginId: mcpServerForTool?.pluginId,
+      pluginName: mcpServerForTool?.displayName,
+      pluginIconUrl: mcpServerForTool?.iconUrl,
+      raw: effectiveRequest,
     };
     await this.callbacks.appendEvents([callEvent]);
     try {
       let result: string;
-      if (this.isOrchestrationMode() && !isAllowedInOrchestrationMode(request.name)) {
-        throw new Error(
-          `Tool ${request.name} is not available in Orchestration Mode. Manage work through the kanban and agent orchestration tools.`
-        );
-      }
-      if (!this.isOrchestrationMode() && isOrchestrationToolName(request.name)) {
-        throw new Error(`Tool ${request.name} is only available in Orchestration Mode.`);
+      const policy = resolveCesiumModeToolPolicy({
+        mode: this.currentMode(),
+        toolName: request.name,
+      });
+      if (!policy.allowed) {
+        throw new Error(policy.reason ?? `Tool ${request.name} is blocked in the active mode.`);
       }
       if (request.name === "edit_file") {
         await this.requirePermission({
@@ -2420,6 +1378,48 @@ class CesiumSessionHandle implements AgentSessionHandle {
         case "todo":
           result = await this.toolTodo(request.arguments);
           break;
+        case "create_plan":
+          result = await this.toolCreatePlan(request.arguments);
+          break;
+        case "update_plan":
+          result = await this.toolUpdatePlan(request.arguments);
+          break;
+        case "read_plan":
+          result = await this.toolReadPlan(request.arguments);
+          break;
+        case "finalize_plan":
+          result = await this.toolFinalizePlan(request.arguments);
+          break;
+        case "burn_goal_set":
+          result = await this.toolBurnGoalSet(request.arguments);
+          break;
+        case "burn_goal_pause":
+          result = await this.toolBurnGoalPause(request.arguments);
+          break;
+        case "burn_goal_block":
+          result = await this.toolBurnGoalBlock(request.arguments);
+          break;
+        case "burn_goal_summarize":
+          result = await this.toolBurnGoalSummarize(request.arguments);
+          break;
+        case "burn_goal_complete":
+          result = await this.toolBurnGoalComplete();
+          break;
+        case "burn_goal_get":
+          result = await this.toolBurnGoalGet();
+          break;
+        case "burn_goal_update_plan":
+          result = await this.toolBurnGoalUpdatePlan(request.arguments);
+          break;
+        case "burn_goal_update_progress":
+          result = await this.toolBurnGoalUpdateProgress(request.arguments);
+          break;
+        case "burn_goal_summarize_state":
+          result = await this.toolBurnGoalSummarize(request.arguments);
+          break;
+        case "burn_goal_resume":
+          result = await this.toolBurnGoalResume();
+          break;
         case "ask_question":
           result = await this.toolAskQuestion(request.arguments);
           break;
@@ -2427,7 +1427,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
           result = await this.toolSubagent(request.arguments);
           break;
         case "read_subagent_transcript":
-          result = this.toolReadSubagentTranscript(request.arguments);
+          result = await this.toolReadSubagentTranscript(request.arguments);
           break;
         case "search_history":
           result = await this.toolSearchHistory(request.arguments);
@@ -2436,7 +1436,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
           result = await this.toolReadHistoryPage(request.arguments);
           break;
         case "call_mcp_tool":
-          result = await this.toolCallMcp(request.arguments, request.id, title);
+          result = await this.toolCallMcp(effectiveRequest.arguments, effectiveRequest.id, title);
           break;
         case "refresh_mcp_servers":
           result = await this.toolRefreshMcpServers();
@@ -2465,6 +1465,9 @@ class CesiumSessionHandle implements AgentSessionHandle {
         case "orchestration_control_agent":
           result = await this.toolOrchestrationControlAgent(request.arguments);
           break;
+        case "orchestration_read_agent_transcript":
+          result = await this.toolOrchestrationReadAgentTranscript(request.arguments);
+          break;
         case "orchestration_wait":
           result = await this.toolOrchestrationWait(request.arguments);
           break;
@@ -2481,11 +1484,27 @@ class CesiumSessionHandle implements AgentSessionHandle {
           toolKind: toolKind(request.name),
           status: "completed",
           detail: result,
-          raw: { request, result },
+          raw: { request: effectiveRequest, result },
         },
       ]);
       return result;
     } catch (error) {
+      if (error instanceof PermissionRefusedToolCallError) {
+        await this.callbacks.appendEvents([
+          {
+            eventId: randomUUID(),
+            conversationId: this.callbacks.conversation.id,
+            kind: "tool_call_update",
+            toolCallId: request.id,
+            title,
+            toolKind: toolKind(request.name),
+            status: "completed",
+            detail: error.message,
+            raw: { request: effectiveRequest, result: error.message, permissionRefused: true },
+          },
+        ]);
+        return error.message;
+      }
       const failed = statusFromError(error);
       await this.callbacks.appendEvents([
         {
@@ -2497,7 +1516,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
           toolKind: toolKind(request.name),
           status: failed.status,
           detail: failed.detail,
-          raw: { request, error: failed.detail },
+          raw: { request: effectiveRequest, error: failed.detail },
         },
       ]);
       return failed.detail;
@@ -2629,9 +1648,18 @@ class CesiumSessionHandle implements AgentSessionHandle {
     };
     child.stdout.on("data", append);
     child.stderr.on("data", append);
+    // Nothing reads runs by id after completion; evict on exit or the map
+    // retains every ChildProcess + up to 80KB of output for the session's life.
     child.on("exit", (code) => {
       run.exitCode = code;
       run.completedAt = Date.now();
+      this.terminalRuns.delete(id);
+    });
+    child.on("error", (error: Error) => {
+      run.output = truncate(`${run.output}\n[spawn failed] ${error.message}`, TERMINAL_OUTPUT_CAP);
+      run.exitCode = -1;
+      run.completedAt = Date.now();
+      this.terminalRuns.delete(id);
     });
     if (waitUntil === "background") {
       return `Started background command ${id}: ${command}`;
@@ -2658,6 +1686,273 @@ class CesiumSessionHandle implements AgentSessionHandle {
     });
   }
 
+  private async appendPlanFileEvents(plan: Awaited<ReturnType<typeof readCesiumPlanFile>>, raw: unknown): Promise<void> {
+    const events: AgentEventInput[] = [
+      {
+        eventId: randomUUID(),
+        conversationId: this.callbacks.conversation.id,
+        kind: "plan_file",
+        path: plan.path,
+        title: plan.title,
+        previewMode: "preview",
+        raw,
+      },
+    ];
+    if (plan.entries.length > 0) {
+      events.push({
+        eventId: randomUUID(),
+        conversationId: this.callbacks.conversation.id,
+        kind: "plan",
+        planId: `plan-file:${plan.path}`,
+        entries: plan.entries,
+        raw,
+      });
+    }
+    await this.callbacks.appendEvents(events);
+  }
+
+  private async toolCreatePlan(args: Record<string, unknown>): Promise<string> {
+    const title = asString(args.title);
+    const content = asString(args.content);
+    if (!title) throw new Error("create_plan.title is required.");
+    if (!content) throw new Error("create_plan.content is required.");
+    const plan = await writeCesiumPlanFile({
+      workspaceRoot: this.callbacks.workspace.root,
+      title,
+      content,
+      path: asString(args.path),
+    });
+    await this.appendPlanFileEvents(plan, args);
+    return `Created plan ${plan.path} with ${plan.entries.length} checklist item${plan.entries.length === 1 ? "" : "s"}.`;
+  }
+
+  private async toolUpdatePlan(args: Record<string, unknown>): Promise<string> {
+    const planPath = asString(args.path);
+    const content = asString(args.content);
+    if (!planPath) throw new Error("update_plan.path is required.");
+    if (!content) throw new Error("update_plan.content is required.");
+    const plan = await writeCesiumPlanFile({
+      workspaceRoot: this.callbacks.workspace.root,
+      title: asString(args.title) ?? "Plan",
+      content,
+      path: planPath,
+    });
+    await this.appendPlanFileEvents(plan, args);
+    return `Updated plan ${plan.path} with ${plan.entries.length} checklist item${plan.entries.length === 1 ? "" : "s"}.`;
+  }
+
+  private async toolReadPlan(args: Record<string, unknown>): Promise<string> {
+    const planPath = asString(args.path);
+    if (!planPath) throw new Error("read_plan.path is required.");
+    const plan = await readCesiumPlanFile({
+      workspaceRoot: this.callbacks.workspace.root,
+      path: planPath,
+    });
+    return [
+      `Plan: ${plan.title}`,
+      `Path: ${plan.path}`,
+      `Checklist items: ${plan.entries.length}`,
+      "",
+      plan.content,
+    ].join("\n");
+  }
+
+  private async toolFinalizePlan(args: Record<string, unknown>): Promise<string> {
+    const planPath = asString(args.path);
+    if (!planPath) throw new Error("finalize_plan.path is required.");
+    const plan = await readCesiumPlanFile({
+      workspaceRoot: this.callbacks.workspace.root,
+      path: planPath,
+    });
+    await this.appendPlanFileEvents(plan, args);
+    return `Finalized plan ${plan.path} for review.`;
+  }
+
+  private async toolBurnGoalGet(): Promise<string> {
+    const goal = await readBurnGoalForConversation({
+      workspace: this.callbacks.workspace,
+      conversationId: this.callbacks.conversation.id,
+    });
+    return goal ? formatBurnGoalForModel(goal) : "No Burn goal exists for this conversation.";
+  }
+
+  private async toolBurnGoalSet(args: Record<string, unknown>): Promise<string> {
+    const objective = asString(args.objective);
+    let goal = await readBurnGoalForConversation({
+      workspace: this.callbacks.workspace,
+      conversationId: this.callbacks.conversation.id,
+    });
+    if (!goal) {
+      if (!objective) {
+        throw new Error("burn_goal_set.objective is required when no Burn goal exists.");
+      }
+      goal = await ensureBurnGoalForConversation({
+        workspace: this.callbacks.workspace,
+        conversationId: this.callbacks.conversation.id,
+        objective,
+      });
+    } else if (objective && objective !== goal.objective) {
+      goal = await updateBurnGoal({
+        workspace: this.callbacks.workspace,
+        conversationId: this.callbacks.conversation.id,
+        patch: {
+          objective,
+          status: goal.status === "planning" || goal.status === "paused" ? "active" : goal.status,
+          phase: goal.phase === "planning" ? "executing" : goal.phase,
+        },
+      });
+    }
+
+    const hasPlanState =
+      asString(args.planSummary) != null ||
+      Array.isArray(args.milestones) ||
+      Array.isArray(args.todos);
+    if (hasPlanState) {
+      goal = await updateBurnGoalPlan({
+        workspace: this.callbacks.workspace,
+        conversationId: this.callbacks.conversation.id,
+        planSummary: asString(args.planSummary),
+        milestones: Array.isArray(args.milestones) ? args.milestones : undefined,
+        todos: Array.isArray(args.todos) ? args.todos : undefined,
+      });
+    }
+
+    if (Array.isArray(args.verificationEvidence)) {
+      goal = await updateBurnGoalProgress({
+        workspace: this.callbacks.workspace,
+        conversationId: this.callbacks.conversation.id,
+        verificationEvidence: args.verificationEvidence,
+      });
+    }
+
+    const progressPercent = asNumber(args.progressPercent);
+    const headline = asString(args.headline);
+    if (progressPercent != null || headline) {
+      const patch: Parameters<typeof updateBurnGoal>[0]["patch"] = {};
+      if (progressPercent != null) {
+        const rounded = Math.round(progressPercent);
+        if (
+          !Number.isFinite(progressPercent) ||
+          rounded !== progressPercent ||
+          rounded < 0 ||
+          rounded > 100
+        ) {
+          throw new Error("burn_goal_set.progressPercent must be an integer from 0 to 100.");
+        }
+        patch.progressPercent = rounded;
+      }
+      if (headline) {
+        patch.headline = headline;
+      }
+      goal = await updateBurnGoal({
+        workspace: this.callbacks.workspace,
+        conversationId: this.callbacks.conversation.id,
+        patch,
+      });
+    }
+
+    if (goal.status === "planning") {
+      goal = await updateBurnGoal({
+        workspace: this.callbacks.workspace,
+        conversationId: this.callbacks.conversation.id,
+        patch: {
+          status: "active",
+          phase: goal.phase === "planning" ? "executing" : goal.phase,
+        },
+      });
+    }
+
+    return `Burn goal set.\n\n${formatBurnGoalForModel(goal)}`;
+  }
+
+  private async toolBurnGoalUpdatePlan(args: Record<string, unknown>): Promise<string> {
+    const planSummary = asString(args.planSummary);
+    if (!planSummary) {
+      throw new Error("burn_goal_update_plan.planSummary is required.");
+    }
+    const goal = await updateBurnGoalPlan({
+      workspace: this.callbacks.workspace,
+      conversationId: this.callbacks.conversation.id,
+      planSummary,
+      milestones: Array.isArray(args.milestones) ? args.milestones : [],
+      todos: Array.isArray(args.todos) ? args.todos : [],
+    });
+    return `Burn plan recorded.\n\n${formatBurnGoalForModel(goal)}`;
+  }
+
+  private async toolBurnGoalUpdateProgress(args: Record<string, unknown>): Promise<string> {
+    const goal = await updateBurnGoalProgress({
+      workspace: this.callbacks.workspace,
+      conversationId: this.callbacks.conversation.id,
+      milestones: Array.isArray(args.milestones) ? args.milestones : undefined,
+      todos: Array.isArray(args.todos) ? args.todos : undefined,
+      verificationEvidence: Array.isArray(args.verificationEvidence)
+        ? args.verificationEvidence
+        : undefined,
+    });
+    return `Burn progress updated.\n\n${formatBurnGoalForModel(goal)}`;
+  }
+
+  private async toolBurnGoalSummarize(args: Record<string, unknown>): Promise<string> {
+    const progressPercent = asNumber(args.progressPercent);
+    const summary = asString(args.summary);
+    if (progressPercent == null) {
+      throw new Error("burn_goal_summarize.progressPercent is required.");
+    }
+    if (!summary) {
+      throw new Error("burn_goal_summarize.summary is required.");
+    }
+    const goal = await appendBurnGoalSnapshot({
+      workspace: this.callbacks.workspace,
+      conversationId: this.callbacks.conversation.id,
+      progressPercent,
+      summary,
+      headline: asString(args.headline),
+    });
+    return `Burn goal summarized.\n\n${formatBurnGoalForModel(goal)}`;
+  }
+
+  private async toolBurnGoalComplete(): Promise<string> {
+    const goal = await completeBurnGoal({
+      workspace: this.callbacks.workspace,
+      conversationId: this.callbacks.conversation.id,
+    });
+    return `Burn goal complete.\n\n${formatBurnGoalForModel(goal)}`;
+  }
+
+  private async toolBurnGoalBlock(args: Record<string, unknown>): Promise<string> {
+    const reason = asString(args.reason);
+    if (!reason) {
+      throw new Error("burn_goal_block.reason is required.");
+    }
+    const goal = await blockBurnGoal({
+      workspace: this.callbacks.workspace,
+      conversationId: this.callbacks.conversation.id,
+      reason,
+      evidence: asString(args.evidence),
+    });
+    return goal.status === "blocked"
+      ? `Burn goal blocked.\n\n${formatBurnGoalForModel(goal)}`
+      : `Blocker recorded but Burn goal remains active until the same blocker repeats across at least three Burn turns.\n\n${formatBurnGoalForModel(goal)}`;
+  }
+
+  private async toolBurnGoalPause(args: Record<string, unknown>): Promise<string> {
+    const goal = await pauseBurnGoal({
+      workspace: this.callbacks.workspace,
+      conversationId: this.callbacks.conversation.id,
+      reason: asString(args.reason),
+    });
+    return `Burn goal paused.\n\n${formatBurnGoalForModel(goal)}`;
+  }
+
+  private async toolBurnGoalResume(): Promise<string> {
+    const goal = await resumeBurnGoal({
+      workspace: this.callbacks.workspace,
+      conversationId: this.callbacks.conversation.id,
+    });
+    return `Burn goal resumed.\n\n${formatBurnGoalForModel(goal)}`;
+  }
+
   private async toolTodo(args: Record<string, unknown>): Promise<string> {
     const action = asString(args.action) ?? "list";
     const items = Array.isArray(args.items) ? args.items : [];
@@ -2679,15 +1974,22 @@ class CesiumSessionHandle implements AgentSessionHandle {
 
       const parsedItems = items.flatMap((item) => {
         const record = asRecord(item);
-        const content = asString(record?.content) ?? asString(item);
+        const content =
+          asString(record?.content) ??
+          asString(record?.title) ??
+          asString(record?.text) ??
+          asString(record?.description) ??
+          asString(item);
         if (!content) return [];
-        const status = record?.status;
+        const status = asString(record?.status)?.toLowerCase();
         const columnId: OrchestrationColumnId =
           status === "completed"
             ? "done"
-            : status === "in_progress"
-              ? "in_progress"
-              : "backlog";
+            : status === "blocked"
+              ? "blocked"
+              : status === "in_progress" || status === "in-progress"
+                ? "in_progress"
+                : "backlog";
         return [{ content, columnId }];
       });
       let current = snapshot;
@@ -2732,13 +2034,33 @@ class CesiumSessionHandle implements AgentSessionHandle {
     }
     const entries = items.flatMap((item, index) => {
       const record = asRecord(item);
-      const content = asString(record?.content) ?? asString(item);
+      const content =
+        asString(record?.content) ??
+        asString(record?.title) ??
+        asString(record?.text) ??
+        asString(record?.description) ??
+        asString(item);
       if (!content) return [];
-      const status: "pending" | "in_progress" | "completed" =
-        record?.status === "completed" || record?.status === "in_progress"
-          ? record.status
-          : "pending";
-      return [{ id: asString(record?.id) ?? `todo-${index + 1}`, content, status }];
+      const rawStatus = asString(record?.status);
+      const normalizedStatus = rawStatus?.toLowerCase();
+      const status: "pending" | "in_progress" | "blocked" | "completed" =
+        normalizedStatus === "completed" || normalizedStatus === "done"
+          ? "completed"
+          : normalizedStatus === "blocked" || normalizedStatus === "stuck"
+            ? "blocked"
+            : normalizedStatus === "in_progress" ||
+                normalizedStatus === "in-progress" ||
+                normalizedStatus === "in progress" ||
+                normalizedStatus === "running"
+              ? "in_progress"
+              : "pending";
+      return [
+        {
+          id: asString(record?.id) ?? asString(record?.title) ?? `todo-${index + 1}`,
+          content,
+          status,
+        },
+      ];
     });
     await this.callbacks.appendEvents([
       {
@@ -2843,18 +2165,16 @@ class CesiumSessionHandle implements AgentSessionHandle {
     toolCallId: string,
     title: string
   ): Promise<string> {
-    const serverId = asString(args.serverId);
-    const toolName = asString(args.toolName);
+    const normalized = normalizeCallMcpToolArgs(args);
+    const serverId = normalized.serverId;
+    const toolName = normalized.toolName;
+    const toolArgs = normalized.arguments;
     if (!serverId || !toolName) {
       throw new Error("call_mcp_tool requires serverId and toolName.");
     }
     if (serverId === BROWSER_MCP_SERVER_ID && this.isOrchestrationMode()) {
       throw new Error("Browser MCP tools are only available to normal Cesium Agent conversations.");
     }
-    const toolArgs =
-      args.arguments && typeof args.arguments === "object" && !Array.isArray(args.arguments)
-        ? (args.arguments as Record<string, unknown>)
-        : {};
     await this.requirePermission({
       toolCallId,
       title,
@@ -2878,24 +2198,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
       workspaceRoot: this.callbacks.workspace.root,
     });
     const summaries = await getMcpSummariesForPrompt(this.callbacks.workspace.id);
-    if (this.isOrchestrationMode()) {
-      const orchestrationSummaries = summaries.filter(
-        (summary) => summary.id !== BROWSER_MCP_SERVER_ID
-      );
-      const board = await this.resolveCurrentOrchestrationBoard();
-      const promptContext = await this.resolveSystemPromptContext(orchestrationSummaries);
-      this.activeSystemPrompt = buildCesiumOrchestrationSystemPrompt({
-        ...promptContext,
-        workspaceRoot: this.callbacks.workspace.root,
-        boardId: board?.board.id,
-        maxConcurrentIssues: board?.board.settings.maxConcurrentIssues,
-        maxConcurrentAgents: board?.board.settings.maxConcurrentAgents,
-      });
-    } else {
-      this.activeSystemPrompt = buildCesiumSystemPrompt(
-        await this.resolveSystemPromptContext(summaries)
-      );
-    }
+    this.activeSystemPrompt = CESIUM_SYSTEM_PROMPT;
     return `Refreshed ${summaries.length} MCP server mirror(s) under mcp-servers/.`;
   }
 
@@ -3064,28 +2367,6 @@ class CesiumSessionHandle implements AgentSessionHandle {
         ? this.callbacks.conversation.config.modelName
         : undefined;
     const { agentRuntimeManager } = await import("./runtime-manager.js");
-    const child = await agentRuntimeManager.createConversation(this.callbacks.workspace, {
-      title: asString(args.title) ?? `Issue: ${issue.title}`,
-      archived: true,
-      backendId,
-      mode: "agent",
-      ...(modelId ? { modelId } : {}),
-      ...(modelName ? { modelName } : {}),
-    });
-    const permissionPolicy = asOrchestrationPermissionPolicy(args.permissions);
-    const assignment: OrchestrationAssignmentRecord = {
-      schemaVersion: 1,
-      id: randomUUID(),
-      boardId: current.board.id,
-      issueId,
-      conversationId: child.id,
-      role: asString(args.role) ?? "implementation",
-      status: "running",
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-      config: { ...child.config, permissionPolicy },
-      lastKnownConversationStatus: child.status,
-    };
     const promptText = [
       `You are assigned to Orchestration Mode issue "${issue.title}".`,
       "",
@@ -3101,16 +2382,38 @@ class CesiumSessionHandle implements AgentSessionHandle {
     ]
       .filter(Boolean)
       .join("\n");
+    const childSnapshot = await agentRuntimeManager.createConversationWithPrompt(
+      this.callbacks.workspace,
+      {
+        title: asString(args.title) ?? `Issue: ${issue.title}`,
+        archived: true,
+        backendId,
+        mode: "agent",
+        ...(modelId ? { modelId } : {}),
+        ...(modelName ? { modelName } : {}),
+      },
+      { text: promptText }
+    );
+    const child = childSnapshot.conversation;
+    const permissionPolicy = asOrchestrationPermissionPolicy(args.permissions);
+    const assignment: OrchestrationAssignmentRecord = {
+      schemaVersion: 1,
+      id: randomUUID(),
+      boardId: current.board.id,
+      issueId,
+      conversationId: child.id,
+      role: asString(args.role) ?? "implementation",
+      status: "running",
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      config: { ...child.config, permissionPolicy },
+      lastKnownConversationStatus: child.status,
+    };
     await upsertOrchestrationAssignment(
       current.board.id,
       assignment,
       { type: "head_agent", conversationId: this.callbacks.conversation.id }
     );
-    void agentRuntimeManager
-      .promptConversation(this.callbacks.workspace, child.id, promptText)
-      .catch((error) => {
-        console.warn("[orchestration] child prompt failed:", error);
-      });
     return safeJson({ assignment, childConversation: child });
   }
 
@@ -3304,6 +2607,59 @@ class CesiumSessionHandle implements AgentSessionHandle {
         commented.assignments.find((candidate) => candidate.id === assignment.id) ??
         null,
     });
+  }
+
+  private async toolOrchestrationReadAgentTranscript(
+    args: Record<string, unknown>
+  ): Promise<string> {
+    const current = await this.resolveCurrentOrchestrationBoard();
+    const assignmentId = asString(args.assignmentId);
+    const conversationId = asString(args.conversationId);
+    if (!assignmentId && !conversationId) {
+      throw new Error(
+        "orchestration_read_agent_transcript requires assignmentId or conversationId."
+      );
+    }
+    const assignment = current.assignments.find((candidate) =>
+      assignmentId
+        ? candidate.id === assignmentId
+        : candidate.conversationId === conversationId
+    );
+    if (!assignment) {
+      throw new Error(`Unknown orchestration assignment: ${assignmentId ?? conversationId}`);
+    }
+    const issue = current.issues.find((candidate) => candidate.id === assignment.issueId);
+    const { agentRuntimeManager } = await import("./runtime-manager.js");
+    const limitEvents = Math.max(1, Math.min(200, Math.floor(asNumber(args.limitEvents) ?? 80)));
+    const limitTurns = Math.max(1, Math.min(100, Math.floor(asNumber(args.limitTurns) ?? 25)));
+    const beforeSeq = Math.floor(asNumber(args.beforeSeq) ?? Number.MAX_SAFE_INTEGER);
+    const head = await agentRuntimeManager.getConversationSnapshotHead(
+      this.callbacks.workspace,
+      assignment.conversationId,
+      { limitEvents, limitTurns }
+    );
+    if (!head) {
+      return `No conversation found for child agent ${assignment.conversationId}.`;
+    }
+    const events = head.events.filter((event) => event.seq < beforeSeq);
+    const header = [
+      "Kanban child agent transcript",
+      `Assignment: ${assignment.id}`,
+      `Conversation: ${assignment.conversationId}`,
+      issue ? `Issue: ${issue.title} (${issue.id})` : `Issue: ${assignment.issueId}`,
+      `Assignment status: ${assignment.status}`,
+      `Conversation status: ${head.conversation.status}`,
+      head.conversation.lastError ? `Last error: ${head.conversation.lastError}` : null,
+      head.window.hasOlder
+        ? `Older events available before seq ${head.window.oldestSeq}. Pass beforeSeq=${head.window.oldestSeq} to load more.`
+        : null,
+    ]
+      .filter(Boolean)
+      .join("\n");
+    if (events.length === 0) {
+      return `${header}\n\nNo transcript events in this page.`;
+    }
+    return `${header}\n\n${generateTranscriptFromEvents(events).trim()}`;
   }
 
   private async toolOrchestrationWait(args: Record<string, unknown>): Promise<string> {
@@ -3618,14 +2974,31 @@ class CesiumSessionHandle implements AgentSessionHandle {
     return `Subagent ${subagentId} ${status}: ${resultText}`;
   }
 
-  private toolReadSubagentTranscript(args: Record<string, unknown>): string {
+  private async toolReadSubagentTranscript(args: Record<string, unknown>): Promise<string> {
     const subagentId = asString(args.subagentId);
     if (!subagentId) throw new Error("read_subagent_transcript.subagentId is required.");
     const transcript = this.subagentTranscripts.get(subagentId);
-    if (!transcript) return `No transcript found for ${subagentId}.`;
+    if (!transcript) {
+      if (this.isOrchestrationMode()) {
+        const current = await this.resolveCurrentOrchestrationBoard();
+        const assignment = current.assignments.find(
+          (candidate) =>
+            candidate.id === subagentId || candidate.conversationId === subagentId
+        );
+        if (assignment) {
+          throw new Error(
+            `${subagentId} is a kanban child agent assignment, not an ephemeral subagent. Use orchestration_read_agent_transcript with assignmentId or conversationId instead.`
+          );
+        }
+      }
+      return `No ephemeral subagent transcript found for ${subagentId}. In Orchestration Mode, use orchestration_read_agent_transcript for kanban child agents assigned via orchestration_assign_agent.`;
+    }
     const offset = Math.max(0, Math.floor(asNumber(args.offset) ?? 0));
     const limit = Math.max(1, Math.min(200, Math.floor(asNumber(args.limit) ?? 50)));
-    return transcript.slice(offset, offset + limit).map((event) => `${event.kind}: ${safeJson(event)}`).join("\n");
+    return transcript
+      .slice(offset, offset + limit)
+      .map((event) => `${event.kind}: ${safeJson(event)}`)
+      .join("\n");
   }
 
   private async toolSearchHistory(args: Record<string, unknown>): Promise<string> {

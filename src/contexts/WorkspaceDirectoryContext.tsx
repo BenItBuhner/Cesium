@@ -32,6 +32,31 @@ type WorkspaceDirectoryContextValue = {
 const WorkspaceDirectoryContext =
   createContext<WorkspaceDirectoryContextValue | null>(null);
 
+function sameWorkspaceDirectory(
+  current: DirectoryWorkspaceRecord[],
+  next: DirectoryWorkspaceRecord[]
+): boolean {
+  if (current.length !== next.length) return false;
+  for (let index = 0; index < current.length; index += 1) {
+    const a = current[index];
+    const b = next[index];
+    if (
+      a.id !== b.id ||
+      a.name !== b.name ||
+      a.root !== b.root ||
+      a.serverId !== b.serverId ||
+      a.serverLabel !== b.serverLabel ||
+      a.serverBaseUrl !== b.serverBaseUrl ||
+      a.workspaceKey !== b.workspaceKey ||
+      a.updatedAt !== b.updatedAt ||
+      a.lastOpenedAt !== b.lastOpenedAt
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
 export function WorkspaceDirectoryProvider({ children }: { children: ReactNode }) {
   const { ready: serversReady, onlineServers, serverStatusById } = useServerConnections();
   const [ready, setReady] = useState(false);
@@ -67,8 +92,11 @@ export function WorkspaceDirectoryProvider({ children }: { children: ReactNode }
           }
         })
       );
-      setWorkspaces(results.flat());
-      setReady(true);
+      const nextWorkspaces = results.flat();
+      setWorkspaces((current) =>
+        sameWorkspaceDirectory(current, nextWorkspaces) ? current : nextWorkspaces
+      );
+      setReady((current) => current || true);
     } finally {
       setRefreshing(false);
     }

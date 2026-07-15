@@ -222,6 +222,9 @@ function buildTranscriptPrompt(
       case "user_message":
         lines.push(`User: ${event.content}`);
         break;
+      case "system_reminder":
+        lines.push(event.text);
+        break;
       case "assistant_message_chunk": {
         const next = `${assistantChunks.get(event.messageId) ?? ""}${event.text}`;
         assistantChunks.set(event.messageId, next);
@@ -261,9 +264,14 @@ async function spawnCliPrompt(
   const useStdin = typeof stdinPrompt === "string";
   const child = spawn(invocation.command, invocation.args, {
     cwd: invocation.cwd,
-    env: spawnSafeEnv(invocation.env),
+    env: spawnSafeEnv({
+      ...invocation.env,
+      OPENCURSOR_PROCESS_NAME:
+        invocation.env?.OPENCURSOR_PROCESS_NAME ?? "Cesium Agent - CLI",
+    }),
     stdio: [useStdin ? "pipe" : "ignore", "pipe", "pipe"],
     windowsHide: true,
+    argv0: invocation.env?.OPENCURSOR_PROCESS_NAME ?? "Cesium Agent - CLI",
   });
   onRegisterChild(child);
 

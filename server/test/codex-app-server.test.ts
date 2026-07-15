@@ -7,6 +7,7 @@ const [
   { isStaleCodexAppServerCache },
   {
     codexAppServerAssistantTextFromItem,
+    canonicalizeCodexAppServerItem,
     codexAppServerPermissionRequestFromServerRequest,
     codexAppServerPlanEntriesFromTurnPlan,
     codexAppServerStatusFromTurn,
@@ -86,13 +87,40 @@ test("codex app server normalizes plan status values", () => {
     plan: [
       { step: "Inspect", status: "completed" },
       { step: "Patch", status: "inProgress" },
+      { step: "Wait for deploy", status: "blocked" },
       { step: "Verify", status: "pending" },
     ],
   });
   assert.deepEqual(
     entries.map((entry) => entry.status),
-    ["completed", "in_progress", "pending"]
+    ["completed", "in_progress", "blocked", "pending"]
   );
+});
+
+test("codex app server canonicalizes collab task raw payloads for frontend routing", () => {
+  const raw = canonicalizeCodexAppServerItem({
+    id: "task_1",
+    type: "collabToolCall",
+    receiverThreadId: "child_1",
+    newThreadId: "child_2",
+    prompt: "Inspect the repo",
+  });
+  assert.equal(raw.type, "collab_tool_call");
+  assert.deepEqual(raw.receiver_thread_ids, ["child_1"]);
+  assert.equal(raw.receiver_thread_id, "child_1");
+  assert.equal(raw.new_thread_id, "child_2");
+
+  const event = codexAppServerToolEventFromItem({
+    conversationId: "conv",
+    eventId: "event",
+    item: {
+      id: "task_1",
+      type: "collabToolCall",
+      receiverThreadId: "child_1",
+      prompt: "Inspect the repo",
+    },
+  });
+  assert.equal((event?.raw as { type?: string } | undefined)?.type, "collab_tool_call");
 });
 
 test("codex app server normalizes command and file items", () => {
@@ -127,6 +155,38 @@ test("codex app server normalizes command and file items", () => {
   assert.equal(file?.status, "completed");
   assert.deepEqual(file?.locations, [{ path: "/tmp/example.txt" }]);
 });
+
+test("codex app server classifies dynamic and MCP tool calls", () => {
+  const grep = codexAppServerToolEventFromItem({
+    conversationId: "conv",
+    eventId: "event",
+    item: {
+      id: "dyn_1",
+      type: "dynamicToolCall",
+      tool: "grep",
+      arguments: { pattern: "TODO", path: "src" },
+      status: "completed",
+    },
+  });
+  assert.equal(grep?.toolKind, "grep");
+  assert.match(String(grep?.title), /Grep/);
+  assert.deepEqual(grep?.locations, [{ path: "src" }]);
+
+  const mcp = codexAppServerToolEventFromItem({
+    conversationId: "conv",
+    eventId: "event",
+    item: {
+      id: "mcp_1",
+      type: "mcpToolCall",
+      server: "context7",
+      tool: "query_docs",
+      status: "completed",
+    },
+  });
+  assert.equal(mcp?.toolKind, "mcp");
+  assert.equal((mcp?.raw as { type?: string } | undefined)?.type, "mcp_tool_call");
+});
+
 
 test("codex app server normalizes permission requests and turn failures", () => {
   const permission = codexAppServerPermissionRequestFromServerRequest({

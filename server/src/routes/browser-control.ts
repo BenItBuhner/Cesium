@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { requireWorkspaceFromRequest } from "../lib/request-workspace.js";
 import {
   closeBrowserControlTab,
+  completeBrowserControlCommand,
   dispatchBrowserControlInput,
   evaluateBrowserControlTab,
   focusBrowserControlTab,
@@ -10,6 +11,7 @@ import {
   moveBrowserControlTab,
   navigateBrowserControlTab,
   openBrowserControlTab,
+  readBrowserControlCommands,
   readBrowserControlEvents,
   screenshotBrowserControlTab,
   setBrowserControlLock,
@@ -39,7 +41,7 @@ browserControlRoutes.post("/api/browser-control/tabs", async (c) => {
     url?: string;
     title?: string;
     group?: BrowserControlGroup;
-    engine?: "proxy" | "server-chromium";
+    engine?: "proxy" | "electron-native" | "server-chromium";
     active?: boolean;
     viewport?: Record<string, unknown>;
   }>();
@@ -239,4 +241,47 @@ browserControlRoutes.get("/api/browser-control/tabs/:tabId/events", async (c) =>
   const workspace = await requireWorkspaceFromRequest(c);
   const after = Number.parseInt(c.req.query("after") ?? "0", 10) || 0;
   return c.json(readBrowserControlEvents(workspace.id, c.req.param("tabId"), after));
+});
+
+browserControlRoutes.get("/api/browser-control/tabs/:tabId/commands", async (c) => {
+  const workspace = await requireWorkspaceFromRequest(c);
+  const after = Number.parseInt(c.req.query("after") ?? "0", 10) || 0;
+  try {
+    return c.json(readBrowserControlCommands(workspace.id, c.req.param("tabId"), after));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to read browser commands.";
+    return c.json({ error: message }, 404);
+  }
+});
+
+browserControlRoutes.post("/api/browser-control/tabs/:tabId/commands/:seq/result", async (c) => {
+  const workspace = await requireWorkspaceFromRequest(c);
+  const seq = Number.parseInt(c.req.param("seq"), 10);
+  if (!Number.isFinite(seq) || seq <= 0) {
+    return c.json({ error: "Expected command seq." }, 400);
+  }
+  const body = (await c.req.json<{
+    ok?: boolean;
+    result?: unknown;
+    error?: string;
+  }>().catch(() => ({}))) as {
+    ok?: boolean;
+    result?: unknown;
+    error?: string;
+  };
+  try {
+    return c.json({
+      result: completeBrowserControlCommand({
+        workspaceId: workspace.id,
+        tabId: c.req.param("tabId"),
+        seq,
+        ok: body.ok !== false,
+        result: body.result,
+        error: body.error,
+      }),
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to complete browser command.";
+    return c.json({ error: message }, 404);
+  }
 });

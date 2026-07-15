@@ -18,6 +18,8 @@ import { flushServerPerfReport } from "../lib/perf.js";
 
 dns.setDefaultResultOrder("ipv4first");
 
+const activeNodeServers: unknown[] = [];
+
 export function startNodeServer(): void {
   const app = createCesiumApp();
   startCesiumBackgroundServices();
@@ -27,6 +29,10 @@ export function startNodeServer(): void {
     port: serverConfig.port,
     hostname: serverConfig.host,
   });
+  activeNodeServers.push(server);
+  if (typeof server.ref === "function") {
+    server.ref();
+  }
 
   server.on("upgrade", (request, socket, head) => {
     const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "localhost"}`);

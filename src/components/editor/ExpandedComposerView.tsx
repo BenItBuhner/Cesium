@@ -31,6 +31,7 @@ export function ExpandedComposerView({
   const content = composerDrafts[draftId]?.content ?? "";
   const draftAttachments = composerDrafts[draftId]?.attachments;
   const draftCaptures = composerDrafts[draftId]?.captures;
+  const draftTextReferences = composerDrafts[draftId]?.textReferences;
   const selection = composerSelections[draftId] ?? {
     start: content.length,
     end: content.length,
@@ -98,6 +99,7 @@ export function ExpandedComposerView({
           onPause={controller.onPause}
           onResume={controller.onResume}
           conversationStatus={controller.conversationStatus}
+          burnProgress={controller.burnProgress}
           busy={controller.busy}
           configLocked={controller.configLocked}
           modeLocked={controller.modeLocked}
@@ -115,6 +117,13 @@ onDraftAttachmentsChange={(next) =>
               upsertComposerDraft(draftId, {
                 title: controller.title,
                 captures: next,
+              })
+            }
+            draftTextReferences={draftTextReferences}
+            onDraftTextReferencesChange={(next) =>
+              upsertComposerDraft(draftId, {
+                title: controller.title,
+                textReferences: next,
               })
             }
             userMessageHistory={controller.userMessageHistory}

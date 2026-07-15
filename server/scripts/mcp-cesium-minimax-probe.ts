@@ -10,9 +10,7 @@
  *   MCP_PROBE_MODEL=nvidia/minimaxai/minimax-m2.7
  */
 import "../src/env-bootstrap.js";
-import { randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildCesiumSystemPrompt } from "@cesium/core/mcp";

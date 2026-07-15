@@ -23,3 +23,10 @@ config({ path: path.join(serverDir, ".env.local"), override: true });
 for (const [key, value] of Object.entries(originalEnv)) {
   process.env[key] = value;
 }
+
+const processName = process.env.OPENCURSOR_PROCESS_NAME?.trim();
+if (processName) {
+  process.title = processName;
+} else if (process.env.OPENCURSOR_DESKTOP_BACKEND === "1") {
+  process.title = "Cesium Server";
+}

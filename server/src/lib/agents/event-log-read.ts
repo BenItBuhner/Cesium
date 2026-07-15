@@ -620,6 +620,9 @@ export function generateTranscriptFromEvents(events: AgentStoredEvent[]): string
         currentUserMessage = event.content;
         break;
 
+      case "system_reminder":
+        break;
+
       case "assistant_message_chunk":
         if (hiddenHandoffTranscriptMessageIds.has(event.messageId)) {
           break;
@@ -662,10 +665,20 @@ export function generateTranscriptFromEvents(events: AgentStoredEvent[]): string
         if (event.entries.length > 0) {
           lines.push("[Plan]");
           for (const entry of event.entries) {
-            const status = entry.status === "completed" ? "[x]" : "[ ]";
-          lines.push(` ${status} ${entry.content.trim()}`);
+            const status =
+              entry.status === "completed"
+                ? "[x]"
+                : entry.status === "blocked"
+                  ? "[!]"
+                  : "[ ]";
+            lines.push(` ${status} ${entry.content.trim()}`);
           }
         }
+        break;
+
+      case "plan_file":
+        flushUser();
+        lines.push(`[Plan file: ${event.path}]`);
         break;
 
       case "subagent":

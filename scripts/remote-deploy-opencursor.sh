@@ -12,29 +12,36 @@ git fetch origin main
 git pull --ff-only origin main
 
 ENV_LOCAL="$ROOT/.env.local"
-python3 << PY
-from pathlib import Path
-p = Path(r"$ENV_LOCAL")
-key = "NEXT_PUBLIC_SERVER_URL"
-val = r"$NEXT_PUBLIC_SERVER_URL"
-lines = p.read_text(encoding="utf-8").splitlines() if p.exists() else []
-out, found = [], False
-for line in lines:
-    if line.startswith(key + "="):
-        out.append(f"{key}={val}")
-        found = True
-    else:
-        out.append(line)
-if not found:
-    out.insert(0, f"{key}={val}")
-p.write_text("\n".join(out) + "\n", encoding="utf-8")
-print(f"Updated {key} in .env.local")
-PY
+export ENV_LOCAL NEXT_PUBLIC_SERVER_URL
+node <<'NODE'
+const fs = require("node:fs");
+const path = process.env.ENV_LOCAL;
+const key = "NEXT_PUBLIC_SERVER_URL";
+const value = process.env.NEXT_PUBLIC_SERVER_URL ?? "";
+const lines = fs.existsSync(path)
+  ? fs.readFileSync(path, "utf8").split(/\r?\n/).filter((line, index, all) => index < all.length - 1 || line)
+  : [];
+let found = false;
+const out = lines.map((line) => {
+  if (line.startsWith(`${key}=`)) {
+    found = true;
+    return `${key}=${value}`;
+  }
+  return line;
+});
+if (!found) {
+  out.unshift(`${key}=${value}`);
+}
+fs.writeFileSync(path, `${out.join("\n")}\n`, "utf8");
+console.log(`Updated ${key} in .env.local`);
+NODE
 
 echo "==> Build packages"
 npm run build --workspace @cesium/core
 
-echo "==> Build server"
+# The runtime below starts bun from source (npm run start -> bun-server.ts);
+# this tsc build is a typecheck/compile gate, dist/ is NOT what gets served.
+echo "==> Typecheck server (compile gate; runtime is bun-from-source)"
 npm run build --prefix server
 
 echo "==> Build Next (NEXT_PUBLIC_* from .env.local)"
@@ -62,48 +69,87 @@ echo "==> Listen check"
 ss -tlnp | grep -E ':3000|:9100' || true
 
 echo "==> Smoke: health + auth bootstrap"
-python3 << 'SMOKE'
-import json, os, urllib.request, http.cookiejar
-from pathlib import Path
+node <<'NODE'
+const fs = require("node:fs");
+const http = require("node:http");
+const path = require("node:path");
 
-root = Path(os.environ["ROOT"])
-env_path = root / "server" / ".env"
-pw = None
-for line in env_path.read_text(encoding="utf-8").splitlines():
-    if line.startswith("OPENCURSOR_AUTH_PASSWORD="):
-        pw = line.split("=", 1)[1].strip()
-        break
-if not pw:
-    raise SystemExit("missing OPENCURSOR_AUTH_PASSWORD in server/.env")
+const root = process.env.ROOT;
+const envPath = path.join(root, "server", ".env");
+const envLines = fs.readFileSync(envPath, "utf8").split(/\r?\n/);
+const passwordLine = envLines.find((line) => line.startsWith("OPENCURSOR_AUTH_PASSWORD="));
+const password = passwordLine?.split("=", 2)[1]?.trim();
+if (!password) {
+  throw new Error("missing OPENCURSOR_AUTH_PASSWORD in server/.env");
+}
 
-with urllib.request.urlopen(
-    urllib.request.Request(
-        "http://127.0.0.1:9100/health",
-        method="GET",
-    ),
-    timeout=10,
-) as r:
-    print("health:", r.read()[:120])
+let cookie = "";
 
-cj = http.cookiejar.CookieJar()
-opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cj))
-login = urllib.request.Request(
-    "http://127.0.0.1:9100/api/auth/login",
-    data=json.dumps({"username": "admin", "password": pw}).encode(),
-    headers={"Content-Type": "application/json"},
-    method="POST",
-)
-with opener.open(login, timeout=25) as r:
-    body = json.loads(r.read().decode())
-print("login ok:", body.get("ok"), "authenticated:", body.get("authenticated"))
+function requestJson(pathname, options = {}) {
+  return new Promise((resolve, reject) => {
+    const body = options.body ? Buffer.from(JSON.stringify(options.body)) : null;
+    const req = http.request(
+      {
+        hostname: "127.0.0.1",
+        port: 9100,
+        path: pathname,
+        method: options.method ?? "GET",
+        timeout: options.timeout ?? 25_000,
+        headers: {
+          ...(body
+            ? {
+                "Content-Type": "application/json",
+                "Content-Length": body.length,
+              }
+            : {}),
+          ...(cookie ? { Cookie: cookie } : {}),
+        },
+      },
+      (res) => {
+        const chunks = [];
+        const setCookie = res.headers["set-cookie"];
+        if (setCookie?.length) {
+          cookie = setCookie.map((value) => value.split(";", 1)[0]).join("; ");
+        }
+        res.on("data", (chunk) => chunks.push(chunk));
+        res.on("end", () => {
+          const text = Buffer.concat(chunks).toString("utf8");
+          if ((res.statusCode ?? 500) >= 400) {
+            reject(new Error(`${pathname} failed with ${res.statusCode}: ${text}`));
+            return;
+          }
+          resolve(options.raw ? text : JSON.parse(text));
+        });
+      }
+    );
+    req.on("timeout", () => req.destroy(new Error(`${pathname} timed out`)));
+    req.on("error", reject);
+    if (body) {
+      req.write(body);
+    }
+    req.end();
+  });
+}
 
-with opener.open(
-    urllib.request.Request("http://127.0.0.1:9100/api/workspaces/bootstrap", method="GET"),
-    timeout=45,
-) as r:
-    data = json.loads(r.read().decode())
-ws = data.get("workspaces") or []
-print("bootstrap workspaces:", len(ws), "startup:", data.get("startupWorkspaceId"))
-SMOKE
+(async () => {
+  const health = await requestJson("/health", { raw: true, timeout: 10_000 });
+  console.log("health:", health.slice(0, 120));
+
+  const login = await requestJson("/api/auth/login", {
+    method: "POST",
+    body: { username: "admin", password },
+  });
+  console.log("login ok:", login.ok, "authenticated:", login.authenticated);
+
+  const bootstrap = await requestJson("/api/workspaces/bootstrap", {
+    timeout: 45_000,
+  });
+  const workspaces = bootstrap.workspaces ?? [];
+  console.log("bootstrap workspaces:", workspaces.length, "startup:", bootstrap.startupWorkspaceId);
+})().catch((error) => {
+  console.error(error instanceof Error ? error.message : error);
+  process.exit(1);
+});
+NODE
 
 echo "==> Done. Logs: $ROOT/logs/server.log $ROOT/logs/next.log"

@@ -136,9 +136,14 @@ async function spawnChromium(pw: typeof import("playwright")): Promise<ChromiumP
       "about:blank",
     ],
     {
+      env: {
+        ...process.env,
+        OPENCURSOR_PROCESS_NAME: "Cesium Browser - Headless Chromium",
+      },
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
       detached: false,
+      argv0: "Cesium Browser - Headless Chromium",
     }
   );
 

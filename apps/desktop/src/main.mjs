@@ -1,19 +1,24 @@
-import { execFileSync, spawn, spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
+import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
-import { dirname, resolve } from "node:path";
+import { basename, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "../../..");
 const resourcesRoot = process.resourcesPath || repoRoot;
+const packagedServerHostExe = resolve(dirname(process.execPath), "Cesium Server.exe");
+const packagedNodeExe = resolve(resourcesRoot, "server/node.exe");
 const packagedServerEntry = resolve(resourcesRoot, "server/dist/index.js");
 const repoServerEntry = resolve(repoRoot, "server/dist/index.js");
 const usingPackagedResources = Boolean(process.resourcesPath) && existsSync(packagedServerEntry);
 const serverEntry = usingPackagedResources ? packagedServerEntry : repoServerEntry;
-const HEALTH_TIMEOUT_MS = 20_000;
+const HEALTH_TIMEOUT_MS = usingPackagedResources ? 90_000 : 45_000;
+const HEALTH_POLL_MS = 150;
+const BACKEND_PID_FILE_NAME = ".cesium-backend.pid";
 const DESKTOP_BACKEND_MARKER = "OPENCURSOR_DESKTOP_BACKEND";
 const BACKEND_LOG_LIMIT = 12_000;
+const DESKTOP_BACKEND_PROCESS_NAME = "Cesium Server";
 // Packaged installs must never inherit a developer shell DATABASE_URL / Redis URL.
 const USE_EXTERNAL_SERVICES =
   usingPackagedResources
@@ -68,16 +73,148 @@ async function getFreePort() {
   });
 }
 
+function backendPidFile(dataDir) {
+  return resolve(dataDir ?? repoRoot, BACKEND_PID_FILE_NAME);
+}
+
+function parseBackendPidFile(raw) {
+  const trimmed = raw.trim();
+  // Current format: JSON { pid, bin, startedAt }. Legacy format: bare integer.
+  if (trimmed.startsWith("{")) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      const pid = Number.parseInt(String(parsed?.pid), 10);
+      return Number.isFinite(pid) && pid > 0
+        ? { pid, bin: typeof parsed?.bin === "string" ? parsed.bin : null }
+        : null;
+    } catch {
+      return null;
+    }
+  }
+  const pid = Number.parseInt(trimmed, 10);
+  return Number.isFinite(pid) && pid > 0 ? { pid, bin: null } : null;
+}
+
+function expectedBackendBinNames() {
+  const names = new Set(["node", "node.exe"]);
+  for (const bin of [packagedNodeExe, packagedServerHostExe, process.execPath]) {
+    try {
+      names.add(basename(bin).toLowerCase());
+    } catch {
+      // ignore
+    }
+  }
+  return names;
+}
+
+/**
+ * The OS recycles PIDs; a stale pidfile must never get an unrelated process
+ * killed. Only report a match when the live process actually looks like our
+ * backend (image name on Windows, command line on POSIX).
+ */
+function processLooksLikeBackend(pid, recordedBin) {
+  if (process.platform === "win32") {
+    const out =
+      spawnSync("tasklist", ["/FI", `PID eq ${pid}`, "/FO", "CSV", "/NH"], {
+        encoding: "utf8",
+        windowsHide: true,
+      }).stdout ?? "";
+    const image = out.split(",")[0]?.replace(/"/g, "").trim().toLowerCase();
+    if (!image || image.includes("no tasks")) {
+      return false;
+    }
+    if (recordedBin && image === recordedBin.toLowerCase()) {
+      return true;
+    }
+    return expectedBackendBinNames().has(image);
+  }
+  const out =
+    spawnSync("ps", ["-p", String(pid), "-o", "args="], { encoding: "utf8" }).stdout ?? "";
+  const args = out.trim();
+  if (!args) {
+    return false;
+  }
+  return (
+    args.includes(serverEntry) ||
+    args.includes(DESKTOP_BACKEND_PROCESS_NAME) ||
+    (recordedBin ? args.includes(recordedBin) : false)
+  );
+}
+
+function reapStaleDesktopBackend(pidFile) {
+  let raw = null;
+  try {
+    raw = readFileSync(pidFile, "utf8");
+  } catch {
+    return;
+  }
+  const record = parseBackendPidFile(raw);
+  if (record) {
+    try {
+      process.kill(record.pid, 0);
+      if (processLooksLikeBackend(record.pid, record.bin)) {
+        killProcessTree(record.pid);
+      }
+    } catch {
+      // already gone
+    }
+  }
+  try {
+    unlinkSync(pidFile);
+  } catch {
+    // ignore
+  }
+}
+
+function rememberBackendPid(pidFile, pid, bin) {
+  try {
+    writeFileSync(
+      pidFile,
+      JSON.stringify({ pid, bin: bin ? basename(bin) : null, startedAt: Date.now() }),
+      "utf8"
+    );
+  } catch {
+    // non-fatal
+  }
+}
+
+function forgetBackendPid(pidFile) {
+  try {
+    unlinkSync(pidFile);
+  } catch {
+    // ignore
+  }
+}
+
+async function readHealthPayload(response) {
+  try {
+    return await response.json();
+  } catch {
+    return null;
+  }
+}
+
+function healthIsReady(payload) {
+  return payload?.ok === true && payload?.bootstrapping !== true;
+}
+
 export async function startCesiumBackend(options = {}) {
-  reapStaleDesktopBackends();
+  const dataDir = options.dataDir?.trim();
+  const pidFile = backendPidFile(dataDir ?? options.cwd ?? repoRoot);
+  reapStaleDesktopBackend(pidFile);
   const port = await getFreePort();
   const nodeBin = usingPackagedResources
-    ? process.execPath
+    ? existsSync(packagedNodeExe)
+      ? packagedNodeExe
+      : existsSync(packagedServerHostExe)
+        ? packagedServerHostExe
+        : process.execPath
     : process.env.OPENCURSOR_NODE_BIN || "node";
-  const cwd = options.cwd ?? (usingPackagedResources ? resourcesRoot : repoRoot);
-  const dataDir = options.dataDir?.trim();
+  const spawnCwd = usingPackagedResources
+    ? resourcesRoot
+    : (options.cwd ?? repoRoot);
   const child = spawn(nodeBin, [serverEntry], {
-    cwd,
+    cwd: spawnCwd,
     env: {
       ...process.env,
       ...(usingPackagedResources ? { ELECTRON_RUN_AS_NODE: "1" } : {}),
@@ -88,11 +225,17 @@ export async function startCesiumBackend(options = {}) {
         ? resolve(resourcesRoot, "server/node_modules")
         : process.env.NODE_PATH,
       [DESKTOP_BACKEND_MARKER]: "1",
+      ...(usingPackagedResources ? { OPENCURSOR_DESKTOP_IMPORT_LEGACY_DATA: "1" } : {}),
+      OPENCURSOR_PROCESS_NAME: `${DESKTOP_BACKEND_PROCESS_NAME} :${port}`,
       OPENCURSOR_DESKTOP_PARENT_PID: String(process.pid),
       ...resolveDesktopBackendEnv(),
     },
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true,
+    // POSIX: become a process-group leader so killProcessTree's `kill(-pid)`
+    // reaps grandchildren (pty shells, MCP servers). The backend's parent-pid
+    // watchdog still self-exits if Electron dies without cleanup.
+    detached: process.platform !== "win32",
   });
   const baseUrl = `http://127.0.0.1:${port}`;
   let spawnError = null;
@@ -116,12 +259,14 @@ export async function startCesiumBackend(options = {}) {
     stdout: recentStdout,
     stderr: recentStderr,
   }));
+  rememberBackendPid(pidFile, child.pid, nodeBin);
 
   return {
     port,
     baseUrl,
     child,
     stop() {
+      forgetBackendPid(pidFile);
       killProcessTree(child.pid);
     },
   };
@@ -147,35 +292,6 @@ function killProcessTree(pid) {
   }
 }
 
-function reapStaleDesktopBackends() {
-  if (process.platform !== "win32") return;
-  try {
-    const output = execFileSync(
-      "wmic",
-      [
-        "process",
-        "where",
-        `CommandLine like '%${serverEntry.replace(/\\/g, "\\\\")}%'`,
-        "get",
-        "ProcessId,CommandLine",
-        "/format:csv",
-      ],
-      { encoding: "utf8", windowsHide: true }
-    );
-    for (const line of output.split(/\r?\n/)) {
-      if (!line.includes("server/dist/index.js") && !line.includes("server\\dist\\index.js")) {
-        continue;
-      }
-      const pid = line.match(/,(\d+)\s*$/)?.[1];
-      if (pid && Number(pid) !== process.pid) {
-        killProcessTree(Number(pid));
-      }
-    }
-  } catch {
-    // WMIC may be unavailable; normal quit hooks still clean the active backend.
-  }
-}
-
 async function waitForHealth(baseUrl, child, getSpawnError, getOutput) {
   const deadline = Date.now() + HEALTH_TIMEOUT_MS;
   let lastError = null;
@@ -197,13 +313,18 @@ async function waitForHealth(baseUrl, child, getSpawnError, getOutput) {
     try {
       const response = await fetch(`${baseUrl}/health`, { cache: "no-store" });
       if (response.ok) {
-        return;
+        const payload = await readHealthPayload(response);
+        if (healthIsReady(payload)) {
+          return;
+        }
+        lastError = new Error("Health endpoint is still bootstrapping.");
+      } else {
+        lastError = new Error(`Health returned ${response.status}.`);
       }
-      lastError = new Error(`Health returned ${response.status}.`);
     } catch (error) {
       lastError = error;
     }
-    await new Promise((resolve) => setTimeout(resolve, 250));
+    await new Promise((resolve) => setTimeout(resolve, HEALTH_POLL_MS));
   }
 
   killProcessTree(child.pid);

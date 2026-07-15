@@ -87,6 +87,37 @@ export type BrowserControlInput =
   | { type: "wheel"; deltaX?: number; deltaY?: number }
   | { type: "key"; action: "down" | "up" | "press" | "type"; key: string };
 
+export type BrowserControlCommandPayload =
+  | {
+      type: "input";
+      input: BrowserControlInput;
+    }
+  | {
+      type: "snapshot";
+    }
+  | {
+      type: "evaluate";
+      script: string;
+    }
+  | {
+      type: "screenshot";
+    };
+
+export type BrowserControlCommand = {
+  seq: number;
+  ts: number;
+  tabId: string;
+} & BrowserControlCommandPayload;
+
+export type BrowserControlCommandResult = {
+  seq: number;
+  tabId: string;
+  ok: boolean;
+  ts: number;
+  result?: unknown;
+  error?: string;
+};
+
 export type BrowserControlSnapshot = {
   tab: BrowserControlTab;
   title?: string | null;

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type MouseEvent } from "react";
-import { AtSign, CornerUpLeft, GitFork, LayoutTemplate, MousePointerSquareDashed } from "lucide-react";
+import { AtSign, CornerUpLeft, FileText, LayoutTemplate, MousePointerSquareDashed } from "lucide-react";
 import type { ImageAttachment, UserMessageSegment } from "@/lib/types";
 import { ImageCarousel } from "./ImageCarousel";
 import { MessageTextSelectionCite } from "./MessageTextSelectionCite";
@@ -13,7 +13,6 @@ interface UserMessageProps {
   /** When set, selected text in the bubble can be cited into this composer draft. */
   composerDraftId?: string | null;
   displayOnly?: boolean;
-  onFork?: () => void;
   onRedo?: () => void;
 }
 
@@ -25,7 +24,6 @@ export function UserMessage({
   highlight,
   composerDraftId,
   displayOnly = false,
-  onFork,
   onRedo,
 }: UserMessageProps) {
   const hasSegments = segments && segments.length > 0;
@@ -67,11 +65,6 @@ export function UserMessage({
     }
   };
   const compactSingleLine = !attachments?.length && singleLineOrLess;
-  const handleForkClick = (event: MouseEvent<HTMLButtonElement>) => {
-    event.preventDefault();
-    event.stopPropagation();
-    onFork?.();
-  };
   const handleRedoClick = (event: MouseEvent<HTMLButtonElement>) => {
     event.preventDefault();
     event.stopPropagation();
@@ -107,7 +100,7 @@ export function UserMessage({
         }}
         className={`relative text-left ${
           expanded ? "" : "overflow-hidden"
-        } ${compactSingleLine ? "flex min-h-[22px] items-center pr-[44px]" : ""} ${
+        } ${compactSingleLine ? "flex min-h-[24px] items-center pr-[30px]" : ""} ${
           !displayOnly && overflowing ? "cursor-pointer" : ""
         }`}
         style={expanded ? undefined : { maxHeight: 100 }}
@@ -146,6 +139,30 @@ export function UserMessage({
                       aria-hidden
                     />
                     <span className="max-w-[260px] truncate">{s.text || "element"}</span>
+                  </span>
+                );
+              }
+              if (s.type === "text-reference") {
+                const charCount = s.referenceCharCount ?? s.referenceText?.length ?? 0;
+                const title = s.referenceText
+                  ? `${s.text}\n${charCount.toLocaleString()} characters\n\n${s.referenceText.slice(0, 600)}${
+                      s.referenceText.length > 600 ? "…" : ""
+                    }`
+                  : s.text;
+                return (
+                  <span
+                    key={i}
+                    title={title}
+                    onClick={(event) => event.stopPropagation()}
+                    className="mx-[2px] inline-flex max-w-full items-center gap-[5px] rounded-[6px] border border-[var(--border-subtle)] bg-[var(--file-tag-bg)] px-[7px] py-[2px] align-baseline font-sans text-[13px] font-medium text-[var(--file-tag-text)]"
+                    data-text-reference-id={s.referenceId ?? ""}
+                  >
+                    <FileText
+                      className="size-[12px] shrink-0 text-[var(--file-tag-icon)]"
+                      strokeWidth={1.75}
+                      aria-hidden
+                    />
+                    <span className="max-w-[260px] truncate">{s.text || "pasted text"}</span>
                   </span>
                 );
               }
@@ -188,21 +205,11 @@ export function UserMessage({
         ) : null}
       </div>
 
-      {!displayOnly && onFork ? (
-        <button
-          type="button"
-          onClick={handleForkClick}
-          className="pointer-events-none absolute bottom-[4px] right-[28px] z-20 rounded-[6px] bg-[var(--bg-card)]/85 p-[4px] text-[var(--text-secondary)] opacity-0 transition-[opacity,background-color,color] duration-200 group-hover:pointer-events-auto group-hover:opacity-100 hover:bg-[var(--bg-card-hover)] hover:text-[var(--text-primary)] focus-visible:pointer-events-auto focus-visible:opacity-100"
-          aria-label="Fork chat from here"
-        >
-          <GitFork className="size-[14px]" strokeWidth={1.75} aria-hidden />
-        </button>
-      ) : null}
       {!displayOnly && showReplyCue !== false && onRedo ? (
         <button
           type="button"
           onClick={handleRedoClick}
-          className="pointer-events-none absolute bottom-[4px] right-[6px] z-20 rounded-[6px] bg-[var(--bg-card)]/85 p-[4px] text-[var(--text-secondary)] opacity-0 transition-[opacity,background-color,color] duration-200 group-hover:pointer-events-auto group-hover:opacity-100 hover:bg-[var(--bg-card-hover)] hover:text-[var(--text-primary)] focus-visible:pointer-events-auto focus-visible:opacity-100"
+          className="pointer-events-none absolute bottom-[6px] right-[8px] z-20 rounded-[6px] bg-[var(--bg-card)]/85 p-[4px] text-[var(--text-secondary)] opacity-0 transition-[opacity,background-color,color] duration-200 group-hover:pointer-events-auto group-hover:opacity-100 hover:bg-[var(--bg-card-hover)] hover:text-[var(--text-primary)] focus-visible:pointer-events-auto focus-visible:opacity-100"
           aria-label="Redo message from here"
         >
           <CornerUpLeft className="size-[14px]" strokeWidth={1.75} aria-hidden />

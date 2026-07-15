@@ -18,7 +18,12 @@ import {
   resolveConversationModel,
   resolveDraftModelForBackend,
 } from "@/lib/agent-chat";
-import { DEFAULT_MODE_OPTIONS, isOrchestrationModeLocked, resolveCanonicalModeId } from "@/lib/chat-modes";
+import {
+  DEFAULT_MODE_OPTIONS,
+  filterGoalModeOptions,
+  isOrchestrationModeLocked,
+  resolveCanonicalModeId,
+} from "@/lib/chat-modes";
 import type { GlobalSettingsState } from "@/lib/global-settings";
 import type {
   ChatMessage,
@@ -45,6 +50,7 @@ export type UseRedoInlineUserMessageArgs = {
   backends: AgentBackendInfo[];
   /** Same map as composer model resolution (`globalSettings.models.byBackend`). */
   modelVisibility: GlobalSettingsState["models"]["byBackend"];
+  goalModeBetaEnabled?: boolean;
   composerUserMessageHistory: string[];
   hasOlderHistory: boolean;
   onRequestOlderHistory?: () => void;
@@ -74,12 +80,16 @@ function pickAvailableBackend(
 export function buildRedoComposerSeedFromConversation(
   conversation: AgentConversationRecord,
   backends: AgentBackendInfo[],
-  modelVisibility: GlobalSettingsState["models"]["byBackend"]
+  modelVisibility: GlobalSettingsState["models"]["byBackend"],
+  options: { goalModeBetaEnabled?: boolean } = {}
 ): RedoInlineComposerSeed {
   const backend = pickAvailableBackend(backends, conversation.config.backendId);
   const models = buildConversationModelOptions(conversation, backends, modelVisibility);
-  const modeOptions = buildConversationModeOptions(conversation, backends);
-  const modeOptionPool = modeOptions.length > 0 ? modeOptions : DEFAULT_MODE_OPTIONS;
+  const modeOptions = buildConversationModeOptions(conversation, backends, options);
+  const modeOptionPool =
+    modeOptions.length > 0
+      ? modeOptions
+      : filterGoalModeOptions(DEFAULT_MODE_OPTIONS, options.goalModeBetaEnabled === true);
   const mode = resolveCanonicalModeId(
     String(conversation.config.mode ?? modeOptionPool[0]?.id ?? "agent"),
     modeOptionPool
@@ -112,6 +122,7 @@ export function useRedoInlineUserMessage(args: UseRedoInlineUserMessageArgs): {
     conversation,
     exposeForkedConversation,
     getRedoComposerSeed,
+    goalModeBetaEnabled = false,
     hasOlderHistory,
     mergeConversationSnapshot,
     modelVisibility,
@@ -197,7 +208,8 @@ export function useRedoInlineUserMessage(args: UseRedoInlineUserMessageArgs): {
           seed = buildRedoComposerSeedFromConversation(
             conv,
             backends,
-            modelVisibility
+            modelVisibility,
+            { goalModeBetaEnabled }
           );
         } catch (fallbackError) {
           pushNotification({
@@ -227,6 +239,7 @@ export function useRedoInlineUserMessage(args: UseRedoInlineUserMessageArgs): {
       backends,
       conversation,
       getRedoComposerSeed,
+      goalModeBetaEnabled,
       modelVisibility,
       pushNotification,
     ]
@@ -403,15 +416,17 @@ export function useRedoInlineUserMessage(args: UseRedoInlineUserMessageArgs): {
         ? buildDraftModelOptionsForBackend(targetBackend, modelVisibility)
         : [redoMessageDraft.model];
       const redoModeOptions = targetBackend
-        ? buildDraftModeOptionsForBackend(targetBackend)
+        ? buildDraftModeOptionsForBackend(targetBackend, { goalModeBetaEnabled })
         : [];
       const modeOptionPool =
-        redoModeOptions.length > 0 ? redoModeOptions : DEFAULT_MODE_OPTIONS;
+        redoModeOptions.length > 0
+          ? redoModeOptions
+          : filterGoalModeOptions(DEFAULT_MODE_OPTIONS, goalModeBetaEnabled);
       const redoMode = resolveCanonicalModeId(
         String(redoMessageDraft.mode),
         modeOptionPool
       ) as EditorMode;
-      const redoModeLocked = isOrchestrationModeLocked(redoMode, true);
+      const redoModeLocked = isOrchestrationModeLocked();
 
       const resolvedComposerBackendId =
         targetBackend?.id ??
@@ -427,7 +442,7 @@ export function useRedoInlineUserMessage(args: UseRedoInlineUserMessageArgs): {
             key={`redo-${redoMessageDraft.messageId}`}
             mode={redoMode}
             onModeChange={(next) => {
-              if (isOrchestrationModeLocked(redoMode, true)) {
+              if (isOrchestrationModeLocked()) {
                 return;
               }
               setRedoMessageDraft((current) =>
@@ -452,7 +467,7 @@ export function useRedoInlineUserMessage(args: UseRedoInlineUserMessageArgs): {
                 ? resolveDraftModelForBackend(nextBackend)
                 : redoMessageDraft.model;
               const nextMode = nextBackend
-                ? ((buildDraftModeOptionsForBackend(nextBackend)[0]?.id ??
+                ? ((buildDraftModeOptionsForBackend(nextBackend, { goalModeBetaEnabled })[0]?.id ??
                     redoMessageDraft.mode) as EditorMode)
                 : redoMessageDraft.mode;
               setRedoMessageDraft((current) =>
@@ -503,6 +518,7 @@ export function useRedoInlineUserMessage(args: UseRedoInlineUserMessageArgs): {
       backends,
       composerUserMessageHistory,
       conversation,
+      goalModeBetaEnabled,
       hasOlderHistory,
       modelVisibility,
       onRequestOlderHistory,

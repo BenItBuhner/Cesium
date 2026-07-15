@@ -7,9 +7,11 @@ import type {
   AgentStoredEvent,
 } from "@/lib/agent-types";
 import {
-  COMPLETION_AUTO_RETRY_MAX_ATTEMPTS,
-  COMPLETION_RETRY_DELAYS_MS,
+  COMPLETION_RETRY_MIN_BUSY_MS,
   completionErrorDismissKey,
+  computeCompletionAutoRetryActive,
+  computeCompletionRetriesRemaining,
+  computeCompletionRetryDelayMs,
   conversationHasCompletionFailure,
   deriveConversationCompletionError,
   isRetryableError,
@@ -21,10 +23,11 @@ export type AgentCompletionErrorDockState = {
   error: ReturnType<typeof parseAgentCompletionError>;
   supportsRetry: boolean;
   retryDelayMs: number;
+  retriesRemaining: number;
   autoRetryActive: boolean;
   retryBusy: boolean;
   dismiss: () => void;
-  retry: () => void;
+  retry: (source?: "auto" | "manual") => void;
   cancelAutoRetry: () => void;
 };
 
@@ -46,18 +49,23 @@ export function useAgentCompletionErrorDock({
   onRetry,
 }: UseAgentCompletionErrorDockInput): AgentCompletionErrorDockState {
   const [retryBusy, setRetryBusy] = useState(false);
+  const [retryPending, setRetryPending] = useState(false);
   const [attemptIndex, setAttemptIndex] = useState(0);
   const [autoRetryEnabled, setAutoRetryEnabled] = useState(true);
+  const [halted, setHalted] = useState(false);
   const lastFailureKeyRef = useRef<string | null>(null);
+  const haltedRef = useRef(false);
 
-  const lastError = conversation?.lastError?.trim() ?? "";
+  const lastError = deriveConversationCompletionError(conversation, events);
   const failureKey = conversation?.id && lastError
     ? completionErrorDismissKey(conversation.id, lastError)
     : null;
 
+  const hasFailure = conversationHasCompletionFailure(conversation, events);
+
   const error = useMemo(
-    () => parseAgentCompletionError(lastError, conversation?.config.backendId),
-    [lastError, conversation?.config.backendId]
+    () => parseAgentCompletionError(lastError),
+    [lastError]
   );
 
   const supportsRetry = Boolean(backend?.capabilities.supportsCompletionRetry);
@@ -68,6 +76,8 @@ export function useAgentCompletionErrorDock({
     }
     if (lastFailureKeyRef.current !== failureKey) {
       lastFailureKeyRef.current = failureKey;
+      haltedRef.current = false;
+      setHalted(false);
       setAttemptIndex(0);
       setAutoRetryEnabled(true);
     }
@@ -75,6 +85,8 @@ export function useAgentCompletionErrorDock({
 
   useEffect(() => {
     if (conversation?.status === "idle" && !conversation.lastError) {
+      haltedRef.current = false;
+      setHalted(false);
       setAttemptIndex(0);
       setAutoRetryEnabled(true);
       setRetryBusy(false);
@@ -82,46 +94,78 @@ export function useAgentCompletionErrorDock({
   }, [conversation?.status, conversation?.lastError]);
 
   const visible =
-    Boolean(lastError) &&
-    Boolean(failureKey) &&
-    dismissedKey !== failureKey &&
-    conversationHasCompletionFailure(conversation, events) &&
-    conversation?.status !== "running" &&
-    conversation?.status !== "awaiting_permission";
+    (Boolean(lastError) &&
+      Boolean(failureKey) &&
+      dismissedKey !== failureKey &&
+      hasFailure &&
+      conversation?.status !== "awaiting_permission" &&
+      !(conversation?.status === "running" && !hasFailure)) ||
+    retryPending;
 
-  const retryDelayMs =
-    COMPLETION_RETRY_DELAYS_MS[
-      Math.min(attemptIndex, COMPLETION_RETRY_DELAYS_MS.length - 1)
-    ] ?? COMPLETION_RETRY_DELAYS_MS[0]!;
+  const retriesRemaining = computeCompletionRetriesRemaining(attemptIndex);
+  const retryDelayMs = computeCompletionRetryDelayMs(attemptIndex);
 
-  const autoRetryActive =
-    visible &&
-    supportsRetry &&
-    autoRetryEnabled &&
-    isRetryableError(error) &&
-    attemptIndex < COMPLETION_AUTO_RETRY_MAX_ATTEMPTS &&
-    !retryBusy;
+  const autoRetryActive = computeCompletionAutoRetryActive({
+    visible,
+    supportsRetry,
+    autoRetryEnabled,
+    halted: halted || haltedRef.current,
+    retryable: isRetryableError(error),
+    attemptIndex,
+    retryBusy,
+  });
 
-  const retry = useCallback(async () => {
-    if (!conversation?.id || !supportsRetry) {
+  const haltRetries = useCallback(() => {
+    haltedRef.current = true;
+    setHalted(true);
+    setAutoRetryEnabled(false);
+    setRetryBusy(false);
+  }, []);
+
+  const retry = useCallback(
+    async (_source: "auto" | "manual" = "manual") => {
+      if (!conversation?.id || !supportsRetry || haltedRef.current) {
+        return;
+      }
+      setRetryPending(true);
+      setRetryBusy(true);
+      const startedAt = Date.now();
+      try {
+        await onRetry(conversation.id);
+        if (haltedRef.current) {
+          return;
+        }
+        setAttemptIndex((current) => current + 1);
+      } finally {
+        const remaining = COMPLETION_RETRY_MIN_BUSY_MS - (Date.now() - startedAt);
+        if (remaining > 0) {
+          await new Promise<void>((resolve) => {
+            window.setTimeout(resolve, remaining);
+          });
+        }
+        setRetryBusy(false);
+        setRetryPending(false);
+      }
+    },
+    [conversation?.id, onRetry, supportsRetry]
+  );
+
+  useEffect(() => {
+    if (!autoRetryActive) {
       return;
     }
-    setAutoRetryEnabled(false);
-    setRetryBusy(true);
-    try {
-      await onRetry(conversation.id);
-      setAttemptIndex((current) => current + 1);
-    } finally {
-      setRetryBusy(false);
-    }
-  }, [conversation?.id, onRetry, supportsRetry]);
+    const timeoutId = window.setTimeout(() => {
+      void retry("auto");
+    }, retryDelayMs);
+    return () => window.clearTimeout(timeoutId);
+  }, [autoRetryActive, retry, retryDelayMs]);
 
   const dismiss = useCallback(() => {
+    haltRetries();
     if (failureKey) {
       onDismiss(failureKey);
     }
-    setAutoRetryEnabled(false);
-  }, [failureKey, onDismiss]);
+  }, [failureKey, haltRetries, onDismiss]);
 
   const cancelAutoRetry = useCallback(() => {
     setAutoRetryEnabled(false);
@@ -132,6 +176,7 @@ export function useAgentCompletionErrorDock({
     error,
     supportsRetry,
     retryDelayMs,
+    retriesRemaining,
     autoRetryActive,
     retryBusy,
     dismiss,

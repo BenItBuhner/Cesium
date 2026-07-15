@@ -43,8 +43,8 @@ export type SettingsExportBundleV1 = SettingsExportBundle;
 export function sliceGlobalAppFromSettings(
   settings: GlobalSettingsState
 ): GlobalAppSettingsSlice {
-  const { general, agents, models } = settings;
-  return { general, agents, models, tools: {} };
+  const { general, agents, models, features } = settings;
+  return { general, agents, models, tools: {}, features };
 }
 
 export function mergeImportedGlobalAppSlice(
@@ -73,6 +73,10 @@ export function mergeImportedGlobalAppSlice(
           : current.models.byBackend,
     },
     tools: {},
+    features: {
+      ...current.features,
+      ...(imported.features ?? {}),
+    },
   };
 }
 

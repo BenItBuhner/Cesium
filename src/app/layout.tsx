@@ -50,7 +50,7 @@ export const viewport: Viewport = {
 };
 
 const themeBootstrap = buildThemeBootstrapScript();
-const preferencesBootstrap = `(()=>{try{var K=${JSON.stringify(USER_PREFERENCES_STORAGE_KEY)};var enabled=false;try{var raw=localStorage.getItem(K);var parsed=raw?JSON.parse(raw):null;enabled=!!(parsed&&parsed.experimentalIpadMode===true)}catch(e){}document.documentElement.setAttribute("data-experimental-ipad-mode",enabled?"true":"false");document.documentElement.classList.toggle("experimental-ipad-mode",enabled)}catch(e){}})();`;
+const preferencesBootstrap = `(()=>{try{var K=${JSON.stringify(USER_PREFERENCES_STORAGE_KEY)};var desktop=!!(window.cesiumDesktop&&window.cesiumDesktop.isElectron);var enabled=false;var resume=false;if(!desktop){try{var raw=localStorage.getItem(K);var parsed=raw?JSON.parse(raw):null;enabled=!!(parsed&&parsed.experimentalIpadMode===true);resume=!!(parsed&&parsed.experimentalIpadResumeCache===true)}catch(e){}}document.documentElement.setAttribute("data-experimental-ipad-mode",enabled?"true":"false");document.documentElement.classList.toggle("experimental-ipad-mode",enabled);document.documentElement.setAttribute("data-experimental-ipad-resume-cache",resume?"true":"false");document.documentElement.classList.toggle("experimental-ipad-resume-cache",resume)}catch(e){}})();`;
 
 export default function RootLayout({
   children,

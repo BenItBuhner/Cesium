@@ -218,7 +218,83 @@ export function hasSavedWorkspaceRailAppearance(
 
 ): boolean {
 
-  return Object.prototype.hasOwnProperty.call(appearances, workspaceKey);
+  return lookupSavedWorkspaceRailAppearance(appearances, workspaceKey) !== undefined;
+
+}
+
+
+
+/** Reads saved appearance by compound key, falling back to legacy bare workspace id. */
+
+export function lookupSavedWorkspaceRailAppearance(
+
+  appearances: Record<string, WorkspaceRailAppearance>,
+
+  workspaceKey: string
+
+): WorkspaceRailAppearance | undefined {
+
+  if (Object.prototype.hasOwnProperty.call(appearances, workspaceKey)) {
+
+    return appearances[workspaceKey];
+
+  }
+
+  const separatorIndex = workspaceKey.lastIndexOf(":");
+
+  if (separatorIndex < 0) {
+
+    return undefined;
+
+  }
+
+  const legacyKey = workspaceKey.slice(separatorIndex + 1);
+
+  if (!legacyKey || legacyKey === workspaceKey) {
+
+    return undefined;
+
+  }
+
+  if (Object.prototype.hasOwnProperty.call(appearances, legacyKey)) {
+
+    return appearances[legacyKey];
+
+  }
+
+  return undefined;
+
+}
+
+
+
+export function resolveGroupWorkspaceAppearanceKey(
+
+  group: {
+
+    workspaceKey?: string;
+
+    serverId?: string;
+
+    workspace: { id: string };
+
+  },
+
+  fallbackServerId: string
+
+): string {
+
+  return resolveWorkspaceAppearanceKey({
+
+    workspaceKey: group.workspaceKey,
+
+    serverId: group.serverId,
+
+    workspaceId: group.workspace.id,
+
+    fallbackServerId,
+
+  });
 
 }
 
@@ -270,33 +346,13 @@ export type WorkspaceRailAppearanceOptions = {
 
 
 
-export function getWorkspaceRailAppearance(
-
-  appearances: Record<string, WorkspaceRailAppearance>,
+export function getDefaultWorkspaceAppearance(
 
   workspaceKey: string,
-
-  index: number,
 
   options?: WorkspaceRailAppearanceOptions
 
 ): WorkspaceRailAppearance {
-
-  const saved = appearances[workspaceKey];
-
-  if (saved) {
-
-    return {
-
-      icon: saved.icon || "Folder",
-
-      color:
-
-        saved.color ?? FOLDER_COLOR_OPTIONS[index % FOLDER_COLOR_OPTIONS.length],
-
-    };
-
-  }
 
   if (options?.isHome) {
 
@@ -308,9 +364,39 @@ export function getWorkspaceRailAppearance(
 
     icon: "Folder",
 
-    color: FOLDER_COLOR_OPTIONS[index % FOLDER_COLOR_OPTIONS.length],
+    color: pickStableWorkspaceColor(workspaceKey),
 
   };
+
+}
+
+
+
+export function getWorkspaceRailAppearance(
+
+  appearances: Record<string, WorkspaceRailAppearance>,
+
+  workspaceKey: string,
+
+  options?: WorkspaceRailAppearanceOptions
+
+): WorkspaceRailAppearance {
+
+  const saved = lookupSavedWorkspaceRailAppearance(appearances, workspaceKey);
+
+  if (saved) {
+
+    return {
+
+      icon: saved.icon || "Folder",
+
+      color: saved.color ?? pickStableWorkspaceColor(workspaceKey),
+
+    };
+
+  }
+
+  return getDefaultWorkspaceAppearance(workspaceKey, options);
 
 }
 

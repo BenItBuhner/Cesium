@@ -1,15 +1,10 @@
+import { asRecord } from "./json-coerce.js";
 import type { AgentToolEditPreview, AgentToolEditPreviewLine } from "./types.js";
 
 const MAX_EDIT_PREVIEW_TEXT_CHARS = 80_000;
 const MAX_EDIT_PREVIEW_LINES = 140;
 const MAX_DIFF_MATRIX_CELLS = 40_000;
 const CONTEXT_RADIUS = 2;
-
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined;
-}
 
 function normalizeText(value: string): string {
   return value.replace(/\r\n?/g, "\n");

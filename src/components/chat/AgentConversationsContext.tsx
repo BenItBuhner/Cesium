@@ -20,6 +20,8 @@ import {
   isIncomingEventDroppedByAcpToolStrip,
   resolveConversationModel,
 } from "@/lib/agent-chat";
+import { isAgentComposerBusy } from "@/lib/agent-completion-error";
+import { safeReadLocationSearchParam } from "@/lib/safe-url";
 import { DEFAULT_MODE_OPTIONS, resolveCanonicalModeId } from "@/lib/chat-modes";
 import { listSupplementaryAgentConfigOptions } from "@/lib/agent-config-option-utils";
 import type {
@@ -34,7 +36,14 @@ import type {
   AgentSocketServerMessage,
   AgentStoredEvent,
 } from "@/lib/agent-types";
-import type { AgentModeOption, EditorMode, ImageAttachment, ModelInfo, QueuedPromptConfigOverride } from "@/lib/types";
+import type {
+  AgentModeOption,
+  EditorMode,
+  ImageAttachment,
+  ModelInfo,
+  PlanBuildHandoff,
+  QueuedPromptConfigOverride,
+} from "@/lib/types";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { useServerConnections } from "@/components/preferences/ServerConnectionsProvider";
 import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
@@ -150,7 +159,34 @@ function mergeConversationByRecency(
     }
     return existing;
   }
-  return incomingWithQueue;
+  const metaChanged =
+    existing.status !== incomingWithQueue.status ||
+    JSON.stringify(existing.pendingPermission) !==
+      JSON.stringify(incomingWithQueue.pendingPermission) ||
+    JSON.stringify(existing.pendingQuestion) !==
+      JSON.stringify(incomingWithQueue.pendingQuestion) ||
+    existing.title !== incomingWithQueue.title ||
+    existing.lastError !== incomingWithQueue.lastError ||
+    existing.archivedAt !== incomingWithQueue.archivedAt ||
+    JSON.stringify(existing.queuedPrompts ?? []) !==
+      JSON.stringify(incomingWithQueue.queuedPrompts ?? []);
+  if (metaChanged || incomingWithQueue.lastEventSeq !== existing.lastEventSeq) {
+    const lastError = incomingWithQueue.lastError ?? existing.lastError;
+    const status =
+      incomingWithQueue.status === "failed" || existing.status === "failed"
+        ? "failed"
+        : incomingWithQueue.lastEventSeq >= existing.lastEventSeq
+          ? incomingWithQueue.status
+          : existing.status;
+    return {
+      ...existing,
+      ...incomingWithQueue,
+      lastError,
+      status,
+      updatedAt: existing.updatedAt,
+    };
+  }
+  return existing;
 }
 
 function conversationNeedsRuntimeHydration(
@@ -164,8 +200,7 @@ function conversationNeedsRuntimeHydration(
     conversation.providerSessionId == null ||
     !conversation.capabilities.supportsLoadSession ||
     (conversation.config.backendId === "cursor-sdk" &&
-      (!conversation.capabilities.supportsPermissions ||
-        !conversation.capabilities.supportsSessionResume)) ||
+      !conversation.capabilities.supportsSessionResume) ||
     ((conversation.status === "running" ||
       conversation.status === "awaiting_permission") &&
       conversation.providerSessionId == null)
@@ -261,7 +296,8 @@ type AgentConversationsContextValue = {
     text: string,
     attachments?: ImageAttachment[],
     configOverride?: QueuedPromptConfigOverride,
-    delivery?: "normal" | "steer"
+    delivery?: "normal" | "steer",
+    planHandoff?: PlanBuildHandoff
   ) => Promise<boolean>;
   retryConversation: (conversationId: string) => Promise<boolean>;
   cancelConversation: (conversationId: string) => Promise<void>;
@@ -296,6 +332,50 @@ type AgentConversationsContextValue = {
 const AgentConversationsContext =
   createContext<AgentConversationsContextValue | null>(null);
 
+const MAX_CLIENT_EVENTS_PER_CONVERSATION = 6_000;
+
+function compactConversationEvents(events: AgentStoredEvent[]): AgentStoredEvent[] {
+  if (events.length <= MAX_CLIENT_EVENTS_PER_CONVERSATION) {
+    return events;
+  }
+  return events.slice(events.length - MAX_CLIENT_EVENTS_PER_CONVERSATION);
+}
+
+export function mergeAgentConversationEventBatch(
+  existing: AgentStoredEvent[],
+  incoming: AgentStoredEvent[]
+): AgentStoredEvent[] {
+  if (incoming.length === 0) {
+    return existing;
+  }
+  const seenSeq = new Set(existing.map((event) => event.seq));
+  const seenEventIds = new Set(existing.map((event) => event.eventId));
+  let next: AgentStoredEvent[] = existing;
+  for (const event of incoming) {
+    if (seenSeq.has(event.seq) || seenEventIds.has(event.eventId)) {
+      continue;
+    }
+    if (isIncomingEventDroppedByAcpToolStrip(next, event)) {
+      continue;
+    }
+    if (next === existing) {
+      next = [...existing];
+    }
+    next.push(event);
+    seenSeq.add(event.seq);
+    seenEventIds.add(event.eventId);
+  }
+  if (next === existing) {
+    return existing;
+  }
+  const ordered = next.every(
+    (event, index) => index === 0 || event.seq >= (next[index - 1]?.seq ?? 0)
+  )
+    ? next
+    : [...next].sort((a, b) => a.seq - b.seq);
+  return compactConversationEvents(ordered);
+}
+
 export function AgentConversationsProvider({
   children,
 }: {
@@ -311,7 +391,7 @@ export function AgentConversationsProvider({
   const agentSocketServerKey = activeServer.baseUrl;
   const activeWorkspaceIdRef = useRef<string | null>(activeWorkspaceId);
   activeWorkspaceIdRef.current = activeWorkspaceId;
-  const { settings: globalSettings } = useGlobalSettings();
+  const { settings: globalSettings, refreshModels } = useGlobalSettings();
   const [backends, setBackends] = useState<AgentBackendInfo[]>([]);
   const [conversationsById, setConversationsById] = useState<
     Record<string, AgentConversationRecord>
@@ -366,7 +446,7 @@ export function AgentConversationsProvider({
   const isAgentRoute = shellView === "agent";
   const requestedConversationIdFromLocation =
     isAgentRoute && typeof window !== "undefined"
-      ? new URL(window.location.href).searchParams.get("conversationId")?.trim() || null
+      ? safeReadLocationSearchParam("conversationId")
       : null;
   const activeSelectedConversationId =
     requestedConversationIdFromLocation &&
@@ -509,7 +589,7 @@ export function AgentConversationsProvider({
           const mergedEvents = dedupeAgentStoredEvents(
             [...bySeq.values()].sort((a, b) => a.seq - b.seq)
           );
-          return { ...current, [incoming.id]: mergedEvents };
+          return { ...current, [incoming.id]: compactConversationEvents(mergedEvents) };
         });
         setHistoryMetaById((c) => ({
           ...c,
@@ -525,7 +605,7 @@ export function AgentConversationsProvider({
           return {
             ...current,
             [full.conversation.id]:
-              incomingSeq >= existingSeq ? incomingDeduped : existing,
+              compactConversationEvents(incomingSeq >= existingSeq ? incomingDeduped : existing),
           };
         });
         setHistoryMetaById((c) => ({
@@ -642,7 +722,7 @@ updateWorkspaceSession((current) => {
         const merged = dedupeAgentStoredEvents(
           [...bySeq.values()].sort((a, b) => a.seq - b.seq)
         );
-        return { ...current, [conversationId]: merged };
+        return { ...current, [conversationId]: compactConversationEvents(merged) };
       });
       setHistoryMetaById((c) => ({
         ...c,
@@ -756,11 +836,13 @@ updateWorkspaceSession((current) => {
         if (isIncomingEventDroppedByAcpToolStrip(existing, event)) {
           return current;
         }
+        const appended =
+          existing.length === 0 || event.seq >= (existing[existing.length - 1]?.seq ?? 0)
+            ? [...existing, event]
+            : [...existing, event].sort((a, b) => a.seq - b.seq);
         return {
           ...current,
-          [conversationId]: dedupeAgentStoredEvents([...existing, event]).sort(
-            (a, b) => a.seq - b.seq
-          ),
+          [conversationId]: compactConversationEvents(appended),
         };
       });
     },
@@ -777,31 +859,13 @@ updateWorkspaceSession((current) => {
       }
       setEventsByConversationId((current) => {
         const existing = current[conversationId] ?? [];
-        let next: AgentStoredEvent[] = existing;
-        for (const event of incoming) {
-          if (
-            next.some(
-              (item) => item.seq === event.seq || item.eventId === event.eventId
-            )
-          ) {
-            continue;
-          }
-          if (isIncomingEventDroppedByAcpToolStrip(next, event)) {
-            continue;
-          }
-          if (next === existing) {
-            next = [...existing];
-          }
-          next.push(event);
-        }
+        const next = mergeAgentConversationEventBatch(existing, incoming);
         if (next === existing) {
           return current;
         }
         return {
           ...current,
-          [conversationId]: dedupeAgentStoredEvents(next).sort(
-            (a, b) => a.seq - b.seq
-          ),
+          [conversationId]: next,
         };
       });
     },
@@ -1111,7 +1175,8 @@ const executePrompt = useCallback(
       text: string,
       attachments?: ImageAttachment[],
       configOverride?: QueuedPromptConfigOverride,
-      delivery: "normal" | "steer" = "normal"
+      delivery: "normal" | "steer" = "normal",
+      planHandoff?: PlanBuildHandoff
     ) => {
       const startedAt = performance.now();
       const clientEventId =
@@ -1149,6 +1214,9 @@ const executePrompt = useCallback(
                 kind: "user_message",
                 messageId: clientMessageId,
                 content: text,
+              displayContent: planHandoff
+                ? `Build: ${planHandoff.planTitle ?? planHandoff.planPath}`
+                : undefined,
                 attachments,
               },
             ],
@@ -1179,7 +1247,7 @@ const executePrompt = useCallback(
           text,
           attachments,
           configOverride,
-          { clientEventId, clientMessageId, delivery }
+          { clientEventId, clientMessageId, delivery, planHandoff }
         );
         recordPerfSample("conversation.prompt.ack", startedAt, {
           conversationId,
@@ -1263,14 +1331,16 @@ const executePrompt = useCallback(
       text: string,
       attachments?: ImageAttachment[],
       configOverride?: QueuedPromptConfigOverride,
-      delivery?: "normal" | "steer"
+      delivery?: "normal" | "steer",
+      planHandoff?: PlanBuildHandoff
     ) => {
       const ok = await executePrompt(
         conversationId,
         text,
         attachments,
         configOverride,
-        delivery
+        delivery,
+        planHandoff
       );
       if (ok) {
         clearEditingQueuedPromptForConversation(conversationId);
@@ -1417,7 +1487,7 @@ const conversation = conversationsById[conversationId] ?? null;
 if (!conversation) {
 return null;
 }
-const busy = isAgentConversationBusy(conversation.status);
+const busy = isAgentComposerBusy(conversation, eventsByConversationId[conversationId]);
 const pending = pendingConfigByConversationId[conversationId];
 const effectiveConfig = busy && pending
 ? resolveEffectiveConfig(conversation.config, pending)
@@ -1434,7 +1504,8 @@ backends
 );
 const modeOptions = buildConversationModeOptions(
 { ...conversation, config: effectiveConfig },
-backends
+backends,
+{ goalModeBetaEnabled: globalSettings.features.goalModeBeta }
 );
 const mode = resolveCanonicalModeId(
 String(effectiveConfig.mode ?? ""),
@@ -1448,13 +1519,16 @@ backend?.id ??
 chatDraftRef.current.backendId,
 models,
 model,
-modeOptions: modeOptions.length > 0 ? modeOptions : DEFAULT_MODE_OPTIONS,
+modeOptions:
+modeOptions.length > 0
+? modeOptions
+: DEFAULT_MODE_OPTIONS,
 mode,
 sessionConfigOptions: listSupplementaryAgentConfigOptions(conversation),
 busy,
 };
 },
-[backends, conversationsById, globalSettings.models.byBackend, pendingConfigByConversationId]
+[backends, conversationsById, eventsByConversationId, globalSettings.models.byBackend, pendingConfigByConversationId]
   );
 
   const getConversationLoadStatus = useCallback(
@@ -1533,13 +1607,15 @@ busy,
 
   useEffect(() => {
     const onBackendsChanged = () => {
-      void refreshConversations().catch(() => undefined);
+      void refreshModels()
+        .then(() => refreshConversations())
+        .catch(() => refreshConversations().catch(() => undefined));
     };
     window.addEventListener(AGENT_BACKENDS_CHANGED_EVENT, onBackendsChanged);
     return () => {
       window.removeEventListener(AGENT_BACKENDS_CHANGED_EVENT, onBackendsChanged);
     };
-  }, [refreshConversations]);
+  }, [refreshConversations, refreshModels]);
 
   const forkConversation = useCallback(
     async (

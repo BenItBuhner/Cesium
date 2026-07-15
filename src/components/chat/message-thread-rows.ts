@@ -88,7 +88,7 @@ export function buildMessageThreadSegments(messages: ChatMessage[]): MessageThre
       i += 1;
       continue;
     }
-    if (msg.type === "user" && messages[i + 1]?.type === "todo-status") {
+    if (msg.type === "user" && (messages[i + 1]?.type === "todo-status" || messages[i + 1]?.type === "todo")) {
       const todoIndex = i + 1;
       const tail = collectTailFrom(messages, i + 2);
       const userMsg = messages[i]!;

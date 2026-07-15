@@ -15,6 +15,7 @@ export type CodexAppServerTransportOptions = {
   args?: string[];
   cwd: string;
   env?: NodeJS.ProcessEnv;
+  processName?: string;
   onNotification?: (message: CodexAppServerJsonObject) => void;
   onServerRequest?: (message: CodexAppServerRequestMessage) => void;
   onStderrLine?: (line: string) => void;
@@ -70,9 +71,13 @@ export class CodexAppServerTransport {
     this.onExit = options.onExit;
     this.child = spawn(options.command, options.args ?? ["app-server"], {
       cwd: options.cwd,
-      env: spawnSafeEnv(options.env),
+      env: spawnSafeEnv({
+        ...options.env,
+        OPENCURSOR_PROCESS_NAME: options.processName ?? "Cesium Agent - Codex App Server",
+      }),
       stdio: ["pipe", "pipe", "pipe"],
       windowsHide: true,
+      argv0: options.processName ?? "Cesium Agent - Codex App Server",
     });
 
     createInterface({ input: this.child.stdout }).on("line", (line) => {

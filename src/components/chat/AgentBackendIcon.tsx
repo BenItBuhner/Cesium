@@ -12,7 +12,9 @@ function LucideBackendFallback({
   if (
     backendId === "cesium-agent" ||
     backendId === "cursor-sdk" ||
-    backendId === "codex-app-server"
+    backendId === "codex-app-server" ||
+    backendId === "pi-agent" ||
+    backendId === "google-antigravity-cli"
   ) {
     return <Sparkles {...props} />;
   }

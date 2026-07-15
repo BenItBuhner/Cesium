@@ -1,9 +1,7 @@
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
-import { after, before, describe, test } from "node:test";
-import { fileURLToPath } from "node:url";
+import { after, describe, test } from "node:test";
 
 const TEST_DATA_DIR = path.join(
   os.tmpdir(),
@@ -20,24 +18,14 @@ process.env.OPENCURSOR_AUTH_PASSWORD = "hunter2";
 process.env.OPENCURSOR_AUTH_ROTATION_INTERVAL_MS = "500";
 process.env.OPENCURSOR_AUTH_SESSION_TTL_MS = "60000";
 
-const repoRoot = path.resolve(
-  path.dirname(fileURLToPath(import.meta.url)),
-  "..",
-  ".."
-);
-
 const { ensureDataDir } = await import("../src/lib/persistence.js");
 await ensureDataDir();
 
 const { Hono } = await import("hono");
 const {
   authMiddleware,
-  authenticateRequest,
-  checkRequestRateLimit,
   isAuthEnabled,
-  loginWithCredentials,
   SESSION_TOKEN_HEADER,
-  SESSION_COOKIE_NAME,
   authenticateUpgradeRequest,
   buildUpgradeHttpResponse,
 } = await import("../src/lib/auth.js");

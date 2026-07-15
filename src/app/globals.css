@@ -1,5 +1,13 @@
 @import "tailwindcss";
 @import "@xterm/xterm/css/xterm.css";
+/*
+ * Canonical theme tokens (`:root`, `html.dark`, `@theme inline`) are generated
+ * from packages/design/src/theme-tokens.ts — the single token source shared
+ * with Electron and the React Native apps. Do not redeclare token variables
+ * here; edit the design package and rebuild (`npm run build --workspace
+ * @cesium/design`).
+ */
+@import "../../packages/design/generated/web-theme.css";
 
 /*
  * Monaco (`@monaco-editor/react`): on iOS / iPadOS WebKit, the standalone bundle
@@ -27,65 +35,16 @@
   }
 }
 
-/* Light theme (default). Dark uses `html.dark` — set by theme bootstrap + ThemeProvider. */
+/*
+ * App-level (non-token) custom properties. Token variables live in the
+ * generated theme import above; dark values for the props below are in the
+ * `html.dark` block further down.
+ */
 :root {
-  --background: #fafafa;
-  --foreground: #0a0a0a;
-
-  --bg-main: #fafafa;
-  --bg-panel: #f0f0f0;
-  --bg-card: #e6e6e6;
-  --bg-card-hover: #dcdcdc;
-  --bg-tab-active: #fafafa;
-  --bg-tab-inactive: rgba(250, 250, 250, 0.35);
-
-  --border-card: #c4c4c4;
-  --border-subtle: #e2e2e2;
-
-  --text-primary: #1a1a1a;
-  --text-secondary: #5c5c5c;
-  --text-disabled: #9a9a9a;
-
-  --accent: #1a1a1a;
-  --accent-dark: #333333;
-  --accent-bg: rgba(0, 0, 0, 0.08);
-
-  --plan-accent: #9a7f1a;
-  --plan-accent-dark: #7d6615;
-  --plan-accent-bg: #ebe4d0;
-  --plan-accent-selected-bg: rgba(154, 127, 26, 0.14);
-  --plan-accent-selected-border: rgba(154, 127, 26, 0.35);
-  --plan-accent-label: rgba(90, 74, 18, 0.85);
-  --plan-accent-label-strong: rgba(50, 42, 10, 0.95);
-
   /* Muted gold for permission / attention dots (plan-like, not traffic amber). */
   --tab-agent-attention-dot: color-mix(in srgb, var(--plan-accent) 68%, #737373 32%);
   --tab-unread-completion-dot: #4a76a8;
 
-  --debug-accent: #b84d55;
-  --debug-accent-dark: #8a3a40;
-  --debug-accent-bg: #f0dedf;
-
-  --ask-accent: #3d6b4d;
-  --ask-accent-dark: #2f523c;
-  --ask-accent-bg: #dfe8e2;
-
-  --file-tag-bg: #c9dcf5;
-  --file-tag-text: #1a2d4d;
-  --file-tag-icon: #3d5a8a;
-
-  --radius-card: 10px;
-  --radius-tab: 5px;
-  --radius-pill: 50px;
-  --radius-checkbox: 2px;
-
-  --font-size-body: 14px;
-  --font-size-small: 10.5px;
-  --font-size-meta: 11.9px;
-
-  --sidebar-width: 290px;
-  --chat-width: 550px;
-  --tab-height: 40px;
   /* Leading inset for editor tabs under iPadOS window controls when the sidebar is collapsed. */
   --editor-window-chrome-tab-inset: 72px;
 
@@ -106,31 +65,6 @@
   --agent-plus-button-bg-hover: var(--agent-card-hover-bg);
   /** Plus control icon (new design can tune separately from --text-secondary). */
   --agent-plus-button-icon: var(--text-secondary);
-
-  /* Command palette & quick open */
-  --palette-surface: #ffffff;
-  --palette-border: var(--border-card);
-  --palette-divider: var(--border-subtle);
-  --palette-input-text: var(--text-primary);
-  --palette-placeholder: var(--text-disabled);
-  --palette-footer-text: var(--text-secondary);
-  --palette-kbd-bg: var(--bg-panel);
-  --palette-kbd-border: var(--border-card);
-  --palette-kbd-text: var(--text-primary);
-  --palette-row-text: var(--text-primary);
-  --palette-row-muted: var(--text-secondary);
-  --palette-row-selected-bg: #d6ebff;
-  --palette-row-selected-text: var(--text-primary);
-  --palette-row-selected-muted: rgba(26, 26, 26, 0.55);
-  --palette-keybinding-on-selected: #0b5cab;
-  --palette-keybinding-idle: var(--text-secondary);
-  --palette-backdrop: rgba(10, 10, 10, 0.38);
-  --palette-shadow: 0 16px 48px rgba(0, 0, 0, 0.14);
-  --palette-icon-json: #7a6410;
-  --palette-icon-md: #0b7285;
-  --palette-icon-css: #5c5c5c;
-  --palette-icon-ts: #1565c0;
-  --palette-icon-fallback: #6b6b6b;
 }
 
 html[data-ui-design="new"]:not(.dark) {
@@ -146,106 +80,8 @@ html[data-ui-design="new"].dark {
 }
 
 html.dark {
-  --background: #191919;
-  --foreground: #ffffff;
-
-  --bg-main: #191919;
-  --bg-panel: #1e1e1e;
-  --bg-card: #393939;
-  --bg-card-hover: #404040;
-  --bg-tab-active: #191919;
-  --bg-tab-inactive: rgba(25, 25, 25, 0.25);
-
-  --border-card: #505050;
-  --border-subtle: #2a2a2a;
-
-  --text-primary: #ffffff;
-  --text-secondary: #6f6f6f;
-  --text-disabled: #5b5b5b;
-
-  --accent: #ffffff;
-  --accent-dark: #e8e8e8;
-  --accent-bg: rgba(255, 255, 255, 0.1);
-
-  --plan-accent: #c2a738;
-  --plan-accent-dark: #b79e38;
-  --plan-accent-bg: #494639;
-  --plan-accent-selected-bg: rgba(194, 167, 56, 0.16);
-  --plan-accent-selected-border: rgba(194, 167, 56, 0.42);
-  --plan-accent-label: rgba(220, 200, 120, 0.78);
-  --plan-accent-label-strong: rgba(232, 210, 130, 0.92);
-
   --tab-agent-attention-dot: color-mix(in srgb, var(--plan-accent) 38%, var(--bg-panel) 62%);
   --tab-unread-completion-dot: #6b9fd4;
-
-  --debug-accent: #e59a9a;
-  --debug-accent-dark: #9b585e;
-  --debug-accent-bg: #3a2a2a;
-
-  --ask-accent: #5e8d6b;
-  --ask-accent-dark: #456b52;
-  --ask-accent-bg: #2a322e;
-
-  --file-tag-bg: #2a4a7a;
-  --file-tag-text: #e8f0ff;
-  --file-tag-icon: #93b4e8;
-
-  --palette-surface: #252526;
-  --palette-border: #3c3c3c;
-  --palette-divider: #2a2a2a;
-  --palette-input-text: #cccccc;
-  --palette-placeholder: #767676;
-  --palette-footer-text: #969696;
-  --palette-kbd-bg: #1e1e1e;
-  --palette-kbd-border: #3c3c3c;
-  --palette-kbd-text: #cccccc;
-  --palette-row-text: #cccccc;
-  --palette-row-muted: #767676;
-  --palette-row-selected-bg: #04395e;
-  --palette-row-selected-text: #ffffff;
-  --palette-row-selected-muted: rgba(255, 255, 255, 0.62);
-  --palette-keybinding-on-selected: #9dc3e6;
-  --palette-keybinding-idle: #767676;
-  --palette-backdrop: rgba(0, 0, 0, 0.5);
-  --palette-shadow: 0 16px 48px rgba(0, 0, 0, 0.55);
-  --palette-icon-json: #cbcb41;
-  --palette-icon-md: #6fb3d2;
-  --palette-icon-css: #d4d4d4;
-  --palette-icon-ts: #519aba;
-  --palette-icon-fallback: #7f7f7f;
-}
-
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --color-bg-main: var(--bg-main);
-  --color-bg-panel: var(--bg-panel);
-  --color-bg-card: var(--bg-card);
-  --color-bg-card-hover: var(--bg-card-hover);
-  --color-bg-tab-active: var(--bg-tab-active);
-  --color-bg-tab-inactive: var(--bg-tab-inactive);
-  --color-border-card: var(--border-card);
-  --color-border-subtle: var(--border-subtle);
-  --color-text-primary: var(--text-primary);
-  --color-text-secondary: var(--text-secondary);
-  --color-text-disabled: var(--text-disabled);
-  --color-accent: var(--accent);
-  --color-accent-dark: var(--accent-dark);
-  --color-accent-bg: var(--accent-bg);
-  --color-plan-accent: var(--plan-accent);
-  --color-plan-accent-dark: var(--plan-accent-dark);
-  --color-plan-accent-bg: var(--plan-accent-bg);
-  --color-debug-accent: var(--debug-accent);
-  --color-debug-accent-dark: var(--debug-accent-dark);
-  --color-debug-accent-bg: var(--debug-accent-bg);
-  --color-ask-accent: var(--ask-accent);
-  --color-ask-accent-dark: var(--ask-accent-dark);
-  --color-ask-accent-bg: var(--ask-accent-bg);
-  --radius-card: var(--radius-card);
-  --radius-tab: var(--radius-tab);
-  --radius-pill: var(--radius-pill);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
 }
 
 * {
@@ -364,6 +200,14 @@ pre {
   position: relative;
   background: transparent;
   box-shadow: none;
+}
+
+:root {
+  --context-usage-system: #9ca3af;
+  --context-usage-tools: #6366f1;
+  --context-usage-mcp: #a855f7;
+  --context-usage-summarized: #ec4899;
+  --context-usage-conversation: #d97706;
 }
 
 [data-group] {

@@ -2,6 +2,7 @@ import type { LucideIcon } from "lucide-react";
 import {
   BookOpen,
   Bot,
+  Blocks,
   Braces,
   Brackets,
   Container,
@@ -24,6 +25,7 @@ import {
   Table,
   Terminal,
   Type,
+  ListChecks,
 } from "lucide-react";
 
 export type FileTypeIconEntry = { Icon: LucideIcon; className: string };
@@ -129,6 +131,8 @@ export const fileTypeIcons = {
   settings: { Icon: Settings, className: "text-[var(--text-secondary)]" },
   browser: { Icon: Globe, className: "text-[#6cb5f5]" },
   kanban: { Icon: Table, className: "text-[#6aab73]" },
+  plan: { Icon: ListChecks, className: "text-[var(--plan-accent)]" },
+  extension: { Icon: Blocks, className: "text-[#c084fc]" },
   agent: { Icon: Bot, className: "text-[var(--accent)]" },
   subagent: { Icon: Bot, className: "text-[#c084fc]" },
 } as const satisfies Record<string, FileTypeIconEntry>;

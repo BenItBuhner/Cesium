@@ -1,3 +1,4 @@
+import { tryParseUrl } from "@/lib/safe-url";
 import {
   WORKBENCH_VIEW_SEARCH_PARAM,
   WORKSPACE_ROUTE,
@@ -31,7 +32,13 @@ function isDesktopFileRenderer(): boolean {
 
 function defaultWorkspaceRoute(): WorkspaceScopedRoute {
   if (isDesktopFileRenderer()) {
-    return window.location.pathname || "/";
+    const path = window.location.pathname || "/";
+    // Before the desktop shim navigates, pathname can still be the packaged
+    // `index.html` path — using that as a URL base breaks `new URL(route, base)`.
+    if (path.endsWith(".html") || path.includes("desktop-renderer")) {
+      return WORKSPACE_ROUTE;
+    }
+    return path;
   }
   return WORKSPACE_ROUTE;
 }
@@ -53,10 +60,16 @@ export function buildWorkspaceScopedUrl(
   extraParams?: Record<string, string | null | undefined>
 ): string {
   const base =
-    origin === "null" && typeof window !== "undefined"
-      ? window.location.href
+    !origin || origin === "null"
+      ? typeof window !== "undefined"
+        ? window.location.href
+        : "http://127.0.0.1/"
       : origin;
-  const url = new URL(route, base);
+  const url =
+    tryParseUrl(route, base) ??
+    tryParseUrl(route, "http://127.0.0.1/") ??
+    tryParseUrl(WORKSPACE_ROUTE, base) ??
+    new URL(WORKSPACE_ROUTE, "http://127.0.0.1/");
   url.searchParams.set("workspaceId", workspaceId);
   url.searchParams.set("windowId", windowId);
   if (extraParams) {
@@ -80,7 +93,9 @@ export function buildWorkspaceWindowUrl(
   const effectiveRoute = route ?? defaultWorkspaceRoute();
   const extra: Record<string, string> = {};
   if (typeof window !== "undefined") {
-    const v = new URL(window.location.href).searchParams.get(WORKBENCH_VIEW_SEARCH_PARAM);
+    const v = tryParseUrl(window.location.href)?.searchParams.get(
+      WORKBENCH_VIEW_SEARCH_PARAM
+    );
     if (v === "editor") {
       extra[WORKBENCH_VIEW_SEARCH_PARAM] = "editor";
     }

@@ -50,7 +50,7 @@ export function LiveSubagentCard({
   sessionId?: string;
   onOpenTranscript?: (payload: { transcript: ChatMessage[]; sessionId?: string }) => void;
 }) {
-  const renderedTranscript = transcript ?? [];
+  const renderedTranscript = useMemo(() => transcript ?? [], [transcript]);
   const renderedRecentActivity = useMemo(
     () => inferRecentActivity(renderedTranscript, recentActivity),
     [renderedTranscript, recentActivity]

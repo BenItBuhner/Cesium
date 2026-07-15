@@ -1,0 +1,12 @@
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/preflight.css" layer(base);
+@import "tailwindcss/utilities.css";
+
+@import "nativewind/theme";
+
+/*
+ * Shared Cesium design tokens — the exact same values the Next.js and Electron
+ * apps consume, generated from packages/design/src/theme-tokens.ts. Do not
+ * declare token variables here.
+ */
+@import "../../packages/design/generated/native-theme.css";

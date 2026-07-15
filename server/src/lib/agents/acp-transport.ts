@@ -63,6 +63,7 @@ export type AcpTransportOptions = {
   args: string[];
   cwd: string;
   env?: NodeJS.ProcessEnv;
+  processName?: string;
 };
 
 export class AcpStdioClient {
@@ -146,9 +147,13 @@ export class AcpStdioClient {
   static async spawn(options: AcpTransportOptions): Promise<AcpStdioClient> {
     const child = spawn(options.command, options.args, {
       cwd: options.cwd,
-      env: spawnSafeEnv(options.env),
+      env: spawnSafeEnv({
+        ...options.env,
+        ...(options.processName ? { OPENCURSOR_PROCESS_NAME: options.processName } : {}),
+      }),
       stdio: ["pipe", "pipe", "pipe"],
       windowsHide: true,
+      argv0: options.processName ?? undefined,
     });
 
     await new Promise<void>((resolve, reject) => {

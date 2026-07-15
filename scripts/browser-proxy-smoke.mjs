@@ -21,7 +21,6 @@
  *   OCS_BASE_URL             — proxy base (default http://localhost:9100)
  */
 
-import { setTimeout as sleep } from "node:timers/promises";
 import { writeFile, mkdir } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -153,7 +152,6 @@ async function probeSite(site, token) {
   let title = "";
   let contentType = "";
   let finalStatus = 0;
-  let redirects = 0;
   let errorMessage = "";
   try {
     const res = await fetch(proxyUrl, {
@@ -174,7 +172,6 @@ async function probeSite(site, token) {
       title = titleMatch ? titleMatch[1].trim().slice(0, 120) : "";
       const lower = text.toLowerCase();
       const markerHit = site.markers.some((m) => lower.includes(m));
-      redirects = 0;
       return {
         id: site.id,
         label: site.label,

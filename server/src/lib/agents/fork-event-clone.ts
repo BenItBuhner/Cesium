@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { AgentEventInput, AgentStoredEvent } from "./types.js";
 
-const SKIP_KINDS = new Set<AgentStoredEvent["kind"]>(["status", "chat_fork"]);
+const SKIP_KINDS = new Set<AgentStoredEvent["kind"]>(["status", "chat_fork", "system_reminder"]);
 
 /**
  * Deep-clone events from a source conversation into a forked conversation with fresh
@@ -147,6 +147,17 @@ export function remapSourceEventsForFork(
         });
         break;
       }
+      case "plan_file":
+        out.push({
+          eventId: randomUUID(),
+          conversationId: newConversationId,
+          kind: "plan_file",
+          path: e.path,
+          title: e.title,
+          previewMode: e.previewMode,
+          raw: e.raw,
+        });
+        break;
       case "permission_request": {
         const newRequestId = mapRequestId(e.requestId);
         out.push({

@@ -1,9 +1,9 @@
 import { randomUUID } from "node:crypto";
+import { asString } from "./json-coerce.js";
 import type {
   AgentBackendInfo,
   AgentConfigOption,
   AgentConversationSnapshot,
-  AgentEventInput,
   AgentProvider,
   AgentProviderCapabilities,
   AgentRuntimeCallbacks,
@@ -20,6 +20,15 @@ import {
   normalizeOpenCodeServerMessage,
   openCodeServerPermissionResponse,
 } from "./opencode-server-normalize.js";
+import {
+  attachOpenCodeGlobalSse,
+  detachOpenCodeGlobalSse,
+} from "./opencode-global-sse.js";
+import { materializeImageAttachments } from "./prompt-attachments.js";
+import {
+  appendAgentPluginPrompt,
+  resolveAgentPluginAttachments,
+} from "../plugins/attachments.js";
 
 function optionValue(options: AgentConfigOption[], id: string, fallback = ""): string {
   return options.find((option) => option.id === id)?.currentValue || fallback;
@@ -33,10 +42,6 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : null;
-}
-
-function asString(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim() ? value : undefined;
 }
 
 function optionName(options: AgentConfigOption[], id: string, value: string): string {
@@ -125,6 +130,8 @@ class OpenCodeServerSessionHandle implements AgentSessionHandle {
   private disposed = false;
   private acceptingPromptSse = false;
   private activePrompt: ActiveOpenCodePrompt | null = null;
+  private globalSsePoolKey: string | null = null;
+  private readonly globalSseRegistrationId: string;
 
   constructor(
     private readonly backend: AgentBackendInfo,
@@ -132,6 +139,7 @@ class OpenCodeServerSessionHandle implements AgentSessionHandle {
     configOptions: AgentConfigOption[],
     providerSessionId?: string | null
   ) {
+    this.globalSseRegistrationId = callbacks.conversation.id;
     this.capabilities = backend.capabilities;
     this.configOptions = callbacks.conversation.configOptions.length > 0
       ? callbacks.conversation.configOptions
@@ -182,6 +190,15 @@ class OpenCodeServerSessionHandle implements AgentSessionHandle {
         ]);
       },
     });
+    this.globalSsePoolKey = `${this.connection.client.baseUrl}::${this.callbacks.workspace.root}`;
+    attachOpenCodeGlobalSse(this.globalSsePoolKey, this.globalSseRegistrationId, {
+      workspaceRoot: this.callbacks.workspace.root,
+      rootSessionId: this.sessionId,
+      baseUrl: this.connection.client.baseUrl,
+      onEvent: async (_directory, payload) => {
+        await this.handleServerEvent(payload, { allowChildSessionEvents: true });
+      },
+    });
     await this.callbacks.updateConversation((current) => ({
       ...current,
       providerSessionId: id,
@@ -203,11 +220,23 @@ class OpenCodeServerSessionHandle implements AgentSessionHandle {
     }
     const recovery = splitSessionRecoveryPrompt(input.text);
     if (recovery) {
-      await this.seedContextText(recovery.transcript, input.userMessageId);
+      await this.seedContextText(recovery.transcript);
     } else {
       await this.seedContextIfNeeded(input.userMessageId);
     }
-    const promptText = recovery?.userText ?? input.text;
+    const pluginAttachments = await resolveAgentPluginAttachments({
+      workspaceId: this.callbacks.workspace.id,
+      workspaceRoot: this.callbacks.workspace.root,
+      backendId: "opencode-server",
+    });
+    const promptText = appendAgentPluginPrompt(
+      recovery?.userText ?? input.text,
+      pluginAttachments
+    );
+    const imageAttachments = await materializeImageAttachments(
+      input.attachments,
+      "opencode-server"
+    );
     const messageId = `opencode-server-${input.userMessageId}`;
     await this.callbacks.updateConversation((current) => ({
       ...current,
@@ -219,19 +248,23 @@ class OpenCodeServerSessionHandle implements AgentSessionHandle {
     this.activePrompt = activePrompt;
     try {
       const model = modelBody(optionValue(this.configOptions, "model", this.callbacks.conversation.config.modelId));
+      const agent =
+        optionValue(this.configOptions, "agent") ||
+        optionValue(this.configOptions, "mode", this.callbacks.conversation.config.mode);
       this.acceptingPromptSse = true;
-      await this.connection.client.sendPromptAsync(this.sessionId, {
-        ...(model ? { model } : {}),
-        parts: [
-          { type: "text", text: promptText },
-          ...(input.attachments ?? []).flatMap((attachment) =>
-            attachment.mimeType.startsWith("image/") && attachment.name
-              ? [{ type: "image", path: attachment.name }]
-              : []
-          ),
-        ],
-      });
-      await this.waitForActivePrompt(activePrompt);
+      try {
+        await this.connection.client.sendPromptAsync(this.sessionId, {
+          ...(model ? { model } : {}),
+          ...(agent && agent !== "auto" && agent !== "__default__" ? { agent } : {}),
+          parts: [
+            { type: "text", text: promptText },
+            ...imageAttachments.paths.map((path) => ({ type: "image", path })),
+          ],
+        });
+        await this.waitForActivePrompt(activePrompt);
+      } finally {
+        await imageAttachments.cleanup();
+      }
       this.acceptingPromptSse = false;
       this.activePrompt = null;
       await this.callbacks.appendEvents([
@@ -361,6 +394,10 @@ class OpenCodeServerSessionHandle implements AgentSessionHandle {
     this.activePrompt = null;
     this.events?.close();
     this.events = null;
+    if (this.globalSsePoolKey) {
+      detachOpenCodeGlobalSse(this.globalSsePoolKey, this.globalSseRegistrationId);
+      this.globalSsePoolKey = null;
+    }
     await this.connection?.dispose();
     this.connection = null;
   }
@@ -375,10 +412,10 @@ class OpenCodeServerSessionHandle implements AgentSessionHandle {
       this.seededContext = true;
       return;
     }
-    await this.seedContextText(transcript, userMessageId);
+    await this.seedContextText(transcript);
   }
 
-  private async seedContextText(transcript: string, userMessageId: string): Promise<void> {
+  private async seedContextText(transcript: string): Promise<void> {
     if (!this.connection) {
       return;
     }
@@ -629,7 +666,10 @@ class OpenCodeServerSessionHandle implements AgentSessionHandle {
     }
   }
 
-  private async handleServerEvent(data: unknown): Promise<void> {
+  private async handleServerEvent(
+    data: unknown,
+    options: { allowChildSessionEvents?: boolean } = {}
+  ): Promise<void> {
     if (this.disposed || !this.acceptingPromptSse) {
       return;
     }
@@ -648,6 +688,7 @@ class OpenCodeServerSessionHandle implements AgentSessionHandle {
       conversationId: this.callbacks.conversation.id,
       rootSessionId: this.sessionId,
       payload: record,
+      allowChildSessionEvents: options.allowChildSessionEvents,
     });
     if (events.length === 0) {
       return;

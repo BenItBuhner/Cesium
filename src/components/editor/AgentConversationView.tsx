@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useDeferredValue, useEffect, useMemo, useState } from "react";
 import { Search } from "lucide-react";
 import { ChatComposer } from "@/components/chat/ChatComposer";
 import { ComposerQueueDock } from "@/components/chat/ComposerQueueDock";
@@ -17,18 +17,20 @@ import { useRedoInlineUserMessage } from "@/components/chat/useRedoInlineUserMes
 import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
 import {
   extractComposerUserMessageHistory,
+  latestBurnProgressStatus,
   projectAgentEventsToChatMessages,
 } from "@/lib/agent-chat";
 import {
   findDockedAskQuestion,
   hideDockedAskFromScroll,
 } from "@/lib/ask-question-dock";
+import { isAgentComposerBusy } from "@/lib/agent-completion-error";
+import { computeContextUsageRefreshGeneration } from "@/lib/context-usage-refresh";
 import { buildQueuedConfigOverride } from "@/lib/queued-prompt-utils";
 import { markConversationSwitchVisible } from "@/lib/dev-perf";
 import { useAgentConversations } from "@/components/chat/AgentConversationsContext";
 import { deleteAgentConversationQueueItem } from "@/lib/server-api";
 import { isOrchestrationModeLocked } from "@/lib/chat-modes";
-import type { AgentBackendId } from "@/lib/agent-types";
 import type { EditorMode, ImageAttachment, QueuedChatPrompt } from "@/lib/types";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { resolvePersistedChatScroll } from "@/lib/workspace-session";
@@ -73,6 +75,9 @@ interface AgentConversationViewProps {
   setExpandedComposerDraft?: (draftId: string | null) => void;
 }
 
+/** Stable identity for the no-events case so memos/effects keyed on it don't re-fire every render. */
+const EMPTY_THREAD_EVENTS: never[] = [];
+
 export function AgentConversationView({
   conversationId,
   expandedComposerDraftId: expandedComposerDraftIdOverride,
@@ -86,7 +91,6 @@ export function AgentConversationView({
     upsertComposerDraft,
     setComposerSelection,
     openComposerDraft,
-    setExpandedComposerController,
     expandedComposerDraftId: workspaceExpandedComposerDraftId,
     setExpandedComposerDraft: setWorkspaceExpandedComposerDraft,
   } = useOpenInEditor();
@@ -119,6 +123,7 @@ loadOlderConversationHistory,
   retryConversation,
   } = useAgentConversations();
   const { settings: globalSettings } = useGlobalSettings();
+  const goalModeBetaEnabled = globalSettings.features.goalModeBeta;
   const {
     activeWorkspaceId,
     activeWindowId,
@@ -130,25 +135,31 @@ loadOlderConversationHistory,
     expandedComposerDraftIdOverride ?? workspaceExpandedComposerDraftId;
   const setExpandedComposerDraft =
     setExpandedComposerDraftOverride ?? setWorkspaceExpandedComposerDraft;
-  const shouldProvideExpandedComposerController =
-    expandedComposerDraftIdOverride !== undefined ||
-    setExpandedComposerDraftOverride !== undefined;
 
   const conversation = conversationsById[conversationId] ?? null;
   const loadState = getConversationLoadStatus(conversationId);
   const composerState = getConversationComposerState(conversationId);
-  const rawThreadEvents = eventsByConversationId[conversationId] ?? [];
+  const rawThreadEvents = eventsByConversationId[conversationId] ?? EMPTY_THREAD_EVENTS;
+  const contextUsageRefreshGeneration = useMemo(
+    () => computeContextUsageRefreshGeneration(rawThreadEvents),
+    [rawThreadEvents]
+  );
+  const burnProgress = useMemo(
+    () => latestBurnProgressStatus(rawThreadEvents, conversation?.status),
+    [conversation?.status, rawThreadEvents]
+  );
+  const deferredThreadEvents = useDeferredValue(rawThreadEvents);
   const composerUserMessageHistory = useMemo(
     () => extractComposerUserMessageHistory(rawThreadEvents),
     [rawThreadEvents]
   );
   const threadMessages = useMemo(
     () =>
-      projectAgentEventsToChatMessages(rawThreadEvents, {
+      projectAgentEventsToChatMessages(deferredThreadEvents, {
         backendId: conversation?.config.backendId,
         workspaceRoot: workspaceInfo?.root ?? null,
       }),
-    [conversationId, conversation?.config.backendId, rawThreadEvents, workspaceInfo?.root]
+    [conversationId, conversation?.config.backendId, deferredThreadEvents, workspaceInfo?.root]
   );
   const dockedAsk = useMemo(
     () =>
@@ -258,6 +269,7 @@ loadOlderConversationHistory,
     getRedoComposerSeed,
     backends,
     modelVisibility: globalSettings.models.byBackend,
+    goalModeBetaEnabled,
     composerUserMessageHistory,
     hasOlderHistory: historyCursor.hasOlder,
     onRequestOlderHistory: () => loadOlderConversationHistory(conversationId),
@@ -405,6 +417,7 @@ loadOlderConversationHistory,
   const composerDraftText = composerDrafts[composerDraftId]?.content ?? "";
   const composerDraftAttachments = composerDrafts[composerDraftId]?.attachments;
   const composerDraftCaptures = composerDrafts[composerDraftId]?.captures;
+  const composerDraftTextReferences = composerDrafts[composerDraftId]?.textReferences;
   const composerSelection = composerSelections[composerDraftId] ?? {
     start: composerDraftText.length,
     end: composerDraftText.length,
@@ -499,7 +512,7 @@ const showRecentChatsSection =
         key={composerDraftId}
         mode={composerState.mode}
         onModeChange={(next) => {
-          if (isOrchestrationModeLocked(composerState.mode, true)) {
+          if (isOrchestrationModeLocked()) {
             return;
           }
           if (composerState.busy) {
@@ -551,11 +564,14 @@ const showRecentChatsSection =
             draftId: composerDraftId,
             title: composerDraftTitle,
             content: composerDraftText,
+            attachments: composerDraftAttachments,
+            captures: composerDraftCaptures,
+            textReferences: composerDraftTextReferences,
           });
         }}
         busy={composerState.busy}
         configLocked={false}
-        modeLocked={isOrchestrationModeLocked(composerState.mode, true)}
+        modeLocked={isOrchestrationModeLocked()}
         draftAttachments={composerDraftAttachments}
         onDraftAttachmentsChange={(next) =>
           upsertComposerDraft(composerDraftId, {
@@ -568,6 +584,13 @@ const showRecentChatsSection =
           upsertComposerDraft(composerDraftId, {
             title: composerDraftTitle,
             captures: next,
+          })
+        }
+        draftTextReferences={composerDraftTextReferences}
+        onDraftTextReferencesChange={(next) =>
+          upsertComposerDraft(composerDraftId, {
+            title: composerDraftTitle,
+            textReferences: next,
           })
         }
         onSubmit={(text, attachments?: ImageAttachment[], options?: { delivery?: "normal" | "steer" }) => {
@@ -621,8 +644,10 @@ const showRecentChatsSection =
         onPause={() => pauseConversation(conversationId)}
         onResume={() => resumeConversation(conversationId)}
         conversationStatus={conversation.status}
+        burnProgress={burnProgress}
+        conversationId={conversationId}
+        contextUsageRefreshGeneration={contextUsageRefreshGeneration}
         layout={isEmptyThread ? "empty-top" : "docked-bottom"}
-        shellMxClass=""
         userMessageHistory={composerUserMessageHistory}
         hasMoreOlderUserMessageHistory={historyCursor.hasOlder}
         onRequestOlderUserMessageHistory={() =>
@@ -680,8 +705,10 @@ const showRecentChatsSection =
             conversationId={conversationId}
             composerDraftId={composerDraftId}
             conversationBusy={
-              conversation?.status === "running" ||
-              conversation?.status === "awaiting_permission"
+              conversation
+                ? isAgentComposerBusy(conversation, eventsByConversationId[conversationId]) ||
+                  conversation.status === "awaiting_permission"
+                : false
             }
             hasOlderHistory={historyCursor.hasOlder}
             loadingOlderHistory={historyCursor.loadingOlder}
@@ -690,11 +717,6 @@ const showRecentChatsSection =
               restoredEditorChatScroll.mode === "restore" &&
               restoredEditorChatScroll.scrollTop !== undefined
                 ? restoredEditorChatScroll.scrollTop
-                : undefined
-            }
-            initialScrollAnchor={
-              restoredEditorChatScroll.mode === "restore"
-                ? restoredEditorChatScroll.anchor
                 : undefined
             }
             onScrollTopSettled={(scrollTop, meta: MessageListScrollPersistMeta) => {

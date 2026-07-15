@@ -29,6 +29,19 @@ import type {
   OrchestrationBoardSnapshot,
 } from "../../lib/orchestration/types.js";
 import type {
+  BurnGoalPatch,
+  BurnGoalRecord,
+} from "../../lib/agents/burn-goal-types.js";
+import {
+  normalizeBurnGoalProgressPercent,
+  normalizeBurnGoalRevision,
+  normalizeBurnGoalSnapshots,
+} from "../../lib/agents/burn-goal-types.js";
+import type {
+  ExtensionInstallRecord,
+  ExtensionPermissionGrant,
+} from "../../lib/extensions/types.js";
+import type {
   AgentProviderCacheRecord,
   AppendAgentEventsInput,
   ListAgentConversationsInput,
@@ -59,6 +72,14 @@ function getProviderCacheFile(backendId: string): string {
 
 function getOrchestrationBoardsDir(workspaceId: string): string {
   return path.join(DATA_DIR, "workspaces", workspaceId, "orchestration");
+}
+
+function getBurnGoalsFile(workspaceId: string): string {
+  return path.join(DATA_DIR, "workspaces", workspaceId, "burn-goals.json");
+}
+
+function getExtensionsFile(workspaceId: string): string {
+  return path.join(DATA_DIR, "workspaces", workspaceId, "extensions.json");
 }
 
 function getOrchestrationBoardFile(workspaceId: string, boardId: string): string {
@@ -106,6 +127,104 @@ type PersistedWorkspaceWindowRegistry = {
   schemaVersion: 1;
   windows: WorkspaceWindowRecord[];
 };
+
+type PersistedBurnGoalsFile = {
+  schemaVersion: 1;
+  goals: BurnGoalRecord[];
+};
+
+type PersistedExtensionsFile = {
+  schemaVersion: 1;
+  extensions: ExtensionInstallRecord[];
+};
+
+function isBurnGoalRecord(value: unknown): value is BurnGoalRecord {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  const record = value as Partial<BurnGoalRecord>;
+  return (
+    record.schemaVersion === 1 &&
+    typeof record.goalId === "string" &&
+    typeof record.workspaceId === "string" &&
+    typeof record.conversationId === "string" &&
+    typeof record.objective === "string" &&
+    typeof record.status === "string" &&
+    typeof record.phase === "string"
+  );
+}
+
+function normalizeBurnGoalRecord(record: BurnGoalRecord): BurnGoalRecord {
+  const raw = record as Partial<BurnGoalRecord>;
+  return {
+    ...record,
+    progressPercent: normalizeBurnGoalProgressPercent(raw.progressPercent),
+    headline: typeof raw.headline === "string" && raw.headline.trim()
+      ? raw.headline.trim()
+      : null,
+    revision: normalizeBurnGoalRevision(raw.revision),
+    snapshots: normalizeBurnGoalSnapshots(raw.snapshots),
+  };
+}
+
+async function readBurnGoalsFile(workspaceId: string): Promise<BurnGoalRecord[]> {
+  const raw = await readJsonFile<PersistedBurnGoalsFile | null>(
+    getBurnGoalsFile(workspaceId),
+    null
+  );
+  if (!raw || raw.schemaVersion !== 1 || !Array.isArray(raw.goals)) {
+    return [];
+  }
+  return raw.goals.filter(isBurnGoalRecord).map(normalizeBurnGoalRecord);
+}
+
+async function writeBurnGoalsFile(
+  workspaceId: string,
+  goals: BurnGoalRecord[]
+): Promise<void> {
+  await writeJsonFile(getBurnGoalsFile(workspaceId), {
+    schemaVersion: 1,
+    goals,
+  } satisfies PersistedBurnGoalsFile);
+}
+
+function isExtensionInstallRecord(value: unknown): value is ExtensionInstallRecord {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  const record = value as Partial<ExtensionInstallRecord>;
+  return (
+    record.schemaVersion === 1 &&
+    typeof record.workspaceId === "string" &&
+    typeof record.extensionId === "string" &&
+    typeof record.publisher === "string" &&
+    typeof record.name === "string" &&
+    typeof record.version === "string" &&
+    typeof record.installPath === "string" &&
+    typeof record.enabled === "boolean"
+  );
+}
+
+async function readExtensionsFile(workspaceId: string): Promise<ExtensionInstallRecord[]> {
+  const raw = await readJsonFile<PersistedExtensionsFile | null>(
+    getExtensionsFile(workspaceId),
+    null
+  );
+  if (!raw || raw.schemaVersion !== 1 || !Array.isArray(raw.extensions)) {
+    return [];
+  }
+  return raw.extensions.filter(isExtensionInstallRecord);
+}
+
+async function writeExtensionsFile(
+  workspaceId: string,
+  extensions: ExtensionInstallRecord[]
+): Promise<void> {
+  await writeJsonFile(getExtensionsFile(workspaceId), {
+    schemaVersion: 1,
+    extensions,
+  } satisfies PersistedExtensionsFile);
+}
 
 function normalizeWorkspaceWindowRecords(raw: unknown): WorkspaceWindowRecord[] {
   if (!Array.isArray(raw)) {
@@ -537,6 +656,140 @@ export class LegacyJsonStorageDriver implements StorageDriver {
     );
     if (limit <= 0 || all.length <= limit) return all;
     return all.slice(-limit);
+  }
+
+  // ---------- Burn goals ----------
+  async getBurnGoalByConversation(
+    workspaceId: string,
+    conversationId: string
+  ): Promise<BurnGoalRecord | null> {
+    const goals = await readBurnGoalsFile(workspaceId);
+    return goals.find((goal) => goal.conversationId === conversationId) ?? null;
+  }
+
+  async upsertBurnGoal(record: BurnGoalRecord): Promise<void> {
+    const goals = await readBurnGoalsFile(record.workspaceId);
+    const next = goals.some((goal) => goal.goalId === record.goalId)
+      ? goals.map((goal) => (goal.goalId === record.goalId ? record : goal))
+      : [
+          ...goals.filter((goal) => goal.conversationId !== record.conversationId),
+          record,
+        ];
+    await writeBurnGoalsFile(record.workspaceId, next);
+  }
+
+  async updateBurnGoal(
+    workspaceId: string,
+    conversationId: string,
+    patch: BurnGoalPatch
+  ): Promise<BurnGoalRecord | null> {
+    const goals = await readBurnGoalsFile(workspaceId);
+    const index = goals.findIndex((goal) => goal.conversationId === conversationId);
+    if (index < 0) {
+      return null;
+    }
+    const current = goals[index]!;
+    const next: BurnGoalRecord = {
+      ...current,
+      ...patch,
+      revision:
+        patch.revision !== undefined
+          ? patch.revision
+          : current.revision + 1,
+      updatedAt: Date.now(),
+    };
+    goals[index] = next;
+    await writeBurnGoalsFile(workspaceId, goals);
+    return next;
+  }
+
+  async listBurnGoals(workspaceId: string): Promise<BurnGoalRecord[]> {
+    return (await readBurnGoalsFile(workspaceId)).sort(
+      (a, b) => b.updatedAt - a.updatedAt || a.goalId.localeCompare(b.goalId)
+    );
+  }
+
+  // ---------- VS Code extensions ----------
+  async listInstalledExtensions(workspaceId: string): Promise<ExtensionInstallRecord[]> {
+    return (await readExtensionsFile(workspaceId)).sort(
+      (a, b) => b.updatedAt - a.updatedAt || a.extensionId.localeCompare(b.extensionId)
+    );
+  }
+
+  async getInstalledExtension(
+    workspaceId: string,
+    extensionId: string
+  ): Promise<ExtensionInstallRecord | null> {
+    const normalizedId = extensionId.toLowerCase();
+    return (
+      (await readExtensionsFile(workspaceId)).find(
+        (record) => record.extensionId.toLowerCase() === normalizedId
+      ) ?? null
+    );
+  }
+
+  async upsertInstalledExtension(record: ExtensionInstallRecord): Promise<void> {
+    const extensions = await readExtensionsFile(record.workspaceId);
+    const normalizedId = record.extensionId.toLowerCase();
+    const next = extensions.some(
+      (extension) => extension.extensionId.toLowerCase() === normalizedId
+    )
+      ? extensions.map((extension) =>
+          extension.extensionId.toLowerCase() === normalizedId ? record : extension
+        )
+      : [...extensions, record];
+    await writeExtensionsFile(record.workspaceId, next);
+  }
+
+  async deleteInstalledExtension(
+    workspaceId: string,
+    extensionId: string
+  ): Promise<boolean> {
+    const normalizedId = extensionId.toLowerCase();
+    const extensions = await readExtensionsFile(workspaceId);
+    const next = extensions.filter(
+      (extension) => extension.extensionId.toLowerCase() !== normalizedId
+    );
+    if (next.length === extensions.length) {
+      return false;
+    }
+    await writeExtensionsFile(workspaceId, next);
+    return true;
+  }
+
+  async patchExtensionSettings(
+    workspaceId: string,
+    extensionId: string,
+    settings: Record<string, unknown>
+  ): Promise<ExtensionInstallRecord | null> {
+    const record = await this.getInstalledExtension(workspaceId, extensionId);
+    if (!record) {
+      return null;
+    }
+    const next: ExtensionInstallRecord = {
+      ...record,
+      settings: {
+        ...record.settings,
+        ...settings,
+      },
+      updatedAt: Date.now(),
+    };
+    await this.upsertInstalledExtension(next);
+    return next;
+  }
+
+  async upsertExtensionPermissionGrant(grant: ExtensionPermissionGrant): Promise<void> {
+    const record = await this.getInstalledExtension(grant.workspaceId, grant.extensionId);
+    if (!record) {
+      throw new Error(`Unknown extension: ${grant.extensionId}`);
+    }
+    const grants = record.permissions.filter((existing) => existing.id !== grant.id);
+    grants.push(grant);
+    await this.upsertInstalledExtension({
+      ...record,
+      permissions: grants,
+      updatedAt: Date.now(),
+    });
   }
 
   // ---------- provider cache ----------

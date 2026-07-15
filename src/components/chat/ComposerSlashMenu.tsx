@@ -21,6 +21,8 @@ import type { EditorMode, ModelInfo } from "@/lib/types";
 type Props = {
   sections: SlashMenuSection[];
   flatItems: SlashMenuItem[];
+  totalItems: number;
+  truncated: boolean;
   selectedIndex: number;
   mode: EditorMode;
   model: ModelInfo;
@@ -45,6 +47,8 @@ function rowClass(selected: boolean, disabled?: boolean): string {
 export function ComposerSlashMenu({
   sections,
   flatItems,
+  totalItems,
+  truncated,
   selectedIndex,
   mode,
   model,
@@ -170,6 +174,11 @@ export function ComposerSlashMenu({
               );
             })
           )}
+          {truncated ? (
+            <p className="px-[8px] py-[6px] font-sans text-[12px] text-[var(--text-disabled)]">
+              Showing {flatItems.length} of {totalItems} matches. Keep typing to narrow the list.
+            </p>
+          ) : null}
         </div>
       </VerticalFadedScroll>
     </div>,

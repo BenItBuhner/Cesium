@@ -8,6 +8,7 @@ import {
   useRef,
   useEffect,
   useLayoutEffect,
+  useDeferredValue,
 } from "react";
 import { createPortal } from "react-dom";
 import { useVirtualizer } from "@tanstack/react-virtual";
@@ -34,13 +35,13 @@ import { measureDev, recordPerfSample } from "@/lib/dev-perf";
 
 /** Row height for @tanstack/react-virtual (py-[4px] + 13px text). */
 const MODEL_ROW_ESTIMATE_PX = 30;
-/** Virtualize when the filtered catalog exceeds this many groups. */
-const MODEL_LIST_VIRTUALIZE_THRESHOLD = 48;
+/** Virtualize before larger catalogs can jank low-power devices. */
+const MODEL_LIST_VIRTUALIZE_THRESHOLD = 24;
 
 const popoverSurface =
   "rounded-[var(--radius-card)] border border-[var(--border-card)] bg-[var(--bg-panel)]";
 
-function settingsNavForBackend(_backendId: AgentBackendId): string {
+function settingsNavForBackend(): string {
   return "agents";
 }
 
@@ -148,27 +149,6 @@ function parseBracketParams(value: string): PickerVariantParams {
     }
   }
   return out;
-}
-
-function applyConfigSelectionParams(
-  params: PickerVariantParams,
-  selections: ModelInfo["configSelections"]
-): PickerVariantParams {
-  if (!selections?.length) return params;
-  const next = { ...params };
-  for (const selection of selections) {
-    const key = normalizeVariantToken(selection.configId);
-    const value = selection.value;
-    const normalizedValue = normalizeVariantToken(value);
-    if (/context|length|window|token/.test(key)) {
-      next.context = formatContextLabel(value);
-    } else if (/reason|effort|thinking/.test(key)) {
-      next.reasoning = formatReasoningLabel(value);
-    } else if (/speed|fast/.test(key)) {
-      next.fast = normalizedValue === "fast" || normalizedValue === "true";
-    }
-  }
-  return next;
 }
 
 function consumeTrailingVariantToken(words: string[]): { key: keyof PickerVariantParams; value: string } | null {
@@ -351,15 +331,15 @@ function buildModelPickerSearchIndex(groups: BaseModelPickerGroup[]): ModelPicke
   );
 }
 
-function applySelectedToGroups(
-  groups: BaseModelPickerGroup[],
+function applySelectedToGroup(
+  group: BaseModelPickerGroup,
   selected: ModelInfo
-): ModelPickerGroup[] {
-  return groups.map((group) => ({
+): ModelPickerGroup {
+  return {
     ...group,
     selectedVariant:
       group.variants.find((variant) => isSameModelChoice(variant.model, selected)) ?? null,
-  }));
+  };
 }
 
 function filterModelPickerGroups(
@@ -568,6 +548,7 @@ export function ModelDropdown({
   const open = isControlled ? controlledIsOpen ?? false : internalOpen;
 
   const [query, setQuery] = useState("");
+  const deferredQuery = useDeferredValue(query);
   const [highlightedIndex, setHighlightedIndex] = useState(0);
   const [harnessFlyoutOpen, setHarnessFlyoutOpen] = useState(false);
   const [harnessFlyoutPos, setHarnessFlyoutPos] = useState<{
@@ -643,12 +624,12 @@ export function ModelDropdown({
   );
 
   const openBackendSettings = useCallback(
-    (targetBackendId: AgentBackendId) => {
+    () => {
       updateWorkspaceSession((current) => ({
         ...current,
         settingsView: {
           ...current.settingsView,
-          activeNav: settingsNavForBackend(targetBackendId),
+          activeNav: settingsNavForBackend(),
         },
       }));
       openSettingsView();
@@ -721,27 +702,18 @@ export function ModelDropdown({
 
   useEffect(() => {
     setHighlightedIndex(0);
-  }, [query]);
+  }, [deferredQuery]);
 
   /** Pre-index catalog when models change — not recomputed on each open/filter keystroke. */
-  const searchIndex = useMemo(() => {
-    const baseGroups = buildBaseModelPickerGroups(models);
-    return buildModelPickerSearchIndex(baseGroups);
-  }, [models]);
+  const baseGroups = useMemo(() => buildBaseModelPickerGroups(models), [models]);
+  const searchIndex = useMemo(() => buildModelPickerSearchIndex(baseGroups), [baseGroups]);
 
   const filteredBase = useMemo(
-    () => filterModelPickerGroups(searchIndex, query),
-    [searchIndex, query]
-  );
-
-  const filtered = useMemo(
-    () => applySelectedToGroups(filteredBase, model),
-    [filteredBase, model]
-  );
-
-  const modelGroups = useMemo(
-    () => applySelectedToGroups(searchIndex.map((entry) => entry.group), model),
-    [searchIndex, model]
+    () =>
+      deferredQuery.trim()
+        ? filterModelPickerGroups(searchIndex, deferredQuery)
+        : baseGroups,
+    [baseGroups, searchIndex, deferredQuery]
   );
 
   /** Defer heavy list mount so popover shell + search paint on the first frame. */
@@ -764,9 +736,9 @@ export function ModelDropdown({
 
   useEffect(() => {
     setHighlightedIndex((prev) =>
-      filtered.length === 0 ? 0 : Math.min(prev, filtered.length - 1)
+      filteredBase.length === 0 ? 0 : Math.min(prev, filteredBase.length - 1)
     );
-  }, [filtered.length]);
+  }, [filteredBase.length]);
 
   const listMaxHeight = Math.max(
     96,
@@ -774,14 +746,14 @@ export function ModelDropdown({
   );
 
   const useVirtualList =
-    listContentReady && filtered.length >= MODEL_LIST_VIRTUALIZE_THRESHOLD;
+    listContentReady && filteredBase.length >= MODEL_LIST_VIRTUALIZE_THRESHOLD;
 
   const virtualizer = useVirtualizer({
-    count: useVirtualList ? filtered.length : 0,
+    count: useVirtualList ? filteredBase.length : 0,
     getScrollElement: () => listRef.current,
     estimateSize: () => MODEL_ROW_ESTIMATE_PX,
-    overscan: 10,
-    getItemKey: (index) => filtered[index]?.key ?? String(index),
+    overscan: 6,
+    getItemKey: (index) => filteredBase[index]?.key ?? String(index),
   });
 
   useEffect(() => {
@@ -790,11 +762,11 @@ export function ModelDropdown({
     }
     recordPerfSample("chat.model_dropdown.list_ready", openPerfRef.current, {
       backendId: backendId ?? null,
-      groups: filtered.length,
+      groups: filteredBase.length,
       virtualized: useVirtualList,
     });
     openPerfRef.current = null;
-  }, [backendId, filtered.length, listContentReady, open, useVirtualList]);
+  }, [backendId, filteredBase.length, listContentReady, open, useVirtualList]);
 
   const updateModelListFade = useCallback(() => {
     const el = listRef.current;
@@ -814,7 +786,7 @@ export function ModelDropdown({
       return;
     }
     updateModelListFade();
-  }, [filtered.length, listContentReady, listMaxHeight, open, updateModelListFade, useVirtualList]);
+  }, [filteredBase.length, listContentReady, listMaxHeight, open, updateModelListFade, useVirtualList]);
 
   useLayoutEffect(() => {
     const el = listRef.current;
@@ -878,7 +850,7 @@ export function ModelDropdown({
       switch (e.key) {
         case "ArrowDown":
           e.preventDefault();
-          setHighlightedIndex((prev) => (prev < filtered.length - 1 ? prev + 1 : prev));
+          setHighlightedIndex((prev) => (prev < filteredBase.length - 1 ? prev + 1 : prev));
           break;
         case "ArrowUp":
           e.preventDefault();
@@ -886,8 +858,8 @@ export function ModelDropdown({
           break;
         case "Enter":
           e.preventDefault();
-          if (filtered[highlightedIndex]) {
-            selectModel(filtered[highlightedIndex].defaultVariant.model);
+          if (filteredBase[highlightedIndex]) {
+            selectModel(filteredBase[highlightedIndex].defaultVariant.model);
           }
           break;
         case "Escape":
@@ -906,7 +878,7 @@ export function ModelDropdown({
     },
     [
       open,
-      filtered,
+      filteredBase,
       highlightedIndex,
       selectModel,
       close,
@@ -943,8 +915,14 @@ export function ModelDropdown({
   }, [highlightedIndex, listContentReady, open, useVirtualList, virtualizer]);
 
   const activeEditGroup = useMemo(
-    () => modelGroups.find((group) => group.key === modelEditFlyout?.groupKey) ?? null,
-    [modelEditFlyout?.groupKey, modelGroups]
+    () => {
+      if (!modelEditFlyout?.groupKey) {
+        return null;
+      }
+      const base = searchIndex.find((entry) => entry.group.key === modelEditFlyout.groupKey)?.group;
+      return base ? applySelectedToGroup(base, model) : null;
+    },
+    [model, modelEditFlyout?.groupKey, searchIndex]
   );
   const activeEditGroupHasContext = (activeEditGroup?.contextOptions.length ?? 0) > 0;
   const activeEditGroupHasReasoning = (activeEditGroup?.reasoningOptions.length ?? 0) > 0;
@@ -1104,7 +1082,7 @@ export function ModelDropdown({
                 >
                   {!listContentReady ? (
                     <ModelListSkeleton />
-                  ) : filtered.length === 0 ? (
+                  ) : filteredBase.length === 0 ? (
                     <p className="px-[8px] py-[6px] font-sans text-[13px] text-[var(--text-disabled)]">
                       No models found
                     </p>
@@ -1114,10 +1092,11 @@ export function ModelDropdown({
                       style={{ height: `${virtualizer.getTotalSize()}px` }}
                     >
                       {virtualizer.getVirtualItems().map((item) => {
-                        const group = filtered[item.index];
-                        if (!group) {
+                        const baseGroup = filteredBase[item.index];
+                        if (!baseGroup) {
                           return null;
                         }
+                        const group = applySelectedToGroup(baseGroup, model);
                         return (
                           <div
                             key={group.key}
@@ -1141,17 +1120,20 @@ export function ModelDropdown({
                       })}
                     </div>
                   ) : (
-                    filtered.map((group, index) => (
-                      <ModelPickerRow
-                        key={group.key}
-                        group={group}
-                        index={index}
-                        highlightedIndex={highlightedIndex}
-                        onSelect={selectModel}
-                        onHighlight={setHighlightedIndex}
-                        onEdit={openModelEditFlyout}
-                      />
-                    ))
+                    filteredBase.map((baseGroup, index) => {
+                      const group = applySelectedToGroup(baseGroup, model);
+                      return (
+                        <ModelPickerRow
+                          key={group.key}
+                          group={group}
+                          index={index}
+                          highlightedIndex={highlightedIndex}
+                          onSelect={selectModel}
+                          onHighlight={setHighlightedIndex}
+                          onEdit={openModelEditFlyout}
+                        />
+                      );
+                    })
                   )}
                 </div>
               </div>
@@ -1361,7 +1343,7 @@ export function ModelDropdown({
                         type="button"
                         aria-label={`Configure ${backend.label}`}
                         title={`Configure ${backend.label}`}
-                        onClick={() => openBackendSettings(backend.id)}
+                        onClick={() => openBackendSettings()}
                         className="flex size-[22px] shrink-0 items-center justify-center rounded-[var(--radius-tab)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)]"
                       >
                         <Settings className="size-[12px]" strokeWidth={1.7} />

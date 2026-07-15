@@ -128,7 +128,7 @@ function mapOpenCodeToolNameToAcpKind(toolName: string): string {
   const key = normalizeOpenCodeToolKey(toolName);
   switch (key) {
     case "bash":
-      return "execute";
+      return "terminal";
     case "webfetch":
       return "fetch";
     case "edit":
@@ -146,12 +146,15 @@ function mapOpenCodeToolNameToAcpKind(toolName: string): string {
     case "todoread":
       return "todo";
     case "task":
-      return "other";
+      return "task";
     case "skill":
     case "question":
     case "invalid":
       return "other";
     default:
+      if (key.startsWith("mcp") || toolName.toLowerCase().startsWith("mcp__")) {
+        return "mcp";
+      }
       if (key.startsWith("context7")) {
         return "search";
       }
@@ -231,7 +234,12 @@ export function openCodeToolPartToAcpSessionUpdate(part: Record<string, unknown>
     return null;
   }
   const toolName = typeof part.tool === "string" ? part.tool : "tool";
-  const callId = typeof part.callID === "string" ? part.callID : randomUUID();
+  const callId =
+    typeof part.callID === "string"
+      ? part.callID
+      : typeof part.callId === "string"
+        ? part.callId
+        : randomUUID();
   const state = part.state;
   if (!state || typeof state !== "object" || Array.isArray(state)) {
     return null;

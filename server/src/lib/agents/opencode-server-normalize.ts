@@ -1,19 +1,10 @@
 import { randomUUID } from "node:crypto";
+import { asRecord, asString } from "./json-coerce.js";
 import { openCodeToolPartToAcpSessionUpdate } from "./opencode-global-sse.js";
 import { extractToolEditPreview } from "./tool-edit-preview.js";
 import type { AgentEventInput, AgentPlanEntry, AgentToolCallStatus } from "./types.js";
 
 type RecordValue = Record<string, unknown>;
-
-function asRecord(value: unknown): RecordValue | undefined {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as RecordValue)
-    : undefined;
-}
-
-function asString(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim() ? value : undefined;
-}
 
 function contentText(value: unknown): string | undefined {
   if (typeof value === "string") {
@@ -118,10 +109,13 @@ function planEntriesFromTodos(todos: unknown): AgentPlanEntry[] {
     if (!content) {
       return [];
     }
+    const rawStatus = asString(record?.status)?.toLowerCase();
     const status =
-      record?.status === "completed"
+      rawStatus === "completed"
         ? "completed"
-        : record?.status === "in_progress" || record?.status === "running"
+        : rawStatus === "blocked" || rawStatus === "stuck"
+          ? "blocked"
+        : rawStatus === "in_progress" || rawStatus === "running"
           ? "in_progress"
           : "pending";
     return [
@@ -202,6 +196,7 @@ export function normalizeOpenCodeServerEvent(input: {
   conversationId: string;
   rootSessionId: string;
   payload: RecordValue;
+  allowChildSessionEvents?: boolean;
 }): AgentEventInput[] {
   const type = asString(input.payload.type);
   const properties = asRecord(input.payload.properties);
@@ -209,7 +204,8 @@ export function normalizeOpenCodeServerEvent(input: {
     return [];
   }
   const sessionID = asString(properties.sessionID) ?? asString(asRecord(properties.part)?.sessionID);
-  if (sessionID && sessionID !== input.rootSessionId) {
+  const childSessionId = sessionID && sessionID !== input.rootSessionId ? sessionID : undefined;
+  if (childSessionId && !input.allowChildSessionEvents) {
     return [];
   }
   if (type === "message.part.delta" && properties.field === "text") {
@@ -232,7 +228,12 @@ export function normalizeOpenCodeServerEvent(input: {
         raw: input.payload,
         emitAsUpdate: update.sessionUpdate === "tool_call_update",
       });
-      return event ? [event] : [];
+      if (!event) {
+        return [];
+      }
+      return childSessionId && (event.kind === "tool_call" || event.kind === "tool_call_update")
+        ? [{ ...event, openCodeSubagentSessionId: childSessionId }]
+        : [event];
     }
     // Non-tool text updates include user/noReply seed content. The provider
     // session handles active assistant text separately once it knows the message id.

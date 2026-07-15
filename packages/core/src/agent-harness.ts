@@ -1,4 +1,4 @@
-import { buildCesiumSystemPrompt } from "./mcp.js";
+import { buildCesiumBaseSystemPrompt, buildCesiumSystemPrompt } from "./mcp";
 
 export type CesiumProviderKind =
   | "openai-chat-completions"
@@ -14,6 +14,20 @@ export type CesiumToolName =
   | "edit_file"
   | "terminal"
   | "todo"
+  | "create_plan"
+  | "update_plan"
+  | "read_plan"
+  | "finalize_plan"
+  | "burn_goal_set"
+  | "burn_goal_pause"
+  | "burn_goal_summarize"
+  | "burn_goal_get"
+  | "burn_goal_update_plan"
+  | "burn_goal_update_progress"
+  | "burn_goal_summarize_state"
+  | "burn_goal_complete"
+  | "burn_goal_block"
+  | "burn_goal_resume"
   | "ask_question"
   | "subagent"
   | "read_subagent_transcript"
@@ -47,9 +61,9 @@ export const CESIUM_BACKEND_LABEL = "Cesium Agent (Beta)";
 export const CESIUM_DEFAULT_MODEL_ID = "openai/gpt-5.1";
 export const CESIUM_DEFAULT_MODEL_NAME = "OpenAI/GPT-5.1";
 
-/** @deprecated Use buildCesiumSystemPrompt() for MCP-aware prompts. */
-export const CESIUM_SYSTEM_PROMPT = buildCesiumSystemPrompt();
-export { buildCesiumSystemPrompt };
+/** @deprecated Use buildCesiumBaseSystemPrompt() plus dynamic system reminders. */
+export const CESIUM_SYSTEM_PROMPT = buildCesiumBaseSystemPrompt();
+export { buildCesiumBaseSystemPrompt, buildCesiumSystemPrompt };
 
 export const CESIUM_CONTEXT_TURN_LIMIT = 250;
 export const CESIUM_CONTEXT_EVENT_LIMIT = 20_000;
@@ -118,7 +132,11 @@ export const CESIUM_TOOL_DEFINITIONS: CesiumToolDefinition[] = [
       type: "object",
       properties: {
         action: { type: "string", enum: ["list", "replace", "patch"] },
-        items: { type: "array" },
+        items: {
+          type: "array",
+          description:
+            "Todo items with status pending, in_progress, blocked, or completed. Use blocked only when a material blocker prevents further progress.",
+        },
       },
       required: ["action"],
     },
@@ -168,7 +186,8 @@ export const CESIUM_TOOL_DEFINITIONS: CesiumToolDefinition[] = [
   },
   {
     name: "read_subagent_transcript",
-    description: "Read a paginated transcript for a subagent by id.",
+    description:
+      "Read a paginated transcript for an ephemeral subagent started with the subagent tool. In Orchestration Mode, use orchestration_read_agent_transcript for kanban child agents.",
     parameters: {
       type: "object",
       properties: {

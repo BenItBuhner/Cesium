@@ -3,7 +3,6 @@
  * Usage: npx tsx ./scripts/cesium-lifecycle-probe.ts [modelId] [workspaceId]
  */
 import "../src/env-bootstrap.js";
-import { randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";

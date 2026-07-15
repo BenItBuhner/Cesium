@@ -26,6 +26,12 @@ export type McpServersFile = {
   schemaVersion: 1;
   updatedAt: number;
   servers: import("@cesium/core/mcp").McpServerConfig[];
+  builtins?: {
+    browser?: {
+      enabled: boolean;
+      updatedAt: number;
+    };
+  };
 };
 
 export type McpServerPublic = Omit<
@@ -33,6 +39,8 @@ export type McpServerPublic = Omit<
   never
 > & {
   connectionStatus?: McpConnectionStatus;
+  builtIn?: boolean;
+  removable?: boolean;
 };
 
 export type McpConnectionStatus = {

@@ -11,6 +11,8 @@ import {
 import { createPortal } from "react-dom";
 import {
   Infinity,
+  Flame,
+  Layers,
   ListChecks,
   Bug,
   MessageSquare,
@@ -42,6 +44,9 @@ const modeColors: Record<KnownEditorMode, { text: string; bg: string }> = {
   plan: { text: "var(--plan-accent)", bg: "var(--plan-accent-bg)" },
   debug: { text: "var(--debug-accent)", bg: "var(--debug-accent-bg)" },
   ask: { text: "var(--ask-accent)", bg: "var(--ask-accent-bg)" },
+  goal: { text: "var(--burn-accent)", bg: "var(--burn-accent-bg)" },
+  burn: { text: "var(--burn-accent)", bg: "var(--burn-accent-bg)" },
+  orchestration: { text: "var(--orchestration-accent)", bg: "var(--orchestration-accent-bg)" },
 };
 
 function iconForModeTone(tone: KnownEditorMode): LucideIcon {
@@ -52,6 +57,10 @@ function iconForModeTone(tone: KnownEditorMode): LucideIcon {
       return Bug;
     case "ask":
       return MessageSquare;
+    case "burn":
+      return Flame;
+    case "orchestration":
+      return Layers;
     default:
       return Infinity;
   }
@@ -71,7 +80,7 @@ interface ModeDropdownProps {
   labelPeekKey?: number;
   /** Increment to open the menu from a keyboard shortcut (settings). */
   menuOpenTriggerKey?: number;
-  /** When true, orchestration (and mode selection generally) cannot be changed. */
+  /** When true, mode selection generally cannot be changed. */
   modeLocked?: boolean;
 }
 
@@ -151,7 +160,6 @@ export function ModeDropdown({
   const current = modes.find((candidate) => candidate.id === mode) ?? modes[0];
   const colors = modeColors[current?.tone ?? "agent"];
   const TriggerIcon = current.icon;
-  const orchestrationLocked = isOrchestrationMode(mode) && (disabled || modeLocked);
   const modeMenuInteractive = !disabled && !modeLocked;
   const showModeLabel = showLabelExpanded || isOrchestrationMode(mode);
 
@@ -204,16 +212,8 @@ export function ModeDropdown({
       width: showModeLabel ? `${expandedWidth}px` : undefined,
       minWidth: 28,
     }}
-    aria-label={
-      orchestrationLocked
-        ? `Mode: ${current.label} (locked for this chat)`
-        : `Mode: ${current.label}`
-    }
-    title={
-      orchestrationLocked
-        ? `Mode: ${current.label} (locked for this chat)`
-        : `Mode: ${current.label}`
-    }
+    aria-label={`Mode: ${current.label}`}
+    title={`Mode: ${current.label}`}
     className={`group inline-flex items-center overflow-hidden rounded-[var(--radius-pill)] py-[1px] transition-[padding,opacity,width] duration-200 hover:opacity-90 disabled:cursor-default disabled:opacity-100 ${
       showModeLabel ? "pl-[8px] pr-[7px] ease-out" : "pl-[7px] pr-[7px] ease-in"
     }`}
@@ -231,9 +231,7 @@ export function ModeDropdown({
         </span>
         <ChevronDown
           className={`size-[8px] shrink-0 transition-[margin,opacity,width] duration-200 ${
-            orchestrationLocked
-              ? "ml-0 w-0 opacity-0"
-              : showModeLabel
+            showModeLabel
               ? "ml-[6px] w-[8px] opacity-100 ease-out"
               : "ml-0 w-0 opacity-0 ease-in group-hover:ml-[6px] group-hover:w-[8px] group-hover:opacity-100 group-hover:ease-out group-focus-visible:ml-[6px] group-focus-visible:w-[8px] group-focus-visible:opacity-100 group-focus-visible:ease-out"
           }`}

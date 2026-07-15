@@ -1,10 +1,20 @@
-import { app, BrowserWindow, Menu, WebContentsView, ipcMain, shell, dialog } from "electron";
+import { app, BrowserWindow, Menu, WebContentsView, ipcMain, shell, dialog, powerMonitor } from "electron";
 import { randomUUID } from "node:crypto";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { startCesiumBackend } from "./main.mjs";
+import { resolvePackagedDesktopDataDir } from "./desktop-data-dir.mjs";
+
+process.title = "Cesium Desktop";
+app.setName("Cesium Desktop");
+if (process.platform === "win32") {
+  app.setAppUserModelId("com.cesium.desktop");
+}
 
 const here = dirname(fileURLToPath(import.meta.url));
+const APP_ICON_PATH = app.isPackaged
+  ? resolve(process.resourcesPath, "build/icon.png")
+  : resolve(here, "../build/icon.png");
 let backend = null;
 let mainWindow = null;
 const smokeMode = process.argv.includes("--smoke");
@@ -15,20 +25,57 @@ const DOCS_ROUTE_QUERY_PARAM = "cesiumRoute";
 const DOCS_ROUTE_QUERY_VALUE = "docs";
 let docsWindow = null;
 const nativeBrowserSessions = new Map();
+const MAIN_RENDERER_UNRESPONSIVE_RECOVERY_MS = 18_000;
+const MAIN_RENDERER_PROBE_TIMEOUT_MS = 8_000;
+const MAIN_RENDERER_FOCUS_PROBE_IDLE_MS = 5 * 60_000;
+const rendererLoadFailureHandlers = new WeakSet();
+let mainRendererRecoveryTimer = null;
+let mainRendererRecovering = false;
+let mainRendererCrashReloading = false;
+let mainRendererProbeInFlight = false;
+let lastRendererFocusProbeAt = 0;
+let desktopLifecycleHandlersInstalled = false;
 
 function browserErrorMessage(error) {
   return error instanceof Error ? error.message : String(error);
 }
 
-function normalizedBounds(bounds) {
+function normalizedBounds(bounds, owner) {
   if (!bounds || typeof bounds !== "object") return { x: 0, y: 0, width: 0, height: 0 };
   const n = (value) => Math.max(0, Math.round(Number(value) || 0));
-  return {
+  const next = {
     x: n(bounds.x),
     y: n(bounds.y),
     width: n(bounds.width),
     height: n(bounds.height),
   };
+  if (!owner || owner.isDestroyed()) {
+    return { x: 0, y: 0, width: 0, height: 0 };
+  }
+  const content = owner.getContentBounds();
+  const maxW = Math.max(1, content.width);
+  const maxH = Math.max(1, content.height);
+  if (next.width <= 0 || next.height <= 0) {
+    return next;
+  }
+  if (next.width > maxW || next.height > maxH) {
+    console.warn("[cesium-desktop] rejecting native browser bounds larger than window", next, {
+      maxW,
+      maxH,
+    });
+    return { x: 0, y: 0, width: 0, height: 0 };
+  }
+  const area = next.width * next.height;
+  const windowArea = maxW * maxH;
+  if (area > windowArea * 0.92) {
+    console.warn("[cesium-desktop] rejecting native browser bounds covering the main window", next);
+    return { x: 0, y: 0, width: 0, height: 0 };
+  }
+  return next;
+}
+
+function hasVisibleBounds(bounds) {
+  return Boolean(bounds && bounds.width > 0 && bounds.height > 0);
 }
 
 function nativeBrowserCapabilitiesAvailable() {
@@ -58,6 +105,89 @@ function nativeNavigationState(rec, patch = {}) {
 
 function emitNativeNavigationState(rec, patch = {}) {
   emitNativeBrowserEvent(rec, nativeNavigationState(rec, patch));
+}
+
+function setNativeBrowserViewAttached(rec, attached) {
+  if (!rec?.owner || rec.owner.isDestroyed() || !rec.view || rec.view.webContents.isDestroyed()) {
+    return;
+  }
+  if (attached && !rec.attached) {
+    rec.owner.contentView.addChildView(rec.view);
+    rec.attached = true;
+    return;
+  }
+  if (!attached && rec.attached) {
+    try {
+      rec.owner.contentView.removeChildView(rec.view);
+    } catch {
+      /* ignore */
+    }
+    rec.attached = false;
+  }
+}
+
+function setNativeBrowserBounds(rec, bounds) {
+  rec.bounds = normalizedBounds(bounds, rec.owner);
+  if (!hasVisibleBounds(rec.bounds)) {
+    try {
+      rec.view.setBounds({ x: 0, y: 0, width: 0, height: 0 });
+    } catch {
+      /* ignore */
+    }
+    setNativeBrowserViewAttached(rec, false);
+    return;
+  }
+  if (!rec.readyToAttach) {
+    return;
+  }
+  setNativeBrowserViewAttached(rec, true);
+  rec.view.setBounds(rec.bounds);
+}
+
+function markNativeBrowserReadyToAttach(rec) {
+  if (!rec || rec.readyToAttach) {
+    return;
+  }
+  rec.readyToAttach = true;
+  if (hasVisibleBounds(rec.bounds)) {
+    setNativeBrowserBounds(rec, rec.bounds);
+  }
+}
+
+function setNativeBrowserDevtoolsAttached(rec, attached) {
+  if (!rec?.owner || rec.owner.isDestroyed() || !rec.devtoolsView || rec.devtoolsView.webContents.isDestroyed()) {
+    return;
+  }
+  if (attached && !rec.devtoolsAttached) {
+    rec.owner.contentView.addChildView(rec.devtoolsView);
+    rec.devtoolsAttached = true;
+    return;
+  }
+  if (!attached && rec.devtoolsAttached) {
+    try {
+      rec.owner.contentView.removeChildView(rec.devtoolsView);
+    } catch {
+      /* ignore */
+    }
+    rec.devtoolsAttached = false;
+  }
+}
+
+function setNativeBrowserDevtoolsBounds(rec, bounds) {
+  rec.devtoolsBounds = normalizedBounds(bounds, rec.owner);
+  if (!rec.devtoolsView || !hasVisibleBounds(rec.devtoolsBounds)) {
+    if (rec.devtoolsView) {
+      try {
+        rec.devtoolsView.setBounds({ x: 0, y: 0, width: 0, height: 0 });
+      } catch {
+        /* ignore */
+      }
+    }
+    setNativeBrowserDevtoolsAttached(rec, false);
+    return;
+  }
+  setNativeBrowserDevtoolsAttached(rec, true);
+  rec.devtoolsView.setBounds(rec.devtoolsBounds);
 }
 
 function installNativeBrowserContextMenu(rec) {
@@ -105,7 +235,6 @@ function installNativeBrowserDebugger(rec) {
     wc.debugger.attach("1.3");
     wc.debugger.sendCommand("Runtime.enable").catch(() => undefined);
     wc.debugger.sendCommand("Log.enable").catch(() => undefined);
-    wc.debugger.sendCommand("Network.enable").catch(() => undefined);
   } catch {
     return;
   }
@@ -159,6 +288,7 @@ function installNativeBrowserDebugger(rec) {
       });
     } else if (method === "Network.responseReceived") {
       const response = params.response ?? {};
+      if (response.status && response.status < 400) return;
       emitNativeBrowserEvent(rec, {
         type: "network",
         entry: {
@@ -178,6 +308,7 @@ function createNativeBrowserSession(owner, tabId, url) {
   if (!nativeBrowserCapabilitiesAvailable()) {
     throw new Error("Native browser views are not available in this Electron runtime.");
   }
+  const browserProcessName = `Cesium Browser Tab${tabId ? ` ${tabId}` : ""}`;
   const view = new WebContentsView({
     webPreferences: {
       nodeIntegration: false,
@@ -185,6 +316,7 @@ function createNativeBrowserSession(owner, tabId, url) {
       sandbox: true,
       webSecurity: true,
       devTools: true,
+      additionalArguments: [`--cesium-process-name=${browserProcessName}`],
     },
   });
   const id = `nb-${randomUUID()}`;
@@ -194,12 +326,14 @@ function createNativeBrowserSession(owner, tabId, url) {
     owner,
     view,
     devtoolsView: null,
+    attached: false,
+    devtoolsAttached: false,
+    readyToAttach: false,
     bounds: { x: 0, y: 0, width: 0, height: 0 },
     devtoolsBounds: { x: 0, y: 0, width: 0, height: 0 },
+    unresponsiveTimer: null,
   };
   nativeBrowserSessions.set(id, rec);
-  owner.contentView.addChildView(view);
-  view.setBounds(rec.bounds);
   view.webContents.setWindowOpenHandler(({ url: nextUrl }) => {
     void view.webContents.loadURL(nextUrl).catch((error) => {
       emitNativeBrowserEvent(rec, { type: "error", message: browserErrorMessage(error) });
@@ -207,7 +341,18 @@ function createNativeBrowserSession(owner, tabId, url) {
     return { action: "deny" };
   });
   view.webContents.on("did-start-loading", () => emitNativeNavigationState(rec, { isLoading: true }));
-  view.webContents.on("did-stop-loading", () => emitNativeNavigationState(rec, { isLoading: false }));
+  view.webContents.on("dom-ready", () => {
+    markNativeBrowserReadyToAttach(rec);
+    emitNativeNavigationState(rec, { isLoading: rec.view.webContents.isLoading() });
+  });
+  view.webContents.on("did-stop-loading", () => {
+    markNativeBrowserReadyToAttach(rec);
+    emitNativeNavigationState(rec, { isLoading: false });
+  });
+  view.webContents.on("did-finish-load", () => {
+    markNativeBrowserReadyToAttach(rec);
+    emitNativeNavigationState(rec, { isLoading: false });
+  });
   view.webContents.on("did-navigate", () => emitNativeNavigationState(rec));
   view.webContents.on("did-navigate-in-page", () => emitNativeNavigationState(rec));
   view.webContents.on("page-title-updated", (_event, title) => emitNativeNavigationState(rec, { title }));
@@ -216,16 +361,44 @@ function createNativeBrowserSession(owner, tabId, url) {
   });
   view.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
     if (!isMainFrame) return;
+    markNativeBrowserReadyToAttach(rec);
+    emitNativeNavigationState(rec, { isLoading: false });
     emitNativeBrowserEvent(rec, {
       type: "error",
       message: `${errorDescription || "Navigation failed"} (${errorCode}) for ${validatedURL || url}`,
     });
   });
+  view.webContents.on("unresponsive", () => {
+    if (rec.unresponsiveTimer) {
+      clearTimeout(rec.unresponsiveTimer);
+    }
+    rec.unresponsiveTimer = setTimeout(() => {
+      rec.unresponsiveTimer = null;
+      emitNativeBrowserEvent(rec, {
+        type: "error",
+        message: "Browser renderer stayed unresponsive for 12s.",
+      });
+    }, 12_000);
+  });
+  view.webContents.on("responsive", () => {
+    if (rec.unresponsiveTimer) {
+      clearTimeout(rec.unresponsiveTimer);
+      rec.unresponsiveTimer = null;
+    }
+  });
   view.webContents.on("render-process-gone", (_event, details) => {
+    console.error("[cesium-desktop] native browser renderer gone", rec.id, details);
+    try {
+      setNativeBrowserViewAttached(rec, false);
+      rec.readyToAttach = false;
+    } catch {
+      /* ignore */
+    }
     emitNativeBrowserEvent(rec, {
       type: "error",
       message: `Browser renderer exited: ${details.reason}`,
     });
+    destroyNativeBrowserSession(rec.id);
   });
   installNativeBrowserContextMenu(rec);
   installNativeBrowserDebugger(rec);
@@ -240,15 +413,30 @@ function destroyNativeBrowserSession(id) {
   if (!rec) return;
   nativeBrowserSessions.delete(id);
   try {
+    if (rec.unresponsiveTimer) {
+      clearTimeout(rec.unresponsiveTimer);
+      rec.unresponsiveTimer = null;
+    }
+  } catch {
+    /* ignore */
+  }
+  try {
     if (rec.devtoolsView) {
-      rec.owner.contentView.removeChildView(rec.devtoolsView);
+      setNativeBrowserDevtoolsAttached(rec, false);
       rec.devtoolsView.webContents.close();
     }
   } catch {
     /* ignore */
   }
   try {
-    rec.owner.contentView.removeChildView(rec.view);
+    setNativeBrowserViewAttached(rec, false);
+  } catch {
+    /* ignore */
+  }
+  try {
+    if (rec.view.webContents.debugger.isAttached()) {
+      rec.view.webContents.debugger.detach();
+    }
   } catch {
     /* ignore */
   }
@@ -284,8 +472,150 @@ function attachRendererNavigationGuards(webContents) {
   });
 }
 
+const RECOVERY_HTML =
+  "data:text/html;charset=utf-8," +
+  encodeURIComponent(
+    "<!doctype html><html><body style='margin:0;background:#191919;color:#e5e5e5;font:14px system-ui,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh'>Recovering Cesium…</body></html>"
+  );
+
+function clearMainRendererRecoveryTimer() {
+  if (mainRendererRecoveryTimer) {
+    clearTimeout(mainRendererRecoveryTimer);
+    mainRendererRecoveryTimer = null;
+  }
+}
+
+async function recoverMainRenderer(win, reason) {
+  if (!win || win.isDestroyed() || win.webContents.isDestroyed() || mainRendererRecovering) {
+    return;
+  }
+  if (!backend?.baseUrl) {
+    console.warn("[cesium-desktop] renderer recovery skipped before backend ready", reason);
+    return;
+  }
+  mainRendererRecovering = true;
+  mainRendererCrashReloading = false;
+  clearMainRendererRecoveryTimer();
+  console.warn("[cesium-desktop] recovering main renderer", reason);
+  destroyNativeBrowserSessionsForWindow(win);
+  try {
+    if (typeof win.webContents.forcefullyCrashRenderer === "function") {
+      mainRendererCrashReloading = true;
+      win.webContents.forcefullyCrashRenderer();
+      win.webContents.reload();
+      return;
+    }
+    await win.webContents.loadURL(RECOVERY_HTML);
+    if (!win.isDestroyed() && !win.webContents.isDestroyed()) {
+      await loadMainRenderer(win);
+    }
+  } catch (error) {
+    mainRendererCrashReloading = false;
+    console.error("[cesium-desktop] failed to recover main renderer", error);
+  } finally {
+    if (!mainRendererCrashReloading) {
+      mainRendererRecovering = false;
+    }
+  }
+}
+
+function scheduleMainRendererRecovery(win, reason) {
+  if (mainRendererRecoveryTimer || mainRendererRecovering) {
+    return;
+  }
+  mainRendererRecoveryTimer = setTimeout(() => {
+    mainRendererRecoveryTimer = null;
+    void recoverMainRenderer(win, reason);
+  }, MAIN_RENDERER_UNRESPONSIVE_RECOVERY_MS);
+}
+
+async function probeMainRenderer(win, reason) {
+  if (
+    !win ||
+    win.isDestroyed() ||
+    win.webContents.isDestroyed() ||
+    win.webContents.isLoading() ||
+    mainRendererRecovering ||
+    mainRendererProbeInFlight
+  ) {
+    return;
+  }
+  mainRendererProbeInFlight = true;
+  try {
+    await Promise.race([
+      win.webContents.executeJavaScript("globalThis.__cesiumDesktopProbeAt = Date.now(); true", true),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error("renderer probe timed out")), MAIN_RENDERER_PROBE_TIMEOUT_MS)
+      ),
+    ]);
+  } catch (error) {
+    console.warn("[cesium-desktop] renderer probe failed", reason, error);
+    await recoverMainRenderer(win, reason);
+  } finally {
+    mainRendererProbeInFlight = false;
+  }
+}
+
+function installRendererHealthRecovery(win) {
+  win.webContents.on("render-process-gone", (_event, details) => {
+    console.error("[cesium-desktop] renderer process gone", details);
+    clearMainRendererRecoveryTimer();
+    destroyNativeBrowserSessionsForWindow(win);
+    if (mainRendererCrashReloading) {
+      return;
+    }
+    if (win.isDestroyed()) {
+      return;
+    }
+    setTimeout(() => {
+      if (win.isDestroyed() || win.webContents.isDestroyed()) {
+        return;
+      }
+      void win.webContents
+        .loadURL(RECOVERY_HTML)
+        .catch(() => undefined)
+        .finally(() => {
+          if (win.isDestroyed() || win.webContents.isDestroyed()) {
+            return;
+          }
+          void loadMainRenderer(win).catch((error) => {
+            console.error("[cesium-desktop] failed to reload renderer after crash", error);
+          });
+        });
+    }, 250);
+  });
+  win.webContents.on("unresponsive", () => {
+    console.warn("[cesium-desktop] renderer became unresponsive");
+    scheduleMainRendererRecovery(win, "renderer stayed unresponsive");
+  });
+  win.webContents.on("responsive", () => {
+    console.info("[cesium-desktop] renderer became responsive");
+    mainRendererRecovering = false;
+    mainRendererCrashReloading = false;
+    clearMainRendererRecoveryTimer();
+  });
+  win.webContents.on("did-finish-load", () => {
+    mainRendererRecovering = false;
+    mainRendererCrashReloading = false;
+    clearMainRendererRecoveryTimer();
+  });
+  win.webContents.on(
+    "did-fail-load",
+    (_event, _errorCode, _errorDescription, _validatedURL, isMainFrame) => {
+      if (!isMainFrame) {
+        return;
+      }
+      mainRendererRecovering = false;
+      mainRendererCrashReloading = false;
+      clearMainRendererRecoveryTimer();
+    }
+  );
+}
+
 function createRendererBrowserWindow(options = {}) {
   return new BrowserWindow({
+    title: options.title ?? "Cesium",
+    icon: APP_ICON_PATH,
     show: options.show ?? true,
     width: options.width ?? 1440,
     height: options.height ?? 960,
@@ -298,6 +628,8 @@ function createRendererBrowserWindow(options = {}) {
       preload: resolve(here, "preload.cjs"),
       contextIsolation: true,
       nodeIntegration: false,
+      spellcheck: false,
+      backgroundThrottling: false,
     },
   });
 }
@@ -369,6 +701,7 @@ async function openDocsWindow(sourceWebContents) {
   }
 
   docsWindow = createRendererBrowserWindow({
+    title: "Cesium Docs",
     width: 1080,
     height: 820,
     minWidth: 720,
@@ -419,64 +752,127 @@ console.log("[cesium-desktop] main starting", {
   argv: process.argv,
 });
 
-async function createMainWindow(options = {}) {
-  console.log("[cesium-desktop] starting backend");
-  const userDataPath = app.getPath("userData");
-  backend = await startCesiumBackend({
-    cwd: userDataPath,
-    dataDir: resolve(userDataPath, "server-data"),
-  });
-  console.log("[cesium-desktop] backend ready", backend.baseUrl);
+function showRendererLoadFailure(win, details) {
+  const code = details?.errorCode ?? "unknown";
+  const description = details?.errorDescription ?? "Unknown load failure";
+  const url = details?.validatedURL ?? details?.url ?? "unknown URL";
+  console.error("[cesium-desktop] renderer load failed", { code, description, url });
+  dialog.showMessageBox(win, {
+    type: "error",
+    title: "Cesium failed to load",
+    message: "The desktop UI could not be loaded.",
+    detail: `${description}\n\n${url}\n\nIf you launched from a terminal, run npm run dev:desktop from the repo root instead of electron . alone.`,
+  }).catch(() => undefined);
+}
 
-  mainWindow = createRendererBrowserWindow({ show: options.show ?? true });
+async function loadMainRenderer(win) {
+  const configuredRendererUrl = process.env.OPENCURSOR_DESKTOP_RENDERER_URL;
+  const devRendererUrl = app.isPackaged ? null : "http://127.0.0.1:5173";
+  const rendererUrl = configuredRendererUrl ?? devRendererUrl;
+
+  if (!rendererLoadFailureHandlers.has(win.webContents)) {
+    rendererLoadFailureHandlers.add(win.webContents);
+    win.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+      if (!isMainFrame || errorCode === -3) {
+        return;
+      }
+      showRendererLoadFailure(win, {
+        errorCode,
+        errorDescription,
+        validatedURL,
+      });
+    });
+  }
+
+  if (rendererUrl) {
+    const url = configuredRendererUrl
+      ? buildConfiguredRendererUrl(rendererUrl, backend.baseUrl)
+      : `${rendererUrl}${WORKSPACE_ROUTE}?serverUrl=${encodeURIComponent(backend.baseUrl)}`;
+    console.log("[cesium-desktop] loading renderer", url);
+    await win.loadURL(url);
+    return;
+  }
+
+  const rendererIndex = resolvePackagedRendererIndexPath();
+  console.log("[cesium-desktop] loading packaged renderer", rendererIndex, backend.baseUrl);
+  await win.loadFile(rendererIndex, {
+    query: { serverUrl: backend.baseUrl },
+  });
+}
+
+async function createMainWindow(options = {}) {
+  const userDataPath = app.getPath("userData");
+  const dataDir = app.isPackaged
+    ? resolvePackagedDesktopDataDir(userDataPath)
+    : resolve(userDataPath, "server-data");
+
+  mainWindow = createRendererBrowserWindow({ show: false });
   mainWindow.on("closed", () => {
     destroyNativeBrowserSessionsForWindow(mainWindow);
     mainWindow = null;
   });
   Menu.setApplicationMenu(null);
 
-  const rendererUrl =
-    process.env.OPENCURSOR_DESKTOP_RENDERER_URL ??
-    (app.isPackaged ? null : "http://127.0.0.1:5173");
   mainWindow.webContents.on("preload-error", (_event, preloadPath, error) => {
     console.error("[cesium-desktop] preload failed", preloadPath, error);
   });
   attachRendererNavigationGuards(mainWindow.webContents);
-  if (rendererUrl) {
-    console.log("[cesium-desktop] loading renderer", rendererUrl);
-    const url =
-      process.env.OPENCURSOR_DESKTOP_RENDERER_URL != null
-        ? buildConfiguredRendererUrl(rendererUrl, backend.baseUrl)
-        : rendererUrl;
-    await mainWindow.loadURL(url);
-    if (options.closeAfterLoad) {
-      mainWindow.close();
-    }
-    return;
-  }
+  installRendererHealthRecovery(mainWindow);
 
-  const rendererIndex = resolvePackagedRendererIndexPath();
-  console.log("[cesium-desktop] loading packaged renderer", rendererIndex);
-  await mainWindow.loadFile(rendererIndex);
+  console.log("[cesium-desktop] starting backend");
+  backend = await startCesiumBackend({ dataDir });
+  console.log("[cesium-desktop] backend ready", backend.baseUrl);
+
+  await loadMainRenderer(mainWindow);
+  if (options.show ?? true) {
+    mainWindow.show();
+  }
   if (options.closeAfterLoad) {
     mainWindow.close();
   }
 }
 
+function installDesktopLifecycleHandlers() {
+  if (desktopLifecycleHandlersInstalled) {
+    return;
+  }
+  desktopLifecycleHandlersInstalled = true;
+
+  powerMonitor.on("resume", () => {
+    console.info("[cesium-desktop] system resumed");
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      return;
+    }
+    setTimeout(() => {
+      void probeMainRenderer(mainWindow, "system resume");
+    }, 1_000);
+  });
+
+  powerMonitor.on("suspend", () => {
+    console.info("[cesium-desktop] system suspending");
+  });
+}
+
 const gotLock = app.isPackaged ? app.requestSingleInstanceLock() : true;
 console.log("[cesium-desktop] single instance lock", gotLock);
-if (!gotLock) {
+if (!gotLock && process.env.CESIUM_STRICT_SINGLE_INSTANCE_LOCK === "1") {
   console.error("[cesium-desktop] another desktop instance already has the lock");
   app.quit();
 } else {
+  if (!gotLock) {
+    console.warn("[cesium-desktop] single instance lock unavailable; continuing startup");
+  }
   app.on("second-instance", () => {
     if (mainWindow) {
       if (mainWindow.isMinimized()) mainWindow.restore();
       mainWindow.focus();
+      void probeMainRenderer(mainWindow, "second-instance focus");
     }
   });
 
   app.whenReady().then(async () => {
+    app.setName("Cesium Desktop");
+    installDesktopLifecycleHandlers();
     if (smokeMode) {
       await createMainWindow({ show: false, closeAfterLoad: true });
       console.log(`Cesium packaged smoke passed at ${backend?.baseUrl ?? "unknown backend"}`);
@@ -495,13 +891,78 @@ if (!gotLock) {
   });
 }
 
+app.on("browser-window-focus", (_event, win) => {
+  if (win !== mainWindow) {
+    return;
+  }
+  const now = Date.now();
+  if (now - lastRendererFocusProbeAt < MAIN_RENDERER_FOCUS_PROBE_IDLE_MS) {
+    return;
+  }
+  lastRendererFocusProbeAt = now;
+  void probeMainRenderer(win, "window focus after idle");
+});
+
 ipcMain.handle("cesium:get-backend-info", () => ({
   baseUrl: backend?.baseUrl ?? null,
   port: backend?.port ?? null,
 }));
 
+const TASKBAR_GOAL_PROGRESS_MODES = new Set(["normal", "paused", "error", "indeterminate"]);
+
+function normalizeTaskbarGoalProgress(input) {
+  if (!input || typeof input !== "object" || input.active === false || input.mode === "none") {
+    return { active: false };
+  }
+  const mode = TASKBAR_GOAL_PROGRESS_MODES.has(input.mode) ? input.mode : "normal";
+  if (mode === "indeterminate") {
+    return { active: true, progress: 2, mode };
+  }
+  const rawPercent = Number(input.progressPercent);
+  if (!Number.isFinite(rawPercent)) {
+    return { active: false };
+  }
+  const percent = Math.max(0, Math.min(100, Math.round(rawPercent)));
+  return {
+    active: true,
+    progress: percent / 100,
+    mode,
+  };
+}
+
+ipcMain.handle("cesium:set-taskbar-goal-progress", (event, input) => {
+  const win = BrowserWindow.fromWebContents(event.sender) ?? mainWindow;
+  if (!win || win.isDestroyed()) {
+    return false;
+  }
+  const progress = normalizeTaskbarGoalProgress(input);
+  try {
+    if (!progress.active) {
+      win.setProgressBar(-1);
+      return true;
+    }
+    win.setProgressBar(progress.progress, { mode: progress.mode });
+    return true;
+  } catch (error) {
+    console.warn("[cesium-desktop] failed to set taskbar goal progress", error);
+    return false;
+  }
+});
+
 ipcMain.handle("cesium:open-external", async (_event, url) => {
   if (typeof url !== "string") return false;
+  // A compromised renderer must not be able to launch arbitrary protocol
+  // handlers (file:, smb:, custom app schemes) through the main process.
+  let parsed;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return false;
+  }
+  if (!["http:", "https:", "mailto:"].includes(parsed.protocol)) {
+    console.warn("[cesium-desktop] blocked open-external for scheme", parsed.protocol);
+    return false;
+  }
   await shell.openExternal(url);
   return true;
 });
@@ -518,14 +979,26 @@ ipcMain.handle("cesium:open-docs-window", async (event) => {
 
 ipcMain.handle("cesium:browser-available", () => nativeBrowserCapabilitiesAvailable());
 
+/** Local file browsing is opt-in: a compromised renderer must not get a native view onto arbitrary disk paths. */
+const BROWSER_FILE_URLS_ALLOWED = process.env.OPENCURSOR_BROWSER_ALLOW_FILE_URLS === "1";
+
+function isAllowedBrowserUrl(url) {
+  if (typeof url !== "string" || !url) return false;
+  if (url === "about:blank") return true;
+  if (/^https?:\/\//i.test(url)) return true;
+  return BROWSER_FILE_URLS_ALLOWED && /^file:\/\//i.test(url);
+}
+
 ipcMain.handle("cesium:browser-create", async (event, input) => {
   const owner = BrowserWindow.fromWebContents(event.sender);
   if (!owner || owner.isDestroyed()) {
     throw new Error("No owning BrowserWindow for native browser session.");
   }
   const url = typeof input?.url === "string" ? input.url : "";
-  if (!/^https?:\/\//i.test(url) && !/^file:\/\//i.test(url)) {
-    throw new Error("Native browser sessions require an absolute http(s) or file URL.");
+  if (!isAllowedBrowserUrl(url)) {
+    throw new Error(
+      "Native browser sessions require an absolute http(s) URL (file:// needs OPENCURSOR_BROWSER_ALLOW_FILE_URLS=1)."
+    );
   }
   const rec = createNativeBrowserSession(owner, String(input?.tabId ?? ""), url);
   return { id: rec.id, kind: "electron-native", url: rec.view.webContents.getURL() || url };
@@ -538,16 +1011,14 @@ ipcMain.handle("cesium:browser-destroy", async (_event, sessionId) => {
 ipcMain.handle("cesium:browser-set-bounds", async (_event, sessionId, bounds) => {
   const rec = nativeBrowserSessions.get(String(sessionId ?? ""));
   if (!rec) return false;
-  rec.bounds = normalizedBounds(bounds);
-  rec.view.setBounds(rec.bounds);
+  setNativeBrowserBounds(rec, bounds);
   return true;
 });
 
 ipcMain.handle("cesium:browser-set-devtools-bounds", async (_event, sessionId, bounds) => {
   const rec = nativeBrowserSessions.get(String(sessionId ?? ""));
   if (!rec?.devtoolsView) return false;
-  rec.devtoolsBounds = normalizedBounds(bounds);
-  rec.devtoolsView.setBounds(rec.devtoolsBounds);
+  setNativeBrowserDevtoolsBounds(rec, bounds);
   return true;
 });
 
@@ -562,11 +1033,11 @@ ipcMain.handle("cesium:browser-devtools", async (_event, sessionId, open) => {
           contextIsolation: true,
           sandbox: true,
           devTools: false,
+          additionalArguments: ["--cesium-process-name=Cesium Browser DevTools"],
         },
       });
-      rec.owner.contentView.addChildView(rec.devtoolsView);
-      rec.devtoolsView.setBounds(rec.devtoolsBounds);
       rec.view.webContents.setDevToolsWebContents(rec.devtoolsView.webContents);
+      setNativeBrowserDevtoolsBounds(rec, rec.devtoolsBounds);
     }
     rec.view.webContents.openDevTools({ mode: "detach" });
     return true;
@@ -574,7 +1045,7 @@ ipcMain.handle("cesium:browser-devtools", async (_event, sessionId, open) => {
   rec.view.webContents.closeDevTools();
   if (rec.devtoolsView) {
     try {
-      rec.owner.contentView.removeChildView(rec.devtoolsView);
+      setNativeBrowserDevtoolsAttached(rec, false);
       rec.devtoolsView.webContents.close();
     } catch {
       /* ignore */
@@ -592,6 +1063,10 @@ ipcMain.handle("cesium:browser-command", async (_event, sessionId, command) => {
   try {
     if (op === "goto") {
       if (typeof command?.url !== "string") throw new Error("Expected url.");
+      // Same policy as session creation; otherwise goto trivially bypasses it.
+      if (!isAllowedBrowserUrl(command.url)) {
+        throw new Error("Blocked navigation to a non-http(s) URL.");
+      }
       await wc.loadURL(command.url);
     } else if (op === "reload") {
       wc.reload();
@@ -624,9 +1099,40 @@ ipcMain.handle("cesium:browser-command", async (_event, sessionId, command) => {
   }
 });
 
+/**
+ * Page-scoped inspection domains only. Browser-wide and capability-granting
+ * domains (Target, Browser, Storage, Network cookie access, IO, Tracing) stay
+ * blocked so a compromised renderer cannot escalate through raw CDP.
+ */
+const CDP_ALLOWED_DOMAINS = new Set([
+  "Runtime",
+  "Page",
+  "DOM",
+  "CSS",
+  "Console",
+  "Log",
+  "Performance",
+  "Profiler",
+  "Accessibility",
+  "Overlay",
+  "Emulation",
+]);
+/** Filesystem-reaching methods inside otherwise-allowed domains. */
+const CDP_DENIED_METHODS = new Set(["Page.setDownloadBehavior", "DOM.setFileInputFiles"]);
+
+function isAllowedCdpMethod(method) {
+  if (typeof method !== "string" || !method.includes(".")) return false;
+  if (CDP_DENIED_METHODS.has(method)) return false;
+  return CDP_ALLOWED_DOMAINS.has(method.split(".", 1)[0]);
+}
+
 ipcMain.handle("cesium:browser-cdp-command", async (_event, sessionId, method, params = {}) => {
   const rec = nativeBrowserSessions.get(String(sessionId ?? ""));
   if (!rec) return null;
+  if (!isAllowedCdpMethod(String(method))) {
+    console.warn("[cesium-desktop] blocked CDP method", method);
+    return { error: `CDP method not allowed: ${String(method)}` };
+  }
   const wc = rec.view.webContents;
   try {
     if (!wc.debugger.isAttached()) {
@@ -660,37 +1166,50 @@ ipcMain.handle("cesium:browser-dispatch-input", async (_event, sessionId, input)
   const rec = nativeBrowserSessions.get(String(sessionId ?? ""));
   if (!rec) return false;
   try {
-    if (!rec.view.webContents.debugger.isAttached()) {
-      rec.view.webContents.debugger.attach("1.3");
-    }
+    const wc = rec.view.webContents;
+    wc.focus();
     if (input?.type === "mouse") {
-      const action = input.action === "down" ? "mousePressed" : input.action === "up" ? "mouseReleased" : "mouseMoved";
-      await rec.view.webContents.debugger.sendCommand("Input.dispatchMouseEvent", {
-        type: input.action === "click" ? "mousePressed" : action,
+      const eventBase = {
         x: Math.max(0, Math.floor(Number(input.x) || 0)),
         y: Math.max(0, Math.floor(Number(input.y) || 0)),
         button: input.button ?? "left",
-        clickCount: input.action === "click" ? 1 : 0,
-      });
+      };
       if (input.action === "click") {
-        await rec.view.webContents.debugger.sendCommand("Input.dispatchMouseEvent", {
-          type: "mouseReleased",
-          x: Math.max(0, Math.floor(Number(input.x) || 0)),
-          y: Math.max(0, Math.floor(Number(input.y) || 0)),
-          button: input.button ?? "left",
+        wc.sendInputEvent({
+          type: "mouseDown",
+          ...eventBase,
           clickCount: 1,
+        });
+        wc.sendInputEvent({
+          type: "mouseUp",
+          ...eventBase,
+          clickCount: 1,
+        });
+      } else {
+        wc.sendInputEvent({
+          type:
+            input.action === "down"
+              ? "mouseDown"
+              : input.action === "up"
+                ? "mouseUp"
+                : "mouseMove",
+          ...eventBase,
+          clickCount: input.action === "down" || input.action === "up" ? 1 : 0,
         });
       }
       return true;
     }
     if (input?.type === "key") {
       if (input.action === "type") {
-        await rec.view.webContents.insertText(String(input.key ?? ""));
+        await wc.insertText(String(input.key ?? ""));
       } else {
-        await rec.view.webContents.debugger.sendCommand("Input.dispatchKeyEvent", {
-          type: input.action === "up" ? "keyUp" : "keyDown",
-          key: String(input.key ?? ""),
-        });
+        const keyCode = String(input.key ?? "");
+        if (input.action === "press") {
+          wc.sendInputEvent({ type: "keyDown", keyCode });
+          wc.sendInputEvent({ type: "keyUp", keyCode });
+        } else {
+          wc.sendInputEvent({ type: input.action === "up" ? "keyUp" : "keyDown", keyCode });
+        }
       }
       return true;
     }
@@ -742,6 +1261,15 @@ ipcMain.handle("cesium:window-close", (event) => {
   BrowserWindow.fromWebContents(event.sender)?.close();
 });
 
+ipcMain.handle("cesium:window-reload", (event) => {
+  const win = BrowserWindow.fromWebContents(event.sender);
+  if (!win || win.webContents.isDestroyed()) {
+    return false;
+  }
+  win.webContents.reload();
+  return true;
+});
+
 ipcMain.handle("cesium:window-is-maximized", (event) => {
   return BrowserWindow.fromWebContents(event.sender)?.isMaximized() ?? false;
 });
@@ -749,6 +1277,9 @@ ipcMain.handle("cesium:window-is-maximized", (event) => {
 function cleanupBackend() {
   if (cleanupStarted) return;
   cleanupStarted = true;
+  clearMainRendererRecoveryTimer();
+  mainRendererRecovering = false;
+  mainRendererCrashReloading = false;
   for (const rec of [...nativeBrowserSessions.values()]) {
     destroyNativeBrowserSession(rec.id);
   }
