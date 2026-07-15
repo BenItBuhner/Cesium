@@ -1,18 +1,22 @@
 import { redirect } from "next/navigation";
-import {
-  WORKBENCH_VIEW_SEARCH_PARAM,
-  WORKSPACE_ROUTE,
-} from "@/lib/workbench-view";
+import { WORKSPACE_ROUTE } from "@/lib/workbench-view";
 
 type SearchParamsInput = Record<string, string | string[] | undefined>;
 
-function buildEditorRedirectQuery(sp: SearchParamsInput): string {
+function toQueryString(sp: SearchParamsInput): string {
   const qs = new URLSearchParams();
   for (const [key, raw] of Object.entries(sp)) {
-    if (key === WORKBENCH_VIEW_SEARCH_PARAM) {
+    if (raw == null) {
       continue;
     }
-    if (raw == null) {
+    // Classic IDE route is gone; never forward `view=editor`.
+    if (key === "view") {
+      const values = Array.isArray(raw) ? raw : [raw];
+      for (const val of values) {
+        if (val === "settings") {
+          qs.append(key, val);
+        }
+      }
       continue;
     }
     const values = Array.isArray(raw) ? raw : [raw];
@@ -20,16 +24,16 @@ function buildEditorRedirectQuery(sp: SearchParamsInput): string {
       qs.append(key, val);
     }
   }
-  qs.set(WORKBENCH_VIEW_SEARCH_PARAM, "editor");
   return qs.toString();
 }
 
-/** Legacy URL; classic IDE is `/workspace?view=editor` on the same workbench route. */
+/** Legacy URL; classic IDE shell was removed — agent route is the workbench. */
 export default async function LegacyEditorPage({
   searchParams,
 }: {
   searchParams: Promise<SearchParamsInput>;
 }) {
   const sp = await searchParams;
-  redirect(`${WORKSPACE_ROUTE}?${buildEditorRedirectQuery(sp)}`);
+  const q = toQueryString(sp);
+  redirect(q ? `${WORKSPACE_ROUTE}?${q}` : WORKSPACE_ROUTE);
 }

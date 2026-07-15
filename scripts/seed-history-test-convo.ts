@@ -110,7 +110,7 @@ console.log(
   `Seeded conversation ${conversationId} with ${userMessages.length} user messages.`
 );
 console.log(
-  `Open: http://localhost:3000/workspace?view=editor&conversationId=${conversationId}`
+  `Open: http://localhost:3000/agent?conversationId=${conversationId}`
 );
 }
 

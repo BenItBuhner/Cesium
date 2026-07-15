@@ -5,7 +5,6 @@ import { DocsPageView } from "@/components/docs/DocsPageView";
 import { AgentConversationsProvider } from "@/components/chat/AgentConversationsContext";
 import { OpenInEditorProvider } from "@/components/editor/OpenInEditorContext";
 import { AgentLayout } from "@/components/layout/AgentLayout";
-import { IDELayout } from "@/components/layout/IDELayout";
 import { MobileBridgeSync } from "@/components/mobile/MobileBridgeSync";
 import { SettingsShellView } from "@/components/layout/SettingsShellView";
 import { ShellViewProvider, useShellView } from "@/components/layout/ShellViewContext";
@@ -34,7 +33,7 @@ function WorkbenchShell() {
   if (shellView === "settings") {
     return <SettingsShellView />;
   }
-  return shellView === "agent" ? <AgentLayout /> : <IDELayout />;
+  return <AgentLayout />;
 }
 
 function WorkbenchWithConversationProviders() {
@@ -51,7 +50,7 @@ function WorkbenchWithConversationProviders() {
 function LoadingFallback() {
   return (
     <div className="flex h-screen w-screen items-center justify-center bg-[var(--bg-main)] font-sans text-[13px] text-[var(--text-secondary)]">
-      Loading workspace...
+      Loading agent...
     </div>
   );
 }

@@ -2,7 +2,7 @@
   "name": "Cesium",
   "short_name": "Cesium",
   "description": "An open-source AI-powered IDE",
-  "start_url": "/workspace",
+  "start_url": "/agent",
   "scope": "/",
   "display": "standalone",
   "orientation": "any",

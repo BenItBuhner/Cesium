@@ -33,5 +33,5 @@ export const webSurfaceImplementations = {
   "code-editor": "src/components/editor/CodeEditor.tsx",
   "browser-preview": "src/components/editor/BrowserTab.tsx",
   "composer-input": "src/components/chat/ChatComposer.tsx",
-  "resizable-shell": "src/components/layout/IDELayout.tsx",
+  "resizable-shell": "src/components/layout/AgentLayout.tsx",
 } as const;
