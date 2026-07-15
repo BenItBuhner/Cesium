@@ -2058,8 +2058,7 @@ export function AgentWorkspaceRail() {
     updateConversationRenameDraft,
   ]);
 
-  const workspaceGroupsSection: ReactNode = useMemo(() => {
-    return (
+  const workspaceGroupsSection: ReactNode = (
       <>
         {visibleGroups.map((group) => {
                 const groupKey = resolveGroupWorkspaceAppearanceKey(group, activeServer.id);
@@ -2394,45 +2393,7 @@ export function AgentWorkspaceRail() {
               );
             })}
       </>
-    );
-  }, [
-    activeServer.id,
-    activeWorkspaceId,
-    agentRailSettings.groupBy,
-    beginConversationRename,
-    bulkSelectMode,
-    bulkSelectedKeys,
-    cancelConversationRename,
-    collapsedFolderIds,
-    collapsedWorkspaceIds,
-    commitConversationRename,
-    draggingConversationId,
-    draggingWorkspaceId,
-    editingFolderId,
-    editingWorkspaceKey,
-    experimentalIpadCustomButtons,
-    gitStatus?.currentBranch,
-    gitStatus?.isGitRepo,
-    handleBulkRowClick,
-    handleConversationContextMenu,
-    handleConversationDragEnd,
-    handleConversationDragStart,
-    handleConversationOverflowMenu,
-    handleConversationSelect,
-    handleNewChatForWorkspace,
-    homeWorkspaceId,
-    isConversationChatSelected,
-    renameState?.conversationId,
-    renameState?.draft,
-    settings.general.chatFolders,
-    toggleFolderCollapsed,
-    toggleWorkspaceCollapsed,
-    updateConversationRenameDraft,
-    updateFolder,
-    visibleGroups,
-    workspaceBranchLabel,
-    workspaceRailAppearances,
-  ]);
+  );
 
   const orderedRailSections = useMemo(() => {
     const nodes: ReactNode[] = [];
