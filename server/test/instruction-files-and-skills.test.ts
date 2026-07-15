@@ -9,9 +9,13 @@ import {
 } from "../src/lib/agents/instruction-files.js";
 import {
   discoverWorkspaceSkills,
-  formatWorkspaceSkillsCatalog,
   parseSkillFrontmatter,
 } from "../src/lib/agents/workspace-skills.js";
+import {
+  formatAgentSkillsPromptSection,
+  refreshWorkspaceSkillsMirror,
+  writeAgentSkillsWorkspaceMirror,
+} from "../src/lib/agents/skills-mirror.js";
 import { buildCesiumModeReminder } from "../src/lib/agents/cesium-mode-reminders.js";
 import { buildCesiumSystemPrompt } from "@cesium/core/mcp";
 
@@ -112,12 +116,6 @@ Do the thing.
     assert.equal(skills[0].relativePath, ".cursor/skills/demo-skill/SKILL.md");
     assert.equal(skills[0].source, "cursor");
     assert.equal(skills[0].disableModelInvocation, false);
-
-    const catalog = formatWorkspaceSkillsCatalog(skills);
-    assert.match(catalog, /progressive disclosure/i);
-    assert.match(catalog, /demo-skill/);
-    assert.match(catalog, /\.cursor\/skills\/demo-skill\/SKILL\.md/);
-    assert.doesNotMatch(catalog, /Do the thing/);
   });
 });
 
@@ -154,31 +152,137 @@ description: From cursor root.
   });
 });
 
-test("buildCesiumSystemPrompt uses Project Instruction Files naming", () => {
+test("writeAgentSkillsWorkspaceMirror mirrors skills for on-demand reads like mcp-servers", async () => {
+  await withTempDir(async (dir) => {
+    const skillDir = path.join(dir, ".cursor", "skills", "demo-skill");
+    await fs.mkdir(skillDir, { recursive: true });
+    await fs.writeFile(
+      path.join(skillDir, "SKILL.md"),
+      `---
+name: demo-skill
+description: Demo skill for mirror tests.
+disable-model-invocation: true
+---
+
+# Demo
+Secret body content for read_file.
+`,
+      "utf8"
+    );
+    await fs.writeFile(path.join(skillDir, "references-note.txt"), "extra ref\n", "utf8");
+
+    const skills = await refreshWorkspaceSkillsMirror({
+      workspaceRoot: dir,
+      pluginSkills: [
+        {
+          id: "plugin-docs",
+          title: "Use Plugin Docs",
+          description: "Plugin skill for docs.",
+          body: "Always call the docs tool first.",
+          pluginId: "demo-plugin",
+          pluginName: "Demo Plugin",
+        },
+      ],
+    });
+
+    const index = await fs.readFile(path.join(dir, "agent-skills", "_index.md"), "utf8");
+    assert.match(index, /demo-skill/);
+    assert.match(index, /Use Plugin Docs/);
+    assert.match(index, /Read `_index\.md` first/);
+
+    const mirroredSkill = await fs.readFile(
+      path.join(dir, "agent-skills", "demo-skill", "SKILL.md"),
+      "utf8"
+    );
+    assert.match(mirroredSkill, /Secret body content for read_file/);
+    const mirroredRef = await fs.readFile(
+      path.join(dir, "agent-skills", "demo-skill", "references-note.txt"),
+      "utf8"
+    );
+    assert.match(mirroredRef, /extra ref/);
+
+    const pluginSkill = await fs.readFile(
+      path.join(dir, "agent-skills", "plugin-docs", "SKILL.md"),
+      "utf8"
+    );
+    assert.match(pluginSkill, /Always call the docs tool first/);
+
+    assert.match(skills.skillsList, /agent-skills\/_index\.md/);
+    assert.match(skills.skillsList, /demo-skill/);
+    assert.doesNotMatch(skills.skillsList, /Secret body content for read_file/);
+    assert.doesNotMatch(skills.skillsList, /Always call the docs tool first/);
+
+    const gitignore = await fs.readFile(path.join(dir, ".gitignore"), "utf8").catch(() => "");
+    // ensureAgentSkillsGitignore no-ops when no .gitignore exists; create one and refresh again
+    await fs.writeFile(path.join(dir, ".gitignore"), "node_modules/\n", "utf8");
+    await refreshWorkspaceSkillsMirror({ workspaceRoot: dir });
+    const updatedIgnore = await fs.readFile(path.join(dir, ".gitignore"), "utf8");
+    assert.match(updatedIgnore, /agent-skills\//);
+  });
+});
+
+test("writeAgentSkillsWorkspaceMirror removes stale skill directories", async () => {
+  await withTempDir(async (dir) => {
+    await fs.mkdir(path.join(dir, "agent-skills", "stale"), { recursive: true });
+    await fs.writeFile(path.join(dir, "agent-skills", "stale", "SKILL.md"), "old\n", "utf8");
+    await writeAgentSkillsWorkspaceMirror({
+      workspaceRoot: dir,
+      workspaceSkills: [],
+      pluginSkills: [],
+    });
+    await assert.rejects(fs.stat(path.join(dir, "agent-skills", "stale")));
+  });
+});
+
+test("formatAgentSkillsPromptSection empty state points at mirror path", () => {
+  const section = formatAgentSkillsPromptSection([]);
+  assert.match(section, /agent-skills\//);
+  assert.match(section, /_index\.md/);
+});
+
+test("buildCesiumSystemPrompt uses Project Instruction Files naming and agent-skills mirror", () => {
   const prompt = buildCesiumSystemPrompt({
     agentsMarkdown: "### AGENTS.md\n\nHello\n\n### CLAUDE.md\n\nClaude bits",
-    skillsList: "- demo: Test skill\n  Location: .cursor/skills/demo/SKILL.md",
+    skillsList: formatAgentSkillsPromptSection([
+      {
+        id: "demo",
+        name: "demo",
+        description: "Test skill",
+        disableModelInvocation: false,
+        sourceKind: "workspace",
+      },
+    ]),
   });
   assert.match(prompt, /## Project Instruction Files/);
   assert.match(prompt, /AGENTS\.md/);
   assert.match(prompt, /CLAUDE\.md/);
-  assert.match(prompt, /progressive disclosure/i);
-  assert.match(prompt, /demo: Test skill/);
+  assert.match(prompt, /agent-skills\//);
+  assert.match(prompt, /agent-skills\/_index\.md/);
+  assert.match(prompt, /demo/);
   assert.doesNotMatch(prompt, /## Your AGENTS\.md File/);
 });
 
-test("buildCesiumModeReminder uses Project Instruction Files section", () => {
+test("buildCesiumModeReminder uses Project Instruction Files section and mirror read guidance", () => {
   const reminder = buildCesiumModeReminder({
     mode: "agent",
     workspaceRoot: "/tmp/workspace",
     dateLabel: "Wednesday, July 15, 2026",
     gitSummary: "a git repository on branch `main`",
     agentsMarkdown: "### AGENTS.md\n\nrules",
-    skillsList: "- demo: Skill\n  Location: .agents/skills/demo/SKILL.md",
+    skillsList: formatAgentSkillsPromptSection([
+      {
+        id: "demo",
+        name: "demo",
+        description: "Skill",
+        disableModelInvocation: false,
+        sourceKind: "workspace",
+      },
+    ]),
     mcpSummaries: [],
   });
   assert.match(reminder, /## Project Instruction Files/);
   assert.doesNotMatch(reminder, /## AGENTS\.md\n\n```markdown/);
   assert.match(reminder, /## Skills/);
-  assert.match(reminder, /\.agents\/skills\/demo\/SKILL\.md/);
+  assert.match(reminder, /agent-skills\/_index\.md/);
+  assert.match(reminder, /same discover-then-read pattern as `mcp-servers\/`/);
 });

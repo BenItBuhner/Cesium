@@ -186,32 +186,3 @@ export async function discoverWorkspaceSkills(
 
   return found;
 }
-
-export function formatWorkspaceSkillsCatalog(
-  skills: WorkspaceSkillCatalogEntry[]
-): string {
-  if (skills.length === 0) {
-    return "";
-  }
-
-  const lines = [
-    "Workspace Agent Skills (SKILL.md catalog — progressive disclosure):",
-    "When a task matches a skill description, or the user cites/tags a skill, read that skill's SKILL.md with the read_file tool before acting. Resolve relative paths from the skill directory (the parent of SKILL.md). Do not guess skill instructions from memory.",
-    "",
-  ];
-
-  for (const skill of skills) {
-    const manual = skill.disableModelInvocation
-      ? " [manual only — use when the user explicitly requests this skill]"
-      : "";
-    lines.push(`- ${skill.name}: ${skill.description}${manual}`);
-    lines.push(`  Location: ${skill.relativePath}`);
-  }
-
-  return lines.join("\n");
-}
-
-export async function resolveWorkspaceSkillsList(workspaceRoot: string): Promise<string> {
-  const skills = await discoverWorkspaceSkills(workspaceRoot);
-  return formatWorkspaceSkillsCatalog(skills);
-}

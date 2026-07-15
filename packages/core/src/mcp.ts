@@ -110,13 +110,15 @@ You cannot infer or assume the tools and their syntax at all, since these change
 
 ## External Skills & Instructions
 
-The user may also configure Agent Skills (the open \`SKILL.md\` standard). Skills are task playbooks discovered from workspace skill directories such as \`.agents/skills/\`, \`.cursor/skills/\`, and \`.claude/skills/\`, plus any plugin-provided skills. Each catalog entry below lists a skill name, description, and location.
+Although you have built-in tools, there are also Agent Skills (the open \`SKILL.md\` standard), which are discoverable as files under the workspace \`agent-skills/\` directory — the same progressive-disclosure pattern used for \`mcp-servers/\`.
 
-Follow progressive disclosure: use the catalog to decide relevance, then read the referenced \`SKILL.md\` with the read_file tool before acting. Resolve relative paths from that skill's directory. If a skill is tagged, cited, or clearly relevant, you should use it even when the user did not name it explicitly, unless the user refutes it. Skills marked manual-only should only be used when the user explicitly requests them.
+As configured by the user, you have the following skills currently visible and exposed to you:
 
 {list_of_skills}
 
-Follow skill instructions exactly once loaded, along with any other instructions given by the user.`;
+When a skill is relevant, or the user cites/tags one, you must parse through the mirrored skill metadata and actually read the instructions before acting. Always read \`agent-skills/_index.md\`, then the relevant \`agent-skills/<skill-id>/summary.txt\` and \`agent-skills/<skill-id>/SKILL.md\`. Resolve relative paths from that skill subdirectory.
+
+You cannot infer or assume skill instructions from memory, since these change frequently; always view the skill files so you can recall and use them thereafter for the intent as given by the user's task(s). Skills marked manual-only should only be used when the user explicitly requests them.`;
 }
 
 export const CESIUM_MCP_EMPTY_SECTION = `---
@@ -204,13 +206,15 @@ This content should be followed to a tee, and if there is any contradictory info
 
 ## External Skills & Instructions
 
-The user may also configure Agent Skills (the open \`SKILL.md\` standard). Skills are task playbooks discovered from workspace skill directories such as \`.agents/skills/\`, \`.cursor/skills/\`, and \`.claude/skills/\`, plus any plugin-provided skills. Each catalog entry below lists a skill name, description, and location when available.
+Although you have built-in tools, there are also Agent Skills (the open \`SKILL.md\` standard), which are discoverable as files under the workspace \`agent-skills/\` directory — the same progressive-disclosure pattern used for \`mcp-servers/\`.
 
-Follow progressive disclosure: use the catalog to decide relevance, then read the referenced \`SKILL.md\` with the read_file tool before acting. Resolve relative paths from that skill's directory. If a skill is tagged, cited, or clearly relevant, you should use it even when the user did not name it explicitly, unless the user refutes it. Skills marked manual-only should only be used when the user explicitly requests them.
+As configured by the user, you have the following skills currently visible and exposed to you:
 
 ${skillsList}
 
-Follow skill instructions exactly once loaded, along with any other instructions given by the user.`;
+When a skill is relevant, or the user cites/tags one, you must parse through the mirrored skill metadata and actually read the instructions before acting. Always read \`agent-skills/_index.md\`, then the relevant \`agent-skills/<skill-id>/summary.txt\` and \`agent-skills/<skill-id>/SKILL.md\`. Resolve relative paths from that skill subdirectory.
+
+You cannot infer or assume skill instructions from memory, since these change frequently; always view the skill files so you can recall and use them thereafter for the intent as given by the user's task(s). Skills marked manual-only should only be used when the user explicitly requests them.`;
 }
 
 export function buildCesiumSystemPrompt(input: BuildCesiumSystemPromptInput = {}): string {

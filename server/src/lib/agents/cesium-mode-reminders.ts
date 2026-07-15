@@ -159,5 +159,7 @@ ${agentsMarkdown}
 ## Skills
 
 ${skillsList}
+
+When using skills, read \`agent-skills/_index.md\` and the relevant \`agent-skills/<skill-id>/SKILL.md\` before following them — the same discover-then-read pattern as \`mcp-servers/\`.
 </system-reminder>`;
 }
