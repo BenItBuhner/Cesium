@@ -5,3 +5,11 @@ plugins {
   id("org.jetbrains.kotlin.plugin.serialization") version "2.1.20" apply false
   id("com.facebook.react") apply false
 }
+
+ext {
+  buildToolsVersion = "36.0.0"
+  minSdkVersion = 26
+  compileSdkVersion = 36
+  targetSdkVersion = 36
+  ndkVersion = "27.0.12077973"
+}

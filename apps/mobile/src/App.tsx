@@ -1,17 +1,22 @@
 import "../global.css";
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   AppState,
+  Appearance,
   PermissionsAndroid,
   Platform,
   StatusBar,
-  Text,
-  View,
   type AppStateStatus,
 } from "react-native";
 import NetInfo from "@react-native-community/netinfo";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
+import { ServerConnectionsProvider } from "@cesium/client/react";
+import {
+  NativeAuthProvider,
+  NativeWorkbench,
+  NativeWorkspaceProvider,
+} from "@cesium/ui-native";
 import { readLaunchUrlConfig, resolveLaunchUrlConfig } from "./config";
 import { installReactNativeClientPlatform, setRuntimeServerBaseUrl } from "./platform";
 import { CesiumLiveUpdates } from "./native/CesiumLiveUpdates";
@@ -20,13 +25,17 @@ import { BackgroundCoordinator } from "./services/BackgroundCoordinator";
 import { LiveUpdateController } from "./services/LiveUpdateController";
 
 installReactNativeClientPlatform();
+const INITIAL_CONFIG = readLaunchUrlConfig();
+setRuntimeServerBaseUrl(INITIAL_CONFIG.serverUrl);
 
 type ConnectionState = "idle" | "connecting" | "open" | "closed" | "reconnecting";
 
 export default function App() {
-  const initialConfig = useMemo(() => readLaunchUrlConfig(), []);
-  const [serverUrl, setServerUrl] = useState(initialConfig.serverUrl);
+  const [serverUrl, setServerUrl] = useState(INITIAL_CONFIG.serverUrl);
   const [connectionState, setConnectionState] = useState<ConnectionState>("idle");
+  const [notificationConversationId, setNotificationConversationId] = useState<string | null>(
+    null
+  );
   const liveUpdatesRef = useRef(new LiveUpdateController());
   const agentStatusRef = useRef(
     new AgentStatusService({
@@ -40,14 +49,8 @@ export default function App() {
     new BackgroundCoordinator(agentStatusRef.current, liveUpdatesRef.current)
   );
 
-  useEffect(() => {
-    setRuntimeServerBaseUrl(serverUrl);
-  }, [serverUrl]);
-
-  // Focused workspace/conversation wiring arrives with the native workbench
-  // UI; until then the status socket stays idle unless a conversation focuses.
   const configureAgentSocket = useCallback(
-    (workspaceId: string | null = null, conversationId: string | null = null) => {
+    (workspaceId: string | null, conversationId: string | null) => {
       agentStatusRef.current.updateConfig({
         serverBaseUrl: serverUrl,
         workspaceId,
@@ -59,8 +62,8 @@ export default function App() {
   );
 
   useEffect(() => {
-    configureAgentSocket();
-  }, [configureAgentSocket]);
+    setRuntimeServerBaseUrl(serverUrl);
+  }, [serverUrl]);
 
   useEffect(() => {
     let cancelled = false;
@@ -69,13 +72,13 @@ export default function App() {
         return;
       }
       setServerUrl((current) =>
-        current === initialConfig.serverUrl ? nextConfig.serverUrl : current
+        current === INITIAL_CONFIG.serverUrl ? nextConfig.serverUrl : current
       );
     });
     return () => {
       cancelled = true;
     };
-  }, [initialConfig.serverUrl]);
+  }, []);
 
   useEffect(() => {
     const agentStatus = agentStatusRef.current;
@@ -102,24 +105,35 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    // Consume any cold-start notification action so it is not replayed; the
-    // native workbench UI will route these to the right conversation.
-    void CesiumLiveUpdates.consumeInitialNotificationAction().catch(() => undefined);
+    void CesiumLiveUpdates.consumeInitialNotificationAction()
+      .then((action) => {
+        if (action?.conversationId) {
+          setNotificationConversationId(action.conversationId);
+        }
+      })
+      .catch(() => undefined);
   }, []);
+
+  const dark = Appearance.getColorScheme() === "dark";
 
   return (
     <SafeAreaProvider>
-      <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
-      <SafeAreaView className="flex-1 bg-bg-main" testID="cesium-mobile-root">
-        <View className="flex-1 items-center justify-center gap-2 px-6">
-          <Text className="text-text-primary text-2xl font-semibold">Cesium</Text>
-          <Text className="text-text-secondary text-sm text-center">
-            Native workbench shell — server {serverUrl}
-          </Text>
-          <Text className="text-text-disabled text-xs">
-            agent socket: {connectionState}
-          </Text>
-        </View>
+      <StatusBar
+        barStyle={dark ? "light-content" : "dark-content"}
+        backgroundColor={dark ? "#191919" : "#fafafa"}
+      />
+      <SafeAreaView style={{ flex: 1 }} testID="cesium-mobile-root">
+        <ServerConnectionsProvider>
+          <NativeAuthProvider>
+            <NativeWorkspaceProvider>
+              <NativeWorkbench
+                connectionState={connectionState}
+                notificationConversationId={notificationConversationId}
+                onFocusedConversationChange={configureAgentSocket}
+              />
+            </NativeWorkspaceProvider>
+          </NativeAuthProvider>
+        </ServerConnectionsProvider>
       </SafeAreaView>
     </SafeAreaProvider>
   );

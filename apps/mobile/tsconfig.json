@@ -11,7 +11,8 @@
       "@cesium/core": ["../../packages/core/src/index.ts"],
       "@cesium/client": ["../../packages/client/src/index.ts"],
       "@cesium/client/react": ["../../packages/client/src/react.ts"],
-      "@cesium/design": ["../../packages/design/src/index.ts"]
+      "@cesium/design": ["../../packages/design/src/index.ts"],
+      "@cesium/ui-native": ["../../packages/ui-native/src/index.ts"]
     }
   },
   "include": [
