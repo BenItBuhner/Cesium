@@ -72,6 +72,24 @@ test("normalizer maps auth and resume events", () => {
   assert.match(resumeEvents[0]?.text ?? "", /01234567-89ab/);
 });
 
+test("normalizer maps stream errors to failed status", () => {
+  const errorEvents = antigravityEventToAgentEvents({
+    event: {
+      type: "error",
+      sessionId: "s1",
+      error: new Error("CLI crashed"),
+      at: "2026-01-01T00:00:00.000Z",
+    },
+    conversationId: "c1",
+    assistantMessageId: "m1",
+  });
+  assert.equal(errorEvents[0]?.kind, "system");
+  assert.equal(errorEvents[0]?.level, "error");
+  assert.equal(errorEvents[1]?.kind, "status");
+  assert.equal(errorEvents[1]?.status, "failed");
+  assert.match(errorEvents[1]?.detail ?? "", /CLI crashed/);
+});
+
 test("tool and permission events normalize to canonical OpenCursor events", () => {
   const toolEvent: Extract<GoogleAntigravityEvent, { type: "tool.proposed" }> = {
     type: "tool.proposed",

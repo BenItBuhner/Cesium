@@ -39,7 +39,9 @@ const eslintConfig = defineConfig([
   },
   {
     // CommonJS by definition; `require()` is the import mechanism.
-    files: ["**/*.cjs", "**/metro.config.js"],
+    // metro-transformer.js is also a Metro worker entry that must use require()
+    // to load non-exported internals via absolute paths.
+    files: ["**/*.cjs", "**/metro.config.js", "**/metro-transformer.js"],
     rules: {
       "@typescript-eslint/no-require-imports": "off",
     },

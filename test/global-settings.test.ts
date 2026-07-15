@@ -64,6 +64,7 @@ describe("global settings", () => {
           "cursor-acp": [{ id: "auto", name: "Auto", on: true }],
           "codex-adapter": [{ id: "gpt-5", name: "GPT-5", on: true }],
           "opencode-acp": [{ id: "auto", name: "Auto", on: true }],
+          "gemini-acp": [{ id: "auto", name: "Auto", on: true }],
         },
       },
     });
@@ -71,6 +72,7 @@ describe("global settings", () => {
     assert.equal(settings.models.byBackend["cursor-acp"], undefined);
     assert.equal(settings.models.byBackend["codex-adapter"], undefined);
     assert.equal(settings.models.byBackend["opencode-acp"], undefined);
+    assert.equal(settings.models.byBackend["gemini-acp"], undefined);
   });
 
   test("normalizes agent rail grouping settings", () => {

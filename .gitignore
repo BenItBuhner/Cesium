@@ -142,6 +142,7 @@ served-sw.js
 /public/sw-test.txt
 
 mcp-servers/
+agent-skills/
 
 # React Native / Android local build artifacts
 apps/mobile/android/app/.cxx/

@@ -1,1 +1,1 @@
-export { default, metadata } from "../../../../../src/app/workspace/page";
+export { default } from "../../../../../src/app/workspace/page";

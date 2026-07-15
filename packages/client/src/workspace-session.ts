@@ -5,6 +5,7 @@ import {
   type ComposerStatusBarVisibility,
 } from "./composer-status-bar";
 import type { AgentBackendId } from "@cesium/core";
+import { isActiveAgentBackendId } from "@cesium/core";
 import type { AgentRailFilterToggleState } from "./agent-rail";
 import {
   defaultAgentRailFilterToggles,
@@ -24,11 +25,11 @@ export type ExplorerSessionState = {
   scrollTop: number;
 };
 
-/** Agent vs IDE vs full-screen settings; `/workspace` uses `?view=editor` / `?view=settings` when not default agent. */
-export type WorkbenchShellView = "agent" | "editor" | "settings";
+/** Agent shell vs full-screen settings; `/agent` uses `?view=settings` when not default agent. */
+export type WorkbenchShellView = "agent" | "settings";
 
 /** Last non-settings shell; used when closing the settings overlay. */
-export type WorkbenchShellNonSettingsView = "agent" | "editor";
+export type WorkbenchShellNonSettingsView = "agent";
 
 export type LayoutSessionState = {
   sidebarOpen: boolean;
@@ -851,6 +852,7 @@ export function mergeWorkspaceSessionFromImport(
     "cursor-acp": "cursor-sdk",
     "opencode-acp": "opencode-server",
     "codex-adapter": "codex-app-server",
+    "gemini-acp": "google-antigravity-cli",
   };
   const importedChatBackendRawMapped =
     typeof importedChatBackendRaw === "string"
@@ -858,15 +860,9 @@ export function mergeWorkspaceSessionFromImport(
       : importedChatBackendRaw;
   const importedChatBackendCoerced: AgentBackendId =
     (importedChatBackendRawMapped as AgentBackendId | undefined) ?? current.chat.backendId;
-  const normalizedChatBackendId =
-    importedChatBackendCoerced === "cesium-agent" ||
-    importedChatBackendCoerced === "cursor-sdk" ||
-    importedChatBackendCoerced === "opencode-server" ||
-    importedChatBackendCoerced === "gemini-acp" ||
-    importedChatBackendCoerced === "codex-app-server" ||
-    importedChatBackendCoerced === "claude-code-sdk"
-      ? importedChatBackendCoerced
-      : current.chat.backendId;
+  const normalizedChatBackendId = isActiveAgentBackendId(importedChatBackendCoerced)
+    ? importedChatBackendCoerced
+    : current.chat.backendId;
   const importedUnsupportedBackend =
     importedChatBackendRaw != null &&
     normalizedChatBackendId !== importedChatBackendCoerced;
@@ -967,15 +963,10 @@ export function mergeWorkspaceSessionFromImport(
       ...current.layout,
       ...(r.layout ?? {}),
       shellView:
-        r.layout?.shellView === "editor" ||
-        r.layout?.shellView === "agent" ||
         r.layout?.shellView === "settings"
-          ? r.layout.shellView
-          : current.layout.shellView ?? "agent",
-      priorShellView:
-        r.layout?.priorShellView === "editor" || r.layout?.priorShellView === "agent"
-          ? r.layout.priorShellView
-          : current.layout.priorShellView ?? "agent",
+          ? "settings"
+          : "agent",
+      priorShellView: "agent",
       desktopLayout:
         r.layout?.desktopLayout && typeof r.layout.desktopLayout === "object"
           ? r.layout.desktopLayout

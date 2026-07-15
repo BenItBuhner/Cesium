@@ -67,7 +67,7 @@ export const AGENT_CAPABILITIES: Record<AgentBackendId, AgentProviderCapabilitie
     supportsInlineReasoning: true,
     supportsCompletionRetry: false,
   },
-  "gemini-acp": {
+  "devin-acp": {
     supportsLoadSession: true,
     supportsModeSelection: true,
     supportsModelSelection: true,
@@ -234,7 +234,7 @@ export const BACKEND_HARNESS_EXPECTATIONS: Record<
     ],
     notes: "Subagent events depend on global/child SSE routing.",
   },
-  "gemini-acp": {
+  "devin-acp": {
     expectedEventKinds: [
       ...textTurnEvents,
       "reasoning",
@@ -243,6 +243,7 @@ export const BACKEND_HARNESS_EXPECTATIONS: Record<
       ...permissionEvents,
       "system",
     ],
+    notes: "Devin CLI ACP (`devin acp`); richer CLI-only interactions may not surface over ACP.",
   },
   "codex-app-server": {
     expectedEventKinds: [

@@ -13,6 +13,7 @@ export type CesiumToolName =
   | "grep"
   | "edit_file"
   | "terminal"
+  | "wait"
   | "todo"
   | "create_plan"
   | "update_plan"
@@ -123,6 +124,19 @@ export const CESIUM_TOOL_DEFINITIONS: CesiumToolDefinition[] = [
         timeoutMs: { type: "number" },
       },
       required: ["command"],
+    },
+  },
+  {
+    name: "wait",
+    description:
+      "Pause this agent for a fixed number of seconds before continuing. Prefer this over shell sleep for timed delays.",
+    parameters: {
+      type: "object",
+      properties: {
+        seconds: { type: "number" },
+        reason: { type: "string" },
+      },
+      required: ["seconds"],
     },
   },
   {

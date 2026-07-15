@@ -54,7 +54,6 @@ import { useWorkspaceDirectory } from "@/contexts/WorkspaceDirectoryContext";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { useServerConnections } from "@/components/preferences/ServerConnectionsProvider";
 import { useIDECommandRunner } from "@/components/ide/IDECommandContext";
-import { useShellView } from "@/components/layout/ShellViewContext";
 import { AGENT_CENTER_CONTENT_CLASS } from "./agent-shell-layout";
 import { useAgentShellState } from "./AgentShellStateContext";
 import {
@@ -168,7 +167,6 @@ export function AgentNewChatLanding() {
   const { activeServer, setActiveServer } = useServerConnections();
   const { workspaces: directoryWorkspaces } = useWorkspaceDirectory();
   const runCommand = useIDECommandRunner();
-  const { setShellView } = useShellView();
 
   const draftBackend = useMemo(
     () => pickAvailableBackend(backends, workspaceSession.chat.backendId),
@@ -784,12 +782,11 @@ export function AgentNewChatLanding() {
                 <button
                   type="button"
                   onClick={() => {
-                    setRightPaneOpen(false);
-                    setShellView("editor");
+                    setRightPaneOpen(true);
                   }}
                   className={QUICK_ACTION_BUTTON_CLASSNAME}
                 >
-                  Open editor window
+                  Open editor panel
                 </button>
               </div>
             </>

@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { spawn } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
+import { spawnPty, type PtyProcess as SharedPtyProcess } from "../pty.js";
 import { spawnSafeEnv } from "./spawn-env.js";
 import {
   GoogleAntigravityHookBridge,
@@ -100,27 +101,6 @@ interface Transport {
   readonly kind: "pty" | "stdio";
   start(options: TransportStartOptions): Promise<TransportProcess>;
 }
-
-type NodePtyModule = {
-  spawn(
-    command: string,
-    args: string[],
-    options: {
-      name?: string;
-      cols?: number;
-      rows?: number;
-      cwd?: string;
-      env?: NodeJS.ProcessEnv;
-    }
-  ): {
-    pid: number;
-    write(input: string): void;
-    resize(cols: number, rows: number): void;
-    kill(signal?: string): void;
-    onData(handler: (data: string) => void): { dispose(): void };
-    onExit(handler: (event: { exitCode: number; signal?: number }) => void): { dispose(): void };
-  };
-};
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -276,7 +256,7 @@ class PtyProcess implements TransportProcess {
   private released = false;
   private exitCode: number | null = null;
 
-  constructor(private readonly ptyProcess: ReturnType<NodePtyModule["spawn"]>) {
+  constructor(private readonly ptyProcess: SharedPtyProcess) {
     this.subscriptions.push(
       ptyProcess.onData((data) => {
         this.chunks.push(data);
@@ -346,7 +326,7 @@ class PtyProcess implements TransportProcess {
     try {
       this.ptyProcess.kill("SIGTERM");
     } catch {
-      // node-pty may throw if the child has already exited.
+      // PTY backends may throw if the child has already exited.
     }
   }
 
@@ -366,8 +346,9 @@ class PtyTransport implements Transport {
   readonly kind = "pty" as const;
 
   async start(options: TransportStartOptions): Promise<TransportProcess> {
-    const nodePty = (await import("node-pty")) as NodePtyModule;
-    const pty = nodePty.spawn(options.command, options.args, {
+    const pty = spawnPty({
+      file: options.command,
+      args: options.args,
       name: "xterm-256color",
       cols: 120,
       rows: 40,

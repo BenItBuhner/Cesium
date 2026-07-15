@@ -32,9 +32,7 @@ type ShellViewContextValue = {
 const ShellViewContext = createContext<ShellViewContextValue | null>(null);
 
 function applyShellViewToUrl(url: URL, next: WorkbenchShellView) {
-  if (next === "editor") {
-    url.searchParams.set(WORKBENCH_VIEW_SEARCH_PARAM, "editor");
-  } else if (next === "settings") {
+  if (next === "settings") {
     url.searchParams.set(WORKBENCH_VIEW_SEARCH_PARAM, "settings");
   } else {
     url.searchParams.delete(WORKBENCH_VIEW_SEARCH_PARAM);
@@ -56,7 +54,9 @@ export function ShellViewProvider({ children }: { children: ReactNode }) {
       }
       return "agent";
     }
-    return workspaceSession.layout.shellView;
+    // Legacy sessions may still persist `editor`; treat as agent.
+    const stored = workspaceSession.layout.shellView;
+    return stored === "settings" ? "settings" : "agent";
   }, [explicitView, sessionReady, workspaceSession.layout.shellView]);
 
   const setShellView = useCallback(
@@ -65,12 +65,13 @@ export function ShellViewProvider({ children }: { children: ReactNode }) {
       if (!url) {
         return;
       }
-      applyShellViewToUrl(url, next);
+      const resolved: WorkbenchShellView = next === "settings" ? "settings" : "agent";
+      applyShellViewToUrl(url, resolved);
       updateWorkspaceSession((c) => {
-        const cur = c.layout.shellView;
-        let layout = { ...c.layout, shellView: next };
-        if (next === "settings" && cur !== "settings") {
-          const prior: WorkbenchShellNonSettingsView = cur === "editor" ? "editor" : "agent";
+        const cur = c.layout.shellView === "settings" ? "settings" : "agent";
+        let layout = { ...c.layout, shellView: resolved };
+        if (resolved === "settings" && cur !== "settings") {
+          const prior: WorkbenchShellNonSettingsView = "agent";
           layout = { ...layout, priorShellView: prior };
         }
         return { ...c, layout };
@@ -85,8 +86,7 @@ export function ShellViewProvider({ children }: { children: ReactNode }) {
   }, [setShellView]);
 
   const closeSettingsView = useCallback(() => {
-    const prior: WorkbenchShellNonSettingsView =
-      workspaceSession.layout.priorShellView ?? "agent";
+    const prior: WorkbenchShellNonSettingsView = "agent";
     const url = safeWindowLocationUrl();
     if (!url) {
       return;
@@ -94,21 +94,17 @@ export function ShellViewProvider({ children }: { children: ReactNode }) {
     applyShellViewToUrl(url, prior);
     updateWorkspaceSession((c) => ({
       ...c,
-      layout: { ...c.layout, shellView: prior },
+      layout: { ...c.layout, shellView: prior, priorShellView: prior },
     }));
     router.replace(`${url.pathname}${url.search}${url.hash}`);
-  }, [router, updateWorkspaceSession, workspaceSession.layout.priorShellView]);
+  }, [router, updateWorkspaceSession]);
 
   useEffect(() => {
     if (!sessionReady) {
       return;
     }
     const wantsParam: WorkbenchShellView | null =
-      workspaceSession.layout.shellView === "editor"
-        ? "editor"
-        : workspaceSession.layout.shellView === "settings"
-          ? "settings"
-          : null;
+      workspaceSession.layout.shellView === "settings" ? "settings" : null;
 
     const url = safeWindowLocationUrl();
     if (!url) {

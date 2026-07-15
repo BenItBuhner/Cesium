@@ -34,7 +34,6 @@ import {
 } from "lucide-react";
 import { ImageCarousel } from "./ImageCarousel";
 import type { ImageAttachment, ImageAttachmentState } from "@/lib/types";
-import { useTheme } from "@/components/theme/ThemeProvider";
 import {
   isComposerEffectivelyEmptyForMultiline,
   resolveComposerIsMultiLine,
@@ -2957,17 +2956,15 @@ const handleNativeComposerKeyDown = useCallback(
   );
   const primaryControlIsVoice = !primaryControlIsStop && !showCesiumTurnPill && !canSubmit;
 
-  const { themeConfig } = useTheme();
-  const isNewDesign = themeConfig.uiDesignMode === "new";
   /**
    * Flips when the contenteditable wraps beyond one visual line. The hook
    * attaches a single ResizeObserver + `input` listener on the editor ref and
    * returns a boolean; it's a cheap no-op when the editor ref hasn't attached
-   * yet. Classic layout still reads the flag but ignores it.
+   * yet.
    */
   const hookMeasuresMultiline = useComposerTextIsMultiLine(editorRef);
   /**
-   * New-design docked composer: measuring multi-line while swapping layout
+   * Docked composer: measuring multi-line while swapping layout
    * (single-row vs stacked) changes editor width and reflow, which can flip the
    * hook true/false in a tight loop. Once wrapped, stay in the multi-line shell
    * until the user clears all content (`value === ""`).
@@ -2986,17 +2983,15 @@ const handleNativeComposerKeyDown = useCallback(
     }
   }, [hookMeasuresMultiline, value]);
 
-  const useNewDesignStickyMultiline =
-    isNewDesign && variant === "docked" && !isExpanded;
+  const useStickyMultiline = variant === "docked" && !isExpanded;
   const isMultiLine = resolveComposerIsMultiLine({
     forceMultiline,
-    useStickyMultiline: useNewDesignStickyMultiline,
+    useStickyMultiline,
     hookMeasuresMultiline,
     latchedMultiline: newDesignMultilineLatch,
     value,
   });
   canBackspaceClearModeChipRef.current =
-    isNewDesign &&
     variant === "docked" &&
     !isExpanded &&
     !forceMultiline &&
@@ -3090,7 +3085,7 @@ const handleNativeComposerKeyDown = useCallback(
     );
   };
 
-  if (isNewDesign && variant === "docked" && !isExpanded) {
+  if (variant === "docked" && !isExpanded) {
     const plusButton = (
       <button
         type="button"

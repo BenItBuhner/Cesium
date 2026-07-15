@@ -12,7 +12,7 @@ export type AgentBackendId =
   | "cesium-agent"
   | "cursor-sdk"
   | "opencode-server"
-  | "gemini-acp"
+  | "devin-acp"
   | "codex-app-server"
   | "claude-code-sdk"
   | "pi-agent"

@@ -21,7 +21,9 @@ export function getAgentLabel(agentId: string): string {
     case "opencode-server":
       return "OpenCode Server";
     case "gemini-acp":
-      return "Gemini";
+      return "Gemini (retired)";
+    case "devin-acp":
+      return "Devin";
     case "codex-adapter":
       return "Codex";
     case "codex-app-server":
@@ -45,7 +47,7 @@ function parseHandoffBackendId(raw: string): AgentBackendId | null {
     case "cesium-agent":
     case "cursor-sdk":
     case "opencode-server":
-    case "gemini-acp":
+    case "devin-acp":
     case "codex-app-server":
     case "claude-code-sdk":
     case "pi-agent":
@@ -57,6 +59,8 @@ function parseHandoffBackendId(raw: string): AgentBackendId | null {
       return "opencode-server";
     case "codex-adapter":
       return "codex-app-server";
+    case "gemini-acp":
+      return "google-antigravity-cli";
     default:
       return null;
   }

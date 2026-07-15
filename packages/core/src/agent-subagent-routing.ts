@@ -653,6 +653,7 @@ function isStructuralNonSubagentToolEvent(event: SubagentToolCallEvent): boolean
       "delete",
       "grep",
       "todo",
+      "wait",
     ].includes(tk)
   ) {
     return true;
@@ -764,7 +765,7 @@ export const SUBAGENT_TOOL_CALL_CLASSIFIERS: Record<
   "cesium-agent": isStrictAcpSubagentTaskToolEvent,
   "cursor-sdk": isCursorAcpSubagentTaskToolEvent,
   "opencode-server": isStrictAcpSubagentTaskToolEvent,
-  "gemini-acp": isStrictAcpSubagentTaskToolEvent,
+  "devin-acp": isStrictAcpSubagentTaskToolEvent,
   "codex-app-server": isCodexSubagentTaskToolEvent,
   "claude-code-sdk": isStrictAcpSubagentTaskToolEvent,
   "pi-agent": isStrictAcpSubagentTaskToolEvent,

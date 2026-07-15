@@ -1170,13 +1170,6 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
         },
       },
       {
-        id: "workbench.action.switchToEditor",
-        label: "View: Switch to Editor Mode",
-        run: () => {
-          setShellView("editor");
-        },
-      },
-      {
         id: "workbench.action.newWindow",
         label: "File: New Window...",
         keybinding: kb("workbench.action.newWindow"),

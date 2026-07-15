@@ -32,7 +32,7 @@ describe("iPad resume cache helpers", () => {
       workspaceId: "workspace",
       windowId: null,
       sessionScopeId: "workspace",
-      route: { pathname: "/workspace", search: "?workspaceId=workspace", hash: "" },
+      route: { pathname: "/agent", search: "?workspaceId=workspace", hash: "" },
       workspaceSession,
     };
 

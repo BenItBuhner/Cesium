@@ -68,7 +68,7 @@ export const HARNESS_ORDER: AgentBackendId[] = [
   "cursor-sdk",
   "codex-app-server",
   "opencode-server",
-  "gemini-acp",
+  "devin-acp",
   "claude-code-sdk",
   "pi-agent",
   "google-antigravity-cli",
@@ -78,7 +78,7 @@ export const HARNESS_LABELS: Record<AgentBackendId, string> = {
   "cesium-agent": "Cesium Agent (Beta)",
   "cursor-sdk": "Cursor SDK",
   "opencode-server": "OpenCode Server",
-  "gemini-acp": "Gemini",
+  "devin-acp": "Devin",
   "codex-app-server": "Codex App Server",
   "claude-code-sdk": "Claude Code",
   "pi-agent": "Pi Agent",
@@ -92,14 +92,15 @@ const HARNESS_DESCRIPTIONS: Record<AgentBackendId, string> = {
     "Cursor TypeScript SDK runtime. Uses the server-stored API key and enabled MCP servers from Plugins.",
   "opencode-server":
     "OpenCode native HTTP/SSE server API. Uses ambient OpenCode auth or the configured external server.",
-  "gemini-acp": "Gemini CLI over ACP (`gemini --acp`).",
+  "devin-acp":
+    "Cognition Devin CLI over ACP (`devin acp`). Authenticate with `devin auth login` or set `WINDSURF_API_KEY`.",
   "codex-app-server":
     "Codex App Server over JSON-RPC stdio. Uses ambient Codex auth and mirrors native plans into OpenCursor plan files.",
   "claude-code-sdk":
     "Anthropic Claude Agent SDK with stock Claude Code tools. Uses configured API/proxy auth and enabled MCP servers from Plugins.",
   "pi-agent": "Pi coding agent SDK with built-in read, edit, grep, and bash tools.",
   "google-antigravity-cli":
-    "Google Antigravity CLI harness. Requires `agy` installed and ambient CLI auth; MCP comes from `.agents/mcp_config.json`, and prompt images are not exposed yet.",
+    "Google Antigravity CLI (`agy`) — Google's successor to Gemini CLI. Sign in with Google OAuth via the CLI on the host (`agy` login); Cesium does not broker tokens. MCP comes from `.agents/mcp_config.json`. Prompt images are not exposed yet. Native ACP is not available upstream.",
 };
 
 /** Custom endpoints support the same four inference APIs as model discovery. */

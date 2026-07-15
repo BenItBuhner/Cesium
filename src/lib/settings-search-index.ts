@@ -151,13 +151,6 @@ const STATIC_SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
   section("appearance", "design", "Design"),
   row(
     "appearance",
-    "new-design",
-    "New design",
-    "Enable the next-generation UI design hooks for agent mode.",
-    ["ui", "classic"]
-  ),
-  row(
-    "appearance",
     "long-paste-references",
     "Long paste references",
     "Collapse very large pasted chat composer text into a compact reference.",

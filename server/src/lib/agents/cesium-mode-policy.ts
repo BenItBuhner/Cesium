@@ -17,6 +17,7 @@ const READ_ONLY_TOOLS = new Set([
   "ask_question",
   "subagent",
   "read_subagent_transcript",
+  "wait",
 ]);
 
 const PLAN_FILE_TOOLS = new Set([
@@ -108,6 +109,7 @@ export function resolveCesiumModeToolPolicy(input: {
       name === "search_history" ||
       name === "read_history_page" ||
       name === "todo" ||
+      name === "wait" ||
       name === "subagent" ||
       name === "read_subagent_transcript" ||
       name === "call_mcp_tool" ||
@@ -145,31 +147,31 @@ export function summarizeCesiumModeToolPolicy(mode: string | undefined | null): 
   switch (normalized) {
     case "ask":
       return {
-        allowed: ["read_file", "grep", "search_history", "read_history_page", "ask_question", "read-only subagents"],
+        allowed: ["read_file", "grep", "search_history", "read_history_page", "ask_question", "wait", "read-only subagents"],
         restricted: ["call_mcp_tool only after an explicit read-only server/tool check"],
         blocked: ["edit_file", "terminal", "plan writes", "orchestration mutations", "Burn execution controls"],
       };
     case "plan":
       return {
-        allowed: ["read_file", "grep", "search_history", "read_history_page", "ask_question", "research subagents", "plan-file tools"],
+        allowed: ["read_file", "grep", "search_history", "read_history_page", "ask_question", "wait", "research subagents", "plan-file tools"],
         restricted: ["terminal for investigation only", "MCP calls for research only"],
         blocked: ["direct implementation edits outside .cesium/plans/", "orchestration mutations", "Burn execution controls"],
       };
     case "orchestration":
       return {
-        allowed: ["orchestration_* tools", "todo", "ask_question", "history tools", "subagents", "MCP refresh/calls"],
+        allowed: ["orchestration_* tools", "todo", "wait", "ask_question", "history tools", "subagents", "MCP refresh/calls"],
         restricted: ["child-agent permissions are controlled by orchestration assignment policy"],
         blocked: ["direct edit_file", "direct terminal implementation", "Burn execution controls"],
       };
     case "burn":
       return {
-        allowed: ["read_file", "grep", "edit_file", "terminal", "todo", "subagents", "plan-file tools", "Burn goal tools", "MCP tools"],
+        allowed: ["read_file", "grep", "edit_file", "terminal", "todo", "wait", "subagents", "plan-file tools", "Burn goal tools", "MCP tools"],
         restricted: ["burn_goal_complete requires a final audit; burn_goal_block requires repeated same-blocker evidence"],
         blocked: ["orchestration kanban mutations"],
       };
     default:
       return {
-        allowed: ["read_file", "grep", "edit_file", "terminal", "todo", "ask_question", "subagents", "history tools", "MCP tools"],
+        allowed: ["read_file", "grep", "edit_file", "terminal", "todo", "wait", "ask_question", "subagents", "history tools", "MCP tools"],
         restricted: ["plan-file tools only for explicit plan creation or handoff"],
         blocked: ["orchestration_* tools", "Burn execution controls"],
       };

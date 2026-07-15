@@ -12,7 +12,7 @@ describe("isDocsPath", () => {
   test("matches /docs and nested paths", () => {
     assert.equal(isDocsPath(DOCS_PATH), true);
     assert.equal(isDocsPath(`${DOCS_PATH}/guides`), true);
-    assert.equal(isDocsPath("/workspace"), false);
+    assert.equal(isDocsPath("/agent"), false);
   });
 });
 
@@ -31,9 +31,9 @@ describe("isDocsRoute", () => {
     );
   });
 
-  test("rejects workspace settings URL", () => {
+  test("rejects agent settings URL", () => {
     assert.equal(
-      isDocsRoute({ pathname: "/workspace", search: "?view=settings" }),
+      isDocsRoute({ pathname: "/agent", search: "?view=settings" }),
       false
     );
   });

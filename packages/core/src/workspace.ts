@@ -4,8 +4,8 @@
  * single source of truth.
  */
 export type MobilePanel = "sidebar" | "editor" | "chat";
-export type WorkbenchShellView = "agent" | "editor" | "settings";
-export type WorkbenchShellNonSettingsView = "agent" | "editor";
+export type WorkbenchShellView = "agent" | "settings";
+export type WorkbenchShellNonSettingsView = "agent";
 
 export type LayoutSessionState = {
   sidebarOpen: boolean;

@@ -431,38 +431,42 @@ async function createOpenCodeServerConfigOptions(): Promise<AgentConfigOption[]>
 }
 
 /**
- * Seed model dropdown for Gemini CLI before the first ACP session lists options.
- * Values follow Gemini CLI model aliases and common model ids (see Gemini CLI docs).
+ * Seed mode/model dropdown for Devin CLI ACP before the first session lists options.
+ * Short names resolve to the latest family version (see https://docs.devin.ai/cli/models).
  */
-async function createGeminiCliConfigOptions(input?: {
+async function createDevinCliConfigOptions(input?: {
   command?: string;
   env?: NodeJS.ProcessEnv;
   cwd?: string;
 }): Promise<AgentConfigOption[]> {
   void input;
-  const modelOptions: AgentConfigOption["options"] = [
-    { value: "auto", name: "Auto" },
-    { value: "pro", name: "Pro" },
-    { value: "flash", name: "Flash" },
-    { value: "flash-lite", name: "Flash Lite" },
-    { value: "gemini-2.5-pro", name: "Gemini 2.5 Pro" },
-    { value: "gemini-2.5-flash", name: "Gemini 2.5 Flash" },
-    { value: "gemini-2.5-flash-lite", name: "Gemini 2.5 Flash Lite" },
-  ];
   return [
     {
       id: "mode",
       name: "Mode",
       category: "mode",
       currentValue: "agent",
-      options: [{ value: "agent", name: "Agent" }],
+      options: [
+        { value: "agent", name: "Normal" },
+        { value: "plan", name: "Plan" },
+        { value: "accept-edits", name: "Accept Edits" },
+        { value: "bypass", name: "Bypass" },
+      ],
     },
     {
       id: "model",
       name: "Model",
       category: "model",
       currentValue: "auto",
-      options: modelOptions,
+      options: [
+        { value: "auto", name: "Auto / Adaptive" },
+        { value: "swe", name: "SWE" },
+        { value: "opus", name: "Opus" },
+        { value: "sonnet", name: "Sonnet" },
+        { value: "gpt", name: "GPT" },
+        { value: "codex", name: "Codex" },
+        { value: "gemini", name: "Gemini" },
+      ],
     },
   ];
 }
@@ -1294,8 +1298,8 @@ async function createSeedConfigOptions(backendId: AgentBackendId): Promise<Agent
       return createCursorSdkConfigOptions();
     case "opencode-server":
       return createOpenCodeServerConfigOptions();
-    case "gemini-acp":
-      return createGeminiCliConfigOptions();
+    case "devin-acp":
+      return createDevinCliConfigOptions();
     case "codex-app-server":
       return createCodexAppServerConfigOptions();
     case "claude-code-sdk":
