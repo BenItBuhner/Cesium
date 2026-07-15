@@ -43,3 +43,46 @@ handles the first two, but you must repeat them by hand if you re-run installs):
   unavailable; sending a chat without a configured backend surfaces a
   "Compilation failed / Provider responded" toast. This is expected, not an
   environment break.
+
+### Inference / model provider environment variables
+
+The built-in `cesium-agent` backend is the one that talks to LLM providers over
+HTTP (`/chat/completions` or `/responses`). Important nuance about how it is
+configured (verified in `server/src/lib/cesium-agent-settings.ts`):
+
+- **The only provider fields read from the environment are API keys, and only for
+  three built-in providers** (`server/src/lib/cesium-agent-settings.ts`,
+  `BUILTIN_ENV_KEYS`):
+  - `OPENAI_API_KEY` — OpenAI (and the default "OpenAI-compatible" path).
+  - `ANTHROPIC_API_KEY` — Anthropic.
+  - `GOOGLE_API_KEY` — Google.
+- **There is NO environment variable for the chat base URL or default model.**
+  - Base URL: implicit `https://api.openai.com/v1` for OpenAI; other known hosts
+    (groq, openrouter, deepseek, mistral, xai, togetherai, fireworks, nvidia,
+    cerebras) use a hardcoded map (`BUILTIN_PROVIDER_BASE_URLS`); a fully custom
+    OpenAI-compatible host's base URL must be saved in Settings → Agents → Cesium
+    Agent (persisted to `{OPENCURSOR_DATA_DIR}/profile/cesium-agent-settings.json`,
+    or via `PUT /api/settings/cesium-agent/provider-key` with `{apiKind,apiKey,baseUrl}`).
+  - Default model: `defaultModelId` in that same settings JSON (default
+    `openai/gpt-5.1`), or just picked per-conversation in the composer's model
+    picker — not an env var.
+  - Note: providers other than openai/anthropic/google also need their key saved
+    in Settings (their keys are NOT read from env), even though their base URL is
+    known.
+- **Simplest env-only inference:** set `OPENAI_API_KEY`; the app then uses OpenAI
+  at `https://api.openai.com/v1` and you choose a model (e.g. `openai/gpt-5.1`) in
+  the composer or via `defaultModelId`.
+
+The **only** subsystem that accepts a full OpenAI-compatible `base URL + model +
+API key` triple purely from env is **speech transcription / title generation**
+(not chat), in `server/src/lib/transcription-env.ts`:
+
+- `OPENCURSOR_TRANSCRIPTION_BASE_URL` (falls back to `OPENAI_BASE_URL`)
+- `OPENCURSOR_TRANSCRIPTION_MODEL`
+- `OPENCURSOR_TRANSCRIPTION_API_KEY` (falls back to `OPENAI_API_KEY`, then `GROQ_API_KEY`)
+- Optional: `OPENCURSOR_TITLE_MODEL` (default `openai/gpt-oss-20b`), plus
+  `OPENCURSOR_TRANSCRIPTION_CONFIG_JSON` / `OPENCURSOR_TRANSCRIPTION_CONFIG_FILE`.
+
+Secrets added via the Cloud Agent Secrets panel are injected as env vars on the
+next VM boot; the server reads them from `process.env` (repo `.env` /`.env.local`
+/ `server/.env` / `server/.env.local` are also loaded, but real process env wins).
