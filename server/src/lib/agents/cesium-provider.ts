@@ -36,6 +36,8 @@ import {
   readCesiumPlanFile,
   writeCesiumPlanFile,
 } from "./cesium-plan-files.js";
+import { loadWorkspaceInstructionFiles } from "./instruction-files.js";
+import { refreshWorkspaceSkillsMirror } from "./skills-mirror.js";
 import {
   appendBurnGoalSnapshot,
   blockBurnGoal,
@@ -319,7 +321,8 @@ class CesiumSessionHandle implements AgentSessionHandle {
   }
 
   private async resolveSystemPromptContext(
-    mcpSummaries: McpServerSummary[]
+    mcpSummaries: McpServerSummary[],
+    skillsList?: string
   ): Promise<BuildCesiumSystemPromptInput> {
     const workspaceRoot = this.callbacks.workspace.root;
     let gitSummary = "not a git repository";
@@ -329,15 +332,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
     } catch {
       gitSummary = "not a git repository";
     }
-    let agentsMarkdown = "(No AGENTS.md file is present in this workspace.)";
-    try {
-      const content = await fs.readFile(path.join(workspaceRoot, "AGENTS.md"), "utf8");
-      if (content.trim()) {
-        agentsMarkdown = content.trim();
-      }
-    } catch {
-      // keep default placeholder
-    }
+    const agentsMarkdown = await loadWorkspaceInstructionFiles(workspaceRoot);
     return {
       mcpSummaries,
       modelName: this.callbacks.conversation.config.modelName ?? "configured model",
@@ -348,6 +343,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
       }),
       gitSummary,
       agentsMarkdown,
+      skillsList: skillsList?.trim() || undefined,
     };
   }
 
@@ -496,6 +492,33 @@ class CesiumSessionHandle implements AgentSessionHandle {
           },
         ]);
       }
+      const skillsMirror = await refreshWorkspaceSkillsMirror({
+        workspaceRoot: this.callbacks.workspace.root,
+        pluginSkills: pluginAttachments.plugins.flatMap((plugin) =>
+          plugin.definition.skills.map((skill) => ({
+            id: skill.id,
+            title: skill.title,
+            description: skill.description,
+            body: skill.body,
+            triggerHints: skill.triggerHints,
+            pluginId: plugin.definition.pluginId,
+            pluginName: plugin.definition.displayName,
+          }))
+        ),
+      }).catch(async (error) => {
+        await this.callbacks.appendEvents([
+          {
+            eventId: randomUUID(),
+            conversationId: this.callbacks.conversation.id,
+            kind: "system",
+            level: "warning",
+            text: `Agent skills mirror refresh failed before the model turn. ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          },
+        ]);
+        return { skills: [], skillsList: "" };
+      });
       const currentMode = this.currentMode();
       const board = this.isOrchestrationMode()
         ? await this.resolveCurrentOrchestrationBoard()
@@ -507,7 +530,10 @@ class CesiumSessionHandle implements AgentSessionHandle {
             objective: input.text,
           })
         : null;
-      const promptContext = await this.resolveSystemPromptContext(summaries);
+      const promptContext = await this.resolveSystemPromptContext(
+        summaries,
+        skillsMirror.skillsList
+      );
       this.activeSystemPrompt = CESIUM_SYSTEM_PROMPT;
       const previousSnapshot = await this.callbacks.readSnapshot().catch(() => null);
       const mcpCatalogRevision = await getMcpCatalogRevision(this.callbacks.workspace.id);
@@ -527,9 +553,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
         dateLabel: promptContext.dateLabel ?? new Date().toLocaleString("en-US"),
         gitSummary: promptContext.gitSummary ?? "not a git repository",
         agentsMarkdown: promptContext.agentsMarkdown,
-        skillsList: [promptContext.skillsList, pluginAttachments.skillsList]
-          .filter((value) => value?.trim())
-          .join("\n"),
+        skillsList: skillsMirror.skillsList,
         mcpSummaries: summaries,
         mcpChangeNotice,
         orchestrationBoard: board,
