@@ -17,6 +17,13 @@ export type AgentPluginMcpContribution = {
   };
 };
 
+export type AgentPluginHarnessSupport = {
+  backendId: AgentBackendId;
+  nativeMcp: boolean;
+  promptSkills: boolean;
+  notes?: string;
+};
+
 export type AgentPluginDefinition = {
   schemaVersion: 1;
   pluginId: string;
@@ -29,17 +36,7 @@ export type AgentPluginDefinition = {
   };
   mcp: AgentPluginMcpContribution[];
   skills: AgentPluginSkillContribution[];
-  harnesses?: Partial<
-    Record<
-      AgentBackendId,
-      {
-        backendId: AgentBackendId;
-        nativeMcp: boolean;
-        promptSkills: boolean;
-        notes?: string;
-      }
-    >
-  >;
+  harnesses?: Partial<Record<AgentBackendId, AgentPluginHarnessSupport>>;
   builtIn?: boolean;
 };
 
@@ -65,4 +62,64 @@ export type AgentPluginPublic = {
   install: AgentPluginInstallRecord | null;
   enabled: boolean;
   managedMcpServerIds: string[];
+};
+
+export type AgentPluginHarnessCapability = {
+  backendId: AgentBackendId;
+  nativeMcp: boolean;
+  promptSkills: boolean;
+  attachment:
+    | "cesium-tools"
+    | "sdk-mcp"
+    | "acp-mcp"
+    | "workspace-mcp-config"
+    | "prompt-only";
+  notes?: string;
+};
+
+export type AgentPluginDiscoveryEntry = {
+  definition: AgentPluginDefinition;
+  source: "builtin" | "local" | "remote" | "github";
+  sourceLabel: string;
+};
+
+export type AgentPluginDiscoveryResult = {
+  query: string;
+  sources: Array<{
+    id: "builtin" | "local" | "remote" | "github";
+    label: string;
+    url?: string;
+    pluginCount: number;
+    error?: string;
+  }>;
+  plugins: AgentPluginDiscoveryEntry[];
+};
+
+export type AgentPluginHarnessVerification = {
+  backendId: AgentBackendId;
+  nativeMcp: boolean;
+  promptSkills: boolean;
+  attachment: AgentPluginHarnessCapability["attachment"];
+  notes?: string;
+  pluginCount: number;
+  skillCount: number;
+  mcpServerIds: string[];
+  nativeMcpServerIds: string[];
+  skillTitles: string[];
+  warnings: Array<{ pluginId: string; pluginName: string; reason: string }>;
+  identified: boolean;
+};
+
+export type AgentPluginVerificationReport = {
+  workspaceId: string;
+  workspaceRoot: string;
+  installedPluginCount: number;
+  enabledPluginCount: number;
+  harnesses: AgentPluginHarnessVerification[];
+  summary: {
+    fullyNativeMcp: AgentBackendId[];
+    promptOnlyMcp: AgentBackendId[];
+    withWarnings: AgentBackendId[];
+    identifyingPlugins: AgentBackendId[];
+  };
 };

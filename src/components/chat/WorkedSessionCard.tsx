@@ -1159,10 +1159,18 @@ function renderEntry(
       const rawDetail = entry.rawDetail?.trim();
       const showRawDetail = Boolean(rawDetail && rawDetail !== extraDetail?.trim());
       const pluginBadge = entry.pluginName ? (
-        <span className="inline-flex items-center gap-[5px] rounded-full border border-[var(--border-subtle)] bg-[var(--bg-card)] px-[7px] py-[2px] font-sans text-[10px] text-[var(--text-secondary)]">
+        <span className="inline-flex items-center gap-[6px] rounded-[6px] border border-[color-mix(in_srgb,var(--border-card)_85%,transparent)] bg-[color-mix(in_srgb,var(--bg-card)_88%,transparent)] px-[7px] py-[2px] font-sans text-[10px] font-medium tracking-[0.01em] text-[var(--text-secondary)]">
           {entry.pluginIconUrl ? (
-            <img alt="" src={entry.pluginIconUrl} className="size-[12px] rounded-[3px]" />
-          ) : null}
+            <img
+              alt=""
+              src={entry.pluginIconUrl}
+              className="size-[12px] rounded-[3px] object-cover"
+            />
+          ) : (
+            <span className="inline-flex size-[12px] items-center justify-center rounded-[3px] bg-[var(--accent-bg)] text-[8px] text-[var(--accent)]">
+              {entry.pluginName.slice(0, 1).toUpperCase()}
+            </span>
+          )}
           {entry.pluginName}
         </span>
       ) : null;

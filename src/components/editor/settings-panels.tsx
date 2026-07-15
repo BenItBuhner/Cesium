@@ -13,13 +13,14 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import {
+  AlertTriangle,
   Check,
   ChevronDown,
   ChevronRight,
   Database,
   Download,
-
   RefreshCw,
+  Search,
   Upload,
 } from "lucide-react";
 import { VerticalFadedScroll } from "@/components/chat/VerticalFadedScroll";
@@ -52,6 +53,8 @@ import { useWorkspace } from "@/contexts/WorkspaceContext";
 import {
   buildStorageExportUrl,
   createCustomAgentPlugin,
+  discoverAgentPlugins,
+  fetchAgentPluginHarnessCapabilities,
   fetchAgentPlugins,
   fetchStorageStatus,
   importStorageArchive,
@@ -59,13 +62,20 @@ import {
   installAgentPlugin,
   setAgentPluginEnabled,
   setAgentPluginHarnessOverride,
+  verifyAgentPlugins,
   type StorageDriverKind,
   type StorageMigrationPhase,
   type StorageMigrationProgress,
   type StorageMigrationResult,
   type StorageStatusResponse,
 } from "@/lib/server-api";
-import type { AgentPluginDefinition, AgentPluginPublic } from "@/lib/plugin-types";
+import type {
+  AgentPluginDefinition,
+  AgentPluginDiscoveryResult,
+  AgentPluginHarnessCapability,
+  AgentPluginPublic,
+  AgentPluginVerificationReport,
+} from "@/lib/plugin-types";
 import {
   DEFAULT_KEYBOARD_SHORTCUT_BINDINGS,
   detectShortcutPlatform,
@@ -1054,7 +1064,13 @@ export function PluginsSettingsPanel() {
     usePluginsMcpNavigation();
   const { workspaceInfo } = useWorkspace();
   const [plugins, setPlugins] = useState<AgentPluginPublic[]>([]);
+  const [capabilities, setCapabilities] = useState<AgentPluginHarnessCapability[]>([]);
+  const [discovery, setDiscovery] = useState<AgentPluginDiscoveryResult | null>(null);
+  const [discoveryQuery, setDiscoveryQuery] = useState("");
+  const [verification, setVerification] = useState<AgentPluginVerificationReport | null>(null);
   const [loading, setLoading] = useState(false);
+  const [discovering, setDiscovering] = useState(false);
+  const [verifying, setVerifying] = useState(false);
   const [pendingAction, setPendingAction] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [customName, setCustomName] = useState("");
@@ -1062,6 +1078,19 @@ export function PluginsSettingsPanel() {
   const [customMcpUrl, setCustomMcpUrl] = useState("");
 
   const workspaceId = workspaceInfo?.id ?? null;
+
+  const capabilityById = useMemo(() => {
+    const map = new Map<AgentBackendId, AgentPluginHarnessCapability>();
+    for (const capability of capabilities) {
+      map.set(capability.backendId, capability);
+    }
+    return map;
+  }, [capabilities]);
+
+  const promptOnlyHarnesses = useMemo(
+    () => capabilities.filter((capability) => !capability.nativeMcp),
+    [capabilities]
+  );
 
   const refreshPlugins = useCallback(async () => {
     if (!workspaceId) {
@@ -1071,7 +1100,12 @@ export function PluginsSettingsPanel() {
     setLoading(true);
     setError(null);
     try {
-      setPlugins(await fetchAgentPlugins(workspaceId));
+      const [nextPlugins, nextCapabilities] = await Promise.all([
+        fetchAgentPlugins(workspaceId),
+        fetchAgentPluginHarnessCapabilities(),
+      ]);
+      setPlugins(nextPlugins);
+      setCapabilities(nextCapabilities);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load plugins.");
     } finally {
@@ -1079,9 +1113,40 @@ export function PluginsSettingsPanel() {
     }
   }, [workspaceId]);
 
+  const refreshDiscovery = useCallback(async (query = discoveryQuery) => {
+    setDiscovering(true);
+    try {
+      setDiscovery(await discoverAgentPlugins(query));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to discover plugins.");
+    } finally {
+      setDiscovering(false);
+    }
+  }, [discoveryQuery]);
+
   useEffect(() => {
     void refreshPlugins();
   }, [refreshPlugins]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      setDiscovering(true);
+      try {
+        const result = await discoverAgentPlugins("");
+        if (!cancelled) setDiscovery(result);
+      } catch (err) {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : "Failed to discover plugins.");
+        }
+      } finally {
+        if (!cancelled) setDiscovering(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const runPluginAction = useCallback(
     async (actionId: string, action: () => Promise<AgentPluginPublic[]>) => {
@@ -1098,6 +1163,19 @@ export function PluginsSettingsPanel() {
     },
     [workspaceId]
   );
+
+  const runVerify = useCallback(async () => {
+    if (!workspaceId) return;
+    setVerifying(true);
+    setError(null);
+    try {
+      setVerification(await verifyAgentPlugins(workspaceId));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to verify plugin harness sync.");
+    } finally {
+      setVerifying(false);
+    }
+  }, [workspaceId]);
 
   const createCustomPlugin = useCallback(async () => {
     if (!workspaceId || !customName.trim()) return;
@@ -1161,12 +1239,94 @@ export function PluginsSettingsPanel() {
       <SettingsSection title="Agent Plugins">
         <div className="space-y-[10px] px-[16px] py-[12px]">
           <p className="font-sans text-[12px] leading-[18px] text-[var(--text-secondary)]">
-            Plugins bundle MCP servers, skill instructions, and branding. Installed plugins are
-            enabled for compatible harnesses by default, with per-harness overrides below.
+            Plugins bundle MCP servers, skill instructions, and branding into one installable unit.
+            Installed plugins sync to compatible harnesses automatically. Per-harness overrides let
+            you disable a plugin for backends that cannot run its MCP tools natively.
           </p>
+          {promptOnlyHarnesses.length > 0 ? (
+            <div className="flex gap-[8px] rounded-[var(--radius-card)] border border-[color-mix(in_srgb,#f59e0b_35%,transparent)] bg-[color-mix(in_srgb,#f59e0b_10%,transparent)] px-[10px] py-[8px]">
+              <AlertTriangle
+                className="mt-[1px] size-[14px] shrink-0 text-[#fbbf24]"
+                strokeWidth={1.75}
+              />
+              <div className="min-w-0 font-sans text-[12px] leading-[18px] text-[var(--text-secondary)]">
+                <span className="font-medium text-[var(--text-primary)]">
+                  Limited MCP support:
+                </span>{" "}
+                {promptOnlyHarnesses
+                  .map((entry) => HARNESS_LABELS[entry.backendId] ?? entry.backendId)
+                  .join(", ")}{" "}
+                receive plugin skills and guidance in the prompt only. MCP tools will not run
+                natively across those harnesses.
+              </div>
+            </div>
+          ) : null}
           {error ? (
             <div className="rounded-[var(--radius-card)] border border-[var(--danger-border)] bg-[var(--danger-bg)] px-[10px] py-[8px] font-sans text-[12px] text-[var(--danger)]">
               {error}
+            </div>
+          ) : null}
+          <div className="flex flex-wrap gap-[8px]">
+            <button
+              type="button"
+              className={selectClass}
+              disabled={!workspaceId || verifying}
+              onClick={() => void runVerify()}
+            >
+              {verifying ? "Verifying..." : "Verify harness sync"}
+            </button>
+            <button
+              type="button"
+              className={selectClass}
+              disabled={loading || pendingAction !== null}
+              onClick={() => void refreshPlugins()}
+            >
+              Refresh
+            </button>
+          </div>
+          {verification ? (
+            <div className="rounded-[var(--radius-card)] border border-[var(--border-card)] bg-[var(--bg-main)] p-[10px]">
+              <div className="font-sans text-[12px] font-medium text-[var(--text-primary)]">
+                Harness verification
+              </div>
+              <p className="mt-[4px] font-sans text-[11px] leading-[16px] text-[var(--text-secondary)]">
+                {verification.enabledPluginCount} enabled plugin(s) identified by{" "}
+                {verification.summary.identifyingPlugins.length}/
+                {verification.harnesses.length} harnesses. Prompt-only MCP:{" "}
+                {verification.summary.promptOnlyMcp
+                  .map((id) => HARNESS_LABELS[id] ?? id)
+                  .join(", ") || "none"}
+                .
+              </p>
+              <div className="mt-[8px] grid gap-[6px] sm:grid-cols-2">
+                {verification.harnesses.map((harness) => (
+                  <div
+                    key={harness.backendId}
+                    className="rounded-[var(--radius-tab)] border border-[var(--border-subtle)] px-[9px] py-[7px]"
+                  >
+                    <div className="flex items-center justify-between gap-[8px]">
+                      <span className="flex items-center gap-[6px] font-sans text-[11px] text-[var(--text-primary)]">
+                        <AgentBackendIcon backendId={harness.backendId} className="size-[13px]" />
+                        {HARNESS_LABELS[harness.backendId] ?? harness.backendId}
+                      </span>
+                      <span className="font-sans text-[10px] uppercase tracking-[0.06em] text-[var(--text-secondary)]">
+                        {harness.identified ? "Identified" : "Idle"}
+                      </span>
+                    </div>
+                    <div className="mt-[4px] font-sans text-[10px] text-[var(--text-secondary)]">
+                      {harness.skillCount} skill(s) ·{" "}
+                      {harness.nativeMcp
+                        ? `${harness.nativeMcpServerIds.length} native MCP`
+                        : "prompt-only MCP"}
+                    </div>
+                    {harness.warnings[0] ? (
+                      <div className="mt-[4px] font-sans text-[10px] leading-[14px] text-[#fbbf24]">
+                        {harness.warnings[0].reason}
+                      </div>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
             </div>
           ) : null}
           {loading ? (
@@ -1175,6 +1335,12 @@ export function PluginsSettingsPanel() {
           {plugins.map((plugin) => {
             const installed = Boolean(plugin.install);
             const enabled = plugin.enabled;
+            const limitedHarnesses = HARNESS_ORDER.filter((backendId) => {
+              const capability = capabilityById.get(backendId as AgentBackendId);
+              const pluginSupport = plugin.definition.harnesses?.[backendId as AgentBackendId];
+              const nativeMcp = pluginSupport?.nativeMcp ?? capability?.nativeMcp ?? true;
+              return plugin.definition.mcp.length > 0 && !nativeMcp;
+            });
             return (
               <div
                 key={plugin.definition.pluginId}
@@ -1209,6 +1375,18 @@ export function PluginsSettingsPanel() {
                         <span>MCP: {plugin.managedMcpServerIds.join(", ")}</span>
                       ) : null}
                     </div>
+                    {installed && limitedHarnesses.length > 0 ? (
+                      <div className="mt-[8px] flex gap-[6px] font-sans text-[11px] leading-[16px] text-[#fbbf24]">
+                        <AlertTriangle className="mt-[1px] size-[12px] shrink-0" strokeWidth={1.75} />
+                        <span>
+                          MCP tools will not work natively on{" "}
+                          {limitedHarnesses
+                            .map((id) => HARNESS_LABELS[id as AgentBackendId] ?? id)
+                            .join(", ")}
+                          . Skills still sync via prompt guidance.
+                        </span>
+                      </div>
+                    ) : null}
                   </div>
                   <button
                     type="button"
@@ -1238,11 +1416,26 @@ export function PluginsSettingsPanel() {
                         (entry) => entry.backendId === backendId
                       );
                       const harnessEnabled = override?.enabled ?? plugin.enabled;
+                      const capability = capabilityById.get(backendId as AgentBackendId);
+                      const pluginSupport = plugin.definition.harnesses?.[backendId as AgentBackendId];
+                      const nativeMcp = pluginSupport?.nativeMcp ?? capability?.nativeMcp ?? true;
+                      const limited = plugin.definition.mcp.length > 0 && !nativeMcp;
                       return (
                         <button
                           key={backendId}
                           type="button"
-                          className="flex items-center justify-between rounded-[var(--radius-tab)] border border-[var(--border-subtle)] px-[9px] py-[7px] font-sans text-[11px] text-[var(--text-secondary)] hover:bg-[var(--accent-bg)]"
+                          title={
+                            limited
+                              ? pluginSupport?.notes ??
+                                capability?.notes ??
+                                "This harness does not support native plugin MCP."
+                              : capability?.notes
+                          }
+                          className={`flex items-center justify-between rounded-[var(--radius-tab)] border px-[9px] py-[7px] font-sans text-[11px] hover:bg-[var(--accent-bg)] ${
+                            limited
+                              ? "border-[color-mix(in_srgb,#f59e0b_35%,transparent)] text-[#fbbf24]"
+                              : "border-[var(--border-subtle)] text-[var(--text-secondary)]"
+                          }`}
                           disabled={pendingAction !== null || !workspaceId}
                           onClick={() =>
                             runPluginAction(`${plugin.definition.pluginId}:${backendId}`, () =>
@@ -1258,6 +1451,9 @@ export function PluginsSettingsPanel() {
                           <span className="flex items-center gap-[6px]">
                             <AgentBackendIcon backendId={backendId as AgentBackendId} className="size-[13px]" />
                             {HARNESS_LABELS[backendId as AgentBackendId] ?? backendId}
+                            {limited ? (
+                              <AlertTriangle className="size-[11px]" strokeWidth={1.75} />
+                            ) : null}
                           </span>
                           <span>{harnessEnabled ? "On" : "Off"}</span>
                         </button>
@@ -1268,6 +1464,121 @@ export function PluginsSettingsPanel() {
               </div>
             );
           })}
+        </div>
+      </SettingsSection>
+
+      <SettingsSection title="Discover">
+        <div className="space-y-[10px] px-[16px] py-[12px]">
+          <p className="font-sans text-[12px] leading-[18px] text-[var(--text-secondary)]">
+            Browse the local catalog and optional remote/GitHub registries. Set{" "}
+            <span className="font-mono text-[11px]">OPENCURSOR_PLUGIN_REGISTRY_URL</span> or{" "}
+            <span className="font-mono text-[11px]">OPENCURSOR_PLUGIN_GITHUB_REPO</span> to pull
+            additional plugins.
+          </p>
+          <div className="flex items-center gap-[8px]">
+            <div className="relative min-w-0 flex-1">
+              <Search
+                className="pointer-events-none absolute left-[10px] top-1/2 size-[13px] -translate-y-1/2 text-[var(--text-secondary)]"
+                strokeWidth={1.75}
+              />
+              <input
+                className={`${shortcutInputClass} w-full max-w-none pl-[30px]`}
+                placeholder="Search plugins"
+                value={discoveryQuery}
+                onChange={(event) => setDiscoveryQuery(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    void refreshDiscovery(discoveryQuery);
+                  }
+                }}
+              />
+            </div>
+            <button
+              type="button"
+              className={selectClass}
+              disabled={discovering}
+              onClick={() => void refreshDiscovery(discoveryQuery)}
+            >
+              {discovering ? "Searching..." : "Search"}
+            </button>
+          </div>
+          {discovery?.sources?.length ? (
+            <div className="flex flex-wrap gap-[6px] font-sans text-[10px] text-[var(--text-secondary)]">
+              {discovery.sources.map((source) => (
+                <span
+                  key={`${source.id}:${source.label}`}
+                  className="rounded-full border border-[var(--border-subtle)] px-[7px] py-[2px]"
+                  title={source.error ?? source.url}
+                >
+                  {source.label}: {source.error ? "error" : source.pluginCount}
+                </span>
+              ))}
+            </div>
+          ) : null}
+          <div className="space-y-[8px]">
+            {(discovery?.plugins ?? [])
+              .filter(
+                (entry) =>
+                  !plugins.some(
+                    (plugin) =>
+                      plugin.definition.pluginId === entry.definition.pluginId && plugin.install
+                  )
+              )
+              .slice(0, 12)
+              .map((entry) => (
+                <div
+                  key={`${entry.source}:${entry.definition.pluginId}`}
+                  className="flex items-start justify-between gap-[12px] rounded-[var(--radius-card)] border border-[var(--border-subtle)] px-[10px] py-[9px]"
+                >
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-[8px]">
+                      {entry.definition.iconUrl ? (
+                        <img
+                          alt=""
+                          src={entry.definition.iconUrl}
+                          className="size-[16px] rounded-[4px]"
+                        />
+                      ) : (
+                        <Database className="size-[16px] text-[var(--text-secondary)]" strokeWidth={1.5} />
+                      )}
+                      <div className="font-sans text-[12px] font-semibold text-[var(--text-primary)]">
+                        {entry.definition.displayName}
+                      </div>
+                      <span className="font-sans text-[10px] uppercase tracking-[0.06em] text-[var(--text-secondary)]">
+                        {entry.sourceLabel}
+                      </span>
+                    </div>
+                    <p className="mt-[4px] font-sans text-[11px] leading-[16px] text-[var(--text-secondary)]">
+                      {entry.definition.description}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    className={selectClass}
+                    disabled={!workspaceId || pendingAction !== null}
+                    onClick={() =>
+                      runPluginAction(`discover:${entry.definition.pluginId}`, () =>
+                        installAgentPlugin(workspaceId!, entry.definition.pluginId)
+                      )
+                    }
+                  >
+                    Install
+                  </button>
+                </div>
+              ))}
+            {discovery &&
+            discovery.plugins.filter(
+              (entry) =>
+                !plugins.some(
+                  (plugin) =>
+                    plugin.definition.pluginId === entry.definition.pluginId && plugin.install
+                )
+            ).length === 0 ? (
+              <div className="font-sans text-[12px] text-[var(--text-secondary)]">
+                No additional plugins to install for this search.
+              </div>
+            ) : null}
+          </div>
         </div>
       </SettingsSection>
 
