@@ -94,14 +94,6 @@ const testBackends: Record<AgentBackendId, AgentBackendInfo> = {
     defaultModelId: "test-fast",
     defaultModelName: "Test Fast",
   },
-  "gemini-acp": {
-    ...AGENT_BACKENDS["gemini-acp"],
-    available: true,
-    capabilities: testCapabilities,
-    defaultMode: "agent",
-    defaultModelId: "test-fast",
-    defaultModelName: "Test Fast",
-  },
 };
 
 function buildConfigOptions(

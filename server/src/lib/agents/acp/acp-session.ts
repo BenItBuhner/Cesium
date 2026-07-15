@@ -363,6 +363,13 @@ async function runAcpTransportBootstrap(transport: AcpStdioClient): Promise<stri
         // Auth failed (e.g. not logged in) — silent; the ACP transport itself will
         // surface any action the user needs to take through its normal protocol flow.
       }
+    } else if (id === "devin-browser") {
+      // Browser login is interactive and can hang headless Cesium hosts. Prefer
+      // ambient credentials from `devin auth login` or `WINDSURF_API_KEY` instead
+      // of invoking the ACP authenticate method here.
+      messages.push(
+        "Devin CLI may require authentication. On the server host run `devin auth login` (or `devin auth login --force-manual-token-flow` for SSH), or set WINDSURF_API_KEY, then retry."
+      );
     } else {
       messages.push(
         `ACP lists authentication method "${id}". If the agent stalls, complete any login this method requires on the server (TTY or documented OAuth); Cesium only bridges stdio.`
@@ -372,8 +379,11 @@ async function runAcpTransportBootstrap(transport: AcpStdioClient): Promise<stri
   return messages;
 }
 
-function backendUsesAcpPromptHints(backendId: AgentBackendId): boolean {
-  return backendId === "gemini-acp";
+function backendUsesAcpPromptHints(_backendId: AgentBackendId): boolean {
+  // Formerly used for Gemini CLI ACP; that harness was retired in favor of
+  // Google Antigravity CLI. Keep the hook so a future ACP backend can opt in.
+  void _backendId;
+  return false;
 }
 
 function pluginMcpServersForAcp(
