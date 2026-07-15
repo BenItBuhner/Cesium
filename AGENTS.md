@@ -86,3 +86,17 @@ API key` triple purely from env is **speech transcription / title generation**
 Secrets added via the Cloud Agent Secrets panel are injected as env vars on the
 next VM boot; the server reads them from `process.env` (repo `.env` /`.env.local`
 / `server/.env` / `server/.env.local` are also loaded, but real process env wins).
+
+#### Inference provider for testing
+
+The OpenAI-compatible inference provider to use for testing in this environment:
+
+- **Base URL:** `https://infer.techlitnow.com/v1` (a personal OpenAI-compatible
+  model proxy).
+- **Preferred model:** `glm-5.2`
+- **API key:** provided via the `OPENAI_API_KEY` Cloud Agent secret.
+
+Because the base URL and model are not env-configurable for `cesium-agent` chat
+(see above), point Cesium at this proxy in **Settings → Agents → Cesium Agent**
+(save an `openai-compatible` provider key with the base URL above), then select
+`glm-5.2` as the model.
