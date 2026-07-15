@@ -69,6 +69,7 @@ export const HARNESS_ORDER: AgentBackendId[] = [
   "codex-app-server",
   "opencode-server",
   "gemini-acp",
+  "devin-acp",
   "claude-code-sdk",
   "pi-agent",
   "google-antigravity-cli",
@@ -79,6 +80,7 @@ export const HARNESS_LABELS: Record<AgentBackendId, string> = {
   "cursor-sdk": "Cursor SDK",
   "opencode-server": "OpenCode Server",
   "gemini-acp": "Gemini",
+  "devin-acp": "Devin",
   "codex-app-server": "Codex App Server",
   "claude-code-sdk": "Claude Code",
   "pi-agent": "Pi Agent",
@@ -93,6 +95,8 @@ const HARNESS_DESCRIPTIONS: Record<AgentBackendId, string> = {
   "opencode-server":
     "OpenCode native HTTP/SSE server API. Uses ambient OpenCode auth or the configured external server.",
   "gemini-acp": "Gemini CLI over ACP (`gemini --acp`).",
+  "devin-acp":
+    "Cognition Devin CLI over ACP (`devin acp`). Authenticate with `devin auth login` or set `WINDSURF_API_KEY`.",
   "codex-app-server":
     "Codex App Server over JSON-RPC stdio. Uses ambient Codex auth and mirrors native plans into OpenCursor plan files.",
   "claude-code-sdk":

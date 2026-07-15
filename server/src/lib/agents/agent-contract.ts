@@ -81,6 +81,20 @@ export const AGENT_CAPABILITIES: Record<AgentBackendId, AgentProviderCapabilitie
     supportsInlineReasoning: true,
     supportsCompletionRetry: false,
   },
+  "devin-acp": {
+    supportsLoadSession: true,
+    supportsModeSelection: true,
+    supportsModelSelection: true,
+    supportsSlashCommands: true,
+    supportsPermissions: true,
+    supportsToolCalls: true,
+    supportsStructuredPlans: true,
+    supportsTodos: true,
+    supportsSessionResume: true,
+    supportsPromptImages: true,
+    supportsInlineReasoning: true,
+    supportsCompletionRetry: false,
+  },
   "codex-app-server": {
     supportsLoadSession: true,
     supportsModeSelection: true,
@@ -243,6 +257,17 @@ export const BACKEND_HARNESS_EXPECTATIONS: Record<
       ...permissionEvents,
       "system",
     ],
+  },
+  "devin-acp": {
+    expectedEventKinds: [
+      ...textTurnEvents,
+      "reasoning",
+      ...toolEvents,
+      "plan",
+      ...permissionEvents,
+      "system",
+    ],
+    notes: "Devin CLI ACP (`devin acp`); richer CLI-only interactions may not surface over ACP.",
   },
   "codex-app-server": {
     expectedEventKinds: [

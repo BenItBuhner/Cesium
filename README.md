@@ -19,6 +19,7 @@ In practice: start the backend, start the frontend, open the app, add a workspac
   - **Cursor SDK** via `@cursor/sdk` plus a Cursor API key configured in Settings or environment.
   - **OpenCode** ACP binary or install under `~/.opencode/bin` (see `OPENCURSOR_OPENCODE_ACP_BIN`, `OPENCURSOR_REAL_HOME`).
   - **Gemini CLI** in ACP mode (`gemini --acp`; install via `@google/gemini-cli`, or set `OPENCURSOR_GEMINI_CLI_BIN`).
+  - **Devin CLI** in ACP mode (`devin acp`; install from https://cli.devin.ai, or set `OPENCURSOR_DEVIN_CLI_BIN`). Authenticate with `devin auth login` or `WINDSURF_API_KEY`.
   - **Codex** / **Claude** CLIs if you use those adapter backends (`OPENCURSOR_CODEX_BIN`, `OPENCURSOR_CLAUDE_BIN`).
 
 ## Quick Start
@@ -219,6 +220,9 @@ Driver resolution (first match wins):
 | `OPENCURSOR_REAL_HOME` | When the server runs with a different `$HOME` (Docker/systemd), set to the real user home so `~/.opencode` resolution matches your install. |
 | `OPENCURSOR_GEMINI_CLI_BIN` | Absolute path to **Gemini CLI** for the `gemini-acp` backend; otherwise `gemini` on `PATH` / Windows `%AppData%\\npm\\gemini.cmd`. |
 | `OPENCURSOR_GEMINI_CLI_ARGS` | JSON array of argv after the Gemini binary for ACP (default `["--acp"]`). |
+| `OPENCURSOR_DEVIN_CLI_BIN` | Absolute path to **Devin CLI** for the `devin-acp` backend; otherwise `devin` on `PATH` / `~/.local/bin/devin`. |
+| `OPENCURSOR_DEVIN_CLI_ARGS` | JSON array of argv after the Devin binary for ACP (default `["acp"]`). |
+| `WINDSURF_API_KEY` | Optional Devin/Windsurf API key used by `devin acp` when ambient `devin auth login` credentials are unavailable. |
 | `OPENCURSOR_CODEX_BIN` | **Codex** CLI path for the `codex-adapter` backend. |
 | `OPENCURSOR_CLAUDE_BIN` | **Claude** CLI path for the `claude-adapter` backend. |
 | `OPENCURSOR_ACP_CLIENT_CAPABILITIES_JSON` | JSON merged into ACP `initialize.clientCapabilities` (e.g. `{"terminal":true}` if the CLI requires it). |

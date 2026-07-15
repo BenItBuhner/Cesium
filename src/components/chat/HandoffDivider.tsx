@@ -22,6 +22,8 @@ export function getAgentLabel(agentId: string): string {
       return "OpenCode Server";
     case "gemini-acp":
       return "Gemini";
+    case "devin-acp":
+      return "Devin";
     case "codex-adapter":
       return "Codex";
     case "codex-app-server":
@@ -46,6 +48,7 @@ function parseHandoffBackendId(raw: string): AgentBackendId | null {
     case "cursor-sdk":
     case "opencode-server":
     case "gemini-acp":
+    case "devin-acp":
     case "codex-app-server":
     case "claude-code-sdk":
     case "pi-agent":

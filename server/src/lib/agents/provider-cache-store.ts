@@ -467,6 +467,47 @@ async function createGeminiCliConfigOptions(input?: {
   ];
 }
 
+/**
+ * Seed mode/model dropdown for Devin CLI ACP before the first session lists options.
+ * Short names resolve to the latest family version (see https://docs.devin.ai/cli/models).
+ */
+async function createDevinCliConfigOptions(input?: {
+  command?: string;
+  env?: NodeJS.ProcessEnv;
+  cwd?: string;
+}): Promise<AgentConfigOption[]> {
+  void input;
+  return [
+    {
+      id: "mode",
+      name: "Mode",
+      category: "mode",
+      currentValue: "agent",
+      options: [
+        { value: "agent", name: "Normal" },
+        { value: "plan", name: "Plan" },
+        { value: "accept-edits", name: "Accept Edits" },
+        { value: "bypass", name: "Bypass" },
+      ],
+    },
+    {
+      id: "model",
+      name: "Model",
+      category: "model",
+      currentValue: "auto",
+      options: [
+        { value: "auto", name: "Auto / Adaptive" },
+        { value: "swe", name: "SWE" },
+        { value: "opus", name: "Opus" },
+        { value: "sonnet", name: "Sonnet" },
+        { value: "gpt", name: "GPT" },
+        { value: "codex", name: "Codex" },
+        { value: "gemini", name: "Gemini" },
+      ],
+    },
+  ];
+}
+
 function titleCaseConfigValue(value: string): string {
   if (/^xhigh$/i.test(value)) {
     return "Extra High";
@@ -1296,6 +1337,8 @@ async function createSeedConfigOptions(backendId: AgentBackendId): Promise<Agent
       return createOpenCodeServerConfigOptions();
     case "gemini-acp":
       return createGeminiCliConfigOptions();
+    case "devin-acp":
+      return createDevinCliConfigOptions();
     case "codex-app-server":
       return createCodexAppServerConfigOptions();
     case "claude-code-sdk":

@@ -47,6 +47,25 @@ function parseGeminiCliAcpArgs(): string[] {
   return ["--acp"];
 }
 
+/**
+ * Devin CLI ACP invocation: default `devin acp` (see https://docs.devin.ai/cli/acp/jetbrains).
+ * Override with JSON array if your build uses different flags.
+ */
+function parseDevinCliAcpArgs(): string[] {
+  const rawJson = process.env.OPENCURSOR_DEVIN_CLI_ARGS?.trim();
+  if (rawJson) {
+    try {
+      const parsed = JSON.parse(rawJson) as unknown;
+      if (Array.isArray(parsed) && parsed.every((item) => typeof item === "string")) {
+        return parsed;
+      }
+    } catch {
+      // ignore invalid JSON
+    }
+  }
+  return ["acp"];
+}
+
 function fileExists(filePath: string): boolean {
   try {
     return existsSync(filePath);
@@ -216,6 +235,55 @@ function resolveGeminiAcpRuntime(): AcpRuntimeSpec | null {
   return null;
 }
 
+function resolveDevinLocalBin(): string | null {
+  const names =
+    process.platform === "win32"
+      ? ["devin.exe", "devin.cmd", "devin.bat", "devin"]
+      : ["devin"];
+  for (const home of openCodeHomeDirCandidates()) {
+    for (const name of names) {
+      const candidate = path.join(home, ".local", "bin", name);
+      if (fileExists(candidate)) {
+        return candidate;
+      }
+    }
+  }
+  return null;
+}
+
+function resolveDevinAcpRuntime(): AcpRuntimeSpec | null {
+  const acpArgs = parseDevinCliAcpArgs();
+  const configured = resolveConfiguredRuntime(process.env.OPENCURSOR_DEVIN_CLI_BIN, acpArgs);
+  if (configured) {
+    return configured;
+  }
+
+  const pathHit = findExecutableOnPath(
+    process.platform === "win32"
+      ? ["devin.exe", "devin.cmd", "devin.bat", "devin"]
+      : ["devin"]
+  );
+  if (pathHit) {
+    return buildInvocation(pathHit, acpArgs);
+  }
+
+  const localBin = resolveDevinLocalBin();
+  if (localBin) {
+    return buildInvocation(localBin, acpArgs);
+  }
+
+  if (process.platform === "win32") {
+    const roamingNpm = process.env.APPDATA?.trim()
+      ? path.join(process.env.APPDATA, "npm", "devin.cmd")
+      : null;
+    if (roamingNpm && fileExists(roamingNpm)) {
+      return buildInvocation(roamingNpm, acpArgs);
+    }
+  }
+
+  return null;
+}
+
 function resolveOpenCodeCliRuntime(): CliRuntimeSpec | null {
   const configured = resolveConfiguredRuntime(
     process.env.OPENCURSOR_OPENCODE_SERVER_BIN?.trim() ||
@@ -298,6 +366,7 @@ function resolveGoogleAntigravityCliRuntime(): CliRuntimeSpec | null {
 
 const OPENCODE_RUNTIME = resolveOpenCodeCliRuntime();
 const GEMINI_RUNTIME = resolveGeminiAcpRuntime();
+const DEVIN_RUNTIME = resolveDevinAcpRuntime();
 const CODEX_RUNTIME = resolveCodexCliRuntime();
 const GOOGLE_ANTIGRAVITY_RUNTIME = resolveGoogleAntigravityCliRuntime();
 
@@ -379,6 +448,19 @@ export const AGENT_BACKENDS: Record<AgentBackendId, AgentBackendInfo> = {
     defaultModelId: "auto",
     defaultModelName: "Auto",
   }),
+  "devin-acp": createBackendInfo({
+    id: "devin-acp",
+    label: "Devin",
+    description:
+      "Cognition Devin CLI over ACP stdio (`devin acp`). Uses ambient `devin auth login` credentials or `WINDSURF_API_KEY`.",
+    experimental: true,
+    commandPreview: DEVIN_RUNTIME?.commandPreview ?? "Devin CLI not found",
+    available: DEVIN_RUNTIME !== null,
+    capabilities: AGENT_CAPABILITIES["devin-acp"],
+    defaultMode: "agent",
+    defaultModelId: "auto",
+    defaultModelName: "Auto",
+  }),
   "codex-app-server": createBackendInfo({
     id: "codex-app-server",
     label: "Codex App Server",
@@ -434,13 +516,14 @@ export const AGENT_BACKENDS: Record<AgentBackendId, AgentBackendInfo> = {
   }),
 };
 
-/** Stable ordering for harness/model-picker menus (Cesium first, then Cursor, Codex, OpenCode, Claude, Gemini). */
+/** Stable ordering for harness/model-picker menus (Cesium first, then Cursor, Codex, OpenCode, Claude, Gemini, Devin). */
 const AGENT_BACKEND_MENU_ORDER = [
   "cesium-agent",
   "cursor-sdk",
   "codex-app-server",
   "opencode-server",
   "gemini-acp",
+  "devin-acp",
   "claude-code-sdk",
   "pi-agent",
   "google-antigravity-cli",
@@ -551,6 +634,34 @@ export async function createAgentProvider(
           command: GEMINI_RUNTIME.command,
           args: GEMINI_RUNTIME.args,
           env: GEMINI_RUNTIME.env,
+          callbacks,
+          loadSessionId: providerSessionId,
+        });
+      },
+    };
+  }
+
+  if (backendId === "devin-acp") {
+    if (!DEVIN_RUNTIME) {
+      throw new Error(`${backend.label} is not installed or could not be resolved.`);
+    }
+    return {
+      backend,
+      startSession(callbacks) {
+        return AcpSessionHandle.create({
+          backend,
+          command: DEVIN_RUNTIME.command,
+          args: DEVIN_RUNTIME.args,
+          env: DEVIN_RUNTIME.env,
+          callbacks,
+        });
+      },
+      loadSession(callbacks, providerSessionId) {
+        return AcpSessionHandle.create({
+          backend,
+          command: DEVIN_RUNTIME.command,
+          args: DEVIN_RUNTIME.args,
+          env: DEVIN_RUNTIME.env,
           callbacks,
           loadSessionId: providerSessionId,
         });

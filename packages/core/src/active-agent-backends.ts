@@ -7,6 +7,7 @@ export const ACTIVE_AGENT_BACKEND_IDS = [
   "codex-app-server",
   "opencode-server",
   "gemini-acp",
+  "devin-acp",
   "claude-code-sdk",
   "pi-agent",
   "google-antigravity-cli",

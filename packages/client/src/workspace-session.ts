@@ -5,6 +5,7 @@ import {
   type ComposerStatusBarVisibility,
 } from "./composer-status-bar";
 import type { AgentBackendId } from "@cesium/core";
+import { isActiveAgentBackendId } from "@cesium/core";
 import type { AgentRailFilterToggleState } from "./agent-rail";
 import {
   defaultAgentRailFilterToggles,
@@ -858,15 +859,9 @@ export function mergeWorkspaceSessionFromImport(
       : importedChatBackendRaw;
   const importedChatBackendCoerced: AgentBackendId =
     (importedChatBackendRawMapped as AgentBackendId | undefined) ?? current.chat.backendId;
-  const normalizedChatBackendId =
-    importedChatBackendCoerced === "cesium-agent" ||
-    importedChatBackendCoerced === "cursor-sdk" ||
-    importedChatBackendCoerced === "opencode-server" ||
-    importedChatBackendCoerced === "gemini-acp" ||
-    importedChatBackendCoerced === "codex-app-server" ||
-    importedChatBackendCoerced === "claude-code-sdk"
-      ? importedChatBackendCoerced
-      : current.chat.backendId;
+  const normalizedChatBackendId = isActiveAgentBackendId(importedChatBackendCoerced)
+    ? importedChatBackendCoerced
+    : current.chat.backendId;
   const importedUnsupportedBackend =
     importedChatBackendRaw != null &&
     normalizedChatBackendId !== importedChatBackendCoerced;

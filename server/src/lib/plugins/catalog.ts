@@ -6,6 +6,7 @@ const ALL_NATIVE_MCP_BACKENDS: AgentBackendId[] = [
   "cursor-sdk",
   "claude-code-sdk",
   "gemini-acp",
+  "devin-acp",
   "codex-app-server",
   "opencode-server",
   "google-antigravity-cli",

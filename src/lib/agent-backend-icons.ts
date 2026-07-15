@@ -19,6 +19,7 @@ export const AGENT_BACKEND_ICON_FILES: Partial<
   },
   "opencode-server": { light: "OpenCode-Light.svg", dark: "OpenCode-Dark.svg" },
   "gemini-acp": { light: "Gemini-CLI-Light.svg", dark: "Gemini-CLI-Dark.svg" },
+  "devin-acp": { light: "Devin-Light.svg", dark: "Devin-Dark.svg" },
 };
 
 const ICON_BASE = "/agent-backend-icons";
