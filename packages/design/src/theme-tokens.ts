@@ -40,6 +40,9 @@ export type ThemeTokens = {
   "--burn-accent": string;
   "--burn-accent-dark": string;
   "--burn-accent-bg": string;
+  "--workflow-accent": string;
+  "--workflow-accent-dark": string;
+  "--workflow-accent-bg": string;
   "--orchestration-accent": string;
   "--orchestration-accent-dark": string;
   "--orchestration-accent-bg": string;
@@ -114,6 +117,9 @@ const TOKEN_KEYS = [
   "--burn-accent",
   "--burn-accent-dark",
   "--burn-accent-bg",
+  "--workflow-accent",
+  "--workflow-accent-dark",
+  "--workflow-accent-bg",
   "--orchestration-accent",
   "--orchestration-accent-dark",
   "--orchestration-accent-bg",
@@ -204,6 +210,9 @@ export const THEME_TOKEN_GROUPS: { title: string; keys: ThemeTokenKey[] }[] = [
       "--burn-accent",
       "--burn-accent-dark",
       "--burn-accent-bg",
+      "--workflow-accent",
+      "--workflow-accent-dark",
+      "--workflow-accent-bg",
       "--orchestration-accent",
       "--orchestration-accent-dark",
       "--orchestration-accent-bg",
@@ -291,6 +300,9 @@ export const DEFAULT_THEME_TOKENS_LIGHT: ThemeTokens = {
   "--burn-accent": "#c43d32",
   "--burn-accent-dark": "#9f2f27",
   "--burn-accent-bg": "#f1dedb",
+  "--workflow-accent": "#0f7a72",
+  "--workflow-accent-dark": "#0b5f59",
+  "--workflow-accent-bg": "#d7eeeb",
   "--orchestration-accent": "#7c4cc2",
   "--orchestration-accent-dark": "#623aa0",
   "--orchestration-accent-bg": "#e8def4",
@@ -366,6 +378,9 @@ export const DEFAULT_THEME_TOKENS_DARK: ThemeTokens = {
   "--burn-accent": "#ff8a7a",
   "--burn-accent-dark": "#c94f43",
   "--burn-accent-bg": "#3a2927",
+  "--workflow-accent": "#4fd1c5",
+  "--workflow-accent-dark": "#2a9f94",
+  "--workflow-accent-bg": "#243634",
   "--orchestration-accent": "#b894ff",
   "--orchestration-accent-dark": "#7d5acb",
   "--orchestration-accent-bg": "#312a3f",

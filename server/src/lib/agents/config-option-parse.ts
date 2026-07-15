@@ -330,6 +330,8 @@ export function normalizeConversationModeForProvider(
             ? ["debug", "build", "agent", "code"]
             : requestedLower === "burn"
               ? ["burn"]
+              : requestedLower === "workflow"
+                ? ["workflow"]
               : [req];
   const available = new Set(option.options.map((value) => value.value));
   for (const candidate of rawCandidates) {

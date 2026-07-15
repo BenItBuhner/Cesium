@@ -39,6 +39,12 @@ const BURN_TOOLS = new Set([
   "burn_goal_block",
 ]);
 
+const WORKFLOW_TOOLS = new Set([
+  "workflow_run",
+  "workflow_status",
+  "workflow_await",
+]);
+
 export function normalizeCesiumMode(mode: string | undefined | null): string {
   const normalized = String(mode ?? "agent").trim().toLowerCase();
   return normalized || "agent";
@@ -54,6 +60,10 @@ export function isPlanFileToolName(name: string): boolean {
 
 export function isBurnToolName(name: string): boolean {
   return BURN_TOOLS.has(name);
+}
+
+export function isWorkflowToolName(name: string): boolean {
+  return WORKFLOW_TOOLS.has(name) || name.startsWith("workflow_");
 }
 
 function policyBlock(name: string, reason: string): CesiumToolPolicyDecision {
@@ -93,8 +103,11 @@ export function resolveCesiumModeToolPolicy(input: {
         "Plan mode should write through plan-file tools under .cesium/plans/ and must not implement code changes directly."
       );
     }
-    if (isOrchestrationToolName(name) || isBurnToolName(name)) {
-      return policyBlock(name, "Plan mode prepares work but does not run Orchestration or Burn execution controls.");
+    if (isOrchestrationToolName(name) || isBurnToolName(name) || isWorkflowToolName(name)) {
+      return policyBlock(
+        name,
+        "Plan mode prepares work but does not run Orchestration, Burn, or Workflow execution controls."
+      );
     }
     if (name === "call_mcp_tool" || name === "refresh_mcp_servers") {
       return { allowed: true };
@@ -127,8 +140,24 @@ export function resolveCesiumModeToolPolicy(input: {
     if (isOrchestrationToolName(name)) {
       return policyBlock(name, "Burn mode executes its own plan and does not mutate the orchestration kanban directly.");
     }
+    if (isWorkflowToolName(name)) {
+      return policyBlock(name, "Burn mode executes its own durable goal loop and does not run Workflow scripts.");
+    }
     if (name === "burn_goal_complete" || name === "burn_goal_block") {
       return { allowed: true };
+    }
+    return { allowed: true };
+  }
+
+  if (mode === "workflow") {
+    if (isOrchestrationToolName(name)) {
+      return policyBlock(
+        name,
+        "Workflow mode orchestrates through JavaScript scripts and workflow_* tools, not the orchestration kanban."
+      );
+    }
+    if (isBurnToolName(name)) {
+      return policyBlock(name, "Workflow mode uses workflow_* tools instead of Burn goal controls.");
     }
     return { allowed: true };
   }
@@ -138,6 +167,9 @@ export function resolveCesiumModeToolPolicy(input: {
   }
   if (isBurnToolName(name)) {
     return policyBlock(name, "Burn control tools are only available in Burn mode.");
+  }
+  if (isWorkflowToolName(name)) {
+    return policyBlock(name, "Workflow tools are only available in Workflow mode.");
   }
   return { allowed: true };
 }
@@ -149,31 +181,64 @@ export function summarizeCesiumModeToolPolicy(mode: string | undefined | null): 
       return {
         allowed: ["read_file", "grep", "search_history", "read_history_page", "ask_question", "wait", "read-only subagents"],
         restricted: ["call_mcp_tool only after an explicit read-only server/tool check"],
-        blocked: ["edit_file", "terminal", "plan writes", "orchestration mutations", "Burn execution controls"],
+        blocked: [
+          "edit_file",
+          "terminal",
+          "plan writes",
+          "orchestration mutations",
+          "Burn execution controls",
+          "Workflow execution controls",
+        ],
       };
     case "plan":
       return {
         allowed: ["read_file", "grep", "search_history", "read_history_page", "ask_question", "wait", "research subagents", "plan-file tools"],
         restricted: ["terminal for investigation only", "MCP calls for research only"],
-        blocked: ["direct implementation edits outside .cesium/plans/", "orchestration mutations", "Burn execution controls"],
+        blocked: [
+          "direct implementation edits outside .cesium/plans/",
+          "orchestration mutations",
+          "Burn execution controls",
+          "Workflow execution controls",
+        ],
       };
     case "orchestration":
       return {
         allowed: ["orchestration_* tools", "todo", "wait", "ask_question", "history tools", "subagents", "MCP refresh/calls"],
         restricted: ["child-agent permissions are controlled by orchestration assignment policy"],
-        blocked: ["direct edit_file", "direct terminal implementation", "Burn execution controls"],
+        blocked: ["direct edit_file", "direct terminal implementation", "Burn execution controls", "Workflow execution controls"],
       };
     case "burn":
       return {
         allowed: ["read_file", "grep", "edit_file", "terminal", "todo", "wait", "subagents", "plan-file tools", "Burn goal tools", "MCP tools"],
         restricted: ["burn_goal_complete requires a final audit; burn_goal_block requires repeated same-blocker evidence"],
-        blocked: ["orchestration kanban mutations"],
+        blocked: ["orchestration kanban mutations", "Workflow execution controls"],
+      };
+    case "workflow":
+      return {
+        allowed: [
+          "workflow_run",
+          "workflow_status",
+          "workflow_await",
+          "read_file",
+          "grep",
+          "edit_file",
+          "terminal",
+          "todo",
+          "wait",
+          "subagents",
+          "MCP tools",
+        ],
+        restricted: [
+          "Prefer encoding fan-out/verify loops in workflow scripts instead of long parent-turn tool chains",
+          "agent() results stay in script variables; only return the final synthesized value to the user",
+        ],
+        blocked: ["orchestration kanban mutations", "Burn execution controls"],
       };
     default:
       return {
         allowed: ["read_file", "grep", "edit_file", "terminal", "todo", "wait", "ask_question", "subagents", "history tools", "MCP tools"],
         restricted: ["plan-file tools only for explicit plan creation or handoff"],
-        blocked: ["orchestration_* tools", "Burn execution controls"],
+        blocked: ["orchestration_* tools", "Burn execution controls", "Workflow execution controls"],
       };
   }
 }

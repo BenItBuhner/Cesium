@@ -274,6 +274,86 @@ const CESIUM_TOOLS = [
     },
   },
   {
+    name: "workflow_run",
+    description:
+      "Compile and execute a Workflow mode JavaScript orchestration script. The script MUST begin with `export const meta = { name, description, phases }` (pure literal) and may use agent()/parallel()/pipeline()/phase()/log()/budget/args. Prefer wait=true so the tool returns the final script value. Intermediate agent results stay in script variables, not the parent transcript.",
+    parameters: {
+      type: "object",
+      properties: {
+        script: {
+          type: "string",
+          description:
+            "Self-contained workflow script beginning with export const meta = { name, description, phases }.",
+        },
+        scriptPath: {
+          type: "string",
+          description:
+            "Path to a previously persisted workflow script. Takes precedence over script when provided.",
+        },
+        name: {
+          type: "string",
+          description: "Optional display name override (meta.name still required in the script).",
+        },
+        args: {
+          description:
+            "Optional input exposed to the script as the global args. Pass real JSON values, not stringified JSON.",
+        },
+        tokenBudget: {
+          type: "integer",
+          minimum: 0,
+          description: "Optional hard token ceiling for this run. budget.remaining() is Infinity when omitted.",
+        },
+        maxAgents: {
+          type: "integer",
+          minimum: 1,
+          maximum: 200,
+          description: "Optional agent() call cap for this run (default 50).",
+        },
+        maxConcurrent: {
+          type: "integer",
+          minimum: 1,
+          maximum: 16,
+          description: "Optional concurrent agent() cap (default 8, also bounded by CPU count).",
+        },
+        resumeFromRunId: {
+          type: "string",
+          description:
+            "Prior run id whose completed agent() calls are reused when prompt+opts are unchanged.",
+        },
+        wait: {
+          type: "boolean",
+          description: "When true (default), wait for the workflow to finish and return the result.",
+        },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "workflow_status",
+    description:
+      "Read the status of a Workflow mode run (phase, agents used, logs, return value). Defaults to the latest run for this conversation when runId is omitted.",
+    parameters: {
+      type: "object",
+      properties: {
+        runId: { type: "string" },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "workflow_await",
+    description:
+      "Wait for a Workflow mode run to reach a terminal state and return its result summary.",
+    parameters: {
+      type: "object",
+      properties: {
+        runId: { type: "string" },
+        timeoutMs: { type: "integer", minimum: 1000, maximum: 600000 },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
     name: "ask_question",
     description: "Ask the user a structured question with selectable options.",
     parameters: {
@@ -706,6 +786,10 @@ export function toolKind(name: string): string {
     case "burn_goal_block":
     case "burn_goal_resume":
       return "burn";
+    case "workflow_run":
+    case "workflow_status":
+    case "workflow_await":
+      return "workflow";
     case "ask_question":
       return "question";
     case "subagent":
@@ -798,6 +882,12 @@ export function toolTitle(name: string, args: Record<string, unknown>): string {
       return "Record Burn blocker";
     case "burn_goal_resume":
       return "Resume Burn goal";
+    case "workflow_run":
+      return `Run workflow ${asString(args.name) ?? ""}`.trim();
+    case "workflow_status":
+      return `Workflow status ${asString(args.runId) ?? ""}`.trim();
+    case "workflow_await":
+      return `Await workflow ${asString(args.runId) ?? ""}`.trim();
     case "ask_question":
       return "Ask question";
     case "subagent":
