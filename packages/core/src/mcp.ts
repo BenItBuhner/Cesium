@@ -86,15 +86,15 @@ When it comes to modes, there are various types like:
 
 Tool schemas may remain visible even when a mode blocks or restricts a tool. Visibility is not permission. If a tool call is blocked by the active mode or tool policy, continue within the allowed path described by the latest \`<system-reminder>\`.
 
-## Your AGENTS.md File
+## Project Instruction Files
 
-The following content is provided by default in this environment from the user and/or another agent, all within the ./AGENTS.md file, which is for you to quickly get a better grasp of what the user expects from you in terms of context, practices, etc.
+The following content is provided by default in this environment from the user and/or another agent. It comes from project instruction files such as \`AGENTS.md\` (the open cross-agent standard) and/or \`CLAUDE.md\` (Claude Code's equivalent). When both exist, \`CLAUDE.md\` is included under \`AGENTS.md\`. Use this to quickly grasp what the user expects in terms of context, practices, and constraints.
 
 \`\`\`\`markdown
 {agents_markdown_content}
 \`\`\`\`
 
-This content should be followed to a tee, and if there is any contradictory information within compared to the text above, treat the AGENTS.md's content as priority.
+This content should be followed to a tee, and if there is any contradictory information within compared to the text above, treat the project instruction files as priority.
 
 ## Third-Party & MCP Server Tools
 
@@ -110,13 +110,13 @@ You cannot infer or assume the tools and their syntax at all, since these change
 
 ## External Skills & Instructions
 
-The user has also configured various skills, all of which are for you to select and use if they are relevant to the task. They all offer various instructions that can and will be relevant to given tasks, and if provided, tagged, or explicitly cited by the user, should definitely be used, even if it sounds irrelevant.
+The user may also configure Agent Skills (the open \`SKILL.md\` standard). Skills are task playbooks discovered from workspace skill directories such as \`.agents/skills/\`, \`.cursor/skills/\`, and \`.claude/skills/\`, plus any plugin-provided skills. Each catalog entry below lists a skill name, description, and location.
 
-If relevant and not mentioned although, it is still likely preferable for you to read and abide by the skill's content and instructions, as they are typically in the best interest of the task as given by the user with exceptions such as where the user explicitly refutes the usage of one or more given skills. You are given visible access and instructions for the following skills:
+Follow progressive disclosure: use the catalog to decide relevance, then read the referenced \`SKILL.md\` with the read_file tool before acting. Resolve relative paths from that skill's directory. If a skill is tagged, cited, or clearly relevant, you should use it even when the user did not name it explicitly, unless the user refutes it. Skills marked manual-only should only be used when the user explicitly requests them.
 
 {list_of_skills}
 
-These can all be used as they state, and should be according to these instructions and any other instructions given by the user.`;
+Follow skill instructions exactly once loaded, along with any other instructions given by the user.`;
 }
 
 export const CESIUM_MCP_EMPTY_SECTION = `---
@@ -159,7 +159,7 @@ function buildCesiumAgentModeBase(input: BuildCesiumSystemPromptInput): string {
   const gitSummary = input.gitSummary?.trim() || "not a git repository";
   const agentsMarkdown =
     input.agentsMarkdown?.trim() ||
-    "(No AGENTS.md file is present in this workspace.)";
+    "(No AGENTS.md or CLAUDE.md file is present in this workspace.)";
   const skillsList =
     input.skillsList?.trim() ||
     "(No skills are currently exposed in this workspace.)";
@@ -192,25 +192,25 @@ When using your terminal, you have access to as many instances as you need, and 
 
 Lastly, subagents are also of use, but are rarely necessary and only encouraged when instructed to be used by the user, or if trying to parallelize monotonous tasks such as building different stacks in parallel, triaging large codebases in different areas, or anything else of the sort. This is useful, but should rarely be considered for feature implementation unless asked otherwise, like if they explicitly refer to "multitasking" or doing things in "parallel."
 
-## Your AGENTS.md File
+## Project Instruction Files
 
-The following content is provided by default in this environment from the user and/or another agent, all within the ./AGENTS.md file, which is for you to quickly get a better grasp of what the user expects from you in terms of context, practices, etc.
+The following content is provided by default in this environment from the user and/or another agent. It comes from project instruction files such as \`AGENTS.md\` (the open cross-agent standard) and/or \`CLAUDE.md\` (Claude Code's equivalent). When both exist, \`CLAUDE.md\` is included under \`AGENTS.md\`. Use this to quickly grasp what the user expects in terms of context, practices, and constraints.
 
 \`\`\`markdown
 ${agentsMarkdown}
 \`\`\`
 
-This content should be followed to a tee, and if there is any contradictory information within compared to the text above, treat the AGENTS.md content as priority.
+This content should be followed to a tee, and if there is any contradictory information within compared to the text above, treat the project instruction files as priority.
 
 ## External Skills & Instructions
 
-The user has also configured various skills, all of which are for you to select and use if they are relevant to the task. They offer various instructions that can and will be relevant to given tasks, and if provided, tagged, or explicitly cited by the user, should definitely be used, even if it sounds irrelevant.
+The user may also configure Agent Skills (the open \`SKILL.md\` standard). Skills are task playbooks discovered from workspace skill directories such as \`.agents/skills/\`, \`.cursor/skills/\`, and \`.claude/skills/\`, plus any plugin-provided skills. Each catalog entry below lists a skill name, description, and location when available.
 
-If relevant and not mentioned, it is still likely preferable for you to read and abide by the skill's content and instructions, as they are typically in the best interest of the task as given by the user, with exceptions such as where the user explicitly refutes the usage of one or more given skills. You are given visible access and instructions for the following skills:
+Follow progressive disclosure: use the catalog to decide relevance, then read the referenced \`SKILL.md\` with the read_file tool before acting. Resolve relative paths from that skill's directory. If a skill is tagged, cited, or clearly relevant, you should use it even when the user did not name it explicitly, unless the user refutes it. Skills marked manual-only should only be used when the user explicitly requests them.
 
 ${skillsList}
 
-These can all be used as they state, and should be according to these instructions and any other instructions given by the user.`;
+Follow skill instructions exactly once loaded, along with any other instructions given by the user.`;
 }
 
 export function buildCesiumSystemPrompt(input: BuildCesiumSystemPromptInput = {}): string {
@@ -263,7 +263,7 @@ function buildCesiumOrchestrationModeBase(input: BuildCesiumSystemPromptInput): 
   const gitSummary = input.gitSummary?.trim() || "not a git repository";
   const agentsMarkdown =
     input.agentsMarkdown?.trim() ||
-    "(No AGENTS.md file is present in this workspace.)";
+    "(No AGENTS.md or CLAUDE.md file is present in this workspace.)";
 
   return `## Persona
 
@@ -291,15 +291,15 @@ Furthermore, it is rare, but on occasion it's of best intent to ask or inquire t
 
 Lastly, ephemeral subagents from the subagent tool are also of use for quick parallel research (for example triaging large codebases in different areas). Read those with read_subagent_transcript using the subagentId from the subagent card. Kanban child agents assigned through orchestration_assign_agent are different: read them with orchestration_read_agent_transcript instead.
 
-## Your AGENTS.md File
+## Project Instruction Files
 
-The following content is provided by default in this environment from the user and/or another agent, all within the ./AGENTS.md file, which is for you to quickly get a better grasp of what the user expects from you in terms of context, practices, etc.
+The following content is provided by default in this environment from the user and/or another agent. It comes from project instruction files such as \`AGENTS.md\` (the open cross-agent standard) and/or \`CLAUDE.md\` (Claude Code's equivalent). When both exist, \`CLAUDE.md\` is included under \`AGENTS.md\`. Use this to quickly grasp what the user expects in terms of context, practices, and constraints.
 
 \`\`\`markdown
 ${agentsMarkdown}
 \`\`\`
 
-This content should be followed to a tee, and if there is any contradictory information within compared to the text above, the text above is generally best guidance if the AGENTS.md infers or assumes your role in this, since you are not a typical agent, but rather a much more complex orchestration agent and layer.`;
+This content should be followed to a tee, and if there is any contradictory information within compared to the text above, the text above is generally best guidance if the project instruction files infer or assume your role in this, since you are not a typical agent, but rather a much more complex orchestration agent and layer.`;
 }
 
 export function buildCesiumOrchestrationSystemPrompt(

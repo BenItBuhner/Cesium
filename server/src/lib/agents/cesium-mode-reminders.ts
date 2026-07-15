@@ -93,7 +93,9 @@ export function buildCesiumModeReminder(input: CesiumModeReminderInput): string 
     input.handoffPlanPath ? `- Implement plan: ${input.handoffPlanPath}` : null,
     input.burnGoalSummary ? input.burnGoalSummary : null,
   ].filter(Boolean).join("\n");
-  const agentsMarkdown = input.agentsMarkdown?.trim() || "(No AGENTS.md file is present in this workspace.)";
+  const agentsMarkdown =
+    input.agentsMarkdown?.trim() ||
+    "(No AGENTS.md or CLAUDE.md file is present in this workspace.)";
   const skillsList = input.skillsList?.trim() || "(No skills are currently exposed in this workspace.)";
 
   const opening = input.handoffPlanPath
@@ -148,7 +150,7 @@ ${mcpSummaryText(input.mcpSummaries)}
 ${input.mcpChangeNotice?.trim() ? `### MCP Changes Since Last Turn\n\n${input.mcpChangeNotice.trim()}\n\n` : ""}
 When using MCP tools, read the mirrored server metadata and exact tool schema before calling a tool.
 
-## AGENTS.md
+## Project Instruction Files
 
 \`\`\`markdown
 ${agentsMarkdown}

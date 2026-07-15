@@ -36,6 +36,8 @@ import {
   readCesiumPlanFile,
   writeCesiumPlanFile,
 } from "./cesium-plan-files.js";
+import { loadWorkspaceInstructionFiles } from "./instruction-files.js";
+import { resolveWorkspaceSkillsList } from "./workspace-skills.js";
 import {
   appendBurnGoalSnapshot,
   blockBurnGoal,
@@ -325,15 +327,10 @@ class CesiumSessionHandle implements AgentSessionHandle {
     } catch {
       gitSummary = "not a git repository";
     }
-    let agentsMarkdown = "(No AGENTS.md file is present in this workspace.)";
-    try {
-      const content = await fs.readFile(path.join(workspaceRoot, "AGENTS.md"), "utf8");
-      if (content.trim()) {
-        agentsMarkdown = content.trim();
-      }
-    } catch {
-      // keep default placeholder
-    }
+    const [agentsMarkdown, skillsList] = await Promise.all([
+      loadWorkspaceInstructionFiles(workspaceRoot),
+      resolveWorkspaceSkillsList(workspaceRoot),
+    ]);
     return {
       mcpSummaries,
       modelName: this.callbacks.conversation.config.modelName ?? "configured model",
@@ -344,6 +341,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
       }),
       gitSummary,
       agentsMarkdown,
+      skillsList: skillsList || undefined,
     };
   }
 
