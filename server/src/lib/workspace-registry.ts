@@ -5,6 +5,10 @@ import { invalidate, readThrough } from "../cache/read-through.js";
 import { getStorage } from "../storage/runtime.js";
 import { createWorkspaceId, normalizeWorkspaceRoot } from "./persistence.js";
 import { HOME_WORKSPACE_DISPLAY_NAME } from "./workspace-constants.js";
+import {
+  annotateWorkspaceKind,
+  isStandaloneChatWorkspace,
+} from "./standalone-chat-paths.js";
 
 export async function getHomeWorkspace(): Promise<WorkspaceRecord | null> {
   try {
@@ -80,6 +84,7 @@ export type WorkspaceRecord = {
   createdAt: number;
   updatedAt: number;
   lastOpenedAt: number;
+  kind?: "workspace" | "standalone-chat";
 };
 
 export type WorkspaceProfileFile = {
@@ -127,7 +132,7 @@ export async function ensureHomeWorkspace(): Promise<WorkspaceRecord | null> {
 
 export async function listWorkspaces(): Promise<WorkspaceRecord[]> {
   return readThrough(KEY_WORKSPACE_LIST, WORKSPACE_CACHE_TTL_SECONDS, async () =>
-    (await getStorage()).listWorkspaces()
+    (await getStorage()).listWorkspaces().then((list) => list.map(annotateWorkspaceKind))
   );
 }
 
@@ -140,7 +145,10 @@ export async function getWorkspaceById(
   return readThrough(
     keyWorkspaceById(workspaceId),
     WORKSPACE_CACHE_TTL_SECONDS,
-    async () => (await getStorage()).getWorkspace(workspaceId)
+    async () => {
+      const workspace = await (await getStorage()).getWorkspace(workspaceId);
+      return workspace ? annotateWorkspaceKind(workspace) : null;
+    }
   );
 }
 
@@ -184,7 +192,9 @@ export async function ensureWorkspaceRegistered(
   };
   await storage.upsertWorkspace(workspace);
   await invalidateWorkspaceCaches(workspace.id);
-  await noteWorkspaceOpened(workspace.id);
+  if (trackOpen) {
+    await noteWorkspaceOpened(workspace.id);
+  }
   return workspace;
 }
 
@@ -219,11 +229,19 @@ export async function noteWorkspaceOpened(workspaceId: string): Promise<void> {
     return;
   }
   const now = Date.now();
+  const annotated = annotateWorkspaceKind(workspace);
   await storage.upsertWorkspace({
-    ...workspace,
+    ...annotated,
     lastOpenedAt: now,
     updatedAt: now,
   });
+
+  // Standalone chat sandboxes should not pollute recent/default workspace lists.
+  if (isStandaloneChatWorkspace(annotated)) {
+    await invalidateWorkspaceCaches(workspaceId);
+    return;
+  }
+
   const profile = await storage.getWorkspaceProfile();
   profile.lastOpenedWorkspaceId = workspaceId;
   profile.recentWorkspaceIds = [
@@ -260,16 +278,20 @@ export async function resolveStartupWorkspace(): Promise<WorkspaceRecord | null>
     listWorkspaces(),
     getWorkspaceProfile(),
   ]);
-  if (workspaces.length === 0) {
+  const durable = workspaces.filter((workspace) => !isStandaloneChatWorkspace(workspace));
+  if (durable.length === 0) {
     return null;
   }
 
   const preferredId = profile.lastOpenedWorkspaceId ?? profile.defaultWorkspaceId;
   if (preferredId) {
-    return workspaces.find((workspace) => workspace.id === preferredId) ?? workspaces[0] ?? null;
+    const preferred = durable.find((workspace) => workspace.id === preferredId);
+    if (preferred) {
+      return preferred;
+    }
   }
 
-  return workspaces[0] ?? null;
+  return durable[0] ?? null;
 }
 
 export async function ensureInitialWorkspace(fallbackRoot: string): Promise<WorkspaceRecord> {

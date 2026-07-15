@@ -97,6 +97,12 @@ async function buildRepositoryInfoByWorkspace(
 ): Promise<Map<string, AgentRailRepositoryInfo>> {
   const entries = await Promise.all(
     workspaces.map(async (workspace) => {
+      if (workspace.kind === "standalone-chat") {
+        return [
+          workspace.id,
+          { isGitRepo: false } satisfies AgentRailRepositoryInfo,
+        ] as const;
+      }
       try {
         const status = await getGitWorkspaceStatus(workspace, workspaces);
         const info: AgentRailRepositoryInfo = {
