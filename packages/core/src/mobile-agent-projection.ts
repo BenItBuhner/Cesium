@@ -4,8 +4,29 @@ import type {
   AgentPlanEntry,
   AgentStoredEvent,
 } from "./protocol";
+import { latestBurnProgressStatus } from "./agent-chat";
 
 export type MobilePendingIntervention = "permission" | "question" | null;
+
+export type MobileTodoProgress = {
+  total: number;
+  completed: number;
+  blocked: number;
+  pending: number;
+  inProgress: number;
+  currentIndex: number | null;
+  percent: number;
+  estimatedRemainingMs: number | null;
+  estimatedCompletionAt: number | null;
+};
+
+export type MobileBurnProgress = {
+  percent: number;
+  headline: string | null;
+  runtimeMs: number;
+  estimatedRemainingMs: number | null;
+  estimatedCompletionAt: number | null;
+};
 
 export type MobileAgentProjection = {
   workspaceId: string;
@@ -22,6 +43,8 @@ export type MobileAgentProjection = {
   completedAt: number | null;
   elapsedMs: number;
   lastError: string | null;
+  todoProgress: MobileTodoProgress | null;
+  burnProgress: MobileBurnProgress | null;
 };
 
 export function isMobileAgentRunActive(status: MobileAgentProjection["status"]): boolean {
@@ -68,7 +91,7 @@ export function deriveMobileAgentProjection(
   const active = isBusyConversationStatus(conversation.status);
   const status = resolveProjectionStatus(conversation, sortedEvents);
   const startedAt =
-    active && previous?.conversationId === conversation.id && previous.startedAt
+    previous?.conversationId === conversation.id && previous.startedAt
       ? previous.startedAt
       : active
         ? findRunStartedAt(sortedEvents) ?? conversation.updatedAt
@@ -79,6 +102,9 @@ export function deriveMobileAgentProjection(
       : null;
   const activeTodo = findCurrentTodo(sortedEvents);
   const activity = resolveCurrentActivity(conversation, sortedEvents, activeTodo);
+  const elapsedMs = startedAt ? Math.max(0, now - startedAt) : 0;
+  const todoProgress = deriveTodoProgress(sortedEvents, elapsedMs, now);
+  const burnProgress = deriveBurnProgress(sortedEvents, conversation.status, now);
 
   return {
     workspaceId: conversation.workspaceId,
@@ -97,8 +123,10 @@ export function deriveMobileAgentProjection(
     startedAt,
     updatedAt: conversation.updatedAt,
     completedAt,
-    elapsedMs: startedAt ? Math.max(0, now - startedAt) : 0,
+    elapsedMs,
     lastError: conversation.lastError,
+    todoProgress,
+    burnProgress,
   };
 }
 
@@ -139,6 +167,91 @@ function findCurrentTodo(events: AgentStoredEvent[]): AgentPlanEntry | null {
     );
   }
   return null;
+}
+
+function findLatestPlan(events: AgentStoredEvent[]): AgentPlanEntry[] | null {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const event = events[i];
+    if (event?.kind === "plan" && event.entries.length > 0) {
+      return event.entries;
+    }
+  }
+  return null;
+}
+
+function deriveTodoProgress(
+  events: AgentStoredEvent[],
+  elapsedMs: number,
+  now: number
+): MobileTodoProgress | null {
+  const entries = findLatestPlan(events);
+  if (!entries) {
+    return null;
+  }
+  const total = entries.length;
+  const completed = entries.filter((entry) => entry.status === "completed").length;
+  const blocked = entries.filter((entry) => entry.status === "blocked").length;
+  const pending = entries.filter((entry) => entry.status === "pending").length;
+  const inProgress = entries.filter((entry) => entry.status === "in_progress").length;
+  const currentIndexZeroBased = entries.findIndex(
+    (entry) =>
+      entry.status === "in_progress" ||
+      entry.status === "blocked" ||
+      entry.status === "pending"
+  );
+  const percent = Math.round((completed / total) * 100);
+  const estimatedRemainingMs =
+    completed > 0 && completed < total && elapsedMs >= 10_000
+      ? boundedEstimate((elapsedMs / completed) * (total - completed))
+      : null;
+  return {
+    total,
+    completed,
+    blocked,
+    pending,
+    inProgress,
+    currentIndex: currentIndexZeroBased >= 0 ? currentIndexZeroBased + 1 : null,
+    percent,
+    estimatedRemainingMs,
+    estimatedCompletionAt:
+      estimatedRemainingMs == null ? null : now + estimatedRemainingMs,
+  };
+}
+
+function deriveBurnProgress(
+  events: AgentStoredEvent[],
+  status: AgentConversationStatus,
+  now: number
+): MobileBurnProgress | null {
+  const burn = latestBurnProgressStatus(events, status);
+  if (!burn) {
+    return null;
+  }
+  const activeRuntimeMs =
+    burn.runtimeActiveSince != null && status === "running"
+      ? Math.max(0, now - burn.runtimeActiveSince)
+      : 0;
+  const runtimeMs = Math.max(0, (burn.runtimeSeconds ?? 0) * 1000 + activeRuntimeMs);
+  const estimatedRemainingMs =
+    burn.progressPercent > 0 &&
+    burn.progressPercent < 100 &&
+    runtimeMs >= 10_000 &&
+    burn.completedAt == null
+      ? boundedEstimate((runtimeMs * (100 - burn.progressPercent)) / burn.progressPercent)
+      : null;
+  return {
+    percent: burn.progressPercent,
+    headline: burn.headline,
+    runtimeMs,
+    estimatedRemainingMs,
+    estimatedCompletionAt:
+      estimatedRemainingMs == null ? null : now + estimatedRemainingMs,
+  };
+}
+
+function boundedEstimate(value: number): number {
+  const MAX_ESTIMATE_MS = 7 * 24 * 60 * 60 * 1000;
+  return Math.round(Math.max(0, Math.min(MAX_ESTIMATE_MS, value)));
 }
 
 function resolveCurrentActivity(

@@ -2,11 +2,11 @@ import type {
   AgentConversationRecord,
   AgentSocketServerMessage,
   AgentStoredEvent,
-} from "../../../../src/lib/agent-types";
+  MobileAgentProjection,
+} from "@cesium/core";
 import {
   deriveMobileAgentProjection,
-  type MobileAgentProjection,
-} from "../../../../src/lib/mobile-agent-projection";
+} from "@cesium/core";
 
 export type AgentStatusServiceConfig = {
   serverBaseUrl: string;

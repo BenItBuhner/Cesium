@@ -11,6 +11,7 @@ import {
 } from "react-native";
 import NetInfo from "@react-native-community/netinfo";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
+import { cancelAgentConversation, setActiveWorkspaceId } from "@cesium/client";
 import { ServerConnectionsProvider } from "@cesium/client/react";
 import {
   NativeAuthProvider,
@@ -48,6 +49,20 @@ export default function App() {
   const backgroundCoordinatorRef = useRef(
     new BackgroundCoordinator(agentStatusRef.current, liveUpdatesRef.current)
   );
+
+  const consumeNotificationAction = useCallback(async () => {
+    const action = await CesiumLiveUpdates.consumeInitialNotificationAction();
+    if (!action.conversationId) {
+      return;
+    }
+    setNotificationConversationId(action.conversationId);
+    if (action.actionId === "cancel") {
+      if (action.workspaceId) {
+        setActiveWorkspaceId(action.workspaceId);
+      }
+      await cancelAgentConversation(action.conversationId).catch(() => undefined);
+    }
+  }, []);
 
   const configureAgentSocket = useCallback(
     (workspaceId: string | null, conversationId: string | null) => {
@@ -90,6 +105,9 @@ export default function App() {
     }
     const appStateSubscription = AppState.addEventListener("change", (nextState: AppStateStatus) => {
       backgroundCoordinatorRef.current.setAppState(nextState);
+      if (nextState === "active") {
+        void consumeNotificationAction().catch(() => undefined);
+      }
     });
     const netInfoSubscription = NetInfo.addEventListener((state) => {
       backgroundCoordinatorRef.current.setNetworkReachable(
@@ -102,17 +120,11 @@ export default function App() {
       agentStatus.close();
       void liveUpdates.stop();
     };
-  }, []);
+  }, [consumeNotificationAction]);
 
   useEffect(() => {
-    void CesiumLiveUpdates.consumeInitialNotificationAction()
-      .then((action) => {
-        if (action?.conversationId) {
-          setNotificationConversationId(action.conversationId);
-        }
-      })
-      .catch(() => undefined);
-  }, []);
+    void consumeNotificationAction().catch(() => undefined);
+  }, [consumeNotificationAction]);
 
   const dark = Appearance.getColorScheme() === "dark";
 

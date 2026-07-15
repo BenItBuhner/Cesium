@@ -6,6 +6,7 @@ import {
   StyleSheet,
   Text,
   TextInput,
+  useWindowDimensions,
   View,
   type ColorValue,
   type TextStyle,
@@ -18,24 +19,31 @@ import {
   ChevronDown,
   ChevronRight,
   Circle,
+  CircleUserRound,
   File,
   Folder,
+  FolderOpen,
+  GitBranch,
   Infinity as InfinityIcon,
   Maximize2,
   Menu,
   MoreHorizontal,
+  PanelLeftClose,
+  PanelLeftOpen,
+  PanelRightClose,
+  PanelRightOpen,
   Paperclip,
   Plus,
   RefreshCw,
   Save,
   Search,
   Send,
+  Settings,
   UserRound,
   Wrench,
   X,
 } from "lucide-react-native";
 import {
-  Fragment,
   memo,
   useCallback,
   useEffect,
@@ -43,7 +51,6 @@ import {
   useRef,
   useState,
   type ComponentType,
-  type ReactNode,
 } from "react";
 import type {
   AgentBackendInfo,
@@ -53,6 +60,7 @@ import type {
   FileNode,
   MobileAgentProjection,
   WorkedSessionEntry,
+  WorkspaceRecord,
 } from "@cesium/core";
 import {
   deriveMobileAgentProjection,
@@ -82,7 +90,7 @@ import {
   type VisibleFileRow,
 } from "./workbench-state";
 
-export type NativeWorkbenchPanel = "files" | "editor" | "chat";
+export type NativeWorkbenchPanel = "center" | "rail" | "workbench";
 
 export type NativeWorkbenchProps = {
   connectionState?: "idle" | "connecting" | "open" | "closed" | "reconnecting";
@@ -111,15 +119,6 @@ const EMPTY_FEED: ConversationFeedState = {
   conversation: null,
   events: [],
 };
-
-const PANEL_ITEMS: Array<{
-  id: NativeWorkbenchPanel;
-  label: string;
-}> = [
-  { id: "files", label: "Files" },
-  { id: "editor", label: "Editor" },
-  { id: "chat", label: "Chat" },
-];
 
 function tokenNumber(value: string, fallback: number): number {
   const parsed = Number.parseFloat(value);
@@ -585,6 +584,8 @@ function EditorPanel({
   loading,
   onChange,
   onClose,
+  onClosePane,
+  onOpenFiles,
   onSave,
   styles,
   tokens,
@@ -593,6 +594,8 @@ function EditorPanel({
   loading: boolean;
   onChange: (content: string) => void;
   onClose: () => void;
+  onClosePane: () => void;
+  onOpenFiles: () => void;
   onSave: () => void;
   styles: ReturnType<typeof createStyles>;
   tokens: ThemeTokens;
@@ -638,6 +641,13 @@ function EditorPanel({
           ) : null}
         </View>
         <View style={sharedStyles.toolbarSpacer} />
+        <IconButton
+          accessibilityLabel="Open workspace file"
+          Icon={FolderOpen}
+          onPress={onOpenFiles}
+          tokens={tokens}
+          testID="open-workbench-file-picker"
+        />
         {document?.dirty ? (
           <IconButton
             accessibilityLabel="Save file"
@@ -648,6 +658,13 @@ function EditorPanel({
           />
         ) : null}
         <IconButton accessibilityLabel="Editor menu" Icon={MoreHorizontal} tokens={tokens} />
+        <IconButton
+          accessibilityLabel="Hide workbench pane"
+          Icon={PanelRightClose}
+          onPress={onClosePane}
+          tokens={tokens}
+          testID="close-workbench-pane"
+        />
       </View>
       {loading ? (
         <LoadingScreen label="Opening file..." tokens={tokens} />
@@ -680,9 +697,9 @@ function EditorPanel({
         </ScrollView>
       ) : (
         <View style={sharedStyles.centered}>
-          <Text style={styles.emptyTitle}>Open a file to start editing</Text>
+          <Text style={styles.emptyTitle}>No files open</Text>
           <Text style={styles.emptySubtitle}>
-            Choose a file from the Files panel.
+            Open a workspace file to start editing.
           </Text>
         </View>
       )}
@@ -947,42 +964,40 @@ function Composer({
 function ChatPanel({
   backends,
   connectionState,
-  conversations,
   feed,
   feedError,
   feedLoading,
-  onNewConversation,
+  onOpenWorkbench,
   onPermission,
   onQuestion,
   onRefresh,
-  onSelectConversation,
   onSubmit,
   selectedConversationId,
   styles,
   tokens,
+  workspaceName,
   workspaceRoot,
 }: {
   backends: AgentBackendInfo[];
   connectionState?: NativeWorkbenchProps["connectionState"];
-  conversations: AgentConversationRecord[];
   feed: ConversationFeedState;
   feedError: string | null;
   feedLoading: boolean;
-  onNewConversation: () => void;
+  onOpenWorkbench: () => void;
   onPermission: (requestId: string, optionId: string) => void;
   onQuestion: (questionId: string, answer: string) => void;
   onRefresh: () => void;
-  onSelectConversation: (id: string) => void;
   onSubmit: (text: string) => Promise<boolean>;
   selectedConversationId: string | null;
   styles: ReturnType<typeof createStyles>;
   tokens: ThemeTokens;
+  workspaceName: string;
   workspaceRoot: string;
 }) {
   const selectedConversation = selectedConversationId
     ? feed.conversation?.id === selectedConversationId
       ? feed.conversation
-      : conversations.find((conversation) => conversation.id === selectedConversationId) ?? null
+      : null
     : null;
   const backend =
     backends.find((candidate) => candidate.id === selectedConversation?.config.backendId) ??
@@ -1001,52 +1016,41 @@ function ChatPanel({
 
   return (
     <View style={styles.panel} testID="cesium-chat-panel">
-      <View style={styles.chatTabs}>
-        <ScrollView
-          contentContainerStyle={styles.chatTabsContent}
-          horizontal
-          showsHorizontalScrollIndicator={false}
-        >
-          {conversations.slice(0, 12).map((conversation) => {
-            const selected = conversation.id === selectedConversationId;
-            return (
-              <Pressable
-                key={conversation.id}
-                onPress={() => onSelectConversation(conversation.id)}
-                style={[styles.chatTab, selected ? styles.activeChatTab : null]}
-                testID={`conversation-tab-${conversation.id}`}
-              >
-                <Text numberOfLines={1} style={styles.chatTabText}>
-                  {conversation.title || "Untitled"}
-                </Text>
-              </Pressable>
-            );
-          })}
-          {!selectedConversationId ? (
-            <View style={[styles.chatTab, styles.activeChatTab]}>
-              <Text style={styles.chatTabText}>New chat</Text>
-            </View>
-          ) : null}
-        </ScrollView>
-        <IconButton
-          accessibilityLabel="New chat"
-          Icon={Plus}
-          onPress={onNewConversation}
-          tokens={tokens}
-          testID="new-chat"
-        />
-        <IconButton accessibilityLabel="Chat menu" Icon={MoreHorizontal} tokens={tokens} />
-      </View>
       {!selectedConversationId ? (
         <View style={styles.newChatStage}>
-          <Composer
-            backend={backend}
-            busy={false}
-            conversation={null}
-            onSubmit={onSubmit}
-            styles={styles}
-            tokens={tokens}
-          />
+          <View style={styles.newChatContent}>
+            <View style={styles.workspaceContextRow}>
+              <Folder color={tokens["--text-secondary"]} size={13} strokeWidth={1.5} />
+              <Text numberOfLines={1} style={styles.workspaceContextText}>
+                {workspaceName}
+              </Text>
+              <GitBranch color={tokens["--text-disabled"]} size={12} strokeWidth={1.5} />
+              <Text numberOfLines={1} style={styles.workspaceRootText}>
+                {workspaceRoot.split("/").filter(Boolean).at(-1) ?? workspaceRoot}
+              </Text>
+            </View>
+            <Composer
+              backend={backend}
+              busy={false}
+              conversation={null}
+              onSubmit={onSubmit}
+              styles={styles}
+              tokens={tokens}
+            />
+            {feedError ? <Text style={styles.landingError}>{feedError}</Text> : null}
+            <View style={styles.quickActions}>
+              <Pressable style={styles.quickActionButton}>
+                <Text style={styles.quickActionText}>Plan new idea</Text>
+              </Pressable>
+              <Pressable
+                onPress={onOpenWorkbench}
+                style={styles.quickActionButton}
+                testID="open-editor-panel"
+              >
+                <Text style={styles.quickActionText}>Open editor panel</Text>
+              </Pressable>
+            </View>
+          </View>
         </View>
       ) : (
         <>
@@ -1100,36 +1104,166 @@ function ChatPanel({
   );
 }
 
-function BottomNavigation({
-  activePanel,
-  onChange,
+function AgentRail({
+  activeWorkspaceId,
+  connectionState,
+  conversations,
+  onClose,
+  onNewConversation,
+  onSelectConversation,
+  onSelectWorkspace,
+  selectedConversationId,
   styles,
+  tokens,
+  workspaces,
 }: {
-  activePanel: NativeWorkbenchPanel;
-  onChange: (panel: NativeWorkbenchPanel) => void;
+  activeWorkspaceId: string | null;
+  connectionState?: NativeWorkbenchProps["connectionState"];
+  conversations: AgentConversationRecord[];
+  onClose: () => void;
+  onNewConversation: () => void;
+  onSelectConversation: (conversationId: string) => void;
+  onSelectWorkspace: (workspaceId: string) => void;
+  selectedConversationId: string | null;
   styles: ReturnType<typeof createStyles>;
+  tokens: ThemeTokens;
+  workspaces: WorkspaceRecord[];
 }) {
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const normalizedQuery = query.trim().toLowerCase();
+  const visibleConversations = normalizedQuery
+    ? conversations.filter((conversation) =>
+        conversation.title.toLowerCase().includes(normalizedQuery)
+      )
+    : conversations;
+  const activeWorkspace = workspaces.find((workspace) => workspace.id === activeWorkspaceId);
+
   return (
-    <View accessibilityRole="tablist" style={styles.bottomNavigation}>
-      {PANEL_ITEMS.map((item) => (
-        <Pressable
-          accessibilityRole="tab"
-          accessibilityState={{ selected: activePanel === item.id }}
-          key={item.id}
-          onPress={() => onChange(item.id)}
-          style={styles.bottomNavigationItem}
-          testID={`nav-${item.id}`}
-        >
-          <Text
-            style={[
-              styles.bottomNavigationText,
-              activePanel === item.id ? styles.bottomNavigationTextActive : null,
-            ]}
-          >
-            {item.label}
-          </Text>
-        </Pressable>
-      ))}
+    <View style={styles.agentRail} testID="agent-workspace-rail">
+      <View style={styles.railTopBar}>
+        <IconButton
+          accessibilityLabel="Hide workspace rail"
+          Icon={PanelLeftClose}
+          onPress={onClose}
+          tokens={tokens}
+          testID="close-agent-rail"
+        />
+        <IconButton
+          accessibilityLabel="Search all chats"
+          Icon={Search}
+          onPress={() => setSearchOpen((open) => !open)}
+          tokens={tokens}
+          testID="search-agent-chats"
+        />
+        <View style={sharedStyles.toolbarSpacer} />
+        <IconButton
+          accessibilityLabel="Start new chat"
+          Icon={Plus}
+          onPress={onNewConversation}
+          tokens={tokens}
+          testID="rail-new-chat"
+        />
+      </View>
+      {searchOpen ? (
+        <TextInput
+          autoCapitalize="none"
+          autoCorrect={false}
+          onChangeText={setQuery}
+          placeholder="Search conversations..."
+          placeholderTextColor={tokens["--text-disabled"]}
+          style={styles.railSearchInput}
+          testID="agent-rail-search-input"
+          value={query}
+        />
+      ) : null}
+      <ScrollView contentContainerStyle={styles.railList}>
+        {workspaces.map((workspace) => {
+          const active = workspace.id === activeWorkspaceId;
+          return (
+            <View key={workspace.id} style={styles.railWorkspaceSection}>
+              <Pressable
+                onPress={() => onSelectWorkspace(workspace.id)}
+                style={styles.railWorkspaceHeader}
+                testID={`workspace-row-${workspace.id}`}
+              >
+                <Folder
+                  color={active ? tokens["--text-primary"] : tokens["--text-disabled"]}
+                  size={11}
+                  strokeWidth={1.7}
+                />
+                <Text
+                  numberOfLines={1}
+                  style={[
+                    styles.railWorkspaceLabel,
+                    active ? styles.railWorkspaceLabelActive : null,
+                  ]}
+                >
+                  {workspace.name}
+                </Text>
+              </Pressable>
+              {active ? (
+                visibleConversations.length > 0 ? (
+                  visibleConversations.map((conversation) => {
+                    const selected = conversation.id === selectedConversationId;
+                    return (
+                      <Pressable
+                        key={conversation.id}
+                        onPress={() => onSelectConversation(conversation.id)}
+                        style={[
+                          styles.railConversationRow,
+                          selected ? styles.railConversationRowSelected : null,
+                        ]}
+                        testID={`rail-conversation-${conversation.id}`}
+                      >
+                        <Circle
+                          color={
+                            conversation.status === "running"
+                              ? tokens["--ask-accent"]
+                              : tokens["--text-disabled"]
+                          }
+                          fill={
+                            conversation.status === "running"
+                              ? tokens["--ask-accent"]
+                              : "transparent"
+                          }
+                          size={6}
+                          strokeWidth={1.5}
+                        />
+                        <Text numberOfLines={1} style={styles.railConversationTitle}>
+                          {conversation.title || "Untitled"}
+                        </Text>
+                      </Pressable>
+                    );
+                  })
+                ) : (
+                  <Text style={styles.railEmptyText}>
+                    {normalizedQuery ? "No matching conversations" : "No conversations yet"}
+                  </Text>
+                )
+              ) : null}
+            </View>
+          );
+        })}
+      </ScrollView>
+      <View style={styles.railFooter}>
+        <CircleUserRound color={tokens["--text-secondary"]} size={17} strokeWidth={1.5} />
+        <Text numberOfLines={1} style={styles.railFooterLabel}>
+          {activeWorkspace?.name ?? "Cesium"}
+        </Text>
+        <View
+          style={[
+            styles.connectionDot,
+            {
+              backgroundColor:
+                connectionState === "open"
+                  ? tokens["--ask-accent"]
+                  : tokens["--text-disabled"],
+            },
+          ]}
+        />
+        <Settings color={tokens["--text-secondary"]} size={15} strokeWidth={1.5} />
+      </View>
     </View>
   );
 }
@@ -1147,9 +1281,14 @@ function WorkbenchBody({
     error: workspaceError,
     loading: workspaceLoading,
     refreshWorkspaces,
+    setActiveWorkspace,
+    workspaces,
   } = useNativeWorkspace();
+  const { width: viewportWidth } = useWindowDimensions();
   const styles = useMemo(() => createStyles(tokens), [tokens]);
-  const [activePanel, setActivePanel] = useState<NativeWorkbenchPanel>("chat");
+  const [railOpen, setRailOpen] = useState(false);
+  const [rightPaneOpen, setRightPaneOpen] = useState(false);
+  const [filePickerOpen, setFilePickerOpen] = useState(false);
   const [conversations, setConversations] = useState<AgentConversationRecord[]>([]);
   const [backends, setBackends] = useState<AgentBackendInfo[]>([]);
   const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null);
@@ -1159,6 +1298,7 @@ function WorkbenchBody({
   const [editorLoading, setEditorLoading] = useState(false);
   const initialConversationSelected = useRef(false);
   const previousProjection = useRef<MobileAgentProjection | null>(null);
+  const openedPlanFiles = useRef(new Set<string>());
   const {
     error: feedError,
     feed,
@@ -1217,7 +1357,8 @@ function WorkbenchBody({
       conversations.some((conversation) => conversation.id === notificationConversationId)
     ) {
       setSelectedConversationId(notificationConversationId);
-      setActivePanel("chat");
+      setRailOpen(false);
+      setRightPaneOpen(false);
     }
   }, [conversations, notificationConversationId]);
 
@@ -1252,7 +1393,8 @@ function WorkbenchBody({
 
   const openFile = useCallback(async (path: string) => {
     setEditorLoading(true);
-    setActivePanel("editor");
+    setFilePickerOpen(false);
+    setRightPaneOpen(true);
     try {
       const result = await readFile(path, { full: true });
       setEditorDocument({
@@ -1273,6 +1415,23 @@ function WorkbenchBody({
       setEditorLoading(false);
     }
   }, []);
+
+  useEffect(() => {
+    if (!selectedConversationId) {
+      openedPlanFiles.current.clear();
+      return;
+    }
+    const latestPlanFile = [...feed.events]
+      .reverse()
+      .find((event) => event.kind === "plan_file");
+    if (
+      latestPlanFile?.kind === "plan_file" &&
+      !openedPlanFiles.current.has(latestPlanFile.path)
+    ) {
+      openedPlanFiles.current.add(latestPlanFile.path);
+      void openFile(latestPlanFile.path);
+    }
+  }, [feed.events, openFile, selectedConversationId]);
 
   const saveEditorDocument = useCallback(async () => {
     if (!editorDocument?.dirty) {
@@ -1367,60 +1526,151 @@ function WorkbenchBody({
 
   return (
     <View style={styles.workbench}>
-      <View style={styles.panelStage}>
-        {activePanel === "files" ? (
-          <FilesPanel
-            activeDocumentPath={editorDocument?.path ?? null}
-            onOpenFile={openFile}
+      <View style={styles.agentCenterStage}>
+        {conversationsLoading && conversations.length === 0 ? (
+          <LoadingScreen label="Loading chats..." tokens={tokens} />
+        ) : (
+          <ChatPanel
+            backends={backends}
+            connectionState={connectionState}
+            feed={feed}
+            feedError={feedError ?? conversationError}
+            feedLoading={feedLoading}
+            onOpenWorkbench={() => {
+              setFilePickerOpen(false);
+              setRightPaneOpen(true);
+            }}
+            onPermission={answerPermission}
+            onQuestion={answerQuestion}
+            onRefresh={() => {
+              refreshFeed();
+              void refreshConversations();
+            }}
+            onSubmit={submitPrompt}
+            selectedConversationId={selectedConversationId}
             styles={styles}
             tokens={tokens}
             workspaceName={activeWorkspace?.name ?? "Workspace"}
+            workspaceRoot={activeWorkspace?.root ?? ""}
           />
-        ) : null}
-        {activePanel === "editor" ? (
-          <EditorPanel
-            document={editorDocument}
-            loading={editorLoading}
-            onChange={(content) =>
-              setEditorDocument((current) =>
-                current ? { ...current, content, dirty: true } : current
-              )
-            }
-            onClose={() => setEditorDocument(null)}
-            onSave={() => void saveEditorDocument()}
-            styles={styles}
+        )}
+      </View>
+
+      <View pointerEvents="box-none" style={styles.agentTopLeftAction}>
+        {!railOpen ? (
+          <IconButton
+            accessibilityLabel="Show workspace rail"
+            Icon={PanelLeftOpen}
+            onPress={() => setRailOpen(true)}
             tokens={tokens}
+            testID="open-agent-rail"
           />
         ) : null}
-        {activePanel === "chat" ? (
-          conversationsLoading && conversations.length === 0 ? (
-            <LoadingScreen label="Loading chats..." tokens={tokens} />
-          ) : (
-            <ChatPanel
-              backends={backends}
+      </View>
+      <View pointerEvents="box-none" style={styles.agentTopRightAction}>
+        {!rightPaneOpen && selectedConversationId ? (
+          <IconButton
+            accessibilityLabel="Show workbench pane"
+            Icon={PanelRightOpen}
+            onPress={() => {
+              setFilePickerOpen(false);
+              setRightPaneOpen(true);
+            }}
+            tokens={tokens}
+            testID="open-workbench-pane"
+          />
+        ) : null}
+      </View>
+
+      {railOpen ? (
+        <>
+          <Pressable
+            accessibilityLabel="Close workspace rail"
+            onPress={() => setRailOpen(false)}
+            style={styles.agentScrim}
+            testID="agent-rail-scrim"
+          />
+          <View
+            style={[
+              styles.agentRailDrawer,
+              { width: Math.min(290, viewportWidth * 0.84) },
+            ]}
+          >
+            <AgentRail
+              activeWorkspaceId={activeWorkspaceId}
               connectionState={connectionState}
               conversations={conversations}
-              feed={feed}
-              feedError={feedError ?? conversationError}
-              feedLoading={feedLoading}
-              onNewConversation={() => setSelectedConversationId(null)}
-              onPermission={answerPermission}
-              onQuestion={answerQuestion}
-              onRefresh={() => {
-                refreshFeed();
-                void refreshConversations();
+              onClose={() => setRailOpen(false)}
+              onNewConversation={() => {
+                setSelectedConversationId(null);
+                setRightPaneOpen(false);
+                setRailOpen(false);
               }}
-              onSelectConversation={setSelectedConversationId}
-              onSubmit={submitPrompt}
+              onSelectConversation={(conversationId) => {
+                setSelectedConversationId(conversationId);
+                setRailOpen(false);
+              }}
+              onSelectWorkspace={(workspaceId) => {
+                setActiveWorkspace(workspaceId);
+                setSelectedConversationId(null);
+                setRightPaneOpen(false);
+                setRailOpen(false);
+              }}
               selectedConversationId={selectedConversationId}
               styles={styles}
               tokens={tokens}
-              workspaceRoot={activeWorkspace?.root ?? ""}
+              workspaces={workspaces}
             />
-          )
-        ) : null}
-      </View>
-      <BottomNavigation activePanel={activePanel} onChange={setActivePanel} styles={styles} />
+          </View>
+        </>
+      ) : null}
+
+      {rightPaneOpen ? (
+        <View
+          style={[
+            styles.agentRightPane,
+            { width: Math.min(viewportWidth, 550) },
+          ]}
+          testID="agent-workbench-pane"
+        >
+          {filePickerOpen ? (
+            <FilesPanel
+              activeDocumentPath={editorDocument?.path ?? null}
+              onOpenFile={openFile}
+              styles={styles}
+              tokens={tokens}
+              workspaceName={activeWorkspace?.name ?? "Workspace"}
+            />
+          ) : (
+            <EditorPanel
+              document={editorDocument}
+              loading={editorLoading}
+              onChange={(content) =>
+                setEditorDocument((current) =>
+                  current ? { ...current, content, dirty: true } : current
+                )
+              }
+              onClose={() => setEditorDocument(null)}
+              onClosePane={() => setRightPaneOpen(false)}
+              onOpenFiles={() => setFilePickerOpen(true)}
+              onSave={() => void saveEditorDocument()}
+              styles={styles}
+              tokens={tokens}
+            />
+          )}
+          {filePickerOpen ? (
+            <View style={styles.filePickerClose}>
+              <IconButton
+                accessibilityLabel="Return to editor"
+                Icon={PanelRightClose}
+                onPress={() => setFilePickerOpen(false)}
+                tokens={tokens}
+                testID="close-workbench-file-picker"
+              />
+            </View>
+          ) : null}
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -1485,8 +1735,57 @@ function createStyles(tokens: ThemeTokens) {
     borderWidth: StyleSheet.hairlineWidth,
   };
   return StyleSheet.create({
-    activeChatTab: {
-      backgroundColor: tokens["--bg-main"],
+    agentCenterStage: {
+      flex: 1,
+      minHeight: 0,
+      paddingHorizontal: 8,
+    },
+    agentRail: {
+      backgroundColor: tokens["--bg-panel"],
+      flex: 1,
+    },
+    agentRailDrawer: {
+      backgroundColor: tokens["--bg-panel"],
+      borderRightColor: tokens["--border-subtle"],
+      borderRightWidth: StyleSheet.hairlineWidth,
+      bottom: 0,
+      elevation: 12,
+      left: 0,
+      position: "absolute",
+      top: 0,
+      zIndex: 40,
+    },
+    agentRightPane: {
+      backgroundColor: tokens["--bg-panel"],
+      borderLeftColor: tokens["--border-subtle"],
+      borderLeftWidth: StyleSheet.hairlineWidth,
+      bottom: 0,
+      elevation: 14,
+      position: "absolute",
+      right: 0,
+      top: 0,
+      zIndex: 40,
+    },
+    agentScrim: {
+      backgroundColor: "rgba(0, 0, 0, 0.4)",
+      bottom: 0,
+      left: 0,
+      position: "absolute",
+      right: 0,
+      top: 0,
+      zIndex: 30,
+    },
+    agentTopLeftAction: {
+      left: 11,
+      position: "absolute",
+      top: 11,
+      zIndex: 20,
+    },
+    agentTopRightAction: {
+      position: "absolute",
+      right: 11,
+      top: 11,
+      zIndex: 20,
     },
     assistantMessage: {
       alignItems: "flex-start",
@@ -1511,52 +1810,6 @@ function createStyles(tokens: ThemeTokens) {
       ...bodyText,
       fontSize: 13,
       fontWeight: "600",
-    },
-    bottomNavigation: {
-      alignItems: "stretch",
-      backgroundColor: tokens["--bg-panel"],
-      borderTopColor: tokens["--border-subtle"],
-      borderTopWidth: StyleSheet.hairlineWidth,
-      flexDirection: "row",
-      height: 44,
-    },
-    bottomNavigationItem: {
-      alignItems: "center",
-      flex: 1,
-      justifyContent: "center",
-    },
-    bottomNavigationText: {
-      color: tokens["--text-secondary"],
-      fontFamily: "sans-serif",
-      fontSize: 12,
-    },
-    bottomNavigationTextActive: {
-      color: tokens["--accent"],
-      fontWeight: "500",
-    },
-    chatTab: {
-      alignItems: "center",
-      height: 40,
-      justifyContent: "center",
-      maxWidth: 150,
-      minWidth: 94,
-      paddingHorizontal: 10,
-    },
-    chatTabText: {
-      color: tokens["--text-primary"],
-      fontFamily: "sans-serif",
-      fontSize: 12,
-    },
-    chatTabs: {
-      alignItems: "center",
-      backgroundColor: tokens["--bg-panel"],
-      borderBottomColor: tokens["--border-subtle"],
-      borderBottomWidth: StyleSheet.hairlineWidth,
-      flexDirection: "row",
-      minHeight: 40,
-    },
-    chatTabsContent: {
-      alignItems: "center",
     },
     choiceButton: {
       alignItems: "center",
@@ -1710,6 +1963,12 @@ function createStyles(tokens: ThemeTokens) {
     fileRowPressed: {
       backgroundColor: tokens["--bg-card"],
     },
+    filePickerClose: {
+      position: "absolute",
+      right: 4,
+      top: 4,
+      zIndex: 50,
+    },
     loginCard: {
       ...card,
       gap: 10,
@@ -1751,7 +2010,7 @@ function createStyles(tokens: ThemeTokens) {
       gap: 8,
       paddingBottom: 12,
       paddingHorizontal: 8,
-      paddingTop: 10,
+      paddingTop: 48,
     },
     messageText: {
       ...bodyText,
@@ -1780,14 +2039,19 @@ function createStyles(tokens: ThemeTokens) {
       fontSize: 10.5,
     },
     newChatStage: {
+      alignItems: "center",
       flex: 1,
+      justifyContent: "center",
+      paddingHorizontal: 2,
+      paddingVertical: 54,
+    },
+    newChatContent: {
+      gap: 4,
+      maxWidth: 876,
+      width: "100%",
     },
     panel: {
       backgroundColor: tokens["--bg-main"],
-      flex: 1,
-      minHeight: 0,
-    },
-    panelStage: {
       flex: 1,
       minHeight: 0,
     },
@@ -1807,6 +2071,106 @@ function createStyles(tokens: ThemeTokens) {
       fontSize: 13,
       fontWeight: "600",
     },
+    quickActionButton: {
+      ...card,
+      borderRadius: 50,
+      paddingHorizontal: 13,
+      paddingVertical: 7,
+    },
+    quickActionText: {
+      color: tokens["--text-primary"],
+      fontFamily: "sans-serif",
+      fontSize: 12,
+    },
+    quickActions: {
+      flexDirection: "row",
+      flexWrap: "wrap",
+      gap: 9,
+      marginTop: 7,
+    },
+    railConversationRow: {
+      alignItems: "center",
+      borderRadius: tabRadius,
+      flexDirection: "row",
+      gap: 7,
+      minHeight: 30,
+      paddingHorizontal: 9,
+    },
+    railConversationRowSelected: {
+      backgroundColor: tokens["--bg-card"],
+    },
+    railConversationTitle: {
+      color: tokens["--text-primary"],
+      flex: 1,
+      fontFamily: "sans-serif",
+      fontSize: 12.5,
+    },
+    railEmptyText: {
+      color: tokens["--text-disabled"],
+      fontFamily: "sans-serif",
+      fontSize: 11.5,
+      paddingHorizontal: 18,
+      paddingVertical: 8,
+    },
+    railFooter: {
+      alignItems: "center",
+      borderTopColor: tokens["--border-subtle"],
+      borderTopWidth: StyleSheet.hairlineWidth,
+      flexDirection: "row",
+      gap: 8,
+      minHeight: 44,
+      paddingHorizontal: 11,
+    },
+    railFooterLabel: {
+      color: tokens["--text-primary"],
+      flex: 1,
+      fontFamily: "sans-serif",
+      fontSize: 12.5,
+    },
+    railList: {
+      flexGrow: 1,
+      paddingBottom: 12,
+      paddingHorizontal: 10,
+      paddingTop: 10,
+    },
+    railSearchInput: {
+      ...bodyText,
+      borderBottomColor: tokens["--border-subtle"],
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      fontSize: 12.5,
+      height: 38,
+      marginHorizontal: 10,
+      paddingHorizontal: 3,
+    },
+    railTopBar: {
+      alignItems: "center",
+      flexDirection: "row",
+      gap: 6,
+      minHeight: 42,
+      paddingHorizontal: 8,
+      paddingTop: 4,
+    },
+    railWorkspaceHeader: {
+      alignItems: "center",
+      flexDirection: "row",
+      gap: 5,
+      minHeight: 24,
+      paddingHorizontal: 1,
+    },
+    railWorkspaceLabel: {
+      color: tokens["--text-disabled"],
+      flex: 1,
+      fontFamily: "sans-serif",
+      fontSize: 10.5,
+      fontWeight: "500",
+    },
+    railWorkspaceLabelActive: {
+      color: tokens["--text-primary"],
+    },
+    railWorkspaceSection: {
+      gap: 2,
+      marginBottom: 10,
+    },
     secondaryButton: {
       borderColor: tokens["--border-card"],
       borderRadius: tabRadius,
@@ -1822,6 +2186,17 @@ function createStyles(tokens: ThemeTokens) {
     selectedFileRow: {
       backgroundColor: tokens["--bg-card"],
       borderRadius: tabRadius,
+    },
+    connectionDot: {
+      borderRadius: 4,
+      height: 7,
+      width: 7,
+    },
+    landingError: {
+      color: tokens["--debug-accent"],
+      fontFamily: "sans-serif",
+      fontSize: 11,
+      marginTop: 5,
     },
     sendButton: {
       alignItems: "center",
@@ -1853,6 +2228,26 @@ function createStyles(tokens: ThemeTokens) {
     workbench: {
       backgroundColor: tokens["--bg-main"],
       flex: 1,
+      overflow: "hidden",
+    },
+    workspaceContextRow: {
+      alignItems: "center",
+      flexDirection: "row",
+      gap: 5,
+      minHeight: 27,
+      paddingHorizontal: 6,
+    },
+    workspaceContextText: {
+      color: tokens["--text-secondary"],
+      flexShrink: 1,
+      fontFamily: "sans-serif",
+      fontSize: 12.5,
+    },
+    workspaceRootText: {
+      color: tokens["--text-disabled"],
+      flexShrink: 1,
+      fontFamily: "monospace",
+      fontSize: 10.5,
     },
     workedCard: {
       ...card,

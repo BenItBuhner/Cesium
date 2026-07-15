@@ -47,5 +47,6 @@ function fallbackStatus(): LiveUpdateStatus {
     progressStyleSupported: false,
     canPostPromotedNotifications: false,
     notificationPermissionGranted: false,
+    suppressedByDismissal: false,
   };
 }

@@ -9,7 +9,11 @@ class CesiumNotificationActionReceiver : BroadcastReceiver() {
     val prefs = context.getSharedPreferences("cesium-mobile", Context.MODE_PRIVATE)
     prefs.edit()
       .putString("lastDismissedConversationId", intent.getStringExtra("conversationId"))
-      .putLong("lastDismissedAt", System.currentTimeMillis())
       .apply()
+    CesiumLiveUpdateStateStore.markDismissed(
+      context,
+      intent.getStringExtra("runKey")
+    )
+    CesiumLiveUpdateStateStore.clearActive(context)
   }
 }

@@ -53,6 +53,18 @@ describe("mobile agent projection", () => {
     assert.equal(projection.elapsedMs, 2900);
     assert.equal(isMobileAgentRunActive(projection.status), true);
     assert.equal(getMobileNotificationChip(projection.status), "RUN");
+    assert.deepEqual(projection.todoProgress, {
+      total: 2,
+      completed: 1,
+      blocked: 0,
+      pending: 0,
+      inProgress: 1,
+      currentIndex: 2,
+      percent: 50,
+      estimatedRemainingMs: null,
+      estimatedCompletionAt: null,
+    });
+    assert.equal(projection.burnProgress, null);
   });
 
   test("surfaces pending intervention over todo activity", () => {
@@ -120,6 +132,107 @@ describe("mobile agent projection", () => {
     assert.equal(projection.status, "completed");
     assert.equal(projection.completedAt, 5000);
     assert.equal(getMobileNotificationChip(projection.status), "DONE");
+  });
+
+  test("estimates todo completion after at least one completed item", () => {
+    const conversation = createConversation({
+      status: "running",
+      lastEventSeq: 3,
+      updatedAt: 1000,
+    });
+    const projection = deriveMobileAgentProjection(
+      conversation,
+      [
+        {
+          seq: 1,
+          eventId: "started",
+          conversationId: "c1",
+          createdAt: 1000,
+          kind: "status",
+          status: "running",
+        },
+        {
+          seq: 2,
+          eventId: "plan",
+          conversationId: "c1",
+          createdAt: 2000,
+          kind: "plan",
+          planId: "plan",
+          entries: [
+            { id: "a", content: "One", status: "completed" },
+            { id: "b", content: "Two", status: "in_progress" },
+            { id: "c", content: "Three", status: "pending" },
+            { id: "d", content: "Four", status: "pending" },
+          ],
+        },
+      ],
+      { now: 61_000 }
+    );
+
+    assert.equal(projection.todoProgress?.percent, 25);
+    assert.equal(projection.todoProgress?.estimatedRemainingMs, 180_000);
+    assert.equal(projection.todoProgress?.estimatedCompletionAt, 241_000);
+  });
+
+  test("prioritizes Burn progress and estimates its completion", () => {
+    const conversation = createConversation({
+      status: "running",
+      lastEventSeq: 4,
+      updatedAt: 1000,
+    });
+    const projection = deriveMobileAgentProjection(
+      conversation,
+      [
+        {
+          seq: 1,
+          eventId: "started",
+          conversationId: "c1",
+          createdAt: 0,
+          kind: "status",
+          status: "running",
+        },
+        {
+          seq: 2,
+          eventId: "burn-set",
+          conversationId: "c1",
+          createdAt: 10_000,
+          kind: "tool_call_update",
+          toolCallId: "burn-set",
+          status: "completed",
+          raw: {
+            request: {
+              name: "burn_goal_set",
+              arguments: { objective: "Ship native live updates" },
+            },
+          },
+        },
+        {
+          seq: 3,
+          eventId: "burn-progress",
+          conversationId: "c1",
+          createdAt: 40_000,
+          kind: "tool_call_update",
+          toolCallId: "burn-progress",
+          status: "completed",
+          raw: {
+            request: {
+              name: "burn_goal_summarize",
+              arguments: {
+                progressPercent: 40,
+                headline: "Implementing notifications",
+              },
+            },
+          },
+        },
+      ],
+      { now: 70_000 }
+    );
+
+    assert.equal(projection.burnProgress?.percent, 40);
+    assert.equal(projection.burnProgress?.headline, "Implementing notifications");
+    assert.equal(projection.burnProgress?.runtimeMs, 60_000);
+    assert.equal(projection.burnProgress?.estimatedRemainingMs, 90_000);
+    assert.equal(projection.burnProgress?.estimatedCompletionAt, 160_000);
   });
 });
 
