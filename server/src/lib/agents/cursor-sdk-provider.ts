@@ -537,6 +537,9 @@ class CursorSdkSessionHandle implements AgentSessionHandle {
             }));
             break;
           }
+          case "usage":
+            // Token usage is informational; ignore so it does not abort the turn.
+            break;
           default: {
             const exhaustive: never = event;
             throw new Error(`Unhandled Cursor SDK event: ${String(exhaustive)}`);
@@ -569,11 +572,12 @@ class CursorSdkSessionHandle implements AgentSessionHandle {
         lastError: result.status === "error" ? result.result ?? "Cursor SDK run failed." : null,
       }));
     } catch (error) {
-      const cursorAgentError = error instanceof CursorAgentError;
       const message = error instanceof Error ? error.message : "Cursor SDK prompt failed.";
-      const detail = cursorAgentError
-        ? `Cursor SDK agent error: ${message}`
-        : message;
+      // Avoid double-prefixing when the SDK message already names the source.
+      const detail =
+        error instanceof CursorAgentError && !/^Cursor SDK agent error:/i.test(message)
+          ? `Cursor SDK agent error: ${message}`
+          : message;
       await this.callbacks.appendEvents([
         {
           eventId: randomUUID(),

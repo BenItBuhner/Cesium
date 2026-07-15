@@ -302,12 +302,30 @@ class GoogleAntigravityCliSessionHandle implements AgentSessionHandle {
         status: "failed",
         lastError: "Google Antigravity CLI requires ambient authentication.",
       }));
-    } else if (event.type === "session.stopped" || event.type === "text.final") {
+    } else if (event.type === "error") {
+      const detail = event.error.message?.trim() || "Google Antigravity CLI error.";
       await this.callbacks.updateConversation((current) => ({
         ...current,
-        status: event.type === "session.stopped" && !/complete|success|stop|idle/i.test(event.reason)
-          ? "failed"
-          : "idle",
+        status: "failed",
+        pendingPermission: null,
+        lastError: detail,
+        providerSessionId: this.session?.conversationId ?? current.providerSessionId,
+      }));
+    } else if (event.type === "session.stopped") {
+      const failed = !/complete|success|stop|idle/i.test(event.reason);
+      await this.callbacks.updateConversation((current) => ({
+        ...current,
+        status: failed ? "failed" : "idle",
+        pendingPermission: null,
+        lastError: failed
+          ? event.reason.trim() || current.lastError || "Google Antigravity session stopped."
+          : null,
+        providerSessionId: this.session?.conversationId ?? current.providerSessionId,
+      }));
+    } else if (event.type === "text.final") {
+      await this.callbacks.updateConversation((current) => ({
+        ...current,
+        status: "idle",
         pendingPermission: null,
         lastError: null,
         providerSessionId: this.session?.conversationId ?? current.providerSessionId,

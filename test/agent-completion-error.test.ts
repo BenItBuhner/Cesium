@@ -64,6 +64,22 @@ describe("agent completion error parsing", () => {
       shouldHideCompletionFailureInThread("Completion failed", toolCallError),
       true
     );
+    assert.equal(
+      isCompletionFailureThreadContent("The agent failed to start: Missing API key"),
+      true
+    );
+  });
+
+  test("treats lastError alone as a completion failure", () => {
+    const conversation = {
+      status: "idle",
+      lastError: "Provider unavailable",
+    } as AgentConversationRecord;
+    assert.equal(conversationHasCompletionFailure(conversation, []), true);
+    assert.equal(
+      deriveConversationCompletionError(conversation, []),
+      "Provider unavailable"
+    );
   });
 
   test("derives completion errors from stored events when lastError is empty", () => {

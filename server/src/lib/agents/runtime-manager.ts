@@ -791,8 +791,12 @@ export class AgentRuntimeManager {
       return null;
     }
     if (options?.hydrateRuntime) {
-      void this.ensureRuntime(workspace, record).catch(async (error) => {
-        await this.persistRuntimeFailure(workspace.id, conversationId, error);
+      void this.ensureRuntime(workspace, record).catch((error) => {
+        // Hydration is opportunistic — missing keys/CLIs must not mark idle chats failed.
+        console.warn(
+          `[agent-runtime] hydrate failed for ${conversationId}:`,
+          error instanceof Error ? error.message : error
+        );
       });
     }
     const snapshot = await readConversationSnapshot(workspace.id, conversationId, record);
@@ -834,8 +838,11 @@ export class AgentRuntimeManager {
       return null;
     }
     if (options?.hydrateRuntime) {
-      void this.ensureRuntime(workspace, record).catch(async (error) => {
-        await this.persistRuntimeFailure(workspace.id, conversationId, error);
+      void this.ensureRuntime(workspace, record).catch((error) => {
+        console.warn(
+          `[agent-runtime] hydrate-head failed for ${conversationId}:`,
+          error instanceof Error ? error.message : error
+        );
       });
     }
     const head = await readConversationSnapshotHead(workspace.id, conversationId, {
@@ -1459,8 +1466,12 @@ export class AgentRuntimeManager {
     if (!record) {
       return;
     }
-    await this.ensureRuntime(workspace, record).catch(async (error) => {
-      await this.persistRuntimeFailure(workspace.id, conversationId, error);
+    await this.ensureRuntime(workspace, record).catch((error) => {
+      // Background ensure must not flip conversation status to failed.
+      console.warn(
+        `[agent-runtime] ensure failed for ${conversationId}:`,
+        error instanceof Error ? error.message : error
+      );
     });
   }
 
@@ -1597,8 +1608,13 @@ export class AgentRuntimeManager {
     workspace: WorkspaceRecord,
     record: AgentConversationRecord
   ): void {
-    void this.ensureRuntime(workspace, record).catch(async (error) => {
-      await this.persistRuntimeFailure(workspace.id, record.id, error);
+    void this.ensureRuntime(workspace, record).catch((error) => {
+      // Warmup is best-effort. Persisting failure here marked brand-new idle
+      // conversations as failed whenever a backend CLI/API key was missing.
+      console.warn(
+        `[agent-runtime] warmup failed for ${record.id}:`,
+        error instanceof Error ? error.message : error
+      );
     });
   }
 
@@ -1992,6 +2008,12 @@ export class AgentRuntimeManager {
       error instanceof Error ? error.message : "Failed to initialize ACP runtime.";
     const current = await readConversationRecord(workspaceId, conversationId);
     if (!current) {
+      return;
+    }
+    // Providers often record failure (system + status + lastError) then rethrow.
+    // Skip when a failure was already persisted — even if the wording differs
+    // (e.g. provider-prefixed detail vs raw exception message).
+    if (current.status === "failed" && current.lastError?.trim()) {
       return;
     }
     if (current.lastError === message && current.status === "failed") {

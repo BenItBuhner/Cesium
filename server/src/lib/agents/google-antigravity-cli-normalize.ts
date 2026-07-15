@@ -271,7 +271,14 @@ export function antigravityEventToAgentEvents(input: {
     }
     case "error":
       return [
-        { ...base, kind: "system", level: "warning", text: event.error.message },
+        { ...base, kind: "system", level: "error", text: event.error.message },
+        {
+          ...base,
+          eventId: randomUUID(),
+          kind: "status",
+          status: "failed",
+          detail: event.error.message,
+        },
       ];
     case "prompt.submitted":
     case "tool.proposed":

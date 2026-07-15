@@ -33,6 +33,9 @@ export function isCompletionFailureThreadContent(text: string): boolean {
   if (isCesiumFailureAssistantChunk(trimmed)) {
     return true;
   }
+  if (/^The agent failed to start:/i.test(trimmed)) {
+    return true;
+  }
   if (TOOL_CALL_PAIRING_ERROR.test(trimmed)) {
     return true;
   }
@@ -176,6 +179,9 @@ export function conversationHasCompletionFailure(
   events: AgentStoredEvent[] | undefined
 ): boolean {
   if (conversation?.status === "failed") {
+    return true;
+  }
+  if (conversation?.lastError?.trim()) {
     return true;
   }
   if (!events?.length) {
