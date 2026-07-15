@@ -598,6 +598,30 @@ function EditorPanel({
   tokens: ThemeTokens;
 }) {
   const fileName = document?.path.split("/").at(-1) ?? "Editor";
+  const [initialSelection, setInitialSelection] = useState<
+    { start: number; end: number } | undefined
+  >(document ? { start: 0, end: 0 } : undefined);
+  const editorScrollRef = useRef<ScrollView>(null);
+  const shouldScrollToTop = useRef(Boolean(document));
+
+  useEffect(() => {
+    setInitialSelection(document ? { start: 0, end: 0 } : undefined);
+    shouldScrollToTop.current = Boolean(document);
+  }, [document?.path]);
+
+  useEffect(() => {
+    if (!document) {
+      return;
+    }
+    const scrollToTop = () => editorScrollRef.current?.scrollTo({ animated: false, y: 0 });
+    const timers = [0, 120, 500].map((delay) => setTimeout(scrollToTop, delay));
+    return () => {
+      for (const timer of timers) {
+        clearTimeout(timer);
+      }
+    };
+  }, [document?.path]);
+
   return (
     <View style={styles.panel} testID="cesium-editor-panel">
       <View style={styles.editorTabs}>
@@ -628,18 +652,32 @@ function EditorPanel({
       {loading ? (
         <LoadingScreen label="Opening file..." tokens={tokens} />
       ) : document ? (
-        <TextInput
-          autoCapitalize="none"
-          autoCorrect={false}
-          multiline
-          onChangeText={onChange}
-          scrollEnabled
-          selectionColor={tokens["--accent"]}
-          style={styles.editorInput}
-          testID="native-code-editor"
-          textAlignVertical="top"
-          value={document.content}
-        />
+        <ScrollView
+          contentContainerStyle={styles.editorScrollContent}
+          keyboardShouldPersistTaps="handled"
+          onContentSizeChange={() => {
+            if (shouldScrollToTop.current) {
+              shouldScrollToTop.current = false;
+              editorScrollRef.current?.scrollTo({ animated: false, y: 0 });
+            }
+          }}
+          ref={editorScrollRef}
+        >
+          <TextInput
+            autoCapitalize="none"
+            autoCorrect={false}
+            multiline
+            onChangeText={onChange}
+            onTouchStart={() => setInitialSelection(undefined)}
+            scrollEnabled={false}
+            selection={initialSelection}
+            selectionColor={tokens["--accent"]}
+            style={styles.editorInput}
+            testID="native-code-editor"
+            textAlignVertical="top"
+            value={document.content}
+          />
+        </ScrollView>
       ) : (
         <View style={sharedStyles.centered}>
           <Text style={styles.emptyTitle}>Open a file to start editing</Text>
@@ -941,10 +979,11 @@ function ChatPanel({
   tokens: ThemeTokens;
   workspaceRoot: string;
 }) {
-  const selectedConversation =
-    feed.conversation ??
-    conversations.find((conversation) => conversation.id === selectedConversationId) ??
-    null;
+  const selectedConversation = selectedConversationId
+    ? feed.conversation?.id === selectedConversationId
+      ? feed.conversation
+      : conversations.find((conversation) => conversation.id === selectedConversationId) ?? null
+    : null;
   const backend =
     backends.find((candidate) => candidate.id === selectedConversation?.config.backendId) ??
     backends.find((candidate) => candidate.available) ??
@@ -1581,12 +1620,15 @@ function createStyles(tokens: ThemeTokens) {
     editorInput: {
       ...bodyText,
       backgroundColor: tokens["--bg-main"],
-      flex: 1,
       fontFamily: "monospace",
       fontSize: 12,
       lineHeight: 18,
       paddingHorizontal: 12,
       paddingVertical: 10,
+    },
+    editorScrollContent: {
+      backgroundColor: tokens["--bg-main"],
+      flexGrow: 1,
     },
     editorTab: {
       alignItems: "center",
