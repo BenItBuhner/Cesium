@@ -31,11 +31,11 @@ export function DocsPageView() {
       <div className="mx-auto min-h-full max-w-[720px] px-[24px] py-[40px] pb-[72px] sm:px-[32px] sm:py-[56px]">
         <nav className="mb-[32px] flex flex-wrap items-center justify-between gap-[16px]">
           <Link
-            href={`${WORKSPACE_ROUTE}?view=editor`}
+            href={WORKSPACE_ROUTE}
             className="inline-flex items-center gap-[8px] rounded-[var(--radius-tab)] px-[10px] py-[6px] font-sans text-[13px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)]"
           >
             <ArrowLeft className="size-[14px] shrink-0" strokeWidth={1.5} aria-hidden />
-            Back to editor
+            Back to agent
           </Link>
           <span className="font-sans text-[12px] text-[var(--text-disabled)]">Cesium</span>
         </nav>

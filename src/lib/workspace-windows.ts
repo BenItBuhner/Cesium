@@ -13,7 +13,7 @@ import {
 export const FRESH_WORKSPACE_WINDOW_HIDDEN_CONVERSATIONS_SENTINEL =
   "__workspace_window_fresh__";
 
-/** Next web workbench lives at `/workspace`; desktop file renderer keeps its current file path. */
+/** Next web workbench lives at `/agent`; desktop file renderer keeps its current file path. */
 export type WorkspaceScopedRoute = string;
 
 function isDesktopFileRenderer(): boolean {
@@ -96,8 +96,8 @@ export function buildWorkspaceWindowUrl(
     const v = tryParseUrl(window.location.href)?.searchParams.get(
       WORKBENCH_VIEW_SEARCH_PARAM
     );
-    if (v === "editor") {
-      extra[WORKBENCH_VIEW_SEARCH_PARAM] = "editor";
+    if (v === "settings") {
+      extra[WORKBENCH_VIEW_SEARCH_PARAM] = "settings";
     }
   }
   return buildWorkspaceScopedUrl(origin, effectiveRoute, workspaceId, windowId, extra);

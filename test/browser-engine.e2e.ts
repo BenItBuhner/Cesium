@@ -85,7 +85,7 @@ describe("browser engine e2e", () => {
     });
     try {
       await bootstrapPage(page);
-      await page.goto(`${BASE_URL}/workspace?serverUrl=${encodeURIComponent(SERVER_URL!)}`, {
+      await page.goto(`${BASE_URL}/agent?serverUrl=${encodeURIComponent(SERVER_URL!)}`, {
         waitUntil: "domcontentloaded",
       });
       await page.waitForLoadState("networkidle", { timeout: 15_000 }).catch(() => undefined);
@@ -132,7 +132,7 @@ describe("browser engine e2e", () => {
     });
     try {
       await bootstrapPage(page);
-      await page.goto(`${BASE_URL}/workspace?serverUrl=${encodeURIComponent(SERVER_URL!)}`, {
+      await page.goto(`${BASE_URL}/agent?serverUrl=${encodeURIComponent(SERVER_URL!)}`, {
         waitUntil: "domcontentloaded",
       });
       await page.waitForLoadState("networkidle", { timeout: 15_000 }).catch(() => undefined);

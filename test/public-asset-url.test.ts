@@ -6,7 +6,7 @@ describe("publicAssetUrl", () => {
   test("anchors packaged file assets to the renderer bundle root", () => {
     const resolved = resolvePublicAssetUrlForRuntime("/model-icons/Claude-Light.svg", {
       protocol: "file:",
-      locationHref: "file:///workspace?workspaceId=abc",
+      locationHref: "file:///agent?workspaceId=abc",
       moduleUrl:
         "file:///C:/Users/benpr/AppData/Local/Programs/Cesium/resources/desktop-renderer/assets/index-abc123.js",
     });
@@ -20,7 +20,7 @@ describe("publicAssetUrl", () => {
   test("preserves escaped install paths", () => {
     const resolved = resolvePublicAssetUrlForRuntime("/agent-backend-icons/Cursor-Light.svg", {
       protocol: "file:",
-      locationHref: "file:///workspace",
+      locationHref: "file:///agent",
       moduleUrl:
         "file:///C:/Users/benpr/AppData/Local/Programs/Cesium%20Preview/resources/desktop-renderer/assets/index-abc123.js",
     });
@@ -35,7 +35,7 @@ describe("publicAssetUrl", () => {
     assert.equal(
       resolvePublicAssetUrlForRuntime("/model-icons/ChatGPT-Light.svg", {
         protocol: "http:",
-        locationHref: "http://127.0.0.1:5173/workspace",
+        locationHref: "http://127.0.0.1:5173/agent",
         moduleUrl: "http://127.0.0.1:5173/src/lib/public-asset-url.ts",
       }),
       "/model-icons/ChatGPT-Light.svg"

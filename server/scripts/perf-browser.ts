@@ -53,25 +53,23 @@ async function api<T>(
 }
 
 function agentUrl(): string {
-  const url = new URL("/", frontendUrl);
+  const url = new URL("/agent", frontendUrl);
   if (conversationId) {
     url.searchParams.set("conversationId", conversationId);
   }
   if (workspaceId) {
     url.searchParams.set("workspaceId", workspaceId);
   }
-  url.searchParams.set("view", "agent");
   url.searchParams.set("opencursorPerf", "1");
   url.searchParams.set("serverUrl", serverBase);
   return String(url);
 }
 
 function agentNewChatUrl(): string {
-  const url = new URL("/", frontendUrl);
+  const url = new URL("/agent", frontendUrl);
   if (workspaceId) {
     url.searchParams.set("workspaceId", workspaceId);
   }
-  url.searchParams.set("view", "agent");
   url.searchParams.set("conversationId", "new");
   url.searchParams.set("opencursorPerf", "1");
   url.searchParams.set("serverUrl", serverBase);

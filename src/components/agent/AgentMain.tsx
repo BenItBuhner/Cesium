@@ -1,12 +1,10 @@
 "use client";
 
 import { useState } from "react";
-import Link from "next/link";
 import { ArrowUp, ChevronDown, Plus, Sparkles } from "lucide-react";
 import { HardwareAwareTextArea } from "@/components/input/HardwareAwareTextField";
 import { agentContextLine } from "@/lib/agent-mock";
 import { currentModel } from "@/lib/mock-data";
-import { WORKSPACE_ROUTE } from "@/lib/workbench-view";
 
 export function AgentMain() {
   const [prompt, setPrompt] = useState("");
@@ -74,12 +72,6 @@ export function AgentMain() {
               Plan new idea{" "}
               <span className="text-[var(--text-secondary)]">(Cmd I)</span>
             </button>
-            <Link
-              href={`${WORKSPACE_ROUTE}?view=editor`}
-              className="rounded-[var(--radius-pill)] border border-[var(--border-card)] bg-[var(--bg-panel)] px-[14px] py-[7px] font-sans text-[12px] font-normal text-[var(--text-primary)] transition-colors hover:bg-[var(--bg-card-hover)]"
-            >
-              Open editor
-            </Link>
           </div>
         </div>
       </div>

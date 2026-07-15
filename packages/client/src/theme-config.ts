@@ -22,8 +22,6 @@ export type CustomThemeEntry = {
   dark: ThemeTokensPartial;
 };
 
-export type UiDesignMode = "classic" | "new";
-
 /** How file-edit tool results render in the agent transcript. */
 export type EditDiffRenderingMode = "full" | "counts";
 
@@ -57,8 +55,6 @@ export type ThemeConfig = {
    * top-left control to reopen it. Hidden by default on wide layouts.
    */
   showFloatingSidebarReveal: boolean;
-  /** Visual system variant. `new` enables the next-generation UI design hooks. */
-  uiDesignMode: UiDesignMode;
   /**
    * `full` — unified diff lines in worked-session cards.
    * `counts` — single-line added/removed counts only (Cursor-style).
@@ -78,7 +74,6 @@ export function createDefaultThemeConfig(): ThemeConfig {
     darkThemeId: DEFAULT_BUILTIN_THEME_ID,
     customThemes: [],
     showFloatingSidebarReveal: false,
-    uiDesignMode: "classic",
     editDiffRenderingMode: "full",
     longPasteReferencesEnabled: true,
     toolCallDropdownMaxHeightPx: TOOL_CALL_DROPDOWN_MAX_HEIGHT_DEFAULT_PX,
@@ -87,10 +82,6 @@ export function createDefaultThemeConfig(): ThemeConfig {
 
 function isThemePreference(v: unknown): v is ThemePreference {
   return v === "light" || v === "dark" || v === "system";
-}
-
-function isUiDesignMode(v: unknown): v is UiDesignMode {
-  return v === "classic" || v === "new";
 }
 
 function isEditDiffRenderingMode(v: unknown): v is EditDiffRenderingMode {
@@ -138,9 +129,6 @@ export function normalizeThemeConfig(raw: unknown): ThemeConfig {
       ? r.darkThemeId.trim()
       : base.darkThemeId;
   const showFloatingSidebarReveal = r.showFloatingSidebarReveal === true;
-  const uiDesignMode = isUiDesignMode(r.uiDesignMode)
-    ? r.uiDesignMode
-    : base.uiDesignMode;
   const editDiffRenderingMode = isEditDiffRenderingMode(r.editDiffRenderingMode)
     ? r.editDiffRenderingMode
     : base.editDiffRenderingMode;
@@ -151,7 +139,6 @@ export function normalizeThemeConfig(raw: unknown): ThemeConfig {
     darkThemeId,
     customThemes: sanitizeCustomThemes(r.customThemes),
     showFloatingSidebarReveal,
-    uiDesignMode,
     editDiffRenderingMode,
     longPasteReferencesEnabled:
       typeof r.longPasteReferencesEnabled === "boolean"

@@ -24,11 +24,11 @@ export type ExplorerSessionState = {
   scrollTop: number;
 };
 
-/** Agent vs IDE vs full-screen settings; `/workspace` uses `?view=editor` / `?view=settings` when not default agent. */
-export type WorkbenchShellView = "agent" | "editor" | "settings";
+/** Agent shell vs full-screen settings; `/agent` uses `?view=settings` when not default agent. */
+export type WorkbenchShellView = "agent" | "settings";
 
 /** Last non-settings shell; used when closing the settings overlay. */
-export type WorkbenchShellNonSettingsView = "agent" | "editor";
+export type WorkbenchShellNonSettingsView = "agent";
 
 export type LayoutSessionState = {
   sidebarOpen: boolean;
@@ -967,15 +967,10 @@ export function mergeWorkspaceSessionFromImport(
       ...current.layout,
       ...(r.layout ?? {}),
       shellView:
-        r.layout?.shellView === "editor" ||
-        r.layout?.shellView === "agent" ||
         r.layout?.shellView === "settings"
-          ? r.layout.shellView
-          : current.layout.shellView ?? "agent",
-      priorShellView:
-        r.layout?.priorShellView === "editor" || r.layout?.priorShellView === "agent"
-          ? r.layout.priorShellView
-          : current.layout.priorShellView ?? "agent",
+          ? "settings"
+          : "agent",
+      priorShellView: "agent",
       desktopLayout:
         r.layout?.desktopLayout && typeof r.layout.desktopLayout === "object"
           ? r.layout.desktopLayout

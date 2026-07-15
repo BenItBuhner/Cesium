@@ -16,7 +16,7 @@ type PublicAssetRuntime = {
 
 // Packaged Electron serves the renderer from file://. Resolve public assets from
 // the bundled renderer root (`desktop-renderer/`), not the mutable SPA location,
-// so history state like `/workspace` cannot turn icons into `file:///model-icons`.
+// so history state like `/agent` cannot turn icons into `file:///model-icons`.
 export function resolvePublicAssetUrlForRuntime(
   path: `/${string}`,
   runtime: PublicAssetRuntime

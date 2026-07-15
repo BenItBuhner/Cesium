@@ -1,7 +1,7 @@
 /** Dispatched from keyboard shortcut layer; composer / workspace UI subscribe. */
 export const CHAT_UI_SHORTCUT_EVENT = "opencursor:chatUiShortcut" as const;
 
-/** IDE editor layout: ChatPanel listens and opens a new local chat tab. */
+/** Legacy IDE chat layout event; agent shell uses conversation creation paths instead. */
 export const NEW_CHAT_SHORTCUT_EVENT = "opencursor:newChat" as const;
 
 export function dispatchNewChatShortcut(): void {
