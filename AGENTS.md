@@ -32,12 +32,9 @@ handles the first two, but you must repeat them by hand if you re-run installs):
   `npm run build:packages`. The backend and its tests import `@cesium/core/dist/*`,
   so without a build you get `ERR_MODULE_NOT_FOUND` for `@cesium/core/dist/mcp.js`
   and ~7 server test files fail.
-- **Integrated terminal (`node-pty`) does not stream output under Bun.** The
-  native module loads, but `onData` never fires under the default Bun runtime, so
-  the in-app terminal shows a dead/blank session. `node-pty` works correctly under
-  Node, so if you need the terminal feature run the backend with the Node runtime
-  instead: `npm run dev:node --prefix server`. All other features (agent chat,
-  editor, filesystem, browser) work fine under Bun.
+- **Integrated terminal uses Bun.Terminal under Bun** (POSIX). The old `node-pty`
+  path stays as a Node/desktop fallback only — do **not** switch the server to
+  Node just for terminals. Deno is not used or supported.
 - **Agent backends need external CLIs / API keys** (Cursor, Codex, Claude, Gemini,
   OpenCode) that are not installed. The app still boots and lists them as
   unavailable; sending a chat without a configured backend surfaces a

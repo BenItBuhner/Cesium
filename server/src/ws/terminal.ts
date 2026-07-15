@@ -4,15 +4,14 @@ import path from "node:path";
 import { TextDecoder, TextEncoder } from "node:util";
 import type { IncomingMessage } from "node:http";
 import type { Duplex } from "node:stream";
-import type { IPty } from "node-pty";
-import pty from "node-pty";
 import { WebSocketServer } from "ws";
+import { spawnPty, type PtyProcess } from "../lib/pty.js";
 import { type RuntimeSocket, wrapNodeWebSocket } from "./runtime-socket.js";
 
 type TerminalSession = {
   id: string;
   workspaceId: string;
-  pty: IPty;
+  pty: PtyProcess;
   shell: string;
   cwd: string;
   clearCommands: string[];
@@ -184,7 +183,9 @@ function spawnTerminalSession(
   shell = getDefaultShell()
 ): TerminalSession {
   const id = randomUUID();
-  const ptyProcess = pty.spawn(shell, [], {
+  const ptyProcess = spawnPty({
+    file: shell,
+    args: [],
     name: "xterm-256color",
     cols: 80,
     rows: 24,
