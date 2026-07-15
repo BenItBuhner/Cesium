@@ -486,22 +486,6 @@ export function AppearanceSettingsPanel() {
       </SettingsSection>
       <SettingsSection title="Design">
         <SettingsRow
-          title="New design"
-          description="Enable the next-generation UI design hooks for agent mode. Visual changes will expand as the design system is built out."
-          trailing={
-            <ToggleSwitch
-              checked={themeConfig.uiDesignMode === "new"}
-              onChange={(value) =>
-                setThemeConfig({
-                  ...themeConfig,
-                  uiDesignMode: value ? "new" : "classic",
-                })
-              }
-              size="md"
-            />
-          }
-        />
-        <SettingsRow
           searchId="long-paste-references"
           title="Long paste references"
           description="Collapse text pasted into the chat composer as a compact reference when it is about 10K characters or longer."

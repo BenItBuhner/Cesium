@@ -16,5 +16,4 @@ export type {
   CustomThemeEntry,
   EditDiffRenderingMode,
   ThemeConfig,
-  UiDesignMode,
 } from "@cesium/client";

@@ -60,26 +60,18 @@
   --agent-control-radius: var(--radius-tab);
   --agent-pill-radius: var(--radius-pill);
   --agent-rail-row-height: 30px;
-  /** Slightly raised surface for new-design composer chip controls (e.g. media [+]). */
-  --agent-plus-button-bg: var(--agent-panel-bg);
-  --agent-plus-button-bg-hover: var(--agent-card-hover-bg);
-  /** Plus control icon (new design can tune separately from --text-secondary). */
-  --agent-plus-button-icon: var(--text-secondary);
-}
-
-html[data-ui-design="new"]:not(.dark) {
+  /** Slightly raised surface for composer chip controls (e.g. media [+]). */
   --agent-plus-button-bg: #eaeaea;
   --agent-plus-button-bg-hover: #e0e0e0;
+  /** Plus control icon (can tune separately from --text-secondary). */
   --agent-plus-button-icon: #767676;
 }
 
-html[data-ui-design="new"].dark {
+html.dark {
   /* Plus / media chip: slightly lifted surface on the dark composer pill only. */
   --agent-plus-button-bg: #303030;
   --agent-plus-button-bg-hover: #3a3a3a;
-}
-
-html.dark {
+  --agent-plus-button-icon: var(--text-secondary);
   --tab-agent-attention-dot: color-mix(in srgb, var(--plan-accent) 38%, var(--bg-panel) 62%);
   --tab-unread-completion-dot: #6b9fd4;
 }
