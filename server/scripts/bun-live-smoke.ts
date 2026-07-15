@@ -151,18 +151,39 @@ async function terminalSocketSmoke(): Promise<void> {
   const url = wsUrlWithAuth(
     baseUrl.replace(/^http/i, "ws").replace(/\/$/, "") + `/ws/terminal/${created.id}`
   );
+  const marker = `__LIVE_TERM_${Date.now()}__`;
+  const expected = `OUT:${marker}`;
   await new Promise<void>((resolve, reject) => {
     const ws = new WebSocket(String(url));
+    let sawMetadata = false;
+    let output = "";
     const timeout = setTimeout(() => {
       ws.close();
-      reject(new Error("Timed out waiting for terminal metadata."));
+      reject(
+        new Error(
+          sawMetadata
+            ? `Timed out waiting for terminal PTY output containing ${expected}. Got: ${JSON.stringify(output)}`
+            : "Timed out waiting for terminal metadata."
+        )
+      );
     }, 10_000);
     ws.addEventListener("message", (event) => {
-      if (typeof event.data !== "string") {
+      if (typeof event.data === "string") {
+        try {
+          const data = JSON.parse(event.data) as { type?: string };
+          if (data.type === "metadata") {
+            sawMetadata = true;
+            // Prefix avoids matching local echo of the typed command alone.
+            ws.send(new TextEncoder().encode(`printf 'OUT:%s\\n' '${marker}'\n`));
+          }
+        } catch {
+          // ignore non-json text
+        }
         return;
       }
-      const data = JSON.parse(event.data) as { type?: string };
-      if (data.type === "metadata") {
+      const chunk = new TextDecoder().decode(event.data as ArrayBuffer);
+      output += chunk;
+      if (output.includes(expected)) {
         clearTimeout(timeout);
         ws.close();
         resolve();
@@ -199,7 +220,7 @@ const checks = [
   "conversation.head",
   "ws.snapshot_head",
   "ws.fs.ready",
-  "ws.terminal.metadata",
+  "ws.terminal.pty-output",
 ];
 if (process.env.BUN_SMOKE_BROWSER_DEBUG === "1") {
   await browserDebugSmoke();

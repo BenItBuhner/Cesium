@@ -20,10 +20,39 @@ async function check(name: string, run: () => Promise<string | undefined>): Prom
 }
 
 const results = await Promise.all([
+  check("bun-terminal-pty", async () => {
+    const { getPtyBackendName, spawnPty } = await import("../src/lib/pty.js");
+    if (getPtyBackendName() !== "bun-terminal") {
+      return `backend=${getPtyBackendName()} (skipped live I/O)`;
+    }
+    const chunks: string[] = [];
+    const marker = `__NATIVE_PTY_${Date.now()}__`;
+    const expected = `OUT:${marker}`;
+    const proc = spawnPty({
+      file: process.env.SHELL || "/bin/bash",
+      args: [],
+      cols: 80,
+      rows: 24,
+      cwd: "/tmp",
+      env: process.env,
+    });
+    proc.onData((data) => chunks.push(data));
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    proc.write(`printf 'OUT:%s\\n' '${marker}'\n`);
+    const deadline = Date.now() + 5000;
+    while (Date.now() < deadline && !chunks.join("").includes(expected)) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    proc.kill();
+    if (!chunks.join("").includes(expected)) {
+      throw new Error(`Bun.Terminal PTY produced no output for ${expected}`);
+    }
+    return "Bun.Terminal I/O ok";
+  }),
   check("node-pty", async () => {
     const mod = await import("node-pty");
     const pty = mod.default ?? mod;
-    return typeof pty.spawn === "function" ? "spawn available" : "spawn missing";
+    return typeof pty.spawn === "function" ? "spawn available (Node fallback only)" : "spawn missing";
   }),
   check("@cursor/sdk", async () => {
     const mod = await import("@cursor/sdk");
