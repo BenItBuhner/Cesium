@@ -273,7 +273,6 @@ async function* streamExport(driver: StorageDriver): AsyncGenerator<ExportLine> 
     "cesium-agent",
     "cursor-sdk",
     "opencode-server",
-    "gemini-acp",
     "devin-acp",
     "codex-app-server",
     "claude-code-sdk",
@@ -334,7 +333,6 @@ function isAgentBackendId(value: string): boolean {
     value === "cesium-agent" ||
     value === "cursor-sdk" ||
     value === "opencode-server" ||
-    value === "gemini-acp" ||
     value === "devin-acp" ||
     value === "codex-app-server" ||
     value === "claude-code-sdk" ||

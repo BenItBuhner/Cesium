@@ -852,6 +852,7 @@ export function mergeWorkspaceSessionFromImport(
     "cursor-acp": "cursor-sdk",
     "opencode-acp": "opencode-server",
     "codex-adapter": "codex-app-server",
+    "gemini-acp": "google-antigravity-cli",
   };
   const importedChatBackendRawMapped =
     typeof importedChatBackendRaw === "string"

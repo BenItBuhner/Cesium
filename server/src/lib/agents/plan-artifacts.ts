@@ -15,7 +15,6 @@ const BACKEND_PLAN_SEGMENTS: Record<AgentBackendId, string> = {
   "cesium-agent": "cesium",
   "cursor-sdk": "cursor-sdk",
   "opencode-server": "opencode",
-  "gemini-acp": "gemini",
   "devin-acp": "devin",
   "codex-app-server": "codex",
   "claude-code-sdk": "claude",

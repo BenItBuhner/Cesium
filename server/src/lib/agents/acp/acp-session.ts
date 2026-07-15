@@ -379,8 +379,11 @@ async function runAcpTransportBootstrap(transport: AcpStdioClient): Promise<stri
   return messages;
 }
 
-function backendUsesAcpPromptHints(backendId: AgentBackendId): boolean {
-  return backendId === "gemini-acp";
+function backendUsesAcpPromptHints(_backendId: AgentBackendId): boolean {
+  // Formerly used for Gemini CLI ACP; that harness was retired in favor of
+  // Google Antigravity CLI. Keep the hook so a future ACP backend can opt in.
+  void _backendId;
+  return false;
 }
 
 function pluginMcpServersForAcp(

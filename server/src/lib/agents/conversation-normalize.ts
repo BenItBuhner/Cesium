@@ -9,6 +9,7 @@ const LEGACY_BACKEND_REMAP: Record<string, AgentBackendId> = {
   "cursor-acp": "cursor-sdk",
   "opencode-acp": "opencode-server",
   "codex-adapter": "codex-app-server",
+  "gemini-acp": "google-antigravity-cli",
 };
 
 export function normalizeConversationRecord(

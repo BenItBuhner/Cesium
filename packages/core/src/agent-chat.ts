@@ -309,7 +309,7 @@ function modelProviderForBackend(backendId: AgentBackendId): ModelInfo["provider
       return "cursor";
     case "opencode-server":
       return "opencode";
-    case "gemini-acp":
+    case "google-antigravity-cli":
       return "google";
     case "codex-app-server":
       return "codex";

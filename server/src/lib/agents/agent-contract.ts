@@ -67,20 +67,6 @@ export const AGENT_CAPABILITIES: Record<AgentBackendId, AgentProviderCapabilitie
     supportsInlineReasoning: true,
     supportsCompletionRetry: false,
   },
-  "gemini-acp": {
-    supportsLoadSession: true,
-    supportsModeSelection: true,
-    supportsModelSelection: true,
-    supportsSlashCommands: true,
-    supportsPermissions: true,
-    supportsToolCalls: true,
-    supportsStructuredPlans: true,
-    supportsTodos: true,
-    supportsSessionResume: true,
-    supportsPromptImages: true,
-    supportsInlineReasoning: true,
-    supportsCompletionRetry: false,
-  },
   "devin-acp": {
     supportsLoadSession: true,
     supportsModeSelection: true,
@@ -247,16 +233,6 @@ export const BACKEND_HARNESS_EXPECTATIONS: Record<
       "system",
     ],
     notes: "Subagent events depend on global/child SSE routing.",
-  },
-  "gemini-acp": {
-    expectedEventKinds: [
-      ...textTurnEvents,
-      "reasoning",
-      ...toolEvents,
-      "plan",
-      ...permissionEvents,
-      "system",
-    ],
   },
   "devin-acp": {
     expectedEventKinds: [

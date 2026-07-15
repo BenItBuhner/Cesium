@@ -50,7 +50,6 @@ export const HARNESS_PROBE_BACKENDS: AgentBackendId[] = [
   "opencode-server",
   "cursor-sdk",
   "claude-code-sdk",
-  "gemini-acp",
   "devin-acp",
   "pi-agent",
   "google-antigravity-cli",

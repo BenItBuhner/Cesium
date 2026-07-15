@@ -29,25 +29,6 @@ import { AcpSessionHandle } from "./acp/acp-session.js";
 type AcpRuntimeSpec = CliRuntimeSpec;
 
 /**
- * Gemini CLI ACP invocation: default `gemini --acp` (see Gemini CLI ACP docs).
- * Override with JSON array if your build uses different flags, e.g. `["--experimental-acp"]`.
- */
-function parseGeminiCliAcpArgs(): string[] {
-  const rawJson = process.env.OPENCURSOR_GEMINI_CLI_ARGS?.trim();
-  if (rawJson) {
-    try {
-      const parsed = JSON.parse(rawJson) as unknown;
-      if (Array.isArray(parsed) && parsed.every((item) => typeof item === "string")) {
-        return parsed;
-      }
-    } catch {
-      // ignore invalid JSON
-    }
-  }
-  return ["--acp"];
-}
-
-/**
  * Devin CLI ACP invocation: default `devin acp` (see https://docs.devin.ai/cli/acp/jetbrains).
  * Override with JSON array if your build uses different flags.
  */
@@ -207,34 +188,6 @@ function resolveOpenCodeBundledBinary(): string | null {
   return null;
 }
 
-function resolveGeminiAcpRuntime(): AcpRuntimeSpec | null {
-  const acpArgs = parseGeminiCliAcpArgs();
-  const configured = resolveConfiguredRuntime(process.env.OPENCURSOR_GEMINI_CLI_BIN, acpArgs);
-  if (configured) {
-    return configured;
-  }
-
-  const pathHit = findExecutableOnPath(
-    process.platform === "win32"
-      ? ["gemini.exe", "gemini.cmd", "gemini.bat", "gemini"]
-      : ["gemini"]
-  );
-  if (pathHit) {
-    return buildInvocation(pathHit, acpArgs);
-  }
-
-  if (process.platform === "win32") {
-    const roamingNpm = process.env.APPDATA?.trim()
-      ? path.join(process.env.APPDATA, "npm", "gemini.cmd")
-      : null;
-    if (roamingNpm && fileExists(roamingNpm)) {
-      return buildInvocation(roamingNpm, acpArgs);
-    }
-  }
-
-  return null;
-}
-
 function resolveDevinLocalBin(): string | null {
   const names =
     process.platform === "win32"
@@ -365,7 +318,6 @@ function resolveGoogleAntigravityCliRuntime(): CliRuntimeSpec | null {
 }
 
 const OPENCODE_RUNTIME = resolveOpenCodeCliRuntime();
-const GEMINI_RUNTIME = resolveGeminiAcpRuntime();
 const DEVIN_RUNTIME = resolveDevinAcpRuntime();
 const CODEX_RUNTIME = resolveCodexCliRuntime();
 const GOOGLE_ANTIGRAVITY_RUNTIME = resolveGoogleAntigravityCliRuntime();
@@ -437,17 +389,6 @@ export const AGENT_BACKENDS: Record<AgentBackendId, AgentBackendInfo> = {
     defaultModelId: "auto",
     defaultModelName: "Auto",
   }),
-  "gemini-acp": createBackendInfo({
-    id: "gemini-acp",
-    label: "Gemini",
-    description: "Gemini CLI over ACP stdio (`gemini --acp`).",
-    commandPreview: GEMINI_RUNTIME?.commandPreview ?? "Gemini CLI not found",
-    available: GEMINI_RUNTIME !== null,
-    capabilities: AGENT_CAPABILITIES["gemini-acp"],
-    defaultMode: "agent",
-    defaultModelId: "auto",
-    defaultModelName: "Auto",
-  }),
   "devin-acp": createBackendInfo({
     id: "devin-acp",
     label: "Devin",
@@ -503,7 +444,7 @@ export const AGENT_BACKENDS: Record<AgentBackendId, AgentBackendInfo> = {
     id: "google-antigravity-cli",
     label: "Google Antigravity CLI",
     description:
-      "Google Antigravity CLI harness using installed agy, ambient CLI auth, OpenCursor plan/tool rendering, and Antigravity workspace MCP config.",
+      "Google Antigravity CLI (`agy`) — successor to Gemini CLI. Uses ambient Google OAuth from the CLI login on the host; OpenCursor does not broker tokens.",
     experimental: true,
     commandPreview: GOOGLE_ANTIGRAVITY_RUNTIME
       ? `${GOOGLE_ANTIGRAVITY_RUNTIME.commandPreview} interactive`
@@ -516,13 +457,12 @@ export const AGENT_BACKENDS: Record<AgentBackendId, AgentBackendInfo> = {
   }),
 };
 
-/** Stable ordering for harness/model-picker menus (Cesium first, then Cursor, Codex, OpenCode, Claude, Gemini, Devin). */
+/** Stable ordering for harness/model-picker menus (Cesium first, then Cursor, Codex, OpenCode, Devin, Claude, Antigravity). */
 const AGENT_BACKEND_MENU_ORDER = [
   "cesium-agent",
   "cursor-sdk",
   "codex-app-server",
   "opencode-server",
-  "gemini-acp",
   "devin-acp",
   "claude-code-sdk",
   "pi-agent",
@@ -611,34 +551,6 @@ export async function createAgentProvider(
       backend,
       configOptions: await readAgentBackendConfigCache(backendId),
     });
-  }
-
-  if (backendId === "gemini-acp") {
-    if (!GEMINI_RUNTIME) {
-      throw new Error(`${backend.label} is not installed or could not be resolved.`);
-    }
-    return {
-      backend,
-      startSession(callbacks) {
-        return AcpSessionHandle.create({
-          backend,
-          command: GEMINI_RUNTIME.command,
-          args: GEMINI_RUNTIME.args,
-          env: GEMINI_RUNTIME.env,
-          callbacks,
-        });
-      },
-      loadSession(callbacks, providerSessionId) {
-        return AcpSessionHandle.create({
-          backend,
-          command: GEMINI_RUNTIME.command,
-          args: GEMINI_RUNTIME.args,
-          env: GEMINI_RUNTIME.env,
-          callbacks,
-          loadSessionId: providerSessionId,
-        });
-      },
-    };
   }
 
   if (backendId === "devin-acp") {
