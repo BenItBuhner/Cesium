@@ -866,6 +866,7 @@ test("Cesium base prompt and tool schema are stable across dynamic modes", () =>
   assert.equal(names.includes("burn_goal_pause"), true);
   assert.equal(names.includes("burn_goal_block"), true);
   assert.equal(names.includes("burn_goal_complete"), true);
+  assert.equal(names.includes("wait"), true);
   assert.equal(names.includes("burn_goal_update_plan"), false);
   assert.equal(names.includes("burn_goal_update_progress"), false);
   assert.equal(names.includes("burn_goal_summarize_state"), false);
@@ -919,8 +920,45 @@ test("Cesium system reminders are injected into targeted user turns", () => {
 test("Cesium mode policy blocks write tools in Ask and permits plan tools in Plan", () => {
   assert.equal(resolveCesiumModeToolPolicy({ mode: "ask", toolName: "edit_file" }).allowed, false);
   assert.equal(resolveCesiumModeToolPolicy({ mode: "ask", toolName: "read_file" }).allowed, true);
+  assert.equal(resolveCesiumModeToolPolicy({ mode: "ask", toolName: "wait" }).allowed, true);
   assert.equal(resolveCesiumModeToolPolicy({ mode: "plan", toolName: "create_plan" }).allowed, true);
+  assert.equal(resolveCesiumModeToolPolicy({ mode: "plan", toolName: "wait" }).allowed, true);
+  assert.equal(resolveCesiumModeToolPolicy({ mode: "orchestration", toolName: "wait" }).allowed, true);
+  assert.equal(resolveCesiumModeToolPolicy({ mode: "agent", toolName: "wait" }).allowed, true);
   assert.equal(resolveCesiumModeToolPolicy({ mode: "agent", toolName: "orchestration_create_issue" }).allowed, false);
+});
+
+test("Cesium wait tool parses seconds, caps duration, and formats titles", async () => {
+  const { parseWaitToolArgs, toolTitle, formatWaitDurationLabel } = await import(
+    "../src/lib/agents/cesium/cesium-tools.js"
+  );
+  const { WAIT_MAX_SECONDS } = await import("../src/lib/agents/cesium/cesium-prompt.js");
+
+  assert.deepEqual(parseWaitToolArgs({ seconds: 2.5, reason: "deploy settle" }), {
+    seconds: 2.5,
+    durationMs: 2500,
+    reason: "deploy settle",
+    capped: false,
+  });
+  assert.equal(parseWaitToolArgs({ seconds: WAIT_MAX_SECONDS + 10 }).capped, true);
+  assert.equal(parseWaitToolArgs({ seconds: WAIT_MAX_SECONDS + 10 }).seconds, WAIT_MAX_SECONDS);
+  assert.throws(() => parseWaitToolArgs({ seconds: 0 }), /positive number/);
+  assert.throws(() => parseWaitToolArgs({}), /positive number/);
+  assert.equal(formatWaitDurationLabel(90), "1m 30s");
+  assert.equal(formatWaitDurationLabel(3600), "1h");
+  assert.equal(toolTitle("wait", { seconds: 120, reason: "build" }), "Wait 2m: build");
+  assert.equal(toolTitle("wait", { seconds: 0.5 }), "Wait 0.5s");
+});
+
+test("Cesium tool schema includes dedicated wait tool", () => {
+  const tools = buildOpenAiToolDefinitions();
+  const wait = tools.find((tool) => tool.function.name === "wait");
+  assert.ok(wait);
+  assert.match(wait.function.description, /seconds/i);
+  assert.equal(
+    (wait.function.parameters as { required?: string[] }).required?.includes("seconds"),
+    true
+  );
 });
 
 test("Cesium plan markdown parser projects checklist statuses", () => {

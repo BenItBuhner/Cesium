@@ -1,6 +1,56 @@
 import { BROWSER_MCP_SERVER_ID } from "../../mcp/builtin-browser-tools.js";
 import { asRecord, asString, parseJsonArgs, pickFirstString } from "./cesium-coerce.js";
+import { WAIT_MAX_SECONDS } from "./cesium-prompt.js";
 import type { CesiumToolRequest } from "./cesium-types.js";
+
+export type ParsedWaitToolArgs = {
+  seconds: number;
+  durationMs: number;
+  reason: string;
+  capped: boolean;
+};
+
+/** Normalize and validate timed `wait` tool arguments. */
+export function parseWaitToolArgs(args: Record<string, unknown>): ParsedWaitToolArgs {
+  const raw =
+    typeof args.seconds === "number"
+      ? args.seconds
+      : typeof args.seconds === "string"
+        ? Number(args.seconds)
+        : Number.NaN;
+  if (!Number.isFinite(raw) || raw <= 0) {
+    throw new Error("wait.seconds must be a positive number.");
+  }
+  const capped = raw > WAIT_MAX_SECONDS;
+  const seconds = capped ? WAIT_MAX_SECONDS : raw;
+  return {
+    seconds,
+    durationMs: Math.max(1, Math.round(seconds * 1000)),
+    reason: asString(args.reason)?.trim() || "Timed wait.",
+    capped,
+  };
+}
+
+export function formatWaitDurationLabel(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds <= 0) {
+    return "0s";
+  }
+  if (seconds < 60) {
+    const rounded = Number.isInteger(seconds) ? String(seconds) : seconds.toFixed(1).replace(/\.0$/, "");
+    return `${rounded}s`;
+  }
+  const totalSeconds = Math.round(seconds);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const secs = totalSeconds % 60;
+  if (hours > 0) {
+    if (minutes === 0 && secs === 0) return `${hours}h`;
+    if (secs === 0) return `${hours}h ${minutes}m`;
+    return `${hours}h ${minutes}m ${secs}s`;
+  }
+  if (secs === 0) return `${minutes}m`;
+  return `${minutes}m ${secs}s`;
+}
 
 const CESIUM_TOOLS = [
   {
@@ -58,6 +108,27 @@ const CESIUM_TOOLS = [
         timeoutMs: { type: "number" },
       },
       required: ["command"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "wait",
+    description:
+      "Pause this agent for a fixed number of seconds before continuing. Use for timed delays (seconds, minutes, or hours) when you do not need to poll terminals, spawn subagents, or wait on orchestration board conditions. Prefer this over shell sleep. Cancel stops the wait early.",
+    parameters: {
+      type: "object",
+      properties: {
+        seconds: {
+          type: "number",
+          description:
+            "How long to wait. Fractional values are allowed (e.g. 0.5). Large values are fine for multi-minute or multi-hour delays (capped at 24 hours).",
+        },
+        reason: {
+          type: "string",
+          description: "Optional short reason shown in status heartbeats while waiting.",
+        },
+      },
+      required: ["seconds"],
       additionalProperties: false,
     },
   },
@@ -614,6 +685,8 @@ export function toolKind(name: string): string {
       return "edit";
     case "terminal":
       return "terminal";
+    case "wait":
+      return "wait";
     case "grep":
       return "grep";
     case "todo":
@@ -684,6 +757,15 @@ export function toolTitle(name: string, args: Record<string, unknown>): string {
       return `Edit ${asString(args.path) ?? "file"}`;
     case "terminal":
       return `Run ${asString(args.command) ?? "command"}`;
+    case "wait": {
+      const seconds = typeof args.seconds === "number" ? args.seconds : Number(args.seconds);
+      const reason = asString(args.reason);
+      if (Number.isFinite(seconds) && seconds > 0) {
+        const label = formatWaitDurationLabel(seconds);
+        return reason ? `Wait ${label}: ${reason}` : `Wait ${label}`;
+      }
+      return reason ? `Wait: ${reason}` : "Wait";
+    }
     case "grep":
       return `Grep ${asString(args.pattern) ?? "workspace"}`;
     case "todo":
