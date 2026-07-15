@@ -21,6 +21,12 @@ export const DEFAULT_GREP_RESULTS = 100;
 export const TERMINAL_OUTPUT_CAP = 80_000;
 export const ORCHESTRATION_WAIT_HEARTBEAT_MS = 15_000;
 export const ORCHESTRATION_WAIT_DEFAULT_MS = 30_000;
+/** Timed `wait` tool: cancel/disposal poll interval while sleeping. */
+export const WAIT_POLL_MS = 1_000;
+/** Timed `wait` tool: status heartbeat cadence (mirrors orchestration wait). */
+export const WAIT_HEARTBEAT_MS = 15_000;
+/** Hard cap so a bad model call cannot sleep forever (24 hours). */
+export const WAIT_MAX_SECONDS = 24 * 60 * 60;
 export const ORCHESTRATION_ASSIGNMENT_TERMINAL_STATUSES: OrchestrationAssignmentStatus[] = [
   "completed",
   "failed",

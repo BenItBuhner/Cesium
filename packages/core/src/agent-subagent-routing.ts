@@ -653,6 +653,7 @@ function isStructuralNonSubagentToolEvent(event: SubagentToolCallEvent): boolean
       "delete",
       "grep",
       "todo",
+      "wait",
     ].includes(tk)
   ) {
     return true;
