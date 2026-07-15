@@ -23,7 +23,8 @@ import {
   popoverMenuSeparatorClass,
 } from "@/components/ui/popover-menu-ui";
 import type { WorkspaceSortMode } from "@/lib/global-settings";
-import type { AgentRailGroupByMode } from "@/lib/global-settings";
+import type { AgentRailGroupByMode, AgentRailSectionId } from "@/lib/global-settings";
+import { AGENT_RAIL_SECTION_IDS } from "@/lib/global-settings";
 const FILTER_TOGGLE_LABELS: Record<AgentRailFilterToggleKey, string> = {
   archived: "Archived",
   running: "Running",
@@ -62,6 +63,16 @@ type AgentRailFilterMenuPortalProps = {
   setGroupBy: (mode: AgentRailGroupByMode) => void;
   showIcons: boolean;
   setShowIcons: (value: boolean) => void;
+  sectionOrder: AgentRailSectionId[];
+  hiddenSections: AgentRailSectionId[];
+  setSectionOrder: (order: AgentRailSectionId[]) => void;
+  setSectionHidden: (sectionId: AgentRailSectionId, hidden: boolean) => void;
+};
+
+const SECTION_LABELS: Record<AgentRailSectionId, string> = {
+  pinned: "Pinned",
+  chats: "Chats",
+  workspaces: "Workspaces",
 };
 
 export function AgentRailFilterMenuPortal({
@@ -80,6 +91,10 @@ export function AgentRailFilterMenuPortal({
   setGroupBy,
   showIcons,
   setShowIcons,
+  sectionOrder,
+  hiddenSections,
+  setSectionOrder,
+  setSectionHidden,
 }: AgentRailFilterMenuPortalProps) {
   const filterPanelRef = useRef<HTMLDivElement>(null);
   const [filterMenuPos, setFilterMenuPos] = useState({ top: 0, left: 0 });
@@ -213,6 +228,63 @@ export function AgentRailFilterMenuPortal({
           />
           <span className="min-w-0 flex-1">Show icons</span>
         </label>
+      </div>
+      <div className={popoverMenuSeparatorClass} />
+      <div className={popoverMenuSectionLabelClass}>Rail sections</div>
+      <div className="flex flex-col gap-[2px]" onPointerDown={(e) => e.stopPropagation()}>
+        {AGENT_RAIL_SECTION_IDS.map((sectionId) => {
+          const hidden = hiddenSections.includes(sectionId);
+          const canHide = sectionId !== "workspaces";
+          const index = sectionOrder.indexOf(sectionId);
+          return (
+            <div key={sectionId} className={`${popoverMenuFormRowClass} gap-[6px]`}>
+              {canHide ? (
+                <input
+                  type="checkbox"
+                  checked={!hidden}
+                  onChange={(ev) => setSectionHidden(sectionId, !ev.target.checked)}
+                  className="size-[14px] shrink-0 rounded border border-[var(--border-subtle)] accent-[var(--accent)]"
+                  aria-label={`Show ${SECTION_LABELS[sectionId]}`}
+                />
+              ) : (
+                <span className="size-[14px] shrink-0" />
+              )}
+              <span className="min-w-0 flex-1">{SECTION_LABELS[sectionId]}</span>
+              <button
+                type="button"
+                disabled={index <= 0}
+                onClick={() => {
+                  if (index <= 0) return;
+                  const next = [...sectionOrder];
+                  const prev = next[index - 1]!;
+                  next[index - 1] = sectionId;
+                  next[index] = prev;
+                  setSectionOrder(next);
+                }}
+                className="rounded px-[4px] text-[11px] text-[var(--text-secondary)] disabled:opacity-30 hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)]"
+                aria-label={`Move ${SECTION_LABELS[sectionId]} up`}
+              >
+                Up
+              </button>
+              <button
+                type="button"
+                disabled={index < 0 || index >= sectionOrder.length - 1}
+                onClick={() => {
+                  if (index < 0 || index >= sectionOrder.length - 1) return;
+                  const next = [...sectionOrder];
+                  const after = next[index + 1]!;
+                  next[index + 1] = sectionId;
+                  next[index] = after;
+                  setSectionOrder(next);
+                }}
+                className="rounded px-[4px] text-[11px] text-[var(--text-secondary)] disabled:opacity-30 hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)]"
+                aria-label={`Move ${SECTION_LABELS[sectionId]} down`}
+              >
+                Down
+              </button>
+            </div>
+          );
+        })}
       </div>
       <div className={popoverMenuSeparatorClass} />
       <div className={popoverMenuSectionLabelClass}>Filter conversations</div>

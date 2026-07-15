@@ -200,6 +200,11 @@ type AgentShellStateContextValue = {
   startNewConversation: () => void;
   /** Open the given workspace, then the draft new-chat session (for rail “+” on a non-active workspace). */
   startNewChatInWorkspace: (workspaceId: string) => Promise<void>;
+  /** Draft a chat with no project workspace (temp sandbox created on first send). */
+  startStandaloneChat: () => void;
+  /** True while the draft composer targets a no-workspace standalone chat. */
+  standaloneDraftActive: boolean;
+  setStandaloneDraftActive: (active: boolean) => void;
   /** Move selection along the visible rail (pinned, then workspaces); crosses workspaces. */
   cycleAgentConversation: (delta: 1 | -1) => void;
   openConversationSummary: (summary: AgentRailConversationSummary) => Promise<void>;
@@ -498,6 +503,7 @@ export function AgentShellStateProvider({
     workspaceId: string;
     conversationId: string;
   } | null>(null);
+  const [standaloneDraftActive, setStandaloneDraftActive] = useState(false);
   const [stableConversationView, setStableConversationView] =
     useState<AgentCenterStableConversationView | null>(null);
   const [sharedLeftRailCollapsed, setSharedLeftRailCollapsedState] = useState(false);
@@ -1498,6 +1504,11 @@ export function AgentShellStateProvider({
     replaceConversationIdInLocation(AGENT_NEW_CHAT_SESSION_ID);
   }, [replaceConversationIdInLocation, updateWorkspaceSession]);
 
+  const startStandaloneChat = useCallback(() => {
+    setStandaloneDraftActive(true);
+    startNewConversation();
+  }, [startNewConversation]);
+
   const startNewChatInWorkspace = useCallback(
     async (workspaceId: string) => {
       // Must run before any `await`. `loadWorkspaceState` rewrites `workspaceId` in the URL but
@@ -1505,6 +1516,7 @@ export function AgentShellStateProvider({
       // effect below sees (active workspace B + URL conversation owned by A) and calls
       // `openWorkspaceById(A)` to "honor" the deep link — undoing the rail + click. Drafting the
       // URL up front keeps `isDraftConversationSelected` true so that effect bails.
+      setStandaloneDraftActive(false);
       replaceConversationIdInLocation(AGENT_NEW_CHAT_SESSION_ID);
       if (workspaceId !== activeWorkspaceId) {
         await openWorkspaceById(workspaceId);
@@ -1523,6 +1535,7 @@ export function AgentShellStateProvider({
     async (summary: AgentRailConversationSummary) => {
       markConversationSwitchStart(summary.id, "rail");
       bumpAgentConversationMruForServer(summary.id);
+      setStandaloneDraftActive(false);
       if (summary.serverId && summary.serverId !== activeServer.id) {
         setActiveServer(summary.serverId);
       }
@@ -1874,6 +1887,9 @@ export function AgentShellStateProvider({
       setSelectedConversationId,
       startNewConversation,
       startNewChatInWorkspace,
+      startStandaloneChat,
+      standaloneDraftActive,
+      setStandaloneDraftActive,
       cycleAgentConversation,
       openConversationSummary,
       agentSwitcherItems,
@@ -1918,6 +1934,9 @@ export function AgentShellStateProvider({
       isDraftConversationSelected,
       openConversationSummary,
       startNewChatInWorkspace,
+      startStandaloneChat,
+      standaloneDraftActive,
+      setStandaloneDraftActive,
       pinConversation,
       pinnedRailConversations,
       railFilterActive,

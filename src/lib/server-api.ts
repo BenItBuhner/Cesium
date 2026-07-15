@@ -22,6 +22,7 @@ export {
   completeBrowserControlCommand,
   createAgentConversation,
   createAndPromptAgentConversation,
+  createAndPromptStandaloneAgentConversation,
   createBrowserDebugSession,
   createCustomAgentPlugin,
   createExtensionSurfaceSession,

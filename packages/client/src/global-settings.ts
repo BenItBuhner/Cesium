@@ -13,6 +13,13 @@ import {
 
 export type WorkspaceSortMode = "recent" | "alphabetical" | "custom";
 export type AgentRailGroupByMode = "workspace" | "repository" | "server" | "updated" | "status";
+export type AgentRailSectionId = "pinned" | "chats" | "workspaces";
+
+export const AGENT_RAIL_SECTION_IDS: AgentRailSectionId[] = [
+  "pinned",
+  "chats",
+  "workspaces",
+];
 
 export type ChatFolderState = {
   id: string;
@@ -57,6 +64,13 @@ export type AgentRailSettingsState = {
   visibleServerIds: string[];
   hiddenServerIds: string[];
   showIcons: boolean;
+  /**
+   * Top-level rail section order. Unknown/missing ids are appended in default order.
+   * Default: pinned → chats (standalone) → workspaces.
+   */
+  sectionOrder: AgentRailSectionId[];
+  /** Sections omitted from the rail (e.g. hide the standalone Chats block). */
+  hiddenSections: AgentRailSectionId[];
 };
 
 export type AgentsSettingsState = {
@@ -175,6 +189,8 @@ export function createDefaultGlobalSettings(): GlobalSettingsState {
         visibleServerIds: [],
         hiddenServerIds: [],
         showIcons: true,
+        sectionOrder: ["pinned", "chats", "workspaces"],
+        hiddenSections: [],
       },
     },
     agents: {
@@ -350,6 +366,29 @@ function normalizeChatFolders(raw: unknown): ChatFolderState[] {
   return folders.slice(0, 500);
 }
 
+function normalizeAgentRailSectionIds(raw: unknown): AgentRailSectionId[] {
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+  const seen = new Set<AgentRailSectionId>();
+  const out: AgentRailSectionId[] = [];
+  for (const value of raw) {
+    if (
+      value !== "pinned" &&
+      value !== "chats" &&
+      value !== "workspaces"
+    ) {
+      continue;
+    }
+    if (seen.has(value)) {
+      continue;
+    }
+    seen.add(value);
+    out.push(value);
+  }
+  return out;
+}
+
 function normalizeAgentRailSettings(raw: unknown): AgentRailSettingsState {
   const defaults = createDefaultGlobalSettings().general.agentRail;
   if (!raw || typeof raw !== "object") {
@@ -369,6 +408,14 @@ function normalizeAgentRailSettings(raw: unknown): AgentRailSettingsState {
     Array.isArray(value)
       ? value.filter((item): item is string => typeof item === "string")
       : [];
+  const ordered = normalizeAgentRailSectionIds(record.sectionOrder);
+  const sectionOrder: AgentRailSectionId[] = [
+    ...ordered,
+    ...AGENT_RAIL_SECTION_IDS.filter((id) => !ordered.includes(id)),
+  ];
+  const hiddenSections = normalizeAgentRailSectionIds(record.hiddenSections).filter(
+    (id) => id !== "workspaces"
+  );
   return {
     groupBy,
     visibleStatusFilters: strings(record.visibleStatusFilters),
@@ -378,6 +425,8 @@ function normalizeAgentRailSettings(raw: unknown): AgentRailSettingsState {
     hiddenServerIds: strings(record.hiddenServerIds),
     showIcons:
       typeof record.showIcons === "boolean" ? record.showIcons : defaults.showIcons,
+    sectionOrder,
+    hiddenSections,
   };
 }
 

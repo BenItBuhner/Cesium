@@ -10,6 +10,7 @@ import {
   GitBranch,
   GitFork,
   Laptop,
+  MessageSquare,
   Plus,
 } from "lucide-react";
 import {
@@ -50,6 +51,7 @@ import type {
   GitWorktreeInfo,
   ImageAttachment,
 } from "@/lib/types";
+import { isStandaloneChatWorkspace } from "@/lib/types";
 import { useWorkspaceDirectory } from "@/contexts/WorkspaceDirectoryContext";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { useServerConnections } from "@/components/preferences/ServerConnectionsProvider";
@@ -141,6 +143,7 @@ export function AgentNewChatLanding() {
   const {
     backends,
     createAndPromptConversation,
+    createAndPromptStandaloneConversation,
   } = useAgentConversations();
   const {
     workspaceSession,
@@ -161,6 +164,9 @@ export function AgentNewChatLanding() {
     refreshConversationGroups,
     setSelectedConversationId,
     setRightPaneOpen,
+    standaloneDraftActive,
+    setStandaloneDraftActive,
+    startStandaloneChat,
   } = useAgentShellState();
   const { settings, updateSettings } = useGlobalSettings();
   const goalModeBetaEnabled = settings.features.goalModeBeta;
@@ -207,7 +213,9 @@ export function AgentNewChatLanding() {
   );
   const workspaceRailAppearances = settings.general.workspaceRailAppearances;
 
-  const composerDraftId = `agent-draft:${activeWorkspaceGroup?.workspace.id ?? "workspace"}`;
+  const composerDraftId = standaloneDraftActive
+    ? "agent-draft:standalone"
+    : `agent-draft:${activeWorkspaceGroup?.workspace.id ?? "workspace"}`;
   const composerDraftTitle = "Agent prompt";
   useRegisterDesignCaptureComposer(composerDraftId, 9);
   const composerDraftText = composerDrafts[composerDraftId]?.content ?? "";
@@ -256,6 +264,26 @@ export function AgentNewChatLanding() {
     async (text: string, attachments?: ImageAttachment[]) => {
       const backend = draftBackend;
       if (!backend) return false;
+
+      if (standaloneDraftActive) {
+        const created = await createAndPromptStandaloneConversation(
+          {
+            backendId: backend.id,
+            mode: draftMode,
+            modelId: draftModel.modelValue ?? draftModel.id,
+            modelName: draftModel.name,
+          },
+          text,
+          attachments
+        );
+        if (!created) return false;
+        setStandaloneDraftActive(false);
+        await openWorkspaceById(created.workspaceId);
+        setSelectedConversationId(created.conversation.id);
+        void refreshConversationGroups();
+        return true;
+      }
+
       const worktreeMatch = text.match(/^\/worktree\b([\s\S]*)$/i);
       const deleteWorktreeMatch = text.match(/^\/delete-worktree\b/i);
       if (deleteWorktreeMatch) {
@@ -290,6 +318,7 @@ export function AgentNewChatLanding() {
     },
     [
       createAndPromptConversation,
+      createAndPromptStandaloneConversation,
       draftBackend,
       draftMode,
       draftModel.id,
@@ -299,8 +328,11 @@ export function AgentNewChatLanding() {
       deleteWorktree,
       gitStatus?.currentBranch,
       gitStatus?.worktrees,
+      openWorkspaceById,
       refreshConversationGroups,
       setSelectedConversationId,
+      setStandaloneDraftActive,
+      standaloneDraftActive,
     ]
   );
 
@@ -435,7 +467,10 @@ export function AgentNewChatLanding() {
 
   const workspacePickerOptions = useMemo(() => {
     const fromDirectory = directoryWorkspaces
-      .filter((workspace) => workspace.serverId === activeServer.id)
+      .filter(
+        (workspace) =>
+          workspace.serverId === activeServer.id && !isStandaloneChatWorkspace(workspace)
+      )
       .map((workspace) => ({
         workspace,
         workspaceKey: workspace.workspaceKey,
@@ -446,7 +481,11 @@ export function AgentNewChatLanding() {
       return fromDirectory;
     }
     return groups
-      .filter((group) => !group.serverId || group.serverId === activeServer.id)
+      .filter(
+        (group) =>
+          (!group.serverId || group.serverId === activeServer.id) &&
+          !isStandaloneChatWorkspace(group.workspace)
+      )
       .map((group) => ({
         workspace: group.workspace,
         workspaceKey: resolveGroupWorkspaceAppearanceKey(group, activeServer.id),
@@ -645,7 +684,9 @@ export function AgentNewChatLanding() {
                 }}
                 className="inline-flex min-w-0 max-w-[220px] items-center gap-[5px] rounded-[var(--radius-pill)] px-[6px] py-[4px] text-left font-sans text-[13px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)]"
               >
-                {activeWorkspaceAppearanceKey ? (
+                {standaloneDraftActive ? (
+                  <MessageSquare className="size-[13px] shrink-0" strokeWidth={1.5} />
+                ) : activeWorkspaceAppearanceKey ? (
                   <WorkspacePickerIcon
                     appearances={workspaceRailAppearances}
                     workspaceKey={activeWorkspaceAppearanceKey}
@@ -655,11 +696,13 @@ export function AgentNewChatLanding() {
                   <Folder className="size-[13px] shrink-0" strokeWidth={1.5} />
                 )}
                 <span className="max-w-[260px] min-w-0 shrink truncate">
-                  {activeWorkspaceGroup?.workspace.name ?? "Select workspace"}
+                  {standaloneDraftActive
+                    ? "No workspace"
+                    : (activeWorkspaceGroup?.workspace.name ?? "Select workspace")}
                 </span>
                 <ChevronDown className="size-[13px] shrink-0" strokeWidth={1.5} />
               </button>
-              {!isHomeWorkspace ? (
+              {!standaloneDraftActive && !isHomeWorkspace ? (
               <button
                 ref={branchPickerRef}
                 type="button"
@@ -678,7 +721,7 @@ export function AgentNewChatLanding() {
                 <ChevronDown className="size-[13px] shrink-0" strokeWidth={1.5} />
               </button>
               ) : null}
-              {!isHomeWorkspace ? (
+              {!standaloneDraftActive && !isHomeWorkspace ? (
               <button
                 ref={targetPickerRef}
                 type="button"
@@ -816,12 +859,30 @@ export function AgentNewChatLanding() {
                 />
               </div>
               <VerticalFadedScroll
-                measureKey={`${workspaceQuery}\0${filteredWorkspaceGroups.length}`}
+                measureKey={`${workspaceQuery}\0${filteredWorkspaceGroups.length}\0${standaloneDraftActive ? 1 : 0}`}
                 scrollClassName="hide-scrollbar-y max-h-[min(320px,45vh)] min-h-0 overflow-y-auto overscroll-contain p-[4px]"
               >
+                <div
+                  className="group flex items-center gap-[6px] rounded-[var(--radius-tab)] px-[8px] py-[5px] font-sans text-[12.5px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)]"
+                >
+                  <button
+                    type="button"
+                    onClick={() => {
+                      startStandaloneChat();
+                      setWorkspacePickerOpen(false);
+                    }}
+                    className="flex min-w-0 flex-1 items-center gap-[8px] truncate text-left"
+                  >
+                    <MessageSquare className="size-[13px] shrink-0" strokeWidth={1.5} />
+                    <span className="min-w-0 flex-1 truncate">No workspace</span>
+                  </button>
+                  {standaloneDraftActive ? (
+                    <Check className="size-[13px] shrink-0" strokeWidth={2} />
+                  ) : null}
+                </div>
                 {filteredWorkspaceGroups.map((group) => {
                   const groupKey = group.workspaceKey;
-                  const current = groupKey === activeWorkspaceAppearanceKey;
+                  const current = !standaloneDraftActive && groupKey === activeWorkspaceAppearanceKey;
                   const isHomeRow =
                     Boolean(homeWorkspaceId) && group.workspace.id === homeWorkspaceId;
                   return (
@@ -833,6 +894,7 @@ export function AgentNewChatLanding() {
                         type="button"
                         onClick={() => {
                           void (async () => {
+                            setStandaloneDraftActive(false);
                             if (group.serverId && group.serverId !== activeServer.id) {
                               setActiveServer(group.serverId);
                             }

@@ -1048,6 +1048,30 @@ export async function createAndPromptAgentConversation(
   });
 }
 
+/** Create a no-workspace chat (temp dir sandbox) and send the first prompt. */
+export async function createAndPromptStandaloneAgentConversation(
+  input: AgentConversationCreateInput,
+  text: string,
+  attachments?: ImageAttachment[],
+  ids?: { clientEventId?: string; clientMessageId?: string; title?: string }
+): Promise<AgentConversationSnapshotResponse & { workspace: WorkspaceRecord }> {
+  return request(
+    `/api/agents/conversations/standalone/create-and-prompt`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        conversation: input,
+        text,
+        attachments,
+        clientEventId: ids?.clientEventId,
+        clientMessageId: ids?.clientMessageId,
+        title: ids?.title,
+      }),
+    },
+    { skipWorkspaceHeader: true }
+  );
+}
+
 export async function generateDraftTitle(
   text: string
 ): Promise<{ title: string }> {

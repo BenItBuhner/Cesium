@@ -7,6 +7,7 @@ export {
 } from "@cesium/client";
 export type {
   AgentRailGroupByMode,
+  AgentRailSectionId,
   AgentRailSettingsState,
   AgentsSettingsState,
   ChatFolderState,
@@ -22,3 +23,4 @@ export type {
   WorkspaceRailAppearance,
   WorkspaceSortMode,
 } from "@cesium/client";
+export { AGENT_RAIL_SECTION_IDS } from "@cesium/client";

@@ -6,6 +6,7 @@ import {
   CircleUserRound,
   GitBranchPlus,
   ListFilter,
+  MessageSquare,
   PanelLeftClose,
   Pin,
   Plus,
@@ -55,11 +56,13 @@ import { useServerConnections } from "@/components/preferences/ServerConnections
 import { useWorkspaceDirectory } from "@/contexts/WorkspaceDirectoryContext";
 import type {
   AgentRailGroupByMode,
+  AgentRailSectionId,
   ChatFolderState,
   ServerRailAppearance,
   WorkspaceRailAppearance,
   WorkspaceSortMode,
 } from "@/lib/global-settings";
+import { isStandaloneChatWorkspace } from "@/lib/types";
 import {
   getServerDisplayLabel,
   getServerRailAppearance,
@@ -88,6 +91,7 @@ import {
 } from "@/lib/workspace-rail-appearance";
 
 const PINNED_SECTION_WORKSPACE_ID = "__agentPinned__";
+const CHATS_SECTION_WORKSPACE_ID = "__agentStandaloneChats__";
 const AGENT_RAIL_CONVERSATION_DRAG_TYPE = "application/x-opencursor-agent-conversation";
 
 const COLLAPSED_WORKSPACES_STORAGE_KEY = "opencursor.agent-rail-collapsed-workspaces";
@@ -471,6 +475,7 @@ export function AgentWorkspaceRail() {
     selectedConversationId,
     startNewConversation,
     startNewChatInWorkspace,
+    startStandaloneChat,
     toggleLeftRailCollapsed,
     openConversationSummary,
     refreshConversationGroups,
@@ -629,6 +634,9 @@ export function AgentWorkspaceRail() {
     const seenKeys = new Set<string>();
     const result: typeof groups = [];
     for (const group of groups) {
+      if (isStandaloneChatWorkspace(group.workspace)) {
+        continue;
+      }
       const key = resolveGroupWorkspaceAppearanceKey(group, activeServer.id);
       if (seenKeys.has(key)) {
         continue;
@@ -638,6 +646,32 @@ export function AgentWorkspaceRail() {
     }
     return result;
   }, [activeServer.id, groups]);
+
+  const standaloneChatConversations = useMemo(() => {
+    const conversations: AgentRailConversationSummary[] = [];
+    for (const group of groups) {
+      if (!isStandaloneChatWorkspace(group.workspace)) {
+        continue;
+      }
+      for (const conversation of group.conversations) {
+        conversations.push(conversation);
+      }
+    }
+    conversations.sort(
+      (a, b) => b.updatedAt - a.updatedAt || a.title.localeCompare(b.title)
+    );
+    return conversations;
+  }, [groups]);
+
+  const railSectionOrder = useMemo(() => {
+    const order = agentRailSettings.sectionOrder ?? ["pinned", "chats", "workspaces"];
+    const hidden = new Set(agentRailSettings.hiddenSections ?? []);
+    return order.filter((id) => !hidden.has(id));
+  }, [agentRailSettings.hiddenSections, agentRailSettings.sectionOrder]);
+
+  const handleNewStandaloneChat = useCallback(() => {
+    startStandaloneChat();
+  }, [startStandaloneChat]);
 
   const handleActiveServerChange = useCallback(
     (serverId: string) => {
@@ -751,6 +785,40 @@ export function AgentWorkspaceRail() {
           },
         },
       }));
+    },
+    [updateSettings]
+  );
+
+  const setRailSectionOrder = useCallback(
+    (order: AgentRailSectionId[]) => {
+      patchAgentRailSettings({ sectionOrder: order });
+    },
+    [patchAgentRailSettings]
+  );
+
+  const setRailSectionHidden = useCallback(
+    (sectionId: AgentRailSectionId, hidden: boolean) => {
+      if (sectionId === "workspaces") {
+        return;
+      }
+      updateSettings((current) => {
+        const hiddenSections = new Set(current.general.agentRail.hiddenSections ?? []);
+        if (hidden) {
+          hiddenSections.add(sectionId);
+        } else {
+          hiddenSections.delete(sectionId);
+        }
+        return {
+          ...current,
+          general: {
+            ...current.general,
+            agentRail: {
+              ...current.general.agentRail,
+              hiddenSections: Array.from(hiddenSections),
+            },
+          },
+        };
+      });
     },
     [updateSettings]
   );
@@ -871,15 +939,17 @@ export function AgentWorkspaceRail() {
 
   const railListScrollMeasureKey = useMemo(
     () =>
-      `${visibleGroups.length}:${pinnedRailConversations.length}:${settings.general.chatFolders.length}:${railLoading ? 1 : 0}:${renameState?.conversationId ?? ""}:${collapsedFolderIds.size}:${editingWorkspaceKey ?? ""}`,
+      `${visibleGroups.length}:${standaloneChatConversations.length}:${pinnedRailConversations.length}:${settings.general.chatFolders.length}:${railLoading ? 1 : 0}:${renameState?.conversationId ?? ""}:${collapsedFolderIds.size}:${editingWorkspaceKey ?? ""}:${railSectionOrder.join(",")}`,
     [
       visibleGroups.length,
+      standaloneChatConversations.length,
       pinnedRailConversations.length,
       settings.general.chatFolders.length,
       railLoading,
       renameState?.conversationId,
       collapsedFolderIds.size,
       editingWorkspaceKey,
+      railSectionOrder,
     ]
   );
 
@@ -1871,115 +1941,127 @@ export function AgentWorkspaceRail() {
     updateConversationRenameDraft,
   ]);
 
-  const desktopRailCollapsed = leftRailCollapsed && !isMobile;
+  const chatsSection: ReactNode = useMemo(() => {
+    const isChatsHeaderCollapsed = collapsedWorkspaceIds.has(CHATS_SECTION_WORKSPACE_ID);
+    return (
+      <section className="pb-[12px]">
+        <div className="group flex items-center gap-[2px] px-px pb-[4px]">
+          <button
+            type="button"
+            onClick={() => toggleWorkspaceCollapsed(CHATS_SECTION_WORKSPACE_ID)}
+            className="group/wshead flex min-w-0 flex-1 items-center gap-[4px] rounded-[var(--radius-tab)] py-[2px] text-left"
+          >
+            <span className="relative grid size-[10px] shrink-0 place-items-center">
+              <MessageSquare
+                className="col-start-1 row-start-1 size-[10px] text-[var(--text-disabled)] group-hover/wshead:opacity-0"
+                strokeWidth={2}
+              />
+              <ChevronRight
+                className={`col-start-1 row-start-1 size-[10px] text-[var(--text-disabled)] opacity-0 group-hover/wshead:opacity-100 group-hover/wshead:text-[var(--text-secondary)] ${
+                  isChatsHeaderCollapsed ? "" : "rotate-90"
+                }`}
+                strokeWidth={2}
+              />
+            </span>
+            <span className="truncate font-sans text-[10.5px] font-medium text-[var(--text-disabled)] group-hover/wshead:text-[var(--text-primary)]">
+              Chats
+            </span>
+          </button>
+          <button
+            type="button"
+            onClick={handleNewStandaloneChat}
+            className="flex size-[18px] shrink-0 items-center justify-center rounded-[var(--agent-control-radius)] text-[var(--text-disabled)] opacity-0 transition-colors group-hover:opacity-100 hover:bg-[var(--agent-card-bg)] hover:text-[var(--text-primary)]"
+            aria-label="Start new chat without workspace"
+            title="New chat (no workspace)"
+          >
+            <Plus className="size-[12px]" strokeWidth={1.5} />
+          </button>
+        </div>
+        {!isChatsHeaderCollapsed ? (
+          <div className="flex flex-col gap-[2px]">
+            {standaloneChatConversations.length === 0 ? (
+              <button
+                type="button"
+                onClick={handleNewStandaloneChat}
+                className="rounded-[var(--radius-tab)] px-[8px] py-[6px] text-left font-sans text-[12px] text-[var(--text-disabled)] transition-colors hover:bg-[var(--accent-bg)] hover:text-[var(--text-secondary)]"
+              >
+                New chat without a workspace
+              </button>
+            ) : (
+              standaloneChatConversations.map((conversation, index) => {
+                const chatsRowSection: RailConversationRowSection = {
+                  inPinnedSection: false,
+                  workspaceId: conversation.workspaceId,
+                  orderedConversations: standaloneChatConversations,
+                };
+                const railKey = getRailConversationKey(conversation);
+                return (
+                  <AgentConversationRow
+                    key={conversation.conversationKey ?? conversation.id}
+                    conversation={conversation}
+                    rowIndex={index}
+                    selected={isConversationChatSelected(conversation)}
+                    bulkSelectMode={bulkSelectMode}
+                    bulkSelected={bulkSelectMode && bulkSelectedKeys.has(railKey)}
+                    editing={renameState?.conversationId === conversation.id}
+                    editValue={renameState?.draft}
+                    onBeginRename={() => beginConversationRename(conversation)}
+                    onEditValueChange={updateConversationRenameDraft}
+                    onCommitRename={commitConversationRename}
+                    onCancelRename={cancelConversationRename}
+                    onSelect={(event) => {
+                      if (bulkSelectMode) {
+                        handleBulkRowClick(event, conversation, chatsRowSection);
+                        return;
+                      }
+                      handleConversationSelect(conversation);
+                    }}
+                    onContextMenu={(e, currentConversation) =>
+                      handleConversationContextMenu(e, currentConversation, {
+                        inPinnedSection: false,
+                        orderedConversations: standaloneChatConversations,
+                      })
+                    }
+                    showOverflowMenu={experimentalIpadCustomButtons}
+                    onOverflowMenu={(anchor) =>
+                      handleConversationOverflowMenu(conversation, anchor, {
+                        inPinnedSection: false,
+                        orderedConversations: standaloneChatConversations,
+                      })
+                    }
+                  />
+                );
+              })
+            )}
+          </div>
+        ) : null}
+      </section>
+    );
+  }, [
+    beginConversationRename,
+    bulkSelectMode,
+    bulkSelectedKeys,
+    cancelConversationRename,
+    collapsedWorkspaceIds,
+    commitConversationRename,
+    experimentalIpadCustomButtons,
+    handleBulkRowClick,
+    handleConversationContextMenu,
+    handleConversationOverflowMenu,
+    handleConversationSelect,
+    handleNewStandaloneChat,
+    isConversationChatSelected,
+    renameState?.conversationId,
+    renameState?.draft,
+    standaloneChatConversations,
+    toggleWorkspaceCollapsed,
+    updateConversationRenameDraft,
+  ]);
 
-  return (
-    <>
-      {!desktopRailCollapsed ? (
-        <div
-          className="flex h-full flex-col bg-[var(--agent-panel-bg)]"
-        >
-          {bulkSelectMode ? (
-            <AgentRailBulkSelectBar
-              selectedCount={bulkSelectedKeys.size}
-              showPin={!bulkSectionPinned}
-              showUnpin={bulkSectionPinned}
-              topBarPadClass={railTopBarPadClass}
-              onArchive={handleBulkArchive}
-              onPin={handleBulkPin}
-              onUnpin={handleBulkUnpin}
-              onCancel={exitBulkSelect}
-            />
-          ) : (
-            <div
-              className={`flex shrink-0 items-center gap-[8px] pt-[11px] ${railTopBarPadClass}`}
-              data-electron-drag-host
-            >
-              <button
-                type="button"
-                onClick={toggleLeftRailCollapsed}
-                data-electron-no-drag
-                className="flex size-[18px] shrink-0 items-center justify-center rounded-[var(--agent-control-radius)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--agent-card-bg)] hover:text-[var(--text-primary)]"
-                aria-label="Collapse workspace rail"
-                title="Collapse workspace rail"
-              >
-                <PanelLeftClose className="size-[16px]" strokeWidth={1.5} />
-              </button>
-              <button
-                type="button"
-                onClick={() => setRecentChatsOpen(true)}
-                data-electron-no-drag
-                className="flex size-[18px] shrink-0 items-center justify-center rounded-[var(--agent-control-radius)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--agent-card-bg)] hover:text-[var(--text-primary)]"
-                aria-label="Search all chats"
-                title="Search all chats"
-              >
-                <Search className="size-[16px]" strokeWidth={1.5} />
-              </button>
-              <button
-                type="button"
-                onClick={handleNewChat}
-                data-perf="agent-rail-new-chat"
-                data-electron-no-drag
-                className="ml-auto flex size-[18px] shrink-0 items-center justify-center rounded-[var(--agent-control-radius)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--agent-card-bg)] hover:text-[var(--text-primary)]"
-                aria-label="Start new chat"
-                title="Start new chat"
-              >
-                <Plus className="size-[16px]" strokeWidth={1.5} />
-              </button>
-            </div>
-          )}
-
-          {!leftRailCollapsed ? (
-            <>
-              <AgentRailConversationListScroll measureKey={railListScrollMeasureKey}>
-          {railLoading ? (
-            <div className="flex min-h-[120px] flex-col items-center justify-center gap-[8px] px-[10px] text-center font-sans text-[13px] text-[var(--text-secondary)]">
-              <span>Loading chats...</span>
-              {railLoadError ? (
-                <>
-                  <span className="text-[12px] text-[var(--text-disabled)]">{railLoadError}</span>
-                  <button
-                    type="button"
-                    onClick={() => void refreshConversationGroups()}
-                    className="rounded-[var(--radius-tab)] border border-[var(--border-card)] px-[10px] py-[5px] text-[12px] text-[var(--text-primary)] transition-colors hover:bg-[var(--bg-card)]"
-                  >
-                    Retry
-                  </button>
-                </>
-              ) : null}
-            </div>
-          ) : railLoadError ? (
-            <div className="flex min-h-[120px] flex-col items-center justify-center gap-[8px] px-[10px] text-center font-sans text-[13px] text-[var(--text-secondary)]">
-              <span>{railLoadError}</span>
-              <button
-                type="button"
-                onClick={() => void refreshConversationGroups()}
-                className="rounded-[var(--radius-tab)] border border-[var(--border-card)] px-[10px] py-[5px] text-[12px] text-[var(--text-primary)] transition-colors hover:bg-[var(--bg-card)]"
-              >
-                Retry
-              </button>
-            </div>
-          ) : visibleGroups.length === 0 && pinnedRailConversations.length === 0 ? (
-            <div className="flex min-h-[120px] flex-col items-center justify-center gap-[8px] px-[10px] text-center font-sans text-[13px] text-[var(--text-secondary)]">
-              <span>
-                {railFilterActive
-                  ? "No conversations match the current filters."
-                  : "No agent conversations yet."}
-              </span>
-              {railFilterActive ? (
-                <button
-                  type="button"
-                  onClick={clearRailFilters}
-                  className="rounded-[var(--radius-tab)] border border-[var(--border-card)] px-[10px] py-[5px] text-[12px] text-[var(--text-primary)] transition-colors hover:bg-[var(--bg-card)]"
-                >
-                  Clear filters
-                </button>
-              ) : null}
-            </div>
-          ) : (
-            <>
-              {pinnedSection}
-              {visibleGroups.map((group) => {
+  const workspaceGroupsSection: ReactNode = useMemo(() => {
+    return (
+      <>
+        {visibleGroups.map((group) => {
                 const groupKey = resolveGroupWorkspaceAppearanceKey(group, activeServer.id);
                 const isHomeWorkspace = Boolean(
                   homeWorkspaceId && group.workspace.id === homeWorkspaceId
@@ -2311,7 +2393,173 @@ export function AgentWorkspaceRail() {
                 </section>
               );
             })}
-            </>
+      </>
+    );
+  }, [
+    activeServer.id,
+    activeWorkspaceId,
+    agentRailSettings.groupBy,
+    beginConversationRename,
+    bulkSelectMode,
+    bulkSelectedKeys,
+    cancelConversationRename,
+    collapsedFolderIds,
+    collapsedWorkspaceIds,
+    commitConversationRename,
+    draggingConversationId,
+    draggingWorkspaceId,
+    editingFolderId,
+    editingWorkspaceKey,
+    experimentalIpadCustomButtons,
+    gitStatus?.currentBranch,
+    gitStatus?.isGitRepo,
+    handleBulkRowClick,
+    handleConversationContextMenu,
+    handleConversationDragEnd,
+    handleConversationDragStart,
+    handleConversationOverflowMenu,
+    handleConversationSelect,
+    handleNewChatForWorkspace,
+    homeWorkspaceId,
+    isConversationChatSelected,
+    renameState?.conversationId,
+    renameState?.draft,
+    settings.general.chatFolders,
+    toggleFolderCollapsed,
+    toggleWorkspaceCollapsed,
+    updateConversationRenameDraft,
+    updateFolder,
+    visibleGroups,
+    workspaceBranchLabel,
+    workspaceRailAppearances,
+  ]);
+
+  const orderedRailSections = useMemo(() => {
+    const nodes: ReactNode[] = [];
+    for (const sectionId of railSectionOrder) {
+      if (sectionId === "pinned") {
+        if (pinnedSection) nodes.push(<div key="pinned">{pinnedSection}</div>);
+      } else if (sectionId === "chats") {
+        nodes.push(<div key="chats">{chatsSection}</div>);
+      } else if (sectionId === "workspaces") {
+        nodes.push(<div key="workspaces">{workspaceGroupsSection}</div>);
+      }
+    }
+    return nodes;
+  }, [chatsSection, pinnedSection, railSectionOrder, workspaceGroupsSection]);
+
+  const desktopRailCollapsed = leftRailCollapsed && !isMobile;
+  const railHasContent =
+    pinnedRailConversations.length > 0 ||
+    standaloneChatConversations.length > 0 ||
+    visibleGroups.length > 0 ||
+    railSectionOrder.includes("chats");
+
+  return (
+    <>
+      {!desktopRailCollapsed ? (
+        <div
+          className="flex h-full flex-col bg-[var(--agent-panel-bg)]"
+        >
+          {bulkSelectMode ? (
+            <AgentRailBulkSelectBar
+              selectedCount={bulkSelectedKeys.size}
+              showPin={!bulkSectionPinned}
+              showUnpin={bulkSectionPinned}
+              topBarPadClass={railTopBarPadClass}
+              onArchive={handleBulkArchive}
+              onPin={handleBulkPin}
+              onUnpin={handleBulkUnpin}
+              onCancel={exitBulkSelect}
+            />
+          ) : (
+            <div
+              className={`flex shrink-0 items-center gap-[8px] pt-[11px] ${railTopBarPadClass}`}
+              data-electron-drag-host
+            >
+              <button
+                type="button"
+                onClick={toggleLeftRailCollapsed}
+                data-electron-no-drag
+                className="flex size-[18px] shrink-0 items-center justify-center rounded-[var(--agent-control-radius)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--agent-card-bg)] hover:text-[var(--text-primary)]"
+                aria-label="Collapse workspace rail"
+                title="Collapse workspace rail"
+              >
+                <PanelLeftClose className="size-[16px]" strokeWidth={1.5} />
+              </button>
+              <button
+                type="button"
+                onClick={() => setRecentChatsOpen(true)}
+                data-electron-no-drag
+                className="flex size-[18px] shrink-0 items-center justify-center rounded-[var(--agent-control-radius)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--agent-card-bg)] hover:text-[var(--text-primary)]"
+                aria-label="Search all chats"
+                title="Search all chats"
+              >
+                <Search className="size-[16px]" strokeWidth={1.5} />
+              </button>
+              <button
+                type="button"
+                onClick={handleNewChat}
+                data-perf="agent-rail-new-chat"
+                data-electron-no-drag
+                className="ml-auto flex size-[18px] shrink-0 items-center justify-center rounded-[var(--agent-control-radius)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--agent-card-bg)] hover:text-[var(--text-primary)]"
+                aria-label="Start new chat"
+                title="Start new chat"
+              >
+                <Plus className="size-[16px]" strokeWidth={1.5} />
+              </button>
+            </div>
+          )}
+
+          {!leftRailCollapsed ? (
+            <>
+              <AgentRailConversationListScroll measureKey={railListScrollMeasureKey}>
+          {railLoading ? (
+            <div className="flex min-h-[120px] flex-col items-center justify-center gap-[8px] px-[10px] text-center font-sans text-[13px] text-[var(--text-secondary)]">
+              <span>Loading chats...</span>
+              {railLoadError ? (
+                <>
+                  <span className="text-[12px] text-[var(--text-disabled)]">{railLoadError}</span>
+                  <button
+                    type="button"
+                    onClick={() => void refreshConversationGroups()}
+                    className="rounded-[var(--radius-tab)] border border-[var(--border-card)] px-[10px] py-[5px] text-[12px] text-[var(--text-primary)] transition-colors hover:bg-[var(--bg-card)]"
+                  >
+                    Retry
+                  </button>
+                </>
+              ) : null}
+            </div>
+          ) : railLoadError ? (
+            <div className="flex min-h-[120px] flex-col items-center justify-center gap-[8px] px-[10px] text-center font-sans text-[13px] text-[var(--text-secondary)]">
+              <span>{railLoadError}</span>
+              <button
+                type="button"
+                onClick={() => void refreshConversationGroups()}
+                className="rounded-[var(--radius-tab)] border border-[var(--border-card)] px-[10px] py-[5px] text-[12px] text-[var(--text-primary)] transition-colors hover:bg-[var(--bg-card)]"
+              >
+                Retry
+              </button>
+            </div>
+          ) : !railHasContent ? (
+            <div className="flex min-h-[120px] flex-col items-center justify-center gap-[8px] px-[10px] text-center font-sans text-[13px] text-[var(--text-secondary)]">
+              <span>
+                {railFilterActive
+                  ? "No conversations match the current filters."
+                  : "No agent conversations yet."}
+              </span>
+              {railFilterActive ? (
+                <button
+                  type="button"
+                  onClick={clearRailFilters}
+                  className="rounded-[var(--radius-tab)] border border-[var(--border-card)] px-[10px] py-[5px] text-[12px] text-[var(--text-primary)] transition-colors hover:bg-[var(--bg-card)]"
+                >
+                  Clear filters
+                </button>
+              ) : null}
+            </div>
+          ) : (
+            <>{orderedRailSections}</>
           )}
               </AgentRailConversationListScroll>
               {editingServerId === activeServer.id && !isLocalDeviceServer(activeServer) ? (
@@ -2459,6 +2707,10 @@ export function AgentWorkspaceRail() {
         setGroupBy={setAgentRailGroupBy}
         showIcons={agentRailSettings.showIcons}
         setShowIcons={(value) => patchAgentRailSettings({ showIcons: value })}
+        sectionOrder={agentRailSettings.sectionOrder ?? ["pinned", "chats", "workspaces"]}
+        hiddenSections={agentRailSettings.hiddenSections ?? []}
+        setSectionOrder={setRailSectionOrder}
+        setSectionHidden={setRailSectionHidden}
       />
     </>
   );

@@ -12,6 +12,7 @@ import {
 import { useServerConnections } from "@/components/preferences/ServerConnectionsProvider";
 import { fetchWorkspacesForServer } from "@/lib/server-api";
 import type { WorkspaceRecord } from "@/lib/types";
+import { isStandaloneChatWorkspace } from "@/lib/types";
 
 export type DirectoryWorkspaceRecord = WorkspaceRecord & {
   serverId: string;
@@ -80,7 +81,9 @@ export function WorkspaceDirectoryProvider({ children }: { children: ReactNode }
               serverId: server.id,
               baseUrl: server.baseUrl,
             });
-            return payload.workspaces.map((workspace): DirectoryWorkspaceRecord => ({
+            return payload.workspaces
+              .filter((workspace) => !isStandaloneChatWorkspace(workspace))
+              .map((workspace): DirectoryWorkspaceRecord => ({
               ...workspace,
               serverId: server.id,
               serverLabel: server.label,
