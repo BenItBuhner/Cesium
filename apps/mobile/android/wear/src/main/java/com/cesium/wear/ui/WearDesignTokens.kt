@@ -27,14 +27,14 @@ internal object CesiumWearColors {
 
 internal object CesiumWearSpacing {
   val ScreenHorizontal = 22.dp
-  val ScreenVertical = 24.dp
-  val CardPadding = 12.dp
+  val ScreenVertical = 16.dp
+  val CardPadding = 10.dp
   val ChipHorizontal = 14.dp
   val ChipVertical = 10.dp
   val GapSmall = 6.dp
-  val Gap = 10.dp
-  val GapLarge = 16.dp
-  val BottomControl = 62.dp
+  val Gap = 8.dp
+  val GapLarge = 10.dp
+  val BottomControl = 52.dp
 }
 
 internal object CesiumWearRadius {
@@ -48,5 +48,5 @@ internal object CesiumWearType {
   val Meta = CesiumDesignTokens.Dark.FontMeta.sp
   val Body = CesiumDesignTokens.Dark.FontBody.sp
   val BodyLarge = 16.sp
-  val Hero = 22.sp
+  val Hero = 20.sp
 }

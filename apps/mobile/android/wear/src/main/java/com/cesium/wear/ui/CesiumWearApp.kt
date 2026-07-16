@@ -191,6 +191,7 @@ private fun GlanceScreen(
   Column(
     modifier = Modifier
       .fillMaxSize()
+      .verticalScroll(rememberScrollState())
       .padding(horizontal = CesiumWearSpacing.ScreenHorizontal, vertical = CesiumWearSpacing.ScreenVertical),
     verticalArrangement = Arrangement.Center,
     horizontalAlignment = Alignment.CenterHorizontally
@@ -202,7 +203,7 @@ private fun GlanceScreen(
       Spacer(Modifier.height(CesiumWearSpacing.GapSmall))
       HeroText(projection?.title ?: "No active agent", maxLines = 2)
       Spacer(Modifier.height(CesiumWearSpacing.Gap))
-      ActivityPanel(projection?.currentActivity ?: "Waiting for phone or server sync")
+      ActivityPanel(projection?.currentActivity ?: "Waiting for phone sync")
       Spacer(Modifier.height(CesiumWearSpacing.Gap))
       projection?.let {
         AgentProgress(it)
@@ -598,11 +599,11 @@ private fun ActivityPanel(text: String) {
   ) {
     BasicText(
       text,
-      maxLines = 2,
+      maxLines = 3,
       overflow = TextOverflow.Ellipsis,
       style = TextStyle(
         color = CesiumWearColors.TextPrimary,
-        fontSize = CesiumWearType.BodyLarge,
+        fontSize = CesiumWearType.Body,
         fontWeight = FontWeight.Medium,
         textAlign = TextAlign.Center
       )
