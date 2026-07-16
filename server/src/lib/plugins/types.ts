@@ -85,3 +85,63 @@ export type AgentPluginToolDisplay = {
   pluginIconUrl?: string;
   mcpServerIds: string[];
 };
+
+export type AgentPluginHarnessCapabilityPublic = {
+  backendId: AgentBackendId;
+  nativeMcp: boolean;
+  promptSkills: boolean;
+  attachment:
+    | "cesium-tools"
+    | "sdk-mcp"
+    | "acp-mcp"
+    | "workspace-mcp-config"
+    | "prompt-only";
+  notes?: string;
+};
+
+export type AgentPluginDiscoveryEntryPublic = {
+  definition: AgentPluginDefinition;
+  source: "builtin" | "local" | "remote" | "github";
+  sourceLabel: string;
+};
+
+export type AgentPluginDiscoveryResultPublic = {
+  query: string;
+  sources: Array<{
+    id: "builtin" | "local" | "remote" | "github";
+    label: string;
+    url?: string;
+    pluginCount: number;
+    error?: string;
+  }>;
+  plugins: AgentPluginDiscoveryEntryPublic[];
+};
+
+export type AgentPluginHarnessVerificationPublic = {
+  backendId: AgentBackendId;
+  nativeMcp: boolean;
+  promptSkills: boolean;
+  attachment: AgentPluginHarnessCapabilityPublic["attachment"];
+  notes?: string;
+  pluginCount: number;
+  skillCount: number;
+  mcpServerIds: string[];
+  nativeMcpServerIds: string[];
+  skillTitles: string[];
+  warnings: Array<{ pluginId: string; pluginName: string; reason: string }>;
+  identified: boolean;
+};
+
+export type AgentPluginVerificationReportPublic = {
+  workspaceId: string;
+  workspaceRoot: string;
+  installedPluginCount: number;
+  enabledPluginCount: number;
+  harnesses: AgentPluginHarnessVerificationPublic[];
+  summary: {
+    fullyNativeMcp: AgentBackendId[];
+    promptOnlyMcp: AgentBackendId[];
+    withWarnings: AgentBackendId[];
+    identifyingPlugins: AgentBackendId[];
+  };
+};

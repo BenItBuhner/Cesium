@@ -51,12 +51,14 @@ export {
   detachExtensionSurfaceSessionClient,
   disableAllExtensionsClient,
   disconnectPiAgentOAuth,
+  discoverAgentPlugins,
   discoverCesiumProviderModels,
   evaluateBrowserControlTab,
   executeInstalledExtensionCommand,
   fetchAgentContextUsage,
   fetchAgentConversationSnapshot,
   fetchAgentDeploymentHints,
+  fetchAgentPluginHarnessCapabilities,
   fetchAgentPlugins,
   fetchCesiumAgentSettings,
   fetchCesiumModelCatalog,
@@ -171,6 +173,7 @@ export {
   uploadAttachments,
   uploadFile,
   upsertMcpServer,
+  verifyAgentPlugins,
   writeFile,
 } from "@cesium/client";
 export type {

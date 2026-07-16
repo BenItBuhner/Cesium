@@ -1,44 +1,5 @@
-import type { AgentBackendId } from "../agents/types.js";
-import type { AgentPluginDefinition, AgentPluginHarnessSupport } from "./types.js";
-
-const ALL_NATIVE_MCP_BACKENDS: AgentBackendId[] = [
-  "cesium-agent",
-  "cursor-sdk",
-  "claude-code-sdk",
-  "devin-acp",
-  "codex-app-server",
-  "opencode-server",
-  "google-antigravity-cli",
-  "pi-agent",
-];
-
-function support(
-  backendId: AgentBackendId,
-  nativeMcp: boolean,
-  notes?: string
-): AgentPluginHarnessSupport {
-  return {
-    backendId,
-    nativeMcp,
-    promptSkills: true,
-    notes,
-  };
-}
-
-function standardHarnessSupport(): AgentPluginDefinition["harnesses"] {
-  return Object.fromEntries(
-    ALL_NATIVE_MCP_BACKENDS.map((backendId) => [
-      backendId,
-      support(
-        backendId,
-        backendId !== "codex-app-server",
-        backendId === "codex-app-server"
-          ? "Codex app server receives plugin skills and MCP mirror instructions when native MCP is unavailable."
-          : undefined
-      ),
-    ])
-  ) as AgentPluginDefinition["harnesses"];
-}
+import type { AgentPluginDefinition } from "./types.js";
+import { standardHarnessSupport } from "./harness-support.js";
 
 export const BUILT_IN_AGENT_PLUGINS: AgentPluginDefinition[] = [
   {
@@ -48,7 +9,7 @@ export const BUILT_IN_AGENT_PLUGINS: AgentPluginDefinition[] = [
     description: "Fetch current documentation and code examples for libraries and frameworks.",
     iconUrl: "https://context7.com/favicon.ico",
     builtIn: true,
-    marketplace: { publisher: "Context7" },
+    marketplace: { id: "context7", publisher: "Context7" },
     mcp: [{ id: "context7", presetId: "context7" }],
     skills: [
       {
@@ -71,7 +32,7 @@ export const BUILT_IN_AGENT_PLUGINS: AgentPluginDefinition[] = [
     description: "Read and update Linear issues, comments, teams, and project metadata.",
     iconUrl: "https://linear.app/favicon.ico",
     builtIn: true,
-    marketplace: { publisher: "Linear" },
+    marketplace: { id: "linear", publisher: "Linear" },
     mcp: [{ id: "linear", presetId: "linear" }],
     skills: [
       {
@@ -94,7 +55,7 @@ export const BUILT_IN_AGENT_PLUGINS: AgentPluginDefinition[] = [
     description: "Search, create, and update Notion pages, databases, tasks, and documentation.",
     iconUrl: "https://www.notion.so/images/favicon.ico",
     builtIn: true,
-    marketplace: { publisher: "Notion" },
+    marketplace: { id: "notion", publisher: "Notion" },
     mcp: [{ id: "notion", presetId: "notion" }],
     skills: [
       {
@@ -117,7 +78,7 @@ export const BUILT_IN_AGENT_PLUGINS: AgentPluginDefinition[] = [
     description: "Read designs, generate screens, sync components, and bridge code with Figma.",
     iconUrl: "https://static.figma.com/app/icon/1/favicon.png",
     builtIn: true,
-    marketplace: { publisher: "Figma" },
+    marketplace: { id: "figma", publisher: "Figma" },
     mcp: [{ id: "figma", presetId: "figma" }],
     skills: [
       {
@@ -140,7 +101,7 @@ export const BUILT_IN_AGENT_PLUGINS: AgentPluginDefinition[] = [
     description: "Search and interact with Slack workspace conversations.",
     iconUrl: "https://a.slack-edge.com/80588/marketing/img/meta/favicon-32.png",
     builtIn: true,
-    marketplace: { publisher: "Slack" },
+    marketplace: { id: "slack", publisher: "Slack" },
     mcp: [{ id: "slack", presetId: "slack" }],
     skills: [
       {
@@ -160,7 +121,7 @@ export const BUILT_IN_AGENT_PLUGINS: AgentPluginDefinition[] = [
     description: "Create and manage Todoist tasks from agent workflows.",
     iconUrl: "https://todoist.com/favicon.ico",
     builtIn: true,
-    marketplace: { publisher: "Todoist" },
+    marketplace: { id: "todoist", publisher: "Todoist" },
     mcp: [{ id: "todoist", presetId: "todoist" }],
     skills: [
       {

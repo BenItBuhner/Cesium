@@ -6,6 +6,10 @@ import {
 } from "../agents/mcp-export-adapter.js";
 import { listEnabledMcpServers } from "../mcp/server-store.js";
 import {
+  getHarnessPluginCapability,
+  harnessCompatibilityWarnings,
+} from "./harness-support.js";
+import {
   getAgentPluginDefinition,
   listAgentPluginInstalls,
 } from "./store.js";
@@ -15,6 +19,7 @@ import type {
   AgentPluginInstallRecord,
   AgentPluginToolDisplay,
 } from "./types.js";
+import { syncWorkspaceAntigravityMcpConfig } from "./workspace-mcp-sync.js";
 
 export type ResolvedAgentPlugin = {
   definition: AgentPluginDefinition;
@@ -42,11 +47,15 @@ function harnessEnabled(record: AgentPluginInstallRecord, backendId: AgentBacken
 }
 
 function supportsNativeMcp(definition: AgentPluginDefinition, backendId: AgentBackendId): boolean {
-  return definition.harnesses?.[backendId]?.nativeMcp !== false;
+  const override = definition.harnesses?.[backendId]?.nativeMcp;
+  if (typeof override === "boolean") return override;
+  return getHarnessPluginCapability(backendId).nativeMcp;
 }
 
 function supportsPromptSkills(definition: AgentPluginDefinition, backendId: AgentBackendId): boolean {
-  return definition.harnesses?.[backendId]?.promptSkills !== false;
+  const override = definition.harnesses?.[backendId]?.promptSkills;
+  if (typeof override === "boolean") return override;
+  return getHarnessPluginCapability(backendId).promptSkills;
 }
 
 function renderPluginSkills(plugins: ResolvedAgentPlugin[], backendId: AgentBackendId): string {
@@ -129,15 +138,34 @@ export async function resolveAgentPluginAttachments(input: {
         reason: "No enabled MCP servers are currently available for this plugin.",
       });
     }
-    if (definition.mcp.length > 0 && !supportsNativeMcp(definition, input.backendId)) {
-      warnings.push({
+    warnings.push(
+      ...harnessCompatibilityWarnings({
+        backendId: input.backendId,
         pluginId: definition.pluginId,
         pluginName: definition.displayName,
+        hasMcp: definition.mcp.length > 0,
+      })
+    );
+    plugins.push({ definition, install, mcpServers });
+  }
+
+  if (input.backendId === "google-antigravity-cli") {
+    try {
+      await syncWorkspaceAntigravityMcpConfig({
+        workspaceId: input.workspaceId,
+        workspaceRoot: input.workspaceRoot,
+      });
+    } catch (error) {
+      warnings.push({
+        pluginId: "workspace-mcp-sync",
+        pluginName: "Antigravity MCP sync",
         backendId: input.backendId,
-        reason: "This harness does not currently support native plugin MCP attachment; using prompt guidance instead.",
+        reason:
+          error instanceof Error
+            ? `Failed to sync .agents/mcp_config.json: ${error.message}`
+            : "Failed to sync .agents/mcp_config.json.",
       });
     }
-    plugins.push({ definition, install, mcpServers });
   }
 
   const mcpServers = plugins.flatMap((plugin) =>
