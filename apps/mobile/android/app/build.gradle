@@ -36,6 +36,28 @@ android {
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     missingDimensionStrategy "detox", "full"
   }
+
+  signingConfigs {
+    release {
+      def keystorePath = System.getenv("ANDROID_KEYSTORE_PATH")
+      if (keystorePath) {
+        storeFile file(keystorePath)
+        storePassword System.getenv("ANDROID_KEYSTORE_PASSWORD")
+        keyAlias System.getenv("ANDROID_KEY_ALIAS")
+        keyPassword System.getenv("ANDROID_KEY_PASSWORD")
+      }
+    }
+  }
+
+  buildTypes {
+    release {
+      // Use a production keystore when ANDROID_KEYSTORE_* env vars are set;
+      // otherwise fall back to the debug keystore for sideload / CI builds.
+      signingConfig System.getenv("ANDROID_KEYSTORE_PATH")
+        ? signingConfigs.release
+        : signingConfigs.debug
+    }
+  }
 }
 
 dependencies {

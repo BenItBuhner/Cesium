@@ -1,0 +1,180 @@
+name: Mobile Android Release
+
+on:
+  push:
+    tags:
+      - "mobile-v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to release (e.g. mobile-v0.1.0). Leave empty when pushing a tag."
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and publish release
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Resolve release tag
+        id: tag
+        env:
+          INPUT_TAG: ${{ github.event.inputs.tag }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          if [ -n "$INPUT_TAG" ]; then
+            printf 'value=%s\n' "$INPUT_TAG" >> "$GITHUB_OUTPUT"
+          else
+            printf 'value=%s\n' "$REF_NAME" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Parse release version
+        id: version
+        env:
+          RELEASE_TAG: ${{ steps.tag.outputs.value }}
+        run: |
+          TAG="$RELEASE_TAG"
+          if [[ ! "$TAG" =~ ^mobile-v([0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?)$ ]]; then
+            echo "Tag must look like mobile-v1.2.3 (got: $TAG)" >&2
+            exit 1
+          fi
+          echo "value=${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.tag.outputs.value }}
+          fetch-depth: 0
+
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@v1.3.1
+        with:
+          tool-cache: false
+          android: false
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: true
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android NDK and CMake
+        run: |
+          yes | sdkmanager --licenses >/dev/null
+          sdkmanager "ndk;27.0.12077973" "cmake;3.31.6"
+
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('apps/mobile/android/**/*.gradle*', 'apps/mobile/android/gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
+
+      - name: Install dependencies
+        run: |
+          npm ci
+          rm -f server/node_modules/cesium
+
+      - name: Build shared packages
+        run: npm run build:packages
+
+      - name: Decode release keystore
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [ -z "$ANDROID_KEYSTORE_BASE64" ]; then
+            echo "No ANDROID_KEYSTORE_BASE64 secret configured; release APKs will use debug signing."
+            exit 0
+          fi
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > /tmp/cesium-release.jks
+          echo "ANDROID_KEYSTORE_PATH=/tmp/cesium-release.jks" >> "$GITHUB_ENV"
+          echo "ANDROID_KEYSTORE_PASSWORD=$ANDROID_KEYSTORE_PASSWORD" >> "$GITHUB_ENV"
+          echo "ANDROID_KEY_ALIAS=$ANDROID_KEY_ALIAS" >> "$GITHUB_ENV"
+          echo "ANDROID_KEY_PASSWORD=$ANDROID_KEY_PASSWORD" >> "$GITHUB_ENV"
+
+      - name: Build Android release APKs
+        working-directory: apps/mobile
+        env:
+          ORG_GRADLE_PROJECT_reactNativeArchitectures: arm64-v8a,armeabi-v7a
+        run: npm run build:android:release
+
+      - name: Prepare release assets
+        env:
+          VERSION: ${{ steps.version.outputs.value }}
+          TAG: ${{ steps.tag.outputs.value }}
+        run: |
+          mkdir -p dist/mobile-android
+          cp apps/mobile/android/app/build/outputs/apk/release/app-release.apk \
+            "dist/mobile-android/cesium-mobile-${VERSION}.apk"
+          cp apps/mobile/android/wear/build/outputs/apk/release/wear-release.apk \
+            "dist/mobile-android/cesium-wear-${VERSION}.apk"
+          printf '%s\n' "$TAG" > dist/mobile-android/RELEASE_TAG.txt
+          printf '%s\n' "$VERSION" > dist/mobile-android/VERSION.txt
+
+      - name: Extract changelog section
+        working-directory: apps/mobile
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.value }}
+        run: npm run changelog:extract -- "$RELEASE_VERSION" > "$RUNNER_TEMP/changelog-section.md"
+
+      - name: Build release notes
+        id: changelog
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.value }}
+        run: |
+          NOTES_FILE="$RUNNER_TEMP/release-notes.md"
+          {
+            echo "## What's changed"
+            echo
+            cat "$RUNNER_TEMP/changelog-section.md"
+            echo
+            echo "## Install"
+            echo
+            echo "Download the phone APK below and sideload it on Android 8+:"
+            echo
+            echo '```bash'
+            echo "adb install -r cesium-mobile-${RELEASE_VERSION}.apk"
+            echo '```'
+            echo
+            echo "The Wear OS companion APK is included for paired watch installs."
+          } > "$NOTES_FILE"
+          echo "path=$NOTES_FILE" >> "$GITHUB_OUTPUT"
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.value }}
+          name: Cesium Mobile v${{ steps.version.outputs.value }}
+          body_path: ${{ steps.changelog.outputs.path }}
+          files: |
+            dist/mobile-android/cesium-mobile-${{ steps.version.outputs.value }}.apk
+            dist/mobile-android/cesium-wear-${{ steps.version.outputs.value }}.apk
+          draft: false
+          prerelease: ${{ contains(steps.version.outputs.value, '-') }}
+          generate_release_notes: false

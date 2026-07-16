@@ -21,6 +21,26 @@ android {
   buildFeatures {
     compose = true
   }
+
+  signingConfigs {
+    release {
+      def keystorePath = System.getenv("ANDROID_KEYSTORE_PATH")
+      if (keystorePath) {
+        storeFile file(keystorePath)
+        storePassword System.getenv("ANDROID_KEYSTORE_PASSWORD")
+        keyAlias System.getenv("ANDROID_KEY_ALIAS")
+        keyPassword System.getenv("ANDROID_KEY_PASSWORD")
+      }
+    }
+  }
+
+  buildTypes {
+    release {
+      signingConfig System.getenv("ANDROID_KEYSTORE_PATH")
+        ? signingConfigs.release
+        : signingConfigs.debug
+    }
+  }
 }
 
 dependencies {

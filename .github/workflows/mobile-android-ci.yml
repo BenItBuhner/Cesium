@@ -1,0 +1,135 @@
+name: Mobile Android CI
+
+on:
+  pull_request:
+    paths:
+      - "apps/mobile/**"
+      - "packages/ui-native/**"
+      - "packages/client/**"
+      - "packages/core/**"
+      - "packages/design/**"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/mobile-android-ci.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: mobile-android-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  build:
+    name: Build debug APKs
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@v1.3.1
+        with:
+          tool-cache: false
+          android: false
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: true
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android NDK and CMake
+        run: |
+          yes | sdkmanager --licenses >/dev/null
+          sdkmanager "ndk;27.0.12077973" "cmake;3.31.6"
+
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('apps/mobile/android/**/*.gradle*', 'apps/mobile/android/gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
+
+      - name: Install dependencies
+        run: |
+          npm ci
+          rm -f server/node_modules/cesium
+
+      - name: Build shared packages
+        run: npm run build:packages
+
+      - name: Typecheck mobile app
+        run: npm run typecheck --workspace @cesium/mobile
+
+      - name: Run mobile unit tests
+        run: npm run test --workspace @cesium/mobile
+
+      - name: Build Android debug APKs
+        working-directory: apps/mobile
+        env:
+          ORG_GRADLE_PROJECT_reactNativeArchitectures: arm64-v8a
+        run: npm run build:android:debug
+
+      - name: Prepare APK artifacts
+        run: |
+          mkdir -p dist/mobile-android
+          cp apps/mobile/android/app/build/outputs/apk/debug/app-debug.apk \
+            dist/mobile-android/cesium-mobile-${{ github.event.pull_request.number || 'manual' }}-debug.apk
+          cp apps/mobile/android/wear/build/outputs/apk/debug/wear-debug.apk \
+            dist/mobile-android/cesium-wear-${{ github.event.pull_request.number || 'manual' }}-debug.apk
+
+      - name: Upload APK artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: cesium-mobile-apks
+          path: dist/mobile-android/*.apk
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Comment on pull request
+        if: github.event_name == 'pull_request'
+        uses: thollander/actions-comment-pull-request@v3
+        with:
+          comment-tag: mobile-android-build
+          message: |
+            ## Cesium Mobile Android build
+
+            Debug APKs are ready for install and PR verification.
+
+            CI builds a single `arm64-v8a` ABI to keep runner disk usage manageable.
+
+            | App | Artifact |
+            | --- | --- |
+            | Phone | `cesium-mobile-${{ github.event.pull_request.number }}-debug.apk` |
+            | Wear OS | `cesium-wear-${{ github.event.pull_request.number }}-debug.apk` |
+
+            Download both from the **cesium-mobile-apks** artifact on [this workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}).
+
+            Install the phone APK with:
+
+            ```bash
+            adb install -r cesium-mobile-${{ github.event.pull_request.number }}-debug.apk
+            ```
