@@ -90,11 +90,20 @@ export function deriveMobileAgentProjection(
   const lastEvent = sortedEvents[sortedEvents.length - 1] ?? null;
   const active = isBusyConversationStatus(conversation.status);
   const status = resolveProjectionStatus(conversation, sortedEvents);
+  const sameConversation = previous?.conversationId === conversation.id;
+  const startsAfterPreviousRun =
+    active &&
+    previous != null &&
+    sameConversation &&
+    isTerminalProjectionStatus(previous.status);
   const startedAt =
-    previous?.conversationId === conversation.id && previous.startedAt
+    sameConversation && previous.startedAt && !startsAfterPreviousRun
       ? previous.startedAt
       : active
-        ? findRunStartedAt(sortedEvents) ?? conversation.updatedAt
+        ? findRunStartedAt(
+            sortedEvents,
+            startsAfterPreviousRun ? previous.lastEventSeq : 0
+          ) ?? conversation.updatedAt
         : null;
   const completedAt =
     status === "completed" || status === "failed" || status === "cancelled" || status === "interrupted"
@@ -150,9 +159,26 @@ function resolveProjectionStatus(
   return conversation.status;
 }
 
-function findRunStartedAt(events: AgentStoredEvent[]): number | null {
-  const runningStatus = events.find((event) => event.kind === "status" && event.status === "running");
-  return runningStatus?.createdAt ?? events.find((event) => event.kind === "user_message")?.createdAt ?? null;
+function isTerminalProjectionStatus(status: MobileAgentProjection["status"]): boolean {
+  return (
+    status === "idle" ||
+    status === "completed" ||
+    status === "failed" ||
+    status === "cancelled" ||
+    status === "interrupted"
+  );
+}
+
+function findRunStartedAt(events: AgentStoredEvent[], afterSeq: number): number | null {
+  const runEvents = events.filter((event) => event.seq > afterSeq);
+  const runningStatus = runEvents.find(
+    (event) => event.kind === "status" && event.status === "running"
+  );
+  return (
+    runningStatus?.createdAt ??
+    runEvents.find((event) => event.kind === "user_message")?.createdAt ??
+    null
+  );
 }
 
 function findCurrentTodo(events: AgentStoredEvent[]): AgentPlanEntry | null {

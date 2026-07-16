@@ -134,6 +134,104 @@ describe("mobile agent projection", () => {
     assert.equal(getMobileNotificationChip(projection.status), "DONE");
   });
 
+  test("preserves a run start through completion but resets it for the next turn", () => {
+    const firstRunEvents: AgentStoredEvent[] = [
+      {
+        seq: 1,
+        eventId: "first-running",
+        conversationId: "c1",
+        createdAt: 1_100,
+        kind: "status",
+        status: "running",
+      },
+    ];
+    const firstRun = deriveMobileAgentProjection(
+      createConversation({
+        status: "running",
+        updatedAt: 1_100,
+        lastEventSeq: 1,
+      }),
+      firstRunEvents,
+      { now: 1_500 }
+    );
+    const completedEvents: AgentStoredEvent[] = [
+      ...firstRunEvents,
+      {
+        seq: 2,
+        eventId: "first-idle",
+        conversationId: "c1",
+        createdAt: 2_000,
+        kind: "status",
+        status: "idle",
+      },
+    ];
+    const completed = deriveMobileAgentProjection(
+      createConversation({
+        status: "idle",
+        updatedAt: 2_000,
+        lastEventSeq: 2,
+      }),
+      completedEvents,
+      { now: 2_100, previous: firstRun }
+    );
+    const secondRunEvents: AgentStoredEvent[] = [
+      ...completedEvents,
+      {
+        seq: 3,
+        eventId: "second-user",
+        conversationId: "c1",
+        createdAt: 3_000,
+        kind: "user_message",
+        messageId: "second-message",
+        content: "Run again",
+      },
+      {
+        seq: 4,
+        eventId: "second-running",
+        conversationId: "c1",
+        createdAt: 3_100,
+        kind: "status",
+        status: "running",
+      },
+    ];
+    const secondRun = deriveMobileAgentProjection(
+      createConversation({
+        status: "running",
+        updatedAt: 3_100,
+        lastEventSeq: 4,
+      }),
+      secondRunEvents,
+      { now: 3_500, previous: completed }
+    );
+
+    assert.equal(firstRun.startedAt, 1_100);
+    assert.equal(completed.startedAt, 1_100);
+    assert.equal(secondRun.startedAt, 3_100);
+  });
+
+  test("uses the record update time when retrying a terminal run without new events", () => {
+    const failed = deriveMobileAgentProjection(
+      createConversation({
+        status: "failed",
+        updatedAt: 2_000,
+        lastEventSeq: 2,
+      }),
+      [],
+      { now: 2_100 }
+    );
+    const retry = deriveMobileAgentProjection(
+      createConversation({
+        status: "running",
+        updatedAt: 4_000,
+        lastEventSeq: 2,
+      }),
+      [],
+      { now: 4_100, previous: { ...failed, startedAt: 1_100 } }
+    );
+
+    assert.equal(retry.startedAt, 4_000);
+  });
+
   test("estimates todo completion after at least one completed item", () => {
     const conversation = createConversation({
       status: "running",
