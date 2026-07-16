@@ -4,6 +4,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -52,10 +53,13 @@ async function fetchAuth(
   serverBaseUrl: string,
   resolvedBaseUrl: string,
   path: string,
-  init?: RequestInit
+  init?: RequestInit,
+  externalSignal?: AbortSignal
 ): Promise<Response> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), AUTH_REQUEST_TIMEOUT_MS);
+  const onExternalAbort = () => controller.abort();
+  externalSignal?.addEventListener("abort", onExternalAbort);
   try {
     return await fetch(`${resolvedBaseUrl}${path}`, {
       ...init,
@@ -67,10 +71,14 @@ async function fetchAuth(
     });
   } catch (error) {
     if (error instanceof Error && error.name === "AbortError") {
+      if (externalSignal?.aborted) {
+        throw new DOMException("Auth request aborted.", "AbortError");
+      }
       throw new Error(`Auth request timed out after ${AUTH_REQUEST_TIMEOUT_MS}ms.`);
     }
     throw error;
   } finally {
+    externalSignal?.removeEventListener("abort", onExternalAbort);
     clearTimeout(timeout);
   }
 }
@@ -84,12 +92,30 @@ export function NativeAuthProvider({ children }: { children: ReactNode }) {
   const [loginPending, setLoginPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [connectionError, setConnectionError] = useState<string | null>(null);
+  const authRequestIdRef = useRef(0);
+  const authAbortRef = useRef<AbortController | null>(null);
 
   const refreshAuthStatus = useCallback(async () => {
+    authAbortRef.current?.abort();
+    const controller = new AbortController();
+    authAbortRef.current = controller;
+    const requestId = ++authRequestIdRef.current;
+    const requestBaseUrl = activeServer.baseUrl;
+    const isCurrent = () => requestId === authRequestIdRef.current;
+
     try {
       const resolvedBaseUrl = resolveClientServerBaseUrl();
-      const response = await fetchAuth(activeServer.baseUrl, resolvedBaseUrl, "/api/auth/status");
-      syncAuthTokenFromResponse(response, activeServer.baseUrl);
+      const response = await fetchAuth(
+        requestBaseUrl,
+        resolvedBaseUrl,
+        "/api/auth/status",
+        undefined,
+        controller.signal
+      );
+      if (!isCurrent()) {
+        return;
+      }
+      syncAuthTokenFromResponse(response, requestBaseUrl);
       if (!response.ok) {
         let message = `Auth status request failed (${response.status})`;
         try {
@@ -103,15 +129,18 @@ export function NativeAuthProvider({ children }: { children: ReactNode }) {
         throw new Error(message);
       }
       const payload = (await response.json()) as AuthStatusResponse;
+      if (!isCurrent()) {
+        return;
+      }
       setEnabled(payload.enabled);
       setAuthenticated(payload.authenticated);
       setSession(payload.session);
       if (!payload.enabled) {
-        clearStoredAuth(activeServer.baseUrl);
+        clearStoredAuth(requestBaseUrl);
       } else if (payload.authenticated) {
-        updateStoredAuthSession(payload.session, activeServer.baseUrl);
+        updateStoredAuthSession(payload.session, requestBaseUrl);
       } else {
-        clearStoredAuth(activeServer.baseUrl);
+        clearStoredAuth(requestBaseUrl);
       }
       if (!payload.authenticated) {
         setSession(null);
@@ -119,15 +148,20 @@ export function NativeAuthProvider({ children }: { children: ReactNode }) {
       setError(null);
       setConnectionError(null);
     } catch (nextError) {
-      setEnabled(Boolean(getStoredSessionToken(activeServer.baseUrl)));
+      // A newer refresh (or effect cleanup) superseded this request — do not
+      // clobber the current server's auth/connection state.
+      if (!isCurrent()) {
+        return;
+      }
+      const message =
+        nextError instanceof Error
+          ? nextError.message
+          : "Failed to determine authentication status.";
+      setEnabled(Boolean(getStoredSessionToken(requestBaseUrl)));
       setAuthenticated(false);
       setSession(null);
       setError(null);
-      setConnectionError(
-        nextError instanceof Error
-          ? nextError.message
-          : "Failed to determine authentication status."
-      );
+      setConnectionError(message);
       throw nextError instanceof Error
         ? nextError
         : new Error("Failed to determine authentication status.");
@@ -142,7 +176,7 @@ export function NativeAuthProvider({ children }: { children: ReactNode }) {
     }
     void refreshAuthStatus()
       .catch(() => {
-        // connectionError is set inside refreshAuthStatus.
+        // connectionError is set inside refreshAuthStatus for current requests.
       })
       .finally(() => {
         if (!cancelled) {
@@ -151,6 +185,8 @@ export function NativeAuthProvider({ children }: { children: ReactNode }) {
       });
     return () => {
       cancelled = true;
+      authAbortRef.current?.abort();
+      authRequestIdRef.current += 1;
     };
   }, [activeServer.baseUrl, refreshAuthStatus]);
 
