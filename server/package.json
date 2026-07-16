@@ -43,7 +43,7 @@
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.159",
     "@cesium/core": "file:../packages/core",
-    "@cursor/sdk": "^1.0.17",
+    "@cursor/sdk": "1.0.17",
     "@earendil-works/pi-coding-agent": "^0.75.5",
     "@hono/node-server": "^1.19.6",
     "@modelcontextprotocol/sdk": "^1.29.0",

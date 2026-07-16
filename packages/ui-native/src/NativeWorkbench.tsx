@@ -1599,9 +1599,10 @@ function OnDeviceServerSetup({
             {status ? <Text style={styles.setupStatus}>{status}</Text> : null}
             <Text style={styles.setupFootnote}>
               If apt complains about mirrors, run termux-change-repo, then retry.
-              The installer skips native addons Termux cannot build (node-pty) and
-              uses legacy-json storage bound to loopback. Integrated terminals are
-              limited on-device; external agent CLIs remain optional.
+              The installer skips native addons Termux cannot build (node-pty),
+              installs only the core + server packages (not the full monorepo),
+              and uses legacy-json storage bound to loopback. Integrated
+              terminals are limited on-device; external agent CLIs remain optional.
             </Text>
           </ScrollView>
         </View>
