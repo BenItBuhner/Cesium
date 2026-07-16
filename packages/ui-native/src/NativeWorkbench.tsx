@@ -33,7 +33,6 @@ import {
   House,
   Laptop,
   ListChecks,
-  ListFilter,
   Maximize2,
   Menu,
   MessageCircleQuestion,
@@ -102,6 +101,7 @@ import {
 import { useThemeTokens } from "./theme";
 import { useNativeAuth } from "./providers/NativeAuthProvider";
 import { useNativeWorkspace } from "./providers/NativeWorkspaceProvider";
+import { ServerConnectionsSheet } from "./ServerConnectionsSheet";
 import {
   flattenVisibleFileTree,
   reduceConversationFeed,
@@ -383,53 +383,126 @@ function LoadingScreen({ label, tokens }: { label: string; tokens: ThemeTokens }
 }
 
 function LoginScreen({ tokens }: { tokens: ThemeTokens }) {
-  const { connectionError, error, login, loginPending } = useNativeAuth();
+  const { connectionError, error, login, loginPending, refreshAuthStatus } =
+    useNativeAuth();
+  const { activeServer } = useServerConnections();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [serversOpen, setServersOpen] = useState(false);
+  const [serverSetupOpen, setServerSetupOpen] = useState(false);
   const styles = useMemo(() => createStyles(tokens), [tokens]);
+  const showConnectionIssue = Boolean(connectionError);
 
   return (
     <View style={styles.loginScreen} testID="cesium-native-login">
       <View style={styles.loginCard}>
-        <Text style={styles.loginTitle}>Cesium</Text>
-        <Text style={styles.loginSubtitle}>Sign in to your workbench</Text>
-        <TextInput
-          autoCapitalize="none"
-          autoCorrect={false}
-          onChangeText={setUsername}
-          placeholder="Username"
-          placeholderTextColor={tokens["--text-disabled"]}
-          style={styles.loginInput}
-          value={username}
-        />
-        <TextInput
-          onChangeText={setPassword}
-          onSubmitEditing={() => void login({ username, password, remember: true })}
-          placeholder="Password"
-          placeholderTextColor={tokens["--text-disabled"]}
-          secureTextEntry
-          style={styles.loginInput}
-          value={password}
-        />
+        <Text style={styles.loginTitle}>
+          {showConnectionIssue ? "Check Cesium server" : "Cesium"}
+        </Text>
+        <Text style={styles.loginSubtitle}>
+          {showConnectionIssue
+            ? "The selected server could not be reached. Add another server or fix the current URL, then retry."
+            : "Sign in to your workbench"}
+        </Text>
+        <View style={styles.loginServerCard}>
+          <Text numberOfLines={1} style={styles.loginServerLabel}>
+            {activeServer.label}
+          </Text>
+          <Text numberOfLines={1} style={styles.loginServerUrl}>
+            {activeServer.baseUrl}
+          </Text>
+        </View>
+        {showConnectionIssue ? (
+          <Pressable
+            onPress={() => setServersOpen(true)}
+            style={styles.primaryButton}
+            testID="login-open-servers"
+          >
+            <Text style={styles.primaryButtonText}>Add or switch server</Text>
+          </Pressable>
+        ) : null}
+        <View style={styles.loginActionsRow}>
+          {!showConnectionIssue ? (
+            <Pressable
+              onPress={() => setServersOpen(true)}
+              style={styles.secondaryButton}
+              testID="login-open-servers"
+            >
+              <Text style={styles.secondaryButtonText}>Servers</Text>
+            </Pressable>
+          ) : null}
+          {showConnectionIssue ? (
+            <Pressable
+              onPress={() => void refreshAuthStatus().catch(() => undefined)}
+              style={styles.secondaryButton}
+              testID="login-retry-connection"
+            >
+              <Text style={styles.secondaryButtonText}>Retry</Text>
+            </Pressable>
+          ) : null}
+        </View>
+        {!showConnectionIssue ? (
+          <>
+            <TextInput
+              autoCapitalize="none"
+              autoCorrect={false}
+              onChangeText={setUsername}
+              placeholder="Username"
+              placeholderTextColor={tokens["--text-disabled"]}
+              style={styles.loginInput}
+              value={username}
+            />
+            <TextInput
+              onChangeText={setPassword}
+              onSubmitEditing={() => void login({ username, password, remember: true })}
+              placeholder="Password"
+              placeholderTextColor={tokens["--text-disabled"]}
+              secureTextEntry
+              style={styles.loginInput}
+              value={password}
+            />
+          </>
+        ) : null}
         {error || connectionError ? (
           <Text style={styles.errorText}>{error ?? connectionError}</Text>
         ) : null}
-        <Pressable
-          disabled={loginPending || !username.trim() || !password}
-          onPress={() => void login({ username, password, remember: true })}
-          style={({ pressed }) => [
-            styles.primaryButton,
-            pressed ? styles.pressed : null,
-            loginPending || !username.trim() || !password ? styles.disabled : null,
-          ]}
-        >
-          {loginPending ? (
-            <ActivityIndicator color={tokens["--bg-main"]} />
-          ) : (
-            <Text style={styles.primaryButtonText}>Sign in</Text>
-          )}
-        </Pressable>
+        {!showConnectionIssue ? (
+          <Pressable
+            disabled={loginPending || !username.trim() || !password}
+            onPress={() => void login({ username, password, remember: true })}
+            style={({ pressed }) => [
+              styles.primaryButton,
+              pressed ? styles.pressed : null,
+              loginPending || !username.trim() || !password ? styles.disabled : null,
+            ]}
+          >
+            {loginPending ? (
+              <ActivityIndicator color={tokens["--bg-main"]} />
+            ) : (
+              <Text style={styles.primaryButtonText}>Sign in</Text>
+            )}
+          </Pressable>
+        ) : (
+          <Pressable
+            onPress={() => setServerSetupOpen(true)}
+            style={styles.secondaryButton}
+            testID="login-open-server-setup"
+          >
+            <Text style={styles.secondaryButtonText}>Set up server on this phone</Text>
+          </Pressable>
+        )}
       </View>
+      <ServerConnectionsSheet
+        onClose={() => setServersOpen(false)}
+        onOpenOnDeviceSetup={() => setServerSetupOpen(true)}
+        open={serversOpen}
+      />
+      <OnDeviceServerSetup
+        onClose={() => setServerSetupOpen(false)}
+        open={serverSetupOpen}
+        styles={styles}
+        tokens={tokens}
+      />
     </View>
   );
 }
@@ -1295,7 +1368,7 @@ function AgentRail({
   conversations,
   onClose,
   onNewConversation,
-  onOpenServerSetup,
+  onOpenServers,
   onSelectConversation,
   onSelectWorkspace,
   serverLabel,
@@ -1309,7 +1382,7 @@ function AgentRail({
   conversations: AgentConversationRecord[];
   onClose: () => void;
   onNewConversation: () => void;
-  onOpenServerSetup: () => void;
+  onOpenServers: () => void;
   onSelectConversation: (conversationId: string) => void;
   onSelectWorkspace: (workspaceId: string) => void;
   serverLabel: string;
@@ -1460,20 +1533,26 @@ function AgentRail({
         })}
       </ScrollView>
       <View style={styles.railFooter}>
-        <Globe2 color={tokens["--text-secondary"]} size={17} strokeWidth={1.5} />
-        <Text numberOfLines={1} style={styles.railFooterLabel}>
-          {serverLabel}
-        </Text>
-        <View style={styles.railFooterIconButton}>
-          <ChevronDown color={tokens["--text-secondary"]} size={12} strokeWidth={1.5} />
-        </View>
-        <View style={styles.railFooterIconButton}>
-          <ListFilter color={tokens["--text-secondary"]} size={15} strokeWidth={1.5} />
-        </View>
         <Pressable
-          accessibilityLabel="Open server setup"
+          accessibilityLabel="Manage servers"
+          accessibilityRole="button"
           hitSlop={6}
-          onPress={onOpenServerSetup}
+          onPress={onOpenServers}
+          style={styles.railFooterServerButton}
+          testID="open-server-connections"
+        >
+          <Globe2 color={tokens["--text-secondary"]} size={17} strokeWidth={1.5} />
+          <Text numberOfLines={1} style={styles.railFooterLabel}>
+            {serverLabel}
+          </Text>
+          <View style={styles.railFooterIconButton}>
+            <ChevronDown color={tokens["--text-secondary"]} size={12} strokeWidth={1.5} />
+          </View>
+        </Pressable>
+        <Pressable
+          accessibilityLabel="Open server settings"
+          hitSlop={6}
+          onPress={onOpenServers}
           style={styles.railFooterIconButton}
           testID="open-server-setup"
         >
@@ -1636,6 +1715,7 @@ function WorkbenchBody({
   const [railOpen, setRailOpen] = useState(false);
   const [rightPaneOpen, setRightPaneOpen] = useState(false);
   const [filePickerOpen, setFilePickerOpen] = useState(false);
+  const [serversOpen, setServersOpen] = useState(false);
   const [serverSetupOpen, setServerSetupOpen] = useState(false);
   const [conversations, setConversations] = useState<AgentConversationRecord[]>([]);
   const [backends, setBackends] = useState<AgentBackendInfo[]>([]);
@@ -1891,12 +1971,24 @@ function WorkbenchBody({
         <ActivityIndicator color={tokens["--text-secondary"]} />
         <Text style={styles.emptySubtitle}>Loading workspace...</Text>
         <Pressable
+          onPress={() => setServersOpen(true)}
+          style={styles.secondaryButton}
+          testID="loading-open-servers"
+        >
+          <Text style={styles.secondaryButtonText}>Add or switch server</Text>
+        </Pressable>
+        <Pressable
           onPress={() => setServerSetupOpen(true)}
           style={styles.secondaryButton}
           testID="loading-open-server-setup"
         >
           <Text style={styles.secondaryButtonText}>Set up server on this phone</Text>
         </Pressable>
+        <ServerConnectionsSheet
+          onClose={() => setServersOpen(false)}
+          onOpenOnDeviceSetup={() => setServerSetupOpen(true)}
+          open={serversOpen}
+        />
         <OnDeviceServerSetup
           onClose={() => setServerSetupOpen(false)}
           open={serverSetupOpen}
@@ -1911,6 +2003,21 @@ function WorkbenchBody({
       <View style={[sharedStyles.centered, { backgroundColor: tokens["--bg-main"] }]}>
         <AlertCircle color={tokens["--text-secondary"]} size={20} />
         <Text style={styles.errorText}>{workspaceError}</Text>
+        <View style={styles.loginServerCard}>
+          <Text numberOfLines={1} style={styles.loginServerLabel}>
+            {activeServer.label}
+          </Text>
+          <Text numberOfLines={1} style={styles.loginServerUrl}>
+            {activeServer.baseUrl}
+          </Text>
+        </View>
+        <Pressable
+          onPress={() => setServersOpen(true)}
+          style={styles.primaryButton}
+          testID="error-open-servers"
+        >
+          <Text style={styles.primaryButtonText}>Add or switch server</Text>
+        </Pressable>
         <Pressable onPress={() => void refreshWorkspaces()} style={styles.secondaryButton}>
           <Text style={styles.secondaryButtonText}>Retry</Text>
         </Pressable>
@@ -1921,6 +2028,11 @@ function WorkbenchBody({
         >
           <Text style={styles.secondaryButtonText}>Set up server on this phone</Text>
         </Pressable>
+        <ServerConnectionsSheet
+          onClose={() => setServersOpen(false)}
+          onOpenOnDeviceSetup={() => setServerSetupOpen(true)}
+          open={serversOpen}
+        />
         <OnDeviceServerSetup
           onClose={() => setServerSetupOpen(false)}
           open={serverSetupOpen}
@@ -2018,9 +2130,9 @@ function WorkbenchBody({
                 setRightPaneOpen(false);
                 setRailOpen(false);
               }}
-              onOpenServerSetup={() => {
+              onOpenServers={() => {
                 setRailOpen(false);
-                setServerSetupOpen(true);
+                setServersOpen(true);
               }}
               onSelectConversation={(conversationId) => {
                 setSelectedConversationId(conversationId);
@@ -2089,6 +2201,11 @@ function WorkbenchBody({
           ) : null}
         </View>
       ) : null}
+      <ServerConnectionsSheet
+        onClose={() => setServersOpen(false)}
+        onOpenOnDeviceSetup={() => setServerSetupOpen(true)}
+        open={serversOpen}
+      />
       <OnDeviceServerSetup
         onClose={() => setServerSetupOpen(false)}
         open={serverSetupOpen}
@@ -2102,10 +2219,19 @@ function WorkbenchBody({
 export function NativeWorkbench(props: NativeWorkbenchProps) {
   const tokens = useThemeTokens();
   const auth = useNativeAuth();
+  const { activeServer } = useServerConnections();
+  const { onServerBaseUrlChange } = props;
+
+  useEffect(() => {
+    onServerBaseUrlChange?.(activeServer.baseUrl);
+  }, [activeServer.baseUrl, onServerBaseUrlChange]);
+
   if (!auth.ready) {
     return <LoadingScreen label="Connecting to Cesium..." tokens={tokens} />;
   }
-  if (auth.enabled && !auth.authenticated) {
+  // Match web AuthGate: unreachable servers get a server picker immediately,
+  // not a dead-end Retry / Termux-only screen after workspace bootstrap fails.
+  if (!auth.authenticated && (auth.connectionError || auth.enabled)) {
     return <LoginScreen tokens={tokens} />;
   }
   return <WorkbenchBody {...props} tokens={tokens} />;
@@ -2467,6 +2593,31 @@ function createStyles(tokens: ThemeTokens) {
       justifyContent: "center",
       padding: 20,
     },
+    loginActionsRow: {
+      flexDirection: "row",
+      flexWrap: "wrap",
+      gap: 8,
+      justifyContent: "center",
+      width: "100%",
+    },
+    loginServerCard: {
+      ...card,
+      gap: 2,
+      paddingHorizontal: 12,
+      paddingVertical: 9,
+      width: "100%",
+    },
+    loginServerLabel: {
+      color: tokens["--text-primary"],
+      fontFamily: "sans-serif",
+      fontSize: 12.5,
+      fontWeight: "600",
+    },
+    loginServerUrl: {
+      color: tokens["--text-secondary"],
+      fontFamily: "monospace",
+      fontSize: 11,
+    },
     loginSubtitle: {
       color: tokens["--text-secondary"],
       fontFamily: "sans-serif",
@@ -2606,6 +2757,13 @@ function createStyles(tokens: ThemeTokens) {
         DESIGN_2_RECIPES.rail.footerVerticalPadding * 2,
       paddingHorizontal: DESIGN_2_RECIPES.rail.footerHorizontalPadding,
       paddingVertical: DESIGN_2_RECIPES.rail.footerVerticalPadding,
+    },
+    railFooterServerButton: {
+      alignItems: "center",
+      flex: 1,
+      flexDirection: "row",
+      gap: DESIGN_2_RECIPES.rail.footerGap,
+      minWidth: 0,
     },
     railFooterLabel: {
       color: tokens["--text-primary"],
