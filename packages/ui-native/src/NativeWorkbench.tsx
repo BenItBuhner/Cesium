@@ -74,6 +74,7 @@ import {
   fetchAgentConversationSnapshot,
   fetchFolderChildren,
   fetchTree,
+  fetchWorkspaceGitStatus,
   listAgentConversations,
   promptAgentConversation,
   readFile,
@@ -976,6 +977,7 @@ function ChatPanel({
   selectedConversationId,
   styles,
   tokens,
+  workspaceBranch,
   workspaceName,
   workspaceRoot,
 }: {
@@ -992,6 +994,7 @@ function ChatPanel({
   selectedConversationId: string | null;
   styles: ReturnType<typeof createStyles>;
   tokens: ThemeTokens;
+  workspaceBranch: string | null;
   workspaceName: string;
   workspaceRoot: string;
 }) {
@@ -1027,7 +1030,7 @@ function ChatPanel({
               </Text>
               <GitBranch color={tokens["--text-disabled"]} size={12} strokeWidth={1.5} />
               <Text numberOfLines={1} style={styles.workspaceRootText}>
-                {workspaceRoot.split("/").filter(Boolean).at(-1) ?? workspaceRoot}
+                {workspaceBranch ?? workspaceRoot.split("/").filter(Boolean).at(-1) ?? workspaceRoot}
               </Text>
             </View>
             <Composer
@@ -1107,6 +1110,7 @@ function ChatPanel({
 
 function AgentRail({
   activeWorkspaceId,
+  branchLabel,
   connectionState,
   conversations,
   onClose,
@@ -1120,6 +1124,7 @@ function AgentRail({
   workspaces,
 }: {
   activeWorkspaceId: string | null;
+  branchLabel: string | null;
   connectionState?: NativeWorkbenchProps["connectionState"];
   conversations: AgentConversationRecord[];
   onClose: () => void;
@@ -1208,6 +1213,11 @@ function AgentRail({
                 >
                   {workspace.name}
                 </Text>
+                {active && branchLabel ? (
+                  <Text numberOfLines={1} style={styles.railBranchLabel}>
+                    {branchLabel}
+                  </Text>
+                ) : null}
               </Pressable>
               {active ? (
                 visibleConversations.length > 0 ? (
@@ -1307,6 +1317,7 @@ function WorkbenchBody({
   const [conversationError, setConversationError] = useState<string | null>(null);
   const [editorDocument, setEditorDocument] = useState<EditorDocument | null>(null);
   const [editorLoading, setEditorLoading] = useState(false);
+  const [workspaceBranch, setWorkspaceBranch] = useState<string | null>(null);
   const initialConversationSelected = useRef(false);
   const previousProjection = useRef<MobileAgentProjection | null>(null);
   const openedPlanFiles = useRef(new Set<string>());
@@ -1361,6 +1372,28 @@ function WorkbenchBody({
     setSelectedConversationId(null);
     void refreshConversations();
   }, [activeWorkspaceId, refreshConversations]);
+
+  useEffect(() => {
+    if (!activeWorkspaceId) {
+      setWorkspaceBranch(null);
+      return;
+    }
+    let disposed = false;
+    void fetchWorkspaceGitStatus(activeWorkspaceId)
+      .then(({ status }) => {
+        if (!disposed) {
+          setWorkspaceBranch(status.currentBranch ?? null);
+        }
+      })
+      .catch(() => {
+        if (!disposed) {
+          setWorkspaceBranch(null);
+        }
+      });
+    return () => {
+      disposed = true;
+    };
+  }, [activeWorkspaceId]);
 
   useEffect(() => {
     if (
@@ -1561,6 +1594,7 @@ function WorkbenchBody({
             selectedConversationId={selectedConversationId}
             styles={styles}
             tokens={tokens}
+            workspaceBranch={workspaceBranch}
             workspaceName={activeWorkspace?.name ?? "Workspace"}
             workspaceRoot={activeWorkspace?.root ?? ""}
           />
@@ -1609,6 +1643,7 @@ function WorkbenchBody({
           >
             <AgentRail
               activeWorkspaceId={activeWorkspaceId}
+              branchLabel={workspaceBranch}
               connectionState={connectionState}
               conversations={conversations}
               onClose={() => setRailOpen(false)}
@@ -2116,6 +2151,13 @@ function createStyles(tokens: ThemeTokens) {
       flex: 1,
       fontFamily: "sans-serif",
       fontSize: 12.5,
+    },
+    railBranchLabel: {
+      color: tokens["--text-disabled"],
+      flexShrink: 1,
+      fontFamily: "monospace",
+      fontSize: 9.5,
+      maxWidth: 118,
     },
     railEmptyText: {
       color: tokens["--text-disabled"],
