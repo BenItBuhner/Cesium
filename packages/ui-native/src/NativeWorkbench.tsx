@@ -1076,7 +1076,11 @@ function Composer({
       }}
       onSubmitEditing={() => void submit()}
       numberOfLines={layout.multiline ? 4 : 1}
-      placeholder={DESIGN_2_RECIPES.composer.placeholder}
+      placeholder={
+        layout.multiline
+          ? DESIGN_2_RECIPES.composer.placeholder
+          : DESIGN_2_RECIPES.composer.compactPlaceholder
+      }
       placeholderTextColor={tokens["--text-secondary"]}
       scrollEnabled={layout.multiline}
       style={[
