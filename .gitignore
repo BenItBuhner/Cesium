@@ -143,6 +143,7 @@ served-sw.js
 
 mcp-servers/
 agent-skills/
+.agents/.cesium-plugin-mcp.json
 
 # React Native / Android local build artifacts
 apps/mobile/android/app/.cxx/

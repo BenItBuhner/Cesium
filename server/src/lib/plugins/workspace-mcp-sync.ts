@@ -133,6 +133,16 @@ export async function syncWorkspaceAntigravityMcpConfig(input: {
     "utf8"
   );
 
+  try {
+    const gitignorePath = path.join(input.workspaceRoot, ".gitignore");
+    const existing = await fs.readFile(gitignorePath, "utf8");
+    if (!existing.split(/\r?\n/).includes(".agents/.cesium-plugin-mcp.json")) {
+      await fs.appendFile(gitignorePath, "\n.agents/.cesium-plugin-mcp.json\n", "utf8");
+    }
+  } catch {
+    // no .gitignore — skip
+  }
+
   return {
     path: configFile,
     managedServerIds,
