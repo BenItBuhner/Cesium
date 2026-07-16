@@ -5,19 +5,30 @@ import {
   type MobilePendingIntervention,
 } from "./mobile-agent-projection";
 
+export const WATCH_SCHEMA_VERSION = 1 as const;
+export const WATCH_AGENT_ACTIONS = [
+  "open",
+  "open_on_phone",
+  "cancel",
+  "pause",
+  "resume",
+  "answer_question",
+  "answer_permission",
+  "prompt",
+] as const;
+export const WATCH_DATA_PATHS = {
+  currentProjection: "/cesium/projection/current",
+  currentConfig: "/cesium/config/current",
+  actionPrefix: "/cesium/action",
+  phoneRelayCapability: "cesium_phone_relay",
+  watchClientCapability: "cesium_watch_client",
+} as const;
+
 export type WatchConnectionSource = "direct_server" | "phone_companion" | "cache";
-export type WatchAgentAction =
-  | "open"
-  | "open_on_phone"
-  | "cancel"
-  | "pause"
-  | "resume"
-  | "answer_question"
-  | "answer_permission"
-  | "prompt";
+export type WatchAgentAction = (typeof WATCH_AGENT_ACTIONS)[number];
 
 export type WatchAgentProjection = {
-  schemaVersion: 1;
+  schemaVersion: typeof WATCH_SCHEMA_VERSION;
   workspaceId: string;
   conversationId: string;
   title: string;
@@ -42,7 +53,7 @@ export type WatchAgentUsageSnapshot = {
 };
 
 export type WatchAgentSyncEnvelope = {
-  schemaVersion: 1;
+  schemaVersion: typeof WATCH_SCHEMA_VERSION;
   server?: {
     id?: string;
     label?: string;
@@ -61,20 +72,20 @@ export type WatchAgentSyncEnvelope = {
 
 export type WatchAgentActionRequest =
   | {
-      schemaVersion: 1;
+      schemaVersion: typeof WATCH_SCHEMA_VERSION;
       action: "open" | "open_on_phone" | "cancel" | "pause" | "resume";
       workspaceId?: string | null;
       conversationId: string;
     }
   | {
-      schemaVersion: 1;
+      schemaVersion: typeof WATCH_SCHEMA_VERSION;
       action: "answer_question";
       conversationId: string;
       questionId: string;
       answer: string;
     }
   | {
-      schemaVersion: 1;
+      schemaVersion: typeof WATCH_SCHEMA_VERSION;
       action: "answer_permission";
       conversationId: string;
       requestId: string;
@@ -82,7 +93,7 @@ export type WatchAgentActionRequest =
       cancelled?: boolean;
     }
   | {
-      schemaVersion: 1;
+      schemaVersion: typeof WATCH_SCHEMA_VERSION;
       action: "prompt";
       conversationId: string;
       text: string;
@@ -99,7 +110,7 @@ export function toWatchAgentProjection(
 ): WatchAgentProjection {
   const now = options.now ?? Date.now();
   return {
-    schemaVersion: 1,
+    schemaVersion: WATCH_SCHEMA_VERSION,
     workspaceId: projection.workspaceId,
     conversationId: projection.conversationId,
     title: projection.title,
@@ -126,7 +137,7 @@ export function toWatchSyncEnvelope(input: {
   usage?: WatchAgentUsageSnapshot | null;
 }): WatchAgentSyncEnvelope {
   return {
-    schemaVersion: 1,
+    schemaVersion: WATCH_SCHEMA_VERSION,
     server: input.server,
     focused: input.focused,
     projection: input.projection,

@@ -1,8 +1,11 @@
 import {
   ActivityIndicator,
   FlatList,
+  Linking,
+  Modal,
   Pressable,
   ScrollView,
+  Share,
   StyleSheet,
   Text,
   TextInput,
@@ -102,6 +105,7 @@ export type NativeWorkbenchProps = {
     conversationId: string | null
   ) => void;
   onProjection?: (projection: MobileAgentProjection | null) => void;
+  onServerBaseUrlChange?: (baseUrl: string) => void;
 };
 
 type EditorDocument = {
@@ -1115,6 +1119,7 @@ function AgentRail({
   conversations,
   onClose,
   onNewConversation,
+  onOpenServerSetup,
   onSelectConversation,
   onSelectWorkspace,
   serverLabel,
@@ -1129,6 +1134,7 @@ function AgentRail({
   conversations: AgentConversationRecord[];
   onClose: () => void;
   onNewConversation: () => void;
+  onOpenServerSetup: () => void;
   onSelectConversation: (conversationId: string) => void;
   onSelectWorkspace: (workspaceId: string) => void;
   serverLabel: string;
@@ -1279,9 +1285,135 @@ function AgentRail({
             },
           ]}
         />
-        <Settings color={tokens["--text-secondary"]} size={15} strokeWidth={1.5} />
+        <Pressable
+          accessibilityLabel="Open server setup"
+          hitSlop={8}
+          onPress={onOpenServerSetup}
+          testID="open-server-setup"
+        >
+          <Settings color={tokens["--text-secondary"]} size={15} strokeWidth={1.5} />
+        </Pressable>
       </View>
     </View>
+  );
+}
+
+const TERMUX_SERVER_URL = "http://127.0.0.1:9100";
+const TERMUX_INSTALL_COMMAND =
+  "pkg install -y curl && curl -fsSL https://raw.githubusercontent.com/BenItBuhner/Cesium/main/apps/mobile/termux/install-cesium-server.sh | bash";
+
+function OnDeviceServerSetup({
+  onClose,
+  open,
+  styles,
+  tokens,
+}: {
+  onClose: () => void;
+  open: boolean;
+  styles: ReturnType<typeof createStyles>;
+  tokens: ThemeTokens;
+}) {
+  const { probeServer, saveServer, setActiveServer } = useServerConnections();
+  const [checking, setChecking] = useState(false);
+  const [status, setStatus] = useState<string | null>(null);
+
+  const connect = useCallback(async () => {
+    setChecking(true);
+    setStatus("Checking the on-device server...");
+    try {
+      const probe = await probeServer(TERMUX_SERVER_URL);
+      if (!probe.ok) {
+        setStatus(probe.error || "The Termux server is not reachable yet.");
+        return;
+      }
+      const saved = saveServer({
+        label: "This phone",
+        baseUrl: TERMUX_SERVER_URL,
+      });
+      setActiveServer(saved.id);
+      setStatus("Connected to the server running on this phone.");
+      onClose();
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Server check failed.");
+    } finally {
+      setChecking(false);
+    }
+  }, [onClose, probeServer, saveServer, setActiveServer]);
+
+  return (
+    <Modal
+      animationType="slide"
+      onRequestClose={onClose}
+      transparent
+      visible={open}
+    >
+      <View style={styles.setupBackdrop}>
+        <View style={styles.setupSheet} testID="on-device-server-setup">
+          <View style={styles.setupHeader}>
+            <View>
+              <Text style={styles.setupTitle}>Server on this phone</Text>
+              <Text style={styles.setupSubtitle}>Optional · Android phone only</Text>
+            </View>
+            <IconButton
+              accessibilityLabel="Close server setup"
+              Icon={X}
+              onPress={onClose}
+              tokens={tokens}
+            />
+          </View>
+          <ScrollView contentContainerStyle={styles.setupContent}>
+            <Text style={styles.setupBody}>
+              Termux runs the real Cesium Node backend locally at 127.0.0.1.
+              Wear OS never installs or runs the server.
+            </Text>
+            <Text style={styles.setupStep}>1 · Install Termux from F-Droid.</Text>
+            <Pressable
+              onPress={() =>
+                void Linking.openURL("https://f-droid.org/packages/com.termux/")
+              }
+              style={styles.setupButton}
+            >
+              <Text style={styles.setupButtonText}>Open Termux installer</Text>
+            </Pressable>
+            <Text style={styles.setupStep}>2 · Run the installer command in Termux.</Text>
+            <View style={styles.setupCommand}>
+              <Text selectable style={styles.setupCommandText}>
+                {TERMUX_INSTALL_COMMAND}
+              </Text>
+            </View>
+            <Pressable
+              onPress={() =>
+                void Share.share({
+                  message: TERMUX_INSTALL_COMMAND,
+                  title: "Cesium Termux installer",
+                })
+              }
+              style={styles.setupButton}
+            >
+              <Text style={styles.setupButtonText}>Share installer command</Text>
+            </Pressable>
+            <Text style={styles.setupStep}>3 · Connect Cesium when installation finishes.</Text>
+            <Pressable
+              disabled={checking}
+              onPress={() => void connect()}
+              style={[styles.setupPrimaryButton, checking ? styles.disabled : null]}
+              testID="connect-on-device-server"
+            >
+              {checking ? (
+                <ActivityIndicator color={tokens["--bg-main"]} />
+              ) : (
+                <Text style={styles.setupPrimaryButtonText}>Check and use this phone</Text>
+              )}
+            </Pressable>
+            {status ? <Text style={styles.setupStatus}>{status}</Text> : null}
+            <Text style={styles.setupFootnote}>
+              The installer uses legacy-json storage in Termux home and binds only
+              to loopback. External agent CLIs remain optional.
+            </Text>
+          </ScrollView>
+        </View>
+      </View>
+    </Modal>
   );
 }
 
@@ -1290,6 +1422,7 @@ function WorkbenchBody({
   notificationConversationId,
   onFocusedConversationChange,
   onProjection,
+  onServerBaseUrlChange,
   tokens,
 }: NativeWorkbenchProps & { tokens: ThemeTokens }) {
   const {
@@ -1310,6 +1443,7 @@ function WorkbenchBody({
   const [railOpen, setRailOpen] = useState(false);
   const [rightPaneOpen, setRightPaneOpen] = useState(false);
   const [filePickerOpen, setFilePickerOpen] = useState(false);
+  const [serverSetupOpen, setServerSetupOpen] = useState(false);
   const [conversations, setConversations] = useState<AgentConversationRecord[]>([]);
   const [backends, setBackends] = useState<AgentBackendInfo[]>([]);
   const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null);
@@ -1327,6 +1461,10 @@ function WorkbenchBody({
     loading: feedLoading,
     refresh: refreshFeed,
   } = useConversationFeed(activeWorkspaceId, selectedConversationId);
+
+  useEffect(() => {
+    onServerBaseUrlChange?.(activeServer.baseUrl);
+  }, [activeServer.baseUrl, onServerBaseUrlChange]);
 
   const refreshConversations = useCallback(async () => {
     if (!activeWorkspaceId) {
@@ -1652,6 +1790,10 @@ function WorkbenchBody({
                 setRightPaneOpen(false);
                 setRailOpen(false);
               }}
+              onOpenServerSetup={() => {
+                setRailOpen(false);
+                setServerSetupOpen(true);
+              }}
               onSelectConversation={(conversationId) => {
                 setSelectedConversationId(conversationId);
                 setRailOpen(false);
@@ -1718,6 +1860,12 @@ function WorkbenchBody({
           ) : null}
         </View>
       ) : null}
+      <OnDeviceServerSetup
+        onClose={() => setServerSetupOpen(false)}
+        open={serverSetupOpen}
+        styles={styles}
+        tokens={tokens}
+      />
     </View>
   );
 }
@@ -2240,6 +2388,105 @@ function createStyles(tokens: ThemeTokens) {
     selectedFileRow: {
       backgroundColor: tokens["--bg-card"],
       borderRadius: tabRadius,
+    },
+    setupBackdrop: {
+      backgroundColor: "rgba(0, 0, 0, 0.48)",
+      flex: 1,
+      justifyContent: "flex-end",
+    },
+    setupBody: {
+      color: tokens["--text-secondary"],
+      fontFamily: "sans-serif",
+      fontSize: 13,
+      lineHeight: 19,
+    },
+    setupButton: {
+      ...card,
+      alignItems: "center",
+      minHeight: 40,
+      justifyContent: "center",
+      paddingHorizontal: 12,
+    },
+    setupButtonText: {
+      color: tokens["--text-primary"],
+      fontFamily: "sans-serif",
+      fontSize: 12.5,
+      fontWeight: "500",
+    },
+    setupCommand: {
+      backgroundColor: tokens["--bg-main"],
+      borderColor: tokens["--border-subtle"],
+      borderRadius: tabRadius,
+      borderWidth: StyleSheet.hairlineWidth,
+      padding: 10,
+    },
+    setupCommandText: {
+      color: tokens["--text-secondary"],
+      fontFamily: "monospace",
+      fontSize: 10.5,
+      lineHeight: 15,
+    },
+    setupContent: {
+      gap: 10,
+      paddingBottom: 28,
+      paddingHorizontal: 16,
+    },
+    setupFootnote: {
+      color: tokens["--text-disabled"],
+      fontFamily: "sans-serif",
+      fontSize: 10.5,
+      lineHeight: 15,
+    },
+    setupHeader: {
+      alignItems: "center",
+      flexDirection: "row",
+      justifyContent: "space-between",
+      padding: 16,
+    },
+    setupPrimaryButton: {
+      alignItems: "center",
+      backgroundColor: tokens["--accent"],
+      borderRadius: tabRadius,
+      justifyContent: "center",
+      minHeight: 42,
+      paddingHorizontal: 12,
+    },
+    setupPrimaryButtonText: {
+      color: tokens["--bg-main"],
+      fontFamily: "sans-serif",
+      fontSize: 12.5,
+      fontWeight: "600",
+    },
+    setupSheet: {
+      backgroundColor: tokens["--bg-panel"],
+      borderTopLeftRadius: 18,
+      borderTopRightRadius: 18,
+      maxHeight: "88%",
+    },
+    setupStatus: {
+      color: tokens["--text-secondary"],
+      fontFamily: "sans-serif",
+      fontSize: 11.5,
+      textAlign: "center",
+    },
+    setupStep: {
+      color: tokens["--text-primary"],
+      fontFamily: "sans-serif",
+      fontSize: 12.5,
+      fontWeight: "500",
+      marginTop: 4,
+    },
+    setupSubtitle: {
+      color: tokens["--text-disabled"],
+      fontFamily: "sans-serif",
+      fontSize: 10.5,
+      marginTop: 2,
+    },
+    setupTitle: {
+      color: tokens["--text-primary"],
+      fontFamily: "sans-serif",
+      fontSize: 17,
+      fontWeight: "600",
     },
     connectionDot: {
       borderRadius: 4,

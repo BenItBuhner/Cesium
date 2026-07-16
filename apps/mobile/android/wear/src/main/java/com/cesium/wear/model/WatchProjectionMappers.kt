@@ -1,49 +1,25 @@
 package com.cesium.wear.model
 
 fun statusChip(status: String): String =
-  when (status) {
-    "awaiting_permission", "awaiting_question" -> "INPUT"
-    "completed", "idle" -> "DONE"
-    "failed" -> "ERR"
-    "cancelled", "interrupted" -> "STOP"
-    "paused" -> "PAUSE"
-    else -> "RUN"
-  }
+  com.cesium.shared.contracts.statusChip(status)
 
 fun isActiveStatus(status: String): Boolean =
-  status == "running" ||
-    status == "pause_requested" ||
-    status == "pausing" ||
-    status == "awaiting_permission" ||
-    status == "awaiting_question"
+  com.cesium.shared.contracts.isActiveStatus(status)
 
 fun availableWatchActions(
   status: String,
   pendingIntervention: WatchPendingIntervention?,
   includePromptAction: Boolean = false
 ): List<String> {
-  val actions = mutableListOf("open")
-  when (pendingIntervention) {
-    WatchPendingIntervention.QUESTION -> actions.add("answer_question")
-    WatchPendingIntervention.PERMISSION -> actions.add("answer_permission")
-    null -> Unit
-  }
-  if (isActiveStatus(status)) {
-    actions.add("pause")
-    actions.add("cancel")
-  } else if (status == "paused") {
-    actions.add("resume")
-    actions.add("cancel")
-  }
-  actions.add("open_on_phone")
-  if (includePromptAction) {
-    actions.add("prompt")
-  }
-  return actions
+  return com.cesium.shared.contracts.availableWatchActions(
+    status,
+    pendingIntervention,
+    includePromptAction
+  )
 }
 
 fun staleWindowMillis(status: String): Long =
-  if (isActiveStatus(status)) 45_000L else 5 * 60_000L
+  com.cesium.shared.contracts.staleWindowMillis(status)
 
 fun WatchAgentProjection.withSource(source: WatchConnectionSource): WatchAgentProjection =
   copy(source = source)

@@ -46,6 +46,7 @@ import com.cesium.wear.sync.WatchConnectionMode
 import com.cesium.wear.sync.WearDataLayerRepository
 import com.cesium.wear.sync.label
 import com.cesium.wear.sync.resolveConnectionMode
+import com.cesium.shared.wear.PhoneRelayStatus
 import kotlinx.coroutines.launch
 
 private enum class WearScreen {
@@ -57,6 +58,14 @@ private enum class WearScreen {
   SETTINGS
 }
 
+private fun PhoneRelayStatus.label(): String =
+  when (this) {
+    PhoneRelayStatus.NEARBY -> "Phone nearby"
+    PhoneRelayStatus.CLOUD -> "Phone via cloud"
+    PhoneRelayStatus.NOT_PAIRED -> "Phone not paired"
+    PhoneRelayStatus.OFFLINE -> "Phone offline"
+  }
+
 @Composable
 fun CesiumWearApp(
   stateStore: WatchStateStore,
@@ -66,26 +75,30 @@ fun CesiumWearApp(
   val scope = rememberCoroutineScope()
   val envelope by stateStore.envelopeFlow.collectAsState(initial = null)
   val modePreference by stateStore.modePreferenceFlow.collectAsState(initial = "auto")
-  var phoneReachable by remember { mutableStateOf(false) }
+  var phoneRelayStatus by remember { mutableStateOf(PhoneRelayStatus.OFFLINE) }
   var screen by remember { mutableStateOf(WearScreen.GLANCE) }
   val projection = envelope?.projection
   val mode = resolveConnectionMode(
     envelope = envelope,
     preference = modePreference,
-    phoneRelayReachable = phoneReachable,
+    phoneRelayReachable =
+      phoneRelayStatus == PhoneRelayStatus.NEARBY ||
+        phoneRelayStatus == PhoneRelayStatus.CLOUD,
     directConfigured = envelope?.server?.baseUrl?.isNotBlank() == true
   )
 
   LaunchedEffect(Unit) {
     dataLayerRepository.loadInitialCompanionState()
-    phoneReachable = dataLayerRepository.hasReachablePhoneRelay()
+    phoneRelayStatus = dataLayerRepository.phoneRelayStatus()
   }
 
   WearShell {
     when (screen) {
       WearScreen.GLANCE -> GlanceScreen(
         projection = projection,
-        connectionLabel = mode.label(projection?.source),
+        connectionLabel =
+          if (mode == WatchConnectionMode.PHONE_COMPANION) phoneRelayStatus.label()
+          else mode.label(projection?.source),
         onPrimary = {
           if (projection?.pendingIntervention != null) {
             screen = WearScreen.INTERVENTION
@@ -118,7 +131,7 @@ fun CesiumWearApp(
       WearScreen.CONNECTION -> ConnectionScreen(
         mode = mode,
         modePreference = modePreference,
-        serverLabel = envelope?.server?.label ?: "No server",
+        serverLabel = "${envelope?.server?.label ?: "No server"} · ${phoneRelayStatus.label()}",
         onBack = { screen = WearScreen.GLANCE },
         onSettings = { screen = WearScreen.SETTINGS }
       )

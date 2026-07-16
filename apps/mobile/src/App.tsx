@@ -11,8 +11,13 @@ import {
 } from "react-native";
 import NetInfo from "@react-native-community/netinfo";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
-import { cancelAgentConversation, setActiveWorkspaceId } from "@cesium/client";
+import {
+  cancelAgentConversation,
+  getStoredSessionToken,
+  setActiveWorkspaceId,
+} from "@cesium/client";
 import { ServerConnectionsProvider } from "@cesium/client/react";
+import { toWatchAgentProjection, toWatchSyncEnvelope } from "@cesium/core";
 import {
   NativeAuthProvider,
   NativeWorkbench,
@@ -21,6 +26,7 @@ import {
 import { readLaunchUrlConfig, resolveLaunchUrlConfig } from "./config";
 import { installReactNativeClientPlatform, setRuntimeServerBaseUrl } from "./platform";
 import { CesiumLiveUpdates } from "./native/CesiumLiveUpdates";
+import { CesiumWearCompanion } from "./native/CesiumWearCompanion";
 import { AgentStatusService } from "./services/AgentStatusService";
 import { BackgroundCoordinator } from "./services/BackgroundCoordinator";
 import { LiveUpdateController } from "./services/LiveUpdateController";
@@ -37,11 +43,38 @@ export default function App() {
   const [notificationConversationId, setNotificationConversationId] = useState<string | null>(
     null
   );
+  const serverUrlRef = useRef(serverUrl);
   const liveUpdatesRef = useRef(new LiveUpdateController());
   const agentStatusRef = useRef(
     new AgentStatusService({
       onProjection: (projection) => {
         void liveUpdatesRef.current.update(projection);
+        if (projection) {
+          const serverBaseUrl = serverUrlRef.current;
+          const watchProjection = toWatchAgentProjection(projection, {
+            source: "phone_companion",
+          });
+          const envelope = toWatchSyncEnvelope({
+            projection: watchProjection,
+            source: "phone_companion",
+            server: {
+              label: "This phone",
+              baseUrl: serverBaseUrl,
+            },
+            focused: {
+              workspaceId: projection.workspaceId,
+              conversationId: projection.conversationId,
+              lastEventSeq: projection.lastEventSeq,
+            },
+          });
+          void CesiumWearCompanion.publishEnvelope(JSON.stringify(envelope), {
+            serverBaseUrl,
+            serverLabel: "This phone",
+            authToken: getStoredSessionToken(serverBaseUrl),
+            workspaceId: projection.workspaceId,
+            conversationId: projection.conversationId,
+          }).catch(() => undefined);
+        }
       },
       onConnectionState: setConnectionState,
     })
@@ -77,6 +110,7 @@ export default function App() {
   );
 
   useEffect(() => {
+    serverUrlRef.current = serverUrl;
     setRuntimeServerBaseUrl(serverUrl);
   }, [serverUrl]);
 
@@ -142,6 +176,7 @@ export default function App() {
                 connectionState={connectionState}
                 notificationConversationId={notificationConversationId}
                 onFocusedConversationChange={configureAgentSocket}
+                onServerBaseUrlChange={setServerUrl}
               />
             </NativeWorkspaceProvider>
           </NativeAuthProvider>

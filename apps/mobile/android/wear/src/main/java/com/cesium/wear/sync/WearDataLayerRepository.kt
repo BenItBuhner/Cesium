@@ -1,10 +1,11 @@
 package com.cesium.wear.sync
 
 import android.content.Context
+import com.cesium.shared.wear.CesiumWearTransport
+import com.cesium.shared.wear.PhoneRelayStatus
 import com.cesium.wear.data.WatchStateStore
 import com.cesium.wear.model.WatchAgentSyncEnvelope
 import com.cesium.wear.model.WearDataPaths
-import com.google.android.gms.wearable.CapabilityClient
 import com.google.android.gms.wearable.DataClient
 import com.google.android.gms.wearable.DataMapItem
 import com.google.android.gms.wearable.Wearable
@@ -19,7 +20,7 @@ class WearDataLayerRepository(
     encodeDefaults = true
   },
   private val dataClient: DataClient = Wearable.getDataClient(context),
-  private val capabilityClient: CapabilityClient = Wearable.getCapabilityClient(context)
+  private val transport: CesiumWearTransport = CesiumWearTransport(context)
 ) {
   suspend fun loadInitialCompanionState() {
     val dataItems = dataClient.dataItems.await()
@@ -35,11 +36,11 @@ class WearDataLayerRepository(
   }
 
   suspend fun hasReachablePhoneRelay(): Boolean {
-    val info = capabilityClient
-      .getCapability(WearDataPaths.PHONE_RELAY_CAPABILITY, CapabilityClient.FILTER_REACHABLE)
-      .await()
-    return info.nodes.isNotEmpty()
+    val status = phoneRelayStatus()
+    return status == PhoneRelayStatus.NEARBY || status == PhoneRelayStatus.CLOUD
   }
+
+  suspend fun phoneRelayStatus(): PhoneRelayStatus = transport.phoneRelayStatus()
 
   suspend fun saveEnvelopeJson(raw: String?) {
     if (raw.isNullOrBlank()) return
