@@ -1075,6 +1075,7 @@ function Composer({
         );
       }}
       onSubmitEditing={() => void submit()}
+      numberOfLines={layout.multiline ? 4 : 1}
       placeholder={DESIGN_2_RECIPES.composer.placeholder}
       placeholderTextColor={tokens["--text-secondary"]}
       scrollEnabled={layout.multiline}
@@ -2301,6 +2302,9 @@ function createStyles(tokens: ThemeTokens) {
     composerInputSingle: {
       height: DESIGN_2_RECIPES.composer.plusSize,
       minHeight: DESIGN_2_RECIPES.composer.plusSize,
+      overflow: "hidden",
+      paddingVertical: 0,
+      textAlignVertical: "center",
     },
     composerInputMultiline: {
       minHeight: 40,
