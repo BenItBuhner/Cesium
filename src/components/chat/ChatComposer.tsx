@@ -3040,7 +3040,7 @@ const handleNativeComposerKeyDown = useCallback(
     const isPrimary = variant === "primary";
     const buttonClassName = isPrimary
       ? `relative flex h-[var(--d2-composer-send-size)] w-[var(--d2-composer-send-size)] items-center justify-center rounded-full transition-opacity hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-50 ${sendButtonBgClass[getModeTone(mode)]}`
-      : `relative flex h-[20px] min-w-[var(--d2-composer-send-size)] items-center justify-center rounded-full transition-colors ${
+      : `relative flex h-[var(--d2-composer-send-size)] min-w-[var(--d2-composer-send-size)] items-center justify-center rounded-full transition-colors ${
           recordingState === "recording" || recordingState === "transcribing"
             ? "bg-[var(--accent-bg)] text-[var(--text-primary)]"
             : "text-[var(--text-secondary)] hover:text-[var(--text-primary)]"

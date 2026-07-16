@@ -6,6 +6,7 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.content.res.Configuration
 import android.os.Build
 import android.os.Bundle
 import androidx.core.app.NotificationCompat
@@ -70,7 +71,8 @@ object CesiumAgentNotification {
         extras,
         progressMax,
         progress,
-        indeterminate
+        indeterminate,
+        progressColors(context)
       )
       builder.setRequestPromotedOngoing(requestPromotion)
       if (shortText != null && estimatedCompletionAt <= 0L) {
@@ -121,7 +123,8 @@ object CesiumAgentNotification {
     extras: Bundle,
     max: Int,
     current: Int,
-    indeterminate: Boolean
+    indeterminate: Boolean,
+    colors: CesiumProgressColors
   ) {
     val safeMax = max.coerceIn(1, MAX_PROGRESS_SEGMENTS)
     val safeProgress = current.coerceIn(0, safeMax)
@@ -139,9 +142,9 @@ object CesiumAgentNotification {
           val segments = (1..safeMax).map { index ->
             NotificationCompat.ProgressStyle.Segment(1).setColor(
               when {
-                index <= completed -> COLOR_COMPLETED
-                index == currentIndex -> COLOR_ACTIVE
-                else -> COLOR_PENDING
+                index <= completed -> colors.completed
+                index == currentIndex -> colors.active
+                else -> colors.pending
               }
             )
           }
@@ -150,7 +153,7 @@ object CesiumAgentNotification {
         "burn" -> {
           style.setProgressSegments(
             listOf(
-              NotificationCompat.ProgressStyle.Segment(safeMax).setColor(COLOR_BURN)
+              NotificationCompat.ProgressStyle.Segment(safeMax).setColor(colors.burn)
             )
           )
         }
@@ -205,10 +208,41 @@ object CesiumAgentNotification {
     )
   }
 
+  private fun progressColors(context: Context): CesiumProgressColors {
+    val dark =
+      context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK ==
+        Configuration.UI_MODE_NIGHT_YES
+    return if (dark) {
+      resolveCesiumProgressColors(true)
+    } else {
+      resolveCesiumProgressColors(false)
+    }
+  }
+
   private const val MIN_COUNTDOWN_MS = 2 * 60 * 1000L
   private const val MAX_PROGRESS_SEGMENTS = 100
-  private val COLOR_COMPLETED = CesiumDesignTokens.Dark.AskAccent.toInt()
-  private val COLOR_ACTIVE = CesiumDesignTokens.Dark.WorkflowAccent.toInt()
-  private val COLOR_PENDING = CesiumDesignTokens.Dark.TextSecondary.toInt()
-  private val COLOR_BURN = CesiumDesignTokens.Dark.BurnAccent.toInt()
 }
+
+internal data class CesiumProgressColors(
+  val completed: Int,
+  val active: Int,
+  val pending: Int,
+  val burn: Int
+)
+
+internal fun resolveCesiumProgressColors(dark: Boolean): CesiumProgressColors =
+  if (dark) {
+    CesiumProgressColors(
+      completed = CesiumDesignTokens.Dark.AskAccent.toInt(),
+      active = CesiumDesignTokens.Dark.WorkflowAccent.toInt(),
+      pending = CesiumDesignTokens.Dark.TextSecondary.toInt(),
+      burn = CesiumDesignTokens.Dark.BurnAccent.toInt()
+    )
+  } else {
+    CesiumProgressColors(
+      completed = CesiumDesignTokens.Light.AskAccent.toInt(),
+      active = CesiumDesignTokens.Light.WorkflowAccent.toInt(),
+      pending = CesiumDesignTokens.Light.TextSecondary.toInt(),
+      burn = CesiumDesignTokens.Light.BurnAccent.toInt()
+    )
+  }

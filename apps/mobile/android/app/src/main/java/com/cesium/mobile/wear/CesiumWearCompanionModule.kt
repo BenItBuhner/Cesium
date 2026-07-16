@@ -10,15 +10,18 @@ import com.facebook.react.bridge.ReactContextBaseJavaModule
 import com.facebook.react.bridge.ReactMethod
 import com.facebook.react.bridge.ReadableMap
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import java.util.concurrent.ConcurrentHashMap
 
 class CesiumWearCompanionModule(
   private val reactContext: ReactApplicationContext
 ) : ReactContextBaseJavaModule(reactContext) {
   private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+  private val pendingConnectionPromises = ConcurrentHashMap.newKeySet<Promise>()
 
   override fun getName(): String = "CesiumWearCompanion"
 
@@ -50,20 +53,49 @@ class CesiumWearCompanionModule(
 
   @ReactMethod
   fun getConnectionStatus(promise: Promise) {
+    pendingConnectionPromises.add(promise)
     scope.launch {
-      val status = runCatching {
-        CesiumWearTransport(reactContext).phoneRelayStatus()
-      }.getOrDefault(PhoneRelayStatus.OFFLINE)
-      val map = Arguments.createMap().apply {
-        putString("status", status.name.lowercase())
-        putBoolean("reachable", status == PhoneRelayStatus.NEARBY || status == PhoneRelayStatus.CLOUD)
-        putBoolean("nearby", status == PhoneRelayStatus.NEARBY)
+      try {
+        val status = CesiumWearTransport(reactContext).phoneRelayStatus()
+        val map = Arguments.createMap().apply {
+          putString("status", status.name.lowercase())
+          putBoolean(
+            "reachable",
+            status == PhoneRelayStatus.NEARBY || status == PhoneRelayStatus.CLOUD
+          )
+          putBoolean("nearby", status == PhoneRelayStatus.NEARBY)
+        }
+        if (pendingConnectionPromises.remove(promise)) {
+          promise.resolve(map)
+        }
+      } catch (error: CancellationException) {
+        if (pendingConnectionPromises.remove(promise)) {
+          promise.reject(
+            "CESIUM_WEAR_MODULE_INVALIDATED",
+            "Wear companion module was invalidated",
+            error
+          )
+        }
+      } catch (error: Throwable) {
+        if (pendingConnectionPromises.remove(promise)) {
+          promise.reject(
+            "CESIUM_WEAR_STATUS_FAILED",
+            "Failed to read Wear OS connection status",
+            error
+          )
+        }
       }
-      promise.resolve(map)
     }
   }
 
   override fun invalidate() {
+    pendingConnectionPromises.forEach { promise ->
+      promise.reject(
+        "CESIUM_WEAR_MODULE_INVALIDATED",
+        "Wear companion module was invalidated"
+      )
+    }
+    pendingConnectionPromises.clear()
     scope.cancel()
     super.invalidate()
   }
