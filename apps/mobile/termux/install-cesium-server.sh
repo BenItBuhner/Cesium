@@ -91,6 +91,13 @@ rm -f server/node_modules/cesium
 unset npm_config_ignore_scripts
 npm run build --prefix server
 
+# Only configure runit after a successful build so a failed compile cannot leave
+# a service pointing at a missing server/dist/index.js.
+if [[ ! -f "$SOURCE_DIR/server/dist/index.js" ]]; then
+  printf 'Server build did not produce server/dist/index.js; aborting before enabling the service.\n' >&2
+  exit 1
+fi
+
 mkdir -p "$SERVICE_DIR" "$SERVICE_DIR/log" "$LOG_DIR"
 cat >"$SERVICE_DIR/run" <<RUN
 #!$PREFIX/bin/sh

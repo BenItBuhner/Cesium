@@ -24,6 +24,11 @@ export type PtySpawnOptions = {
 
 export type PtyExitEvent = {
   exitCode: number;
+  /**
+   * Present on the node-pty backend when the process died from a signal.
+   * Bun.Terminal only exposes a numeric exit code via `subprocess.exited`, so
+   * this stays undefined on the bun-terminal backend today.
+   */
   signal?: number;
 };
 
@@ -175,6 +180,7 @@ function spawnBunPty(options: PtySpawnOptions): PtyProcess {
 
   void proc.exited.then((exitCode) => {
     exited = true;
+    // Bun reports only the exit code here; signal is unavailable on this backend.
     exitEvent = { exitCode };
     for (const listener of exitListeners) {
       listener(exitEvent);
