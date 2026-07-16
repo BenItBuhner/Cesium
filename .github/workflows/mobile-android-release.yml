@@ -51,6 +51,17 @@ jobs:
           ref: ${{ steps.tag.outputs.value }}
           fetch-depth: 0
 
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@v1.3.1
+        with:
+          tool-cache: false
+          android: false
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: true
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -109,6 +120,8 @@ jobs:
 
       - name: Build Android release APKs
         working-directory: apps/mobile
+        env:
+          ORG_GRADLE_PROJECT_reactNativeArchitectures: arm64-v8a,armeabi-v7a
         run: npm run build:android:release
 
       - name: Prepare release assets
