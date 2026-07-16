@@ -1993,7 +1993,7 @@ function createStyles(tokens: ThemeTokens) {
       zIndex: 40,
     },
     agentScrim: {
-      backgroundColor: "rgba(0, 0, 0, 0.4)",
+      backgroundColor: tokens["--palette-backdrop"],
       bottom: 0,
       left: 0,
       position: "absolute",
@@ -2421,7 +2421,7 @@ function createStyles(tokens: ThemeTokens) {
       borderRadius: tabRadius,
     },
     setupBackdrop: {
-      backgroundColor: "rgba(0, 0, 0, 0.48)",
+      backgroundColor: tokens["--palette-backdrop"],
       flex: 1,
       justifyContent: "flex-end",
     },

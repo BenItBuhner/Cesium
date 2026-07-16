@@ -3,7 +3,6 @@ import "../global.css";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   AppState,
-  Appearance,
   PermissionsAndroid,
   Platform,
   StatusBar,
@@ -22,6 +21,8 @@ import {
   NativeAuthProvider,
   NativeWorkbench,
   NativeWorkspaceProvider,
+  useColorScheme,
+  useThemeTokens,
 } from "@cesium/ui-native";
 import { readLaunchUrlConfig, resolveLaunchUrlConfig } from "./config";
 import { installReactNativeClientPlatform, setRuntimeServerBaseUrl } from "./platform";
@@ -38,6 +39,8 @@ setRuntimeServerBaseUrl(INITIAL_CONFIG.serverUrl);
 type ConnectionState = "idle" | "connecting" | "open" | "closed" | "reconnecting";
 
 export default function App() {
+  const colorScheme = useColorScheme();
+  const themeTokens = useThemeTokens();
   const [serverUrl, setServerUrl] = useState(INITIAL_CONFIG.serverUrl);
   const [connectionState, setConnectionState] = useState<ConnectionState>("idle");
   const [notificationConversationId, setNotificationConversationId] = useState<string | null>(
@@ -160,13 +163,11 @@ export default function App() {
     void consumeNotificationAction().catch(() => undefined);
   }, [consumeNotificationAction]);
 
-  const dark = Appearance.getColorScheme() === "dark";
-
   return (
     <SafeAreaProvider>
       <StatusBar
-        barStyle={dark ? "light-content" : "dark-content"}
-        backgroundColor={dark ? "#191919" : "#fafafa"}
+        barStyle={colorScheme === "dark" ? "light-content" : "dark-content"}
+        backgroundColor={themeTokens["--bg-main"]}
       />
       <SafeAreaView style={{ flex: 1 }} testID="cesium-mobile-root">
         <ServerConnectionsProvider>

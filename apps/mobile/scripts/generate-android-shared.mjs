@@ -10,6 +10,11 @@ if (outIndex < 0 || !process.argv[outIndex + 1]) {
   throw new Error("Usage: generate-android-shared.mjs --outDir <directory>");
 }
 const outDir = resolve(process.argv[outIndex + 1]);
+const resOutIndex = process.argv.indexOf("--resOutDir");
+const resOutDir =
+  resOutIndex >= 0 && process.argv[resOutIndex + 1]
+    ? resolve(process.argv[resOutIndex + 1])
+    : null;
 
 const design = await import(
   pathToFileURL(join(repoRoot, "packages/design/dist/theme-tokens.js")).href
@@ -81,9 +86,14 @@ const colorKeys = {
   TextDisabled: "--text-disabled",
   Accent: "--accent",
   AccentSoft: "--accent-bg",
+  AskAccent: "--ask-accent",
+  BurnAccent: "--burn-accent",
   PlanAccent: "--plan-accent",
   PlanAccentDark: "--plan-accent-dark",
   PlanAccentPanel: "--plan-accent-bg",
+  WorkflowAccent: "--workflow-accent",
+  WorkflowAccentDark: "--workflow-accent-dark",
+  WorkflowAccentPanel: "--workflow-accent-bg",
   Danger: "--debug-accent",
 };
 const dimensionKeys = {
@@ -194,4 +204,20 @@ await writeFile(
   )}\n`,
   "utf8"
 );
+if (resOutDir) {
+  const valuesDir = join(resOutDir, "values");
+  await mkdir(valuesDir, { recursive: true });
+  await writeFile(
+    join(valuesDir, "cesium_design_generated.xml"),
+    `<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <color name="cesium_design_background_dark">${design.DEFAULT_THEME_TOKENS_DARK["--background"]}</color>
+  <color name="cesium_design_background_light">${design.DEFAULT_THEME_TOKENS_LIGHT["--background"]}</color>
+  <color name="cesium_design_plan_accent_dark">${design.DEFAULT_THEME_TOKENS_DARK["--plan-accent"]}</color>
+  <color name="cesium_design_text_primary_dark">${design.DEFAULT_THEME_TOKENS_DARK["--text-primary"]}</color>
+</resources>
+`,
+    "utf8"
+  );
+}
 console.log(`Generated shared Android sources in ${outDir}`);

@@ -6,12 +6,12 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
-import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import com.cesium.mobile.MainActivity
+import com.cesium.shared.generated.CesiumDesignTokens
 
 object CesiumAgentNotification {
   const val CHANNEL_ID = "cesium-agent-runs"
@@ -207,8 +207,8 @@ object CesiumAgentNotification {
 
   private const val MIN_COUNTDOWN_MS = 2 * 60 * 1000L
   private const val MAX_PROGRESS_SEGMENTS = 100
-  private val COLOR_COMPLETED = Color.rgb(88, 166, 120)
-  private val COLOR_ACTIVE = Color.rgb(72, 133, 237)
-  private val COLOR_PENDING = Color.rgb(120, 120, 120)
-  private val COLOR_BURN = Color.rgb(229, 108, 98)
+  private val COLOR_COMPLETED = CesiumDesignTokens.Dark.AskAccent.toInt()
+  private val COLOR_ACTIVE = CesiumDesignTokens.Dark.WorkflowAccent.toInt()
+  private val COLOR_PENDING = CesiumDesignTokens.Dark.TextSecondary.toInt()
+  private val COLOR_BURN = CesiumDesignTokens.Dark.BurnAccent.toInt()
 }

@@ -5,6 +5,7 @@ plugins {
 }
 
 def generatedDir = layout.buildDirectory.dir("generated/source/cesium/main")
+def generatedResDir = layout.buildDirectory.dir("generated/res/cesium/main")
 def repoRoot = rootProject.file("../../..")
 
 tasks.register("generateCesiumSharedSources", Exec) {
@@ -13,13 +14,16 @@ tasks.register("generateCesiumSharedSources", Exec) {
     "node",
     new File(repoRoot, "apps/mobile/scripts/generate-android-shared.mjs").absolutePath,
     "--outDir",
-    generatedDir.get().asFile.absolutePath
+    generatedDir.get().asFile.absolutePath,
+    "--resOutDir",
+    generatedResDir.get().asFile.absolutePath
   )
   inputs.files(
     new File(repoRoot, "packages/core/src/watch-agent-contract.ts"),
     new File(repoRoot, "packages/design/dist/theme-tokens.js")
   )
   outputs.dir(generatedDir)
+  outputs.dir(generatedResDir)
 }
 
 android {
@@ -33,6 +37,7 @@ android {
   sourceSets {
     main {
       java.srcDir(generatedDir)
+      res.srcDir(generatedResDir)
     }
   }
 }

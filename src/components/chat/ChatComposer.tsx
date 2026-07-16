@@ -187,11 +187,11 @@ const COMPOSER_PLACEHOLDER_TEXT =
   "Ask anything, @ for files, / for commands";
 
 /**
- * Shared mode accent/icon map for the new-design mode chip. Kept local so
- * `ModeDropdown` (classic) can stay untouched and the chip renders without
+ * Shared mode accent/icon map for the mode chip. Kept local so
+ * `ModeDropdown` can stay untouched and the chip renders without
  * importing private symbols from a peer.
  */
-const NEW_DESIGN_MODE_COLORS: Record<KnownEditorMode, { text: string; bg: string }> = {
+const MODE_CHIP_COLORS: Record<KnownEditorMode, { text: string; bg: string }> = {
   agent: { text: "var(--accent)", bg: "var(--accent-bg)" },
   plan: { text: "var(--plan-accent)", bg: "var(--plan-accent-bg)" },
   debug: { text: "var(--debug-accent)", bg: "var(--debug-accent-bg)" },
@@ -202,7 +202,7 @@ const NEW_DESIGN_MODE_COLORS: Record<KnownEditorMode, { text: string; bg: string
   orchestration: { text: "var(--orchestration-accent)", bg: "var(--orchestration-accent-bg)" },
 };
 
-function renderNewDesignModeIcon(tone: KnownEditorMode, color: string): ReactElement {
+function renderModeChipIcon(tone: KnownEditorMode, color: string): ReactElement {
   const className = "size-[13px] shrink-0";
   const strokeWidth = 1.5;
   switch (tone) {
@@ -228,7 +228,7 @@ function renderNewDesignModeIcon(tone: KnownEditorMode, color: string): ReactEle
   }
 }
 
-function isNewDesignModeChipVisible(mode: EditorMode): boolean {
+function isModeChipVisible(mode: EditorMode): boolean {
   return getModeTone(mode) !== "agent";
 }
 
@@ -256,7 +256,7 @@ function isPlainBackspaceKey(
   );
 }
 
-interface NewDesignModeChipProps {
+interface ModeChipProps {
   mode: EditorMode;
   options: AgentModeOption[];
   onModeChange: (mode: EditorMode) => void;
@@ -270,15 +270,15 @@ interface NewDesignModeChipProps {
  * cycling Shift+Tab into Plan/Debug/Ask surfaces an obvious chip that can be
  * dismissed back to default without opening a menu.
  */
-function NewDesignModeChip({
+function ModeChip({
   mode,
   options,
   onModeChange,
   disabled,
   removable = true,
-}: NewDesignModeChipProps) {
+}: ModeChipProps) {
   const tone = getModeTone(mode);
-  if (!isNewDesignModeChipVisible(mode)) {
+  if (!isModeChipVisible(mode)) {
     return null;
   }
   const defaultMode = resolveDefaultModeForOptions(options);
@@ -290,13 +290,13 @@ function NewDesignModeChip({
     resolvedOptions.find((o) => o.id === mode) ??
     resolvedOptions[0];
   const label = current?.label ?? mode;
-  const colors = NEW_DESIGN_MODE_COLORS[tone];
+  const colors = MODE_CHIP_COLORS[tone];
   return (
     <span
       className="inline-flex h-[22px] shrink-0 items-center gap-[3px] rounded-[var(--radius-pill)] pl-[7px] pr-[4px] font-sans text-[13px] font-normal leading-none"
       style={{ background: colors.bg }}
     >
-      {renderNewDesignModeIcon(tone, colors.text)}
+      {renderModeChipIcon(tone, colors.text)}
       <span style={{ color: colors.text }}>{label}</span>
       {removable ? (
         <button
@@ -2502,7 +2502,7 @@ export function ChatComposer({
         configLockedRef.current ||
         modeLockedRef.current ||
         !canBackspaceClearModeChipRef.current ||
-        !isNewDesignModeChipVisible(currentMode) ||
+        !isModeChipVisible(currentMode) ||
         valueRef.current.length !== 0
       ) {
         return false;
@@ -2974,17 +2974,17 @@ const handleNativeComposerKeyDown = useCallback(
    * hook true/false in a tight loop. Once wrapped, stay in the multi-line shell
    * until the user clears all content (`value === ""`).
    */
-  const [newDesignMultilineLatch, setNewDesignMultilineLatch] = useState(false);
+  const [multilineLatch, setMultilineLatch] = useState(false);
 
   useEffect(() => {
     if (isComposerEffectivelyEmptyForMultiline(value, hookMeasuresMultiline)) {
-      setNewDesignMultilineLatch(false);
+      setMultilineLatch(false);
       return;
     }
     // After clearing, ResizeObserver can still see the old tall box until layout
     // settles; never re-latch multiline while the field is effectively empty.
     if (shouldLatchComposerMultiline(value, hookMeasuresMultiline)) {
-      setNewDesignMultilineLatch(true);
+      setMultilineLatch(true);
     }
   }, [hookMeasuresMultiline, value]);
 
@@ -2993,7 +2993,7 @@ const handleNativeComposerKeyDown = useCallback(
     forceMultiline,
     useStickyMultiline,
     hookMeasuresMultiline,
-    latchedMultiline: newDesignMultilineLatch,
+    latchedMultiline: multilineLatch,
     value,
   });
   canBackspaceClearModeChipRef.current =
@@ -3105,7 +3105,7 @@ const handleNativeComposerKeyDown = useCallback(
     );
 
     const modeChip = (
-      <NewDesignModeChip
+      <ModeChip
         mode={mode}
         options={modeOptions ?? DEFAULT_MODE_OPTIONS}
         onModeChange={onModeChange}
@@ -3172,7 +3172,7 @@ const handleNativeComposerKeyDown = useCallback(
      * the squarer composer-radius so the bottom row corners stay tidy under a
      * tall editor.
      */
-    const newDesignPillRadiusClass =
+    const pillRadiusClass =
       isMultiLine || attachedImages.length > 0
         ? "rounded-[var(--agent-composer-radius)]"
         : "rounded-full";
@@ -3183,7 +3183,7 @@ const handleNativeComposerKeyDown = useCallback(
       <div
         ref={composerRootRef}
         data-ide-input-sink
-        className={`${shellMargin} flex shrink-0 flex-col gap-[8px] overflow-hidden ${newDesignPillRadiusClass} border border-[var(--agent-border)] bg-[var(--agent-card-bg)] p-[10px]`}
+        className={`${shellMargin} flex shrink-0 flex-col gap-[8px] overflow-hidden ${pillRadiusClass} border border-[var(--agent-border)] bg-[var(--agent-card-bg)] p-[10px]`}
       >
         {attachedImages.length > 0 && (
           <ImageCarousel
