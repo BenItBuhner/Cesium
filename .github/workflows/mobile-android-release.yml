@@ -23,17 +23,22 @@ jobs:
     steps:
       - name: Resolve release tag
         id: tag
+        env:
+          INPUT_TAG: ${{ github.event.inputs.tag }}
+          REF_NAME: ${{ github.ref_name }}
         run: |
-          if [ -n "${{ github.event.inputs.tag }}" ]; then
-            echo "value=${{ github.event.inputs.tag }}" >> "$GITHUB_OUTPUT"
+          if [ -n "$INPUT_TAG" ]; then
+            printf 'value=%s\n' "$INPUT_TAG" >> "$GITHUB_OUTPUT"
           else
-            echo "value=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+            printf 'value=%s\n' "$REF_NAME" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Parse release version
         id: version
+        env:
+          RELEASE_TAG: ${{ steps.tag.outputs.value }}
         run: |
-          TAG="${{ steps.tag.outputs.value }}"
+          TAG="$RELEASE_TAG"
           if [[ ! "$TAG" =~ ^mobile-v([0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?)$ ]]; then
             echo "Tag must look like mobile-v1.2.3 (got: $TAG)" >&2
             exit 1
@@ -107,9 +112,10 @@ jobs:
         run: npm run build:android:release
 
       - name: Prepare release assets
+        env:
+          VERSION: ${{ steps.version.outputs.value }}
+          TAG: ${{ steps.tag.outputs.value }}
         run: |
-          VERSION="${{ steps.version.outputs.value }}"
-          TAG="${{ steps.tag.outputs.value }}"
           mkdir -p dist/mobile-android
           cp apps/mobile/android/app/build/outputs/apk/release/app-release.apk \
             "dist/mobile-android/cesium-mobile-${VERSION}.apk"
@@ -118,22 +124,29 @@ jobs:
           printf '%s\n' "$TAG" > dist/mobile-android/RELEASE_TAG.txt
           printf '%s\n' "$VERSION" > dist/mobile-android/VERSION.txt
 
-      - name: Extract changelog
-        id: changelog
+      - name: Extract changelog section
         working-directory: apps/mobile
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.value }}
+        run: npm run changelog:extract -- "$RELEASE_VERSION" > "$RUNNER_TEMP/changelog-section.md"
+
+      - name: Build release notes
+        id: changelog
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.value }}
         run: |
           NOTES_FILE="$RUNNER_TEMP/release-notes.md"
           {
             echo "## What's changed"
             echo
-            npm run changelog:extract -- "${{ steps.version.outputs.value }}"
+            cat "$RUNNER_TEMP/changelog-section.md"
             echo
             echo "## Install"
             echo
             echo "Download the phone APK below and sideload it on Android 8+:"
             echo
             echo '```bash'
-            echo "adb install -r cesium-mobile-${{ steps.version.outputs.value }}.apk"
+            echo "adb install -r cesium-mobile-${RELEASE_VERSION}.apk"
             echo '```'
             echo
             echo "The Wear OS companion APK is included for paired watch installs."
