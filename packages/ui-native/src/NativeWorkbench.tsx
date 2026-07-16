@@ -390,8 +390,14 @@ function LoginScreen({ tokens }: { tokens: ThemeTokens }) {
   const [password, setPassword] = useState("");
   const [serversOpen, setServersOpen] = useState(false);
   const [serverSetupOpen, setServerSetupOpen] = useState(false);
+  const [retryPending, setRetryPending] = useState(false);
   const styles = useMemo(() => createStyles(tokens), [tokens]);
   const showConnectionIssue = Boolean(connectionError);
+
+  const handleRetry = useCallback(() => {
+    setRetryPending(true);
+    void refreshAuthStatus().finally(() => setRetryPending(false));
+  }, [refreshAuthStatus]);
 
   return (
     <View style={styles.loginScreen} testID="cesium-native-login">
@@ -416,7 +422,7 @@ function LoginScreen({ tokens }: { tokens: ThemeTokens }) {
           <Pressable
             onPress={() => setServersOpen(true)}
             style={styles.primaryButton}
-            testID="login-open-servers"
+            testID="login-add-or-switch-server"
           >
             <Text style={styles.primaryButtonText}>Add or switch server</Text>
           </Pressable>
@@ -433,11 +439,16 @@ function LoginScreen({ tokens }: { tokens: ThemeTokens }) {
           ) : null}
           {showConnectionIssue ? (
             <Pressable
-              onPress={() => void refreshAuthStatus().catch(() => undefined)}
-              style={styles.secondaryButton}
+              disabled={retryPending}
+              onPress={handleRetry}
+              style={[styles.secondaryButton, retryPending ? styles.disabled : null]}
               testID="login-retry-connection"
             >
-              <Text style={styles.secondaryButtonText}>Retry</Text>
+              {retryPending ? (
+                <ActivityIndicator color={tokens["--text-secondary"]} />
+              ) : (
+                <Text style={styles.secondaryButtonText}>Retry</Text>
+              )}
             </Pressable>
           ) : null}
         </View>
@@ -1550,11 +1561,11 @@ function AgentRail({
           </View>
         </Pressable>
         <Pressable
-          accessibilityLabel="Open server settings"
+          accessibilityLabel="Manage servers"
           hitSlop={6}
           onPress={onOpenServers}
           style={styles.railFooterIconButton}
-          testID="open-server-setup"
+          testID="open-server-connections-icon"
         >
           <Settings color={tokens["--text-secondary"]} size={15} strokeWidth={1.5} />
         </Pressable>
@@ -1694,7 +1705,6 @@ function WorkbenchBody({
   notificationConversationId,
   onFocusedConversationChange,
   onProjection,
-  onServerBaseUrlChange,
   tokens,
 }: NativeWorkbenchProps & { tokens: ThemeTokens }) {
   const {
@@ -1734,10 +1744,6 @@ function WorkbenchBody({
     loading: feedLoading,
     refresh: refreshFeed,
   } = useConversationFeed(activeWorkspaceId, selectedConversationId);
-
-  useEffect(() => {
-    onServerBaseUrlChange?.(activeServer.baseUrl);
-  }, [activeServer.baseUrl, onServerBaseUrlChange]);
 
   const refreshConversations = useCallback(async () => {
     if (!activeWorkspaceId) {

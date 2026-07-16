@@ -97,7 +97,7 @@ export function ServerConnectionsSheet({
   }, []);
 
   const handleSave = useCallback(
-    async (activate: boolean) => {
+    (activate: boolean) => {
       setSavePending(true);
       setFormError(null);
       try {
@@ -336,7 +336,7 @@ export function ServerConnectionsSheet({
                 <View style={styles.formActions}>
                   <Pressable
                     disabled={savePending || !baseUrl.trim()}
-                    onPress={() => void handleSave(true)}
+                    onPress={() => handleSave(true)}
                     style={[
                       styles.primaryButton,
                       savePending || !baseUrl.trim() ? styles.actionDisabled : null,
@@ -351,7 +351,7 @@ export function ServerConnectionsSheet({
                   </Pressable>
                   <Pressable
                     disabled={savePending || !baseUrl.trim()}
-                    onPress={() => void handleSave(false)}
+                    onPress={() => handleSave(false)}
                     style={[
                       styles.actionButton,
                       savePending || !baseUrl.trim() ? styles.actionDisabled : null,

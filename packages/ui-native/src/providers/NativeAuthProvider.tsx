@@ -86,37 +86,52 @@ export function NativeAuthProvider({ children }: { children: ReactNode }) {
   const [connectionError, setConnectionError] = useState<string | null>(null);
 
   const refreshAuthStatus = useCallback(async () => {
-    const resolvedBaseUrl = resolveClientServerBaseUrl();
-    const response = await fetchAuth(activeServer.baseUrl, resolvedBaseUrl, "/api/auth/status");
-    syncAuthTokenFromResponse(response, activeServer.baseUrl);
-    if (!response.ok) {
-      let message = `Auth status request failed (${response.status})`;
-      try {
-        const payload = (await response.json()) as { error?: string };
-        if (payload.error) {
-          message = payload.error;
+    try {
+      const resolvedBaseUrl = resolveClientServerBaseUrl();
+      const response = await fetchAuth(activeServer.baseUrl, resolvedBaseUrl, "/api/auth/status");
+      syncAuthTokenFromResponse(response, activeServer.baseUrl);
+      if (!response.ok) {
+        let message = `Auth status request failed (${response.status})`;
+        try {
+          const payload = (await response.json()) as { error?: string };
+          if (payload.error) {
+            message = payload.error;
+          }
+        } catch {
+          // fall through
         }
-      } catch {
-        // fall through
+        throw new Error(message);
       }
-      throw new Error(message);
-    }
-    const payload = (await response.json()) as AuthStatusResponse;
-    setEnabled(payload.enabled);
-    setAuthenticated(payload.authenticated);
-    setSession(payload.session);
-    if (!payload.enabled) {
-      clearStoredAuth(activeServer.baseUrl);
-    } else if (payload.authenticated) {
-      updateStoredAuthSession(payload.session, activeServer.baseUrl);
-    } else {
-      clearStoredAuth(activeServer.baseUrl);
-    }
-    if (!payload.authenticated) {
+      const payload = (await response.json()) as AuthStatusResponse;
+      setEnabled(payload.enabled);
+      setAuthenticated(payload.authenticated);
+      setSession(payload.session);
+      if (!payload.enabled) {
+        clearStoredAuth(activeServer.baseUrl);
+      } else if (payload.authenticated) {
+        updateStoredAuthSession(payload.session, activeServer.baseUrl);
+      } else {
+        clearStoredAuth(activeServer.baseUrl);
+      }
+      if (!payload.authenticated) {
+        setSession(null);
+      }
+      setError(null);
+      setConnectionError(null);
+    } catch (nextError) {
+      setEnabled(Boolean(getStoredSessionToken(activeServer.baseUrl)));
+      setAuthenticated(false);
       setSession(null);
+      setError(null);
+      setConnectionError(
+        nextError instanceof Error
+          ? nextError.message
+          : "Failed to determine authentication status."
+      );
+      throw nextError instanceof Error
+        ? nextError
+        : new Error("Failed to determine authentication status.");
     }
-    setError(null);
-    setConnectionError(null);
   }, [activeServer.baseUrl]);
 
   useEffect(() => {
@@ -126,19 +141,8 @@ export function NativeAuthProvider({ children }: { children: ReactNode }) {
       setReady(false);
     }
     void refreshAuthStatus()
-      .catch((nextError) => {
-        if (cancelled) {
-          return;
-        }
-        setEnabled(Boolean(getStoredSessionToken(activeServer.baseUrl)));
-        setAuthenticated(false);
-        setSession(null);
-        const message =
-          nextError instanceof Error
-            ? nextError.message
-            : "Failed to determine authentication status.";
-        setError(null);
-        setConnectionError(message);
+      .catch(() => {
+        // connectionError is set inside refreshAuthStatus.
       })
       .finally(() => {
         if (!cancelled) {
