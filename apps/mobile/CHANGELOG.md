@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-07-16
+
+### Fixed
+
+- Termux on-device server setup no longer dies on broken curl: bootstrap upgrades packages with `apt full-upgrade` before invoking curl (Termux `pkg` depends on curl).
+- Termux installer skips native addons Android cannot build (`node-pty` / NDK), so `npm ci` can finish and the local backend can start.
+- Setup copy and Android bundle updated with the repaired installer command and mirror guidance (`termux-change-repo`).
+
 ## [0.1.0] - 2026-07-16
 
 ### Added
