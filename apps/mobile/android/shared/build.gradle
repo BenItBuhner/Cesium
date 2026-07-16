@@ -11,13 +11,13 @@ tasks.register("generateCesiumSharedSources", Exec) {
   workingDir = repoRoot
   commandLine(
     "node",
-    repoRoot.file("apps/mobile/scripts/generate-android-shared.mjs").absolutePath,
+    new File(repoRoot, "apps/mobile/scripts/generate-android-shared.mjs").absolutePath,
     "--outDir",
     generatedDir.get().asFile.absolutePath
   )
   inputs.files(
-    repoRoot.file("packages/core/src/watch-agent-contract.ts"),
-    repoRoot.file("packages/design/dist/theme-tokens.js")
+    new File(repoRoot, "packages/core/src/watch-agent-contract.ts"),
+    new File(repoRoot, "packages/design/dist/theme-tokens.js")
   )
   outputs.dir(generatedDir)
 }

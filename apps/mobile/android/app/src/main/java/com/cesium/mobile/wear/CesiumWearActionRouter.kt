@@ -42,8 +42,8 @@ class CesiumWearActionRouter(
     val intent = Intent(context, MainActivity::class.java).apply {
       flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
       putExtra("cesiumAction", "open")
-      putExtra("conversationId", json.optString("conversationId", null))
-      putExtra("workspaceId", json.optString("workspaceId", null))
+      putExtra("conversationId", json.optString("conversationId").takeIf { it.isNotBlank() })
+      putExtra("workspaceId", json.optString("workspaceId").takeIf { it.isNotBlank() })
     }
     context.startActivity(intent)
   }
