@@ -122,7 +122,12 @@ jobs:
         working-directory: apps/mobile
         env:
           ORG_GRADLE_PROJECT_reactNativeArchitectures: arm64-v8a,armeabi-v7a
-        run: npm run build:android:release
+        run: |
+          npm run bundle:android
+          # New Architecture codegen for autolinked native modules is produced
+          # during the debug app build; release CMake fails without this primer.
+          node scripts/run-gradle.mjs :app:assembleDebug -x :wear:assembleDebug
+          node scripts/run-gradle.mjs :app:assembleRelease :wear:assembleRelease
 
       - name: Prepare release assets
         env:

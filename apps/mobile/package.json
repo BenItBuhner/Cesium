@@ -9,7 +9,7 @@
     "build": "npm run build:android:debug",
     "bundle:android": "react-native bundle --platform android --dev false --entry-file index.js --bundle-output android/app/src/main/assets/index.android.bundle --assets-dest android/app/src/main/res",
     "build:android:debug": "npm run bundle:android && node scripts/run-gradle.mjs :app:assembleDebug :wear:assembleDebug",
-    "build:android:release": "npm run bundle:android && node scripts/run-gradle.mjs :app:assembleRelease :wear:assembleRelease",
+    "build:android:release": "npm run bundle:android && node scripts/run-gradle.mjs :app:assembleDebug -x :wear:assembleDebug && node scripts/run-gradle.mjs :app:assembleRelease :wear:assembleRelease",
     "changelog:extract": "node scripts/extract-changelog.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "tsx --test ./src/**/*.test.ts",
