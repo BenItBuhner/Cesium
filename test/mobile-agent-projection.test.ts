@@ -53,6 +53,18 @@ describe("mobile agent projection", () => {
     assert.equal(projection.elapsedMs, 2900);
     assert.equal(isMobileAgentRunActive(projection.status), true);
     assert.equal(getMobileNotificationChip(projection.status), "RUN");
+    assert.deepEqual(projection.todoProgress, {
+      total: 2,
+      completed: 1,
+      blocked: 0,
+      pending: 0,
+      inProgress: 1,
+      currentIndex: 2,
+      percent: 50,
+      estimatedRemainingMs: null,
+      estimatedCompletionAt: null,
+    });
+    assert.equal(projection.burnProgress, null);
   });
 
   test("surfaces pending intervention over todo activity", () => {
@@ -120,6 +132,205 @@ describe("mobile agent projection", () => {
     assert.equal(projection.status, "completed");
     assert.equal(projection.completedAt, 5000);
     assert.equal(getMobileNotificationChip(projection.status), "DONE");
+  });
+
+  test("preserves a run start through completion but resets it for the next turn", () => {
+    const firstRunEvents: AgentStoredEvent[] = [
+      {
+        seq: 1,
+        eventId: "first-running",
+        conversationId: "c1",
+        createdAt: 1_100,
+        kind: "status",
+        status: "running",
+      },
+    ];
+    const firstRun = deriveMobileAgentProjection(
+      createConversation({
+        status: "running",
+        updatedAt: 1_100,
+        lastEventSeq: 1,
+      }),
+      firstRunEvents,
+      { now: 1_500 }
+    );
+    const completedEvents: AgentStoredEvent[] = [
+      ...firstRunEvents,
+      {
+        seq: 2,
+        eventId: "first-idle",
+        conversationId: "c1",
+        createdAt: 2_000,
+        kind: "status",
+        status: "idle",
+      },
+    ];
+    const completed = deriveMobileAgentProjection(
+      createConversation({
+        status: "idle",
+        updatedAt: 2_000,
+        lastEventSeq: 2,
+      }),
+      completedEvents,
+      { now: 2_100, previous: firstRun }
+    );
+    const secondRunEvents: AgentStoredEvent[] = [
+      ...completedEvents,
+      {
+        seq: 3,
+        eventId: "second-user",
+        conversationId: "c1",
+        createdAt: 3_000,
+        kind: "user_message",
+        messageId: "second-message",
+        content: "Run again",
+      },
+      {
+        seq: 4,
+        eventId: "second-running",
+        conversationId: "c1",
+        createdAt: 3_100,
+        kind: "status",
+        status: "running",
+      },
+    ];
+    const secondRun = deriveMobileAgentProjection(
+      createConversation({
+        status: "running",
+        updatedAt: 3_100,
+        lastEventSeq: 4,
+      }),
+      secondRunEvents,
+      { now: 3_500, previous: completed }
+    );
+
+    assert.equal(firstRun.startedAt, 1_100);
+    assert.equal(completed.startedAt, 1_100);
+    assert.equal(secondRun.startedAt, 3_100);
+  });
+
+  test("uses the record update time when retrying a terminal run without new events", () => {
+    const failed = deriveMobileAgentProjection(
+      createConversation({
+        status: "failed",
+        updatedAt: 2_000,
+        lastEventSeq: 2,
+      }),
+      [],
+      { now: 2_100 }
+    );
+    const retry = deriveMobileAgentProjection(
+      createConversation({
+        status: "running",
+        updatedAt: 4_000,
+        lastEventSeq: 2,
+      }),
+      [],
+      { now: 4_100, previous: { ...failed, startedAt: 1_100 } }
+    );
+
+    assert.equal(retry.startedAt, 4_000);
+  });
+
+  test("estimates todo completion after at least one completed item", () => {
+    const conversation = createConversation({
+      status: "running",
+      lastEventSeq: 3,
+      updatedAt: 1000,
+    });
+    const projection = deriveMobileAgentProjection(
+      conversation,
+      [
+        {
+          seq: 1,
+          eventId: "started",
+          conversationId: "c1",
+          createdAt: 1000,
+          kind: "status",
+          status: "running",
+        },
+        {
+          seq: 2,
+          eventId: "plan",
+          conversationId: "c1",
+          createdAt: 2000,
+          kind: "plan",
+          planId: "plan",
+          entries: [
+            { id: "a", content: "One", status: "completed" },
+            { id: "b", content: "Two", status: "in_progress" },
+            { id: "c", content: "Three", status: "pending" },
+            { id: "d", content: "Four", status: "pending" },
+          ],
+        },
+      ],
+      { now: 61_000 }
+    );
+
+    assert.equal(projection.todoProgress?.percent, 25);
+    assert.equal(projection.todoProgress?.estimatedRemainingMs, 180_000);
+    assert.equal(projection.todoProgress?.estimatedCompletionAt, 241_000);
+  });
+
+  test("prioritizes Burn progress and estimates its completion", () => {
+    const conversation = createConversation({
+      status: "running",
+      lastEventSeq: 4,
+      updatedAt: 1000,
+    });
+    const projection = deriveMobileAgentProjection(
+      conversation,
+      [
+        {
+          seq: 1,
+          eventId: "started",
+          conversationId: "c1",
+          createdAt: 0,
+          kind: "status",
+          status: "running",
+        },
+        {
+          seq: 2,
+          eventId: "burn-set",
+          conversationId: "c1",
+          createdAt: 10_000,
+          kind: "tool_call_update",
+          toolCallId: "burn-set",
+          status: "completed",
+          raw: {
+            request: {
+              name: "burn_goal_set",
+              arguments: { objective: "Ship native live updates" },
+            },
+          },
+        },
+        {
+          seq: 3,
+          eventId: "burn-progress",
+          conversationId: "c1",
+          createdAt: 40_000,
+          kind: "tool_call_update",
+          toolCallId: "burn-progress",
+          status: "completed",
+          raw: {
+            request: {
+              name: "burn_goal_summarize",
+              arguments: {
+                progressPercent: 40,
+                headline: "Implementing notifications",
+              },
+            },
+          },
+        },
+      ],
+      { now: 70_000 }
+    );
+
+    assert.equal(projection.burnProgress?.percent, 40);
+    assert.equal(projection.burnProgress?.headline, "Implementing notifications");
+    assert.equal(projection.burnProgress?.runtimeMs, 60_000);
+    assert.equal(projection.burnProgress?.estimatedRemainingMs, 90_000);
+    assert.equal(projection.burnProgress?.estimatedCompletionAt, 160_000);
   });
 });
 

@@ -6,9 +6,13 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.content.res.Configuration
 import android.os.Build
 import android.os.Bundle
+import androidx.core.app.NotificationCompat
+import androidx.core.app.NotificationManagerCompat
 import com.cesium.mobile.MainActivity
+import com.cesium.shared.generated.CesiumDesignTokens
 
 object CesiumAgentNotification {
   const val CHANNEL_ID = "cesium-agent-runs"
@@ -39,38 +43,64 @@ object CesiumAgentNotification {
     val progress = extras.getInt("progress", 0)
     val indeterminate = extras.getBoolean("indeterminate", true)
     val startedAt = extras.getLong("startedAt", System.currentTimeMillis())
+    val estimatedCompletionAt = extras.getLong("estimatedCompletionAt", 0L)
+    val ongoing = extras.getBoolean("ongoing", true)
+    val requestPromotion = extras.getBoolean("promote", false) && ongoing
 
-    val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-      Notification.Builder(context, CHANNEL_ID)
-    } else {
-      @Suppress("DEPRECATION")
-      Notification.Builder(context)
-    }
+    val builder = NotificationCompat.Builder(context, CHANNEL_ID)
 
     builder
       .setSmallIcon(android.R.drawable.stat_notify_sync)
       .setContentTitle(title)
       .setContentText(body)
-      .setOngoing(extras.getBoolean("ongoing", true))
+      .setCategory(Notification.CATEGORY_PROGRESS)
+      .setOngoing(ongoing)
       .setOnlyAlertOnce(true)
       .setShowWhen(true)
       .setWhen(startedAt)
       .setContentIntent(openIntent(context, extras, "open"))
       .setDeleteIntent(deleteIntent(context, extras))
 
-    if (Build.VERSION.SDK_INT < 36 || !tryApplyProgressStyle(builder, progressMax, progress, indeterminate)) {
-      builder.setProgress(progressMax, progress.coerceIn(0, progressMax), indeterminate)
+    if (Build.VERSION.SDK_INT >= 31 && ongoing) {
+      builder.setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
     }
 
-    if (shortText != null && Build.VERSION.SDK_INT >= 31) {
-      tryInvoke(builder, "setShortCriticalText", arrayOf(CharSequence::class.java), arrayOf(shortText))
+    if (Build.VERSION.SDK_INT >= 36) {
+      applyProgressStyle(
+        builder,
+        extras,
+        progressMax,
+        progress,
+        indeterminate,
+        progressColors(context)
+      )
+      builder.setRequestPromotedOngoing(requestPromotion)
+      if (shortText != null && estimatedCompletionAt <= 0L) {
+        builder.setShortCriticalText(shortText)
+      }
+    } else {
+      builder.setProgress(progressMax, progress.coerceIn(0, progressMax), indeterminate)
+      if (!shortText.isNullOrBlank()) {
+        builder.setSubText(shortText)
+      }
     }
-    tryInvoke(
-      builder,
-      "setRequestPromotedOngoing",
-      arrayOf(Boolean::class.javaPrimitiveType!!),
-      arrayOf(true)
-    )
+
+    if (
+      estimatedCompletionAt >= System.currentTimeMillis() + MIN_COUNTDOWN_MS &&
+      Build.VERSION.SDK_INT >= 24
+    ) {
+      builder
+        .setWhen(estimatedCompletionAt)
+        .setUsesChronometer(true)
+        .setChronometerCountDown(true)
+    } else if (startedAt > 0L && ongoing) {
+      builder
+        .setWhen(startedAt)
+        .setUsesChronometer(true)
+      if (Build.VERSION.SDK_INT >= 24) {
+        builder.setChronometerCountDown(false)
+      }
+    }
 
     addAction(builder, context, extras, "open", "Open")
     val intervention = extras.getString("intervention")
@@ -85,42 +115,62 @@ object CesiumAgentNotification {
   }
 
   fun canPostPromoted(context: Context): Boolean {
-    val manager = context.getSystemService(NotificationManager::class.java)
-    return try {
-      val method = manager.javaClass.getMethod("canPostPromotedNotifications")
-      method.invoke(manager) as? Boolean ?: false
-    } catch (_: Throwable) {
-      false
-    }
+    return NotificationManagerCompat.from(context).canPostPromotedNotifications()
   }
 
-  private fun tryApplyProgressStyle(
-    builder: Notification.Builder,
+  private fun applyProgressStyle(
+    builder: NotificationCompat.Builder,
+    extras: Bundle,
     max: Int,
     current: Int,
-    indeterminate: Boolean
-  ): Boolean {
-    return try {
-      val styleClass = Class.forName("android.app.Notification\$ProgressStyle")
-      val style = styleClass.getDeclaredConstructor().newInstance() as Notification.Style
-      tryInvoke(style, "setStyledByProgress", arrayOf(Boolean::class.javaPrimitiveType!!), arrayOf(!indeterminate))
-      tryInvoke(style, "setProgress", arrayOf(Int::class.javaPrimitiveType!!), arrayOf(current.coerceIn(0, max)))
-      builder.setStyle(style)
-      true
-    } catch (_: Throwable) {
-      false
+    indeterminate: Boolean,
+    colors: CesiumProgressColors
+  ) {
+    val safeMax = max.coerceIn(1, MAX_PROGRESS_SEGMENTS)
+    val safeProgress = current.coerceIn(0, safeMax)
+    val progressKind = extras.getString("progressKind") ?: "indeterminate"
+    val style = NotificationCompat.ProgressStyle()
+      .setProgressIndeterminate(indeterminate)
+    if (!indeterminate) {
+      style
+        .setProgress(safeProgress)
+        .setStyledByProgress(progressKind == "burn")
+      when (progressKind) {
+        "todo" -> {
+          val completed = extras.getInt("todoCompleted", safeProgress)
+          val currentIndex = extras.getInt("todoCurrentIndex", completed + 1)
+          val segments = (1..safeMax).map { index ->
+            NotificationCompat.ProgressStyle.Segment(1).setColor(
+              when {
+                index <= completed -> colors.completed
+                index == currentIndex -> colors.active
+                else -> colors.pending
+              }
+            )
+          }
+          style.setProgressSegments(segments)
+        }
+        "burn" -> {
+          style.setProgressSegments(
+            listOf(
+              NotificationCompat.ProgressStyle.Segment(safeMax).setColor(colors.burn)
+            )
+          )
+        }
+      }
     }
+    builder.setStyle(style)
   }
 
   private fun addAction(
-    builder: Notification.Builder,
+    builder: NotificationCompat.Builder,
     context: Context,
     extras: Bundle,
     action: String,
     title: String
   ) {
     builder.addAction(
-      Notification.Action.Builder(
+      NotificationCompat.Action.Builder(
         android.R.drawable.ic_menu_view,
         title,
         openIntent(context, extras, action)
@@ -146,6 +196,7 @@ object CesiumAgentNotification {
   private fun deleteIntent(context: Context, extras: Bundle): PendingIntent {
     val intent = Intent(context, CesiumNotificationActionReceiver::class.java).apply {
       action = "com.cesium.mobile.NOTIFICATION_DISMISSED"
+      putExtra("runKey", extras.getString("runKey"))
       putExtra("conversationId", extras.getString("conversationId"))
       putExtra("workspaceId", extras.getString("workspaceId"))
     }
@@ -157,17 +208,41 @@ object CesiumAgentNotification {
     )
   }
 
-  private fun tryInvoke(
-    target: Any,
-    name: String,
-    parameterTypes: Array<Class<*>>,
-    values: Array<Any?>
-  ) {
-    try {
-      val method = target.javaClass.getMethod(name, *parameterTypes)
-      method.invoke(target, *values)
-    } catch (_: Throwable) {
-      // API-level fallback; standard notifications remain functional.
+  private fun progressColors(context: Context): CesiumProgressColors {
+    val dark =
+      context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK ==
+        Configuration.UI_MODE_NIGHT_YES
+    return if (dark) {
+      resolveCesiumProgressColors(true)
+    } else {
+      resolveCesiumProgressColors(false)
     }
   }
+
+  private const val MIN_COUNTDOWN_MS = 2 * 60 * 1000L
+  private const val MAX_PROGRESS_SEGMENTS = 100
 }
+
+internal data class CesiumProgressColors(
+  val completed: Int,
+  val active: Int,
+  val pending: Int,
+  val burn: Int
+)
+
+internal fun resolveCesiumProgressColors(dark: Boolean): CesiumProgressColors =
+  if (dark) {
+    CesiumProgressColors(
+      completed = CesiumDesignTokens.Dark.AskAccent.toInt(),
+      active = CesiumDesignTokens.Dark.WorkflowAccent.toInt(),
+      pending = CesiumDesignTokens.Dark.TextSecondary.toInt(),
+      burn = CesiumDesignTokens.Dark.BurnAccent.toInt()
+    )
+  } else {
+    CesiumProgressColors(
+      completed = CesiumDesignTokens.Light.AskAccent.toInt(),
+      active = CesiumDesignTokens.Light.WorkflowAccent.toInt(),
+      pending = CesiumDesignTokens.Light.TextSecondary.toInt(),
+      burn = CesiumDesignTokens.Light.BurnAccent.toInt()
+    )
+  }

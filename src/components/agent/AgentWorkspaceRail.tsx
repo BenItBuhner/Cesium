@@ -436,7 +436,7 @@ function RailIconCustomizePanel({
               key={swatchColor}
               type="button"
               onClick={() => onUpdate({ color: swatchColor })}
-              className={`size-[18px] rounded-full border transition-transform hover:scale-110 ${
+              className={`size-[var(--d2-rail-control-size)] rounded-full border transition-transform hover:scale-110 ${
                 color.toLowerCase() === swatchColor.toLowerCase()
                   ? "border-[var(--text-primary)]"
                   : "border-[var(--border-card)]"
@@ -454,7 +454,7 @@ function RailIconCustomizePanel({
             type="color"
             value={isValidFolderColor(color) ? color : "#7c3aed"}
             onChange={(event) => onUpdate({ color: event.target.value })}
-            className="size-[18px] cursor-pointer border-0 bg-transparent p-0"
+            className="size-[var(--d2-rail-control-size)] cursor-pointer border-0 bg-transparent p-0"
             aria-label="Custom color"
           />
         </label>
@@ -1970,7 +1970,7 @@ export function AgentWorkspaceRail() {
           <button
             type="button"
             onClick={handleNewStandaloneChat}
-            className="flex size-[18px] shrink-0 items-center justify-center rounded-[var(--agent-control-radius)] text-[var(--text-disabled)] opacity-0 transition-colors group-hover:opacity-100 hover:bg-[var(--agent-card-bg)] hover:text-[var(--text-primary)]"
+            className="flex size-[var(--d2-rail-control-size)] shrink-0 items-center justify-center rounded-[var(--agent-control-radius)] text-[var(--text-disabled)] opacity-0 transition-colors group-hover:opacity-100 hover:bg-[var(--agent-card-bg)] hover:text-[var(--text-primary)]"
             aria-label="Start new chat without workspace"
             title="New chat (no workspace)"
           >
@@ -2240,7 +2240,7 @@ export function AgentWorkspaceRail() {
                                     current === folder.id ? null : folder.id
                                   );
                                 }}
-                                className="mr-[3px] flex size-[18px] shrink-0 items-center justify-center rounded-[var(--agent-control-radius)] text-[var(--text-disabled)] opacity-0 hover:bg-[var(--bg-card)] hover:text-[var(--text-primary)] group-hover/folder:opacity-100 focus-visible:opacity-100"
+                                className="mr-[3px] flex size-[var(--d2-rail-control-size)] shrink-0 items-center justify-center rounded-[var(--agent-control-radius)] text-[var(--text-disabled)] opacity-0 hover:bg-[var(--bg-card)] hover:text-[var(--text-primary)] group-hover/folder:opacity-100 focus-visible:opacity-100"
                                 title={`Customize ${folder.name}`}
                                 aria-label={`Customize ${folder.name}`}
                               >
@@ -2442,7 +2442,7 @@ export function AgentWorkspaceRail() {
                 type="button"
                 onClick={toggleLeftRailCollapsed}
                 data-electron-no-drag
-                className="flex size-[18px] shrink-0 items-center justify-center rounded-[var(--agent-control-radius)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--agent-card-bg)] hover:text-[var(--text-primary)]"
+                className="flex size-[var(--d2-rail-control-size)] shrink-0 items-center justify-center rounded-[var(--agent-control-radius)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--agent-card-bg)] hover:text-[var(--text-primary)]"
                 aria-label="Collapse workspace rail"
                 title="Collapse workspace rail"
               >
@@ -2452,7 +2452,7 @@ export function AgentWorkspaceRail() {
                 type="button"
                 onClick={() => setRecentChatsOpen(true)}
                 data-electron-no-drag
-                className="flex size-[18px] shrink-0 items-center justify-center rounded-[var(--agent-control-radius)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--agent-card-bg)] hover:text-[var(--text-primary)]"
+                className="flex size-[var(--d2-rail-control-size)] shrink-0 items-center justify-center rounded-[var(--agent-control-radius)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--agent-card-bg)] hover:text-[var(--text-primary)]"
                 aria-label="Search all chats"
                 title="Search all chats"
               >
@@ -2463,7 +2463,7 @@ export function AgentWorkspaceRail() {
                 onClick={handleNewChat}
                 data-perf="agent-rail-new-chat"
                 data-electron-no-drag
-                className="ml-auto flex size-[18px] shrink-0 items-center justify-center rounded-[var(--agent-control-radius)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--agent-card-bg)] hover:text-[var(--text-primary)]"
+                className="ml-auto flex size-[var(--d2-rail-control-size)] shrink-0 items-center justify-center rounded-[var(--agent-control-radius)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--agent-card-bg)] hover:text-[var(--text-primary)]"
                 aria-label="Start new chat"
                 title="Start new chat"
               >
@@ -2576,7 +2576,7 @@ export function AgentWorkspaceRail() {
                 >
                   {isLocalDeviceServer(activeServer) ? (
                     <CircleUserRound
-                      className="size-[18px] shrink-0 text-[var(--text-secondary)]"
+                      className="size-[var(--d2-rail-control-size)] shrink-0 text-[var(--text-secondary)]"
                       strokeWidth={1.5}
                       aria-hidden
                     />
@@ -2584,7 +2584,7 @@ export function AgentWorkspaceRail() {
                     <WorkspaceFolderIcon
                       iconName={activeServerAppearance.icon}
                       color={activeServerAppearance.color}
-                      className="size-[18px] shrink-0"
+                      className="size-[var(--d2-rail-control-size)] shrink-0"
                       strokeWidth={1.5}
                     />
                   )}
@@ -2604,7 +2604,7 @@ export function AgentWorkspaceRail() {
                     e.stopPropagation();
                     setFilterMenuOpen((open) => !open);
                   }}
-                  className={`flex size-[18px] shrink-0 items-center justify-center rounded-[var(--radius-tab)] transition-colors hover:bg-[var(--bg-card)] hover:text-[var(--text-primary)] ${
+                  className={`flex size-[var(--d2-rail-control-size)] shrink-0 items-center justify-center rounded-[var(--radius-tab)] transition-colors hover:bg-[var(--bg-card)] hover:text-[var(--text-primary)] ${
                     railControlActive ? "text-[var(--accent)]" : "text-[var(--text-secondary)]"
                   }`}
                   aria-label="Filter and sort conversations"
@@ -2616,7 +2616,7 @@ export function AgentWorkspaceRail() {
                 <button
                   type="button"
                   onClick={openSettingsView}
-                  className="flex size-[18px] shrink-0 items-center justify-center rounded-[var(--radius-tab)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-card)] hover:text-[var(--text-primary)]"
+                  className="flex size-[var(--d2-rail-control-size)] shrink-0 items-center justify-center rounded-[var(--radius-tab)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-card)] hover:text-[var(--text-primary)]"
                   aria-label="Open settings"
                   title="Open settings"
                 >

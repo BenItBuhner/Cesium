@@ -537,9 +537,6 @@ class CursorSdkSessionHandle implements AgentSessionHandle {
             }));
             break;
           }
-          case "usage":
-            // Token usage is informational; ignore so it does not abort the turn.
-            break;
           default: {
             const exhaustive: never = event;
             throw new Error(`Unhandled Cursor SDK event: ${String(exhaustive)}`);

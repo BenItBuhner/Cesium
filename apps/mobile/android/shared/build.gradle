@@ -1,0 +1,56 @@
+plugins {
+  id("com.android.library")
+  id("org.jetbrains.kotlin.android")
+  id("org.jetbrains.kotlin.plugin.serialization")
+}
+
+def generatedDir = layout.buildDirectory.dir("generated/source/cesium/main")
+def generatedResDir = layout.buildDirectory.dir("generated/res/cesium/main")
+def repoRoot = rootProject.file("../../..")
+
+tasks.register("generateCesiumSharedSources", Exec) {
+  workingDir = repoRoot
+  commandLine(
+    "node",
+    new File(repoRoot, "apps/mobile/scripts/generate-android-shared.mjs").absolutePath,
+    "--outDir",
+    generatedDir.get().asFile.absolutePath,
+    "--resOutDir",
+    generatedResDir.get().asFile.absolutePath
+  )
+  inputs.files(
+    new File(repoRoot, "packages/core/src/watch-agent-contract.ts"),
+    new File(repoRoot, "packages/design/dist/theme-tokens.js")
+  )
+  outputs.dir(generatedDir)
+  outputs.dir(generatedResDir)
+}
+
+android {
+  namespace = "com.cesium.shared"
+  compileSdk = 36
+
+  defaultConfig {
+    minSdk = 26
+  }
+
+  sourceSets {
+    main {
+      java.srcDir(generatedDir)
+      res.srcDir(generatedResDir)
+    }
+  }
+}
+
+tasks.named("preBuild").configure {
+  dependsOn("generateCesiumSharedSources")
+}
+
+dependencies {
+  api("com.google.android.gms:play-services-wearable:19.0.0")
+  api("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.9.0")
+  api("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
+  implementation("androidx.core:core-ktx:1.18.0")
+
+  testImplementation("junit:junit:4.13.2")
+}

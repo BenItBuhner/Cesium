@@ -21,6 +21,7 @@ import {
   DEFAULT_THEME_TOKENS_DARK,
   DEFAULT_THEME_TOKENS_LIGHT,
 } from "../dist/theme-tokens.js";
+import { DESIGN_2_SURFACE_ALIASES } from "../dist/design-language.js";
 
 const packageRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -87,10 +88,13 @@ const webCss = `${header}
 
 :root {
 ${declarations(DEFAULT_THEME_TOKENS_LIGHT)}
+${declarations(DESIGN_2_SURFACE_ALIASES.common)}
+${declarations(DESIGN_2_SURFACE_ALIASES.light)}
 }
 
 html.dark {
 ${declarations(DEFAULT_THEME_TOKENS_DARK)}
+${declarations(DESIGN_2_SURFACE_ALIASES.dark)}
 }
 
 @theme inline {
@@ -102,11 +106,14 @@ const nativeCss = `${header}
 
 :root {
 ${declarations(DEFAULT_THEME_TOKENS_LIGHT)}
+${declarations(DESIGN_2_SURFACE_ALIASES.common)}
+${declarations(DESIGN_2_SURFACE_ALIASES.light)}
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
 ${declarations(DEFAULT_THEME_TOKENS_DARK).replace(/^/gm, "  ")}
+${declarations(DESIGN_2_SURFACE_ALIASES.dark).replace(/^/gm, "  ")}
   }
 }
 

@@ -2,7 +2,5 @@
 export {
   CURRENT_DESIGN_LANGUAGE_ID,
   DESIGN_LANGUAGE_PACKS,
-  NEW_DESIGN_DEFAULT_DARK_OVERLAY,
-  NEW_DESIGN_DEFAULT_LIGHT_OVERLAY,
 } from "@cesium/client";
 export type { DesignLanguageId, DesignLanguagePack } from "@cesium/client";

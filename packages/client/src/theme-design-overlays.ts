@@ -49,11 +49,3 @@ export const DESIGN_LANGUAGE_PACKS: Record<DesignLanguageId, DesignLanguagePack>
 
 /** Sole active design language. Swap / extend via {@link DESIGN_LANGUAGE_PACKS}. */
 export const CURRENT_DESIGN_LANGUAGE_ID: DesignLanguageId = "2.0";
-
-/** @deprecated Use {@link DESIGN_LANGUAGE_PACKS}[`2.0`].dark — kept for import stability. */
-export const NEW_DESIGN_DEFAULT_DARK_OVERLAY: ThemeTokensPartial =
-  DESIGN_LANGUAGE_PACKS["2.0"].dark;
-
-/** @deprecated Use {@link DESIGN_LANGUAGE_PACKS}[`2.0`].light — kept for import stability. */
-export const NEW_DESIGN_DEFAULT_LIGHT_OVERLAY: ThemeTokensPartial =
-  DESIGN_LANGUAGE_PACKS["2.0"].light;

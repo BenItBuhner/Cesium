@@ -5,6 +5,7 @@ type CesiumLiveUpdatesModule = {
   startOrUpdate(payload: LiveUpdatePayload): Promise<LiveUpdateStatus>;
   stop(): Promise<void>;
   getPromotionStatus(): Promise<LiveUpdateStatus>;
+  openPromotionSettings(): Promise<boolean>;
   consumeInitialNotificationAction(): Promise<{
     actionId?: string;
     workspaceId?: string;
@@ -33,6 +34,12 @@ export const CesiumLiveUpdates: CesiumLiveUpdatesModule = {
     }
     return nativeModule.getPromotionStatus();
   },
+  async openPromotionSettings() {
+    if (Platform.OS !== "android" || !nativeModule) {
+      return false;
+    }
+    return nativeModule.openPromotionSettings();
+  },
   async consumeInitialNotificationAction() {
     if (Platform.OS !== "android" || !nativeModule) {
       return {};
@@ -47,5 +54,6 @@ function fallbackStatus(): LiveUpdateStatus {
     progressStyleSupported: false,
     canPostPromotedNotifications: false,
     notificationPermissionGranted: false,
+    suppressedByDismissal: false,
   };
 }

@@ -46,6 +46,7 @@ import com.cesium.wear.sync.WatchConnectionMode
 import com.cesium.wear.sync.WearDataLayerRepository
 import com.cesium.wear.sync.label
 import com.cesium.wear.sync.resolveConnectionMode
+import com.cesium.shared.wear.PhoneRelayStatus
 import kotlinx.coroutines.launch
 
 private enum class WearScreen {
@@ -57,6 +58,14 @@ private enum class WearScreen {
   SETTINGS
 }
 
+private fun PhoneRelayStatus.label(): String =
+  when (this) {
+    PhoneRelayStatus.NEARBY -> "Phone nearby"
+    PhoneRelayStatus.CLOUD -> "Phone via cloud"
+    PhoneRelayStatus.NOT_PAIRED -> "Phone not paired"
+    PhoneRelayStatus.OFFLINE -> "Phone offline"
+  }
+
 @Composable
 fun CesiumWearApp(
   stateStore: WatchStateStore,
@@ -66,26 +75,30 @@ fun CesiumWearApp(
   val scope = rememberCoroutineScope()
   val envelope by stateStore.envelopeFlow.collectAsState(initial = null)
   val modePreference by stateStore.modePreferenceFlow.collectAsState(initial = "auto")
-  var phoneReachable by remember { mutableStateOf(false) }
+  var phoneRelayStatus by remember { mutableStateOf(PhoneRelayStatus.OFFLINE) }
   var screen by remember { mutableStateOf(WearScreen.GLANCE) }
   val projection = envelope?.projection
   val mode = resolveConnectionMode(
     envelope = envelope,
     preference = modePreference,
-    phoneRelayReachable = phoneReachable,
+    phoneRelayReachable =
+      phoneRelayStatus == PhoneRelayStatus.NEARBY ||
+        phoneRelayStatus == PhoneRelayStatus.CLOUD,
     directConfigured = envelope?.server?.baseUrl?.isNotBlank() == true
   )
 
   LaunchedEffect(Unit) {
     dataLayerRepository.loadInitialCompanionState()
-    phoneReachable = dataLayerRepository.hasReachablePhoneRelay()
+    phoneRelayStatus = dataLayerRepository.phoneRelayStatus()
   }
 
   WearShell {
     when (screen) {
       WearScreen.GLANCE -> GlanceScreen(
         projection = projection,
-        connectionLabel = mode.label(projection?.source),
+        connectionLabel =
+          if (mode == WatchConnectionMode.PHONE_COMPANION) phoneRelayStatus.label()
+          else mode.label(projection?.source),
         onPrimary = {
           if (projection?.pendingIntervention != null) {
             screen = WearScreen.INTERVENTION
@@ -118,7 +131,7 @@ fun CesiumWearApp(
       WearScreen.CONNECTION -> ConnectionScreen(
         mode = mode,
         modePreference = modePreference,
-        serverLabel = envelope?.server?.label ?: "No server",
+        serverLabel = "${envelope?.server?.label ?: "No server"} · ${phoneRelayStatus.label()}",
         onBack = { screen = WearScreen.GLANCE },
         onSettings = { screen = WearScreen.SETTINGS }
       )
@@ -178,6 +191,7 @@ private fun GlanceScreen(
   Column(
     modifier = Modifier
       .fillMaxSize()
+      .verticalScroll(rememberScrollState())
       .padding(horizontal = CesiumWearSpacing.ScreenHorizontal, vertical = CesiumWearSpacing.ScreenVertical),
     verticalArrangement = Arrangement.Center,
     horizontalAlignment = Alignment.CenterHorizontally
@@ -189,9 +203,17 @@ private fun GlanceScreen(
       Spacer(Modifier.height(CesiumWearSpacing.GapSmall))
       HeroText(projection?.title ?: "No active agent", maxLines = 2)
       Spacer(Modifier.height(CesiumWearSpacing.Gap))
-      ActivityPanel(projection?.currentActivity ?: "Waiting for phone or server sync")
+      ActivityPanel(projection?.currentActivity ?: "Waiting for phone sync")
       Spacer(Modifier.height(CesiumWearSpacing.Gap))
-      MetaLine(projection?.let { "${it.chip} · ${formatDuration(it.elapsedMs)}" } ?: "Offline")
+      projection?.let {
+        AgentProgress(it)
+        Spacer(Modifier.height(CesiumWearSpacing.GapSmall))
+      }
+      MetaLine(
+        projection?.let {
+          listOfNotNull(it.chip, it.progressLabel, formatDuration(it.elapsedMs)).joinToString(" · ")
+        } ?: "Offline"
+      )
     }
     Spacer(Modifier.height(CesiumWearSpacing.GapLarge))
     BottomActions(
@@ -200,6 +222,30 @@ private fun GlanceScreen(
       attention = hasPendingInput,
       onPrimary = onPrimary,
       secondary = listOf("List" to onList, "Link" to onConnection)
+    )
+  }
+}
+
+@Composable
+private fun AgentProgress(projection: WatchAgentProjection) {
+  val current = projection.progress ?: return
+  val maximum = projection.progressMax?.takeIf { it > 0 } ?: return
+  val fraction = (current / maximum).coerceIn(0.0, 1.0).toFloat()
+  Box(
+    modifier = Modifier
+      .fillMaxWidth()
+      .height(5.dp)
+      .clip(RoundedCornerShape(CesiumWearRadius.Pill))
+      .background(CesiumWearColors.BorderSubtle)
+  ) {
+    Box(
+      modifier = Modifier
+        .fillMaxWidth(fraction)
+        .height(5.dp)
+        .background(
+          if (projection.progressKind == "burn") CesiumWearColors.Danger
+          else CesiumWearColors.PlanGold
+        )
     )
   }
 }
@@ -553,11 +599,11 @@ private fun ActivityPanel(text: String) {
   ) {
     BasicText(
       text,
-      maxLines = 2,
+      maxLines = 3,
       overflow = TextOverflow.Ellipsis,
       style = TextStyle(
         color = CesiumWearColors.TextPrimary,
-        fontSize = CesiumWearType.BodyLarge,
+        fontSize = CesiumWearType.Body,
         fontWeight = FontWeight.Medium,
         textAlign = TextAlign.Center
       )

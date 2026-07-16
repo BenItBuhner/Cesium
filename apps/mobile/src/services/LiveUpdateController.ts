@@ -1,10 +1,12 @@
 import {
-  getMobileNotificationChip,
   isMobileAgentRunActive,
   type MobileAgentProjection,
-} from "../../../../src/lib/mobile-agent-projection";
+} from "@cesium/core";
 import { CesiumLiveUpdates } from "../native/CesiumLiveUpdates";
-import type { LiveUpdatePayload, LiveUpdateStatus } from "./liveUpdateTypes";
+import { toLiveUpdatePayload } from "./liveUpdateProjection";
+import type { LiveUpdateStatus } from "./liveUpdateTypes";
+
+export { toLiveUpdatePayload } from "./liveUpdateProjection";
 
 export class LiveUpdateController {
   private lastProjection: MobileAgentProjection | null = null;
@@ -53,22 +55,4 @@ export class LiveUpdateController {
     }
     await CesiumLiveUpdates.stop();
   }
-}
-
-export function toLiveUpdatePayload(projection: MobileAgentProjection): LiveUpdatePayload {
-  const active = isMobileAgentRunActive(projection.status);
-  return {
-    title: projection.title || "Cesium agent",
-    body: projection.currentActivity || "Agent is working",
-    shortText: getMobileNotificationChip(projection.status),
-    workspaceId: projection.workspaceId,
-    conversationId: projection.conversationId,
-    startedAt: projection.startedAt,
-    progress: projection.status === "completed" ? 100 : active ? 50 : 0,
-    progressMax: 100,
-    indeterminate: active,
-    intervention: projection.pendingIntervention,
-    ongoing: active,
-    cancellable: active,
-  };
 }

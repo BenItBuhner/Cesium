@@ -36,9 +36,13 @@ import {
 import { ImageCarousel } from "./ImageCarousel";
 import type { ImageAttachment, ImageAttachmentState } from "@/lib/types";
 import {
+  DESIGN_2_MODE_RECIPES,
   isComposerEffectivelyEmptyForMultiline,
   resolveComposerIsMultiLine,
   shouldLatchComposerMultiline,
+  type Design2ModeTone,
+} from "@cesium/design";
+import {
   useComposerTextIsMultiLine,
   useComposerVisualLineCount,
 } from "./composer-multiline";
@@ -186,23 +190,19 @@ const sendButtonBgClass: Record<KnownEditorMode, string> = {
 const COMPOSER_PLACEHOLDER_TEXT =
   "Ask anything, @ for files, / for commands";
 
-/**
- * Shared mode accent/icon map for the new-design mode chip. Kept local so
- * `ModeDropdown` (classic) can stay untouched and the chip renders without
- * importing private symbols from a peer.
- */
-const NEW_DESIGN_MODE_COLORS: Record<KnownEditorMode, { text: string; bg: string }> = {
-  agent: { text: "var(--accent)", bg: "var(--accent-bg)" },
-  plan: { text: "var(--plan-accent)", bg: "var(--plan-accent-bg)" },
-  debug: { text: "var(--debug-accent)", bg: "var(--debug-accent-bg)" },
-  ask: { text: "var(--ask-accent)", bg: "var(--ask-accent-bg)" },
-  goal: { text: "var(--burn-accent)", bg: "var(--burn-accent-bg)" },
-  burn: { text: "var(--burn-accent)", bg: "var(--burn-accent-bg)" },
-  workflow: { text: "var(--workflow-accent)", bg: "var(--workflow-accent-bg)" },
-  orchestration: { text: "var(--orchestration-accent)", bg: "var(--orchestration-accent-bg)" },
-};
+function design2ModeTone(tone: KnownEditorMode): Design2ModeTone {
+  return tone === "goal" ? "burn" : tone;
+}
 
-function renderNewDesignModeIcon(tone: KnownEditorMode, color: string): ReactElement {
+function modeChipColors(tone: KnownEditorMode): { text: string; bg: string } {
+  const recipe = DESIGN_2_MODE_RECIPES[design2ModeTone(tone)];
+  return {
+    text: `var(${recipe.textToken})`,
+    bg: `var(${recipe.backgroundToken})`,
+  };
+}
+
+function renderModeChipIcon(tone: KnownEditorMode, color: string): ReactElement {
   const className = "size-[13px] shrink-0";
   const strokeWidth = 1.5;
   switch (tone) {
@@ -228,7 +228,7 @@ function renderNewDesignModeIcon(tone: KnownEditorMode, color: string): ReactEle
   }
 }
 
-function isNewDesignModeChipVisible(mode: EditorMode): boolean {
+function isModeChipVisible(mode: EditorMode): boolean {
   return getModeTone(mode) !== "agent";
 }
 
@@ -256,7 +256,7 @@ function isPlainBackspaceKey(
   );
 }
 
-interface NewDesignModeChipProps {
+interface ModeChipProps {
   mode: EditorMode;
   options: AgentModeOption[];
   onModeChange: (mode: EditorMode) => void;
@@ -270,15 +270,15 @@ interface NewDesignModeChipProps {
  * cycling Shift+Tab into Plan/Debug/Ask surfaces an obvious chip that can be
  * dismissed back to default without opening a menu.
  */
-function NewDesignModeChip({
+function ModeChip({
   mode,
   options,
   onModeChange,
   disabled,
   removable = true,
-}: NewDesignModeChipProps) {
+}: ModeChipProps) {
   const tone = getModeTone(mode);
-  if (!isNewDesignModeChipVisible(mode)) {
+  if (!isModeChipVisible(mode)) {
     return null;
   }
   const defaultMode = resolveDefaultModeForOptions(options);
@@ -290,13 +290,13 @@ function NewDesignModeChip({
     resolvedOptions.find((o) => o.id === mode) ??
     resolvedOptions[0];
   const label = current?.label ?? mode;
-  const colors = NEW_DESIGN_MODE_COLORS[tone];
+  const colors = modeChipColors(tone);
   return (
     <span
       className="inline-flex h-[22px] shrink-0 items-center gap-[3px] rounded-[var(--radius-pill)] pl-[7px] pr-[4px] font-sans text-[13px] font-normal leading-none"
       style={{ background: colors.bg }}
     >
-      {renderNewDesignModeIcon(tone, colors.text)}
+      {renderModeChipIcon(tone, colors.text)}
       <span style={{ color: colors.text }}>{label}</span>
       {removable ? (
         <button
@@ -2502,7 +2502,7 @@ export function ChatComposer({
         configLockedRef.current ||
         modeLockedRef.current ||
         !canBackspaceClearModeChipRef.current ||
-        !isNewDesignModeChipVisible(currentMode) ||
+        !isModeChipVisible(currentMode) ||
         valueRef.current.length !== 0
       ) {
         return false;
@@ -2974,17 +2974,17 @@ const handleNativeComposerKeyDown = useCallback(
    * hook true/false in a tight loop. Once wrapped, stay in the multi-line shell
    * until the user clears all content (`value === ""`).
    */
-  const [newDesignMultilineLatch, setNewDesignMultilineLatch] = useState(false);
+  const [multilineLatch, setMultilineLatch] = useState(false);
 
   useEffect(() => {
     if (isComposerEffectivelyEmptyForMultiline(value, hookMeasuresMultiline)) {
-      setNewDesignMultilineLatch(false);
+      setMultilineLatch(false);
       return;
     }
     // After clearing, ResizeObserver can still see the old tall box until layout
     // settles; never re-latch multiline while the field is effectively empty.
     if (shouldLatchComposerMultiline(value, hookMeasuresMultiline)) {
-      setNewDesignMultilineLatch(true);
+      setMultilineLatch(true);
     }
   }, [hookMeasuresMultiline, value]);
 
@@ -2993,7 +2993,7 @@ const handleNativeComposerKeyDown = useCallback(
     forceMultiline,
     useStickyMultiline,
     hookMeasuresMultiline,
-    latchedMultiline: newDesignMultilineLatch,
+    latchedMultiline: multilineLatch,
     value,
   });
   canBackspaceClearModeChipRef.current =
@@ -3039,8 +3039,8 @@ const handleNativeComposerKeyDown = useCallback(
   const renderVoiceButton = (variant: "primary" | "secondary"): ReactElement => {
     const isPrimary = variant === "primary";
     const buttonClassName = isPrimary
-      ? `relative flex h-[20px] w-[20px] items-center justify-center rounded-full transition-opacity hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-50 ${sendButtonBgClass[getModeTone(mode)]}`
-      : `relative flex h-[20px] min-w-[20px] items-center justify-center rounded-full transition-colors ${
+      ? `relative flex h-[var(--d2-composer-send-size)] w-[var(--d2-composer-send-size)] items-center justify-center rounded-full transition-opacity hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-50 ${sendButtonBgClass[getModeTone(mode)]}`
+      : `relative flex h-[var(--d2-composer-send-size)] min-w-[var(--d2-composer-send-size)] items-center justify-center rounded-full transition-colors ${
           recordingState === "recording" || recordingState === "transcribing"
             ? "bg-[var(--accent-bg)] text-[var(--text-primary)]"
             : "text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
@@ -3096,7 +3096,7 @@ const handleNativeComposerKeyDown = useCallback(
         type="button"
         onClick={() => fileInputRef.current?.click()}
         disabled={configLocked}
-        className="flex size-[22px] shrink-0 items-center justify-center rounded-full border border-[var(--agent-border)] bg-[var(--agent-plus-button-bg)] text-[var(--agent-plus-button-icon)] transition-colors hover:bg-[var(--agent-plus-button-bg-hover)] hover:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-50"
+        className="flex size-[var(--d2-composer-plus-size)] shrink-0 items-center justify-center rounded-full border border-[var(--agent-border)] bg-[var(--agent-plus-button-bg)] text-[var(--agent-plus-button-icon)] transition-colors hover:bg-[var(--agent-plus-button-bg-hover)] hover:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-50"
         aria-label="Attach media"
         title="Attach media"
       >
@@ -3105,7 +3105,7 @@ const handleNativeComposerKeyDown = useCallback(
     );
 
     const modeChip = (
-      <NewDesignModeChip
+      <ModeChip
         mode={mode}
         options={modeOptions ?? DEFAULT_MODE_OPTIONS}
         onModeChange={onModeChange}
@@ -3145,7 +3145,7 @@ const handleNativeComposerKeyDown = useCallback(
         <button
           type="button"
           onClick={() => void onCancel?.()}
-          className={`flex h-[20px] w-[20px] items-center justify-center rounded-full transition-opacity hover:opacity-80 ${sendButtonBgClass[getModeTone(mode)]}`}
+          className={`flex h-[var(--d2-composer-send-size)] w-[var(--d2-composer-send-size)] items-center justify-center rounded-full transition-opacity hover:opacity-80 ${sendButtonBgClass[getModeTone(mode)]}`}
           aria-label="Stop"
         >
           <Square className="size-[9px] text-[var(--bg-main)]" fill="currentColor" strokeWidth={2.2} />
@@ -3155,7 +3155,7 @@ const handleNativeComposerKeyDown = useCallback(
           type="button"
           onClick={() => void submitComposer()}
           disabled={!canSubmit}
-          className={`flex h-[20px] w-[20px] items-center justify-center rounded-full transition-opacity hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-50 ${sendButtonBgClass[getModeTone(mode)]}`}
+          className={`flex h-[var(--d2-composer-send-size)] w-[var(--d2-composer-send-size)] items-center justify-center rounded-full transition-opacity hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-50 ${sendButtonBgClass[getModeTone(mode)]}`}
           aria-label={busy ? "Send or queue message" : "Send"}
         >
           <ArrowUp className="size-3 text-[var(--bg-main)]" strokeWidth={2.5} />
@@ -3172,7 +3172,7 @@ const handleNativeComposerKeyDown = useCallback(
      * the squarer composer-radius so the bottom row corners stay tidy under a
      * tall editor.
      */
-    const newDesignPillRadiusClass =
+    const pillRadiusClass =
       isMultiLine || attachedImages.length > 0
         ? "rounded-[var(--agent-composer-radius)]"
         : "rounded-full";
@@ -3183,7 +3183,7 @@ const handleNativeComposerKeyDown = useCallback(
       <div
         ref={composerRootRef}
         data-ide-input-sink
-        className={`${shellMargin} flex shrink-0 flex-col gap-[8px] overflow-hidden ${newDesignPillRadiusClass} border border-[var(--agent-border)] bg-[var(--agent-card-bg)] p-[10px]`}
+        className={`${shellMargin} flex shrink-0 flex-col gap-[8px] overflow-hidden ${pillRadiusClass} border border-[var(--agent-border)] bg-[var(--agent-card-bg)] p-[10px]`}
       >
         {attachedImages.length > 0 && (
           <ImageCarousel
@@ -3397,7 +3397,7 @@ const handleNativeComposerKeyDown = useCallback(
       <button
         type="button"
         onClick={() => void onCancel?.()}
-        className={`flex h-[20px] w-[20px] items-center justify-center rounded-full transition-opacity hover:opacity-80 ${sendButtonBgClass[getModeTone(mode)]}`}
+        className={`flex h-[var(--d2-composer-send-size)] w-[var(--d2-composer-send-size)] items-center justify-center rounded-full transition-opacity hover:opacity-80 ${sendButtonBgClass[getModeTone(mode)]}`}
         aria-label="Stop"
       >
         <Square className="size-[9px] text-[var(--bg-main)]" fill="currentColor" strokeWidth={2.2} />
@@ -3407,7 +3407,7 @@ const handleNativeComposerKeyDown = useCallback(
         type="button"
         onClick={() => void submitComposer()}
         disabled={!canSubmit}
-        className={`flex h-[20px] w-[20px] items-center justify-center rounded-full transition-opacity hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-50 ${sendButtonBgClass[getModeTone(mode)]}`}
+        className={`flex h-[var(--d2-composer-send-size)] w-[var(--d2-composer-send-size)] items-center justify-center rounded-full transition-opacity hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-50 ${sendButtonBgClass[getModeTone(mode)]}`}
         aria-label={busy ? "Send or queue message" : "Send"}
       >
         <ArrowUp className="size-3 text-[var(--bg-main)]" strokeWidth={2.5} />

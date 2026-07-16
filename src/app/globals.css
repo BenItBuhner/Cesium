@@ -41,39 +41,8 @@
  * `html.dark` block further down.
  */
 :root {
-  /* Muted gold for permission / attention dots (plan-like, not traffic amber). */
-  --tab-agent-attention-dot: color-mix(in srgb, var(--plan-accent) 68%, #737373 32%);
-  --tab-unread-completion-dot: #4a76a8;
-
   /* Leading inset for editor tabs under iPadOS window controls when the sidebar is collapsed. */
   --editor-window-chrome-tab-inset: 72px;
-
-  /* Agent UI design hooks. Defaults intentionally mirror the current design. */
-  --agent-content-max-width: 876px;
-  --agent-content-edge-gutter: 28px;
-  --agent-panel-bg: var(--bg-panel);
-  --agent-card-bg: var(--bg-card);
-  --agent-card-hover-bg: var(--bg-card-hover);
-  --agent-border: var(--border-card);
-  --agent-composer-radius: var(--radius-card);
-  --agent-card-radius: var(--radius-card);
-  --agent-control-radius: var(--radius-tab);
-  --agent-pill-radius: var(--radius-pill);
-  --agent-rail-row-height: 30px;
-  /** Slightly raised surface for composer chip controls (e.g. media [+]). */
-  --agent-plus-button-bg: #eaeaea;
-  --agent-plus-button-bg-hover: #e0e0e0;
-  /** Plus control icon (can tune separately from --text-secondary). */
-  --agent-plus-button-icon: #767676;
-}
-
-html.dark {
-  /* Plus / media chip: slightly lifted surface on the dark composer pill only. */
-  --agent-plus-button-bg: #303030;
-  --agent-plus-button-bg-hover: #3a3a3a;
-  --agent-plus-button-icon: var(--text-secondary);
-  --tab-agent-attention-dot: color-mix(in srgb, var(--plan-accent) 38%, var(--bg-panel) 62%);
-  --tab-unread-completion-dot: #6b9fd4;
 }
 
 * {

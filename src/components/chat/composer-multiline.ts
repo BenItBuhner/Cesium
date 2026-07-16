@@ -54,62 +54,6 @@ export function measureIsMultiLine(el: HTMLElement): boolean {
 }
 
 /**
- * True when the composer has no text the user would treat as "content".
- * Whitespace-only strings (including newline runs) still count once layout
- * measures past one visual line; a lone phantom `\n` from an empty
- * contenteditable does not.
- */
-export function isComposerEffectivelyEmptyForMultiline(
-  value: string,
-  hookMeasuresMultiline: boolean
-): boolean {
-  if (value.length === 0) {
-    return true;
-  }
-  if (value.trim().length > 0) {
-    return false;
-  }
-  return !hookMeasuresMultiline;
-}
-
-export function shouldLatchComposerMultiline(
-  value: string,
-  hookMeasuresMultiline: boolean
-): boolean {
-  return hookMeasuresMultiline && !isComposerEffectivelyEmptyForMultiline(value, hookMeasuresMultiline);
-}
-
-export function resolveComposerIsMultiLine(options: {
-  forceMultiline?: boolean;
-  useStickyMultiline: boolean;
-  hookMeasuresMultiline: boolean;
-  latchedMultiline: boolean;
-  value: string;
-}): boolean {
-  const {
-    forceMultiline = false,
-    useStickyMultiline,
-    hookMeasuresMultiline,
-    latchedMultiline,
-    value,
-  } = options;
-
-  if (forceMultiline) {
-    return true;
-  }
-  if (!useStickyMultiline) {
-    return hookMeasuresMultiline;
-  }
-  if (isComposerEffectivelyEmptyForMultiline(value, hookMeasuresMultiline)) {
-    return false;
-  }
-  if (latchedMultiline) {
-    return true;
-  }
-  return hookMeasuresMultiline;
-}
-
-/**
  * Watches a contenteditable (or any block) for wrap transitions. Returns `true`
  * once the content occupies more than a single visual line. Safe in SSR: the
  * hook no-ops until the ref attaches on the client.

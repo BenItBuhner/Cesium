@@ -15,7 +15,7 @@ test("resolvePackagedDesktopDataDir migrates legacy server-data profile to canon
   mkdirSync(join(legacyDir, "profile"), { recursive: true });
   writeFileSync(
     join(legacyDir, "profile", "global-settings.json"),
-    JSON.stringify({ themeConfig: { uiDesignMode: "new" } })
+    JSON.stringify({ themeConfig: { appearance: "system" } })
   );
 
   const previousLocalAppData = process.env.LOCALAPPDATA;
@@ -25,7 +25,7 @@ test("resolvePackagedDesktopDataDir migrates legacy server-data profile to canon
     assert.equal(resolved, canonicalDir);
     assert.equal(
       readFileSync(join(canonicalDir, "profile", "global-settings.json"), "utf8"),
-      JSON.stringify({ themeConfig: { uiDesignMode: "new" } })
+      JSON.stringify({ themeConfig: { appearance: "system" } })
     );
   } finally {
     process.env.LOCALAPPDATA = previousLocalAppData;
@@ -45,7 +45,7 @@ test("resolvePackagedDesktopDataDir prefers richer legacy desktop profile when b
   mkdirSync(join(legacyDir, "profile"), { recursive: true });
   writeFileSync(
     join(legacyDir, "profile", "global-settings.json"),
-    JSON.stringify({ themeConfig: { uiDesignMode: "new" }, desktop: true, extra: "x".repeat(4096) })
+    JSON.stringify({ themeConfig: { appearance: "system" }, desktop: true, extra: "x".repeat(4096) })
   );
 
   const previousLocalAppData = process.env.LOCALAPPDATA;
@@ -57,7 +57,7 @@ test("resolvePackagedDesktopDataDir prefers richer legacy desktop profile when b
       readFileSync(join(canonicalDir, "profile", "global-settings.json"), "utf8")
     );
     assert.equal(merged.desktop, true);
-    assert.equal(merged.themeConfig.uiDesignMode, "new");
+    assert.equal(merged.themeConfig.appearance, "system");
   } finally {
     process.env.LOCALAPPDATA = previousLocalAppData;
     rmSync(root, { recursive: true, force: true });
