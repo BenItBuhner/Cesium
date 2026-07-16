@@ -15,10 +15,42 @@ PROJECTS_DIR="$HOME/projects"
 SERVICE_DIR="$PREFIX/var/service/cesium"
 LOG_DIR="$PREFIX/var/log/sv/cesium"
 
+# Termux is rolling-release. Partial upgrades break curl/openssl linkage
+# (CANNOT LINK EXECUTABLE "curl" / SSL_set_quic_tls_transport_params).
+# pkg itself depends on curl, so repair with apt — which does not.
+ensure_termux_packages_ready() {
+  if ! command -v apt >/dev/null 2>&1; then
+    printf 'Termux apt is missing. Reinstall Termux from F-Droid and retry.\n' >&2
+    exit 1
+  fi
+  if ! apt update; then
+    printf 'apt update failed. Select a mirror, then retry:\n' >&2
+    printf '  termux-change-repo\n' >&2
+    printf '  apt update && apt full-upgrade -y\n' >&2
+    exit 1
+  fi
+  DEBIAN_FRONTEND=noninteractive apt full-upgrade -y
+}
+
+ensure_curl_works() {
+  if ! command -v curl >/dev/null 2>&1 || ! curl --version >/dev/null 2>&1; then
+    DEBIAN_FRONTEND=noninteractive apt install -y curl
+  fi
+  if ! curl --version >/dev/null 2>&1; then
+    printf 'curl is still broken after package repair.\n' >&2
+    printf 'Run these, then retry this installer:\n' >&2
+    printf '  termux-change-repo\n' >&2
+    printf '  apt update && apt full-upgrade -y\n' >&2
+    exit 1
+  fi
+}
+
 if [[ "${CESIUM_SKIP_PACKAGE_UPDATE:-0}" != "1" ]]; then
-  pkg update -y
+  ensure_termux_packages_ready
 fi
-pkg install -y \
+ensure_curl_works
+
+DEBIAN_FRONTEND=noninteractive apt install -y \
   clang \
   curl \
   git \
