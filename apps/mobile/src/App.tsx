@@ -15,7 +15,7 @@ import {
   getStoredSessionToken,
   setActiveWorkspaceId,
 } from "@cesium/client";
-import { ServerConnectionsProvider } from "@cesium/client/react";
+import { ServerConnectionsProvider, GlobalSettingsProvider } from "@cesium/client/react";
 import { toWatchAgentProjection, toWatchSyncEnvelope } from "@cesium/core";
 import {
   NativeAuthProvider,
@@ -171,16 +171,18 @@ export default function App() {
       />
       <SafeAreaView style={{ flex: 1 }} testID="cesium-mobile-root">
         <ServerConnectionsProvider>
-          <NativeAuthProvider>
-            <NativeWorkspaceProvider>
-              <NativeWorkbench
-                connectionState={connectionState}
-                notificationConversationId={notificationConversationId}
-                onFocusedConversationChange={configureAgentSocket}
-                onServerBaseUrlChange={setServerUrl}
-              />
-            </NativeWorkspaceProvider>
-          </NativeAuthProvider>
+          <GlobalSettingsProvider>
+            <NativeAuthProvider>
+              <NativeWorkspaceProvider>
+                <NativeWorkbench
+                  connectionState={connectionState}
+                  notificationConversationId={notificationConversationId}
+                  onFocusedConversationChange={configureAgentSocket}
+                  onServerBaseUrlChange={setServerUrl}
+                />
+              </NativeWorkspaceProvider>
+            </NativeAuthProvider>
+          </GlobalSettingsProvider>
         </ServerConnectionsProvider>
       </SafeAreaView>
     </SafeAreaProvider>

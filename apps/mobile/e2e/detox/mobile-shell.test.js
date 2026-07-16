@@ -15,4 +15,13 @@ describe("Cesium mobile shell", () => {
     await expect(element(by.id("cesium-mobile-root"))).toBeVisible();
     await device.takeScreenshot("mobile-native-shell");
   });
+
+  it("exposes composer controls for send, attach, model, and mode", async () => {
+    await expect(element(by.id("native-chat-composer"))).toBeVisible();
+    await expect(element(by.id("native-chat-input"))).toBeVisible();
+    await expect(element(by.id("native-chat-send"))).toBeVisible();
+    await expect(element(by.id("native-chat-attach"))).toBeVisible();
+    await expect(element(by.id("native-chat-model"))).toBeVisible();
+    await expect(element(by.id("native-chat-mode"))).toBeVisible();
+  });
 });
