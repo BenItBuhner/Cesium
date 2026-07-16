@@ -1692,7 +1692,25 @@ function WorkbenchBody({
   );
 
   if (workspaceLoading && !activeWorkspace) {
-    return <LoadingScreen label="Loading workspace..." tokens={tokens} />;
+    return (
+      <View style={[sharedStyles.centered, { backgroundColor: tokens["--bg-main"] }]}>
+        <ActivityIndicator color={tokens["--text-secondary"]} />
+        <Text style={styles.emptySubtitle}>Loading workspace...</Text>
+        <Pressable
+          onPress={() => setServerSetupOpen(true)}
+          style={styles.secondaryButton}
+          testID="loading-open-server-setup"
+        >
+          <Text style={styles.secondaryButtonText}>Set up server on this phone</Text>
+        </Pressable>
+        <OnDeviceServerSetup
+          onClose={() => setServerSetupOpen(false)}
+          open={serverSetupOpen}
+          styles={styles}
+          tokens={tokens}
+        />
+      </View>
+    );
   }
   if (workspaceError && !activeWorkspace) {
     return (
@@ -1702,6 +1720,19 @@ function WorkbenchBody({
         <Pressable onPress={() => void refreshWorkspaces()} style={styles.secondaryButton}>
           <Text style={styles.secondaryButtonText}>Retry</Text>
         </Pressable>
+        <Pressable
+          onPress={() => setServerSetupOpen(true)}
+          style={styles.secondaryButton}
+          testID="error-open-server-setup"
+        >
+          <Text style={styles.secondaryButtonText}>Set up server on this phone</Text>
+        </Pressable>
+        <OnDeviceServerSetup
+          onClose={() => setServerSetupOpen(false)}
+          open={serverSetupOpen}
+          styles={styles}
+          tokens={tokens}
+        />
       </View>
     );
   }

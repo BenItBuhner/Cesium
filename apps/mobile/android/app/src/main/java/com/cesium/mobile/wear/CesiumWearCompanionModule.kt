@@ -1,16 +1,25 @@
 package com.cesium.mobile.wear
 
 import com.cesium.shared.wear.CesiumWearTransport
+import com.cesium.shared.wear.PhoneRelayStatus
 import com.cesium.shared.wear.WearRelayConfigPayload
+import com.facebook.react.bridge.Arguments
 import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReactContextBaseJavaModule
 import com.facebook.react.bridge.ReactMethod
 import com.facebook.react.bridge.ReadableMap
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 
 class CesiumWearCompanionModule(
   private val reactContext: ReactApplicationContext
 ) : ReactContextBaseJavaModule(reactContext) {
+  private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
   override fun getName(): String = "CesiumWearCompanion"
 
   @ReactMethod
@@ -37,6 +46,26 @@ class CesiumWearCompanionModule(
     } catch (error: Exception) {
       promise.reject("CESIUM_WEAR_PUBLISH_FAILED", "Failed to publish Wear OS state", error)
     }
+  }
+
+  @ReactMethod
+  fun getConnectionStatus(promise: Promise) {
+    scope.launch {
+      val status = runCatching {
+        CesiumWearTransport(reactContext).phoneRelayStatus()
+      }.getOrDefault(PhoneRelayStatus.OFFLINE)
+      val map = Arguments.createMap().apply {
+        putString("status", status.name.lowercase())
+        putBoolean("reachable", status == PhoneRelayStatus.NEARBY || status == PhoneRelayStatus.CLOUD)
+        putBoolean("nearby", status == PhoneRelayStatus.NEARBY)
+      }
+      promise.resolve(map)
+    }
+  }
+
+  override fun invalidate() {
+    scope.cancel()
+    super.invalidate()
   }
 
 }

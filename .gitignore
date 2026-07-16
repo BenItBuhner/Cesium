@@ -149,5 +149,6 @@ apps/mobile/android/app/.cxx/
 apps/mobile/android/app/build/
 apps/mobile/android/build/
 apps/mobile/android/.gradle/
+apps/mobile/android/.kotlin/
 apps/mobile/android/local.properties
 apps/mobile/node_modules/

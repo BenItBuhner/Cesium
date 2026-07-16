@@ -9,13 +9,22 @@ export type ServerProbeResult = {
   error: string | null;
 };
 
+function timeoutSignal(timeoutMs: number): AbortSignal {
+  if (typeof AbortSignal.timeout === "function") {
+    return AbortSignal.timeout(timeoutMs);
+  }
+  const controller = new AbortController();
+  setTimeout(() => controller.abort(), timeoutMs);
+  return controller.signal;
+}
+
 export async function probeServerBaseUrl(baseUrl: string): Promise<ServerProbeResult> {
   const normalizedBaseUrl = normalizeServerBaseUrl(baseUrl);
   try {
     const healthResponse = await fetch(`${normalizedBaseUrl}/health`, {
       method: "GET",
       cache: "no-store",
-      signal: AbortSignal.timeout(8_000),
+      signal: timeoutSignal(8_000),
     });
     if (!healthResponse.ok) {
       return {
@@ -33,7 +42,7 @@ export async function probeServerBaseUrl(baseUrl: string): Promise<ServerProbeRe
         headers: attachSessionToken(undefined, normalizedBaseUrl),
         credentials: "include",
         cache: "no-store",
-        signal: AbortSignal.timeout(8_000),
+        signal: timeoutSignal(8_000),
       });
       if (!authResponse.ok) {
         return {
