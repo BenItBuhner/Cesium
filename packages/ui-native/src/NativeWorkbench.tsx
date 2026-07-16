@@ -19,11 +19,11 @@ import {
   ChevronDown,
   ChevronRight,
   Circle,
-  CircleUserRound,
   File,
   Folder,
   FolderOpen,
   GitBranch,
+  Globe2,
   Infinity as InfinityIcon,
   Maximize2,
   Menu,
@@ -79,6 +79,7 @@ import {
   readFile,
   writeFile,
 } from "@cesium/client";
+import { useServerConnections } from "@cesium/client/react";
 import type { ThemeTokens } from "@cesium/design";
 import { useThemeTokens } from "./theme";
 import { useNativeAuth } from "./providers/NativeAuthProvider";
@@ -1112,6 +1113,7 @@ function AgentRail({
   onNewConversation,
   onSelectConversation,
   onSelectWorkspace,
+  serverLabel,
   selectedConversationId,
   styles,
   tokens,
@@ -1124,6 +1126,7 @@ function AgentRail({
   onNewConversation: () => void;
   onSelectConversation: (conversationId: string) => void;
   onSelectWorkspace: (workspaceId: string) => void;
+  serverLabel: string;
   selectedConversationId: string | null;
   styles: ReturnType<typeof createStyles>;
   tokens: ThemeTokens;
@@ -1137,7 +1140,11 @@ function AgentRail({
         conversation.title.toLowerCase().includes(normalizedQuery)
       )
     : conversations;
-  const activeWorkspace = workspaces.find((workspace) => workspace.id === activeWorkspaceId);
+  const orderedWorkspaces = [...workspaces].sort((left, right) => {
+    if (left.id === activeWorkspaceId) return -1;
+    if (right.id === activeWorkspaceId) return 1;
+    return left.name.localeCompare(right.name);
+  });
 
   return (
     <View style={styles.agentRail} testID="agent-workspace-rail">
@@ -1178,7 +1185,7 @@ function AgentRail({
         />
       ) : null}
       <ScrollView contentContainerStyle={styles.railList}>
-        {workspaces.map((workspace) => {
+        {orderedWorkspaces.map((workspace) => {
           const active = workspace.id === activeWorkspaceId;
           return (
             <View key={workspace.id} style={styles.railWorkspaceSection}>
@@ -1247,9 +1254,9 @@ function AgentRail({
         })}
       </ScrollView>
       <View style={styles.railFooter}>
-        <CircleUserRound color={tokens["--text-secondary"]} size={17} strokeWidth={1.5} />
+        <Globe2 color={tokens["--text-secondary"]} size={17} strokeWidth={1.5} />
         <Text numberOfLines={1} style={styles.railFooterLabel}>
-          {activeWorkspace?.name ?? "Cesium"}
+          {serverLabel}
         </Text>
         <View
           style={[
@@ -1284,7 +1291,11 @@ function WorkbenchBody({
     setActiveWorkspace,
     workspaces,
   } = useNativeWorkspace();
+  const { activeServer } = useServerConnections();
   const { width: viewportWidth } = useWindowDimensions();
+  const serverLabel =
+    activeServer.baseUrl.replace(/^https?:\/\//, "").replace(/\/+$/, "") ||
+    activeServer.label;
   const styles = useMemo(() => createStyles(tokens), [tokens]);
   const [railOpen, setRailOpen] = useState(false);
   const [rightPaneOpen, setRightPaneOpen] = useState(false);
@@ -1616,6 +1627,7 @@ function WorkbenchBody({
                 setRightPaneOpen(false);
                 setRailOpen(false);
               }}
+              serverLabel={serverLabel}
               selectedConversationId={selectedConversationId}
               styles={styles}
               tokens={tokens}

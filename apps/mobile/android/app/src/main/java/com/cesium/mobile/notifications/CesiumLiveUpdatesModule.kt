@@ -4,6 +4,7 @@ import android.app.NotificationManager
 import android.content.Intent
 import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import com.cesium.mobile.CesiumNotificationIntentStore
 import com.cesium.mobile.background.CesiumForegroundService
 import com.facebook.react.bridge.Arguments
@@ -64,6 +65,23 @@ class CesiumLiveUpdatesModule(
   @ReactMethod
   fun getPromotionStatus(promise: Promise) {
     promise.resolve(statusMap())
+  }
+
+  @ReactMethod
+  fun openPromotionSettings(promise: Promise) {
+    if (Build.VERSION.SDK_INT < 36) {
+      promise.resolve(false)
+      return
+    }
+    val intent = Intent(Settings.ACTION_APP_NOTIFICATION_PROMOTION_SETTINGS).apply {
+      putExtra(Settings.EXTRA_APP_PACKAGE, reactContext.packageName)
+      addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    }
+    val available = intent.resolveActivity(reactContext.packageManager) != null
+    if (available) {
+      reactContext.startActivity(intent)
+    }
+    promise.resolve(available)
   }
 
   @ReactMethod
