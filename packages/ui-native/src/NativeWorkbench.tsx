@@ -17,32 +17,39 @@ import {
 } from "react-native";
 import {
   AlertCircle,
-  Bot,
+  ArrowUp,
+  Boxes,
+  Bug,
   Check,
   ChevronDown,
   ChevronRight,
   Circle,
   File,
+  Flame,
   Folder,
   FolderOpen,
   GitBranch,
   Globe2,
-  Infinity as InfinityIcon,
+  House,
+  Laptop,
+  ListChecks,
+  ListFilter,
   Maximize2,
   Menu,
+  MessageCircleQuestion,
+  Mic,
   MoreHorizontal,
   PanelLeftClose,
   PanelLeftOpen,
   PanelRightClose,
   PanelRightOpen,
-  Paperclip,
   Plus,
   RefreshCw,
   Save,
   Search,
-  Send,
   Settings,
-  UserRound,
+  Square,
+  Workflow,
   Wrench,
   X,
 } from "lucide-react-native";
@@ -84,7 +91,14 @@ import {
   writeFile,
 } from "@cesium/client";
 import { useServerConnections } from "@cesium/client/react";
-import type { ThemeTokens } from "@cesium/design";
+import {
+  DESIGN_2_MODE_RECIPES,
+  DESIGN_2_RECIPES,
+  resolveDesign2ComposerLayout,
+  resolveDesign2ModeTone,
+  type Design2ModeTone,
+  type Design2ThemeTokens as ThemeTokens,
+} from "@cesium/design";
 import { useThemeTokens } from "./theme";
 import { useNativeAuth } from "./providers/NativeAuthProvider";
 import { useNativeWorkspace } from "./providers/NativeWorkspaceProvider";
@@ -129,6 +143,23 @@ const EMPTY_FEED: ConversationFeedState = {
 function tokenNumber(value: string, fallback: number): number {
   const parsed = Number.parseFloat(value);
   return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+const MODE_ICONS: Record<Design2ModeTone, IconComponent> = {
+  agent: Workflow,
+  plan: ListChecks,
+  debug: Bug,
+  ask: MessageCircleQuestion,
+  burn: Flame,
+  workflow: Workflow,
+  orchestration: Boxes,
+};
+
+function modeToken(
+  tokens: ThemeTokens,
+  token: string
+): string {
+  return tokens[token as keyof ThemeTokens] ?? tokens["--text-primary"];
 }
 
 function formatModelLabel(conversation: AgentConversationRecord | null, backend: AgentBackendInfo | null) {
@@ -303,14 +334,18 @@ function useConversationFeed(
 
 function IconButton({
   accessibilityLabel,
+  compact = false,
   Icon,
   onPress,
+  surface = false,
   tokens,
   testID,
 }: {
   accessibilityLabel: string;
+  compact?: boolean;
   Icon: IconComponent;
   onPress?: () => void;
+  surface?: boolean;
   tokens: ThemeTokens;
   testID?: string;
 }) {
@@ -321,12 +356,17 @@ function IconButton({
       hitSlop={8}
       onPress={onPress}
       style={({ pressed }) => [
-        sharedStyles.iconButton,
+        compact ? sharedStyles.compactIconButton : sharedStyles.iconButton,
+        surface ? { backgroundColor: tokens["--bg-panel"] } : null,
         pressed ? { backgroundColor: tokens["--accent-bg"] } : null,
       ]}
       testID={testID}
     >
-      <Icon color={tokens["--text-secondary"]} size={16} strokeWidth={1.5} />
+      <Icon
+        color={tokens["--text-secondary"]}
+        size={DESIGN_2_RECIPES.rail.toolbarIconSize}
+        strokeWidth={1.5}
+      />
     </Pressable>
   );
 }
@@ -534,16 +574,17 @@ function FilesPanel({
     <View style={styles.panel} testID="cesium-files-panel">
       <View style={styles.explorerToolbar}>
         <View style={sharedStyles.toolbarSpacer} />
-        <IconButton accessibilityLabel="Explorer menu" Icon={Menu} tokens={tokens} />
+        <IconButton accessibilityLabel="Explorer menu" compact Icon={Menu} tokens={tokens} />
         <IconButton
           accessibilityLabel="Refresh files"
+          compact
           Icon={RefreshCw}
           onPress={() => setRefreshKey((current) => current + 1)}
           tokens={tokens}
           testID="refresh-files"
         />
-        <IconButton accessibilityLabel="Search files" Icon={Search} tokens={tokens} />
-        <IconButton accessibilityLabel="Maximize explorer" Icon={Maximize2} tokens={tokens} />
+        <IconButton accessibilityLabel="Search files" compact Icon={Search} tokens={tokens} />
+        <IconButton accessibilityLabel="Maximize explorer" compact Icon={Maximize2} tokens={tokens} />
       </View>
       <Text numberOfLines={1} style={styles.explorerTitle}>
         {workspaceName || root.split(/[\\/]/).filter(Boolean).at(-1) || "Workspace"}
@@ -649,6 +690,7 @@ function EditorPanel({
         <View style={sharedStyles.toolbarSpacer} />
         <IconButton
           accessibilityLabel="Open workspace file"
+          compact
           Icon={FolderOpen}
           onPress={onOpenFiles}
           tokens={tokens}
@@ -657,15 +699,17 @@ function EditorPanel({
         {document?.dirty ? (
           <IconButton
             accessibilityLabel="Save file"
+            compact
             Icon={Save}
             onPress={onSave}
             tokens={tokens}
             testID="save-file"
           />
         ) : null}
-        <IconButton accessibilityLabel="Editor menu" Icon={MoreHorizontal} tokens={tokens} />
+        <IconButton accessibilityLabel="Editor menu" compact Icon={MoreHorizontal} tokens={tokens} />
         <IconButton
           accessibilityLabel="Hide workbench pane"
+          compact
           Icon={PanelRightClose}
           onPress={onClosePane}
           tokens={tokens}
@@ -764,7 +808,6 @@ const NativeMessage = memo(function NativeMessage({
   if (message.type === "user") {
     return (
       <View style={styles.userMessage} testID={`chat-message-${message.id}`}>
-        <UserRound color={tokens["--text-secondary"]} size={14} strokeWidth={1.5} />
         <Text selectable style={styles.messageText}>
           {message.content ?? ""}
         </Text>
@@ -774,7 +817,6 @@ const NativeMessage = memo(function NativeMessage({
   if (message.type === "assistant") {
     return (
       <View style={styles.assistantMessage} testID={`chat-message-${message.id}`}>
-        <Bot color={tokens["--text-secondary"]} size={14} strokeWidth={1.5} />
         <Text selectable style={styles.messageText}>
           {message.content ?? ""}
         </Text>
@@ -900,6 +942,7 @@ function Composer({
   backend,
   busy,
   conversation,
+  mode,
   onSubmit,
   styles,
   tokens,
@@ -907,11 +950,36 @@ function Composer({
   backend: AgentBackendInfo | null;
   busy: boolean;
   conversation: AgentConversationRecord | null;
+  mode: string;
   onSubmit: (text: string) => Promise<boolean>;
   styles: ReturnType<typeof createStyles>;
   tokens: ThemeTokens;
 }) {
   const [text, setText] = useState("");
+  const [measuredMultiline, setMeasuredMultiline] = useState(false);
+  const [multilineLatch, setMultilineLatch] = useState(false);
+  const layout = resolveDesign2ComposerLayout({
+    measuredMultiline,
+    latchedMultiline: multilineLatch,
+    hasAttachments: false,
+    value: text,
+  });
+  const tone = resolveDesign2ModeTone(mode);
+  const modeRecipe = DESIGN_2_MODE_RECIPES[tone];
+  const ModeIcon = MODE_ICONS[tone];
+  const canSubmit = text.trim().length > 0;
+
+  useEffect(() => {
+    if (!text) {
+      setMeasuredMultiline(false);
+      setMultilineLatch(false);
+      return;
+    }
+    if (measuredMultiline) {
+      setMultilineLatch(true);
+    }
+  }, [measuredMultiline, text]);
+
   const submit = useCallback(async () => {
     const next = text.trim();
     if (!next || busy) {
@@ -921,48 +989,127 @@ function Composer({
       setText("");
     }
   }, [busy, onSubmit, text]);
-  return (
-    <View style={styles.composer} testID="native-chat-composer">
-      <TextInput
-        accessibilityLabel="Agent prompt"
-        multiline
-        onChangeText={setText}
-        onSubmitEditing={() => void submit()}
-        placeholder="Ask anything, @ for files, / for commands"
-        placeholderTextColor={tokens["--text-secondary"]}
-        style={styles.composerInput}
-        testID="native-chat-input"
-        value={text}
+
+  const plusButton = (
+    <Pressable
+      accessibilityLabel="Attach media"
+      hitSlop={6}
+      style={styles.composerPlusButton}
+    >
+      <Plus
+        color={tokens["--agent-plus-button-icon"]}
+        size={DESIGN_2_RECIPES.composer.plusIconSize}
+        strokeWidth={2}
       />
-      <View style={styles.composerActions}>
-        <Pressable accessibilityLabel="Attach context" hitSlop={8} style={styles.composerIcon}>
-          <Paperclip color={tokens["--text-secondary"]} size={13} strokeWidth={1.5} />
-        </Pressable>
-        <Pressable accessibilityLabel="More context options" hitSlop={8} style={styles.composerIcon}>
-          <InfinityIcon color={tokens["--text-secondary"]} size={14} strokeWidth={1.5} />
-        </Pressable>
-        <Pressable style={styles.modelButton}>
-          <Bot color={tokens["--text-secondary"]} size={12} strokeWidth={1.5} />
-          <Text numberOfLines={1} style={styles.modelText}>
-            {formatModelLabel(conversation, backend)}
-          </Text>
-          <ChevronDown color={tokens["--text-secondary"]} size={10} strokeWidth={1.5} />
-        </Pressable>
-        <View style={sharedStyles.toolbarSpacer} />
-        <Pressable
-          accessibilityLabel="Send prompt"
-          disabled={!text.trim() || busy}
-          onPress={() => void submit()}
-          style={[styles.sendButton, !text.trim() || busy ? styles.disabled : null]}
-          testID="native-chat-send"
-        >
-          {busy ? (
-            <ActivityIndicator color={tokens["--bg-main"]} size="small" />
-          ) : (
-            <Send color={tokens["--bg-main"]} size={12} strokeWidth={2} />
-          )}
-        </Pressable>
-      </View>
+    </Pressable>
+  );
+  const modeChip = !modeRecipe.hiddenWhenDefault ? (
+    <View
+      style={[
+        styles.composerModeChip,
+        { backgroundColor: modeToken(tokens, modeRecipe.backgroundToken) },
+      ]}
+    >
+      <ModeIcon
+        color={modeToken(tokens, modeRecipe.textToken)}
+        size={13}
+        strokeWidth={1.5}
+      />
+      <Text
+        style={[
+          styles.composerModeChipText,
+          { color: modeToken(tokens, modeRecipe.textToken) },
+        ]}
+      >
+        {modeRecipe.label}
+      </Text>
+      <X color={modeToken(tokens, modeRecipe.textToken)} size={9} strokeWidth={2} />
+    </View>
+  ) : null;
+  const leadingControls = (
+    <View style={styles.composerLeadingControls}>
+      {plusButton}
+      {modeChip}
+    </View>
+  );
+  const modelPill = (
+    <Pressable style={styles.modelButton}>
+      <Text numberOfLines={1} style={styles.modelText}>
+        {formatModelLabel(conversation, backend)}
+      </Text>
+      <ChevronDown color={tokens["--text-secondary"]} size={10} strokeWidth={1.5} />
+    </Pressable>
+  );
+  const primaryControl = (
+    <Pressable
+      accessibilityLabel={busy ? "Stop" : canSubmit ? "Send" : "Voice input"}
+      onPress={canSubmit && !busy ? () => void submit() : undefined}
+      style={[
+        styles.sendButton,
+        { backgroundColor: modeToken(tokens, modeRecipe.sendToken) },
+      ]}
+      testID="native-chat-send"
+    >
+      {busy ? (
+        <Square color={tokens["--bg-main"]} fill="currentColor" size={9} strokeWidth={2.2} />
+      ) : canSubmit ? (
+        <ArrowUp
+          color={tokens["--bg-main"]}
+          size={DESIGN_2_RECIPES.composer.sendIconSize}
+          strokeWidth={DESIGN_2_RECIPES.composer.sendIconStrokeWidth}
+        />
+      ) : (
+        <Mic color={tokens["--bg-main"]} size={13} strokeWidth={1.5} />
+      )}
+    </Pressable>
+  );
+  const editor = (
+    <TextInput
+      accessibilityLabel="Agent prompt"
+      multiline
+      onChangeText={setText}
+      onContentSizeChange={(event) => {
+        setMeasuredMultiline(
+          event.nativeEvent.contentSize.height >
+            DESIGN_2_RECIPES.composer.multilineThreshold
+        );
+      }}
+      onSubmitEditing={() => void submit()}
+      placeholder={DESIGN_2_RECIPES.composer.placeholder}
+      placeholderTextColor={tokens["--text-secondary"]}
+      scrollEnabled={layout.multiline}
+      style={[
+        styles.composerInput,
+        layout.multiline ? styles.composerInputMultiline : styles.composerInputSingle,
+      ]}
+      testID="native-chat-input"
+      value={text}
+    />
+  );
+
+  return (
+    <View
+      style={[styles.composer, { borderRadius: layout.radius }]}
+      testID="native-chat-composer"
+    >
+      {layout.multiline ? (
+        <>
+          {editor}
+          <View style={styles.composerActions}>
+            {leadingControls}
+            <View style={sharedStyles.toolbarSpacer} />
+            {modelPill}
+            {primaryControl}
+          </View>
+        </>
+      ) : (
+        <View style={styles.composerSingleRow}>
+          {leadingControls}
+          {editor}
+          {modelPill}
+          {primaryControl}
+        </View>
+      )}
     </View>
   );
 }
@@ -994,7 +1141,7 @@ function ChatPanel({
   onPermission: (requestId: string, optionId: string) => void;
   onQuestion: (questionId: string, answer: string) => void;
   onRefresh: () => void;
-  onSubmit: (text: string) => Promise<boolean>;
+  onSubmit: (text: string, mode?: string) => Promise<boolean>;
   selectedConversationId: string | null;
   styles: ReturnType<typeof createStyles>;
   tokens: ThemeTokens;
@@ -1002,6 +1149,7 @@ function ChatPanel({
   workspaceName: string;
   workspaceRoot: string;
 }) {
+  const [draftMode, setDraftMode] = useState("agent");
   const selectedConversation = selectedConversationId
     ? feed.conversation?.id === selectedConversationId
       ? feed.conversation
@@ -1028,27 +1176,41 @@ function ChatPanel({
         <View style={styles.newChatStage}>
           <View style={styles.newChatContent}>
             <View style={styles.workspaceContextRow}>
-              <Folder color={tokens["--text-secondary"]} size={13} strokeWidth={1.5} />
-              <Text numberOfLines={1} style={styles.workspaceContextText}>
-                {workspaceName}
-              </Text>
-              <GitBranch color={tokens["--text-disabled"]} size={12} strokeWidth={1.5} />
-              <Text numberOfLines={1} style={styles.workspaceRootText}>
-                {workspaceBranch ?? workspaceRoot.split("/").filter(Boolean).at(-1) ?? workspaceRoot}
-              </Text>
+              <Pressable style={styles.workspaceContextPill}>
+                <Folder color={tokens["--file-tag-icon"]} size={13} strokeWidth={1.5} />
+                <Text numberOfLines={1} style={styles.workspaceContextText}>
+                  {workspaceName}
+                </Text>
+                <ChevronDown color={tokens["--text-secondary"]} size={11} strokeWidth={1.5} />
+              </Pressable>
+              <Pressable style={styles.workspaceContextPill}>
+                <GitBranch color={tokens["--text-disabled"]} size={12} strokeWidth={1.5} />
+                <Text numberOfLines={1} style={styles.workspaceRootText}>
+                  {workspaceBranch ?? workspaceRoot.split("/").filter(Boolean).at(-1) ?? workspaceRoot}
+                </Text>
+                <ChevronDown color={tokens["--text-secondary"]} size={11} strokeWidth={1.5} />
+              </Pressable>
+              <Pressable style={styles.workspaceTargetPill}>
+                <Laptop color={tokens["--text-secondary"]} size={13} strokeWidth={1.5} />
+                <ChevronDown color={tokens["--text-secondary"]} size={11} strokeWidth={1.5} />
+              </Pressable>
             </View>
             <Composer
               backend={backend}
               busy={false}
               conversation={null}
-              onSubmit={onSubmit}
+              mode={draftMode}
+              onSubmit={(text) => onSubmit(text, draftMode)}
               styles={styles}
               tokens={tokens}
             />
             {feedError ? <Text style={styles.landingError}>{feedError}</Text> : null}
             <View style={styles.quickActions}>
-              <Pressable style={styles.quickActionButton}>
-                <Text style={styles.quickActionText}>Plan new idea</Text>
+              <Pressable
+                onPress={() => setDraftMode("plan")}
+                style={styles.quickActionButton}
+              >
+                <Text style={styles.quickActionText}>Plan new idea (Ctrl+I)</Text>
               </Pressable>
               <Pressable
                 onPress={onOpenWorkbench}
@@ -1094,13 +1256,21 @@ function ChatPanel({
             backend={backend}
             busy={false}
             conversation={selectedConversation}
-            onSubmit={onSubmit}
+            mode={selectedConversation?.config.mode ?? "agent"}
+            onSubmit={(text) =>
+              onSubmit(text, selectedConversation?.config.mode)
+            }
             styles={styles}
             tokens={tokens}
           />
           <View style={styles.composerMetaRow}>
+            <Text style={styles.composerMeta}>workspace</Text>
+            <Text numberOfLines={1} style={styles.composerBranchMeta}>
+              {workspaceBranch ?? workspaceRoot.split("/").filter(Boolean).at(-1) ?? workspaceRoot}
+            </Text>
+            <View style={sharedStyles.toolbarSpacer} />
             <Text numberOfLines={1} style={styles.composerMeta}>
-              workspace · {workspaceRoot}
+              {backend?.label ?? ""}
             </Text>
             {connectionState && connectionState !== "open" ? (
               <Text style={styles.composerMeta}>{connectionState}</Text>
@@ -1115,7 +1285,6 @@ function ChatPanel({
 function AgentRail({
   activeWorkspaceId,
   branchLabel,
-  connectionState,
   conversations,
   onClose,
   onNewConversation,
@@ -1130,7 +1299,6 @@ function AgentRail({
 }: {
   activeWorkspaceId: string | null;
   branchLabel: string | null;
-  connectionState?: NativeWorkbenchProps["connectionState"];
   conversations: AgentConversationRecord[];
   onClose: () => void;
   onNewConversation: () => void;
@@ -1162,6 +1330,7 @@ function AgentRail({
       <View style={styles.railTopBar}>
         <IconButton
           accessibilityLabel="Hide workspace rail"
+          compact
           Icon={PanelLeftClose}
           onPress={onClose}
           tokens={tokens}
@@ -1169,6 +1338,7 @@ function AgentRail({
         />
         <IconButton
           accessibilityLabel="Search all chats"
+          compact
           Icon={Search}
           onPress={() => setSearchOpen((open) => !open)}
           tokens={tokens}
@@ -1177,6 +1347,7 @@ function AgentRail({
         <View style={sharedStyles.toolbarSpacer} />
         <IconButton
           accessibilityLabel="Start new chat"
+          compact
           Icon={Plus}
           onPress={onNewConversation}
           tokens={tokens}
@@ -1205,11 +1376,19 @@ function AgentRail({
                 style={styles.railWorkspaceHeader}
                 testID={`workspace-row-${workspace.id}`}
               >
-                <Folder
-                  color={active ? tokens["--text-primary"] : tokens["--text-disabled"]}
-                  size={11}
-                  strokeWidth={1.7}
-                />
+                {workspace.name.toLowerCase() === "home" ? (
+                  <House
+                    color={tokens["--debug-accent"]}
+                    size={11}
+                    strokeWidth={1.7}
+                  />
+                ) : (
+                  <Folder
+                    color={active ? tokens["--file-tag-icon"] : tokens["--text-disabled"]}
+                    size={11}
+                    strokeWidth={1.7}
+                  />
+                )}
                 <Text
                   numberOfLines={1}
                   style={[
@@ -1241,16 +1420,20 @@ function AgentRail({
                       >
                         <Circle
                           color={
-                            conversation.status === "running"
-                              ? tokens["--ask-accent"]
-                              : tokens["--text-disabled"]
+                            selected
+                              ? tokens["--text-primary"]
+                              : conversation.status === "running"
+                                ? tokens["--ask-accent"]
+                                : tokens["--text-disabled"]
                           }
                           fill={
-                            conversation.status === "running"
-                              ? tokens["--ask-accent"]
-                              : "transparent"
+                            selected
+                              ? tokens["--text-primary"]
+                              : conversation.status === "running"
+                                ? tokens["--ask-accent"]
+                                : tokens["--text-disabled"]
                           }
-                          size={6}
+                          size={5}
                           strokeWidth={1.5}
                         />
                         <Text numberOfLines={1} style={styles.railConversationTitle}>
@@ -1274,21 +1457,17 @@ function AgentRail({
         <Text numberOfLines={1} style={styles.railFooterLabel}>
           {serverLabel}
         </Text>
-        <View
-          style={[
-            styles.connectionDot,
-            {
-              backgroundColor:
-                connectionState === "open"
-                  ? tokens["--ask-accent"]
-                  : tokens["--text-disabled"],
-            },
-          ]}
-        />
+        <View style={styles.railFooterIconButton}>
+          <ChevronDown color={tokens["--text-secondary"]} size={12} strokeWidth={1.5} />
+        </View>
+        <View style={styles.railFooterIconButton}>
+          <ListFilter color={tokens["--text-secondary"]} size={15} strokeWidth={1.5} />
+        </View>
         <Pressable
           accessibilityLabel="Open server setup"
-          hitSlop={8}
+          hitSlop={6}
           onPress={onOpenServerSetup}
+          style={styles.railFooterIconButton}
           testID="open-server-setup"
         >
           <Settings color={tokens["--text-secondary"]} size={15} strokeWidth={1.5} />
@@ -1624,7 +1803,7 @@ function WorkbenchBody({
   }, [editorDocument]);
 
   const submitPrompt = useCallback(
-    async (text: string): Promise<boolean> => {
+    async (text: string, modeOverride?: string): Promise<boolean> => {
       try {
         if (selectedConversationId) {
           const result = await promptAgentConversation(selectedConversationId, text);
@@ -1644,7 +1823,8 @@ function WorkbenchBody({
         const result = await createAndPromptAgentConversation(
           {
             backendId: backend.id,
-            mode: backend.defaultMode,
+            mode:
+              (modeOverride ?? backend.defaultMode) as AgentConversationRecord["config"]["mode"],
             modelId: backend.defaultModelId,
             modelName: backend.defaultModelName,
           },
@@ -1774,8 +1954,10 @@ function WorkbenchBody({
         {!railOpen ? (
           <IconButton
             accessibilityLabel="Show workspace rail"
+            compact
             Icon={PanelLeftOpen}
             onPress={() => setRailOpen(true)}
+            surface
             tokens={tokens}
             testID="open-agent-rail"
           />
@@ -1785,11 +1967,13 @@ function WorkbenchBody({
         {!rightPaneOpen && selectedConversationId ? (
           <IconButton
             accessibilityLabel="Show workbench pane"
+            compact
             Icon={PanelRightOpen}
             onPress={() => {
               setFilePickerOpen(false);
               setRightPaneOpen(true);
             }}
+            surface
             tokens={tokens}
             testID="open-workbench-pane"
           />
@@ -1813,7 +1997,6 @@ function WorkbenchBody({
             <AgentRail
               activeWorkspaceId={activeWorkspaceId}
               branchLabel={workspaceBranch}
-              connectionState={connectionState}
               conversations={conversations}
               onClose={() => setRailOpen(false)}
               onNewConversation={() => {
@@ -1882,6 +2065,7 @@ function WorkbenchBody({
             <View style={styles.filePickerClose}>
               <IconButton
                 accessibilityLabel="Return to editor"
+                compact
                 Icon={PanelRightClose}
                 onPress={() => setFilePickerOpen(false)}
                 tokens={tokens}
@@ -1921,12 +2105,6 @@ const sharedStyles = StyleSheet.create({
     justifyContent: "center",
     padding: 24,
   },
-  composerIcon: {
-    alignItems: "center",
-    height: 22,
-    justifyContent: "center",
-    width: 22,
-  },
   fileIndent: {
     width: 11,
   },
@@ -1936,6 +2114,13 @@ const sharedStyles = StyleSheet.create({
     height: 28,
     justifyContent: "center",
     width: 28,
+  },
+  compactIconButton: {
+    alignItems: "center",
+    borderRadius: 5,
+    height: DESIGN_2_RECIPES.rail.toolbarButtonSize,
+    justifyContent: "center",
+    width: DESIGN_2_RECIPES.rail.toolbarButtonSize,
   },
   loadingLabel: {
     fontFamily: "sans-serif",
@@ -1958,7 +2143,7 @@ function createStyles(tokens: ThemeTokens) {
     backgroundColor: tokens["--bg-card"],
     borderColor: tokens["--border-card"],
     borderRadius: cardRadius,
-    borderWidth: StyleSheet.hairlineWidth,
+    borderWidth: DESIGN_2_RECIPES.cards.borderWidth,
   };
   return StyleSheet.create({
     agentCenterStage: {
@@ -2014,15 +2199,12 @@ function createStyles(tokens: ThemeTokens) {
       zIndex: 20,
     },
     assistantMessage: {
-      alignItems: "flex-start",
-      flexDirection: "row",
-      gap: 8,
       paddingHorizontal: 4,
       paddingVertical: 7,
     },
     attentionCard: {
       ...card,
-      backgroundColor: tokens["--plan-accent-bg"],
+      backgroundColor: tokens["--bg-card"],
       gap: 7,
       padding: 10,
     },
@@ -2042,7 +2224,7 @@ function createStyles(tokens: ThemeTokens) {
       backgroundColor: tokens["--bg-main"],
       borderColor: tokens["--border-card"],
       borderRadius: tabRadius,
-      borderWidth: StyleSheet.hairlineWidth,
+      borderWidth: DESIGN_2_RECIPES.cards.borderWidth,
       flexDirection: "row",
       gap: 8,
       minHeight: 34,
@@ -2063,27 +2245,77 @@ function createStyles(tokens: ThemeTokens) {
     },
     composer: {
       ...card,
-      gap: 7,
-      marginHorizontal: 1,
-      padding: 9,
+      gap: DESIGN_2_RECIPES.composer.stackedGap,
+      marginHorizontal: 0,
+      padding: DESIGN_2_RECIPES.composer.padding,
     },
     composerActions: {
       alignItems: "center",
       flexDirection: "row",
-      minHeight: 23,
+      gap: DESIGN_2_RECIPES.composer.gap,
+      minHeight: DESIGN_2_RECIPES.composer.plusSize,
     },
-    composerIcon: sharedStyles.composerIcon,
+    composerLeadingControls: {
+      alignItems: "center",
+      flexDirection: "row",
+      gap: 6,
+      flexShrink: 0,
+    },
+    composerModeChip: {
+      alignItems: "center",
+      borderRadius: DESIGN_2_RECIPES.composer.singleLineRadius,
+      flexDirection: "row",
+      gap: DESIGN_2_RECIPES.composer.modeChipGap,
+      height: DESIGN_2_RECIPES.composer.modeChipHeight,
+      paddingLeft: DESIGN_2_RECIPES.composer.modeChipPaddingLeft,
+      paddingRight: DESIGN_2_RECIPES.composer.modeChipPaddingRight,
+    },
+    composerModeChipText: {
+      fontFamily: "sans-serif",
+      fontSize: 11,
+      fontWeight: "500",
+    },
+    composerPlusButton: {
+      alignItems: "center",
+      backgroundColor: tokens["--agent-plus-button-bg"] ?? tokens["--bg-panel"],
+      borderColor: tokens["--border-card"],
+      borderRadius: DESIGN_2_RECIPES.composer.singleLineRadius,
+      borderWidth: DESIGN_2_RECIPES.composer.borderWidth,
+      height: DESIGN_2_RECIPES.composer.plusSize,
+      justifyContent: "center",
+      width: DESIGN_2_RECIPES.composer.plusSize,
+    },
+    composerSingleRow: {
+      alignItems: "center",
+      flexDirection: "row",
+      gap: DESIGN_2_RECIPES.composer.gap,
+      minWidth: 0,
+    },
     composerInput: {
       ...bodyText,
-      lineHeight: 19,
-      maxHeight: 126,
-      minHeight: 38,
+      flex: 1,
+      lineHeight: DESIGN_2_RECIPES.composer.lineHeight,
+      maxHeight: DESIGN_2_RECIPES.composer.maxHeight,
       padding: 0,
+    },
+    composerInputSingle: {
+      height: DESIGN_2_RECIPES.composer.plusSize,
+      minHeight: DESIGN_2_RECIPES.composer.plusSize,
+    },
+    composerInputMultiline: {
+      minHeight: 40,
+      textAlignVertical: "top",
     },
     composerMeta: {
       color: tokens["--text-disabled"],
       flexShrink: 1,
       fontFamily: "sans-serif",
+      fontSize: 9.5,
+    },
+    composerBranchMeta: {
+      color: tokens["--text-disabled"],
+      flexShrink: 1,
+      fontFamily: "monospace",
       fontSize: 9.5,
     },
     composerMetaRow: {
@@ -2254,15 +2486,15 @@ function createStyles(tokens: ThemeTokens) {
       alignItems: "center",
       flexDirection: "row",
       gap: 4,
-      marginLeft: 2,
-      maxWidth: 180,
-      paddingHorizontal: 3,
+      maxWidth: 145,
+      minHeight: DESIGN_2_RECIPES.composer.sendSize,
+      paddingHorizontal: 0,
     },
     modelText: {
       color: tokens["--text-secondary"],
       flexShrink: 1,
       fontFamily: "sans-serif",
-      fontSize: 10.5,
+      fontSize: 11,
     },
     newChatStage: {
       alignItems: "center",
@@ -2272,8 +2504,8 @@ function createStyles(tokens: ThemeTokens) {
       paddingVertical: 54,
     },
     newChatContent: {
-      gap: 4,
-      maxWidth: 876,
+      gap: 2,
+      maxWidth: DESIGN_2_RECIPES.landing.contentMaxWidth,
       width: "100%",
     },
     panel: {
@@ -2298,10 +2530,12 @@ function createStyles(tokens: ThemeTokens) {
       fontWeight: "600",
     },
     quickActionButton: {
-      ...card,
-      borderRadius: 50,
-      paddingHorizontal: 13,
-      paddingVertical: 7,
+      backgroundColor: tokens["--bg-panel"],
+      borderColor: tokens["--border-card"],
+      borderRadius: DESIGN_2_RECIPES.composer.singleLineRadius,
+      borderWidth: DESIGN_2_RECIPES.cards.borderWidth,
+      paddingHorizontal: DESIGN_2_RECIPES.landing.quickActionHorizontalPadding,
+      paddingVertical: DESIGN_2_RECIPES.landing.quickActionVerticalPadding,
     },
     quickActionText: {
       color: tokens["--text-primary"],
@@ -2311,16 +2545,16 @@ function createStyles(tokens: ThemeTokens) {
     quickActions: {
       flexDirection: "row",
       flexWrap: "wrap",
-      gap: 9,
-      marginTop: 7,
+      gap: DESIGN_2_RECIPES.landing.quickActionGap,
+      marginTop: 10,
     },
     railConversationRow: {
       alignItems: "center",
       borderRadius: tabRadius,
       flexDirection: "row",
       gap: 7,
-      minHeight: 30,
-      paddingHorizontal: 9,
+      height: DESIGN_2_RECIPES.rail.rowHeight,
+      paddingHorizontal: DESIGN_2_RECIPES.rail.rowHorizontalPadding,
     },
     railConversationRowSelected: {
       backgroundColor: tokens["--bg-card"],
@@ -2330,6 +2564,7 @@ function createStyles(tokens: ThemeTokens) {
       flex: 1,
       fontFamily: "sans-serif",
       fontSize: 12.5,
+      fontWeight: "500",
     },
     railBranchLabel: {
       color: tokens["--text-disabled"],
@@ -2347,18 +2582,26 @@ function createStyles(tokens: ThemeTokens) {
     },
     railFooter: {
       alignItems: "center",
-      borderTopColor: tokens["--border-subtle"],
-      borderTopWidth: StyleSheet.hairlineWidth,
       flexDirection: "row",
-      gap: 8,
-      minHeight: 44,
-      paddingHorizontal: 11,
+      gap: DESIGN_2_RECIPES.rail.footerGap,
+      minHeight:
+        DESIGN_2_RECIPES.rail.footerControlSize +
+        DESIGN_2_RECIPES.rail.footerVerticalPadding * 2,
+      paddingHorizontal: DESIGN_2_RECIPES.rail.footerHorizontalPadding,
+      paddingVertical: DESIGN_2_RECIPES.rail.footerVerticalPadding,
     },
     railFooterLabel: {
       color: tokens["--text-primary"],
       flex: 1,
       fontFamily: "sans-serif",
       fontSize: 12.5,
+    },
+    railFooterIconButton: {
+      alignItems: "center",
+      borderRadius: tabRadius,
+      height: DESIGN_2_RECIPES.rail.footerControlSize,
+      justifyContent: "center",
+      width: DESIGN_2_RECIPES.rail.footerControlSize,
     },
     railList: {
       flexGrow: 1,
@@ -2378,10 +2621,10 @@ function createStyles(tokens: ThemeTokens) {
     railTopBar: {
       alignItems: "center",
       flexDirection: "row",
-      gap: 6,
-      minHeight: 42,
-      paddingHorizontal: 8,
-      paddingTop: 4,
+      gap: DESIGN_2_RECIPES.rail.toolbarGap,
+      minHeight: 40,
+      paddingHorizontal: DESIGN_2_RECIPES.rail.footerHorizontalPadding,
+      paddingTop: 11,
     },
     railWorkspaceHeader: {
       alignItems: "center",
@@ -2519,11 +2762,6 @@ function createStyles(tokens: ThemeTokens) {
       fontSize: 17,
       fontWeight: "600",
     },
-    connectionDot: {
-      borderRadius: 4,
-      height: 7,
-      width: 7,
-    },
     landingError: {
       color: tokens["--debug-accent"],
       fontFamily: "sans-serif",
@@ -2532,11 +2770,10 @@ function createStyles(tokens: ThemeTokens) {
     },
     sendButton: {
       alignItems: "center",
-      backgroundColor: tokens["--accent"],
-      borderRadius: 12,
-      height: 23,
+      borderRadius: DESIGN_2_RECIPES.composer.singleLineRadius,
+      height: DESIGN_2_RECIPES.composer.sendSize,
       justifyContent: "center",
-      width: 23,
+      width: DESIGN_2_RECIPES.composer.sendSize,
     },
     todoRow: {
       alignItems: "flex-start",
@@ -2552,10 +2789,8 @@ function createStyles(tokens: ThemeTokens) {
     },
     userMessage: {
       ...card,
-      alignItems: "flex-start",
-      flexDirection: "row",
-      gap: 8,
-      padding: 10,
+      overflow: "hidden",
+      padding: DESIGN_2_RECIPES.cards.padding,
     },
     workbench: {
       backgroundColor: tokens["--bg-main"],
@@ -2565,9 +2800,26 @@ function createStyles(tokens: ThemeTokens) {
     workspaceContextRow: {
       alignItems: "center",
       flexDirection: "row",
-      gap: 5,
+      flexWrap: "wrap",
+      gap: DESIGN_2_RECIPES.landing.contextGap,
       minHeight: 27,
-      paddingHorizontal: 6,
+    },
+    workspaceContextPill: {
+      alignItems: "center",
+      borderRadius: DESIGN_2_RECIPES.composer.singleLineRadius,
+      flexDirection: "row",
+      gap: 5,
+      maxWidth: 220,
+      paddingHorizontal: DESIGN_2_RECIPES.landing.contextHorizontalPadding,
+      paddingVertical: DESIGN_2_RECIPES.landing.contextVerticalPadding,
+    },
+    workspaceTargetPill: {
+      alignItems: "center",
+      borderRadius: DESIGN_2_RECIPES.composer.singleLineRadius,
+      flexDirection: "row",
+      gap: 5,
+      paddingHorizontal: DESIGN_2_RECIPES.landing.contextHorizontalPadding,
+      paddingVertical: DESIGN_2_RECIPES.landing.contextVerticalPadding,
     },
     workspaceContextText: {
       color: tokens["--text-secondary"],

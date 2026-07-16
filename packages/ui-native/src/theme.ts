@@ -3,8 +3,9 @@ import { Appearance } from "react-native";
 import {
   DEFAULT_THEME_TOKENS_DARK,
   DEFAULT_THEME_TOKENS_LIGHT,
+  resolveDesign2ThemeTokens,
   type ColorScheme,
-  type ThemeTokens,
+  type Design2ThemeTokens,
 } from "@cesium/design";
 
 /**
@@ -27,7 +28,10 @@ export function useColorScheme(): ColorScheme {
   return useSyncExternalStore(subscribe, getScheme, () => "dark" as const);
 }
 
-export function useThemeTokens(): ThemeTokens {
+export function useThemeTokens(): Design2ThemeTokens {
   const scheme = useColorScheme();
-  return scheme === "dark" ? DEFAULT_THEME_TOKENS_DARK : DEFAULT_THEME_TOKENS_LIGHT;
+  return resolveDesign2ThemeTokens(
+    scheme === "dark" ? DEFAULT_THEME_TOKENS_DARK : DEFAULT_THEME_TOKENS_LIGHT,
+    scheme
+  );
 }

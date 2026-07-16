@@ -4,7 +4,7 @@ import {
   isComposerEffectivelyEmptyForMultiline,
   resolveComposerIsMultiLine,
   shouldLatchComposerMultiline,
-} from "../src/components/chat/composer-multiline.ts";
+} from "../packages/design/src/design-language.ts";
 
 describe("composer multiline layout", () => {
   test("treats newline-only input as non-empty once layout wraps", () => {

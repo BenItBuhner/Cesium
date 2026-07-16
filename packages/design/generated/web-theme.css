@@ -78,6 +78,26 @@
   --palette-icon-css: #5c5c5c;
   --palette-icon-ts: #1565c0;
   --palette-icon-fallback: #6b6b6b;
+  --agent-content-max-width: 876px;
+  --agent-content-edge-gutter: 28px;
+  --agent-panel-bg: var(--bg-panel);
+  --agent-card-bg: var(--bg-card);
+  --agent-card-hover-bg: var(--bg-card-hover);
+  --agent-border: var(--border-card);
+  --agent-composer-radius: var(--radius-card);
+  --agent-card-radius: var(--radius-card);
+  --agent-control-radius: var(--radius-tab);
+  --agent-pill-radius: var(--radius-pill);
+  --agent-rail-row-height: 30px;
+  --d2-composer-plus-size: 22px;
+  --d2-composer-send-size: 20px;
+  --d2-card-border-width: 1px;
+  --d2-rail-control-size: 18px;
+  --agent-plus-button-bg: #eaeaea;
+  --agent-plus-button-bg-hover: #e0e0e0;
+  --agent-plus-button-icon: #767676;
+  --tab-agent-attention-dot: color-mix(in srgb, var(--plan-accent) 68%, #737373 32%);
+  --tab-unread-completion-dot: #4a76a8;
 }
 
 html.dark {
@@ -155,6 +175,11 @@ html.dark {
   --palette-icon-css: #d4d4d4;
   --palette-icon-ts: #519aba;
   --palette-icon-fallback: #7f7f7f;
+  --agent-plus-button-bg: #303030;
+  --agent-plus-button-bg-hover: #3a3a3a;
+  --agent-plus-button-icon: var(--text-secondary);
+  --tab-agent-attention-dot: color-mix(in srgb, var(--plan-accent) 38%, var(--bg-panel) 62%);
+  --tab-unread-completion-dot: #6b9fd4;
 }
 
 @theme inline {
