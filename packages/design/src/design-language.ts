@@ -81,6 +81,7 @@ export const DESIGN_2_RECIPES = {
   composer: {
     placeholder: "Ask anything, @ for files, / for commands",
     compactPlaceholder: "Ask anything, @ for files…",
+    modePlaceholder: "Ask anything…",
     padding: 10,
     gap: 10,
     stackedGap: 8,

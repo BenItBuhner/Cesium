@@ -1079,7 +1079,9 @@ function Composer({
       placeholder={
         layout.multiline
           ? DESIGN_2_RECIPES.composer.placeholder
-          : DESIGN_2_RECIPES.composer.compactPlaceholder
+          : modeRecipe.hiddenWhenDefault
+            ? DESIGN_2_RECIPES.composer.compactPlaceholder
+            : DESIGN_2_RECIPES.composer.modePlaceholder
       }
       placeholderTextColor={tokens["--text-secondary"]}
       scrollEnabled={layout.multiline}
