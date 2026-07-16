@@ -204,7 +204,15 @@ private fun GlanceScreen(
       Spacer(Modifier.height(CesiumWearSpacing.Gap))
       ActivityPanel(projection?.currentActivity ?: "Waiting for phone or server sync")
       Spacer(Modifier.height(CesiumWearSpacing.Gap))
-      MetaLine(projection?.let { "${it.chip} · ${formatDuration(it.elapsedMs)}" } ?: "Offline")
+      projection?.let {
+        AgentProgress(it)
+        Spacer(Modifier.height(CesiumWearSpacing.GapSmall))
+      }
+      MetaLine(
+        projection?.let {
+          listOfNotNull(it.chip, it.progressLabel, formatDuration(it.elapsedMs)).joinToString(" · ")
+        } ?: "Offline"
+      )
     }
     Spacer(Modifier.height(CesiumWearSpacing.GapLarge))
     BottomActions(
@@ -213,6 +221,30 @@ private fun GlanceScreen(
       attention = hasPendingInput,
       onPrimary = onPrimary,
       secondary = listOf("List" to onList, "Link" to onConnection)
+    )
+  }
+}
+
+@Composable
+private fun AgentProgress(projection: WatchAgentProjection) {
+  val current = projection.progress ?: return
+  val maximum = projection.progressMax?.takeIf { it > 0 } ?: return
+  val fraction = (current / maximum).coerceIn(0.0, 1.0).toFloat()
+  Box(
+    modifier = Modifier
+      .fillMaxWidth()
+      .height(5.dp)
+      .clip(RoundedCornerShape(CesiumWearRadius.Pill))
+      .background(CesiumWearColors.BorderSubtle)
+  ) {
+    Box(
+      modifier = Modifier
+        .fillMaxWidth(fraction)
+        .height(5.dp)
+        .background(
+          if (projection.progressKind == "burn") CesiumWearColors.Danger
+          else CesiumWearColors.PlanGold
+        )
     )
   }
 }

@@ -22,6 +22,8 @@ const baseProjection: MobileAgentProjection = {
   completedAt: null,
   elapsedMs: 25_000,
   lastError: null,
+  todoProgress: null,
+  burnProgress: null,
 };
 
 describe("watch agent contract", () => {
@@ -31,11 +33,52 @@ describe("watch agent contract", () => {
       now: 10_000,
     });
 
-    assert.equal(projection.schemaVersion, 1);
+    assert.equal(projection.schemaVersion, 2);
     assert.equal(projection.chip, "RUN");
     assert.equal(projection.source, "direct_server");
     assert.equal(projection.staleAt, 55_000);
     assert.deepEqual(projection.availableActions, ["open", "pause", "cancel", "open_on_phone"]);
+  });
+
+  test("carries todo and Burn progress to Wear surfaces", () => {
+    const todo = toWatchAgentProjection(
+      {
+        ...baseProjection,
+        todoProgress: {
+          total: 5,
+          completed: 2,
+          blocked: 0,
+          pending: 2,
+          inProgress: 1,
+          currentIndex: 3,
+          percent: 40,
+          estimatedRemainingMs: 120_000,
+          estimatedCompletionAt: 140_000,
+        },
+      },
+      { source: "phone_companion" }
+    );
+    assert.equal(todo.progressKind, "todo");
+    assert.equal(todo.progress, 2);
+    assert.equal(todo.progressMax, 5);
+    assert.equal(todo.progressLabel, "2/5");
+
+    const burn = toWatchAgentProjection(
+      {
+        ...baseProjection,
+        burnProgress: {
+          percent: 68,
+          headline: "Verification",
+          runtimeMs: 60_000,
+          estimatedRemainingMs: 30_000,
+          estimatedCompletionAt: 90_000,
+        },
+      },
+      { source: "phone_companion" }
+    );
+    assert.equal(burn.progressKind, "burn");
+    assert.equal(burn.progress, 68);
+    assert.equal(burn.progressLabel, "68%");
   });
 
   test("adds intervention actions for questions and permissions", () => {
@@ -75,7 +118,7 @@ describe("watch agent contract", () => {
       },
     });
 
-    assert.equal(envelope.schemaVersion, 1);
+    assert.equal(envelope.schemaVersion, 2);
     assert.equal(envelope.projection?.conversationId, "conversation-1");
     assert.equal(envelope.server?.label, "This device");
     assert.equal(envelope.updatedAt, 21_000);

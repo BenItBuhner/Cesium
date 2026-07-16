@@ -5,7 +5,7 @@ import {
   type MobilePendingIntervention,
 } from "./mobile-agent-projection";
 
-export const WATCH_SCHEMA_VERSION = 1 as const;
+export const WATCH_SCHEMA_VERSION = 2 as const;
 export const WATCH_AGENT_ACTIONS = [
   "open",
   "open_on_phone",
@@ -40,6 +40,11 @@ export type WatchAgentProjection = {
   elapsedMs: number;
   lastEventSeq: number;
   lastError: string | null;
+  progressKind?: "todo" | "burn" | null;
+  progress?: number | null;
+  progressMax?: number | null;
+  progressLabel?: string | null;
+  estimatedCompletionAt?: number | null;
   source: WatchConnectionSource;
   staleAt: number;
   availableActions: WatchAgentAction[];
@@ -109,6 +114,29 @@ export function toWatchAgentProjection(
   }
 ): WatchAgentProjection {
   const now = options.now ?? Date.now();
+  const progress = projection.burnProgress
+    ? {
+        progressKind: "burn" as const,
+        progress: projection.burnProgress.percent,
+        progressMax: 100,
+        progressLabel: `${projection.burnProgress.percent}%`,
+        estimatedCompletionAt: projection.burnProgress.estimatedCompletionAt,
+      }
+    : projection.todoProgress
+      ? {
+          progressKind: "todo" as const,
+          progress: projection.todoProgress.completed,
+          progressMax: projection.todoProgress.total,
+          progressLabel: `${projection.todoProgress.completed}/${projection.todoProgress.total}`,
+          estimatedCompletionAt: projection.todoProgress.estimatedCompletionAt,
+        }
+      : {
+          progressKind: null,
+          progress: null,
+          progressMax: null,
+          progressLabel: null,
+          estimatedCompletionAt: null,
+        };
   return {
     schemaVersion: WATCH_SCHEMA_VERSION,
     workspaceId: projection.workspaceId,
@@ -122,6 +150,7 @@ export function toWatchAgentProjection(
     elapsedMs: projection.elapsedMs,
     lastEventSeq: projection.lastEventSeq,
     lastError: projection.lastError,
+    ...progress,
     source: options.source,
     staleAt: now + staleWindowForProjection(projection),
     availableActions: availableWatchActions(projection, options.includePromptAction === true),

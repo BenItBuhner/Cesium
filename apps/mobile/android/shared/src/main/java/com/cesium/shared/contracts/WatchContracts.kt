@@ -42,6 +42,11 @@ data class WatchAgentProjection(
   val elapsedMs: Long = 0,
   val lastEventSeq: Long = 0,
   val lastError: String? = null,
+  val progressKind: String? = null,
+  val progress: Double? = null,
+  val progressMax: Double? = null,
+  val progressLabel: String? = null,
+  val estimatedCompletionAt: Long? = null,
   val source: WatchConnectionSource = WatchConnectionSource.CACHE,
   val staleAt: Long = 0,
   val availableActions: List<String> = emptyList()

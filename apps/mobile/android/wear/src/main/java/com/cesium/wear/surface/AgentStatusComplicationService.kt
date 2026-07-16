@@ -27,12 +27,16 @@ class AgentStatusComplicationService : ComplicationDataSourceService() {
           .setTitle(PlainComplicationText.Builder(projection?.chip ?: "OFF").build())
           .build()
         ComplicationType.RANGED_VALUE -> RangedValueComplicationData.Builder(
-          value = progressValue(projection?.elapsedMs ?: 0),
+          value = progressValue(projection?.progress, projection?.progressMax),
           min = 0f,
           max = 100f,
           contentDescription = PlainComplicationText.Builder("Cesium agent progress").build()
         )
-          .setText(PlainComplicationText.Builder(projection?.chip ?: "OFF").build())
+          .setText(
+            PlainComplicationText.Builder(
+              projection?.progressLabel ?: projection?.chip ?: "OFF"
+            ).build()
+          )
           .build()
         else -> ShortTextComplicationData.Builder(
           text = PlainComplicationText.Builder(projection?.chip ?: "OFF").build(),
@@ -50,6 +54,8 @@ class AgentStatusComplicationService : ComplicationDataSourceService() {
       contentDescription = PlainComplicationText.Builder("Cesium agent status").build()
     ).setTitle(PlainComplicationText.Builder("Cesium").build()).build()
 
-  private fun progressValue(elapsedMs: Long): Float =
-    ((elapsedMs / 1000) % 100).toFloat()
+  private fun progressValue(progress: Double?, maximum: Double?): Float {
+    if (progress == null || maximum == null || maximum <= 0) return 0f
+    return ((progress / maximum) * 100).coerceIn(0.0, 100.0).toFloat()
+  }
 }

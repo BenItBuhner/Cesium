@@ -23,16 +23,24 @@ class WearAgentNotificationController(private val context: Context) {
     ) {
       return
     }
-    val notification = NotificationCompat.Builder(context, CHANNEL_ID)
+    val builder = NotificationCompat.Builder(context, CHANNEL_ID)
       .setSmallIcon(android.R.drawable.stat_notify_sync)
       .setContentTitle(projection.title)
       .setContentText(projection.currentActivity)
-      .setSubText(projection.chip)
+      .setSubText(projection.progressLabel ?: projection.chip)
       .setOnlyAlertOnce(true)
       .setOngoing(projection.status == "running" || projection.pendingIntervention != null)
       .setPriority(if (projection.pendingIntervention != null) NotificationCompat.PRIORITY_HIGH else NotificationCompat.PRIORITY_DEFAULT)
-      .build()
-    NotificationManagerCompat.from(context).notify(NOTIFICATION_ID, notification)
+    val current = projection.progress
+    val maximum = projection.progressMax
+    if (current != null && maximum != null && maximum > 0) {
+      builder.setProgress(
+        maximum.toInt().coerceAtLeast(1),
+        current.toInt().coerceAtLeast(0),
+        false
+      )
+    }
+    NotificationManagerCompat.from(context).notify(NOTIFICATION_ID, builder.build())
   }
 
   private fun ensureChannel() {
