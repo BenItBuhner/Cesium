@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-07-16
+
+### Fixed
+
+- Termux installer now starts `runsvdir` / `service-daemon` before `sv up`, fixing `unable to open supervise/ok`.
+- Falls back to direct `nohup node` mode when runit cannot supervise, so `/health` still comes up after a successful build.
+- `cesium-server start|stop|status|logs` works in both runit and direct modes.
+
 ## [0.1.2] - 2026-07-16
 
 ### Fixed
