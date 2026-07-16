@@ -919,9 +919,7 @@ function isConversationBusy(status: AgentConversationRecord["status"] | undefine
   return (
     status === "running" ||
     status === "pause_requested" ||
-    status === "pausing" ||
-    status === "awaiting_permission" ||
-    status === "awaiting_question"
+    status === "pausing"
   );
 }
 
