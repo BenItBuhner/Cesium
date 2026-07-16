@@ -5,6 +5,8 @@ import { getMcpPreset } from "../mcp/presets.js";
 import { getMcpServer, listMcpServers, upsertMcpServer } from "../mcp/server-store.js";
 import { slugifyMcpServerId } from "../mcp/paths.js";
 import { getBuiltInAgentPlugin, listBuiltInAgentPlugins } from "./catalog.js";
+import { getDiscoveredAgentPlugin } from "./discovery.js";
+import { standardHarnessSupport } from "./harness-support.js";
 import { agentPluginsConfigPath } from "./paths.js";
 import type {
   AgentPluginDefinition,
@@ -13,6 +15,7 @@ import type {
   AgentPluginPublic,
   AgentPluginsFile,
 } from "./types.js";
+import { syncWorkspaceAntigravityMcpConfig } from "./workspace-mcp-sync.js";
 
 function emptyPluginsFile(): AgentPluginsFile {
   return {
@@ -54,6 +57,7 @@ function normalizeDefinition(definition: AgentPluginDefinition): AgentPluginDefi
     description: definition.description.trim(),
     mcp: Array.isArray(definition.mcp) ? definition.mcp : [],
     skills: Array.isArray(definition.skills) ? definition.skills : [],
+    harnesses: definition.harnesses ?? standardHarnessSupport(),
   };
 }
 
@@ -87,7 +91,11 @@ export async function getAgentPluginDefinition(
   const install = (await readPluginsFile(workspaceId)).installs.find(
     (entry) => entry.pluginId === pluginId
   );
-  return install ? installDefinition(install) : null;
+  if (install) {
+    const custom = installDefinition(install);
+    if (custom) return custom;
+  }
+  return getDiscoveredAgentPlugin(pluginId);
 }
 
 export async function listAgentPluginDefinitions(
@@ -156,6 +164,15 @@ export async function installAgentPlugin(
   });
   await syncAgentPluginMcpServers(workspaceId, definition, true);
   return saved!;
+}
+
+async function maybeSyncAntigravityMcp(workspaceId: string, workspaceRoot?: string): Promise<void> {
+  if (!workspaceRoot?.trim()) return;
+  try {
+    await syncWorkspaceAntigravityMcpConfig({ workspaceId, workspaceRoot });
+  } catch {
+    // Workspace root may be unavailable during pure unit tests; harness resolve path retries.
+  }
 }
 
 export async function setAgentPluginEnabled(
@@ -253,7 +270,8 @@ function pluginMcpServerId(
 export async function syncAgentPluginMcpServers(
   workspaceId: string,
   definition: AgentPluginDefinition,
-  enabled: boolean
+  enabled: boolean,
+  workspaceRoot?: string
 ): Promise<McpServerConfig[]> {
   const saved: McpServerConfig[] = [];
   for (const contribution of definition.mcp) {
@@ -290,5 +308,6 @@ export async function syncAgentPluginMcpServers(
     });
     saved.push(next);
   }
+  await maybeSyncAntigravityMcp(workspaceId, workspaceRoot);
   return saved;
 }

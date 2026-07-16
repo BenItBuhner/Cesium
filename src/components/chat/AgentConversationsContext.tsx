@@ -69,6 +69,7 @@ import {
   buildAgentWebSocketUrl,
   cancelAgentConversation,
   createAndPromptAgentConversation,
+  createAndPromptStandaloneAgentConversation,
   createAgentConversation,
   fetchAgentConversationSnapshot,
   forkAgentConversation,
@@ -257,6 +258,12 @@ type AgentConversationsContextValue = {
     text: string,
     attachments?: ImageAttachment[]
   ) => Promise<AgentConversationRecord | null>;
+  /** Create a no-workspace chat (temp sandbox) and send the first prompt. */
+  createAndPromptStandaloneConversation: (
+    input: AgentConversationCreateInput,
+    text: string,
+    attachments?: ImageAttachment[]
+  ) => Promise<{ conversation: AgentConversationRecord; workspaceId: string } | null>;
   renameConversation: (conversationId: string, title: string) => Promise<void>;
   /** Merge a conversation record from push/HTTP (title, status, unread, tab strip). */
   upsertConversation: (conversation: AgentConversationRecord) => void;
@@ -1418,6 +1425,44 @@ const executePrompt = useCallback(
     [markWorkspaceActivity, mergeConversationSnapshot]
   );
 
+  const createAndPromptStandaloneConversation = useCallback(
+    async (
+      input: AgentConversationCreateInput,
+      text: string,
+      attachments?: ImageAttachment[]
+    ) => {
+      const startedAt = performance.now();
+      const clientEventId =
+        globalThis.crypto?.randomUUID?.() ?? `local-user-event-${Date.now()}`;
+      const clientMessageId =
+        globalThis.crypto?.randomUUID?.() ?? `local-user-message-${Date.now()}`;
+      try {
+        const result = await createAndPromptStandaloneAgentConversation(
+          input,
+          text,
+          attachments,
+          { clientEventId, clientMessageId }
+        );
+        dispatchAgentConversationUpserted(result.snapshot.conversation);
+        recordPerfSample("conversation.create_and_prompt_standalone.ack", startedAt, {
+          conversationId: result.snapshot.conversation.id,
+        });
+        return {
+          conversation: result.snapshot.conversation,
+          workspaceId: result.workspace.id,
+        };
+      } catch (error) {
+        const message =
+          error instanceof Error
+            ? error.message
+            : "Failed to create the standalone chat.";
+        console.warn("[agent] standalone create-and-prompt failed:", message);
+        return null;
+      }
+    },
+    []
+  );
+
   const cancelConversation = useCallback(
     async (conversationId: string) => {
       patchConversationStatus(conversationId, "cancelled");
@@ -2101,6 +2146,7 @@ busy,
       getConversationLoadStatus,
       createConversation,
       createAndPromptConversation,
+      createAndPromptStandaloneConversation,
       renameConversation,
       upsertConversation,
       answerPermissionForConversation,
@@ -2136,6 +2182,7 @@ answerQuestionForConversation,
 clearPendingConfigForConversation,
 createConversation,
 createAndPromptConversation,
+createAndPromptStandaloneConversation,
 conversations,
 conversationsById,
 eventsByConversationId,

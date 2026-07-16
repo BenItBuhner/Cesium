@@ -350,6 +350,9 @@ export interface WorkspaceInfo {
   name: string;
 }
 
+/** Persistent project folder vs ephemeral per-chat sandbox. */
+export type WorkspaceKind = "workspace" | "standalone-chat";
+
 export interface WorkspaceRecord {
   id: string;
   root: string;
@@ -357,6 +360,28 @@ export interface WorkspaceRecord {
   createdAt: number;
   updatedAt: number;
   lastOpenedAt: number;
+  /**
+   * When `"standalone-chat"`, this entry is a temporary per-chat sandbox (not a
+   * user-managed workspace). Older records omit the field (= `"workspace"`).
+   */
+  kind?: WorkspaceKind;
+}
+
+/**
+ * True for ephemeral chat sandboxes. Prefers explicit `kind`, then falls back to
+ * the `standalone-chats` path convention used by the server.
+ */
+export function isStandaloneChatWorkspace(
+  workspace: Pick<WorkspaceRecord, "kind" | "root">
+): boolean {
+  if (workspace.kind === "standalone-chat") {
+    return true;
+  }
+  if (workspace.kind === "workspace") {
+    return false;
+  }
+  const normalized = workspace.root.replace(/\\/g, "/");
+  return normalized.includes("/standalone-chats/");
 }
 
 export type GitBranchInfo = {
@@ -488,6 +513,7 @@ export type KnownEditorMode =
   | "ask"
   | "goal"
   | "burn"
+  | "workflow"
   | "orchestration";
 
 export type EditorMode = KnownEditorMode | (string & {});

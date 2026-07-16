@@ -47,8 +47,11 @@ import type {
 } from "./mcp-types";
 import type {
   AgentPluginDefinition,
+  AgentPluginDiscoveryResult,
+  AgentPluginHarnessCapability,
   AgentPluginInstallRecord,
   AgentPluginPublic,
+  AgentPluginVerificationReport,
 } from "./plugin-types";
 import type { AgentBackendId } from "@cesium/core";
 import type {
@@ -1046,6 +1049,30 @@ export async function createAndPromptAgentConversation(
       ...ids,
     }),
   });
+}
+
+/** Create a no-workspace chat (temp dir sandbox) and send the first prompt. */
+export async function createAndPromptStandaloneAgentConversation(
+  input: AgentConversationCreateInput,
+  text: string,
+  attachments?: ImageAttachment[],
+  ids?: { clientEventId?: string; clientMessageId?: string; title?: string }
+): Promise<AgentConversationSnapshotResponse & { workspace: WorkspaceRecord }> {
+  return request(
+    `/api/agents/conversations/standalone/create-and-prompt`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        conversation: input,
+        text,
+        attachments,
+        clientEventId: ids?.clientEventId,
+        clientMessageId: ids?.clientMessageId,
+        title: ids?.title,
+      }),
+    },
+    { skipWorkspaceHeader: true }
+  );
 }
 
 export async function generateDraftTitle(
@@ -2891,6 +2918,32 @@ export async function fetchAgentPlugins(workspaceId: string): Promise<AgentPlugi
     { workspaceId }
   );
   return result.plugins;
+}
+
+export async function discoverAgentPlugins(query = ""): Promise<AgentPluginDiscoveryResult> {
+  const params = new URLSearchParams();
+  if (query.trim()) params.set("q", query.trim());
+  const suffix = params.toString() ? `?${params.toString()}` : "";
+  return await mcpJsonRequest<AgentPluginDiscoveryResult>(`/api/plugins/discover${suffix}`);
+}
+
+export async function fetchAgentPluginHarnessCapabilities(): Promise<
+  AgentPluginHarnessCapability[]
+> {
+  const result = await mcpJsonRequest<{ harnesses: AgentPluginHarnessCapability[] }>(
+    "/api/plugins/harness-capabilities"
+  );
+  return result.harnesses;
+}
+
+export async function verifyAgentPlugins(
+  workspaceId: string
+): Promise<AgentPluginVerificationReport> {
+  const result = await mcpJsonRequest<{ report: AgentPluginVerificationReport }>(
+    `/api/workspaces/${encodeURIComponent(workspaceId)}/plugins/verify`,
+    { workspaceId }
+  );
+  return result.report;
 }
 
 export async function installAgentPlugin(

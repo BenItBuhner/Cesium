@@ -15,6 +15,7 @@ export type CesiumModeReminderInput = {
   orchestrationBoard?: OrchestrationBoardSnapshot | null;
   activePlanPath?: string | null;
   burnGoalSummary?: string | null;
+  workflowRunSummary?: string | null;
   handoffPlanPath?: string | null;
 };
 
@@ -23,6 +24,7 @@ function modeTitle(mode: string): string {
   if (normalized === "ask") return "Ask";
   if (normalized === "plan") return "Plan";
   if (normalized === "burn") return "Burn";
+  if (normalized === "workflow") return "Workflow";
   if (normalized === "orchestration") return "Orchestration";
   return "Agent";
 }
@@ -50,6 +52,15 @@ function modeFlow(mode: string): string {
       "Burn mode is persistent across turns. You must not shrink the goal to what fits in one turn. Use burn_goal_summarize periodically after meaningful progress, after resolving a blocker, before pausing, before completing, and whenever the latest summary is missing or materially stale. Do not call it every turn, and do not stop after a progress snapshot if there is still concrete work to do.",
       "",
       "In Cesium Burn mode, the Burn control tools are burn_goal_set, burn_goal_pause, burn_goal_block, burn_goal_summarize, and burn_goal_complete. Use burn_goal_complete only after verification passes, and use burn_goal_block only when a genuine external blocker prevents progress.",
+    ].join("\n");
+  }
+  if (normalized === "workflow") {
+    return [
+      "The general flow when working in Workflow mode is 1) understand the fan-out / verification shape of the task 2) write a JavaScript orchestration script beginning with `export const meta = { name, description, phases }` 3) execute it with workflow_run (wait=true unless you intentionally background it) 4) inspect with workflow_status / workflow_await 5) return only the final synthesized result to the user.",
+      "",
+      "Workflow scripts may use agent(), parallel(), pipeline(), phase(), log(), budget, and args. Prefer pipeline() for multi-stage item processing. Use parallel() only when a later stage needs every prior result at once. Keep intermediate agent results in script variables — do not dump every subagent transcript into the parent reply.",
+      "",
+      "Date.now(), Math.random(), and argless new Date() are unavailable inside scripts because resume journals agent(prompt, opts) calls deterministically. Pass timestamps through args and vary prompts/labels by index.",
     ].join("\n");
   }
   if (normalized === "orchestration") {
@@ -92,6 +103,7 @@ export function buildCesiumModeReminder(input: CesiumModeReminderInput): string 
     input.activePlanPath ? `- Active plan: ${input.activePlanPath}` : null,
     input.handoffPlanPath ? `- Implement plan: ${input.handoffPlanPath}` : null,
     input.burnGoalSummary ? input.burnGoalSummary : null,
+    input.workflowRunSummary ? input.workflowRunSummary : null,
   ].filter(Boolean).join("\n");
   const agentsMarkdown =
     input.agentsMarkdown?.trim() ||
@@ -107,7 +119,9 @@ export function buildCesiumModeReminder(input: CesiumModeReminderInput): string 
             ? "plan in an agentic manner to prepare for any assortment of tasks given to you by the user"
             : mode === "orchestration"
               ? "coordinate work, manage orchestration state, delegate where useful, and supervise progress"
-              : "work in an agentic manner to complete any assortment of tasks given to you by the user"
+              : mode === "workflow"
+                ? "write and execute JavaScript workflow scripts that fan work across subagents while keeping intermediate results out of the parent context"
+                : "work in an agentic manner to complete any assortment of tasks given to you by the user"
       }.`;
 
   return `<system-reminder>
@@ -143,7 +157,7 @@ ${modeFlow(mode)}
 
 It is best to keep it all short and concise, but is preferable to also use warm and friendly communication, along with bold proposals and ideas to evade blockers and innovate where stagnant. Best practice also assumes you are to create your to-do list before researching or implementing and executing within the codebase, and keeping on-track with said to-do list to keep working and updating the list as you go, be it adjusting the list, checking off completed tasks, or anything else.
 
-${planLines ? `## Active Plan And Burn Goal\n\n${planLines}\n\n` : ""}${boardLines ? `## Orchestration Board\n\n${boardLines}\n\n` : ""}## MCP Servers
+${planLines ? `## Active Plan, Burn Goal, And Workflow\n\n${planLines}\n\n` : ""}${boardLines ? `## Orchestration Board\n\n${boardLines}\n\n` : ""}## MCP Servers
 
 ${mcpSummaryText(input.mcpSummaries)}
 

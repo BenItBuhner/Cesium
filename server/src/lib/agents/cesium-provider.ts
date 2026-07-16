@@ -52,6 +52,18 @@ import {
   updateBurnGoalProgress,
 } from "./burn-goal-store.js";
 import { burnCompactionRecoveryContext } from "./burn-goal-steering.js";
+import { executeWorkflowRun } from "./workflow-runtime.js";
+import {
+  createWorkflowRunRecord,
+  persistWorkflowScript,
+  readLatestWorkflowRunForConversation,
+  readWorkflowRun,
+  readWorkflowScriptFile,
+  seedJournalFromPriorRun,
+  upsertWorkflowRun,
+} from "./workflow-store.js";
+import { formatWorkflowRunForModel } from "./workflow-types.js";
+import type { WorkflowAgentSpawnRequest, WorkflowRunRecord } from "./workflow-types.js";
 import {
   addOrchestrationComment,
   createOrchestrationIssue,
@@ -355,6 +367,10 @@ class CesiumSessionHandle implements AgentSessionHandle {
     return this.currentMode() === "burn";
   }
 
+  private isWorkflowMode(): boolean {
+    return this.currentMode() === "workflow";
+  }
+
   private currentMode(): string {
     return optionValue(
       this.configOptions,
@@ -530,6 +546,12 @@ class CesiumSessionHandle implements AgentSessionHandle {
             objective: input.text,
           })
         : null;
+      const workflowState = this.isWorkflowMode()
+        ? await readLatestWorkflowRunForConversation({
+            workspaceId: this.callbacks.workspace.id,
+            conversationId: this.callbacks.conversation.id,
+          })
+        : null;
       const promptContext = await this.resolveSystemPromptContext(
         summaries,
         skillsMirror.skillsList
@@ -559,6 +581,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
         orchestrationBoard: board,
         handoffPlanPath: input.planHandoff?.planPath,
         burnGoalSummary: burnState ? formatBurnGoalForModel(burnState) : null,
+        workflowRunSummary: workflowState ? formatWorkflowRunForModel(workflowState) : null,
       });
       await this.callbacks.appendEvents([
         {
@@ -1450,6 +1473,15 @@ class CesiumSessionHandle implements AgentSessionHandle {
           break;
         case "burn_goal_resume":
           result = await this.toolBurnGoalResume();
+          break;
+        case "workflow_run":
+          result = await this.toolWorkflowRun(request.arguments);
+          break;
+        case "workflow_status":
+          result = await this.toolWorkflowStatus(request.arguments);
+          break;
+        case "workflow_await":
+          result = await this.toolWorkflowAwait(request.arguments);
           break;
         case "ask_question":
           result = await this.toolAskQuestion(request.arguments);
@@ -2958,6 +2990,231 @@ class CesiumSessionHandle implements AgentSessionHandle {
       boardUpdatedAt: snapshot.board.updatedAt,
       recentEvents: snapshot.events.slice(-10),
     });
+  }
+
+  private summarizeWorkflowRun(run: WorkflowRunRecord): string {
+    const returnPreview =
+      run.returnValue === undefined
+        ? null
+        : typeof run.returnValue === "string"
+          ? run.returnValue.slice(0, 4000)
+          : JSON.stringify(run.returnValue, null, 2)?.slice(0, 4000) ?? null;
+    return safeJson({
+      runId: run.runId,
+      status: run.status,
+      name: run.meta.name,
+      description: run.meta.description,
+      scriptPath: run.scriptPath,
+      currentPhase: run.currentPhase,
+      agentsUsed: run.agentsUsed,
+      maxAgents: run.maxAgents,
+      tokensUsed: run.tokensUsed,
+      tokenBudget: run.tokenBudget,
+      error: run.error,
+      returnValue: run.returnValue,
+      returnPreview,
+      recentLogs: run.logs.slice(-12),
+      agents: run.agents.slice(-20).map((agent) => ({
+        id: agent.id,
+        label: agent.label,
+        phase: agent.phase,
+        status: agent.status,
+        error: agent.error,
+        resultPreview: agent.resultPreview,
+      })),
+    });
+  }
+
+  private async spawnWorkflowAgent(request: WorkflowAgentSpawnRequest): Promise<{
+    value: unknown;
+    tokensUsed?: number;
+  }> {
+    const modelId =
+      request.model ||
+      resolvedModelId(this.callbacks.conversation.config.modelId, this.configOptions);
+    const providerId = providerPart(modelId);
+    const auth = await resolveCesiumAuth({
+      modelId,
+      configuredApiKind:
+        providerId === "openai"
+          ? (optionValue(this.configOptions, "api_kind", "openai-responses") as CesiumProviderKind)
+          : undefined,
+    });
+    const schemaHint = request.schema
+      ? `\n\nYou MUST respond with ONLY valid JSON matching this JSON Schema (no markdown fences):\n${JSON.stringify(request.schema, null, 2)}`
+      : "\n\nYour final text response is returned verbatim to the orchestration script as the agent() result. Prefer concise structured text.";
+    const system = [
+      CESIUM_SYSTEM_PROMPT,
+      "You are a subagent spawned by a Cesium Workflow orchestration script.",
+      "Complete the assigned task. Do not spawn additional workflows or subagents.",
+      schemaHint,
+    ].join("\n\n");
+
+    let lastError: string | null = null;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const result = await runAdapter({
+        apiKind: auth.apiKind,
+        apiKey: auth.apiKey,
+        baseUrl: auth.baseUrl,
+        providerId: auth.providerId,
+        modelId,
+        messages: [
+          { role: "system", content: system },
+          {
+            role: "user",
+            content:
+              attempt === 0
+                ? request.prompt
+                : `${request.prompt}\n\nPrevious response failed validation: ${lastError}\nReturn corrected output only.`,
+          },
+        ],
+      });
+      const text = result.text.trim();
+      if (!request.schema) {
+        return {
+          value:
+            text ||
+            (result.toolRequests.length > 0
+              ? `Workflow agent requested unsupported tools: ${result.toolRequests
+                  .map((tool) => tool.name)
+                  .join(", ")}`
+              : ""),
+        };
+      }
+      try {
+        const jsonText = text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
+        return { value: JSON.parse(jsonText) as unknown };
+      } catch (error) {
+        lastError = error instanceof Error ? error.message : String(error);
+      }
+    }
+    throw new Error(lastError ?? "Workflow agent failed schema validation.");
+  }
+
+  private async toolWorkflowRun(args: Record<string, unknown>): Promise<string> {
+    const scriptPathArg = asString(args.scriptPath);
+    const scriptArg = asString(args.script);
+    let script = scriptArg ?? "";
+    if (scriptPathArg) {
+      script = await readWorkflowScriptFile(scriptPathArg);
+    }
+    if (!script.trim()) {
+      throw new Error("workflow_run requires script or scriptPath.");
+    }
+
+    const wait = args.wait !== false;
+    const tokenBudget = asNumber(args.tokenBudget);
+    const maxAgents = asNumber(args.maxAgents);
+    const maxConcurrent = asNumber(args.maxConcurrent);
+    const resumeFromRunId = asString(args.resumeFromRunId);
+
+    const provisionalId = randomUUID();
+    const scriptPath =
+      scriptPathArg ??
+      (await persistWorkflowScript({
+        workspace: this.callbacks.workspace,
+        runId: provisionalId,
+        script,
+      }));
+
+    let run = createWorkflowRunRecord({
+      workspace: this.callbacks.workspace,
+      conversationId: this.callbacks.conversation.id,
+      script,
+      scriptPath,
+      args: args.args,
+      tokenBudget: tokenBudget ?? null,
+      maxAgents: maxAgents ?? undefined,
+      maxConcurrent: maxConcurrent ?? undefined,
+      resumeFromRunId: resumeFromRunId ?? undefined,
+    });
+    // Keep script filename aligned with the final run id when we generated the path.
+    if (!scriptPathArg) {
+      const rewritten = await persistWorkflowScript({
+        workspace: this.callbacks.workspace,
+        runId: run.runId,
+        script,
+      });
+      run = { ...run, scriptPath: rewritten };
+    }
+    run = await upsertWorkflowRun(run);
+
+    const journalSeed = resumeFromRunId
+      ? await seedJournalFromPriorRun({
+          workspaceId: this.callbacks.workspace.id,
+          priorRunId: resumeFromRunId,
+        })
+      : [];
+
+    if (!wait) {
+      void executeWorkflowRun({
+        run,
+        journalSeed,
+        spawnAgent: (request) => this.spawnWorkflowAgent(request),
+      }).catch(() => undefined);
+      return safeJson({
+        status: "async_launched",
+        runId: run.runId,
+        scriptPath: run.scriptPath,
+        summary: "Workflow started in the background. Use workflow_status or workflow_await.",
+      });
+    }
+
+    const completed = await executeWorkflowRun({
+      run,
+      journalSeed,
+      spawnAgent: (request) => this.spawnWorkflowAgent(request),
+    });
+    return this.summarizeWorkflowRun(completed);
+  }
+
+  private async toolWorkflowStatus(args: Record<string, unknown>): Promise<string> {
+    const runId = asString(args.runId);
+    const run = runId
+      ? await readWorkflowRun({
+          workspaceId: this.callbacks.workspace.id,
+          runId,
+        })
+      : await readLatestWorkflowRunForConversation({
+          workspaceId: this.callbacks.workspace.id,
+          conversationId: this.callbacks.conversation.id,
+        });
+    if (!run) {
+      return "No workflow run found for this conversation.";
+    }
+    return this.summarizeWorkflowRun(run);
+  }
+
+  private async toolWorkflowAwait(args: Record<string, unknown>): Promise<string> {
+    const runId = asString(args.runId);
+    const timeoutMs = Math.min(
+      Math.max(asNumber(args.timeoutMs) ?? 120_000, 1_000),
+      600_000
+    );
+    const started = Date.now();
+    while (Date.now() - started < timeoutMs) {
+      const run = runId
+        ? await readWorkflowRun({
+            workspaceId: this.callbacks.workspace.id,
+            runId,
+          })
+        : await readLatestWorkflowRunForConversation({
+            workspaceId: this.callbacks.workspace.id,
+            conversationId: this.callbacks.conversation.id,
+          });
+      if (!run) {
+        throw new Error("No workflow run found to await.");
+      }
+      if (
+        run.status === "completed" ||
+        run.status === "failed" ||
+        run.status === "cancelled"
+      ) {
+        return this.summarizeWorkflowRun(run);
+      }
+      await sleepMs(500);
+    }
+    throw new Error(`Timed out waiting for workflow run${runId ? ` ${runId}` : ""}.`);
   }
 
   private async toolSubagent(args: Record<string, unknown>): Promise<string> {

@@ -10,5 +10,6 @@ export {
   isGoalMode,
   isOrchestrationMode,
   isOrchestrationModeLocked,
+  isWorkflowMode,
   resolveCanonicalModeId,
 } from "@cesium/core";

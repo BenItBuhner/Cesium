@@ -1,0 +1,65 @@
+{
+  "schemaVersion": 1,
+  "source": "local",
+  "updatedAt": "2026-07-15",
+  "description": "Local Cesium agent-plugin registry used for discovery and offline testing.",
+  "plugins": [
+    {
+      "schemaVersion": 1,
+      "pluginId": "context7",
+      "displayName": "Context7",
+      "description": "Fetch current documentation and code examples for libraries and frameworks.",
+      "iconUrl": "https://context7.com/favicon.ico",
+      "builtIn": true,
+      "marketplace": { "id": "context7", "publisher": "Context7" },
+      "mcp": [{ "id": "context7", "presetId": "context7" }],
+      "skills": [
+        {
+          "id": "context7-docs",
+          "title": "Use Context7 Docs",
+          "description": "Look up library documentation before answering API or framework questions.",
+          "triggerHints": ["framework docs", "API reference", "library examples"],
+          "body": "Use Context7 when the user asks about libraries, frameworks, SDKs, APIs, or CLI usage.\nPrefer fetched documentation over memory for version-sensitive syntax, setup, and migration guidance."
+        }
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "pluginId": "linear",
+      "displayName": "Linear",
+      "description": "Read and update Linear issues, comments, teams, and project metadata.",
+      "iconUrl": "https://linear.app/favicon.ico",
+      "builtIn": true,
+      "marketplace": { "id": "linear", "publisher": "Linear" },
+      "mcp": [{ "id": "linear", "presetId": "linear" }],
+      "skills": [
+        {
+          "id": "linear-workflow",
+          "title": "Linear Workflow",
+          "description": "Use Linear context for issue-driven implementation work.",
+          "triggerHints": ["Linear issue", "ticket", "project work"],
+          "body": "When the user references a Linear issue, fetch the issue and relevant comments before planning or editing.\nKeep issue status, acceptance criteria, and implementation notes aligned with the work performed."
+        }
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "pluginId": "notion",
+      "displayName": "Notion",
+      "description": "Search, create, and update Notion pages, databases, tasks, and documentation.",
+      "iconUrl": "https://www.notion.so/images/favicon.ico",
+      "builtIn": true,
+      "marketplace": { "id": "notion", "publisher": "Notion" },
+      "mcp": [{ "id": "notion", "presetId": "notion" }],
+      "skills": [
+        {
+          "id": "notion-knowledge",
+          "title": "Notion Knowledge Capture",
+          "description": "Use Notion as a structured workspace for tasks and documentation.",
+          "triggerHints": ["Notion", "task board", "docs"],
+          "body": "Use Notion tools for workspace knowledge, task creation, database queries, and documentation capture.\nPrefer structured page/database operations over unstructured prose when updating Notion."
+        }
+      ]
+    }
+  ]
+}

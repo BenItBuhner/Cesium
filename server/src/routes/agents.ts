@@ -22,6 +22,7 @@ import type {
   AgentConversationMetadataPatch,
   AgentQueuedChatPrompt,
 } from "../lib/agents/types.js";
+import { createStandaloneChatWorkspace } from "../lib/standalone-chats.js";
 
 export const agentRoutes = new Hono();
 
@@ -114,6 +115,37 @@ agentRoutes.post("/api/agents/conversations/create-and-prompt", async (c) => {
     }
   );
   return c.json({ snapshot }, 201);
+});
+
+/**
+ * Create a chat with no project workspace: spins up a temporary directory +
+ * ephemeral workspace, then creates and prompts the conversation there.
+ * Does not require `x-opencursor-workspace-id`.
+ */
+agentRoutes.post("/api/agents/conversations/standalone/create-and-prompt", async (c) => {
+  const body = await c.req.json<{
+    conversation?: AgentConversationCreateInput;
+    text?: string;
+    attachments?: Array<{ mimeType: string; data: string; name?: string }>;
+    clientEventId?: string;
+    clientMessageId?: string;
+    title?: string;
+  }>();
+  if (!body.text?.trim() && (!body.attachments || body.attachments.length === 0)) {
+    return c.json({ error: "Expected prompt text or attachments." }, 400);
+  }
+  const workspace = await createStandaloneChatWorkspace(body.title);
+  const snapshot = await agentRuntimeManager.createConversationWithPrompt(
+    workspace,
+    body.conversation ?? {},
+    {
+      text: body.text ?? "",
+      ...(body.attachments ? { attachments: body.attachments } : {}),
+      ...(body.clientEventId ? { clientEventId: body.clientEventId } : {}),
+      ...(body.clientMessageId ? { clientMessageId: body.clientMessageId } : {}),
+    }
+  );
+  return c.json({ snapshot, workspace }, 201);
 });
 
 agentRoutes.post("/api/agents/conversations/draft-title", async (c) => {

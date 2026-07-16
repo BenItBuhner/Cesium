@@ -84,3 +84,47 @@ test("custom agent plugins contribute skills without MCP", async () => {
   assert.match(attachments.promptSection, /Keep docs terse/);
   assert.equal(attachments.mcpServers.length, 0);
 });
+
+test("plugin discovery includes local Context7 and harness verify identifies all backends", async () => {
+  const workspaceRoot = await fs.mkdtemp(path.join(os.tmpdir(), "cesium-plugin-verify-"));
+  const workspaceId = "workspace-plugin-verify";
+
+  const { discoverAgentPlugins } = await import("../src/lib/plugins/discovery.js");
+  const { installAgentPlugin } = await import("../src/lib/plugins/store.js");
+  const { verifyAgentPluginHarnesses } = await import("../src/lib/plugins/verify.js");
+  const { HARNESS_PLUGIN_CAPABILITIES } = await import("../src/lib/plugins/harness-support.js");
+
+  const discovery = await discoverAgentPlugins({ query: "context7" });
+  assert.ok(discovery.plugins.some((entry) => entry.definition.pluginId === "context7"));
+  assert.ok(discovery.sources.some((source) => source.id === "local" || source.id === "builtin"));
+
+  await installAgentPlugin(workspaceId, "context7");
+  const report = await verifyAgentPluginHarnesses({ workspaceId, workspaceRoot });
+
+  assert.equal(report.enabledPluginCount, 1);
+  assert.equal(report.harnesses.length, Object.keys(HARNESS_PLUGIN_CAPABILITIES).length);
+  assert.ok(report.summary.identifyingPlugins.includes("cesium-agent"));
+  assert.ok(report.summary.identifyingPlugins.includes("cursor-sdk"));
+  assert.ok(report.summary.promptOnlyMcp.includes("opencode-server"));
+  assert.ok(report.summary.promptOnlyMcp.includes("pi-agent"));
+
+  const openCode = report.harnesses.find((entry) => entry.backendId === "opencode-server");
+  assert.ok(openCode);
+  assert.equal(openCode.nativeMcp, false);
+  assert.ok(openCode.warnings.length > 0);
+  assert.match(openCode.warnings[0]?.reason ?? "", /will not work|prompt/i);
+
+  const antigravity = report.harnesses.find(
+    (entry) => entry.backendId === "google-antigravity-cli"
+  );
+  assert.ok(antigravity?.identified);
+  assert.equal(antigravity?.nativeMcp, true);
+
+  const mcpConfig = JSON.parse(
+    await fs.readFile(path.join(workspaceRoot, ".agents", "mcp_config.json"), "utf8")
+  ) as { mcpServers: Record<string, { serverUrl?: string }> };
+  assert.equal(mcpConfig.mcpServers.context7?.serverUrl, "https://mcp.context7.com/mcp");
+
+  await fs.rm(workspaceRoot, { recursive: true, force: true });
+  await fs.rm(process.env.OPENCURSOR_DATA_DIR!, { recursive: true, force: true });
+});

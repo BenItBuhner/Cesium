@@ -31,6 +31,8 @@ export type {
   WorkedSessionEditPreviewLine,
   WorkedSessionEntry,
   WorkspaceInfo,
+  WorkspaceKind,
   WorkspaceRecord,
   WorkspaceWindowRecord,
 } from "@cesium/core";
+export { isStandaloneChatWorkspace } from "@cesium/core";

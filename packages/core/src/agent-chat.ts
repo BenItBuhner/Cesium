@@ -1553,6 +1553,8 @@ function summarizeWorkedToolBucket(
       return count === 1 ? "updated todo list" : `updated todo list ${count} times`;
     case "burn":
       return count === 1 ? "updated Burn goal" : `updated Burn goal ${count} times`;
+    case "workflow":
+      return count === 1 ? "ran a workflow" : `ran workflows ${count} times`;
     case "question":
     case "ask":
       return count === 1 ? "asked question" : "asked questions";

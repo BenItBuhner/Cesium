@@ -1,6 +1,11 @@
 import { Hono } from "hono";
 import type { AgentBackendId } from "../lib/agents/types.js";
 import { requireWorkspaceFromRequest } from "../lib/request-workspace.js";
+import { discoverAgentPlugins } from "../lib/plugins/discovery.js";
+import {
+  ALL_PLUGIN_HARNESS_IDS,
+  HARNESS_PLUGIN_CAPABILITIES,
+} from "../lib/plugins/harness-support.js";
 import type { AgentPluginDefinition } from "../lib/plugins/types.js";
 import {
   deleteAgentPluginInstall,
@@ -9,8 +14,20 @@ import {
   setAgentPluginEnabled,
   setAgentPluginHarnessOverride,
 } from "../lib/plugins/store.js";
+import { verifyAgentPluginHarnesses } from "../lib/plugins/verify.js";
 
 export const pluginRoutes = new Hono();
+
+pluginRoutes.get("/api/plugins/discover", async (c) => {
+  const query = c.req.query("q") ?? c.req.query("query") ?? "";
+  return c.json(await discoverAgentPlugins({ query }));
+});
+
+pluginRoutes.get("/api/plugins/harness-capabilities", async (c) => {
+  return c.json({
+    harnesses: ALL_PLUGIN_HARNESS_IDS.map((backendId) => HARNESS_PLUGIN_CAPABILITIES[backendId]),
+  });
+});
 
 pluginRoutes.get("/api/workspaces/:workspaceId/plugins", async (c) => {
   const workspace = await requireWorkspaceFromRequest(c);
@@ -18,6 +35,18 @@ pluginRoutes.get("/api/workspaces/:workspaceId/plugins", async (c) => {
     return c.json({ error: "Workspace mismatch." }, 400);
   }
   return c.json({ plugins: await listAgentPluginsPublic(workspace.id) });
+});
+
+pluginRoutes.get("/api/workspaces/:workspaceId/plugins/verify", async (c) => {
+  const workspace = await requireWorkspaceFromRequest(c);
+  if (workspace.id !== c.req.param("workspaceId")) {
+    return c.json({ error: "Workspace mismatch." }, 400);
+  }
+  const report = await verifyAgentPluginHarnesses({
+    workspaceId: workspace.id,
+    workspaceRoot: workspace.root,
+  });
+  return c.json({ report });
 });
 
 pluginRoutes.post("/api/workspaces/:workspaceId/plugins/:pluginId/install", async (c) => {

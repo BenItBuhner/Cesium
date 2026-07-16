@@ -664,9 +664,11 @@ test("Cesium config options include dynamic prompt modes", async () => {
     "plan",
     "orchestration",
     "burn",
+    "workflow",
     "ask",
   ]);
   assert.equal(modeOption?.options.some((option) => option.value === "burn"), true);
+  assert.equal(modeOption?.options.some((option) => option.value === "workflow"), true);
 });
 
 test("Burn goal records start in planning with durable milestones and todos", () => {
@@ -866,6 +868,9 @@ test("Cesium base prompt and tool schema are stable across dynamic modes", () =>
   assert.equal(names.includes("burn_goal_pause"), true);
   assert.equal(names.includes("burn_goal_block"), true);
   assert.equal(names.includes("burn_goal_complete"), true);
+  assert.equal(names.includes("workflow_run"), true);
+  assert.equal(names.includes("workflow_status"), true);
+  assert.equal(names.includes("workflow_await"), true);
   assert.equal(names.includes("wait"), true);
   assert.equal(names.includes("burn_goal_update_plan"), false);
   assert.equal(names.includes("burn_goal_update_progress"), false);
