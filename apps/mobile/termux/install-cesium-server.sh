@@ -15,10 +15,42 @@ PROJECTS_DIR="$HOME/projects"
 SERVICE_DIR="$PREFIX/var/service/cesium"
 LOG_DIR="$PREFIX/var/log/sv/cesium"
 
+# Termux is rolling-release. Partial upgrades break curl/openssl linkage
+# (CANNOT LINK EXECUTABLE "curl" / SSL_set_quic_tls_transport_params).
+# pkg itself depends on curl, so repair with apt — which does not.
+ensure_termux_packages_ready() {
+  if ! command -v apt >/dev/null 2>&1; then
+    printf 'Termux apt is missing. Reinstall Termux from F-Droid and retry.\n' >&2
+    exit 1
+  fi
+  if ! apt update; then
+    printf 'apt update failed. Select a mirror, then retry:\n' >&2
+    printf '  termux-change-repo\n' >&2
+    printf '  apt update && apt full-upgrade -y\n' >&2
+    exit 1
+  fi
+  DEBIAN_FRONTEND=noninteractive apt full-upgrade -y
+}
+
+ensure_curl_works() {
+  if ! command -v curl >/dev/null 2>&1 || ! curl --version >/dev/null 2>&1; then
+    DEBIAN_FRONTEND=noninteractive apt install -y curl
+  fi
+  if ! curl --version >/dev/null 2>&1; then
+    printf 'curl is still broken after package repair.\n' >&2
+    printf 'Run these, then retry this installer:\n' >&2
+    printf '  termux-change-repo\n' >&2
+    printf '  apt update && apt full-upgrade -y\n' >&2
+    exit 1
+  fi
+}
+
 if [[ "${CESIUM_SKIP_PACKAGE_UPDATE:-0}" != "1" ]]; then
-  pkg update -y
+  ensure_termux_packages_ready
 fi
-pkg install -y \
+ensure_curl_works
+
+DEBIAN_FRONTEND=noninteractive apt install -y \
   clang \
   curl \
   git \
@@ -39,12 +71,32 @@ else
 fi
 
 cd "$SOURCE_DIR"
+
+# Android/Termux cannot build node-pty (requires android_ndk_path) or download
+# desktop browser binaries. Skip optional native addons and lifecycle scripts;
+# the on-device server runs under Node with legacy-json and does not need them.
+export PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+export PUPPETEER_SKIP_DOWNLOAD=1
+export ELECTRON_SKIP_BINARY_DOWNLOAD=1
+export npm_config_ignore_scripts=true
+export npm_config_fund=false
+export npm_config_audit=false
+
 npm ci --omit=optional
-rm -f server/node_modules/cesium
-npm run build:packages
+rm -f server/node_modules/cesium node_modules/cesium
+# Only the shared core package is required to run the backend on-device.
+npm run build --workspace @cesium/core
 npm ci --prefix server --omit=optional
 rm -f server/node_modules/cesium
+unset npm_config_ignore_scripts
 npm run build --prefix server
+
+# Only configure runit after a successful build so a failed compile cannot leave
+# a service pointing at a missing server/dist/index.js.
+if [[ ! -f "$SOURCE_DIR/server/dist/index.js" ]]; then
+  printf 'Server build did not produce server/dist/index.js; aborting before enabling the service.\n' >&2
+  exit 1
+fi
 
 mkdir -p "$SERVICE_DIR" "$SERVICE_DIR/log" "$LOG_DIR"
 cat >"$SERVICE_DIR/run" <<RUN
@@ -95,3 +147,4 @@ printf '\nCesium server installed.\n'
 printf 'Server: http://127.0.0.1:9100\n'
 printf 'Workspace: %s\n' "$PROJECTS_DIR/default"
 printf 'Check: cesium-server health\n'
+printf 'Note: integrated terminals need Bun.Terminal; node-pty is skipped on Termux.\n'

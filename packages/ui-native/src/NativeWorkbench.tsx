@@ -1485,8 +1485,11 @@ function AgentRail({
 }
 
 const TERMUX_SERVER_URL = "http://127.0.0.1:9100";
+// apt (not pkg) first: Termux pkg depends on curl, and a partial openssl/curl
+// upgrade leaves curl unlinkable (SSL_set_quic_tls_transport_params). Only
+// apt full-upgrade can repair that state before curl can fetch the installer.
 const TERMUX_INSTALL_COMMAND =
-  "pkg install -y curl && curl -fsSL https://raw.githubusercontent.com/BenItBuhner/Cesium/main/apps/mobile/termux/install-cesium-server.sh | bash";
+  "apt update && apt full-upgrade -y && apt install -y curl && curl -fsSL https://raw.githubusercontent.com/BenItBuhner/Cesium/main/apps/mobile/termux/install-cesium-server.sh | bash";
 
 function OnDeviceServerSetup({
   onClose,
@@ -1561,7 +1564,9 @@ function OnDeviceServerSetup({
             >
               <Text style={styles.setupButtonText}>Open Termux installer</Text>
             </Pressable>
-            <Text style={styles.setupStep}>2 · Run the installer command in Termux.</Text>
+            <Text style={styles.setupStep}>
+              2 · Paste this in Termux. It upgrades packages first (fixes broken curl), then installs the server.
+            </Text>
             <View style={styles.setupCommand}>
               <Text selectable style={styles.setupCommandText}>
                 {TERMUX_INSTALL_COMMAND}
@@ -1593,8 +1598,10 @@ function OnDeviceServerSetup({
             </Pressable>
             {status ? <Text style={styles.setupStatus}>{status}</Text> : null}
             <Text style={styles.setupFootnote}>
-              The installer uses legacy-json storage in Termux home and binds only
-              to loopback. External agent CLIs remain optional.
+              If apt complains about mirrors, run termux-change-repo, then retry.
+              The installer skips native addons Termux cannot build (node-pty) and
+              uses legacy-json storage bound to loopback. Integrated terminals are
+              limited on-device; external agent CLIs remain optional.
             </Text>
           </ScrollView>
         </View>

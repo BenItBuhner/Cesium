@@ -24,6 +24,11 @@ export type PtySpawnOptions = {
 
 export type PtyExitEvent = {
   exitCode: number;
+  /**
+   * Present on the node-pty backend when the process died from a signal.
+   * Bun.Terminal only exposes a numeric exit code via `subprocess.exited`, so
+   * this stays undefined on the bun-terminal backend today.
+   */
   signal?: number;
 };
 
@@ -175,6 +180,7 @@ function spawnBunPty(options: PtySpawnOptions): PtyProcess {
 
   void proc.exited.then((exitCode) => {
     exited = true;
+    // Bun reports only the exit code here; signal is unavailable on this backend.
     exitEvent = { exitCode };
     for (const listener of exitListeners) {
       listener(exitEvent);
@@ -230,7 +236,17 @@ function spawnBunPty(options: PtySpawnOptions): PtyProcess {
 
 function resolveNodePtyModule(): NodePtyModule {
   const requireFromHere = createRequire(fileURLToPath(import.meta.url));
-  const mod = requireFromHere("node-pty") as NodePtyModule & { default?: NodePtyModule };
+  let mod: NodePtyModule & { default?: NodePtyModule };
+  try {
+    mod = requireFromHere("node-pty") as NodePtyModule & { default?: NodePtyModule };
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      "node-pty is unavailable. Integrated terminals need Bun.Terminal (Bun on POSIX) " +
+        "or a working node-pty native build. On Termux/Android, node-pty cannot build " +
+        `(missing Android NDK); the rest of the server still runs. (${detail})`
+    );
+  }
   const pty = mod.default ?? mod;
   if (!pty || typeof pty.spawn !== "function") {
     throw new Error("node-pty.spawn is unavailable");
