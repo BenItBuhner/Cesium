@@ -132,20 +132,30 @@ export function ServerConnectionsSheet({
         ...current,
         [serverId]: { status: "running", message: null },
       }));
-      const result = await probeServer(candidateBaseUrl);
-      setProbeByServerId((current) => ({
-        ...current,
-        [serverId]: {
-          status: result.ok ? "ok" : "error",
-          message: result.ok
-            ? result.authEnabled
-              ? result.authenticated
-                ? "Reachable, auth enabled, signed in."
-                : "Reachable, auth enabled."
-              : "Reachable."
-            : result.error,
-        },
-      }));
+      try {
+        const result = await probeServer(candidateBaseUrl);
+        setProbeByServerId((current) => ({
+          ...current,
+          [serverId]: {
+            status: result.ok ? "ok" : "error",
+            message: result.ok
+              ? result.authEnabled
+                ? result.authenticated
+                  ? "Reachable, auth enabled, signed in."
+                  : "Reachable, auth enabled."
+                : "Reachable."
+              : result.error,
+          },
+        }));
+      } catch (error) {
+        setProbeByServerId((current) => ({
+          ...current,
+          [serverId]: {
+            status: "error",
+            message: error instanceof Error ? error.message : "Probe failed.",
+          },
+        }));
+      }
     },
     [probeServer]
   );
