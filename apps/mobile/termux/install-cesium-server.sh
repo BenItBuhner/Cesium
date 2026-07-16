@@ -71,11 +71,24 @@ else
 fi
 
 cd "$SOURCE_DIR"
+
+# Android/Termux cannot build node-pty (requires android_ndk_path) or download
+# desktop browser binaries. Skip optional native addons and lifecycle scripts;
+# the on-device server runs under Node with legacy-json and does not need them.
+export PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+export PUPPETEER_SKIP_DOWNLOAD=1
+export ELECTRON_SKIP_BINARY_DOWNLOAD=1
+export npm_config_ignore_scripts=true
+export npm_config_fund=false
+export npm_config_audit=false
+
 npm ci --omit=optional
-rm -f server/node_modules/cesium
-npm run build:packages
+rm -f server/node_modules/cesium node_modules/cesium
+# Only the shared core package is required to run the backend on-device.
+npm run build --workspace @cesium/core
 npm ci --prefix server --omit=optional
 rm -f server/node_modules/cesium
+unset npm_config_ignore_scripts
 npm run build --prefix server
 
 mkdir -p "$SERVICE_DIR" "$SERVICE_DIR/log" "$LOG_DIR"
@@ -127,3 +140,4 @@ printf '\nCesium server installed.\n'
 printf 'Server: http://127.0.0.1:9100\n'
 printf 'Workspace: %s\n' "$PROJECTS_DIR/default"
 printf 'Check: cesium-server health\n'
+printf 'Note: integrated terminals need Bun.Terminal; node-pty is skipped on Termux.\n'

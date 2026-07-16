@@ -230,7 +230,17 @@ function spawnBunPty(options: PtySpawnOptions): PtyProcess {
 
 function resolveNodePtyModule(): NodePtyModule {
   const requireFromHere = createRequire(fileURLToPath(import.meta.url));
-  const mod = requireFromHere("node-pty") as NodePtyModule & { default?: NodePtyModule };
+  let mod: NodePtyModule & { default?: NodePtyModule };
+  try {
+    mod = requireFromHere("node-pty") as NodePtyModule & { default?: NodePtyModule };
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      "node-pty is unavailable. Integrated terminals need Bun.Terminal (Bun on POSIX) " +
+        "or a working node-pty native build. On Termux/Android, node-pty cannot build " +
+        `(missing Android NDK); the rest of the server still runs. (${detail})`
+    );
+  }
   const pty = mod.default ?? mod;
   if (!pty || typeof pty.spawn !== "function") {
     throw new Error("node-pty.spawn is unavailable");
