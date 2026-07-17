@@ -134,6 +134,9 @@ export function NativeComposer({
   const [attachError, setAttachError] = useState<string | null>(null);
   const [picker, setPicker] = useState<"model" | "mode" | "slash" | null>(null);
   const [slashQuery, setSlashQuery] = useState<string | null>(null);
+  const [pendingSetConfigOptions, setPendingSetConfigOptions] = useState<
+    Array<{ configId: string; value: string }>
+  >([]);
 
   const layout = resolveDesign2ComposerLayout({
     measuredMultiline,
@@ -191,7 +194,12 @@ export function NativeComposer({
       } else if (action.kind === "backend") {
         onBackendChange(action.backendId);
       } else if (action.kind === "config") {
-        onSessionConfigOptionChange?.(action.configId, action.value);
+        // Queue for the next submit so a fast select-and-send cannot race an
+        // async PATCH on an existing conversation.
+        setPendingSetConfigOptions((current) => {
+          const without = current.filter((entry) => entry.configId !== action.configId);
+          return [...without, { configId: action.configId, value: action.value }];
+        });
       } else if (action.kind === "insert") {
         setText(action.insert);
         setPicker(null);
@@ -207,7 +215,7 @@ export function NativeComposer({
       });
       setPicker(null);
     },
-    [onBackendChange, onModeChange, onModelChange, onSessionConfigOptionChange]
+    [onBackendChange, onModeChange, onModelChange]
   );
 
   const submit = useCallback(async () => {
@@ -227,7 +235,9 @@ export function NativeComposer({
     let nextBackendId = backend?.id ?? null;
     let explicitModel = false;
     let explicitMode = false;
-    const setConfigOptions: Array<{ configId: string; value: string }> = [];
+    const setConfigOptions: Array<{ configId: string; value: string }> = [
+      ...pendingSetConfigOptions,
+    ];
     // Resolve directives into the submit payload only. Do not call the normal
     // config-change handlers here — on an existing conversation those fire
     // async PATCHes (and backend switches reset mode/model) that race the
@@ -258,7 +268,9 @@ export function NativeComposer({
         }
       },
       onSessionConfigOptionChange: (configId, value) => {
-        setConfigOptions.push({ configId, value });
+        const without = setConfigOptions.filter((entry) => entry.configId !== configId);
+        setConfigOptions.length = 0;
+        setConfigOptions.push(...without, { configId, value });
       },
     });
 
@@ -295,6 +307,7 @@ export function NativeComposer({
         setText("");
         setAttachments([]);
         setAttachError(null);
+        setPendingSetConfigOptions([]);
         setPicker(null);
       }
     } finally {
@@ -316,6 +329,7 @@ export function NativeComposer({
     onModeChange,
     onModelChange,
     onSubmit,
+    pendingSetConfigOptions,
     sessionConfigOptions,
     submitting,
     text,
