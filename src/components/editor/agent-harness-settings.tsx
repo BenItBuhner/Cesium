@@ -1360,6 +1360,172 @@ function CesiumAgentHarnessSettings() {
           </HarnessDetailBlock>
 
           <HarnessDetailBlock>
+            <SettingsSubsectionHeading>Harness features</SettingsSubsectionHeading>
+            <p className="mt-[4px] font-sans text-[12px] leading-[1.45] text-[var(--text-secondary)]">
+              Versioned feature layers swap tools and behavior without changing the core turn loop.
+              Subagents V2 is Codex-inspired collaborative agents (spawn / wait / follow-up / interrupt).
+            </p>
+            <div className="mt-[12px] grid gap-[12px]">
+              <label className="flex flex-col gap-[5px]">
+                <SettingsFieldLabel>Subagents version</SettingsFieldLabel>
+                <SettingsThemeSelect
+                  value={String(settings.harness?.features.subagents.version ?? 1)}
+                  options={[
+                    {
+                      value: "1",
+                      label: "V1 — ephemeral subagent tool",
+                    },
+                    {
+                      value: "2",
+                      label: "V2 — collaborative spawn / wait / mailbox",
+                    },
+                  ]}
+                  onChange={(value) =>
+                    void patchSettings({
+                      harness: {
+                        ...settings.harness,
+                        features: {
+                          ...settings.harness.features,
+                          subagents: {
+                            version: value === "2" ? 2 : 1,
+                          },
+                        },
+                      },
+                    })
+                  }
+                  ariaLabel="Subagents version"
+                  className="w-full max-w-none"
+                  triggerClassName={`${settingsSelectTriggerClass} w-full max-w-none`}
+                  disabled={busy}
+                />
+              </label>
+              <div className="grid gap-[12px] md:grid-cols-2">
+                <label className="flex flex-col gap-[5px]">
+                  <SettingsFieldLabel>Wait tool max (seconds)</SettingsFieldLabel>
+                  <input
+                    type="number"
+                    min={1}
+                    max={86400}
+                    className="rounded-[var(--radius-tab)] border border-[var(--border-subtle)] bg-[var(--bg-primary)] px-[10px] py-[7px] font-mono text-[12px] text-[var(--text-primary)]"
+                    value={settings.harness?.limits.waitMaxSeconds ?? 86400}
+                    disabled={busy}
+                    onChange={(event) => {
+                      const waitMaxSeconds = Number(event.target.value);
+                      if (!Number.isFinite(waitMaxSeconds)) return;
+                      void patchSettings({
+                        harness: {
+                          ...settings.harness,
+                          limits: {
+                            ...settings.harness.limits,
+                            waitMaxSeconds,
+                          },
+                        },
+                      });
+                    }}
+                  />
+                </label>
+                <label className="flex flex-col gap-[5px]">
+                  <SettingsFieldLabel>wait_agent default (ms)</SettingsFieldLabel>
+                  <input
+                    type="number"
+                    min={1000}
+                    className="rounded-[var(--radius-tab)] border border-[var(--border-subtle)] bg-[var(--bg-primary)] px-[10px] py-[7px] font-mono text-[12px] text-[var(--text-primary)]"
+                    value={settings.harness?.limits.waitAgentDefaultTimeoutMs ?? 30000}
+                    disabled={busy}
+                    onChange={(event) => {
+                      const waitAgentDefaultTimeoutMs = Number(event.target.value);
+                      if (!Number.isFinite(waitAgentDefaultTimeoutMs)) return;
+                      void patchSettings({
+                        harness: {
+                          ...settings.harness,
+                          limits: {
+                            ...settings.harness.limits,
+                            waitAgentDefaultTimeoutMs,
+                          },
+                        },
+                      });
+                    }}
+                  />
+                </label>
+                <label className="flex flex-col gap-[5px]">
+                  <SettingsFieldLabel>wait_agent min (ms)</SettingsFieldLabel>
+                  <input
+                    type="number"
+                    min={1}
+                    className="rounded-[var(--radius-tab)] border border-[var(--border-subtle)] bg-[var(--bg-primary)] px-[10px] py-[7px] font-mono text-[12px] text-[var(--text-primary)]"
+                    value={settings.harness?.limits.waitAgentMinTimeoutMs ?? 1000}
+                    disabled={busy}
+                    onChange={(event) => {
+                      const waitAgentMinTimeoutMs = Number(event.target.value);
+                      if (!Number.isFinite(waitAgentMinTimeoutMs)) return;
+                      void patchSettings({
+                        harness: {
+                          ...settings.harness,
+                          limits: {
+                            ...settings.harness.limits,
+                            waitAgentMinTimeoutMs,
+                          },
+                        },
+                      });
+                    }}
+                  />
+                </label>
+                <label className="flex flex-col gap-[5px]">
+                  <SettingsFieldLabel>wait_agent max (ms)</SettingsFieldLabel>
+                  <input
+                    type="number"
+                    min={1000}
+                    max={3600000}
+                    className="rounded-[var(--radius-tab)] border border-[var(--border-subtle)] bg-[var(--bg-primary)] px-[10px] py-[7px] font-mono text-[12px] text-[var(--text-primary)]"
+                    value={settings.harness?.limits.waitAgentMaxTimeoutMs ?? 1_800_000}
+                    disabled={busy}
+                    onChange={(event) => {
+                      const waitAgentMaxTimeoutMs = Number(event.target.value);
+                      if (!Number.isFinite(waitAgentMaxTimeoutMs)) return;
+                      void patchSettings({
+                        harness: {
+                          ...settings.harness,
+                          limits: {
+                            ...settings.harness.limits,
+                            waitAgentMaxTimeoutMs,
+                          },
+                        },
+                      });
+                    }}
+                  />
+                  <span className="font-sans text-[11px] text-[var(--text-secondary)]">
+                    Default max is 30 minutes (1,800,000 ms). Prefer short polls when work can continue.
+                  </span>
+                </label>
+                <label className="flex flex-col gap-[5px]">
+                  <SettingsFieldLabel>Max concurrent V2 subagents</SettingsFieldLabel>
+                  <input
+                    type="number"
+                    min={1}
+                    max={64}
+                    className="rounded-[var(--radius-tab)] border border-[var(--border-subtle)] bg-[var(--bg-primary)] px-[10px] py-[7px] font-mono text-[12px] text-[var(--text-primary)]"
+                    value={settings.harness?.limits.maxConcurrentSubagents ?? 8}
+                    disabled={busy}
+                    onChange={(event) => {
+                      const maxConcurrentSubagents = Number(event.target.value);
+                      if (!Number.isFinite(maxConcurrentSubagents)) return;
+                      void patchSettings({
+                        harness: {
+                          ...settings.harness,
+                          limits: {
+                            ...settings.harness.limits,
+                            maxConcurrentSubagents,
+                          },
+                        },
+                      });
+                    }}
+                  />
+                </label>
+              </div>
+            </div>
+          </HarnessDetailBlock>
+
+          <HarnessDetailBlock>
             <SettingsSubsectionHeading>Tool permissions</SettingsSubsectionHeading>
             <div className="mt-[10px] grid gap-[12px] md:grid-cols-2">
               <label className="flex flex-col gap-[5px]">

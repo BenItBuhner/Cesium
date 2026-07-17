@@ -89,8 +89,11 @@ async function runOpenAiChat(input: {
   providerId: string;
   model: string;
   messages: CesiumHistoryMessage[];
+  tools?: import("./cesium-tools.js").CesiumToolDefinition[];
 }): Promise<CesiumAdapterResult> {
   const baseUrl = resolveOpenAiCompatibleBaseUrl(input.baseUrl, input.providerId);
+  const tools =
+    input.tools && input.tools.length === 0 ? undefined : openAiTools(input.tools);
   const payload = await fetchJson(`${baseUrl.replace(/\/+$/, "")}/chat/completions`, {
     method: "POST",
     headers: {
@@ -100,8 +103,7 @@ async function runOpenAiChat(input: {
     body: JSON.stringify({
       model: input.model,
       messages: openAiMessages(input.messages),
-      tools: openAiTools(),
-      tool_choice: "auto",
+      ...(tools ? { tools, tool_choice: "auto" as const } : {}),
       max_tokens: DEFAULT_MAX_OUTPUT_TOKENS,
     }),
   });
@@ -136,6 +138,7 @@ async function* streamOpenAiResponses(input: {
   providerId: string;
   model: string;
   messages: CesiumHistoryMessage[];
+  tools?: import("./cesium-tools.js").CesiumToolDefinition[];
 }): AsyncGenerator<CesiumAdapterStreamEvent> {
   const baseUrl = resolveOpenAiCompatibleBaseUrl(input.baseUrl, input.providerId);
   const response = await fetch(`${baseUrl.replace(/\/+$/, "")}/responses`, {
@@ -150,7 +153,7 @@ async function* streamOpenAiResponses(input: {
         role: message.role === "system" ? "developer" : message.role,
         content: message.content,
       })),
-      tools: responseTools(),
+      tools: responseTools(input.tools),
       max_output_tokens: DEFAULT_MAX_OUTPUT_TOKENS,
       stream: true,
     }),
@@ -250,6 +253,7 @@ async function* streamOpenAiRealtime(input: {
   apiKey: string;
   model: string;
   messages: CesiumHistoryMessage[];
+  tools?: import("./cesium-tools.js").CesiumToolDefinition[];
 }): AsyncGenerator<CesiumAdapterStreamEvent> {
   type QueueItem =
     | { kind: "event"; event: CesiumAdapterStreamEvent }
@@ -275,7 +279,7 @@ async function* streamOpenAiRealtime(input: {
       session: {
         modalities: ["text"],
         instructions: CESIUM_SYSTEM_PROMPT,
-        tools: responseTools(),
+        tools: responseTools(input.tools),
       },
     }));
     ws.send(JSON.stringify({
@@ -378,6 +382,7 @@ async function runAnthropic(input: {
   apiKey: string;
   model: string;
   messages: CesiumHistoryMessage[];
+  tools?: import("./cesium-tools.js").CesiumToolDefinition[];
 }): Promise<CesiumAdapterResult> {
   const payload = await fetchJson("https://api.anthropic.com/v1/messages", {
     method: "POST",
@@ -391,7 +396,7 @@ async function runAnthropic(input: {
       system: CESIUM_SYSTEM_PROMPT,
       max_tokens: DEFAULT_MAX_OUTPUT_TOKENS,
       messages: anthropicMessages(input.messages),
-      tools: anthropicTools(),
+      tools: anthropicTools(input.tools),
     }),
   });
   const root = asRecord(payload);
@@ -432,6 +437,7 @@ async function runGoogle(input: {
   apiKey: string;
   model: string;
   messages: CesiumHistoryMessage[];
+  tools?: import("./cesium-tools.js").CesiumToolDefinition[];
 }): Promise<CesiumAdapterResult> {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(input.model)}:generateContent?key=${encodeURIComponent(input.apiKey)}`;
   const payload = await fetchJson(url, {
@@ -440,7 +446,7 @@ async function runGoogle(input: {
     body: JSON.stringify({
       contents: googleContents(input.messages),
       systemInstruction: { parts: [{ text: CESIUM_SYSTEM_PROMPT }] },
-      tools: googleTools(),
+      tools: googleTools(input.tools),
       generationConfig: {
         maxOutputTokens: DEFAULT_MAX_OUTPUT_TOKENS,
       },
@@ -485,6 +491,8 @@ export type RunAdapterInput = {
   providerId: string;
   modelId: string;
   messages: CesiumHistoryMessage[];
+  /** When set, overrides the default composed Cesium tool list (including harness feature modules). */
+  tools?: import("./cesium-tools.js").CesiumToolDefinition[];
 };
 
 async function* streamStaticResult(
@@ -517,17 +525,37 @@ export async function* streamAdapter(
           providerId,
           model,
           messages: input.messages,
+          tools: input.tools,
         })
       );
       return;
     case "openai-realtime":
-      yield* streamOpenAiRealtime({ apiKey: input.apiKey, model, messages: input.messages });
+      yield* streamOpenAiRealtime({
+        apiKey: input.apiKey,
+        model,
+        messages: input.messages,
+        tools: input.tools,
+      });
       return;
     case "anthropic":
-      yield* streamStaticResult(await runAnthropic({ apiKey: input.apiKey, model, messages: input.messages }));
+      yield* streamStaticResult(
+        await runAnthropic({
+          apiKey: input.apiKey,
+          model,
+          messages: input.messages,
+          tools: input.tools,
+        })
+      );
       return;
     case "google-genai":
-      yield* streamStaticResult(await runGoogle({ apiKey: input.apiKey, model, messages: input.messages }));
+      yield* streamStaticResult(
+        await runGoogle({
+          apiKey: input.apiKey,
+          model,
+          messages: input.messages,
+          tools: input.tools,
+        })
+      );
       return;
     case "openai-responses":
     default:
@@ -537,6 +565,7 @@ export async function* streamAdapter(
         providerId,
         model,
         messages: input.messages,
+        tools: input.tools,
       });
       return;
   }

@@ -6,6 +6,13 @@ import {
   writeJsonFile,
 } from "./persistence.js";
 import type { AgentConfigOption } from "./agents/types.js";
+import {
+  defaultHarnessSettings,
+  mergeHarnessSettings,
+  normalizeHarnessSettings,
+  type CesiumHarnessSettings,
+  type CesiumSubagentsVersion,
+} from "./agents/cesium/features/index.js";
 
 export type CesiumProviderKind =
   | "openai-chat-completions"
@@ -58,6 +65,11 @@ export type CesiumAgentSettings = {
     /** Prompt the agent to continue when it stops with incomplete todos or open kanban issues. */
     continueWhenIncomplete: boolean;
   };
+  /**
+   * Modular harness feature layers (subagents v1/v2, wait limits, etc.).
+   * Swapping a feature version swaps its tools/reminders without rewriting the turn loop.
+   */
+  harness: CesiumHarnessSettings;
   toolPermissions: {
     editFile: "ask" | "allow" | "deny";
     terminal: "ask" | "allow" | "deny";
@@ -251,6 +263,7 @@ function defaultSettings(): CesiumAgentSettings {
     orchestration: {
       continueWhenIncomplete: true,
     },
+    harness: defaultHarnessSettings(),
     toolPermissions: {
       editFile: "ask",
       terminal: "ask",
@@ -403,6 +416,7 @@ function normalizeSettings(raw: unknown): CesiumAgentSettings {
           ? orchestration.continueWhenIncomplete
           : defaults.orchestration.continueWhenIncomplete,
     },
+    harness: normalizeHarnessSettings(record.harness),
     toolPermissions: {
       editFile:
         toolPermissions?.editFile === "allow" ||
@@ -615,6 +629,10 @@ export async function patchCesiumAgentSettings(input: {
   defaultApiKind?: CesiumProviderKind;
   compression?: Partial<CesiumAgentSettings["compression"]>;
   orchestration?: Partial<CesiumAgentSettings["orchestration"]>;
+  harness?: {
+    features?: { subagents?: { version?: CesiumSubagentsVersion | number | string } };
+    limits?: Partial<CesiumAgentSettings["harness"]["limits"]>;
+  };
   toolPermissions?: Partial<CesiumAgentSettings["toolPermissions"]>;
   customProviders?: CesiumCustomProvider[];
 }): Promise<CesiumAgentSettingsPublic> {
@@ -635,6 +653,9 @@ export async function patchCesiumAgentSettings(input: {
       ...settings.orchestration,
       ...(input.orchestration ?? {}),
     },
+    harness: input.harness
+      ? mergeHarnessSettings(settings.harness, input.harness)
+      : settings.harness,
     toolPermissions: {
       ...settings.toolPermissions,
       ...(input.toolPermissions ?? {}),
