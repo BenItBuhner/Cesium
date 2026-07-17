@@ -73,8 +73,7 @@ fi
 cd "$SOURCE_DIR"
 
 # Android/Termux cannot build node-pty (requires android_ndk_path) or download
-# desktop browser binaries. Skip optional native addons and lifecycle scripts;
-# the on-device server runs under Node with legacy-json and does not need them.
+# desktop browser binaries. Skip optional native addons and lifecycle scripts.
 export PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 export PUPPETEER_SKIP_DOWNLOAD=1
 export ELECTRON_SKIP_BINARY_DOWNLOAD=1
@@ -82,14 +81,31 @@ export npm_config_ignore_scripts=true
 export npm_config_fund=false
 export npm_config_audit=false
 
-npm ci --omit=optional
-rm -f server/node_modules/cesium node_modules/cesium
-# Only the shared core package is required to run the backend on-device.
-npm run build --workspace @cesium/core
-npm ci --prefix server --omit=optional
-rm -f server/node_modules/cesium
-unset npm_config_ignore_scripts
-npm run build --prefix server
+# Lean on-device install: only @cesium/core + cesium-server.
+# Do NOT run root `npm ci` (pulls the full monorepo) or a second
+# `npm ci --prefix server` against a stale nested lockfile — npm 11 on Termux
+# rejects that out-of-sync lock with EUSAGE.
+printf 'Installing @cesium/core...\n'
+(
+  cd packages/core
+  npm install --no-workspaces --omit=optional
+  npm run build
+)
+if [[ ! -f packages/core/dist/index.js ]]; then
+  printf 'Core build did not produce packages/core/dist/index.js.\n' >&2
+  exit 1
+fi
+
+printf 'Installing cesium-server...\n'
+(
+  cd server
+  # --no-workspaces: use server/package-lock.json in isolation (kept in sync
+  # with server/package.json). --omit=optional skips node-pty's NDK build.
+  npm ci --no-workspaces --omit=optional
+  rm -f node_modules/cesium
+  unset npm_config_ignore_scripts
+  npm run build
+)
 
 # Only configure runit after a successful build so a failed compile cannot leave
 # a service pointing at a missing server/dist/index.js.
@@ -142,6 +158,18 @@ if [[ -f "$PREFIX/etc/profile.d/start-services.sh" ]]; then
 fi
 sv-enable cesium
 sv up cesium
+
+# Wait briefly for the service to bind loopback before declaring success.
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+  if curl -fsS http://127.0.0.1:9100/health >/dev/null 2>&1; then
+    break
+  fi
+  sleep 1
+done
+if ! curl -fsS http://127.0.0.1:9100/health >/dev/null 2>&1; then
+  printf 'Server installed but /health is not responding yet. Check: cesium-server logs\n' >&2
+  exit 1
+fi
 
 printf '\nCesium server installed.\n'
 printf 'Server: http://127.0.0.1:9100\n'

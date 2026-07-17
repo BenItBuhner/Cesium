@@ -137,9 +137,16 @@ import {
   normalizeCesiumToolRequestArguments,
   parseWaitToolArgs,
   permissionDecisionFromOption,
+  resolveCesiumTools,
   toolKind,
   toolTitle,
 } from "./cesium/cesium-tools.js";
+import {
+  harnessFeatureReminder,
+  isSubagentsV2ToolName,
+  SubagentsV2Runtime,
+  type ResolvedCesiumHarness,
+} from "./cesium/features/index.js";
 import {
   estimateHistoryTokens,
   isEmptyCesiumAdapterResult,
@@ -291,6 +298,8 @@ class CesiumSessionHandle implements AgentSessionHandle {
   private terminalRuns = new Map<string, TerminalRun>();
   private subagentTranscripts = new Map<string, AgentStoredEvent[]>();
   private activeSystemPrompt = CESIUM_SYSTEM_PROMPT;
+  private harness: ResolvedCesiumHarness = resolveCesiumTools();
+  private subagentsV2: SubagentsV2Runtime | null = null;
 
   constructor(
     private readonly backend: AgentBackendInfo,
@@ -557,6 +566,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
         skillsMirror.skillsList
       );
       this.activeSystemPrompt = CESIUM_SYSTEM_PROMPT;
+      await this.refreshHarnessFromSettings();
       const previousSnapshot = await this.callbacks.readSnapshot().catch(() => null);
       const mcpCatalogRevision = await getMcpCatalogRevision(this.callbacks.workspace.id);
       const currentMcpSnapshot = mcpReminderSnapshot({
@@ -568,21 +578,29 @@ class CesiumSessionHandle implements AgentSessionHandle {
         previousSnapshot ? latestMcpReminderSnapshot(previousSnapshot.events) : null,
         currentMcpSnapshot
       );
-      const reminderText = buildCesiumModeReminder({
-        mode: currentMode,
-        modelName: promptContext.modelName,
-        workspaceRoot: promptContext.workspaceRoot ?? this.callbacks.workspace.root,
-        dateLabel: promptContext.dateLabel ?? new Date().toLocaleString("en-US"),
-        gitSummary: promptContext.gitSummary ?? "not a git repository",
-        agentsMarkdown: promptContext.agentsMarkdown,
-        skillsList: skillsMirror.skillsList,
-        mcpSummaries: summaries,
-        mcpChangeNotice,
-        orchestrationBoard: board,
-        handoffPlanPath: input.planHandoff?.planPath,
-        burnGoalSummary: burnState ? formatBurnGoalForModel(burnState) : null,
-        workflowRunSummary: workflowState ? formatWorkflowRunForModel(workflowState) : null,
-      });
+      const featureReminder = harnessFeatureReminder(this.harness);
+      const reminderText = [
+        buildCesiumModeReminder({
+          mode: currentMode,
+          modelName: promptContext.modelName,
+          workspaceRoot: promptContext.workspaceRoot ?? this.callbacks.workspace.root,
+          dateLabel: promptContext.dateLabel ?? new Date().toLocaleString("en-US"),
+          gitSummary: promptContext.gitSummary ?? "not a git repository",
+          agentsMarkdown: promptContext.agentsMarkdown,
+          skillsList: skillsMirror.skillsList,
+          mcpSummaries: summaries,
+          mcpChangeNotice,
+          orchestrationBoard: board,
+          handoffPlanPath: input.planHandoff?.planPath,
+          burnGoalSummary: burnState ? formatBurnGoalForModel(burnState) : null,
+          workflowRunSummary: workflowState ? formatWorkflowRunForModel(workflowState) : null,
+        }),
+        featureReminder
+          ? `<harness-features>\n${featureReminder}\n</harness-features>`
+          : "",
+      ]
+        .filter(Boolean)
+        .join("\n\n");
       await this.callbacks.appendEvents([
         {
           eventId: randomUUID(),
@@ -640,6 +658,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
               providerId: auth.providerId,
               modelId,
               messages: [...history, ...toolResultMessages],
+              tools: this.harness.tools,
             },
             iteration,
             {
@@ -1078,6 +1097,8 @@ class CesiumSessionHandle implements AgentSessionHandle {
     this.resumeWaiter?.();
     this.resumeWaiter = null;
     this.releaseResumeAck();
+    this.subagentsV2?.dispose();
+    this.subagentsV2 = null;
     for (const permission of this.pendingPermissions.values()) {
       permission.reject(new Error("Cesium session disposed."));
     }
@@ -1088,6 +1109,79 @@ class CesiumSessionHandle implements AgentSessionHandle {
     this.pendingQuestions.clear();
     // Background terminal runs would otherwise outlive the session as zombies.
     this.killTerminalRuns();
+  }
+
+  private async refreshHarnessFromSettings(): Promise<void> {
+    const settings = await getCesiumAgentSettings();
+    this.harness = resolveCesiumTools(settings.harness);
+    if (this.harness.subagentsVersion === 2) {
+      const runtime = this.ensureSubagentsV2();
+      runtime.updateLimits(this.harness.settings.limits);
+    } else if (this.subagentsV2) {
+      this.subagentsV2.dispose();
+      this.subagentsV2 = null;
+    }
+  }
+
+  private ensureSubagentsV2(): SubagentsV2Runtime {
+    if (this.harness.subagentsVersion !== 2) {
+      throw new Error(
+        "Subagents V2 tools require harness.features.subagents.version = 2. Enable Subagents V2 in Settings → Agents → Cesium Agent."
+      );
+    }
+    if (!this.subagentsV2) {
+      const modelId =
+        resolvedModelId(this.callbacks.conversation.config.modelId, this.configOptions) ||
+        this.callbacks.conversation.config.modelId ||
+        "openai/gpt-5.1";
+      this.subagentsV2 = new SubagentsV2Runtime({
+        conversationId: this.callbacks.conversation.id,
+        limits: this.harness.settings.limits,
+        defaultModelId: modelId,
+        defaultApiKind: optionValue(
+          this.configOptions,
+          "api_kind",
+          "openai-responses"
+        ) as CesiumProviderKind,
+        appendEvents: async (events) => {
+          await this.callbacks.appendEvents(events as Parameters<typeof this.callbacks.appendEvents>[0]);
+        },
+        getParentHistory: async () => {
+          const snapshot = await this.callbacks.readSnapshot();
+          return normalizeEventsToHistory(snapshot?.events ?? []).filter(
+            (message) => message.role !== "system"
+          );
+        },
+        isCancelled: () => this.cancelled || this.disposed,
+      });
+    }
+    return this.subagentsV2;
+  }
+
+  private async executeSubagentsV2Tool(
+    name: string,
+    args: Record<string, unknown>
+  ): Promise<string> {
+    if (!isSubagentsV2ToolName(name) && name !== "list_agents") {
+      throw new Error(`Unknown Subagents V2 tool: ${name}`);
+    }
+    const runtime = this.ensureSubagentsV2();
+    switch (name) {
+      case "spawn_agent":
+        return runtime.spawnAgent(args);
+      case "send_message":
+        return runtime.sendMessage(args);
+      case "followup_task":
+        return runtime.followupTask(args);
+      case "wait_agent":
+        return runtime.waitAgent(args);
+      case "interrupt_agent":
+        return runtime.interruptAgent(args);
+      case "list_agents":
+        return JSON.stringify({ agents: runtime.listAgents(asString(args.path_prefix) ?? asString(args.pathPrefix)) });
+      default:
+        throw new Error(`Unknown Subagents V2 tool: ${name}`);
+    }
   }
 
   private killTerminalRuns(): void {
@@ -1487,10 +1581,26 @@ class CesiumSessionHandle implements AgentSessionHandle {
           result = await this.toolAskQuestion(request.arguments);
           break;
         case "subagent":
+          if (this.harness.subagentsVersion !== 1) {
+            throw new Error(
+              "Legacy `subagent` tool is only available when harness subagents version is 1. Switch Subagents to V1 in Settings → Agents → Cesium Agent, or use spawn_agent (V2)."
+            );
+          }
           result = await this.toolSubagent(request.arguments);
           break;
         case "read_subagent_transcript":
-          result = await this.toolReadSubagentTranscript(request.arguments);
+          result =
+            this.harness.subagentsVersion === 2
+              ? await this.ensureSubagentsV2().readTranscript(request.arguments)
+              : await this.toolReadSubagentTranscript(request.arguments);
+          break;
+        case "spawn_agent":
+        case "send_message":
+        case "followup_task":
+        case "wait_agent":
+        case "interrupt_agent":
+        case "list_agents":
+          result = await this.executeSubagentsV2Tool(request.name, request.arguments);
           break;
         case "search_history":
           result = await this.toolSearchHistory(request.arguments);
@@ -2726,7 +2836,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
   }
 
   private async toolWait(args: Record<string, unknown>): Promise<string> {
-    const parsed = parseWaitToolArgs(args);
+    const parsed = parseWaitToolArgs(args, this.harness.settings.limits.waitMaxSeconds);
     let elapsedMs = 0;
     let statusElapsedMs = 0;
     while (elapsedMs < parsed.durationMs) {
@@ -2755,6 +2865,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
       seconds: parsed.seconds,
       reason: parsed.reason,
       capped: parsed.capped,
+      maxSeconds: this.harness.settings.limits.waitMaxSeconds,
     });
   }
 

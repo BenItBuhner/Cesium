@@ -74,9 +74,17 @@ function modeToken(tokens: ThemeTokens, token: string): string {
   return tokens[token as keyof ThemeTokens] ?? tokens["--text-primary"];
 }
 
+export type NativeComposerSubmitConfig = {
+  backendId?: AgentBackendId;
+  mode?: string;
+  model?: ModelInfo | null;
+};
+
 export type NativeComposerSubmitPayload = {
   text: string;
   attachments: ImageAttachment[];
+  /** Config resolved from slash directives in this submit (overrides parent draft state). */
+  config?: NativeComposerSubmitConfig;
 };
 
 export type NativeComposerProps = {
@@ -231,6 +239,12 @@ export function NativeComposer({
       },
       onBackendChange: (backendId) => {
         nextBackendId = backendId;
+        const nextBackend = backends.find((candidate) => candidate.id === backendId);
+        if (nextBackend) {
+          // Drop the previous backend's model so create uses the new default.
+          nextModel = null;
+          nextMode = nextBackend.defaultMode;
+        }
         onBackendChange(backendId);
       },
       onSessionConfigOptionChange,
@@ -243,16 +257,21 @@ export function NativeComposer({
 
     setSubmitting(true);
     try {
-      const ok = await onSubmit({ text: directed, attachments: imagesToSubmit });
+      const ok = await onSubmit({
+        text: directed,
+        attachments: imagesToSubmit,
+        config: {
+          backendId: nextBackendId ?? undefined,
+          mode: nextMode,
+          model: nextModel,
+        },
+      });
       if (ok) {
         setText("");
         setAttachments([]);
         setAttachError(null);
         setPicker(null);
       }
-      void nextMode;
-      void nextModel;
-      void nextBackendId;
     } finally {
       setSubmitting(false);
     }

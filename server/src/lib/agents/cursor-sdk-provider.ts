@@ -538,8 +538,13 @@ class CursorSdkSessionHandle implements AgentSessionHandle {
             break;
           }
           default: {
-            const exhaustive: never = event;
-            throw new Error(`Unhandled Cursor SDK event: ${String(exhaustive)}`);
+            // Forward-compatible with newer @cursor/sdk stream events (e.g. "usage"
+            // on >=1.0.23). Ignore until the conversation stream surfaces them.
+            const eventType = (event as { type: string }).type;
+            if (eventType === "usage") {
+              break;
+            }
+            throw new Error(`Unhandled Cursor SDK event: ${eventType}`);
           }
         }
       }

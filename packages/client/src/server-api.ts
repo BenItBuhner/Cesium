@@ -1755,6 +1755,20 @@ export type CesiumAgentSettingsPayload = {
   orchestration: {
     continueWhenIncomplete: boolean;
   };
+  harness: {
+    features: {
+      subagents: {
+        version: 1 | 2;
+      };
+    };
+    limits: {
+      waitMaxSeconds: number;
+      waitAgentDefaultTimeoutMs: number;
+      waitAgentMinTimeoutMs: number;
+      waitAgentMaxTimeoutMs: number;
+      maxConcurrentSubagents: number;
+    };
+  };
   toolPermissions: {
     editFile: "ask" | "allow" | "deny";
     terminal: "ask" | "allow" | "deny";
@@ -1795,6 +1809,7 @@ export async function patchCesiumAgentSettings(
       | "defaultApiKind"
       | "compression"
       | "orchestration"
+      | "harness"
       | "toolPermissions"
       | "customProviders"
     >

@@ -1,6 +1,7 @@
 export * from "./NativeWorkbench";
 export * from "./NativeComposer";
 export * from "./NativeSettingsShell";
+export * from "./ServerConnectionsSheet";
 export * from "./theme";
 export * from "./workbench-state";
 export * from "./providers/NativeAuthProvider";

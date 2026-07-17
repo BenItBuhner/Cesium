@@ -45,7 +45,7 @@ class CesiumAndroidRuntimeModule(
       promise.reject("CESIUM_PICK_IN_PROGRESS", "An image picker is already open.")
       return
     }
-    val activity = currentActivity
+    val activity = reactContext.currentActivity
     if (activity == null) {
       promise.reject("CESIUM_NO_ACTIVITY", "No Android activity is available to pick images.")
       return
