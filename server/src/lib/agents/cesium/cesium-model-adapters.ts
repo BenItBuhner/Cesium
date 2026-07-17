@@ -10,6 +10,7 @@ import {
   googleTools,
   openAiTools,
   responseTools,
+  type CesiumToolDefinition,
 } from "./cesium-tools.js";
 import type {
   CesiumAdapterResult,
@@ -17,6 +18,17 @@ import type {
   CesiumHistoryMessage,
   CesiumToolRequest,
 } from "./cesium-types.js";
+
+/** Omit tools when the caller passed an empty list (tool-less child turns). */
+function optionalProviderTools(
+  tools: CesiumToolDefinition[] | undefined,
+  build: (tools?: CesiumToolDefinition[]) => unknown
+): unknown | undefined {
+  if (tools && tools.length === 0) {
+    return undefined;
+  }
+  return build(tools);
+}
 
 async function fetchJson(url: string, init: RequestInit): Promise<unknown> {
   const response = await fetch(url, init);
@@ -141,6 +153,7 @@ async function* streamOpenAiResponses(input: {
   tools?: import("./cesium-tools.js").CesiumToolDefinition[];
 }): AsyncGenerator<CesiumAdapterStreamEvent> {
   const baseUrl = resolveOpenAiCompatibleBaseUrl(input.baseUrl, input.providerId);
+  const tools = optionalProviderTools(input.tools, responseTools);
   const response = await fetch(`${baseUrl.replace(/\/+$/, "")}/responses`, {
     method: "POST",
     headers: {
@@ -153,7 +166,7 @@ async function* streamOpenAiResponses(input: {
         role: message.role === "system" ? "developer" : message.role,
         content: message.content,
       })),
-      tools: responseTools(input.tools),
+      ...(tools ? { tools } : {}),
       max_output_tokens: DEFAULT_MAX_OUTPUT_TOKENS,
       stream: true,
     }),
@@ -274,12 +287,13 @@ async function* streamOpenAiRealtime(input: {
     notify = null;
   };
   ws.on("open", () => {
+    const tools = optionalProviderTools(input.tools, responseTools);
     ws.send(JSON.stringify({
       type: "session.update",
       session: {
         modalities: ["text"],
         instructions: CESIUM_SYSTEM_PROMPT,
-        tools: responseTools(input.tools),
+        ...(tools ? { tools } : {}),
       },
     }));
     ws.send(JSON.stringify({
@@ -384,6 +398,7 @@ async function runAnthropic(input: {
   messages: CesiumHistoryMessage[];
   tools?: import("./cesium-tools.js").CesiumToolDefinition[];
 }): Promise<CesiumAdapterResult> {
+  const tools = optionalProviderTools(input.tools, anthropicTools);
   const payload = await fetchJson("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: {
@@ -396,7 +411,7 @@ async function runAnthropic(input: {
       system: CESIUM_SYSTEM_PROMPT,
       max_tokens: DEFAULT_MAX_OUTPUT_TOKENS,
       messages: anthropicMessages(input.messages),
-      tools: anthropicTools(input.tools),
+      ...(tools ? { tools } : {}),
     }),
   });
   const root = asRecord(payload);
@@ -440,13 +455,14 @@ async function runGoogle(input: {
   tools?: import("./cesium-tools.js").CesiumToolDefinition[];
 }): Promise<CesiumAdapterResult> {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(input.model)}:generateContent?key=${encodeURIComponent(input.apiKey)}`;
+  const tools = optionalProviderTools(input.tools, googleTools);
   const payload = await fetchJson(url, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
       contents: googleContents(input.messages),
       systemInstruction: { parts: [{ text: CESIUM_SYSTEM_PROMPT }] },
-      tools: googleTools(input.tools),
+      ...(tools ? { tools } : {}),
       generationConfig: {
         maxOutputTokens: DEFAULT_MAX_OUTPUT_TOKENS,
       },

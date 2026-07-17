@@ -499,9 +499,22 @@ export class SubagentsV2Runtime {
   private startTurn(agent: SubagentsV2Agent): void {
     if (agent.turnPromise) return;
     agent.status = { kind: "running" };
-    agent.turnPromise = this.runTurn(agent).finally(() => {
-      agent.turnPromise = null;
-    });
+    agent.turnPromise = this.runTurn(agent)
+      .catch(() => undefined)
+      .finally(() => {
+        agent.turnPromise = null;
+        // Drain follow-ups queued while this turn was already running.
+        const hasPending = agent.mailbox.some((entry) => !entry.consumed && entry.triggerTurn);
+        if (
+          hasPending &&
+          !agent.abortController.signal.aborted &&
+          !this.options.isCancelled?.() &&
+          agent.status.kind !== "shutdown"
+        ) {
+          agent.abortController = new AbortController();
+          this.startTurn(agent);
+        }
+      });
   }
 
   private async runTurn(agent: SubagentsV2Agent): Promise<void> {
@@ -514,10 +527,11 @@ export class SubagentsV2Runtime {
       entry.consumed = true;
     }
 
+    let cardStatus: "completed" | "failed" | "running" | null = null;
     try {
       if (agent.abortController.signal.aborted || this.options.isCancelled?.()) {
         agent.status = { kind: "interrupted" };
-        this.notifyMailbox([agent.path]);
+        cardStatus = "failed";
         return;
       }
       const subagentProviderId = providerPart(agent.modelId);
@@ -545,14 +559,11 @@ export class SubagentsV2Runtime {
         providerId: auth.providerId,
         modelId: agent.modelId,
         messages,
-        // Children intentionally get no tools in V2 MVP — they reason/summarize;
-        // parent retains tool loop. (Mirrors Cesium V1 child constraint, with async mailbox.)
-        tools: [],
+        // Omit tools entirely — empty [] still serializes on some providers.
       });
       if (agent.abortController.signal.aborted) {
         agent.status = { kind: "interrupted" };
-        await this.emitSubagentCard(agent, "failed");
-        this.notifyMailbox([agent.path]);
+        cardStatus = "failed";
         return;
       }
       const resultText =
@@ -570,9 +581,7 @@ export class SubagentsV2Runtime {
         text: resultText,
       });
       agent.status = { kind: "completed", summary: resultText };
-      agent.unreadCount += 1;
-      await this.emitSubagentCard(agent, "completed");
-      this.notifyMailbox([agent.path]);
+      cardStatus = "completed";
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       if (agent.abortController.signal.aborted) {
@@ -589,9 +598,14 @@ export class SubagentsV2Runtime {
           text: message,
         });
       }
+      cardStatus = "failed";
+    } finally {
+      // Always wake wait_agent even if card persistence fails.
       agent.unreadCount += 1;
-      await this.emitSubagentCard(agent, "failed");
       this.notifyMailbox([agent.path]);
+      if (cardStatus) {
+        await this.emitSubagentCard(agent, cardStatus);
+      }
     }
   }
 
@@ -605,23 +619,27 @@ export class SubagentsV2Runtime {
         : agent.status.kind === "errored"
           ? agent.status.error
           : agent.lastTaskMessage ?? "";
-    await this.options.appendEvents([
-      {
-        eventId: randomUUID(),
-        conversationId: this.options.conversationId,
-        kind: "subagent",
-        subagentId: agent.path,
-        title: agent.title,
-        status,
-        transcript: agent.transcript,
-        recentActivity: recent.slice(0, 240),
-        raw: {
-          version: 2,
-          path: agent.path,
-          taskName: agent.taskName,
-          agentStatus: statusKind(agent.status),
+    try {
+      await this.options.appendEvents([
+        {
+          eventId: randomUUID(),
+          conversationId: this.options.conversationId,
+          kind: "subagent",
+          subagentId: agent.path,
+          title: agent.title,
+          status,
+          transcript: agent.transcript,
+          recentActivity: recent.slice(0, 240),
+          raw: {
+            version: 2,
+            path: agent.path,
+            taskName: agent.taskName,
+            agentStatus: statusKind(agent.status),
+          },
         },
-      },
-    ]);
+      ]);
+    } catch {
+      // Card persistence is best-effort and must not block mailbox wakeups.
+    }
   }
 }

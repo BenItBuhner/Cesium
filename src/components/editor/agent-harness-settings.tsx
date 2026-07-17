@@ -1383,12 +1383,14 @@ function CesiumAgentHarnessSettings() {
                   onChange={(value) =>
                     void patchSettings({
                       harness: {
-                        ...settings.harness,
                         features: {
-                          ...settings.harness.features,
+                          ...(settings.harness?.features ?? {}),
                           subagents: {
                             version: value === "2" ? 2 : 1,
                           },
+                        },
+                        limits: {
+                          ...(settings.harness?.limits ?? {}),
                         },
                       },
                     })
@@ -1414,9 +1416,14 @@ function CesiumAgentHarnessSettings() {
                       if (!Number.isFinite(waitMaxSeconds)) return;
                       void patchSettings({
                         harness: {
-                          ...settings.harness,
+                          features: {
+                            ...(settings.harness?.features ?? {}),
+                            subagents: {
+                              version: settings.harness?.features.subagents.version ?? 1,
+                            },
+                          },
                           limits: {
-                            ...settings.harness.limits,
+                            ...(settings.harness?.limits ?? {}),
                             waitMaxSeconds,
                           },
                         },
@@ -1437,9 +1444,14 @@ function CesiumAgentHarnessSettings() {
                       if (!Number.isFinite(waitAgentDefaultTimeoutMs)) return;
                       void patchSettings({
                         harness: {
-                          ...settings.harness,
+                          features: {
+                            ...(settings.harness?.features ?? {}),
+                            subagents: {
+                              version: settings.harness?.features.subagents.version ?? 1,
+                            },
+                          },
                           limits: {
-                            ...settings.harness.limits,
+                            ...(settings.harness?.limits ?? {}),
                             waitAgentDefaultTimeoutMs,
                           },
                         },
@@ -1460,9 +1472,14 @@ function CesiumAgentHarnessSettings() {
                       if (!Number.isFinite(waitAgentMinTimeoutMs)) return;
                       void patchSettings({
                         harness: {
-                          ...settings.harness,
+                          features: {
+                            ...(settings.harness?.features ?? {}),
+                            subagents: {
+                              version: settings.harness?.features.subagents.version ?? 1,
+                            },
+                          },
                           limits: {
-                            ...settings.harness.limits,
+                            ...(settings.harness?.limits ?? {}),
                             waitAgentMinTimeoutMs,
                           },
                         },
@@ -1484,9 +1501,14 @@ function CesiumAgentHarnessSettings() {
                       if (!Number.isFinite(waitAgentMaxTimeoutMs)) return;
                       void patchSettings({
                         harness: {
-                          ...settings.harness,
+                          features: {
+                            ...(settings.harness?.features ?? {}),
+                            subagents: {
+                              version: settings.harness?.features.subagents.version ?? 1,
+                            },
+                          },
                           limits: {
-                            ...settings.harness.limits,
+                            ...(settings.harness?.limits ?? {}),
                             waitAgentMaxTimeoutMs,
                           },
                         },
@@ -1511,9 +1533,14 @@ function CesiumAgentHarnessSettings() {
                       if (!Number.isFinite(maxConcurrentSubagents)) return;
                       void patchSettings({
                         harness: {
-                          ...settings.harness,
+                          features: {
+                            ...(settings.harness?.features ?? {}),
+                            subagents: {
+                              version: settings.harness?.features.subagents.version ?? 1,
+                            },
+                          },
                           limits: {
-                            ...settings.harness.limits,
+                            ...(settings.harness?.limits ?? {}),
                             maxConcurrentSubagents,
                           },
                         },

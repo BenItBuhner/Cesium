@@ -151,3 +151,97 @@ test("resolveCesiumHarness composes base + feature tools", () => {
   assert.ok(resolved.toolNames.has("spawn_agent"));
   assert.equal(resolved.subagentsVersion, 2);
 });
+
+test("followup_task queued during a running turn is drained after the turn ends", async () => {
+  const events: unknown[] = [];
+  let turnCount = 0;
+  const runtime = new SubagentsV2Runtime({
+    conversationId: "conv-followup",
+    limits: defaultHarnessSettings().limits,
+    defaultModelId: "openai/gpt-5.1",
+    appendEvents: async (batch) => {
+      events.push(...batch);
+    },
+  });
+
+  // Inject a fake long-running turn by spawning then immediately queueing follow-up
+  // without a live model: use interrupt + manual mailbox drain path via public API.
+  // Simulate orphaned follow-up: push a trigger message while status is running.
+  const agentPath = "/root/drain_test";
+  // Access via spawn would call the model; instead exercise drain via list/wait after
+  // constructing through spawn with a failing auth path is hard. Use interrupt/list only.
+  // Direct unit: enqueue via followup after forcing a completed agent then start another.
+  // Prefer: spawn fails without key — skip live model by stubbing through interrupt path.
+  runtime.dispose();
+
+  // Dedicated lightweight drain check using wait timeout + pending followup semantics:
+  const runtime2 = new SubagentsV2Runtime({
+    conversationId: "conv-followup-2",
+    limits: {
+      ...defaultHarnessSettings().limits,
+      waitAgentMinTimeoutMs: 50,
+      waitAgentDefaultTimeoutMs: 50,
+      waitAgentMaxTimeoutMs: 5_000,
+    },
+    defaultModelId: "openai/missing-model-for-unit-test",
+    appendEvents: async (batch) => {
+      events.push(...batch);
+      turnCount += 1;
+    },
+  });
+
+  // Without a valid provider this will error the child turn — still drains follow-ups.
+  const spawnResult = JSON.parse(
+    await runtime2.spawnAgent({
+      task_name: "drain_test",
+      message: "first",
+    })
+  );
+  assert.equal(spawnResult.path, agentPath);
+
+  // Queue follow-up while first turn is (or was) in flight.
+  await runtime2.followupTask({
+    target: agentPath,
+    message: "second followup that must not be orphaned",
+  });
+
+  // Wait long enough for error turn(s) + drain.
+  await runtime2.waitAgent({ timeout_ms: 2_000 }).catch(() => null);
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  const listed = runtime2.listAgents();
+  assert.equal(listed.length, 1);
+  // Follow-up must have been consumed (not left pending forever).
+  const transcript = await runtime2.readTranscript({ subagentId: agentPath });
+  assert.match(transcript, /second followup that must not be orphaned/);
+  runtime2.dispose();
+  assert.ok(turnCount >= 1);
+});
+
+test("wait_agent still wakes when subagent card persistence fails", async () => {
+  const runtime = new SubagentsV2Runtime({
+    conversationId: "conv-card-fail",
+    limits: {
+      ...defaultHarnessSettings().limits,
+      waitAgentMinTimeoutMs: 50,
+      waitAgentDefaultTimeoutMs: 50,
+      waitAgentMaxTimeoutMs: 5_000,
+    },
+    defaultModelId: "openai/missing-model-for-unit-test",
+    appendEvents: async () => {
+      throw new Error("card persistence failed");
+    },
+  });
+
+  await runtime.spawnAgent({
+    task_name: "card_fail",
+    message: "do work",
+  });
+
+  const wait = JSON.parse(await runtime.waitAgent({ timeout_ms: 3_000 })) as {
+    timed_out: boolean;
+    agents_with_updates?: string[];
+  };
+  assert.equal(wait.timed_out, false);
+  assert.ok(wait.agents_with_updates?.includes("/root/card_fail"));
+  runtime.dispose();
+});
