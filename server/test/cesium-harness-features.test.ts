@@ -245,3 +245,13 @@ test("wait_agent still wakes when subagent card persistence fails", async () => 
   assert.ok(wait.agents_with_updates?.includes("/root/card_fail"));
   runtime.dispose();
 });
+
+test("empty tools array means omit tools, not fall back to defaults", async () => {
+  const { openAiTools, responseTools, anthropicTools } = await import(
+    "../src/lib/agents/cesium/cesium-tools.js"
+  );
+  assert.deepEqual(openAiTools([]), []);
+  assert.deepEqual(responseTools([]), []);
+  assert.deepEqual(anthropicTools([]), []);
+  assert.ok(openAiTools().length > 0);
+});

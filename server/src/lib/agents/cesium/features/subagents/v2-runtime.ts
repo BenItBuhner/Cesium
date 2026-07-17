@@ -559,7 +559,9 @@ export class SubagentsV2Runtime {
         providerId: auth.providerId,
         modelId: agent.modelId,
         messages,
-        // Omit tools entirely — empty [] still serializes on some providers.
+        // Explicit empty array: adapters omit tools from the provider payload.
+        // Leaving tools undefined would fall back to the full default tool surface.
+        tools: [],
       });
       if (agent.abortController.signal.aborted) {
         agent.status = { kind: "interrupted" };
