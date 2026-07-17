@@ -912,6 +912,22 @@ export class AgentRuntimeManager {
       return record;
     }
 
+    const needsOptionCatalog =
+      Boolean(setConfigOption || (setConfigOptions && setConfigOptions.length > 0)) &&
+      record.configOptions.length === 0 &&
+      !this.runtimes.get(conversationId);
+    if (needsOptionCatalog) {
+      try {
+        await this.ensureRuntime(workspace, record);
+        record = (await readConversationRecord(workspace.id, conversationId)) ?? record;
+      } catch (error) {
+        console.warn(
+          `[agent-runtime] ensure before config patch failed for ${conversationId}:`,
+          error instanceof Error ? error.message : error
+        );
+      }
+    }
+
     record = await updateConversationRecord(workspace.id, conversationId, (current) =>
       this.applyConfigPatchToRecord(current, {
         configPatch,
@@ -1073,6 +1089,24 @@ export class AgentRuntimeManager {
       record = await readConversationRecord(workspace.id, conversationId) ?? record;
     }
     if (override?.mode || override?.modelId || override?.setConfigOptions) {
+      // Handoff / create leave `configOptions` empty until the new runtime warms.
+      // `/set` matches by option id, so await ensure before applying those patches.
+      if (
+        override.setConfigOptions &&
+        override.setConfigOptions.length > 0 &&
+        record.configOptions.length === 0
+      ) {
+        try {
+          await this.ensureRuntime(workspace, record);
+          record =
+            (await readConversationRecord(workspace.id, conversationId)) ?? record;
+        } catch (error) {
+          console.warn(
+            `[agent-runtime] ensure before config override failed for ${conversationId}:`,
+            error instanceof Error ? error.message : error
+          );
+        }
+      }
       const patch: AgentConversationConfigPatch = {};
       if (override.mode) patch.mode = override.mode;
       if (override.modelId) {
