@@ -228,6 +228,10 @@ export function NativeComposer({
     let explicitModel = false;
     let explicitMode = false;
     const setConfigOptions: Array<{ configId: string; value: string }> = [];
+    // Resolve directives into the submit payload only. Do not call the normal
+    // config-change handlers here — on an existing conversation those fire
+    // async PATCHes (and backend switches reset mode/model) that race the
+    // prompt's configOverride.
     const directed = applyComposerDirectives(text.trim(), {
       modeOptions,
       models,
@@ -236,19 +240,15 @@ export function NativeComposer({
       onModeChange: (modeId) => {
         nextMode = modeId;
         explicitMode = true;
-        onModeChange(modeId);
       },
       onModelChange: (selected) => {
         nextModel = selected;
         explicitModel = true;
-        onModelChange(selected);
       },
       onBackendChange: (backendId) => {
         nextBackendId = backendId;
         const nextBackend = backends.find((candidate) => candidate.id === backendId);
         if (nextBackend) {
-          // Keep explicit /model and /mode from the same submit; otherwise fall
-          // back to the new backend defaults.
           if (!explicitModel) {
             nextModel = null;
           }
@@ -256,11 +256,9 @@ export function NativeComposer({
             nextMode = nextBackend.defaultMode;
           }
         }
-        onBackendChange(backendId);
       },
       onSessionConfigOptionChange: (configId, value) => {
         setConfigOptions.push({ configId, value });
-        onSessionConfigOptionChange?.(configId, value);
       },
     });
 
@@ -282,6 +280,18 @@ export function NativeComposer({
         },
       });
       if (ok) {
+        // Sync draft landing state only after a successful new-chat create.
+        if (!conversation) {
+          if (nextBackendId && nextBackendId !== backend?.id) {
+            onBackendChange(nextBackendId);
+          }
+          if (explicitMode) {
+            onModeChange(nextMode);
+          }
+          if (explicitModel && nextModel) {
+            onModelChange(nextModel);
+          }
+        }
         setText("");
         setAttachments([]);
         setAttachError(null);
@@ -296,6 +306,7 @@ export function NativeComposer({
     backends,
     busy,
     canSubmit,
+    conversation,
     mode,
     modeOptions,
     model,
@@ -304,7 +315,6 @@ export function NativeComposer({
     onCancel,
     onModeChange,
     onModelChange,
-    onSessionConfigOptionChange,
     onSubmit,
     sessionConfigOptions,
     submitting,
