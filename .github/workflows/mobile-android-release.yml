@@ -146,7 +146,7 @@ jobs:
         working-directory: apps/mobile
         env:
           RELEASE_VERSION: ${{ steps.version.outputs.value }}
-        run: npm run changelog:extract -- "$RELEASE_VERSION" > "$RUNNER_TEMP/changelog-section.md"
+        run: node scripts/extract-changelog.mjs "$RELEASE_VERSION" > "$RUNNER_TEMP/changelog-section.md"
 
       - name: Build release notes
         id: changelog
