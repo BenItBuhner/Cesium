@@ -1831,11 +1831,15 @@ function WorkbenchBody({
           setConversationError("No agent backend is configured.");
           return false;
         }
-        // Prefer the model from this submit when it belongs to the resolved backend;
-        // otherwise fall back to that backend's default.
+        // Prefer the model from this submit. An explicit `/model` in the same
+        // prompt must survive a following `/backend` even if the ModelInfo still
+        // carries the previous backendId; only draft leftovers are filtered.
+        const modelFromThisSubmit = config?.model !== undefined;
         const modelForBackend =
           resolvedModel &&
-          (!resolvedModel.backendId || resolvedModel.backendId === backend.id)
+          (modelFromThisSubmit ||
+            !resolvedModel.backendId ||
+            resolvedModel.backendId === backend.id)
             ? resolvedModel
             : null;
         const modelId =
