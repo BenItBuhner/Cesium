@@ -1038,7 +1038,11 @@ export async function createAndPromptAgentConversation(
   input: AgentConversationCreateInput,
   text: string,
   attachments?: ImageAttachment[],
-  ids?: { clientEventId?: string; clientMessageId?: string }
+  ids?: {
+    clientEventId?: string;
+    clientMessageId?: string;
+    configOverride?: QueuedPromptConfigOverride;
+  }
 ): Promise<AgentConversationSnapshotResponse> {
   return request(`/api/agents/conversations/create-and-prompt`, {
     method: "POST",
@@ -1046,7 +1050,9 @@ export async function createAndPromptAgentConversation(
       conversation: input,
       text,
       attachments,
-      ...ids,
+      clientEventId: ids?.clientEventId,
+      clientMessageId: ids?.clientMessageId,
+      configOverride: ids?.configOverride,
     }),
   });
 }
@@ -1986,12 +1992,25 @@ export type UploadedAttachment = {
   path: string;
 };
 
+/**
+ * Browser `File` or a React Native FormData file descriptor (`uri`/`name`/`type`).
+ * RN's FormData accepts the descriptor shape; web continues to pass real `File`s.
+ */
+export type AttachmentUploadSource =
+  | File
+  | {
+      uri: string;
+      name: string;
+      type: string;
+    };
+
 export async function uploadAttachments(
-  files: File[]
+  files: AttachmentUploadSource[]
 ): Promise<UploadedAttachment[]> {
   const form = new FormData();
   for (const file of files) {
-    form.append("files", file);
+    // RN FormData typings only know Blob/File; the uri descriptor is runtime-valid.
+    form.append("files", file as Blob);
   }
   const response = await fetch(`${resolveClientServerBaseUrl()}/api/agents/attachments`, {
     method: "POST",

@@ -100,6 +100,13 @@ agentRoutes.post("/api/agents/conversations/create-and-prompt", async (c) => {
     attachments?: Array<{ mimeType: string; data: string; name?: string }>;
     clientEventId?: string;
     clientMessageId?: string;
+    configOverride?: {
+      backendId?: string;
+      mode?: string;
+      modelId?: string;
+      modelName?: string;
+      setConfigOptions?: Array<{ configId: string; value: string }>;
+    };
   }>();
   if (!body.text?.trim() && (!body.attachments || body.attachments.length === 0)) {
     return c.json({ error: "Expected prompt text or attachments." }, 400);
@@ -112,6 +119,7 @@ agentRoutes.post("/api/agents/conversations/create-and-prompt", async (c) => {
       ...(body.attachments ? { attachments: body.attachments } : {}),
       ...(body.clientEventId ? { clientEventId: body.clientEventId } : {}),
       ...(body.clientMessageId ? { clientMessageId: body.clientMessageId } : {}),
+      ...(body.configOverride ? { configOverride: body.configOverride } : {}),
     }
   );
   return c.json({ snapshot }, 201);

@@ -17,26 +17,19 @@ import {
 } from "react-native";
 import {
   AlertCircle,
-  ArrowUp,
-  Boxes,
-  Bug,
   Check,
   ChevronDown,
   ChevronRight,
   Circle,
   File,
-  Flame,
   Folder,
   FolderOpen,
   GitBranch,
   Globe2,
   House,
   Laptop,
-  ListChecks,
   Maximize2,
   Menu,
-  MessageCircleQuestion,
-  Mic,
   MoreHorizontal,
   PanelLeftClose,
   PanelLeftOpen,
@@ -47,8 +40,6 @@ import {
   Save,
   Search,
   Settings,
-  Square,
-  Workflow,
   Wrench,
   X,
 } from "lucide-react-native";
@@ -62,23 +53,33 @@ import {
   type ComponentType,
 } from "react";
 import type {
+  AgentBackendId,
   AgentBackendInfo,
   AgentConversationRecord,
   AgentSocketServerMessage,
   ChatMessage,
   FileNode,
   MobileAgentProjection,
+  ModelInfo,
+  QueuedPromptConfigOverride,
   WorkedSessionEntry,
   WorkspaceRecord,
 } from "@cesium/core";
 import {
+  buildConversationModeOptions,
+  buildConversationModelOptions,
+  buildDraftModeOptionsForBackend,
+  buildDraftModelOptionsForBackend,
   deriveMobileAgentProjection,
   projectAgentEventsToChatMessages,
+  resolveConversationModel,
+  resolveDraftModelForBackend,
 } from "@cesium/core";
 import {
   answerAgentPermission,
   answerAgentQuestion,
   buildAgentWebSocketUrl,
+  cancelAgentConversation,
   createAndPromptAgentConversation,
   fetchAgentConversationSnapshot,
   fetchFolderChildren,
@@ -87,15 +88,12 @@ import {
   listAgentConversations,
   promptAgentConversation,
   readFile,
+  updateAgentConversationConfig,
   writeFile,
 } from "@cesium/client";
-import { useServerConnections } from "@cesium/client/react";
+import { useGlobalSettings, useServerConnections } from "@cesium/client/react";
 import {
-  DESIGN_2_MODE_RECIPES,
   DESIGN_2_RECIPES,
-  resolveDesign2ComposerLayout,
-  resolveDesign2ModeTone,
-  type Design2ModeTone,
   type Design2ThemeTokens as ThemeTokens,
 } from "@cesium/design";
 import { useThemeTokens } from "./theme";
@@ -108,7 +106,8 @@ import {
   type ConversationFeedState,
   type VisibleFileRow,
 } from "./workbench-state";
-
+import { NativeComposer, type NativeComposerSubmitPayload } from "./NativeComposer";
+import { NativeSettingsShell } from "./NativeSettingsShell";
 export type NativeWorkbenchPanel = "center" | "rail" | "workbench";
 
 export type NativeWorkbenchProps = {
@@ -143,27 +142,6 @@ const EMPTY_FEED: ConversationFeedState = {
 function tokenNumber(value: string, fallback: number): number {
   const parsed = Number.parseFloat(value);
   return Number.isFinite(parsed) ? parsed : fallback;
-}
-
-const MODE_ICONS: Record<Design2ModeTone, IconComponent> = {
-  agent: Workflow,
-  plan: ListChecks,
-  debug: Bug,
-  ask: MessageCircleQuestion,
-  burn: Flame,
-  workflow: Workflow,
-  orchestration: Boxes,
-};
-
-function modeToken(
-  tokens: ThemeTokens,
-  token: string
-): string {
-  return tokens[token as keyof ThemeTokens] ?? tokens["--text-primary"];
-}
-
-function formatModelLabel(conversation: AgentConversationRecord | null, backend: AgentBackendInfo | null) {
-  return conversation?.config.modelName || backend?.defaultModelName || "Select model";
 }
 
 function formatStatus(status: AgentConversationRecord["status"] | undefined): string {
@@ -1022,199 +1000,32 @@ const NativeMessage = memo(function NativeMessage({
   );
 });
 
-function Composer({
-  backend,
-  busy,
-  conversation,
-  mode,
-  onSubmit,
-  styles,
-  tokens,
-}: {
-  backend: AgentBackendInfo | null;
-  busy: boolean;
-  conversation: AgentConversationRecord | null;
-  mode: string;
-  onSubmit: (text: string) => Promise<boolean>;
-  styles: ReturnType<typeof createStyles>;
-  tokens: ThemeTokens;
-}) {
-  const [text, setText] = useState("");
-  const [measuredMultiline, setMeasuredMultiline] = useState(false);
-  const [multilineLatch, setMultilineLatch] = useState(false);
-  const layout = resolveDesign2ComposerLayout({
-    measuredMultiline,
-    latchedMultiline: multilineLatch,
-    hasAttachments: false,
-    value: text,
-  });
-  const tone = resolveDesign2ModeTone(mode);
-  const modeRecipe = DESIGN_2_MODE_RECIPES[tone];
-  const ModeIcon = MODE_ICONS[tone];
-  const canSubmit = text.trim().length > 0;
-
-  useEffect(() => {
-    if (!text) {
-      setMeasuredMultiline(false);
-      setMultilineLatch(false);
-      return;
-    }
-    if (measuredMultiline) {
-      setMultilineLatch(true);
-    }
-  }, [measuredMultiline, text]);
-
-  const submit = useCallback(async () => {
-    const next = text.trim();
-    if (!next || busy) {
-      return;
-    }
-    if (await onSubmit(next)) {
-      setText("");
-    }
-  }, [busy, onSubmit, text]);
-
-  const plusButton = (
-    <Pressable
-      accessibilityLabel="Attach media"
-      hitSlop={6}
-      style={styles.composerPlusButton}
-    >
-      <Plus
-        color={tokens["--agent-plus-button-icon"]}
-        size={DESIGN_2_RECIPES.composer.plusIconSize}
-        strokeWidth={2}
-      />
-    </Pressable>
-  );
-  const modeChip = !modeRecipe.hiddenWhenDefault ? (
-    <View
-      style={[
-        styles.composerModeChip,
-        { backgroundColor: modeToken(tokens, modeRecipe.backgroundToken) },
-      ]}
-    >
-      <ModeIcon
-        color={modeToken(tokens, modeRecipe.textToken)}
-        size={13}
-        strokeWidth={1.5}
-      />
-      <Text
-        style={[
-          styles.composerModeChipText,
-          { color: modeToken(tokens, modeRecipe.textToken) },
-        ]}
-      >
-        {modeRecipe.label}
-      </Text>
-      <X color={modeToken(tokens, modeRecipe.textToken)} size={9} strokeWidth={2} />
-    </View>
-  ) : null;
-  const leadingControls = (
-    <View style={styles.composerLeadingControls}>
-      {plusButton}
-      {modeChip}
-    </View>
-  );
-  const modelPill = (
-    <Pressable style={styles.modelButton}>
-      <Text numberOfLines={1} style={styles.modelText}>
-        {formatModelLabel(conversation, backend)}
-      </Text>
-      <ChevronDown color={tokens["--text-secondary"]} size={10} strokeWidth={1.5} />
-    </Pressable>
-  );
-  const primaryControl = (
-    <Pressable
-      accessibilityLabel={busy ? "Stop" : canSubmit ? "Send" : "Voice input"}
-      onPress={canSubmit && !busy ? () => void submit() : undefined}
-      style={[
-        styles.sendButton,
-        { backgroundColor: modeToken(tokens, modeRecipe.sendToken) },
-      ]}
-      testID="native-chat-send"
-    >
-      {busy ? (
-        <Square color={tokens["--bg-main"]} fill="currentColor" size={9} strokeWidth={2.2} />
-      ) : canSubmit ? (
-        <ArrowUp
-          color={tokens["--bg-main"]}
-          size={DESIGN_2_RECIPES.composer.sendIconSize}
-          strokeWidth={DESIGN_2_RECIPES.composer.sendIconStrokeWidth}
-        />
-      ) : (
-        <Mic color={tokens["--bg-main"]} size={13} strokeWidth={1.5} />
-      )}
-    </Pressable>
-  );
-  const editor = (
-    <TextInput
-      accessibilityLabel="Agent prompt"
-      multiline
-      onChangeText={setText}
-      onContentSizeChange={(event) => {
-        setMeasuredMultiline(
-          event.nativeEvent.contentSize.height >
-            DESIGN_2_RECIPES.composer.multilineThreshold
-        );
-      }}
-      onSubmitEditing={() => void submit()}
-      numberOfLines={layout.multiline ? 4 : 1}
-      placeholder={
-        layout.multiline
-          ? DESIGN_2_RECIPES.composer.placeholder
-          : modeRecipe.hiddenWhenDefault
-            ? DESIGN_2_RECIPES.composer.compactPlaceholder
-            : DESIGN_2_RECIPES.composer.modePlaceholder
-      }
-      placeholderTextColor={tokens["--text-secondary"]}
-      scrollEnabled={layout.multiline}
-      style={[
-        styles.composerInput,
-        layout.multiline ? styles.composerInputMultiline : styles.composerInputSingle,
-      ]}
-      testID="native-chat-input"
-      value={text}
-    />
-  );
-
+function isConversationBusy(status: AgentConversationRecord["status"] | undefined): boolean {
   return (
-    <View
-      style={[styles.composer, { borderRadius: layout.radius }]}
-      testID="native-chat-composer"
-    >
-      {layout.multiline ? (
-        <>
-          {editor}
-          <View style={styles.composerActions}>
-            {leadingControls}
-            <View style={sharedStyles.toolbarSpacer} />
-            {modelPill}
-            {primaryControl}
-          </View>
-        </>
-      ) : (
-        <View style={styles.composerSingleRow}>
-          {leadingControls}
-          {editor}
-          {modelPill}
-          {primaryControl}
-        </View>
-      )}
-    </View>
+    status === "running" ||
+    status === "pause_requested" ||
+    status === "pausing"
   );
 }
 
 function ChatPanel({
   backends,
   connectionState,
+  draftBackendId,
+  draftMode,
+  draftModel,
   feed,
   feedError,
   feedLoading,
+  onBackendChange,
+  onCancel,
+  onModeChange,
+  onModelChange,
   onOpenWorkbench,
   onPermission,
   onQuestion,
   onRefresh,
+  onSessionConfigOptionChange,
   onSubmit,
   selectedConversationId,
   styles,
@@ -1225,14 +1036,22 @@ function ChatPanel({
 }: {
   backends: AgentBackendInfo[];
   connectionState?: NativeWorkbenchProps["connectionState"];
+  draftBackendId: AgentBackendId | null;
+  draftMode: string;
+  draftModel: ModelInfo | null;
   feed: ConversationFeedState;
   feedError: string | null;
   feedLoading: boolean;
+  onBackendChange: (backendId: AgentBackendId) => void;
+  onCancel: () => void;
+  onModeChange: (modeId: string) => void;
+  onModelChange: (model: ModelInfo) => void;
   onOpenWorkbench: () => void;
   onPermission: (requestId: string, optionId: string) => void;
   onQuestion: (questionId: string, answer: string) => void;
   onRefresh: () => void;
-  onSubmit: (text: string, mode?: string) => Promise<boolean>;
+  onSessionConfigOptionChange?: (configId: string, value: string) => void;
+  onSubmit: (payload: NativeComposerSubmitPayload) => Promise<boolean>;
   selectedConversationId: string | null;
   styles: ReturnType<typeof createStyles>;
   tokens: ThemeTokens;
@@ -1240,17 +1059,51 @@ function ChatPanel({
   workspaceName: string;
   workspaceRoot: string;
 }) {
-  const [draftMode, setDraftMode] = useState("agent");
+  const { settings } = useGlobalSettings();
   const selectedConversation = selectedConversationId
     ? feed.conversation?.id === selectedConversationId
       ? feed.conversation
       : null
     : null;
   const backend =
-    backends.find((candidate) => candidate.id === selectedConversation?.config.backendId) ??
+    backends.find(
+      (candidate) =>
+        candidate.id ===
+        (selectedConversation?.config.backendId ?? draftBackendId ?? undefined)
+    ) ??
     backends.find((candidate) => candidate.available) ??
     backends[0] ??
     null;
+  const modelVisibility = settings.models.byBackend;
+  const modeOptions = useMemo(() => {
+    if (selectedConversation) {
+      return buildConversationModeOptions(selectedConversation, backends, {
+        goalModeBetaEnabled: settings.features.goalModeBeta,
+      });
+    }
+    return backend
+      ? buildDraftModeOptionsForBackend(backend, {
+          goalModeBetaEnabled: settings.features.goalModeBeta,
+        })
+      : [];
+  }, [backend, backends, selectedConversation, settings.features.goalModeBeta]);
+  const models = useMemo(() => {
+    if (selectedConversation) {
+      return buildConversationModelOptions(selectedConversation, backends, modelVisibility);
+    }
+    return backend ? buildDraftModelOptionsForBackend(backend, modelVisibility) : [];
+  }, [backend, backends, modelVisibility, selectedConversation]);
+  const model = useMemo(() => {
+    if (selectedConversation) {
+      return resolveConversationModel(selectedConversation, backends);
+    }
+    return (
+      draftModel ??
+      (backend ? resolveDraftModelForBackend(backend) : null)
+    );
+  }, [backend, backends, draftModel, selectedConversation]);
+  const mode = selectedConversation?.config.mode ?? draftMode;
+  const busy = isConversationBusy(selectedConversation?.status);
   const messages = useMemo(
     () =>
       projectAgentEventsToChatMessages(feed.events, {
@@ -1260,6 +1113,29 @@ function ChatPanel({
     [feed.events, selectedConversation?.config.backendId, workspaceRoot]
   );
   const status = formatStatus(selectedConversation?.status);
+  const sessionConfigOptions =
+    selectedConversation?.configOptions ?? backend?.cachedConfigOptions;
+
+  const composer = (
+    <NativeComposer
+      backend={backend}
+      backends={backends}
+      busy={busy}
+      conversation={selectedConversation}
+      mode={mode}
+      modeOptions={modeOptions}
+      model={model}
+      models={models}
+      onBackendChange={onBackendChange}
+      onCancel={onCancel}
+      onModeChange={onModeChange}
+      onModelChange={onModelChange}
+      onSessionConfigOptionChange={onSessionConfigOptionChange}
+      onSubmit={onSubmit}
+      sessionConfigOptions={sessionConfigOptions}
+      tokens={tokens}
+    />
+  );
 
   return (
     <View style={styles.panel} testID="cesium-chat-panel">
@@ -1286,22 +1162,14 @@ function ChatPanel({
                 <ChevronDown color={tokens["--text-secondary"]} size={11} strokeWidth={1.5} />
               </Pressable>
             </View>
-            <Composer
-              backend={backend}
-              busy={false}
-              conversation={null}
-              mode={draftMode}
-              onSubmit={(text) => onSubmit(text, draftMode)}
-              styles={styles}
-              tokens={tokens}
-            />
+            {composer}
             {feedError ? <Text style={styles.landingError}>{feedError}</Text> : null}
             <View style={styles.quickActions}>
               <Pressable
-                onPress={() => setDraftMode("plan")}
+                onPress={() => onModeChange("plan")}
                 style={styles.quickActionButton}
               >
-                <Text style={styles.quickActionText}>Plan new idea (Ctrl+I)</Text>
+                <Text style={styles.quickActionText}>Plan new idea</Text>
               </Pressable>
               <Pressable
                 onPress={onOpenWorkbench}
@@ -1343,17 +1211,7 @@ function ChatPanel({
               )}
             />
           )}
-          <Composer
-            backend={backend}
-            busy={false}
-            conversation={selectedConversation}
-            mode={selectedConversation?.config.mode ?? "agent"}
-            onSubmit={(text) =>
-              onSubmit(text, selectedConversation?.config.mode)
-            }
-            styles={styles}
-            tokens={tokens}
-          />
+          {composer}
           <View style={styles.composerMetaRow}>
             <Text style={styles.composerMeta}>workspace</Text>
             <Text numberOfLines={1} style={styles.composerBranchMeta}>
@@ -1380,6 +1238,7 @@ function AgentRail({
   onClose,
   onNewConversation,
   onOpenServers,
+  onOpenSettings,
   onSelectConversation,
   onSelectWorkspace,
   serverLabel,
@@ -1394,6 +1253,7 @@ function AgentRail({
   onClose: () => void;
   onNewConversation: () => void;
   onOpenServers: () => void;
+  onOpenSettings: () => void;
   onSelectConversation: (conversationId: string) => void;
   onSelectWorkspace: (workspaceId: string) => void;
   serverLabel: string;
@@ -1561,11 +1421,11 @@ function AgentRail({
           </View>
         </Pressable>
         <Pressable
-          accessibilityLabel="Manage servers"
+          accessibilityLabel="Open settings"
           hitSlop={6}
-          onPress={onOpenServers}
+          onPress={onOpenSettings}
           style={styles.railFooterIconButton}
-          testID="open-server-connections-icon"
+          testID="open-native-settings"
         >
           <Settings color={tokens["--text-secondary"]} size={15} strokeWidth={1.5} />
         </Pressable>
@@ -1728,6 +1588,7 @@ function WorkbenchBody({
   const [filePickerOpen, setFilePickerOpen] = useState(false);
   const [serversOpen, setServersOpen] = useState(false);
   const [serverSetupOpen, setServerSetupOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [conversations, setConversations] = useState<AgentConversationRecord[]>([]);
   const [backends, setBackends] = useState<AgentBackendInfo[]>([]);
   const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null);
@@ -1736,6 +1597,9 @@ function WorkbenchBody({
   const [editorDocument, setEditorDocument] = useState<EditorDocument | null>(null);
   const [editorLoading, setEditorLoading] = useState(false);
   const [workspaceBranch, setWorkspaceBranch] = useState<string | null>(null);
+  const [draftBackendId, setDraftBackendId] = useState<AgentBackendId | null>(null);
+  const [draftMode, setDraftMode] = useState("agent");
+  const [draftModel, setDraftModel] = useState<ModelInfo | null>(null);
   const initialConversationSelected = useRef(false);
   const previousProjection = useRef<MobileAgentProjection | null>(null);
   const openedPlanFiles = useRef(new Set<string>());
@@ -1745,6 +1609,19 @@ function WorkbenchBody({
     loading: feedLoading,
     refresh: refreshFeed,
   } = useConversationFeed(activeWorkspaceId, selectedConversationId);
+
+  useEffect(() => {
+    if (draftBackendId || backends.length === 0) {
+      return;
+    }
+    const backend = backends.find((candidate) => candidate.available) ?? backends[0] ?? null;
+    if (!backend) {
+      return;
+    }
+    setDraftBackendId(backend.id);
+    setDraftMode(backend.defaultMode);
+    setDraftModel(resolveDraftModelForBackend(backend));
+  }, [backends, draftBackendId]);
 
   const refreshConversations = useCallback(async () => {
     if (!activeWorkspaceId) {
@@ -1904,39 +1781,91 @@ function WorkbenchBody({
   }, [editorDocument]);
 
   const submitPrompt = useCallback(
-    async (text: string, modeOverride?: string): Promise<boolean> => {
+    async (payload: NativeComposerSubmitPayload): Promise<boolean> => {
+      const { text, attachments, config } = payload;
+      const resolvedBackendId = config?.backendId ?? draftBackendId;
+      const resolvedMode = config?.mode ?? draftMode;
+      const resolvedModel = config?.model !== undefined ? config.model : draftModel;
+      const setConfigOptions = config?.setConfigOptions;
       try {
         if (selectedConversationId) {
-          const result = await promptAgentConversation(selectedConversationId, text);
-          const conversation = result.snapshot.conversation;
+          const hasOverride =
+            Boolean(config?.backendId) ||
+            Boolean(config?.mode) ||
+            Boolean(config?.model) ||
+            Boolean(setConfigOptions?.length);
+          const configOverride: QueuedPromptConfigOverride | undefined = hasOverride
+            ? {
+                ...(config?.backendId ? { backendId: config.backendId } : {}),
+                ...(config?.mode
+                  ? { mode: config.mode as AgentConversationRecord["config"]["mode"] }
+                  : {}),
+                ...(config?.model
+                  ? {
+                      modelId: config.model.modelValue ?? config.model.id,
+                      modelName: config.model.name,
+                    }
+                  : {}),
+                ...(setConfigOptions?.length ? { setConfigOptions } : {}),
+              }
+            : undefined;
+          const result = await promptAgentConversation(
+            selectedConversationId,
+            text,
+            attachments.length > 0 ? attachments : undefined,
+            configOverride
+          );
+          const nextConversation = result.snapshot.conversation;
           setConversations((current) =>
-            current.map((item) => (item.id === conversation.id ? conversation : item))
+            current.map((item) => (item.id === nextConversation.id ? nextConversation : item))
           );
           refreshFeed();
           return true;
         }
         const backend =
-          backends.find((candidate) => candidate.available) ?? backends[0] ?? null;
+          backends.find((candidate) => candidate.id === resolvedBackendId) ??
+          backends.find((candidate) => candidate.available) ??
+          backends[0] ??
+          null;
         if (!backend) {
           setConversationError("No agent backend is configured.");
           return false;
         }
+        // Prefer the model from this submit. An explicit `/model` in the same
+        // prompt must survive a following `/backend` even if the ModelInfo still
+        // carries the previous backendId; only draft leftovers are filtered.
+        const modelFromThisSubmit = config?.model !== undefined;
+        const modelForBackend =
+          resolvedModel &&
+          (modelFromThisSubmit ||
+            !resolvedModel.backendId ||
+            resolvedModel.backendId === backend.id)
+            ? resolvedModel
+            : null;
+        const modelId =
+          modelForBackend?.modelValue ?? modelForBackend?.id ?? backend.defaultModelId;
+        const modelName = modelForBackend?.name ?? backend.defaultModelName;
+        const createConfigOverride: QueuedPromptConfigOverride | undefined =
+          setConfigOptions?.length
+            ? { setConfigOptions }
+            : undefined;
         const result = await createAndPromptAgentConversation(
           {
             backendId: backend.id,
-            mode:
-              (modeOverride ?? backend.defaultMode) as AgentConversationRecord["config"]["mode"],
-            modelId: backend.defaultModelId,
-            modelName: backend.defaultModelName,
+            mode: (resolvedMode || backend.defaultMode) as AgentConversationRecord["config"]["mode"],
+            modelId,
+            modelName,
           },
-          text
+          text,
+          attachments.length > 0 ? attachments : undefined,
+          createConfigOverride ? { configOverride: createConfigOverride } : undefined
         );
-        const conversation = result.snapshot.conversation;
+        const nextConversation = result.snapshot.conversation;
         setConversations((current) => [
-          conversation,
-          ...current.filter((item) => item.id !== conversation.id),
+          nextConversation,
+          ...current.filter((item) => item.id !== nextConversation.id),
         ]);
-        setSelectedConversationId(conversation.id);
+        setSelectedConversationId(nextConversation.id);
         return true;
       } catch (nextError) {
         setConversationError(
@@ -1945,7 +1874,146 @@ function WorkbenchBody({
         return false;
       }
     },
+    [
+      backends,
+      draftBackendId,
+      draftMode,
+      draftModel,
+      refreshFeed,
+      selectedConversationId,
+    ]
+  );
+
+  const cancelActive = useCallback(() => {
+    if (!selectedConversationId) {
+      return;
+    }
+    void cancelAgentConversation(selectedConversationId)
+      .then((result) => {
+        setConversations((current) =>
+          current.map((item) =>
+            item.id === result.conversation.id ? result.conversation : item
+          )
+        );
+        refreshFeed();
+      })
+      .catch(() => undefined);
+  }, [refreshFeed, selectedConversationId]);
+
+  const handleModeChange = useCallback(
+    (modeId: string) => {
+      if (!selectedConversationId) {
+        setDraftMode(modeId);
+        return;
+      }
+      void updateAgentConversationConfig(selectedConversationId, { mode: modeId as AgentConversationRecord["config"]["mode"] })
+        .then((result) => {
+          setConversations((current) =>
+            current.map((item) =>
+              item.id === result.conversation.id ? result.conversation : item
+            )
+          );
+          refreshFeed();
+        })
+        .catch((error) => {
+          setConversationError(
+            error instanceof Error ? error.message : "Failed to update mode."
+          );
+        });
+    },
+    [refreshFeed, selectedConversationId]
+  );
+
+  const handleModelChange = useCallback(
+    (model: ModelInfo) => {
+      if (!selectedConversationId) {
+        setDraftModel(model);
+        if (model.backendId) {
+          setDraftBackendId(model.backendId as AgentBackendId);
+        }
+        return;
+      }
+      const modelId = model.modelValue ?? model.id;
+      void updateAgentConversationConfig(selectedConversationId, {
+        modelId,
+        modelName: model.name,
+        ...(model.configSelections
+          ? { setConfigOptions: model.configSelections }
+          : {}),
+      })
+        .then((result) => {
+          setConversations((current) =>
+            current.map((item) =>
+              item.id === result.conversation.id ? result.conversation : item
+            )
+          );
+          refreshFeed();
+        })
+        .catch((error) => {
+          setConversationError(
+            error instanceof Error ? error.message : "Failed to update model."
+          );
+        });
+    },
+    [refreshFeed, selectedConversationId]
+  );
+
+  const handleBackendChange = useCallback(
+    (backendId: AgentBackendId) => {
+      const backend = backends.find((candidate) => candidate.id === backendId) ?? null;
+      if (!selectedConversationId) {
+        setDraftBackendId(backendId);
+        if (backend) {
+          setDraftMode(backend.defaultMode);
+          setDraftModel(resolveDraftModelForBackend(backend));
+        }
+        return;
+      }
+      if (!backend) {
+        return;
+      }
+      void updateAgentConversationConfig(selectedConversationId, {
+        backendId,
+        mode: backend.defaultMode,
+        modelId: backend.defaultModelId,
+        modelName: backend.defaultModelName,
+      })
+        .then((result) => {
+          setConversations((current) =>
+            current.map((item) =>
+              item.id === result.conversation.id ? result.conversation : item
+            )
+          );
+          refreshFeed();
+        })
+        .catch((error) => {
+          setConversationError(
+            error instanceof Error ? error.message : "Failed to update harness."
+          );
+        });
+    },
     [backends, refreshFeed, selectedConversationId]
+  );
+
+  const handleSessionConfigOptionChange = useCallback(
+    (configId: string, value: string) => {
+      if (!selectedConversationId) {
+        return;
+      }
+      void updateAgentConversationConfig(selectedConversationId, {
+        setConfigOptions: [{ configId, value }],
+      })
+        .then((result) => {
+          setConversations((current) =>
+            current.map((item) =>
+              item.id === result.conversation.id ? result.conversation : item
+            )
+          );
+          refreshFeed();
+        })
+        .catch(() => undefined);
+    },
+    [refreshFeed, selectedConversationId]
   );
 
   const answerPermission = useCallback(
@@ -2059,9 +2127,16 @@ function WorkbenchBody({
           <ChatPanel
             backends={backends}
             connectionState={connectionState}
+            draftBackendId={draftBackendId}
+            draftMode={draftMode}
+            draftModel={draftModel}
             feed={feed}
             feedError={feedError ?? conversationError}
             feedLoading={feedLoading}
+            onBackendChange={handleBackendChange}
+            onCancel={cancelActive}
+            onModeChange={handleModeChange}
+            onModelChange={handleModelChange}
             onOpenWorkbench={() => {
               setFilePickerOpen(false);
               setRightPaneOpen(true);
@@ -2072,6 +2147,7 @@ function WorkbenchBody({
               refreshFeed();
               void refreshConversations();
             }}
+            onSessionConfigOptionChange={handleSessionConfigOptionChange}
             onSubmit={submitPrompt}
             selectedConversationId={selectedConversationId}
             styles={styles}
@@ -2140,6 +2216,10 @@ function WorkbenchBody({
               onOpenServers={() => {
                 setRailOpen(false);
                 setServersOpen(true);
+              }}
+              onOpenSettings={() => {
+                setRailOpen(false);
+                setSettingsOpen(true);
               }}
               onSelectConversation={(conversationId) => {
                 setSelectedConversationId(conversationId);
@@ -2217,6 +2297,12 @@ function WorkbenchBody({
         onClose={() => setServerSetupOpen(false)}
         open={serverSetupOpen}
         styles={styles}
+        tokens={tokens}
+      />
+      <NativeSettingsShell
+        onClose={() => setSettingsOpen(false)}
+        onOpenServerSetup={() => setServerSetupOpen(true)}
+        open={settingsOpen}
         tokens={tokens}
       />
     </View>

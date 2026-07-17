@@ -49,6 +49,15 @@ const SAVE_DEBOUNCE_MS = 500;
 const MODEL_TOGGLE_SAVE_DEBOUNCE_MS = 160;
 const MODEL_SYNC_INTERVAL_MS = 5 * 60 * 1000;
 
+/** Prefer globalThis so timers work on React Native where `window` may be absent. */
+const scheduleTimeout = (handler: () => void, delay: number): number =>
+  globalThis.setTimeout(handler, delay) as unknown as number;
+const cancelTimeout = (handle: number | null): void => {
+  if (handle != null) {
+    globalThis.clearTimeout(handle);
+  }
+};
+
 function createDefaultState(): GlobalSettingsState {
   return createDefaultGlobalSettings();
 }
@@ -91,7 +100,7 @@ export function GlobalSettingsProvider({
 
   const flushModelToggleUpdates = useCallback(async () => {
     if (modelToggleTimerRef.current) {
-      window.clearTimeout(modelToggleTimerRef.current);
+      cancelTimeout(modelToggleTimerRef.current);
       modelToggleTimerRef.current = null;
     }
     const updates = [...modelToggleQueueRef.current.values()];
@@ -131,9 +140,9 @@ export function GlobalSettingsProvider({
 
   const scheduleModelToggleFlush = useCallback(() => {
     if (modelToggleTimerRef.current) {
-      window.clearTimeout(modelToggleTimerRef.current);
+      cancelTimeout(modelToggleTimerRef.current);
     }
-    modelToggleTimerRef.current = window.setTimeout(() => {
+    modelToggleTimerRef.current = scheduleTimeout(() => {
       void flushModelToggleUpdates();
     }, MODEL_TOGGLE_SAVE_DEBOUNCE_MS);
   }, [flushModelToggleUpdates]);
@@ -145,7 +154,7 @@ export function GlobalSettingsProvider({
       }
 
       if (saveTimerRef.current) {
-        window.clearTimeout(saveTimerRef.current);
+        cancelTimeout(saveTimerRef.current);
         saveTimerRef.current = null;
       }
 
@@ -284,10 +293,10 @@ export function GlobalSettingsProvider({
     }
 
     if (saveTimerRef.current) {
-      window.clearTimeout(saveTimerRef.current);
+      cancelTimeout(saveTimerRef.current);
     }
 
-    saveTimerRef.current = window.setTimeout(() => {
+    saveTimerRef.current = scheduleTimeout(() => {
       const server = settingsServerRef.current;
       if (!server) {
         return;
@@ -297,7 +306,7 @@ export function GlobalSettingsProvider({
 
     return () => {
       if (saveTimerRef.current) {
-        window.clearTimeout(saveTimerRef.current);
+        cancelTimeout(saveTimerRef.current);
       }
     };
   }, [ready, settings]);

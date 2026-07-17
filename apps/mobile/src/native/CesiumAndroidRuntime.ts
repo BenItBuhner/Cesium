@@ -9,8 +9,17 @@ export type AndroidRuntimeConfig = {
   localBackendReady: boolean;
 };
 
+export type PickedAndroidImage = {
+  uri: string;
+  mimeType: string;
+  name: string;
+  base64: string;
+  byteLength: number;
+};
+
 type CesiumAndroidRuntimeModule = {
   getRuntimeConfig(): Promise<Partial<AndroidRuntimeConfig>>;
+  pickImages(allowMultiple: boolean): Promise<PickedAndroidImage[]>;
 };
 
 const nativeModule = NativeModules.CesiumAndroidRuntime as CesiumAndroidRuntimeModule | undefined;
@@ -25,6 +34,18 @@ export const CesiumAndroidRuntime = {
       return normalizeRuntimeConfig(await nativeModule.getRuntimeConfig());
     } catch {
       return null;
+    }
+  },
+
+  async pickImages(allowMultiple = true): Promise<PickedAndroidImage[]> {
+    if (Platform.OS !== "android" || !nativeModule?.pickImages) {
+      return [];
+    }
+    try {
+      const picked = await nativeModule.pickImages(allowMultiple);
+      return Array.isArray(picked) ? picked : [];
+    } catch {
+      return [];
     }
   },
 };
