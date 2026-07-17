@@ -17,6 +17,12 @@ const READ_ONLY_TOOLS = new Set([
   "ask_question",
   "subagent",
   "read_subagent_transcript",
+  "spawn_agent",
+  "send_message",
+  "followup_task",
+  "wait_agent",
+  "interrupt_agent",
+  "list_agents",
   "wait",
 ]);
 

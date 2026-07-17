@@ -361,6 +361,10 @@ settingsRoutes.patch("/api/settings/cesium-agent", async (c) => {
     defaultApiKind?: unknown;
     compression?: Record<string, unknown>;
     orchestration?: Record<string, unknown>;
+    harness?: {
+      features?: { subagents?: { version?: number | string } };
+      limits?: Record<string, unknown>;
+    };
     toolPermissions?: Record<string, unknown>;
     customProviders?: CesiumCustomProvider[];
   }>();
@@ -375,6 +379,14 @@ settingsRoutes.patch("/api/settings/cesium-agent", async (c) => {
       : {}),
     ...(body.orchestration
       ? { orchestration: body.orchestration as Partial<CesiumAgentSettings["orchestration"]> }
+      : {}),
+    ...(body.harness
+      ? {
+          harness: body.harness as {
+            features?: { subagents?: { version?: number | string } };
+            limits?: Partial<CesiumAgentSettings["harness"]["limits"]>;
+          },
+        }
       : {}),
     ...(body.toolPermissions
       ? { toolPermissions: body.toolPermissions as Partial<CesiumAgentSettings["toolPermissions"]> }

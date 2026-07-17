@@ -1,7 +1,16 @@
 import { BROWSER_MCP_SERVER_ID } from "../../mcp/builtin-browser-tools.js";
+import {
+  defaultHarnessSettings,
+  resolveCesiumHarness,
+  type CesiumHarnessSettings,
+  type CesiumToolDefinition,
+  type ResolvedCesiumHarness,
+} from "./features/index.js";
 import { asRecord, asString, parseJsonArgs, pickFirstString } from "./cesium-coerce.js";
 import { WAIT_MAX_SECONDS } from "./cesium-prompt.js";
 import type { CesiumToolRequest } from "./cesium-types.js";
+
+export type { CesiumToolDefinition, ResolvedCesiumHarness };
 
 export type ParsedWaitToolArgs = {
   seconds: number;
@@ -11,7 +20,10 @@ export type ParsedWaitToolArgs = {
 };
 
 /** Normalize and validate timed `wait` tool arguments. */
-export function parseWaitToolArgs(args: Record<string, unknown>): ParsedWaitToolArgs {
+export function parseWaitToolArgs(
+  args: Record<string, unknown>,
+  maxSeconds: number = WAIT_MAX_SECONDS
+): ParsedWaitToolArgs {
   const raw =
     typeof args.seconds === "number"
       ? args.seconds
@@ -21,8 +33,12 @@ export function parseWaitToolArgs(args: Record<string, unknown>): ParsedWaitTool
   if (!Number.isFinite(raw) || raw <= 0) {
     throw new Error("wait.seconds must be a positive number.");
   }
-  const capped = raw > WAIT_MAX_SECONDS;
-  const seconds = capped ? WAIT_MAX_SECONDS : raw;
+  const cap =
+    Number.isFinite(maxSeconds) && maxSeconds > 0
+      ? Math.min(WAIT_MAX_SECONDS, Math.floor(maxSeconds))
+      : WAIT_MAX_SECONDS;
+  const capped = raw > cap;
+  const seconds = capped ? cap : raw;
   return {
     seconds,
     durationMs: Math.max(1, Math.round(seconds * 1000)),
@@ -52,7 +68,8 @@ export function formatWaitDurationLabel(seconds: number): string {
   return `${minutes}m ${secs}s`;
 }
 
-const CESIUM_TOOLS = [
+/** Core tools always present; versioned feature modules (subagents v1/v2) are layered on top. */
+const CESIUM_BASE_TOOLS: CesiumToolDefinition[] = [
   {
     name: "read_file",
     description: "Read all or part of a workspace file. Use offset and limit for large files.",
@@ -384,38 +401,6 @@ const CESIUM_TOOLS = [
     },
   },
   {
-    name: "subagent",
-    description:
-      "Start an ephemeral in-session research subagent (not a kanban child agent). Stores a transcript card keyed by subagentId for read_subagent_transcript.",
-    parameters: {
-      type: "object",
-      properties: {
-        title: { type: "string" },
-        instructions: { type: "string" },
-        modelId: { type: "string" },
-        wait: { type: "boolean" },
-        allowedTools: { type: "array" },
-      },
-      required: ["instructions"],
-      additionalProperties: false,
-    },
-  },
-  {
-    name: "read_subagent_transcript",
-    description:
-      "Read the transcript of an ephemeral subagent started with the subagent tool (subagentId from that card). In Orchestration Mode, use orchestration_read_agent_transcript for kanban child agents assigned via orchestration_assign_agent.",
-    parameters: {
-      type: "object",
-      properties: {
-        subagentId: { type: "string" },
-        offset: { type: "number" },
-        limit: { type: "number" },
-      },
-      required: ["subagentId"],
-      additionalProperties: false,
-    },
-  },
-  {
     name: "search_history",
     description: "Search older or compressed conversation history.",
     parameters: {
@@ -713,8 +698,20 @@ export function sanitizeOpenAiCompatibleJsonSchema<T>(value: T): T {
   return next as T;
 }
 
-export function buildOpenAiToolDefinitions() {
-  return CESIUM_TOOLS.map((tool) => ({
+export function resolveCesiumTools(
+  harness?: CesiumHarnessSettings | unknown
+): ResolvedCesiumHarness {
+  return resolveCesiumHarness(CESIUM_BASE_TOOLS, harness ?? defaultHarnessSettings());
+}
+
+/** @deprecated Prefer resolveCesiumTools(harness).tools — kept for tests expecting a flat default list. */
+function defaultCesiumTools(): CesiumToolDefinition[] {
+  return resolveCesiumTools().tools;
+}
+
+export function buildOpenAiToolDefinitions(tools?: CesiumToolDefinition[]) {
+  const list = tools ?? defaultCesiumTools();
+  return list.map((tool) => ({
     type: "function" as const,
     function: {
       name: tool.name,
@@ -724,12 +721,13 @@ export function buildOpenAiToolDefinitions() {
   }));
 }
 
-export function openAiTools() {
-  return buildOpenAiToolDefinitions();
+export function openAiTools(tools?: CesiumToolDefinition[]) {
+  return buildOpenAiToolDefinitions(tools);
 }
 
-export function responseTools() {
-  return CESIUM_TOOLS.map((tool) => ({
+export function responseTools(tools?: CesiumToolDefinition[]) {
+  const list = tools ?? defaultCesiumTools();
+  return list.map((tool) => ({
     type: "function",
     name: tool.name,
     description: tool.description,
@@ -737,18 +735,20 @@ export function responseTools() {
   }));
 }
 
-export function anthropicTools() {
-  return CESIUM_TOOLS.map((tool) => ({
+export function anthropicTools(tools?: CesiumToolDefinition[]) {
+  const list = tools ?? defaultCesiumTools();
+  return list.map((tool) => ({
     name: tool.name,
     description: tool.description,
     input_schema: tool.parameters,
   }));
 }
 
-export function googleTools() {
+export function googleTools(tools?: CesiumToolDefinition[]) {
+  const list = tools ?? defaultCesiumTools();
   return [
     {
-      functionDeclarations: CESIUM_TOOLS.map((tool) => ({
+      functionDeclarations: list.map((tool) => ({
         name: tool.name,
         description: tool.description,
         parametersJsonSchema: tool.parameters,
@@ -793,6 +793,13 @@ export function toolKind(name: string): string {
     case "ask_question":
       return "question";
     case "subagent":
+    case "spawn_agent":
+    case "send_message":
+    case "followup_task":
+    case "wait_agent":
+    case "interrupt_agent":
+    case "list_agents":
+    case "read_subagent_transcript":
       return "subagent";
     case "search_history":
     case "read_history_page":
@@ -892,6 +899,18 @@ export function toolTitle(name: string, args: Record<string, unknown>): string {
       return "Ask question";
     case "subagent":
       return `Subagent ${asString(args.title) ?? ""}`.trim();
+    case "spawn_agent":
+      return `Spawn agent ${asString(args.task_name) ?? asString(args.taskName) ?? ""}`.trim();
+    case "send_message":
+      return `Message agent ${asString(args.target) ?? ""}`.trim();
+    case "followup_task":
+      return `Follow up ${asString(args.target) ?? ""}`.trim();
+    case "wait_agent":
+      return "Wait for agents";
+    case "interrupt_agent":
+      return `Interrupt ${asString(args.target) ?? ""}`.trim();
+    case "list_agents":
+      return "List agents";
     case "read_subagent_transcript":
       return "Read subagent transcript";
     case "search_history":
