@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-07-17
+
+### Fixed
+
+- Native Android workbench send, stop, attachments, model/mode switching, slash directives, and settings now match the shared web/Electron flows.
+- Same-submit slash directives (`/backend`, `/mode`, `/model`, `/set`) apply on create and prompt without racing draft state or dropping option overrides after a backend handoff.
+- Android image picker uses the current React Native activity context so attachment uploads work on RN 0.86.
+- Native server connections picker is restored when the phone cannot reach the Cesium backend.
+
+### Changed
+
+- Shared composer suggestion and directive helpers live in `@cesium/core` so web and native stay in sync.
+- Create-and-prompt accepts a server `configOverride` so first-turn directive config is applied before the turn runs.
+
 ## [0.1.2] - 2026-07-16
 
 ### Fixed
