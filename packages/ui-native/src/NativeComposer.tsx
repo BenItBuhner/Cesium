@@ -78,6 +78,7 @@ export type NativeComposerSubmitConfig = {
   backendId?: AgentBackendId;
   mode?: string;
   model?: ModelInfo | null;
+  setConfigOptions?: Array<{ configId: string; value: string }>;
 };
 
 export type NativeComposerSubmitPayload = {
@@ -224,6 +225,9 @@ export function NativeComposer({
     let nextMode = mode;
     let nextModel = model;
     let nextBackendId = backend?.id ?? null;
+    let explicitModel = false;
+    let explicitMode = false;
+    const setConfigOptions: Array<{ configId: string; value: string }> = [];
     const directed = applyComposerDirectives(text.trim(), {
       modeOptions,
       models,
@@ -231,23 +235,33 @@ export function NativeComposer({
       sessionConfigOptions,
       onModeChange: (modeId) => {
         nextMode = modeId;
+        explicitMode = true;
         onModeChange(modeId);
       },
       onModelChange: (selected) => {
         nextModel = selected;
+        explicitModel = true;
         onModelChange(selected);
       },
       onBackendChange: (backendId) => {
         nextBackendId = backendId;
         const nextBackend = backends.find((candidate) => candidate.id === backendId);
         if (nextBackend) {
-          // Drop the previous backend's model so create uses the new default.
-          nextModel = null;
-          nextMode = nextBackend.defaultMode;
+          // Keep explicit /model and /mode from the same submit; otherwise fall
+          // back to the new backend defaults.
+          if (!explicitModel) {
+            nextModel = null;
+          }
+          if (!explicitMode) {
+            nextMode = nextBackend.defaultMode;
+          }
         }
         onBackendChange(backendId);
       },
-      onSessionConfigOptionChange,
+      onSessionConfigOptionChange: (configId, value) => {
+        setConfigOptions.push({ configId, value });
+        onSessionConfigOptionChange?.(configId, value);
+      },
     });
 
     if (!directed && imagesToSubmit.length === 0) {
@@ -264,6 +278,7 @@ export function NativeComposer({
           backendId: nextBackendId ?? undefined,
           mode: nextMode,
           model: nextModel,
+          setConfigOptions: setConfigOptions.length > 0 ? setConfigOptions : undefined,
         },
       });
       if (ok) {

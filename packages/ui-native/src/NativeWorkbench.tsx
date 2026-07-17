@@ -1786,23 +1786,29 @@ function WorkbenchBody({
       const resolvedBackendId = config?.backendId ?? draftBackendId;
       const resolvedMode = config?.mode ?? draftMode;
       const resolvedModel = config?.model !== undefined ? config.model : draftModel;
+      const setConfigOptions = config?.setConfigOptions;
       try {
         if (selectedConversationId) {
-          const configOverride: QueuedPromptConfigOverride | undefined =
-            config?.backendId || config?.mode || config?.model
-              ? {
-                  ...(config?.backendId ? { backendId: config.backendId } : {}),
-                  ...(config?.mode
-                    ? { mode: config.mode as AgentConversationRecord["config"]["mode"] }
-                    : {}),
-                  ...(config?.model
-                    ? {
-                        modelId: config.model.modelValue ?? config.model.id,
-                        modelName: config.model.name,
-                      }
-                    : {}),
-                }
-              : undefined;
+          const hasOverride =
+            Boolean(config?.backendId) ||
+            Boolean(config?.mode) ||
+            Boolean(config?.model) ||
+            Boolean(setConfigOptions?.length);
+          const configOverride: QueuedPromptConfigOverride | undefined = hasOverride
+            ? {
+                ...(config?.backendId ? { backendId: config.backendId } : {}),
+                ...(config?.mode
+                  ? { mode: config.mode as AgentConversationRecord["config"]["mode"] }
+                  : {}),
+                ...(config?.model
+                  ? {
+                      modelId: config.model.modelValue ?? config.model.id,
+                      modelName: config.model.name,
+                    }
+                  : {}),
+                ...(setConfigOptions?.length ? { setConfigOptions } : {}),
+              }
+            : undefined;
           const result = await promptAgentConversation(
             selectedConversationId,
             text,
@@ -1841,6 +1847,7 @@ function WorkbenchBody({
             mode: (resolvedMode || backend.defaultMode) as AgentConversationRecord["config"]["mode"],
             modelId,
             modelName,
+            ...(setConfigOptions?.length ? { setConfigOptions } : {}),
           },
           text,
           attachments.length > 0 ? attachments : undefined
