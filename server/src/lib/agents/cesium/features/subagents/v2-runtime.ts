@@ -233,11 +233,16 @@ export class SubagentsV2Runtime {
     this.agentsByTaskName.set(taskName, path);
 
     await this.emitSubagentCard(agent, "running");
-    this.enqueueMessage({
+    // Initial task is delivered privately to the child; do not wake parent wait_agent
+    // until the child produces a status/mailbox update.
+    agent.mailbox.push({
+      id: randomUUID(),
       from: this.parentPath,
       to: path,
       message,
       triggerTurn: true,
+      createdAt: Date.now(),
+      consumed: false,
     });
     this.startTurn(agent);
 
@@ -292,11 +297,15 @@ export class SubagentsV2Runtime {
       messageId: randomUUID(),
       content: message,
     });
-    this.enqueueMessage({
+    // Queue for the child without waking parent waiters (same as spawn).
+    agent.mailbox.push({
+      id: randomUUID(),
       from: this.parentPath,
       to: agent.path,
       message,
       triggerTurn: true,
+      createdAt: Date.now(),
+      consumed: false,
     });
     if (agent.status.kind !== "running") {
       agent.abortController = new AbortController();
