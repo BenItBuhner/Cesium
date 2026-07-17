@@ -1841,16 +1841,20 @@ function WorkbenchBody({
         const modelId =
           modelForBackend?.modelValue ?? modelForBackend?.id ?? backend.defaultModelId;
         const modelName = modelForBackend?.name ?? backend.defaultModelName;
+        const createConfigOverride: QueuedPromptConfigOverride | undefined =
+          setConfigOptions?.length
+            ? { setConfigOptions }
+            : undefined;
         const result = await createAndPromptAgentConversation(
           {
             backendId: backend.id,
             mode: (resolvedMode || backend.defaultMode) as AgentConversationRecord["config"]["mode"],
             modelId,
             modelName,
-            ...(setConfigOptions?.length ? { setConfigOptions } : {}),
           },
           text,
-          attachments.length > 0 ? attachments : undefined
+          attachments.length > 0 ? attachments : undefined,
+          createConfigOverride ? { configOverride: createConfigOverride } : undefined
         );
         const nextConversation = result.snapshot.conversation;
         setConversations((current) => [

@@ -1038,7 +1038,11 @@ export async function createAndPromptAgentConversation(
   input: AgentConversationCreateInput,
   text: string,
   attachments?: ImageAttachment[],
-  ids?: { clientEventId?: string; clientMessageId?: string }
+  ids?: {
+    clientEventId?: string;
+    clientMessageId?: string;
+    configOverride?: QueuedPromptConfigOverride;
+  }
 ): Promise<AgentConversationSnapshotResponse> {
   return request(`/api/agents/conversations/create-and-prompt`, {
     method: "POST",
@@ -1046,7 +1050,9 @@ export async function createAndPromptAgentConversation(
       conversation: input,
       text,
       attachments,
-      ...ids,
+      clientEventId: ids?.clientEventId,
+      clientMessageId: ids?.clientMessageId,
+      configOverride: ids?.configOverride,
     }),
   });
 }

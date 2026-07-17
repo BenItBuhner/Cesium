@@ -511,6 +511,13 @@ export class AgentRuntimeManager {
       attachments?: Array<{ mimeType: string; data: string; name?: string }>;
       clientEventId?: string;
       clientMessageId?: string;
+      configOverride?: {
+        backendId?: string;
+        mode?: string;
+        modelId?: string;
+        modelName?: string;
+        setConfigOptions?: Array<{ configId: string; value: string }>;
+      };
     }
   ): Promise<AgentConversationSnapshotHead> {
     const conversation = await this.createConversation(workspace, input);
@@ -522,6 +529,7 @@ export class AgentRuntimeManager {
       {
         ...(prompt.clientEventId ? { clientEventId: prompt.clientEventId } : {}),
         ...(prompt.clientMessageId ? { clientMessageId: prompt.clientMessageId } : {}),
+        ...(prompt.configOverride ? { configOverride: prompt.configOverride } : {}),
       }
     );
   }
