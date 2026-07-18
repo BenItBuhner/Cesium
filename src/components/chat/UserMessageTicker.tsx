@@ -282,6 +282,7 @@ export function UserMessageTicker({
             const isHovered = hoveredId === item.messageId;
             const topPercent =
               items.length <= 1 ? 0 : (index / (items.length - 1)) * 100;
+            const tickWidth = isActive || isHovered ? 11 : 7;
             return (
               <button
                 key={item.messageId}
@@ -293,10 +294,14 @@ export function UserMessageTicker({
                     tickRefs.current.delete(item.messageId);
                   }
                 }}
-                className={`pointer-events-auto absolute right-0 flex h-[14px] w-full -translate-y-1/2 items-center justify-center rounded-[2px] outline-none transition-opacity duration-100 focus-visible:ring-1 focus-visible:ring-[var(--accent)] ${
+                className={`pointer-events-auto absolute right-0 flex w-full items-center justify-center rounded-[2px] border-0 bg-transparent p-0 outline-none transition-opacity duration-100 focus-visible:ring-1 focus-visible:ring-[var(--accent)] ${
                   isActive || isHovered ? "opacity-100" : "opacity-55 hover:opacity-90"
                 }`}
-                style={{ top: `${topPercent}%` }}
+                style={{
+                  top: `${topPercent}%`,
+                  height: 16,
+                  transform: "translateY(-50%)",
+                }}
                 aria-label={`Jump to message ${index + 1}: ${item.userPreview}`}
                 aria-describedby={isHovered ? tooltipId : undefined}
                 onMouseEnter={() => openPreview(item.messageId)}
@@ -310,13 +315,15 @@ export function UserMessageTicker({
                 }}
               >
                 <span
-                  className={`block h-[2px] rounded-full transition-[width,background-color] duration-100 ${
-                    isActive
-                      ? "w-[11px] bg-[var(--text-primary)]"
-                      : isHovered
-                        ? "w-[10px] bg-[var(--text-primary)]"
-                        : "w-[7px] bg-[var(--text-secondary)]"
-                  }`}
+                  className="block rounded-full"
+                  style={{
+                    width: tickWidth,
+                    height: 2,
+                    backgroundColor:
+                      isActive || isHovered
+                        ? "var(--text-primary)"
+                        : "var(--text-secondary)",
+                  }}
                 />
               </button>
             );
