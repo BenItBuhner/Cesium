@@ -65,7 +65,7 @@ test("resting ticker markers use compact uniform spacing", () => {
   assert.equal(userMessageTickerRailHeight(100), 360);
 
   const centers = Array.from({ length: 10 }, (_, index) =>
-    userMessageTickerMarkerCenter(index, 10, 50)
+    Number(userMessageTickerMarkerCenter(index, 10, 50).toFixed(6))
   );
   assert.deepEqual(centers, [2.5, 7.5, 12.5, 17.5, 22.5, 27.5, 32.5, 37.5, 42.5, 47.5]);
 });
