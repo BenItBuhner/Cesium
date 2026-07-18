@@ -266,11 +266,12 @@ export function UserMessageTicker({
   return (
     <>
       <div
-        className="pointer-events-none absolute inset-y-0 right-0 z-[4] w-[18px]"
+        className="pointer-events-none absolute inset-y-0 right-0 z-[4] w-[22px]"
         style={{
           paddingTop: topPad,
           paddingBottom: bottomPad,
         }}
+        data-user-message-ticker=""
       >
         <div
           className="relative h-full w-full"
@@ -282,7 +283,7 @@ export function UserMessageTicker({
             const isHovered = hoveredId === item.messageId;
             const topPercent =
               items.length <= 1 ? 0 : (index / (items.length - 1)) * 100;
-            const tickWidth = isActive || isHovered ? 11 : 7;
+            const tickWidth = isActive ? 14 : isHovered ? 12 : 9;
             return (
               <button
                 key={item.messageId}
@@ -294,13 +295,12 @@ export function UserMessageTicker({
                     tickRefs.current.delete(item.messageId);
                   }
                 }}
-                className={`pointer-events-auto absolute right-0 flex w-full items-center justify-center rounded-[2px] border-0 bg-transparent p-0 outline-none transition-opacity duration-100 focus-visible:ring-1 focus-visible:ring-[var(--accent)] ${
-                  isActive || isHovered ? "opacity-100" : "opacity-55 hover:opacity-90"
-                }`}
+                className="pointer-events-auto absolute right-0 flex w-full items-center justify-center rounded-[2px] border-0 bg-transparent p-0 outline-none focus-visible:ring-1 focus-visible:ring-[var(--accent)]"
                 style={{
                   top: `${topPercent}%`,
-                  height: 16,
+                  height: 18,
                   transform: "translateY(-50%)",
+                  opacity: isActive || isHovered ? 1 : 0.72,
                 }}
                 aria-label={`Jump to message ${index + 1}: ${item.userPreview}`}
                 aria-describedby={isHovered ? tooltipId : undefined}
@@ -315,14 +315,16 @@ export function UserMessageTicker({
                 }}
               >
                 <span
-                  className="block rounded-full"
+                  aria-hidden
                   style={{
+                    display: "block",
                     width: tickWidth,
-                    height: 2,
-                    backgroundColor:
-                      isActive || isHovered
-                        ? "var(--text-primary)"
-                        : "var(--text-secondary)",
+                    height: 3,
+                    borderRadius: 999,
+                    backgroundColor: isActive
+                      ? "var(--text-primary)"
+                      : "color-mix(in srgb, var(--text-primary) 70%, transparent)",
+                    boxShadow: "0 0 0 1px color-mix(in srgb, var(--bg-main) 55%, transparent)",
                   }}
                 />
               </button>
