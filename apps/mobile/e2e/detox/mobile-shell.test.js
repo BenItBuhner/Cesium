@@ -24,4 +24,16 @@ describe("Cesium mobile shell", () => {
     await expect(element(by.id("native-chat-model"))).toBeVisible();
     await expect(element(by.id("native-chat-mode"))).toBeVisible();
   });
+
+  it("exposes consent-gated Android control and assistant settings", async () => {
+    await element(by.id("open-agent-rail")).tap();
+    await expect(element(by.id("agent-workspace-rail"))).toBeVisible();
+    await element(by.id("open-native-settings")).tap();
+    await expect(element(by.id("native-settings-shell"))).toBeVisible();
+    await element(by.id("settings-open-mobile-control")).tap();
+    await expect(element(by.id("mobile-control-settings"))).toBeVisible();
+    await expect(element(by.id("mobile-control-enabled"))).toBeVisible();
+    await expect(element(by.id("mobile-control-accessibility"))).toBeVisible();
+    await expect(element(by.id("mobile-control-assistant-role"))).toBeVisible();
+  });
 });

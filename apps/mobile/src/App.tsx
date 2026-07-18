@@ -1,6 +1,6 @@
 import "../global.css";
 
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AppState,
   PermissionsAndroid,
@@ -21,6 +21,7 @@ import {
   NativeAuthProvider,
   NativeWorkbench,
   NativeWorkspaceProvider,
+  type NativeMobileControlSettings,
   useColorScheme,
   useThemeTokens,
 } from "@cesium/ui-native";
@@ -28,6 +29,10 @@ import { readLaunchUrlConfig, resolveLaunchUrlConfig } from "./config";
 import { installReactNativeClientPlatform, setRuntimeServerBaseUrl } from "./platform";
 import { CesiumLiveUpdates } from "./native/CesiumLiveUpdates";
 import { CesiumWearCompanion } from "./native/CesiumWearCompanion";
+import {
+  CesiumPhoneControl,
+  type PhoneControlStatus,
+} from "./native/CesiumPhoneControl";
 import { AgentStatusService } from "./services/AgentStatusService";
 import { BackgroundCoordinator } from "./services/BackgroundCoordinator";
 import { LiveUpdateController } from "./services/LiveUpdateController";
@@ -38,15 +43,33 @@ setRuntimeServerBaseUrl(INITIAL_CONFIG.serverUrl);
 
 type ConnectionState = "idle" | "connecting" | "open" | "closed" | "reconnecting";
 
+const INITIAL_PHONE_CONTROL_STATUS: PhoneControlStatus = {
+  enabled: false,
+  connectionState: "disabled",
+  serverUrl: "",
+  workspaceId: "",
+  deviceId: "",
+  accessibilityEnabled: false,
+  assistantSelected: false,
+  assistantRoleAvailable: false,
+  hotwordMode: "oem_dependent",
+  privateDisplaySupported: false,
+};
+
 export default function App() {
   const colorScheme = useColorScheme();
   const themeTokens = useThemeTokens();
   const [serverUrl, setServerUrl] = useState(INITIAL_CONFIG.serverUrl);
   const [connectionState, setConnectionState] = useState<ConnectionState>("idle");
+  const [phoneControlStatus, setPhoneControlStatus] = useState<PhoneControlStatus>(
+    INITIAL_PHONE_CONTROL_STATUS
+  );
   const [notificationConversationId, setNotificationConversationId] = useState<string | null>(
     null
   );
   const serverUrlRef = useRef(serverUrl);
+  const workspaceIdRef = useRef<string | null>(null);
+  const phoneSyncKeyRef = useRef("");
   const liveUpdatesRef = useRef(new LiveUpdateController());
   const agentStatusRef = useRef(
     new AgentStatusService({
@@ -102,14 +125,72 @@ export default function App() {
 
   const configureAgentSocket = useCallback(
     (workspaceId: string | null, conversationId: string | null) => {
+      workspaceIdRef.current = workspaceId;
       agentStatusRef.current.updateConfig({
         serverBaseUrl: serverUrl,
         workspaceId,
         conversationId,
         authToken: null,
       });
+      const syncKey = `${serverUrl}\0${workspaceId ?? ""}`;
+      if (workspaceId && phoneSyncKeyRef.current !== syncKey) {
+        phoneSyncKeyRef.current = syncKey;
+        void CesiumPhoneControl.syncConnection(
+          serverUrl,
+          workspaceId,
+          getStoredSessionToken(serverUrl)
+        )
+          .then(setPhoneControlStatus)
+          .catch(() => undefined);
+      }
     },
     [serverUrl]
+  );
+
+  const refreshPhoneControl = useCallback(async () => {
+    setPhoneControlStatus(await CesiumPhoneControl.getStatus());
+  }, []);
+
+  const setPhoneControlEnabled = useCallback(async (enabled: boolean) => {
+    const workspaceId = workspaceIdRef.current;
+    if (enabled && !workspaceId) {
+      throw new Error("Select a workspace before enabling mobile control.");
+    }
+    const next = await CesiumPhoneControl.setEnabled(
+      enabled,
+      serverUrlRef.current,
+      workspaceId ?? "",
+      getStoredSessionToken(serverUrlRef.current)
+    );
+    setPhoneControlStatus(next);
+  }, []);
+
+  const requestAssistantRole = useCallback(async () => {
+    if (Platform.OS === "android") {
+      await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.RECORD_AUDIO);
+    }
+    await CesiumPhoneControl.requestAssistantRole();
+  }, []);
+
+  const mobileControl = useMemo<NativeMobileControlSettings>(
+    () => ({
+      status: phoneControlStatus,
+      refresh: refreshPhoneControl,
+      setEnabled: setPhoneControlEnabled,
+      async openAccessibilitySettings() {
+        await CesiumPhoneControl.openAccessibilitySettings();
+      },
+      requestAssistantRole,
+      async launchAssistant() {
+        await CesiumPhoneControl.launchAssistant();
+      },
+    }),
+    [
+      phoneControlStatus,
+      refreshPhoneControl,
+      requestAssistantRole,
+      setPhoneControlEnabled,
+    ]
   );
 
   useEffect(() => {
@@ -144,6 +225,7 @@ export default function App() {
       backgroundCoordinatorRef.current.setAppState(nextState);
       if (nextState === "active") {
         void consumeNotificationAction().catch(() => undefined);
+        void refreshPhoneControl().catch(() => undefined);
       }
     });
     const netInfoSubscription = NetInfo.addEventListener((state) => {
@@ -157,11 +239,12 @@ export default function App() {
       agentStatus.close();
       void liveUpdates.stop();
     };
-  }, [consumeNotificationAction]);
+  }, [consumeNotificationAction, refreshPhoneControl]);
 
   useEffect(() => {
     void consumeNotificationAction().catch(() => undefined);
-  }, [consumeNotificationAction]);
+    void refreshPhoneControl().catch(() => undefined);
+  }, [consumeNotificationAction, refreshPhoneControl]);
 
   return (
     <SafeAreaProvider>
@@ -176,6 +259,7 @@ export default function App() {
               <NativeWorkspaceProvider>
                 <NativeWorkbench
                   connectionState={connectionState}
+                  mobileControl={mobileControl}
                   notificationConversationId={notificationConversationId}
                   onFocusedConversationChange={configureAgentSocket}
                   onServerBaseUrlChange={setServerUrl}

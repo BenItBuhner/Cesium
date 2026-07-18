@@ -26,13 +26,36 @@ type SettingsSection =
   | "appearance"
   | "models"
   | "agents"
+  | "mobile-control"
   | "server-setup";
+
+export type NativeMobileControlStatus = {
+  enabled: boolean;
+  connectionState: string;
+  lastError?: string;
+  deviceId: string;
+  accessibilityEnabled: boolean;
+  assistantSelected: boolean;
+  assistantRoleAvailable: boolean;
+  hotwordMode: "oem_dependent";
+  privateDisplaySupported: boolean;
+};
+
+export type NativeMobileControlSettings = {
+  status: NativeMobileControlStatus;
+  refresh(): Promise<void>;
+  setEnabled(enabled: boolean): Promise<void>;
+  openAccessibilitySettings(): Promise<void>;
+  requestAssistantRole(): Promise<void>;
+  launchAssistant(): Promise<void>;
+};
 
 export type NativeSettingsShellProps = {
   onClose: () => void;
   onOpenServerSetup: () => void;
   open: boolean;
   tokens: ThemeTokens;
+  mobileControl?: NativeMobileControlSettings;
 };
 
 export function NativeSettingsShell({
@@ -40,6 +63,7 @@ export function NativeSettingsShell({
   onOpenServerSetup,
   open,
   tokens,
+  mobileControl,
 }: NativeSettingsShellProps) {
   const styles = useMemo(() => createStyles(tokens), [tokens]);
   const [section, setSection] = useState<SettingsSection>("home");
@@ -78,7 +102,9 @@ export function NativeSettingsShell({
                       ? "Models"
                       : section === "agents"
                         ? "Cesium Agent"
-                        : "Settings"}
+                        : section === "mobile-control"
+                          ? "Mobile control"
+                          : "Settings"}
             </Text>
             <Pressable
               accessibilityLabel="Close settings"
@@ -117,6 +143,18 @@ export function NativeSettingsShell({
                 onPress={() => setSection("agents")}
                 styles={styles}
               />
+              {mobileControl ? (
+                <SettingsRow
+                  label="Mobile control"
+                  detail="Assistant role, screen context, and connected agents"
+                  onPress={() => {
+                    setSection("mobile-control");
+                    void mobileControl.refresh();
+                  }}
+                  styles={styles}
+                  testID="settings-open-mobile-control"
+                />
+              ) : null}
               <SettingsRow
                 label="Server on this phone"
                 detail="Optional Termux backend setup"
@@ -133,9 +171,138 @@ export function NativeSettingsShell({
           {section === "appearance" ? <AppearancePanel styles={styles} tokens={tokens} /> : null}
           {section === "models" ? <ModelsPanel styles={styles} tokens={tokens} /> : null}
           {section === "agents" ? <AgentsPanel styles={styles} tokens={tokens} /> : null}
+          {section === "mobile-control" && mobileControl ? (
+            <MobileControlPanel
+              control={mobileControl}
+              styles={styles}
+              tokens={tokens}
+            />
+          ) : null}
         </View>
       </View>
     </Modal>
+  );
+}
+
+function MobileControlPanel({
+  control,
+  styles,
+  tokens,
+}: {
+  control: NativeMobileControlSettings;
+  styles: ReturnType<typeof createStyles>;
+  tokens: ThemeTokens;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const run = useCallback(
+    async (action: () => Promise<void>) => {
+      setBusy(true);
+      setMessage(null);
+      try {
+        await action();
+        await control.refresh();
+      } catch (error) {
+        setMessage(error instanceof Error ? error.message : "Android action failed.");
+      } finally {
+        setBusy(false);
+      }
+    },
+    [control]
+  );
+  const status = control.status;
+
+  return (
+    <ScrollView contentContainerStyle={styles.content} testID="mobile-control-settings">
+      <View style={styles.disclosure}>
+        <Text style={styles.rowLabel}>Sensitive device access</Text>
+        <Text style={styles.rowDetail}>
+          Connected Cesium servers can request app launches and device settings. If you separately
+          enable Accessibility, they can also read screen text, capture screens, and perform taps,
+          swipes, typing, and navigation. Only enable this for servers and agent sessions you trust.
+        </Text>
+      </View>
+      <View style={styles.switchRow}>
+        <View style={styles.rowTextWrap}>
+          <Text style={styles.rowLabel}>Connect this phone</Text>
+          <Text style={styles.rowDetail}>
+            {status.enabled
+              ? `${status.connectionState} · ${status.deviceId || "Android device"}`
+              : "Off · no remote mobile tools are exposed"}
+          </Text>
+        </View>
+        <Switch
+          disabled={busy}
+          onValueChange={(enabled) => void run(() => control.setEnabled(enabled))}
+          trackColor={{
+            false: tokens["--border-subtle"],
+            true: tokens["--text-secondary"],
+          }}
+          value={status.enabled}
+          testID="mobile-control-enabled"
+        />
+      </View>
+      <View style={styles.disclosure}>
+        <Text style={styles.rowLabel}>Cross-app control</Text>
+        <Text style={styles.rowDetail}>
+          {status.accessibilityEnabled
+            ? "Accessibility control is enabled. Password fields are redacted."
+            : "Accessibility control is off. App intents and private displays remain available."}
+        </Text>
+        <Pressable
+          disabled={busy}
+          onPress={() => void run(control.openAccessibilitySettings)}
+          style={styles.secondaryButton}
+          testID="mobile-control-accessibility"
+        >
+          <Text style={styles.secondaryButtonText}>
+            {status.accessibilityEnabled ? "Review Accessibility access" : "Enable in Accessibility"}
+          </Text>
+        </Pressable>
+      </View>
+      <View style={styles.disclosure}>
+        <Text style={styles.rowLabel}>System assistant</Text>
+        <Text style={styles.rowDetail}>
+          {status.assistantSelected
+            ? "Cesium is the selected assistant. The system gesture or configured power-button shortcut opens its voice overlay."
+            : "Select Cesium as Android’s assistant to use system invocation, voice input, and current-screen context."}
+        </Text>
+        <Text style={styles.rowDetail}>
+          A custom always-on “Cesium” wake word depends on OEM hotword/DSP support. Cesium does not
+          run a hidden continuous microphone listener.
+        </Text>
+        <Pressable
+          disabled={busy || !status.assistantRoleAvailable}
+          onPress={() => void run(control.requestAssistantRole)}
+          style={styles.secondaryButton}
+          testID="mobile-control-assistant-role"
+        >
+          <Text style={styles.secondaryButtonText}>
+            {status.assistantSelected ? "Review assistant role" : "Set Cesium as assistant"}
+          </Text>
+        </Pressable>
+        {status.assistantSelected ? (
+          <Pressable
+            disabled={busy}
+            onPress={() => void run(control.launchAssistant)}
+            style={styles.secondaryButton}
+            testID="mobile-control-launch-assistant"
+          >
+            <Text style={styles.secondaryButtonText}>Open assistant overlay</Text>
+          </Pressable>
+        ) : null}
+      </View>
+      <View style={styles.disclosure}>
+        <Text style={styles.rowLabel}>Private display</Text>
+        <Text style={styles.rowDetail}>
+          {status.privateDisplaySupported
+            ? "Supported. Apps that allow secondary displays can run on an app-owned display hidden from the physical screen."
+            : "This Android device does not advertise secondary-display activity support."}
+        </Text>
+      </View>
+      {status.lastError ? <Text style={styles.status}>{status.lastError}</Text> : null}
+      {message ? <Text style={styles.status}>{message}</Text> : null}
+    </ScrollView>
   );
 }
 
@@ -637,6 +804,13 @@ function createStyles(tokens: ThemeTokens) {
     },
     group: {
       gap: 8,
+    },
+    disclosure: {
+      backgroundColor: tokens["--bg-card"],
+      borderRadius: 12,
+      gap: 10,
+      paddingHorizontal: 14,
+      paddingVertical: 14,
     },
     loadingWrap: {
       alignItems: "center",
