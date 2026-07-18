@@ -126,3 +126,16 @@ export function buildMessageThreadSegments(messages: ChatMessage[]): MessageThre
   }
   return segments;
 }
+
+export function findUserTurnSegmentIndex(
+  segments: MessageThreadSegment[],
+  messages: ChatMessage[],
+  messageId: string
+): number {
+  return segments.findIndex((segment) => {
+    if (segment.type !== "turn") {
+      return false;
+    }
+    return messages[segment.userIndex]?.id === messageId;
+  });
+}
