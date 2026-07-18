@@ -120,7 +120,7 @@ class CesiumAccessibilityService : AccessibilityService() {
       root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
         ?: findEditable(root)
         ?: return false
-    val next = if (append) "${focused.text.orEmpty()}$text" else text
+    val next = if (append) "${focused.text?.toString().orEmpty()}$text" else text
     return focused.performAction(
       AccessibilityNodeInfo.ACTION_SET_TEXT,
       Bundle().apply {

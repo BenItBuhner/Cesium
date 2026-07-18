@@ -91,7 +91,7 @@ class CesiumPhoneControlModule(
 
   @ReactMethod
   fun requestAssistantRole(promise: Promise) {
-    val activity = currentActivity
+    val activity = reactContext.currentActivity
     if (activity == null) {
       promise.resolve(false)
       return
@@ -124,10 +124,14 @@ class CesiumPhoneControlModule(
   }
 
   private fun openSettings(intent: Intent): Boolean {
-    val target = currentActivity ?: reactContext
-    if (currentActivity == null) intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
     if (intent.resolveActivity(reactContext.packageManager) == null) return false
-    target.startActivity(intent)
+    val activity = reactContext.currentActivity
+    if (activity != null) {
+      activity.startActivity(intent)
+    } else {
+      intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+      reactContext.startActivity(intent)
+    }
     return true
   }
 

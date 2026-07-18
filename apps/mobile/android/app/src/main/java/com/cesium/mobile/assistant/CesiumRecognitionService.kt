@@ -49,8 +49,7 @@ class CesiumRecognitionService : RecognitionService() {
       }
       override fun onPartialResults(partialResults: Bundle?) =
         callback.partialResults(partialResults ?: Bundle())
-      override fun onEvent(eventType: Int, params: Bundle?) =
-        callback.event(eventType, params ?: Bundle())
+      override fun onEvent(eventType: Int, params: Bundle?) = Unit
     })
     target.startListening(recognizerIntent)
   }
