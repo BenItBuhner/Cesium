@@ -6,8 +6,13 @@ import {
 } from "../src/components/chat/message-thread-rows";
 import {
   buildUserMessageTickerItems,
+  nearestUserMessageTickerIndex,
+  USER_MESSAGE_TICKER_MARKER_MAX_WIDTH_PX,
+  USER_MESSAGE_TICKER_MARKER_WIDTH_PX,
+  userMessageTickerHoverWidth,
+  userMessageTickerMarkerCenter,
   userMessagePreview,
-  userMessageTickerMarkerWidth,
+  userMessageTickerRailHeight,
 } from "../src/components/chat/user-message-ticker";
 import type { ChatMessage } from "../src/lib/types";
 
@@ -53,10 +58,44 @@ test("ticker preview truncates long prompts and describes attachment-only turns"
   assert.equal(userMessagePreview(attachmentMessage), "2 image attachments");
 });
 
-test("marker width remains compact while reflecting preview length", () => {
-  assert.equal(userMessageTickerMarkerWidth(""), 8);
-  assert.ok(userMessageTickerMarkerWidth("A reasonably descriptive prompt") > 8);
-  assert.equal(userMessageTickerMarkerWidth("x".repeat(1000)), 20);
+test("resting ticker markers use compact uniform spacing", () => {
+  assert.equal(userMessageTickerRailHeight(0), 0);
+  assert.equal(userMessageTickerRailHeight(1), 24);
+  assert.equal(userMessageTickerRailHeight(10), 50);
+  assert.equal(userMessageTickerRailHeight(100), 360);
+
+  const centers = Array.from({ length: 10 }, (_, index) =>
+    userMessageTickerMarkerCenter(index, 10, 50)
+  );
+  assert.deepEqual(centers, [2.5, 7.5, 12.5, 17.5, 22.5, 27.5, 32.5, 37.5, 42.5, 47.5]);
+});
+
+test("cursor position selects the nearest uniformly spaced marker", () => {
+  assert.equal(nearestUserMessageTickerIndex(0, 10, 50), 0);
+  assert.equal(nearestUserMessageTickerIndex(4.9, 10, 50), 0);
+  assert.equal(nearestUserMessageTickerIndex(5, 10, 50), 1);
+  assert.equal(nearestUserMessageTickerIndex(49.9, 10, 50), 9);
+  assert.equal(nearestUserMessageTickerIndex(500, 10, 50), 9);
+  assert.equal(nearestUserMessageTickerIndex(10, 0, 50), null);
+});
+
+test("hover scaling is smooth, local, and independent of message content", () => {
+  assert.equal(
+    userMessageTickerHoverWidth(20, null),
+    USER_MESSAGE_TICKER_MARKER_WIDTH_PX
+  );
+  assert.equal(
+    userMessageTickerHoverWidth(20, 20),
+    USER_MESSAGE_TICKER_MARKER_MAX_WIDTH_PX
+  );
+  const nearWidth = userMessageTickerHoverWidth(20, 26);
+  const fartherWidth = userMessageTickerHoverWidth(20, 34);
+  assert.ok(nearWidth > fartherWidth);
+  assert.ok(fartherWidth > USER_MESSAGE_TICKER_MARKER_WIDTH_PX);
+  assert.equal(
+    userMessageTickerHoverWidth(20, 42),
+    USER_MESSAGE_TICKER_MARKER_WIDTH_PX
+  );
 });
 
 test("turn lookup resolves virtualized user rows across preamble and todo turns", () => {
