@@ -7,8 +7,12 @@ import {
 import {
   buildUserMessageTickerItems,
   nearestUserMessageTickerIndex,
+  USER_MESSAGE_TICKER_MARKER_HEIGHT_PX,
+  USER_MESSAGE_TICKER_MARKER_MAX_HEIGHT_PX,
   USER_MESSAGE_TICKER_MARKER_MAX_WIDTH_PX,
   USER_MESSAGE_TICKER_MARKER_WIDTH_PX,
+  userMessageTickerHoverHeight,
+  userMessageTickerHoverProgress,
   userMessageTickerHoverWidth,
   userMessageTickerMarkerCenter,
   userMessagePreview,
@@ -81,20 +85,40 @@ test("cursor position selects the nearest uniformly spaced marker", () => {
 
 test("hover scaling is smooth, local, and independent of message content", () => {
   assert.equal(
+    userMessageTickerHoverProgress(20, null),
+    0
+  );
+  assert.equal(
     userMessageTickerHoverWidth(20, null),
     USER_MESSAGE_TICKER_MARKER_WIDTH_PX
+  );
+  assert.equal(
+    userMessageTickerHoverHeight(20, null),
+    USER_MESSAGE_TICKER_MARKER_HEIGHT_PX
   );
   assert.equal(
     userMessageTickerHoverWidth(20, 20),
     USER_MESSAGE_TICKER_MARKER_MAX_WIDTH_PX
   );
+  assert.equal(
+    userMessageTickerHoverHeight(20, 20),
+    USER_MESSAGE_TICKER_MARKER_MAX_HEIGHT_PX
+  );
   const nearWidth = userMessageTickerHoverWidth(20, 26);
   const fartherWidth = userMessageTickerHoverWidth(20, 34);
+  const nearHeight = userMessageTickerHoverHeight(20, 26);
+  const fartherHeight = userMessageTickerHoverHeight(20, 34);
   assert.ok(nearWidth > fartherWidth);
   assert.ok(fartherWidth > USER_MESSAGE_TICKER_MARKER_WIDTH_PX);
+  assert.ok(nearHeight > fartherHeight);
+  assert.ok(fartherHeight > USER_MESSAGE_TICKER_MARKER_HEIGHT_PX);
   assert.equal(
     userMessageTickerHoverWidth(20, 42),
     USER_MESSAGE_TICKER_MARKER_WIDTH_PX
+  );
+  assert.equal(
+    userMessageTickerHoverHeight(20, 42),
+    USER_MESSAGE_TICKER_MARKER_HEIGHT_PX
   );
 });
 

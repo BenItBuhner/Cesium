@@ -15,6 +15,8 @@ import type { ChatMessage } from "@/lib/types";
 import {
   buildUserMessageTickerItems,
   nearestUserMessageTickerIndex,
+  userMessageTickerHoverHeight,
+  userMessageTickerHoverProgress,
   userMessageTickerHoverWidth,
   userMessageTickerMarkerCenter,
   userMessageTickerRailHeight,
@@ -148,10 +150,11 @@ export function UserMessageTicker({
 
   const updatePointerY = (event: ReactPointerEvent<HTMLDivElement>) => {
     const rect = event.currentTarget.getBoundingClientRect();
-    pendingPointerYRef.current = Math.max(
+    const nextPointerY = Math.max(
       0,
       Math.min(rect.height, event.clientY - rect.top)
     );
+    pendingPointerYRef.current = nextPointerY;
     if (hoverRafRef.current != null) {
       return;
     }
@@ -212,6 +215,19 @@ export function UserMessageTicker({
             items.length,
             railHeight
           );
+          const markerWidth = userMessageTickerHoverWidth(
+            markerCenter,
+            effectivePointerY
+          );
+          const markerHeight = userMessageTickerHoverHeight(
+            markerCenter,
+            effectivePointerY
+          );
+          const markerProximity = userMessageTickerHoverProgress(
+            markerCenter,
+            effectivePointerY
+          );
+          const markerProminent = active || previewOpen;
           return (
             <button
               key={item.id}
@@ -237,16 +253,15 @@ export function UserMessageTicker({
             >
               <span
                 aria-hidden
-                className={`block h-[2px] rounded-full transition-[width,background-color,opacity] duration-75 ease-out ${
-                  active
+                className={`block rounded-full transition-[width,height,background-color,opacity] duration-75 ease-out ${
+                  markerProminent
                     ? "bg-[var(--text-primary)] opacity-90"
                     : "bg-[var(--text-secondary)] opacity-45 group-focus-visible:bg-[var(--text-primary)] group-focus-visible:opacity-90"
                 }`}
                 style={{
-                  width: userMessageTickerHoverWidth(
-                    markerCenter,
-                    effectivePointerY
-                  ),
+                  width: markerWidth,
+                  height: markerHeight,
+                  opacity: markerProminent ? 0.92 : 0.45 + markerProximity * 0.35,
                 }}
               />
             </button>

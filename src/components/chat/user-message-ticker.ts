@@ -9,6 +9,8 @@ export type UserMessageTickerItem = {
 const PREVIEW_MAX_LENGTH = 280;
 export const USER_MESSAGE_TICKER_MARKER_WIDTH_PX = 10;
 export const USER_MESSAGE_TICKER_MARKER_MAX_WIDTH_PX = 24;
+export const USER_MESSAGE_TICKER_MARKER_HEIGHT_PX = 2;
+export const USER_MESSAGE_TICKER_MARKER_MAX_HEIGHT_PX = 4;
 export const USER_MESSAGE_TICKER_MARKER_PITCH_PX = 5;
 export const USER_MESSAGE_TICKER_MIN_RAIL_HEIGHT_PX = 24;
 export const USER_MESSAGE_TICKER_MAX_RAIL_HEIGHT_PX = 360;
@@ -99,23 +101,43 @@ export function nearestUserMessageTickerIndex(
   return Math.min(itemCount - 1, Math.floor((clampedY / railHeight) * itemCount));
 }
 
-export function userMessageTickerHoverWidth(
+export function userMessageTickerHoverProgress(
   markerCenterY: number,
   pointerY: number | null
 ): number {
   if (pointerY == null || !Number.isFinite(pointerY)) {
-    return USER_MESSAGE_TICKER_MARKER_WIDTH_PX;
+    return 0;
   }
   const distance = Math.abs(markerCenterY - pointerY);
   if (distance >= USER_MESSAGE_TICKER_HOVER_RADIUS_PX) {
-    return USER_MESSAGE_TICKER_MARKER_WIDTH_PX;
+    return 0;
   }
   const proximity = 1 - distance / USER_MESSAGE_TICKER_HOVER_RADIUS_PX;
-  const easedProximity = 0.5 - Math.cos(Math.PI * proximity) / 2;
+  return 0.5 - Math.cos(Math.PI * proximity) / 2;
+}
+
+export function userMessageTickerHoverWidth(
+  markerCenterY: number,
+  pointerY: number | null
+): number {
+  const easedProximity = userMessageTickerHoverProgress(markerCenterY, pointerY);
   return (
     USER_MESSAGE_TICKER_MARKER_WIDTH_PX +
     (USER_MESSAGE_TICKER_MARKER_MAX_WIDTH_PX -
       USER_MESSAGE_TICKER_MARKER_WIDTH_PX) *
+      easedProximity
+  );
+}
+
+export function userMessageTickerHoverHeight(
+  markerCenterY: number,
+  pointerY: number | null
+): number {
+  const easedProximity = userMessageTickerHoverProgress(markerCenterY, pointerY);
+  return (
+    USER_MESSAGE_TICKER_MARKER_HEIGHT_PX +
+    (USER_MESSAGE_TICKER_MARKER_MAX_HEIGHT_PX -
+      USER_MESSAGE_TICKER_MARKER_HEIGHT_PX) *
       easedProximity
   );
 }
