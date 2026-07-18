@@ -14,11 +14,22 @@ import { MessageThreadContent } from "./MessageThreadContent";
 import { UserMessageTicker } from "./UserMessageTicker";
 import { useOpenInEditor } from "@/components/editor/OpenInEditorContext";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
+import {
+  findChatScrollAnchor,
+  notifyScrollElementLayout,
+  scrollTopForAnchor,
+} from "@/lib/chat-scroll-anchor";
 import type { ChatMessage } from "@/lib/types";
+import type { ChatScrollAnchor } from "@/lib/workspace-session";
 
 export type MessageListScrollPersistMeta = {
   pinnedToBottom: boolean;
-  anchor?: { messageId: string; delta: number };
+  anchor?: ChatScrollAnchor;
+};
+
+type ScrollSnapshot = {
+  sh: number;
+  st: number;
 };
 
 function inferTranscriptSessionId(messages: ChatMessage[]): string | undefined {
@@ -110,7 +121,9 @@ export function MessageList({
   const persistedScrollTopRef = useRef<number | null>(null);
   const olderLoadGateRef = useRef(false);
   /** Last measured scrollport geometry; kept fresh in `onScroll` so prepends can anchor correctly. */
-  const scrollSnapshotRef = useRef({ sh: 0, st: 0 });
+  const scrollSnapshotRef = useRef<ScrollSnapshot>({ sh: 0, st: 0 });
+  const pendingOlderAnchorRef = useRef<ChatScrollAnchor | null>(null);
+  const scrollAnchorRequestIdRef = useRef(0);
   const prevFirstMessageIdRef = useRef<string | undefined>(undefined);
   const prevMessageLenRef = useRef(0);
   const prevLoadingOlderRef = useRef(false);
@@ -122,8 +135,43 @@ export function MessageList({
     messageId: string;
     requestId: number;
   } | null>(null);
+  const [scrollAnchorRequest, setScrollAnchorRequest] = useState<{
+    anchor: ChatScrollAnchor;
+    requestId: number;
+  } | null>(null);
 
   const useVirtualThread = useMemo(() => messages.length >= 16, [messages.length]);
+  const userMessageIds = useMemo(
+    () => messages.filter((message) => message.type === "user").map((message) => message.id),
+    [messages]
+  );
+
+  const captureScrollAnchor = useCallback(
+    (root: HTMLDivElement): ChatScrollAnchor | null => {
+      if (userMessageIds.length === 0) {
+        return null;
+      }
+      return findChatScrollAnchor(root, root.scrollTop, userMessageIds);
+    },
+    [userMessageIds]
+  );
+
+  const requestScrollAnchorRestore = useCallback((anchor: ChatScrollAnchor) => {
+    scrollAnchorRequestIdRef.current += 1;
+    setScrollAnchorRequest({
+      anchor,
+      requestId: scrollAnchorRequestIdRef.current,
+    });
+  }, []);
+
+  const requestOlderHistory = useCallback(() => {
+    if (!onRequestOlderHistory) {
+      return;
+    }
+    const root = scrollRootRef.current;
+    pendingOlderAnchorRef.current = root ? captureScrollAnchor(root) : null;
+    onRequestOlderHistory();
+  }, [captureScrollAnchor, onRequestOlderHistory]);
 
   const isNearBottom = (root: HTMLDivElement) =>
     root.scrollHeight - (root.scrollTop + root.clientHeight) <= 48;
@@ -208,18 +256,42 @@ export function MessageList({
     }
 
     if (anchorTopDelta) {
-      const delta = root.scrollHeight - snapshot.sh;
-      if (Math.abs(delta) > 0.5) {
-        root.scrollTop = snapshot.st + delta;
-        pendingScrollTopRef.current = Math.round(root.scrollTop);
+      const anchor = pendingOlderAnchorRef.current;
+      let restoredFromAnchor = false;
+      if (anchor) {
+        const anchoredTop = scrollTopForAnchor(root, anchor);
+        if (anchoredTop != null) {
+          root.scrollTop = Math.max(0, anchoredTop);
+          pendingScrollTopRef.current = Math.round(root.scrollTop);
+          notifyScrollElementLayout(root);
+          restoredFromAnchor = true;
+        }
+        requestScrollAnchorRestore(anchor);
       }
+
+      if (!restoredFromAnchor) {
+        const delta = root.scrollHeight - snapshot.sh;
+        if (Math.abs(delta) > 0.5) {
+          root.scrollTop = snapshot.st + delta;
+          pendingScrollTopRef.current = Math.round(root.scrollTop);
+        }
+      }
+    }
+
+    if (prepended || loaderRemoved) {
+      pendingOlderAnchorRef.current = null;
     }
 
     prevFirstMessageIdRef.current = firstId;
     prevMessageLenRef.current = len;
     prevLoadingOlderRef.current = loadingOlderHistory;
     scrollSnapshotRef.current = { sh: root.scrollHeight, st: root.scrollTop };
-  }, [messages, loadingOlderHistory, conversationId]);
+  }, [
+    loadingOlderHistory,
+    conversationId,
+    messages,
+    requestScrollAnchorRestore,
+  ]);
 
   useEffect(() => {
     const root = scrollRootRef.current;
@@ -267,7 +339,7 @@ export function MessageList({
         }
         const chainPx = olderChainScrollTopPx(root);
         if (root.scrollTop <= chainPx) {
-          onRequestOlderHistory();
+          requestOlderHistory();
         }
       });
     });
@@ -276,7 +348,12 @@ export function MessageList({
       window.cancelAnimationFrame(raf1);
       window.cancelAnimationFrame(raf2);
     };
-  }, [loadingOlderHistory, hasOlderHistory, onRequestOlderHistory]);
+  }, [
+    loadingOlderHistory,
+    hasOlderHistory,
+    onRequestOlderHistory,
+    requestOlderHistory,
+  ]);
 
   /**
    * While the user stays pinned to the bottom, keep requesting older pages until the transcript
@@ -284,7 +361,7 @@ export function MessageList({
    * they scroll up, but avoids a long train of manual pagination after opening a chat.
    */
   useEffect(() => {
-    if (!onRequestOlderHistory || !hasOlderHistory || loadingOlderHistory) {
+    if (!onRequestOlderHistory || !hasOlderHistory || loadingOlderHistory || messages.length === 0) {
       return;
     }
     const root = scrollRootRef.current;
@@ -319,7 +396,7 @@ export function MessageList({
         return;
       }
       autoHistoryFillRoundsRef.current += 1;
-      onRequestOlderHistory();
+      requestOlderHistory();
     });
     return () => window.cancelAnimationFrame(raf);
   }, [
@@ -328,6 +405,7 @@ export function MessageList({
     loadingOlderHistory,
     messages.length,
     onRequestOlderHistory,
+    requestOlderHistory,
   ]);
 
   useEffect(() => {
@@ -416,6 +494,7 @@ export function MessageList({
       }
       workspaceRoot={workspaceInfo?.root ?? null}
       userMessageNavigation={userMessageNavigation}
+      scrollAnchorRequest={scrollAnchorRequest}
     />
   );
 
@@ -481,7 +560,7 @@ export function MessageList({
           ) {
             if (!olderLoadGateRef.current) {
               olderLoadGateRef.current = true;
-              onRequestOlderHistory();
+              requestOlderHistory();
             }
           } else if (scrollTop > releasePx) {
             olderLoadGateRef.current = false;
@@ -517,7 +596,7 @@ export function MessageList({
         onNavigate={navigateToUserMessage}
         hasOlderHistory={hasOlderHistory}
         loadingOlderHistory={loadingOlderHistory}
-        onRequestOlderHistory={onRequestOlderHistory}
+        onRequestOlderHistory={requestOlderHistory}
       />
     </div>
   );

@@ -45,7 +45,9 @@ import {
   contentTopOfElementInScrollRoot,
   findChatMessageElement,
   notifyScrollElementLayout,
+  scrollTopForAnchor,
 } from "@/lib/chat-scroll-anchor";
+import type { ChatScrollAnchor } from "@/lib/workspace-session";
 
 /**
  * Types that end the “live tail” worked-session; later messages must not keep prior cards in
@@ -311,10 +313,29 @@ export interface MessageThreadContentProps {
   composerDraftId?: string | null;
   /** Imperative turn navigation requested by the message ticker. */
   userMessageNavigation?: { messageId: string; requestId: number } | null;
+  /** Imperative scroll anchor restore requested after older-history prepends. */
+  scrollAnchorRequest?: {
+    anchor: ChatScrollAnchor;
+    requestId: number;
+  } | null;
 }
 
 /** Stable identity for the non-virtualized case so downstream memos don't re-fire every render. */
 const EMPTY_VIRTUAL_ITEMS: never[] = [];
+
+export function scrollTopForVirtualUserTurnAnchor(
+  segments: MessageThreadSegment[],
+  messages: ChatMessage[],
+  anchor: ChatScrollAnchor,
+  getOffsetForIndex: (index: number) => number | null | undefined
+): number | null {
+  const segmentIndex = findUserTurnSegmentIndex(segments, messages, anchor.messageId);
+  if (segmentIndex < 0) {
+    return null;
+  }
+  const offset = getOffsetForIndex(segmentIndex);
+  return offset == null ? null : Math.max(0, offset + anchor.delta);
+}
 
 export function MessageThreadContent({
   messages,
@@ -335,6 +356,7 @@ export function MessageThreadContent({
   editingUserMessageId,
   composerDraftId,
   userMessageNavigation,
+  scrollAnchorRequest,
 }: MessageThreadContentProps) {
   const { embeddedPermissionByWorkedId, skipPermissionMessageIndex } = useMemo(() => {
     const embedded = new Map<string, ChatMessage>();
@@ -857,6 +879,71 @@ export function MessageThreadContent({
     overscan: 4,
     getItemKey: (index) => `${conversationId ?? "none"}:${segments[index]?.key ?? String(index)}`,
   });
+
+  const handledScrollAnchorRequestRef = useRef<number | null>(null);
+  useLayoutEffect(() => {
+    if (
+      !scrollAnchorRequest ||
+      handledScrollAnchorRequestRef.current === scrollAnchorRequest.requestId
+    ) {
+      return;
+    }
+    const root = scrollRootRef?.current;
+    if (!root) {
+      return;
+    }
+
+    const applyExactAnchor = () => {
+      const exactTop = scrollTopForAnchor(root, scrollAnchorRequest.anchor);
+      if (exactTop == null) {
+        return false;
+      }
+      root.scrollTop = Math.max(0, exactTop);
+      notifyScrollElementLayout(root);
+      return true;
+    };
+
+    if (applyExactAnchor()) {
+      handledScrollAnchorRequestRef.current = scrollAnchorRequest.requestId;
+      return;
+    }
+    if (!useVirtualList) {
+      return;
+    }
+
+    const anchoredTop = scrollTopForVirtualUserTurnAnchor(
+      segments,
+      messages,
+      scrollAnchorRequest.anchor,
+      (index) => virtualizer.getOffsetForIndex(index, "start")?.[0]
+    );
+    if (anchoredTop == null) {
+      return;
+    }
+
+    handledScrollAnchorRequestRef.current = scrollAnchorRequest.requestId;
+    root.scrollTop = anchoredTop;
+    notifyScrollElementLayout(root);
+
+    let firstFrame = 0;
+    let secondFrame = 0;
+    firstFrame = window.requestAnimationFrame(() => {
+      secondFrame = window.requestAnimationFrame(() => {
+        applyExactAnchor();
+      });
+    });
+    return () => {
+      window.cancelAnimationFrame(firstFrame);
+      window.cancelAnimationFrame(secondFrame);
+    };
+  }, [
+    messages,
+    scrollAnchorRequest,
+    scrollRootRef,
+    segments,
+    useVirtualList,
+    virtualizer,
+  ]);
 
   const handledNavigationRequestRef = useRef<number | null>(null);
   useLayoutEffect(() => {
