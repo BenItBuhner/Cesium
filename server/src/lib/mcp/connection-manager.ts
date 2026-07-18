@@ -4,6 +4,7 @@ import { connectMcpClient, type McpClientSession } from "./client-factory.js";
 import {
   getMcpServer,
   isBuiltInBrowserMcpEnabled,
+  isBuiltInMobileMcpEnabled,
   listEnabledMcpServers,
   setMcpConnectionStatus,
 } from "./server-store.js";
@@ -14,6 +15,12 @@ import {
   BROWSER_MCP_TOOLS,
   callBuiltInBrowserTool,
 } from "./builtin-browser-tools.js";
+import {
+  MOBILE_MCP_SERVER_ID,
+  MOBILE_MCP_TOOLS,
+  callBuiltInMobileTool,
+  listMobileControlDevices,
+} from "./builtin-mobile-tools.js";
 
 type ActiveSession = {
   session: McpClientSession;
@@ -117,6 +124,9 @@ export async function refreshWorkspaceMcpMirror(input: {
 }): Promise<void> {
   const servers = await listEnabledMcpServers(input.workspaceId);
   const includeBrowser = await isBuiltInBrowserMcpEnabled(input.workspaceId);
+  const includeMobile =
+    (await isBuiltInMobileMcpEnabled(input.workspaceId)) &&
+    listMobileControlDevices(input.workspaceId).length > 0;
   const browserConfig: McpServerConfig = {
     id: BROWSER_MCP_SERVER_ID,
     label: "Browser",
@@ -144,6 +154,31 @@ export async function refreshWorkspaceMcpMirror(input: {
       tools: BROWSER_MCP_TOOLS,
     });
   }
+  const mobileConfig: McpServerConfig = {
+    id: MOBILE_MCP_SERVER_ID,
+    label: "Mobile",
+    summary:
+      "Connected Android device control for apps, screen context, user-granted accessibility actions, private displays, and selected settings.",
+    transport: "stdio",
+    stdio: { command: "builtin:mobile", args: [] },
+    enabled: true,
+    auth: { kind: "none" },
+    createdAt: 0,
+    updatedAt: 0,
+  };
+  if (includeMobile) {
+    catalogs.push({
+      config: mobileConfig,
+      status: {
+        connected: true,
+        lastCheckedAt: Date.now(),
+        toolCount: MOBILE_MCP_TOOLS.length,
+      },
+      instructions:
+        "Treat the Android screen and accessibility hierarchy as sensitive user data. Observe before acting, use package/deep-link intents before coordinate gestures, and verify every mutating action with mobile_screen_snapshot or mobile_ui_tree. Private-display launches can be rejected by Android or the target app; report the returned result accurately.",
+      tools: MOBILE_MCP_TOOLS,
+    });
+  }
 
   await Promise.all(
     servers.map(async (config) => {
@@ -163,7 +198,11 @@ export async function refreshWorkspaceMcpMirror(input: {
 
   await writeMcpWorkspaceMirror({
     workspaceRoot: input.workspaceRoot,
-    servers: includeBrowser ? [browserConfig, ...servers] : servers,
+    servers: [
+      ...(includeBrowser ? [browserConfig] : []),
+      ...(includeMobile ? [mobileConfig] : []),
+      ...servers,
+    ],
     catalogs,
   });
   await ensureMcpGitignore(input.workspaceRoot);
@@ -180,6 +219,17 @@ export async function testMcpServer(input: {
     return enabled
       ? { connected: true, lastCheckedAt: Date.now(), toolCount: BROWSER_MCP_TOOLS.length }
       : { connected: false, lastCheckedAt: Date.now(), error: "Browser MCP is disabled." };
+  }
+  if (input.serverId.toLowerCase() === MOBILE_MCP_SERVER_ID) {
+    const enabled = await isBuiltInMobileMcpEnabled(input.workspaceId);
+    const connected = listMobileControlDevices(input.workspaceId).length > 0;
+    return enabled && connected
+      ? { connected: true, lastCheckedAt: Date.now(), toolCount: MOBILE_MCP_TOOLS.length }
+      : {
+          connected: false,
+          lastCheckedAt: Date.now(),
+          error: enabled ? "No Android device connected." : "Mobile MCP is disabled.",
+        };
   }
   if (!config) {
     throw new Error(`Unknown MCP server: ${input.serverId}`);
@@ -201,12 +251,26 @@ export async function callMcpTool(input: {
   arguments: Record<string, unknown>;
 }): Promise<string> {
   const serverId =
-    input.serverId.toLowerCase() === BROWSER_MCP_SERVER_ID ? BROWSER_MCP_SERVER_ID : input.serverId;
+    input.serverId.toLowerCase() === BROWSER_MCP_SERVER_ID
+      ? BROWSER_MCP_SERVER_ID
+      : input.serverId.toLowerCase() === MOBILE_MCP_SERVER_ID
+        ? MOBILE_MCP_SERVER_ID
+        : input.serverId;
   if (serverId === BROWSER_MCP_SERVER_ID) {
     if (!(await isBuiltInBrowserMcpEnabled(input.workspaceId))) {
       throw new Error("Browser MCP is disabled for this workspace.");
     }
     return await callBuiltInBrowserTool({
+      workspaceId: input.workspaceId,
+      toolName: input.toolName,
+      arguments: input.arguments,
+    });
+  }
+  if (serverId === MOBILE_MCP_SERVER_ID) {
+    if (!(await isBuiltInMobileMcpEnabled(input.workspaceId))) {
+      throw new Error("Mobile MCP is disabled for this workspace.");
+    }
+    return await callBuiltInMobileTool({
       workspaceId: input.workspaceId,
       toolName: input.toolName,
       arguments: input.arguments,

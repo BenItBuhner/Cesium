@@ -21,11 +21,13 @@ import {
   getMcpServer,
   listMcpServers,
   setBuiltInBrowserMcpEnabled,
+  setBuiltInMobileMcpEnabled,
   setMcpSecret,
   touchMcpCatalogRevision,
   upsertMcpServer,
 } from "../lib/mcp/server-store.js";
 import { BROWSER_MCP_SERVER_ID } from "../lib/mcp/builtin-browser-tools.js";
+import { MOBILE_MCP_SERVER_ID } from "../lib/mcp/builtin-mobile-tools.js";
 import { slugifyMcpServerId } from "../lib/mcp/paths.js";
 
 export const mcpRoutes = new Hono();
@@ -131,7 +133,10 @@ mcpRoutes.put("/api/workspaces/:workspaceId/mcp/servers", async (c) => {
 mcpRoutes.delete("/api/workspaces/:workspaceId/mcp/servers/:serverId", async (c) => {
   const workspace = await requireWorkspaceFromRequest(c);
   const serverId = c.req.param("serverId");
-  if (serverId.toLowerCase() === BROWSER_MCP_SERVER_ID) {
+  if (
+    serverId.toLowerCase() === BROWSER_MCP_SERVER_ID ||
+    serverId.toLowerCase() === MOBILE_MCP_SERVER_ID
+  ) {
     return c.json({ error: "Built-in MCP servers can be disabled, not removed." }, 400);
   }
   await disconnectMcpServer(workspace.id, serverId);
@@ -145,14 +150,18 @@ mcpRoutes.delete("/api/workspaces/:workspaceId/mcp/servers/:serverId", async (c)
 mcpRoutes.patch("/api/workspaces/:workspaceId/mcp/builtins/:serverId", async (c) => {
   const workspace = await requireWorkspaceFromRequest(c);
   const serverId = c.req.param("serverId").toLowerCase();
-  if (serverId !== BROWSER_MCP_SERVER_ID) {
+  if (serverId !== BROWSER_MCP_SERVER_ID && serverId !== MOBILE_MCP_SERVER_ID) {
     return c.json({ error: `Unknown built-in MCP server: ${serverId}` }, 404);
   }
   const body = await c.req.json<{ enabled?: boolean }>();
   if (typeof body.enabled !== "boolean") {
     return c.json({ error: "Expected enabled boolean." }, 400);
   }
-  await setBuiltInBrowserMcpEnabled(workspace.id, body.enabled);
+  if (serverId === BROWSER_MCP_SERVER_ID) {
+    await setBuiltInBrowserMcpEnabled(workspace.id, body.enabled);
+  } else {
+    await setBuiltInMobileMcpEnabled(workspace.id, body.enabled);
+  }
   await refreshWorkspaceMcpMirror({
     workspaceId: workspace.id,
     workspaceRoot: workspace.root,

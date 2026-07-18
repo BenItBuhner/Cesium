@@ -31,6 +31,10 @@ export type McpServersFile = {
       enabled: boolean;
       updatedAt: number;
     };
+    mobile?: {
+      enabled: boolean;
+      updatedAt: number;
+    };
   };
 };
 

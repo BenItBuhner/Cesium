@@ -13,6 +13,7 @@ import { attachOrchestrationSocket } from "../ws/orchestration.js";
 import { attachFsSocket } from "../ws/filewatcher.js";
 import { attachTerminalSocket } from "../ws/terminal.js";
 import { attachBrowserDebugSocket } from "../ws/browser-debug.js";
+import { attachMobileControlSocket } from "../ws/mobile-control.js";
 import { BufferedRuntimeSocket, type RuntimeSocketData } from "../ws/runtime-socket.js";
 
 // Match Node entry resilience: transient TLS / WS flakes must not take down Bun.
@@ -24,7 +25,7 @@ process.on("uncaughtException", (error) => {
 });
 
 type BunSocketData = {
-  kind: "agent" | "orchestration" | "fs" | "terminal" | "browser-debug";
+  kind: "agent" | "orchestration" | "fs" | "terminal" | "browser-debug" | "mobile-control";
   workspaceId?: string;
   since?: number;
   terminalId?: string;
@@ -84,6 +85,8 @@ async function upgradeOrReject(
       ? "ws-fs"
       : kind === "agent"
         ? "ws-agent"
+        : kind === "mobile-control"
+          ? "ws-agent"
         : kind === "orchestration"
           ? "ws-agent"
           : kind === "terminal"
@@ -109,6 +112,9 @@ function attachSocket(ws: BunServerWebSocket): void {
       break;
     case "orchestration":
       attachOrchestrationSocket(runtimeSocket, ws.data.workspaceId ?? "");
+      break;
+    case "mobile-control":
+      attachMobileControlSocket(runtimeSocket, ws.data.workspaceId ?? "");
       break;
     case "fs":
       void attachFsSocket(runtimeSocket, ws.data.workspaceId ?? "", ws.data.since ?? 0).catch(
@@ -155,6 +161,11 @@ export function startBunServer(): void {
       }
       if (url.pathname === "/ws/agent") {
         return upgradeOrReject(request, bunServer, "agent", {
+          workspaceId: url.searchParams.get("workspaceId")?.trim() || "",
+        });
+      }
+      if (url.pathname === "/ws/mobile-control") {
+        return upgradeOrReject(request, bunServer, "mobile-control", {
           workspaceId: url.searchParams.get("workspaceId")?.trim() || "",
         });
       }

@@ -5,6 +5,11 @@ import type { McpServerConfig } from "@cesium/core/mcp";
 import { readJsonFile, writeJsonFile } from "../persistence.js";
 import { mcpSecretsPath, mcpServersConfigPath, slugifyMcpServerId } from "./paths.js";
 import { BROWSER_MCP_SERVER_ID, BROWSER_MCP_TOOLS } from "./builtin-browser-tools.js";
+import {
+  MOBILE_MCP_SERVER_ID,
+  MOBILE_MCP_TOOLS,
+  listMobileControlDevices,
+} from "./builtin-mobile-tools.js";
 import type {
   McpConnectionStatus,
   McpSecretsFile,
@@ -17,6 +22,8 @@ import { decryptForWorkspace, encryptForWorkspace } from "./secret-crypto.js";
 const connectionStatusByKey = new Map<string, McpConnectionStatus>();
 const BROWSER_MCP_SUMMARY =
   "Built-in browser-tab tools for opening visible IDE editor browser tabs, locking them, clicking, typing, inspecting metadata, viewport testing, and optionally using legacy server Chromium automation.";
+const MOBILE_MCP_SUMMARY =
+  "Connected Android device control: open apps, inspect or capture screens, perform user-granted accessibility actions, manage private virtual displays, and adjust selected device settings.";
 
 function statusKey(workspaceId: string, serverId: string): string {
   return `${workspaceId}:${serverId}`;
@@ -102,6 +109,8 @@ async function writeSecretsFile(workspaceId: string, secrets: McpSecretsFile): P
 export async function listMcpServers(workspaceId: string): Promise<McpServerPublic[]> {
   const file = await readServersFile(workspaceId);
   const browserEnabled = file.builtins?.browser?.enabled !== false;
+  const mobileEnabled = file.builtins?.mobile?.enabled !== false;
+  const mobileDevices = listMobileControlDevices(workspaceId);
   const browserServer: McpServerPublic = {
     id: BROWSER_MCP_SERVER_ID,
     label: "Browser",
@@ -118,7 +127,32 @@ export async function listMcpServers(workspaceId: string): Promise<McpServerPubl
       ? { connected: true, lastCheckedAt: Date.now(), toolCount: BROWSER_MCP_TOOLS.length }
       : { connected: false, lastCheckedAt: Date.now(), error: "Disabled" },
   };
-  return [browserServer, ...file.servers.map((server) => ({
+  const mobileServer: McpServerPublic = {
+    id: MOBILE_MCP_SERVER_ID,
+    label: "Mobile",
+    enabled: mobileEnabled,
+    transport: "stdio",
+    stdio: { command: "builtin:mobile", args: [] },
+    auth: { kind: "none" },
+    summary: MOBILE_MCP_SUMMARY,
+    createdAt: 0,
+    updatedAt: file.builtins?.mobile?.updatedAt ?? 0,
+    builtIn: true,
+    removable: false,
+    connectionStatus:
+      mobileEnabled && mobileDevices.length > 0
+        ? {
+            connected: true,
+            lastCheckedAt: Date.now(),
+            toolCount: MOBILE_MCP_TOOLS.length,
+          }
+        : {
+            connected: false,
+            lastCheckedAt: Date.now(),
+            error: mobileEnabled ? "No Android device connected" : "Disabled",
+          },
+  };
+  return [browserServer, mobileServer, ...file.servers.map((server) => ({
     ...server,
     removable: true,
     connectionStatus: getMcpConnectionStatus(workspaceId, server.id),
@@ -142,6 +176,27 @@ export async function setBuiltInBrowserMcpEnabled(
     builtins: {
       ...file.builtins,
       browser: { enabled, updatedAt: now },
+    },
+  });
+}
+
+export async function isBuiltInMobileMcpEnabled(workspaceId: string): Promise<boolean> {
+  const file = await readServersFile(workspaceId);
+  return file.builtins?.mobile?.enabled !== false;
+}
+
+export async function setBuiltInMobileMcpEnabled(
+  workspaceId: string,
+  enabled: boolean
+): Promise<void> {
+  const file = await readServersFile(workspaceId);
+  const now = Date.now();
+  await writeServersFile(workspaceId, {
+    ...file,
+    updatedAt: now,
+    builtins: {
+      ...file.builtins,
+      mobile: { enabled, updatedAt: now },
     },
   });
 }
@@ -266,11 +321,19 @@ export async function getMcpSummariesForPrompt(
 ): Promise<Array<{ id: string; label: string; summary: string }>> {
   const servers = await listEnabledMcpServers(workspaceId);
   const includeBrowser = await isBuiltInBrowserMcpEnabled(workspaceId);
+  const includeMobile =
+    (await isBuiltInMobileMcpEnabled(workspaceId)) &&
+    listMobileControlDevices(workspaceId).length > 0;
   return [
     ...(includeBrowser ? [{
       id: BROWSER_MCP_SERVER_ID,
       label: "Browser",
       summary: BROWSER_MCP_SUMMARY,
+    }] : []),
+    ...(includeMobile ? [{
+      id: MOBILE_MCP_SERVER_ID,
+      label: "Mobile",
+      summary: MOBILE_MCP_SUMMARY,
     }] : []),
     ...servers.map((server) => ({
       id: server.id,

@@ -9,6 +9,7 @@ import { handleAgentUpgrade } from "../ws/agent.js";
 import { handleOrchestrationUpgrade } from "../ws/orchestration.js";
 import { handleTerminalUpgrade } from "../ws/terminal.js";
 import { handleBrowserDebugUpgrade } from "../ws/browser-debug.js";
+import { handleMobileControlUpgrade } from "../ws/mobile-control.js";
 import {
   createCesiumApp,
   serverConfig,
@@ -56,6 +57,18 @@ export function startNodeServer(): void {
           return;
         }
         handleAgentUpgrade(request, socket, head);
+      });
+      return;
+    }
+
+    if (url.pathname === "/ws/mobile-control") {
+      void authenticateUpgradeRequest(request, "ws-agent").then((result) => {
+        if (!result.ok) {
+          socket.write(buildUpgradeHttpResponse(result));
+          socket.destroy();
+          return;
+        }
+        handleMobileControlUpgrade(request, socket, head);
       });
       return;
     }
