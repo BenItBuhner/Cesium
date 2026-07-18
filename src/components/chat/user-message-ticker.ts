@@ -7,6 +7,14 @@ export type UserMessageTickerItem = {
 };
 
 const PREVIEW_MAX_LENGTH = 280;
+export const USER_MESSAGE_TICKER_MARKER_WIDTH_PX = 10;
+export const USER_MESSAGE_TICKER_MARKER_MAX_WIDTH_PX = 24;
+export const USER_MESSAGE_TICKER_MARKER_HEIGHT_PX = 2;
+export const USER_MESSAGE_TICKER_MARKER_MAX_HEIGHT_PX = 4;
+export const USER_MESSAGE_TICKER_MARKER_PITCH_PX = 5;
+export const USER_MESSAGE_TICKER_MIN_RAIL_HEIGHT_PX = 24;
+export const USER_MESSAGE_TICKER_MAX_RAIL_HEIGHT_PX = 360;
+export const USER_MESSAGE_TICKER_HOVER_RADIUS_PX = 22;
 
 function normalizePreview(value: string): string {
   return value.replace(/\s+/g, " ").trim();
@@ -57,6 +65,79 @@ export function buildUserMessageTickerItems(
   return items;
 }
 
-export function userMessageTickerMarkerWidth(preview: string): number {
-  return Math.max(8, Math.min(20, Math.round(7 + Math.sqrt(preview.length) * 0.85)));
+export function userMessageTickerRailHeight(itemCount: number): number {
+  if (itemCount <= 0) {
+    return 0;
+  }
+  return Math.min(
+    USER_MESSAGE_TICKER_MAX_RAIL_HEIGHT_PX,
+    Math.max(
+      USER_MESSAGE_TICKER_MIN_RAIL_HEIGHT_PX,
+      itemCount * USER_MESSAGE_TICKER_MARKER_PITCH_PX
+    )
+  );
+}
+
+export function userMessageTickerMarkerCenter(
+  index: number,
+  itemCount: number,
+  railHeight: number
+): number {
+  if (itemCount <= 0 || railHeight <= 0) {
+    return 0;
+  }
+  return ((Math.max(0, Math.min(itemCount - 1, index)) + 0.5) / itemCount) * railHeight;
+}
+
+export function nearestUserMessageTickerIndex(
+  pointerY: number,
+  itemCount: number,
+  railHeight: number
+): number | null {
+  if (itemCount <= 0 || railHeight <= 0 || !Number.isFinite(pointerY)) {
+    return null;
+  }
+  const clampedY = Math.max(0, Math.min(railHeight - Number.EPSILON, pointerY));
+  return Math.min(itemCount - 1, Math.floor((clampedY / railHeight) * itemCount));
+}
+
+export function userMessageTickerHoverProgress(
+  markerCenterY: number,
+  pointerY: number | null
+): number {
+  if (pointerY == null || !Number.isFinite(pointerY)) {
+    return 0;
+  }
+  const distance = Math.abs(markerCenterY - pointerY);
+  if (distance >= USER_MESSAGE_TICKER_HOVER_RADIUS_PX) {
+    return 0;
+  }
+  const proximity = 1 - distance / USER_MESSAGE_TICKER_HOVER_RADIUS_PX;
+  return 0.5 - Math.cos(Math.PI * proximity) / 2;
+}
+
+export function userMessageTickerHoverWidth(
+  markerCenterY: number,
+  pointerY: number | null
+): number {
+  const easedProximity = userMessageTickerHoverProgress(markerCenterY, pointerY);
+  return (
+    USER_MESSAGE_TICKER_MARKER_WIDTH_PX +
+    (USER_MESSAGE_TICKER_MARKER_MAX_WIDTH_PX -
+      USER_MESSAGE_TICKER_MARKER_WIDTH_PX) *
+      easedProximity
+  );
+}
+
+export function userMessageTickerHoverHeight(
+  markerCenterY: number,
+  pointerY: number | null
+): number {
+  const easedProximity = userMessageTickerHoverProgress(markerCenterY, pointerY);
+  return (
+    USER_MESSAGE_TICKER_MARKER_HEIGHT_PX +
+    (USER_MESSAGE_TICKER_MARKER_MAX_HEIGHT_PX -
+      USER_MESSAGE_TICKER_MARKER_HEIGHT_PX) *
+      easedProximity
+  );
 }
