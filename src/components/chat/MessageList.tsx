@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, type ReactNode } from "react";
 import { useComposerEditorScrollFade } from "./composer-editor-scroll-fade";
-import { MessageThreadContent } from "./MessageThreadContent";
+import { MessageThreadContent, type MessageThreadHandle } from "./MessageThreadContent";
+import { UserMessageTicker } from "./UserMessageTicker";
 import { useOpenInEditor } from "@/components/editor/OpenInEditorContext";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import type { ChatMessage } from "@/lib/types";
@@ -94,6 +95,7 @@ export function MessageList({
   const { openSubagentTranscript } = useOpenInEditor();
   const { workspaceSession, updateWorkspaceSession, workspaceInfo } = useWorkspace();
   const scrollRootRef = useRef<HTMLDivElement>(null);
+  const threadRef = useRef<MessageThreadHandle | null>(null);
   const stickToBottomRef = useRef(true);
   const initialScrollTopRef = useRef(initialScrollTop);
   const persistTimerRef = useRef<number | null>(null);
@@ -381,6 +383,7 @@ export function MessageList({
       messages={messages}
       stickyUserHeader
       scrollRootRef={scrollRootRef}
+      threadRef={threadRef}
       workedSessionSurface={surface}
       virtualize={useVirtualThread}
       onResolvePermission={onResolvePermission}
@@ -429,6 +432,11 @@ export function MessageList({
     contentClassName && contentClassName.length > 0
       ? "pl-[max(0px,env(safe-area-inset-left,0px))] pr-[max(0px,env(safe-area-inset-right,0px))] @min-[481px]:pl-[max(10px,env(safe-area-inset-left,0px))] @min-[481px]:pr-[max(10px,env(safe-area-inset-right,0px))]"
       : "pl-[max(0px,env(safe-area-inset-left,0px))] pr-[max(0px,env(safe-area-inset-right,0px))] @min-[481px]:px-[10px]";
+
+  const handleScrollToMessage = useCallback((messageId: string) => {
+    stickToBottomRef.current = false;
+    threadRef.current?.scrollToMessageId(messageId);
+  }, []);
 
   return (
     <div className="@container relative h-full min-w-0 w-full">
@@ -487,6 +495,12 @@ export function MessageList({
           {thread}
         </div>
       </div>
+      <UserMessageTicker
+        messages={messages}
+        scrollRootRef={scrollRootRef}
+        onScrollToMessage={handleScrollToMessage}
+        bottomDockVisible={bottomDockVisible}
+      />
     </div>
   );
 }

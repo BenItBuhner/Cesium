@@ -9,7 +9,7 @@ export function contentTopOfElementInScrollRoot(
   return elRect.top - rootRect.top + scrollRoot.scrollTop;
 }
 
-function selectorForChatMessageId(id: string): string {
+export function selectorForChatMessageId(id: string): string {
   if (typeof CSS !== "undefined" && typeof CSS.escape === "function") {
     return `[data-chat-message-id="${CSS.escape(id)}"]`;
   }
@@ -73,4 +73,23 @@ export function notifyScrollElementLayout(scrollRoot: HTMLElement | null): void 
       scrollRoot.dispatchEvent(new Event("scroll", { bubbles: false }));
     });
   });
+}
+
+/**
+ * Align a chat message row under the sticky rail inset. Returns false when the row is not in the DOM
+ * (e.g. virtualized out of range — caller should scroll the virtualizer first).
+ */
+export function scrollChatMessageIntoView(
+  scrollRoot: HTMLElement,
+  messageId: string,
+  railInsetPx: number
+): boolean {
+  const el = scrollRoot.querySelector(selectorForChatMessageId(messageId));
+  if (!el) {
+    return false;
+  }
+  const top = contentTopOfElementInScrollRoot(el, scrollRoot);
+  scrollRoot.scrollTop = Math.max(0, top - railInsetPx);
+  notifyScrollElementLayout(scrollRoot);
+  return true;
 }

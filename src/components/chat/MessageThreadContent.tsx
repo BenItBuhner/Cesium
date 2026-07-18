@@ -4,6 +4,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   useCallback,
   useEffect,
+  useImperativeHandle,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -40,6 +41,7 @@ import {
 import type { ChatMessage } from "@/lib/types";
 import { stripAgentTodoJsonAssistantContent } from "@/lib/agent-chat";
 import { shouldHideCompletionFailureInThread } from "@/lib/agent-completion-error";
+import { scrollChatMessageIntoView } from "@/lib/chat-scroll-anchor";
 
 /**
  * Types that end the “live tail” worked-session; later messages must not keep prior cards in
@@ -264,6 +266,11 @@ function findLastWorkedSessionIndex(messages: ChatMessage[]): number {
   return -1;
 }
 
+export type MessageThreadHandle = {
+  /** Scroll so the given user message sits under the sticky rail. */
+  scrollToMessageId: (messageId: string) => boolean;
+};
+
 export interface MessageThreadContentProps {
   messages: ChatMessage[];
   /**
@@ -303,6 +310,8 @@ export interface MessageThreadContentProps {
   editingUserMessageId?: string | null;
   /** Active chat composer draft; enables cite-from-selection into the composer. */
   composerDraftId?: string | null;
+  /** Imperative scroll API for overlays (message ticker). */
+  threadRef?: RefObject<MessageThreadHandle | null>;
 }
 
 /** Stable identity for the non-virtualized case so downstream memos don't re-fire every render. */
@@ -326,6 +335,7 @@ export function MessageThreadContent({
   renderUserMessageEditor,
   editingUserMessageId,
   composerDraftId,
+  threadRef,
 }: MessageThreadContentProps) {
   const { embeddedPermissionByWorkedId, skipPermissionMessageIndex } = useMemo(() => {
     const embedded = new Map<string, ChatMessage>();
@@ -848,6 +858,48 @@ export function MessageThreadContent({
     overscan: 4,
     getItemKey: (index) => `${conversationId ?? "none"}:${segments[index]?.key ?? String(index)}`,
   });
+
+  useImperativeHandle(
+    threadRef,
+    () => ({
+      scrollToMessageId(messageId: string) {
+        const root = scrollRootRef?.current;
+        if (!root) {
+          return false;
+        }
+        const segmentIndex = segments.findIndex(
+          (segment) =>
+            segment.type === "turn" && messages[segment.userIndex]?.id === messageId
+        );
+        if (segmentIndex < 0) {
+          return false;
+        }
+
+        const railInset = getChatStickyRailInsetPx();
+        if (useVirtualList) {
+          virtualizer.scrollToIndex(segmentIndex, { align: "start" });
+          // Virtual rows mount async — fine-tune once the sticky root exists.
+          window.requestAnimationFrame(() => {
+            window.requestAnimationFrame(() => {
+              if (!scrollChatMessageIntoView(root, messageId, railInset)) {
+                const offset = virtualizer.getOffsetForIndex(segmentIndex, "start");
+                if (offset) {
+                  root.scrollTop = Math.max(0, offset[0] - railInset);
+                }
+                window.requestAnimationFrame(() => {
+                  scrollChatMessageIntoView(root, messageId, railInset);
+                });
+              }
+            });
+          });
+          return true;
+        }
+
+        return scrollChatMessageIntoView(root, messageId, railInset);
+      },
+    }),
+    [messages, scrollRootRef, segments, useVirtualList, virtualizer]
+  );
 
   const virtualItems = useVirtualList ? virtualizer.getVirtualItems() : EMPTY_VIRTUAL_ITEMS;
   const virtualStickyScrollTop = useStickyScrollTop(
