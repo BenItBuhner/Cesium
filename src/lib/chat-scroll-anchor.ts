@@ -17,6 +17,20 @@ function selectorForChatMessageId(id: string): string {
 }
 
 /**
+ * Virtual sticky headers duplicate the active user message id outside the measured row.
+ * Prefer the copy inside a virtual row so navigation resolves to the turn's real content offset.
+ */
+export function findChatMessageElement(
+  scrollRoot: HTMLElement,
+  messageId: string
+): HTMLElement | null {
+  const matches = Array.from(
+    scrollRoot.querySelectorAll<HTMLElement>(selectorForChatMessageId(messageId))
+  );
+  return matches.find((element) => element.closest("[data-index]")) ?? matches[0] ?? null;
+}
+
+/**
  * Pick a message row at or above the viewport top and compute delta = scrollTop - rowTop.
  */
 export function findChatScrollAnchor(
@@ -26,7 +40,7 @@ export function findChatScrollAnchor(
 ): ChatScrollAnchor | null {
   let best: { id: string; top: number } | null = null;
   for (const id of orderedMessageIds) {
-    const el = scrollRoot.querySelector(selectorForChatMessageId(id));
+    const el = findChatMessageElement(scrollRoot, id);
     if (!el) {
       continue;
     }
@@ -41,7 +55,7 @@ export function findChatScrollAnchor(
     return { messageId: best.id, delta: scrollTop - best.top };
   }
   for (const id of orderedMessageIds) {
-    const el = scrollRoot.querySelector(selectorForChatMessageId(id));
+    const el = findChatMessageElement(scrollRoot, id);
     if (!el) {
       continue;
     }
@@ -55,7 +69,7 @@ export function scrollTopForAnchor(
   scrollRoot: HTMLElement,
   anchor: ChatScrollAnchor
 ): number | null {
-  const el = scrollRoot.querySelector(selectorForChatMessageId(anchor.messageId));
+  const el = findChatMessageElement(scrollRoot, anchor.messageId);
   if (!el) {
     return null;
   }

@@ -1,8 +1,17 @@
 "use client";
 
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { useComposerEditorScrollFade } from "./composer-editor-scroll-fade";
 import { MessageThreadContent } from "./MessageThreadContent";
+import { UserMessageTicker } from "./UserMessageTicker";
 import { useOpenInEditor } from "@/components/editor/OpenInEditorContext";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import type { ChatMessage } from "@/lib/types";
@@ -108,6 +117,11 @@ export function MessageList({
   const prevConversationIdRef = useRef<string | undefined>(undefined);
   const wasLoadingOlderHistoryRef = useRef(false);
   const autoHistoryFillRoundsRef = useRef(0);
+  const navigationRequestIdRef = useRef(0);
+  const [userMessageNavigation, setUserMessageNavigation] = useState<{
+    messageId: string;
+    requestId: number;
+  } | null>(null);
 
   const useVirtualThread = useMemo(() => messages.length >= 16, [messages.length]);
 
@@ -401,8 +415,18 @@ export function MessageList({
         })
       }
       workspaceRoot={workspaceInfo?.root ?? null}
+      userMessageNavigation={userMessageNavigation}
     />
   );
+
+  const navigateToUserMessage = useCallback((messageId: string) => {
+    stickToBottomRef.current = false;
+    navigationRequestIdRef.current += 1;
+    setUserMessageNavigation({
+      messageId,
+      requestId: navigationRequestIdRef.current,
+    });
+  }, []);
 
   /** Top padding lives here, not on the scroll root, so `position: sticky` + `top` is not
    *  stacked with scroll-container padding (which reads ~20px low in Blink/WebKit). */
@@ -487,6 +511,14 @@ export function MessageList({
           {thread}
         </div>
       </div>
+      <UserMessageTicker
+        messages={messages}
+        scrollRootRef={scrollRootRef}
+        onNavigate={navigateToUserMessage}
+        hasOlderHistory={hasOlderHistory}
+        loadingOlderHistory={loadingOlderHistory}
+        onRequestOlderHistory={onRequestOlderHistory}
+      />
     </div>
   );
 }
