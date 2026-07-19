@@ -16,19 +16,22 @@ object PhoneCommandExecutor {
 
   fun capabilities(context: Context): JSONObject {
     val accessibility = CesiumAccessibilityService.instance != null
-    val roleManager = context.getSystemService(RoleManager::class.java)
-    val assistantHeld =
-      Build.VERSION.SDK_INT >= 29 && roleManager.isRoleHeld(RoleManager.ROLE_ASSISTANT)
+    val assistantHeld = if (Build.VERSION.SDK_INT >= 29) {
+      context.getSystemService(RoleManager::class.java)
+        .isRoleHeld(RoleManager.ROLE_ASSISTANT)
+    } else {
+      false
+    }
     return JSONObject().apply {
-      put("appLaunch", true)
+      put("appLaunch", accessibility)
       put("appList", true)
       put("screenSnapshot", accessibility)
       put("screenCapture", accessibility && Build.VERSION.SDK_INT >= 30)
       put("gestures", accessibility)
       put("textInput", accessibility)
       put("globalActions", accessibility)
-      put("settings", true)
-      put("secondaryDisplay", true)
+      put("settings", accessibility)
+      put("secondaryDisplay", accessibility)
       put("assistant", true)
       put("accessibilityEnabled", CesiumAccessibilityService.isEnabled(context))
       put("assistantRoleHeld", assistantHeld)
@@ -66,7 +69,10 @@ object PhoneCommandExecutor {
           "launch_app" -> success(launchApp(context, payload))
           "open_settings" -> success(openSettings(context, payload))
           "secondary_display" -> success(
-            CesiumSecondaryDisplayController.execute(context, payload)
+            CesiumSecondaryDisplayController.execute(
+              CesiumAccessibilityService.instance ?: context,
+              payload
+            )
           )
           "snapshot",
           "screenshot",
@@ -131,7 +137,7 @@ object PhoneCommandExecutor {
         ?: throw IllegalArgumentException("Package '$resolvedPackage' has no launchable activity.")
     }
     intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-    context.startActivity(intent)
+    (CesiumAccessibilityService.instance ?: context).startActivity(intent)
     return JSONObject().apply {
       put("launched", true)
       put("packageName", intent.`package` ?: packageName ?: JSONObject.NULL)
@@ -173,7 +179,7 @@ object PhoneCommandExecutor {
     } else if (page == "notifications") {
       intent.putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
     }
-    context.startActivity(intent)
+    (CesiumAccessibilityService.instance ?: context).startActivity(intent)
     return JSONObject().put("opened", true).put("page", page)
   }
 }

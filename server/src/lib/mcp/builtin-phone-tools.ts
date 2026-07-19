@@ -1,4 +1,7 @@
-import type { PhoneControlCapability, PhoneControlCommandPayload } from "@cesium/core";
+import type {
+  PhoneControlCapability,
+  PhoneControlCommandPayload,
+} from "@cesium/core/phone-control";
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import {
   dispatchPhoneCommand,

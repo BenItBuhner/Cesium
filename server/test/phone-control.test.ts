@@ -1,19 +1,46 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { defaultPhoneControlCapabilities } from "@cesium/core";
+import { defaultPhoneControlCapabilities } from "@cesium/core/phone-control";
 import {
   PHONE_MCP_SERVER_ID,
   PHONE_MCP_TOOLS,
   callBuiltInPhoneTool,
 } from "../src/lib/mcp/builtin-phone-tools.js";
 import {
+  authorizePhoneDevice,
   completePhoneCommand,
   dispatchPhoneCommand,
   listPhoneDevices,
   readPhoneCommands,
   registerPhoneDevice,
+  registerPhoneDeviceSession,
   resetPhoneControlForTests,
 } from "../src/lib/phone-control/service.js";
+
+test("phone polling is protected by a per-device pairing token", () => {
+  resetPhoneControlForTests();
+  const session = registerPhoneDeviceSession({
+    workspaceId: "ws-phone",
+    deviceId: "android-secure",
+  });
+  assert.match(session.deviceToken, /^phone-token:/);
+  assert.doesNotThrow(() =>
+    authorizePhoneDevice("ws-phone", "android-secure", session.deviceToken)
+  );
+  assert.throws(
+    () => authorizePhoneDevice("ws-phone", "android-secure", "wrong-token"),
+    /pairing token/
+  );
+  assert.throws(
+    () =>
+      registerPhoneDeviceSession({
+        workspaceId: "ws-phone",
+        deviceId: "android-secure",
+        deviceToken: "wrong-token",
+      }),
+    /pairing token/
+  );
+});
 
 test("phone control registers a capability-derived Android device", () => {
   resetPhoneControlForTests();

@@ -1,10 +1,11 @@
-import type { PhoneControlCapabilities } from "@cesium/core";
+import type { PhoneControlCapabilities } from "@cesium/core/phone-control";
 import { Hono } from "hono";
 import {
+  authorizePhoneDevice,
   completePhoneCommand,
   listPhoneDevices,
   readPhoneCommands,
-  registerPhoneDevice,
+  registerPhoneDeviceSession,
   unregisterPhoneDevice,
 } from "../lib/phone-control/service.js";
 import { requireWorkspaceFromRequest } from "../lib/request-workspace.js";
@@ -26,12 +27,13 @@ phoneControlRoutes.post("/api/phone-control/devices/register", async (c) => {
     androidVersion?: string;
     sdkInt?: number;
     model?: string;
+    deviceToken?: string;
   }>();
   if (!body.deviceId?.trim()) {
     return c.json({ error: "Expected deviceId." }, 400);
   }
   try {
-    const device = registerPhoneDevice({
+    const session = registerPhoneDeviceSession({
       workspaceId: workspace.id,
       deviceId: body.deviceId,
       name: body.name,
@@ -40,12 +42,15 @@ phoneControlRoutes.post("/api/phone-control/devices/register", async (c) => {
       androidVersion: body.androidVersion,
       sdkInt: body.sdkInt,
       model: body.model,
+      deviceToken: body.deviceToken,
     });
-    return c.json({ device }, 201);
+    return c.json(session, 201);
   } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "Failed to register phone.";
     return c.json(
-      { error: error instanceof Error ? error.message : "Failed to register phone." },
-      400
+      { error: message },
+      message.includes("pairing token") ? 403 : 400
     );
   }
 });
@@ -65,6 +70,11 @@ phoneControlRoutes.get(
     const afterSeq = Number.parseInt(c.req.query("after") ?? "0", 10);
     const waitMs = Number.parseInt(c.req.query("waitMs") ?? "0", 10);
     try {
+      authorizePhoneDevice(
+        workspace.id,
+        c.req.param("deviceId"),
+        c.req.header("x-cesium-phone-token")
+      );
       return c.json(
         await readPhoneCommands({
           workspaceId: workspace.id,
@@ -86,10 +96,15 @@ phoneControlRoutes.post(
   "/api/phone-control/devices/:deviceId/commands/:commandId/result",
   async (c) => {
     const workspace = await requireWorkspaceFromRequest(c);
-    const body = await c.req
+    const body: { ok?: boolean; result?: unknown; error?: string } = await c.req
       .json<{ ok?: boolean; result?: unknown; error?: string }>()
       .catch(() => ({}));
     try {
+      authorizePhoneDevice(
+        workspace.id,
+        c.req.param("deviceId"),
+        c.req.header("x-cesium-phone-token")
+      );
       const result = completePhoneCommand({
         workspaceId: workspace.id,
         deviceId: c.req.param("deviceId"),

@@ -17,6 +17,10 @@
     "./mcp": {
       "types": "./dist/mcp.d.ts",
       "import": "./dist/mcp.js"
+    },
+    "./phone-control": {
+      "types": "./dist/phone-control.d.ts",
+      "import": "./dist/phone-control.js"
     }
   },
   "scripts": {

@@ -299,6 +299,8 @@ class CesiumAccessibilityService : AccessibilityService() {
             val colorSpace = screenshot.colorSpace ?: ColorSpace.get(ColorSpace.Named.SRGB)
             val wrapped = Bitmap.wrapHardwareBuffer(screenshot.hardwareBuffer, colorSpace)
               ?: throw IllegalStateException("Android returned an unreadable screenshot buffer.")
+            val width = wrapped.width
+            val height = wrapped.height
             val bitmap = wrapped.copy(Bitmap.Config.ARGB_8888, false)
             screenshot.hardwareBuffer.close()
             val output = ByteArrayOutputStream()
@@ -312,8 +314,8 @@ class CesiumAccessibilityService : AccessibilityService() {
             success(JSONObject().apply {
               put("mimeType", "image/jpeg")
               put("imageDataUrl", "data:image/jpeg;base64,$encoded")
-              put("width", wrapped.width)
-              put("height", wrapped.height)
+              put("width", width)
+              put("height", height)
             })
           } catch (error: Exception) {
             failure(error.message ?: "Failed to encode screenshot.")

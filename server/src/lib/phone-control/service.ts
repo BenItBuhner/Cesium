@@ -5,11 +5,11 @@ import type {
   PhoneControlCommandPayload,
   PhoneControlCommandResult,
   PhoneControlDevice,
-} from "@cesium/core";
+} from "@cesium/core/phone-control";
 import {
   PHONE_CONTROL_PROTOCOL_VERSION,
   defaultPhoneControlCapabilities,
-} from "@cesium/core";
+} from "@cesium/core/phone-control";
 
 type RegisterPhoneDeviceInput = {
   workspaceId: string;
@@ -20,6 +20,7 @@ type RegisterPhoneDeviceInput = {
   androidVersion?: string;
   sdkInt?: number;
   model?: string;
+  deviceToken?: string;
 };
 
 const DEVICE_ONLINE_WINDOW_MS = 45_000;
@@ -28,6 +29,7 @@ const COMMAND_RETENTION_MS = 2 * 60_000;
 const MAX_COMMANDS = 1_000;
 
 const devices = new Map<string, PhoneControlDevice>();
+const deviceTokens = new Map<string, string>();
 const commands: PhoneControlCommand[] = [];
 const commandResults = new Map<string, PhoneControlCommandResult>();
 const resultWaiters = new Map<
@@ -100,6 +102,15 @@ export function registerPhoneDevice(
     throw new Error("A valid phone deviceId is required.");
   }
   const key = deviceKey(input.workspaceId, id);
+  const presentedToken = input.deviceToken?.trim();
+  const existingToken = deviceTokens.get(key);
+  if (existingToken && presentedToken !== existingToken) {
+    throw new Error("Phone pairing token is missing or invalid.");
+  }
+  deviceTokens.set(
+    key,
+    existingToken ?? presentedToken ?? `phone-token:${randomUUID()}`
+  );
   const current = devices.get(key);
   const now = Date.now();
   const capabilities: PhoneControlCapabilities = {
@@ -129,6 +140,27 @@ export function registerPhoneDevice(
   return next;
 }
 
+export function registerPhoneDeviceSession(
+  input: RegisterPhoneDeviceInput
+): { device: PhoneControlDevice; deviceToken: string } {
+  const device = registerPhoneDevice(input);
+  return {
+    device,
+    deviceToken: deviceTokens.get(deviceKey(input.workspaceId, device.deviceId))!,
+  };
+}
+
+export function authorizePhoneDevice(
+  workspaceId: string,
+  deviceId: string,
+  deviceToken: string | undefined
+): void {
+  const expected = deviceTokens.get(deviceKey(workspaceId, deviceId));
+  if (!expected || !deviceToken || deviceToken !== expected) {
+    throw new Error("Phone pairing token is missing or invalid.");
+  }
+}
+
 export function listPhoneDevices(workspaceId: string): PhoneControlDevice[] {
   const now = Date.now();
   return [...devices.values()]
@@ -156,7 +188,9 @@ export function unregisterPhoneDevice(
   workspaceId: string,
   deviceId: string
 ): boolean {
-  return devices.delete(deviceKey(workspaceId, deviceId));
+  const key = deviceKey(workspaceId, deviceId);
+  deviceTokens.delete(key);
+  return devices.delete(key);
 }
 
 export function enqueuePhoneCommand(input: {
@@ -330,6 +364,7 @@ export function resetPhoneControlForTests(): void {
     }
   }
   devices.clear();
+  deviceTokens.clear();
   commands.splice(0, commands.length);
   commandResults.clear();
   resultWaiters.clear();

@@ -112,15 +112,15 @@ export type PhoneControlCommandResult = {
 
 export function defaultPhoneControlCapabilities(): PhoneControlCapabilities {
   return {
-    appLaunch: true,
+    appLaunch: false,
     appList: true,
     screenSnapshot: false,
     screenCapture: false,
     gestures: false,
     textInput: false,
     globalActions: false,
-    settings: true,
-    secondaryDisplay: true,
+    settings: false,
+    secondaryDisplay: false,
     assistant: true,
     accessibilityEnabled: false,
     assistantRoleHeld: false,

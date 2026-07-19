@@ -1,7 +1,7 @@
 package com.cesium.mobile.assistant
 
-import android.app.AssistContent
-import android.app.AssistStructure
+import android.app.assist.AssistContent
+import android.app.assist.AssistStructure
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap

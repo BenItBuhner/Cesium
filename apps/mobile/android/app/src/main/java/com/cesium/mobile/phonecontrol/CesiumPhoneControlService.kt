@@ -84,6 +84,7 @@ class CesiumPhoneControlService : Service() {
       put("androidVersion", Build.VERSION.RELEASE)
       put("sdkInt", Build.VERSION.SDK_INT)
       put("model", Build.MODEL)
+      config.deviceToken?.let { put("deviceToken", it) }
     }
     execute(
       request(
@@ -94,7 +95,16 @@ class CesiumPhoneControlService : Service() {
       )
     ) { response ->
       if (response?.isSuccessful == true) {
-        poll(config)
+        try {
+          val registered = JSONObject(response.body?.string() ?: "{}")
+          val token = registered.optString("deviceToken")
+          if (token.isBlank()) {
+            throw IllegalStateException("Server did not return a phone pairing token.")
+          }
+          poll(PhoneControlPreferences.setDeviceToken(this, token))
+        } catch (error: Exception) {
+          scheduleRetry(error.message ?: "Invalid phone registration response")
+        }
       } else {
         scheduleRetry(response?.code?.let { "Server returned HTTP $it" } ?: "Server unavailable")
       }
@@ -113,7 +123,6 @@ class CesiumPhoneControlService : Service() {
       }
       try {
         val json = JSONObject(response.body?.string() ?: "{}")
-        cursor = maxOf(cursor, json.optLong("cursor", cursor))
         processCommands(config, json.optJSONArray("commands") ?: JSONArray(), 0) {
           handler.postDelayed({ registerAndPoll() }, 250)
         }
@@ -138,18 +147,21 @@ class CesiumPhoneControlService : Service() {
       processCommands(config, commands, index + 1, finished)
       return
     }
-    cursor = maxOf(cursor, command.optLong("seq", cursor))
+    val commandSeq = command.optLong("seq", cursor)
+    val expiresAt = command.optLong("expiresAt", System.currentTimeMillis() + 30_000)
     val payload = command.optJSONObject("payload") ?: JSONObject()
     PhoneCommandExecutor.execute(
       this,
       payload,
       success = { result ->
-        postResult(config, command.optString("commandId"), true, result, null) {
+        postResult(config, command.optString("commandId"), true, result, null, expiresAt) { acked ->
+          if (acked) cursor = maxOf(cursor, commandSeq)
           processCommands(config, commands, index + 1, finished)
         }
       },
       failure = { error ->
-        postResult(config, command.optString("commandId"), false, null, error) {
+        postResult(config, command.optString("commandId"), false, null, error, expiresAt) { acked ->
+          if (acked) cursor = maxOf(cursor, commandSeq)
           processCommands(config, commands, index + 1, finished)
         }
       }
@@ -162,7 +174,9 @@ class CesiumPhoneControlService : Service() {
     ok: Boolean,
     result: JSONObject?,
     error: String?,
-    finished: () -> Unit
+    expiresAt: Long,
+    attempt: Int = 0,
+    finished: (Boolean) -> Unit
   ) {
     val deviceId = PhoneControlPreferences.deviceId(this)
     val body = JSONObject().apply {
@@ -178,8 +192,32 @@ class CesiumPhoneControlService : Service() {
         "POST",
         body
       )
-    ) {
-      finished()
+    ) { response ->
+      if (response?.isSuccessful == true) {
+        finished(true)
+        return@execute
+      }
+      val retryable = response == null || response.code >= 500
+      if (retryable && !stopped && System.currentTimeMillis() < expiresAt) {
+        val delay = (500L * (attempt + 1)).coerceAtMost(3_000L)
+        handler.postDelayed(
+          {
+            postResult(
+              config,
+              commandId,
+              ok,
+              result,
+              error,
+              expiresAt,
+              attempt + 1,
+              finished
+            )
+          },
+          delay
+        )
+      } else {
+        finished(false)
+      }
     }
   }
 
@@ -194,6 +232,7 @@ class CesiumPhoneControlService : Service() {
       .header("x-opencursor-workspace-id", config.workspaceId)
       .header("Accept", "application/json")
     config.authToken?.let { builder.header("x-opencursor-session-token", it) }
+    config.deviceToken?.let { builder.header("x-cesium-phone-token", it) }
     val body = json?.toString()?.toRequestBody(JSON_MEDIA_TYPE)
     return builder.method(method, body).build()
   }

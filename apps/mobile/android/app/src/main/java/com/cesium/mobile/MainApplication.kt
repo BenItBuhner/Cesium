@@ -7,6 +7,7 @@ import com.facebook.react.ReactApplication
 import com.facebook.react.ReactHost
 import com.facebook.react.ReactNativeApplicationEntryPoint.loadReactNative
 import com.facebook.react.defaults.DefaultReactHost.getDefaultReactHost
+import java.io.File
 
 class MainApplication : Application(), ReactApplication {
   override val reactHost: ReactHost by lazy {
@@ -21,7 +22,13 @@ class MainApplication : Application(), ReactApplication {
 
   override fun onCreate() {
     super.onCreate()
-    val processName = if (Build.VERSION.SDK_INT >= 28) Application.getProcessName() else packageName
+    val processName = if (Build.VERSION.SDK_INT >= 28) {
+      Application.getProcessName()
+    } else {
+      runCatching {
+        File("/proc/self/cmdline").readText().trim('\u0000')
+      }.getOrDefault(packageName)
+    }
     if (!processName.endsWith(":assistant")) {
       loadReactNative(this)
     }
