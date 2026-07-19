@@ -12,7 +12,7 @@
     "start:node": "cross-env NODE_ENV=production node --max-old-space-size=3072 dist/index.js",
     "start:bun": "bun src/runtime/bun-server.ts",
     "test": "node --import tsx --test ./test/*.test.ts",
-    "test:mcp": "node --import tsx --test ./test/mcp-prompt.test.ts ./test/mcp-mirror.test.ts ./test/mcp-url-policy.test.ts ./test/mcp-oauth.test.ts",
+    "test:mcp": "node --import tsx --test ./test/mcp-prompt.test.ts ./test/mcp-mirror.test.ts ./test/mcp-url-policy.test.ts ./test/mcp-oauth.test.ts ./test/phone-control.test.ts",
     "test:bun:smoke": "bun test ./test/bun-smoke.test.ts",
     "seed:fat-conversations": "bun ./scripts/seed-fat-conversations.ts",
     "seed:perf:small": "bun ./scripts/seed-fat-conversations.ts --conversations=3 --turns=25",

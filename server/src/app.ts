@@ -8,6 +8,7 @@ import { terminalRoutes } from "./routes/terminals.js";
 import { browserProxyRoutes } from "./routes/browser-proxy.js";
 import { browserDebugRoutes } from "./routes/browser-debug.js";
 import { browserControlRoutes } from "./routes/browser-control.js";
+import { phoneControlRoutes } from "./routes/phone-control.js";
 import { agentRoutes } from "./routes/agents.js";
 import { audioRoutes } from "./routes/audio.js";
 import { authRoutes } from "./routes/auth.js";
@@ -126,6 +127,7 @@ export function createCesiumApp(): Hono {
   app.route("/browser", browserProxyRoutes);
   app.route("/", browserDebugRoutes);
   app.route("/", browserControlRoutes);
+  app.route("/", phoneControlRoutes);
   app.route("/", workspaceRoutes);
   app.route("/", settingsRoutes);
   app.route("/", fsRoutes);

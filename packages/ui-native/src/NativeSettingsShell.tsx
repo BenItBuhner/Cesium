@@ -26,12 +26,39 @@ type SettingsSection =
   | "appearance"
   | "models"
   | "agents"
+  | "phone-control"
   | "server-setup";
+
+export type NativePhoneControlSettings = {
+  loading?: boolean;
+  error?: string | null;
+  status?: {
+    controlEnabled: boolean;
+    configured: boolean;
+    deviceId: string;
+    capabilities: {
+      accessibilityEnabled: boolean;
+      assistantRoleHeld: boolean;
+      screenCapture: boolean;
+      screenSnapshot: boolean;
+      gestures: boolean;
+      secondaryDisplay: boolean;
+      hardwareWakeWord: false;
+      thirdPartyAppsOnSecondaryDisplay: false;
+    };
+  } | null;
+  onRefresh: () => void | Promise<void>;
+  onSetEnabled: (enabled: boolean) => void | Promise<void>;
+  onOpenAccessibilitySettings: () => void | Promise<void>;
+  onRequestAssistantRole: () => void | Promise<void>;
+  onInvokeAssistant: () => void | Promise<void>;
+};
 
 export type NativeSettingsShellProps = {
   onClose: () => void;
   onOpenServerSetup: () => void;
   open: boolean;
+  phoneControl?: NativePhoneControlSettings;
   tokens: ThemeTokens;
 };
 
@@ -39,6 +66,7 @@ export function NativeSettingsShell({
   onClose,
   onOpenServerSetup,
   open,
+  phoneControl,
   tokens,
 }: NativeSettingsShellProps) {
   const styles = useMemo(() => createStyles(tokens), [tokens]);
@@ -78,6 +106,8 @@ export function NativeSettingsShell({
                       ? "Models"
                       : section === "agents"
                         ? "Cesium Agent"
+                        : section === "phone-control"
+                          ? "Phone & Assistant"
                         : "Settings"}
             </Text>
             <Pressable
@@ -117,6 +147,15 @@ export function NativeSettingsShell({
                 onPress={() => setSection("agents")}
                 styles={styles}
               />
+              {phoneControl ? (
+                <SettingsRow
+                  label="Phone & Assistant"
+                  detail="MCP control, screen access, and system assistant"
+                  onPress={() => setSection("phone-control")}
+                  styles={styles}
+                  testID="settings-open-phone-control"
+                />
+              ) : null}
               <SettingsRow
                 label="Server on this phone"
                 detail="Optional Termux backend setup"
@@ -133,6 +172,13 @@ export function NativeSettingsShell({
           {section === "appearance" ? <AppearancePanel styles={styles} tokens={tokens} /> : null}
           {section === "models" ? <ModelsPanel styles={styles} tokens={tokens} /> : null}
           {section === "agents" ? <AgentsPanel styles={styles} tokens={tokens} /> : null}
+          {section === "phone-control" && phoneControl ? (
+            <PhoneControlPanel
+              controller={phoneControl}
+              styles={styles}
+              tokens={tokens}
+            />
+          ) : null}
         </View>
       </View>
     </Modal>
@@ -503,6 +549,115 @@ function AgentsPanel({
         <Text style={styles.primaryButtonText}>Save provider key</Text>
       </Pressable>
       {status ? <Text style={styles.status}>{status}</Text> : null}
+    </ScrollView>
+  );
+}
+
+function PhoneControlPanel({
+  controller,
+  styles,
+  tokens,
+}: {
+  controller: NativePhoneControlSettings;
+  styles: ReturnType<typeof createStyles>;
+  tokens: ThemeTokens;
+}) {
+  const status = controller.status;
+  const capabilities = status?.capabilities;
+  const refresh = controller.onRefresh;
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  return (
+    <ScrollView contentContainerStyle={styles.content}>
+      <View style={styles.switchRow}>
+        <View style={styles.rowTextWrap}>
+          <Text style={styles.rowLabel}>Connected phone control</Text>
+          <Text style={styles.rowDetail}>
+            {status?.configured
+              ? "Accept MCP commands from the active Cesium server"
+              : "Select a server and workspace first"}
+          </Text>
+        </View>
+        <Switch
+          disabled={controller.loading || !status?.configured}
+          onValueChange={(enabled) => void controller.onSetEnabled(enabled)}
+          trackColor={{
+            false: tokens["--border-subtle"],
+            true: tokens["--text-secondary"],
+          }}
+          value={status?.controlEnabled === true}
+          testID="phone-control-enabled"
+        />
+      </View>
+
+      <Text style={styles.sectionLabel}>Android permissions</Text>
+      <View style={styles.group}>
+        <Text style={styles.rowLabel}>
+          Screen & actions · {capabilities?.accessibilityEnabled ? "Enabled" : "Setup required"}
+        </Text>
+        <Text style={styles.rowDetail}>
+          Accessibility is an explicit Android permission. It enables semantic screen snapshots,
+          screenshots, taps, typing, swipes, and global actions.
+        </Text>
+        <Pressable
+          onPress={() => void controller.onOpenAccessibilitySettings()}
+          style={styles.secondaryButton}
+          testID="phone-control-open-accessibility"
+        >
+          <Text style={styles.secondaryButtonText}>Open Accessibility settings</Text>
+        </Pressable>
+      </View>
+
+      <View style={styles.group}>
+        <Text style={styles.rowLabel}>
+          Default assistant · {capabilities?.assistantRoleHeld ? "Cesium" : "Not selected"}
+        </Text>
+        <Text style={styles.rowDetail}>
+          Selecting Cesium lets Android invoke it through the configured assistant gesture,
+          including long-press power on supported devices.
+        </Text>
+        <Pressable
+          onPress={() => void controller.onRequestAssistantRole()}
+          style={styles.secondaryButton}
+          testID="phone-control-request-assistant"
+        >
+          <Text style={styles.secondaryButtonText}>Choose Cesium as assistant</Text>
+        </Pressable>
+        {capabilities?.assistantRoleHeld ? (
+          <Pressable
+            onPress={() => void controller.onInvokeAssistant()}
+            style={styles.secondaryButton}
+            testID="phone-control-invoke-assistant"
+          >
+            <Text style={styles.secondaryButtonText}>Try assistant overlay</Text>
+          </Pressable>
+        ) : null}
+      </View>
+
+      <Text style={styles.sectionLabel}>Live capabilities</Text>
+      <Text style={styles.status}>
+        {capabilities?.screenSnapshot ? "Screen snapshot · " : ""}
+        {capabilities?.screenCapture ? "Screenshot · " : ""}
+        {capabilities?.gestures ? "Actions · " : ""}
+        {capabilities?.secondaryDisplay ? "Private Cesium display" : "Basic app launch"}
+      </Text>
+      <Text style={styles.rowDetail}>
+        Android does not grant ordinary apps invisible third-party app streaming or DSP wake-word
+        access. The private display runs Cesium-owned UI only; true always-on “Cesium” hotword
+        support requires an OEM/system-signed build.
+      </Text>
+      {controller.error ? <Text style={styles.status}>{controller.error}</Text> : null}
+      <Pressable
+        disabled={controller.loading}
+        onPress={() => void controller.onRefresh()}
+        style={styles.secondaryButton}
+        testID="phone-control-refresh"
+      >
+        <Text style={styles.secondaryButtonText}>Refresh status</Text>
+      </Pressable>
     </ScrollView>
   );
 }

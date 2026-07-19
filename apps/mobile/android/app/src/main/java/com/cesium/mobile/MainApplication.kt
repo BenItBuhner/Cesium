@@ -1,6 +1,7 @@
 package com.cesium.mobile
 
 import android.app.Application
+import android.os.Build
 import com.facebook.react.PackageList
 import com.facebook.react.ReactApplication
 import com.facebook.react.ReactHost
@@ -20,6 +21,9 @@ class MainApplication : Application(), ReactApplication {
 
   override fun onCreate() {
     super.onCreate()
-    loadReactNative(this)
+    val processName = if (Build.VERSION.SDK_INT >= 28) Application.getProcessName() else packageName
+    if (!processName.endsWith(":assistant")) {
+      loadReactNative(this)
+    }
   }
 }

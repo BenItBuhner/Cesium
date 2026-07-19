@@ -107,7 +107,10 @@ import {
   type VisibleFileRow,
 } from "./workbench-state";
 import { NativeComposer, type NativeComposerSubmitPayload } from "./NativeComposer";
-import { NativeSettingsShell } from "./NativeSettingsShell";
+import {
+  NativeSettingsShell,
+  type NativePhoneControlSettings,
+} from "./NativeSettingsShell";
 export type NativeWorkbenchPanel = "center" | "rail" | "workbench";
 
 export type NativeWorkbenchProps = {
@@ -118,6 +121,7 @@ export type NativeWorkbenchProps = {
     conversationId: string | null
   ) => void;
   onProjection?: (projection: MobileAgentProjection | null) => void;
+  phoneControl?: NativePhoneControlSettings;
   onServerBaseUrlChange?: (baseUrl: string) => void;
 };
 
@@ -1566,6 +1570,7 @@ function WorkbenchBody({
   notificationConversationId,
   onFocusedConversationChange,
   onProjection,
+  phoneControl,
   tokens,
 }: NativeWorkbenchProps & { tokens: ThemeTokens }) {
   const {
@@ -2303,6 +2308,7 @@ function WorkbenchBody({
         onClose={() => setSettingsOpen(false)}
         onOpenServerSetup={() => setServerSetupOpen(true)}
         open={settingsOpen}
+        phoneControl={phoneControl}
         tokens={tokens}
       />
     </View>

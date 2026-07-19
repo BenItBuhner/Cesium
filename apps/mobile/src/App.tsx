@@ -27,6 +27,10 @@ import {
 import { readLaunchUrlConfig, resolveLaunchUrlConfig } from "./config";
 import { installReactNativeClientPlatform, setRuntimeServerBaseUrl } from "./platform";
 import { CesiumLiveUpdates } from "./native/CesiumLiveUpdates";
+import {
+  CesiumPhoneControl,
+  type AndroidPhoneControlStatus,
+} from "./native/CesiumPhoneControl";
 import { CesiumWearCompanion } from "./native/CesiumWearCompanion";
 import { AgentStatusService } from "./services/AgentStatusService";
 import { BackgroundCoordinator } from "./services/BackgroundCoordinator";
@@ -46,6 +50,10 @@ export default function App() {
   const [notificationConversationId, setNotificationConversationId] = useState<string | null>(
     null
   );
+  const [phoneControlStatus, setPhoneControlStatus] =
+    useState<AndroidPhoneControlStatus | null>(null);
+  const [phoneControlLoading, setPhoneControlLoading] = useState(false);
+  const [phoneControlError, setPhoneControlError] = useState<string | null>(null);
   const serverUrlRef = useRef(serverUrl);
   const liveUpdatesRef = useRef(new LiveUpdateController());
   const agentStatusRef = useRef(
@@ -102,15 +110,57 @@ export default function App() {
 
   const configureAgentSocket = useCallback(
     (workspaceId: string | null, conversationId: string | null) => {
+      const authToken = getStoredSessionToken(serverUrl);
       agentStatusRef.current.updateConfig({
         serverBaseUrl: serverUrl,
         workspaceId,
         conversationId,
-        authToken: null,
+        authToken,
       });
+      void CesiumPhoneControl.configure({
+        serverUrl,
+        workspaceId,
+        authToken,
+        backendId: "cesium-agent",
+        mode: "agent",
+      })
+        .then(setPhoneControlStatus)
+        .catch((error) => {
+          setPhoneControlError(
+            error instanceof Error ? error.message : "Failed to configure phone control."
+          );
+        });
     },
     [serverUrl]
   );
+
+  const refreshPhoneControl = useCallback(async () => {
+    setPhoneControlLoading(true);
+    try {
+      setPhoneControlStatus(await CesiumPhoneControl.getStatus());
+      setPhoneControlError(null);
+    } catch (error) {
+      setPhoneControlError(
+        error instanceof Error ? error.message : "Failed to read Android phone-control status."
+      );
+    } finally {
+      setPhoneControlLoading(false);
+    }
+  }, []);
+
+  const setPhoneControlEnabled = useCallback(async (enabled: boolean) => {
+    setPhoneControlLoading(true);
+    try {
+      setPhoneControlStatus(await CesiumPhoneControl.setEnabled(enabled));
+      setPhoneControlError(null);
+    } catch (error) {
+      setPhoneControlError(
+        error instanceof Error ? error.message : "Failed to update Android phone control."
+      );
+    } finally {
+      setPhoneControlLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
     serverUrlRef.current = serverUrl;
@@ -144,6 +194,7 @@ export default function App() {
       backgroundCoordinatorRef.current.setAppState(nextState);
       if (nextState === "active") {
         void consumeNotificationAction().catch(() => undefined);
+        void refreshPhoneControl();
       }
     });
     const netInfoSubscription = NetInfo.addEventListener((state) => {
@@ -157,11 +208,12 @@ export default function App() {
       agentStatus.close();
       void liveUpdates.stop();
     };
-  }, [consumeNotificationAction]);
+  }, [consumeNotificationAction, refreshPhoneControl]);
 
   useEffect(() => {
     void consumeNotificationAction().catch(() => undefined);
-  }, [consumeNotificationAction]);
+    void refreshPhoneControl();
+  }, [consumeNotificationAction, refreshPhoneControl]);
 
   return (
     <SafeAreaProvider>
@@ -179,6 +231,17 @@ export default function App() {
                   notificationConversationId={notificationConversationId}
                   onFocusedConversationChange={configureAgentSocket}
                   onServerBaseUrlChange={setServerUrl}
+                  phoneControl={{
+                    loading: phoneControlLoading,
+                    error: phoneControlError,
+                    status: phoneControlStatus,
+                    onRefresh: refreshPhoneControl,
+                    onSetEnabled: setPhoneControlEnabled,
+                    onOpenAccessibilitySettings:
+                      CesiumPhoneControl.openAccessibilitySettings,
+                    onRequestAssistantRole: CesiumPhoneControl.requestAssistantRole,
+                    onInvokeAssistant: CesiumPhoneControl.invokeAssistant,
+                  }}
                 />
               </NativeWorkspaceProvider>
             </NativeAuthProvider>

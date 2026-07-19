@@ -2,6 +2,7 @@ package com.cesium.mobile
 
 import com.cesium.mobile.wear.CesiumWearCompanionModule
 import com.cesium.mobile.notifications.CesiumLiveUpdatesModule
+import com.cesium.mobile.phonecontrol.CesiumPhoneControlModule
 import com.facebook.react.ReactPackage
 import com.facebook.react.bridge.NativeModule
 import com.facebook.react.bridge.ReactApplicationContext
@@ -13,6 +14,7 @@ class CesiumMobilePackage : ReactPackage {
       CesiumAndroidRuntimeModule(reactContext),
       CesiumLiveUpdatesModule(reactContext),
       CesiumWearCompanionModule(reactContext),
+      CesiumPhoneControlModule(reactContext),
       CesiumWindowInsetsModule(reactContext)
     )
   }
