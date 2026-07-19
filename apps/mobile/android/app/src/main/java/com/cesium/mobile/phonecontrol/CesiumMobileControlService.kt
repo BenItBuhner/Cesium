@@ -83,17 +83,11 @@ class CesiumMobileControlService : Service() {
     val generation = connectionGeneration
     socket?.cancel()
     socket = null
-    val base = config.serverUrl.toHttpUrlOrNull()
+    val url = buildMobileControlRequestUrl(config.serverUrl, config.workspaceId)
       ?: run {
         updateState("error", "Invalid Cesium server URL.")
         return
       }
-    val url = base.newBuilder()
-      .scheme(if (base.isHttps) "wss" else "ws")
-      .encodedPath("/ws/mobile-control")
-      .query(null)
-      .addQueryParameter("workspaceId", config.workspaceId)
-      .build()
     val request = Request.Builder()
       .url(url)
       .apply {
