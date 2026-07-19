@@ -6,9 +6,15 @@ export type CesiumHistoryToolCall = {
   arguments: string;
 };
 
+export type CesiumHistoryImage = {
+  mimeType: string;
+  data: string;
+};
+
 export type CesiumHistoryMessage = {
   role: CesiumRole;
   content: string;
+  images?: CesiumHistoryImage[];
   toolCallId?: string;
   name?: string;
   toolCalls?: CesiumHistoryToolCall[];

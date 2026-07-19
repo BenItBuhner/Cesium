@@ -296,7 +296,21 @@ export function normalizeEventsToHistory(events: AgentStoredEvent[]): CesiumHist
           const content = reminders.length
             ? `${reminders.join("\n\n")}\n\n${event.content}`
             : event.content;
-          messages.push({ role: "user", content });
+          const images = (event.attachments ?? [])
+            .filter(
+              (attachment) =>
+                typeof attachment?.mimeType === "string" &&
+                attachment.mimeType.startsWith("image/") &&
+                typeof attachment?.data === "string" &&
+                attachment.data.length > 0
+            )
+            .slice(0, 6)
+            .map((attachment) => ({ mimeType: attachment.mimeType, data: attachment.data }));
+          messages.push({
+            role: "user",
+            content,
+            ...(images.length > 0 ? { images } : {}),
+          });
         }
         break;
       case "system_reminder":

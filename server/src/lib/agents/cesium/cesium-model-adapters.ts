@@ -88,6 +88,18 @@ export function openAiMessages(messages: CesiumHistoryMessage[]) {
         })),
       };
     }
+    if (message.role === "user" && message.images?.length) {
+      return {
+        role: "user",
+        content: [
+          ...(message.content ? [{ type: "text", text: message.content }] : []),
+          ...message.images.map((image) => ({
+            type: "image_url",
+            image_url: { url: `data:${image.mimeType};base64,${image.data}` },
+          })),
+        ],
+      };
+    }
     return {
       role: message.role,
       content: message.content,
@@ -162,10 +174,24 @@ async function* streamOpenAiResponses(input: {
     },
     body: JSON.stringify({
       model: input.model,
-      input: input.messages.map((message) => ({
-        role: message.role === "system" ? "developer" : message.role,
-        content: message.content,
-      })),
+      input: input.messages.map((message) => {
+        if (message.role === "user" && message.images?.length) {
+          return {
+            role: "user",
+            content: [
+              ...(message.content ? [{ type: "input_text", text: message.content }] : []),
+              ...message.images.map((image) => ({
+                type: "input_image",
+                image_url: `data:${image.mimeType};base64,${image.data}`,
+              })),
+            ],
+          };
+        }
+        return {
+          role: message.role === "system" ? "developer" : message.role,
+          content: message.content,
+        };
+      }),
       ...(tools ? { tools } : {}),
       max_output_tokens: DEFAULT_MAX_OUTPUT_TOKENS,
       stream: true,
