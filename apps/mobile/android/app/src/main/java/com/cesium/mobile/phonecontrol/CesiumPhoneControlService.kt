@@ -35,6 +35,8 @@ class CesiumPhoneControlService : Service() {
   private var activeCall: Call? = null
   private var stopped = false
   private var cursor = 0L
+  private var consecutiveFailures = 0
+  private var connectedHost: String? = null
 
   override fun onBind(intent: Intent?): IBinder? = null
 
@@ -101,6 +103,7 @@ class CesiumPhoneControlService : Service() {
           if (token.isBlank()) {
             throw IllegalStateException("Server did not return a phone pairing token.")
           }
+          onHealthy(config.serverUrl)
           poll(PhoneControlPreferences.setDeviceToken(this, token))
         } catch (error: Exception) {
           scheduleRetry(error.message ?: "Invalid phone registration response")
@@ -121,13 +124,18 @@ class CesiumPhoneControlService : Service() {
         scheduleRetry(response?.code?.let { "Server returned HTTP $it" } ?: "Connection lost")
         return@execute
       }
-      try {
-        val json = JSONObject(response.body?.string() ?: "{}")
-        processCommands(config, json.optJSONArray("commands") ?: JSONArray(), 0) {
-          handler.postDelayed({ registerAndPoll() }, 250)
-        }
-      } catch (error: Exception) {
-        scheduleRetry(error.message ?: "Invalid server response")
+      val raw = runCatching { response.body?.string() }.getOrNull().orEmpty()
+      val json = runCatching { JSONObject(raw.ifBlank { "{}" }) }.getOrNull()
+      if (json == null) {
+        // A long-poll that returns an empty/partial body is a normal transient on
+        // a slow link; just re-poll quietly instead of alarming the user.
+        onHealthy(config.serverUrl)
+        handler.postDelayed({ registerAndPoll() }, 400)
+        return@execute
+      }
+      onHealthy(config.serverUrl)
+      processCommands(config, json.optJSONArray("commands") ?: JSONArray(), 0) {
+        handler.postDelayed({ registerAndPoll() }, 250)
       }
     }
   }
@@ -267,10 +275,26 @@ class CesiumPhoneControlService : Service() {
     }
   }
 
+  private fun onHealthy(serverUrl: String) {
+    consecutiveFailures = 0
+    val label = "Connected to ${hostLabel(serverUrl)}"
+    if (connectedHost != label) {
+      connectedHost = label
+      startAsForeground(label)
+    }
+  }
+
   private fun scheduleRetry(detail: String) {
     if (stopped) return
-    startAsForeground(detail)
-    handler.postDelayed({ registerAndPoll() }, 5_000)
+    consecutiveFailures += 1
+    connectedHost = null
+    // Keep the notification calm through brief blips; only surface trouble once
+    // failures persist. Recover fast (short backoff, capped).
+    if (consecutiveFailures >= 3) {
+      startAsForeground("Reconnecting… ($detail)")
+    }
+    val delay = (750L * consecutiveFailures).coerceAtMost(5_000L)
+    handler.postDelayed({ registerAndPoll() }, delay)
   }
 
   private fun stopControl() {
