@@ -32,14 +32,33 @@ test("phone polling is protected by a per-device pairing token", () => {
     /pairing token/
   );
   assert.throws(
-    () =>
-      registerPhoneDeviceSession({
-        workspaceId: "ws-phone",
-        deviceId: "android-secure",
-        deviceToken: "wrong-token",
-      }),
+    () => authorizePhoneDevice("ws-phone", "android-secure", undefined),
     /pairing token/
   );
+
+  // Re-registering without the current token rotates the pairing token so a
+  // reinstalled app can always re-pair; the previous token then stops working.
+  const rotated = registerPhoneDeviceSession({
+    workspaceId: "ws-phone",
+    deviceId: "android-secure",
+    deviceToken: "stale-token",
+  });
+  assert.notEqual(rotated.deviceToken, session.deviceToken);
+  assert.throws(
+    () => authorizePhoneDevice("ws-phone", "android-secure", session.deviceToken),
+    /pairing token/
+  );
+  assert.doesNotThrow(() =>
+    authorizePhoneDevice("ws-phone", "android-secure", rotated.deviceToken)
+  );
+
+  // Presenting the current token keeps it stable across heartbeats.
+  const kept = registerPhoneDeviceSession({
+    workspaceId: "ws-phone",
+    deviceId: "android-secure",
+    deviceToken: rotated.deviceToken,
+  });
+  assert.equal(kept.deviceToken, rotated.deviceToken);
 });
 
 test("phone control registers a capability-derived Android device", () => {

@@ -102,15 +102,17 @@ export function registerPhoneDevice(
     throw new Error("A valid phone deviceId is required.");
   }
   const key = deviceKey(input.workspaceId, id);
-  const presentedToken = input.deviceToken?.trim();
+  const presentedToken = input.deviceToken?.trim() || undefined;
   const existingToken = deviceTokens.get(key);
-  if (existingToken && presentedToken !== existingToken) {
-    throw new Error("Phone pairing token is missing or invalid.");
-  }
-  deviceTokens.set(
-    key,
-    existingToken ?? presentedToken ?? `phone-token:${randomUUID()}`
-  );
+  // Registration is authorized by workspace access. The pairing token binds the
+  // command channel (poll/result) to the latest device instance: re-registering
+  // rotates the token unless the caller proves it already holds the current one,
+  // so a reinstalled app can always re-pair while stale pollers are cut off.
+  const token =
+    presentedToken && presentedToken === existingToken
+      ? existingToken
+      : `phone-token:${randomUUID()}`;
+  deviceTokens.set(key, token);
   const current = devices.get(key);
   const now = Date.now();
   const capabilities: PhoneControlCapabilities = {

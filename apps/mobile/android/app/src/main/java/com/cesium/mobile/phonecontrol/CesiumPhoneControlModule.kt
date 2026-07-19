@@ -13,6 +13,18 @@ import org.json.JSONObject
 class CesiumPhoneControlModule(
   private val reactContext: ReactApplicationContext
 ) : ReactContextBaseJavaModule(reactContext) {
+  init {
+    // Once the user has enabled phone control, reconnect automatically on every
+    // cold app launch instead of waiting for a settings interaction. Runs during
+    // RN package init while the launching Activity is foregrounded, so the
+    // foreground service start is permitted.
+    runCatching {
+      if (PhoneControlPreferences.read(reactContext).configured) {
+        CesiumPhoneControlService.start(reactContext)
+      }
+    }
+  }
+
   override fun getName(): String = "CesiumPhoneControl"
 
   @ReactMethod

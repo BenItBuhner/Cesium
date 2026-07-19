@@ -138,7 +138,8 @@ object PhoneControlPreferences {
 
   private fun nullableString(json: JSONObject, key: String): String? {
     if (!json.has(key) || json.isNull(key)) return null
-    return json.optString(key).trim().takeIf { it.isNotBlank() }
+    return json.optString(key).trim()
+      .takeIf { it.isNotBlank() && it != "null" && it != "undefined" }
   }
 
   private fun putOptionalString(
