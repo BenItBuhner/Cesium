@@ -43,13 +43,6 @@
       </intent-filter>
     </activity>
 
-    <activity
-      android:name=".phonecontrol.CesiumSecondaryDisplayActivity"
-      android:excludeFromRecents="true"
-      android:exported="false"
-      android:finishOnTaskLaunch="true"
-      android:theme="@style/AppTheme" />
-
     <service
       android:name=".background.CesiumForegroundService"
       android:exported="false"
@@ -103,6 +96,16 @@
       android:exported="true"
       android:permission="android.permission.BIND_VOICE_INTERACTION"
       android:process=":assistant" />
+
+    <service
+      android:name=".assistant.CesiumRecognitionService"
+      android:exported="true"
+      android:permission="android.permission.BIND_SPEECH_RECOGNITION"
+      android:process=":assistant">
+      <intent-filter>
+        <action android:name="android.speech.RecognitionService" />
+      </intent-filter>
+    </service>
 
     <service
       android:name=".wear.CesiumWearCompanionService"

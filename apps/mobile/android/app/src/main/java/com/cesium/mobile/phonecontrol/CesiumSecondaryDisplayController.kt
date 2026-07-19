@@ -1,19 +1,19 @@
 package com.cesium.mobile.phonecontrol
 
-import android.app.ActivityOptions
 import android.content.Context
-import android.content.Intent
+import android.graphics.Bitmap
 import android.graphics.PixelFormat
 import android.hardware.display.DisplayManager
 import android.hardware.display.VirtualDisplay
 import android.media.ImageReader
+import android.util.Base64
 import org.json.JSONObject
-import java.lang.ref.WeakReference
+import java.io.ByteArrayOutputStream
 
 object CesiumSecondaryDisplayController {
   private var virtualDisplay: VirtualDisplay? = null
   private var imageReader: ImageReader? = null
-  private var activityRef: WeakReference<CesiumSecondaryDisplayActivity>? = null
+  private var presentation: CesiumSecondaryPresentation? = null
   private var width = 0
   private var height = 0
   private var title = "Cesium background workspace"
@@ -62,14 +62,13 @@ object CesiumSecondaryDisplayController {
         DisplayManager.VIRTUAL_DISPLAY_FLAG_PRESENTATION
     ) ?: throw IllegalStateException("Android refused to create a private display.")
 
-    val displayId = virtualDisplay!!.display.displayId
-    val intent = Intent(context, CesiumSecondaryDisplayActivity::class.java).apply {
-      addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_MULTIPLE_TASK)
+    presentation = CesiumSecondaryPresentation(
+      context,
+      virtualDisplay!!.display
+    ).apply {
+      render(title, body)
+      show()
     }
-    val options = ActivityOptions.makeBasic().apply {
-      launchDisplayId = displayId
-    }
-    context.startActivity(intent, options.toBundle())
     return status()
   }
 
@@ -79,24 +78,13 @@ object CesiumSecondaryDisplayController {
     }
     if (nextTitle != null) title = nextTitle
     if (nextBody != null) body = nextBody
-    activityRef?.get()?.render(title, body)
+    presentation?.render(title, body)
     return status()
   }
 
-  fun bind(activity: CesiumSecondaryDisplayActivity) {
-    activityRef = WeakReference(activity)
-    activity.render(title, body)
-  }
-
-  fun unbind(activity: CesiumSecondaryDisplayActivity) {
-    if (activityRef?.get() === activity) {
-      activityRef = null
-    }
-  }
-
   private fun close(): JSONObject {
-    activityRef?.get()?.finish()
-    activityRef = null
+    presentation?.dismiss()
+    presentation = null
     virtualDisplay?.release()
     virtualDisplay = null
     imageReader?.close()
@@ -113,11 +101,43 @@ object CesiumSecondaryDisplayController {
     put("height", height)
     put("title", title)
     put("body", body)
+    put("imageDataUrl", captureImageDataUrl() ?: JSONObject.NULL)
     put("visibleToUser", false)
     put("thirdPartyAppsSupported", false)
     put(
       "platformLimit",
       "Android only permits Cesium-owned activities on this private display. Arbitrary third-party app launch requires OEM/signature privileges."
     )
+  }
+
+  private fun captureImageDataUrl(): String? {
+    val reader = imageReader ?: return null
+    val image = runCatching { reader.acquireLatestImage() }.getOrNull() ?: return null
+    return try {
+      val plane = image.planes.firstOrNull() ?: return null
+      val pixelStride = plane.pixelStride
+      val rowStride = plane.rowStride
+      val rowPadding = rowStride - pixelStride * image.width
+      val paddedWidth = image.width + rowPadding / pixelStride
+      val padded = Bitmap.createBitmap(
+        paddedWidth,
+        image.height,
+        Bitmap.Config.ARGB_8888
+      )
+      plane.buffer.rewind()
+      padded.copyPixelsFromBuffer(plane.buffer)
+      val cropped = if (paddedWidth == image.width) {
+        padded
+      } else {
+        Bitmap.createBitmap(padded, 0, 0, image.width, image.height)
+      }
+      val output = ByteArrayOutputStream()
+      cropped.compress(Bitmap.CompressFormat.JPEG, 80, output)
+      if (cropped !== padded) cropped.recycle()
+      padded.recycle()
+      "data:image/jpeg;base64,${Base64.encodeToString(output.toByteArray(), Base64.NO_WRAP)}"
+    } finally {
+      image.close()
+    }
   }
 }
