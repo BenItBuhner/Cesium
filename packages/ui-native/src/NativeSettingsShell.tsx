@@ -10,8 +10,17 @@ import {
   TextInput,
   View,
 } from "react-native";
-import { ChevronLeft, X } from "lucide-react-native";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  Bot,
+  Check,
+  ChevronLeft,
+  ChevronRight,
+  Cpu,
+  Palette,
+  Server,
+  Smartphone,
+} from "lucide-react-native";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   fetchCesiumAgentSettings,
   saveCesiumProviderKey,
@@ -55,18 +64,15 @@ export function NativeSettingsShell({
       <View style={styles.backdrop}>
         <View style={styles.sheet} testID="native-settings-shell">
           <View style={styles.header}>
-            {section !== "home" ? (
-              <Pressable
-                accessibilityLabel="Back"
-                hitSlop={8}
-                onPress={() => setSection("home")}
-                style={styles.headerButton}
-              >
-                <ChevronLeft color={tokens["--text-primary"]} size={20} strokeWidth={1.5} />
-              </Pressable>
-            ) : (
-              <View style={styles.headerButton} />
-            )}
+            <Pressable
+              accessibilityLabel={section === "home" ? "Close settings" : "Back to settings"}
+              hitSlop={8}
+              onPress={section === "home" ? onClose : () => setSection("home")}
+              style={styles.headerButton}
+              testID={section === "home" ? "close-native-settings" : "settings-back-home"}
+            >
+              <ChevronLeft color={tokens["--text-primary"]} size={22} strokeWidth={1.7} />
+            </Pressable>
             <Text style={styles.title}>
               {section === "home"
                 ? "Settings"
@@ -80,54 +86,22 @@ export function NativeSettingsShell({
                         ? "Cesium Agent"
                         : "Settings"}
             </Text>
-            <Pressable
-              accessibilityLabel="Close settings"
-              hitSlop={8}
-              onPress={onClose}
-              style={styles.headerButton}
-              testID="close-native-settings"
-            >
-              <X color={tokens["--text-primary"]} size={18} strokeWidth={1.5} />
-            </Pressable>
+            <View style={styles.headerButton} />
           </View>
 
           {section === "home" ? (
-            <ScrollView contentContainerStyle={styles.content}>
-              <SettingsRow
-                label="Servers"
-                detail="Active and saved Cesium servers"
-                onPress={() => setSection("servers")}
-                styles={styles}
-              />
-              <SettingsRow
-                label="Appearance"
-                detail="Theme and density preferences"
-                onPress={() => setSection("appearance")}
-                styles={styles}
-              />
-              <SettingsRow
-                label="Models"
-                detail="Visible models per harness"
-                onPress={() => setSection("models")}
-                styles={styles}
-              />
-              <SettingsRow
-                label="Cesium Agent"
-                detail="Provider keys and default model"
-                onPress={() => setSection("agents")}
-                styles={styles}
-              />
-              <SettingsRow
-                label="Server on this phone"
-                detail="Optional Termux backend setup"
-                onPress={() => {
-                  onClose();
-                  onOpenServerSetup();
-                }}
-                styles={styles}
-                testID="settings-open-server-setup"
-              />
-            </ScrollView>
+            <SettingsHome
+              onOpenAppearance={() => setSection("appearance")}
+              onOpenAgents={() => setSection("agents")}
+              onOpenModels={() => setSection("models")}
+              onOpenServers={() => setSection("servers")}
+              onOpenServerSetup={() => {
+                onClose();
+                onOpenServerSetup();
+              }}
+              styles={styles}
+              tokens={tokens}
+            />
           ) : null}
           {section === "servers" ? <ServersPanel styles={styles} tokens={tokens} /> : null}
           {section === "appearance" ? <AppearancePanel styles={styles} tokens={tokens} /> : null}
@@ -139,25 +113,140 @@ export function NativeSettingsShell({
   );
 }
 
-function SettingsRow({
-  detail,
+function SettingsHome({
+  onOpenAppearance,
+  onOpenAgents,
+  onOpenModels,
+  onOpenServers,
+  onOpenServerSetup,
+  styles,
+  tokens,
+}: {
+  onOpenAppearance: () => void;
+  onOpenAgents: () => void;
+  onOpenModels: () => void;
+  onOpenServers: () => void;
+  onOpenServerSetup: () => void;
+  styles: ReturnType<typeof createStyles>;
+  tokens: ThemeTokens;
+}) {
+  const { activeServer } = useServerConnections();
+  const { settings } = useGlobalSettings();
+  const modelCount = Object.values(settings.models.byBackend).reduce(
+    (total, models) => total + models.filter((model) => model.on).length,
+    0
+  );
+  const theme = settings.themeConfig.appearance;
+  const themeLabel = theme === "system" ? "System" : theme === "light" ? "Light" : "Dark";
+  const iconColor = tokens["--text-primary"];
+
+  return (
+    <ScrollView contentContainerStyle={styles.content}>
+      <SettingsGroup label="Workspace" styles={styles}>
+        <NavigationRow
+          detail={activeServer.label}
+          icon={<Server color={iconColor} size={19} strokeWidth={1.6} />}
+          label="Servers"
+          onPress={onOpenServers}
+          styles={styles}
+          testID="settings-nav-servers"
+        />
+      </SettingsGroup>
+
+      <SettingsGroup label="AI configuration" styles={styles}>
+        <NavigationRow
+          detail="Provider keys and default model"
+          icon={<Bot color={iconColor} size={19} strokeWidth={1.6} />}
+          label="Cesium Agent"
+          onPress={onOpenAgents}
+          styles={styles}
+          testID="settings-nav-agents"
+        />
+        <NavigationRow
+          detail={`${modelCount} visible model${modelCount === 1 ? "" : "s"}`}
+          icon={<Cpu color={iconColor} size={19} strokeWidth={1.6} />}
+          label="Models"
+          last
+          onPress={onOpenModels}
+          styles={styles}
+          testID="settings-nav-models"
+        />
+      </SettingsGroup>
+
+      <SettingsGroup label="Preferences" styles={styles}>
+        <NavigationRow
+          detail={`${themeLabel} theme`}
+          icon={<Palette color={iconColor} size={19} strokeWidth={1.6} />}
+          label="Appearance"
+          last
+          onPress={onOpenAppearance}
+          styles={styles}
+          testID="settings-nav-appearance"
+        />
+      </SettingsGroup>
+
+      <SettingsGroup label="On this device" styles={styles}>
+        <NavigationRow
+          detail="Optional Termux backend"
+          icon={<Smartphone color={iconColor} size={19} strokeWidth={1.6} />}
+          label="Server on this phone"
+          last
+          onPress={onOpenServerSetup}
+          styles={styles}
+          testID="settings-open-server-setup"
+        />
+      </SettingsGroup>
+    </ScrollView>
+  );
+}
+
+function SettingsGroup({
+  children,
   label,
+  styles,
+}: {
+  children: ReactNode;
+  label: string;
+  styles: ReturnType<typeof createStyles>;
+}) {
+  return (
+    <View style={styles.section}>
+      <Text style={styles.sectionLabel}>{label}</Text>
+      <View style={styles.groupCard}>{children}</View>
+    </View>
+  );
+}
+
+function NavigationRow({
+  detail,
+  icon,
+  label,
+  last = false,
   onPress,
   styles,
   testID,
 }: {
   detail: string;
+  icon: ReactNode;
   label: string;
+  last?: boolean;
   onPress: () => void;
   styles: ReturnType<typeof createStyles>;
   testID?: string;
 }) {
   return (
-    <Pressable onPress={onPress} style={styles.row} testID={testID}>
+    <Pressable
+      accessibilityRole="button"
+      onPress={onPress}
+      style={[styles.navigationRow, last ? null : styles.rowDivider]}
+      testID={testID}
+    >
+      <View style={styles.iconWrap}>{icon}</View>
       <View style={styles.rowTextWrap}>
         <Text style={styles.rowLabel}>{label}</Text>
         <Text style={styles.rowDetail}>{detail}</Text>
       </View>
+      <ChevronRight color={styles.chevron.color} size={18} strokeWidth={1.6} />
     </Pressable>
   );
 }
@@ -214,57 +303,81 @@ function ServersPanel({
 
   return (
     <ScrollView contentContainerStyle={styles.content}>
-      {servers.map((server) => {
-        const active = server.id === activeServer.id;
-        return (
+      <SettingsGroup label="Saved servers" styles={styles}>
+        {servers.map((server, index) => {
+          const active = server.id === activeServer.id;
+          return (
+            <Pressable
+              accessibilityRole="radio"
+              accessibilityState={{ selected: active }}
+              key={server.id}
+              onPress={() => {
+                setActiveServer(server.id);
+                setDefaultServer(server.id);
+              }}
+              style={[
+                styles.listRow,
+                index < servers.length - 1 ? styles.rowDivider : null,
+                active ? styles.listRowSelected : null,
+              ]}
+            >
+              <View style={styles.rowTextWrap}>
+                <Text style={styles.rowLabel}>{server.label}</Text>
+                <Text numberOfLines={1} style={styles.rowDetail}>
+                  {server.baseUrl}
+                </Text>
+              </View>
+              {active ? (
+                <View style={styles.activeBadge}>
+                  <Check color={tokens["--text-primary"]} size={13} strokeWidth={2} />
+                  <Text style={styles.badge}>Active</Text>
+                </View>
+              ) : null}
+            </Pressable>
+          );
+        })}
+      </SettingsGroup>
+
+      <View style={styles.section}>
+        <Text style={styles.sectionLabel}>Add server</Text>
+        <View style={styles.formCard}>
+          <TextInput
+            autoCapitalize="none"
+            autoCorrect={false}
+            onChangeText={setLabel}
+            placeholder="Name (optional)"
+            placeholderTextColor={tokens["--text-secondary"]}
+            style={styles.input}
+            value={label}
+          />
+          <TextInput
+            autoCapitalize="none"
+            autoCorrect={false}
+            onChangeText={setBaseUrl}
+            placeholder="https://example.com:9100"
+            placeholderTextColor={tokens["--text-secondary"]}
+            style={styles.input}
+            value={baseUrl}
+          />
           <Pressable
-            key={server.id}
-            onPress={() => {
-              setActiveServer(server.id);
-              setDefaultServer(server.id);
-            }}
-            style={[styles.row, active ? styles.rowSelected : null]}
+            disabled={saving}
+            onPress={() => void addServer()}
+            style={({ pressed }) => [
+              styles.primaryButton,
+              pressed ? styles.buttonPressed : null,
+              saving ? styles.buttonDisabled : null,
+            ]}
+            testID="settings-add-server"
           >
-            <View style={styles.rowTextWrap}>
-              <Text style={styles.rowLabel}>{server.label}</Text>
-              <Text style={styles.rowDetail}>{server.baseUrl}</Text>
-            </View>
-            {active ? <Text style={styles.badge}>Active</Text> : null}
+            {saving ? (
+              <ActivityIndicator color={tokens["--bg-main"]} />
+            ) : (
+              <Text style={styles.primaryButtonText}>Check and save</Text>
+            )}
           </Pressable>
-        );
-      })}
-      <Text style={styles.sectionLabel}>Add server</Text>
-      <TextInput
-        autoCapitalize="none"
-        autoCorrect={false}
-        onChangeText={setLabel}
-        placeholder="Label"
-        placeholderTextColor={tokens["--text-secondary"]}
-        style={styles.input}
-        value={label}
-      />
-      <TextInput
-        autoCapitalize="none"
-        autoCorrect={false}
-        onChangeText={setBaseUrl}
-        placeholder="https://example.com:9100"
-        placeholderTextColor={tokens["--text-secondary"]}
-        style={styles.input}
-        value={baseUrl}
-      />
-      <Pressable
-        disabled={saving}
-        onPress={() => void addServer()}
-        style={styles.primaryButton}
-        testID="settings-add-server"
-      >
-        {saving ? (
-          <ActivityIndicator color={tokens["--bg-main"]} />
-        ) : (
-          <Text style={styles.primaryButtonText}>Save server</Text>
-        )}
-      </Pressable>
-      {status ? <Text style={styles.status}>{status}</Text> : null}
+        </View>
+        {status ? <Text style={styles.status}>{status}</Text> : null}
+      </View>
     </ScrollView>
   );
 }
@@ -295,36 +408,57 @@ function AppearancePanel({
 
   return (
     <ScrollView contentContainerStyle={styles.content}>
-      {(["system", "light", "dark"] as const).map((value) => (
-        <Pressable
-          key={value}
-          onPress={() => setTheme(value)}
-          style={[styles.row, theme === value ? styles.rowSelected : null]}
-        >
-          <Text style={styles.rowLabel}>
-            {value === "system" ? "System" : value === "light" ? "Light" : "Dark"}
-          </Text>
-        </Pressable>
-      ))}
-      <View style={styles.switchRow}>
-        <Text style={styles.rowLabel}>Collapse long pastes</Text>
-        <Switch
-          onValueChange={(next) =>
-            updateSettings((current) => ({
-              ...current,
-              themeConfig: {
-                ...current.themeConfig,
-                longPasteReferencesEnabled: next,
-              },
-            }))
-          }
-          trackColor={{
-            false: tokens["--border-subtle"],
-            true: tokens["--text-secondary"],
-          }}
-          value={settings.themeConfig.longPasteReferencesEnabled}
-        />
+      <View style={styles.section}>
+        <Text style={styles.sectionLabel}>Theme</Text>
+        <View accessibilityRole="radiogroup" style={styles.segmentedControl}>
+          {(["system", "light", "dark"] as const).map((value) => {
+            const selected = theme === value;
+            const label = value === "system" ? "System" : value === "light" ? "Light" : "Dark";
+            return (
+              <Pressable
+                accessibilityRole="radio"
+                accessibilityState={{ selected }}
+                key={value}
+                onPress={() => setTheme(value)}
+                style={[styles.segment, selected ? styles.segmentSelected : null]}
+                testID={`settings-theme-${value}`}
+              >
+                <Text style={[styles.segmentText, selected ? styles.segmentTextSelected : null]}>
+                  {label}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
+        <Text style={styles.sectionHint}>
+          System follows your device and changes automatically.
+        </Text>
       </View>
+
+      <SettingsGroup label="Chat" styles={styles}>
+        <View style={styles.preferenceRow}>
+          <View style={styles.rowTextWrap}>
+            <Text style={styles.rowLabel}>Collapse long pastes</Text>
+            <Text style={styles.rowDetail}>Show large pasted content as a compact reference</Text>
+          </View>
+          <Switch
+            onValueChange={(next) =>
+              updateSettings((current) => ({
+                ...current,
+                themeConfig: {
+                  ...current.themeConfig,
+                  longPasteReferencesEnabled: next,
+                },
+              }))
+            }
+            trackColor={{
+              false: tokens["--border-subtle"],
+              true: tokens["--text-secondary"],
+            }}
+            value={settings.themeConfig.longPasteReferencesEnabled}
+          />
+        </View>
+      </SettingsGroup>
     </ScrollView>
   );
 }
@@ -344,7 +478,7 @@ function ModelsPanel({
     <ScrollView contentContainerStyle={styles.content}>
       <Pressable
         onPress={() => void refreshModels()}
-        style={styles.secondaryButton}
+        style={({ pressed }) => [styles.secondaryButton, pressed ? styles.buttonPressed : null]}
         testID="settings-refresh-models"
       >
         {modelsRefreshing ? (
@@ -354,14 +488,27 @@ function ModelsPanel({
         )}
       </Pressable>
       {backends.length === 0 ? (
-        <Text style={styles.status}>No model catalog loaded yet. Refresh after connecting.</Text>
+        <View style={styles.emptyCard}>
+          <Text style={styles.emptyTitle}>No models yet</Text>
+          <Text style={styles.status}>Connect to a server, then refresh the model catalog.</Text>
+        </View>
       ) : (
         backends.map(([backendId, toggles]) => (
-          <View key={backendId} style={styles.group}>
-            <Text style={styles.sectionLabel}>{backendId}</Text>
-            {toggles.map((toggle) => (
-              <View key={toggle.id} style={styles.switchRow}>
-                <Text style={styles.rowLabel}>{toggle.name}</Text>
+          <SettingsGroup key={backendId} label={backendId} styles={styles}>
+            {toggles.map((toggle, index) => (
+              <View
+                key={toggle.id}
+                style={[
+                  styles.preferenceRow,
+                  index < toggles.length - 1 ? styles.rowDivider : null,
+                ]}
+              >
+                <View style={styles.rowTextWrap}>
+                  <Text style={styles.rowLabel}>{toggle.name}</Text>
+                  <Text numberOfLines={1} style={styles.rowDetail}>
+                    {toggle.id}
+                  </Text>
+                </View>
                 <Switch
                   onValueChange={(on) => {
                     void saveModelToggleUpdates([{ backendId, modelId: toggle.id, on }]);
@@ -374,7 +521,7 @@ function ModelsPanel({
                 />
               </View>
             ))}
-          </View>
+          </SettingsGroup>
         ))
       )}
     </ScrollView>
@@ -449,60 +596,99 @@ function AgentsPanel({
 
   return (
     <ScrollView contentContainerStyle={styles.content}>
-      <Text style={styles.status}>
-        {configured
-          ? `Configured · ${providerCount} provider key${providerCount === 1 ? "" : "s"}`
-          : "Not configured yet"}
-      </Text>
-      <Text style={styles.sectionLabel}>Default model id</Text>
-      <Text style={styles.rowDetail}>{defaultModelId || "—"}</Text>
-      <Text style={styles.sectionLabel}>Add OpenAI-compatible key</Text>
-      <TextInput
-        autoCapitalize="none"
-        autoCorrect={false}
-        onChangeText={setBaseUrl}
-        placeholder="Base URL"
-        placeholderTextColor={tokens["--text-secondary"]}
-        style={styles.input}
-        value={baseUrl}
-      />
-      <TextInput
-        autoCapitalize="none"
-        autoCorrect={false}
-        onChangeText={setApiKey}
-        placeholder="API key"
-        placeholderTextColor={tokens["--text-secondary"]}
-        secureTextEntry
-        style={styles.input}
-        value={apiKey}
-      />
-      <View style={styles.kindRow}>
-        {(
-          [
-            ["openai-compatible", "Compatible"],
-            ["openai-chat-completions", "Chat"],
-            ["anthropic", "Anthropic"],
-            ["google-genai", "Google"],
-          ] as const
-        ).map(([value, label]) => (
+      <SettingsGroup label="Overview" styles={styles}>
+        <View style={[styles.preferenceRow, styles.rowDivider]}>
+          <View style={styles.rowTextWrap}>
+            <Text style={styles.rowLabel}>Provider status</Text>
+            <Text style={styles.rowDetail}>
+              {configured
+                ? `${providerCount} saved key${providerCount === 1 ? "" : "s"}`
+                : "No provider configured"}
+            </Text>
+          </View>
+          <View style={[styles.statusDot, configured ? styles.statusDotActive : null]} />
+        </View>
+        <View style={styles.preferenceRow}>
+          <View style={styles.rowTextWrap}>
+            <Text style={styles.rowLabel}>Default model</Text>
+            <Text numberOfLines={1} style={styles.rowDetail}>
+              {defaultModelId || "Not selected"}
+            </Text>
+          </View>
+        </View>
+      </SettingsGroup>
+
+      <View style={styles.section}>
+        <Text style={styles.sectionLabel}>Add provider</Text>
+        <View style={styles.formCard}>
+          <Text style={styles.fieldLabel}>Provider type</Text>
+          <View style={styles.kindRow}>
+            {(
+              [
+                ["openai-compatible", "Compatible"],
+                ["openai-chat-completions", "OpenAI"],
+                ["anthropic", "Anthropic"],
+                ["google-genai", "Google"],
+              ] as const
+            ).map(([value, label]) => {
+              const selected = apiKind === value;
+              return (
+                <Pressable
+                  accessibilityRole="radio"
+                  accessibilityState={{ selected }}
+                  key={value}
+                  onPress={() => setApiKind(value)}
+                  style={[styles.kindChip, selected ? styles.kindChipSelected : null]}
+                >
+                  <Text
+                    style={[styles.kindChipText, selected ? styles.kindChipTextSelected : null]}
+                  >
+                    {label}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+          {apiKind === "openai-compatible" || apiKind === "openai-chat-completions" ? (
+            <>
+              <Text style={styles.fieldLabel}>Base URL</Text>
+              <TextInput
+                autoCapitalize="none"
+                autoCorrect={false}
+                onChangeText={setBaseUrl}
+                placeholder="https://api.openai.com/v1"
+                placeholderTextColor={tokens["--text-secondary"]}
+                style={styles.input}
+                value={baseUrl}
+              />
+            </>
+          ) : null}
+          <Text style={styles.fieldLabel}>API key</Text>
+          <TextInput
+            autoCapitalize="none"
+            autoCorrect={false}
+            onChangeText={setApiKey}
+            placeholder="Paste a provider key"
+            placeholderTextColor={tokens["--text-secondary"]}
+            secureTextEntry
+            style={styles.input}
+            value={apiKey}
+          />
           <Pressable
-            key={value}
-            onPress={() => setApiKind(value)}
-            style={[styles.kindChip, apiKind === value ? styles.rowSelected : null]}
+            disabled={loading}
+            onPress={() => void saveKey()}
+            style={({ pressed }) => [
+              styles.primaryButton,
+              pressed ? styles.buttonPressed : null,
+              loading ? styles.buttonDisabled : null,
+            ]}
+            testID="settings-save-provider-key"
           >
-            <Text style={styles.kindChipText}>{label}</Text>
+            <Text style={styles.primaryButtonText}>Save provider</Text>
           </Pressable>
-        ))}
+        </View>
+        {status ? <Text style={styles.status}>{status}</Text> : null}
       </View>
-      <Pressable
-        disabled={loading}
-        onPress={() => void saveKey()}
-        style={styles.primaryButton}
-        testID="settings-save-provider-key"
-      >
-        <Text style={styles.primaryButtonText}>Save provider key</Text>
-      </Pressable>
-      {status ? <Text style={styles.status}>{status}</Text> : null}
     </ScrollView>
   );
 }
@@ -510,17 +696,12 @@ function AgentsPanel({
 function createStyles(tokens: ThemeTokens) {
   return StyleSheet.create({
     backdrop: {
-      backgroundColor: "rgba(0,0,0,0.45)",
+      backgroundColor: tokens["--bg-main"],
       flex: 1,
-      justifyContent: "flex-end",
     },
     sheet: {
       backgroundColor: tokens["--bg-main"],
-      borderTopLeftRadius: 18,
-      borderTopRightRadius: 18,
-      maxHeight: "92%",
-      minHeight: "70%",
-      paddingBottom: 20,
+      flex: 1,
     },
     header: {
       alignItems: "center",
@@ -528,36 +709,63 @@ function createStyles(tokens: ThemeTokens) {
       borderBottomWidth: StyleSheet.hairlineWidth,
       flexDirection: "row",
       justifyContent: "space-between",
-      paddingHorizontal: 12,
-      paddingVertical: 12,
+      minHeight: 56,
+      paddingHorizontal: 8,
     },
     headerButton: {
       alignItems: "center",
-      height: 32,
+      height: 44,
       justifyContent: "center",
-      width: 32,
+      width: 44,
     },
     title: {
       color: tokens["--text-primary"],
+      flex: 1,
       fontFamily: "sans-serif-medium",
-      fontSize: 17,
+      fontSize: 18,
+      textAlign: "left",
     },
     content: {
-      gap: 8,
+      gap: 22,
       padding: 16,
+      paddingBottom: 40,
     },
-    row: {
+    section: {
+      gap: 8,
+    },
+    sectionLabel: {
+      color: tokens["--text-secondary"],
+      fontFamily: "sans-serif-medium",
+      fontSize: 12,
+      letterSpacing: 0.2,
+      paddingHorizontal: 4,
+    },
+    groupCard: {
       backgroundColor: tokens["--bg-card"],
-      borderRadius: 12,
-      flexDirection: "row",
-      alignItems: "center",
-      justifyContent: "space-between",
-      paddingHorizontal: 14,
-      paddingVertical: 14,
-    },
-    rowSelected: {
-      borderColor: tokens["--text-secondary"],
+      borderColor: tokens["--border-subtle"],
+      borderRadius: 14,
       borderWidth: StyleSheet.hairlineWidth,
+      overflow: "hidden",
+    },
+    navigationRow: {
+      alignItems: "center",
+      flexDirection: "row",
+      gap: 12,
+      minHeight: 68,
+      paddingHorizontal: 14,
+      paddingVertical: 10,
+    },
+    rowDivider: {
+      borderBottomColor: tokens["--border-subtle"],
+      borderBottomWidth: StyleSheet.hairlineWidth,
+    },
+    iconWrap: {
+      alignItems: "center",
+      backgroundColor: tokens["--accent-bg"],
+      borderRadius: 10,
+      height: 36,
+      justifyContent: "center",
+      width: 36,
     },
     rowTextWrap: {
       flex: 1,
@@ -566,34 +774,77 @@ function createStyles(tokens: ThemeTokens) {
     rowLabel: {
       color: tokens["--text-primary"],
       fontFamily: "sans-serif-medium",
-      fontSize: 15,
+      fontSize: 14,
     },
     rowDetail: {
       color: tokens["--text-secondary"],
       fontFamily: "sans-serif",
       fontSize: 12,
+      lineHeight: 17,
+    },
+    chevron: {
+      color: tokens["--text-disabled"],
     },
     badge: {
-      color: tokens["--text-secondary"],
+      color: tokens["--text-primary"],
       fontFamily: "sans-serif-medium",
       fontSize: 11,
-      marginLeft: 8,
     },
-    sectionLabel: {
+    activeBadge: {
+      alignItems: "center",
+      backgroundColor: tokens["--accent-bg"],
+      borderRadius: 999,
+      flexDirection: "row",
+      gap: 4,
+      paddingHorizontal: 8,
+      paddingVertical: 5,
+    },
+    listRow: {
+      alignItems: "center",
+      flexDirection: "row",
+      gap: 12,
+      justifyContent: "space-between",
+      minHeight: 62,
+      paddingHorizontal: 14,
+      paddingVertical: 10,
+    },
+    listRowSelected: {
+      backgroundColor: tokens["--accent-bg"],
+    },
+    preferenceRow: {
+      alignItems: "center",
+      flexDirection: "row",
+      gap: 16,
+      justifyContent: "space-between",
+      minHeight: 60,
+      paddingHorizontal: 14,
+      paddingVertical: 10,
+    },
+    formCard: {
+      backgroundColor: tokens["--bg-card"],
+      borderColor: tokens["--border-subtle"],
+      borderRadius: 14,
+      borderWidth: StyleSheet.hairlineWidth,
+      gap: 10,
+      padding: 12,
+    },
+    fieldLabel: {
       color: tokens["--text-secondary"],
       fontFamily: "sans-serif-medium",
       fontSize: 12,
-      marginTop: 8,
-      textTransform: "uppercase",
+      marginTop: 2,
     },
     input: {
-      backgroundColor: tokens["--bg-card"],
+      backgroundColor: tokens["--bg-main"],
+      borderColor: tokens["--border-subtle"],
       borderRadius: 10,
+      borderWidth: StyleSheet.hairlineWidth,
       color: tokens["--text-primary"],
       fontFamily: "sans-serif",
       fontSize: 14,
+      minHeight: 46,
       paddingHorizontal: 12,
-      paddingVertical: 12,
+      paddingVertical: 10,
     },
     primaryButton: {
       alignItems: "center",
@@ -608,12 +859,20 @@ function createStyles(tokens: ThemeTokens) {
       fontFamily: "sans-serif-medium",
       fontSize: 14,
     },
+    buttonPressed: {
+      opacity: 0.78,
+    },
+    buttonDisabled: {
+      opacity: 0.5,
+    },
     secondaryButton: {
       alignItems: "center",
       backgroundColor: tokens["--bg-card"],
+      borderColor: tokens["--border-subtle"],
       borderRadius: 12,
+      borderWidth: StyleSheet.hairlineWidth,
       justifyContent: "center",
-      minHeight: 40,
+      minHeight: 44,
       paddingHorizontal: 14,
     },
     secondaryButtonText: {
@@ -625,18 +884,21 @@ function createStyles(tokens: ThemeTokens) {
       color: tokens["--text-secondary"],
       fontFamily: "sans-serif",
       fontSize: 13,
+      lineHeight: 18,
+      paddingHorizontal: 4,
     },
-    switchRow: {
-      alignItems: "center",
+    emptyCard: {
       backgroundColor: tokens["--bg-card"],
-      borderRadius: 12,
-      flexDirection: "row",
-      justifyContent: "space-between",
-      paddingHorizontal: 14,
-      paddingVertical: 12,
+      borderColor: tokens["--border-subtle"],
+      borderRadius: 14,
+      borderWidth: StyleSheet.hairlineWidth,
+      gap: 4,
+      padding: 18,
     },
-    group: {
-      gap: 8,
+    emptyTitle: {
+      color: tokens["--text-primary"],
+      fontFamily: "sans-serif-medium",
+      fontSize: 15,
     },
     loadingWrap: {
       alignItems: "center",
@@ -650,15 +912,70 @@ function createStyles(tokens: ThemeTokens) {
       gap: 8,
     },
     kindChip: {
-      backgroundColor: tokens["--bg-card"],
+      backgroundColor: tokens["--bg-main"],
+      borderColor: tokens["--border-subtle"],
       borderRadius: 999,
+      borderWidth: StyleSheet.hairlineWidth,
       paddingHorizontal: 12,
       paddingVertical: 8,
+    },
+    kindChipSelected: {
+      backgroundColor: tokens["--text-primary"],
+      borderColor: tokens["--text-primary"],
     },
     kindChipText: {
       color: tokens["--text-primary"],
       fontFamily: "sans-serif",
       fontSize: 12,
+    },
+    kindChipTextSelected: {
+      color: tokens["--bg-main"],
+      fontFamily: "sans-serif-medium",
+    },
+    segmentedControl: {
+      backgroundColor: tokens["--bg-card"],
+      borderColor: tokens["--border-subtle"],
+      borderRadius: 12,
+      borderWidth: StyleSheet.hairlineWidth,
+      flexDirection: "row",
+      gap: 3,
+      padding: 3,
+    },
+    segment: {
+      alignItems: "center",
+      borderRadius: 9,
+      flex: 1,
+      minHeight: 38,
+      justifyContent: "center",
+      paddingHorizontal: 10,
+    },
+    segmentSelected: {
+      backgroundColor: tokens["--text-primary"],
+    },
+    segmentText: {
+      color: tokens["--text-secondary"],
+      fontFamily: "sans-serif",
+      fontSize: 13,
+    },
+    segmentTextSelected: {
+      color: tokens["--bg-main"],
+      fontFamily: "sans-serif-medium",
+    },
+    sectionHint: {
+      color: tokens["--text-secondary"],
+      fontFamily: "sans-serif",
+      fontSize: 12,
+      lineHeight: 17,
+      paddingHorizontal: 4,
+    },
+    statusDot: {
+      backgroundColor: tokens["--text-disabled"],
+      borderRadius: 5,
+      height: 10,
+      width: 10,
+    },
+    statusDotActive: {
+      backgroundColor: tokens["--accent"],
     },
   });
 }
