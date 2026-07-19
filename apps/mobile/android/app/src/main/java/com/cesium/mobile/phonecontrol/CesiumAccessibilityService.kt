@@ -203,18 +203,35 @@ class CesiumAccessibilityService : AccessibilityService() {
         return
       }
       val onDefaultDisplay = displayId < 0 || displayId == Display.DEFAULT_DISPLAY
-      // On the active display, a real coordinate gesture at the node center is
-      // the most reliable way to actually trigger navigation: ACTION_CLICK on a
-      // list row often "succeeds" without the app reacting. Off-screen displays
-      // can't receive coordinate gestures, so use the semantic click there.
+      // 1) On the active display, dispatch a real coordinate gesture at the node
+      //    center — this most reliably triggers navigation. But only when the
+      //    node (or an ancestor) reports sane, on-screen bounds: some widgets
+      //    (Settings' collapsing-toolbar rows) report a negative/off-screen rect
+      //    mid-relayout, and tapping that would miss. Climb parents to find a
+      //    valid rect.
       if (onDefaultDisplay) {
+        val metrics = resources.displayMetrics
         val bounds = Rect()
-        target.getBoundsInScreen(bounds)
-        if (!bounds.isEmpty) {
+        var node: AccessibilityNodeInfo? = target
+        var usable = false
+        while (node != null) {
+          node.getBoundsInScreen(bounds)
+          if (!bounds.isEmpty && bounds.top >= 0 && bounds.left >= 0 &&
+            bounds.bottom <= metrics.heightPixels && bounds.right <= metrics.widthPixels
+          ) {
+            usable = true
+            break
+          }
+          node = node.parent
+        }
+        if (usable) {
           dispatchTap(bounds.exactCenterX(), bounds.exactCenterY(), 80, success, failure)
           return
         }
       }
+      // 2) Fallback: a coordinate-independent semantic click on the nearest
+      //    clickable ancestor. This covers off-screen displays and nodes whose
+      //    on-screen bounds are unusable.
       var clickable: AccessibilityNodeInfo? = target
       while (clickable != null && !clickable.isClickable) {
         clickable = clickable.parent
@@ -223,7 +240,7 @@ class CesiumAccessibilityService : AccessibilityService() {
         success(JSONObject().put("dispatched", true).put("method", "accessibility_click"))
         return
       }
-      failure("Matched a node on display $displayId but could not tap it (no on-screen bounds and no clickable ancestor).")
+      failure("Matched a node on display $displayId but could not tap it (no valid on-screen bounds and no clickable ancestor).")
       return
     }
     if (!payload.has("x") || !payload.has("y")) {
@@ -417,15 +434,50 @@ class CesiumAccessibilityService : AccessibilityService() {
     viewId: String?,
     displayId: Int = -1
   ): AccessibilityNodeInfo? {
-    for (root in rootsForDisplay(displayId)) {
-      if (viewId != null) {
-        root.findAccessibilityNodeInfosByViewId(viewId).firstOrNull()?.let { return it }
+    val metrics = resources.displayMetrics
+    // Prefer the best candidate over the first match: text/viewId queries can
+    // return duplicates (e.g. a collapsed app-bar title plus the real list row),
+    // and the first one may be off-screen, which would send a coordinate tap to
+    // the wrong place. Rank by: visible-to-user + valid on-screen bounds, then by
+    // whether it (or an ancestor) is clickable, then prefer an exact text match.
+    fun hasClickableSelfOrAncestor(node: AccessibilityNodeInfo): Boolean {
+      var n: AccessibilityNodeInfo? = node
+      var hops = 0
+      while (n != null && hops < 12) {
+        if (n.isClickable) return true
+        n = n.parent
+        hops += 1
       }
-      if (text != null) {
-        root.findAccessibilityNodeInfosByText(text).firstOrNull()?.let { return it }
-      }
+      return false
     }
-    return null
+    fun score(node: AccessibilityNodeInfo): Int {
+      val bounds = Rect()
+      node.getBoundsInScreen(bounds)
+      val onScreen = !bounds.isEmpty && bounds.top >= 0 && bounds.left >= 0 &&
+        bounds.bottom <= metrics.heightPixels && bounds.right <= metrics.widthPixels
+      var s = 0
+      if (node.isVisibleToUser) s += 4
+      if (onScreen) s += 4
+      if (hasClickableSelfOrAncestor(node)) s += 2
+      if (text != null && node.text?.toString() == text) s += 1
+      return s
+    }
+    var best: AccessibilityNodeInfo? = null
+    var bestScore = -1
+    for (root in rootsForDisplay(displayId)) {
+      val candidates = mutableListOf<AccessibilityNodeInfo>()
+      if (viewId != null) candidates += root.findAccessibilityNodeInfosByViewId(viewId)
+      if (text != null) candidates += root.findAccessibilityNodeInfosByText(text)
+      for (candidate in candidates) {
+        val s = score(candidate)
+        if (s > bestScore) {
+          bestScore = s
+          best = candidate
+        }
+      }
+      if (best != null && bestScore >= 8) return best
+    }
+    return best
   }
 
   companion object {
