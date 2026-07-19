@@ -105,12 +105,12 @@ object PhoneControlPreferences {
         enabled = json.optBoolean("enabled", false),
         serverUrl = json.optString("serverUrl").trimEnd('/'),
         workspaceId = json.optString("workspaceId"),
-        authToken = json.optString("authToken").takeIf { it.isNotBlank() },
-        deviceToken = json.optString("deviceToken").takeIf { it.isNotBlank() },
+        authToken = nullableString(json, "authToken"),
+        deviceToken = nullableString(json, "deviceToken"),
         backendId = json.optString("backendId", "cesium-agent"),
         mode = json.optString("mode", "agent"),
-        modelId = json.optString("modelId").takeIf { it.isNotBlank() },
-        modelName = json.optString("modelName").takeIf { it.isNotBlank() }
+        modelId = nullableString(json, "modelId"),
+        modelName = nullableString(json, "modelName")
       )
     }.getOrNull()
   }
@@ -134,6 +134,11 @@ object PhoneControlPreferences {
       target.writeText(json.toString())
       temporary.delete()
     }
+  }
+
+  private fun nullableString(json: JSONObject, key: String): String? {
+    if (!json.has(key) || json.isNull(key)) return null
+    return json.optString(key).trim().takeIf { it.isNotBlank() }
   }
 
   private fun putOptionalString(

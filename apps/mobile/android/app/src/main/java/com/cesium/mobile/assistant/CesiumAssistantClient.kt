@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.os.Handler
 import android.os.Looper
+import com.cesium.mobile.phonecontrol.PhoneControlConnectionConfig
 import com.cesium.mobile.phonecontrol.PhoneControlPreferences
 import okhttp3.Call
 import okhttp3.Callback
@@ -43,12 +44,27 @@ class CesiumAssistantClient(private val context: Context) {
         append(screenContext.take(12_000))
       }
     }
+    update("Starting agent…", null)
+    resolveModel(config) { modelId ->
+      startAgent(config, text, screenshot, modelId, update)
+    }
+  }
+
+  private fun startAgent(
+    config: PhoneControlConnectionConfig,
+    text: String,
+    screenshot: Bitmap?,
+    modelId: String?,
+    update: (status: String, answer: String?) -> Unit
+  ) {
     val body = JSONObject().apply {
       put("conversation", JSONObject().apply {
         put("backendId", config.backendId)
         put("mode", config.mode)
-        config.modelId?.let { put("modelId", it) }
-        config.modelName?.let { put("modelName", it) }
+        modelId?.let {
+          put("modelId", it)
+          put("modelName", config.modelName ?: it)
+        }
       })
       put("text", text)
       if (screenshot != null) {
@@ -59,7 +75,6 @@ class CesiumAssistantClient(private val context: Context) {
         }))
       }
     }
-    update("Starting agent…", null)
     client.newCall(
       request(
         config.serverUrl,
@@ -91,6 +106,46 @@ class CesiumAssistantClient(private val context: Context) {
           }
           handler.post { update("Agent is working. You can dismiss this overlay.", null) }
           poll(config.serverUrl, config.workspaceId, config.authToken, conversationId, update)
+        }
+      }
+    })
+  }
+
+  private fun resolveModel(
+    config: PhoneControlConnectionConfig,
+    completed: (String?) -> Unit
+  ) {
+    if (config.modelId != null) {
+      completed(config.modelId)
+      return
+    }
+    client.newCall(
+      request(
+        config.serverUrl,
+        config.workspaceId,
+        config.authToken,
+        "/api/settings/cesium-agent",
+        "GET",
+        null
+      )
+    ).enqueue(object : Callback {
+      override fun onFailure(call: Call, error: IOException) {
+        completed(null)
+      }
+
+      override fun onResponse(call: Call, response: Response) {
+        response.use {
+          val modelId = if (it.isSuccessful) {
+            runCatching {
+              JSONObject(it.body?.string() ?: "{}")
+                .getJSONObject("settings")
+                .optString("defaultModelId")
+                .takeIf(String::isNotBlank)
+            }.getOrNull()
+          } else {
+            null
+          }
+          completed(modelId)
         }
       }
     })
@@ -146,14 +201,14 @@ class CesiumAssistantClient(private val context: Context) {
           handler.post {
             update(
               when (status) {
-                "completed" -> "Done"
+                "idle", "completed" -> "Done"
                 "failed", "cancelled" -> "Agent $status"
                 else -> "Agent is working. You can dismiss this overlay."
               },
               answer.takeIf { text -> text.isNotBlank() }
             )
           }
-          if (status !in setOf("completed", "failed", "cancelled")) {
+          if (status !in setOf("idle", "completed", "failed", "cancelled")) {
             handler.postDelayed(
               { poll(serverUrl, workspaceId, authToken, conversationId, update) },
               1_500
