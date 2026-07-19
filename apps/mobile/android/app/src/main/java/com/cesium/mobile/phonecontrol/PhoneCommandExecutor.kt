@@ -66,6 +66,9 @@ object PhoneCommandExecutor {
         when (payload.optString("type")) {
           "get_status" -> success(status(context))
           "list_apps" -> success(listApps(context, payload.optString("query")))
+          "list_displays" -> success(
+            JSONObject().put("displays", CesiumSecondaryDisplayController.listDisplays(context))
+          )
           "launch_app" -> success(launchApp(context, payload))
           "open_settings" -> success(openSettings(context, payload))
           "secondary_display" -> success(

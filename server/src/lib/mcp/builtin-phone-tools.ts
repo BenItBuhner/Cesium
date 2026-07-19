@@ -47,14 +47,25 @@ export const PHONE_MCP_TOOLS: Tool[] = [
     },
   },
   {
+    name: "phone_displays",
+    description:
+      "List every Android display (physical + secondary/virtual), including Cesium's off-screen display and whether each is trusted and can host apps. Use the returned displayId with phone_snapshot / phone_screenshot / phone_tap to read and control apps on a secondary display.",
+    inputSchema: {
+      type: "object",
+      properties: { deviceId },
+      additionalProperties: false,
+    },
+  },
+  {
     name: "phone_snapshot",
     description:
-      "Read the current Android accessibility hierarchy, visible text, bounds, view ids, actions, foreground package, and window metadata. Requires the user-enabled Cesium accessibility service. Prefer this semantic result over screenshots for text-only models.",
+      "Read the Android accessibility hierarchy, visible text, bounds, view ids, actions, foreground package, and window metadata. Requires the user-enabled Cesium accessibility service. Pass displayId (from phone_displays) to read a secondary/off-screen display; omit it for the active screen. Prefer this semantic result over screenshots for text-only models.",
     inputSchema: {
       type: "object",
       properties: {
         deviceId,
         maxNodes: { type: "number", minimum: 1, maximum: 500, default: 250 },
+        displayId: { type: "number", description: "Target display id from phone_displays; omit for the active display." },
       },
       additionalProperties: false,
     },
@@ -62,12 +73,13 @@ export const PHONE_MCP_TOOLS: Tool[] = [
   {
     name: "phone_screenshot",
     description:
-      "Capture the visible Android display as a JPEG data URL through the user-enabled accessibility service. Secure windows may be blank. Text-only models should use phone_snapshot instead.",
+      "Capture an Android display as a JPEG data URL through the user-enabled accessibility service. Pass displayId (from phone_displays) to capture a secondary/off-screen display; omit for the active display. Secure windows may be blank. Text-only models should use phone_snapshot instead.",
     inputSchema: {
       type: "object",
       properties: {
         deviceId,
         quality: { type: "number", minimum: 30, maximum: 95, default: 72 },
+        displayId: { type: "number", description: "Target display id from phone_displays; omit for the active display." },
       },
       additionalProperties: false,
     },
@@ -75,7 +87,7 @@ export const PHONE_MCP_TOOLS: Tool[] = [
   {
     name: "phone_tap",
     description:
-      "Tap an accessibility node by visible text/view id, or tap screen coordinates. A successful dispatch does not prove the target app changed; verify with phone_snapshot.",
+      "Tap an accessibility node by visible text/view id, or tap screen coordinates. Pass displayId (from phone_displays) to tap a node on a secondary/off-screen display (text/viewId only there). A successful dispatch does not prove the target app changed; verify with phone_snapshot.",
     inputSchema: {
       type: "object",
       properties: {
@@ -85,6 +97,7 @@ export const PHONE_MCP_TOOLS: Tool[] = [
         x: { type: "number" },
         y: { type: "number" },
         longPressMs: { type: "number", minimum: 300, maximum: 5000 },
+        displayId: { type: "number", description: "Target display id from phone_displays; omit for the active display." },
       },
       additionalProperties: false,
     },
@@ -183,16 +196,18 @@ export const PHONE_MCP_TOOLS: Tool[] = [
   {
     name: "phone_secondary_display",
     description:
-      "Create, inspect, update, or close a private off-screen display owned by Cesium. Android allows Cesium's own assistant surface there, but an ordinary app cannot launch arbitrary third-party apps on this display; that requires OEM-only privileges.",
+      "Manage Cesium's private off-screen display. action=create renders Cesium's own surface there; action=launch_app tries to host a real third-party app off-screen (needs a trusted display — system/signature — otherwise it returns launched=false with the exact reason, and the app can still be controlled on any display that already exists via phone_displays + phone_snapshot/phone_tap). action=status returns a live capture; update/close manage it.",
     inputSchema: {
       type: "object",
       properties: {
         deviceId,
-        action: { type: "string", enum: ["create", "status", "update", "close"] },
+        action: { type: "string", enum: ["create", "launch_app", "status", "update", "close"] },
         width: { type: "number", minimum: 320, maximum: 2560, default: 1080 },
         height: { type: "number", minimum: 320, maximum: 2560, default: 1920 },
         title: { type: "string" },
         body: { type: "string" },
+        packageName: { type: "string", description: "For action=launch_app: exact package to host off-screen." },
+        appName: { type: "string", description: "For action=launch_app: app label to host off-screen." },
       },
       required: ["action"],
       additionalProperties: false,
@@ -310,16 +325,23 @@ export async function callBuiltInPhoneTool(input: {
       deepLink: asString(args.deepLink),
     });
   }
+  if (input.toolName === "phone_displays") {
+    return await run(input.workspaceId, requestedDeviceId, "secondaryDisplay", {
+      type: "list_displays",
+    });
+  }
   if (input.toolName === "phone_snapshot") {
     return await run(input.workspaceId, requestedDeviceId, "screenSnapshot", {
       type: "snapshot",
       maxNodes: Math.max(1, Math.min(500, Math.round(asNumber(args.maxNodes) ?? 250))),
+      ...(asNumber(args.displayId) !== undefined ? { displayId: asNumber(args.displayId) } : {}),
     });
   }
   if (input.toolName === "phone_screenshot") {
     return await run(input.workspaceId, requestedDeviceId, "screenCapture", {
       type: "screenshot",
       quality: Math.max(30, Math.min(95, Math.round(asNumber(args.quality) ?? 72))),
+      ...(asNumber(args.displayId) !== undefined ? { displayId: asNumber(args.displayId) } : {}),
     });
   }
   if (input.toolName === "phone_tap") {
@@ -351,6 +373,7 @@ export async function callBuiltInPhoneTool(input: {
       y: asNumber(args.y),
       text: asString(args.text),
       viewId: asString(args.viewId),
+      ...(asNumber(args.displayId) !== undefined ? { displayId: asNumber(args.displayId) } : {}),
     });
   }
   if (input.toolName === "phone_type") {
@@ -441,11 +464,19 @@ export async function callBuiltInPhoneTool(input: {
     const action = asString(args.action);
     if (
       action !== "create" &&
+      action !== "launch_app" &&
       action !== "status" &&
       action !== "update" &&
       action !== "close"
     ) {
       throw new Error("phone_secondary_display received an unsupported action.");
+    }
+    if (
+      action === "launch_app" &&
+      !asString(args.packageName) &&
+      !asString(args.appName)
+    ) {
+      throw new Error("phone_secondary_display action=launch_app requires packageName or appName.");
     }
     return await run(input.workspaceId, requestedDeviceId, "secondaryDisplay", {
       type: "secondary_display",
@@ -454,6 +485,8 @@ export async function callBuiltInPhoneTool(input: {
       height: asNumber(args.height),
       title: asString(args.title),
       body: asString(args.body),
+      packageName: asString(args.packageName),
+      appName: asString(args.appName),
     });
   }
   throw new Error(`Unknown phone MCP tool: ${input.toolName}`);

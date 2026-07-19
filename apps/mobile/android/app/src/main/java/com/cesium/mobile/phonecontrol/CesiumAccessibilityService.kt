@@ -21,6 +21,14 @@ import java.io.ByteArrayOutputStream
 class CesiumAccessibilityService : AccessibilityService() {
   override fun onServiceConnected() {
     instance = this
+    // Control must survive without the RN UI ever opening: as soon as the user
+    // enables accessibility, bring up the polling foreground service (shared
+    // process, so it can reach this instance) if the device is configured.
+    runCatching {
+      if (PhoneControlPreferences.read(this).configured) {
+        CesiumPhoneControlService.start(this)
+      }
+    }
   }
 
   override fun onAccessibilityEvent(event: AccessibilityEvent?) = Unit
@@ -41,8 +49,8 @@ class CesiumAccessibilityService : AccessibilityService() {
   ) {
     when (payload.optString("type")) {
       "get_status" -> success(statusJson(this))
-      "snapshot" -> snapshot(payload.optInt("maxNodes", 250), success, failure)
-      "screenshot" -> screenshot(payload.optInt("quality", 72), success, failure)
+      "snapshot" -> snapshot(payload, success, failure)
+      "screenshot" -> screenshot(payload, success, failure)
       "tap" -> tap(payload, success, failure)
       "long_press" -> longPress(payload, success, failure)
       "swipe" -> swipe(payload, success, failure)
@@ -52,16 +60,38 @@ class CesiumAccessibilityService : AccessibilityService() {
     }
   }
 
+  /**
+   * Roots for a target display. displayId < 0 means the active window (default
+   * display). getWindowsOnAllDisplays (API 30+) lets us read and control apps on
+   * a secondary/off-screen display, not just the physical screen.
+   */
+  private fun rootsForDisplay(displayId: Int): List<AccessibilityNodeInfo> {
+    if (displayId < 0 || displayId == Display.DEFAULT_DISPLAY) {
+      val active = rootInActiveWindow
+      if (active != null && displayId < 0) return listOf(active)
+    }
+    if (Build.VERSION.SDK_INT >= 30) {
+      val all = windowsOnAllDisplays
+      val list = all.get(displayId)
+      if (list != null && list.isNotEmpty()) {
+        return list.mapNotNull { it.root }
+      }
+    }
+    return listOfNotNull(rootInActiveWindow)
+  }
+
   private fun snapshot(
-    requestedMaxNodes: Int,
+    payload: JSONObject,
     success: (JSONObject) -> Unit,
     failure: (String) -> Unit
   ) {
-    val root = rootInActiveWindow ?: run {
-      failure("No active accessibility window is available.")
+    val displayId = payload.optInt("displayId", -1)
+    val roots = rootsForDisplay(displayId)
+    if (roots.isEmpty()) {
+      failure("No accessibility window is available on display $displayId.")
       return
     }
-    val maxNodes = requestedMaxNodes.coerceIn(1, 500)
+    val maxNodes = payload.optInt("maxNodes", 250).coerceIn(1, 500)
     val nodes = JSONArray()
     var count = 0
 
@@ -101,20 +131,23 @@ class CesiumAccessibilityService : AccessibilityService() {
       }
     }
 
-    visit(root, "0")
+    roots.forEachIndexed { rootIndex, root -> visit(root, "$rootIndex") }
+    val primary = roots.first()
     val windowsJson = JSONArray()
     windows.forEach { window ->
       windowsJson.put(JSONObject().apply {
         put("id", window.id)
         put("type", window.type)
+        put("displayId", if (Build.VERSION.SDK_INT >= 30) window.displayId else 0)
         put("title", window.title?.toString() ?: JSONObject.NULL)
         put("active", window.isActive)
         put("focused", window.isFocused)
       })
     }
     success(JSONObject().apply {
-      put("packageName", root.packageName?.toString() ?: JSONObject.NULL)
-      put("className", root.className?.toString() ?: JSONObject.NULL)
+      put("displayId", displayId)
+      put("packageName", primary.packageName?.toString() ?: JSONObject.NULL)
+      put("className", primary.className?.toString() ?: JSONObject.NULL)
       put("nodes", nodes)
       put("windows", windowsJson)
       put("nodeCount", count)
@@ -127,12 +160,13 @@ class CesiumAccessibilityService : AccessibilityService() {
     success: (JSONObject) -> Unit,
     failure: (String) -> Unit
   ) {
+    val displayId = payload.optInt("displayId", -1)
     val text = payload.optString("text").takeIf { it.isNotBlank() }
     val viewId = payload.optString("viewId").takeIf { it.isNotBlank() }
     if (text != null || viewId != null) {
-      val target = findNode(text, viewId)
+      val target = findNode(text, viewId, displayId)
       if (target == null) {
-        failure("No accessibility node matched the requested text or view id.")
+        failure("No accessibility node matched the requested text or view id on display $displayId.")
         return
       }
       var clickable: AccessibilityNodeInfo? = target
@@ -141,6 +175,10 @@ class CesiumAccessibilityService : AccessibilityService() {
       }
       if (clickable?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true) {
         success(JSONObject().put("dispatched", true).put("method", "accessibility_click"))
+        return
+      }
+      if (displayId >= 0 && displayId != Display.DEFAULT_DISPLAY) {
+        failure("Matched a non-clickable node on display $displayId; coordinate taps only reach the default display, so use a clickable text/viewId target.")
         return
       }
       val bounds = Rect()
@@ -233,7 +271,8 @@ class CesiumAccessibilityService : AccessibilityService() {
   ) {
     val target = findNode(
       payload.optString("targetText").takeIf { it.isNotBlank() },
-      payload.optString("viewId").takeIf { it.isNotBlank() }
+      payload.optString("viewId").takeIf { it.isNotBlank() },
+      payload.optInt("displayId", -1)
     ) ?: findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
     if (target == null) {
       failure("No editable or focused accessibility node is available.")
@@ -282,7 +321,7 @@ class CesiumAccessibilityService : AccessibilityService() {
   }
 
   private fun screenshot(
-    requestedQuality: Int,
+    payload: JSONObject,
     success: (JSONObject) -> Unit,
     failure: (String) -> Unit
   ) {
@@ -290,8 +329,12 @@ class CesiumAccessibilityService : AccessibilityService() {
       failure("Accessibility screenshots require Android 11 or newer.")
       return
     }
+    val requestedQuality = payload.optInt("quality", 72)
+    val targetDisplay = payload.optInt("displayId", -1).let {
+      if (it < 0) Display.DEFAULT_DISPLAY else it
+    }
     takeScreenshot(
-      Display.DEFAULT_DISPLAY,
+      targetDisplay,
       mainExecutor,
       object : TakeScreenshotCallback {
         override fun onSuccess(screenshot: ScreenshotResult) {
@@ -329,13 +372,18 @@ class CesiumAccessibilityService : AccessibilityService() {
     )
   }
 
-  private fun findNode(text: String?, viewId: String?): AccessibilityNodeInfo? {
-    val root = rootInActiveWindow ?: return null
-    if (viewId != null) {
-      root.findAccessibilityNodeInfosByViewId(viewId).firstOrNull()?.let { return it }
-    }
-    if (text != null) {
-      root.findAccessibilityNodeInfosByText(text).firstOrNull()?.let { return it }
+  private fun findNode(
+    text: String?,
+    viewId: String?,
+    displayId: Int = -1
+  ): AccessibilityNodeInfo? {
+    for (root in rootsForDisplay(displayId)) {
+      if (viewId != null) {
+        root.findAccessibilityNodeInfosByViewId(viewId).firstOrNull()?.let { return it }
+      }
+      if (text != null) {
+        root.findAccessibilityNodeInfosByText(text).firstOrNull()?.let { return it }
+      }
     }
     return null
   }

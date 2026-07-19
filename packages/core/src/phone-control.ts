@@ -38,10 +38,17 @@ export type PhoneControlDevice = {
 export type PhoneControlCommandPayload =
   | { type: "get_status" }
   | { type: "list_apps"; query?: string }
-  | { type: "launch_app"; packageName?: string; appName?: string; deepLink?: string }
-  | { type: "snapshot"; maxNodes?: number }
-  | { type: "screenshot"; quality?: number }
-  | { type: "tap"; x?: number; y?: number; text?: string; viewId?: string }
+  | { type: "list_displays" }
+  | {
+      type: "launch_app";
+      packageName?: string;
+      appName?: string;
+      deepLink?: string;
+      displayId?: number;
+    }
+  | { type: "snapshot"; maxNodes?: number; displayId?: number }
+  | { type: "screenshot"; quality?: number; displayId?: number }
+  | { type: "tap"; x?: number; y?: number; text?: string; viewId?: string; displayId?: number }
   | { type: "long_press"; x: number; y: number; durationMs?: number }
   | {
       type: "swipe";
@@ -82,11 +89,13 @@ export type PhoneControlCommandPayload =
     }
   | {
       type: "secondary_display";
-      action: "create" | "status" | "update" | "close";
+      action: "create" | "status" | "update" | "close" | "launch_app";
       width?: number;
       height?: number;
       title?: string;
       body?: string;
+      packageName?: string;
+      appName?: string;
     };
 
 export type PhoneControlCommand = {
