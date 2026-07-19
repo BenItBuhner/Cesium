@@ -295,11 +295,12 @@ export async function callBuiltInPhoneTool(input: {
         ? all.filter((device) => device.deviceId === requestedDeviceId)
         : all,
       platformLimits: {
-        thirdPartyAppsOnPrivateSecondaryDisplay: false,
+        launchThirdPartyAppsOnAppOwnedVirtualDisplay: false,
+        readOrControlBackgroundSecondaryDisplay: false,
         hardwareWakeWordForThirdPartyApps: false,
         mediaProjectionRequiresPerSessionConsent: true,
         note:
-          "These are Android security boundaries, not missing Cesium permissions. OEM/system-signed deployments can add privileged capabilities separately.",
+          "Verified live on Android 15: a non-system app can create an off-screen display and render its own surface there, but Android blocks launching other apps onto it (needs a TRUSTED display / ADD_TRUSTED_DISPLAY, signature-only) and only exposes the focused display's windows to a non-system accessibility service (getWindowsOnAllDisplays returned [0]). Full autonomous off-screen app hosting + control therefore requires a system-signed build or the companion app-streaming role. Everything on the active display (launch, tap, type, swipe, snapshot, screenshot, global actions, settings) works fully.",
       },
     });
   }

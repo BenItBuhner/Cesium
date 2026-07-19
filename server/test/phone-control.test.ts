@@ -162,7 +162,8 @@ test("built-in phone MCP exposes explicit Android-safe tools and limits", async 
     arguments: {},
   });
   assert.match(devices, /android-1/);
-  assert.match(devices, /thirdPartyAppsOnPrivateSecondaryDisplay/);
+  assert.match(devices, /launchThirdPartyAppsOnAppOwnedVirtualDisplay/);
+  assert.match(devices, /readOrControlBackgroundSecondaryDisplay/);
   assert.match(devices, /hardwareWakeWordForThirdPartyApps/);
 });
 
@@ -206,5 +207,61 @@ test("built-in phone MCP refuses unavailable accessibility capabilities", async 
       arguments: {},
     }),
     /screenSnapshot is unavailable/
+  );
+});
+
+test("built-in phone MCP forwards displayId to snapshot and lists displays", async () => {
+  resetPhoneControlForTests();
+  registerPhoneDevice({
+    workspaceId: "ws-phone",
+    deviceId: "android-1",
+    capabilities: {
+      ...defaultPhoneControlCapabilities(),
+      accessibilityEnabled: true,
+      screenSnapshot: true,
+      secondaryDisplay: true,
+    },
+  });
+  const snapshot = callBuiltInPhoneTool({
+    workspaceId: "ws-phone",
+    toolName: "phone_snapshot",
+    arguments: { displayId: 7 },
+  });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const queued = await readPhoneCommands({
+    workspaceId: "ws-phone",
+    deviceId: "android-1",
+  });
+  const payload = queued.commands[0]!.payload as { type: string; displayId?: number };
+  assert.equal(payload.type, "snapshot");
+  assert.equal(payload.displayId, 7);
+  completePhoneCommand({
+    workspaceId: "ws-phone",
+    deviceId: "android-1",
+    commandId: queued.commands[0]!.commandId,
+    ok: true,
+    result: { displayId: 7, nodes: [], availableDisplays: [0] },
+  });
+  assert.match(await snapshot, /availableDisplays/);
+});
+
+test("built-in phone MCP requires a target for off-screen app hosting", async () => {
+  resetPhoneControlForTests();
+  registerPhoneDevice({
+    workspaceId: "ws-phone",
+    deviceId: "android-1",
+    capabilities: {
+      ...defaultPhoneControlCapabilities(),
+      accessibilityEnabled: true,
+      secondaryDisplay: true,
+    },
+  });
+  await assert.rejects(
+    callBuiltInPhoneTool({
+      workspaceId: "ws-phone",
+      toolName: "phone_secondary_display",
+      arguments: { action: "launch_app" },
+    }),
+    /requires packageName or appName/
   );
 });

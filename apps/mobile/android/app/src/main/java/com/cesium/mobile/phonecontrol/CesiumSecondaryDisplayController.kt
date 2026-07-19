@@ -32,8 +32,6 @@ object CesiumSecondaryDisplayController {
   private const val FLAG_SHOW_SYSTEM_DECORATIONS = 1 shl 9
   private const val FLAG_TRUSTED_VD = 1 shl 10
   private const val FLAG_OWN_DISPLAY_GROUP = 1 shl 11
-  // Hidden Display flag indicating the display is trusted to host other apps.
-  private const val DISPLAY_FLAG_TRUSTED = 1 shl 4
 
   private var virtualDisplay: VirtualDisplay? = null
   private var imageReader: ImageReader? = null
@@ -96,8 +94,10 @@ object CesiumSecondaryDisplayController {
         }.getOrNull()
         if (virtualDisplay != null) break
       }
-      trustedGranted = virtualDisplay != null &&
-        (virtualDisplay!!.display.flags and DISPLAY_FLAG_TRUSTED) != 0
+      // We can only confirm the app was allowed to host apps by actually
+      // launching one; creation never throws for the trusted flag, it is just
+      // silently dropped without the signature permission.
+      trustedGranted = false
     } else {
       trustedGranted = false
       virtualDisplay = manager.createVirtualDisplay(
@@ -255,8 +255,8 @@ object CesiumSecondaryDisplayController {
         put("width", android.graphics.Point().also { display.getRealSize(it) }.x)
         @Suppress("DEPRECATION")
         put("height", android.graphics.Point().also { display.getRealSize(it) }.y)
-        put("trusted", (display.flags and DISPLAY_FLAG_TRUSTED) != 0)
         put("presentation", (display.flags and android.view.Display.FLAG_PRESENTATION) != 0)
+        put("flags", display.flags)
         put("cesiumOwned", display.displayId == virtualDisplay?.display?.displayId)
       })
     }

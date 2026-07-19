@@ -1,6 +1,7 @@
 package com.cesium.mobile.phonecontrol
 
 import android.accessibilityservice.AccessibilityService
+import android.accessibilityservice.AccessibilityServiceInfo
 import android.accessibilityservice.GestureDescription
 import android.content.ComponentName
 import android.content.Context
@@ -21,6 +22,16 @@ import java.io.ByteArrayOutputStream
 class CesiumAccessibilityService : AccessibilityService() {
   override fun onServiceConnected() {
     instance = this
+    // Guarantee we can enumerate windows across every display (needed to read /
+    // control apps on secondary / off-screen displays), regardless of what the
+    // XML config resolved to at install time.
+    runCatching {
+      serviceInfo = serviceInfo?.apply {
+        flags = flags or
+          AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS or
+          AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS
+      }
+    }
     // Control must survive without the RN UI ever opening: as soon as the user
     // enables accessibility, bring up the polling foreground service (shared
     // process, so it can reach this instance) if the device is configured.
@@ -77,7 +88,22 @@ class CesiumAccessibilityService : AccessibilityService() {
         return list.mapNotNull { it.root }
       }
     }
+    // No windows keyed to this display: derive roots from any window whose root
+    // reports the requested display id (covers displays the SparseArray misses).
+    if (displayId >= 0) {
+      val matches = windows.mapNotNull { it.root }
+        .filter { runCatching { it.window?.displayId }.getOrNull() == displayId }
+      if (matches.isNotEmpty()) return matches
+    }
     return listOfNotNull(rootInActiveWindow)
+  }
+
+  private fun availableA11yDisplays(): List<Int> {
+    if (Build.VERSION.SDK_INT < 30) return listOf(0)
+    val all = windowsOnAllDisplays
+    val ids = mutableListOf<Int>()
+    for (i in 0 until all.size()) ids.add(all.keyAt(i))
+    return ids
   }
 
   private fun snapshot(
@@ -88,7 +114,13 @@ class CesiumAccessibilityService : AccessibilityService() {
     val displayId = payload.optInt("displayId", -1)
     val roots = rootsForDisplay(displayId)
     if (roots.isEmpty()) {
-      failure("No accessibility window is available on display $displayId.")
+      val visible = availableA11yDisplays().joinToString(",")
+      failure(
+        "No accessibility content is available on display $displayId. On stock Android a " +
+          "non-system accessibility service is only granted windows on displays it can observe " +
+          "(currently: [$visible]); reading a secondary/off-screen display reliably needs a " +
+          "system-signed build. Use displayId from phone_displays and omit it to read the active screen."
+      )
       return
     }
     val maxNodes = payload.optInt("maxNodes", 250).coerceIn(1, 500)
@@ -152,6 +184,7 @@ class CesiumAccessibilityService : AccessibilityService() {
       put("windows", windowsJson)
       put("nodeCount", count)
       put("truncated", count >= maxNodes)
+      put("availableDisplays", JSONArray(availableA11yDisplays()))
     })
   }
 
@@ -169,6 +202,19 @@ class CesiumAccessibilityService : AccessibilityService() {
         failure("No accessibility node matched the requested text or view id on display $displayId.")
         return
       }
+      val onDefaultDisplay = displayId < 0 || displayId == Display.DEFAULT_DISPLAY
+      // On the active display, a real coordinate gesture at the node center is
+      // the most reliable way to actually trigger navigation: ACTION_CLICK on a
+      // list row often "succeeds" without the app reacting. Off-screen displays
+      // can't receive coordinate gestures, so use the semantic click there.
+      if (onDefaultDisplay) {
+        val bounds = Rect()
+        target.getBoundsInScreen(bounds)
+        if (!bounds.isEmpty) {
+          dispatchTap(bounds.exactCenterX(), bounds.exactCenterY(), 80, success, failure)
+          return
+        }
+      }
       var clickable: AccessibilityNodeInfo? = target
       while (clickable != null && !clickable.isClickable) {
         clickable = clickable.parent
@@ -177,13 +223,7 @@ class CesiumAccessibilityService : AccessibilityService() {
         success(JSONObject().put("dispatched", true).put("method", "accessibility_click"))
         return
       }
-      if (displayId >= 0 && displayId != Display.DEFAULT_DISPLAY) {
-        failure("Matched a non-clickable node on display $displayId; coordinate taps only reach the default display, so use a clickable text/viewId target.")
-        return
-      }
-      val bounds = Rect()
-      target.getBoundsInScreen(bounds)
-      dispatchTap(bounds.exactCenterX(), bounds.exactCenterY(), 80, success, failure)
+      failure("Matched a node on display $displayId but could not tap it (no on-screen bounds and no clickable ancestor).")
       return
     }
     if (!payload.has("x") || !payload.has("y")) {

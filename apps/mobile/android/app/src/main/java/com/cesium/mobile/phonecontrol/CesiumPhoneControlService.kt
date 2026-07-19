@@ -243,16 +243,28 @@ class CesiumPhoneControlService : Service() {
     activeCall!!.enqueue(object : Callback {
       override fun onFailure(call: Call, error: IOException) {
         if (!stopped && !call.isCanceled()) {
-          handler.post { completed(null) }
+          handler.post { safeComplete(null, completed) }
         }
       }
 
       override fun onResponse(call: Call, response: Response) {
-        handler.post {
-          response.use { completed(it) }
-        }
+        // Never let a callback or a close-time error (e.g. okhttp gzip
+        // InflaterSource.close throwing) escape onto the main looper and crash
+        // the whole app process, which previously took the service down for
+        // Android's 30-minute restart backoff.
+        handler.post { safeComplete(response, completed) }
       }
     })
+  }
+
+  private fun safeComplete(response: Response?, completed: (Response?) -> Unit) {
+    try {
+      completed(response)
+    } catch (error: Exception) {
+      scheduleRetry(error.message ?: "Phone control callback error")
+    } finally {
+      if (response != null) runCatching { response.close() }
+    }
   }
 
   private fun scheduleRetry(detail: String) {
