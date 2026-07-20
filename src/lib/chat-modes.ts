@@ -12,4 +12,5 @@ export {
   isOrchestrationModeLocked,
   isWorkflowMode,
   resolveCanonicalModeId,
+  resolveNextModeInCycle,
 } from "@cesium/core";
