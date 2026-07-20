@@ -78,7 +78,7 @@ export function normalizeHarnessLimits(raw: unknown): CesiumHarnessLimits {
     DEFAULT_WAIT_MAX_SECONDS
   );
 
-  let waitAgentMinTimeoutMs = clampInt(
+  const waitAgentMinTimeoutMs = clampInt(
     asNumber(record.waitAgentMinTimeoutMs) ?? defaults.waitAgentMinTimeoutMs,
     1,
     HARD_MAX_WAIT_AGENT_TIMEOUT_MS
@@ -91,7 +91,7 @@ export function normalizeHarnessLimits(raw: unknown): CesiumHarnessLimits {
   if (waitAgentMaxTimeoutMs < waitAgentMinTimeoutMs) {
     waitAgentMaxTimeoutMs = waitAgentMinTimeoutMs;
   }
-  let waitAgentDefaultTimeoutMs = clampInt(
+  const waitAgentDefaultTimeoutMs = clampInt(
     asNumber(record.waitAgentDefaultTimeoutMs) ?? defaults.waitAgentDefaultTimeoutMs,
     waitAgentMinTimeoutMs,
     waitAgentMaxTimeoutMs

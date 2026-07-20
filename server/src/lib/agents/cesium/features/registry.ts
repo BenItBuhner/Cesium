@@ -78,7 +78,11 @@ export function createCesiumFeatureRegistry(
         label: definition.label,
         description: definition.description,
         defaultVersion: definition.defaultVersion,
-        versions: definition.versions.map(({ resolve: _resolve, ...version }) => version),
+        versions: definition.versions.map((version) => ({
+          version: version.version,
+          label: version.label,
+          description: version.description,
+        })),
       })),
     resolve: (settings, limits) =>
       list().map((definition) => {
@@ -87,13 +91,16 @@ export function createCesiumFeatureRegistry(
         const implementation =
           definition.versions.find((entry) => entry.version === requestedVersion) ??
           definition.versions.find((entry) => entry.version === definition.defaultVersion)!;
-        const module = implementation.resolve(limits);
-        if (module.id !== definition.id || module.version !== implementation.version) {
+        const featureModule = implementation.resolve(limits);
+        if (
+          featureModule.id !== definition.id ||
+          featureModule.version !== implementation.version
+        ) {
           throw new Error(
-            `Cesium feature "${definition.id}" v${implementation.version} resolved mismatched module "${module.id}" v${module.version}.`
+            `Cesium feature "${definition.id}" v${implementation.version} resolved mismatched module "${featureModule.id}" v${featureModule.version}.`
           );
         }
-        return module;
+        return featureModule;
       }),
   };
 }

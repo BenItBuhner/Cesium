@@ -3,10 +3,7 @@ import {
   createCesiumFeatureRegistry,
   type CesiumFeatureRegistry,
 } from "./registry.js";
-import {
-  SUBAGENTS_FEATURE_DEFINITION,
-  resolveSubagentsModule,
-} from "./subagents/index.js";
+import { SUBAGENTS_FEATURE_DEFINITION } from "./subagents/index.js";
 import type {
   CesiumFeatureDefinition,
   CesiumFeatureModule,
