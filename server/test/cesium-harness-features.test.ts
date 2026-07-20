@@ -153,7 +153,7 @@ test("resolveCesiumHarness composes base + feature tools", () => {
   assert.equal(resolved.subagentsVersion, 2);
 });
 
-test("feature registry resolves a custom versioned module without central resolver edits", () => {
+test("feature registry resolves and executes custom modules without central resolver edits", async () => {
   const registry = createCesiumFeatureRegistry([
     {
       id: "custom-memory",
@@ -197,6 +197,12 @@ test("feature registry resolves a custom versioned module without central resolv
               },
             ],
             toolNames: ["memory_lookup_v2"],
+            executeTool: (name, args) =>
+              JSON.stringify({
+                name,
+                query: args.query,
+                source: "custom-memory-v2",
+              }),
           }),
         },
       ],
@@ -217,6 +223,16 @@ test("feature registry resolves a custom versioned module without central resolv
   ]);
   assert.equal(resolved.toolNames.has("memory_lookup_v2"), true);
   assert.equal(resolved.toolNames.has("memory_lookup_v1"), false);
+  assert.equal(
+    await resolved.modules[0]?.executeTool?.("memory_lookup_v2", {
+      query: "plugin registry",
+    }),
+    JSON.stringify({
+      name: "memory_lookup_v2",
+      query: "plugin registry",
+      source: "custom-memory-v2",
+    })
+  );
 });
 
 test("followup_task queued during a running turn is drained after the turn ends", async () => {

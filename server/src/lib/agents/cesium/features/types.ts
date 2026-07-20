@@ -51,6 +51,14 @@ export type CesiumFeatureModule = {
   toolNames: string[];
   /** Optional mode-reminder fragment injected when this feature is active. */
   reminder?: string;
+  /**
+   * Optional module-owned dispatcher for contributed tools. Stateful modules
+   * can close over a runtime created by their version resolver.
+   */
+  executeTool?: (
+    name: string,
+    args: Record<string, unknown>
+  ) => string | Promise<string>;
 };
 
 export type CesiumFeatureVersionDefinition = {

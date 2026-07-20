@@ -1507,7 +1507,14 @@ class CesiumSessionHandle implements AgentSessionHandle {
           toolLabel: title,
         });
       }
-      switch (request.name) {
+      const featureExecutor = this.harness.modules.find(
+        (featureModule) =>
+          featureModule.executeTool && featureModule.toolNames.includes(request.name)
+      );
+      if (featureExecutor?.executeTool) {
+        result = await featureExecutor.executeTool(request.name, request.arguments);
+      } else {
+        switch (request.name) {
         case "read_file":
           result = await this.toolReadFile(request.arguments);
           break;
@@ -1646,6 +1653,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
           break;
         default:
           throw new Error(`Unknown Cesium tool: ${request.name}`);
+        }
       }
       await this.callbacks.appendEvents([
         {

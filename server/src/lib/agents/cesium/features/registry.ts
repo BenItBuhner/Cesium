@@ -100,6 +100,18 @@ export function createCesiumFeatureRegistry(
             `Cesium feature "${definition.id}" v${implementation.version} resolved mismatched module "${featureModule.id}" v${featureModule.version}.`
           );
         }
+        const declaredToolNames = new Set(featureModule.toolNames);
+        const contributedToolNames = new Set(
+          featureModule.tools.map((tool) => tool.name)
+        );
+        if (
+          declaredToolNames.size !== contributedToolNames.size ||
+          [...declaredToolNames].some((name) => !contributedToolNames.has(name))
+        ) {
+          throw new Error(
+            `Cesium feature "${definition.id}" v${implementation.version} toolNames must exactly match its contributed tools.`
+          );
+        }
         return featureModule;
       }),
   };
