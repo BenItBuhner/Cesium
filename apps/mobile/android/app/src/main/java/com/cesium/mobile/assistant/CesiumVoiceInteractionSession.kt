@@ -1,21 +1,21 @@
 package com.cesium.mobile.assistant
 
+import android.Manifest
 import android.app.assist.AssistContent
 import android.app.assist.AssistStructure
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Typeface
 import android.os.Bundle
 import android.service.voice.VoiceInteractionSession
-import android.text.TextUtils
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
 import android.widget.EditText
 import android.widget.FrameLayout
-import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.ScrollView
@@ -23,35 +23,30 @@ import android.widget.TextView
 import com.cesium.mobile.MainActivity
 
 /**
- * Cesium's system-assistant surface. Rendered with the shared Cesium Design 2
- * dark tokens (CesiumTheme) so the overlay reads as part of the product rather
- * than a stock Android dialog. It collects the current screen's semantic
- * context plus an auto-attached screenshot (for multimodal models) and hands a
- * request to a connected Cesium server agent, streaming status back inline.
+ * Cesium's system-assistant surface. A single, clean bottom sheet: a prompt
+ * field with a mic (speech-to-text) button and a Send button, plus Minimize
+ * (park it as a floating bubble over other apps) and Open. The agent's reply is
+ * rendered as Markdown and read aloud. There is no "screen context ready" chrome
+ * and no auto-pasting suggestion chips — the live screen is available to the
+ * agent as phone tools (phone_snapshot / phone_screenshot / phone_tap …), and a
+ * screenshot is attached automatically only when the user actually refers to the
+ * screen in their prompt.
  */
 class CesiumVoiceInteractionSession(context: Context) : VoiceInteractionSession(context) {
-  private val assistantClient = CesiumAssistantClient(context)
   private var assistContext = ""
   private var capturedScreenshot: Bitmap? = null
-  private var attachScreenshot = true
-  private var running = false
+  private val recorder = CesiumVoiceRecorder(context)
 
   private lateinit var requestInput: EditText
-  private lateinit var contextChip: TextView
-  private lateinit var screenshotChip: TextView
+  private lateinit var micButton: TextView
+  private lateinit var runButton: TextView
   private lateinit var statusRow: LinearLayout
   private lateinit var statusSpinner: ProgressBar
   private lateinit var statusText: TextView
   private lateinit var answerCard: ScrollView
   private lateinit var answerText: TextView
-  private lateinit var runButton: TextView
 
-  private val suggestions = listOf(
-    "Create a cron job that appends the date to ~/cesium-cron.log every minute, then confirm the exact line",
-    "Summarize what is on this screen in one line",
-    "Search the web for the latest Bun release version",
-    "Open the Settings app"
-  )
+  private var controllerListener: CesiumAssistantController.Listener? = null
 
   override fun onCreateContentView(): View {
     val root = FrameLayout(context).apply { setBackgroundColor(CesiumTheme.BACKDROP) }
@@ -62,7 +57,6 @@ class CesiumVoiceInteractionSession(context: Context) : VoiceInteractionSession(
       setPadding(pad(22), pad(12), pad(22), pad(20))
     }
 
-    // Grabber handle.
     card.addView(View(context).apply {
       background = CesiumTheme.pill(CesiumTheme.BORDER)
     }, LinearLayout.LayoutParams(pad(36), pad(4)).apply {
@@ -70,7 +64,7 @@ class CesiumVoiceInteractionSession(context: Context) : VoiceInteractionSession(
       bottomMargin = pad(14)
     })
 
-    // Header: wordmark + close.
+    // Header: wordmark + minimize + close.
     val header = LinearLayout(context).apply {
       orientation = LinearLayout.HORIZONTAL
       gravity = Gravity.CENTER_VERTICAL
@@ -90,27 +84,20 @@ class CesiumVoiceInteractionSession(context: Context) : VoiceInteractionSession(
       setPadding(0, pad(1), 0, 0)
     })
     header.addView(heading, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-    header.addView(pillButton("Close", filled = false) { hide() })
+    header.addView(pillButton("Minimize", filled = false) { minimize() })
+    header.addView(pillButton("Close", filled = false) { hide() }.apply {
+      (layoutParams as? LinearLayout.LayoutParams)?.leftMargin = pad(8)
+    })
     card.addView(header)
 
-    // Context chips row.
-    val chipRow = LinearLayout(context).apply {
+    // Prompt input with mic + send inline.
+    val inputRow = LinearLayout(context).apply {
       orientation = LinearLayout.HORIZONTAL
-      setPadding(0, pad(14), 0, pad(12))
+      gravity = Gravity.BOTTOM
+      setPadding(0, pad(16), 0, 0)
     }
-    contextChip = statusChip("Reading screen…", CesiumTheme.STATUS)
-    screenshotChip = statusChip("Screenshot ready", CesiumTheme.TEXT_SECONDARY).apply {
-      setOnClickListener { toggleScreenshot() }
-    }
-    chipRow.addView(contextChip)
-    chipRow.addView(screenshotChip, LinearLayout.LayoutParams(
-      ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
-    ).apply { leftMargin = pad(8) })
-    card.addView(chipRow)
-
-    // Prompt input.
     requestInput = EditText(context).apply {
-      hint = "Ask Cesium to do something with this screen…"
+      hint = "Ask Cesium, or tap the mic to speak…"
       setHintTextColor(CesiumTheme.TEXT_MUTED)
       setTextColor(CesiumTheme.TEXT_PRIMARY)
       textSize = 15f
@@ -118,7 +105,7 @@ class CesiumVoiceInteractionSession(context: Context) : VoiceInteractionSession(
         CesiumTheme.SURFACE, pad(14).toFloat(), CesiumTheme.BORDER, CesiumTheme.dp(context, 1f)
       )
       setPadding(pad(16), pad(14), pad(16), pad(14))
-      minLines = 2
+      minLines = 1
       maxLines = 5
       gravity = Gravity.TOP or Gravity.START
       imeOptions = EditorInfo.IME_ACTION_SEND
@@ -126,33 +113,20 @@ class CesiumVoiceInteractionSession(context: Context) : VoiceInteractionSession(
         if (actionId == EditorInfo.IME_ACTION_SEND) { submit(); true } else false
       }
     }
-    card.addView(requestInput, LinearLayout.LayoutParams(
-      ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
-    ))
+    inputRow.addView(requestInput, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+    micButton = circleButton("Mic") { toggleDictation() }
+    inputRow.addView(micButton, LinearLayout.LayoutParams(pad(48), pad(48)).apply { leftMargin = pad(10) })
+    card.addView(inputRow, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
 
-    // Suggestion chips (tap to prefill + run).
-    val suggestScroll = HorizontalScrollView(context).apply {
-      isHorizontalScrollBarEnabled = false
-      setPadding(0, pad(12), 0, 0)
-    }
-    val suggestRow = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL }
-    suggestions.forEach { suggestion ->
-      suggestRow.addView(suggestionChip(suggestion), LinearLayout.LayoutParams(
-        ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
-      ).apply { rightMargin = pad(8) })
-    }
-    suggestScroll.addView(suggestRow)
-    card.addView(suggestScroll)
-
-    // Action row: helper text + primary run.
+    // Action row: Open app + Send.
     val actionRow = LinearLayout(context).apply {
       orientation = LinearLayout.HORIZONTAL
       gravity = Gravity.CENTER_VERTICAL
-      setPadding(0, pad(16), 0, 0)
+      setPadding(0, pad(14), 0, 0)
     }
     actionRow.addView(pillButton("Open app", filled = false) { openCesium() })
     actionRow.addView(View(context), LinearLayout.LayoutParams(0, 1, 1f))
-    runButton = pillButton("Run  ↑", filled = true) { submit() }
+    runButton = pillButton("Send  ↑", filled = true) { submit() }
     actionRow.addView(runButton)
     card.addView(actionRow)
 
@@ -163,24 +137,20 @@ class CesiumVoiceInteractionSession(context: Context) : VoiceInteractionSession(
       setPadding(0, pad(14), 0, 0)
       visibility = View.GONE
     }
-    statusSpinner = ProgressBar(context).apply {
-      isIndeterminate = true
-      visibility = View.GONE
-    }
+    statusSpinner = ProgressBar(context).apply { isIndeterminate = true; visibility = View.GONE }
     statusText = TextView(context).apply {
       textSize = 13f
       setTextColor(CesiumTheme.STATUS)
     }
-    statusRow.addView(statusSpinner, LinearLayout.LayoutParams(pad(16), pad(16)).apply {
-      rightMargin = pad(10)
-    })
+    statusRow.addView(statusSpinner, LinearLayout.LayoutParams(pad(16), pad(16)).apply { rightMargin = pad(10) })
     statusRow.addView(statusText)
     card.addView(statusRow)
 
-    // Answer card.
+    // Answer card (Markdown-rendered).
     answerText = TextView(context).apply {
       textSize = 14.5f
       setTextColor(CesiumTheme.TEXT_PRIMARY)
+      setTextIsSelectable(true)
       setLineSpacing(pad(3).toFloat(), 1f)
     }
     answerCard = ScrollView(context).apply {
@@ -190,106 +160,149 @@ class CesiumVoiceInteractionSession(context: Context) : VoiceInteractionSession(
       addView(answerText)
     }
     card.addView(answerCard, LinearLayout.LayoutParams(
-      ViewGroup.LayoutParams.MATCH_PARENT, pad(190)
+      ViewGroup.LayoutParams.MATCH_PARENT, pad(210)
     ).apply { topMargin = pad(12) })
 
     root.addView(card, FrameLayout.LayoutParams(
       ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM
     ))
-    refreshChips()
     return root
   }
 
-  override fun onHandleAssist(
-    data: Bundle?,
-    structure: AssistStructure?,
-    content: AssistContent?
-  ) {
+  override fun onShow(args: Bundle?, showFlags: Int) {
+    super.onShow(args, showFlags)
+    // Reflect any run still in flight (e.g. re-opened from the bubble).
+    if (controllerListener != null) return
+    val obs = CesiumAssistantController.Listener { state -> applyState(state) }
+    controllerListener = obs
+    CesiumAssistantController.addListener(context, obs)
+  }
+
+  override fun onHide() {
+    controllerListener?.let { CesiumAssistantController.removeListener(it) }
+    controllerListener = null
+    recorder.cancel()
+    super.onHide()
+  }
+
+  override fun onHandleAssist(data: Bundle?, structure: AssistStructure?, content: AssistContent?) {
     val parts = mutableListOf<String>()
     content?.webUri?.toString()?.let { parts.add("URL: $it") }
-    content?.structuredData?.takeIf { it.isNotBlank() }?.let {
-      parts.add("Structured content: ${it.take(4_000)}")
-    }
     structure?.let {
       val text = StringBuilder()
       for (windowIndex in 0 until it.windowNodeCount) {
         appendNodeText(it.getWindowNodeAt(windowIndex).rootViewNode, text, 0)
       }
-      if (text.isNotBlank()) parts.add("Visible interface:\n${text.toString().take(8_000)}")
+      if (text.isNotBlank()) parts.add("Foreground screen text:\n${text.toString().take(4_000)}")
     }
     assistContext = parts.joinToString("\n")
-    refreshChips()
   }
 
   override fun onHandleScreenshot(screenshot: Bitmap?) {
     capturedScreenshot = screenshot
-    refreshChips()
   }
 
   override fun onBackPressed() = hide()
 
   private fun submit() {
-    if (running) return
     val request = requestInput.text?.toString()?.trim().orEmpty()
     if (request.isBlank()) {
-      showStatus("Type a request first.", spinning = false, color = CesiumTheme.DANGER)
+      showStatus("Type or speak a request first.", spinning = false, color = CesiumTheme.DANGER)
       return
     }
-    running = true
-    requestInput.isEnabled = false
-    runButton.isEnabled = false
-    runButton.alpha = 0.55f
+    if (CesiumAssistantController.state.running) {
+      showStatus("An agent run is already in progress.", spinning = true, color = CesiumTheme.STATUS)
+      return
+    }
     answerCard.visibility = View.GONE
-    showStatus("Starting agent…", spinning = true, color = CesiumTheme.STATUS)
-    assistantClient.createAgent(
-      request,
-      assistContext,
-      capturedScreenshot?.takeIf { attachScreenshot }
-    ) { status, answer ->
-      val terminal = status == "Done" ||
-        status.startsWith("Agent failed") ||
-        status.startsWith("Agent cancelled") ||
-        status.startsWith("Could not reach") ||
-        status.startsWith("Server returned")
-      val color = when {
-        status == "Done" -> CesiumTheme.SUCCESS
-        terminal -> CesiumTheme.DANGER
-        else -> CesiumTheme.STATUS
+    // Attach the screenshot only when the user actually refers to the screen;
+    // otherwise the agent can pull it on demand via the phone_screenshot tool.
+    val screenshot = capturedScreenshot?.takeIf { referencesScreen(request) }
+    CesiumAssistantController.start(context, request, assistContext, screenshot)
+  }
+
+  private fun referencesScreen(prompt: String): Boolean {
+    val p = prompt.lowercase()
+    return listOf(
+      "screen", "screenshot", "this ", "here", "see ", "look", "image", "photo",
+      "picture", "on display", "what's shown", "whats shown", "visible", "reading",
+      "read this", "current app", "in front"
+    ).any { p.contains(it) }
+  }
+
+  private fun toggleDictation() {
+    if (recorder.isRecording) {
+      micButton.text = "…"
+      recorder.stopAndTranscribe { text, error ->
+        micButton.text = "Mic"
+        setMicActive(false)
+        if (text != null) {
+          val existing = requestInput.text?.toString()?.trim().orEmpty()
+          val merged = if (existing.isBlank()) text else "$existing $text"
+          requestInput.setText(merged)
+          requestInput.setSelection(merged.length)
+        } else if (error != null) {
+          showStatus(error, spinning = false, color = CesiumTheme.DANGER)
+        }
       }
-      showStatus(status, spinning = !terminal, color = color)
-      if (!answer.isNullOrBlank()) {
-        answerText.text = answer
-        answerCard.visibility = View.VISIBLE
-      }
-      if (terminal) {
-        running = false
-        requestInput.isEnabled = true
-        runButton.isEnabled = true
-        runButton.alpha = 1f
-      }
+      return
+    }
+    if (!hasMicPermission()) {
+      showStatus("Grant microphone access to Cesium, then tap the mic again.", spinning = false, color = CesiumTheme.DANGER)
+      requestMicPermission()
+      return
+    }
+    if (recorder.start()) {
+      setMicActive(true)
+      micButton.text = "Stop"
+      showStatus("Listening… tap Stop when done.", spinning = false, color = CesiumTheme.STATUS)
+    } else {
+      showStatus("Couldn't start recording.", spinning = false, color = CesiumTheme.DANGER)
     }
   }
 
-  private fun toggleScreenshot() {
-    if (capturedScreenshot == null) return
-    attachScreenshot = !attachScreenshot
-    refreshChips()
+  private fun setMicActive(active: Boolean) {
+    micButton.background = CesiumTheme.pill(
+      if (active) CesiumTheme.DANGER else CesiumTheme.SURFACE,
+      CesiumTheme.BORDER, CesiumTheme.dp(context, 1f)
+    )
+    micButton.setTextColor(if (active) CesiumTheme.ACCENT_TEXT else CesiumTheme.TEXT_SECONDARY)
   }
 
-  private fun refreshChips() {
-    if (!::contextChip.isInitialized) return
-    val hasContext = assistContext.isNotBlank()
-    contextChip.text = if (hasContext) "Screen context ready" else "No screen context"
-    setChipColor(contextChip, if (hasContext) CesiumTheme.STATUS else CesiumTheme.TEXT_MUTED)
+  private fun hasMicPermission(): Boolean =
+    context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
 
-    val hasShot = capturedScreenshot != null
-    screenshotChip.visibility = if (hasShot) View.VISIBLE else View.GONE
-    if (hasShot) {
-      screenshotChip.text = if (attachScreenshot) "Screenshot attached" else "Screenshot off"
-      setChipColor(
-        screenshotChip,
-        if (attachScreenshot) CesiumTheme.SUCCESS else CesiumTheme.TEXT_MUTED
+  private fun requestMicPermission() {
+    runCatching {
+      context.startActivity(
+        Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+          .setData(android.net.Uri.parse("package:${context.packageName}"))
+          .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
       )
+    }
+  }
+
+  private fun minimize() {
+    if (!CesiumAssistantBubble.canOverlay(context)) {
+      showStatus("Allow Cesium to display over other apps, then Minimize again.", spinning = false, color = CesiumTheme.DANGER)
+      CesiumAssistantBubble.requestOverlayPermission(context)
+      return
+    }
+    CesiumAssistantBubble.show(context)
+    hide()
+  }
+
+  private fun applyState(state: CesiumAssistantController.State) {
+    if (!::statusText.isInitialized) return
+    if (state.status.isNotBlank()) {
+      val color = when { state.ok -> CesiumTheme.SUCCESS; state.terminal -> CesiumTheme.DANGER; else -> CesiumTheme.STATUS }
+      showStatus(state.status, spinning = state.running, color = color)
+    }
+    runButton.isEnabled = !state.running
+    runButton.alpha = if (state.running) 0.55f else 1f
+    if (state.answer.isNotBlank()) {
+      answerText.text = Markdown.render(state.answer)
+      answerCard.visibility = View.VISIBLE
     }
   }
 
@@ -307,34 +320,16 @@ class CesiumVoiceInteractionSession(context: Context) : VoiceInteractionSession(
     hide()
   }
 
-  private fun statusChip(label: String, color: Int): TextView =
+  private fun circleButton(label: String, onClick: () -> Unit): TextView =
     TextView(context).apply {
       text = label
-      textSize = 11.5f
-      setTextColor(color)
+      textSize = 12f
+      gravity = Gravity.CENTER
       typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
-      background = CesiumTheme.pill(CesiumTheme.SURFACE_RAISED)
-      setPadding(pad(12), pad(6), pad(12), pad(6))
-    }
-
-  private fun setChipColor(chip: TextView, color: Int) = chip.setTextColor(color)
-
-  private fun suggestionChip(text: String): TextView =
-    TextView(context).apply {
-      this.text = text
-      textSize = 12.5f
       setTextColor(CesiumTheme.TEXT_SECONDARY)
-      maxLines = 1
-      ellipsize = TextUtils.TruncateAt.END
-      background = CesiumTheme.pill(
-        CesiumTheme.SURFACE, CesiumTheme.BORDER, CesiumTheme.dp(context, 1f)
-      )
-      setPadding(pad(14), pad(9), pad(14), pad(9))
-      setOnClickListener {
-        requestInput.setText(text)
-        requestInput.setSelection(text.length)
-        submit()
-      }
+      background = CesiumTheme.pill(CesiumTheme.SURFACE, CesiumTheme.BORDER, CesiumTheme.dp(context, 1f))
+      isClickable = true
+      setOnClickListener { onClick() }
     }
 
   private fun pillButton(label: String, filled: Boolean, onClick: () -> Unit): TextView =
@@ -343,33 +338,23 @@ class CesiumVoiceInteractionSession(context: Context) : VoiceInteractionSession(
       textSize = 14f
       typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
       gravity = Gravity.CENTER
-      setPadding(pad(20), pad(11), pad(20), pad(11))
+      setPadding(pad(18), pad(11), pad(18), pad(11))
       if (filled) {
         setTextColor(CesiumTheme.ACCENT_TEXT)
         background = CesiumTheme.pill(CesiumTheme.ACCENT)
       } else {
         setTextColor(CesiumTheme.TEXT_SECONDARY)
-        background = CesiumTheme.pill(
-          CesiumTheme.SURFACE, CesiumTheme.BORDER, CesiumTheme.dp(context, 1f)
-        )
+        background = CesiumTheme.pill(CesiumTheme.SURFACE, CesiumTheme.BORDER, CesiumTheme.dp(context, 1f))
       }
       isClickable = true
       setOnClickListener { onClick() }
     }
 
-  private fun appendNodeText(
-    node: AssistStructure.ViewNode,
-    output: StringBuilder,
-    depth: Int
-  ) {
-    if (output.length >= 8_000 || depth > 40) return
+  private fun appendNodeText(node: AssistStructure.ViewNode, output: StringBuilder, depth: Int) {
+    if (output.length >= 4_000 || depth > 40) return
     val text = node.text?.toString()?.trim().orEmpty()
     val description = node.contentDescription?.toString()?.trim().orEmpty()
-    val hint = node.hint?.trim().orEmpty()
-    val value = listOf(text, description, hint)
-      .filter { it.isNotBlank() }
-      .distinct()
-      .joinToString(" · ")
+    val value = listOf(text, description).filter { it.isNotBlank() }.distinct().joinToString(" · ")
     if (value.isNotBlank()) output.append(value).append('\n')
     for (index in 0 until node.childCount) {
       appendNodeText(node.getChildAt(index), output, depth + 1)

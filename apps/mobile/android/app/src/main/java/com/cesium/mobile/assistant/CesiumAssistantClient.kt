@@ -39,9 +39,20 @@ class CesiumAssistantClient(private val context: Context) {
     }
     val text = buildString {
       append(requestText.trim())
+      append(
+        "\n\n[You are Cesium acting through an Android phone. You can control this " +
+          "phone with the built-in \"phone\" MCP server via call_mcp_tool — e.g. " +
+          "phone_screenshot, phone_snapshot, phone_apps (open apps), phone_tap, " +
+          "phone_type, phone_swipe, phone_global_action, phone_settings, and " +
+          "phone_secondary_display for background/off-screen apps. Prefer these tools " +
+          "to actually perform the task on the device rather than only describing it.]"
+      )
+      if (screenshot != null) {
+        append("\n\nThe attached image is the user's current screen.")
+      }
       if (screenContext.isNotBlank()) {
-        append("\n\nCurrent Android screen context supplied by the system assistant:\n")
-        append(screenContext.take(12_000))
+        append("\n\nForeground screen text (call phone_snapshot for the full live tree):\n")
+        append(screenContext.take(4_000))
       }
     }
     update("Starting agent…", null)
@@ -60,7 +71,9 @@ class CesiumAssistantClient(private val context: Context) {
     val body = JSONObject().apply {
       put("conversation", JSONObject().apply {
         put("backendId", config.backendId)
-        put("mode", config.mode)
+        // Force agent mode: the assistant must be able to call phone MCP tools,
+        // which "ask" mode blocks.
+        put("mode", "agent")
         modelId?.let {
           put("modelId", it)
           put("modelName", config.modelName ?: it)
