@@ -671,6 +671,31 @@ test("Cesium config options include dynamic prompt modes", async () => {
   assert.equal(modeOption?.options.some((option) => option.value === "workflow"), true);
 });
 
+test("Cesium mode preferences remove disabled modes from the live catalog", async () => {
+  await patchCesiumAgentSettings({
+    modes: {
+      enabled: {
+        plan: false,
+        burn: false,
+      },
+    },
+  });
+  const options = await createCesiumAgentConfigOptions();
+  const modeIds = options
+    .find((option) => option.id === "mode")
+    ?.options.map((option) => option.value);
+  assert.deepEqual(modeIds, ["agent", "orchestration", "workflow", "ask"]);
+
+  await patchCesiumAgentSettings({
+    modes: {
+      enabled: {
+        plan: true,
+        burn: true,
+      },
+    },
+  });
+});
+
 test("Burn goal records start in planning with durable milestones and todos", () => {
   const goal = createBurnGoalRecord({
     workspace: {

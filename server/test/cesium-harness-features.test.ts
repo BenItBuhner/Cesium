@@ -23,6 +23,7 @@ const [
     resolveWaitAgentTimeoutMs,
     defaultHarnessSettings,
     normalizeHarnessSettings,
+    createCesiumFeatureRegistry,
   },
   { resolveCesiumTools, parseWaitToolArgs, buildOpenAiToolDefinitions },
   { patchCesiumAgentSettings, getCesiumAgentSettingsPublic },
@@ -150,6 +151,88 @@ test("resolveCesiumHarness composes base + feature tools", () => {
   assert.ok(resolved.toolNames.has("read_file"));
   assert.ok(resolved.toolNames.has("spawn_agent"));
   assert.equal(resolved.subagentsVersion, 2);
+});
+
+test("feature registry resolves and executes custom modules without central resolver edits", async () => {
+  const registry = createCesiumFeatureRegistry([
+    {
+      id: "custom-memory",
+      label: "Custom memory",
+      description: "Test plugin layer",
+      defaultVersion: 1,
+      versions: [
+        {
+          version: 1,
+          label: "V1",
+          description: "Baseline",
+          resolve: () => ({
+            id: "custom-memory",
+            version: 1,
+            label: "Custom memory V1",
+            description: "Baseline",
+            tools: [
+              {
+                name: "memory_lookup_v1",
+                description: "Lookup memory",
+                parameters: { type: "object" },
+              },
+            ],
+            toolNames: ["memory_lookup_v1"],
+          }),
+        },
+        {
+          version: 2,
+          label: "V2",
+          description: "Experimental",
+          resolve: () => ({
+            id: "custom-memory",
+            version: 2,
+            label: "Custom memory V2",
+            description: "Experimental",
+            tools: [
+              {
+                name: "memory_lookup_v2",
+                description: "Lookup memory with citations",
+                parameters: { type: "object" },
+              },
+            ],
+            toolNames: ["memory_lookup_v2"],
+            executeTool: (name, args) =>
+              JSON.stringify({
+                name,
+                query: args.query,
+                source: "custom-memory-v2",
+              }),
+          }),
+        },
+      ],
+    },
+  ]);
+  const resolved = resolveCesiumHarness(
+    [],
+    {
+      features: {
+        subagents: { version: 1 },
+        "custom-memory": { version: 2 },
+      },
+    },
+    registry
+  );
+  assert.deepEqual(resolved.modules.map((module) => `${module.id}@${module.version}`), [
+    "custom-memory@2",
+  ]);
+  assert.equal(resolved.toolNames.has("memory_lookup_v2"), true);
+  assert.equal(resolved.toolNames.has("memory_lookup_v1"), false);
+  assert.equal(
+    await resolved.modules[0]?.executeTool?.("memory_lookup_v2", {
+      query: "plugin registry",
+    }),
+    JSON.stringify({
+      name: "memory_lookup_v2",
+      query: "plugin registry",
+      source: "custom-memory-v2",
+    })
+  );
 });
 
 test("followup_task queued during a running turn is drained after the turn ends", async () => {
