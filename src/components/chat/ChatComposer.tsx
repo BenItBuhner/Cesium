@@ -137,7 +137,7 @@ import {
   ensureCurrentModeOption,
   getModeTone,
   isGoalMode,
-  resolveCanonicalModeId,
+  resolveNextModeInCycle,
 } from "@/lib/chat-modes";
 import {
   clearDesktopTaskbarGoalProgress,
@@ -2240,21 +2240,15 @@ export function ChatComposer({
  if (configLocked || modeLocked) {
  return false;
  }
- const opts = ensureCurrentModeOption(
- mode,
- modeOptions?.length ? modeOptions : DEFAULT_MODE_OPTIONS
- );
-      if (opts.length === 0) {
+      const next = resolveNextModeInCycle(
+        mode,
+        modeOptions?.length ? modeOptions : DEFAULT_MODE_OPTIONS
+      );
+      if (!next) {
         return false;
       }
       event.preventDefault();
-      const canonical = resolveCanonicalModeId(String(mode), opts);
-      let idx = opts.findIndex((o) => o.id === canonical);
-      if (idx < 0) {
-        idx = 0;
-      }
-      const next = opts[(idx + 1) % opts.length]!;
-      onModeChange(next.id as EditorMode);
+      onModeChange(next);
       setModeLabelPeekKey((k) => k + 1);
       return true;
     },

@@ -6,6 +6,7 @@ import {
   isOrchestrationMode,
   isOrchestrationModeLocked,
   resolveCanonicalModeId,
+  resolveNextModeInCycle,
 } from "../src/lib/chat-modes.ts";
 
 describe("chat modes", () => {
@@ -48,5 +49,27 @@ describe("chat modes", () => {
     assert.equal(isOrchestrationModeLocked("orchestration", true), false);
     assert.equal(isOrchestrationModeLocked("plan", true), false);
     assert.equal(isOrchestrationModeLocked("agent", false), false);
+  });
+
+  test("cycles only through the effective mode catalog", () => {
+    const enabled = [
+      { id: "agent", label: "Agent" },
+      { id: "workflow", label: "Workflow" },
+      { id: "ask", label: "Ask" },
+    ];
+    assert.equal(resolveNextModeInCycle("agent", enabled), "workflow");
+    assert.equal(resolveNextModeInCycle("workflow", enabled), "ask");
+    assert.equal(resolveNextModeInCycle("ask", enabled), "agent");
+  });
+
+  test("exits a disabled active mode and preserves focus with one mode", () => {
+    assert.equal(
+      resolveNextModeInCycle("plan", [{ id: "agent", label: "Agent" }]),
+      "agent"
+    );
+    assert.equal(
+      resolveNextModeInCycle("agent", [{ id: "agent", label: "Agent" }]),
+      null
+    );
   });
 });

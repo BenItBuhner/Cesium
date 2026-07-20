@@ -1114,6 +1114,9 @@ function CesiumAgentHarnessSettings() {
     (selectedProvider.custom ||
       selectedProvider.apiKind === "openai-compatible" ||
       !selectedProvider.baseUrl);
+  const enabledModeCount = settings
+    ? Object.values(settings.modes.enabled).filter(Boolean).length
+    : 0;
 
   return (
     <>
@@ -1360,47 +1363,101 @@ function CesiumAgentHarnessSettings() {
           </HarnessDetailBlock>
 
           <HarnessDetailBlock>
+            <SettingsSubsectionHeading>Mode cycle</SettingsSubsectionHeading>
+            <p className="mt-[4px] font-sans text-[12px] leading-[1.45] text-[var(--text-secondary)]">
+              Choose which Cesium modes appear in the picker, slash menu, and Shift+Tab cycle.
+              The active mode stays visible until you switch away from it.
+            </p>
+            <div className="mt-[12px] divide-y divide-[var(--border-subtle)]">
+              {settings.modeCatalog.map((mode) => {
+                const enabled = settings.modes.enabled[mode.id];
+                const labelId = `cesium-mode-${mode.id}`;
+                return (
+                  <div
+                    key={mode.id}
+                    className="flex items-center justify-between gap-[16px] py-[10px] first:pt-0 last:pb-0"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <p
+                        id={labelId}
+                        className="font-sans text-[13px] font-medium text-[var(--text-primary)]"
+                      >
+                        {mode.label}
+                      </p>
+                      <p className="mt-[3px] font-sans text-[11px] leading-relaxed text-[var(--text-secondary)]">
+                        {mode.description}
+                      </p>
+                    </div>
+                    <ToggleSwitch
+                      checked={enabled}
+                      labelledBy={labelId}
+                      onChange={(nextEnabled) => {
+                        if (!nextEnabled && enabledModeCount <= 1) {
+                          setMessage("At least one Cesium mode must remain enabled.");
+                          return;
+                        }
+                        void patchSettings({
+                          modes: {
+                            enabled: {
+                              ...settings.modes.enabled,
+                              [mode.id]: nextEnabled,
+                            },
+                          },
+                        });
+                      }}
+                      size="md"
+                      variant="green"
+                    />
+                  </div>
+                );
+              })}
+            </div>
+          </HarnessDetailBlock>
+
+          <HarnessDetailBlock>
             <SettingsSubsectionHeading>Harness features</SettingsSubsectionHeading>
             <p className="mt-[4px] font-sans text-[12px] leading-[1.45] text-[var(--text-secondary)]">
-              Versioned feature layers swap tools and behavior without changing the core turn loop.
-              Subagents V2 is Codex-inspired collaborative agents (spawn / wait / follow-up / interrupt).
+              Registered feature layers can contribute versioned tools and prompt behavior without
+              changing the core turn loop.
             </p>
             <div className="mt-[12px] grid gap-[12px]">
-              <label className="flex flex-col gap-[5px]">
-                <SettingsFieldLabel>Subagents version</SettingsFieldLabel>
-                <SettingsThemeSelect
-                  value={String(settings.harness?.features.subagents.version ?? 1)}
-                  options={[
-                    {
-                      value: "1",
-                      label: "V1 — ephemeral subagent tool",
-                    },
-                    {
-                      value: "2",
-                      label: "V2 — collaborative spawn / wait / mailbox",
-                    },
-                  ]}
-                  onChange={(value) =>
-                    void patchSettings({
-                      harness: {
-                        features: {
-                          ...(settings.harness?.features ?? {}),
-                          subagents: {
-                            version: value === "2" ? 2 : 1,
+              {settings.harnessCatalog.map((feature) => (
+                <label key={feature.id} className="flex flex-col gap-[5px]">
+                  <SettingsFieldLabel>{feature.label} implementation</SettingsFieldLabel>
+                  <SettingsThemeSelect
+                    value={String(
+                      settings.harness.features[feature.id]?.version ??
+                        feature.defaultVersion
+                    )}
+                    options={feature.versions.map((version) => ({
+                      value: String(version.version),
+                      label: version.label,
+                    }))}
+                    onChange={(value) =>
+                      void patchSettings({
+                        harness: {
+                          features: {
+                            ...settings.harness.features,
+                            [feature.id]: {
+                              version: Number(value),
+                            },
+                          },
+                          limits: {
+                            ...settings.harness.limits,
                           },
                         },
-                        limits: {
-                          ...(settings.harness?.limits ?? {}),
-                        },
-                      },
-                    })
-                  }
-                  ariaLabel="Subagents version"
-                  className="w-full max-w-none"
-                  triggerClassName={`${settingsSelectTriggerClass} w-full max-w-none`}
-                  disabled={busy}
-                />
-              </label>
+                      })
+                    }
+                    ariaLabel={`${feature.label} implementation`}
+                    className="w-full max-w-none"
+                    triggerClassName={`${settingsSelectTriggerClass} w-full max-w-none`}
+                    disabled={busy}
+                  />
+                  <span className="font-sans text-[11px] leading-relaxed text-[var(--text-secondary)]">
+                    {feature.description}
+                  </span>
+                </label>
+              ))}
               <div className="grid gap-[12px] md:grid-cols-2">
                 <label className="flex flex-col gap-[5px]">
                   <SettingsFieldLabel>Wait tool max (seconds)</SettingsFieldLabel>

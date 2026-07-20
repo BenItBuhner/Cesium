@@ -164,3 +164,21 @@ export function ensureCurrentModeOption(
   }
   return [{ id: mode, label: formatModeLabel(mode) }, ...options];
 }
+
+/**
+ * Resolve the next mode from an already-filtered effective catalog.
+ * A disabled current mode is temporarily inserted so the next cycle exits it;
+ * a single remaining mode leaves Shift+Tab available for focus navigation.
+ */
+export function resolveNextModeInCycle(
+  mode: EditorMode,
+  options: AgentModeOption[]
+): EditorMode | null {
+  const cycle = ensureCurrentModeOption(mode, options);
+  if (cycle.length < 2) {
+    return null;
+  }
+  const canonical = resolveCanonicalModeId(String(mode), cycle);
+  const index = cycle.findIndex((option) => option.id === canonical);
+  return cycle[(index < 0 ? 0 : index + 1) % cycle.length]?.id ?? null;
+}

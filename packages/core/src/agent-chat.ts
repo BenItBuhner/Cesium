@@ -423,9 +423,14 @@ function mergeConversationConfigOptionsWithBackend(
     const preferBackendCatalog =
       isPrimaryConfigCategory(backendOption.category) &&
       backendOption.options.length >= conversationOption.options.length;
-    /** Model catalogs on the conversation snapshot can lag behind the backend; always use the backend list when present so new models show up after refresh. */
+    /**
+     * Model catalogs and enabled mode lists can change after a conversation was
+     * created. Prefer the backend's live catalog so stale snapshots cannot
+     * resurrect disabled modes or hide newly discovered models.
+     */
     const baseOption =
-      backendOption.category === "model" && backendOption.options.length > 0
+      (backendOption.category === "model" || backendOption.category === "mode") &&
+      backendOption.options.length > 0
         ? backendOption
         : preferBackendCatalog
           ? backendOption

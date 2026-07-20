@@ -48,6 +48,16 @@ function asNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
+function asVersion(value: unknown): number | undefined {
+  const parsed =
+    typeof value === "number"
+      ? value
+      : typeof value === "string" && value.trim()
+        ? Number(value)
+        : Number.NaN;
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined;
+}
+
 function clampInt(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, Math.floor(value)));
 }
@@ -106,8 +116,19 @@ export function normalizeHarnessSettings(raw: unknown): CesiumHarnessSettings {
   if (!record) return defaults;
   const features = asRecord(record.features);
   const subagents = asRecord(features?.subagents);
+  const normalizedFeatures: Record<string, { version: number }> = {};
+  if (features) {
+    for (const [id, selection] of Object.entries(features)) {
+      const selectionRecord = asRecord(selection);
+      const version = asVersion(selectionRecord?.version ?? selection);
+      if (id.trim() && version != null) {
+        normalizedFeatures[id] = { version };
+      }
+    }
+  }
   return {
     features: {
+      ...normalizedFeatures,
       subagents: {
         version: normalizeSubagentsVersion(
           subagents?.version ?? features?.subagents ?? defaults.features.subagents.version
@@ -121,12 +142,16 @@ export function normalizeHarnessSettings(raw: unknown): CesiumHarnessSettings {
 export function mergeHarnessSettings(
   current: CesiumHarnessSettings,
   patch: {
-    features?: { subagents?: { version?: CesiumSubagentsVersion | number | string } };
+    features?: Record<string, { version?: number | string } | undefined> & {
+      subagents?: { version?: CesiumSubagentsVersion | number | string };
+    };
     limits?: Partial<CesiumHarnessLimits>;
   }
 ): CesiumHarnessSettings {
   return normalizeHarnessSettings({
     features: {
+      ...current.features,
+      ...(patch.features ?? {}),
       subagents: {
         version: patch.features?.subagents?.version ?? current.features.subagents.version,
       },
