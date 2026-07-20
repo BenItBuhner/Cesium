@@ -512,7 +512,7 @@ export class AgentRuntimeManager {
       clientEventId?: string;
       clientMessageId?: string;
       configOverride?: {
-        backendId?: string;
+        backendId?: AgentBackendId;
         mode?: string;
         modelId?: string;
         modelName?: string;
