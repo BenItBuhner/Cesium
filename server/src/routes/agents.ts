@@ -101,7 +101,7 @@ agentRoutes.post("/api/agents/conversations/create-and-prompt", async (c) => {
     clientEventId?: string;
     clientMessageId?: string;
     configOverride?: {
-      backendId?: string;
+      backendId?: AgentBackendId;
       mode?: string;
       modelId?: string;
       modelName?: string;
