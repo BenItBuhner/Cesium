@@ -1761,8 +1761,19 @@ export type CesiumAgentSettingsPayload = {
   orchestration: {
     continueWhenIncomplete: boolean;
   };
+  modes: {
+    enabled: Record<
+      "agent" | "plan" | "orchestration" | "burn" | "workflow" | "ask",
+      boolean
+    >;
+  };
+  modeCatalog: Array<{
+    id: "agent" | "plan" | "orchestration" | "burn" | "workflow" | "ask";
+    label: string;
+    description: string;
+  }>;
   harness: {
-    features: {
+    features: Record<string, { version: number }> & {
       subagents: {
         version: 1 | 2;
       };
@@ -1775,6 +1786,17 @@ export type CesiumAgentSettingsPayload = {
       maxConcurrentSubagents: number;
     };
   };
+  harnessCatalog: Array<{
+    id: string;
+    label: string;
+    description: string;
+    defaultVersion: number;
+    versions: Array<{
+      version: number;
+      label: string;
+      description: string;
+    }>;
+  }>;
   toolPermissions: {
     editFile: "ask" | "allow" | "deny";
     terminal: "ask" | "allow" | "deny";
@@ -1815,6 +1837,7 @@ export async function patchCesiumAgentSettings(
       | "defaultApiKind"
       | "compression"
       | "orchestration"
+      | "modes"
       | "harness"
       | "toolPermissions"
       | "customProviders"

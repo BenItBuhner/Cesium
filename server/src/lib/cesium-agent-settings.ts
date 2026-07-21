@@ -8,11 +8,65 @@ import {
 import type { AgentConfigOption } from "./agents/types.js";
 import {
   defaultHarnessSettings,
+  getCesiumFeatureCatalog,
   mergeHarnessSettings,
   normalizeHarnessSettings,
   type CesiumHarnessSettings,
   type CesiumSubagentsVersion,
 } from "./agents/cesium/features/index.js";
+
+export type CesiumModeId =
+  | "agent"
+  | "plan"
+  | "orchestration"
+  | "burn"
+  | "workflow"
+  | "ask";
+
+export type CesiumModeDefinition = {
+  id: CesiumModeId;
+  label: string;
+  description: string;
+};
+
+export const CESIUM_MODE_DEFINITIONS: readonly CesiumModeDefinition[] = [
+  {
+    id: "agent",
+    label: "Agent",
+    description: "Build, edit, run commands, and complete implementation work.",
+  },
+  {
+    id: "plan",
+    label: "Plan",
+    description: "Research and draft a reviewable implementation plan before building.",
+  },
+  {
+    id: "orchestration",
+    label: "Orchestration",
+    description: "Coordinate a kanban board and delegate work to child agents.",
+  },
+  {
+    id: "burn",
+    label: "Burn",
+    description:
+      "Run a DB-backed long-running goal with planning, milestones, continuation, and final verification.",
+  },
+  {
+    id: "workflow",
+    label: "Workflow",
+    description:
+      "Write and execute JavaScript orchestration scripts that fan work across subagents.",
+  },
+  {
+    id: "ask",
+    label: "Ask",
+    description: "Read-only Q&A mode for inspecting the workspace without side effects.",
+  },
+] as const;
+
+export type CesiumModeSettings = {
+  enabled: Record<CesiumModeId, boolean>;
+};
 
 export type CesiumProviderKind =
   | "openai-chat-completions"
@@ -65,6 +119,8 @@ export type CesiumAgentSettings = {
     /** Prompt the agent to continue when it stops with incomplete todos or open kanban issues. */
     continueWhenIncomplete: boolean;
   };
+  /** Modes exposed by this harness in dropdowns, slash commands, and Shift+Tab. */
+  modes: CesiumModeSettings;
   /**
    * Modular harness feature layers (subagents v1/v2, wait limits, etc.).
    * Swapping a feature version swaps its tools/reminders without rewriting the turn loop.
@@ -87,6 +143,8 @@ export type CesiumProviderKeyStatus = Omit<CesiumProviderKey, "apiKey" | "source
 export type CesiumAgentSettingsPublic = Omit<CesiumAgentSettings, "providerKeys"> & {
   configured: boolean;
   providerKeys: CesiumProviderKeyStatus[];
+  harnessCatalog: ReturnType<typeof getCesiumFeatureCatalog>;
+  modeCatalog: CesiumModeDefinition[];
 };
 
 export type CesiumModelCatalogEntry = {
@@ -263,6 +321,11 @@ function defaultSettings(): CesiumAgentSettings {
     orchestration: {
       continueWhenIncomplete: true,
     },
+    modes: {
+      enabled: Object.fromEntries(
+        CESIUM_MODE_DEFINITIONS.map((mode) => [mode.id, true])
+      ) as Record<CesiumModeId, boolean>,
+    },
     harness: defaultHarnessSettings(),
     toolPermissions: {
       editFile: "ask",
@@ -286,6 +349,24 @@ function asString(value: unknown): string | undefined {
 
 function asNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function normalizeModeSettings(raw: unknown): CesiumModeSettings {
+  const defaults = defaultSettings().modes;
+  const record = asRecord(raw);
+  const enabled = asRecord(record?.enabled);
+  const normalized = Object.fromEntries(
+    CESIUM_MODE_DEFINITIONS.map((mode) => [
+      mode.id,
+      typeof enabled?.[mode.id] === "boolean"
+        ? enabled[mode.id]
+        : defaults.enabled[mode.id],
+    ])
+  ) as Record<CesiumModeId, boolean>;
+  if (!Object.values(normalized).some(Boolean)) {
+    normalized.agent = true;
+  }
+  return { enabled: normalized };
 }
 
 /** Provider-reported context windows that are missing or unusable fall back to 100k tokens. */
@@ -416,6 +497,7 @@ function normalizeSettings(raw: unknown): CesiumAgentSettings {
           ? orchestration.continueWhenIncomplete
           : defaults.orchestration.continueWhenIncomplete,
     },
+    modes: normalizeModeSettings(record.modes),
     harness: normalizeHarnessSettings(record.harness),
     toolPermissions: {
       editFile:
@@ -535,6 +617,8 @@ export async function getCesiumAgentSettingsPublic(): Promise<CesiumAgentSetting
     ...settings,
     configured: providerKeys.length > 0,
     providerKeys,
+    harnessCatalog: getCesiumFeatureCatalog(),
+    modeCatalog: [...CESIUM_MODE_DEFINITIONS],
   };
 }
 
@@ -629,8 +713,13 @@ export async function patchCesiumAgentSettings(input: {
   defaultApiKind?: CesiumProviderKind;
   compression?: Partial<CesiumAgentSettings["compression"]>;
   orchestration?: Partial<CesiumAgentSettings["orchestration"]>;
+  modes?: {
+    enabled?: Partial<Record<CesiumModeId, boolean>>;
+  };
   harness?: {
-    features?: { subagents?: { version?: CesiumSubagentsVersion | number | string } };
+    features?: Record<string, { version?: number | string } | undefined> & {
+      subagents?: { version?: CesiumSubagentsVersion | number | string };
+    };
     limits?: Partial<CesiumAgentSettings["harness"]["limits"]>;
   };
   toolPermissions?: Partial<CesiumAgentSettings["toolPermissions"]>;
@@ -653,6 +742,12 @@ export async function patchCesiumAgentSettings(input: {
       ...settings.orchestration,
       ...(input.orchestration ?? {}),
     },
+    modes: normalizeModeSettings({
+      enabled: {
+        ...settings.modes.enabled,
+        ...(input.modes?.enabled ?? {}),
+      },
+    }),
     harness: input.harness
       ? mergeHarnessSettings(settings.harness, input.harness)
       : settings.harness,
@@ -1076,41 +1171,20 @@ export async function createCesiumAgentConfigOptions(): Promise<AgentConfigOptio
     { value: "google-genai", name: "Google GenAI" },
     { value: "openai-compatible", name: "OpenAI-compatible" },
   ];
+  const enabledModes = CESIUM_MODE_DEFINITIONS.filter(
+    (mode) => settings.modes.enabled[mode.id]
+  );
   return [
     {
       id: "mode",
       name: "Mode",
       category: "mode",
-      currentValue: "agent",
-      options: [
-        { value: "agent", name: "Agent" },
-        {
-          value: "plan",
-          name: "Plan",
-          description: "Research and draft a reviewable implementation plan before building.",
-        },
-        {
-          value: "orchestration",
-          name: "Orchestration",
-          description: "Coordinate a kanban board and delegate work to child agents.",
-        },
-        {
-          value: "burn",
-          name: "Burn",
-          description: "Run a DB-backed long-running goal with planning, milestones, continuation, and final verification.",
-        },
-        {
-          value: "workflow",
-          name: "Workflow",
-          description:
-            "Write and execute JavaScript orchestration scripts that fan work across subagents with parallel/pipeline primitives.",
-        },
-        {
-          value: "ask",
-          name: "Ask",
-          description: "Read-only Q&A mode for inspecting the workspace without side effects.",
-        },
-      ],
+      currentValue: enabledModes[0]?.id ?? "agent",
+      options: enabledModes.map((mode) => ({
+        value: mode.id,
+        name: mode.label,
+        description: mode.description,
+      })),
     },
     {
       id: "model",

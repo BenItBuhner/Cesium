@@ -1,6 +1,11 @@
 import { defaultHarnessSettings, normalizeHarnessSettings } from "./limits.js";
-import { resolveSubagentsModule } from "./subagents/index.js";
+import {
+  createCesiumFeatureRegistry,
+  type CesiumFeatureRegistry,
+} from "./registry.js";
+import { SUBAGENTS_FEATURE_DEFINITION } from "./subagents/index.js";
 import type {
+  CesiumFeatureDefinition,
   CesiumFeatureModule,
   CesiumHarnessSettings,
   CesiumToolDefinition,
@@ -9,6 +14,9 @@ import type {
 
 export type {
   CesiumFeatureModule,
+  CesiumFeatureCatalogEntry,
+  CesiumFeatureDefinition,
+  CesiumFeatureVersionDefinition,
   CesiumHarnessFeatureId,
   CesiumHarnessFeatureVersions,
   CesiumHarnessLimits,
@@ -17,6 +25,10 @@ export type {
   CesiumToolDefinition,
   ResolvedCesiumHarness,
 } from "./types.js";
+export {
+  createCesiumFeatureRegistry,
+  type CesiumFeatureRegistry,
+} from "./registry.js";
 
 export {
   DEFAULT_MAX_CONCURRENT_SUBAGENTS,
@@ -44,13 +56,29 @@ export {
   resolveSubagentsModule,
 } from "./subagents/index.js";
 
+export const CESIUM_FEATURE_REGISTRY = createCesiumFeatureRegistry([
+  SUBAGENTS_FEATURE_DEFINITION,
+]);
+
+/** Register a plugin-like feature layer in the process-wide Cesium harness. */
+export function registerCesiumFeatureDefinition(
+  definition: CesiumFeatureDefinition
+): () => void {
+  return CESIUM_FEATURE_REGISTRY.register(definition);
+}
+
+export function getCesiumFeatureCatalog() {
+  return CESIUM_FEATURE_REGISTRY.catalog();
+}
+
 /**
  * Resolve the active harness feature stack from settings.
  * Feature modules are swapped by version (e.g. subagents v1 vs v2) without
  * rewriting the core turn loop — tools, reminders, and dispatch keys come from modules.
  */
 export function resolveCesiumHarnessFeatures(
-  harnessInput?: CesiumHarnessSettings | unknown
+  harnessInput?: CesiumHarnessSettings | unknown,
+  registry: CesiumFeatureRegistry = CESIUM_FEATURE_REGISTRY
 ): {
   settings: CesiumHarnessSettings;
   modules: CesiumFeatureModule[];
@@ -60,8 +88,7 @@ export function resolveCesiumHarnessFeatures(
   const settings = harnessInput
     ? normalizeHarnessSettings(harnessInput)
     : defaultHarnessSettings();
-  const subagents = resolveSubagentsModule(settings.features.subagents.version, settings.limits);
-  const modules: CesiumFeatureModule[] = [subagents];
+  const modules = registry.resolve(settings, settings.limits);
   return {
     settings,
     modules,
@@ -73,10 +100,19 @@ export function resolveCesiumHarnessFeatures(
 /** Compose base tools + active feature-module tools into a resolved harness. */
 export function resolveCesiumHarness(
   baseTools: CesiumToolDefinition[],
-  harnessInput?: CesiumHarnessSettings | unknown
+  harnessInput?: CesiumHarnessSettings | unknown,
+  registry: CesiumFeatureRegistry = CESIUM_FEATURE_REGISTRY
 ): ResolvedCesiumHarness {
-  const features = resolveCesiumHarnessFeatures(harnessInput);
+  const features = resolveCesiumHarnessFeatures(harnessInput, registry);
   const tools = [...baseTools, ...features.featureTools];
+  const duplicateToolNames = tools
+    .map((tool) => tool.name)
+    .filter((name, index, names) => names.indexOf(name) !== index);
+  if (duplicateToolNames.length > 0) {
+    throw new Error(
+      `Cesium harness feature tool collision: ${[...new Set(duplicateToolNames)].join(", ")}`
+    );
+  }
   return {
     settings: features.settings,
     modules: features.modules,

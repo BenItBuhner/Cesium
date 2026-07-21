@@ -6,11 +6,18 @@ export type CesiumToolDefinition = {
 };
 
 /** Versioned harness feature ids that can be swapped independently. */
-export type CesiumHarnessFeatureId = "subagents";
+export type CesiumHarnessFeatureId = "subagents" | (string & {});
 
 export type CesiumSubagentsVersion = 1 | 2;
 
-export type CesiumHarnessFeatureVersions = {
+export type CesiumHarnessFeatureSelection = {
+  version: number;
+};
+
+export type CesiumHarnessFeatureVersions = Record<
+  string,
+  CesiumHarnessFeatureSelection
+> & {
   subagents: {
     version: CesiumSubagentsVersion;
   };
@@ -44,6 +51,37 @@ export type CesiumFeatureModule = {
   toolNames: string[];
   /** Optional mode-reminder fragment injected when this feature is active. */
   reminder?: string;
+  /**
+   * Optional module-owned dispatcher for contributed tools. Stateful modules
+   * can close over a runtime created by their version resolver.
+   */
+  executeTool?: (
+    name: string,
+    args: Record<string, unknown>
+  ) => string | Promise<string>;
+};
+
+export type CesiumFeatureVersionDefinition = {
+  version: number;
+  label: string;
+  description: string;
+  resolve: (limits: CesiumHarnessLimits) => CesiumFeatureModule;
+};
+
+/**
+ * One independently swappable part of the harness. Third-party modules can
+ * register another definition without editing the central resolver.
+ */
+export type CesiumFeatureDefinition = {
+  id: CesiumHarnessFeatureId;
+  label: string;
+  description: string;
+  defaultVersion: number;
+  versions: readonly CesiumFeatureVersionDefinition[];
+};
+
+export type CesiumFeatureCatalogEntry = Omit<CesiumFeatureDefinition, "versions"> & {
+  versions: Array<Omit<CesiumFeatureVersionDefinition, "resolve">>;
 };
 
 export type ResolvedCesiumHarness = {
