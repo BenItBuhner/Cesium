@@ -1,6 +1,7 @@
 package com.cesium.mobile.notifications
 
 import android.app.NotificationManager
+import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.os.Bundle
@@ -92,7 +93,7 @@ class CesiumLiveUpdatesModule(
       else -> PREFERENCE_NOW_BAR
     }
     reactContext
-      .getSharedPreferences(PREFERENCES, ReactApplicationContext.MODE_PRIVATE)
+      .getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
       .edit()
       .putString(KEY_DELIVERY_PREFERENCE, normalized)
       .apply()
@@ -142,7 +143,7 @@ class CesiumLiveUpdatesModule(
 
   private fun deliveryPreference(): String =
     reactContext
-      .getSharedPreferences(PREFERENCES, ReactApplicationContext.MODE_PRIVATE)
+      .getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
       .getString(KEY_DELIVERY_PREFERENCE, PREFERENCE_NOW_BAR)
       ?.takeIf { it in setOf(PREFERENCE_NOW_BAR, PREFERENCE_LIVE, PREFERENCE_OFF) }
       ?: PREFERENCE_NOW_BAR
