@@ -1,6 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  ActivityIndicator,
   AppState,
   BackHandler,
   Dimensions,
@@ -309,12 +308,6 @@ export default function App() {
         setSupportMultipleWindows={false}
         mediaPlaybackRequiresUserAction={false}
         style={styles.webview}
-        renderLoading={() => (
-          <View style={styles.loading}>
-            <ActivityIndicator color="#ffffff" />
-          </View>
-        )}
-        startInLoadingState
       />
       {loadError ? (
         <View style={styles.error}>
@@ -374,16 +367,6 @@ const styles = StyleSheet.create({
   webview: {
     flex: 1,
     backgroundColor: "#191919",
-  },
-  loading: {
-    bottom: 0,
-    left: 0,
-    position: "absolute",
-    right: 0,
-    top: 0,
-    alignItems: "center",
-    backgroundColor: "#191919",
-    justifyContent: "center",
   },
   error: {
     bottom: 0,
