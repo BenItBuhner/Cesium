@@ -54,6 +54,9 @@ export function createCesiumApp(): Hono {
     `http://${serverConfig.publicHost}:3000`,
     "http://localhost:3000",
     "http://127.0.0.1:3000",
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://10.0.2.2:5173",
     // The production Android app loads the exact Vite workbench from
     // file:///android_asset/workbench/index.html. Android WebView serializes
     // that file document's Origin header as the literal string "null".
