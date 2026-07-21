@@ -7,6 +7,18 @@ const MOBILE_THEME_CONFIG_STORAGE_KEY = "opencursor-theme-config";
 const MOBILE_LEGACY_THEME_STORAGE_KEY = "opencursor-theme";
 
 export type MobileLifecycleState = "active" | "background" | "inactive";
+export type MobileLiveUpdatePreference = "nowbar" | "live" | "off";
+
+export type MobileNativeStatus = {
+  liveUpdates: {
+    preference: MobileLiveUpdatePreference;
+    sdkInt: number;
+    progressStyleSupported: boolean;
+    canPostPromotedNotifications: boolean;
+    notificationPermissionGranted: boolean;
+  };
+  phoneControl?: unknown;
+};
 
 export type MobileServerConfig = {
   baseUrl: string;
@@ -39,6 +51,7 @@ export type MobileAgentProjectionMessage = {
 
 export type MobileNativeToWebMessage =
   | { type: "nativeReady"; server: MobileServerConfig }
+  | { type: "mobileNativeStatus"; status: MobileNativeStatus }
   | { type: "lifecycle"; state: MobileLifecycleState }
   | { type: "notificationAction"; actionId: string; workspaceId?: string | null; conversationId?: string | null }
   | { type: "resumeCatchUp"; workspaceId?: string | null; conversationId?: string | null; lastEventSeq?: number };
@@ -49,6 +62,9 @@ export type MobileWebToNativeMessage =
   | MobileAgentProjectionMessage
   | { type: "webIdleMode"; enabled: boolean }
   | { type: "webRuntimeError"; message: string; source?: string; line?: number }
+  | { type: "getMobileNativeStatus" }
+  | { type: "setLiveUpdatePreference"; preference: MobileLiveUpdatePreference }
+  | { type: "openLiveUpdatePromotionSettings" }
   | { type: "serverConfigured"; server: MobileServerConfig }
   | {
       type: "wearSyncEnvelope";

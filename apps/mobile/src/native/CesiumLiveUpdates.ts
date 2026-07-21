@@ -5,6 +5,10 @@ type CesiumLiveUpdatesModule = {
   startOrUpdate(payload: LiveUpdatePayload): Promise<LiveUpdateStatus>;
   stop(): Promise<void>;
   getPromotionStatus(): Promise<LiveUpdateStatus>;
+  getDeliveryPreference(): Promise<LiveUpdateStatus["deliveryPreference"]>;
+  setDeliveryPreference(
+    preference: LiveUpdateStatus["deliveryPreference"]
+  ): Promise<LiveUpdateStatus>;
   openPromotionSettings(): Promise<boolean>;
   consumeInitialNotificationAction(): Promise<{
     actionId?: string;
@@ -34,6 +38,18 @@ export const CesiumLiveUpdates: CesiumLiveUpdatesModule = {
     }
     return nativeModule.getPromotionStatus();
   },
+  async getDeliveryPreference() {
+    if (Platform.OS !== "android" || !nativeModule) {
+      return "live";
+    }
+    return nativeModule.getDeliveryPreference();
+  },
+  async setDeliveryPreference(preference) {
+    if (Platform.OS !== "android" || !nativeModule) {
+      return { ...fallbackStatus(), deliveryPreference: preference };
+    }
+    return nativeModule.setDeliveryPreference(preference);
+  },
   async openPromotionSettings() {
     if (Platform.OS !== "android" || !nativeModule) {
       return false;
@@ -55,5 +71,6 @@ function fallbackStatus(): LiveUpdateStatus {
     canPostPromotedNotifications: false,
     notificationPermissionGranted: false,
     suppressedByDismissal: false,
+    deliveryPreference: "live",
   };
 }

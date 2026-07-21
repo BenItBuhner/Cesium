@@ -35,6 +35,49 @@ describe("mobile bridge", () => {
     assert.equal(parseMobileBridgeMessage(null), null);
   });
 
+  test("round-trips mobile live-activity preference and native status", () => {
+    assert.deepEqual(
+      parseMobileBridgeMessage(
+        encodeMobileBridgeMessage({
+          type: "setLiveUpdatePreference",
+          preference: "nowbar",
+        })
+      ),
+      {
+        type: "setLiveUpdatePreference",
+        preference: "nowbar",
+      }
+    );
+    assert.deepEqual(
+      parseMobileBridgeMessage(
+        encodeMobileBridgeMessage({
+          type: "mobileNativeStatus",
+          status: {
+            liveUpdates: {
+              preference: "live",
+              sdkInt: 36,
+              progressStyleSupported: true,
+              canPostPromotedNotifications: false,
+              notificationPermissionGranted: true,
+            },
+          },
+        })
+      ),
+      {
+        type: "mobileNativeStatus",
+        status: {
+          liveUpdates: {
+            preference: "live",
+            sdkInt: 36,
+            progressStyleSupported: true,
+            canPostPromotedNotifications: false,
+            notificationPermissionGranted: true,
+          },
+        },
+      }
+    );
+  });
+
   test("bootstrap script embeds sanitized mobile server metadata", () => {
     const script = buildMobileBootstrapScript({
       baseUrl: "http://10.0.2.2:9100/",

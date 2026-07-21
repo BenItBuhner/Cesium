@@ -26,6 +26,7 @@ import {
   encodeMobileBridgeMessage,
   parseMobileBridgeMessage,
   type MobileNativeToWebMessage,
+  type MobileNativeStatus,
   type MobileWebToNativeMessage,
 } from "../../../src/lib/mobile-bridge";
 import { readLaunchUrlConfig, resolveLaunchUrlConfig } from "./config";
@@ -142,6 +143,24 @@ export default function App() {
     });
   }, [sendToWeb]);
 
+  const sendNativeStatus = useCallback(async () => {
+    const [liveUpdates, phoneControl] = await Promise.all([
+      CesiumLiveUpdates.getPromotionStatus(),
+      CesiumPhoneControl.getStatus().catch(() => null),
+    ]);
+    const status: MobileNativeStatus = {
+      liveUpdates: {
+        preference: liveUpdates.deliveryPreference,
+        sdkInt: liveUpdates.sdkInt,
+        progressStyleSupported: liveUpdates.progressStyleSupported,
+        canPostPromotedNotifications: liveUpdates.canPostPromotedNotifications,
+        notificationPermissionGranted: liveUpdates.notificationPermissionGranted,
+      },
+      phoneControl,
+    };
+    sendToWeb({ type: "mobileNativeStatus", status });
+  }, [sendToWeb]);
+
   useEffect(() => {
     serverUrlRef.current = serverUrl;
   }, [serverUrl]);
@@ -238,6 +257,21 @@ export default function App() {
         setAuthToken(nextToken);
         setFocused(nextFocused);
         configureNativeServices(nextFocused, nextToken);
+        void sendNativeStatus();
+        return;
+      }
+      if (message.type === "getMobileNativeStatus") {
+        void sendNativeStatus();
+        return;
+      }
+      if (message.type === "setLiveUpdatePreference") {
+        void CesiumLiveUpdates.setDeliveryPreference(message.preference).then(() =>
+          sendNativeStatus()
+        );
+        return;
+      }
+      if (message.type === "openLiveUpdatePromotionSettings") {
+        void CesiumLiveUpdates.openPromotionSettings().then(() => sendNativeStatus());
         return;
       }
       if (message.type === "serverConfigured") {
@@ -268,7 +302,7 @@ export default function App() {
         ).catch(() => undefined);
       }
     },
-    [configureNativeServices, focused]
+    [configureNativeServices, focused, sendNativeStatus]
   );
 
   const handleNavigation = useCallback((navigation: WebViewNavigation) => {

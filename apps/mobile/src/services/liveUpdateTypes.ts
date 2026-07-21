@@ -29,4 +29,5 @@ export type LiveUpdateStatus = {
   canPostPromotedNotifications: boolean;
   notificationPermissionGranted: boolean;
   suppressedByDismissal: boolean;
+  deliveryPreference: "nowbar" | "live" | "off";
 };

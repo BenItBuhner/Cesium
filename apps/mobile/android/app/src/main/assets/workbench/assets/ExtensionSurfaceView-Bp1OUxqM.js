@@ -1,4 +1,4 @@
-import{j as m,Y as K,Z,$ as Q,a as X,a0 as ee,b as te,r as n,a1 as O,a2 as ne,a3 as se,a4 as re,a5 as oe,a6 as ae,a7 as ie,a8 as ce}from"./index-CI8CPV2l.js";function de(){return m.jsx("div",{className:"h-full overflow-auto bg-[var(--bg-main)]",children:m.jsx("div",{className:"mx-auto max-w-[980px] px-[24px] py-[22px]",children:m.jsx(K,{})})})}const j=`<!doctype html>
+import{j as m,Y as K,Z,$ as Q,a as X,a0 as ee,b as te,r as n,a1 as O,a2 as ne,a3 as se,a4 as re,a5 as oe,a6 as ae,a7 as ie,a8 as ce}from"./index-1X9PkHeq.js";function de(){return m.jsx("div",{className:"h-full overflow-auto bg-[var(--bg-main)]",children:m.jsx("div",{className:"mx-auto max-w-[980px] px-[24px] py-[22px]",children:m.jsx(K,{})})})}const j=`<!doctype html>
 <html>
   <head><meta charset="utf-8" /></head>
   <body><main><p>Extension webview session is ready.</p></main></body>

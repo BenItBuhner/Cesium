@@ -22,6 +22,15 @@ class CesiumLiveUpdatesModule(
   @ReactMethod
   fun startOrUpdate(payload: ReadableMap, promise: Promise) {
     val extras = payload.toBundle()
+    when (deliveryPreference()) {
+      PREFERENCE_OFF -> {
+        stopLiveUpdate()
+        promise.resolve(statusMap())
+        return
+      }
+      PREFERENCE_LIVE -> extras.putBoolean("promote", false)
+      PREFERENCE_NOW_BAR -> extras.putBoolean("promote", true)
+    }
     if (CesiumLiveUpdateStateStore.wasDismissed(reactContext, extras.getString("runKey"))) {
       promise.resolve(statusMap(suppressedByDismissal = true))
       return
@@ -52,6 +61,11 @@ class CesiumLiveUpdatesModule(
 
   @ReactMethod
   fun stop(promise: Promise) {
+    stopLiveUpdate()
+    promise.resolve(null)
+  }
+
+  private fun stopLiveUpdate() {
     val intent = Intent(reactContext, CesiumForegroundService::class.java).apply {
       action = CesiumForegroundService.ACTION_STOP
     }
@@ -59,11 +73,32 @@ class CesiumLiveUpdatesModule(
     reactContext.stopService(intent)
     reactContext.getSystemService(NotificationManager::class.java)
       .cancel(CesiumAgentNotification.NOTIFICATION_ID)
-    promise.resolve(null)
   }
 
   @ReactMethod
   fun getPromotionStatus(promise: Promise) {
+    promise.resolve(statusMap())
+  }
+
+  @ReactMethod
+  fun getDeliveryPreference(promise: Promise) {
+    promise.resolve(deliveryPreference())
+  }
+
+  @ReactMethod
+  fun setDeliveryPreference(preference: String, promise: Promise) {
+    val normalized = when (preference) {
+      PREFERENCE_NOW_BAR, PREFERENCE_LIVE, PREFERENCE_OFF -> preference
+      else -> PREFERENCE_NOW_BAR
+    }
+    reactContext
+      .getSharedPreferences(PREFERENCES, ReactApplicationContext.MODE_PRIVATE)
+      .edit()
+      .putString(KEY_DELIVERY_PREFERENCE, normalized)
+      .apply()
+    if (normalized == PREFERENCE_OFF) {
+      stopLiveUpdate()
+    }
     promise.resolve(statusMap())
   }
 
@@ -102,7 +137,15 @@ class CesiumLiveUpdatesModule(
     putBoolean("canPostPromotedNotifications", CesiumAgentNotification.canPostPromoted(reactContext))
     putBoolean("notificationPermissionGranted", notificationsEnabled())
     putBoolean("suppressedByDismissal", suppressedByDismissal)
+    putString("deliveryPreference", deliveryPreference())
   }
+
+  private fun deliveryPreference(): String =
+    reactContext
+      .getSharedPreferences(PREFERENCES, ReactApplicationContext.MODE_PRIVATE)
+      .getString(KEY_DELIVERY_PREFERENCE, PREFERENCE_NOW_BAR)
+      ?.takeIf { it in setOf(PREFERENCE_NOW_BAR, PREFERENCE_LIVE, PREFERENCE_OFF) }
+      ?: PREFERENCE_NOW_BAR
 
   private fun notificationsEnabled(): Boolean {
     val manager = reactContext.getSystemService(NotificationManager::class.java)
@@ -111,6 +154,14 @@ class CesiumLiveUpdatesModule(
     } else {
       true
     }
+  }
+
+  companion object {
+    private const val PREFERENCES = "cesium-live-update-preferences"
+    private const val KEY_DELIVERY_PREFERENCE = "delivery-preference"
+    private const val PREFERENCE_NOW_BAR = "nowbar"
+    private const val PREFERENCE_LIVE = "live"
+    private const val PREFERENCE_OFF = "off"
   }
 }
 
