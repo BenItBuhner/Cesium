@@ -88,7 +88,7 @@ export default function App() {
 
   const bootstrapScript = useMemo(
     () =>
-      buildMobileBootstrapScript({
+      `${buildWebErrorBridgeScript()}\n${buildMobileBootstrapScript({
         baseUrl: serverUrl,
         label: "This phone",
         authToken,
@@ -98,7 +98,7 @@ export default function App() {
             ? systemColorScheme
             : null,
         runtime,
-      }),
+      })}`,
     [authToken, runtime, safeAreaTop, serverUrl, systemColorScheme]
   );
 
@@ -225,6 +225,10 @@ export default function App() {
         event.nativeEvent.data
       );
       if (!message) return;
+      if (message.type === "webRuntimeError") {
+        setLoadError(message.message);
+        return;
+      }
       if (message.type === "webReady") {
         const nextFocused = {
           workspaceId: message.workspaceId,
@@ -304,6 +308,7 @@ export default function App() {
         sharedCookiesEnabled
         setSupportMultipleWindows={false}
         mediaPlaybackRequiresUserAction={false}
+        webviewDebuggingEnabled
         style={styles.webview}
         renderLoading={() => (
           <View style={styles.loading}>
@@ -335,6 +340,31 @@ function toMobileLifecycleState(state: AppStateStatus) {
   return state === "active" || state === "background" || state === "inactive"
     ? state
     : "background";
+}
+
+function buildWebErrorBridgeScript() {
+  return `
+(() => {
+  if (window.__CESIUM_MOBILE_ERROR_BRIDGE__) return true;
+  window.__CESIUM_MOBILE_ERROR_BRIDGE__ = true;
+  const send = (message, source, line) => {
+    try {
+      window.ReactNativeWebView?.postMessage(JSON.stringify({
+        type: "webRuntimeError",
+        message: String(message || "Unknown web runtime error"),
+        source: source || undefined,
+        line: Number.isFinite(line) ? line : undefined
+      }));
+    } catch {}
+  };
+  window.addEventListener("error", (event) => {
+    send(event.message || event.error?.message, event.filename, event.lineno);
+  });
+  window.addEventListener("unhandledrejection", (event) => {
+    send(event.reason?.message || event.reason);
+  });
+  true;
+})();`;
 }
 
 const styles = StyleSheet.create({

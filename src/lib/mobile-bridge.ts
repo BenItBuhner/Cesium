@@ -48,6 +48,7 @@ export type MobileWebToNativeMessage =
   | ({ type: "focusedConversationChanged" } & MobileFocusedConversation)
   | MobileAgentProjectionMessage
   | { type: "webIdleMode"; enabled: boolean }
+  | { type: "webRuntimeError"; message: string; source?: string; line?: number }
   | { type: "serverConfigured"; server: MobileServerConfig }
   | {
       type: "wearSyncEnvelope";
