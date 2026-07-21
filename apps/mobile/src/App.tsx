@@ -1,181 +1,164 @@
-import "../global.css";
-
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  ActivityIndicator,
   AppState,
+  BackHandler,
+  Dimensions,
   PermissionsAndroid,
   Platform,
+  Pressable,
   StatusBar,
+  StyleSheet,
+  Text,
+  View,
+  useColorScheme,
   type AppStateStatus,
 } from "react-native";
 import NetInfo from "@react-native-community/netinfo";
-import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import {
-  cancelAgentConversation,
-  getStoredSessionToken,
-  setActiveWorkspaceId,
-} from "@cesium/client";
-import { ServerConnectionsProvider, GlobalSettingsProvider } from "@cesium/client/react";
-import { toWatchAgentProjection, toWatchSyncEnvelope } from "@cesium/core";
+  WebView,
+  type WebViewMessageEvent,
+  type WebViewNavigation,
+} from "react-native-webview";
+import type { WebView as WebViewType } from "react-native-webview";
+import type { MobileAgentProjection } from "@cesium/core";
 import {
-  NativeAuthProvider,
-  NativeWorkbench,
-  NativeWorkspaceProvider,
-  useColorScheme,
-  useThemeTokens,
-} from "@cesium/ui-native";
+  buildMobileBootstrapScript,
+  encodeMobileBridgeMessage,
+  parseMobileBridgeMessage,
+  type MobileNativeToWebMessage,
+  type MobileWebToNativeMessage,
+} from "../../../src/lib/mobile-bridge";
 import { readLaunchUrlConfig, resolveLaunchUrlConfig } from "./config";
-import { installReactNativeClientPlatform, setRuntimeServerBaseUrl } from "./platform";
 import { CesiumLiveUpdates } from "./native/CesiumLiveUpdates";
-import {
-  CesiumPhoneControl,
-  type AndroidPhoneControlStatus,
-} from "./native/CesiumPhoneControl";
+import { CesiumPhoneControl } from "./native/CesiumPhoneControl";
 import { CesiumWearCompanion } from "./native/CesiumWearCompanion";
+import { CesiumWindowInsets } from "./native/CesiumWindowInsets";
 import { AgentStatusService } from "./services/AgentStatusService";
 import { BackgroundCoordinator } from "./services/BackgroundCoordinator";
 import { LiveUpdateController } from "./services/LiveUpdateController";
 
-installReactNativeClientPlatform();
 const INITIAL_CONFIG = readLaunchUrlConfig();
-setRuntimeServerBaseUrl(INITIAL_CONFIG.serverUrl);
-
-type ConnectionState = "idle" | "connecting" | "open" | "closed" | "reconnecting";
+// react-native-webview 14.0.1 accidentally defaults its public class generic to
+// `undefined`, which makes JSX props resolve to `never` under TypeScript 5.9.
+// Runtime exports are correct; keep the workaround local until upstream fixes
+// the declaration.
+const AndroidWebView = WebView as unknown as React.ComponentType<any>;
 
 export default function App() {
-  const colorScheme = useColorScheme();
-  const themeTokens = useThemeTokens();
+  const systemColorScheme = useColorScheme();
+  const [safeAreaTop, setSafeAreaTop] = useState(0);
+  const [webUrl, setWebUrl] = useState(INITIAL_CONFIG.webUrl);
   const [serverUrl, setServerUrl] = useState(INITIAL_CONFIG.serverUrl);
-  const [connectionState, setConnectionState] = useState<ConnectionState>("idle");
-  const [notificationConversationId, setNotificationConversationId] = useState<string | null>(
-    null
-  );
-  const [phoneControlStatus, setPhoneControlStatus] =
-    useState<AndroidPhoneControlStatus | null>(null);
-  const [phoneControlLoading, setPhoneControlLoading] = useState(false);
-  const [phoneControlError, setPhoneControlError] = useState<string | null>(null);
+  const [runtime, setRuntime] = useState(INITIAL_CONFIG.runtime);
+  const [authToken, setAuthToken] = useState<string | null>(null);
+  const [focused, setFocused] = useState<{
+    workspaceId: string | null;
+    conversationId: string | null;
+  }>({ workspaceId: null, conversationId: null });
+  const [canGoBack, setCanGoBack] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
+  const webViewRef = useRef<WebViewType>(null);
   const serverUrlRef = useRef(serverUrl);
+  const authTokenRef = useRef(authToken);
   const liveUpdatesRef = useRef(new LiveUpdateController());
+  const sendToWebRef = useRef<((message: MobileNativeToWebMessage) => void) | null>(null);
   const agentStatusRef = useRef(
     new AgentStatusService({
       onProjection: (projection) => {
         void liveUpdatesRef.current.update(projection);
-        if (projection) {
-          const serverBaseUrl = serverUrlRef.current;
-          const watchProjection = toWatchAgentProjection(projection, {
-            source: "phone_companion",
-          });
-          const envelope = toWatchSyncEnvelope({
-            projection: watchProjection,
-            source: "phone_companion",
-            server: {
-              label: "This phone",
-              baseUrl: serverBaseUrl,
-            },
-            focused: {
-              workspaceId: projection.workspaceId,
-              conversationId: projection.conversationId,
-              lastEventSeq: projection.lastEventSeq,
-            },
-          });
-          void CesiumWearCompanion.publishEnvelope(JSON.stringify(envelope), {
-            serverBaseUrl,
-            serverLabel: "This phone",
-            authToken: getStoredSessionToken(serverBaseUrl),
-            workspaceId: projection.workspaceId,
-            conversationId: projection.conversationId,
-          }).catch(() => undefined);
-        }
+        sendToWebRef.current?.({
+          type: "resumeCatchUp",
+          workspaceId: projection?.workspaceId,
+          conversationId: projection?.conversationId,
+          lastEventSeq: projection?.lastEventSeq,
+        });
       },
-      onConnectionState: setConnectionState,
     })
   );
   const backgroundCoordinatorRef = useRef(
     new BackgroundCoordinator(agentStatusRef.current, liveUpdatesRef.current)
   );
 
-  const consumeNotificationAction = useCallback(async () => {
-    const action = await CesiumLiveUpdates.consumeInitialNotificationAction();
-    if (!action.conversationId) {
-      return;
-    }
-    setNotificationConversationId(action.conversationId);
-    if (action.actionId === "cancel") {
-      if (action.workspaceId) {
-        setActiveWorkspaceId(action.workspaceId);
-      }
-      await cancelAgentConversation(action.conversationId).catch(() => undefined);
-    }
+  const sendToWeb = useCallback((message: MobileNativeToWebMessage) => {
+    webViewRef.current?.postMessage(encodeMobileBridgeMessage(message));
   }, []);
+  sendToWebRef.current = sendToWeb;
 
-  const configureAgentSocket = useCallback(
-    (workspaceId: string | null, conversationId: string | null) => {
-      const authToken = getStoredSessionToken(serverUrl);
-      agentStatusRef.current.updateConfig({
-        serverBaseUrl: serverUrl,
-        workspaceId,
-        conversationId,
+  const bootstrapScript = useMemo(
+    () =>
+      buildMobileBootstrapScript({
+        baseUrl: serverUrl,
+        label: "This phone",
         authToken,
-      });
-      void CesiumPhoneControl.configure({
-        serverUrl,
-        workspaceId,
-        authToken,
-        backendId: "cesium-agent",
-        mode: "agent",
-      })
-        .then(setPhoneControlStatus)
-        .catch((error) => {
-          setPhoneControlError(
-            error instanceof Error ? error.message : "Failed to configure phone control."
-          );
-        });
-    },
-    [serverUrl]
+        safeAreaTop,
+        systemColorScheme:
+          systemColorScheme === "light" || systemColorScheme === "dark"
+            ? systemColorScheme
+            : null,
+        runtime,
+      }),
+    [authToken, runtime, safeAreaTop, serverUrl, systemColorScheme]
   );
 
-  const refreshPhoneControl = useCallback(async () => {
-    setPhoneControlLoading(true);
-    try {
-      setPhoneControlStatus(await CesiumPhoneControl.getStatus());
-      setPhoneControlError(null);
-    } catch (error) {
-      setPhoneControlError(
-        error instanceof Error ? error.message : "Failed to read Android phone-control status."
-      );
-    } finally {
-      setPhoneControlLoading(false);
-    }
+  const configureNativeServices = useCallback(
+    (
+      nextFocused = focused,
+      nextAuthToken = authTokenRef.current,
+      nextServerUrl = serverUrlRef.current
+    ) => {
+      agentStatusRef.current.updateConfig({
+        serverBaseUrl: nextServerUrl,
+        workspaceId: nextFocused.workspaceId,
+        conversationId: nextFocused.conversationId,
+        authToken: nextAuthToken,
+      });
+      void CesiumPhoneControl.configure({
+        serverUrl: nextServerUrl,
+        workspaceId: nextFocused.workspaceId,
+        authToken: nextAuthToken,
+        backendId: "cesium-agent",
+        mode: "agent",
+      }).catch(() => undefined);
+    },
+    [focused]
+  );
+
+  const refreshSafeArea = useCallback(() => {
+    void CesiumWindowInsets.getInsets()
+      .then((insets) => setSafeAreaTop(insets.safeAreaTop))
+      .catch(() => setSafeAreaTop(0));
   }, []);
 
-  const setPhoneControlEnabled = useCallback(async (enabled: boolean) => {
-    setPhoneControlLoading(true);
-    try {
-      setPhoneControlStatus(await CesiumPhoneControl.setEnabled(enabled));
-      setPhoneControlError(null);
-    } catch (error) {
-      setPhoneControlError(
-        error instanceof Error ? error.message : "Failed to update Android phone control."
-      );
-    } finally {
-      setPhoneControlLoading(false);
-    }
-  }, []);
+  const consumeNotificationAction = useCallback(async () => {
+    const action = await CesiumLiveUpdates.consumeInitialNotificationAction();
+    if (!action.actionId) return;
+    sendToWeb({
+      type: "notificationAction",
+      actionId: action.actionId,
+      workspaceId: action.workspaceId,
+      conversationId: action.conversationId,
+    });
+  }, [sendToWeb]);
 
   useEffect(() => {
     serverUrlRef.current = serverUrl;
-    setRuntimeServerBaseUrl(serverUrl);
   }, [serverUrl]);
 
   useEffect(() => {
+    authTokenRef.current = authToken;
+  }, [authToken]);
+
+  useEffect(() => {
     let cancelled = false;
-    void resolveLaunchUrlConfig().then((nextConfig) => {
-      if (cancelled) {
-        return;
-      }
+    void resolveLaunchUrlConfig().then((next) => {
+      if (cancelled) return;
+      setRuntime(next.runtime);
       setServerUrl((current) =>
-        current === INITIAL_CONFIG.serverUrl ? nextConfig.serverUrl : current
+        current === INITIAL_CONFIG.serverUrl ? next.serverUrl : current
       );
+      setWebUrl((current) => current || next.webUrl);
     });
     return () => {
       cancelled = true;
@@ -183,71 +166,227 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    const agentStatus = agentStatusRef.current;
-    const liveUpdates = liveUpdatesRef.current;
+    refreshSafeArea();
+    const dimensions = Dimensions.addEventListener("change", refreshSafeArea);
+    const timers = [0, 250, 1000].map((delay) => setTimeout(refreshSafeArea, delay));
+    return () => {
+      dimensions.remove();
+      timers.forEach(clearTimeout);
+    };
+  }, [refreshSafeArea]);
+
+  useEffect(() => {
+    webViewRef.current?.injectJavaScript(bootstrapScript);
+  }, [bootstrapScript]);
+
+  useEffect(() => {
     if (Platform.OS === "android") {
       void PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS).catch(
         () => undefined
       );
     }
-    const appStateSubscription = AppState.addEventListener("change", (nextState: AppStateStatus) => {
+    const appState = AppState.addEventListener("change", (nextState: AppStateStatus) => {
       backgroundCoordinatorRef.current.setAppState(nextState);
+      sendToWeb({ type: "lifecycle", state: toMobileLifecycleState(nextState) });
       if (nextState === "active") {
-        void consumeNotificationAction().catch(() => undefined);
-        void refreshPhoneControl();
+        refreshSafeArea();
+        void consumeNotificationAction();
       }
     });
-    const netInfoSubscription = NetInfo.addEventListener((state) => {
+    const network = NetInfo.addEventListener((state) => {
       backgroundCoordinatorRef.current.setNetworkReachable(
         state.isInternetReachable ?? state.isConnected
       );
     });
     return () => {
-      appStateSubscription.remove();
-      netInfoSubscription();
-      agentStatus.close();
-      void liveUpdates.stop();
+      appState.remove();
+      network();
+      agentStatusRef.current.close();
+      void liveUpdatesRef.current.stop();
     };
-  }, [consumeNotificationAction, refreshPhoneControl]);
+  }, [consumeNotificationAction, refreshSafeArea, sendToWeb]);
 
   useEffect(() => {
-    void consumeNotificationAction().catch(() => undefined);
-    void refreshPhoneControl();
-  }, [consumeNotificationAction, refreshPhoneControl]);
+    const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
+      if (!canGoBack) return false;
+      webViewRef.current?.goBack();
+      return true;
+    });
+    return () => subscription.remove();
+  }, [canGoBack]);
+
+  useEffect(() => {
+    void consumeNotificationAction();
+  }, [consumeNotificationAction]);
+
+  const handleMessage = useCallback(
+    (event: WebViewMessageEvent) => {
+      const message = parseMobileBridgeMessage<MobileWebToNativeMessage>(
+        event.nativeEvent.data
+      );
+      if (!message) return;
+      if (message.type === "webReady") {
+        const nextFocused = {
+          workspaceId: message.workspaceId,
+          conversationId: message.focusedConversationId,
+        };
+        const nextToken = message.authToken ?? null;
+        setAuthToken(nextToken);
+        setFocused(nextFocused);
+        configureNativeServices(nextFocused, nextToken);
+        return;
+      }
+      if (message.type === "serverConfigured") {
+        const nextServerUrl = message.server.baseUrl;
+        const nextToken = message.server.authToken ?? authTokenRef.current;
+        setServerUrl(nextServerUrl);
+        setAuthToken(nextToken);
+        configureNativeServices(focused, nextToken, nextServerUrl);
+        return;
+      }
+      if (message.type === "focusedConversationChanged") {
+        const nextFocused = {
+          workspaceId: message.workspaceId,
+          conversationId: message.conversationId,
+        };
+        setFocused(nextFocused);
+        configureNativeServices(nextFocused);
+        return;
+      }
+      if (message.type === "agentProjection") {
+        void liveUpdatesRef.current.update(message.projection as MobileAgentProjection);
+        return;
+      }
+      if (message.type === "wearSyncEnvelope") {
+        void CesiumWearCompanion.publishEnvelope(
+          message.envelopeJson,
+          message.config
+        ).catch(() => undefined);
+      }
+    },
+    [configureNativeServices, focused]
+  );
+
+  const handleNavigation = useCallback((navigation: WebViewNavigation) => {
+    setCanGoBack(navigation.canGoBack);
+  }, []);
 
   return (
-    <SafeAreaProvider>
+    <View style={styles.root} testID="cesium-mobile-root">
       <StatusBar
-        barStyle={colorScheme === "dark" ? "light-content" : "dark-content"}
-        backgroundColor={themeTokens["--bg-main"]}
+        barStyle={systemColorScheme === "light" ? "dark-content" : "light-content"}
+        backgroundColor="transparent"
+        translucent
       />
-      <SafeAreaView style={{ flex: 1 }} testID="cesium-mobile-root">
-        <ServerConnectionsProvider>
-          <GlobalSettingsProvider>
-            <NativeAuthProvider>
-              <NativeWorkspaceProvider>
-                <NativeWorkbench
-                  connectionState={connectionState}
-                  notificationConversationId={notificationConversationId}
-                  onFocusedConversationChange={configureAgentSocket}
-                  onServerBaseUrlChange={setServerUrl}
-                  phoneControl={{
-                    loading: phoneControlLoading,
-                    error: phoneControlError,
-                    status: phoneControlStatus,
-                    onRefresh: refreshPhoneControl,
-                    onSetEnabled: setPhoneControlEnabled,
-                    onOpenAccessibilitySettings:
-                      CesiumPhoneControl.openAccessibilitySettings,
-                    onRequestAssistantRole: CesiumPhoneControl.requestAssistantRole,
-                    onInvokeAssistant: CesiumPhoneControl.invokeAssistant,
-                  }}
-                />
-              </NativeWorkspaceProvider>
-            </NativeAuthProvider>
-          </GlobalSettingsProvider>
-        </ServerConnectionsProvider>
-      </SafeAreaView>
-    </SafeAreaProvider>
+      <AndroidWebView
+        key={reloadKey}
+        ref={webViewRef}
+        testID="cesium-mobile-webview"
+        source={{ uri: webUrl }}
+        originWhitelist={["*"]}
+        allowFileAccess
+        allowFileAccessFromFileURLs
+        allowUniversalAccessFromFileURLs
+        mixedContentMode="always"
+        injectedJavaScriptBeforeContentLoaded={bootstrapScript}
+        injectedJavaScript={bootstrapScript}
+        onLoadEnd={() => {
+          setLoadError(null);
+          webViewRef.current?.injectJavaScript(bootstrapScript);
+        }}
+        onMessage={handleMessage}
+        onNavigationStateChange={handleNavigation}
+        onError={(event: { nativeEvent: { description: string } }) =>
+          setLoadError(event.nativeEvent.description)
+        }
+        javaScriptEnabled
+        domStorageEnabled
+        sharedCookiesEnabled
+        setSupportMultipleWindows={false}
+        mediaPlaybackRequiresUserAction={false}
+        style={styles.webview}
+        renderLoading={() => (
+          <View style={styles.loading}>
+            <ActivityIndicator color="#ffffff" />
+          </View>
+        )}
+        startInLoadingState
+      />
+      {loadError ? (
+        <View style={styles.error}>
+          <Text style={styles.errorTitle}>Cesium could not load</Text>
+          <Text style={styles.errorBody}>{loadError}</Text>
+          <Pressable
+            onPress={() => {
+              setLoadError(null);
+              setReloadKey((current) => current + 1);
+            }}
+            style={styles.retry}
+          >
+            <Text style={styles.retryText}>Retry</Text>
+          </Pressable>
+        </View>
+      ) : null}
+    </View>
   );
 }
+
+function toMobileLifecycleState(state: AppStateStatus) {
+  return state === "active" || state === "background" || state === "inactive"
+    ? state
+    : "background";
+}
+
+const styles = StyleSheet.create({
+  root: {
+    flex: 1,
+    backgroundColor: "#191919",
+  },
+  webview: {
+    flex: 1,
+    backgroundColor: "#191919",
+  },
+  loading: {
+    bottom: 0,
+    left: 0,
+    position: "absolute",
+    right: 0,
+    top: 0,
+    alignItems: "center",
+    backgroundColor: "#191919",
+    justifyContent: "center",
+  },
+  error: {
+    bottom: 0,
+    left: 0,
+    position: "absolute",
+    right: 0,
+    top: 0,
+    alignItems: "center",
+    backgroundColor: "#191919",
+    gap: 12,
+    justifyContent: "center",
+    paddingHorizontal: 32,
+  },
+  errorTitle: {
+    color: "#ffffff",
+    fontSize: 18,
+    fontWeight: "600",
+  },
+  errorBody: {
+    color: "#a3a3a3",
+    fontSize: 13,
+    textAlign: "center",
+  },
+  retry: {
+    backgroundColor: "#ffffff",
+    borderRadius: 999,
+    paddingHorizontal: 18,
+    paddingVertical: 10,
+  },
+  retryText: {
+    color: "#191919",
+    fontSize: 14,
+    fontWeight: "600",
+  },
+});
