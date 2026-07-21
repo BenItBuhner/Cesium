@@ -308,7 +308,6 @@ export default function App() {
         sharedCookiesEnabled
         setSupportMultipleWindows={false}
         mediaPlaybackRequiresUserAction={false}
-        webviewDebuggingEnabled
         style={styles.webview}
         renderLoading={() => (
           <View style={styles.loading}>
