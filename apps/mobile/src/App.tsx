@@ -58,6 +58,7 @@ export default function App() {
   const [canGoBack, setCanGoBack] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
+  const [webViewAvailable, setWebViewAvailable] = useState(true);
   const webViewRef = useRef<WebViewType>(null);
   const serverUrlRef = useRef(serverUrl);
   const authTokenRef = useRef(authToken);
@@ -281,34 +282,49 @@ export default function App() {
         backgroundColor="transparent"
         translucent
       />
-      <AndroidWebView
-        key={reloadKey}
-        ref={webViewRef}
-        testID="cesium-mobile-webview"
-        source={{ uri: webUrl }}
-        originWhitelist={["*"]}
-        allowFileAccess
-        allowFileAccessFromFileURLs
-        allowUniversalAccessFromFileURLs
-        mixedContentMode="always"
-        injectedJavaScriptBeforeContentLoaded={bootstrapScript}
-        injectedJavaScript={bootstrapScript}
-        onLoadEnd={() => {
-          setLoadError(null);
-          webViewRef.current?.injectJavaScript(bootstrapScript);
-        }}
-        onMessage={handleMessage}
-        onNavigationStateChange={handleNavigation}
-        onError={(event: { nativeEvent: { description: string } }) =>
-          setLoadError(event.nativeEvent.description)
-        }
-        javaScriptEnabled
-        domStorageEnabled
-        sharedCookiesEnabled
-        setSupportMultipleWindows={false}
-        mediaPlaybackRequiresUserAction={false}
-        style={styles.webview}
-      />
+      {webViewAvailable ? (
+        <AndroidWebView
+          key={reloadKey}
+          ref={webViewRef}
+          testID="cesium-mobile-webview"
+          source={{ uri: webUrl }}
+          originWhitelist={["*"]}
+          allowFileAccess
+          allowFileAccessFromFileURLs
+          allowUniversalAccessFromFileURLs
+          mixedContentMode="always"
+          injectedJavaScriptBeforeContentLoaded={bootstrapScript}
+          injectedJavaScript={bootstrapScript}
+          onLoadEnd={() => {
+            setLoadError(null);
+            webViewRef.current?.injectJavaScript(bootstrapScript);
+          }}
+          onMessage={handleMessage}
+          onNavigationStateChange={handleNavigation}
+          onError={(event: {
+            nativeEvent: { description: string; code?: number; url?: string };
+          }) => {
+            setLoadError(event.nativeEvent.description);
+          }}
+          onRenderProcessGone={(event: {
+            nativeEvent: { didCrash: boolean; url?: string };
+          }) => {
+            const description = event.nativeEvent.didCrash
+              ? "Android System WebView crashed. The failed renderer was discarded. Update Android System WebView and, on an emulator, enable hardware acceleration before retrying."
+              : "Android stopped the WebView renderer to reclaim resources. The failed renderer was discarded; retry to create a fresh one.";
+            webViewRef.current = null;
+            setCanGoBack(false);
+            setWebViewAvailable(false);
+            setLoadError(description);
+          }}
+          javaScriptEnabled
+          domStorageEnabled
+          sharedCookiesEnabled
+          setSupportMultipleWindows={false}
+          mediaPlaybackRequiresUserAction={false}
+          style={styles.webview}
+        />
+      ) : null}
       {loadError ? (
         <View style={styles.error}>
           <Text style={styles.errorTitle}>Cesium could not load</Text>
@@ -317,6 +333,7 @@ export default function App() {
             onPress={() => {
               setLoadError(null);
               setReloadKey((current) => current + 1);
+              setWebViewAvailable(true);
             }}
             style={styles.retry}
           >
