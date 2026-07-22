@@ -53,7 +53,7 @@ import {
   isLocalDeviceServer,
 } from "@/lib/server-rail-appearance";
 import { WorkspaceFolderIcon } from "@/lib/workspace-rail-appearance";
-import { SETTINGS_PANELS } from "@/components/editor/settings-panels";
+import { SETTINGS_PANELS } from "@/components/editor/settings";
 import { DefaultServerSettingsBanner } from "@/components/preferences/DefaultServerSettingsBanner";
 import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
 import { useUserPreferences } from "@/components/preferences/UserPreferencesProvider";
