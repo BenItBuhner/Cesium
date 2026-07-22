@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { asRecord, asString } from "./json-coerce.js";
 import type {
@@ -17,9 +18,12 @@ import {
 } from "./opencode-v2-process.js";
 import {
   parseOpenCodeV2ModelRef,
+  OpenCodeV2Error,
   type OpenCodeV2Client,
   type OpenCodeV2Json,
 } from "./opencode-v2-client.js";
+import { buildOpenCodeV2ConfigOptions } from "./opencode-v2-config.js";
+import { writeAgentBackendConfigCache } from "./provider-cache-store.js";
 import {
   startOpenCodeV2Events,
   startOpenCodeV2SessionLog,
@@ -95,71 +99,19 @@ function modelValue(model: unknown): string | undefined {
   return providerId && id ? `${providerId}/${id}${variant ? `#${variant}` : ""}` : undefined;
 }
 
-export function buildOpenCodeV2ConfigOptions(input: {
-  agents: OpenCodeV2Json[];
-  models: OpenCodeV2Json[];
-  currentAgent?: string;
-  currentModel?: string;
-}): AgentConfigOption[] {
-  const agents = input.agents.flatMap((agent) => {
-    const id = asString(agent.id);
-    const mode = asString(agent.mode);
-    if (!id || agent.hidden === true || mode === "subagent") return [];
-    return [
-      {
-        value: id,
-        name: asString(agent.name) ?? id,
-        ...(asString(agent.description) ? { description: asString(agent.description) } : {}),
-      },
-    ];
-  });
-  const models = input.models.flatMap((model) => {
-    const providerId = asString(model.providerID);
-    const id = asString(model.id) ?? asString(model.modelID);
-    if (!providerId || !id || model.enabled === false) return [];
-    const name = asString(model.name) ?? id;
-    const base = { value: `${providerId}/${id}`, name: `${providerId}/${name}` };
-    const variants = Array.isArray(model.variants)
-      ? model.variants.flatMap((variant) => {
-          const variantId = asString(asRecord(variant)?.id);
-          return variantId
-            ? [{ value: `${providerId}/${id}#${variantId}`, name: `${providerId}/${name} (${variantId})` }]
-            : [];
-        })
-      : [];
-    return [base, ...variants];
-  });
-  return [
-    {
-      id: "agent",
-      name: "Agent",
-      category: "mode",
-      currentValue:
-        input.currentAgent && agents.some((option) => option.value === input.currentAgent)
-          ? input.currentAgent
-          : agents[0]?.value ?? "__default__",
-      description: "Primary agents reported by the OpenCode v2 server.",
-      options: agents,
-    },
-    {
-      id: "model",
-      name: "Model",
-      category: "model",
-      currentValue:
-        input.currentModel && models.some((option) => option.value === input.currentModel)
-          ? input.currentModel
-          : models[0]?.value ?? "auto",
-      description:
-        models.length > 0
-          ? "Models and variants reported by the OpenCode v2 server."
-          : "No OpenCode v2 models were reported. Configure provider credentials in OpenCode.",
-      options: models,
-    },
-  ];
+function eventMatchesWorkspace(payload: OpenCodeV2Json, workspaceRoot: string): boolean {
+  const directory = asString(asRecord(payload.location)?.directory);
+  if (!directory) return true;
+  try {
+    return path.resolve(directory) === path.resolve(workspaceRoot);
+  } catch {
+    return false;
+  }
 }
 
 type ActivePrompt = {
   messageId: string;
+  emittedText: string;
   completed: boolean;
   cancelled: boolean;
   promise: Promise<void>;
@@ -178,7 +130,15 @@ function createActivePrompt(messageId: string): ActivePrompt {
     resolve = res;
     reject = rej;
   });
-  return { messageId, completed: false, cancelled: false, promise, resolve, reject };
+  return {
+    messageId,
+    emittedText: "",
+    completed: false,
+    cancelled: false,
+    promise,
+    resolve,
+    reject,
+  };
 }
 
 function eventErrorMessage(value: unknown): string {
@@ -192,25 +152,31 @@ function eventErrorMessage(value: unknown): string {
   );
 }
 
-function answerLines(answer: string, count: number): string[] {
+function stripSynthesizedAnswerLabel(value: string, label: string): string {
+  const prefix = `${label.trim()}:`;
+  return value.trim().toLowerCase().startsWith(prefix.toLowerCase())
+    ? value.trim().slice(prefix.length).trim()
+    : value.trim();
+}
+
+function answerLines(answer: string, labels: string[]): string[] {
+  if (labels.length <= 1) {
+    return [stripSynthesizedAnswerLabel(answer, labels[0] ?? "")];
+  }
   const lines = answer
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter(Boolean);
-  if (count <= 1) {
-    const value = lines.join(" ").trim();
-    const colon = value.indexOf(":");
-    return [colon >= 0 ? value.slice(colon + 1).trim() : value];
-  }
-  return Array.from({ length: count }, (_, index) => {
-    const line = lines[index] ?? "";
-    const colon = line.indexOf(":");
-    return (colon >= 0 ? line.slice(colon + 1) : line).trim();
-  });
+  return labels.map((label, index) =>
+    stripSynthesizedAnswerLabel(lines[index] ?? "", label)
+  );
 }
 
 function questionAnswers(request: OpenCodeV2QuestionRequest, answer: string): string[][] {
-  return answerLines(answer, request.questions.length).map((line, index) =>
+  return answerLines(
+    answer,
+    request.questions.map((question) => question.question)
+  ).map((line, index) =>
     request.questions[index]?.multiple
       ? line.split(/\s*,\s*/).filter(Boolean)
       : line
@@ -239,7 +205,10 @@ function formAnswers(
   request: OpenCodeV2FormRequest,
   answer: string
 ): Record<string, string | number | boolean | string[]> {
-  const lines = answerLines(answer, request.fields.length);
+  const lines = answerLines(
+    answer,
+    request.fields.map((field) => field.title ?? field.description ?? field.key)
+  );
   return Object.fromEntries(
     request.fields.map((field, index) => [
       field.key,
@@ -320,12 +289,14 @@ class OpenCodeV2SessionHandle implements AgentSessionHandle {
   private readonly normalizer = new OpenCodeV2EventNormalizer();
   private readonly seenEventIds = new Set<string>();
   private readonly sessionBelongsToRoot = new Map<string, boolean>();
+  private readonly completedChildSessions = new Set<string>();
   private readonly permissionSessions = new Map<string, string>();
   private readonly pendingInteractions = new Map<string, PendingInteraction>();
   private readonly reportedStreamErrors = new Set<string>();
   private seededContext = false;
   private disposed = false;
   private activePrompt: ActivePrompt | null = null;
+  private waitController: AbortController | null = null;
 
   constructor(
     private readonly backend: AgentBackendInfo,
@@ -356,7 +327,16 @@ class OpenCodeV2SessionHandle implements AgentSessionHandle {
         ]);
       },
     });
-    const client = this.connection.client;
+    try {
+      await this.initializeConnected(loadSessionId);
+    } catch (error) {
+      await this.closeStreamsAndConnection();
+      throw error;
+    }
+  }
+
+  private async initializeConnected(loadSessionId?: string | null): Promise<void> {
+    const client = this.connection!.client;
     const existingSession = loadSessionId ? await client.getSession(loadSessionId) : null;
     await this.refreshConfigOptions(client, existingSession);
     const selectedAgent = optionValue(
@@ -369,6 +349,7 @@ class OpenCodeV2SessionHandle implements AgentSessionHandle {
       "model",
       this.callbacks.conversation.config.modelId
     );
+    const selectedModelRef = parseOpenCodeV2ModelRef(selectedModel);
     const session =
       existingSession ??
       (await client.createSession({
@@ -376,9 +357,7 @@ class OpenCodeV2SessionHandle implements AgentSessionHandle {
         ...(selectedAgent && selectedAgent !== "auto" && selectedAgent !== "__default__"
           ? { agent: selectedAgent }
           : {}),
-        ...(parseOpenCodeV2ModelRef(selectedModel)
-          ? { model: parseOpenCodeV2ModelRef(selectedModel)! }
-          : {}),
+        ...(selectedModelRef ? { model: selectedModelRef } : {}),
       }));
     const id = asString(session.id) ?? loadSessionId ?? undefined;
     if (!id) {
@@ -402,16 +381,22 @@ class OpenCodeV2SessionHandle implements AgentSessionHandle {
       onError: (error) => this.reportStreamError(error),
     });
     this.sessionLogs.set(id, rootLog);
-    await Promise.race([
-      Promise.all([this.globalEvents.ready, rootLog.ready]),
-      new Promise<never>((_, reject) => {
-        const timer = setTimeout(
-          () => reject(new Error("OpenCode v2 event streams did not become ready.")),
-          15_000
-        );
-        timer.unref?.();
-      }),
-    ]);
+    let readyTimer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        Promise.all([this.globalEvents.ready, rootLog.ready]),
+        new Promise<never>((_, reject) => {
+          readyTimer = setTimeout(
+            () => reject(new Error("OpenCode v2 event streams did not become ready.")),
+            15_000
+          );
+          readyTimer.unref?.();
+        }),
+      ]);
+    } finally {
+      clearTimeout(readyTimer);
+    }
+    await this.discoverActiveChildren();
     await this.callbacks.updateConversation((current) => ({
       ...current,
       providerSessionId: id,
@@ -456,26 +441,44 @@ class OpenCodeV2SessionHandle implements AgentSessionHandle {
       lastError: null,
     }));
     try {
-      await client.sendPrompt(this.sessionId, {
-        text,
-        ...(images.paths.length > 0
-          ? {
-              files: images.paths.map((filePath) => ({
-                uri: pathToFileURL(filePath).href,
-              })),
-            }
-          : {}),
-        metadata: { source: "cesium", conversationId: this.callbacks.conversation.id },
-      });
-      const wait = client.waitForSession(this.sessionId).then(async () => {
-        await new Promise((resolve) => setTimeout(resolve, 750));
-        if (this.activePrompt === active && !active.completed && !active.cancelled) {
-          await this.completeActivePrompt(active, {
-            type: "cesium.opencode-v2.wait-fallback",
-          });
+      try {
+        await client.sendPrompt(this.sessionId, {
+          id: `msg_cesium_${input.userMessageId}`,
+          text,
+          ...(images.paths.length > 0
+            ? {
+                files: images.paths.map((filePath) => ({
+                  uri: pathToFileURL(filePath).href,
+                })),
+              }
+            : {}),
+          metadata: { source: "cesium", conversationId: this.callbacks.conversation.id },
+          delivery: "steer",
+        });
+      } catch (error) {
+        if (!(error instanceof OpenCodeV2Error) || error.status !== 409) {
+          throw error;
         }
-      });
-      await Promise.all([active.promise, wait]);
+      }
+      const waitController = new AbortController();
+      this.waitController?.abort();
+      this.waitController = waitController;
+      const wait = client
+        .waitForSession(this.sessionId, waitController.signal)
+        .then(() => this.reconcileActivePrompt(active))
+        .catch((error) => {
+          if (!waitController.signal.aborted) {
+            this.reportStreamError(
+              error instanceof Error ? error : new Error(String(error))
+            );
+          }
+        });
+      await Promise.race([active.promise, wait.then(() => active.promise)]);
+      await active.promise;
+      waitController.abort();
+      if (this.waitController === waitController) {
+        this.waitController = null;
+      }
       if (active.cancelled) return;
       await this.callbacks.appendEvents([
         {
@@ -523,12 +526,16 @@ class OpenCodeV2SessionHandle implements AgentSessionHandle {
       }));
       throw error;
     } finally {
+      this.waitController?.abort();
+      this.waitController = null;
       if (this.activePrompt === active) this.activePrompt = null;
       await images.cleanup();
     }
   }
 
   async cancel(): Promise<void> {
+    this.waitController?.abort();
+    this.waitController = null;
     const active = this.activePrompt;
     if (active && !active.completed) {
       active.cancelled = true;
@@ -555,15 +562,22 @@ class OpenCodeV2SessionHandle implements AgentSessionHandle {
   }
 
   async setConfigOption(configId: string, value: string): Promise<void> {
-    this.configOptions = updateConfigOption(this.configOptions, configId, value);
     const client = this.connection?.client;
-    if (client && configId === "agent" && value && value !== "__default__" && value !== "auto") {
+    if (
+      client &&
+      (configId === "agent" || configId === "mode") &&
+      value &&
+      value !== "__default__" &&
+      value !== "auto"
+    ) {
       await client.switchAgent(this.sessionId, value);
     }
     const model = configId === "model" ? parseOpenCodeV2ModelRef(value) : undefined;
     if (client && model) {
       await client.switchModel(this.sessionId, model);
     }
+    const storedConfigId = configId === "mode" ? "agent" : configId;
+    this.configOptions = updateConfigOption(this.configOptions, storedConfigId, value);
     await this.callbacks.updateConversation((current) => {
       const next = { ...current, configOptions: this.configOptions };
       if (configId === "model") {
@@ -586,7 +600,10 @@ class OpenCodeV2SessionHandle implements AgentSessionHandle {
   }): Promise<void> {
     const client = this.connection?.client;
     if (!client) return;
-    const sessionId = this.permissionSessions.get(input.requestId) ?? this.sessionId;
+    const sessionId = this.permissionSessions.get(input.requestId);
+    if (!sessionId) {
+      throw new Error(`OpenCode v2 permission request ${input.requestId} is no longer pending.`);
+    }
     await client.answerPermission(
       sessionId,
       input.requestId,
@@ -624,7 +641,8 @@ class OpenCodeV2SessionHandle implements AgentSessionHandle {
       await client.answerForm(
         interaction.request.sessionId,
         interaction.request.id,
-        formAnswers(interaction.request, input.answer)
+        formAnswers(interaction.request, input.answer),
+        interaction.request.location
       );
     }
     this.pendingInteractions.delete(input.questionId);
@@ -652,10 +670,8 @@ class OpenCodeV2SessionHandle implements AgentSessionHandle {
 
   async dispose(): Promise<void> {
     this.disposed = true;
-    this.globalEvents?.close();
-    this.globalEvents = null;
-    for (const stream of this.sessionLogs.values()) stream.close();
-    this.sessionLogs.clear();
+    this.waitController?.abort();
+    this.waitController = null;
     const active = this.activePrompt;
     if (active && !active.completed) {
       active.cancelled = true;
@@ -663,8 +679,7 @@ class OpenCodeV2SessionHandle implements AgentSessionHandle {
       active.reject(new Error("OpenCode v2 Beta session disposed."));
     }
     this.activePrompt = null;
-    await this.connection?.dispose();
-    this.connection = null;
+    await this.closeStreamsAndConnection();
   }
 
   private async refreshConfigOptions(
@@ -687,7 +702,11 @@ class OpenCodeV2SessionHandle implements AgentSessionHandle {
       currentModel:
         modelValue(session?.model) ??
         optionValue(this.configOptions, "model", this.callbacks.conversation.config.modelId),
+      previous: this.configOptions,
     });
+    await writeAgentBackendConfigCache("opencode-v2-beta", this.configOptions).catch(
+      () => undefined
+    );
   }
 
   private async seedContextIfNeeded(userMessageId: string): Promise<void> {
@@ -725,6 +744,99 @@ class OpenCodeV2SessionHandle implements AgentSessionHandle {
           },
         ]);
       });
+  }
+
+  private async reconcileActivePrompt(active: ActivePrompt): Promise<void> {
+    if (
+      active.completed ||
+      active.cancelled ||
+      this.activePrompt !== active ||
+      !this.connection
+    ) {
+      return;
+    }
+    const messages = await this.connection.client.listMessages(this.sessionId, 20);
+    const assistant = messages.find((message) => message.type === "assistant");
+    if (!assistant) {
+      await this.completeActivePrompt(active, {
+        type: "cesium.opencode-v2.wait-reconciled",
+      });
+      return;
+    }
+    if (assistant.error) {
+      active.completed = true;
+      active.reject(new Error(eventErrorMessage(assistant.error)));
+      return;
+    }
+    const text = Array.isArray(assistant.content)
+      ? assistant.content
+          .flatMap((entry) => {
+            const record = asRecord(entry);
+            return record?.type === "text" && typeof record.text === "string"
+              ? [record.text]
+              : [];
+          })
+          .join("")
+      : "";
+    const missing =
+      !active.emittedText
+        ? text
+        : text.startsWith(active.emittedText)
+          ? text.slice(active.emittedText.length)
+          : "";
+    if (missing) {
+      active.emittedText += missing;
+      await this.callbacks.appendEvents([
+        {
+          eventId: randomUUID(),
+          conversationId: this.callbacks.conversation.id,
+          kind: "assistant_message_chunk",
+          messageId: active.messageId,
+          text: missing,
+          raw: assistant,
+        },
+      ]);
+    }
+    await this.completeActivePrompt(active, assistant);
+  }
+
+  private async discoverActiveChildren(): Promise<void> {
+    const client = this.connection?.client;
+    if (!client) return;
+    const activeSessionIds = await client.listActiveSessionIds().catch(() => []);
+    await Promise.all(
+      activeSessionIds
+        .filter((sessionId) => sessionId !== this.sessionId)
+        .map(async (sessionId) => {
+          if (await this.eventChildSession(sessionId)) {
+            this.startChildLog(sessionId);
+          }
+        })
+    );
+  }
+
+  private cleanupChildSession(sessionId: string): void {
+    this.completedChildSessions.add(sessionId);
+    this.sessionLogs.get(sessionId)?.close();
+    this.sessionLogs.delete(sessionId);
+    this.sessionBelongsToRoot.delete(sessionId);
+    for (const [requestId, ownerSessionId] of this.permissionSessions) {
+      if (ownerSessionId === sessionId) this.permissionSessions.delete(requestId);
+    }
+    for (const [requestId, interaction] of this.pendingInteractions) {
+      if (interaction.request.sessionId === sessionId) {
+        this.pendingInteractions.delete(requestId);
+      }
+    }
+  }
+
+  private async closeStreamsAndConnection(): Promise<void> {
+    this.globalEvents?.close();
+    this.globalEvents = null;
+    for (const stream of this.sessionLogs.values()) stream.close();
+    this.sessionLogs.clear();
+    await this.connection?.dispose();
+    this.connection = null;
   }
 
   private async completeActivePrompt(active: ActivePrompt, raw: unknown): Promise<void> {
@@ -792,12 +904,17 @@ class OpenCodeV2SessionHandle implements AgentSessionHandle {
 
   private startChildLog(sessionId: string): void {
     const client = this.connection?.client;
-    if (!client || this.sessionLogs.has(sessionId)) return;
+    if (
+      !client ||
+      this.sessionLogs.has(sessionId) ||
+      this.completedChildSessions.has(sessionId)
+    ) return;
     this.sessionBelongsToRoot.set(sessionId, true);
     const stream = startOpenCodeV2SessionLog({
       client,
       sessionId,
       replayExisting: true,
+      reconnectOnCleanClose: false,
       onEvent: (event) => this.handleEvent(event),
       onError: (error) => this.reportStreamError(error),
     });
@@ -805,11 +922,41 @@ class OpenCodeV2SessionHandle implements AgentSessionHandle {
   }
 
   private async handleEvent(payload: OpenCodeV2Json): Promise<void> {
-    if (this.disposed || !this.rememberEvent(payload)) return;
+    if (this.disposed) return;
     const type = asString(payload.type);
+    if (
+      type &&
+      ["agent.updated", "catalog.updated", "integration.updated", "models-dev.refreshed"].includes(type)
+    ) {
+      if (!eventMatchesWorkspace(payload, this.callbacks.workspace.root)) return;
+      if (!this.rememberEvent(payload) || !this.connection) return;
+      await this.refreshConfigOptions(this.connection.client, null);
+      await this.callbacks.updateConversation((current) => ({
+        ...current,
+        configOptions: this.configOptions,
+      }));
+      return;
+    }
     const sessionId = openCodeV2EventSessionId(payload);
-    const childSessionId = await this.eventChildSession(sessionId);
-    if (sessionId && sessionId !== this.sessionId && !childSessionId) return;
+    const form = readOpenCodeV2FormRequest(payload);
+    const globalForm =
+      form?.sessionId === "global" &&
+      eventMatchesWorkspace(payload, this.callbacks.workspace.root);
+    const childSessionId = globalForm
+      ? undefined
+      : await this.eventChildSession(sessionId);
+    if (
+      sessionId &&
+      sessionId !== this.sessionId &&
+      !childSessionId &&
+      !globalForm
+    ) {
+      return;
+    }
+    if (!this.rememberEvent(payload)) return;
+    if (childSessionId) {
+      this.startChildLog(childSessionId);
+    }
 
     const spawnedChild = openCodeV2ChildSessionId(payload);
     if (spawnedChild && sessionId === this.sessionId) {
@@ -825,7 +972,6 @@ class OpenCodeV2SessionHandle implements AgentSessionHandle {
     if (question) {
       this.pendingInteractions.set(question.id, { kind: "question", request: question, raw: payload });
     }
-    const form = readOpenCodeV2FormRequest(payload);
     if (form) {
       this.pendingInteractions.set(form.id, { kind: "form", request: form, raw: payload });
     }
@@ -839,6 +985,17 @@ class OpenCodeV2SessionHandle implements AgentSessionHandle {
     });
     if (events.length > 0) {
       await this.callbacks.appendEvents(events);
+      const active = this.activePrompt;
+      if (active) {
+        for (const event of events) {
+          if (
+            event.kind === "assistant_message_chunk" &&
+            event.messageId === active.messageId
+          ) {
+            active.emittedText += event.text;
+          }
+        }
+      }
     }
     const permission = events.find((event) => event.kind === "permission_request");
     if (permission?.kind === "permission_request") {
@@ -867,6 +1024,16 @@ class OpenCodeV2SessionHandle implements AgentSessionHandle {
       }));
     }
 
+    if (childSessionId) {
+      if (
+        type === "session.execution.succeeded" ||
+        type === "session.execution.failed" ||
+        type === "session.execution.interrupted"
+      ) {
+        this.cleanupChildSession(childSessionId);
+      }
+      return;
+    }
     if (sessionId !== this.sessionId) return;
     const active = this.activePrompt;
     if (!active || active.completed || active.cancelled) return;

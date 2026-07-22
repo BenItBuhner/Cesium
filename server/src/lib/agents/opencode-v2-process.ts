@@ -40,7 +40,14 @@ export function resolveOpenCodeV2CommandPath(): string | null {
   }
   const names =
     process.platform === "win32"
-      ? [configured, "opencode2.exe", "opencode2.cmd", "opencode2.bat", "opencode2"]
+      ? [
+          configured,
+          "opencode2.exe",
+          "opencode2.cmd",
+          "opencode2.bat",
+          "opencode2.ps1",
+          "opencode2",
+        ]
       : [configured, "opencode2"];
   for (const directory of (process.env.PATH ?? "").split(path.delimiter).filter(Boolean)) {
     for (const name of names) {
@@ -72,7 +79,10 @@ function quoteWindowsArg(value: string): string {
   return /[\s"]/u.test(value) ? `"${value.replace(/"/g, '\\"')}"` : value;
 }
 
-function spawnCommand(command: string, args: string[]): { command: string; args: string[] } {
+function spawnCommand(
+  command: string,
+  args: string[]
+): { command: string; args: string[]; direct: boolean } {
   const extension = path.extname(command).toLowerCase();
   if (process.platform === "win32" && (extension === ".cmd" || extension === ".bat")) {
     const comspec =
@@ -85,9 +95,26 @@ function spawnCommand(command: string, args: string[]): { command: string; args:
     return {
       command: comspec,
       args: ["/d", "/s", "/c", [command, ...args].map(quoteWindowsArg).join(" ")],
+      direct: false,
     };
   }
-  return { command, args };
+  if (process.platform === "win32" && extension === ".ps1") {
+    const powershell =
+      process.env.PWSH ??
+      path.join(
+        process.env.SystemRoot ?? "C:\\Windows",
+        "System32",
+        "WindowsPowerShell",
+        "v1.0",
+        "powershell.exe"
+      );
+    return {
+      command: powershell,
+      args: ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", command, ...args],
+      direct: false,
+    };
+  }
+  return { command, args, direct: true };
 }
 
 async function waitForHealth(client: OpenCodeV2Client): Promise<void> {
@@ -107,15 +134,25 @@ async function waitForHealth(client: OpenCodeV2Client): Promise<void> {
 
 function stopManagedChild(child: ChildProcess): void {
   child.stdin?.end();
-  if (child.exitCode != null || child.killed) {
+  if (child.exitCode != null) {
     return;
   }
-  const timer = setTimeout(() => {
-    if (child.exitCode == null && !child.killed) {
-      child.kill();
+  const forceTimer = setTimeout(() => {
+    if (child.exitCode == null) {
+      child.kill("SIGKILL");
+    }
+  }, 3_000);
+  const terminateTimer = setTimeout(() => {
+    if (child.exitCode == null) {
+      child.kill("SIGTERM");
     }
   }, 1_500);
-  timer.unref?.();
+  child.once("exit", () => {
+    clearTimeout(terminateTimer);
+    clearTimeout(forceTimer);
+  });
+  terminateTimer.unref?.();
+  forceTimer.unref?.();
 }
 
 function releaseManagedServer(poolKey: string, row: ManagedServerPoolRow): void {
@@ -185,7 +222,9 @@ export async function connectOpenCodeV2(input: {
       }),
       stdio: ["pipe", "pipe", "pipe"],
       windowsHide: true,
-      argv0: `Cesium Agent - OpenCode v2 Beta :${port}`,
+      ...(invocation.direct
+        ? { argv0: `Cesium Agent - OpenCode v2 Beta :${port}` }
+        : {}),
     }
   );
   const reportLines = (chunk: unknown) => {

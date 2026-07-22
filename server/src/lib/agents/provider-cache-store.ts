@@ -21,7 +21,7 @@ import { spawnSafeEnv } from "./spawn-env.js";
 import { CodexAppServerTransport } from "./codex-app-server-transport.js";
 import { OpenCodeServerClient, openCodeServerAuthFromEnv } from "./opencode-server-client.js";
 import { OpenCodeV2Client, openCodeV2AuthFromEnv } from "./opencode-v2-client.js";
-import { buildOpenCodeV2ConfigOptions } from "./opencode-v2-provider.js";
+import { buildOpenCodeV2ConfigOptions } from "./opencode-v2-config.js";
 import { encodeCursorSdkModelValue, type CursorSdkModelParam } from "./cursor-sdk-model-selection.js";
 import type { AgentBackendId, AgentConfigOption, AgentConfigOptionValue } from "./types.js";
 

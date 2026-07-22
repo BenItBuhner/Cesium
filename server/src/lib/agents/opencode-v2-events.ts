@@ -18,18 +18,17 @@ function eventBlocks(buffer: string): { blocks: string[]; rest: string } {
 }
 
 function parseBlock(block: string): unknown[] {
-  return block
+  const data = block
     .split(/\r?\n/)
     .filter((line) => line.startsWith("data:"))
     .map((line) => line.slice(5).trimStart())
-    .filter(Boolean)
-    .flatMap((line) => {
-      try {
-        return [JSON.parse(line) as unknown];
-      } catch {
-        return [];
-      }
-    });
+    .join("\n");
+  if (!data) return [];
+  try {
+    return [JSON.parse(data) as unknown];
+  } catch {
+    return [];
+  }
 }
 
 async function consumeSse(input: {
@@ -115,6 +114,7 @@ export function startOpenCodeV2SessionLog(input: {
   client: OpenCodeV2Client;
   sessionId: string;
   replayExisting: boolean;
+  reconnectOnCleanClose?: boolean;
   onEvent: (event: OpenCodeV2Json) => void | Promise<void>;
   onError?: (error: Error) => void | Promise<void>;
 }): OpenCodeV2EventStream {
@@ -164,6 +164,9 @@ export function startOpenCodeV2SessionLog(input: {
             }
           },
         });
+        if (input.reconnectOnCleanClose === false) {
+          return;
+        }
       } catch (error) {
         if (controller.signal.aborted) {
           return;

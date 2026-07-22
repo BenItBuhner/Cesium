@@ -202,9 +202,11 @@ export class OpenCodeV2Client {
   sendPrompt(
     id: string,
     body: {
+      id?: string;
       text: string;
       files?: Array<{ uri: string; name?: string }>;
       metadata?: Record<string, unknown>;
+      delivery?: "steer" | "queue";
       resume?: boolean;
     }
   ): Promise<OpenCodeV2Json> {
@@ -224,10 +226,10 @@ export class OpenCodeV2Client {
     });
   }
 
-  waitForSession(id: string): Promise<null> {
+  waitForSession(id: string, signal?: AbortSignal): Promise<null> {
     return this.request(
       `/api/session/${encodeURIComponent(id)}/wait`,
-      { method: "POST" },
+      { method: "POST", signal },
       { timeoutMs: 0 }
     );
   }
@@ -265,15 +267,45 @@ export class OpenCodeV2Client {
   answerForm(
     sessionId: string,
     formId: string,
-    answer: Record<string, string | number | boolean | string[]>
+    answer: Record<string, string | number | boolean | string[]>,
+    location?: { directory?: string; workspaceID?: string }
   ): Promise<null> {
     return this.request(
       `/api/session/${encodeURIComponent(sessionId)}/form/${encodeURIComponent(formId)}/reply`,
       {
         method: "POST",
         body: JSON.stringify({ answer }),
+        headers: {
+          ...(location?.directory
+            ? { "x-opencode-directory": encodeURIComponent(location.directory) }
+            : {}),
+          ...(location?.workspaceID
+            ? { "x-opencode-workspace": location.workspaceID }
+            : {}),
+        },
       }
     );
+  }
+
+  async listMessages(id: string, limit = 20): Promise<OpenCodeV2Json[]> {
+    const query = new URLSearchParams({ order: "desc", limit: String(limit) });
+    return dataArray(
+      await this.request(`/api/session/${encodeURIComponent(id)}/message?${query.toString()}`)
+    );
+  }
+
+  async listActiveSessionIds(): Promise<string[]> {
+    const response = await this.request("/api/session/active");
+    const active = dataRecord(response);
+    return Object.entries(active)
+      .filter(([, status]) => {
+        const record =
+          status && typeof status === "object" && !Array.isArray(status)
+            ? (status as OpenCodeV2Json)
+            : undefined;
+        return record?.type === "running";
+      })
+      .map(([sessionId]) => sessionId);
   }
 
   async listAgents(directory: string): Promise<OpenCodeV2Json[]> {

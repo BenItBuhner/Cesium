@@ -13,6 +13,7 @@ import {
 import {
   OpenCodeV2EventNormalizer,
   openCodeV2ChildSessionId,
+  openCodeV2EventSessionId,
   openCodeV2PermissionReply,
   readOpenCodeV2FormRequest,
   readOpenCodeV2QuestionRequest,
@@ -21,10 +22,8 @@ import {
   startOpenCodeV2Events,
   startOpenCodeV2SessionLog,
 } from "../src/lib/agents/opencode-v2-events.js";
-import {
-  buildOpenCodeV2ConfigOptions,
-  createOpenCodeV2Provider,
-} from "../src/lib/agents/opencode-v2-provider.js";
+import { buildOpenCodeV2ConfigOptions } from "../src/lib/agents/opencode-v2-config.js";
+import { createOpenCodeV2Provider } from "../src/lib/agents/opencode-v2-provider.js";
 import type {
   AgentConversationRecord,
   AgentEventInput,
@@ -74,6 +73,23 @@ test("OpenCode v2 catalogs expose primary agents and model variants", () => {
     "provider-a/model-a#high",
   ]);
   assert.equal(options[1]?.currentValue, "provider-a/model-a#high");
+  const partialRefresh = buildOpenCodeV2ConfigOptions({
+    agents: [],
+    models: [
+      {
+        id: "model-b",
+        providerID: "provider-b",
+        name: "Model B",
+        enabled: true,
+        variants: [],
+      },
+    ],
+    previous: options,
+  });
+  assert.deepEqual(partialRefresh[0]?.options.map((option) => option.value), ["build"]);
+  assert.deepEqual(partialRefresh[1]?.options.map((option) => option.value), [
+    "provider-b/model-b",
+  ]);
 });
 
 test("OpenCode v2 normalizes typed text, shell, subagent, and permission events", () => {
@@ -173,6 +189,21 @@ test("OpenCode v2 normalizes typed text, shell, subagent, and permission events"
     },
   };
   assert.equal(openCodeV2ChildSessionId(spawn), "ses_child");
+  assert.equal(
+    openCodeV2EventSessionId({
+      type: "session.test",
+      data: { session: { id: "ses_nested" } },
+    }),
+    "ses_nested"
+  );
+  assert.equal(
+    openCodeV2EventSessionId({
+      type: "session.test",
+      durable: { aggregateID: "ses_durable", seq: 1, version: 1 },
+      data: {},
+    }),
+    "ses_durable"
+  );
 
   const permission = normalizer.normalize({
     ...common,
@@ -188,7 +219,10 @@ test("OpenCode v2 normalizes typed text, shell, subagent, and permission events"
     },
   });
   assert.equal(permission[0]?.kind, "permission_request");
-  assert.equal("toolCallId" in permission[0]! ? permission[0].toolCallId : null, "call_shell");
+  assert.equal(
+    "toolCallId" in permission[0]! ? permission[0].toolCallId : null,
+    "opencode-v2:ses_child:call_shell"
+  );
   assert.equal(openCodeV2PermissionReply("allow_always"), "always");
   assert.equal(openCodeV2PermissionReply("deny"), "reject");
 });
@@ -290,12 +324,22 @@ test("OpenCode v2 SSE waits for connection and skips existing durable history", 
 test("OpenCode v2 provider completes a native typed tool and text turn", async () => {
   const eventStreams = new Set<import("node:http").ServerResponse>();
   let nextEventId = 0;
-  const sendEvent = (type: string, data: Record<string, unknown>) => {
+  const promptBodies: Record<string, unknown>[] = [];
+  let formReply: {
+    body: Record<string, unknown>;
+    directory?: string;
+  } | null = null;
+  const sendEvent = (
+    type: string,
+    data: Record<string, unknown>,
+    extra: Record<string, unknown> = {}
+  ) => {
     const frame = `data: ${JSON.stringify({
       id: `evt_provider_${nextEventId++}`,
       created: Date.now(),
       type,
       data,
+      ...extra,
     })}\n\n`;
     for (const stream of eventStreams) stream.write(frame);
   };
@@ -376,13 +420,18 @@ test("OpenCode v2 provider completes a native typed tool and text turn", async (
       return;
     }
     if (request.method === "POST" && url.pathname === "/api/session/ses_root/prompt") {
+      const bodyChunks: Buffer[] = [];
+      for await (const chunk of request) bodyChunks.push(Buffer.from(chunk));
+      promptBodies.push(
+        JSON.parse(Buffer.concat(bodyChunks).toString("utf8")) as Record<string, unknown>
+      );
       response.setHeader("content-type", "application/json");
       response.end(
         JSON.stringify({
           data: { id: "msg_user", sessionID: "ses_root", type: "user" },
         })
       );
-      setTimeout(() => {
+      if (promptBodies.length === 1) setTimeout(() => {
         const base = {
           sessionID: "ses_root",
           assistantMessageID: "msg_assistant",
@@ -421,10 +470,43 @@ test("OpenCode v2 provider completes a native typed tool and text turn", async (
       return;
     }
     if (request.method === "POST" && url.pathname === "/api/session/ses_root/wait") {
-      setTimeout(() => response.writeHead(204).end(), 25);
+      if (promptBodies.length === 1) {
+        setTimeout(() => response.writeHead(500).end("transient wait failure"), 5);
+      } else {
+        setTimeout(() => response.writeHead(204).end(), 5);
+      }
+      return;
+    }
+    if (request.method === "GET" && url.pathname === "/api/session/ses_root/message") {
+      response.setHeader("content-type", "application/json");
+      response.end(
+        JSON.stringify({
+          data: [
+            {
+              id: "msg_projected",
+              type: "assistant",
+              content: [{ type: "text", text: "reconciled" }],
+            },
+          ],
+          cursor: {},
+        })
+      );
       return;
     }
     if (request.method === "POST" && url.pathname === "/api/session/ses_root/interrupt") {
+      response.writeHead(204).end();
+      return;
+    }
+    if (
+      request.method === "POST" &&
+      url.pathname === "/api/session/global/form/frm_global/reply"
+    ) {
+      const bodyChunks: Buffer[] = [];
+      for await (const chunk of request) bodyChunks.push(Buffer.from(chunk));
+      formReply = {
+        body: JSON.parse(Buffer.concat(bodyChunks).toString("utf8")) as Record<string, unknown>,
+        directory: request.headers["x-opencode-directory"] as string | undefined,
+      };
       response.writeHead(204).end();
       return;
     }
@@ -497,6 +579,8 @@ test("OpenCode v2 provider completes a native typed tool and text turn", async (
     });
     const handle = await provider.startSession(callbacks);
     await handle.prompt({ text: "Run pwd", userMessageId: "user-1" });
+    assert.equal(promptBodies[0]?.id, "msg_cesium_user-1");
+    assert.equal(promptBodies[0]?.delivery, "steer");
     assert.equal(conversation.providerSessionId, "ses_root");
     assert.equal(conversation.status, "idle");
     assert.ok(
@@ -515,6 +599,38 @@ test("OpenCode v2 provider completes a native typed tool and text turn", async (
       "done"
     );
     assert.ok(appended.some((event) => event.kind === "assistant_message_end"));
+    await handle.prompt({ text: "Reconcile me", userMessageId: "user-2" });
+    assert.equal(promptBodies[1]?.id, "msg_cesium_user-2");
+    assert.ok(
+      appended.some(
+        (event) =>
+          event.kind === "assistant_message_chunk" &&
+          event.messageId === "opencode-v2-user-2" &&
+          event.text === "reconciled"
+      )
+    );
+    sendEvent(
+      "form.created",
+      {
+        form: {
+          id: "frm_global",
+          sessionID: "global",
+          title: "MCP confirmation",
+          fields: [{ key: "confirm", type: "boolean", title: "Continue?" }],
+        },
+      },
+      { location: { directory: workspaceRoot } }
+    );
+    for (let attempt = 0; attempt < 50 && conversation.pendingQuestion?.questionId !== "frm_global"; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    assert.equal(conversation.pendingQuestion?.questionId, "frm_global");
+    await handle.answerQuestion?.({
+      questionId: "frm_global",
+      answer: "Continue?: Yes",
+    });
+    assert.deepEqual(formReply?.body, { answer: { confirm: true } });
+    assert.equal(formReply?.directory, encodeURIComponent(workspaceRoot));
     await handle.dispose();
   } finally {
     if (previousUrl == null) delete process.env.OPENCURSOR_OPENCODE_V2_SERVER_URL;

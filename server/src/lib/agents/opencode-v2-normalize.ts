@@ -111,10 +111,14 @@ function formFieldOptions(field: RecordValue): Array<{ id: string; label: string
 
 export function openCodeV2EventSessionId(payload: RecordValue): string | undefined {
   const data = asRecord(payload.data);
+  const durable = asRecord(payload.durable);
   return (
     asString(data?.sessionID) ??
     asString(asRecord(data?.form)?.sessionID) ??
-    asString(asRecord(data?.info)?.metadata && asRecord(asRecord(data?.info)?.metadata)?.sessionID)
+    asString(asRecord(data?.session)?.id) ??
+    asString(asRecord(data?.source)?.sessionID) ??
+    asString(asRecord(asRecord(data?.info)?.metadata)?.sessionID) ??
+    asString(durable?.aggregateID)
   );
 }
 
@@ -195,6 +199,7 @@ export type OpenCodeV2FormRequest = {
   sessionId: string;
   title: string;
   fields: OpenCodeV2FormField[];
+  location?: { directory?: string; workspaceID?: string };
 };
 
 export function readOpenCodeV2FormRequest(payload: RecordValue): OpenCodeV2FormRequest | null {
@@ -231,12 +236,21 @@ export function readOpenCodeV2FormRequest(payload: RecordValue): OpenCodeV2FormR
       },
     ];
   });
+  const location = asRecord(payload.location);
   return fields.length > 0
     ? {
         id,
         sessionId,
         title: asString(form.title) ?? "OpenCode form",
         fields,
+        ...(location
+          ? {
+              location: {
+                ...(asString(location.directory) ? { directory: asString(location.directory) } : {}),
+                ...(asString(location.workspaceID) ? { workspaceID: asString(location.workspaceID) } : {}),
+              },
+            }
+          : {}),
       }
     : null;
 }
@@ -385,7 +399,9 @@ export class OpenCodeV2EventNormalizer {
           requestId,
           title: `OpenCode requests ${action}`,
           detail: resources.length > 0 ? resources.join("\n") : undefined,
-          toolCallId: asString(asRecord(data.source)?.callID),
+          toolCallId: asString(asRecord(data.source)?.callID)
+            ? `opencode-v2:${asString(data.sessionID) ?? "global"}:${asString(asRecord(data.source)?.callID)}`
+            : undefined,
           options: [
             { optionId: "allow", name: "Allow", kind: "allow_once" },
             { optionId: "allow_always", name: "Allow Always", kind: "allow_always" },
