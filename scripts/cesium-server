@@ -83,7 +83,7 @@ managed_process_is_running() {
 wait_for_health() {
   local attempt
   for ((attempt = 1; attempt <= 60; attempt++)); do
-    if curl -fsS "$LOCAL_URL/health" >/dev/null 2>&1; then
+    if curl -fsS --max-time 5 "$LOCAL_URL/health" >/dev/null 2>&1; then
       return 0
     fi
     sleep 1
@@ -629,11 +629,16 @@ supervise() {
 
   local last_published_at=0
   local last_published_url=""
+  local tunnel_health_failures=0
   local interval="${CESIUM_RENDEZVOUS_INTERVAL:-15}"
   [[ "$interval" =~ ^[0-9]+$ ]] || interval=15
   ((interval >= 5)) || interval=5
 
   while true; do
+    if managed_process_is_running "$SERVER_PID_FILE" "$SERVER_PROCESS_SIGNATURE" &&
+      ! curl -fsS --max-time 5 "$LOCAL_URL/health" >/dev/null 2>&1; then
+      stop_managed_process "$SERVER_PID_FILE" "$SERVER_PROCESS_SIGNATURE" "Server" || true
+    fi
     if ! start_server; then
       printf '%s Server restart failed; retrying.\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" >>"$RENDEZVOUS_LOG"
       sleep 5
@@ -649,6 +654,22 @@ supervise() {
     local remote="" now
     remote="$(public_url || true)"
     now="$(date +%s)"
+    if tunnel_required; then
+      if [[ -n "$remote" ]] && public_health_is_healthy "$remote"; then
+        tunnel_health_failures=0
+      else
+        tunnel_health_failures=$((tunnel_health_failures + 1))
+        if ((tunnel_health_failures >= 3)); then
+          printf '%s Tunnel health failed repeatedly; restarting.\n' \
+            "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" >>"$RENDEZVOUS_LOG"
+          stop_tunnel || true
+          tunnel_health_failures=0
+          last_published_url=""
+          sleep 2
+          continue
+        fi
+      fi
+    fi
     if [[ -n "$remote" ]] &&
       { [[ "$remote" != "$last_published_url" ]] || ((now - last_published_at >= interval)); }; then
       if publish_rendezvous; then
