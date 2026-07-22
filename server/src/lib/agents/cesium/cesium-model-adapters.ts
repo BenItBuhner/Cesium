@@ -16,6 +16,7 @@ import type {
   CesiumAdapterResult,
   CesiumAdapterStreamEvent,
   CesiumHistoryMessage,
+  CesiumTokenUsage,
   CesiumToolRequest,
 } from "./cesium-types.js";
 
@@ -28,6 +29,131 @@ function optionalProviderTools(
     return undefined;
   }
   return build(tools);
+}
+
+function resolveMaxOutputTokens(value: number | undefined): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return DEFAULT_MAX_OUTPUT_TOKENS;
+  }
+  return Math.min(Math.max(1, Math.floor(value)), Number.MAX_SAFE_INTEGER);
+}
+
+function asTokenCount(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0
+    ? Math.floor(value)
+    : undefined;
+}
+
+function firstTokenCount(
+  record: Record<string, unknown> | null | undefined,
+  keys: readonly string[]
+): number | undefined {
+  if (!record) {
+    return undefined;
+  }
+  for (const key of keys) {
+    const value = asTokenCount(record[key]);
+    if (value !== undefined) {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+function sumTokenCounts(...values: Array<number | undefined>): number | undefined {
+  let total = 0;
+  let seen = false;
+  for (const value of values) {
+    if (value === undefined) {
+      continue;
+    }
+    total += value;
+    seen = true;
+  }
+  return seen ? total : undefined;
+}
+
+function normalizedTokenUsage(input: {
+  inputTokens?: number;
+  outputTokens?: number;
+  totalTokens?: number;
+}): CesiumTokenUsage | undefined {
+  const totalTokens =
+    input.totalTokens ?? sumTokenCounts(input.inputTokens, input.outputTokens);
+  if (
+    input.inputTokens === undefined &&
+    input.outputTokens === undefined &&
+    totalTokens === undefined
+  ) {
+    return undefined;
+  }
+  return {
+    ...(input.inputTokens !== undefined ? { inputTokens: input.inputTokens } : {}),
+    ...(input.outputTokens !== undefined ? { outputTokens: input.outputTokens } : {}),
+    ...(totalTokens !== undefined ? { totalTokens } : {}),
+  };
+}
+
+function addTokenUsage(
+  existing: CesiumTokenUsage | undefined,
+  next: CesiumTokenUsage | undefined
+): CesiumTokenUsage | undefined {
+  if (!next) {
+    return existing;
+  }
+  if (!existing) {
+    return next;
+  }
+  return normalizedTokenUsage({
+    inputTokens: sumTokenCounts(existing.inputTokens, next.inputTokens),
+    outputTokens: sumTokenCounts(existing.outputTokens, next.outputTokens),
+    totalTokens: sumTokenCounts(existing.totalTokens, next.totalTokens),
+  });
+}
+
+function openAiTokenUsageFromRecord(
+  usage: Record<string, unknown> | null | undefined
+): CesiumTokenUsage | undefined {
+  return normalizedTokenUsage({
+    inputTokens: firstTokenCount(usage, ["prompt_tokens", "input_tokens"]),
+    outputTokens: firstTokenCount(usage, ["completion_tokens", "output_tokens"]),
+    totalTokens: firstTokenCount(usage, ["total_tokens"]),
+  });
+}
+
+function extractOpenAiChatUsage(payload: unknown): CesiumTokenUsage | undefined {
+  const root = asRecord(payload);
+  return openAiTokenUsageFromRecord(asRecord(root?.usage));
+}
+
+function extractOpenAiResponsesUsage(payload: unknown): CesiumTokenUsage | undefined {
+  const root = asRecord(payload);
+  const response = asRecord(root?.response);
+  return openAiTokenUsageFromRecord(asRecord(response?.usage) ?? asRecord(root?.usage));
+}
+
+function extractAnthropicUsage(payload: unknown): CesiumTokenUsage | undefined {
+  const root = asRecord(payload);
+  const usage = asRecord(root?.usage);
+  const inputTokens = sumTokenCounts(
+    firstTokenCount(usage, ["input_tokens"]),
+    firstTokenCount(usage, ["cache_creation_input_tokens"]),
+    firstTokenCount(usage, ["cache_read_input_tokens"])
+  );
+  return normalizedTokenUsage({
+    inputTokens,
+    outputTokens: firstTokenCount(usage, ["output_tokens"]),
+  });
+}
+
+function extractGoogleUsage(payload: unknown): CesiumTokenUsage | undefined {
+  const root = asRecord(payload);
+  const usage = asRecord(root?.usageMetadata);
+  return normalizedTokenUsage({
+    inputTokens: firstTokenCount(usage, ["promptTokenCount"]),
+    outputTokens: firstTokenCount(usage, ["candidatesTokenCount"]),
+    totalTokens: firstTokenCount(usage, ["totalTokenCount"]),
+  });
 }
 
 async function fetchJson(url: string, init: RequestInit): Promise<unknown> {
@@ -124,6 +250,7 @@ async function runOpenAiChat(input: {
   baseUrl?: string;
   providerId: string;
   model: string;
+  maxOutputTokens: number;
   messages: CesiumHistoryMessage[];
   tools?: import("./cesium-tools.js").CesiumToolDefinition[];
 }): Promise<CesiumAdapterResult> {
@@ -140,7 +267,7 @@ async function runOpenAiChat(input: {
       model: input.model,
       messages: openAiMessages(input.messages),
       ...(tools ? { tools, tool_choice: "auto" as const } : {}),
-      max_tokens: DEFAULT_MAX_OUTPUT_TOKENS,
+      max_tokens: input.maxOutputTokens,
     }),
   });
   const root = asRecord(payload);
@@ -164,6 +291,7 @@ async function runOpenAiChat(input: {
         parseJsonArgs(fn?.arguments)
       )];
     }),
+    usage: extractOpenAiChatUsage(payload),
     raw: payload,
   };
 }
@@ -173,6 +301,7 @@ async function* streamOpenAiResponses(input: {
   baseUrl?: string;
   providerId: string;
   model: string;
+  maxOutputTokens: number;
   messages: CesiumHistoryMessage[];
   tools?: import("./cesium-tools.js").CesiumToolDefinition[];
 }): AsyncGenerator<CesiumAdapterStreamEvent> {
@@ -207,7 +336,7 @@ async function* streamOpenAiResponses(input: {
         };
       }),
       ...(tools ? { tools } : {}),
-      max_output_tokens: DEFAULT_MAX_OUTPUT_TOKENS,
+      max_output_tokens: input.maxOutputTokens,
       stream: true,
     }),
   });
@@ -215,10 +344,13 @@ async function* streamOpenAiResponses(input: {
     const text = await response.text();
     throw new Error(`${response.status} ${response.statusText}: ${text.slice(0, 1000)}`);
   }
-  if (response.body) {
+  const contentType = response.headers.get("content-type") ?? "";
+  if (response.body && (!contentType || contentType.includes("text/event-stream"))) {
     const decoder = new TextDecoder();
     const reader = response.body.getReader();
     let buffer = "";
+    let usage: CesiumTokenUsage | undefined;
+    let doneRaw: unknown;
     for (;;) {
       const { value, done } = await reader.read();
       if (done) break;
@@ -236,6 +368,10 @@ async function* streamOpenAiResponses(input: {
           }
           const event = parseJsonArgs(dataLine);
           yield { kind: "raw", raw: event };
+          usage = extractOpenAiResponsesUsage(event) ?? usage;
+          if (event.type === "response.completed" || event.type === "response.done") {
+            doneRaw = event;
+          }
           if (event.type === "response.output_text.delta" && typeof event.delta === "string") {
             yield { kind: "text_delta", text: event.delta, raw: event };
           }
@@ -257,7 +393,7 @@ async function* streamOpenAiResponses(input: {
         }
       }
     }
-    yield { kind: "done" };
+    yield { kind: "done", raw: doneRaw, usage };
     return;
   }
   const payload = await response.json();
@@ -299,12 +435,13 @@ async function* streamOpenAiResponses(input: {
   for (const request of toolRequests) {
     yield { kind: "tool_request", request, raw: payload };
   }
-  yield { kind: "done", raw: payload };
+  yield { kind: "done", raw: payload, usage: extractOpenAiResponsesUsage(payload) };
 }
 
 async function* streamOpenAiRealtime(input: {
   apiKey: string;
   model: string;
+  maxOutputTokens: number;
   messages: CesiumHistoryMessage[];
   tools?: import("./cesium-tools.js").CesiumToolDefinition[];
 }): AsyncGenerator<CesiumAdapterStreamEvent> {
@@ -344,7 +481,12 @@ async function* streamOpenAiRealtime(input: {
         content: [{ type: "input_text", text: input.messages.map((m) => `${m.role}: ${m.content}`).join("\n\n") }],
       },
     }));
-    ws.send(JSON.stringify({ type: "response.create" }));
+    ws.send(JSON.stringify({
+      type: "response.create",
+      response: {
+        max_output_tokens: input.maxOutputTokens,
+      },
+    }));
   });
   ws.on("message", (data) => {
     const event = parseJsonArgs(data.toString());
@@ -354,7 +496,10 @@ async function* streamOpenAiRealtime(input: {
     }
     if (event.type === "response.done") {
       completed = true;
-      push({ kind: "event", event: { kind: "done", raw: event } });
+      push({
+        kind: "event",
+        event: { kind: "done", raw: event, usage: extractOpenAiResponsesUsage(event) },
+      });
       push({ kind: "closed" });
       ws.close();
     }
@@ -435,6 +580,7 @@ function anthropicMessages(messages: CesiumHistoryMessage[]) {
 async function runAnthropic(input: {
   apiKey: string;
   model: string;
+  maxOutputTokens: number;
   messages: CesiumHistoryMessage[];
   tools?: import("./cesium-tools.js").CesiumToolDefinition[];
 }): Promise<CesiumAdapterResult> {
@@ -449,7 +595,7 @@ async function runAnthropic(input: {
     body: JSON.stringify({
       model: input.model,
       system: CESIUM_SYSTEM_PROMPT,
-      max_tokens: DEFAULT_MAX_OUTPUT_TOKENS,
+      max_tokens: input.maxOutputTokens,
       messages: anthropicMessages(input.messages),
       ...(tools ? { tools } : {}),
     }),
@@ -476,7 +622,7 @@ async function runAnthropic(input: {
       }
     }
   }
-  return { text: text.join(""), toolRequests, raw: payload };
+  return { text: text.join(""), toolRequests, usage: extractAnthropicUsage(payload), raw: payload };
 }
 
 function googleContents(messages: CesiumHistoryMessage[]) {
@@ -491,6 +637,7 @@ function googleContents(messages: CesiumHistoryMessage[]) {
 async function runGoogle(input: {
   apiKey: string;
   model: string;
+  maxOutputTokens: number;
   messages: CesiumHistoryMessage[];
   tools?: import("./cesium-tools.js").CesiumToolDefinition[];
 }): Promise<CesiumAdapterResult> {
@@ -504,7 +651,7 @@ async function runGoogle(input: {
       systemInstruction: { parts: [{ text: CESIUM_SYSTEM_PROMPT }] },
       ...(tools ? { tools } : {}),
       generationConfig: {
-        maxOutputTokens: DEFAULT_MAX_OUTPUT_TOKENS,
+        maxOutputTokens: input.maxOutputTokens,
       },
     }),
   });
@@ -537,7 +684,7 @@ async function runGoogle(input: {
       );
     }
   }
-  return { text: text.join(""), toolRequests, raw: payload };
+  return { text: text.join(""), toolRequests, usage: extractGoogleUsage(payload), raw: payload };
 }
 
 export type RunAdapterInput = {
@@ -546,6 +693,7 @@ export type RunAdapterInput = {
   baseUrl?: string;
   providerId: string;
   modelId: string;
+  maxOutputTokens?: number;
   messages: CesiumHistoryMessage[];
   /** When set, overrides the default composed Cesium tool list (including harness feature modules). */
   tools?: import("./cesium-tools.js").CesiumToolDefinition[];
@@ -563,7 +711,7 @@ async function* streamStaticResult(
   for (const request of result.toolRequests) {
     yield { kind: "tool_request", request, raw: result.raw };
   }
-  yield { kind: "done", raw: result.raw };
+  yield { kind: "done", raw: result.raw, usage: result.usage };
 }
 
 export async function* streamAdapter(
@@ -571,6 +719,7 @@ export async function* streamAdapter(
 ): AsyncGenerator<CesiumAdapterStreamEvent> {
   const model = modelPart(input.modelId);
   const providerId = providerPart(input.modelId);
+  const maxOutputTokens = resolveMaxOutputTokens(input.maxOutputTokens);
   switch (input.apiKind) {
     case "openai-chat-completions":
     case "openai-compatible":
@@ -580,6 +729,7 @@ export async function* streamAdapter(
           baseUrl: input.baseUrl,
           providerId,
           model,
+          maxOutputTokens,
           messages: input.messages,
           tools: input.tools,
         })
@@ -589,6 +739,7 @@ export async function* streamAdapter(
       yield* streamOpenAiRealtime({
         apiKey: input.apiKey,
         model,
+        maxOutputTokens,
         messages: input.messages,
         tools: input.tools,
       });
@@ -598,6 +749,7 @@ export async function* streamAdapter(
         await runAnthropic({
           apiKey: input.apiKey,
           model,
+          maxOutputTokens,
           messages: input.messages,
           tools: input.tools,
         })
@@ -608,6 +760,7 @@ export async function* streamAdapter(
         await runGoogle({
           apiKey: input.apiKey,
           model,
+          maxOutputTokens,
           messages: input.messages,
           tools: input.tools,
         })
@@ -620,6 +773,7 @@ export async function* streamAdapter(
         baseUrl: input.baseUrl,
         providerId,
         model,
+        maxOutputTokens,
         messages: input.messages,
         tools: input.tools,
       });
@@ -632,6 +786,7 @@ export async function runAdapter(input: RunAdapterInput): Promise<CesiumAdapterR
   const reasoningParts: string[] = [];
   const toolRequests: CesiumToolRequest[] = [];
   const rawEvents: unknown[] = [];
+  let usage: CesiumTokenUsage | undefined;
   let finalRaw: unknown;
   for await (const event of streamAdapter(input)) {
     if ("raw" in event && event.raw !== undefined) {
@@ -649,7 +804,9 @@ export async function runAdapter(input: RunAdapterInput): Promise<CesiumAdapterR
         toolRequests.push(event.request);
         break;
       case "raw":
+        break;
       case "done":
+        usage = addTokenUsage(usage, event.usage);
         break;
     }
   }
@@ -657,6 +814,7 @@ export async function runAdapter(input: RunAdapterInput): Promise<CesiumAdapterR
     text: textParts.join(""),
     reasoning: reasoningParts.join("") || undefined,
     toolRequests,
+    usage,
     raw: rawEvents.length > 1 ? rawEvents : finalRaw,
   };
 }
