@@ -604,7 +604,12 @@ export class PublicAccessManager {
       process.env.OPENCURSOR_AUTH_USERNAME = this.config.managedAuthUsername;
       process.env.OPENCURSOR_AUTH_PASSWORD = this.config.managedAuthPassword;
       this.runtimeAuthOwnedByManager = true;
-      return undefined;
+      return returnNewCredentials
+        ? {
+            username: this.config.managedAuthUsername,
+            password: this.config.managedAuthPassword,
+          }
+        : undefined;
     }
     const username = this.config.managedAuthUsername || "cesium";
     const password = base64UrlRandom(32);

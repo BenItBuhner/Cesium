@@ -171,6 +171,34 @@ test("failed exposure rolls back generated runtime auth and enabled state", asyn
   assert.equal(process.env.OPENCURSOR_AUTH_PASSWORD, undefined);
 });
 
+test("retrying a rolled-back enable returns the undisclosed generated credentials", async () => {
+  delete process.env.OPENCURSOR_AUTH_USERNAME;
+  delete process.env.OPENCURSOR_AUTH_PASSWORD;
+  const manager = makeManager();
+  const now = Date.now();
+  manager.replaceConfigForTests({
+    schemaVersion: 1,
+    enabled: false,
+    webAppUrl: "https://web.example",
+    provider: "auto",
+    customPublicUrl: "https://existing-proxy.example",
+    serverId: "server_1234567890abcdefghijklmnop",
+    rendezvousReadSecret: "read_secret_1234567890abcdefghijklmnopqrstuv",
+    rendezvousWriteSecret: "write_secret_1234567890abcdefghijklmnopqrstu",
+    managedAuthUsername: "cesium",
+    managedAuthPassword: "undisclosed_generated_password_123456",
+    credentialsManagerGenerated: true,
+    createdAt: now,
+    updatedAt: now,
+  });
+  const result = await manager.enable();
+  assert.deepEqual(result.generatedCredentials, {
+    username: "cesium",
+    password: "undisclosed_generated_password_123456",
+  });
+  await manager.disable();
+});
+
 test("stable connect link contains read secret but excludes write secret", async () => {
   const requests: FetchRequest[] = [];
   const manager = makeManager({ fetch: makeFetch(requests) });
