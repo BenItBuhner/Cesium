@@ -2,6 +2,10 @@
 
 import { isLoopbackServerBaseUrl } from "./configured-server-base-url";
 import { clientKeyValueStore, getClientPlatform } from "./platform";
+import {
+  normalizeRendezvousLocator,
+  type RendezvousLocator,
+} from "./rendezvous";
 
 export const SERVER_CONNECTIONS_STORAGE_KEY = "opencursor.server-connections";
 export const SERVER_CONNECTIONS_EVENT = "opencursor:server-connections-changed";
@@ -10,6 +14,7 @@ export type ServerConnection = {
   id: string;
   label: string;
   baseUrl: string;
+  rendezvous?: RendezvousLocator;
   createdAt: number;
   updatedAt: number;
   lastUsedAt: number;
@@ -37,6 +42,7 @@ type PartialServerConnection = {
   id?: unknown;
   label?: unknown;
   baseUrl?: unknown;
+  rendezvous?: unknown;
   createdAt?: unknown;
   updatedAt?: unknown;
   lastUsedAt?: unknown;
@@ -108,6 +114,7 @@ export function createServerConnection(input: {
   label?: string;
   baseUrl: string;
   id?: string;
+  rendezvous?: RendezvousLocator;
   now?: number;
 }): ServerConnection {
   const now = input.now ?? Date.now();
@@ -117,6 +124,9 @@ export function createServerConnection(input: {
     id: input.id?.trim() || fallbackId(),
     label,
     baseUrl,
+    ...(input.rendezvous
+      ? { rendezvous: normalizeRendezvousLocator(input.rendezvous) }
+      : {}),
     createdAt: now,
     updatedAt: now,
     lastUsedAt: now,
@@ -143,6 +153,13 @@ function sanitizeServerConnection(raw: PartialServerConnection): ServerConnectio
           ? raw.label.trim()
           : deriveServerLabel(baseUrl),
       baseUrl,
+      ...(raw.rendezvous && typeof raw.rendezvous === "object"
+        ? {
+            rendezvous: normalizeRendezvousLocator(
+              raw.rendezvous as Partial<RendezvousLocator>
+            ),
+          }
+        : {}),
       createdAt,
       updatedAt,
       lastUsedAt: typeof raw.lastUsedAt === "number" ? raw.lastUsedAt : updatedAt,
@@ -152,10 +169,16 @@ function sanitizeServerConnection(raw: PartialServerConnection): ServerConnectio
   }
 }
 
+function serverIdentityKey(server: ServerConnection): string {
+  return server.rendezvous
+    ? `rendezvous:${server.rendezvous.serverId}`
+    : getServerConnectionKey(server.baseUrl);
+}
+
 function dedupeServers(servers: ServerConnection[]): ServerConnection[] {
   const seenByBaseUrl = new Map<string, ServerConnection>();
   for (const server of servers) {
-    const key = getServerConnectionKey(server.baseUrl);
+    const key = serverIdentityKey(server);
     const existing = seenByBaseUrl.get(key);
     if (!existing || existing.updatedAt < server.updatedAt) {
       seenByBaseUrl.set(key, server);
@@ -295,6 +318,70 @@ export function applyServerUrlBootstrap(
   return server ? markServerConnectionUsed(upserted, server.id) : upserted;
 }
 
+export function applyRendezvousBootstrap(
+  state: ServerConnectionsState,
+  input: {
+    locator: RendezvousLocator;
+    baseUrl: string;
+    label?: string;
+    now?: number;
+  }
+): ServerConnectionsState {
+  const locator = normalizeRendezvousLocator(input.locator);
+  const existing = state.servers.find(
+    (server) => server.rendezvous?.serverId === locator.serverId
+  );
+  return mergeServerConnectionBootstrap(
+    state,
+    {
+      id: existing?.id ?? `rendezvous:${locator.serverId}`,
+      label: input.label,
+      baseUrl: input.baseUrl,
+      rendezvous: locator,
+      now: input.now,
+    },
+    {
+      activate: "always",
+      defaultServer: "always",
+    }
+  );
+}
+
+export function updateRendezvousServerEndpoint(
+  state: ServerConnectionsState,
+  input: {
+    serverId: string;
+    baseUrl: string;
+    label?: string;
+    now?: number;
+  }
+): ServerConnectionsState {
+  const existing = state.servers.find(
+    (server) => server.rendezvous?.serverId === input.serverId
+  );
+  if (!existing?.rendezvous) {
+    return state;
+  }
+  const normalizedBaseUrl = normalizeServerBaseUrl(input.baseUrl);
+  if (existing.baseUrl === normalizedBaseUrl) {
+    return state;
+  }
+  return mergeServerConnectionBootstrap(
+    state,
+    {
+      id: existing.id,
+      label: input.label,
+      baseUrl: normalizedBaseUrl,
+      rendezvous: existing.rendezvous,
+      now: input.now,
+    },
+    {
+      activate: "never",
+      defaultServer: "never",
+    }
+  );
+}
+
 export function createDefaultServerConnectionsState(configuredDefaultBaseUrl: string): ServerConnectionsState {
   const initial = createServerConnection({ baseUrl: configuredDefaultBaseUrl });
   return {
@@ -307,7 +394,13 @@ export function createDefaultServerConnectionsState(configuredDefaultBaseUrl: st
 
 export function mergeServerConnectionBootstrap(
   state: ServerConnectionsState,
-  input: { id: string; label?: string; baseUrl: string; now?: number },
+  input: {
+    id: string;
+    label?: string;
+    baseUrl: string;
+    rendezvous?: RendezvousLocator;
+    now?: number;
+  },
   options?: ServerConnectionBootstrapOptions
 ): ServerConnectionsState {
   const normalizedBaseUrl = normalizeServerBaseUrl(input.baseUrl);
@@ -321,16 +414,27 @@ export function mergeServerConnectionBootstrap(
   const shouldActivate =
     activateMode === "always" || (activateMode === "if-missing" && !existingActive);
   const existingById = state.servers.find((server) => server.id === input.id) ?? null;
+  const existingByRendezvous = input.rendezvous
+    ? state.servers.find(
+        (server) =>
+          server.rendezvous?.serverId === input.rendezvous?.serverId
+      ) ?? null
+    : null;
   const existingByBaseUrl =
     state.servers.find((server) => getServerConnectionKey(server.baseUrl) === normalizedKey) ??
     null;
-  const target = existingById ?? existingByBaseUrl;
+  const target = existingById ?? existingByRendezvous ?? existingByBaseUrl;
   const nextServer: ServerConnection = target
     ? {
         ...target,
         id: existingById?.id ?? input.id ?? target.id,
         label: target.label || trimmedLabel || deriveServerLabel(normalizedBaseUrl),
         baseUrl: normalizedBaseUrl,
+        ...(input.rendezvous
+          ? { rendezvous: normalizeRendezvousLocator(input.rendezvous) }
+          : target.rendezvous
+            ? { rendezvous: target.rendezvous }
+            : {}),
         updatedAt: now,
         lastUsedAt: shouldActivate ? now : target.lastUsedAt,
       }
@@ -338,6 +442,7 @@ export function mergeServerConnectionBootstrap(
         id: input.id,
         label: trimmedLabel,
         baseUrl: normalizedBaseUrl,
+        rendezvous: input.rendezvous,
         now,
       });
 
@@ -345,7 +450,10 @@ export function mergeServerConnectionBootstrap(
     nextServer,
     ...state.servers.filter(
       (server) =>
-        server.id !== target?.id && getServerConnectionKey(server.baseUrl) !== normalizedKey
+        server.id !== target?.id &&
+        getServerConnectionKey(server.baseUrl) !== normalizedKey &&
+        (!input.rendezvous ||
+          server.rendezvous?.serverId !== input.rendezvous.serverId)
     ),
   ]);
   const bootstrappedServer =
@@ -463,7 +571,12 @@ export function readStoredServerConnectionsState(
 }
 
 export function bootstrapStoredServerConnection(
-  input: { id: string; label?: string; baseUrl: string },
+  input: {
+    id: string;
+    label?: string;
+    baseUrl: string;
+    rendezvous?: RendezvousLocator;
+  },
   options?: ServerConnectionBootstrapOptions
 ): ServerConnectionsState {
   const configuredDefaultBaseUrl = options?.configuredDefaultBaseUrl ?? input.baseUrl;
@@ -517,32 +630,62 @@ export function getActiveServerBaseUrl(configuredDefaultBaseUrl: string): string
 }
 
 export function getActiveServerStorageKey(configuredDefaultBaseUrl: string): string {
-  return encodeURIComponent(getServerConnectionKey(getActiveServerBaseUrl(configuredDefaultBaseUrl)));
+  const server = getActiveServerConnection(configuredDefaultBaseUrl);
+  return encodeURIComponent(
+    server.rendezvous
+      ? `rendezvous:${server.rendezvous.serverId}`
+      : getServerConnectionKey(server.baseUrl)
+  );
 }
 
 export function upsertServerConnection(
   state: ServerConnectionsState,
-  input: { id?: string; label?: string; baseUrl: string }
+  input: {
+    id?: string;
+    label?: string;
+    baseUrl: string;
+    rendezvous?: RendezvousLocator;
+  }
 ): ServerConnectionsState {
   const normalizedBaseUrl = normalizeServerBaseUrl(input.baseUrl);
   const normalizedKey = getServerConnectionKey(normalizedBaseUrl);
   const now = Date.now();
   const existingById = input.id ? state.servers.find((server) => server.id === input.id) : null;
+  const existingByRendezvous = input.rendezvous
+    ? state.servers.find(
+        (server) => server.rendezvous?.serverId === input.rendezvous?.serverId
+      )
+    : null;
   const existingByBaseUrl = state.servers.find(
     (server) => getServerConnectionKey(server.baseUrl) === normalizedKey
   );
-  const target = existingById ?? existingByBaseUrl;
+  const target = existingById ?? existingByRendezvous ?? existingByBaseUrl;
   const nextServer: ServerConnection = target
     ? {
         ...target,
         label: input.label?.trim() || target.label || deriveServerLabel(normalizedBaseUrl),
         baseUrl: normalizedBaseUrl,
+        ...(input.rendezvous
+          ? { rendezvous: normalizeRendezvousLocator(input.rendezvous) }
+          : target.rendezvous
+            ? { rendezvous: target.rendezvous }
+            : {}),
         updatedAt: now,
       }
-    : createServerConnection({ label: input.label, baseUrl: normalizedBaseUrl, now });
+    : createServerConnection({
+        id: input.id,
+        label: input.label,
+        baseUrl: normalizedBaseUrl,
+        rendezvous: input.rendezvous,
+        now,
+      });
 
   const remaining = state.servers.filter(
-    (server) => server.id !== target?.id && getServerConnectionKey(server.baseUrl) !== normalizedKey
+    (server) =>
+      server.id !== target?.id &&
+      getServerConnectionKey(server.baseUrl) !== normalizedKey &&
+      (!input.rendezvous ||
+        server.rendezvous?.serverId !== input.rendezvous.serverId)
   );
   const servers = dedupeServers([nextServer, ...remaining]);
   const defaultServerId =

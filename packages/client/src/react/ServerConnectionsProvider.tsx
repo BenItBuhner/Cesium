@@ -11,14 +11,23 @@ import {
   type ReactNode,
 } from "react";
 import {
+  applyRendezvousBootstrap,
   applyServerUrlBootstrap,
   getSettingsServerConnection,
   requiresDefaultServerSelection,
   setDefaultServerConnection,
+  updateRendezvousServerEndpoint,
   upsertServerConnection,
   type ServerConnection,
   type ServerConnectionsState,
 } from "../server-connections";
+import {
+  parseRendezvousBootstrapHash,
+  resolveRendezvousEndpoint,
+  stripRendezvousBootstrapFromLocation,
+  type RendezvousBootstrap,
+} from "../rendezvous";
+import { migrateStoredAuthServerBaseUrl } from "../auth-client";
 import {
   SERVER_CONNECTIONS_EVENT,
   getActiveServerConnectionFromDefaults as getActiveServerConnection,
@@ -128,7 +137,9 @@ function mergeRuntimeStatusesIfChanged(
 }
 
 function connectionDedupeKey(server: ServerConnection): string {
-  return getServerConnectionKey(server.baseUrl);
+  return server.rendezvous
+    ? `rendezvous:${server.rendezvous.serverId}`
+    : getServerConnectionKey(server.baseUrl);
 }
 
 function dedupeServersByResolvedBaseUrl(servers: ServerConnection[]): ServerConnection[] {
@@ -154,9 +165,52 @@ export function ServerConnectionsProvider({ children }: { children: ReactNode })
   useEffect(() => {
     const sync = () => {
       setState(readStoredServerConnectionsState());
-      setReady(true);
     };
-    sync();
+    let cancelled = false;
+    void (async () => {
+      let next = readStoredServerConnectionsState();
+      const location = clientLocation();
+      let bootstrap: RendezvousBootstrap | null = null;
+      if (location?.href) {
+        try {
+          bootstrap = parseRendezvousBootstrapHash(new URL(location.href).hash);
+        } catch {
+          bootstrap = null;
+        }
+      }
+      if (bootstrap) {
+        let resolvedBaseUrl = bootstrap.initialBaseUrl ?? null;
+        let resolvedLabel = bootstrap.label;
+        try {
+          const resolved = await resolveRendezvousEndpoint(bootstrap);
+          if (resolved) {
+            resolvedBaseUrl = resolved.baseUrl;
+            resolvedLabel = resolved.label ?? resolvedLabel;
+          }
+        } catch {
+          // The encrypted identity is still persisted below when the link carries
+          // its initial endpoint; polling will recover a temporarily unavailable registry.
+        }
+        if (resolvedBaseUrl) {
+          next = applyRendezvousBootstrap(next, {
+            locator: {
+              version: 1,
+              serverId: bootstrap.serverId,
+              secret: bootstrap.secret,
+              registryBaseUrl: bootstrap.registryBaseUrl,
+            },
+            baseUrl: resolvedBaseUrl,
+            label: resolvedLabel,
+          });
+          writeStoredServerConnectionsState(next);
+        }
+        stripRendezvousBootstrapFromLocation();
+      }
+      if (!cancelled) {
+        setState(next);
+        setReady(true);
+      }
+    })();
     const unsubscribeChange = getClientPlatform().addEventListener(
       SERVER_CONNECTIONS_EVENT,
       sync
@@ -173,6 +227,7 @@ export function ServerConnectionsProvider({ children }: { children: ReactNode })
       window.addEventListener("storage", onStorage);
     }
     return () => {
+      cancelled = true;
       unsubscribeChange();
       if (canUseWindowEvents) {
         window.removeEventListener("storage", onStorage);
@@ -258,6 +313,55 @@ export function ServerConnectionsProvider({ children }: { children: ReactNode })
       cancelled = true;
     };
   }, [ready]);
+
+  const refreshRendezvousEndpoints = useCallback(async () => {
+    const rendezvousServers = serversRef.current.filter(
+      (server): server is ServerConnection & { rendezvous: NonNullable<ServerConnection["rendezvous"]> } =>
+        Boolean(server.rendezvous)
+    );
+    const resolved = await Promise.all(
+      rendezvousServers.map(async (server) => {
+        try {
+          const endpoint = await resolveRendezvousEndpoint(server.rendezvous);
+          return endpoint ? { endpoint, serverId: server.rendezvous.serverId } : null;
+        } catch {
+          return null;
+        }
+      })
+    );
+    for (const result of resolved) {
+      if (!result) continue;
+      setState((current) => {
+        const existing = current.servers.find(
+          (server) => server.rendezvous?.serverId === result.serverId
+        );
+        if (!existing || existing.baseUrl === result.endpoint.baseUrl) {
+          return current;
+        }
+        migrateStoredAuthServerBaseUrl(existing.baseUrl, result.endpoint.baseUrl);
+        const next = updateRendezvousServerEndpoint(current, {
+          serverId: result.serverId,
+          baseUrl: result.endpoint.baseUrl,
+          label: result.endpoint.label,
+        });
+        if (next !== current) {
+          writeStoredServerConnectionsState(next);
+        }
+        return next;
+      });
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!ready) {
+      return;
+    }
+    void refreshRendezvousEndpoints();
+    const interval = window.setInterval(() => {
+      void refreshRendezvousEndpoints();
+    }, 10_000);
+    return () => window.clearInterval(interval);
+  }, [ready, refreshRendezvousEndpoints]);
 
   const refreshServerHealth = useCallback(async () => {
     const servers = serversRef.current;

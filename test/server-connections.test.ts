@@ -3,12 +3,15 @@ import { afterEach, describe, test } from "node:test";
 import {
   clearStoredAuth,
   getStoredSessionToken,
+  migrateStoredAuthServerBaseUrl,
   setStoredSessionToken,
 } from "../src/lib/auth-client.ts";
 import {
+  applyRendezvousBootstrap,
   applyServerUrlBootstrap,
   bootstrapStoredServerConnection,
   createDefaultServerConnectionsState,
+  getActiveServerStorageKey,
   getServerConnectionKey,
   getSettingsServerConnection,
   markServerConnectionUsed,
@@ -17,6 +20,7 @@ import {
   requiresDefaultServerSelection,
   setDefaultServerConnection,
   shouldApplyServerUrlFromSearch,
+  updateRendezvousServerEndpoint,
   writeStoredServerConnectionsState,
 } from "../src/lib/server-connections.ts";
 import { getConfiguredServerBaseUrl } from "../src/lib/configured-server-base-url.ts";
@@ -410,6 +414,89 @@ describe("server connections", () => {
     assert.equal(
       next.servers.find((server) => server.id === "desktop-sidecar")?.baseUrl,
       "http://127.0.0.1:54321"
+    );
+  });
+});
+
+describe("stable rendezvous server identity", () => {
+  const locator = {
+    version: 1 as const,
+    serverId: "server_1234567890abcdefghijklmnop",
+    secret: "secret_1234567890abcdefghijklmnopqrstuvwxyz",
+    registryBaseUrl: "https://cesium.example",
+  };
+
+  test("bootstraps and rotates one logical server in place", () => {
+    const initial = createDefaultServerConnectionsState("http://localhost:9100");
+    const connected = applyRendezvousBootstrap(initial, {
+      locator,
+      baseUrl: "https://first-tunnel.example",
+      label: "Home server",
+      now: 10,
+    });
+    const stable = connected.servers.find(
+      (server) => server.rendezvous?.serverId === locator.serverId
+    );
+    assert.ok(stable);
+    assert.equal(connected.activeServerId, stable.id);
+
+    const rotated = updateRendezvousServerEndpoint(connected, {
+      serverId: locator.serverId,
+      baseUrl: "https://second-tunnel.example",
+      now: 20,
+    });
+    const current = rotated.servers.find((server) => server.id === stable.id);
+    assert.equal(current?.baseUrl, "https://second-tunnel.example");
+    assert.equal(current?.rendezvous?.secret, locator.secret);
+    assert.equal(rotated.activeServerId, stable.id);
+  });
+
+  test("migrates authentication to a verified rotated endpoint", () => {
+    installMockWindow();
+    setStoredSessionToken(
+      "stable-session-token",
+      {
+        username: "cesium",
+        createdAt: 1,
+        expiresAt: Date.now() + 60_000,
+        lastSeenAt: 1,
+        remember: true,
+      },
+      "https://first-tunnel.example"
+    );
+    assert.equal(
+      migrateStoredAuthServerBaseUrl(
+        "https://first-tunnel.example",
+        "https://second-tunnel.example"
+      ),
+      true
+    );
+    assert.equal(
+      getStoredSessionToken("https://second-tunnel.example"),
+      "stable-session-token"
+    );
+    assert.equal(getStoredSessionToken("https://first-tunnel.example"), null);
+  });
+
+  test("uses a stable local-storage scope across endpoint rotations", () => {
+    installMockWindow();
+    const initial = applyRendezvousBootstrap(
+      createDefaultServerConnectionsState("http://localhost:9100"),
+      {
+        locator,
+        baseUrl: "https://first-tunnel.example",
+      }
+    );
+    writeStoredServerConnectionsState(initial);
+    const firstKey = getActiveServerStorageKey("http://localhost:9100");
+    const rotated = updateRendezvousServerEndpoint(initial, {
+      serverId: locator.serverId,
+      baseUrl: "https://second-tunnel.example",
+    });
+    writeStoredServerConnectionsState(rotated);
+    assert.equal(
+      getActiveServerStorageKey("http://localhost:9100"),
+      firstKey
     );
   });
 });
