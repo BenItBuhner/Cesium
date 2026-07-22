@@ -31,15 +31,23 @@ RUN_DIR="$CESIUM_HOME/run"
 LOG_DIR="$CESIUM_HOME/logs"
 SERVER_PID_FILE="$RUN_DIR/server.pid"
 TUNNEL_PID_FILE="$RUN_DIR/tunnel.pid"
+SUPERVISOR_PID_FILE="$RUN_DIR/supervisor.pid"
+SUPERVISOR_LOCK_DIR="$RUN_DIR/supervisor.lock"
 TUNNEL_PROVIDER_FILE="$RUN_DIR/tunnel-provider"
 PUBLIC_URL_FILE="$RUN_DIR/public-url"
+RENDEZVOUS_STATUS_FILE="$RUN_DIR/rendezvous-status"
+RENDEZVOUS_ERROR_FILE="$RUN_DIR/rendezvous-error"
 SERVER_LOG="$LOG_DIR/server.log"
 TUNNEL_LOG="$LOG_DIR/tunnel.log"
+RENDEZVOUS_LOG="$LOG_DIR/rendezvous.log"
 LOCAL_URL="http://${HOST:-127.0.0.1}:${PORT:-9100}"
 BUN_BIN="${CESIUM_BUN_BIN:-$CESIUM_HOME/runtime/bin/bun}"
 CLOUDFLARED_BIN="${CESIUM_CLOUDFLARED_BIN:-$CESIUM_HOME/runtime/bin/cloudflared}"
 SSH_BIN="${CESIUM_SSH_BIN:-}"
 SERVER_PROCESS_SIGNATURE="server/src/runtime/bun-server.ts"
+SUPERVISOR_PROCESS_SIGNATURE="cesium-server supervise"
+MANAGER_BIN="${CESIUM_MANAGER_BIN:-$CESIUM_HOME/bin/cesium-server}"
+RENDEZVOUS_HELPER="$SOURCE_DIR/scripts/cesium-rendezvous.mjs"
 PUBLIC_HEALTH_TIMEOUT="${CESIUM_PUBLIC_HEALTH_TIMEOUT:-120}"
 TUNNEL_URL_TIMEOUT="${CESIUM_TUNNEL_URL_TIMEOUT:-60}"
 
@@ -468,6 +476,52 @@ public_url() {
   printf '%s' "${value%/}"
 }
 
+publish_rendezvous() {
+  if [[ -z "${CESIUM_RENDEZVOUS_URL:-}" ]]; then
+    [[ "${CESIUM_RENDEZVOUS_REQUIRED:-0}" != "1" ]]
+    return
+  fi
+  if [[ ! -f "$RENDEZVOUS_HELPER" ]]; then
+    printf 'Rendezvous helper is missing: %s\n' "$RENDEZVOUS_HELPER" >&2
+    return 1
+  fi
+  local remote provider
+  remote="$(public_url)" || return 1
+  provider="$(active_tunnel_provider || true)"
+  local output
+  if output="$("$BUN_BIN" "$RENDEZVOUS_HELPER" publish "$remote" "$provider" 2>&1)"; then
+    [[ -n "$output" ]] && printf '%s\n' "$output" >>"$RENDEZVOUS_LOG"
+    local temporary_file="${RENDEZVOUS_STATUS_FILE}.tmp.$$"
+    printf '%s\t%s\n' "$(date +%s)" "$remote" >"$temporary_file"
+    mv "$temporary_file" "$RENDEZVOUS_STATUS_FILE"
+    rm -f "$RENDEZVOUS_ERROR_FILE"
+    return 0
+  fi
+  printf '%s\n' "$output" >>"$RENDEZVOUS_LOG"
+  printf '%s\n' "${output:-Rendezvous publish failed.}" >"$RENDEZVOUS_ERROR_FILE"
+  return 1
+}
+
+rendezvous_is_ready() {
+  [[ -f "$RENDEZVOUS_STATUS_FILE" ]] || return 1
+  local published_at published_url current_url now
+  IFS=$'\t' read -r published_at published_url <"$RENDEZVOUS_STATUS_FILE" || return 1
+  [[ "$published_at" =~ ^[0-9]+$ ]] || return 1
+  current_url="$(public_url)" || return 1
+  [[ "$published_url" == "$current_url" ]] || return 1
+  now="$(date +%s)"
+  ((now - published_at < 75))
+}
+
+stable_connect_url() {
+  [[ -n "${CESIUM_WEB_URL:-}" && -n "${CESIUM_RENDEZVOUS_URL:-}" ]] || return 1
+  rendezvous_is_ready || return 1
+  local remote fragment
+  remote="$(public_url)" || return 1
+  fragment="$("$BUN_BIN" "$RENDEZVOUS_HELPER" connect-fragment "$remote")" || return 1
+  printf '%s/agent#cesiumConnect=%s' "${CESIUM_WEB_URL%/}" "$fragment"
+}
+
 encoded_public_url() {
   local value="$1"
   value="${value//%/%25}"
@@ -487,10 +541,16 @@ print_connection_details() {
     }
     printf 'Public URL: %s\n' "$remote"
     if [[ -n "${CESIUM_WEB_URL:-}" ]]; then
-      local separator="?"
-      [[ "$CESIUM_WEB_URL" == *"?"* ]] && separator="&"
-      printf 'Connect: %s%sserverUrl=%s\n' \
-        "${CESIUM_WEB_URL%/}" "$separator" "$(encoded_public_url "$remote")"
+      local stable_url
+      stable_url="$(stable_connect_url || true)"
+      if [[ -n "$stable_url" ]]; then
+        printf 'Connect: %s\n' "$stable_url"
+      else
+        local separator="?"
+        [[ "$CESIUM_WEB_URL" == *"?"* ]] && separator="&"
+        printf 'Connect: %s%sserverUrl=%s\n' \
+          "${CESIUM_WEB_URL%/}" "$separator" "$(encoded_public_url "$remote")"
+      fi
     fi
   fi
   if [[ -n "${OPENCURSOR_AUTH_USERNAME:-}" ]]; then
@@ -501,6 +561,11 @@ print_connection_details() {
 }
 
 status() {
+  if supervisor_is_running; then
+    printf 'Lifecycle: running (%s)\n' "${CESIUM_SERVICE_MANAGER:-detached}"
+  else
+    printf 'Lifecycle: stopped (%s)\n' "${CESIUM_SERVICE_MANAGER:-detached}"
+  fi
   if managed_process_is_running "$SERVER_PID_FILE" "$SERVER_PROCESS_SIGNATURE" &&
     curl -fsS "$LOCAL_URL/health" >/dev/null 2>&1; then
     printf 'Server: running (%s)\n' "$LOCAL_URL"
@@ -520,6 +585,13 @@ status() {
       printf 'Tunnel: stopped\n'
     fi
   fi
+  if [[ -n "${CESIUM_RENDEZVOUS_URL:-}" ]]; then
+    if rendezvous_is_ready; then
+      printf 'Rendezvous: connected\n'
+    else
+      printf 'Rendezvous: waiting\n'
+    fi
+  fi
 }
 
 show_logs() {
@@ -527,12 +599,143 @@ show_logs() {
   case "$target" in
     server) tail -n 100 -f "$SERVER_LOG" ;;
     tunnel) tail -n 100 -f "$TUNNEL_LOG" ;;
-    *) printf 'Usage: cesium-server logs [server|tunnel]\n' >&2; exit 2 ;;
+    rendezvous) tail -n 100 -f "$RENDEZVOUS_LOG" ;;
+    supervisor) tail -n 100 -f "$LOG_DIR/supervisor.log" ;;
+    *) printf 'Usage: cesium-server logs [server|tunnel|rendezvous|supervisor]\n' >&2; exit 2 ;;
   esac
 }
 
+supervisor_is_running() {
+  managed_process_is_running "$SUPERVISOR_PID_FILE" "$SUPERVISOR_PROCESS_SIGNATURE"
+}
+
+cleanup_supervisor() {
+  stop_all || true
+  rm -f "$SUPERVISOR_PID_FILE"
+  rmdir "$SUPERVISOR_LOCK_DIR" 2>/dev/null || true
+}
+
+supervise() {
+  if ! mkdir "$SUPERVISOR_LOCK_DIR" 2>/dev/null; then
+    if supervisor_is_running; then
+      return 0
+    fi
+    rmdir "$SUPERVISOR_LOCK_DIR" 2>/dev/null || true
+    mkdir "$SUPERVISOR_LOCK_DIR"
+  fi
+  printf '%s\n' "$$" >"$SUPERVISOR_PID_FILE"
+  trap cleanup_supervisor EXIT
+  trap 'exit 0' INT TERM
+
+  local last_published_at=0
+  local last_published_url=""
+  local interval="${CESIUM_RENDEZVOUS_INTERVAL:-15}"
+  [[ "$interval" =~ ^[0-9]+$ ]] || interval=15
+  ((interval >= 5)) || interval=5
+
+  while true; do
+    if ! start_server; then
+      printf '%s Server restart failed; retrying.\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" >>"$RENDEZVOUS_LOG"
+      sleep 5
+      continue
+    fi
+    if ! start_tunnel; then
+      printf '%s Tunnel restart failed; retrying.\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" >>"$RENDEZVOUS_LOG"
+      sleep 5
+      continue
+    fi
+    refresh_public_url
+
+    local remote="" now
+    remote="$(public_url || true)"
+    now="$(date +%s)"
+    if [[ -n "$remote" ]] &&
+      { [[ "$remote" != "$last_published_url" ]] || ((now - last_published_at >= interval)); }; then
+      if publish_rendezvous; then
+        last_published_url="$remote"
+        last_published_at="$now"
+      elif [[ "${CESIUM_RENDEZVOUS_REQUIRED:-0}" == "1" ]]; then
+        printf '%s Rendezvous publish failed; retrying.\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" >>"$RENDEZVOUS_LOG"
+      fi
+    fi
+    sleep 5
+  done
+}
+
+start_managed_service() {
+  case "${CESIUM_SERVICE_MANAGER:-detached}" in
+    systemd-user)
+      systemctl --user start cesium-server.service
+      ;;
+    launchd)
+      local domain="gui/$(id -u)"
+      local label="dev.cesium.server"
+      local plist="$HOME/Library/LaunchAgents/$label.plist"
+      if launchctl print "$domain/$label" >/dev/null 2>&1; then
+        launchctl kickstart -k "$domain/$label"
+      else
+        launchctl bootstrap "$domain" "$plist"
+      fi
+      ;;
+    detached)
+      if ! supervisor_is_running; then
+        nohup "$MANAGER_BIN" supervise >>"$LOG_DIR/supervisor.log" 2>&1 </dev/null &
+      fi
+      ;;
+    *)
+      printf 'Unsupported service manager: %s\n' "${CESIUM_SERVICE_MANAGER:-}" >&2
+      return 1
+      ;;
+  esac
+}
+
+stop_managed_service() {
+  case "${CESIUM_SERVICE_MANAGER:-detached}" in
+    systemd-user)
+      systemctl --user stop cesium-server.service 2>/dev/null || true
+      ;;
+    launchd)
+      launchctl bootout "gui/$(id -u)/dev.cesium.server" 2>/dev/null || true
+      ;;
+    detached)
+      if supervisor_is_running; then
+        local pid
+        pid="$(read_pid "$SUPERVISOR_PID_FILE")"
+        kill "$pid"
+        local attempt
+        for ((attempt = 1; attempt <= 40; attempt++)); do
+          kill -0 "$pid" 2>/dev/null || break
+          sleep 0.25
+        done
+      fi
+      ;;
+  esac
+  stop_all || true
+  rm -f "$SUPERVISOR_PID_FILE"
+  rmdir "$SUPERVISOR_LOCK_DIR" 2>/dev/null || true
+}
+
+wait_for_managed_ready() {
+  local attempt
+  for ((attempt = 1; attempt <= 90; attempt++)); do
+    if curl -fsS "$LOCAL_URL/health" >/dev/null 2>&1; then
+      local ready=1
+      if tunnel_required && ! public_url >/dev/null 2>&1; then
+        ready=0
+      fi
+      if [[ "${CESIUM_RENDEZVOUS_REQUIRED:-0}" == "1" ]] &&
+        ! rendezvous_is_ready; then
+        ready=0
+      fi
+      ((ready == 1)) && return 0
+    fi
+    sleep 1
+  done
+  return 1
+}
+
 update_install() {
-  stop_all
+  stop_managed_service
   if [[ ! -x "$SOURCE_DIR/scripts/install-cesium-server.sh" ]]; then
     printf 'Installer is missing from %s.\n' "$SOURCE_DIR" >&2
     exit 1
@@ -544,6 +747,12 @@ update_install() {
     CESIUM_WORKSPACE_ROOT="${WORKSPACE_ROOT:-$HOME}" \
     CESIUM_AUTH_USERNAME="${OPENCURSOR_AUTH_USERNAME:-cesium}" \
     CESIUM_AUTH_PASSWORD="${OPENCURSOR_AUTH_PASSWORD:-}" \
+    CESIUM_SERVER_ID="${CESIUM_SERVER_ID:-}" \
+    CESIUM_SERVER_LABEL="${CESIUM_SERVER_LABEL:-}" \
+    CESIUM_RENDEZVOUS_URL="${CESIUM_RENDEZVOUS_URL:-}" \
+    CESIUM_RENDEZVOUS_SECRET="${CESIUM_RENDEZVOUS_SECRET:-}" \
+    CESIUM_RENDEZVOUS_REQUIRED="${CESIUM_RENDEZVOUS_REQUIRED:-0}" \
+    CESIUM_SERVICE_MANAGER="${CESIUM_SERVICE_MANAGER:-auto}" \
     CESIUM_TUNNEL_REQUIRED="${CESIUM_TUNNEL_REQUIRED:-0}" \
     CESIUM_TUNNEL_PROVIDER="${CESIUM_TUNNEL_PROVIDER:-auto}" \
     CESIUM_TUNNEL_TOKEN="${CESIUM_TUNNEL_TOKEN:-}" \
@@ -554,29 +763,32 @@ update_install() {
 main() {
   case "${1:-status}" in
     run | start)
-      start_server
-      if ! start_tunnel; then
-        if tunnel_required; then
-          exit 1
+      start_managed_service
+      if ! wait_for_managed_ready; then
+        printf 'Cesium lifecycle started, but did not become fully ready.\n' >&2
+        if [[ -f "$RENDEZVOUS_ERROR_FILE" ]]; then
+          printf 'Rendezvous: %s\n' "$(tr '\n' ' ' <"$RENDEZVOUS_ERROR_FILE")" >&2
         fi
-        printf 'Continuing with the local server; public tunnel is unavailable.\n' >&2
+        printf 'Inspect: cesium-server logs server; cesium-server logs rendezvous\n' >&2
+        return 1
       fi
       print_connection_details
       ;;
     stop)
-      stop_all
+      stop_managed_service
       printf 'Cesium server stopped.\n'
       ;;
     restart)
-      stop_all
-      start_server
-      if ! start_tunnel; then
-        if tunnel_required; then
-          exit 1
-        fi
-        printf 'Continuing with the local server; public tunnel is unavailable.\n' >&2
+      stop_managed_service
+      start_managed_service
+      if ! wait_for_managed_ready; then
+        printf 'Cesium lifecycle restarted, but did not become fully ready.\n' >&2
+        return 1
       fi
       print_connection_details
+      ;;
+    supervise)
+      supervise
       ;;
     status)
       status
@@ -599,7 +811,7 @@ main() {
       update_install
       ;;
     *)
-      printf 'Usage: cesium-server {run|stop|restart|status|health|connect|credentials|logs [server|tunnel]|update}\n' >&2
+      printf 'Usage: cesium-server {run|stop|restart|status|health|connect|credentials|logs [server|tunnel|rendezvous|supervisor]|update}\n' >&2
       exit 2
       ;;
   esac

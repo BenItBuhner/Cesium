@@ -122,6 +122,19 @@ assert_equal "https://current-second.lhr.life" \
   "$(<"$PUBLIC_URL_FILE")" \
   "the rotated healthy URL is persisted"
 
+CESIUM_RENDEZVOUS_URL="https://cesium-test.vercel.app/api/rendezvous"
+CESIUM_SERVER_ID="server_1234567890abcdefghijklmnop"
+CESIUM_RENDEZVOUS_SECRET="secret_1234567890abcdefghijklmnopqrstuvwxyz"
+CESIUM_SERVER_LABEL="Home server"
+export CESIUM_RENDEZVOUS_URL CESIUM_SERVER_ID CESIUM_RENDEZVOUS_SECRET CESIUM_SERVER_LABEL
+BUN_BIN="$(command -v node)"
+printf '%s\t%s\n' "$(date +%s)" "https://current-second.lhr.life" >"$RENDEZVOUS_STATUS_FILE"
+stable_output="$(stable_connect_url)"
+[[ "$stable_output" == "https://cesium-test.vercel.app/agent#cesiumConnect="* ]] || {
+  printf 'FAIL: stable connection URL did not use a fragment identity\n%s\n' "$stable_output" >&2
+  exit 1
+}
+
 printf '%s\n' \
   'Assigned remote URL https://newest-unhealthy.lhr.life after rotation' >>"$TUNNEL_LOG"
 assert_equal "https://newest-unhealthy.lhr.life" \
@@ -149,5 +162,31 @@ if ! wait_for_public_health "https://example.invalid"; then
   printf 'FAIL: the Cesium health payload did not pass the health check\n' >&2
   exit 1
 fi
+
+SUPERVISOR_MARKER="$TEST_HOME/supervisor-published"
+start_server() { return 0; }
+start_tunnel() { return 0; }
+refresh_public_url() { return 0; }
+public_url() { printf 'https://supervised.example'; }
+publish_rendezvous() {
+  printf 'published\n' >>"$SUPERVISOR_MARKER"
+}
+stop_all() { return 0; }
+CESIUM_RENDEZVOUS_INTERVAL=5
+supervise &
+SUPERVISOR_TEST_PID="$!"
+sleep 0.3
+assert_equal "$SUPERVISOR_TEST_PID" "$(<"$SUPERVISOR_PID_FILE")" \
+  "supervisor records its owned PID"
+[[ -s "$SUPERVISOR_MARKER" ]] || {
+  printf 'FAIL: supervisor did not publish rendezvous heartbeat\n' >&2
+  exit 1
+}
+kill "$SUPERVISOR_TEST_PID"
+wait "$SUPERVISOR_TEST_PID"
+[[ ! -e "$SUPERVISOR_PID_FILE" && ! -d "$SUPERVISOR_LOCK_DIR" ]] || {
+  printf 'FAIL: supervisor did not clean up its PID and lock\n' >&2
+  exit 1
+}
 
 printf 'PASS: Cesium tunnel provider tests\n'

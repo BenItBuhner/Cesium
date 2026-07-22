@@ -7,9 +7,26 @@ import { buildCesiumServerInstallCommand } from "@/lib/server-install-command";
 export function ServerSetupCommand({ compact = false }: { compact?: boolean }) {
   const [command, setCommand] = useState("");
   const [copied, setCopied] = useState(false);
+  const [rendezvousStatus, setRendezvousStatus] = useState<
+    "checking" | "ready" | "unavailable"
+  >("checking");
 
   useEffect(() => {
     setCommand(buildCesiumServerInstallCommand(window.location.origin));
+    const controller = new AbortController();
+    void fetch("/api/rendezvous", {
+      cache: "no-store",
+      signal: controller.signal,
+    })
+      .then((response) => {
+        setRendezvousStatus(response.ok ? "ready" : "unavailable");
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) {
+          setRendezvousStatus("unavailable");
+        }
+      });
+    return () => controller.abort();
   }, []);
 
   const copyCommand = async () => {
@@ -42,7 +59,7 @@ export function ServerSetupCommand({ compact = false }: { compact?: boolean }) {
           <p className="mt-[4px] font-sans text-[11.5px] leading-relaxed text-[var(--text-secondary)]">
             Run this in the folder Cesium should access. It installs into{" "}
             <span className="font-mono">~/.cesium</span>, starts immediately, and prints a secure
-            Connect URL plus sign-in credentials.
+            permanent Connect URL plus sign-in credentials.
           </p>
         </div>
       </div>
@@ -52,7 +69,7 @@ export function ServerSetupCommand({ compact = false }: { compact?: boolean }) {
         </code>
         <button
           type="button"
-          disabled={!command}
+          disabled={!command || rendezvousStatus !== "ready"}
           onClick={() => void copyCommand()}
           className="inline-flex w-[72px] shrink-0 items-center justify-center gap-[5px] rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-[var(--bg-panel)] px-[8px] font-sans text-[11px] text-[var(--text-primary)] transition-colors hover:bg-[var(--accent-bg)] disabled:opacity-50"
           aria-label="Copy Cesium server install command"
@@ -66,8 +83,17 @@ export function ServerSetupCommand({ compact = false }: { compact?: boolean }) {
         </button>
       </div>
       <p className="mt-[7px] font-sans text-[10.5px] leading-relaxed text-[var(--text-disabled)]">
-        Later, use <span className="font-mono">cesium-server run</span> to start it and print a
-        fresh Connect URL.
+        {rendezvousStatus === "unavailable" ? (
+          "Stable connection storage is not configured on this deployment. The site owner must attach Upstash Redis before sharing this installer."
+        ) : rendezvousStatus === "checking" ? (
+          "Checking stable connection service..."
+        ) : (
+          <>
+            The same link follows tunnel changes automatically. Use{" "}
+            <span className="font-mono">cesium-server status</span> to check the supervised
+            service.
+          </>
+        )}
       </p>
     </section>
   );
