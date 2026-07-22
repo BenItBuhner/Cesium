@@ -4,7 +4,6 @@ on:
   pull_request:
     paths:
       - "apps/mobile/**"
-      - "packages/ui-native/**"
       - "packages/client/**"
       - "packages/core/**"
       - "packages/design/**"

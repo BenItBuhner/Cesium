@@ -1,6 +1,6 @@
 /**
- * Emits generated/web-theme.css and generated/native-theme.css from the
- * canonical token maps in src/theme-tokens.ts (via the built dist output).
+ * Emits generated/web-theme.css from the canonical token maps in
+ * src/theme-tokens.ts (via the built dist output).
  * Run after `tsc`: the package `build` script chains this automatically.
  *
  * web-theme.css (Next.js + Electron renderer):
@@ -8,10 +8,6 @@
  *   2. `html.dark` — dark defaults
  *   3. `@theme inline` — Tailwind v4 utility mapping
  *
- * native-theme.css (React Native via NativeWind/react-native-css): same
- * values, but dark tokens live under `@media (prefers-color-scheme: dark)`
- * because there is no `html.dark` element on native, and the geist font
- * mappings are omitted (native font stacks come from nativewind/theme).
  */
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -80,9 +76,6 @@ const header = `/**
  */`;
 
 const webThemeMappings = THEME_INLINE_MAPPINGS;
-const nativeThemeMappings = THEME_INLINE_MAPPINGS.filter(
-  ([, src]) => !src.startsWith("--font-geist")
-);
 
 const webCss = `${header}
 
@@ -102,27 +95,6 @@ ${webThemeMappings.map(([out, src]) => `  ${out}: var(${src});`).join("\n")}
 }
 `;
 
-const nativeCss = `${header}
-
-:root {
-${declarations(DEFAULT_THEME_TOKENS_LIGHT)}
-${declarations(DESIGN_2_SURFACE_ALIASES.common)}
-${declarations(DESIGN_2_SURFACE_ALIASES.light)}
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-${declarations(DEFAULT_THEME_TOKENS_DARK).replace(/^/gm, "  ")}
-${declarations(DESIGN_2_SURFACE_ALIASES.dark).replace(/^/gm, "  ")}
-  }
-}
-
-@theme inline {
-${nativeThemeMappings.map(([out, src]) => `  ${out}: var(${src});`).join("\n")}
-}
-`;
-
 await mkdir(join(packageRoot, "generated"), { recursive: true });
 await writeFile(join(packageRoot, "generated", "web-theme.css"), webCss, "utf8");
-await writeFile(join(packageRoot, "generated", "native-theme.css"), nativeCss, "utf8");
-console.log("generated/web-theme.css + generated/native-theme.css written");
+console.log("generated/web-theme.css written");

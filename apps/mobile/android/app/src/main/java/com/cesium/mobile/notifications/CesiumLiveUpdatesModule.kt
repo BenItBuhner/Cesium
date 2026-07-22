@@ -15,6 +15,18 @@ import com.facebook.react.bridge.ReactContextBaseJavaModule
 import com.facebook.react.bridge.ReactMethod
 import com.facebook.react.bridge.ReadableMap
 
+internal const val LIVE_UPDATE_PREFERENCE_NOW_BAR = "nowbar"
+internal const val LIVE_UPDATE_PREFERENCE_LIVE = "live"
+internal const val LIVE_UPDATE_PREFERENCE_OFF = "off"
+
+internal fun normalizeLiveUpdatePreference(preference: String?): String =
+  when (preference) {
+    LIVE_UPDATE_PREFERENCE_NOW_BAR,
+    LIVE_UPDATE_PREFERENCE_LIVE,
+    LIVE_UPDATE_PREFERENCE_OFF -> preference
+    else -> LIVE_UPDATE_PREFERENCE_NOW_BAR
+  }
+
 class CesiumLiveUpdatesModule(
   private val reactContext: ReactApplicationContext
 ) : ReactContextBaseJavaModule(reactContext) {
@@ -24,13 +36,13 @@ class CesiumLiveUpdatesModule(
   fun startOrUpdate(payload: ReadableMap, promise: Promise) {
     val extras = payload.toBundle()
     when (deliveryPreference()) {
-      PREFERENCE_OFF -> {
+      LIVE_UPDATE_PREFERENCE_OFF -> {
         stopLiveUpdate()
         promise.resolve(statusMap())
         return
       }
-      PREFERENCE_LIVE -> extras.putBoolean("promote", false)
-      PREFERENCE_NOW_BAR -> extras.putBoolean("promote", true)
+      LIVE_UPDATE_PREFERENCE_LIVE -> extras.putBoolean("promote", false)
+      LIVE_UPDATE_PREFERENCE_NOW_BAR -> extras.putBoolean("promote", true)
     }
     if (CesiumLiveUpdateStateStore.wasDismissed(reactContext, extras.getString("runKey"))) {
       promise.resolve(statusMap(suppressedByDismissal = true))
@@ -88,16 +100,13 @@ class CesiumLiveUpdatesModule(
 
   @ReactMethod
   fun setDeliveryPreference(preference: String, promise: Promise) {
-    val normalized = when (preference) {
-      PREFERENCE_NOW_BAR, PREFERENCE_LIVE, PREFERENCE_OFF -> preference
-      else -> PREFERENCE_NOW_BAR
-    }
+    val normalized = normalizeLiveUpdatePreference(preference)
     reactContext
       .getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
       .edit()
       .putString(KEY_DELIVERY_PREFERENCE, normalized)
       .apply()
-    if (normalized == PREFERENCE_OFF) {
+    if (normalized == LIVE_UPDATE_PREFERENCE_OFF) {
       stopLiveUpdate()
     }
     promise.resolve(statusMap())
@@ -144,9 +153,8 @@ class CesiumLiveUpdatesModule(
   private fun deliveryPreference(): String =
     reactContext
       .getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
-      .getString(KEY_DELIVERY_PREFERENCE, PREFERENCE_NOW_BAR)
-      ?.takeIf { it in setOf(PREFERENCE_NOW_BAR, PREFERENCE_LIVE, PREFERENCE_OFF) }
-      ?: PREFERENCE_NOW_BAR
+      .getString(KEY_DELIVERY_PREFERENCE, LIVE_UPDATE_PREFERENCE_NOW_BAR)
+      .let(::normalizeLiveUpdatePreference)
 
   private fun notificationsEnabled(): Boolean {
     val manager = reactContext.getSystemService(NotificationManager::class.java)
@@ -160,9 +168,6 @@ class CesiumLiveUpdatesModule(
   companion object {
     private const val PREFERENCES = "cesium-live-update-preferences"
     private const val KEY_DELIVERY_PREFERENCE = "delivery-preference"
-    private const val PREFERENCE_NOW_BAR = "nowbar"
-    private const val PREFERENCE_LIVE = "live"
-    private const val PREFERENCE_OFF = "off"
   }
 }
 
