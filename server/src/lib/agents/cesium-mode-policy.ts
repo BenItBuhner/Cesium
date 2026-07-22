@@ -93,6 +93,11 @@ export function resolveCesiumModeToolPolicy(input: {
       ? `goal_${input.toolName.slice("burn_goal_".length)}`
       : input.toolName;
 
+  // Mode switching is available from every mode so the agent can request a change.
+  if (name === "switch_mode") {
+    return { allowed: true };
+  }
+
   if (mode === "ask") {
     if (READ_ONLY_TOOLS.has(name)) {
       return { allowed: true };
@@ -192,7 +197,16 @@ export function summarizeCesiumModeToolPolicy(mode: string | undefined | null): 
   switch (normalized) {
     case "ask":
       return {
-        allowed: ["read_file", "grep", "search_history", "read_history_page", "ask_question", "wait", "read-only subagents"],
+        allowed: [
+          "read_file",
+          "grep",
+          "search_history",
+          "read_history_page",
+          "ask_question",
+          "wait",
+          "switch_mode",
+          "read-only subagents",
+        ],
         restricted: ["call_mcp_tool only after an explicit read-only server/tool check"],
         blocked: [
           "edit_file",
@@ -205,7 +219,17 @@ export function summarizeCesiumModeToolPolicy(mode: string | undefined | null): 
       };
     case "plan":
       return {
-        allowed: ["read_file", "grep", "search_history", "read_history_page", "ask_question", "wait", "research subagents", "plan-file tools"],
+        allowed: [
+          "read_file",
+          "grep",
+          "search_history",
+          "read_history_page",
+          "ask_question",
+          "wait",
+          "switch_mode",
+          "research subagents",
+          "plan-file tools",
+        ],
         restricted: ["terminal for investigation only", "MCP calls for research only"],
         blocked: [
           "direct implementation edits outside .cesium/plans/",
@@ -216,13 +240,34 @@ export function summarizeCesiumModeToolPolicy(mode: string | undefined | null): 
       };
     case "orchestration":
       return {
-        allowed: ["orchestration_* tools", "todo", "wait", "ask_question", "history tools", "subagents", "MCP refresh/calls"],
+        allowed: [
+          "orchestration_* tools",
+          "todo",
+          "wait",
+          "ask_question",
+          "history tools",
+          "subagents",
+          "MCP refresh/calls",
+          "switch_mode",
+        ],
         restricted: ["child-agent permissions are controlled by orchestration assignment policy"],
         blocked: ["direct edit_file", "direct terminal implementation", "Goal execution controls", "Workflow execution controls"],
       };
     case "goal":
       return {
-        allowed: ["read_file", "grep", "edit_file", "terminal", "todo", "wait", "subagents", "plan-file tools", "Goal tools", "MCP tools"],
+        allowed: [
+          "read_file",
+          "grep",
+          "edit_file",
+          "terminal",
+          "todo",
+          "wait",
+          "switch_mode",
+          "subagents",
+          "plan-file tools",
+          "Goal tools",
+          "MCP tools",
+        ],
         restricted: ["goal_complete requires a final audit; goal_block requires repeated same-blocker evidence"],
         blocked: ["orchestration kanban mutations", "Workflow execution controls"],
       };
@@ -238,6 +283,7 @@ export function summarizeCesiumModeToolPolicy(mode: string | undefined | null): 
           "terminal",
           "todo",
           "wait",
+          "switch_mode",
           "subagents",
           "MCP tools",
         ],
@@ -249,7 +295,19 @@ export function summarizeCesiumModeToolPolicy(mode: string | undefined | null): 
       };
     default:
       return {
-        allowed: ["read_file", "grep", "edit_file", "terminal", "todo", "wait", "ask_question", "subagents", "history tools", "MCP tools"],
+        allowed: [
+          "read_file",
+          "grep",
+          "edit_file",
+          "terminal",
+          "todo",
+          "wait",
+          "ask_question",
+          "switch_mode",
+          "subagents",
+          "history tools",
+          "MCP tools",
+        ],
         restricted: ["plan-file tools only for explicit plan creation or handoff"],
         blocked: ["orchestration_* tools", "Goal execution controls", "Workflow execution controls"],
       };

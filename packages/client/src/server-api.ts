@@ -1832,6 +1832,8 @@ export type CesiumAgentSettingsPayload = {
   toolPermissions: {
     editFile: "ask" | "allow" | "deny";
     terminal: "ask" | "allow" | "deny";
+    mcpCall: "ask" | "allow" | "deny";
+    switchMode: "ask" | "allow" | "deny";
   };
   providerKeys: CesiumProviderKeyStatus[];
   customProviders: CesiumCustomProvider[];
@@ -1848,6 +1850,8 @@ export type CesiumModelCatalogEntry = {
   supportsTools: boolean;
   supportsReasoning: boolean;
   supportsStructuredOutput: boolean;
+  /** Vision / multimodal image prompt support when advertised by the catalog. */
+  supportsImages?: boolean;
   contextWindow?: number;
   outputLimit?: number;
 };

@@ -813,104 +813,13 @@ export function parsePermissionOptions(raw: unknown): AgentPermissionOption[] {
     .filter((value): value is AgentPermissionOption => value !== null);
 }
 
-export function withPersistentPermissionOptions(
-  options: AgentPermissionOption[]
-): AgentPermissionOption[] {
-  const next = [...options];
-  const hasAllowOnce = next.some((option) => option.kind === "allow_once");
-  const hasAllowAlways = next.some((option) => option.kind === "allow_always");
-  const hasRejectOnce = next.some((option) => option.kind === "reject_once");
-  const hasRejectAlways = next.some((option) => option.kind === "reject_always");
-  if (
-    hasAllowOnce &&
-    !hasAllowAlways &&
-    !next.some((option) => option.optionId === "allow_always")
-  ) {
-    next.push({
-      optionId: "allow_always",
-      name: "Allow always",
-      kind: "allow_always",
-    });
-  }
-  if (
-    hasRejectOnce &&
-    !hasRejectAlways &&
-    !next.some((option) => option.optionId === "reject_always")
-  ) {
-    next.push({
-      optionId: "reject_always",
-      name: "Reject always",
-      kind: "reject_always",
-    });
-  }
-  return next;
-}
-
-export function buildFallbackPermissionOptions(): AgentPermissionOption[] {
-  return [
-    {
-      optionId: "allow_once",
-      name: "Allow once",
-      kind: "allow_once",
-    },
-    {
-      optionId: "allow_always",
-      name: "Allow always",
-      kind: "allow_always",
-    },
-    {
-      optionId: "reject_once",
-      name: "Reject",
-      kind: "reject_once",
-    },
-    {
-      optionId: "reject_always",
-      name: "Reject always",
-      kind: "reject_always",
-    },
-  ];
-}
-
-export function permissionDecisionFromKind(
-  kind: AgentPermissionOption["kind"] | undefined
-): "allow" | "reject" | null {
-  if (kind === "allow_once" || kind === "allow_always") {
-    return "allow";
-  }
-  if (kind === "reject_once" || kind === "reject_always") {
-    return "reject";
-  }
-  return null;
-}
-
-export function providerOptionIdForPermissionSelection(
-  options: AgentPermissionOption[],
-  selectedOptionId: string | undefined
-): string | undefined {
-  const selected = options.find((option) => option.optionId === selectedOptionId);
-  if (!selected) {
-    return selectedOptionId;
-  }
-  if (selected.kind === "allow_always") {
-    return options.find((option) => option.kind === "allow_once")?.optionId ?? selected.optionId;
-  }
-  if (selected.kind === "reject_always") {
-    return options.find((option) => option.kind === "reject_once")?.optionId ?? selected.optionId;
-  }
-  return selected.optionId;
-}
-
-export function providerOptionIdForRememberedPermission(
-  options: AgentPermissionOption[],
-  decision: "allow" | "reject"
-): string | undefined {
-  const onceKind = decision === "allow" ? "allow_once" : "reject_once";
-  const alwaysKind = decision === "allow" ? "allow_always" : "reject_always";
-  return (
-    options.find((option) => option.kind === onceKind)?.optionId ??
-    options.find((option) => option.kind === alwaysKind)?.optionId
-  );
-}
+export {
+  buildFallbackPermissionOptions,
+  permissionDecisionFromKind,
+  providerOptionIdForPermissionSelection,
+  providerOptionIdForRememberedPermission,
+  withPersistentPermissionOptions,
+} from "../permission-options.js";
 
 export function normalizeToolCallId(record: Record<string, unknown>): string {
   const readIdFromNestedRecord = (value: unknown): string | undefined => {

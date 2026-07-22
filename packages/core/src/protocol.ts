@@ -66,6 +66,16 @@ export type AgentPermissionOptionKind =
   | "reject_once"
   | "reject_always";
 
+/** Shared permission categories across Cesium tool gates and remembered auto-allow rules. */
+export type AgentPermissionCategory =
+  | "editFile"
+  | "terminal"
+  | "mcpCall"
+  | "switchMode";
+
+/** How a remembered permission rule matches future tool calls. */
+export type RememberedAgentPermissionMatchStyle = "exact" | "category";
+
 export type AgentPermissionOption = {
   optionId: string;
   name: string;
@@ -76,7 +86,7 @@ export type AgentPendingPermission = {
   requestId: string;
   requestedAt: number;
   toolCallId?: string;
-  permission?: "editFile" | "terminal" | "mcpCall";
+  permission?: AgentPermissionCategory;
   title?: string;
   detail?: string;
   options: AgentPermissionOption[];

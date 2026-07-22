@@ -118,6 +118,8 @@ export type RememberedAgentPermissionRule = {
   decision: "allow" | "reject";
   optionId: string;
   optionKind: "allow_always" | "reject_always";
+  permissionCategory?: "editFile" | "terminal" | "mcpCall" | "switchMode";
+  matchStyle?: "exact" | "category";
   createdAt: number;
   updatedAt: number;
 };
@@ -484,6 +486,17 @@ function normalizeRememberedPermissions(raw: unknown): RememberedAgentPermission
             ? record.optionId.trim()
             : optionKind,
         optionKind,
+        permissionCategory:
+          record.permissionCategory === "editFile" ||
+          record.permissionCategory === "terminal" ||
+          record.permissionCategory === "mcpCall" ||
+          record.permissionCategory === "switchMode"
+            ? record.permissionCategory
+            : undefined,
+        matchStyle:
+          record.matchStyle === "exact" || record.matchStyle === "category"
+            ? record.matchStyle
+            : undefined,
         createdAt:
           typeof record.createdAt === "number" && Number.isFinite(record.createdAt)
             ? record.createdAt

@@ -1653,6 +1653,44 @@ function CesiumAgentHarnessSettings() {
                   disabled={busy}
                 />
               </label>
+              <label className="flex flex-col gap-[5px]">
+                <SettingsFieldLabel>MCP call</SettingsFieldLabel>
+                <SettingsThemeSelect
+                  value={settings.toolPermissions.mcpCall ?? "ask"}
+                  options={[...TOOL_PERMISSION_OPTIONS]}
+                  onChange={(value) =>
+                    void patchSettings({
+                      toolPermissions: {
+                        ...settings.toolPermissions,
+                        mcpCall: value as "ask" | "allow" | "deny",
+                      },
+                    })
+                  }
+                  ariaLabel="MCP call permission"
+                  className="w-full max-w-none"
+                  triggerClassName={`${settingsSelectTriggerClass} w-full max-w-none`}
+                  disabled={busy}
+                />
+              </label>
+              <label className="flex flex-col gap-[5px]">
+                <SettingsFieldLabel>Switch mode</SettingsFieldLabel>
+                <SettingsThemeSelect
+                  value={settings.toolPermissions.switchMode ?? "ask"}
+                  options={[...TOOL_PERMISSION_OPTIONS]}
+                  onChange={(value) =>
+                    void patchSettings({
+                      toolPermissions: {
+                        ...settings.toolPermissions,
+                        switchMode: value as "ask" | "allow" | "deny",
+                      },
+                    })
+                  }
+                  ariaLabel="Switch mode permission"
+                  className="w-full max-w-none"
+                  triggerClassName={`${settingsSelectTriggerClass} w-full max-w-none`}
+                  disabled={busy}
+                />
+              </label>
             </div>
           </HarnessDetailBlock>
 
@@ -2089,6 +2127,12 @@ function HarnessRememberedPermissionsList({
               <p className="mt-[6px] flex flex-wrap items-center gap-[6px] font-sans text-[11px] text-[var(--text-secondary)]">
                 {showBackendLabel ? <span className={tagClass}>{harnessLabel}</span> : null}
                 <span className={tagClass}>{wsLabel}</span>
+                {rule.permissionCategory ? (
+                  <span className={tagClass}>{rule.permissionCategory}</span>
+                ) : null}
+                {rule.matchStyle === "category" ? (
+                  <span className={tagClass}>category</span>
+                ) : null}
                 <span
                   className={`${tagClass} ${
                     rule.decision === "allow"

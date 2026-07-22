@@ -109,3 +109,83 @@ test("remembered permission backend ids are normalized from legacy harness ids",
   });
   assert.equal(cursorRule?.backendId, "cursor-sdk");
 });
+
+test("remembered permission category matchStyle covers any tool key in that category", async () => {
+  const {
+    findMatchingRememberedPermissionRule,
+    saveRememberedAgentPermissionRule,
+  } = await import("../src/lib/global-settings-store.js");
+
+  await saveRememberedAgentPermissionRule({
+    workspaceId: "workspace-category",
+    backendId: "cesium-agent",
+    toolKey: "cesium:switch_mode",
+    toolLabel: "Any mode switch",
+    decision: "allow",
+    optionId: "allow_always",
+    optionKind: "allow_always",
+    permissionCategory: "switchMode",
+    matchStyle: "category",
+  });
+
+  const settings = await getGlobalSettings();
+  const matched = findMatchingRememberedPermissionRule(settings.agents.rememberedPermissions, {
+    workspaceId: "workspace-category",
+    backendId: "cesium-agent",
+    toolKey: "cesium:switch_mode:plan",
+    permissionCategory: "switchMode",
+  });
+  assert.equal(matched?.decision, "allow");
+  assert.equal(matched?.matchStyle, "category");
+  assert.equal(matched?.permissionCategory, "switchMode");
+
+  const exactWins = await saveRememberedAgentPermissionRule({
+    workspaceId: "workspace-category",
+    backendId: "cesium-agent",
+    toolKey: "cesium:switch_mode:ask",
+    toolLabel: "Switch to ask mode",
+    decision: "reject",
+    optionId: "reject_always",
+    optionKind: "reject_always",
+    permissionCategory: "switchMode",
+    matchStyle: "exact",
+  });
+  assert.equal(exactWins.decision, "reject");
+
+  const refreshed = await getGlobalSettings();
+  const preferExact = findMatchingRememberedPermissionRule(refreshed.agents.rememberedPermissions, {
+    workspaceId: "workspace-category",
+    backendId: "cesium-agent",
+    toolKey: "cesium:switch_mode:ask",
+    permissionCategory: "switchMode",
+  });
+  assert.equal(preferExact?.decision, "reject");
+  assert.equal(preferExact?.matchStyle ?? "exact", "exact");
+});
+
+test("shared permission options expose allow/reject once and always kinds", async () => {
+  const {
+    STANDARD_PERMISSION_OPTIONS,
+    withPersistentPermissionOptions,
+    permissionDecisionFromOption,
+    permissionDecisionFromKind,
+    isOrchestrationPermissionCategory,
+  } = await import("../src/lib/agents/permission-options.js");
+
+  assert.deepEqual(
+    STANDARD_PERMISSION_OPTIONS.map((option) => option.kind),
+    ["allow_once", "allow_always", "reject_once", "reject_always"]
+  );
+  assert.equal(permissionDecisionFromOption("allow_always"), "allow");
+  assert.equal(permissionDecisionFromOption("reject_once"), "reject");
+  assert.equal(permissionDecisionFromKind("allow_once"), "allow");
+  assert.equal(isOrchestrationPermissionCategory("switchMode"), false);
+  assert.equal(isOrchestrationPermissionCategory("terminal"), true);
+
+  const ensured = withPersistentPermissionOptions([
+    { optionId: "allow_once", name: "Allow", kind: "allow_once" },
+    { optionId: "reject_once", name: "Reject", kind: "reject_once" },
+  ]);
+  assert.ok(ensured.some((option) => option.kind === "allow_always"));
+  assert.ok(ensured.some((option) => option.kind === "reject_always"));
+});
