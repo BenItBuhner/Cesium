@@ -35,6 +35,14 @@ await rm(target, { force: true, recursive: true });
 await mkdir(target, { recursive: true });
 await cp(source, target, { recursive: true });
 
+// Vite adds `crossorigin` to module/style assets for HTTP deployments.
+// Chromium 83 treats a file:// stylesheet with that attribute as a CORS fetch
+// and silently drops it. All referenced assets are inside the signed APK, so
+// remove the attribute from the mobile copy.
+const indexPath = resolve(target, "index.html");
+const indexHtml = await readFile(indexPath, "utf8");
+await writeFile(indexPath, indexHtml.replace(/\s+crossorigin(?=[\s>])/g, ""), "utf8");
+
 // Android 11's Chromium 83 predates CSS cascade layers. Tailwind 4 wraps its
 // utility output in @layer blocks, which old WebViews discard wholesale and
 // leaves an otherwise functional app completely unstyled. Flatten the layers
