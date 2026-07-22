@@ -26,7 +26,6 @@
     "react-native-webview": "^14.0.1"
   },
   "devDependencies": {
-    "@csstools/postcss-cascade-layers": "^6.0.0",
     "@react-native-community/cli": "20.2.0",
     "@react-native-community/cli-platform-android": "20.2.0",
     "@react-native/babel-preset": "0.86.0",
