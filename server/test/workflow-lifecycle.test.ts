@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { rm } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import {
@@ -10,10 +10,13 @@ import {
 } from "../src/lib/agents/workflow-store.js";
 import {
   resetWorkflowRunForReplay,
+  workflowRunManager,
   WorkflowRunManager,
 } from "../src/lib/agents/workflow-run-manager.js";
 import { DATA_DIR } from "../src/lib/persistence.js";
 import type { WorkspaceRecord } from "../src/lib/workspace-registry.js";
+import { ensureWorkspaceRegistered } from "../src/lib/workspace-registry.js";
+import { agentRoutes } from "../src/routes/agents.js";
 
 function workspace(id: string): WorkspaceRecord {
   return {
@@ -397,5 +400,71 @@ return "done";
     assert.equal(manager.get(ws.id, run.runId), null);
   } finally {
     await cleanupWorkspace(ws.id);
+  }
+});
+
+test("workflow detail and lifecycle control routes expose managed runs", async () => {
+  const root = await mkdtemp(path.join("/tmp", "cesium-workflow-route-"));
+  const ws = await ensureWorkspaceRegistered(root, `workflow-route-${Date.now()}`);
+  const conversationId = `conv-workflow-route-${Date.now()}`;
+  const script = `export const meta = { name: "route-control", description: "route control", phases: [] };
+return await agent("wait for stop");
+`;
+  try {
+    const run = await upsertWorkflowRun(
+      createWorkflowRunRecord({
+        workspace: ws,
+        conversationId,
+        script,
+        scriptPath: path.join(root, "route-control.js"),
+      })
+    );
+    const managed = workflowRunManager.start({
+      run,
+      spawnAgent: async (request) =>
+        new Promise<never>((_, reject) => {
+          request.signal?.addEventListener(
+            "abort",
+            () => reject(new Error("route-controlled child aborted")),
+            { once: true }
+          );
+        }),
+    });
+    const headers = {
+      "content-type": "application/json",
+      "x-opencursor-workspace-id": ws.id,
+    };
+
+    const detail = await agentRoutes.request(
+      `http://test.local/api/agents/conversations/${conversationId}/workflows/${run.runId}`,
+      { headers }
+    );
+    assert.equal(detail.status, 200);
+    const detailPayload = (await detail.json()) as {
+      active: boolean;
+      workflow: { runId: string; name: string };
+    };
+    assert.equal(detailPayload.active, true);
+    assert.equal(detailPayload.workflow.runId, run.runId);
+    assert.equal(detailPayload.workflow.name, "route-control");
+
+    const pause = await agentRoutes.request(
+      `http://test.local/api/agents/conversations/${conversationId}/workflows/${run.runId}/control`,
+      { method: "POST", headers, body: JSON.stringify({ action: "pause" }) }
+    );
+    assert.equal(pause.status, 202);
+
+    const stop = await agentRoutes.request(
+      `http://test.local/api/agents/conversations/${conversationId}/workflows/${run.runId}/control`,
+      { method: "POST", headers, body: JSON.stringify({ action: "stop" }) }
+    );
+    assert.equal(stop.status, 202);
+    assert.equal((await managed.promise).status, "cancelled");
+  } finally {
+    workflowRunManager.stopConversation(ws.id, conversationId);
+    await Promise.all([
+      cleanupWorkspace(ws.id),
+      rm(root, { recursive: true, force: true }),
+    ]);
   }
 });

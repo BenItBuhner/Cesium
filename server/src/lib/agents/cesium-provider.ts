@@ -1879,17 +1879,24 @@ class CesiumSessionHandle implements AgentSessionHandle {
         effectiveRequest.name
       );
       if (permissionCategory) {
-        const permissionArgs =
-          permissionCategory === "mcpCall"
-            ? (() => {
-                const normalized = normalizeCallMcpToolArgs(effectiveRequest.arguments);
-                return {
-                  serverId: normalized.serverId,
-                  toolName: normalized.toolName,
-                  arguments: normalized.arguments,
-                };
-              })()
-            : effectiveRequest.arguments;
+        let permissionArgs = effectiveRequest.arguments;
+        if (permissionCategory === "mcpCall") {
+          const normalized = normalizeCallMcpToolArgs(effectiveRequest.arguments);
+          permissionArgs = {
+            serverId: normalized.serverId,
+            toolName: normalized.toolName,
+            arguments: normalized.arguments,
+          };
+        } else if (permissionCategory === "workflowLaunch") {
+          const requestedBudget = asNumber(effectiveRequest.arguments.tokenBudget);
+          if (requestedBudget == null || requestedBudget <= 0) {
+            const settings = await getCesiumAgentSettings();
+            permissionArgs = {
+              ...effectiveRequest.arguments,
+              tokenBudget: settings.workflow.defaultTokenBudget,
+            };
+          }
+        }
         await this.requirePermission({
           toolCallId: effectiveRequest.id,
           title,
