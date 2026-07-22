@@ -118,6 +118,13 @@ export type CloudAgentTaskSource = {
   sender?: string;
 };
 
+/** Reference to media (image/video) attached to the source issue or message. */
+export type CloudAgentMediaRef = {
+  url: string;
+  name?: string;
+  mimeType?: string;
+};
+
 export type CloudAgentTaskTimelineEntry = {
   at: number;
   kind:
@@ -152,6 +159,8 @@ export type CloudAgentTaskRecord = {
   executionMode: CloudAgentExecutionMode;
   branch?: string | null;
   worktreePath?: string | null;
+  /** Media referenced by the source; downloaded and attached at dispatch. */
+  attachments?: CloudAgentMediaRef[];
   timeline: CloudAgentTaskTimelineEntry[];
   lastError?: string | null;
 };
@@ -163,4 +172,11 @@ export type CloudAgentInboundAssignment = {
   body: string;
   source: CloudAgentTaskSource;
   verified: boolean;
+  /** Images/videos attached to the source issue or message. */
+  mediaRefs?: CloudAgentMediaRef[];
+  /**
+   * Comment-style events that should only steer an existing task; when no
+   * active task tracks the source, they are ignored instead of creating one.
+   */
+  followUpOnly?: boolean;
 };

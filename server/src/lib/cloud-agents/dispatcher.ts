@@ -11,6 +11,10 @@ import {
   listWorkspaces,
   type WorkspaceRecord,
 } from "../workspace-registry.js";
+import {
+  fetchCloudAgentAttachments,
+  type CloudAgentPromptAttachment,
+} from "./attachments.js";
 import { getCloudAgentSettings } from "./settings.js";
 import {
   appendCloudAgentTaskTimeline,
@@ -23,6 +27,7 @@ import {
 import type {
   CloudAgentExecutionMode,
   CloudAgentInboundAssignment,
+  CloudAgentMediaRef,
   CloudAgentRoutingRule,
   CloudAgentTaskRecord,
   CloudAgentTaskSource,
@@ -140,8 +145,13 @@ function describeSource(source: CloudAgentTaskSource): string {
  */
 export function buildCloudAgentTaskPrompt(
   task: CloudAgentTaskRecord,
-  options: { branch: string | null; artifactsDir: string }
+  options: {
+    branch: string | null;
+    artifactsDir: string;
+    attachedMedia?: Array<{ name?: string }>;
+  }
 ): string {
+  const attachedMedia = options.attachedMedia ?? [];
   const lines: string[] = [
     `You are working on a Cloud Agents task offloaded from an external tracker.`,
     ``,
@@ -150,8 +160,22 @@ export function buildCloudAgentTaskPrompt(
     describeSource(task.source),
     ``,
     `## Instructions`,
+    ``,
+    `The instructions below are the source issue/message body, verbatim markdown:`,
+    ``,
     task.prompt.trim() || "(No further body was provided; use the title and source link.)",
     ``,
+    ...(attachedMedia.length > 0
+      ? [
+          `## Attached media`,
+          `${attachedMedia.length} media file(s) from the source are attached to this prompt${
+            attachedMedia.some((m) => m.name)
+              ? `: ${attachedMedia.map((m) => m.name).filter(Boolean).join(", ")}`
+              : "."
+          } Review them as part of the task context.`,
+          ``,
+        ]
+      : []),
     `## Cloud Agents operating contract`,
     options.branch
       ? `- You are working on an isolated git branch (\`${options.branch}\`) inside a dedicated worktree. Commit your work here; never touch the main checkout. Push the branch and open a PR when the repository has a remote configured, so the requester can review and merge when comfortable.`
@@ -195,7 +219,12 @@ async function prepareIsolatedWorkspace(
 
 export async function ingestCloudAgentAssignment(
   assignment: CloudAgentInboundAssignment
-): Promise<{ task: CloudAgentTaskRecord; dispatched: boolean; steered?: boolean }> {
+): Promise<{
+  task: CloudAgentTaskRecord | null;
+  dispatched: boolean;
+  steered?: boolean;
+  ignoredReason?: string;
+}> {
   // Follow-up comments/replies on an already-tracked issue or thread steer the
   // existing conversation — the "communicative" loop — instead of duplicating.
   const steerable = await findSteerableCloudAgentTaskBySource(assignment.source);
@@ -206,12 +235,21 @@ export async function ingestCloudAgentAssignment(
         : `Follow-up via ${assignment.providerId}:`;
       const task = await steerCloudAgentTask(
         steerable.id,
-        `${attribution}\n\n${assignment.body}`
+        `${attribution}\n\n${assignment.body}`,
+        { mediaRefs: assignment.mediaRefs }
       );
       return { task, dispatched: false, steered: true };
     } catch {
       // Conversation may be gone; fall through and treat it as a new task.
     }
+  }
+
+  if (assignment.followUpOnly) {
+    return {
+      task: null,
+      dispatched: false,
+      ignoredReason: "Comment does not belong to an active Cloud Agent task.",
+    };
   }
 
   const settings = await getCloudAgentSettings();
@@ -227,13 +265,20 @@ export async function ingestCloudAgentAssignment(
     backendId: route.backendId,
     modelId: route.modelId,
     executionMode: route.executionMode,
+    ...(assignment.mediaRefs && assignment.mediaRefs.length > 0
+      ? { attachments: assignment.mediaRefs }
+      : {}),
     timeline: [
       {
         at: Date.now(),
         kind: "received",
         message: `Received from ${assignment.providerId}${
           assignment.verified ? "" : " (signature not verified)"
-        }${route.matchedRuleId ? `; matched routing rule ${route.matchedRuleId}` : ""}.`,
+        }${route.matchedRuleId ? `; matched routing rule ${route.matchedRuleId}` : ""}${
+          assignment.mediaRefs?.length
+            ? `; ${assignment.mediaRefs.length} media attachment(s) referenced`
+            : ""
+        }.`,
       },
     ],
   });
@@ -310,9 +355,20 @@ export async function dispatchCloudAgentTask(
       }
     }
 
+    // Media attached to the source issue/message becomes prompt attachments
+    // so vision-capable harness models get the full multimodal context.
+    const { attachments, notes: attachmentNotes } = await fetchCloudAgentAttachments(
+      task.attachments ?? [],
+      task.source.providerId
+    );
+    for (const note of attachmentNotes) {
+      await appendCloudAgentTaskTimeline(taskId, { kind: "status", message: note });
+    }
+
     const prompt = buildCloudAgentTaskPrompt(task, {
       branch,
       artifactsDir: `${CLOUD_AGENT_ARTIFACTS_DIR}/${task.id}`,
+      attachedMedia: attachments,
     });
     const originLabel = buildCloudAgentOriginLabel(task.source);
     const snapshot = await agentRuntimeManager.createConversationWithPrompt(
@@ -329,7 +385,10 @@ export async function dispatchCloudAgentTask(
           ...(task.source.url ? { url: task.source.url } : {}),
         },
       },
-      { text: prompt }
+      {
+        text: prompt,
+        ...(attachments.length > 0 ? { attachments } : {}),
+      }
     );
 
     task = await updateCloudAgentTask(taskId, {
@@ -341,7 +400,9 @@ export async function dispatchCloudAgentTask(
     });
     await appendCloudAgentTaskTimeline(taskId, {
       kind: "dispatched",
-      message: `Dispatched to ${backendId}${modelId ? ` (${modelId})` : ""} in workspace "${runWorkspace.name}"${branch ? ` on branch ${branch}` : ""}.`,
+      message: `Dispatched to ${backendId}${modelId ? ` (${modelId})` : ""} in workspace "${runWorkspace.name}"${branch ? ` on branch ${branch}` : ""}${
+        attachments.length > 0 ? ` with ${attachments.length} media attachment(s)` : ""
+      }.`,
     });
     return (await getCloudAgentTask(taskId)) ?? task;
   } catch (error) {
@@ -361,7 +422,13 @@ export async function dispatchCloudAgentTask(
  */
 export async function steerCloudAgentTask(
   taskId: string,
-  text: string
+  text: string,
+  options?: {
+    /** Media references to download and attach to the steering prompt. */
+    mediaRefs?: CloudAgentMediaRef[];
+    /** Pre-fetched attachments (skips downloading). */
+    attachments?: CloudAgentPromptAttachment[];
+  }
 ): Promise<CloudAgentTaskRecord> {
   const task = await getCloudAgentTask(taskId);
   if (!task) {
@@ -374,17 +441,32 @@ export async function steerCloudAgentTask(
   if (!workspace) {
     throw new Error("The task's workspace no longer exists.");
   }
+
+  let attachments = options?.attachments ?? [];
+  if (attachments.length === 0 && options?.mediaRefs && options.mediaRefs.length > 0) {
+    const fetched = await fetchCloudAgentAttachments(
+      options.mediaRefs,
+      task.source.providerId
+    );
+    attachments = fetched.attachments;
+    for (const note of fetched.notes) {
+      await appendCloudAgentTaskTimeline(taskId, { kind: "status", message: note });
+    }
+  }
+
   await agentRuntimeManager.promptConversation(
     workspace,
     task.conversationId,
     text,
-    undefined,
+    attachments.length > 0 ? attachments : undefined,
     { delivery: "steer" }
   );
   await updateCloudAgentTask(taskId, { status: "running", lastError: null });
   await appendCloudAgentTaskTimeline(taskId, {
     kind: "steered",
-    message: `Steering message sent: ${text.slice(0, 140)}${text.length > 140 ? "…" : ""}`,
+    message: `Steering message sent${
+      attachments.length > 0 ? ` with ${attachments.length} media attachment(s)` : ""
+    }: ${text.slice(0, 140)}${text.length > 140 ? "…" : ""}`,
   });
   return (await getCloudAgentTask(taskId))!;
 }

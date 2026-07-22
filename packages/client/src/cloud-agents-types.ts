@@ -84,6 +84,12 @@ export type CloudAgentTaskSource = {
   sender?: string;
 };
 
+export type CloudAgentMediaRef = {
+  url: string;
+  name?: string;
+  mimeType?: string;
+};
+
 export type CloudAgentTaskTimelineEntry = {
   at: number;
   kind:
@@ -115,6 +121,7 @@ export type CloudAgentTaskRecord = {
   executionMode: CloudAgentExecutionMode;
   branch?: string | null;
   worktreePath?: string | null;
+  attachments?: CloudAgentMediaRef[];
   timeline: CloudAgentTaskTimelineEntry[];
   lastError?: string | null;
 };

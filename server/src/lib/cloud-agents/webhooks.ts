@@ -1,5 +1,10 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
-import type { CloudAgentInboundAssignment, CloudAgentProviderId } from "./types.js";
+import { extractMarkdownMediaRefs, normalizeSlackMrkdwn } from "./attachments.js";
+import type {
+  CloudAgentInboundAssignment,
+  CloudAgentMediaRef,
+  CloudAgentProviderId,
+} from "./types.js";
 
 export type CloudAgentWebhookResult =
   | { kind: "assignment"; assignment: CloudAgentInboundAssignment }
@@ -99,6 +104,8 @@ function parseGithubPayload(
           .map((label) => asRecord(label)?.name)
           .filter((name): name is string => typeof name === "string")
       : [];
+    const body = typeof issue.body === "string" ? issue.body : "";
+    const mediaRefs = extractMarkdownMediaRefs(body);
     return {
       kind: "assignment",
       assignment: {
@@ -107,7 +114,7 @@ function parseGithubPayload(
           typeof issue.title === "string" && issue.title.trim()
             ? issue.title.trim()
             : `GitHub issue${typeof number === "number" ? ` #${number}` : ""}`,
-        body: typeof issue.body === "string" ? issue.body : "",
+        body,
         source: {
           providerId: "github",
           ...(typeof number === "number" ? { externalId: String(number) } : {}),
@@ -117,6 +124,7 @@ function parseGithubPayload(
           ...(sender ? { sender } : {}),
         },
         verified,
+        ...(mediaRefs.length > 0 ? { mediaRefs } : {}),
       },
     };
   }
@@ -129,6 +137,7 @@ function parseGithubPayload(
       return { kind: "ignored", reason: "GitHub comment payload missing content." };
     }
     const number = issue.number;
+    const commentMediaRefs = extractMarkdownMediaRefs(body);
     return {
       kind: "assignment",
       assignment: {
@@ -145,6 +154,7 @@ function parseGithubPayload(
           ...(sender ? { sender } : {}),
         },
         verified,
+        ...(commentMediaRefs.length > 0 ? { mediaRefs: commentMediaRefs } : {}),
       },
     };
   }
@@ -184,6 +194,8 @@ function parseLinearPayload(payload: unknown, verified: boolean): CloudAgentWebh
           .filter((name): name is string => typeof name === "string")
       : [];
     const identifier = typeof data.identifier === "string" ? data.identifier : undefined;
+    const description = typeof data.description === "string" ? data.description : "";
+    const issueMediaRefs = extractMarkdownMediaRefs(description);
     return {
       kind: "assignment",
       assignment: {
@@ -192,7 +204,7 @@ function parseLinearPayload(payload: unknown, verified: boolean): CloudAgentWebh
           typeof data.title === "string" && data.title.trim()
             ? `${identifier ? `${identifier}: ` : ""}${data.title.trim()}`
             : identifier ?? "Linear issue",
-        body: typeof data.description === "string" ? data.description : "",
+        body: description,
         source: {
           providerId: "linear",
           ...(typeof data.id === "string" ? { externalId: data.id } : {}),
@@ -207,6 +219,37 @@ function parseLinearPayload(payload: unknown, verified: boolean): CloudAgentWebh
           ...(typeof assignee.name === "string" ? { sender: assignee.name } : {}),
         },
         verified,
+        ...(issueMediaRefs.length > 0 ? { mediaRefs: issueMediaRefs } : {}),
+      },
+    };
+  }
+
+  // Comments on a tracked issue steer the running conversation. Comments on
+  // untracked issues are ignored (followUpOnly) instead of creating tasks.
+  if (type === "Comment" && action === "create") {
+    const issue = asRecord(data.issue);
+    const body = typeof data.body === "string" ? data.body : "";
+    const issueId = typeof issue?.id === "string" ? issue.id : undefined;
+    if (!issueId || !body.trim()) {
+      return { kind: "ignored", reason: "Linear comment payload missing issue or body." };
+    }
+    const user = asRecord(data.user);
+    const commentMediaRefs = extractMarkdownMediaRefs(body);
+    return {
+      kind: "assignment",
+      assignment: {
+        providerId: "linear",
+        title: `Comment on ${typeof issue?.identifier === "string" ? issue.identifier : "Linear issue"}`,
+        body,
+        source: {
+          providerId: "linear",
+          externalId: issueId,
+          ...(typeof record.url === "string" ? { url: record.url } : {}),
+          ...(typeof user?.name === "string" ? { sender: user.name } : {}),
+        },
+        verified,
+        followUpOnly: true,
+        ...(commentMediaRefs.length > 0 ? { mediaRefs: commentMediaRefs } : {}),
       },
     };
   }
@@ -233,11 +276,32 @@ function parseSlackPayload(payload: unknown, verified: boolean): CloudAgentWebho
     return { kind: "ignored", reason: "Slack bot/system messages are ignored." };
   }
   const text = typeof event.text === "string" ? event.text : "";
-  if (!text.trim()) {
-    return { kind: "ignored", reason: "Slack event has no text." };
+  const files = Array.isArray(event.files) ? event.files : [];
+  const mediaRefs: CloudAgentMediaRef[] = files.flatMap((file): CloudAgentMediaRef[] => {
+    const record = asRecord(file);
+    const url =
+      typeof record?.url_private_download === "string"
+        ? record.url_private_download
+        : typeof record?.url_private === "string"
+          ? record.url_private
+          : undefined;
+    if (!url) {
+      return [];
+    }
+    return [
+      {
+        url,
+        ...(typeof record?.name === "string" ? { name: record.name } : {}),
+        ...(typeof record?.mimetype === "string" ? { mimeType: record.mimetype } : {}),
+      },
+    ];
+  });
+  if (!text.trim() && mediaRefs.length === 0) {
+    return { kind: "ignored", reason: "Slack event has no text or files." };
   }
-  // Strip the leading bot mention so the prompt starts with the actual ask.
-  const cleaned = text.replace(/^\s*<@[^>]+>\s*/, "").trim();
+  // Strip the leading bot mention, then convert mrkdwn to standard markdown
+  // so the agent prompt reads naturally.
+  const cleaned = normalizeSlackMrkdwn(text.replace(/^\s*<@[^>]+>\s*/, "").trim());
   const channel = typeof event.channel === "string" ? event.channel : undefined;
   const ts =
     typeof event.thread_ts === "string"
@@ -245,12 +309,15 @@ function parseSlackPayload(payload: unknown, verified: boolean): CloudAgentWebho
       : typeof event.ts === "string"
         ? event.ts
         : undefined;
+  // Replies inside a tracked thread steer the running conversation; fresh
+  // mentions start new tasks. thread_ts is only present on replies.
+  const isThreadReply = typeof event.thread_ts === "string";
   return {
     kind: "assignment",
     assignment: {
       providerId: "slack",
       title: `Slack: ${cleaned.slice(0, 80)}${cleaned.length > 80 ? "…" : ""}`,
-      body: cleaned,
+      body: cleaned || "(Attached media only.)",
       source: {
         providerId: "slack",
         ...(ts ? { externalId: ts } : {}),
@@ -258,6 +325,8 @@ function parseSlackPayload(payload: unknown, verified: boolean): CloudAgentWebho
         ...(typeof event.user === "string" ? { sender: `<@${event.user}>` } : {}),
       },
       verified,
+      ...(isThreadReply && event.type === "message" ? { followUpOnly: true } : {}),
+      ...(mediaRefs.length > 0 ? { mediaRefs } : {}),
     },
   };
 }

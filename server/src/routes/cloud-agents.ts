@@ -236,9 +236,11 @@ cloudAgentRoutes.post("/api/cloud-agents/webhooks/:providerId", async (c) => {
     case "ignored":
       return c.json({ ok: true, ignored: true, reason: result.reason });
     case "assignment": {
-      const { task, dispatched, steered } = await ingestCloudAgentAssignment(
-        result.assignment
-      );
+      const { task, dispatched, steered, ignoredReason } =
+        await ingestCloudAgentAssignment(result.assignment);
+      if (!task) {
+        return c.json({ ok: true, ignored: true, reason: ignoredReason });
+      }
       return c.json(
         { ok: true, taskId: task.id, dispatched, ...(steered ? { steered } : {}) },
         201
