@@ -144,6 +144,8 @@ served-sw.js
 mcp-servers/
 agent-skills/
 .agents/.cesium-plugin-mcp.json
+# MCP mirror artifacts written by server tests running from server/
+server/.agents/
 
 # React Native / Android local build artifacts
 apps/mobile/android/app/.cxx/
