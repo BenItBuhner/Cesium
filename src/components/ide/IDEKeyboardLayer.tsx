@@ -484,6 +484,7 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
         if (!result) return;
         const { snapshot } = result;
         bridge.openOrchestrationBoardTab(snapshot.board.id, snapshot.board.title);
+        agentShell?.setRightPaneOpen(true);
         flash(setToast, "Opened orchestration board.");
       })
       .catch((error) => {
@@ -494,7 +495,7 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
             : "Failed to open board."
         );
       });
-  }, [agentShell?.selectedConversationId, bridgeRef]);
+  }, [agentShell, bridgeRef]);
 
   const promptRenameCurrentWindow = useCallback(() => {
     if (!isDedicatedWindow || !activeWindowId) {
@@ -1208,6 +1209,7 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
                 ...current.filter((board) => board.id !== snapshot.board.id),
               ]);
               bridge.openOrchestrationBoardTab(snapshot.board.id, snapshot.board.title);
+              agentShell?.setRightPaneOpen(true);
               flash(setToast, "Created orchestration board.");
             } catch (error) {
               flash(
@@ -1236,6 +1238,7 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
             return;
           }
           bridge.openOrchestrationBoardTab(board.id, board.title);
+          agentShell?.setRightPaneOpen(true);
         },
       })),
       {
@@ -1345,6 +1348,7 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
     [
       activeServer.id,
       activeWorkspaceId,
+      agentShell,
       bridgeRef,
       defaultWorkspaceId,
       extensionPaletteCommands,
