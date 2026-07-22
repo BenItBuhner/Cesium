@@ -66,10 +66,11 @@ assert_equal "cloudflare-quick" "$(resolve_tunnel_provider)" \
 
 printf '%s\n' \
   'Manage at https://admin.localhost.run/' \
-  'Connect to https://f8b0809b088105.lhr.life with this tunnel' >"$TUNNEL_LOG"
-assert_equal "https://f8b0809b088105.lhr.life" \
+  'Connect to https://stale-first.lhr.life with this tunnel' \
+  'Assigned remote URL https://current-second.lhr.life after rotation' >"$TUNNEL_LOG"
+assert_equal "https://current-second.lhr.life" \
   "$(extract_tunnel_url localhost-run)" \
-  "the assigned localhost.run URL is parsed instead of a banner URL"
+  "the latest assigned localhost.run URL is parsed after rotation"
 
 printf '%s\n' \
   'Visit https://sample-quick-tunnel.trycloudflare.com now' >"$TUNNEL_LOG"
@@ -81,22 +82,54 @@ bash -c 'exec -a "ssh -R 80:127.0.0.1:19100 nokey@localhost.run" sleep 30' &
 TEST_PROCESS_PID="$!"
 printf '%s\n' "$TEST_PROCESS_PID" >"$TUNNEL_PID_FILE"
 printf '%s\n' "localhost-run" >"$TUNNEL_PROVIDER_FILE"
-printf '%s\n' "https://test.lhr.life" >"$PUBLIC_URL_FILE"
+printf '%s\n' \
+  'Connect to https://stale-first.lhr.life with this tunnel' \
+  'Assigned remote URL https://current-second.lhr.life after rotation' >"$TUNNEL_LOG"
+printf '%s\n' "https://stale-first.lhr.life" >"$PUBLIC_URL_FILE"
+curl() {
+  local url="${!#}"
+  [[ "$url" == *"current-second.lhr.life/health"* ]] && printf '{"ok":true}'
+}
 
 if ! tunnel_is_running; then
   printf 'FAIL: PID-scoped localhost.run process was not detected\n' >&2
   exit 1
 fi
+original_tunnel_pid="$(<"$TUNNEL_PID_FILE")"
+start_tunnel
+run_output="$(print_connection_details)"
+[[ "$run_output" == *"Connect: https://cesium-test.vercel.app?serverUrl=https%3A%2F%2Fcurrent-second.lhr.life"* ]] || {
+  printf 'FAIL: run did not use the latest healthy public URL\n%s\n' "$run_output" >&2
+  exit 1
+}
+assert_equal "$original_tunnel_pid" "$(<"$TUNNEL_PID_FILE")" \
+  "run reuses the live tunnel PID during hostname rotation"
+
+printf '%s\n' "https://stale-first.lhr.life" >"$PUBLIC_URL_FILE"
 status_output="$(status)"
-[[ "$status_output" == *"Tunnel: running (localhost-run, https://test.lhr.life)"* ]] || {
-  printf 'FAIL: status did not include provider and URL\n%s\n' "$status_output" >&2
+[[ "$status_output" == *"Tunnel: running (localhost-run, https://current-second.lhr.life)"* ]] || {
+  printf 'FAIL: status did not refresh to the latest healthy URL\n%s\n' "$status_output" >&2
   exit 1
 }
+
+printf '%s\n' "https://stale-first.lhr.life" >"$PUBLIC_URL_FILE"
 connect_output="$(print_connection_details)"
-[[ "$connect_output" == *"Connect: https://cesium-test.vercel.app?serverUrl=https%3A%2F%2Ftest.lhr.life"* ]] || {
-  printf 'FAIL: connection details did not include the encoded public URL\n%s\n' "$connect_output" >&2
+[[ "$connect_output" == *"Connect: https://cesium-test.vercel.app?serverUrl=https%3A%2F%2Fcurrent-second.lhr.life"* ]] || {
+  printf 'FAIL: connection details did not use the latest healthy public URL\n%s\n' "$connect_output" >&2
   exit 1
 }
+assert_equal "https://current-second.lhr.life" \
+  "$(<"$PUBLIC_URL_FILE")" \
+  "the rotated healthy URL is persisted"
+
+printf '%s\n' \
+  'Assigned remote URL https://newest-unhealthy.lhr.life after rotation' >>"$TUNNEL_LOG"
+assert_equal "https://newest-unhealthy.lhr.life" \
+  "$(extract_tunnel_url localhost-run)" \
+  "the newest advertised localhost.run URL remains discoverable"
+assert_equal "https://current-second.lhr.life" \
+  "$(public_url)" \
+  "an unhealthy newer assignment does not replace the latest healthy URL"
 
 stop_tunnel
 if kill -0 "$TEST_PROCESS_PID" 2>/dev/null; then
