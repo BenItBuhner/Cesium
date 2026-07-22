@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
 import { after, test } from "node:test";
+import type { AgentEventInput } from "../src/lib/agents/types.js";
 
 const TEST_DATA_DIR = path.join(
   os.tmpdir(),
@@ -106,11 +107,7 @@ async function startCesiumTestSession(id: string) {
     lastReadSeq: 0,
     queuedPrompts: [],
   };
-  const events: Array<{
-    kind: string;
-    requestId?: string;
-    detail?: string;
-  }> = [];
+  const events: AgentEventInput[] = [];
   const handle = await provider.startSession({
     conversation,
     workspace: { id: "ws-1", root: TEST_DATA_DIR, name: "test", createdAt: 1 },
@@ -252,6 +249,67 @@ return budget.total;`;
       workflow: { defaultTokenBudget: DEFAULT_CESIUM_WORKFLOW_TOKEN_BUDGET },
       toolPermissions: { workflowLaunch: "ask" },
     });
+  }
+});
+
+test("workflow_run emits live workflow snapshot tool updates", async () => {
+  await patchCesiumAgentSettings({ toolPermissions: { workflowLaunch: "allow" } });
+  try {
+    const { handle, events } = await startCesiumTestSession("cesium-workflow-snapshot-events");
+    const privateHandle = handle as unknown as {
+      executeTool(
+        request: { id: string; name: string; arguments: Record<string, unknown> },
+        options: { suppressTranscript: boolean }
+      ): Promise<string>;
+    };
+    const script = `export const meta = {
+  name: "snapshot-demo",
+  description: "Emit workflow snapshots",
+  phases: [{ title: "Collect", detail: "Collect context" }],
+};
+phase("Collect");
+log("collecting");
+return { ok: true };`;
+
+    await privateHandle.executeTool(
+      {
+        id: "workflow-snapshot-tool",
+        name: "workflow_run",
+        arguments: { script, wait: true, tokenBudget: 55 },
+      },
+      { suppressTranscript: false }
+    );
+
+    const updates = events.filter(
+      (event) =>
+        event.kind === "tool_call_update" &&
+        event.toolCallId === "workflow-snapshot-tool" &&
+        event.raw != null &&
+        typeof event.raw === "object" &&
+        "workflowRun" in event.raw
+    );
+    assert.ok(updates.length >= 2);
+    assert.equal(updates.every((event) => event.toolKind === "workflow"), true);
+    assert.equal(updates[0]?.status, "in_progress");
+    assert.equal(updates.at(-1)?.status, "completed");
+    const snapshot = (updates.at(-1)?.raw as { workflowRun?: unknown }).workflowRun as {
+      name?: string;
+      status?: string;
+      tokenBudget?: number;
+      recentLogs?: Array<{ message?: string }>;
+      phases?: Array<{ title?: string; detail?: string }>;
+    };
+    assert.equal(snapshot.name, "snapshot-demo");
+    assert.equal(snapshot.status, "completed");
+    assert.equal(snapshot.tokenBudget, 55);
+    assert.equal(snapshot.recentLogs?.some((entry) => entry.message === "collecting"), true);
+    assert.deepEqual(snapshot.phases?.[0], {
+      title: "Collect",
+      detail: "Collect context",
+    });
+    assert.match(updates.at(-1)?.detail ?? "", /snapshot-demo: completed/);
+  } finally {
+    await patchCesiumAgentSettings({ toolPermissions: { workflowLaunch: "ask" } });
   }
 });
 

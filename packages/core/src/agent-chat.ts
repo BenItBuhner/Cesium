@@ -60,6 +60,140 @@ function objectRecord(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
+const WORKFLOW_SNAPSHOT_STATUSES = new Set([
+  "pending",
+  "compiling",
+  "running",
+  "paused",
+  "completed",
+  "failed",
+  "cancelled",
+]);
+
+const WORKFLOW_SNAPSHOT_AGENT_STATUSES = new Set([
+  "queued",
+  "running",
+  "completed",
+  "failed",
+  "cached",
+  "skipped",
+]);
+
+function isNumberOrNull(value: unknown): value is number | null {
+  return value === null || (typeof value === "number" && Number.isFinite(value));
+}
+
+function extractWorkflowRunSnapshotFromRaw(rawValue: unknown): WorkflowRunSnapshot | undefined {
+  const raw = objectRecord(rawValue);
+  const candidate = objectRecord(raw?.workflowRun);
+  if (!candidate) {
+    return undefined;
+  }
+  if (
+    typeof candidate.runId !== "string" ||
+    typeof candidate.name !== "string" ||
+    typeof candidate.description !== "string" ||
+    typeof candidate.status !== "string" ||
+    !WORKFLOW_SNAPSHOT_STATUSES.has(candidate.status) ||
+    !(typeof candidate.currentPhase === "string" || candidate.currentPhase === null) ||
+    !isNumberOrNull(candidate.tokenBudget) ||
+    typeof candidate.tokensUsed !== "number" ||
+    typeof candidate.maxAgents !== "number" ||
+    typeof candidate.agentsUsed !== "number" ||
+    typeof candidate.maxConcurrent !== "number" ||
+    typeof candidate.createdAt !== "number" ||
+    typeof candidate.updatedAt !== "number" ||
+    !isNumberOrNull(candidate.completedAt) ||
+    typeof candidate.scriptPath !== "string" ||
+    !Array.isArray(candidate.recentLogs) ||
+    !(typeof candidate.returnPreview === "string" || candidate.returnPreview === null) ||
+    !(typeof candidate.errorPreview === "string" || candidate.errorPreview === null) ||
+    !Array.isArray(candidate.phases) ||
+    !Array.isArray(candidate.agents)
+  ) {
+    return undefined;
+  }
+  const logs = candidate.recentLogs;
+  const phases = candidate.phases;
+  const agents = candidate.agents;
+  if (
+    !logs.every((entry) => {
+      const log = objectRecord(entry);
+      return (
+        log &&
+        typeof log.at === "number" &&
+        typeof log.message === "string" &&
+        (typeof log.phase === "string" || log.phase === null || log.phase === undefined)
+      );
+    }) ||
+    !phases.every((entry) => {
+      const phase = objectRecord(entry);
+      return (
+        phase &&
+        typeof phase.title === "string" &&
+        (typeof phase.detail === "string" || phase.detail === undefined) &&
+        (typeof phase.model === "string" || phase.model === undefined)
+      );
+    }) ||
+    !agents.every((entry) => {
+      const agent = objectRecord(entry);
+      return (
+        agent &&
+        typeof agent.id === "string" &&
+        typeof agent.label === "string" &&
+        (typeof agent.phase === "string" || agent.phase === null) &&
+        typeof agent.status === "string" &&
+        WORKFLOW_SNAPSHOT_AGENT_STATUSES.has(agent.status) &&
+        typeof agent.tokensUsed === "number" &&
+        isNumberOrNull(agent.startedAt) &&
+        isNumberOrNull(agent.completedAt) &&
+        (typeof agent.promptPreview === "string" || agent.promptPreview === undefined) &&
+        (typeof agent.resultPreview === "string" || agent.resultPreview === undefined) &&
+        (typeof agent.errorPreview === "string" || agent.errorPreview === undefined)
+      );
+    })
+  ) {
+    return undefined;
+  }
+  return {
+    ...(candidate as unknown as WorkflowRunSnapshot),
+    agentRecordsTotal:
+      typeof candidate.agentRecordsTotal === "number"
+        ? candidate.agentRecordsTotal
+        : agents.length,
+    agentsTruncated:
+      typeof candidate.agentsTruncated === "boolean"
+        ? candidate.agentsTruncated
+        : false,
+  };
+}
+
+function workflowSnapshotWorkedStatus(
+  status: WorkflowRunSnapshot["status"]
+): Extract<WorkedSessionEntry, { kind: "tool" }>["status"] {
+  switch (status) {
+    case "completed":
+      return "completed";
+    case "failed":
+      return "failed";
+    case "cancelled":
+      return "cancelled";
+    default:
+      return "running";
+  }
+}
+
+function workflowSnapshotDetail(snapshot: WorkflowRunSnapshot): string {
+  const phase = snapshot.currentPhase ? ` - ${snapshot.currentPhase}` : "";
+  const agents = ` - ${snapshot.agentsUsed}/${snapshot.maxAgents} agents`;
+  const tokens =
+    snapshot.tokenBudget != null
+      ? ` - ${snapshot.tokensUsed}/${snapshot.tokenBudget} tokens`
+      : ` - ${snapshot.tokensUsed} tokens`;
+  const error = snapshot.errorPreview ? ` - ${snapshot.errorPreview.slice(0, 240)}` : "";
+  return `${snapshot.status}${phase}${agents}${tokens}${error}`;
+}
+
 function normalizeGoalToolName(name: string): string | null {
   const trimmed = name.trim();
   if (trimmed.startsWith("goal_")) {
@@ -275,6 +409,7 @@ import type {
   UserMessageSegment,
   WorkedSessionEditPreview,
   WorkedSessionEntry,
+  WorkflowRunSnapshot,
 } from "./types";
 import { questionEventToChatMessage } from "./ask-question-dock";
 import {
@@ -1395,6 +1530,9 @@ function inferToolKindFromTitle(name: string): string {
   }
   if (n.includes("todo")) {
     return "todo";
+  }
+  if (n.includes("workflow")) {
+    return "workflow";
   }
   if (n.includes("ask question") || n.includes("asked question")) {
     return "question";
@@ -2968,6 +3106,8 @@ function formatToolSummary(
     "raw" in event && event.raw && typeof event.raw === "object"
       ? (event.raw as Record<string, unknown>)
       : undefined;
+  const workflowRunSnapshot = extractWorkflowRunSnapshotFromRaw(event.raw);
+  const workflowRun = workflowRunSnapshot ?? existing?.workflowRun;
   const rawToolRecord =
     (rawUpdate &&
     (extractAcpToolCallEntries(rawUpdate).length > 0 ||
@@ -3160,6 +3300,28 @@ function formatToolSummary(
         "Tool call was rejected by the current approval settings."
       : undefined);
   const rawDetail = isVerboseToolPayloadDetail(detail) ? detail?.trim() : existing?.rawDetail;
+  if (workflowRun || toolKind === "workflow" || toolKindFromEvent === "workflow") {
+    return withConciseToolDetail({
+      kind: "tool",
+      toolCallId: event.toolCallId,
+      toolKind: "workflow",
+      title: workflowRun
+        ? `Workflow ${truncateMiddleLabel(workflowRun.name, TOOL_TITLE_MAX_LEN)}`
+        : truncateMiddleLabel(
+            resolvedTitleLabel ?? existing?.title ?? "Workflow",
+            TOOL_TITLE_MAX_LEN
+          ),
+      detail: workflowRun
+        ? workflowSnapshotDetail(workflowRun)
+        : safeToolDetailText(detail, { suppressVerbosePayload: true }) ?? existing?.detail,
+      rawDetail: undefined,
+      status: workflowRun ? workflowSnapshotWorkedStatus(workflowRun.status) : status,
+      locations: undefined,
+      editPreview: undefined,
+      files: undefined,
+      workflowRun,
+    });
+  }
   const burnTool = burnToolRequestFromRaw(rawTop, rawToolRecord);
   if (burnTool) {
     const presentation = goalToolPresentation(burnTool);

@@ -34,6 +34,7 @@ export type WorkflowAgentRecord = {
   phase: string | null;
   prompt: string;
   status: WorkflowAgentStatus;
+  tokensUsed: number;
   startedAt: number | null;
   completedAt: number | null;
   error?: string;

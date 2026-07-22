@@ -151,6 +151,10 @@ test("executeWorkflowRun fans out agent calls and returns synthesized value", as
       args: { topic: "auth" },
     });
     assert.equal(completed.tokensUsed, 48);
+    assert.deepEqual(
+      completed.agents.map((agent) => agent.tokensUsed),
+      [12, 12, 12, 12]
+    );
     assert.ok(completed.logs.some((entry) => entry.message.includes("collected 3")));
   } finally {
     if (previous === undefined) {
@@ -198,6 +202,10 @@ return [a, b];
   assert.equal(liveCalls, 1);
   assert.deepEqual(completed.returnValue, ["live:same", "live:same"]);
   assert.equal(completed.agents.filter((item) => item.status === "cached").length, 1);
+  assert.deepEqual(
+    completed.agents.map((item) => item.tokensUsed),
+    [5, 0]
+  );
 });
 
 test("workflow semaphore never exceeds configured concurrency", async () => {
@@ -286,6 +294,7 @@ return await agent("bounded child");
     assert.equal(completed.returnValue, null);
     assert.equal(completed.tokensUsed, 7);
     assert.equal(completed.agents[0]?.status, "failed");
+    assert.equal(completed.agents[0]?.tokensUsed, 7);
   } finally {
     await rm(path.join(DATA_DIR, "workspaces", workspace.id), { recursive: true, force: true });
   }

@@ -656,6 +656,7 @@ export function MessageThreadContent({
                 onResolvePermission={onResolvePermission}
                 contentRail={!isSettledWork}
                 settled={isSettledWork}
+                conversationId={conversationId}
               />
             </div>
           );

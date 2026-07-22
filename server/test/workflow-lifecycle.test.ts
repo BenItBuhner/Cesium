@@ -268,6 +268,10 @@ return await parallel([
     );
     assert.ok(completed.agents.every((agent) => agent.completedAt !== null));
     assert.ok(completed.agents.every((agent) => /abort|cancel/i.test(agent.error ?? "")));
+    assert.deepEqual(
+      completed.agents.map((agent) => agent.tokensUsed),
+      [0, 0]
+    );
   } finally {
     await cleanupWorkspace(ws.id);
   }

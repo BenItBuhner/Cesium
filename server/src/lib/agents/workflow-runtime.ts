@@ -445,6 +445,7 @@ export async function executeWorkflowRun(input: {
               phase: phaseName,
               prompt: promptText,
               status: "cached",
+              tokensUsed: 0,
               startedAt: Date.now(),
               completedAt: Date.now(),
               resultPreview: previewValue(cached.result),
@@ -468,6 +469,7 @@ export async function executeWorkflowRun(input: {
             phase: phaseName,
             prompt: promptText,
             status: "queued",
+            tokensUsed: 0,
             startedAt: null,
             completedAt: null,
           },
@@ -537,16 +539,18 @@ export async function executeWorkflowRun(input: {
           completedAt: Date.now(),
         };
         journal.set(begin.key, entry);
+        const childTokens = Math.max(0, result.tokensUsed ?? 0);
         await withRunLock(async () => {
           run = await appendWorkflowJournal(
             {
               ...run,
-              tokensUsed: run.tokensUsed + Math.max(0, result.tokensUsed ?? 0),
+              tokensUsed: run.tokensUsed + childTokens,
               agents: run.agents.map((item, index) =>
                 index === begin.agentIndex
                   ? {
                       ...item,
                       status: "completed",
+                      tokensUsed: childTokens,
                       completedAt: Date.now(),
                       resultPreview: previewValue(result.value),
                     }
@@ -573,6 +577,7 @@ export async function executeWorkflowRun(input: {
                   ? {
                       ...item,
                       status: "skipped",
+                      tokensUsed: item.tokensUsed ?? 0,
                       completedAt: Date.now(),
                       error: message,
                     }
@@ -595,6 +600,7 @@ export async function executeWorkflowRun(input: {
                 ? {
                     ...item,
                     status: "failed",
+                    tokensUsed: failedTokens,
                     completedAt: Date.now(),
                     error: message,
                   }
@@ -788,6 +794,7 @@ export async function executeWorkflowRun(input: {
                 ? {
                     ...agent,
                     status: "skipped",
+                    tokensUsed: agent.tokensUsed ?? 0,
                     completedAt: Date.now(),
                     error: message,
                   }

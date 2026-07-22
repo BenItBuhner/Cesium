@@ -7,6 +7,7 @@ import {
   type BuildCesiumSystemPromptInput,
   type McpServerSummary,
 } from "@cesium/core/mcp";
+import type { WorkflowRunSnapshot } from "@cesium/core";
 import { getGitWorkspaceStatus } from "../git-worktrees.js";
 import {
   createCesiumAgentConfigOptions,
@@ -77,8 +78,17 @@ import {
   updateWorkflowRunStatus,
   upsertWorkflowRun,
 } from "./workflow-store.js";
-import type { WorkflowAgentSpawnRequest, WorkflowRunRecord } from "./workflow-types.js";
+import type {
+  WorkflowAgentSpawnRequest,
+  WorkflowRunRecord,
+  WorkflowRunUpdateHandler,
+} from "./workflow-types.js";
 import { workflowModeContinuationContext } from "./workflow-steering.js";
+import {
+  serializeWorkflowRunSnapshot,
+  summarizeWorkflowSnapshotDetail,
+  workflowSnapshotToolStatus,
+} from "./workflow-snapshot.js";
 import {
   resetWorkflowRunForReplay,
   workflowRunManager,
@@ -1287,6 +1297,76 @@ class CesiumSessionHandle implements AgentSessionHandle {
     return managed;
   }
 
+  private async emitWorkflowRunSnapshotUpdate(
+    toolCallId: string,
+    run: WorkflowRunRecord,
+    appendTranscriptEvents: CesiumToolExecutionContext["appendTranscriptEvents"]
+  ): Promise<WorkflowRunSnapshot> {
+    const snapshot = serializeWorkflowRunSnapshot(run, { agentLimit: 100 });
+    await appendTranscriptEvents([
+      {
+        eventId: randomUUID(),
+        conversationId: this.callbacks.conversation.id,
+        kind: "tool_call_update",
+        toolCallId,
+        title: `Workflow ${snapshot.name}`,
+        toolKind: "workflow",
+        status: workflowSnapshotToolStatus(run.status),
+        detail: summarizeWorkflowSnapshotDetail(snapshot),
+        raw: { workflowRun: snapshot },
+      },
+    ]);
+    return snapshot;
+  }
+
+  private createWorkflowSnapshotEmitter(
+    toolCallId: string,
+    appendTranscriptEvents: CesiumToolExecutionContext["appendTranscriptEvents"]
+  ): WorkflowRunUpdateHandler {
+    let lastStatus: WorkflowRunRecord["status"] | null = null;
+    let lastPhase: string | null = null;
+    let lastAgentsUsed = -1;
+    let lastTerminalAgents = -1;
+    let lastLogCount = -1;
+    return async (run) => {
+      const terminalAgents = run.agents.filter(
+        (agent) =>
+          agent.status === "completed" ||
+          agent.status === "failed" ||
+          agent.status === "cached" ||
+          agent.status === "skipped"
+      ).length;
+      const terminalRun =
+        run.status === "completed" ||
+        run.status === "failed" ||
+        run.status === "cancelled";
+      const earlyRun =
+        run.agentsUsed <= 10 || terminalAgents <= 10 || run.logs.length <= 10;
+      const shouldEmit =
+        lastStatus === null ||
+        run.status !== lastStatus ||
+        run.currentPhase !== lastPhase ||
+        terminalRun ||
+        earlyRun ||
+        run.agentsUsed - lastAgentsUsed >= 5 ||
+        terminalAgents - lastTerminalAgents >= 5 ||
+        run.logs.length - lastLogCount >= 5;
+      if (!shouldEmit) {
+        return;
+      }
+      lastStatus = run.status;
+      lastPhase = run.currentPhase;
+      lastAgentsUsed = run.agentsUsed;
+      lastTerminalAgents = terminalAgents;
+      lastLogCount = run.logs.length;
+      await this.emitWorkflowRunSnapshotUpdate(
+        toolCallId,
+        run,
+        appendTranscriptEvents
+      );
+    };
+  }
+
   private async finishDispose(): Promise<void> {
     if (this.disposed) {
       return;
@@ -1900,7 +1980,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
           result = await this.toolGoalResume();
           break;
         case "workflow_run":
-          result = await this.toolWorkflowRun(request.arguments);
+          result = await this.toolWorkflowRun(request.arguments, request.id, context);
           break;
         case "workflow_status":
           result = await this.toolWorkflowStatus(request.arguments);
@@ -1909,7 +1989,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
           result = await this.toolWorkflowAwait(request.arguments);
           break;
         case "workflow_control":
-          result = await this.toolWorkflowControl(request.arguments, request.id);
+          result = await this.toolWorkflowControl(request.arguments, request.id, context);
           break;
         case "ask_question":
           result = await this.toolAskQuestion(request.arguments);
@@ -3676,6 +3756,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
         label: agent.label,
         phase: agent.phase,
         status: agent.status,
+        tokensUsed: agent.tokensUsed ?? 0,
         error: agent.error,
         resultPreview: agent.resultPreview,
       })),
@@ -3739,7 +3820,11 @@ class CesiumSessionHandle implements AgentSessionHandle {
     });
   }
 
-  private async toolWorkflowRun(args: Record<string, unknown>): Promise<string> {
+  private async toolWorkflowRun(
+    args: Record<string, unknown>,
+    toolCallId: string,
+    context: CesiumToolExecutionContext
+  ): Promise<string> {
     const scriptPathArg = asString(args.scriptPath);
     const scriptArg = asString(args.script);
     let script = scriptArg ?? "";
@@ -3792,11 +3877,16 @@ class CesiumSessionHandle implements AgentSessionHandle {
           priorRunId: resumeFromRunId,
         })
       : [];
+    const emitWorkflowUpdate = this.createWorkflowSnapshotEmitter(
+      toolCallId,
+      context.appendTranscriptEvents
+    );
     const managed = this.trackWorkflowRun(
       workflowRunManager.start({
         run,
         journalSeed,
         spawnAgent: (request) => this.spawnWorkflowAgent(request),
+        onUpdate: emitWorkflowUpdate,
       })
     );
 
@@ -3838,7 +3928,9 @@ class CesiumSessionHandle implements AgentSessionHandle {
 
   private async startWorkflowReplay(
     run: WorkflowRunRecord,
-    reuseJournal: boolean
+    reuseJournal: boolean,
+    toolCallId: string,
+    context: CesiumToolExecutionContext
   ) {
     const replay = await upsertWorkflowRun(
       resetWorkflowRunForReplay(
@@ -3846,11 +3938,16 @@ class CesiumSessionHandle implements AgentSessionHandle {
         "Workflow replay started from durable lifecycle control."
       )
     );
+    const emitWorkflowUpdate = this.createWorkflowSnapshotEmitter(
+      toolCallId,
+      context.appendTranscriptEvents
+    );
     return this.trackWorkflowRun(
       workflowRunManager.start({
         run: replay,
         journalSeed: reuseJournal ? run.journal : [],
         spawnAgent: (request) => this.spawnWorkflowAgent(request),
+        onUpdate: emitWorkflowUpdate,
       })
     );
   }
@@ -3890,7 +3987,8 @@ class CesiumSessionHandle implements AgentSessionHandle {
 
   private async toolWorkflowControl(
     args: Record<string, unknown>,
-    toolCallId: string
+    toolCallId: string,
+    context: CesiumToolExecutionContext
   ): Promise<string> {
     const action = asString(args.action)?.trim().toLowerCase();
     if (
@@ -3959,7 +4057,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
           toolKey: cesiumPermissionToolKey("workflowLaunch", { script: run.script }),
           toolLabel: `Resume workflow ${run.meta.name}`,
         });
-        const replay = await this.startWorkflowReplay(run, true);
+        const replay = await this.startWorkflowReplay(run, true, toolCallId, context);
         return safeJson({
           status: "replay_started",
           runId: run.runId,
@@ -4028,11 +4126,16 @@ class CesiumSessionHandle implements AgentSessionHandle {
       resumeFromRunId: reuseJournal ? restartSource.runId : undefined,
     });
     nextRun = await upsertWorkflowRun(nextRun);
+    const emitWorkflowUpdate = this.createWorkflowSnapshotEmitter(
+      toolCallId,
+      context.appendTranscriptEvents
+    );
     this.trackWorkflowRun(
       workflowRunManager.start({
         run: nextRun,
         journalSeed: reuseJournal ? restartSource.journal : [],
         spawnAgent: (request) => this.spawnWorkflowAgent(request),
+        onUpdate: emitWorkflowUpdate,
       })
     );
     return safeJson({

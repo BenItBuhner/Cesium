@@ -12,6 +12,7 @@ import type {
   AgentConversationSnapshotHead,
   AgentContextUsageSnapshot,
   AgentRailRepositoryInfo,
+  WorkflowRunSnapshot,
 } from "@cesium/core";
 import type { WorkspaceSessionState } from "./workspace-session";
 import type {
@@ -1232,6 +1233,34 @@ export async function resumeAgentConversation(
     method: "POST",
     body: JSON.stringify({}),
   });
+}
+
+export async function getWorkflowRun(
+  conversationId: string,
+  runId: string
+): Promise<{ workflow: WorkflowRunSnapshot; active: boolean }> {
+  return request(
+    `/api/agents/conversations/${encodeURIComponent(conversationId)}/workflows/${encodeURIComponent(runId)}`
+  );
+}
+
+export async function controlWorkflowRun(
+  conversationId: string,
+  runId: string,
+  action: "pause" | "resume" | "stop"
+): Promise<{
+  ok: true;
+  requestedAction: "pause" | "resume" | "stop";
+  workflow: WorkflowRunSnapshot;
+  active: boolean;
+}> {
+  return request(
+    `/api/agents/conversations/${encodeURIComponent(conversationId)}/workflows/${encodeURIComponent(runId)}/control`,
+    {
+      method: "POST",
+      body: JSON.stringify({ action }),
+    }
+  );
 }
 
 export async function answerAgentPermission(
