@@ -4,6 +4,7 @@ import {
   ChevronDown,
   ChevronRight,
   CircleUserRound,
+  FolderPlus,
   GitBranchPlus,
   ListFilter,
   MessageSquare,
@@ -89,10 +90,23 @@ import {
   resolveGroupWorkspaceAppearanceKey,
   WorkspaceFolderIcon,
 } from "@/lib/workspace-rail-appearance";
+import {
+  STANDALONE_CHATS_FOLDER_SCOPE,
+  createChatFolderState,
+  getChatFoldersForScope,
+  isStandaloneChatFolderScope,
+  moveConversationInChatFolders,
+  partitionConversationsByFolders,
+  reorderChatFolders,
+  updateRootOrderForMove,
+  upsertChatFoldersWithNewFolder,
+  type ChatFolderPlacement,
+} from "@/lib/chat-folders";
 
 const PINNED_SECTION_WORKSPACE_ID = "__agentPinned__";
-const CHATS_SECTION_WORKSPACE_ID = "__agentStandaloneChats__";
+const CHATS_SECTION_WORKSPACE_ID = STANDALONE_CHATS_FOLDER_SCOPE;
 const AGENT_RAIL_CONVERSATION_DRAG_TYPE = "application/x-opencursor-agent-conversation";
+const AGENT_RAIL_FOLDER_DRAG_TYPE = "application/x-opencursor-agent-chat-folder";
 
 const COLLAPSED_WORKSPACES_STORAGE_KEY = "opencursor.agent-rail-collapsed-workspaces";
 const COLLAPSED_FOLDERS_STORAGE_KEY = "opencursor.agent-rail-collapsed-folders";
@@ -521,6 +535,7 @@ export function AgentWorkspaceRail() {
   const [collapsedFolderIds, setCollapsedFolderIds] = useState<Set<string>>(new Set());
   const [draggingWorkspaceId, setDraggingWorkspaceId] = useState<string | null>(null);
   const [draggingConversationId, setDraggingConversationId] = useState<string | null>(null);
+  const [draggingFolderId, setDraggingFolderId] = useState<string | null>(null);
   const [editingFolderId, setEditingFolderId] = useState<string | null>(null);
   const [editingWorkspaceKey, setEditingWorkspaceKey] = useState<string | null>(null);
   const [editingServerId, setEditingServerId] = useState<string | null>(null);
@@ -674,11 +689,69 @@ export function AgentWorkspaceRail() {
         conversations.push(conversation);
       }
     }
-    conversations.sort(
-      (a, b) => b.updatedAt - a.updatedAt || a.title.localeCompare(b.title)
-    );
     return conversations;
   }, [groups]);
+
+  const standaloneWorkspaceIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const group of groups) {
+      if (isStandaloneChatWorkspace(group.workspace)) {
+        ids.add(group.workspace.id);
+      }
+    }
+    return ids;
+  }, [groups]);
+
+  const resolveConversationFolderScope = useCallback(
+    (conversation: Pick<AgentRailConversationSummary, "workspaceId">) =>
+      standaloneWorkspaceIds.has(conversation.workspaceId)
+        ? STANDALONE_CHATS_FOLDER_SCOPE
+        : conversation.workspaceId,
+    [standaloneWorkspaceIds]
+  );
+
+  const findRailConversationById = useCallback(
+    (conversationId: string): AgentRailConversationSummary | null => {
+      for (const group of groups) {
+        for (const conversation of group.conversations) {
+          if (conversation.id === conversationId) {
+            return conversation;
+          }
+        }
+      }
+      for (const conversation of pinnedRailConversations) {
+        if (conversation.id === conversationId) {
+          return conversation;
+        }
+      }
+      return null;
+    },
+    [groups, pinnedRailConversations]
+  );
+
+  const collectScopeRootConversationIds = useCallback(
+    (scopeId: string, options?: { includeConversationId?: string }) => {
+      const folders = getChatFoldersForScope(settings.general.chatFolders, scopeId);
+      const folderedIds = new Set<string>();
+      for (const folder of folders) {
+        for (const id of folder.conversationIds) {
+          folderedIds.add(id);
+        }
+      }
+      if (options?.includeConversationId) {
+        folderedIds.delete(options.includeConversationId);
+      }
+      const conversations = isStandaloneChatFolderScope(scopeId)
+        ? standaloneChatConversations
+        : groups.flatMap((group) =>
+            group.workspace.id === scopeId ? group.conversations : []
+          );
+      return conversations
+        .filter((conversation) => !folderedIds.has(conversation.id))
+        .map((conversation) => conversation.id);
+    },
+    [groups, settings.general.chatFolders, standaloneChatConversations]
+  );
 
   const railSectionOrder = useMemo(() => {
     const order = agentRailSettings.sectionOrder ?? ["pinned", "chats", "workspaces"];
@@ -967,17 +1040,6 @@ export function AgentWorkspaceRail() {
     setDraggingConversationId(null);
   }, []);
 
-  const handleConversationDropTargetDragOver = useCallback(
-    (event: ReactDragEvent<HTMLElement>) => {
-      if (!draggingConversationId) {
-        return;
-      }
-      event.preventDefault();
-      event.dataTransfer.dropEffect = "move";
-    },
-    [draggingConversationId]
-  );
-
   const railListScrollMeasureKey = useMemo(
     () =>
       `${visibleGroups.length}:${standaloneChatConversations.length}:${pinnedRailConversations.length}:${settings.general.chatFolders.length}:${railLoading ? 1 : 0}:${renameState?.conversationId ?? ""}:${collapsedFolderIds.size}:${editingWorkspaceKey ?? ""}:${railSectionOrder.join(",")}`,
@@ -1093,43 +1155,50 @@ export function AgentWorkspaceRail() {
   }, []);
 
   const createFolderForWorkspace = useCallback(
-    (workspaceId: string, options?: { conversationId?: string }) => {
+    (scopeId: string, options?: { conversationId?: string }) => {
       const folderId = createChatFolderId();
       const conversationId = options?.conversationId;
       updateSettings((current) => {
-        const workspaceFolders = current.general.chatFolders.filter(
-          (folder) => folder.workspaceId === workspaceId
-        );
-        const nextFolder: ChatFolderState = {
+        const workspaceFolders = getChatFoldersForScope(current.general.chatFolders, scopeId);
+        const nextFolder = createChatFolderState({
           id: folderId,
-          workspaceId,
-          name: "New folder",
+          scopeId,
+          existingFolders: workspaceFolders,
+          conversationId,
           color: FOLDER_COLOR_OPTIONS[workspaceFolders.length % FOLDER_COLOR_OPTIONS.length],
-          icon: "Folder",
-          sortOrder:
-            workspaceFolders.reduce(
-              (max, folder) => Math.max(max, folder.sortOrder),
-              -1
-            ) + 1,
-          conversationIds: conversationId ? [conversationId] : [],
-        };
+        });
+        const folderedIds = new Set<string>();
+        for (const folder of workspaceFolders) {
+          for (const id of folder.conversationIds) {
+            folderedIds.add(id);
+          }
+        }
+        const scopeConversations = isStandaloneChatFolderScope(scopeId)
+          ? standaloneChatConversations
+          : groups.flatMap((group) =>
+              group.workspace.id === scopeId ? group.conversations : []
+            );
+        const knownRootIds = scopeConversations
+          .filter((conversation) => !folderedIds.has(conversation.id))
+          .map((conversation) => conversation.id);
+        const nextRootOrderByScope = conversationId
+          ? updateRootOrderForMove(current.general.chatRootOrderByScope, {
+              scopeId,
+              conversationId,
+              folderId: nextFolder.id,
+              knownRootIds,
+            })
+          : current.general.chatRootOrderByScope;
         return {
           ...current,
           general: {
             ...current.general,
-            chatFolders: [
-              ...current.general.chatFolders.map((folder) =>
-                folder.workspaceId === workspaceId && conversationId
-                  ? {
-                      ...folder,
-                      conversationIds: folder.conversationIds.filter(
-                        (id) => id !== conversationId
-                      ),
-                    }
-                  : folder
-              ),
+            chatFolders: upsertChatFoldersWithNewFolder(
+              current.general.chatFolders,
               nextFolder,
-            ],
+              conversationId
+            ),
+            chatRootOrderByScope: nextRootOrderByScope,
           },
         };
       });
@@ -1144,7 +1213,7 @@ export function AgentWorkspaceRail() {
       });
       setEditingFolderId(folderId);
     },
-    [updateSettings]
+    [groups, standaloneChatConversations, updateSettings]
   );
 
   const updateFolder = useCallback(
@@ -1248,64 +1317,184 @@ export function AgentWorkspaceRail() {
 
   const deleteFolder = useCallback(
     (folder: ChatFolderState) => {
+      const rootLabel = isStandaloneChatFolderScope(folder.workspaceId)
+        ? "Chats"
+        : "this workspace root";
       const confirmed = window.confirm(
-        `Delete "${folder.name}"? Chats move back to this workspace root.`
+        `Delete "${folder.name}"? Chats move back to ${rootLabel}.`
       );
       if (!confirmed) {
         return;
       }
-      updateSettings((current) => ({
-        ...current,
-        general: {
-          ...current.general,
-          chatFolders: current.general.chatFolders.filter((item) => item.id !== folder.id),
-        },
-      }));
+      updateSettings((current) => {
+        const releasedIds = folder.conversationIds;
+        const previousRoot = current.general.chatRootOrderByScope[folder.workspaceId] ?? [];
+        const nextRoot = [...previousRoot];
+        for (const id of releasedIds) {
+          if (!nextRoot.includes(id)) {
+            nextRoot.push(id);
+          }
+        }
+        return {
+          ...current,
+          general: {
+            ...current.general,
+            chatFolders: current.general.chatFolders.filter((item) => item.id !== folder.id),
+            chatRootOrderByScope:
+              nextRoot.length > 0
+                ? {
+                    ...current.general.chatRootOrderByScope,
+                    [folder.workspaceId]: nextRoot,
+                  }
+                : current.general.chatRootOrderByScope,
+          },
+        };
+      });
       setEditingFolderId((current) => (current === folder.id ? null : current));
     },
     [updateSettings]
   );
 
   const moveConversationToFolder = useCallback(
-    (conversationId: string, workspaceId: string, folderId: string | null) => {
-      updateSettings((current) => ({
-        ...current,
-        general: {
-          ...current.general,
-          chatFolders: current.general.chatFolders.map((folder) => {
-            if (folder.workspaceId !== workspaceId) {
-              return folder;
-            }
-            const withoutConversation = folder.conversationIds.filter(
-              (id) => id !== conversationId
-            );
-            return {
-              ...folder,
-              conversationIds:
-                folder.id === folderId
-                  ? [...withoutConversation, conversationId]
-                  : withoutConversation,
-            };
-          }),
-        },
-      }));
+    (
+      conversationId: string,
+      scopeId: string,
+      folderId: string | null,
+      options?: {
+        targetConversationId?: string | null;
+        placement?: ChatFolderPlacement;
+      }
+    ) => {
+      updateSettings((current) => {
+        const knownRootIds = collectScopeRootConversationIds(scopeId, {
+          includeConversationId: folderId === null ? conversationId : undefined,
+        });
+        return {
+          ...current,
+          general: {
+            ...current.general,
+            chatFolders: moveConversationInChatFolders(current.general.chatFolders, {
+              scopeId,
+              conversationId,
+              folderId,
+              targetConversationId: options?.targetConversationId,
+              placement: options?.placement,
+            }),
+            chatRootOrderByScope: updateRootOrderForMove(current.general.chatRootOrderByScope, {
+              scopeId,
+              conversationId,
+              folderId,
+              targetConversationId: options?.targetConversationId,
+              placement: options?.placement,
+              knownRootIds,
+            }),
+          },
+        };
+      });
     },
-    [updateSettings]
+    [collectScopeRootConversationIds, updateSettings]
   );
 
   const handleConversationDrop = useCallback(
-    (event: ReactDragEvent<HTMLElement>, workspaceId: string, folderId: string | null) => {
+    (
+      event: ReactDragEvent<HTMLElement>,
+      scopeId: string,
+      folderId: string | null,
+      targetConversationId?: string | null
+    ) => {
+      if (draggingFolderId) {
+        return;
+      }
       const conversationId =
         event.dataTransfer.getData(AGENT_RAIL_CONVERSATION_DRAG_TYPE) || draggingConversationId;
       if (!conversationId) {
         return;
       }
+      const source = findRailConversationById(conversationId);
+      if (!source) {
+        return;
+      }
+      const sourceScope = resolveConversationFolderScope(source);
+      if (sourceScope !== scopeId) {
+        return;
+      }
       event.preventDefault();
       event.stopPropagation();
       setDraggingConversationId(null);
-      moveConversationToFolder(conversationId, workspaceId, folderId);
+      let placement: ChatFolderPlacement = "after";
+      if (targetConversationId) {
+        const rect = event.currentTarget.getBoundingClientRect();
+        placement = event.clientY > rect.top + rect.height / 2 ? "after" : "before";
+      }
+      moveConversationToFolder(conversationId, scopeId, folderId, {
+        targetConversationId,
+        placement,
+      });
     },
-    [draggingConversationId, moveConversationToFolder]
+    [
+      draggingConversationId,
+      draggingFolderId,
+      findRailConversationById,
+      moveConversationToFolder,
+      resolveConversationFolderScope,
+    ]
+  );
+
+  const handleFolderDragStart = useCallback(
+    (event: ReactDragEvent<HTMLElement>, folder: ChatFolderState) => {
+      event.dataTransfer.effectAllowed = "move";
+      event.dataTransfer.setData(AGENT_RAIL_FOLDER_DRAG_TYPE, folder.id);
+      event.dataTransfer.setData("text/plain", folder.id);
+      setDraggingFolderId(folder.id);
+    },
+    []
+  );
+
+  const handleFolderDragEnd = useCallback(() => {
+    setDraggingFolderId(null);
+  }, []);
+
+  const handleFolderDropTargetDragOver = useCallback(
+    (event: ReactDragEvent<HTMLElement>) => {
+      if (!draggingFolderId && !draggingConversationId) {
+        return;
+      }
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "move";
+    },
+    [draggingConversationId, draggingFolderId]
+  );
+
+  const handleFolderReorderDrop = useCallback(
+    (event: ReactDragEvent<HTMLElement>, scopeId: string, targetFolderId: string) => {
+      const sourceFolderId =
+        event.dataTransfer.getData(AGENT_RAIL_FOLDER_DRAG_TYPE) || draggingFolderId;
+      if (!sourceFolderId) {
+        if (draggingConversationId) {
+          handleConversationDrop(event, scopeId, targetFolderId);
+        }
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      setDraggingFolderId(null);
+      const rect = event.currentTarget.getBoundingClientRect();
+      const placement: ChatFolderPlacement =
+        event.clientY > rect.top + rect.height / 2 ? "after" : "before";
+      updateSettings((current) => ({
+        ...current,
+        general: {
+          ...current.general,
+          chatFolders: reorderChatFolders(current.general.chatFolders, {
+            scopeId,
+            sourceFolderId,
+            targetFolderId,
+            placement,
+          }),
+        },
+      }));
+    },
+    [draggingConversationId, draggingFolderId, handleConversationDrop, updateSettings]
   );
 
   const beginConversationRename = useCallback(
@@ -1698,12 +1887,17 @@ export function AgentWorkspaceRail() {
       const inPinned = options?.inPinnedSection ?? false;
       const orderedConversations = options?.orderedConversations ?? [conversation];
       const conversationId = conversation.id;
-      const workspaceFolders = settings.general.chatFolders
-        .filter((folder) => folder.workspaceId === conversation.workspaceId)
-        .sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name));
+      const folderScopeId = resolveConversationFolderScope(conversation);
+      const workspaceFolders = getChatFoldersForScope(
+        settings.general.chatFolders,
+        folderScopeId
+      );
       const currentFolder = workspaceFolders.find((folder) =>
         folder.conversationIds.includes(conversationId)
       );
+      const rootLabel = isStandaloneChatFolderScope(folderScopeId)
+        ? "Move to Chats Root"
+        : "Move to Workspace Root";
       const moveItems: WorkbenchMenuItem[] = [
         { type: "sep" },
         {
@@ -1711,7 +1905,7 @@ export function AgentWorkspaceRail() {
           id: "move-new-folder",
           label: "Move to New Folder...",
           onSelect: () =>
-            createFolderForWorkspace(conversation.workspaceId, {
+            createFolderForWorkspace(folderScopeId, {
               conversationId,
             }),
         },
@@ -1720,10 +1914,9 @@ export function AgentWorkspaceRail() {
               {
                 type: "item" as const,
                 id: "move-root",
-                label: "Move to Workspace Root",
+                label: rootLabel,
                 disabled: !currentFolder,
-                onSelect: () =>
-                  moveConversationToFolder(conversationId, conversation.workspaceId, null),
+                onSelect: () => moveConversationToFolder(conversationId, folderScopeId, null),
               },
               ...workspaceFolders.map(
                 (folder): WorkbenchMenuItem => ({
@@ -1732,7 +1925,7 @@ export function AgentWorkspaceRail() {
                   label: `Move to ${folder.name}`,
                   disabled: currentFolder?.id === folder.id,
                   onSelect: () =>
-                    moveConversationToFolder(conversationId, conversation.workspaceId, folder.id),
+                    moveConversationToFolder(conversationId, folderScopeId, folder.id),
                 })
               ),
             ]
@@ -1817,6 +2010,7 @@ export function AgentWorkspaceRail() {
       handleOpenConversationInEditor,
       moveConversationToFolder,
       pinConversation,
+      resolveConversationFolderScope,
       settings.general.chatFolders,
       unpinConversation,
     ]
@@ -1985,6 +2179,85 @@ export function AgentWorkspaceRail() {
 
   const chatsSection: ReactNode = useMemo(() => {
     const isChatsHeaderCollapsed = collapsedWorkspaceIds.has(CHATS_SECTION_WORKSPACE_ID);
+    const chatsFolders = getChatFoldersForScope(
+      settings.general.chatFolders,
+      STANDALONE_CHATS_FOLDER_SCOPE
+    );
+    const { folderConversations, rootConversations } = partitionConversationsByFolders(
+      standaloneChatConversations,
+      chatsFolders,
+      settings.general.chatRootOrderByScope[STANDALONE_CHATS_FOLDER_SCOPE]
+    );
+    const renderConversationRow = (
+      conversation: AgentRailConversationSummary,
+      index: number,
+      folderId: string | null,
+      orderedConversations: AgentRailConversationSummary[]
+    ) => {
+      const chatsRowSection: RailConversationRowSection = {
+        inPinnedSection: false,
+        workspaceId: conversation.workspaceId,
+        folderId,
+        orderedConversations,
+      };
+      const railKey = getRailConversationKey(conversation);
+      return (
+        <AgentConversationRow
+          key={conversation.conversationKey ?? conversation.id}
+          conversation={conversation}
+          rowIndex={index}
+          selected={isConversationChatSelected(conversation)}
+          bulkSelectMode={bulkSelectMode}
+          bulkSelected={bulkSelectMode && bulkSelectedKeys.has(railKey)}
+          editing={renameState?.conversationId === conversation.id}
+          editValue={renameState?.draft}
+          onBeginRename={() => beginConversationRename(conversation)}
+          onEditValueChange={updateConversationRenameDraft}
+          onCommitRename={commitConversationRename}
+          onCancelRename={cancelConversationRename}
+          onSelect={(event) => {
+            if (bulkSelectMode) {
+              handleBulkRowClick(event, conversation, chatsRowSection);
+              return;
+            }
+            handleConversationSelect(conversation);
+          }}
+          onDragStart={bulkSelectMode ? undefined : handleConversationDragStart}
+          onDragEnd={bulkSelectMode ? undefined : handleConversationDragEnd}
+          onDragOver={
+            bulkSelectMode
+              ? undefined
+              : (event) => handleFolderDropTargetDragOver(event)
+          }
+          onDrop={
+            bulkSelectMode
+              ? undefined
+              : (event) =>
+                  handleConversationDrop(
+                    event,
+                    STANDALONE_CHATS_FOLDER_SCOPE,
+                    folderId,
+                    conversation.id
+                  )
+          }
+          onContextMenu={(e, currentConversation) =>
+            handleConversationContextMenu(e, currentConversation, {
+              inPinnedSection: false,
+              folderId,
+              orderedConversations,
+            })
+          }
+          showOverflowMenu={experimentalIpadCustomButtons}
+          onOverflowMenu={(anchor) =>
+            handleConversationOverflowMenu(conversation, anchor, {
+              inPinnedSection: false,
+              folderId,
+              orderedConversations,
+            })
+          }
+        />
+      );
+    };
     return (
       <section className="pb-[12px]">
         <div className="group flex items-center gap-[2px] px-px pb-[4px]">
@@ -2011,6 +2284,15 @@ export function AgentWorkspaceRail() {
           </button>
           <button
             type="button"
+            onClick={() => createFolderForWorkspace(STANDALONE_CHATS_FOLDER_SCOPE)}
+            className="flex size-[var(--d2-rail-control-size)] shrink-0 items-center justify-center rounded-[var(--agent-control-radius)] text-[var(--text-disabled)] opacity-0 transition-colors group-hover:opacity-100 hover:bg-[var(--agent-card-bg)] hover:text-[var(--text-primary)]"
+            aria-label="New chats folder"
+            title="New folder"
+          >
+            <FolderPlus className="size-[12px]" strokeWidth={1.5} />
+          </button>
+          <button
+            type="button"
             onClick={handleNewStandaloneChat}
             className="flex size-[var(--d2-rail-control-size)] shrink-0 items-center justify-center rounded-[var(--agent-control-radius)] text-[var(--text-disabled)] opacity-0 transition-colors group-hover:opacity-100 hover:bg-[var(--agent-card-bg)] hover:text-[var(--text-primary)]"
             aria-label="Start new chat without workspace"
@@ -2020,8 +2302,14 @@ export function AgentWorkspaceRail() {
           </button>
         </div>
         {!isChatsHeaderCollapsed ? (
-          <div className="flex flex-col gap-[2px]">
-            {standaloneChatConversations.length === 0 ? (
+          <div
+            className="flex flex-col gap-[2px]"
+            onDragOver={handleFolderDropTargetDragOver}
+            onDrop={(event) =>
+              handleConversationDrop(event, STANDALONE_CHATS_FOLDER_SCOPE, null)
+            }
+          >
+            {standaloneChatConversations.length === 0 && chatsFolders.length === 0 ? (
               <button
                 type="button"
                 onClick={handleNewStandaloneChat}
@@ -2030,50 +2318,131 @@ export function AgentWorkspaceRail() {
                 New chat without a workspace
               </button>
             ) : (
-              standaloneChatConversations.map((conversation, index) => {
-                const chatsRowSection: RailConversationRowSection = {
-                  inPinnedSection: false,
-                  workspaceId: conversation.workspaceId,
-                  orderedConversations: standaloneChatConversations,
-                };
-                const railKey = getRailConversationKey(conversation);
-                return (
-                  <AgentConversationRow
-                    key={conversation.conversationKey ?? conversation.id}
-                    conversation={conversation}
-                    rowIndex={index}
-                    selected={isConversationChatSelected(conversation)}
-                    bulkSelectMode={bulkSelectMode}
-                    bulkSelected={bulkSelectMode && bulkSelectedKeys.has(railKey)}
-                    editing={renameState?.conversationId === conversation.id}
-                    editValue={renameState?.draft}
-                    onBeginRename={() => beginConversationRename(conversation)}
-                    onEditValueChange={updateConversationRenameDraft}
-                    onCommitRename={commitConversationRename}
-                    onCancelRename={cancelConversationRename}
-                    onSelect={(event) => {
-                      if (bulkSelectMode) {
-                        handleBulkRowClick(event, conversation, chatsRowSection);
-                        return;
+              <>
+                {chatsFolders.map((folder) => {
+                  const isFolderCollapsed = collapsedFolderIds.has(folder.id);
+                  const Icon = getFolderIcon(folder.icon);
+                  const conversationsInFolder = folderConversations.get(folder.id) ?? [];
+                  return (
+                    <div
+                      key={folder.id}
+                      className={`rounded-[var(--agent-control-radius)] ${
+                        draggingConversationId || draggingFolderId === folder.id
+                          ? "bg-[var(--bg-card)]"
+                          : ""
+                      } ${draggingFolderId === folder.id ? "opacity-60" : ""}`}
+                      onDragOver={handleFolderDropTargetDragOver}
+                      onDrop={(event) =>
+                        handleFolderReorderDrop(event, STANDALONE_CHATS_FOLDER_SCOPE, folder.id)
                       }
-                      handleConversationSelect(conversation);
-                    }}
-                    onContextMenu={(e, currentConversation) =>
-                      handleConversationContextMenu(e, currentConversation, {
-                        inPinnedSection: false,
-                        orderedConversations: standaloneChatConversations,
-                      })
-                    }
-                    showOverflowMenu={experimentalIpadCustomButtons}
-                    onOverflowMenu={(anchor) =>
-                      handleConversationOverflowMenu(conversation, anchor, {
-                        inPinnedSection: false,
-                        orderedConversations: standaloneChatConversations,
-                      })
-                    }
-                  />
-                );
-              })
+                    >
+                      <div
+                        draggable
+                        onDragStart={(event) => handleFolderDragStart(event, folder)}
+                        onDragEnd={handleFolderDragEnd}
+                        className="group/folder flex h-[24px] w-full min-w-0 items-center rounded-[var(--agent-control-radius)] text-[var(--text-secondary)] hover:bg-[var(--agent-card-bg)] hover:text-[var(--text-primary)]"
+                        onContextMenu={(event) => handleFolderContextMenu(event, folder)}
+                      >
+                        <button
+                          type="button"
+                          onClick={() => toggleFolderCollapsed(folder.id)}
+                          className="flex h-full min-w-0 flex-1 items-center gap-[6px] px-[9px] text-left"
+                          title={`${folder.name} (${conversationsInFolder.length})`}
+                        >
+                          <ChevronRight
+                            className={`size-[10px] shrink-0 text-[var(--text-disabled)] transition-transform ${
+                              isFolderCollapsed ? "" : "rotate-90"
+                            }`}
+                            strokeWidth={2}
+                          />
+                          <Icon
+                            className="size-[13px] shrink-0"
+                            color={folder.color}
+                            strokeWidth={1.8}
+                          />
+                          <span className="min-w-0 flex-1 truncate font-sans text-[12.5px]">
+                            {folder.name}
+                          </span>
+                          <span className="shrink-0 font-sans text-[10px] text-[var(--text-disabled)]">
+                            {conversationsInFolder.length}
+                          </span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            setEditingFolderId((current) =>
+                              current === folder.id ? null : folder.id
+                            );
+                          }}
+                          className="mr-[3px] flex size-[var(--d2-rail-control-size)] shrink-0 items-center justify-center rounded-[var(--agent-control-radius)] text-[var(--text-disabled)] opacity-0 hover:bg-[var(--bg-card)] hover:text-[var(--text-primary)] group-hover/folder:opacity-100 focus-visible:opacity-100"
+                          title={`Customize ${folder.name}`}
+                          aria-label={`Customize ${folder.name}`}
+                        >
+                          <Settings className="size-[12px]" strokeWidth={1.7} />
+                        </button>
+                      </div>
+                      {editingFolderId === folder.id ? (
+                        <RailIconCustomizePanel
+                          title={folder.name}
+                          icon={folder.icon}
+                          color={folder.color}
+                          showNameField
+                          name={folder.name}
+                          onClose={() => setEditingFolderId(null)}
+                          onUpdate={(patch) =>
+                            updateFolder(folder.id, (current) => ({
+                              ...current,
+                              ...patch,
+                              name:
+                                typeof patch.name === "string"
+                                  ? patch.name.trim().slice(0, 80) || "Folder"
+                                  : current.name,
+                              color:
+                                typeof patch.color === "string" &&
+                                isValidFolderColor(patch.color)
+                                  ? patch.color
+                                  : current.color,
+                            }))
+                          }
+                        />
+                      ) : null}
+                      {!isFolderCollapsed ? (
+                        <div
+                          className="ml-[13px] mt-[2px] flex flex-col gap-[2px] border-l border-[var(--border-subtle)] pl-[5px]"
+                          onDragOver={handleFolderDropTargetDragOver}
+                          onDrop={(event) =>
+                            handleConversationDrop(
+                              event,
+                              STANDALONE_CHATS_FOLDER_SCOPE,
+                              folder.id
+                            )
+                          }
+                        >
+                          {conversationsInFolder.length === 0 ? (
+                            <div className="px-[9px] py-[5px] font-sans text-[12px] text-[var(--text-disabled)]">
+                              Empty folder
+                            </div>
+                          ) : (
+                            conversationsInFolder.map((conversation, index) =>
+                              renderConversationRow(
+                                conversation,
+                                index,
+                                folder.id,
+                                conversationsInFolder
+                              )
+                            )
+                          )}
+                        </div>
+                      ) : null}
+                    </div>
+                  );
+                })}
+                {rootConversations.map((conversation, index) =>
+                  renderConversationRow(conversation, index, null, rootConversations)
+                )}
+              </>
             )}
           </div>
         ) : null}
@@ -2084,20 +2453,37 @@ export function AgentWorkspaceRail() {
     bulkSelectMode,
     bulkSelectedKeys,
     cancelConversationRename,
+    collapsedFolderIds,
     collapsedWorkspaceIds,
     commitConversationRename,
+    createFolderForWorkspace,
+    draggingConversationId,
+    draggingFolderId,
+    editingFolderId,
     experimentalIpadCustomButtons,
     handleBulkRowClick,
     handleConversationContextMenu,
+    handleConversationDragEnd,
+    handleConversationDragStart,
+    handleConversationDrop,
     handleConversationOverflowMenu,
     handleConversationSelect,
+    handleFolderContextMenu,
+    handleFolderDragEnd,
+    handleFolderDragStart,
+    handleFolderDropTargetDragOver,
+    handleFolderReorderDrop,
     handleNewStandaloneChat,
     isConversationChatSelected,
     renameState?.conversationId,
     renameState?.draft,
+    settings.general.chatFolders,
+    settings.general.chatRootOrderByScope,
     standaloneChatConversations,
+    toggleFolderCollapsed,
     toggleWorkspaceCollapsed,
     updateConversationRenameDraft,
+    updateFolder,
   ]);
 
   const workspaceGroupsSection: ReactNode = (
@@ -2135,20 +2521,17 @@ export function AgentWorkspaceRail() {
                       ? machineOptions.find((machine) => machine.id === group.serverId)?.label
                       : null;
                 const isWorkspaceCollapsed = collapsedWorkspaceIds.has(groupKey);
-                const workspaceFolders = settings.general.chatFolders
-                  .filter((folder) => folder.workspaceId === group.workspace.id)
-                  .sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name));
-                const folderIdByConversationId = new Map<string, string>();
-                for (const folder of workspaceFolders) {
-                  for (const conversationId of folder.conversationIds) {
-                    folderIdByConversationId.set(conversationId, folder.id);
-                  }
-                }
-                const conversationsById = new Map(
-                  group.conversations.map((conversation) => [conversation.id, conversation])
+                const workspaceFolders = getChatFoldersForScope(
+                  settings.general.chatFolders,
+                  group.workspace.id
                 );
-                const rootConversations = group.conversations.filter(
-                  (conversation) => !folderIdByConversationId.has(conversation.id)
+                const {
+                  folderConversations,
+                  rootConversations,
+                } = partitionConversationsByFolders(
+                  group.conversations,
+                  workspaceFolders,
+                  settings.general.chatRootOrderByScope[group.workspace.id]
                 );
                 const branchLabel = workspaceBranchLabel(group.workspace.id, group.workspace.root);
                 const workspaceIsGitRepo =
@@ -2247,30 +2630,31 @@ export function AgentWorkspaceRail() {
                   {!isWorkspaceCollapsed ? (
                     <div
                       className="flex flex-col gap-[2px]"
-                      onDragOver={handleConversationDropTargetDragOver}
+                      onDragOver={handleFolderDropTargetDragOver}
                       onDrop={(event) => handleConversationDrop(event, group.workspace.id, null)}
                     >
                       {workspaceFolders.map((folder) => {
                         const isFolderCollapsed = collapsedFolderIds.has(folder.id);
                         const Icon = getFolderIcon(folder.icon);
-                        const folderConversations = folder.conversationIds
-                          .map((conversationId) => conversationsById.get(conversationId))
-                          .filter(
-                            (conversation): conversation is AgentRailConversationSummary =>
-                              Boolean(conversation)
-                          );
+                        const folderConversationList =
+                          folderConversations.get(folder.id) ?? [];
                         return (
                           <div
                             key={folder.id}
                             className={`rounded-[var(--agent-control-radius)] ${
-                              draggingConversationId ? "bg-[var(--bg-card)]" : ""
-                            }`}
-                            onDragOver={handleConversationDropTargetDragOver}
+                              draggingConversationId || draggingFolderId === folder.id
+                                ? "bg-[var(--bg-card)]"
+                                : ""
+                            } ${draggingFolderId === folder.id ? "opacity-60" : ""}`}
+                            onDragOver={handleFolderDropTargetDragOver}
                             onDrop={(event) =>
-                              handleConversationDrop(event, group.workspace.id, folder.id)
+                              handleFolderReorderDrop(event, group.workspace.id, folder.id)
                             }
                           >
                             <div
+                              draggable
+                              onDragStart={(event) => handleFolderDragStart(event, folder)}
+                              onDragEnd={handleFolderDragEnd}
                               className="group/folder flex h-[24px] w-full min-w-0 items-center rounded-[var(--agent-control-radius)] text-[var(--text-secondary)] hover:bg-[var(--agent-card-bg)] hover:text-[var(--text-primary)]"
                               onContextMenu={(event) => handleFolderContextMenu(event, folder)}
                             >
@@ -2278,7 +2662,7 @@ export function AgentWorkspaceRail() {
                                 type="button"
                                 onClick={() => toggleFolderCollapsed(folder.id)}
                                 className="flex h-full min-w-0 flex-1 items-center gap-[6px] px-[9px] text-left"
-                                title={`${folder.name} (${folderConversations.length})`}
+                                title={`${folder.name} (${folderConversationList.length})`}
                               >
                                 <ChevronRight
                                   className={`size-[10px] shrink-0 text-[var(--text-disabled)] transition-transform ${
@@ -2295,7 +2679,7 @@ export function AgentWorkspaceRail() {
                                   {folder.name}
                                 </span>
                                 <span className="shrink-0 font-sans text-[10px] text-[var(--text-disabled)]">
-                                  {folderConversations.length}
+                                  {folderConversationList.length}
                                 </span>
                               </button>
                               <button
@@ -2340,17 +2724,23 @@ export function AgentWorkspaceRail() {
                               />
                             ) : null}
                             {!isFolderCollapsed ? (
-                              <div className="ml-[13px] mt-[2px] flex flex-col gap-[2px] border-l border-[var(--border-subtle)] pl-[5px]">
-                                {folderConversations.length === 0 ? (
+                              <div
+                                className="ml-[13px] mt-[2px] flex flex-col gap-[2px] border-l border-[var(--border-subtle)] pl-[5px]"
+                                onDragOver={handleFolderDropTargetDragOver}
+                                onDrop={(event) =>
+                                  handleConversationDrop(event, group.workspace.id, folder.id)
+                                }
+                              >
+                                {folderConversationList.length === 0 ? (
                                   <div className="px-[9px] py-[5px] font-sans text-[12px] text-[var(--text-disabled)]">
                                     Empty folder
                                   </div>
                                 ) : (
-                                  folderConversations.map((conversation, index) => {
+                                  folderConversationList.map((conversation, index) => {
                                     const folderSection: RailConversationRowSection = {
                                       workspaceId: group.workspace.id,
                                       folderId: folder.id,
-                                      orderedConversations: folderConversations,
+                                      orderedConversations: folderConversationList,
                                     };
                                     const railKey = getRailConversationKey(conversation);
                                     return (
@@ -2381,11 +2771,27 @@ export function AgentWorkspaceRail() {
                                         onDragEnd={
                                           bulkSelectMode ? undefined : handleConversationDragEnd
                                         }
+                                        onDragOver={
+                                          bulkSelectMode
+                                            ? undefined
+                                            : (event) => handleFolderDropTargetDragOver(event)
+                                        }
+                                        onDrop={
+                                          bulkSelectMode
+                                            ? undefined
+                                            : (event) =>
+                                                handleConversationDrop(
+                                                  event,
+                                                  group.workspace.id,
+                                                  folder.id,
+                                                  conversation.id
+                                                )
+                                        }
                                         onContextMenu={(e, currentConversation) =>
                                           handleConversationContextMenu(e, currentConversation, {
                                             inPinnedSection: false,
                                             folderId: folder.id,
-                                            orderedConversations: folderConversations,
+                                            orderedConversations: folderConversationList,
                                           })
                                         }
                                         showOverflowMenu={experimentalIpadCustomButtons}
@@ -2393,7 +2799,7 @@ export function AgentWorkspaceRail() {
                                           handleConversationOverflowMenu(conversation, anchor, {
                                             inPinnedSection: false,
                                             folderId: folder.id,
-                                            orderedConversations: folderConversations,
+                                            orderedConversations: folderConversationList,
                                           })
                                         }
                                       />
@@ -2438,6 +2844,22 @@ export function AgentWorkspaceRail() {
                                 bulkSelectMode ? undefined : handleConversationDragStart
                               }
                               onDragEnd={bulkSelectMode ? undefined : handleConversationDragEnd}
+                              onDragOver={
+                                bulkSelectMode
+                                  ? undefined
+                                  : (event) => handleFolderDropTargetDragOver(event)
+                              }
+                              onDrop={
+                                bulkSelectMode
+                                  ? undefined
+                                  : (event) =>
+                                      handleConversationDrop(
+                                        event,
+                                        group.workspace.id,
+                                        null,
+                                        conversation.id
+                                      )
+                              }
                               onContextMenu={(e, currentConversation) =>
                                 handleConversationContextMenu(e, currentConversation, {
                                   inPinnedSection: false,

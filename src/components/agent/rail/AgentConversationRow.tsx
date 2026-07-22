@@ -65,6 +65,8 @@ export function AgentConversationRow({
   onSelect,
   onDragStart,
   onDragEnd,
+  onDragOver,
+  onDrop,
   rowIndex,
   selected,
   bulkSelectMode = false,
@@ -88,6 +90,8 @@ export function AgentConversationRow({
   onSelect: (event: MouseEvent<HTMLButtonElement>) => void;
   onDragStart?: (event: DragEvent<HTMLDivElement>, conversation: AgentRailConversationSummary) => void;
   onDragEnd?: (event: DragEvent<HTMLDivElement>, conversation: AgentRailConversationSummary) => void;
+  onDragOver?: (event: DragEvent<HTMLDivElement>, conversation: AgentRailConversationSummary) => void;
+  onDrop?: (event: DragEvent<HTMLDivElement>, conversation: AgentRailConversationSummary) => void;
   rowIndex?: number;
   selected: boolean;
   bulkSelectMode?: boolean;
@@ -198,6 +202,10 @@ export function AgentConversationRow({
         onDragStart ? (event) => onDragStart(event, conversation) : undefined
       }
       onDragEnd={onDragEnd ? (event) => onDragEnd(event, conversation) : undefined}
+      onDragOver={
+        onDragOver ? (event) => onDragOver(event, conversation) : undefined
+      }
+      onDrop={onDrop ? (event) => onDrop(event, conversation) : undefined}
       data-perf="agent-rail-row"
       data-conversation-id={conversation.id}
       data-rail-row-index={rowIndex}
