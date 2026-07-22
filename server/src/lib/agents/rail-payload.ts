@@ -31,6 +31,7 @@ export type AgentRailRepositoryInfo = {
   isGitRepo: boolean;
   repoRoot?: string;
   repoKey?: string;
+  repositoryId?: string;
   currentBranch?: string | null;
   worktreeBaseRoot?: string;
 };
@@ -94,7 +95,7 @@ function summarizeConversation(
   };
 }
 
-async function buildRepositoryInfoByWorkspace(
+export async function buildRepositoryInfoByWorkspace(
   workspaces: WorkspaceRecord[]
 ): Promise<Map<string, AgentRailRepositoryInfo>> {
   const entries = await Promise.all(
@@ -111,6 +112,7 @@ async function buildRepositoryInfoByWorkspace(
           isGitRepo: status.isGitRepo,
           repoRoot: status.repoRoot,
           repoKey: status.repoKey,
+          repositoryId: status.repositoryId,
           currentBranch: status.currentBranch,
           worktreeBaseRoot: worktreeBaseRoot(workspace.root, status.repoRoot),
         };

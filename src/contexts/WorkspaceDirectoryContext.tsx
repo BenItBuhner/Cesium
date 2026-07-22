@@ -11,6 +11,7 @@ import {
 } from "react";
 import { useServerConnections } from "@/components/preferences/ServerConnectionsProvider";
 import { fetchWorkspacesForServer } from "@/lib/server-api";
+import type { AgentRailRepositoryInfo } from "@/lib/agent-types";
 import type { WorkspaceRecord } from "@/lib/types";
 import { isStandaloneChatWorkspace } from "@/lib/types";
 
@@ -19,6 +20,7 @@ export type DirectoryWorkspaceRecord = WorkspaceRecord & {
   serverLabel: string;
   serverBaseUrl: string;
   workspaceKey: string;
+  repository?: AgentRailRepositoryInfo;
 };
 
 type WorkspaceDirectoryContextValue = {
@@ -49,6 +51,10 @@ function sameWorkspaceDirectory(
       a.serverLabel !== b.serverLabel ||
       a.serverBaseUrl !== b.serverBaseUrl ||
       a.workspaceKey !== b.workspaceKey ||
+      a.repository?.repositoryId !== b.repository?.repositoryId ||
+      a.repository?.repoKey !== b.repository?.repoKey ||
+      a.repository?.repoRoot !== b.repository?.repoRoot ||
+      a.repository?.currentBranch !== b.repository?.currentBranch ||
       a.updatedAt !== b.updatedAt ||
       a.lastOpenedAt !== b.lastOpenedAt
     ) {
@@ -89,6 +95,7 @@ export function WorkspaceDirectoryProvider({ children }: { children: ReactNode }
               serverLabel: server.label,
               serverBaseUrl: server.baseUrl,
               workspaceKey: `${server.id}:${workspace.id}`,
+              repository: payload.repositoriesByWorkspaceId?.[workspace.id],
             }));
           } catch {
             return [];

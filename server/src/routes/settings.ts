@@ -256,6 +256,26 @@ settingsRoutes.get("/api/settings/pi-agent", async (c) => {
   return c.json(await getPiAgentSettingsResponse());
 });
 
+settingsRoutes.put("/api/settings/pi-agent", async (c) => {
+  const body = await c.req.json<{
+    agentHome?: "native" | "isolated";
+  }>();
+  if (body.agentHome !== "native" && body.agentHome !== "isolated") {
+    return c.json({ error: "Expected agentHome to be \"native\" or \"isolated\"." }, 400);
+  }
+  try {
+    const { setPiAgentHome } = await import("../lib/pi-agent-settings.js");
+    await setPiAgentHome(body.agentHome);
+    const payload = await getPiAgentSettingsResponse();
+    const refresh = await forceRefreshAllBackendCaches(["pi-agent"]);
+    return c.json({ ok: true, ...payload, refresh });
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "Failed to update Pi Agent settings.";
+    return c.json({ error: message }, 400);
+  }
+});
+
 settingsRoutes.get("/api/settings/pi-agent/oauth/:providerId/start", async (c) => {
   const providerId = c.req.param("providerId");
   try {

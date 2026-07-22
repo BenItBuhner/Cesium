@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { DATA_DIR, readJsonFile, writeJsonFile } from "../persistence.js";
+import { isActiveAgentBackendId } from "../active-agent-backends.js";
 import type { AgentBackendId } from "../agents/types.js";
 import {
   isCloudAgentProviderId,
@@ -17,19 +18,8 @@ import {
 
 const SETTINGS_FILE = path.join(DATA_DIR, "profile", "cloud-agents-settings.json");
 
-const AGENT_BACKEND_IDS: AgentBackendId[] = [
-  "cesium-agent",
-  "cursor-sdk",
-  "opencode-server",
-  "devin-acp",
-  "codex-app-server",
-  "claude-code-sdk",
-  "pi-agent",
-  "google-antigravity-cli",
-];
-
 function isAgentBackendId(value: unknown): value is AgentBackendId {
-  return typeof value === "string" && AGENT_BACKEND_IDS.includes(value as AgentBackendId);
+  return typeof value === "string" && isActiveAgentBackendId(value);
 }
 
 function isExecutionMode(value: unknown): value is CloudAgentExecutionMode {

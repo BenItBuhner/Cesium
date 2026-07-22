@@ -12,6 +12,7 @@ export type AgentBackendId =
   | "cesium-agent"
   | "cursor-sdk"
   | "opencode-server"
+  | "opencode-v2-beta"
   | "devin-acp"
   | "codex-app-server"
   | "claude-code-sdk"
@@ -66,6 +67,16 @@ export type AgentPermissionOptionKind =
   | "reject_once"
   | "reject_always";
 
+/** Shared permission categories across Cesium tool gates and remembered auto-allow rules. */
+export type AgentPermissionCategory =
+  | "editFile"
+  | "terminal"
+  | "mcpCall"
+  | "switchMode";
+
+/** How a remembered permission rule matches future tool calls. */
+export type RememberedAgentPermissionMatchStyle = "exact" | "category";
+
 export type AgentPermissionOption = {
   optionId: string;
   name: string;
@@ -76,7 +87,7 @@ export type AgentPendingPermission = {
   requestId: string;
   requestedAt: number;
   toolCallId?: string;
-  permission?: "editFile" | "terminal" | "mcpCall";
+  permission?: AgentPermissionCategory;
   title?: string;
   detail?: string;
   options: AgentPermissionOption[];
@@ -173,7 +184,7 @@ export type AgentStoredEvent =
       kind: "system_reminder";
       reminderId: string;
       targetMessageId?: string;
-      reason: "mode" | "plan_handoff" | "compaction" | "burn" | "goal" | "other";
+      reason: "mode" | "plan_handoff" | "compaction" | "goal" | "burn" | "other";
       text: string;
       raw?: unknown;
     }
@@ -496,6 +507,8 @@ export type AgentRailRepositoryInfo = {
   isGitRepo: boolean;
   repoRoot?: string;
   repoKey?: string;
+  /** Canonical network remote identity shared by clones on different machines. */
+  repositoryId?: string;
   currentBranch?: string | null;
   worktreeBaseRoot?: string;
 };
@@ -505,6 +518,8 @@ export type AgentConversationGroup = {
   conversations: AgentRailConversationSummary[];
   serverId?: string;
   serverLabel?: string;
+  /** Source machines represented after repository/server regrouping. */
+  serverIds?: string[];
   workspaceKey?: string;
   repositoryKey?: string;
   repository?: AgentRailRepositoryInfo;

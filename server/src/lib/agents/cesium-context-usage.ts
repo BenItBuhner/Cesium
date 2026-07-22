@@ -72,7 +72,7 @@ function rawConversationEventText(event: AgentStoredEvent): string {
     case "user_message":
       return event.hidden ? "" : event.content;
     case "system_reminder":
-      if (event.reason === "burn") return "";
+      if (event.reason === "goal" || event.reason === "burn") return "";
       return event.text;
     case "assistant_message_chunk":
     case "reasoning":

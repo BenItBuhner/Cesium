@@ -33,16 +33,17 @@ const PLAN_FILE_TOOLS = new Set([
   "finalize_plan",
 ]);
 
-const BURN_TOOLS = new Set([
-  "burn_goal_set",
-  "burn_goal_pause",
-  "burn_goal_summarize",
-  "burn_goal_get",
-  "burn_goal_update_plan",
-  "burn_goal_update_progress",
-  "burn_goal_summarize_state",
-  "burn_goal_complete",
-  "burn_goal_block",
+const GOAL_TOOLS = new Set([
+  "goal_set",
+  "goal_pause",
+  "goal_summarize",
+  "goal_get",
+  "goal_update_plan",
+  "goal_update_progress",
+  "goal_summarize_state",
+  "goal_complete",
+  "goal_block",
+  "goal_resume",
 ]);
 
 const WORKFLOW_TOOLS = new Set([
@@ -53,7 +54,8 @@ const WORKFLOW_TOOLS = new Set([
 
 export function normalizeCesiumMode(mode: string | undefined | null): string {
   const normalized = String(mode ?? "agent").trim().toLowerCase();
-  return normalized || "agent";
+  if (!normalized) return "agent";
+  return normalized === "burn" ? "goal" : normalized;
 }
 
 export function isOrchestrationToolName(name: string): boolean {
@@ -64,8 +66,10 @@ export function isPlanFileToolName(name: string): boolean {
   return PLAN_FILE_TOOLS.has(name);
 }
 
-export function isBurnToolName(name: string): boolean {
-  return BURN_TOOLS.has(name);
+export function isGoalToolName(name: string): boolean {
+  const normalized =
+    name.startsWith("burn_goal_") ? `goal_${name.slice("burn_goal_".length)}` : name;
+  return GOAL_TOOLS.has(normalized) || normalized === "goal_resume";
 }
 
 export function isWorkflowToolName(name: string): boolean {
@@ -84,7 +88,15 @@ export function resolveCesiumModeToolPolicy(input: {
   toolName: string;
 }): CesiumToolPolicyDecision {
   const mode = normalizeCesiumMode(input.mode);
-  const name = input.toolName;
+  const name =
+    input.toolName.startsWith("burn_goal_")
+      ? `goal_${input.toolName.slice("burn_goal_".length)}`
+      : input.toolName;
+
+  // Mode switching is available from every mode so the agent can request a change.
+  if (name === "switch_mode") {
+    return { allowed: true };
+  }
 
   if (mode === "ask") {
     if (READ_ONLY_TOOLS.has(name)) {
@@ -109,10 +121,10 @@ export function resolveCesiumModeToolPolicy(input: {
         "Plan mode should write through plan-file tools under .cesium/plans/ and must not implement code changes directly."
       );
     }
-    if (isOrchestrationToolName(name) || isBurnToolName(name) || isWorkflowToolName(name)) {
+    if (isOrchestrationToolName(name) || isGoalToolName(name) || isWorkflowToolName(name)) {
       return policyBlock(
         name,
-        "Plan mode prepares work but does not run Orchestration, Burn, or Workflow execution controls."
+        "Plan mode prepares work but does not run Orchestration, Goal, or Workflow execution controls."
       );
     }
     if (name === "call_mcp_tool" || name === "refresh_mcp_servers") {
@@ -142,14 +154,14 @@ export function resolveCesiumModeToolPolicy(input: {
     );
   }
 
-  if (mode === "burn") {
+  if (mode === "goal") {
     if (isOrchestrationToolName(name)) {
-      return policyBlock(name, "Burn mode executes its own plan and does not mutate the orchestration kanban directly.");
+      return policyBlock(name, "Goal mode executes its own plan and does not mutate the orchestration kanban directly.");
     }
     if (isWorkflowToolName(name)) {
-      return policyBlock(name, "Burn mode executes its own durable goal loop and does not run Workflow scripts.");
+      return policyBlock(name, "Goal mode executes its own durable goal loop and does not run Workflow scripts.");
     }
-    if (name === "burn_goal_complete" || name === "burn_goal_block") {
+    if (name === "goal_complete" || name === "goal_block") {
       return { allowed: true };
     }
     return { allowed: true };
@@ -162,8 +174,8 @@ export function resolveCesiumModeToolPolicy(input: {
         "Workflow mode orchestrates through JavaScript scripts and workflow_* tools, not the orchestration kanban."
       );
     }
-    if (isBurnToolName(name)) {
-      return policyBlock(name, "Workflow mode uses workflow_* tools instead of Burn goal controls.");
+    if (isGoalToolName(name)) {
+      return policyBlock(name, "Workflow mode uses workflow_* tools instead of Goal controls.");
     }
     return { allowed: true };
   }
@@ -171,8 +183,8 @@ export function resolveCesiumModeToolPolicy(input: {
   if (isOrchestrationToolName(name)) {
     return policyBlock(name, "Orchestration tools are only available in Orchestration mode.");
   }
-  if (isBurnToolName(name)) {
-    return policyBlock(name, "Burn control tools are only available in Burn mode.");
+  if (isGoalToolName(name)) {
+    return policyBlock(name, "Goal control tools are only available in Goal mode.");
   }
   if (isWorkflowToolName(name)) {
     return policyBlock(name, "Workflow tools are only available in Workflow mode.");
@@ -185,38 +197,78 @@ export function summarizeCesiumModeToolPolicy(mode: string | undefined | null): 
   switch (normalized) {
     case "ask":
       return {
-        allowed: ["read_file", "grep", "search_history", "read_history_page", "ask_question", "wait", "read-only subagents"],
+        allowed: [
+          "read_file",
+          "grep",
+          "search_history",
+          "read_history_page",
+          "ask_question",
+          "wait",
+          "switch_mode",
+          "read-only subagents",
+        ],
         restricted: ["call_mcp_tool only after an explicit read-only server/tool check"],
         blocked: [
           "edit_file",
           "terminal",
           "plan writes",
           "orchestration mutations",
-          "Burn execution controls",
+          "Goal execution controls",
           "Workflow execution controls",
         ],
       };
     case "plan":
       return {
-        allowed: ["read_file", "grep", "search_history", "read_history_page", "ask_question", "wait", "research subagents", "plan-file tools"],
+        allowed: [
+          "read_file",
+          "grep",
+          "search_history",
+          "read_history_page",
+          "ask_question",
+          "wait",
+          "switch_mode",
+          "research subagents",
+          "plan-file tools",
+        ],
         restricted: ["terminal for investigation only", "MCP calls for research only"],
         blocked: [
           "direct implementation edits outside .cesium/plans/",
           "orchestration mutations",
-          "Burn execution controls",
+          "Goal execution controls",
           "Workflow execution controls",
         ],
       };
     case "orchestration":
       return {
-        allowed: ["orchestration_* tools", "todo", "wait", "ask_question", "history tools", "subagents", "MCP refresh/calls"],
+        allowed: [
+          "orchestration_* tools",
+          "todo",
+          "wait",
+          "ask_question",
+          "history tools",
+          "subagents",
+          "MCP refresh/calls",
+          "switch_mode",
+        ],
         restricted: ["child-agent permissions are controlled by orchestration assignment policy"],
-        blocked: ["direct edit_file", "direct terminal implementation", "Burn execution controls", "Workflow execution controls"],
+        blocked: ["direct edit_file", "direct terminal implementation", "Goal execution controls", "Workflow execution controls"],
       };
-    case "burn":
+    case "goal":
       return {
-        allowed: ["read_file", "grep", "edit_file", "terminal", "todo", "wait", "subagents", "plan-file tools", "Burn goal tools", "MCP tools"],
-        restricted: ["burn_goal_complete requires a final audit; burn_goal_block requires repeated same-blocker evidence"],
+        allowed: [
+          "read_file",
+          "grep",
+          "edit_file",
+          "terminal",
+          "todo",
+          "wait",
+          "switch_mode",
+          "subagents",
+          "plan-file tools",
+          "Goal tools",
+          "MCP tools",
+        ],
+        restricted: ["goal_complete requires a final audit; goal_block requires repeated same-blocker evidence"],
         blocked: ["orchestration kanban mutations", "Workflow execution controls"],
       };
     case "workflow":
@@ -231,6 +283,7 @@ export function summarizeCesiumModeToolPolicy(mode: string | undefined | null): 
           "terminal",
           "todo",
           "wait",
+          "switch_mode",
           "subagents",
           "MCP tools",
         ],
@@ -238,13 +291,25 @@ export function summarizeCesiumModeToolPolicy(mode: string | undefined | null): 
           "Prefer encoding fan-out/verify loops in workflow scripts instead of long parent-turn tool chains",
           "agent() results stay in script variables; only return the final synthesized value to the user",
         ],
-        blocked: ["orchestration kanban mutations", "Burn execution controls"],
+        blocked: ["orchestration kanban mutations", "Goal execution controls"],
       };
     default:
       return {
-        allowed: ["read_file", "grep", "edit_file", "terminal", "todo", "wait", "ask_question", "subagents", "history tools", "MCP tools"],
+        allowed: [
+          "read_file",
+          "grep",
+          "edit_file",
+          "terminal",
+          "todo",
+          "wait",
+          "ask_question",
+          "switch_mode",
+          "subagents",
+          "history tools",
+          "MCP tools",
+        ],
         restricted: ["plan-file tools only for explicit plan creation or handoff"],
-        blocked: ["orchestration_* tools", "Burn execution controls", "Workflow execution controls"],
+        blocked: ["orchestration_* tools", "Goal execution controls", "Workflow execution controls"],
       };
   }
 }

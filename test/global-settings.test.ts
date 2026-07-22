@@ -38,10 +38,12 @@ describe("global settings", () => {
       visibleServerIds: [],
       hiddenServerIds: [],
       showIcons: true,
+      sectionOrder: ["pinned", "chats", "workspaces"],
+      hiddenSections: [],
     });
   });
 
-  test("migrates legacy environment group-by to workspace", () => {
+  test("preserves machine group-by", () => {
     const base = createDefaultGlobalSettings();
     const settings = normalizeLoadedGlobalSettings({
       ...base,
@@ -53,7 +55,7 @@ describe("global settings", () => {
         },
       },
     });
-    assert.equal(settings.general.agentRail.groupBy, "workspace");
+    assert.equal(settings.general.agentRail.groupBy, "server");
   });
 
   test("drops retired harness ids from model toggle settings", () => {
@@ -101,6 +103,20 @@ describe("global settings", () => {
       visibleServerIds: [],
       hiddenServerIds: ["server-b"],
       showIcons: true,
+      sectionOrder: ["pinned", "chats", "workspaces"],
+      hiddenSections: [],
     });
+  });
+
+  test("normalizes machine workspace sorting", () => {
+    const base = createDefaultGlobalSettings();
+    const settings = normalizeLoadedGlobalSettings({
+      ...base,
+      general: {
+        ...base.general,
+        workspaceSortMode: "machine",
+      },
+    });
+    assert.equal(settings.general.workspaceSortMode, "machine");
   });
 });

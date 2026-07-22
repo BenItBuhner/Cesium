@@ -38,12 +38,14 @@ const FILTER_TOGGLE_LABELS: Record<AgentRailFilterToggleKey, string> = {
 const WORKSPACE_SORT_OPTIONS: Array<{ value: WorkspaceSortMode; label: string }> = [
   { value: "recent", label: "Recently opened" },
   { value: "alphabetical", label: "Alphabetical" },
+  { value: "machine", label: "Machine" },
   { value: "custom", label: "Custom order" },
 ];
 
 const GROUP_BY_OPTIONS: Array<{ value: AgentRailGroupByMode; label: string }> = [
   { value: "workspace", label: "Workspace" },
   { value: "repository", label: "Repository" },
+  { value: "server", label: "Machine" },
   { value: "updated", label: "Updated" },
   { value: "status", label: "Status" },
 ];
@@ -62,6 +64,9 @@ type AgentRailFilterMenuPortalProps = {
   resetWorkspaceCustomOrder: () => void;
   groupBy: AgentRailGroupByMode;
   setGroupBy: (mode: AgentRailGroupByMode) => void;
+  machines: Array<{ id: string; label: string }>;
+  hiddenMachineIds: string[];
+  setMachineVisible: (serverId: string, visible: boolean) => void;
   showIcons: boolean;
   setShowIcons: (value: boolean) => void;
   sectionOrder: AgentRailSectionId[];
@@ -90,6 +95,9 @@ export function AgentRailFilterMenuPortal({
   resetWorkspaceCustomOrder,
   groupBy,
   setGroupBy,
+  machines,
+  hiddenMachineIds,
+  setMachineVisible,
   showIcons,
   setShowIcons,
   sectionOrder,
@@ -191,6 +199,39 @@ export function AgentRailFilterMenuPortal({
         ))}
       </div>
       <div className={popoverMenuSeparatorClass} />
+      {machines.length > 1 ? (
+        <>
+          <div className={`${popoverMenuSectionLabelClass} flex items-center justify-between`}>
+            <span>Machines</span>
+            <button
+              type="button"
+              disabled={hiddenMachineIds.length === 0}
+              onClick={() => {
+                for (const machine of machines) {
+                  setMachineVisible(machine.id, true);
+                }
+              }}
+              className="text-[10px] normal-case tracking-normal text-[var(--accent)] disabled:opacity-35"
+            >
+              Show all
+            </button>
+          </div>
+          <div className="flex flex-col" onPointerDown={(e) => e.stopPropagation()}>
+            {machines.map((machine) => (
+              <label key={machine.id} className={popoverMenuFormRowClass}>
+                <input
+                  type="checkbox"
+                  checked={!hiddenMachineIds.includes(machine.id)}
+                  onChange={(event) => setMachineVisible(machine.id, event.target.checked)}
+                  className="size-[14px] shrink-0 rounded border border-[var(--border-subtle)] accent-[var(--accent)]"
+                />
+                <span className="min-w-0 flex-1 truncate">{machine.label}</span>
+              </label>
+            ))}
+          </div>
+          <div className={popoverMenuSeparatorClass} />
+        </>
+      ) : null}
       <div className={popoverMenuSectionLabelClass}>Sort workspaces</div>
       <div className="flex flex-col" onPointerDown={(e) => e.stopPropagation()}>
         {WORKSPACE_SORT_OPTIONS.map((option) => (

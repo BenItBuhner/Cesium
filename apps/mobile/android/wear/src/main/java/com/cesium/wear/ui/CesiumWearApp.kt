@@ -243,7 +243,7 @@ private fun AgentProgress(projection: WatchAgentProjection) {
         .fillMaxWidth(fraction)
         .height(5.dp)
         .background(
-          if (projection.progressKind == "burn") CesiumWearColors.Danger
+          if (projection.progressKind == "goal") CesiumWearColors.Danger
           else CesiumWearColors.PlanGold
         )
     )

@@ -407,6 +407,7 @@ export type GitWorkspaceStatus = {
   root: string;
   repoRoot?: string;
   repoKey?: string;
+  repositoryId?: string;
   currentBranch?: string | null;
   detached?: boolean;
   dirty?: boolean;
@@ -512,7 +513,6 @@ export type KnownEditorMode =
   | "debug"
   | "ask"
   | "goal"
-  | "burn"
   | "workflow"
   | "orchestration";
 

@@ -18,12 +18,14 @@ describe("Cesium Agent frontend integration", () => {
       "cursor-sdk",
       "codex-app-server",
       "opencode-server",
+      "opencode-v2-beta",
       "devin-acp",
       "claude-code-sdk",
       "pi-agent",
       "google-antigravity-cli",
     ]);
     assert.equal(HARNESS_LABELS["cesium-agent"], "Cesium Agent (Beta)");
+    assert.equal(HARNESS_LABELS["opencode-v2-beta"], "OpenCode v2 Beta");
     assert.equal(HARNESS_LABELS["devin-acp"], "Devin");
     assert.equal(HARNESS_LABELS["google-antigravity-cli"], "Google Antigravity");
   });

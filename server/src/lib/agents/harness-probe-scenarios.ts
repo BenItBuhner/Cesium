@@ -48,6 +48,7 @@ export const HARNESS_PROBE_BACKENDS: AgentBackendId[] = [
   "cesium-agent",
   "codex-app-server",
   "opencode-server",
+  "opencode-v2-beta",
   "cursor-sdk",
   "claude-code-sdk",
   "devin-acp",

@@ -55,7 +55,11 @@ function baseRecord(
   };
 }
 
-function group(wsId: string, conversations: AgentConversationRecord[]): AgentConversationGroup {
+function group(
+  wsId: string,
+  conversations: AgentConversationRecord[],
+  serverId?: string
+): AgentConversationGroup {
   const workspace: WorkspaceRecord = {
     id: wsId,
     name: "W",
@@ -66,6 +70,9 @@ function group(wsId: string, conversations: AgentConversationRecord[]): AgentCon
   };
   return {
     workspace,
+    serverId,
+    serverLabel: serverId,
+    workspaceKey: serverId ? `${serverId}:${wsId}` : undefined,
     conversations: conversations.map((c) => ({
       id: c.id,
       workspaceId: c.workspaceId,
@@ -154,6 +161,21 @@ describe("patchAgentConversationGroups", () => {
     });
     const next = patchAgentConversationGroups([group(ws, [placeholder])], placeholder);
     assert.deepEqual(next[0]!.conversations, []);
+  });
+
+  test("patches only the matching machine when workspace and conversation ids collide", () => {
+    const shared = baseRecord("same-chat", "same-workspace");
+    const next = patchAgentConversationGroups(
+      [
+        group("same-workspace", [shared], "laptop"),
+        group("same-workspace", [shared], "desktop"),
+      ],
+      { ...shared, title: "Desktop title", updatedAt: 300 },
+      "desktop"
+    );
+    assert.equal(next[0]?.conversations[0]?.title, "t-same-chat");
+    assert.equal(next[1]?.conversations[0]?.title, "Desktop title");
+    assert.equal(next[1]?.conversations[0]?.conversationKey, "desktop:same-chat");
   });
 
   test("conversation origin flows into rail summaries", () => {

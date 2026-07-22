@@ -288,7 +288,7 @@ export const orchestrationEvents = pgTable(
   ]
 );
 
-export const burnGoals = pgTable(
+export const goals = pgTable(
   "burn_goals",
   {
     goalId: text("goal_id").primaryKey(),
