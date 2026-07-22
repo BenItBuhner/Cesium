@@ -69,6 +69,7 @@ jobs:
       - name: Setup Gradle cache
         uses: gradle/actions/setup-gradle@v4
         with:
+          cache-read-only: false
           cache-cleanup: on-success
 
       - name: Setup Android SDK
