@@ -381,6 +381,7 @@ settingsRoutes.patch("/api/settings/cesium-agent", async (c) => {
     defaultApiKind?: unknown;
     compression?: Record<string, unknown>;
     orchestration?: Record<string, unknown>;
+    workflow?: Record<string, unknown>;
     modes?: { enabled?: Record<string, boolean> };
     harness?: {
       features?: Record<string, { version?: number | string }>;
@@ -400,6 +401,9 @@ settingsRoutes.patch("/api/settings/cesium-agent", async (c) => {
       : {}),
     ...(body.orchestration
       ? { orchestration: body.orchestration as Partial<CesiumAgentSettings["orchestration"]> }
+      : {}),
+    ...(body.workflow
+      ? { workflow: body.workflow as Partial<CesiumAgentSettings["workflow"]> }
       : {}),
     ...(body.modes
       ? {

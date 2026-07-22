@@ -125,6 +125,10 @@ export type CesiumAgentSettings = {
     /** Prompt the agent to continue when it stops with incomplete todos or open kanban issues. */
     continueWhenIncomplete: boolean;
   };
+  workflow: {
+    /** Default best-effort token budget for Workflow runs when workflow_run omits tokenBudget. */
+    defaultTokenBudget: number;
+  };
   /** Modes exposed by this harness in dropdowns, slash commands, and Shift+Tab. */
   modes: CesiumModeSettings;
   /**
@@ -181,6 +185,7 @@ const CROFAI_PROVIDER_ID = "crofai";
 const CROFAI_PROVIDER_NAME = "CrofAI";
 const CROFAI_BASE_URL = "https://crof.ai/v1";
 export const DEFAULT_CESIUM_CONTEXT_WINDOW = 100_000;
+export const DEFAULT_CESIUM_WORKFLOW_TOKEN_BUDGET = 5_000_000;
 
 const BUILTIN_PROVIDER_KINDS: Record<string, CesiumProviderKind> = {
   openai: "openai-responses",
@@ -606,6 +611,9 @@ function defaultSettings(): CesiumAgentSettings {
     orchestration: {
       continueWhenIncomplete: true,
     },
+    workflow: {
+      defaultTokenBudget: DEFAULT_CESIUM_WORKFLOW_TOKEN_BUDGET,
+    },
     modes: {
       enabled: Object.fromEntries(
         CESIUM_MODE_DEFINITIONS.map((mode) => [mode.id, true])
@@ -656,6 +664,23 @@ function normalizeModeSettings(raw: unknown): CesiumModeSettings {
     normalized.agent = true;
   }
   return { enabled: normalized };
+}
+
+function normalizeWorkflowDefaultTokenBudget(value: unknown): number {
+  const parsed = asNumber(value);
+  return parsed != null && parsed > 0
+    ? Math.floor(parsed)
+    : DEFAULT_CESIUM_WORKFLOW_TOKEN_BUDGET;
+}
+
+function normalizeWorkflowSettings(raw: unknown): CesiumAgentSettings["workflow"] {
+  const defaults = defaultSettings().workflow;
+  const record = asRecord(raw);
+  return {
+    defaultTokenBudget: normalizeWorkflowDefaultTokenBudget(
+      record?.defaultTokenBudget ?? defaults.defaultTokenBudget
+    ),
+  };
 }
 
 /** Provider-reported context windows that are missing or unusable fall back to 100k tokens. */
@@ -789,6 +814,7 @@ function normalizeSettings(raw: unknown): CesiumAgentSettings {
           ? orchestration.continueWhenIncomplete
           : defaults.orchestration.continueWhenIncomplete,
     },
+    workflow: normalizeWorkflowSettings(record.workflow),
     modes: normalizeModeSettings(record.modes),
     harness: normalizeHarnessSettings(record.harness),
     toolPermissions: {
@@ -1045,6 +1071,7 @@ export async function patchCesiumAgentSettings(input: {
   defaultApiKind?: CesiumProviderKind;
   compression?: Partial<CesiumAgentSettings["compression"]>;
   orchestration?: Partial<CesiumAgentSettings["orchestration"]>;
+  workflow?: Partial<CesiumAgentSettings["workflow"]>;
   modes?: {
     enabled?: Partial<Record<CesiumModeId, boolean>>;
   };
@@ -1073,6 +1100,10 @@ export async function patchCesiumAgentSettings(input: {
     orchestration: {
       ...settings.orchestration,
       ...(input.orchestration ?? {}),
+    },
+    workflow: {
+      ...settings.workflow,
+      ...(input.workflow ?? {}),
     },
     modes: normalizeModeSettings({
       enabled: {

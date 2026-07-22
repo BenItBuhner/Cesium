@@ -13,6 +13,12 @@ import {
 import { asRecord, asString, parseJsonArgs, pickFirstString } from "./cesium-coerce.js";
 import { WAIT_MAX_SECONDS } from "./cesium-prompt.js";
 import type { CesiumToolRequest } from "./cesium-types.js";
+import {
+  WORKFLOW_DEFAULT_MAX_AGENTS,
+  WORKFLOW_DEFAULT_MAX_CONCURRENT,
+  WORKFLOW_MAX_AGENTS,
+  WORKFLOW_MAX_CONCURRENT,
+} from "../workflow-types.js";
 
 export type { CesiumToolDefinition, ResolvedCesiumHarness };
 
@@ -348,21 +354,21 @@ const CESIUM_BASE_TOOLS: CesiumToolDefinition[] = [
         },
         tokenBudget: {
           type: "integer",
-          minimum: 0,
+          minimum: 1,
           description:
-            "Optional best-effort run-wide token budget. Reported provider usage is accumulated and the remaining amount limits each child response, but input tokens and concurrent in-flight agents can make final usage exceed it. budget.remaining() is Infinity when omitted.",
+            "Optional positive best-effort run-wide token budget. Omit to use Settings -> Agents -> Cesium Agent -> Workflow default token budget (5,000,000 by default). Cesium accumulates provider-reported usage and passes the remaining amount as a child response target; providers may under-report, omit usage, or exceed requested output caps, so final usage can exceed the target.",
         },
         maxAgents: {
           type: "integer",
           minimum: 1,
-          maximum: 200,
-          description: "Optional agent() call cap for this run (default 50).",
+          maximum: WORKFLOW_MAX_AGENTS,
+          description: `Optional agent() call cap for this run (default ${WORKFLOW_DEFAULT_MAX_AGENTS}).`,
         },
         maxConcurrent: {
           type: "integer",
           minimum: 1,
-          maximum: 16,
-          description: "Optional concurrent agent() cap (default 8, also bounded by CPU count).",
+          maximum: WORKFLOW_MAX_CONCURRENT,
+          description: `Optional concurrent agent() cap for this run (default ${WORKFLOW_DEFAULT_MAX_CONCURRENT}, also bounded by available CPU cores).`,
         },
         resumeFromRunId: {
           type: "string",

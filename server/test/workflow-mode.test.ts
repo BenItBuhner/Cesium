@@ -14,7 +14,11 @@ import {
 } from "../src/lib/agents/workflow-store.js";
 import { DATA_DIR } from "../src/lib/persistence.js";
 import type { WorkspaceRecord } from "../src/lib/workspace-registry.js";
-import { WorkflowAgentSpawnError } from "../src/lib/agents/workflow-types.js";
+import {
+  WORKFLOW_DEFAULT_MAX_AGENTS,
+  WORKFLOW_DEFAULT_MAX_CONCURRENT,
+  WorkflowAgentSpawnError,
+} from "../src/lib/agents/workflow-types.js";
 import {
   resolveCesiumModeToolPolicy,
   summarizeCesiumModeToolPolicy,
@@ -62,6 +66,38 @@ test("compileWorkflowScript requires pure meta literal first", () => {
     `export const meta = { name: "x", description: "y", phases: [] };\nconst t = Date.now();\nreturn t;`
   );
   assert.equal(nondet.ok, false);
+});
+
+test("workflow run records default to Claude-parity runtime caps", () => {
+  const workspace: WorkspaceRecord = {
+    id: "ws-workflow-default-caps",
+    root: "/tmp",
+    name: "Workflow defaults",
+    createdAt: 1,
+    updatedAt: 1,
+    lastOpenedAt: 1,
+  };
+  const defaults = createWorkflowRunRecord({
+    workspace,
+    conversationId: "conv-default-caps",
+    script: SAMPLE_SCRIPT,
+    scriptPath: "/tmp/default-caps.js",
+  });
+  assert.equal(WORKFLOW_DEFAULT_MAX_AGENTS, 1000);
+  assert.equal(WORKFLOW_DEFAULT_MAX_CONCURRENT, 16);
+  assert.equal(defaults.maxAgents, 1000);
+  assert.equal(defaults.maxConcurrent, 16);
+
+  const clamped = createWorkflowRunRecord({
+    workspace,
+    conversationId: "conv-clamped-caps",
+    script: SAMPLE_SCRIPT,
+    scriptPath: "/tmp/clamped-caps.js",
+    maxAgents: 10_000,
+    maxConcurrent: 100,
+  });
+  assert.equal(clamped.maxAgents, 1000);
+  assert.equal(clamped.maxConcurrent, 16);
 });
 
 test("executeWorkflowRun fans out agent calls and returns synthesized value", async () => {

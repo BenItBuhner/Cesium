@@ -1321,6 +1321,32 @@ function CesiumAgentHarnessSettings() {
                   disabled={busy}
                 />
               </label>
+              <label className="flex flex-col gap-[5px]">
+                <SettingsFieldLabel>Workflow default token budget</SettingsFieldLabel>
+                <input
+                  type="number"
+                  min={1}
+                  step={1000}
+                  className="rounded-[var(--radius-tab)] border border-[var(--border-subtle)] bg-[var(--bg-primary)] px-[10px] py-[7px] font-mono text-[12px] text-[var(--text-primary)]"
+                  value={settings.workflow.defaultTokenBudget}
+                  disabled={busy}
+                  onChange={(event) => {
+                    const defaultTokenBudget = Number(event.target.value);
+                    if (!Number.isFinite(defaultTokenBudget) || defaultTokenBudget <= 0) return;
+                    void patchSettings({
+                      workflow: {
+                        ...settings.workflow,
+                        defaultTokenBudget,
+                      },
+                    });
+                  }}
+                />
+                <span className="font-sans text-[11px] leading-relaxed text-[var(--text-secondary)]">
+                  Official-style omitted budgets are unrestricted. Cesium instead uses this high
+                  default best-effort target when workflow_run omits tokenBudget; explicit positive
+                  tokenBudget values still override it for a run.
+                </span>
+              </label>
             </div>
           </HarnessDetailBlock>
 

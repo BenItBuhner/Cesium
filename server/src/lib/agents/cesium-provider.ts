@@ -2770,12 +2770,15 @@ class CesiumSessionHandle implements AgentSessionHandle {
       const phases = compiled?.ok
         ? compiled.meta.phases.map((phase) => phase.title)
         : [];
+      const tokenBudget = asNumber(args.tokenBudget);
       return [
         `Launch workflow: ${name}`,
         phases.length > 0 ? `Phases: ${phases.join(" → ")}` : null,
         `Agent limit: ${asNumber(args.maxAgents) ?? "default"}`,
         `Concurrency: ${asNumber(args.maxConcurrent) ?? "default"}`,
-        `Token budget: ${asNumber(args.tokenBudget) ?? "not set"}`,
+        `Token budget: ${
+          tokenBudget != null && tokenBudget > 0 ? tokenBudget : "configured default"
+        }`,
         `Execution: ${args.wait === false ? "background" : "wait for completion"}`,
       ]
         .filter((line): line is string => Boolean(line))
@@ -3751,7 +3754,12 @@ class CesiumSessionHandle implements AgentSessionHandle {
     }
 
     const wait = args.wait !== false;
-    const tokenBudget = asNumber(args.tokenBudget);
+    const settings = await getCesiumAgentSettings();
+    const explicitTokenBudget = asNumber(args.tokenBudget);
+    const tokenBudget =
+      explicitTokenBudget != null && explicitTokenBudget > 0
+        ? Math.floor(explicitTokenBudget)
+        : settings.workflow.defaultTokenBudget;
     const maxAgents = asNumber(args.maxAgents);
     const maxConcurrent = asNumber(args.maxConcurrent);
     const resumeFromRunId = asString(args.resumeFromRunId);
@@ -3762,7 +3770,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
       script,
       scriptPath: scriptPathArg ?? "",
       args: args.args,
-      tokenBudget: tokenBudget ?? null,
+      tokenBudget,
       maxAgents: maxAgents ?? undefined,
       maxConcurrent: maxConcurrent ?? undefined,
       resumeFromRunId: resumeFromRunId ?? undefined,

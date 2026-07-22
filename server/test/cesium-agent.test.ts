@@ -44,6 +44,7 @@ const [
     refreshCesiumModelCatalog,
     normalizeCesiumContextWindow,
     DEFAULT_CESIUM_CONTEXT_WINDOW,
+    DEFAULT_CESIUM_WORKFLOW_TOKEN_BUDGET,
     findCesiumModelCatalogEntry,
     resolveCesiumModelContextWindow,
     createCesiumAgentConfigOptions,
@@ -182,14 +183,76 @@ test("workflow_run requires the dedicated workflow launch permission", () => {
 
 test("workflow_run describes tokenBudget as best-effort accounting", () => {
   const workflowRun = resolveCesiumTools().tools.find((tool) => tool.name === "workflow_run");
-  const tokenBudget = (
+  const properties = (
     workflowRun?.parameters as {
-      properties?: { tokenBudget?: { description?: string } };
+      properties?: {
+        tokenBudget?: { description?: string; minimum?: number };
+        maxAgents?: { description?: string; maximum?: number };
+        maxConcurrent?: { description?: string; maximum?: number };
+      };
     }
-  ).properties?.tokenBudget;
+  ).properties;
+  const tokenBudget = properties?.tokenBudget;
   assert.match(tokenBudget?.description ?? "", /best-effort run-wide token budget/i);
-  assert.match(tokenBudget?.description ?? "", /can make final usage exceed it/i);
+  assert.match(tokenBudget?.description ?? "", /Omit to use Settings/i);
+  assert.match(tokenBudget?.description ?? "", /provider-reported usage/i);
+  assert.match(tokenBudget?.description ?? "", /final usage can exceed the target/i);
+  assert.equal(tokenBudget?.minimum, 1);
   assert.doesNotMatch(tokenBudget?.description ?? "", /hard token ceiling/i);
+  assert.doesNotMatch(tokenBudget?.description ?? "", /Infinity when omitted/i);
+  assert.equal(properties?.maxAgents?.maximum, 1000);
+  assert.match(properties?.maxAgents?.description ?? "", /default 1000/i);
+  assert.equal(properties?.maxConcurrent?.maximum, 16);
+  assert.match(properties?.maxConcurrent?.description ?? "", /default 16/i);
+});
+
+test("workflow_run uses configured default token budget unless a positive override is provided", async () => {
+  await patchCesiumAgentSettings({
+    workflow: { defaultTokenBudget: 777 },
+    toolPermissions: { workflowLaunch: "allow" },
+  });
+  try {
+    const { handle } = await startCesiumTestSession("cesium-workflow-default-budget");
+    const privateHandle = handle as unknown as {
+      executeTool(
+        request: { id: string; name: string; arguments: Record<string, unknown> },
+        options: { suppressTranscript: boolean }
+      ): Promise<string>;
+    };
+    const script = `export const meta = { name: "budget-total", description: "Return budget" };
+return budget.total;`;
+
+    const omitted = JSON.parse(
+      await privateHandle.executeTool(
+        {
+          id: "workflow-budget-default",
+          name: "workflow_run",
+          arguments: { script },
+        },
+        { suppressTranscript: true }
+      )
+    ) as { tokenBudget?: number; returnValue?: unknown };
+    assert.equal(omitted.tokenBudget, 777);
+    assert.equal(omitted.returnValue, 777);
+
+    const explicit = JSON.parse(
+      await privateHandle.executeTool(
+        {
+          id: "workflow-budget-explicit",
+          name: "workflow_run",
+          arguments: { script, tokenBudget: 25 },
+        },
+        { suppressTranscript: true }
+      )
+    ) as { tokenBudget?: number; returnValue?: unknown };
+    assert.equal(explicit.tokenBudget, 25);
+    assert.equal(explicit.returnValue, 25);
+  } finally {
+    await patchCesiumAgentSettings({
+      workflow: { defaultTokenBudget: DEFAULT_CESIUM_WORKFLOW_TOKEN_BUDGET },
+      toolPermissions: { workflowLaunch: "ask" },
+    });
+  }
 });
 
 test("workflow child tool execution suppresses transcript events but preserves permissions", async () => {
@@ -1754,6 +1817,12 @@ test("default Cesium orchestration settings continue when work remains", async (
   assert.equal(settings.orchestration.continueWhenIncomplete, true);
 });
 
+test("default Cesium workflow settings use the high token budget target", async () => {
+  const settings = await getCesiumAgentSettingsPublic();
+  assert.equal(DEFAULT_CESIUM_WORKFLOW_TOKEN_BUDGET, 5_000_000);
+  assert.equal(settings.workflow.defaultTokenBudget, DEFAULT_CESIUM_WORKFLOW_TOKEN_BUDGET);
+});
+
 test("patchCesiumAgentSettings persists orchestration continue toggle", async () => {
   const patched = await patchCesiumAgentSettings({
     orchestration: { continueWhenIncomplete: false },
@@ -1762,6 +1831,33 @@ test("patchCesiumAgentSettings persists orchestration continue toggle", async ()
   await patchCesiumAgentSettings({
     orchestration: { continueWhenIncomplete: true },
   });
+});
+
+test("patchCesiumAgentSettings persists workflow default token budget", async () => {
+  const patched = await patchCesiumAgentSettings({
+    workflow: { defaultTokenBudget: 123_456 },
+  });
+  assert.equal(patched.workflow.defaultTokenBudget, 123_456);
+  await patchCesiumAgentSettings({
+    workflow: { defaultTokenBudget: DEFAULT_CESIUM_WORKFLOW_TOKEN_BUDGET },
+  });
+});
+
+test("legacy Cesium settings without workflow normalize to the high default", async () => {
+  const fs = await import("node:fs/promises");
+  const settingsFile = path.join(TEST_DATA_DIR, "profile", "cesium-agent-settings.json");
+  await fs.mkdir(path.dirname(settingsFile), { recursive: true });
+  await fs.writeFile(
+    settingsFile,
+    JSON.stringify({
+      schemaVersion: 1,
+      updatedAt: 1,
+      workflow: { defaultTokenBudget: 0 },
+    }),
+    "utf8"
+  );
+  const settings = await getCesiumAgentSettingsPublic();
+  assert.equal(settings.workflow.defaultTokenBudget, DEFAULT_CESIUM_WORKFLOW_TOKEN_BUDGET);
 });
 
 test("normalizeCesiumContextWindow defaults invalid provider values to 100k", () => {

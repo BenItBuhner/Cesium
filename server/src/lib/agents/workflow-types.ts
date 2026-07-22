@@ -88,7 +88,7 @@ export type WorkflowAgentSpawnRequest = {
   schema?: Record<string, unknown>;
   model?: string;
   effort?: string;
-  /** Remaining best-effort token budget available to this child invocation. */
+  /** Remaining provider-reported best-effort token budget available to this child invocation. */
   tokenBudget?: number;
   /** Optional lifecycle signal for callers that can cancel an active child request. */
   signal?: AbortSignal;
@@ -132,8 +132,10 @@ export class WorkflowAgentSpawnError extends Error {
   }
 }
 
-export const WORKFLOW_DEFAULT_MAX_AGENTS = 50;
-export const WORKFLOW_DEFAULT_MAX_CONCURRENT = 8;
+export const WORKFLOW_MAX_AGENTS = 1000;
+export const WORKFLOW_MAX_CONCURRENT = 16;
+export const WORKFLOW_DEFAULT_MAX_AGENTS = WORKFLOW_MAX_AGENTS;
+export const WORKFLOW_DEFAULT_MAX_CONCURRENT = WORKFLOW_MAX_CONCURRENT;
 export const WORKFLOW_LOG_LIMIT = 200;
 export const WORKFLOW_JOURNAL_LIMIT = 500;
 

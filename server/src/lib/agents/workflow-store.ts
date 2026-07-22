@@ -7,6 +7,8 @@ import type { WorkspaceRecord } from "../workspace-registry.js";
 import {
   WORKFLOW_DEFAULT_MAX_AGENTS,
   WORKFLOW_DEFAULT_MAX_CONCURRENT,
+  WORKFLOW_MAX_AGENTS,
+  WORKFLOW_MAX_CONCURRENT,
   WORKFLOW_JOURNAL_LIMIT,
   WORKFLOW_LOG_LIMIT,
   createEmptyWorkflowMeta,
@@ -192,6 +194,14 @@ export function createWorkflowRunRecord(input: {
   resumeFromRunId?: string;
 }): WorkflowRunRecord {
   const now = nowMs();
+  const maxAgents =
+    typeof input.maxAgents === "number" && Number.isFinite(input.maxAgents)
+      ? Math.min(WORKFLOW_MAX_AGENTS, Math.max(1, Math.floor(input.maxAgents)))
+      : WORKFLOW_DEFAULT_MAX_AGENTS;
+  const maxConcurrent =
+    typeof input.maxConcurrent === "number" && Number.isFinite(input.maxConcurrent)
+      ? Math.min(WORKFLOW_MAX_CONCURRENT, Math.max(1, Math.floor(input.maxConcurrent)))
+      : WORKFLOW_DEFAULT_MAX_CONCURRENT;
   return {
     schemaVersion: 1,
     runId: randomUUID(),
@@ -207,8 +217,8 @@ export function createWorkflowRunRecord(input: {
         ? Math.max(0, Math.floor(input.tokenBudget))
         : null,
     tokensUsed: 0,
-    maxAgents: input.maxAgents ?? WORKFLOW_DEFAULT_MAX_AGENTS,
-    maxConcurrent: input.maxConcurrent ?? WORKFLOW_DEFAULT_MAX_CONCURRENT,
+    maxAgents,
+    maxConcurrent,
     agentsUsed: 0,
     currentPhase: null,
     agents: [],

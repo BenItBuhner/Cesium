@@ -1,4 +1,5 @@
 import { normalizeCesiumToolResultForModel } from "./cesium-history.js";
+import { DEFAULT_MAX_OUTPUT_TOKENS } from "./cesium-prompt.js";
 import type { CesiumToolDefinition } from "./cesium-tools.js";
 import type {
   CesiumAdapterResult,
@@ -120,7 +121,9 @@ export async function runCesiumWorkflowChild(input: {
       result = await input.complete({
         messages,
         tools,
-        ...(remainingTokens !== undefined ? { maxOutputTokens: remainingTokens } : {}),
+        ...(remainingTokens !== undefined
+          ? { maxOutputTokens: Math.min(remainingTokens, DEFAULT_MAX_OUTPUT_TOKENS) }
+          : {}),
         signal: input.signal,
       });
     } catch (error) {
@@ -143,7 +146,7 @@ export async function runCesiumWorkflowChild(input: {
       result.usage?.outputTokens === undefined
     ) {
       throw new WorkflowAgentSpawnError(
-        "Workflow child provider did not report token usage, so its configured token budget cannot be enforced.",
+        "Workflow child provider did not report token usage, so Cesium cannot account for its best-effort token budget.",
         tokensUsed
       );
     }

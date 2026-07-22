@@ -1809,6 +1809,9 @@ export type CesiumAgentSettingsPayload = {
   orchestration: {
     continueWhenIncomplete: boolean;
   };
+  workflow: {
+    defaultTokenBudget: number;
+  };
   modes: {
     enabled: Record<
       "agent" | "plan" | "orchestration" | "goal" | "workflow" | "ask",
@@ -1850,6 +1853,7 @@ export type CesiumAgentSettingsPayload = {
     terminal: "ask" | "allow" | "deny";
     mcpCall: "ask" | "allow" | "deny";
     switchMode: "ask" | "allow" | "deny";
+    workflowLaunch: "ask" | "allow" | "deny";
   };
   providerKeys: CesiumProviderKeyStatus[];
   customProviders: CesiumCustomProvider[];
@@ -1889,6 +1893,7 @@ export async function patchCesiumAgentSettings(
       | "defaultApiKind"
       | "compression"
       | "orchestration"
+      | "workflow"
       | "modes"
       | "harness"
       | "toolPermissions"
