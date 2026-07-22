@@ -1881,13 +1881,15 @@ export function AgentWorkspaceRail() {
       options?: {
         inPinnedSection?: boolean;
         folderId?: string | null;
+        folderScopeId?: string;
         orderedConversations?: AgentRailConversationSummary[];
       }
     ): WorkbenchMenuItem[] => {
       const inPinned = options?.inPinnedSection ?? false;
       const orderedConversations = options?.orderedConversations ?? [conversation];
       const conversationId = conversation.id;
-      const folderScopeId = resolveConversationFolderScope(conversation);
+      const folderScopeId =
+        options?.folderScopeId ?? resolveConversationFolderScope(conversation);
       const workspaceFolders = getChatFoldersForScope(
         settings.general.chatFolders,
         folderScopeId
@@ -2023,6 +2025,7 @@ export function AgentWorkspaceRail() {
       options?: {
         inPinnedSection?: boolean;
         folderId?: string | null;
+        folderScopeId?: string;
         orderedConversations?: AgentRailConversationSummary[];
       }
     ) => {
@@ -2038,6 +2041,7 @@ export function AgentWorkspaceRail() {
       options?: {
         inPinnedSection?: boolean;
         folderId?: string | null;
+        folderScopeId?: string;
         orderedConversations?: AgentRailConversationSummary[];
       }
     ) => {
@@ -2244,6 +2248,7 @@ export function AgentWorkspaceRail() {
             handleConversationContextMenu(e, currentConversation, {
               inPinnedSection: false,
               folderId,
+              folderScopeId: STANDALONE_CHATS_FOLDER_SCOPE,
               orderedConversations,
             })
           }
@@ -2252,6 +2257,7 @@ export function AgentWorkspaceRail() {
             handleConversationOverflowMenu(conversation, anchor, {
               inPinnedSection: false,
               folderId,
+              folderScopeId: STANDALONE_CHATS_FOLDER_SCOPE,
               orderedConversations,
             })
           }
