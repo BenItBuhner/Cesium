@@ -272,6 +272,26 @@ const STATIC_SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
   ),
   row("servers", "active-chat", "Active chat server", "New chats and workspace actions."),
   row("servers", "connected-runtimes", "Connected runtimes", "Saved servers online"),
+  section("servers", "public-access-section", "Public access", "share expose tunnel remote link"),
+  row(
+    "servers",
+    "public-access",
+    "Share this backend",
+    "Enable a secure public tunnel for this machine.",
+    ["remote access", "electron", "laptop"]
+  ),
+  row(
+    "servers",
+    "stable-link",
+    "Permanent connection link",
+    "Copy the stable Cesium link that follows tunnel changes."
+  ),
+  row(
+    "servers",
+    "server-credentials",
+    "Connection credentials",
+    "Copy or rotate public server sign-in credentials."
+  ),
   section("servers", "saved", "Saved servers"),
 
   // —— Beta ——

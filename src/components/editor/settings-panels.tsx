@@ -26,6 +26,7 @@ import {
 import { VerticalFadedScroll } from "@/components/chat/VerticalFadedScroll";
 import { HardwareAwareTextInput } from "@/components/input/HardwareAwareTextField";
 import { DefaultServerSettingsBanner } from "@/components/preferences/DefaultServerSettingsBanner";
+import { PublicAccessSettings } from "@/components/preferences/PublicAccessSettings";
 import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
 import { ServerConnectionsManager } from "@/components/preferences/ServerConnectionsManager";
 import { useServerConnections } from "@/components/preferences/ServerConnectionsProvider";
@@ -1871,6 +1872,7 @@ export function ServerConnectionsSettingsPanel() {
           border={false}
         />
       </SettingsSection>
+      <PublicAccessSettings serverBaseUrl={activeServer.baseUrl} />
       <SettingsSection title="Saved servers" bordered={false}>
         <ServerConnectionsManager
           onActivate={(serverId) => {
