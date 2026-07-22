@@ -69,7 +69,7 @@ export const HARNESS_PLUGIN_CAPABILITIES: Record<AgentBackendId, AgentPluginHarn
     promptSkills: true,
     attachment: "prompt-only",
     notes:
-      "Pi Agent does not currently accept Cesium-managed native MCP attachment. Plugin skills and MCP guidance are injected into the prompt only — tools will not run natively across this harness.",
+      "Pi loads its own packages/extensions/skills from the configured agent home (~/.pi/agent by default). Cesium-managed plugin MCP is prompt-only — use Pi packages or CLI tools for native Pi capabilities.",
   },
 };
 
