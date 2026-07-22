@@ -20,7 +20,7 @@ import {
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 
 const cardClass =
-  "rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-[var(--bg-card)] p-[10px] shadow-sm";
+  "rounded-[var(--radius-card,var(--radius-tab))] border border-[var(--border-card)] bg-[var(--bg-card)] p-[10px] shadow-sm";
 const smallButtonClass =
   "rounded-[var(--radius-tab)] border border-[var(--border-card)] px-[8px] py-[4px] text-[11px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-panel)] hover:text-[var(--text-primary)]";
 
@@ -35,14 +35,39 @@ function formatTime(value: number): string {
   }
 }
 
-function nextColumn(columnId: OrchestrationColumnId): OrchestrationColumnId {
-  const index = ORCHESTRATION_COLUMNS.findIndex((column) => column.id === columnId);
-  return ORCHESTRATION_COLUMNS[Math.min(index + 1, ORCHESTRATION_COLUMNS.length - 1)]!.id;
+const WORKFLOW_COLUMNS: OrchestrationColumnId[] = [
+  "backlog",
+  "ready",
+  "in_progress",
+  "review",
+  "done",
+];
+
+function adjacentWorkflowColumn(
+  columnId: OrchestrationColumnId,
+  direction: -1 | 1
+): OrchestrationColumnId | null {
+  if (columnId === "blocked") {
+    return direction === 1 ? "in_progress" : null;
+  }
+  const index = WORKFLOW_COLUMNS.indexOf(columnId);
+  const next = WORKFLOW_COLUMNS[index + direction];
+  return next ?? null;
 }
 
-function previousColumn(columnId: OrchestrationColumnId): OrchestrationColumnId {
-  const index = ORCHESTRATION_COLUMNS.findIndex((column) => column.id === columnId);
-  return ORCHESTRATION_COLUMNS[Math.max(index - 1, 0)]!.id;
+function moveLabel(columnId: OrchestrationColumnId): string {
+  switch (columnId) {
+    case "ready":
+      return "Move to ready";
+    case "in_progress":
+      return "Start work";
+    case "review":
+      return "Request review";
+    case "done":
+      return "Mark done";
+    default:
+      return `Move to ${columnId.replace("_", " ")}`;
+  }
 }
 
 function IssueCard({
@@ -50,6 +75,7 @@ function IssueCard({
   agents,
   onMove,
   onUpdate,
+  onBlock,
   onDelete,
   onComment,
 }: {
@@ -63,11 +89,14 @@ function IssueCard({
     acceptanceCriteria?: string[];
     blockedReason?: string | null;
   }) => void;
+  onBlock: (blockerExplanation: string) => void;
   onDelete: () => void;
   onComment: (message: string) => void;
 }) {
   const [comment, setComment] = useState("");
   const [editing, setEditing] = useState(false);
+  const [blocking, setBlocking] = useState(false);
+  const [blockerExplanation, setBlockerExplanation] = useState("");
   const [draftTitle, setDraftTitle] = useState(issue.title);
   const [draftDescription, setDraftDescription] = useState(issue.description);
   const [draftPriority, setDraftPriority] = useState<OrchestrationIssuePriority>(
@@ -79,9 +108,8 @@ function IssueCard({
   const [draftBlockedReason, setDraftBlockedReason] = useState(
     issue.blockedReason ?? ""
   );
-  const canMoveLeft = issue.columnId !== ORCHESTRATION_COLUMNS[0]?.id;
-  const canMoveRight =
-    issue.columnId !== ORCHESTRATION_COLUMNS[ORCHESTRATION_COLUMNS.length - 1]?.id;
+  const previous = adjacentWorkflowColumn(issue.columnId, -1);
+  const next = adjacentWorkflowColumn(issue.columnId, 1);
   useEffect(() => {
     if (editing) return;
     setDraftTitle(issue.title);
@@ -204,6 +232,16 @@ function IssueCard({
           ))}
         </ul>
       ) : null}
+      {issue.columnId === "blocked" ? (
+        <div className="mt-[8px] rounded-[var(--radius-tab)] border border-[color-mix(in_srgb,var(--warning,#d8a028)_35%,var(--border-card))] bg-[color-mix(in_srgb,var(--warning,#d8a028)_8%,var(--bg-card))] px-[8px] py-[7px]">
+          <p className="font-sans text-[10px] font-semibold uppercase tracking-[0.05em] text-[var(--warning,#b77b00)]">
+            Why this is blocked
+          </p>
+          <p className="mt-[3px] whitespace-pre-wrap font-sans text-[11px] leading-snug text-[var(--text-secondary)]">
+            {issue.blockedReason || "This issue needs a blocker explanation before work can resume."}
+          </p>
+        </div>
+      ) : null}
       <div className="mt-[10px] flex flex-wrap items-center gap-[6px] font-sans text-[11px] text-[var(--text-disabled)]">
         <span>{agents} agent{agents === 1 ? "" : "s"}</span>
         <span>Verification: {issue.verification.status}</span>
@@ -216,23 +254,62 @@ function IssueCard({
         >
           Edit
         </button>
-        <button
-          type="button"
-          className={smallButtonClass}
-          disabled={!canMoveLeft}
-          onClick={() => onMove(previousColumn(issue.columnId))}
-        >
-          Back
-        </button>
-        <button
-          type="button"
-          className={smallButtonClass}
-          disabled={!canMoveRight}
-          onClick={() => onMove(nextColumn(issue.columnId))}
-        >
-          Advance
-        </button>
+        {previous ? (
+          <button type="button" className={smallButtonClass} onClick={() => onMove(previous)}>
+            Back to {previous.replace("_", " ")}
+          </button>
+        ) : null}
+        {next ? (
+          <button type="button" className={smallButtonClass} onClick={() => onMove(next)}>
+            {issue.columnId === "blocked" ? "Resume work" : moveLabel(next)}
+          </button>
+        ) : null}
+        {issue.columnId !== "blocked" && issue.columnId !== "done" ? (
+          <button
+            type="button"
+            className={smallButtonClass}
+            onClick={() => {
+              setBlockerExplanation("");
+              setBlocking(true);
+            }}
+          >
+            Block
+          </button>
+        ) : null}
       </div>
+      {blocking ? (
+        <form
+          className="mt-[8px] rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-[var(--bg-panel)] p-[8px]"
+          onSubmit={(event) => {
+            event.preventDefault();
+            const explanation = blockerExplanation.trim();
+            if (!explanation) return;
+            onBlock(explanation);
+            setBlocking(false);
+            setBlockerExplanation("");
+          }}
+        >
+          <label className="font-sans text-[11px] font-medium text-[var(--text-primary)]">
+            What is blocking progress?
+          </label>
+          <textarea
+            autoFocus
+            value={blockerExplanation}
+            onChange={(event) => setBlockerExplanation(event.target.value)}
+            rows={2}
+            placeholder="Describe the blocker and what is needed to resume"
+            className="mt-[6px] w-full resize-none rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-[var(--bg-main)] px-[8px] py-[5px] font-sans text-[12px] text-[var(--text-primary)] outline-none placeholder:text-[var(--text-disabled)] focus:border-[var(--accent)]"
+          />
+          <div className="mt-[6px] flex gap-[6px]">
+            <button type="submit" className={smallButtonClass}>
+              Mark blocked
+            </button>
+            <button type="button" className={smallButtonClass} onClick={() => setBlocking(false)}>
+              Cancel
+            </button>
+          </div>
+        </form>
+      ) : null}
       <form
         className="mt-[10px] flex gap-[6px]"
         onSubmit={(event) => {
@@ -400,6 +477,16 @@ export function KanbanBoardView({ boardId }: { boardId: string }) {
                           .then(({ snapshot: next }) => setSnapshot(next))
                           .catch((err) =>
                             setError(err instanceof Error ? err.message : "Update failed.")
+                          );
+                      }}
+                      onBlock={(blockerExplanation) => {
+                        patchOrchestrationIssue(boardId, issue.id, {
+                          columnId: "blocked",
+                          blockerExplanation,
+                        })
+                          .then(({ snapshot: next }) => setSnapshot(next))
+                          .catch((err) =>
+                            setError(err instanceof Error ? err.message : "Could not block issue.")
                           );
                       }}
                       onDelete={() => {
