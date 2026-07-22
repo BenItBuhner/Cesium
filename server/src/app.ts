@@ -16,11 +16,13 @@ import { pluginRoutes } from "./routes/plugins.js";
 import { storageRoutes } from "./routes/storage.js";
 import { orchestrationRoutes } from "./routes/orchestration.js";
 import { extensionRoutes } from "./routes/extensions.js";
+import { publicAccessRoutes } from "./routes/public-access.js";
 import { bootstrapStorage } from "./storage/index.js";
 import { AGENT_BACKENDS } from "./lib/agents/providers.js";
 import { warmupAgentBackendCaches } from "./lib/agents/provider-cache-store.js";
 import { startAgentPromptQueueDrainListener } from "./lib/agents/prompt-queue-drain.js";
 import { authMiddleware, SESSION_TOKEN_HEADER } from "./lib/auth.js";
+import { publicAccessManager, startPublicAccessManager } from "./lib/public-access-manager.js";
 import { isTranscriptionConfigured } from "./lib/transcription-env.js";
 import {
   isPrivateLanBrowserOrigin,
@@ -71,9 +73,10 @@ export function createCesiumApp(): Hono {
     "*",
     cors({
       origin: (origin) => {
-        if (!origin) return allowedOrigins[0] ?? "*";
+        if (!origin) return allowedOrigins[0] ?? "";
         if (allowedOrigins.includes(origin)) return origin;
         if (relaxPrivateLanCors && isPrivateLanBrowserOrigin(origin)) return origin;
+        if (publicAccessManager.getCorsOriginSync() === origin) return origin;
         return "";
       },
       credentials: true,
@@ -121,6 +124,7 @@ export function createCesiumApp(): Hono {
     c.json({ ok: true, transcription: { configured: isTranscriptionConfigured() } })
   );
   app.route("/", authRoutes);
+  app.route("/", publicAccessRoutes);
   app.route("/", mcpRoutes);
   app.route("/", pluginRoutes);
   app.route("/browser", browserProxyRoutes);
@@ -147,6 +151,9 @@ export function startCesiumBackgroundServices(): void {
   backgroundStarted = true;
   void bootstrapStorage().catch((error) => {
     console.error("[storage] bootstrap failed:", error);
+  });
+  void startPublicAccessManager().catch((error) => {
+    console.error("[public-access] startup failed:", error);
   });
   if (process.env.NODE_ENV !== "test") {
     void warmupAgentBackendCaches(
