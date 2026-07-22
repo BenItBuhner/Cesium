@@ -117,6 +117,32 @@ describe("agent rail grouping", () => {
     );
   });
 
+  test("keeps an empty shared repository visible and records both source machines", () => {
+    const repositoryKey = "remote:github.com/acme/empty";
+    const grouped = groupAgentRailGroups(
+      [
+        {
+          workspace: workspace("laptop-empty", "empty"),
+          serverId: "laptop",
+          repositoryKey,
+          repository: { isGitRepo: true, repoRoot: "/laptop/empty" },
+          conversations: [],
+        },
+        {
+          workspace: workspace("desktop-empty", "empty"),
+          serverId: "desktop",
+          repositoryKey,
+          repository: { isGitRepo: true, repoRoot: "/desktop/empty" },
+          conversations: [],
+        },
+      ],
+      "repository"
+    );
+    assert.equal(grouped.length, 1);
+    assert.deepEqual(grouped[0]?.serverIds, ["laptop", "desktop"]);
+    assert.deepEqual(grouped[0]?.conversations, []);
+  });
+
   test("groups conversations by server environment", () => {
     const grouped = groupAgentRailGroups(
       [

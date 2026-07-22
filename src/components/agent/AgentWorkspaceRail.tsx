@@ -2118,9 +2118,10 @@ export function AgentWorkspaceRail() {
                   !group.serverAuthRequired &&
                   (!group.serverId || group.serverId === activeServer.id);
                 const groupMachineIds = new Set(
-                  group.conversations
-                    .map((conversation) => conversation.serverId)
-                    .filter((serverId): serverId is string => Boolean(serverId))
+                  [
+                    ...(group.serverIds ?? []),
+                    ...group.conversations.map((conversation) => conversation.serverId),
+                  ].filter((serverId): serverId is string => Boolean(serverId))
                 );
                 if (group.serverId) {
                   groupMachineIds.add(group.serverId);

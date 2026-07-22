@@ -486,6 +486,8 @@ export type AgentConversationGroup = {
   conversations: AgentRailConversationSummary[];
   serverId?: string;
   serverLabel?: string;
+  /** Source machines represented after repository/server regrouping. */
+  serverIds?: string[];
   workspaceKey?: string;
   repositoryKey?: string;
   repository?: AgentRailRepositoryInfo;
