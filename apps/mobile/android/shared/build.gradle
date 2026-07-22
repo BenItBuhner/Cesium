@@ -21,9 +21,10 @@ tasks.register("generateCesiumSharedSources", Exec) {
   inputs.files(
     new File(repoRoot, "packages/core/src/watch-agent-contract.ts"),
     new File(repoRoot, "packages/design/dist/theme-tokens.js")
-  )
+  ).withPathSensitivity(org.gradle.api.tasks.PathSensitivity.RELATIVE)
   outputs.dir(generatedDir)
   outputs.dir(generatedResDir)
+  outputs.cacheIf { true }
 }
 
 android {

@@ -24,27 +24,18 @@ jobs:
   build:
     name: Build debug APKs
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 35
+    env:
+      GRADLE_OPTS: -Dorg.gradle.workers.max=4 -Dkotlin.daemon.jvm.options=-Xmx2048m
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Free disk space
-        uses: jlumbroso/free-disk-space@v1.3.1
-        with:
-          tool-cache: false
-          android: false
-          dotnet: true
-          haskell: true
-          large-packages: true
-          docker-images: true
-          swap-storage: true
-
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22.19.0
           cache: npm
           cache-dependency-path: package-lock.json
 
@@ -54,43 +45,68 @@ jobs:
           distribution: temurin
           java-version: 17
 
+      - name: Setup Gradle cache
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-cleanup: on-success
+
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
+      - name: Cache Android NDK and CMake
+        id: android-toolchain-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ env.ANDROID_HOME }}/ndk/27.0.12077973
+            ${{ env.ANDROID_HOME }}/cmake/3.31.6
+          key: ${{ runner.os }}-android-ndk-27.0.12077973-cmake-3.31.6
+
       - name: Install Android NDK and CMake
+        if: steps.android-toolchain-cache.outputs.cache-hit != 'true'
         run: |
           yes | sdkmanager --licenses >/dev/null
           sdkmanager "ndk;27.0.12077973" "cmake;3.31.6"
 
-      - name: Cache Gradle
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.gradle/caches
-            ~/.gradle/wrapper
-          key: ${{ runner.os }}-gradle-${{ hashFiles('apps/mobile/android/**/*.gradle*', 'apps/mobile/android/gradle/wrapper/gradle-wrapper.properties') }}
-          restore-keys: |
-            ${{ runner.os }}-gradle-
-
-      - name: Install dependencies
-        run: |
+      - name: Install mobile build dependencies
+        run: >
           npm ci
-          rm -f server/node_modules/cesium
+          --include-workspace-root=false
+          --workspace @cesium/mobile
+          --workspace @cesium/desktop-renderer
+          --workspace @cesium/core
+          --workspace @cesium/design
+          --workspace @cesium/client
+          --workspace @cesium/config
+          --workspace @cesium/ui-web
 
-      - name: Build shared packages
-        run: npm run build:packages
+      - name: Build required shared packages
+        run: |
+          status=0
+          npm run build --workspace @cesium/core & core_pid=$!
+          npm run build --workspace @cesium/design & design_pid=$!
+          wait "$core_pid" || status=1
+          wait "$design_pid" || status=1
+          exit "$status"
 
-      - name: Typecheck mobile app
-        run: npm run typecheck --workspace @cesium/mobile
+      - name: Validate mobile app
+        run: |
+          status=0
+          npm run typecheck --workspace @cesium/mobile & typecheck_pid=$!
+          npm run test --workspace @cesium/mobile & test_pid=$!
+          wait "$typecheck_pid" || status=1
+          wait "$test_pid" || status=1
+          exit "$status"
 
-      - name: Run mobile unit tests
-        run: npm run test --workspace @cesium/mobile
+      - name: Prepare Vite and React Native assets
+        working-directory: apps/mobile
+        run: npm run prepare:android
 
       - name: Build Android debug APKs
         working-directory: apps/mobile
         env:
           ORG_GRADLE_PROJECT_reactNativeArchitectures: arm64-v8a
-        run: npm run build:android:debug
+        run: node scripts/run-gradle.mjs --parallel --build-cache :app:assembleDebug :wear:assembleDebug
 
       - name: Prepare APK artifacts
         run: |
