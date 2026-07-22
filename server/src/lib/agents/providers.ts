@@ -25,6 +25,7 @@ import {
   hasClaudeCodeSdkProxyConfig,
 } from "../claude-code-sdk-credentials.js";
 import { AcpSessionHandle } from "./acp/acp-session.js";
+import { resolveOpenCodeV2CommandPath } from "./opencode-v2-process.js";
 
 type AcpRuntimeSpec = CliRuntimeSpec;
 
@@ -318,6 +319,7 @@ function resolveGoogleAntigravityCliRuntime(): CliRuntimeSpec | null {
 }
 
 const OPENCODE_RUNTIME = resolveOpenCodeCliRuntime();
+const OPENCODE_V2_COMMAND = resolveOpenCodeV2CommandPath();
 const DEVIN_RUNTIME = resolveDevinAcpRuntime();
 const CODEX_RUNTIME = resolveCodexCliRuntime();
 const GOOGLE_ANTIGRAVITY_RUNTIME = resolveGoogleAntigravityCliRuntime();
@@ -385,6 +387,25 @@ export const AGENT_BACKENDS: Record<AgentBackendId, AgentBackendInfo> = {
         : "OpenCode server not configured",
     available: Boolean(process.env.OPENCURSOR_OPENCODE_SERVER_URL?.trim()) || OPENCODE_RUNTIME !== null,
     capabilities: AGENT_CAPABILITIES["opencode-server"],
+    defaultMode: "build",
+    defaultModelId: "auto",
+    defaultModelName: "Auto",
+  }),
+  "opencode-v2-beta": createBackendInfo({
+    id: "opencode-v2-beta",
+    label: "OpenCode v2 Beta",
+    description:
+      "Native OpenCode v2 API with durable event recovery, typed tool events, background subagents, forms, and v2 permissions.",
+    experimental: true,
+    commandPreview: process.env.OPENCURSOR_OPENCODE_V2_SERVER_URL?.trim()
+      ? `OpenCode v2 server at ${process.env.OPENCURSOR_OPENCODE_V2_SERVER_URL.trim()}`
+      : OPENCODE_V2_COMMAND
+        ? `${OPENCODE_V2_COMMAND} serve --stdio`
+        : "OpenCode v2 Beta server not configured",
+    available:
+      Boolean(process.env.OPENCURSOR_OPENCODE_V2_SERVER_URL?.trim()) ||
+      OPENCODE_V2_COMMAND !== null,
+    capabilities: AGENT_CAPABILITIES["opencode-v2-beta"],
     defaultMode: "build",
     defaultModelId: "auto",
     defaultModelName: "Auto",
@@ -464,6 +485,7 @@ const AGENT_BACKEND_MENU_ORDER = [
   "cursor-sdk",
   "codex-app-server",
   "opencode-server",
+  "opencode-v2-beta",
   "devin-acp",
   "claude-code-sdk",
   "pi-agent",
@@ -549,6 +571,17 @@ export async function createAgentProvider(
     }
     const { createOpenCodeServerProvider } = await import("./opencode-server-provider.js");
     return createOpenCodeServerProvider({
+      backend,
+      configOptions: await readAgentBackendConfigCache(backendId),
+    });
+  }
+
+  if (backendId === "opencode-v2-beta") {
+    if (!process.env.OPENCURSOR_OPENCODE_V2_SERVER_URL?.trim() && !OPENCODE_V2_COMMAND) {
+      throw new Error(`${backend.label} is not installed or configured.`);
+    }
+    const { createOpenCodeV2Provider } = await import("./opencode-v2-provider.js");
+    return createOpenCodeV2Provider({
       backend,
       configOptions: await readAgentBackendConfigCache(backendId),
     });

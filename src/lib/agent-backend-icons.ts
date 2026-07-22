@@ -18,6 +18,7 @@ export const AGENT_BACKEND_ICON_FILES: Partial<
     dark: "Claude-Code-Dark.svg",
   },
   "opencode-server": { light: "OpenCode-Light.svg", dark: "OpenCode-Dark.svg" },
+  "opencode-v2-beta": { light: "OpenCode-Light.svg", dark: "OpenCode-Dark.svg" },
   "devin-acp": { light: "Devin-Light.svg", dark: "Devin-Dark.svg" },
 };
 

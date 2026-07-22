@@ -106,6 +106,7 @@ test("plugin discovery includes local Context7 and harness verify identifies all
   assert.ok(report.summary.identifyingPlugins.includes("cesium-agent"));
   assert.ok(report.summary.identifyingPlugins.includes("cursor-sdk"));
   assert.ok(report.summary.promptOnlyMcp.includes("opencode-server"));
+  assert.ok(report.summary.promptOnlyMcp.includes("opencode-v2-beta"));
   assert.ok(report.summary.promptOnlyMcp.includes("pi-agent"));
 
   const openCode = report.harnesses.find((entry) => entry.backendId === "opencode-server");

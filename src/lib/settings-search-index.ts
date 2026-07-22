@@ -226,6 +226,13 @@ const STATIC_SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
   row("agents", "cesium-custom-providers", "Custom providers", "Cesium Agent"),
   row("agents", "cursor-sdk-api-key", "Cursor SDK API key", "Cursor SDK"),
   row("agents", "cursor-sdk", "Cursor SDK", "Cursor SDK API key"),
+  row(
+    "agents",
+    "opencode-v2-beta",
+    "OpenCode v2 Beta",
+    "Native OpenCode v2 harness with durable events, typed tools, and background subagents.",
+    ["opencode2", "terminal", "subagent", "permission", "form"]
+  ),
 
   // —— Models (panel chrome; model rows are dynamic) ——
   section("models", "catalog", "Model catalog", "visibility toggle refresh"),

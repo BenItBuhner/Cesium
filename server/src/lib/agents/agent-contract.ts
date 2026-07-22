@@ -67,6 +67,20 @@ export const AGENT_CAPABILITIES: Record<AgentBackendId, AgentProviderCapabilitie
     supportsInlineReasoning: true,
     supportsCompletionRetry: false,
   },
+  "opencode-v2-beta": {
+    supportsLoadSession: true,
+    supportsModeSelection: true,
+    supportsModelSelection: true,
+    supportsSlashCommands: false,
+    supportsPermissions: true,
+    supportsToolCalls: true,
+    supportsStructuredPlans: false,
+    supportsTodos: false,
+    supportsSessionResume: true,
+    supportsPromptImages: true,
+    supportsInlineReasoning: true,
+    supportsCompletionRetry: false,
+  },
   "devin-acp": {
     supportsLoadSession: true,
     supportsModeSelection: true,
@@ -233,6 +247,19 @@ export const BACKEND_HARNESS_EXPECTATIONS: Record<
       "system",
     ],
     notes: "Subagent events depend on global/child SSE routing.",
+  },
+  "opencode-v2-beta": {
+    expectedEventKinds: [
+      ...textTurnEvents,
+      "reasoning",
+      ...toolEvents,
+      "subagent",
+      "question",
+      ...permissionEvents,
+      "system",
+    ],
+    notes:
+      "Native v2 events use volatile live deltas plus cursor-resumable durable logs; background subagents have child log streams.",
   },
   "devin-acp": {
     expectedEventKinds: [

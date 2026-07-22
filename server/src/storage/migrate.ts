@@ -7,6 +7,7 @@ const ALL_BACKEND_IDS: AgentBackendId[] = [
   "cesium-agent",
   "cursor-sdk",
   "opencode-server",
+  "opencode-v2-beta",
   "devin-acp",
   "codex-app-server",
   "claude-code-sdk",

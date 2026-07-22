@@ -717,7 +717,7 @@ function isKnownPlaceholderModelToggle(
   if (backendId === "cursor-sdk") {
     return id === "composer-2" && name === "composer 2";
   }
-  if (backendId === "opencode-server") {
+  if (backendId === "opencode-server" || backendId === "opencode-v2-beta") {
     return id === "auto" && name === "auto";
   }
   if (backendId === "pi-agent") {
