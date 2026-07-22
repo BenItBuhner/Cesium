@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
+import { promises as fs } from "node:fs";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
+import os from "node:os";
+import path from "node:path";
 import { test } from "node:test";
 import { AGENT_BACKENDS, listAgentBackends } from "../src/lib/agents/providers.js";
 import {
@@ -18,7 +21,15 @@ import {
   startOpenCodeV2Events,
   startOpenCodeV2SessionLog,
 } from "../src/lib/agents/opencode-v2-events.js";
-import { buildOpenCodeV2ConfigOptions } from "../src/lib/agents/opencode-v2-provider.js";
+import {
+  buildOpenCodeV2ConfigOptions,
+  createOpenCodeV2Provider,
+} from "../src/lib/agents/opencode-v2-provider.js";
+import type {
+  AgentConversationRecord,
+  AgentEventInput,
+  AgentRuntimeCallbacks,
+} from "../src/lib/agents/types.js";
 
 test("OpenCode v2 Beta is a separate registered harness", () => {
   const ids = listAgentBackends().map((backend) => backend.id);
@@ -274,4 +285,243 @@ test("OpenCode v2 SSE waits for connection and skips existing durable history", 
   events.close();
   log!.close();
   await new Promise<void>((resolve) => server.close(() => resolve()));
+});
+
+test("OpenCode v2 provider completes a native typed tool and text turn", async () => {
+  const eventStreams = new Set<import("node:http").ServerResponse>();
+  let nextEventId = 0;
+  const sendEvent = (type: string, data: Record<string, unknown>) => {
+    const frame = `data: ${JSON.stringify({
+      id: `evt_provider_${nextEventId++}`,
+      created: Date.now(),
+      type,
+      data,
+    })}\n\n`;
+    for (const stream of eventStreams) stream.write(frame);
+  };
+  const server = createServer(async (request, response) => {
+    const url = new URL(request.url ?? "/", "http://127.0.0.1");
+    if (request.method === "GET" && url.pathname === "/api/health") {
+      response.setHeader("content-type", "application/json");
+      response.end(JSON.stringify({ healthy: true, version: "v2-test", pid: process.pid }));
+      return;
+    }
+    if (request.method === "GET" && url.pathname === "/api/agent") {
+      response.setHeader("content-type", "application/json");
+      response.end(
+        JSON.stringify({
+          location: { directory: "/workspace", project: { id: "project", directory: "/workspace" } },
+          data: [{ id: "build", name: "Build", mode: "primary", hidden: false }],
+        })
+      );
+      return;
+    }
+    if (request.method === "GET" && url.pathname === "/api/model") {
+      response.setHeader("content-type", "application/json");
+      response.end(
+        JSON.stringify({
+          location: { directory: "/workspace", project: { id: "project", directory: "/workspace" } },
+          data: [
+            {
+              id: "model",
+              providerID: "test",
+              name: "Test Model",
+              enabled: true,
+              variants: [],
+            },
+          ],
+        })
+      );
+      return;
+    }
+    if (request.method === "POST" && url.pathname === "/api/session") {
+      response.setHeader("content-type", "application/json");
+      response.end(
+        JSON.stringify({
+          data: {
+            id: "ses_root",
+            agent: "build",
+            model: { providerID: "test", id: "model" },
+          },
+        })
+      );
+      return;
+    }
+    if (request.method === "POST" && url.pathname === "/api/session/ses_root/rename") {
+      response.writeHead(204).end();
+      return;
+    }
+    if (request.method === "GET" && url.pathname === "/api/event") {
+      response.writeHead(200, { "content-type": "text/event-stream" });
+      response.write(
+        `data: ${JSON.stringify({
+          id: "evt_provider_connected",
+          created: Date.now(),
+          type: "server.connected",
+          data: {},
+        })}\n\n`
+      );
+      eventStreams.add(response);
+      response.on("close", () => eventStreams.delete(response));
+      return;
+    }
+    if (
+      request.method === "GET" &&
+      url.pathname === "/api/experimental/session/ses_root/log"
+    ) {
+      response.writeHead(200, { "content-type": "text/event-stream" });
+      response.write(
+        `data: ${JSON.stringify({ type: "log.synced", aggregateID: "ses_root" })}\n\n`
+      );
+      return;
+    }
+    if (request.method === "POST" && url.pathname === "/api/session/ses_root/prompt") {
+      response.setHeader("content-type", "application/json");
+      response.end(
+        JSON.stringify({
+          data: { id: "msg_user", sessionID: "ses_root", type: "user" },
+        })
+      );
+      setTimeout(() => {
+        const base = {
+          sessionID: "ses_root",
+          assistantMessageID: "msg_assistant",
+          callID: "call_shell",
+        };
+        sendEvent("session.tool.input.started", { ...base, name: "shell" });
+        sendEvent("session.tool.input.ended", {
+          ...base,
+          text: JSON.stringify({ command: "pwd" }),
+        });
+        sendEvent("session.tool.called", {
+          ...base,
+          input: { command: "pwd" },
+          executed: true,
+        });
+        sendEvent("session.tool.success", {
+          ...base,
+          structured: {},
+          content: [{ type: "text", text: "/workspace\n" }],
+          executed: true,
+        });
+        sendEvent("session.text.delta", {
+          sessionID: "ses_root",
+          assistantMessageID: "msg_assistant",
+          ordinal: 0,
+          delta: "done",
+        });
+        sendEvent("session.text.ended", {
+          sessionID: "ses_root",
+          assistantMessageID: "msg_assistant",
+          ordinal: 0,
+          text: "done",
+        });
+        sendEvent("session.execution.succeeded", { sessionID: "ses_root" });
+      }, 10);
+      return;
+    }
+    if (request.method === "POST" && url.pathname === "/api/session/ses_root/wait") {
+      setTimeout(() => response.writeHead(204).end(), 25);
+      return;
+    }
+    if (request.method === "POST" && url.pathname === "/api/session/ses_root/interrupt") {
+      response.writeHead(204).end();
+      return;
+    }
+    response.writeHead(404).end();
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address() as AddressInfo;
+  const previousUrl = process.env.OPENCURSOR_OPENCODE_V2_SERVER_URL;
+  const workspaceRoot = await fs.mkdtemp(path.join(os.tmpdir(), "cesium-opencode-v2-provider-"));
+  process.env.OPENCURSOR_OPENCODE_V2_SERVER_URL = `http://127.0.0.1:${address.port}`;
+  const appended: AgentEventInput[] = [];
+  let conversation: AgentConversationRecord = {
+    schemaVersion: 1,
+    id: "conv-v2",
+    workspaceId: "workspace-v2",
+    title: "V2 provider test",
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+    lastEventSeq: 0,
+    status: "idle",
+    config: {
+      backendId: "opencode-v2-beta",
+      mode: "build",
+      modelId: "test/model",
+      modelName: "Test Model",
+    },
+    providerSessionId: null,
+    configOptions: [],
+    capabilities: AGENT_BACKENDS["opencode-v2-beta"].capabilities,
+    pendingPermission: null,
+    pendingQuestion: null,
+    lastError: null,
+    experimental: true,
+    archivedAt: null,
+    lastReadSeq: 0,
+    queuedPrompts: [],
+  };
+  const callbacks: AgentRuntimeCallbacks = {
+    workspace: {
+      id: "workspace-v2",
+      root: workspaceRoot,
+      name: "V2",
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      lastOpenedAt: Date.now(),
+    },
+    conversation,
+    appendEvents: async (events) => {
+      appended.push(...events);
+      return events.map((event, index) => ({
+        ...event,
+        seq: appended.length + index,
+        createdAt: Date.now(),
+      })) as never;
+    },
+    readSnapshot: async () => null,
+    updateConversation: async (patch) => {
+      conversation =
+        typeof patch === "function"
+          ? patch(conversation)
+          : ({ ...conversation, ...patch } as AgentConversationRecord);
+      callbacks.conversation = conversation;
+      return conversation;
+    },
+  };
+  try {
+    const provider = createOpenCodeV2Provider({
+      backend: AGENT_BACKENDS["opencode-v2-beta"],
+      configOptions: [],
+    });
+    const handle = await provider.startSession(callbacks);
+    await handle.prompt({ text: "Run pwd", userMessageId: "user-1" });
+    assert.equal(conversation.providerSessionId, "ses_root");
+    assert.equal(conversation.status, "idle");
+    assert.ok(
+      appended.some(
+        (event) =>
+          event.kind === "tool_call_update" &&
+          event.toolKind === "terminal" &&
+          event.status === "completed"
+      )
+    );
+    assert.equal(
+      appended
+        .filter((event) => event.kind === "assistant_message_chunk")
+        .map((event) => (event.kind === "assistant_message_chunk" ? event.text : ""))
+        .join(""),
+      "done"
+    );
+    assert.ok(appended.some((event) => event.kind === "assistant_message_end"));
+    await handle.dispose();
+  } finally {
+    if (previousUrl == null) delete process.env.OPENCURSOR_OPENCODE_V2_SERVER_URL;
+    else process.env.OPENCURSOR_OPENCODE_V2_SERVER_URL = previousUrl;
+    for (const stream of eventStreams) stream.end();
+    server.closeAllConnections();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    await fs.rm(workspaceRoot, { recursive: true, force: true });
+  }
 });
