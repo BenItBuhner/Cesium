@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   addOrchestrationIssueComment,
   buildOrchestrationWebSocketUrl,
@@ -336,11 +336,23 @@ function IssueCard({
 
 export function KanbanBoardView({ boardId }: { boardId: string }) {
   const { activeWorkspaceId } = useWorkspace();
+  const containerRef = useRef<HTMLDivElement>(null);
   const [snapshot, setSnapshot] = useState<OrchestrationBoardSnapshot | null>(null);
   const [newIssueTitle, setNewIssueTitle] = useState("");
   const [newIssueDescription, setNewIssueDescription] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [compactLayout, setCompactLayout] = useState(false);
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    const update = () => setCompactLayout(container.clientWidth < 760);
+    const observer = new ResizeObserver(update);
+    observer.observe(container);
+    update();
+    return () => observer.disconnect();
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -426,7 +438,7 @@ export function KanbanBoardView({ boardId }: { boardId: string }) {
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-[var(--bg-main)]">
+    <div ref={containerRef} className="flex h-full min-h-0 flex-col bg-[var(--bg-main)]">
       <header className="flex shrink-0 items-start justify-between gap-[16px] border-b border-[var(--border-subtle)] px-[18px] py-[14px]">
         <div className="min-w-0">
           <h2 className="truncate font-sans text-[18px] font-semibold text-[var(--text-primary)]">
@@ -442,14 +454,24 @@ export function KanbanBoardView({ boardId }: { boardId: string }) {
           </p>
         ) : null}
       </header>
-      <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_280px] gap-[12px] overflow-hidden p-[12px]">
-        <div className="flex min-h-0 gap-[10px] overflow-x-auto pb-[8px]">
+      <div
+        className={
+          compactLayout
+            ? "flex min-h-0 flex-1 flex-col gap-[12px] overflow-y-auto p-[12px]"
+            : "grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_280px] gap-[12px] overflow-hidden p-[12px]"
+        }
+      >
+        <div
+          className={`flex gap-[10px] overflow-x-auto pb-[8px] ${
+            compactLayout ? "min-h-[420px] shrink-0 snap-x snap-mandatory" : "min-h-0"
+          }`}
+        >
           {ORCHESTRATION_COLUMNS.map((column) => {
             const issues = snapshot.issues.filter((issue) => issue.columnId === column.id);
             return (
               <section
                 key={column.id}
-                className="flex min-h-0 w-[270px] shrink-0 flex-col rounded-[var(--radius-tab)] border border-[var(--border-subtle)] bg-[var(--bg-panel)]"
+                className="flex min-h-0 w-[270px] shrink-0 snap-start flex-col rounded-[var(--radius-tab)] border border-[var(--border-subtle)] bg-[var(--bg-panel)]"
               >
                 <div className="flex shrink-0 items-center justify-between border-b border-[var(--border-subtle)] px-[10px] py-[8px]">
                   <h3 className="font-sans text-[12px] font-semibold uppercase tracking-[0.04em] text-[var(--text-secondary)]">
@@ -510,7 +532,11 @@ export function KanbanBoardView({ boardId }: { boardId: string }) {
             );
           })}
         </div>
-        <aside className="flex min-h-0 flex-col gap-[12px] overflow-hidden">
+        <aside
+          className={`flex flex-col gap-[12px] ${
+            compactLayout ? "min-h-[460px] shrink-0" : "min-h-0 overflow-hidden"
+          }`}
+        >
           <form
             className="rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-[var(--bg-panel)] p-[10px]"
             onSubmit={(event) => {
