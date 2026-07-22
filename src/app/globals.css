@@ -76,6 +76,91 @@ pre {
   to { transform: rotate(360deg); }
 }
 
+/* ---------------------------------------------------------------------------
+ * Landing page (`/`) — decorative-only styles, all prefixed `landing-`.
+ * ------------------------------------------------------------------------- */
+
+@keyframes landing-marquee {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+
+.landing-marquee-track {
+  animation: landing-marquee 36s linear infinite;
+  will-change: transform;
+}
+
+.landing-marquee:hover .landing-marquee-track {
+  animation-play-state: paused;
+}
+
+/* Fade the marquee out at both edges. */
+.landing-marquee {
+  mask-image: linear-gradient(to right, transparent, black 12%, black 88%, transparent);
+  -webkit-mask-image: linear-gradient(to right, transparent, black 12%, black 88%, transparent);
+}
+
+@keyframes landing-caret-blink {
+  0%, 55% { opacity: 1; }
+  56%, 100% { opacity: 0; }
+}
+
+.landing-caret {
+  animation: landing-caret-blink 1.1s steps(1) infinite;
+}
+
+/* Dashed “wire” between the cloud client and the local engine. */
+@keyframes landing-wire-flow {
+  from { background-position: 0 0; }
+  to { background-position: 24px 0; }
+}
+
+.landing-wire-x {
+  background-image: repeating-linear-gradient(
+    to right,
+    var(--text-disabled) 0 8px,
+    transparent 8px 16px
+  );
+  background-size: 24px 2px;
+  background-repeat: repeat-x;
+  animation: landing-wire-flow 1.6s linear infinite;
+}
+
+@keyframes landing-wire-flow-y {
+  from { background-position: 0 0; }
+  to { background-position: 0 24px; }
+}
+
+.landing-wire-y {
+  background-image: repeating-linear-gradient(
+    to bottom,
+    var(--text-disabled) 0 8px,
+    transparent 8px 16px
+  );
+  background-size: 2px 24px;
+  background-repeat: repeat-y;
+  animation: landing-wire-flow-y 1.6s linear infinite;
+}
+
+/* Faint blueprint grid behind the hero, fading toward the page body. */
+.landing-grid-bg {
+  background-image:
+    linear-gradient(to right, color-mix(in srgb, var(--text-primary) 5%, transparent) 1px, transparent 1px),
+    linear-gradient(to bottom, color-mix(in srgb, var(--text-primary) 5%, transparent) 1px, transparent 1px);
+  background-size: 44px 44px;
+  mask-image: radial-gradient(ellipse 90% 78% at 50% 0%, black 30%, transparent 76%);
+  -webkit-mask-image: radial-gradient(ellipse 90% 78% at 50% 0%, black 30%, transparent 76%);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .landing-marquee-track,
+  .landing-caret,
+  .landing-wire-x,
+  .landing-wire-y {
+    animation: none;
+  }
+}
+
 @keyframes wave-bounce {
   0% { transform: scaleY(0.7); }
   100% { transform: scaleY(1); }
