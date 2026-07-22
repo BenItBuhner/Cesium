@@ -343,6 +343,7 @@ export function KanbanBoardView({ boardId }: { boardId: string }) {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [compactLayout, setCompactLayout] = useState(false);
+  const hasSnapshot = snapshot !== null;
 
   useEffect(() => {
     const container = containerRef.current;
@@ -352,7 +353,7 @@ export function KanbanBoardView({ boardId }: { boardId: string }) {
     observer.observe(container);
     update();
     return () => observer.disconnect();
-  }, []);
+  }, [hasSnapshot]);
 
   useEffect(() => {
     let cancelled = false;
