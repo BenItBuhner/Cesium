@@ -318,7 +318,6 @@ setPendingConfigForConversation,
 clearPendingConfigForConversation,
 } = useAgentConversations();
   const { settings: globalSettings } = useGlobalSettings();
-  const goalModeBetaEnabled = globalSettings.features.goalModeBeta;
   const { experimentalIpadWindowedTabInset } = useUserPreferences();
   const padTabsForWindowChrome =
     experimentalIpadWindowedTabInset && chatTrailingWindowControlsVisible;
@@ -534,7 +533,7 @@ await setConversationMode(draftId, next);
 void syncConversationSnapshot(draftId).catch(() => undefined);
 }
 },
-[backends, goalModeBetaEnabled, setConversationMode, setPendingConfigForConversation, syncConversationSnapshot, updateWorkspaceSession, workspaceSession.chat.mode]
+[setConversationMode, setPendingConfigForConversation, syncConversationSnapshot, updateWorkspaceSession]
 );
 
 const setModelForDraft = useCallback(
@@ -588,7 +587,7 @@ if (!isPersistedConversationTabId(draftId)) {
 const targetBackend = pickAvailableBackend(backends, nextBackendId);
 const targetModel = targetBackend ? resolveDraftModelForBackend(targetBackend) : null;
 const targetMode = targetBackend
-? buildDraftModeOptionsForBackend(targetBackend, { goalModeBetaEnabled })[0]?.id ?? workspaceSession.chat.mode
+? buildDraftModeOptionsForBackend(targetBackend)[0]?.id ?? workspaceSession.chat.mode
 : workspaceSession.chat.mode;
 updateWorkspaceSession((current) => ({
 ...current,
@@ -616,7 +615,6 @@ await handoffConversationInPlace(draftId, useBackendId);
 backends,
 clearPendingConfigForConversation,
 conversationsById,
-goalModeBetaEnabled,
 handoffConversationInPlace,
 updateWorkspaceSession,
 workspaceSession.chat.mode,
@@ -922,16 +920,16 @@ models.find(
 : workspaceSession.chat.model;
 const modeOptions =
 pendingTarget != null && backend
-? buildDraftModeOptionsForBackend(backend, { goalModeBetaEnabled })
+? buildDraftModeOptionsForBackend(backend)
 : conversation
-? buildConversationModeOptions(conversation, backends, { goalModeBetaEnabled })
+? buildConversationModeOptions(conversation, backends)
 : backend
-? buildDraftModeOptionsForBackend(backend, { goalModeBetaEnabled })
+? buildDraftModeOptionsForBackend(backend)
 : DEFAULT_MODE_OPTIONS;
 const mode = resolveCanonicalModeId(
 String(
 (pendingTarget != null && backend
-? buildDraftModeOptionsForBackend(backend, { goalModeBetaEnabled })[0]?.id
+? buildDraftModeOptionsForBackend(backend)[0]?.id
 : busy && pendingMode
 ? pendingMode
 : conversation?.config.mode) ?? workspaceSession.chat.mode ?? ""
@@ -963,7 +961,6 @@ draftBackend,
 eventsByConversationId,
 modelVisibility,
 pendingConfigByConversationId,
-goalModeBetaEnabled,
 workspaceSession.chat.backendId,
 workspaceSession.chat.mode,
 workspaceSession.chat.model,
@@ -2166,7 +2163,7 @@ workspaceSession.chat.model,
         ? buildDraftModelOptionsForBackend(targetBackend, modelVisibility)
         : models;
       const redoModeOptions = targetBackend
-        ? buildDraftModeOptionsForBackend(targetBackend, { goalModeBetaEnabled })
+        ? buildDraftModeOptionsForBackend(targetBackend)
         : modeOptions;
       const redoMode = resolveCanonicalModeId(
         String(redoMessageDraft.mode),
@@ -2205,7 +2202,7 @@ workspaceSession.chat.model,
                 ? resolveDraftModelForBackend(nextBackend)
                 : redoMessageDraft.model;
               const nextMode = nextBackend
-                ? buildDraftModeOptionsForBackend(nextBackend, { goalModeBetaEnabled })[0]?.id ?? redoMessageDraft.mode
+                ? buildDraftModeOptionsForBackend(nextBackend)[0]?.id ?? redoMessageDraft.mode
                 : redoMessageDraft.mode;
               setRedoMessageDraft((current) =>
                 current && current.messageId === redoMessageDraft.messageId
@@ -2258,7 +2255,6 @@ workspaceSession.chat.model,
       activeTabId,
       backends,
       composerUserMessageHistory,
-      goalModeBetaEnabled,
       loadOlderConversationHistory,
       modeOptions,
       modelVisibility,

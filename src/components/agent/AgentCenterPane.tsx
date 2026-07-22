@@ -97,7 +97,6 @@ export function AgentCenterPane() {
     retryConversation,
   } = useAgentConversations();
   const { settings: globalSettings } = useGlobalSettings();
-  const goalModeBetaEnabled = globalSettings.features.goalModeBeta;
   const { workspaceSession, updateWorkspaceSession, workspaceInfo } = useWorkspace();
   const {
     activeWorkspaceGroup,
@@ -325,9 +324,9 @@ export function AgentCenterPane() {
   const draftModeOptions = useMemo(
     () =>
       draftBackend
-        ? buildDraftModeOptionsForBackend(draftBackend, { goalModeBetaEnabled })
+        ? buildDraftModeOptionsForBackend(draftBackend)
         : DEFAULT_MODE_OPTIONS,
-    [draftBackend, goalModeBetaEnabled]
+    [draftBackend]
   );
   const draftMode = useMemo(
     () =>
@@ -391,7 +390,6 @@ export function AgentCenterPane() {
     getRedoComposerSeed,
     backends,
     modelVisibility: globalSettings.models.byBackend,
-    goalModeBetaEnabled,
     composerUserMessageHistory,
     hasOlderHistory: historyCursor.hasOlder,
     onRequestOlderHistory: selectedConversationId
@@ -639,13 +637,13 @@ export function AgentCenterPane() {
           ...current.chat,
           backendId: nextBackend.id,
           mode:
-            buildDraftModeOptionsForBackend(nextBackend, { goalModeBetaEnabled })[0]?.id ??
+            buildDraftModeOptionsForBackend(nextBackend)[0]?.id ??
             current.chat.mode,
           model: resolveDraftModelForBackend(nextBackend),
         },
       }));
     },
-    [backends, goalModeBetaEnabled, updateWorkspaceSession]
+    [backends, updateWorkspaceSession]
   );
 
   const handleSubmit = useCallback(

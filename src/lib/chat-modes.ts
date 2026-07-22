@@ -3,7 +3,6 @@ export {
   DEFAULT_MODE_OPTIONS,
   coerceUnavailableGoalMode,
   ensureCurrentModeOption,
-  filterGoalModeOptions,
   formatModeLabel,
   getModeTone,
   isBurnMode,

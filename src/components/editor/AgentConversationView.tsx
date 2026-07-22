@@ -123,7 +123,6 @@ loadOlderConversationHistory,
   retryConversation,
   } = useAgentConversations();
   const { settings: globalSettings } = useGlobalSettings();
-  const goalModeBetaEnabled = globalSettings.features.goalModeBeta;
   const {
     activeWorkspaceId,
     activeWindowId,
@@ -269,7 +268,6 @@ loadOlderConversationHistory,
     getRedoComposerSeed,
     backends,
     modelVisibility: globalSettings.models.byBackend,
-    goalModeBetaEnabled,
     composerUserMessageHistory,
     hasOlderHistory: historyCursor.hasOlder,
     onRequestOlderHistory: () => loadOlderConversationHistory(conversationId),

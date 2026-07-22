@@ -265,7 +265,6 @@ import type {
 import { questionEventToChatMessage } from "./ask-question-dock";
 import {
   DEFAULT_MODE_OPTIONS,
-  filterGoalModeOptions,
   formatModeLabel,
   resolveCanonicalModeId,
 } from "./chat-modes";
@@ -493,21 +492,17 @@ export function findConversationModeConfigOption(
 
 export function buildConversationModeOptions(
   conversation: AgentConversationRecord,
-  backends: AgentBackendInfo[] = [],
-  options: { goalModeBetaEnabled?: boolean } = {}
+  backends: AgentBackendInfo[] = []
 ): AgentModeOption[] {
-  const goalModeBetaEnabled = options.goalModeBetaEnabled === true;
   const modeOption = findConversationModeConfigOption(conversation, backends);
   if (!modeOption || modeOption.options.length === 0) {
-    return filterGoalModeOptions(DEFAULT_MODE_OPTIONS, goalModeBetaEnabled);
+    return DEFAULT_MODE_OPTIONS;
   }
-  const rows = modeOption.options
-    .map((option) => ({
-      id: option.value,
-      label: formatModeLabel(option.name.trim() || option.value),
-      description: option.description,
-    }));
-  return filterGoalModeOptions(rows, goalModeBetaEnabled);
+  return modeOption.options.map((option) => ({
+    id: option.value,
+    label: formatModeLabel(option.name.trim() || option.value),
+    description: option.description,
+  }));
 }
 
 export function findConversationModelConfigOption(
@@ -4904,10 +4899,9 @@ export function resolveDraftModelForBackend(
 }
 
 export function buildDraftModeOptionsForBackend(
-  backend: AgentBackendInfo,
-  options: { goalModeBetaEnabled?: boolean } = {}
+  backend: AgentBackendInfo
 ): AgentModeOption[] {
-  return buildConversationModeOptions(createBackendDraftConversation(backend), [backend], options);
+  return buildConversationModeOptions(createBackendDraftConversation(backend), [backend]);
 }
 
 export function resolveConversationModel(
