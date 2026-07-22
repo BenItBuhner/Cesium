@@ -190,3 +190,36 @@ test("Cesium batch adapter accumulates OpenAI Responses stream usage", async () 
     totalTokens: 5,
   });
 });
+
+test("Cesium adapters forward workflow cancellation to active provider requests", async () => {
+  globalThis.fetch = async (_url, init) =>
+    new Promise<Response>((_resolve, reject) => {
+      const signal = init?.signal;
+      const rejectAbort = () => {
+        const error = new Error("provider request aborted");
+        error.name = "AbortError";
+        reject(error);
+      };
+      signal?.addEventListener("abort", rejectAbort, { once: true });
+      if (signal?.aborted) {
+        rejectAbort();
+      }
+    });
+
+  const controller = new AbortController();
+  const pending = runAdapter({
+    apiKind: "openai-compatible",
+    apiKey: "test-key",
+    baseUrl: "https://example.invalid/v1",
+    providerId: "example",
+    modelId: "example/test-model",
+    messages: [{ role: "user", content: "Wait forever" }],
+    signal: controller.signal,
+  });
+  controller.abort();
+
+  await assert.rejects(pending, (error) => {
+    assert.equal((error as Error).name, "AbortError");
+    return true;
+  });
+});

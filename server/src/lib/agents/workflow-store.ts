@@ -114,12 +114,36 @@ export async function persistWorkflowScript(input: {
   return scriptPath;
 }
 
-export async function readWorkflowScriptFile(scriptPath: string): Promise<string> {
+function isPathInside(root: string, candidate: string): boolean {
+  const relative = path.relative(root, candidate);
+  return relative === "" || (!relative.startsWith(`..${path.sep}`) && relative !== ".." && !path.isAbsolute(relative));
+}
+
+export async function readWorkflowScriptFile(input: {
+  workspace: WorkspaceRecord;
+  scriptPath: string;
+}): Promise<string> {
+  const { workspace, scriptPath } = input;
   if (scriptPath.includes("\\") && /^\\\\/.test(scriptPath)) {
     throw new Error(`UNC paths are not allowed for workflow scriptPath: ${scriptPath}`);
   }
   try {
-    return await fs.readFile(scriptPath, "utf8");
+    const [resolvedFile, resolvedWorkspace, resolvedPersistedDir] = await Promise.all([
+      fs.realpath(scriptPath),
+      fs.realpath(workspace.root).catch(() => path.resolve(workspace.root)),
+      fs.realpath(getWorkflowScriptsDir(workspace.id)).catch(() =>
+        path.resolve(getWorkflowScriptsDir(workspace.id))
+      ),
+    ]);
+    if (
+      !isPathInside(resolvedWorkspace, resolvedFile) &&
+      !isPathInside(resolvedPersistedDir, resolvedFile)
+    ) {
+      throw new Error(
+        "workflow scriptPath must resolve inside the active workspace or its persisted Cesium workflows directory"
+      );
+    }
+    return await fs.readFile(resolvedFile, "utf8");
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     throw new Error(`Failed to read workflow script file ${scriptPath}: ${message}`);

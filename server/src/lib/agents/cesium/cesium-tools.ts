@@ -402,6 +402,25 @@ const CESIUM_BASE_TOOLS: CesiumToolDefinition[] = [
     },
   },
   {
+    name: "workflow_control",
+    description:
+      "Pause, resume, stop, or restart a Workflow mode run. Defaults to the latest run for this conversation when runId is omitted. Restart creates a new run from the prior script, args, and limits; set reuseJournal=true to replay completed agent calls from the prior journal.",
+    parameters: {
+      type: "object",
+      properties: {
+        action: { type: "string", enum: ["pause", "resume", "stop", "restart"] },
+        runId: { type: "string" },
+        reuseJournal: {
+          type: "boolean",
+          description:
+            "For restart only. When true, seed completed prior agent() calls into the new run.",
+        },
+      },
+      required: ["action"],
+      additionalProperties: false,
+    },
+  },
+  {
     name: "ask_question",
     description: "Ask the user a structured question with selectable options.",
     parameters: {
@@ -823,6 +842,7 @@ export function toolKind(name: string): string {
     case "workflow_run":
     case "workflow_status":
     case "workflow_await":
+    case "workflow_control":
       return "workflow";
     case "ask_question":
       return "question";
@@ -969,6 +989,8 @@ export function toolTitle(name: string, args: Record<string, unknown>): string {
       return `Workflow status ${asString(args.runId) ?? ""}`.trim();
     case "workflow_await":
       return `Await workflow ${asString(args.runId) ?? ""}`.trim();
+    case "workflow_control":
+      return `${asString(args.action) ?? "Control"} workflow ${asString(args.runId) ?? ""}`.trim();
     case "ask_question":
       return "Ask question";
     case "subagent":

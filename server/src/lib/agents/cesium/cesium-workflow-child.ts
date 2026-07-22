@@ -70,11 +70,14 @@ export async function runCesiumWorkflowChild(input: {
   schema?: Record<string, unknown>;
   tools: CesiumToolDefinition[];
   tokenBudget?: number;
+  signal?: AbortSignal;
+  checkpoint?: () => Promise<void>;
   maxIterations?: number;
   complete: (request: {
     messages: CesiumHistoryMessage[];
     tools: CesiumToolDefinition[];
     maxOutputTokens?: number;
+    signal?: AbortSignal;
   }) => Promise<CesiumAdapterResult>;
   executeTool: (request: CesiumToolRequest) => Promise<string>;
 }): Promise<WorkflowAgentSpawnResult> {
@@ -95,7 +98,18 @@ export async function runCesiumWorkflowChild(input: {
   let usedToolResultChars = 0;
   let schemaFailures = 0;
 
+  const throwIfAborted = () => {
+    if (input.signal?.aborted) {
+      const error = new Error("Workflow child cancelled.");
+      error.name = "AbortError";
+      throw error;
+    }
+  };
+
   for (let iteration = 0; iteration < maxIterations; iteration += 1) {
+    throwIfAborted();
+    await input.checkpoint?.();
+    throwIfAborted();
     const remainingTokens =
       tokenBudget === undefined ? undefined : Math.max(0, tokenBudget - tokensUsed);
     if (remainingTokens === 0) {
@@ -111,6 +125,7 @@ export async function runCesiumWorkflowChild(input: {
         messages,
         tools,
         ...(remainingTokens !== undefined ? { maxOutputTokens: remainingTokens } : {}),
+        signal: input.signal,
       });
     } catch (error) {
       if (tokensUsed === 0 || error instanceof WorkflowAgentSpawnError) {
@@ -122,6 +137,9 @@ export async function runCesiumWorkflowChild(input: {
       );
     }
     tokensUsed += resultTokenCount(result);
+    throwIfAborted();
+    await input.checkpoint?.();
+    throwIfAborted();
     if (
       tokenBudget !== undefined &&
       result.usage?.totalTokens === undefined &&
@@ -168,9 +186,15 @@ export async function runCesiumWorkflowChild(input: {
       })),
     });
     for (const request of result.toolRequests) {
+      throwIfAborted();
+      await input.checkpoint?.();
+      throwIfAborted();
       const toolResult = isCesiumWorkflowChildToolBlocked(request.name)
         ? `Tool ${request.name} is blocked in workflow child agents to prevent recursive workflow control or child-agent management.`
         : await input.executeTool(request);
+      throwIfAborted();
+      await input.checkpoint?.();
+      throwIfAborted();
       const normalized = normalizeCesiumToolResultForModel({
         toolName: request.name,
         result: toolResult,

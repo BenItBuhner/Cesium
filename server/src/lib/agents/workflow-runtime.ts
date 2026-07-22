@@ -15,6 +15,7 @@ import {
   type WorkflowJournalEntry,
   type WorkflowMeta,
   type WorkflowPhaseMeta,
+  type WorkflowRunLifecycleControl,
   type WorkflowRunRecord,
 } from "./workflow-types.js";
 
@@ -22,6 +23,20 @@ const NOW_ERR =
   "Date.now() / new Date() are unavailable in workflow scripts (breaks resume). Stamp results after the workflow returns, or pass timestamps via args.";
 const RANDOM_ERR =
   "Math.random() is unavailable in workflow scripts (breaks resume). For N independent samples, include the index in the agent label or prompt.";
+
+class WorkflowRunCancelledError extends Error {
+  constructor(message = "Workflow run cancelled.") {
+    super(message);
+    this.name = "WorkflowRunCancelledError";
+  }
+}
+
+function isAbortLikeError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  return error.name === "AbortError" || /abort|cancel/i.test(error.message);
+}
 
 export type CompileWorkflowResult =
   | { ok: true; meta: WorkflowMeta; body: string }
@@ -201,6 +216,7 @@ export async function executeWorkflowRun(input: {
   spawnAgent: WorkflowAgentSpawner;
   journalSeed?: WorkflowJournalEntry[];
   onUpdate?: (run: WorkflowRunRecord) => void | Promise<void>;
+  control?: WorkflowRunLifecycleControl;
 }): Promise<WorkflowRunRecord> {
   let run = input.run;
   const compiled = compileWorkflowScript(run.script);
@@ -258,6 +274,32 @@ export async function executeWorkflowRun(input: {
     await input.onUpdate?.(run);
   };
 
+  const checkpoint = async (): Promise<void> => {
+    if (!input.control) {
+      return;
+    }
+    await withRunLock(async (current) => {
+      run = await input.control!.checkpoint(current, {
+        currentPhase,
+        onUpdate: input.onUpdate,
+      });
+    });
+  };
+
+  const throwIfStopped = (): void => {
+    try {
+      input.control?.throwIfStopped();
+    } catch (error) {
+      throw error instanceof WorkflowRunCancelledError
+        ? error
+        : new WorkflowRunCancelledError(
+            error instanceof Error ? error.message : String(error)
+          );
+    }
+  };
+
+  await checkpoint();
+
   const budget = {
     total: run.tokenBudget,
     spent(): number {
@@ -295,6 +337,8 @@ export async function executeWorkflowRun(input: {
     prompt: string,
     opts: Record<string, unknown> = {}
   ): Promise<unknown> => {
+    throwIfStopped();
+    await checkpoint();
     if (cancelled) return null;
     const promptText = String(prompt ?? "");
     if (!promptText.trim()) {
@@ -400,6 +444,8 @@ export async function executeWorkflowRun(input: {
     }
 
     return semaphore.run(async () => {
+      throwIfStopped();
+      await checkpoint();
       if (cancelled) return null;
       try {
         const result = await input.spawnAgent({
@@ -412,7 +458,10 @@ export async function executeWorkflowRun(input: {
           ...(begin.tokenBudget !== undefined
             ? { tokenBudget: begin.tokenBudget }
             : {}),
+          signal: input.control?.signal,
+          checkpoint: input.control ? checkpoint : undefined,
         });
+        throwIfStopped();
         const entry: WorkflowJournalEntry = {
           key: begin.key,
           prompt: promptText,
@@ -443,6 +492,30 @@ export async function executeWorkflowRun(input: {
         });
         return result.value;
       } catch (error) {
+        if (
+          input.control?.isStopRequested() ||
+          (input.control?.signal.aborted && isAbortLikeError(error)) ||
+          error instanceof WorkflowRunCancelledError
+        ) {
+          const message = error instanceof Error ? error.message : "Workflow run cancelled.";
+          await withRunLock(async () => {
+            run = {
+              ...run,
+              agents: run.agents.map((item) =>
+                item.id === begin.agentId && item.startedAt === begin.startedAt
+                  ? {
+                      ...item,
+                      status: "skipped",
+                      completedAt: Date.now(),
+                      error: message,
+                    }
+                  : item
+              ),
+            };
+            await persist(run);
+          });
+          throw new WorkflowRunCancelledError(message);
+        }
         const message = error instanceof Error ? error.message : String(error);
         const failedTokens =
           error instanceof WorkflowAgentSpawnError ? error.tokensUsed : 0;
@@ -480,8 +553,16 @@ export async function executeWorkflowRun(input: {
     return Promise.all(
       thunks.map(async (thunk) => {
         try {
+          throwIfStopped();
+          await checkpoint();
           return await (thunk as () => Promise<unknown>)();
-        } catch {
+        } catch (error) {
+          if (
+            error instanceof WorkflowRunCancelledError ||
+            (input.control?.signal.aborted && isAbortLikeError(error))
+          ) {
+            throw error;
+          }
           return null;
         }
       })
@@ -503,8 +584,16 @@ export async function executeWorkflowRun(input: {
         let current: unknown = original;
         for (const stage of stages) {
           try {
+            throwIfStopped();
+            await checkpoint();
             current = await stage(current, original, index);
-          } catch {
+          } catch (error) {
+            if (
+              error instanceof WorkflowRunCancelledError ||
+              (input.control?.signal.aborted && isAbortLikeError(error))
+            ) {
+              throw error;
+            }
             return null;
           }
         }
@@ -596,10 +685,13 @@ export async function executeWorkflowRun(input: {
     const script = new Script(wrapped, {
       filename: "workflow.js",
     });
+    throwIfStopped();
     const result = await script.runInContext(context, {
       timeout: 600_000,
       breakOnSigint: true,
     });
+    throwIfStopped();
+    await checkpoint();
     const safeReturnValue =
       result === undefined
         ? undefined
@@ -615,6 +707,17 @@ export async function executeWorkflowRun(input: {
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     cancelled = true;
+    if (
+      error instanceof WorkflowRunCancelledError ||
+      input.control?.isStopRequested() ||
+      (input.control?.signal.aborted && isAbortLikeError(error))
+    ) {
+      run = await withRunLock(async () => {
+        return updateWorkflowRunStatus(run, "cancelled", { error: message });
+      });
+      await input.onUpdate?.(run);
+      return run;
+    }
     run = await withRunLock(async () => {
       return updateWorkflowRunStatus(run, "failed", { error: message });
     });

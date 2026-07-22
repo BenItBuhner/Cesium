@@ -17,6 +17,7 @@ Continue the active Workflow mode run.
 ${formatWorkflowRunForModel(run)}
 - Use workflow_status to inspect progress.
 - Use workflow_await if the run is still running.
+- Use workflow_control to pause, resume, stop, or restart the run when needed.
 - To iterate, edit the script file and call workflow_run with scriptPath + resumeFromRunId.
 - Only summarize the final return value to the user; keep intermediate agent output out of the parent reply.
 </workflow_context>`;

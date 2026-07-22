@@ -169,6 +169,18 @@ async function fetchJson(url: string, init: RequestInit): Promise<unknown> {
   }
 }
 
+function makeAbortError(message = "Cesium provider request aborted."): Error {
+  const error = new Error(message);
+  error.name = "AbortError";
+  return error;
+}
+
+function throwIfAborted(signal: AbortSignal | undefined): void {
+  if (signal?.aborted) {
+    throw makeAbortError();
+  }
+}
+
 export function modelPart(modelId: string): string {
   const slash = modelId.indexOf("/");
   return slash >= 0 ? modelId.slice(slash + 1) : modelId;
@@ -253,6 +265,7 @@ async function runOpenAiChat(input: {
   maxOutputTokens: number;
   messages: CesiumHistoryMessage[];
   tools?: import("./cesium-tools.js").CesiumToolDefinition[];
+  signal?: AbortSignal;
 }): Promise<CesiumAdapterResult> {
   const baseUrl = resolveOpenAiCompatibleBaseUrl(input.baseUrl, input.providerId);
   const tools =
@@ -269,6 +282,7 @@ async function runOpenAiChat(input: {
       ...(tools ? { tools, tool_choice: "auto" as const } : {}),
       max_tokens: input.maxOutputTokens,
     }),
+    signal: input.signal,
   });
   const root = asRecord(payload);
   const choices = Array.isArray(root?.choices) ? root.choices : [];
@@ -304,6 +318,7 @@ async function* streamOpenAiResponses(input: {
   maxOutputTokens: number;
   messages: CesiumHistoryMessage[];
   tools?: import("./cesium-tools.js").CesiumToolDefinition[];
+  signal?: AbortSignal;
 }): AsyncGenerator<CesiumAdapterStreamEvent> {
   const baseUrl = resolveOpenAiCompatibleBaseUrl(input.baseUrl, input.providerId);
   const tools = optionalProviderTools(input.tools, responseTools);
@@ -339,6 +354,7 @@ async function* streamOpenAiResponses(input: {
       max_output_tokens: input.maxOutputTokens,
       stream: true,
     }),
+    signal: input.signal,
   });
   if (!response.ok) {
     const text = await response.text();
@@ -352,7 +368,9 @@ async function* streamOpenAiResponses(input: {
     let usage: CesiumTokenUsage | undefined;
     let doneRaw: unknown;
     for (;;) {
+      throwIfAborted(input.signal);
       const { value, done } = await reader.read();
+      throwIfAborted(input.signal);
       if (done) break;
       buffer += decoder.decode(value, { stream: true });
       const frames = buffer.split(/\n\n/);
@@ -444,11 +462,13 @@ async function* streamOpenAiRealtime(input: {
   maxOutputTokens: number;
   messages: CesiumHistoryMessage[];
   tools?: import("./cesium-tools.js").CesiumToolDefinition[];
+  signal?: AbortSignal;
 }): AsyncGenerator<CesiumAdapterStreamEvent> {
   type QueueItem =
     | { kind: "event"; event: CesiumAdapterStreamEvent }
     | { kind: "error"; error: Error }
     | { kind: "closed" };
+  throwIfAborted(input.signal);
   const ws = new WebSocket(`wss://api.openai.com/v1/realtime?model=${encodeURIComponent(input.model)}`, {
     headers: {
       authorization: `Bearer ${input.apiKey}`,
@@ -463,7 +483,18 @@ async function* streamOpenAiRealtime(input: {
     notify?.();
     notify = null;
   };
+  const onAbort = () => {
+    push({ kind: "error", error: makeAbortError() });
+    if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+      ws.close();
+    }
+  };
+  input.signal?.addEventListener("abort", onAbort, { once: true });
   ws.on("open", () => {
+    if (input.signal?.aborted) {
+      onAbort();
+      return;
+    }
     const tools = optionalProviderTools(input.tools, responseTools);
     ws.send(JSON.stringify({
       type: "session.update",
@@ -515,6 +546,7 @@ async function* streamOpenAiRealtime(input: {
 
   try {
     for (;;) {
+      throwIfAborted(input.signal);
       if (queue.length === 0) {
         await new Promise<void>((resolve) => {
           notify = resolve;
@@ -533,6 +565,7 @@ async function* streamOpenAiRealtime(input: {
       yield item.event;
     }
   } finally {
+    input.signal?.removeEventListener("abort", onAbort);
     if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
       ws.close();
     }
@@ -583,6 +616,7 @@ async function runAnthropic(input: {
   maxOutputTokens: number;
   messages: CesiumHistoryMessage[];
   tools?: import("./cesium-tools.js").CesiumToolDefinition[];
+  signal?: AbortSignal;
 }): Promise<CesiumAdapterResult> {
   const tools = optionalProviderTools(input.tools, anthropicTools);
   const payload = await fetchJson("https://api.anthropic.com/v1/messages", {
@@ -599,6 +633,7 @@ async function runAnthropic(input: {
       messages: anthropicMessages(input.messages),
       ...(tools ? { tools } : {}),
     }),
+    signal: input.signal,
   });
   const root = asRecord(payload);
   const content = Array.isArray(root?.content) ? root.content : [];
@@ -640,6 +675,7 @@ async function runGoogle(input: {
   maxOutputTokens: number;
   messages: CesiumHistoryMessage[];
   tools?: import("./cesium-tools.js").CesiumToolDefinition[];
+  signal?: AbortSignal;
 }): Promise<CesiumAdapterResult> {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(input.model)}:generateContent?key=${encodeURIComponent(input.apiKey)}`;
   const tools = optionalProviderTools(input.tools, googleTools);
@@ -654,6 +690,7 @@ async function runGoogle(input: {
         maxOutputTokens: input.maxOutputTokens,
       },
     }),
+    signal: input.signal,
   });
   const root = asRecord(payload);
   const candidates = Array.isArray(root?.candidates)
@@ -697,6 +734,7 @@ export type RunAdapterInput = {
   messages: CesiumHistoryMessage[];
   /** When set, overrides the default composed Cesium tool list (including harness feature modules). */
   tools?: import("./cesium-tools.js").CesiumToolDefinition[];
+  signal?: AbortSignal;
 };
 
 async function* streamStaticResult(
@@ -732,6 +770,7 @@ export async function* streamAdapter(
           maxOutputTokens,
           messages: input.messages,
           tools: input.tools,
+          signal: input.signal,
         })
       );
       return;
@@ -742,6 +781,7 @@ export async function* streamAdapter(
         maxOutputTokens,
         messages: input.messages,
         tools: input.tools,
+        signal: input.signal,
       });
       return;
     case "anthropic":
@@ -752,6 +792,7 @@ export async function* streamAdapter(
           maxOutputTokens,
           messages: input.messages,
           tools: input.tools,
+          signal: input.signal,
         })
       );
       return;
@@ -763,6 +804,7 @@ export async function* streamAdapter(
           maxOutputTokens,
           messages: input.messages,
           tools: input.tools,
+          signal: input.signal,
         })
       );
       return;
@@ -776,6 +818,7 @@ export async function* streamAdapter(
         maxOutputTokens,
         messages: input.messages,
         tools: input.tools,
+        signal: input.signal,
       });
       return;
   }

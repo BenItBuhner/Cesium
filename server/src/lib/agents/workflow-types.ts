@@ -89,6 +89,10 @@ export type WorkflowAgentSpawnRequest = {
   effort?: string;
   /** Remaining best-effort token budget available to this child invocation. */
   tokenBudget?: number;
+  /** Optional lifecycle signal for callers that can cancel an active child request. */
+  signal?: AbortSignal;
+  /** Optional lifecycle checkpoint for child loops between provider/tool work. */
+  checkpoint?: () => Promise<void>;
 };
 
 export type WorkflowAgentSpawnResult = {
@@ -99,6 +103,23 @@ export type WorkflowAgentSpawnResult = {
 export type WorkflowAgentSpawner = (
   request: WorkflowAgentSpawnRequest
 ) => Promise<WorkflowAgentSpawnResult>;
+
+export type WorkflowRunUpdateHandler = (
+  run: WorkflowRunRecord
+) => void | Promise<void>;
+
+export type WorkflowRunLifecycleControl = {
+  readonly signal: AbortSignal;
+  checkpoint(
+    run: WorkflowRunRecord,
+    context?: {
+      currentPhase?: string | null;
+      onUpdate?: WorkflowRunUpdateHandler;
+    }
+  ): Promise<WorkflowRunRecord>;
+  isStopRequested(): boolean;
+  throwIfStopped(): void;
+};
 
 export class WorkflowAgentSpawnError extends Error {
   readonly tokensUsed: number;

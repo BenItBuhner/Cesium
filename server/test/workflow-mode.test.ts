@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -8,6 +8,7 @@ import {
   createWorkflowRunRecord,
   hashWorkflowAgentCall,
   persistWorkflowScript,
+  readWorkflowScriptFile,
   readWorkflowRun,
   upsertWorkflowRun,
 } from "../src/lib/agents/workflow-store.js";
@@ -282,6 +283,7 @@ test("hashWorkflowAgentCall is stable for identical prompt/opts", () => {
 
 test("Workflow mode policy allows workflow tools and blocks goal/orchestration", () => {
   assert.equal(resolveCesiumModeToolPolicy({ mode: "workflow", toolName: "workflow_run" }).allowed, true);
+  assert.equal(resolveCesiumModeToolPolicy({ mode: "workflow", toolName: "workflow_control" }).allowed, true);
   assert.equal(resolveCesiumModeToolPolicy({ mode: "workflow", toolName: "edit_file" }).allowed, true);
   assert.equal(resolveCesiumModeToolPolicy({ mode: "workflow", toolName: "goal_set" }).allowed, false);
   assert.equal(
@@ -292,6 +294,7 @@ test("Workflow mode policy allows workflow tools and blocks goal/orchestration",
   assert.equal(resolveCesiumModeToolPolicy({ mode: "goal", toolName: "workflow_run" }).allowed, false);
   const summary = summarizeCesiumModeToolPolicy("workflow");
   assert.equal(summary.allowed.includes("workflow_run"), true);
+  assert.equal(summary.allowed.includes("workflow_control"), true);
 });
 
 test("Workflow mode reminder documents script primitives", () => {
@@ -304,6 +307,7 @@ test("Workflow mode reminder documents script primitives", () => {
   });
   assert.match(reminder, /Workflow mode/);
   assert.match(reminder, /workflow_run/);
+  assert.match(reminder, /workflow_control/);
   assert.match(reminder, /pipeline\(\)/);
   assert.match(reminder, /export const meta/);
 });
@@ -326,4 +330,55 @@ test("persistWorkflowScript writes under the workspace workflows directory", asy
   });
   assert.match(scriptPath, /run-123\.js$/);
   void previous;
+});
+
+test("workflow script paths stay inside the workspace or persisted workflow directory", async () => {
+  const workspaceRoot = await mkdtemp(path.join(os.tmpdir(), "cesium-workflow-path-workspace-"));
+  const outsideRoot = await mkdtemp(path.join(os.tmpdir(), "cesium-workflow-path-outside-"));
+  const workspace: WorkspaceRecord = {
+    id: `ws-workflow-path-${process.pid}-${Date.now()}`,
+    root: workspaceRoot,
+    name: "Workflow path policy",
+    createdAt: 1,
+    updatedAt: 1,
+    lastOpenedAt: 1,
+  };
+  const script = `export const meta = { name: "path", description: "path policy" }; return 1;`;
+  try {
+    const workspaceScript = path.join(workspaceRoot, "workflow.js");
+    const outsideScript = path.join(outsideRoot, "outside.js");
+    const linkedScript = path.join(workspaceRoot, "linked.js");
+    await writeFile(workspaceScript, script, "utf8");
+    await writeFile(outsideScript, script, "utf8");
+    await symlink(outsideScript, linkedScript);
+
+    assert.equal(
+      await readWorkflowScriptFile({ workspace, scriptPath: workspaceScript }),
+      script
+    );
+    await assert.rejects(
+      () => readWorkflowScriptFile({ workspace, scriptPath: outsideScript }),
+      /must resolve inside the active workspace/
+    );
+    await assert.rejects(
+      () => readWorkflowScriptFile({ workspace, scriptPath: linkedScript }),
+      /must resolve inside the active workspace/
+    );
+
+    const persistedPath = await persistWorkflowScript({
+      workspace,
+      runId: "path-policy",
+      script,
+    });
+    assert.equal(
+      await readWorkflowScriptFile({ workspace, scriptPath: persistedPath }),
+      script
+    );
+  } finally {
+    await Promise.all([
+      rm(workspaceRoot, { recursive: true, force: true }),
+      rm(outsideRoot, { recursive: true, force: true }),
+      rm(path.join(DATA_DIR, "workspaces", workspace.id), { recursive: true, force: true }),
+    ]);
+  }
 });

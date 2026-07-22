@@ -1173,6 +1173,7 @@ test("Cesium base prompt and tool schema are stable across dynamic modes", () =>
   assert.equal(names.includes("workflow_run"), true);
   assert.equal(names.includes("workflow_status"), true);
   assert.equal(names.includes("workflow_await"), true);
+  assert.equal(names.includes("workflow_control"), true);
   assert.equal(names.includes("wait"), true);
   assert.equal(names.includes("switch_mode"), true);
   assert.equal(names.includes("goal_update_plan"), false);
