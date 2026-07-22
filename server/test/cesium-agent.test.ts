@@ -81,6 +81,14 @@ test("cesiumPermissionToolKey scopes remembered rules by tool shape", () => {
     cesiumPermissionToolKey("mcpCall", { serverId: "browser", toolName: "browser_click" }),
     "cesium:mcp:browser:browser_click"
   );
+  assert.equal(
+    cesiumPermissionToolKey("switchMode", { target_mode: "plan" }),
+    "cesium:switch_mode:plan"
+  );
+  assert.equal(
+    cesiumPermissionToolKey("switchMode", { targetMode: "Ask" }),
+    "cesium:switch_mode:ask"
+  );
 });
 
 test("normalizeCallMcpToolArgs accepts nested, snake_case, and flat MCP tool shapes", () => {
@@ -897,6 +905,7 @@ test("Cesium base prompt and tool schema are stable across dynamic modes", () =>
   assert.equal(names.includes("workflow_status"), true);
   assert.equal(names.includes("workflow_await"), true);
   assert.equal(names.includes("wait"), true);
+  assert.equal(names.includes("switch_mode"), true);
   assert.equal(names.includes("burn_goal_update_plan"), false);
   assert.equal(names.includes("burn_goal_update_progress"), false);
   assert.equal(names.includes("burn_goal_summarize_state"), false);
@@ -951,11 +960,34 @@ test("Cesium mode policy blocks write tools in Ask and permits plan tools in Pla
   assert.equal(resolveCesiumModeToolPolicy({ mode: "ask", toolName: "edit_file" }).allowed, false);
   assert.equal(resolveCesiumModeToolPolicy({ mode: "ask", toolName: "read_file" }).allowed, true);
   assert.equal(resolveCesiumModeToolPolicy({ mode: "ask", toolName: "wait" }).allowed, true);
+  assert.equal(resolveCesiumModeToolPolicy({ mode: "ask", toolName: "switch_mode" }).allowed, true);
   assert.equal(resolveCesiumModeToolPolicy({ mode: "plan", toolName: "create_plan" }).allowed, true);
   assert.equal(resolveCesiumModeToolPolicy({ mode: "plan", toolName: "wait" }).allowed, true);
+  assert.equal(resolveCesiumModeToolPolicy({ mode: "plan", toolName: "switch_mode" }).allowed, true);
   assert.equal(resolveCesiumModeToolPolicy({ mode: "orchestration", toolName: "wait" }).allowed, true);
+  assert.equal(
+    resolveCesiumModeToolPolicy({ mode: "orchestration", toolName: "switch_mode" }).allowed,
+    true
+  );
   assert.equal(resolveCesiumModeToolPolicy({ mode: "agent", toolName: "wait" }).allowed, true);
+  assert.equal(resolveCesiumModeToolPolicy({ mode: "agent", toolName: "switch_mode" }).allowed, true);
   assert.equal(resolveCesiumModeToolPolicy({ mode: "agent", toolName: "orchestration_create_issue" }).allowed, false);
+});
+
+test("Cesium switch_mode tool is registered with switchMode permission metadata", async () => {
+  const { resolveCesiumTools, resolveCesiumToolPermissionCategory, toolTitle } = await import(
+    "../src/lib/agents/cesium/cesium-tools.js"
+  );
+  const harness = resolveCesiumTools();
+  const switchMode = harness.tools.find((tool) => tool.name === "switch_mode");
+  assert.ok(switchMode);
+  assert.equal(switchMode?.requiresPermission, "switchMode");
+  assert.equal(resolveCesiumToolPermissionCategory(harness.tools, "edit_file"), "editFile");
+  assert.equal(resolveCesiumToolPermissionCategory(harness.tools, "terminal"), "terminal");
+  assert.equal(resolveCesiumToolPermissionCategory(harness.tools, "call_mcp_tool"), "mcpCall");
+  assert.equal(resolveCesiumToolPermissionCategory(harness.tools, "switch_mode"), "switchMode");
+  assert.equal(resolveCesiumToolPermissionCategory(harness.tools, "read_file"), undefined);
+  assert.equal(toolTitle("switch_mode", { target_mode: "plan" }), "Switch to plan mode");
 });
 
 test("Cesium wait tool parses seconds, caps duration, and formats titles", async () => {

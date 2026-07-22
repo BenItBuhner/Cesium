@@ -5,7 +5,7 @@ import {
   readJsonFile,
   writeJsonFile,
 } from "./persistence.js";
-import type { AgentConfigOption } from "./agents/types.js";
+import type { AgentConfigOption, AgentPermissionCategory } from "./agents/types.js";
 import {
   defaultHarnessSettings,
   getCesiumFeatureCatalog,
@@ -22,6 +22,10 @@ export type CesiumModeId =
   | "burn"
   | "workflow"
   | "ask";
+
+export type CesiumToolPermissionDecision = "ask" | "allow" | "deny";
+
+export type CesiumToolPermissions = Record<AgentPermissionCategory, CesiumToolPermissionDecision>;
 
 export type CesiumModeDefinition = {
   id: CesiumModeId;
@@ -126,11 +130,7 @@ export type CesiumAgentSettings = {
    * Swapping a feature version swaps its tools/reminders without rewriting the turn loop.
    */
   harness: CesiumHarnessSettings;
-  toolPermissions: {
-    editFile: "ask" | "allow" | "deny";
-    terminal: "ask" | "allow" | "deny";
-    mcpCall: "ask" | "allow" | "deny";
-  };
+  toolPermissions: CesiumToolPermissions;
   providerKeys: CesiumProviderKey[];
   customProviders: CesiumCustomProvider[];
 };
@@ -331,6 +331,7 @@ function defaultSettings(): CesiumAgentSettings {
       editFile: "ask",
       terminal: "ask",
       mcpCall: "ask",
+      switchMode: "ask",
     },
     providerKeys: [],
     customProviders: [],
@@ -518,6 +519,12 @@ function normalizeSettings(raw: unknown): CesiumAgentSettings {
         toolPermissions?.mcpCall === "ask"
           ? toolPermissions.mcpCall
           : defaults.toolPermissions.mcpCall,
+      switchMode:
+        toolPermissions?.switchMode === "allow" ||
+        toolPermissions?.switchMode === "deny" ||
+        toolPermissions?.switchMode === "ask"
+          ? toolPermissions.switchMode
+          : defaults.toolPermissions.switchMode,
     },
     providerKeys: dedupeProviderKeys(
       Array.isArray(record.providerKeys)

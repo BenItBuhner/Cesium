@@ -8,6 +8,7 @@ import {
 import { getCesiumAgentSettings } from "../cesium-agent-settings.js";
 import { getWorkspaceById } from "../workspace-registry.js";
 import { agentRuntimeManager } from "./runtime-manager.js";
+import { isOrchestrationPermissionCategory } from "./permission-options.js";
 import { readConversationSnapshotHead, subscribeAgentStoreEvents } from "./session-store.js";
 import { readBurnGoalForConversation } from "./burn-goal-store.js";
 import { burnGoalHasRunnableWork } from "./burn-goal-types.js";
@@ -280,10 +281,11 @@ export function startOrchestrationAgentControlListener(): void {
             if (!assignment) {
               return;
             }
-            const policy =
-              assignment.config.permissionPolicy?.[
-                pendingPermission.permission ?? "editFile"
-              ] ?? "allow";
+            const permission = pendingPermission.permission;
+            if (!isOrchestrationPermissionCategory(permission)) {
+              return;
+            }
+            const policy = assignment.config.permissionPolicy?.[permission] ?? "allow";
             if (policy !== "allow") {
               return;
             }
