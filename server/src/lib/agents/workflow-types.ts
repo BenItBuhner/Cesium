@@ -87,6 +87,8 @@ export type WorkflowAgentSpawnRequest = {
   schema?: Record<string, unknown>;
   model?: string;
   effort?: string;
+  /** Remaining best-effort token budget available to this child invocation. */
+  tokenBudget?: number;
 };
 
 export type WorkflowAgentSpawnResult = {
@@ -97,6 +99,16 @@ export type WorkflowAgentSpawnResult = {
 export type WorkflowAgentSpawner = (
   request: WorkflowAgentSpawnRequest
 ) => Promise<WorkflowAgentSpawnResult>;
+
+export class WorkflowAgentSpawnError extends Error {
+  readonly tokensUsed: number;
+
+  constructor(message: string, tokensUsed: number) {
+    super(message);
+    this.name = "WorkflowAgentSpawnError";
+    this.tokensUsed = Math.max(0, Math.floor(tokensUsed));
+  }
+}
 
 export const WORKFLOW_DEFAULT_MAX_AGENTS = 50;
 export const WORKFLOW_DEFAULT_MAX_CONCURRENT = 8;

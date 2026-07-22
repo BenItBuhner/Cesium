@@ -348,7 +348,8 @@ const CESIUM_BASE_TOOLS: CesiumToolDefinition[] = [
         tokenBudget: {
           type: "integer",
           minimum: 0,
-          description: "Optional hard token ceiling for this run. budget.remaining() is Infinity when omitted.",
+          description:
+            "Optional best-effort run-wide token budget. Reported provider usage is accumulated and the remaining amount limits each child response, but input tokens and concurrent in-flight agents can make final usage exceed it. budget.remaining() is Infinity when omitted.",
         },
         maxAgents: {
           type: "integer",

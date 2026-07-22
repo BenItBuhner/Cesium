@@ -129,6 +129,94 @@ test("workflow_run requires the dedicated workflow launch permission", () => {
   );
 });
 
+test("workflow_run describes tokenBudget as best-effort accounting", () => {
+  const workflowRun = resolveCesiumTools().tools.find((tool) => tool.name === "workflow_run");
+  const tokenBudget = (
+    workflowRun?.parameters as {
+      properties?: { tokenBudget?: { description?: string } };
+    }
+  ).properties?.tokenBudget;
+  assert.match(tokenBudget?.description ?? "", /best-effort run-wide token budget/i);
+  assert.match(tokenBudget?.description ?? "", /can make final usage exceed it/i);
+  assert.doesNotMatch(tokenBudget?.description ?? "", /hard token ceiling/i);
+});
+
+test("workflow child tool execution suppresses transcript events but preserves permissions", async () => {
+  const fs = await import("node:fs/promises");
+  const relativePath = "workflow-child-permission.txt";
+  await fs.mkdir(TEST_DATA_DIR, { recursive: true });
+  await fs.writeFile(path.join(TEST_DATA_DIR, relativePath), "before", "utf8");
+  await patchCesiumAgentSettings({ toolPermissions: { editFile: "deny" } });
+  try {
+    const backend = AGENT_BACKENDS["cesium-agent"];
+    const provider = await createCesiumAgentProvider({ backend });
+    let conversation = {
+      schemaVersion: 1 as const,
+      id: "cesium-workflow-child-permission",
+      workspaceId: "ws-1",
+      title: "Workflow child permission",
+      createdAt: 1,
+      updatedAt: 1,
+      lastEventSeq: 0,
+      status: "idle" as const,
+      config: {
+        backendId: "cesium-agent" as const,
+        mode: "workflow",
+        modelId: "openai/gpt-5.1",
+        modelName: "GPT-5.1",
+      },
+      providerSessionId: null,
+      configOptions: [],
+      capabilities: backend.capabilities,
+      pendingPermission: null,
+      pendingQuestion: null,
+      lastError: null,
+      experimental: true,
+      archivedAt: null,
+      lastReadSeq: 0,
+      queuedPrompts: [],
+    };
+    const events: Array<{ kind: string }> = [];
+    const handle = await provider.startSession({
+      conversation,
+      workspace: { id: "ws-1", root: TEST_DATA_DIR, name: "test", createdAt: 1 },
+      appendEvents: async (next) => {
+        events.push(...next);
+      },
+      readSnapshot: async () => null,
+      updateConversation: async (patch) => {
+        conversation =
+          typeof patch === "function" ? patch(conversation) : { ...conversation, ...patch };
+        return conversation;
+      },
+    });
+    events.length = 0;
+
+    const result = await (
+      handle as unknown as {
+        executeTool(
+          request: { id: string; name: string; arguments: Record<string, unknown> },
+          options: { suppressTranscript: boolean }
+        ): Promise<string>;
+      }
+    ).executeTool(
+      {
+        id: "child-edit",
+        name: "edit_file",
+        arguments: { path: relativePath, oldString: "before", newString: "after" },
+      },
+      { suppressTranscript: true }
+    );
+
+    assert.match(result, /blocked by Cesium permission settings/);
+    assert.equal(await fs.readFile(path.join(TEST_DATA_DIR, relativePath), "utf8"), "before");
+    assert.equal(events.some((event) => event.kind === "tool_call"), false);
+    assert.equal(events.some((event) => event.kind === "tool_call_update"), false);
+  } finally {
+    await patchCesiumAgentSettings({ toolPermissions: { editFile: "ask" } });
+  }
+});
+
 test("normalizeCallMcpToolArgs accepts nested, snake_case, and flat MCP tool shapes", () => {
   assert.deepEqual(
     normalizeCallMcpToolArgs({

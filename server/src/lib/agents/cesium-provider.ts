@@ -170,6 +170,7 @@ import {
   normalizeEventsToHistory,
   summarizeForCompression,
 } from "./cesium/cesium-history.js";
+import { runCesiumWorkflowChild } from "./cesium/cesium-workflow-child.js";
 import {
   modelPart,
   providerPart,
@@ -230,6 +231,10 @@ type ActiveQuestion = {
   questions: CesiumQuestionStep[];
   allowMultiple: boolean;
   raw: Record<string, unknown>;
+};
+
+type CesiumToolExecutionOptions = {
+  suppressTranscript?: boolean;
 };
 
 type CesiumQuestionStep = {
@@ -1565,7 +1570,10 @@ class CesiumSessionHandle implements AgentSessionHandle {
     }
   }
 
-  private async executeTool(request: CesiumToolRequest): Promise<string> {
+  private async executeTool(
+    request: CesiumToolRequest,
+    options: CesiumToolExecutionOptions = {}
+  ): Promise<string> {
     const effectiveRequest =
       request.name === "call_mcp_tool"
         ? {
@@ -1595,7 +1603,9 @@ class CesiumSessionHandle implements AgentSessionHandle {
       pluginIconUrl: mcpServerForTool?.iconUrl,
       raw: effectiveRequest,
     };
-    await this.callbacks.appendEvents([callEvent]);
+    if (!options.suppressTranscript) {
+      await this.callbacks.appendEvents([callEvent]);
+    }
     try {
       let result: string;
       const policy = resolveCesiumModeToolPolicy({
@@ -1784,22 +1794,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
           throw new Error(`Unknown Cesium tool: ${request.name}`);
         }
       }
-      await this.callbacks.appendEvents([
-        {
-          eventId: randomUUID(),
-          conversationId: this.callbacks.conversation.id,
-          kind: "tool_call_update",
-          toolCallId: request.id,
-          title,
-          toolKind: toolKind(request.name),
-          status: "completed",
-          detail: result,
-          raw: { request: effectiveRequest, result },
-        },
-      ]);
-      return result;
-    } catch (error) {
-      if (error instanceof PermissionRefusedToolCallError) {
+      if (!options.suppressTranscript) {
         await this.callbacks.appendEvents([
           {
             eventId: randomUUID(),
@@ -1809,26 +1804,47 @@ class CesiumSessionHandle implements AgentSessionHandle {
             title,
             toolKind: toolKind(request.name),
             status: "completed",
-            detail: error.message,
-            raw: { request: effectiveRequest, result: error.message, permissionRefused: true },
+            detail: result,
+            raw: { request: effectiveRequest, result },
           },
         ]);
+      }
+      return result;
+    } catch (error) {
+      if (error instanceof PermissionRefusedToolCallError) {
+        if (!options.suppressTranscript) {
+          await this.callbacks.appendEvents([
+            {
+              eventId: randomUUID(),
+              conversationId: this.callbacks.conversation.id,
+              kind: "tool_call_update",
+              toolCallId: request.id,
+              title,
+              toolKind: toolKind(request.name),
+              status: "completed",
+              detail: error.message,
+              raw: { request: effectiveRequest, result: error.message, permissionRefused: true },
+            },
+          ]);
+        }
         return error.message;
       }
       const failed = statusFromError(error);
-      await this.callbacks.appendEvents([
-        {
-          eventId: randomUUID(),
-          conversationId: this.callbacks.conversation.id,
-          kind: "tool_call_update",
-          toolCallId: request.id,
-          title,
-          toolKind: toolKind(request.name),
-          status: failed.status,
-          detail: failed.detail,
-          raw: { request: effectiveRequest, error: failed.detail },
-        },
-      ]);
+      if (!options.suppressTranscript) {
+        await this.callbacks.appendEvents([
+          {
+            eventId: randomUUID(),
+            conversationId: this.callbacks.conversation.id,
+            kind: "tool_call_update",
+            toolCallId: request.id,
+            title,
+            toolKind: toolKind(request.name),
+            status: failed.status,
+            detail: failed.detail,
+            raw: { request: effectiveRequest, error: failed.detail },
+          },
+        ]);
+      }
       return failed.detail;
     }
   }
@@ -3417,46 +3433,26 @@ class CesiumSessionHandle implements AgentSessionHandle {
       "Complete the assigned task. Do not spawn additional workflows or subagents.",
       schemaHint,
     ].join("\n\n");
-
-    let lastError: string | null = null;
-    for (let attempt = 0; attempt < 2; attempt += 1) {
-      const result = await runAdapter({
-        apiKind: auth.apiKind,
-        apiKey: auth.apiKey,
-        baseUrl: auth.baseUrl,
-        providerId: auth.providerId,
-        modelId,
-        messages: [
-          { role: "system", content: system },
-          {
-            role: "user",
-            content:
-              attempt === 0
-                ? request.prompt
-                : `${request.prompt}\n\nPrevious response failed validation: ${lastError}\nReturn corrected output only.`,
-          },
-        ],
-      });
-      const text = result.text.trim();
-      if (!request.schema) {
-        return {
-          value:
-            text ||
-            (result.toolRequests.length > 0
-              ? `Workflow agent requested unsupported tools: ${result.toolRequests
-                  .map((tool) => tool.name)
-                  .join(", ")}`
-              : ""),
-        };
-      }
-      try {
-        const jsonText = text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
-        return { value: JSON.parse(jsonText) as unknown };
-      } catch (error) {
-        lastError = error instanceof Error ? error.message : String(error);
-      }
-    }
-    throw new Error(lastError ?? "Workflow agent failed schema validation.");
+    return runCesiumWorkflowChild({
+      prompt: request.prompt,
+      system,
+      schema: request.schema,
+      tools: this.harness.tools,
+      tokenBudget: request.tokenBudget,
+      complete: ({ messages, tools, maxOutputTokens }) =>
+        runAdapter({
+          apiKind: auth.apiKind,
+          apiKey: auth.apiKey,
+          baseUrl: auth.baseUrl,
+          providerId: auth.providerId,
+          modelId,
+          messages,
+          tools,
+          maxOutputTokens,
+        }),
+      executeTool: (toolRequest) =>
+        this.executeTool(toolRequest, { suppressTranscript: true }),
+    });
   }
 
   private async toolWorkflowRun(args: Record<string, unknown>): Promise<string> {

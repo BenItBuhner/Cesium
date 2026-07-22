@@ -10,6 +10,7 @@ import {
 import {
   WORKFLOW_DEFAULT_MAX_AGENTS,
   WORKFLOW_DEFAULT_MAX_CONCURRENT,
+  WorkflowAgentSpawnError,
   type WorkflowAgentSpawner,
   type WorkflowJournalEntry,
   type WorkflowMeta,
@@ -387,6 +388,10 @@ export async function executeWorkflowRun(input: {
         startedAt,
         finalLabel,
         hashOpts,
+        tokenBudget:
+          run.tokenBudget == null
+            ? undefined
+            : Math.max(0, run.tokenBudget - run.tokensUsed),
       };
     });
 
@@ -404,6 +409,9 @@ export async function executeWorkflowRun(input: {
           schema,
           model,
           effort,
+          ...(begin.tokenBudget !== undefined
+            ? { tokenBudget: begin.tokenBudget }
+            : {}),
         });
         const entry: WorkflowJournalEntry = {
           key: begin.key,
@@ -436,9 +444,12 @@ export async function executeWorkflowRun(input: {
         return result.value;
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
+        const failedTokens =
+          error instanceof WorkflowAgentSpawnError ? error.tokensUsed : 0;
         await withRunLock(async () => {
           run = {
             ...run,
+            tokensUsed: run.tokensUsed + failedTokens,
             agents: run.agents.map((item) =>
               item.id === begin.agentId && item.startedAt === begin.startedAt
                 ? {

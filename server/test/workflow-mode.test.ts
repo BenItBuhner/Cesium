@@ -13,6 +13,7 @@ import {
 } from "../src/lib/agents/workflow-store.js";
 import { DATA_DIR } from "../src/lib/persistence.js";
 import type { WorkspaceRecord } from "../src/lib/workspace-registry.js";
+import { WorkflowAgentSpawnError } from "../src/lib/agents/workflow-types.js";
 import {
   resolveCesiumModeToolPolicy,
   summarizeCesiumModeToolPolicy,
@@ -160,6 +161,46 @@ return [a, b];
   assert.equal(liveCalls, 1);
   assert.deepEqual(completed.returnValue, ["live:same", "live:same"]);
   assert.equal(completed.agents.filter((item) => item.status === "cached").length, 1);
+});
+
+test("workflow runtime threads remaining budget and records failed child usage", async () => {
+  const workspace: WorkspaceRecord = {
+    id: `ws-workflow-budget-${process.pid}-${Date.now()}`,
+    root: "/tmp",
+    name: "Workflow budget",
+    createdAt: 1,
+    updatedAt: 1,
+    lastOpenedAt: 1,
+  };
+  const script = `export const meta = { name: "budget", description: "budget demo", phases: [] };
+return await agent("bounded child");
+`;
+  try {
+    let run = createWorkflowRunRecord({
+      workspace,
+      conversationId: "conv-budget",
+      script,
+      scriptPath: "/tmp/budget.js",
+      tokenBudget: 25,
+      maxAgents: 1,
+    });
+    run = await upsertWorkflowRun(run);
+
+    const completed = await executeWorkflowRun({
+      run,
+      spawnAgent: async (request) => {
+        assert.equal(request.tokenBudget, 25);
+        throw new WorkflowAgentSpawnError("provider failed after a tool turn", 7);
+      },
+    });
+
+    assert.equal(completed.status, "completed");
+    assert.equal(completed.returnValue, null);
+    assert.equal(completed.tokensUsed, 7);
+    assert.equal(completed.agents[0]?.status, "failed");
+  } finally {
+    await rm(path.join(DATA_DIR, "workspaces", workspace.id), { recursive: true, force: true });
+  }
 });
 
 test("upsertWorkflowRun preserves concurrent distinct runs in one workspace", async () => {
