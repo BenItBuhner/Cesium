@@ -21,6 +21,8 @@ jobs:
     timeout-minutes: 60
     env:
       GRADLE_OPTS: -Dorg.gradle.workers.max=4 -Dkotlin.daemon.jvm.options=-Xmx2048m
+      NPM_CONFIG_AUDIT: "false"
+      NPM_CONFIG_FUND: "false"
 
     steps:
       - name: Resolve release tag
