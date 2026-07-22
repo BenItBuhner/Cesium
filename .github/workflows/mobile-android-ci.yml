@@ -56,22 +56,25 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Install Android NDK and CMake
+      - name: Install Android toolchain and mobile dependencies
         run: |
-          yes | sdkmanager --licenses >/dev/null
-          sdkmanager "ndk;27.0.12077973" "cmake;3.31.6"
-
-      - name: Install mobile build dependencies
-        run: >
-          npm ci
-          --include-workspace-root=false
-          --workspace @cesium/mobile
-          --workspace @cesium/desktop-renderer
-          --workspace @cesium/core
-          --workspace @cesium/design
-          --workspace @cesium/client
-          --workspace @cesium/config
-          --workspace @cesium/ui-web
+          status=0
+          (
+            yes | sdkmanager --licenses >/dev/null
+            sdkmanager "ndk;27.0.12077973" "cmake;3.31.6"
+          ) & android_pid=$!
+          npm ci \
+            --include-workspace-root=false \
+            --workspace @cesium/mobile \
+            --workspace @cesium/desktop-renderer \
+            --workspace @cesium/core \
+            --workspace @cesium/design \
+            --workspace @cesium/client \
+            --workspace @cesium/config \
+            --workspace @cesium/ui-web & npm_pid=$!
+          wait "$android_pid" || status=1
+          wait "$npm_pid" || status=1
+          exit "$status"
 
       - name: Build required shared packages
         run: |
