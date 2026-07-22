@@ -10,7 +10,9 @@ import {
 import { getGitWorkspaceStatus } from "../git-worktrees.js";
 import {
   createCesiumAgentConfigOptions,
+  findCesiumModelCatalogEntry,
   getCesiumAgentSettings,
+  getCesiumModelCatalog,
   resolveCesiumModelContextWindow,
   resolveCesiumAuth,
   type CesiumProviderKind,
@@ -627,9 +629,47 @@ class CesiumSessionHandle implements AgentSessionHandle {
         },
       ]);
       const history = await this.buildHistory(input.userMessageId);
+      const promptImages = (input.attachments ?? [])
+        .filter((attachment) => attachment.mimeType.startsWith("image/"))
+        .map((attachment) => ({
+          mimeType: attachment.mimeType,
+          data: attachment.data,
+          name: attachment.name,
+        }));
       if (!history.some((message) => message.role === "user" && message.content === input.text)) {
-        history.push({ role: "user", content: input.text });
+        history.push({
+          role: "user",
+          content: input.text,
+          ...(promptImages.length > 0 ? { images: promptImages } : {}),
+        });
       }
+      const catalog = await getCesiumModelCatalog();
+      const catalogEntry = findCesiumModelCatalogEntry(modelId, catalog);
+      const modelSupportsImages = catalogEntry?.supportsImages === true;
+      const historyImageCount = history.reduce(
+        (count, message) => count + (message.images?.length ?? 0),
+        0
+      );
+      if (historyImageCount > 0 && !modelSupportsImages) {
+        await this.callbacks.appendEvents([
+          {
+            eventId: randomUUID(),
+            conversationId: this.callbacks.conversation.id,
+            kind: "system",
+            level: "warning",
+            text:
+              `Model ${modelId} does not advertise image/multimodal support. ` +
+              `Image attachments were dropped for this turn. Use a vision model such as kimi-k2.7-code.`,
+          },
+        ]);
+      }
+      const modelHistory = modelSupportsImages
+        ? history
+        : history.map((message) =>
+            message.images?.length
+              ? { ...message, images: undefined }
+              : message
+          );
       const toolResultMessages: CesiumHistoryMessage[] = [];
       let usedToolResultChars = 0;
       let completedToolCallCount = 0;
@@ -657,7 +697,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
               baseUrl: auth.baseUrl,
               providerId: auth.providerId,
               modelId,
-              messages: [...history, ...toolResultMessages],
+              messages: [...modelHistory, ...toolResultMessages],
               tools: this.harness.tools,
             },
             iteration,
