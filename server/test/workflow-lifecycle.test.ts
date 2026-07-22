@@ -423,11 +423,15 @@ return await agent("wait for stop");
       run,
       spawnAgent: async (request) =>
         new Promise<never>((_, reject) => {
-          request.signal?.addEventListener(
-            "abort",
-            () => reject(new Error("route-controlled child aborted")),
-            { once: true }
-          );
+          const rejectAbort = () =>
+            reject(new Error("route-controlled child aborted"));
+          if (request.signal?.aborted) {
+            rejectAbort();
+          } else {
+            request.signal?.addEventListener("abort", rejectAbort, {
+              once: true,
+            });
+          }
         }),
     });
     for (let attempt = 0; attempt < 50; attempt += 1) {
