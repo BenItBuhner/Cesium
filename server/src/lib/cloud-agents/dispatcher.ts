@@ -338,7 +338,7 @@ export async function steerCloudAgentTask(
     undefined,
     { delivery: "steer" }
   );
-  await updateCloudAgentTask(taskId, { status: "running" });
+  await updateCloudAgentTask(taskId, { status: "running", lastError: null });
   await appendCloudAgentTaskTimeline(taskId, {
     kind: "steered",
     message: `Steering message sent: ${text.slice(0, 140)}${text.length > 140 ? "…" : ""}`,
@@ -439,7 +439,12 @@ export function startCloudAgentTaskSyncListener(): void {
         conversation.status === "idle" &&
         task.status === "running"
       ) {
-        await updateCloudAgentTask(task.id, { status: "awaiting_review" }).catch(() => undefined);
+        // A finished turn supersedes any earlier failure (e.g. a task revived
+        // through steering); clear the stale error alongside the status flip.
+        await updateCloudAgentTask(task.id, {
+          status: "awaiting_review",
+          lastError: null,
+        }).catch(() => undefined);
         await appendCloudAgentTaskTimeline(task.id, {
           kind: "turn_completed",
           message: "Agent turn finished; task is awaiting review. Steer it or mark it complete.",

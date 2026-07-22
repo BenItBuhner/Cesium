@@ -36,26 +36,47 @@ export async function verifyCloudAgentToken(
 ): Promise<CloudAgentVerifiedIdentity> {
   switch (providerId) {
     case "github": {
-      const { status, headers, body } = await fetchJson("https://api.github.com/user", {
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          Accept: "application/vnd.github+json",
-          "User-Agent": "cesium-cloud-agents",
-        },
-      });
-      if (status !== 200) {
-        throw new Error(`GitHub rejected the token (HTTP ${status}).`);
-      }
-      const login = (body as { login?: string })?.login;
-      const scopes = headers
-        .get("x-oauth-scopes")
-        ?.split(",")
-        .map((scope) => scope.trim())
-        .filter(Boolean);
-      return {
-        accountLabel: login ? `@${login}` : "GitHub account",
-        ...(scopes && scopes.length > 0 ? { scopes } : {}),
+      const githubHeaders = {
+        Authorization: `Bearer ${accessToken}`,
+        Accept: "application/vnd.github+json",
+        "User-Agent": "cesium-cloud-agents",
       };
+      const { status, headers, body } = await fetchJson("https://api.github.com/user", {
+        headers: githubHeaders,
+      });
+      if (status === 200) {
+        const login = (body as { login?: string })?.login;
+        const scopes = headers
+          .get("x-oauth-scopes")
+          ?.split(",")
+          .map((scope) => scope.trim())
+          .filter(Boolean);
+        return {
+          accountLabel: login ? `@${login}` : "GitHub account",
+          ...(scopes && scopes.length > 0 ? { scopes } : {}),
+        };
+      }
+      // GitHub App installation tokens cannot access /user; identify them via
+      // the installation's repository listing instead.
+      if (status === 403 || status === 401) {
+        const installation = await fetchJson(
+          "https://api.github.com/installation/repositories?per_page=1",
+          { headers: githubHeaders }
+        );
+        if (installation.status === 200) {
+          const repos = (installation.body as {
+            total_count?: number;
+            repositories?: Array<{ owner?: { login?: string } }>;
+          }) ?? {};
+          const owner = repos.repositories?.[0]?.owner?.login;
+          return {
+            accountLabel: owner
+              ? `GitHub App · ${owner} (${repos.total_count ?? "?"} repos)`
+              : "GitHub App installation",
+          };
+        }
+      }
+      throw new Error(`GitHub rejected the token (HTTP ${status}).`);
     }
     case "linear": {
       const { status, body } = await fetchJson("https://api.linear.app/graphql", {
