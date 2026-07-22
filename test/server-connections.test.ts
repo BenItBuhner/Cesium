@@ -24,6 +24,11 @@ import {
   parseServerUrlSearchParam,
   resolveClientServerBaseUrlForLocation,
 } from "../src/lib/resolve-server-base-url.ts";
+import {
+  CESIUM_SERVER_INSTALLER_URL,
+  buildCesiumServerInstallCommand,
+  normalizeWebAppOrigin,
+} from "../src/lib/server-install-command.ts";
 
 class MemoryStorage {
   private readonly data = new Map<string, string>();
@@ -487,6 +492,19 @@ describe("base URL resolution", () => {
     );
   });
 
+});
+
+describe("server installer command", () => {
+  test("targets the current web origin and starts the installer through bash", () => {
+    assert.equal(
+      buildCesiumServerInstallCommand("https://cesium-example.vercel.app/workspace?tab=server"),
+      `curl -fsSL ${CESIUM_SERVER_INSTALLER_URL} | env CESIUM_WEB_URL='https://cesium-example.vercel.app' bash`
+    );
+  });
+
+  test("rejects non-http web app URLs", () => {
+    assert.throws(() => normalizeWebAppOrigin("file:///tmp/cesium"), /http or https/);
+  });
 });
 
 describe("per-server auth storage", () => {
