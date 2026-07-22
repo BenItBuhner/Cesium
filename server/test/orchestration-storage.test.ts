@@ -228,6 +228,57 @@ for (const kind of availableDriverKinds()) {
     }
   });
 
+  test(`orchestration storage[${kind}]: requires and clears blocker explanations`, async () => {
+    bootstrapFixtureEnv(kind);
+    const fixture = await createFixture(kind);
+    const [{ __setStorageForTesting }, store] = await Promise.all([
+      import("../src/storage/runtime.js"),
+      import("../src/lib/orchestration/store.js"),
+    ]);
+    __setStorageForTesting(fixture.driver);
+    try {
+      const workspace = makeWorkspace();
+      await fixture.driver.upsertWorkspace(workspace);
+      const board = await store.createOrchestrationBoard({
+        workspace,
+        title: "Blockers",
+        headConversationId: "head-blockers",
+        allowedBackendIds: ["cesium-agent"],
+      });
+      const created = await store.createOrchestrationIssue({
+        boardId: board.board.id,
+        title: "Needs credentials",
+        columnId: "in_progress",
+      });
+      const issue = created.issues[0]!;
+
+      await assert.rejects(
+        () =>
+          store.upsertOrchestrationIssue(board.board.id, {
+            id: issue.id,
+            columnId: "blocked",
+          }),
+        /blocker explanation is required/i
+      );
+
+      const blocked = await store.upsertOrchestrationIssue(board.board.id, {
+        id: issue.id,
+        columnId: "blocked",
+        blockedReason: "Waiting for a test account.",
+      });
+      assert.equal(blocked.issues[0]!.blockedReason, "Waiting for a test account.");
+
+      const resumed = await store.upsertOrchestrationIssue(board.board.id, {
+        id: issue.id,
+        columnId: "in_progress",
+      });
+      assert.equal(resumed.issues[0]!.blockedReason, null);
+    } finally {
+      __setStorageForTesting(null);
+      await fixture.cleanup();
+    }
+  });
+
   test(`orchestration storage[${kind}]: finds child assignment conversations`, async () => {
     bootstrapFixtureEnv(kind);
     const fixture = await createFixture(kind);

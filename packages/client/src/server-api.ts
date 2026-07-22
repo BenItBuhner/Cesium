@@ -39,7 +39,9 @@ import {
 import {
   resolveClientServerBaseUrl,
   resolveExplicitServerBaseUrlForCurrentWindow,
+  getConfiguredServerBaseUrl,
 } from "./resolve-server-base-url";
+import { getActiveServerBaseUrl } from "./server-connections";
 import type {
   McpConnectionStatus,
   McpPresetDefinition,
@@ -113,6 +115,23 @@ function resolveServerRequestBaseUrl(server?: ServerRequestContext): string {
     : resolveClientServerBaseUrl();
 }
 
+function captureServerRequestTarget(server?: ServerRequestContext): {
+  requestBaseUrl: string;
+  authBaseUrl: string;
+} {
+  if (server?.baseUrl) {
+    return {
+      requestBaseUrl: resolveServerRequestBaseUrl(server),
+      authBaseUrl: server.baseUrl,
+    };
+  }
+  const authBaseUrl = getActiveServerBaseUrl(getConfiguredServerBaseUrl());
+  return {
+    requestBaseUrl: resolveExplicitServerBaseUrlForCurrentWindow(authBaseUrl),
+    authBaseUrl,
+  };
+}
+
 function revisionKeyForServer(revisionKey: string, server?: ServerRequestContext): string {
   return server?.baseUrl ? `${server.baseUrl}\0${revisionKey}` : revisionKey;
 }
@@ -176,8 +195,8 @@ async function request<T>(
   const method = (init?.method ?? "GET").toUpperCase();
   const cacheMode: RequestCache = method === "GET" ? "default" : "no-store";
   const startedAt = performance.now();
-  const baseUrl = resolveServerRequestBaseUrl(options?.server);
-  const serverBaseUrl = options?.server?.baseUrl;
+  const { requestBaseUrl: baseUrl, authBaseUrl: serverBaseUrl } =
+    captureServerRequestTarget(options?.server);
   const hadSessionToken = Boolean(getStoredSessionToken(serverBaseUrl));
   const response = await fetch(`${baseUrl}${input}`, {
     ...init,
@@ -237,9 +256,12 @@ async function requestWithEtag<T>(
   revisionKey: string,
   options?: { skipWorkspaceHeader?: boolean; server?: ServerRequestContext }
 ): Promise<T> {
-  const baseUrl = resolveServerRequestBaseUrl(options?.server);
-  const serverBaseUrl = options?.server?.baseUrl;
-  const scopedRevisionKey = revisionKeyForServer(revisionKey, options?.server);
+  const { requestBaseUrl: baseUrl, authBaseUrl: serverBaseUrl } =
+    captureServerRequestTarget(options?.server);
+  const scopedRevisionKey = revisionKeyForServer(revisionKey, {
+    ...options?.server,
+    baseUrl: serverBaseUrl,
+  });
   const hadSessionToken = Boolean(getStoredSessionToken(serverBaseUrl));
   const response = await fetch(`${baseUrl}${input}`, {
     headers: Object.fromEntries(
@@ -287,9 +309,12 @@ async function mutateWithEtag(
     server?: ServerRequestContext;
   }
 ): Promise<{ revision?: number; etag: string | null }> {
-  const baseUrl = resolveServerRequestBaseUrl(options?.server);
-  const serverBaseUrl = options?.server?.baseUrl;
-  const scopedRevisionKey = revisionKeyForServer(revisionKey, options?.server);
+  const { requestBaseUrl: baseUrl, authBaseUrl: serverBaseUrl } =
+    captureServerRequestTarget(options?.server);
+  const scopedRevisionKey = revisionKeyForServer(revisionKey, {
+    ...options?.server,
+    baseUrl: serverBaseUrl,
+  });
   const cachedEtag = etagRegistry.get(scopedRevisionKey);
   const hadSessionToken = Boolean(getStoredSessionToken(serverBaseUrl));
   const headers: Record<string, string> = {
@@ -1368,6 +1393,7 @@ export async function patchOrchestrationIssue(
     acceptanceCriteria?: string[];
     dependencyIssueIds?: string[];
     blockedReason?: string | null;
+    blockerExplanation?: string | null;
   }
 ): Promise<{ snapshot: OrchestrationBoardSnapshot }> {
   return request(

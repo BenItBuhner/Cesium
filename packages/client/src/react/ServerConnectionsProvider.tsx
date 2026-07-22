@@ -70,6 +70,7 @@ const ServerConnectionsContext = createContext<ServerConnectionsContextValue | n
 export type ServerRuntimeHealth = "unknown" | "online" | "offline" | "auth_required" | "degraded";
 
 export type ServerRuntimeStatus = {
+  baseUrl: string;
   health: ServerRuntimeHealth;
   lastCheckedAt: number | null;
   lastOnlineAt: number | null;
@@ -78,13 +79,18 @@ export type ServerRuntimeStatus = {
   authenticated: boolean | null;
 };
 
-function statusFromProbe(probe: ServerProbeResult, now = Date.now()): ServerRuntimeStatus {
+function statusFromProbe(
+  baseUrl: string,
+  probe: ServerProbeResult,
+  now = Date.now()
+): ServerRuntimeStatus {
   const health: ServerRuntimeHealth = probe.ok
     ? probe.authEnabled && probe.authenticated === false
       ? "auth_required"
       : "online"
     : "offline";
   return {
+    baseUrl,
     health,
     lastCheckedAt: now,
     lastOnlineAt: probe.ok ? now : null,
@@ -101,6 +107,9 @@ function sameRuntimeStatus(
   if (!current || !next) return current === next;
   return (
     current.health === next.health &&
+    current.baseUrl === next.baseUrl &&
+    current.lastCheckedAt === next.lastCheckedAt &&
+    current.lastOnlineAt === next.lastOnlineAt &&
     current.error === next.error &&
     current.authEnabled === next.authEnabled &&
     current.authenticated === next.authenticated
@@ -112,12 +121,17 @@ function upsertRuntimeStatusIfChanged(
   serverId: string,
   nextStatus: ServerRuntimeStatus
 ): Record<string, ServerRuntimeStatus> {
-  if (sameRuntimeStatus(current[serverId], nextStatus)) {
+  const previous = current[serverId];
+  const mergedStatus =
+    nextStatus.lastOnlineAt === null && previous?.baseUrl === nextStatus.baseUrl
+      ? { ...nextStatus, lastOnlineAt: previous.lastOnlineAt }
+      : nextStatus;
+  if (sameRuntimeStatus(previous, mergedStatus)) {
     return current;
   }
   return {
     ...current,
-    [serverId]: nextStatus,
+    [serverId]: mergedStatus,
   };
 }
 
@@ -159,6 +173,7 @@ export function ServerConnectionsProvider({ children }: { children: ReactNode })
   const [state, setState] = useState<ServerConnectionsState>(() => readStoredServerConnectionsState());
   const [serverStatusById, setServerStatusById] = useState<Record<string, ServerRuntimeStatus>>({});
   const healthRecoveryRanRef = useRef(false);
+  const healthRefreshEpochRef = useRef(0);
   const serversRef = useRef<ServerConnection[]>(state.servers);
   serversRef.current = state.servers;
 
@@ -280,7 +295,7 @@ export function ServerConnectionsProvider({ children }: { children: ReactNode })
       }
       const activeProbe = await probeServerBaseUrl(active.baseUrl);
       setServerStatusById((current) =>
-        upsertRuntimeStatusIfChanged(current, active.id, statusFromProbe(activeProbe))
+        upsertRuntimeStatusIfChanged(current, active.id, statusFromProbe(active.baseUrl, activeProbe))
       );
       if (cancelled || activeProbe.ok) {
         return;
@@ -292,12 +307,19 @@ export function ServerConnectionsProvider({ children }: { children: ReactNode })
         }
         const probe = await probeServerBaseUrl(candidate.baseUrl);
         setServerStatusById((current) =>
-          upsertRuntimeStatusIfChanged(current, candidate.id, statusFromProbe(probe))
+          upsertRuntimeStatusIfChanged(
+            current,
+            candidate.id,
+            statusFromProbe(candidate.baseUrl, probe)
+          )
         );
         if (!probe.ok) {
           continue;
         }
         if (cancelled) {
+          return;
+        }
+        if (readStoredServerConnectionsState().activeServerId !== active.id) {
           return;
         }
         setState((current) => {
@@ -364,15 +386,35 @@ export function ServerConnectionsProvider({ children }: { children: ReactNode })
   }, [ready, refreshRendezvousEndpoints]);
 
   const refreshServerHealth = useCallback(async () => {
+    const epoch = ++healthRefreshEpochRef.current;
     const servers = serversRef.current;
     const entries = await Promise.all(
       servers.map(async (server) => {
         const probe = await probeServerBaseUrl(server.baseUrl);
-        return [server.id, statusFromProbe(probe)] as const;
+        return [server.id, statusFromProbe(server.baseUrl, probe)] as const;
       })
     );
     const next = Object.fromEntries(entries);
-    setServerStatusById((current) => mergeRuntimeStatusesIfChanged(current, next));
+    if (epoch !== healthRefreshEpochRef.current) {
+      return next;
+    }
+    setServerStatusById((current) => {
+      const currentServers = new Map(serversRef.current.map((server) => [server.id, server.baseUrl]));
+      const merged = Object.fromEntries(
+        Object.entries(next)
+          .filter(([serverId, status]) => currentServers.get(serverId) === status.baseUrl)
+          .map(([serverId, status]) => {
+            const previous = current[serverId];
+            return [
+              serverId,
+              status.lastOnlineAt === null && previous?.baseUrl === status.baseUrl
+                ? { ...status, lastOnlineAt: previous.lastOnlineAt }
+                : status,
+            ];
+          })
+      );
+      return mergeRuntimeStatusesIfChanged(current, merged);
+    });
     return next;
   }, []);
 

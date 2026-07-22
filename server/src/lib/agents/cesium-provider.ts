@@ -2646,13 +2646,21 @@ class CesiumSessionHandle implements AgentSessionHandle {
     if (!title) {
       throw new Error("orchestration_create_issue.title is required.");
     }
+    const columnId = asOrchestrationColumnId(args.columnId);
+    const blockerExplanation = asString(args.blockerExplanation);
+    if (columnId === "blocked" && !blockerExplanation) {
+      throw new Error(
+        "orchestration_create_issue.blockerExplanation is required for blocked issues."
+      );
+    }
     const snapshot = await createOrchestrationIssue({
       boardId: current.board.id,
       title,
       description: asString(args.description),
-      columnId: asOrchestrationColumnId(args.columnId),
+      columnId,
       priority: asOrchestrationPriority(args.priority),
       acceptanceCriteria: asStringArray(args.acceptanceCriteria),
+      blockedReason: blockerExplanation,
       actor: { type: "head_agent", conversationId: this.callbacks.conversation.id },
     });
     const issue = snapshot.issues[snapshot.issues.length - 1];
@@ -2669,6 +2677,17 @@ class CesiumSessionHandle implements AgentSessionHandle {
     }
     const columnId = asOrchestrationColumnId(args.columnId);
     const priority = asOrchestrationPriority(args.priority);
+    const blockerExplanation =
+      asString(args.blockerExplanation) ?? asString(args.blockedReason);
+    const existingIssue = current.issues.find((issue) => issue.id === issueId);
+    if (!existingIssue) {
+      throw new Error(`Unknown orchestration issue: ${issueId}`);
+    }
+    if (columnId === "blocked" && !blockerExplanation && !existingIssue.blockedReason) {
+      throw new Error(
+        "orchestration_update_issue.blockerExplanation is required when moving an issue to blocked."
+      );
+    }
     const snapshot = await upsertOrchestrationIssue(
       current.board.id,
       {
@@ -2682,8 +2701,8 @@ class CesiumSessionHandle implements AgentSessionHandle {
         ...(Array.isArray(args.acceptanceCriteria)
           ? { acceptanceCriteria: asStringArray(args.acceptanceCriteria) }
           : {}),
-        ...(typeof args.blockedReason === "string" || args.blockedReason === null
-          ? { blockedReason: args.blockedReason }
+        ...(blockerExplanation
+          ? { blockedReason: blockerExplanation }
           : {}),
       },
       { type: "head_agent", conversationId: this.callbacks.conversation.id }

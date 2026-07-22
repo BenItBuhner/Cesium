@@ -18,6 +18,7 @@ import {
   type OrchestrationEventRecord,
   type OrchestrationIssuePriority,
   type OrchestrationIssueRecord,
+  ORCHESTRATION_DEFAULT_COLUMNS,
 } from "./types.js";
 
 const ORCHESTRATION_STORE_EVENTS_CHANNEL = "opencursor:orchestration:store-events";
@@ -47,11 +48,15 @@ async function publishOrchestrationStoreEvent(
 }
 
 function sortSnapshot(snapshot: OrchestrationBoardSnapshot): OrchestrationBoardSnapshot {
+  const columnOrder = new Map(
+    ORCHESTRATION_DEFAULT_COLUMNS.map((columnId, index) => [columnId, index])
+  );
   return {
     board: snapshot.board,
     issues: [...snapshot.issues].sort(
       (a, b) =>
-        a.columnId.localeCompare(b.columnId) ||
+        (columnOrder.get(a.columnId) ?? Number.MAX_SAFE_INTEGER) -
+          (columnOrder.get(b.columnId) ?? Number.MAX_SAFE_INTEGER) ||
         a.sortOrder - b.sortOrder ||
         a.createdAt - b.createdAt
     ),
@@ -309,11 +314,16 @@ export async function createOrchestrationIssue(input: {
   columnId?: OrchestrationColumnId;
   priority?: OrchestrationIssuePriority;
   acceptanceCriteria?: string[];
+  blockedReason?: string | null;
   actor?: OrchestrationActor;
 }): Promise<OrchestrationBoardSnapshot> {
   const now = Date.now();
   return mutateOrchestrationBoardSnapshot(input.boardId, (snapshot) => {
     const columnId = input.columnId ?? "backlog";
+    const blockedReason = input.blockedReason?.trim() || null;
+    if (columnId === "blocked" && !blockedReason) {
+      throw new Error("A blocker explanation is required when creating a blocked issue.");
+    }
     const maxSort = snapshot.issues
       .filter((issue) => issue.columnId === columnId)
       .reduce((max, issue) => Math.max(max, issue.sortOrder), 0);
@@ -328,7 +338,7 @@ export async function createOrchestrationIssue(input: {
       sortOrder: maxSort + 1000,
       acceptanceCriteria: input.acceptanceCriteria ?? [],
       dependencyIssueIds: [],
-      blockedReason: null,
+      blockedReason,
       verification: { status: "unchecked" },
       createdAt: now,
       updatedAt: now,
@@ -364,9 +374,22 @@ export async function upsertOrchestrationIssue(
     if (!existing) {
       throw new Error(`Unknown orchestration issue: ${issuePatch.id}`);
     }
+    const requestedColumn = issuePatch.columnId ?? existing.columnId;
+    const requestedBlockedReason =
+      typeof issuePatch.blockedReason === "string"
+        ? issuePatch.blockedReason.trim() || null
+        : issuePatch.blockedReason === null
+          ? null
+          : requestedColumn === "blocked"
+            ? existing.blockedReason
+            : null;
+    if (requestedColumn === "blocked" && !requestedBlockedReason) {
+      throw new Error("A blocker explanation is required when moving an issue to blocked.");
+    }
     const nextIssue: OrchestrationIssueRecord = {
       ...existing,
       ...issuePatch,
+      blockedReason: requestedBlockedReason,
       boardId,
       schemaVersion: 1,
       updatedAt: now,

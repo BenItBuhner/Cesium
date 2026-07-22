@@ -57,6 +57,7 @@ import {
   subscribeGlobalPinnedAgentConversationIds,
   writeGlobalPinnedAgentConversationIds,
 } from "@/lib/agent-rail-pins";
+import { resolveAgentRightPaneOpen } from "@/lib/agent-right-pane";
 import {
   AGENT_CONVERSATION_DELETED_EVENT,
   AGENT_CONVERSATION_UPSERTED_EVENT,
@@ -531,6 +532,7 @@ export function AgentShellStateProvider({
   const [stableConversationView, setStableConversationView] =
     useState<AgentCenterStableConversationView | null>(null);
   const [sharedLeftRailCollapsed, setSharedLeftRailCollapsedState] = useState(false);
+  const [draftRightPaneOpenScope, setDraftRightPaneOpenScope] = useState<string | null>(null);
   const [sharedAgentShellDesktopLayout, setSharedAgentShellDesktopLayoutState] =
     useState<Record<string, number> | null>(null);
   const previousEditorTabCountRef = useRef(0);
@@ -1019,6 +1021,18 @@ export function AgentShellStateProvider({
     sidePaneScopeId,
     sidePaneSessionMap,
   ]);
+  const draftRightPaneScope = `${activeWorkspaceId ?? "workspace"}:${sidePaneScopeId}`;
+  const rightPaneOpen = resolveAgentRightPaneOpen({
+    isDraftConversationSelected,
+    persistedRightPaneOpen: activeSidePaneSession.rightPaneOpen,
+    draftRightPaneExplicitlyOpen: draftRightPaneOpenScope === draftRightPaneScope,
+  });
+
+  useEffect(() => {
+    if (!isDraftConversationSelected && draftRightPaneOpenScope != null) {
+      setDraftRightPaneOpenScope(null);
+    }
+  }, [draftRightPaneOpenScope, isDraftConversationSelected]);
 
   // Apply persisted global shell before paint. Never re-source rail/layout from per-workspace session
   // after that — session layout changes when switching workspaces and must not clobber user prefs.
@@ -1306,7 +1320,8 @@ export function AgentShellStateProvider({
 
   const setRightPaneOpen = useCallback(
     (open: boolean) => {
-      if (isDraftConversationSelected && open) {
+      if (isDraftConversationSelected) {
+        setDraftRightPaneOpenScope(open ? draftRightPaneScope : null);
         return;
       }
       updateWorkspaceSession((current) => ({
@@ -1328,23 +1343,17 @@ export function AgentShellStateProvider({
         },
       }));
     },
-    [isDraftConversationSelected, sidePaneScopeId, updateWorkspaceSession]
+    [
+      draftRightPaneScope,
+      isDraftConversationSelected,
+      sidePaneScopeId,
+      updateWorkspaceSession,
+    ]
   );
 
   const toggleRightPaneOpen = useCallback(() => {
-    setRightPaneOpen(!activeSidePaneSession.rightPaneOpen);
-  }, [activeSidePaneSession.rightPaneOpen, setRightPaneOpen]);
-
-  useEffect(() => {
-    if (!isDraftConversationSelected || !activeSidePaneSession.rightPaneOpen) {
-      return;
-    }
-    setRightPaneOpen(false);
-  }, [
-    activeSidePaneSession.rightPaneOpen,
-    isDraftConversationSelected,
-    setRightPaneOpen,
-  ]);
+    setRightPaneOpen(!rightPaneOpen);
+  }, [rightPaneOpen, setRightPaneOpen]);
 
   const updateSidePaneEditorSession = useCallback(
     (updater: (current: EditorSessionState) => EditorSessionState) => {
@@ -1895,9 +1904,7 @@ export function AgentShellStateProvider({
       leftRailCollapsed: sharedLeftRailCollapsed,
       setLeftRailCollapsed,
       toggleLeftRailCollapsed,
-      rightPaneOpen: isDraftConversationSelected
-        ? false
-        : activeSidePaneSession.rightPaneOpen,
+      rightPaneOpen,
       setRightPaneOpen,
       toggleRightPaneOpen,
       sidePaneScopeId,
@@ -1947,7 +1954,6 @@ export function AgentShellStateProvider({
       activeWorkspaceGroup,
       activeSidePaneSession.editor,
       activeSidePaneSession.expandedComposerDraftId,
-      activeSidePaneSession.rightPaneOpen,
       effectiveAgentShellDesktopLayout,
       archiveConversation,
       backends,
@@ -1973,6 +1979,7 @@ export function AgentShellStateProvider({
       railRefreshing,
       railLoadError,
       refreshConversationGroupsWithState,
+      rightPaneOpen,
       applyOptimisticRailTitle,
       selectedConversationId,
       selectedConversationSummary,

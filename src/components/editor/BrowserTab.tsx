@@ -532,6 +532,23 @@ export function BrowserTab({
   }, [nativeSessionId, tab.browser?.targetUrl, usingNativeBrowser]);
 
   useEffect(() => {
+    if (!usingNativeBrowser || !nativeSessionId || !tab.browser?.viewport) return;
+    const bridge = getDesktopBrowserBridge();
+    if (!bridge?.setEmulation) return;
+    const viewport = tab.browser.viewport;
+    void bridge.setEmulation(nativeSessionId, {
+      width: viewport.width,
+      height: viewport.height,
+      deviceScaleFactor: viewport.deviceScaleFactor,
+      mobile: viewport.mobile,
+    });
+  }, [
+    nativeSessionId,
+    tab.browser?.viewport,
+    usingNativeBrowser,
+  ]);
+
+  useEffect(() => {
     browserControlCommandCursorRef.current = 0;
   }, [tab.id]);
 
@@ -540,10 +557,7 @@ export function BrowserTab({
     let cancelled = false;
     let timer: number | null = null;
 
-    type NativeDispatchInput = Exclude<
-      Extract<BrowserControlCommand, { type: "input" }>["input"],
-      { type: "wheel" }
-    >;
+    type NativeDispatchInput = Extract<BrowserControlCommand, { type: "input" }>["input"];
 
     const mapBrowserControlInput = (input: NativeDispatchInput): NativeDispatchInput => {
       if (input.type !== "mouse") {
@@ -677,7 +691,7 @@ export function BrowserTab({
         }
         for (const command of result.commands) {
           if (command.type === "input") {
-            if (bridge?.dispatchInput && command.input.type !== "wheel") {
+            if (bridge?.dispatchInput) {
               try {
                 await bridge.command(nativeSessionId, { op: "focus" }).catch(() => null);
                 const ok = await bridge.dispatchInput(

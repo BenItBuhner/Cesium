@@ -1199,6 +1199,17 @@ ipcMain.handle("cesium:browser-dispatch-input", async (_event, sessionId, input)
       }
       return true;
     }
+    if (input?.type === "wheel") {
+      wc.sendInputEvent({
+        type: "mouseWheel",
+        x: Math.max(0, Math.floor(rec.bounds.width / 2)),
+        y: Math.max(0, Math.floor(rec.bounds.height / 2)),
+        deltaX: Number(input.deltaX) || 0,
+        deltaY: Number(input.deltaY) || 0,
+        canScroll: true,
+      });
+      return true;
+    }
     if (input?.type === "key") {
       if (input.action === "type") {
         await wc.insertText(String(input.key ?? ""));

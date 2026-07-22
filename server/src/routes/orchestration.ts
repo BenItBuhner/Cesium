@@ -224,18 +224,33 @@ orchestrationRoutes.post("/api/orchestration/boards/:boardId/issues", async (c) 
     columnId?: unknown;
     priority?: unknown;
     acceptanceCriteria?: unknown;
+    blockedReason?: unknown;
+    blockerExplanation?: unknown;
   }>();
   const title = asString(body.title);
   if (!title) {
     return c.json({ error: "Issue title is required." }, 400);
   }
+  const columnId = asColumnId(body.columnId);
+  if (body.columnId !== undefined && !columnId) {
+    return c.json({ error: "Invalid issue column." }, 400);
+  }
+  const priority = asPriority(body.priority);
+  if (body.priority !== undefined && !priority) {
+    return c.json({ error: "Invalid issue priority." }, 400);
+  }
+  const blockedReason = asString(body.blockerExplanation) ?? asString(body.blockedReason);
+  if (columnId === "blocked" && !blockedReason) {
+    return c.json({ error: "A blocker explanation is required for blocked issues." }, 400);
+  }
   const snapshot = await createOrchestrationIssue({
     boardId,
     title,
     description: typeof body.description === "string" ? body.description : undefined,
-    columnId: asColumnId(body.columnId),
-    priority: asPriority(body.priority),
+    columnId,
+    priority,
     acceptanceCriteria: asStringArray(body.acceptanceCriteria),
+    blockedReason,
   });
   return c.json({ snapshot }, 201);
 });
@@ -251,14 +266,39 @@ orchestrationRoutes.patch(
       return c.json({ error: `Unknown orchestration board: ${boardId}` }, 404);
     }
     const body = await c.req.json<Record<string, unknown>>();
+    const existingIssue = current.issues.find((candidate) => candidate.id === issueId);
+    if (!existingIssue) {
+      return c.json({ error: `Unknown issue: ${issueId}` }, 404);
+    }
+    const columnId = asColumnId(body.columnId);
+    if (body.columnId !== undefined && !columnId) {
+      return c.json({ error: "Invalid issue column." }, 400);
+    }
+    const priority = asPriority(body.priority);
+    if (body.priority !== undefined && !priority) {
+      return c.json({ error: "Invalid issue priority." }, 400);
+    }
+    if (body.title !== undefined && !asString(body.title)) {
+      return c.json({ error: "Issue title cannot be empty." }, 400);
+    }
+    const blockerExplanation =
+      body.blockerExplanation === null
+        ? null
+        : asString(body.blockerExplanation) ??
+          (body.blockedReason === null ? null : asString(body.blockedReason));
+    const effectiveBlockedReason =
+      blockerExplanation !== undefined ? blockerExplanation : existingIssue.blockedReason;
+    if ((columnId ?? existingIssue.columnId) === "blocked" && !effectiveBlockedReason) {
+      return c.json({ error: "A blocker explanation is required when blocking an issue." }, 400);
+    }
     const patch: Partial<OrchestrationIssueRecord> & { id: string } = {
       id: issueId,
-      ...(typeof body.title === "string" ? { title: body.title } : {}),
+      ...(typeof body.title === "string" ? { title: body.title.trim() } : {}),
       ...(typeof body.description === "string"
         ? { description: body.description }
         : {}),
-      ...(asColumnId(body.columnId) ? { columnId: asColumnId(body.columnId)! } : {}),
-      ...(asPriority(body.priority) ? { priority: asPriority(body.priority)! } : {}),
+      ...(columnId ? { columnId } : {}),
+      ...(priority ? { priority } : {}),
       ...(typeof body.sortOrder === "number" && Number.isFinite(body.sortOrder)
         ? { sortOrder: body.sortOrder }
         : {}),
@@ -268,8 +308,8 @@ orchestrationRoutes.patch(
       ...(Array.isArray(body.dependencyIssueIds)
         ? { dependencyIssueIds: asStringArray(body.dependencyIssueIds) }
         : {}),
-      ...(typeof body.blockedReason === "string" || body.blockedReason === null
-        ? { blockedReason: body.blockedReason }
+      ...(blockerExplanation !== undefined
+        ? { blockedReason: blockerExplanation }
         : {}),
     };
     const snapshot = await upsertOrchestrationIssue(boardId, patch);

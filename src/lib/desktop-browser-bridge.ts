@@ -34,6 +34,7 @@ export type DesktopBrowserBridge = {
     sessionId: string,
     input:
       | { type: "mouse"; action: "move" | "down" | "up" | "click"; x: number; y: number; button?: "left" | "middle" | "right" }
+      | { type: "wheel"; deltaX?: number; deltaY?: number }
       | { type: "key"; action: "down" | "up" | "press" | "type"; key: string }
   ) => Promise<boolean>;
   setEmulation?: (

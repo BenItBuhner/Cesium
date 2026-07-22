@@ -492,7 +492,8 @@ const CESIUM_BASE_TOOLS: CesiumToolDefinition[] = [
   },
   {
     name: "orchestration_create_issue",
-    description: "Create a kanban issue with optional description and acceptance criteria.",
+    description:
+      "Create a kanban issue with optional description and acceptance criteria. A blockerExplanation is required when columnId is blocked.",
     parameters: {
       type: "object",
       properties: {
@@ -508,6 +509,10 @@ const CESIUM_BASE_TOOLS: CesiumToolDefinition[] = [
           enum: ["none", "low", "medium", "high", "urgent"],
         },
         acceptanceCriteria: { type: "array", items: { type: "string" } },
+        blockerExplanation: {
+          type: "string",
+          description: "Why progress is blocked and what is needed to resume.",
+        },
       },
       required: ["title"],
       additionalProperties: false,
@@ -515,7 +520,8 @@ const CESIUM_BASE_TOOLS: CesiumToolDefinition[] = [
   },
   {
     name: "orchestration_update_issue",
-    description: "Update or move an existing kanban issue.",
+    description:
+      "Update or move an existing kanban issue. Provide blockerExplanation when moving it to blocked.",
     parameters: {
       type: "object",
       properties: {
@@ -532,7 +538,14 @@ const CESIUM_BASE_TOOLS: CesiumToolDefinition[] = [
           enum: ["none", "low", "medium", "high", "urgent"],
         },
         acceptanceCriteria: { type: "array", items: { type: "string" } },
-        blockedReason: { type: "string" },
+        blockerExplanation: {
+          type: "string",
+          description: "Why progress is blocked and what is needed to resume.",
+        },
+        blockedReason: {
+          type: "string",
+          description: "Deprecated alias for blockerExplanation.",
+        },
       },
       required: ["issueId"],
       additionalProperties: false,
