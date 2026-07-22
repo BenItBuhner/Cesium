@@ -53,17 +53,7 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Cache Android NDK and CMake
-        id: android-toolchain-cache
-        uses: actions/cache@v4
-        with:
-          path: |
-            ${{ env.ANDROID_HOME }}/ndk/27.0.12077973
-            ${{ env.ANDROID_HOME }}/cmake/3.31.6
-          key: ${{ runner.os }}-android-ndk-27.0.12077973-cmake-3.31.6
-
       - name: Install Android NDK and CMake
-        if: steps.android-toolchain-cache.outputs.cache-hit != 'true'
         run: |
           yes | sdkmanager --licenses >/dev/null
           sdkmanager "ndk;27.0.12077973" "cmake;3.31.6"
