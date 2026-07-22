@@ -88,6 +88,10 @@ import {
   withRailFetchTimeout,
 } from "@/lib/rail-fetch";
 import {
+  filterGroupsByMachine,
+  getRepositoryGroupingKey,
+} from "@/lib/multi-server-workspaces";
+import {
   AGENT_NEW_CHAT_SESSION_ID,
   createEmptyAgentSidePaneSession,
   getAgentSidePaneSessionScopeId,
@@ -254,8 +258,17 @@ function sortConversationGroups(
     a.workspace.name.localeCompare(b.workspace.name, undefined, { sensitivity: "base" });
 
   return [...groups].sort((a, b) => {
+    if (workspaceSortMode === "machine") {
+      return (
+        (a.serverLabel ?? "").localeCompare(b.serverLabel ?? "", undefined, {
+          sensitivity: "base",
+        }) ||
+        compareByName(a, b) ||
+        groupId(a).localeCompare(groupId(b))
+      );
+    }
     if (workspaceSortMode === "alphabetical") {
-      return compareByName(a, b);
+      return compareByName(a, b) || groupId(a).localeCompare(groupId(b));
     }
 
     if (workspaceSortMode === "custom") {
@@ -315,11 +328,13 @@ function annotateRailGroupsForServer(
 ): AgentConversationGroup[] {
   return groups.map((group) => {
     const workspaceKey = `${server.id}:${group.workspace.id}`;
-    const repositoryKey = group.repository?.repoKey
-      ? `${server.id}:${group.repository.repoKey}`
-      : group.repository?.repoRoot
-        ? `${server.id}:${group.repository.repoRoot}`
-        : undefined;
+    const repositoryKey = group.repository?.isGitRepo
+      ? getRepositoryGroupingKey({
+          repository: group.repository,
+          serverId: server.id,
+          fallbackRoot: group.workspace.root,
+        })
+      : undefined;
     return {
       ...group,
       serverId: server.id,
@@ -357,6 +372,7 @@ function mergeDirectoryPlaceholders(
     serverId: string;
     serverLabel: string;
     workspaceKey: string;
+    repository?: AgentConversationGroup["repository"];
   }>
 ): AgentConversationGroup[] {
   const seenKeys = new Set(
@@ -383,6 +399,14 @@ function mergeDirectoryPlaceholders(
       serverId: workspace.serverId,
       serverLabel: workspace.serverLabel,
       workspaceKey: workspace.workspaceKey,
+      repositoryKey: workspace.repository?.isGitRepo
+        ? getRepositoryGroupingKey({
+            repository: workspace.repository,
+            serverId: workspace.serverId,
+            fallbackRoot: workspace.root,
+          })
+        : undefined,
+      repository: workspace.repository,
     });
   }
   return result;
@@ -737,7 +761,7 @@ export function AgentShellStateProvider({
       if (!detail?.id || !detail.workspaceId) {
         return;
       }
-      setGroups((prev) => patchAgentConversationGroups(prev, detail));
+      setGroups((prev) => patchAgentConversationGroups(prev, detail, activeServer.id));
     };
     const onDeleted = (ev: Event) => {
       const detail = (ev as CustomEvent<AgentConversationDeletedDetail>).detail;
@@ -745,7 +769,12 @@ export function AgentShellStateProvider({
         return;
       }
       setGroups((prev) =>
-        removeConversationFromAgentGroups(prev, detail.conversationId, detail.workspaceId)
+        removeConversationFromAgentGroups(
+          prev,
+          detail.conversationId,
+          detail.workspaceId,
+          activeServer.id
+        )
       );
     };
     window.addEventListener(AGENT_CONVERSATION_UPSERTED_EVENT, onUpsert);
@@ -754,7 +783,7 @@ export function AgentShellStateProvider({
       window.removeEventListener(AGENT_CONVERSATION_UPSERTED_EVENT, onUpsert);
       window.removeEventListener(AGENT_CONVERSATION_DELETED_EVENT, onDeleted);
     };
-  }, []);
+  }, [activeServer.id]);
 
   useEffect(() => {
     if (!activeWorkspaceId) {
@@ -767,15 +796,14 @@ export function AgentShellStateProvider({
     void refreshConversationGroupsWithState();
   }, [activeServer.id, refreshConversationGroupsWithState]);
 
-  const activeServerGroups = useMemo(
-    () =>
-      groups.filter((group) => !group.serverId || group.serverId === activeServer.id),
-    [activeServer.id, groups]
+  const visibleMachineGroups = useMemo(
+    () => filterGroupsByMachine(groups, settings.general.agentRail.hiddenServerIds),
+    [groups, settings.general.agentRail.hiddenServerIds]
   );
 
   const groupedByRailMode = useMemo(
-    () => groupAgentRailGroups(activeServerGroups, settings.general.agentRail.groupBy),
-    [activeServerGroups, settings.general.agentRail.groupBy]
+    () => groupAgentRailGroups(visibleMachineGroups, settings.general.agentRail.groupBy),
+    [settings.general.agentRail.groupBy, visibleMachineGroups]
   );
 
   const orderedGroups = useMemo(

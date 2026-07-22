@@ -19,7 +19,13 @@ import {
   testMcpServerConnection,
   upsertMcpServer,
 } from "@/lib/server-api";
-import { SettingsRow, SettingsSection, rowButtonClass } from "./settings-ui";
+import {
+  SettingsBlock,
+  SettingsCallout,
+  SettingsRow,
+  SettingsSection,
+  rowButtonClass,
+} from "./settings-ui";
 
 function statusLabel(server: McpServerPublic): string {
   const status = server.connectionStatus;
@@ -217,7 +223,9 @@ export function McpServersSettingsPanel() {
   return (
     <>
       {error ? (
-        <p className="mb-[12px] px-[2px] font-sans text-[12px] text-[var(--error-fg)]">{error}</p>
+        <SettingsCallout tone="danger" className="mb-[12px] px-[2px]">
+          {error}
+        </SettingsCallout>
       ) : null}
 
       <SettingsSection
@@ -229,20 +237,12 @@ export function McpServersSettingsPanel() {
           </button>
         }
       >
-        <div className="divide-y divide-[var(--border-subtle)]">
-          {presets.map((preset) => (
-            <div
-              key={preset.presetId}
-              className="flex items-center justify-between gap-[12px] px-[16px] py-[12px]"
-            >
-              <div className="min-w-0">
-                <p className="font-sans text-[13px] font-medium text-[var(--text-primary)]">
-                  {preset.label}
-                </p>
-                <p className="mt-[4px] font-sans text-[12px] text-[var(--text-secondary)]">
-                  {preset.description}
-                </p>
-              </div>
+        {presets.map((preset) => (
+          <SettingsRow
+            key={preset.presetId}
+            title={preset.label}
+            description={preset.description}
+            trailing={
               <button
                 type="button"
                 className={rowButtonClass}
@@ -252,9 +252,9 @@ export function McpServersSettingsPanel() {
                 <Plus className="size-[14px]" strokeWidth={1.5} />
                 Add
               </button>
-            </div>
-          ))}
-        </div>
+            }
+          />
+        ))}
       </SettingsSection>
 
       <SettingsSection
@@ -270,7 +270,7 @@ export function McpServersSettingsPanel() {
         }
       >
         {showCustomForm ? (
-          <div className="space-y-[10px] px-[16px] py-[12px]">
+          <SettingsBlock className="space-y-[10px] py-[12px]">
             <label className="block font-sans text-[12px] text-[var(--text-secondary)]">
               Label
               <input
@@ -358,7 +358,7 @@ export function McpServersSettingsPanel() {
             >
               Save server
             </button>
-          </div>
+          </SettingsBlock>
         ) : (
           <p className="px-[16px] py-[12px] font-sans text-[12px] text-[var(--text-secondary)]">
             Add a manual MCP server when no preset matches your setup.

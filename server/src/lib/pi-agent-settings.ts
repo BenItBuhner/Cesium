@@ -1,7 +1,10 @@
 import { createHash, randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { DATA_DIR, readJsonFile, writeJsonFile } from "./persistence.js";
+
+export type PiAgentHomeMode = "native" | "isolated";
 
 export type PiAgentProviderKey = {
   id: string;
@@ -17,6 +20,12 @@ export type PiAgentSettings = {
   updatedAt: number;
   defaultProviderKeyId: string | null;
   providerKeys: PiAgentProviderKey[];
+  /**
+   * Where Pi loads settings, packages, extensions, skills, auth, and models.
+   * - native: ~/.pi/agent (or PI_CODING_AGENT_DIR) — preserves CLI customization
+   * - isolated: Cesium profile dir — sandbox for shared servers
+   */
+  agentHome: PiAgentHomeMode;
 };
 
 export type PiAgentProviderKeyStatus = Omit<PiAgentProviderKey, "apiKey"> & {
@@ -35,7 +44,16 @@ export type PiAgentCredentialStatus = {
   providerKeys: PiAgentProviderKeyStatus[];
 };
 
-const PI_AGENT_DIR = path.join(DATA_DIR, "profile", "pi-agent");
+export type PiAgentHomeInfo = {
+  agentHome: PiAgentHomeMode;
+  agentDir: string;
+  nativeAgentDir: string;
+  isolatedAgentDir: string;
+  envOverride: string | null;
+  usesEnvOverride: boolean;
+};
+
+const ISOLATED_PI_AGENT_DIR = path.join(DATA_DIR, "profile", "pi-agent");
 const SETTINGS_FILE = path.join(DATA_DIR, "profile", "pi-agent-settings.json");
 
 const BUILTIN_ENV_KEYS: Array<{ providerId: string; env: string }> = [
@@ -51,6 +69,7 @@ function defaultSettings(): PiAgentSettings {
     updatedAt: 0,
     defaultProviderKeyId: null,
     providerKeys: [],
+    agentHome: "native",
   };
 }
 
@@ -66,6 +85,10 @@ function asString(value: unknown): string | undefined {
 
 function asNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function normalizeAgentHome(value: unknown): PiAgentHomeMode {
+  return value === "isolated" ? "isolated" : "native";
 }
 
 function normalizeProviderKey(raw: unknown): PiAgentProviderKey | null {
@@ -101,6 +124,12 @@ function normalizeSettings(raw: unknown): PiAgentSettings {
           .map(normalizeProviderKey)
           .filter((key): key is PiAgentProviderKey => key != null)
       : [],
+    // Missing agentHome (older settings) defaults to native so CLI customization
+    // is preserved unless the user explicitly chooses isolated.
+    agentHome:
+      record.agentHome === undefined
+        ? "native"
+        : normalizeAgentHome(record.agentHome),
   };
 }
 
@@ -137,24 +166,89 @@ function envProviderKeys(): PiAgentProviderKeyStatus[] {
   });
 }
 
+function expandHomePrefix(value: string): string {
+  if (value === "~") {
+    return os.homedir();
+  }
+  if (value.startsWith("~/") || value.startsWith("~\\")) {
+    return path.join(os.homedir(), value.slice(2));
+  }
+  return value;
+}
+
+/** Cesium-only absolute override. Wins over agentHome mode and Pi's own env. */
+export function getPiAgentDirEnvOverride(): string | null {
+  const value = process.env.OPENCURSOR_PI_AGENT_DIR?.trim();
+  return value ? path.resolve(expandHomePrefix(value)) : null;
+}
+
+/** Pi's native agent home (~/.pi/agent, or PI_CODING_AGENT_DIR). */
+export function getNativePiAgentDir(): string {
+  // Prefer Pi's resolver so PI_CODING_AGENT_DIR / renamed builds stay correct.
+  try {
+    // Synchronous require-style via dynamic import is async; use the same path
+    // formula Pi documents when the package is unavailable at module load.
+    const envDir = process.env.PI_CODING_AGENT_DIR?.trim();
+    if (envDir) {
+      return path.resolve(expandHomePrefix(envDir));
+    }
+  } catch {
+    // Fall through.
+  }
+  return path.join(os.homedir(), ".pi", "agent");
+}
+
+export function getIsolatedPiAgentDir(): string {
+  return ISOLATED_PI_AGENT_DIR;
+}
+
+/**
+ * Resolve the effective Pi agent directory.
+ * Order: OPENCURSOR_PI_AGENT_DIR → agentHome setting → native ~/.pi/agent.
+ */
+export function resolvePiAgentDir(agentHome: PiAgentHomeMode = "native"): string {
+  const envOverride = getPiAgentDirEnvOverride();
+  if (envOverride) {
+    return envOverride;
+  }
+  if (agentHome === "isolated") {
+    return getIsolatedPiAgentDir();
+  }
+  return getNativePiAgentDir();
+}
+
+/** Sync helper used by hot paths; reads cached settings asynchronously elsewhere. */
+let cachedAgentHome: PiAgentHomeMode | null = null;
+
 export function getPiAgentDir(): string {
-  return PI_AGENT_DIR;
+  return resolvePiAgentDir(cachedAgentHome ?? "native");
+}
+
+export async function refreshPiAgentDirCache(): Promise<string> {
+  const settings = await getPiAgentSettings();
+  cachedAgentHome = settings.agentHome;
+  return resolvePiAgentDir(settings.agentHome);
 }
 
 export function getPiAgentAuthPath(): string {
-  return path.join(PI_AGENT_DIR, "auth.json");
+  return path.join(getPiAgentDir(), "auth.json");
+}
+
+/** @deprecated Use getPiAgentAuthPath — kept for older probe scripts. */
+export function getPiAgentAuthDir(): string {
+  return getPiAgentAuthPath();
 }
 
 export function getPiAgentModelsPath(): string {
-  return path.join(PI_AGENT_DIR, "models.json");
+  return path.join(getPiAgentDir(), "models.json");
 }
 
 export function getPiAgentSdkSettingsPath(): string {
-  return path.join(PI_AGENT_DIR, "settings.json");
+  return path.join(getPiAgentDir(), "settings.json");
 }
 
 export function getPiAgentSessionsRootDir(): string {
-  return path.join(PI_AGENT_DIR, "sessions");
+  return path.join(getPiAgentDir(), "sessions");
 }
 
 export function getPiAgentSessionsDirForCwd(cwd: string): string {
@@ -162,12 +256,28 @@ export function getPiAgentSessionsDirForCwd(cwd: string): string {
   return path.join(getPiAgentSessionsRootDir(), encoded);
 }
 
+export async function describePiAgentHome(): Promise<PiAgentHomeInfo> {
+  const settings = await getPiAgentSettings();
+  const envOverride = getPiAgentDirEnvOverride();
+  const agentDir = resolvePiAgentDir(settings.agentHome);
+  return {
+    agentHome: settings.agentHome,
+    agentDir,
+    nativeAgentDir: getNativePiAgentDir(),
+    isolatedAgentDir: getIsolatedPiAgentDir(),
+    envOverride,
+    usesEnvOverride: envOverride != null,
+  };
+}
+
 export async function ensurePiAgentStorage(): Promise<void> {
-  await fs.mkdir(PI_AGENT_DIR, { recursive: true });
+  await fs.mkdir(await refreshPiAgentDirCache(), { recursive: true });
 }
 
 export async function getPiAgentSettings(): Promise<PiAgentSettings> {
-  return normalizeSettings(await readJsonFile<unknown>(SETTINGS_FILE, null));
+  const settings = normalizeSettings(await readJsonFile<unknown>(SETTINGS_FILE, null));
+  cachedAgentHome = settings.agentHome;
+  return settings;
 }
 
 export async function savePiAgentSettings(settings: PiAgentSettings): Promise<PiAgentSettings> {
@@ -177,7 +287,18 @@ export async function savePiAgentSettings(settings: PiAgentSettings): Promise<Pi
     updatedAt: Date.now(),
   });
   await writeJsonFile(SETTINGS_FILE, normalized);
+  cachedAgentHome = normalized.agentHome;
   return normalized;
+}
+
+export async function setPiAgentHome(agentHome: PiAgentHomeMode): Promise<PiAgentSettingsPublic> {
+  const settings = await getPiAgentSettings();
+  await savePiAgentSettings({
+    ...settings,
+    agentHome: normalizeAgentHome(agentHome),
+  });
+  await ensurePiAgentStorage();
+  return getPiAgentSettingsPublic();
 }
 
 export async function getPiAgentSettingsPublic(): Promise<PiAgentSettingsPublic> {

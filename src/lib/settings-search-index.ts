@@ -2,6 +2,10 @@ import { HARNESS_LABELS, HARNESS_ORDER } from "@/components/editor/agent-harness
 import type { AgentBackendId } from "@/lib/agent-types";
 import type { ModelToggleState } from "@/lib/global-settings";
 import { SHORTCUT_COMMAND_DEFINITIONS } from "@/lib/keyboard-shortcuts";
+import {
+  compactModelName,
+  stripCursorSdkModelParams,
+} from "@/lib/settings-model-compaction";
 import type { SettingsPanelSearchFocus } from "@/lib/workspace-session";
 
 export type { SettingsPanelSearchFocus };
@@ -171,8 +175,9 @@ const STATIC_SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
     "Maximum height of expanded agent tool-call blocks in chat; content scrolls inside the limit.",
     ["worked session", "tool call", "max height", "scroll"]
   ),
-  section("appearance", "light-theme", "Light theme"),
-  section("appearance", "dark-theme", "Dark theme"),
+  section("appearance", "themes", "Themes", "light dark"),
+  row("appearance", "light-theme", "Light theme", "Theme applied when the UI resolves to light."),
+  row("appearance", "dark-theme", "Dark theme", "Theme applied when the UI resolves to dark."),
   section("appearance", "custom-themes", "Custom themes", "duplicate preset tokens"),
 
   // —— Agents ——
@@ -216,9 +221,18 @@ const STATIC_SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
   ),
   row("agents", "cesium-edit-file", "Edit file", "Cesium tool permissions"),
   row("agents", "cesium-terminal", "Terminal", "Cesium tool permissions"),
+  row("agents", "cesium-mcp-call", "MCP call", "Cesium tool permissions"),
+  row("agents", "cesium-switch-mode", "Switch mode", "Cesium tool permissions"),
   row("agents", "cesium-custom-providers", "Custom providers", "Cesium Agent"),
   row("agents", "cursor-sdk-api-key", "Cursor SDK API key", "Cursor SDK"),
   row("agents", "cursor-sdk", "Cursor SDK", "Cursor SDK API key"),
+  row(
+    "agents",
+    "opencode-v2-beta",
+    "OpenCode v2 Beta",
+    "Native OpenCode v2 harness with durable events, typed tools, and background subagents.",
+    ["opencode2", "terminal", "subagent", "permission", "form"]
+  ),
 
   // —— Models (panel chrome; model rows are dynamic) ——
   section("models", "catalog", "Model catalog", "visibility toggle refresh"),
@@ -361,77 +375,6 @@ const SHORTCUT_SEARCH_ENTRIES: SettingsSearchEntry[] = SHORTCUT_COMMAND_DEFINITI
       keywords: [def.id, def.section, "shortcut", "keybinding", "hotkey"],
     })
 );
-
-const CURSOR_SDK_VARIANT_TOKENS = new Set([
-  "auto",
-  "default",
-  "extra",
-  "fast",
-  "high",
-  "large",
-  "long",
-  "low",
-  "max",
-  "medium",
-  "normal",
-  "short",
-  "standard",
-  "true",
-  "false",
-]);
-
-function stripCursorSdkModelParams(value: string): string {
-  return value.replace(/\[[^\]]+\]$/g, "").trim();
-}
-
-function normalizeModelVariantToken(value: string): string {
-  return value
-    .trim()
-    .toLowerCase()
-    .replace(/[_-]+/g, " ")
-    .replace(/\s+/g, " ");
-}
-
-function consumeSettingsModelVariantToken(words: string[]): boolean {
-  const last = words.at(-1);
-  if (!last) return false;
-  const normalizedLast = normalizeModelVariantToken(last);
-  if (normalizedLast === "true" || normalizedLast === "fast") {
-    words.pop();
-    return true;
-  }
-  if (normalizedLast === "false") {
-    words.pop();
-    if (normalizeModelVariantToken(words.at(-1) ?? "") === "fast") {
-      words.pop();
-    }
-    return true;
-  }
-  if (/^\d+\s*[km]$/i.test(last)) {
-    words.pop();
-    return true;
-  }
-  const prev = normalizeModelVariantToken(words.at(-2) ?? "");
-  if (prev === "extra" && normalizedLast === "high") {
-    words.pop();
-    words.pop();
-    return true;
-  }
-  if (CURSOR_SDK_VARIANT_TOKENS.has(normalizedLast)) {
-    words.pop();
-    return true;
-  }
-  return false;
-}
-
-function compactModelName(name: string, fallbackId: string): string {
-  const base = (name.trim() || fallbackId.trim() || "Model")
-    .replace(/\s*\([^)]*\)\s*$/g, "")
-    .trim();
-  const parts = base.split(/\s+/);
-  while (parts.length > 1 && consumeSettingsModelVariantToken(parts)) {}
-  return parts.join(" ") || base || fallbackId || "Model";
-}
 
 function buildModelSearchEntries(
   byBackend: Record<string, ModelToggleState[]>

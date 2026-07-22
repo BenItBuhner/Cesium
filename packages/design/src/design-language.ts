@@ -5,7 +5,7 @@ export type Design2ModeTone =
   | "plan"
   | "debug"
   | "ask"
-  | "burn"
+  | "goal"
   | "workflow"
   | "orchestration";
 
@@ -51,12 +51,12 @@ export const DESIGN_2_MODE_RECIPES: Record<Design2ModeTone, Design2ModeRecipe> =
     sendToken: "--ask-accent-dark",
     hiddenWhenDefault: false,
   },
-  burn: {
-    label: "Burn",
+  goal: {
+    label: "Goal",
     icon: "flame",
-    textToken: "--burn-accent",
-    backgroundToken: "--burn-accent-bg",
-    sendToken: "--burn-accent-dark",
+    textToken: "--goal-accent",
+    backgroundToken: "--goal-accent-bg",
+    sendToken: "--goal-accent-dark",
     hiddenWhenDefault: false,
   },
   workflow: {

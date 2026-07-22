@@ -33,6 +33,7 @@ import {
   saveClaudeCodeSdkSettings,
   saveCursorSdkApiKey,
   saveCesiumProviderKey,
+  savePiAgentHome,
   savePiAgentProviderKey,
   startPiAgentOAuth,
   type ClaudeCodeSdkSettingsPayload,
@@ -43,6 +44,7 @@ import {
   type CesiumProviderKeyStatus,
   type CesiumProviderKind,
   type CursorSdkCredentialStatus,
+  type PiAgentHomeMode,
   type PiAgentProviderStatus,
   type PiAgentSettingsResponse,
 } from "@/lib/server-api";
@@ -68,6 +70,7 @@ export const HARNESS_ORDER: AgentBackendId[] = [
   "cursor-sdk",
   "codex-app-server",
   "opencode-server",
+  "opencode-v2-beta",
   "devin-acp",
   "claude-code-sdk",
   "pi-agent",
@@ -78,6 +81,7 @@ export const HARNESS_LABELS: Record<AgentBackendId, string> = {
   "cesium-agent": "Cesium Agent (Beta)",
   "cursor-sdk": "Cursor SDK",
   "opencode-server": "OpenCode Server",
+  "opencode-v2-beta": "OpenCode v2 Beta",
   "devin-acp": "Devin",
   "codex-app-server": "Codex App Server",
   "claude-code-sdk": "Claude Code",
@@ -92,13 +96,16 @@ const HARNESS_DESCRIPTIONS: Record<AgentBackendId, string> = {
     "Cursor TypeScript SDK runtime. Uses the server-stored API key and enabled MCP servers from Plugins.",
   "opencode-server":
     "OpenCode native HTTP/SSE server API. Uses ambient OpenCode auth or the configured external server.",
+  "opencode-v2-beta":
+    "Native OpenCode v2 beta API with typed tool events, durable reconnect recovery, background subagents, forms, and v2 permissions. Uses `opencode2` or `OPENCURSOR_OPENCODE_V2_SERVER_URL`.",
   "devin-acp":
     "Cognition Devin CLI over ACP (`devin acp`). Authenticate with `devin auth login` or set `WINDSURF_API_KEY`.",
   "codex-app-server":
     "Codex App Server over JSON-RPC stdio. Uses ambient Codex auth and mirrors native plans into OpenCursor plan files.",
   "claude-code-sdk":
     "Anthropic Claude Agent SDK with stock Claude Code tools. Uses configured API/proxy auth and enabled MCP servers from Plugins.",
-  "pi-agent": "Pi coding agent SDK with built-in read, edit, grep, and bash tools.",
+  "pi-agent":
+    "Native Pi coding agent. Uses ~/.pi/agent by default so packages, extensions, skills, and settings match the CLI.",
   "google-antigravity-cli":
     "Google Antigravity CLI (`agy`) — Google's successor to Gemini CLI. Sign in with Google OAuth via the CLI on the host (`agy` login); Cesium does not broker tokens. MCP comes from `.agents/mcp_config.json`. Prompt images are not exposed yet. Native ACP is not available upstream.",
 };
@@ -1650,6 +1657,44 @@ function CesiumAgentHarnessSettings() {
                   disabled={busy}
                 />
               </label>
+              <label className="flex flex-col gap-[5px]">
+                <SettingsFieldLabel>MCP call</SettingsFieldLabel>
+                <SettingsThemeSelect
+                  value={settings.toolPermissions.mcpCall ?? "ask"}
+                  options={[...TOOL_PERMISSION_OPTIONS]}
+                  onChange={(value) =>
+                    void patchSettings({
+                      toolPermissions: {
+                        ...settings.toolPermissions,
+                        mcpCall: value as "ask" | "allow" | "deny",
+                      },
+                    })
+                  }
+                  ariaLabel="MCP call permission"
+                  className="w-full max-w-none"
+                  triggerClassName={`${settingsSelectTriggerClass} w-full max-w-none`}
+                  disabled={busy}
+                />
+              </label>
+              <label className="flex flex-col gap-[5px]">
+                <SettingsFieldLabel>Switch mode</SettingsFieldLabel>
+                <SettingsThemeSelect
+                  value={settings.toolPermissions.switchMode ?? "ask"}
+                  options={[...TOOL_PERMISSION_OPTIONS]}
+                  onChange={(value) =>
+                    void patchSettings({
+                      toolPermissions: {
+                        ...settings.toolPermissions,
+                        switchMode: value as "ask" | "allow" | "deny",
+                      },
+                    })
+                  }
+                  ariaLabel="Switch mode permission"
+                  className="w-full max-w-none"
+                  triggerClassName={`${settingsSelectTriggerClass} w-full max-w-none`}
+                  disabled={busy}
+                />
+              </label>
             </div>
           </HarnessDetailBlock>
 
@@ -1698,6 +1743,7 @@ function PiAgentHarnessSettings() {
   const [payload, setPayload] = useState<PiAgentSettingsResponse | null>(null);
   const [apiKeysByProvider, setApiKeysByProvider] = useState<Record<string, string>>({});
   const [busyProviderId, setBusyProviderId] = useState<string | null>(null);
+  const [homeBusy, setHomeBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
@@ -1726,6 +1772,29 @@ function PiAgentHarnessSettings() {
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
   }, [refresh, refreshModels]);
+
+  const setAgentHome = useCallback(
+    async (agentHome: PiAgentHomeMode) => {
+      setHomeBusy(true);
+      setMessage(null);
+      try {
+        const result = await savePiAgentHome(agentHome);
+        setPayload(result);
+        await refreshModels();
+        notifyAgentBackendsChanged();
+        setMessage(
+          agentHome === "native"
+            ? "Using native Pi home — packages, extensions, and skills load from ~/.pi/agent."
+            : "Using isolated Cesium Pi home."
+        );
+      } catch (error) {
+        setMessage(error instanceof Error ? error.message : "Failed to update Pi agent home.");
+      } finally {
+        setHomeBusy(false);
+      }
+    },
+    [refreshModels]
+  );
 
   const connectOAuth = useCallback(
     async (provider: PiAgentProviderStatus) => {
@@ -1819,10 +1888,54 @@ function PiAgentHarnessSettings() {
 
   const providers = payload?.providers ?? [];
   const configuredCount = providers.filter((provider) => provider.configured).length;
+  const home = payload?.home;
+  const agentHome = home?.agentHome ?? payload?.settings.agentHome ?? "native";
 
   return (
     <HarnessDetailBlock>
-      <SettingsSubsectionHeading>Provider credentials</SettingsSubsectionHeading>
+      <SettingsSubsectionHeading>Agent home</SettingsSubsectionHeading>
+      <div className="mt-[10px] flex flex-col gap-[12px] font-sans text-[12px] text-[var(--text-secondary)]">
+        <p className="leading-relaxed">
+          Pi is built around user customization. Native mode loads the same{" "}
+          <span className="font-mono text-[11px] text-[var(--text-primary)]">~/.pi/agent</span>{" "}
+          tree as the CLI — packages, extensions, skills, prompts, themes,{" "}
+          <span className="font-mono text-[11px] text-[var(--text-primary)]">settings.json</span>,{" "}
+          and auth — plus project{" "}
+          <span className="font-mono text-[11px] text-[var(--text-primary)]">.pi/</span> resources.
+        </p>
+        <div className="flex flex-wrap gap-[8px]">
+          <button
+            type="button"
+            className={rowButtonClass}
+            disabled={homeBusy || home?.usesEnvOverride || agentHome === "native"}
+            onClick={() => void setAgentHome("native")}
+          >
+            Native (~/.pi/agent)
+          </button>
+          <button
+            type="button"
+            className={rowButtonClass}
+            disabled={homeBusy || home?.usesEnvOverride || agentHome === "isolated"}
+            onClick={() => void setAgentHome("isolated")}
+          >
+            Isolated (Cesium profile)
+          </button>
+        </div>
+        {home ? (
+          <p className="font-mono text-[11px] leading-relaxed text-[var(--text-primary)]">
+            {home.agentDir}
+            {home.usesEnvOverride
+              ? " · overridden by OPENCURSOR_PI_AGENT_DIR"
+              : agentHome === "native"
+                ? " · matches Pi CLI"
+                : " · Cesium sandbox"}
+          </p>
+        ) : null}
+      </div>
+
+      <div className="mt-[18px]">
+        <SettingsSubsectionHeading>Provider credentials</SettingsSubsectionHeading>
+      </div>
       <div className="mt-[10px] flex flex-col gap-[12px] font-sans text-[12px] text-[var(--text-secondary)]">
         <p className="text-[13px] font-medium text-[var(--text-primary)]">
           {payload
@@ -1832,8 +1945,10 @@ function PiAgentHarnessSettings() {
             : "Loading…"}
         </p>
         <p className="leading-relaxed">
-          Connect OAuth providers or paste API keys as a fallback. Credentials are stored in an
-          isolated Pi Agent auth directory on the server.
+          Connect OAuth or paste API keys. Credentials write into the active agent home{" "}
+          <span className="font-mono text-[11px] text-[var(--text-primary)]">auth.json</span>
+          {agentHome === "native" ? " (shared with the Pi CLI)" : ""}. Cesium-stored keys also apply
+          as runtime overlays.
         </p>
         <ul className="divide-y divide-[var(--border-subtle)] rounded-[8px] border border-[var(--border-subtle)]">
           {providers.map((provider) => {
@@ -2016,6 +2131,12 @@ function HarnessRememberedPermissionsList({
               <p className="mt-[6px] flex flex-wrap items-center gap-[6px] font-sans text-[11px] text-[var(--text-secondary)]">
                 {showBackendLabel ? <span className={tagClass}>{harnessLabel}</span> : null}
                 <span className={tagClass}>{wsLabel}</span>
+                {rule.permissionCategory ? (
+                  <span className={tagClass}>{rule.permissionCategory}</span>
+                ) : null}
+                {rule.matchStyle === "category" ? (
+                  <span className={tagClass}>category</span>
+                ) : null}
                 <span
                   className={`${tagClass} ${
                     rule.decision === "allow"

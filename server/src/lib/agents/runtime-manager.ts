@@ -34,12 +34,12 @@ import {
   unsupportedContextUsageSnapshot,
 } from "./cesium-context-usage.js";
 import { listOrchestrationChildConversationIds } from "../orchestration/store.js";
-import { burnContinuationContext } from "./burn-goal-steering.js";
+import { goalContinuationContext } from "./goal-steering.js";
 import {
-  ensureBurnGoalForConversation,
-  readBurnGoalForConversation,
-  updateBurnGoalPlan,
-} from "./burn-goal-store.js";
+  ensureGoalForConversation,
+  readGoalForConversation,
+  updateGoalPlan,
+} from "./goal-store.js";
 import {
   findPrimaryModelConfigOption,
   findPrimaryModeConfigOption,
@@ -328,7 +328,7 @@ export class AgentRuntimeManager {
     this.listBackendsFn = options.listBackends ?? listAgentBackendsWithCache;
   }
 
-  private async buildBurnRuntimePrompt(input: {
+  private async buildGoalRuntimePrompt(input: {
     workspace: WorkspaceRecord;
     record: AgentConversationRecord;
     userText: string;
@@ -336,6 +336,7 @@ export class AgentRuntimeManager {
   }): Promise<string> {
     const nativeBurn =
       input.record.config.backendId === "cesium-agent" &&
+      String(input.record.config.mode).trim().toLowerCase() === "goal" ||
       String(input.record.config.mode).trim().toLowerCase() === "burn";
     if (!nativeBurn) {
       return input.userText;
@@ -343,19 +344,19 @@ export class AgentRuntimeManager {
     if (input.continuation !== true) {
       return input.userText;
     }
-    const existing = await readBurnGoalForConversation({
+    const existing = await readGoalForConversation({
       workspace: input.workspace,
       conversationId: input.record.id,
     });
-    const burnGoal =
+    const goal =
       existing ??
-      (await ensureBurnGoalForConversation({
+      (await ensureGoalForConversation({
         workspace: input.workspace,
         conversationId: input.record.id,
         objective: input.userText,
       }));
     return [
-      burnContinuationContext(burnGoal),
+      goalContinuationContext(goal),
       "",
       "<current_user_message>",
       input.userText,
@@ -363,22 +364,23 @@ export class AgentRuntimeManager {
     ].join("\n");
   }
 
-  private async processBurnSignals(input: {
+  private async processGoalSignals(input: {
     workspace: WorkspaceRecord;
     conversation: AgentConversationRecord;
     events: AgentEventInput[];
   }): Promise<void> {
-    const nativeBurn =
+    const nativeGoal =
       input.conversation.config.backendId === "cesium-agent" &&
-      String(input.conversation.config.mode).trim().toLowerCase() === "burn";
-    if (!nativeBurn) {
+      (String(input.conversation.config.mode).trim().toLowerCase() === "goal" ||
+        String(input.conversation.config.mode).trim().toLowerCase() === "burn");
+    if (!nativeGoal) {
       return;
     }
     const planEvent = [...input.events]
       .reverse()
       .find((event) => event.kind === "plan");
     if (planEvent && planEvent.kind === "plan") {
-      await updateBurnGoalPlan({
+      await updateGoalPlan({
         workspace: input.workspace,
         conversationId: input.conversation.id,
         planSummary: `Latest ${planEvent.planId} plan from ${input.conversation.config.backendId}.`,
@@ -1213,7 +1215,7 @@ export class AgentRuntimeManager {
     void (async () => {
       try {
         const runtime = await this.ensureRuntime(workspace, updatedRecord);
-        const providerPromptText = await this.buildBurnRuntimePrompt({
+        const providerPromptText = await this.buildGoalRuntimePrompt({
           workspace,
           record: updatedRecord,
           userText: runtimePromptText,
@@ -1295,7 +1297,7 @@ export class AgentRuntimeManager {
     void (async () => {
       try {
         const runtime = await this.ensureRuntime(workspace, updatedRecord);
-        const retryText = await this.buildBurnRuntimePrompt({
+        const retryText = await this.buildGoalRuntimePrompt({
           workspace,
           record: updatedRecord,
           userText: lastUser.content,
@@ -1764,7 +1766,7 @@ export class AgentRuntimeManager {
       conversation: record,
       appendEvents: async (events: AgentEventInput[]) => {
         const appended = await appendConversationEvents(workspace.id, record.id, events);
-        await this.processBurnSignals({
+        await this.processGoalSignals({
           workspace,
           conversation: callbacks.conversation,
           events,
@@ -1988,9 +1990,9 @@ export class AgentRuntimeManager {
               ? modeOption.options.find((option) => option.value === "ask")?.value
               : patchKey === "orchestration"
                 ? modeOption.options.find((option) => option.value === "orchestration")?.value
-                : patchKey === "burn"
+                : patchKey === "goal"
                   ? modeOption.options.find(
-                      (option) => option.value === "burn"
+                      (option) => option.value === "goal"
                     )?.value
                 : modeOption.options.find((option) =>
                     option.value === "debug" ||

@@ -45,8 +45,7 @@ const modeColors: Record<KnownEditorMode, { text: string; bg: string }> = {
   plan: { text: "var(--plan-accent)", bg: "var(--plan-accent-bg)" },
   debug: { text: "var(--debug-accent)", bg: "var(--debug-accent-bg)" },
   ask: { text: "var(--ask-accent)", bg: "var(--ask-accent-bg)" },
-  goal: { text: "var(--burn-accent)", bg: "var(--burn-accent-bg)" },
-  burn: { text: "var(--burn-accent)", bg: "var(--burn-accent-bg)" },
+  goal: { text: "var(--goal-accent)", bg: "var(--goal-accent-bg)" },
   workflow: { text: "var(--workflow-accent)", bg: "var(--workflow-accent-bg)" },
   orchestration: { text: "var(--orchestration-accent)", bg: "var(--orchestration-accent-bg)" },
 };
@@ -59,7 +58,6 @@ function iconForModeTone(tone: KnownEditorMode): LucideIcon {
       return Bug;
     case "ask":
       return MessageSquare;
-    case "burn":
     case "goal":
       return Flame;
     case "workflow":

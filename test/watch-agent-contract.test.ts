@@ -23,7 +23,7 @@ const baseProjection: MobileAgentProjection = {
   elapsedMs: 25_000,
   lastError: null,
   todoProgress: null,
-  burnProgress: null,
+  goalProgress: null,
 };
 
 describe("watch agent contract", () => {
@@ -40,7 +40,7 @@ describe("watch agent contract", () => {
     assert.deepEqual(projection.availableActions, ["open", "pause", "cancel", "open_on_phone"]);
   });
 
-  test("carries todo and Burn progress to Wear surfaces", () => {
+  test("carries todo and Goal progress to Wear surfaces", () => {
     const todo = toWatchAgentProjection(
       {
         ...baseProjection,
@@ -66,7 +66,7 @@ describe("watch agent contract", () => {
     const burn = toWatchAgentProjection(
       {
         ...baseProjection,
-        burnProgress: {
+        goalProgress: {
           percent: 68,
           headline: "Verification",
           runtimeMs: 60_000,
@@ -76,7 +76,7 @@ describe("watch agent contract", () => {
       },
       { source: "phone_companion" }
     );
-    assert.equal(burn.progressKind, "burn");
+    assert.equal(burn.progressKind, "goal");
     assert.equal(burn.progress, 68);
     assert.equal(burn.progressLabel, "68%");
   });

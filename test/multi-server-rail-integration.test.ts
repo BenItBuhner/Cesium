@@ -23,6 +23,7 @@ async function startFakeCesiumServer(input: {
   workspaceId: string;
   workspaceName: string;
   conversationId: string;
+  repositoryId?: string;
 }): Promise<StartedServer> {
   const server = createServer((req, res) => {
     if (req.url === "/health") {
@@ -40,6 +41,15 @@ async function startFakeCesiumServer(input: {
             lastOpenedAt: 1,
           },
         ],
+        repositoriesByWorkspaceId: input.repositoryId
+          ? {
+              [input.workspaceId]: {
+                isGitRepo: true,
+                repoRoot: `/tmp/${input.workspaceName}`,
+                repositoryId: input.repositoryId,
+              },
+            }
+          : {},
         defaultWorkspaceId: input.workspaceId,
         lastOpenedWorkspaceId: input.workspaceId,
         recentWorkspaceIds: [input.workspaceId],
@@ -59,6 +69,13 @@ async function startFakeCesiumServer(input: {
               updatedAt: 1,
               lastOpenedAt: 1,
             },
+            repository: input.repositoryId
+              ? {
+                  isGitRepo: true,
+                  repoRoot: `/tmp/${input.workspaceName}`,
+                  repositoryId: input.repositoryId,
+                }
+              : undefined,
             conversations: [
               {
                 id: input.conversationId,
@@ -107,11 +124,13 @@ describe("multi-server rail integration", () => {
       workspaceId: "workspace-a",
       workspaceName: "repo-a",
       conversationId: "chat-a",
+      repositoryId: "github.com/acme/shared",
     });
     const serverB = await startFakeCesiumServer({
       workspaceId: "workspace-b",
       workspaceName: "repo-b",
       conversationId: "chat-b",
+      repositoryId: "github.com/acme/shared",
     });
 
     const [workspacesA, workspacesB, railA, railB] = await Promise.all([
@@ -129,6 +148,14 @@ describe("multi-server rail integration", () => {
 
     assert.equal(workspacesA.workspaces[0]?.id, "workspace-a");
     assert.equal(workspacesB.workspaces[0]?.id, "workspace-b");
+    assert.equal(
+      workspacesA.repositoriesByWorkspaceId?.["workspace-a"]?.repositoryId,
+      "github.com/acme/shared"
+    );
+    assert.equal(
+      workspacesB.repositoriesByWorkspaceId?.["workspace-b"]?.repositoryId,
+      "github.com/acme/shared"
+    );
     assert.equal(railA.groups[0]?.conversations[0]?.id, "chat-a");
     assert.equal(railB.groups[0]?.conversations[0]?.id, "chat-b");
   });

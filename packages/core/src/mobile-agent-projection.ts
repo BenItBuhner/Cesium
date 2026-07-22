@@ -4,7 +4,7 @@ import type {
   AgentPlanEntry,
   AgentStoredEvent,
 } from "./protocol";
-import { latestBurnProgressStatus } from "./agent-chat";
+import { latestGoalProgressStatus } from "./agent-chat";
 
 export type MobilePendingIntervention = "permission" | "question" | null;
 
@@ -20,7 +20,7 @@ export type MobileTodoProgress = {
   estimatedCompletionAt: number | null;
 };
 
-export type MobileBurnProgress = {
+export type MobileGoalProgress = {
   percent: number;
   headline: string | null;
   runtimeMs: number;
@@ -44,7 +44,7 @@ export type MobileAgentProjection = {
   elapsedMs: number;
   lastError: string | null;
   todoProgress: MobileTodoProgress | null;
-  burnProgress: MobileBurnProgress | null;
+  goalProgress: MobileGoalProgress | null;
 };
 
 export function isMobileAgentRunActive(status: MobileAgentProjection["status"]): boolean {
@@ -113,7 +113,7 @@ export function deriveMobileAgentProjection(
   const activity = resolveCurrentActivity(conversation, sortedEvents, activeTodo);
   const elapsedMs = startedAt ? Math.max(0, now - startedAt) : 0;
   const todoProgress = deriveTodoProgress(sortedEvents, elapsedMs, now);
-  const burnProgress = deriveBurnProgress(sortedEvents, conversation.status, now);
+  const goalProgress = deriveGoalProgress(sortedEvents, conversation.status, now);
 
   return {
     workspaceId: conversation.workspaceId,
@@ -135,7 +135,7 @@ export function deriveMobileAgentProjection(
     elapsedMs,
     lastError: conversation.lastError,
     todoProgress,
-    burnProgress,
+    goalProgress,
   };
 }
 
@@ -244,12 +244,12 @@ function deriveTodoProgress(
   };
 }
 
-function deriveBurnProgress(
+function deriveGoalProgress(
   events: AgentStoredEvent[],
   status: AgentConversationStatus,
   now: number
-): MobileBurnProgress | null {
-  const burn = latestBurnProgressStatus(events, status);
+): MobileGoalProgress | null {
+  const burn = latestGoalProgressStatus(events, status);
   if (!burn) {
     return null;
   }

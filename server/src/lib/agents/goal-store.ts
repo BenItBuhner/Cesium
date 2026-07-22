@@ -2,21 +2,21 @@ import { randomUUID } from "node:crypto";
 import { getStorage } from "../../storage/runtime.js";
 import type { WorkspaceRecord } from "../workspace-registry.js";
 import {
-  BURN_GOAL_SNAPSHOT_LIMIT,
-  burnGoalLatestSnapshotFreshness,
-  burnGoalRemainingSummary,
-  type BurnGoalBlocker,
-  type BurnGoalItemStatus,
-  type BurnGoalMilestone,
-  type BurnGoalPatch,
-  type BurnGoalProgressSnapshot,
-  type BurnGoalRecord,
-  type BurnGoalStatus,
-  type BurnGoalTodo,
-  type BurnGoalVerification,
-} from "./burn-goal-types.js";
+  GOAL_SNAPSHOT_LIMIT,
+  goalLatestSnapshotFreshness,
+  goalRemainingSummary,
+  type GoalBlocker,
+  type GoalItemStatus,
+  type GoalMilestone,
+  type GoalPatch,
+  type GoalProgressSnapshot,
+  type GoalRecord,
+  type GoalStatus,
+  type GoalTodo,
+  type GoalVerification,
+} from "./goal-types.js";
 
-const TERMINAL_STATUSES: BurnGoalStatus[] = [
+const TERMINAL_STATUSES: GoalStatus[] = [
   "blocked",
   "usage_limited",
   "budget_limited",
@@ -28,7 +28,7 @@ function nowMs(): number {
   return Date.now();
 }
 
-function asStatus(value: unknown): BurnGoalItemStatus {
+function asStatus(value: unknown): GoalItemStatus {
   const normalized = String(value ?? "pending").trim().toLowerCase();
   if (normalized === "done" || normalized === "completed") return "completed";
   if (normalized === "in-progress" || normalized === "in_progress") return "in_progress";
@@ -40,7 +40,7 @@ function stringValue(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
-function normalizeMilestones(values: unknown[], previous: BurnGoalMilestone[]): BurnGoalMilestone[] {
+function normalizeMilestones(values: unknown[], previous: GoalMilestone[]): GoalMilestone[] {
   const byId = new Map(previous.map((item) => [item.id, item]));
   return values.flatMap((value, index) => {
     if (!value || typeof value !== "object") return [];
@@ -60,7 +60,7 @@ function normalizeMilestones(values: unknown[], previous: BurnGoalMilestone[]): 
   });
 }
 
-function normalizeTodos(values: unknown[], previous: BurnGoalTodo[]): BurnGoalTodo[] {
+function normalizeTodos(values: unknown[], previous: GoalTodo[]): GoalTodo[] {
   const byId = new Map(previous.map((item) => [item.id, item]));
   return values.flatMap((value, index) => {
     if (!value || typeof value !== "object") return [];
@@ -84,7 +84,7 @@ function normalizeTodos(values: unknown[], previous: BurnGoalTodo[]): BurnGoalTo
   });
 }
 
-function normalizeVerification(values: unknown[]): BurnGoalVerification[] {
+function normalizeVerification(values: unknown[]): GoalVerification[] {
   return values.flatMap((value) => {
     if (!value || typeof value !== "object") return [];
     const record = value as Record<string, unknown>;
@@ -104,12 +104,12 @@ function normalizeVerification(values: unknown[]): BurnGoalVerification[] {
   });
 }
 
-export function createBurnGoalRecord(input: {
+export function createGoalRecord(input: {
   workspace: WorkspaceRecord;
   conversationId: string;
   objective: string;
   tokenBudget?: number | null;
-}): BurnGoalRecord {
+}): GoalRecord {
   const now = nowMs();
   return {
     schemaVersion: 1,
@@ -138,60 +138,60 @@ export function createBurnGoalRecord(input: {
   };
 }
 
-export async function readBurnGoalForConversation(input: {
+export async function readGoalForConversation(input: {
   workspace: WorkspaceRecord;
   conversationId: string;
-}): Promise<BurnGoalRecord | null> {
+}): Promise<GoalRecord | null> {
   const storage = await getStorage();
-  return storage.getBurnGoalByConversation(input.workspace.id, input.conversationId);
+  return storage.getGoalByConversation(input.workspace.id, input.conversationId);
 }
 
-export async function ensureBurnGoalForConversation(input: {
+export async function ensureGoalForConversation(input: {
   workspace: WorkspaceRecord;
   conversationId: string;
   objective: string;
   tokenBudget?: number | null;
-}): Promise<BurnGoalRecord> {
+}): Promise<GoalRecord> {
   const storage = await getStorage();
-  const existing = await storage.getBurnGoalByConversation(
+  const existing = await storage.getGoalByConversation(
     input.workspace.id,
     input.conversationId
   );
   if (existing && !TERMINAL_STATUSES.includes(existing.status)) {
     return existing;
   }
-  const record = createBurnGoalRecord(input);
-  await storage.upsertBurnGoal(record);
+  const record = createGoalRecord(input);
+  await storage.upsertGoal(record);
   return record;
 }
 
-export async function updateBurnGoal(input: {
+export async function updateGoal(input: {
   workspace: WorkspaceRecord;
   conversationId: string;
-  patch: BurnGoalPatch;
-}): Promise<BurnGoalRecord> {
+  patch: GoalPatch;
+}): Promise<GoalRecord> {
   const storage = await getStorage();
-  const updated = await storage.updateBurnGoal(
+  const updated = await storage.updateGoal(
     input.workspace.id,
     input.conversationId,
     input.patch
   );
   if (!updated) {
-    throw new Error("No Burn goal exists for this conversation.");
+    throw new Error("No Goal exists for this conversation.");
   }
   return updated;
 }
 
-export async function updateBurnGoalPlan(input: {
+export async function updateGoalPlan(input: {
   workspace: WorkspaceRecord;
   conversationId: string;
   planSummary?: string | null;
   milestones?: unknown[];
   todos?: unknown[];
-}): Promise<BurnGoalRecord> {
-  const current = await readBurnGoalForConversation(input);
+}): Promise<GoalRecord> {
+  const current = await readGoalForConversation(input);
   if (!current) {
-    throw new Error("No Burn goal exists for this conversation.");
+    throw new Error("No Goal exists for this conversation.");
   }
   const milestones = input.milestones
     ? normalizeMilestones(input.milestones, current.milestones)
@@ -199,7 +199,7 @@ export async function updateBurnGoalPlan(input: {
   const todos = input.todos
     ? normalizeTodos(input.todos, current.todos)
     : current.todos;
-  return updateBurnGoal({
+  return updateGoal({
     workspace: input.workspace,
     conversationId: input.conversationId,
     patch: {
@@ -214,7 +214,7 @@ export async function updateBurnGoalPlan(input: {
 
 const REQUIRED_SNAPSHOT_SECTIONS = ["Progress", "Current State", "Blockers", "Next Steps"] as const;
 
-export function validateBurnGoalSnapshotSummary(summary: string): void {
+export function validateGoalSnapshotSummary(summary: string): void {
   const sections = new Map<string, number>();
   let current: string | undefined;
 
@@ -227,77 +227,77 @@ export function validateBurnGoalSnapshotSummary(summary: string): void {
     const heading = line.match(/^(#{1,6})\s+(.+)$/);
     if (heading) {
       if (heading[1] !== "##") {
-        throw new Error(`Burn progress summary headings must use size 2 markdown headers: ${line}`);
+        throw new Error(`Goal progress summary headings must use size 2 markdown headers: ${line}`);
       }
       current = heading[2]?.trim();
       if (!current) {
-        throw new Error("Burn progress summary headings cannot be empty.");
+        throw new Error("Goal progress summary headings cannot be empty.");
       }
       sections.set(current, sections.get(current) ?? 0);
       continue;
     }
 
     if (!current) {
-      throw new Error("Burn progress summary content must appear under size 2 markdown headers.");
+      throw new Error("Goal progress summary content must appear under size 2 markdown headers.");
     }
     if (!line.trimStart().startsWith("- ")) {
-      throw new Error(`Burn progress summary section "${current}" must use bullet list items.`);
+      throw new Error(`Goal progress summary section "${current}" must use bullet list items.`);
     }
     sections.set(current, (sections.get(current) ?? 0) + 1);
   }
 
   for (const section of REQUIRED_SNAPSHOT_SECTIONS) {
     if (!sections.has(section)) {
-      throw new Error(`Burn progress summary is missing the ## ${section} section.`);
+      throw new Error(`Goal progress summary is missing the ## ${section} section.`);
     }
     if ((sections.get(section) ?? 0) === 0) {
-      throw new Error(`Burn progress summary section ## ${section} needs at least one bullet.`);
+      throw new Error(`Goal progress summary section ## ${section} needs at least one bullet.`);
     }
   }
 
   for (const [section, bullets] of sections) {
     if (bullets === 0) {
-      throw new Error(`Burn progress summary section ## ${section} needs at least one bullet.`);
+      throw new Error(`Goal progress summary section ## ${section} needs at least one bullet.`);
     }
   }
 }
 
-export async function appendBurnGoalSnapshot(input: {
+export async function appendGoalSnapshot(input: {
   workspace: WorkspaceRecord;
   conversationId: string;
   progressPercent: number;
   summary: string;
   headline?: string | null;
-}): Promise<BurnGoalRecord> {
-  const current = await readBurnGoalForConversation(input);
+}): Promise<GoalRecord> {
+  const current = await readGoalForConversation(input);
   if (!current) {
-    throw new Error("No Burn goal exists for this conversation.");
+    throw new Error("No Goal exists for this conversation.");
   }
   const progressPercent = Math.min(100, Math.max(0, Math.round(input.progressPercent)));
   if (!Number.isFinite(input.progressPercent) || progressPercent !== input.progressPercent) {
-    throw new Error("burn_goal_summarize.progressPercent must be an integer from 0 to 100.");
+    throw new Error("goal_summarize.progressPercent must be an integer from 0 to 100.");
   }
   const summary = input.summary.trim();
   if (!summary) {
-    throw new Error("burn_goal_summarize.summary is required.");
+    throw new Error("goal_summarize.summary is required.");
   }
-  validateBurnGoalSnapshotSummary(summary);
+  validateGoalSnapshotSummary(summary);
   const nextRevision = current.revision + 1;
-  const snapshot: BurnGoalProgressSnapshot = {
-    id: `burn-snapshot-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+  const snapshot: GoalProgressSnapshot = {
+    id: `goal-snapshot-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     createdAt: nowMs(),
     progressPercent,
     summary,
     headline: stringValue(input.headline) ?? undefined,
     revision: nextRevision,
   };
-  return updateBurnGoal({
+  return updateGoal({
     workspace: input.workspace,
     conversationId: input.conversationId,
     patch: {
       progressPercent,
       headline: snapshot.headline ?? current.headline,
-      snapshots: [...current.snapshots, snapshot].slice(-BURN_GOAL_SNAPSHOT_LIMIT),
+      snapshots: [...current.snapshots, snapshot].slice(-GOAL_SNAPSHOT_LIMIT),
       revision: nextRevision,
       status: current.status === "planning" ? "active" : current.status,
       phase: current.phase === "planning" ? "executing" : current.phase,
@@ -305,18 +305,18 @@ export async function appendBurnGoalSnapshot(input: {
   });
 }
 
-export async function updateBurnGoalProgress(input: {
+export async function updateGoalProgress(input: {
   workspace: WorkspaceRecord;
   conversationId: string;
   milestones?: unknown[];
   todos?: unknown[];
   verificationEvidence?: unknown[];
-}): Promise<BurnGoalRecord> {
-  const current = await readBurnGoalForConversation(input);
+}): Promise<GoalRecord> {
+  const current = await readGoalForConversation(input);
   if (!current) {
-    throw new Error("No Burn goal exists for this conversation.");
+    throw new Error("No Goal exists for this conversation.");
   }
-  return updateBurnGoal({
+  return updateGoal({
     workspace: input.workspace,
     conversationId: input.conversationId,
     patch: {
@@ -331,21 +331,21 @@ export async function updateBurnGoalProgress(input: {
   });
 }
 
-export async function blockBurnGoal(input: {
+export async function blockGoal(input: {
   workspace: WorkspaceRecord;
   conversationId: string;
   reason: string;
   evidence?: string | null;
-}): Promise<BurnGoalRecord> {
-  const current = await readBurnGoalForConversation(input);
+}): Promise<GoalRecord> {
+  const current = await readGoalForConversation(input);
   if (!current) {
-    throw new Error("No Burn goal exists for this conversation.");
+    throw new Error("No Goal exists for this conversation.");
   }
   const normalizedReason = input.reason.trim();
   const existing = current.blockerHistory.find(
     (item) => item.reason.trim().toLowerCase() === normalizedReason.toLowerCase()
   );
-  const blocker: BurnGoalBlocker = existing
+  const blocker: GoalBlocker = existing
     ? {
         ...existing,
         occurrenceCount: existing.occurrenceCount + 1,
@@ -364,33 +364,33 @@ export async function blockBurnGoal(input: {
     ? current.blockerHistory.map((item) => item.id === existing.id ? blocker : item)
     : [...current.blockerHistory, blocker];
   if (blocker.occurrenceCount < 3) {
-    return updateBurnGoal({
+    return updateGoal({
       workspace: input.workspace,
       conversationId: input.conversationId,
       patch: { blockerHistory },
     });
   }
-  return updateBurnGoal({
+  return updateGoal({
     workspace: input.workspace,
     conversationId: input.conversationId,
     patch: { blockerHistory, status: "blocked" },
   });
 }
 
-export async function pauseBurnGoal(input: {
+export async function pauseGoal(input: {
   workspace: WorkspaceRecord;
   conversationId: string;
   reason?: string | null;
-}): Promise<BurnGoalRecord> {
-  const current = await readBurnGoalForConversation(input);
+}): Promise<GoalRecord> {
+  const current = await readGoalForConversation(input);
   if (!current) {
-    throw new Error("No Burn goal exists for this conversation.");
+    throw new Error("No Goal exists for this conversation.");
   }
   if (current.status === "complete" || current.status === "cancelled") {
-    throw new Error(`Cannot pause a Burn goal with status ${current.status}.`);
+    throw new Error(`Cannot pause a Goal with status ${current.status}.`);
   }
   const reason = stringValue(input.reason);
-  return updateBurnGoal({
+  return updateGoal({
     workspace: input.workspace,
     conversationId: input.conversationId,
     patch: {
@@ -400,18 +400,18 @@ export async function pauseBurnGoal(input: {
   });
 }
 
-export async function resumeBurnGoal(input: {
+export async function resumeGoal(input: {
   workspace: WorkspaceRecord;
   conversationId: string;
-}): Promise<BurnGoalRecord> {
-  const current = await readBurnGoalForConversation(input);
+}): Promise<GoalRecord> {
+  const current = await readGoalForConversation(input);
   if (!current) {
-    throw new Error("No Burn goal exists for this conversation.");
+    throw new Error("No Goal exists for this conversation.");
   }
   if (current.status === "complete" || current.status === "cancelled") {
-    throw new Error(`Cannot resume a Burn goal with status ${current.status}.`);
+    throw new Error(`Cannot resume a Goal with status ${current.status}.`);
   }
-  return updateBurnGoal({
+  return updateGoal({
     workspace: input.workspace,
     conversationId: input.conversationId,
     patch: {
@@ -421,13 +421,13 @@ export async function resumeBurnGoal(input: {
   });
 }
 
-export async function completeBurnGoal(input: {
+export async function completeGoal(input: {
   workspace: WorkspaceRecord;
   conversationId: string;
-}): Promise<BurnGoalRecord> {
-  const current = await readBurnGoalForConversation(input);
+}): Promise<GoalRecord> {
+  const current = await readGoalForConversation(input);
   if (!current) {
-    throw new Error("No Burn goal exists for this conversation.");
+    throw new Error("No Goal exists for this conversation.");
   }
   const incompleteMilestones = current.milestones.filter((item) => item.status !== "completed");
   const incompleteTodos = current.todos.filter((item) => item.status !== "completed");
@@ -435,14 +435,14 @@ export async function completeBurnGoal(input: {
   if (incompleteMilestones.length || incompleteTodos.length || failedEvidence.length) {
     throw new Error(
       [
-        "Burn goal is not complete yet.",
+        "Goal is not complete yet.",
         incompleteMilestones.length ? `${incompleteMilestones.length} milestone(s) remain.` : null,
         incompleteTodos.length ? `${incompleteTodos.length} todo(s) remain.` : null,
         failedEvidence.length ? `${failedEvidence.length} verification item(s) are not passed.` : null,
       ].filter(Boolean).join(" ")
     );
   }
-  return updateBurnGoal({
+  return updateGoal({
     workspace: input.workspace,
     conversationId: input.conversationId,
     patch: {
@@ -453,7 +453,7 @@ export async function completeBurnGoal(input: {
   });
 }
 
-function formatBurnSnapshotForModel(snapshot: BurnGoalProgressSnapshot): string {
+function formatGoalSnapshotForModel(snapshot: GoalProgressSnapshot): string {
   return [
     `Updated: ${new Date(snapshot.createdAt).toISOString()}`,
     `Progress: ${snapshot.progressPercent}%`,
@@ -463,42 +463,42 @@ function formatBurnSnapshotForModel(snapshot: BurnGoalProgressSnapshot): string 
   ].filter(Boolean).join("\n");
 }
 
-function formatRecentBurnSnapshotsForModel(goal: BurnGoalRecord): string {
+function formatRecentGoalSnapshotsForModel(goal: GoalRecord): string {
   const recent = goal.snapshots.slice(-3);
   if (recent.length === 0) {
-    return "- No Burn progress snapshots have been recorded yet.";
+    return "- No Goal progress snapshots have been recorded yet.";
   }
   return recent
     .map((snapshot, index) =>
       [
         `### ${index === recent.length - 1 ? "Latest" : "Previous"} Progress Snapshot`,
-        formatBurnSnapshotForModel(snapshot),
+        formatGoalSnapshotForModel(snapshot),
       ].join("\n")
     )
     .join("\n\n");
 }
 
-export function formatBurnGoalForModel(goal: BurnGoalRecord): string {
+export function formatGoalForModel(goal: GoalRecord): string {
   const latestSnapshot = goal.snapshots.at(-1);
-  const snapshotFreshness = burnGoalLatestSnapshotFreshness(goal);
+  const snapshotFreshness = goalLatestSnapshotFreshness(goal);
   return [
-    `Burn goal id: ${goal.goalId}`,
+    `Goal id: ${goal.goalId}`,
     `Objective: ${goal.objective}`,
     `Revision: ${goal.revision}`,
     goal.progressPercent == null ? null : `Progress: ${goal.progressPercent}%`,
     goal.headline ? `Headline: ${goal.headline}` : null,
     `Latest summary freshness: ${snapshotFreshness}`,
-    burnGoalRemainingSummary(goal),
+    goalRemainingSummary(goal),
     latestSnapshot
       ? [
           "",
           "## Latest Progress Snapshot",
-          formatBurnSnapshotForModel(latestSnapshot),
+          formatGoalSnapshotForModel(latestSnapshot),
         ].filter(Boolean).join("\n")
       : null,
     "",
     "## Recent Progress Snapshot History",
-    formatRecentBurnSnapshotsForModel(goal),
+    formatRecentGoalSnapshotsForModel(goal),
     "",
     "## Plan",
     goal.planSummary || "(No structured plan has been recorded yet.)",

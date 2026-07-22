@@ -12,8 +12,24 @@ delete process.env.REDIS_URL;
 delete process.env.DATABASE_URL;
 delete process.env.OPENCURSOR_STORAGE_DRIVER;
 delete process.env.OPENAI_API_KEY;
+delete process.env.OPENAI_BASE_URL;
 delete process.env.ANTHROPIC_API_KEY;
 delete process.env.GOOGLE_API_KEY;
+delete process.env.OPENROUTER_API_KEY;
+delete process.env.GROQ_API_KEY;
+delete process.env.DEEPSEEK_API_KEY;
+delete process.env.MISTRAL_API_KEY;
+delete process.env.XAI_API_KEY;
+delete process.env.TOGETHER_API_KEY;
+delete process.env.FIREWORKS_API_KEY;
+delete process.env.NVIDIA_API_KEY;
+delete process.env.CEREBRAS_API_KEY;
+delete process.env.CROFAI_API_KEY;
+delete process.env.CESIUM_BASE_URL;
+delete process.env.CESIUM_API_KEY;
+delete process.env.CESIUM_DEFAULT_MODEL;
+delete process.env.CESIUM_PROVIDER_ID;
+delete process.env.CESIUM_MODELS;
 process.env.OPENCURSOR_DATA_DIR = TEST_DATA_DIR;
 
 const [
@@ -31,13 +47,15 @@ const [
     findCesiumModelCatalogEntry,
     resolveCesiumModelContextWindow,
     createCesiumAgentConfigOptions,
+    readCesiumEnvBootstrap,
+    getCesiumModelCatalog,
   },
   { normalizeEventsToHistory, openAiMessages, cesiumPermissionToolKey, createCesiumAgentProvider, buildOpenAiToolDefinitions, sanitizeOpenAiCompatibleJsonSchema, normalizeCesiumToolResultForModel, isEmptyCesiumAdapterResult, normalizeCallMcpToolArgs },
   { buildCesiumBaseSystemPrompt },
   { resolveCesiumModeToolPolicy },
   { parsePlanEntriesFromMarkdown },
-  { createBurnGoalRecord, formatBurnGoalForModel, validateBurnGoalSnapshotSummary },
-  { burnCompactionRecoveryContext, burnContinuationContext },
+  { createGoalRecord, formatGoalForModel, validateGoalSnapshotSummary },
+  { goalCompactionRecoveryContext, goalContinuationContext },
   { buildCesiumModeReminder },
 ] = await Promise.all([
   import("../src/lib/agents/providers.js"),
@@ -46,8 +64,8 @@ const [
   import("@cesium/core/mcp"),
   import("../src/lib/agents/cesium-mode-policy.js"),
   import("../src/lib/agents/cesium-plan-files.js"),
-  import("../src/lib/agents/burn-goal-store.js"),
-  import("../src/lib/agents/burn-goal-steering.js"),
+  import("../src/lib/agents/goal-store.js"),
+  import("../src/lib/agents/goal-steering.js"),
   import("../src/lib/agents/cesium-mode-reminders.js"),
 ]);
 
@@ -80,6 +98,14 @@ test("cesiumPermissionToolKey scopes remembered rules by tool shape", () => {
   assert.equal(
     cesiumPermissionToolKey("mcpCall", { serverId: "browser", toolName: "browser_click" }),
     "cesium:mcp:browser:browser_click"
+  );
+  assert.equal(
+    cesiumPermissionToolKey("switchMode", { target_mode: "plan" }),
+    "cesium:switch_mode:plan"
+  );
+  assert.equal(
+    cesiumPermissionToolKey("switchMode", { targetMode: "Ask" }),
+    "cesium:switch_mode:ask"
   );
 });
 
@@ -443,6 +469,124 @@ test("upsertCesiumProviderKey rejects unambiguous cross-provider keys", async ()
   );
 });
 
+test("upsertCesiumProviderKey allows OpenAI-format sk keys on OpenAI-compatible providers", async () => {
+  const result = await upsertCesiumProviderKey({
+    providerId: "model-proxy",
+    label: "Model Proxy",
+    apiKind: "openai-compatible",
+    apiKey: "sk-proxy-style-key-abcdef123456",
+    baseUrl: "https://infer.example.test/v1",
+  });
+  const stored = result.providerKeys.find((key) => key.providerId === "model-proxy");
+  assert.ok(stored);
+  assert.equal(stored?.lastFour, "3456");
+});
+
+test("readCesiumEnvBootstrap maps OPENAI_API_KEY onto a custom OpenAI-compatible host", () => {
+  process.env.CESIUM_BASE_URL = "https://infer.techlitnow.com/v1";
+  process.env.OPENAI_API_KEY = "sk-test-techlit-key";
+  process.env.CESIUM_DEFAULT_MODEL = "glm-5.2";
+  try {
+    const bootstrap = readCesiumEnvBootstrap();
+    assert.ok(bootstrap);
+    assert.equal(bootstrap?.providerId, "techlit");
+    assert.equal(bootstrap?.baseUrl, "https://infer.techlitnow.com/v1");
+    assert.equal(bootstrap?.apiKey, "sk-test-techlit-key");
+    assert.equal(bootstrap?.defaultModelId, "techlit/glm-5.2");
+    assert.ok(bootstrap?.models.some((model) => model.id === "glm-5.2" && !model.supportsImages));
+    assert.ok(bootstrap?.models.some((model) => model.id === "kimi-k2.7-code" && model.supportsImages));
+  } finally {
+    delete process.env.CESIUM_BASE_URL;
+    delete process.env.OPENAI_API_KEY;
+    delete process.env.CESIUM_DEFAULT_MODEL;
+  }
+});
+
+test("resolveCesiumAuth uses env bootstrap for techlit models", async () => {
+  process.env.CESIUM_BASE_URL = "https://infer.techlitnow.com/v1";
+  process.env.OPENAI_API_KEY = "sk-test-techlit-auth-key";
+  process.env.CESIUM_DEFAULT_MODEL = "kimi-k2.7-code";
+  try {
+    const auth = await resolveCesiumAuth({
+      modelId: "techlit/kimi-k2.7-code",
+    });
+    assert.equal(auth.providerId, "techlit");
+    assert.equal(auth.apiKey, "sk-test-techlit-auth-key");
+    assert.equal(auth.baseUrl, "https://infer.techlitnow.com/v1");
+    assert.equal(auth.apiKind, "openai-chat-completions");
+
+    const catalog = await getCesiumModelCatalog();
+    const kimi = findCesiumModelCatalogEntry("techlit/kimi-k2.7-code", catalog);
+    const glm = findCesiumModelCatalogEntry("techlit/glm-5.2", catalog);
+    assert.equal(kimi?.supportsImages, true);
+    assert.equal(glm?.supportsImages, false);
+
+    const publicSettings = await getCesiumAgentSettingsPublic();
+    assert.ok(
+      publicSettings.providerKeys.some(
+        (key) => key.providerId === "techlit" && key.source === "env"
+      )
+    );
+  } finally {
+    delete process.env.CESIUM_BASE_URL;
+    delete process.env.OPENAI_API_KEY;
+    delete process.env.CESIUM_DEFAULT_MODEL;
+  }
+});
+
+test("resolveCesiumAuth maps GROQ_API_KEY env onto the groq provider", async () => {
+  process.env.GROQ_API_KEY = "gsk-test-groq-key-1234";
+  try {
+    const auth = await resolveCesiumAuth({
+      modelId: "groq/llama-3.3-70b-versatile",
+    });
+    assert.equal(auth.providerId, "groq");
+    assert.equal(auth.apiKey, "gsk-test-groq-key-1234");
+    assert.equal(auth.baseUrl, "https://api.groq.com/openai/v1");
+    assert.equal(auth.apiKind, "openai-chat-completions");
+  } finally {
+    delete process.env.GROQ_API_KEY;
+  }
+});
+
+test("openAiMessages encodes image attachments as multimodal content parts", () => {
+  const encoded = openAiMessages([
+    { role: "system", content: "sys" },
+    {
+      role: "user",
+      content: "describe this",
+      images: [{ mimeType: "image/png", data: "aaaabbbb", name: "shot.png" }],
+    },
+  ]);
+  const user = encoded.find((message) => (message as { role?: string }).role === "user") as {
+    content?: Array<{ type?: string; text?: string; image_url?: { url?: string } }>;
+  };
+  assert.ok(Array.isArray(user.content));
+  assert.equal(user.content?.[0]?.type, "text");
+  assert.equal(user.content?.[0]?.text, "describe this");
+  assert.equal(user.content?.[1]?.type, "image_url");
+  assert.equal(user.content?.[1]?.image_url?.url, "data:image/png;base64,aaaabbbb");
+});
+
+test("normalizeEventsToHistory preserves user image attachments", () => {
+  const history = normalizeEventsToHistory([
+    {
+      seq: 1,
+      eventId: "e1",
+      conversationId: "c1",
+      createdAt: 1,
+      kind: "user_message",
+      messageId: "u1",
+      content: "look",
+      attachments: [{ mimeType: "image/jpeg", data: "deadbeef", name: "a.jpg" }],
+    },
+  ] as never);
+  const user = history.find((message) => message.role === "user");
+  assert.equal(user?.content, "look");
+  assert.equal(user?.images?.length, 1);
+  assert.equal(user?.images?.[0]?.mimeType, "image/jpeg");
+});
+
 test("resolveCesiumModelRuntime uses catalog base URL for third-party providers", async () => {
   await refreshCesiumModelCatalog().catch(() => undefined);
   const runtime = await resolveCesiumModelRuntime({
@@ -663,11 +807,11 @@ test("Cesium config options include dynamic prompt modes", async () => {
     "agent",
     "plan",
     "orchestration",
-    "burn",
+    "goal",
     "workflow",
     "ask",
   ]);
-  assert.equal(modeOption?.options.some((option) => option.value === "burn"), true);
+  assert.equal(modeOption?.options.some((option) => option.value === "goal"), true);
   assert.equal(modeOption?.options.some((option) => option.value === "workflow"), true);
 });
 
@@ -676,7 +820,7 @@ test("Cesium mode preferences remove disabled modes from the live catalog", asyn
     modes: {
       enabled: {
         plan: false,
-        burn: false,
+        goal: false,
       },
     },
   });
@@ -690,28 +834,28 @@ test("Cesium mode preferences remove disabled modes from the live catalog", asyn
     modes: {
       enabled: {
         plan: true,
-        burn: true,
+        goal: true,
       },
     },
   });
 });
 
-test("Burn goal records start in planning with durable milestones and todos", () => {
-  const goal = createBurnGoalRecord({
+test("Goal records start in planning with durable milestones and todos", () => {
+  const goal = createGoalRecord({
     workspace: {
       id: "ws-burn",
       root: TEST_DATA_DIR,
-      name: "Burn workspace",
+      name: "Goal workspace",
       createdAt: 1,
       updatedAt: 1,
       lastOpenedAt: 1,
     },
     conversationId: "conv-burn",
-    objective: "Ship the hybrid Burn goal mode.",
+    objective: "Ship the hybrid Goal mode.",
   });
   assert.equal(goal.status, "planning");
   assert.equal(goal.phase, "planning");
-  assert.equal(goal.objective, "Ship the hybrid Burn goal mode.");
+  assert.equal(goal.objective, "Ship the hybrid Goal mode.");
   assert.deepEqual(goal.milestones, []);
   assert.deepEqual(goal.todos, []);
   assert.equal(goal.progressPercent, null);
@@ -721,13 +865,13 @@ test("Burn goal records start in planning with durable milestones and todos", ()
   assert.equal(goal.compaction.generation, 0);
 });
 
-test("Burn progress snapshots require the OpenCode-style markdown sections", () => {
+test("Goal progress snapshots require the OpenCode-style markdown sections", () => {
   assert.doesNotThrow(() =>
-    validateBurnGoalSnapshotSummary([
+    validateGoalSnapshotSummary([
       "## Progress",
       "- Implemented snapshot storage.",
       "## Current State",
-      "- Burn is still active.",
+      "- Goal is still active.",
       "## Blockers",
       "- None.",
       "## Next Steps",
@@ -735,17 +879,17 @@ test("Burn progress snapshots require the OpenCode-style markdown sections", () 
     ].join("\n"))
   );
   assert.throws(
-    () => validateBurnGoalSnapshotSummary("## Progress\n- Only one section."),
+    () => validateGoalSnapshotSummary("## Progress\n- Only one section."),
     /missing the ## Current State section/
   );
 });
 
-test("Burn continuation context preserves objective and blocker audit rules", () => {
-  const goal = createBurnGoalRecord({
+test("Goal continuation context preserves objective and blocker audit rules", () => {
+  const goal = createGoalRecord({
     workspace: {
       id: "ws-burn",
       root: TEST_DATA_DIR,
-      name: "Burn workspace",
+      name: "Goal workspace",
       createdAt: 1,
       updatedAt: 1,
       lastOpenedAt: 1,
@@ -753,17 +897,17 @@ test("Burn continuation context preserves objective and blocker audit rules", ()
     conversationId: "conv-burn",
     objective: "Finish <all> requirements & verify them.",
   });
-  const context = burnContinuationContext({
+  const context = goalContinuationContext({
     ...goal,
     progressPercent: 42,
-    headline: "Halfway through Burn verification",
+    headline: "Halfway through Goal verification",
     revision: 3,
     snapshots: [
       {
         id: "snapshot-1",
         createdAt: 1,
         progressPercent: 42,
-        headline: "Halfway through Burn verification",
+        headline: "Halfway through Goal verification",
         summary: [
           "## Progress",
           "- Wrote snapshot plumbing.",
@@ -778,27 +922,27 @@ test("Burn continuation context preserves objective and blocker audit rules", ()
       },
     ],
   });
-  assert.match(context, /<burn_context>/);
+  assert.match(context, /<goal_context>/);
   assert.match(context, /Finish &lt;all&gt; requirements &amp; verify them\./);
-  assert.match(context, /at least three Burn turns/);
-  assert.match(context, /Do not call burn_goal_complete/);
+  assert.match(context, /at least three Goal turns/);
+  assert.match(context, /Do not call goal_complete/);
   assert.match(context, /Latest progress snapshot:/);
   assert.match(context, /Progress: 42%/);
-  assert.match(context, /Halfway through Burn verification/);
+  assert.match(context, /Halfway through Goal verification/);
   assert.match(context, /Freshness: stale/);
   assert.match(context, /Recent progress summary history:/);
   assert.match(context, /Do not stop after a progress snapshot/);
-  const recovery = burnCompactionRecoveryContext({
+  const recovery = goalCompactionRecoveryContext({
     ...goal,
     progressPercent: 42,
-    headline: "Halfway through Burn verification",
+    headline: "Halfway through Goal verification",
     revision: 3,
     snapshots: [
       {
         id: "snapshot-1",
         createdAt: 1,
         progressPercent: 42,
-        headline: "Halfway through Burn verification",
+        headline: "Halfway through Goal verification",
         summary: [
           "## Progress",
           "- Wrote snapshot plumbing.",
@@ -818,20 +962,20 @@ test("Burn continuation context preserves objective and blocker audit rules", ()
   assert.match(recovery, /Recent progress summary history:/);
 });
 
-test("Burn goal model summary includes snapshot freshness and recent history", () => {
-  const goal = createBurnGoalRecord({
+test("Goal model summary includes snapshot freshness and recent history", () => {
+  const goal = createGoalRecord({
     workspace: {
       id: "ws-burn-model",
       root: TEST_DATA_DIR,
-      name: "Burn workspace",
+      name: "Goal workspace",
       createdAt: 1,
       updatedAt: 1,
       lastOpenedAt: 1,
     },
     conversationId: "conv-burn-model",
-    objective: "Ship the Burn UI summary view.",
+    objective: "Ship the Goal UI summary view.",
   });
-  const summary = formatBurnGoalForModel({
+  const summary = formatGoalForModel({
     ...goal,
     progressPercent: 70,
     headline: "Summary view is underway",
@@ -888,32 +1032,33 @@ test("Cesium base prompt and tool schema are stable across dynamic modes", () =>
   const tools = buildOpenAiToolDefinitions();
   assert.deepEqual(tools, buildOpenAiToolDefinitions());
   const names = tools.map((tool) => tool.function.name);
-  assert.equal(names.includes("burn_goal_set"), true);
-  assert.equal(names.includes("burn_goal_summarize"), true);
-  assert.equal(names.includes("burn_goal_pause"), true);
-  assert.equal(names.includes("burn_goal_block"), true);
-  assert.equal(names.includes("burn_goal_complete"), true);
+  assert.equal(names.includes("goal_set"), true);
+  assert.equal(names.includes("goal_summarize"), true);
+  assert.equal(names.includes("goal_pause"), true);
+  assert.equal(names.includes("goal_block"), true);
+  assert.equal(names.includes("goal_complete"), true);
   assert.equal(names.includes("workflow_run"), true);
   assert.equal(names.includes("workflow_status"), true);
   assert.equal(names.includes("workflow_await"), true);
   assert.equal(names.includes("wait"), true);
-  assert.equal(names.includes("burn_goal_update_plan"), false);
-  assert.equal(names.includes("burn_goal_update_progress"), false);
-  assert.equal(names.includes("burn_goal_summarize_state"), false);
-  assert.equal(names.includes("burn_goal_resume"), false);
+  assert.equal(names.includes("switch_mode"), true);
+  assert.equal(names.includes("goal_update_plan"), false);
+  assert.equal(names.includes("goal_update_progress"), false);
+  assert.equal(names.includes("goal_summarize_state"), false);
+  assert.equal(names.includes("goal_resume"), false);
 });
 
-test("Cesium Burn reminder uses Burn tools instead of generic Goal state phrases", () => {
+test("Cesium Goal reminder uses Goal tools instead of generic goal state phrases", () => {
   const reminder = buildCesiumModeReminder({
-    mode: "burn",
+    mode: "goal",
     workspaceRoot: TEST_DATA_DIR,
     dateLabel: "today",
     gitSummary: "clean",
     mcpSummaries: [],
   });
-  assert.match(reminder, /burn_goal_set/);
-  assert.match(reminder, /burn_goal_summarize/);
-  assert.match(reminder, /burn_goal_complete/);
+  assert.match(reminder, /goal_set/);
+  assert.match(reminder, /goal_summarize/);
+  assert.match(reminder, /goal_complete/);
   assert.match(reminder, /latest summary is missing or materially stale/);
   assert.match(reminder, /Do not call it every turn/);
   assert.doesNotMatch(reminder, /GOAL_STATE:/);
@@ -951,11 +1096,34 @@ test("Cesium mode policy blocks write tools in Ask and permits plan tools in Pla
   assert.equal(resolveCesiumModeToolPolicy({ mode: "ask", toolName: "edit_file" }).allowed, false);
   assert.equal(resolveCesiumModeToolPolicy({ mode: "ask", toolName: "read_file" }).allowed, true);
   assert.equal(resolveCesiumModeToolPolicy({ mode: "ask", toolName: "wait" }).allowed, true);
+  assert.equal(resolveCesiumModeToolPolicy({ mode: "ask", toolName: "switch_mode" }).allowed, true);
   assert.equal(resolveCesiumModeToolPolicy({ mode: "plan", toolName: "create_plan" }).allowed, true);
   assert.equal(resolveCesiumModeToolPolicy({ mode: "plan", toolName: "wait" }).allowed, true);
+  assert.equal(resolveCesiumModeToolPolicy({ mode: "plan", toolName: "switch_mode" }).allowed, true);
   assert.equal(resolveCesiumModeToolPolicy({ mode: "orchestration", toolName: "wait" }).allowed, true);
+  assert.equal(
+    resolveCesiumModeToolPolicy({ mode: "orchestration", toolName: "switch_mode" }).allowed,
+    true
+  );
   assert.equal(resolveCesiumModeToolPolicy({ mode: "agent", toolName: "wait" }).allowed, true);
+  assert.equal(resolveCesiumModeToolPolicy({ mode: "agent", toolName: "switch_mode" }).allowed, true);
   assert.equal(resolveCesiumModeToolPolicy({ mode: "agent", toolName: "orchestration_create_issue" }).allowed, false);
+});
+
+test("Cesium switch_mode tool is registered with switchMode permission metadata", async () => {
+  const { resolveCesiumTools, resolveCesiumToolPermissionCategory, toolTitle } = await import(
+    "../src/lib/agents/cesium/cesium-tools.js"
+  );
+  const harness = resolveCesiumTools();
+  const switchMode = harness.tools.find((tool) => tool.name === "switch_mode");
+  assert.ok(switchMode);
+  assert.equal(switchMode?.requiresPermission, "switchMode");
+  assert.equal(resolveCesiumToolPermissionCategory(harness.tools, "edit_file"), "editFile");
+  assert.equal(resolveCesiumToolPermissionCategory(harness.tools, "terminal"), "terminal");
+  assert.equal(resolveCesiumToolPermissionCategory(harness.tools, "call_mcp_tool"), "mcpCall");
+  assert.equal(resolveCesiumToolPermissionCategory(harness.tools, "switch_mode"), "switchMode");
+  assert.equal(resolveCesiumToolPermissionCategory(harness.tools, "read_file"), undefined);
+  assert.equal(toolTitle("switch_mode", { target_mode: "plan" }), "Switch to plan mode");
 });
 
 test("Cesium wait tool parses seconds, caps duration, and formats titles", async () => {

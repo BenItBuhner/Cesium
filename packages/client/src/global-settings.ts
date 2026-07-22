@@ -11,7 +11,7 @@ import {
   type ThemeConfig,
 } from "./theme-config";
 
-export type WorkspaceSortMode = "recent" | "alphabetical" | "custom";
+export type WorkspaceSortMode = "recent" | "alphabetical" | "machine" | "custom";
 export type AgentRailGroupByMode = "workspace" | "repository" | "server" | "updated" | "status";
 export type AgentRailSectionId = "pinned" | "chats" | "workspaces";
 
@@ -118,6 +118,8 @@ export type RememberedAgentPermissionRule = {
   decision: "allow" | "reject";
   optionId: string;
   optionKind: "allow_always" | "reject_always";
+  permissionCategory?: "editFile" | "terminal" | "mcpCall" | "switchMode";
+  matchStyle?: "exact" | "category";
   createdAt: number;
   updatedAt: number;
 };
@@ -138,7 +140,6 @@ export type ToolsSettingsState = Record<string, never>;
 
 export type FeaturesSettingsState = {
   vscodeExtensionsBeta: boolean;
-  goalModeBeta: boolean;
 };
 
 export type GlobalAppSettingsSlice = {
@@ -226,13 +227,12 @@ export function createDefaultGlobalSettings(): GlobalSettingsState {
     tools: {},
     features: {
       vscodeExtensionsBeta: false,
-      goalModeBeta: false,
     },
   };
 }
 
 function normalizeWorkspaceSortMode(raw: unknown): WorkspaceSortMode {
-  return raw === "recent" || raw === "alphabetical" || raw === "custom"
+  return raw === "recent" || raw === "alphabetical" || raw === "machine" || raw === "custom"
     ? raw
     : "recent";
 }
@@ -403,7 +403,6 @@ function normalizeAgentRailSettings(raw: unknown): AgentRailSettingsState {
     record.groupBy === "status"
       ? record.groupBy
       : defaults.groupBy;
-  const groupBy = rawGroupBy === "server" ? "workspace" : rawGroupBy;
   const strings = (value: unknown): string[] =>
     Array.isArray(value)
       ? value.filter((item): item is string => typeof item === "string")
@@ -417,7 +416,7 @@ function normalizeAgentRailSettings(raw: unknown): AgentRailSettingsState {
     (id) => id !== "workspaces"
   );
   return {
-    groupBy,
+    groupBy: rawGroupBy,
     visibleStatusFilters: strings(record.visibleStatusFilters),
     // Do not preserve legacy allow-lists. They hide newly added servers forever,
     // which is catastrophic for a dynamic multi-server rail.
@@ -486,6 +485,17 @@ function normalizeRememberedPermissions(raw: unknown): RememberedAgentPermission
             ? record.optionId.trim()
             : optionKind,
         optionKind,
+        permissionCategory:
+          record.permissionCategory === "editFile" ||
+          record.permissionCategory === "terminal" ||
+          record.permissionCategory === "mcpCall" ||
+          record.permissionCategory === "switchMode"
+            ? record.permissionCategory
+            : undefined,
+        matchStyle:
+          record.matchStyle === "exact" || record.matchStyle === "category"
+            ? record.matchStyle
+            : undefined,
         createdAt:
           typeof record.createdAt === "number" && Number.isFinite(record.createdAt)
             ? record.createdAt
@@ -571,11 +581,6 @@ export function normalizeLoadedGlobalSettings(
           ? (r as { features: { vscodeExtensionsBeta: boolean } }).features
               .vscodeExtensionsBeta
           : base.features.vscodeExtensionsBeta,
-      goalModeBeta:
-        typeof (r as { features?: { goalModeBeta?: unknown } }).features
-          ?.goalModeBeta === "boolean"
-          ? (r as { features: { goalModeBeta: boolean } }).features.goalModeBeta
-          : base.features.goalModeBeta,
     },
   };
 }

@@ -14,12 +14,12 @@ class CesiumAgentNotificationTest {
     assertEquals(CesiumDesignTokens.Light.AskAccent.toInt(), light.completed)
     assertEquals(CesiumDesignTokens.Light.WorkflowAccent.toInt(), light.active)
     assertEquals(CesiumDesignTokens.Light.TextSecondary.toInt(), light.pending)
-    assertEquals(CesiumDesignTokens.Light.BurnAccent.toInt(), light.burn)
+    assertEquals(CesiumDesignTokens.Light.GoalAccent.toInt(), light.goal)
 
     assertEquals(CesiumDesignTokens.Dark.AskAccent.toInt(), dark.completed)
     assertEquals(CesiumDesignTokens.Dark.WorkflowAccent.toInt(), dark.active)
     assertEquals(CesiumDesignTokens.Dark.TextSecondary.toInt(), dark.pending)
-    assertEquals(CesiumDesignTokens.Dark.BurnAccent.toInt(), dark.burn)
+    assertEquals(CesiumDesignTokens.Dark.GoalAccent.toInt(), dark.goal)
 
     assertNotEquals(light.completed, dark.completed)
     assertNotEquals(light.active, dark.active)

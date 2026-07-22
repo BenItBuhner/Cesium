@@ -64,7 +64,7 @@ describe("mobile agent projection", () => {
       estimatedRemainingMs: null,
       estimatedCompletionAt: null,
     });
-    assert.equal(projection.burnProgress, null);
+    assert.equal(projection.goalProgress, null);
   });
 
   test("surfaces pending intervention over todo activity", () => {
@@ -272,7 +272,7 @@ describe("mobile agent projection", () => {
     assert.equal(projection.todoProgress?.estimatedCompletionAt, 241_000);
   });
 
-  test("prioritizes Burn progress and estimates its completion", () => {
+  test("prioritizes Goal progress and estimates its completion", () => {
     const conversation = createConversation({
       status: "running",
       lastEventSeq: 4,
@@ -299,7 +299,7 @@ describe("mobile agent projection", () => {
           status: "completed",
           raw: {
             request: {
-              name: "burn_goal_set",
+              name: "goal_set",
               arguments: { objective: "Ship native live updates" },
             },
           },
@@ -314,7 +314,7 @@ describe("mobile agent projection", () => {
           status: "completed",
           raw: {
             request: {
-              name: "burn_goal_summarize",
+              name: "goal_summarize",
               arguments: {
                 progressPercent: 40,
                 headline: "Implementing notifications",
@@ -326,11 +326,11 @@ describe("mobile agent projection", () => {
       { now: 70_000 }
     );
 
-    assert.equal(projection.burnProgress?.percent, 40);
-    assert.equal(projection.burnProgress?.headline, "Implementing notifications");
-    assert.equal(projection.burnProgress?.runtimeMs, 60_000);
-    assert.equal(projection.burnProgress?.estimatedRemainingMs, 90_000);
-    assert.equal(projection.burnProgress?.estimatedCompletionAt, 160_000);
+    assert.equal(projection.goalProgress?.percent, 40);
+    assert.equal(projection.goalProgress?.headline, "Implementing notifications");
+    assert.equal(projection.goalProgress?.runtimeMs, 60_000);
+    assert.equal(projection.goalProgress?.estimatedRemainingMs, 90_000);
+    assert.equal(projection.goalProgress?.estimatedCompletionAt, 160_000);
   });
 });
 

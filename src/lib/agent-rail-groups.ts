@@ -39,6 +39,12 @@ export function groupAgentRailGroups(
     const existing = map.get(key);
     if (existing) {
       existing.conversations.push(...conversations);
+      existing.serverIds = [
+        ...new Set([
+          ...(existing.serverIds ?? (existing.serverId ? [existing.serverId] : [])),
+          ...(group.serverIds ?? (group.serverId ? [group.serverId] : [])),
+        ]),
+      ];
       return;
     }
     map.set(key, {
@@ -49,6 +55,7 @@ export function groupAgentRailGroups(
         name: label,
       },
       conversations: [...conversations],
+      serverIds: group.serverIds ?? (group.serverId ? [group.serverId] : undefined),
     });
   };
 
@@ -59,6 +66,13 @@ export function groupAgentRailGroups(
     const serverPrefix = group.serverId ?? "local";
 
     if (mode === "repository") {
+      if (group.conversations.length === 0 && group.repositoryKey) {
+        const label =
+          group.repository?.repoRoot?.split(/[\\/]/).filter(Boolean).at(-1) ??
+          group.workspace.name;
+        addToGroup(group.repositoryKey, label, group, []);
+        continue;
+      }
       const byRepo = new Map<string, AgentRailConversationSummary[]>();
       for (const conversation of group.conversations) {
         const repoKey =

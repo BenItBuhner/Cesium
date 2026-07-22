@@ -14,7 +14,7 @@ import {
 } from "@/components/ui/popover-menu-ui";
 import type { ModelInfo } from "@/lib/types";
 
-export type PlanBuildMode = "agent" | "orchestration" | "burn";
+export type PlanBuildMode = "agent" | "orchestration" | "goal";
 export type PlanBuildModelChoice = "inherit" | string;
 
 export type PlanBuildRequest = {
@@ -48,7 +48,7 @@ function labelForModelChoice(
 }
 
 function modeLabel(mode: PlanBuildMode): string {
-  return mode === "orchestration" ? "Orchestration" : mode === "burn" ? "Burn" : "Agent";
+  return mode === "orchestration" ? "Orchestration" : mode === "goal" ? "Goal" : "Agent";
 }
 
 function menuStyle(position: ReturnType<typeof usePopover>["position"]) {
