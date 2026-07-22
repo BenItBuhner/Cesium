@@ -517,28 +517,28 @@ function parseCesiumEnvModels(raw: string | undefined): CesiumEnvBootstrap["mode
  * Optional env triple that maps a key (+ base URL + models) onto an
  * OpenAI-compatible provider without requiring Settings UI.
  *
- * - `OPENCURSOR_CESIUM_BASE_URL` (falls back to `OPENAI_BASE_URL`)
- * - `OPENCURSOR_CESIUM_API_KEY` (falls back to `OPENAI_API_KEY`)
- * - `OPENCURSOR_CESIUM_DEFAULT_MODEL`
- * - `OPENCURSOR_CESIUM_PROVIDER_ID` (optional)
- * - `OPENCURSOR_CESIUM_MODELS` (comma list or JSON array; defaults to glm-5.2 + kimi-k2.7-code)
+ * - `CESIUM_BASE_URL` (falls back to `OPENAI_BASE_URL`)
+ * - `CESIUM_API_KEY` (falls back to `OPENAI_API_KEY`)
+ * - `CESIUM_DEFAULT_MODEL`
+ * - `CESIUM_PROVIDER_ID` (optional)
+ * - `CESIUM_MODELS` (comma list or JSON array; defaults to glm-5.2 + kimi-k2.7-code)
  */
 export function readCesiumEnvBootstrap(
   env: NodeJS.ProcessEnv = process.env
 ): CesiumEnvBootstrap | null {
   const baseUrl = (
-    env.OPENCURSOR_CESIUM_BASE_URL ??
+    env.CESIUM_BASE_URL ??
     env.OPENAI_BASE_URL ??
     ""
   ).trim().replace(/\/+$/, "");
   if (!baseUrl || OPENAI_HOST_RE.test(baseUrl)) {
     return null;
   }
-  const apiKey = (env.OPENCURSOR_CESIUM_API_KEY ?? env.OPENAI_API_KEY ?? "").trim();
+  const apiKey = (env.CESIUM_API_KEY ?? env.OPENAI_API_KEY ?? "").trim();
   if (!apiKey) {
     return null;
   }
-  const explicitProviderId = env.OPENCURSOR_CESIUM_PROVIDER_ID?.trim();
+  const explicitProviderId = env.CESIUM_PROVIDER_ID?.trim();
   let providerId: string;
   if (explicitProviderId) {
     providerId = normalizeProviderId(explicitProviderId);
@@ -552,9 +552,9 @@ export function readCesiumEnvBootstrap(
     }
   }
   const models =
-    parseCesiumEnvModels(env.OPENCURSOR_CESIUM_MODELS) ??
+    parseCesiumEnvModels(env.CESIUM_MODELS) ??
     CESIUM_ENV_BOOTSTRAP_MODELS.map((model) => ({ ...model }));
-  const rawDefault = env.OPENCURSOR_CESIUM_DEFAULT_MODEL?.trim() || null;
+  const rawDefault = env.CESIUM_DEFAULT_MODEL?.trim() || null;
   const defaultModelId = rawDefault
     ? rawDefault.includes("/")
       ? rawDefault
@@ -893,9 +893,9 @@ function envProviderKeys(): CesiumProviderKeyStatus[] {
   return [
     ...builtin,
     {
-      id: `env:OPENCURSOR_CESIUM:${bootstrap.providerId}`,
+      id: `env:CESIUM:${bootstrap.providerId}`,
       providerId: bootstrap.providerId,
-      label: `OPENCURSOR_CESIUM (${bootstrap.providerName})`,
+      label: `CESIUM (${bootstrap.providerName})`,
       apiKind: "openai-compatible",
       baseUrl: bootstrap.baseUrl,
       source: "env",

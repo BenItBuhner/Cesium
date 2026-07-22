@@ -25,11 +25,11 @@ delete process.env.FIREWORKS_API_KEY;
 delete process.env.NVIDIA_API_KEY;
 delete process.env.CEREBRAS_API_KEY;
 delete process.env.CROFAI_API_KEY;
-delete process.env.OPENCURSOR_CESIUM_BASE_URL;
-delete process.env.OPENCURSOR_CESIUM_API_KEY;
-delete process.env.OPENCURSOR_CESIUM_DEFAULT_MODEL;
-delete process.env.OPENCURSOR_CESIUM_PROVIDER_ID;
-delete process.env.OPENCURSOR_CESIUM_MODELS;
+delete process.env.CESIUM_BASE_URL;
+delete process.env.CESIUM_API_KEY;
+delete process.env.CESIUM_DEFAULT_MODEL;
+delete process.env.CESIUM_PROVIDER_ID;
+delete process.env.CESIUM_MODELS;
 process.env.OPENCURSOR_DATA_DIR = TEST_DATA_DIR;
 
 const [
@@ -475,9 +475,9 @@ test("upsertCesiumProviderKey allows OpenAI-format sk keys on OpenAI-compatible 
 });
 
 test("readCesiumEnvBootstrap maps OPENAI_API_KEY onto a custom OpenAI-compatible host", () => {
-  process.env.OPENCURSOR_CESIUM_BASE_URL = "https://infer.techlitnow.com/v1";
+  process.env.CESIUM_BASE_URL = "https://infer.techlitnow.com/v1";
   process.env.OPENAI_API_KEY = "sk-test-techlit-key";
-  process.env.OPENCURSOR_CESIUM_DEFAULT_MODEL = "glm-5.2";
+  process.env.CESIUM_DEFAULT_MODEL = "glm-5.2";
   try {
     const bootstrap = readCesiumEnvBootstrap();
     assert.ok(bootstrap);
@@ -488,16 +488,16 @@ test("readCesiumEnvBootstrap maps OPENAI_API_KEY onto a custom OpenAI-compatible
     assert.ok(bootstrap?.models.some((model) => model.id === "glm-5.2" && !model.supportsImages));
     assert.ok(bootstrap?.models.some((model) => model.id === "kimi-k2.7-code" && model.supportsImages));
   } finally {
-    delete process.env.OPENCURSOR_CESIUM_BASE_URL;
+    delete process.env.CESIUM_BASE_URL;
     delete process.env.OPENAI_API_KEY;
-    delete process.env.OPENCURSOR_CESIUM_DEFAULT_MODEL;
+    delete process.env.CESIUM_DEFAULT_MODEL;
   }
 });
 
 test("resolveCesiumAuth uses env bootstrap for techlit models", async () => {
-  process.env.OPENCURSOR_CESIUM_BASE_URL = "https://infer.techlitnow.com/v1";
+  process.env.CESIUM_BASE_URL = "https://infer.techlitnow.com/v1";
   process.env.OPENAI_API_KEY = "sk-test-techlit-auth-key";
-  process.env.OPENCURSOR_CESIUM_DEFAULT_MODEL = "kimi-k2.7-code";
+  process.env.CESIUM_DEFAULT_MODEL = "kimi-k2.7-code";
   try {
     const auth = await resolveCesiumAuth({
       modelId: "techlit/kimi-k2.7-code",
@@ -520,9 +520,9 @@ test("resolveCesiumAuth uses env bootstrap for techlit models", async () => {
       )
     );
   } finally {
-    delete process.env.OPENCURSOR_CESIUM_BASE_URL;
+    delete process.env.CESIUM_BASE_URL;
     delete process.env.OPENAI_API_KEY;
-    delete process.env.OPENCURSOR_CESIUM_DEFAULT_MODEL;
+    delete process.env.CESIUM_DEFAULT_MODEL;
   }
 });
 

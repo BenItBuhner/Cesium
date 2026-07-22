@@ -77,16 +77,16 @@ match: `sk-ant-` → Anthropic, `AIza` → Google, `nvapi-` → Nvidia.
 #### Env bootstrap for a custom OpenAI-compatible host
 
 Chat base URL + default model **are** configurable from env (no Settings dance
-required). When `OPENCURSOR_CESIUM_BASE_URL` (or `OPENAI_BASE_URL`) points at a
+required). When `CESIUM_BASE_URL` (or `OPENAI_BASE_URL`) points at a
 **non-OpenAI** host and an API key is available, Cesium registers an env-sourced
 OpenAI-compatible provider with catalog models:
 
-- `OPENCURSOR_CESIUM_BASE_URL` — falls back to `OPENAI_BASE_URL`
-- `OPENCURSOR_CESIUM_API_KEY` — falls back to `OPENAI_API_KEY`
-- `OPENCURSOR_CESIUM_DEFAULT_MODEL` — e.g. `glm-5.2` or `techlit/glm-5.2`
-- `OPENCURSOR_CESIUM_PROVIDER_ID` — optional; defaults to `techlit` for
+- `CESIUM_BASE_URL` — falls back to `OPENAI_BASE_URL`
+- `CESIUM_API_KEY` — falls back to `OPENAI_API_KEY`
+- `CESIUM_DEFAULT_MODEL` — e.g. `glm-5.2` or `techlit/glm-5.2`
+- `CESIUM_PROVIDER_ID` — optional; defaults to `techlit` for
   `*.techlitnow.com` hosts, otherwise a hostname slug
-- `OPENCURSOR_CESIUM_MODELS` — optional comma list or JSON array (default:
+- `CESIUM_MODELS` — optional comma list or JSON array (default:
   `glm-5.2`, `kimi-k2.7-code`)
 
 Default bootstrap models:
@@ -118,18 +118,18 @@ next VM boot; the server reads them from `process.env` (repo `.env` /`.env.local
 Use the personal OpenAI-compatible proxy for Cesium Agent testing:
 
 - **Base URL:** `https://infer.techlitnow.com/v1`
-- **API key:** `OPENAI_API_KEY` Cloud Agent secret (or `OPENCURSOR_CESIUM_API_KEY`)
+- **API key:** `OPENAI_API_KEY` Cloud Agent secret (or `CESIUM_API_KEY`)
 - **Text / default model:** `glm-5.2` (no imagery)
 - **Multimodal / imagery model:** `kimi-k2.7-code`
 
 Env-only setup (preferred for cloud agents):
 
 ```bash
-export OPENCURSOR_CESIUM_BASE_URL=https://infer.techlitnow.com/v1
+export CESIUM_BASE_URL=https://infer.techlitnow.com/v1
 # OPENAI_API_KEY already set via Cloud Agent secrets
-export OPENCURSOR_CESIUM_DEFAULT_MODEL=glm-5.2
+export CESIUM_DEFAULT_MODEL=glm-5.2
 # For image attachments, switch the composer model to kimi-k2.7-code
-# (or: export OPENCURSOR_CESIUM_DEFAULT_MODEL=kimi-k2.7-code)
+# (or: export CESIUM_DEFAULT_MODEL=kimi-k2.7-code)
 ```
 
 That registers provider id `techlit` with models `techlit/glm-5.2` and
