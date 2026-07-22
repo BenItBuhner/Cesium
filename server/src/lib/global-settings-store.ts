@@ -68,6 +68,11 @@ export type GlobalSettings = {
     workspaceRailAppearances: Record<string, WorkspaceRailAppearance>;
     serverRailAppearances: Record<string, ServerRailAppearance>;
     chatFolders: ChatFolderState[];
+    /**
+     * Custom root (unfoldered) conversation order keyed by folder scope id.
+     * Scope is a real workspace id, or `__agentStandaloneChats__` for the Chats section.
+     */
+    chatRootOrderByScope: Record<string, string[]>;
     agentRail: AgentRailSettingsState;
   };
   agents: {
@@ -159,6 +164,7 @@ function createDefaultSettings(): GlobalSettings {
       workspaceRailAppearances: {},
       serverRailAppearances: {},
       chatFolders: [],
+      chatRootOrderByScope: {},
       agentRail: {
         groupBy: "workspace",
         visibleStatusFilters: [],
@@ -477,6 +483,41 @@ function normalizeChatFolders(raw: unknown): ChatFolderState[] {
   return folders.slice(0, 500);
 }
 
+function normalizeChatRootOrderByScope(raw: unknown): Record<string, string[]> {
+  if (!raw || typeof raw !== "object") {
+    return {};
+  }
+  const out: Record<string, string[]> = {};
+  let scopeCount = 0;
+  for (const [key, value] of Object.entries(raw)) {
+    if (scopeCount >= 500) {
+      break;
+    }
+    const scopeId = typeof key === "string" ? key.trim() : "";
+    if (!scopeId || !Array.isArray(value)) {
+      continue;
+    }
+    const seen = new Set<string>();
+    const ids: string[] = [];
+    for (const item of value) {
+      if (typeof item !== "string" || !item || seen.has(item)) {
+        continue;
+      }
+      if (ids.length >= 2000) {
+        break;
+      }
+      seen.add(item);
+      ids.push(item);
+    }
+    if (ids.length === 0) {
+      continue;
+    }
+    out[scopeId] = ids;
+    scopeCount += 1;
+  }
+  return out;
+}
+
 function normalizeAgentRailSettings(raw: unknown): AgentRailSettingsState {
   const defaults = createDefaultSettings().general.agentRail;
   if (!raw || typeof raw !== "object") {
@@ -657,6 +698,9 @@ function migrateGlobalSettings(raw: Record<string, unknown>): GlobalSettings {
       ),
       chatFolders: normalizeChatFolders(
         (r.general as Record<string, unknown> | undefined)?.chatFolders
+      ),
+      chatRootOrderByScope: normalizeChatRootOrderByScope(
+        (r.general as Record<string, unknown> | undefined)?.chatRootOrderByScope
       ),
       agentRail: normalizeAgentRailSettings(
         (r.general as Record<string, unknown> | undefined)?.agentRail
