@@ -1,6 +1,6 @@
 "use client";
 
-import { Check } from "lucide-react";
+import { AlertTriangle, Check, ChevronRight } from "lucide-react";
 import { useCallback, useId, type ChangeEvent, type FocusEvent, type ReactNode } from "react";
 
 export const rowButtonClass =
@@ -146,6 +146,117 @@ export function SettingsRow({
       </div>
       <div className="shrink-0">{trailing}</div>
     </div>
+  );
+}
+
+/**
+ * Free-form content block inside a bordered `SettingsSection`. Replaces the
+ * repeated `border-b … px-[16px] py-[14px] last:border-b-0` wrappers so
+ * non-row content (forms, sliders, logs) stays consistent with rows.
+ */
+export function SettingsBlock({
+  children,
+  className = "",
+  searchId,
+}: {
+  children: ReactNode;
+  className?: string;
+  /** Stable id for global settings search scroll/highlight (`data-settings-search-id`). */
+  searchId?: string;
+}) {
+  return (
+    <div
+      data-settings-search-id={searchId}
+      className={`border-b border-[var(--border-subtle)] px-[16px] py-[14px] last:border-b-0 ${className}`}
+    >
+      {children}
+    </div>
+  );
+}
+
+/**
+ * Flat inline note (no card chrome). Use for contextual warnings and errors
+ * instead of one-off bordered alert boxes.
+ */
+export function SettingsCallout({
+  tone = "info",
+  children,
+  className = "",
+}: {
+  tone?: "info" | "warning" | "danger";
+  children: ReactNode;
+  className?: string;
+}) {
+  const toneClass =
+    tone === "danger"
+      ? "text-[#dc2626] dark:text-[#fca5a5]"
+      : tone === "warning"
+        ? "text-[#b45309] dark:text-[#fbbf24]"
+        : "text-[var(--text-secondary)]";
+  return (
+    <div
+      role={tone === "danger" ? "alert" : undefined}
+      className={`flex gap-[8px] font-sans text-[12px] leading-[18px] ${toneClass} ${className}`}
+    >
+      {tone !== "info" ? (
+        <AlertTriangle className="mt-[1px] size-[14px] shrink-0" strokeWidth={1.75} aria-hidden />
+      ) : null}
+      <div className="min-w-0 flex-1">{children}</div>
+    </div>
+  );
+}
+
+/** Centered placeholder text for empty lists and no-result search states. */
+export function SettingsEmptyState({ children }: { children: ReactNode }) {
+  return (
+    <p className="px-[16px] py-[24px] text-center font-sans text-[13px] text-[var(--text-disabled)]">
+      {children}
+    </p>
+  );
+}
+
+/**
+ * Full-width clickable navigation row with a trailing chevron. Use for rows
+ * that open another settings page or subview.
+ */
+export function SettingsLinkRow({
+  title,
+  description,
+  onClick,
+  border = true,
+  searchId,
+}: {
+  title: string;
+  description?: string;
+  onClick: () => void;
+  border?: boolean;
+  searchId?: string;
+}) {
+  return (
+    <button
+      type="button"
+      data-settings-search-id={searchId}
+      onClick={onClick}
+      className={`flex min-h-[56px] w-full items-center justify-between gap-[16px] px-[16px] py-[12px] text-left transition-colors hover:bg-[var(--accent-bg)] ${
+        border ? "border-b border-[var(--border-subtle)] last:border-b-0" : ""
+      }`}
+    >
+      <span className="min-w-0 flex-1">
+        <span className="block font-sans text-[13px] font-medium text-[var(--text-primary)]">
+          {title}
+        </span>
+        {description ? (
+          <span className="mt-[4px] block font-sans text-[12px] leading-snug text-[var(--text-secondary)]">
+            {description}
+          </span>
+        ) : null}
+      </span>
+      <ChevronRight
+        className="size-[14px] shrink-0 text-[var(--text-secondary)]"
+        strokeWidth={1.5}
+        aria-hidden
+      />
+    </button>
   );
 }
 

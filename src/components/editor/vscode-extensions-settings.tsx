@@ -24,6 +24,8 @@ import {
 } from "@/lib/server-api";
 import {
   PageIntro,
+  SettingsBlock,
+  SettingsCallout,
   SettingsRow,
   SettingsSection,
   rowButtonClass,
@@ -289,12 +291,13 @@ export function VscodeExtensionsSettingsPanel() {
     <>
       <PageIntro title="VS Code Extensions" />
       {error ? (
-        <p className="mb-[12px] rounded-[var(--radius-card)] border border-[var(--error-border)] bg-[var(--error-bg)] px-[12px] py-[10px] font-sans text-[12px] text-[var(--error-fg)]">
+        <SettingsCallout tone="danger" className="mb-[12px] px-[2px]">
           {error}
-        </p>
+        </SettingsCallout>
       ) : null}
       <SettingsSection title="Beta Runtime">
         <SettingsRow
+          searchId="marketplace"
           title="Enable extension marketplace"
           description="Off means no extension marketplace requests, no host process, and no extension surfaces. On allows Open VSX installs and starts the host only when you activate an extension."
           trailing={
@@ -393,7 +396,7 @@ export function VscodeExtensionsSettingsPanel() {
               </button>
             }
           >
-            <div className="border-b border-[var(--border-subtle)] px-[16px] py-[12px]">
+            <SettingsBlock className="py-[12px]">
               <input
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
@@ -403,7 +406,7 @@ export function VscodeExtensionsSettingsPanel() {
                 className="box-border h-[32px] w-full rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-[var(--bg-main)] px-[10px] font-sans text-[12px] text-[var(--text-primary)] outline-none"
                 placeholder="Search Open VSX"
               />
-            </div>
+            </SettingsBlock>
             {results.length === 0 ? (
               <p className="px-[16px] py-[14px] font-sans text-[12px] text-[var(--text-secondary)]">
                 Search Open VSX to install extensions.
@@ -473,23 +476,23 @@ export function VscodeExtensionsSettingsPanel() {
                       />
                     </div>
                     {extension.compatibilityWarnings.length > 0 ? (
-                      <div className="mt-[10px] rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-[var(--bg-main)] px-[10px] py-[8px] font-sans text-[12px] text-[var(--text-secondary)]">
+                      <SettingsCallout tone="warning" className="mt-[10px]">
                         {extension.compatibilityWarnings.slice(0, 4).join(" ")}
-                      </div>
+                      </SettingsCallout>
                     ) : null}
                     {extension.manifest.capabilities?.reasons.length ? (
-                      <div className="mt-[10px] rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-[var(--bg-main)] px-[10px] py-[8px] font-sans text-[12px] text-[var(--text-secondary)]">
+                      <SettingsCallout className="mt-[10px]">
                         {extension.manifest.capabilities.reasons.slice(0, 4).join(" ")}
-                      </div>
+                      </SettingsCallout>
                     ) : null}
                     {extension.manifest.capabilities?.staticContributions.length ? (
-                      <div className="mt-[10px] rounded-[var(--radius-tab)] border border-[var(--border-subtle)] px-[10px] py-[7px] font-sans text-[11px] text-[var(--text-disabled)]">
+                      <p className="mt-[10px] font-sans text-[11px] text-[var(--text-disabled)]">
                         Static contribution only:{" "}
                         {extension.manifest.capabilities.staticContributions
                           .slice(0, 4)
                           .map((item) => item.label)
                           .join(", ")}
-                      </div>
+                      </p>
                     ) : null}
                     <div className="mt-[10px] flex flex-wrap gap-[8px]">
                       {extension.manifest.capabilities?.activitySurfaces
