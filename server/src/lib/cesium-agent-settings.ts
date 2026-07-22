@@ -105,6 +105,8 @@ export type CesiumCustomProvider = {
     contextWindow?: number;
     supportsTools?: boolean;
     supportsReasoning?: boolean;
+    /** True when the model accepts image prompt attachments (vision/multimodal). */
+    supportsImages?: boolean;
   }>;
 };
 
@@ -739,6 +741,8 @@ function normalizeCustomProvider(raw: unknown): CesiumCustomProvider | null {
               typeof model.supportsReasoning === "boolean"
                 ? model.supportsReasoning
                 : undefined,
+            supportsImages:
+              typeof model.supportsImages === "boolean" ? model.supportsImages : undefined,
           },
         ];
       })
@@ -1406,11 +1410,36 @@ export async function refreshCesiumModelCatalog(): Promise<CesiumModelCatalogEnt
   return entries;
 }
 
+/**
+ * Catalog entries for user-defined custom providers so capability lookups
+ * (tools/vision gating) see them alongside the built-in catalog.
+ */
+async function customProviderCatalogEntries(): Promise<CesiumModelCatalogEntry[]> {
+  const settings = await getCesiumAgentSettings();
+  return settings.customProviders.flatMap((provider) =>
+    provider.models.map((model): CesiumModelCatalogEntry =>
+      normalizeCatalogEntry({
+        providerId: provider.id,
+        providerName: provider.name,
+        modelId: `${provider.id}/${model.id}`,
+        modelName: `${provider.name}/${model.name}`,
+        apiKind: provider.apiKind,
+        supportsTools: model.supportsTools ?? true,
+        supportsReasoning: model.supportsReasoning ?? false,
+        supportsStructuredOutput: false,
+        supportsImages: model.supportsImages ?? false,
+        contextWindow: model.contextWindow,
+      })
+    )
+  );
+}
+
 export async function getCesiumModelCatalog(options?: {
   forceRefresh?: boolean;
 }): Promise<CesiumModelCatalogEntry[]> {
   const bootstrap = readCesiumEnvBootstrap();
   const bootstrapEntries = bootstrap ? cesiumEnvBootstrapCatalog(bootstrap) : [];
+  const customEntries = await customProviderCatalogEntries();
   const cached = await readCatalogCache();
   if (
     !options?.forceRefresh &&
@@ -1419,6 +1448,7 @@ export async function getCesiumModelCatalog(options?: {
     Date.now() - cached.updatedAt < CATALOG_TTL_MS
   ) {
     return mergeCatalogEntries([
+      ...customEntries,
       ...cached.entries,
       ...(await getCrofAiCatalog()),
       ...bootstrapEntries,
@@ -1426,11 +1456,13 @@ export async function getCesiumModelCatalog(options?: {
   }
   try {
     return mergeCatalogEntries([
+      ...customEntries,
       ...(await refreshCesiumModelCatalog()),
       ...bootstrapEntries,
     ]);
   } catch {
     return mergeCatalogEntries([
+      ...customEntries,
       ...(cached?.entries ?? fallbackCatalog()),
       ...(await getCrofAiCatalog()),
       ...bootstrapEntries,
@@ -1481,23 +1513,8 @@ export async function createCesiumAgentConfigOptions(): Promise<AgentConfigOptio
     getCesiumAgentSettings(),
     getCesiumModelCatalog(),
   ]);
-  const customModels = settings.customProviders.flatMap((provider) =>
-    provider.models.map((model): CesiumModelCatalogEntry =>
-      normalizeCatalogEntry({
-        providerId: provider.id,
-        providerName: provider.name,
-        modelId: `${provider.id}/${model.id}`,
-        modelName: `${provider.name}/${model.name}`,
-        apiKind: provider.apiKind,
-        supportsTools: model.supportsTools ?? true,
-        supportsReasoning: model.supportsReasoning ?? false,
-        supportsStructuredOutput: false,
-        supportsImages: false,
-        contextWindow: model.contextWindow,
-      })
-    )
-  );
-  const modelEntries = [...catalog, ...customModels].filter((model) => model.supportsTools);
+  // Custom provider models are already merged into the catalog.
+  const modelEntries = catalog.filter((model) => model.supportsTools);
   const modelOptions = modelEntries.map((model) => ({
     value: model.modelId,
     name: model.modelName,

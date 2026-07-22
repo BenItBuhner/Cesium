@@ -1789,6 +1789,8 @@ export type CesiumCustomProvider = {
     contextWindow?: number;
     supportsTools?: boolean;
     supportsReasoning?: boolean;
+    /** True when the model accepts image prompt attachments (vision/multimodal). */
+    supportsImages?: boolean;
   }>;
 };
 
