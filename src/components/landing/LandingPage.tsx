@@ -11,7 +11,6 @@ import {
   MessagesSquare,
   Mic,
   Monitor,
-  PenLine,
   ShieldCheck,
   Smartphone,
   SquareCode,
@@ -57,11 +56,80 @@ function AgentMask({ file, className }: { file: string; className?: string }) {
   return <span aria-hidden className={`inline-block shrink-0 ${className ?? ""}`} style={style} />;
 }
 
-function SectionLabel({ children }: { children: React.ReactNode }) {
+function SectionLabel({ index, children }: { index: string; children: React.ReactNode }) {
   return (
     <p className="mb-[10px] font-mono text-[11px] font-medium uppercase tracking-[0.14em] text-[var(--text-disabled)]">
+      <span className="text-[var(--text-secondary)]">{index}</span>
+      <span className="mx-[8px]">·</span>
       {children}
     </p>
+  );
+}
+
+/** Periodic-table tile for caesium — the brand's namesake. */
+function ElementTile() {
+  return (
+    <div className="relative">
+      {/* offset "shadow" tile */}
+      <div
+        className="absolute inset-0 translate-x-[10px] translate-y-[10px] rounded-[var(--radius-card)] border border-[var(--border-subtle)]"
+        aria-hidden
+      />
+      <div className="relative flex w-[228px] flex-col rounded-[var(--radius-card)] border border-[var(--border-card)] bg-[var(--bg-panel)] p-[20px] shadow-[0_16px_48px_-24px_rgba(0,0,0,0.3)]">
+        <div className="flex items-baseline justify-between font-mono text-[12px] text-[var(--text-secondary)]">
+          <span>55</span>
+          <span>132.905</span>
+        </div>
+        <div className="py-[10px] text-center text-[92px] font-semibold leading-none tracking-tight text-[var(--text-primary)]">
+          Cs
+        </div>
+        <div className="text-center font-mono text-[11px] uppercase tracking-[0.14em] text-[var(--text-disabled)]">
+          caesium
+        </div>
+        <div className="mt-[14px] border-t border-[var(--border-subtle)] pt-[12px] text-center font-mono text-[10.5px] leading-relaxed text-[var(--text-secondary)]">
+          the element that defines the second
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Real product screenshot (not a mockup): a Cesium agent tracing this repo's
+ * WebSocket reconnect logic. Light/dark variants swap with `html.dark`.
+ */
+function WorkbenchShot() {
+  return (
+    <figure className="mx-auto max-w-[980px]">
+      <div className="overflow-hidden rounded-[14px] border border-[var(--border-card)] bg-[var(--bg-panel)] shadow-[0_24px_80px_-24px_rgba(0,0,0,0.35)]">
+        <div className="flex items-center gap-[8px] border-b border-[var(--border-subtle)] bg-[var(--bg-main)] px-[14px] py-[10px]">
+          <span className="size-[10px] rounded-full bg-[var(--burn-accent)] opacity-80" />
+          <span className="size-[10px] rounded-full bg-[var(--plan-accent)] opacity-80" />
+          <span className="size-[10px] rounded-full bg-[var(--ask-accent)] opacity-80" />
+          <span className="ml-[10px] font-mono text-[11px] text-[var(--text-disabled)]">
+            cesium — /agent · glm-5.2
+          </span>
+        </div>
+        <img
+          src="/landing/workbench-light.webp"
+          alt="Cesium workbench, light theme: an agent conversation tracing WebSocket reconnect logic with tool calls and a backoff table"
+          width={1280}
+          height={772}
+          className="landing-shot-light block w-full"
+        />
+        <img
+          src="/landing/workbench-dark.webp"
+          alt="Cesium workbench, dark theme: an agent conversation tracing WebSocket reconnect logic with tool calls and a backoff table"
+          width={1280}
+          height={772}
+          className="landing-shot-dark w-full"
+        />
+      </div>
+      <figcaption className="mt-[14px] text-center font-mono text-[11.5px] text-[var(--text-disabled)]">
+        Not a mockup — a live session. A Cesium agent tracing the WebSocket reconnect logic in
+        this very repository.
+      </figcaption>
+    </figure>
   );
 }
 
@@ -145,82 +213,6 @@ const PLATFORMS = [
     body: "A dedicated iPad mode with touch-tuned layout, window chrome, and resume cache.",
   },
 ] as const;
-
-/* ------------------------------------------------------------------------ */
-/* Hero mock window                                                         */
-/* ------------------------------------------------------------------------ */
-
-function HeroMockWindow() {
-  return (
-    <div className="overflow-hidden rounded-[14px] border border-[var(--border-card)] bg-[var(--bg-panel)] shadow-[0_24px_80px_-24px_rgba(0,0,0,0.35)]">
-      {/* window chrome */}
-      <div className="flex items-center gap-[8px] border-b border-[var(--border-subtle)] bg-[var(--bg-main)] px-[14px] py-[10px]">
-        <span className="size-[10px] rounded-full bg-[var(--burn-accent)] opacity-80" />
-        <span className="size-[10px] rounded-full bg-[var(--plan-accent)] opacity-80" />
-        <span className="size-[10px] rounded-full bg-[var(--ask-accent)] opacity-80" />
-        <span className="ml-[10px] font-mono text-[11px] text-[var(--text-disabled)]">
-          cesium — localhost:3000
-        </span>
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]">
-        {/* chat pane */}
-        <div className="flex min-h-[280px] flex-col gap-[12px] p-[18px]">
-          <div className="flex items-center gap-[8px]">
-            <span className="rounded-[var(--radius-pill)] border border-[var(--border-card)] bg-[var(--bg-card)] px-[10px] py-[3px] font-mono text-[10.5px] text-[var(--text-secondary)]">
-              claude-code
-            </span>
-            <span className="rounded-[var(--radius-pill)] border border-[var(--border-card)] bg-[var(--bg-card)] px-[10px] py-[3px] font-mono text-[10.5px] text-[var(--text-secondary)]">
-              ~/projects/api
-            </span>
-          </div>
-
-          <div className="ml-auto max-w-[85%] rounded-[var(--radius-card)] bg-[var(--accent-bg)] px-[14px] py-[9px] text-[13px] leading-relaxed text-[var(--text-primary)]">
-            Refactor the auth flow, then run the test suite.
-          </div>
-
-          <div className="max-w-[92%] space-y-[8px]">
-            <div className="inline-flex items-center gap-[8px] rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-[var(--bg-card)] px-[10px] py-[6px] font-mono text-[11px] text-[var(--text-secondary)]">
-              <PenLine className="size-[12px] shrink-0" strokeWidth={1.75} aria-hidden />
-              Edited src/auth/session.ts
-              <span className="text-[var(--ask-accent)]">+41</span>
-              <span className="text-[var(--burn-accent)]">-17</span>
-            </div>
-            <div className="inline-flex items-center gap-[8px] rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-[var(--bg-card)] px-[10px] py-[6px] font-mono text-[11px] text-[var(--text-secondary)]">
-              <TerminalSquare className="size-[12px] shrink-0" strokeWidth={1.75} aria-hidden />
-              npm test
-              <span className="text-[var(--ask-accent)]">42 passed</span>
-            </div>
-            <p className="text-[13px] leading-relaxed text-[var(--text-primary)]">
-              Sessions are now rotated on refresh and the suite is green. Want me to open a PR?
-              <span className="landing-caret ml-[2px] inline-block h-[13px] w-[7px] translate-y-[2px] bg-[var(--text-primary)]" />
-            </p>
-          </div>
-        </div>
-
-        {/* terminal pane */}
-        <div className="border-t border-[var(--border-subtle)] bg-[var(--bg-main)] p-[18px] font-mono text-[11.5px] leading-[1.9] text-[var(--text-secondary)] md:border-l md:border-t-0">
-          <p className="text-[var(--text-disabled)]"># the engine, on your machine</p>
-          <p>
-            <span className="text-[var(--workflow-accent)]">$</span> bun src/runtime/bun-server.ts
-          </p>
-          <p>ready — listening on :9100</p>
-          <p className="text-[var(--text-disabled)]"># the client, anywhere</p>
-          <p>
-            <span className="text-[var(--workflow-accent)]">$</span> vercel deploy
-          </p>
-          <p>
-            production: <span className="text-[var(--text-primary)]">cesium.yours.dev</span>
-          </p>
-          <p>
-            ws connected <span className="text-[var(--ask-accent)]">/ws/agent /ws/terminal /ws/fs</span>
-            <span className="landing-caret ml-[6px] inline-block h-[11px] w-[7px] translate-y-[2px] bg-[var(--text-secondary)]" />
-          </p>
-        </div>
-      </div>
-    </div>
-  );
-}
 
 /* ------------------------------------------------------------------------ */
 /* Architecture diagram                                                     */
@@ -314,47 +306,52 @@ export function LandingPage() {
       {/* hero */}
       <section className="relative">
         <div className="landing-grid-bg pointer-events-none absolute inset-0" aria-hidden />
-        <div className="relative mx-auto max-w-[1100px] px-[24px] pb-[64px] pt-[72px] sm:pt-[96px]">
-          <div className="mx-auto max-w-[720px] text-center">
-            <p className="mx-auto mb-[20px] inline-flex items-center gap-[8px] rounded-[var(--radius-pill)] border border-[var(--border-card)] bg-[var(--bg-panel)] px-[14px] py-[6px] font-mono text-[11px] text-[var(--text-secondary)]">
-              <span className="size-[6px] rounded-full bg-[var(--ask-accent)]" />
-              Local-first AI workbench
-            </p>
-            <h1 className="text-balance text-[40px] font-semibold leading-[1.06] tracking-tight sm:text-[56px]">
-              Every agent.
-              <br />
-              Your machine.
-              <br />
-              One workbench.
-            </h1>
-            <p className="mx-auto mt-[22px] max-w-[560px] text-pretty text-[16px] leading-relaxed text-[var(--text-secondary)]">
-              Cesium pairs a Next.js client you can put on Vercel with a Bun-powered engine that
-              runs where your code lives. Chat with any coding agent, edit real files, run real
-              terminals — from anywhere.
-            </p>
-            <div className="mt-[32px] flex flex-wrap items-center justify-center gap-[12px]">
-              <Link
-                href={WORKSPACE_ROUTE}
-                className="inline-flex items-center gap-[8px] rounded-[var(--radius-tab)] bg-[var(--accent)] px-[20px] py-[10px] text-[14px] font-medium text-[var(--bg-main)] transition-colors hover:bg-[var(--accent-dark)]"
-              >
-                Launch the workbench
-                <ArrowRight className="size-[15px]" strokeWidth={2} aria-hidden />
-              </Link>
-              <Link
-                href="/docs"
-                className="inline-flex items-center gap-[8px] rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-[var(--bg-panel)] px-[20px] py-[10px] text-[14px] text-[var(--text-primary)] transition-colors hover:bg-[var(--bg-card-hover)]"
-              >
-                <BookOpen className="size-[15px]" strokeWidth={1.75} aria-hidden />
-                Read the docs
-              </Link>
+        <div className="relative mx-auto max-w-[1100px] px-[24px] pb-[64px] pt-[64px] sm:pt-[88px]">
+          <div className="grid grid-cols-1 items-center gap-[48px] lg:grid-cols-[minmax(0,1fr)_auto]">
+            <div>
+              <p className="mb-[20px] inline-flex items-center gap-[8px] rounded-[var(--radius-pill)] border border-[var(--border-card)] bg-[var(--bg-panel)] px-[14px] py-[6px] font-mono text-[11px] text-[var(--text-secondary)]">
+                <span className="size-[6px] rounded-full bg-[var(--ask-accent)]" />
+                Local-first AI workbench
+              </p>
+              <h1 className="text-balance text-[42px] font-semibold leading-[1.05] tracking-tight sm:text-[58px]">
+                Every agent.
+                <br />
+                Your machine.
+                <br />
+                One workbench.
+              </h1>
+              <p className="mt-[22px] max-w-[520px] text-pretty text-[16px] leading-relaxed text-[var(--text-secondary)]">
+                Cesium pairs a Next.js client you can put on Vercel with a Bun-powered engine that
+                runs where your code lives. Chat with any coding agent, edit real files, run real
+                terminals — from anywhere.
+              </p>
+              <div className="mt-[32px] flex flex-wrap items-center gap-[12px]">
+                <Link
+                  href={WORKSPACE_ROUTE}
+                  className="inline-flex items-center gap-[8px] rounded-[var(--radius-tab)] bg-[var(--accent)] px-[20px] py-[10px] text-[14px] font-medium text-[var(--bg-main)] transition-colors hover:bg-[var(--accent-dark)]"
+                >
+                  Launch the workbench
+                  <ArrowRight className="size-[15px]" strokeWidth={2} aria-hidden />
+                </Link>
+                <Link
+                  href="/docs"
+                  className="inline-flex items-center gap-[8px] rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-[var(--bg-panel)] px-[20px] py-[10px] text-[14px] text-[var(--text-primary)] transition-colors hover:bg-[var(--bg-card-hover)]"
+                >
+                  <BookOpen className="size-[15px]" strokeWidth={1.75} aria-hidden />
+                  Read the docs
+                </Link>
+              </div>
+              <p className="mt-[18px] font-mono text-[11.5px] text-[var(--text-disabled)]">
+                npm run dev · npm run dev:server · open localhost:3000
+              </p>
             </div>
-            <p className="mt-[18px] font-mono text-[11.5px] text-[var(--text-disabled)]">
-              npm run dev · npm run dev:server · open localhost:3000
-            </p>
+            <div className="hidden justify-center lg:flex lg:rotate-[2.5deg] lg:pr-[10px]">
+              <ElementTile />
+            </div>
           </div>
 
-          <div className="mx-auto mt-[56px] max-w-[880px]">
-            <HeroMockWindow />
+          <div className="mt-[56px]">
+            <WorkbenchShot />
           </div>
         </div>
       </section>
@@ -380,10 +377,24 @@ export function LandingPage() {
         </div>
       </section>
 
+      {/* atomic interlude */}
+      <section className="mx-auto max-w-[1100px] px-[24px] pt-[72px]">
+        <div className="mx-auto max-w-[720px] text-center">
+          <p className="font-mono text-[26px] font-medium tracking-tight text-[var(--text-primary)] sm:text-[36px]">
+            9,192,631,770
+          </p>
+          <p className="mt-[10px] text-[14.5px] leading-relaxed text-[var(--text-secondary)]">
+            oscillations of a caesium-133 atom define one second. We named the workbench after the
+            element that keeps time itself honest — every agent event, tool call, and terminal
+            byte is streamed live and persisted, so nothing your agents do goes unaccounted for.
+          </p>
+        </div>
+      </section>
+
       {/* features */}
       <section className="mx-auto max-w-[1100px] px-[24px] py-[72px]">
         <div className="mb-[36px] max-w-[560px]">
-          <SectionLabel>Versatility</SectionLabel>
+          <SectionLabel index="01">Versatility</SectionLabel>
           <h2 className="text-[28px] font-semibold leading-tight tracking-tight sm:text-[32px]">
             A full workbench, not another chat box
           </h2>
@@ -415,7 +426,7 @@ export function LandingPage() {
       <section className="border-y border-[var(--border-subtle)] bg-[var(--bg-panel)]">
         <div className="mx-auto max-w-[1100px] px-[24px] py-[72px]">
           <div className="mb-[36px] max-w-[600px]">
-            <SectionLabel>Hybrid architecture</SectionLabel>
+            <SectionLabel index="02">Hybrid architecture</SectionLabel>
             <h2 className="text-[28px] font-semibold leading-tight tracking-tight sm:text-[32px]">
               Cloud reach. Local roots.
             </h2>
@@ -433,7 +444,7 @@ export function LandingPage() {
       <section className="mx-auto max-w-[1100px] px-[24px] py-[72px]">
         <div className="grid grid-cols-1 items-center gap-[40px] lg:grid-cols-2">
           <div>
-            <SectionLabel>Multi-agent interoperability</SectionLabel>
+            <SectionLabel index="03">Multi-agent interoperability</SectionLabel>
             <h2 className="text-[28px] font-semibold leading-tight tracking-tight sm:text-[32px]">
               One conversation, many minds
             </h2>
@@ -497,7 +508,7 @@ export function LandingPage() {
       <section className="border-y border-[var(--border-subtle)] bg-[var(--bg-panel)]">
         <div className="mx-auto max-w-[1100px] px-[24px] py-[72px]">
           <div className="mb-[36px] max-w-[560px]">
-            <SectionLabel>Platform support</SectionLabel>
+            <SectionLabel index="04">Platform support</SectionLabel>
             <h2 className="text-[28px] font-semibold leading-tight tracking-tight sm:text-[32px]">
               One engine, every screen
             </h2>
