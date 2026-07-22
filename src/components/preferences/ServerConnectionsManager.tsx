@@ -9,6 +9,7 @@ import {
   updateStoredAuthSession,
   type AuthSession,
 } from "@/lib/auth-client";
+import { ServerSetupCommand } from "@/components/preferences/ServerSetupCommand";
 
 const inputClass =
   "box-border h-[36px] w-full rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-[var(--bg-main)] px-[10px] font-sans text-[12px] text-[var(--text-primary)] outline-none placeholder:text-[var(--text-disabled)]";
@@ -368,6 +369,8 @@ export function ServerConnectionsManager({
           <RefreshCw className="size-[14px]" strokeWidth={1.5} aria-hidden />
           Refresh all server status
         </button>
+
+        <ServerSetupCommand compact={compact} />
 
         <div className="border-t border-[var(--border-subtle)] pt-[16px]">
         <div className="mb-[10px] flex items-center gap-[8px] px-[2px]">

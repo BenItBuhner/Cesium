@@ -47,6 +47,16 @@ describe("settings search index", () => {
     assert.ok(index.some((hit) => hit.navId === "beta" && hit.rowId === "vscode-extensions"));
   });
 
+  test("indexes backend public access controls under Servers", () => {
+    const index = buildSettingsSearchIndex({});
+    const hits = searchSettingsIndex(index, "permanent connection link");
+    assert.ok(
+      hits.some(
+        (hit) => hit.navId === "servers" && hit.rowId === "stable-link"
+      )
+    );
+  });
+
   test("finds keyboard shortcut commands", () => {
     const index = buildSettingsSearchIndex({});
     const openSettings = searchSettingsIndex(index, "open settings");

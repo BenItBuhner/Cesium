@@ -602,6 +602,24 @@ async function getAuthState(): Promise<PersistedAuthState> {
   return authStatePromise;
 }
 
+export async function rotateAuthSecurityState(): Promise<void> {
+  const storage = await getStorage();
+  const now = Date.now();
+  const next: PersistedAuthState = {
+    schemaVersion: 1,
+    createdAt: now,
+    secret: randomBytes(32).toString("base64url"),
+  };
+  await storage.saveAuthState({
+    schemaVersion: 1,
+    secret: next.secret,
+    createdAt: next.createdAt,
+    updatedAt: now,
+  });
+  await storage.saveAuthSessions([]);
+  authStatePromise = Promise.resolve(next);
+}
+
 async function loadSessionStore(): Promise<PersistedAuthSessions> {
   const sessions = await (await getStorage()).listAuthSessions();
   const now = Date.now();

@@ -197,6 +197,26 @@ export function clearStoredAuth(serverBaseUrl?: string): void {
   writeStoredAuthMap(map);
 }
 
+export function migrateStoredAuthServerBaseUrl(
+  previousBaseUrl: string,
+  nextBaseUrl: string
+): boolean {
+  const previousKey = getServerStorageKey(previousBaseUrl);
+  const nextKey = getServerStorageKey(nextBaseUrl);
+  if (previousKey === nextKey) {
+    return false;
+  }
+  const map = { ...readStoredAuthMap() };
+  const previous = map[previousKey];
+  if (!previous) {
+    return false;
+  }
+  map[nextKey] = map[nextKey] ?? previous;
+  delete map[previousKey];
+  writeStoredAuthMap(map);
+  return true;
+}
+
 export function buildAuthenticatedUrl(url: string, serverBaseUrl?: string): string {
   const token = getStoredSessionToken(serverBaseUrl);
   if (!token) {

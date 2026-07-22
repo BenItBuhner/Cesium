@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import { Check, ChevronDown } from "lucide-react";
 import { VerticalFadedScroll } from "@/components/chat/VerticalFadedScroll";
 import { DefaultServerSettingsBanner } from "@/components/preferences/DefaultServerSettingsBanner";
+import { PublicAccessSettings } from "@/components/preferences/PublicAccessSettings";
 import { ServerConnectionsManager } from "@/components/preferences/ServerConnectionsManager";
 import { useServerConnections } from "@/components/preferences/ServerConnectionsProvider";
 import {
@@ -252,6 +253,7 @@ export function ServerConnectionsSettingsPanel() {
           border={false}
         />
       </SettingsSection>
+      <PublicAccessSettings serverBaseUrl={activeServer.baseUrl} />
       <SettingsSection title="Saved servers" bordered={false}>
         <ServerConnectionsManager
           onActivate={(serverId) => {

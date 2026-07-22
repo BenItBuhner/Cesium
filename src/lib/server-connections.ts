@@ -2,6 +2,7 @@
 export {
   SERVER_CONNECTIONS_EVENT,
   SERVER_CONNECTIONS_STORAGE_KEY,
+  applyRendezvousBootstrap,
   applyServerUrlBootstrap,
   bootstrapStoredServerConnection,
   createDefaultServerConnectionsState,
@@ -20,6 +21,7 @@ export {
   requiresDefaultServerSelection,
   setDefaultServerConnection,
   shouldApplyServerUrlFromSearch,
+  updateRendezvousServerEndpoint,
   upsertServerConnection,
   writeStoredServerConnectionsState,
 } from "@cesium/client";

@@ -3,6 +3,7 @@ export * from "./configured-server-base-url";
 export * from "./server-connections";
 export * from "./server-connections-provider-shared";
 export * from "./resolve-server-base-url";
+export * from "./rendezvous";
 export * from "./server-connection-health";
 export * from "./auth-client";
 export * from "./ws-client";

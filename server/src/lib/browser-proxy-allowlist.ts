@@ -1,6 +1,7 @@
 import type { LookupAddress } from "node:dns";
 import dns from "node:dns/promises";
 import net from "node:net";
+import { publicAccessManager } from "./public-access-manager.js";
 
 /**
  * Public internet upstreams (e.g. https://google.com) resolve to routable IPs. By default we **allow** those
@@ -8,12 +9,11 @@ import net from "node:net";
  * private/LAN-only allowlist (recommended if the API server is reachable from untrusted networks).
  */
 function allowPublicInternet(): boolean {
+  if (publicAccessManager.isEnabledSync()) return false;
   const explicit = process.env.BROWSER_PROXY_ALLOW_PUBLIC?.trim();
   if (explicit === "0" || explicit === "false") return false;
   return true;
 }
-
-const ALLOW_PUBLIC = allowPublicInternet();
 
 /** Optional: comma-separated extra hostnames to allow (still resolved and checked unless public mode). */
 const EXTRA_HOSTS = (process.env.BROWSER_PROXY_EXTRA_HOSTS ?? "")
@@ -61,7 +61,7 @@ export function isAllowedIp(ip: string): boolean {
 }
 
 export async function assertBrowserProxyHostAllowed(hostname: string): Promise<void> {
-  if (ALLOW_PUBLIC) return;
+  if (allowPublicInternet()) return;
 
   const h = hostname.toLowerCase();
   if (h === "localhost" || h.endsWith(".localhost")) return;
