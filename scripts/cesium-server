@@ -91,7 +91,15 @@ wait_for_health() {
   return 1
 }
 
+backend_manages_public_access() {
+  [[ "${CESIUM_BACKEND_MANAGES_PUBLIC_ACCESS:-0}" == "1" ]]
+}
+
 tunnel_required() {
+  if backend_manages_public_access &&
+    [[ -f "$RUN_DIR/backend-public-access-disabled" ]]; then
+    return 1
+  fi
   [[ "${CESIUM_TUNNEL_REQUIRED:-0}" == "1" ]]
 }
 
@@ -391,6 +399,9 @@ start_localhost_run_tunnel() {
 }
 
 start_tunnel() {
+  if backend_manages_public_access; then
+    return 0
+  fi
   if [[ "${CESIUM_TUNNEL_ENABLED:-0}" != "1" ]]; then
     return 0
   fi
@@ -477,6 +488,9 @@ public_url() {
 }
 
 publish_rendezvous() {
+  if backend_manages_public_access; then
+    return 0
+  fi
   if [[ -z "${CESIUM_RENDEZVOUS_URL:-}" ]]; then
     [[ "${CESIUM_RENDEZVOUS_REQUIRED:-0}" != "1" ]]
     return
@@ -573,7 +587,17 @@ status() {
     printf 'Server: stopped\n'
   fi
   if [[ "${CESIUM_TUNNEL_ENABLED:-0}" == "1" ]]; then
-    if tunnel_is_running; then
+    if backend_manages_public_access; then
+      local backend_url
+      backend_url="$(public_url || true)"
+      if [[ -n "$backend_url" ]]; then
+        printf 'Tunnel: running (backend-managed, %s)\n' "$backend_url"
+      elif [[ -f "$RUN_DIR/backend-public-access-disabled" ]]; then
+        printf 'Tunnel: disabled in Cesium settings\n'
+      else
+        printf 'Tunnel: starting (backend-managed)\n'
+      fi
+    elif tunnel_is_running; then
       local provider
       provider="$(active_tunnel_provider)"
       printf 'Tunnel: running (%s' "$provider"
@@ -654,7 +678,7 @@ supervise() {
     local remote="" now
     remote="$(public_url || true)"
     now="$(date +%s)"
-    if tunnel_required; then
+    if tunnel_required && ! backend_manages_public_access; then
       if [[ -n "$remote" ]] && public_health_is_healthy "$remote"; then
         tunnel_health_failures=0
       else
