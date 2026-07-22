@@ -15,9 +15,12 @@ import {
   getCesiumModelCatalog,
   resolveCesiumModelContextWindow,
   resolveCesiumAuth,
+  CESIUM_MODE_DEFINITIONS,
+  type CesiumModeId,
   type CesiumProviderKind,
 } from "../cesium-agent-settings.js";
 import {
+  findMatchingRememberedPermissionRule,
   getGlobalSettings,
   saveRememberedAgentPermissionRule,
 } from "../global-settings-store.js";
@@ -33,7 +36,15 @@ import { asNumber } from "./json-coerce.js";
 import { readConversationEvents } from "./session-store.js";
 import { extractToolEditPreview } from "./tool-edit-preview.js";
 import { buildCesiumModeReminder } from "./cesium-mode-reminders.js";
-import { resolveCesiumModeToolPolicy } from "./cesium-mode-policy.js";
+import {
+  resolveCesiumModeToolPolicy,
+  summarizeCesiumModeToolPolicy,
+} from "./cesium-mode-policy.js";
+import {
+  isOrchestrationPermissionCategory,
+  isPersistentPermissionOptionId,
+  STANDARD_PERMISSION_OPTIONS,
+} from "./permission-options.js";
 import {
   readCesiumPlanFile,
   writeCesiumPlanFile,
@@ -100,7 +111,7 @@ import type {
   AgentConversationStatus,
   AgentEventInput,
   AgentQueuedChatPrompt,
-  AgentPermissionOption,
+  AgentPermissionCategory,
   AgentProvider,
   AgentRuntimeCallbacks,
   AgentSessionHandle,
@@ -128,7 +139,6 @@ import {
   ORCHESTRATION_ASSIGNMENT_TERMINAL_STATUSES,
   ORCHESTRATION_WAIT_DEFAULT_MS,
   ORCHESTRATION_WAIT_HEARTBEAT_MS,
-  PERMISSION_OPTIONS,
   TERMINAL_OUTPUT_CAP,
   WAIT_HEARTBEAT_MS,
   WAIT_POLL_MS,
@@ -139,6 +149,7 @@ import {
   normalizeCesiumToolRequestArguments,
   parseWaitToolArgs,
   permissionDecisionFromOption,
+  resolveCesiumToolPermissionCategory,
   resolveCesiumTools,
   toolKind,
   toolTitle,
@@ -208,6 +219,7 @@ type ActivePermission = {
   reject: (error: Error) => void;
   toolKey: string;
   toolLabel: string;
+  permissionCategory?: AgentPermissionCategory;
 };
 
 type ActiveQuestion = {
@@ -300,6 +312,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
   private terminalRuns = new Map<string, TerminalRun>();
   private subagentTranscripts = new Map<string, AgentStoredEvent[]>();
   private activeSystemPrompt = CESIUM_SYSTEM_PROMPT;
+  private activeUserMessageId: string | null = null;
   private harness: ResolvedCesiumHarness = resolveCesiumTools();
   private subagentsV2: SubagentsV2Runtime | null = null;
 
@@ -454,6 +467,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
     this.pausePhase = "none";
     this.resumeWaiter = null;
     this.releaseResumeAck();
+    this.activeUserMessageId = input.userMessageId;
     const assistantMessageId = `cesium-assistant-${randomUUID()}`;
     await this.callbacks.appendEvents([
       {
@@ -813,6 +827,8 @@ class CesiumSessionHandle implements AgentSessionHandle {
         pendingPermission: null,
         pendingQuestion: null,
       }));
+    } finally {
+      this.activeUserMessageId = null;
     }
   }
 
@@ -1056,9 +1072,34 @@ class CesiumSessionHandle implements AgentSessionHandle {
       return;
     }
     this.pendingPermissions.delete(input.requestId);
-    const decision = input.cancelled ? "reject" : permissionDecisionFromOption(input.optionId);
-    const optionId = input.cancelled ? undefined : input.optionId;
-    if (optionId === "allow_always" || optionId === "reject_always") {
+    if (input.cancelled) {
+      await this.callbacks.appendEvents([
+        {
+          eventId: randomUUID(),
+          conversationId: this.callbacks.conversation.id,
+          kind: "permission_resolved",
+          requestId: input.requestId,
+          outcome: "cancelled",
+        },
+        {
+          eventId: randomUUID(),
+          conversationId: this.callbacks.conversation.id,
+          kind: "status",
+          status: "running",
+          detail: "Permission cancelled.",
+        },
+      ]);
+      await this.callbacks.updateConversation((current) => ({
+        ...current,
+        status: "running",
+        pendingPermission: null,
+      }));
+      pending.resolve("reject");
+      return;
+    }
+    const decision = permissionDecisionFromOption(input.optionId);
+    const optionId = input.optionId;
+    if (isPersistentPermissionOptionId(optionId)) {
       await saveRememberedAgentPermissionRule({
         workspaceId: this.callbacks.workspace.id,
         backendId: this.backend.id,
@@ -1067,6 +1108,8 @@ class CesiumSessionHandle implements AgentSessionHandle {
         decision,
         optionId,
         optionKind: optionId,
+        permissionCategory: pending.permissionCategory,
+        matchStyle: "exact",
       }).catch(() => undefined);
     }
     await this.callbacks.appendEvents([
@@ -1075,7 +1118,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
         conversationId: this.callbacks.conversation.id,
         kind: "permission_resolved",
         requestId: input.requestId,
-        outcome: input.cancelled ? "cancelled" : "selected",
+        outcome: "selected",
         optionId,
       },
       {
@@ -1362,7 +1405,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
     toolCallId: string;
     title: string;
     detail: string;
-    permission: "editFile" | "terminal" | "mcpCall";
+    permission: AgentPermissionCategory;
     toolKey: string;
     toolLabel: string;
   }): Promise<void> {
@@ -1370,23 +1413,26 @@ class CesiumSessionHandle implements AgentSessionHandle {
       this.callbacks.workspace.id,
       this.callbacks.conversation.id
     ).catch(() => null);
-    const orchestrationPolicy = assignment
-      ? assignment.config.permissionPolicy?.[input.permission] ?? "allow"
-      : undefined;
-    if (orchestrationPolicy === "allow") {
-      await this.callbacks.appendEvents([
-        {
-          eventId: randomUUID(),
-          conversationId: this.callbacks.conversation.id,
-          kind: "status",
-          status: "running",
-          detail: `Allowed ${input.title} by orchestration assignment policy.`,
-        },
-      ]);
-      return;
-    }
-    if (orchestrationPolicy === "deny") {
-      throw new Error(`${input.title} blocked by orchestration assignment policy.`);
+    // Only edit/terminal/mcp are orchestration-policy-controlled. Other categories
+    // (e.g. switchMode) fall through to the normal Cesium/global cascade.
+    if (assignment && isOrchestrationPermissionCategory(input.permission)) {
+      const orchestrationPolicy =
+        assignment.config.permissionPolicy?.[input.permission] ?? "allow";
+      if (orchestrationPolicy === "allow") {
+        await this.callbacks.appendEvents([
+          {
+            eventId: randomUUID(),
+            conversationId: this.callbacks.conversation.id,
+            kind: "status",
+            status: "running",
+            detail: `Allowed ${input.title} by orchestration assignment policy.`,
+          },
+        ]);
+        return;
+      }
+      if (orchestrationPolicy === "deny") {
+        throw new Error(`${input.title} blocked by orchestration assignment policy.`);
+      }
     }
 
     const [settings, globalSettings] = await Promise.all([
@@ -1401,11 +1447,14 @@ class CesiumSessionHandle implements AgentSessionHandle {
       throw new Error(`${input.title} blocked by Cesium permission settings.`);
     }
 
-    const remembered = globalSettings?.agents.rememberedPermissions.find(
-      (rule) =>
-        rule.workspaceId === this.callbacks.workspace.id &&
-        rule.backendId === this.backend.id &&
-        rule.toolKey === input.toolKey
+    const remembered = findMatchingRememberedPermissionRule(
+      globalSettings?.agents.rememberedPermissions ?? [],
+      {
+        workspaceId: this.callbacks.workspace.id,
+        backendId: this.backend.id,
+        toolKey: input.toolKey,
+        permissionCategory: input.permission,
+      }
     );
     if (remembered) {
       if (remembered.decision === "reject") {
@@ -1427,6 +1476,8 @@ class CesiumSessionHandle implements AgentSessionHandle {
               id: remembered.id,
               decision: remembered.decision,
               toolLabel: remembered.toolLabel,
+              permissionCategory: remembered.permissionCategory ?? input.permission,
+              matchStyle: remembered.matchStyle ?? "exact",
             },
           },
         },
@@ -1442,6 +1493,29 @@ class CesiumSessionHandle implements AgentSessionHandle {
     }
 
     if (globalSettings?.agents.autoAcceptAllAgentPermissions) {
+      const requestId = randomUUID();
+      await this.callbacks.appendEvents([
+        {
+          eventId: randomUUID(),
+          conversationId: this.callbacks.conversation.id,
+          kind: "permission_resolved",
+          requestId,
+          outcome: "selected",
+          optionId: "allow_once",
+          raw: {
+            autoAcceptedAll: true,
+            permissionCategory: input.permission,
+            toolKey: input.toolKey,
+          },
+        },
+        {
+          eventId: randomUUID(),
+          conversationId: this.callbacks.conversation.id,
+          kind: "status",
+          status: "running",
+          detail: `Auto-accepted ${input.title} (auto-accept all permissions).`,
+        },
+      ]);
       return;
     }
 
@@ -1459,7 +1533,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
         toolCallId: input.toolCallId,
         title: input.title,
         detail: input.detail,
-        options: PERMISSION_OPTIONS,
+        options: STANDARD_PERMISSION_OPTIONS,
       },
     ]);
     await this.callbacks.updateConversation((current) => ({
@@ -1472,7 +1546,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
         permission: input.permission,
         title: input.title,
         detail: input.detail,
-        options: PERMISSION_OPTIONS,
+        options: STANDARD_PERMISSION_OPTIONS,
       },
     }));
     const decision = await new Promise<"allow" | "reject">((resolve, reject) => {
@@ -1481,6 +1555,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
         reject,
         toolKey: input.toolKey,
         toolLabel: input.toolLabel,
+        permissionCategory: input.permission,
       });
     });
     if (decision !== "allow") {
@@ -1528,22 +1603,28 @@ class CesiumSessionHandle implements AgentSessionHandle {
       if (!policy.allowed) {
         throw new Error(policy.reason ?? `Tool ${request.name} is blocked in the active mode.`);
       }
-      if (request.name === "edit_file") {
+      const permissionCategory = resolveCesiumToolPermissionCategory(
+        this.harness.tools,
+        effectiveRequest.name
+      );
+      if (permissionCategory) {
+        const permissionArgs =
+          permissionCategory === "mcpCall"
+            ? (() => {
+                const normalized = normalizeCallMcpToolArgs(effectiveRequest.arguments);
+                return {
+                  serverId: normalized.serverId,
+                  toolName: normalized.toolName,
+                  arguments: normalized.arguments,
+                };
+              })()
+            : effectiveRequest.arguments;
         await this.requirePermission({
-          toolCallId: request.id,
+          toolCallId: effectiveRequest.id,
           title,
-          detail: safeJson(request.arguments),
-          permission: "editFile",
-          toolKey: cesiumPermissionToolKey("editFile", request.arguments),
-          toolLabel: title,
-        });
-      } else if (request.name === "terminal") {
-        await this.requirePermission({
-          toolCallId: request.id,
-          title,
-          detail: safeJson(request.arguments),
-          permission: "terminal",
-          toolKey: cesiumPermissionToolKey("terminal", request.arguments),
+          detail: this.buildPermissionDetail(permissionCategory, permissionArgs),
+          permission: permissionCategory,
+          toolKey: cesiumPermissionToolKey(permissionCategory, permissionArgs),
           toolLabel: title,
         });
       }
@@ -1566,6 +1647,9 @@ class CesiumSessionHandle implements AgentSessionHandle {
           break;
         case "terminal":
           result = await this.toolTerminal(request.arguments);
+          break;
+        case "switch_mode":
+          result = await this.toolSwitchMode(request.arguments, request.id);
           break;
         case "wait":
           result = await this.toolWait(request.arguments);
@@ -2381,10 +2465,116 @@ class CesiumSessionHandle implements AgentSessionHandle {
     return `User answer:\n${answer}`;
   }
 
+  private buildPermissionDetail(
+    permission: AgentPermissionCategory,
+    args: Record<string, unknown>
+  ): string {
+    if (permission === "switchMode") {
+      const target =
+        asString(args.target_mode)?.trim() ||
+        asString(args.targetMode)?.trim() ||
+        "unknown";
+      const reason = asString(args.reason)?.trim();
+      return reason
+        ? `Switch conversation mode to ${target}.\nReason: ${reason}`
+        : `Switch conversation mode to ${target}.`;
+    }
+    if (permission === "mcpCall") {
+      const serverId = asString(args.serverId) ?? "";
+      const toolName = asString(args.toolName) ?? "";
+      const toolArgs = asRecord(args.arguments) ?? {};
+      return `${serverId} - ${toolName}\n${JSON.stringify(toolArgs)}`;
+    }
+    return safeJson(args);
+  }
+
+  private async toolSwitchMode(
+    args: Record<string, unknown>,
+    toolCallId: string
+  ): Promise<string> {
+    const rawTarget =
+      asString(args.target_mode)?.trim().toLowerCase() ||
+      asString(args.targetMode)?.trim().toLowerCase() ||
+      "";
+    if (!rawTarget) {
+      throw new Error("switch_mode.target_mode is required.");
+    }
+    const knownMode = CESIUM_MODE_DEFINITIONS.find((mode) => mode.id === rawTarget);
+    if (!knownMode) {
+      throw new Error(
+        `Unknown mode "${rawTarget}". Allowed modes: ${CESIUM_MODE_DEFINITIONS.map((mode) => mode.id).join(", ")}.`
+      );
+    }
+    const targetMode = knownMode.id as CesiumModeId;
+    const settings = await getCesiumAgentSettings();
+    if (!settings.modes.enabled[targetMode]) {
+      throw new Error(
+        `Mode "${targetMode}" is disabled in Cesium Agent settings. Enable it under Settings → Agents → Cesium Agent → Modes.`
+      );
+    }
+    const previousMode = this.currentMode();
+    if (previousMode === targetMode) {
+      return `Already in ${targetMode} mode. No switch needed.`;
+    }
+    const reason = asString(args.reason)?.trim() || undefined;
+    await this.setConfigOption("mode", targetMode);
+    const policy = summarizeCesiumModeToolPolicy(targetMode);
+    const reminderText = buildCesiumModeReminder({
+      mode: targetMode,
+      modelName: this.callbacks.conversation.config.modelName,
+      workspaceRoot: this.callbacks.workspace.root,
+      dateLabel: new Date().toLocaleString("en-US"),
+      gitSummary: "unchanged since last reminder",
+      mcpSummaries: [],
+    });
+    const targetMessageId = this.activeUserMessageId;
+    if (targetMessageId) {
+      await this.callbacks.appendEvents([
+        {
+          eventId: randomUUID(),
+          conversationId: this.callbacks.conversation.id,
+          kind: "system_reminder",
+          reminderId: `mode-switch-${toolCallId}`,
+          targetMessageId,
+          reason: "mode",
+          text: reminderText,
+          raw: {
+            mode: targetMode,
+            previousMode,
+            switchedByTool: true,
+            toolCallId,
+            reason,
+          },
+        },
+      ]);
+    }
+    await this.callbacks.appendEvents([
+      {
+        eventId: randomUUID(),
+        conversationId: this.callbacks.conversation.id,
+        kind: "status",
+        status: "running",
+        detail: `Switched mode from ${previousMode} to ${targetMode}.`,
+      },
+    ]);
+    return [
+      `Switched conversation mode from ${previousMode} to ${targetMode}.`,
+      reason ? `Reason: ${reason}` : null,
+      `Allowed tools: ${policy.allowed.join(", ")}`,
+      `Restricted: ${policy.restricted.join(", ")}`,
+      `Blocked: ${policy.blocked.join(", ")}`,
+      "Follow this mode for the rest of this turn and subsequent turns until switched again.",
+      "",
+      reminderText,
+    ]
+      .filter((line): line is string => line != null)
+      .join("\n");
+  }
+
   private async toolCallMcp(
     args: Record<string, unknown>,
-    toolCallId: string,
-    title: string
+    _toolCallId: string,
+    _title: string
   ): Promise<string> {
     const normalized = normalizeCallMcpToolArgs(args);
     const serverId = normalized.serverId;
@@ -2396,14 +2586,6 @@ class CesiumSessionHandle implements AgentSessionHandle {
     if (serverId === BROWSER_MCP_SERVER_ID && this.isOrchestrationMode()) {
       throw new Error("Browser MCP tools are only available to normal Cesium Agent conversations.");
     }
-    await this.requirePermission({
-      toolCallId,
-      title,
-      detail: `${serverId} - ${toolName}\n${JSON.stringify(toolArgs)}`,
-      permission: "mcpCall",
-      toolKey: cesiumPermissionToolKey("mcpCall", { serverId, toolName }),
-      toolLabel: title,
-    });
     return await callMcpTool({
       workspaceId: this.callbacks.workspace.id,
       workspaceRoot: this.callbacks.workspace.root,

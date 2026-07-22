@@ -13,6 +13,7 @@ export type CesiumToolName =
   | "grep"
   | "edit_file"
   | "terminal"
+  | "switch_mode"
   | "wait"
   | "todo"
   | "create_plan"
@@ -41,7 +42,8 @@ export type CesiumToolDefinition = {
   name: CesiumToolName;
   description: string;
   parameters: Record<string, unknown>;
-  requiresPermission?: boolean;
+  /** Permission category when the tool should prompt / honor auto-allow rules. */
+  requiresPermission?: "editFile" | "terminal" | "mcpCall" | "switchMode" | boolean;
 };
 
 export type CesiumModelCatalogEntry = {
@@ -102,7 +104,7 @@ export const CESIUM_TOOL_DEFINITIONS: CesiumToolDefinition[] = [
   {
     name: "edit_file",
     description: "Apply a precise before/after edit to a file and return an edit preview.",
-    requiresPermission: true,
+    requiresPermission: "editFile",
     parameters: {
       type: "object",
       properties: {
@@ -116,7 +118,7 @@ export const CESIUM_TOOL_DEFINITIONS: CesiumToolDefinition[] = [
   {
     name: "terminal",
     description: "Run a command in the workspace, optionally waiting for completion or backgrounding it.",
-    requiresPermission: true,
+    requiresPermission: "terminal",
     parameters: {
       type: "object",
       properties: {
@@ -126,6 +128,23 @@ export const CESIUM_TOOL_DEFINITIONS: CesiumToolDefinition[] = [
         timeoutMs: { type: "number" },
       },
       required: ["command"],
+    },
+  },
+  {
+    name: "switch_mode",
+    description:
+      "Switch this conversation into another Cesium mode. Requires user approval by default.",
+    requiresPermission: "switchMode",
+    parameters: {
+      type: "object",
+      properties: {
+        target_mode: {
+          type: "string",
+          enum: ["agent", "plan", "orchestration", "burn", "workflow", "ask"],
+        },
+        reason: { type: "string" },
+      },
+      required: ["target_mode"],
     },
   },
   {
@@ -242,7 +261,7 @@ export const CESIUM_TOOL_DEFINITIONS: CesiumToolDefinition[] = [
     name: "call_mcp_tool",
     description:
       "Invoke a tool on a connected MCP server. Read mcp-servers/<serverId>/tools/ first to learn tool names and schemas.",
-    requiresPermission: true,
+    requiresPermission: "mcpCall",
     parameters: {
       type: "object",
       properties: {

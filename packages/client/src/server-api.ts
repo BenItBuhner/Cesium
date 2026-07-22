@@ -1832,6 +1832,8 @@ export type CesiumAgentSettingsPayload = {
   toolPermissions: {
     editFile: "ask" | "allow" | "deny";
     terminal: "ask" | "allow" | "deny";
+    mcpCall: "ask" | "allow" | "deny";
+    switchMode: "ask" | "allow" | "deny";
   };
   providerKeys: CesiumProviderKeyStatus[];
   customProviders: CesiumCustomProvider[];
