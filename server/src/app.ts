@@ -15,11 +15,13 @@ import { mcpRoutes } from "./routes/mcp.js";
 import { pluginRoutes } from "./routes/plugins.js";
 import { storageRoutes } from "./routes/storage.js";
 import { orchestrationRoutes } from "./routes/orchestration.js";
+import { cloudAgentRoutes } from "./routes/cloud-agents.js";
 import { extensionRoutes } from "./routes/extensions.js";
 import { bootstrapStorage } from "./storage/index.js";
 import { AGENT_BACKENDS } from "./lib/agents/providers.js";
 import { warmupAgentBackendCaches } from "./lib/agents/provider-cache-store.js";
 import { startAgentPromptQueueDrainListener } from "./lib/agents/prompt-queue-drain.js";
+import { startCloudAgentTaskSyncListener } from "./lib/cloud-agents/dispatcher.js";
 import { authMiddleware, SESSION_TOKEN_HEADER } from "./lib/auth.js";
 import { isTranscriptionConfigured } from "./lib/transcription-env.js";
 import {
@@ -132,6 +134,7 @@ export function createCesiumApp(): Hono {
   app.route("/", terminalRoutes);
   app.route("/", agentRoutes);
   app.route("/", orchestrationRoutes);
+  app.route("/", cloudAgentRoutes);
   app.route("/", extensionRoutes);
   app.route("/", audioRoutes);
   app.route("/", storageRoutes);
@@ -156,4 +159,5 @@ export function startCesiumBackgroundServices(): void {
     });
   }
   startAgentPromptQueueDrainListener();
+  startCloudAgentTaskSyncListener();
 }

@@ -971,7 +971,11 @@ export const authMiddleware: MiddlewareHandler = async (c, next) => {
     pathname === "/api/auth/login" ||
     pathname === "/api/auth/logout" ||
     pathname === "/api/mcp/oauth/callback" ||
-    pathname === "/api/settings/pi-agent/oauth/callback"
+    pathname === "/api/settings/pi-agent/oauth/callback" ||
+    pathname === "/api/cloud-agents/oauth/callback" ||
+    // Provider webhooks authenticate via per-provider HMAC signatures instead
+    // of app sessions (external services cannot hold a Cesium session).
+    pathname.startsWith("/api/cloud-agents/webhooks/")
   ) {
     await next();
     return;

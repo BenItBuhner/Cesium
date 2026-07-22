@@ -32,6 +32,7 @@ const NAV_LABELS: Record<string, string> = {
   appearance: "Appearance",
   keyboardShortcuts: "Keyboard shortcuts",
   agents: "Agents",
+  cloudAgents: "Cloud Agents",
   models: "Models",
   plugins: "Plugins",
   extensions: "Extensions",
@@ -219,6 +220,47 @@ const STATIC_SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
   row("agents", "cesium-custom-providers", "Custom providers", "Cesium Agent"),
   row("agents", "cursor-sdk-api-key", "Cursor SDK API key", "Cursor SDK"),
   row("agents", "cursor-sdk", "Cursor SDK", "Cursor SDK API key"),
+
+  // —— Cloud Agents ——
+  section("cloudAgents", "connections", "Connections", "linear github slack oauth token webhook"),
+  section("cloudAgents", "defaults", "Defaults", "cloud agents harness model workspace"),
+  section("cloudAgents", "routing", "Workspace routing", "cloud agents rules filter"),
+  section("cloudAgents", "tasks", "Tasks", "cloud agents inbox dispatch steer"),
+  row(
+    "cloudAgents",
+    "cloud-agents-default-harness",
+    "Default agent harness",
+    "Harness used for offloaded Cloud Agent tasks.",
+    ["cloud", "backend", "linear", "github", "slack"]
+  ),
+  row(
+    "cloudAgents",
+    "cloud-agents-default-model",
+    "Default model",
+    "Model id used for offloaded Cloud Agent tasks.",
+    ["cloud", "llm"]
+  ),
+  row(
+    "cloudAgents",
+    "cloud-agents-execution-mode",
+    "Execution mode",
+    "Isolated worktree branches vs. local workspace checkout.",
+    ["cloud", "branch", "worktree", "git", "pr"]
+  ),
+  row(
+    "cloudAgents",
+    "cloud-agents-auto-dispatch",
+    "Auto-dispatch assignments",
+    "Start agents immediately when webhook assignments arrive.",
+    ["cloud", "webhook", "auto"]
+  ),
+  row(
+    "cloudAgents",
+    "cloud-agents-fallback-workspace",
+    "Fallback workspace",
+    "Workspace used when no Cloud Agents routing rule matches.",
+    ["cloud", "routing"]
+  ),
 
   // —— Models (panel chrome; model rows are dynamic) ——
   section("models", "catalog", "Model catalog", "visibility toggle refresh"),

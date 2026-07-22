@@ -43,6 +43,7 @@ import {
 } from "@/lib/theme-config";
 import { DEFAULT_BUILTIN_THEME_ID, BUILTIN_THEME_CATALOG } from "@/lib/theme-presets";
 import { McpServersSettingsPanel } from "./mcp-servers-settings";
+import { CloudAgentsSettingsPanel } from "./cloud-agents-settings";
 import type { ThemePreference } from "@/lib/theme";
 import {
   THEME_TOKEN_GROUPS,
@@ -3065,6 +3066,7 @@ export const SETTINGS_PANELS: Record<string, ComponentType> = {
   general: GeneralSettingsPanel,
   appearance: AppearanceSettingsPanel,
   agents: AgentsSettingsPanel,
+  cloudAgents: CloudAgentsSettingsPanel,
   models: ModelsSettingsPanel,
   plugins: PluginsSettingsPanel,
   extensions: VscodeExtensionsSettingsPanel,
