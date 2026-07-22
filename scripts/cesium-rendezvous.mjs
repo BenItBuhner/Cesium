@@ -15,7 +15,14 @@ function requiredEnv(name, pattern) {
 
 function registryConfig() {
   const serverId = requiredEnv("CESIUM_SERVER_ID", /^[A-Za-z0-9_-]{24,80}$/);
-  const secret = requiredEnv("CESIUM_RENDEZVOUS_SECRET", /^[A-Za-z0-9_-]{32,128}$/);
+  const readSecret = requiredEnv(
+    "CESIUM_RENDEZVOUS_READ_SECRET",
+    /^[A-Za-z0-9_-]{32,128}$/
+  );
+  const writeSecret = requiredEnv(
+    "CESIUM_RENDEZVOUS_WRITE_SECRET",
+    /^[A-Za-z0-9_-]{32,128}$/
+  );
   const endpoint = new URL(requiredEnv("CESIUM_RENDEZVOUS_URL"));
   if (
     endpoint.protocol !== "https:" &&
@@ -29,11 +36,11 @@ function registryConfig() {
   endpoint.pathname = `${endpoint.pathname.replace(/\/+$/, "")}/${encodeURIComponent(serverId)}`;
   endpoint.search = "";
   endpoint.hash = "";
-  return { endpoint, secret, serverId };
+  return { endpoint, readSecret, serverId, writeSecret };
 }
 
 function encryptedRecord(publicUrl, tunnelProvider) {
-  const { secret, serverId } = registryConfig();
+  const { readSecret, serverId } = registryConfig();
   const endpoint = new URL(publicUrl);
   if (endpoint.protocol !== "https:") {
     throw new Error("Published Cesium endpoint must use HTTPS.");
@@ -50,7 +57,7 @@ function encryptedRecord(publicUrl, tunnelProvider) {
     })
   );
   const key = createHash("sha256")
-    .update(`cesium-rendezvous-v1\0${secret}`)
+    .update(`cesium-rendezvous-v1\0${readSecret}`)
     .digest();
   const iv = randomBytes(12);
   const cipher = createCipheriv("aes-256-gcm", key, iv);
@@ -64,11 +71,11 @@ function encryptedRecord(publicUrl, tunnelProvider) {
 }
 
 async function publish(publicUrl, tunnelProvider) {
-  const { endpoint, secret } = registryConfig();
+  const { endpoint, writeSecret } = registryConfig();
   const response = await fetch(endpoint, {
     method: "PUT",
     headers: {
-      Authorization: `Bearer ${secret}`,
+      Authorization: `Bearer ${writeSecret}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
@@ -88,11 +95,11 @@ async function publish(publicUrl, tunnelProvider) {
 }
 
 function connectFragment(publicUrl) {
-  const { endpoint, secret, serverId } = registryConfig();
+  const { endpoint, readSecret, serverId } = registryConfig();
   const payload = {
     version: 1,
     serverId,
-    secret,
+    secret: readSecret,
     registryBaseUrl: endpoint.origin,
     initialBaseUrl: new URL(publicUrl).toString().replace(/\/+$/, ""),
     label: process.env.CESIUM_SERVER_LABEL?.trim() || undefined,

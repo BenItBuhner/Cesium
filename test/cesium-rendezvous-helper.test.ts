@@ -10,7 +10,8 @@ import {
 
 const run = promisify(execFile);
 const SERVER_ID = "server_1234567890abcdefghijklmnop";
-const SECRET = "secret_1234567890abcdefghijklmnopqrstuvwxyz";
+const READ_SECRET = "read_secret_1234567890abcdefghijklmnopqrstuv";
+const WRITE_SECRET = "write_secret_1234567890abcdefghijklmnopqrstu";
 let registryBaseUrl = "";
 let lastRequest:
   | { authorization: string | undefined; body: { version: number; ciphertext: string }; url: string }
@@ -55,7 +56,8 @@ function helperEnv(): NodeJS.ProcessEnv {
     ...process.env,
     CESIUM_SERVER_ID: SERVER_ID,
     CESIUM_SERVER_LABEL: "Home server",
-    CESIUM_RENDEZVOUS_SECRET: SECRET,
+    CESIUM_RENDEZVOUS_READ_SECRET: READ_SECRET,
+    CESIUM_RENDEZVOUS_WRITE_SECRET: WRITE_SECRET,
     CESIUM_RENDEZVOUS_URL: `${registryBaseUrl}/api/rendezvous`,
   };
 }
@@ -73,14 +75,14 @@ describe("installed rendezvous helper", () => {
       { cwd: process.cwd(), env: helperEnv() }
     );
     assert.ok(lastRequest);
-    assert.equal(lastRequest.authorization, `Bearer ${SECRET}`);
+    assert.equal(lastRequest.authorization, `Bearer ${WRITE_SECRET}`);
     assert.equal(lastRequest.url, `/api/rendezvous/${SERVER_ID}`);
     assert.equal(lastRequest.body.version, 1);
     const decrypted = await decryptRendezvousCiphertext(
       {
         version: 1,
         serverId: SERVER_ID,
-        secret: SECRET,
+        secret: READ_SECRET,
         registryBaseUrl,
       },
       lastRequest.body.ciphertext
@@ -103,7 +105,7 @@ describe("installed rendezvous helper", () => {
     assert.deepEqual(decodeRendezvousBootstrap(stdout), {
       version: 1,
       serverId: SERVER_ID,
-      secret: SECRET,
+      secret: READ_SECRET,
       registryBaseUrl,
       initialBaseUrl: "https://first-tunnel.example",
       label: "Home server",

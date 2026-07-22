@@ -124,9 +124,11 @@ assert_equal "https://current-second.lhr.life" \
 
 CESIUM_RENDEZVOUS_URL="https://cesium-test.vercel.app/api/rendezvous"
 CESIUM_SERVER_ID="server_1234567890abcdefghijklmnop"
-CESIUM_RENDEZVOUS_SECRET="secret_1234567890abcdefghijklmnopqrstuvwxyz"
+CESIUM_RENDEZVOUS_READ_SECRET="read_secret_1234567890abcdefghijklmnopqrstuv"
+CESIUM_RENDEZVOUS_WRITE_SECRET="write_secret_1234567890abcdefghijklmnopqrstu"
 CESIUM_SERVER_LABEL="Home server"
-export CESIUM_RENDEZVOUS_URL CESIUM_SERVER_ID CESIUM_RENDEZVOUS_SECRET CESIUM_SERVER_LABEL
+export CESIUM_RENDEZVOUS_URL CESIUM_SERVER_ID CESIUM_RENDEZVOUS_READ_SECRET \
+  CESIUM_RENDEZVOUS_WRITE_SECRET CESIUM_SERVER_LABEL
 BUN_BIN="$(command -v node)"
 printf '%s\t%s\n' "$(date +%s)" "https://current-second.lhr.life" >"$RENDEZVOUS_STATUS_FILE"
 stable_output="$(stable_connect_url)"

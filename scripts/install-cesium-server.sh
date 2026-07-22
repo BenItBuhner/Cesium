@@ -53,7 +53,8 @@ AUTH_PASSWORD="${CESIUM_AUTH_PASSWORD:-$(existing_env_value OPENCURSOR_AUTH_PASS
 SERVER_ID="${CESIUM_SERVER_ID:-$(existing_env_value CESIUM_SERVER_ID)}"
 SERVER_LABEL="${CESIUM_SERVER_LABEL:-$(existing_env_value CESIUM_SERVER_LABEL)}"
 SERVER_LABEL="${SERVER_LABEL:-$(hostname 2>/dev/null || printf 'Cesium server')}"
-RENDEZVOUS_SECRET="${CESIUM_RENDEZVOUS_SECRET:-$(existing_env_value CESIUM_RENDEZVOUS_SECRET)}"
+RENDEZVOUS_READ_SECRET="${CESIUM_RENDEZVOUS_READ_SECRET:-$(existing_env_value CESIUM_RENDEZVOUS_READ_SECRET)}"
+RENDEZVOUS_WRITE_SECRET="${CESIUM_RENDEZVOUS_WRITE_SECRET:-$(existing_env_value CESIUM_RENDEZVOUS_WRITE_SECRET)}"
 RENDEZVOUS_URL="${CESIUM_RENDEZVOUS_URL:-$(existing_env_value CESIUM_RENDEZVOUS_URL)}"
 RENDEZVOUS_REQUIRED="${CESIUM_RENDEZVOUS_REQUIRED:-$(existing_env_value CESIUM_RENDEZVOUS_REQUIRED)}"
 SERVICE_MANAGER="${CESIUM_SERVICE_MANAGER:-$(existing_env_value CESIUM_SERVICE_MANAGER)}"
@@ -211,16 +212,24 @@ if [[ -z "$SERVER_ID" ]]; then
   SERVER_ID="$("$BUN_BIN" -e \
     'console.log(require("node:crypto").randomBytes(24).toString("base64url"))')"
 fi
-if [[ -z "$RENDEZVOUS_SECRET" ]]; then
-  RENDEZVOUS_SECRET="$("$BUN_BIN" -e \
+if [[ -z "$RENDEZVOUS_READ_SECRET" ]]; then
+  RENDEZVOUS_READ_SECRET="$("$BUN_BIN" -e \
+    'console.log(require("node:crypto").randomBytes(32).toString("base64url"))')"
+fi
+if [[ -z "$RENDEZVOUS_WRITE_SECRET" ]]; then
+  RENDEZVOUS_WRITE_SECRET="$("$BUN_BIN" -e \
     'console.log(require("node:crypto").randomBytes(32).toString("base64url"))')"
 fi
 if [[ ! "$SERVER_ID" =~ ^[A-Za-z0-9_-]{24,80}$ ]]; then
   printf 'CESIUM_SERVER_ID is invalid.\n' >&2
   exit 1
 fi
-if [[ ! "$RENDEZVOUS_SECRET" =~ ^[A-Za-z0-9_-]{32,128}$ ]]; then
-  printf 'CESIUM_RENDEZVOUS_SECRET is invalid.\n' >&2
+if [[ ! "$RENDEZVOUS_READ_SECRET" =~ ^[A-Za-z0-9_-]{32,128}$ ]]; then
+  printf 'CESIUM_RENDEZVOUS_READ_SECRET is invalid.\n' >&2
+  exit 1
+fi
+if [[ ! "$RENDEZVOUS_WRITE_SECRET" =~ ^[A-Za-z0-9_-]{32,128}$ ]]; then
+  printf 'CESIUM_RENDEZVOUS_WRITE_SECRET is invalid.\n' >&2
   exit 1
 fi
 install_cloudflared
@@ -309,7 +318,8 @@ ENV_FILE="$CESIUM_HOME/server.env"
   write_env_value CESIUM_SERVER_ID "$SERVER_ID"
   write_env_value CESIUM_SERVER_LABEL "$SERVER_LABEL"
   write_env_value CESIUM_RENDEZVOUS_URL "$RENDEZVOUS_URL"
-  write_env_value CESIUM_RENDEZVOUS_SECRET "$RENDEZVOUS_SECRET"
+  write_env_value CESIUM_RENDEZVOUS_READ_SECRET "$RENDEZVOUS_READ_SECRET"
+  write_env_value CESIUM_RENDEZVOUS_WRITE_SECRET "$RENDEZVOUS_WRITE_SECRET"
   write_env_value CESIUM_RENDEZVOUS_REQUIRED "$RENDEZVOUS_REQUIRED"
   write_env_value CESIUM_RENDEZVOUS_INTERVAL "15"
   write_env_value CESIUM_SERVICE_MANAGER "$SERVICE_MANAGER"
