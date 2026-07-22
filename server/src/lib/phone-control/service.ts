@@ -287,7 +287,6 @@ export async function readPhoneCommands(input: {
     await new Promise<void>((resolve) => {
       const key = deviceKey(input.workspaceId, input.deviceId);
       const bucket = commandWaiters.get(key) ?? new Set<() => void>();
-      let timer: ReturnType<typeof setTimeout>;
       const done = () => {
         clearTimeout(timer);
         bucket.delete(done);
@@ -296,7 +295,7 @@ export async function readPhoneCommands(input: {
         }
         resolve();
       };
-      timer = setTimeout(done, waitMs);
+      const timer = setTimeout(done, waitMs);
       bucket.add(done);
       commandWaiters.set(key, bucket);
     });

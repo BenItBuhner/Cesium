@@ -18,6 +18,7 @@ import {
   WebView,
   type WebViewMessageEvent,
   type WebViewNavigation,
+  type WebViewProps,
 } from "react-native-webview";
 import type { WebView as WebViewType } from "react-native-webview";
 import type { MobileAgentProjection } from "@cesium/core";
@@ -43,7 +44,9 @@ const INITIAL_CONFIG = readLaunchUrlConfig();
 // `undefined`, which makes JSX props resolve to `never` under TypeScript 5.9.
 // Runtime exports are correct; keep the workaround local until upstream fixes
 // the declaration.
-const AndroidWebView = WebView as unknown as React.ComponentType<any>;
+const AndroidWebView = WebView as unknown as React.ComponentType<
+  WebViewProps & React.RefAttributes<WebViewType>
+>;
 
 export default function App() {
   const systemColorScheme = useColorScheme();
