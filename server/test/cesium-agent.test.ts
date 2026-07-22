@@ -12,8 +12,24 @@ delete process.env.REDIS_URL;
 delete process.env.DATABASE_URL;
 delete process.env.OPENCURSOR_STORAGE_DRIVER;
 delete process.env.OPENAI_API_KEY;
+delete process.env.OPENAI_BASE_URL;
 delete process.env.ANTHROPIC_API_KEY;
 delete process.env.GOOGLE_API_KEY;
+delete process.env.OPENROUTER_API_KEY;
+delete process.env.GROQ_API_KEY;
+delete process.env.DEEPSEEK_API_KEY;
+delete process.env.MISTRAL_API_KEY;
+delete process.env.XAI_API_KEY;
+delete process.env.TOGETHER_API_KEY;
+delete process.env.FIREWORKS_API_KEY;
+delete process.env.NVIDIA_API_KEY;
+delete process.env.CEREBRAS_API_KEY;
+delete process.env.CROFAI_API_KEY;
+delete process.env.CESIUM_BASE_URL;
+delete process.env.CESIUM_API_KEY;
+delete process.env.CESIUM_DEFAULT_MODEL;
+delete process.env.CESIUM_PROVIDER_ID;
+delete process.env.CESIUM_MODELS;
 process.env.OPENCURSOR_DATA_DIR = TEST_DATA_DIR;
 
 const [
@@ -31,6 +47,8 @@ const [
     findCesiumModelCatalogEntry,
     resolveCesiumModelContextWindow,
     createCesiumAgentConfigOptions,
+    readCesiumEnvBootstrap,
+    getCesiumModelCatalog,
   },
   { normalizeEventsToHistory, openAiMessages, cesiumPermissionToolKey, createCesiumAgentProvider, buildOpenAiToolDefinitions, sanitizeOpenAiCompatibleJsonSchema, normalizeCesiumToolResultForModel, isEmptyCesiumAdapterResult, normalizeCallMcpToolArgs },
   { buildCesiumBaseSystemPrompt },
@@ -441,6 +459,124 @@ test("upsertCesiumProviderKey rejects unambiguous cross-provider keys", async ()
       }),
     /Nvidia/
   );
+});
+
+test("upsertCesiumProviderKey allows OpenAI-format sk keys on OpenAI-compatible providers", async () => {
+  const result = await upsertCesiumProviderKey({
+    providerId: "model-proxy",
+    label: "Model Proxy",
+    apiKind: "openai-compatible",
+    apiKey: "sk-proxy-style-key-abcdef123456",
+    baseUrl: "https://infer.example.test/v1",
+  });
+  const stored = result.providerKeys.find((key) => key.providerId === "model-proxy");
+  assert.ok(stored);
+  assert.equal(stored?.lastFour, "3456");
+});
+
+test("readCesiumEnvBootstrap maps OPENAI_API_KEY onto a custom OpenAI-compatible host", () => {
+  process.env.CESIUM_BASE_URL = "https://infer.techlitnow.com/v1";
+  process.env.OPENAI_API_KEY = "sk-test-techlit-key";
+  process.env.CESIUM_DEFAULT_MODEL = "glm-5.2";
+  try {
+    const bootstrap = readCesiumEnvBootstrap();
+    assert.ok(bootstrap);
+    assert.equal(bootstrap?.providerId, "techlit");
+    assert.equal(bootstrap?.baseUrl, "https://infer.techlitnow.com/v1");
+    assert.equal(bootstrap?.apiKey, "sk-test-techlit-key");
+    assert.equal(bootstrap?.defaultModelId, "techlit/glm-5.2");
+    assert.ok(bootstrap?.models.some((model) => model.id === "glm-5.2" && !model.supportsImages));
+    assert.ok(bootstrap?.models.some((model) => model.id === "kimi-k2.7-code" && model.supportsImages));
+  } finally {
+    delete process.env.CESIUM_BASE_URL;
+    delete process.env.OPENAI_API_KEY;
+    delete process.env.CESIUM_DEFAULT_MODEL;
+  }
+});
+
+test("resolveCesiumAuth uses env bootstrap for techlit models", async () => {
+  process.env.CESIUM_BASE_URL = "https://infer.techlitnow.com/v1";
+  process.env.OPENAI_API_KEY = "sk-test-techlit-auth-key";
+  process.env.CESIUM_DEFAULT_MODEL = "kimi-k2.7-code";
+  try {
+    const auth = await resolveCesiumAuth({
+      modelId: "techlit/kimi-k2.7-code",
+    });
+    assert.equal(auth.providerId, "techlit");
+    assert.equal(auth.apiKey, "sk-test-techlit-auth-key");
+    assert.equal(auth.baseUrl, "https://infer.techlitnow.com/v1");
+    assert.equal(auth.apiKind, "openai-chat-completions");
+
+    const catalog = await getCesiumModelCatalog();
+    const kimi = findCesiumModelCatalogEntry("techlit/kimi-k2.7-code", catalog);
+    const glm = findCesiumModelCatalogEntry("techlit/glm-5.2", catalog);
+    assert.equal(kimi?.supportsImages, true);
+    assert.equal(glm?.supportsImages, false);
+
+    const publicSettings = await getCesiumAgentSettingsPublic();
+    assert.ok(
+      publicSettings.providerKeys.some(
+        (key) => key.providerId === "techlit" && key.source === "env"
+      )
+    );
+  } finally {
+    delete process.env.CESIUM_BASE_URL;
+    delete process.env.OPENAI_API_KEY;
+    delete process.env.CESIUM_DEFAULT_MODEL;
+  }
+});
+
+test("resolveCesiumAuth maps GROQ_API_KEY env onto the groq provider", async () => {
+  process.env.GROQ_API_KEY = "gsk-test-groq-key-1234";
+  try {
+    const auth = await resolveCesiumAuth({
+      modelId: "groq/llama-3.3-70b-versatile",
+    });
+    assert.equal(auth.providerId, "groq");
+    assert.equal(auth.apiKey, "gsk-test-groq-key-1234");
+    assert.equal(auth.baseUrl, "https://api.groq.com/openai/v1");
+    assert.equal(auth.apiKind, "openai-chat-completions");
+  } finally {
+    delete process.env.GROQ_API_KEY;
+  }
+});
+
+test("openAiMessages encodes image attachments as multimodal content parts", () => {
+  const encoded = openAiMessages([
+    { role: "system", content: "sys" },
+    {
+      role: "user",
+      content: "describe this",
+      images: [{ mimeType: "image/png", data: "aaaabbbb", name: "shot.png" }],
+    },
+  ]);
+  const user = encoded.find((message) => (message as { role?: string }).role === "user") as {
+    content?: Array<{ type?: string; text?: string; image_url?: { url?: string } }>;
+  };
+  assert.ok(Array.isArray(user.content));
+  assert.equal(user.content?.[0]?.type, "text");
+  assert.equal(user.content?.[0]?.text, "describe this");
+  assert.equal(user.content?.[1]?.type, "image_url");
+  assert.equal(user.content?.[1]?.image_url?.url, "data:image/png;base64,aaaabbbb");
+});
+
+test("normalizeEventsToHistory preserves user image attachments", () => {
+  const history = normalizeEventsToHistory([
+    {
+      seq: 1,
+      eventId: "e1",
+      conversationId: "c1",
+      createdAt: 1,
+      kind: "user_message",
+      messageId: "u1",
+      content: "look",
+      attachments: [{ mimeType: "image/jpeg", data: "deadbeef", name: "a.jpg" }],
+    },
+  ] as never);
+  const user = history.find((message) => message.role === "user");
+  assert.equal(user?.content, "look");
+  assert.equal(user?.images?.length, 1);
+  assert.equal(user?.images?.[0]?.mimeType, "image/jpeg");
 });
 
 test("resolveCesiumModelRuntime uses catalog base URL for third-party providers", async () => {

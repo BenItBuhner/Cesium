@@ -1848,6 +1848,8 @@ export type CesiumModelCatalogEntry = {
   supportsTools: boolean;
   supportsReasoning: boolean;
   supportsStructuredOutput: boolean;
+  /** Vision / multimodal image prompt support when advertised by the catalog. */
+  supportsImages?: boolean;
   contextWindow?: number;
   outputLimit?: number;
 };
