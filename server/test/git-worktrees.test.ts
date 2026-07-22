@@ -28,6 +28,7 @@ const {
   createWorkspaceWorktree,
   defaultWorktreePath,
   getGitWorkspaceStatus,
+  normalizeGitRepositoryIdentity,
   switchWorkspaceBranch,
 } = await import("../src/lib/git-worktrees.js");
 
@@ -77,6 +78,30 @@ after(async () => {
 });
 
 describe("git worktree service", () => {
+  test("normalizes equivalent network remotes without leaking credentials", () => {
+    assert.equal(
+      normalizeGitRepositoryIdentity("git@GitHub.com:cesium/app.git"),
+      "github.com/cesium/app"
+    );
+    assert.equal(
+      normalizeGitRepositoryIdentity("https://token@example.com:8443/team/app.git"),
+      "example.com:8443/team/app"
+    );
+    assert.equal(
+      normalizeGitRepositoryIdentity("ssh://git@example.com:22/team/app.git"),
+      "example.com/team/app"
+    );
+    assert.equal(normalizeGitRepositoryIdentity("/srv/git/app.git"), undefined);
+    assert.equal(normalizeGitRepositoryIdentity("file:///srv/git/app.git"), undefined);
+  });
+
+  test("reports a cross-machine repository id from origin", async () => {
+    const { repo, workspace } = await createRepo("repository-id");
+    await git(repo, ["remote", "add", "origin", "git@GitHub.com:cesium/app.git"]);
+    const status = await getGitWorkspaceStatus(workspace, [workspace]);
+    assert.equal(status.repositoryId, "github.com/cesium/app");
+  });
+
   test("reports non-git workspaces without throwing", async () => {
     const root = path.join(TEST_ROOT, "plain");
     await mkdir(root, { recursive: true });

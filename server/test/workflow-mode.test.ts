@@ -168,16 +168,16 @@ test("hashWorkflowAgentCall is stable for identical prompt/opts", () => {
   assert.notEqual(a, c);
 });
 
-test("Workflow mode policy allows workflow tools and blocks burn/orchestration", () => {
+test("Workflow mode policy allows workflow tools and blocks goal/orchestration", () => {
   assert.equal(resolveCesiumModeToolPolicy({ mode: "workflow", toolName: "workflow_run" }).allowed, true);
   assert.equal(resolveCesiumModeToolPolicy({ mode: "workflow", toolName: "edit_file" }).allowed, true);
-  assert.equal(resolveCesiumModeToolPolicy({ mode: "workflow", toolName: "burn_goal_set" }).allowed, false);
+  assert.equal(resolveCesiumModeToolPolicy({ mode: "workflow", toolName: "goal_set" }).allowed, false);
   assert.equal(
     resolveCesiumModeToolPolicy({ mode: "workflow", toolName: "orchestration_create_issue" }).allowed,
     false
   );
   assert.equal(resolveCesiumModeToolPolicy({ mode: "agent", toolName: "workflow_run" }).allowed, false);
-  assert.equal(resolveCesiumModeToolPolicy({ mode: "burn", toolName: "workflow_run" }).allowed, false);
+  assert.equal(resolveCesiumModeToolPolicy({ mode: "goal", toolName: "workflow_run" }).allowed, false);
   const summary = summarizeCesiumModeToolPolicy("workflow");
   assert.equal(summary.allowed.includes("workflow_run"), true);
 });

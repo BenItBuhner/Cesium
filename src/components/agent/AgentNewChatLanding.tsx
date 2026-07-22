@@ -37,7 +37,6 @@ import {
 } from "@/lib/agent-chat";
 import {
   DEFAULT_MODE_OPTIONS,
-  filterGoalModeOptions,
   resolveCanonicalModeId,
 } from "@/lib/chat-modes";
 import type { AgentBackendId, AgentBackendInfo } from "@/lib/agent-types";
@@ -68,6 +67,14 @@ import {
   WorkspaceFolderIcon,
 } from "@/lib/workspace-rail-appearance";
 import { shouldAutoFocusTextInput } from "@/lib/mobile-autofocus";
+import {
+  groupDirectoryWorkspacesByRepository,
+  sortDirectoryWorkspaces,
+} from "@/lib/multi-server-workspaces";
+import {
+  getServerDisplayLabel,
+  getServerRailAppearance,
+} from "@/lib/server-rail-appearance";
 
 function pickAvailableBackend(
   backends: AgentBackendInfo[],
@@ -169,8 +176,7 @@ export function AgentNewChatLanding() {
     startStandaloneChat,
   } = useAgentShellState();
   const { settings, updateSettings } = useGlobalSettings();
-  const goalModeBetaEnabled = settings.features.goalModeBeta;
-  const { activeServer, setActiveServer } = useServerConnections();
+  const { activeServer, servers, setActiveServer } = useServerConnections();
   const { workspaces: directoryWorkspaces } = useWorkspaceDirectory();
   const runCommand = useIDECommandRunner();
 
@@ -195,9 +201,9 @@ export function AgentNewChatLanding() {
   const draftModeOptions = useMemo(
     () =>
       draftBackend
-        ? buildDraftModeOptionsForBackend(draftBackend, { goalModeBetaEnabled })
-        : filterGoalModeOptions(DEFAULT_MODE_OPTIONS, goalModeBetaEnabled),
-    [draftBackend, goalModeBetaEnabled]
+        ? buildDraftModeOptionsForBackend(draftBackend)
+        : DEFAULT_MODE_OPTIONS,
+    [draftBackend]
   );
   const draftMode = useMemo(
     () =>
@@ -237,6 +243,7 @@ export function AgentNewChatLanding() {
   const [branchQuery, setBranchQuery] = useState("");
   const [workspacePickerOpen, setWorkspacePickerOpen] = useState(false);
   const [workspaceQuery, setWorkspaceQuery] = useState("");
+  const [workspaceMachineFilter, setWorkspaceMachineFilter] = useState("all");
   const [targetPickerOpen, setTargetPickerOpen] = useState(false);
   const [gitActionBusy, setGitActionBusy] = useState<string | null>(null);
   const [gitActionError, setGitActionError] = useState<string | null>(null);
@@ -251,13 +258,13 @@ export function AgentNewChatLanding() {
           ...current.chat,
           backendId: nextBackend.id,
           mode:
-            buildDraftModeOptionsForBackend(nextBackend, { goalModeBetaEnabled })[0]?.id ??
+            buildDraftModeOptionsForBackend(nextBackend)[0]?.id ??
             current.chat.mode,
           model: resolveDraftModelForBackend(nextBackend),
         },
       }));
     },
-    [backends, goalModeBetaEnabled, updateWorkspaceSession]
+    [backends, updateWorkspaceSession]
   );
 
   const handleSubmit = useCallback(
@@ -466,41 +473,58 @@ export function AgentNewChatLanding() {
   }, [branchPickerItems, branchQuery]);
 
   const workspacePickerOptions = useMemo(() => {
-    const fromDirectory = directoryWorkspaces
-      .filter(
-        (workspace) =>
-          workspace.serverId === activeServer.id && !isStandaloneChatWorkspace(workspace)
-      )
-      .map((workspace) => ({
-        workspace,
-        workspaceKey: workspace.workspaceKey,
-        serverId: workspace.serverId,
-        serverLabel: workspace.serverLabel,
-      }));
+    const fromDirectory = directoryWorkspaces.filter(
+      (workspace) => !isStandaloneChatWorkspace(workspace)
+    );
     if (fromDirectory.length > 0) {
-      return fromDirectory;
+      return sortDirectoryWorkspaces(fromDirectory, settings.general.workspaceSortMode);
     }
-    return groups
-      .filter(
-        (group) =>
-          (!group.serverId || group.serverId === activeServer.id) &&
-          !isStandaloneChatWorkspace(group.workspace)
-      )
+    const fromGroups = groups
+      .filter((group) => !isStandaloneChatWorkspace(group.workspace))
       .map((group) => ({
-        workspace: group.workspace,
+        ...group.workspace,
+        serverId: group.serverId ?? activeServer.id,
+        serverLabel: group.serverLabel ?? activeServer.label,
+        serverBaseUrl:
+          servers.find((server) => server.id === group.serverId)?.baseUrl ??
+          activeServer.baseUrl,
         workspaceKey: resolveGroupWorkspaceAppearanceKey(group, activeServer.id),
-        serverId: group.serverId,
-        serverLabel: group.serverLabel,
+        repository: group.repository,
       }));
-  }, [activeServer.id, directoryWorkspaces, groups]);
+    return sortDirectoryWorkspaces(fromGroups, settings.general.workspaceSortMode);
+  }, [
+    activeServer.baseUrl,
+    activeServer.id,
+    activeServer.label,
+    directoryWorkspaces,
+    groups,
+    servers,
+    settings.general.workspaceSortMode,
+  ]);
+
+  const workspaceMachineOptions = useMemo(
+    () =>
+      servers.map((server, index) => ({
+        id: server.id,
+        label: getServerDisplayLabel(
+          server,
+          getServerRailAppearance(settings.general.serverRailAppearances, server.id, index)
+        ),
+      })),
+    [servers, settings.general.serverRailAppearances]
+  );
 
   const homeAppearancePersistEntries = useMemo(
     () =>
       workspacePickerOptions.map((group) => ({
         workspaceKey: group.workspaceKey,
-        isHome: Boolean(homeWorkspaceId && group.workspace.id === homeWorkspaceId),
+        isHome: Boolean(
+          homeWorkspaceId &&
+          group.id === homeWorkspaceId &&
+          group.serverId === activeServer.id
+        ),
       })),
-    [workspacePickerOptions, homeWorkspaceId]
+    [activeServer.id, workspacePickerOptions, homeWorkspaceId]
   );
   usePersistHomeWorkspaceRailAppearances(
     workspaceRailAppearances,
@@ -517,13 +541,21 @@ export function AgentNewChatLanding() {
 
   const filteredWorkspaceGroups = useMemo(() => {
     const q = workspaceQuery.trim().toLowerCase();
-    if (!q) return workspacePickerOptions;
     return workspacePickerOptions.filter(
       (g) =>
-        g.workspace.name.toLowerCase().includes(q) ||
-        g.serverLabel?.toLowerCase().includes(q)
+        (workspaceMachineFilter === "all" || g.serverId === workspaceMachineFilter) &&
+        (!q ||
+          g.name.toLowerCase().includes(q) ||
+          g.serverLabel.toLowerCase().includes(q) ||
+          g.repository?.repoRoot?.toLowerCase().includes(q) ||
+          g.repository?.repositoryId?.toLowerCase().includes(q))
     );
-  }, [workspacePickerOptions, workspaceQuery]);
+  }, [workspaceMachineFilter, workspacePickerOptions, workspaceQuery]);
+
+  const workspaceRepositorySections = useMemo(
+    () => groupDirectoryWorkspacesByRepository(filteredWorkspaceGroups),
+    [filteredWorkspaceGroups]
+  );
 
   const activeBranchLabel = gitStatus?.isGitRepo
     ? gitStatus.currentBranch ?? "Detached"
@@ -858,6 +890,59 @@ export function AgentNewChatLanding() {
                   autoFocus={shouldAutoFocusTextInput()}
                 />
               </div>
+              {workspaceMachineOptions.length > 1 ? (
+                <div className="flex items-center gap-[4px] border-b border-[var(--border-card)] px-[6px] py-[5px]">
+                  <div className="hide-scrollbar-x flex min-w-0 flex-1 gap-[3px] overflow-x-auto">
+                    <button
+                      type="button"
+                      onClick={() => setWorkspaceMachineFilter("all")}
+                      className={`shrink-0 rounded-[var(--radius-pill)] px-[7px] py-[3px] font-sans text-[10px] ${
+                        workspaceMachineFilter === "all"
+                          ? "bg-[var(--accent-bg)] text-[var(--text-primary)]"
+                          : "text-[var(--text-secondary)] hover:bg-[var(--bg-card)]"
+                      }`}
+                    >
+                      All
+                    </button>
+                    {workspaceMachineOptions.map((machine) => (
+                      <button
+                        key={machine.id}
+                        type="button"
+                        onClick={() => setWorkspaceMachineFilter(machine.id)}
+                        className={`max-w-[104px] shrink-0 truncate rounded-[var(--radius-pill)] px-[7px] py-[3px] font-sans text-[10px] ${
+                          workspaceMachineFilter === machine.id
+                            ? "bg-[var(--accent-bg)] text-[var(--text-primary)]"
+                            : "text-[var(--text-secondary)] hover:bg-[var(--bg-card)]"
+                        }`}
+                        title={machine.label}
+                      >
+                        {machine.label}
+                      </button>
+                    ))}
+                  </div>
+                  <select
+                    aria-label="Sort workspaces"
+                    value={settings.general.workspaceSortMode}
+                    onChange={(event) => {
+                      const mode = event.target.value as
+                        | "recent"
+                        | "alphabetical"
+                        | "machine"
+                        | "custom";
+                      updateSettings((current) => ({
+                        ...current,
+                        general: { ...current.general, workspaceSortMode: mode },
+                      }));
+                    }}
+                    className="max-w-[76px] shrink-0 rounded-[var(--radius-tab)] bg-[var(--bg-card)] px-[5px] py-[3px] font-sans text-[10px] text-[var(--text-secondary)] outline-none"
+                  >
+                    <option value="recent">Recent</option>
+                    <option value="alphabetical">A–Z</option>
+                    <option value="machine">Machine</option>
+                    <option value="custom">Custom</option>
+                  </select>
+                </div>
+              ) : null}
               <VerticalFadedScroll
                 measureKey={`${workspaceQuery}\0${filteredWorkspaceGroups.length}\0${standaloneDraftActive ? 1 : 0}`}
                 scrollClassName="hide-scrollbar-y max-h-[min(320px,45vh)] min-h-0 overflow-y-auto overscroll-contain p-[4px]"
@@ -880,43 +965,65 @@ export function AgentNewChatLanding() {
                     <Check className="size-[13px] shrink-0" strokeWidth={2} />
                   ) : null}
                 </div>
-                {filteredWorkspaceGroups.map((group) => {
-                  const groupKey = group.workspaceKey;
-                  const current = !standaloneDraftActive && groupKey === activeWorkspaceAppearanceKey;
-                  const isHomeRow =
-                    Boolean(homeWorkspaceId) && group.workspace.id === homeWorkspaceId;
-                  return (
-                    <div
-                      key={groupKey}
-                      className="group flex items-center gap-[6px] rounded-[var(--radius-tab)] px-[8px] py-[5px] font-sans text-[12.5px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)]"
-                    >
-                      <button
-                        type="button"
-                        onClick={() => {
-                          void (async () => {
-                            setStandaloneDraftActive(false);
-                            if (group.serverId && group.serverId !== activeServer.id) {
-                              setActiveServer(group.serverId);
-                            }
-                            await openWorkspaceById(group.workspace.id);
-                          })();
-                          setWorkspacePickerOpen(false);
-                        }}
-                        className="flex min-w-0 flex-1 items-center gap-[8px] truncate text-left"
-                      >
-                        <WorkspacePickerIcon
-                          appearances={workspaceRailAppearances}
-                          workspaceKey={groupKey}
-                          isHome={isHomeRow}
-                        />
-                        <span className="min-w-0 flex-1 truncate">{group.workspace.name}</span>
-                      </button>
-                      {current ? (
-                        <Check className="size-[13px] shrink-0" strokeWidth={2} />
-                      ) : null}
-                    </div>
-                  );
-                })}
+                {workspaceRepositorySections.map((section) => (
+                  <div key={section.key}>
+                    {section.machineCount > 1 ? (
+                      <div className="flex items-center gap-[6px] px-[8px] pb-[2px] pt-[6px] font-sans text-[9.5px] font-medium text-[var(--text-disabled)]">
+                        <FolderGit2 className="size-[11px] shrink-0" strokeWidth={1.5} />
+                        <span className="min-w-0 flex-1 truncate">{section.label}</span>
+                        <span className="shrink-0">{section.machineCount} machines</span>
+                      </div>
+                    ) : null}
+                    {section.items.map((group) => {
+                      const groupKey = group.workspaceKey;
+                      const current =
+                        !standaloneDraftActive && groupKey === activeWorkspaceAppearanceKey;
+                      const isHomeRow = Boolean(
+                        homeWorkspaceId &&
+                        group.id === homeWorkspaceId &&
+                        group.serverId === activeServer.id
+                      );
+                      return (
+                        <div
+                          key={groupKey}
+                          className="group flex items-center gap-[6px] rounded-[var(--radius-tab)] px-[8px] py-[5px] font-sans text-[12.5px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)]"
+                        >
+                          <button
+                            type="button"
+                            onClick={() => {
+                              void (async () => {
+                                setStandaloneDraftActive(false);
+                                if (group.serverId !== activeServer.id) {
+                                  setActiveServer(group.serverId);
+                                }
+                                await openWorkspaceById(group.id);
+                              })();
+                              setWorkspacePickerOpen(false);
+                            }}
+                            className="flex min-w-0 flex-1 items-center gap-[8px] truncate text-left"
+                          >
+                            <WorkspacePickerIcon
+                              appearances={workspaceRailAppearances}
+                              workspaceKey={groupKey}
+                              isHome={isHomeRow}
+                            />
+                            <span className="min-w-0 flex-1 truncate">{group.name}</span>
+                            {workspaceMachineOptions.length > 1 ? (
+                              <span className="max-w-[88px] shrink truncate font-sans text-[9.5px] text-[var(--text-disabled)]">
+                                {workspaceMachineOptions.find(
+                                  (machine) => machine.id === group.serverId
+                                )?.label ?? group.serverLabel}
+                              </span>
+                            ) : null}
+                          </button>
+                          {current ? (
+                            <Check className="size-[13px] shrink-0" strokeWidth={2} />
+                          ) : null}
+                        </div>
+                      );
+                    })}
+                  </div>
+                ))}
                 {filteredWorkspaceGroups.length === 0 ? (
                   <div className="px-[8px] py-[8px] font-sans text-[12px] text-[var(--text-disabled)]">
                     No workspaces found

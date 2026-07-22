@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { burnProgressStatuses, latestBurnProgressStatus } from "../src/lib/agent-chat";
+import { goalProgressStatuses, latestGoalProgressStatus } from "../src/lib/agent-chat";
 import type { AgentStoredEvent } from "../src/lib/agent-types";
 
-test("latestBurnProgressStatus reads the latest completed Burn summarize tool event", () => {
+test("latestGoalProgressStatus reads the latest completed Goal summarize tool event", () => {
   const events: AgentStoredEvent[] = [
     {
       seq: 1,
@@ -15,10 +15,10 @@ test("latestBurnProgressStatus reads the latest completed Burn summarize tool ev
       status: "completed",
       raw: {
         request: {
-          name: "burn_goal_summarize",
+          name: "goal_summarize",
           arguments: {
             progressPercent: 33,
-            headline: "Initial Burn snapshot",
+            headline: "Initial Goal snapshot",
             summary: "## Progress\n- Started.",
           },
         },
@@ -34,10 +34,10 @@ test("latestBurnProgressStatus reads the latest completed Burn summarize tool ev
       status: "completed",
       raw: {
         request: {
-          name: "burn_goal_summarize_state",
+          name: "goal_summarize_state",
           arguments: {
             progressPercent: 67.4,
-            headline: "Burn verification underway",
+            headline: "Goal verification underway",
             summary: "## Progress\n- Most implementation is done.",
           },
         },
@@ -45,33 +45,33 @@ test("latestBurnProgressStatus reads the latest completed Burn summarize tool ev
     },
   ];
 
-  assert.deepEqual(latestBurnProgressStatus(events), {
+  assert.deepEqual(latestGoalProgressStatus(events), {
     progressPercent: 67,
-    headline: "Burn verification underway",
+    headline: "Goal verification underway",
     summary: "## Progress\n- Most implementation is done.",
     updatedAt: 20,
     toolCallId: "tool-2",
     history: [
       {
         progressPercent: 33,
-        headline: "Initial Burn snapshot",
+        headline: "Initial Goal snapshot",
         summary: "## Progress\n- Started.",
         updatedAt: 10,
         toolCallId: "tool-1",
       },
       {
         progressPercent: 67,
-        headline: "Burn verification underway",
+        headline: "Goal verification underway",
         summary: "## Progress\n- Most implementation is done.",
         updatedAt: 20,
         toolCallId: "tool-2",
       },
     ],
   });
-  assert.equal(burnProgressStatuses(events).length, 2);
+  assert.equal(goalProgressStatuses(events).length, 2);
 });
 
-test("latestBurnProgressStatus ignores failed or unrelated tool events", () => {
+test("latestGoalProgressStatus ignores failed or unrelated tool events", () => {
   const events: AgentStoredEvent[] = [
     {
       seq: 1,
@@ -83,7 +83,7 @@ test("latestBurnProgressStatus ignores failed or unrelated tool events", () => {
       status: "failed",
       raw: {
         request: {
-          name: "burn_goal_summarize_state",
+          name: "goal_summarize_state",
           arguments: { progressPercent: 50 },
         },
       },
@@ -98,17 +98,17 @@ test("latestBurnProgressStatus ignores failed or unrelated tool events", () => {
       status: "completed",
       raw: {
         request: {
-          name: "burn_goal_set",
+          name: "goal_set",
           arguments: { progressPercent: 99 },
         },
       },
     },
   ];
 
-  assert.equal(latestBurnProgressStatus(events), null);
+  assert.equal(latestGoalProgressStatus(events), null);
 });
 
-test("latestBurnProgressStatus marks progress completed after burn_goal_complete", () => {
+test("latestGoalProgressStatus marks progress completed after goal_complete", () => {
   const events: AgentStoredEvent[] = [
     {
       seq: 1,
@@ -120,7 +120,7 @@ test("latestBurnProgressStatus marks progress completed after burn_goal_complete
       status: "completed",
       raw: {
         request: {
-          name: "burn_goal_summarize",
+          name: "goal_summarize",
           arguments: {
             progressPercent: 100,
             headline: "Done",
@@ -139,17 +139,17 @@ test("latestBurnProgressStatus marks progress completed after burn_goal_complete
       status: "completed",
       raw: {
         request: {
-          name: "burn_goal_complete",
+          name: "goal_complete",
           arguments: {},
         },
       },
     },
   ];
 
-  assert.equal(latestBurnProgressStatus(events)?.completedAt, 20);
+  assert.equal(latestGoalProgressStatus(events)?.completedAt, 20);
 });
 
-test("latestBurnProgressStatus ignores completion before the latest progress snapshot", () => {
+test("latestGoalProgressStatus ignores completion before the latest progress snapshot", () => {
   const events: AgentStoredEvent[] = [
     {
       seq: 1,
@@ -161,7 +161,7 @@ test("latestBurnProgressStatus ignores completion before the latest progress sna
       status: "completed",
       raw: {
         request: {
-          name: "burn_goal_complete",
+          name: "goal_complete",
           arguments: {},
         },
       },
@@ -176,7 +176,7 @@ test("latestBurnProgressStatus ignores completion before the latest progress sna
       status: "completed",
       raw: {
         request: {
-          name: "burn_goal_summarize",
+          name: "goal_summarize",
           arguments: {
             progressPercent: 25,
             headline: "New goal",
@@ -187,10 +187,10 @@ test("latestBurnProgressStatus ignores completion before the latest progress sna
     },
   ];
 
-  assert.equal(latestBurnProgressStatus(events)?.completedAt, undefined);
+  assert.equal(latestGoalProgressStatus(events)?.completedAt, undefined);
 });
 
-test("latestBurnProgressStatus tracks goal runtime only during running spans", () => {
+test("latestGoalProgressStatus tracks goal runtime only during running spans", () => {
   const events: AgentStoredEvent[] = [
     {
       seq: 1,
@@ -210,7 +210,7 @@ test("latestBurnProgressStatus tracks goal runtime only during running spans", (
       status: "completed",
       raw: {
         request: {
-          name: "burn_goal_set",
+          name: "goal_set",
           arguments: { objective: "Ship the goal runtime footer" },
         },
       },
@@ -225,7 +225,7 @@ test("latestBurnProgressStatus tracks goal runtime only during running spans", (
       status: "completed",
       raw: {
         request: {
-          name: "burn_goal_summarize",
+          name: "goal_summarize",
           arguments: {
             progressPercent: 40,
             headline: "Footer underway",
@@ -252,7 +252,7 @@ test("latestBurnProgressStatus tracks goal runtime only during running spans", (
     },
   ];
 
-  const status = latestBurnProgressStatus(events, "running");
+  const status = latestGoalProgressStatus(events, "running");
 
   assert.equal(status?.runtimeSeconds, 240);
   assert.equal(status?.runtimeActiveSince, 420_000);

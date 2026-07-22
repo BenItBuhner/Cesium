@@ -6,15 +6,17 @@ export type CesiumHistoryToolCall = {
   arguments: string;
 };
 
-export type CesiumHistoryImage = {
+export type CesiumImagePart = {
   mimeType: string;
   data: string;
+  name?: string;
 };
 
 export type CesiumHistoryMessage = {
   role: CesiumRole;
   content: string;
-  images?: CesiumHistoryImage[];
+  /** Image attachments for multimodal / vision models (OpenAI-compatible image_url parts). */
+  images?: CesiumImagePart[];
   toolCallId?: string;
   name?: string;
   toolCalls?: CesiumHistoryToolCall[];

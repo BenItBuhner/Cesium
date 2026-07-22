@@ -7,6 +7,7 @@ const ALL_BACKEND_IDS: AgentBackendId[] = [
   "cesium-agent",
   "cursor-sdk",
   "opencode-server",
+  "opencode-v2-beta",
   "devin-acp",
   "codex-app-server",
   "claude-code-sdk",
@@ -30,7 +31,7 @@ export type MigrationPhase =
   | "workspace-window-sessions"
   | "agent-conversations"
   | "agent-events"
-  | "burn-goals"
+  | "goals"
   | "extensions"
   | "provider-cache";
 
@@ -45,7 +46,7 @@ export const ALL_MIGRATION_PHASES: MigrationPhase[] = [
   "workspace-window-sessions",
   "agent-conversations",
   "agent-events",
-  "burn-goals",
+  "goals",
   "extensions",
   "provider-cache",
 ];
@@ -603,7 +604,7 @@ async function migrateAgentEvents(
   return { phase: "agent-events", migrated, skipped, errors };
 }
 
-async function migrateBurnGoals(ctx: PhaseContext): Promise<MigrationPhaseReport> {
+async function migrateGoals(ctx: PhaseContext): Promise<MigrationPhaseReport> {
   const errors: MigrationPhaseReport["errors"] = [];
   let migrated = 0;
   let skipped = 0;
@@ -615,10 +616,10 @@ async function migrateBurnGoals(ctx: PhaseContext): Promise<MigrationPhaseReport
       total: workspaces.length,
       currentKey: workspace.id,
     });
-    const goals = await ctx.from.listBurnGoals(workspace.id);
+    const goals = await ctx.from.listGoals(workspace.id);
     for (const goal of goals) {
       if (!ctx.overwrite) {
-        const existing = await ctx.to.getBurnGoalByConversation(
+        const existing = await ctx.to.getGoalByConversation(
           workspace.id,
           goal.conversationId
         );
@@ -628,7 +629,7 @@ async function migrateBurnGoals(ctx: PhaseContext): Promise<MigrationPhaseReport
         }
       }
       try {
-        await ctx.to.upsertBurnGoal(goal);
+        await ctx.to.upsertGoal(goal);
         migrated += 1;
       } catch (error) {
         errors.push({ key: goal.goalId, message: (error as Error).message });
@@ -639,7 +640,7 @@ async function migrateBurnGoals(ctx: PhaseContext): Promise<MigrationPhaseReport
     completed: workspaces.length,
     total: workspaces.length,
   });
-  return { phase: "burn-goals", migrated, skipped, errors };
+  return { phase: "goals", migrated, skipped, errors };
 }
 
 async function migrateExtensions(ctx: PhaseContext): Promise<MigrationPhaseReport> {
@@ -734,7 +735,7 @@ const PHASE_HANDLERS: Record<
   "workspace-window-sessions": migrateWorkspaceWindowSessions,
   "agent-conversations": migrateAgentConversations,
   "agent-events": migrateAgentEvents,
-  "burn-goals": migrateBurnGoals,
+  "goals": migrateGoals,
   extensions: migrateExtensions,
   "provider-cache": migrateProviderCache,
 };

@@ -88,14 +88,18 @@ export function openAiMessages(messages: CesiumHistoryMessage[]) {
         })),
       };
     }
-    if (message.role === "user" && message.images?.length) {
+    if (message.role === "user" && message.images && message.images.length > 0) {
       return {
         role: "user",
         content: [
-          ...(message.content ? [{ type: "text", text: message.content }] : []),
+          ...(message.content.trim()
+            ? [{ type: "text" as const, text: message.content }]
+            : []),
           ...message.images.map((image) => ({
-            type: "image_url",
-            image_url: { url: `data:${image.mimeType};base64,${image.data}` },
+            type: "image_url" as const,
+            image_url: {
+              url: toDataUrl(image.mimeType, image.data),
+            },
           })),
         ],
       };
@@ -105,6 +109,14 @@ export function openAiMessages(messages: CesiumHistoryMessage[]) {
       content: message.content,
     };
   });
+}
+
+function toDataUrl(mimeType: string, data: string): string {
+  const trimmed = data.trim();
+  if (trimmed.startsWith("data:")) {
+    return trimmed;
+  }
+  return `data:${mimeType || "image/png"};base64,${trimmed}`;
 }
 
 async function runOpenAiChat(input: {
@@ -179,10 +191,12 @@ async function* streamOpenAiResponses(input: {
           return {
             role: "user",
             content: [
-              ...(message.content ? [{ type: "input_text", text: message.content }] : []),
+              ...(message.content.trim()
+                ? [{ type: "input_text", text: message.content }]
+                : []),
               ...message.images.map((image) => ({
                 type: "input_image",
-                image_url: `data:${image.mimeType};base64,${image.data}`,
+                image_url: toDataUrl(image.mimeType, image.data),
               })),
             ],
           };

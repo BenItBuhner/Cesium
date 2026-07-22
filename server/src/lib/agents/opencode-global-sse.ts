@@ -124,13 +124,17 @@ export function normalizeOpenCodeToolKey(toolName: string): string {
  * Built-in OpenCode tools (see anomalyco/opencode packages). Unknown names fall through to `"other"`.
  * @see https://github.com/anomalyco/opencode
  */
-function mapOpenCodeToolNameToAcpKind(toolName: string): string {
+export function mapOpenCodeToolNameToAcpKind(toolName: string): string {
   const key = normalizeOpenCodeToolKey(toolName);
   switch (key) {
     case "bash":
+    case "shell":
+    case "execute":
       return "terminal";
     case "webfetch":
       return "fetch";
+    case "websearch":
+      return "search";
     case "edit":
     case "patch":
     case "write":
@@ -146,6 +150,7 @@ function mapOpenCodeToolNameToAcpKind(toolName: string): string {
     case "todoread":
       return "todo";
     case "task":
+    case "subagent":
       return "task";
     case "skill":
     case "question":
@@ -169,7 +174,7 @@ function mapOpenCodeToolNameToAcpKind(toolName: string): string {
   }
 }
 
-function mapOpenCodeToolLocations(
+export function mapOpenCodeToolLocations(
   toolName: string,
   input: Record<string, unknown>
 ): Array<{ path: string }> {

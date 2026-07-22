@@ -5,7 +5,7 @@ export {
   buildConversationModelOptions,
   buildDraftModeOptionsForBackend,
   buildDraftModelOptionsForBackend,
-  burnProgressStatuses,
+  goalProgressStatuses,
   dedupeAgentStoredEvents,
   extractComposerUserMessageHistory,
   extractLiveSubagentTranscriptFromMessages,
@@ -19,7 +19,7 @@ export {
   isAgentTodoJsonArrayPayload,
   isAgentTodoJsonDetailString,
   isIncomingEventDroppedByAcpToolStrip,
-  latestBurnProgressStatus,
+  latestGoalProgressStatus,
   mergeAgentConversationStatusFromEvent,
   projectAgentEventsToChatMessages,
   resolveConversationModel,
@@ -28,7 +28,7 @@ export {
   stripSpuriousAcpToolCallReplays,
 } from "@cesium/core";
 export type {
-  BurnProgressSnapshotStatus,
-  BurnProgressStatus,
+  GoalProgressSnapshotStatus,
+  GoalProgressStatus,
   ProjectAgentEventsOptions,
 } from "@cesium/core";

@@ -26,7 +26,7 @@ object CesiumLiveUpdateStateStore {
     "todoCompleted",
     "todoTotal",
     "todoCurrentIndex",
-    "burnProgressPercent",
+    "goalProgressPercent",
     "estimatedRemainingSeconds"
   )
   private val booleanKeys = listOf(

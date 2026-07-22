@@ -45,6 +45,11 @@ test("getPiAgentSettingsResponse lists minimum providers with oauth flags", asyn
   const payload = await getPiAgentSettingsResponse();
   assert.ok(Array.isArray(payload.providers));
   assert.ok(payload.settings);
+  assert.ok(payload.home);
+  assert.ok(payload.home.agentDir);
+  assert.ok(payload.home.nativeAgentDir);
+  assert.ok(payload.home.isolatedAgentDir);
+  assert.ok(payload.settings.agentHome === "native" || payload.settings.agentHome === "isolated");
   for (const providerId of PI_AGENT_MINIMUM_PROVIDER_IDS) {
     const provider = payload.providers.find((entry) => entry.id === providerId);
     assert.ok(provider, `expected provider entry for ${providerId}`);

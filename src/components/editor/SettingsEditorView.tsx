@@ -53,7 +53,7 @@ import {
   isLocalDeviceServer,
 } from "@/lib/server-rail-appearance";
 import { WorkspaceFolderIcon } from "@/lib/workspace-rail-appearance";
-import { SETTINGS_PANELS } from "@/components/editor/settings-panels";
+import { SETTINGS_PANELS } from "@/components/editor/settings";
 import { DefaultServerSettingsBanner } from "@/components/preferences/DefaultServerSettingsBanner";
 import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
 import { useUserPreferences } from "@/components/preferences/UserPreferencesProvider";
@@ -447,6 +447,15 @@ export function SettingsEditorView({ onCloseShell }: SettingsEditorViewProps = {
   const scrollRootRef = useRef<HTMLElement | null>(null);
   const debouncedSearchQuery = useDebouncedValue(searchQuery, 150);
   const scrollPersistTimerRef = useRef<number | null>(null);
+  /**
+   * Last {activeNav, searchQuery} pair this view wrote into the workspace session.
+   * The session->local sync effect skips values that merely echo our own write;
+   * otherwise a keystroke landing mid-echo leaves local and session state crossed,
+   * and the two sync effects swap the values forever (infinite update loop).
+   */
+  const lastWrittenSettingsSyncRef = useRef<{ nav: string; query: string } | null>(
+    null
+  );
   const pendingScrollTopRef = useRef(workspaceSession.settingsView.scrollTop);
   const persistedScrollTopRef = useRef<number | null>(null);
   const resolvedNav = activeNav;
@@ -579,6 +588,17 @@ export function SettingsEditorView({ onCloseShell }: SettingsEditorViewProps = {
 
   useEffect(() => {
     const persistedNav = workspaceSession.settingsView.activeNav;
+    const persistedQuery = workspaceSession.settingsView.searchQuery;
+    const lastWritten = lastWrittenSettingsSyncRef.current;
+    if (
+      lastWritten &&
+      lastWritten.nav === persistedNav &&
+      lastWritten.query === persistedQuery
+    ) {
+      // Echo of our own local->session write; applying it back would clobber
+      // newer local state (e.g. a keystroke) and start the sync ping-pong.
+      return;
+    }
     if (persistedNav === "tools" || persistedNav === "mcps") {
       updateWorkspaceSession((current) => ({
         ...current,
@@ -592,7 +612,7 @@ export function SettingsEditorView({ onCloseShell }: SettingsEditorViewProps = {
     } else {
       setActiveNav(persistedNav);
     }
-    setSearchQuery(workspaceSession.settingsView.searchQuery);
+    setSearchQuery(persistedQuery);
   }, [
     updateWorkspaceSession,
     workspaceSession.settingsView.activeNav,
@@ -600,14 +620,20 @@ export function SettingsEditorView({ onCloseShell }: SettingsEditorViewProps = {
   ]);
 
   useEffect(() => {
-    updateWorkspaceSession((current) => ({
-      ...current,
-      settingsView: {
-        ...current.settingsView,
-        activeNav,
-        searchQuery,
-      },
-    }));
+    lastWrittenSettingsSyncRef.current = { nav: activeNav, query: searchQuery };
+    updateWorkspaceSession((current) =>
+      current.settingsView.activeNav === activeNav &&
+      current.settingsView.searchQuery === searchQuery
+        ? current
+        : {
+            ...current,
+            settingsView: {
+              ...current.settingsView,
+              activeNav,
+              searchQuery,
+            },
+          }
+    );
   }, [activeNav, searchQuery, updateWorkspaceSession]);
 
   const flushPersistedScrollTop = useCallback(() => {

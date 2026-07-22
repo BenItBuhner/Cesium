@@ -36,7 +36,7 @@ export function isAgentCesiumPauseDraining(status: AgentConversationStatus): boo
   return status === "pause_requested" || status === "pausing";
 }
 
-export type BurnProgressSnapshotStatus = {
+export type GoalProgressSnapshotStatus = {
   progressPercent: number;
   headline: string | null;
   summary: string | null;
@@ -44,9 +44,9 @@ export type BurnProgressSnapshotStatus = {
   toolCallId: string;
 };
 
-export type BurnProgressStatus = BurnProgressSnapshotStatus & {
-  history: BurnProgressSnapshotStatus[];
-  /** Set when the latest Burn progress has since been marked complete. */
+export type GoalProgressStatus = GoalProgressSnapshotStatus & {
+  history: GoalProgressSnapshotStatus[];
+  /** Set when the latest Goal progress has since been marked complete. */
   completedAt?: number | null;
   /** Completed running time for this goal, excluding the currently active interval. */
   runtimeSeconds?: number;
@@ -60,19 +60,30 @@ function objectRecord(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
-function burnGoalToolNameFromEvent(event: AgentStoredEvent): string | null {
+function normalizeGoalToolName(name: string): string | null {
+  const trimmed = name.trim();
+  if (trimmed.startsWith("goal_")) {
+    return trimmed;
+  }
+  if (trimmed.startsWith("burn_goal_")) {
+    return `goal_${trimmed.slice("burn_goal_".length)}`;
+  }
+  return null;
+}
+
+function goalToolNameFromEvent(event: AgentStoredEvent): string | null {
   if (event.kind !== "tool_call_update" || !event.raw) {
     return null;
   }
   const raw = objectRecord(event.raw);
   const request = objectRecord(raw?.request);
   const name = typeof request?.name === "string" ? request.name.trim() : "";
-  return name.startsWith("burn_goal_") ? name : null;
+  return normalizeGoalToolName(name);
 }
 
-function firstBurnGoalToolAt(events: readonly AgentStoredEvent[]): number | null {
+function firstGoalToolAt(events: readonly AgentStoredEvent[]): number | null {
   for (const event of events) {
-    if (burnGoalToolNameFromEvent(event)) {
+    if (goalToolNameFromEvent(event)) {
       return event.createdAt;
     }
   }
@@ -83,14 +94,14 @@ function isGoalRuntimeRunningStatus(status: AgentConversationStatus | null | und
   return status === "running";
 }
 
-function burnGoalRuntimeStatus(
+function goalRuntimeStatus(
   events: readonly AgentStoredEvent[],
   conversationStatus: AgentConversationStatus | null | undefined
-): Pick<BurnProgressStatus, "runtimeSeconds" | "runtimeActiveSince"> | null {
+): Pick<GoalProgressStatus, "runtimeSeconds" | "runtimeActiveSince"> | null {
   if (!conversationStatus) {
     return null;
   }
-  const goalStartedAt = firstBurnGoalToolAt(events);
+  const goalStartedAt = firstGoalToolAt(events);
   if (goalStartedAt == null) {
     return null;
   }
@@ -146,10 +157,10 @@ function burnGoalRuntimeStatus(
   };
 }
 
-export function burnProgressStatuses(
+export function goalProgressStatuses(
   events: readonly AgentStoredEvent[]
-): BurnProgressSnapshotStatus[] {
-  const statuses: BurnProgressSnapshotStatus[] = [];
+): GoalProgressSnapshotStatus[] {
+  const statuses: GoalProgressSnapshotStatus[] = [];
   for (let index = 0; index < events.length; index += 1) {
     const event = events[index]!;
     if (
@@ -161,10 +172,13 @@ export function burnProgressStatuses(
     }
     const raw = objectRecord(event.raw);
     const request = objectRecord(raw?.request);
-    if (request?.name !== "burn_goal_summarize" && request?.name !== "burn_goal_summarize_state") {
+    const toolName = normalizeGoalToolName(
+      typeof request?.name === "string" ? request.name : ""
+    );
+    if (toolName !== "goal_summarize" && toolName !== "goal_summarize_state") {
       continue;
     }
-    const args = objectRecord(request.arguments);
+    const args = objectRecord(request?.arguments);
     if (!args) {
       continue;
     }
@@ -189,11 +203,11 @@ export function burnProgressStatuses(
   return statuses;
 }
 
-export function latestBurnProgressStatus(
+export function latestGoalProgressStatus(
   events: readonly AgentStoredEvent[],
   conversationStatus?: AgentConversationStatus | null
-): BurnProgressStatus | null {
-  const history = burnProgressStatuses(events);
+): GoalProgressStatus | null {
+  const history = goalProgressStatuses(events);
   const latest = history.at(-1);
   if (!latest) {
     return null;
@@ -207,11 +221,11 @@ export function latestBurnProgressStatus(
     ) {
       continue;
     }
-    if (burnGoalToolNameFromEvent(event) === "burn_goal_complete") {
+    if (goalToolNameFromEvent(event) === "goal_complete") {
       completedAt = event.createdAt;
     }
   }
-  const runtime = burnGoalRuntimeStatus(events, conversationStatus);
+  const runtime = goalRuntimeStatus(events, conversationStatus);
   const completion = completedAt == null ? {} : { completedAt };
   return runtime
     ? { ...latest, history, ...completion, ...runtime }
@@ -265,7 +279,6 @@ import type {
 import { questionEventToChatMessage } from "./ask-question-dock";
 import {
   DEFAULT_MODE_OPTIONS,
-  filterGoalModeOptions,
   formatModeLabel,
   resolveCanonicalModeId,
 } from "./chat-modes";
@@ -308,6 +321,7 @@ function modelProviderForBackend(backendId: AgentBackendId): ModelInfo["provider
     case "cursor-sdk":
       return "cursor";
     case "opencode-server":
+    case "opencode-v2-beta":
       return "opencode";
     case "google-antigravity-cli":
       return "google";
@@ -325,7 +339,7 @@ function isCodexBackendId(backendId: AgentBackendId | undefined): boolean {
 }
 
 function isOpenCodeBackendId(backendId: AgentBackendId | undefined): boolean {
-  return backendId === "opencode-server";
+  return backendId === "opencode-server" || backendId === "opencode-v2-beta";
 }
 
 function getBackendForConversation(
@@ -493,21 +507,17 @@ export function findConversationModeConfigOption(
 
 export function buildConversationModeOptions(
   conversation: AgentConversationRecord,
-  backends: AgentBackendInfo[] = [],
-  options: { goalModeBetaEnabled?: boolean } = {}
+  backends: AgentBackendInfo[] = []
 ): AgentModeOption[] {
-  const goalModeBetaEnabled = options.goalModeBetaEnabled === true;
   const modeOption = findConversationModeConfigOption(conversation, backends);
   if (!modeOption || modeOption.options.length === 0) {
-    return filterGoalModeOptions(DEFAULT_MODE_OPTIONS, goalModeBetaEnabled);
+    return DEFAULT_MODE_OPTIONS;
   }
-  const rows = modeOption.options
-    .map((option) => ({
-      id: option.value,
-      label: formatModeLabel(option.name.trim() || option.value),
-      description: option.description,
-    }));
-  return filterGoalModeOptions(rows, goalModeBetaEnabled);
+  return modeOption.options.map((option) => ({
+    id: option.value,
+    label: formatModeLabel(option.name.trim() || option.value),
+    description: option.description,
+  }));
 }
 
 export function findConversationModelConfigOption(
@@ -1556,8 +1566,8 @@ function summarizeWorkedToolBucket(
       return count === 1 ? "ran a command" : `ran ${count} commands`;
     case "todo":
       return count === 1 ? "updated todo list" : `updated todo list ${count} times`;
-    case "burn":
-      return count === 1 ? "updated Burn goal" : `updated Burn goal ${count} times`;
+    case "goal":
+      return count === 1 ? "updated Goal" : `updated Goal ${count} times`;
     case "workflow":
       return count === 1 ? "ran a workflow" : `ran workflows ${count} times`;
     case "question":
@@ -2813,11 +2823,12 @@ function burnToolRequestFromRaw(
     parseLooseJsonObject(rawToolRecord?.request) ??
     rawToolRecord;
   const rawName = typeof request?.name === "string" ? request.name.trim() : "";
-  if (!rawName.startsWith("burn_goal_")) {
+  const normalizedName = normalizeGoalToolName(rawName);
+  if (!normalizedName) {
     return null;
   }
   return {
-    name: rawName,
+    name: normalizedName,
     args: parseLooseJsonObject(request?.arguments) ?? parseLooseJsonObject(request?.args) ?? {},
   };
 }
@@ -2842,28 +2853,28 @@ function countDoneItems(value: unknown): { done: number; total: number } | null 
   return total > 0 ? { done, total } : null;
 }
 
-function burnProgressPercent(args: Record<string, unknown>): string | undefined {
+function goalProgressPercent(args: Record<string, unknown>): string | undefined {
   const raw = args.progressPercent;
   return typeof raw === "number" && Number.isFinite(raw)
     ? `${Math.max(0, Math.min(100, Math.round(raw)))}%`
     : undefined;
 }
 
-function burnGoalToolPresentation(
-  burn: { name: string; args: Record<string, unknown> }
+function goalToolPresentation(
+  goal: { name: string; args: Record<string, unknown> }
 ): { title: string; detail?: string } {
-  switch (burn.name) {
-    case "burn_goal_set": {
+  switch (goal.name) {
+    case "goal_set": {
       const summary =
-        typeof burn.args.planSummary === "string" && burn.args.planSummary.trim()
-          ? truncateMiddleLabel(burn.args.planSummary.trim(), 96)
-          : typeof burn.args.objective === "string" && burn.args.objective.trim()
-            ? truncateMiddleLabel(burn.args.objective.trim(), 96)
+        typeof goal.args.planSummary === "string" && goal.args.planSummary.trim()
+          ? truncateMiddleLabel(goal.args.planSummary.trim(), 96)
+          : typeof goal.args.objective === "string" && goal.args.objective.trim()
+            ? truncateMiddleLabel(goal.args.objective.trim(), 96)
             : undefined;
-      const milestones = countDoneItems(burn.args.milestones);
-      const todos = countDoneItems(burn.args.todos);
-      const evidenceCount = Array.isArray(burn.args.verificationEvidence)
-        ? burn.args.verificationEvidence.length
+      const milestones = countDoneItems(goal.args.milestones);
+      const todos = countDoneItems(goal.args.todos);
+      const evidenceCount = Array.isArray(goal.args.verificationEvidence)
+        ? goal.args.verificationEvidence.length
         : 0;
       const counts = [
         milestones ? `${milestones.done}/${milestones.total} milestones` : null,
@@ -2871,22 +2882,22 @@ function burnGoalToolPresentation(
         evidenceCount > 0 ? `${evidenceCount} verification note${evidenceCount === 1 ? "" : "s"}` : null,
       ].filter(Boolean);
       const detail = summary ?? (counts.length > 0 ? counts.join(" · ") : undefined);
-      return { title: "Set Burn goal", detail };
+      return { title: "Set Goal", detail };
     }
-    case "burn_goal_get":
-      return { title: "Read Burn goal", detail: "Loaded current objective, plan, and progress state" };
-    case "burn_goal_update_plan": {
+    case "goal_get":
+      return { title: "Read Goal", detail: "Loaded current objective, plan, and progress state" };
+    case "goal_update_plan": {
       const summary =
-        typeof burn.args.planSummary === "string" && burn.args.planSummary.trim()
-          ? truncateMiddleLabel(burn.args.planSummary.trim(), 96)
+        typeof goal.args.planSummary === "string" && goal.args.planSummary.trim()
+          ? truncateMiddleLabel(goal.args.planSummary.trim(), 96)
           : undefined;
-      return { title: "Record Burn plan", detail: summary };
+      return { title: "Record Goal plan", detail: summary };
     }
-    case "burn_goal_update_progress": {
-      const milestones = countDoneItems(burn.args.milestones);
-      const todos = countDoneItems(burn.args.todos);
-      const evidenceCount = Array.isArray(burn.args.verificationEvidence)
-        ? burn.args.verificationEvidence.length
+    case "goal_update_progress": {
+      const milestones = countDoneItems(goal.args.milestones);
+      const todos = countDoneItems(goal.args.todos);
+      const evidenceCount = Array.isArray(goal.args.verificationEvidence)
+        ? goal.args.verificationEvidence.length
         : 0;
       const parts = [
         milestones ? `${milestones.done}/${milestones.total} milestones` : null,
@@ -2894,42 +2905,42 @@ function burnGoalToolPresentation(
         evidenceCount > 0 ? `${evidenceCount} verification note${evidenceCount === 1 ? "" : "s"}` : null,
       ].filter(Boolean);
       return {
-        title: "Update Burn progress",
+        title: "Update Goal progress",
         detail: parts.length > 0 ? parts.join(" · ") : "Milestones, todos, or verification updated",
       };
     }
-    case "burn_goal_summarize":
-    case "burn_goal_summarize_state": {
-      const percent = burnProgressPercent(burn.args);
+    case "goal_summarize":
+    case "goal_summarize_state": {
+      const percent = goalProgressPercent(goal.args);
       const headline =
-        typeof burn.args.headline === "string" && burn.args.headline.trim()
-          ? truncateMiddleLabel(burn.args.headline.trim(), 96)
+        typeof goal.args.headline === "string" && goal.args.headline.trim()
+          ? truncateMiddleLabel(goal.args.headline.trim(), 96)
           : undefined;
       return {
-        title: "Summarize Burn goal",
+        title: "Summarize Goal",
         detail: [percent, headline].filter(Boolean).join(" · ") || undefined,
       };
     }
-    case "burn_goal_complete":
-      return { title: "Complete Burn goal", detail: "Objective marked complete after final verification" };
-    case "burn_goal_block": {
+    case "goal_complete":
+      return { title: "Complete Goal", detail: "Objective marked complete after final verification" };
+    case "goal_block": {
       const reason =
-        typeof burn.args.reason === "string" && burn.args.reason.trim()
-          ? truncateMiddleLabel(burn.args.reason.trim(), 96)
+        typeof goal.args.reason === "string" && goal.args.reason.trim()
+          ? truncateMiddleLabel(goal.args.reason.trim(), 96)
           : undefined;
-      return { title: "Block Burn goal", detail: reason };
+      return { title: "Block Goal", detail: reason };
     }
-    case "burn_goal_pause": {
+    case "goal_pause": {
       const reason =
-        typeof burn.args.reason === "string" && burn.args.reason.trim()
-          ? truncateMiddleLabel(burn.args.reason.trim(), 96)
+        typeof goal.args.reason === "string" && goal.args.reason.trim()
+          ? truncateMiddleLabel(goal.args.reason.trim(), 96)
           : undefined;
-      return { title: "Pause Burn goal", detail: reason };
+      return { title: "Pause Goal", detail: reason };
     }
-    case "burn_goal_resume":
-      return { title: "Resume Burn goal", detail: "Goal returned to active execution" };
+    case "goal_resume":
+      return { title: "Resume Goal", detail: "Goal returned to active execution" };
     default:
-      return { title: "Update Burn goal" };
+      return { title: "Update Goal" };
   }
 }
 
@@ -3151,11 +3162,11 @@ function formatToolSummary(
   const rawDetail = isVerboseToolPayloadDetail(detail) ? detail?.trim() : existing?.rawDetail;
   const burnTool = burnToolRequestFromRaw(rawTop, rawToolRecord);
   if (burnTool) {
-    const presentation = burnGoalToolPresentation(burnTool);
+    const presentation = goalToolPresentation(burnTool);
     return withConciseToolDetail({
       kind: "tool",
       toolCallId: event.toolCallId,
-      toolKind: "burn",
+      toolKind: "goal",
       title: presentation.title,
       detail:
         presentation.detail ??
@@ -4766,7 +4777,7 @@ export function buildConversationModelOptions(
   const catalogOptionCount = modelOption?.options.length ?? 0;
   const stalePlaceholderToggles =
     (conversation.config.backendId === "pi-agent" ||
-      conversation.config.backendId === "opencode-server") &&
+      isOpenCodeBackendId(conversation.config.backendId)) &&
     (backendToggles?.length ?? 0) === 1 &&
     backendToggles?.[0]?.id.trim().toLowerCase() === "auto" &&
     catalogOptionCount > 1;
@@ -4904,10 +4915,9 @@ export function resolveDraftModelForBackend(
 }
 
 export function buildDraftModeOptionsForBackend(
-  backend: AgentBackendInfo,
-  options: { goalModeBetaEnabled?: boolean } = {}
+  backend: AgentBackendInfo
 ): AgentModeOption[] {
-  return buildConversationModeOptions(createBackendDraftConversation(backend), [backend], options);
+  return buildConversationModeOptions(createBackendDraftConversation(backend), [backend]);
 }
 
 export function resolveConversationModel(

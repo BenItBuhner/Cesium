@@ -29,14 +29,14 @@ import type {
   OrchestrationBoardSnapshot,
 } from "../../lib/orchestration/types.js";
 import type {
-  BurnGoalPatch,
-  BurnGoalRecord,
-} from "../../lib/agents/burn-goal-types.js";
+  GoalPatch,
+  GoalRecord,
+} from "../../lib/agents/goal-types.js";
 import {
-  normalizeBurnGoalProgressPercent,
-  normalizeBurnGoalRevision,
-  normalizeBurnGoalSnapshots,
-} from "../../lib/agents/burn-goal-types.js";
+  normalizeGoalProgressPercent,
+  normalizeGoalRevision,
+  normalizeGoalSnapshots,
+} from "../../lib/agents/goal-types.js";
 import type {
   ExtensionInstallRecord,
   ExtensionPermissionGrant,
@@ -74,7 +74,11 @@ function getOrchestrationBoardsDir(workspaceId: string): string {
   return path.join(DATA_DIR, "workspaces", workspaceId, "orchestration");
 }
 
-function getBurnGoalsFile(workspaceId: string): string {
+function getGoalsFile(workspaceId: string): string {
+  return path.join(DATA_DIR, "workspaces", workspaceId, "goals.json");
+}
+
+function getLegacyBurnGoalsFile(workspaceId: string): string {
   return path.join(DATA_DIR, "workspaces", workspaceId, "burn-goals.json");
 }
 
@@ -128,9 +132,9 @@ type PersistedWorkspaceWindowRegistry = {
   windows: WorkspaceWindowRecord[];
 };
 
-type PersistedBurnGoalsFile = {
+type PersistedGoalsFile = {
   schemaVersion: 1;
-  goals: BurnGoalRecord[];
+  goals: GoalRecord[];
 };
 
 type PersistedExtensionsFile = {
@@ -138,11 +142,11 @@ type PersistedExtensionsFile = {
   extensions: ExtensionInstallRecord[];
 };
 
-function isBurnGoalRecord(value: unknown): value is BurnGoalRecord {
+function isGoalRecord(value: unknown): value is GoalRecord {
   if (!value || typeof value !== "object") {
     return false;
   }
-  const record = value as Partial<BurnGoalRecord>;
+  const record = value as Partial<GoalRecord>;
   return (
     record.schemaVersion === 1 &&
     typeof record.goalId === "string" &&
@@ -154,38 +158,44 @@ function isBurnGoalRecord(value: unknown): value is BurnGoalRecord {
   );
 }
 
-function normalizeBurnGoalRecord(record: BurnGoalRecord): BurnGoalRecord {
-  const raw = record as Partial<BurnGoalRecord>;
+function normalizeGoalRecord(record: GoalRecord): GoalRecord {
+  const raw = record as Partial<GoalRecord>;
   return {
     ...record,
-    progressPercent: normalizeBurnGoalProgressPercent(raw.progressPercent),
+    progressPercent: normalizeGoalProgressPercent(raw.progressPercent),
     headline: typeof raw.headline === "string" && raw.headline.trim()
       ? raw.headline.trim()
       : null,
-    revision: normalizeBurnGoalRevision(raw.revision),
-    snapshots: normalizeBurnGoalSnapshots(raw.snapshots),
+    revision: normalizeGoalRevision(raw.revision),
+    snapshots: normalizeGoalSnapshots(raw.snapshots),
   };
 }
 
-async function readBurnGoalsFile(workspaceId: string): Promise<BurnGoalRecord[]> {
-  const raw = await readJsonFile<PersistedBurnGoalsFile | null>(
-    getBurnGoalsFile(workspaceId),
+async function readGoalsFile(workspaceId: string): Promise<GoalRecord[]> {
+  let raw = await readJsonFile<PersistedGoalsFile | null>(
+    getGoalsFile(workspaceId),
     null
   );
   if (!raw || raw.schemaVersion !== 1 || !Array.isArray(raw.goals)) {
+    raw = await readJsonFile<PersistedGoalsFile | null>(
+      getLegacyBurnGoalsFile(workspaceId),
+      null
+    );
+  }
+  if (!raw || raw.schemaVersion !== 1 || !Array.isArray(raw.goals)) {
     return [];
   }
-  return raw.goals.filter(isBurnGoalRecord).map(normalizeBurnGoalRecord);
+  return raw.goals.filter(isGoalRecord).map(normalizeGoalRecord);
 }
 
-async function writeBurnGoalsFile(
+async function writeGoalsFile(
   workspaceId: string,
-  goals: BurnGoalRecord[]
+  goals: GoalRecord[]
 ): Promise<void> {
-  await writeJsonFile(getBurnGoalsFile(workspaceId), {
+  await writeJsonFile(getGoalsFile(workspaceId), {
     schemaVersion: 1,
     goals,
-  } satisfies PersistedBurnGoalsFile);
+  } satisfies PersistedGoalsFile);
 }
 
 function isExtensionInstallRecord(value: unknown): value is ExtensionInstallRecord {
@@ -658,38 +668,38 @@ export class LegacyJsonStorageDriver implements StorageDriver {
     return all.slice(-limit);
   }
 
-  // ---------- Burn goals ----------
-  async getBurnGoalByConversation(
+  // ---------- Goals ----------
+  async getGoalByConversation(
     workspaceId: string,
     conversationId: string
-  ): Promise<BurnGoalRecord | null> {
-    const goals = await readBurnGoalsFile(workspaceId);
+  ): Promise<GoalRecord | null> {
+    const goals = await readGoalsFile(workspaceId);
     return goals.find((goal) => goal.conversationId === conversationId) ?? null;
   }
 
-  async upsertBurnGoal(record: BurnGoalRecord): Promise<void> {
-    const goals = await readBurnGoalsFile(record.workspaceId);
+  async upsertGoal(record: GoalRecord): Promise<void> {
+    const goals = await readGoalsFile(record.workspaceId);
     const next = goals.some((goal) => goal.goalId === record.goalId)
       ? goals.map((goal) => (goal.goalId === record.goalId ? record : goal))
       : [
           ...goals.filter((goal) => goal.conversationId !== record.conversationId),
           record,
         ];
-    await writeBurnGoalsFile(record.workspaceId, next);
+    await writeGoalsFile(record.workspaceId, next);
   }
 
-  async updateBurnGoal(
+  async updateGoal(
     workspaceId: string,
     conversationId: string,
-    patch: BurnGoalPatch
-  ): Promise<BurnGoalRecord | null> {
-    const goals = await readBurnGoalsFile(workspaceId);
+    patch: GoalPatch
+  ): Promise<GoalRecord | null> {
+    const goals = await readGoalsFile(workspaceId);
     const index = goals.findIndex((goal) => goal.conversationId === conversationId);
     if (index < 0) {
       return null;
     }
     const current = goals[index]!;
-    const next: BurnGoalRecord = {
+    const next: GoalRecord = {
       ...current,
       ...patch,
       revision:
@@ -699,12 +709,12 @@ export class LegacyJsonStorageDriver implements StorageDriver {
       updatedAt: Date.now(),
     };
     goals[index] = next;
-    await writeBurnGoalsFile(workspaceId, goals);
+    await writeGoalsFile(workspaceId, goals);
     return next;
   }
 
-  async listBurnGoals(workspaceId: string): Promise<BurnGoalRecord[]> {
-    return (await readBurnGoalsFile(workspaceId)).sort(
+  async listGoals(workspaceId: string): Promise<GoalRecord[]> {
+    return (await readGoalsFile(workspaceId)).sort(
       (a, b) => b.updatedAt - a.updatedAt || a.goalId.localeCompare(b.goalId)
     );
   }
