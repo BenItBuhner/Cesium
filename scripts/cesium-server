@@ -38,8 +38,13 @@ LOCAL_URL="http://${HOST:-127.0.0.1}:${PORT:-9100}"
 BUN_BIN="${CESIUM_BUN_BIN:-$CESIUM_HOME/runtime/bin/bun}"
 CLOUDFLARED_BIN="${CESIUM_CLOUDFLARED_BIN:-$CESIUM_HOME/runtime/bin/cloudflared}"
 SERVER_PROCESS_SIGNATURE="server/src/runtime/bun-server.ts"
+PUBLIC_HEALTH_TIMEOUT="${CESIUM_PUBLIC_HEALTH_TIMEOUT:-120}"
 
 mkdir -p "$RUN_DIR" "$LOG_DIR"
+
+if [[ ! "$PUBLIC_HEALTH_TIMEOUT" =~ ^[0-9]+$ ]] || ((PUBLIC_HEALTH_TIMEOUT < 1)); then
+  PUBLIC_HEALTH_TIMEOUT=120
+fi
 
 read_pid() {
   local file="$1"
@@ -70,6 +75,10 @@ wait_for_health() {
     sleep 1
   done
   return 1
+}
+
+tunnel_required() {
+  [[ "${CESIUM_TUNNEL_REQUIRED:-0}" == "1" ]]
 }
 
 start_server() {
@@ -112,7 +121,6 @@ discover_quick_tunnel_url() {
       }' "$TUNNEL_LOG" 2>/dev/null || true
     )"
     if [[ -n "$candidate" ]]; then
-      printf '%s\n' "$candidate" >"$PUBLIC_URL_FILE"
       printf '%s' "$candidate"
       return 0
     fi
@@ -124,16 +132,53 @@ discover_quick_tunnel_url() {
   return 1
 }
 
+public_hostname() {
+  local remote="${1#https://}"
+  printf '%s' "${remote%%/*}"
+}
+
+describe_public_dns() {
+  local remote="$1"
+  local hostname
+  hostname="$(public_hostname "$remote")"
+  if command -v dig >/dev/null 2>&1; then
+    local status
+    status="$(dig +time=3 +tries=1 "$hostname" A 2>/dev/null | awk '
+      /status:/ {
+        sub(/^.*status: /, "")
+        sub(/,.*/, "")
+        print
+        exit
+      }' || true)"
+    [[ -n "$status" ]] && printf 'DNS status for %s: %s\n' "$hostname" "$status"
+    return 0
+  fi
+  if getent hosts "$hostname" >/dev/null 2>&1; then
+    printf 'DNS resolved for %s.\n' "$hostname"
+  else
+    printf 'DNS did not resolve for %s.\n' "$hostname"
+  fi
+}
+
 wait_for_public_health() {
   local remote="$1"
-  local attempt
-  for ((attempt = 1; attempt <= 30; attempt++)); do
-    if curl -fsS "$remote/health" >/dev/null 2>&1; then
+  local attempt last_error=""
+  for ((attempt = 1; attempt <= PUBLIC_HEALTH_TIMEOUT; attempt++)); do
+    local output
+    if output="$(curl -fsS --connect-timeout 5 --max-time 10 "$remote/health" 2>&1 >/dev/null)"; then
       return 0
     fi
+    last_error="$output"
     sleep 1
   done
+  printf 'Last public health error: %s\n' "${last_error:-unknown error}" >&2
+  describe_public_dns "$remote" >&2
   return 1
+}
+
+stop_tunnel() {
+  stop_managed_process "$TUNNEL_PID_FILE" "$CLOUDFLARED_BIN" "Tunnel"
+  rm -f "$PUBLIC_URL_FILE"
 }
 
 start_tunnel() {
@@ -167,6 +212,7 @@ start_tunnel() {
     fi
     if ! wait_for_public_health "${CESIUM_PUBLIC_URL%/}"; then
       printf 'The configured Cloudflare tunnel is running, but its public health check failed.\n' >&2
+      stop_tunnel
       return 1
     fi
     return 0
@@ -175,17 +221,19 @@ start_tunnel() {
   nohup "$CLOUDFLARED_BIN" tunnel --no-autoupdate \
     --url "$LOCAL_URL" >>"$TUNNEL_LOG" 2>&1 </dev/null &
   printf '%s\n' "$!" >"$TUNNEL_PID_FILE"
-  if ! discover_quick_tunnel_url >/dev/null; then
+  local remote
+  if ! remote="$(discover_quick_tunnel_url)"; then
     printf 'Cloudflare Quick Tunnel did not publish a URL.\n' >&2
     printf 'Inspect the tunnel log with: cesium-server logs tunnel\n' >&2
+    stop_tunnel
     return 1
   fi
-  local remote
-  remote="$(public_url)"
   if ! wait_for_public_health "$remote"; then
     printf 'Cloudflare Quick Tunnel published %s, but its health check failed.\n' "$remote" >&2
+    stop_tunnel
     return 1
   fi
+  printf '%s\n' "$remote" >"$PUBLIC_URL_FILE"
 }
 
 stop_managed_process() {
@@ -215,9 +263,8 @@ stop_managed_process() {
 }
 
 stop_all() {
-  stop_managed_process "$TUNNEL_PID_FILE" "$CLOUDFLARED_BIN" "Tunnel"
+  stop_tunnel
   stop_managed_process "$SERVER_PID_FILE" "$SERVER_PROCESS_SIGNATURE" "Server"
-  rm -f "$PUBLIC_URL_FILE"
 }
 
 public_url() {
@@ -242,7 +289,7 @@ print_connection_details() {
   if [[ "${CESIUM_TUNNEL_ENABLED:-0}" == "1" ]]; then
     local remote
     remote="$(public_url)" || {
-      printf 'Public tunnel: starting; run cesium-server connect shortly.\n'
+      printf 'Public tunnel: unavailable; run cesium-server run to retry.\n'
       return 0
     }
     printf 'Public URL: %s\n' "$remote"
@@ -302,6 +349,7 @@ update_install() {
     CESIUM_WORKSPACE_ROOT="${WORKSPACE_ROOT:-$HOME}" \
     CESIUM_AUTH_USERNAME="${OPENCURSOR_AUTH_USERNAME:-cesium}" \
     CESIUM_AUTH_PASSWORD="${OPENCURSOR_AUTH_PASSWORD:-}" \
+    CESIUM_TUNNEL_REQUIRED="${CESIUM_TUNNEL_REQUIRED:-0}" \
     CESIUM_TUNNEL_TOKEN="${CESIUM_TUNNEL_TOKEN:-}" \
     CESIUM_PUBLIC_URL="${CESIUM_PUBLIC_URL:-}" \
     exec "$SOURCE_DIR/scripts/install-cesium-server.sh"
@@ -310,7 +358,12 @@ update_install() {
 case "${1:-status}" in
   run | start)
     start_server
-    start_tunnel
+    if ! start_tunnel; then
+      if tunnel_required; then
+        exit 1
+      fi
+      printf 'Continuing with the local server; public Quick Tunnel is unavailable.\n' >&2
+    fi
     print_connection_details
     ;;
   stop)
@@ -320,7 +373,12 @@ case "${1:-status}" in
   restart)
     stop_all
     start_server
-    start_tunnel
+    if ! start_tunnel; then
+      if tunnel_required; then
+        exit 1
+      fi
+      printf 'Continuing with the local server; public Quick Tunnel is unavailable.\n' >&2
+    fi
     print_connection_details
     ;;
   status)

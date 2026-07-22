@@ -37,6 +37,7 @@ AUTH_USERNAME="${CESIUM_AUTH_USERNAME:-cesium}"
 AUTH_PASSWORD="${CESIUM_AUTH_PASSWORD:-}"
 TUNNEL_TOKEN="${CESIUM_TUNNEL_TOKEN:-}"
 PUBLIC_URL="${CESIUM_PUBLIC_URL:-}"
+TUNNEL_REQUIRED="${CESIUM_TUNNEL_REQUIRED:-}"
 SKIP_TUNNEL="${CESIUM_SKIP_TUNNEL:-0}"
 SKIP_AUTOSTART="${CESIUM_SKIP_AUTOSTART:-0}"
 
@@ -66,6 +67,14 @@ if [[ -n "$PUBLIC_URL" && ! "$PUBLIC_URL" =~ ^https:// ]]; then
 fi
 if [[ -n "$TUNNEL_TOKEN" && -z "$PUBLIC_URL" ]]; then
   printf 'CESIUM_PUBLIC_URL is required when CESIUM_TUNNEL_TOKEN is set.\n' >&2
+  exit 1
+fi
+if [[ -z "$TUNNEL_REQUIRED" ]]; then
+  TUNNEL_REQUIRED=0
+  [[ -n "$TUNNEL_TOKEN" ]] && TUNNEL_REQUIRED=1
+fi
+if [[ "$TUNNEL_REQUIRED" != "0" && "$TUNNEL_REQUIRED" != "1" ]]; then
+  printf 'CESIUM_TUNNEL_REQUIRED must be 0 or 1.\n' >&2
   exit 1
 fi
 
@@ -201,6 +210,7 @@ ENV_FILE="$CESIUM_HOME/server.env"
   write_env_value CESIUM_CLOUDFLARED_BIN "$RUNTIME_DIR/bin/cloudflared"
   write_env_value CESIUM_WEB_URL "$WEB_URL"
   write_env_value CESIUM_TUNNEL_ENABLED "$TUNNEL_ENABLED"
+  write_env_value CESIUM_TUNNEL_REQUIRED "$TUNNEL_REQUIRED"
   write_env_value CESIUM_TUNNEL_TOKEN "$TUNNEL_TOKEN"
   write_env_value CESIUM_PUBLIC_URL "${PUBLIC_URL%/}"
   write_env_value HOST "127.0.0.1"
