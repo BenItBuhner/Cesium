@@ -7,7 +7,7 @@ export type LiveUpdatePayload = {
   conversationId?: string | null;
   startedAt?: number | null;
   estimatedCompletionAt?: number | null;
-  progressKind: "todo" | "burn" | "indeterminate" | "terminal";
+  progressKind: "todo" | "goal" | "indeterminate" | "terminal";
   progressLabel?: string | null;
   progress?: number;
   progressMax?: number;
@@ -15,7 +15,7 @@ export type LiveUpdatePayload = {
   todoCompleted?: number;
   todoTotal?: number;
   todoCurrentIndex?: number | null;
-  burnProgressPercent?: number;
+  goalProgressPercent?: number;
   estimatedRemainingSeconds?: number | null;
   intervention?: "permission" | "question" | null;
   ongoing?: boolean;

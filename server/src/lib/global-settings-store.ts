@@ -106,7 +106,6 @@ export type GlobalSettings = {
   tools: Record<string, never>;
   features: {
     vscodeExtensionsBeta: boolean;
-    goalModeBeta: boolean;
   };
   keyboardShortcuts: {
     bindings: Record<string, string[]>;
@@ -208,7 +207,6 @@ function createDefaultSettings(): GlobalSettings {
     tools: {},
     features: {
       vscodeExtensionsBeta: false,
-      goalModeBeta: false,
     },
     keyboardShortcuts: {
       bindings: {},
@@ -688,11 +686,6 @@ function migrateGlobalSettings(raw: Record<string, unknown>): GlobalSettings {
           ? (r as { features: { vscodeExtensionsBeta: boolean } }).features
               .vscodeExtensionsBeta
           : defaults.features.vscodeExtensionsBeta,
-      goalModeBeta:
-        typeof (r as { features?: { goalModeBeta?: unknown } }).features
-          ?.goalModeBeta === "boolean"
-          ? (r as { features: { goalModeBeta: boolean } }).features.goalModeBeta
-          : defaults.features.goalModeBeta,
     },
     keyboardShortcuts: {
       bindings: typeof r.keyboardShortcuts === "object" && r.keyboardShortcuts

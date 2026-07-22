@@ -34,14 +34,14 @@ import type {
   OrchestrationIssueRecord,
 } from "../../lib/orchestration/types.js";
 import type {
-  BurnGoalPatch,
-  BurnGoalRecord,
-} from "../../lib/agents/burn-goal-types.js";
+  GoalPatch,
+  GoalRecord,
+} from "../../lib/agents/goal-types.js";
 import {
-  normalizeBurnGoalProgressPercent,
-  normalizeBurnGoalRevision,
-  normalizeBurnGoalSnapshots,
-} from "../../lib/agents/burn-goal-types.js";
+  normalizeGoalProgressPercent,
+  normalizeGoalRevision,
+  normalizeGoalSnapshots,
+} from "../../lib/agents/goal-types.js";
 import type {
   ExtensionInstallRecord,
   ExtensionPermissionGrant,
@@ -66,7 +66,7 @@ type OrchestrationIssueRow = typeof schema.orchestrationIssues.$inferSelect;
 type OrchestrationAssignmentRow =
   typeof schema.orchestrationAssignments.$inferSelect;
 type OrchestrationEventRow = typeof schema.orchestrationEvents.$inferSelect;
-type BurnGoalRow = typeof schema.burnGoals.$inferSelect;
+type GoalRow = typeof schema.goals.$inferSelect;
 type ExtensionInstallRow = typeof schema.extensionInstalls.$inferSelect;
 
 function rowToWorkspace(row: typeof schema.workspaces.$inferSelect): WorkspaceRecord {
@@ -219,24 +219,24 @@ function rowToOrchestrationEvent(
   };
 }
 
-function rowToBurnGoal(row: BurnGoalRow): BurnGoalRecord {
-  const payload = row.payload as Partial<BurnGoalRecord>;
+function rowToGoal(row: GoalRow): GoalRecord {
+  const payload = row.payload as Partial<GoalRecord>;
   return {
     schemaVersion: 1,
     goalId: row.goalId,
     workspaceId: row.workspaceId,
     conversationId: row.conversationId,
     objective: row.objective,
-    status: row.status as BurnGoalRecord["status"],
-    phase: row.phase as BurnGoalRecord["phase"],
+    status: row.status as GoalRecord["status"],
+    phase: row.phase as GoalRecord["phase"],
     tokenBudget: row.tokenBudget,
     tokensUsed: row.tokensUsed,
     timeUsedSeconds: row.timeUsedSeconds,
-    progressPercent: normalizeBurnGoalProgressPercent(payload.progressPercent),
+    progressPercent: normalizeGoalProgressPercent(payload.progressPercent),
     headline: typeof payload.headline === "string" && payload.headline.trim()
       ? payload.headline.trim()
       : null,
-    revision: normalizeBurnGoalRevision(payload.revision),
+    revision: normalizeGoalRevision(payload.revision),
     planSummary: typeof payload.planSummary === "string" ? payload.planSummary : "",
     milestones: Array.isArray(payload.milestones) ? payload.milestones : [],
     todos: Array.isArray(payload.todos) ? payload.todos : [],
@@ -244,10 +244,10 @@ function rowToBurnGoal(row: BurnGoalRow): BurnGoalRecord {
     verificationEvidence: Array.isArray(payload.verificationEvidence)
       ? payload.verificationEvidence
       : [],
-    snapshots: normalizeBurnGoalSnapshots(payload.snapshots),
+    snapshots: normalizeGoalSnapshots(payload.snapshots),
     compaction:
       payload.compaction && typeof payload.compaction === "object"
-        ? payload.compaction as BurnGoalRecord["compaction"]
+        ? payload.compaction as GoalRecord["compaction"]
         : { generation: 0 },
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
@@ -255,7 +255,7 @@ function rowToBurnGoal(row: BurnGoalRow): BurnGoalRecord {
   };
 }
 
-function burnGoalPayload(record: BurnGoalRecord): Record<string, unknown> {
+function goalPayload(record: GoalRecord): Record<string, unknown> {
   return {
     planSummary: record.planSummary,
     progressPercent: record.progressPercent,
@@ -979,25 +979,25 @@ async readAgentEvents(input: ReadAgentEventsInput): Promise<AgentStoredEvent[]> 
     return rows.reverse().map(rowToEvent);
   }
 
-  // ---------- Burn goals ----------
-  async getBurnGoalByConversation(
+  // ---------- Goals ----------
+  async getGoalByConversation(
     workspaceId: string,
     conversationId: string
-  ): Promise<BurnGoalRecord | null> {
+  ): Promise<GoalRecord | null> {
     const [row] = await getDb()
       .select()
-      .from(schema.burnGoals)
+      .from(schema.goals)
       .where(
         and(
-          eq(schema.burnGoals.workspaceId, workspaceId),
-          eq(schema.burnGoals.conversationId, conversationId)
+          eq(schema.goals.workspaceId, workspaceId),
+          eq(schema.goals.conversationId, conversationId)
         )
       )
       .limit(1);
-    return row ? rowToBurnGoal(row) : null;
+    return row ? rowToGoal(row) : null;
   }
 
-  async upsertBurnGoal(record: BurnGoalRecord): Promise<void> {
+  async upsertGoal(record: GoalRecord): Promise<void> {
     const values = {
       goalId: record.goalId,
       workspaceId: record.workspaceId,
@@ -1009,16 +1009,16 @@ async readAgentEvents(input: ReadAgentEventsInput): Promise<AgentStoredEvent[]> 
       tokenBudget: record.tokenBudget,
       tokensUsed: record.tokensUsed,
       timeUsedSeconds: record.timeUsedSeconds,
-      payload: burnGoalPayload(record),
+      payload: goalPayload(record),
       createdAt: record.createdAt,
       updatedAt: record.updatedAt,
       completedAt: record.completedAt,
     };
     await getDb()
-      .insert(schema.burnGoals)
+      .insert(schema.goals)
       .values(values)
       .onConflictDoUpdate({
-        target: schema.burnGoals.conversationId,
+        target: schema.goals.conversationId,
         set: {
           objective: values.objective,
           status: values.status,
@@ -1033,16 +1033,16 @@ async readAgentEvents(input: ReadAgentEventsInput): Promise<AgentStoredEvent[]> 
       });
   }
 
-  async updateBurnGoal(
+  async updateGoal(
     workspaceId: string,
     conversationId: string,
-    patch: BurnGoalPatch
-  ): Promise<BurnGoalRecord | null> {
-    const current = await this.getBurnGoalByConversation(workspaceId, conversationId);
+    patch: GoalPatch
+  ): Promise<GoalRecord | null> {
+    const current = await this.getGoalByConversation(workspaceId, conversationId);
     if (!current) {
       return null;
     }
-    const next: BurnGoalRecord = {
+    const next: GoalRecord = {
       ...current,
       ...patch,
       revision:
@@ -1051,17 +1051,17 @@ async readAgentEvents(input: ReadAgentEventsInput): Promise<AgentStoredEvent[]> 
           : current.revision + 1,
       updatedAt: Date.now(),
     };
-    await this.upsertBurnGoal(next);
+    await this.upsertGoal(next);
     return next;
   }
 
-  async listBurnGoals(workspaceId: string): Promise<BurnGoalRecord[]> {
+  async listGoals(workspaceId: string): Promise<GoalRecord[]> {
     const rows = await getDb()
       .select()
-      .from(schema.burnGoals)
-      .where(eq(schema.burnGoals.workspaceId, workspaceId))
-      .orderBy(desc(schema.burnGoals.updatedAt));
-    return rows.map(rowToBurnGoal);
+      .from(schema.goals)
+      .where(eq(schema.goals.workspaceId, workspaceId))
+      .orderBy(desc(schema.goals.updatedAt));
+    return rows.map(rowToGoal);
   }
 
   // ---------- VS Code extensions ----------

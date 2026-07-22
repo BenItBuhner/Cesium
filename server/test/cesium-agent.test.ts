@@ -54,8 +54,8 @@ const [
   { buildCesiumBaseSystemPrompt },
   { resolveCesiumModeToolPolicy },
   { parsePlanEntriesFromMarkdown },
-  { createBurnGoalRecord, formatBurnGoalForModel, validateBurnGoalSnapshotSummary },
-  { burnCompactionRecoveryContext, burnContinuationContext },
+  { createGoalRecord, formatGoalForModel, validateGoalSnapshotSummary },
+  { goalCompactionRecoveryContext, goalContinuationContext },
   { buildCesiumModeReminder },
 ] = await Promise.all([
   import("../src/lib/agents/providers.js"),
@@ -64,8 +64,8 @@ const [
   import("@cesium/core/mcp"),
   import("../src/lib/agents/cesium-mode-policy.js"),
   import("../src/lib/agents/cesium-plan-files.js"),
-  import("../src/lib/agents/burn-goal-store.js"),
-  import("../src/lib/agents/burn-goal-steering.js"),
+  import("../src/lib/agents/goal-store.js"),
+  import("../src/lib/agents/goal-steering.js"),
   import("../src/lib/agents/cesium-mode-reminders.js"),
 ]);
 
@@ -807,11 +807,11 @@ test("Cesium config options include dynamic prompt modes", async () => {
     "agent",
     "plan",
     "orchestration",
-    "burn",
+    "goal",
     "workflow",
     "ask",
   ]);
-  assert.equal(modeOption?.options.some((option) => option.value === "burn"), true);
+  assert.equal(modeOption?.options.some((option) => option.value === "goal"), true);
   assert.equal(modeOption?.options.some((option) => option.value === "workflow"), true);
 });
 
@@ -820,7 +820,7 @@ test("Cesium mode preferences remove disabled modes from the live catalog", asyn
     modes: {
       enabled: {
         plan: false,
-        burn: false,
+        goal: false,
       },
     },
   });
@@ -834,28 +834,28 @@ test("Cesium mode preferences remove disabled modes from the live catalog", asyn
     modes: {
       enabled: {
         plan: true,
-        burn: true,
+        goal: true,
       },
     },
   });
 });
 
-test("Burn goal records start in planning with durable milestones and todos", () => {
-  const goal = createBurnGoalRecord({
+test("Goal records start in planning with durable milestones and todos", () => {
+  const goal = createGoalRecord({
     workspace: {
       id: "ws-burn",
       root: TEST_DATA_DIR,
-      name: "Burn workspace",
+      name: "Goal workspace",
       createdAt: 1,
       updatedAt: 1,
       lastOpenedAt: 1,
     },
     conversationId: "conv-burn",
-    objective: "Ship the hybrid Burn goal mode.",
+    objective: "Ship the hybrid Goal mode.",
   });
   assert.equal(goal.status, "planning");
   assert.equal(goal.phase, "planning");
-  assert.equal(goal.objective, "Ship the hybrid Burn goal mode.");
+  assert.equal(goal.objective, "Ship the hybrid Goal mode.");
   assert.deepEqual(goal.milestones, []);
   assert.deepEqual(goal.todos, []);
   assert.equal(goal.progressPercent, null);
@@ -865,13 +865,13 @@ test("Burn goal records start in planning with durable milestones and todos", ()
   assert.equal(goal.compaction.generation, 0);
 });
 
-test("Burn progress snapshots require the OpenCode-style markdown sections", () => {
+test("Goal progress snapshots require the OpenCode-style markdown sections", () => {
   assert.doesNotThrow(() =>
-    validateBurnGoalSnapshotSummary([
+    validateGoalSnapshotSummary([
       "## Progress",
       "- Implemented snapshot storage.",
       "## Current State",
-      "- Burn is still active.",
+      "- Goal is still active.",
       "## Blockers",
       "- None.",
       "## Next Steps",
@@ -879,17 +879,17 @@ test("Burn progress snapshots require the OpenCode-style markdown sections", () 
     ].join("\n"))
   );
   assert.throws(
-    () => validateBurnGoalSnapshotSummary("## Progress\n- Only one section."),
+    () => validateGoalSnapshotSummary("## Progress\n- Only one section."),
     /missing the ## Current State section/
   );
 });
 
-test("Burn continuation context preserves objective and blocker audit rules", () => {
-  const goal = createBurnGoalRecord({
+test("Goal continuation context preserves objective and blocker audit rules", () => {
+  const goal = createGoalRecord({
     workspace: {
       id: "ws-burn",
       root: TEST_DATA_DIR,
-      name: "Burn workspace",
+      name: "Goal workspace",
       createdAt: 1,
       updatedAt: 1,
       lastOpenedAt: 1,
@@ -897,17 +897,17 @@ test("Burn continuation context preserves objective and blocker audit rules", ()
     conversationId: "conv-burn",
     objective: "Finish <all> requirements & verify them.",
   });
-  const context = burnContinuationContext({
+  const context = goalContinuationContext({
     ...goal,
     progressPercent: 42,
-    headline: "Halfway through Burn verification",
+    headline: "Halfway through Goal verification",
     revision: 3,
     snapshots: [
       {
         id: "snapshot-1",
         createdAt: 1,
         progressPercent: 42,
-        headline: "Halfway through Burn verification",
+        headline: "Halfway through Goal verification",
         summary: [
           "## Progress",
           "- Wrote snapshot plumbing.",
@@ -922,27 +922,27 @@ test("Burn continuation context preserves objective and blocker audit rules", ()
       },
     ],
   });
-  assert.match(context, /<burn_context>/);
+  assert.match(context, /<goal_context>/);
   assert.match(context, /Finish &lt;all&gt; requirements &amp; verify them\./);
-  assert.match(context, /at least three Burn turns/);
-  assert.match(context, /Do not call burn_goal_complete/);
+  assert.match(context, /at least three Goal turns/);
+  assert.match(context, /Do not call goal_complete/);
   assert.match(context, /Latest progress snapshot:/);
   assert.match(context, /Progress: 42%/);
-  assert.match(context, /Halfway through Burn verification/);
+  assert.match(context, /Halfway through Goal verification/);
   assert.match(context, /Freshness: stale/);
   assert.match(context, /Recent progress summary history:/);
   assert.match(context, /Do not stop after a progress snapshot/);
-  const recovery = burnCompactionRecoveryContext({
+  const recovery = goalCompactionRecoveryContext({
     ...goal,
     progressPercent: 42,
-    headline: "Halfway through Burn verification",
+    headline: "Halfway through Goal verification",
     revision: 3,
     snapshots: [
       {
         id: "snapshot-1",
         createdAt: 1,
         progressPercent: 42,
-        headline: "Halfway through Burn verification",
+        headline: "Halfway through Goal verification",
         summary: [
           "## Progress",
           "- Wrote snapshot plumbing.",
@@ -962,20 +962,20 @@ test("Burn continuation context preserves objective and blocker audit rules", ()
   assert.match(recovery, /Recent progress summary history:/);
 });
 
-test("Burn goal model summary includes snapshot freshness and recent history", () => {
-  const goal = createBurnGoalRecord({
+test("Goal model summary includes snapshot freshness and recent history", () => {
+  const goal = createGoalRecord({
     workspace: {
       id: "ws-burn-model",
       root: TEST_DATA_DIR,
-      name: "Burn workspace",
+      name: "Goal workspace",
       createdAt: 1,
       updatedAt: 1,
       lastOpenedAt: 1,
     },
     conversationId: "conv-burn-model",
-    objective: "Ship the Burn UI summary view.",
+    objective: "Ship the Goal UI summary view.",
   });
-  const summary = formatBurnGoalForModel({
+  const summary = formatGoalForModel({
     ...goal,
     progressPercent: 70,
     headline: "Summary view is underway",
@@ -1032,33 +1032,33 @@ test("Cesium base prompt and tool schema are stable across dynamic modes", () =>
   const tools = buildOpenAiToolDefinitions();
   assert.deepEqual(tools, buildOpenAiToolDefinitions());
   const names = tools.map((tool) => tool.function.name);
-  assert.equal(names.includes("burn_goal_set"), true);
-  assert.equal(names.includes("burn_goal_summarize"), true);
-  assert.equal(names.includes("burn_goal_pause"), true);
-  assert.equal(names.includes("burn_goal_block"), true);
-  assert.equal(names.includes("burn_goal_complete"), true);
+  assert.equal(names.includes("goal_set"), true);
+  assert.equal(names.includes("goal_summarize"), true);
+  assert.equal(names.includes("goal_pause"), true);
+  assert.equal(names.includes("goal_block"), true);
+  assert.equal(names.includes("goal_complete"), true);
   assert.equal(names.includes("workflow_run"), true);
   assert.equal(names.includes("workflow_status"), true);
   assert.equal(names.includes("workflow_await"), true);
   assert.equal(names.includes("wait"), true);
   assert.equal(names.includes("switch_mode"), true);
-  assert.equal(names.includes("burn_goal_update_plan"), false);
-  assert.equal(names.includes("burn_goal_update_progress"), false);
-  assert.equal(names.includes("burn_goal_summarize_state"), false);
-  assert.equal(names.includes("burn_goal_resume"), false);
+  assert.equal(names.includes("goal_update_plan"), false);
+  assert.equal(names.includes("goal_update_progress"), false);
+  assert.equal(names.includes("goal_summarize_state"), false);
+  assert.equal(names.includes("goal_resume"), false);
 });
 
-test("Cesium Burn reminder uses Burn tools instead of generic Goal state phrases", () => {
+test("Cesium Goal reminder uses Goal tools instead of generic goal state phrases", () => {
   const reminder = buildCesiumModeReminder({
-    mode: "burn",
+    mode: "goal",
     workspaceRoot: TEST_DATA_DIR,
     dateLabel: "today",
     gitSummary: "clean",
     mcpSummaries: [],
   });
-  assert.match(reminder, /burn_goal_set/);
-  assert.match(reminder, /burn_goal_summarize/);
-  assert.match(reminder, /burn_goal_complete/);
+  assert.match(reminder, /goal_set/);
+  assert.match(reminder, /goal_summarize/);
+  assert.match(reminder, /goal_complete/);
   assert.match(reminder, /latest summary is missing or materially stale/);
   assert.match(reminder, /Do not call it every turn/);
   assert.doesNotMatch(reminder, /GOAL_STATE:/);

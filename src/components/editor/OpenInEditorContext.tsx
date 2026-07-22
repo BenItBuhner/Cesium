@@ -30,7 +30,7 @@ import {
   type DesignCapture,
 } from "@/lib/design-capture";
 import type { TextReference } from "@/lib/text-reference";
-import type { BurnProgressStatus } from "@/lib/agent-chat";
+import type { GoalProgressStatus } from "@/lib/agent-chat";
 
 export type OpenTranscriptPayload = {
   title: string;
@@ -150,7 +150,7 @@ export type ExpandedComposerController = {
   onPause?: () => Promise<void> | void;
   onResume?: () => Promise<void> | void;
   conversationStatus?: import("@/lib/agent-types").AgentConversationStatus;
-  burnProgress?: BurnProgressStatus | null;
+  goalProgress?: GoalProgressStatus | null;
   busy?: boolean;
   configLocked?: boolean;
   modeLocked?: boolean;

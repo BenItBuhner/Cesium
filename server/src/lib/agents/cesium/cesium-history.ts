@@ -439,7 +439,7 @@ export function summarizeForCompression(events: AgentStoredEvent[]): string {
         lines.push(`User: ${truncate(event.content, 1000)}`);
         break;
       case "system_reminder":
-        if (event.reason === "burn") {
+        if (event.reason === "goal" || event.reason === "burn") {
           break;
         }
         lines.push(truncate(event.text, 1000));

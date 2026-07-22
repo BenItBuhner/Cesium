@@ -140,7 +140,6 @@ export type ToolsSettingsState = Record<string, never>;
 
 export type FeaturesSettingsState = {
   vscodeExtensionsBeta: boolean;
-  goalModeBeta: boolean;
 };
 
 export type GlobalAppSettingsSlice = {
@@ -228,7 +227,6 @@ export function createDefaultGlobalSettings(): GlobalSettingsState {
     tools: {},
     features: {
       vscodeExtensionsBeta: false,
-      goalModeBeta: false,
     },
   };
 }
@@ -584,11 +582,6 @@ export function normalizeLoadedGlobalSettings(
           ? (r as { features: { vscodeExtensionsBeta: boolean } }).features
               .vscodeExtensionsBeta
           : base.features.vscodeExtensionsBeta,
-      goalModeBeta:
-        typeof (r as { features?: { goalModeBeta?: unknown } }).features
-          ?.goalModeBeta === "boolean"
-          ? (r as { features: { goalModeBeta: boolean } }).features.goalModeBeta
-          : base.features.goalModeBeta,
     },
   };
 }

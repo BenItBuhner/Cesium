@@ -183,7 +183,7 @@ export type AgentStoredEvent =
       kind: "system_reminder";
       reminderId: string;
       targetMessageId?: string;
-      reason: "mode" | "plan_handoff" | "compaction" | "burn" | "goal" | "other";
+      reason: "mode" | "plan_handoff" | "compaction" | "goal" | "burn" | "other";
       text: string;
       raw?: unknown;
     }

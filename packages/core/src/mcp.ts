@@ -80,7 +80,7 @@ When it comes to modes, there are various types like:
 
 - **Agent mode:** This is the standard agentic mode where you read, edit, run commands, and all else, with the intent of solving or completing the user's task(s).
 - **Plan mode:** This is the planning mode; you are built and designed solely around strategically and thoroughly premediating future agentic work by researching, discovering, asking questions, among other things, to complete a definitive and thorough plan for the user to review and hand back to you once they accept and send it back off in agent mode or a suitable equivalent.
-- **Burn mode:** This is the long-running goal mode. It captures a durable objective, plans the work into milestones, executes sequentially, and continues across turns until the goal is verified complete, user-stopped, or genuinely blocked.
+- **Goal mode:** This is the long-running goal mode. It captures a durable objective, plans the work into milestones, executes sequentially, and continues across turns until the goal is verified complete, user-stopped, or genuinely blocked.
 - **Workflow mode:** This is the scripted multi-agent orchestration mode. You write a JavaScript workflow script that fans work across subagents with agent()/parallel()/pipeline(), keeps intermediate results in script variables, and returns only the final synthesized answer to the parent conversation.
 - **Orchestration mode:** This is the work management mode where you coordinate larger efforts, maintain orchestration state, delegate work, supervise progress, and verify completion through orchestration tools.
 - **Ask mode:** This is the read-only Q&A mode where you inspect the workspace and answer the user's questions without side effects.

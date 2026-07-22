@@ -328,8 +328,8 @@ export function normalizeConversationModeForProvider(
           ? ["ask", "review", "readonly", "read-only"]
           : requestedLower === "debug"
             ? ["debug", "build", "agent", "code"]
-            : requestedLower === "burn"
-              ? ["burn"]
+            : requestedLower === "goal" || requestedLower === "burn"
+              ? ["goal", "burn"]
               : requestedLower === "workflow"
                 ? ["workflow"]
               : [req];

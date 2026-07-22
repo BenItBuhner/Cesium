@@ -25,9 +25,9 @@ describe("chat modes", () => {
     assert.equal(getModeTone("orchestration"), "orchestration");
   });
 
-  test("uses burn emphasis for Burn mode", () => {
-    assert.equal(getModeTone("burn"), "burn");
-    assert.equal(resolveCanonicalModeId("Burn", [{ id: "burn", label: "Burn" }]), "burn");
+  test("uses goal emphasis for Goal mode", () => {
+    assert.equal(getModeTone("goal"), "goal");
+    assert.equal(resolveCanonicalModeId("Goal", [{ id: "goal", label: "Goal" }]), "goal");
   });
 
   test("uses workflow emphasis for Workflow mode", () => {

@@ -19,9 +19,9 @@ import type {
   OrchestrationBoardSnapshot,
 } from "../lib/orchestration/types.js";
 import type {
-  BurnGoalPatch,
-  BurnGoalRecord,
-} from "../lib/agents/burn-goal-types.js";
+  GoalPatch,
+  GoalRecord,
+} from "../lib/agents/goal-types.js";
 import type {
   ExtensionInstallRecord,
   ExtensionPermissionGrant,
@@ -215,18 +215,18 @@ export interface StorageDriver {
     limit: number
   ): Promise<AgentStoredEvent[]>;
 
-  // ---------- Burn goals ----------
-  getBurnGoalByConversation(
+  // ---------- Goals ----------
+  getGoalByConversation(
     workspaceId: string,
     conversationId: string
-  ): Promise<BurnGoalRecord | null>;
-  upsertBurnGoal(record: BurnGoalRecord): Promise<void>;
-  updateBurnGoal(
+  ): Promise<GoalRecord | null>;
+  upsertGoal(record: GoalRecord): Promise<void>;
+  updateGoal(
     workspaceId: string,
     conversationId: string,
-    patch: BurnGoalPatch
-  ): Promise<BurnGoalRecord | null>;
-  listBurnGoals(workspaceId: string): Promise<BurnGoalRecord[]>;
+    patch: GoalPatch
+  ): Promise<GoalRecord | null>;
+  listGoals(workspaceId: string): Promise<GoalRecord[]>;
 
   // ---------- VS Code extensions ----------
   listInstalledExtensions(workspaceId: string): Promise<ExtensionInstallRecord[]>;

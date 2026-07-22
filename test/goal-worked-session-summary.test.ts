@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { projectAgentEventsToChatMessages } from "../src/lib/agent-chat.ts";
 import type { AgentStoredEvent } from "../src/lib/agent-types.ts";
 
-test("Burn goal tools project to clean worked-session summaries", () => {
+test("Goal tools project to clean worked-session summaries", () => {
   const events: AgentStoredEvent[] = [
     {
       seq: 1,
@@ -12,7 +12,7 @@ test("Burn goal tools project to clean worked-session summaries", () => {
       createdAt: 1,
       kind: "user_message",
       messageId: "user-message-1",
-      content: "Run burn mode",
+      content: "Run goal mode",
     },
     {
       seq: 2,
@@ -26,7 +26,7 @@ test("Burn goal tools project to clean worked-session summaries", () => {
       status: "completed",
       raw: {
         request: {
-          name: "burn_goal_set",
+          name: "goal_set",
           arguments: {
             planSummary: "Inspect workspace and record progress.",
             milestones: [
@@ -54,7 +54,7 @@ test("Burn goal tools project to clean worked-session summaries", () => {
       status: "completed",
       raw: {
         request: {
-          name: "burn_goal_summarize",
+          name: "goal_summarize",
           arguments: {
             progressPercent: 66,
             headline: "Workspace inspected",
@@ -68,13 +68,13 @@ test("Burn goal tools project to clean worked-session summaries", () => {
   const messages = projectAgentEventsToChatMessages(events);
   const worked = messages.find((message) => message.type === "worked-session");
   assert.ok(worked);
-  assert.equal(worked.workedLabel, "Updated Burn goal 2 times");
+  assert.equal(worked.workedLabel, "Updated Goal 2 times");
   const tools = worked.workedEntries?.filter((entry) => entry.kind === "tool") ?? [];
-  assert.equal(tools[0]?.toolKind, "burn");
-  assert.equal(tools[0]?.title, "Set Burn goal");
+  assert.equal(tools[0]?.toolKind, "goal");
+  assert.equal(tools[0]?.title, "Set Goal");
   assert.equal(tools[0]?.detail, "Inspect workspace and record progress.");
   assert.equal(tools[0]?.editPreview, undefined);
-  assert.equal(tools[1]?.toolKind, "burn");
-  assert.equal(tools[1]?.title, "Summarize Burn goal");
+  assert.equal(tools[1]?.toolKind, "goal");
+  assert.equal(tools[1]?.title, "Summarize Goal");
   assert.equal(tools[1]?.detail, "66% · Workspace inspected");
 });

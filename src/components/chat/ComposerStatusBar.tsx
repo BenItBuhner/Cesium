@@ -9,13 +9,13 @@ import {
   resolveComposerRepoLabel,
 } from "@/lib/composer-status-bar";
 import type { AgentBackendId, AgentContextUsageSnapshot } from "@/lib/agent-types";
-import type { BurnProgressSnapshotStatus, BurnProgressStatus } from "@/lib/agent-chat";
+import type { GoalProgressSnapshotStatus, GoalProgressStatus } from "@/lib/agent-chat";
 import { ContextUsageRing } from "./ContextUsageRing";
 import { ComposerStatusBarMenu } from "./ComposerStatusBarMenu";
 
 const COMPOSER_STATUS_BAR_GAP_CLASS = "mt-[4px] mb-[8px]";
 
-function burnProgressBar(progress: number): string {
+function goalProgressBar(progress: number): string {
   const value = Math.max(0, Math.min(100, Math.round(progress)));
   const filled = Math.round(value / 10);
   return `[${"#".repeat(filled)}${"-".repeat(10 - filled)}]`;
@@ -32,7 +32,7 @@ function formatGoalRuntime(seconds: number): string {
   return `${minutes}:${String(secs).padStart(2, "0")}`;
 }
 
-function burnSummarySections(markdown: string | null): Array<{ title: string; bullets: string[] }> {
+function goalSummarySections(markdown: string | null): Array<{ title: string; bullets: string[] }> {
   const sections: Array<{ title: string; bullets: string[] }> = [];
   let current: { title: string; bullets: string[] } | null = null;
   for (const raw of (markdown ?? "").split(/\r?\n/)) {
@@ -50,14 +50,14 @@ function burnSummarySections(markdown: string | null): Array<{ title: string; bu
   return sections;
 }
 
-function BurnSummaryHistoryCard({
+function GoalSummaryHistoryCard({
   item,
   latest = false,
 }: {
-  item: BurnProgressSnapshotStatus;
+  item: GoalProgressSnapshotStatus;
   latest?: boolean;
 }) {
-  const sections = burnSummarySections(item.summary);
+  const sections = goalSummarySections(item.summary);
   return (
     <div className={latest ? "" : "border-t border-[var(--border-subtle)] pt-[10px]"}>
       <div className="flex items-center justify-between gap-[12px]">
@@ -65,7 +65,7 @@ function BurnSummaryHistoryCard({
           {latest ? "Latest State" : item.headline ?? "Previous State"}
         </div>
         <div className="shrink-0 font-mono text-[11px] text-[var(--accent)]">
-          {item.progressPercent}% {burnProgressBar(item.progressPercent)}
+          {item.progressPercent}% {goalProgressBar(item.progressPercent)}
         </div>
       </div>
       <div className="mt-[3px] font-sans text-[10px] text-[var(--text-disabled)]">
@@ -102,7 +102,7 @@ interface ComposerStatusBarProps {
   contextLoading?: boolean;
   contextBreakdownOpen?: boolean;
   onContextBreakdownOpenChange?: (open: boolean) => void;
-  burnProgress?: BurnProgressStatus | null;
+  goalProgress?: GoalProgressStatus | null;
 }
 
 export function ComposerStatusBar({
@@ -112,12 +112,12 @@ export function ComposerStatusBar({
   contextLoading = false,
   contextBreakdownOpen = false,
   onContextBreakdownOpenChange,
-  burnProgress = null,
+  goalProgress = null,
 }: ComposerStatusBarProps) {
   const { gitStatus, workspaceInfo, workspaceSession, updateWorkspaceSession, workspaces, activeWorkspaceId } =
     useWorkspace();
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
-  const [burnSummaryOpen, setBurnSummaryOpen] = useState(false);
+  const [goalSummaryOpen, setGoalSummaryOpen] = useState(false);
 
   const visibility = normalizeComposerStatusBarVisibility(
     workspaceSession.chat.composerStatusBarVisibility
@@ -149,7 +149,7 @@ export function ComposerStatusBar({
       event.preventDefault();
       event.stopPropagation();
       setMenu({ x: event.clientX, y: event.clientY });
-      setBurnSummaryOpen(false);
+      setGoalSummaryOpen(false);
       onContextBreakdownOpenChange?.(false);
     },
     [onContextBreakdownOpenChange]
@@ -157,12 +157,12 @@ export function ComposerStatusBar({
 
   const showRepo = visibility.repo;
   const showBranch = visibility.branch && branchLabel != null;
-  const showGoal = visibility.goal && burnProgress != null;
+  const showGoal = visibility.goal && goalProgress != null;
   const showContext = visibility.context;
   const contextSupported = usage?.supported ?? backendId === "cesium-agent";
   const contextPercent = usage?.percentFull ?? 0;
   const [runtimeNow, setRuntimeNow] = useState(() => Date.now());
-  const runtimeActiveSince = burnProgress?.runtimeActiveSince ?? null;
+  const runtimeActiveSince = goalProgress?.runtimeActiveSince ?? null;
   useEffect(() => {
     if (runtimeActiveSince == null) {
       return;
@@ -172,15 +172,15 @@ export function ComposerStatusBar({
     return () => window.clearInterval(id);
   }, [runtimeActiveSince]);
   const goalRuntimeSeconds =
-    burnProgress?.runtimeSeconds == null
+    goalProgress?.runtimeSeconds == null
       ? null
-      : burnProgress.runtimeSeconds +
+      : goalProgress.runtimeSeconds +
         (runtimeActiveSince == null
           ? 0
           : Math.max(0, Math.floor((runtimeNow - runtimeActiveSince) / 1000)));
   const burnHistory = useMemo(
-    () => burnProgress?.history ?? (burnProgress ? [burnProgress] : []),
-    [burnProgress]
+    () => goalProgress?.history ?? (goalProgress ? [goalProgress] : []),
+    [goalProgress]
   );
   const burnHistoryNewestFirst = useMemo(
     () => [...burnHistory].reverse(),
@@ -242,22 +242,22 @@ export function ComposerStatusBar({
         </div>
 
         <div className="flex shrink-0 items-center gap-[8px]">
-          {showGoal && burnProgress ? (
+          {showGoal && goalProgress ? (
             <div className="relative">
               <button
                 type="button"
                 className="flex max-w-[310px] items-center gap-[6px] truncate rounded-[6px] bg-[var(--accent-bg)] px-[6px] py-[2px] text-[var(--text-secondary)] transition-colors hover:text-[var(--text-primary)]"
                 title={[
-                  `Burn progress: ${burnProgress.progressPercent}%`,
+                  `Goal progress: ${goalProgress.progressPercent}%`,
                   goalRuntimeSeconds != null
                     ? `Runtime: ${formatGoalRuntime(goalRuntimeSeconds)}${runtimeActiveSince != null ? " and running" : ""}`
                     : null,
-                  burnProgress.headline,
-                  burnProgress.summary,
+                  goalProgress.headline,
+                  goalProgress.summary,
                   burnHistory.length > 1 ? `${burnHistory.length} recorded summaries` : null,
                 ].filter(Boolean).join("\n\n")}
-                aria-expanded={burnSummaryOpen}
-                onClick={() => setBurnSummaryOpen((open) => !open)}
+                aria-expanded={goalSummaryOpen}
+                onClick={() => setGoalSummaryOpen((open) => !open)}
               >
                 <Flame className="size-[12px] shrink-0 text-[var(--accent)]" strokeWidth={1.7} aria-hidden />
                 <span
@@ -266,25 +266,25 @@ export function ComposerStatusBar({
                 >
                   <span
                     className="absolute inset-y-0 left-0 rounded-full bg-[var(--accent)]"
-                    style={{ width: `${Math.max(0, Math.min(100, burnProgress.progressPercent))}%` }}
+                    style={{ width: `${Math.max(0, Math.min(100, goalProgress.progressPercent))}%` }}
                   />
                 </span>
-                <span className="shrink-0 tabular-nums">{burnProgress.progressPercent}%</span>
+                <span className="shrink-0 tabular-nums">{goalProgress.progressPercent}%</span>
                 {goalRuntimeSeconds != null ? (
                   <span className="shrink-0 tabular-nums text-[var(--text-disabled)]">
                     {formatGoalRuntime(goalRuntimeSeconds)}
                   </span>
                 ) : null}
-                {burnProgress.headline ? (
-                  <span className="truncate">{burnProgress.headline}</span>
+                {goalProgress.headline ? (
+                  <span className="truncate">{goalProgress.headline}</span>
                 ) : null}
               </button>
-              {burnSummaryOpen ? (
+              {goalSummaryOpen ? (
                 <div className="absolute bottom-[calc(100%+7px)] right-0 z-50 max-h-[360px] w-[min(440px,calc(100vw-24px))] overflow-auto rounded-[var(--radius-card)] border border-[var(--border-card)] bg-[var(--bg-card)] p-[12px] shadow-[0_18px_50px_rgba(0,0,0,0.35)]">
                   <div className="mb-[10px] flex items-center justify-between gap-[12px]">
                     <div>
                       <div className="font-sans text-[12px] font-semibold text-[var(--text-primary)]">
-                        Burn State Summaries
+                        Goal State Summaries
                       </div>
                       <div className="mt-[2px] font-sans text-[11px] text-[var(--text-secondary)]">
                         {burnHistory.length} recorded {burnHistory.length === 1 ? "summary" : "summaries"}
@@ -296,14 +296,14 @@ export function ComposerStatusBar({
                     <button
                       type="button"
                       className="rounded-[6px] px-[6px] py-[3px] font-sans text-[11px] text-[var(--text-secondary)] hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)]"
-                      onClick={() => setBurnSummaryOpen(false)}
+                      onClick={() => setGoalSummaryOpen(false)}
                     >
                       Close
                     </button>
                   </div>
                   <div className="space-y-[10px]">
                     {burnHistoryNewestFirst.map((item, index) => (
-                      <BurnSummaryHistoryCard
+                      <GoalSummaryHistoryCard
                         key={item.toolCallId}
                         item={item}
                         latest={index === 0}

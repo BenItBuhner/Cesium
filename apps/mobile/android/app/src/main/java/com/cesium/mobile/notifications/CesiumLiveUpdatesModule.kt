@@ -139,7 +139,7 @@ private fun ReadableMap.toBundle(): Bundle {
     "todoCompleted",
     "todoTotal",
     "todoCurrentIndex",
-    "burnProgressPercent",
+    "goalProgressPercent",
     "estimatedRemainingSeconds"
   ).forEach { key ->
     if (hasKey(key) && !isNull(key)) {

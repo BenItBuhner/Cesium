@@ -37,7 +37,6 @@ import {
 } from "@/lib/agent-chat";
 import {
   DEFAULT_MODE_OPTIONS,
-  filterGoalModeOptions,
   resolveCanonicalModeId,
 } from "@/lib/chat-modes";
 import type { AgentBackendId, AgentBackendInfo } from "@/lib/agent-types";
@@ -169,7 +168,6 @@ export function AgentNewChatLanding() {
     startStandaloneChat,
   } = useAgentShellState();
   const { settings, updateSettings } = useGlobalSettings();
-  const goalModeBetaEnabled = settings.features.goalModeBeta;
   const { activeServer, setActiveServer } = useServerConnections();
   const { workspaces: directoryWorkspaces } = useWorkspaceDirectory();
   const runCommand = useIDECommandRunner();
@@ -195,9 +193,9 @@ export function AgentNewChatLanding() {
   const draftModeOptions = useMemo(
     () =>
       draftBackend
-        ? buildDraftModeOptionsForBackend(draftBackend, { goalModeBetaEnabled })
-        : filterGoalModeOptions(DEFAULT_MODE_OPTIONS, goalModeBetaEnabled),
-    [draftBackend, goalModeBetaEnabled]
+        ? buildDraftModeOptionsForBackend(draftBackend)
+        : DEFAULT_MODE_OPTIONS,
+    [draftBackend]
   );
   const draftMode = useMemo(
     () =>
@@ -251,13 +249,13 @@ export function AgentNewChatLanding() {
           ...current.chat,
           backendId: nextBackend.id,
           mode:
-            buildDraftModeOptionsForBackend(nextBackend, { goalModeBetaEnabled })[0]?.id ??
+            buildDraftModeOptionsForBackend(nextBackend)[0]?.id ??
             current.chat.mode,
           model: resolveDraftModelForBackend(nextBackend),
         },
       }));
     },
-    [backends, goalModeBetaEnabled, updateWorkspaceSession]
+    [backends, updateWorkspaceSession]
   );
 
   const handleSubmit = useCallback(

@@ -52,19 +52,19 @@ import {
 import { loadWorkspaceInstructionFiles } from "./instruction-files.js";
 import { refreshWorkspaceSkillsMirror } from "./skills-mirror.js";
 import {
-  appendBurnGoalSnapshot,
-  blockBurnGoal,
-  completeBurnGoal,
-  ensureBurnGoalForConversation,
-  formatBurnGoalForModel,
-  pauseBurnGoal,
-  readBurnGoalForConversation,
-  resumeBurnGoal,
-  updateBurnGoal,
-  updateBurnGoalPlan,
-  updateBurnGoalProgress,
-} from "./burn-goal-store.js";
-import { burnCompactionRecoveryContext } from "./burn-goal-steering.js";
+  appendGoalSnapshot,
+  blockGoal,
+  completeGoal,
+  ensureGoalForConversation,
+  formatGoalForModel,
+  pauseGoal,
+  readGoalForConversation,
+  resumeGoal,
+  updateGoal,
+  updateGoalPlan,
+  updateGoalProgress,
+} from "./goal-store.js";
+import { goalCompactionRecoveryContext } from "./goal-steering.js";
 import { executeWorkflowRun } from "./workflow-runtime.js";
 import {
   createWorkflowRunRecord,
@@ -387,8 +387,9 @@ class CesiumSessionHandle implements AgentSessionHandle {
     return this.currentMode() === "orchestration";
   }
 
-  private isBurnMode(): boolean {
-    return this.currentMode() === "burn";
+  private isGoalMode(): boolean {
+    const mode = this.currentMode();
+    return mode === "goal" || mode === "burn";
   }
 
   private isWorkflowMode(): boolean {
@@ -396,11 +397,12 @@ class CesiumSessionHandle implements AgentSessionHandle {
   }
 
   private currentMode(): string {
-    return optionValue(
+    const raw = optionValue(
       this.configOptions,
       "mode",
       this.callbacks.conversation.config.mode ?? "agent"
     );
+    return String(raw).trim().toLowerCase() === "burn" ? "goal" : String(raw);
   }
 
   private createAssistantChunkFlusher(messageId: string): {
@@ -564,8 +566,8 @@ class CesiumSessionHandle implements AgentSessionHandle {
       const board = this.isOrchestrationMode()
         ? await this.resolveCurrentOrchestrationBoard()
         : null;
-      const burnState = this.isBurnMode()
-        ? await ensureBurnGoalForConversation({
+      const burnState = this.isGoalMode()
+        ? await ensureGoalForConversation({
             workspace: this.callbacks.workspace,
             conversationId: this.callbacks.conversation.id,
             objective: input.text,
@@ -608,7 +610,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
           mcpChangeNotice,
           orchestrationBoard: board,
           handoffPlanPath: input.planHandoff?.planPath,
-          burnGoalSummary: burnState ? formatBurnGoalForModel(burnState) : null,
+          goalSummary: burnState ? formatGoalForModel(burnState) : null,
           workflowRunSummary: workflowState ? formatWorkflowRunForModel(workflowState) : null,
         }),
         featureReminder
@@ -797,8 +799,8 @@ class CesiumSessionHandle implements AgentSessionHandle {
           ? error.message
           : String(error);
       console.warn("[cesium-agent] turn failed:", message);
-      if (this.isBurnMode()) {
-        await pauseBurnGoal({
+      if (this.isGoalMode()) {
+        await pauseGoal({
           workspace: this.callbacks.workspace,
           conversationId: this.callbacks.conversation.id,
           reason: `Provider error: ${message}`,
@@ -1377,13 +1379,13 @@ class CesiumSessionHandle implements AgentSessionHandle {
         (event) => event.kind !== "user_message" || !event.hidden
       );
       const history = this.normalizeEventsToHistory(visibleRetained);
-      if (this.isBurnMode()) {
-        const burnGoal = await readBurnGoalForConversation({
+      if (this.isGoalMode()) {
+        const goal = await readGoalForConversation({
           workspace: this.callbacks.workspace,
           conversationId: this.callbacks.conversation.id,
         });
-        if (burnGoal) {
-          history.push({ role: "user", content: burnCompactionRecoveryContext(burnGoal) });
+        if (goal) {
+          history.push({ role: "user", content: goalCompactionRecoveryContext(goal) });
         }
       }
       return history;
@@ -1635,7 +1637,10 @@ class CesiumSessionHandle implements AgentSessionHandle {
       if (featureExecutor?.executeTool) {
         result = await featureExecutor.executeTool(request.name, request.arguments);
       } else {
-        switch (request.name) {
+        const toolName = request.name.startsWith("burn_goal_")
+          ? `goal_${request.name.slice("burn_goal_".length)}`
+          : request.name;
+        switch (toolName) {
         case "read_file":
           result = await this.toolReadFile(request.arguments);
           break;
@@ -1669,35 +1674,35 @@ class CesiumSessionHandle implements AgentSessionHandle {
         case "finalize_plan":
           result = await this.toolFinalizePlan(request.arguments);
           break;
-        case "burn_goal_set":
-          result = await this.toolBurnGoalSet(request.arguments);
+        case "goal_set":
+          result = await this.toolGoalSet(request.arguments);
           break;
-        case "burn_goal_pause":
-          result = await this.toolBurnGoalPause(request.arguments);
+        case "goal_pause":
+          result = await this.toolGoalPause(request.arguments);
           break;
-        case "burn_goal_block":
-          result = await this.toolBurnGoalBlock(request.arguments);
+        case "goal_block":
+          result = await this.toolGoalBlock(request.arguments);
           break;
-        case "burn_goal_summarize":
-          result = await this.toolBurnGoalSummarize(request.arguments);
+        case "goal_summarize":
+          result = await this.toolGoalSummarize(request.arguments);
           break;
-        case "burn_goal_complete":
-          result = await this.toolBurnGoalComplete();
+        case "goal_complete":
+          result = await this.toolGoalComplete();
           break;
-        case "burn_goal_get":
-          result = await this.toolBurnGoalGet();
+        case "goal_get":
+          result = await this.toolGoalGet();
           break;
-        case "burn_goal_update_plan":
-          result = await this.toolBurnGoalUpdatePlan(request.arguments);
+        case "goal_update_plan":
+          result = await this.toolGoalUpdatePlan(request.arguments);
           break;
-        case "burn_goal_update_progress":
-          result = await this.toolBurnGoalUpdateProgress(request.arguments);
+        case "goal_update_progress":
+          result = await this.toolGoalUpdateProgress(request.arguments);
           break;
-        case "burn_goal_summarize_state":
-          result = await this.toolBurnGoalSummarize(request.arguments);
+        case "goal_summarize_state":
+          result = await this.toolGoalSummarize(request.arguments);
           break;
-        case "burn_goal_resume":
-          result = await this.toolBurnGoalResume();
+        case "goal_resume":
+          result = await this.toolGoalResume();
           break;
         case "workflow_run":
           result = await this.toolWorkflowRun(request.arguments);
@@ -2073,31 +2078,31 @@ class CesiumSessionHandle implements AgentSessionHandle {
     return `Finalized plan ${plan.path} for review.`;
   }
 
-  private async toolBurnGoalGet(): Promise<string> {
-    const goal = await readBurnGoalForConversation({
+  private async toolGoalGet(): Promise<string> {
+    const goal = await readGoalForConversation({
       workspace: this.callbacks.workspace,
       conversationId: this.callbacks.conversation.id,
     });
-    return goal ? formatBurnGoalForModel(goal) : "No Burn goal exists for this conversation.";
+    return goal ? formatGoalForModel(goal) : "No Goal exists for this conversation.";
   }
 
-  private async toolBurnGoalSet(args: Record<string, unknown>): Promise<string> {
+  private async toolGoalSet(args: Record<string, unknown>): Promise<string> {
     const objective = asString(args.objective);
-    let goal = await readBurnGoalForConversation({
+    let goal = await readGoalForConversation({
       workspace: this.callbacks.workspace,
       conversationId: this.callbacks.conversation.id,
     });
     if (!goal) {
       if (!objective) {
-        throw new Error("burn_goal_set.objective is required when no Burn goal exists.");
+        throw new Error("goal_set.objective is required when no Goal exists.");
       }
-      goal = await ensureBurnGoalForConversation({
+      goal = await ensureGoalForConversation({
         workspace: this.callbacks.workspace,
         conversationId: this.callbacks.conversation.id,
         objective,
       });
     } else if (objective && objective !== goal.objective) {
-      goal = await updateBurnGoal({
+      goal = await updateGoal({
         workspace: this.callbacks.workspace,
         conversationId: this.callbacks.conversation.id,
         patch: {
@@ -2113,7 +2118,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
       Array.isArray(args.milestones) ||
       Array.isArray(args.todos);
     if (hasPlanState) {
-      goal = await updateBurnGoalPlan({
+      goal = await updateGoalPlan({
         workspace: this.callbacks.workspace,
         conversationId: this.callbacks.conversation.id,
         planSummary: asString(args.planSummary),
@@ -2123,7 +2128,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
     }
 
     if (Array.isArray(args.verificationEvidence)) {
-      goal = await updateBurnGoalProgress({
+      goal = await updateGoalProgress({
         workspace: this.callbacks.workspace,
         conversationId: this.callbacks.conversation.id,
         verificationEvidence: args.verificationEvidence,
@@ -2133,7 +2138,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
     const progressPercent = asNumber(args.progressPercent);
     const headline = asString(args.headline);
     if (progressPercent != null || headline) {
-      const patch: Parameters<typeof updateBurnGoal>[0]["patch"] = {};
+      const patch: Parameters<typeof updateGoal>[0]["patch"] = {};
       if (progressPercent != null) {
         const rounded = Math.round(progressPercent);
         if (
@@ -2142,14 +2147,14 @@ class CesiumSessionHandle implements AgentSessionHandle {
           rounded < 0 ||
           rounded > 100
         ) {
-          throw new Error("burn_goal_set.progressPercent must be an integer from 0 to 100.");
+          throw new Error("goal_set.progressPercent must be an integer from 0 to 100.");
         }
         patch.progressPercent = rounded;
       }
       if (headline) {
         patch.headline = headline;
       }
-      goal = await updateBurnGoal({
+      goal = await updateGoal({
         workspace: this.callbacks.workspace,
         conversationId: this.callbacks.conversation.id,
         patch,
@@ -2157,7 +2162,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
     }
 
     if (goal.status === "planning") {
-      goal = await updateBurnGoal({
+      goal = await updateGoal({
         workspace: this.callbacks.workspace,
         conversationId: this.callbacks.conversation.id,
         patch: {
@@ -2167,26 +2172,26 @@ class CesiumSessionHandle implements AgentSessionHandle {
       });
     }
 
-    return `Burn goal set.\n\n${formatBurnGoalForModel(goal)}`;
+    return `Goal set.\n\n${formatGoalForModel(goal)}`;
   }
 
-  private async toolBurnGoalUpdatePlan(args: Record<string, unknown>): Promise<string> {
+  private async toolGoalUpdatePlan(args: Record<string, unknown>): Promise<string> {
     const planSummary = asString(args.planSummary);
     if (!planSummary) {
-      throw new Error("burn_goal_update_plan.planSummary is required.");
+      throw new Error("goal_update_plan.planSummary is required.");
     }
-    const goal = await updateBurnGoalPlan({
+    const goal = await updateGoalPlan({
       workspace: this.callbacks.workspace,
       conversationId: this.callbacks.conversation.id,
       planSummary,
       milestones: Array.isArray(args.milestones) ? args.milestones : [],
       todos: Array.isArray(args.todos) ? args.todos : [],
     });
-    return `Burn plan recorded.\n\n${formatBurnGoalForModel(goal)}`;
+    return `Goal plan recorded.\n\n${formatGoalForModel(goal)}`;
   }
 
-  private async toolBurnGoalUpdateProgress(args: Record<string, unknown>): Promise<string> {
-    const goal = await updateBurnGoalProgress({
+  private async toolGoalUpdateProgress(args: Record<string, unknown>): Promise<string> {
+    const goal = await updateGoalProgress({
       workspace: this.callbacks.workspace,
       conversationId: this.callbacks.conversation.id,
       milestones: Array.isArray(args.milestones) ? args.milestones : undefined,
@@ -2195,67 +2200,67 @@ class CesiumSessionHandle implements AgentSessionHandle {
         ? args.verificationEvidence
         : undefined,
     });
-    return `Burn progress updated.\n\n${formatBurnGoalForModel(goal)}`;
+    return `Goal progress updated.\n\n${formatGoalForModel(goal)}`;
   }
 
-  private async toolBurnGoalSummarize(args: Record<string, unknown>): Promise<string> {
+  private async toolGoalSummarize(args: Record<string, unknown>): Promise<string> {
     const progressPercent = asNumber(args.progressPercent);
     const summary = asString(args.summary);
     if (progressPercent == null) {
-      throw new Error("burn_goal_summarize.progressPercent is required.");
+      throw new Error("goal_summarize.progressPercent is required.");
     }
     if (!summary) {
-      throw new Error("burn_goal_summarize.summary is required.");
+      throw new Error("goal_summarize.summary is required.");
     }
-    const goal = await appendBurnGoalSnapshot({
+    const goal = await appendGoalSnapshot({
       workspace: this.callbacks.workspace,
       conversationId: this.callbacks.conversation.id,
       progressPercent,
       summary,
       headline: asString(args.headline),
     });
-    return `Burn goal summarized.\n\n${formatBurnGoalForModel(goal)}`;
+    return `Goal summarized.\n\n${formatGoalForModel(goal)}`;
   }
 
-  private async toolBurnGoalComplete(): Promise<string> {
-    const goal = await completeBurnGoal({
+  private async toolGoalComplete(): Promise<string> {
+    const goal = await completeGoal({
       workspace: this.callbacks.workspace,
       conversationId: this.callbacks.conversation.id,
     });
-    return `Burn goal complete.\n\n${formatBurnGoalForModel(goal)}`;
+    return `Goal complete.\n\n${formatGoalForModel(goal)}`;
   }
 
-  private async toolBurnGoalBlock(args: Record<string, unknown>): Promise<string> {
+  private async toolGoalBlock(args: Record<string, unknown>): Promise<string> {
     const reason = asString(args.reason);
     if (!reason) {
-      throw new Error("burn_goal_block.reason is required.");
+      throw new Error("goal_block.reason is required.");
     }
-    const goal = await blockBurnGoal({
+    const goal = await blockGoal({
       workspace: this.callbacks.workspace,
       conversationId: this.callbacks.conversation.id,
       reason,
       evidence: asString(args.evidence),
     });
     return goal.status === "blocked"
-      ? `Burn goal blocked.\n\n${formatBurnGoalForModel(goal)}`
-      : `Blocker recorded but Burn goal remains active until the same blocker repeats across at least three Burn turns.\n\n${formatBurnGoalForModel(goal)}`;
+      ? `Goal blocked.\n\n${formatGoalForModel(goal)}`
+      : `Blocker recorded but Goal remains active until the same blocker repeats across at least three Goal turns.\n\n${formatGoalForModel(goal)}`;
   }
 
-  private async toolBurnGoalPause(args: Record<string, unknown>): Promise<string> {
-    const goal = await pauseBurnGoal({
+  private async toolGoalPause(args: Record<string, unknown>): Promise<string> {
+    const goal = await pauseGoal({
       workspace: this.callbacks.workspace,
       conversationId: this.callbacks.conversation.id,
       reason: asString(args.reason),
     });
-    return `Burn goal paused.\n\n${formatBurnGoalForModel(goal)}`;
+    return `Goal paused.\n\n${formatGoalForModel(goal)}`;
   }
 
-  private async toolBurnGoalResume(): Promise<string> {
-    const goal = await resumeBurnGoal({
+  private async toolGoalResume(): Promise<string> {
+    const goal = await resumeGoal({
       workspace: this.callbacks.workspace,
       conversationId: this.callbacks.conversation.id,
     });
-    return `Burn goal resumed.\n\n${formatBurnGoalForModel(goal)}`;
+    return `Goal resumed.\n\n${formatGoalForModel(goal)}`;
   }
 
   private async toolTodo(args: Record<string, unknown>): Promise<string> {
