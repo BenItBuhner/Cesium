@@ -89,10 +89,12 @@ export function PublicAccessSettings({
         | (Record<string, unknown> & { error?: string })
         | PublicAccessStatus;
       if (!response.ok) {
-        throw new Error(
-          typeof payload.error === "string"
+        const responseError =
+          "error" in payload && typeof payload.error === "string"
             ? payload.error
-            : `Public access request failed (${response.status}).`
+            : null;
+        throw new Error(
+          responseError ?? `Public access request failed (${response.status}).`
         );
       }
       return payload;
