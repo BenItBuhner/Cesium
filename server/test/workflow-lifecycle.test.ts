@@ -404,7 +404,7 @@ return "done";
 });
 
 test("workflow detail and lifecycle control routes expose managed runs", async () => {
-  const root = await mkdtemp(path.join("/tmp", "cesium-workflow-route-"));
+  const root = await mkdtemp(path.join(process.cwd(), ".cesium-workflow-route-"));
   const ws = await ensureWorkspaceRegistered(root, `workflow-route-${Date.now()}`);
   const conversationId = `conv-workflow-route-${Date.now()}`;
   const script = `export const meta = { name: "route-control", description: "route control", phases: [] };
