@@ -10,12 +10,17 @@ import {
 import { getGitWorkspaceStatus } from "../git-worktrees.js";
 import {
   createCesiumAgentConfigOptions,
+  findCesiumModelCatalogEntry,
   getCesiumAgentSettings,
+  getCesiumModelCatalog,
   resolveCesiumModelContextWindow,
   resolveCesiumAuth,
+  CESIUM_MODE_DEFINITIONS,
+  type CesiumModeId,
   type CesiumProviderKind,
 } from "../cesium-agent-settings.js";
 import {
+  findMatchingRememberedPermissionRule,
   getGlobalSettings,
   saveRememberedAgentPermissionRule,
 } from "../global-settings-store.js";
@@ -31,7 +36,15 @@ import { asNumber } from "./json-coerce.js";
 import { readConversationEvents } from "./session-store.js";
 import { extractToolEditPreview } from "./tool-edit-preview.js";
 import { buildCesiumModeReminder } from "./cesium-mode-reminders.js";
-import { resolveCesiumModeToolPolicy } from "./cesium-mode-policy.js";
+import {
+  resolveCesiumModeToolPolicy,
+  summarizeCesiumModeToolPolicy,
+} from "./cesium-mode-policy.js";
+import {
+  isOrchestrationPermissionCategory,
+  isPersistentPermissionOptionId,
+  STANDARD_PERMISSION_OPTIONS,
+} from "./permission-options.js";
 import {
   readCesiumPlanFile,
   writeCesiumPlanFile,
@@ -39,19 +52,19 @@ import {
 import { loadWorkspaceInstructionFiles } from "./instruction-files.js";
 import { refreshWorkspaceSkillsMirror } from "./skills-mirror.js";
 import {
-  appendBurnGoalSnapshot,
-  blockBurnGoal,
-  completeBurnGoal,
-  ensureBurnGoalForConversation,
-  formatBurnGoalForModel,
-  pauseBurnGoal,
-  readBurnGoalForConversation,
-  resumeBurnGoal,
-  updateBurnGoal,
-  updateBurnGoalPlan,
-  updateBurnGoalProgress,
-} from "./burn-goal-store.js";
-import { burnCompactionRecoveryContext } from "./burn-goal-steering.js";
+  appendGoalSnapshot,
+  blockGoal,
+  completeGoal,
+  ensureGoalForConversation,
+  formatGoalForModel,
+  pauseGoal,
+  readGoalForConversation,
+  resumeGoal,
+  updateGoal,
+  updateGoalPlan,
+  updateGoalProgress,
+} from "./goal-store.js";
+import { goalCompactionRecoveryContext } from "./goal-steering.js";
 import { executeWorkflowRun } from "./workflow-runtime.js";
 import {
   createWorkflowRunRecord,
@@ -98,7 +111,7 @@ import type {
   AgentConversationStatus,
   AgentEventInput,
   AgentQueuedChatPrompt,
-  AgentPermissionOption,
+  AgentPermissionCategory,
   AgentProvider,
   AgentRuntimeCallbacks,
   AgentSessionHandle,
@@ -126,7 +139,6 @@ import {
   ORCHESTRATION_ASSIGNMENT_TERMINAL_STATUSES,
   ORCHESTRATION_WAIT_DEFAULT_MS,
   ORCHESTRATION_WAIT_HEARTBEAT_MS,
-  PERMISSION_OPTIONS,
   TERMINAL_OUTPUT_CAP,
   WAIT_HEARTBEAT_MS,
   WAIT_POLL_MS,
@@ -137,6 +149,7 @@ import {
   normalizeCesiumToolRequestArguments,
   parseWaitToolArgs,
   permissionDecisionFromOption,
+  resolveCesiumToolPermissionCategory,
   resolveCesiumTools,
   toolKind,
   toolTitle,
@@ -206,6 +219,7 @@ type ActivePermission = {
   reject: (error: Error) => void;
   toolKey: string;
   toolLabel: string;
+  permissionCategory?: AgentPermissionCategory;
 };
 
 type ActiveQuestion = {
@@ -298,6 +312,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
   private terminalRuns = new Map<string, TerminalRun>();
   private subagentTranscripts = new Map<string, AgentStoredEvent[]>();
   private activeSystemPrompt = CESIUM_SYSTEM_PROMPT;
+  private activeUserMessageId: string | null = null;
   private harness: ResolvedCesiumHarness = resolveCesiumTools();
   private subagentsV2: SubagentsV2Runtime | null = null;
 
@@ -372,8 +387,9 @@ class CesiumSessionHandle implements AgentSessionHandle {
     return this.currentMode() === "orchestration";
   }
 
-  private isBurnMode(): boolean {
-    return this.currentMode() === "burn";
+  private isGoalMode(): boolean {
+    const mode = this.currentMode();
+    return mode === "goal" || mode === "burn";
   }
 
   private isWorkflowMode(): boolean {
@@ -381,11 +397,12 @@ class CesiumSessionHandle implements AgentSessionHandle {
   }
 
   private currentMode(): string {
-    return optionValue(
+    const raw = optionValue(
       this.configOptions,
       "mode",
       this.callbacks.conversation.config.mode ?? "agent"
     );
+    return String(raw).trim().toLowerCase() === "burn" ? "goal" : String(raw);
   }
 
   private createAssistantChunkFlusher(messageId: string): {
@@ -452,6 +469,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
     this.pausePhase = "none";
     this.resumeWaiter = null;
     this.releaseResumeAck();
+    this.activeUserMessageId = input.userMessageId;
     const assistantMessageId = `cesium-assistant-${randomUUID()}`;
     await this.callbacks.appendEvents([
       {
@@ -548,8 +566,8 @@ class CesiumSessionHandle implements AgentSessionHandle {
       const board = this.isOrchestrationMode()
         ? await this.resolveCurrentOrchestrationBoard()
         : null;
-      const burnState = this.isBurnMode()
-        ? await ensureBurnGoalForConversation({
+      const burnState = this.isGoalMode()
+        ? await ensureGoalForConversation({
             workspace: this.callbacks.workspace,
             conversationId: this.callbacks.conversation.id,
             objective: input.text,
@@ -592,7 +610,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
           mcpChangeNotice,
           orchestrationBoard: board,
           handoffPlanPath: input.planHandoff?.planPath,
-          burnGoalSummary: burnState ? formatBurnGoalForModel(burnState) : null,
+          goalSummary: burnState ? formatGoalForModel(burnState) : null,
           workflowRunSummary: workflowState ? formatWorkflowRunForModel(workflowState) : null,
         }),
         featureReminder
@@ -627,9 +645,47 @@ class CesiumSessionHandle implements AgentSessionHandle {
         },
       ]);
       const history = await this.buildHistory(input.userMessageId);
+      const promptImages = (input.attachments ?? [])
+        .filter((attachment) => attachment.mimeType.startsWith("image/"))
+        .map((attachment) => ({
+          mimeType: attachment.mimeType,
+          data: attachment.data,
+          name: attachment.name,
+        }));
       if (!history.some((message) => message.role === "user" && message.content === input.text)) {
-        history.push({ role: "user", content: input.text });
+        history.push({
+          role: "user",
+          content: input.text,
+          ...(promptImages.length > 0 ? { images: promptImages } : {}),
+        });
       }
+      const catalog = await getCesiumModelCatalog();
+      const catalogEntry = findCesiumModelCatalogEntry(modelId, catalog);
+      const modelSupportsImages = catalogEntry?.supportsImages === true;
+      const historyImageCount = history.reduce(
+        (count, message) => count + (message.images?.length ?? 0),
+        0
+      );
+      if (historyImageCount > 0 && !modelSupportsImages) {
+        await this.callbacks.appendEvents([
+          {
+            eventId: randomUUID(),
+            conversationId: this.callbacks.conversation.id,
+            kind: "system",
+            level: "warning",
+            text:
+              `Model ${modelId} does not advertise image/multimodal support. ` +
+              `Image attachments were dropped for this turn. Use a vision model such as kimi-k2.7-code.`,
+          },
+        ]);
+      }
+      const modelHistory = modelSupportsImages
+        ? history
+        : history.map((message) =>
+            message.images?.length
+              ? { ...message, images: undefined }
+              : message
+          );
       const toolResultMessages: CesiumHistoryMessage[] = [];
       let usedToolResultChars = 0;
       let completedToolCallCount = 0;
@@ -657,7 +713,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
               baseUrl: auth.baseUrl,
               providerId: auth.providerId,
               modelId,
-              messages: [...history, ...toolResultMessages],
+              messages: [...modelHistory, ...toolResultMessages],
               tools: this.harness.tools,
             },
             iteration,
@@ -743,8 +799,8 @@ class CesiumSessionHandle implements AgentSessionHandle {
           ? error.message
           : String(error);
       console.warn("[cesium-agent] turn failed:", message);
-      if (this.isBurnMode()) {
-        await pauseBurnGoal({
+      if (this.isGoalMode()) {
+        await pauseGoal({
           workspace: this.callbacks.workspace,
           conversationId: this.callbacks.conversation.id,
           reason: `Provider error: ${message}`,
@@ -773,6 +829,8 @@ class CesiumSessionHandle implements AgentSessionHandle {
         pendingPermission: null,
         pendingQuestion: null,
       }));
+    } finally {
+      this.activeUserMessageId = null;
     }
   }
 
@@ -1016,9 +1074,34 @@ class CesiumSessionHandle implements AgentSessionHandle {
       return;
     }
     this.pendingPermissions.delete(input.requestId);
-    const decision = input.cancelled ? "reject" : permissionDecisionFromOption(input.optionId);
-    const optionId = input.cancelled ? undefined : input.optionId;
-    if (optionId === "allow_always" || optionId === "reject_always") {
+    if (input.cancelled) {
+      await this.callbacks.appendEvents([
+        {
+          eventId: randomUUID(),
+          conversationId: this.callbacks.conversation.id,
+          kind: "permission_resolved",
+          requestId: input.requestId,
+          outcome: "cancelled",
+        },
+        {
+          eventId: randomUUID(),
+          conversationId: this.callbacks.conversation.id,
+          kind: "status",
+          status: "running",
+          detail: "Permission cancelled.",
+        },
+      ]);
+      await this.callbacks.updateConversation((current) => ({
+        ...current,
+        status: "running",
+        pendingPermission: null,
+      }));
+      pending.resolve("reject");
+      return;
+    }
+    const decision = permissionDecisionFromOption(input.optionId);
+    const optionId = input.optionId;
+    if (isPersistentPermissionOptionId(optionId)) {
       await saveRememberedAgentPermissionRule({
         workspaceId: this.callbacks.workspace.id,
         backendId: this.backend.id,
@@ -1027,6 +1110,8 @@ class CesiumSessionHandle implements AgentSessionHandle {
         decision,
         optionId,
         optionKind: optionId,
+        permissionCategory: pending.permissionCategory,
+        matchStyle: "exact",
       }).catch(() => undefined);
     }
     await this.callbacks.appendEvents([
@@ -1035,7 +1120,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
         conversationId: this.callbacks.conversation.id,
         kind: "permission_resolved",
         requestId: input.requestId,
-        outcome: input.cancelled ? "cancelled" : "selected",
+        outcome: "selected",
         optionId,
       },
       {
@@ -1294,13 +1379,13 @@ class CesiumSessionHandle implements AgentSessionHandle {
         (event) => event.kind !== "user_message" || !event.hidden
       );
       const history = this.normalizeEventsToHistory(visibleRetained);
-      if (this.isBurnMode()) {
-        const burnGoal = await readBurnGoalForConversation({
+      if (this.isGoalMode()) {
+        const goal = await readGoalForConversation({
           workspace: this.callbacks.workspace,
           conversationId: this.callbacks.conversation.id,
         });
-        if (burnGoal) {
-          history.push({ role: "user", content: burnCompactionRecoveryContext(burnGoal) });
+        if (goal) {
+          history.push({ role: "user", content: goalCompactionRecoveryContext(goal) });
         }
       }
       return history;
@@ -1322,7 +1407,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
     toolCallId: string;
     title: string;
     detail: string;
-    permission: "editFile" | "terminal" | "mcpCall";
+    permission: AgentPermissionCategory;
     toolKey: string;
     toolLabel: string;
   }): Promise<void> {
@@ -1330,23 +1415,26 @@ class CesiumSessionHandle implements AgentSessionHandle {
       this.callbacks.workspace.id,
       this.callbacks.conversation.id
     ).catch(() => null);
-    const orchestrationPolicy = assignment
-      ? assignment.config.permissionPolicy?.[input.permission] ?? "allow"
-      : undefined;
-    if (orchestrationPolicy === "allow") {
-      await this.callbacks.appendEvents([
-        {
-          eventId: randomUUID(),
-          conversationId: this.callbacks.conversation.id,
-          kind: "status",
-          status: "running",
-          detail: `Allowed ${input.title} by orchestration assignment policy.`,
-        },
-      ]);
-      return;
-    }
-    if (orchestrationPolicy === "deny") {
-      throw new Error(`${input.title} blocked by orchestration assignment policy.`);
+    // Only edit/terminal/mcp are orchestration-policy-controlled. Other categories
+    // (e.g. switchMode) fall through to the normal Cesium/global cascade.
+    if (assignment && isOrchestrationPermissionCategory(input.permission)) {
+      const orchestrationPolicy =
+        assignment.config.permissionPolicy?.[input.permission] ?? "allow";
+      if (orchestrationPolicy === "allow") {
+        await this.callbacks.appendEvents([
+          {
+            eventId: randomUUID(),
+            conversationId: this.callbacks.conversation.id,
+            kind: "status",
+            status: "running",
+            detail: `Allowed ${input.title} by orchestration assignment policy.`,
+          },
+        ]);
+        return;
+      }
+      if (orchestrationPolicy === "deny") {
+        throw new Error(`${input.title} blocked by orchestration assignment policy.`);
+      }
     }
 
     const [settings, globalSettings] = await Promise.all([
@@ -1361,11 +1449,14 @@ class CesiumSessionHandle implements AgentSessionHandle {
       throw new Error(`${input.title} blocked by Cesium permission settings.`);
     }
 
-    const remembered = globalSettings?.agents.rememberedPermissions.find(
-      (rule) =>
-        rule.workspaceId === this.callbacks.workspace.id &&
-        rule.backendId === this.backend.id &&
-        rule.toolKey === input.toolKey
+    const remembered = findMatchingRememberedPermissionRule(
+      globalSettings?.agents.rememberedPermissions ?? [],
+      {
+        workspaceId: this.callbacks.workspace.id,
+        backendId: this.backend.id,
+        toolKey: input.toolKey,
+        permissionCategory: input.permission,
+      }
     );
     if (remembered) {
       if (remembered.decision === "reject") {
@@ -1387,6 +1478,8 @@ class CesiumSessionHandle implements AgentSessionHandle {
               id: remembered.id,
               decision: remembered.decision,
               toolLabel: remembered.toolLabel,
+              permissionCategory: remembered.permissionCategory ?? input.permission,
+              matchStyle: remembered.matchStyle ?? "exact",
             },
           },
         },
@@ -1402,6 +1495,29 @@ class CesiumSessionHandle implements AgentSessionHandle {
     }
 
     if (globalSettings?.agents.autoAcceptAllAgentPermissions) {
+      const requestId = randomUUID();
+      await this.callbacks.appendEvents([
+        {
+          eventId: randomUUID(),
+          conversationId: this.callbacks.conversation.id,
+          kind: "permission_resolved",
+          requestId,
+          outcome: "selected",
+          optionId: "allow_once",
+          raw: {
+            autoAcceptedAll: true,
+            permissionCategory: input.permission,
+            toolKey: input.toolKey,
+          },
+        },
+        {
+          eventId: randomUUID(),
+          conversationId: this.callbacks.conversation.id,
+          kind: "status",
+          status: "running",
+          detail: `Auto-accepted ${input.title} (auto-accept all permissions).`,
+        },
+      ]);
       return;
     }
 
@@ -1419,7 +1535,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
         toolCallId: input.toolCallId,
         title: input.title,
         detail: input.detail,
-        options: PERMISSION_OPTIONS,
+        options: STANDARD_PERMISSION_OPTIONS,
       },
     ]);
     await this.callbacks.updateConversation((current) => ({
@@ -1432,7 +1548,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
         permission: input.permission,
         title: input.title,
         detail: input.detail,
-        options: PERMISSION_OPTIONS,
+        options: STANDARD_PERMISSION_OPTIONS,
       },
     }));
     const decision = await new Promise<"allow" | "reject">((resolve, reject) => {
@@ -1441,6 +1557,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
         reject,
         toolKey: input.toolKey,
         toolLabel: input.toolLabel,
+        permissionCategory: input.permission,
       });
     });
     if (decision !== "allow") {
@@ -1488,22 +1605,28 @@ class CesiumSessionHandle implements AgentSessionHandle {
       if (!policy.allowed) {
         throw new Error(policy.reason ?? `Tool ${request.name} is blocked in the active mode.`);
       }
-      if (request.name === "edit_file") {
+      const permissionCategory = resolveCesiumToolPermissionCategory(
+        this.harness.tools,
+        effectiveRequest.name
+      );
+      if (permissionCategory) {
+        const permissionArgs =
+          permissionCategory === "mcpCall"
+            ? (() => {
+                const normalized = normalizeCallMcpToolArgs(effectiveRequest.arguments);
+                return {
+                  serverId: normalized.serverId,
+                  toolName: normalized.toolName,
+                  arguments: normalized.arguments,
+                };
+              })()
+            : effectiveRequest.arguments;
         await this.requirePermission({
-          toolCallId: request.id,
+          toolCallId: effectiveRequest.id,
           title,
-          detail: safeJson(request.arguments),
-          permission: "editFile",
-          toolKey: cesiumPermissionToolKey("editFile", request.arguments),
-          toolLabel: title,
-        });
-      } else if (request.name === "terminal") {
-        await this.requirePermission({
-          toolCallId: request.id,
-          title,
-          detail: safeJson(request.arguments),
-          permission: "terminal",
-          toolKey: cesiumPermissionToolKey("terminal", request.arguments),
+          detail: this.buildPermissionDetail(permissionCategory, permissionArgs),
+          permission: permissionCategory,
+          toolKey: cesiumPermissionToolKey(permissionCategory, permissionArgs),
           toolLabel: title,
         });
       }
@@ -1514,7 +1637,10 @@ class CesiumSessionHandle implements AgentSessionHandle {
       if (featureExecutor?.executeTool) {
         result = await featureExecutor.executeTool(request.name, request.arguments);
       } else {
-        switch (request.name) {
+        const toolName = request.name.startsWith("burn_goal_")
+          ? `goal_${request.name.slice("burn_goal_".length)}`
+          : request.name;
+        switch (toolName) {
         case "read_file":
           result = await this.toolReadFile(request.arguments);
           break;
@@ -1526,6 +1652,9 @@ class CesiumSessionHandle implements AgentSessionHandle {
           break;
         case "terminal":
           result = await this.toolTerminal(request.arguments);
+          break;
+        case "switch_mode":
+          result = await this.toolSwitchMode(request.arguments, request.id);
           break;
         case "wait":
           result = await this.toolWait(request.arguments);
@@ -1545,35 +1674,35 @@ class CesiumSessionHandle implements AgentSessionHandle {
         case "finalize_plan":
           result = await this.toolFinalizePlan(request.arguments);
           break;
-        case "burn_goal_set":
-          result = await this.toolBurnGoalSet(request.arguments);
+        case "goal_set":
+          result = await this.toolGoalSet(request.arguments);
           break;
-        case "burn_goal_pause":
-          result = await this.toolBurnGoalPause(request.arguments);
+        case "goal_pause":
+          result = await this.toolGoalPause(request.arguments);
           break;
-        case "burn_goal_block":
-          result = await this.toolBurnGoalBlock(request.arguments);
+        case "goal_block":
+          result = await this.toolGoalBlock(request.arguments);
           break;
-        case "burn_goal_summarize":
-          result = await this.toolBurnGoalSummarize(request.arguments);
+        case "goal_summarize":
+          result = await this.toolGoalSummarize(request.arguments);
           break;
-        case "burn_goal_complete":
-          result = await this.toolBurnGoalComplete();
+        case "goal_complete":
+          result = await this.toolGoalComplete();
           break;
-        case "burn_goal_get":
-          result = await this.toolBurnGoalGet();
+        case "goal_get":
+          result = await this.toolGoalGet();
           break;
-        case "burn_goal_update_plan":
-          result = await this.toolBurnGoalUpdatePlan(request.arguments);
+        case "goal_update_plan":
+          result = await this.toolGoalUpdatePlan(request.arguments);
           break;
-        case "burn_goal_update_progress":
-          result = await this.toolBurnGoalUpdateProgress(request.arguments);
+        case "goal_update_progress":
+          result = await this.toolGoalUpdateProgress(request.arguments);
           break;
-        case "burn_goal_summarize_state":
-          result = await this.toolBurnGoalSummarize(request.arguments);
+        case "goal_summarize_state":
+          result = await this.toolGoalSummarize(request.arguments);
           break;
-        case "burn_goal_resume":
-          result = await this.toolBurnGoalResume();
+        case "goal_resume":
+          result = await this.toolGoalResume();
           break;
         case "workflow_run":
           result = await this.toolWorkflowRun(request.arguments);
@@ -1949,31 +2078,31 @@ class CesiumSessionHandle implements AgentSessionHandle {
     return `Finalized plan ${plan.path} for review.`;
   }
 
-  private async toolBurnGoalGet(): Promise<string> {
-    const goal = await readBurnGoalForConversation({
+  private async toolGoalGet(): Promise<string> {
+    const goal = await readGoalForConversation({
       workspace: this.callbacks.workspace,
       conversationId: this.callbacks.conversation.id,
     });
-    return goal ? formatBurnGoalForModel(goal) : "No Burn goal exists for this conversation.";
+    return goal ? formatGoalForModel(goal) : "No Goal exists for this conversation.";
   }
 
-  private async toolBurnGoalSet(args: Record<string, unknown>): Promise<string> {
+  private async toolGoalSet(args: Record<string, unknown>): Promise<string> {
     const objective = asString(args.objective);
-    let goal = await readBurnGoalForConversation({
+    let goal = await readGoalForConversation({
       workspace: this.callbacks.workspace,
       conversationId: this.callbacks.conversation.id,
     });
     if (!goal) {
       if (!objective) {
-        throw new Error("burn_goal_set.objective is required when no Burn goal exists.");
+        throw new Error("goal_set.objective is required when no Goal exists.");
       }
-      goal = await ensureBurnGoalForConversation({
+      goal = await ensureGoalForConversation({
         workspace: this.callbacks.workspace,
         conversationId: this.callbacks.conversation.id,
         objective,
       });
     } else if (objective && objective !== goal.objective) {
-      goal = await updateBurnGoal({
+      goal = await updateGoal({
         workspace: this.callbacks.workspace,
         conversationId: this.callbacks.conversation.id,
         patch: {
@@ -1989,7 +2118,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
       Array.isArray(args.milestones) ||
       Array.isArray(args.todos);
     if (hasPlanState) {
-      goal = await updateBurnGoalPlan({
+      goal = await updateGoalPlan({
         workspace: this.callbacks.workspace,
         conversationId: this.callbacks.conversation.id,
         planSummary: asString(args.planSummary),
@@ -1999,7 +2128,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
     }
 
     if (Array.isArray(args.verificationEvidence)) {
-      goal = await updateBurnGoalProgress({
+      goal = await updateGoalProgress({
         workspace: this.callbacks.workspace,
         conversationId: this.callbacks.conversation.id,
         verificationEvidence: args.verificationEvidence,
@@ -2009,7 +2138,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
     const progressPercent = asNumber(args.progressPercent);
     const headline = asString(args.headline);
     if (progressPercent != null || headline) {
-      const patch: Parameters<typeof updateBurnGoal>[0]["patch"] = {};
+      const patch: Parameters<typeof updateGoal>[0]["patch"] = {};
       if (progressPercent != null) {
         const rounded = Math.round(progressPercent);
         if (
@@ -2018,14 +2147,14 @@ class CesiumSessionHandle implements AgentSessionHandle {
           rounded < 0 ||
           rounded > 100
         ) {
-          throw new Error("burn_goal_set.progressPercent must be an integer from 0 to 100.");
+          throw new Error("goal_set.progressPercent must be an integer from 0 to 100.");
         }
         patch.progressPercent = rounded;
       }
       if (headline) {
         patch.headline = headline;
       }
-      goal = await updateBurnGoal({
+      goal = await updateGoal({
         workspace: this.callbacks.workspace,
         conversationId: this.callbacks.conversation.id,
         patch,
@@ -2033,7 +2162,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
     }
 
     if (goal.status === "planning") {
-      goal = await updateBurnGoal({
+      goal = await updateGoal({
         workspace: this.callbacks.workspace,
         conversationId: this.callbacks.conversation.id,
         patch: {
@@ -2043,26 +2172,26 @@ class CesiumSessionHandle implements AgentSessionHandle {
       });
     }
 
-    return `Burn goal set.\n\n${formatBurnGoalForModel(goal)}`;
+    return `Goal set.\n\n${formatGoalForModel(goal)}`;
   }
 
-  private async toolBurnGoalUpdatePlan(args: Record<string, unknown>): Promise<string> {
+  private async toolGoalUpdatePlan(args: Record<string, unknown>): Promise<string> {
     const planSummary = asString(args.planSummary);
     if (!planSummary) {
-      throw new Error("burn_goal_update_plan.planSummary is required.");
+      throw new Error("goal_update_plan.planSummary is required.");
     }
-    const goal = await updateBurnGoalPlan({
+    const goal = await updateGoalPlan({
       workspace: this.callbacks.workspace,
       conversationId: this.callbacks.conversation.id,
       planSummary,
       milestones: Array.isArray(args.milestones) ? args.milestones : [],
       todos: Array.isArray(args.todos) ? args.todos : [],
     });
-    return `Burn plan recorded.\n\n${formatBurnGoalForModel(goal)}`;
+    return `Goal plan recorded.\n\n${formatGoalForModel(goal)}`;
   }
 
-  private async toolBurnGoalUpdateProgress(args: Record<string, unknown>): Promise<string> {
-    const goal = await updateBurnGoalProgress({
+  private async toolGoalUpdateProgress(args: Record<string, unknown>): Promise<string> {
+    const goal = await updateGoalProgress({
       workspace: this.callbacks.workspace,
       conversationId: this.callbacks.conversation.id,
       milestones: Array.isArray(args.milestones) ? args.milestones : undefined,
@@ -2071,67 +2200,67 @@ class CesiumSessionHandle implements AgentSessionHandle {
         ? args.verificationEvidence
         : undefined,
     });
-    return `Burn progress updated.\n\n${formatBurnGoalForModel(goal)}`;
+    return `Goal progress updated.\n\n${formatGoalForModel(goal)}`;
   }
 
-  private async toolBurnGoalSummarize(args: Record<string, unknown>): Promise<string> {
+  private async toolGoalSummarize(args: Record<string, unknown>): Promise<string> {
     const progressPercent = asNumber(args.progressPercent);
     const summary = asString(args.summary);
     if (progressPercent == null) {
-      throw new Error("burn_goal_summarize.progressPercent is required.");
+      throw new Error("goal_summarize.progressPercent is required.");
     }
     if (!summary) {
-      throw new Error("burn_goal_summarize.summary is required.");
+      throw new Error("goal_summarize.summary is required.");
     }
-    const goal = await appendBurnGoalSnapshot({
+    const goal = await appendGoalSnapshot({
       workspace: this.callbacks.workspace,
       conversationId: this.callbacks.conversation.id,
       progressPercent,
       summary,
       headline: asString(args.headline),
     });
-    return `Burn goal summarized.\n\n${formatBurnGoalForModel(goal)}`;
+    return `Goal summarized.\n\n${formatGoalForModel(goal)}`;
   }
 
-  private async toolBurnGoalComplete(): Promise<string> {
-    const goal = await completeBurnGoal({
+  private async toolGoalComplete(): Promise<string> {
+    const goal = await completeGoal({
       workspace: this.callbacks.workspace,
       conversationId: this.callbacks.conversation.id,
     });
-    return `Burn goal complete.\n\n${formatBurnGoalForModel(goal)}`;
+    return `Goal complete.\n\n${formatGoalForModel(goal)}`;
   }
 
-  private async toolBurnGoalBlock(args: Record<string, unknown>): Promise<string> {
+  private async toolGoalBlock(args: Record<string, unknown>): Promise<string> {
     const reason = asString(args.reason);
     if (!reason) {
-      throw new Error("burn_goal_block.reason is required.");
+      throw new Error("goal_block.reason is required.");
     }
-    const goal = await blockBurnGoal({
+    const goal = await blockGoal({
       workspace: this.callbacks.workspace,
       conversationId: this.callbacks.conversation.id,
       reason,
       evidence: asString(args.evidence),
     });
     return goal.status === "blocked"
-      ? `Burn goal blocked.\n\n${formatBurnGoalForModel(goal)}`
-      : `Blocker recorded but Burn goal remains active until the same blocker repeats across at least three Burn turns.\n\n${formatBurnGoalForModel(goal)}`;
+      ? `Goal blocked.\n\n${formatGoalForModel(goal)}`
+      : `Blocker recorded but Goal remains active until the same blocker repeats across at least three Goal turns.\n\n${formatGoalForModel(goal)}`;
   }
 
-  private async toolBurnGoalPause(args: Record<string, unknown>): Promise<string> {
-    const goal = await pauseBurnGoal({
+  private async toolGoalPause(args: Record<string, unknown>): Promise<string> {
+    const goal = await pauseGoal({
       workspace: this.callbacks.workspace,
       conversationId: this.callbacks.conversation.id,
       reason: asString(args.reason),
     });
-    return `Burn goal paused.\n\n${formatBurnGoalForModel(goal)}`;
+    return `Goal paused.\n\n${formatGoalForModel(goal)}`;
   }
 
-  private async toolBurnGoalResume(): Promise<string> {
-    const goal = await resumeBurnGoal({
+  private async toolGoalResume(): Promise<string> {
+    const goal = await resumeGoal({
       workspace: this.callbacks.workspace,
       conversationId: this.callbacks.conversation.id,
     });
-    return `Burn goal resumed.\n\n${formatBurnGoalForModel(goal)}`;
+    return `Goal resumed.\n\n${formatGoalForModel(goal)}`;
   }
 
   private async toolTodo(args: Record<string, unknown>): Promise<string> {
@@ -2341,10 +2470,116 @@ class CesiumSessionHandle implements AgentSessionHandle {
     return `User answer:\n${answer}`;
   }
 
+  private buildPermissionDetail(
+    permission: AgentPermissionCategory,
+    args: Record<string, unknown>
+  ): string {
+    if (permission === "switchMode") {
+      const target =
+        asString(args.target_mode)?.trim() ||
+        asString(args.targetMode)?.trim() ||
+        "unknown";
+      const reason = asString(args.reason)?.trim();
+      return reason
+        ? `Switch conversation mode to ${target}.\nReason: ${reason}`
+        : `Switch conversation mode to ${target}.`;
+    }
+    if (permission === "mcpCall") {
+      const serverId = asString(args.serverId) ?? "";
+      const toolName = asString(args.toolName) ?? "";
+      const toolArgs = asRecord(args.arguments) ?? {};
+      return `${serverId} - ${toolName}\n${JSON.stringify(toolArgs)}`;
+    }
+    return safeJson(args);
+  }
+
+  private async toolSwitchMode(
+    args: Record<string, unknown>,
+    toolCallId: string
+  ): Promise<string> {
+    const rawTarget =
+      asString(args.target_mode)?.trim().toLowerCase() ||
+      asString(args.targetMode)?.trim().toLowerCase() ||
+      "";
+    if (!rawTarget) {
+      throw new Error("switch_mode.target_mode is required.");
+    }
+    const knownMode = CESIUM_MODE_DEFINITIONS.find((mode) => mode.id === rawTarget);
+    if (!knownMode) {
+      throw new Error(
+        `Unknown mode "${rawTarget}". Allowed modes: ${CESIUM_MODE_DEFINITIONS.map((mode) => mode.id).join(", ")}.`
+      );
+    }
+    const targetMode = knownMode.id as CesiumModeId;
+    const settings = await getCesiumAgentSettings();
+    if (!settings.modes.enabled[targetMode]) {
+      throw new Error(
+        `Mode "${targetMode}" is disabled in Cesium Agent settings. Enable it under Settings → Agents → Cesium Agent → Modes.`
+      );
+    }
+    const previousMode = this.currentMode();
+    if (previousMode === targetMode) {
+      return `Already in ${targetMode} mode. No switch needed.`;
+    }
+    const reason = asString(args.reason)?.trim() || undefined;
+    await this.setConfigOption("mode", targetMode);
+    const policy = summarizeCesiumModeToolPolicy(targetMode);
+    const reminderText = buildCesiumModeReminder({
+      mode: targetMode,
+      modelName: this.callbacks.conversation.config.modelName,
+      workspaceRoot: this.callbacks.workspace.root,
+      dateLabel: new Date().toLocaleString("en-US"),
+      gitSummary: "unchanged since last reminder",
+      mcpSummaries: [],
+    });
+    const targetMessageId = this.activeUserMessageId;
+    if (targetMessageId) {
+      await this.callbacks.appendEvents([
+        {
+          eventId: randomUUID(),
+          conversationId: this.callbacks.conversation.id,
+          kind: "system_reminder",
+          reminderId: `mode-switch-${toolCallId}`,
+          targetMessageId,
+          reason: "mode",
+          text: reminderText,
+          raw: {
+            mode: targetMode,
+            previousMode,
+            switchedByTool: true,
+            toolCallId,
+            reason,
+          },
+        },
+      ]);
+    }
+    await this.callbacks.appendEvents([
+      {
+        eventId: randomUUID(),
+        conversationId: this.callbacks.conversation.id,
+        kind: "status",
+        status: "running",
+        detail: `Switched mode from ${previousMode} to ${targetMode}.`,
+      },
+    ]);
+    return [
+      `Switched conversation mode from ${previousMode} to ${targetMode}.`,
+      reason ? `Reason: ${reason}` : null,
+      `Allowed tools: ${policy.allowed.join(", ")}`,
+      `Restricted: ${policy.restricted.join(", ")}`,
+      `Blocked: ${policy.blocked.join(", ")}`,
+      "Follow this mode for the rest of this turn and subsequent turns until switched again.",
+      "",
+      reminderText,
+    ]
+      .filter((line): line is string => line != null)
+      .join("\n");
+  }
+
   private async toolCallMcp(
     args: Record<string, unknown>,
-    toolCallId: string,
-    title: string
+    _toolCallId: string,
+    _title: string
   ): Promise<string> {
     const normalized = normalizeCallMcpToolArgs(args);
     const serverId = normalized.serverId;
@@ -2356,14 +2591,6 @@ class CesiumSessionHandle implements AgentSessionHandle {
     if (serverId === BROWSER_MCP_SERVER_ID && this.isOrchestrationMode()) {
       throw new Error("Browser MCP tools are only available to normal Cesium Agent conversations.");
     }
-    await this.requirePermission({
-      toolCallId,
-      title,
-      detail: `${serverId} - ${toolName}\n${JSON.stringify(toolArgs)}`,
-      permission: "mcpCall",
-      toolKey: cesiumPermissionToolKey("mcpCall", { serverId, toolName }),
-      toolLabel: title,
-    });
     return await callMcpTool({
       workspaceId: this.callbacks.workspace.id,
       workspaceRoot: this.callbacks.workspace.root,

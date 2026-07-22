@@ -1077,16 +1077,12 @@ function ChatPanel({
   const modelVisibility = settings.models.byBackend;
   const modeOptions = useMemo(() => {
     if (selectedConversation) {
-      return buildConversationModeOptions(selectedConversation, backends, {
-        goalModeBetaEnabled: settings.features.goalModeBeta,
-      });
+      return buildConversationModeOptions(selectedConversation, backends);
     }
     return backend
-      ? buildDraftModeOptionsForBackend(backend, {
-          goalModeBetaEnabled: settings.features.goalModeBeta,
-        })
+      ? buildDraftModeOptionsForBackend(backend)
       : [];
-  }, [backend, backends, selectedConversation, settings.features.goalModeBeta]);
+  }, [backend, backends, selectedConversation]);
   const models = useMemo(() => {
     if (selectedConversation) {
       return buildConversationModelOptions(selectedConversation, backends, modelVisibility);

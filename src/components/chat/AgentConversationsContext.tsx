@@ -1549,8 +1549,7 @@ backends
 );
 const modeOptions = buildConversationModeOptions(
 { ...conversation, config: effectiveConfig },
-backends,
-{ goalModeBetaEnabled: globalSettings.features.goalModeBeta }
+backends
 );
 const mode = resolveCanonicalModeId(
 String(effectiveConfig.mode ?? ""),

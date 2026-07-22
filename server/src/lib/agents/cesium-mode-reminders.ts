@@ -14,23 +14,23 @@ export type CesiumModeReminderInput = {
   mcpChangeNotice?: string | null;
   orchestrationBoard?: OrchestrationBoardSnapshot | null;
   activePlanPath?: string | null;
-  burnGoalSummary?: string | null;
+  goalSummary?: string | null;
   workflowRunSummary?: string | null;
   handoffPlanPath?: string | null;
 };
 
 function modeTitle(mode: string): string {
-  const normalized = mode.trim().toLowerCase();
+  const normalized = mode.trim().toLowerCase() === "burn" ? "goal" : mode.trim().toLowerCase();
   if (normalized === "ask") return "Ask";
   if (normalized === "plan") return "Plan";
-  if (normalized === "burn") return "Burn";
+  if (normalized === "goal") return "Goal";
   if (normalized === "workflow") return "Workflow";
   if (normalized === "orchestration") return "Orchestration";
   return "Agent";
 }
 
 function modeFlow(mode: string): string {
-  const normalized = mode.trim().toLowerCase();
+  const normalized = mode.trim().toLowerCase() === "burn" ? "goal" : mode.trim().toLowerCase();
   if (normalized === "ask") {
     return [
       "The general flow when working on tasks is 1) context collection, be it grep, read, or anything else 2) answering any/all questions asked by the user.",
@@ -45,13 +45,13 @@ function modeFlow(mode: string): string {
       "You should create and edit plan files under .cesium/plans/ when drafting implementation plans. Do not perform direct implementation work in plan mode.",
     ].join("\n");
   }
-  if (normalized === "burn") {
+  if (normalized === "goal") {
     return [
-      "The general flow when working in Burn mode is 1) keep the user's objective as durable Burn task context with burn_goal_set 2) execute sequentially while refreshing compact goal state with burn_goal_set as needed 3) record meaningful progress snapshots with burn_goal_summarize 4) pause or block only when appropriate 5) audit every requirement before calling burn_goal_complete.",
+      "The general flow when working in Goal mode is 1) keep the user's objective as durable Goal task context with goal_set 2) execute sequentially while refreshing compact goal state with goal_set as needed 3) record meaningful progress snapshots with goal_summarize 4) pause or block only when appropriate 5) audit every requirement before calling goal_complete.",
       "",
-      "Burn mode is persistent across turns. You must not shrink the goal to what fits in one turn. Use burn_goal_summarize periodically after meaningful progress, after resolving a blocker, before pausing, before completing, and whenever the latest summary is missing or materially stale. Do not call it every turn, and do not stop after a progress snapshot if there is still concrete work to do.",
+      "Goal mode is persistent across turns. You must not shrink the goal to what fits in one turn. Use goal_summarize periodically after meaningful progress, after resolving a blocker, before pausing, before completing, and whenever the latest summary is missing or materially stale. Do not call it every turn, and do not stop after a progress snapshot if there is still concrete work to do.",
       "",
-      "In Cesium Burn mode, the Burn control tools are burn_goal_set, burn_goal_pause, burn_goal_block, burn_goal_summarize, and burn_goal_complete. Use burn_goal_complete only after verification passes, and use burn_goal_block only when a genuine external blocker prevents progress.",
+      "In Cesium Goal mode, the Goal control tools are goal_set, goal_pause, goal_block, goal_summarize, and goal_complete. Use goal_complete only after verification passes, and use goal_block only when a genuine external blocker prevents progress.",
     ].join("\n");
   }
   if (normalized === "workflow") {
@@ -102,7 +102,7 @@ export function buildCesiumModeReminder(input: CesiumModeReminderInput): string 
   const planLines = [
     input.activePlanPath ? `- Active plan: ${input.activePlanPath}` : null,
     input.handoffPlanPath ? `- Implement plan: ${input.handoffPlanPath}` : null,
-    input.burnGoalSummary ? input.burnGoalSummary : null,
+    input.goalSummary ? input.goalSummary : null,
     input.workflowRunSummary ? input.workflowRunSummary : null,
   ].filter(Boolean).join("\n");
   const agentsMarkdown =
@@ -157,7 +157,7 @@ ${modeFlow(mode)}
 
 It is best to keep it all short and concise, but is preferable to also use warm and friendly communication, along with bold proposals and ideas to evade blockers and innovate where stagnant. Best practice also assumes you are to create your to-do list before researching or implementing and executing within the codebase, and keeping on-track with said to-do list to keep working and updating the list as you go, be it adjusting the list, checking off completed tasks, or anything else.
 
-${planLines ? `## Active Plan, Burn Goal, And Workflow\n\n${planLines}\n\n` : ""}${boardLines ? `## Orchestration Board\n\n${boardLines}\n\n` : ""}## MCP Servers
+${planLines ? `## Active Plan, Goal, And Workflow\n\n${planLines}\n\n` : ""}${boardLines ? `## Orchestration Board\n\n${boardLines}\n\n` : ""}## MCP Servers
 
 ${mcpSummaryText(input.mcpSummaries)}
 

@@ -1,4 +1,6 @@
 import { BROWSER_MCP_SERVER_ID } from "../../mcp/builtin-browser-tools.js";
+import type { AgentPermissionCategory } from "../types.js";
+import { permissionDecisionFromOption as sharedPermissionDecisionFromOption } from "../permission-options.js";
 import {
   defaultHarnessSettings,
   resolveCesiumHarness,
@@ -102,6 +104,7 @@ const CESIUM_BASE_TOOLS: CesiumToolDefinition[] = [
   {
     name: "edit_file",
     description: "Replace one exact string in a file. Returns a precise error if the match is missing or duplicated.",
+    requiresPermission: "editFile",
     parameters: {
       type: "object",
       properties: {
@@ -116,6 +119,7 @@ const CESIUM_BASE_TOOLS: CesiumToolDefinition[] = [
   {
     name: "terminal",
     description: "Run a workspace command. waitUntil can be complete, background, or pattern.",
+    requiresPermission: "terminal",
     parameters: {
       type: "object",
       properties: {
@@ -125,6 +129,30 @@ const CESIUM_BASE_TOOLS: CesiumToolDefinition[] = [
         timeoutMs: { type: "number" },
       },
       required: ["command"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "switch_mode",
+    description:
+      "Switch this conversation into another Cesium mode (agent, plan, ask, orchestration, burn, or workflow). " +
+      "Requires user approval by default; the user can Always allow a specific target mode. " +
+      "Use when the task needs a different operating mode instead of asking the user to change the mode picker themselves.",
+    requiresPermission: "switchMode",
+    parameters: {
+      type: "object",
+      properties: {
+        target_mode: {
+          type: "string",
+          enum: ["agent", "plan", "orchestration", "burn", "workflow", "ask"],
+          description: "Mode to switch into. Must be enabled in Cesium Agent settings.",
+        },
+        reason: {
+          type: "string",
+          description: "Short explanation shown to the user in the permission prompt.",
+        },
+      },
+      required: ["target_mode"],
       additionalProperties: false,
     },
   },
@@ -222,9 +250,9 @@ const CESIUM_BASE_TOOLS: CesiumToolDefinition[] = [
     },
   },
   {
-    name: "burn_goal_set",
+    name: "goal_set",
     description:
-      "Set or refresh the active Burn goal state. Use this to record the objective, current plan summary, compact milestones/todos, and verification evidence before or during execution.",
+      "Set or refresh the active Goal state. Use this to record the objective, current plan summary, compact milestones/todos, and verification evidence before or during execution.",
     parameters: {
       type: "object",
       properties: {
@@ -240,9 +268,9 @@ const CESIUM_BASE_TOOLS: CesiumToolDefinition[] = [
     },
   },
   {
-    name: "burn_goal_pause",
+    name: "goal_pause",
     description:
-      "Pause the active Burn goal without marking it blocked or complete. Use when the user asks to pause or when the turn should stop cleanly with remaining work.",
+      "Pause the active Goal without marking it blocked or complete. Use when the user asks to pause or when the turn should stop cleanly with remaining work.",
     parameters: {
       type: "object",
       properties: {
@@ -252,9 +280,9 @@ const CESIUM_BASE_TOOLS: CesiumToolDefinition[] = [
     },
   },
   {
-    name: "burn_goal_block",
+    name: "goal_block",
     description:
-      "Record a blocker. The goal is marked blocked only after the same blocker recurs across at least three Burn turns unless a hard external impossibility is proven.",
+      "Record a blocker. The goal is marked blocked only after the same blocker recurs across at least three Goal turns unless a hard external impossibility is proven.",
     parameters: {
       type: "object",
       properties: {
@@ -266,9 +294,9 @@ const CESIUM_BASE_TOOLS: CesiumToolDefinition[] = [
     },
   },
   {
-    name: "burn_goal_summarize",
+    name: "goal_summarize",
     description:
-      "Persist a structured Burn progress snapshot after meaningful progress, blocker resolution, before pausing, before completing, or when the latest summary is missing/stale. Do not call this every turn; after summarizing, continue working if the Burn goal is not complete. The summary must use ## Progress, ## Current State, ## Blockers, and ## Next Steps sections with bullet items.",
+      "Persist a structured Goal progress snapshot after meaningful progress, blocker resolution, before pausing, before completing, or when the latest summary is missing/stale. Do not call this every turn; after summarizing, continue working if the Goal is not complete. The summary must use ## Progress, ## Current State, ## Blockers, and ## Next Steps sections with bullet items.",
     parameters: {
       type: "object",
       properties: {
@@ -281,9 +309,9 @@ const CESIUM_BASE_TOOLS: CesiumToolDefinition[] = [
     },
   },
   {
-    name: "burn_goal_complete",
+    name: "goal_complete",
     description:
-      "Mark the Burn goal complete only after every requirement has been audited and current evidence proves the objective is satisfied.",
+      "Mark the Goal complete only after every requirement has been audited and current evidence proves the objective is satisfied.",
     parameters: {
       type: "object",
       properties: {},
@@ -430,6 +458,7 @@ const CESIUM_BASE_TOOLS: CesiumToolDefinition[] = [
     name: "call_mcp_tool",
     description:
       "Invoke a tool on a connected MCP server. Read mcp-servers/<serverId>/tools/ first.",
+    requiresPermission: "mcpCall",
     parameters: {
       type: "object",
       properties: {
@@ -765,6 +794,8 @@ export function toolKind(name: string): string {
       return "edit";
     case "terminal":
       return "terminal";
+    case "switch_mode":
+      return "mode";
     case "wait":
       return "wait";
     case "grep":
@@ -775,17 +806,17 @@ export function toolKind(name: string): string {
     case "read_plan":
     case "finalize_plan":
       return "todo";
-    case "burn_goal_set":
-    case "burn_goal_pause":
-    case "burn_goal_summarize":
-    case "burn_goal_get":
-    case "burn_goal_update_plan":
-    case "burn_goal_update_progress":
-    case "burn_goal_summarize_state":
-    case "burn_goal_complete":
-    case "burn_goal_block":
-    case "burn_goal_resume":
-      return "burn";
+    case "goal_set":
+    case "goal_pause":
+    case "goal_summarize":
+    case "goal_get":
+    case "goal_update_plan":
+    case "goal_update_progress":
+    case "goal_summarize_state":
+    case "goal_complete":
+    case "goal_block":
+    case "goal_resume":
+      return "goal";
     case "workflow_run":
     case "workflow_status":
     case "workflow_await":
@@ -823,11 +854,18 @@ export function toolKind(name: string): string {
 }
 
 export function permissionDecisionFromOption(optionId: string | undefined): "allow" | "reject" {
-  return optionId === "allow_once" || optionId === "allow_always" ? "allow" : "reject";
+  return sharedPermissionDecisionFromOption(optionId);
+}
+
+export function resolveCesiumToolPermissionCategory(
+  tools: CesiumToolDefinition[],
+  toolName: string
+): AgentPermissionCategory | undefined {
+  return tools.find((tool) => tool.name === toolName)?.requiresPermission;
 }
 
 export function cesiumPermissionToolKey(
-  permission: "editFile" | "terminal" | "mcpCall",
+  permission: AgentPermissionCategory,
   args: Record<string, unknown>
 ): string {
   switch (permission) {
@@ -837,6 +875,27 @@ export function cesiumPermissionToolKey(
       return `cesium:terminal:${asString(args.command) ?? ""}`;
     case "mcpCall":
       return `cesium:mcp:${asString(args.serverId) ?? ""}:${asString(args.toolName) ?? ""}`;
+    case "switchMode": {
+      const target =
+        asString(args.target_mode)?.trim().toLowerCase() ||
+        asString(args.targetMode)?.trim().toLowerCase() ||
+        "";
+      return `cesium:switch_mode:${target}`;
+    }
+  }
+}
+
+/** Category-level key used when a remembered rule applies to every call in that category. */
+export function cesiumPermissionCategoryKey(permission: AgentPermissionCategory): string {
+  switch (permission) {
+    case "editFile":
+      return "cesium:edit_file";
+    case "terminal":
+      return "cesium:terminal";
+    case "mcpCall":
+      return "cesium:mcp";
+    case "switchMode":
+      return "cesium:switch_mode";
   }
 }
 
@@ -848,6 +907,11 @@ export function toolTitle(name: string, args: Record<string, unknown>): string {
       return `Edit ${asString(args.path) ?? "file"}`;
     case "terminal":
       return `Run ${asString(args.command) ?? "command"}`;
+    case "switch_mode": {
+      const target =
+        asString(args.target_mode)?.trim() || asString(args.targetMode)?.trim() || "mode";
+      return `Switch to ${target} mode`;
+    }
     case "wait": {
       const seconds = typeof args.seconds === "number" ? args.seconds : Number(args.seconds);
       const reason = asString(args.reason);
@@ -869,26 +933,26 @@ export function toolTitle(name: string, args: Record<string, unknown>): string {
       return `Read plan ${asString(args.path) ?? ""}`.trim();
     case "finalize_plan":
       return `Finalize plan ${asString(args.path) ?? ""}`.trim();
-    case "burn_goal_set":
-      return "Set Burn goal";
-    case "burn_goal_pause":
-      return "Pause Burn goal";
-    case "burn_goal_summarize":
-      return "Summarize Burn goal";
-    case "burn_goal_get":
-      return "Read Burn goal";
-    case "burn_goal_update_plan":
-      return "Record Burn plan";
-    case "burn_goal_update_progress":
-      return "Update Burn progress";
-    case "burn_goal_summarize_state":
-      return "Summarize Burn state";
-    case "burn_goal_complete":
-      return "Complete Burn goal";
-    case "burn_goal_block":
-      return "Record Burn blocker";
-    case "burn_goal_resume":
-      return "Resume Burn goal";
+    case "goal_set":
+      return "Set Goal";
+    case "goal_pause":
+      return "Pause Goal";
+    case "goal_summarize":
+      return "Summarize Goal";
+    case "goal_get":
+      return "Read Goal";
+    case "goal_update_plan":
+      return "Record Goal plan";
+    case "goal_update_progress":
+      return "Update Goal progress";
+    case "goal_summarize_state":
+      return "Summarize Goal state";
+    case "goal_complete":
+      return "Complete Goal";
+    case "goal_block":
+      return "Record Goal blocker";
+    case "goal_resume":
+      return "Resume Goal";
     case "workflow_run":
       return `Run workflow ${asString(args.name) ?? ""}`.trim();
     case "workflow_status":

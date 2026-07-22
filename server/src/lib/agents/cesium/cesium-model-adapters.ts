@@ -88,11 +88,35 @@ export function openAiMessages(messages: CesiumHistoryMessage[]) {
         })),
       };
     }
+    if (message.role === "user" && message.images && message.images.length > 0) {
+      return {
+        role: "user",
+        content: [
+          ...(message.content.trim()
+            ? [{ type: "text" as const, text: message.content }]
+            : []),
+          ...message.images.map((image) => ({
+            type: "image_url" as const,
+            image_url: {
+              url: toDataUrl(image.mimeType, image.data),
+            },
+          })),
+        ],
+      };
+    }
     return {
       role: message.role,
       content: message.content,
     };
   });
+}
+
+function toDataUrl(mimeType: string, data: string): string {
+  const trimmed = data.trim();
+  if (trimmed.startsWith("data:")) {
+    return trimmed;
+  }
+  return `data:${mimeType || "image/png"};base64,${trimmed}`;
 }
 
 async function runOpenAiChat(input: {

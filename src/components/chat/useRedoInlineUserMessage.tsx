@@ -20,7 +20,6 @@ import {
 } from "@/lib/agent-chat";
 import {
   DEFAULT_MODE_OPTIONS,
-  filterGoalModeOptions,
   isOrchestrationModeLocked,
   resolveCanonicalModeId,
 } from "@/lib/chat-modes";
@@ -50,7 +49,6 @@ export type UseRedoInlineUserMessageArgs = {
   backends: AgentBackendInfo[];
   /** Same map as composer model resolution (`globalSettings.models.byBackend`). */
   modelVisibility: GlobalSettingsState["models"]["byBackend"];
-  goalModeBetaEnabled?: boolean;
   composerUserMessageHistory: string[];
   hasOlderHistory: boolean;
   onRequestOlderHistory?: () => void;
@@ -80,16 +78,15 @@ function pickAvailableBackend(
 export function buildRedoComposerSeedFromConversation(
   conversation: AgentConversationRecord,
   backends: AgentBackendInfo[],
-  modelVisibility: GlobalSettingsState["models"]["byBackend"],
-  options: { goalModeBetaEnabled?: boolean } = {}
+  modelVisibility: GlobalSettingsState["models"]["byBackend"]
 ): RedoInlineComposerSeed {
   const backend = pickAvailableBackend(backends, conversation.config.backendId);
   const models = buildConversationModelOptions(conversation, backends, modelVisibility);
-  const modeOptions = buildConversationModeOptions(conversation, backends, options);
+  const modeOptions = buildConversationModeOptions(conversation, backends);
   const modeOptionPool =
     modeOptions.length > 0
       ? modeOptions
-      : filterGoalModeOptions(DEFAULT_MODE_OPTIONS, options.goalModeBetaEnabled === true);
+      : DEFAULT_MODE_OPTIONS;
   const mode = resolveCanonicalModeId(
     String(conversation.config.mode ?? modeOptionPool[0]?.id ?? "agent"),
     modeOptionPool
@@ -122,7 +119,6 @@ export function useRedoInlineUserMessage(args: UseRedoInlineUserMessageArgs): {
     conversation,
     exposeForkedConversation,
     getRedoComposerSeed,
-    goalModeBetaEnabled = false,
     hasOlderHistory,
     mergeConversationSnapshot,
     modelVisibility,
@@ -208,8 +204,7 @@ export function useRedoInlineUserMessage(args: UseRedoInlineUserMessageArgs): {
           seed = buildRedoComposerSeedFromConversation(
             conv,
             backends,
-            modelVisibility,
-            { goalModeBetaEnabled }
+            modelVisibility
           );
         } catch (fallbackError) {
           pushNotification({
@@ -239,7 +234,6 @@ export function useRedoInlineUserMessage(args: UseRedoInlineUserMessageArgs): {
       backends,
       conversation,
       getRedoComposerSeed,
-      goalModeBetaEnabled,
       modelVisibility,
       pushNotification,
     ]
@@ -416,12 +410,12 @@ export function useRedoInlineUserMessage(args: UseRedoInlineUserMessageArgs): {
         ? buildDraftModelOptionsForBackend(targetBackend, modelVisibility)
         : [redoMessageDraft.model];
       const redoModeOptions = targetBackend
-        ? buildDraftModeOptionsForBackend(targetBackend, { goalModeBetaEnabled })
+        ? buildDraftModeOptionsForBackend(targetBackend)
         : [];
       const modeOptionPool =
         redoModeOptions.length > 0
           ? redoModeOptions
-          : filterGoalModeOptions(DEFAULT_MODE_OPTIONS, goalModeBetaEnabled);
+          : DEFAULT_MODE_OPTIONS;
       const redoMode = resolveCanonicalModeId(
         String(redoMessageDraft.mode),
         modeOptionPool
@@ -467,7 +461,7 @@ export function useRedoInlineUserMessage(args: UseRedoInlineUserMessageArgs): {
                 ? resolveDraftModelForBackend(nextBackend)
                 : redoMessageDraft.model;
               const nextMode = nextBackend
-                ? ((buildDraftModeOptionsForBackend(nextBackend, { goalModeBetaEnabled })[0]?.id ??
+                ? ((buildDraftModeOptionsForBackend(nextBackend)[0]?.id ??
                     redoMessageDraft.mode) as EditorMode)
                 : redoMessageDraft.mode;
               setRedoMessageDraft((current) =>
@@ -518,7 +512,6 @@ export function useRedoInlineUserMessage(args: UseRedoInlineUserMessageArgs): {
       backends,
       composerUserMessageHistory,
       conversation,
-      goalModeBetaEnabled,
       hasOlderHistory,
       modelVisibility,
       onRequestOlderHistory,

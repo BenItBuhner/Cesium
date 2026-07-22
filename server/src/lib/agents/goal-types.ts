@@ -1,4 +1,4 @@
-export type BurnGoalStatus =
+export type GoalStatus =
   | "planning"
   | "active"
   | "paused"
@@ -8,38 +8,38 @@ export type BurnGoalStatus =
   | "complete"
   | "cancelled";
 
-export type BurnGoalPhase =
+export type GoalPhase =
   | "planning"
   | "executing"
   | "milestone_review"
   | "final_audit"
   | "complete";
 
-export type BurnGoalItemStatus =
+export type GoalItemStatus =
   | "pending"
   | "in_progress"
   | "blocked"
   | "completed";
 
-export type BurnGoalMilestone = {
+export type GoalMilestone = {
   id: string;
   title: string;
   description?: string;
-  status: BurnGoalItemStatus;
+  status: GoalItemStatus;
   evidence?: string;
   updatedAt: number;
 };
 
-export type BurnGoalTodo = {
+export type GoalTodo = {
   id: string;
   content: string;
-  status: BurnGoalItemStatus;
+  status: GoalItemStatus;
   milestoneId?: string;
   evidence?: string;
   updatedAt: number;
 };
 
-export type BurnGoalBlocker = {
+export type GoalBlocker = {
   id: string;
   reason: string;
   occurrenceCount: number;
@@ -48,14 +48,14 @@ export type BurnGoalBlocker = {
   evidence?: string;
 };
 
-export type BurnGoalVerification = {
+export type GoalVerification = {
   requirement: string;
   status: "unverified" | "passed" | "failed";
   evidence?: string;
   updatedAt: number;
 };
 
-export type BurnGoalProgressSnapshot = {
+export type GoalProgressSnapshot = {
   id: string;
   createdAt: number;
   progressPercent: number;
@@ -64,7 +64,7 @@ export type BurnGoalProgressSnapshot = {
   revision: number;
 };
 
-export type BurnGoalCompactionMetadata = {
+export type GoalCompactionMetadata = {
   generation: number;
   lastCompactedSeq?: number;
   sourceRange?: { fromSeq: number; toSeq: number };
@@ -73,14 +73,14 @@ export type BurnGoalCompactionMetadata = {
   updatedAt?: number;
 };
 
-export type BurnGoalRecord = {
+export type GoalRecord = {
   schemaVersion: 1;
   goalId: string;
   workspaceId: string;
   conversationId: string;
   objective: string;
-  status: BurnGoalStatus;
-  phase: BurnGoalPhase;
+  status: GoalStatus;
+  phase: GoalPhase;
   tokenBudget: number | null;
   tokensUsed: number;
   timeUsedSeconds: number;
@@ -88,20 +88,20 @@ export type BurnGoalRecord = {
   headline: string | null;
   revision: number;
   planSummary: string;
-  milestones: BurnGoalMilestone[];
-  todos: BurnGoalTodo[];
-  blockerHistory: BurnGoalBlocker[];
-  verificationEvidence: BurnGoalVerification[];
-  snapshots: BurnGoalProgressSnapshot[];
-  compaction: BurnGoalCompactionMetadata;
+  milestones: GoalMilestone[];
+  todos: GoalTodo[];
+  blockerHistory: GoalBlocker[];
+  verificationEvidence: GoalVerification[];
+  snapshots: GoalProgressSnapshot[];
+  compaction: GoalCompactionMetadata;
   createdAt: number;
   updatedAt: number;
   completedAt: number | null;
 };
 
-export type BurnGoalPatch = Partial<
+export type GoalPatch = Partial<
   Pick<
-    BurnGoalRecord,
+    GoalRecord,
     | "objective"
     | "status"
     | "phase"
@@ -122,38 +122,38 @@ export type BurnGoalPatch = Partial<
   >
 >;
 
-export const BURN_GOAL_SNAPSHOT_LIMIT = 25;
-export const BURN_GOAL_SNAPSHOT_STALE_MS = 45 * 60 * 1000;
+export const GOAL_SNAPSHOT_LIMIT = 25;
+export const GOAL_SNAPSHOT_STALE_MS = 45 * 60 * 1000;
 
-export function normalizeBurnGoalProgressPercent(value: unknown): number | null {
+export function normalizeGoalProgressPercent(value: unknown): number | null {
   if (typeof value !== "number" || !Number.isFinite(value)) {
     return null;
   }
   return Math.min(100, Math.max(0, Math.round(value)));
 }
 
-export function normalizeBurnGoalRevision(value: unknown): number {
+export function normalizeGoalRevision(value: unknown): number {
   if (typeof value !== "number" || !Number.isFinite(value)) {
     return 0;
   }
   return Math.max(0, Math.round(value));
 }
 
-export function normalizeBurnGoalSnapshots(value: unknown): BurnGoalProgressSnapshot[] {
+export function normalizeGoalSnapshots(value: unknown): GoalProgressSnapshot[] {
   if (!Array.isArray(value)) {
     return [];
   }
-  return value.flatMap((item): BurnGoalProgressSnapshot[] => {
+  return value.flatMap((item): GoalProgressSnapshot[] => {
     if (!item || typeof item !== "object") {
       return [];
     }
-    const record = item as Partial<BurnGoalProgressSnapshot>;
+    const record = item as Partial<GoalProgressSnapshot>;
     const id = typeof record.id === "string" && record.id.trim() ? record.id.trim() : "";
     const createdAt =
       typeof record.createdAt === "number" && Number.isFinite(record.createdAt)
         ? record.createdAt
         : null;
-    const progressPercent = normalizeBurnGoalProgressPercent(record.progressPercent);
+    const progressPercent = normalizeGoalProgressPercent(record.progressPercent);
     const summary =
       typeof record.summary === "string" && record.summary.trim()
         ? record.summary.trim()
@@ -172,13 +172,13 @@ export function normalizeBurnGoalSnapshots(value: unknown): BurnGoalProgressSnap
         progressPercent,
         summary,
         headline,
-        revision: normalizeBurnGoalRevision(record.revision),
+        revision: normalizeGoalRevision(record.revision),
       },
     ];
-  }).slice(-BURN_GOAL_SNAPSHOT_LIMIT);
+  }).slice(-GOAL_SNAPSHOT_LIMIT);
 }
 
-export function burnGoalHasRunnableWork(goal: BurnGoalRecord | null): boolean {
+export function goalHasRunnableWork(goal: GoalRecord | null): boolean {
   if (!goal) return false;
   if (
     goal.status !== "planning" &&
@@ -195,18 +195,18 @@ export function burnGoalHasRunnableWork(goal: BurnGoalRecord | null): boolean {
   );
 }
 
-export function burnGoalLatestSnapshotFreshness(
-  goal: BurnGoalRecord,
+export function goalLatestSnapshotFreshness(
+  goal: GoalRecord,
   nowMs = Date.now()
 ): "missing" | "fresh" | "stale" {
   const latest = goal.snapshots.at(-1);
   if (!latest) {
     return "missing";
   }
-  return nowMs - latest.createdAt > BURN_GOAL_SNAPSHOT_STALE_MS ? "stale" : "fresh";
+  return nowMs - latest.createdAt > GOAL_SNAPSHOT_STALE_MS ? "stale" : "fresh";
 }
 
-export function burnGoalRemainingSummary(goal: BurnGoalRecord): string {
+export function goalRemainingSummary(goal: GoalRecord): string {
   const runnableMilestones = goal.milestones.filter(
     (item) => item.status === "pending" || item.status === "in_progress"
   );

@@ -76,22 +76,36 @@ function mergeRailSummaryByRecency(
 /** Merge a live server record into cross-workspace rail groups (in-place copy). */
 export function patchAgentConversationGroups(
   groups: AgentConversationGroup[],
-  record: AgentConversationRecord
+  record: AgentConversationRecord,
+  serverId?: string
 ): AgentConversationGroup[] {
   const summary = agentRecordToRailSummary(record);
   if (!isRenderableAgentRailConversation(summary)) {
-    return removeConversationFromAgentGroups(groups, record.id, record.workspaceId);
+    return removeConversationFromAgentGroups(groups, record.id, record.workspaceId, serverId);
   }
   let touched = false;
   const next = groups.map((group) => {
-    if (group.workspace.id !== record.workspaceId) {
+    if (
+      group.workspace.id !== record.workspaceId ||
+      (serverId && group.serverId && group.serverId !== serverId)
+    ) {
       return group;
     }
     touched = true;
+    const scopedSummary: AgentRailConversationSummary = {
+      ...summary,
+      serverId: group.serverId ?? serverId,
+      serverLabel: group.serverLabel,
+      workspaceKey: group.workspaceKey,
+      conversationKey:
+        group.serverId || serverId ? `${group.serverId ?? serverId}:${summary.id}` : undefined,
+      repositoryKey: group.repositoryKey,
+      repository: group.repository,
+    };
     const idx = group.conversations.findIndex((c) => c.id === record.id);
     if (idx >= 0) {
       const prev = group.conversations[idx]!;
-      const merged = mergeRailSummaryByRecency(prev, summary);
+      const merged = mergeRailSummaryByRecency(prev, scopedSummary);
       const replaced = group.conversations.slice();
       replaced[idx] = merged;
       if (merged.updatedAt === prev.updatedAt) {
@@ -99,7 +113,10 @@ export function patchAgentConversationGroups(
       }
       return { ...group, conversations: sortRailSummaries(replaced) };
     }
-    return { ...group, conversations: sortRailSummaries([...group.conversations, summary]) };
+    return {
+      ...group,
+      conversations: sortRailSummaries([...group.conversations, scopedSummary]),
+    };
   });
   return touched ? next : groups;
 }
@@ -107,10 +124,12 @@ export function patchAgentConversationGroups(
 export function removeConversationFromAgentGroups(
   groups: AgentConversationGroup[],
   conversationId: string,
-  workspaceId: string
+  workspaceId: string,
+  serverId?: string
 ): AgentConversationGroup[] {
   return groups.map((group) =>
-    group.workspace.id !== workspaceId
+    group.workspace.id !== workspaceId ||
+    (serverId && group.serverId && group.serverId !== serverId)
       ? group
       : {
           ...group,

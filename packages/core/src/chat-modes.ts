@@ -12,8 +12,9 @@ export function isOrchestrationMode(mode: string): boolean {
   return String(mode).trim().toLowerCase() === "orchestration";
 }
 
+/** @deprecated Use `isGoalMode`. Kept for callers that still check the legacy Burn alias. */
 export function isBurnMode(mode: string): boolean {
-  return String(mode).trim().toLowerCase() === "burn";
+  return isGoalMode(mode);
 }
 
 export function isWorkflowMode(mode: string): boolean {
@@ -22,29 +23,52 @@ export function isWorkflowMode(mode: string): boolean {
 
 export function isGoalMode(mode: string): boolean {
   const normalized = String(mode).trim().toLowerCase();
-  return normalized === "burn";
+  return normalized === "goal" || normalized === "burn";
 }
 
+/**
+ * Normalize legacy Burn mode option ids to Goal, and drop duplicate Burn entries
+ * when Goal is already present in the catalog.
+ */
 export function filterGoalModeOptions(
   options: AgentModeOption[],
-  _goalModeBetaEnabled: boolean
+  _goalModeBetaEnabled = false
 ): AgentModeOption[] {
-  return options.filter((option) => {
+  const hasGoal = options.some((option) => String(option.id).trim().toLowerCase() === "goal");
+  const seen = new Set<string>();
+  const next: AgentModeOption[] = [];
+  for (const option of options) {
     const normalized = String(option.id).trim().toLowerCase();
-    return normalized !== "goal";
-  });
+    if (normalized === "burn") {
+      if (hasGoal) continue;
+      const remapped = { ...option, id: "goal" as EditorMode, label: option.label === "Burn" ? "Goal" : option.label };
+      if (seen.has("goal")) continue;
+      seen.add("goal");
+      next.push(remapped);
+      continue;
+    }
+    if (seen.has(normalized)) continue;
+    seen.add(normalized);
+    next.push(option);
+  }
+  return next;
 }
 
+/**
+ * Coerce legacy persisted `"burn"` mode ids to `"goal"` when Goal is available.
+ */
 export function coerceUnavailableGoalMode(
   mode: string,
   options: AgentModeOption[]
 ): string {
   const normalized = mode.trim().toLowerCase();
-  if (normalized === "goal") {
-    return options.find((option) => getModeTone(option.id) === "agent")?.id ?? options[0]?.id ?? "agent";
-  }
-  if (normalized === "burn" && !options.some((option) => isGoalMode(option.id))) {
-    return options.find((option) => getModeTone(option.id) === "agent")?.id ?? options[0]?.id ?? "agent";
+  if (normalized === "burn") {
+    if (options.some((option) => String(option.id).trim().toLowerCase() === "goal")) {
+      return options.find((option) => String(option.id).trim().toLowerCase() === "goal")?.id ?? "goal";
+    }
+    if (options.some((option) => isGoalMode(option.id))) {
+      return options.find((option) => isGoalMode(option.id))?.id ?? mode;
+    }
   }
   return mode;
 }
@@ -57,6 +81,9 @@ export function formatModeLabel(mode: string): string {
   const trimmed = mode.trim();
   if (!trimmed) {
     return "Mode";
+  }
+  if (trimmed.toLowerCase() === "burn") {
+    return "Goal";
   }
   return trimmed
     .replace(/[-_]+/g, " ")
@@ -74,7 +101,7 @@ export function resolveCanonicalModeId(rawMode: string, options: AgentModeOption
     return options[0]?.id ?? "agent";
   }
   if (options.length === 0) {
-    return trimmed;
+    return trimmed.toLowerCase() === "burn" ? "goal" : trimmed;
   }
   const ids = options.map((o) => o.id);
   if (ids.includes(trimmed)) {
@@ -86,14 +113,7 @@ export function resolveCanonicalModeId(rawMode: string, options: AgentModeOption
       return id;
     }
   }
-  const requestedLower = lower;
-  if (requestedLower === "goal") {
-    return (
-      ids.find((id) => getModeTone(id) === "agent") ??
-      ids[0] ??
-      "agent"
-    );
-  }
+  const requestedLower = lower === "burn" ? "goal" : lower;
   const rawCandidates =
     requestedLower === "agent" || requestedLower === "code"
       ? ["agent", "code", "build"]
@@ -103,11 +123,11 @@ export function resolveCanonicalModeId(rawMode: string, options: AgentModeOption
           ? ["ask", "review", "readonly", "read-only"]
           : requestedLower === "debug"
             ? ["debug", "build", "agent", "code"]
-            : requestedLower === "burn"
-              ? ["burn"]
+            : requestedLower === "goal"
+              ? ["goal", "burn"]
               : requestedLower === "workflow"
                 ? ["workflow"]
-              : [trimmed];
+                : [trimmed];
   const idSet = new Set(ids);
   for (const candidate of rawCandidates) {
     if (idSet.has(candidate)) {
@@ -120,13 +140,13 @@ export function resolveCanonicalModeId(rawMode: string, options: AgentModeOption
       return found;
     }
   }
-  return trimmed;
+  return requestedLower === "goal" ? "goal" : trimmed;
 }
 
 export function getModeTone(mode: string): KnownEditorMode {
   const normalized = mode.trim().toLowerCase();
   if (isGoalMode(normalized)) {
-    return "burn";
+    return "goal";
   }
   if (isWorkflowMode(normalized) || normalized.includes("workflow")) {
     return "workflow";

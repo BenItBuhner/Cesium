@@ -134,7 +134,7 @@ object CesiumAgentNotification {
     if (!indeterminate) {
       style
         .setProgress(safeProgress)
-        .setStyledByProgress(progressKind == "burn")
+        .setStyledByProgress(progressKind == "goal")
       when (progressKind) {
         "todo" -> {
           val completed = extras.getInt("todoCompleted", safeProgress)
@@ -150,10 +150,10 @@ object CesiumAgentNotification {
           }
           style.setProgressSegments(segments)
         }
-        "burn" -> {
+        "goal" -> {
           style.setProgressSegments(
             listOf(
-              NotificationCompat.ProgressStyle.Segment(safeMax).setColor(colors.burn)
+              NotificationCompat.ProgressStyle.Segment(safeMax).setColor(colors.goal)
             )
           )
         }
@@ -236,13 +236,13 @@ internal fun resolveCesiumProgressColors(dark: Boolean): CesiumProgressColors =
       completed = CesiumDesignTokens.Dark.AskAccent.toInt(),
       active = CesiumDesignTokens.Dark.WorkflowAccent.toInt(),
       pending = CesiumDesignTokens.Dark.TextSecondary.toInt(),
-      burn = CesiumDesignTokens.Dark.BurnAccent.toInt()
+      burn = CesiumDesignTokens.Dark.GoalAccent.toInt()
     )
   } else {
     CesiumProgressColors(
       completed = CesiumDesignTokens.Light.AskAccent.toInt(),
       active = CesiumDesignTokens.Light.WorkflowAccent.toInt(),
       pending = CesiumDesignTokens.Light.TextSecondary.toInt(),
-      burn = CesiumDesignTokens.Light.BurnAccent.toInt()
+      burn = CesiumDesignTokens.Light.GoalAccent.toInt()
     )
   }

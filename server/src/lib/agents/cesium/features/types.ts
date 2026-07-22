@@ -1,8 +1,15 @@
+import type { AgentPermissionCategory } from "../../types.js";
+
 /** Shared JSON-schema tool definition used by the Cesium harness registry. */
 export type CesiumToolDefinition = {
   name: string;
   description: string;
   parameters: Record<string, unknown>;
+  /**
+   * When set, `CesiumSession.executeTool` gates the call through the shared
+   * permission cascade (ask / allow / deny / remembered / auto-accept) before dispatch.
+   */
+  requiresPermission?: AgentPermissionCategory;
 };
 
 /** Versioned harness feature ids that can be swapped independently. */

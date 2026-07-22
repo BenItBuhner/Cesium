@@ -1,6 +1,9 @@
 import { buildCesiumBaseSystemPrompt } from "@cesium/core/mcp";
-import type { AgentPermissionOption } from "../types.js";
 import type { OrchestrationAssignmentStatus } from "../../orchestration/types.js";
+export {
+  PERMISSION_OPTIONS,
+  STANDARD_PERMISSION_OPTIONS,
+} from "../permission-options.js";
 
 export const CESIUM_SYSTEM_PROMPT = buildCesiumBaseSystemPrompt();
 
@@ -31,11 +34,4 @@ export const ORCHESTRATION_ASSIGNMENT_TERMINAL_STATUSES: OrchestrationAssignment
   "completed",
   "failed",
   "cancelled",
-];
-
-export const PERMISSION_OPTIONS: AgentPermissionOption[] = [
-  { optionId: "allow_once", name: "Allow", kind: "allow_once" },
-  { optionId: "allow_always", name: "Always allow", kind: "allow_always" },
-  { optionId: "reject_once", name: "Reject", kind: "reject_once" },
-  { optionId: "reject_always", name: "Always reject", kind: "reject_always" },
 ];

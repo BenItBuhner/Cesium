@@ -40,7 +40,7 @@ export type WatchAgentProjection = {
   elapsedMs: number;
   lastEventSeq: number;
   lastError: string | null;
-  progressKind?: "todo" | "burn" | null;
+  progressKind?: "todo" | "goal" | null;
   progress?: number | null;
   progressMax?: number | null;
   progressLabel?: string | null;
@@ -114,13 +114,13 @@ export function toWatchAgentProjection(
   }
 ): WatchAgentProjection {
   const now = options.now ?? Date.now();
-  const progress = projection.burnProgress
+  const progress = projection.goalProgress
     ? {
-        progressKind: "burn" as const,
-        progress: projection.burnProgress.percent,
+        progressKind: "goal" as const,
+        progress: projection.goalProgress.percent,
         progressMax: 100,
-        progressLabel: `${projection.burnProgress.percent}%`,
-        estimatedCompletionAt: projection.burnProgress.estimatedCompletionAt,
+        progressLabel: `${projection.goalProgress.percent}%`,
+        estimatedCompletionAt: projection.goalProgress.estimatedCompletionAt,
       }
     : projection.todoProgress
       ? {

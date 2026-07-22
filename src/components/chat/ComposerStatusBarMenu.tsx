@@ -100,7 +100,7 @@ export function ComposerStatusBarMenu({
       <div className={`${popoverMenuListClass} py-[6px]`}>
         {row("composer-status-repo", "Repo", "repo")}
         {row("composer-status-branch", "Branch", "branch")}
-        {row("composer-status-goal", "Burn progress", "goal")}
+        {row("composer-status-goal", "Goal progress", "goal")}
         {row("composer-status-context", "Context", "context")}
       </div>
     </div>,

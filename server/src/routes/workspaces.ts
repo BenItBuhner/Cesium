@@ -2,6 +2,7 @@ import path from "node:path";
 import { Hono } from "hono";
 import { resolveRepoRootFromProcessCwd } from "../lib/persistence.js";
 import { cloneGitRepository } from "../lib/git-workspace.js";
+import { buildRepositoryInfoByWorkspace } from "../lib/agents/rail-payload.js";
 import {
   createWorkspaceWorktree,
   deleteWorkspaceWorktree,
@@ -99,11 +100,12 @@ async function homeWorkspaceIdPayload(): Promise<{ homeWorkspaceId: string | nul
 
 workspaceRoutes.get("/api/workspaces/bootstrap", async (c) => {
   await ensureInitialWorkspace(resolveInitialWorkspaceRoot());
-  const [workspaces, profile, startupWorkspace, homePayload] = await Promise.all([
-    listWorkspaces(),
+  const workspaces = await listWorkspaces();
+  const [profile, startupWorkspace, homePayload, repositoryInfoByWorkspaceId] = await Promise.all([
     getWorkspaceProfile(),
     resolveStartupWorkspace(),
     homeWorkspaceIdPayload(),
+    buildRepositoryInfoByWorkspace(workspaces),
   ]);
 
   setShortCache(c, { maxAgeSec: 5, swr: 30 });
@@ -112,16 +114,18 @@ workspaceRoutes.get("/api/workspaces/bootstrap", async (c) => {
     defaultWorkspaceId: profile.defaultWorkspaceId,
     startupWorkspaceId: startupWorkspace?.id ?? null,
     recentWorkspaceIds: profile.recentWorkspaceIds,
+    repositoriesByWorkspaceId: Object.fromEntries(repositoryInfoByWorkspaceId),
     ...homePayload,
   });
 });
 
 workspaceRoutes.get("/api/workspaces", async (c) => {
   await ensureHomeWorkspace();
-  const [workspaces, profile, homePayload] = await Promise.all([
-    listWorkspaces(),
+  const workspaces = await listWorkspaces();
+  const [profile, homePayload, repositoryInfoByWorkspaceId] = await Promise.all([
     getWorkspaceProfile(),
     homeWorkspaceIdPayload(),
+    buildRepositoryInfoByWorkspace(workspaces),
   ]);
   setShortCache(c, { maxAgeSec: 5, swr: 30 });
   return c.json({
@@ -129,6 +133,7 @@ workspaceRoutes.get("/api/workspaces", async (c) => {
     defaultWorkspaceId: profile.defaultWorkspaceId,
     lastOpenedWorkspaceId: profile.lastOpenedWorkspaceId,
     recentWorkspaceIds: profile.recentWorkspaceIds,
+    repositoriesByWorkspaceId: Object.fromEntries(repositoryInfoByWorkspaceId),
     ...homePayload,
   });
 });

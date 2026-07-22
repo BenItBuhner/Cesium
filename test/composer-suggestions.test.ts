@@ -19,7 +19,7 @@ describe("composer slash menu", () => {
         { id: "agent", label: "Agent" },
         { id: "plan", label: "Plan" },
         { id: "orchestration", label: "Orchestration" },
-        { id: "burn", label: "Burn" },
+        { id: "goal", label: "Goal" },
         { id: "ask", label: "Ask" },
       ],
     });
@@ -29,7 +29,7 @@ describe("composer slash menu", () => {
       "Agent",
       "Plan",
       "Orchestration",
-      "Burn",
+      "Goal",
       "Ask",
     ]);
   });
@@ -46,7 +46,7 @@ describe("composer slash menu", () => {
         { id: "agent", label: "Agent" },
         { id: "plan", label: "Plan" },
         { id: "orchestration", label: "Orchestration" },
-        { id: "burn", label: "Burn" },
+        { id: "goal", label: "Goal" },
         { id: "ask", label: "Ask" },
       ],
     });
