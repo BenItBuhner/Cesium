@@ -10,6 +10,7 @@ export {
   buildIframeAuthenticatedUrl,
   clearStoredAuth,
   getStoredSessionToken,
+  migrateStoredAuthServerBaseUrl,
   setStoredSessionToken,
   syncAuthTokenFromResponse,
   updateStoredAuthSession,

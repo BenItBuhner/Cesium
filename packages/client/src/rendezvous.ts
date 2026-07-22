@@ -57,6 +57,12 @@ function base64UrlToBytes(value: string): Uint8Array {
   return Uint8Array.from(binary, (character) => character.charCodeAt(0));
 }
 
+function bytesToArrayBuffer(bytes: Uint8Array): ArrayBuffer {
+  const buffer = new ArrayBuffer(bytes.byteLength);
+  new Uint8Array(buffer).set(bytes);
+  return buffer;
+}
+
 function normalizeRegistryBaseUrl(value: string): string {
   const url = new URL(value);
   const loopback =
@@ -175,11 +181,11 @@ export async function decryptRendezvousCiphertext(
   const plaintext = await crypto.subtle.decrypt(
     {
       name: "AES-GCM",
-      iv: base64UrlToBytes(ivValue),
-      additionalData: new TextEncoder().encode(locator.serverId),
+      iv: bytesToArrayBuffer(base64UrlToBytes(ivValue)),
+      additionalData: bytesToArrayBuffer(new TextEncoder().encode(locator.serverId)),
     },
     await deriveEncryptionKey(locator.secret),
-    base64UrlToBytes(encryptedValue)
+    bytesToArrayBuffer(base64UrlToBytes(encryptedValue))
   );
   const parsed = JSON.parse(new TextDecoder().decode(plaintext)) as {
     baseUrl?: unknown;

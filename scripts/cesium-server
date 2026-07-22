@@ -623,7 +623,7 @@ supervise() {
     rmdir "$SUPERVISOR_LOCK_DIR" 2>/dev/null || true
     mkdir "$SUPERVISOR_LOCK_DIR"
   fi
-  printf '%s\n' "$$" >"$SUPERVISOR_PID_FILE"
+  printf '%s\n' "${BASHPID:-$$}" >"$SUPERVISOR_PID_FILE"
   trap cleanup_supervisor EXIT
   trap 'exit 0' INT TERM
 
