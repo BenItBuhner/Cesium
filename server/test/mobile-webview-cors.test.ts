@@ -1,4 +1,5 @@
-import { describe, expect, test } from "bun:test";
+import assert from "node:assert/strict";
+import { describe, test } from "node:test";
 import { createCesiumApp } from "../src/app.js";
 
 describe("Android bundled workbench CORS", () => {
@@ -7,9 +8,9 @@ describe("Android bundled workbench CORS", () => {
       headers: { Origin: "null" },
     });
 
-    expect(response.status).toBe(200);
-    expect(response.headers.get("access-control-allow-origin")).toBe("null");
-    expect(response.headers.get("access-control-allow-credentials")).toBe("true");
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get("access-control-allow-origin"), "null");
+    assert.equal(response.headers.get("access-control-allow-credentials"), "true");
   });
 
   test("allows the Vite renderer origins used for mobile development", async () => {
@@ -21,7 +22,7 @@ describe("Android bundled workbench CORS", () => {
       const response = await createCesiumApp().request("/health", {
         headers: { Origin: origin },
       });
-      expect(response.headers.get("access-control-allow-origin")).toBe(origin);
+      assert.equal(response.headers.get("access-control-allow-origin"), origin);
     }
   });
 });
