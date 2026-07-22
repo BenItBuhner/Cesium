@@ -181,7 +181,8 @@ export npm_config_audit=false
   "$BUN_BIN" install \
     --filter @cesium/core \
     --filter cesium-server \
-    --ignore-scripts
+    --ignore-scripts \
+    --no-save
   "$BUN_BIN" run --cwd packages/core build
   rm -f server/node_modules/cesium
 )

@@ -346,8 +346,7 @@ start_localhost_run_tunnel() {
   nohup "$ssh_command" \
     -o BatchMode=yes \
     -o ConnectTimeout=10 \
-    -o StrictHostKeyChecking=no \
-    -o UserKnownHostsFile=/dev/null \
+    -o StrictHostKeyChecking=accept-new \
     -o ExitOnForwardFailure=yes \
     -o ServerAliveInterval=30 \
     -o ServerAliveCountMax=3 \
