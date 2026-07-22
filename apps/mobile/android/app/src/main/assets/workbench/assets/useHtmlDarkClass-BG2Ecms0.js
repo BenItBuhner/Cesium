@@ -1,0 +1,1 @@
+import{r}from"./index-BFwIZrGd.js";function s(e){const n=document.documentElement,t=new MutationObserver(e);return t.observe(n,{attributes:!0,attributeFilter:["class"]}),()=>t.disconnect()}function o(){return document.documentElement.classList.contains("dark")}function u(){return!1}function a(){return r.useSyncExternalStore(s,o,u)}export{a as u};

@@ -48,6 +48,7 @@ await writeFile(indexPath, indexHtml.replace(/\s+crossorigin(?=[\s>])/g, ""), "u
 // leaves an otherwise functional app completely unstyled. Flatten the layers
 // only in the Android asset copy; Electron and modern web keep the native CSS.
 const assetsDir = resolve(target, "assets");
+let bundledCss = "";
 for (const filename of await readdir(assetsDir)) {
   if (!filename.endsWith(".css")) continue;
   const cssPath = resolve(assetsDir, filename);
@@ -57,6 +58,19 @@ for (const filename of await readdir(assetsDir)) {
     to: cssPath,
   });
   await writeFile(cssPath, result.css, "utf8");
+  bundledCss += `${result.css}\n`;
+}
+
+// Older WebViews also apply stricter file-origin rules to linked stylesheets.
+// Inline the already-minified CSS into the local index so the first paint is
+// deterministic and does not depend on file:// stylesheet fetch behavior.
+if (bundledCss) {
+  const mobileIndex = await readFile(indexPath, "utf8");
+  const inlined = mobileIndex.replace(
+    /<link\s+rel=["']stylesheet["'][^>]*>/g,
+    `<style data-cesium-bundled>${bundledCss.replace(/<\/style/gi, "<\\/style")}</style>`
+  );
+  await writeFile(indexPath, inlined, "utf8");
 }
 
 console.log(`Copied Cesium web workbench to ${target}`);
