@@ -28,7 +28,17 @@ export function isCesiumWorkflowChildToolBlocked(name: string): boolean {
 export function resolveCesiumWorkflowChildTools(
   tools: CesiumToolDefinition[]
 ): CesiumToolDefinition[] {
-  return tools.filter((tool) => !isCesiumWorkflowChildToolBlocked(tool.name));
+  return tools
+    .filter((tool) => !isCesiumWorkflowChildToolBlocked(tool.name))
+    .map((tool) =>
+      tool.name === "terminal"
+        ? {
+            ...tool,
+            description:
+              `${tool.description} Workflow children must use waitUntil=complete; background and pattern commands are rejected so no process outlives the workflow.`,
+          }
+        : tool
+    );
 }
 
 function resultTokenCount(result: CesiumAdapterResult): number {

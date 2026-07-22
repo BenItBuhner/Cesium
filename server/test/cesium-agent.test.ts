@@ -489,6 +489,59 @@ test("parallel workflow child permissions are serialized and attributed", async 
   );
 });
 
+test("workflow stop aborts a pending child permission request", async () => {
+  const fs = await import("node:fs/promises");
+  const relativePath = "workflow-permission-abort.txt";
+  await fs.mkdir(TEST_DATA_DIR, { recursive: true });
+  await fs.writeFile(path.join(TEST_DATA_DIR, relativePath), "before", "utf8");
+  await patchCesiumAgentSettings({ toolPermissions: { editFile: "ask" } });
+  const { handle, events, getConversation } = await startCesiumTestSession(
+    "cesium-workflow-permission-abort"
+  );
+  const privateHandle = handle as unknown as {
+    executeTool(
+      request: { id: string; name: string; arguments: Record<string, unknown> },
+      options: {
+        suppressTranscript: boolean;
+        signal: AbortSignal;
+        permissionContext: string;
+      }
+    ): Promise<string>;
+  };
+  const controller = new AbortController();
+  const pending = privateHandle.executeTool(
+    {
+      id: "workflow-edit-abort",
+      name: "edit_file",
+      arguments: {
+        path: relativePath,
+        oldString: "before",
+        newString: "after",
+      },
+    },
+    {
+      suppressTranscript: true,
+      signal: controller.signal,
+      permissionContext: "Workflow abort-test child requests this tool.",
+    }
+  );
+
+  while (events.filter((event) => event.kind === "permission_request").length < 1) {
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+  controller.abort();
+  await assert.rejects(pending, (error) => {
+    assert.equal((error as Error).name, "AbortError");
+    return true;
+  });
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(getConversation().pendingPermission, null);
+  assert.equal(
+    await fs.readFile(path.join(TEST_DATA_DIR, relativePath), "utf8"),
+    "before"
+  );
+});
+
 test("normalizeCallMcpToolArgs accepts nested, snake_case, and flat MCP tool shapes", () => {
   assert.deepEqual(
     normalizeCallMcpToolArgs({

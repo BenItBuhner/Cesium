@@ -136,7 +136,7 @@ const CESIUM_BASE_TOOLS: CesiumToolDefinition[] = [
   {
     name: "switch_mode",
     description:
-      "Switch this conversation into another Cesium mode (agent, plan, ask, orchestration, burn, or workflow). " +
+      "Switch this conversation into another Cesium mode (agent, plan, ask, orchestration, goal, or workflow). " +
       "Requires user approval by default; the user can Always allow a specific target mode. " +
       "Use when the task needs a different operating mode instead of asking the user to change the mode picker themselves.",
     requiresPermission: "switchMode",
@@ -145,7 +145,7 @@ const CESIUM_BASE_TOOLS: CesiumToolDefinition[] = [
       properties: {
         target_mode: {
           type: "string",
-          enum: ["agent", "plan", "orchestration", "burn", "workflow", "ask"],
+          enum: ["agent", "plan", "orchestration", "goal", "workflow", "ask"],
           description: "Mode to switch into. Must be enabled in Cesium Agent settings.",
         },
         reason: {

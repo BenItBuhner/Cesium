@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { constants as fsConstants } from "node:fs";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { DATA_DIR, readJsonFile, writeJsonFile } from "../persistence.js";
@@ -123,7 +124,19 @@ export async function persistWorkflowScript(input: {
   if (existing?.isSymbolicLink()) {
     throw new Error(`Refusing to overwrite symlinked workflow script: ${scriptPath}`);
   }
-  await fs.writeFile(scriptPath, input.script, "utf8");
+  const handle = await fs.open(
+    scriptPath,
+    fsConstants.O_WRONLY |
+      fsConstants.O_CREAT |
+      fsConstants.O_TRUNC |
+      fsConstants.O_NOFOLLOW,
+    0o600
+  );
+  try {
+    await handle.writeFile(input.script, "utf8");
+  } finally {
+    await handle.close();
+  }
   return scriptPath;
 }
 

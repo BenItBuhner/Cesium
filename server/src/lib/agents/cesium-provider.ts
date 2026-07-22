@@ -31,6 +31,7 @@ import {
 import { getMcpCatalogRevision, getMcpServer, getMcpSummariesForPrompt } from "../mcp/server-store.js";
 import { resolveAgentPluginAttachments } from "../plugins/attachments.js";
 import { BROWSER_MCP_SERVER_ID } from "../mcp/builtin-browser-tools.js";
+import { PHONE_MCP_SERVER_ID } from "../mcp/builtin-phone-tools.js";
 import { generateTranscriptFromEvents } from "./event-log-read.js";
 import { asNumber } from "./json-coerce.js";
 import { readConversationEvents } from "./session-store.js";
@@ -257,6 +258,7 @@ type CesiumPermissionRequest = {
   permission: AgentPermissionCategory;
   toolKey: string;
   toolLabel: string;
+  signal?: AbortSignal;
 };
 
 type CesiumQuestionStep = {
@@ -903,24 +905,27 @@ class CesiumSessionHandle implements AgentSessionHandle {
     iteration: number,
     handlers: {
       onTextDelta?: (text: string) => Promise<void>;
+      suppressEvents?: boolean;
     } = {}
   ): Promise<CesiumAdapterResult> {
     const providerId = providerPart(input.modelId);
-    const timer = setTimeout(() => {
-      void this.callbacks.appendEvents([
-        {
-          eventId: randomUUID(),
-          conversationId: this.callbacks.conversation.id,
-          kind: "system",
-          level: "warning",
-          text:
-            `Still waiting for ${providerId} to return a response after ` +
-            `${Math.round(CESIUM_RESPONSE_WARNING_MS / 60_000)} minutes. ` +
-            "Cesium is not cancelling the request.",
-          raw: { modelId: input.modelId, iteration },
-        },
-      ]).catch(() => undefined);
-    }, CESIUM_RESPONSE_WARNING_MS);
+    const timer = handlers.suppressEvents
+      ? null
+      : setTimeout(() => {
+          void this.callbacks.appendEvents([
+            {
+              eventId: randomUUID(),
+              conversationId: this.callbacks.conversation.id,
+              kind: "system",
+              level: "warning",
+              text:
+                `Still waiting for ${providerId} to return a response after ` +
+                `${Math.round(CESIUM_RESPONSE_WARNING_MS / 60_000)} minutes. ` +
+                "Cesium is not cancelling the request.",
+              raw: { modelId: input.modelId, iteration },
+            },
+          ]).catch(() => undefined);
+        }, CESIUM_RESPONSE_WARNING_MS);
     try {
       for (let retryIndex = 0; ; retryIndex += 1) {
         if (this.cancelled) {
@@ -932,6 +937,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
           const reasoningParts: string[] = [];
           const toolRequests: CesiumToolRequest[] = [];
           const rawEvents: unknown[] = [];
+          let usage: CesiumAdapterResult["usage"];
           let finalRaw: unknown;
           for await (const event of streamAdapter(input)) {
             if (this.cancelled) {
@@ -954,7 +960,9 @@ class CesiumSessionHandle implements AgentSessionHandle {
                 toolRequests.push(event.request);
                 break;
               case "raw":
+                break;
               case "done":
+                usage = event.usage ?? usage;
                 break;
             }
           }
@@ -962,6 +970,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
             text: textParts.join(""),
             reasoning: reasoningParts.join("") || undefined,
             toolRequests,
+            usage,
             raw: rawEvents.length > 1 ? rawEvents : finalRaw,
           };
         } catch (error) {
@@ -981,18 +990,22 @@ class CesiumSessionHandle implements AgentSessionHandle {
             `[cesium-agent] transient provider error (attempt ${retryIndex + 1}/${COMPLETION_AUTO_RETRY_MAX_ATTEMPTS}), retrying in ${delayMs}ms:`,
             message
           );
-          await this.emitConversationStatus(
-            "running",
-            formatTakingLongerStatusDetail(retryIndex + 1, COMPLETION_AUTO_RETRY_MAX_ATTEMPTS)
-          );
-          await sleepMs(delayMs);
-          if (this.cancelled) {
+          if (!handlers.suppressEvents) {
+            await this.emitConversationStatus(
+              "running",
+              formatTakingLongerStatusDetail(retryIndex + 1, COMPLETION_AUTO_RETRY_MAX_ATTEMPTS)
+            );
+          }
+          await waitForToolDelay(delayMs, input.signal);
+          if (this.cancelled || input.signal?.aborted) {
             throw new CesiumTurnCancelledError();
           }
         }
       }
     } finally {
-      clearTimeout(timer);
+      if (timer) {
+        clearTimeout(timer);
+      }
     }
   }
 
@@ -1548,6 +1561,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
   }
 
   private async requirePermissionNow(input: CesiumPermissionRequest): Promise<void> {
+    throwIfToolAborted(input.signal);
     const assignment = await findOrchestrationAssignmentForConversation(
       this.callbacks.workspace.id,
       this.callbacks.conversation.id
@@ -1688,15 +1702,41 @@ class CesiumSessionHandle implements AgentSessionHandle {
         options: STANDARD_PERMISSION_OPTIONS,
       },
     }));
-    const decision = await new Promise<"allow" | "reject">((resolve, reject) => {
-      this.pendingPermissions.set(requestId, {
-        resolve,
-        reject,
-        toolKey: input.toolKey,
-        toolLabel: input.toolLabel,
-        permissionCategory: input.permission,
+    const onAbort = () => {
+      const pending = this.pendingPermissions.get(requestId);
+      if (!pending) {
+        return;
+      }
+      this.pendingPermissions.delete(requestId);
+      pending.reject(toolAbortError());
+      void this.callbacks.updateConversation((current) =>
+        current.pendingPermission?.requestId === requestId
+          ? {
+              ...current,
+              status: current.status === "awaiting_permission" ? "running" : current.status,
+              pendingPermission: null,
+            }
+          : current
+      );
+    };
+    input.signal?.addEventListener("abort", onAbort, { once: true });
+    let decision: "allow" | "reject" = "reject";
+    try {
+      decision = await new Promise<"allow" | "reject">((resolve, reject) => {
+        this.pendingPermissions.set(requestId, {
+          resolve,
+          reject,
+          toolKey: input.toolKey,
+          toolLabel: input.toolLabel,
+          permissionCategory: input.permission,
+        });
+        if (input.signal?.aborted) {
+          onAbort();
+        }
       });
-    });
+    } finally {
+      input.signal?.removeEventListener("abort", onAbort);
+    }
     if (decision !== "allow") {
       throw new PermissionRefusedToolCallError();
     }
@@ -1782,6 +1822,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
           permission: permissionCategory,
           toolKey: cesiumPermissionToolKey(permissionCategory, permissionArgs),
           toolLabel: title,
+          signal: context.signal,
         });
       }
       const featureExecutor = this.harness.modules.find(
@@ -2843,6 +2884,14 @@ class CesiumSessionHandle implements AgentSessionHandle {
     if (serverId === BROWSER_MCP_SERVER_ID && this.isOrchestrationMode()) {
       throw new Error("Browser MCP tools are only available to normal Cesium Agent conversations.");
     }
+    if (
+      context.signal &&
+      (serverId === BROWSER_MCP_SERVER_ID || serverId === PHONE_MCP_SERVER_ID)
+    ) {
+      throw new Error(
+        "Built-in Browser and Phone MCP tools are not available inside Workflow children because their interactive operations cannot be safely cancelled with the workflow run."
+      );
+    }
     return await callMcpTool({
       workspaceId: this.callbacks.workspace.id,
       workspaceRoot: this.callbacks.workspace.root,
@@ -3663,17 +3712,21 @@ class CesiumSessionHandle implements AgentSessionHandle {
       signal: request.signal,
       checkpoint: request.checkpoint,
       complete: ({ messages, tools, maxOutputTokens, signal }) =>
-        runAdapter({
-          apiKind: auth.apiKind,
-          apiKey: auth.apiKey,
-          baseUrl: auth.baseUrl,
-          providerId: auth.providerId,
-          modelId,
-          messages,
-          tools,
-          maxOutputTokens,
-          signal,
-        }),
+        this.runAdapterWithWarning(
+          {
+            apiKind: auth.apiKind,
+            apiKey: auth.apiKey,
+            baseUrl: auth.baseUrl,
+            providerId: auth.providerId,
+            modelId,
+            messages,
+            tools,
+            maxOutputTokens,
+            signal,
+          },
+          0,
+          { suppressEvents: true }
+        ),
       executeTool: (toolRequest, context) =>
         this.executeTool(toolRequest, {
           suppressTranscript: true,
@@ -3860,6 +3913,21 @@ class CesiumSessionHandle implements AgentSessionHandle {
 
     if (action === "resume") {
       if (managed) {
+        await this.requirePermission({
+          toolCallId,
+          title: `Resume workflow ${run.meta.name}`,
+          detail: this.buildPermissionDetail("workflowLaunch", {
+            script: run.script,
+            name: run.meta.name,
+            maxAgents: run.maxAgents,
+            maxConcurrent: run.maxConcurrent,
+            tokenBudget: run.tokenBudget,
+            wait: false,
+          }),
+          permission: "workflowLaunch",
+          toolKey: cesiumPermissionToolKey("workflowLaunch", { script: run.script }),
+          toolLabel: `Resume workflow ${run.meta.name}`,
+        });
         managed.resume();
         return safeJson({
           status: "running",
