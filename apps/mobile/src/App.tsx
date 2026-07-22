@@ -245,7 +245,17 @@ export default function App() {
       );
       if (!message) return;
       if (message.type === "webRuntimeError") {
-        setLoadError(message.message);
+        // The canonical workbench owns its own error boundaries and reconnect
+        // behavior. Unhandled API timeouts are reported here by the diagnostic
+        // bridge too, but they must not replace the entire app with a native
+        // fatal screen. Native loading errors and renderer termination are
+        // handled by onError/onRenderProcessGone below.
+        console.warn(
+          "[Cesium WebView]",
+          message.message,
+          message.source ?? "",
+          message.line ?? ""
+        );
         return;
       }
       if (message.type === "webReady") {
