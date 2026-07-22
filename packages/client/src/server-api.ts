@@ -1628,10 +1628,22 @@ export type PiAgentProviderStatus = {
   apiKeyLastFour?: string;
 };
 
+export type PiAgentHomeMode = "native" | "isolated";
+
+export type PiAgentHomeInfo = {
+  agentHome: PiAgentHomeMode;
+  agentDir: string;
+  nativeAgentDir: string;
+  isolatedAgentDir: string;
+  envOverride: string | null;
+  usesEnvOverride: boolean;
+};
+
 export type PiAgentSettingsPayload = {
   schemaVersion: 1;
   updatedAt: number;
   defaultProviderKeyId: string | null;
+  agentHome: PiAgentHomeMode;
   configured: boolean;
   providerKeys: Array<{
     id: string;
@@ -1647,6 +1659,7 @@ export type PiAgentSettingsPayload = {
 export type PiAgentSettingsResponse = {
   settings: PiAgentSettingsPayload;
   providers: PiAgentProviderStatus[];
+  home: PiAgentHomeInfo;
 };
 
 export type PiAgentOAuthStartResponse = {
@@ -1662,6 +1675,25 @@ export type PiAgentOAuthStartResponse = {
 export async function fetchPiAgentSettings(): Promise<PiAgentSettingsResponse> {
   return request<PiAgentSettingsResponse>("/api/settings/pi-agent", {
     method: "GET",
+  });
+}
+
+export async function savePiAgentHome(
+  agentHome: PiAgentHomeMode
+): Promise<
+  PiAgentSettingsResponse & {
+    ok: true;
+    refresh?: unknown;
+  }
+> {
+  return request<
+    PiAgentSettingsResponse & {
+      ok: true;
+      refresh?: unknown;
+    }
+  >("/api/settings/pi-agent", {
+    method: "PUT",
+    body: JSON.stringify({ agentHome }),
   });
 }
 

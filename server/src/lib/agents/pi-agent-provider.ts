@@ -1,12 +1,15 @@
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { promises as fs } from "node:fs";
+import path from "node:path";
 import type { AgentSession, AgentSessionEvent, ModelRegistry } from "@earendil-works/pi-coding-agent";
 import {
   applyPiRuntimeApiKeys,
   createPiAuthStorage,
+  getPiAgentDir,
   getPiAgentSessionsDirForCwd,
   hasPiAgentStoredAuthConfig,
+  refreshPiAgentDirCache,
 } from "../pi-agent-settings.js";
 import { AGENT_CAPABILITIES } from "./agent-contract.js";
 import { piAgentEventsFromSessionEvent } from "./pi-agent-normalize.js";
@@ -109,13 +112,34 @@ function useInMemorySessions(): boolean {
   return process.env.OPENCURSOR_PI_AGENT_IN_MEMORY === "1";
 }
 
-async function resolveSessionManager(cwd: string, providerSessionId?: string | null) {
+/**
+ * Mirror Pi's getDefaultSessionDir encoding (not re-exported from the package root).
+ * Layout: <agentDir>/sessions/--<cwd-with-slashes-as-dashes>--
+ */
+function piNativeSessionDirForCwd(cwd: string, agentDir: string): string {
+  const resolvedCwd = path.resolve(cwd);
+  const safePath = `--${resolvedCwd.replace(/^[/\\]/, "").replace(/[/\\:]/g, "-")}--`;
+  return path.join(path.resolve(agentDir), "sessions", safePath);
+}
+
+/**
+ * Resolve Pi session storage under the active agentDir so CLI and Cesium share
+ * the same session tree when using native ~/.pi/agent.
+ */
+async function resolveSessionManager(cwd: string, agentDir: string, providerSessionId?: string | null) {
   const { SessionManager } = await import("@earendil-works/pi-coding-agent");
   if (useInMemorySessions()) {
     return SessionManager.inMemory(cwd);
   }
 
-  const sessionDir = getPiAgentSessionsDirForCwd(cwd);
+  // Prefer Pi's native layout under agentDir; fall back to the hashed Cesium path
+  // only when that directory already has sessions (resume compatibility).
+  const nativeSessionDir = piNativeSessionDirForCwd(cwd, agentDir);
+  const legacySessionDir = getPiAgentSessionsDirForCwd(cwd);
+  const sessionDir =
+    existsSync(legacySessionDir) && !existsSync(nativeSessionDir)
+      ? legacySessionDir
+      : nativeSessionDir;
   await fs.mkdir(sessionDir, { recursive: true });
 
   if (providerSessionId) {
@@ -183,27 +207,44 @@ class PiAgentSessionHandle implements AgentSessionHandle {
 
     const configOptions = withCurrentConfig(input.configOptions, input.callbacks.conversation);
     const cwd = input.callbacks.workspace.root;
+    const agentDir = await refreshPiAgentDirCache();
     const authStorage = await createPiAuthStorage();
     await applyPiRuntimeApiKeys(authStorage);
 
-    const { createAgentSession, ModelRegistry } = await import("@earendil-works/pi-coding-agent");
-    const { getPiAgentModelsPath } = await import("../pi-agent-settings.js");
-    const modelRegistry = ModelRegistry.create(authStorage, getPiAgentModelsPath());
-    modelRegistry.refresh();
+    // Use Pi's service factory so DefaultResourceLoader picks up packages,
+    // extensions, skills, prompt templates, themes, and AGENTS.md from agentDir
+    // + project .pi/ — the whole point of Pi's customization model.
+    const {
+      createAgentSessionServices,
+      createAgentSessionFromServices,
+    } = await import("@earendil-works/pi-coding-agent");
 
-    const sessionManager = await resolveSessionManager(cwd, input.providerSessionId);
-    const model = await resolveModel(input.callbacks.conversation, configOptions, modelRegistry);
+    const services = await createAgentSessionServices({
+      cwd,
+      agentDir,
+      authStorage,
+    });
+
+    for (const diagnostic of services.diagnostics) {
+      if (diagnostic.type === "error" || diagnostic.type === "warning") {
+        console.warn(`[pi-agent] ${diagnostic.type}: ${diagnostic.message}`);
+      }
+    }
+
+    const sessionManager = await resolveSessionManager(cwd, agentDir, input.providerSessionId);
+    const model = await resolveModel(
+      input.callbacks.conversation,
+      configOptions,
+      services.modelRegistry
+    );
     const thinkingLevel = thinkingLevelForConfig(configOptions);
 
-    const { session } = await createAgentSession({
-      cwd,
-      agentDir: (await import("../pi-agent-settings.js")).getPiAgentDir(),
-      authStorage,
-      modelRegistry,
+    // Do NOT pass a tools allowlist — that would disable extension/custom tools.
+    const { session } = await createAgentSessionFromServices({
+      services,
       sessionManager,
       ...(model ? { model } : {}),
       ...(thinkingLevel ? { thinkingLevel } : {}),
-      tools: ["read", "bash", "edit", "write", "grep", "find", "ls"],
     });
 
     const handle = new PiAgentSessionHandle(input.backend, input.callbacks, configOptions);
@@ -427,3 +468,6 @@ export function createPiAgentProvider(input: {
     },
   };
 }
+
+// Re-export for tests that assert path helpers without importing settings.
+export { getPiAgentDir };

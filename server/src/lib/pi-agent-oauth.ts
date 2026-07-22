@@ -3,10 +3,12 @@ import {
   applyPiRuntimeApiKeys,
   createPiAuthStorage,
   deletePiAgentProviderKey,
+  describePiAgentHome,
   getPiAgentAuthPath,
   getPiAgentModelsPath,
   getPiAgentSettings,
   getPiAgentSettingsPublic,
+  type PiAgentHomeInfo,
   type PiAgentSettingsPublic,
 } from "./pi-agent-settings.js";
 
@@ -38,6 +40,7 @@ export type PiAgentProviderStatus = {
 export type PiAgentSettingsResponse = {
   settings: PiAgentSettingsPublic;
   providers: PiAgentProviderStatus[];
+  home: PiAgentHomeInfo;
 };
 
 export type PiAgentOAuthStartResponse = {
@@ -172,9 +175,10 @@ function resolveProviderAuthMethod(
 
 export async function getPiAgentSettingsResponse(): Promise<PiAgentSettingsResponse> {
   await ensureAuthStorageUnlocked();
-  const [settings, authStorage] = await Promise.all([
+  const [settings, authStorage, home] = await Promise.all([
     getPiAgentSettingsPublic(),
     createPiAuthStorage(),
+    describePiAgentHome(),
   ]);
   await applyPiRuntimeApiKeys(authStorage);
 
@@ -218,7 +222,7 @@ export async function getPiAgentSettingsResponse(): Promise<PiAgentSettingsRespo
     };
   });
 
-  return { settings, providers };
+  return { settings, providers, home };
 }
 
 export async function startPiAgentOAuth(input: {
