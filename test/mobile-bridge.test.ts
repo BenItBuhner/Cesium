@@ -94,6 +94,9 @@ describe("mobile bridge", () => {
     assert.match(script, /"systemColorScheme":"dark"/);
     assert.match(script, /opencursor-theme-config/);
     assert.match(script, /applyStartupTheme/);
+    assert.match(script, /Array\.prototype\.at/);
+    assert.match(script, /String\.prototype\.replaceAll/);
+    assert.match(script, /structuredClone/);
     assert.match(script, /window\.__CESIUM_MOBILE_NATIVE_READY__ = "\{\\"type\\":\\"nativeReady/);
     assert.doesNotMatch(script, /safeAreaTop":44/);
   });

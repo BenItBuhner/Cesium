@@ -137,6 +137,71 @@ export function buildMobileBootstrapScript(server: MobileServerConfig): string {
   const legacyThemeStorageKey = JSON.stringify(MOBILE_LEGACY_THEME_STORAGE_KEY);
   return `
 (() => {
+  // Android 11 ships Chromium WebView 83. Keep the bundled workbench usable on
+  // every supported Android API (minSdk 26) by installing the modern built-ins
+  // used by today's canonical web client before its module executes.
+  const relativeIndex = (length, index) => {
+    const value = Number(index) || 0;
+    const integer = value < 0 ? Math.ceil(value) : Math.floor(value);
+    return integer < 0 ? length + integer : integer;
+  };
+  if (!Array.prototype.at) {
+    Object.defineProperty(Array.prototype, "at", {
+      configurable: true,
+      writable: true,
+      value: function(index) { return this[relativeIndex(this.length, index)]; }
+    });
+  }
+  if (!String.prototype.at) {
+    Object.defineProperty(String.prototype, "at", {
+      configurable: true,
+      writable: true,
+      value: function(index) {
+        const position = relativeIndex(this.length, index);
+        return position < 0 || position >= this.length ? undefined : this.charAt(position);
+      }
+    });
+  }
+  [
+    "Int8Array", "Uint8Array", "Uint8ClampedArray", "Int16Array", "Uint16Array",
+    "Int32Array", "Uint32Array", "Float32Array", "Float64Array", "BigInt64Array",
+    "BigUint64Array"
+  ].forEach((name) => {
+    const ctor = window[name];
+    if (ctor && !ctor.prototype.at) {
+      Object.defineProperty(ctor.prototype, "at", {
+        configurable: true,
+        writable: true,
+        value: function(index) { return this[relativeIndex(this.length, index)]; }
+      });
+    }
+  });
+  if (!Object.hasOwn) {
+    Object.hasOwn = (object, key) => Object.prototype.hasOwnProperty.call(object, key);
+  }
+  if (!String.prototype.replaceAll) {
+    Object.defineProperty(String.prototype, "replaceAll", {
+      configurable: true,
+      writable: true,
+      value: function(search, replacement) {
+        if (search instanceof RegExp) {
+          if (!search.global) throw new TypeError("replaceAll requires a global RegExp");
+          return this.replace(search, replacement);
+        }
+        return this.split(String(search)).join(String(replacement));
+      }
+    });
+  }
+  if (!globalThis.structuredClone) {
+    globalThis.structuredClone = (value) => JSON.parse(JSON.stringify(value));
+  }
+  if (globalThis.crypto && !globalThis.crypto.randomUUID) {
+    globalThis.crypto.randomUUID = () =>
+      "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (char) => {
+        const random = Math.random() * 16 | 0;
+        return (char === "x" ? random : (random & 3) | 8).toString(16);
+      });
+  }
   const server = ${payload};
   window.__CESIUM_MOBILE_SERVER__ = server;
   const readThemePreference = () => {

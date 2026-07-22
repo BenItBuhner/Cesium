@@ -33,6 +33,10 @@ export default defineConfig({
     "process.env.NEXT_PUBLIC_SERVER_URL": JSON.stringify(undefined),
   },
   build: {
+    // Android 11's bundled System WebView is Chromium 83. The mobile APK uses
+    // this exact renderer bundle, so keep syntax compatible with that baseline;
+    // Electron and modern browsers simply run the same ES2020 output.
+    target: "chrome83",
     outDir: "dist",
     emptyOutDir: true,
   },
