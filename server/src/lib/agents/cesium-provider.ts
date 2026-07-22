@@ -65,7 +65,7 @@ import {
   updateGoalProgress,
 } from "./goal-store.js";
 import { goalCompactionRecoveryContext } from "./goal-steering.js";
-import { executeWorkflowRun } from "./workflow-runtime.js";
+import { compileWorkflowScript, executeWorkflowRun } from "./workflow-runtime.js";
 import {
   createWorkflowRunRecord,
   persistWorkflowScript,
@@ -2489,6 +2489,28 @@ class CesiumSessionHandle implements AgentSessionHandle {
       const toolName = asString(args.toolName) ?? "";
       const toolArgs = asRecord(args.arguments) ?? {};
       return `${serverId} - ${toolName}\n${JSON.stringify(toolArgs)}`;
+    }
+    if (permission === "workflowLaunch") {
+      const script = asString(args.script);
+      const compiled = script ? compileWorkflowScript(script) : null;
+      const name =
+        asString(args.name)?.trim() ||
+        (compiled?.ok ? compiled.meta.name : null) ||
+        asString(args.scriptPath)?.trim() ||
+        "unnamed workflow";
+      const phases = compiled?.ok
+        ? compiled.meta.phases.map((phase) => phase.title)
+        : [];
+      return [
+        `Launch workflow: ${name}`,
+        phases.length > 0 ? `Phases: ${phases.join(" → ")}` : null,
+        `Agent limit: ${asNumber(args.maxAgents) ?? "default"}`,
+        `Concurrency: ${asNumber(args.maxConcurrent) ?? "default"}`,
+        `Token budget: ${asNumber(args.tokenBudget) ?? "not set"}`,
+        `Execution: ${args.wait === false ? "background" : "wait for completion"}`,
+      ]
+        .filter((line): line is string => Boolean(line))
+        .join("\n");
     }
     return safeJson(args);
   }

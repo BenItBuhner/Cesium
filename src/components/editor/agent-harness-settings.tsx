@@ -1695,6 +1695,25 @@ function CesiumAgentHarnessSettings() {
                   disabled={busy}
                 />
               </label>
+              <label className="flex flex-col gap-[5px]">
+                <SettingsFieldLabel>Launch workflow</SettingsFieldLabel>
+                <SettingsThemeSelect
+                  value={settings.toolPermissions.workflowLaunch ?? "ask"}
+                  options={[...TOOL_PERMISSION_OPTIONS]}
+                  onChange={(value) =>
+                    void patchSettings({
+                      toolPermissions: {
+                        ...settings.toolPermissions,
+                        workflowLaunch: value as "ask" | "allow" | "deny",
+                      },
+                    })
+                  }
+                  ariaLabel="Workflow launch permission"
+                  className="w-full max-w-none"
+                  triggerClassName={`${settingsSelectTriggerClass} w-full max-w-none`}
+                  disabled={busy}
+                />
+              </label>
             </div>
           </HarnessDetailBlock>
 

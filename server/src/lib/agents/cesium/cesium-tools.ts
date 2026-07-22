@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { BROWSER_MCP_SERVER_ID } from "../../mcp/builtin-browser-tools.js";
 import type { AgentPermissionCategory } from "../types.js";
 import { permissionDecisionFromOption as sharedPermissionDecisionFromOption } from "../permission-options.js";
@@ -322,6 +323,7 @@ const CESIUM_BASE_TOOLS: CesiumToolDefinition[] = [
     name: "workflow_run",
     description:
       "Compile and execute a Workflow mode JavaScript orchestration script. The script MUST begin with `export const meta = { name, description, phases }` (pure literal) and may use agent()/parallel()/pipeline()/phase()/log()/budget/args. Prefer wait=true so the tool returns the final script value. Intermediate agent results stay in script variables, not the parent transcript.",
+    requiresPermission: "workflowLaunch",
     parameters: {
       type: "object",
       properties: {
@@ -882,6 +884,11 @@ export function cesiumPermissionToolKey(
         "";
       return `cesium:switch_mode:${target}`;
     }
+    case "workflowLaunch": {
+      const source = asString(args.scriptPath) ?? asString(args.script) ?? "";
+      const digest = createHash("sha256").update(source).digest("hex").slice(0, 24);
+      return `cesium:workflow_launch:${digest}`;
+    }
   }
 }
 
@@ -896,6 +903,8 @@ export function cesiumPermissionCategoryKey(permission: AgentPermissionCategory)
       return "cesium:mcp";
     case "switchMode":
       return "cesium:switch_mode";
+    case "workflowLaunch":
+      return "cesium:workflow_launch";
   }
 }
 

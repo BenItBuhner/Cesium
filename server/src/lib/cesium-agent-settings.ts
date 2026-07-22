@@ -617,6 +617,7 @@ function defaultSettings(): CesiumAgentSettings {
       terminal: "ask",
       mcpCall: "ask",
       switchMode: "ask",
+      workflowLaunch: "ask",
     },
     providerKeys: [],
     customProviders: [],
@@ -815,6 +816,12 @@ function normalizeSettings(raw: unknown): CesiumAgentSettings {
         toolPermissions?.switchMode === "ask"
           ? toolPermissions.switchMode
           : defaults.toolPermissions.switchMode,
+      workflowLaunch:
+        toolPermissions?.workflowLaunch === "allow" ||
+        toolPermissions?.workflowLaunch === "deny" ||
+        toolPermissions?.workflowLaunch === "ask"
+          ? toolPermissions.workflowLaunch
+          : defaults.toolPermissions.workflowLaunch,
     },
     providerKeys: dedupeProviderKeys(
       Array.isArray(record.providerKeys)

@@ -57,6 +57,7 @@ const [
   { createGoalRecord, formatGoalForModel, validateGoalSnapshotSummary },
   { goalCompactionRecoveryContext, goalContinuationContext },
   { buildCesiumModeReminder },
+  { resolveCesiumTools, resolveCesiumToolPermissionCategory },
 ] = await Promise.all([
   import("../src/lib/agents/providers.js"),
   import("../src/lib/cesium-agent-settings.js"),
@@ -67,6 +68,7 @@ const [
   import("../src/lib/agents/goal-store.js"),
   import("../src/lib/agents/goal-steering.js"),
   import("../src/lib/agents/cesium-mode-reminders.js"),
+  import("../src/lib/agents/cesium/cesium-tools.js"),
 ]);
 
 after(async () => {
@@ -106,6 +108,24 @@ test("cesiumPermissionToolKey scopes remembered rules by tool shape", () => {
   assert.equal(
     cesiumPermissionToolKey("switchMode", { targetMode: "Ask" }),
     "cesium:switch_mode:ask"
+  );
+  const workflowKey = cesiumPermissionToolKey("workflowLaunch", {
+    script: 'export const meta = { name: "audit", description: "Audit" }; return 1;',
+  });
+  assert.match(workflowKey, /^cesium:workflow_launch:[a-f0-9]{24}$/);
+  assert.equal(
+    workflowKey,
+    cesiumPermissionToolKey("workflowLaunch", {
+      script: 'export const meta = { name: "audit", description: "Audit" }; return 1;',
+    })
+  );
+});
+
+test("workflow_run requires the dedicated workflow launch permission", () => {
+  const tools = resolveCesiumTools().tools;
+  assert.equal(
+    resolveCesiumToolPermissionCategory(tools, "workflow_run"),
+    "workflowLaunch"
   );
 });
 
