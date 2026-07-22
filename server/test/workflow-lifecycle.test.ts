@@ -430,6 +430,13 @@ return await agent("wait for stop");
           );
         }),
     });
+    for (let attempt = 0; attempt < 50; attempt += 1) {
+      const latest = await readWorkflowRun({ workspaceId: ws.id, runId: run.runId });
+      if (latest?.meta.name === "route-control") {
+        break;
+      }
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
     const headers = {
       "content-type": "application/json",
       "x-opencursor-workspace-id": ws.id,
