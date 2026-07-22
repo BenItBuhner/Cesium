@@ -74,7 +74,7 @@ test("compileWorkflowScript requires pure meta literal first", () => {
   assert.equal(stringPhases.ok, true);
   if (stringPhases.ok) {
     assert.deepEqual(
-      stringPhases.meta.phases.map((phase) => phase.title),
+      Array.from(stringPhases.meta.phases, (phase) => phase.title),
       ["Inspect", "Synthesize"]
     );
   }
