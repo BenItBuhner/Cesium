@@ -1,7 +1,7 @@
 "use client";
 
 import { Check, Copy, ExternalLink, RefreshCw } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   attachSessionToken,
   setStoredSessionToken,
@@ -74,6 +74,7 @@ export function PublicAccessSettings({
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
+  const draftDirtyRef = useRef(false);
 
   const request = useCallback(
     async (pathname: string, init?: RequestInit) => {
@@ -103,13 +104,15 @@ export function PublicAccessSettings({
     try {
       const next = (await request("/api/public-access/status")) as PublicAccessStatus;
       setStatus(next);
-      setWebAppUrl(next.webAppUrl ?? defaultWebAppUrl());
-      setProvider(
-        next.provider === "localhost-run" || next.provider === "cloudflare-quick"
-          ? next.provider
-          : "auto"
-      );
-      setCustomPublicUrl(next.customPublicUrl ?? "");
+      if (!draftDirtyRef.current) {
+        setWebAppUrl(next.webAppUrl ?? defaultWebAppUrl());
+        setProvider(
+          next.provider === "localhost-run" || next.provider === "cloudflare-quick"
+            ? next.provider
+            : "auto"
+        );
+        setCustomPublicUrl(next.customPublicUrl ?? "");
+      }
       setError(null);
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "Public access is unavailable.");
@@ -166,6 +169,7 @@ export function PublicAccessSettings({
             method: "POST",
           })) as PublicAccessStatus;
           setStatus(next);
+          draftDirtyRef.current = false;
           await refreshAuthStatus();
           return;
         }
@@ -186,6 +190,7 @@ export function PublicAccessSettings({
           setCredentials(result.generatedCredentials);
         }
         setStatus(result.status);
+        draftDirtyRef.current = false;
       } catch (nextError) {
         setError(nextError instanceof Error ? nextError.message : "Public access update failed.");
         await refresh();
@@ -259,7 +264,10 @@ export function PublicAccessSettings({
             <input
               type="url"
               value={webAppUrl}
-              onChange={(event) => setWebAppUrl(event.target.value)}
+              onChange={(event) => {
+                draftDirtyRef.current = true;
+                setWebAppUrl(event.target.value);
+              }}
               disabled={pending || enabled}
               placeholder="https://your-cesium.vercel.app"
               className={inputClass}
@@ -270,9 +278,12 @@ export function PublicAccessSettings({
             <select
               value={provider}
               onChange={(event) =>
-                setProvider(
-                  event.target.value as "auto" | "localhost-run" | "cloudflare-quick"
-                )
+                {
+                  draftDirtyRef.current = true;
+                  setProvider(
+                    event.target.value as "auto" | "localhost-run" | "cloudflare-quick"
+                  );
+                }
               }
               disabled={pending || enabled}
               className={inputClass}
@@ -288,7 +299,10 @@ export function PublicAccessSettings({
           <input
             type="url"
             value={customPublicUrl}
-            onChange={(event) => setCustomPublicUrl(event.target.value)}
+            onChange={(event) => {
+              draftDirtyRef.current = true;
+              setCustomPublicUrl(event.target.value);
+            }}
             disabled={pending || enabled}
             placeholder="https://server.example.com"
             className={inputClass}
