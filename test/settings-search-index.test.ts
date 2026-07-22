@@ -39,6 +39,20 @@ describe("settings search index", () => {
     );
   });
 
+  test("indexes Cloud Agents settings", () => {
+    const index = buildSettingsSearchIndex({});
+    const nav = searchSettingsIndex(index, "cloud agents");
+    assert.ok(nav.some((hit) => hit.kind === "nav" && hit.navId === "cloudAgents"));
+
+    const connections = searchSettingsIndex(index, "linear slack");
+    assert.ok(
+      connections.some((hit) => hit.id === "cloudAgents::section::connections")
+    );
+
+    const autoDispatch = searchSettingsIndex(index, "auto-dispatch");
+    assert.ok(autoDispatch.some((hit) => hit.rowId === "cloud-agents-auto-dispatch"));
+  });
+
   test("indexes VS Code extension settings", () => {
     const index = buildSettingsSearchIndex({});
     const navHits = searchSettingsIndex(index, "extensions");

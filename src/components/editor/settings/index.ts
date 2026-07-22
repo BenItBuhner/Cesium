@@ -4,6 +4,7 @@
  */
 import type { ComponentType } from "react";
 import { AgentsHarnessSettingsPanel } from "@/components/editor/agent-harness-settings";
+import { CloudAgentsSettingsPanel } from "@/components/editor/cloud-agents-settings";
 import { VscodeExtensionsSettingsPanel } from "@/components/editor/vscode-extensions-settings";
 import { GeneralSettingsPanel } from "./GeneralSettingsPanel";
 import { AppearanceSettingsPanel } from "./AppearanceSettingsPanel";
@@ -22,6 +23,7 @@ export const SETTINGS_PANELS: Record<string, ComponentType> = {
   general: GeneralSettingsPanel,
   appearance: AppearanceSettingsPanel,
   agents: AgentsHarnessSettingsPanel,
+  cloudAgents: CloudAgentsSettingsPanel,
   models: ModelsSettingsPanel,
   plugins: PluginsSettingsPanel,
   extensions: VscodeExtensionsSettingsPanel,

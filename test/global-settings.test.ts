@@ -32,6 +32,8 @@ describe("global settings", () => {
     const settings = createDefaultGlobalSettings();
     assert.deepEqual(settings.general.agentRail, {
       groupBy: "workspace",
+      sectionOrder: ["pinned", "chats", "workspaces"],
+      hiddenSections: [],
       visibleStatusFilters: [],
       visibleServerIds: [],
       hiddenServerIds: [],
@@ -95,6 +97,8 @@ describe("global settings", () => {
 
     assert.deepEqual(settings.general.agentRail, {
       groupBy: "repository",
+      sectionOrder: ["pinned", "chats", "workspaces"],
+      hiddenSections: [],
       visibleStatusFilters: ["running"],
       visibleServerIds: [],
       hiddenServerIds: ["server-b"],

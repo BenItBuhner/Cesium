@@ -11,6 +11,7 @@ export * from "./dev-perf";
 export * from "./safe-url";
 export * from "./mcp-types";
 export * from "./plugin-types";
+export * from "./cloud-agents-types";
 export * from "./agent-rail";
 export * from "./composer-status-bar";
 export * from "./workspace-session";

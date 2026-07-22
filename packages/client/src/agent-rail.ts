@@ -27,6 +27,7 @@ export const AGENT_RAIL_FILTER_TOGGLE_KEYS = [
   "pinned",
   "unread",
   "read",
+  "external",
 ] as const;
 
 export type AgentRailFilterToggleKey = (typeof AGENT_RAIL_FILTER_TOGGLE_KEYS)[number];
@@ -41,6 +42,7 @@ export function defaultAgentRailFilterToggles(): AgentRailFilterToggleState {
     pinned: false,
     unread: false,
     read: false,
+    external: false,
   };
 }
 
@@ -164,6 +166,11 @@ export function matchesAgentRailMultiFilter(
     return false;
   }
   if (toggles.read && isUnread) {
+    return false;
+  }
+  // Conversations triggered from external sources (Linear/GitHub/Slack via
+  // Cloud Agents) carry an `origin`; the toggle narrows the rail to them.
+  if (toggles.external && conversation.origin?.kind !== "cloud") {
     return false;
   }
 

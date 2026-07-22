@@ -650,6 +650,31 @@ test("resolveCesiumAuth matches custom provider keys without custom prefix", asy
   assert.equal(auth.baseUrl, "https://infer.example.test/v1");
 });
 
+test("custom provider models can advertise image/multimodal support", async () => {
+  await patchCesiumAgentSettings({
+    customProviders: [
+      {
+        id: "vision-proxy",
+        name: "Vision Proxy",
+        apiKind: "openai-compatible",
+        baseUrl: "https://infer.example.test/v1",
+        models: [
+          { id: "text-only", name: "Text Only" },
+          { id: "vision-model", name: "Vision Model", supportsImages: true },
+        ],
+      },
+    ],
+  });
+
+  const catalog = await getCesiumModelCatalog();
+  const textOnly = catalog.find((entry) => entry.modelId === "vision-proxy/text-only");
+  const vision = catalog.find((entry) => entry.modelId === "vision-proxy/vision-model");
+  assert.equal(textOnly?.supportsImages, false);
+  assert.equal(vision?.supportsImages, true);
+
+  await patchCesiumAgentSettings({ customProviders: [] });
+});
+
 test("Cesium session handle exposes pause and resume", async () => {
   const backend = AGENT_BACKENDS["cesium-agent"];
   const provider = await createCesiumAgentProvider({ backend });

@@ -177,4 +177,56 @@ describe("patchAgentConversationGroups", () => {
     assert.equal(next[1]?.conversations[0]?.title, "Desktop title");
     assert.equal(next[1]?.conversations[0]?.conversationKey, "desktop:same-chat");
   });
+
+  test("conversation origin flows into rail summaries", () => {
+    const ws = "ws1";
+    const record = baseRecord("cloud-1", ws, {
+      origin: {
+        kind: "cloud",
+        providerId: "github",
+        taskId: "task-1",
+        label: "owner/repo#42",
+      },
+    });
+    const next = patchAgentConversationGroups([group(ws, [])], record);
+    const summary = next[0]!.conversations[0]!;
+    assert.equal(summary.origin?.kind, "cloud");
+    assert.equal(summary.origin?.providerId, "github");
+    assert.equal(summary.origin?.label, "owner/repo#42");
+  });
+});
+
+describe("agent rail external-source filter", () => {
+  const ctx = {
+    pinnedConversationIds: new Set<string>(),
+    unreadCompletionByConversationId: undefined,
+  };
+
+  test("external toggle narrows the rail to cloud-originated conversations", async () => {
+    const { defaultAgentRailFilterToggles, matchesAgentRailMultiFilter } = await import(
+      "../src/lib/agent-rail"
+    );
+    const { agentRecordToRailSummary } = await import("../src/lib/agent-rail-patch");
+    const cloud = agentRecordToRailSummary(
+      baseRecord("cloud-1", "ws1", {
+        origin: { kind: "cloud", providerId: "linear", label: "OSP" },
+      })
+    );
+    const local = agentRecordToRailSummary(baseRecord("local-1", "ws1"));
+
+    const off = defaultAgentRailFilterToggles();
+    assert.equal(matchesAgentRailMultiFilter(cloud, off, ctx), true);
+    assert.equal(matchesAgentRailMultiFilter(local, off, ctx), true);
+
+    const on = { ...off, external: true };
+    assert.equal(matchesAgentRailMultiFilter(cloud, on, ctx), true);
+    assert.equal(matchesAgentRailMultiFilter(local, on, ctx), false);
+  });
+
+  test("persisted toggles without the external key default to off", async () => {
+    const { normalizeAgentRailFilterToggles } = await import("../src/lib/agent-rail");
+    const restored = normalizeAgentRailFilterToggles({ archived: true });
+    assert.equal(restored.archived, true);
+    assert.equal(restored.external, false);
+  });
 });

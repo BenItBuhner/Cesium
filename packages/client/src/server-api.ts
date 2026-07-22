@@ -54,6 +54,16 @@ import type {
   AgentPluginPublic,
   AgentPluginVerificationReport,
 } from "./plugin-types";
+import type {
+  CloudAgentEndpoints,
+  CloudAgentExecutionMode,
+  CloudAgentProviderId,
+  CloudAgentRoutingRule,
+  CloudAgentSettingsPublic,
+  CloudAgentTaskArtifact,
+  CloudAgentTaskRecord,
+  CloudAgentTaskStatus,
+} from "./cloud-agents-types";
 import type { AgentBackendId } from "@cesium/core";
 import type {
   OrchestrationBoardRecord,
@@ -1779,6 +1789,8 @@ export type CesiumCustomProvider = {
     contextWindow?: number;
     supportsTools?: boolean;
     supportsReasoning?: boolean;
+    /** True when the model accepts image prompt attachments (vision/multimodal). */
+    supportsImages?: boolean;
   }>;
 };
 
@@ -3643,5 +3655,200 @@ export async function disableAllExtensionsClient(
   return await mcpJsonRequest(
     `/api/workspaces/${encodeURIComponent(workspaceId)}/extensions/disable-all`,
     { method: "POST", workspaceId }
+  );
+}
+
+// —— Cloud Agents (Linear / GitHub / Slack task offloading) ——
+
+export async function fetchCloudAgentSettings(): Promise<{
+  settings: CloudAgentSettingsPublic;
+  endpoints: CloudAgentEndpoints;
+}> {
+  return request<{ settings: CloudAgentSettingsPublic; endpoints: CloudAgentEndpoints }>(
+    "/api/cloud-agents/settings",
+    { method: "GET" },
+    { skipWorkspaceHeader: true, cache: "no-store" }
+  );
+}
+
+export async function patchCloudAgentSettings(patch: {
+  defaults?: Partial<CloudAgentSettingsPublic["defaults"]>;
+  routingRules?: CloudAgentRoutingRule[];
+}): Promise<{ ok: true; settings: CloudAgentSettingsPublic }> {
+  return request<{ ok: true; settings: CloudAgentSettingsPublic }>(
+    "/api/cloud-agents/settings",
+    { method: "PATCH", body: JSON.stringify(patch) },
+    { skipWorkspaceHeader: true }
+  );
+}
+
+export async function saveCloudAgentConnectionToken(input: {
+  providerId: CloudAgentProviderId;
+  accessToken: string;
+  webhookSecret?: string;
+}): Promise<{ ok: true; settings: CloudAgentSettingsPublic }> {
+  return request<{ ok: true; settings: CloudAgentSettingsPublic }>(
+    `/api/cloud-agents/connections/${encodeURIComponent(input.providerId)}/token`,
+    {
+      method: "PUT",
+      body: JSON.stringify({
+        accessToken: input.accessToken,
+        ...(input.webhookSecret !== undefined ? { webhookSecret: input.webhookSecret } : {}),
+      }),
+    },
+    { skipWorkspaceHeader: true }
+  );
+}
+
+export async function saveCloudAgentWebhookSecret(input: {
+  providerId: CloudAgentProviderId;
+  webhookSecret: string | null;
+}): Promise<{ ok: true; settings: CloudAgentSettingsPublic }> {
+  return request<{ ok: true; settings: CloudAgentSettingsPublic }>(
+    `/api/cloud-agents/connections/${encodeURIComponent(input.providerId)}/webhook-secret`,
+    { method: "PUT", body: JSON.stringify({ webhookSecret: input.webhookSecret }) },
+    { skipWorkspaceHeader: true }
+  );
+}
+
+export async function deleteCloudAgentConnection(
+  providerId: CloudAgentProviderId
+): Promise<{ ok: true; settings: CloudAgentSettingsPublic }> {
+  return request<{ ok: true; settings: CloudAgentSettingsPublic }>(
+    `/api/cloud-agents/connections/${encodeURIComponent(providerId)}`,
+    { method: "DELETE" },
+    { skipWorkspaceHeader: true }
+  );
+}
+
+export async function saveCloudAgentOAuthApp(input: {
+  providerId: CloudAgentProviderId;
+  clientId: string;
+  clientSecret: string;
+}): Promise<{ ok: true; settings: CloudAgentSettingsPublic }> {
+  return request<{ ok: true; settings: CloudAgentSettingsPublic }>(
+    `/api/cloud-agents/connections/${encodeURIComponent(input.providerId)}/oauth-app`,
+    {
+      method: "PUT",
+      body: JSON.stringify({ clientId: input.clientId, clientSecret: input.clientSecret }),
+    },
+    { skipWorkspaceHeader: true }
+  );
+}
+
+export async function startCloudAgentOAuth(
+  providerId: CloudAgentProviderId
+): Promise<{ providerId: CloudAgentProviderId; authUrl: string; callbackUrl: string }> {
+  return request<{ providerId: CloudAgentProviderId; authUrl: string; callbackUrl: string }>(
+    `/api/cloud-agents/connections/${encodeURIComponent(providerId)}/oauth/start`,
+    { method: "GET" },
+    { skipWorkspaceHeader: true, cache: "no-store" }
+  );
+}
+
+export async function fetchCloudAgentTasks(options?: {
+  workspaceId?: string;
+  status?: CloudAgentTaskStatus;
+}): Promise<{ tasks: CloudAgentTaskRecord[] }> {
+  const params = new URLSearchParams();
+  if (options?.workspaceId) params.set("workspaceId", options.workspaceId);
+  if (options?.status) params.set("status", options.status);
+  const query = params.size > 0 ? `?${params.toString()}` : "";
+  return request<{ tasks: CloudAgentTaskRecord[] }>(
+    `/api/cloud-agents/tasks${query}`,
+    { method: "GET" },
+    { skipWorkspaceHeader: true, cache: "no-store" }
+  );
+}
+
+export async function createCloudAgentTask(input: {
+  title: string;
+  prompt?: string;
+  workspaceId?: string;
+  backendId?: AgentBackendId;
+  modelId?: string;
+  executionMode?: CloudAgentExecutionMode;
+  dispatch?: boolean;
+}): Promise<{ ok: boolean; task: CloudAgentTaskRecord; error?: string }> {
+  return request<{ ok: boolean; task: CloudAgentTaskRecord; error?: string }>(
+    "/api/cloud-agents/tasks",
+    { method: "POST", body: JSON.stringify(input) },
+    { skipWorkspaceHeader: true }
+  );
+}
+
+export async function dispatchCloudAgentTask(
+  taskId: string,
+  overrides?: {
+    workspaceId?: string;
+    backendId?: AgentBackendId;
+    modelId?: string;
+    executionMode?: CloudAgentExecutionMode;
+  }
+): Promise<{ ok: true; task: CloudAgentTaskRecord }> {
+  return request<{ ok: true; task: CloudAgentTaskRecord }>(
+    `/api/cloud-agents/tasks/${encodeURIComponent(taskId)}/dispatch`,
+    { method: "POST", body: JSON.stringify(overrides ?? {}) },
+    { skipWorkspaceHeader: true }
+  );
+}
+
+export async function steerCloudAgentTask(
+  taskId: string,
+  text: string
+): Promise<{ ok: true; task: CloudAgentTaskRecord }> {
+  return request<{ ok: true; task: CloudAgentTaskRecord }>(
+    `/api/cloud-agents/tasks/${encodeURIComponent(taskId)}/steer`,
+    { method: "POST", body: JSON.stringify({ text }) },
+    { skipWorkspaceHeader: true }
+  );
+}
+
+export async function cancelCloudAgentTask(
+  taskId: string
+): Promise<{ ok: true; task: CloudAgentTaskRecord }> {
+  return request<{ ok: true; task: CloudAgentTaskRecord }>(
+    `/api/cloud-agents/tasks/${encodeURIComponent(taskId)}/cancel`,
+    { method: "POST", body: JSON.stringify({}) },
+    { skipWorkspaceHeader: true }
+  );
+}
+
+export async function completeCloudAgentTask(
+  taskId: string
+): Promise<{ ok: true; task: CloudAgentTaskRecord }> {
+  return request<{ ok: true; task: CloudAgentTaskRecord }>(
+    `/api/cloud-agents/tasks/${encodeURIComponent(taskId)}/complete`,
+    { method: "POST", body: JSON.stringify({}) },
+    { skipWorkspaceHeader: true }
+  );
+}
+
+export async function deleteCloudAgentTask(taskId: string): Promise<{ ok: true }> {
+  return request<{ ok: true }>(
+    `/api/cloud-agents/tasks/${encodeURIComponent(taskId)}`,
+    { method: "DELETE" },
+    { skipWorkspaceHeader: true }
+  );
+}
+
+export async function fetchCloudAgentTaskArtifacts(
+  taskId: string
+): Promise<{ artifacts: CloudAgentTaskArtifact[] }> {
+  return request<{ artifacts: CloudAgentTaskArtifact[] }>(
+    `/api/cloud-agents/tasks/${encodeURIComponent(taskId)}/artifacts`,
+    { method: "GET" },
+    { skipWorkspaceHeader: true, cache: "no-store" }
+  );
+}
+
+export async function postCloudAgentTaskUpdate(
+  taskId: string,
+  input?: { message?: string; includeArtifacts?: boolean }
+): Promise<{ ok: true; task: CloudAgentTaskRecord; detail: string }> {
+  return request<{ ok: true; task: CloudAgentTaskRecord; detail: string }>(
+    `/api/cloud-agents/tasks/${encodeURIComponent(taskId)}/post-update`,
+    { method: "POST", body: JSON.stringify(input ?? {}) },
+    { skipWorkspaceHeader: true }
   );
 }
