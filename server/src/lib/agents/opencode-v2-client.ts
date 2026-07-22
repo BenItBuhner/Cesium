@@ -35,10 +35,14 @@ function errorDetail(body: string): string {
         ? (record.data as Record<string, unknown>)
         : undefined;
     const message =
-      (typeof data?.message === "string" && data.message) ||
-      (typeof record.message === "string" && record.message) ||
-      (typeof record.error === "string" && record.error);
-    return message?.trim() || body.slice(0, 500);
+      typeof data?.message === "string"
+        ? data.message
+        : typeof record.message === "string"
+          ? record.message
+          : typeof record.error === "string"
+            ? record.error
+            : "";
+    return message.trim() || body.slice(0, 500);
   } catch {
     return body.slice(0, 500);
   }

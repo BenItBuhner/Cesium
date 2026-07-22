@@ -360,7 +360,7 @@ export class OpenCodeV2EventNormalizer {
           conversationId: input.conversationId,
           kind: ended ? "tool_call_update" : "tool_call",
           toolCallId: `opencode-v2-shell:${sessionId}:${shellId}`,
-          title: asString(shell.command) ?? "shell",
+          title: asString(shell?.command) ?? "shell",
           toolKind: "terminal",
           status,
           detail,
