@@ -765,6 +765,7 @@ export const SUBAGENT_TOOL_CALL_CLASSIFIERS: Record<
   "cesium-agent": isStrictAcpSubagentTaskToolEvent,
   "cursor-sdk": isCursorAcpSubagentTaskToolEvent,
   "opencode-server": isStrictAcpSubagentTaskToolEvent,
+  "opencode-v2-beta": isStrictAcpSubagentTaskToolEvent,
   "devin-acp": isStrictAcpSubagentTaskToolEvent,
   "codex-app-server": isCodexSubagentTaskToolEvent,
   "claude-code-sdk": isStrictAcpSubagentTaskToolEvent,

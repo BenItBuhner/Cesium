@@ -20,6 +20,8 @@ import {
 import { spawnSafeEnv } from "./spawn-env.js";
 import { CodexAppServerTransport } from "./codex-app-server-transport.js";
 import { OpenCodeServerClient, openCodeServerAuthFromEnv } from "./opencode-server-client.js";
+import { OpenCodeV2Client, openCodeV2AuthFromEnv } from "./opencode-v2-client.js";
+import { buildOpenCodeV2ConfigOptions } from "./opencode-v2-provider.js";
 import { encodeCursorSdkModelValue, type CursorSdkModelParam } from "./cursor-sdk-model-selection.js";
 import type { AgentBackendId, AgentConfigOption, AgentConfigOptionValue } from "./types.js";
 
@@ -427,6 +429,28 @@ async function createOpenCodeServerConfigOptions(): Promise<AgentConfigOption[]>
     ];
   } catch {
     return createOpenCodeCliConfigOptions();
+  }
+}
+
+async function createOpenCodeV2ConfigOptions(): Promise<AgentConfigOption[]> {
+  const baseUrl = process.env.OPENCURSOR_OPENCODE_V2_SERVER_URL?.trim();
+  if (!baseUrl) {
+    return [];
+  }
+  const directory = process.env.WORKSPACE_ROOT?.trim() || process.cwd();
+  try {
+    const client = new OpenCodeV2Client({
+      baseUrl,
+      ...openCodeV2AuthFromEnv(),
+      timeoutMs: 10_000,
+    });
+    const [agents, models] = await Promise.all([
+      client.listAgents(directory),
+      client.listModels(directory),
+    ]);
+    return buildOpenCodeV2ConfigOptions({ agents, models });
+  } catch {
+    return [];
   }
 }
 
@@ -1298,6 +1322,8 @@ async function createSeedConfigOptions(backendId: AgentBackendId): Promise<Agent
       return createCursorSdkConfigOptions();
     case "opencode-server":
       return createOpenCodeServerConfigOptions();
+    case "opencode-v2-beta":
+      return createOpenCodeV2ConfigOptions();
     case "devin-acp":
       return createDevinCliConfigOptions();
     case "codex-app-server":
@@ -1401,6 +1427,9 @@ function shouldWarmupBackendAtBoot(backendId: AgentBackendId): boolean {
     }
     if (backendId === "opencode-server") {
       return process.env.OPENCURSOR_WARMUP_OPENCODE_SERVER === "1";
+    }
+    if (backendId === "opencode-v2-beta") {
+      return process.env.OPENCURSOR_WARMUP_OPENCODE_V2_SERVER === "1";
     }
     return process.env.OPENCURSOR_WARMUP_CURSOR_SDK === "1";
   }
@@ -1525,7 +1554,7 @@ function maybeInPlaceMigrate(
     }
   }
 
-  if (backendId === "opencode-server") {
+  if (backendId === "opencode-server" || backendId === "opencode-v2-beta") {
     const hasModel = cachedOptions.some((option) => option.id === "model");
     const hasAgent = cachedOptions.some((option) => option.id === "agent" || option.id === "mode");
     if (!hasModel || !hasAgent) {

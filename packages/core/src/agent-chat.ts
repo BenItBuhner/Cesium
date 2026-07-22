@@ -308,6 +308,7 @@ function modelProviderForBackend(backendId: AgentBackendId): ModelInfo["provider
     case "cursor-sdk":
       return "cursor";
     case "opencode-server":
+    case "opencode-v2-beta":
       return "opencode";
     case "google-antigravity-cli":
       return "google";
@@ -325,7 +326,7 @@ function isCodexBackendId(backendId: AgentBackendId | undefined): boolean {
 }
 
 function isOpenCodeBackendId(backendId: AgentBackendId | undefined): boolean {
-  return backendId === "opencode-server";
+  return backendId === "opencode-server" || backendId === "opencode-v2-beta";
 }
 
 function getBackendForConversation(
@@ -4766,7 +4767,7 @@ export function buildConversationModelOptions(
   const catalogOptionCount = modelOption?.options.length ?? 0;
   const stalePlaceholderToggles =
     (conversation.config.backendId === "pi-agent" ||
-      conversation.config.backendId === "opencode-server") &&
+      isOpenCodeBackendId(conversation.config.backendId)) &&
     (backendToggles?.length ?? 0) === 1 &&
     backendToggles?.[0]?.id.trim().toLowerCase() === "auto" &&
     catalogOptionCount > 1;

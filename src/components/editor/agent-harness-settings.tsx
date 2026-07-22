@@ -68,6 +68,7 @@ export const HARNESS_ORDER: AgentBackendId[] = [
   "cursor-sdk",
   "codex-app-server",
   "opencode-server",
+  "opencode-v2-beta",
   "devin-acp",
   "claude-code-sdk",
   "pi-agent",
@@ -78,6 +79,7 @@ export const HARNESS_LABELS: Record<AgentBackendId, string> = {
   "cesium-agent": "Cesium Agent (Beta)",
   "cursor-sdk": "Cursor SDK",
   "opencode-server": "OpenCode Server",
+  "opencode-v2-beta": "OpenCode v2 Beta",
   "devin-acp": "Devin",
   "codex-app-server": "Codex App Server",
   "claude-code-sdk": "Claude Code",
@@ -92,6 +94,8 @@ const HARNESS_DESCRIPTIONS: Record<AgentBackendId, string> = {
     "Cursor TypeScript SDK runtime. Uses the server-stored API key and enabled MCP servers from Plugins.",
   "opencode-server":
     "OpenCode native HTTP/SSE server API. Uses ambient OpenCode auth or the configured external server.",
+  "opencode-v2-beta":
+    "Native OpenCode v2 beta API with typed tool events, durable reconnect recovery, background subagents, forms, and v2 permissions. Uses `opencode2` or `OPENCURSOR_OPENCODE_V2_SERVER_URL`.",
   "devin-acp":
     "Cognition Devin CLI over ACP (`devin acp`). Authenticate with `devin auth login` or set `WINDSURF_API_KEY`.",
   "codex-app-server":
