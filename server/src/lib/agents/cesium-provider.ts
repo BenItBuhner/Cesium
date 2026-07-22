@@ -241,6 +241,22 @@ type ActiveQuestion = {
 
 type CesiumToolExecutionOptions = {
   suppressTranscript?: boolean;
+  signal?: AbortSignal;
+  permissionContext?: string;
+};
+
+type CesiumToolExecutionContext = {
+  signal?: AbortSignal;
+  appendTranscriptEvents(events: AgentEventInput[]): Promise<void>;
+};
+
+type CesiumPermissionRequest = {
+  toolCallId: string;
+  title: string;
+  detail: string;
+  permission: AgentPermissionCategory;
+  toolKey: string;
+  toolLabel: string;
 };
 
 type CesiumQuestionStep = {
@@ -306,6 +322,37 @@ class PermissionRefusedToolCallError extends Error {
   }
 }
 
+function toolAbortError(): Error {
+  const error = new Error("Workflow child tool execution cancelled.");
+  error.name = "AbortError";
+  return error;
+}
+
+function throwIfToolAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) {
+    throw toolAbortError();
+  }
+}
+
+function waitForToolDelay(durationMs: number, signal?: AbortSignal): Promise<void> {
+  throwIfToolAborted(signal);
+  return new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, durationMs);
+    const onAbort = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
+      reject(toolAbortError());
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+    if (signal?.aborted) {
+      onAbort();
+    }
+  });
+}
+
 type CesiumPausePhase = "none" | "pause_requested" | "pausing" | "paused";
 
 class CesiumSessionHandle implements AgentSessionHandle {
@@ -319,12 +366,15 @@ class CesiumSessionHandle implements AgentSessionHandle {
   private resumeWaiter: (() => void) | null = null;
   private resumeAck: (() => void) | null = null;
   private pendingPermissions = new Map<string, ActivePermission>();
+  private permissionQueue: Promise<void> = Promise.resolve();
   private pendingQuestions = new Map<string, ActiveQuestion>();
   private terminalRuns = new Map<string, TerminalRun>();
   private subagentTranscripts = new Map<string, AgentStoredEvent[]>();
   private activeSystemPrompt = CESIUM_SYSTEM_PROMPT;
   private activeUserMessageId: string | null = null;
   private activeForegroundWorkflow: ManagedWorkflowRun | null = null;
+  private managedWorkflowRuns = new Set<ManagedWorkflowRun>();
+  private disposeRequested = false;
   private harness: ResolvedCesiumHarness = resolveCesiumTools();
   private subagentsV2: SubagentsV2Runtime | null = null;
 
@@ -991,7 +1041,13 @@ class CesiumSessionHandle implements AgentSessionHandle {
     }
     this.pendingQuestions.clear();
     this.killTerminalRuns();
-    this.activeForegroundWorkflow?.stop();
+    for (const managed of this.managedWorkflowRuns) {
+      managed.stop();
+    }
+    workflowRunManager.stopConversation(
+      this.callbacks.workspace.id,
+      this.callbacks.conversation.id
+    );
     this.activeForegroundWorkflow = null;
     await this.callbacks.appendEvents([
       {
@@ -1192,7 +1248,36 @@ class CesiumSessionHandle implements AgentSessionHandle {
     pending.resolve(answer);
   }
 
-  async dispose(): Promise<void> {
+  private trackWorkflowRun(managed: ManagedWorkflowRun): ManagedWorkflowRun {
+    if (this.managedWorkflowRuns.has(managed)) {
+      return managed;
+    }
+    this.managedWorkflowRuns.add(managed);
+    const finished = async () => {
+      this.managedWorkflowRuns.delete(managed);
+      if (
+        this.managedWorkflowRuns.size === 0 &&
+        this.activeUserMessageId === null &&
+        this.pendingPermissions.size === 0 &&
+        this.pendingQuestions.size === 0
+      ) {
+        await this.callbacks.updateConversation((current) => ({
+          ...current,
+          status: current.status === "running" ? "idle" : current.status,
+        }));
+      }
+      if (this.disposeRequested && this.managedWorkflowRuns.size === 0) {
+        await this.finishDispose();
+      }
+    };
+    void managed.promise.then(finished, finished);
+    return managed;
+  }
+
+  private async finishDispose(): Promise<void> {
+    if (this.disposed) {
+      return;
+    }
     this.disposed = true;
     this.pausePhase = "none";
     this.resumeWaiter?.();
@@ -1210,6 +1295,14 @@ class CesiumSessionHandle implements AgentSessionHandle {
     this.pendingQuestions.clear();
     // Background terminal runs would otherwise outlive the session as zombies.
     this.killTerminalRuns();
+  }
+
+  async dispose(): Promise<void> {
+    if (this.managedWorkflowRuns.size > 0) {
+      this.disposeRequested = true;
+      return;
+    }
+    await this.finishDispose();
   }
 
   private async refreshHarnessFromSettings(): Promise<void> {
@@ -1287,11 +1380,24 @@ class CesiumSessionHandle implements AgentSessionHandle {
 
   private killTerminalRuns(): void {
     for (const run of this.terminalRuns.values()) {
-      if (run.exitCode === undefined) {
-        run.process.kill();
-      }
+      this.killTerminalRun(run);
     }
     this.terminalRuns.clear();
+  }
+
+  private killTerminalRun(run: TerminalRun): void {
+    if (run.exitCode !== undefined) {
+      return;
+    }
+    if (process.platform !== "win32" && run.process.pid) {
+      try {
+        process.kill(-run.process.pid, "SIGTERM");
+        return;
+      } catch {
+        // Fall back to the direct child if its process group already exited.
+      }
+    }
+    run.process.kill("SIGTERM");
   }
 
   private async finishAssistant(messageId: string, raw?: unknown): Promise<void> {
@@ -1419,14 +1525,29 @@ class CesiumSessionHandle implements AgentSessionHandle {
     return [{ role: "system", content: this.activeSystemPrompt }, ...base.slice(1)];
   }
 
-  private async requirePermission(input: {
-    toolCallId: string;
-    title: string;
-    detail: string;
-    permission: AgentPermissionCategory;
-    toolKey: string;
-    toolLabel: string;
-  }): Promise<void> {
+  private async requirePermission(input: CesiumPermissionRequest): Promise<void> {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const previous = this.permissionQueue;
+    const current = previous.catch(() => undefined).then(() => gate);
+    this.permissionQueue = current;
+    await previous.catch(() => undefined);
+    try {
+      if (this.cancelled || this.disposed) {
+        throw new Error("Cesium session is no longer available for permission requests.");
+      }
+      await this.requirePermissionNow(input);
+    } finally {
+      release();
+      if (this.permissionQueue === current) {
+        this.permissionQueue = Promise.resolve();
+      }
+    }
+  }
+
+  private async requirePermissionNow(input: CesiumPermissionRequest): Promise<void> {
     const assignment = await findOrchestrationAssignmentForConversation(
       this.callbacks.workspace.id,
       this.callbacks.conversation.id
@@ -1585,6 +1706,15 @@ class CesiumSessionHandle implements AgentSessionHandle {
     request: CesiumToolRequest,
     options: CesiumToolExecutionOptions = {}
   ): Promise<string> {
+    const context: CesiumToolExecutionContext = {
+      signal: options.signal,
+      appendTranscriptEvents: async (events) => {
+        if (!options.suppressTranscript) {
+          await this.callbacks.appendEvents(events);
+        }
+      },
+    };
+    throwIfToolAborted(context.signal);
     const effectiveRequest =
       request.name === "call_mcp_tool"
         ? {
@@ -1614,9 +1744,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
       pluginIconUrl: mcpServerForTool?.iconUrl,
       raw: effectiveRequest,
     };
-    if (!options.suppressTranscript) {
-      await this.callbacks.appendEvents([callEvent]);
-    }
+    await context.appendTranscriptEvents([callEvent]);
     try {
       let result: string;
       const policy = resolveCesiumModeToolPolicy({
@@ -1645,7 +1773,12 @@ class CesiumSessionHandle implements AgentSessionHandle {
         await this.requirePermission({
           toolCallId: effectiveRequest.id,
           title,
-          detail: this.buildPermissionDetail(permissionCategory, permissionArgs),
+          detail: [
+            options.permissionContext,
+            this.buildPermissionDetail(permissionCategory, permissionArgs),
+          ]
+            .filter((line): line is string => Boolean(line))
+            .join("\n"),
           permission: permissionCategory,
           toolKey: cesiumPermissionToolKey(permissionCategory, permissionArgs),
           toolLabel: title,
@@ -1663,22 +1796,22 @@ class CesiumSessionHandle implements AgentSessionHandle {
           : request.name;
         switch (toolName) {
         case "read_file":
-          result = await this.toolReadFile(request.arguments);
+          result = await this.toolReadFile(request.arguments, context);
           break;
         case "grep":
-          result = await this.toolGrep(request.arguments);
+          result = await this.toolGrep(request.arguments, context);
           break;
         case "edit_file":
-          result = await this.toolEditFile(request.arguments, request.id, title);
+          result = await this.toolEditFile(request.arguments, request.id, title, context);
           break;
         case "terminal":
-          result = await this.toolTerminal(request.arguments);
+          result = await this.toolTerminal(request.arguments, context);
           break;
         case "switch_mode":
           result = await this.toolSwitchMode(request.arguments, request.id);
           break;
         case "wait":
-          result = await this.toolWait(request.arguments);
+          result = await this.toolWait(request.arguments, context);
           break;
         case "todo":
           result = await this.toolTodo(request.arguments);
@@ -1769,7 +1902,12 @@ class CesiumSessionHandle implements AgentSessionHandle {
           result = await this.toolReadHistoryPage(request.arguments);
           break;
         case "call_mcp_tool":
-          result = await this.toolCallMcp(effectiveRequest.arguments, effectiveRequest.id, title);
+          result = await this.toolCallMcp(
+            effectiveRequest.arguments,
+            effectiveRequest.id,
+            title,
+            context
+          );
           break;
         case "refresh_mcp_servers":
           result = await this.toolRefreshMcpServers();
@@ -1808,8 +1946,26 @@ class CesiumSessionHandle implements AgentSessionHandle {
           throw new Error(`Unknown Cesium tool: ${request.name}`);
         }
       }
-      if (!options.suppressTranscript) {
-        await this.callbacks.appendEvents([
+      await context.appendTranscriptEvents([
+        {
+          eventId: randomUUID(),
+          conversationId: this.callbacks.conversation.id,
+          kind: "tool_call_update",
+          toolCallId: request.id,
+          title,
+          toolKind: toolKind(request.name),
+          status: "completed",
+          detail: result,
+          raw: { request: effectiveRequest, result },
+        },
+      ]);
+      return result;
+    } catch (error) {
+      if (context.signal?.aborted || (error instanceof Error && error.name === "AbortError")) {
+        throw error instanceof Error ? error : toolAbortError();
+      }
+      if (error instanceof PermissionRefusedToolCallError) {
+        await context.appendTranscriptEvents([
           {
             eventId: randomUUID(),
             conversationId: this.callbacks.conversation.id,
@@ -1818,56 +1974,42 @@ class CesiumSessionHandle implements AgentSessionHandle {
             title,
             toolKind: toolKind(request.name),
             status: "completed",
-            detail: result,
-            raw: { request: effectiveRequest, result },
+            detail: error.message,
+            raw: { request: effectiveRequest, result: error.message, permissionRefused: true },
           },
         ]);
-      }
-      return result;
-    } catch (error) {
-      if (error instanceof PermissionRefusedToolCallError) {
-        if (!options.suppressTranscript) {
-          await this.callbacks.appendEvents([
-            {
-              eventId: randomUUID(),
-              conversationId: this.callbacks.conversation.id,
-              kind: "tool_call_update",
-              toolCallId: request.id,
-              title,
-              toolKind: toolKind(request.name),
-              status: "completed",
-              detail: error.message,
-              raw: { request: effectiveRequest, result: error.message, permissionRefused: true },
-            },
-          ]);
-        }
         return error.message;
       }
       const failed = statusFromError(error);
-      if (!options.suppressTranscript) {
-        await this.callbacks.appendEvents([
-          {
-            eventId: randomUUID(),
-            conversationId: this.callbacks.conversation.id,
-            kind: "tool_call_update",
-            toolCallId: request.id,
-            title,
-            toolKind: toolKind(request.name),
-            status: failed.status,
-            detail: failed.detail,
-            raw: { request: effectiveRequest, error: failed.detail },
-          },
-        ]);
-      }
+      await context.appendTranscriptEvents([
+        {
+          eventId: randomUUID(),
+          conversationId: this.callbacks.conversation.id,
+          kind: "tool_call_update",
+          toolCallId: request.id,
+          title,
+          toolKind: toolKind(request.name),
+          status: failed.status,
+          detail: failed.detail,
+          raw: { request: effectiveRequest, error: failed.detail },
+        },
+      ]);
       return failed.detail;
     }
   }
 
-  private async toolReadFile(args: Record<string, unknown>): Promise<string> {
+  private async toolReadFile(
+    args: Record<string, unknown>,
+    context: CesiumToolExecutionContext
+  ): Promise<string> {
+    throwIfToolAborted(context.signal);
     const inputPath = asString(args.path);
     if (!inputPath) throw new Error("read_file.path is required.");
     const resolved = resolveWorkspacePath(this.callbacks.workspace.root, inputPath);
-    const raw = await fs.readFile(resolved, "utf8");
+    const raw = await fs.readFile(resolved, {
+      encoding: "utf8",
+      signal: context.signal,
+    });
     const lines = raw.split(/\r?\n/);
     const offset = Math.max(1, Math.floor(asNumber(args.offset) ?? 1));
     const requestedLimit = Math.floor(asNumber(args.limit) ?? Math.min(lines.length, MAX_READ_LINES));
@@ -1886,7 +2028,11 @@ class CesiumSessionHandle implements AgentSessionHandle {
       .join("\n");
   }
 
-  private async toolGrep(args: Record<string, unknown>): Promise<string> {
+  private async toolGrep(
+    args: Record<string, unknown>,
+    context: CesiumToolExecutionContext
+  ): Promise<string> {
+    throwIfToolAborted(context.signal);
     const pattern = asString(args.pattern);
     if (!pattern) throw new Error("grep.pattern is required.");
     const root = resolveWorkspacePath(this.callbacks.workspace.root, asString(args.path) ?? ".");
@@ -1895,9 +2041,11 @@ class CesiumSessionHandle implements AgentSessionHandle {
     const maxResults = Math.max(1, Math.min(MAX_GREP_RESULTS, Math.floor(asNumber(args.maxResults) ?? DEFAULT_GREP_RESULTS)));
     const results: string[] = [];
     const visit = async (dir: string): Promise<void> => {
+      throwIfToolAborted(context.signal);
       if (results.length >= maxResults) return;
       const entries = await fs.readdir(dir, { withFileTypes: true }).catch(() => []);
       for (const entry of entries) {
+        throwIfToolAborted(context.signal);
         if (results.length >= maxResults) return;
         if (entry.name === ".git" || entry.name === "node_modules" || entry.name === ".docker" || entry.name === ".next") {
           continue;
@@ -1927,8 +2075,10 @@ class CesiumSessionHandle implements AgentSessionHandle {
   private async toolEditFile(
     args: Record<string, unknown>,
     toolCallId: string,
-    title: string
+    title: string,
+    context: CesiumToolExecutionContext
   ): Promise<string> {
+    throwIfToolAborted(context.signal);
     const inputPath = asString(args.path);
     const oldString = typeof args.oldString === "string" ? args.oldString : "";
     const newString = typeof args.newString === "string" ? args.newString : "";
@@ -1942,13 +2092,15 @@ class CesiumSessionHandle implements AgentSessionHandle {
       throw new Error("oldString matches more than once; include more context.");
     }
     const after = `${before.slice(0, first)}${newString}${before.slice(first + oldString.length)}`;
+    throwIfToolAborted(context.signal);
     await fs.writeFile(resolved, after, "utf8");
+    throwIfToolAborted(context.signal);
     const editPreview = extractToolEditPreview(
       { path: inputPath, oldString, newString },
       { beforeFullFileContent: before, afterFullFileContent: after },
       inputPath
     );
-    await this.callbacks.appendEvents([
+    await context.appendTranscriptEvents([
       {
         eventId: randomUUID(),
         conversationId: this.callbacks.conversation.id,
@@ -1965,14 +2117,24 @@ class CesiumSessionHandle implements AgentSessionHandle {
     return `Edited ${inputPath}.`;
   }
 
-  private async toolTerminal(args: Record<string, unknown>): Promise<string> {
+  private async toolTerminal(
+    args: Record<string, unknown>,
+    context: CesiumToolExecutionContext
+  ): Promise<string> {
+    throwIfToolAborted(context.signal);
     const command = asString(args.command);
     if (!command) throw new Error("terminal.command is required.");
     const waitUntil = asString(args.waitUntil) ?? "complete";
+    if (context.signal && waitUntil !== "complete") {
+      throw new Error(
+        "Workflow child terminal calls must use waitUntil=complete so commands cannot outlive the workflow run."
+      );
+    }
     const timeoutMs = Math.max(1000, Math.min(120_000, Math.floor(asNumber(args.timeoutMs) ?? 30_000)));
     const child = spawn(command, {
       cwd: this.callbacks.workspace.root,
       shell: true,
+      detached: process.platform !== "win32",
       windowsHide: true,
     });
     const id = randomUUID();
@@ -1983,6 +2145,18 @@ class CesiumSessionHandle implements AgentSessionHandle {
       startedAt: Date.now(),
     };
     this.terminalRuns.set(id, run);
+    let rejectWait: ((error: Error) => void) | null = null;
+    let waitInterval: ReturnType<typeof setInterval> | null = null;
+    const onAbort = () => {
+      this.killTerminalRun(run);
+      if (waitInterval) {
+        clearInterval(waitInterval);
+        waitInterval = null;
+      }
+      rejectWait?.(toolAbortError());
+      rejectWait = null;
+    };
+    context.signal?.addEventListener("abort", onAbort, { once: true });
     const append = (chunk: Buffer) => {
       run.output = truncate(`${run.output}${chunk.toString("utf8")}`, TERMINAL_OUTPUT_CAP);
     };
@@ -1991,38 +2165,59 @@ class CesiumSessionHandle implements AgentSessionHandle {
     // Nothing reads runs by id after completion; evict on exit or the map
     // retains every ChildProcess + up to 80KB of output for the session's life.
     child.on("exit", (code) => {
+      context.signal?.removeEventListener("abort", onAbort);
       run.exitCode = code;
       run.completedAt = Date.now();
       this.terminalRuns.delete(id);
     });
     child.on("error", (error: Error) => {
+      context.signal?.removeEventListener("abort", onAbort);
       run.output = truncate(`${run.output}\n[spawn failed] ${error.message}`, TERMINAL_OUTPUT_CAP);
       run.exitCode = -1;
       run.completedAt = Date.now();
       this.terminalRuns.delete(id);
     });
+    if (context.signal?.aborted) {
+      onAbort();
+      throw toolAbortError();
+    }
     if (waitUntil === "background") {
       return `Started background command ${id}: ${command}`;
     }
     const pattern = asString(args.pattern);
-    return await new Promise<string>((resolve) => {
+    return await new Promise<string>((resolve, reject) => {
+      rejectWait = reject;
       const started = Date.now();
-      const interval = setInterval(() => {
+      waitInterval = setInterval(() => {
         if (waitUntil === "pattern" && pattern && run.output.includes(pattern)) {
-          clearInterval(interval);
+          clearInterval(waitInterval!);
+          waitInterval = null;
+          rejectWait = null;
           resolve(`Pattern matched for ${command}.\n${run.output}`);
           return;
         }
         if (run.exitCode !== undefined) {
-          clearInterval(interval);
+          clearInterval(waitInterval!);
+          waitInterval = null;
+          rejectWait = null;
           resolve(`Command exited ${run.exitCode ?? 0}.\n${run.output}`);
           return;
         }
         if (Date.now() - started >= timeoutMs) {
-          clearInterval(interval);
-          resolve(`Command still running after ${timeoutMs}ms as ${id}.\n${run.output}`);
+          clearInterval(waitInterval!);
+          waitInterval = null;
+          rejectWait = null;
+          if (context.signal) {
+            this.killTerminalRun(run);
+            resolve(`Command timed out after ${timeoutMs}ms and was terminated.\n${run.output}`);
+          } else {
+            resolve(`Command still running after ${timeoutMs}ms as ${id}.\n${run.output}`);
+          }
         }
       }, 250);
+      if (context.signal?.aborted) {
+        onAbort();
+      }
     });
   }
 
@@ -2631,8 +2826,10 @@ class CesiumSessionHandle implements AgentSessionHandle {
   private async toolCallMcp(
     args: Record<string, unknown>,
     _toolCallId: string,
-    _title: string
+    _title: string,
+    context: CesiumToolExecutionContext
   ): Promise<string> {
+    throwIfToolAborted(context.signal);
     const normalized = normalizeCallMcpToolArgs(args);
     const serverId = normalized.serverId;
     const toolName = normalized.toolName;
@@ -2649,6 +2846,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
       serverId,
       toolName,
       arguments: toolArgs,
+      signal: context.signal,
     });
   }
 
@@ -3122,21 +3320,27 @@ class CesiumSessionHandle implements AgentSessionHandle {
     return `${header}\n\n${generateTranscriptFromEvents(events).trim()}`;
   }
 
-  private async toolWait(args: Record<string, unknown>): Promise<string> {
+  private async toolWait(
+    args: Record<string, unknown>,
+    context: CesiumToolExecutionContext
+  ): Promise<string> {
     const parsed = parseWaitToolArgs(args, this.harness.settings.limits.waitMaxSeconds);
     let elapsedMs = 0;
     let statusElapsedMs = 0;
     while (elapsedMs < parsed.durationMs) {
+      if (context.signal?.aborted) {
+        throw toolAbortError();
+      }
       if (this.cancelled || this.disposed) {
         throw new Error("Wait interrupted.");
       }
       const chunkMs = Math.min(WAIT_POLL_MS, parsed.durationMs - elapsedMs);
-      await sleepMs(chunkMs);
+      await waitForToolDelay(chunkMs, context.signal);
       elapsedMs += chunkMs;
       statusElapsedMs += chunkMs;
       if (statusElapsedMs >= WAIT_HEARTBEAT_MS || elapsedMs >= parsed.durationMs) {
         statusElapsedMs = 0;
-        await this.callbacks.appendEvents([
+        await context.appendTranscriptEvents([
           {
             eventId: randomUUID(),
             conversationId: this.callbacks.conversation.id,
@@ -3467,8 +3671,12 @@ class CesiumSessionHandle implements AgentSessionHandle {
           maxOutputTokens,
           signal,
         }),
-      executeTool: (toolRequest) =>
-        this.executeTool(toolRequest, { suppressTranscript: true }),
+      executeTool: (toolRequest, context) =>
+        this.executeTool(toolRequest, {
+          suppressTranscript: true,
+          signal: context.signal,
+          permissionContext: `Workflow ${request.workflowRunId ?? "run"} child ${request.label ?? "agent"} requests this tool.`,
+        }),
     });
   }
 
@@ -3492,20 +3700,11 @@ class CesiumSessionHandle implements AgentSessionHandle {
     const maxConcurrent = asNumber(args.maxConcurrent);
     const resumeFromRunId = asString(args.resumeFromRunId);
 
-    const provisionalId = randomUUID();
-    const scriptPath =
-      scriptPathArg ??
-      (await persistWorkflowScript({
-        workspace: this.callbacks.workspace,
-        runId: provisionalId,
-        script,
-      }));
-
     let run = createWorkflowRunRecord({
       workspace: this.callbacks.workspace,
       conversationId: this.callbacks.conversation.id,
       script,
-      scriptPath,
+      scriptPath: scriptPathArg ?? "",
       args: args.args,
       tokenBudget: tokenBudget ?? null,
       maxAgents: maxAgents ?? undefined,
@@ -3529,11 +3728,13 @@ class CesiumSessionHandle implements AgentSessionHandle {
           priorRunId: resumeFromRunId,
         })
       : [];
-    const managed = workflowRunManager.start({
-      run,
-      journalSeed,
-      spawnAgent: (request) => this.spawnWorkflowAgent(request),
-    });
+    const managed = this.trackWorkflowRun(
+      workflowRunManager.start({
+        run,
+        journalSeed,
+        spawnAgent: (request) => this.spawnWorkflowAgent(request),
+      })
+    );
 
     if (!wait) {
       return safeJson({
@@ -3571,16 +3772,23 @@ class CesiumSessionHandle implements AgentSessionHandle {
     return workflowRunManager.reconcileStaleRun(run);
   }
 
-  private startWorkflowReplay(run: WorkflowRunRecord, reuseJournal: boolean) {
-    const replay = resetWorkflowRunForReplay(
-      run,
-      "Workflow replay started from durable lifecycle control."
+  private async startWorkflowReplay(
+    run: WorkflowRunRecord,
+    reuseJournal: boolean
+  ) {
+    const replay = await upsertWorkflowRun(
+      resetWorkflowRunForReplay(
+        run,
+        "Workflow replay started from durable lifecycle control."
+      )
     );
-    return workflowRunManager.start({
-      run: replay,
-      journalSeed: reuseJournal ? run.journal : [],
-      spawnAgent: (request) => this.spawnWorkflowAgent(request),
-    });
+    return this.trackWorkflowRun(
+      workflowRunManager.start({
+        run: replay,
+        journalSeed: reuseJournal ? run.journal : [],
+        spawnAgent: (request) => this.spawnWorkflowAgent(request),
+      })
+    );
   }
 
   private async toolWorkflowStatus(args: Record<string, unknown>): Promise<string> {
@@ -3672,7 +3880,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
           toolKey: cesiumPermissionToolKey("workflowLaunch", { script: run.script }),
           toolLabel: `Resume workflow ${run.meta.name}`,
         });
-        const replay = this.startWorkflowReplay(run, true);
+        const replay = await this.startWorkflowReplay(run, true);
         return safeJson({
           status: "replay_started",
           runId: run.runId,
@@ -3714,35 +3922,43 @@ class CesiumSessionHandle implements AgentSessionHandle {
       toolKey: cesiumPermissionToolKey("workflowLaunch", { script: run.script }),
       toolLabel: `Restart workflow ${run.meta.name}`,
     });
+    let restartSource = run;
     if (managed) {
       managed.stop();
+      await managed.promise.catch(() => undefined);
+      restartSource =
+        (await readWorkflowRun({
+          workspaceId: run.workspaceId,
+          runId: run.runId,
+        })) ?? run;
     }
     const reuseJournal = args.reuseJournal === true;
+    const restartScript = await readWorkflowScriptFile({
+      workspace: this.callbacks.workspace,
+      scriptPath: restartSource.scriptPath,
+    });
     let nextRun = createWorkflowRunRecord({
       workspace: this.callbacks.workspace,
-      conversationId: run.conversationId,
-      script: run.script,
-      scriptPath: run.scriptPath,
-      args: run.args,
-      tokenBudget: run.tokenBudget,
-      maxAgents: run.maxAgents,
-      maxConcurrent: run.maxConcurrent,
-      resumeFromRunId: reuseJournal ? run.runId : undefined,
+      conversationId: restartSource.conversationId,
+      script: restartScript,
+      scriptPath: restartSource.scriptPath,
+      args: restartSource.args,
+      tokenBudget: restartSource.tokenBudget,
+      maxAgents: restartSource.maxAgents,
+      maxConcurrent: restartSource.maxConcurrent,
+      resumeFromRunId: reuseJournal ? restartSource.runId : undefined,
     });
-    const finalScriptPath = await persistWorkflowScript({
-      workspace: this.callbacks.workspace,
-      runId: nextRun.runId,
-      script: run.script,
-    });
-    nextRun = await upsertWorkflowRun({ ...nextRun, scriptPath: finalScriptPath });
-    workflowRunManager.start({
-      run: nextRun,
-      journalSeed: reuseJournal ? run.journal : [],
-      spawnAgent: (request) => this.spawnWorkflowAgent(request),
-    });
+    nextRun = await upsertWorkflowRun(nextRun);
+    this.trackWorkflowRun(
+      workflowRunManager.start({
+        run: nextRun,
+        journalSeed: reuseJournal ? restartSource.journal : [],
+        spawnAgent: (request) => this.spawnWorkflowAgent(request),
+      })
+    );
     return safeJson({
       status: "restarted",
-      previousRunId: run.runId,
+      previousRunId: restartSource.runId,
       runId: nextRun.runId,
       reusedJournal: reuseJournal,
       scriptPath: nextRun.scriptPath,

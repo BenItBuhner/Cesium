@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -162,6 +162,57 @@ return [a, b];
   assert.equal(liveCalls, 1);
   assert.deepEqual(completed.returnValue, ["live:same", "live:same"]);
   assert.equal(completed.agents.filter((item) => item.status === "cached").length, 1);
+});
+
+test("workflow semaphore never exceeds configured concurrency", async () => {
+  const workspace: WorkspaceRecord = {
+    id: `ws-workflow-concurrency-${process.pid}-${Date.now()}`,
+    root: "/tmp",
+    name: "Workflow concurrency",
+    createdAt: 1,
+    updatedAt: 1,
+    lastOpenedAt: 1,
+  };
+  const script = `export const meta = { name: "concurrency", description: "concurrency cap", phases: [] };
+return await parallel([
+  () => agent("one"),
+  () => agent("two"),
+  () => agent("three"),
+  () => agent("four"),
+  () => agent("five"),
+  () => agent("six"),
+]);
+`;
+  try {
+    let run = createWorkflowRunRecord({
+      workspace,
+      conversationId: "conv-concurrency",
+      script,
+      scriptPath: "/tmp/concurrency.js",
+      maxConcurrent: 2,
+    });
+    run = await upsertWorkflowRun(run);
+    let active = 0;
+    let maximum = 0;
+    const completed = await executeWorkflowRun({
+      run,
+      spawnAgent: async (request) => {
+        active += 1;
+        maximum = Math.max(maximum, active);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        active -= 1;
+        return { value: request.prompt, tokensUsed: 1 };
+      },
+    });
+
+    assert.equal(completed.status, "completed");
+    assert.equal(maximum, 2);
+  } finally {
+    await rm(path.join(DATA_DIR, "workspaces", workspace.id), {
+      recursive: true,
+      force: true,
+    });
+  }
 });
 
 test("workflow runtime threads remaining budget and records failed child usage", async () => {
@@ -356,6 +407,10 @@ test("workflow script paths stay inside the workspace or persisted workflow dire
       await readWorkflowScriptFile({ workspace, scriptPath: workspaceScript }),
       script
     );
+    assert.equal(
+      await readWorkflowScriptFile({ workspace, scriptPath: "workflow.js" }),
+      script
+    );
     await assert.rejects(
       () => readWorkflowScriptFile({ workspace, scriptPath: outsideScript }),
       /must resolve inside the active workspace/
@@ -379,6 +434,37 @@ test("workflow script paths stay inside the workspace or persisted workflow dire
       rm(workspaceRoot, { recursive: true, force: true }),
       rm(outsideRoot, { recursive: true, force: true }),
       rm(path.join(DATA_DIR, "workspaces", workspace.id), { recursive: true, force: true }),
+    ]);
+  }
+});
+
+test("persistWorkflowScript rejects symlink escapes", async () => {
+  const outsideRoot = await mkdtemp(path.join(os.tmpdir(), "cesium-workflow-persist-outside-"));
+  const workspace: WorkspaceRecord = {
+    id: `ws-workflow-persist-path-${process.pid}-${Date.now()}`,
+    root: "/tmp",
+    name: "Workflow persistence path policy",
+    createdAt: 1,
+    updatedAt: 1,
+    lastOpenedAt: 1,
+  };
+  const workspaceDataDir = path.join(DATA_DIR, "workspaces", workspace.id);
+  try {
+    await mkdir(workspaceDataDir, { recursive: true });
+    await symlink(outsideRoot, path.join(workspaceDataDir, "workflows"));
+    await assert.rejects(
+      () =>
+        persistWorkflowScript({
+          workspace,
+          runId: "escape",
+          script: SAMPLE_SCRIPT,
+        }),
+      /must stay inside the workspace data directory/
+    );
+  } finally {
+    await Promise.all([
+      rm(outsideRoot, { recursive: true, force: true }),
+      rm(workspaceDataDir, { recursive: true, force: true }),
     ]);
   }
 });

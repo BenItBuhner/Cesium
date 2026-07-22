@@ -170,6 +170,109 @@ return await agent("long child", { label: "child" });
   }
 });
 
+test("workflow manager stops every active background run for a conversation", async () => {
+  const ws = workspace(`ws-workflow-stop-conversation-${process.pid}-${Date.now()}`);
+  const manager = new WorkflowRunManager();
+  const script = `export const meta = { name: "stop-conversation", description: "stop background runs", phases: [] };
+return await agent("long child");
+`;
+  try {
+    const runs = await Promise.all(
+      ["first", "second"].map((label) =>
+        upsertWorkflowRun(
+          createWorkflowRunRecord({
+            workspace: ws,
+            conversationId: "conv-stop-all",
+            script,
+            scriptPath: `/tmp/stop-${label}.js`,
+          })
+        )
+      )
+    );
+    const managed = runs.map((run) =>
+      manager.start({
+        run,
+        spawnAgent: async (request) =>
+          new Promise<never>((_, reject) => {
+            request.signal?.addEventListener(
+              "abort",
+              () => reject(new Error("background child aborted")),
+              { once: true }
+            );
+          }),
+      })
+    );
+
+    assert.equal(manager.stopConversation(ws.id, "conv-stop-all"), 2);
+    const completed = await Promise.all(managed.map((entry) => entry.promise));
+    assert.deepEqual(completed.map((run) => run.status), ["cancelled", "cancelled"]);
+  } finally {
+    await cleanupWorkspace(ws.id);
+  }
+});
+
+test("workflow stop persists queued agents and terminalizes queued and active agents", async () => {
+  const ws = workspace(`ws-workflow-stop-queued-${process.pid}-${Date.now()}`);
+  const manager = new WorkflowRunManager();
+  const script = `export const meta = { name: "stop-queued", description: "stop queued agents", phases: [] };
+return await parallel([
+  () => agent("first child", { label: "first" }),
+  () => agent("second child", { label: "second" }),
+]);
+`;
+  try {
+    const run = await upsertWorkflowRun(
+      createWorkflowRunRecord({
+        workspace: ws,
+        conversationId: "conv-stop-queued",
+        script,
+        scriptPath: "/tmp/stop-queued.js",
+        maxConcurrent: 1,
+      })
+    );
+    let observedQueued!: () => void;
+    const queued = new Promise<void>((resolve) => {
+      observedQueued = resolve;
+    });
+    let queuedObserved = false;
+    const managed = manager.start({
+      run,
+      onUpdate: (updated) => {
+        if (
+          updated.agents.some((agent) => agent.status === "running") &&
+          updated.agents.some((agent) => agent.status === "queued")
+        ) {
+          queuedObserved = true;
+          observedQueued();
+        }
+      },
+      spawnAgent: async (request) =>
+        new Promise<never>((_, reject) => {
+          request.signal?.addEventListener(
+            "abort",
+            () => reject(new Error("active child aborted by workflow stop")),
+            { once: true }
+          );
+        }),
+    });
+
+    await queued;
+    assert.equal(queuedObserved, true);
+    await manager.stop(ws.id, run.runId);
+    const completed = await managed.promise;
+
+    assert.equal(completed.status, "cancelled");
+    assert.deepEqual(
+      completed.agents.map((agent) => agent.status),
+      ["skipped", "skipped"]
+    );
+    assert.ok(completed.agents.every((agent) => agent.completedAt !== null));
+    assert.ok(completed.agents.every((agent) => /abort|cancel/i.test(agent.error ?? "")));
+  } finally {
+    await cleanupWorkspace(ws.id);
+  }
+});
+
 test("workflow restart can reuse prior completed journal entries", async () => {
   const ws = workspace(`ws-workflow-restart-${process.pid}-${Date.now()}`);
   const manager = new WorkflowRunManager();

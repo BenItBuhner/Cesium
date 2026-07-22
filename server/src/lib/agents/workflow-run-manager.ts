@@ -63,6 +63,7 @@ export class ManagedWorkflowRun implements WorkflowRunLifecycleControl {
   readonly key: string;
   readonly runId: string;
   readonly workspaceId: string;
+  readonly conversationId: string;
 
   private readonly controller = new AbortController();
   private state: ManagedWorkflowState = "running";
@@ -74,6 +75,7 @@ export class ManagedWorkflowRun implements WorkflowRunLifecycleControl {
     this.key = workflowRunKey(run.workspaceId, run.runId);
     this.runId = run.runId;
     this.workspaceId = run.workspaceId;
+    this.conversationId = run.conversationId;
     this.signal = this.controller.signal;
   }
 
@@ -145,6 +147,10 @@ export class ManagedWorkflowRun implements WorkflowRunLifecycleControl {
     return new Promise<void>((resolve) => {
       this.pausedWaiters.push(resolve);
     });
+  }
+
+  notifyFinished(): void {
+    this.resolvePausedWaiters();
   }
 
   async checkpoint(
@@ -236,6 +242,7 @@ export class WorkflowRunManager {
       onUpdate: input.onUpdate,
       control: managed,
     }).finally(() => {
+      managed.notifyFinished();
       if (this.active.get(key) === managed) {
         this.active.delete(key);
       }
@@ -284,6 +291,20 @@ export class WorkflowRunManager {
     }
     managed.stop();
     return true;
+  }
+
+  stopConversation(workspaceId: string, conversationId: string): number {
+    let stopped = 0;
+    for (const managed of this.active.values()) {
+      if (
+        managed.workspaceId === workspaceId &&
+        managed.conversationId === conversationId
+      ) {
+        managed.stop();
+        stopped += 1;
+      }
+    }
+    return stopped;
   }
 }
 

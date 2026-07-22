@@ -76,6 +76,57 @@ after(async () => {
   await fs.rm(TEST_DATA_DIR, { recursive: true, force: true }).catch(() => {});
 });
 
+async function startCesiumTestSession(id: string) {
+  const backend = AGENT_BACKENDS["cesium-agent"];
+  const provider = await createCesiumAgentProvider({ backend });
+  let conversation = {
+    schemaVersion: 1 as const,
+    id,
+    workspaceId: "ws-1",
+    title: id,
+    createdAt: 1,
+    updatedAt: 1,
+    lastEventSeq: 0,
+    status: "idle" as const,
+    config: {
+      backendId: "cesium-agent" as const,
+      mode: "workflow",
+      modelId: "openai/gpt-5.1",
+      modelName: "GPT-5.1",
+    },
+    providerSessionId: null,
+    configOptions: [],
+    capabilities: backend.capabilities,
+    pendingPermission: null,
+    pendingQuestion: null,
+    lastError: null,
+    experimental: true,
+    archivedAt: null,
+    lastReadSeq: 0,
+    queuedPrompts: [],
+  };
+  const events: Array<{
+    kind: string;
+    requestId?: string;
+    detail?: string;
+  }> = [];
+  const handle = await provider.startSession({
+    conversation,
+    workspace: { id: "ws-1", root: TEST_DATA_DIR, name: "test", createdAt: 1 },
+    appendEvents: async (next) => {
+      events.push(...next);
+    },
+    readSnapshot: async () => null,
+    updateConversation: async (patch) => {
+      conversation =
+        typeof patch === "function" ? patch(conversation) : { ...conversation, ...patch };
+      return conversation;
+    },
+  });
+  events.length = 0;
+  return { handle, events, getConversation: () => conversation };
+}
+
 test("Cesium Agent is registered first and marked beta", () => {
   assert.equal(listAgentBackends()[0]?.id, "cesium-agent");
   assert.equal(AGENT_BACKENDS["cesium-agent"].label, "Cesium Agent (Beta)");
@@ -215,6 +266,227 @@ test("workflow child tool execution suppresses transcript events but preserves p
   } finally {
     await patchCesiumAgentSettings({ toolPermissions: { editFile: "ask" } });
   }
+});
+
+test("successful suppressed workflow child edit emits no orphan parent events", async () => {
+  const fs = await import("node:fs/promises");
+  const relativePath = "workflow-child-successful-edit.txt";
+  await fs.mkdir(TEST_DATA_DIR, { recursive: true });
+  await fs.writeFile(path.join(TEST_DATA_DIR, relativePath), "before", "utf8");
+  await patchCesiumAgentSettings({ toolPermissions: { editFile: "allow" } });
+  try {
+    const { handle, events } = await startCesiumTestSession(
+      "cesium-workflow-child-successful-edit"
+    );
+    const privateHandle = handle as unknown as {
+      executeTool(
+        request: { id: string; name: string; arguments: Record<string, unknown> },
+        options: { suppressTranscript: boolean; signal?: AbortSignal }
+      ): Promise<string>;
+    };
+    const result = await privateHandle.executeTool(
+      {
+        id: "child-edit-success",
+        name: "edit_file",
+        arguments: { path: relativePath, oldString: "before", newString: "after" },
+      },
+      { suppressTranscript: true }
+    );
+    await privateHandle.executeTool(
+      {
+        id: "child-wait-success",
+        name: "wait",
+        arguments: { seconds: 0.001, reason: "suppressed child status" },
+      },
+      { suppressTranscript: true }
+    );
+
+    assert.equal(result, `Edited ${relativePath}.`);
+    assert.equal(await fs.readFile(path.join(TEST_DATA_DIR, relativePath), "utf8"), "after");
+    assert.deepEqual(events, []);
+  } finally {
+    await patchCesiumAgentSettings({ toolPermissions: { editFile: "ask" } });
+  }
+});
+
+test("workflow child stop promptly interrupts wait and its terminal only", async () => {
+  await patchCesiumAgentSettings({ toolPermissions: { terminal: "allow" } });
+  const { handle, events } = await startCesiumTestSession(
+    "cesium-workflow-child-abort-tools"
+  );
+  const privateHandle = handle as unknown as {
+    executeTool(
+      request: { id: string; name: string; arguments: Record<string, unknown> },
+      options?: { suppressTranscript?: boolean; signal?: AbortSignal }
+    ): Promise<string>;
+    terminalRuns: Map<
+      string,
+      {
+        process: {
+          exitCode: number | null;
+          killed: boolean;
+          kill(signal?: NodeJS.Signals): boolean;
+        };
+      }
+    >;
+    killTerminalRuns(): void;
+  };
+  try {
+    await privateHandle.executeTool({
+      id: "unrelated-terminal",
+      name: "terminal",
+      arguments: {
+        command: `${JSON.stringify(process.execPath)} -e "setInterval(() => {}, 1000)"`,
+        waitUntil: "background",
+      },
+    });
+    const unrelated = [...privateHandle.terminalRuns.values()][0]!;
+    events.length = 0;
+
+    const waitController = new AbortController();
+    const waitResult = privateHandle
+      .executeTool(
+        {
+          id: "child-wait",
+          name: "wait",
+          arguments: { seconds: 60, reason: "workflow child wait" },
+        },
+        { suppressTranscript: true, signal: waitController.signal }
+      )
+      .then(
+        () => "completed",
+        (error: unknown) => (error instanceof Error ? error.name : String(error))
+      );
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    waitController.abort();
+    assert.equal(
+      await Promise.race([
+        waitResult,
+        new Promise<string>((resolve) => setTimeout(() => resolve("timeout"), 250)),
+      ]),
+      "AbortError"
+    );
+
+    const terminalController = new AbortController();
+    const terminalResult = privateHandle
+      .executeTool(
+        {
+          id: "child-terminal",
+          name: "terminal",
+          arguments: {
+            command: `${JSON.stringify(process.execPath)} -e "setInterval(() => {}, 1000)"`,
+            waitUntil: "complete",
+            timeoutMs: 60_000,
+          },
+        },
+        { suppressTranscript: true, signal: terminalController.signal }
+      )
+      .then(
+        () => "completed",
+        (error: unknown) => (error instanceof Error ? error.name : String(error))
+      );
+    while (privateHandle.terminalRuns.size < 2) {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+    terminalController.abort();
+    assert.equal(
+      await Promise.race([
+        terminalResult,
+        new Promise<string>((resolve) => setTimeout(() => resolve("timeout"), 250)),
+      ]),
+      "AbortError"
+    );
+    assert.equal(unrelated.process.exitCode, null);
+    assert.equal(unrelated.process.killed, false);
+    assert.deepEqual(events, []);
+  } finally {
+    privateHandle.killTerminalRuns();
+    await patchCesiumAgentSettings({ toolPermissions: { terminal: "ask" } });
+  }
+});
+
+test("parallel workflow child permissions are serialized and attributed", async () => {
+  const fs = await import("node:fs/promises");
+  await fs.mkdir(TEST_DATA_DIR, { recursive: true });
+  await fs.writeFile(path.join(TEST_DATA_DIR, "workflow-permission-a.txt"), "before-a", "utf8");
+  await fs.writeFile(path.join(TEST_DATA_DIR, "workflow-permission-b.txt"), "before-b", "utf8");
+  await patchCesiumAgentSettings({ toolPermissions: { editFile: "ask" } });
+  const { handle, events, getConversation } = await startCesiumTestSession(
+    "cesium-workflow-permission-queue"
+  );
+  const privateHandle = handle as unknown as {
+    executeTool(
+      request: { id: string; name: string; arguments: Record<string, unknown> },
+      options: {
+        suppressTranscript: boolean;
+        permissionContext: string;
+      }
+    ): Promise<string>;
+  };
+
+  const first = privateHandle.executeTool(
+    {
+      id: "workflow-edit-a",
+      name: "edit_file",
+      arguments: {
+        path: "workflow-permission-a.txt",
+        oldString: "before-a",
+        newString: "after-a",
+      },
+    },
+    {
+      suppressTranscript: true,
+      permissionContext: "Workflow run-a child first requests this tool.",
+    }
+  );
+  const second = privateHandle.executeTool(
+    {
+      id: "workflow-edit-b",
+      name: "edit_file",
+      arguments: {
+        path: "workflow-permission-b.txt",
+        oldString: "before-b",
+        newString: "after-b",
+      },
+    },
+    {
+      suppressTranscript: true,
+      permissionContext: "Workflow run-a child second requests this tool.",
+    }
+  );
+
+  while (events.filter((event) => event.kind === "permission_request").length < 1) {
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+  assert.equal(events.filter((event) => event.kind === "permission_request").length, 1);
+  const firstRequest = events.find((event) => event.kind === "permission_request")!;
+  assert.match(firstRequest.detail ?? "", /Workflow run-a child first/);
+  assert.equal(getConversation().pendingPermission?.requestId, firstRequest.requestId);
+  await handle.answerPermission({
+    requestId: firstRequest.requestId!,
+    optionId: "allow_once",
+  });
+
+  while (events.filter((event) => event.kind === "permission_request").length < 2) {
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+  const requests = events.filter((event) => event.kind === "permission_request");
+  assert.match(requests[1]?.detail ?? "", /Workflow run-a child second/);
+  assert.equal(getConversation().pendingPermission?.requestId, requests[1]?.requestId);
+  await handle.answerPermission({
+    requestId: requests[1]!.requestId!,
+    optionId: "allow_once",
+  });
+
+  await Promise.all([first, second]);
+  assert.equal(
+    await fs.readFile(path.join(TEST_DATA_DIR, "workflow-permission-a.txt"), "utf8"),
+    "after-a"
+  );
+  assert.equal(
+    await fs.readFile(path.join(TEST_DATA_DIR, "workflow-permission-b.txt"), "utf8"),
+    "after-b"
+  );
 });
 
 test("normalizeCallMcpToolArgs accepts nested, snake_case, and flat MCP tool shapes", () => {

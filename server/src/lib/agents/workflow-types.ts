@@ -82,6 +82,7 @@ export type WorkflowRunRecord = {
 
 export type WorkflowAgentSpawnRequest = {
   prompt: string;
+  workflowRunId?: string;
   label?: string;
   phase?: string | null;
   schema?: Record<string, unknown>;

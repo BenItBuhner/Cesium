@@ -107,9 +107,22 @@ export async function persistWorkflowScript(input: {
   runId: string;
   script: string;
 }): Promise<string> {
+  const workspaceDataDir = path.join(DATA_DIR, "workspaces", input.workspace.id);
   const dir = getWorkflowScriptsDir(input.workspace.id);
+  await fs.mkdir(workspaceDataDir, { recursive: true });
   await fs.mkdir(dir, { recursive: true });
+  const [resolvedWorkspaceDataDir, resolvedDir] = await Promise.all([
+    fs.realpath(workspaceDataDir),
+    fs.realpath(dir),
+  ]);
+  if (!isPathInside(resolvedWorkspaceDataDir, resolvedDir)) {
+    throw new Error("Persisted workflow directory must stay inside the workspace data directory.");
+  }
   const scriptPath = path.join(dir, `${input.runId}.js`);
+  const existing = await fs.lstat(scriptPath).catch(() => null);
+  if (existing?.isSymbolicLink()) {
+    throw new Error(`Refusing to overwrite symlinked workflow script: ${scriptPath}`);
+  }
   await fs.writeFile(scriptPath, input.script, "utf8");
   return scriptPath;
 }
@@ -128,8 +141,11 @@ export async function readWorkflowScriptFile(input: {
     throw new Error(`UNC paths are not allowed for workflow scriptPath: ${scriptPath}`);
   }
   try {
+    const requestedPath = path.isAbsolute(scriptPath)
+      ? scriptPath
+      : path.resolve(workspace.root, scriptPath);
     const [resolvedFile, resolvedWorkspace, resolvedPersistedDir] = await Promise.all([
-      fs.realpath(scriptPath),
+      fs.realpath(requestedPath),
       fs.realpath(workspace.root).catch(() => path.resolve(workspace.root)),
       fs.realpath(getWorkflowScriptsDir(workspace.id)).catch(() =>
         path.resolve(getWorkflowScriptsDir(workspace.id))

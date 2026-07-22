@@ -12,34 +12,17 @@ import {
 
 export const CESIUM_WORKFLOW_CHILD_MAX_ITERATIONS = 20;
 
-export const CESIUM_WORKFLOW_CHILD_BLOCKED_TOOLS: ReadonlySet<string> = new Set([
-  "subagent",
-  "read_subagent_transcript",
-  "spawn_agent",
-  "send_message",
-  "followup_task",
-  "wait_agent",
-  "interrupt_agent",
-  "list_agents",
-  "switch_mode",
-  "todo",
-  "create_plan",
-  "update_plan",
-  "read_plan",
-  "finalize_plan",
-  "ask_question",
-  "search_history",
-  "read_history_page",
+export const CESIUM_WORKFLOW_CHILD_ALLOWED_TOOLS: ReadonlySet<string> = new Set([
+  "read_file",
+  "grep",
+  "edit_file",
+  "terminal",
+  "wait",
+  "call_mcp_tool",
 ]);
 
 export function isCesiumWorkflowChildToolBlocked(name: string): boolean {
-  return (
-    CESIUM_WORKFLOW_CHILD_BLOCKED_TOOLS.has(name) ||
-    name.startsWith("workflow_") ||
-    name.startsWith("orchestration_") ||
-    name.startsWith("goal_") ||
-    name.startsWith("burn_goal_")
-  );
+  return !CESIUM_WORKFLOW_CHILD_ALLOWED_TOOLS.has(name);
 }
 
 export function resolveCesiumWorkflowChildTools(
@@ -79,7 +62,10 @@ export async function runCesiumWorkflowChild(input: {
     maxOutputTokens?: number;
     signal?: AbortSignal;
   }) => Promise<CesiumAdapterResult>;
-  executeTool: (request: CesiumToolRequest) => Promise<string>;
+  executeTool: (
+    request: CesiumToolRequest,
+    context: { signal?: AbortSignal }
+  ) => Promise<string>;
 }): Promise<WorkflowAgentSpawnResult> {
   const tools = resolveCesiumWorkflowChildTools(input.tools);
   const messages: CesiumHistoryMessage[] = [
@@ -191,7 +177,7 @@ export async function runCesiumWorkflowChild(input: {
       throwIfAborted();
       const toolResult = isCesiumWorkflowChildToolBlocked(request.name)
         ? `Tool ${request.name} is blocked in workflow child agents to prevent recursive workflow control or child-agent management.`
-        : await input.executeTool(request);
+        : await input.executeTool(request, { signal: input.signal });
       throwIfAborted();
       await input.checkpoint?.();
       throwIfAborted();
