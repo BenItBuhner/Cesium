@@ -297,7 +297,14 @@ export function normalizeEventsToHistory(events: AgentStoredEvent[]): CesiumHist
             ? `${reminders.join("\n\n")}\n\n${event.content}`
             : event.content;
           const images = (event.attachments ?? [])
-            .filter((attachment) => attachment.mimeType.startsWith("image/"))
+            .filter(
+              (attachment) =>
+                typeof attachment?.mimeType === "string" &&
+                attachment.mimeType.startsWith("image/") &&
+                typeof attachment?.data === "string" &&
+                attachment.data.length > 0
+            )
+            .slice(0, 6)
             .map((attachment) => ({
               mimeType: attachment.mimeType,
               data: attachment.data,

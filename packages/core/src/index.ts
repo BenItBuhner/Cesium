@@ -20,3 +20,4 @@ export * from "./agent-chat";
 export * from "./mobile-agent-projection";
 export * from "./watch-agent-contract";
 export * from "./orchestration-types";
+export * from "./phone-control";

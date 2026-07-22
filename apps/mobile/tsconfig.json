@@ -8,19 +8,14 @@
     "paths": {
       "@mobile/*": ["src/*"],
       "@/*": ["../../src/*"],
-      "@cesium/core": ["../../packages/core/src/index.ts"],
-      "@cesium/client": ["../../packages/client/src/index.ts"],
-      "@cesium/client/react": ["../../packages/client/src/react.ts"],
-      "@cesium/design": ["../../packages/design/src/index.ts"],
-      "@cesium/ui-native": ["../../packages/ui-native/src/index.ts"]
+      "@cesium/core": ["../../packages/core/src/index.ts"]
     }
   },
   "include": [
     "index.js",
-    "nativewind-env.d.ts",
     "src/**/*.ts",
     "src/**/*.tsx",
     "../../src/lib/mobile-*.ts",
-    "../../packages/**/*.ts"
+    "../../packages/core/src/**/*.ts"
   ]
 }

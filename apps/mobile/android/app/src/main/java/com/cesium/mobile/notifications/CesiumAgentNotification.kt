@@ -227,7 +227,7 @@ internal data class CesiumProgressColors(
   val completed: Int,
   val active: Int,
   val pending: Int,
-  val burn: Int
+  val goal: Int
 )
 
 internal fun resolveCesiumProgressColors(dark: Boolean): CesiumProgressColors =
@@ -236,13 +236,13 @@ internal fun resolveCesiumProgressColors(dark: Boolean): CesiumProgressColors =
       completed = CesiumDesignTokens.Dark.AskAccent.toInt(),
       active = CesiumDesignTokens.Dark.WorkflowAccent.toInt(),
       pending = CesiumDesignTokens.Dark.TextSecondary.toInt(),
-      burn = CesiumDesignTokens.Dark.GoalAccent.toInt()
+      goal = CesiumDesignTokens.Dark.GoalAccent.toInt()
     )
   } else {
     CesiumProgressColors(
       completed = CesiumDesignTokens.Light.AskAccent.toInt(),
       active = CesiumDesignTokens.Light.WorkflowAccent.toInt(),
       pending = CesiumDesignTokens.Light.TextSecondary.toInt(),
-      burn = CesiumDesignTokens.Light.GoalAccent.toInt()
+      goal = CesiumDesignTokens.Light.GoalAccent.toInt()
     )
   }

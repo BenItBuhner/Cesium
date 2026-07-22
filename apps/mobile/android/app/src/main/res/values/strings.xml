@@ -1,0 +1,5 @@
+<resources>
+  <string name="app_name">Cesium</string>
+  <string name="phone_control_accessibility_label">Cesium phone control</string>
+  <string name="phone_control_accessibility_description">Lets Cesium read the visible interface and perform actions you request through a connected Cesium server. You can turn this off at any time.</string>
+</resources>

@@ -8,6 +8,7 @@ import { terminalRoutes } from "./routes/terminals.js";
 import { browserProxyRoutes } from "./routes/browser-proxy.js";
 import { browserDebugRoutes } from "./routes/browser-debug.js";
 import { browserControlRoutes } from "./routes/browser-control.js";
+import { phoneControlRoutes } from "./routes/phone-control.js";
 import { agentRoutes } from "./routes/agents.js";
 import { audioRoutes } from "./routes/audio.js";
 import { authRoutes } from "./routes/auth.js";
@@ -57,6 +58,14 @@ export function createCesiumApp(): Hono {
     `http://${serverConfig.publicHost}:3000`,
     "http://localhost:3000",
     "http://127.0.0.1:3000",
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://10.0.2.2:5173",
+    // The production Android app loads the exact Vite workbench from
+    // file:///android_asset/workbench/index.html. Android WebView serializes
+    // that file document's Origin header as the literal string "null".
+    // Universal file access is intentionally limited to this bundled shell.
+    "null",
   ];
   const allowedOrigins = (
     process.env.ALLOWED_ORIGINS ?? defaultAllowedOrigins.join(",")
@@ -132,6 +141,7 @@ export function createCesiumApp(): Hono {
   app.route("/browser", browserProxyRoutes);
   app.route("/", browserDebugRoutes);
   app.route("/", browserControlRoutes);
+  app.route("/", phoneControlRoutes);
   app.route("/", workspaceRoutes);
   app.route("/", settingsRoutes);
   app.route("/", fsRoutes);

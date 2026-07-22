@@ -35,6 +35,61 @@ describe("mobile bridge", () => {
     assert.equal(parseMobileBridgeMessage(null), null);
   });
 
+  test("round-trips mobile live-activity preference and native status", () => {
+    assert.deepEqual(
+      parseMobileBridgeMessage(
+        encodeMobileBridgeMessage({
+          type: "setLiveUpdatePreference",
+          preference: "nowbar",
+        })
+      ),
+      {
+        type: "setLiveUpdatePreference",
+        preference: "nowbar",
+      }
+    );
+    assert.deepEqual(
+      parseMobileBridgeMessage(
+        encodeMobileBridgeMessage({
+          type: "mobileNativeStatus",
+          status: {
+            liveUpdates: {
+              preference: "live",
+              sdkInt: 36,
+              progressStyleSupported: true,
+              canPostPromotedNotifications: false,
+              notificationPermissionGranted: true,
+            },
+          },
+        })
+      ),
+      {
+        type: "mobileNativeStatus",
+        status: {
+          liveUpdates: {
+            preference: "live",
+            sdkInt: 36,
+            progressStyleSupported: true,
+            canPostPromotedNotifications: false,
+            notificationPermissionGranted: true,
+          },
+        },
+      }
+    );
+    assert.deepEqual(
+      parseMobileBridgeMessage(
+        encodeMobileBridgeMessage({
+          type: "setPhoneControlEnabled",
+          enabled: true,
+        })
+      ),
+      {
+        type: "setPhoneControlEnabled",
+        enabled: true,
+      }
+    );
+  });
+
   test("bootstrap script embeds sanitized mobile server metadata", () => {
     const script = buildMobileBootstrapScript({
       baseUrl: "http://10.0.2.2:9100/",
@@ -51,6 +106,10 @@ describe("mobile bridge", () => {
     assert.match(script, /"systemColorScheme":"dark"/);
     assert.match(script, /opencursor-theme-config/);
     assert.match(script, /applyStartupTheme/);
+    assert.match(script, /syncLegacyThemeTokens/);
+    assert.match(script, /Array\.prototype\.at/);
+    assert.match(script, /String\.prototype\.replaceAll/);
+    assert.match(script, /structuredClone/);
     assert.match(script, /window\.__CESIUM_MOBILE_NATIVE_READY__ = "\{\\"type\\":\\"nativeReady/);
     assert.doesNotMatch(script, /safeAreaTop":44/);
   });

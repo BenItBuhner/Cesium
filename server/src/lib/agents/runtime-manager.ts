@@ -514,13 +514,7 @@ export class AgentRuntimeManager {
       attachments?: Array<{ mimeType: string; data: string; name?: string }>;
       clientEventId?: string;
       clientMessageId?: string;
-      configOverride?: {
-        backendId?: AgentBackendId;
-        mode?: string;
-        modelId?: string;
-        modelName?: string;
-        setConfigOptions?: Array<{ configId: string; value: string }>;
-      };
+      configOverride?: AgentQueuedChatPrompt["configOverride"];
     }
   ): Promise<AgentConversationSnapshotHead> {
     const conversation = await this.createConversation(workspace, input);

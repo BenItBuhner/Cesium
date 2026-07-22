@@ -9,6 +9,7 @@ import {
   SettingsSection,
 } from "@/components/editor/settings-ui";
 import { ToggleSwitch } from "@/components/ui/ToggleSwitch";
+import { MobileNativeSettings } from "./MobileNativeSettings";
 
 export function GeneralSettingsPanel() {
   const { settings, updateSettings } = useGlobalSettings();
@@ -74,6 +75,7 @@ export function GeneralSettingsPanel() {
           border={false}
         />
       </SettingsSection>
+      <MobileNativeSettings />
     </>
   );
 }

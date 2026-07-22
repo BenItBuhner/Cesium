@@ -100,13 +100,7 @@ agentRoutes.post("/api/agents/conversations/create-and-prompt", async (c) => {
     attachments?: Array<{ mimeType: string; data: string; name?: string }>;
     clientEventId?: string;
     clientMessageId?: string;
-    configOverride?: {
-      backendId?: AgentBackendId;
-      mode?: string;
-      modelId?: string;
-      modelName?: string;
-      setConfigOptions?: Array<{ configId: string; value: string }>;
-    };
+    configOverride?: AgentQueuedChatPrompt["configOverride"];
   }>();
   if (!body.text?.trim() && (!body.attachments || body.attachments.length === 0)) {
     return c.json({ error: "Expected prompt text or attachments." }, 400);

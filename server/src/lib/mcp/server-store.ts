@@ -5,6 +5,7 @@ import type { McpServerConfig } from "@cesium/core/mcp";
 import { readJsonFile, writeJsonFile } from "../persistence.js";
 import { mcpSecretsPath, mcpServersConfigPath, slugifyMcpServerId } from "./paths.js";
 import { BROWSER_MCP_SERVER_ID, BROWSER_MCP_TOOLS } from "./builtin-browser-tools.js";
+import { PHONE_MCP_SERVER_ID, PHONE_MCP_TOOLS } from "./builtin-phone-tools.js";
 import type {
   McpConnectionStatus,
   McpSecretsFile,
@@ -17,6 +18,8 @@ import { decryptForWorkspace, encryptForWorkspace } from "./secret-crypto.js";
 const connectionStatusByKey = new Map<string, McpConnectionStatus>();
 const BROWSER_MCP_SUMMARY =
   "Built-in browser-tab tools for opening visible IDE editor browser tabs, locking them, clicking, typing, inspecting metadata, viewport testing, and optionally using legacy server Chromium automation.";
+const PHONE_MCP_SUMMARY =
+  "Built-in Android phone control tools for capability discovery, app launch, accessibility snapshots, screenshots, gestures, system actions, safe settings pages, and Cesium-owned secondary displays.";
 
 function statusKey(workspaceId: string, serverId: string): string {
   return `${workspaceId}:${serverId}`;
@@ -102,6 +105,7 @@ async function writeSecretsFile(workspaceId: string, secrets: McpSecretsFile): P
 export async function listMcpServers(workspaceId: string): Promise<McpServerPublic[]> {
   const file = await readServersFile(workspaceId);
   const browserEnabled = file.builtins?.browser?.enabled !== false;
+  const phoneEnabled = file.builtins?.phone?.enabled !== false;
   const browserServer: McpServerPublic = {
     id: BROWSER_MCP_SERVER_ID,
     label: "Browser",
@@ -118,7 +122,23 @@ export async function listMcpServers(workspaceId: string): Promise<McpServerPubl
       ? { connected: true, lastCheckedAt: Date.now(), toolCount: BROWSER_MCP_TOOLS.length }
       : { connected: false, lastCheckedAt: Date.now(), error: "Disabled" },
   };
-  return [browserServer, ...file.servers.map((server) => ({
+  const phoneServer: McpServerPublic = {
+    id: PHONE_MCP_SERVER_ID,
+    label: "Android phone",
+    enabled: phoneEnabled,
+    transport: "stdio",
+    stdio: { command: "builtin:phone", args: [] },
+    auth: { kind: "none" },
+    summary: PHONE_MCP_SUMMARY,
+    createdAt: 0,
+    updatedAt: file.builtins?.phone?.updatedAt ?? 0,
+    builtIn: true,
+    removable: false,
+    connectionStatus: phoneEnabled
+      ? { connected: true, lastCheckedAt: Date.now(), toolCount: PHONE_MCP_TOOLS.length }
+      : { connected: false, lastCheckedAt: Date.now(), error: "Disabled" },
+  };
+  return [browserServer, phoneServer, ...file.servers.map((server) => ({
     ...server,
     removable: true,
     connectionStatus: getMcpConnectionStatus(workspaceId, server.id),
@@ -142,6 +162,27 @@ export async function setBuiltInBrowserMcpEnabled(
     builtins: {
       ...file.builtins,
       browser: { enabled, updatedAt: now },
+    },
+  });
+}
+
+export async function isBuiltInPhoneMcpEnabled(workspaceId: string): Promise<boolean> {
+  const file = await readServersFile(workspaceId);
+  return file.builtins?.phone?.enabled !== false;
+}
+
+export async function setBuiltInPhoneMcpEnabled(
+  workspaceId: string,
+  enabled: boolean
+): Promise<void> {
+  const file = await readServersFile(workspaceId);
+  const now = Date.now();
+  await writeServersFile(workspaceId, {
+    ...file,
+    updatedAt: now,
+    builtins: {
+      ...file.builtins,
+      phone: { enabled, updatedAt: now },
     },
   });
 }
@@ -266,11 +307,17 @@ export async function getMcpSummariesForPrompt(
 ): Promise<Array<{ id: string; label: string; summary: string }>> {
   const servers = await listEnabledMcpServers(workspaceId);
   const includeBrowser = await isBuiltInBrowserMcpEnabled(workspaceId);
+  const includePhone = await isBuiltInPhoneMcpEnabled(workspaceId);
   return [
     ...(includeBrowser ? [{
       id: BROWSER_MCP_SERVER_ID,
       label: "Browser",
       summary: BROWSER_MCP_SUMMARY,
+    }] : []),
+    ...(includePhone ? [{
+      id: PHONE_MCP_SERVER_ID,
+      label: "Android phone",
+      summary: PHONE_MCP_SUMMARY,
     }] : []),
     ...servers.map((server) => ({
       id: server.id,

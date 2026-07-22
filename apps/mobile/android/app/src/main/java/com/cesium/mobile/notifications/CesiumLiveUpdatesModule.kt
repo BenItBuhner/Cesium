@@ -1,6 +1,7 @@
 package com.cesium.mobile.notifications
 
 import android.app.NotificationManager
+import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.os.Bundle
@@ -14,6 +15,18 @@ import com.facebook.react.bridge.ReactContextBaseJavaModule
 import com.facebook.react.bridge.ReactMethod
 import com.facebook.react.bridge.ReadableMap
 
+internal const val LIVE_UPDATE_PREFERENCE_NOW_BAR = "nowbar"
+internal const val LIVE_UPDATE_PREFERENCE_LIVE = "live"
+internal const val LIVE_UPDATE_PREFERENCE_OFF = "off"
+
+internal fun normalizeLiveUpdatePreference(preference: String?): String =
+  when (preference) {
+    LIVE_UPDATE_PREFERENCE_NOW_BAR,
+    LIVE_UPDATE_PREFERENCE_LIVE,
+    LIVE_UPDATE_PREFERENCE_OFF -> preference
+    else -> LIVE_UPDATE_PREFERENCE_NOW_BAR
+  }
+
 class CesiumLiveUpdatesModule(
   private val reactContext: ReactApplicationContext
 ) : ReactContextBaseJavaModule(reactContext) {
@@ -22,6 +35,15 @@ class CesiumLiveUpdatesModule(
   @ReactMethod
   fun startOrUpdate(payload: ReadableMap, promise: Promise) {
     val extras = payload.toBundle()
+    when (deliveryPreference()) {
+      LIVE_UPDATE_PREFERENCE_OFF -> {
+        stopLiveUpdate()
+        promise.resolve(statusMap())
+        return
+      }
+      LIVE_UPDATE_PREFERENCE_LIVE -> extras.putBoolean("promote", false)
+      LIVE_UPDATE_PREFERENCE_NOW_BAR -> extras.putBoolean("promote", true)
+    }
     if (CesiumLiveUpdateStateStore.wasDismissed(reactContext, extras.getString("runKey"))) {
       promise.resolve(statusMap(suppressedByDismissal = true))
       return
@@ -52,6 +74,11 @@ class CesiumLiveUpdatesModule(
 
   @ReactMethod
   fun stop(promise: Promise) {
+    stopLiveUpdate()
+    promise.resolve(null)
+  }
+
+  private fun stopLiveUpdate() {
     val intent = Intent(reactContext, CesiumForegroundService::class.java).apply {
       action = CesiumForegroundService.ACTION_STOP
     }
@@ -59,11 +86,29 @@ class CesiumLiveUpdatesModule(
     reactContext.stopService(intent)
     reactContext.getSystemService(NotificationManager::class.java)
       .cancel(CesiumAgentNotification.NOTIFICATION_ID)
-    promise.resolve(null)
   }
 
   @ReactMethod
   fun getPromotionStatus(promise: Promise) {
+    promise.resolve(statusMap())
+  }
+
+  @ReactMethod
+  fun getDeliveryPreference(promise: Promise) {
+    promise.resolve(deliveryPreference())
+  }
+
+  @ReactMethod
+  fun setDeliveryPreference(preference: String, promise: Promise) {
+    val normalized = normalizeLiveUpdatePreference(preference)
+    reactContext
+      .getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
+      .edit()
+      .putString(KEY_DELIVERY_PREFERENCE, normalized)
+      .apply()
+    if (normalized == LIVE_UPDATE_PREFERENCE_OFF) {
+      stopLiveUpdate()
+    }
     promise.resolve(statusMap())
   }
 
@@ -102,7 +147,14 @@ class CesiumLiveUpdatesModule(
     putBoolean("canPostPromotedNotifications", CesiumAgentNotification.canPostPromoted(reactContext))
     putBoolean("notificationPermissionGranted", notificationsEnabled())
     putBoolean("suppressedByDismissal", suppressedByDismissal)
+    putString("deliveryPreference", deliveryPreference())
   }
+
+  private fun deliveryPreference(): String =
+    reactContext
+      .getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
+      .getString(KEY_DELIVERY_PREFERENCE, LIVE_UPDATE_PREFERENCE_NOW_BAR)
+      .let(::normalizeLiveUpdatePreference)
 
   private fun notificationsEnabled(): Boolean {
     val manager = reactContext.getSystemService(NotificationManager::class.java)
@@ -111,6 +163,11 @@ class CesiumLiveUpdatesModule(
     } else {
       true
     }
+  }
+
+  companion object {
+    private const val PREFERENCES = "cesium-live-update-preferences"
+    private const val KEY_DELIVERY_PREFERENCE = "delivery-preference"
   }
 }
 

@@ -5,6 +5,20 @@
   <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
   <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
   <uses-permission android:name="android.permission.WAKE_LOCK" />
+  <uses-permission android:name="android.permission.RECORD_AUDIO" />
+  <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+
+  <queries>
+    <intent>
+      <action android:name="android.intent.action.MAIN" />
+      <category android:name="android.intent.category.LAUNCHER" />
+    </intent>
+    <intent>
+      <action android:name="android.intent.action.VIEW" />
+      <category android:name="android.intent.category.BROWSABLE" />
+      <data android:scheme="https" />
+    </intent>
+  </queries>
 
   <application
     android:name=".MainApplication"
@@ -43,6 +57,57 @@
     <service
       android:name=".background.CesiumHeadlessService"
       android:exported="false" />
+
+    <service
+      android:name=".phonecontrol.CesiumPhoneControlService"
+      android:exported="false"
+      android:foregroundServiceType="specialUse">
+      <property
+        android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+        android:value="User-enabled connection to a Cesium server for remote assistant commands" />
+    </service>
+
+    <service
+      android:name=".phonecontrol.CesiumAccessibilityService"
+      android:exported="true"
+      android:label="@string/phone_control_accessibility_label"
+      android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+      <intent-filter>
+        <action android:name="android.accessibilityservice.AccessibilityService" />
+      </intent-filter>
+      <meta-data
+        android:name="android.accessibilityservice"
+        android:resource="@xml/cesium_accessibility_service" />
+    </service>
+
+    <service
+      android:name=".assistant.CesiumVoiceInteractionService"
+      android:exported="true"
+      android:permission="android.permission.BIND_VOICE_INTERACTION"
+      android:process=":assistant">
+      <intent-filter>
+        <action android:name="android.service.voice.VoiceInteractionService" />
+      </intent-filter>
+      <meta-data
+        android:name="android.voice_interaction"
+        android:resource="@xml/cesium_voice_interaction_service" />
+    </service>
+
+    <service
+      android:name=".assistant.CesiumVoiceInteractionSessionService"
+      android:exported="true"
+      android:permission="android.permission.BIND_VOICE_INTERACTION"
+      android:process=":assistant" />
+
+    <service
+      android:name=".assistant.CesiumRecognitionService"
+      android:exported="true"
+      android:permission="android.permission.BIND_SPEECH_RECOGNITION"
+      android:process=":assistant">
+      <intent-filter>
+        <action android:name="android.speech.RecognitionService" />
+      </intent-filter>
+    </service>
 
     <service
       android:name=".wear.CesiumWearCompanionService"

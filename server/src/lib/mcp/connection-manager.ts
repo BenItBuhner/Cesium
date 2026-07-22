@@ -4,6 +4,7 @@ import { connectMcpClient, type McpClientSession } from "./client-factory.js";
 import {
   getMcpServer,
   isBuiltInBrowserMcpEnabled,
+  isBuiltInPhoneMcpEnabled,
   listEnabledMcpServers,
   setMcpConnectionStatus,
 } from "./server-store.js";
@@ -14,6 +15,11 @@ import {
   BROWSER_MCP_TOOLS,
   callBuiltInBrowserTool,
 } from "./builtin-browser-tools.js";
+import {
+  PHONE_MCP_SERVER_ID,
+  PHONE_MCP_TOOLS,
+  callBuiltInPhoneTool,
+} from "./builtin-phone-tools.js";
 
 type ActiveSession = {
   session: McpClientSession;
@@ -117,6 +123,7 @@ export async function refreshWorkspaceMcpMirror(input: {
 }): Promise<void> {
   const servers = await listEnabledMcpServers(input.workspaceId);
   const includeBrowser = await isBuiltInBrowserMcpEnabled(input.workspaceId);
+  const includePhone = await isBuiltInPhoneMcpEnabled(input.workspaceId);
   const browserConfig: McpServerConfig = {
     id: BROWSER_MCP_SERVER_ID,
     label: "Browser",
@@ -124,6 +131,18 @@ export async function refreshWorkspaceMcpMirror(input: {
       "Built-in browser-tab control tools for opening visible IDE editor browser tabs, locking them, clicking, typing, inspecting page state, and optionally using the legacy server Chromium engine.",
     transport: "stdio",
     stdio: { command: "builtin:browser", args: [] },
+    enabled: true,
+    auth: { kind: "none" },
+    createdAt: 0,
+    updatedAt: 0,
+  };
+  const phoneConfig: McpServerConfig = {
+    id: PHONE_MCP_SERVER_ID,
+    label: "Android phone",
+    summary:
+      "Built-in Android phone tools for connected-device capability discovery, app launching, semantic screen snapshots, screenshots, gestures, system actions, settings, and a Cesium-owned private secondary display.",
+    transport: "stdio",
+    stdio: { command: "builtin:phone", args: [] },
     enabled: true,
     auth: { kind: "none" },
     createdAt: 0,
@@ -142,6 +161,19 @@ export async function refreshWorkspaceMcpMirror(input: {
       instructions:
         "Use these tools to control browser tabs in the editor. Open tabs with the default electron-native engine for visible desktop tabs; use proxy only for the legacy iframe path and server-chromium only when the user explicitly needs the legacy headless browser. Prefer locking before mutating page state, and check browser_events for user unlocks or interventions.",
       tools: BROWSER_MCP_TOOLS,
+    });
+  }
+  if (includePhone) {
+    catalogs.push({
+      config: phoneConfig,
+      status: {
+        connected: true,
+        lastCheckedAt: Date.now(),
+        toolCount: PHONE_MCP_TOOLS.length,
+      },
+      instructions:
+        "Use phone_devices before controlling a phone. Android permissions and device presence determine live capabilities. Prefer phone_snapshot for text-only models, verify mutating actions with a follow-up snapshot, and never claim arbitrary third-party apps can run on Cesium's private secondary display.",
+      tools: PHONE_MCP_TOOLS,
     });
   }
 
@@ -163,7 +195,11 @@ export async function refreshWorkspaceMcpMirror(input: {
 
   await writeMcpWorkspaceMirror({
     workspaceRoot: input.workspaceRoot,
-    servers: includeBrowser ? [browserConfig, ...servers] : servers,
+    servers: [
+      ...(includeBrowser ? [browserConfig] : []),
+      ...(includePhone ? [phoneConfig] : []),
+      ...servers,
+    ],
     catalogs,
   });
   await ensureMcpGitignore(input.workspaceRoot);
@@ -180,6 +216,12 @@ export async function testMcpServer(input: {
     return enabled
       ? { connected: true, lastCheckedAt: Date.now(), toolCount: BROWSER_MCP_TOOLS.length }
       : { connected: false, lastCheckedAt: Date.now(), error: "Browser MCP is disabled." };
+  }
+  if (input.serverId.toLowerCase() === PHONE_MCP_SERVER_ID) {
+    const enabled = await isBuiltInPhoneMcpEnabled(input.workspaceId);
+    return enabled
+      ? { connected: true, lastCheckedAt: Date.now(), toolCount: PHONE_MCP_TOOLS.length }
+      : { connected: false, lastCheckedAt: Date.now(), error: "Phone MCP is disabled." };
   }
   if (!config) {
     throw new Error(`Unknown MCP server: ${input.serverId}`);
@@ -201,12 +243,26 @@ export async function callMcpTool(input: {
   arguments: Record<string, unknown>;
 }): Promise<string> {
   const serverId =
-    input.serverId.toLowerCase() === BROWSER_MCP_SERVER_ID ? BROWSER_MCP_SERVER_ID : input.serverId;
+    input.serverId.toLowerCase() === BROWSER_MCP_SERVER_ID
+      ? BROWSER_MCP_SERVER_ID
+      : input.serverId.toLowerCase() === PHONE_MCP_SERVER_ID
+        ? PHONE_MCP_SERVER_ID
+        : input.serverId;
   if (serverId === BROWSER_MCP_SERVER_ID) {
     if (!(await isBuiltInBrowserMcpEnabled(input.workspaceId))) {
       throw new Error("Browser MCP is disabled for this workspace.");
     }
     return await callBuiltInBrowserTool({
+      workspaceId: input.workspaceId,
+      toolName: input.toolName,
+      arguments: input.arguments,
+    });
+  }
+  if (serverId === PHONE_MCP_SERVER_ID) {
+    if (!(await isBuiltInPhoneMcpEnabled(input.workspaceId))) {
+      throw new Error("Phone MCP is disabled for this workspace.");
+    }
+    return await callBuiltInPhoneTool({
       workspaceId: input.workspaceId,
       toolName: input.toolName,
       arguments: input.arguments,

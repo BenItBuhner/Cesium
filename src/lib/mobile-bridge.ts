@@ -7,6 +7,25 @@ const MOBILE_THEME_CONFIG_STORAGE_KEY = "opencursor-theme-config";
 const MOBILE_LEGACY_THEME_STORAGE_KEY = "opencursor-theme";
 
 export type MobileLifecycleState = "active" | "background" | "inactive";
+export type MobileLiveUpdatePreference = "nowbar" | "live" | "off";
+
+export type MobileNativeStatus = {
+  liveUpdates: {
+    preference: MobileLiveUpdatePreference;
+    sdkInt: number;
+    progressStyleSupported: boolean;
+    canPostPromotedNotifications: boolean;
+    notificationPermissionGranted: boolean;
+  };
+  phoneControl?: {
+    controlEnabled: boolean;
+    configured: boolean;
+    capabilities: {
+      accessibilityEnabled: boolean;
+      assistantRoleHeld: boolean;
+    };
+  } | null;
+};
 
 export type MobileServerConfig = {
   baseUrl: string;
@@ -39,6 +58,7 @@ export type MobileAgentProjectionMessage = {
 
 export type MobileNativeToWebMessage =
   | { type: "nativeReady"; server: MobileServerConfig }
+  | { type: "mobileNativeStatus"; status: MobileNativeStatus }
   | { type: "lifecycle"; state: MobileLifecycleState }
   | { type: "notificationAction"; actionId: string; workspaceId?: string | null; conversationId?: string | null }
   | { type: "resumeCatchUp"; workspaceId?: string | null; conversationId?: string | null; lastEventSeq?: number };
@@ -48,6 +68,14 @@ export type MobileWebToNativeMessage =
   | ({ type: "focusedConversationChanged" } & MobileFocusedConversation)
   | MobileAgentProjectionMessage
   | { type: "webIdleMode"; enabled: boolean }
+  | { type: "webRuntimeError"; message: string; source?: string; line?: number }
+  | { type: "getMobileNativeStatus" }
+  | { type: "setLiveUpdatePreference"; preference: MobileLiveUpdatePreference }
+  | { type: "openLiveUpdatePromotionSettings" }
+  | { type: "setPhoneControlEnabled"; enabled: boolean }
+  | { type: "openPhoneAccessibilitySettings" }
+  | { type: "requestPhoneAssistantRole" }
+  | { type: "invokePhoneAssistant" }
   | { type: "serverConfigured"; server: MobileServerConfig }
   | {
       type: "wearSyncEnvelope";
@@ -120,6 +148,71 @@ export function buildMobileBootstrapScript(server: MobileServerConfig): string {
   const legacyThemeStorageKey = JSON.stringify(MOBILE_LEGACY_THEME_STORAGE_KEY);
   return `
 (() => {
+  // Android 11 ships Chromium WebView 83. Keep the bundled workbench usable on
+  // every supported Android API (minSdk 26) by installing the modern built-ins
+  // used by today's canonical web client before its module executes.
+  const relativeIndex = (length, index) => {
+    const value = Number(index) || 0;
+    const integer = value < 0 ? Math.ceil(value) : Math.floor(value);
+    return integer < 0 ? length + integer : integer;
+  };
+  if (!Array.prototype.at) {
+    Object.defineProperty(Array.prototype, "at", {
+      configurable: true,
+      writable: true,
+      value: function(index) { return this[relativeIndex(this.length, index)]; }
+    });
+  }
+  if (!String.prototype.at) {
+    Object.defineProperty(String.prototype, "at", {
+      configurable: true,
+      writable: true,
+      value: function(index) {
+        const position = relativeIndex(this.length, index);
+        return position < 0 || position >= this.length ? undefined : this.charAt(position);
+      }
+    });
+  }
+  [
+    "Int8Array", "Uint8Array", "Uint8ClampedArray", "Int16Array", "Uint16Array",
+    "Int32Array", "Uint32Array", "Float32Array", "Float64Array", "BigInt64Array",
+    "BigUint64Array"
+  ].forEach((name) => {
+    const ctor = window[name];
+    if (ctor && !ctor.prototype.at) {
+      Object.defineProperty(ctor.prototype, "at", {
+        configurable: true,
+        writable: true,
+        value: function(index) { return this[relativeIndex(this.length, index)]; }
+      });
+    }
+  });
+  if (!Object.hasOwn) {
+    Object.hasOwn = (object, key) => Object.prototype.hasOwnProperty.call(object, key);
+  }
+  if (!String.prototype.replaceAll) {
+    Object.defineProperty(String.prototype, "replaceAll", {
+      configurable: true,
+      writable: true,
+      value: function(search, replacement) {
+        if (search instanceof RegExp) {
+          if (!search.global) throw new TypeError("replaceAll requires a global RegExp");
+          return this.replace(search, replacement);
+        }
+        return this.split(String(search)).join(String(replacement));
+      }
+    });
+  }
+  if (!globalThis.structuredClone) {
+    globalThis.structuredClone = (value) => JSON.parse(JSON.stringify(value));
+  }
+  if (globalThis.crypto && !globalThis.crypto.randomUUID) {
+    globalThis.crypto.randomUUID = () =>
+      "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (char) => {
+        const random = Math.random() * 16 | 0;
+        return (char === "x" ? random : (random & 3) | 8).toString(16);
+      });
+  }
   const server = ${payload};
   window.__CESIUM_MOBILE_SERVER__ = server;
   const readThemePreference = () => {
@@ -147,11 +240,33 @@ export function buildMobileBootstrapScript(server: MobileServerConfig): string {
     if (currentServer.systemColorScheme === "light") return false;
     return !!(window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches);
   };
+  const syncLegacyThemeTokens = (dark) => {
+    const selector = dark ? "html.dark" : ":root";
+    try {
+      for (const sheet of Array.from(document.styleSheets)) {
+        let rules;
+        try { rules = Array.from(sheet.cssRules || []); } catch { continue; }
+        for (const rule of rules) {
+          if (rule.selectorText !== selector || !rule.style?.getPropertyValue("--bg-main")) continue;
+          for (const name of Array.from(rule.style)) {
+            if (name.startsWith("--")) {
+              document.documentElement.style.setProperty(
+                name,
+                rule.style.getPropertyValue(name),
+                rule.style.getPropertyPriority(name)
+              );
+            }
+          }
+        }
+      }
+    } catch {}
+  };
   const applyStartupTheme = () => {
     const preference = readThemePreference();
     const dark = preference === "dark" || (preference === "system" && systemPrefersDark());
     document.documentElement.classList.toggle("dark", dark);
     document.documentElement.style.colorScheme = dark ? "dark" : "light";
+    syncLegacyThemeTokens(dark);
   };
   const ensureMobileSafeAreaStyle = () => {
     const styleId = "opencursor-mobile-safe-area-style";

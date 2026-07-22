@@ -1,6 +1,5 @@
 const path = require("node:path");
 const { getDefaultConfig, mergeConfig } = require("@react-native/metro-config");
-const { withNativewind } = require("nativewind/metro");
 
 const repoRoot = path.resolve(__dirname, "../..");
 const mobileNodeModules = path.resolve(__dirname, "node_modules");
@@ -34,11 +33,4 @@ const config = {
   },
 };
 
-const nativewindConfig = withNativewind(mergeConfig(getDefaultConfig(__dirname), config));
-
-// Re-route the transformer through our wrapper (see metro-transformer.js): it
-// delegates to react-native-css's transformer but converts Expo's packed
-// source maps back to the tuple arrays bare Metro's serializer expects.
-nativewindConfig.transformerPath = require.resolve("./metro-transformer");
-
-module.exports = nativewindConfig;
+module.exports = mergeConfig(getDefaultConfig(__dirname), config);

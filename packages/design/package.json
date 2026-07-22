@@ -10,8 +10,7 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     },
-    "./web-theme.css": "./generated/web-theme.css",
-    "./native-theme.css": "./generated/native-theme.css"
+    "./web-theme.css": "./generated/web-theme.css"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json && node scripts/generate-theme-css.mjs",
