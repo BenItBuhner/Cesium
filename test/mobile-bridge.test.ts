@@ -76,6 +76,18 @@ describe("mobile bridge", () => {
         },
       }
     );
+    assert.deepEqual(
+      parseMobileBridgeMessage(
+        encodeMobileBridgeMessage({
+          type: "setPhoneControlEnabled",
+          enabled: true,
+        })
+      ),
+      {
+        type: "setPhoneControlEnabled",
+        enabled: true,
+      }
+    );
   });
 
   test("bootstrap script embeds sanitized mobile server metadata", () => {
@@ -94,6 +106,7 @@ describe("mobile bridge", () => {
     assert.match(script, /"systemColorScheme":"dark"/);
     assert.match(script, /opencursor-theme-config/);
     assert.match(script, /applyStartupTheme/);
+    assert.match(script, /syncLegacyThemeTokens/);
     assert.match(script, /Array\.prototype\.at/);
     assert.match(script, /String\.prototype\.replaceAll/);
     assert.match(script, /structuredClone/);

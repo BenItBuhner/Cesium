@@ -284,6 +284,22 @@ export default function App() {
         void CesiumLiveUpdates.openPromotionSettings().then(() => sendNativeStatus());
         return;
       }
+      if (message.type === "setPhoneControlEnabled") {
+        void CesiumPhoneControl.setEnabled(message.enabled).then(() => sendNativeStatus());
+        return;
+      }
+      if (message.type === "openPhoneAccessibilitySettings") {
+        void CesiumPhoneControl.openAccessibilitySettings();
+        return;
+      }
+      if (message.type === "requestPhoneAssistantRole") {
+        void CesiumPhoneControl.requestAssistantRole().then(() => sendNativeStatus());
+        return;
+      }
+      if (message.type === "invokePhoneAssistant") {
+        void CesiumPhoneControl.invokeAssistant();
+        return;
+      }
       if (message.type === "serverConfigured") {
         const nextServerUrl = message.server.baseUrl;
         const nextToken = message.server.authToken ?? authTokenRef.current;

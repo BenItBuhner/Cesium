@@ -17,7 +17,14 @@ export type MobileNativeStatus = {
     canPostPromotedNotifications: boolean;
     notificationPermissionGranted: boolean;
   };
-  phoneControl?: unknown;
+  phoneControl?: {
+    controlEnabled: boolean;
+    configured: boolean;
+    capabilities: {
+      accessibilityEnabled: boolean;
+      assistantRoleHeld: boolean;
+    };
+  } | null;
 };
 
 export type MobileServerConfig = {
@@ -65,6 +72,10 @@ export type MobileWebToNativeMessage =
   | { type: "getMobileNativeStatus" }
   | { type: "setLiveUpdatePreference"; preference: MobileLiveUpdatePreference }
   | { type: "openLiveUpdatePromotionSettings" }
+  | { type: "setPhoneControlEnabled"; enabled: boolean }
+  | { type: "openPhoneAccessibilitySettings" }
+  | { type: "requestPhoneAssistantRole" }
+  | { type: "invokePhoneAssistant" }
   | { type: "serverConfigured"; server: MobileServerConfig }
   | {
       type: "wearSyncEnvelope";
@@ -229,11 +240,33 @@ export function buildMobileBootstrapScript(server: MobileServerConfig): string {
     if (currentServer.systemColorScheme === "light") return false;
     return !!(window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches);
   };
+  const syncLegacyThemeTokens = (dark) => {
+    const selector = dark ? "html.dark" : ":root";
+    try {
+      for (const sheet of Array.from(document.styleSheets)) {
+        let rules;
+        try { rules = Array.from(sheet.cssRules || []); } catch { continue; }
+        for (const rule of rules) {
+          if (rule.selectorText !== selector || !rule.style?.getPropertyValue("--bg-main")) continue;
+          for (const name of Array.from(rule.style)) {
+            if (name.startsWith("--")) {
+              document.documentElement.style.setProperty(
+                name,
+                rule.style.getPropertyValue(name),
+                rule.style.getPropertyPriority(name)
+              );
+            }
+          }
+        }
+      }
+    } catch {}
+  };
   const applyStartupTheme = () => {
     const preference = readThemePreference();
     const dark = preference === "dark" || (preference === "system" && systemPrefersDark());
     document.documentElement.classList.toggle("dark", dark);
     document.documentElement.style.colorScheme = dark ? "dark" : "light";
+    syncLegacyThemeTokens(dark);
   };
   const ensureMobileSafeAreaStyle = () => {
     const styleId = "opencursor-mobile-safe-area-style";
