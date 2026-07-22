@@ -99,7 +99,7 @@ export function ExpandedComposerView({
           onPause={controller.onPause}
           onResume={controller.onResume}
           conversationStatus={controller.conversationStatus}
-          burnProgress={controller.burnProgress}
+          goalProgress={controller.goalProgress}
           busy={controller.busy}
           configLocked={controller.configLocked}
           modeLocked={controller.modeLocked}

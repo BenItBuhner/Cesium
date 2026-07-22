@@ -341,7 +341,7 @@ export type ChatSessionState = {
   dismissedPlanEventByConversationId?: Record<string, string>;
   /** Conversation completed (idle) since last viewed; key present means show unread dot. */
   unreadChatCompletionByConversationId?: Record<string, true>;
-  /** Composer footer: repo / branch / Burn progress / context visibility toggles. */
+  /** Composer footer: repo / branch / Goal progress / context visibility toggles. */
   composerStatusBarVisibility?: ComposerStatusBarVisibility;
 };
 

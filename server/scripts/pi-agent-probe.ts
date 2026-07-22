@@ -76,7 +76,7 @@ async function main(): Promise<void> {
     authStorage,
     modelRegistry,
     model: available[0],
-    tools: ["read", "grep", "bash"],
+    // Omit tools allowlist so extension tools stay available (same as harness).
     sessionManager: SessionManager.inMemory(args.cwd),
   });
 

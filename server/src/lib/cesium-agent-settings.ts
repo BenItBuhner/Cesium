@@ -5,7 +5,7 @@ import {
   readJsonFile,
   writeJsonFile,
 } from "./persistence.js";
-import type { AgentConfigOption } from "./agents/types.js";
+import type { AgentConfigOption, AgentPermissionCategory } from "./agents/types.js";
 import {
   defaultHarnessSettings,
   getCesiumFeatureCatalog,
@@ -19,9 +19,13 @@ export type CesiumModeId =
   | "agent"
   | "plan"
   | "orchestration"
-  | "burn"
+  | "goal"
   | "workflow"
   | "ask";
+
+export type CesiumToolPermissionDecision = "ask" | "allow" | "deny";
+
+export type CesiumToolPermissions = Record<AgentPermissionCategory, CesiumToolPermissionDecision>;
 
 export type CesiumModeDefinition = {
   id: CesiumModeId;
@@ -46,8 +50,8 @@ export const CESIUM_MODE_DEFINITIONS: readonly CesiumModeDefinition[] = [
     description: "Coordinate a kanban board and delegate work to child agents.",
   },
   {
-    id: "burn",
-    label: "Burn",
+    id: "goal",
+    label: "Goal",
     description:
       "Run a DB-backed long-running goal with planning, milestones, continuation, and final verification.",
   },
@@ -126,11 +130,7 @@ export type CesiumAgentSettings = {
    * Swapping a feature version swaps its tools/reminders without rewriting the turn loop.
    */
   harness: CesiumHarnessSettings;
-  toolPermissions: {
-    editFile: "ask" | "allow" | "deny";
-    terminal: "ask" | "allow" | "deny";
-    mcpCall: "ask" | "allow" | "deny";
-  };
+  toolPermissions: CesiumToolPermissions;
   providerKeys: CesiumProviderKey[];
   customProviders: CesiumCustomProvider[];
 };
@@ -158,6 +158,8 @@ export type CesiumModelCatalogEntry = {
   supportsTools: boolean;
   supportsReasoning: boolean;
   supportsStructuredOutput: boolean;
+  /** True when the model accepts image prompt attachments (vision / multimodal). */
+  supportsImages: boolean;
   contextWindow?: number;
   outputLimit?: number;
 };
@@ -260,6 +262,9 @@ function providerKeyLookupIds(providerId: string): string[] {
   return [...new Set(ids.filter(Boolean))];
 }
 
+/** First-party providers that reject foreign native key prefixes. */
+const NATIVE_API_KEY_PROVIDERS = new Set(["openai", "anthropic", "google"]);
+
 function formatApiKeyMismatchError(apiKey: string, expectedProviderId: string): string {
   const inferred = inferProviderIdFromApiKey(apiKey);
   const expected = normalizeProviderId(expectedProviderId);
@@ -272,20 +277,36 @@ function formatApiKeyMismatchError(apiKey: string, expectedProviderId: string): 
   );
 }
 
+/**
+ * Reject only unambiguous native-key conflicts.
+ *
+ * OpenAI-format `sk-*` keys are widely reused by OpenAI-compatible proxies, so
+ * they may be saved under third-party / custom provider ids. Strict prefixes
+ * (`sk-ant-`, `AIza`, `nvapi-`) must still match their native provider.
+ */
 function assertApiKeyMatchesProvider(apiKey: string, providerId: string): void {
   const inferred = inferProviderIdFromApiKey(apiKey);
   const expected = normalizeProviderId(providerId);
-  if (inferred && inferred !== expected) {
-    throw new Error(formatApiKeyMismatchError(apiKey, expected));
+  if (!inferred || inferred === expected) {
+    return;
   }
+  // sk-* → usable on openai and any OpenAI-compatible host; not on anthropic/google.
+  if (inferred === "openai" && !NATIVE_API_KEY_PROVIDERS.has(expected)) {
+    return;
+  }
+  // nvidia/anthropic/google prefixes are unambiguous — always enforce.
+  throw new Error(formatApiKeyMismatchError(apiKey, expected));
 }
 
-const BUILTIN_ENV_KEYS: Array<{
+type BuiltinEnvKey = {
   providerId: string;
   label: string;
   apiKind: CesiumProviderKind;
   env: string;
-}> = [
+  baseUrl?: string;
+};
+
+const BUILTIN_ENV_KEYS: BuiltinEnvKey[] = [
   {
     providerId: "openai",
     label: "OPENAI_API_KEY",
@@ -304,15 +325,277 @@ const BUILTIN_ENV_KEYS: Array<{
     apiKind: "google-genai",
     env: "GOOGLE_API_KEY",
   },
+  {
+    providerId: "openrouter",
+    label: "OPENROUTER_API_KEY",
+    apiKind: "openai-compatible",
+    env: "OPENROUTER_API_KEY",
+    baseUrl: BUILTIN_PROVIDER_BASE_URLS.openrouter,
+  },
+  {
+    providerId: "groq",
+    label: "GROQ_API_KEY",
+    apiKind: "openai-compatible",
+    env: "GROQ_API_KEY",
+    baseUrl: BUILTIN_PROVIDER_BASE_URLS.groq,
+  },
+  {
+    providerId: "deepseek",
+    label: "DEEPSEEK_API_KEY",
+    apiKind: "openai-compatible",
+    env: "DEEPSEEK_API_KEY",
+    baseUrl: BUILTIN_PROVIDER_BASE_URLS.deepseek,
+  },
+  {
+    providerId: "mistral",
+    label: "MISTRAL_API_KEY",
+    apiKind: "openai-compatible",
+    env: "MISTRAL_API_KEY",
+    baseUrl: BUILTIN_PROVIDER_BASE_URLS.mistral,
+  },
+  {
+    providerId: "xai",
+    label: "XAI_API_KEY",
+    apiKind: "openai-compatible",
+    env: "XAI_API_KEY",
+    baseUrl: BUILTIN_PROVIDER_BASE_URLS.xai,
+  },
+  {
+    providerId: "togetherai",
+    label: "TOGETHER_API_KEY",
+    apiKind: "openai-compatible",
+    env: "TOGETHER_API_KEY",
+    baseUrl: BUILTIN_PROVIDER_BASE_URLS.togetherai,
+  },
+  {
+    providerId: "fireworks",
+    label: "FIREWORKS_API_KEY",
+    apiKind: "openai-compatible",
+    env: "FIREWORKS_API_KEY",
+    baseUrl: BUILTIN_PROVIDER_BASE_URLS.fireworks,
+  },
+  {
+    providerId: "nvidia",
+    label: "NVIDIA_API_KEY",
+    apiKind: "openai-compatible",
+    env: "NVIDIA_API_KEY",
+    baseUrl: BUILTIN_PROVIDER_BASE_URLS.nvidia,
+  },
+  {
+    providerId: "cerebras",
+    label: "CEREBRAS_API_KEY",
+    apiKind: "openai-compatible",
+    env: "CEREBRAS_API_KEY",
+    baseUrl: BUILTIN_PROVIDER_BASE_URLS.cerebras,
+  },
+  {
+    providerId: CROFAI_PROVIDER_ID,
+    label: "CROFAI_API_KEY",
+    apiKind: "openai-compatible",
+    env: "CROFAI_API_KEY",
+    baseUrl: CROFAI_BASE_URL,
+  },
 ];
 
+/** Default models for the env-bootstrapped OpenAI-compatible Cesium provider. */
+export const CESIUM_ENV_BOOTSTRAP_MODELS = [
+  {
+    id: "glm-5.2",
+    name: "GLM 5.2",
+    contextWindow: 1_000_000,
+    supportsImages: false,
+    supportsReasoning: true,
+  },
+  {
+    id: "kimi-k2.7-code",
+    name: "Kimi K2.7 Code",
+    contextWindow: 262_144,
+    supportsImages: true,
+    supportsReasoning: true,
+  },
+] as const;
+
+const OPENAI_HOST_RE = /(?:^https?:\/\/)?(?:api\.)?openai\.com(?:\/|$)/i;
+
+export type CesiumEnvBootstrap = {
+  providerId: string;
+  providerName: string;
+  apiKey: string;
+  baseUrl: string;
+  defaultModelId: string | null;
+  models: Array<{
+    id: string;
+    name: string;
+    contextWindow: number;
+    supportsImages: boolean;
+    supportsReasoning: boolean;
+  }>;
+};
+
+function slugifyEnvProviderId(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/^https?:\/\//, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 48);
+}
+
+function parseCesiumEnvModels(raw: string | undefined): CesiumEnvBootstrap["models"] | null {
+  const trimmed = raw?.trim();
+  if (!trimmed) {
+    return null;
+  }
+  if (trimmed.startsWith("[")) {
+    try {
+      const parsed = JSON.parse(trimmed) as unknown;
+      if (!Array.isArray(parsed)) {
+        return null;
+      }
+      const models = parsed.flatMap((entry): CesiumEnvBootstrap["models"] => {
+        if (typeof entry === "string" && entry.trim()) {
+          const id = entry.trim();
+          const known = CESIUM_ENV_BOOTSTRAP_MODELS.find((model) => model.id === id);
+          return [
+            {
+              id,
+              name: known?.name ?? id,
+              contextWindow: known?.contextWindow ?? DEFAULT_CESIUM_CONTEXT_WINDOW,
+              supportsImages: known?.supportsImages ?? false,
+              supportsReasoning: known?.supportsReasoning ?? false,
+            },
+          ];
+        }
+        const record = asRecord(entry);
+        const id = asString(record?.id);
+        if (!record || !id) {
+          return [];
+        }
+        const known = CESIUM_ENV_BOOTSTRAP_MODELS.find((model) => model.id === id);
+        return [
+          {
+            id,
+            name: asString(record.name) ?? known?.name ?? id,
+            contextWindow: normalizeCesiumContextWindow(
+              asNumber(record.contextWindow) ?? known?.contextWindow
+            ),
+            supportsImages:
+              typeof record.supportsImages === "boolean"
+                ? record.supportsImages
+                : (known?.supportsImages ?? false),
+            supportsReasoning:
+              typeof record.supportsReasoning === "boolean"
+                ? record.supportsReasoning
+                : (known?.supportsReasoning ?? false),
+          },
+        ];
+      });
+      return models.length > 0 ? models : null;
+    } catch {
+      return null;
+    }
+  }
+  const models = trimmed
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .map((id) => {
+      const known = CESIUM_ENV_BOOTSTRAP_MODELS.find((model) => model.id === id);
+      return {
+        id,
+        name: known?.name ?? id,
+        contextWindow: known?.contextWindow ?? DEFAULT_CESIUM_CONTEXT_WINDOW,
+        supportsImages: known?.supportsImages ?? false,
+        supportsReasoning: known?.supportsReasoning ?? false,
+      };
+    });
+  return models.length > 0 ? models : null;
+}
+
+/**
+ * Optional env triple that maps a key (+ base URL + models) onto an
+ * OpenAI-compatible provider without requiring Settings UI.
+ *
+ * - `CESIUM_BASE_URL` (falls back to `OPENAI_BASE_URL`)
+ * - `CESIUM_API_KEY` (falls back to `OPENAI_API_KEY`)
+ * - `CESIUM_DEFAULT_MODEL`
+ * - `CESIUM_PROVIDER_ID` (optional)
+ * - `CESIUM_MODELS` (comma list or JSON array; defaults to glm-5.2 + kimi-k2.7-code)
+ */
+export function readCesiumEnvBootstrap(
+  env: NodeJS.ProcessEnv = process.env
+): CesiumEnvBootstrap | null {
+  const baseUrl = (
+    env.CESIUM_BASE_URL ??
+    env.OPENAI_BASE_URL ??
+    ""
+  ).trim().replace(/\/+$/, "");
+  if (!baseUrl || OPENAI_HOST_RE.test(baseUrl)) {
+    return null;
+  }
+  const apiKey = (env.CESIUM_API_KEY ?? env.OPENAI_API_KEY ?? "").trim();
+  if (!apiKey) {
+    return null;
+  }
+  const explicitProviderId = env.CESIUM_PROVIDER_ID?.trim();
+  let providerId: string;
+  if (explicitProviderId) {
+    providerId = normalizeProviderId(explicitProviderId);
+  } else if (/techlitnow\.com/i.test(baseUrl)) {
+    providerId = "techlit";
+  } else {
+    try {
+      providerId = slugifyEnvProviderId(new URL(baseUrl).hostname) || "cesium-env";
+    } catch {
+      providerId = slugifyEnvProviderId(baseUrl) || "cesium-env";
+    }
+  }
+  const models =
+    parseCesiumEnvModels(env.CESIUM_MODELS) ??
+    CESIUM_ENV_BOOTSTRAP_MODELS.map((model) => ({ ...model }));
+  const rawDefault = env.CESIUM_DEFAULT_MODEL?.trim() || null;
+  const defaultModelId = rawDefault
+    ? rawDefault.includes("/")
+      ? rawDefault
+      : `${providerId}/${rawDefault}`
+    : `${providerId}/${models[0]!.id}`;
+  return {
+    providerId,
+    providerName: providerLabelFromId(providerId),
+    apiKey,
+    baseUrl,
+    defaultModelId,
+    models,
+  };
+}
+
+function cesiumEnvBootstrapCatalog(bootstrap: CesiumEnvBootstrap): CesiumModelCatalogEntry[] {
+  return bootstrap.models.map((model) =>
+    normalizeCatalogEntry({
+      providerId: bootstrap.providerId,
+      providerName: bootstrap.providerName,
+      providerApiBaseUrl: bootstrap.baseUrl,
+      modelId: `${bootstrap.providerId}/${model.id}`,
+      modelName: `${bootstrap.providerName}/${model.name}`,
+      apiKind: "openai-compatible",
+      supportsTools: true,
+      supportsReasoning: model.supportsReasoning,
+      supportsStructuredOutput: false,
+      supportsImages: model.supportsImages,
+      contextWindow: model.contextWindow,
+    })
+  );
+}
+
 function defaultSettings(): CesiumAgentSettings {
+  const bootstrap = readCesiumEnvBootstrap();
   return {
     schemaVersion: 1,
     updatedAt: 0,
     defaultProviderKeyId: null,
-    defaultModelId: "openai/gpt-5.1",
-    defaultApiKind: "openai-responses",
+    defaultModelId: bootstrap?.defaultModelId ?? "openai/gpt-5.1",
+    defaultApiKind: bootstrap ? "openai-chat-completions" : "openai-responses",
     compression: {
       enabled: true,
       modelId: null,
@@ -331,6 +614,7 @@ function defaultSettings(): CesiumAgentSettings {
       editFile: "ask",
       terminal: "ask",
       mcpCall: "ask",
+      switchMode: "ask",
     },
     providerKeys: [],
     customProviders: [],
@@ -360,7 +644,9 @@ function normalizeModeSettings(raw: unknown): CesiumModeSettings {
       mode.id,
       typeof enabled?.[mode.id] === "boolean"
         ? enabled[mode.id]
-        : defaults.enabled[mode.id],
+        : mode.id === "goal" && typeof enabled?.burn === "boolean"
+          ? enabled.burn
+          : defaults.enabled[mode.id],
     ])
   ) as Record<CesiumModeId, boolean>;
   if (!Object.values(normalized).some(Boolean)) {
@@ -389,6 +675,7 @@ export function normalizeCesiumContextWindow(value: unknown): number {
 function normalizeCatalogEntry(entry: CesiumModelCatalogEntry): CesiumModelCatalogEntry {
   return {
     ...entry,
+    supportsImages: entry.supportsImages === true,
     contextWindow: normalizeCesiumContextWindow(entry.contextWindow),
   };
 }
@@ -518,6 +805,12 @@ function normalizeSettings(raw: unknown): CesiumAgentSettings {
         toolPermissions?.mcpCall === "ask"
           ? toolPermissions.mcpCall
           : defaults.toolPermissions.mcpCall,
+      switchMode:
+        toolPermissions?.switchMode === "allow" ||
+        toolPermissions?.switchMode === "deny" ||
+        toolPermissions?.switchMode === "ask"
+          ? toolPermissions.switchMode
+          : defaults.toolPermissions.switchMode,
     },
     providerKeys: dedupeProviderKeys(
       Array.isArray(record.providerKeys)
@@ -574,7 +867,7 @@ function redactedKey(key: CesiumProviderKey): CesiumProviderKeyStatus {
 
 function envProviderKeys(): CesiumProviderKeyStatus[] {
   const now = Date.now();
-  return BUILTIN_ENV_KEYS.flatMap((entry): CesiumProviderKeyStatus[] => {
+  const builtin = BUILTIN_ENV_KEYS.flatMap((entry): CesiumProviderKeyStatus[] => {
     const value = process.env[entry.env]?.trim();
     if (!value) {
       return [];
@@ -585,6 +878,7 @@ function envProviderKeys(): CesiumProviderKeyStatus[] {
         providerId: entry.providerId,
         label: entry.label,
         apiKind: entry.apiKind,
+        baseUrl: entry.baseUrl,
         source: "env",
         createdAt: 0,
         updatedAt: now,
@@ -592,6 +886,33 @@ function envProviderKeys(): CesiumProviderKeyStatus[] {
       },
     ];
   });
+  const bootstrap = readCesiumEnvBootstrap();
+  if (!bootstrap) {
+    return builtin;
+  }
+  // Prefer the env-bootstrapped OpenAI-compatible host over a bare OPENAI_API_KEY
+  // when both resolve to the same key material for listing — keep both entries so
+  // true OpenAI models remain selectable, but expose the custom host explicitly.
+  const already = builtin.some(
+    (key) => normalizeProviderId(key.providerId) === bootstrap.providerId
+  );
+  if (already) {
+    return builtin;
+  }
+  return [
+    ...builtin,
+    {
+      id: `env:CESIUM:${bootstrap.providerId}`,
+      providerId: bootstrap.providerId,
+      label: `CESIUM (${bootstrap.providerName})`,
+      apiKind: "openai-compatible",
+      baseUrl: bootstrap.baseUrl,
+      source: "env",
+      createdAt: 0,
+      updatedAt: now,
+      lastFour: bootstrap.apiKey.slice(-4),
+    },
+  ];
 }
 
 export async function getCesiumAgentSettings(): Promise<CesiumAgentSettings> {
@@ -912,6 +1233,10 @@ function parseModelsDevPayload(payload: unknown): CesiumModelCatalogEntry[] {
           supportsTools: model.tool_call === true,
           supportsReasoning: model.reasoning === true,
           supportsStructuredOutput: model.structured_output === true,
+          supportsImages:
+            model.attachment === true ||
+            (Array.isArray(asRecord(model.modalities)?.input) &&
+              (asRecord(model.modalities)?.input as unknown[]).includes("image")),
           contextWindow: asNumber(limit?.context),
           outputLimit: asNumber(limit?.output),
         })
@@ -946,6 +1271,10 @@ function parseCrofAiModelsPayload(payload: unknown): CesiumModelCatalogEntry[] {
             model.custom_reasoning === true ||
             /reasoning/i.test(asString(model.name) ?? ""),
           supportsStructuredOutput: false,
+          supportsImages:
+            model.vision === true ||
+            model.attachment === true ||
+            /kimi-k2\.7/i.test(id),
           contextWindow: asNumber(model.context_length),
           outputLimit: asNumber(model.max_completion_tokens),
         }),
@@ -961,6 +1290,7 @@ function fallbackCrofAiCatalog(): CesiumModelCatalogEntry[] {
     contextWindow?: number;
     outputLimit?: number;
     reasoning?: boolean;
+    images?: boolean;
   }> = [
     { id: "deepseek-v4-pro", name: "DeepSeek: DeepSeek V4 Pro", contextWindow: 1_000_000, outputLimit: 131_072, reasoning: true },
     { id: "deepseek-v4-pro-precision", name: "DeepSeek: DeepSeek V4 Pro (Precision)", contextWindow: 1_000_000, outputLimit: 131_072, reasoning: true },
@@ -968,9 +1298,11 @@ function fallbackCrofAiCatalog(): CesiumModelCatalogEntry[] {
     { id: "deepseek-v3.2", name: "DeepSeek: DeepSeek V3.2", contextWindow: 163_840, outputLimit: 163_840 },
     { id: "mimo-v2.5-pro", name: "Xiaomi: MiMo-V2.5-Pro", contextWindow: 1_000_000, outputLimit: 131_072, reasoning: true },
     { id: "mimo-v2.5-pro-precision", name: "Xiaomi: MiMo-V2.5-Pro (Precision)", contextWindow: 1_000_000, outputLimit: 131_072, reasoning: true },
+    { id: "glm-5.2", name: "Z.ai: GLM 5.2", contextWindow: 1_000_000, outputLimit: 1_000_000, reasoning: true },
     { id: "glm-5.1", name: "Z.ai: GLM 5.1", contextWindow: 202_752, outputLimit: 202_752, reasoning: true },
     { id: "glm-5.1-precision", name: "Z.ai: GLM 5.1 (Precision)", contextWindow: 202_752, outputLimit: 202_752, reasoning: true },
     { id: "greg", name: "Experiment!: Greg", contextWindow: 229_376, outputLimit: 229_376 },
+    { id: "kimi-k2.7-code", name: "MoonshotAI: Kimi K2.7 Code", contextWindow: 262_144, outputLimit: 262_144, reasoning: true, images: true },
     { id: "kimi-k2.6", name: "MoonshotAI: Kimi K2.6", contextWindow: 262_144, outputLimit: 262_144, reasoning: true },
     { id: "kimi-k2.6-precision", name: "MoonshotAI: Kimi K2.6 (Precision)", contextWindow: 262_144, outputLimit: 262_144, reasoning: true },
     { id: "kimi-k2.5", name: "MoonshotAI: Kimi K2.5", contextWindow: 262_144, outputLimit: 262_144, reasoning: true },
@@ -996,6 +1328,7 @@ function fallbackCrofAiCatalog(): CesiumModelCatalogEntry[] {
       supportsTools: true,
       supportsReasoning: model.reasoning ?? false,
       supportsStructuredOutput: false,
+      supportsImages: model.images ?? false,
       contextWindow: model.contextWindow,
       outputLimit: model.outputLimit,
     })
@@ -1076,6 +1409,8 @@ export async function refreshCesiumModelCatalog(): Promise<CesiumModelCatalogEnt
 export async function getCesiumModelCatalog(options?: {
   forceRefresh?: boolean;
 }): Promise<CesiumModelCatalogEntry[]> {
+  const bootstrap = readCesiumEnvBootstrap();
+  const bootstrapEntries = bootstrap ? cesiumEnvBootstrapCatalog(bootstrap) : [];
   const cached = await readCatalogCache();
   if (
     !options?.forceRefresh &&
@@ -1083,12 +1418,23 @@ export async function getCesiumModelCatalog(options?: {
     cached.entries.length > 0 &&
     Date.now() - cached.updatedAt < CATALOG_TTL_MS
   ) {
-    return mergeCatalogEntries([...cached.entries, ...(await getCrofAiCatalog())]);
+    return mergeCatalogEntries([
+      ...cached.entries,
+      ...(await getCrofAiCatalog()),
+      ...bootstrapEntries,
+    ]);
   }
   try {
-    return await refreshCesiumModelCatalog();
+    return mergeCatalogEntries([
+      ...(await refreshCesiumModelCatalog()),
+      ...bootstrapEntries,
+    ]);
   } catch {
-    return mergeCatalogEntries([...(cached?.entries ?? fallbackCatalog()), ...(await getCrofAiCatalog())]);
+    return mergeCatalogEntries([
+      ...(cached?.entries ?? fallbackCatalog()),
+      ...(await getCrofAiCatalog()),
+      ...bootstrapEntries,
+    ]);
   }
 }
 
@@ -1103,6 +1449,7 @@ function fallbackCatalog(): CesiumModelCatalogEntry[] {
       supportsTools: true,
       supportsReasoning: true,
       supportsStructuredOutput: true,
+      supportsImages: true,
     }),
     normalizeCatalogEntry({
       providerId: "anthropic",
@@ -1113,6 +1460,7 @@ function fallbackCatalog(): CesiumModelCatalogEntry[] {
       supportsTools: true,
       supportsReasoning: true,
       supportsStructuredOutput: false,
+      supportsImages: true,
     }),
     normalizeCatalogEntry({
       providerId: "google",
@@ -1123,6 +1471,7 @@ function fallbackCatalog(): CesiumModelCatalogEntry[] {
       supportsTools: true,
       supportsReasoning: true,
       supportsStructuredOutput: true,
+      supportsImages: true,
     }),
   ];
 }
@@ -1143,6 +1492,7 @@ export async function createCesiumAgentConfigOptions(): Promise<AgentConfigOptio
         supportsTools: model.supportsTools ?? true,
         supportsReasoning: model.supportsReasoning ?? false,
         supportsStructuredOutput: false,
+        supportsImages: false,
         contextWindow: model.contextWindow,
       })
     )
@@ -1155,12 +1505,14 @@ export async function createCesiumAgentConfigOptions(): Promise<AgentConfigOptio
       model.apiKind,
       `${normalizeCesiumContextWindow(model.contextWindow).toLocaleString()} ctx`,
       model.supportsReasoning ? "reasoning" : "",
+      model.supportsImages ? "images" : "",
     ].filter(Boolean).join(" · "),
     metadata: {
       providerId: model.providerId,
       apiKind: model.apiKind,
       contextWindow: String(normalizeCesiumContextWindow(model.contextWindow)),
       supportsReasoning: String(model.supportsReasoning),
+      supportsImages: String(model.supportsImages),
     },
   }));
   const apiKindOptions: Array<{ value: CesiumProviderKind; name: string }> = [
@@ -1236,6 +1588,10 @@ export async function resolveCesiumModelContextWindow(modelId: string): Promise<
 export async function resolveProviderApiBaseUrl(providerId: string): Promise<string | undefined> {
   const normalized = normalizeProviderId(providerId);
   const providerIds = providerKeyLookupIds(normalized);
+  const bootstrap = readCesiumEnvBootstrap();
+  if (bootstrap && providerIds.includes(bootstrap.providerId)) {
+    return bootstrap.baseUrl;
+  }
   const settings = await getCesiumAgentSettings();
   const customProvider = settings.customProviders.find((provider) =>
     providerIds.includes(normalizeProviderId(provider.id))
@@ -1248,6 +1604,12 @@ export async function resolveProviderApiBaseUrl(providerId: string): Promise<str
   );
   if (providerKey?.baseUrl?.trim()) {
     return providerKey.baseUrl.trim();
+  }
+  const builtinEnv = BUILTIN_ENV_KEYS.find((entry) =>
+    providerIds.includes(normalizeProviderId(entry.providerId))
+  );
+  if (builtinEnv?.baseUrl?.trim() && process.env[builtinEnv.env]?.trim()) {
+    return builtinEnv.baseUrl.trim();
   }
   const catalog = await getCesiumModelCatalog();
   const entry = catalog.find((item) => providerIds.includes(normalizeProviderId(item.providerId)));
@@ -1342,10 +1704,20 @@ export async function resolveCesiumApiKey(input: {
       assertApiKeyMatchesProvider(envValue, providerId);
       return {
         apiKey: envValue,
+        baseUrl: env.baseUrl,
         providerId: env.providerId,
         apiKind: input.apiKind,
       };
     }
+  }
+  const bootstrap = readCesiumEnvBootstrap();
+  if (bootstrap && normalizeProviderId(bootstrap.providerId) === providerId) {
+    return {
+      apiKey: bootstrap.apiKey,
+      baseUrl: bootstrap.baseUrl,
+      providerId: bootstrap.providerId,
+      apiKind: input.apiKind,
+    };
   }
   throw new Error(
     `No API key configured for ${providerLabelFromId(providerId)}. Add one in Settings → Agents → Cesium Agent.`

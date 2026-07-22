@@ -2685,7 +2685,7 @@ const STORAGE_PHASE_LABELS: Record<StorageMigrationPhase, string> = {
   "workspace-window-sessions": "Workspace window sessions",
   "agent-conversations": "Agent conversations",
   "agent-events": "Agent events",
-  "burn-goals": "Burn goals",
+  "goals": "Goals",
   extensions: "Extensions",
   "provider-cache": "Provider cache",
 };

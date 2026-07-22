@@ -27,7 +27,7 @@ import {
   buildDraftModeOptionsForBackend,
   buildDraftModelOptionsForBackend,
   extractComposerUserMessageHistory,
-  latestBurnProgressStatus,
+  latestGoalProgressStatus,
   projectAgentEventsToChatMessages,
   resolveDraftModelForBackend,
 } from "@/lib/agent-chat";
@@ -97,7 +97,6 @@ export function AgentCenterPane() {
     retryConversation,
   } = useAgentConversations();
   const { settings: globalSettings } = useGlobalSettings();
-  const goalModeBetaEnabled = globalSettings.features.goalModeBeta;
   const { workspaceSession, updateWorkspaceSession, workspaceInfo } = useWorkspace();
   const {
     activeWorkspaceGroup,
@@ -176,8 +175,8 @@ export function AgentCenterPane() {
     () => computeContextUsageRefreshGeneration(rawThreadEvents),
     [rawThreadEvents]
   );
-  const burnProgress = useMemo(
-    () => latestBurnProgressStatus(rawThreadEvents, conversation?.status),
+  const goalProgress = useMemo(
+    () => latestGoalProgressStatus(rawThreadEvents, conversation?.status),
     [conversation?.status, rawThreadEvents]
   );
 
@@ -325,9 +324,9 @@ export function AgentCenterPane() {
   const draftModeOptions = useMemo(
     () =>
       draftBackend
-        ? buildDraftModeOptionsForBackend(draftBackend, { goalModeBetaEnabled })
+        ? buildDraftModeOptionsForBackend(draftBackend)
         : DEFAULT_MODE_OPTIONS,
-    [draftBackend, goalModeBetaEnabled]
+    [draftBackend]
   );
   const draftMode = useMemo(
     () =>
@@ -391,7 +390,6 @@ export function AgentCenterPane() {
     getRedoComposerSeed,
     backends,
     modelVisibility: globalSettings.models.byBackend,
-    goalModeBetaEnabled,
     composerUserMessageHistory,
     hasOlderHistory: historyCursor.hasOlder,
     onRequestOlderHistory: selectedConversationId
@@ -507,8 +505,8 @@ export function AgentCenterPane() {
           mode:
             detail.mode === "orchestration"
               ? "orchestration"
-              : detail.mode === "burn"
-                ? "burn"
+              : detail.mode === "goal"
+                ? "goal"
                 : "agent",
           modelChoice: detail.modelChoice ?? planBuildModelChoice,
         }
@@ -639,13 +637,13 @@ export function AgentCenterPane() {
           ...current.chat,
           backendId: nextBackend.id,
           mode:
-            buildDraftModeOptionsForBackend(nextBackend, { goalModeBetaEnabled })[0]?.id ??
+            buildDraftModeOptionsForBackend(nextBackend)[0]?.id ??
             current.chat.mode,
           model: resolveDraftModelForBackend(nextBackend),
         },
       }));
     },
-    [backends, goalModeBetaEnabled, updateWorkspaceSession]
+    [backends, updateWorkspaceSession]
   );
 
   const handleSubmit = useCallback(
@@ -803,14 +801,14 @@ export function AgentCenterPane() {
           ? cancelConversation(selectedConversationId)
           : undefined,
       conversationStatus: conversation?.status,
-      burnProgress,
+      goalProgress,
       busy: composerState?.busy ?? false,
       configLocked: false,
       modeLocked,
     };
   }, [
     backends,
-    burnProgress,
+    goalProgress,
     cancelConversation,
     conversation?.status,
     composerDraftId,
@@ -1134,7 +1132,7 @@ export function AgentCenterPane() {
                         : undefined
                     }
                     conversationStatus={conversation?.status}
-                    burnProgress={burnProgress}
+                    goalProgress={goalProgress}
                     conversationId={selectedConversationId}
                     contextUsageRefreshGeneration={contextUsageRefreshGeneration}
                     layout="docked-bottom"

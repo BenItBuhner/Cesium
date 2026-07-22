@@ -1,7 +1,7 @@
 "use client";
 
 import type { AgentConversationStatus } from "@/lib/agent-types";
-import type { BurnProgressStatus } from "@/lib/agent-chat";
+import type { GoalProgressStatus } from "@/lib/agent-chat";
 import { isGoalMode } from "@/lib/chat-modes";
 
 type TaskbarGoalProgressMode = "normal" | "paused" | "error" | "indeterminate" | "none";
@@ -61,18 +61,18 @@ function taskbarModeForConversationStatus(
 
 export function resolveDesktopTaskbarGoalProgress(input: {
   mode: string;
-  burnProgress: BurnProgressStatus | null | undefined;
+  goalProgress: GoalProgressStatus | null | undefined;
   conversationStatus: AgentConversationStatus | null | undefined;
 }): TaskbarGoalProgressPayload {
-  if (!isGoalMode(input.mode) || !input.burnProgress) {
+  if (!isGoalMode(input.mode) || !input.goalProgress) {
     return { active: false, mode: "none" };
   }
-  if (input.burnProgress.completedAt != null) {
+  if (input.goalProgress.completedAt != null) {
     return { active: false, mode: "none", retainSource: true };
   }
   return {
     active: true,
-    progressPercent: input.burnProgress.progressPercent,
+    progressPercent: input.goalProgress.progressPercent,
     mode: taskbarModeForConversationStatus(input.conversationStatus),
   };
 }

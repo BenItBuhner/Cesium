@@ -431,7 +431,8 @@ export const AGENT_BACKENDS: Record<AgentBackendId, AgentBackendInfo> = {
   "pi-agent": createBackendInfo({
     id: "pi-agent",
     label: "Pi Agent",
-    description: "Pi coding agent SDK with built-in read, edit, grep, and bash tools.",
+    description:
+      "Native Pi coding agent SDK. Loads ~/.pi/agent (packages, extensions, skills, settings) plus project .pi/ customization.",
     experimental: true,
     commandPreview: `@earendil-works/pi-coding-agent · API key via settings`,
     available: false,
@@ -510,7 +511,7 @@ export async function listAgentBackendsWithCache(): Promise<AgentBackendInfo[]> 
             : backend.id === "cursor-sdk" && !cursorSdkStatus.configured
             ? "Cursor SDK requires a Cursor API key. Open Settings -> Agents to configure it."
             : backend.id === "pi-agent" && !piAgentStatus
-            ? "Pi Agent requires at least one provider credential (OAuth or API key). Open Settings -> Agents to configure it."
+            ? "Pi Agent requires at least one provider credential (OAuth or API key in Settings, env keys, or native ~/.pi/agent auth). Open Settings -> Agents to configure it."
             : backend.description,
         cachedConfigOptions,
       };

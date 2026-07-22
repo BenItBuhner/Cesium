@@ -6,9 +6,9 @@ import {
   publishDesktopTaskbarGoalProgress,
   resolveDesktopTaskbarGoalProgress,
 } from "../src/lib/desktop-taskbar-progress.ts";
-import type { BurnProgressStatus } from "../src/lib/agent-chat.ts";
+import type { GoalProgressStatus } from "../src/lib/agent-chat.ts";
 
-const progress: BurnProgressStatus = {
+const progress: GoalProgressStatus = {
   progressPercent: 42,
   headline: "Taskbar progress wired",
   summary: "## Progress\n- Added taskbar progress.",
@@ -21,23 +21,23 @@ test("resolveDesktopTaskbarGoalProgress only activates for goal modes with progr
   assert.deepEqual(
     resolveDesktopTaskbarGoalProgress({
       mode: "agent",
-      burnProgress: progress,
+      goalProgress: progress,
       conversationStatus: "running",
     }),
     { active: false, mode: "none" }
   );
   assert.deepEqual(
     resolveDesktopTaskbarGoalProgress({
-      mode: "burn",
-      burnProgress: null,
+      mode: "goal",
+      goalProgress: null,
       conversationStatus: "running",
     }),
     { active: false, mode: "none" }
   );
   assert.deepEqual(
     resolveDesktopTaskbarGoalProgress({
-      mode: "burn",
-      burnProgress: progress,
+      mode: "goal",
+      goalProgress: progress,
       conversationStatus: "running",
     }),
     { active: true, progressPercent: 42, mode: "normal" }
@@ -47,16 +47,16 @@ test("resolveDesktopTaskbarGoalProgress only activates for goal modes with progr
 test("resolveDesktopTaskbarGoalProgress maps paused and failed states", () => {
   assert.deepEqual(
     resolveDesktopTaskbarGoalProgress({
-      mode: "burn",
-      burnProgress: progress,
+      mode: "goal",
+      goalProgress: progress,
       conversationStatus: "paused",
     }),
     { active: true, progressPercent: 42, mode: "paused" }
   );
   assert.deepEqual(
     resolveDesktopTaskbarGoalProgress({
-      mode: "burn",
-      burnProgress: progress,
+      mode: "goal",
+      goalProgress: progress,
       conversationStatus: "failed",
     }),
     { active: true, progressPercent: 42, mode: "error" }
@@ -66,8 +66,8 @@ test("resolveDesktopTaskbarGoalProgress maps paused and failed states", () => {
 test("resolveDesktopTaskbarGoalProgress clears completed goals", () => {
   assert.deepEqual(
     resolveDesktopTaskbarGoalProgress({
-      mode: "burn",
-      burnProgress: { ...progress, completedAt: 10 },
+      mode: "goal",
+      goalProgress: { ...progress, completedAt: 10 },
       conversationStatus: "idle",
     }),
     { active: false, mode: "none", retainSource: true }

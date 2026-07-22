@@ -118,6 +118,8 @@ export type RememberedAgentPermissionRule = {
   decision: "allow" | "reject";
   optionId: string;
   optionKind: "allow_always" | "reject_always";
+  permissionCategory?: "editFile" | "terminal" | "mcpCall" | "switchMode";
+  matchStyle?: "exact" | "category";
   createdAt: number;
   updatedAt: number;
 };
@@ -138,7 +140,6 @@ export type ToolsSettingsState = Record<string, never>;
 
 export type FeaturesSettingsState = {
   vscodeExtensionsBeta: boolean;
-  goalModeBeta: boolean;
 };
 
 export type GlobalAppSettingsSlice = {
@@ -226,7 +227,6 @@ export function createDefaultGlobalSettings(): GlobalSettingsState {
     tools: {},
     features: {
       vscodeExtensionsBeta: false,
-      goalModeBeta: false,
     },
   };
 }
@@ -485,6 +485,17 @@ function normalizeRememberedPermissions(raw: unknown): RememberedAgentPermission
             ? record.optionId.trim()
             : optionKind,
         optionKind,
+        permissionCategory:
+          record.permissionCategory === "editFile" ||
+          record.permissionCategory === "terminal" ||
+          record.permissionCategory === "mcpCall" ||
+          record.permissionCategory === "switchMode"
+            ? record.permissionCategory
+            : undefined,
+        matchStyle:
+          record.matchStyle === "exact" || record.matchStyle === "category"
+            ? record.matchStyle
+            : undefined,
         createdAt:
           typeof record.createdAt === "number" && Number.isFinite(record.createdAt)
             ? record.createdAt
@@ -570,11 +581,6 @@ export function normalizeLoadedGlobalSettings(
           ? (r as { features: { vscodeExtensionsBeta: boolean } }).features
               .vscodeExtensionsBeta
           : base.features.vscodeExtensionsBeta,
-      goalModeBeta:
-        typeof (r as { features?: { goalModeBeta?: unknown } }).features
-          ?.goalModeBeta === "boolean"
-          ? (r as { features: { goalModeBeta: boolean } }).features.goalModeBeta
-          : base.features.goalModeBeta,
     },
   };
 }

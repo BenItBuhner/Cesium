@@ -65,7 +65,7 @@ const MODE_ICONS: Record<Design2ModeTone, IconComponent> = {
   plan: ListChecks,
   debug: Bug,
   ask: MessageCircleQuestion,
-  burn: Flame,
+  goal: Flame,
   workflow: Workflow,
   orchestration: Boxes,
 };

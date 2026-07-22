@@ -1,13 +1,19 @@
 import assert from "node:assert/strict";
+import os from "node:os";
+import path from "node:path";
 import { test } from "node:test";
 
 const [
   { AGENT_BACKENDS, listAgentBackends },
   { piAgentEventsFromSessionEvent, piAgentToolEventFromExecution },
   {
+    getIsolatedPiAgentDir,
+    getNativePiAgentDir,
     getPiAgentAuthPath,
     getPiAgentDir,
     getPiAgentSessionsDirForCwd,
+    resolvePiAgentDir,
+    setPiAgentHome,
   },
   {
     createPiAgentFallbackConfigOptions,
@@ -29,12 +35,45 @@ test("pi agent backend is registered in the harness menu", () => {
   assert.equal(AGENT_BACKENDS["pi-agent"].capabilities.supportsLoadSession, true);
   assert.equal(AGENT_BACKENDS["pi-agent"].capabilities.supportsToolCalls, true);
   assert.equal(AGENT_BACKENDS["pi-agent"].capabilities.supportsInlineReasoning, true);
+  assert.match(
+    AGENT_BACKENDS["pi-agent"].description,
+    /~\/\.pi\/agent|packages|extensions|skills/i
+  );
 });
 
-test("pi agent settings use isolated auth storage paths", () => {
-  assert.match(getPiAgentDir(), /pi-agent$/);
+test("pi agent defaults to native ~/.pi/agent home", () => {
+  delete process.env.OPENCURSOR_PI_AGENT_DIR;
+  const native = getNativePiAgentDir();
+  assert.equal(native, path.join(os.homedir(), ".pi", "agent"));
+  assert.equal(resolvePiAgentDir("native"), native);
+  assert.equal(resolvePiAgentDir("isolated"), getIsolatedPiAgentDir());
+  assert.match(getIsolatedPiAgentDir(), /pi-agent$/);
+});
+
+test("pi agent respects OPENCURSOR_PI_AGENT_DIR override", () => {
+  const override = path.join(os.tmpdir(), "cesium-pi-override");
+  process.env.OPENCURSOR_PI_AGENT_DIR = override;
+  try {
+    assert.equal(resolvePiAgentDir("native"), path.resolve(override));
+    assert.equal(resolvePiAgentDir("isolated"), path.resolve(override));
+  } finally {
+    delete process.env.OPENCURSOR_PI_AGENT_DIR;
+  }
+});
+
+test("pi agent auth and session paths follow resolved agent home", async () => {
+  delete process.env.OPENCURSOR_PI_AGENT_DIR;
+  await setPiAgentHome("native");
+  assert.equal(getPiAgentDir(), getNativePiAgentDir());
+  assert.equal(getPiAgentAuthPath(), path.join(getNativePiAgentDir(), "auth.json"));
+  assert.match(getPiAgentSessionsDirForCwd("/tmp/workspace"), /sessions[\\/][a-f0-9]{16}$/);
+
+  await setPiAgentHome("isolated");
+  assert.equal(getPiAgentDir(), getIsolatedPiAgentDir());
   assert.match(getPiAgentAuthPath(), /pi-agent[\\/]+auth\.json$/);
-  assert.match(getPiAgentSessionsDirForCwd("C:\\workspace"), /sessions[\\/][a-f0-9]{16}$/);
+
+  // Restore native default for subsequent tests / local runs.
+  await setPiAgentHome("native");
 });
 
 test("pi agent placeholder model catalog is detected", () => {

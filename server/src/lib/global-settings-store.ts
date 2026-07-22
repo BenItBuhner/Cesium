@@ -7,8 +7,11 @@ import {
 } from "./agents/provider-cache-store.js";
 import type {
   AgentBackendId,
+  AgentPermissionCategory,
   AgentPermissionOptionKind,
+  RememberedAgentPermissionMatchStyle,
 } from "./agents/types.js";
+import { isAgentPermissionCategory } from "./agents/permission-options.js";
 import {
   isActiveAgentBackendId,
   pruneModelToggleByBackend,
@@ -39,6 +42,13 @@ export type RememberedAgentPermissionRule = {
   decision: RememberedAgentPermissionDecision;
   optionId: string;
   optionKind: Extract<AgentPermissionOptionKind, "allow_always" | "reject_always">;
+  /** Optional category for UI grouping and category-scoped matching. */
+  permissionCategory?: AgentPermissionCategory;
+  /**
+   * `exact` (default): match this toolKey only.
+   * `category`: match any tool call in `permissionCategory` for this workspace/backend.
+   */
+  matchStyle?: RememberedAgentPermissionMatchStyle;
   createdAt: number;
   updatedAt: number;
 };
@@ -96,7 +106,6 @@ export type GlobalSettings = {
   tools: Record<string, never>;
   features: {
     vscodeExtensionsBeta: boolean;
-    goalModeBeta: boolean;
   };
   keyboardShortcuts: {
     bindings: Record<string, string[]>;
@@ -198,7 +207,6 @@ function createDefaultSettings(): GlobalSettings {
     tools: {},
     features: {
       vscodeExtensionsBeta: false,
-      goalModeBeta: false,
     },
     keyboardShortcuts: {
       bindings: {},
@@ -314,6 +322,13 @@ function normalizeRememberedAgentPermissionRules(
           ? record.optionId.trim()
           : optionKind,
       optionKind,
+      permissionCategory: isAgentPermissionCategory(record.permissionCategory)
+        ? record.permissionCategory
+        : undefined,
+      matchStyle:
+        record.matchStyle === "exact" || record.matchStyle === "category"
+          ? record.matchStyle
+          : undefined,
       createdAt:
         typeof record.createdAt === "number" && Number.isFinite(record.createdAt)
           ? record.createdAt
@@ -493,19 +508,43 @@ function normalizeAgentRailSettings(raw: unknown): AgentRailSettingsState {
   };
 }
 
+export function findMatchingRememberedPermissionRule(
+  rules: RememberedAgentPermissionRule[],
+  input: {
+    workspaceId: string;
+    backendId: string;
+    toolKey: string;
+    permissionCategory?: AgentPermissionCategory;
+  }
+): RememberedAgentPermissionRule | undefined {
+  const backendId = normalizeRememberedPermissionBackendId(input.backendId.trim());
+  const scoped = rules.filter(
+    (rule) => rule.workspaceId === input.workspaceId && rule.backendId === backendId
+  );
+  const exact = scoped.find(
+    (rule) => (rule.matchStyle ?? "exact") === "exact" && rule.toolKey === input.toolKey
+  );
+  if (exact) {
+    return exact;
+  }
+  if (input.permissionCategory) {
+    return scoped.find(
+      (rule) =>
+        rule.matchStyle === "category" &&
+        rule.permissionCategory === input.permissionCategory
+    );
+  }
+  return undefined;
+}
+
 export async function getRememberedAgentPermissionRule(input: {
   workspaceId: string;
   backendId: string;
   toolKey: string;
+  permissionCategory?: AgentPermissionCategory;
 }): Promise<RememberedAgentPermissionRule | undefined> {
   const settings = await getGlobalSettings();
-  const backendId = normalizeRememberedPermissionBackendId(input.backendId.trim());
-  return settings.agents.rememberedPermissions.find(
-    (rule) =>
-      rule.workspaceId === input.workspaceId &&
-      rule.backendId === backendId &&
-      rule.toolKey === input.toolKey
-  );
+  return findMatchingRememberedPermissionRule(settings.agents.rememberedPermissions, input);
 }
 
 export async function saveRememberedAgentPermissionRule(input: {
@@ -516,16 +555,20 @@ export async function saveRememberedAgentPermissionRule(input: {
   decision: RememberedAgentPermissionDecision;
   optionId: string;
   optionKind: RememberedAgentPermissionRule["optionKind"];
+  permissionCategory?: AgentPermissionCategory;
+  matchStyle?: RememberedAgentPermissionMatchStyle;
 }): Promise<RememberedAgentPermissionRule> {
   const settings = await getGlobalSettings();
   const now = Date.now();
   const backendId = normalizeRememberedPermissionBackendId(input.backendId.trim());
-  const id = `${input.workspaceId}:${backendId}:${input.toolKey}`;
+  const matchStyle = input.matchStyle ?? "exact";
+  const id = `${input.workspaceId}:${backendId}:${input.toolKey}:${matchStyle}`;
   const existing = settings.agents.rememberedPermissions.find(
     (rule) =>
       rule.workspaceId === input.workspaceId &&
       rule.backendId === backendId &&
-      rule.toolKey === input.toolKey
+      rule.toolKey === input.toolKey &&
+      (rule.matchStyle ?? "exact") === matchStyle
   );
   const nextRule: RememberedAgentPermissionRule = {
     id: existing?.id ?? id,
@@ -536,6 +579,8 @@ export async function saveRememberedAgentPermissionRule(input: {
     decision: input.decision,
     optionId: input.optionId,
     optionKind: input.optionKind,
+    permissionCategory: input.permissionCategory,
+    matchStyle,
     createdAt: existing?.createdAt ?? now,
     updatedAt: now,
   };
@@ -544,7 +589,8 @@ export async function saveRememberedAgentPermissionRule(input: {
       !(
         rule.workspaceId === input.workspaceId &&
         rule.backendId === backendId &&
-        rule.toolKey === input.toolKey
+        rule.toolKey === input.toolKey &&
+        (rule.matchStyle ?? "exact") === matchStyle
       )
   );
   const rememberedPermissions = [...withoutExisting, nextRule].slice(-250);
@@ -640,11 +686,6 @@ function migrateGlobalSettings(raw: Record<string, unknown>): GlobalSettings {
           ? (r as { features: { vscodeExtensionsBeta: boolean } }).features
               .vscodeExtensionsBeta
           : defaults.features.vscodeExtensionsBeta,
-      goalModeBeta:
-        typeof (r as { features?: { goalModeBeta?: unknown } }).features
-          ?.goalModeBeta === "boolean"
-          ? (r as { features: { goalModeBeta: boolean } }).features.goalModeBeta
-          : defaults.features.goalModeBeta,
     },
     keyboardShortcuts: {
       bindings: typeof r.keyboardShortcuts === "object" && r.keyboardShortcuts

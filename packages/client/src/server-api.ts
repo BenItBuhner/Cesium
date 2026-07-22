@@ -1632,10 +1632,22 @@ export type PiAgentProviderStatus = {
   apiKeyLastFour?: string;
 };
 
+export type PiAgentHomeMode = "native" | "isolated";
+
+export type PiAgentHomeInfo = {
+  agentHome: PiAgentHomeMode;
+  agentDir: string;
+  nativeAgentDir: string;
+  isolatedAgentDir: string;
+  envOverride: string | null;
+  usesEnvOverride: boolean;
+};
+
 export type PiAgentSettingsPayload = {
   schemaVersion: 1;
   updatedAt: number;
   defaultProviderKeyId: string | null;
+  agentHome: PiAgentHomeMode;
   configured: boolean;
   providerKeys: Array<{
     id: string;
@@ -1651,6 +1663,7 @@ export type PiAgentSettingsPayload = {
 export type PiAgentSettingsResponse = {
   settings: PiAgentSettingsPayload;
   providers: PiAgentProviderStatus[];
+  home: PiAgentHomeInfo;
 };
 
 export type PiAgentOAuthStartResponse = {
@@ -1666,6 +1679,25 @@ export type PiAgentOAuthStartResponse = {
 export async function fetchPiAgentSettings(): Promise<PiAgentSettingsResponse> {
   return request<PiAgentSettingsResponse>("/api/settings/pi-agent", {
     method: "GET",
+  });
+}
+
+export async function savePiAgentHome(
+  agentHome: PiAgentHomeMode
+): Promise<
+  PiAgentSettingsResponse & {
+    ok: true;
+    refresh?: unknown;
+  }
+> {
+  return request<
+    PiAgentSettingsResponse & {
+      ok: true;
+      refresh?: unknown;
+    }
+  >("/api/settings/pi-agent", {
+    method: "PUT",
+    body: JSON.stringify({ agentHome }),
   });
 }
 
@@ -1767,12 +1799,12 @@ export type CesiumAgentSettingsPayload = {
   };
   modes: {
     enabled: Record<
-      "agent" | "plan" | "orchestration" | "burn" | "workflow" | "ask",
+      "agent" | "plan" | "orchestration" | "goal" | "workflow" | "ask",
       boolean
     >;
   };
   modeCatalog: Array<{
-    id: "agent" | "plan" | "orchestration" | "burn" | "workflow" | "ask";
+    id: "agent" | "plan" | "orchestration" | "goal" | "workflow" | "ask";
     label: string;
     description: string;
   }>;
@@ -1804,6 +1836,8 @@ export type CesiumAgentSettingsPayload = {
   toolPermissions: {
     editFile: "ask" | "allow" | "deny";
     terminal: "ask" | "allow" | "deny";
+    mcpCall: "ask" | "allow" | "deny";
+    switchMode: "ask" | "allow" | "deny";
   };
   providerKeys: CesiumProviderKeyStatus[];
   customProviders: CesiumCustomProvider[];
@@ -1820,6 +1854,8 @@ export type CesiumModelCatalogEntry = {
   supportsTools: boolean;
   supportsReasoning: boolean;
   supportsStructuredOutput: boolean;
+  /** Vision / multimodal image prompt support when advertised by the catalog. */
+  supportsImages?: boolean;
   contextWindow?: number;
   outputLimit?: number;
 };
@@ -2146,7 +2182,7 @@ export type StorageMigrationPhase =
   | "workspace-window-sessions"
   | "agent-conversations"
   | "agent-events"
-  | "burn-goals"
+  | "goals"
   | "extensions"
   | "provider-cache";
 

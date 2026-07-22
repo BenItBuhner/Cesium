@@ -513,7 +513,6 @@ export type KnownEditorMode =
   | "debug"
   | "ask"
   | "goal"
-  | "burn"
   | "workflow"
   | "orchestration";
 
