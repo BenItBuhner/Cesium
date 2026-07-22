@@ -1,5 +1,7 @@
-import { cp, mkdir, rm, stat } from "node:fs/promises";
+import { cp, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
+import postcss from "postcss";
+import postcssCascadeLayers from "@csstools/postcss-cascade-layers";
 
 const repoRoot = resolve(import.meta.dirname, "../../..");
 const source = resolve(repoRoot, "apps/desktop-renderer/dist");
@@ -21,4 +23,21 @@ await ensureBuiltSource();
 await rm(target, { force: true, recursive: true });
 await mkdir(target, { recursive: true });
 await cp(source, target, { recursive: true });
+
+// Android 11's Chromium 83 predates CSS cascade layers. Tailwind 4 wraps its
+// utility output in @layer blocks, which old WebViews discard wholesale and
+// leaves an otherwise functional app completely unstyled. Flatten the layers
+// only in the Android asset copy; Electron and modern web keep the native CSS.
+const assetsDir = resolve(target, "assets");
+for (const filename of await readdir(assetsDir)) {
+  if (!filename.endsWith(".css")) continue;
+  const cssPath = resolve(assetsDir, filename);
+  const sourceCss = await readFile(cssPath, "utf8");
+  const result = await postcss([postcssCascadeLayers()]).process(sourceCss, {
+    from: cssPath,
+    to: cssPath,
+  });
+  await writeFile(cssPath, result.css, "utf8");
+}
+
 console.log(`Copied Cesium web workbench to ${target}`);
