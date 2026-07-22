@@ -37,6 +37,7 @@ TUNNEL_LOG="$LOG_DIR/tunnel.log"
 LOCAL_URL="http://${HOST:-127.0.0.1}:${PORT:-9100}"
 BUN_BIN="${CESIUM_BUN_BIN:-$CESIUM_HOME/runtime/bin/bun}"
 CLOUDFLARED_BIN="${CESIUM_CLOUDFLARED_BIN:-$CESIUM_HOME/runtime/bin/cloudflared}"
+SERVER_PROCESS_SIGNATURE="server/src/runtime/bun-server.ts"
 
 mkdir -p "$RUN_DIR" "$LOG_DIR"
 
@@ -72,7 +73,7 @@ wait_for_health() {
 }
 
 start_server() {
-  if managed_process_is_running "$SERVER_PID_FILE" "$SOURCE_DIR/server/src/runtime/bun-server.ts"; then
+  if managed_process_is_running "$SERVER_PID_FILE" "$SERVER_PROCESS_SIGNATURE"; then
     return 0
   fi
   rm -f "$SERVER_PID_FILE"
@@ -215,7 +216,7 @@ stop_managed_process() {
 
 stop_all() {
   stop_managed_process "$TUNNEL_PID_FILE" "$CLOUDFLARED_BIN" "Tunnel"
-  stop_managed_process "$SERVER_PID_FILE" "$SOURCE_DIR/server/src/runtime/bun-server.ts" "Server"
+  stop_managed_process "$SERVER_PID_FILE" "$SERVER_PROCESS_SIGNATURE" "Server"
   rm -f "$PUBLIC_URL_FILE"
 }
 
@@ -260,7 +261,7 @@ print_connection_details() {
 }
 
 status() {
-  if managed_process_is_running "$SERVER_PID_FILE" "$SOURCE_DIR/server/src/runtime/bun-server.ts" &&
+  if managed_process_is_running "$SERVER_PID_FILE" "$SERVER_PROCESS_SIGNATURE" &&
     curl -fsS "$LOCAL_URL/health" >/dev/null 2>&1; then
     printf 'Server: running (%s)\n' "$LOCAL_URL"
   else
