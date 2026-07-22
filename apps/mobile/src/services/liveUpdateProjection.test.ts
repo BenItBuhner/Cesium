@@ -19,7 +19,7 @@ const baseProjection: MobileAgentProjection = {
   elapsedMs: 60_000,
   lastError: null,
   todoProgress: null,
-  burnProgress: null,
+  goalProgress: null,
 };
 
 test("maps todo progress and estimated completion", () => {
@@ -47,7 +47,7 @@ test("maps todo progress and estimated completion", () => {
   assert.equal(payload.promote, true);
 });
 
-test("prioritizes Burn percentage over todo progress", () => {
+test("prioritizes Goal percentage over todo progress", () => {
   const payload = toLiveUpdatePayload({
     ...baseProjection,
     todoProgress: {
@@ -61,20 +61,20 @@ test("prioritizes Burn percentage over todo progress", () => {
       estimatedRemainingMs: null,
       estimatedCompletionAt: null,
     },
-    burnProgress: {
+    goalProgress: {
       percent: 62,
-      headline: "Burn verification",
+      headline: "Goal verification",
       runtimeMs: 120_000,
       estimatedRemainingMs: 74_000,
       estimatedCompletionAt: 196_000,
     },
   });
 
-  assert.equal(payload.progressKind, "burn");
+  assert.equal(payload.progressKind, "goal");
   assert.equal(payload.progress, 62);
   assert.equal(payload.progressMax, 100);
   assert.equal(payload.progressLabel, "62%");
-  assert.equal(payload.body, "Burn verification · ~2m left");
+  assert.equal(payload.body, "Goal verification · ~2m left");
 });
 
 test("uses an indeterminate Live Update before structured progress exists", () => {

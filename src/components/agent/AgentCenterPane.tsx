@@ -27,7 +27,7 @@ import {
   buildDraftModeOptionsForBackend,
   buildDraftModelOptionsForBackend,
   extractComposerUserMessageHistory,
-  latestBurnProgressStatus,
+  latestGoalProgressStatus,
   projectAgentEventsToChatMessages,
   resolveDraftModelForBackend,
 } from "@/lib/agent-chat";
@@ -175,8 +175,8 @@ export function AgentCenterPane() {
     () => computeContextUsageRefreshGeneration(rawThreadEvents),
     [rawThreadEvents]
   );
-  const burnProgress = useMemo(
-    () => latestBurnProgressStatus(rawThreadEvents, conversation?.status),
+  const goalProgress = useMemo(
+    () => latestGoalProgressStatus(rawThreadEvents, conversation?.status),
     [conversation?.status, rawThreadEvents]
   );
 
@@ -505,8 +505,8 @@ export function AgentCenterPane() {
           mode:
             detail.mode === "orchestration"
               ? "orchestration"
-              : detail.mode === "burn"
-                ? "burn"
+              : detail.mode === "goal"
+                ? "goal"
                 : "agent",
           modelChoice: detail.modelChoice ?? planBuildModelChoice,
         }
@@ -801,14 +801,14 @@ export function AgentCenterPane() {
           ? cancelConversation(selectedConversationId)
           : undefined,
       conversationStatus: conversation?.status,
-      burnProgress,
+      goalProgress,
       busy: composerState?.busy ?? false,
       configLocked: false,
       modeLocked,
     };
   }, [
     backends,
-    burnProgress,
+    goalProgress,
     cancelConversation,
     conversation?.status,
     composerDraftId,
@@ -1132,7 +1132,7 @@ export function AgentCenterPane() {
                         : undefined
                     }
                     conversationStatus={conversation?.status}
-                    burnProgress={burnProgress}
+                    goalProgress={goalProgress}
                     conversationId={selectedConversationId}
                     contextUsageRefreshGeneration={contextUsageRefreshGeneration}
                     layout="docked-bottom"

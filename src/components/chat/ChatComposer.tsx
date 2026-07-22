@@ -150,7 +150,7 @@ import type { AgentBackendId, AgentBackendInfo, AgentConfigOption, AgentConversa
 import {
   isAgentCesiumTurnActive,
   isAgentCesiumPauseDraining,
-  type BurnProgressStatus,
+  type GoalProgressStatus,
 } from "@/lib/agent-chat";
 import {
   composerStatusBarHasVisibleItems,
@@ -181,8 +181,7 @@ const sendButtonBgClass: Record<KnownEditorMode, string> = {
   plan: "bg-[var(--plan-accent-dark)]",
   debug: "bg-[var(--debug-accent-dark)]",
   ask: "bg-[var(--ask-accent-dark)]",
-  goal: "bg-[var(--burn-accent-dark)]",
-  burn: "bg-[var(--burn-accent-dark)]",
+  goal: "bg-[var(--goal-accent-dark)]",
   workflow: "bg-[var(--workflow-accent-dark)]",
   orchestration: "bg-[var(--orchestration-accent-dark)]",
 };
@@ -191,7 +190,7 @@ const COMPOSER_PLACEHOLDER_TEXT =
   "Ask anything, @ for files, / for commands";
 
 function design2ModeTone(tone: KnownEditorMode): Design2ModeTone {
-  return tone === "goal" ? "burn" : tone;
+  return tone;
 }
 
 function modeChipColors(tone: KnownEditorMode): { text: string; bg: string } {
@@ -213,7 +212,6 @@ function renderModeChipIcon(tone: KnownEditorMode, color: string): ReactElement 
     case "ask":
       return <MessageSquare className={className} strokeWidth={strokeWidth} style={{ color }} />;
     case "goal":
-    case "burn":
       return <Flame className={className} strokeWidth={strokeWidth} style={{ color }} />;
     case "workflow":
       return <GitBranch className={className} strokeWidth={strokeWidth} style={{ color }} />;
@@ -474,7 +472,7 @@ interface ChatComposerProps {
   onPause?: () => Promise<void> | void;
   onResume?: () => Promise<void> | void;
   conversationStatus?: AgentConversationStatus;
-  burnProgress?: BurnProgressStatus | null;
+  goalProgress?: GoalProgressStatus | null;
   busy?: boolean;
   configLocked?: boolean;
   /** When true, mode cannot be changed or removed. */
@@ -929,7 +927,7 @@ export function ChatComposer({
   onPause,
   onResume,
   conversationStatus,
-  burnProgress = null,
+  goalProgress = null,
   busy = false,
   configLocked = false,
   modeLocked = false,
@@ -971,12 +969,12 @@ export function ChatComposer({
       surfaceId,
       resolveDesktopTaskbarGoalProgress({
         mode,
-        burnProgress,
+        goalProgress,
         conversationStatus,
       })
     );
     return () => clearDesktopTaskbarGoalProgress(surfaceId);
-  }, [burnProgress, conversationStatus, mode, surfaceId]);
+  }, [goalProgress, conversationStatus, mode, surfaceId]);
   const {
     enabled: hardwareInputEnabled,
     registerSurface,
@@ -2849,7 +2847,7 @@ const handleNativeComposerKeyDown = useCallback(
   const statusBarHasVisibleItems =
     statusBarMounted &&
     composerStatusBarHasVisibleItems(composerStatusBarVisibility, gitStatus, {
-      goalProgress: burnProgress != null,
+      goalProgress: goalProgress != null,
     });
   const showContextUsage = composerStatusBarVisibility.context;
   const [contextBreakdownOpen, setContextBreakdownOpen] = useState(false);
@@ -2882,7 +2880,7 @@ const handleNativeComposerKeyDown = useCallback(
       contextLoading={contextLoading}
       contextBreakdownOpen={contextBreakdownOpen}
       onContextBreakdownOpenChange={setContextBreakdownOpen}
-      burnProgress={burnProgress}
+      goalProgress={goalProgress}
       shellInsetClass={shellMx}
     />
   ) : null;

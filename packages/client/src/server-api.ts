@@ -1795,12 +1795,12 @@ export type CesiumAgentSettingsPayload = {
   };
   modes: {
     enabled: Record<
-      "agent" | "plan" | "orchestration" | "burn" | "workflow" | "ask",
+      "agent" | "plan" | "orchestration" | "goal" | "workflow" | "ask",
       boolean
     >;
   };
   modeCatalog: Array<{
-    id: "agent" | "plan" | "orchestration" | "burn" | "workflow" | "ask";
+    id: "agent" | "plan" | "orchestration" | "goal" | "workflow" | "ask";
     label: string;
     description: string;
   }>;
@@ -2174,7 +2174,7 @@ export type StorageMigrationPhase =
   | "workspace-window-sessions"
   | "agent-conversations"
   | "agent-events"
-  | "burn-goals"
+  | "goals"
   | "extensions"
   | "provider-cache";
 

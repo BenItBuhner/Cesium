@@ -222,9 +222,9 @@ const CESIUM_BASE_TOOLS: CesiumToolDefinition[] = [
     },
   },
   {
-    name: "burn_goal_set",
+    name: "goal_set",
     description:
-      "Set or refresh the active Burn goal state. Use this to record the objective, current plan summary, compact milestones/todos, and verification evidence before or during execution.",
+      "Set or refresh the active Goal state. Use this to record the objective, current plan summary, compact milestones/todos, and verification evidence before or during execution.",
     parameters: {
       type: "object",
       properties: {
@@ -240,9 +240,9 @@ const CESIUM_BASE_TOOLS: CesiumToolDefinition[] = [
     },
   },
   {
-    name: "burn_goal_pause",
+    name: "goal_pause",
     description:
-      "Pause the active Burn goal without marking it blocked or complete. Use when the user asks to pause or when the turn should stop cleanly with remaining work.",
+      "Pause the active Goal without marking it blocked or complete. Use when the user asks to pause or when the turn should stop cleanly with remaining work.",
     parameters: {
       type: "object",
       properties: {
@@ -252,9 +252,9 @@ const CESIUM_BASE_TOOLS: CesiumToolDefinition[] = [
     },
   },
   {
-    name: "burn_goal_block",
+    name: "goal_block",
     description:
-      "Record a blocker. The goal is marked blocked only after the same blocker recurs across at least three Burn turns unless a hard external impossibility is proven.",
+      "Record a blocker. The goal is marked blocked only after the same blocker recurs across at least three Goal turns unless a hard external impossibility is proven.",
     parameters: {
       type: "object",
       properties: {
@@ -266,9 +266,9 @@ const CESIUM_BASE_TOOLS: CesiumToolDefinition[] = [
     },
   },
   {
-    name: "burn_goal_summarize",
+    name: "goal_summarize",
     description:
-      "Persist a structured Burn progress snapshot after meaningful progress, blocker resolution, before pausing, before completing, or when the latest summary is missing/stale. Do not call this every turn; after summarizing, continue working if the Burn goal is not complete. The summary must use ## Progress, ## Current State, ## Blockers, and ## Next Steps sections with bullet items.",
+      "Persist a structured Goal progress snapshot after meaningful progress, blocker resolution, before pausing, before completing, or when the latest summary is missing/stale. Do not call this every turn; after summarizing, continue working if the Goal is not complete. The summary must use ## Progress, ## Current State, ## Blockers, and ## Next Steps sections with bullet items.",
     parameters: {
       type: "object",
       properties: {
@@ -281,9 +281,9 @@ const CESIUM_BASE_TOOLS: CesiumToolDefinition[] = [
     },
   },
   {
-    name: "burn_goal_complete",
+    name: "goal_complete",
     description:
-      "Mark the Burn goal complete only after every requirement has been audited and current evidence proves the objective is satisfied.",
+      "Mark the Goal complete only after every requirement has been audited and current evidence proves the objective is satisfied.",
     parameters: {
       type: "object",
       properties: {},
@@ -775,17 +775,17 @@ export function toolKind(name: string): string {
     case "read_plan":
     case "finalize_plan":
       return "todo";
-    case "burn_goal_set":
-    case "burn_goal_pause":
-    case "burn_goal_summarize":
-    case "burn_goal_get":
-    case "burn_goal_update_plan":
-    case "burn_goal_update_progress":
-    case "burn_goal_summarize_state":
-    case "burn_goal_complete":
-    case "burn_goal_block":
-    case "burn_goal_resume":
-      return "burn";
+    case "goal_set":
+    case "goal_pause":
+    case "goal_summarize":
+    case "goal_get":
+    case "goal_update_plan":
+    case "goal_update_progress":
+    case "goal_summarize_state":
+    case "goal_complete":
+    case "goal_block":
+    case "goal_resume":
+      return "goal";
     case "workflow_run":
     case "workflow_status":
     case "workflow_await":
@@ -869,26 +869,26 @@ export function toolTitle(name: string, args: Record<string, unknown>): string {
       return `Read plan ${asString(args.path) ?? ""}`.trim();
     case "finalize_plan":
       return `Finalize plan ${asString(args.path) ?? ""}`.trim();
-    case "burn_goal_set":
-      return "Set Burn goal";
-    case "burn_goal_pause":
-      return "Pause Burn goal";
-    case "burn_goal_summarize":
-      return "Summarize Burn goal";
-    case "burn_goal_get":
-      return "Read Burn goal";
-    case "burn_goal_update_plan":
-      return "Record Burn plan";
-    case "burn_goal_update_progress":
-      return "Update Burn progress";
-    case "burn_goal_summarize_state":
-      return "Summarize Burn state";
-    case "burn_goal_complete":
-      return "Complete Burn goal";
-    case "burn_goal_block":
-      return "Record Burn blocker";
-    case "burn_goal_resume":
-      return "Resume Burn goal";
+    case "goal_set":
+      return "Set Goal";
+    case "goal_pause":
+      return "Pause Goal";
+    case "goal_summarize":
+      return "Summarize Goal";
+    case "goal_get":
+      return "Read Goal";
+    case "goal_update_plan":
+      return "Record Goal plan";
+    case "goal_update_progress":
+      return "Update Goal progress";
+    case "goal_summarize_state":
+      return "Summarize Goal state";
+    case "goal_complete":
+      return "Complete Goal";
+    case "goal_block":
+      return "Record Goal blocker";
+    case "goal_resume":
+      return "Resume Goal";
     case "workflow_run":
       return `Run workflow ${asString(args.name) ?? ""}`.trim();
     case "workflow_status":

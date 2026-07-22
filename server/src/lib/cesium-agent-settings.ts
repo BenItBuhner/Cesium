@@ -19,7 +19,7 @@ export type CesiumModeId =
   | "agent"
   | "plan"
   | "orchestration"
-  | "burn"
+  | "goal"
   | "workflow"
   | "ask";
 
@@ -46,8 +46,8 @@ export const CESIUM_MODE_DEFINITIONS: readonly CesiumModeDefinition[] = [
     description: "Coordinate a kanban board and delegate work to child agents.",
   },
   {
-    id: "burn",
-    label: "Burn",
+    id: "goal",
+    label: "Goal",
     description:
       "Run a DB-backed long-running goal with planning, milestones, continuation, and final verification.",
   },
@@ -360,7 +360,9 @@ function normalizeModeSettings(raw: unknown): CesiumModeSettings {
       mode.id,
       typeof enabled?.[mode.id] === "boolean"
         ? enabled[mode.id]
-        : defaults.enabled[mode.id],
+        : mode.id === "goal" && typeof enabled?.burn === "boolean"
+          ? enabled.burn
+          : defaults.enabled[mode.id],
     ])
   ) as Record<CesiumModeId, boolean>;
   if (!Object.values(normalized).some(Boolean)) {

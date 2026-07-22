@@ -87,7 +87,7 @@ const colorKeys = {
   Accent: "--accent",
   AccentSoft: "--accent-bg",
   AskAccent: "--ask-accent",
-  BurnAccent: "--burn-accent",
+  GoalAccent: "--goal-accent",
   PlanAccent: "--plan-accent",
   PlanAccentDark: "--plan-accent-dark",
   PlanAccentPanel: "--plan-accent-bg",

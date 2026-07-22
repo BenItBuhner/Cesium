@@ -30,7 +30,7 @@ import {
   buildConversationModeOptions,
   buildConversationModelOptions,
   extractComposerUserMessageHistory,
-  latestBurnProgressStatus,
+  latestGoalProgressStatus,
   projectAgentEventsToChatMessages,
   resolveDraftModelForBackend,
   resolveConversationModel,
@@ -1009,8 +1009,8 @@ workspaceSession.chat.model,
       }),
     [activeConversation, rawPanelThreadEvents]
   );
-  const burnProgress = useMemo(
-    () => latestBurnProgressStatus(rawPanelThreadEvents, activeConversation?.status),
+  const goalProgress = useMemo(
+    () => latestGoalProgressStatus(rawPanelThreadEvents, activeConversation?.status),
     [activeConversation?.status, rawPanelThreadEvents]
   );
   const scrollMessages = useMemo(
@@ -2420,7 +2420,7 @@ const cancelPromptForDraft = useCallback(
       onPause: () => pausePromptForDraft(expandedComposerDraftId),
       onResume: () => resumePromptForDraft(expandedComposerDraftId),
       conversationStatus: state.conversation?.status,
-      burnProgress: latestBurnProgressStatus(
+      goalProgress: latestGoalProgressStatus(
         eventsByConversationId[expandedComposerDraftId] ?? [],
         state.conversation?.status
       ),
@@ -2522,7 +2522,7 @@ const cancelPromptForDraft = useCallback(
       onPause={() => pausePromptForDraft(composerDraftId)}
       onResume={() => resumePromptForDraft(composerDraftId)}
       conversationStatus={activeConversation?.status}
-      burnProgress={burnProgress}
+      goalProgress={goalProgress}
       conversationId={
         activeConversation?.id ??
         (isPersistedConversationTabId(composerDraftId) ? composerDraftId : null)

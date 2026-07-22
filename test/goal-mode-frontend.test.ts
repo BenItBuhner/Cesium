@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  coerceUnavailableGoalMode,
+  filterGoalModeOptions,
   isGoalMode,
   resolveCanonicalModeId,
 } from "../src/lib/chat-modes";
@@ -21,11 +23,30 @@ test("global settings ignore legacy goal feature flags", () => {
   assert.deepEqual(normalized.features, { vscodeExtensionsBeta: true });
 });
 
-test("goal mode is a first-class mode id", () => {
+test("goal mode is a first-class mode id and accepts legacy burn alias", () => {
   assert.equal(isGoalMode("goal"), true);
+  assert.equal(isGoalMode("burn"), true);
 });
 
-test("goal resolves to native goal provider mode ids", () => {
+test("legacy burn options remap to goal", () => {
+  assert.deepEqual(
+    filterGoalModeOptions([
+      { id: "agent" as const, label: "Agent" },
+      { id: "burn" as const, label: "Burn" },
+    ]).map((option) => option.id),
+    ["agent", "goal"]
+  );
+  assert.deepEqual(
+    filterGoalModeOptions([
+      { id: "agent" as const, label: "Agent" },
+      { id: "goal" as const, label: "Goal" },
+      { id: "burn" as const, label: "Burn" },
+    ]).map((option) => option.id),
+    ["agent", "goal"]
+  );
+});
+
+test("goal and burn resolve to native goal provider mode ids", () => {
   assert.equal(
     resolveCanonicalModeId("goal", [
       { id: "goal", label: "Goal" },
@@ -34,9 +55,17 @@ test("goal resolves to native goal provider mode ids", () => {
     "goal"
   );
   assert.equal(
-    resolveCanonicalModeId("goal", [
+    resolveCanonicalModeId("burn", [
+      { id: "goal", label: "Goal" },
       { id: "agent", label: "Agent" },
     ]),
-    "agent"
+    "goal"
+  );
+  assert.equal(
+    coerceUnavailableGoalMode("burn", [
+      { id: "goal", label: "Goal" },
+      { id: "agent", label: "Agent" },
+    ]),
+    "goal"
   );
 });

@@ -9,8 +9,8 @@ import { getCesiumAgentSettings } from "../cesium-agent-settings.js";
 import { getWorkspaceById } from "../workspace-registry.js";
 import { agentRuntimeManager } from "./runtime-manager.js";
 import { readConversationSnapshotHead, subscribeAgentStoreEvents } from "./session-store.js";
-import { readBurnGoalForConversation } from "./burn-goal-store.js";
-import { burnGoalHasRunnableWork } from "./burn-goal-types.js";
+import { readGoalForConversation } from "./goal-store.js";
+import { goalHasRunnableWork } from "./goal-types.js";
 import type { OrchestrationAssignmentStatus } from "../orchestration/types.js";
 import type { AgentConversationRecord, AgentStoredEvent } from "./types.js";
 
@@ -26,6 +26,7 @@ function countTrailingAutoContinues(events: AgentStoredEvent[]): number {
     }
     if (
       event.content.includes(AUTO_CONTINUE_MARKER) ||
+      event.content.includes("<goal_context>") ||
       event.content.includes("<burn_context>")
     ) {
       count += 1;
@@ -53,14 +54,15 @@ function buildAutoContinuePrompt(mode: AgentConversationRecord["config"]["mode"]
   return `${AUTO_CONTINUE_MARKER} You stopped while your todo list still has runnable incomplete items. Continue working through pending and in-progress tasks toward the user's goals before stopping again. If only blocked tasks remain, explain the blocker to the user instead of spinning.`;
 }
 
-function isNativeBurnConversation(conversation: AgentConversationRecord): boolean {
+function isNativeGoalConversation(conversation: AgentConversationRecord): boolean {
   return (
     conversation.config.backendId === "cesium-agent" &&
-    String(conversation.config.mode).trim().toLowerCase() === "burn"
+    (String(conversation.config.mode).trim().toLowerCase() === "goal" ||
+      String(conversation.config.mode).trim().toLowerCase() === "burn")
   );
 }
 
-async function maybeAutoContinueBurnConversation(
+async function maybeAutoContinueGoalConversation(
   conversation: AgentConversationRecord
 ): Promise<void> {
   if (
@@ -69,8 +71,8 @@ async function maybeAutoContinueBurnConversation(
   ) {
     return;
   }
-  const burnMode = isNativeBurnConversation(conversation);
-  if (!burnMode && conversation.config.backendId !== "cesium-agent") {
+  const goalMode = isNativeGoalConversation(conversation);
+  if (!goalMode && conversation.config.backendId !== "cesium-agent") {
     return;
   }
   const settings = await getCesiumAgentSettings();
@@ -107,8 +109,8 @@ async function maybeAutoContinueBurnConversation(
       conversation.id
     );
     shouldContinue = board ? orchestrationBoardNeedsManagement(board) : false;
-  } else if (burnMode) {
-    const goal = await readBurnGoalForConversation({
+  } else if (goalMode) {
+    const goal = await readGoalForConversation({
       workspace,
       conversationId: conversation.id,
     });
@@ -116,7 +118,7 @@ async function maybeAutoContinueBurnConversation(
       return;
     }
     shouldContinue =
-      burnGoalHasRunnableWork(goal) ||
+      goalHasRunnableWork(goal) ||
       latestPlanHasIncompleteEntries(snapshot.events);
     hiddenContinuation = true;
   } else {
@@ -178,7 +180,7 @@ export function startOrchestrationAgentControlListener(): void {
               }
               inFlight.add(autoContinueKey);
               try {
-                await maybeAutoContinueBurnConversation(conversation);
+                await maybeAutoContinueGoalConversation(conversation);
               } catch (error) {
                 console.warn("[orchestration] auto-continue failed:", error);
               } finally {

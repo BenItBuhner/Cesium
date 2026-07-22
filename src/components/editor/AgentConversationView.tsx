@@ -17,7 +17,7 @@ import { useRedoInlineUserMessage } from "@/components/chat/useRedoInlineUserMes
 import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
 import {
   extractComposerUserMessageHistory,
-  latestBurnProgressStatus,
+  latestGoalProgressStatus,
   projectAgentEventsToChatMessages,
 } from "@/lib/agent-chat";
 import {
@@ -143,8 +143,8 @@ loadOlderConversationHistory,
     () => computeContextUsageRefreshGeneration(rawThreadEvents),
     [rawThreadEvents]
   );
-  const burnProgress = useMemo(
-    () => latestBurnProgressStatus(rawThreadEvents, conversation?.status),
+  const goalProgress = useMemo(
+    () => latestGoalProgressStatus(rawThreadEvents, conversation?.status),
     [conversation?.status, rawThreadEvents]
   );
   const deferredThreadEvents = useDeferredValue(rawThreadEvents);
@@ -642,7 +642,7 @@ const showRecentChatsSection =
         onPause={() => pauseConversation(conversationId)}
         onResume={() => resumeConversation(conversationId)}
         conversationStatus={conversation.status}
-        burnProgress={burnProgress}
+        goalProgress={goalProgress}
         conversationId={conversationId}
         contextUsageRefreshGeneration={contextUsageRefreshGeneration}
         layout={isEmptyThread ? "empty-top" : "docked-bottom"}
