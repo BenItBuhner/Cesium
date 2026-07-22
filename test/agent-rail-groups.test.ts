@@ -72,6 +72,51 @@ describe("agent rail grouping", () => {
     ]);
   });
 
+  test("groups the same remote repository across machines while retaining conversation owners", () => {
+    const repositoryKey = "remote:github.com/acme/cesium";
+    const grouped = groupAgentRailGroups(
+      [
+        {
+          workspace: workspace("laptop-workspace", "cesium"),
+          serverId: "laptop",
+          serverLabel: "Laptop",
+          repositoryKey,
+          conversations: [
+            conversation("laptop-chat", "laptop-workspace", 10, {
+              serverId: "laptop",
+              serverLabel: "Laptop",
+              conversationKey: "laptop:laptop-chat",
+              repositoryKey,
+            }),
+          ],
+        },
+        {
+          workspace: workspace("desktop-workspace", "cesium"),
+          serverId: "desktop",
+          serverLabel: "Desktop",
+          repositoryKey,
+          conversations: [
+            conversation("desktop-chat", "desktop-workspace", 20, {
+              serverId: "desktop",
+              serverLabel: "Desktop",
+              conversationKey: "desktop:desktop-chat",
+              repositoryKey,
+            }),
+          ],
+        },
+      ],
+      "repository"
+    );
+    assert.equal(grouped.length, 1);
+    assert.deepEqual(
+      grouped[0]?.conversations.map((item) => [item.id, item.serverId]),
+      [
+        ["desktop-chat", "desktop"],
+        ["laptop-chat", "laptop"],
+      ]
+    );
+  });
+
   test("groups conversations by server environment", () => {
     const grouped = groupAgentRailGroups(
       [

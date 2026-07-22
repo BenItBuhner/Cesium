@@ -33,6 +33,8 @@ export type GitWorkspaceStatus = {
   root: string;
   repoRoot?: string;
   repoKey?: string;
+  /** Host/path identity derived from the preferred network remote. Safe for cross-machine grouping. */
+  repositoryId?: string;
   currentBranch?: string | null;
   detached?: boolean;
   dirty?: boolean;
@@ -212,6 +214,68 @@ async function repoKeyFor(repoRoot: string): Promise<string | undefined> {
   return fs.realpath(resolved).catch(() => resolved);
 }
 
+export function normalizeGitRepositoryIdentity(remoteUrl: string): string | undefined {
+  const value = remoteUrl.trim();
+  if (!value || /^[a-z]:[\\/]/i.test(value)) {
+    return undefined;
+  }
+
+  let host = "";
+  let pathname = "";
+  if (!value.includes("://")) {
+    const scpLike = value.match(/^(?:[^@\s/:]+@)?([^:/\s]+):(.+)$/);
+    if (!scpLike) {
+      return undefined;
+    }
+    host = scpLike[1] ?? "";
+    pathname = scpLike[2] ?? "";
+  } else {
+    try {
+      const parsed = new URL(value);
+      if (!["http:", "https:", "ssh:", "git:"].includes(parsed.protocol)) {
+        return undefined;
+      }
+      host = parsed.hostname;
+      const defaultPort =
+        (parsed.protocol === "https:" && parsed.port === "443") ||
+        (parsed.protocol === "http:" && parsed.port === "80") ||
+        (parsed.protocol === "ssh:" && parsed.port === "22");
+      if (parsed.port && !defaultPort) {
+        host = `${host}:${parsed.port}`;
+      }
+      pathname = parsed.pathname;
+    } catch {
+      return undefined;
+    }
+  }
+
+  const normalizedHost = host.trim().toLowerCase();
+  const normalizedPath = pathname
+    .trim()
+    .replace(/^\/+|\/+$/g, "")
+    .replace(/\.git$/i, "");
+  if (!normalizedHost || !normalizedPath) {
+    return undefined;
+  }
+  return `${normalizedHost}/${normalizedPath}`;
+}
+
+async function repositoryIdFor(repoRoot: string): Promise<string | undefined> {
+  const origin = await tryGit(repoRoot, ["remote", "get-url", "origin"]);
+  let remoteUrl = origin?.stdout.trim();
+  if (!remoteUrl) {
+    const remotes = await tryGit(repoRoot, ["remote"]);
+    const firstRemote = remotes?.stdout
+      .split(/\r?\n/)
+      .map((remote) => remote.trim())
+      .find(Boolean);
+    if (firstRemote) {
+      remoteUrl = (await tryGit(repoRoot, ["remote", "get-url", firstRemote]))?.stdout.trim();
+    }
+  }
+  return remoteUrl ? normalizeGitRepositoryIdentity(remoteUrl) : undefined;
+}
+
 async function currentBranchFor(repoRoot: string): Promise<string | null> {
   const result = await tryGit(repoRoot, ["branch", "--show-current"]);
   const branch = result?.stdout.trim();
@@ -335,10 +399,11 @@ export async function getGitWorkspaceStatus(
     };
   }
   try {
-    const [currentBranch, status, repoKey] = await Promise.all([
+    const [currentBranch, status, repoKey, repositoryId] = await Promise.all([
       currentBranchFor(repoRoot),
       runGit(repoRoot, ["status", "--porcelain=v1", "--branch"]),
       repoKeyFor(repoRoot),
+      repositoryIdFor(repoRoot),
     ]);
     const [branches, worktrees, aheadBehind] = await Promise.all([
       listBranches(repoRoot, currentBranch),
@@ -350,6 +415,7 @@ export async function getGitWorkspaceStatus(
       root,
       repoRoot,
       repoKey,
+      repositoryId,
       currentBranch,
       detached: currentBranch === null,
       dirty: status.stdout.split(/\r?\n/).some((line) => line.trim() && !line.startsWith("##")),

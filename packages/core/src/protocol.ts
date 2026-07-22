@@ -475,6 +475,8 @@ export type AgentRailRepositoryInfo = {
   isGitRepo: boolean;
   repoRoot?: string;
   repoKey?: string;
+  /** Canonical network remote identity shared by clones on different machines. */
+  repositoryId?: string;
   currentBranch?: string | null;
   worktreeBaseRoot?: string;
 };
