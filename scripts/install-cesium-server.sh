@@ -35,6 +35,7 @@ PORT="${CESIUM_PORT:-9100}"
 WEB_URL="${CESIUM_WEB_URL:-}"
 AUTH_USERNAME="${CESIUM_AUTH_USERNAME:-cesium}"
 AUTH_PASSWORD="${CESIUM_AUTH_PASSWORD:-}"
+TUNNEL_PROVIDER="${CESIUM_TUNNEL_PROVIDER:-auto}"
 TUNNEL_TOKEN="${CESIUM_TUNNEL_TOKEN:-}"
 PUBLIC_URL="${CESIUM_PUBLIC_URL:-}"
 TUNNEL_REQUIRED="${CESIUM_TUNNEL_REQUIRED:-}"
@@ -69,9 +70,18 @@ if [[ -n "$TUNNEL_TOKEN" && -z "$PUBLIC_URL" ]]; then
   printf 'CESIUM_PUBLIC_URL is required when CESIUM_TUNNEL_TOKEN is set.\n' >&2
   exit 1
 fi
+case "$TUNNEL_PROVIDER" in
+  auto | localhost-run | cloudflare-quick) ;;
+  *)
+    printf 'CESIUM_TUNNEL_PROVIDER must be auto, localhost-run, or cloudflare-quick.\n' >&2
+    exit 1
+    ;;
+esac
 if [[ -z "$TUNNEL_REQUIRED" ]]; then
   TUNNEL_REQUIRED=0
-  [[ -n "$TUNNEL_TOKEN" ]] && TUNNEL_REQUIRED=1
+  if [[ "$SKIP_TUNNEL" != "1" && -n "$WEB_URL" ]]; then
+    TUNNEL_REQUIRED=1
+  fi
 fi
 if [[ "$TUNNEL_REQUIRED" != "0" && "$TUNNEL_REQUIRED" != "1" ]]; then
   printf 'CESIUM_TUNNEL_REQUIRED must be 0 or 1.\n' >&2
@@ -102,7 +112,11 @@ install_bun() {
 
 install_cloudflared() {
   local target="$RUNTIME_DIR/bin/cloudflared"
-  if [[ "$SKIP_TUNNEL" == "1" || -x "$target" ]]; then
+  if [[ "$SKIP_TUNNEL" == "1" || -z "$WEB_URL" || -x "$target" ]]; then
+    return 0
+  fi
+  if [[ -z "$TUNNEL_TOKEN" && "$TUNNEL_PROVIDER" != "cloudflare-quick" ]] &&
+    command -v ssh >/dev/null 2>&1; then
     return 0
   fi
   if command -v cloudflared >/dev/null 2>&1; then
@@ -143,6 +157,7 @@ install_cloudflared() {
 install_bun
 BUN_BIN="$RUNTIME_DIR/bin/bun"
 install_cloudflared
+SSH_BIN="$(command -v ssh 2>/dev/null || true)"
 
 if [[ -d "$SOURCE_DIR/.git" ]]; then
   printf 'Updating Cesium source...\n'
@@ -208,9 +223,11 @@ ENV_FILE="$CESIUM_HOME/server.env"
   write_env_value CESIUM_SOURCE_DIR "$SOURCE_DIR"
   write_env_value CESIUM_BUN_BIN "$BUN_BIN"
   write_env_value CESIUM_CLOUDFLARED_BIN "$RUNTIME_DIR/bin/cloudflared"
+  write_env_value CESIUM_SSH_BIN "$SSH_BIN"
   write_env_value CESIUM_WEB_URL "$WEB_URL"
   write_env_value CESIUM_TUNNEL_ENABLED "$TUNNEL_ENABLED"
   write_env_value CESIUM_TUNNEL_REQUIRED "$TUNNEL_REQUIRED"
+  write_env_value CESIUM_TUNNEL_PROVIDER "$TUNNEL_PROVIDER"
   write_env_value CESIUM_TUNNEL_TOKEN "$TUNNEL_TOKEN"
   write_env_value CESIUM_PUBLIC_URL "${PUBLIC_URL%/}"
   write_env_value HOST "127.0.0.1"

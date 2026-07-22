@@ -31,19 +31,25 @@ RUN_DIR="$CESIUM_HOME/run"
 LOG_DIR="$CESIUM_HOME/logs"
 SERVER_PID_FILE="$RUN_DIR/server.pid"
 TUNNEL_PID_FILE="$RUN_DIR/tunnel.pid"
+TUNNEL_PROVIDER_FILE="$RUN_DIR/tunnel-provider"
 PUBLIC_URL_FILE="$RUN_DIR/public-url"
 SERVER_LOG="$LOG_DIR/server.log"
 TUNNEL_LOG="$LOG_DIR/tunnel.log"
 LOCAL_URL="http://${HOST:-127.0.0.1}:${PORT:-9100}"
 BUN_BIN="${CESIUM_BUN_BIN:-$CESIUM_HOME/runtime/bin/bun}"
 CLOUDFLARED_BIN="${CESIUM_CLOUDFLARED_BIN:-$CESIUM_HOME/runtime/bin/cloudflared}"
+SSH_BIN="${CESIUM_SSH_BIN:-}"
 SERVER_PROCESS_SIGNATURE="server/src/runtime/bun-server.ts"
 PUBLIC_HEALTH_TIMEOUT="${CESIUM_PUBLIC_HEALTH_TIMEOUT:-120}"
+TUNNEL_URL_TIMEOUT="${CESIUM_TUNNEL_URL_TIMEOUT:-60}"
 
 mkdir -p "$RUN_DIR" "$LOG_DIR"
 
 if [[ ! "$PUBLIC_HEALTH_TIMEOUT" =~ ^[0-9]+$ ]] || ((PUBLIC_HEALTH_TIMEOUT < 1)); then
   PUBLIC_HEALTH_TIMEOUT=120
+fi
+if [[ ! "$TUNNEL_URL_TIMEOUT" =~ ^[0-9]+$ ]] || ((TUNNEL_URL_TIMEOUT < 1)); then
+  TUNNEL_URL_TIMEOUT=60
 fi
 
 read_pid() {
@@ -81,6 +87,72 @@ tunnel_required() {
   [[ "${CESIUM_TUNNEL_REQUIRED:-0}" == "1" ]]
 }
 
+find_ssh() {
+  if [[ -n "$SSH_BIN" && -x "$SSH_BIN" ]]; then
+    printf '%s' "$SSH_BIN"
+    return 0
+  fi
+  command -v ssh 2>/dev/null
+}
+
+resolve_tunnel_provider() {
+  if [[ -n "${CESIUM_TUNNEL_TOKEN:-}" ]]; then
+    printf 'cloudflare-named'
+    return 0
+  fi
+
+  local configured="${CESIUM_TUNNEL_PROVIDER:-auto}"
+  case "$configured" in
+    auto | localhost-run)
+      if find_ssh >/dev/null; then
+        printf 'localhost-run'
+      else
+        printf 'cloudflare-quick'
+      fi
+      ;;
+    cloudflare-quick)
+      printf 'cloudflare-quick'
+      ;;
+    *)
+      printf 'Unsupported tunnel provider: %s\n' "$configured" >&2
+      return 1
+      ;;
+  esac
+}
+
+active_tunnel_provider() {
+  if [[ -f "$TUNNEL_PROVIDER_FILE" ]]; then
+    local provider
+    provider="$(tr -d '[:space:]' <"$TUNNEL_PROVIDER_FILE")"
+    case "$provider" in
+      cloudflare-named | cloudflare-quick | localhost-run)
+        printf '%s' "$provider"
+        return 0
+        ;;
+    esac
+  fi
+  if managed_process_is_running "$TUNNEL_PID_FILE" "$CLOUDFLARED_BIN"; then
+    printf 'cloudflare-quick'
+    return 0
+  fi
+  return 1
+}
+
+tunnel_process_signature() {
+  case "$1" in
+    cloudflare-named | cloudflare-quick) printf '%s' "$CLOUDFLARED_BIN" ;;
+    localhost-run) printf 'localhost.run' ;;
+    *) return 1 ;;
+  esac
+}
+
+tunnel_is_running() {
+  local provider signature
+  provider="$(active_tunnel_provider)" || return 1
+  signature="$(tunnel_process_signature "$provider")" || return 1
+  managed_process_is_running "$TUNNEL_PID_FILE" "$signature"
+}
+
 start_server() {
   if managed_process_is_running "$SERVER_PID_FILE" "$SERVER_PROCESS_SIGNATURE"; then
     return 0
@@ -110,21 +182,38 @@ start_server() {
   fi
 }
 
-discover_quick_tunnel_url() {
-  local attempt
-  for ((attempt = 1; attempt <= 60; attempt++)); do
-    local candidate
-    candidate="$(
+extract_tunnel_url() {
+  local provider="$1"
+  case "$provider" in
+    cloudflare-quick)
       awk 'match($0, /https:\/\/[-a-z0-9]+\.trycloudflare\.com/) {
         print substr($0, RSTART, RLENGTH)
         exit
-      }' "$TUNNEL_LOG" 2>/dev/null || true
-    )"
+      }' "$TUNNEL_LOG" 2>/dev/null
+      ;;
+    localhost-run)
+      awk 'match($0, /https:\/\/[-a-z0-9]+\.lhr\.life/) {
+        print substr($0, RSTART, RLENGTH)
+        exit
+      }' "$TUNNEL_LOG" 2>/dev/null
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+discover_tunnel_url() {
+  local provider="$1"
+  local attempt
+  for ((attempt = 1; attempt <= TUNNEL_URL_TIMEOUT; attempt++)); do
+    local candidate
+    candidate="$(extract_tunnel_url "$provider" || true)"
     if [[ -n "$candidate" ]]; then
       printf '%s' "$candidate"
       return 0
     fi
-    if ! managed_process_is_running "$TUNNEL_PID_FILE" "$CLOUDFLARED_BIN"; then
+    if ! tunnel_is_running; then
       return 1
     fi
     sleep 1
@@ -165,10 +254,14 @@ wait_for_public_health() {
   local attempt last_error=""
   for ((attempt = 1; attempt <= PUBLIC_HEALTH_TIMEOUT; attempt++)); do
     local output
-    if output="$(curl -fsS --connect-timeout 5 --max-time 10 "$remote/health" 2>&1 >/dev/null)"; then
-      return 0
+    if output="$(curl -fsS --connect-timeout 5 --max-time 10 "$remote/health" 2>&1)"; then
+      if [[ "$output" == *'"ok":true'* ]]; then
+        return 0
+      fi
+      last_error="HTTP 200 did not contain the Cesium health payload"
+    else
+      last_error="$output"
     fi
-    last_error="$output"
     sleep 1
   done
   printf 'Last public health error: %s\n' "${last_error:-unknown error}" >&2
@@ -177,52 +270,58 @@ wait_for_public_health() {
 }
 
 stop_tunnel() {
-  stop_managed_process "$TUNNEL_PID_FILE" "$CLOUDFLARED_BIN" "Tunnel"
-  rm -f "$PUBLIC_URL_FILE"
+  local provider signature
+  provider="$(active_tunnel_provider || true)"
+  if [[ -n "$provider" ]]; then
+    signature="$(tunnel_process_signature "$provider")"
+    stop_managed_process "$TUNNEL_PID_FILE" "$signature" "Tunnel"
+  else
+    rm -f "$TUNNEL_PID_FILE"
+  fi
+  rm -f "$PUBLIC_URL_FILE" "$TUNNEL_PROVIDER_FILE"
 }
 
-start_tunnel() {
-  if [[ "${CESIUM_TUNNEL_ENABLED:-0}" != "1" ]]; then
-    return 0
-  fi
-  if managed_process_is_running "$TUNNEL_PID_FILE" "$CLOUDFLARED_BIN"; then
-    return 0
-  fi
-  rm -f "$TUNNEL_PID_FILE" "$PUBLIC_URL_FILE"
+require_cloudflared() {
   if [[ ! -x "$CLOUDFLARED_BIN" ]]; then
     printf 'cloudflared is missing: %s\n' "$CLOUDFLARED_BIN" >&2
     printf 'Run the Cesium server installer again.\n' >&2
     return 1
   fi
-  : >"$TUNNEL_LOG"
+}
 
-  if [[ -n "${CESIUM_TUNNEL_TOKEN:-}" ]]; then
-    if [[ -z "${CESIUM_PUBLIC_URL:-}" ]]; then
-      printf 'CESIUM_PUBLIC_URL is required with CESIUM_TUNNEL_TOKEN.\n' >&2
-      return 1
-    fi
-    nohup "$CLOUDFLARED_BIN" tunnel --no-autoupdate run \
-      --token "$CESIUM_TUNNEL_TOKEN" >>"$TUNNEL_LOG" 2>&1 </dev/null &
-    printf '%s\n' "$!" >"$TUNNEL_PID_FILE"
-    printf '%s\n' "${CESIUM_PUBLIC_URL%/}" >"$PUBLIC_URL_FILE"
-    sleep 2
-    if ! managed_process_is_running "$TUNNEL_PID_FILE" "$CLOUDFLARED_BIN"; then
-      printf 'The configured Cloudflare tunnel failed to start.\n' >&2
-      return 1
-    fi
-    if ! wait_for_public_health "${CESIUM_PUBLIC_URL%/}"; then
-      printf 'The configured Cloudflare tunnel is running, but its public health check failed.\n' >&2
-      stop_tunnel
-      return 1
-    fi
-    return 0
+start_cloudflare_named_tunnel() {
+  require_cloudflared || return 1
+  if [[ -z "${CESIUM_PUBLIC_URL:-}" ]]; then
+    printf 'CESIUM_PUBLIC_URL is required with CESIUM_TUNNEL_TOKEN.\n' >&2
+    return 1
   fi
+  printf '%s\n' "cloudflare-named" >"$TUNNEL_PROVIDER_FILE"
+  nohup "$CLOUDFLARED_BIN" tunnel --no-autoupdate run \
+    --token "$CESIUM_TUNNEL_TOKEN" >>"$TUNNEL_LOG" 2>&1 </dev/null &
+  printf '%s\n' "$!" >"$TUNNEL_PID_FILE"
+  sleep 2
+  if ! tunnel_is_running; then
+    printf 'The configured Cloudflare tunnel failed to start.\n' >&2
+    stop_tunnel
+    return 1
+  fi
+  local remote="${CESIUM_PUBLIC_URL%/}"
+  if ! wait_for_public_health "$remote"; then
+    printf 'The configured Cloudflare tunnel is running, but its public health check failed.\n' >&2
+    stop_tunnel
+    return 1
+  fi
+  printf '%s\n' "$remote" >"$PUBLIC_URL_FILE"
+}
 
+start_cloudflare_quick_tunnel() {
+  require_cloudflared || return 1
+  printf '%s\n' "cloudflare-quick" >"$TUNNEL_PROVIDER_FILE"
   nohup "$CLOUDFLARED_BIN" tunnel --no-autoupdate \
     --url "$LOCAL_URL" >>"$TUNNEL_LOG" 2>&1 </dev/null &
   printf '%s\n' "$!" >"$TUNNEL_PID_FILE"
   local remote
-  if ! remote="$(discover_quick_tunnel_url)"; then
+  if ! remote="$(discover_tunnel_url cloudflare-quick)"; then
     printf 'Cloudflare Quick Tunnel did not publish a URL.\n' >&2
     printf 'Inspect the tunnel log with: cesium-server logs tunnel\n' >&2
     stop_tunnel
@@ -234,6 +333,60 @@ start_tunnel() {
     return 1
   fi
   printf '%s\n' "$remote" >"$PUBLIC_URL_FILE"
+}
+
+start_localhost_run_tunnel() {
+  local ssh_command
+  ssh_command="$(find_ssh)" || {
+    printf 'ssh is unavailable; falling back to Cloudflare Quick Tunnel.\n' >&2
+    start_cloudflare_quick_tunnel
+    return
+  }
+  printf '%s\n' "localhost-run" >"$TUNNEL_PROVIDER_FILE"
+  nohup "$ssh_command" \
+    -o BatchMode=yes \
+    -o ConnectTimeout=10 \
+    -o StrictHostKeyChecking=no \
+    -o UserKnownHostsFile=/dev/null \
+    -o ExitOnForwardFailure=yes \
+    -o ServerAliveInterval=30 \
+    -o ServerAliveCountMax=3 \
+    -R "80:${HOST:-127.0.0.1}:${PORT:-9100}" \
+    nokey@localhost.run >>"$TUNNEL_LOG" 2>&1 </dev/null &
+  printf '%s\n' "$!" >"$TUNNEL_PID_FILE"
+
+  local remote
+  if ! remote="$(discover_tunnel_url localhost-run)"; then
+    printf 'localhost.run did not publish a URL.\n' >&2
+    printf 'Inspect the tunnel log with: cesium-server logs tunnel\n' >&2
+    stop_tunnel
+    return 1
+  fi
+  if ! wait_for_public_health "$remote"; then
+    printf 'localhost.run published %s, but its health check failed.\n' "$remote" >&2
+    stop_tunnel
+    return 1
+  fi
+  printf '%s\n' "$remote" >"$PUBLIC_URL_FILE"
+}
+
+start_tunnel() {
+  if [[ "${CESIUM_TUNNEL_ENABLED:-0}" != "1" ]]; then
+    return 0
+  fi
+  if tunnel_is_running; then
+    return 0
+  fi
+  rm -f "$TUNNEL_PID_FILE" "$PUBLIC_URL_FILE" "$TUNNEL_PROVIDER_FILE"
+
+  local provider
+  provider="$(resolve_tunnel_provider)" || return 1
+  printf 'Starting tunnel provider: %s\n' "$provider" >"$TUNNEL_LOG"
+  case "$provider" in
+    cloudflare-named) start_cloudflare_named_tunnel ;;
+    cloudflare-quick) start_cloudflare_quick_tunnel ;;
+    localhost-run) start_localhost_run_tunnel ;;
+  esac
 }
 
 stop_managed_process() {
@@ -315,12 +468,14 @@ status() {
     printf 'Server: stopped\n'
   fi
   if [[ "${CESIUM_TUNNEL_ENABLED:-0}" == "1" ]]; then
-    if managed_process_is_running "$TUNNEL_PID_FILE" "$CLOUDFLARED_BIN"; then
-      printf 'Tunnel: running'
+    if tunnel_is_running; then
+      local provider
+      provider="$(active_tunnel_provider)"
+      printf 'Tunnel: running (%s' "$provider"
       local remote
       remote="$(public_url || true)"
-      [[ -n "$remote" ]] && printf ' (%s)' "$remote"
-      printf '\n'
+      [[ -n "$remote" ]] && printf ', %s' "$remote"
+      printf ')\n'
     else
       printf 'Tunnel: stopped\n'
     fi
@@ -350,59 +505,66 @@ update_install() {
     CESIUM_AUTH_USERNAME="${OPENCURSOR_AUTH_USERNAME:-cesium}" \
     CESIUM_AUTH_PASSWORD="${OPENCURSOR_AUTH_PASSWORD:-}" \
     CESIUM_TUNNEL_REQUIRED="${CESIUM_TUNNEL_REQUIRED:-0}" \
+    CESIUM_TUNNEL_PROVIDER="${CESIUM_TUNNEL_PROVIDER:-auto}" \
     CESIUM_TUNNEL_TOKEN="${CESIUM_TUNNEL_TOKEN:-}" \
     CESIUM_PUBLIC_URL="${CESIUM_PUBLIC_URL:-}" \
     exec "$SOURCE_DIR/scripts/install-cesium-server.sh"
 }
 
-case "${1:-status}" in
-  run | start)
-    start_server
-    if ! start_tunnel; then
-      if tunnel_required; then
-        exit 1
+main() {
+  case "${1:-status}" in
+    run | start)
+      start_server
+      if ! start_tunnel; then
+        if tunnel_required; then
+          exit 1
+        fi
+        printf 'Continuing with the local server; public tunnel is unavailable.\n' >&2
       fi
-      printf 'Continuing with the local server; public Quick Tunnel is unavailable.\n' >&2
-    fi
-    print_connection_details
-    ;;
-  stop)
-    stop_all
-    printf 'Cesium server stopped.\n'
-    ;;
-  restart)
-    stop_all
-    start_server
-    if ! start_tunnel; then
-      if tunnel_required; then
-        exit 1
+      print_connection_details
+      ;;
+    stop)
+      stop_all
+      printf 'Cesium server stopped.\n'
+      ;;
+    restart)
+      stop_all
+      start_server
+      if ! start_tunnel; then
+        if tunnel_required; then
+          exit 1
+        fi
+        printf 'Continuing with the local server; public tunnel is unavailable.\n' >&2
       fi
-      printf 'Continuing with the local server; public Quick Tunnel is unavailable.\n' >&2
-    fi
-    print_connection_details
-    ;;
-  status)
-    status
-    ;;
-  health)
-    curl -fsS "$LOCAL_URL/health"
-    printf '\n'
-    ;;
-  connect)
-    print_connection_details
-    ;;
-  credentials)
-    printf 'Username: %s\nPassword: %s\n' \
-      "${OPENCURSOR_AUTH_USERNAME:-}" "${OPENCURSOR_AUTH_PASSWORD:-}"
-    ;;
-  logs)
-    show_logs "${2:-server}"
-    ;;
-  update)
-    update_install
-    ;;
-  *)
-    printf 'Usage: cesium-server {run|stop|restart|status|health|connect|credentials|logs [server|tunnel]|update}\n' >&2
-    exit 2
-    ;;
-esac
+      print_connection_details
+      ;;
+    status)
+      status
+      ;;
+    health)
+      curl -fsS "$LOCAL_URL/health"
+      printf '\n'
+      ;;
+    connect)
+      print_connection_details
+      ;;
+    credentials)
+      printf 'Username: %s\nPassword: %s\n' \
+        "${OPENCURSOR_AUTH_USERNAME:-}" "${OPENCURSOR_AUTH_PASSWORD:-}"
+      ;;
+    logs)
+      show_logs "${2:-server}"
+      ;;
+    update)
+      update_install
+      ;;
+    *)
+      printf 'Usage: cesium-server {run|stop|restart|status|health|connect|credentials|logs [server|tunnel]|update}\n' >&2
+      exit 2
+      ;;
+  esac
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi
