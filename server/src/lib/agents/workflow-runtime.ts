@@ -125,6 +125,9 @@ function normalizeMeta(raw: unknown): WorkflowMeta {
       : undefined;
   const phasesRaw = Array.isArray(record.phases) ? record.phases : [];
   const phases: WorkflowPhaseMeta[] = phasesRaw.flatMap((item) => {
+    if (typeof item === "string" && item.trim()) {
+      return [{ title: item.trim() }];
+    }
     if (!item || typeof item !== "object") return [];
     const phase = item as Record<string, unknown>;
     const title = typeof phase.title === "string" ? phase.title.trim() : "";

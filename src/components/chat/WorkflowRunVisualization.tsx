@@ -164,6 +164,15 @@ export function WorkflowRunVisualization({
   const terminalAgents = run.agents.filter((agent) =>
     TERMINAL_AGENT_STATUSES.has(agent.status)
   ).length;
+  const phaseLabel =
+    run.currentPhase ??
+    (run.status === "completed"
+      ? "Complete"
+      : run.status === "failed"
+        ? "Failed"
+        : run.status === "cancelled"
+          ? "Stopped"
+          : "Waiting");
 
   const phases = useMemo(() => {
     const declared = run.phases.map((phase) => phase.title);
@@ -249,7 +258,7 @@ export function WorkflowRunVisualization({
 
         <div className="mt-[12px] grid grid-cols-2 gap-[6px] sm:grid-cols-4">
           {[
-            { icon: Activity, label: "Phase", value: run.currentPhase ?? "Waiting" },
+            { icon: Activity, label: "Phase", value: phaseLabel },
             { icon: Users, label: "Agents", value: `${terminalAgents}/${run.agentsUsed}` },
             { icon: Coins, label: "Tokens", value: compactNumber(run.tokensUsed) },
             { icon: Clock, label: "Elapsed", value: formatDuration(elapsed) },

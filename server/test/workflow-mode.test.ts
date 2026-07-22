@@ -13,6 +13,7 @@ import {
   upsertWorkflowRun,
 } from "../src/lib/agents/workflow-store.js";
 import { DATA_DIR } from "../src/lib/persistence.js";
+import { serializeWorkflowRunSnapshot } from "../src/lib/agents/workflow-snapshot.js";
 import type { WorkspaceRecord } from "../src/lib/workspace-registry.js";
 import {
   WORKFLOW_DEFAULT_MAX_AGENTS,
@@ -66,6 +67,52 @@ test("compileWorkflowScript requires pure meta literal first", () => {
     `export const meta = { name: "x", description: "y", phases: [] };\nconst t = Date.now();\nreturn t;`
   );
   assert.equal(nondet.ok, false);
+
+  const stringPhases = compileWorkflowScript(
+    `export const meta = { name: "strings", description: "string phases", phases: ["Inspect", "Synthesize"] };\nreturn 1;`
+  );
+  assert.equal(stringPhases.ok, true);
+  if (stringPhases.ok) {
+    assert.deepEqual(
+      stringPhases.meta.phases.map((phase) => phase.title),
+      ["Inspect", "Synthesize"]
+    );
+  }
+});
+
+test("workflow snapshots infer the active phase from agent records", () => {
+  const workspace: WorkspaceRecord = {
+    id: "ws-workflow-snapshot-phase",
+    root: "/tmp",
+    name: "Snapshot phase",
+    createdAt: 1,
+    updatedAt: 1,
+    lastOpenedAt: 1,
+  };
+  const run = createWorkflowRunRecord({
+    workspace,
+    conversationId: "conv-snapshot-phase",
+    script: SAMPLE_SCRIPT,
+    scriptPath: "/tmp/snapshot-phase.js",
+  });
+  const snapshot = serializeWorkflowRunSnapshot({
+    ...run,
+    status: "running",
+    agentsUsed: 1,
+    agents: [
+      {
+        id: "inspect-1",
+        label: "Inspect package",
+        phase: "Inspect",
+        prompt: "Inspect package.json",
+        status: "running",
+        tokensUsed: 0,
+        startedAt: 10,
+        completedAt: null,
+      },
+    ],
+  });
+  assert.equal(snapshot.currentPhase, "Inspect");
 });
 
 test("workflow run records default to Claude-parity runtime caps", () => {

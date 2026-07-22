@@ -43,12 +43,28 @@ export function serializeWorkflowRunSnapshot(
       ? Math.max(1, Math.floor(options.agentLimit))
       : run.agents.length || 1;
   const agents = run.agents.slice(-agentLimit);
+  const inferredActivePhase =
+    [...run.agents]
+      .reverse()
+      .find((agent) => agent.status === "running" || agent.status === "queued")
+      ?.phase ?? null;
+  const inferredLatestPhase =
+    [...run.agents]
+      .reverse()
+      .find((agent) => agent.phase && agent.startedAt != null)
+      ?.phase ?? null;
+  const currentPhase =
+    run.currentPhase ??
+    inferredActivePhase ??
+    (run.status === "running" || run.status === "paused"
+      ? inferredLatestPhase
+      : null);
   return {
     runId: run.runId,
     name: run.meta.name,
     description: run.meta.description,
     status: run.status,
-    currentPhase: run.currentPhase,
+    currentPhase,
     tokenBudget: run.tokenBudget,
     tokensUsed: run.tokensUsed,
     maxAgents: run.maxAgents,
