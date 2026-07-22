@@ -116,6 +116,9 @@ function rowToConversation(row: ConversationRow): AgentConversationRecord {
     lastError: row.lastError,
     experimental: row.experimental,
     archivedAt: row.archivedAt,
+    origin:
+      ((row as ConversationRow & { origin?: unknown })
+        .origin as AgentConversationRecord["origin"]) ?? null,
     queuedPrompts: Array.isArray(
       (row as ConversationRow & { queuedPrompts?: unknown }).queuedPrompts
     )
@@ -796,6 +799,7 @@ export class PgStorageDriver implements StorageDriver {
       experimental: record.experimental ?? false,
       archivedAt: record.archivedAt ?? null,
       queuedPrompts: (record.queuedPrompts ?? []) as unknown as unknown[],
+      origin: (record.origin ?? null) as unknown as Record<string, unknown> | null,
     };
     await getDb()
       .insert(schema.agentConversations)
@@ -817,6 +821,7 @@ export class PgStorageDriver implements StorageDriver {
           experimental: values.experimental,
           archivedAt: values.archivedAt,
           queuedPrompts: values.queuedPrompts,
+          origin: values.origin,
         },
       });
   }

@@ -168,3 +168,40 @@ export async function findCloudAgentTaskByConversation(
   const file = await readTasksFile();
   return file.tasks.find((task) => task.conversationId === conversationId) ?? null;
 }
+
+/**
+ * Finds an active task tracking the same external source (same issue/thread),
+ * so follow-up comments steer the existing conversation instead of spawning a
+ * duplicate task. Completed/cancelled tasks are not steerable.
+ */
+export async function findSteerableCloudAgentTaskBySource(source: {
+  providerId: string;
+  externalId?: string;
+  repo?: string;
+  channel?: string;
+}): Promise<CloudAgentTaskRecord | null> {
+  if (!source.externalId) {
+    return null;
+  }
+  const file = await readTasksFile();
+  return (
+    file.tasks.find((task) => {
+      if (
+        task.source.providerId !== source.providerId ||
+        task.source.externalId !== source.externalId ||
+        !task.conversationId ||
+        task.status === "completed" ||
+        task.status === "cancelled"
+      ) {
+        return false;
+      }
+      if (source.providerId === "github") {
+        return task.source.repo === source.repo;
+      }
+      if (source.providerId === "slack") {
+        return task.source.channel === source.channel;
+      }
+      return true;
+    }) ?? null
+  );
+}

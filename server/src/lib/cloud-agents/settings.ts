@@ -58,7 +58,9 @@ function defaultSettings(): CloudAgentSettings {
       backendId: "cesium-agent",
       modelId: null,
       executionMode: "isolated",
-      autoDispatch: false,
+      // Assignments dispatch immediately so they show up as normal
+      // conversations in the agent rail without a manual review step.
+      autoDispatch: true,
       workspaceId: null,
     },
     routingRules: [],
@@ -141,7 +143,7 @@ function normalizeSettings(raw: unknown): CloudAgentSettings {
       executionMode: isExecutionMode(defaultsRecord?.executionMode)
         ? (defaultsRecord!.executionMode as CloudAgentExecutionMode)
         : defaults.defaults.executionMode,
-      autoDispatch: defaultsRecord?.autoDispatch === true,
+      autoDispatch: defaultsRecord?.autoDispatch !== false,
       workspaceId: asString(defaultsRecord?.workspaceId) ?? null,
     },
     routingRules: Array.isArray(record.routingRules)

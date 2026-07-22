@@ -418,6 +418,22 @@ export type AgentQueuedChatPrompt = {
   hidden?: boolean;
 };
 
+/**
+ * Where a conversation was triggered from. Conversations started from external
+ * sources (Linear/GitHub/Slack via Cloud Agents) are normal conversations in
+ * every way — this only records provenance for rail badges and filtering.
+ */
+export type AgentConversationOrigin = {
+  kind: "cloud";
+  providerId: "linear" | "github" | "slack" | "manual";
+  /** Cloud Agents task id linking back to the external assignment. */
+  taskId?: string;
+  /** Short human label, e.g. "owner/repo#42" or "OSP-67". */
+  label?: string;
+  /** Deep link to the source issue/message. */
+  url?: string;
+};
+
 export type AgentConversationRecord = {
   schemaVersion: 1;
   id: string;
@@ -437,6 +453,8 @@ export type AgentConversationRecord = {
   experimental: boolean;
   archivedAt: number | null;
   lastReadSeq: number;
+  /** Set when the conversation was triggered from an external source. */
+  origin?: AgentConversationOrigin | null;
   /** FIFO queue; applied automatically when the conversation becomes idle. */
   queuedPrompts: AgentQueuedChatPrompt[];
 };
@@ -486,6 +504,8 @@ export type AgentContextUsageSnapshot = {
 export type AgentConversationCreateInput = Partial<AgentConversationConfig> & {
   title?: string;
   archived?: boolean;
+  /** Provenance for conversations triggered from external sources. */
+  origin?: AgentConversationOrigin | null;
 };
 
 export type AgentConversationConfigPatch = Partial<AgentConversationConfig> & {

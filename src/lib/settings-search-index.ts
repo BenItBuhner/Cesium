@@ -225,7 +225,12 @@ const STATIC_SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
   section("cloudAgents", "connections", "Connections", "linear github slack oauth token webhook"),
   section("cloudAgents", "defaults", "Defaults", "cloud agents harness model workspace"),
   section("cloudAgents", "routing", "Workspace routing", "cloud agents rules filter"),
-  section("cloudAgents", "tasks", "Tasks", "cloud agents inbox dispatch steer"),
+  section(
+    "cloudAgents",
+    "pending",
+    "Pending assignments",
+    "cloud agents inbox dispatch test rail external"
+  ),
   row(
     "cloudAgents",
     "cloud-agents-default-harness",

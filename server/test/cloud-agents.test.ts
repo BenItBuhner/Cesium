@@ -52,14 +52,17 @@ const {
   createCloudAgentTask,
   deleteCloudAgentTask,
   findCloudAgentTaskByConversation,
+  findSteerableCloudAgentTaskBySource,
   getCloudAgentTask,
   listCloudAgentTasks,
   updateCloudAgentTask,
 } = tasksModule;
 const {
   buildCloudAgentBranchName,
+  buildCloudAgentOriginLabel,
   buildCloudAgentTaskPrompt,
   dispatchCloudAgentTask,
+  ingestCloudAgentAssignment,
   resolveCloudAgentRoute,
 } = dispatcherModule;
 const {
@@ -82,7 +85,9 @@ test("cloud agent settings default shape", async () => {
   assert.equal(settings.schemaVersion, 1);
   assert.equal(settings.defaults.backendId, "cesium-agent");
   assert.equal(settings.defaults.executionMode, "isolated");
-  assert.equal(settings.defaults.autoDispatch, false);
+  // Auto-dispatch defaults on so assignments become normal rail conversations
+  // without a manual review step.
+  assert.equal(settings.defaults.autoDispatch, true);
   assert.deepEqual(settings.routingRules, []);
   assert.deepEqual(settings.connections, []);
 });
@@ -129,7 +134,7 @@ test("oauth app upsert redacts client secret in public view", async () => {
 
 test("patch settings updates defaults and routing rules", async () => {
   const patched = await patchCloudAgentSettings({
-    defaults: { autoDispatch: true, modelId: "glm-5.2", executionMode: "local" },
+    defaults: { autoDispatch: false, modelId: "glm-5.2", executionMode: "local" },
     routingRules: [
       {
         id: "r1",
@@ -140,13 +145,14 @@ test("patch settings updates defaults and routing rules", async () => {
       },
     ],
   });
-  assert.equal(patched.defaults.autoDispatch, true);
+  assert.equal(patched.defaults.autoDispatch, false);
   assert.equal(patched.defaults.modelId, "glm-5.2");
   assert.equal(patched.defaults.executionMode, "local");
   assert.equal(patched.routingRules.length, 1);
   assert.equal(patched.routingRules[0]?.match, "owner/repo");
 
-  // Restore for later tests.
+  // Restore for later tests (webhook route tests rely on no auto-dispatch
+  // because no workspace is routable in this isolated data dir).
   await patchCloudAgentSettings({
     defaults: { autoDispatch: false, modelId: null, executionMode: "isolated" },
     routingRules: [],
@@ -454,6 +460,92 @@ test("task store lifecycle: create, update, timeline, find by conversation, dele
 });
 
 // —— Dispatcher helpers ——
+
+test("origin labels are short provider-specific provenance strings", () => {
+  assert.equal(
+    buildCloudAgentOriginLabel({ providerId: "github", repo: "owner/repo", externalId: "42" }),
+    "owner/repo#42"
+  );
+  assert.equal(buildCloudAgentOriginLabel({ providerId: "linear", teamKey: "OSP" }), "OSP");
+  assert.equal(
+    buildCloudAgentOriginLabel({ providerId: "slack", channel: "C0LOUDAG" }),
+    "#C0LOUDAG"
+  );
+  assert.equal(buildCloudAgentOriginLabel({ providerId: "manual" }), undefined);
+});
+
+test("steerable lookup matches active tasks tracking the same external source", async () => {
+  const task = await createCloudAgentTask({
+    title: "Tracked issue",
+    prompt: "",
+    status: "running",
+    source: { providerId: "github", repo: "owner/repo", externalId: "7" },
+    workspaceId: "ws-x",
+    conversationId: "conv-track-1",
+    backendId: "cesium-agent",
+    modelId: null,
+    executionMode: "isolated",
+  });
+
+  const hit = await findSteerableCloudAgentTaskBySource({
+    providerId: "github",
+    repo: "owner/repo",
+    externalId: "7",
+  });
+  assert.equal(hit?.id, task.id);
+
+  // Different repo with the same issue number must not match.
+  assert.equal(
+    await findSteerableCloudAgentTaskBySource({
+      providerId: "github",
+      repo: "other/repo",
+      externalId: "7",
+    }),
+    null
+  );
+
+  // Completed tasks are no longer steerable.
+  await updateCloudAgentTask(task.id, { status: "completed" });
+  assert.equal(
+    await findSteerableCloudAgentTaskBySource({
+      providerId: "github",
+      repo: "owner/repo",
+      externalId: "7",
+    }),
+    null
+  );
+  await deleteCloudAgentTask(task.id);
+});
+
+test("ingest falls back to a new task when the steer target is unavailable", async () => {
+  // Task claims a conversation in a workspace that does not exist, so the
+  // steer attempt fails and the assignment becomes a fresh task instead.
+  const stale = await createCloudAgentTask({
+    title: "Stale tracked issue",
+    prompt: "",
+    status: "running",
+    source: { providerId: "github", repo: "owner/repo", externalId: "99" },
+    workspaceId: "ws-gone",
+    conversationId: "conv-gone",
+    backendId: "cesium-agent",
+    modelId: null,
+    executionMode: "isolated",
+  });
+
+  const { task, dispatched, steered } = await ingestCloudAgentAssignment({
+    providerId: "github",
+    title: "Follow-up comment",
+    body: "Any update?",
+    source: { providerId: "github", repo: "owner/repo", externalId: "99" },
+    verified: true,
+  });
+  assert.notEqual(task.id, stale.id);
+  assert.equal(steered, undefined);
+  assert.equal(dispatched, false);
+
+  await deleteCloudAgentTask(stale.id);
+  await deleteCloudAgentTask(task.id);
+});
 
 test("branch names are slugified and unique per task", () => {
   const branch = buildCloudAgentBranchName({

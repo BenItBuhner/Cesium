@@ -16,6 +16,7 @@ import {
   appendCloudAgentTaskTimeline,
   createCloudAgentTask,
   findCloudAgentTaskByConversation,
+  findSteerableCloudAgentTaskBySource,
   getCloudAgentTask,
   updateCloudAgentTask,
 } from "./tasks.js";
@@ -99,6 +100,22 @@ export function buildCloudAgentBranchName(task: Pick<CloudAgentTaskRecord, "id" 
   return `cloud/${slugify(task.title)}-${task.id.slice(0, 8)}`;
 }
 
+/** Short provenance label for rail badges, e.g. "owner/repo#42" or "OSP". */
+export function buildCloudAgentOriginLabel(source: CloudAgentTaskSource): string | undefined {
+  switch (source.providerId) {
+    case "github":
+      return source.repo
+        ? `${source.repo}${source.externalId ? `#${source.externalId}` : ""}`
+        : undefined;
+    case "linear":
+      return source.teamKey ?? source.project;
+    case "slack":
+      return source.channel ? `#${source.channel}` : undefined;
+    default:
+      return undefined;
+  }
+}
+
 function describeSource(source: CloudAgentTaskSource): string {
   const parts: string[] = [];
   if (source.providerId !== "manual") {
@@ -178,7 +195,25 @@ async function prepareIsolatedWorkspace(
 
 export async function ingestCloudAgentAssignment(
   assignment: CloudAgentInboundAssignment
-): Promise<{ task: CloudAgentTaskRecord; dispatched: boolean }> {
+): Promise<{ task: CloudAgentTaskRecord; dispatched: boolean; steered?: boolean }> {
+  // Follow-up comments/replies on an already-tracked issue or thread steer the
+  // existing conversation — the "communicative" loop — instead of duplicating.
+  const steerable = await findSteerableCloudAgentTaskBySource(assignment.source);
+  if (steerable) {
+    try {
+      const attribution = assignment.source.sender
+        ? `Follow-up from ${assignment.source.sender} via ${assignment.providerId}:`
+        : `Follow-up via ${assignment.providerId}:`;
+      const task = await steerCloudAgentTask(
+        steerable.id,
+        `${attribution}\n\n${assignment.body}`
+      );
+      return { task, dispatched: false, steered: true };
+    } catch {
+      // Conversation may be gone; fall through and treat it as a new task.
+    }
+  }
+
   const settings = await getCloudAgentSettings();
   const route = await resolveCloudAgentRoute(assignment.source);
   let task = await createCloudAgentTask({
@@ -279,12 +314,20 @@ export async function dispatchCloudAgentTask(
       branch,
       artifactsDir: `${CLOUD_AGENT_ARTIFACTS_DIR}/${task.id}`,
     });
+    const originLabel = buildCloudAgentOriginLabel(task.source);
     const snapshot = await agentRuntimeManager.createConversationWithPrompt(
       runWorkspace,
       {
-        title: `Cloud: ${task.title}`.slice(0, 120),
+        title: task.title.slice(0, 120),
         backendId,
         ...(modelId ? { modelId } : {}),
+        origin: {
+          kind: "cloud",
+          providerId: task.source.providerId,
+          taskId: task.id,
+          ...(originLabel ? { label: originLabel } : {}),
+          ...(task.source.url ? { url: task.source.url } : {}),
+        },
       },
       { text: prompt }
     );

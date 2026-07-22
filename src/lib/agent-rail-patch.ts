@@ -21,6 +21,7 @@ export function agentRecordToRailSummary(
     mode: c.config.mode,
     experimental: c.experimental,
     hasPendingPermission: c.pendingPermission != null,
+    ...(c.origin ? { origin: c.origin } : {}),
   };
 }
 
@@ -60,7 +61,8 @@ function mergeRailSummaryByRecency(
       existing.backendId !== incoming.backendId ||
       existing.mode !== incoming.mode ||
       existing.experimental !== incoming.experimental ||
-      existing.hasPendingPermission !== incoming.hasPendingPermission;
+      existing.hasPendingPermission !== incoming.hasPendingPermission ||
+      existing.origin?.providerId !== incoming.origin?.providerId;
     if (metaChanged) {
       return {
         ...existing,

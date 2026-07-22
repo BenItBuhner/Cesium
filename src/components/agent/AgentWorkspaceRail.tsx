@@ -205,6 +205,7 @@ const FILTER_TOGGLE_LABELS: Record<AgentRailFilterToggleKey, string> = {
   pinned: "Pinned",
   unread: "Unread",
   read: "Read",
+  external: "External sources",
 };
 
 const WORKSPACE_SORT_LABELS: Record<WorkspaceSortMode, string> = {

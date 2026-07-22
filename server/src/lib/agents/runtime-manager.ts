@@ -495,6 +495,7 @@ export class AgentRuntimeManager {
       lastError: null,
       experimental: Boolean(backend.experimental),
       archivedAt: input.archived ? now : null,
+      ...(input.origin ? { origin: input.origin } : {}),
       lastReadSeq: 0,
       queuedPrompts: [],
     };

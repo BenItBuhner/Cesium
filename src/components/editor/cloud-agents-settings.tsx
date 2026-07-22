@@ -12,14 +12,12 @@ import {
   Send,
   Trash2,
   Unplug,
-  X,
 } from "lucide-react";
 import {
   PageIntro,
   SettingsFieldLabel,
   SettingsRow,
   SettingsSection,
-  SettingsSubsectionHeading,
   rowButtonClass,
   settingsSelectTriggerClass,
   tagClass,
@@ -27,23 +25,18 @@ import {
 import { HARNESS_LABELS, HARNESS_ORDER } from "./agent-harness-settings";
 import { ToggleSwitch } from "@/components/ui/ToggleSwitch";
 import {
-  cancelCloudAgentTask,
-  completeCloudAgentTask,
   createCloudAgentTask,
   deleteCloudAgentConnection,
   deleteCloudAgentTask,
   dispatchCloudAgentTask,
   fetchCloudAgentSettings,
-  fetchCloudAgentTaskArtifacts,
   fetchCloudAgentTasks,
   fetchWorkspaces,
   patchCloudAgentSettings,
-  postCloudAgentTaskUpdate,
   saveCloudAgentConnectionToken,
   saveCloudAgentOAuthApp,
   saveCloudAgentWebhookSecret,
   startCloudAgentOAuth,
-  steerCloudAgentTask,
 } from "@/lib/server-api";
 import type {
   CloudAgentEndpoints,
@@ -51,9 +44,7 @@ import type {
   CloudAgentProviderId,
   CloudAgentRoutingRule,
   CloudAgentSettingsPublic,
-  CloudAgentTaskArtifact,
   CloudAgentTaskRecord,
-  CloudAgentTaskStatus,
 } from "@/lib/server-api";
 import type { WorkspaceRecord } from "@cesium/core";
 import type { AgentBackendId } from "@/lib/agent-types";
@@ -86,26 +77,6 @@ const PROVIDERS: Array<{
       "Mention the app in a channel to offload a task; replies land back in the thread.",
   },
 ];
-
-const STATUS_LABELS: Record<CloudAgentTaskStatus, string> = {
-  inbox: "Inbox",
-  dispatching: "Dispatching",
-  running: "Running",
-  awaiting_review: "Awaiting review",
-  completed: "Completed",
-  failed: "Failed",
-  cancelled: "Cancelled",
-};
-
-const STATUS_COLORS: Record<CloudAgentTaskStatus, string> = {
-  inbox: "text-[var(--text-secondary)]",
-  dispatching: "text-amber-400",
-  running: "text-blue-400",
-  awaiting_review: "text-purple-400",
-  completed: "text-emerald-400",
-  failed: "text-red-400",
-  cancelled: "text-[var(--text-disabled)]",
-};
 
 const fieldInputClass =
   "box-border h-[30px] w-full rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-[var(--bg-main)] px-[10px] font-mono text-[12px] text-[var(--text-primary)] outline-none placeholder:text-[var(--text-disabled)]";
@@ -337,209 +308,10 @@ function ProviderConnectionCard({
   );
 }
 
-function TaskCard({
-  task,
-  workspacesById,
-  busy,
-  onDispatch,
-  onSteer,
-  onCancel,
-  onComplete,
-  onDelete,
-  onPostUpdate,
-}: {
-  task: CloudAgentTaskRecord;
-  workspacesById: Map<string, WorkspaceRecord>;
-  busy: boolean;
-  onDispatch: () => Promise<void>;
-  onSteer: (text: string) => Promise<void>;
-  onCancel: () => Promise<void>;
-  onComplete: () => Promise<void>;
-  onDelete: () => Promise<void>;
-  onPostUpdate: () => Promise<void>;
-}) {
-  const [steerText, setSteerText] = useState("");
-  const [expanded, setExpanded] = useState(false);
-  const [artifacts, setArtifacts] = useState<CloudAgentTaskArtifact[] | null>(null);
-  const workspaceName = task.workspaceId
-    ? workspacesById.get(task.workspaceId)?.name ?? task.workspaceId
-    : "Unrouted";
-  const canSteer =
-    Boolean(task.conversationId) &&
-    (task.status === "running" || task.status === "awaiting_review");
-  const canPostUpdate = task.source.providerId !== "manual";
-
-  useEffect(() => {
-    if (!expanded) {
-      return;
-    }
-    let alive = true;
-    void fetchCloudAgentTaskArtifacts(task.id)
-      .then((result) => {
-        if (alive) setArtifacts(result.artifacts);
-      })
-      .catch(() => {
-        if (alive) setArtifacts([]);
-      });
-    return () => {
-      alive = false;
-    };
-  }, [expanded, task.id, task.updatedAt]);
-
-  return (
-    <div className="border-b border-[var(--border-subtle)] px-[16px] py-[12px] last:border-b-0">
-      <div className="flex flex-wrap items-center justify-between gap-[8px]">
-        <button
-          type="button"
-          onClick={() => setExpanded((open) => !open)}
-          className="flex min-w-0 flex-1 flex-col items-start text-left"
-        >
-          <span className="flex w-full min-w-0 flex-wrap items-center gap-[8px]">
-            <span className="min-w-0 truncate font-sans text-[13px] font-medium text-[var(--text-primary)]">
-              {task.title}
-            </span>
-            <span className={`${tagClass} ${STATUS_COLORS[task.status]}`}>
-              {STATUS_LABELS[task.status]}
-            </span>
-            {task.unverified ? (
-              <span className={`${tagClass} !text-amber-400`}>unverified</span>
-            ) : null}
-          </span>
-          <span className="mt-[3px] font-sans text-[11px] text-[var(--text-secondary)]">
-            {task.source.providerId} · {workspaceName}
-            {task.backendId ? ` · ${HARNESS_LABELS[task.backendId] ?? task.backendId}` : ""}
-            {task.modelId ? ` · ${task.modelId}` : ""}
-            {task.branch ? ` · ${task.branch}` : ""}
-          </span>
-        </button>
-        <div className="flex shrink-0 flex-wrap items-center gap-[6px]">
-          {task.status === "inbox" || task.status === "failed" ? (
-            <button
-              type="button"
-              className={rowButtonClass}
-              disabled={busy}
-              onClick={() => void onDispatch()}
-            >
-              <Send className="size-[13px]" strokeWidth={1.5} aria-hidden />
-              Dispatch
-            </button>
-          ) : null}
-          {task.status === "running" || task.status === "dispatching" ? (
-            <button
-              type="button"
-              className={rowButtonClass}
-              disabled={busy}
-              onClick={() => void onCancel()}
-            >
-              <X className="size-[13px]" strokeWidth={1.5} aria-hidden />
-              Cancel
-            </button>
-          ) : null}
-          {task.status === "awaiting_review" ? (
-            <button
-              type="button"
-              className={rowButtonClass}
-              disabled={busy}
-              onClick={() => void onComplete()}
-            >
-              <Check className="size-[13px]" strokeWidth={1.5} aria-hidden />
-              Complete
-            </button>
-          ) : null}
-          {canPostUpdate && (task.status === "awaiting_review" || task.status === "completed") ? (
-            <button
-              type="button"
-              className={rowButtonClass}
-              disabled={busy}
-              onClick={() => void onPostUpdate()}
-              title="Post a progress comment (with artifact list) back to the source"
-            >
-              Post update
-            </button>
-          ) : null}
-          <button
-            type="button"
-            className={`${rowButtonClass} !text-red-400`}
-            disabled={busy}
-            onClick={() => void onDelete()}
-            aria-label="Delete task"
-            title="Delete task"
-          >
-            <Trash2 className="size-[13px]" strokeWidth={1.5} aria-hidden />
-          </button>
-        </div>
-      </div>
-
-      {canSteer ? (
-        <div className="mt-[8px] flex items-center gap-[8px]">
-          <input
-            type="text"
-            value={steerText}
-            onChange={(event) => setSteerText(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" && steerText.trim()) {
-                void onSteer(steerText.trim()).then(() => setSteerText(""));
-              }
-            }}
-            placeholder="Steer the agent: refine, redirect, or ask for a demo video…"
-            className={fieldInputClass}
-            aria-label="Steer this task"
-          />
-          <button
-            type="button"
-            className={rowButtonClass}
-            disabled={busy || !steerText.trim()}
-            onClick={() => void onSteer(steerText.trim()).then(() => setSteerText(""))}
-          >
-            Steer
-          </button>
-        </div>
-      ) : null}
-
-      {expanded ? (
-        <div className="mt-[10px] flex flex-col gap-[8px]">
-          {task.lastError ? (
-            <p className="font-sans text-[11px] text-red-400">{task.lastError}</p>
-          ) : null}
-          {artifacts && artifacts.length > 0 ? (
-            <div>
-              <SettingsFieldLabel>Demonstration artifacts</SettingsFieldLabel>
-              <ul className="mt-[4px] flex flex-col gap-[2px]">
-                {artifacts.map((artifact) => (
-                  <li key={artifact.name} className="font-mono text-[11px] text-[var(--text-secondary)]">
-                    {artifact.name} · {(artifact.size / 1024).toFixed(1)} KB
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ) : null}
-          <div>
-            <SettingsFieldLabel>Timeline</SettingsFieldLabel>
-            <ul className="mt-[4px] flex flex-col gap-[2px]">
-              {task.timeline.length === 0 ? (
-                <li className="font-sans text-[11px] text-[var(--text-disabled)]">No events yet.</li>
-              ) : (
-                [...task.timeline].reverse().map((entry, index) => (
-                  <li key={`${entry.at}-${index}`} className="font-sans text-[11px] text-[var(--text-secondary)]">
-                    <span className="text-[var(--text-disabled)]">
-                      {new Date(entry.at).toLocaleTimeString()}
-                    </span>{" "}
-                    · {entry.message}
-                  </li>
-                ))
-              )}
-            </ul>
-          </div>
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
 export function CloudAgentsSettingsPanel() {
   const [settings, setSettings] = useState<CloudAgentSettingsPublic | null>(null);
   const [endpoints, setEndpoints] = useState<CloudAgentEndpoints | null>(null);
-  const [tasks, setTasks] = useState<CloudAgentTaskRecord[]>([]);
+  const [pendingTasks, setPendingTasks] = useState<CloudAgentTaskRecord[]>([]);
   const [workspaces, setWorkspaces] = useState<WorkspaceRecord[]>([]);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -549,9 +321,9 @@ export function CloudAgentsSettingsPanel() {
   const [newRuleMatch, setNewRuleMatch] = useState("");
   const [newRuleWorkspaceId, setNewRuleWorkspaceId] = useState("");
 
-  const [newTaskTitle, setNewTaskTitle] = useState("");
-  const [newTaskPrompt, setNewTaskPrompt] = useState("");
-  const [newTaskWorkspaceId, setNewTaskWorkspaceId] = useState("");
+  const [testTitle, setTestTitle] = useState("");
+  const [testPrompt, setTestPrompt] = useState("");
+  const [testWorkspaceId, setTestWorkspaceId] = useState("");
 
   const workspacesById = useMemo(
     () => new Map(workspaces.map((workspace) => [workspace.id, workspace])),
@@ -570,7 +342,11 @@ export function CloudAgentsSettingsPanel() {
     ]);
     setSettings(settingsResult.settings);
     setEndpoints(settingsResult.endpoints);
-    setTasks(tasksResult.tasks);
+    // Dispatched tasks live in the agent rail as normal conversations; only
+    // assignments that could not start (unrouted or failed) need attention here.
+    setPendingTasks(
+      tasksResult.tasks.filter((task) => task.status === "inbox" || task.status === "failed")
+    );
     if (workspacesResult) {
       setWorkspaces(workspacesResult.workspaces);
     }
@@ -581,22 +357,6 @@ export function CloudAgentsSettingsPanel() {
       setError(refreshError instanceof Error ? refreshError.message : "Failed to load Cloud Agents.");
     });
   }, [refresh]);
-
-  // Live-ish task list while agents run.
-  useEffect(() => {
-    const hasActive = tasks.some(
-      (task) => task.status === "running" || task.status === "dispatching"
-    );
-    if (!hasActive) {
-      return;
-    }
-    const timer = window.setInterval(() => {
-      void fetchCloudAgentTasks()
-        .then((result) => setTasks(result.tasks))
-        .catch(() => undefined);
-    }, 4000);
-    return () => window.clearInterval(timer);
-  }, [tasks]);
 
   useEffect(() => {
     const onMessage = (event: MessageEvent) => {
@@ -645,9 +405,10 @@ export function CloudAgentsSettingsPanel() {
       <PageIntro title="Cloud Agents" />
       <p className="-mt-[8px] mb-[16px] font-sans text-[13px] leading-relaxed text-[var(--text-secondary)]">
         Offload work from Linear, GitHub, and Slack to agents running in this Cesium server.
-        Inbound assignments are filtered to the right workspace, run on your chosen harness and
-        model, and can be steered turn-by-turn. Agents work on isolated branches by default and
-        save demonstration media for sharing back to the source.
+        Assignments are routed to the right workspace and start as normal conversations in the
+        agent rail — same harnesses, same models, same chat — tagged with their source and
+        filterable via the rail&apos;s “External sources” filter. Follow-up comments and thread
+        replies steer the running conversation.
       </p>
 
       {message ? (
@@ -720,7 +481,7 @@ export function CloudAgentsSettingsPanel() {
       <SettingsSection title="Defaults">
         <SettingsRow
           title="Default agent harness"
-          description="Harness used when a routing rule doesn't pick one."
+          description="Harness used when a routing rule doesn't pick one — the same harnesses available in the composer."
           searchId="cloud-agents-default-harness"
           trailing={
             <select
@@ -747,7 +508,7 @@ export function CloudAgentsSettingsPanel() {
         />
         <SettingsRow
           title="Default model"
-          description="Optional model id override passed to the harness (e.g. openai/gpt-5.1 or glm-5.2)."
+          description="Optional model id override passed to the harness (e.g. openai/gpt-5.1 or techlitnow/glm-5.2)."
           searchId="cloud-agents-default-model"
           trailing={
             <input
@@ -799,7 +560,7 @@ export function CloudAgentsSettingsPanel() {
         />
         <SettingsRow
           title="Auto-dispatch assignments"
-          description="Start the agent immediately when a webhook assignment arrives, instead of waiting in the inbox."
+          description="Start the agent immediately when a webhook assignment arrives, so it shows up in the rail right away."
           searchId="cloud-agents-auto-dispatch"
           trailing={
             <ToggleSwitch
@@ -965,7 +726,7 @@ export function CloudAgentsSettingsPanel() {
       </SettingsSection>
 
       <SettingsSection
-        title="Tasks"
+        title="Pending assignments"
         action={
           <button
             type="button"
@@ -979,118 +740,135 @@ export function CloudAgentsSettingsPanel() {
         }
       >
         <div className="border-b border-[var(--border-subtle)] px-[16px] py-[12px]">
-          <SettingsSubsectionHeading>New manual task</SettingsSubsectionHeading>
-          <div className="flex flex-wrap items-end gap-[8px]">
+          <p className="font-sans text-[12px] leading-snug text-[var(--text-secondary)]">
+            Dispatched assignments run as normal conversations in the agent rail (filter:
+            External sources). Only assignments that could not start — unrouted or failed —
+            wait here. Use the test dispatch to verify routing end to end.
+          </p>
+        </div>
+        {pendingTasks.length === 0 ? (
+          <p className="px-[16px] py-[12px] font-sans text-[12px] text-[var(--text-disabled)]">
+            Nothing pending — new assignments dispatch straight into the rail.
+          </p>
+        ) : (
+          pendingTasks.map((task) => (
+            <div
+              key={task.id}
+              className="flex flex-wrap items-center justify-between gap-[8px] border-b border-[var(--border-subtle)] px-[16px] py-[10px] last:border-b-0"
+            >
+              <div className="min-w-0 flex-1">
+                <p className="flex flex-wrap items-center gap-[8px] font-sans text-[13px] font-medium text-[var(--text-primary)]">
+                  <span className="min-w-0 truncate">{task.title}</span>
+                  <span className={`${tagClass} ${task.status === "failed" ? "!text-red-400" : ""}`}>
+                    {task.status === "failed" ? "Failed" : "Not dispatched"}
+                  </span>
+                  {task.unverified ? (
+                    <span className={`${tagClass} !text-amber-400`}>unverified</span>
+                  ) : null}
+                </p>
+                <p className="mt-[2px] font-sans text-[11px] text-[var(--text-secondary)]">
+                  {task.source.providerId} ·{" "}
+                  {task.workspaceId
+                    ? workspacesById.get(task.workspaceId)?.name ?? task.workspaceId
+                    : "no workspace routed"}
+                  {task.lastError ? ` · ${task.lastError}` : ""}
+                </p>
+              </div>
+              <div className="flex shrink-0 items-center gap-[6px]">
+                <button
+                  type="button"
+                  className={rowButtonClass}
+                  disabled={busy}
+                  onClick={() =>
+                    void runAction(async () => {
+                      await dispatchCloudAgentTask(task.id);
+                      await refresh();
+                    }, "Dispatched — the agent is now in the rail.")
+                  }
+                >
+                  <Send className="size-[13px]" strokeWidth={1.5} aria-hidden />
+                  Dispatch
+                </button>
+                <button
+                  type="button"
+                  className={`${rowButtonClass} !text-red-400`}
+                  disabled={busy}
+                  aria-label="Delete assignment"
+                  onClick={() =>
+                    void runAction(async () => {
+                      await deleteCloudAgentTask(task.id);
+                      await refresh();
+                    })
+                  }
+                >
+                  <Trash2 className="size-[13px]" strokeWidth={1.5} aria-hidden />
+                </button>
+              </div>
+            </div>
+          ))
+        )}
+        <div className="px-[16px] py-[12px]">
+          <SettingsFieldLabel>Test dispatch (behaves exactly like a webhook assignment)</SettingsFieldLabel>
+          <div className="mt-[6px] flex flex-wrap items-end gap-[8px]">
             <div className="flex min-w-[160px] flex-1 flex-col gap-[4px]">
-              <SettingsFieldLabel>Title</SettingsFieldLabel>
               <input
                 type="text"
-                value={newTaskTitle}
-                onChange={(event) => setNewTaskTitle(event.target.value)}
-                placeholder="What should the agent do?"
+                value={testTitle}
+                onChange={(event) => setTestTitle(event.target.value)}
+                placeholder="Task title"
                 className={fieldInputClass}
-                aria-label="New task title"
+                aria-label="Test task title"
               />
             </div>
             <div className="flex min-w-[200px] flex-[2] flex-col gap-[4px]">
-              <SettingsFieldLabel>Instructions (optional)</SettingsFieldLabel>
               <input
                 type="text"
-                value={newTaskPrompt}
-                onChange={(event) => setNewTaskPrompt(event.target.value)}
-                placeholder="Details, constraints, links…"
+                value={testPrompt}
+                onChange={(event) => setTestPrompt(event.target.value)}
+                placeholder="Instructions (optional)"
                 className={fieldInputClass}
-                aria-label="New task instructions"
+                aria-label="Test task instructions"
               />
             </div>
-            <div className="flex flex-col gap-[4px]">
-              <SettingsFieldLabel>Workspace</SettingsFieldLabel>
-              <select
-                className={settingsSelectTriggerClass}
-                value={newTaskWorkspaceId}
-                aria-label="New task workspace"
-                onChange={(event) => setNewTaskWorkspaceId(event.target.value)}
-              >
-                <option value="">Routed / fallback</option>
-                {selectableWorkspaces.map((workspace) => (
-                  <option key={workspace.id} value={workspace.id}>
-                    {workspace.name}
-                  </option>
-                ))}
-              </select>
-            </div>
+            <select
+              className={settingsSelectTriggerClass}
+              value={testWorkspaceId}
+              aria-label="Test task workspace"
+              onChange={(event) => setTestWorkspaceId(event.target.value)}
+            >
+              <option value="">Routed / fallback</option>
+              {selectableWorkspaces.map((workspace) => (
+                <option key={workspace.id} value={workspace.id}>
+                  {workspace.name}
+                </option>
+              ))}
+            </select>
             <button
               type="button"
               className={rowButtonClass}
-              disabled={busy || !newTaskTitle.trim()}
+              disabled={busy || !testTitle.trim()}
               onClick={() =>
                 void runAction(async () => {
-                  await createCloudAgentTask({
-                    title: newTaskTitle.trim(),
-                    prompt: newTaskPrompt.trim(),
-                    ...(newTaskWorkspaceId ? { workspaceId: newTaskWorkspaceId } : {}),
+                  const result = await createCloudAgentTask({
+                    title: testTitle.trim(),
+                    prompt: testPrompt.trim(),
+                    ...(testWorkspaceId ? { workspaceId: testWorkspaceId } : {}),
+                    dispatch: true,
                   });
-                  setNewTaskTitle("");
-                  setNewTaskPrompt("");
+                  if (!result.ok) {
+                    throw new Error(result.error ?? "Dispatch failed.");
+                  }
+                  setTestTitle("");
+                  setTestPrompt("");
                   await refresh();
-                }, "Task created in the inbox.")
+                }, "Dispatched — check the agent rail.")
               }
             >
-              <Plus className="size-[13px]" strokeWidth={1.5} aria-hidden />
-              Create
+              <Send className="size-[13px]" strokeWidth={1.5} aria-hidden />
+              Dispatch
             </button>
           </div>
         </div>
-        {tasks.length === 0 ? (
-          <p className="px-[16px] py-[14px] font-sans text-[12px] text-[var(--text-disabled)]">
-            No Cloud Agent tasks yet. Assign an issue, mention the Slack app, or create one above.
-          </p>
-        ) : (
-          tasks.map((task) => (
-            <TaskCard
-              key={task.id}
-              task={task}
-              workspacesById={workspacesById}
-              busy={busy}
-              onDispatch={() =>
-                runAction(async () => {
-                  await dispatchCloudAgentTask(task.id);
-                  await refresh();
-                }, "Task dispatched.")
-              }
-              onSteer={(text) =>
-                runAction(async () => {
-                  await steerCloudAgentTask(task.id, text);
-                  await refresh();
-                }, "Steering message sent.")
-              }
-              onCancel={() =>
-                runAction(async () => {
-                  await cancelCloudAgentTask(task.id);
-                  await refresh();
-                })
-              }
-              onComplete={() =>
-                runAction(async () => {
-                  await completeCloudAgentTask(task.id);
-                  await refresh();
-                })
-              }
-              onDelete={() =>
-                runAction(async () => {
-                  await deleteCloudAgentTask(task.id);
-                  await refresh();
-                })
-              }
-              onPostUpdate={() =>
-                runAction(async () => {
-                  await postCloudAgentTaskUpdate(task.id, { includeArtifacts: true });
-                  await refresh();
-                }, "Update posted to the source.")
-              }
-            />
-          ))
-        )}
       </SettingsSection>
 
       {endpoints ? (

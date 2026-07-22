@@ -141,6 +141,7 @@ export const agentConversations = pgTable(
     queuedPrompts: jsonb("queued_prompts")
       .notNull()
       .default(sql`'[]'::jsonb`),
+    origin: jsonb("origin"),
   },
   (table) => [
     index("agent_conversations_workspace_updated_idx").on(

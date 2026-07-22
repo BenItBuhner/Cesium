@@ -23,6 +23,7 @@ export type AgentConversationsAllSummary = {
   mode: AgentConversationRecord["config"]["mode"];
   experimental: boolean;
   hasPendingPermission: boolean;
+  origin?: AgentConversationRecord["origin"];
   repository?: AgentRailRepositoryInfo;
 };
 
@@ -88,6 +89,7 @@ function summarizeConversation(
     mode: conversation.config.mode,
     experimental: conversation.experimental,
     hasPendingPermission: conversation.pendingPermission != null,
+    ...(conversation.origin ? { origin: conversation.origin } : {}),
     repository,
   };
 }
