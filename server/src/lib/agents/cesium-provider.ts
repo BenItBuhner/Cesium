@@ -2037,7 +2037,10 @@ class CesiumSessionHandle implements AgentSessionHandle {
     if (!pattern) throw new Error("grep.pattern is required.");
     const root = resolveWorkspacePath(this.callbacks.workspace.root, asString(args.path) ?? ".");
     const regex = new RegExp(pattern, "i");
-    const context = Math.max(0, Math.min(20, Math.floor(asNumber(args.context) ?? 0)));
+    const contextLines = Math.max(
+      0,
+      Math.min(20, Math.floor(asNumber(args.context) ?? 0))
+    );
     const maxResults = Math.max(1, Math.min(MAX_GREP_RESULTS, Math.floor(asNumber(args.maxResults) ?? DEFAULT_GREP_RESULTS)));
     const results: string[] = [];
     const visit = async (dir: string): Promise<void> => {
@@ -2061,8 +2064,8 @@ class CesiumSessionHandle implements AgentSessionHandle {
         const lines = text.split(/\r?\n/);
         for (let index = 0; index < lines.length && results.length < maxResults; index += 1) {
           if (!regex.test(lines[index] ?? "")) continue;
-          const start = Math.max(0, index - context);
-          const end = Math.min(lines.length, index + context + 1);
+          const start = Math.max(0, index - contextLines);
+          const end = Math.min(lines.length, index + contextLines + 1);
           const rel = path.relative(this.callbacks.workspace.root, full);
           results.push(`${rel}:${index + 1}\n${lines.slice(start, end).map((line, i) => `${start + i + 1}|${line}`).join("\n")}`);
         }

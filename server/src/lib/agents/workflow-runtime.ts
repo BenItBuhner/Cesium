@@ -335,7 +335,19 @@ export async function executeWorkflowRun(input: {
     }
   };
 
-  await checkpoint();
+  try {
+    await checkpoint();
+  } catch (error) {
+    if (input.control?.isStopRequested() || isAbortLikeError(error)) {
+      const message = error instanceof Error ? error.message : "Workflow run cancelled.";
+      run = await withRunLock(async () =>
+        updateWorkflowRunStatus(run, "cancelled", { error: message })
+      );
+      await input.onUpdate?.(run);
+      return run;
+    }
+    throw error;
+  }
 
   const budget = {
     total: run.tokenBudget,
