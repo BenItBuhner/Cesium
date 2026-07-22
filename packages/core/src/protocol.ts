@@ -485,6 +485,8 @@ export type AgentRailRepositoryInfo = {
   isGitRepo: boolean;
   repoRoot?: string;
   repoKey?: string;
+  /** Canonical network remote identity shared by clones on different machines. */
+  repositoryId?: string;
   currentBranch?: string | null;
   worktreeBaseRoot?: string;
 };
@@ -494,6 +496,8 @@ export type AgentConversationGroup = {
   conversations: AgentRailConversationSummary[];
   serverId?: string;
   serverLabel?: string;
+  /** Source machines represented after repository/server regrouping. */
+  serverIds?: string[];
   workspaceKey?: string;
   repositoryKey?: string;
   repository?: AgentRailRepositoryInfo;

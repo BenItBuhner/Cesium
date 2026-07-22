@@ -11,6 +11,7 @@ import type {
   AgentConversationSnapshot,
   AgentConversationSnapshotHead,
   AgentContextUsageSnapshot,
+  AgentRailRepositoryInfo,
 } from "@cesium/core";
 import type { WorkspaceSessionState } from "./workspace-session";
 import type {
@@ -375,6 +376,7 @@ export async function fetchWorkspaceBootstrapForServer(
   server: ServerRequestContext
 ): Promise<{
   workspaces: WorkspaceRecord[];
+  repositoriesByWorkspaceId?: Record<string, AgentRailRepositoryInfo>;
   defaultWorkspaceId: string | null;
   startupWorkspaceId: string | null;
   recentWorkspaceIds: string[];
@@ -388,6 +390,7 @@ export async function fetchWorkspaceBootstrapForServer(
 
 export async function fetchWorkspaces(): Promise<{
   workspaces: WorkspaceRecord[];
+  repositoriesByWorkspaceId?: Record<string, AgentRailRepositoryInfo>;
   defaultWorkspaceId: string | null;
   lastOpenedWorkspaceId: string | null;
   recentWorkspaceIds: string[];
@@ -402,6 +405,7 @@ export async function fetchWorkspacesForServer(
   server: ServerRequestContext
 ): Promise<{
   workspaces: WorkspaceRecord[];
+  repositoriesByWorkspaceId?: Record<string, AgentRailRepositoryInfo>;
   defaultWorkspaceId: string | null;
   lastOpenedWorkspaceId: string | null;
   recentWorkspaceIds: string[];

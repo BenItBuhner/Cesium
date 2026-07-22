@@ -11,7 +11,7 @@ import {
   type ThemeConfig,
 } from "./theme-config";
 
-export type WorkspaceSortMode = "recent" | "alphabetical" | "custom";
+export type WorkspaceSortMode = "recent" | "alphabetical" | "machine" | "custom";
 export type AgentRailGroupByMode = "workspace" | "repository" | "server" | "updated" | "status";
 export type AgentRailSectionId = "pinned" | "chats" | "workspaces";
 
@@ -232,7 +232,7 @@ export function createDefaultGlobalSettings(): GlobalSettingsState {
 }
 
 function normalizeWorkspaceSortMode(raw: unknown): WorkspaceSortMode {
-  return raw === "recent" || raw === "alphabetical" || raw === "custom"
+  return raw === "recent" || raw === "alphabetical" || raw === "machine" || raw === "custom"
     ? raw
     : "recent";
 }
@@ -403,7 +403,6 @@ function normalizeAgentRailSettings(raw: unknown): AgentRailSettingsState {
     record.groupBy === "status"
       ? record.groupBy
       : defaults.groupBy;
-  const groupBy = rawGroupBy === "server" ? "workspace" : rawGroupBy;
   const strings = (value: unknown): string[] =>
     Array.isArray(value)
       ? value.filter((item): item is string => typeof item === "string")
@@ -417,7 +416,7 @@ function normalizeAgentRailSettings(raw: unknown): AgentRailSettingsState {
     (id) => id !== "workspaces"
   );
   return {
-    groupBy,
+    groupBy: rawGroupBy,
     visibleStatusFilters: strings(record.visibleStatusFilters),
     // Do not preserve legacy allow-lists. They hide newly added servers forever,
     // which is catastrophic for a dynamic multi-server rail.

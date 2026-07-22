@@ -210,6 +210,7 @@ const FILTER_TOGGLE_LABELS: Record<AgentRailFilterToggleKey, string> = {
 const WORKSPACE_SORT_LABELS: Record<WorkspaceSortMode, string> = {
   recent: "Recently opened",
   alphabetical: "Alphabetical",
+  machine: "Machine",
   custom: "Custom order",
 };
 
@@ -537,6 +538,17 @@ export function AgentWorkspaceRail() {
     () => getServerDisplayLabel(activeServer, activeServerAppearance),
     [activeServer, activeServerAppearance]
   );
+  const machineOptions = useMemo(
+    () =>
+      servers.map((server, index) => ({
+        id: server.id,
+        label: getServerDisplayLabel(
+          server,
+          getServerRailAppearance(serverRailAppearances, server.id, index)
+        ),
+      })),
+    [serverRailAppearances, servers]
+  );
   const homeAppearancePersistEntries = useMemo(
     () =>
       groups.map((group) => {
@@ -628,7 +640,11 @@ export function AgentWorkspaceRail() {
   }, [railFilterActive, railFilterToggles]);
 
   const sortSummary = WORKSPACE_SORT_LABELS[workspaceSortMode];
-  const railControlActive = railFilterActive || workspaceSortMode !== "recent";
+  const railControlActive =
+    railFilterActive ||
+    workspaceSortMode !== "recent" ||
+    agentRailSettings.groupBy !== "workspace" ||
+    agentRailSettings.hiddenServerIds.length > 0;
 
   const visibleGroups = useMemo(() => {
     const seenKeys = new Set<string>();
@@ -785,6 +801,30 @@ export function AgentWorkspaceRail() {
           },
         },
       }));
+    },
+    [updateSettings]
+  );
+
+  const setMachineVisible = useCallback(
+    (serverId: string, visible: boolean) => {
+      updateSettings((current) => {
+        const hidden = new Set(current.general.agentRail.hiddenServerIds);
+        if (visible) {
+          hidden.delete(serverId);
+        } else {
+          hidden.add(serverId);
+        }
+        return {
+          ...current,
+          general: {
+            ...current.general,
+            agentRail: {
+              ...current.general.agentRail,
+              hiddenServerIds: [...hidden],
+            },
+          },
+        };
+      });
     },
     [updateSettings]
   );
@@ -1597,8 +1637,9 @@ export function AgentWorkspaceRail() {
     (conversation: AgentRailConversationSummary) =>
       !bulkSelectMode &&
       conversation.id === selectedConversationId &&
-      conversation.workspaceId === activeWorkspaceId,
-    [activeWorkspaceId, bulkSelectMode, selectedConversationId]
+      conversation.workspaceId === activeWorkspaceId &&
+      (!conversation.serverId || conversation.serverId === activeServer.id),
+    [activeServer.id, activeWorkspaceId, bulkSelectMode, selectedConversationId]
   );
 
   const handleOpenConversationInEditor = useCallback(
@@ -2063,7 +2104,9 @@ export function AgentWorkspaceRail() {
         {visibleGroups.map((group) => {
                 const groupKey = resolveGroupWorkspaceAppearanceKey(group, activeServer.id);
                 const isHomeWorkspace = Boolean(
-                  homeWorkspaceId && group.workspace.id === homeWorkspaceId
+                  homeWorkspaceId &&
+                  group.workspace.id === homeWorkspaceId &&
+                  (!group.serverId || group.serverId === activeServer.id)
                 );
                 const workspaceAppearance = getWorkspaceRailAppearance(
                   workspaceRailAppearances,
@@ -2071,7 +2114,25 @@ export function AgentWorkspaceRail() {
                   { isHome: isHomeWorkspace }
                 );
                 const workspaceActionsEnabled =
-                  agentRailSettings.groupBy === "workspace" && !group.serverAuthRequired;
+                  agentRailSettings.groupBy === "workspace" &&
+                  !group.serverAuthRequired &&
+                  (!group.serverId || group.serverId === activeServer.id);
+                const groupMachineIds = new Set(
+                  [
+                    ...(group.serverIds ?? []),
+                    ...group.conversations.map((conversation) => conversation.serverId),
+                  ].filter((serverId): serverId is string => Boolean(serverId))
+                );
+                if (group.serverId) {
+                  groupMachineIds.add(group.serverId);
+                }
+                const showConversationMachine = groupMachineIds.size > 1;
+                const groupMachineLabel =
+                  groupMachineIds.size > 1
+                    ? `${groupMachineIds.size} machines`
+                    : group.serverId && machineOptions.length > 1
+                      ? machineOptions.find((machine) => machine.id === group.serverId)?.label
+                      : null;
                 const isWorkspaceCollapsed = collapsedWorkspaceIds.has(groupKey);
                 const workspaceFolders = settings.general.chatFolders
                   .filter((folder) => folder.workspaceId === group.workspace.id)
@@ -2129,6 +2190,11 @@ export function AgentWorkspaceRail() {
                       <span className="truncate font-sans text-[10.5px] font-medium text-[var(--text-disabled)] group-hover/wshead:text-[var(--text-primary)]">
                         {group.workspace.name}
                       </span>
+                      {groupMachineLabel && agentRailSettings.groupBy !== "server" ? (
+                        <span className="max-w-[86px] shrink truncate rounded-[var(--radius-tab)] bg-[var(--bg-card)] px-[5px] py-px font-sans text-[9px] text-[var(--text-disabled)]">
+                          {groupMachineLabel}
+                        </span>
+                      ) : null}
                       {branchLabel ? (
                         <span className="max-w-[120px] shrink truncate rounded-[var(--radius-tab)] border border-[var(--border-subtle)] px-[5px] py-[1px] font-mono text-[9.5px] text-[var(--text-disabled)]">
                           {branchLabel}
@@ -2290,6 +2356,7 @@ export function AgentWorkspaceRail() {
                                       <AgentConversationRow
                                         key={conversation.conversationKey ?? conversation.id}
                                         conversation={conversation}
+                                        showMachineBadge={showConversationMachine}
                                         rowIndex={index}
                                         selected={isConversationChatSelected(conversation)}
                                         bulkSelectMode={bulkSelectMode}
@@ -2348,6 +2415,7 @@ export function AgentWorkspaceRail() {
                             <AgentConversationRow
                               key={conversation.conversationKey ?? conversation.id}
                               conversation={conversation}
+                              showMachineBadge={showConversationMachine}
                               rowIndex={index}
                               selected={isConversationChatSelected(conversation)}
                               bulkSelectMode={bulkSelectMode}
@@ -2666,6 +2734,9 @@ export function AgentWorkspaceRail() {
         resetWorkspaceCustomOrder={resetWorkspaceCustomOrder}
         groupBy={agentRailSettings.groupBy}
         setGroupBy={setAgentRailGroupBy}
+        machines={machineOptions}
+        hiddenMachineIds={agentRailSettings.hiddenServerIds}
+        setMachineVisible={setMachineVisible}
         showIcons={agentRailSettings.showIcons}
         setShowIcons={(value) => patchAgentRailSettings({ showIcons: value })}
         sectionOrder={agentRailSettings.sectionOrder ?? ["pinned", "chats", "workspaces"]}
