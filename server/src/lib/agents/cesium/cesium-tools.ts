@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { BROWSER_MCP_SERVER_ID } from "../../mcp/builtin-browser-tools.js";
+import { PHONE_MCP_SERVER_ID } from "../../mcp/builtin-phone-tools.js";
 import type { AgentPermissionCategory } from "../types.js";
 import { permissionDecisionFromOption as sharedPermissionDecisionFromOption } from "../permission-options.js";
 import {
@@ -1086,7 +1087,13 @@ export function normalizeCallMcpToolArgs(raw: Record<string, unknown>): Normaliz
     pickFirstString(raw, CALL_MCP_SERVER_ID_KEYS) ??
     pickFirstString(nested, CALL_MCP_SERVER_ID_KEYS) ??
     "";
-  const serverId = rawServerId.toLowerCase() === BROWSER_MCP_SERVER_ID ? BROWSER_MCP_SERVER_ID : rawServerId;
+  const normalizedServerId = rawServerId.toLowerCase();
+  const serverId =
+    normalizedServerId === BROWSER_MCP_SERVER_ID
+      ? BROWSER_MCP_SERVER_ID
+      : normalizedServerId === PHONE_MCP_SERVER_ID
+        ? PHONE_MCP_SERVER_ID
+        : rawServerId;
   const toolName =
     pickFirstString(raw, CALL_MCP_TOOL_NAME_KEYS) ??
     pickFirstString(nested, CALL_MCP_TOOL_NAME_KEYS) ??

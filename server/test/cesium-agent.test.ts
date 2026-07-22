@@ -571,6 +571,17 @@ test("normalizeCallMcpToolArgs accepts nested, snake_case, and flat MCP tool sha
   );
   assert.deepEqual(
     normalizeCallMcpToolArgs({
+      serverId: "PHONE",
+      toolName: "phone_snapshot",
+    }),
+    {
+      serverId: "phone",
+      toolName: "phone_snapshot",
+      arguments: {},
+    }
+  );
+  assert.deepEqual(
+    normalizeCallMcpToolArgs({
       serverId: "browser",
       toolName: "browser_snapshot",
       arguments: { tabId: "tab-1" },
