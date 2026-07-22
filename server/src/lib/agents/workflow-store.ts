@@ -21,6 +21,8 @@ type PersistedWorkflowRunsFile = {
   runs: WorkflowRunRecord[];
 };
 
+const workflowRunFileQueues = new Map<string, Promise<void>>();
+
 function getWorkflowRunsFile(workspaceId: string): string {
   return path.join(DATA_DIR, "workspaces", workspaceId, "workflow-runs.json");
 }
@@ -65,6 +67,30 @@ async function writeRunsFile(
     schemaVersion: 1,
     runs,
   } satisfies PersistedWorkflowRunsFile);
+}
+
+async function withWorkflowRunFileLock<T>(
+  workspaceId: string,
+  fn: () => Promise<T>
+): Promise<T> {
+  const filePath = getWorkflowRunsFile(workspaceId);
+  const previous = workflowRunFileQueues.get(filePath) ?? Promise.resolve();
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const current = previous.catch(() => undefined).then(() => gate);
+  workflowRunFileQueues.set(filePath, current);
+
+  await previous.catch(() => undefined);
+  try {
+    return await fn();
+  } finally {
+    release();
+    if (workflowRunFileQueues.get(filePath) === current) {
+      workflowRunFileQueues.delete(filePath);
+    }
+  }
 }
 
 export function hashWorkflowAgentCall(
@@ -144,18 +170,20 @@ export function createWorkflowRunRecord(input: {
 }
 
 export async function upsertWorkflowRun(record: WorkflowRunRecord): Promise<WorkflowRunRecord> {
-  const runs = await readRunsFile(record.workspaceId);
-  const index = runs.findIndex((item) => item.runId === record.runId);
-  const next = { ...record, updatedAt: nowMs() };
-  if (index >= 0) {
-    runs[index] = next;
-  } else {
-    runs.push(next);
-  }
-  // Keep the newest 100 runs.
-  runs.sort((a, b) => b.updatedAt - a.updatedAt);
-  await writeRunsFile(record.workspaceId, runs.slice(0, 100));
-  return next;
+  return withWorkflowRunFileLock(record.workspaceId, async () => {
+    const runs = await readRunsFile(record.workspaceId);
+    const index = runs.findIndex((item) => item.runId === record.runId);
+    const next = { ...record, updatedAt: nowMs() };
+    if (index >= 0) {
+      runs[index] = next;
+    } else {
+      runs.push(next);
+    }
+    // Keep the newest 100 runs.
+    runs.sort((a, b) => b.updatedAt - a.updatedAt);
+    await writeRunsFile(record.workspaceId, runs.slice(0, 100));
+    return next;
+  });
 }
 
 export async function readWorkflowRun(input: {

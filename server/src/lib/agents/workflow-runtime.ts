@@ -269,20 +269,23 @@ export async function executeWorkflowRun(input: {
   };
 
   const phase = (title: string) => {
-    currentPhase = String(title ?? "").trim() || null;
+    const nextPhase = String(title ?? "").trim() || null;
+    currentPhase = nextPhase;
     void withRunLock(async () => {
       run = await appendWorkflowLog(
-        { ...run, currentPhase },
-        currentPhase ? `Phase: ${currentPhase}` : "Phase cleared",
-        currentPhase
+        { ...run, currentPhase: nextPhase },
+        nextPhase ? `Phase: ${nextPhase}` : "Phase cleared",
+        nextPhase
       );
       await input.onUpdate?.(run);
     });
   };
 
   const log = (message: string) => {
+    const phaseName = currentPhase;
+    const messageText = String(message ?? "");
     void withRunLock(async () => {
-      run = await appendWorkflowLog(run, String(message ?? ""), currentPhase);
+      run = await appendWorkflowLog(run, messageText, phaseName);
       await input.onUpdate?.(run);
     });
   };
@@ -590,16 +593,20 @@ export async function executeWorkflowRun(input: {
       result === undefined
         ? undefined
         : (JSON.parse(JSON.stringify(result)) as unknown);
-    run = await updateWorkflowRunStatus(run, "completed", {
-      returnValue: safeReturnValue,
-      error: null,
+    run = await withRunLock(async () => {
+      return updateWorkflowRunStatus(run, "completed", {
+        returnValue: safeReturnValue,
+        error: null,
+      });
     });
     await input.onUpdate?.(run);
     return run;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     cancelled = true;
-    run = await updateWorkflowRunStatus(run, "failed", { error: message });
+    run = await withRunLock(async () => {
+      return updateWorkflowRunStatus(run, "failed", { error: message });
+    });
     await input.onUpdate?.(run);
     return run;
   }

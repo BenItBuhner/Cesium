@@ -8,8 +8,10 @@ import {
   createWorkflowRunRecord,
   hashWorkflowAgentCall,
   persistWorkflowScript,
+  readWorkflowRun,
   upsertWorkflowRun,
 } from "../src/lib/agents/workflow-store.js";
+import { DATA_DIR } from "../src/lib/persistence.js";
 import type { WorkspaceRecord } from "../src/lib/workspace-registry.js";
 import {
   resolveCesiumModeToolPolicy,
@@ -158,6 +160,75 @@ return [a, b];
   assert.equal(liveCalls, 1);
   assert.deepEqual(completed.returnValue, ["live:same", "live:same"]);
   assert.equal(completed.agents.filter((item) => item.status === "cached").length, 1);
+});
+
+test("upsertWorkflowRun preserves concurrent distinct runs in one workspace", async () => {
+  const workspace: WorkspaceRecord = {
+    id: `ws-workflow-upsert-${process.pid}-${Date.now()}`,
+    root: "/tmp",
+    name: "Workflow upsert race",
+    createdAt: 1,
+    updatedAt: 1,
+    lastOpenedAt: 1,
+  };
+  try {
+    const runs = Array.from({ length: 20 }, (_, index) =>
+      createWorkflowRunRecord({
+        workspace,
+        conversationId: `conv-upsert-${index}`,
+        script: SAMPLE_SCRIPT,
+        scriptPath: `/tmp/upsert-${index}.js`,
+      })
+    );
+
+    await Promise.all(runs.map((run) => upsertWorkflowRun(run)));
+
+    const persisted = await Promise.all(
+      runs.map((run) => readWorkflowRun({ workspaceId: workspace.id, runId: run.runId }))
+    );
+    assert.equal(persisted.filter(Boolean).length, runs.length);
+  } finally {
+    await rm(path.join(DATA_DIR, "workspaces", workspace.id), { recursive: true, force: true });
+  }
+});
+
+test("workflow immediate phase and log writes do not regress persisted completed status", async () => {
+  const workspace: WorkspaceRecord = {
+    id: `ws-workflow-immediate-${process.pid}-${Date.now()}`,
+    root: "/tmp",
+    name: "Workflow immediate return",
+    createdAt: 1,
+    updatedAt: 1,
+    lastOpenedAt: 1,
+  };
+  const script = `export const meta = { name: "instant", description: "instant return", phases: [{ title: "One" }] };
+phase("One");
+log("ready");
+return "done";
+`;
+  try {
+    let run = createWorkflowRunRecord({
+      workspace,
+      conversationId: "conv-immediate",
+      script,
+      scriptPath: "/tmp/instant.js",
+    });
+    run = await upsertWorkflowRun(run);
+
+    const completed = await executeWorkflowRun({
+      run,
+      spawnAgent: async () => ({ value: null, tokensUsed: 0 }),
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    const persisted = await readWorkflowRun({ workspaceId: workspace.id, runId: run.runId });
+    assert.equal(completed.status, "completed");
+    assert.equal(persisted?.status, "completed");
+    assert.equal(persisted?.returnValue, "done");
+    assert.equal(persisted?.logs.some((entry) => entry.message === "ready"), true);
+  } finally {
+    await rm(path.join(DATA_DIR, "workspaces", workspace.id), { recursive: true, force: true });
+  }
 });
 
 test("hashWorkflowAgentCall is stable for identical prompt/opts", () => {
