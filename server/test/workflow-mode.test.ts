@@ -115,6 +115,55 @@ test("workflow snapshots infer the active phase from agent records", () => {
   assert.equal(snapshot.currentPhase, "Inspect");
 });
 
+test("truncated workflow snapshots retain full phase and status totals", () => {
+  const workspace: WorkspaceRecord = {
+    id: "ws-workflow-snapshot-scale",
+    root: "/tmp",
+    name: "Snapshot scale",
+    createdAt: 1,
+    updatedAt: 1,
+    lastOpenedAt: 1,
+  };
+  const run = createWorkflowRunRecord({
+    workspace,
+    conversationId: "conv-snapshot-scale",
+    script: SAMPLE_SCRIPT,
+    scriptPath: "/tmp/snapshot-scale.js",
+    meta: {
+      name: "scale",
+      description: "Scale snapshot",
+      phases: [{ title: "Inspect" }],
+    },
+  });
+  const agents = Array.from({ length: 600 }, (_, index) => ({
+    id: `agent-${index}`,
+    label: `Agent ${index}`,
+    phase: "Inspect",
+    prompt: `Inspect ${index}`,
+    status: "completed" as const,
+    tokensUsed: 100,
+    startedAt: index,
+    completedAt: index + 10,
+  }));
+  const snapshot = serializeWorkflowRunSnapshot(
+    {
+      ...run,
+      status: "completed",
+      agentsUsed: agents.length,
+      tokensUsed: 60_000,
+      agents,
+    },
+    { agentLimit: 50 }
+  );
+
+  assert.equal(snapshot.agents.length, 50);
+  assert.equal(snapshot.agentRecordsTotal, 600);
+  assert.equal(snapshot.agentsTruncated, true);
+  assert.equal(snapshot.agentStatusCounts.completed, 600);
+  assert.equal(snapshot.phases[0]?.agentCount, 600);
+  assert.equal(snapshot.phases[0]?.tokensUsed, 60_000);
+});
+
 test("workflow run records default to Claude-parity runtime caps", () => {
   const workspace: WorkspaceRecord = {
     id: "ws-workflow-default-caps",
