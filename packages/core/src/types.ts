@@ -14,6 +14,83 @@ export type WorkedSessionEditPreview = {
   lines: WorkedSessionEditPreviewLine[];
 };
 
+export type WorkflowRunSnapshotStatus =
+  | "pending"
+  | "compiling"
+  | "running"
+  | "paused"
+  | "completed"
+  | "failed"
+  | "cancelled";
+
+export type WorkflowRunSnapshotAgentStatus =
+  | "queued"
+  | "running"
+  | "completed"
+  | "failed"
+  | "cached"
+  | "skipped";
+
+export type WorkflowRunSnapshotAgentStatusCounts = Record<
+  WorkflowRunSnapshotAgentStatus,
+  number
+>;
+
+export type WorkflowRunSnapshotPhase = {
+  title: string;
+  detail?: string;
+  model?: string;
+  agentCount?: number;
+  tokensUsed?: number;
+  statusCounts?: WorkflowRunSnapshotAgentStatusCounts;
+  startedAt?: number | null;
+  completedAt?: number | null;
+};
+
+export type WorkflowRunSnapshotLogEntry = {
+  at: number;
+  message: string;
+  phase?: string | null;
+};
+
+export type WorkflowRunSnapshotAgent = {
+  id: string;
+  label: string;
+  phase: string | null;
+  status: WorkflowRunSnapshotAgentStatus;
+  tokensUsed: number;
+  startedAt: number | null;
+  completedAt: number | null;
+  promptPreview?: string;
+  resultPreview?: string;
+  errorPreview?: string;
+};
+
+export type WorkflowRunSnapshot = {
+  runId: string;
+  name: string;
+  description: string;
+  status: WorkflowRunSnapshotStatus;
+  currentPhase: string | null;
+  tokenBudget: number | null;
+  tokensUsed: number;
+  maxAgents: number;
+  agentsUsed: number;
+  maxConcurrent: number;
+  createdAt: number;
+  updatedAt: number;
+  completedAt: number | null;
+  scriptPath: string;
+  recentLogs: WorkflowRunSnapshotLogEntry[];
+  returnPreview: string | null;
+  errorPreview: string | null;
+  phases: WorkflowRunSnapshotPhase[];
+  agentStatusCounts: WorkflowRunSnapshotAgentStatusCounts;
+  agentRecordsTotal: number;
+  agentsTruncated: boolean;
+  agents: WorkflowRunSnapshotAgent[];
+};
+
 export interface FileNode {
   name: string;
   type: "file" | "folder";
@@ -71,6 +148,7 @@ export type WorkedSessionEntry =
       locations?: Array<{ path: string; line?: number }>;
       files?: string[];
       editPreview?: WorkedSessionEditPreview;
+      workflowRun?: WorkflowRunSnapshot;
     };
 
 export type ImageAttachment = {

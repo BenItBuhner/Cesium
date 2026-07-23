@@ -1321,6 +1321,32 @@ function CesiumAgentHarnessSettings() {
                   disabled={busy}
                 />
               </label>
+              <label className="flex flex-col gap-[5px]">
+                <SettingsFieldLabel>Workflow default token budget</SettingsFieldLabel>
+                <input
+                  type="number"
+                  min={1}
+                  step={1000}
+                  className="rounded-[var(--radius-tab)] border border-[var(--border-subtle)] bg-[var(--bg-primary)] px-[10px] py-[7px] font-mono text-[12px] text-[var(--text-primary)]"
+                  value={settings.workflow.defaultTokenBudget}
+                  disabled={busy}
+                  onChange={(event) => {
+                    const defaultTokenBudget = Number(event.target.value);
+                    if (!Number.isFinite(defaultTokenBudget) || defaultTokenBudget <= 0) return;
+                    void patchSettings({
+                      workflow: {
+                        ...settings.workflow,
+                        defaultTokenBudget,
+                      },
+                    });
+                  }}
+                />
+                <span className="font-sans text-[11px] leading-relaxed text-[var(--text-secondary)]">
+                  Official-style omitted budgets are unrestricted. Cesium instead uses this high
+                  default best-effort target when workflow_run omits tokenBudget; explicit positive
+                  tokenBudget values still override it for a run.
+                </span>
+              </label>
             </div>
           </HarnessDetailBlock>
 
@@ -1690,6 +1716,25 @@ function CesiumAgentHarnessSettings() {
                     })
                   }
                   ariaLabel="Switch mode permission"
+                  className="w-full max-w-none"
+                  triggerClassName={`${settingsSelectTriggerClass} w-full max-w-none`}
+                  disabled={busy}
+                />
+              </label>
+              <label className="flex flex-col gap-[5px]">
+                <SettingsFieldLabel>Launch workflow</SettingsFieldLabel>
+                <SettingsThemeSelect
+                  value={settings.toolPermissions.workflowLaunch ?? "ask"}
+                  options={[...TOOL_PERMISSION_OPTIONS]}
+                  onChange={(value) =>
+                    void patchSettings({
+                      toolPermissions: {
+                        ...settings.toolPermissions,
+                        workflowLaunch: value as "ask" | "allow" | "deny",
+                      },
+                    })
+                  }
+                  ariaLabel="Workflow launch permission"
                   className="w-full max-w-none"
                   triggerClassName={`${settingsSelectTriggerClass} w-full max-w-none`}
                   disabled={busy}

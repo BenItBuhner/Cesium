@@ -1,4 +1,6 @@
+import { createHash } from "node:crypto";
 import { BROWSER_MCP_SERVER_ID } from "../../mcp/builtin-browser-tools.js";
+import { PHONE_MCP_SERVER_ID } from "../../mcp/builtin-phone-tools.js";
 import type { AgentPermissionCategory } from "../types.js";
 import { permissionDecisionFromOption as sharedPermissionDecisionFromOption } from "../permission-options.js";
 import {
@@ -11,6 +13,12 @@ import {
 import { asRecord, asString, parseJsonArgs, pickFirstString } from "./cesium-coerce.js";
 import { WAIT_MAX_SECONDS } from "./cesium-prompt.js";
 import type { CesiumToolRequest } from "./cesium-types.js";
+import {
+  WORKFLOW_DEFAULT_MAX_AGENTS,
+  WORKFLOW_DEFAULT_MAX_CONCURRENT,
+  WORKFLOW_MAX_AGENTS,
+  WORKFLOW_MAX_CONCURRENT,
+} from "../workflow-types.js";
 
 export type { CesiumToolDefinition, ResolvedCesiumHarness };
 
@@ -135,7 +143,7 @@ const CESIUM_BASE_TOOLS: CesiumToolDefinition[] = [
   {
     name: "switch_mode",
     description:
-      "Switch this conversation into another Cesium mode (agent, plan, ask, orchestration, burn, or workflow). " +
+      "Switch this conversation into another Cesium mode (agent, plan, ask, orchestration, goal, or workflow). " +
       "Requires user approval by default; the user can Always allow a specific target mode. " +
       "Use when the task needs a different operating mode instead of asking the user to change the mode picker themselves.",
     requiresPermission: "switchMode",
@@ -144,7 +152,7 @@ const CESIUM_BASE_TOOLS: CesiumToolDefinition[] = [
       properties: {
         target_mode: {
           type: "string",
-          enum: ["agent", "plan", "orchestration", "burn", "workflow", "ask"],
+          enum: ["agent", "plan", "orchestration", "goal", "workflow", "ask"],
           description: "Mode to switch into. Must be enabled in Cesium Agent settings.",
         },
         reason: {
@@ -322,6 +330,7 @@ const CESIUM_BASE_TOOLS: CesiumToolDefinition[] = [
     name: "workflow_run",
     description:
       "Compile and execute a Workflow mode JavaScript orchestration script. The script MUST begin with `export const meta = { name, description, phases }` (pure literal) and may use agent()/parallel()/pipeline()/phase()/log()/budget/args. Prefer wait=true so the tool returns the final script value. Intermediate agent results stay in script variables, not the parent transcript.",
+    requiresPermission: "workflowLaunch",
     parameters: {
       type: "object",
       properties: {
@@ -345,20 +354,21 @@ const CESIUM_BASE_TOOLS: CesiumToolDefinition[] = [
         },
         tokenBudget: {
           type: "integer",
-          minimum: 0,
-          description: "Optional hard token ceiling for this run. budget.remaining() is Infinity when omitted.",
+          minimum: 1,
+          description:
+            "Optional positive best-effort run-wide token budget. Omit to use Settings -> Agents -> Cesium Agent -> Workflow default token budget (5,000,000 by default). Cesium accumulates provider-reported usage and passes the remaining amount as a child response target; providers may under-report, omit usage, or exceed requested output caps, so final usage can exceed the target.",
         },
         maxAgents: {
           type: "integer",
           minimum: 1,
-          maximum: 200,
-          description: "Optional agent() call cap for this run (default 50).",
+          maximum: WORKFLOW_MAX_AGENTS,
+          description: `Optional agent() call cap for this run (default ${WORKFLOW_DEFAULT_MAX_AGENTS}).`,
         },
         maxConcurrent: {
           type: "integer",
           minimum: 1,
-          maximum: 16,
-          description: "Optional concurrent agent() cap (default 8, also bounded by CPU count).",
+          maximum: WORKFLOW_MAX_CONCURRENT,
+          description: `Optional concurrent agent() cap for this run (default ${WORKFLOW_DEFAULT_MAX_CONCURRENT}, also bounded by available CPU cores).`,
         },
         resumeFromRunId: {
           type: "string",
@@ -395,6 +405,25 @@ const CESIUM_BASE_TOOLS: CesiumToolDefinition[] = [
         runId: { type: "string" },
         timeoutMs: { type: "integer", minimum: 1000, maximum: 600000 },
       },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "workflow_control",
+    description:
+      "Pause, resume, stop, or restart a Workflow mode run. Defaults to the latest run for this conversation when runId is omitted. Restart creates a new run from the prior script, args, and limits; set reuseJournal=true to replay completed agent calls from the prior journal.",
+    parameters: {
+      type: "object",
+      properties: {
+        action: { type: "string", enum: ["pause", "resume", "stop", "restart"] },
+        runId: { type: "string" },
+        reuseJournal: {
+          type: "boolean",
+          description:
+            "For restart only. When true, seed completed prior agent() calls into the new run.",
+        },
+      },
+      required: ["action"],
       additionalProperties: false,
     },
   },
@@ -833,6 +862,7 @@ export function toolKind(name: string): string {
     case "workflow_run":
     case "workflow_status":
     case "workflow_await":
+    case "workflow_control":
       return "workflow";
     case "ask_question":
       return "question";
@@ -895,6 +925,11 @@ export function cesiumPermissionToolKey(
         "";
       return `cesium:switch_mode:${target}`;
     }
+    case "workflowLaunch": {
+      const source = asString(args.scriptPath) ?? asString(args.script) ?? "";
+      const digest = createHash("sha256").update(source).digest("hex").slice(0, 24);
+      return `cesium:workflow_launch:${digest}`;
+    }
   }
 }
 
@@ -909,6 +944,8 @@ export function cesiumPermissionCategoryKey(permission: AgentPermissionCategory)
       return "cesium:mcp";
     case "switchMode":
       return "cesium:switch_mode";
+    case "workflowLaunch":
+      return "cesium:workflow_launch";
   }
 }
 
@@ -972,6 +1009,8 @@ export function toolTitle(name: string, args: Record<string, unknown>): string {
       return `Workflow status ${asString(args.runId) ?? ""}`.trim();
     case "workflow_await":
       return `Await workflow ${asString(args.runId) ?? ""}`.trim();
+    case "workflow_control":
+      return `${asString(args.action) ?? "Control"} workflow ${asString(args.runId) ?? ""}`.trim();
     case "ask_question":
       return "Ask question";
     case "subagent":
@@ -1067,7 +1106,13 @@ export function normalizeCallMcpToolArgs(raw: Record<string, unknown>): Normaliz
     pickFirstString(raw, CALL_MCP_SERVER_ID_KEYS) ??
     pickFirstString(nested, CALL_MCP_SERVER_ID_KEYS) ??
     "";
-  const serverId = rawServerId.toLowerCase() === BROWSER_MCP_SERVER_ID ? BROWSER_MCP_SERVER_ID : rawServerId;
+  const normalizedServerId = rawServerId.toLowerCase();
+  const serverId =
+    normalizedServerId === BROWSER_MCP_SERVER_ID
+      ? BROWSER_MCP_SERVER_ID
+      : normalizedServerId === PHONE_MCP_SERVER_ID
+        ? PHONE_MCP_SERVER_ID
+        : rawServerId;
   const toolName =
     pickFirstString(raw, CALL_MCP_TOOL_NAME_KEYS) ??
     pickFirstString(nested, CALL_MCP_TOOL_NAME_KEYS) ??

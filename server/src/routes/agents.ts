@@ -23,6 +23,9 @@ import type {
   AgentQueuedChatPrompt,
 } from "../lib/agents/types.js";
 import { createStandaloneChatWorkspace } from "../lib/standalone-chats.js";
+import { readWorkflowRun } from "../lib/agents/workflow-store.js";
+import { workflowRunManager } from "../lib/agents/workflow-run-manager.js";
+import { serializeWorkflowRunSnapshot } from "../lib/agents/workflow-snapshot.js";
 
 export const agentRoutes = new Hono();
 
@@ -91,6 +94,83 @@ agentRoutes.post("/api/agents/conversations", async (c) => {
   const conversation = await agentRuntimeManager.createConversation(workspace, body);
   return c.json({ conversation }, 201);
 });
+
+agentRoutes.get(
+  "/api/agents/conversations/:conversationId/workflows/:runId",
+  async (c) => {
+    const workspace = await requireWorkspaceFromRequest(c);
+    const conversationId = c.req.param("conversationId");
+    const runId = c.req.param("runId");
+    const stored = await readWorkflowRun({ workspaceId: workspace.id, runId });
+    if (!stored || stored.conversationId !== conversationId) {
+      return c.json({ error: "Workflow run not found." }, 404);
+    }
+    const active = workflowRunManager.has(workspace.id, stored.runId);
+    const displayRun =
+      !active && (stored.status === "running" || stored.status === "pending")
+        ? { ...stored, status: "paused" as const }
+        : stored;
+    c.header("Cache-Control", "no-store");
+    return c.json({
+      workflow: serializeWorkflowRunSnapshot(displayRun, { agentLimit: 500 }),
+      active,
+    });
+  }
+);
+
+agentRoutes.post(
+  "/api/agents/conversations/:conversationId/workflows/:runId/control",
+  async (c) => {
+    const workspace = await requireWorkspaceFromRequest(c);
+    const conversationId = c.req.param("conversationId");
+    const runId = c.req.param("runId");
+    const body = await c.req.json<{ action?: unknown }>();
+    const action =
+      body.action === "pause" ||
+      body.action === "resume" ||
+      body.action === "stop"
+        ? body.action
+        : null;
+    if (!action) {
+      return c.json({ error: "Expected action pause, resume, or stop." }, 400);
+    }
+    const stored = await readWorkflowRun({ workspaceId: workspace.id, runId });
+    if (!stored || stored.conversationId !== conversationId) {
+      return c.json({ error: "Workflow run not found." }, 404);
+    }
+    const managed = workflowRunManager.get(workspace.id, runId);
+    if (!managed) {
+      return c.json(
+        {
+          error:
+            "Workflow run is not active in this server process. Resume or restart it from Workflow mode.",
+          workflow: serializeWorkflowRunSnapshot(stored),
+        },
+        409
+      );
+    }
+    if (action === "pause") {
+      managed.pause();
+    } else if (action === "resume") {
+      managed.resume();
+    } else {
+      managed.stop();
+    }
+    const latest =
+      (await readWorkflowRun({ workspaceId: workspace.id, runId })) ?? stored;
+    return c.json(
+      {
+        ok: true,
+        requestedAction: action,
+        workflow: serializeWorkflowRunSnapshot(latest),
+        active:
+          action !== "stop" &&
+          workflowRunManager.has(workspace.id, runId),
+      },
+      202
+    );
+  }
+);
 
 agentRoutes.post("/api/agents/conversations/create-and-prompt", async (c) => {
   const workspace = await requireWorkspaceFromRequest(c);

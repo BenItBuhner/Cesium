@@ -72,7 +72,8 @@ export type AgentPermissionCategory =
   | "editFile"
   | "terminal"
   | "mcpCall"
-  | "switchMode";
+  | "switchMode"
+  | "workflowLaunch";
 
 /** How a remembered permission rule matches future tool calls. */
 export type RememberedAgentPermissionMatchStyle = "exact" | "category";

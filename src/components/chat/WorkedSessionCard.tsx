@@ -22,6 +22,7 @@ import { TOOL_CALL_DROPDOWN_MAX_HEIGHT_DEFAULT_PX } from "@/lib/theme-config";
 import { inferEditorLanguageFromPath } from "@/lib/editor-language";
 import { HorizontalFadedScroll } from "./HorizontalFadedScroll";
 import { PermissionRequestCard } from "./PermissionRequestCard";
+import { WorkflowRunVisualization } from "./WorkflowRunVisualization";
 import type { ChatMessage, WorkedSessionEntry, WorkedSessionEditPreview } from "@/lib/types";
 import { isAgentTodoJsonDetailString } from "@/lib/agent-chat";
 import {
@@ -87,6 +88,7 @@ interface WorkedSessionCardProps {
   contentRail?: boolean;
   /** Turn finished — card should collapse when this becomes true. */
   settled?: boolean;
+  conversationId?: string | null;
 }
 
 const TOOL_FILE_PREVIEW = 5;
@@ -552,6 +554,7 @@ export function WorkedSessionCard({
   onResolvePermission,
   contentRail = true,
   settled = false,
+  conversationId = null,
 }: WorkedSessionCardProps) {
   const { themeConfig } = useTheme();
   const entryListMaxHeightPx =
@@ -941,6 +944,7 @@ export function WorkedSessionCard({
                       onOpenToolFile={handleOpenToolFile}
                       horizScrollFadeEdge={gradientVar}
                       editDiffRenderingMode={editDiffRenderingMode}
+                      conversationId={conversationId}
                     />
                   )
                 )}
@@ -972,6 +976,7 @@ function WorkedEntryBlock({
   onOpenToolFile,
   horizScrollFadeEdge,
   editDiffRenderingMode,
+  conversationId,
 }: {
   entry: WorkedSessionEntry;
   isLiveWorkedTail: boolean;
@@ -979,6 +984,7 @@ function WorkedEntryBlock({
   onOpenToolFile: (path: string) => void;
   horizScrollFadeEdge: string;
   editDiffRenderingMode: EditDiffRenderingMode;
+  conversationId: string | null;
 }) {
   const [visible, setVisible] = useState(false);
   const [rawDetailOpen, setRawDetailOpen] = useState(false);
@@ -1002,7 +1008,8 @@ function WorkedEntryBlock({
         horizScrollFadeEdge,
         rawDetailOpen,
         setRawDetailOpen,
-        editDiffRenderingMode
+        editDiffRenderingMode,
+        conversationId
       )}
     </div>
   );
@@ -1016,7 +1023,8 @@ function renderEntry(
   horizScrollFadeEdge: string,
   rawDetailOpen: boolean,
   onRawDetailOpenChange: (open: boolean) => void,
-  editDiffRenderingMode: EditDiffRenderingMode
+  editDiffRenderingMode: EditDiffRenderingMode,
+  conversationId: string | null
 ) {
   switch (entry.kind) {
     case "verbatim":
@@ -1110,6 +1118,14 @@ function renderEntry(
         </div>
       );
     case "tool": {
+      if (entry.workflowRun) {
+        return (
+          <WorkflowRunVisualization
+            snapshot={entry.workflowRun}
+            conversationId={conversationId}
+          />
+        );
+      }
       const active = isToolEntryActive(entry);
       const statusKey =
         entry.status === "failed" || entry.status === "cancelled"
