@@ -71,14 +71,27 @@ function agentDuration(agent: WorkflowRunSnapshotAgent, now: number): number {
 function phaseStatus(
   title: string,
   currentPhase: string | null,
-  agents: WorkflowRunSnapshotAgent[]
+  agents: WorkflowRunSnapshotAgent[],
+  runStatus: WorkflowRunSnapshot["status"],
+  summary?: WorkflowRunSnapshot["phases"][number]
 ): "pending" | "running" | "completed" | "failed" {
-  if (agents.some((agent) => agent.status === "failed")) return "failed";
-  if (title === currentPhase || agents.some((agent) => agent.status === "running")) {
-    return "running";
-  }
-  if (agents.length > 0 && agents.every((agent) => TERMINAL_AGENT_STATUSES.has(agent.status))) {
+  const counts = summary?.statusCounts;
+  const failed = counts?.failed ?? agents.filter((agent) => agent.status === "failed").length;
+  if (failed > 0) return "failed";
+  const agentCount = summary?.agentCount ?? agents.length;
+  const terminal =
+    counts != null
+      ? counts.completed + counts.failed + counts.cached + counts.skipped
+      : agents.filter((agent) => TERMINAL_AGENT_STATUSES.has(agent.status)).length;
+  if (agentCount > 0 && terminal >= agentCount) {
     return "completed";
+  }
+  if (
+    runStatus === "running" &&
+    (title === currentPhase ||
+      (counts?.running ?? agents.filter((agent) => agent.status === "running").length) > 0)
+  ) {
+    return "running";
   }
   return "pending";
 }
@@ -132,16 +145,7 @@ export function WorkflowRunVisualization({
       setControlError(null);
       try {
         const response = await controlWorkflowRun(conversationId, run.runId, action);
-        setRun((current) => ({
-          ...current,
-          ...response.workflow,
-          status:
-            action === "pause"
-              ? "paused"
-              : action === "resume"
-                ? "running"
-                : current.status,
-        }));
+        setRun(response.workflow);
         setActive(action !== "stop");
         window.setTimeout(() => void refresh(), 350);
       } catch (error) {
@@ -161,18 +165,19 @@ export function WorkflowRunVisualization({
       ? Math.min(100, (run.tokensUsed / run.tokenBudget) * 100)
       : 0;
   const largeWorkflow = run.agentsUsed > 25 || run.tokensUsed > 1_500_000;
-  const terminalAgents = run.agents.filter((agent) =>
-    TERMINAL_AGENT_STATUSES.has(agent.status)
-  ).length;
+  const terminalAgents =
+    run.agentStatusCounts.completed +
+    run.agentStatusCounts.failed +
+    run.agentStatusCounts.cached +
+    run.agentStatusCounts.skipped;
   const phaseLabel =
-    run.currentPhase ??
-    (run.status === "completed"
+    run.status === "completed"
       ? "Complete"
       : run.status === "failed"
         ? "Failed"
         : run.status === "cancelled"
           ? "Stopped"
-          : "Waiting");
+          : run.currentPhase ?? "Waiting";
 
   const phases = useMemo(() => {
     const declared = run.phases.map((phase) => phase.title);
@@ -191,8 +196,11 @@ export function WorkflowRunVisualization({
         detail: phase?.detail,
         model: phase?.model,
         agents,
-        status: phaseStatus(title, run.currentPhase, agents),
-        tokens: agents.reduce((total, agent) => total + agent.tokensUsed, 0),
+        agentCount: phase?.agentCount ?? agents.length,
+        status: phaseStatus(title, run.currentPhase, agents, run.status, phase),
+        tokens:
+          phase?.tokensUsed ??
+          agents.reduce((total, agent) => total + agent.tokensUsed, 0),
       };
     });
   }, [run.agents, run.currentPhase, run.phases]);
@@ -290,7 +298,7 @@ export function WorkflowRunVisualization({
           ["timeline", Activity, "Timeline"],
           ["logs", ScrollText, "Logs"],
         ] as const).map(([id, Icon, label]) => (
-          <button key={id} onClick={() => setView(id)} className={`inline-flex items-center gap-[5px] rounded-[7px] px-[8px] py-[4px] text-[10px] transition-colors ${view === id ? "bg-[var(--workflow-accent-bg)] text-[var(--workflow-accent)]" : "text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"}`}>
+          <button key={id} aria-pressed={view === id} onClick={() => setView(id)} className={`inline-flex items-center gap-[5px] rounded-[7px] px-[8px] py-[4px] text-[10px] transition-colors ${view === id ? "bg-[var(--workflow-accent-bg)] text-[var(--workflow-accent)]" : "text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"}`}>
             <Icon className="size-[11px]" /> {label}
           </button>
         ))}
@@ -307,20 +315,20 @@ export function WorkflowRunVisualization({
                 <div key={phase.title} className="relative rounded-[10px] border border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--bg-card)_80%,transparent)] px-[10px] py-[9px]">
                   <div className="flex items-start gap-[8px]">
                     <div className="flex flex-col items-center">
-                      <span className={`mt-[2px] size-[8px] rounded-full ${phase.status === "running" ? "bg-violet-400 shadow-[0_0_10px_rgba(167,139,250,.75)]" : phase.status === "completed" ? "bg-emerald-400" : phase.status === "failed" ? "bg-rose-400" : "bg-slate-500"}`} />
+                      <span role="img" aria-label={`${phase.title} phase ${phase.status}`} className={`mt-[2px] size-[8px] rounded-full ${phase.status === "running" ? "bg-violet-400 shadow-[0_0_10px_rgba(167,139,250,.75)]" : phase.status === "completed" ? "bg-emerald-400" : phase.status === "failed" ? "bg-rose-400" : "bg-slate-500"}`} />
                       {index < phases.length - 1 ? <span className="mt-[3px] h-[22px] w-px bg-[var(--border-subtle)]" /> : null}
                     </div>
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-[7px]">
                         <span className="font-sans text-[11px] font-medium text-[var(--text-primary)]">{phase.title}</span>
-                        <span className="font-mono text-[9px] text-[var(--text-secondary)]">{phase.agents.length} agents · {compactNumber(phase.tokens)} tok</span>
+                        <span className="font-mono text-[9px] text-[var(--text-secondary)]">{phase.agentCount} agents · {compactNumber(phase.tokens)} tok</span>
                         {phase.model ? <span className="rounded bg-[var(--bg-hover)] px-[5px] py-[1px] font-mono text-[8px] text-[var(--text-secondary)]">{phase.model}</span> : null}
                       </div>
                       {phase.detail ? <p className="mt-[2px] text-[10px] text-[var(--text-secondary)]">{phase.detail}</p> : null}
                       <div className="mt-[7px] grid gap-[4px] sm:grid-cols-2">
                         {phase.agents.map((agent) => (
                           <button key={`${agent.id}-${agent.label}`} onClick={() => setSelectedAgentId(agent.id)} className={`flex min-w-0 items-center gap-[6px] rounded-[7px] border px-[7px] py-[5px] text-left transition-colors ${selectedAgentId === agent.id ? "border-[var(--workflow-accent)] bg-[var(--workflow-accent-bg)]" : "border-transparent bg-[var(--bg-primary)] hover:border-[var(--border-card)]"}`}>
-                            <span className={`size-[6px] shrink-0 rounded-full ${agentDot[agent.status]}`} />
+                            <span role="img" aria-label={`${agent.status} agent`} className={`size-[6px] shrink-0 rounded-full ${agentDot[agent.status]}`} />
                             <span className="min-w-0 flex-1 truncate text-[10px] text-[var(--text-primary)]">{agent.label}</span>
                             <span className="shrink-0 font-mono text-[8px] text-[var(--text-secondary)]">{compactNumber(agent.tokensUsed)}</span>
                           </button>
@@ -334,7 +342,7 @@ export function WorkflowRunVisualization({
             {selectedAgent ? (
               <aside className="rounded-[10px] border border-[color-mix(in_srgb,var(--workflow-accent)_24%,var(--border-card))] bg-[var(--bg-card)] p-[10px]">
                 <div className="flex items-center gap-[7px]">
-                  <span className={`size-[7px] rounded-full ${agentDot[selectedAgent.status]}`} />
+                  <span role="img" aria-label={`${selectedAgent.status} agent`} className={`size-[7px] rounded-full ${agentDot[selectedAgent.status]}`} />
                   <h4 className="min-w-0 flex-1 truncate text-[11px] font-semibold text-[var(--text-primary)]">{selectedAgent.label}</h4>
                   <button onClick={() => setSelectedAgentId(null)} className="text-[10px] text-[var(--text-secondary)] hover:text-[var(--text-primary)]">Close</button>
                 </div>
@@ -358,7 +366,7 @@ export function WorkflowRunVisualization({
               return (
                 <button key={`${agent.id}-${agent.label}`} onClick={() => { setSelectedAgentId(agent.id); setView("phases"); }} className="grid w-full grid-cols-[110px_minmax(0,1fr)_52px] items-center gap-[8px] rounded-[7px] px-[6px] py-[5px] text-left hover:bg-[var(--bg-hover)]">
                   <span className="truncate text-[9px] text-[var(--text-primary)]">{agent.label}</span>
-                  <span className="relative h-[7px] rounded-full bg-[var(--bg-primary)]"><span className={`absolute h-full rounded-full ${agent.status === "running" ? "bg-violet-400" : agent.status === "failed" ? "bg-rose-400" : "bg-emerald-400"}`} style={{ left: `${left}%`, width: `${Math.min(100 - left, width)}%` }} /></span>
+                  <span role="img" aria-label={`${agent.label}: ${agent.status}, ${formatDuration(agentDuration(agent, now))}`} className="relative h-[7px] rounded-full bg-[var(--bg-primary)]"><span className={`absolute h-full rounded-full ${agent.status === "running" ? "bg-violet-400" : agent.status === "failed" ? "bg-rose-400" : "bg-emerald-400"}`} style={{ left: `${left}%`, width: `${Math.min(100 - left, width)}%` }} /></span>
                   <span className="text-right font-mono text-[8px] text-[var(--text-secondary)]">{formatDuration(agentDuration(agent, now))}</span>
                 </button>
               );

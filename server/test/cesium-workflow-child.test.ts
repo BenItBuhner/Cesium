@@ -118,27 +118,21 @@ test("workflow child blocks recursive tools even if a provider emits one", async
   );
 });
 
-test("workflow child rejects a budget when the provider omits usage", async () => {
-  await assert.rejects(
-    () =>
-      runCesiumWorkflowChild({
-        prompt: "Use a budget",
-        system: "Workflow child",
-        tools: [],
-        tokenBudget: 100,
-        complete: async () => ({
-          text: "unmetered",
-          toolRequests: [],
-        }),
-        executeTool: async () => "unused",
-      }),
-    (error) => {
-      assert.ok(error instanceof WorkflowAgentSpawnError);
-      assert.equal(error.tokensUsed, 0);
-      assert.match(error.message, /did not report token usage/);
-      return true;
-    }
-  );
+test("workflow child estimates usage when the provider omits it", async () => {
+  const result = await runCesiumWorkflowChild({
+    prompt: "Use a budget",
+    system: "Workflow child",
+    tools: [],
+    tokenBudget: 100,
+    complete: async () => ({
+      text: "unmetered",
+      toolRequests: [],
+    }),
+    executeTool: async () => "unused",
+  });
+  assert.equal(result.value, "unmetered");
+  assert.ok((result.tokensUsed ?? 0) > 0);
+  assert.ok((result.tokensUsed ?? 0) <= 100);
 });
 
 test("workflow child tool loop is bounded and reports consumed tokens", async () => {

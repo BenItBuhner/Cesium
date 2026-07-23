@@ -24,6 +24,16 @@ test("workflow tool projection retains latest snapshot through generic final upd
     returnPreview: null,
     errorPreview: null,
     phases: [{ title: "Collect", detail: "Gather context" }],
+    agentStatusCounts: {
+      queued: 0,
+      running: 1,
+      completed: 0,
+      failed: 0,
+      cached: 0,
+      skipped: 0,
+    },
+    agentRecordsTotal: 1,
+    agentsTruncated: false,
     agents: [
       {
         id: "agent-1",

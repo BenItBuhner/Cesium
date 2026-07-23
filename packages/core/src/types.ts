@@ -31,10 +31,20 @@ export type WorkflowRunSnapshotAgentStatus =
   | "cached"
   | "skipped";
 
+export type WorkflowRunSnapshotAgentStatusCounts = Record<
+  WorkflowRunSnapshotAgentStatus,
+  number
+>;
+
 export type WorkflowRunSnapshotPhase = {
   title: string;
   detail?: string;
   model?: string;
+  agentCount?: number;
+  tokensUsed?: number;
+  statusCounts?: WorkflowRunSnapshotAgentStatusCounts;
+  startedAt?: number | null;
+  completedAt?: number | null;
 };
 
 export type WorkflowRunSnapshotLogEntry = {
@@ -75,6 +85,7 @@ export type WorkflowRunSnapshot = {
   returnPreview: string | null;
   errorPreview: string | null;
   phases: WorkflowRunSnapshotPhase[];
+  agentStatusCounts: WorkflowRunSnapshotAgentStatusCounts;
   agentRecordsTotal: number;
   agentsTruncated: boolean;
   agents: WorkflowRunSnapshotAgent[];

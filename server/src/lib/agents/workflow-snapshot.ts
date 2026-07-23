@@ -1,4 +1,7 @@
-import type { WorkflowRunSnapshot } from "@cesium/core";
+import type {
+  WorkflowRunSnapshot,
+  WorkflowRunSnapshotAgentStatusCounts,
+} from "@cesium/core";
 import type { WorkflowRunRecord, WorkflowRunStatus } from "./workflow-types.js";
 
 const PREVIEW_LIMIT = 2000;
@@ -17,6 +20,23 @@ function previewUnknown(value: unknown, limit = PREVIEW_LIMIT): string | null {
   } catch {
     return String(value).slice(0, limit);
   }
+}
+
+function statusCounts(
+  agents: WorkflowRunRecord["agents"]
+): WorkflowRunSnapshotAgentStatusCounts {
+  const counts: WorkflowRunSnapshotAgentStatusCounts = {
+    queued: 0,
+    running: 0,
+    completed: 0,
+    failed: 0,
+    cached: 0,
+    skipped: 0,
+  };
+  for (const agent of agents) {
+    counts[agent.status] += 1;
+  }
+  return counts;
 }
 
 export function workflowSnapshotToolStatus(
@@ -59,6 +79,42 @@ export function serializeWorkflowRunSnapshot(
     (run.status === "running" || run.status === "paused"
       ? inferredLatestPhase
       : null);
+  const declaredPhaseTitles = run.meta.phases.map((phase) => phase.title);
+  const discoveredPhaseTitles = run.agents
+    .map((agent) => agent.phase)
+    .filter((phase): phase is string => Boolean(phase));
+  const phaseTitles = [...new Set([...declaredPhaseTitles, ...discoveredPhaseTitles])];
+  if (run.agents.some((agent) => !agent.phase)) {
+    phaseTitles.push("Unassigned");
+  }
+  const phases = phaseTitles.map((title) => {
+    const definition = run.meta.phases.find((phase) => phase.title === title);
+    const phaseAgents = run.agents.filter((agent) =>
+      title === "Unassigned" ? !agent.phase : agent.phase === title
+    );
+    const starts = phaseAgents.flatMap((agent) =>
+      agent.startedAt == null ? [] : [agent.startedAt]
+    );
+    const completions = phaseAgents.flatMap((agent) =>
+      agent.completedAt == null ? [] : [agent.completedAt]
+    );
+    return {
+      title,
+      ...(definition?.detail ? { detail: definition.detail } : {}),
+      ...(definition?.model ? { model: definition.model } : {}),
+      agentCount: phaseAgents.length,
+      tokensUsed: phaseAgents.reduce(
+        (total, agent) => total + Math.max(0, agent.tokensUsed ?? 0),
+        0
+      ),
+      statusCounts: statusCounts(phaseAgents),
+      startedAt: starts.length > 0 ? Math.min(...starts) : null,
+      completedAt:
+        phaseAgents.length > 0 && completions.length === phaseAgents.length
+          ? Math.max(...completions)
+          : null,
+    };
+  });
   return {
     runId: run.runId,
     name: run.meta.name,
@@ -81,11 +137,8 @@ export function serializeWorkflowRunSnapshot(
     })),
     returnPreview: previewUnknown(run.returnValue),
     errorPreview: previewUnknown(run.error),
-    phases: run.meta.phases.map((phase) => ({
-      title: phase.title,
-      ...(phase.detail ? { detail: phase.detail } : {}),
-      ...(phase.model ? { model: phase.model } : {}),
-    })),
+    phases,
+    agentStatusCounts: statusCounts(run.agents),
     agentRecordsTotal: run.agents.length,
     agentsTruncated: agents.length < run.agents.length,
     agents: agents.map((agent) => ({

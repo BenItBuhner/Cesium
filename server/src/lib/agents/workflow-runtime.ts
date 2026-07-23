@@ -291,6 +291,8 @@ export async function executeWorkflowRun(input: {
   let currentPhase: string | null = null;
   let cancelled = false;
   let writeChain: Promise<void> = Promise.resolve();
+  let sideEffectError: Error | null = null;
+  const pendingSideEffects = new Set<Promise<void>>();
 
   const withRunLock = async <T>(
     fn: (current: WorkflowRunRecord) => Promise<T> | T
@@ -312,6 +314,32 @@ export async function executeWorkflowRun(input: {
   const persist = async (next: WorkflowRunRecord) => {
     run = await upsertWorkflowRun(next);
     await input.onUpdate?.(run);
+  };
+
+  const captureSideEffectError = (error: unknown) => {
+    sideEffectError =
+      error instanceof Error ? error : new Error(String(error));
+  };
+
+  const throwSideEffectError = () => {
+    if (sideEffectError) {
+      throw sideEffectError;
+    }
+  };
+
+  const scheduleSideEffect = (effect: () => Promise<void>) => {
+    const task = withRunLock(effect);
+    pendingSideEffects.add(task);
+    void task
+      .catch(captureSideEffectError)
+      .finally(() => pendingSideEffects.delete(task));
+  };
+
+  const flushSideEffects = async () => {
+    if (pendingSideEffects.size > 0) {
+      await Promise.allSettled([...pendingSideEffects]);
+    }
+    throwSideEffectError();
   };
 
   const checkpoint = async (): Promise<void> => {
@@ -366,7 +394,7 @@ export async function executeWorkflowRun(input: {
   const phase = (title: string) => {
     const nextPhase = String(title ?? "").trim() || null;
     currentPhase = nextPhase;
-    void withRunLock(async () => {
+    scheduleSideEffect(async () => {
       run = await appendWorkflowLog(
         { ...run, currentPhase: nextPhase },
         nextPhase ? `Phase: ${nextPhase}` : "Phase cleared",
@@ -379,7 +407,7 @@ export async function executeWorkflowRun(input: {
   const log = (message: string) => {
     const phaseName = currentPhase;
     const messageText = String(message ?? "");
-    void withRunLock(async () => {
+    scheduleSideEffect(async () => {
       run = await appendWorkflowLog(run, messageText, phaseName);
       await input.onUpdate?.(run);
     });
@@ -391,6 +419,7 @@ export async function executeWorkflowRun(input: {
   ): Promise<unknown> => {
     throwIfStopped();
     await checkpoint();
+    await flushSideEffects();
     if (cancelled) return null;
     const promptText = String(prompt ?? "");
     if (!promptText.trim()) {
@@ -424,6 +453,7 @@ export async function executeWorkflowRun(input: {
     };
 
     const begin = await withRunLock(async () => {
+      throwSideEffectError();
       if (run.agentsUsed >= maxAgents) {
         throw new Error(
           `Workflow agent() call cap reached (${maxAgents}). This usually means a loop using budget.remaining() never terminates because no token budget was set — remaining() returns Infinity when budget.total is null. Add a hard iteration cap to the loop, or pass a token budget.`
@@ -768,11 +798,13 @@ export async function executeWorkflowRun(input: {
     });
     throwIfStopped();
     await checkpoint();
+    await flushSideEffects();
     const safeReturnValue =
       result === undefined
         ? undefined
         : (JSON.parse(JSON.stringify(result)) as unknown);
     run = await withRunLock(async () => {
+      throwSideEffectError();
       return updateWorkflowRunStatus(run, "completed", {
         returnValue: safeReturnValue,
         error: null,

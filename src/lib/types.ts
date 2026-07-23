@@ -33,6 +33,7 @@ export type {
   WorkflowRunSnapshot,
   WorkflowRunSnapshotAgent,
   WorkflowRunSnapshotAgentStatus,
+  WorkflowRunSnapshotAgentStatusCounts,
   WorkflowRunSnapshotLogEntry,
   WorkflowRunSnapshotPhase,
   WorkflowRunSnapshotStatus,

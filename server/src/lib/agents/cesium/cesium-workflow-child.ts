@@ -42,15 +42,32 @@ export function resolveCesiumWorkflowChildTools(
     );
 }
 
-function resultTokenCount(result: CesiumAdapterResult): number {
+function estimatedTokens(value: unknown): number {
+  try {
+    return Math.max(0, Math.ceil(JSON.stringify(value).length / 4));
+  } catch {
+    return Math.max(0, Math.ceil(String(value ?? "").length / 4));
+  }
+}
+
+function resultTokenCount(
+  result: CesiumAdapterResult,
+  messages: CesiumHistoryMessage[]
+): number {
   const total = result.usage?.totalTokens;
   if (typeof total === "number" && Number.isFinite(total)) {
     return Math.max(0, Math.floor(total));
   }
-  return Math.max(
-    0,
-    Math.floor((result.usage?.inputTokens ?? 0) + (result.usage?.outputTokens ?? 0))
-  );
+  const inputTokens =
+    result.usage?.inputTokens ?? estimatedTokens(messages);
+  const outputTokens =
+    result.usage?.outputTokens ??
+    estimatedTokens({
+      text: result.text,
+      reasoning: result.reasoning,
+      tools: result.toolRequests,
+    });
+  return Math.max(0, Math.floor(inputTokens + outputTokens));
 }
 
 function parseSchemaResult(text: string): unknown {
@@ -135,21 +152,10 @@ export async function runCesiumWorkflowChild(input: {
         tokensUsed
       );
     }
-    tokensUsed += resultTokenCount(result);
+    tokensUsed += resultTokenCount(result, messages);
     throwIfAborted();
     await input.checkpoint?.();
     throwIfAborted();
-    if (
-      tokenBudget !== undefined &&
-      result.usage?.totalTokens === undefined &&
-      result.usage?.inputTokens === undefined &&
-      result.usage?.outputTokens === undefined
-    ) {
-      throw new WorkflowAgentSpawnError(
-        "Workflow child provider did not report token usage, so Cesium cannot account for its best-effort token budget.",
-        tokensUsed
-      );
-    }
     const text = result.text.trim();
 
     if (result.toolRequests.length === 0) {

@@ -83,6 +83,27 @@ function isNumberOrNull(value: unknown): value is number | null {
   return value === null || (typeof value === "number" && Number.isFinite(value));
 }
 
+function workflowStatusCounts(
+  agents: unknown[]
+): WorkflowRunSnapshot["agentStatusCounts"] {
+  const counts: WorkflowRunSnapshot["agentStatusCounts"] = {
+    queued: 0,
+    running: 0,
+    completed: 0,
+    failed: 0,
+    cached: 0,
+    skipped: 0,
+  };
+  for (const entry of agents) {
+    const agent = objectRecord(entry);
+    const status = typeof agent?.status === "string" ? agent.status : "";
+    if (WORKFLOW_SNAPSHOT_AGENT_STATUSES.has(status)) {
+      counts[status as keyof typeof counts] += 1;
+    }
+  }
+  return counts;
+}
+
 function extractWorkflowRunSnapshotFromRaw(rawValue: unknown): WorkflowRunSnapshot | undefined {
   const raw = objectRecord(rawValue);
   const candidate = objectRecord(raw?.workflowRun);
@@ -157,6 +178,10 @@ function extractWorkflowRunSnapshotFromRaw(rawValue: unknown): WorkflowRunSnapsh
   }
   return {
     ...(candidate as unknown as WorkflowRunSnapshot),
+    agentStatusCounts:
+      objectRecord(candidate.agentStatusCounts) != null
+        ? (candidate.agentStatusCounts as WorkflowRunSnapshot["agentStatusCounts"])
+        : workflowStatusCounts(agents),
     agentRecordsTotal:
       typeof candidate.agentRecordsTotal === "number"
         ? candidate.agentRecordsTotal

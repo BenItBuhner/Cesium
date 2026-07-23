@@ -105,10 +105,10 @@ agentRoutes.get(
     if (!stored || stored.conversationId !== conversationId) {
       return c.json({ error: "Workflow run not found." }, 404);
     }
-    const run = await workflowRunManager.reconcileStaleRun(stored);
+    c.header("Cache-Control", "no-store");
     return c.json({
-      workflow: serializeWorkflowRunSnapshot(run, { agentLimit: 500 }),
-      active: workflowRunManager.has(workspace.id, run.runId),
+      workflow: serializeWorkflowRunSnapshot(stored, { agentLimit: 500 }),
+      active: workflowRunManager.has(workspace.id, stored.runId),
     });
   }
 );
@@ -158,7 +158,9 @@ agentRoutes.post(
         ok: true,
         requestedAction: action,
         workflow: serializeWorkflowRunSnapshot(latest),
-        active: true,
+        active:
+          action !== "stop" &&
+          workflowRunManager.has(workspace.id, runId),
       },
       202
     );
