@@ -297,16 +297,15 @@ return { ok: true };`;
       status?: string;
       tokenBudget?: number;
       recentLogs?: Array<{ message?: string }>;
-      phases?: Array<{ title?: string; detail?: string }>;
+      phases?: Array<{ title?: string; detail?: string; agentCount?: number }>;
     };
     assert.equal(snapshot.name, "snapshot-demo");
     assert.equal(snapshot.status, "completed");
     assert.equal(snapshot.tokenBudget, 55);
     assert.equal(snapshot.recentLogs?.some((entry) => entry.message === "collecting"), true);
-    assert.deepEqual(snapshot.phases?.[0], {
-      title: "Collect",
-      detail: "Collect context",
-    });
+    assert.equal(snapshot.phases?.[0]?.title, "Collect");
+    assert.equal(snapshot.phases?.[0]?.detail, "Collect context");
+    assert.equal(snapshot.phases?.[0]?.agentCount, 0);
     assert.match(updates.at(-1)?.detail ?? "", /snapshot-demo: completed/);
   } finally {
     await patchCesiumAgentSettings({ toolPermissions: { workflowLaunch: "ask" } });
