@@ -24,6 +24,7 @@ type WorkflowView = "phases" | "timeline" | "logs";
 type WorkflowControlAction = "pause" | "resume" | "stop";
 
 const ACTIVE_STATUSES = new Set(["pending", "compiling", "running", "paused"]);
+const POLLING_STATUSES = new Set(["pending", "compiling", "running"]);
 const TERMINAL_AGENT_STATUSES = new Set(["completed", "failed", "cached", "skipped"]);
 const controlButtonClass =
   "inline-flex items-center gap-[5px] rounded-[7px] border border-[var(--border-card)] bg-[var(--bg-card)] px-[8px] py-[5px] text-[9px] font-medium text-[var(--text-secondary)] transition-colors hover:border-[var(--workflow-accent)] hover:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-45";
@@ -74,16 +75,25 @@ function phaseStatus(
   agents: WorkflowRunSnapshotAgent[],
   runStatus: WorkflowRunSnapshot["status"],
   summary?: WorkflowRunSnapshot["phases"][number]
-): "pending" | "running" | "completed" | "failed" {
+): "pending" | "running" | "completed" | "failed" | "cancelled" {
   const counts = summary?.statusCounts;
   const failed = counts?.failed ?? agents.filter((agent) => agent.status === "failed").length;
-  if (failed > 0) return "failed";
+  const skipped = counts?.skipped ?? agents.filter((agent) => agent.status === "skipped").length;
+  if (failed > 0 || (runStatus === "failed" && skipped > 0)) return "failed";
   const agentCount = summary?.agentCount ?? agents.length;
   const terminal =
     counts != null
-      ? counts.completed + counts.failed + counts.cached + counts.skipped
-      : agents.filter((agent) => TERMINAL_AGENT_STATUSES.has(agent.status)).length;
-  if (agentCount > 0 && terminal >= agentCount) {
+      ? counts.completed + counts.failed + counts.cached
+      : agents.filter(
+          (agent) =>
+            agent.status === "completed" ||
+            agent.status === "failed" ||
+            agent.status === "cached"
+        ).length;
+  if (runStatus === "cancelled" && skipped > 0) {
+    return "cancelled";
+  }
+  if (agentCount > 0 && terminal >= agentCount && skipped === 0) {
     return "completed";
   }
   if (
@@ -130,7 +140,7 @@ export function WorkflowRunVisualization({
 
   useEffect(() => {
     void refresh();
-    if (!ACTIVE_STATUSES.has(run.status)) return;
+    if (!POLLING_STATUSES.has(run.status)) return;
     const timer = window.setInterval(() => {
       setNow(Date.now());
       void refresh();
@@ -203,7 +213,7 @@ export function WorkflowRunVisualization({
           agents.reduce((total, agent) => total + agent.tokensUsed, 0),
       };
     });
-  }, [run.agents, run.currentPhase, run.phases]);
+  }, [run.agents, run.currentPhase, run.phases, run.status]);
 
   const timelineStart = Math.min(
     run.createdAt,
@@ -315,7 +325,7 @@ export function WorkflowRunVisualization({
                 <div key={phase.title} className="relative rounded-[10px] border border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--bg-card)_80%,transparent)] px-[10px] py-[9px]">
                   <div className="flex items-start gap-[8px]">
                     <div className="flex flex-col items-center">
-                      <span role="img" aria-label={`${phase.title} phase ${phase.status}`} className={`mt-[2px] size-[8px] rounded-full ${phase.status === "running" ? "bg-violet-400 shadow-[0_0_10px_rgba(167,139,250,.75)]" : phase.status === "completed" ? "bg-emerald-400" : phase.status === "failed" ? "bg-rose-400" : "bg-slate-500"}`} />
+                      <span role="img" aria-label={`${phase.title} phase ${phase.status}`} className={`mt-[2px] size-[8px] rounded-full ${phase.status === "running" ? "bg-violet-400 shadow-[0_0_10px_rgba(167,139,250,.75)]" : phase.status === "completed" ? "bg-emerald-400" : phase.status === "failed" ? "bg-rose-400" : phase.status === "cancelled" ? "bg-amber-400" : "bg-slate-500"}`} />
                       {index < phases.length - 1 ? <span className="mt-[3px] h-[22px] w-px bg-[var(--border-subtle)]" /> : null}
                     </div>
                     <div className="min-w-0 flex-1">
@@ -334,6 +344,11 @@ export function WorkflowRunVisualization({
                           </button>
                         ))}
                       </div>
+                      {phase.agentCount > phase.agents.length ? (
+                        <p className="mt-[5px] font-mono text-[8px] text-[var(--text-secondary)]">
+                          Showing {phase.agents.length} recent agents of {phase.agentCount}
+                        </p>
+                      ) : null}
                     </div>
                   </div>
                 </div>
@@ -359,14 +374,27 @@ export function WorkflowRunVisualization({
         ) : view === "timeline" ? (
           <div className="space-y-[5px]">
             {run.agents.map((agent) => {
-              const start = agent.startedAt ?? run.createdAt;
-              const end = agent.completedAt ?? now;
+              const queued = agent.startedAt == null;
+              const start = agent.startedAt ?? timelineStart;
+              const end = queued ? start + 1 : agent.completedAt ?? now;
               const left = Math.max(0, ((start - timelineStart) / timelineSpan) * 100);
               const width = Math.max(1.5, ((end - start) / timelineSpan) * 100);
+              const barTone =
+                agent.status === "queued"
+                  ? "bg-slate-500"
+                  : agent.status === "running"
+                    ? "bg-violet-400"
+                    : agent.status === "failed"
+                      ? "bg-rose-400"
+                      : agent.status === "cached"
+                        ? "bg-cyan-400"
+                        : agent.status === "skipped"
+                          ? "bg-amber-400"
+                          : "bg-emerald-400";
               return (
                 <button key={`${agent.id}-${agent.label}`} onClick={() => { setSelectedAgentId(agent.id); setView("phases"); }} className="grid w-full grid-cols-[110px_minmax(0,1fr)_52px] items-center gap-[8px] rounded-[7px] px-[6px] py-[5px] text-left hover:bg-[var(--bg-hover)]">
                   <span className="truncate text-[9px] text-[var(--text-primary)]">{agent.label}</span>
-                  <span role="img" aria-label={`${agent.label}: ${agent.status}, ${formatDuration(agentDuration(agent, now))}`} className="relative h-[7px] rounded-full bg-[var(--bg-primary)]"><span className={`absolute h-full rounded-full ${agent.status === "running" ? "bg-violet-400" : agent.status === "failed" ? "bg-rose-400" : "bg-emerald-400"}`} style={{ left: `${left}%`, width: `${Math.min(100 - left, width)}%` }} /></span>
+                  <span role="img" aria-label={`${agent.label}: ${agent.status}, ${formatDuration(agentDuration(agent, now))}`} className="relative h-[7px] rounded-full bg-[var(--bg-primary)]"><span className={`absolute h-full rounded-full ${barTone}`} style={{ left: `${left}%`, width: `${Math.min(100 - left, width)}%` }} /></span>
                   <span className="text-right font-mono text-[8px] text-[var(--text-secondary)]">{formatDuration(agentDuration(agent, now))}</span>
                 </button>
               );

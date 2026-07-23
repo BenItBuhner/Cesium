@@ -105,10 +105,15 @@ agentRoutes.get(
     if (!stored || stored.conversationId !== conversationId) {
       return c.json({ error: "Workflow run not found." }, 404);
     }
+    const active = workflowRunManager.has(workspace.id, stored.runId);
+    const displayRun =
+      !active && (stored.status === "running" || stored.status === "pending")
+        ? { ...stored, status: "paused" as const }
+        : stored;
     c.header("Cache-Control", "no-store");
     return c.json({
-      workflow: serializeWorkflowRunSnapshot(stored, { agentLimit: 500 }),
-      active: workflowRunManager.has(workspace.id, stored.runId),
+      workflow: serializeWorkflowRunSnapshot(displayRun, { agentLimit: 500 }),
+      active,
     });
   }
 );

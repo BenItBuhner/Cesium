@@ -1302,7 +1302,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
     run: WorkflowRunRecord,
     appendTranscriptEvents: CesiumToolExecutionContext["appendTranscriptEvents"]
   ): Promise<WorkflowRunSnapshot> {
-    const snapshot = serializeWorkflowRunSnapshot(run, { agentLimit: 50 });
+    const snapshot = serializeWorkflowRunSnapshot(run, { agentLimit: 20 });
     await appendTranscriptEvents([
       {
         eventId: randomUUID(),

@@ -195,6 +195,18 @@ class Semaphore {
 
   constructor(private readonly limit: number) {}
 
+  private release(): void {
+    const next = this.waiters.shift();
+    if (next) {
+      if (next.signal && next.onAbort) {
+        next.signal.removeEventListener("abort", next.onAbort);
+      }
+      next.resolve();
+    } else {
+      this.active -= 1;
+    }
+  }
+
   async run<T>(fn: () => Promise<T>, signal?: AbortSignal): Promise<T> {
     if (signal?.aborted) {
       throw new WorkflowRunCancelledError("Workflow run cancelled while agent was queued.");
@@ -226,18 +238,14 @@ class Semaphore {
     } else {
       this.active += 1;
     }
+    if (signal?.aborted) {
+      this.release();
+      throw new WorkflowRunCancelledError("Workflow run cancelled while agent was queued.");
+    }
     try {
       return await fn();
     } finally {
-      const next = this.waiters.shift();
-      if (next) {
-        if (next.signal && next.onAbort) {
-          next.signal.removeEventListener("abort", next.onAbort);
-        }
-        next.resolve();
-      } else {
-        this.active -= 1;
-      }
+      this.release();
     }
   }
 }
@@ -288,6 +296,7 @@ export async function executeWorkflowRun(input: {
   );
   const maxAgents = run.maxAgents || WORKFLOW_DEFAULT_MAX_AGENTS;
   const semaphore = new Semaphore(maxConcurrent);
+  const activeTokenReservations = new Map<number, number>();
   let currentPhase: string | null = null;
   let cancelled = false;
   let writeChain: Promise<void> = Promise.resolve();
@@ -544,10 +553,6 @@ export async function executeWorkflowRun(input: {
         agentIndex,
         finalLabel,
         hashOpts,
-        tokenBudget:
-          run.tokenBudget == null
-            ? undefined
-            : Math.max(0, run.tokenBudget - run.tokensUsed),
       };
     });
 
@@ -556,6 +561,7 @@ export async function executeWorkflowRun(input: {
     }
 
     return semaphore.run(async () => {
+      let childTokenBudget: number | undefined;
       try {
         throwIfStopped();
         await checkpoint();
@@ -564,6 +570,35 @@ export async function executeWorkflowRun(input: {
           throw new WorkflowRunCancelledError();
         }
         await withRunLock(async () => {
+          if (run.tokenBudget != null) {
+            const reserved = [...activeTokenReservations.values()].reduce(
+              (total, value) => total + value,
+              0
+            );
+            const available = Math.max(
+              0,
+              run.tokenBudget - run.tokensUsed - reserved
+            );
+            if (available === 0) {
+              throw new Error("Workflow token budget exhausted by active agents.");
+            }
+            const pendingAgents = run.agents.filter(
+              (agent) =>
+                agent.status === "queued" || agent.status === "running"
+            ).length;
+            const unreservedSlots = Math.max(
+              1,
+              Math.min(
+                maxConcurrent - activeTokenReservations.size,
+                pendingAgents
+              )
+            );
+            childTokenBudget = Math.max(
+              1,
+              Math.floor(available / unreservedSlots)
+            );
+            activeTokenReservations.set(begin.agentIndex, childTokenBudget);
+          }
           run = {
             ...run,
             agents: run.agents.map((item, index) =>
@@ -586,12 +621,13 @@ export async function executeWorkflowRun(input: {
           schema,
           model,
           effort,
-          ...(begin.tokenBudget !== undefined
-            ? { tokenBudget: begin.tokenBudget }
+          ...(childTokenBudget !== undefined
+            ? { tokenBudget: childTokenBudget }
             : {}),
           signal: input.control?.signal,
           checkpoint: input.control ? checkpoint : undefined,
         });
+        activeTokenReservations.delete(begin.agentIndex);
         throwIfStopped();
         const entry: WorkflowJournalEntry = {
           key: begin.key,
@@ -626,6 +662,7 @@ export async function executeWorkflowRun(input: {
         });
         return result.value;
       } catch (error) {
+        activeTokenReservations.delete(begin.agentIndex);
         if (
           input.control?.isStopRequested() ||
           (input.control?.signal.aborted && isAbortLikeError(error)) ||
