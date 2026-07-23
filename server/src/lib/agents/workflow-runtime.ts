@@ -1,7 +1,6 @@
 import { cpus } from "node:os";
 import { Script, createContext } from "node:vm";
 import {
-  appendWorkflowJournal,
   appendWorkflowLog,
   hashWorkflowAgentCall,
   updateWorkflowRunStatus,
@@ -10,6 +9,7 @@ import {
 import {
   WORKFLOW_DEFAULT_MAX_AGENTS,
   WORKFLOW_DEFAULT_MAX_CONCURRENT,
+  WORKFLOW_JOURNAL_LIMIT,
   WorkflowAgentSpawnError,
   type WorkflowAgentSpawner,
   type WorkflowJournalEntry,
@@ -311,8 +311,37 @@ export async function executeWorkflowRun(input: {
     }
   };
 
-  const persist = async (next: WorkflowRunRecord) => {
-    run = await upsertWorkflowRun(next);
+  let lastDiskAgentsUsed = run.agentsUsed;
+  let lastDiskTerminalAgents = run.agents.filter(
+    (agent) =>
+      agent.status === "completed" ||
+      agent.status === "failed" ||
+      agent.status === "cached" ||
+      agent.status === "skipped"
+  ).length;
+  let lastDiskWriteAt = Date.now();
+  const persist = async (next: WorkflowRunRecord, force = false) => {
+    const terminalAgents = next.agents.filter(
+      (agent) =>
+        agent.status === "completed" ||
+        agent.status === "failed" ||
+        agent.status === "cached" ||
+        agent.status === "skipped"
+    ).length;
+    const shouldWrite =
+      force ||
+      next.agentsUsed <= 10 ||
+      next.agentsUsed - lastDiskAgentsUsed >= 10 ||
+      terminalAgents - lastDiskTerminalAgents >= 10 ||
+      Date.now() - lastDiskWriteAt >= 1_000;
+    run = shouldWrite
+      ? await upsertWorkflowRun(next)
+      : { ...next, updatedAt: Date.now() };
+    if (shouldWrite) {
+      lastDiskAgentsUsed = run.agentsUsed;
+      lastDiskTerminalAgents = terminalAgents;
+      lastDiskWriteAt = Date.now();
+    }
     await input.onUpdate?.(run);
   };
 
@@ -574,25 +603,26 @@ export async function executeWorkflowRun(input: {
         journal.set(begin.key, entry);
         const childTokens = Math.max(0, result.tokensUsed ?? 0);
         await withRunLock(async () => {
-          run = await appendWorkflowJournal(
-            {
-              ...run,
-              tokensUsed: run.tokensUsed + childTokens,
-              agents: run.agents.map((item, index) =>
-                index === begin.agentIndex
-                  ? {
-                      ...item,
-                      status: "completed",
-                      tokensUsed: childTokens,
-                      completedAt: Date.now(),
-                      resultPreview: previewValue(result.value),
-                    }
-                  : item
-              ),
-            },
-            entry
-          );
-          await input.onUpdate?.(run);
+          const nextJournal = [
+            ...run.journal.filter((item) => item.key !== entry.key),
+            entry,
+          ].slice(-WORKFLOW_JOURNAL_LIMIT);
+          await persist({
+            ...run,
+            tokensUsed: run.tokensUsed + childTokens,
+            journal: nextJournal,
+            agents: run.agents.map((item, index) =>
+              index === begin.agentIndex
+                ? {
+                    ...item,
+                    status: "completed",
+                    tokensUsed: childTokens,
+                    completedAt: Date.now(),
+                    resultPreview: previewValue(result.value),
+                  }
+                : item
+            ),
+          });
         });
         return result.value;
       } catch (error) {
