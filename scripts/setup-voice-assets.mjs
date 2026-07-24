@@ -55,8 +55,14 @@ async function downloadSileroModel() {
 }
 
 async function copyOrtRuntime() {
-  const ortPackageJson = require.resolve("onnxruntime-web/package.json");
-  const distDir = path.join(path.dirname(ortPackageJson), "dist");
+  // onnxruntime-web's exports map hides package.json; resolve the module
+  // entry (dist/ort.min.mjs or similar) and use its directory.
+  let distDir = path.join(repoRoot, "node_modules", "onnxruntime-web", "dist");
+  try {
+    await fs.stat(distDir);
+  } catch {
+    distDir = path.dirname(require.resolve("onnxruntime-web"));
+  }
   const entries = await fs.readdir(distDir);
   const wanted = entries.filter(
     (entry) => entry.endsWith(".wasm") || entry.endsWith(".mjs")

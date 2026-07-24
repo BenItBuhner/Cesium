@@ -1,9 +1,15 @@
 import type {
+  AgentConversationCreateInput,
   AgentConversationRecord,
   AgentConversationSnapshotHead,
   AgentStoredEvent,
 } from "../agents/types.js";
 import { agentRuntimeManager } from "../agents/runtime-manager.js";
+import {
+  findCesiumModelCatalogEntry,
+  getCesiumAgentSettings,
+  getCesiumModelCatalog,
+} from "../cesium-agent-settings.js";
 import type { WorkspaceRecord } from "../workspace-registry.js";
 
 /**
@@ -173,9 +179,29 @@ export async function executeVoiceTool(
         };
       }
       const title = String(args.title ?? "").trim() || undefined;
+      const input: AgentConversationCreateInput = title ? { title } : {};
+      // Voice-delegated sessions default onto the configured cesium-agent
+      // default model (env-bootstrap aware) rather than the backend's
+      // hardcoded default, so delegation works on proxy-only deployments.
+      try {
+        const settings = await getCesiumAgentSettings();
+        if (settings.defaultModelId) {
+          input.modelId = settings.defaultModelId;
+          const catalog = await getCesiumModelCatalog();
+          const entry = findCesiumModelCatalogEntry(
+            settings.defaultModelId,
+            catalog
+          );
+          if (entry?.modelName) {
+            input.modelName = entry.modelName;
+          }
+        }
+      } catch {
+        // Fall back to backend defaults when settings are unavailable.
+      }
       const snapshot = await agentRuntimeManager.createConversationWithPrompt(
         workspace,
-        title ? { title } : {},
+        input,
         { text: prompt }
       );
       return {
