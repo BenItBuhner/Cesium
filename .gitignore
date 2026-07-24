@@ -141,6 +141,9 @@ live-root.html
 served-sw.js
 /public/sw-test.txt
 
+# Browser-side voice assets fetched by `npm run voice:assets`
+/public/voice/
+
 mcp-servers/
 agent-skills/
 .agents/.cesium-plugin-mcp.json
