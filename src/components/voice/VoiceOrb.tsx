@@ -262,7 +262,7 @@ export function VoiceOrb() {
       style={{ left: position.x, top: position.y, width: ORB_SIZE, height: ORB_SIZE }}
       data-testid="voice-orb-root"
     >
-      <VoiceBubbles anchor={anchor} orbSize={ORB_SIZE} />
+      <VoiceBubbles anchor={anchor} />
       {menuOpen ? (
         <VoiceOrbMenu anchor={anchor} onClose={() => setMenuOpen(false)} />
       ) : null}

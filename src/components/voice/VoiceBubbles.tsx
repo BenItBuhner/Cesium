@@ -23,10 +23,8 @@ const KIND_STYLES: Record<VoiceBubbleKind, string> = {
 
 export function VoiceBubbles({
   anchor,
-  orbSize,
 }: {
   anchor: { horizontal: "left" | "right"; vertical: "up" | "down" };
-  orbSize: number;
 }) {
   const { bubbles, dismissBubble } = useVoice();
   if (bubbles.length === 0) return null;
@@ -39,11 +37,6 @@ export function VoiceBubbles({
       className={`absolute flex w-[300px] flex-col gap-1.5 ${
         anchor.vertical === "up" ? "bottom-full mb-2" : "top-full mt-2"
       } ${anchor.horizontal === "left" ? "right-0" : "left-0"}`}
-      style={
-        anchor.horizontal === "left"
-          ? { right: orbSize / 2 - 12 }
-          : { left: orbSize / 2 - 12 }
-      }
       data-testid="voice-bubbles"
     >
       {ordered.map((bubble) => (

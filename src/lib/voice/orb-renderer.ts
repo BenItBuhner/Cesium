@@ -31,10 +31,10 @@ type CloudSpec = {
 };
 
 const CLOUDS: CloudSpec[] = [
-  { orbitRadius: 0.30, orbitSpeed: 0.00011, phase: 0.0, size: 0.62, alpha: 0.42 },
-  { orbitRadius: 0.22, orbitSpeed: -0.00017, phase: 2.1, size: 0.5, alpha: 0.34 },
-  { orbitRadius: 0.34, orbitSpeed: 0.00008, phase: 4.2, size: 0.44, alpha: 0.3 },
-  { orbitRadius: 0.16, orbitSpeed: 0.00023, phase: 1.2, size: 0.36, alpha: 0.24 },
+  { orbitRadius: 0.30, orbitSpeed: 0.00011, phase: 0.0, size: 0.68, alpha: 0.55 },
+  { orbitRadius: 0.22, orbitSpeed: -0.00017, phase: 2.1, size: 0.55, alpha: 0.45 },
+  { orbitRadius: 0.34, orbitSpeed: 0.00008, phase: 4.2, size: 0.48, alpha: 0.38 },
+  { orbitRadius: 0.16, orbitSpeed: 0.00023, phase: 1.2, size: 0.4, alpha: 0.3 },
 ];
 
 function activityParams(state: OrbRenderState): {

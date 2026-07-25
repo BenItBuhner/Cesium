@@ -78,8 +78,8 @@ export function VoiceOrbMenu({
     <div
       ref={rootRef}
       className={`absolute z-[81] w-[228px] rounded-[12px] border border-[var(--border-card)] bg-[var(--bg-panel)] p-2 shadow-xl ${
-        anchor.vertical === "up" ? "bottom-full mb-2" : "top-full mt-2"
-      } ${anchor.horizontal === "left" ? "right-0" : "left-0"}`}
+        anchor.vertical === "up" ? "bottom-0" : "top-0"
+      } ${anchor.horizontal === "left" ? "right-full mr-2" : "left-full ml-2"}`}
       data-testid="voice-orb-menu"
     >
       <div className="flex gap-1">
