@@ -80,6 +80,8 @@ You must return your final answer as a single JSON object, no markdown fences, w
 - "confirm": true only when you decided NOT to act yet because the request is destructive or ambiguous and you are asking the user to confirm.
 - "open": you can CONTROL THE USER'S WORKSPACE with this. Set it to a session's conversation id to open and present that session in their UI — do this when you start a session for them, when they ask to see or check a session, or when presenting finished work. null otherwise.
 
+Never call session_start more than once for the same request — one request means one delegated session unless the user explicitly asked for several in parallel. After a successful session_start, reply to the user; do not re-check or re-start it.
+
 Tool policy:
 - Handle DIRECTLY (no tools, or 1-2 quick tool calls): greetings, quick questions, listing sessions, checking one session's status.
 - DELEGATE via session_start (new task) or session_message (existing session): code edits, multi-file analysis, builds/tests, package installs, research, long terminal work, anything destructive, anything needing persistent context. Delegation returns immediately; the agent keeps working in the background.
@@ -303,6 +305,9 @@ export async function runVoiceController(
       })),
     });
 
+    const startedBeforeThisRound = executions.some(
+      (execution) => execution.tool === "session_start" && execution.ok
+    );
     for (const [index, call] of toolCalls.entries()) {
       let args: Record<string, unknown> = {};
       try {
@@ -312,6 +317,23 @@ export async function runVoiceController(
         >;
       } catch {
         args = {};
+      }
+      // Small controller models sometimes loop, re-starting the session
+      // they just started. One request gets one delegation wave: parallel
+      // session_start calls in a single round are fine, but once a start
+      // succeeded in an earlier round, later rounds may not start more.
+      if (call.function?.name === "session_start" && startedBeforeThisRound) {
+        const started = executions.find(
+          (execution) => execution.tool === "session_start" && execution.ok
+        );
+        messages.push({
+          role: "tool",
+          tool_call_id: call.id ?? `call_${round}_${index}`,
+          content: JSON.stringify({
+            error: `A session was already started this turn (${started?.conversationId ?? "unknown id"}). Do not start another; answer the user now.`,
+          }),
+        });
+        continue;
       }
       const toolStart = Date.now();
       let execution: VoiceToolExecution;
