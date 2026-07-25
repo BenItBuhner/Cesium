@@ -143,6 +143,7 @@ served-sw.js
 
 # Browser-side voice assets fetched by `npm run voice:assets`
 /public/voice/
+/apps/desktop-renderer/public/voice/
 
 mcp-servers/
 agent-skills/

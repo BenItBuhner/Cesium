@@ -347,6 +347,12 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
     }) => {
       let sttMs: number | null = null;
       let text = input.utteranceText ?? "";
+      console.debug(
+        "[voice] turn start",
+        input.source,
+        "clipSamples:",
+        input.clip?.length ?? 0
+      );
 
       if (!text && input.clip) {
         setActivityBoth("transcribing");
@@ -356,10 +362,15 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
         try {
           const result = await transcribeAudio(file);
           text = result.text.trim();
-        } catch (sttError) {
-          setError(
-            `Transcription: ${sttError instanceof Error ? sttError.message : "failed"}`
+          console.debug(
+            "[voice] stt ok:",
+            `${text.length} chars in ${Math.round(performance.now() - sttStart)}ms`
           );
+        } catch (sttError) {
+          console.debug("[voice] stt failed:", sttError);
+          const message = `Transcription: ${sttError instanceof Error ? sttError.message : "failed"}`;
+          setError(message);
+          pushBubble({ kind: "error", text: message, meta: "stt" });
           setActivityBoth(captureRef.current?.isRunning ? "listening" : "idle");
           return;
         }
@@ -391,6 +402,18 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
           mode: modeRef.current === "quiet" ? "quiet" : "active",
         });
         const controllerMs = Math.round(performance.now() - controllerStart);
+        console.debug(
+          "[voice] controller ok:",
+          `${controllerMs}ms`,
+          "actions:",
+          result.actions.map((action) => action.tool).join(",") || "none",
+          "open:",
+          result.openConversationId ?? "no",
+          "compaction:",
+          result.compaction
+            ? `${result.compaction.compressedTurnCount} folded`
+            : "no"
+        );
 
         // Harness-style compaction: adopt the server's folded memory.
         if (result.compaction) {
