@@ -199,6 +199,7 @@ export {
 export type {
   AgentConversationSnapshotResponse,
   AudioTranscriptionResult,
+  VoiceCompactionInfo,
   VoiceControllerAction,
   VoiceControllerResult,
   VoiceStatus,

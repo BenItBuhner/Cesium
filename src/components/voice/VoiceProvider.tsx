@@ -3,9 +3,14 @@
 /**
  * Global voice control plane provider: owns the ambient microphone
  * pipeline (AudioWorklet -> ring buffer -> VAD -> layered endpointing),
- * speech-to-text, the voice controller turn, clause-streamed TTS with
- * barge-in, the Active/Quiet/Paused mode machine, and the agent event
- * notification policy with digesting. Mounted once, outside ChatComposer.
+ * speech-to-text, the voice controller turn (with harness-style context
+ * compaction so sessions run indefinitely), clause-streamed TTS with
+ * barge-in, the Active/Quiet/Paused mode machine, the agent event
+ * notification policy with digesting, and workspace control (the
+ * controller can open/present sessions in the user's UI).
+ *
+ * The interface is deliberately non-textual: an ambient orb plus
+ * transient spoken captions (bubbles), not a chat log.
  */
 
 import {
@@ -23,10 +28,10 @@ import {
   runVoiceControllerTurn,
   synthesizeVoiceSpeech,
   transcribeAudio,
-  type VoiceControllerAction,
   type VoiceStatus,
 } from "@/lib/server-api";
 import { useAgentConversations } from "@/components/chat/AgentConversationsContext";
+import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { VoiceCapture, type CaptureTrackSettings } from "@/lib/voice/capture";
 import { decodeToPcm16k } from "@/lib/voice/audio-decode";
 import {
@@ -41,6 +46,12 @@ import {
   type VoiceNotification,
   type VoiceWatchedConversation,
 } from "@/lib/voice/notification-policy";
+import {
+  BUBBLE_TTL_MS,
+  pruneBubbles,
+  type VoiceBubble,
+  type VoiceBubbleKind,
+} from "@/lib/voice/orb-utils";
 import { encodeWavPcm16, VOICE_SAMPLE_RATE } from "@/lib/voice/pcm";
 import { TtsPlayer, type TtsPlayerState } from "@/lib/voice/tts-player";
 import { createBestVad, EnergyVad, type VadEngine } from "@/lib/voice/vad";
@@ -55,15 +66,6 @@ export type VoiceActivity =
   | "thinking"
   | "speaking";
 
-export type VoiceLogEntry = {
-  id: string;
-  role: "user" | "assistant" | "event" | "system";
-  text: string;
-  at: number;
-  meta?: string;
-  actions?: VoiceControllerAction[];
-};
-
 export type VoiceLatencySample = {
   sttMs: number | null;
   controllerMs: number;
@@ -76,44 +78,58 @@ type VoiceContextValue = {
   mode: VoiceMode;
   activity: VoiceActivity;
   setMode: (mode: VoiceMode) => void;
-  log: VoiceLogEntry[];
-  micLevel: number;
+  bubbles: VoiceBubble[];
+  dismissBubble: (id: string) => void;
+  /** Live animation levels for the orb (mic + TTS output), ref-safe. */
+  getOrbLevels: () => { mic: number; tts: number };
   vadEngineId: string | null;
   captureSettings: CaptureTrackSettings | null;
   serverStatus: VoiceStatus | null;
-  refreshServerStatus: () => void;
   lastLatency: VoiceLatencySample | null;
   latencyP50Ms: number | null;
+  memory: { turns: number; compactions: number };
   sendTextUtterance: (text: string) => Promise<void>;
   runSelfTest: (text?: string) => Promise<void>;
   selfTestRunning: boolean;
   interrupt: () => void;
-  panelOpen: boolean;
-  setPanelOpen: (open: boolean) => void;
   error: string | null;
   queuedDigestCount: number;
 };
 
 const VoiceContext = createContext<VoiceContextValue | null>(null);
 
-let entryCounter = 0;
-function entryId(): string {
-  entryCounter += 1;
-  return `voice-${Date.now()}-${entryCounter}`;
+let bubbleCounter = 0;
+function nextBubbleId(): string {
+  bubbleCounter += 1;
+  return `vb-${Date.now()}-${bubbleCounter}`;
 }
 
-const MAX_LOG_ENTRIES = 200;
-const MAX_HISTORY = 16;
 const BARGE_IN_CANCEL_MS = 350;
 const SELF_TEST_DEFAULT = "What agent sessions are running right now?";
 
+declare global {
+  interface Window {
+    __cesiumVoice?: {
+      setMode: (mode: VoiceMode) => void;
+      sendTextUtterance: (text: string) => Promise<void>;
+      runSelfTest: (text?: string) => Promise<void>;
+      interrupt: () => void;
+    };
+  }
+}
+
 export function VoiceProvider({ children }: { children: ReactNode }) {
-  const { conversations } = useAgentConversations();
+  const {
+    conversations,
+    conversationsById,
+    flushAgentSubscription,
+    syncConversationSnapshot,
+  } = useAgentConversations();
+  const { updateWorkspaceSession } = useWorkspace();
 
   const [mode, setModeState] = useState<VoiceMode>("off");
   const [activity, setActivity] = useState<VoiceActivity>("idle");
-  const [log, setLog] = useState<VoiceLogEntry[]>([]);
-  const [micLevel, setMicLevel] = useState(0);
+  const [bubbles, setBubbles] = useState<VoiceBubble[]>([]);
   const [vadEngineId, setVadEngineId] = useState<string | null>(null);
   const [captureSettings, setCaptureSettings] =
     useState<CaptureTrackSettings | null>(null);
@@ -121,10 +137,10 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
   const [lastLatency, setLastLatency] = useState<VoiceLatencySample | null>(
     null
   );
-  const [panelOpen, setPanelOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selfTestRunning, setSelfTestRunning] = useState(false);
   const [queuedDigestCount, setQueuedDigestCount] = useState(0);
+  const [memory, setMemory] = useState({ turns: 0, compactions: 0 });
 
   const modeRef = useRef<VoiceMode>("off");
   const captureRef = useRef<VoiceCapture | null>(null);
@@ -132,10 +148,11 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
   const endpointerRef = useRef<Endpointer | null>(null);
   const playerRef = useRef<TtsPlayer | null>(null);
   const historyRef = useRef<Array<{ role: "user" | "assistant"; content: string }>>([]);
+  const summaryRef = useRef<string | null>(null);
   const turnChainRef = useRef<Promise<void>>(Promise.resolve());
   const speechActiveRef = useRef(false);
   const bargeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const levelUpdatedAtRef = useRef(0);
+  const micLevelRef = useRef(0);
   const respondSamplesRef = useRef<number[]>([]);
   const digestRef = useRef<VoiceNotification[]>([]);
   const watchedConversationsRef = useRef<Map<string, VoiceWatchedConversation>>(
@@ -143,36 +160,57 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
   );
   const watchedPrimedRef = useRef(false);
   const activityRef = useRef<VoiceActivity>("idle");
+  const conversationsByIdRef = useRef(conversationsById);
+  conversationsByIdRef.current = conversationsById;
 
   const setActivityBoth = useCallback((next: VoiceActivity) => {
     activityRef.current = next;
     setActivity(next);
   }, []);
 
-  const pushLog = useCallback((entry: Omit<VoiceLogEntry, "id" | "at">) => {
-    setLog((previous) => {
-      const next = [...previous, { ...entry, id: entryId(), at: Date.now() }];
-      return next.length > MAX_LOG_ENTRIES
-        ? next.slice(next.length - MAX_LOG_ENTRIES)
-        : next;
-    });
+  const pushBubble = useCallback(
+    (bubble: { kind: VoiceBubbleKind; text: string; meta?: string }) => {
+      const now = Date.now();
+      setBubbles((previous) =>
+        pruneBubbles(
+          [
+            ...previous,
+            {
+              id: nextBubbleId(),
+              kind: bubble.kind,
+              text: bubble.text,
+              ...(bubble.meta ? { meta: bubble.meta } : {}),
+              at: now,
+              expiresAt: now + BUBBLE_TTL_MS[bubble.kind],
+            },
+          ],
+          now
+        )
+      );
+    },
+    []
+  );
+
+  const dismissBubble = useCallback((id: string) => {
+    setBubbles((previous) => previous.filter((bubble) => bubble.id !== id));
   }, []);
 
-  const refreshServerStatus = useCallback(() => {
-    fetchVoiceStatus()
-      .then(setServerStatus)
-      .catch((statusError: unknown) => {
-        setError(
-          statusError instanceof Error
-            ? statusError.message
-            : "Voice status unavailable."
-        );
-      });
-  }, []);
+  // Expire bubbles on a coarse tick.
+  useEffect(() => {
+    if (bubbles.length === 0) return;
+    const timer = setInterval(() => {
+      setBubbles((previous) => pruneBubbles(previous, Date.now()));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [bubbles.length]);
 
   useEffect(() => {
-    refreshServerStatus();
-  }, [refreshServerStatus]);
+    fetchVoiceStatus()
+      .then(setServerStatus)
+      .catch(() => {
+        setError("Voice status unavailable.");
+      });
+  }, []);
 
   const getPlayer = useCallback((): TtsPlayer => {
     if (!playerRef.current) {
@@ -186,10 +224,9 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
             setActivityBoth("speaking");
           } else if (state === "idle" && activityRef.current === "speaking") {
             setActivityBoth(
-              modeRef.current === "active" || modeRef.current === "quiet"
-                ? captureRef.current?.isRunning
-                  ? "listening"
-                  : "idle"
+              (modeRef.current === "active" || modeRef.current === "quiet") &&
+                captureRef.current?.isRunning
+                ? "listening"
                 : "idle"
             );
           }
@@ -202,6 +239,13 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
     return playerRef.current;
   }, [setActivityBoth]);
 
+  const getOrbLevels = useCallback(() => {
+    return {
+      mic: micLevelRef.current,
+      tts: playerRef.current?.getOutputLevel() ?? 0,
+    };
+  }, []);
+
   const speakIfAllowed = useCallback(
     async (text: string, onFirstAudio?: () => void) => {
       if (modeRef.current !== "active" || !text.trim()) return;
@@ -213,19 +257,52 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
     [getPlayer]
   );
 
+  /** Voice-plane control of the user's workspace: open/present a session. */
+  const openConversationInWorkbench = useCallback(
+    (conversationId: string): string | null => {
+      const record = conversationsByIdRef.current[conversationId];
+      updateWorkspaceSession((current) => {
+        const existing = current.chat.tabs.find(
+          (tab) => tab.id === conversationId
+        );
+        const nextTabs = current.chat.tabs.map((tab) => ({
+          ...tab,
+          active: tab.id === conversationId,
+        }));
+        if (!existing) {
+          nextTabs.push({
+            id: conversationId,
+            title: record?.title ?? "Conversation",
+            active: true,
+          });
+        }
+        return {
+          ...current,
+          chat: { ...current.chat, tabs: nextTabs },
+        };
+      });
+      flushAgentSubscription([conversationId]);
+      void syncConversationSnapshot(conversationId, {
+        hydrateRuntime: true,
+      }).catch(() => undefined);
+      return record?.title ?? null;
+    },
+    [flushAgentSubscription, syncConversationSnapshot, updateWorkspaceSession]
+  );
+
   const drainDigest = useCallback(() => {
     if (digestRef.current.length === 0) return;
     const items = digestRef.current;
     digestRef.current = [];
     setQueuedDigestCount(0);
     const spoken = buildDigestSpokenText(items);
-    pushLog({
-      role: "event",
-      text: items.map((item) => item.displayText).join("\n"),
-      meta: `digest of ${items.length} event${items.length === 1 ? "" : "s"}`,
+    pushBubble({
+      kind: "event",
+      text: spoken,
+      meta: `digest · ${items.length} event${items.length === 1 ? "" : "s"}`,
     });
     void speakIfAllowed(spoken);
-  }, [pushLog, speakIfAllowed]);
+  }, [pushBubble, speakIfAllowed]);
 
   const applyLocalCommand = useCallback(
     (utterance: string): boolean => {
@@ -234,30 +311,30 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
       switch (command.kind) {
         case "stop_speaking":
           getPlayer().cancel();
-          pushLog({ role: "system", text: "Playback stopped.", meta: "local command" });
+          pushBubble({ kind: "system", text: "Stopped.", meta: "local" });
           break;
         case "quiet_mode":
           setMode("quiet");
-          pushLog({ role: "system", text: "Quiet mode: still listening and acting, not speaking.", meta: "local command" });
+          pushBubble({ kind: "system", text: "Going quiet — still listening and acting.", meta: "local" });
           break;
         case "active_mode":
           setMode("active");
-          pushLog({ role: "system", text: "Active mode.", meta: "local command" });
+          pushBubble({ kind: "system", text: "Voice back on.", meta: "local" });
           break;
         case "pause_listening":
           setMode("paused");
-          pushLog({ role: "system", text: "Paused: microphone off, no interpretation until resumed.", meta: "local command" });
+          pushBubble({ kind: "system", text: "Paused — microphone off.", meta: "local" });
           break;
         case "resume_listening":
           setMode("active");
-          pushLog({ role: "system", text: "Listening resumed.", meta: "local command" });
+          pushBubble({ kind: "system", text: "Listening again.", meta: "local" });
           break;
       }
       return true;
     },
-    // setMode is defined below; ref-stable via useCallback ordering.
+    // setMode is declared later in this scope; binding resolves at call time.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [getPlayer, pushLog]
+    [getPlayer, pushBubble]
   );
 
   /** Serialized controller turn for one committed/typed utterance. */
@@ -268,7 +345,6 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
       endOfSpeechAt: number;
       source: "mic" | "text" | "self-test";
     }) => {
-      const startedAt = performance.now();
       let sttMs: number | null = null;
       let text = input.utteranceText ?? "";
 
@@ -294,15 +370,10 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
         return;
       }
 
-      pushLog({
-        role: "user",
+      pushBubble({
+        kind: "heard",
         text,
-        meta: [
-          input.source === "mic" ? "spoken" : input.source,
-          sttMs !== null ? `stt ${sttMs}ms` : null,
-        ]
-          .filter(Boolean)
-          .join(" · "),
+        meta: sttMs !== null ? `heard · ${sttMs}ms` : input.source,
       });
 
       if (applyLocalCommand(text)) {
@@ -316,78 +387,102 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
         const { result } = await runVoiceControllerTurn({
           utterance: text,
           history: historyRef.current,
+          summary: summaryRef.current,
           mode: modeRef.current === "quiet" ? "quiet" : "active",
         });
         const controllerMs = Math.round(performance.now() - controllerStart);
+
+        // Harness-style compaction: adopt the server's folded memory.
+        if (result.compaction) {
+          historyRef.current = result.compaction.history;
+          summaryRef.current = result.compaction.summary;
+          setMemory((previous) => ({
+            turns: 0,
+            compactions: previous.compactions + 1,
+          }));
+          pushBubble({
+            kind: "system",
+            text: `Memory compacted: ${result.compaction.compressedTurnCount} older turns folded into the running summary (${result.compaction.estimatedTokensBefore} → ${result.compaction.estimatedTokensAfter} est. tokens).`,
+            meta: "compaction",
+          });
+        }
         historyRef.current = [
           ...historyRef.current,
           { role: "user" as const, content: text },
           { role: "assistant" as const, content: result.displayText },
-        ].slice(-MAX_HISTORY);
+        ];
+        setMemory((previous) => ({
+          turns: historyRef.current.filter((entry) => entry.role === "user")
+            .length,
+          compactions: previous.compactions,
+        }));
 
-        pushLog({
-          role: "assistant",
+        const actionsMeta = result.actions
+          .map((action) => `${action.tool}${action.ok ? "" : "✗"}`)
+          .join(" · ");
+        pushBubble({
+          kind: "assistant",
           text: result.displayText,
-          actions: result.actions,
-          meta: [
-            `${result.model}`,
-            `llm ${result.llmMs}ms`,
-            result.toolRounds > 0
-              ? `${result.toolRounds} tool round${result.toolRounds === 1 ? "" : "s"} ${result.toolMs}ms`
-              : null,
-            result.needsConfirmation ? "awaiting confirmation" : null,
-          ]
-            .filter(Boolean)
-            .join(" · "),
+          meta:
+            [actionsMeta, `${result.model} ${result.llmMs}ms`]
+              .filter(Boolean)
+              .join(" · ") || undefined,
         });
 
-        let ttsFirstAudioMs: number | null = null;
-        let respondMs: number | null = null;
+        // Workspace control: the controller can present sessions in the UI.
+        if (result.openConversationId) {
+          const title = openConversationInWorkbench(result.openConversationId);
+          pushBubble({
+            kind: "system",
+            text: `Opened ${title ?? "the session"} in your workspace.`,
+            meta: "app control",
+          });
+        }
+
         if (modeRef.current === "active" && result.notify === "speak") {
           const speakStart = performance.now();
           await speakIfAllowed(result.spokenText, () => {
-            ttsFirstAudioMs = Math.round(performance.now() - speakStart);
-            respondMs = Math.round(performance.now() - input.endOfSpeechAt);
+            const respondMs = Math.round(
+              performance.now() - input.endOfSpeechAt
+            );
             respondSamplesRef.current.push(respondMs);
             setLastLatency({
               sttMs,
               controllerMs,
-              ttsFirstAudioMs,
+              ttsFirstAudioMs: Math.round(performance.now() - speakStart),
               respondMs,
             });
           });
+        } else {
+          setLastLatency({
+            sttMs,
+            controllerMs,
+            ttsFirstAudioMs: null,
+            respondMs: null,
+          });
         }
-        setLastLatency({
-          sttMs,
-          controllerMs,
-          ttsFirstAudioMs,
-          respondMs,
-        });
-        // Anything that queued up while the user was mid-interaction now
-        // becomes one digest instead of several interruptions.
         drainDigest();
       } catch (controllerError) {
-        setError(
+        const message =
           controllerError instanceof Error
             ? controllerError.message
-            : "Voice controller failed."
-        );
-        pushLog({
-          role: "system",
-          text:
-            controllerError instanceof Error
-              ? controllerError.message
-              : "Voice controller failed.",
-          meta: "error",
-        });
+            : "Voice controller failed.";
+        setError(message);
+        pushBubble({ kind: "error", text: message, meta: "controller" });
       } finally {
         if (activityRef.current !== "speaking") {
           setActivityBoth(captureRef.current?.isRunning ? "listening" : "idle");
         }
-        void startedAt;
       }
     },
-    [applyLocalCommand, drainDigest, pushLog, setActivityBoth, speakIfAllowed]
+    [
+      applyLocalCommand,
+      drainDigest,
+      openConversationInWorkbench,
+      pushBubble,
+      setActivityBoth,
+      speakIfAllowed,
+    ]
   );
 
   const enqueueTurn = useCallback(
@@ -408,7 +503,6 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
           setActivityBoth("capturing");
           const player = playerRef.current;
           if (player?.isActive) {
-            // Barge-in: duck now, cancel if the speech sustains.
             player.duck();
             if (bargeTimerRef.current) clearTimeout(bargeTimerRef.current);
             bargeTimerRef.current = setTimeout(() => {
@@ -454,10 +548,10 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
     captureRef.current = null;
     endpointerRef.current = null;
     speechActiveRef.current = false;
+    micLevelRef.current = 0;
     if (capture) {
       await capture.stop().catch(() => {});
     }
-    setMicLevel(0);
   }, []);
 
   const startCapture = useCallback(async () => {
@@ -482,11 +576,7 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
         }
       },
       onLevel: (rms) => {
-        const now = performance.now();
-        if (now - levelUpdatedAtRef.current > 120) {
-          levelUpdatedAtRef.current = now;
-          setMicLevel(Math.min(1, rms * 8));
-        }
+        micLevelRef.current = Math.min(1, rms * 8);
       },
       onSettings: setCaptureSettings,
       onError: (captureError) => setError(`Capture: ${captureError.message}`),
@@ -516,13 +606,11 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
       setError(null);
 
       if (nextMode === "off" || nextMode === "paused") {
-        // Paused: no audio leaves the machine, no STT, no controller calls.
         void stopCapture();
         playerRef.current?.cancel();
         setActivityBoth("idle");
         return;
       }
-      // active | quiet both listen and infer; quiet only suppresses speech.
       if (nextMode === "quiet") {
         playerRef.current?.cancel();
       }
@@ -533,8 +621,8 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
           }
         })
         .catch(() => {
-          // Mic failed: stay in the selected mode but idle; the panel's
-          // text path still works.
+          // Mic unavailable: mode stays selected; programmatic utterances
+          // and the self-test still work.
         });
     },
     [drainDigest, setActivityBoth, startCapture, stopCapture]
@@ -556,7 +644,7 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
   /**
    * Pipeline self-test: synthesizes a spoken utterance with the active TTS
    * engine, then feeds the raw PCM through the same VAD -> endpointing ->
-   * STT -> controller -> TTS path a microphone would take.
+   * STT -> controller path a microphone would take.
    */
   const runSelfTest = useCallback(
     async (text?: string) => {
@@ -564,9 +652,9 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
       setSelfTestRunning(true);
       setError(null);
       try {
-        pushLog({
-          role: "system",
-          text: `Self-test: synthesizing "${utterance}" and running it through the ambient pipeline.`,
+        pushBubble({
+          kind: "system",
+          text: `Self-test: speaking "${utterance}" through the ambient pipeline.`,
           meta: "self-test",
         });
         const synthesized = await synthesizeVoiceSpeech({ text: utterance });
@@ -579,7 +667,6 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
         const vad = vadRef.current;
         vad.reset();
         const endpointer = new Endpointer(DEFAULT_ENDPOINTER_CONFIG);
-        // Pad with 2s of silence so the endpointer is guaranteed to commit.
         const padded = new Float32Array(pcm.length + VOICE_SAMPLE_RATE * 2);
         padded.set(pcm);
         let committed: { startMs: number; endMs: number; reason: string } | null =
@@ -602,16 +689,16 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
         }
         vad.reset();
         if (!committed) {
-          pushLog({
-            role: "system",
-            text: "Self-test failed: the endpointer never committed an utterance.",
+          pushBubble({
+            kind: "error",
+            text: "Self-test: the endpointer never committed an utterance.",
             meta: "self-test",
           });
           return;
         }
-        pushLog({
-          role: "system",
-          text: `Endpointer committed ${(committed.endMs - committed.startMs) / 1000}s clip (${committed.reason}) via ${vad.id} VAD; sending to STT.`,
+        pushBubble({
+          kind: "system",
+          text: `Endpointer committed a ${((committed.endMs - committed.startMs) / 1000).toFixed(1)}s clip (${committed.reason}) via ${vad.id} VAD.`,
           meta: "self-test",
         });
         const from = Math.floor((committed.startMs / 1000) * VOICE_SAMPLE_RATE);
@@ -634,14 +721,14 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
         setSelfTestRunning(false);
       }
     },
-    [enqueueTurn, pushLog]
+    [enqueueTurn, pushBubble]
   );
 
   const interrupt = useCallback(() => {
     playerRef.current?.cancel();
   }, []);
 
-  // ---- Agent event observation -> notification policy -> digest ----
+  // ---- Agent event observation -> notification policy -> bubbles ----
   useEffect(() => {
     const watchable: VoiceWatchedConversation[] = conversations.map(
       (conversation) => ({
@@ -673,37 +760,45 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
 
     for (const notification of notifications) {
       const busy =
-        activityRef.current === "capturing" ||
-        activityRef.current === "transcribing" ||
-        activityRef.current === "thinking" ||
-        activityRef.current === "speaking" ||
-        speechActiveRef.current;
+        activityRef.current !== "idle" && activityRef.current !== "listening";
       if (
         notification.policy === "speak" &&
         modeRef.current === "active" &&
-        !busy
+        !busy &&
+        !speechActiveRef.current
       ) {
-        pushLog({
-          role: "event",
-          text: notification.displayText,
+        pushBubble({
+          kind: "event",
+          text: notification.spokenText,
           meta: notification.kind,
         });
         void speakIfAllowed(notification.spokenText);
       } else if (notification.policy === "show") {
-        pushLog({
-          role: "event",
-          text: notification.displayText,
+        pushBubble({
+          kind: "event",
+          text: notification.spokenText,
           meta: notification.kind,
         });
       } else {
-        // Queue for the next digest (also used when busy or in quiet mode).
         digestRef.current = [...digestRef.current, notification];
         setQueuedDigestCount(digestRef.current.length);
       }
     }
-  }, [conversations, pushLog, speakIfAllowed]);
+  }, [conversations, pushBubble, speakIfAllowed]);
 
-  // Teardown on unmount.
+  // Dev/scripting hook: lets tooling drive the voice plane without a mic.
+  useEffect(() => {
+    window.__cesiumVoice = {
+      setMode,
+      sendTextUtterance,
+      runSelfTest,
+      interrupt,
+    };
+    return () => {
+      delete window.__cesiumVoice;
+    };
+  }, [interrupt, runSelfTest, sendTextUtterance, setMode]);
+
   useEffect(() => {
     return () => {
       void stopCapture();
@@ -724,20 +819,19 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
       mode,
       activity,
       setMode,
-      log,
-      micLevel,
+      bubbles,
+      dismissBubble,
+      getOrbLevels,
       vadEngineId,
       captureSettings,
       serverStatus,
-      refreshServerStatus,
       lastLatency,
       latencyP50Ms,
+      memory,
       sendTextUtterance,
       runSelfTest,
       selfTestRunning,
       interrupt,
-      panelOpen,
-      setPanelOpen,
       error,
       queuedDigestCount,
     }),
@@ -745,19 +839,19 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
       mode,
       activity,
       setMode,
-      log,
-      micLevel,
+      bubbles,
+      dismissBubble,
+      getOrbLevels,
       vadEngineId,
       captureSettings,
       serverStatus,
-      refreshServerStatus,
       lastLatency,
       latencyP50Ms,
+      memory,
       sendTextUtterance,
       runSelfTest,
       selfTestRunning,
       interrupt,
-      panelOpen,
       error,
       queuedDigestCount,
     ]

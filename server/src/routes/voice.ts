@@ -123,6 +123,7 @@ voiceRoutes.post("/api/voice/controller", async (c) => {
     const result = await runVoiceController(workspace, {
       utterance: body.utterance,
       ...(Array.isArray(body.history) ? { history: body.history } : {}),
+      ...(typeof body.summary === "string" ? { summary: body.summary } : {}),
       ...(body.mode ? { mode: body.mode } : {}),
     });
     return c.json({ result });

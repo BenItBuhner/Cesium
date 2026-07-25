@@ -1474,12 +1474,25 @@ export type VoiceControllerAction = {
   conversationId?: string;
 };
 
+export type VoiceCompactionInfo = {
+  summary: string;
+  history: Array<{ role: "user" | "assistant"; content: string }>;
+  compressedTurnCount: number;
+  retainedTurnCount: number;
+  estimatedTokensBefore: number;
+  estimatedTokensAfter: number;
+};
+
 export type VoiceControllerResult = {
   spokenText: string;
   displayText: string;
   notify: "speak" | "show";
   needsConfirmation: boolean;
+  /** Session the controller wants presented in the workspace UI. */
+  openConversationId: string | null;
   actions: VoiceControllerAction[];
+  /** Present when this turn compacted the conversation memory. */
+  compaction: VoiceCompactionInfo | null;
   model: string;
   toolRounds: number;
   llmMs: number;
@@ -1509,6 +1522,7 @@ export async function fetchVoiceStatus(): Promise<VoiceStatus> {
 export async function runVoiceControllerTurn(input: {
   utterance: string;
   history?: Array<{ role: "user" | "assistant"; content: string }>;
+  summary?: string | null;
   mode?: "active" | "quiet";
 }): Promise<{ result: VoiceControllerResult }> {
   return request(`/api/voice/controller`, {

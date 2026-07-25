@@ -1,5 +1,11 @@
 import type { WorkspaceRecord } from "../workspace-registry.js";
 import {
+  compactVoiceHistory,
+  summaryPromptMessage,
+  voiceCompactionConfig,
+  type VoiceHistoryEntry,
+} from "./compaction.js";
+import {
   voiceControllerEnv,
   voiceControllerExtraBody,
 } from "./voice-env.js";
@@ -16,16 +22,24 @@ import {
  * sessions via session_start / session_message, which return immediately.
  */
 
-export type VoiceHistoryEntry = {
-  role: "user" | "assistant";
-  content: string;
-};
+export type { VoiceHistoryEntry } from "./compaction.js";
 
 export type VoiceControllerRequest = {
   utterance: string;
   history?: VoiceHistoryEntry[];
+  /** Running compaction summary from previous turns; opaque to the client. */
+  summary?: string | null;
   /** Voice mode at the time of the utterance; quiet mode still infers/acts. */
   mode?: "active" | "quiet";
+};
+
+export type VoiceCompactionInfo = {
+  summary: string;
+  history: VoiceHistoryEntry[];
+  compressedTurnCount: number;
+  retainedTurnCount: number;
+  estimatedTokensBefore: number;
+  estimatedTokensAfter: number;
 };
 
 export type VoiceControllerResult = {
@@ -35,12 +49,16 @@ export type VoiceControllerResult = {
   notify: "speak" | "show";
   /** True when the controller wants explicit confirmation before acting. */
   needsConfirmation: boolean;
+  /** Session the controller wants presented in the user's workspace UI. */
+  openConversationId: string | null;
   actions: Array<{
     tool: string;
     ok: boolean;
     summary: string;
     conversationId?: string;
   }>;
+  /** Present when this turn compacted the conversation memory. */
+  compaction: VoiceCompactionInfo | null;
   model: string;
   toolRounds: number;
   llmMs: number;
@@ -49,18 +67,18 @@ export type VoiceControllerResult = {
 };
 
 const MAX_TOOL_ROUNDS = 4;
-const MAX_HISTORY_ENTRIES = 16;
 const MAX_UTTERANCE_CHARS = 4000;
 
-const SYSTEM_PROMPT = `You are the live voice controller for Cesium, a local-first AI engineering workbench. The user is SPEAKING to you and hears your reply through text-to-speech.
+const SYSTEM_PROMPT = `You are the live voice controller for Cesium, a local-first AI engineering workbench. The user is SPEAKING to you and hears your reply through text-to-speech. Your visual presence is a small ambient orb with transient captions — there is no chat log, so never refer to "the text above".
 
 You must return your final answer as a single JSON object, no markdown fences, with exactly these keys:
-{"spoken": string, "display": string, "notify": "speak"|"show", "confirm": boolean}
+{"spoken": string, "display": string, "notify": "speak"|"show", "confirm": boolean, "open": string|null}
 
 - "spoken": what gets read aloud. Conversational, concise (1-3 short sentences), no markdown, no code, no URLs, no bullet lists. Expand things that read badly aloud.
-- "display": what gets shown in the voice panel. May use markdown, may include ids/paths/details. Often slightly fuller than "spoken".
+- "display": a short caption shown briefly next to the orb. Plain text, one or two lines.
 - "notify": "speak" normally; "show" when the content is routine/verbose and interrupting the user aloud is not warranted.
 - "confirm": true only when you decided NOT to act yet because the request is destructive or ambiguous and you are asking the user to confirm.
+- "open": you can CONTROL THE USER'S WORKSPACE with this. Set it to a session's conversation id to open and present that session in their UI — do this when you start a session for them, when they ask to see or check a session, or when presenting finished work. null otherwise.
 
 Tool policy:
 - Handle DIRECTLY (no tools, or 1-2 quick tool calls): greetings, quick questions, listing sessions, checking one session's status.
@@ -105,12 +123,14 @@ export function parseControllerPayload(raw: string): {
   display: string;
   notify: "speak" | "show";
   confirm: boolean;
+  open: string | null;
 } {
   const fallback = (text: string) => ({
     spoken: text.trim(),
     display: text.trim(),
     notify: "speak" as const,
     confirm: false,
+    open: null,
   });
   const text = raw.trim();
   if (!text) return fallback("Done.");
@@ -154,11 +174,18 @@ export function parseControllerPayload(raw: string): {
               ? parsed.display.trim()
               : spoken;
           if (!spoken && !display) return fallback(text);
+          const open =
+            typeof parsed.open === "string" &&
+            parsed.open.trim().length >= 8 &&
+            parsed.open.trim().length <= 64
+              ? parsed.open.trim()
+              : null;
           return {
             spoken: spoken || display,
             display,
             notify: parsed.notify === "show" ? "show" : "speak",
             confirm: parsed.confirm === true,
+            open,
           };
         } catch {
           return fallback(text);
@@ -189,16 +216,32 @@ export async function runVoiceController(
   let toolMs = 0;
   const executions: VoiceToolExecution[] = [];
 
-  const history = (request.history ?? [])
-    .slice(-MAX_HISTORY_ENTRIES)
+  const providedHistory = (request.history ?? [])
     .filter((entry) => entry.content.trim().length > 0)
     .map((entry) => ({
       role: entry.role,
       content: entry.content.slice(0, 2000),
     }));
 
+  // Harness-style compaction: fold old turns into the running summary so
+  // the voice session can continue indefinitely with bounded prompts.
+  const compaction = compactVoiceHistory(
+    request.summary?.trim() || null,
+    providedHistory,
+    voiceCompactionConfig()
+  );
+  const history = compaction.history;
+
   const messages: ChatMessage[] = [
     { role: "system", content: SYSTEM_PROMPT },
+    ...(compaction.summary
+      ? [
+          {
+            role: "user" as const,
+            content: summaryPromptMessage(compaction.summary),
+          },
+        ]
+      : []),
     ...history.map(
       (entry): ChatMessage => ({ role: entry.role, content: entry.content })
     ),
@@ -305,6 +348,7 @@ export async function runVoiceController(
     displayText: parsed.display,
     notify: parsed.notify,
     needsConfirmation: parsed.confirm,
+    openConversationId: parsed.open,
     actions: executions.map((execution) => ({
       tool: execution.tool,
       ok: execution.ok,
@@ -313,6 +357,17 @@ export async function runVoiceController(
         ? { conversationId: execution.conversationId }
         : {}),
     })),
+    compaction:
+      compaction.compacted && compaction.summary
+        ? {
+            summary: compaction.summary,
+            history: compaction.history,
+            compressedTurnCount: compaction.compressedTurnCount,
+            retainedTurnCount: compaction.retainedTurnCount,
+            estimatedTokensBefore: compaction.estimatedTokensBefore,
+            estimatedTokensAfter: compaction.estimatedTokensAfter,
+          }
+        : null,
     model,
     toolRounds,
     llmMs,

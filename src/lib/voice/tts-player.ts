@@ -23,6 +23,8 @@ const DUCK_RAMP_S = 0.08;
 export class TtsPlayer {
   private context: AudioContext | null = null;
   private gainNode: GainNode | null = null;
+  private analyser: AnalyserNode | null = null;
+  private analyserData: Uint8Array | null = null;
   private activeSources = new Set<AudioBufferSourceNode>();
   private abortController: AbortController | null = null;
   private generation = 0;
@@ -39,11 +41,34 @@ export class TtsPlayer {
     return this.state !== "idle";
   }
 
+  /**
+   * Instantaneous output level (0..1) from the analyser tap — drives the
+   * orb's speaking animation with the actual speech amplitude.
+   */
+  getOutputLevel(): number {
+    if (!this.analyser || !this.analyserData || this.state !== "speaking") {
+      return 0;
+    }
+    this.analyser.getByteTimeDomainData(
+      this.analyserData as Uint8Array<ArrayBuffer>
+    );
+    let sum = 0;
+    for (let i = 0; i < this.analyserData.length; i++) {
+      const centered = (this.analyserData[i]! - 128) / 128;
+      sum += centered * centered;
+    }
+    return Math.min(1, Math.sqrt(sum / this.analyserData.length) * 3);
+  }
+
   private ensureContext(): AudioContext {
     if (!this.context) {
       this.context = new AudioContext();
       this.gainNode = this.context.createGain();
-      this.gainNode.connect(this.context.destination);
+      this.analyser = this.context.createAnalyser();
+      this.analyser.fftSize = 512;
+      this.analyserData = new Uint8Array(this.analyser.fftSize);
+      this.gainNode.connect(this.analyser);
+      this.analyser.connect(this.context.destination);
     }
     return this.context;
   }

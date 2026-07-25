@@ -4,7 +4,7 @@ import { Suspense, useSyncExternalStore, type ReactNode } from "react";
 import { DocsPageView } from "@/components/docs/DocsPageView";
 import { AgentConversationsProvider } from "@/components/chat/AgentConversationsContext";
 import { OpenInEditorProvider } from "@/components/editor/OpenInEditorContext";
-import { VoicePill } from "@/components/voice/VoicePill";
+import { VoiceOrb } from "@/components/voice/VoiceOrb";
 import { VoiceProvider } from "@/components/voice/VoiceProvider";
 import { AgentLayout } from "@/components/layout/AgentLayout";
 import { MobileBridgeSync } from "@/components/mobile/MobileBridgeSync";
@@ -45,7 +45,7 @@ function WorkbenchWithConversationProviders() {
         <VoiceProvider>
           <MobileBridgeSync />
           <WorkbenchShell />
-          <VoicePill />
+          <VoiceOrb />
         </VoiceProvider>
       </AgentConversationsProvider>
     </OpenInEditorProvider>
