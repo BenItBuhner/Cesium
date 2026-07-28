@@ -210,16 +210,32 @@ function createHarnessTestRig(options: {
   };
 }
 
-function assistantMessageUpdated(finish?: string): Record<string, unknown> {
+function assistantMessageUpdated(finish?: string, id = "msg_provider"): Record<string, unknown> {
   return {
     type: "message.updated",
     properties: {
       sessionID: ROOT_SESSION,
       info: {
-        id: "msg_provider",
+        id,
         role: "assistant",
         sessionID: ROOT_SESSION,
         ...(finish ? { finish } : {}),
+      },
+    },
+  };
+}
+
+function assistantTextPartUpdated(messageId: string, partId: string, text: string): Record<string, unknown> {
+  return {
+    type: "message.part.updated",
+    properties: {
+      sessionID: ROOT_SESSION,
+      part: {
+        id: partId,
+        messageID: messageId,
+        sessionID: ROOT_SESSION,
+        type: "text",
+        text,
       },
     },
   };
@@ -676,6 +692,47 @@ test("hard error status still fails the turn", async () => {
   });
   await rejection;
   assert.equal(rig.conversation().status, "failed");
+  await handle.dispose();
+});
+
+test("tool-calls step finish does not end the turn; final text streams from the follow-up message", async () => {
+  resetHarnessDiagnosticsForTests();
+  setFastTimers();
+  const rig = createHarnessTestRig({ conversationId: "conv-step-finish" });
+  const handle = await rig.provider.startSession(rig.callbacks);
+
+  const promptDone = handle.prompt({ text: "run a tool", userMessageId: "u1" });
+  const promptSettled = { value: false };
+  promptDone.then(
+    () => {
+      promptSettled.value = true;
+    },
+    () => {
+      promptSettled.value = true;
+    }
+  );
+  await waitFor(() => rig.conversation().status === "running");
+  await sleep(20);
+
+  // Step boundary: the model paused to run tools. This must NOT end the turn.
+  await rig.emitSse(assistantMessageUpdated("tool-calls", "msg_step1"));
+  await sleep(80);
+  assert.equal(promptSettled.value, false, "tool-calls finish must not complete the turn");
+
+  // The final answer arrives in a fresh assistant message.
+  await rig.emitSse(assistantMessageUpdated(undefined, "msg_step2"));
+  await rig.emitSse(assistantTextPartUpdated("msg_step2", "prt_1", "The output is harness-ok"));
+  await rig.emitSse(assistantMessageUpdated("stop", "msg_step2"));
+  await promptDone;
+
+  assert.equal(rig.conversation().status, "idle");
+  assert.ok(
+    rig.appended.some(
+      (event) =>
+        event.kind === "assistant_message_chunk" && event.text.includes("The output is harness-ok")
+    ),
+    "final text from the follow-up assistant message must be streamed"
+  );
   await handle.dispose();
 });
 

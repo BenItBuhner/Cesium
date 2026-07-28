@@ -151,6 +151,17 @@ export function openCodeServerPartTextDelta(previous: string, next: string): str
   return previous && next.startsWith(previous) ? next.slice(previous.length) : next;
 }
 
+/**
+ * OpenCode sets `finish` on assistant messages at every step boundary:
+ * `tool-calls` means "the model paused to run tools and will continue", so
+ * completing the turn there cuts it off mid-work (and loses the final text,
+ * which arrives later in a fresh assistant message).
+ */
+export function isTerminalOpenCodeFinish(finish: string): boolean {
+  const key = finish.trim().toLowerCase().replace(/[_-]+/g, "");
+  return key !== "toolcalls" && key !== "tooluse" && key !== "toolresult";
+}
+
 /** Injectable transports so reliability behavior is unit-testable without a real OpenCode binary. */
 export type OpenCodeServerProviderDeps = {
   connect: typeof connectOpenCodeServer;
@@ -820,8 +831,12 @@ export class OpenCodeServerSessionHandle implements AgentSessionHandle {
         return info?.role === "assistant";
       });
       const info = asRecord(latestAssistant?.info ?? null);
+      const finish = info ? asString(info.finish) : undefined;
       const finished = Boolean(
-        info && (asString(info.finish) || asRecord(info.time)?.completed != null)
+        info &&
+          (finish
+            ? isTerminalOpenCodeFinish(finish)
+            : asRecord(info.time)?.completed != null)
       );
       if (finished) {
         this.log.warning(
@@ -999,15 +1014,23 @@ export class OpenCodeServerSessionHandle implements AgentSessionHandle {
       const info = asRecord(properties.info);
       const providerMessageId = asString(info?.id);
       if (info?.role === "assistant" && providerMessageId) {
-        active.providerAssistantMessageId ??= providerMessageId;
+        // Follow the LATEST assistant message: OpenCode starts a fresh
+        // assistant message for the post-tool text step, and locking onto the
+        // first one both dropped the final text and missed the terminal finish.
+        if (active.providerAssistantMessageId !== providerMessageId) {
+          active.providerAssistantMessageId = providerMessageId;
+        }
       }
-      if (
-        info?.role === "assistant" &&
-        providerMessageId &&
-        providerMessageId === active.providerAssistantMessageId &&
-        asString(info.finish)
-      ) {
-        this.scheduleActivePromptCompletion(active, payload);
+      const finish = info?.role === "assistant" && providerMessageId ? asString(info.finish) : undefined;
+      if (finish) {
+        if (isTerminalOpenCodeFinish(finish)) {
+          this.scheduleActivePromptCompletion(active, payload);
+        } else {
+          this.log.debug(
+            "prompt.step_boundary",
+            `Assistant message ${providerMessageId} finished a step (${finish}); turn continues.`
+          );
+        }
       }
       return;
     }
