@@ -5,6 +5,7 @@ import { asRecord, asString } from "./json-coerce.js";
 import type {
   AgentBackendInfo,
   AgentConfigOption,
+  AgentConversationRecord,
   AgentConversationSnapshot,
   AgentEventInput,
   AgentProvider,
@@ -65,6 +66,31 @@ function optionName(options: AgentConfigOption[], id: string, value: string): st
 
 function updateConfigOption(options: AgentConfigOption[], id: string, value: string): AgentConfigOption[] {
   return options.map((option) => (option.id === id ? { ...option, currentValue: value } : option));
+}
+
+/**
+ * The conversation's configured model/mode must win over catalog defaults.
+ * Fresh conversations start from the backend option catalog, whose model
+ * `currentValue` is just "first model the server listed" — without this merge
+ * it silently overrides the model the user picked when creating the chat.
+ */
+function withConversationConfig(
+  options: AgentConfigOption[],
+  conversation: AgentConversationRecord
+): AgentConfigOption[] {
+  const applies = (option: AgentConfigOption, value: string): boolean =>
+    Boolean(value) &&
+    (option.options.length === 0 ||
+      option.options.some((candidate) => candidate.value === value));
+  return options.map((option) => {
+    if (option.category === "model" && applies(option, conversation.config.modelId ?? "")) {
+      return { ...option, currentValue: conversation.config.modelId };
+    }
+    if (option.category === "mode" && applies(option, conversation.config.mode ?? "")) {
+      return { ...option, currentValue: conversation.config.mode };
+    }
+    return option;
+  });
 }
 
 function transcriptText(snapshot: AgentConversationSnapshot | null, excludeUserMessageId?: string): string {
@@ -316,10 +342,12 @@ class OpenCodeV2SessionHandle implements AgentSessionHandle {
     providerSessionId?: string | null
   ) {
     this.capabilities = backend.capabilities;
-    this.configOptions =
+    this.configOptions = withConversationConfig(
       callbacks.conversation.configOptions.length > 0
         ? callbacks.conversation.configOptions
-        : configOptions;
+        : configOptions,
+      callbacks.conversation
+    );
     this.sessionId = providerSessionId ?? `opencode-v2-pending-${callbacks.conversation.id}`;
   }
 

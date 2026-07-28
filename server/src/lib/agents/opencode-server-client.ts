@@ -2,6 +2,15 @@ export type OpenCodeServerJson = Record<string, unknown>;
 
 export type OpenCodeServerClientOptions = {
   baseUrl: string;
+  /**
+   * Workspace directory every instance-scoped request is pinned to via the
+   * `?directory=` query param (supported by OpenCode servers since v0.6.0).
+   * Without it OpenCode resolves the project from the server process cwd,
+   * which is wrong whenever the server is shared across workspaces (external
+   * `OPENCURSOR_OPENCODE_SERVER_URL` deployments) — chats then run in the
+   * server's cwd instead of their own per-chat sandbox directory.
+   */
+  directory?: string;
   username?: string;
   password?: string;
   timeoutMs?: number;
@@ -74,15 +83,30 @@ const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 
 export class OpenCodeServerClient {
   readonly baseUrl: string;
+  readonly directory?: string;
   private readonly username?: string;
   private readonly password?: string;
   private readonly timeoutMs?: number;
 
   constructor(options: OpenCodeServerClientOptions) {
     this.baseUrl = options.baseUrl.replace(/\/$/, "");
+    this.directory = options.directory?.trim() || undefined;
     this.username = options.username;
     this.password = options.password;
     this.timeoutMs = options.timeoutMs;
+  }
+
+  /**
+   * Builds the request URL, scoping instance routes to the configured
+   * workspace directory. `/global/*` routes are instance-independent and must
+   * stay unscoped.
+   */
+  url(pathName: string): string {
+    const url = new URL(`${this.baseUrl}${pathName}`);
+    if (this.directory && !pathName.startsWith("/global")) {
+      url.searchParams.set("directory", this.directory);
+    }
+    return url.toString();
   }
 
   headers(extra?: HeadersInit): Record<string, string> {
@@ -106,7 +130,7 @@ export class OpenCodeServerClient {
         : undefined;
     const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : undefined;
     try {
-      const response = await fetch(`${this.baseUrl}${pathName}`, {
+      const response = await fetch(this.url(pathName), {
         ...init,
         headers: this.headers(init?.headers),
         ...(controller ? { signal: controller.signal } : {}),

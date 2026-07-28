@@ -112,8 +112,16 @@ type FakeClientBehavior = {
 function createHarnessTestRig(options: {
   conversationId: string;
   behavior?: FakeClientBehavior;
+  configOptions?: import("../src/lib/agents/types.js").AgentConfigOption[];
+  conversationConfig?: Partial<AgentConversationRecord["config"]>;
 }) {
   let conversation = baseConversation(options.conversationId);
+  if (options.conversationConfig) {
+    conversation = {
+      ...conversation,
+      config: { ...conversation.config, ...options.conversationConfig },
+    };
+  }
   const appended: AgentEventInput[] = [];
   const answerPermissionCalls: Array<{ sessionId: string; permissionId: string; body: Record<string, unknown> }> = [];
   let seq = 0;
@@ -121,12 +129,16 @@ function createHarnessTestRig(options: {
   let pushEvent: ((event: OpenCodeServerEvent) => void | Promise<void>) | null = null;
   let pushStreamError: ((error: Error) => void | Promise<void>) | null = null;
 
+  const promptBodies: Array<Record<string, unknown>> = [];
   const client = {
     baseUrl: "http://127.0.0.1:0",
     headers: () => ({}),
     createSession: async () => ({ id: ROOT_SESSION }),
     getSession: async (id: string) => ({ id }),
-    sendPromptAsync: async () => null,
+    sendPromptAsync: async (_id: string, body: Record<string, unknown>) => {
+      promptBodies.push(body);
+      return null;
+    },
     sendMessage: async () => ({}),
     abortSession: async () => true,
     listMessages:
@@ -193,7 +205,7 @@ function createHarnessTestRig(options: {
 
   const provider = createOpenCodeServerProvider({
     backend: BACKEND,
-    configOptions: [],
+    configOptions: options.configOptions ?? [],
     deps: {
       connect: async () => connection,
       startEvents: (input) => {
@@ -211,6 +223,7 @@ function createHarnessTestRig(options: {
     callbacks,
     appended,
     answerPermissionCalls,
+    promptBodies,
     startSession: async () => {
       const handle = await provider.startSession(callbacks);
       activeHandles.push(handle);
@@ -851,5 +864,67 @@ test("external permission replies clear the pending prompt", async () => {
       (event) => event.kind === "permission_resolved" && event.requestId === "perm_ext"
     )
   );
+  await handle.dispose();
+});
+
+test("conversation model wins over the catalog default on fresh sessions", async () => {
+  resetHarnessDiagnosticsForTests();
+  setFastTimers();
+  const rig = createHarnessTestRig({
+    conversationId: "conv-model-priority",
+    // Catalog default is another provider's model (e.g. an external server
+    // whose first listed model is an OpenAI one); the user picked kimi-k3.
+    configOptions: [
+      {
+        id: "model",
+        name: "Model",
+        category: "model",
+        currentValue: "openai/gpt-5.2-codex",
+        options: [
+          { value: "openai/gpt-5.2-codex", name: "OpenAI/GPT 5.2 Codex" },
+          { value: "techlit/kimi-k3", name: "Model Proxy/Kimi K3" },
+        ],
+      },
+    ],
+    conversationConfig: { modelId: "techlit/kimi-k3", modelName: "Model Proxy/Kimi K3" },
+  });
+  const handle = await rig.startSession();
+
+  const promptDone = handle.prompt({ text: "hello", userMessageId: "u1" });
+  await waitFor(() => rig.promptBodies.length > 0);
+  assert.deepEqual(rig.promptBodies[0]?.model, { providerID: "techlit", modelID: "kimi-k3" });
+
+  await rig.emitSse(assistantMessageUpdated());
+  await rig.emitSse(assistantMessageUpdated("stop"));
+  await promptDone;
+  assert.equal(rig.conversation().status, "idle");
+  await handle.dispose();
+});
+
+test("stale conversation model not in the catalog keeps the catalog default", async () => {
+  resetHarnessDiagnosticsForTests();
+  setFastTimers();
+  const rig = createHarnessTestRig({
+    conversationId: "conv-model-stale",
+    configOptions: [
+      {
+        id: "model",
+        name: "Model",
+        category: "model",
+        currentValue: "techlit/kimi-k3",
+        options: [{ value: "techlit/kimi-k3", name: "Model Proxy/Kimi K3" }],
+      },
+    ],
+    conversationConfig: { modelId: "gone/removed-model", modelName: "Removed" },
+  });
+  const handle = await rig.startSession();
+
+  const promptDone = handle.prompt({ text: "hello", userMessageId: "u1" });
+  await waitFor(() => rig.promptBodies.length > 0);
+  assert.deepEqual(rig.promptBodies[0]?.model, { providerID: "techlit", modelID: "kimi-k3" });
+
+  await rig.emitSse(assistantMessageUpdated());
+  await rig.emitSse(assistantMessageUpdated("stop"));
+  await promptDone;
   await handle.dispose();
 });
