@@ -28,9 +28,9 @@ import {
   resolveAgentPluginAttachments,
 } from "../../plugins/attachments.js";
 import {
-  getGlobalSettings,
-  saveRememberedAgentPermissionRule,
-} from "../../global-settings-store.js";
+  persistRememberedPermissionChoice,
+  resolveRememberedPermissionDecision,
+} from "../remembered-permissions.js";
 import { extractInlineReasoning } from "../parse-inline-reasoning.js";
 import type {
   AgentBackendId,
@@ -80,7 +80,6 @@ import {
   parsePermissionOptions,
   permissionDecisionFromKind,
   providerOptionIdForPermissionSelection,
-  providerOptionIdForRememberedPermission,
   readOpenCodeSseChildSessionId,
   summarizeAcpToolCallDetail,
   summarizeAcpToolCallTitle,
@@ -1047,15 +1046,14 @@ export class AcpSessionHandle implements AgentSessionHandle {
     ) {
       const decision = permissionDecisionFromKind(selected.kind);
       if (decision) {
-        await saveRememberedAgentPermissionRule({
+        await persistRememberedPermissionChoice({
           workspaceId: this.callbacks.workspace.id,
           backendId: this.backend.id,
           toolKey: context.toolKey,
           toolLabel: context.toolLabel,
-          decision,
           optionId: selected.optionId,
           optionKind: selected.kind,
-        }).catch(() => undefined);
+        });
       }
     }
     await this.callbacks.appendEvents([
@@ -1644,18 +1642,14 @@ export class AcpSessionHandle implements AgentSessionHandle {
         title,
         detail,
       });
-      const settings = await getGlobalSettings().catch(() => undefined);
-      const remembered = settings?.agents.rememberedPermissions.find(
-        (rule) =>
-          rule.workspaceId === this.callbacks.workspace.id &&
-          rule.backendId === this.backend.id &&
-          rule.toolKey === permissionSignature.toolKey
-      );
-      if (remembered) {
-        const providerOptionId = providerOptionIdForRememberedPermission(
-          normalizedOptions,
-          remembered.decision
-        );
+      const resolved = await resolveRememberedPermissionDecision({
+        workspaceId: this.callbacks.workspace.id,
+        backendId: this.backend.id,
+        toolKey: permissionSignature.toolKey,
+        options: normalizedOptions,
+      });
+      if (resolved.kind === "remembered") {
+        const providerOptionId = resolved.providerOptionId;
         this.bridge.respond(requestId, {
           outcome: providerOptionId
             ? {
@@ -1672,12 +1666,12 @@ export class AcpSessionHandle implements AgentSessionHandle {
             kind: "permission_resolved",
             requestId: requestKey,
             outcome: providerOptionId ? "selected" : "cancelled",
-            optionId: remembered.optionId,
+            optionId: resolved.rule.optionId,
             raw: {
               rememberedPermission: {
-                id: remembered.id,
-                decision: remembered.decision,
-                toolLabel: remembered.toolLabel,
+                id: resolved.rule.id,
+                decision: resolved.rule.decision,
+                toolLabel: resolved.rule.toolLabel,
               },
             },
           },
@@ -1686,7 +1680,7 @@ export class AcpSessionHandle implements AgentSessionHandle {
             conversationId: this.callbacks.conversation.id,
             kind: "status",
             status: "running",
-            detail: `Used remembered permission for ${remembered.toolLabel}.`,
+            detail: `Used remembered permission for ${resolved.rule.toolLabel}.`,
           },
         ]);
         await this.callbacks.updateConversation((current) => ({
@@ -1696,41 +1690,35 @@ export class AcpSessionHandle implements AgentSessionHandle {
         }));
         return;
       }
-      if (settings?.agents.autoAcceptAllAgentPermissions) {
-        const providerOptionId = providerOptionIdForRememberedPermission(
-          normalizedOptions,
-          "allow"
-        );
-        if (providerOptionId) {
-          this.bridge.respond(requestId, {
-            outcome: { outcome: "selected", optionId: providerOptionId },
-          });
-          this.pendingPermissionRequestIds.delete(requestKey);
-          await this.callbacks.appendEvents([
-            {
-              eventId: randomUUID(),
-              conversationId: this.callbacks.conversation.id,
-              kind: "permission_resolved",
-              requestId: requestKey,
-              outcome: "selected",
-              optionId: providerOptionId,
-              raw: { autoAcceptedAll: true },
-            },
-            {
-              eventId: randomUUID(),
-              conversationId: this.callbacks.conversation.id,
-              kind: "status",
-              status: "running",
-              detail: "Auto-accepted (Agents → auto-approve all).",
-            },
-          ]);
-          await this.callbacks.updateConversation((current) => ({
-            ...current,
+      if (resolved.kind === "auto_accept" && resolved.providerOptionId) {
+        this.bridge.respond(requestId, {
+          outcome: { outcome: "selected", optionId: resolved.providerOptionId },
+        });
+        this.pendingPermissionRequestIds.delete(requestKey);
+        await this.callbacks.appendEvents([
+          {
+            eventId: randomUUID(),
+            conversationId: this.callbacks.conversation.id,
+            kind: "permission_resolved",
+            requestId: requestKey,
+            outcome: "selected",
+            optionId: resolved.providerOptionId,
+            raw: { autoAcceptedAll: true },
+          },
+          {
+            eventId: randomUUID(),
+            conversationId: this.callbacks.conversation.id,
+            kind: "status",
             status: "running",
-            pendingPermission: null,
-          }));
-          return;
-        }
+            detail: "Auto-accepted (Agents → auto-approve all).",
+          },
+        ]);
+        await this.callbacks.updateConversation((current) => ({
+          ...current,
+          status: "running",
+          pendingPermission: null,
+        }));
+        return;
       }
       this.pendingPermissionContextById.set(requestKey, {
         options: normalizedOptions,

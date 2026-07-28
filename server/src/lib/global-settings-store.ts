@@ -1,4 +1,5 @@
 import { invalidate, readThrough } from "../cache/read-through.js";
+import { bumpRevision } from "../storage/revisions.js";
 import { getStorage } from "../storage/runtime.js";
 import {
   readAgentBackendConfigCache,
@@ -21,6 +22,8 @@ import { measureServerPerf } from "./perf.js";
 
 const GLOBAL_SETTINGS_CACHE_TTL_SECONDS = 120;
 const KEY_GLOBAL_SETTINGS = "opencursor:settings:global";
+/** Must match `GLOBAL_SETTINGS_KEY` in `routes/settings.ts` for If-Match. */
+const GLOBAL_SETTINGS_REVISION_KEY = "settings:global";
 const MODEL_TOGGLE_CACHE_TTL_SECONDS = 30;
 const modelToggleCacheKeys = new Set<string>();
 
@@ -642,7 +645,73 @@ export async function saveRememberedAgentPermissionRule(input: {
       rememberedPermissions,
     },
   });
+  // Agent sessions write remembered rules outside the settings UI. Bump the HTTP
+  // revision so stale client full-settings PUTs fail If-Match instead of racing.
+  bumpRevision(GLOBAL_SETTINGS_REVISION_KEY);
   return nextRule;
+}
+
+export async function removeRememberedAgentPermissionRule(
+  id: string
+): Promise<RememberedAgentPermissionRule[]> {
+  const settings = await getGlobalSettings();
+  const rememberedPermissions = settings.agents.rememberedPermissions.filter(
+    (rule) => rule.id !== id
+  );
+  if (rememberedPermissions.length === settings.agents.rememberedPermissions.length) {
+    return rememberedPermissions;
+  }
+  await saveGlobalSettings({
+    ...settings,
+    agents: {
+      ...settings.agents,
+      rememberedPermissions,
+    },
+  });
+  bumpRevision(GLOBAL_SETTINGS_REVISION_KEY);
+  return rememberedPermissions;
+}
+
+export async function clearRememberedAgentPermissionRules(input?: {
+  backendId?: string;
+}): Promise<RememberedAgentPermissionRule[]> {
+  const settings = await getGlobalSettings();
+  const backendId = input?.backendId
+    ? normalizeRememberedPermissionBackendId(input.backendId.trim())
+    : null;
+  const rememberedPermissions = backendId
+    ? settings.agents.rememberedPermissions.filter((rule) => rule.backendId !== backendId)
+    : [];
+  if (
+    rememberedPermissions.length === settings.agents.rememberedPermissions.length
+  ) {
+    return rememberedPermissions;
+  }
+  await saveGlobalSettings({
+    ...settings,
+    agents: {
+      ...settings.agents,
+      rememberedPermissions,
+    },
+  });
+  bumpRevision(GLOBAL_SETTINGS_REVISION_KEY);
+  return rememberedPermissions;
+}
+
+export async function replaceRememberedAgentPermissionRules(
+  rules: RememberedAgentPermissionRule[]
+): Promise<RememberedAgentPermissionRule[]> {
+  const settings = await getGlobalSettings();
+  const rememberedPermissions = normalizeRememberedAgentPermissionRules(rules).slice(-250);
+  await saveGlobalSettings({
+    ...settings,
+    agents: {
+      ...settings.agents,
+      rememberedPermissions,
+    },
+  });
+  bumpRevision(GLOBAL_SETTINGS_REVISION_KEY);
+  return rememberedPermissions;
 }
 
 function migrateGlobalSettings(raw: Record<string, unknown>): GlobalSettings {

@@ -36,6 +36,8 @@ import {
   savePiAgentHome,
   savePiAgentProviderKey,
   startPiAgentOAuth,
+  removeRememberedAgentPermission,
+  clearRememberedAgentPermissions,
   type ClaudeCodeSdkSettingsPayload,
   type CesiumAgentSettingsPayload,
   type CesiumCustomProvider,
@@ -2160,14 +2162,12 @@ function HarnessRememberedPermissionsList({
 
 function HarnessDetailView({
   backendId,
-  agents,
   rememberedForHarness,
   workspaceNameById,
   onPatchAgents,
   onOpenModels,
 }: {
   backendId: AgentBackendId;
-  agents: AgentsSettingsState;
   rememberedForHarness: RememberedAgentPermissionRule[];
   workspaceNameById: Map<string, string>;
   onPatchAgents: (patch: Partial<AgentsSettingsState>) => void;
@@ -2175,20 +2175,28 @@ function HarnessDetailView({
 }) {
   const removeRemembered = useCallback(
     (id: string) => {
-      onPatchAgents({
-        rememberedPermissions: agents.rememberedPermissions.filter((rule) => rule.id !== id),
-      });
+      void (async () => {
+        try {
+          const result = await removeRememberedAgentPermission(id);
+          onPatchAgents({ rememberedPermissions: result.rememberedPermissions });
+        } catch {
+          // Keep local list; next settings refetch will reconcile.
+        }
+      })();
     },
-    [agents.rememberedPermissions, onPatchAgents]
+    [onPatchAgents]
   );
 
   const clearHarnessRemembered = useCallback(() => {
-    onPatchAgents({
-      rememberedPermissions: agents.rememberedPermissions.filter(
-        (rule) => rule.backendId !== backendId
-      ),
-    });
-  }, [agents.rememberedPermissions, backendId, onPatchAgents]);
+    void (async () => {
+      try {
+        const result = await clearRememberedAgentPermissions({ backendId });
+        onPatchAgents({ rememberedPermissions: result.rememberedPermissions });
+      } catch {
+        // Keep local list; next settings refetch will reconcile.
+      }
+    })();
+  }, [backendId, onPatchAgents]);
 
   return (
     <>
@@ -2313,7 +2321,18 @@ function HarnessListView({
               type="button"
               className={`${rowButtonClass} disabled:cursor-not-allowed disabled:opacity-45`}
               disabled={agents.rememberedPermissions.length === 0}
-              onClick={() => onPatchAgents({ rememberedPermissions: [] })}
+              onClick={() => {
+                void (async () => {
+                  try {
+                    const result = await clearRememberedAgentPermissions();
+                    onPatchAgents({
+                      rememberedPermissions: result.rememberedPermissions,
+                    });
+                  } catch {
+                    // Keep local list; next settings refetch will reconcile.
+                  }
+                })();
+              }}
             >
               Clear all
             </button>
@@ -2327,13 +2346,18 @@ function HarnessListView({
               rules={sortedRemembered}
               workspaceNameById={workspaceNameById}
               showBackendLabel
-              onRemove={(id) =>
-                onPatchAgents({
-                  rememberedPermissions: agents.rememberedPermissions.filter(
-                    (rule) => rule.id !== id
-                  ),
-                })
-              }
+              onRemove={(id) => {
+                void (async () => {
+                  try {
+                    const result = await removeRememberedAgentPermission(id);
+                    onPatchAgents({
+                      rememberedPermissions: result.rememberedPermissions,
+                    });
+                  } catch {
+                    // Keep local list; next settings refetch will reconcile.
+                  }
+                })();
+              }}
             />
           )}
         </HarnessListInset>
@@ -2440,7 +2464,6 @@ export function AgentsHarnessSettingsPanel() {
       {activeHarnessId ? (
         <HarnessDetailView
           backendId={activeHarnessId}
-          agents={agents}
           rememberedForHarness={rememberedByHarness.get(activeHarnessId) ?? []}
           workspaceNameById={workspaceNameById}
           onPatchAgents={patchAgents}
