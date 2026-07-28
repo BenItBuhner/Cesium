@@ -508,7 +508,7 @@ export function CloudAgentsSettingsPanel() {
         />
         <SettingsRow
           title="Default model"
-          description="Optional model id override passed to the harness (e.g. openai/gpt-5.1 or techlitnow/glm-5.2)."
+          description="Optional model id override passed to the harness (e.g. openai/gpt-5.1 or techlit/kimi-k3)."
           searchId="cloud-agents-default-model"
           trailing={
             <input

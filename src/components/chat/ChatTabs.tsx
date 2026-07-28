@@ -310,7 +310,7 @@ export function ChatTabs({
                     onCloseTab(tab.id);
                   }
                 }}
-                className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-[var(--radius-tab)] text-[var(--text-secondary)] opacity-0 transition-opacity hover:text-[var(--text-primary)] group-hover:pointer-events-auto group-hover:opacity-100"
+                className="tab-close-hit absolute inset-0 flex items-center justify-center rounded-[var(--radius-tab)] text-[var(--text-secondary)] transition-opacity hover:text-[var(--text-primary)]"
                 aria-label={`Close ${tab.title}`}
               >
                 <X className="size-[18px]" strokeWidth={1.5} />

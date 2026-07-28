@@ -103,11 +103,11 @@ function WorkbenchShot() {
     <figure className="mx-auto max-w-[980px]">
       <div className="overflow-hidden rounded-[14px] border border-[var(--border-card)] bg-[var(--bg-panel)] shadow-[0_24px_80px_-24px_rgba(0,0,0,0.35)]">
         <div className="flex items-center gap-[8px] border-b border-[var(--border-subtle)] bg-[var(--bg-main)] px-[14px] py-[10px]">
-          <span className="size-[10px] rounded-full bg-[var(--burn-accent)] opacity-80" />
+          <span className="size-[10px] rounded-full bg-[var(--goal-accent)] opacity-80" />
           <span className="size-[10px] rounded-full bg-[var(--plan-accent)] opacity-80" />
           <span className="size-[10px] rounded-full bg-[var(--ask-accent)] opacity-80" />
           <span className="ml-[10px] font-mono text-[11px] text-[var(--text-disabled)]">
-            cesium — /agent · glm-5.2
+            cesium — /agent · kimi-k3
           </span>
         </div>
         <img
@@ -138,12 +138,15 @@ function WorkbenchShot() {
 /* ------------------------------------------------------------------------ */
 
 const AGENT_MARQUEE = [
+  { name: "Cesium", file: "Cesium-Light.svg", note: "built-in" },
   { name: "Cursor", file: "Cursor-Light.svg", note: "SDK + ACP" },
   { name: "Codex", file: "Codex-Light.svg", note: "app server" },
   { name: "Claude Code", file: "Claude-Code-Light.svg", note: "SDK" },
   { name: "OpenCode", file: "OpenCode-Light.svg", note: "ACP" },
   { name: "Devin", file: "Devin-Light.svg", note: "ACP" },
-  { name: "Gemini CLI", file: "Gemini-CLI-Light.svg", note: "ACP" },
+  { name: "Grok Build", file: "Grok-Light.svg", note: "ACP" },
+  { name: "Pi Agent", file: "Pi-Light.svg", note: "ACP" },
+  { name: "Antigravity", file: "Antigravity-Light.svg", note: "CLI" },
 ] as const;
 
 const FEATURES = [
@@ -165,8 +168,8 @@ const FEATURES = [
     icon: TerminalSquare,
     title: "Integrated terminals",
     body: "Real PTY sessions streamed to xterm.js. Watch what your agents run, scroll back through it, and take over whenever you want.",
-    accent: "var(--burn-accent)",
-    accentBg: "var(--burn-accent-bg)",
+    accent: "var(--goal-accent)",
+    accentBg: "var(--goal-accent-bg)",
   },
   {
     icon: FolderOpen,

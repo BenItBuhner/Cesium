@@ -17,6 +17,7 @@ const BACKEND_PLAN_SEGMENTS: Record<AgentBackendId, string> = {
   "opencode-server": "opencode",
   "opencode-v2-beta": "opencode-v2",
   "devin-acp": "devin",
+  "grok-build": "grok-build",
   "codex-app-server": "codex",
   "claude-code-sdk": "claude",
   "pi-agent": "pi-agent",

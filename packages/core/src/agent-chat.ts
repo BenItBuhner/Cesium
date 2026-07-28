@@ -10,6 +10,7 @@ import {
   isCompressingContextStatusDetail,
   isTakingLongerStatusDetail,
 } from "./agent-completion-error";
+import { resolveModelDisplayName } from "./model-display-name";
 
 /** Agent is actively working or waiting on user mid-turn (not paused). */
 export function isAgentConversationBusy(status: AgentConversationStatus): boolean {
@@ -325,6 +326,8 @@ function modelProviderForBackend(backendId: AgentBackendId): ModelInfo["provider
       return "opencode";
     case "google-antigravity-cli":
       return "google";
+    case "grok-build":
+      return "xai";
     case "codex-app-server":
       return "codex";
     case "claude-code-sdk":
@@ -2814,7 +2817,7 @@ function mergeWorkSessionEditPreview(
   return incN >= exN ? incoming : existing;
 }
 
-function burnToolRequestFromRaw(
+function goalToolRequestFromRaw(
   rawTop: Record<string, unknown> | undefined,
   rawToolRecord: Record<string, unknown> | undefined
 ): { name: string; args: Record<string, unknown> } | null {
@@ -3160,9 +3163,9 @@ function formatToolSummary(
         "Tool call was rejected by the current approval settings."
       : undefined);
   const rawDetail = isVerboseToolPayloadDetail(detail) ? detail?.trim() : existing?.rawDetail;
-  const burnTool = burnToolRequestFromRaw(rawTop, rawToolRecord);
-  if (burnTool) {
-    const presentation = goalToolPresentation(burnTool);
+  const goalTool = goalToolRequestFromRaw(rawTop, rawToolRecord);
+  if (goalTool) {
+    const presentation = goalToolPresentation(goalTool);
     return withConciseToolDetail({
       kind: "tool",
       toolCallId: event.toolCallId,
@@ -4717,7 +4720,9 @@ function cursorSdkStyleVariantDetailLabel(key: string, value: string): string | 
 }
 
 function formatModelVariantLabel(name: string, modelId: string): string {
-  const trimmedName = cleanModelVariantBaseName(name.trim() || modelId.trim() || "Model");
+  const trimmedName = cleanModelVariantBaseName(
+    resolveModelDisplayName(name.trim() || modelId.trim() || "Model", modelId.trim() || name.trim())
+  );
   const normalizedName = trimmedName.toLowerCase();
   const details: string[] = [];
 

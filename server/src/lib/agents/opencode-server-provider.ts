@@ -29,6 +29,14 @@ import {
   openCodeServerPermissionResponse,
 } from "./opencode-server-normalize.js";
 import {
+  buildRememberedPermissionToolKey,
+  persistRememberedPermissionChoice,
+  resolveRememberedPermissionDecision,
+} from "./remembered-permissions.js";
+import {
+  isPersistentPermissionOptionId,
+} from "./permission-options.js";
+import {
   attachOpenCodeGlobalSse,
   detachOpenCodeGlobalSse,
   openCodeEventBelongsToRootSession,
@@ -197,6 +205,11 @@ export class OpenCodeServerSessionHandle implements AgentSessionHandle {
   private readonly pendingPermissions = new Map<string, { sessionId: string; addedAt: number }>();
   /** Every permission requestId surfaced this session, to dedupe re-emits across SSE routes. */
   private readonly seenPermissionRequestIds = new Set<string>();
+  /** requestId → remembered-permission bookkeeping for persisting "always" choices. */
+  private readonly pendingPermissionContext = new Map<
+    string,
+    { toolKey: string; toolLabel: string }
+  >();
   private lastSseActivityAt = 0;
   private watchdogTimer: ReturnType<typeof setInterval> | null = null;
   private watchdogBusy = false;
@@ -478,80 +491,38 @@ export class OpenCodeServerSessionHandle implements AgentSessionHandle {
       `Answering permission ${input.requestId} on session ${targetSessionId}.`,
       { optionId: input.optionId ?? null, cancelled: Boolean(input.cancelled) }
     );
+    const context = this.pendingPermissionContext.get(input.requestId);
+    this.pendingPermissionContext.delete(input.requestId);
+    if (
+      !input.cancelled &&
+      context &&
+      isPersistentPermissionOptionId(input.optionId)
+    ) {
+      await persistRememberedPermissionChoice({
+        workspaceId: this.callbacks.workspace.id,
+        backendId: this.backend.id,
+        toolKey: context.toolKey,
+        toolLabel: context.toolLabel,
+        optionId: input.optionId,
+        optionKind: input.optionId,
+      });
+    }
     this.answeringPermissionIds.add(input.requestId);
-    let delivered = false;
-    let lastError: unknown = null;
+    let result: { delivered: boolean; lastError: unknown };
     try {
-      for (let attempt = 0; attempt < PERMISSION_ANSWER_RETRY_DELAYS_MS.length; attempt += 1) {
-        const delay = PERMISSION_ANSWER_RETRY_DELAYS_MS[attempt]!;
-        if (delay > 0) {
-          await new Promise((resolve) => setTimeout(resolve, delay));
-        }
-        try {
-          await this.connection.client.answerPermission(
-            targetSessionId,
-            input.requestId,
-            openCodeServerPermissionResponse(input.optionId, input.cancelled)
-          );
-          delivered = true;
-          break;
-        } catch (error) {
-          if (error instanceof OpenCodeServerError && error.status === 400) {
-            // Pre-1.x OpenCode servers reject the modern once/always/reject
-            // shape; retry immediately with the legacy allow/deny shape.
-            this.log.info(
-              "permission.answer_format_fallback",
-              `Modern permission reply rejected (400); retrying with legacy allow/deny shape.`
-            );
-            try {
-              await this.connection.client.answerPermission(
-                targetSessionId,
-                input.requestId,
-                openCodeServerLegacyPermissionResponse(input.optionId, input.cancelled)
-              );
-              delivered = true;
-              break;
-            } catch (legacyError) {
-              lastError = legacyError;
-              this.log.warning(
-                "permission.answer_retry",
-                `Legacy-format fallback failed: ${
-                  legacyError instanceof Error ? legacyError.message : String(legacyError)
-                }`
-              );
-              continue;
-            }
-          }
-          if (
-            error instanceof OpenCodeServerError &&
-            (error.status === 404 || error.status === 410)
-          ) {
-            // The request is no longer pending on the OpenCode side (already
-            // answered elsewhere, expired, or the tool moved on). Resolving
-            // locally is correct; retrying can never succeed.
-            this.log.warning(
-              "permission.answer_gone",
-              `Permission ${input.requestId} was no longer pending on OpenCode (${error.status}); resolving locally.`
-            );
-            delivered = true;
-            break;
-          }
-          lastError = error;
-          this.log.warning(
-            "permission.answer_retry",
-            `Attempt ${attempt + 1}/${PERMISSION_ANSWER_RETRY_DELAYS_MS.length} failed: ${
-              error instanceof Error ? error.message : String(error)
-            }`
-          );
-        }
-      }
+      result = await this.deliverPermissionReply(
+        targetSessionId,
+        input.requestId,
+        input.optionId,
+        input.cancelled
+      );
     } finally {
       this.answeringPermissionIds.delete(input.requestId);
     }
-    if (!delivered) {
+    if (!result.delivered) {
       const message = `Failed to deliver the permission response to OpenCode Server after ${
         PERMISSION_ANSWER_RETRY_DELAYS_MS.length
-      } attempts: ${lastError instanceof Error ? lastError.message : String(lastError)}`;
+      } attempts: ${result.lastError instanceof Error ? result.lastError.message : String(result.lastError)}`;
       this.log.error("permission.answer_failed", message, { requestId: input.requestId });
       await this.callbacks.appendEvents([
         {
@@ -591,12 +562,91 @@ export class OpenCodeServerSessionHandle implements AgentSessionHandle {
     }));
   }
 
+  /**
+   * Delivers one permission reply with retries, the modern→legacy format
+   * fallback, and gone-request detection. Shared by user answers and
+   * remembered/auto-accept resolutions so both get the hardened path.
+   */
+  private async deliverPermissionReply(
+    targetSessionId: string,
+    requestId: string,
+    optionId: string | undefined,
+    cancelled: boolean | undefined
+  ): Promise<{ delivered: boolean; lastError: unknown }> {
+    if (!this.connection) {
+      return { delivered: false, lastError: new Error("OpenCode Server session is not initialized.") };
+    }
+    let lastError: unknown = null;
+    for (let attempt = 0; attempt < PERMISSION_ANSWER_RETRY_DELAYS_MS.length; attempt += 1) {
+      const delay = PERMISSION_ANSWER_RETRY_DELAYS_MS[attempt]!;
+      if (delay > 0) {
+        await new Promise((resolve) => setTimeout(resolve, delay));
+      }
+      try {
+        await this.connection.client.answerPermission(
+          targetSessionId,
+          requestId,
+          openCodeServerPermissionResponse(optionId, cancelled)
+        );
+        return { delivered: true, lastError: null };
+      } catch (error) {
+        if (error instanceof OpenCodeServerError && error.status === 400) {
+          // Pre-1.x OpenCode servers reject the modern once/always/reject
+          // shape; retry immediately with the legacy allow/deny shape.
+          this.log.info(
+            "permission.answer_format_fallback",
+            `Modern permission reply rejected (400); retrying with legacy allow/deny shape.`
+          );
+          try {
+            await this.connection.client.answerPermission(
+              targetSessionId,
+              requestId,
+              openCodeServerLegacyPermissionResponse(optionId, cancelled)
+            );
+            return { delivered: true, lastError: null };
+          } catch (legacyError) {
+            lastError = legacyError;
+            this.log.warning(
+              "permission.answer_retry",
+              `Legacy-format fallback failed: ${
+                legacyError instanceof Error ? legacyError.message : String(legacyError)
+              }`
+            );
+            continue;
+          }
+        }
+        if (
+          error instanceof OpenCodeServerError &&
+          (error.status === 404 || error.status === 410)
+        ) {
+          // The request is no longer pending on the OpenCode side (already
+          // answered elsewhere, expired, or the tool moved on). Resolving
+          // locally is correct; retrying can never succeed.
+          this.log.warning(
+            "permission.answer_gone",
+            `Permission ${requestId} was no longer pending on OpenCode (${error.status}); resolving locally.`
+          );
+          return { delivered: true, lastError: null };
+        }
+        lastError = error;
+        this.log.warning(
+          "permission.answer_retry",
+          `Attempt ${attempt + 1}/${PERMISSION_ANSWER_RETRY_DELAYS_MS.length} failed: ${
+            error instanceof Error ? error.message : String(error)
+          }`
+        );
+      }
+    }
+    return { delivered: false, lastError };
+  }
+
   async dispose(): Promise<void> {
     this.disposed = true;
     this.acceptingPromptSse = false;
     this.stopWatchdog();
     this.stopPermissionPolling();
     this.pendingPermissions.clear();
+    this.pendingPermissionContext.clear();
     if (this.unsubscribeProcessExit) {
       this.unsubscribeProcessExit();
       this.unsubscribeProcessExit = null;
@@ -1266,7 +1316,7 @@ export class OpenCodeServerSessionHandle implements AgentSessionHandle {
     }
     await this.callbacks.appendEvents(events);
     if (permission?.kind === "permission_request") {
-      await this.publishPendingPermission(permission);
+      await this.handleSurfacedPermission(permission);
     }
   }
 
@@ -1411,7 +1461,7 @@ export class OpenCodeServerSessionHandle implements AgentSessionHandle {
           return;
         }
         await this.callbacks.appendEvents([event]);
-        await this.publishPendingPermission(event);
+        await this.handleSurfacedPermission(event);
       }
       // Reverse reconcile: anything we still consider pending that OpenCode no
       // longer lists was resolved elsewhere (auto-allow rule, another client).
@@ -1462,6 +1512,116 @@ export class OpenCodeServerSessionHandle implements AgentSessionHandle {
     } finally {
       this.permissionPollBusy = false;
     }
+  }
+
+  /**
+   * Applies remembered-permission / auto-accept rules to a freshly surfaced
+   * permission request. Matches are auto-answered through the hardened
+   * delivery path (retries + format fallback); everything else is published
+   * as a pending prompt for the user to decide.
+   */
+  private async handleSurfacedPermission(
+    permission: Extract<AgentEventInput, { kind: "permission_request" }>
+  ): Promise<void> {
+    const toolKey = buildRememberedPermissionToolKey(
+      "opencode-server",
+      permission.title,
+      permission.detail
+    );
+    const toolLabel = permission.title ?? "OpenCode permission";
+    const resolved = await resolveRememberedPermissionDecision({
+      workspaceId: this.callbacks.workspace.id,
+      backendId: this.backend.id,
+      toolKey,
+      options: permission.options,
+    });
+    if (resolved.kind === "remembered" || resolved.kind === "auto_accept") {
+      const optionId =
+        resolved.kind === "remembered"
+          ? resolved.providerOptionId ??
+            (resolved.decision === "allow" ? "allow" : "deny")
+          : resolved.providerOptionId ?? "allow";
+      const targetSessionId =
+        this.pendingPermissions.get(permission.requestId)?.sessionId ?? this.sessionId;
+      this.log.info(
+        "permission.auto_resolve",
+        resolved.kind === "remembered"
+          ? `Answering permission ${permission.requestId} from a remembered rule for ${toolLabel}.`
+          : `Auto-accepting permission ${permission.requestId} (Agents → auto-approve all).`,
+        { optionId }
+      );
+      this.answeringPermissionIds.add(permission.requestId);
+      let delivered = false;
+      try {
+        delivered = (
+          await this.deliverPermissionReply(
+            targetSessionId,
+            permission.requestId,
+            optionId,
+            false
+          )
+        ).delivered;
+      } finally {
+        this.answeringPermissionIds.delete(permission.requestId);
+      }
+      if (delivered) {
+        this.pendingPermissions.delete(permission.requestId);
+        if (this.disposed) {
+          return;
+        }
+        await this.callbacks.appendEvents([
+          {
+            eventId: randomUUID(),
+            conversationId: this.callbacks.conversation.id,
+            kind: "permission_resolved",
+            requestId: permission.requestId,
+            outcome: "selected",
+            optionId:
+              resolved.kind === "remembered" ? resolved.rule.optionId : optionId,
+            raw:
+              resolved.kind === "remembered"
+                ? {
+                    rememberedPermission: {
+                      id: resolved.rule.id,
+                      decision: resolved.rule.decision,
+                      toolLabel: resolved.rule.toolLabel,
+                    },
+                  }
+                : { autoAcceptedAll: true },
+          },
+          {
+            eventId: randomUUID(),
+            conversationId: this.callbacks.conversation.id,
+            kind: "status",
+            status: "running",
+            detail:
+              resolved.kind === "remembered"
+                ? `Used remembered permission for ${resolved.rule.toolLabel}.`
+                : "Auto-accepted (Agents → auto-approve all).",
+          },
+        ]);
+        const turnActive = Boolean(this.activePrompt && !this.activePrompt.completed);
+        await this.callbacks.updateConversation((current) => ({
+          ...current,
+          status:
+            this.pendingPermissions.size > 0
+              ? "awaiting_permission"
+              : turnActive
+                ? "running"
+                : "idle",
+          pendingPermission: null,
+        }));
+        return;
+      }
+      // The automatic reply could not be delivered even with retries; ask the
+      // user instead of silently pretending the rule was applied.
+      this.log.warning(
+        "permission.auto_resolve_failed",
+        `Could not deliver the automatic reply for ${permission.requestId}; surfacing the prompt.`
+      );
+    }
+    this.pendingPermissionContext.set(permission.requestId, { toolKey, toolLabel });
+    await this.publishPendingPermission(permission);
   }
 }
 

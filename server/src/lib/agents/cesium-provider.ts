@@ -37,6 +37,8 @@ import { readConversationEvents } from "./session-store.js";
 import { extractToolEditPreview } from "./tool-edit-preview.js";
 import { buildCesiumModeReminder } from "./cesium-mode-reminders.js";
 import {
+  normalizeCesiumMode,
+  normalizeCesiumToolName,
   resolveCesiumModeToolPolicy,
   summarizeCesiumModeToolPolicy,
 } from "./cesium-mode-policy.js";
@@ -161,15 +163,20 @@ import {
   type ResolvedCesiumHarness,
 } from "./cesium/features/index.js";
 import {
+  cesiumEnvironmentChangeNotice,
   estimateHistoryTokens,
+  formatCesiumDateLabel,
   isEmptyCesiumAdapterResult,
+  latestCesiumEnvironmentReminderSnapshot,
   latestMcpReminderSnapshot,
   mcpReminderChangeNotice,
   mcpReminderSnapshot,
   normalizeCesiumToolResultForModel,
   normalizeEventsToHistory,
+  previousUserMessageCreatedAt,
   summarizeForCompression,
 } from "./cesium/cesium-history.js";
+import { resolveModelDisplayName } from "@cesium/core/model-display-name";
 import {
   modelPart,
   providerPart,
@@ -288,6 +295,87 @@ const USER_REFUSED_TOOL_CALL_RESULT =
 const CESIUM_STREAM_CHUNK_FLUSH_MS = 120;
 const CESIUM_STREAM_CHUNK_MIN_CHARS = 512;
 
+export type CesiumAssistantStreamSink = {
+  pushText: (text: string) => Promise<void>;
+  pushReasoning: (text: string) => Promise<void>;
+  flush: () => Promise<void>;
+};
+
+/**
+ * Persists one model turn's streamed output. Reasoning deltas are buffered into a
+ * single `reasoning` event that is always appended before the first
+ * `assistant_message_chunk`, so the thought dropdown renders above the answer.
+ */
+export function createCesiumAssistantStreamSink(input: {
+  conversationId: string;
+  messageId: string;
+  reasoningMessageId: string;
+  appendEvents: (events: AgentEventInput[]) => Promise<unknown>;
+}): CesiumAssistantStreamSink {
+  let pendingText = "";
+  let pendingReasoning = "";
+  let lastFlushAt = 0;
+  const flushReasoning = async () => {
+    if (!pendingReasoning) {
+      return;
+    }
+    const text = pendingReasoning;
+    pendingReasoning = "";
+    await input.appendEvents([
+      {
+        eventId: randomUUID(),
+        conversationId: input.conversationId,
+        kind: "reasoning",
+        messageId: input.reasoningMessageId,
+        text,
+      },
+    ]);
+  };
+  const flushText = async () => {
+    if (!pendingText) {
+      return;
+    }
+    const text = pendingText;
+    pendingText = "";
+    lastFlushAt = Date.now();
+    await input.appendEvents([
+      {
+        eventId: randomUUID(),
+        conversationId: input.conversationId,
+        kind: "assistant_message_chunk",
+        messageId: input.messageId,
+        text,
+      },
+    ]);
+  };
+  return {
+    pushText: async (text: string) => {
+      if (!text) {
+        return;
+      }
+      await flushReasoning();
+      pendingText += text;
+      const now = Date.now();
+      if (
+        pendingText.length >= CESIUM_STREAM_CHUNK_MIN_CHARS ||
+        now - lastFlushAt >= CESIUM_STREAM_CHUNK_FLUSH_MS
+      ) {
+        await flushText();
+      }
+    },
+    pushReasoning: async (text: string) => {
+      if (!text) {
+        return;
+      }
+      pendingReasoning += text;
+    },
+    flush: async () => {
+      await flushReasoning();
+      await flushText();
+    },
+  };
+}
+
 class PermissionRefusedToolCallError extends Error {
   constructor() {
     super(USER_REFUSED_TOOL_CALL_RESULT);
@@ -369,14 +457,17 @@ class CesiumSessionHandle implements AgentSessionHandle {
       gitSummary = "not a git repository";
     }
     const agentsMarkdown = await loadWorkspaceInstructionFiles(workspaceRoot);
+    const modelId =
+      this.callbacks.conversation.config.modelId ||
+      optionValue(this.configOptions, "model", "openai/gpt-5.1");
     return {
       mcpSummaries,
-      modelName: this.callbacks.conversation.config.modelName ?? "configured model",
+      modelName: resolveModelDisplayName(
+        this.callbacks.conversation.config.modelName,
+        String(modelId)
+      ),
       workspaceRoot,
-      dateLabel: new Date().toLocaleString("en-US", {
-        dateStyle: "full",
-        timeStyle: "short",
-      }),
+      dateLabel: formatCesiumDateLabel(new Date()),
       gitSummary,
       agentsMarkdown,
       skillsList: skillsList?.trim() || undefined,
@@ -388,8 +479,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
   }
 
   private isGoalMode(): boolean {
-    const mode = this.currentMode();
-    return mode === "goal" || mode === "burn";
+    return this.currentMode() === "goal";
   }
 
   private isWorkflowMode(): boolean {
@@ -402,48 +492,19 @@ class CesiumSessionHandle implements AgentSessionHandle {
       "mode",
       this.callbacks.conversation.config.mode ?? "agent"
     );
-    return String(raw).trim().toLowerCase() === "burn" ? "goal" : String(raw);
+    return normalizeCesiumMode(String(raw));
   }
 
-  private createAssistantChunkFlusher(messageId: string): {
-    push: (text: string) => Promise<void>;
-    flush: () => Promise<void>;
-  } {
-    let pending = "";
-    let lastFlushAt = 0;
-    const flush = async () => {
-      if (!pending) {
-        return;
-      }
-      const text = pending;
-      pending = "";
-      lastFlushAt = Date.now();
-      await this.callbacks.appendEvents([
-        {
-          eventId: randomUUID(),
-          conversationId: this.callbacks.conversation.id,
-          kind: "assistant_message_chunk",
-          messageId,
-          text,
-        },
-      ]);
-    };
-    return {
-      push: async (text: string) => {
-        if (!text) {
-          return;
-        }
-        pending += text;
-        const now = Date.now();
-        if (
-          pending.length >= CESIUM_STREAM_CHUNK_MIN_CHARS ||
-          now - lastFlushAt >= CESIUM_STREAM_CHUNK_FLUSH_MS
-        ) {
-          await flush();
-        }
-      },
-      flush,
-    };
+  private createAssistantStreamSink(
+    messageId: string,
+    iteration: number
+  ): CesiumAssistantStreamSink {
+    return createCesiumAssistantStreamSink({
+      conversationId: this.callbacks.conversation.id,
+      messageId,
+      reasoningMessageId: `${messageId}-reasoning-${iteration}`,
+      appendEvents: (events) => this.callbacks.appendEvents(events),
+    });
   }
 
   private async resolveCurrentOrchestrationBoard() {
@@ -461,6 +522,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
     attachments?: Array<{ mimeType: string; data: string; name?: string }>;
     isRetry?: boolean;
     planHandoff?: AgentQueuedChatPrompt["planHandoff"];
+    clientTimezone?: string;
   }): Promise<void> {
     if (this.disposed) {
       throw new Error("Cesium session has been disposed.");
@@ -566,7 +628,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
       const board = this.isOrchestrationMode()
         ? await this.resolveCurrentOrchestrationBoard()
         : null;
-      const burnState = this.isGoalMode()
+      const goalState = this.isGoalMode()
         ? await ensureGoalForConversation({
             workspace: this.callbacks.workspace,
             conversationId: this.callbacks.conversation.id,
@@ -583,34 +645,63 @@ class CesiumSessionHandle implements AgentSessionHandle {
         summaries,
         skillsMirror.skillsList
       );
+      const nowMs = Date.now();
+      const timeZone = input.clientTimezone?.trim() || undefined;
+      promptContext.dateLabel = formatCesiumDateLabel(nowMs, timeZone);
+      promptContext.modelName = resolveModelDisplayName(
+        promptContext.modelName ?? this.callbacks.conversation.config.modelName,
+        modelId
+      );
       this.activeSystemPrompt = CESIUM_SYSTEM_PROMPT;
       await this.refreshHarnessFromSettings();
       const previousSnapshot = await this.callbacks.readSnapshot().catch(() => null);
+      const previousEvents = previousSnapshot?.events ?? [];
       const mcpCatalogRevision = await getMcpCatalogRevision(this.callbacks.workspace.id);
       const currentMcpSnapshot = mcpReminderSnapshot({
         revision: mcpCatalogRevision,
         dateLabel: promptContext.dateLabel,
+        dateMs: nowMs,
+        timeZone,
+        modelId,
+        modelName: promptContext.modelName,
         summaries,
       });
       const mcpChangeNotice = mcpReminderChangeNotice(
-        previousSnapshot ? latestMcpReminderSnapshot(previousSnapshot.events) : null,
+        previousSnapshot ? latestMcpReminderSnapshot(previousEvents) : null,
         currentMcpSnapshot
       );
+      const environmentChangeNotice = cesiumEnvironmentChangeNotice({
+        previous: previousSnapshot
+          ? latestCesiumEnvironmentReminderSnapshot(previousEvents)
+          : null,
+        current: {
+          dateLabel: promptContext.dateLabel,
+          dateMs: nowMs,
+          timeZone,
+          modelId,
+          modelName: promptContext.modelName,
+        },
+        previousUserMessageAt: previousUserMessageCreatedAt(
+          previousEvents,
+          input.userMessageId
+        ),
+      });
       const featureReminder = harnessFeatureReminder(this.harness);
       const reminderText = [
         buildCesiumModeReminder({
           mode: currentMode,
           modelName: promptContext.modelName,
           workspaceRoot: promptContext.workspaceRoot ?? this.callbacks.workspace.root,
-          dateLabel: promptContext.dateLabel ?? new Date().toLocaleString("en-US"),
+          dateLabel: promptContext.dateLabel ?? formatCesiumDateLabel(nowMs, timeZone),
           gitSummary: promptContext.gitSummary ?? "not a git repository",
           agentsMarkdown: promptContext.agentsMarkdown,
           skillsList: skillsMirror.skillsList,
           mcpSummaries: summaries,
           mcpChangeNotice,
+          environmentChangeNotice,
           orchestrationBoard: board,
           handoffPlanPath: input.planHandoff?.planPath,
-          goalSummary: burnState ? formatGoalForModel(burnState) : null,
+          goalSummary: goalState ? formatGoalForModel(goalState) : null,
           workflowRunSummary: workflowState ? formatWorkflowRunForModel(workflowState) : null,
         }),
         featureReminder
@@ -632,8 +723,16 @@ class CesiumSessionHandle implements AgentSessionHandle {
             mode: currentMode,
             planHandoff: input.planHandoff,
             modelId,
+            modelName: promptContext.modelName,
             mcpServerCount: summaries.length,
             mcpReminderSnapshot: currentMcpSnapshot,
+            environmentReminderSnapshot: {
+              dateLabel: promptContext.dateLabel,
+              dateMs: nowMs,
+              timeZone,
+              modelId,
+              modelName: promptContext.modelName,
+            },
           },
         },
         {
@@ -675,7 +774,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
             level: "warning",
             text:
               `Model ${modelId} does not advertise image/multimodal support. ` +
-              `Image attachments were dropped for this turn. Use a vision model such as kimi-k2.7-code.`,
+              `Image attachments were dropped for this turn. Use a vision model such as kimi-k3.`,
           },
         ]);
       }
@@ -703,7 +802,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
         if (this.cancelled) {
           return;
         }
-        const assistantChunks = this.createAssistantChunkFlusher(assistantMessageId);
+        const assistantStream = this.createAssistantStreamSink(assistantMessageId, iteration);
         let result: CesiumAdapterResult | null = null;
         try {
           result = await this.runAdapterWithWarning(
@@ -718,26 +817,15 @@ class CesiumSessionHandle implements AgentSessionHandle {
             },
             iteration,
             {
-              onTextDelta: (text) => assistantChunks.push(text),
+              onTextDelta: (text) => assistantStream.pushText(text),
+              onReasoningDelta: (text) => assistantStream.pushReasoning(text),
             }
           );
         } finally {
-          await assistantChunks.flush();
+          await assistantStream.flush();
         }
         if (!result) {
           throw new Error("Cesium streaming adapter did not produce a result.");
-        }
-        if (result.reasoning) {
-          await this.callbacks.appendEvents([
-            {
-              eventId: randomUUID(),
-              conversationId: this.callbacks.conversation.id,
-              kind: "reasoning",
-              messageId: `${assistantMessageId}-reasoning-${iteration}`,
-              text: result.reasoning,
-              raw: result.raw,
-            },
-          ]);
         }
         if (result.toolRequests.length === 0) {
           if (isEmptyCesiumAdapterResult(result)) {
@@ -839,6 +927,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
     iteration: number,
     handlers: {
       onTextDelta?: (text: string) => Promise<void>;
+      onReasoningDelta?: (text: string) => Promise<void>;
     } = {}
   ): Promise<CesiumAdapterResult> {
     const providerId = providerPart(input.modelId);
@@ -885,6 +974,8 @@ class CesiumSessionHandle implements AgentSessionHandle {
                 break;
               case "reasoning_delta":
                 reasoningParts.push(event.text);
+                emittedDelta = emittedDelta || event.text.length > 0;
+                await handlers.onReasoningDelta?.(event.text);
                 break;
               case "tool_request":
                 toolRequests.push(event.request);
@@ -1637,9 +1728,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
       if (featureExecutor?.executeTool) {
         result = await featureExecutor.executeTool(request.name, request.arguments);
       } else {
-        const toolName = request.name.startsWith("burn_goal_")
-          ? `goal_${request.name.slice("burn_goal_".length)}`
-          : request.name;
+        const toolName = normalizeCesiumToolName(request.name);
         switch (toolName) {
         case "read_file":
           result = await this.toolReadFile(request.arguments);
@@ -2504,7 +2593,8 @@ class CesiumSessionHandle implements AgentSessionHandle {
     if (!rawTarget) {
       throw new Error("switch_mode.target_mode is required.");
     }
-    const knownMode = CESIUM_MODE_DEFINITIONS.find((mode) => mode.id === rawTarget);
+    const normalizedTarget = normalizeCesiumMode(rawTarget);
+    const knownMode = CESIUM_MODE_DEFINITIONS.find((mode) => mode.id === normalizedTarget);
     if (!knownMode) {
       throw new Error(
         `Unknown mode "${rawTarget}". Allowed modes: ${CESIUM_MODE_DEFINITIONS.map((mode) => mode.id).join(", ")}.`
@@ -2526,9 +2616,12 @@ class CesiumSessionHandle implements AgentSessionHandle {
     const policy = summarizeCesiumModeToolPolicy(targetMode);
     const reminderText = buildCesiumModeReminder({
       mode: targetMode,
-      modelName: this.callbacks.conversation.config.modelName,
+      modelName: resolveModelDisplayName(
+        this.callbacks.conversation.config.modelName,
+        this.callbacks.conversation.config.modelId || "configured model"
+      ),
       workspaceRoot: this.callbacks.workspace.root,
-      dateLabel: new Date().toLocaleString("en-US"),
+      dateLabel: formatCesiumDateLabel(new Date()),
       gitSummary: "unchanged since last reminder",
       mcpSummaries: [],
     });

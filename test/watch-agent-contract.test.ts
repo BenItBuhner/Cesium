@@ -63,7 +63,7 @@ describe("watch agent contract", () => {
     assert.equal(todo.progressMax, 5);
     assert.equal(todo.progressLabel, "2/5");
 
-    const burn = toWatchAgentProjection(
+    const goal = toWatchAgentProjection(
       {
         ...baseProjection,
         goalProgress: {
@@ -76,9 +76,9 @@ describe("watch agent contract", () => {
       },
       { source: "phone_companion" }
     );
-    assert.equal(burn.progressKind, "goal");
-    assert.equal(burn.progress, 68);
-    assert.equal(burn.progressLabel, "68%");
+    assert.equal(goal.progressKind, "goal");
+    assert.equal(goal.progress, 68);
+    assert.equal(goal.progressLabel, "68%");
   });
 
   test("adds intervention actions for questions and permissions", () => {

@@ -24,6 +24,12 @@ import {
   appendAgentPluginPrompt,
   resolveAgentPluginAttachments,
 } from "../plugins/attachments.js";
+import {
+  buildRememberedPermissionToolKey,
+  persistRememberedPermissionChoice,
+  resolveRememberedPermissionDecision,
+} from "./remembered-permissions.js";
+import { isPersistentPermissionOptionId } from "./permission-options.js";
 import type {
   AgentBackendInfo,
   AgentConfigOption,
@@ -332,20 +338,84 @@ class GoogleAntigravityCliSessionHandle implements AgentSessionHandle {
       }));
     } else if (event.type === "permission.requested") {
       const requestId = antigravityPermissionRequestId(event);
+      const title = event.action ? `Permission requested: ${event.action}` : "Permission requested";
+      const detail = [event.target, event.reason].filter(Boolean).join("\n\n") || undefined;
+      const options = [
+        { optionId: "allow_once", name: "Allow once", kind: "allow_once" as const },
+        { optionId: "allow_always", name: "Always allow", kind: "allow_always" as const },
+        { optionId: "reject_once", name: "Reject once", kind: "reject_once" as const },
+        { optionId: "reject_always", name: "Always reject", kind: "reject_always" as const },
+      ];
+      const toolKey = buildRememberedPermissionToolKey(
+        "google-antigravity",
+        event.action,
+        event.target,
+        event.reason
+      );
+      const toolLabel = title;
+      const resolved = await resolveRememberedPermissionDecision({
+        workspaceId: this.callbacks.workspace.id,
+        backendId: this.backend.id,
+        toolKey,
+        options,
+      });
+      if (resolved.kind === "remembered" || resolved.kind === "auto_accept") {
+        const allow =
+          resolved.kind === "auto_accept" || resolved.decision === "allow";
+        this.permissionByRequest.delete(requestId);
+        this.session?.prompt(allow ? "allow" : "reject");
+        await this.callbacks.appendEvents([
+          {
+            eventId: randomUUID(),
+            conversationId: this.callbacks.conversation.id,
+            kind: "permission_resolved",
+            requestId,
+            outcome: "selected",
+            optionId:
+              resolved.kind === "remembered"
+                ? resolved.rule.optionId
+                : allow
+                  ? "allow_once"
+                  : "reject_once",
+            raw:
+              resolved.kind === "remembered"
+                ? {
+                    rememberedPermission: {
+                      id: resolved.rule.id,
+                      decision: resolved.rule.decision,
+                      toolLabel: resolved.rule.toolLabel,
+                    },
+                  }
+                : { autoAcceptedAll: true },
+          },
+          {
+            eventId: randomUUID(),
+            conversationId: this.callbacks.conversation.id,
+            kind: "status",
+            status: "running",
+            detail:
+              resolved.kind === "remembered"
+                ? `Used remembered permission for ${resolved.rule.toolLabel}.`
+                : "Auto-accepted (Agents → auto-approve all).",
+          },
+        ]);
+        await this.callbacks.updateConversation((current) => ({
+          ...current,
+          pendingPermission: null,
+          status: "running",
+        }));
+        return;
+      }
+      this.permissionByRequest.set(requestId, event);
       await this.callbacks.updateConversation((current) => ({
         ...current,
         status: "awaiting_permission",
         pendingPermission: {
           requestId,
           requestedAt: Date.now(),
-          title: event.action ? `Permission requested: ${event.action}` : "Permission requested",
-          detail: [event.target, event.reason].filter(Boolean).join("\n\n") || undefined,
-          options: [
-            { optionId: "allow_once", name: "Allow once", kind: "allow_once" },
-            { optionId: "allow_always", name: "Always allow", kind: "allow_always" },
-            { optionId: "reject_once", name: "Reject once", kind: "reject_once" },
-            { optionId: "reject_always", name: "Always reject", kind: "reject_always" },
-          ],
+          title,
+          detail,
+          options,
         },
       }));
     }
@@ -539,6 +609,24 @@ class GoogleAntigravityCliSessionHandle implements AgentSessionHandle {
     const pending = this.permissionByRequest.get(input.requestId);
     this.session?.prompt(allow ? "allow" : "reject");
     this.permissionByRequest.delete(input.requestId);
+    if (!input.cancelled && pending && isPersistentPermissionOptionId(selected)) {
+      const toolKey = buildRememberedPermissionToolKey(
+        "google-antigravity",
+        pending.action,
+        pending.target,
+        pending.reason
+      );
+      await persistRememberedPermissionChoice({
+        workspaceId: this.callbacks.workspace.id,
+        backendId: this.backend.id,
+        toolKey,
+        toolLabel: pending.action
+          ? `Permission requested: ${pending.action}`
+          : "Permission requested",
+        optionId: selected,
+        optionKind: selected,
+      });
+    }
     await this.callbacks.appendEvents([
       {
         eventId: randomUUID(),

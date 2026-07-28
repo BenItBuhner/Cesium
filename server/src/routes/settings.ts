@@ -1,10 +1,13 @@
 import { Hono } from "hono";
 import {
   getGlobalSettings,
-  saveGlobalSettings,
   getModelToggleState,
   setModelToggles,
   refreshAndGetModelToggleState,
+  removeRememberedAgentPermissionRule,
+  clearRememberedAgentPermissionRules,
+  replaceRememberedAgentPermissionRules,
+  saveGlobalSettingsPreservingRememberedPermissions,
   type GlobalSettings,
   type ModelToggleUpdate,
 } from "../lib/global-settings-store.js";
@@ -60,7 +63,9 @@ const GLOBAL_SETTINGS_KEY = "settings:global";
 
 const globalSettingsCoalescer = new WriteCoalescer<GlobalSettings>(
   async (_key, settings) => {
-    await saveGlobalSettings(settings);
+    // Preserve remembered permissions at flush time: an agent may have saved a
+    // rule inside the debounce window, after the route captured `settings`.
+    await saveGlobalSettingsPreservingRememberedPermissions(settings);
   },
   50
 );
@@ -134,8 +139,13 @@ settingsRoutes.put("/api/settings/global", async (c) => {
     };
   }
 
+  // Remembered always-allow / always-reject rules are written by agent sessions
+  // independently of the settings UI (same class of bug as model toggles). The
+  // on-disk list is re-applied at write time (inside the mutation chain) by
+  // saveGlobalSettingsPreservingRememberedPermissions; dedicated
+  // remembered-permission routes own mutations.
   if (process.env.NODE_ENV === "test") {
-    await saveGlobalSettings(toSave);
+    await saveGlobalSettingsPreservingRememberedPermissions(toSave);
   } else {
     globalSettingsCoalescer.schedule("global", toSave);
   }
@@ -143,6 +153,47 @@ settingsRoutes.put("/api/settings/global", async (c) => {
   const nextRevision = bumpRevision(GLOBAL_SETTINGS_KEY);
   c.header("ETag", formatEtag(nextRevision));
   return c.json({ ok: true, revision: nextRevision });
+});
+
+settingsRoutes.delete("/api/settings/remembered-permissions/:id", async (c) => {
+  const id = c.req.param("id")?.trim();
+  if (!id) {
+    return c.json({ error: "Expected remembered permission id." }, 400);
+  }
+  const rememberedPermissions = await removeRememberedAgentPermissionRule(id);
+  const nextRevision = getRevision(GLOBAL_SETTINGS_KEY);
+  c.header("ETag", formatEtag(nextRevision));
+  return c.json({ rememberedPermissions, revision: nextRevision });
+});
+
+settingsRoutes.post("/api/settings/remembered-permissions/clear", async (c) => {
+  const body = await c.req.json<{ backendId?: string }>().catch(() => ({} as { backendId?: string }));
+  const backendId =
+    typeof body.backendId === "string" && body.backendId.trim()
+      ? body.backendId.trim()
+      : undefined;
+  if (backendId && !ACTIVE_AGENT_BACKEND_IDS.includes(backendId as AgentBackendId)) {
+    return c.json({ error: `Unknown backendId: ${backendId}` }, 400);
+  }
+  const rememberedPermissions = await clearRememberedAgentPermissionRules(
+    backendId ? { backendId } : undefined
+  );
+  const nextRevision = getRevision(GLOBAL_SETTINGS_KEY);
+  c.header("ETag", formatEtag(nextRevision));
+  return c.json({ rememberedPermissions, revision: nextRevision });
+});
+
+settingsRoutes.put("/api/settings/remembered-permissions", async (c) => {
+  const body = await c.req.json<{ rememberedPermissions?: unknown }>();
+  if (!Array.isArray(body.rememberedPermissions)) {
+    return c.json({ error: "Expected rememberedPermissions array." }, 400);
+  }
+  const rememberedPermissions = await replaceRememberedAgentPermissionRules(
+    body.rememberedPermissions as Parameters<typeof replaceRememberedAgentPermissionRules>[0]
+  );
+  const nextRevision = getRevision(GLOBAL_SETTINGS_KEY);
+  c.header("ETag", formatEtag(nextRevision));
+  return c.json({ rememberedPermissions, revision: nextRevision });
 });
 
 settingsRoutes.get("/api/settings/models-by-backend", async (c) => {

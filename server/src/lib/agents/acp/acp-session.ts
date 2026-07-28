@@ -28,9 +28,9 @@ import {
   resolveAgentPluginAttachments,
 } from "../../plugins/attachments.js";
 import {
-  getGlobalSettings,
-  saveRememberedAgentPermissionRule,
-} from "../../global-settings-store.js";
+  persistRememberedPermissionChoice,
+  resolveRememberedPermissionDecision,
+} from "../remembered-permissions.js";
 import { extractInlineReasoning } from "../parse-inline-reasoning.js";
 import type {
   AgentBackendId,
@@ -80,7 +80,6 @@ import {
   parsePermissionOptions,
   permissionDecisionFromKind,
   providerOptionIdForPermissionSelection,
-  providerOptionIdForRememberedPermission,
   readOpenCodeSseChildSessionId,
   summarizeAcpToolCallDetail,
   summarizeAcpToolCallTitle,
@@ -314,18 +313,7 @@ function summarizeAuthenticateResult(raw: unknown): string | undefined {
   return undefined;
 }
 
-async function runAcpTransportBootstrap(transport: AcpStdioClient): Promise<string[]> {
-  const messages: string[] = [];
-  const init = (await transport.request("initialize", {
-    protocolVersion: 1,
-    clientCapabilities: buildAcpClientCapabilities(),
-    clientInfo: {
-      name: "cesium-server",
-      title: "Cesium Server",
-      version: "0.1.0",
-    },
-  })) as Record<string, unknown> | undefined;
-
+function acpAuthMethodIds(init: Record<string, unknown> | undefined): string[] {
   const authMethods = Array.isArray(init?.authMethods) ? init.authMethods : [];
   const seen = new Set<string>();
   for (const entry of authMethods) {
@@ -335,10 +323,115 @@ async function runAcpTransportBootstrap(transport: AcpStdioClient): Promise<stri
         : typeof entry === "string"
           ? entry.trim()
           : "";
-    if (!id || seen.has(id)) {
-      continue;
+    if (id) {
+      seen.add(id);
     }
-    seen.add(id);
+  }
+  return [...seen];
+}
+
+function grokBuildDefaultAuthMethod(init: Record<string, unknown> | undefined): string | null {
+  const meta =
+    init?._meta && typeof init._meta === "object" && !Array.isArray(init._meta)
+      ? (init._meta as Record<string, unknown>)
+      : init?.meta && typeof init.meta === "object" && !Array.isArray(init.meta)
+        ? (init.meta as Record<string, unknown>)
+        : null;
+  return parseConfigOptionString(meta?.defaultAuthMethodId) || null;
+}
+
+export function selectGrokBuildAuthMethod(input: {
+  authMethodIds: string[];
+  defaultAuthMethodId?: string | null;
+  hasApiKey: boolean;
+}): "xai.api_key" | "cached_token" | null {
+  const available = new Set(input.authMethodIds);
+  if (input.hasApiKey && available.has("xai.api_key")) {
+    return "xai.api_key";
+  }
+  if (
+    (input.defaultAuthMethodId === "xai.api_key" ||
+      input.defaultAuthMethodId === "cached_token") &&
+    available.has(input.defaultAuthMethodId)
+  ) {
+    return input.defaultAuthMethodId;
+  }
+  if (available.has("cached_token")) {
+    return "cached_token";
+  }
+  if (available.has("xai.api_key")) {
+    return "xai.api_key";
+  }
+  return null;
+}
+
+async function authenticateGrokBuild(
+  transport: AcpStdioClient,
+  init: Record<string, unknown> | undefined
+): Promise<string> {
+  const authMethodIds = acpAuthMethodIds(init);
+  const methodId = selectGrokBuildAuthMethod({
+    authMethodIds,
+    defaultAuthMethodId: grokBuildDefaultAuthMethod(init),
+    hasApiKey: Boolean(
+      process.env.XAI_API_KEY?.trim() || process.env.GROK_CODE_XAI_API_KEY?.trim()
+    ),
+  });
+  if (!methodId) {
+    const offered = authMethodIds.length > 0 ? authMethodIds.join(", ") : "none";
+    throw new Error(
+      `Grok Build is not authenticated for headless ACP use (offered methods: ${offered}). Run \`grok login --device-auth\` on the server host or set XAI_API_KEY, then retry.`
+    );
+  }
+  try {
+    await transport.request("authenticate", {
+      methodId,
+      _meta: { headless: true },
+    });
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `Grok Build authentication via ${methodId} failed: ${detail}. Run \`grok login --device-auth\` or verify XAI_API_KEY.`
+    );
+  }
+  return methodId;
+}
+
+async function runAcpTransportBootstrap(
+  transport: AcpStdioClient,
+  backendId: AgentBackendId
+): Promise<string[]> {
+  const messages: string[] = [];
+  const init = (await transport.request("initialize", {
+    protocolVersion: 1,
+    clientCapabilities: buildAcpClientCapabilities(),
+    clientInfo: {
+      name: "cesium-server",
+      title: "Cesium Server",
+      version: "0.1.0",
+    },
+    ...(backendId === "grok-build"
+      ? {
+          _meta: {
+            startupHints: {
+              nonInteractive: true,
+              skipGitStatus: true,
+              skipProjectLayout: true,
+            },
+            clientType: "cesium",
+            clientVersion: "0.1.0",
+          },
+        }
+      : {}),
+  })) as Record<string, unknown> | undefined;
+
+  if (backendId === "grok-build") {
+    const methodId = await authenticateGrokBuild(transport, init);
+    messages.push(`Grok Build authenticated for ACP using ${methodId}.`);
+    return messages;
+  }
+
+  for (const id of acpAuthMethodIds(init)) {
     if (id === "cursor_login") {
       try {
         const authResult = await transport.request("authenticate", { methodId: "cursor_login" });
@@ -643,7 +736,8 @@ export class AcpSessionHandle implements AgentSessionHandle {
           env,
           processName: `Cesium Agent - ${input.backend.label}`,
         }),
-      afterSpawn: (transport) => runAcpTransportBootstrap(transport),
+      afterSpawn: (transport) =>
+        runAcpTransportBootstrap(transport, input.backend.id),
     });
 
     const isInvalidParamsError = (error: unknown): boolean => {
@@ -755,7 +849,10 @@ export class AcpSessionHandle implements AgentSessionHandle {
         parseConfigOptions(openResultRecord.configOptions),
         parseLegacySessionConfigOptions(openResultRecord)
       );
-      const configOptions = liveConfigOptions;
+      const configOptions = mergeSessionConfigOptions(
+        liveConfigOptions,
+        input.seedConfigOptions ?? []
+      );
 
       const handle = new AcpSessionHandle({
         bridge,
@@ -1047,15 +1144,14 @@ export class AcpSessionHandle implements AgentSessionHandle {
     ) {
       const decision = permissionDecisionFromKind(selected.kind);
       if (decision) {
-        await saveRememberedAgentPermissionRule({
+        await persistRememberedPermissionChoice({
           workspaceId: this.callbacks.workspace.id,
           backendId: this.backend.id,
           toolKey: context.toolKey,
           toolLabel: context.toolLabel,
-          decision,
           optionId: selected.optionId,
           optionKind: selected.kind,
-        }).catch(() => undefined);
+        });
       }
     }
     await this.callbacks.appendEvents([
@@ -1644,18 +1740,14 @@ export class AcpSessionHandle implements AgentSessionHandle {
         title,
         detail,
       });
-      const settings = await getGlobalSettings().catch(() => undefined);
-      const remembered = settings?.agents.rememberedPermissions.find(
-        (rule) =>
-          rule.workspaceId === this.callbacks.workspace.id &&
-          rule.backendId === this.backend.id &&
-          rule.toolKey === permissionSignature.toolKey
-      );
-      if (remembered) {
-        const providerOptionId = providerOptionIdForRememberedPermission(
-          normalizedOptions,
-          remembered.decision
-        );
+      const resolved = await resolveRememberedPermissionDecision({
+        workspaceId: this.callbacks.workspace.id,
+        backendId: this.backend.id,
+        toolKey: permissionSignature.toolKey,
+        options: normalizedOptions,
+      });
+      if (resolved.kind === "remembered") {
+        const providerOptionId = resolved.providerOptionId;
         this.bridge.respond(requestId, {
           outcome: providerOptionId
             ? {
@@ -1672,12 +1764,12 @@ export class AcpSessionHandle implements AgentSessionHandle {
             kind: "permission_resolved",
             requestId: requestKey,
             outcome: providerOptionId ? "selected" : "cancelled",
-            optionId: remembered.optionId,
+            optionId: resolved.rule.optionId,
             raw: {
               rememberedPermission: {
-                id: remembered.id,
-                decision: remembered.decision,
-                toolLabel: remembered.toolLabel,
+                id: resolved.rule.id,
+                decision: resolved.rule.decision,
+                toolLabel: resolved.rule.toolLabel,
               },
             },
           },
@@ -1686,7 +1778,7 @@ export class AcpSessionHandle implements AgentSessionHandle {
             conversationId: this.callbacks.conversation.id,
             kind: "status",
             status: "running",
-            detail: `Used remembered permission for ${remembered.toolLabel}.`,
+            detail: `Used remembered permission for ${resolved.rule.toolLabel}.`,
           },
         ]);
         await this.callbacks.updateConversation((current) => ({
@@ -1696,41 +1788,35 @@ export class AcpSessionHandle implements AgentSessionHandle {
         }));
         return;
       }
-      if (settings?.agents.autoAcceptAllAgentPermissions) {
-        const providerOptionId = providerOptionIdForRememberedPermission(
-          normalizedOptions,
-          "allow"
-        );
-        if (providerOptionId) {
-          this.bridge.respond(requestId, {
-            outcome: { outcome: "selected", optionId: providerOptionId },
-          });
-          this.pendingPermissionRequestIds.delete(requestKey);
-          await this.callbacks.appendEvents([
-            {
-              eventId: randomUUID(),
-              conversationId: this.callbacks.conversation.id,
-              kind: "permission_resolved",
-              requestId: requestKey,
-              outcome: "selected",
-              optionId: providerOptionId,
-              raw: { autoAcceptedAll: true },
-            },
-            {
-              eventId: randomUUID(),
-              conversationId: this.callbacks.conversation.id,
-              kind: "status",
-              status: "running",
-              detail: "Auto-accepted (Agents → auto-approve all).",
-            },
-          ]);
-          await this.callbacks.updateConversation((current) => ({
-            ...current,
+      if (resolved.kind === "auto_accept" && resolved.providerOptionId) {
+        this.bridge.respond(requestId, {
+          outcome: { outcome: "selected", optionId: resolved.providerOptionId },
+        });
+        this.pendingPermissionRequestIds.delete(requestKey);
+        await this.callbacks.appendEvents([
+          {
+            eventId: randomUUID(),
+            conversationId: this.callbacks.conversation.id,
+            kind: "permission_resolved",
+            requestId: requestKey,
+            outcome: "selected",
+            optionId: resolved.providerOptionId,
+            raw: { autoAcceptedAll: true },
+          },
+          {
+            eventId: randomUUID(),
+            conversationId: this.callbacks.conversation.id,
+            kind: "status",
             status: "running",
-            pendingPermission: null,
-          }));
-          return;
-        }
+            detail: "Auto-accepted (Agents → auto-approve all).",
+          },
+        ]);
+        await this.callbacks.updateConversation((current) => ({
+          ...current,
+          status: "running",
+          pendingPermission: null,
+        }));
+        return;
       }
       this.pendingPermissionContextById.set(requestKey, {
         options: normalizedOptions,

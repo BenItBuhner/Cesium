@@ -1,6 +1,9 @@
 "use client";
 
-import type { GlobalSettingsState } from "./global-settings";
+import type {
+  GlobalSettingsState,
+  RememberedAgentPermissionRule,
+} from "./global-settings";
 import type {
   AgentConversationConfigPatch,
   AgentConversationCreateInput,
@@ -1203,13 +1206,25 @@ export async function promptAgentConversation(
   ids?: {
     clientEventId?: string;
     clientMessageId?: string;
+    clientTimezone?: string;
     delivery?: "normal" | "steer";
     planHandoff?: PlanBuildHandoff;
   }
 ): Promise<AgentConversationSnapshotResponse> {
+  const clientTimezone =
+    ids?.clientTimezone?.trim() ||
+    (typeof Intl !== "undefined"
+      ? Intl.DateTimeFormat().resolvedOptions().timeZone
+      : undefined);
   return request(`/api/agents/conversations/${encodeURIComponent(conversationId)}/prompt`, {
     method: "POST",
-    body: JSON.stringify({ text, attachments, configOverride, ...ids }),
+    body: JSON.stringify({
+      text,
+      attachments,
+      configOverride,
+      ...ids,
+      ...(clientTimezone ? { clientTimezone } : {}),
+    }),
   });
 }
 
@@ -1536,6 +1551,45 @@ export async function saveGlobalSettings(
       skipWorkspaceHeader: true,
       server: options?.server,
     }
+  );
+}
+
+export async function removeRememberedAgentPermission(
+  id: string,
+  options?: { server?: ServerRequestContext }
+): Promise<{ rememberedPermissions: RememberedAgentPermissionRule[]; revision?: number }> {
+  return request(
+    `/api/settings/remembered-permissions/${encodeURIComponent(id)}`,
+    { method: "DELETE" },
+    { skipWorkspaceHeader: true, server: options?.server }
+  );
+}
+
+export async function clearRememberedAgentPermissions(
+  input?: { backendId?: string },
+  options?: { server?: ServerRequestContext }
+): Promise<{ rememberedPermissions: RememberedAgentPermissionRule[]; revision?: number }> {
+  return request(
+    `/api/settings/remembered-permissions/clear`,
+    {
+      method: "POST",
+      body: JSON.stringify(input ?? {}),
+    },
+    { skipWorkspaceHeader: true, server: options?.server }
+  );
+}
+
+export async function replaceRememberedAgentPermissions(
+  rememberedPermissions: RememberedAgentPermissionRule[],
+  options?: { server?: ServerRequestContext }
+): Promise<{ rememberedPermissions: RememberedAgentPermissionRule[]; revision?: number }> {
+  return request(
+    `/api/settings/remembered-permissions`,
+    {
+      method: "PUT",
+      body: JSON.stringify({ rememberedPermissions }),
+    },
+    { skipWorkspaceHeader: true, server: options?.server }
   );
 }
 

@@ -43,6 +43,15 @@ async function fetchJson(url: string, init: RequestInit): Promise<unknown> {
   }
 }
 
+async function readJsonResponse(response: Response): Promise<unknown> {
+  const text = await response.text();
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    return text;
+  }
+}
+
 export function modelPart(modelId: string): string {
   const slash = modelId.indexOf("/");
   return slash >= 0 ? modelId.slice(slash + 1) : modelId;
@@ -119,30 +128,26 @@ function toDataUrl(mimeType: string, data: string): string {
   return `data:${mimeType || "image/png"};base64,${trimmed}`;
 }
 
-async function runOpenAiChat(input: {
-  apiKey: string;
-  baseUrl?: string;
-  providerId: string;
-  model: string;
-  messages: CesiumHistoryMessage[];
-  tools?: import("./cesium-tools.js").CesiumToolDefinition[];
-}): Promise<CesiumAdapterResult> {
-  const baseUrl = resolveOpenAiCompatibleBaseUrl(input.baseUrl, input.providerId);
+function openAiChatRequestBody(
+  input: {
+    model: string;
+    messages: CesiumHistoryMessage[];
+    tools?: import("./cesium-tools.js").CesiumToolDefinition[];
+  },
+  stream: boolean
+): Record<string, unknown> {
   const tools =
     input.tools && input.tools.length === 0 ? undefined : openAiTools(input.tools);
-  const payload = await fetchJson(`${baseUrl.replace(/\/+$/, "")}/chat/completions`, {
-    method: "POST",
-    headers: {
-      authorization: `Bearer ${input.apiKey}`,
-      "content-type": "application/json",
-    },
-    body: JSON.stringify({
-      model: input.model,
-      messages: openAiMessages(input.messages),
-      ...(tools ? { tools, tool_choice: "auto" as const } : {}),
-      max_tokens: DEFAULT_MAX_OUTPUT_TOKENS,
-    }),
-  });
+  return {
+    model: input.model,
+    messages: openAiMessages(input.messages),
+    ...(tools ? { tools, tool_choice: "auto" as const } : {}),
+    max_tokens: DEFAULT_MAX_OUTPUT_TOKENS,
+    ...(stream ? { stream: true } : {}),
+  };
+}
+
+function openAiChatResultFromPayload(payload: unknown): CesiumAdapterResult {
   const root = asRecord(payload);
   const choices = Array.isArray(root?.choices) ? root.choices : [];
   const choice = asRecord(choices[0]);
@@ -150,7 +155,7 @@ async function runOpenAiChat(input: {
   const toolCalls = Array.isArray(message?.tool_calls) ? message.tool_calls : [];
   return {
     text: asString(message?.content) ?? "",
-    reasoning: asString(message?.reasoning),
+    reasoning: asString(message?.reasoning) ?? asString(message?.reasoning_content),
     toolRequests: toolCalls.flatMap((toolCall): CesiumToolRequest[] => {
       const record = asRecord(toolCall);
       const fn = asRecord(record?.function);
@@ -166,6 +171,194 @@ async function runOpenAiChat(input: {
     }),
     raw: payload,
   };
+}
+
+async function fetchOpenAiChat(input: {
+  apiKey: string;
+  baseUrl?: string;
+  providerId: string;
+  model: string;
+  messages: CesiumHistoryMessage[];
+  tools?: import("./cesium-tools.js").CesiumToolDefinition[];
+  stream: boolean;
+}): Promise<Response> {
+  const baseUrl = resolveOpenAiCompatibleBaseUrl(input.baseUrl, input.providerId);
+  return fetch(`${baseUrl.replace(/\/+$/, "")}/chat/completions`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${input.apiKey}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify(openAiChatRequestBody(input, input.stream)),
+  });
+}
+
+type ChatToolCallDelta = {
+  id?: string;
+  name?: string;
+  arguments: string;
+};
+
+function appendOpenAiChatToolCallDeltas(
+  value: unknown,
+  pending: Map<number, ChatToolCallDelta>
+): void {
+  const toolCalls = Array.isArray(value) ? value : [];
+  for (const rawToolCall of toolCalls) {
+    const toolCall = asRecord(rawToolCall);
+    if (!toolCall) {
+      continue;
+    }
+    const rawIndex = toolCall.index;
+    const index =
+      typeof rawIndex === "number" && Number.isInteger(rawIndex)
+        ? rawIndex
+        : pending.size;
+    const current = pending.get(index) ?? { arguments: "" };
+    if (typeof toolCall.id === "string" && toolCall.id) {
+      current.id = toolCall.id;
+    }
+    const fn = asRecord(toolCall.function);
+    if (typeof fn?.name === "string" && fn.name) {
+      current.name = current.name ?? fn.name;
+    }
+    if (typeof fn?.arguments === "string") {
+      current.arguments += fn.arguments;
+    }
+    pending.set(index, current);
+  }
+}
+
+function completeOpenAiChatToolCalls(
+  pending: Map<number, ChatToolCallDelta>
+): CesiumToolRequest[] {
+  return [...pending.entries()]
+    .sort(([left], [right]) => left - right)
+    .flatMap(([, call]): CesiumToolRequest[] => {
+      if (!call.name) {
+        return [];
+      }
+      return [
+        createCesiumToolRequest(
+          call.id ?? randomUUID(),
+          call.name,
+          parseJsonArgs(call.arguments)
+        ),
+      ];
+    });
+}
+
+function chatDeltaText(delta: Record<string, unknown>, key: string): string | undefined {
+  const value = delta[key];
+  return typeof value === "string" ? value : undefined;
+}
+
+function chatDeltaReasoning(delta: Record<string, unknown>): string | undefined {
+  return (
+    chatDeltaText(delta, "reasoning") ??
+    chatDeltaText(delta, "reasoning_content") ??
+    chatDeltaText(delta, "reasoning_text")
+  );
+}
+
+function* parseSseFrame(frame: string): Generator<unknown | "[DONE]"> {
+  const dataLines = frame
+    .split(/\n/)
+    .filter((line) => line.startsWith("data:"))
+    .map((line) => line.slice("data:".length).trim());
+  if (dataLines.length === 0) {
+    return;
+  }
+  const data = dataLines.join("\n").trim();
+  if (!data) {
+    return;
+  }
+  if (data === "[DONE]") {
+    yield "[DONE]";
+    return;
+  }
+  yield parseJsonArgs(data);
+}
+
+async function* readSseJsonEvents(response: Response): AsyncGenerator<unknown | "[DONE]"> {
+  if (!response.body) {
+    return;
+  }
+  const decoder = new TextDecoder();
+  const reader = response.body.getReader();
+  let buffer = "";
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) {
+      break;
+    }
+    buffer += decoder.decode(value, { stream: true });
+    const frames = buffer.split(/\n\n/);
+    buffer = frames.pop() ?? "";
+    for (const frame of frames) {
+      yield* parseSseFrame(frame);
+    }
+  }
+  buffer += decoder.decode();
+  if (buffer.trim()) {
+    yield* parseSseFrame(buffer);
+  }
+}
+
+async function* streamOpenAiChat(input: {
+  apiKey: string;
+  baseUrl?: string;
+  providerId: string;
+  model: string;
+  messages: CesiumHistoryMessage[];
+  tools?: import("./cesium-tools.js").CesiumToolDefinition[];
+}): AsyncGenerator<CesiumAdapterStreamEvent> {
+  const response = await fetchOpenAiChat({ ...input, stream: true });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`${response.status} ${response.statusText}: ${text.slice(0, 1000)}`);
+  }
+
+  const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
+  if (
+    !response.body ||
+    contentType.includes("application/json") ||
+    contentType.includes("text/json")
+  ) {
+    yield* streamStaticResult(openAiChatResultFromPayload(await readJsonResponse(response)));
+    return;
+  }
+
+  const pendingToolCalls = new Map<number, ChatToolCallDelta>();
+  for await (const event of readSseJsonEvents(response)) {
+    if (event === "[DONE]") {
+      break;
+    }
+    yield { kind: "raw", raw: event };
+    const root = asRecord(event);
+    const choices = Array.isArray(root?.choices) ? root.choices : [];
+    for (const rawChoice of choices) {
+      const choice = asRecord(rawChoice);
+      const delta = asRecord(choice?.delta);
+      if (!delta) {
+        continue;
+      }
+      const content = chatDeltaText(delta, "content");
+      if (content !== undefined) {
+        yield { kind: "text_delta", text: content, raw: event };
+      }
+      const reasoning = chatDeltaReasoning(delta);
+      if (reasoning !== undefined) {
+        yield { kind: "reasoning_delta", text: reasoning, raw: event };
+      }
+      appendOpenAiChatToolCallDeltas(delta.tool_calls, pendingToolCalls);
+    }
+  }
+
+  for (const request of completeOpenAiChatToolCalls(pendingToolCalls)) {
+    yield { kind: "tool_request", request };
+  }
+  yield { kind: "done" };
 }
 
 async function* streamOpenAiResponses(input: {
@@ -574,16 +767,14 @@ export async function* streamAdapter(
   switch (input.apiKind) {
     case "openai-chat-completions":
     case "openai-compatible":
-      yield* streamStaticResult(
-        await runOpenAiChat({
-          apiKey: input.apiKey,
-          baseUrl: input.baseUrl,
-          providerId,
-          model,
-          messages: input.messages,
-          tools: input.tools,
-        })
-      );
+      yield* streamOpenAiChat({
+        apiKey: input.apiKey,
+        baseUrl: input.baseUrl,
+        providerId,
+        model,
+        messages: input.messages,
+        tools: input.tools,
+      });
       return;
     case "openai-realtime":
       yield* streamOpenAiRealtime({

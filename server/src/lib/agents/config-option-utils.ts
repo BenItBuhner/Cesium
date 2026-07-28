@@ -7,6 +7,9 @@ export function configOptionMatchesCategory(
   if (option.category === category) {
     return true;
   }
+  if (option.category !== "other") {
+    return false;
+  }
   const lowerId = option.id.trim().toLowerCase();
   const lowerName = option.name.trim().toLowerCase();
   if (category === "mode") {

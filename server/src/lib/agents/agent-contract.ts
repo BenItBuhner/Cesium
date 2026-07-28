@@ -95,6 +95,20 @@ export const AGENT_CAPABILITIES: Record<AgentBackendId, AgentProviderCapabilitie
     supportsInlineReasoning: true,
     supportsCompletionRetry: false,
   },
+  "grok-build": {
+    supportsLoadSession: true,
+    supportsModeSelection: true,
+    supportsModelSelection: true,
+    supportsSlashCommands: true,
+    supportsPermissions: true,
+    supportsToolCalls: true,
+    supportsStructuredPlans: true,
+    supportsTodos: true,
+    supportsSessionResume: true,
+    supportsPromptImages: true,
+    supportsInlineReasoning: true,
+    supportsCompletionRetry: false,
+  },
   "codex-app-server": {
     supportsLoadSession: true,
     supportsModeSelection: true,
@@ -271,6 +285,19 @@ export const BACKEND_HARNESS_EXPECTATIONS: Record<
       "system",
     ],
     notes: "Devin CLI ACP (`devin acp`); richer CLI-only interactions may not surface over ACP.",
+  },
+  "grok-build": {
+    expectedEventKinds: [
+      ...textTurnEvents,
+      "reasoning",
+      ...toolEvents,
+      "plan",
+      "subagent",
+      ...permissionEvents,
+      "system",
+    ],
+    notes:
+      "Official Grok Build ACP (`grok agent stdio`); Cesium performs the advertised xai.api_key or cached_token authentication handshake before opening a session.",
   },
   "codex-app-server": {
     expectedEventKinds: [

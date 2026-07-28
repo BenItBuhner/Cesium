@@ -1,10 +1,14 @@
 import assert from "node:assert/strict";
-import { test } from "node:test";
+import { after, test } from "node:test";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
 const TEST_DATA_DIR = await fs.mkdtemp(path.join(os.tmpdir(), "cesium-opencode-rel-"));
+delete process.env.REDIS_URL;
+delete process.env.DATABASE_URL;
+delete process.env.OPENCURSOR_STORAGE_DRIVER;
+process.env.NODE_ENV = "test";
 process.env.OPENCURSOR_DATA_DIR = TEST_DATA_DIR;
 // Keep the harness diagnostics file writer quiet during unit tests.
 process.env.OPENCURSOR_HARNESS_DIAGNOSTICS = "0";
@@ -37,6 +41,19 @@ import type { OpenCodeServerEvent } from "../src/lib/agents/opencode-server-even
 
 const BACKEND = AGENT_BACKENDS["opencode-server"];
 const ROOT_SESSION = "ses_root";
+
+/**
+ * A failed assertion mid-test would otherwise skip `handle.dispose()`, and a
+ * live watchdog/poll interval (deliberately not unref'ed in the provider)
+ * then pins the event loop until its huge test value elapses. Register every
+ * session and dispose leftovers when the file finishes.
+ */
+const activeHandles: Array<{ dispose: () => Promise<void> }> = [];
+after(async () => {
+  for (const handle of activeHandles.splice(0)) {
+    await handle.dispose().catch(() => undefined);
+  }
+});
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -194,6 +211,11 @@ function createHarnessTestRig(options: {
     callbacks,
     appended,
     answerPermissionCalls,
+    startSession: async () => {
+      const handle = await provider.startSession(callbacks);
+      activeHandles.push(handle);
+      return handle;
+    },
     conversation: () => conversation,
     emitSse: async (payload: Record<string, unknown>) => {
       assert.ok(pushEvent, "SSE stream was not started");
@@ -241,12 +263,19 @@ function assistantTextPartUpdated(messageId: string, partId: string, text: strin
   };
 }
 
-function permissionUpdated(id: string, sessionId = ROOT_SESSION): Record<string, unknown> {
+function permissionUpdated(
+  id: string,
+  sessionId = ROOT_SESSION,
+  // Unique per request by default: remembered "always" rules match on
+  // title+detail, so shared strings would leak auto-answers across tests.
+  title = `Run command ${id}`,
+  description = `rm -rf ./tmp-${id}`
+): Record<string, unknown> {
   return {
     type: "permission.updated",
     properties: {
       sessionID: sessionId,
-      permission: { id, sessionID: sessionId, title: "Run command", description: "rm -rf ./tmp" },
+      permission: { id, sessionID: sessionId, title, description },
     },
   };
 }
@@ -262,7 +291,7 @@ test("permission arriving inside the finish quiet window defers turn completion"
   resetHarnessDiagnosticsForTests();
   setFastTimers();
   const rig = createHarnessTestRig({ conversationId: "conv-finish-race" });
-  const handle = await rig.provider.startSession(rig.callbacks);
+  const handle = await rig.startSession();
 
   const promptDone = handle.prompt({ text: "do something", userMessageId: "u1" });
   const promptSettled = { value: false };
@@ -284,8 +313,10 @@ test("permission arriving inside the finish quiet window defers turn completion"
   // ...but a permission request lands inside the window.
   await rig.emitSse(permissionUpdated("perm_1"));
 
+  // SSE handling is fire-and-forget and includes an async remembered-rule
+  // lookup, so wait for the surfaced state instead of asserting immediately.
+  await waitFor(() => rig.conversation().pendingPermission?.requestId === "perm_1");
   assert.equal(rig.conversation().status, "awaiting_permission");
-  assert.equal(rig.conversation().pendingPermission?.requestId, "perm_1");
 
   // Well past the quiet window: the turn must NOT have completed and the
   // permission prompt must still be pending.
@@ -315,11 +346,11 @@ test("permission events are processed even between turns (no active prompt)", as
   resetHarnessDiagnosticsForTests();
   setFastTimers();
   const rig = createHarnessTestRig({ conversationId: "conv-out-of-turn" });
-  const handle = await rig.provider.startSession(rig.callbacks);
+  const handle = await rig.startSession();
 
   await rig.emitSse(permissionUpdated("perm_late"));
+  await waitFor(() => rig.conversation().pendingPermission?.requestId === "perm_late");
   assert.equal(rig.conversation().status, "awaiting_permission");
-  assert.equal(rig.conversation().pendingPermission?.requestId, "perm_late");
   assert.ok(
     rig.appended.some(
       (event) => event.kind === "permission_request" && event.requestId === "perm_late"
@@ -336,11 +367,17 @@ test("duplicate permission events across SSE routes surface a single request", a
   resetHarnessDiagnosticsForTests();
   setFastTimers();
   const rig = createHarnessTestRig({ conversationId: "conv-dup-perm" });
-  const handle = await rig.provider.startSession(rig.callbacks);
+  const handle = await rig.startSession();
 
   await rig.emitSse(permissionUpdated("perm_dup"));
   await rig.emitSse(permissionUpdated("perm_dup"));
 
+  await waitFor(() =>
+    rig.appended.some(
+      (event) => event.kind === "permission_request" && event.requestId === "perm_dup"
+    )
+  );
+  await sleep(50);
   const requests = rig.appended.filter(
     (event) => event.kind === "permission_request" && event.requestId === "perm_dup"
   );
@@ -361,9 +398,10 @@ test("permission replies are retried and failures keep the prompt actionable", a
       },
     },
   });
-  const handle = await rig.provider.startSession(rig.callbacks);
+  const handle = await rig.startSession();
 
   await rig.emitSse(permissionUpdated("perm_fail"));
+  await waitFor(() => rig.conversation().pendingPermission?.requestId === "perm_fail");
   assert.equal(rig.conversation().status, "awaiting_permission");
 
   await assert.rejects(
@@ -400,9 +438,10 @@ test("a 404 permission reply resolves locally instead of freezing", async () => 
       },
     },
   });
-  const handle = await rig.provider.startSession(rig.callbacks);
+  const handle = await rig.startSession();
 
   await rig.emitSse(permissionUpdated("perm_gone"));
+  await waitFor(() => rig.conversation().pendingPermission?.requestId === "perm_gone");
   await handle.answerPermission({ requestId: "perm_gone", optionId: "allow" });
   assert.equal(rig.conversation().status, "idle");
   assert.equal(rig.conversation().pendingPermission, null);
@@ -418,7 +457,7 @@ test("subagent permissions are answered on the child session that raised them", 
   resetHarnessDiagnosticsForTests();
   setFastTimers();
   const rig = createHarnessTestRig({ conversationId: "conv-child-perm" });
-  const handle = await rig.provider.startSession(rig.callbacks);
+  const handle = await rig.startSession();
 
   // Child-session events reach providers via the global SSE pool.
   await (handle as unknown as {
@@ -439,7 +478,7 @@ test("watchdog reconciles a turn whose finish event was lost", async () => {
   process.env.OPENCODE_SERVER_WATCHDOG_INTERVAL_MS = "30";
   process.env.OPENCODE_SERVER_STALL_THRESHOLD_MS = "60";
   const rig = createHarnessTestRig({ conversationId: "conv-watchdog" });
-  const handle = await rig.provider.startSession(rig.callbacks);
+  const handle = await rig.startSession();
 
   // No SSE events at all: the finish notification is "lost".
   await handle.prompt({ text: "hello", userMessageId: "u1" });
@@ -470,7 +509,7 @@ test("watchdog fails the turn when OpenCode becomes unreachable", async () => {
       },
     },
   });
-  const handle = await rig.provider.startSession(rig.callbacks);
+  const handle = await rig.startSession();
 
   await assert.rejects(
     handle.prompt({ text: "hello", userMessageId: "u1" }),
@@ -485,7 +524,7 @@ test("managed process exit fails the active turn immediately", async () => {
   resetHarnessDiagnosticsForTests();
   setFastTimers();
   const rig = createHarnessTestRig({ conversationId: "conv-proc-exit" });
-  const handle = await rig.provider.startSession(rig.callbacks);
+  const handle = await rig.startSession();
 
   const promptDone = handle.prompt({ text: "hello", userMessageId: "u1" });
   const rejection = assert.rejects(promptDone, /exited unexpectedly/);
@@ -502,7 +541,7 @@ test("repeated SSE stream errors do not spam the conversation log", async () => 
   resetHarnessDiagnosticsForTests();
   setFastTimers();
   const rig = createHarnessTestRig({ conversationId: "conv-sse-spam" });
-  const handle = await rig.provider.startSession(rig.callbacks);
+  const handle = await rig.startSession();
 
   for (let i = 0; i < 6; i += 1) {
     await rig.emitSseError(new Error("stream disconnected"));
@@ -561,7 +600,7 @@ test("pending permissions are discovered by polling when no ask event exists", a
     conversationId: "conv-polled",
     behavior: { listPermissions: async () => pending },
   });
-  const handle = await rig.provider.startSession(rig.callbacks);
+  const handle = await rig.startSession();
 
   await waitFor(() => rig.conversation().pendingPermission?.requestId === "per_polled");
   assert.equal(rig.conversation().status, "awaiting_permission");
@@ -588,7 +627,7 @@ test("permissions resolved elsewhere are reconciled away by polling", async () =
     conversationId: "conv-poll-reconcile",
     behavior: { listPermissions: async () => [...pending] },
   });
-  const handle = await rig.provider.startSession(rig.callbacks);
+  const handle = await rig.startSession();
 
   await waitFor(() => rig.conversation().pendingPermission?.requestId === "per_gone_ext");
   // Someone else (another client / auto-allow rule) resolves it on OpenCode.
@@ -617,9 +656,10 @@ test("modern reply format falls back to legacy allow/deny on 400", async () => {
       },
     },
   });
-  const handle = await rig.provider.startSession(rig.callbacks);
+  const handle = await rig.startSession();
 
   await rig.emitSse(permissionUpdated("perm_legacy"));
+  await waitFor(() => rig.conversation().pendingPermission?.requestId === "perm_legacy");
   await handle.answerPermission({ requestId: "perm_legacy", optionId: "allow_always" });
   assert.equal(rig.answerPermissionCalls.length, 2);
   assert.deepEqual(rig.answerPermissionCalls[0]?.body, { response: "always" });
@@ -632,7 +672,7 @@ test("transient provider retry status does not fail the turn", async () => {
   resetHarnessDiagnosticsForTests();
   setFastTimers();
   const rig = createHarnessTestRig({ conversationId: "conv-retry-status" });
-  const handle = await rig.provider.startSession(rig.callbacks);
+  const handle = await rig.startSession();
 
   const promptDone = handle.prompt({ text: "hello", userMessageId: "u1" });
   const promptSettled = { value: false };
@@ -677,7 +717,7 @@ test("session.error during an active turn fails it with the extracted detail", a
   resetHarnessDiagnosticsForTests();
   setFastTimers();
   const rig = createHarnessTestRig({ conversationId: "conv-session-error" });
-  const handle = await rig.provider.startSession(rig.callbacks);
+  const handle = await rig.startSession();
 
   const promptDone = handle.prompt({ text: "hello", userMessageId: "u1" });
   const rejection = assert.rejects(promptDone, /APIError: No provider available \(HTTP 401\)/);
@@ -703,7 +743,7 @@ test("hard error status still fails the turn", async () => {
   resetHarnessDiagnosticsForTests();
   setFastTimers();
   const rig = createHarnessTestRig({ conversationId: "conv-error-status" });
-  const handle = await rig.provider.startSession(rig.callbacks);
+  const handle = await rig.startSession();
 
   const promptDone = handle.prompt({ text: "hello", userMessageId: "u1" });
   const rejection = assert.rejects(promptDone, /model exploded/);
@@ -725,7 +765,7 @@ test("tool-calls step finish does not end the turn; final text streams from the 
   resetHarnessDiagnosticsForTests();
   setFastTimers();
   const rig = createHarnessTestRig({ conversationId: "conv-step-finish" });
-  const handle = await rig.provider.startSession(rig.callbacks);
+  const handle = await rig.startSession();
 
   const promptDone = handle.prompt({ text: "run a tool", userMessageId: "u1" });
   const promptSettled = { value: false };
@@ -762,13 +802,41 @@ test("tool-calls step finish does not end the turn; final text streams from the 
   await handle.dispose();
 });
 
+test("an allow-always choice is remembered and auto-answers the next matching permission", async () => {
+  resetHarnessDiagnosticsForTests();
+  setFastTimers();
+  const rig = createHarnessTestRig({ conversationId: "conv-remembered" });
+  const handle = await rig.startSession();
+
+  // First request surfaces normally; the user picks "Allow Always".
+  await rig.emitSse(permissionUpdated("perm_rem_1", ROOT_SESSION, "Deploy docs", "npm run deploy"));
+  await waitFor(() => rig.conversation().pendingPermission?.requestId === "perm_rem_1");
+  await handle.answerPermission({ requestId: "perm_rem_1", optionId: "allow_always" });
+  assert.equal(rig.conversation().pendingPermission, null);
+
+  // A later request with the same tool key must be auto-answered without
+  // ever surfacing a pending prompt.
+  await rig.emitSse(permissionUpdated("perm_rem_2", ROOT_SESSION, "Deploy docs", "npm run deploy"));
+  await waitFor(() =>
+    rig.appended.some(
+      (event) => event.kind === "permission_resolved" && event.requestId === "perm_rem_2"
+    )
+  );
+  assert.equal(rig.conversation().pendingPermission, null);
+  assert.notEqual(rig.conversation().status, "awaiting_permission");
+  // The reply went to OpenCode through the hardened delivery path.
+  assert.ok(rig.answerPermissionCalls.some((call) => call.permissionId === "perm_rem_2"));
+  await handle.dispose();
+});
+
 test("external permission replies clear the pending prompt", async () => {
   resetHarnessDiagnosticsForTests();
   setFastTimers();
   const rig = createHarnessTestRig({ conversationId: "conv-external-reply" });
-  const handle = await rig.provider.startSession(rig.callbacks);
+  const handle = await rig.startSession();
 
   await rig.emitSse(permissionUpdated("perm_ext"));
+  await waitFor(() => rig.conversation().pendingPermission?.requestId === "perm_ext");
   assert.equal(rig.conversation().status, "awaiting_permission");
 
   // Real OpenCode 1.18 shape: requestID + reply (older servers use permissionID + response).
@@ -776,8 +844,8 @@ test("external permission replies clear the pending prompt", async () => {
     type: "permission.replied",
     properties: { sessionID: ROOT_SESSION, requestID: "perm_ext", reply: "once" },
   });
+  await waitFor(() => rig.conversation().pendingPermission === null);
   assert.equal(rig.conversation().status, "idle");
-  assert.equal(rig.conversation().pendingPermission, null);
   assert.ok(
     rig.appended.some(
       (event) => event.kind === "permission_resolved" && event.requestId === "perm_ext"

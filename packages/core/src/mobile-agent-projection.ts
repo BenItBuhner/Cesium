@@ -249,25 +249,25 @@ function deriveGoalProgress(
   status: AgentConversationStatus,
   now: number
 ): MobileGoalProgress | null {
-  const burn = latestGoalProgressStatus(events, status);
-  if (!burn) {
+  const goal = latestGoalProgressStatus(events, status);
+  if (!goal) {
     return null;
   }
   const activeRuntimeMs =
-    burn.runtimeActiveSince != null && status === "running"
-      ? Math.max(0, now - burn.runtimeActiveSince)
+    goal.runtimeActiveSince != null && status === "running"
+      ? Math.max(0, now - goal.runtimeActiveSince)
       : 0;
-  const runtimeMs = Math.max(0, (burn.runtimeSeconds ?? 0) * 1000 + activeRuntimeMs);
+  const runtimeMs = Math.max(0, (goal.runtimeSeconds ?? 0) * 1000 + activeRuntimeMs);
   const estimatedRemainingMs =
-    burn.progressPercent > 0 &&
-    burn.progressPercent < 100 &&
+    goal.progressPercent > 0 &&
+    goal.progressPercent < 100 &&
     runtimeMs >= 10_000 &&
-    burn.completedAt == null
-      ? boundedEstimate((runtimeMs * (100 - burn.progressPercent)) / burn.progressPercent)
+    goal.completedAt == null
+      ? boundedEstimate((runtimeMs * (100 - goal.progressPercent)) / goal.progressPercent)
       : null;
   return {
-    percent: burn.progressPercent,
-    headline: burn.headline,
+    percent: goal.progressPercent,
+    headline: goal.headline,
     runtimeMs,
     estimatedRemainingMs,
     estimatedCompletionAt:

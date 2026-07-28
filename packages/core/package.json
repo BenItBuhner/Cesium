@@ -18,6 +18,10 @@
       "types": "./dist/mcp.d.ts",
       "import": "./dist/mcp.js"
     },
+    "./model-display-name": {
+      "types": "./dist/model-display-name.d.ts",
+      "import": "./dist/model-display-name.js"
+    },
     "./phone-control": {
       "types": "./dist/phone-control.d.ts",
       "import": "./dist/phone-control.js"

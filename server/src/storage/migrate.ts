@@ -9,6 +9,7 @@ const ALL_BACKEND_IDS: AgentBackendId[] = [
   "opencode-server",
   "opencode-v2-beta",
   "devin-acp",
+  "grok-build",
   "codex-app-server",
   "claude-code-sdk",
   "pi-agent",

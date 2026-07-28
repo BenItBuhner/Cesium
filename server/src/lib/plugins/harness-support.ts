@@ -47,6 +47,13 @@ export const HARNESS_PLUGIN_CAPABILITIES: Record<AgentBackendId, AgentPluginHarn
     attachment: "acp-mcp",
     notes: "Devin ACP sessions receive MCP servers through the ACP mcpServers array.",
   },
+  "grok-build": {
+    backendId: "grok-build",
+    nativeMcp: true,
+    promptSkills: true,
+    attachment: "acp-mcp",
+    notes: "Grok Build ACP sessions receive MCP servers through the native mcpServers array.",
+  },
   "google-antigravity-cli": {
     backendId: "google-antigravity-cli",
     nativeMcp: true,

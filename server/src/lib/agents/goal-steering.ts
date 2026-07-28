@@ -115,7 +115,7 @@ Use the compacted summary as memory only. Current files, DB state, command outpu
 </goal_context>`;
 }
 
-export function burnBudgetLimitContext(goal: GoalRecord): string {
+export function goalBudgetLimitContext(goal: GoalRecord): string {
   return `<goal_context>
 The active Goal has reached its token budget.
 
@@ -127,7 +127,7 @@ Do not start new substantive work for this goal. Wrap up this turn soon: summari
 </goal_context>`;
 }
 
-export function burnObjectiveUpdatedContext(goal: GoalRecord): string {
+export function goalObjectiveUpdatedContext(goal: GoalRecord): string {
   return `<goal_context>
 The active Goal objective was updated.
 

@@ -36,6 +36,8 @@ import {
   savePiAgentHome,
   savePiAgentProviderKey,
   startPiAgentOAuth,
+  removeRememberedAgentPermission,
+  clearRememberedAgentPermissions,
   type ClaudeCodeSdkSettingsPayload,
   type CesiumAgentSettingsPayload,
   type CesiumCustomProvider,
@@ -72,6 +74,7 @@ export const HARNESS_ORDER: AgentBackendId[] = [
   "opencode-server",
   "opencode-v2-beta",
   "devin-acp",
+  "grok-build",
   "claude-code-sdk",
   "pi-agent",
   "google-antigravity-cli",
@@ -83,6 +86,7 @@ export const HARNESS_LABELS: Record<AgentBackendId, string> = {
   "opencode-server": "OpenCode Server",
   "opencode-v2-beta": "OpenCode v2 Beta",
   "devin-acp": "Devin",
+  "grok-build": "Grok Build",
   "codex-app-server": "Codex App Server",
   "claude-code-sdk": "Claude Code",
   "pi-agent": "Pi Agent",
@@ -100,6 +104,8 @@ const HARNESS_DESCRIPTIONS: Record<AgentBackendId, string> = {
     "Native OpenCode v2 beta API with typed tool events, durable reconnect recovery, background subagents, forms, and v2 permissions. Uses `opencode2` or `OPENCURSOR_OPENCODE_V2_SERVER_URL`.",
   "devin-acp":
     "Cognition Devin CLI over ACP (`devin acp`). Authenticate with `devin auth login` or set `WINDSURF_API_KEY`.",
+  "grok-build":
+    "SpaceXAI Grok Build CLI over official ACP (`grok agent stdio`). Authenticate with `grok login --device-auth` or set `XAI_API_KEY`; Cesium performs the non-interactive ACP handshake.",
   "codex-app-server":
     "Codex App Server over JSON-RPC stdio. Uses ambient Codex auth and mirrors native plans into OpenCursor plan files.",
   "claude-code-sdk":
@@ -714,6 +720,8 @@ function CustomProviderModal({
 
   const addManualModel = () => {
     const id = manualModelId.trim();
+    // Preserve whatever the user typed as the display name; blank → store id and let
+    // catalog normalization turn slug ids into spaced labels at display time.
     const name = manualModelName.trim() || id;
     if (!id) {
       setMessage("Model id is required for manual add.");
@@ -2160,14 +2168,12 @@ function HarnessRememberedPermissionsList({
 
 function HarnessDetailView({
   backendId,
-  agents,
   rememberedForHarness,
   workspaceNameById,
   onPatchAgents,
   onOpenModels,
 }: {
   backendId: AgentBackendId;
-  agents: AgentsSettingsState;
   rememberedForHarness: RememberedAgentPermissionRule[];
   workspaceNameById: Map<string, string>;
   onPatchAgents: (patch: Partial<AgentsSettingsState>) => void;
@@ -2175,20 +2181,28 @@ function HarnessDetailView({
 }) {
   const removeRemembered = useCallback(
     (id: string) => {
-      onPatchAgents({
-        rememberedPermissions: agents.rememberedPermissions.filter((rule) => rule.id !== id),
-      });
+      void (async () => {
+        try {
+          const result = await removeRememberedAgentPermission(id);
+          onPatchAgents({ rememberedPermissions: result.rememberedPermissions });
+        } catch {
+          // Keep local list; next settings refetch will reconcile.
+        }
+      })();
     },
-    [agents.rememberedPermissions, onPatchAgents]
+    [onPatchAgents]
   );
 
   const clearHarnessRemembered = useCallback(() => {
-    onPatchAgents({
-      rememberedPermissions: agents.rememberedPermissions.filter(
-        (rule) => rule.backendId !== backendId
-      ),
-    });
-  }, [agents.rememberedPermissions, backendId, onPatchAgents]);
+    void (async () => {
+      try {
+        const result = await clearRememberedAgentPermissions({ backendId });
+        onPatchAgents({ rememberedPermissions: result.rememberedPermissions });
+      } catch {
+        // Keep local list; next settings refetch will reconcile.
+      }
+    })();
+  }, [backendId, onPatchAgents]);
 
   return (
     <>
@@ -2313,7 +2327,18 @@ function HarnessListView({
               type="button"
               className={`${rowButtonClass} disabled:cursor-not-allowed disabled:opacity-45`}
               disabled={agents.rememberedPermissions.length === 0}
-              onClick={() => onPatchAgents({ rememberedPermissions: [] })}
+              onClick={() => {
+                void (async () => {
+                  try {
+                    const result = await clearRememberedAgentPermissions();
+                    onPatchAgents({
+                      rememberedPermissions: result.rememberedPermissions,
+                    });
+                  } catch {
+                    // Keep local list; next settings refetch will reconcile.
+                  }
+                })();
+              }}
             >
               Clear all
             </button>
@@ -2327,13 +2352,18 @@ function HarnessListView({
               rules={sortedRemembered}
               workspaceNameById={workspaceNameById}
               showBackendLabel
-              onRemove={(id) =>
-                onPatchAgents({
-                  rememberedPermissions: agents.rememberedPermissions.filter(
-                    (rule) => rule.id !== id
-                  ),
-                })
-              }
+              onRemove={(id) => {
+                void (async () => {
+                  try {
+                    const result = await removeRememberedAgentPermission(id);
+                    onPatchAgents({
+                      rememberedPermissions: result.rememberedPermissions,
+                    });
+                  } catch {
+                    // Keep local list; next settings refetch will reconcile.
+                  }
+                })();
+              }}
             />
           )}
         </HarnessListInset>
@@ -2440,7 +2470,6 @@ export function AgentsHarnessSettingsPanel() {
       {activeHarnessId ? (
         <HarnessDetailView
           backendId={activeHarnessId}
-          agents={agents}
           rememberedForHarness={rememberedByHarness.get(activeHarnessId) ?? []}
           workspaceNameById={workspaceNameById}
           onPatchAgents={patchAgents}
