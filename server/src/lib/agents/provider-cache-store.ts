@@ -23,6 +23,7 @@ import { OpenCodeServerClient, openCodeServerAuthFromEnv } from "./opencode-serv
 import { OpenCodeV2Client, openCodeV2AuthFromEnv } from "./opencode-v2-client.js";
 import { buildOpenCodeV2ConfigOptions } from "./opencode-v2-config.js";
 import { encodeCursorSdkModelValue, type CursorSdkModelParam } from "./cursor-sdk-model-selection.js";
+import { LEGACY_MODE_CONFIG_ID } from "./config-option-parse.js";
 import type { AgentBackendId, AgentConfigOption, AgentConfigOptionValue } from "./types.js";
 
 type AgentBackendCacheRecord = {
@@ -491,6 +492,108 @@ async function createDevinCliConfigOptions(input?: {
         { value: "codex", name: "Codex" },
         { value: "gemini", name: "Gemini" },
       ],
+    },
+  ];
+}
+
+function formatGrokBuildModelName(modelId: string): string {
+  if (/^grok[-_.]/i.test(modelId)) {
+    return modelId
+      .split(/[-_.]+/)
+      .map((part, index) =>
+        index === 0
+          ? "Grok"
+          : /^\d/.test(part)
+            ? part
+            : part.charAt(0).toUpperCase() + part.slice(1)
+      )
+      .join(" ");
+  }
+  return modelId;
+}
+
+async function resolveGrokBuildCommand(): Promise<string> {
+  const configured =
+    process.env.OPENCURSOR_GROK_BUILD_BIN?.trim() ||
+    process.env.OPENCURSOR_GROK_BIN?.trim();
+  if (configured) {
+    return configured;
+  }
+  const binaryName = process.platform === "win32" ? "grok.exe" : "grok";
+  const installed = path.join(os.homedir(), ".grok", "bin", binaryName);
+  try {
+    await fs.access(installed);
+    return installed;
+  } catch {
+    return "grok";
+  }
+}
+
+/**
+ * Grok exposes a credential-independent model catalog through `grok models`.
+ * Live ACP session metadata supersedes this seed after authentication.
+ */
+export async function createGrokBuildConfigOptions(input?: {
+  command?: string;
+  env?: NodeJS.ProcessEnv;
+  cwd?: string;
+}): Promise<AgentConfigOption[]> {
+  const command = input?.command?.trim() || (await resolveGrokBuildCommand());
+  const raw = await execFileText(command, ["models"], {
+    cwd: input?.cwd,
+    env: input?.env,
+  }).catch(() => "");
+  const cleaned = stripAnsi(raw);
+  const defaultModel =
+    cleaned.match(/^\s*Default model:\s*(\S+)\s*$/im)?.[1]?.trim() || "grok-4.5";
+  const modelRows: AgentConfigOptionValue[] = [];
+  let readingModels = false;
+  for (const line of cleaned.split("\n")) {
+    const trimmed = line.trim();
+    if (/^Available models:/i.test(trimmed)) {
+      readingModels = true;
+      continue;
+    }
+    if (!readingModels || !trimmed) {
+      continue;
+    }
+    const match = /^(?:\*\s*)?(\S+?)(?:\s+\(default\))?$/.exec(trimmed);
+    const value = match?.[1]?.trim();
+    if (!value || value.endsWith(":")) {
+      continue;
+    }
+    modelRows.push({ value, name: formatGrokBuildModelName(value) });
+  }
+  if (!modelRows.some((option) => option.value === defaultModel)) {
+    modelRows.unshift({
+      value: defaultModel,
+      name: formatGrokBuildModelName(defaultModel),
+    });
+  }
+  const models = Array.from(
+    new Map(modelRows.map((option) => [option.value, option])).values()
+  );
+
+  return [
+    {
+      id: LEGACY_MODE_CONFIG_ID,
+      name: "Mode",
+      category: "mode",
+      currentValue: "default",
+      options: [
+        { value: "default", name: "Build" },
+        { value: "plan", name: "Plan" },
+        { value: "ask", name: "Ask" },
+      ],
+    },
+    {
+      id: "model",
+      name: "Model",
+      category: "model",
+      currentValue: defaultModel,
+      description:
+        "Models reported by the installed Grok Build CLI. A live ACP session refreshes this catalog.",
+      options: models,
     },
   ];
 }
@@ -1326,6 +1429,8 @@ async function createSeedConfigOptions(backendId: AgentBackendId): Promise<Agent
       return createOpenCodeV2ConfigOptions();
     case "devin-acp":
       return createDevinCliConfigOptions();
+    case "grok-build":
+      return createGrokBuildConfigOptions();
     case "codex-app-server":
       return createCodexAppServerConfigOptions();
     case "claude-code-sdk":

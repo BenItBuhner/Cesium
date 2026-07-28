@@ -8,6 +8,7 @@ export const ACTIVE_AGENT_BACKEND_IDS = [
   "opencode-server",
   "opencode-v2-beta",
   "devin-acp",
+  "grok-build",
   "claude-code-sdk",
   "pi-agent",
   "google-antigravity-cli",

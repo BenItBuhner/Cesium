@@ -314,18 +314,7 @@ function summarizeAuthenticateResult(raw: unknown): string | undefined {
   return undefined;
 }
 
-async function runAcpTransportBootstrap(transport: AcpStdioClient): Promise<string[]> {
-  const messages: string[] = [];
-  const init = (await transport.request("initialize", {
-    protocolVersion: 1,
-    clientCapabilities: buildAcpClientCapabilities(),
-    clientInfo: {
-      name: "cesium-server",
-      title: "Cesium Server",
-      version: "0.1.0",
-    },
-  })) as Record<string, unknown> | undefined;
-
+function acpAuthMethodIds(init: Record<string, unknown> | undefined): string[] {
   const authMethods = Array.isArray(init?.authMethods) ? init.authMethods : [];
   const seen = new Set<string>();
   for (const entry of authMethods) {
@@ -335,10 +324,115 @@ async function runAcpTransportBootstrap(transport: AcpStdioClient): Promise<stri
         : typeof entry === "string"
           ? entry.trim()
           : "";
-    if (!id || seen.has(id)) {
-      continue;
+    if (id) {
+      seen.add(id);
     }
-    seen.add(id);
+  }
+  return [...seen];
+}
+
+function grokBuildDefaultAuthMethod(init: Record<string, unknown> | undefined): string | null {
+  const meta =
+    init?._meta && typeof init._meta === "object" && !Array.isArray(init._meta)
+      ? (init._meta as Record<string, unknown>)
+      : init?.meta && typeof init.meta === "object" && !Array.isArray(init.meta)
+        ? (init.meta as Record<string, unknown>)
+        : null;
+  return parseConfigOptionString(meta?.defaultAuthMethodId) || null;
+}
+
+export function selectGrokBuildAuthMethod(input: {
+  authMethodIds: string[];
+  defaultAuthMethodId?: string | null;
+  hasApiKey: boolean;
+}): "xai.api_key" | "cached_token" | null {
+  const available = new Set(input.authMethodIds);
+  if (input.hasApiKey && available.has("xai.api_key")) {
+    return "xai.api_key";
+  }
+  if (
+    (input.defaultAuthMethodId === "xai.api_key" ||
+      input.defaultAuthMethodId === "cached_token") &&
+    available.has(input.defaultAuthMethodId)
+  ) {
+    return input.defaultAuthMethodId;
+  }
+  if (available.has("cached_token")) {
+    return "cached_token";
+  }
+  if (available.has("xai.api_key")) {
+    return "xai.api_key";
+  }
+  return null;
+}
+
+async function authenticateGrokBuild(
+  transport: AcpStdioClient,
+  init: Record<string, unknown> | undefined
+): Promise<string> {
+  const authMethodIds = acpAuthMethodIds(init);
+  const methodId = selectGrokBuildAuthMethod({
+    authMethodIds,
+    defaultAuthMethodId: grokBuildDefaultAuthMethod(init),
+    hasApiKey: Boolean(
+      process.env.XAI_API_KEY?.trim() || process.env.GROK_CODE_XAI_API_KEY?.trim()
+    ),
+  });
+  if (!methodId) {
+    const offered = authMethodIds.length > 0 ? authMethodIds.join(", ") : "none";
+    throw new Error(
+      `Grok Build is not authenticated for headless ACP use (offered methods: ${offered}). Run \`grok login --device-auth\` on the server host or set XAI_API_KEY, then retry.`
+    );
+  }
+  try {
+    await transport.request("authenticate", {
+      methodId,
+      _meta: { headless: true },
+    });
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `Grok Build authentication via ${methodId} failed: ${detail}. Run \`grok login --device-auth\` or verify XAI_API_KEY.`
+    );
+  }
+  return methodId;
+}
+
+async function runAcpTransportBootstrap(
+  transport: AcpStdioClient,
+  backendId: AgentBackendId
+): Promise<string[]> {
+  const messages: string[] = [];
+  const init = (await transport.request("initialize", {
+    protocolVersion: 1,
+    clientCapabilities: buildAcpClientCapabilities(),
+    clientInfo: {
+      name: "cesium-server",
+      title: "Cesium Server",
+      version: "0.1.0",
+    },
+    ...(backendId === "grok-build"
+      ? {
+          _meta: {
+            startupHints: {
+              nonInteractive: true,
+              skipGitStatus: true,
+              skipProjectLayout: true,
+            },
+            clientType: "cesium",
+            clientVersion: "0.1.0",
+          },
+        }
+      : {}),
+  })) as Record<string, unknown> | undefined;
+
+  if (backendId === "grok-build") {
+    const methodId = await authenticateGrokBuild(transport, init);
+    messages.push(`Grok Build authenticated for ACP using ${methodId}.`);
+    return messages;
+  }
+
+  for (const id of acpAuthMethodIds(init)) {
     if (id === "cursor_login") {
       try {
         const authResult = await transport.request("authenticate", { methodId: "cursor_login" });
@@ -643,7 +737,8 @@ export class AcpSessionHandle implements AgentSessionHandle {
           env,
           processName: `Cesium Agent - ${input.backend.label}`,
         }),
-      afterSpawn: (transport) => runAcpTransportBootstrap(transport),
+      afterSpawn: (transport) =>
+        runAcpTransportBootstrap(transport, input.backend.id),
     });
 
     const isInvalidParamsError = (error: unknown): boolean => {
@@ -755,7 +850,10 @@ export class AcpSessionHandle implements AgentSessionHandle {
         parseConfigOptions(openResultRecord.configOptions),
         parseLegacySessionConfigOptions(openResultRecord)
       );
-      const configOptions = liveConfigOptions;
+      const configOptions = mergeSessionConfigOptions(
+        liveConfigOptions,
+        input.seedConfigOptions ?? []
+      );
 
       const handle = new AcpSessionHandle({
         bridge,
