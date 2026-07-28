@@ -50,21 +50,28 @@ export async function persistRememberedPermissionChoice(input: {
   if (!optionKind || !input.toolKey.trim()) {
     return null;
   }
-  try {
-    return await saveRememberedAgentPermissionRule({
-      workspaceId: input.workspaceId,
-      backendId: input.backendId,
-      toolKey: input.toolKey,
-      toolLabel: input.toolLabel,
-      decision: optionKind === "allow_always" ? "allow" : "reject",
-      optionId: input.optionId?.trim() || optionKind,
-      optionKind,
-      permissionCategory: input.permissionCategory,
-      matchStyle: input.matchStyle ?? "exact",
-    });
-  } catch {
-    return null;
+  // Storage hiccups (slow disk, transient pg failure) must not silently drop an
+  // explicit "always" decision, so retry briefly before giving up.
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      return await saveRememberedAgentPermissionRule({
+        workspaceId: input.workspaceId,
+        backendId: input.backendId,
+        toolKey: input.toolKey,
+        toolLabel: input.toolLabel,
+        decision: optionKind === "allow_always" ? "allow" : "reject",
+        optionId: input.optionId?.trim() || optionKind,
+        optionKind,
+        permissionCategory: input.permissionCategory,
+        matchStyle: input.matchStyle ?? "exact",
+      });
+    } catch {
+      if (attempt < 2) {
+        await new Promise((resolve) => setTimeout(resolve, 25 * (attempt + 1)));
+      }
+    }
   }
+  return null;
 }
 
 export type ResolvedRememberedPermission =
@@ -92,7 +99,12 @@ export async function resolveRememberedPermissionDecision(input: {
   permissionCategory?: AgentPermissionCategory;
   options?: AgentPermissionOption[];
 }): Promise<ResolvedRememberedPermission> {
-  const settings = await getGlobalSettings().catch(() => undefined);
+  // One retry: a transient settings-load failure must not cause a stored
+  // "always" decision to silently fall back to prompting mid-conversation.
+  let settings = await getGlobalSettings().catch(() => undefined);
+  if (!settings) {
+    settings = await getGlobalSettings().catch(() => undefined);
+  }
   if (!settings) {
     return { kind: "prompt" };
   }

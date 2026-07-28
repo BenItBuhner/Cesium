@@ -249,6 +249,44 @@ export async function saveGlobalSettings(settings: GlobalSettings): Promise<void
   await invalidateGlobalSettingsCaches();
 }
 
+/**
+ * All remembered-permission mutations are read-modify-write cycles over the
+ * whole settings blob. Serialize them through one in-process chain so two
+ * harness sessions answering "Always allow" concurrently cannot drop each
+ * other's rule (lost update). Mirrors the single-process rationale of the
+ * revisions registry.
+ */
+let rememberedPermissionMutationChain: Promise<unknown> = Promise.resolve();
+
+function enqueueRememberedPermissionMutation<T>(fn: () => Promise<T>): Promise<T> {
+  const run = rememberedPermissionMutationChain
+    .catch(() => undefined)
+    .then(fn);
+  rememberedPermissionMutationChain = run.catch(() => undefined);
+  return run;
+}
+
+/**
+ * Full-settings save for the PUT route: re-reads the on-disk remembered rules
+ * at WRITE time (not request time) inside the mutation chain, so coalesced /
+ * delayed client saves can never clobber rules an agent persisted in the
+ * debounce window.
+ */
+export async function saveGlobalSettingsPreservingRememberedPermissions(
+  settings: GlobalSettings
+): Promise<void> {
+  await enqueueRememberedPermissionMutation(async () => {
+    const current = await getGlobalSettings();
+    await saveGlobalSettings({
+      ...settings,
+      agents: {
+        ...settings.agents,
+        rememberedPermissions: current.agents.rememberedPermissions,
+      },
+    });
+  });
+}
+
 function modelToggleCacheKey(backendIds: AgentBackendId[]): string {
   return `opencursor:settings:models:${[...backendIds].sort().join(",")}`;
 }
@@ -602,116 +640,124 @@ export async function saveRememberedAgentPermissionRule(input: {
   permissionCategory?: AgentPermissionCategory;
   matchStyle?: RememberedAgentPermissionMatchStyle;
 }): Promise<RememberedAgentPermissionRule> {
-  const settings = await getGlobalSettings();
-  const now = Date.now();
-  const backendId = normalizeRememberedPermissionBackendId(input.backendId.trim());
-  const matchStyle = input.matchStyle ?? "exact";
-  const id = `${input.workspaceId}:${backendId}:${input.toolKey}:${matchStyle}`;
-  const existing = settings.agents.rememberedPermissions.find(
-    (rule) =>
-      rule.workspaceId === input.workspaceId &&
-      rule.backendId === backendId &&
-      rule.toolKey === input.toolKey &&
-      (rule.matchStyle ?? "exact") === matchStyle
-  );
-  const nextRule: RememberedAgentPermissionRule = {
-    id: existing?.id ?? id,
-    workspaceId: input.workspaceId,
-    backendId,
-    toolKey: input.toolKey,
-    toolLabel: input.toolLabel.trim().slice(0, 160) || "Tool permission",
-    decision: input.decision,
-    optionId: input.optionId,
-    optionKind: input.optionKind,
-    permissionCategory: input.permissionCategory,
-    matchStyle,
-    createdAt: existing?.createdAt ?? now,
-    updatedAt: now,
-  };
-  const withoutExisting = settings.agents.rememberedPermissions.filter(
-    (rule) =>
-      !(
+  return enqueueRememberedPermissionMutation(async () => {
+    const settings = await getGlobalSettings();
+    const now = Date.now();
+    const backendId = normalizeRememberedPermissionBackendId(input.backendId.trim());
+    const matchStyle = input.matchStyle ?? "exact";
+    const id = `${input.workspaceId}:${backendId}:${input.toolKey}:${matchStyle}`;
+    const existing = settings.agents.rememberedPermissions.find(
+      (rule) =>
         rule.workspaceId === input.workspaceId &&
         rule.backendId === backendId &&
         rule.toolKey === input.toolKey &&
         (rule.matchStyle ?? "exact") === matchStyle
-      )
-  );
-  const rememberedPermissions = [...withoutExisting, nextRule].slice(-250);
-  await saveGlobalSettings({
-    ...settings,
-    agents: {
-      ...settings.agents,
-      rememberedPermissions,
-    },
+    );
+    const nextRule: RememberedAgentPermissionRule = {
+      id: existing?.id ?? id,
+      workspaceId: input.workspaceId,
+      backendId,
+      toolKey: input.toolKey,
+      toolLabel: input.toolLabel.trim().slice(0, 160) || "Tool permission",
+      decision: input.decision,
+      optionId: input.optionId,
+      optionKind: input.optionKind,
+      permissionCategory: input.permissionCategory,
+      matchStyle,
+      createdAt: existing?.createdAt ?? now,
+      updatedAt: now,
+    };
+    const withoutExisting = settings.agents.rememberedPermissions.filter(
+      (rule) =>
+        !(
+          rule.workspaceId === input.workspaceId &&
+          rule.backendId === backendId &&
+          rule.toolKey === input.toolKey &&
+          (rule.matchStyle ?? "exact") === matchStyle
+        )
+    );
+    const rememberedPermissions = [...withoutExisting, nextRule].slice(-250);
+    await saveGlobalSettings({
+      ...settings,
+      agents: {
+        ...settings.agents,
+        rememberedPermissions,
+      },
   });
   // Agent sessions write remembered rules outside the settings UI. Bump the HTTP
   // revision so stale client full-settings PUTs fail If-Match instead of racing.
   bumpRevision(GLOBAL_SETTINGS_REVISION_KEY);
   return nextRule;
+  });
 }
 
 export async function removeRememberedAgentPermissionRule(
   id: string
 ): Promise<RememberedAgentPermissionRule[]> {
-  const settings = await getGlobalSettings();
-  const rememberedPermissions = settings.agents.rememberedPermissions.filter(
-    (rule) => rule.id !== id
-  );
-  if (rememberedPermissions.length === settings.agents.rememberedPermissions.length) {
-    return rememberedPermissions;
-  }
-  await saveGlobalSettings({
-    ...settings,
-    agents: {
-      ...settings.agents,
-      rememberedPermissions,
-    },
+  return enqueueRememberedPermissionMutation(async () => {
+    const settings = await getGlobalSettings();
+    const rememberedPermissions = settings.agents.rememberedPermissions.filter(
+      (rule) => rule.id !== id
+    );
+    if (rememberedPermissions.length === settings.agents.rememberedPermissions.length) {
+      return rememberedPermissions;
+    }
+    await saveGlobalSettings({
+      ...settings,
+      agents: {
+        ...settings.agents,
+        rememberedPermissions,
+      },
   });
   bumpRevision(GLOBAL_SETTINGS_REVISION_KEY);
   return rememberedPermissions;
+  });
 }
 
 export async function clearRememberedAgentPermissionRules(input?: {
   backendId?: string;
 }): Promise<RememberedAgentPermissionRule[]> {
-  const settings = await getGlobalSettings();
-  const backendId = input?.backendId
-    ? normalizeRememberedPermissionBackendId(input.backendId.trim())
-    : null;
-  const rememberedPermissions = backendId
-    ? settings.agents.rememberedPermissions.filter((rule) => rule.backendId !== backendId)
-    : [];
-  if (
-    rememberedPermissions.length === settings.agents.rememberedPermissions.length
-  ) {
-    return rememberedPermissions;
-  }
-  await saveGlobalSettings({
-    ...settings,
-    agents: {
-      ...settings.agents,
-      rememberedPermissions,
-    },
+  return enqueueRememberedPermissionMutation(async () => {
+    const settings = await getGlobalSettings();
+    const backendId = input?.backendId
+      ? normalizeRememberedPermissionBackendId(input.backendId.trim())
+      : null;
+    const rememberedPermissions = backendId
+      ? settings.agents.rememberedPermissions.filter((rule) => rule.backendId !== backendId)
+      : [];
+    if (
+      rememberedPermissions.length === settings.agents.rememberedPermissions.length
+    ) {
+      return rememberedPermissions;
+    }
+    await saveGlobalSettings({
+      ...settings,
+      agents: {
+        ...settings.agents,
+        rememberedPermissions,
+      },
   });
   bumpRevision(GLOBAL_SETTINGS_REVISION_KEY);
   return rememberedPermissions;
+  });
 }
 
 export async function replaceRememberedAgentPermissionRules(
   rules: RememberedAgentPermissionRule[]
 ): Promise<RememberedAgentPermissionRule[]> {
-  const settings = await getGlobalSettings();
-  const rememberedPermissions = normalizeRememberedAgentPermissionRules(rules).slice(-250);
-  await saveGlobalSettings({
-    ...settings,
-    agents: {
-      ...settings.agents,
-      rememberedPermissions,
-    },
+  return enqueueRememberedPermissionMutation(async () => {
+    const settings = await getGlobalSettings();
+    const rememberedPermissions = normalizeRememberedAgentPermissionRules(rules).slice(-250);
+    await saveGlobalSettings({
+      ...settings,
+      agents: {
+        ...settings.agents,
+        rememberedPermissions,
+      },
   });
   bumpRevision(GLOBAL_SETTINGS_REVISION_KEY);
   return rememberedPermissions;
+  });
 }
 
 function migrateGlobalSettings(raw: Record<string, unknown>): GlobalSettings {
