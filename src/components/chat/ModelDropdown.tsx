@@ -13,6 +13,7 @@ import {
 import { createPortal } from "react-dom";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
+  Box,
   ChevronDown,
   ChevronRight,
   Check,
@@ -28,7 +29,7 @@ import { useWorkspace } from "@/contexts/WorkspaceContext";
 import type { ModelInfo } from "@/lib/types";
 import type { AgentBackendId, AgentBackendInfo } from "@/lib/agent-types";
 import { shouldAutoFocusTextInput } from "@/lib/mobile-autofocus";
-import { isAutoModel } from "@/lib/model-brand-icons";
+import { isAutoModel, resolveModelBrandIcon } from "@/lib/model-brand-icons";
 import { AgentBackendIcon } from "./AgentBackendIcon";
 import { ModelBrandIcon } from "./ModelBrandIcon";
 import { measureDev, recordPerfSample } from "@/lib/dev-perf";
@@ -518,6 +519,11 @@ interface ModelDropdownProps {
   onModelChange?: (model: ModelInfo) => void;
   popoverPlacement?: "above" | "below";
   disabled?: boolean;
+  /**
+   * Icon-only trigger (brand mark + chevron, no model name) for narrow
+   * single-line composers where the full label would crowd out the editor.
+   */
+  compact?: boolean;
   isOpen?: boolean;
   onOpenChange?: (open: boolean) => void;
   /**
@@ -535,6 +541,7 @@ export function ModelDropdown({
   onModelChange,
   popoverPlacement = "above",
   disabled = false,
+  compact = false,
   isOpen: controlledIsOpen,
   onOpenChange,
   backendId,
@@ -966,14 +973,28 @@ export function ModelDropdown({
           data-perf="chat-model-dropdown-trigger"
           onClick={() => (open ? close() : openDropdown())}
           className="inline-flex max-w-full min-w-0 items-center gap-[4px] overflow-hidden text-left transition-opacity hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-50"
+          aria-label={compact ? `Model: ${model.name}` : undefined}
+          title={compact ? model.name : undefined}
         >
-          <ModelBrandIcon model={model} className="size-[14px] shrink-0" strokeWidth={1.5} />
-          <span
-            className="min-w-0 max-w-[min(280px,45vw)] truncate font-sans text-[13px] font-normal text-[var(--text-secondary)]"
-            title={model.name}
-          >
-            {model.name}
-          </span>
+          {compact && resolveModelBrandIcon(model).kind === "none" ? (
+            // Auto/Efficiency-style models render no brand mark; an icon-only
+            // trigger still needs a visible glyph next to the chevron.
+            <Box
+              className="size-[14px] shrink-0 text-[var(--text-secondary)]"
+              strokeWidth={1.5}
+              aria-hidden
+            />
+          ) : (
+            <ModelBrandIcon model={model} className="size-[14px] shrink-0" strokeWidth={1.5} />
+          )}
+          {compact ? null : (
+            <span
+              className="min-w-0 max-w-[min(280px,45vw)] truncate font-sans text-[13px] font-normal text-[var(--text-secondary)]"
+              title={model.name}
+            >
+              {model.name}
+            </span>
+          )}
           <ChevronDown className="size-[8px] shrink-0 text-[var(--text-secondary)]" strokeWidth={2.5} />
         </button>
       </div>

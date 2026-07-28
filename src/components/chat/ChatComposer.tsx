@@ -46,6 +46,13 @@ import {
   useComposerTextIsMultiLine,
   useComposerVisualLineCount,
 } from "./composer-multiline";
+import {
+  COMPOSER_INLINE_MIN_EDITOR_WIDTH_PX,
+  resolveComposerInlineOverflowUi,
+  useComposerInlineControlsOverflow,
+  useComposerInlineOverflowStrategy,
+  type ComposerInlineOverflowStrategy,
+} from "./composer-inline-overflow";
 
 const COMPOSER_DOCK_HEIGHT_OVERLAY_MIN_LINES = 3;
 const COMPOSER_DOCK_MAX_HEIGHT_DEFAULT = "max-h-[min(42vh,240px)]";
@@ -260,6 +267,12 @@ interface ModeChipProps {
   onModeChange: (mode: EditorMode) => void;
   disabled?: boolean;
   removable?: boolean;
+  /**
+   * Icon-only pill for narrow single-line composers. The whole pill becomes
+   * the remove affordance (when removable) since there is no room for a
+   * separate label + X.
+   */
+  compact?: boolean;
 }
 
 /**
@@ -274,6 +287,7 @@ function ModeChip({
   onModeChange,
   disabled,
   removable = true,
+  compact = false,
 }: ModeChipProps) {
   const tone = getModeTone(mode);
   if (!isModeChipVisible(mode)) {
@@ -289,6 +303,35 @@ function ModeChip({
     resolvedOptions[0];
   const label = current?.label ?? mode;
   const colors = modeChipColors(tone);
+  if (compact) {
+    const compactClass =
+      "flex h-[22px] w-[26px] shrink-0 items-center justify-center rounded-[var(--radius-pill)]";
+    if (!removable) {
+      return (
+        <span
+          className={compactClass}
+          style={{ background: colors.bg }}
+          title={`${label} mode`}
+          aria-label={`${label} mode`}
+        >
+          {renderModeChipIcon(tone, colors.text)}
+        </span>
+      );
+    }
+    return (
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => onModeChange(defaultMode)}
+        className={`${compactClass} transition-opacity hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-50`}
+        style={{ background: colors.bg }}
+        aria-label={`Remove ${label} mode`}
+        title={`${label} mode — tap to remove`}
+      >
+        {renderModeChipIcon(tone, colors.text)}
+      </button>
+    );
+  }
   return (
     <span
       className="inline-flex h-[22px] shrink-0 items-center gap-[3px] rounded-[var(--radius-pill)] pl-[7px] pr-[4px] font-sans text-[13px] font-normal leading-none"
@@ -482,6 +525,12 @@ interface ChatComposerProps {
   variant?: "docked" | "expanded";
   /** Force the docked composer into its stacked multi-line layout without using the legacy expanded shell. */
   forceMultiline?: boolean;
+  /**
+   * Overrides how the docked single-line composer reacts when long mode/model
+   * labels would crowd out the editor (default: `"compact"`, or the
+   * `cesium.composer-overflow-strategy` localStorage override).
+   */
+  inlineOverflowStrategy?: ComposerInlineOverflowStrategy;
   /**
    * When set, replaces the default horizontal shell margin (non-expanded only).
    * Default: `mx-0` until the pane `@container` is ≥481px wide, then `mx-[10px]`; use `""` for flush.
@@ -934,6 +983,7 @@ export function ChatComposer({
   layout = "docked-bottom",
   variant = "docked",
   forceMultiline = false,
+  inlineOverflowStrategy,
   shellMxClass,
   agentShellDockHeightExpand = false,
   onRequestHandoff,
@@ -1008,6 +1058,9 @@ export function ChatComposer({
   const consumedDraftAttachmentKeysRef = useRef<Set<string>>(new Set());
   const fileInputRef = useRef<HTMLInputElement>(null);
   const composerRootRef = useRef<HTMLDivElement>(null);
+  /** Docked main row (measures available width) + hidden full-size controls probe. */
+  const inlineRowRef = useRef<HTMLDivElement>(null);
+  const inlineProbeRef = useRef<HTMLDivElement>(null);
   const isDraggingRef = useRef(false);
   const imageFilesRef = useRef<Map<string, File>>(new Map());
   const [inputLevel, setInputLevel] = useState(0);
@@ -2981,24 +3034,50 @@ const handleNativeComposerKeyDown = useCallback(
   }, [hookMeasuresMultiline, value]);
 
   const useStickyMultiline = variant === "docked" && !isExpanded;
-  const isMultiLine = resolveComposerIsMultiLine({
+  /** Content-driven multiline (typed text wrapped / forceMultiline), before overflow handling. */
+  const contentIsMultiLine = resolveComposerIsMultiLine({
     forceMultiline,
     useStickyMultiline,
     hookMeasuresMultiline,
     latchedMultiline: multilineLatch,
     value,
   });
+
+  /**
+   * Inline-controls overflow: on narrow (mobile-width) panes, a long model
+   * name or mode label can crowd the single-line capsule until the editor is
+   * unusably thin. A hidden probe row mirrors the full-size controls plus a
+   * minimum editor width; when the probe outgrows the composer row, either
+   * compact the mode/model triggers to icons (`"compact"`) or flip into the
+   * existing stacked two-line shell (`"stack"`).
+   */
+  const inlineOverflowEnabled = variant === "docked" && !isExpanded;
+  const overflowStrategy = useComposerInlineOverflowStrategy(
+    inlineOverflowStrategy
+  );
+  const inlineControlsOverflow = useComposerInlineControlsOverflow(
+    inlineRowRef,
+    inlineProbeRef,
+    inlineOverflowEnabled
+  );
+  const { compactInlineControls, forceStackedControls } =
+    resolveComposerInlineOverflowUi({
+      strategy: overflowStrategy,
+      inlineControlsOverflow,
+      contentIsMultiLine,
+    });
+  const isMultiLine = contentIsMultiLine || forceStackedControls;
   canBackspaceClearModeChipRef.current =
     variant === "docked" &&
     !isExpanded &&
     !forceMultiline &&
-    !isMultiLine &&
+    !contentIsMultiLine &&
     attachedImages.length === 0 &&
     !(showComposerHeightOverlay && dockComposerHeightExpanded);
 
-  /** `trim()` alone can't hide the overlay after Shift+Enter (`\\n`-only trims to ""). Treating lone `\\n` or phantom `<br>` as "has newline" broke empty inputs (Chrome serializes sentinel breaks as "\\n"). Hiding instead when wrapped past one line aligns with visible layout + soft breaks. */
+  /** `trim()` alone can't hide the overlay after Shift+Enter (`\\n`-only trims to ""). Treating lone `\\n` or phantom `<br>` as "has newline" broke empty inputs (Chrome serializes sentinel breaks as "\\n"). Hiding instead when wrapped past one line aligns with visible layout + soft breaks. Uses the content-driven flag so the placeholder survives an overflow-forced stack of an empty composer. */
   const showFloatingPlaceholder =
-    composerTrimmedLength === 0 && !isMultiLine;
+    composerTrimmedLength === 0 && !contentIsMultiLine;
 
   const composerScrollFadeKey = [
     layout,
@@ -3103,6 +3182,7 @@ const handleNativeComposerKeyDown = useCallback(
         onModeChange={onModeChange}
         disabled={configLocked || modeLocked}
         removable={!modeLocked}
+        compact={compactInlineControls}
       />
     );
 
@@ -3120,12 +3200,58 @@ const handleNativeComposerKeyDown = useCallback(
         onModelChange={onModelChange}
         popoverPlacement={modeModelPopoverPlacement}
         disabled={configLocked}
+        compact={compactInlineControls}
         isOpen={modelDropdownOpen}
         onOpenChange={setModelDropdownOpen}
         backendId={backendId}
         backends={backends}
         onBackendChange={onBackendChange}
       />
+    );
+
+    /**
+     * Invisible measurement row mirroring the single-line layout at full size:
+     * plus button, full mode chip, a minimum editor width, untruncated model
+     * label, and the action buttons (with their real gaps). Overflow handling
+     * keys off this probe — not the live controls — so compacting/stacking the
+     * real row never feeds back into the measurement.
+     */
+    const inlineOverflowProbe = (
+      <div
+        aria-hidden
+        className="pointer-events-none invisible absolute left-0 top-0 h-0 overflow-hidden"
+      >
+        <div
+          ref={inlineProbeRef}
+          className="flex w-max items-center gap-[10px] whitespace-nowrap"
+        >
+          <div className="flex shrink-0 items-center gap-[6px]">
+            <span className="block size-[var(--d2-composer-plus-size)] shrink-0" />
+            <ModeChip
+              mode={mode}
+              options={modeOptions ?? DEFAULT_MODE_OPTIONS}
+              onModeChange={() => {}}
+              disabled
+              removable={!modeLocked}
+            />
+          </div>
+          <span
+            className="block shrink-0"
+            style={{ width: COMPOSER_INLINE_MIN_EDITOR_WIDTH_PX }}
+          />
+          <span className="inline-flex shrink-0 items-center gap-[4px]">
+            <span className="block size-[14px] shrink-0" />
+            <span className="font-sans text-[13px] font-normal">
+              {model.name}
+            </span>
+            <span className="block w-[8px] shrink-0" />
+          </span>
+          {!primaryControlIsVoice ? (
+            <span className="block w-[var(--d2-composer-send-size)] shrink-0" />
+          ) : null}
+          <span className="block w-[var(--d2-composer-send-size)] shrink-0" />
+        </div>
+      </div>
     );
 
     const voiceButton = renderVoiceButton(
@@ -3175,8 +3301,9 @@ const handleNativeComposerKeyDown = useCallback(
       <div
         ref={composerRootRef}
         data-ide-input-sink
-        className={`${shellMargin} flex shrink-0 flex-col gap-[8px] overflow-hidden ${pillRadiusClass} border border-[var(--agent-border)] bg-[var(--agent-card-bg)] p-[10px]`}
+        className={`${shellMargin} relative flex shrink-0 flex-col gap-[8px] overflow-hidden ${pillRadiusClass} border border-[var(--agent-border)] bg-[var(--agent-card-bg)] p-[10px]`}
       >
+        {inlineOverflowProbe}
         {attachedImages.length > 0 && (
           <ImageCarousel
             images={attachedImages}
@@ -3188,6 +3315,7 @@ const handleNativeComposerKeyDown = useCallback(
 
         {/* Main row: everything inline when single-line; editor-only when wrapped. */}
         <div
+          ref={inlineRowRef}
           className={
             isMultiLine
               ? "flex min-w-0"
