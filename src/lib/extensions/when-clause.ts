@@ -77,6 +77,15 @@ function resolveValue(raw: string, context: WhenClauseContext): unknown {
   return context[raw];
 }
 
+/** RHS of ==/!= comparisons: bare words are literals (VS Code semantics). */
+function resolveLiteral(raw: string): unknown {
+  if (raw.startsWith("'")) return raw.slice(1);
+  if (raw === "true") return true;
+  if (raw === "false") return false;
+  if (/^-?\d+(\.\d+)?$/.test(raw)) return Number(raw);
+  return raw;
+}
+
 function truthy(value: unknown): boolean {
   if (typeof value === "string") return value.length > 0;
   if (Array.isArray(value)) return value.length > 0;
@@ -93,6 +102,11 @@ class Parser {
 
   parse(): boolean {
     const result = this.parseOr();
+    if (this.position < this.tokens.length) {
+      // Unconsumed tokens mean we hit syntax we don't model; treating the
+      // clause as visible beats silently hiding features.
+      throw new Error("Unparsed when-clause tokens");
+    }
     return truthy(result);
   }
 
@@ -128,6 +142,29 @@ class Parser {
 
   private parseComparison(): unknown {
     const left = this.parseUnary();
+    const peeked = this.peek();
+    if (peeked?.kind === "value" && (peeked.value === "in" || peeked.value === "not")) {
+      // `key in collection` / `key not in collection`
+      this.next();
+      let negate = false;
+      if (peeked.value === "not") {
+        const inToken = this.next();
+        if (!(inToken?.kind === "value" && inToken.value === "in")) {
+          throw new Error("Expected 'in' after 'not'");
+        }
+        negate = true;
+      }
+      const rightToken = this.next();
+      const rightRaw = rightToken?.kind === "value" ? rightToken.value : "";
+      const collection = resolveValue(rightRaw, this.context);
+      let contained = false;
+      if (Array.isArray(collection)) {
+        contained = collection.some((entry) => String(entry) === String(left ?? ""));
+      } else if (collection && typeof collection === "object") {
+        contained = String(left ?? "") in (collection as Record<string, unknown>);
+      }
+      return negate ? !contained : contained;
+    }
     const operator = this.peek();
     if (
       operator?.kind === "op" &&
@@ -153,7 +190,7 @@ class Parser {
           return false;
         }
       }
-      const right = resolveValue(rightRaw, this.context);
+      const right = resolveLiteral(rightRaw);
       if (operator.value === "==") return String(left ?? "") === String(right ?? "") || left === right;
       if (operator.value === "!=") return !(String(left ?? "") === String(right ?? "") || left === right);
       const leftNum = Number(left);

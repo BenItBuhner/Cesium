@@ -4849,9 +4849,17 @@ async function handleRequest(request: HostRequest): Promise<HostResponse> {
           throw new Error("Tree item has no command.");
         }
       }
+      if (commandId === "setContext") {
+        const key = String(args[0] ?? "");
+        if (key) {
+          contextKeys.set(key, args[1]);
+          emitEvent({ event: "context", payload: { key, value: args[1] } });
+        }
+        return { id: request.id, ok: true, result: { commandResult: undefined, externalUrls: [] } };
+      }
       const handler = commands.get(commandId);
       if (!handler) {
-        if (commandId === "setContext" || commandId.startsWith("workbench.") || commandId.startsWith("vscode.")) {
+        if (commandId.startsWith("workbench.") || commandId.startsWith("vscode.")) {
           return { id: request.id, ok: true, result: { commandResult: undefined, externalUrls: [] } };
         }
         throw new Error(`Command not found: ${commandId}`);
