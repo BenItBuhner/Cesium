@@ -45,6 +45,7 @@ import {
   findPrimaryModelConfigOption,
   findPrimaryModeConfigOption,
 } from "./config-option-utils.js";
+import { harnessLog } from "./harness-diagnostics.js";
 import type {
   AgentBackendId,
   AgentBackendInfo,
@@ -1490,11 +1491,29 @@ export class AgentRuntimeManager {
   ): Promise<AgentConversationRecord> {
     const runtime = await this.resolveActiveRuntime(workspace, conversationId);
     if (!runtime) {
+      harnessLog({
+        level: "error",
+        conversationId,
+        event: "runtime.permission_no_runtime",
+        detail: `Permission ${input.requestId} could not be answered: no active runtime.`,
+      });
       throw new Error(
         "No active runtime for this conversation. The provider session may have ended."
       );
     }
-    await runtime.handle.answerPermission(input);
+    try {
+      await runtime.handle.answerPermission(input);
+    } catch (error) {
+      harnessLog({
+        level: "error",
+        conversationId,
+        backendId: runtime.provider.backend.id,
+        event: "runtime.permission_answer_failed",
+        detail: error instanceof Error ? error.message : String(error),
+        data: { requestId: input.requestId, optionId: input.optionId ?? null },
+      });
+      throw error;
+    }
     const record = await readConversationRecord(workspace.id, conversationId);
     if (!record) {
       throw new Error(`Unknown conversation: ${conversationId}`);
@@ -1818,6 +1837,13 @@ export class AgentRuntimeManager {
 
         if (retriedHandle) {
           handle = retriedHandle;
+          harnessLog({
+            level: "warning",
+            conversationId: record.id,
+            backendId: record.config.backendId,
+            event: "runtime.resume_recovered",
+            detail: `Provider session resume succeeded on retry. First error: ${resumeErrorMessage}`,
+          });
           await appendConversationEvents(workspace.id, record.id, [
             {
               eventId: randomUUID(),
@@ -1832,6 +1858,13 @@ export class AgentRuntimeManager {
         } else {
           const recoveredTranscript = await buildRecoveryTranscript();
           const fallbackReason = secondAttemptErrorMessage ?? resumeErrorMessage;
+          harnessLog({
+            level: "warning",
+            conversationId: record.id,
+            backendId: record.config.backendId,
+            event: "runtime.resume_failed_restarting",
+            detail: `Could not resume provider session ${record.providerSessionId}; starting fresh with transcript recovery. ${fallbackReason}`,
+          });
           await updateConversationRecord(workspace.id, record.id, (current) => ({
             ...current,
             providerSessionId: null,
@@ -2050,6 +2083,12 @@ export class AgentRuntimeManager {
   ): Promise<void> {
     const message =
       error instanceof Error ? error.message : "Failed to initialize ACP runtime.";
+    harnessLog({
+      level: "error",
+      conversationId,
+      event: "runtime.failure",
+      detail: message,
+    });
     const current = await readConversationRecord(workspaceId, conversationId);
     if (!current) {
       return;

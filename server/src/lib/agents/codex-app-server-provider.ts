@@ -918,7 +918,7 @@ class CodexAppServerSessionHandle implements AgentSessionHandle {
       event.title,
       event.detail
     );
-    const toolLabel = event.title;
+    const toolLabel = event.title ?? message.method;
     const resolved = await resolveRememberedPermissionDecision({
       workspaceId: this.callbacks.workspace.id,
       backendId: this.backend.id,

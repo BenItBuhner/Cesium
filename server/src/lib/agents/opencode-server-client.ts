@@ -64,6 +64,14 @@ function authHeader(username: string | undefined, password: string | undefined):
   };
 }
 
+/**
+ * Non-streaming OpenCode HTTP calls are all fast control operations (session
+ * CRUD, async prompt start, permission replies). Without a deadline a wedged
+ * server leaves the harness waiting forever, so every request gets a default
+ * timeout unless the caller explicitly opts out with `timeoutMs: 0`.
+ */
+const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
+
 export class OpenCodeServerClient {
   readonly baseUrl: string;
   private readonly username?: string;
@@ -91,7 +99,7 @@ export class OpenCodeServerClient {
     init?: RequestInit,
     options?: { timeoutMs?: number }
   ): Promise<T> {
-    const timeoutMs = options?.timeoutMs ?? this.timeoutMs;
+    const timeoutMs = options?.timeoutMs ?? this.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
     const controller =
       typeof timeoutMs === "number" && Number.isFinite(timeoutMs) && timeoutMs > 0
         ? new AbortController()
@@ -113,6 +121,15 @@ export class OpenCodeServerClient {
         );
       }
       return (text ? JSON.parse(text) : null) as T;
+    } catch (error) {
+      if (controller?.signal.aborted) {
+        throw new OpenCodeServerError(
+          `OpenCode Server ${pathName} timed out after ${timeoutMs}ms.`,
+          0,
+          ""
+        );
+      }
+      throw error;
     } finally {
       if (timer) {
         clearTimeout(timer);
@@ -184,6 +201,16 @@ export class OpenCodeServerClient {
         body: JSON.stringify(body),
       }
     );
+  }
+
+  /**
+   * Lists pending permission requests instance-wide. Modern OpenCode servers
+   * raise permissions silently (no SSE event), so this is the only reliable
+   * discovery mechanism; older servers 404 here and emit `permission.updated`
+   * events instead.
+   */
+  listPermissions(): Promise<OpenCodeServerJson[]> {
+    return this.request("/permission", undefined, { timeoutMs: 10_000 });
   }
 }
 
