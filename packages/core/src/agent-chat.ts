@@ -2032,7 +2032,99 @@ function tryParseLeadingJsonArray(text: string): unknown | undefined {
 
 export function isAgentTodoJsonDetailString(text: string): boolean {
   const parsed = tryParseLeadingJsonArray(text);
-  return parsed != null && isAgentTodoJsonArrayPayload(parsed);
+  if (parsed != null && isAgentTodoJsonArrayPayload(parsed)) {
+    return true;
+  }
+  // Cesium's todo tool args are `{action, items:[…]}`; Claude/Cursor use `{todos:[…]}`.
+  const record = parseLooseJsonObject(text);
+  if (!record) {
+    return false;
+  }
+  const nested = record.items ?? record.todos ?? record.entries;
+  return (
+    (typeof record.action === "string" || Array.isArray(record.todos)) &&
+    Array.isArray(nested) &&
+    parseWorkedTodoChecklistItems([nested]) != null
+  );
+}
+
+const WORKED_TODO_STATUSES: ReadonlySet<TodoItem["status"]> = new Set([
+  "pending",
+  "in_progress",
+  "blocked",
+  "completed",
+]);
+
+function normalizeWorkedTodoStatus(value: unknown): TodoItem["status"] {
+  const normalized =
+    typeof value === "string" ? value.trim().toLowerCase().replace(/[\s-]+/g, "_") : "";
+  if (WORKED_TODO_STATUSES.has(normalized as TodoItem["status"])) {
+    return normalized as TodoItem["status"];
+  }
+  if (normalized === "done" || normalized === "complete" || normalized === "finished") {
+    return "completed";
+  }
+  if (normalized === "running" || normalized === "active" || normalized === "doing") {
+    return "in_progress";
+  }
+  if (normalized === "stuck") {
+    return "blocked";
+  }
+  return "pending";
+}
+
+/**
+ * Structured checklist from todo tool payloads (`{action, items}` / `{todos}` / bare arrays),
+ * so the UI can render an organic list instead of a raw JSON dump.
+ */
+function parseWorkedTodoChecklistItems(values: unknown[]): TodoItem[] | undefined {
+  for (const value of values) {
+    const array = Array.isArray(value)
+      ? value
+      : (() => {
+          const record =
+            value && typeof value === "object"
+              ? (value as Record<string, unknown>)
+              : undefined;
+          const nested =
+            record?.todos ?? record?.items ?? record?.entries ?? record?.tasks;
+          return Array.isArray(nested) ? nested : undefined;
+        })();
+    if (!array || array.length === 0) {
+      continue;
+    }
+    const parsed = array.flatMap((item, index): TodoItem[] => {
+      if (typeof item === "string" && item.trim()) {
+        return [{ id: `todo-${index + 1}`, text: item.trim(), status: "pending" }];
+      }
+      if (!item || typeof item !== "object" || Array.isArray(item)) {
+        return [];
+      }
+      const record = item as Record<string, unknown>;
+      const text = [record.content, record.title, record.text, record.description].find(
+        (candidate): candidate is string =>
+          typeof candidate === "string" && candidate.trim().length > 0
+      );
+      if (!text) {
+        return [];
+      }
+      return [
+        {
+          id:
+            typeof record.id === "string" && record.id.trim()
+              ? record.id.trim()
+              : `todo-${index + 1}`,
+          text: text.trim(),
+          status: normalizeWorkedTodoStatus(record.status),
+        },
+      ];
+    });
+    // Require the whole array to look like todos; partial matches are likely another payload.
+    if (parsed.length > 0 && parsed.length === array.length) {
+      return parsed;
+    }
+  }
+  return undefined;
 }
 
 /** Remove assistant bubbles that are only a redundant todo JSON dump (optionally in a ```json fence). */
@@ -3179,6 +3271,60 @@ function formatToolSummary(
       files: undefined,
     });
   }
+  /**
+   * Todo tools must route before the edit/command heuristics: titles like
+   * "Update todos" match the edit verb regex and used to fall through to a raw
+   * JSON dump instead of a checklist.
+   */
+  const todoLike =
+    toolKind === "todo" ||
+    /todo/i.test(acpToolName ?? "") ||
+    /todo/i.test(titleFromRaw ?? "") ||
+    // Exact phrases only — "Update todos.md" is a file edit, not a todo tool.
+    /^(?:(?:update[ds]?|read|write|manage)\s+)?todos?(?:\s+list)?$/i.test(
+      (resolvedTitleLabel ?? "").trim()
+    );
+  if (todoLike) {
+    const parsedDetailValue = detail?.trim()
+      ? tryParseLeadingJsonArray(detail.trim()) ?? parseLooseJsonObject(detail.trim())
+      : undefined;
+    const todos =
+      parseWorkedTodoChecklistItems([...rawInputs, parsedDetailValue, ...rawOutputs]) ??
+      existing?.todos;
+    const todoCount =
+      todos?.length ??
+      (Array.isArray(rawInputs[0]?.todos)
+        ? (rawInputs[0]?.todos as unknown[]).length
+        : findFirstNumberAcrossValues(rawInputs, ["count", "total"]));
+    const todoAction = findFirstStringAcrossValues(rawInputs, ["action"])?.trim().toLowerCase();
+    const todoTitle =
+      todos && todos.length > 0
+        ? todoAction === "list"
+          ? "Read todos"
+          : "Update todos"
+        : todoCount != null && todoCount > 0
+          ? `Todo · ${todoCount} item${todoCount === 1 ? "" : "s"}`
+          : todoAction === "list"
+            ? "Read todos"
+            : "Todo list";
+    return withConciseToolDetail({
+      kind: "tool",
+      toolCallId: event.toolCallId,
+      toolKind: "todo",
+      title: todoTitle,
+      // The parsed checklist replaces both the inline detail and the raw JSON dropdown.
+      detail:
+        todos && todos.length > 0
+          ? undefined
+          : safeToolDetailText(detail, { suppressVerbosePayload: true }) ?? existing?.detail,
+      rawDetail: todos && todos.length > 0 ? undefined : rawDetail,
+      todos,
+      status,
+      locations: normalizedLocations,
+      editPreview: undefined,
+      files: undefined,
+    });
+  }
   const command = findFirstStringAcrossValues(rawInputs, ["command", "cmd", "script"]);
   if (command) {
     return withConciseToolDetail({
@@ -3419,28 +3565,6 @@ function formatToolSummary(
       locations: normalizedLocations,
       editPreview,
       files: delFiles,
-    });
-  }
-
-  if (toolKind === "todo") {
-    const todoCount = Array.isArray(rawInputs[0]?.todos)
-      ? (rawInputs[0]?.todos as unknown[]).length
-      : findFirstNumberAcrossValues(rawInputs, ["count", "total"]);
-    const todoLabel =
-      todoCount != null && todoCount > 0
-        ? `Todo · ${todoCount} item${todoCount === 1 ? "" : "s"}`
-        : "Todo list";
-    return withConciseToolDetail({
-      kind: "tool",
-      toolCallId: event.toolCallId,
-      toolKind,
-      title: todoLabel,
-      detail: safeToolDetailText(detail, { suppressVerbosePayload: true }) ?? existing?.detail,
-      rawDetail,
-      status,
-      locations: normalizedLocations,
-      editPreview,
-      files,
     });
   }
 
