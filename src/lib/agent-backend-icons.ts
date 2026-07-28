@@ -11,6 +11,7 @@ export type AgentBackendIconFilenames = {
 export const AGENT_BACKEND_ICON_FILES: Partial<
   Record<AgentBackendId, AgentBackendIconFilenames>
 > = {
+  "cesium-agent": { light: "Cesium-Light.svg", dark: "Cesium-Dark.svg" },
   "cursor-sdk": { light: "Cursor-Light.svg", dark: "Cursor-Dark.svg" },
   "codex-app-server": { light: "Codex-Light.svg", dark: "Codex-Dark.svg" },
   "claude-code-sdk": {
@@ -20,6 +21,11 @@ export const AGENT_BACKEND_ICON_FILES: Partial<
   "opencode-server": { light: "OpenCode-Light.svg", dark: "OpenCode-Dark.svg" },
   "opencode-v2-beta": { light: "OpenCode-Light.svg", dark: "OpenCode-Dark.svg" },
   "devin-acp": { light: "Devin-Light.svg", dark: "Devin-Dark.svg" },
+  "pi-agent": { light: "Pi-Light.svg", dark: "Pi-Dark.svg" },
+  "google-antigravity-cli": {
+    light: "Antigravity-Light.svg",
+    dark: "Antigravity-Dark.svg",
+  },
 };
 
 const ICON_BASE = "/agent-backend-icons";

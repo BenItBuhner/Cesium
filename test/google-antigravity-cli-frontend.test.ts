@@ -4,9 +4,9 @@ import type { AgentBackendId } from "../src/lib/agent-types";
 import { hasAgentBackendIconAsset } from "../src/lib/agent-backend-icons";
 import { SUBAGENT_TOOL_CALL_CLASSIFIERS } from "../src/lib/agent-subagent-routing";
 
-test("google antigravity frontend wiring uses fallback icon and classifier", () => {
+test("google antigravity frontend wiring uses antigravity icon and classifier", () => {
   const id: AgentBackendId = "google-antigravity-cli";
-  assert.equal(hasAgentBackendIconAsset(id), false);
+  assert.equal(hasAgentBackendIconAsset(id), true);
   assert.equal(typeof SUBAGENT_TOOL_CALL_CLASSIFIERS[id], "function");
   assert.equal(
     SUBAGENT_TOOL_CALL_CLASSIFIERS[id]({

@@ -1,23 +1,13 @@
 "use client";
 
-import { Bot, Sparkles, type LucideProps } from "lucide-react";
+import { Bot, type LucideProps } from "lucide-react";
 import type { AgentBackendId } from "@/lib/agent-types";
 import { AGENT_BACKEND_ICON_FILES } from "@/lib/agent-backend-icons";
 import { publicAssetUrl } from "@/lib/public-asset-url";
 
-function LucideBackendFallback({
-  backendId,
-  ...props
-}: { backendId: AgentBackendId } & LucideProps) {
-  if (
-    backendId === "cesium-agent" ||
-    backendId === "cursor-sdk" ||
-    backendId === "codex-app-server" ||
-    backendId === "pi-agent" ||
-    backendId === "google-antigravity-cli"
-  ) {
-    return <Sparkles {...props} />;
-  }
+function LucideBackendFallback(props: LucideProps) {
+  // Prefer SVG marks via AGENT_BACKEND_ICON_FILES; Bot is the last-resort fallback
+  // for any backend that still lacks a dedicated asset.
   return <Bot {...props} />;
 }
 
@@ -44,7 +34,7 @@ type AgentBackendIconProps = {
 /**
  * Renders theme-aware SVG marks from `/public/agent-backend-icons/` when present,
  * using `dark:hidden` / `dark:block` so it tracks `html.dark` (same as the app theme).
- * Falls back to Lucide icons for backends without assets (e.g. Gemini).
+ * Falls back to Lucide icons for backends without assets.
  */
 export function AgentBackendIcon({
   backendId,
@@ -57,7 +47,6 @@ export function AgentBackendIcon({
   if (!files) {
     return (
       <LucideBackendFallback
-        backendId={backendId}
         className={className}
         strokeWidth={strokeWidth}
         style={
