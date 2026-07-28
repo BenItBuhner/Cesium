@@ -398,7 +398,7 @@ export function AgentConversationsProvider({
   const agentSocketServerKey = activeServer.baseUrl;
   const activeWorkspaceIdRef = useRef<string | null>(activeWorkspaceId);
   activeWorkspaceIdRef.current = activeWorkspaceId;
-  const { settings: globalSettings, refreshModels } = useGlobalSettings();
+  const { settings: globalSettings, refreshModels, refreshSettings } = useGlobalSettings();
   const [backends, setBackends] = useState<AgentBackendInfo[]>([]);
   const [conversationsById, setConversationsById] = useState<
     Record<string, AgentConversationRecord>
@@ -1023,11 +1023,14 @@ updateWorkspaceSession((current) => {
         const result = await fetchAgentConversationSnapshot(conversationId);
         mergeConversationSnapshot(result.snapshot);
         dispatchAgentConversationUpserted(result.snapshot.conversation);
+        if (optionId === "allow_always" || optionId === "reject_always" || optionId === "acceptForSession") {
+          void refreshSettings().catch(() => undefined);
+        }
       } catch {
         void syncConversationSnapshot(conversationId).catch(() => undefined);
       }
     },
-    [mergeConversationSnapshot, syncConversationSnapshot]
+    [mergeConversationSnapshot, refreshSettings, syncConversationSnapshot]
   );
 
   const cancelPermissionForConversation = useCallback(

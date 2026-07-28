@@ -40,6 +40,12 @@ import {
   type OpenCodeV2FormRequest,
   type OpenCodeV2QuestionRequest,
 } from "./opencode-v2-normalize.js";
+import {
+  buildRememberedPermissionToolKey,
+  persistRememberedPermissionChoice,
+  resolveRememberedPermissionDecision,
+} from "./remembered-permissions.js";
+import { isPersistentPermissionOptionId } from "./permission-options.js";
 import { materializeImageAttachments } from "./prompt-attachments.js";
 import {
   appendAgentPluginPrompt,
@@ -291,6 +297,10 @@ class OpenCodeV2SessionHandle implements AgentSessionHandle {
   private readonly sessionBelongsToRoot = new Map<string, boolean>();
   private readonly completedChildSessions = new Set<string>();
   private readonly permissionSessions = new Map<string, string>();
+  private readonly pendingPermissionContext = new Map<
+    string,
+    { toolKey: string; toolLabel: string }
+  >();
   private readonly pendingInteractions = new Map<string, PendingInteraction>();
   private readonly reportedStreamErrors = new Set<string>();
   private seededContext = false;
@@ -603,6 +613,22 @@ class OpenCodeV2SessionHandle implements AgentSessionHandle {
     const sessionId = this.permissionSessions.get(input.requestId);
     if (!sessionId) {
       throw new Error(`OpenCode v2 permission request ${input.requestId} is no longer pending.`);
+    }
+    const context = this.pendingPermissionContext.get(input.requestId);
+    this.pendingPermissionContext.delete(input.requestId);
+    if (
+      !input.cancelled &&
+      context &&
+      isPersistentPermissionOptionId(input.optionId)
+    ) {
+      await persistRememberedPermissionChoice({
+        workspaceId: this.callbacks.workspace.id,
+        backendId: this.backend.id,
+        toolKey: context.toolKey,
+        toolLabel: context.toolLabel,
+        optionId: input.optionId,
+        optionKind: input.optionId,
+      });
     }
     await client.answerPermission(
       sessionId,
@@ -999,6 +1025,74 @@ class OpenCodeV2SessionHandle implements AgentSessionHandle {
     }
     const permission = events.find((event) => event.kind === "permission_request");
     if (permission?.kind === "permission_request") {
+      const toolKey = buildRememberedPermissionToolKey(
+        "opencode-v2",
+        permission.title,
+        permission.detail
+      );
+      const toolLabel = permission.title;
+      const resolved = await resolveRememberedPermissionDecision({
+        workspaceId: this.callbacks.workspace.id,
+        backendId: this.backend.id,
+        toolKey,
+        options: permission.options,
+      });
+      if (resolved.kind === "remembered" || resolved.kind === "auto_accept") {
+        const ownerSessionId = this.permissionSessions.get(permission.requestId);
+        const optionId =
+          resolved.kind === "remembered"
+            ? resolved.providerOptionId ??
+              (resolved.decision === "allow" ? "allow" : "deny")
+            : resolved.providerOptionId ?? "allow";
+        if (ownerSessionId && this.connection?.client) {
+          await this.connection.client
+            .answerPermission(
+              ownerSessionId,
+              permission.requestId,
+              openCodeV2PermissionReply(optionId, false)
+            )
+            .catch(() => undefined);
+        }
+        this.permissionSessions.delete(permission.requestId);
+        await this.callbacks.appendEvents([
+          {
+            eventId: randomUUID(),
+            conversationId: this.callbacks.conversation.id,
+            kind: "permission_resolved",
+            requestId: permission.requestId,
+            outcome: "selected",
+            optionId:
+              resolved.kind === "remembered" ? resolved.rule.optionId : optionId,
+            raw:
+              resolved.kind === "remembered"
+                ? {
+                    rememberedPermission: {
+                      id: resolved.rule.id,
+                      decision: resolved.rule.decision,
+                      toolLabel: resolved.rule.toolLabel,
+                    },
+                  }
+                : { autoAcceptedAll: true },
+          },
+          {
+            eventId: randomUUID(),
+            conversationId: this.callbacks.conversation.id,
+            kind: "status",
+            status: "running",
+            detail:
+              resolved.kind === "remembered"
+                ? `Used remembered permission for ${resolved.rule.toolLabel}.`
+                : "Auto-accepted (Agents → auto-approve all).",
+          },
+        ]);
+        await this.callbacks.updateConversation((current) => ({
+          ...current,
+          status: "running",
+          pendingPermission: null,
+        }));
+        return;
+      }
+      this.pendingPermissionContext.set(permission.requestId, { toolKey, toolLabel });
       await this.callbacks.updateConversation((current) => ({
         ...current,
         status: "awaiting_permission",

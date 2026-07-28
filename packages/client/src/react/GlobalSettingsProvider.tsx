@@ -36,6 +36,8 @@ type GlobalSettingsContextValue = {
   updateSettings: (
     updater: (current: GlobalSettingsState) => GlobalSettingsState
   ) => void;
+  /** Re-fetch global settings from the server without writing local state back. */
+  refreshSettings: () => Promise<void>;
   refreshModels: () => Promise<void>;
   modelsRefreshing: boolean;
   modelToggleSaveState: { pending: number; error: string | null };
@@ -378,6 +380,7 @@ export function GlobalSettingsProvider({
       settingsServerId: settingsServer?.id ?? null,
       settingsServerMissing: requiresDefaultServer,
       updateSettings,
+      refreshSettings: refetchGlobalSettingsFromServer,
       refreshModels,
       modelsRefreshing,
       modelToggleSaveState,
@@ -389,6 +392,7 @@ export function GlobalSettingsProvider({
       settings,
       settingsServer?.id,
       updateSettings,
+      refetchGlobalSettingsFromServer,
       refreshModels,
       modelsRefreshing,
       modelToggleSaveState,
