@@ -138,12 +138,15 @@ function WorkbenchShot() {
 /* ------------------------------------------------------------------------ */
 
 const AGENT_MARQUEE = [
+  { name: "Cesium", file: "Cesium-Light.svg", note: "built-in" },
   { name: "Cursor", file: "Cursor-Light.svg", note: "SDK + ACP" },
   { name: "Codex", file: "Codex-Light.svg", note: "app server" },
   { name: "Claude Code", file: "Claude-Code-Light.svg", note: "SDK" },
   { name: "OpenCode", file: "OpenCode-Light.svg", note: "ACP" },
   { name: "Devin", file: "Devin-Light.svg", note: "ACP" },
-  { name: "Gemini CLI", file: "Gemini-CLI-Light.svg", note: "ACP" },
+  { name: "Grok Build", file: "Grok-Light.svg", note: "ACP" },
+  { name: "Pi Agent", file: "Pi-Light.svg", note: "ACP" },
+  { name: "Antigravity", file: "Antigravity-Light.svg", note: "CLI" },
 ] as const;
 
 const FEATURES = [
