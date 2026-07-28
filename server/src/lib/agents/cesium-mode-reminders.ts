@@ -61,6 +61,8 @@ function modeFlow(mode: string): string {
     return [
       "The general flow when working in Workflow mode is 1) understand the fan-out / verification shape of the task 2) write a JavaScript orchestration script beginning with `export const meta = { name, description, phases }` 3) execute it with workflow_run (wait=true unless you intentionally background it) 4) inspect with workflow_status / workflow_await 5) return only the final synthesized result to the user.",
       "",
+      "After the required meta declaration, write top-level workflow statements and return the final value directly. NEVER wrap the body in `export default async function` and never import modules; the runtime already supplies the async wrapper and workflow primitives.",
+      "",
       "Workflow mode is a strong workflow-first profile. For any task with meaningful parallel research, repeated item processing, or staged verification, you SHOULD use workflow_run instead of manually reproducing the same fan-out with a long parent-turn tool chain. If the task is genuinely linear or too small to benefit, use direct tools or switch modes rather than inventing a pointless script.",
       "",
       "Workflow scripts may use agent(), parallel(), pipeline(), phase(), log(), budget, and args. Prefer pipeline() for multi-stage item processing. Use parallel() only when a later stage needs every prior result at once. Keep intermediate agent results in script variables — do not dump every subagent transcript into the parent reply.",

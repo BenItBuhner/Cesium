@@ -322,14 +322,14 @@ const CESIUM_BASE_TOOLS: CesiumToolDefinition[] = [
   {
     name: "workflow_run",
     description:
-      "Compile and execute a JavaScript orchestration workflow from Agent, Goal, or Workflow mode. Use it dynamically for meaningful fan-out, repeated item processing, or staged verification. The script MUST begin with `export const meta = { name, description, phases }` (pure literal) and may use agent()/parallel()/pipeline()/phase()/log()/budget/args. Prefer wait=true so the tool returns the final script value. Intermediate agent results stay in script variables, not the parent transcript.",
+      "Compile and execute a JavaScript orchestration workflow from Agent, Goal, or Workflow mode. Use it dynamically for meaningful fan-out, repeated item processing, or staged verification. The script MUST begin with `export const meta = { name, description, phases }` (pure literal). After that declaration, write top-level workflow statements and `return` the final value directly; NEVER export a default function or import modules. The body may use agent()/parallel()/pipeline()/phase()/log()/budget/args. Prefer wait=true so the tool returns the final script value. Intermediate agent results stay in script variables, not the parent transcript.",
     parameters: {
       type: "object",
       properties: {
         script: {
           type: "string",
           description:
-            "Self-contained workflow script beginning with export const meta = { name, description, phases }.",
+            "Self-contained workflow script beginning with export const meta = { name, description, phases }, followed by top-level statements and a direct return (no export default function or imports).",
         },
         scriptPath: {
           type: "string",

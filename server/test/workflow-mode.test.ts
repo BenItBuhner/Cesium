@@ -58,6 +58,14 @@ test("compileWorkflowScript requires pure meta literal first", () => {
     `export const meta = { name: "x", description: "y", phases: [] };\nconst t = Date.now();\nreturn t;`
   );
   assert.equal(nondet.ok, false);
+
+  const exportedFunction = compileWorkflowScript(
+    `export const meta = { name: "x", description: "y", phases: [] };\nexport default async function main() { return "x"; }`
+  );
+  assert.equal(exportedFunction.ok, false);
+  if (!exportedFunction.ok) {
+    assert.match(exportedFunction.error, /return the final value directly/);
+  }
 });
 
 test("executeWorkflowRun fans out agent calls and returns synthesized value", async () => {
@@ -199,6 +207,7 @@ test("Workflow mode reminder documents script primitives", () => {
   assert.match(reminder, /export const meta/);
   assert.match(reminder, /strong workflow-first profile/i);
   assert.match(reminder, /SHOULD use workflow_run/);
+  assert.match(reminder, /NEVER wrap the body in `export default async function`/);
 });
 
 test("persistWorkflowScript writes under the workspace workflows directory", async () => {
