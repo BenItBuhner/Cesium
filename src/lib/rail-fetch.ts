@@ -2,6 +2,8 @@
 export {
   RAIL_FETCH_TIMEOUT_MS,
   RAIL_INITIAL_LOAD_FAILSAFE_MS,
+  RAIL_INITIAL_LOAD_RETRY_DELAY_MS,
   resolveRailFetchServers,
+  runRailFetchWithTimeout,
   withRailFetchTimeout,
 } from "@cesium/client";

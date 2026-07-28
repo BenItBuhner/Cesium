@@ -44,6 +44,7 @@ import {
 } from "../resolve-server-base-url";
 import {
   probeServerBaseUrl,
+  timeoutSignal,
   type ServerProbeResult,
 } from "../server-connection-health";
 import { clientLocation, getClientPlatform } from "../platform";
@@ -66,6 +67,9 @@ type ServerConnectionsContextValue = {
 };
 
 const ServerConnectionsContext = createContext<ServerConnectionsContextValue | null>(null);
+
+/** Registry lookups must never block app readiness or pile up between polls. */
+const RENDEZVOUS_RESOLVE_TIMEOUT_MS = 8_000;
 
 export type ServerRuntimeHealth = "unknown" | "online" | "offline" | "auth_required" | "degraded";
 
@@ -183,47 +187,57 @@ export function ServerConnectionsProvider({ children }: { children: ReactNode })
     };
     let cancelled = false;
     void (async () => {
+      // The whole shell (rail load, auth, workspace bootstrap) gates on
+      // `ready`. Nothing in this bootstrap may block readiness forever: every
+      // network call is time-boxed and any unexpected failure still resolves.
       let next = readStoredServerConnectionsState();
-      const location = clientLocation();
-      let bootstrap: RendezvousBootstrap | null = null;
-      if (location?.href) {
-        try {
-          bootstrap = parseRendezvousBootstrapHash(new URL(location.href).hash);
-        } catch {
-          bootstrap = null;
-        }
-      }
-      if (bootstrap) {
-        let resolvedBaseUrl = bootstrap.initialBaseUrl ?? null;
-        let resolvedLabel = bootstrap.label;
-        try {
-          const resolved = await resolveRendezvousEndpoint(bootstrap);
-          if (resolved) {
-            resolvedBaseUrl = resolved.baseUrl;
-            resolvedLabel = resolved.label ?? resolvedLabel;
+      try {
+        const location = clientLocation();
+        let bootstrap: RendezvousBootstrap | null = null;
+        if (location?.href) {
+          try {
+            bootstrap = parseRendezvousBootstrapHash(new URL(location.href).hash);
+          } catch {
+            bootstrap = null;
           }
-        } catch {
-          // The encrypted identity is still persisted below when the link carries
-          // its initial endpoint; polling will recover a temporarily unavailable registry.
         }
-        if (resolvedBaseUrl) {
-          next = applyRendezvousBootstrap(next, {
-            locator: {
-              version: 1,
-              serverId: bootstrap.serverId,
-              secret: bootstrap.secret,
-              registryBaseUrl: bootstrap.registryBaseUrl,
-            },
-            baseUrl: resolvedBaseUrl,
-            label: resolvedLabel,
-          });
-          writeStoredServerConnectionsState(next);
+        if (bootstrap) {
+          let resolvedBaseUrl = bootstrap.initialBaseUrl ?? null;
+          let resolvedLabel = bootstrap.label;
+          try {
+            const resolved = await resolveRendezvousEndpoint(bootstrap, {
+              signal: timeoutSignal(RENDEZVOUS_RESOLVE_TIMEOUT_MS),
+            });
+            if (resolved) {
+              resolvedBaseUrl = resolved.baseUrl;
+              resolvedLabel = resolved.label ?? resolvedLabel;
+            }
+          } catch {
+            // The encrypted identity is still persisted below when the link carries
+            // its initial endpoint; polling will recover a temporarily unavailable registry.
+          }
+          if (resolvedBaseUrl) {
+            next = applyRendezvousBootstrap(next, {
+              locator: {
+                version: 1,
+                serverId: bootstrap.serverId,
+                secret: bootstrap.secret,
+                registryBaseUrl: bootstrap.registryBaseUrl,
+              },
+              baseUrl: resolvedBaseUrl,
+              label: resolvedLabel,
+            });
+            writeStoredServerConnectionsState(next);
+          }
+          stripRendezvousBootstrapFromLocation();
         }
-        stripRendezvousBootstrapFromLocation();
-      }
-      if (!cancelled) {
-        setState(next);
-        setReady(true);
+      } catch {
+        // Never let a bootstrap failure hold the app on the loading screen.
+      } finally {
+        if (!cancelled) {
+          setState(next);
+          setReady(true);
+        }
       }
     })();
     const unsubscribeChange = getClientPlatform().addEventListener(
@@ -344,7 +358,9 @@ export function ServerConnectionsProvider({ children }: { children: ReactNode })
     const resolved = await Promise.all(
       rendezvousServers.map(async (server) => {
         try {
-          const endpoint = await resolveRendezvousEndpoint(server.rendezvous);
+          const endpoint = await resolveRendezvousEndpoint(server.rendezvous, {
+            signal: timeoutSignal(RENDEZVOUS_RESOLVE_TIMEOUT_MS),
+          });
           return endpoint ? { endpoint, serverId: server.rendezvous.serverId } : null;
         } catch {
           return null;

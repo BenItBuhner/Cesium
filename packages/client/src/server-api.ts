@@ -41,7 +41,8 @@ import {
 } from "./auth-client";
 import {
   resolveClientServerBaseUrl,
-  resolveExplicitServerBaseUrlForCurrentWindow,
+  resolveClientServerBaseUrlForCurrentWindow,
+  resolveServerRequestBaseUrlForCurrentWindow,
   getConfiguredServerBaseUrl,
 } from "./resolve-server-base-url";
 import { getActiveServerBaseUrl } from "./server-connections";
@@ -114,7 +115,7 @@ function getWorkspaceHeaders(
 
 function resolveServerRequestBaseUrl(server?: ServerRequestContext): string {
   return server?.baseUrl
-    ? resolveExplicitServerBaseUrlForCurrentWindow(server.baseUrl)
+    ? resolveServerRequestBaseUrlForCurrentWindow(server.baseUrl)
     : resolveClientServerBaseUrl();
 }
 
@@ -129,8 +130,14 @@ function captureServerRequestTarget(server?: ServerRequestContext): {
     };
   }
   const authBaseUrl = getActiveServerBaseUrl(getConfiguredServerBaseUrl());
+  // No explicit target means "the server the app is currently pointed at".
+  // Resolve it exactly like auth and the agent WebSocket do (same-origin
+  // collapse on HTTPS pages, LAN/loopback rewrites) so reverse-proxy
+  // deployments keep working even when the stored base URL is an HTTP
+  // loopback/LAN address. Only explicit multi-server targets skip the
+  // collapse (see resolveServerRequestBaseUrlForCurrentWindow).
   return {
-    requestBaseUrl: resolveExplicitServerBaseUrlForCurrentWindow(authBaseUrl),
+    requestBaseUrl: resolveClientServerBaseUrlForCurrentWindow(authBaseUrl),
     authBaseUrl,
   };
 }
@@ -1052,10 +1059,11 @@ export async function listCrossWorkspaceAgentConversations(params?: {
   limit?: number;
   cursor?: string | null;
   cache?: RequestCache;
+  signal?: AbortSignal;
 }): Promise<AgentConversationGroupsResult> {
   return request(
     `/api/agents/conversations/all${buildPageQuery(params)}`,
-    undefined,
+    params?.signal ? { signal: params.signal } : undefined,
     { skipWorkspaceHeader: true, cache: params?.cache }
   );
 }
@@ -1066,11 +1074,12 @@ export async function listCrossWorkspaceAgentConversationsForServer(
     limit?: number;
     cursor?: string | null;
     cache?: RequestCache;
+    signal?: AbortSignal;
   }
 ): Promise<AgentConversationGroupsResult> {
   return request(
     `/api/agents/conversations/all${buildPageQuery(params)}`,
-    undefined,
+    params?.signal ? { signal: params.signal } : undefined,
     { skipWorkspaceHeader: true, server, cache: params?.cache }
   );
 }

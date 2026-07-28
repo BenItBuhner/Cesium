@@ -12,6 +12,9 @@ export const RAIL_FETCH_TIMEOUT_MS = 12_000;
 /** Hard stop for the initial rail spinner even if every fetch misbehaves. */
 export const RAIL_INITIAL_LOAD_FAILSAFE_MS = 20_000;
 
+/** Pause before the automatic second attempt when the very first rail load fails. */
+export const RAIL_INITIAL_LOAD_RETRY_DELAY_MS = 1_500;
+
 export async function withRailFetchTimeout<T>(
   promise: Promise<T>,
   label: string,
@@ -31,6 +34,27 @@ export async function withRailFetchTimeout<T>(
     if (timeoutId !== undefined) {
       clearTimeout(timeoutId);
     }
+  }
+}
+
+/**
+ * Like {@link withRailFetchTimeout} but also aborts the underlying request on
+ * timeout, so hung sockets do not keep piling up behind flaky mobile networks
+ * (the plain race leaves the fetch running until the TCP stack gives up).
+ */
+export async function runRailFetchWithTimeout<T>(
+  label: string,
+  run: (signal: AbortSignal) => Promise<T>,
+  timeoutMs = RAIL_FETCH_TIMEOUT_MS
+): Promise<T> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => {
+    controller.abort(new Error(`${label} timed out after ${timeoutMs}ms`));
+  }, timeoutMs);
+  try {
+    return await withRailFetchTimeout(run(controller.signal), label, timeoutMs);
+  } finally {
+    clearTimeout(timeoutId);
   }
 }
 

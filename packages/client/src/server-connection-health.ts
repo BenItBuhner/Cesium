@@ -1,5 +1,6 @@
 import { attachSessionToken } from "./auth-client";
 import { normalizeServerBaseUrl } from "./server-connections";
+import { resolveServerRequestBaseUrlForCurrentWindow } from "./resolve-server-base-url";
 
 export type ServerProbeResult = {
   ok: boolean;
@@ -9,7 +10,7 @@ export type ServerProbeResult = {
   error: string | null;
 };
 
-function timeoutSignal(timeoutMs: number): AbortSignal {
+export function timeoutSignal(timeoutMs: number): AbortSignal {
   if (typeof AbortSignal.timeout === "function") {
     return AbortSignal.timeout(timeoutMs);
   }
@@ -20,8 +21,14 @@ function timeoutSignal(timeoutMs: number): AbortSignal {
 
 export async function probeServerBaseUrl(baseUrl: string): Promise<ServerProbeResult> {
   const normalizedBaseUrl = normalizeServerBaseUrl(baseUrl);
+  // Probe through the same URL real requests use. Behind an HTTPS reverse
+  // proxy the raw stored URL (HTTP loopback/LAN) is unreachable from the
+  // browser, and probing it directly would keep the active server marked
+  // "offline" forever (and could trigger bogus active-server failover) even
+  // though every actual API call works via same-origin.
+  const requestBaseUrl = resolveServerRequestBaseUrlForCurrentWindow(normalizedBaseUrl);
   try {
-    const healthResponse = await fetch(`${normalizedBaseUrl}/health`, {
+    const healthResponse = await fetch(`${requestBaseUrl}/health`, {
       method: "GET",
       cache: "no-store",
       signal: timeoutSignal(8_000),
@@ -37,7 +44,7 @@ export async function probeServerBaseUrl(baseUrl: string): Promise<ServerProbeRe
     }
 
     try {
-      const authResponse = await fetch(`${normalizedBaseUrl}/api/auth/status`, {
+      const authResponse = await fetch(`${requestBaseUrl}/api/auth/status`, {
         method: "GET",
         headers: attachSessionToken(undefined, normalizedBaseUrl),
         credentials: "include",

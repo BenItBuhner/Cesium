@@ -86,8 +86,9 @@ import type { WorkspaceSortMode } from "@/lib/global-settings";
 import type { ServerConnection } from "@/lib/server-connections";
 import {
   RAIL_INITIAL_LOAD_FAILSAFE_MS,
+  RAIL_INITIAL_LOAD_RETRY_DELAY_MS,
   resolveRailFetchServers,
-  withRailFetchTimeout,
+  runRailFetchWithTimeout,
 } from "@/lib/rail-fetch";
 import {
   filterGroupsByMachine,
@@ -551,6 +552,10 @@ export function AgentShellStateProvider({
   const sharedLeftRailCollapsedRef = useRef(sharedLeftRailCollapsed);
   const sharedAgentShellDesktopLayoutRef = useRef(sharedAgentShellDesktopLayout);
   const railInitialLoadCompletedRef = useRef(false);
+  /** True once any conversation-groups payload has been applied. Background
+   * refresh failures must never replace an already-rendered rail with an
+   * error screen (mobile radios routinely fail right after wake). */
+  const railHasDataRef = useRef(false);
   const serverStatusByIdRef = useRef(serverStatusById);
   const railRefreshInFlightRef = useRef<Promise<void> | null>(null);
   const railFetchGenerationRef = useRef(0);
@@ -588,6 +593,7 @@ export function AgentShellStateProvider({
           serverStatusByIdRef.current
         )
       );
+      railHasDataRef.current = true;
       return true;
     },
     [directoryWorkspaces]
@@ -603,12 +609,13 @@ export function AgentShellStateProvider({
     const results = await Promise.all(
       servers.map(async (server) => {
         try {
-          const result = await withRailFetchTimeout(
-            listCrossWorkspaceAgentConversationsForServer({
-              serverId: server.id,
-              baseUrl: server.baseUrl,
-            }, { cache: "no-store" }),
-            `Rail fetch for ${server.label}`
+          const result = await runRailFetchWithTimeout(
+            `Rail fetch for ${server.label}`,
+            (signal) =>
+              listCrossWorkspaceAgentConversationsForServer({
+                serverId: server.id,
+                baseUrl: server.baseUrl,
+              }, { cache: "no-store", signal })
           );
           return {
             server,
@@ -640,9 +647,9 @@ export function AgentShellStateProvider({
     }
 
     try {
-      const result = await withRailFetchTimeout(
-        listCrossWorkspaceAgentConversations({ cache: "no-store" }),
-        "Rail fetch for active server"
+      const result = await runRailFetchWithTimeout(
+        "Rail fetch for active server",
+        (signal) => listCrossWorkspaceAgentConversations({ cache: "no-store", signal })
       );
       if (fetchGeneration !== railFetchGenerationRef.current) {
         return;
@@ -658,6 +665,7 @@ export function AgentShellStateProvider({
           serverStatusByIdRef.current
         )
       );
+      railHasDataRef.current = true;
     } catch (error) {
       if (typeof console !== "undefined") {
         console.warn("[rail] Failed to fetch conversations from active server:", error);
@@ -665,6 +673,36 @@ export function AgentShellStateProvider({
       throw error;
     }
   }, [activeServer, applyRailGroupsResult, directoryWorkspaces, onlineServers]);
+
+  // Failsafe for the initial "Loading chats..." spinner. Deliberately
+  // decoupled from the loader effect below: that effect re-runs whenever its
+  // dependencies churn during startup (health probes flipping onlineServers,
+  // the workspace directory arriving, active-server changes), and an
+  // effect-scoped timer would be cleared on every re-run — leaving the
+  // spinner up forever if the in-flight run never settles. This timer only
+  // restarts when `connectionsReady` flips (at most once), so it also covers
+  // the case where server-connections bootstrap itself never completes.
+  useEffect(() => {
+    if (railInitialLoadCompletedRef.current) {
+      return;
+    }
+    const failSafeTimer = window.setTimeout(() => {
+      if (railInitialLoadCompletedRef.current) {
+        return;
+      }
+      railInitialLoadCompletedRef.current = true;
+      setRailLoading(false);
+      setRailRefreshing(false);
+      if (!railHasDataRef.current) {
+        setRailLoadError(
+          "Timed out loading conversations. Check your server connection and retry."
+        );
+      }
+    }, RAIL_INITIAL_LOAD_FAILSAFE_MS);
+    return () => {
+      window.clearTimeout(failSafeTimer);
+    };
+  }, [connectionsReady]);
 
   useEffect(() => {
     if (!connectionsReady) {
@@ -679,33 +717,39 @@ export function AgentShellStateProvider({
       setRailRefreshing(true);
     }
 
-    const failSafeTimer = initialLoad
-      ? window.setTimeout(() => {
-          if (!active || railInitialLoadCompletedRef.current) {
-            return;
-          }
-          railInitialLoadCompletedRef.current = true;
-          setRailLoading(false);
-          setRailRefreshing(false);
-          setRailLoadError("Timed out loading conversations. Check your server connection and retry.");
-        }, RAIL_INITIAL_LOAD_FAILSAFE_MS)
-      : null;
+    const loadWithInitialRetry = async () => {
+      try {
+        await refreshConversationGroups();
+      } catch (error) {
+        // One automatic retry on the very first load: transient network blips
+        // (mobile radio wake, proxy cold start) should not require the user
+        // to find the Retry button.
+        if (!initialLoad || !active) {
+          throw error;
+        }
+        await new Promise((resolve) =>
+          window.setTimeout(resolve, RAIL_INITIAL_LOAD_RETRY_DELAY_MS)
+        );
+        if (!active) {
+          throw error;
+        }
+        await refreshConversationGroups();
+      }
+    };
 
-    void refreshConversationGroups()
+    void loadWithInitialRetry()
       .then(() => {
         if (active) {
           setRailLoadError(null);
         }
       })
       .catch(() => {
-        if (active) {
+        // Keep showing already-loaded conversations over an error screen.
+        if (active && !railHasDataRef.current) {
           setRailLoadError("Could not load conversations. Check your server connection and retry.");
         }
       })
       .finally(() => {
-        if (failSafeTimer != null) {
-          window.clearTimeout(failSafeTimer);
-        }
         if (active) {
           railInitialLoadCompletedRef.current = true;
           setRailLoading(false);
@@ -714,9 +758,6 @@ export function AgentShellStateProvider({
       });
     return () => {
       active = false;
-      if (failSafeTimer != null) {
-        window.clearTimeout(failSafeTimer);
-      }
     };
   }, [connectionsReady, refreshConversationGroups]);
 
@@ -734,7 +775,12 @@ export function AgentShellStateProvider({
     try {
       await refreshPromise;
     } catch {
-      setRailLoadError("Could not load conversations. Check your server connection and retry.");
+      // A failed background refresh must not blank out an already-loaded
+      // rail; stale conversations beat an error screen, and the periodic
+      // refresh will heal the data as soon as the connection recovers.
+      if (!railHasDataRef.current) {
+        setRailLoadError("Could not load conversations. Check your server connection and retry.");
+      }
     } finally {
       railRefreshInFlightRef.current = null;
       setRailRefreshing(false);
@@ -750,26 +796,40 @@ export function AgentShellStateProvider({
   );
 
   useEffect(() => {
+    // `navigator.onLine === false` means a fetch is guaranteed to fail;
+    // skipping avoids churning generations/state on flappy mobile radios.
+    // (`true` is not trustworthy, so it is never used to assume success.)
+    const browserIsOffline = () =>
+      typeof navigator !== "undefined" && navigator.onLine === false;
     const handleFocus = () => {
-      if (document.visibilityState === "hidden") return;
+      if (document.visibilityState === "hidden" || browserIsOffline()) return;
       void refreshConversationGroupsWithState();
     };
     const handleVisibility = () => {
-      if (document.visibilityState === "visible") {
+      if (document.visibilityState === "visible" && !browserIsOffline()) {
         void refreshConversationGroupsWithState();
       }
     };
+    const handleOnline = () => {
+      if (document.visibilityState === "hidden") return;
+      void refreshConversationGroupsWithState();
+    };
     window.addEventListener("focus", handleFocus);
     document.addEventListener("visibilitychange", handleVisibility);
+    window.addEventListener("online", handleOnline);
     return () => {
       window.removeEventListener("focus", handleFocus);
       document.removeEventListener("visibilitychange", handleVisibility);
+      window.removeEventListener("online", handleOnline);
     };
   }, [refreshConversationGroupsWithState]);
 
   useEffect(() => {
     const interval = window.setInterval(() => {
-      if (document.visibilityState === "hidden") {
+      if (
+        document.visibilityState === "hidden" ||
+        (typeof navigator !== "undefined" && navigator.onLine === false)
+      ) {
         return;
       }
       void refreshConversationGroupsWithState();
@@ -816,13 +876,20 @@ export function AgentShellStateProvider({
   }, [activeServer.id]);
 
   useEffect(() => {
-    if (!activeWorkspaceId) {
+    // During the initial load these eager refreshes would only race the main
+    // loader (each call bumps the fetch generation, forcing earlier fetches
+    // to discard their results). The initial cross-workspace load already
+    // covers every workspace/server, so they add nothing until it completes.
+    if (!activeWorkspaceId || !railInitialLoadCompletedRef.current) {
       return;
     }
     void refreshConversationGroups().catch(() => undefined);
   }, [activeWorkspaceId, refreshConversationGroups]);
 
   useEffect(() => {
+    if (!railInitialLoadCompletedRef.current) {
+      return;
+    }
     void refreshConversationGroupsWithState();
   }, [activeServer.id, refreshConversationGroupsWithState]);
 
