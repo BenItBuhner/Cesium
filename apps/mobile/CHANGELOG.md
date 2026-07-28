@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-07-28
+
+### Fixed
+
+- App no longer crashes to "Cesium hit an unexpected UI error / Cesium web URL must use http or https" on first launch when no Cesium server is reachable. The hosted-web server installer card (`ServerSetupCommand`) threw on the packaged client's `file://` origin from both the connection-error screen and the server connections manager; it is now hidden in packaged (WebView/Electron) builds, so the "Check Cesium server" screen and server management work as intended.
+
 ## [0.2.0] - 2026-07-28
 
 ### Changed

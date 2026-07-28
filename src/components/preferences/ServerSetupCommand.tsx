@@ -4,7 +4,20 @@ import { Check, Copy, SquareTerminal } from "lucide-react";
 import { useEffect, useState } from "react";
 import { buildCesiumServerInstallCommand } from "@/lib/server-install-command";
 
+/**
+ * The installer command embeds the hosted web app origin, so it only makes
+ * sense on http(s) deployments. Packaged clients (Android WebView, Electron)
+ * load from file:// and have no hosted origin to point the installer at.
+ */
+function hostedWebAppOrigin(): string {
+  if (typeof window === "undefined") return "";
+  return window.location.protocol === "http:" || window.location.protocol === "https:"
+    ? window.location.origin
+    : "";
+}
+
 export function ServerSetupCommand({ compact = false }: { compact?: boolean }) {
+  const [origin] = useState(hostedWebAppOrigin);
   const [command, setCommand] = useState("");
   const [copied, setCopied] = useState(false);
   const [rendezvousStatus, setRendezvousStatus] = useState<
@@ -12,7 +25,8 @@ export function ServerSetupCommand({ compact = false }: { compact?: boolean }) {
   >("checking");
 
   useEffect(() => {
-    setCommand(buildCesiumServerInstallCommand(window.location.origin));
+    if (!origin) return;
+    setCommand(buildCesiumServerInstallCommand(origin));
     const controller = new AbortController();
     void fetch("/api/rendezvous", {
       cache: "no-store",
@@ -27,7 +41,7 @@ export function ServerSetupCommand({ compact = false }: { compact?: boolean }) {
         }
       });
     return () => controller.abort();
-  }, []);
+  }, [origin]);
 
   const copyCommand = async () => {
     if (!command) return;
@@ -39,6 +53,10 @@ export function ServerSetupCommand({ compact = false }: { compact?: boolean }) {
       setCopied(false);
     }
   };
+
+  if (!origin) {
+    return null;
+  }
 
   return (
     <section
