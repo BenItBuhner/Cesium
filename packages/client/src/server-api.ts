@@ -386,6 +386,12 @@ export function buildOrchestrationWebSocketUrl(workspaceId: string): string {
   return buildAuthenticatedUrl(base);
 }
 
+export function buildExtensionsWebSocketUrl(workspaceId: string): string {
+  const params = new URLSearchParams({ workspaceId });
+  const base = `${toWebSocketUrl(resolveClientServerBaseUrl())}/ws/extensions?${params.toString()}`;
+  return buildAuthenticatedUrl(base);
+}
+
 export function buildAgentWebSocketUrlForServer(
   workspaceId: string,
   server: ServerRequestContext
@@ -3199,6 +3205,8 @@ export type ExtensionSurfaceSession = {
   lastError?: string;
   missingProvider?: boolean;
   message?: string;
+  isPanel?: boolean;
+  isTree?: boolean;
   host: ExtensionHostStatus;
 };
 
@@ -3213,14 +3221,136 @@ export type ExtensionSurfaceSnapshot = {
   host: ExtensionHostStatus;
   missingProvider?: boolean;
   message?: string;
+  isTree?: boolean;
+  treeItems?: ExtensionTreeItem[];
 };
 
 export type ExtensionSurfaceEvent = {
   seq: number;
   ts: number;
-  type: "html" | "message" | "external-url" | "state" | "theme" | "status";
+  type: "html" | "message" | "external-url" | "state" | "theme" | "status" | "tree";
   sessionId: string;
   payload?: unknown;
+};
+
+export type WorkspaceExtensionEvent = {
+  seq: number;
+  ts: number;
+  type: string;
+  payload: unknown;
+};
+
+export type ExtensionUiRequest = {
+  requestId: string;
+  extensionId: string;
+  kind: "quickPick" | "inputBox" | "notification" | "openDialog" | "saveDialog" | "progress";
+  createdAt: number;
+  level?: "info" | "warning" | "error";
+  message?: string;
+  items?: Array<{ index: number; label: string; description?: string; detail?: string; picked?: boolean; kind?: number }>;
+  modal?: boolean;
+  detail?: string;
+  canSelectMany?: boolean;
+  placeholder?: string;
+  title?: string;
+  matchOnDescription?: boolean;
+  matchOnDetail?: boolean;
+  value?: string;
+  prompt?: string;
+  password?: boolean;
+  progressLocation?: number;
+  cancellable?: boolean;
+  interactive?: boolean;
+  busy?: boolean;
+};
+
+export type ExtensionUiResponse = {
+  requestId: string;
+  selectedIndices?: number[];
+  value?: string;
+  actionIndex?: number;
+  paths?: string[];
+  dismissed?: boolean;
+};
+
+export type ExtensionUiClientEvent = {
+  requestId: string;
+  type: "valueChanged" | "accepted" | "hidden" | "buttonTriggered" | "cancelled";
+  value?: string;
+  selectedIndices?: number[];
+  buttonIndex?: number;
+};
+
+export type ExtensionStatusBarItem = {
+  itemId: string;
+  extensionId: string;
+  alignment: 1 | 2;
+  priority: number;
+  text: string;
+  tooltip?: string;
+  command?: string;
+  color?: string;
+  backgroundColor?: string;
+  visible: boolean;
+};
+
+export type ExtensionDiagnosticEntry = {
+  startLine: number;
+  startColumn: number;
+  endLine: number;
+  endColumn: number;
+  message: string;
+  severity: 0 | 1 | 2 | 3;
+  source?: string;
+  code?: string;
+};
+
+export type ExtensionTreeItem = {
+  handle: string;
+  label: string;
+  description?: string;
+  tooltip?: string;
+  collapsibleState: 0 | 1 | 2;
+  iconId?: string;
+  resourcePath?: string;
+  contextValue?: string;
+  hasCommand: boolean;
+  checkboxState?: 0 | 1;
+};
+
+export type WorkspaceExtensionUiSnapshot = {
+  cursor: number;
+  statusBarItems: ExtensionStatusBarItem[];
+  contextKeys: Record<string, unknown>;
+  outputChannels: Array<{ extensionId: string; channel: string; sizeBytes: number }>;
+  diagnostics: Array<{ key: string; uri: string; entries: ExtensionDiagnosticEntry[] }>;
+  uiRequests: ExtensionUiRequest[];
+  languageRegistrations: Array<{
+    extensionId: string;
+    kind: string;
+    languages: string[];
+    triggerCharacters?: string[];
+  }>;
+  hostErrors: Array<{ ts: number; error: string }>;
+};
+
+export type ExtensionThemeDescriptor = {
+  extensionId: string;
+  id?: string;
+  label: string;
+  uiTheme: string;
+  path: string;
+};
+
+export type LoadedExtensionTheme = {
+  extensionId: string;
+  label: string;
+  type: "dark" | "light" | "hcDark" | "hcLight";
+  colors: Record<string, string>;
+  tokenRules: Array<{ token: string; foreground?: string; background?: string; fontStyle?: string }>;
+  webviewVariables: Record<string, string>;
+  cesiumTokens: Record<string, string>;
+  monacoBase: "vs" | "vs-dark" | "hc-black" | "hc-light";
 };
 
 export type ExtensionIconDescriptor =
@@ -3454,6 +3584,7 @@ export async function executeInstalledExtensionCommand(input: {
   command: string;
   args?: unknown[];
   editorContext?: unknown;
+  treeItem?: { viewId: string; handle: string };
 }): Promise<{ result: unknown; externalUrls?: string[]; host: ExtensionHostStatus }> {
   return await mcpJsonRequest(
     `/api/workspaces/${encodeURIComponent(input.workspaceId)}/extensions/commands/execute`,
@@ -3464,6 +3595,7 @@ export async function executeInstalledExtensionCommand(input: {
         command: input.command,
         args: input.args ?? [],
         editorContext: input.editorContext,
+        treeItem: input.treeItem,
       }),
     }
   );
@@ -3610,13 +3742,14 @@ export async function deliverExtensionSurfaceSessionMessageClient(input: {
   workspaceId: string;
   sessionId: string;
   message: unknown;
-}): Promise<ExtensionSurfaceSnapshot & { missingWebview: boolean }> {
+  msgId?: string;
+}): Promise<ExtensionSurfaceSnapshot & { missingWebview: boolean; duplicate?: boolean }> {
   return await mcpJsonRequest(
     `/api/workspaces/${encodeURIComponent(input.workspaceId)}/extensions/surface-sessions/${encodeURIComponent(input.sessionId)}/message`,
     {
       method: "POST",
       workspaceId: input.workspaceId,
-      body: JSON.stringify({ message: input.message }),
+      body: JSON.stringify({ message: input.message, msgId: input.msgId }),
     }
   );
 }
@@ -3663,6 +3796,178 @@ export async function readExtensionSurfaceEvents(input: {
   return await mcpJsonRequest(
     `/api/workspaces/${encodeURIComponent(input.workspaceId)}/extensions/surface-sessions/${encodeURIComponent(input.sessionId)}/events${params.size ? `?${params}` : ""}`,
     { workspaceId: input.workspaceId }
+  );
+}
+
+export async function readWorkspaceExtensionEvents(input: {
+  workspaceId: string;
+  cursor?: number;
+}): Promise<{ events: WorkspaceExtensionEvent[]; cursor: number; resyncRequired: boolean }> {
+  const params = new URLSearchParams();
+  if (typeof input.cursor === "number") {
+    params.set("cursor", String(input.cursor));
+  }
+  return await mcpJsonRequest(
+    `/api/workspaces/${encodeURIComponent(input.workspaceId)}/extensions/events${params.size ? `?${params}` : ""}`,
+    { workspaceId: input.workspaceId }
+  );
+}
+
+export async function fetchWorkspaceExtensionUiState(
+  workspaceId: string
+): Promise<WorkspaceExtensionUiSnapshot & { host: ExtensionHostStatus }> {
+  return await mcpJsonRequest(
+    `/api/workspaces/${encodeURIComponent(workspaceId)}/extensions/ui-state`,
+    { workspaceId }
+  );
+}
+
+export async function sendExtensionUiResponse(input: {
+  workspaceId: string;
+  response: ExtensionUiResponse;
+}): Promise<{ delivered: boolean }> {
+  return await mcpJsonRequest(
+    `/api/workspaces/${encodeURIComponent(input.workspaceId)}/extensions/ui-response`,
+    {
+      method: "POST",
+      workspaceId: input.workspaceId,
+      body: JSON.stringify({ response: input.response }),
+    }
+  );
+}
+
+export async function sendExtensionUiEvent(input: {
+  workspaceId: string;
+  event: ExtensionUiClientEvent;
+}): Promise<{ delivered: boolean }> {
+  return await mcpJsonRequest(
+    `/api/workspaces/${encodeURIComponent(input.workspaceId)}/extensions/ui-event`,
+    {
+      method: "POST",
+      workspaceId: input.workspaceId,
+      body: JSON.stringify({ event: input.event }),
+    }
+  );
+}
+
+export async function fetchExtensionTreeChildren(input: {
+  workspaceId: string;
+  extensionId: string;
+  viewId: string;
+  parentHandle?: string;
+}): Promise<{ items: ExtensionTreeItem[]; missingProvider: boolean }> {
+  const params = new URLSearchParams();
+  if (input.parentHandle) params.set("parentHandle", input.parentHandle);
+  return await mcpJsonRequest(
+    `/api/workspaces/${encodeURIComponent(input.workspaceId)}/extensions/${encodeURIComponent(input.extensionId)}/tree/${encodeURIComponent(input.viewId)}${params.size ? `?${params}` : ""}`,
+    { workspaceId: input.workspaceId }
+  );
+}
+
+export async function fetchExtensionOutputChannel(input: {
+  workspaceId: string;
+  extensionId: string;
+  channel: string;
+}): Promise<{ content: string; exists: boolean }> {
+  const params = new URLSearchParams({
+    extensionId: input.extensionId,
+    channel: input.channel,
+  });
+  return await mcpJsonRequest(
+    `/api/workspaces/${encodeURIComponent(input.workspaceId)}/extensions/output-channel?${params}`,
+    { workspaceId: input.workspaceId }
+  );
+}
+
+export async function pushExtensionEditorContext(input: {
+  workspaceId: string;
+  context: unknown;
+  reason: "open" | "focus" | "selection" | "edit" | "save" | "close";
+}): Promise<{ delivered: boolean }> {
+  return await mcpJsonRequest(
+    `/api/workspaces/${encodeURIComponent(input.workspaceId)}/extensions/editor-context`,
+    {
+      method: "POST",
+      workspaceId: input.workspaceId,
+      body: JSON.stringify({ context: input.context, reason: input.reason }),
+    }
+  );
+}
+
+export async function requestExtensionLanguageFeature(input: {
+  workspaceId: string;
+  kind: "hover" | "completion" | "definition" | "formatting";
+  uri: string;
+  languageId: string;
+  content?: string;
+  position?: { line: number; character: number };
+  formattingOptions?: { tabSize?: number; insertSpaces?: boolean };
+  triggerCharacter?: string;
+}): Promise<{ result: unknown }> {
+  return await mcpJsonRequest(
+    `/api/workspaces/${encodeURIComponent(input.workspaceId)}/extensions/language-feature`,
+    {
+      method: "POST",
+      workspaceId: input.workspaceId,
+      body: JSON.stringify({
+        kind: input.kind,
+        uri: input.uri,
+        languageId: input.languageId,
+        content: input.content,
+        position: input.position,
+        formattingOptions: input.formattingOptions,
+        triggerCharacter: input.triggerCharacter,
+      }),
+    }
+  );
+}
+
+export async function listWorkspaceExtensionThemes(
+  workspaceId: string
+): Promise<{ themes: ExtensionThemeDescriptor[] }> {
+  return await mcpJsonRequest(
+    `/api/workspaces/${encodeURIComponent(workspaceId)}/extensions/themes`,
+    { workspaceId }
+  );
+}
+
+export async function fetchExtensionTheme(input: {
+  workspaceId: string;
+  extensionId: string;
+  label: string;
+}): Promise<{ theme: LoadedExtensionTheme }> {
+  return await mcpJsonRequest(
+    `/api/workspaces/${encodeURIComponent(input.workspaceId)}/extensions/${encodeURIComponent(input.extensionId)}/themes/${encodeURIComponent(input.label)}`,
+    { workspaceId: input.workspaceId }
+  );
+}
+
+export async function installVsixExtensionClient(input: {
+  workspaceId: string;
+  filename: string;
+  dataBase64: string;
+}): Promise<ExtensionInstallRecord> {
+  const result = await mcpJsonRequest<{ extension: ExtensionInstallRecord }>(
+    `/api/workspaces/${encodeURIComponent(input.workspaceId)}/extensions/install`,
+    {
+      method: "POST",
+      workspaceId: input.workspaceId,
+      body: JSON.stringify({
+        source: "vsix",
+        filename: input.filename,
+        data: input.dataBase64,
+      }),
+    }
+  );
+  return result.extension;
+}
+
+export async function restartExtensionHostClient(
+  workspaceId: string
+): Promise<{ host: ExtensionHostStatus }> {
+  return await mcpJsonRequest(
+    `/api/workspaces/${encodeURIComponent(workspaceId)}/extensions/host/restart`,
+    { method: "POST", workspaceId }
   );
 }
 

@@ -21,13 +21,32 @@ function isCesiumDesktopRenderer(): boolean {
   );
 }
 
+/**
+ * The VS Code extension Beta is desktop-first, but can be force-enabled for
+ * web renderers via `NEXT_PUBLIC_VSCODE_EXTENSIONS_WEB=1` (build-time) or by
+ * setting `localStorage["cesium.vscodeExtensionsWeb"] = "1"` (runtime).
+ */
+function isVscodeExtensionsWebOverrideEnabled(): boolean {
+  if (process.env.NEXT_PUBLIC_VSCODE_EXTENSIONS_WEB === "1") {
+    return true;
+  }
+  if (typeof window === "undefined") {
+    return false;
+  }
+  try {
+    return window.localStorage.getItem("cesium.vscodeExtensionsWeb") === "1";
+  } catch {
+    return false;
+  }
+}
+
 export function getCesiumRendererFeatureFlags(): CesiumRendererFeatureFlags {
   const desktop = isCesiumDesktopRenderer();
   return {
     ipadBetaSettings: !desktop,
     ipadExperimentalUi: !desktop,
     ipadResumeCache: !desktop,
-    vscodeExtensionsBetaSettings: desktop,
+    vscodeExtensionsBetaSettings: desktop || isVscodeExtensionsWebOverrideEnabled(),
   };
 }
 

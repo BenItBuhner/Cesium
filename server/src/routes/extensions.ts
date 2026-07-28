@@ -416,7 +416,7 @@ extensionRoutes.post(
     if (workspace.id !== c.req.param("workspaceId")) {
       return c.json({ error: "Workspace mismatch." }, 400);
     }
-    const body: { message?: unknown } = await c.req.json().catch(() => ({}));
+    const body: { message?: unknown; msgId?: unknown } = await c.req.json().catch(() => ({}));
     if (!getExtensionSurfaceSession(workspace.id, c.req.param("sessionId"))) {
       return c.json({
         session: null,
@@ -433,6 +433,7 @@ extensionRoutes.post(
         workspace,
         sessionId: c.req.param("sessionId"),
         message: body.message,
+        msgId: typeof body.msgId === "string" ? body.msgId : undefined,
       })
     );
   }
