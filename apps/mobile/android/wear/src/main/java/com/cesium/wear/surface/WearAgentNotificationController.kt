@@ -9,6 +9,7 @@ import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
+import com.cesium.wear.R
 import com.cesium.wear.model.WatchAgentProjection
 
 class WearAgentNotificationController(private val context: Context) {
@@ -24,7 +25,7 @@ class WearAgentNotificationController(private val context: Context) {
       return
     }
     val builder = NotificationCompat.Builder(context, CHANNEL_ID)
-      .setSmallIcon(android.R.drawable.stat_notify_sync)
+      .setSmallIcon(R.drawable.ic_stat_cesium)
       .setContentTitle(projection.title)
       .setContentText(projection.currentActivity)
       .setSubText(projection.progressLabel ?: projection.chip)

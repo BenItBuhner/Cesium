@@ -1,0 +1,18 @@
+<!-- Cesium hexagon mark from public/icon-source.svg (viewBox 200x174), centered
+     in the 66dp adaptive-icon safe zone of the 108dp canvas. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+  android:width="108dp"
+  android:height="108dp"
+  android:viewportWidth="108"
+  android:viewportHeight="108">
+  <group
+    android:scaleX="0.35"
+    android:scaleY="0.35"
+    android:translateX="19"
+    android:translateY="23.55">
+    <path
+      android:fillColor="#FFFFFF"
+      android:fillType="evenOdd"
+      android:pathData="M159.014,134.928L112,162.072A24,24 0,0 1,88 162.072L40.986,134.928A24,24 0,0 1,28.986 114.144L28.986,59.856A24,24 0,0 1,40.986 39.072L88,11.928A24,24 0,0 1,112 11.928L159.014,39.072A24,24 0,0 1,171.014 59.856L171.014,114.144A24,24 0,0 1,159.014 134.928ZM151.014,121.072L104,148.215A8,8 0,0 1,96 148.215L48.986,121.072A8,8 0,0 1,44.986 114.144L44.986,59.856A8,8 0,0 1,48.986 52.928L96,25.785A8,8 0,0 1,104 25.785L151.014,52.928A8,8 0,0 1,155.014 59.856L155.014,114.144A8,8 0,0 1,151.014 121.072Z" />
+  </group>
+</vector>

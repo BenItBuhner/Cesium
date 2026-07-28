@@ -12,6 +12,7 @@ import android.os.Bundle
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import com.cesium.mobile.MainActivity
+import com.cesium.mobile.R
 import com.cesium.shared.generated.CesiumDesignTokens
 
 object CesiumAgentNotification {
@@ -50,7 +51,7 @@ object CesiumAgentNotification {
     val builder = NotificationCompat.Builder(context, CHANNEL_ID)
 
     builder
-      .setSmallIcon(android.R.drawable.stat_notify_sync)
+      .setSmallIcon(R.drawable.ic_stat_cesium)
       .setContentTitle(title)
       .setContentText(body)
       .setCategory(Notification.CATEGORY_PROGRESS)
