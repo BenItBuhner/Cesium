@@ -79,7 +79,6 @@ import {
   type AgentSwitcherCandidate,
 } from "@/lib/agent-conversation-mru";
 import { markConversationSwitchStart } from "@/lib/dev-perf";
-import type { AgentConversationRecord } from "@/lib/agent-types";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { useWorkspaceDirectory } from "@/contexts/WorkspaceDirectoryContext";
 import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
