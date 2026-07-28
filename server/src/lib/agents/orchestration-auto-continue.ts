@@ -12,6 +12,7 @@ import { isOrchestrationPermissionCategory } from "./permission-options.js";
 import { readConversationSnapshotHead, subscribeAgentStoreEvents } from "./session-store.js";
 import { readGoalForConversation } from "./goal-store.js";
 import { goalHasRunnableWork } from "./goal-types.js";
+import { normalizeCesiumMode } from "./cesium-mode-policy.js";
 import type { OrchestrationAssignmentStatus } from "../orchestration/types.js";
 import type { AgentConversationRecord, AgentStoredEvent } from "./types.js";
 
@@ -58,8 +59,7 @@ function buildAutoContinuePrompt(mode: AgentConversationRecord["config"]["mode"]
 function isNativeGoalConversation(conversation: AgentConversationRecord): boolean {
   return (
     conversation.config.backendId === "cesium-agent" &&
-    (String(conversation.config.mode).trim().toLowerCase() === "goal" ||
-      String(conversation.config.mode).trim().toLowerCase() === "burn")
+    normalizeCesiumMode(String(conversation.config.mode)) === "goal"
   );
 }
 

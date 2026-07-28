@@ -178,13 +178,13 @@ export function ComposerStatusBar({
         (runtimeActiveSince == null
           ? 0
           : Math.max(0, Math.floor((runtimeNow - runtimeActiveSince) / 1000)));
-  const burnHistory = useMemo(
+  const goalHistory = useMemo(
     () => goalProgress?.history ?? (goalProgress ? [goalProgress] : []),
     [goalProgress]
   );
-  const burnHistoryNewestFirst = useMemo(
-    () => [...burnHistory].reverse(),
-    [burnHistory]
+  const goalHistoryNewestFirst = useMemo(
+    () => [...goalHistory].reverse(),
+    [goalHistory]
   );
 
   const leftSegments = useMemo(() => {
@@ -254,7 +254,7 @@ export function ComposerStatusBar({
                     : null,
                   goalProgress.headline,
                   goalProgress.summary,
-                  burnHistory.length > 1 ? `${burnHistory.length} recorded summaries` : null,
+                  goalHistory.length > 1 ? `${goalHistory.length} recorded summaries` : null,
                 ].filter(Boolean).join("\n\n")}
                 aria-expanded={goalSummaryOpen}
                 onClick={() => setGoalSummaryOpen((open) => !open)}
@@ -287,7 +287,7 @@ export function ComposerStatusBar({
                         Goal State Summaries
                       </div>
                       <div className="mt-[2px] font-sans text-[11px] text-[var(--text-secondary)]">
-                        {burnHistory.length} recorded {burnHistory.length === 1 ? "summary" : "summaries"}
+                        {goalHistory.length} recorded {goalHistory.length === 1 ? "summary" : "summaries"}
                         {goalRuntimeSeconds != null
                           ? ` · ${formatGoalRuntime(goalRuntimeSeconds)} tracked runtime`
                           : ""}
@@ -302,7 +302,7 @@ export function ComposerStatusBar({
                     </button>
                   </div>
                   <div className="space-y-[10px]">
-                    {burnHistoryNewestFirst.map((item, index) => (
+                    {goalHistoryNewestFirst.map((item, index) => (
                       <GoalSummaryHistoryCard
                         key={item.toolCallId}
                         item={item}

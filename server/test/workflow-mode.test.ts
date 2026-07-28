@@ -168,7 +168,7 @@ test("hashWorkflowAgentCall is stable for identical prompt/opts", () => {
   assert.notEqual(a, c);
 });
 
-test("Workflow mode policy allows workflow tools and blocks goal/orchestration", () => {
+test("Workflow capability is dynamic while Workflow mode strongly promotes it", () => {
   assert.equal(resolveCesiumModeToolPolicy({ mode: "workflow", toolName: "workflow_run" }).allowed, true);
   assert.equal(resolveCesiumModeToolPolicy({ mode: "workflow", toolName: "edit_file" }).allowed, true);
   assert.equal(resolveCesiumModeToolPolicy({ mode: "workflow", toolName: "goal_set" }).allowed, false);
@@ -176,10 +176,13 @@ test("Workflow mode policy allows workflow tools and blocks goal/orchestration",
     resolveCesiumModeToolPolicy({ mode: "workflow", toolName: "orchestration_create_issue" }).allowed,
     false
   );
-  assert.equal(resolveCesiumModeToolPolicy({ mode: "agent", toolName: "workflow_run" }).allowed, false);
-  assert.equal(resolveCesiumModeToolPolicy({ mode: "goal", toolName: "workflow_run" }).allowed, false);
+  assert.equal(resolveCesiumModeToolPolicy({ mode: "agent", toolName: "workflow_run" }).allowed, true);
+  assert.equal(resolveCesiumModeToolPolicy({ mode: "goal", toolName: "workflow_run" }).allowed, true);
+  assert.equal(resolveCesiumModeToolPolicy({ mode: "ask", toolName: "workflow_run" }).allowed, false);
+  assert.equal(resolveCesiumModeToolPolicy({ mode: "plan", toolName: "workflow_run" }).allowed, false);
   const summary = summarizeCesiumModeToolPolicy("workflow");
   assert.equal(summary.allowed.includes("workflow_run"), true);
+  assert.match(summary.restricted.join(" "), /Prefer encoding fan-out/);
 });
 
 test("Workflow mode reminder documents script primitives", () => {
@@ -194,6 +197,8 @@ test("Workflow mode reminder documents script primitives", () => {
   assert.match(reminder, /workflow_run/);
   assert.match(reminder, /pipeline\(\)/);
   assert.match(reminder, /export const meta/);
+  assert.match(reminder, /strong workflow-first profile/i);
+  assert.match(reminder, /SHOULD use workflow_run/);
 });
 
 test("persistWorkflowScript writes under the workspace workflows directory", async () => {

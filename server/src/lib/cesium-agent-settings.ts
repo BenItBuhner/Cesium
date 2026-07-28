@@ -53,13 +53,13 @@ export const CESIUM_MODE_DEFINITIONS: readonly CesiumModeDefinition[] = [
     id: "goal",
     label: "Goal",
     description:
-      "Run a DB-backed long-running goal with planning, milestones, continuation, and final verification.",
+      "Use a durable execution profile with canonical state, continuation, milestones, and completion enforcement.",
   },
   {
     id: "workflow",
     label: "Workflow",
     description:
-      "Write and execute JavaScript orchestration scripts that fan work across subagents.",
+      "Strongly promote JavaScript workflow scripts for fan-out, pipelines, and staged verification.",
   },
   {
     id: "ask",
