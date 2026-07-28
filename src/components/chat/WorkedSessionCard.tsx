@@ -720,7 +720,6 @@ export function WorkedSessionCard({
     entries.some((entry) => entry.kind === "compression");
   const isWorkingPlaceholder =
     showLoadingState && entries.length === 0 && !isContextCompression;
-  const collapsibleOpen = isWorkingPlaceholder ? true : open;
   const gradientVar = surface === "editor" ? "var(--bg-main)" : "var(--bg-panel)";
   const inlineEditEntries =
     !preferInside && standaloneHighlighted ? [standaloneHighlighted] : [];
@@ -732,6 +731,12 @@ export function WorkedSessionCard({
     !embeddedPermission.permissionResolved
       ? embeddedPermission
       : null;
+  /**
+   * An unresolved permission embedded in a collapsed card would be invisible while the agent
+   * blocks on it forever — force the dropdown open until the user answers.
+   */
+  const collapsibleOpen =
+    isWorkingPlaceholder || embeddedPermissionCard != null ? true : open;
   const embeddedPermissionEl =
     embeddedPermissionCard != null ? (
       <PermissionRequestCard
