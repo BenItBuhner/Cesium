@@ -1269,6 +1269,46 @@ export async function answerAgentPermission(
   });
 }
 
+export type AgentHarnessDiagnosticEntry = {
+  seq: number;
+  at: number;
+  level: "debug" | "info" | "warning" | "error";
+  event: string;
+  backendId?: string;
+  conversationId?: string;
+  detail?: string;
+  data?: Record<string, unknown>;
+};
+
+/**
+ * Structured harness diagnostics (spawn/SSE/permission/watchdog lifecycle).
+ * Scoped to one conversation when `conversationId` is set, global otherwise.
+ */
+export async function fetchAgentHarnessDiagnostics(options?: {
+  conversationId?: string;
+  backendId?: string;
+  level?: AgentHarnessDiagnosticEntry["level"];
+  limit?: number;
+  afterSeq?: number;
+  signal?: AbortSignal;
+}): Promise<{ entries: AgentHarnessDiagnosticEntry[] }> {
+  const params = new URLSearchParams();
+  if (options?.conversationId) params.set("conversationId", options.conversationId);
+  if (options?.backendId) params.set("backendId", options.backendId);
+  if (options?.level) params.set("level", options.level);
+  if (options?.limit != null && Number.isFinite(options.limit)) {
+    params.set("limit", String(Math.floor(options.limit)));
+  }
+  if (options?.afterSeq != null && Number.isFinite(options.afterSeq)) {
+    params.set("afterSeq", String(Math.floor(options.afterSeq)));
+  }
+  const suffix = params.size > 0 ? `?${params.toString()}` : "";
+  return request(
+    `/api/agents/diagnostics/harness${suffix}`,
+    options?.signal ? { signal: options.signal } : undefined
+  );
+}
+
 export async function answerAgentQuestion(
   conversationId: string,
   input: { questionId: string; answer: string }

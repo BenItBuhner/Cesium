@@ -23,8 +23,42 @@ import type {
   AgentQueuedChatPrompt,
 } from "../lib/agents/types.js";
 import { createStandaloneChatWorkspace } from "../lib/standalone-chats.js";
+import {
+  harnessDiagnosticsFilePaths,
+  readHarnessDiagnostics,
+  type HarnessDiagnosticLevel,
+} from "../lib/agents/harness-diagnostics.js";
 
 export const agentRoutes = new Hono();
+
+const HARNESS_DIAGNOSTIC_LEVELS: HarnessDiagnosticLevel[] = [
+  "debug",
+  "info",
+  "warning",
+  "error",
+];
+
+function parseHarnessDiagnosticsQuery(c: {
+  req: { query(name: string): string | undefined };
+}): {
+  backendId?: string;
+  minLevel?: HarnessDiagnosticLevel;
+  limit?: number;
+  afterSeq?: number;
+} {
+  const levelRaw = c.req.query("level");
+  const limitRaw = Number.parseInt(c.req.query("limit") ?? "", 10);
+  const afterSeqRaw = Number.parseInt(c.req.query("afterSeq") ?? "", 10);
+  const backendId = c.req.query("backendId")?.trim();
+  return {
+    ...(backendId ? { backendId } : {}),
+    ...(levelRaw && HARNESS_DIAGNOSTIC_LEVELS.includes(levelRaw as HarnessDiagnosticLevel)
+      ? { minLevel: levelRaw as HarnessDiagnosticLevel }
+      : {}),
+    ...(Number.isFinite(limitRaw) && limitRaw > 0 ? { limit: limitRaw } : {}),
+    ...(Number.isFinite(afterSeqRaw) && afterSeqRaw >= 0 ? { afterSeq: afterSeqRaw } : {}),
+  };
+}
 
 function parsePageParams(c: {
   req: { query(name: string): string | undefined };
@@ -37,6 +71,27 @@ function parsePageParams(c: {
     cursor: cursorRaw && cursorRaw.length > 0 ? cursorRaw : undefined,
   };
 }
+
+agentRoutes.get("/api/agents/diagnostics/harness", async (c) => {
+  const conversationId = c.req.query("conversationId")?.trim();
+  const entries = await readHarnessDiagnostics({
+    ...(conversationId ? { conversationId } : {}),
+    ...parseHarnessDiagnosticsQuery(c),
+  });
+  return c.json({ entries, files: harnessDiagnosticsFilePaths() });
+});
+
+agentRoutes.get(
+  "/api/agents/conversations/:conversationId/diagnostics",
+  async (c) => {
+    const conversationId = c.req.param("conversationId");
+    const entries = await readHarnessDiagnostics({
+      conversationId,
+      ...parseHarnessDiagnosticsQuery(c),
+    });
+    return c.json({ entries });
+  }
+);
 
 agentRoutes.get("/api/agents/conversations", async (c) => {
   const workspace = await requireWorkspaceFromRequest(c);

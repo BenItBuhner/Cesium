@@ -1,5 +1,6 @@
 import path from "node:path";
 import { randomUUID } from "node:crypto";
+import { harnessLog } from "./harness-diagnostics.js";
 import type { AgentEventInput } from "./types.js";
 
 type SseTarget = {
@@ -51,6 +52,19 @@ export function extractOpenCodeEventSessionId(
       if (typeof p.sessionID === "string") {
         return p.sessionID;
       }
+    }
+  }
+  if (payloadType === "permission.updated" || payloadType === "permission.replied") {
+    // Permission prompts from subagent (child) sessions only reach providers
+    // through this pool; without a session id here they were dropped entirely
+    // and OpenCode blocked forever on an answer no one could give.
+    if (typeof props.sessionID === "string") {
+      return props.sessionID;
+    }
+    const permission = props.permission;
+    if (permission && typeof permission === "object" && !Array.isArray(permission)) {
+      const sessionID = (permission as Record<string, unknown>).sessionID;
+      return typeof sessionID === "string" ? sessionID : undefined;
     }
   }
   return undefined;
@@ -473,6 +487,7 @@ async function* iterateSseDataLines(
 }
 
 async function runPoolLoop(poolKey: string, signal: AbortSignal): Promise<void> {
+  let consecutiveFailures = 0;
   while (!signal.aborted) {
     const row = pools.get(poolKey);
     if (!row || row.targets.size === 0) {
@@ -484,6 +499,14 @@ async function runPoolLoop(poolKey: string, signal: AbortSignal): Promise<void> 
       for await (const data of iterateSseDataLines(url, signal)) {
         if (signal.aborted) {
           return;
+        }
+        if (consecutiveFailures > 0) {
+          harnessLog({
+            backendId: "opencode-server",
+            event: "global_sse.recovered",
+            detail: `Global event stream for ${baseUrl} recovered after ${consecutiveFailures} failed attempt(s).`,
+          });
+          consecutiveFailures = 0;
         }
         let env: unknown;
         try {
@@ -535,7 +558,23 @@ async function runPoolLoop(poolKey: string, signal: AbortSignal): Promise<void> 
           await target.onEvent(directory || target.workspaceRoot, p as Record<string, unknown>);
         }
       }
-    } catch {
+    } catch (error) {
+      if (signal.aborted) {
+        return;
+      }
+      consecutiveFailures += 1;
+      // Log the first failure and then sample, so a dead server does not
+      // flood diagnostics at the 600ms reconnect cadence.
+      if (consecutiveFailures === 1 || consecutiveFailures % 20 === 0) {
+        harnessLog({
+          level: "warning",
+          backendId: "opencode-server",
+          event: "global_sse.error",
+          detail: `Global event stream for ${baseUrl} failed (attempt ${consecutiveFailures}): ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        });
+      }
       await new Promise((r) => setTimeout(r, 600));
     }
   }

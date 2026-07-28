@@ -40,6 +40,7 @@ import {
   type OpenCodeV2FormRequest,
   type OpenCodeV2QuestionRequest,
 } from "./opencode-v2-normalize.js";
+import { harnessLog } from "./harness-diagnostics.js";
 import { materializeImageAttachments } from "./prompt-attachments.js";
 import {
   appendAgentPluginPrompt,
@@ -604,11 +605,30 @@ class OpenCodeV2SessionHandle implements AgentSessionHandle {
     if (!sessionId) {
       throw new Error(`OpenCode v2 permission request ${input.requestId} is no longer pending.`);
     }
-    await client.answerPermission(
-      sessionId,
-      input.requestId,
-      openCodeV2PermissionReply(input.optionId, input.cancelled)
-    );
+    try {
+      await client.answerPermission(
+        sessionId,
+        input.requestId,
+        openCodeV2PermissionReply(input.optionId, input.cancelled)
+      );
+    } catch (error) {
+      harnessLog({
+        level: "error",
+        backendId: this.backend.id,
+        conversationId: this.callbacks.conversation.id,
+        event: "permission.answer_failed",
+        detail: error instanceof Error ? error.message : String(error),
+        data: { requestId: input.requestId, sessionId },
+      });
+      throw error;
+    }
+    harnessLog({
+      backendId: this.backend.id,
+      conversationId: this.callbacks.conversation.id,
+      event: "permission.answered",
+      detail: `Permission ${input.requestId} resolved on session ${sessionId}.`,
+      data: { optionId: input.optionId ?? null, cancelled: Boolean(input.cancelled) },
+    });
     this.permissionSessions.delete(input.requestId);
     await this.callbacks.appendEvents([
       {
@@ -856,7 +876,15 @@ class OpenCodeV2SessionHandle implements AgentSessionHandle {
   }
 
   private reportStreamError(error: Error): void {
-    if (this.disposed || this.reportedStreamErrors.has(error.message)) return;
+    if (this.disposed) return;
+    harnessLog({
+      level: "warning",
+      backendId: this.backend.id,
+      conversationId: this.callbacks.conversation.id,
+      event: "sse.error",
+      detail: error.message,
+    });
+    if (this.reportedStreamErrors.has(error.message)) return;
     this.reportedStreamErrors.add(error.message);
     void this.callbacks.appendEvents([
       {
@@ -967,6 +995,13 @@ class OpenCodeV2SessionHandle implements AgentSessionHandle {
       type === "permission.v2.asked" ? asString(asRecord(payload.data)?.id) : undefined;
     if (permissionRequest && sessionId) {
       this.permissionSessions.set(permissionRequest, sessionId);
+      harnessLog({
+        backendId: this.backend.id,
+        conversationId: this.callbacks.conversation.id,
+        event: "permission.requested",
+        detail: `OpenCode v2 requested permission ${permissionRequest}.`,
+        data: { sessionId },
+      });
     }
     const question = readOpenCodeV2QuestionRequest(payload);
     if (question) {

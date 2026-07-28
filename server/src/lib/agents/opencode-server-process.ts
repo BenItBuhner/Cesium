@@ -2,14 +2,26 @@ import { spawn, type ChildProcess } from "node:child_process";
 import path from "node:path";
 import { getOpenCodeAcpListenPort, openCodeAcpInternalBaseUrl } from "./opencode-acp-port.js";
 import { spawnSafeEnv } from "./spawn-env.js";
+import { harnessLog } from "./harness-diagnostics.js";
 import {
   OpenCodeServerClient,
   openCodeServerAuthFromEnv,
 } from "./opencode-server-client.js";
 
+export type OpenCodeServerProcessExit = {
+  code: number | null;
+  signal: NodeJS.Signals | null;
+};
+
 export type OpenCodeServerConnection = {
   client: OpenCodeServerClient;
   managed: boolean;
+  /**
+   * Registers a listener fired when the managed OpenCode process exits while
+   * this connection is still attached. Returns an unsubscribe function.
+   * External (unmanaged) connections never fire it.
+   */
+  onProcessExit: (listener: (exit: OpenCodeServerProcessExit) => void) => () => void;
   dispose: () => Promise<void>;
 };
 
@@ -18,6 +30,8 @@ type ManagedServerPoolRow = {
   child: ChildProcess;
   ready: Promise<void>;
   refs: number;
+  exitListeners: Set<(exit: OpenCodeServerProcessExit) => void>;
+  exited: OpenCodeServerProcessExit | null;
 };
 
 const managedServerPool = new Map<string, ManagedServerPoolRow>();
@@ -31,8 +45,29 @@ function releaseManagedOpenCodeServer(poolKey: string, row: ManagedServerPoolRow
     managedServerPool.delete(poolKey);
   }
   if (!row.child.killed) {
+    harnessLog({
+      backendId: "opencode-server",
+      event: "process.stop",
+      detail: `Stopping managed OpenCode Server (last session detached): ${row.client.baseUrl}`,
+    });
     row.child.kill();
   }
+}
+
+function subscribeToRowExit(
+  row: ManagedServerPoolRow,
+  listener: (exit: OpenCodeServerProcessExit) => void
+): () => void {
+  if (row.exited) {
+    // Deliver asynchronously so subscribers never re-enter their own setup.
+    const exited = row.exited;
+    queueMicrotask(() => listener(exited));
+    return () => undefined;
+  }
+  row.exitListeners.add(listener);
+  return () => {
+    row.exitListeners.delete(listener);
+  };
 }
 
 async function resolveOpenCodeCommand(): Promise<string> {
@@ -56,18 +91,23 @@ async function resolveOpenCodeCommand(): Promise<string> {
 }
 
 async function waitForHealth(client: OpenCodeServerClient): Promise<void> {
+  let lastError = "";
   for (let attempt = 0; attempt < 80; attempt += 1) {
     try {
       const health = await client.health();
       if (health.healthy !== false) {
         return;
       }
-    } catch {
-      // keep polling
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : String(error);
     }
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
-  throw new Error(`OpenCode Server did not become healthy at ${client.baseUrl}.`);
+  throw new Error(
+    `OpenCode Server did not become healthy at ${client.baseUrl}.${
+      lastError ? ` Last health error: ${lastError}` : ""
+    }`
+  );
 }
 
 export async function connectOpenCodeServer(input: {
@@ -82,6 +122,7 @@ export async function connectOpenCodeServer(input: {
     return {
       client,
       managed: false,
+      onProcessExit: () => () => undefined,
       dispose: async () => undefined,
     };
   }
@@ -94,6 +135,7 @@ export async function connectOpenCodeServer(input: {
     return {
       client: existing.client,
       managed: true,
+      onProcessExit: (listener) => subscribeToRowExit(existing, listener),
       dispose: async () => {
         releaseManagedOpenCodeServer(poolKey, existing);
       },
@@ -103,6 +145,7 @@ export async function connectOpenCodeServer(input: {
   const port = await getOpenCodeAcpListenPort(poolKey);
   const baseUrl = openCodeAcpInternalBaseUrl(port);
   const command = await resolveOpenCodeCommand();
+  const spawnedAt = Date.now();
   const child = spawn(
     command,
     ["serve", "--hostname", "127.0.0.1", "--port", String(port)],
@@ -116,11 +159,23 @@ export async function connectOpenCodeServer(input: {
       argv0: `Cesium Agent - OpenCode Server :${port}`,
     }
   );
+  harnessLog({
+    backendId: "opencode-server",
+    event: "process.spawn",
+    detail: `Spawned OpenCode Server at ${baseUrl}`,
+    data: { command, port, pid: child.pid ?? null, workspaceRoot: input.workspaceRoot },
+  });
   child.stderr.on("data", (chunk) => {
     const text = String(chunk);
     for (const line of text.split(/\r?\n/)) {
       const trimmed = line.trim();
       if (trimmed) {
+        harnessLog({
+          level: "debug",
+          backendId: "opencode-server",
+          event: "process.stderr",
+          detail: trimmed,
+        });
         input.onStderrLine?.(trimmed);
       }
     }
@@ -131,25 +186,62 @@ export async function connectOpenCodeServer(input: {
     child,
     refs: 1,
     ready: waitForHealth(client),
+    exitListeners: new Set(),
+    exited: null,
   };
   managedServerPool.set(poolKey, row);
-  child.once("exit", () => {
-    if (managedServerPool.get(poolKey) === row) {
+  child.once("exit", (code, signal) => {
+    const exit: OpenCodeServerProcessExit = { code, signal };
+    row.exited = exit;
+    const wasPooled = managedServerPool.get(poolKey) === row;
+    if (wasPooled) {
       managedServerPool.delete(poolKey);
     }
+    // `child.kill()` from an intentional dispose also lands here; listeners are
+    // only interesting for sessions still attached (refs > 0 and pooled).
+    const unexpected = wasPooled && row.refs > 0;
+    harnessLog({
+      level: unexpected ? "error" : "info",
+      backendId: "opencode-server",
+      event: unexpected ? "process.exit_unexpected" : "process.exit",
+      detail: `OpenCode Server at ${baseUrl} exited (code ${code ?? "null"}, signal ${signal ?? "null"}) after ${Math.round((Date.now() - spawnedAt) / 1000)}s.`,
+      data: { code, signal, attachedSessions: row.refs },
+    });
+    if (unexpected) {
+      for (const listener of [...row.exitListeners]) {
+        try {
+          listener(exit);
+        } catch {
+          // Listener failures must not break other subscribers.
+        }
+      }
+    }
+    row.exitListeners.clear();
   });
   try {
     await row.ready;
+    harnessLog({
+      backendId: "opencode-server",
+      event: "process.healthy",
+      detail: `OpenCode Server at ${baseUrl} became healthy in ${Date.now() - spawnedAt}ms.`,
+    });
   } catch (error) {
     managedServerPool.delete(poolKey);
     if (!child.killed) {
       child.kill();
     }
+    harnessLog({
+      level: "error",
+      backendId: "opencode-server",
+      event: "process.health_timeout",
+      detail: error instanceof Error ? error.message : String(error),
+    });
     throw error;
   }
   return {
     client,
     managed: true,
+    onProcessExit: (listener) => subscribeToRowExit(row, listener),
     dispose: async () => {
       releaseManagedOpenCodeServer(poolKey, row);
     },
