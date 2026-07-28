@@ -191,7 +191,12 @@ agentRoutes.post("/api/agents/conversations/standalone/create-and-prompt", async
   if (!body.text?.trim() && (!body.attachments || body.attachments.length === 0)) {
     return c.json({ error: "Expected prompt text or attachments." }, 400);
   }
-  const workspace = await createStandaloneChatWorkspace(body.title);
+  const workspace = await createStandaloneChatWorkspace(body.title, {
+    backendId: body.conversation?.backendId,
+    mode: body.conversation?.mode,
+    modelId: body.conversation?.modelId,
+    modelName: body.conversation?.modelName,
+  });
   const snapshot = await agentRuntimeManager.createConversationWithPrompt(
     workspace,
     body.conversation ?? {},

@@ -50,6 +50,7 @@ import {
   createDefaultWorkspaceSession,
   mergeWorkspaceSessionFromImport,
   createPersistableWorkspaceSession,
+  type ChatSessionState,
   type WorkspaceSessionState,
 } from "@/lib/workspace-session";
 import {
@@ -120,6 +121,16 @@ type WorkspaceContextValue = {
     updater: (current: WorkspaceSessionState) => WorkspaceSessionState
   ) => Promise<void>;
   flushWorkspaceSessionNow: () => Promise<void>;
+  /**
+   * Pre-seed the local session backup for a workspace that is about to be
+   * opened for the first time (e.g. a fresh standalone-chat sandbox) so the
+   * optimistic transition inherits the given chat draft selection instead of
+   * resetting to hard defaults.
+   */
+  seedWorkspaceSessionChatDraft: (
+    workspaceId: string,
+    chat: Pick<ChatSessionState, "backendId" | "mode" | "model">
+  ) => void;
   connected: boolean;
   connectionState: "idle" | "connecting" | "open" | "closed" | "reconnecting";
   lastFileChange: FileChangeNotice | null;
@@ -573,6 +584,29 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       });
     },
     [getSessionScopeId, sessionReady, windowId, workspaceInfo, writeIpadResumeSnapshot]
+  );
+
+  const seedWorkspaceSessionChatDraft = useCallback(
+    (
+      workspaceId: string,
+      chat: Pick<ChatSessionState, "backendId" | "mode" | "model">
+    ) => {
+      // The optimistic workspace transition falls back to hard session
+      // defaults when no local backup exists, then immediately re-writes that
+      // backup — which would beat any server-side session seed during
+      // hydration. Writing the backup first keeps the chat draft selection.
+      const defaults = createSessionDefaults();
+      writeWorkspaceSessionBackup(getSessionScopeId(workspaceId), {
+        ...defaults,
+        chat: {
+          ...defaults.chat,
+          backendId: chat.backendId,
+          mode: chat.mode,
+          model: chat.model,
+        },
+      });
+    },
+    [getSessionScopeId]
   );
 
   const flushWorkspaceSessionNow = useCallback(
@@ -1651,6 +1685,7 @@ let lastHeartbeatRunAt = Date.now();
       updateWorkspaceSession,
       updateWorkspaceSessionNow,
       flushWorkspaceSessionNow,
+      seedWorkspaceSessionChatDraft,
       connected: connectionState === "open",
       connectionState,
       lastFileChange,
@@ -1697,6 +1732,7 @@ let lastHeartbeatRunAt = Date.now();
       updateWorkspaceSession,
       updateWorkspaceSessionNow,
       flushWorkspaceSessionNow,
+      seedWorkspaceSessionChatDraft,
       connectionState,
       lastFileChange,
       fsResyncToken,

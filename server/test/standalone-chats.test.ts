@@ -11,6 +11,7 @@ process.env.OPENCURSOR_ALLOW_ANY_WORKSPACE_ROOT = "1";
 const { createStandaloneChatWorkspace, isStandaloneChatWorkspace, removeStandaloneChatWorkspace } =
   await import("../src/lib/standalone-chats.ts");
 const { getWorkspaceById, listWorkspaces } = await import("../src/lib/workspace-registry.ts");
+const { getWorkspaceSession } = await import("../src/lib/workspace-session-store.ts");
 
 describe("standalone chat workspaces", () => {
   after(async () => {
@@ -33,5 +34,35 @@ describe("standalone chat workspaces", () => {
 
     await removeStandaloneChatWorkspace(workspace.id);
     assert.equal(await getWorkspaceById(workspace.id), null);
+  });
+
+  test("seeds the sandbox session with the draft chat selection", async () => {
+    const workspace = await createStandaloneChatWorkspace(undefined, {
+      backendId: "cesium-agent",
+      mode: "agent",
+      modelId: "techlit/kimi-k3",
+      modelName: "Kimi K3",
+    });
+    assert.equal(workspace.name, "Chat");
+
+    const session = await getWorkspaceSession(workspace.id);
+    assert.ok(session);
+    const chat = (session as { chat?: Record<string, unknown> }).chat;
+    assert.equal(chat?.backendId, "cesium-agent");
+    assert.equal(chat?.mode, "agent");
+    assert.deepEqual(chat?.model, {
+      id: "techlit/kimi-k3",
+      modelValue: "techlit/kimi-k3",
+      name: "Kimi K3",
+      backendId: "cesium-agent",
+    });
+
+    await removeStandaloneChatWorkspace(workspace.id);
+  });
+
+  test("skips the session seed when no backend/model selection is provided", async () => {
+    const workspace = await createStandaloneChatWorkspace();
+    assert.equal(await getWorkspaceSession(workspace.id), null);
+    await removeStandaloneChatWorkspace(workspace.id);
   });
 });
