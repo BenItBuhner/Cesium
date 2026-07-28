@@ -402,16 +402,9 @@ const BUILTIN_ENV_KEYS: BuiltinEnvKey[] = [
 /** Default models for the env-bootstrapped OpenAI-compatible Cesium provider. */
 export const CESIUM_ENV_BOOTSTRAP_MODELS = [
   {
-    id: "glm-5.2",
-    name: "GLM 5.2",
+    id: "kimi-k3",
+    name: "Kimi K3",
     contextWindow: 1_000_000,
-    supportsImages: false,
-    supportsReasoning: true,
-  },
-  {
-    id: "kimi-k2.7-code",
-    name: "Kimi K2.7 Code",
-    contextWindow: 262_144,
     supportsImages: true,
     supportsReasoning: true,
   },
@@ -523,7 +516,7 @@ function parseCesiumEnvModels(raw: string | undefined): CesiumEnvBootstrap["mode
  * - `CESIUM_API_KEY` (falls back to `OPENAI_API_KEY`)
  * - `CESIUM_DEFAULT_MODEL`
  * - `CESIUM_PROVIDER_ID` (optional)
- * - `CESIUM_MODELS` (comma list or JSON array; defaults to glm-5.2 + kimi-k2.7-code)
+ * - `CESIUM_MODELS` (comma list or JSON array; defaults to kimi-k3)
  */
 export function readCesiumEnvBootstrap(
   env: NodeJS.ProcessEnv = process.env
@@ -1306,6 +1299,7 @@ function fallbackCrofAiCatalog(): CesiumModelCatalogEntry[] {
     { id: "glm-5.1", name: "Z.ai: GLM 5.1", contextWindow: 202_752, outputLimit: 202_752, reasoning: true },
     { id: "glm-5.1-precision", name: "Z.ai: GLM 5.1 (Precision)", contextWindow: 202_752, outputLimit: 202_752, reasoning: true },
     { id: "greg", name: "Experiment!: Greg", contextWindow: 229_376, outputLimit: 229_376 },
+    { id: "kimi-k3", name: "MoonshotAI: Kimi K3", contextWindow: 1_000_000, outputLimit: 1_000_000, reasoning: true, images: true },
     { id: "kimi-k2.7-code", name: "MoonshotAI: Kimi K2.7 Code", contextWindow: 262_144, outputLimit: 262_144, reasoning: true, images: true },
     { id: "kimi-k2.6", name: "MoonshotAI: Kimi K2.6", contextWindow: 262_144, outputLimit: 262_144, reasoning: true },
     { id: "kimi-k2.6-precision", name: "MoonshotAI: Kimi K2.6 (Precision)", contextWindow: 262_144, outputLimit: 262_144, reasoning: true },
