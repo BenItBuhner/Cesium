@@ -12,12 +12,43 @@ const [
   },
   { openCodeServerPartTextDelta },
   { extractOpenCodeEventSessionId, openCodeEventBelongsToRootSession, translateOpenCodeGlobalPayload },
+  { OpenCodeServerClient },
 ] = await Promise.all([
   import("../src/lib/agents/providers.js"),
   import("../src/lib/agents/opencode-server-normalize.js"),
   import("../src/lib/agents/opencode-server-provider.js"),
   import("../src/lib/agents/opencode-global-sse.js"),
+  import("../src/lib/agents/opencode-server-client.js"),
 ]);
+
+test("opencode server client scopes instance routes to the workspace directory", () => {
+  const client = new OpenCodeServerClient({
+    baseUrl: "http://127.0.0.1:9333/",
+    directory: "/data/standalone-chats/chat-123",
+  });
+  assert.equal(
+    client.url("/session"),
+    "http://127.0.0.1:9333/session?directory=%2Fdata%2Fstandalone-chats%2Fchat-123"
+  );
+  assert.equal(
+    client.url("/session/ses_1/prompt_async"),
+    "http://127.0.0.1:9333/session/ses_1/prompt_async?directory=%2Fdata%2Fstandalone-chats%2Fchat-123"
+  );
+  assert.equal(
+    client.url("/event"),
+    "http://127.0.0.1:9333/event?directory=%2Fdata%2Fstandalone-chats%2Fchat-123"
+  );
+  // Global routes are instance-independent and must stay unscoped.
+  assert.equal(client.url("/global/health"), "http://127.0.0.1:9333/global/health");
+  assert.equal(client.url("/global/event"), "http://127.0.0.1:9333/global/event");
+});
+
+test("opencode server client leaves routes unscoped without a directory", () => {
+  const client = new OpenCodeServerClient({ baseUrl: "http://127.0.0.1:9333" });
+  assert.equal(client.url("/session"), "http://127.0.0.1:9333/session");
+  const blank = new OpenCodeServerClient({ baseUrl: "http://127.0.0.1:9333", directory: "  " });
+  assert.equal(blank.url("/session"), "http://127.0.0.1:9333/session");
+});
 
 test("opencode server backend is registered in the harness menu", () => {
   const backends = listAgentBackends();

@@ -46,7 +46,7 @@ export async function consumeOpenCodeSse(input: {
 }): Promise<void> {
   while (!input.signal.aborted) {
     try {
-      const response = await fetch(`${input.client.baseUrl}${input.route}`, {
+      const response = await fetch(input.client.url(input.route), {
         headers: {
           Accept: "text/event-stream",
           ...input.client.headers(),

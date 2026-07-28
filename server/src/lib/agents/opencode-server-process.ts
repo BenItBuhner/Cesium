@@ -117,7 +117,14 @@ export async function connectOpenCodeServer(input: {
   const auth = openCodeServerAuthFromEnv();
   const externalUrl = process.env.OPENCURSOR_OPENCODE_SERVER_URL?.trim();
   if (externalUrl) {
-    const client = new OpenCodeServerClient({ baseUrl: externalUrl, ...auth });
+    // Shared/external servers host many workspaces from one process, so the
+    // client must pin every request to this workspace's directory: the server
+    // cwd fallback would run the chat in the wrong directory.
+    const client = new OpenCodeServerClient({
+      baseUrl: externalUrl,
+      directory: input.workspaceRoot,
+      ...auth,
+    });
     await waitForHealth(client);
     return {
       client,
@@ -180,7 +187,11 @@ export async function connectOpenCodeServer(input: {
       }
     }
   });
-  const client = new OpenCodeServerClient({ baseUrl, ...auth });
+  const client = new OpenCodeServerClient({
+    baseUrl,
+    directory: input.workspaceRoot,
+    ...auth,
+  });
   const row: ManagedServerPoolRow = {
     client,
     child,
