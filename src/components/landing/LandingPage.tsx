@@ -103,7 +103,7 @@ function WorkbenchShot() {
     <figure className="mx-auto max-w-[980px]">
       <div className="overflow-hidden rounded-[14px] border border-[var(--border-card)] bg-[var(--bg-panel)] shadow-[0_24px_80px_-24px_rgba(0,0,0,0.35)]">
         <div className="flex items-center gap-[8px] border-b border-[var(--border-subtle)] bg-[var(--bg-main)] px-[14px] py-[10px]">
-          <span className="size-[10px] rounded-full bg-[var(--burn-accent)] opacity-80" />
+          <span className="size-[10px] rounded-full bg-[var(--goal-accent)] opacity-80" />
           <span className="size-[10px] rounded-full bg-[var(--plan-accent)] opacity-80" />
           <span className="size-[10px] rounded-full bg-[var(--ask-accent)] opacity-80" />
           <span className="ml-[10px] font-mono text-[11px] text-[var(--text-disabled)]">
@@ -168,8 +168,8 @@ const FEATURES = [
     icon: TerminalSquare,
     title: "Integrated terminals",
     body: "Real PTY sessions streamed to xterm.js. Watch what your agents run, scroll back through it, and take over whenever you want.",
-    accent: "var(--burn-accent)",
-    accentBg: "var(--burn-accent-bg)",
+    accent: "var(--goal-accent)",
+    accentBg: "var(--goal-accent-bg)",
   },
   {
     icon: FolderOpen,

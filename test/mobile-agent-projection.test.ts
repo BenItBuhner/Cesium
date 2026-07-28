@@ -291,11 +291,11 @@ describe("mobile agent projection", () => {
         },
         {
           seq: 2,
-          eventId: "burn-set",
+          eventId: "goal-set",
           conversationId: "c1",
           createdAt: 10_000,
           kind: "tool_call_update",
-          toolCallId: "burn-set",
+          toolCallId: "goal-set",
           status: "completed",
           raw: {
             request: {
@@ -306,11 +306,11 @@ describe("mobile agent projection", () => {
         },
         {
           seq: 3,
-          eventId: "burn-progress",
+          eventId: "goal-progress",
           conversationId: "c1",
           createdAt: 40_000,
           kind: "tool_call_update",
-          toolCallId: "burn-progress",
+          toolCallId: "goal-progress",
           status: "completed",
           raw: {
             request: {

@@ -2817,7 +2817,7 @@ function mergeWorkSessionEditPreview(
   return incN >= exN ? incoming : existing;
 }
 
-function burnToolRequestFromRaw(
+function goalToolRequestFromRaw(
   rawTop: Record<string, unknown> | undefined,
   rawToolRecord: Record<string, unknown> | undefined
 ): { name: string; args: Record<string, unknown> } | null {
@@ -3163,9 +3163,9 @@ function formatToolSummary(
         "Tool call was rejected by the current approval settings."
       : undefined);
   const rawDetail = isVerboseToolPayloadDetail(detail) ? detail?.trim() : existing?.rawDetail;
-  const burnTool = burnToolRequestFromRaw(rawTop, rawToolRecord);
-  if (burnTool) {
-    const presentation = goalToolPresentation(burnTool);
+  const goalTool = goalToolRequestFromRaw(rawTop, rawToolRecord);
+  if (goalTool) {
+    const presentation = goalToolPresentation(goalTool);
     return withConciseToolDetail({
       kind: "tool",
       toolCallId: event.toolCallId,

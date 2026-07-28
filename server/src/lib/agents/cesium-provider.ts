@@ -37,6 +37,8 @@ import { readConversationEvents } from "./session-store.js";
 import { extractToolEditPreview } from "./tool-edit-preview.js";
 import { buildCesiumModeReminder } from "./cesium-mode-reminders.js";
 import {
+  normalizeCesiumMode,
+  normalizeCesiumToolName,
   resolveCesiumModeToolPolicy,
   summarizeCesiumModeToolPolicy,
 } from "./cesium-mode-policy.js";
@@ -477,8 +479,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
   }
 
   private isGoalMode(): boolean {
-    const mode = this.currentMode();
-    return mode === "goal" || mode === "burn";
+    return this.currentMode() === "goal";
   }
 
   private isWorkflowMode(): boolean {
@@ -491,7 +492,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
       "mode",
       this.callbacks.conversation.config.mode ?? "agent"
     );
-    return String(raw).trim().toLowerCase() === "burn" ? "goal" : String(raw);
+    return normalizeCesiumMode(String(raw));
   }
 
   private createAssistantStreamSink(
@@ -627,7 +628,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
       const board = this.isOrchestrationMode()
         ? await this.resolveCurrentOrchestrationBoard()
         : null;
-      const burnState = this.isGoalMode()
+      const goalState = this.isGoalMode()
         ? await ensureGoalForConversation({
             workspace: this.callbacks.workspace,
             conversationId: this.callbacks.conversation.id,
@@ -700,7 +701,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
           environmentChangeNotice,
           orchestrationBoard: board,
           handoffPlanPath: input.planHandoff?.planPath,
-          goalSummary: burnState ? formatGoalForModel(burnState) : null,
+          goalSummary: goalState ? formatGoalForModel(goalState) : null,
           workflowRunSummary: workflowState ? formatWorkflowRunForModel(workflowState) : null,
         }),
         featureReminder
@@ -1727,9 +1728,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
       if (featureExecutor?.executeTool) {
         result = await featureExecutor.executeTool(request.name, request.arguments);
       } else {
-        const toolName = request.name.startsWith("burn_goal_")
-          ? `goal_${request.name.slice("burn_goal_".length)}`
-          : request.name;
+        const toolName = normalizeCesiumToolName(request.name);
         switch (toolName) {
         case "read_file":
           result = await this.toolReadFile(request.arguments);
@@ -2594,7 +2593,8 @@ class CesiumSessionHandle implements AgentSessionHandle {
     if (!rawTarget) {
       throw new Error("switch_mode.target_mode is required.");
     }
-    const knownMode = CESIUM_MODE_DEFINITIONS.find((mode) => mode.id === rawTarget);
+    const normalizedTarget = normalizeCesiumMode(rawTarget);
+    const knownMode = CESIUM_MODE_DEFINITIONS.find((mode) => mode.id === normalizedTarget);
     if (!knownMode) {
       throw new Error(
         `Unknown mode "${rawTarget}". Allowed modes: ${CESIUM_MODE_DEFINITIONS.map((mode) => mode.id).join(", ")}.`

@@ -31,28 +31,28 @@ export function toLiveUpdatePayload(
     };
   }
 
-  const burn = projection.goalProgress;
-  if (burn) {
-    const remaining = formatRemainingTime(burn.estimatedRemainingMs);
+  const goal = projection.goalProgress;
+  if (goal) {
+    const remaining = formatRemainingTime(goal.estimatedRemainingMs);
     return {
       runKey,
       title: projection.title || "Cesium agent",
       body: withRemainingTime(
-        burn.headline || projection.currentActivity || "Goal is running",
+        goal.headline || projection.currentActivity || "Goal is running",
         remaining
       ),
-      shortText: `${burn.percent}%`,
+      shortText: `${goal.percent}%`,
       workspaceId: projection.workspaceId,
       conversationId: projection.conversationId,
       startedAt: projection.startedAt,
-      estimatedCompletionAt: burn.estimatedCompletionAt,
+      estimatedCompletionAt: goal.estimatedCompletionAt,
       progressKind: "goal",
-      progressLabel: `${burn.percent}%`,
-      progress: burn.percent,
+      progressLabel: `${goal.percent}%`,
+      progress: goal.percent,
       progressMax: 100,
       indeterminate: false,
-      goalProgressPercent: burn.percent,
-      estimatedRemainingSeconds: toRemainingSeconds(burn.estimatedRemainingMs),
+      goalProgressPercent: goal.percent,
+      estimatedRemainingSeconds: toRemainingSeconds(goal.estimatedRemainingMs),
       intervention: projection.pendingIntervention,
       ongoing: true,
       cancellable: true,

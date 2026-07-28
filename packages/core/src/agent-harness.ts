@@ -133,14 +133,14 @@ export const CESIUM_TOOL_DEFINITIONS: CesiumToolDefinition[] = [
   {
     name: "switch_mode",
     description:
-      "Switch this conversation into another Cesium mode. Requires user approval by default.",
+      "Switch this conversation into another Cesium operating profile. Requires user approval by default.",
     requiresPermission: "switchMode",
     parameters: {
       type: "object",
       properties: {
         target_mode: {
           type: "string",
-          enum: ["agent", "plan", "orchestration", "burn", "workflow", "ask"],
+          enum: ["agent", "plan", "orchestration", "goal", "workflow", "ask"],
         },
         reason: { type: "string" },
       },

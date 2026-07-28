@@ -1,6 +1,9 @@
 import type { McpServerSummary } from "@cesium/core/mcp";
 import type { OrchestrationBoardSnapshot } from "../orchestration/types.js";
-import { summarizeCesiumModeToolPolicy } from "./cesium-mode-policy.js";
+import {
+  normalizeCesiumMode,
+  summarizeCesiumModeToolPolicy,
+} from "./cesium-mode-policy.js";
 
 export type CesiumModeReminderInput = {
   mode: string;
@@ -21,7 +24,7 @@ export type CesiumModeReminderInput = {
 };
 
 function modeTitle(mode: string): string {
-  const normalized = mode.trim().toLowerCase() === "burn" ? "goal" : mode.trim().toLowerCase();
+  const normalized = normalizeCesiumMode(mode);
   if (normalized === "ask") return "Ask";
   if (normalized === "plan") return "Plan";
   if (normalized === "goal") return "Goal";
@@ -31,7 +34,7 @@ function modeTitle(mode: string): string {
 }
 
 function modeFlow(mode: string): string {
-  const normalized = mode.trim().toLowerCase() === "burn" ? "goal" : mode.trim().toLowerCase();
+  const normalized = normalizeCesiumMode(mode);
   if (normalized === "ask") {
     return [
       "The general flow when working on tasks is 1) context collection, be it grep, read, or anything else 2) answering any/all questions asked by the user.",
@@ -50,14 +53,18 @@ function modeFlow(mode: string): string {
     return [
       "The general flow when working in Goal mode is 1) keep the user's objective as durable Goal task context with goal_set 2) execute sequentially while refreshing compact goal state with goal_set as needed 3) record meaningful progress snapshots with goal_summarize 4) pause or block only when appropriate 5) audit every requirement before calling goal_complete.",
       "",
-      "Goal mode is persistent across turns. You must not shrink the goal to what fits in one turn. Use goal_summarize periodically after meaningful progress, after resolving a blocker, before pausing, before completing, and whenever the latest summary is missing or materially stale. Do not call it every turn, and do not stop after a progress snapshot if there is still concrete work to do.",
+      "Goal mode is a durable execution profile, not merely a label. You MUST use the Goal lifecycle controls to keep its canonical state truthful. Do not shrink the goal to what fits in one turn. Use goal_summarize periodically after meaningful progress, after resolving a blocker, before pausing, before completing, and whenever the latest summary is missing or materially stale. Do not call it every turn, and do not stop after a progress snapshot if there is still concrete work to do.",
       "",
-      "In Cesium Goal mode, the Goal control tools are goal_set, goal_pause, goal_block, goal_summarize, and goal_complete. Use goal_complete only after verification passes, and use goal_block only when a genuine external blocker prevents progress.",
+      "The Goal control tools are goal_set, goal_pause, goal_block, goal_summarize, and goal_complete. Use goal_complete only after verification passes, and use goal_block only when a genuine external blocker prevents progress. Workflow tools remain available as a capability: use them when fan-out or a scripted verification pipeline materially advances the Goal, while keeping Goal state authoritative.",
     ].join("\n");
   }
   if (normalized === "workflow") {
     return [
       "The general flow when working in Workflow mode is 1) understand the fan-out / verification shape of the task 2) write a JavaScript orchestration script beginning with `export const meta = { name, description, phases }` 3) execute it with workflow_run (wait=true unless you intentionally background it) 4) inspect with workflow_status / workflow_await 5) return only the final synthesized result to the user.",
+      "",
+      "After the required meta declaration, write top-level workflow statements and return the final value directly. NEVER wrap the body in `export default async function` and never import modules; the runtime already supplies the async wrapper and workflow primitives.",
+      "",
+      "Workflow mode is a strong workflow-first profile. For any task with meaningful parallel research, repeated item processing, or staged verification, you SHOULD use workflow_run instead of manually reproducing the same fan-out with a long parent-turn tool chain. If the task is genuinely linear or too small to benefit, use direct tools or switch modes rather than inventing a pointless script.",
       "",
       "Workflow scripts may use agent(), parallel(), pipeline(), phase(), log(), budget, and args. Prefer pipeline() for multi-stage item processing. Use parallel() only when a later stage needs every prior result at once. Keep intermediate agent results in script variables — do not dump every subagent transcript into the parent reply.",
       "",
@@ -69,6 +76,8 @@ function modeFlow(mode: string): string {
   }
   return [
     "The general flow when working on tasks is 1) context collection, be it grep, read, or anything else 2) editing files to implement the necessary changes and running various commands to build things, run servers, perform tests, etc. 3) iterate and refine until the task(s) provided by the user are achieved with reasonable verification unless instructed otherwise.",
+    "",
+    "Agent mode is the general execution profile. Workflow tools are available directly as a capability: use them when meaningful fan-out, repeated item processing, or a staged verification pipeline would outperform a long manual tool chain. Switch to Workflow mode when the work should remain workflow-first across the turn. For a durable multi-turn objective that needs canonical progress and completion enforcement, call switch_mode with target_mode goal before using Goal controls.",
     "",
     "This lifecycle is intended for you to keep working until the derived goal is accomplished and verifiably working to the extent at which you can test and verify it functions to the user's specifications or verbatim.",
   ].join("\n");
@@ -88,7 +97,7 @@ function mcpSummaryText(summaries: McpServerSummary[]): string {
 }
 
 export function buildCesiumModeReminder(input: CesiumModeReminderInput): string {
-  const mode = input.mode.trim().toLowerCase() || "agent";
+  const mode = normalizeCesiumMode(input.mode);
   const title = modeTitle(mode);
   const policy = summarizeCesiumModeToolPolicy(mode);
   const board = input.orchestrationBoard;
@@ -120,6 +129,8 @@ export function buildCesiumModeReminder(input: CesiumModeReminderInput): string 
             ? "plan in an agentic manner to prepare for any assortment of tasks given to you by the user"
             : mode === "orchestration"
               ? "coordinate work, manage orchestration state, delegate where useful, and supervise progress"
+              : mode === "goal"
+                ? "persist and execute the active Goal until it is verified complete, deliberately paused, or genuinely blocked"
               : mode === "workflow"
                 ? "write and execute JavaScript workflow scripts that fan work across subagents while keeping intermediate results out of the parent context"
                 : "work in an agentic manner to complete any assortment of tasks given to you by the user"
@@ -128,7 +139,7 @@ export function buildCesiumModeReminder(input: CesiumModeReminderInput): string 
   return `<system-reminder>
 ${opening}
 
-This switch has been done via the user, and you should abide by all instructions attached below along with the user context, disregarding prior behavior from other modes you were or might have been in.
+The active mode is authoritative whether the user selected it directly or approved a model-requested switch. Follow the policy below for this turn and subsequent turns until the mode changes; do not carry conflicting behavior forward from a previous mode.
 
 ## Current Environment
 

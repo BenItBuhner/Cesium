@@ -33,6 +33,7 @@ import {
   computeCesiumAgentContextUsage,
   unsupportedContextUsageSnapshot,
 } from "./cesium-context-usage.js";
+import { normalizeCesiumMode } from "./cesium-mode-policy.js";
 import { listOrchestrationChildConversationIds } from "../orchestration/store.js";
 import { goalContinuationContext } from "./goal-steering.js";
 import {
@@ -334,11 +335,10 @@ export class AgentRuntimeManager {
     userText: string;
     continuation?: boolean;
   }): Promise<string> {
-    const nativeBurn =
+    const nativeGoal =
       input.record.config.backendId === "cesium-agent" &&
-      String(input.record.config.mode).trim().toLowerCase() === "goal" ||
-      String(input.record.config.mode).trim().toLowerCase() === "burn";
-    if (!nativeBurn) {
+      normalizeCesiumMode(String(input.record.config.mode)) === "goal";
+    if (!nativeGoal) {
       return input.userText;
     }
     if (input.continuation !== true) {
@@ -371,8 +371,7 @@ export class AgentRuntimeManager {
   }): Promise<void> {
     const nativeGoal =
       input.conversation.config.backendId === "cesium-agent" &&
-      (String(input.conversation.config.mode).trim().toLowerCase() === "goal" ||
-        String(input.conversation.config.mode).trim().toLowerCase() === "burn");
+      normalizeCesiumMode(String(input.conversation.config.mode)) === "goal";
     if (!nativeGoal) {
       return;
     }

@@ -8,6 +8,7 @@ import {
   type CesiumToolDefinition,
   type ResolvedCesiumHarness,
 } from "./features/index.js";
+import { normalizeCesiumMode } from "../cesium-mode-policy.js";
 import { asRecord, asString, parseJsonArgs, pickFirstString } from "./cesium-coerce.js";
 import { WAIT_MAX_SECONDS } from "./cesium-prompt.js";
 import type { CesiumToolRequest } from "./cesium-types.js";
@@ -135,16 +136,16 @@ const CESIUM_BASE_TOOLS: CesiumToolDefinition[] = [
   {
     name: "switch_mode",
     description:
-      "Switch this conversation into another Cesium mode (agent, plan, ask, orchestration, burn, or workflow). " +
+      "Switch this conversation into another Cesium operating profile (agent, plan, ask, orchestration, goal, or workflow). " +
       "Requires user approval by default; the user can Always allow a specific target mode. " +
-      "Use when the task needs a different operating mode instead of asking the user to change the mode picker themselves.",
+      "Use when the task needs a different operating policy; do not switch merely to access Workflow tools already available in Agent or Goal mode.",
     requiresPermission: "switchMode",
     parameters: {
       type: "object",
       properties: {
         target_mode: {
           type: "string",
-          enum: ["agent", "plan", "orchestration", "burn", "workflow", "ask"],
+          enum: ["agent", "plan", "orchestration", "goal", "workflow", "ask"],
           description: "Mode to switch into. Must be enabled in Cesium Agent settings.",
         },
         reason: {
@@ -252,7 +253,7 @@ const CESIUM_BASE_TOOLS: CesiumToolDefinition[] = [
   {
     name: "goal_set",
     description:
-      "Set or refresh the active Goal state. Use this to record the objective, current plan summary, compact milestones/todos, and verification evidence before or during execution.",
+      "Set or refresh canonical state for the active Goal profile. Use this to record the objective, current plan summary, compact milestones/todos, and verification evidence before or during execution. Goal controls require Goal mode because that mode activates durable continuation.",
     parameters: {
       type: "object",
       properties: {
@@ -321,14 +322,14 @@ const CESIUM_BASE_TOOLS: CesiumToolDefinition[] = [
   {
     name: "workflow_run",
     description:
-      "Compile and execute a Workflow mode JavaScript orchestration script. The script MUST begin with `export const meta = { name, description, phases }` (pure literal) and may use agent()/parallel()/pipeline()/phase()/log()/budget/args. Prefer wait=true so the tool returns the final script value. Intermediate agent results stay in script variables, not the parent transcript.",
+      "Compile and execute a JavaScript orchestration workflow from Agent, Goal, or Workflow mode. Use it dynamically for meaningful fan-out, repeated item processing, or staged verification. The script MUST begin with `export const meta = { name, description, phases }` (pure literal). After that declaration, write top-level workflow statements and `return` the final value directly; NEVER export a default function or import modules. The body may use agent()/parallel()/pipeline()/phase()/log()/budget/args. Prefer wait=true so the tool returns the final script value. Intermediate agent results stay in script variables, not the parent transcript.",
     parameters: {
       type: "object",
       properties: {
         script: {
           type: "string",
           description:
-            "Self-contained workflow script beginning with export const meta = { name, description, phases }.",
+            "Self-contained workflow script beginning with export const meta = { name, description, phases }, followed by top-level statements and a direct return (no export default function or imports).",
         },
         scriptPath: {
           type: "string",
@@ -376,7 +377,7 @@ const CESIUM_BASE_TOOLS: CesiumToolDefinition[] = [
   {
     name: "workflow_status",
     description:
-      "Read the status of a Workflow mode run (phase, agents used, logs, return value). Defaults to the latest run for this conversation when runId is omitted.",
+      "Read the status of a workflow run (phase, agents used, logs, return value). Defaults to the latest run for this conversation when runId is omitted.",
     parameters: {
       type: "object",
       properties: {
@@ -388,7 +389,7 @@ const CESIUM_BASE_TOOLS: CesiumToolDefinition[] = [
   {
     name: "workflow_await",
     description:
-      "Wait for a Workflow mode run to reach a terminal state and return its result summary.",
+      "Wait for a workflow run to reach a terminal state and return its result summary.",
     parameters: {
       type: "object",
       properties: {
@@ -889,10 +890,11 @@ export function cesiumPermissionToolKey(
     case "mcpCall":
       return `cesium:mcp:${asString(args.serverId) ?? ""}:${asString(args.toolName) ?? ""}`;
     case "switchMode": {
-      const target =
+      const rawTarget =
         asString(args.target_mode)?.trim().toLowerCase() ||
         asString(args.targetMode)?.trim().toLowerCase() ||
         "";
+      const target = rawTarget ? normalizeCesiumMode(rawTarget) : "";
       return `cesium:switch_mode:${target}`;
     }
   }
@@ -921,8 +923,9 @@ export function toolTitle(name: string, args: Record<string, unknown>): string {
     case "terminal":
       return `Run ${asString(args.command) ?? "command"}`;
     case "switch_mode": {
-      const target =
-        asString(args.target_mode)?.trim() || asString(args.targetMode)?.trim() || "mode";
+      const rawTarget =
+        asString(args.target_mode)?.trim() || asString(args.targetMode)?.trim() || "";
+      const target = rawTarget ? normalizeCesiumMode(rawTarget) : "mode";
       return `Switch to ${target} mode`;
     }
     case "wait": {

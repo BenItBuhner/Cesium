@@ -52,10 +52,13 @@ const WORKFLOW_TOOLS = new Set([
   "workflow_await",
 ]);
 
+/** Legacy persisted mode id accepted only at normalization boundaries. */
+export const LEGACY_GOAL_MODE_ID = "burn";
+
 export function normalizeCesiumMode(mode: string | undefined | null): string {
   const normalized = String(mode ?? "agent").trim().toLowerCase();
   if (!normalized) return "agent";
-  return normalized === "burn" ? "goal" : normalized;
+  return normalized === LEGACY_GOAL_MODE_ID ? "goal" : normalized;
 }
 
 export function isOrchestrationToolName(name: string): boolean {
@@ -66,9 +69,15 @@ export function isPlanFileToolName(name: string): boolean {
   return PLAN_FILE_TOOLS.has(name);
 }
 
+/** Canonicalize pre-Goal tool names from persisted transcripts and older clients. */
+export function normalizeCesiumToolName(name: string): string {
+  return name.startsWith("burn_goal_")
+    ? `goal_${name.slice("burn_goal_".length)}`
+    : name;
+}
+
 export function isGoalToolName(name: string): boolean {
-  const normalized =
-    name.startsWith("burn_goal_") ? `goal_${name.slice("burn_goal_".length)}` : name;
+  const normalized = normalizeCesiumToolName(name);
   return GOAL_TOOLS.has(normalized) || normalized === "goal_resume";
 }
 
@@ -88,10 +97,7 @@ export function resolveCesiumModeToolPolicy(input: {
   toolName: string;
 }): CesiumToolPolicyDecision {
   const mode = normalizeCesiumMode(input.mode);
-  const name =
-    input.toolName.startsWith("burn_goal_")
-      ? `goal_${input.toolName.slice("burn_goal_".length)}`
-      : input.toolName;
+  const name = normalizeCesiumToolName(input.toolName);
 
   // Mode switching is available from every mode so the agent can request a change.
   if (name === "switch_mode") {
@@ -158,12 +164,6 @@ export function resolveCesiumModeToolPolicy(input: {
     if (isOrchestrationToolName(name)) {
       return policyBlock(name, "Goal mode executes its own plan and does not mutate the orchestration kanban directly.");
     }
-    if (isWorkflowToolName(name)) {
-      return policyBlock(name, "Goal mode executes its own durable goal loop and does not run Workflow scripts.");
-    }
-    if (name === "goal_complete" || name === "goal_block") {
-      return { allowed: true };
-    }
     return { allowed: true };
   }
 
@@ -184,10 +184,10 @@ export function resolveCesiumModeToolPolicy(input: {
     return policyBlock(name, "Orchestration tools are only available in Orchestration mode.");
   }
   if (isGoalToolName(name)) {
-    return policyBlock(name, "Goal control tools are only available in Goal mode.");
-  }
-  if (isWorkflowToolName(name)) {
-    return policyBlock(name, "Workflow tools are only available in Workflow mode.");
+    return policyBlock(
+      name,
+      "Goal controls require Goal mode because that mode activates durable continuation and completion enforcement. Use switch_mode with target_mode goal first."
+    );
   }
   return { allowed: true };
 }
@@ -266,10 +266,15 @@ export function summarizeCesiumModeToolPolicy(mode: string | undefined | null): 
           "subagents",
           "plan-file tools",
           "Goal tools",
+          "Workflow tools",
           "MCP tools",
         ],
-        restricted: ["goal_complete requires a final audit; goal_block requires repeated same-blocker evidence"],
-        blocked: ["orchestration kanban mutations", "Workflow execution controls"],
+        restricted: [
+          "Goal lifecycle controls are mandatory for durable state and completion",
+          "goal_complete requires a final audit; goal_block requires repeated same-blocker evidence",
+          "Use Workflow tools when parallel fan-out or a scripted verification pipeline materially helps the Goal",
+        ],
+        blocked: ["orchestration kanban mutations"],
       };
     case "workflow":
       return {
@@ -307,9 +312,14 @@ export function summarizeCesiumModeToolPolicy(mode: string | undefined | null): 
           "subagents",
           "history tools",
           "MCP tools",
+          "Workflow tools",
         ],
-        restricted: ["plan-file tools only for explicit plan creation or handoff"],
-        blocked: ["orchestration_* tools", "Goal execution controls", "Workflow execution controls"],
+        restricted: [
+          "plan-file tools only for explicit plan creation or handoff",
+          "Use Workflow tools directly for meaningful fan-out or repeatable pipelines; switch to Workflow mode for sustained workflow-first execution",
+          "Switch to Goal mode before using Goal controls so durable continuation is active",
+        ],
+        blocked: ["orchestration_* tools", "Goal execution controls"],
       };
   }
 }

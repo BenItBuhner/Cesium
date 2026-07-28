@@ -148,6 +148,13 @@ export function compileWorkflowScript(script: string): CompileWorkflowResult {
       )
     );
     // Syntax-check the body in isolation (async wrapper).
+    if (/^\s*(?:export|import)\b/m.test(split.body)) {
+      return {
+        ok: false,
+        error:
+          "After the meta export, write top-level workflow statements and return the final value directly. Do not import modules or export a default function.",
+      };
+    }
     new Script(`(async () => {\n${split.body}\n})`, { filename: "workflow.js" });
     if (/\bDate\.now\b|\bMath\.random\b/.test(split.body)) {
       return {

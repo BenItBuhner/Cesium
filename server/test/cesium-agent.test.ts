@@ -52,7 +52,7 @@ const [
   },
   { normalizeEventsToHistory, openAiMessages, cesiumPermissionToolKey, createCesiumAgentProvider, createCesiumAssistantStreamSink, buildOpenAiToolDefinitions, sanitizeOpenAiCompatibleJsonSchema, normalizeCesiumToolResultForModel, isEmptyCesiumAdapterResult, normalizeCallMcpToolArgs },
   { buildCesiumBaseSystemPrompt },
-  { resolveCesiumModeToolPolicy },
+  { normalizeCesiumMode, resolveCesiumModeToolPolicy },
   { parsePlanEntriesFromMarkdown },
   { createGoalRecord, formatGoalForModel, validateGoalSnapshotSummary },
   { goalCompactionRecoveryContext, goalContinuationContext },
@@ -106,6 +106,10 @@ test("cesiumPermissionToolKey scopes remembered rules by tool shape", () => {
   assert.equal(
     cesiumPermissionToolKey("switchMode", { targetMode: "Ask" }),
     "cesium:switch_mode:ask"
+  );
+  assert.equal(
+    cesiumPermissionToolKey("switchMode", { target_mode: "burn" }),
+    "cesium:switch_mode:goal"
   );
 });
 
@@ -874,14 +878,14 @@ test("Cesium mode preferences remove disabled modes from the live catalog", asyn
 test("Goal records start in planning with durable milestones and todos", () => {
   const goal = createGoalRecord({
     workspace: {
-      id: "ws-burn",
+      id: "ws-goal",
       root: TEST_DATA_DIR,
       name: "Goal workspace",
       createdAt: 1,
       updatedAt: 1,
       lastOpenedAt: 1,
     },
-    conversationId: "conv-burn",
+    conversationId: "conv-goal",
     objective: "Ship the hybrid Goal mode.",
   });
   assert.equal(goal.status, "planning");
@@ -918,14 +922,14 @@ test("Goal progress snapshots require the OpenCode-style markdown sections", () 
 test("Goal continuation context preserves objective and blocker audit rules", () => {
   const goal = createGoalRecord({
     workspace: {
-      id: "ws-burn",
+      id: "ws-goal",
       root: TEST_DATA_DIR,
       name: "Goal workspace",
       createdAt: 1,
       updatedAt: 1,
       lastOpenedAt: 1,
     },
-    conversationId: "conv-burn",
+    conversationId: "conv-goal",
     objective: "Finish <all> requirements & verify them.",
   });
   const context = goalContinuationContext({
@@ -996,14 +1000,14 @@ test("Goal continuation context preserves objective and blocker audit rules", ()
 test("Goal model summary includes snapshot freshness and recent history", () => {
   const goal = createGoalRecord({
     workspace: {
-      id: "ws-burn-model",
+      id: "ws-goal-model",
       root: TEST_DATA_DIR,
       name: "Goal workspace",
       createdAt: 1,
       updatedAt: 1,
       lastOpenedAt: 1,
     },
-    conversationId: "conv-burn-model",
+    conversationId: "conv-goal-model",
     objective: "Ship the Goal UI summary view.",
   });
   const summary = formatGoalForModel({
@@ -1073,6 +1077,18 @@ test("Cesium base prompt and tool schema are stable across dynamic modes", () =>
   assert.equal(names.includes("workflow_await"), true);
   assert.equal(names.includes("wait"), true);
   assert.equal(names.includes("switch_mode"), true);
+  const switchMode = tools.find((tool) => tool.function.name === "switch_mode");
+  const switchModeParameters = switchMode?.function.parameters as {
+    properties?: { target_mode?: { enum?: string[] } };
+  };
+  assert.deepEqual(switchModeParameters.properties?.target_mode?.enum, [
+    "agent",
+    "plan",
+    "orchestration",
+    "goal",
+    "workflow",
+    "ask",
+  ]);
   assert.equal(names.includes("goal_update_plan"), false);
   assert.equal(names.includes("goal_update_progress"), false);
   assert.equal(names.includes("goal_summarize_state"), false);
@@ -1092,6 +1108,8 @@ test("Cesium Goal reminder uses Goal tools instead of generic goal state phrases
   assert.match(reminder, /goal_complete/);
   assert.match(reminder, /latest summary is missing or materially stale/);
   assert.match(reminder, /Do not call it every turn/);
+  assert.match(reminder, /durable execution profile/);
+  assert.match(reminder, /Workflow tools remain available as a capability/);
   assert.doesNotMatch(reminder, /GOAL_STATE:/);
 });
 
@@ -1138,6 +1156,10 @@ test("Cesium mode policy blocks write tools in Ask and permits plan tools in Pla
   );
   assert.equal(resolveCesiumModeToolPolicy({ mode: "agent", toolName: "wait" }).allowed, true);
   assert.equal(resolveCesiumModeToolPolicy({ mode: "agent", toolName: "switch_mode" }).allowed, true);
+  assert.equal(resolveCesiumModeToolPolicy({ mode: "agent", toolName: "workflow_run" }).allowed, true);
+  assert.equal(resolveCesiumModeToolPolicy({ mode: "agent", toolName: "goal_set" }).allowed, false);
+  assert.equal(resolveCesiumModeToolPolicy({ mode: "goal", toolName: "workflow_run" }).allowed, true);
+  assert.equal(normalizeCesiumMode("burn"), "goal");
   assert.equal(resolveCesiumModeToolPolicy({ mode: "agent", toolName: "orchestration_create_issue" }).allowed, false);
 });
 
