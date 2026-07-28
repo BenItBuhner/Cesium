@@ -13,6 +13,7 @@ import { attachOrchestrationSocket } from "../ws/orchestration.js";
 import { attachFsSocket } from "../ws/filewatcher.js";
 import { attachTerminalSocket } from "../ws/terminal.js";
 import { attachBrowserDebugSocket } from "../ws/browser-debug.js";
+import { attachExtensionsSocket } from "../ws/extensions.js";
 import { BufferedRuntimeSocket, type RuntimeSocketData } from "../ws/runtime-socket.js";
 
 // Match Node entry resilience: transient TLS / WS flakes must not take down Bun.
@@ -24,7 +25,7 @@ process.on("uncaughtException", (error) => {
 });
 
 type BunSocketData = {
-  kind: "agent" | "orchestration" | "fs" | "terminal" | "browser-debug";
+  kind: "agent" | "orchestration" | "fs" | "terminal" | "browser-debug" | "extensions";
   workspaceId?: string;
   since?: number;
   terminalId?: string;
@@ -82,13 +83,11 @@ async function upgradeOrReject(
   const authKind =
     kind === "fs"
       ? "ws-fs"
-      : kind === "agent"
+      : kind === "agent" || kind === "orchestration" || kind === "extensions"
         ? "ws-agent"
-        : kind === "orchestration"
-          ? "ws-agent"
-          : kind === "terminal"
-            ? "ws-terminal"
-            : "ws-browser-debug";
+        : kind === "terminal"
+          ? "ws-terminal"
+          : "ws-browser-debug";
   const auth = responseFromUpgradeAuth(await authenticateUpgradeRequest(request, authKind));
   if (auth) {
     return auth;
@@ -125,6 +124,9 @@ function attachSocket(ws: BunServerWebSocket): void {
         ws.data.subPath ?? ""
       );
       break;
+    case "extensions":
+      attachExtensionsSocket(runtimeSocket, ws.data.workspaceId ?? "");
+      break;
     default: {
       const exhaustive: never = ws.data.kind;
       runtimeSocket.close(1011, `Unknown socket kind: ${String(exhaustive)}`);
@@ -160,6 +162,11 @@ export function startBunServer(): void {
       }
       if (url.pathname === "/ws/orchestration") {
         return upgradeOrReject(request, bunServer, "orchestration", {
+          workspaceId: url.searchParams.get("workspaceId")?.trim() || "",
+        });
+      }
+      if (url.pathname === "/ws/extensions") {
+        return upgradeOrReject(request, bunServer, "extensions", {
           workspaceId: url.searchParams.get("workspaceId")?.trim() || "",
         });
       }

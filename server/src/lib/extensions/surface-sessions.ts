@@ -1,13 +1,17 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { WorkspaceRecord } from "../workspace-registry.js";
+import { getWorkspaceById } from "../workspace-registry.js";
 import {
   deliverExtensionSurfaceMessage,
   getExtensionHostStatus,
+  onExtensionHostEvent,
+  onExtensionHostLifecycle,
   releaseExtensionHost,
   resolveExtensionSurface,
   retainExtensionHost,
   updateExtensionSurfaceThemeInHost,
 } from "./host-runtime.js";
+import { logWorkspaceExtensionEvent } from "./host-events.js";
 import type { ExtensionHostStatus, ExtensionInstallRecord } from "./types.js";
 
 export type ExtensionSurfacePlacement = "sidebar" | "editor";
@@ -18,14 +22,13 @@ export type ExtensionWebviewThemeSnapshot = {
   variables: Record<string, string>;
 };
 
-export type ExtensionSurfaceEvent =
-  | {
-      seq: number;
-      ts: number;
-      type: "html" | "message" | "external-url" | "state" | "theme" | "status";
-      sessionId: string;
-      payload?: unknown;
-    };
+export type ExtensionSurfaceEvent = {
+  seq: number;
+  ts: number;
+  type: "html" | "message" | "external-url" | "state" | "theme" | "status" | "tree";
+  sessionId: string;
+  payload?: unknown;
+};
 
 export type ExtensionSurfaceSession = {
   sessionId: string;
@@ -53,6 +56,8 @@ export type ExtensionSurfaceSession = {
   lastError?: string;
   missingProvider?: boolean;
   message?: string;
+  isPanel?: boolean;
+  isTree?: boolean;
   host: ExtensionHostStatus;
 };
 
@@ -76,20 +81,34 @@ export type ExtensionSurfaceSnapshot = {
   host: ExtensionHostStatus;
   missingProvider?: boolean;
   message?: string;
+  isTree?: boolean;
+  treeItems?: unknown[];
 };
 
 type MutableSession = Omit<ExtensionSurfaceSession, "attachedClientCount"> & {
   attachedClientIds: Set<string>;
   resolvePromise?: Promise<void>;
+  seenMessageIds: string[];
+  treeItems?: unknown[];
+  themeKey?: string;
 };
 
 const sessions = new Map<string, MutableSession>();
 const MAX_MESSAGE_BACKLOG = 1_000;
-const MAX_EVENT_BACKLOG = 1_000;
+const MAX_EVENT_BACKLOG = 2_000;
 const MAX_PUBLIC_MESSAGE_BACKLOG = 300;
 const MAX_PUBLIC_MESSAGE_BYTES = 16 * 1024 * 1024;
+const MAX_SEEN_MESSAGE_IDS = 256;
 let eventSeq = 0;
 const events: ExtensionSurfaceEvent[] = [];
+
+type SurfaceEventListener = (workspaceId: string, event: ExtensionSurfaceEvent) => void;
+const surfaceEventListeners = new Set<SurfaceEventListener>();
+
+export function subscribeExtensionSurfaceEvents(listener: SurfaceEventListener): () => void {
+  surfaceEventListeners.add(listener);
+  return () => surfaceEventListeners.delete(listener);
+}
 
 export function stableExtensionSurfaceSessionId(input: {
   workspaceId: string;
@@ -186,11 +205,24 @@ function retainId(sessionId: string): string {
   return `surface:${sessionId}`;
 }
 
-function pushEvent(sessionId: string, type: ExtensionSurfaceEvent["type"], payload?: unknown): void {
+function pushEvent(
+  workspaceId: string,
+  sessionId: string,
+  type: ExtensionSurfaceEvent["type"],
+  payload?: unknown
+): void {
   eventSeq += 1;
-  events.push({ seq: eventSeq, ts: Date.now(), type, sessionId, payload });
+  const event: ExtensionSurfaceEvent = { seq: eventSeq, ts: Date.now(), type, sessionId, payload };
+  events.push(event);
   if (events.length > MAX_EVENT_BACKLOG) {
     events.splice(0, events.length - MAX_EVENT_BACKLOG);
+  }
+  for (const listener of [...surfaceEventListeners]) {
+    try {
+      listener(workspaceId, event);
+    } catch (error) {
+      console.warn("[extensions] surface event listener failed:", error);
+    }
   }
 }
 
@@ -199,7 +231,7 @@ function appendMessages(session: MutableSession, messages: unknown[]): void {
     session.messageCursor += 1;
     const entry = { seq: session.messageCursor, ts: Date.now(), message };
     session.messages.push(entry);
-    pushEvent(session.sessionId, "message", entry);
+    pushEvent(session.workspaceId, session.sessionId, "message", entry);
   }
   if (session.messages.length > MAX_MESSAGE_BACKLOG) {
     session.messages.splice(0, session.messages.length - MAX_MESSAGE_BACKLOG);
@@ -207,7 +239,14 @@ function appendMessages(session: MutableSession, messages: unknown[]): void {
 }
 
 function publicSession(session: MutableSession): ExtensionSurfaceSession {
-  const { attachedClientIds: _attachedClientIds, ...rest } = session;
+  const {
+    attachedClientIds: _attachedClientIds,
+    resolvePromise: _resolvePromise,
+    seenMessageIds: _seen,
+    treeItems: _treeItems,
+    themeKey: _themeKey,
+    ...rest
+  } = session;
   return {
     ...rest,
     attachedClientCount: session.attachedClientIds.size,
@@ -226,6 +265,8 @@ function snapshot(session: MutableSession): ExtensionSurfaceSnapshot {
     host: session.host,
     missingProvider: session.missingProvider,
     message: session.message,
+    isTree: session.isTree,
+    treeItems: session.treeItems,
   };
 }
 
@@ -238,7 +279,12 @@ function publicMessages(
     if (selected.length >= MAX_PUBLIC_MESSAGE_BACKLOG) break;
     const entry = messages[index];
     if (!entry) continue;
-    const size = Buffer.byteLength(JSON.stringify(entry.message), "utf8");
+    let size = 0;
+    try {
+      size = Buffer.byteLength(JSON.stringify(entry.message), "utf8");
+    } catch {
+      continue;
+    }
     if (size > MAX_PUBLIC_MESSAGE_BYTES) continue;
     if (selected.length > 0 && bytes + size > MAX_PUBLIC_MESSAGE_BYTES) break;
     bytes += size;
@@ -274,13 +320,101 @@ export function readExtensionSurfaceEvents(input: {
   if (!session || session.workspaceId !== input.workspaceId) {
     return { events: [], cursor };
   }
-  const next = events.filter(
-    (event) => event.sessionId === input.sessionId && event.seq > cursor
-  );
+  const next = events.filter((event) => event.sessionId === input.sessionId && event.seq > cursor);
   return {
     events: next,
     cursor: next.at(-1)?.seq ?? cursor,
   };
+}
+
+function createSessionObject(input: {
+  sessionId: string;
+  workspaceId: string;
+  extensionId: string;
+  surfaceId: string;
+  title: string;
+  kind: ExtensionSurfaceKind;
+  viewType?: string;
+  placement?: ExtensionSurfacePlacement;
+  theme?: ExtensionWebviewThemeSnapshot;
+  isPanel?: boolean;
+}): MutableSession {
+  const now = Date.now();
+  const session: MutableSession = {
+    sessionId: input.sessionId,
+    workspaceId: input.workspaceId,
+    extensionId: input.extensionId.toLowerCase(),
+    surfaceId: input.surfaceId,
+    title: input.title,
+    kind: input.kind,
+    viewType: input.viewType,
+    placements: input.placement ? [input.placement] : [],
+    createdAt: now,
+    updatedAt: now,
+    attachedClientIds: new Set(),
+    html: "",
+    htmlVersion: 0,
+    messageCursor: 0,
+    messages: [],
+    externalUrls: [],
+    theme: input.theme,
+    themeKey: input.theme ? JSON.stringify(input.theme) : undefined,
+    isPanel: input.isPanel,
+    seenMessageIds: [],
+    host: getExtensionHostStatus(input.workspaceId),
+  };
+  sessions.set(input.sessionId, session);
+  return session;
+}
+
+async function resolveSessionSurface(
+  session: MutableSession,
+  workspace: WorkspaceRecord
+): Promise<void> {
+  const startedAt = Date.now();
+  try {
+    const result = await resolveExtensionSurface({
+      workspace,
+      extensionId: session.extensionId,
+      surfaceId: session.surfaceId,
+      title: session.title,
+      surfaceSessionId: session.sessionId,
+      webviewState: session.vscodeState,
+      theme: session.theme,
+      kind: session.isPanel ? "panel" : undefined,
+    });
+    const elapsed = Date.now() - startedAt;
+    session.resolveMs = elapsed;
+    session.activationMs = elapsed;
+    if (result.html || !session.html) {
+      session.html = result.html;
+      session.htmlVersion += 1;
+    }
+    session.htmlBytes = Buffer.byteLength(session.html, "utf8");
+    session.externalUrls = result.externalUrls;
+    session.host = result.status;
+    session.missingProvider = result.missingProvider;
+    session.isTree = result.treeView;
+    if (result.treeView) {
+      session.treeItems = result.treeItems;
+      session.kind = "view";
+    }
+    session.message = result.message;
+    session.lastError = undefined;
+    session.updatedAt = Date.now();
+    appendMessages(session, result.messages);
+    pushEvent(session.workspaceId, session.sessionId, "html", {
+      htmlVersion: session.htmlVersion,
+      htmlBytes: session.htmlBytes,
+      html: session.html,
+      isTree: session.isTree,
+    });
+  } catch (error) {
+    session.lastError = error instanceof Error ? error.message : String(error);
+    session.updatedAt = Date.now();
+    pushEvent(session.workspaceId, session.sessionId, "status", { error: session.lastError });
+    throw error;
+  }
 }
 
 export async function ensureExtensionSurfaceSession(input: {
@@ -304,29 +438,20 @@ export async function ensureExtensionSurfaceSession(input: {
     });
   let session = sessions.get(sessionId);
   if (!session) {
-    session = {
+    session = createSessionObject({
       sessionId,
       workspaceId: input.workspace.id,
-      extensionId: input.extensionId.toLowerCase(),
+      extensionId: input.extensionId,
       surfaceId: input.surfaceId,
       title: input.title ?? input.surfaceId,
       kind: input.kind ?? "view",
       viewType: input.viewType,
-      placements: input.placement ? [input.placement] : [],
-      createdAt: now,
-      updatedAt: now,
-      attachedClientIds: new Set(),
-      html: "",
-      htmlVersion: 0,
-      messageCursor: 0,
-      messages: [],
-      externalUrls: [],
+      placement: input.placement,
       theme: input.theme,
-      host: getExtensionHostStatus(input.workspace.id),
-    };
-    sessions.set(sessionId, session);
+      isPanel: sessionId.startsWith("extpanel-"),
+    });
     await retainExtensionHost(input.workspace, retainId(sessionId));
-    pushEvent(sessionId, "status", { created: true });
+    pushEvent(input.workspace.id, sessionId, "status", { created: true });
   } else {
     session.title = input.title ?? session.title;
     session.kind = input.kind ?? session.kind;
@@ -340,45 +465,10 @@ export async function ensureExtensionSurfaceSession(input: {
     session.updatedAt = now;
   }
 
-  if (!session.html) {
-    session.resolvePromise ??= (async () => {
-      const startedAt = Date.now();
-      try {
-        const result = await resolveExtensionSurface({
-          workspace: input.workspace,
-          extensionId: session.extensionId,
-          surfaceId: session.surfaceId,
-          title: session.title,
-          surfaceSessionId: session.sessionId,
-          webviewState: session.vscodeState,
-          theme: session.theme,
-        });
-        const elapsed = Date.now() - startedAt;
-        session.resolveMs = elapsed;
-        session.activationMs = elapsed;
-        session.html = result.html;
-        session.htmlVersion += 1;
-        session.htmlBytes = Buffer.byteLength(result.html, "utf8");
-        session.externalUrls = result.externalUrls;
-        session.host = result.status;
-        session.missingProvider = result.missingProvider;
-        session.message = result.message;
-        session.lastError = undefined;
-        session.updatedAt = Date.now();
-        appendMessages(session, result.messages);
-        pushEvent(session.sessionId, "html", {
-          htmlVersion: session.htmlVersion,
-          htmlBytes: session.htmlBytes,
-        });
-      } catch (error) {
-        session.lastError = error instanceof Error ? error.message : String(error);
-        session.updatedAt = Date.now();
-        pushEvent(session.sessionId, "status", { error: session.lastError });
-        throw error;
-      } finally {
-        session.resolvePromise = undefined;
-      }
-    })();
+  if (!session.html && !session.isTree) {
+    session.resolvePromise ??= resolveSessionSurface(session, input.workspace).finally(() => {
+      session.resolvePromise = undefined;
+    });
     await session.resolvePromise;
   }
 
@@ -420,7 +510,7 @@ export async function prewarmExtensionSurfaceSessions(input: {
         extensionId: descriptor.extensionId,
         surfaceId: descriptor.surfaceId,
       });
-      pushEvent(sessionId, "status", {
+      pushEvent(input.workspace.id, sessionId, "status", {
         prewarmFailed: true,
         error: error instanceof Error ? error.message : String(error),
       });
@@ -452,7 +542,9 @@ export async function attachExtensionSurfaceSession(input: {
     });
   }
   await retainExtensionHost(input.workspace, retainId(session.sessionId));
-  pushEvent(session.sessionId, "status", { attachedClientCount: session.attachedClientIds.size });
+  pushEvent(session.workspaceId, session.sessionId, "status", {
+    attachedClientCount: session.attachedClientIds.size,
+  });
   return snapshot(session);
 }
 
@@ -469,7 +561,9 @@ export async function detachExtensionSurfaceSession(input: {
     session.attachedClientIds.delete(input.clientId);
   }
   session.updatedAt = Date.now();
-  pushEvent(session.sessionId, "status", { attachedClientCount: session.attachedClientIds.size });
+  pushEvent(session.workspaceId, session.sessionId, "status", {
+    attachedClientCount: session.attachedClientIds.size,
+  });
   return publicSession(session);
 }
 
@@ -483,7 +577,7 @@ export async function closeExtensionSurfaceSession(input: {
   }
   sessions.delete(input.sessionId);
   await releaseExtensionHost(input.workspaceId, retainId(input.sessionId));
-  pushEvent(input.sessionId, "status", { closed: true });
+  pushEvent(input.workspaceId, input.sessionId, "status", { closed: true });
   return true;
 }
 
@@ -516,10 +610,21 @@ export async function deliverExtensionSurfaceSessionMessage(input: {
   workspace: WorkspaceRecord;
   sessionId: string;
   message: unknown;
-}): Promise<ExtensionSurfaceSnapshot & { missingWebview: boolean }> {
+  msgId?: string;
+}): Promise<ExtensionSurfaceSnapshot & { missingWebview: boolean; duplicate: boolean }> {
   const session = sessions.get(input.sessionId);
   if (!session || session.workspaceId !== input.workspace.id) {
     throw new Error("Unknown extension surface session.");
+  }
+  // Idempotent delivery: retried sends over lossy links carry the same msgId.
+  if (input.msgId) {
+    if (session.seenMessageIds.includes(input.msgId)) {
+      return { ...snapshot(session), missingWebview: false, duplicate: true };
+    }
+    session.seenMessageIds.push(input.msgId);
+    if (session.seenMessageIds.length > MAX_SEEN_MESSAGE_IDS) {
+      session.seenMessageIds.splice(0, session.seenMessageIds.length - MAX_SEEN_MESSAGE_IDS);
+    }
   }
   const result = await deliverExtensionSurfaceMessage({
     workspace: input.workspace,
@@ -529,13 +634,9 @@ export async function deliverExtensionSurfaceSessionMessage(input: {
     message: input.message,
   });
   appendMessages(session, result.messages);
-  session.externalUrls = result.externalUrls;
   session.host = result.status;
   session.updatedAt = Date.now();
-  for (const url of result.externalUrls) {
-    pushEvent(session.sessionId, "external-url", { url });
-  }
-  return { ...snapshot(session), missingWebview: result.missingWebview };
+  return { ...snapshot(session), missingWebview: result.missingWebview, duplicate: false };
 }
 
 export async function updateExtensionSurfaceState(input: {
@@ -549,7 +650,7 @@ export async function updateExtensionSurfaceState(input: {
   }
   session.vscodeState = input.state;
   session.updatedAt = Date.now();
-  pushEvent(session.sessionId, "state", { state: input.state });
+  pushEvent(session.workspaceId, session.sessionId, "state", { state: input.state });
   return snapshot(session);
 }
 
@@ -562,7 +663,12 @@ export async function updateExtensionSurfaceTheme(input: {
   if (!session || session.workspaceId !== input.workspace.id) {
     throw new Error("Unknown extension surface session.");
   }
+  const themeKey = JSON.stringify(input.theme);
+  if (session.themeKey === themeKey) {
+    return snapshot(session);
+  }
   session.theme = input.theme;
+  session.themeKey = themeKey;
   session.updatedAt = Date.now();
   await updateExtensionSurfaceThemeInHost({
     workspace: input.workspace,
@@ -573,10 +679,168 @@ export async function updateExtensionSurfaceTheme(input: {
   }).catch((error) => {
     session.lastError = error instanceof Error ? error.message : String(error);
   });
-  pushEvent(session.sessionId, "theme", input.theme);
+  pushEvent(session.workspaceId, session.sessionId, "theme", input.theme);
   return snapshot(session);
 }
 
 export function newExtensionSurfaceClientId(): string {
   return `ext-client-${randomUUID()}`;
 }
+
+/* ------------------------------------------------------------------ */
+/* Host event ingestion (webview push channel)                         */
+/* ------------------------------------------------------------------ */
+
+function handleHostSurfaceEvent(
+  workspaceId: string,
+  event:
+    | { event: "webview-message"; payload: { surfaceKey: string; extensionId: string; message: unknown } }
+    | { event: "webview-html"; payload: { surfaceKey: string; extensionId: string; html: string; title?: string } }
+    | {
+        event: "webview-panel";
+        payload: {
+          surfaceKey: string;
+          extensionId: string;
+          viewType: string;
+          title: string;
+          html: string;
+          active: boolean;
+        };
+      }
+    | { event: "webview-panel-disposed"; payload: { surfaceKey: string; extensionId: string } }
+    | { event: "tree-changed"; payload: { extensionId: string; viewId: string } }
+): void {
+  if (event.event === "webview-message") {
+    const session = sessions.get(event.payload.surfaceKey);
+    if (!session || session.workspaceId !== workspaceId) return;
+    appendMessages(session, [event.payload.message]);
+    session.updatedAt = Date.now();
+    return;
+  }
+  if (event.event === "webview-html") {
+    const session = sessions.get(event.payload.surfaceKey);
+    if (!session || session.workspaceId !== workspaceId) return;
+    if (typeof event.payload.title === "string" && event.payload.title.trim()) {
+      session.title = event.payload.title;
+    }
+    if (session.html !== event.payload.html) {
+      session.html = event.payload.html;
+      session.htmlVersion += 1;
+      session.htmlBytes = Buffer.byteLength(session.html, "utf8");
+    }
+    session.updatedAt = Date.now();
+    pushEvent(workspaceId, session.sessionId, "html", {
+      htmlVersion: session.htmlVersion,
+      htmlBytes: session.htmlBytes,
+      html: session.html,
+      title: session.title,
+    });
+    return;
+  }
+  if (event.event === "webview-panel") {
+    void (async () => {
+      let session = sessions.get(event.payload.surfaceKey);
+      if (!session) {
+        session = createSessionObject({
+          sessionId: event.payload.surfaceKey,
+          workspaceId,
+          extensionId: event.payload.extensionId,
+          surfaceId: event.payload.viewType,
+          title: event.payload.title,
+          kind: "webview",
+          placement: "editor",
+          isPanel: true,
+        });
+        const workspace = await getWorkspaceById(workspaceId).catch(() => null);
+        if (workspace) {
+          await retainExtensionHost(workspace, retainId(session.sessionId)).catch(() => undefined);
+        }
+        pushEvent(workspaceId, session.sessionId, "status", { created: true });
+      }
+      if (event.payload.html && session.html !== event.payload.html) {
+        session.html = event.payload.html;
+        session.htmlVersion += 1;
+        session.htmlBytes = Buffer.byteLength(session.html, "utf8");
+      }
+      session.title = event.payload.title || session.title;
+      session.updatedAt = Date.now();
+      logWorkspaceExtensionEvent(workspaceId, "panel-opened", {
+        sessionId: session.sessionId,
+        extensionId: session.extensionId,
+        surfaceId: session.surfaceId,
+        title: session.title,
+        active: event.payload.active,
+      });
+    })();
+    return;
+  }
+  if (event.event === "webview-panel-disposed") {
+    void closeExtensionSurfaceSession({
+      workspaceId,
+      sessionId: event.payload.surfaceKey,
+    });
+    return;
+  }
+  if (event.event === "tree-changed") {
+    // Forward per-session tree refreshes for sidebar/editor tree surfaces.
+    for (const session of sessions.values()) {
+      if (
+        session.workspaceId === workspaceId &&
+        session.extensionId === event.payload.extensionId.toLowerCase() &&
+        session.surfaceId === event.payload.viewId
+      ) {
+        session.updatedAt = Date.now();
+        pushEvent(workspaceId, session.sessionId, "tree", { viewId: event.payload.viewId });
+      }
+    }
+  }
+}
+
+let surfaceIngestionStarted = false;
+
+function startSurfaceIngestion(): void {
+  if (surfaceIngestionStarted) return;
+  surfaceIngestionStarted = true;
+  onExtensionHostEvent((workspaceId, event) => {
+    if (
+      event.event === "webview-message" ||
+      event.event === "webview-html" ||
+      event.event === "webview-panel" ||
+      event.event === "webview-panel-disposed" ||
+      event.event === "tree-changed"
+    ) {
+      handleHostSurfaceEvent(workspaceId, event);
+    }
+  });
+  onExtensionHostLifecycle({
+    onRestarted: (workspace) => {
+      void reresolveWorkspaceSurfaceSessions(workspace);
+    },
+    onCrashed: (workspaceId) => {
+      for (const session of sessions.values()) {
+        if (session.workspaceId !== workspaceId) continue;
+        session.host = getExtensionHostStatus(workspaceId);
+        pushEvent(workspaceId, session.sessionId, "status", { hostCrashed: true });
+      }
+    },
+  });
+}
+
+async function reresolveWorkspaceSurfaceSessions(workspace: WorkspaceRecord): Promise<void> {
+  for (const session of sessions.values()) {
+    if (session.workspaceId !== workspace.id) continue;
+    session.html = "";
+    session.htmlVersion += 0;
+    session.missingProvider = undefined;
+    try {
+      await resolveSessionSurface(session, workspace);
+    } catch (error) {
+      console.warn(
+        `[extensions] failed to re-resolve surface ${session.sessionId} after restart:`,
+        error instanceof Error ? error.message : error
+      );
+    }
+  }
+}
+
+startSurfaceIngestion();
