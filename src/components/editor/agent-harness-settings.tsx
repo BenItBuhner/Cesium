@@ -714,6 +714,8 @@ function CustomProviderModal({
 
   const addManualModel = () => {
     const id = manualModelId.trim();
+    // Preserve whatever the user typed as the display name; blank → store id and let
+    // catalog normalization turn slug ids into spaced labels at display time.
     const name = manualModelName.trim() || id;
     if (!id) {
       setMessage("Model id is required for manual add.");

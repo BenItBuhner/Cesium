@@ -1,5 +1,6 @@
 import path from "node:path";
 import { randomUUID } from "node:crypto";
+import { formatCatalogModelLabel, formatProviderDisplayLabel, resolveModelDisplayName } from "@cesium/core/model-display-name";
 import {
   DATA_DIR,
   readJsonFile,
@@ -248,11 +249,7 @@ function inferProviderIdFromApiKey(apiKey: string): string | undefined {
 }
 
 function providerLabelFromId(providerId: string): string {
-  return providerId
-    .split(/[-_]+/)
-    .filter(Boolean)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(" ");
+  return formatProviderDisplayLabel(providerId);
 }
 
 function providerKeyLookupIds(providerId: string): string[] {
@@ -579,7 +576,11 @@ function cesiumEnvBootstrapCatalog(bootstrap: CesiumEnvBootstrap): CesiumModelCa
       providerName: bootstrap.providerName,
       providerApiBaseUrl: bootstrap.baseUrl,
       modelId: `${bootstrap.providerId}/${model.id}`,
-      modelName: `${bootstrap.providerName}/${model.name}`,
+      modelName: formatCatalogModelLabel(
+        bootstrap.providerName,
+        model.name,
+        `${bootstrap.providerId}/${model.id}`
+      ),
       apiKind: "openai-compatible",
       supportsTools: true,
       supportsReasoning: model.supportsReasoning,
@@ -733,7 +734,9 @@ function normalizeCustomProvider(raw: unknown): CesiumCustomProvider | null {
         return [
           {
             id: modelId,
-            name: asString(model.name) ?? modelId,
+            name: resolveModelDisplayName(asString(model.name) ?? modelId, modelId, {
+              preferExplicitName: true,
+            }),
             contextWindow: normalizeCesiumContextWindow(model.contextWindow),
             supportsTools:
               typeof model.supportsTools === "boolean" ? model.supportsTools : undefined,
@@ -1169,7 +1172,7 @@ export async function discoverCesiumProviderModels(input: {
     );
     models.push({
       id,
-      name,
+      name: resolveModelDisplayName(name, id),
       contextWindow: context,
     });
   }
@@ -1232,7 +1235,11 @@ function parseModelsDevPayload(payload: unknown): CesiumModelCatalogEntry[] {
           providerApiBaseUrl,
           providerDocUrl,
           modelId: `${providerId}/${modelId}`,
-          modelName: `${providerName}/${asString(model.name) ?? modelId}`,
+          modelName: formatCatalogModelLabel(
+            providerName,
+            asString(model.name) ?? modelId,
+            `${providerId}/${modelId}`
+          ),
           apiKind,
           supportsTools: model.tool_call === true,
           supportsReasoning: model.reasoning === true,
@@ -1267,7 +1274,11 @@ function parseCrofAiModelsPayload(payload: unknown): CesiumModelCatalogEntry[] {
           providerApiBaseUrl: CROFAI_BASE_URL,
           providerDocUrl: "https://crof.ai/",
           modelId: `${CROFAI_PROVIDER_ID}/${id}`,
-          modelName: `${CROFAI_PROVIDER_NAME}/${asString(model.name) ?? id}`,
+          modelName: formatCatalogModelLabel(
+            CROFAI_PROVIDER_NAME,
+            asString(model.name) ?? id,
+            `${CROFAI_PROVIDER_ID}/${id}`
+          ),
           apiKind: "openai-compatible",
           supportsTools: true,
           supportsReasoning:
@@ -1327,7 +1338,7 @@ function fallbackCrofAiCatalog(): CesiumModelCatalogEntry[] {
       providerApiBaseUrl: CROFAI_BASE_URL,
       providerDocUrl: "https://crof.ai/",
       modelId: `${CROFAI_PROVIDER_ID}/${model.id}`,
-      modelName: `${CROFAI_PROVIDER_NAME}/${model.name}`,
+      modelName: formatCatalogModelLabel(CROFAI_PROVIDER_NAME, model.name, `${CROFAI_PROVIDER_ID}/${model.id}`),
       apiKind: "openai-compatible",
       supportsTools: true,
       supportsReasoning: model.reasoning ?? false,
@@ -1422,7 +1433,11 @@ async function customProviderCatalogEntries(): Promise<CesiumModelCatalogEntry[]
         providerId: provider.id,
         providerName: provider.name,
         modelId: `${provider.id}/${model.id}`,
-        modelName: `${provider.name}/${model.name}`,
+        modelName: formatCatalogModelLabel(
+          provider.name,
+          resolveModelDisplayName(model.name, model.id, { preferExplicitName: true }),
+          `${provider.id}/${model.id}`
+        ),
         apiKind: provider.apiKind,
         supportsTools: model.supportsTools ?? true,
         supportsReasoning: model.supportsReasoning ?? false,
@@ -1476,7 +1491,7 @@ function fallbackCatalog(): CesiumModelCatalogEntry[] {
       providerId: "openai",
       providerName: "OpenAI",
       modelId: "openai/gpt-5.1",
-      modelName: "OpenAI/GPT-5.1",
+      modelName: formatCatalogModelLabel("OpenAI", "GPT-5.1", "openai/gpt-5.1"),
       apiKind: "openai-responses",
       supportsTools: true,
       supportsReasoning: true,
@@ -1487,7 +1502,11 @@ function fallbackCatalog(): CesiumModelCatalogEntry[] {
       providerId: "anthropic",
       providerName: "Anthropic",
       modelId: "anthropic/claude-sonnet-4-5-20250929",
-      modelName: "Anthropic/Claude Sonnet 4.5",
+      modelName: formatCatalogModelLabel(
+        "Anthropic",
+        "Claude Sonnet 4.5",
+        "anthropic/claude-sonnet-4-5-20250929"
+      ),
       apiKind: "anthropic",
       supportsTools: true,
       supportsReasoning: true,
@@ -1498,7 +1517,7 @@ function fallbackCatalog(): CesiumModelCatalogEntry[] {
       providerId: "google",
       providerName: "Google",
       modelId: "google/gemini-2.5-pro",
-      modelName: "Google/Gemini 2.5 Pro",
+      modelName: formatCatalogModelLabel("Google", "Gemini 2.5 Pro", "google/gemini-2.5-pro"),
       apiKind: "google-genai",
       supportsTools: true,
       supportsReasoning: true,

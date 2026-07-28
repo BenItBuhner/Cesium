@@ -12,6 +12,7 @@ export type CesiumModeReminderInput = {
   skillsList?: string | null;
   mcpSummaries: McpServerSummary[];
   mcpChangeNotice?: string | null;
+  environmentChangeNotice?: string | null;
   orchestrationBoard?: OrchestrationBoardSnapshot | null;
   activePlanPath?: string | null;
   goalSummary?: string | null;
@@ -136,7 +137,7 @@ This switch has been done via the user, and you should abide by all instructions
 - Repository: ${input.gitSummary}
 - Model: ${input.modelName?.trim() || "configured model"}
 
-Do note, the following tools have been changed:
+${input.environmentChangeNotice?.trim() ? `### Environment Changes Since Last Turn\n\n${input.environmentChangeNotice.trim()}\n\n` : ""}Do note, the following tools have been changed:
 
 Allowed:
 ${bullets(policy.allowed)}

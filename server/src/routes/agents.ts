@@ -243,6 +243,7 @@ agentRoutes.post("/api/agents/conversations/:conversationId/prompt", async (c) =
     planHandoff?: AgentQueuedChatPrompt["planHandoff"];
     clientEventId?: string;
     clientMessageId?: string;
+    clientTimezone?: string;
     delivery?: AgentQueuedChatPrompt["delivery"];
   }>();
   if (!body.text?.trim() && (!body.attachments || body.attachments.length === 0)) {
@@ -258,6 +259,7 @@ agentRoutes.post("/api/agents/conversations/:conversationId/prompt", async (c) =
       ...(body.planHandoff ? { planHandoff: body.planHandoff } : {}),
       ...(body.clientEventId ? { clientEventId: body.clientEventId } : {}),
       ...(body.clientMessageId ? { clientMessageId: body.clientMessageId } : {}),
+      ...(body.clientTimezone ? { clientTimezone: body.clientTimezone } : {}),
       ...(body.delivery ? { delivery: body.delivery } : {}),
     }
   );

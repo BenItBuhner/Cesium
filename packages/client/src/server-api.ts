@@ -1203,13 +1203,25 @@ export async function promptAgentConversation(
   ids?: {
     clientEventId?: string;
     clientMessageId?: string;
+    clientTimezone?: string;
     delivery?: "normal" | "steer";
     planHandoff?: PlanBuildHandoff;
   }
 ): Promise<AgentConversationSnapshotResponse> {
+  const clientTimezone =
+    ids?.clientTimezone?.trim() ||
+    (typeof Intl !== "undefined"
+      ? Intl.DateTimeFormat().resolvedOptions().timeZone
+      : undefined);
   return request(`/api/agents/conversations/${encodeURIComponent(conversationId)}/prompt`, {
     method: "POST",
-    body: JSON.stringify({ text, attachments, configOverride, ...ids }),
+    body: JSON.stringify({
+      text,
+      attachments,
+      configOverride,
+      ...ids,
+      ...(clientTimezone ? { clientTimezone } : {}),
+    }),
   });
 }
 

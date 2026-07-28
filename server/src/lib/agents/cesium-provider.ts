@@ -161,15 +161,20 @@ import {
   type ResolvedCesiumHarness,
 } from "./cesium/features/index.js";
 import {
+  cesiumEnvironmentChangeNotice,
   estimateHistoryTokens,
+  formatCesiumDateLabel,
   isEmptyCesiumAdapterResult,
+  latestCesiumEnvironmentReminderSnapshot,
   latestMcpReminderSnapshot,
   mcpReminderChangeNotice,
   mcpReminderSnapshot,
   normalizeCesiumToolResultForModel,
   normalizeEventsToHistory,
+  previousUserMessageCreatedAt,
   summarizeForCompression,
 } from "./cesium/cesium-history.js";
+import { resolveModelDisplayName } from "@cesium/core/model-display-name";
 import {
   modelPart,
   providerPart,
@@ -369,14 +374,17 @@ class CesiumSessionHandle implements AgentSessionHandle {
       gitSummary = "not a git repository";
     }
     const agentsMarkdown = await loadWorkspaceInstructionFiles(workspaceRoot);
+    const modelId =
+      this.callbacks.conversation.config.modelId ||
+      optionValue(this.configOptions, "model", "openai/gpt-5.1");
     return {
       mcpSummaries,
-      modelName: this.callbacks.conversation.config.modelName ?? "configured model",
+      modelName: resolveModelDisplayName(
+        this.callbacks.conversation.config.modelName,
+        String(modelId)
+      ),
       workspaceRoot,
-      dateLabel: new Date().toLocaleString("en-US", {
-        dateStyle: "full",
-        timeStyle: "short",
-      }),
+      dateLabel: formatCesiumDateLabel(new Date()),
       gitSummary,
       agentsMarkdown,
       skillsList: skillsList?.trim() || undefined,
@@ -461,6 +469,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
     attachments?: Array<{ mimeType: string; data: string; name?: string }>;
     isRetry?: boolean;
     planHandoff?: AgentQueuedChatPrompt["planHandoff"];
+    clientTimezone?: string;
   }): Promise<void> {
     if (this.disposed) {
       throw new Error("Cesium session has been disposed.");
@@ -583,31 +592,60 @@ class CesiumSessionHandle implements AgentSessionHandle {
         summaries,
         skillsMirror.skillsList
       );
+      const nowMs = Date.now();
+      const timeZone = input.clientTimezone?.trim() || undefined;
+      promptContext.dateLabel = formatCesiumDateLabel(nowMs, timeZone);
+      promptContext.modelName = resolveModelDisplayName(
+        promptContext.modelName ?? this.callbacks.conversation.config.modelName,
+        modelId
+      );
       this.activeSystemPrompt = CESIUM_SYSTEM_PROMPT;
       await this.refreshHarnessFromSettings();
       const previousSnapshot = await this.callbacks.readSnapshot().catch(() => null);
+      const previousEvents = previousSnapshot?.events ?? [];
       const mcpCatalogRevision = await getMcpCatalogRevision(this.callbacks.workspace.id);
       const currentMcpSnapshot = mcpReminderSnapshot({
         revision: mcpCatalogRevision,
         dateLabel: promptContext.dateLabel,
+        dateMs: nowMs,
+        timeZone,
+        modelId,
+        modelName: promptContext.modelName,
         summaries,
       });
       const mcpChangeNotice = mcpReminderChangeNotice(
-        previousSnapshot ? latestMcpReminderSnapshot(previousSnapshot.events) : null,
+        previousSnapshot ? latestMcpReminderSnapshot(previousEvents) : null,
         currentMcpSnapshot
       );
+      const environmentChangeNotice = cesiumEnvironmentChangeNotice({
+        previous: previousSnapshot
+          ? latestCesiumEnvironmentReminderSnapshot(previousEvents)
+          : null,
+        current: {
+          dateLabel: promptContext.dateLabel,
+          dateMs: nowMs,
+          timeZone,
+          modelId,
+          modelName: promptContext.modelName,
+        },
+        previousUserMessageAt: previousUserMessageCreatedAt(
+          previousEvents,
+          input.userMessageId
+        ),
+      });
       const featureReminder = harnessFeatureReminder(this.harness);
       const reminderText = [
         buildCesiumModeReminder({
           mode: currentMode,
           modelName: promptContext.modelName,
           workspaceRoot: promptContext.workspaceRoot ?? this.callbacks.workspace.root,
-          dateLabel: promptContext.dateLabel ?? new Date().toLocaleString("en-US"),
+          dateLabel: promptContext.dateLabel ?? formatCesiumDateLabel(nowMs, timeZone),
           gitSummary: promptContext.gitSummary ?? "not a git repository",
           agentsMarkdown: promptContext.agentsMarkdown,
           skillsList: skillsMirror.skillsList,
           mcpSummaries: summaries,
           mcpChangeNotice,
+          environmentChangeNotice,
           orchestrationBoard: board,
           handoffPlanPath: input.planHandoff?.planPath,
           goalSummary: burnState ? formatGoalForModel(burnState) : null,
@@ -632,8 +670,16 @@ class CesiumSessionHandle implements AgentSessionHandle {
             mode: currentMode,
             planHandoff: input.planHandoff,
             modelId,
+            modelName: promptContext.modelName,
             mcpServerCount: summaries.length,
             mcpReminderSnapshot: currentMcpSnapshot,
+            environmentReminderSnapshot: {
+              dateLabel: promptContext.dateLabel,
+              dateMs: nowMs,
+              timeZone,
+              modelId,
+              modelName: promptContext.modelName,
+            },
           },
         },
         {
@@ -2526,9 +2572,12 @@ class CesiumSessionHandle implements AgentSessionHandle {
     const policy = summarizeCesiumModeToolPolicy(targetMode);
     const reminderText = buildCesiumModeReminder({
       mode: targetMode,
-      modelName: this.callbacks.conversation.config.modelName,
+      modelName: resolveModelDisplayName(
+        this.callbacks.conversation.config.modelName,
+        this.callbacks.conversation.config.modelId || "configured model"
+      ),
       workspaceRoot: this.callbacks.workspace.root,
-      dateLabel: new Date().toLocaleString("en-US"),
+      dateLabel: formatCesiumDateLabel(new Date()),
       gitSummary: "unchanged since last reminder",
       mcpSummaries: [],
     });
