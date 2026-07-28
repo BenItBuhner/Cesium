@@ -499,7 +499,7 @@ async function createDevinCliConfigOptions(input?: {
 function formatGrokBuildModelName(modelId: string): string {
   if (/^grok[-_.]/i.test(modelId)) {
     return modelId
-      .split(/[-_.]+/)
+      .split(/[-_]+/)
       .map((part, index) =>
         index === 0
           ? "Grok"

@@ -210,6 +210,7 @@ test("Grok Build model discovery parses the official CLI output without auth", a
     "grok-4.5",
     "grok-build",
   ]);
+  assert.equal(model?.options[0]?.name, "Grok 4.5");
 });
 
 test("Grok Build provider completes an authenticated ACP turn and resumes", async () => {
