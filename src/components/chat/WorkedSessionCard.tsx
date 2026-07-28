@@ -764,36 +764,22 @@ export function WorkedSessionCard({
   const orphanInsideDetails =
     preferInside &&
     (embeddedPermissionCard != null || Boolean(standaloneHighlighted?.editPreview));
+  /**
+   * The unresolved permission card renders pinned *below* the scrollable tool list, never
+   * inside it: the list is capped at ~240px and an inline permission row could sit below the
+   * fold, invisibly blocking the whole turn.
+   */
   const workedScrollRows = useMemo(() => {
-    type Row =
-      | { kind: "entry"; entry: WorkedSessionEntry; index: number }
-      | { kind: "permission" };
+    type Row = { kind: "entry"; entry: WorkedSessionEntry; index: number };
     const rows: Row[] = [];
     if (!hasCollapsibleEntries) {
       return rows;
     }
-    const perm = embeddedPermissionCard;
-    const anchor = perm?.permissionLinkedToolCallId;
-    let inserted = false;
     for (let i = 0; i < entries.length; i += 1) {
-      const entry = entries[i]!;
-      rows.push({ kind: "entry", entry, index: i });
-      if (
-        perm &&
-        !inserted &&
-        anchor &&
-        entry.kind === "tool" &&
-        entry.toolCallId === anchor
-      ) {
-        rows.push({ kind: "permission" });
-        inserted = true;
-      }
-    }
-    if (perm && !inserted) {
-      rows.push({ kind: "permission" });
+      rows.push({ kind: "entry", entry: entries[i]!, index: i });
     }
     return rows;
-  }, [hasCollapsibleEntries, entries, embeddedPermissionCard]);
+  }, [hasCollapsibleEntries, entries]);
   const prevMessageLoadingRef = useRef(loading);
   const prevSettledRef = useRef(settled);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -1063,31 +1049,22 @@ export function WorkedSessionCard({
                     summarized.
                   </p>
                 ) : null}
-                {workedScrollRows.map((row) =>
-                  row.kind === "permission" ? (
-                    <div
-                      key={`perm-${embeddedPermissionCard?.permissionRequestId ?? "embed"}`}
-                      className="relative z-[4] flex flex-col"
-                    >
-                      {embeddedPermissionEl}
-                    </div>
-                  ) : (
-                    <WorkedEntryBlock
-                      key={
-                        row.entry.kind === "tool"
-                          ? row.entry.toolCallId ??
-                            `tool-${row.index}-${row.entry.title}`
-                          : `${row.entry.kind}-${row.index}`
-                      }
-                      entry={row.entry}
-                      isLiveWorkedTail={isLiveWorkedTail}
-                      workspaceRoot={workspaceRoot}
-                      onOpenToolFile={handleOpenToolFile}
-                      horizScrollFadeEdge={gradientVar}
-                      editDiffRenderingMode={editDiffRenderingMode}
-                    />
-                  )
-                )}
+                {workedScrollRows.map((row) => (
+                  <WorkedEntryBlock
+                    key={
+                      row.entry.kind === "tool"
+                        ? row.entry.toolCallId ??
+                          `tool-${row.index}-${row.entry.title}`
+                        : `${row.entry.kind}-${row.index}`
+                    }
+                    entry={row.entry}
+                    isLiveWorkedTail={isLiveWorkedTail}
+                    workspaceRoot={workspaceRoot}
+                    onOpenToolFile={handleOpenToolFile}
+                    horizScrollFadeEdge={gradientVar}
+                    editDiffRenderingMode={editDiffRenderingMode}
+                  />
+                ))}
               </div>
             </div>
             {showTopGrad ? (
@@ -1103,6 +1080,13 @@ export function WorkedSessionCard({
               />
             ) : null}
           </div>
+          {embeddedPermissionEl ? (
+            <div
+              className={`relative z-[4] pt-[10px] ${contentRail ? "ml-[2px] pl-[10px]" : ""}`}
+            >
+              {embeddedPermissionEl}
+            </div>
+          ) : null}
         </CollapsibleHeight>
       ) : null}
     </div>
