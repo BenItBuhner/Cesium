@@ -1,19 +1,39 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Download, Play, RefreshCw, ShieldCheck, Square, Trash2 } from "lucide-react";
+import {
+  Download,
+  Palette,
+  Play,
+  RefreshCw,
+  RotateCw,
+  ShieldCheck,
+  Square,
+  Trash2,
+  Upload,
+} from "lucide-react";
+import { useTheme } from "@/components/theme/ThemeProvider";
 import { useUserPreferences } from "@/components/preferences/UserPreferencesProvider";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { useEditorBridgeRef } from "@/components/ide/EditorBridgeContext";
+import {
+  extensionThemeCustomId,
+  getActiveExtensionTheme,
+  setActiveExtensionTheme,
+} from "@/lib/extensions/extension-theme-store";
 import {
   activateInstalledExtension,
   closeExtensionSurfaceSessionClient,
   deleteInstalledExtensionClient,
   disableAllExtensionsClient,
+  fetchExtensionTheme,
   fetchInstalledExtensions,
   grantExtensionPermission,
   installOpenVsxExtensionClient,
+  installVsixExtensionClient,
   listExtensionSurfaceSessions,
+  listWorkspaceExtensionThemes,
+  restartExtensionHostClient,
   searchExtensionMarketplace,
   setExtensionEnabled,
   stopExtensionHostClient,
@@ -21,6 +41,7 @@ import {
   type ExtensionInstallRecord,
   type ExtensionSurfaceSession,
   type ExtensionMarketplaceSearchResult,
+  type ExtensionThemeDescriptor,
 } from "@/lib/server-api";
 import {
   PageIntro,
@@ -83,6 +104,7 @@ export function VscodeExtensionsSettingsPanel() {
   const { vscodeExtensionsBeta, setVscodeExtensionsBeta } = useUserPreferences();
   const { activeWorkspaceId } = useWorkspace();
   const editorBridgeRef = useEditorBridgeRef();
+  const { upsertCustomTheme, setDarkThemeId, setLightThemeId, setAppearance } = useTheme();
   const [query, setQuery] = useState("python");
   const [results, setResults] = useState<ExtensionMarketplaceSearchResult[]>([]);
   const [installed, setInstalled] = useState<ExtensionInstallRecord[]>([]);
@@ -90,6 +112,11 @@ export function VscodeExtensionsSettingsPanel() {
   const [host, setHost] = useState<ExtensionHostStatus | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [themes, setThemes] = useState<ExtensionThemeDescriptor[]>([]);
+  const [activeThemeLabel, setActiveThemeLabel] = useState<string | null>(
+    () => getActiveExtensionTheme()?.label ?? null
+  );
+  const vsixInputRef = useRef<HTMLInputElement | null>(null);
   const previousBetaRef = useRef(vscodeExtensionsBeta);
 
   const installedIds = useMemo(
@@ -108,6 +135,8 @@ export function VscodeExtensionsSettingsPanel() {
     setHost(result.host);
     const sessionResult = await listExtensionSurfaceSessions(activeWorkspaceId).catch(() => null);
     setSurfaceSessions(sessionResult?.sessions ?? []);
+    const themeResult = await listWorkspaceExtensionThemes(activeWorkspaceId).catch(() => null);
+    setThemes(themeResult?.themes ?? []);
   }, [activeWorkspaceId, vscodeExtensionsBeta]);
 
   useEffect(() => {
@@ -228,6 +257,94 @@ export function VscodeExtensionsSettingsPanel() {
     }
   }, [activeWorkspaceId, reloadInstalled]);
 
+  const restartHost = useCallback(async () => {
+    if (!activeWorkspaceId) return;
+    setBusy("__host__");
+    setError(null);
+    try {
+      const result = await restartExtensionHostClient(activeWorkspaceId);
+      setHost(result.host);
+      await reloadInstalled();
+    } catch (restartError) {
+      setError(restartError instanceof Error ? restartError.message : String(restartError));
+    } finally {
+      setBusy(null);
+    }
+  }, [activeWorkspaceId, reloadInstalled]);
+
+  const uploadVsix = useCallback(
+    async (file: File) => {
+      if (!activeWorkspaceId) return;
+      setBusy("__vsix__");
+      setError(null);
+      try {
+        const buffer = await file.arrayBuffer();
+        const bytes = new Uint8Array(buffer);
+        let binary = "";
+        const chunkSize = 0x8000;
+        for (let index = 0; index < bytes.length; index += chunkSize) {
+          binary += String.fromCharCode(...bytes.subarray(index, index + chunkSize));
+        }
+        await installVsixExtensionClient({
+          workspaceId: activeWorkspaceId,
+          filename: file.name,
+          dataBase64: btoa(binary),
+        });
+        await reloadInstalled();
+      } catch (uploadError) {
+        setError(uploadError instanceof Error ? uploadError.message : String(uploadError));
+      } finally {
+        setBusy(null);
+      }
+    },
+    [activeWorkspaceId, reloadInstalled]
+  );
+
+  const applyExtensionTheme = useCallback(
+    async (descriptor: ExtensionThemeDescriptor) => {
+      if (!activeWorkspaceId) return;
+      setBusy(`theme:${descriptor.extensionId}:${descriptor.label}`);
+      setError(null);
+      try {
+        const { theme } = await fetchExtensionTheme({
+          workspaceId: activeWorkspaceId,
+          extensionId: descriptor.extensionId,
+          label: descriptor.label,
+        });
+        setActiveExtensionTheme(theme);
+        setActiveThemeLabel(theme.label);
+        const customId = extensionThemeCustomId(theme);
+        const tokens = theme.cesiumTokens as Record<string, string>;
+        upsertCustomTheme({
+          id: customId,
+          label: theme.label,
+          light: tokens as never,
+          dark: tokens as never,
+        });
+        const dark = theme.type === "dark" || theme.type === "hcDark";
+        if (dark) {
+          setDarkThemeId(customId);
+          setAppearance("dark");
+        } else {
+          setLightThemeId(customId);
+          setAppearance("light");
+        }
+      } catch (themeError) {
+        setError(themeError instanceof Error ? themeError.message : String(themeError));
+      } finally {
+        setBusy(null);
+      }
+    },
+    [activeWorkspaceId, setAppearance, setDarkThemeId, setLightThemeId, upsertCustomTheme]
+  );
+
+  const resetExtensionTheme = useCallback(() => {
+    setActiveExtensionTheme(null);
+    setActiveThemeLabel(null);
+    setDarkThemeId("default");
+    setLightThemeId("default");
+  }, [setDarkThemeId, setLightThemeId]);
+
   const disableAll = useCallback(async () => {
     if (!activeWorkspaceId) return;
     setBusy("__disable_all__");
@@ -317,15 +434,26 @@ export function VscodeExtensionsSettingsPanel() {
               : "Stopped. The host starts only after you activate or open an extension surface."
           }
           trailing={
-            <button
-              type="button"
-              className={rowButtonClass}
-              disabled={!host?.running || busy === "__host__"}
-              onClick={() => void stopHost()}
-            >
-              <Square className="size-[14px]" strokeWidth={1.5} />
-              Stop host
-            </button>
+            <span className="flex items-center gap-[8px]">
+              <button
+                type="button"
+                className={rowButtonClass}
+                disabled={busy === "__host__"}
+                onClick={() => void restartHost()}
+              >
+                <RotateCw className="size-[14px]" strokeWidth={1.5} />
+                Restart
+              </button>
+              <button
+                type="button"
+                className={rowButtonClass}
+                disabled={!host?.running || busy === "__host__"}
+                onClick={() => void stopHost()}
+              >
+                <Square className="size-[14px]" strokeWidth={1.5} />
+                Stop host
+              </button>
+            </span>
           }
           border={false}
         />
@@ -385,15 +513,38 @@ export function VscodeExtensionsSettingsPanel() {
           <SettingsSection
             title="Marketplace"
             action={
-              <button
-                type="button"
-                className={rowButtonClass}
-                disabled={busy === "__search__"}
-                onClick={() => void runSearch()}
-              >
-                <RefreshCw className="size-[14px]" strokeWidth={1.5} />
-                Search
-              </button>
+              <span className="flex items-center gap-[8px]">
+                <input
+                  ref={vsixInputRef}
+                  type="file"
+                  accept=".vsix"
+                  className="hidden"
+                  onChange={(event) => {
+                    const file = event.target.files?.[0];
+                    event.target.value = "";
+                    if (file) void uploadVsix(file);
+                  }}
+                />
+                <button
+                  type="button"
+                  className={rowButtonClass}
+                  disabled={busy === "__vsix__"}
+                  title="Side-load a .vsix file (e.g. extensions not published to Open VSX, like GitHub Copilot)"
+                  onClick={() => vsixInputRef.current?.click()}
+                >
+                  <Upload className="size-[14px]" strokeWidth={1.5} />
+                  {busy === "__vsix__" ? "Installing…" : "Install VSIX"}
+                </button>
+                <button
+                  type="button"
+                  className={rowButtonClass}
+                  disabled={busy === "__search__"}
+                  onClick={() => void runSearch()}
+                >
+                  <RefreshCw className="size-[14px]" strokeWidth={1.5} />
+                  Search
+                </button>
+              </span>
             }
           >
             <SettingsBlock className="py-[12px]">
@@ -437,6 +588,59 @@ export function VscodeExtensionsSettingsPanel() {
                       >
                         <Download className="size-[14px]" strokeWidth={1.5} />
                         {isInstalled ? "Installed" : "Install"}
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </SettingsSection>
+          <SettingsSection
+            title="Color Themes"
+            action={
+              activeThemeLabel ? (
+                <button type="button" className={rowButtonClass} onClick={resetExtensionTheme}>
+                  Reset to default
+                </button>
+              ) : undefined
+            }
+          >
+            {themes.length === 0 ? (
+              <p className="px-[16px] py-[14px] font-sans text-[12px] text-[var(--text-secondary)]">
+                Install a theme extension (e.g. One Dark Pro, Dracula) to restyle the workbench,
+                editor, and extension webviews.
+              </p>
+            ) : (
+              <div className="divide-y divide-[var(--border-subtle)]">
+                {themes.map((descriptor) => {
+                  const key = `theme:${descriptor.extensionId}:${descriptor.label}`;
+                  const isActive = activeThemeLabel === descriptor.label;
+                  return (
+                    <div
+                      key={key}
+                      className="flex items-center justify-between gap-[12px] px-[16px] py-[10px]"
+                    >
+                      <div className="min-w-0">
+                        <p className="truncate font-sans text-[13px] font-medium text-[var(--text-primary)]">
+                          {descriptor.label}
+                          {isActive ? (
+                            <span className="ml-[8px] rounded-[4px] bg-[var(--accent-bg)] px-[6px] py-[1px] font-sans text-[10px] text-[var(--accent)]">
+                              active
+                            </span>
+                          ) : null}
+                        </p>
+                        <p className="mt-[2px] truncate font-sans text-[11px] text-[var(--text-secondary)]">
+                          {descriptor.extensionId} · {descriptor.uiTheme}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        className={rowButtonClass}
+                        disabled={busy === key || isActive}
+                        onClick={() => void applyExtensionTheme(descriptor)}
+                      >
+                        <Palette className="size-[14px]" strokeWidth={1.5} />
+                        Apply
                       </button>
                     </div>
                   );

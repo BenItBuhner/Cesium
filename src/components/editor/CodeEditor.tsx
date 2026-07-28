@@ -17,10 +17,16 @@ import {
 import { useUserPreferences } from "@/components/preferences/UserPreferencesProvider";
 import { resolveEditorLanguageId } from "@/lib/editor-language";
 import {
+  getActiveExtensionTheme,
+  subscribeActiveExtensionTheme,
+} from "@/lib/extensions/extension-theme-store";
+import { peekExtensionSocket } from "@/lib/extensions/extension-socket";
+import {
   executeInstalledExtensionCommand,
   fetchInstalledExtensions,
   readFile,
   type ExtensionInstallRecord,
+  type LoadedExtensionTheme,
 } from "@/lib/server-api";
 
 interface CodeEditorProps {
@@ -620,6 +626,41 @@ function clearCSpellFallbackMarkers(
   monaco.editor.setModelMarkers(model, CSPELL_MARKER_OWNER, []);
 }
 
+const EXTENSION_MONACO_THEME = "cesium-extension-theme";
+const HEX_COLOR_RE = /^#[0-9a-fA-F]{3,8}$/;
+
+function extensionThemeIsDark(theme: LoadedExtensionTheme): boolean {
+  return theme.type === "dark" || theme.type === "hcDark";
+}
+
+/** Defines a Monaco theme from an extension-contributed color theme. */
+function defineExtensionMonacoTheme(monaco: Monaco, theme: LoadedExtensionTheme): boolean {
+  try {
+    const colors: Record<string, string> = {};
+    for (const [key, value] of Object.entries(theme.colors)) {
+      if (HEX_COLOR_RE.test(value)) {
+        colors[key] = value;
+      }
+    }
+    monaco.editor.defineTheme(EXTENSION_MONACO_THEME, {
+      base: theme.monacoBase === "hc-light" ? "vs" : theme.monacoBase,
+      inherit: true,
+      rules: theme.tokenRules
+        .filter((rule) => rule.token)
+        .map((rule) => ({
+          token: rule.token,
+          foreground: rule.foreground,
+          background: rule.background,
+          fontStyle: rule.fontStyle,
+        })),
+      colors,
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function defineCesiumThemes(monaco: Monaco) {
   monaco.editor.defineTheme("cesium-dark", {
     base: "vs-dark",
@@ -863,7 +904,24 @@ export function CodeEditor({
   const extensionDocPathRef = useRef<string | null>(null);
   const captureRef = useRef<HTMLDivElement | null>(null);
   const isDark = useHtmlDarkClass();
-  const monacoTheme = isDark ? "cesium-dark" : "cesium-light";
+  const [extensionTheme, setExtensionTheme] = useState<LoadedExtensionTheme | null>(() =>
+    getActiveExtensionTheme()
+  );
+  useEffect(
+    () =>
+      subscribeActiveExtensionTheme(() => {
+        setExtensionTheme(getActiveExtensionTheme());
+      }),
+    []
+  );
+  const extensionThemeActive = Boolean(
+    vscodeExtensionsBeta && extensionTheme && extensionThemeIsDark(extensionTheme) === isDark
+  );
+  const monacoTheme = extensionThemeActive
+    ? EXTENSION_MONACO_THEME
+    : isDark
+      ? "cesium-dark"
+      : "cesium-light";
   const editorLanguage = useMemo(
     () => resolveEditorLanguageId(language, filePath),
     [filePath, language]
@@ -951,8 +1009,66 @@ export function CodeEditor({
 
   useEffect(() => {
     const m = monacoRef.current;
-    if (m) m.editor.setTheme(monacoTheme);
-  }, [monacoTheme]);
+    if (!m) return;
+    if (extensionThemeActive && extensionTheme) {
+      if (!defineExtensionMonacoTheme(m, extensionTheme)) {
+        m.editor.setTheme(isDark ? "cesium-dark" : "cesium-light");
+        return;
+      }
+    }
+    m.editor.setTheme(monacoTheme);
+  }, [editorInstance, extensionTheme, extensionThemeActive, isDark, monacoTheme]);
+
+  // Live editor context sync: keeps the extension host's activeTextEditor,
+  // documents, and selection in step with what the user is actually doing.
+  useEffect(() => {
+    if (!vscodeExtensionsBeta || !activeWorkspaceId || !editorInstance || !filePath) {
+      return;
+    }
+    const socket = peekExtensionSocket(activeWorkspaceId);
+    if (!socket) return;
+    const buildContext = () => {
+      const model = editorInstance.getModel();
+      const contentValue = model?.getValue() ?? valueRef.current;
+      if (contentValue.length > 512 * 1024) {
+        return null;
+      }
+      const selection = editorInstance.getSelection();
+      const selectedText =
+        selection && model ? model.getValueInRange(selection) : "";
+      return {
+        uri: `file:///${normalizeWorkspacePath(filePath)}`,
+        path: normalizeWorkspacePath(filePath),
+        language: editorLanguage,
+        content: contentValue,
+        selectedText,
+        selection: selection
+          ? {
+              startLineNumber: selection.startLineNumber,
+              startColumn: selection.startColumn,
+              endLineNumber: selection.endLineNumber,
+              endColumn: selection.endColumn,
+            }
+          : undefined,
+      };
+    };
+    const push = (reason: "open" | "selection" | "edit" | "save") => {
+      const context = buildContext();
+      if (context) {
+        socket.sendEditorContext(context, reason);
+      }
+    };
+    push("open");
+    const disposables = [
+      editorInstance.onDidChangeCursorSelection(() => push("selection")),
+      editorInstance.onDidChangeModelContent(() => push("edit")),
+    ];
+    return () => {
+      for (const disposable of disposables) {
+        disposable.dispose();
+      }
+    };
+  }, [activeWorkspaceId, editorInstance, editorLanguage, filePath, vscodeExtensionsBeta]);
 
   useEffect(() => {
     if (!onContentChange || value === content) return;

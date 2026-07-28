@@ -8,6 +8,7 @@ import { getStorage } from "../storage/runtime.js";
 import {
   getOpenVsxDetail,
   installOpenVsxExtension,
+  installVsixExtension,
   searchOpenVsx,
 } from "../lib/extensions/install-store.js";
 import { classifyExtensionManifest } from "../lib/extensions/manifest-classifier.js";
@@ -15,10 +16,26 @@ import {
   activateExtension,
   executeExtensionCommand,
   getExtensionHostStatus,
+  getExtensionTreeChildren,
+  notifyHostConfigChanged,
+  provideExtensionLanguageFeature,
   releaseExtensionHost,
+  resetExtensionHostRestartBudget,
   retainExtensionHost,
   stopExtensionHost,
+  updateHostEditorContext,
 } from "../lib/extensions/host-runtime.js";
+import {
+  forwardWorkspaceUiEvent,
+  getWorkspaceExtensionUiSnapshot,
+  getWorkspaceOutputChannelContent,
+  readWorkspaceExtensionEvents,
+  resolveWorkspaceUiRequest,
+} from "../lib/extensions/host-events.js";
+import {
+  listExtensionThemes,
+  loadExtensionTheme,
+} from "../lib/extensions/theme-loader.js";
 import {
   attachExtensionSurfaceSession,
   closeExtensionSurfaceSession,
@@ -399,7 +416,7 @@ extensionRoutes.post(
     if (workspace.id !== c.req.param("workspaceId")) {
       return c.json({ error: "Workspace mismatch." }, 400);
     }
-    const body: { message?: unknown } = await c.req.json().catch(() => ({}));
+    const body: { message?: unknown; msgId?: unknown } = await c.req.json().catch(() => ({}));
     if (!getExtensionSurfaceSession(workspace.id, c.req.param("sessionId"))) {
       return c.json({
         session: null,
@@ -416,6 +433,7 @@ extensionRoutes.post(
         workspace,
         sessionId: c.req.param("sessionId"),
         message: body.message,
+        msgId: typeof body.msgId === "string" ? body.msgId : undefined,
       })
     );
   }
@@ -531,13 +549,35 @@ extensionRoutes.post("/api/workspaces/:workspaceId/extensions/install", async (c
     return c.json({ error: "Workspace mismatch." }, 400);
   }
   const body = await c.req.json<{
-    source?: "open-vsx";
+    source?: "open-vsx" | "vsix";
     namespace?: string;
     name?: string;
     version?: string;
+    filename?: string;
+    data?: string;
   }>();
+  if (body.source === "vsix") {
+    if (!body.data?.trim()) {
+      return c.json({ error: "Expected base64 VSIX data." }, 400);
+    }
+    let buffer: Buffer;
+    try {
+      buffer = Buffer.from(body.data, "base64");
+    } catch {
+      return c.json({ error: "Invalid base64 VSIX data." }, 400);
+    }
+    if (buffer.length === 0) {
+      return c.json({ error: "Empty VSIX payload." }, 400);
+    }
+    const record = await installVsixExtension({
+      workspaceId: workspace.id,
+      filename: body.filename?.trim() || "extension.vsix",
+      buffer,
+    });
+    return c.json({ extension: publicRecord(record), host: getExtensionHostStatus(workspace.id) });
+  }
   if (body.source !== "open-vsx" || !body.namespace?.trim() || !body.name?.trim()) {
-    return c.json({ error: "Expected Open VSX namespace and name." }, 400);
+    return c.json({ error: "Expected Open VSX namespace and name, or a VSIX payload." }, 400);
   }
   const record = await installOpenVsxExtension({
     workspaceId: workspace.id,
@@ -617,6 +657,11 @@ extensionRoutes.patch("/api/workspaces/:workspaceId/extensions/:extensionId/sett
   if (!record) {
     return c.json({ error: "Extension not found." }, 404);
   }
+  notifyHostConfigChanged({
+    workspaceId: workspace.id,
+    extensionId: record.extensionId,
+    settings: record.settings,
+  });
   return c.json({ extension: publicRecord(record) });
 });
 
@@ -772,16 +817,237 @@ extensionRoutes.post("/api/workspaces/:workspaceId/extensions/commands/execute",
   if (workspace.id !== c.req.param("workspaceId")) {
     return c.json({ error: "Workspace mismatch." }, 400);
   }
-  const body = await c.req.json<{ command?: string; args?: unknown[]; editorContext?: unknown }>();
-  if (!body.command?.trim()) {
+  const body = await c.req.json<{
+    command?: string;
+    args?: unknown[];
+    editorContext?: unknown;
+    treeItem?: { viewId?: string; handle?: string };
+  }>();
+  if (!body.command?.trim() && !body.treeItem) {
     return c.json({ error: "Expected command." }, 400);
   }
   await ensureInstalledExtensionsForWorkspace(workspace);
+  const treeItem =
+    body.treeItem &&
+    typeof body.treeItem.viewId === "string" &&
+    typeof body.treeItem.handle === "string"
+      ? { viewId: body.treeItem.viewId, handle: body.treeItem.handle }
+      : undefined;
   const result = await executeExtensionCommand({
     workspace,
-    command: body.command.trim(),
+    command: body.command?.trim() ?? "",
     args: body.args,
     editorContext: body.editorContext,
+    treeItem,
   });
   return c.json({ result: result.result, externalUrls: result.externalUrls, host: result.status });
+});
+
+/* ------------------------------------------------------------------ */
+/* Workspace-level extension runtime endpoints                         */
+/* ------------------------------------------------------------------ */
+
+extensionRoutes.get("/api/workspaces/:workspaceId/extensions/events", async (c) => {
+  const workspace = await requireWorkspaceFromRequest(c);
+  if (workspace.id !== c.req.param("workspaceId")) {
+    return c.json({ error: "Workspace mismatch." }, 400);
+  }
+  const cursor = Number.parseInt(c.req.query("cursor") ?? "0", 10);
+  return c.json(
+    readWorkspaceExtensionEvents({
+      workspaceId: workspace.id,
+      cursor: Number.isFinite(cursor) ? cursor : 0,
+    })
+  );
+});
+
+extensionRoutes.get("/api/workspaces/:workspaceId/extensions/ui-state", async (c) => {
+  const workspace = await requireWorkspaceFromRequest(c);
+  if (workspace.id !== c.req.param("workspaceId")) {
+    return c.json({ error: "Workspace mismatch." }, 400);
+  }
+  return c.json({
+    ...getWorkspaceExtensionUiSnapshot(workspace.id),
+    host: getExtensionHostStatus(workspace.id),
+  });
+});
+
+extensionRoutes.post("/api/workspaces/:workspaceId/extensions/ui-response", async (c) => {
+  const workspace = await requireWorkspaceFromRequest(c);
+  if (workspace.id !== c.req.param("workspaceId")) {
+    return c.json({ error: "Workspace mismatch." }, 400);
+  }
+  const body = await c.req.json<{ response?: { requestId?: string } }>().catch(() => ({}) as never);
+  if (!body.response || typeof body.response.requestId !== "string") {
+    return c.json({ error: "Expected response with requestId." }, 400);
+  }
+  const delivered = await resolveWorkspaceUiRequest({
+    workspaceId: workspace.id,
+    response: body.response as Parameters<typeof resolveWorkspaceUiRequest>[0]["response"],
+  });
+  return c.json({ delivered });
+});
+
+extensionRoutes.post("/api/workspaces/:workspaceId/extensions/ui-event", async (c) => {
+  const workspace = await requireWorkspaceFromRequest(c);
+  if (workspace.id !== c.req.param("workspaceId")) {
+    return c.json({ error: "Workspace mismatch." }, 400);
+  }
+  const body = await c.req.json<{ event?: { requestId?: string; type?: string } }>().catch(() => ({}) as never);
+  if (!body.event || typeof body.event.requestId !== "string" || typeof body.event.type !== "string") {
+    return c.json({ error: "Expected event with requestId and type." }, 400);
+  }
+  const delivered = await forwardWorkspaceUiEvent({
+    workspaceId: workspace.id,
+    event: body.event as Parameters<typeof forwardWorkspaceUiEvent>[0]["event"],
+  });
+  return c.json({ delivered });
+});
+
+extensionRoutes.get(
+  "/api/workspaces/:workspaceId/extensions/:extensionId/tree/:viewId",
+  async (c) => {
+    const workspace = await requireWorkspaceFromRequest(c);
+    if (workspace.id !== c.req.param("workspaceId")) {
+      return c.json({ error: "Workspace mismatch." }, 400);
+    }
+    await ensureInstalledExtensionsForWorkspace(workspace);
+    const result = await getExtensionTreeChildren({
+      workspace,
+      extensionId: normalizeExtensionId(c.req.param("extensionId")),
+      viewId: decodeURIComponent(c.req.param("viewId")),
+      parentHandle: c.req.query("parentHandle") || undefined,
+    });
+    return c.json(result);
+  }
+);
+
+extensionRoutes.get("/api/workspaces/:workspaceId/extensions/output-channel", async (c) => {
+  const workspace = await requireWorkspaceFromRequest(c);
+  if (workspace.id !== c.req.param("workspaceId")) {
+    return c.json({ error: "Workspace mismatch." }, 400);
+  }
+  const extensionId = c.req.query("extensionId");
+  const channel = c.req.query("channel");
+  if (!extensionId?.trim() || !channel?.trim()) {
+    return c.json({ error: "Expected extensionId and channel." }, 400);
+  }
+  const content = getWorkspaceOutputChannelContent(
+    workspace.id,
+    normalizeExtensionId(extensionId),
+    channel
+  );
+  return c.json({ content: content ?? "", exists: content !== null });
+});
+
+extensionRoutes.post("/api/workspaces/:workspaceId/extensions/editor-context", async (c) => {
+  const workspace = await requireWorkspaceFromRequest(c);
+  if (workspace.id !== c.req.param("workspaceId")) {
+    return c.json({ error: "Workspace mismatch." }, 400);
+  }
+  const body = await c.req.json<{ context?: unknown; reason?: unknown }>().catch(() => ({}) as never);
+  const reason =
+    body.reason === "open" ||
+    body.reason === "focus" ||
+    body.reason === "selection" ||
+    body.reason === "edit" ||
+    body.reason === "save" ||
+    body.reason === "close"
+      ? body.reason
+      : "focus";
+  const delivered = updateHostEditorContext({
+    workspaceId: workspace.id,
+    context: (body.context ?? null) as Parameters<typeof updateHostEditorContext>[0]["context"],
+    reason,
+  });
+  return c.json({ delivered });
+});
+
+extensionRoutes.post("/api/workspaces/:workspaceId/extensions/language-feature", async (c) => {
+  const workspace = await requireWorkspaceFromRequest(c);
+  if (workspace.id !== c.req.param("workspaceId")) {
+    return c.json({ error: "Workspace mismatch." }, 400);
+  }
+  const body = await c.req.json<{
+    kind?: string;
+    uri?: string;
+    languageId?: string;
+    content?: string;
+    position?: { line?: number; character?: number };
+    formattingOptions?: { tabSize?: number; insertSpaces?: boolean };
+    triggerCharacter?: string;
+  }>();
+  if (
+    body.kind !== "hover" &&
+    body.kind !== "completion" &&
+    body.kind !== "definition" &&
+    body.kind !== "formatting"
+  ) {
+    return c.json({ error: "Unknown language feature kind." }, 400);
+  }
+  if (!body.uri?.trim() || !body.languageId?.trim()) {
+    return c.json({ error: "Expected uri and languageId." }, 400);
+  }
+  const result = await provideExtensionLanguageFeature({
+    workspace,
+    kind: body.kind,
+    uri: body.uri,
+    languageId: body.languageId,
+    content: typeof body.content === "string" ? body.content : undefined,
+    position:
+      body.position &&
+      typeof body.position.line === "number" &&
+      typeof body.position.character === "number"
+        ? { line: body.position.line, character: body.position.character }
+        : undefined,
+    formattingOptions: body.formattingOptions,
+    triggerCharacter: body.triggerCharacter,
+  });
+  return c.json({ result });
+});
+
+extensionRoutes.get("/api/workspaces/:workspaceId/extensions/themes", async (c) => {
+  const workspace = await requireWorkspaceFromRequest(c);
+  if (workspace.id !== c.req.param("workspaceId")) {
+    return c.json({ error: "Workspace mismatch." }, 400);
+  }
+  const extensions = await ensureInstalledExtensionsForWorkspace(workspace);
+  return c.json({ themes: listExtensionThemes(extensions) });
+});
+
+extensionRoutes.get(
+  "/api/workspaces/:workspaceId/extensions/:extensionId/themes/:label",
+  async (c) => {
+    const workspace = await requireWorkspaceFromRequest(c);
+    if (workspace.id !== c.req.param("workspaceId")) {
+      return c.json({ error: "Workspace mismatch." }, 400);
+    }
+    const record = await getInstalledExtensionForWorkspace(
+      workspace,
+      normalizeExtensionId(c.req.param("extensionId"))
+    );
+    if (!record) {
+      return c.json({ error: "Extension not found." }, 404);
+    }
+    const theme = await loadExtensionTheme({
+      record,
+      label: decodeURIComponent(c.req.param("label")),
+    });
+    if (!theme) {
+      return c.json({ error: "Theme not found." }, 404);
+    }
+    c.header("Cache-Control", "private, max-age=300");
+    return c.json({ theme });
+  }
+);
+
+extensionRoutes.post("/api/workspaces/:workspaceId/extensions/host/restart", async (c) => {
+  const workspace = await requireWorkspaceFromRequest(c);
+  if (workspace.id !== c.req.param("workspaceId")) {
+    return c.json({ error: "Workspace mismatch." }, 400);
+  }
+  await stopExtensionHost(workspace.id);
+  resetExtensionHostRestartBudget(workspace.id);
+  const status = await retainExtensionHost(workspace, "settings");
+  return c.json({ host: status });
 });

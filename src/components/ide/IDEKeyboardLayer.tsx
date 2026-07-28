@@ -54,6 +54,15 @@ import {
 import { useShellView } from "@/components/layout/ShellViewContext";
 import { useAgentShellStateMaybe } from "@/components/agent/AgentShellStateContext";
 import {
+  collectExtensionKeybindings,
+  eventMatchesExtensionKeybinding,
+  type ParsedExtensionKeybinding,
+} from "@/lib/extensions/extension-keybindings";
+import {
+  evaluateWhenClause,
+  getExtensionContextKeys,
+} from "@/lib/extensions/when-clause";
+import {
   dispatchChatComposerShortcut,
   dispatchNewChatShortcut,
   dispatchWorkspacePickerShortcut,
@@ -176,6 +185,7 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
   const [renameWindowValue, setRenameWindowValue] = useState("");
   const [toast, setToast] = useState<string | null>(null);
   const [extensionPaletteCommands, setExtensionPaletteCommands] = useState<PaletteCommand[]>([]);
+  const extensionKeybindingsRef = useRef<ParsedExtensionKeybinding[]>([]);
   const [orchestrationBoards, setOrchestrationBoards] = useState<
     OrchestrationBoardRecord[]
   >([]);
@@ -230,6 +240,10 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
     fetchInstalledExtensions(activeWorkspaceId)
       .then(({ extensions }) => {
         if (cancelled) return;
+        extensionKeybindingsRef.current = collectExtensionKeybindings(
+          extensions,
+          shortcutPlatform
+        );
         const next: PaletteCommand[] = [];
         for (const extension of extensions) {
           if (!extension.enabled) continue;
@@ -319,12 +333,42 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
         setExtensionPaletteCommands(next);
       })
       .catch(() => {
-        if (!cancelled) setExtensionPaletteCommands([]);
+        if (!cancelled) {
+          setExtensionPaletteCommands([]);
+          extensionKeybindingsRef.current = [];
+        }
       });
     return () => {
       cancelled = true;
     };
-  }, [activeWorkspaceId, bridgeRef, setToast, vscodeExtensionsBeta]);
+  }, [activeWorkspaceId, bridgeRef, setToast, shortcutPlatform, vscodeExtensionsBeta]);
+
+  /** Extension-contributed keybindings run after built-in workbench shortcuts. */
+  const tryRunExtensionKeybinding = useCallback(
+    (event: KeyboardEvent): boolean => {
+      if (!vscodeExtensionsBeta || !activeWorkspaceId) return false;
+      const bindings = extensionKeybindingsRef.current;
+      if (bindings.length === 0) return false;
+      const contextKeys = getExtensionContextKeys(activeWorkspaceId);
+      for (const binding of bindings) {
+        if (!eventMatchesExtensionKeybinding(event, binding)) continue;
+        if (!evaluateWhenClause(binding.when, contextKeys)) continue;
+        event.preventDefault();
+        void executeInstalledExtensionCommand({
+          workspaceId: activeWorkspaceId,
+          command: binding.command,
+        }).catch((error) =>
+          flash(
+            setToast,
+            error instanceof Error ? error.message : "Extension keybinding failed."
+          )
+        );
+        return true;
+      }
+      return false;
+    },
+    [activeWorkspaceId, setToast, vscodeExtensionsBeta]
+  );
 
   const inferEditorIcon = useCallback((entry: QuickOpenEntry): EditorTab["icon"] => {
     const lower = entry.name.toLowerCase();
@@ -1476,6 +1520,10 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
       if (handleWorkbenchKeyDown(e)) {
         return;
       }
+
+      if (tryRunExtensionKeybinding(e)) {
+        return;
+      }
     };
 
     const onPaste = (e: ClipboardEvent) => {
@@ -1576,6 +1624,7 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
   shortcutBindings,
   shortcutPlatform,
   stepAgentSwitcher,
+  tryRunExtensionKeybinding,
 ]);
 
   const onQuickPick = useCallback(

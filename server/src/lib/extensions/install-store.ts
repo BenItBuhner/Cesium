@@ -261,36 +261,28 @@ export async function getOpenVsxDetail(input: {
   };
 }
 
-export async function installOpenVsxExtension(input: {
+async function installVsixBuffer(input: {
   workspaceId: string;
-  namespace: string;
-  name: string;
-  version?: string;
+  buffer: Buffer;
+  source: (manifest: ExtensionManifestSummary) => ExtensionInstallRecord["source"];
+  fallbackDisplayName?: string;
+  fallbackDescription?: string;
 }): Promise<ExtensionInstallRecord> {
-  const detail = await getOpenVsxDetail(input);
-  if (!detail.downloadUrl) {
-    throw new Error("Open VSX extension did not include a VSIX download URL.");
-  }
-  const response = await fetch(detail.downloadUrl);
-  if (!response.ok) {
-    throw new Error(`Failed to download VSIX (${response.status}).`);
-  }
-  const buffer = Buffer.from(await response.arrayBuffer());
-  const entries = readZipEntries(buffer, VSIX_LIMITS);
+  const entries = readZipEntries(input.buffer, VSIX_LIMITS);
   const manifestText =
-    readTextEntry(buffer, entries, "extension/package.json") ??
-    readTextEntry(buffer, entries, "package.json");
+    readTextEntry(input.buffer, entries, "extension/package.json") ??
+    readTextEntry(input.buffer, entries, "package.json");
   if (!manifestText) {
     throw new Error("Invalid VSIX: missing extension/package.json.");
   }
   const manifest = summarizeManifest(JSON.parse(manifestText) as Record<string, unknown>);
   const extensionId = `${manifest.publisher}.${manifest.name}`.toLowerCase();
-  const sha256 = createHash("sha256").update(buffer).digest("hex");
+  const sha256 = createHash("sha256").update(input.buffer).digest("hex");
   const installPath = extensionInstallRoot(input.workspaceId, extensionId, manifest.version);
   const vsixPath = extensionVsixPath(input.workspaceId, extensionId, manifest.version);
   await fs.mkdir(path.dirname(vsixPath), { recursive: true });
-  await fs.writeFile(vsixPath, buffer);
-  await extractZip(buffer, installPath, VSIX_LIMITS);
+  await fs.writeFile(vsixPath, input.buffer);
+  await extractZip(input.buffer, installPath, VSIX_LIMITS);
   const compatibility = scoreCompatibility(manifest);
   const now = Date.now();
   const existing = await (await getStorage()).getInstalledExtension(
@@ -315,21 +307,15 @@ export async function installOpenVsxExtension(input: {
     extensionId,
     publisher: manifest.publisher,
     name: manifest.name,
-    displayName: manifest.displayName || detail.displayName,
-    description: manifest.description || detail.description,
+    displayName: manifest.displayName || input.fallbackDisplayName || manifest.name,
+    description: manifest.description || input.fallbackDescription || "",
     version: manifest.version,
     enabled: true,
     compatibility: compatibility.compatibility,
     compatibilityWarnings: compatibility.warnings,
-    source: {
-      kind: "open-vsx",
-      namespace: detail.namespace,
-      name: detail.name,
-      version: detail.version,
-      registryUrl: OPEN_VSX_BASE_URL,
-    },
+    source: input.source(manifest),
     vsixSha256: sha256,
-    vsixSizeBytes: buffer.length,
+    vsixSizeBytes: input.buffer.length,
     installPath,
     manifest,
     settings: existing?.settings ?? {},
@@ -346,4 +332,53 @@ export async function installOpenVsxExtension(input: {
   };
   await (await getStorage()).upsertInstalledExtension(record);
   return record;
+}
+
+export async function installOpenVsxExtension(input: {
+  workspaceId: string;
+  namespace: string;
+  name: string;
+  version?: string;
+}): Promise<ExtensionInstallRecord> {
+  const detail = await getOpenVsxDetail(input);
+  if (!detail.downloadUrl) {
+    throw new Error("Open VSX extension did not include a VSIX download URL.");
+  }
+  const response = await fetch(detail.downloadUrl);
+  if (!response.ok) {
+    throw new Error(`Failed to download VSIX (${response.status}).`);
+  }
+  const buffer = Buffer.from(await response.arrayBuffer());
+  return await installVsixBuffer({
+    workspaceId: input.workspaceId,
+    buffer,
+    fallbackDisplayName: detail.displayName,
+    fallbackDescription: detail.description,
+    source: () => ({
+      kind: "open-vsx",
+      namespace: detail.namespace,
+      name: detail.name,
+      version: detail.version,
+      registryUrl: OPEN_VSX_BASE_URL,
+    }),
+  });
+}
+
+/**
+ * Side-load an extension from an uploaded `.vsix` file. This is the path for
+ * extensions that are not published to Open VSX (e.g. GitHub Copilot).
+ */
+export async function installVsixExtension(input: {
+  workspaceId: string;
+  filename: string;
+  buffer: Buffer;
+}): Promise<ExtensionInstallRecord> {
+  return await installVsixBuffer({
+    workspaceId: input.workspaceId,
+    buffer: input.buffer,
+    source: () => ({
+      kind: "vsix",
+      filename: input.filename,
+    }),
+  });
 }
