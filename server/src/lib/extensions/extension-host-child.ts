@@ -1167,7 +1167,7 @@ function heuristicConfigDefault(fullKey: string, fallback: unknown): unknown {
 
 function createConfigurationObject(extensionId: string, section?: string) {
   const resolveKey = (key: string) => (section ? `${section}.${key}` : key);
-  return {
+  const api = {
     get: (key: string, fallback?: unknown) => {
       const fullKey = resolveKey(key);
       const result = lookupConfigValue(extensionId, fullKey);
@@ -1208,6 +1208,23 @@ function createConfigurationObject(extensionId: string, section?: string) {
       };
     },
   };
+  // VS Code's WorkspaceConfiguration also exposes values as plain properties
+  // (`getConfiguration("todo-tree.general").tagGroups`); mirror that.
+  return new Proxy(api, {
+    get(target, property, receiver) {
+      if (typeof property !== "string" || Reflect.has(target, property)) {
+        return Reflect.get(target, property, receiver);
+      }
+      if (property === "then" || property === "toJSON" || property.startsWith("__")) {
+        return undefined;
+      }
+      return target.get(property);
+    },
+    has(target, property) {
+      if (typeof property !== "string") return Reflect.has(target, property);
+      return Reflect.has(target, property) || target.has(property);
+    },
+  });
 }
 
 /* ------------------------------------------------------------------ */
@@ -1992,11 +2009,16 @@ async function getSerializedTreeChildren(input: {
           ? String((raw.tooltip as { value?: unknown }).value ?? "")
           : undefined;
     const resourceFsPath = raw.resourceUri ? uriToFsPath(raw.resourceUri) : "";
+    const description =
+      typeof raw.description === "string" && raw.description.trim() ? raw.description : undefined;
     items.push({
       handle,
-      label: label || (resourceFsPath ? path.basename(resourceFsPath) : "(empty)"),
-      description:
-        typeof raw.description === "string" && raw.description.trim() ? raw.description : undefined,
+      label:
+        label ||
+        (resourceFsPath ? path.basename(resourceFsPath) : "") ||
+        description ||
+        "(empty)",
+      description: label ? description : undefined,
       tooltip,
       collapsibleState: rawState === 1 || rawState === 2 ? rawState : 0,
       ...serializeTreeIcon(raw.iconPath, extensionRoot),
