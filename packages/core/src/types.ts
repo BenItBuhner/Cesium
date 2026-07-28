@@ -71,6 +71,8 @@ export type WorkedSessionEntry =
       locations?: Array<{ path: string; line?: number }>;
       files?: string[];
       editPreview?: WorkedSessionEditPreview;
+      /** Parsed checklist for todo tools; rendered as an organic list instead of raw JSON args. */
+      todos?: TodoItem[];
     };
 
 export type ImageAttachment = {

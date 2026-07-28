@@ -128,6 +128,13 @@ import {
   truncate,
 } from "./cesium/cesium-coerce.js";
 import {
+  applyCesiumFileEdit,
+  describeWriteFileOutcome,
+  parseCesiumEditFileArgs,
+  parseCesiumWriteFileArgs,
+} from "./cesium/cesium-file-tools.js";
+import { parseAskQuestionArgs } from "./cesium/cesium-ask-question.js";
+import {
   CESIUM_MAX_TOOL_ITERATIONS,
   CESIUM_RESPONSE_WARNING_MS,
   CESIUM_SYSTEM_PROMPT,
@@ -283,6 +290,18 @@ function resolveWorkspacePath(workspaceRoot: string, inputPath: string): string 
   return resolved;
 }
 
+/** `null` when the file does not exist; other filesystem errors still throw. */
+async function readWorkspaceFileIfExists(resolvedPath: string): Promise<string | null> {
+  try {
+    return await fs.readFile(resolvedPath, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code === "ENOENT") {
+      return null;
+    }
+    throw error;
+  }
+}
+
 function statusFromError(error: unknown): { status: AgentToolCallStatus; detail: string } {
   return {
     status: "failed",
@@ -398,6 +417,8 @@ class CesiumSessionHandle implements AgentSessionHandle {
   private pendingPermissions = new Map<string, ActivePermission>();
   private pendingQuestions = new Map<string, ActiveQuestion>();
   private terminalRuns = new Map<string, TerminalRun>();
+  /** Tool-call titles refined during execution (e.g. "Write x" → "Create x" once we know the file is new). */
+  private refinedToolTitles = new Map<string, string>();
   private subagentTranscripts = new Map<string, AgentStoredEvent[]>();
   private activeSystemPrompt = CESIUM_SYSTEM_PROMPT;
   private activeUserMessageId: string | null = null;
@@ -1739,6 +1760,9 @@ class CesiumSessionHandle implements AgentSessionHandle {
         case "edit_file":
           result = await this.toolEditFile(request.arguments, request.id, title);
           break;
+        case "write_file":
+          result = await this.toolWriteFile(request.arguments, request.id);
+          break;
         case "terminal":
           result = await this.toolTerminal(request.arguments);
           break;
@@ -1873,13 +1897,15 @@ class CesiumSessionHandle implements AgentSessionHandle {
           throw new Error(`Unknown Cesium tool: ${request.name}`);
         }
       }
+      const refinedTitle = this.refinedToolTitles.get(request.id);
+      this.refinedToolTitles.delete(request.id);
       await this.callbacks.appendEvents([
         {
           eventId: randomUUID(),
           conversationId: this.callbacks.conversation.id,
           kind: "tool_call_update",
           toolCallId: request.id,
-          title,
+          title: refinedTitle ?? title,
           toolKind: toolKind(request.name),
           status: "completed",
           detail: result,
@@ -1888,6 +1914,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
       ]);
       return result;
     } catch (error) {
+      this.refinedToolTitles.delete(request.id);
       if (error instanceof PermissionRefusedToolCallError) {
         await this.callbacks.appendEvents([
           {
@@ -1988,40 +2015,77 @@ class CesiumSessionHandle implements AgentSessionHandle {
     toolCallId: string,
     title: string
   ): Promise<string> {
-    const inputPath = asString(args.path);
-    const oldString = typeof args.oldString === "string" ? args.oldString : "";
-    const newString = typeof args.newString === "string" ? args.newString : "";
-    if (!inputPath) throw new Error("edit_file.path is required.");
-    if (!oldString) throw new Error("edit_file.oldString is required.");
-    const resolved = resolveWorkspacePath(this.callbacks.workspace.root, inputPath);
-    const before = await fs.readFile(resolved, "utf8");
-    const first = before.indexOf(oldString);
-    if (first < 0) throw new Error("oldString was not found.");
-    if (before.indexOf(oldString, first + oldString.length) >= 0) {
-      throw new Error("oldString matches more than once; include more context.");
-    }
-    const after = `${before.slice(0, first)}${newString}${before.slice(first + oldString.length)}`;
-    await fs.writeFile(resolved, after, "utf8");
+    const parsed = parseCesiumEditFileArgs(args);
+    const resolved = resolveWorkspacePath(this.callbacks.workspace.root, parsed.path);
+    const before = await readWorkspaceFileIfExists(resolved);
+    const outcome = applyCesiumFileEdit({
+      path: parsed.path,
+      before,
+      oldString: parsed.oldString,
+      newString: parsed.newString,
+      replaceAll: parsed.replaceAll,
+    });
+    await fs.mkdir(path.dirname(resolved), { recursive: true });
+    await fs.writeFile(resolved, outcome.after, "utf8");
     const editPreview = extractToolEditPreview(
-      { path: inputPath, oldString, newString },
-      { beforeFullFileContent: before, afterFullFileContent: after },
-      inputPath
+      { path: parsed.path, oldString: parsed.oldString, newString: parsed.newString },
+      { beforeFullFileContent: before ?? "", afterFullFileContent: outcome.after },
+      parsed.path
     );
+    const refinedTitle = outcome.created ? `Create ${parsed.path}` : title;
+    if (outcome.created) {
+      this.refinedToolTitles.set(toolCallId, refinedTitle);
+    }
     await this.callbacks.appendEvents([
       {
         eventId: randomUUID(),
         conversationId: this.callbacks.conversation.id,
         kind: "tool_call_update",
         toolCallId,
-        title,
+        title: refinedTitle,
         toolKind: "edit",
         status: "in_progress",
-        detail: "Applied edit preview.",
-        locations: [{ path: inputPath }],
+        detail: outcome.created ? "Created file." : "Applied edit preview.",
+        locations: [{ path: parsed.path }],
         editPreview,
       },
     ]);
-    return `Edited ${inputPath}.`;
+    return outcome.resultMessage;
+  }
+
+  private async toolWriteFile(args: Record<string, unknown>, toolCallId: string): Promise<string> {
+    const parsed = parseCesiumWriteFileArgs(args);
+    const resolved = resolveWorkspacePath(this.callbacks.workspace.root, parsed.path);
+    const before = await readWorkspaceFileIfExists(resolved);
+    await fs.mkdir(path.dirname(resolved), { recursive: true });
+    await fs.writeFile(resolved, parsed.content, "utf8");
+    const { created, resultMessage } = describeWriteFileOutcome({
+      path: parsed.path,
+      before,
+      content: parsed.content,
+    });
+    const editPreview = extractToolEditPreview(
+      { path: parsed.path },
+      { beforeFullFileContent: before ?? "", afterFullFileContent: parsed.content },
+      parsed.path
+    );
+    const refinedTitle = `${created ? "Create" : "Update"} ${parsed.path}`;
+    this.refinedToolTitles.set(toolCallId, refinedTitle);
+    await this.callbacks.appendEvents([
+      {
+        eventId: randomUUID(),
+        conversationId: this.callbacks.conversation.id,
+        kind: "tool_call_update",
+        toolCallId,
+        title: refinedTitle,
+        toolKind: "edit",
+        status: "in_progress",
+        detail: created ? "Created file." : "Overwrote file.",
+        locations: [{ path: parsed.path }],
+        editPreview,
+      },
+    ]);
+    return resultMessage;
   }
 
   private async toolTerminal(args: Record<string, unknown>): Promise<string> {
@@ -2475,45 +2539,10 @@ class CesiumSessionHandle implements AgentSessionHandle {
   }
 
   private async toolAskQuestion(args: Record<string, unknown>): Promise<string> {
-    const parseOptions = (value: unknown): Array<{ id: string; label: string }> =>
-      Array.isArray(value)
-        ? value.flatMap((option, index) => {
-            const record = asRecord(option);
-            const label = asString(record?.label) ?? asString(record?.text) ?? asString(option);
-            if (!label) return [];
-            return [{ id: asString(record?.id) ?? `option-${index + 1}`, label }];
-          })
-        : [];
-    const questionsFromArgs = Array.isArray(args.questions)
-      ? args.questions.flatMap((question, index): CesiumQuestionStep[] => {
-          const record = asRecord(question);
-          if (!record) return [];
-          const prompt = asString(record.prompt) ?? asString(record.title);
-          const options = parseOptions(record.options);
-          if (!prompt || options.length === 0) return [];
-          return [
-            {
-              id: asString(record.id) ?? `question-${index + 1}`,
-              prompt,
-              options,
-              allowMultiple: record.allowMultiple === true || record.allow_multiple === true,
-            },
-          ];
-        })
-      : [];
-    const prompt = asString(args.prompt) ?? (questionsFromArgs.length > 1 ? "Questions" : questionsFromArgs[0]?.prompt);
-    const options = parseOptions(args.options);
-    const allowMultiple = args.allowMultiple === true || args.allow_multiple === true;
-    const questions =
-      questionsFromArgs.length > 0
-        ? questionsFromArgs
-        : prompt && options.length > 0
-          ? [{ id: "single", prompt, options, allowMultiple }]
-          : [];
-    if (!prompt || questions.length === 0) {
-      throw new Error("ask_question requires either prompt/options or a non-empty questions array.");
-    }
-    const primaryOptions = questions[0]?.options ?? options;
+    const parsed = parseAskQuestionArgs(args);
+    const prompt = parsed.prompt;
+    const questions: CesiumQuestionStep[] = parsed.questions;
+    const primaryOptions = questions[0]?.options ?? parsed.options;
     const primaryAllowMultiple = questions.length === 1 ? Boolean(questions[0]?.allowMultiple) : false;
     const questionId = randomUUID();
     await this.callbacks.appendEvents([

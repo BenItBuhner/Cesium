@@ -103,8 +103,24 @@ const CESIUM_BASE_TOOLS: CesiumToolDefinition[] = [
     },
   },
   {
+    name: "write_file",
+    description:
+      "Create a new workspace file or overwrite an existing one with the full content. Parent directories are created automatically. Prefer edit_file for targeted changes inside existing files.",
+    requiresPermission: "editFile",
+    parameters: {
+      type: "object",
+      properties: {
+        path: { type: "string" },
+        content: { type: "string" },
+      },
+      required: ["path", "content"],
+      additionalProperties: false,
+    },
+  },
+  {
     name: "edit_file",
-    description: "Replace one exact string in a file. Returns a precise error if the match is missing or duplicated.",
+    description:
+      "Replace one exact string in an existing file (set replaceAll to true to replace every occurrence). Use write_file to create new files or fully rewrite one. Returns a precise, actionable error if the match is missing or ambiguous.",
     requiresPermission: "editFile",
     parameters: {
       type: "object",
@@ -112,6 +128,10 @@ const CESIUM_BASE_TOOLS: CesiumToolDefinition[] = [
         path: { type: "string" },
         oldString: { type: "string" },
         newString: { type: "string" },
+        replaceAll: {
+          type: "boolean",
+          description: "Replace every occurrence of oldString instead of requiring a unique match.",
+        },
       },
       required: ["path", "oldString", "newString"],
       additionalProperties: false,
@@ -401,27 +421,35 @@ const CESIUM_BASE_TOOLS: CesiumToolDefinition[] = [
   },
   {
     name: "ask_question",
-    description: "Ask the user a structured question with selectable options.",
+    description:
+      'Ask the user a question. Pass prompt (the question text) plus optional options (array of strings or {id,label}); omit options for an open-ended question — the user always gets a free-text answer field. Multi-step: questions: [{prompt, options}]. Example: {"prompt":"Which approach?","options":["Refactor now","Ship as-is"]}.',
     parameters: {
       type: "object",
       properties: {
-        prompt: { type: "string" },
-        options: { type: "array" },
+        prompt: { type: "string", description: "The question to show the user." },
+        question: { type: "string", description: "Alias of prompt." },
+        options: {
+          type: "array",
+          description: "Selectable answers: strings or {id,label}. Optional.",
+        },
+        choices: { type: "array", description: "Alias of options." },
         allowMultiple: { type: "boolean" },
         allow_multiple: { type: "boolean" },
         questions: {
           type: "array",
+          description: "Multiple question steps, each {prompt, options?}.",
           items: {
             type: "object",
             properties: {
               id: { type: "string" },
               prompt: { type: "string" },
+              question: { type: "string" },
               title: { type: "string" },
               options: { type: "array" },
+              choices: { type: "array" },
               allowMultiple: { type: "boolean" },
               allow_multiple: { type: "boolean" },
             },
-            required: ["options"],
             additionalProperties: false,
           },
         },
@@ -806,6 +834,8 @@ export function toolKind(name: string): string {
       return "read";
     case "edit_file":
       return "edit";
+    case "write_file":
+      return "edit";
     case "terminal":
       return "terminal";
     case "switch_mode":
@@ -920,6 +950,8 @@ export function toolTitle(name: string, args: Record<string, unknown>): string {
       return `Read ${asString(args.path) ?? "file"}`;
     case "edit_file":
       return `Edit ${asString(args.path) ?? "file"}`;
+    case "write_file":
+      return `Write ${asString(args.path) ?? "file"}`;
     case "terminal":
       return `Run ${asString(args.command) ?? "command"}`;
     case "switch_mode": {

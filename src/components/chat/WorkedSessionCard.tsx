@@ -10,9 +10,26 @@ import {
   type ReactNode,
 } from "react";
 import {
+  Ban,
+  Check,
   ChevronDown,
+  Circle,
+  CircleHelp,
+  FilePlus2,
+  FileText,
   FolderOpen,
+  Globe,
+  ListTodo,
+  LoaderCircle,
+  Plug,
   ScrollText,
+  Search,
+  SquarePen,
+  SquareTerminal,
+  Target,
+  TextSearch,
+  Trash2,
+  Wrench,
 } from "lucide-react";
 import { CollapsibleHeight } from "./CollapsibleHeight";
 import { useTheme } from "@/components/theme/ThemeProvider";
@@ -22,7 +39,7 @@ import { TOOL_CALL_DROPDOWN_MAX_HEIGHT_DEFAULT_PX } from "@/lib/theme-config";
 import { inferEditorLanguageFromPath } from "@/lib/editor-language";
 import { HorizontalFadedScroll } from "./HorizontalFadedScroll";
 import { PermissionRequestCard } from "./PermissionRequestCard";
-import type { ChatMessage, WorkedSessionEntry, WorkedSessionEditPreview } from "@/lib/types";
+import type { ChatMessage, TodoItem, WorkedSessionEntry, WorkedSessionEditPreview } from "@/lib/types";
 import { isAgentTodoJsonDetailString } from "@/lib/agent-chat";
 import {
   formatToolFileLabel,
@@ -32,6 +49,118 @@ import {
 
 const iconWrap =
   "mt-[2px] flex size-[14px] shrink-0 items-center justify-center text-[var(--text-secondary)]";
+
+/** Subtle per-kind glyph so tool rows scan visually instead of reading as a wall of text. */
+function toolEntryIcon(entry: Extract<WorkedSessionEntry, { kind: "tool" }>): ReactNode {
+  const kind = entry.toolKind ?? "";
+  const title = entry.title.trim();
+  const iconProps = { className: "size-[13px]", strokeWidth: 1.5, "aria-hidden": true } as const;
+  if (kind === "todo" || (entry.todos?.length ?? 0) > 0) {
+    return <ListTodo {...iconProps} />;
+  }
+  if (kind === "terminal" || entry.variant === "terminal" || /^ran\b/i.test(title)) {
+    return <SquareTerminal {...iconProps} />;
+  }
+  if (kind === "grep" || /^grep\b/i.test(title)) {
+    return <TextSearch {...iconProps} />;
+  }
+  if (kind === "search" || /^find\b/i.test(title)) {
+    return <Search {...iconProps} />;
+  }
+  if (kind === "search_web" || kind === "fetch" || /^web(\s*·|\s+search)/i.test(title)) {
+    return <Globe {...iconProps} />;
+  }
+  if (kind === "delete" || /^delete\b/i.test(title)) {
+    return <Trash2 {...iconProps} />;
+  }
+  if (/^create\b/i.test(title)) {
+    return <FilePlus2 {...iconProps} />;
+  }
+  if (
+    kind === "edit" ||
+    kind === "write" ||
+    entry.editPreview != null ||
+    /^(update|edit|write)\b/i.test(title)
+  ) {
+    return <SquarePen {...iconProps} />;
+  }
+  if (kind === "read" || /^read\b/i.test(title)) {
+    return <FileText {...iconProps} />;
+  }
+  if (kind === "mcp") {
+    return <Plug {...iconProps} />;
+  }
+  if (kind === "goal") {
+    return <Target {...iconProps} />;
+  }
+  if (kind === "question" || kind === "ask") {
+    return <CircleHelp {...iconProps} />;
+  }
+  return <Wrench {...iconProps} />;
+}
+
+/** Compact 13px status glyphs matching {@link TodoCard}'s visual language. */
+function WorkedTodoStatusIcon({ status }: { status: TodoItem["status"] }) {
+  if (status === "in_progress") {
+    return (
+      <LoaderCircle
+        className="size-[13px] shrink-0 animate-spin text-[var(--text-secondary)]"
+        strokeWidth={1.5}
+        aria-hidden
+      />
+    );
+  }
+  if (status === "completed") {
+    return (
+      <Check className="size-[13px] shrink-0 text-[var(--text-secondary)]" strokeWidth={1.75} aria-hidden />
+    );
+  }
+  if (status === "blocked") {
+    return <Ban className="size-[13px] shrink-0 text-[#f59e0b]" strokeWidth={1.5} aria-hidden />;
+  }
+  return (
+    <Circle className="size-[13px] shrink-0 text-[var(--text-secondary)]" strokeWidth={1.5} aria-hidden />
+  );
+}
+
+function WorkedTodoChecklist({ todos }: { todos: TodoItem[] }) {
+  return (
+    <ul className="mt-[6px] flex list-none flex-col gap-[5px]">
+      {todos.map((todo) => (
+        <li key={todo.id} className="flex items-start gap-[7px]">
+          <span className="mt-[2px] shrink-0">
+            <WorkedTodoStatusIcon status={todo.status} />
+          </span>
+          <span
+            className={`min-w-0 font-sans text-[12px] font-normal leading-snug ${
+              todo.status === "pending"
+                ? "text-[var(--text-secondary)]"
+                : "text-[var(--text-primary)]"
+            }`}
+          >
+            {todo.status === "blocked" ? (
+              <span className="mr-[5px] text-[#f59e0b]">Blocked:</span>
+            ) : null}
+            {todo.text}
+          </span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/** Raw payload dropdowns render one-line JSON args as indented JSON for readability. */
+function formatRawDetailForDisplay(raw: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) {
+    return raw;
+  }
+  try {
+    return JSON.stringify(JSON.parse(trimmed), null, 2);
+  } catch {
+    return raw;
+  }
+}
 
 const toolStatusClass: Record<
   NonNullable<Extract<WorkedSessionEntry, { kind: "tool" }>["status"]>,
@@ -148,7 +277,7 @@ function toolTitleDisplayedPathLabels(
   ) {
     return labels;
   }
-  const pathVerb = /^(Read|Update|Delete)\s+(.+)$/i.exec(tEffective);
+  const pathVerb = /^(Read|Update|Create|Write|Delete)\s+(.+)$/i.exec(tEffective);
   if (pathVerb?.[2]) {
     labels.add(pathVerb[2].trim());
   }
@@ -166,6 +295,16 @@ function renderToolTitleLine(
       ? `${base} transition-colors group-hover:text-[var(--text-primary)]`
       : base;
   const muted = mc("text-[var(--text-secondary)]");
+
+  if (entry.todos && entry.todos.length > 0) {
+    const done = entry.todos.filter((todo) => todo.status === "completed").length;
+    return (
+      <span className={`${titleClass} block min-w-0`}>
+        <span>{entry.title}</span>
+        <span className={muted}>{` · ${done}/${entry.todos.length} done`}</span>
+      </span>
+    );
+  }
 
   const suffix = filesFoundSuffix(entry.detail);
   const t = entry.title.trim();
@@ -204,7 +343,7 @@ function renderToolTitleLine(
       </span>
     );
   }
-  const pathVerb = /^(Read|Update|Delete)\s+(.+)$/i.exec(tEffective);
+  const pathVerb = /^(Read|Update|Create|Write|Delete)\s+(.+)$/i.exec(tEffective);
   if (pathVerb) {
     const verb = pathVerb[1]!;
     const pathPart = pathVerb[2]!;
@@ -333,11 +472,11 @@ function editPreviewPathLabel(preview: WorkedSessionEditPreview, workspaceRoot?:
     : null;
 }
 
-function filterFileRowsForEditPreview(
-  rows: Array<{ raw: string; label: string }>,
+function filterFileRowsForEditPreview<T extends { label: string }>(
+  rows: T[],
   preview: WorkedSessionEditPreview | undefined,
   workspaceRoot?: string | null
-): Array<{ raw: string; label: string }> {
+): T[] {
   const primary = preview ? editPreviewPathLabel(preview, workspaceRoot) : null;
   if (!primary) {
     return rows;
@@ -581,7 +720,6 @@ export function WorkedSessionCard({
     entries.some((entry) => entry.kind === "compression");
   const isWorkingPlaceholder =
     showLoadingState && entries.length === 0 && !isContextCompression;
-  const collapsibleOpen = isWorkingPlaceholder ? true : open;
   const gradientVar = surface === "editor" ? "var(--bg-main)" : "var(--bg-panel)";
   const inlineEditEntries =
     !preferInside && standaloneHighlighted ? [standaloneHighlighted] : [];
@@ -593,6 +731,12 @@ export function WorkedSessionCard({
     !embeddedPermission.permissionResolved
       ? embeddedPermission
       : null;
+  /**
+   * An unresolved permission embedded in a collapsed card would be invisible while the agent
+   * blocks on it forever — force the dropdown open until the user answers.
+   */
+  const collapsibleOpen =
+    isWorkingPlaceholder || embeddedPermissionCard != null ? true : open;
   const embeddedPermissionEl =
     embeddedPermissionCard != null ? (
       <PermissionRequestCard
@@ -620,36 +764,22 @@ export function WorkedSessionCard({
   const orphanInsideDetails =
     preferInside &&
     (embeddedPermissionCard != null || Boolean(standaloneHighlighted?.editPreview));
+  /**
+   * The unresolved permission card renders pinned *below* the scrollable tool list, never
+   * inside it: the list is capped at ~240px and an inline permission row could sit below the
+   * fold, invisibly blocking the whole turn.
+   */
   const workedScrollRows = useMemo(() => {
-    type Row =
-      | { kind: "entry"; entry: WorkedSessionEntry; index: number }
-      | { kind: "permission" };
+    type Row = { kind: "entry"; entry: WorkedSessionEntry; index: number };
     const rows: Row[] = [];
     if (!hasCollapsibleEntries) {
       return rows;
     }
-    const perm = embeddedPermissionCard;
-    const anchor = perm?.permissionLinkedToolCallId;
-    let inserted = false;
     for (let i = 0; i < entries.length; i += 1) {
-      const entry = entries[i]!;
-      rows.push({ kind: "entry", entry, index: i });
-      if (
-        perm &&
-        !inserted &&
-        anchor &&
-        entry.kind === "tool" &&
-        entry.toolCallId === anchor
-      ) {
-        rows.push({ kind: "permission" });
-        inserted = true;
-      }
-    }
-    if (perm && !inserted) {
-      rows.push({ kind: "permission" });
+      rows.push({ kind: "entry", entry: entries[i]!, index: i });
     }
     return rows;
-  }, [hasCollapsibleEntries, entries, embeddedPermissionCard]);
+  }, [hasCollapsibleEntries, entries]);
   const prevMessageLoadingRef = useRef(loading);
   const prevSettledRef = useRef(settled);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -919,31 +1049,22 @@ export function WorkedSessionCard({
                     summarized.
                   </p>
                 ) : null}
-                {workedScrollRows.map((row) =>
-                  row.kind === "permission" ? (
-                    <div
-                      key={`perm-${embeddedPermissionCard?.permissionRequestId ?? "embed"}`}
-                      className="relative z-[4] flex flex-col"
-                    >
-                      {embeddedPermissionEl}
-                    </div>
-                  ) : (
-                    <WorkedEntryBlock
-                      key={
-                        row.entry.kind === "tool"
-                          ? row.entry.toolCallId ??
-                            `tool-${row.index}-${row.entry.title}`
-                          : `${row.entry.kind}-${row.index}`
-                      }
-                      entry={row.entry}
-                      isLiveWorkedTail={isLiveWorkedTail}
-                      workspaceRoot={workspaceRoot}
-                      onOpenToolFile={handleOpenToolFile}
-                      horizScrollFadeEdge={gradientVar}
-                      editDiffRenderingMode={editDiffRenderingMode}
-                    />
-                  )
-                )}
+                {workedScrollRows.map((row) => (
+                  <WorkedEntryBlock
+                    key={
+                      row.entry.kind === "tool"
+                        ? row.entry.toolCallId ??
+                          `tool-${row.index}-${row.entry.title}`
+                        : `${row.entry.kind}-${row.index}`
+                    }
+                    entry={row.entry}
+                    isLiveWorkedTail={isLiveWorkedTail}
+                    workspaceRoot={workspaceRoot}
+                    onOpenToolFile={handleOpenToolFile}
+                    horizScrollFadeEdge={gradientVar}
+                    editDiffRenderingMode={editDiffRenderingMode}
+                  />
+                ))}
               </div>
             </div>
             {showTopGrad ? (
@@ -959,6 +1080,13 @@ export function WorkedSessionCard({
               />
             ) : null}
           </div>
+          {embeddedPermissionEl ? (
+            <div
+              className={`relative z-[4] pt-[10px] ${contentRail ? "ml-[2px] pl-[10px]" : ""}`}
+            >
+              {embeddedPermissionEl}
+            </div>
+          ) : null}
         </CollapsibleHeight>
       ) : null}
     </div>
@@ -1051,14 +1179,27 @@ function renderEntry(
             </p>
             {explorePreview.length > 0 ? (
               <ul className="mt-[6px] flex list-none flex-col gap-[4px]">
-                {explorePreview.map((row) => (
-                  <li
-                    key={row.raw}
-                    className="font-sans text-[12px] font-normal leading-snug text-[var(--text-secondary)]"
-                  >
-                    {row.label}
-                  </li>
-                ))}
+                {explorePreview.map((row) => {
+                  const openPath = resolveWorkspaceToolPath(row.raw, workspaceRoot ?? undefined);
+                  return (
+                    <li key={row.raw} className="flex min-w-0">
+                      {openPath ? (
+                        <button
+                          type="button"
+                          onClick={() => onOpenToolFile(openPath)}
+                          title={row.label}
+                          className="max-w-full truncate text-left font-sans text-[12px] font-normal leading-snug text-[var(--text-secondary)] transition-colors hover:text-[var(--text-primary)]"
+                        >
+                          {row.label}
+                        </button>
+                      ) : (
+                        <span className="max-w-full truncate font-sans text-[12px] font-normal leading-snug text-[var(--text-secondary)]">
+                          {row.label}
+                        </span>
+                      )}
+                    </li>
+                  );
+                })}
                 {exploreExtra > 0 ? (
                   <li className="font-sans text-[12px] font-normal leading-snug text-[var(--text-secondary)]">
                     +{exploreExtra} more
@@ -1124,6 +1265,7 @@ function renderEntry(
               }
               return {
                 raw: `${location.path}:${location.line ?? ""}`,
+                path: location.path,
                 label:
                   typeof location.line === "number"
                     ? `${baseLabel}:${location.line}`
@@ -1132,9 +1274,10 @@ function renderEntry(
             })
           : entry.files?.map((raw) => ({
               raw,
+              path: raw,
               label: formatToolFileLabel(raw, workspaceRoot ?? undefined),
             })) ?? [])
-          .filter((row): row is { raw: string; label: string } => Boolean(row?.label))
+          .filter((row): row is { raw: string; path: string; label: string } => Boolean(row?.label))
           .filter((row, index, all) => all.findIndex((candidate) => candidate.label === row.label) === index);
       const filteredFileRows = filterFileRowsForEditPreview(fileRows, entry.editPreview, workspaceRoot);
       const titlePaths = toolTitleDisplayedPathLabels(entry, workspaceRoot);
@@ -1158,6 +1301,9 @@ function renderEntry(
       const extraDetail = toolBlockDetail(entry);
       const rawDetail = entry.rawDetail?.trim();
       const showRawDetail = Boolean(rawDetail && rawDetail !== extraDetail?.trim());
+      const rawDetailDisplay = rawDetail ? formatRawDetailForDisplay(rawDetail) : undefined;
+      const rawDetailHeading = entry.variant === "terminal" ? "Output" : "Details";
+      const todos = entry.todos && entry.todos.length > 0 ? entry.todos : null;
       const pluginBadge = entry.pluginName ? (
         <span className="inline-flex items-center gap-[6px] rounded-[6px] border border-[color-mix(in_srgb,var(--border-card)_85%,transparent)] bg-[color-mix(in_srgb,var(--bg-card)_88%,transparent)] px-[7px] py-[2px] font-sans text-[10px] font-medium tracking-[0.01em] text-[var(--text-secondary)]">
           {entry.pluginIconUrl ? (
@@ -1176,6 +1322,7 @@ function renderEntry(
       ) : null;
       return (
         <div className="flex gap-[8px]">
+          <span className={iconWrap}>{toolEntryIcon(entry)}</span>
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-[8px]">
               {showRawDetail ? (
@@ -1214,10 +1361,14 @@ function renderEntry(
                 {extraDetail}
               </HorizontalFadedScroll>
             ) : null}
+            {todos ? <WorkedTodoChecklist todos={todos} /> : null}
             {showRawDetail && rawDetailOpen ? (
-              <div className="relative z-[2] mt-[6px] rounded-[8px] border border-[color-mix(in_srgb,var(--border-card)_70%,transparent)] bg-[color-mix(in_srgb,var(--bg-card)_62%,transparent)]">
-                <pre className="max-h-[220px] overflow-auto px-[8px] py-[7px] font-mono text-[11px] font-normal leading-relaxed text-[var(--text-secondary)]">
-                  {rawDetail}
+              <div className="relative z-[2] mt-[6px] overflow-hidden rounded-[8px] border border-[color-mix(in_srgb,var(--border-card)_70%,transparent)] bg-[color-mix(in_srgb,var(--bg-card)_62%,transparent)]">
+                <p className="border-b border-[color-mix(in_srgb,var(--border-card)_55%,transparent)] px-[8px] py-[4px] font-sans text-[10px] font-medium uppercase tracking-[0.08em] text-[var(--text-secondary)]">
+                  {rawDetailHeading}
+                </p>
+                <pre className="max-h-[220px] overflow-auto whitespace-pre-wrap break-words px-[8px] py-[7px] font-mono text-[11px] font-normal leading-relaxed text-[var(--text-secondary)]">
+                  {rawDetailDisplay}
                 </pre>
               </div>
             ) : null}
@@ -1231,14 +1382,27 @@ function renderEntry(
             ) : null}
             {previewFiles.length > 0 ? (
               <ul className="mt-[6px] flex list-none flex-col gap-[4px]">
-                {previewFiles.map((row) => (
-                  <li
-                    key={row.raw}
-                    className="font-sans text-[12px] font-normal leading-snug text-[var(--text-secondary)]"
-                  >
-                    {row.label}
-                  </li>
-                ))}
+                {previewFiles.map((row) => {
+                  const openPath = resolveWorkspaceToolPath(row.path, workspaceRoot ?? undefined);
+                  return (
+                    <li key={row.raw} className="flex min-w-0">
+                      {openPath ? (
+                        <button
+                          type="button"
+                          onClick={() => onOpenToolFile(openPath)}
+                          title={row.label}
+                          className="max-w-full truncate text-left font-sans text-[12px] font-normal leading-snug text-[var(--text-secondary)] transition-colors hover:text-[var(--text-primary)]"
+                        >
+                          {row.label}
+                        </button>
+                      ) : (
+                        <span className="max-w-full truncate font-sans text-[12px] font-normal leading-snug text-[var(--text-secondary)]">
+                          {row.label}
+                        </span>
+                      )}
+                    </li>
+                  );
+                })}
                 {extraFileCount > 0 ? (
                   <li className="font-sans text-[12px] font-normal leading-snug text-[var(--text-secondary)]">
                     +{extraFileCount} more
