@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <!-- Matches the Cesium dark "background" design token so the launcher tile
+       blends with the in-app background. Kept literal because manifest icon
+       resources must not depend on build-generated library colors. -->
+  <color name="ic_launcher_background">#141414</color>
+</resources>

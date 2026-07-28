@@ -13,6 +13,7 @@ import android.os.IBinder
 import android.os.Looper
 import com.cesium.mobile.BuildConfig
 import com.cesium.mobile.MainActivity
+import com.cesium.mobile.R
 import okhttp3.Call
 import okhttp3.Callback
 import okhttp3.MediaType.Companion.toMediaType
@@ -327,7 +328,7 @@ class CesiumPhoneControlService : Service() {
       PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
     )
     return Notification.Builder(this, CHANNEL_ID)
-      .setSmallIcon(android.R.drawable.ic_dialog_info)
+      .setSmallIcon(R.drawable.ic_stat_cesium)
       .setContentTitle("Cesium phone control")
       .setContentText(detail)
       .setContentIntent(pending)
