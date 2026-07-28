@@ -673,6 +673,32 @@ test("transient provider retry status does not fail the turn", async () => {
   await handle.dispose();
 });
 
+test("session.error during an active turn fails it with the extracted detail", async () => {
+  resetHarnessDiagnosticsForTests();
+  setFastTimers();
+  const rig = createHarnessTestRig({ conversationId: "conv-session-error" });
+  const handle = await rig.provider.startSession(rig.callbacks);
+
+  const promptDone = handle.prompt({ text: "hello", userMessageId: "u1" });
+  const rejection = assert.rejects(promptDone, /APIError: No provider available \(HTTP 401\)/);
+  await waitFor(() => rig.conversation().status === "running");
+  await sleep(20);
+  await rig.emitSse({
+    type: "session.error",
+    properties: {
+      sessionID: ROOT_SESSION,
+      error: {
+        name: "APIError",
+        data: { message: "No provider available", statusCode: 401 },
+      },
+    },
+  });
+  await rejection;
+  assert.equal(rig.conversation().status, "failed");
+  assert.ok(rig.conversation().lastError?.includes("No provider available"));
+  await handle.dispose();
+});
+
 test("hard error status still fails the turn", async () => {
   resetHarnessDiagnosticsForTests();
   setFastTimers();

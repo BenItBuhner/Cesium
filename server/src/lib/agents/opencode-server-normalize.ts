@@ -268,12 +268,37 @@ export function normalizeOpenCodeServerEvent(input: {
         conversationId: input.conversationId,
         kind: "system",
         level: "error",
-        text: asString(properties.message) ?? "OpenCode Server emitted an error.",
+        text: openCodeServerErrorDetail(properties) ?? "OpenCode Server emitted an error.",
         raw: input.payload,
       },
     ];
   }
   return [];
+}
+
+/**
+ * OpenCode nests the useful part of an error deep inside
+ * `properties.error.data.message`; surfacing only the generic wrapper text
+ * made real failures ("No provider available", HTTP 401, ...) undiagnosable.
+ */
+export function openCodeServerErrorDetail(properties: RecordValue): string | undefined {
+  const direct = asString(properties.message);
+  if (direct) {
+    return direct;
+  }
+  const error = asRecord(properties.error);
+  if (!error) {
+    return undefined;
+  }
+  const data = asRecord(error.data);
+  const message = asString(data?.message) ?? asString(error.message);
+  const name = asString(error.name);
+  const statusCode = data?.statusCode;
+  if (!message && !name) {
+    return undefined;
+  }
+  const status = typeof statusCode === "number" ? ` (HTTP ${statusCode})` : "";
+  return `${name ? `${name}: ` : ""}${message ?? "unknown error"}${status}`;
 }
 
 /**

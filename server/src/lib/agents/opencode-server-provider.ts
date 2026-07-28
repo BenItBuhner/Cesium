@@ -24,6 +24,7 @@ import {
   normalizeOpenCodePolledPermission,
   normalizeOpenCodeServerEvent,
   normalizeOpenCodeServerMessage,
+  openCodeServerErrorDetail,
   openCodeServerLegacyPermissionResponse,
   openCodeServerPermissionResponse,
 } from "./opencode-server-normalize.js";
@@ -1070,6 +1071,15 @@ export class OpenCodeServerSessionHandle implements AgentSessionHandle {
     }
     if (type === "session.idle") {
       this.scheduleActivePromptCompletion(active, payload);
+      return;
+    }
+    if (type === "session.error" || type === "message.error") {
+      // Without this, an aborted turn (auth failure, dead provider, ...)
+      // quietly "completed" with an empty reply instead of failing visibly.
+      const message =
+        openCodeServerErrorDetail(properties) ?? "OpenCode Server emitted an error.";
+      this.log.error("session.error", message);
+      active.reject(new Error(message));
       return;
     }
     if (type === "session.status") {
