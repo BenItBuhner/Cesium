@@ -4,6 +4,7 @@ import type {
   AgentBackendInfo,
   AgentConfigOption,
   AgentConversationSnapshot,
+  AgentEventInput,
   AgentProvider,
   AgentProviderCapabilities,
   AgentRuntimeCallbacks,
@@ -20,13 +21,16 @@ import {
 } from "./opencode-server-events.js";
 import { OpenCodeServerError, type OpenCodeServerJson } from "./opencode-server-client.js";
 import {
+  normalizeOpenCodePolledPermission,
   normalizeOpenCodeServerEvent,
   normalizeOpenCodeServerMessage,
+  openCodeServerLegacyPermissionResponse,
   openCodeServerPermissionResponse,
 } from "./opencode-server-normalize.js";
 import {
   attachOpenCodeGlobalSse,
   detachOpenCodeGlobalSse,
+  openCodeEventBelongsToRootSession,
 } from "./opencode-global-sse.js";
 import { createHarnessLogger, type HarnessLogger } from "./harness-diagnostics.js";
 import { materializeImageAttachments } from "./prompt-attachments.js";
@@ -135,6 +139,11 @@ function watchdogStallThresholdMs(): number {
   return Number.isFinite(raw) && raw >= 50 ? raw : 45_000;
 }
 
+function permissionPollIntervalMs(): number {
+  const raw = Number.parseInt(process.env.OPENCODE_SERVER_PERMISSION_POLL_MS ?? "", 10);
+  return Number.isFinite(raw) && raw >= 25 ? raw : 1_500;
+}
+
 export function openCodeServerPartTextDelta(previous: string, next: string): string {
   if (next === previous) {
     return "";
@@ -172,8 +181,8 @@ export class OpenCodeServerSessionHandle implements AgentSessionHandle {
   private readonly globalSseRegistrationId: string;
   private readonly deps: OpenCodeServerProviderDeps;
   private readonly log: HarnessLogger;
-  /** requestId → session that raised it (root or subagent child session). */
-  private readonly pendingPermissions = new Map<string, string>();
+  /** requestId → session that raised it (root or subagent child session) and when it surfaced. */
+  private readonly pendingPermissions = new Map<string, { sessionId: string; addedAt: number }>();
   /** Every permission requestId surfaced this session, to dedupe re-emits across SSE routes. */
   private readonly seenPermissionRequestIds = new Set<string>();
   private lastSseActivityAt = 0;
@@ -182,8 +191,15 @@ export class OpenCodeServerSessionHandle implements AgentSessionHandle {
   private watchdogReconcileFailures = 0;
   private sseConsecutiveErrors = 0;
   private lastSseErrorConversationEventAt = 0;
+  private lastRetryConversationEventAt = 0;
   private processExited: OpenCodeServerProcessExit | null = null;
   private unsubscribeProcessExit: (() => void) | null = null;
+  private permissionPollTimer: ReturnType<typeof setInterval> | null = null;
+  private permissionPollBusy = false;
+  private permissionPollDisabled = false;
+  private permissionPollFailures = 0;
+  /** Permission replies currently in flight to OpenCode, to suppress poll-reconcile races. */
+  private readonly answeringPermissionIds = new Set<string>();
 
   constructor(
     private readonly backend: AgentBackendInfo,
@@ -257,6 +273,7 @@ export class OpenCodeServerSessionHandle implements AgentSessionHandle {
         await this.handleServerEvent(payload, { allowChildSessionEvents: true });
       },
     });
+    this.startPermissionPolling();
     await this.callbacks.updateConversation((current) => ({
       ...current,
       providerSessionId: id,
@@ -443,47 +460,81 @@ export class OpenCodeServerSessionHandle implements AgentSessionHandle {
     if (!this.connection) {
       throw new Error("OpenCode Server session is not initialized.");
     }
-    const targetSessionId = this.pendingPermissions.get(input.requestId) ?? this.sessionId;
-    const response = openCodeServerPermissionResponse(input.optionId, input.cancelled);
+    const targetSessionId = this.pendingPermissions.get(input.requestId)?.sessionId ?? this.sessionId;
     this.log.info(
       "permission.answer",
       `Answering permission ${input.requestId} on session ${targetSessionId}.`,
       { optionId: input.optionId ?? null, cancelled: Boolean(input.cancelled) }
     );
+    this.answeringPermissionIds.add(input.requestId);
     let delivered = false;
     let lastError: unknown = null;
-    for (let attempt = 0; attempt < PERMISSION_ANSWER_RETRY_DELAYS_MS.length; attempt += 1) {
-      const delay = PERMISSION_ANSWER_RETRY_DELAYS_MS[attempt]!;
-      if (delay > 0) {
-        await new Promise((resolve) => setTimeout(resolve, delay));
-      }
-      try {
-        await this.connection.client.answerPermission(targetSessionId, input.requestId, response);
-        delivered = true;
-        break;
-      } catch (error) {
-        if (
-          error instanceof OpenCodeServerError &&
-          (error.status === 400 || error.status === 404 || error.status === 410)
-        ) {
-          // The request is no longer pending on the OpenCode side (already
-          // answered elsewhere, expired, or the tool moved on). Resolving
-          // locally is correct; retrying can never succeed.
-          this.log.warning(
-            "permission.answer_gone",
-            `Permission ${input.requestId} was no longer pending on OpenCode (${error.status}); resolving locally.`
+    try {
+      for (let attempt = 0; attempt < PERMISSION_ANSWER_RETRY_DELAYS_MS.length; attempt += 1) {
+        const delay = PERMISSION_ANSWER_RETRY_DELAYS_MS[attempt]!;
+        if (delay > 0) {
+          await new Promise((resolve) => setTimeout(resolve, delay));
+        }
+        try {
+          await this.connection.client.answerPermission(
+            targetSessionId,
+            input.requestId,
+            openCodeServerPermissionResponse(input.optionId, input.cancelled)
           );
           delivered = true;
           break;
+        } catch (error) {
+          if (error instanceof OpenCodeServerError && error.status === 400) {
+            // Pre-1.x OpenCode servers reject the modern once/always/reject
+            // shape; retry immediately with the legacy allow/deny shape.
+            this.log.info(
+              "permission.answer_format_fallback",
+              `Modern permission reply rejected (400); retrying with legacy allow/deny shape.`
+            );
+            try {
+              await this.connection.client.answerPermission(
+                targetSessionId,
+                input.requestId,
+                openCodeServerLegacyPermissionResponse(input.optionId, input.cancelled)
+              );
+              delivered = true;
+              break;
+            } catch (legacyError) {
+              lastError = legacyError;
+              this.log.warning(
+                "permission.answer_retry",
+                `Legacy-format fallback failed: ${
+                  legacyError instanceof Error ? legacyError.message : String(legacyError)
+                }`
+              );
+              continue;
+            }
+          }
+          if (
+            error instanceof OpenCodeServerError &&
+            (error.status === 404 || error.status === 410)
+          ) {
+            // The request is no longer pending on the OpenCode side (already
+            // answered elsewhere, expired, or the tool moved on). Resolving
+            // locally is correct; retrying can never succeed.
+            this.log.warning(
+              "permission.answer_gone",
+              `Permission ${input.requestId} was no longer pending on OpenCode (${error.status}); resolving locally.`
+            );
+            delivered = true;
+            break;
+          }
+          lastError = error;
+          this.log.warning(
+            "permission.answer_retry",
+            `Attempt ${attempt + 1}/${PERMISSION_ANSWER_RETRY_DELAYS_MS.length} failed: ${
+              error instanceof Error ? error.message : String(error)
+            }`
+          );
         }
-        lastError = error;
-        this.log.warning(
-          "permission.answer_retry",
-          `Attempt ${attempt + 1}/${PERMISSION_ANSWER_RETRY_DELAYS_MS.length} failed: ${
-            error instanceof Error ? error.message : String(error)
-          }`
-        );
       }
+    } finally {
+      this.answeringPermissionIds.delete(input.requestId);
     }
     if (!delivered) {
       const message = `Failed to deliver the permission response to OpenCode Server after ${
@@ -532,6 +583,7 @@ export class OpenCodeServerSessionHandle implements AgentSessionHandle {
     this.disposed = true;
     this.acceptingPromptSse = false;
     this.stopWatchdog();
+    this.stopPermissionPolling();
     this.pendingPermissions.clear();
     if (this.unsubscribeProcessExit) {
       this.unsubscribeProcessExit();
@@ -1000,7 +1052,34 @@ export class OpenCodeServerSessionHandle implements AgentSessionHandle {
     if (type === "session.status") {
       const status = asRecord(properties.status);
       const statusType = asString(status?.type);
-      if (statusType === "retry" || statusType === "error" || statusType === "failed") {
+      if (statusType === "retry") {
+        // OpenCode retries transient provider failures (rate limits, 5xx)
+        // itself; failing the whole turn here turned recoverable hiccups
+        // into hard "Internal server error" failures.
+        const attempt = status?.attempt;
+        const message = asString(status?.message) ?? "transient provider error";
+        this.log.warning(
+          "session.provider_retry",
+          `OpenCode is retrying a transient provider error${
+            typeof attempt === "number" ? ` (attempt ${attempt})` : ""
+          }: ${message}`
+        );
+        const now = Date.now();
+        if (now - this.lastRetryConversationEventAt >= 30_000) {
+          this.lastRetryConversationEventAt = now;
+          await this.callbacks.appendEvents([
+            {
+              eventId: randomUUID(),
+              conversationId: this.callbacks.conversation.id,
+              kind: "system",
+              level: "warning",
+              text: `OpenCode hit a transient provider error and is retrying: ${message}`,
+            },
+          ]);
+        }
+        return;
+      }
+      if (statusType === "error" || statusType === "failed") {
         const message =
           asString(status?.message) ?? `OpenCode Server session entered ${statusType} status.`;
         this.log.error("session.status_failure", message, { statusType });
@@ -1050,15 +1129,21 @@ export class OpenCodeServerSessionHandle implements AgentSessionHandle {
     if (!properties) {
       return;
     }
+    // Modern servers use `requestID` + `reply`; older ones `permissionID` + `response`.
     const requestId =
+      asString(properties.requestID) ??
       asString(properties.permissionID) ??
       asString(asRecord(properties.permission)?.id) ??
       asString(properties.id);
     if (!requestId || !this.pendingPermissions.has(requestId)) {
       return;
     }
+    if (this.answeringPermissionIds.has(requestId)) {
+      // Our own reply echoing back; answerPermission handles the bookkeeping.
+      return;
+    }
     this.pendingPermissions.delete(requestId);
-    const response = asString(properties.response);
+    const response = asString(properties.reply) ?? asString(properties.response);
     this.log.info(
       "permission.replied_externally",
       `Permission ${requestId} was resolved outside Cesium (response: ${response ?? "unknown"}).`
@@ -1141,40 +1226,208 @@ export class OpenCodeServerSessionHandle implements AgentSessionHandle {
       // Track synchronously (before any await): the same event can arrive on
       // both the session SSE route and the global SSE pool near-simultaneously.
       const raisedBySessionId = this.eventSessionId(record) ?? this.sessionId;
-      this.seenPermissionRequestIds.add(permission.requestId);
-      this.pendingPermissions.set(permission.requestId, raisedBySessionId);
-      this.log.info(
-        "permission.requested",
-        `OpenCode requested permission ${permission.requestId} (${permission.title ?? "untitled"}).`,
-        { sessionId: raisedBySessionId, duringActiveTurn: Boolean(this.activePrompt) }
-      );
-      if (this.activePrompt?.completionTimer) {
-        // A permission arriving inside the finish quiet window means the turn
-        // is NOT done; completing would wipe the prompt and freeze the agent.
-        this.clearActivePromptCompletion(this.activePrompt);
-        this.log.info(
-          "permission.cancelled_finish_window",
-          "Cancelled the scheduled turn completion because a permission request arrived."
-        );
-      }
+      this.trackPermissionRequest(permission.requestId, raisedBySessionId, permission.title);
     }
     if (this.disposed || (!this.acceptingPromptSse && !isPermissionLifecycle)) {
       return;
     }
     await this.callbacks.appendEvents(events);
     if (permission?.kind === "permission_request") {
-      await this.callbacks.updateConversation((current) => ({
-        ...current,
-        status: "awaiting_permission",
-        pendingPermission: {
-          requestId: permission.requestId,
-          requestedAt: Date.now(),
-          title: permission.title,
-          detail: permission.detail,
-          toolCallId: permission.toolCallId,
-          options: permission.options,
-        },
-      }));
+      await this.publishPendingPermission(permission);
+    }
+  }
+
+  private trackPermissionRequest(
+    requestId: string,
+    raisedBySessionId: string,
+    title: string | undefined
+  ): void {
+    this.seenPermissionRequestIds.add(requestId);
+    this.pendingPermissions.set(requestId, { sessionId: raisedBySessionId, addedAt: Date.now() });
+    this.log.info(
+      "permission.requested",
+      `OpenCode requested permission ${requestId} (${title ?? "untitled"}).`,
+      { sessionId: raisedBySessionId, duringActiveTurn: Boolean(this.activePrompt) }
+    );
+    if (this.activePrompt?.completionTimer) {
+      // A permission arriving inside the finish quiet window means the turn
+      // is NOT done; completing would wipe the prompt and freeze the agent.
+      this.clearActivePromptCompletion(this.activePrompt);
+      this.log.info(
+        "permission.cancelled_finish_window",
+        "Cancelled the scheduled turn completion because a permission request arrived."
+      );
+    }
+  }
+
+  private async publishPendingPermission(
+    permission: Extract<AgentEventInput, { kind: "permission_request" }>
+  ): Promise<void> {
+    await this.callbacks.updateConversation((current) => ({
+      ...current,
+      status: "awaiting_permission",
+      pendingPermission: {
+        requestId: permission.requestId,
+        requestedAt: Date.now(),
+        title: permission.title,
+        detail: permission.detail,
+        toolCallId: permission.toolCallId,
+        options: permission.options,
+      },
+    }));
+  }
+
+  private startPermissionPolling(): void {
+    if (this.permissionPollTimer || this.permissionPollDisabled) {
+      return;
+    }
+    // Modern OpenCode servers raise permissions with NO ask-time SSE event
+    // (only `permission.replied` after resolution), so polling GET /permission
+    // is the only reliable way to surface prompts to the user.
+    this.permissionPollTimer = setInterval(() => {
+      void this.pollPermissionsOnce();
+    }, permissionPollIntervalMs());
+    if (typeof this.permissionPollTimer.unref === "function") {
+      this.permissionPollTimer.unref();
+    }
+  }
+
+  private stopPermissionPolling(): void {
+    if (this.permissionPollTimer) {
+      clearInterval(this.permissionPollTimer);
+      this.permissionPollTimer = null;
+    }
+    this.permissionPollBusy = false;
+  }
+
+  private async pollPermissionsOnce(): Promise<void> {
+    if (
+      this.disposed ||
+      !this.connection ||
+      this.processExited ||
+      this.permissionPollDisabled ||
+      this.permissionPollBusy
+    ) {
+      return;
+    }
+    this.permissionPollBusy = true;
+    try {
+      let entries: OpenCodeServerJson[];
+      try {
+        entries = await this.connection.client.listPermissions();
+      } catch (error) {
+        if (error instanceof OpenCodeServerError && error.status === 404) {
+          this.permissionPollDisabled = true;
+          this.stopPermissionPolling();
+          this.log.info(
+            "permission.poll_unsupported",
+            "This OpenCode server has no GET /permission route; relying on permission.updated SSE events."
+          );
+          return;
+        }
+        this.permissionPollFailures += 1;
+        if (this.permissionPollFailures === 1 || this.permissionPollFailures % 20 === 0) {
+          this.log.warning(
+            "permission.poll_failed",
+            `${error instanceof Error ? error.message : String(error)} (attempt ${this.permissionPollFailures})`
+          );
+        }
+        return;
+      }
+      this.permissionPollFailures = 0;
+      if (!Array.isArray(entries)) {
+        return;
+      }
+      const pendingOnServer = new Set<string>();
+      for (const entryRaw of entries) {
+        const entry = asRecord(entryRaw);
+        const id = entry ? asString(entry.id) : undefined;
+        if (!entry || !id) {
+          continue;
+        }
+        const raisedBySessionId = asString(entry.sessionID) ?? this.sessionId;
+        let belongsToUs = raisedBySessionId === this.sessionId;
+        if (!belongsToUs) {
+          belongsToUs = await openCodeEventBelongsToRootSession({
+            baseUrl: this.connection.client.baseUrl,
+            directory: this.callbacks.workspace.root,
+            eventSessionId: raisedBySessionId,
+            rootSessionId: this.sessionId,
+          }).catch(() => false);
+        }
+        if (!belongsToUs) {
+          continue;
+        }
+        pendingOnServer.add(id);
+        if (this.seenPermissionRequestIds.has(id)) {
+          continue;
+        }
+        const event = normalizeOpenCodePolledPermission({
+          conversationId: this.callbacks.conversation.id,
+          entry,
+        });
+        if (!event || event.kind !== "permission_request") {
+          continue;
+        }
+        this.trackPermissionRequest(event.requestId, raisedBySessionId, event.title);
+        this.log.info(
+          "permission.discovered_by_poll",
+          `Discovered pending permission ${id} by polling (server emits no ask event).`
+        );
+        if (this.disposed) {
+          return;
+        }
+        await this.callbacks.appendEvents([event]);
+        await this.publishPendingPermission(event);
+      }
+      // Reverse reconcile: anything we still consider pending that OpenCode no
+      // longer lists was resolved elsewhere (auto-allow rule, another client).
+      const reconcileGraceMs = permissionPollIntervalMs() * 3;
+      for (const [requestId, pending] of [...this.pendingPermissions.entries()]) {
+        if (pendingOnServer.has(requestId) || this.answeringPermissionIds.has(requestId)) {
+          continue;
+        }
+        // A permission that surfaced moments ago may postdate the poll
+        // response we are holding; give it time before declaring it resolved.
+        if (Date.now() - pending.addedAt < reconcileGraceMs) {
+          continue;
+        }
+        this.pendingPermissions.delete(requestId);
+        this.log.info(
+          "permission.poll_reconciled",
+          `Permission ${requestId} is no longer pending on OpenCode; clearing the local prompt.`
+        );
+        if (this.disposed) {
+          return;
+        }
+        await this.callbacks.appendEvents([
+          {
+            eventId: randomUUID(),
+            conversationId: this.callbacks.conversation.id,
+            kind: "permission_resolved",
+            requestId,
+            outcome: "selected",
+          },
+        ]);
+        const turnActive = Boolean(this.activePrompt && !this.activePrompt.completed);
+        await this.callbacks.updateConversation((current) => {
+          if (current.pendingPermission && current.pendingPermission.requestId !== requestId) {
+            return current;
+          }
+          return {
+            ...current,
+            status:
+              this.pendingPermissions.size > 0
+                ? "awaiting_permission"
+                : turnActive
+                  ? "running"
+                  : "idle",
+            pendingPermission: null,
+          };
+        });
+      }
+    } finally {
+      this.permissionPollBusy = false;
     }
   }
 }

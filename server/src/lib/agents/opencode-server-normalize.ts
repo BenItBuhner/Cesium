@@ -276,9 +276,67 @@ export function normalizeOpenCodeServerEvent(input: {
   return [];
 }
 
+/**
+ * Modern OpenCode servers (>= 1.x) expect `{ response: "once" | "always" | "reject" }`
+ * on `POST /session/:id/permissions/:permissionId`. Sending the legacy
+ * `allow`/`deny` shape returns HTTP 400 — which used to be silently swallowed,
+ * leaving OpenCode blocked on the permission forever.
+ */
 export function openCodeServerPermissionResponse(optionId: string | undefined, cancelled?: boolean): RecordValue {
+  if (cancelled || optionId === "deny") {
+    return { response: "reject" };
+  }
+  return { response: optionId === "allow_always" ? "always" : "once" };
+}
+
+/** Reply shape for pre-1.x OpenCode servers; used as a fallback when the modern shape is rejected. */
+export function openCodeServerLegacyPermissionResponse(
+  optionId: string | undefined,
+  cancelled?: boolean
+): RecordValue {
   if (cancelled || optionId === "deny") {
     return { response: "deny" };
   }
   return { response: "allow", remember: optionId === "allow_always" };
+}
+
+/**
+ * Modern OpenCode servers do not emit any SSE event when a permission is
+ * ASKED (only `permission.replied` once it resolves), so pending requests
+ * must be discovered by polling `GET /permission`. This maps one polled row
+ * to the normalized `permission_request` event shape.
+ */
+export function normalizeOpenCodePolledPermission(input: {
+  conversationId: string;
+  entry: RecordValue;
+}): AgentEventInput | null {
+  const id = asString(input.entry.id);
+  if (!id) {
+    return null;
+  }
+  const permissionKind = asString(input.entry.permission) ?? "tool";
+  const metadata = asRecord(input.entry.metadata);
+  const patterns = Array.isArray(input.entry.patterns)
+    ? input.entry.patterns.filter((value): value is string => typeof value === "string")
+    : [];
+  const detail =
+    asString(metadata?.command) ??
+    asString(input.entry.title) ??
+    (patterns.length > 0 ? patterns.join(", ") : undefined);
+  const toolCallId = asString(asRecord(input.entry.tool)?.callID);
+  return {
+    eventId: randomUUID(),
+    conversationId: input.conversationId,
+    kind: "permission_request",
+    requestId: id,
+    title: `OpenCode permission: ${permissionKind}`,
+    detail,
+    ...(toolCallId ? { toolCallId } : {}),
+    options: [
+      { optionId: "allow", name: "Allow", kind: "allow_once" },
+      { optionId: "allow_always", name: "Allow Always", kind: "allow_always" },
+      { optionId: "deny", name: "Deny", kind: "reject_once" },
+    ],
+    raw: input.entry,
+  };
 }

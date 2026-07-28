@@ -4,8 +4,10 @@ import { test } from "node:test";
 const [
   { AGENT_BACKENDS, listAgentBackends },
   {
+    normalizeOpenCodePolledPermission,
     normalizeOpenCodeServerEvent,
     normalizeOpenCodeServerMessage,
+    openCodeServerLegacyPermissionResponse,
     openCodeServerPermissionResponse,
   },
   { openCodeServerPartTextDelta },
@@ -169,10 +171,39 @@ test("opencode ACP global SSE accepts root-session deltas", async () => {
   }
 });
 
-test("opencode server permission response maps allow always and deny", () => {
-  assert.deepEqual(openCodeServerPermissionResponse("allow_always"), {
+test("opencode server permission response maps to modern once/always/reject", () => {
+  assert.deepEqual(openCodeServerPermissionResponse("allow"), { response: "once" });
+  assert.deepEqual(openCodeServerPermissionResponse("allow_always"), { response: "always" });
+  assert.deepEqual(openCodeServerPermissionResponse("deny"), { response: "reject" });
+  assert.deepEqual(openCodeServerPermissionResponse(undefined, true), { response: "reject" });
+});
+
+test("opencode server legacy permission response keeps allow/deny shape", () => {
+  assert.deepEqual(openCodeServerLegacyPermissionResponse("allow_always"), {
     response: "allow",
     remember: true,
   });
-  assert.deepEqual(openCodeServerPermissionResponse("deny"), { response: "deny" });
+  assert.deepEqual(openCodeServerLegacyPermissionResponse("deny"), { response: "deny" });
+});
+
+test("polled permissions normalize with tool linkage and command detail", () => {
+  const event = normalizeOpenCodePolledPermission({
+    conversationId: "conv",
+    entry: {
+      id: "per_1",
+      sessionID: "ses_root",
+      permission: "bash",
+      patterns: ["echo hi"],
+      metadata: { command: "echo hi" },
+      tool: { messageID: "msg_1", callID: "call_9" },
+    },
+  });
+  assert.equal(event?.kind, "permission_request");
+  if (event?.kind === "permission_request") {
+    assert.equal(event.requestId, "per_1");
+    assert.equal(event.title, "OpenCode permission: bash");
+    assert.equal(event.detail, "echo hi");
+    assert.equal(event.toolCallId, "call_9");
+    assert.equal(event.options.length, 3);
+  }
 });

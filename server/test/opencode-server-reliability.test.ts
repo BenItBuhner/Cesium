@@ -89,6 +89,7 @@ type FakeClientBehavior = {
     permissionId: string,
     body: Record<string, unknown>
   ) => Promise<boolean>;
+  listPermissions?: () => Promise<Record<string, unknown>[]>;
 };
 
 function createHarnessTestRig(options: {
@@ -129,6 +130,12 @@ function createHarnessTestRig(options: {
         return options.behavior.answerPermission(sessionId, permissionId, body);
       }
       return true;
+    },
+    listPermissions: async () => {
+      if (options.behavior?.listPermissions) {
+        return options.behavior.listPermissions();
+      }
+      return [];
     },
   };
 
@@ -232,6 +239,7 @@ function setFastTimers(): void {
   process.env.OPENCODE_SERVER_FINISH_QUIET_MS = "20";
   process.env.OPENCODE_SERVER_WATCHDOG_INTERVAL_MS = "600000";
   process.env.OPENCODE_SERVER_STALL_THRESHOLD_MS = "600000";
+  process.env.OPENCODE_SERVER_PERMISSION_POLL_MS = "600000";
 }
 
 test("permission arriving inside the finish quiet window defers turn completion", async () => {
@@ -277,7 +285,7 @@ test("permission arriving inside the finish quiet window defers turn completion"
   await handle.answerPermission({ requestId: "perm_1", optionId: "allow" });
   assert.equal(rig.conversation().status, "running");
   assert.equal(rig.answerPermissionCalls.length, 1);
-  assert.deepEqual(rig.answerPermissionCalls[0]?.body, { response: "allow", remember: false });
+  assert.deepEqual(rig.answerPermissionCalls[0]?.body, { response: "once" });
 
   // The agent resumes and finishes for real this time.
   await rig.emitSse(assistantMessageUpdated("stop"));
@@ -519,6 +527,158 @@ test("global SSE session extraction routes permission events", () => {
   );
 });
 
+test("pending permissions are discovered by polling when no ask event exists", async () => {
+  resetHarnessDiagnosticsForTests();
+  setFastTimers();
+  process.env.OPENCODE_SERVER_PERMISSION_POLL_MS = "30";
+  const pending: Record<string, unknown>[] = [
+    {
+      id: "per_polled",
+      sessionID: ROOT_SESSION,
+      permission: "bash",
+      patterns: ["echo hi"],
+      metadata: { command: "echo hi" },
+      tool: { messageID: "msg_1", callID: "call_77" },
+    },
+  ];
+  const rig = createHarnessTestRig({
+    conversationId: "conv-polled",
+    behavior: { listPermissions: async () => pending },
+  });
+  const handle = await rig.provider.startSession(rig.callbacks);
+
+  await waitFor(() => rig.conversation().pendingPermission?.requestId === "per_polled");
+  assert.equal(rig.conversation().status, "awaiting_permission");
+  assert.equal(rig.conversation().pendingPermission?.toolCallId, "call_77");
+  assert.equal(rig.conversation().pendingPermission?.detail, "echo hi");
+
+  pending.length = 0;
+  await handle.answerPermission({ requestId: "per_polled", optionId: "allow" });
+  assert.deepEqual(rig.answerPermissionCalls[0]?.body, { response: "once" });
+  assert.equal(rig.conversation().status, "idle");
+  const diagnostics = await readHarnessDiagnostics({ conversationId: "conv-polled" });
+  assert.ok(diagnostics.some((entry) => entry.event === "permission.discovered_by_poll"));
+  await handle.dispose();
+});
+
+test("permissions resolved elsewhere are reconciled away by polling", async () => {
+  resetHarnessDiagnosticsForTests();
+  setFastTimers();
+  process.env.OPENCODE_SERVER_PERMISSION_POLL_MS = "30";
+  const pending: Record<string, unknown>[] = [
+    { id: "per_gone_ext", sessionID: ROOT_SESSION, permission: "bash", metadata: { command: "ls" } },
+  ];
+  const rig = createHarnessTestRig({
+    conversationId: "conv-poll-reconcile",
+    behavior: { listPermissions: async () => [...pending] },
+  });
+  const handle = await rig.provider.startSession(rig.callbacks);
+
+  await waitFor(() => rig.conversation().pendingPermission?.requestId === "per_gone_ext");
+  // Someone else (another client / auto-allow rule) resolves it on OpenCode.
+  pending.length = 0;
+  await waitFor(() => rig.conversation().pendingPermission === null);
+  assert.equal(rig.conversation().status, "idle");
+  assert.ok(
+    rig.appended.some(
+      (event) => event.kind === "permission_resolved" && event.requestId === "per_gone_ext"
+    )
+  );
+  await handle.dispose();
+});
+
+test("modern reply format falls back to legacy allow/deny on 400", async () => {
+  resetHarnessDiagnosticsForTests();
+  setFastTimers();
+  const rig = createHarnessTestRig({
+    conversationId: "conv-format-fallback",
+    behavior: {
+      answerPermission: async (_sessionId, _permissionId, body) => {
+        if (body.response === "once" || body.response === "always" || body.response === "reject") {
+          throw new OpenCodeServerError('Expected "allow" | "deny"', 400, "");
+        }
+        return true;
+      },
+    },
+  });
+  const handle = await rig.provider.startSession(rig.callbacks);
+
+  await rig.emitSse(permissionUpdated("perm_legacy"));
+  await handle.answerPermission({ requestId: "perm_legacy", optionId: "allow_always" });
+  assert.equal(rig.answerPermissionCalls.length, 2);
+  assert.deepEqual(rig.answerPermissionCalls[0]?.body, { response: "always" });
+  assert.deepEqual(rig.answerPermissionCalls[1]?.body, { response: "allow", remember: true });
+  assert.equal(rig.conversation().pendingPermission, null);
+  await handle.dispose();
+});
+
+test("transient provider retry status does not fail the turn", async () => {
+  resetHarnessDiagnosticsForTests();
+  setFastTimers();
+  const rig = createHarnessTestRig({ conversationId: "conv-retry-status" });
+  const handle = await rig.provider.startSession(rig.callbacks);
+
+  const promptDone = handle.prompt({ text: "hello", userMessageId: "u1" });
+  const promptSettled = { value: false };
+  promptDone.then(
+    () => {
+      promptSettled.value = true;
+    },
+    () => {
+      promptSettled.value = true;
+    }
+  );
+  await waitFor(() => rig.conversation().status === "running");
+  await sleep(20);
+
+  await rig.emitSse(assistantMessageUpdated());
+  await rig.emitSse({
+    type: "session.status",
+    properties: {
+      sessionID: ROOT_SESSION,
+      status: { type: "retry", attempt: 1, message: "Internal server error", next: Date.now() + 500 },
+    },
+  });
+  await sleep(60);
+  assert.equal(promptSettled.value, false, "retry status must not fail the turn");
+  assert.ok(
+    rig.appended.some(
+      (event) =>
+        event.kind === "system" && event.text.includes("transient provider error")
+    )
+  );
+
+  await rig.emitSse(assistantMessageUpdated("stop"));
+  await promptDone;
+  assert.equal(rig.conversation().status, "idle");
+
+  const diagnostics = await readHarnessDiagnostics({ conversationId: "conv-retry-status" });
+  assert.ok(diagnostics.some((entry) => entry.event === "session.provider_retry"));
+  await handle.dispose();
+});
+
+test("hard error status still fails the turn", async () => {
+  resetHarnessDiagnosticsForTests();
+  setFastTimers();
+  const rig = createHarnessTestRig({ conversationId: "conv-error-status" });
+  const handle = await rig.provider.startSession(rig.callbacks);
+
+  const promptDone = handle.prompt({ text: "hello", userMessageId: "u1" });
+  const rejection = assert.rejects(promptDone, /model exploded/);
+  await waitFor(() => rig.conversation().status === "running");
+  await sleep(20);
+  await rig.emitSse({
+    type: "session.status",
+    properties: {
+      sessionID: ROOT_SESSION,
+      status: { type: "error", message: "model exploded" },
+    },
+  });
+  await rejection;
+  assert.equal(rig.conversation().status, "failed");
+  await handle.dispose();
+});
+
 test("external permission replies clear the pending prompt", async () => {
   resetHarnessDiagnosticsForTests();
   setFastTimers();
@@ -528,9 +688,10 @@ test("external permission replies clear the pending prompt", async () => {
   await rig.emitSse(permissionUpdated("perm_ext"));
   assert.equal(rig.conversation().status, "awaiting_permission");
 
+  // Real OpenCode 1.18 shape: requestID + reply (older servers use permissionID + response).
   await rig.emitSse({
     type: "permission.replied",
-    properties: { sessionID: ROOT_SESSION, permissionID: "perm_ext", response: "allow" },
+    properties: { sessionID: ROOT_SESSION, requestID: "perm_ext", reply: "once" },
   });
   assert.equal(rig.conversation().status, "idle");
   assert.equal(rig.conversation().pendingPermission, null);

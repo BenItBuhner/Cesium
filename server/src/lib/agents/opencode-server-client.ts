@@ -202,6 +202,16 @@ export class OpenCodeServerClient {
       }
     );
   }
+
+  /**
+   * Lists pending permission requests instance-wide. Modern OpenCode servers
+   * raise permissions silently (no SSE event), so this is the only reliable
+   * discovery mechanism; older servers 404 here and emit `permission.updated`
+   * events instead.
+   */
+  listPermissions(): Promise<OpenCodeServerJson[]> {
+    return this.request("/permission", undefined, { timeoutMs: 10_000 });
+  }
 }
 
 export function openCodeServerAuthFromEnv(): { username?: string; password?: string } {
