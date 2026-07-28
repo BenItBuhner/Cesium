@@ -3,8 +3,8 @@ import { resolveModelDisplayName } from "@cesium/core/model-display-name";
 import type { AgentStoredEvent } from "../types.js";
 import { asRecord, asString, asNumber } from "./cesium-coerce.js";
 
-/** Minimum elapsed time before a time-gap system reminder is emitted. */
-export const CESIUM_TIME_GAP_REMINDER_MS = 6 * 60 * 60 * 1000;
+/** Minimum elapsed time before a time-gap environment notice is emitted (infrequent on purpose). */
+export const CESIUM_TIME_GAP_REMINDER_MS = 24 * 60 * 60 * 1000;
 
 export type CesiumEnvironmentReminderSnapshot = {
   dateLabel?: string;
@@ -45,12 +45,12 @@ export function formatCesiumTimeGapDuration(gapMs: number): string {
   if (hours > 0) {
     parts.push(`${hours} hour${hours === 1 ? "" : "s"}`);
   }
-  if (parts.length === 0 || (days === 0 && minutes > 0 && hours < 6)) {
+  if (parts.length === 0 || (days === 0 && minutes > 0 && hours < 12)) {
     if (minutes > 0 && days === 0) {
       parts.push(`${minutes} minute${minutes === 1 ? "" : "s"}`);
     }
   }
-  return parts.join(", ") || "several hours";
+  return parts.join(", ") || "a day";
 }
 
 export function cesiumEnvironmentReminderSnapshot(input: {
@@ -145,7 +145,7 @@ export function cesiumEnvironmentChangeNotice(input: {
       input.current.dateLabel?.trim() ||
       formatCesiumDateLabel(currentAt, zone);
     lines.push(
-      `- Significant time has elapsed since the previous user message (about ${gapLabel}). It is now ${when}${
+      `- A full day or more has passed since the previous user message (about ${gapLabel}). It is now ${when}${
         zone ? ` (${zone})` : ""
       }.`
     );

@@ -37,13 +37,13 @@ test("cesiumEnvironmentChangeNotice emits model switch notices", () => {
   assert.match(notice!, /Claude Opus 5/);
 });
 
-test("cesiumEnvironmentChangeNotice emits time-gap notices after six hours", () => {
+test("cesiumEnvironmentChangeNotice emits time-gap notices only after a full day", () => {
   const now = Date.UTC(2026, 6, 28, 18, 0, 0);
   const previousAt = now - CESIUM_TIME_GAP_REMINDER_MS - 60_000;
   const notice = cesiumEnvironmentChangeNotice({
     previous: {
       dateMs: previousAt,
-      dateLabel: "Monday, July 27, 2026 at 11:00 PM",
+      dateLabel: "Sunday, July 27, 2026 at 5:59 PM",
       modelId: "openai/gpt-5.1",
       modelName: "OpenAI/GPT 5.1",
     },
@@ -57,8 +57,26 @@ test("cesiumEnvironmentChangeNotice emits time-gap notices after six hours", () 
     previousUserMessageAt: previousAt,
   });
   assert.ok(notice);
-  assert.match(notice!, /Significant time has elapsed/i);
+  assert.match(notice!, /full day or more has passed/i);
   assert.match(notice!, /UTC/);
+
+  // Same-day / multi-hour gaps stay quiet — these notices are intentionally rare.
+  assert.equal(
+    cesiumEnvironmentChangeNotice({
+      previous: {
+        dateMs: now - 12 * 60 * 60 * 1000,
+        modelId: "openai/gpt-5.1",
+        modelName: "OpenAI/GPT 5.1",
+      },
+      current: {
+        dateMs: now,
+        modelId: "openai/gpt-5.1",
+        modelName: "OpenAI/GPT 5.1",
+      },
+      previousUserMessageAt: now - 12 * 60 * 60 * 1000,
+    }),
+    null
+  );
   assert.equal(
     cesiumEnvironmentChangeNotice({
       previous: {
@@ -77,9 +95,9 @@ test("cesiumEnvironmentChangeNotice emits time-gap notices after six hours", () 
   );
 });
 
-test("formatCesiumTimeGapDuration summarizes multi-hour gaps", () => {
-  assert.match(formatCesiumTimeGapDuration(6 * 60 * 60 * 1000), /6 hours/);
+test("formatCesiumTimeGapDuration summarizes multi-day gaps", () => {
   assert.match(formatCesiumTimeGapDuration(26 * 60 * 60 * 1000), /1 day/);
+  assert.match(formatCesiumTimeGapDuration(50 * 60 * 60 * 1000), /2 days/);
 });
 
 test("mcpReminderChangeNotice no longer fires on every dateLabel tick", () => {
