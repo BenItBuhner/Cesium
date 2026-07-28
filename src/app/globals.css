@@ -36,6 +36,82 @@
 }
 
 /*
+ * Tab close controls: always visible + tappable on touch / no-hover devices
+ * and on the mobile layout breakpoint (<768px, matches useViewport isMobile).
+ * On fine-pointer hover desktops, keep the classic hover-reveal (and dirty-dot
+ * swap). Tailwind `group-hover:` alone is gated by the hover media query and
+ * never reveals these on phones. The max-width override also covers Chrome
+ * device emulation, where the host mouse still reports any-pointer: fine.
+ */
+.tab-close-hit {
+  pointer-events: auto;
+  opacity: 1;
+}
+
+.tab-close-hit-dirty {
+  pointer-events: auto;
+  display: flex;
+  opacity: 1;
+}
+
+.tab-dirty-dot {
+  display: block;
+}
+
+@media (any-hover: hover) and (any-pointer: fine) {
+  .tab-close-hit {
+    pointer-events: none;
+    opacity: 0;
+  }
+
+  .group:hover .tab-close-hit,
+  .group:focus-within .tab-close-hit {
+    pointer-events: auto;
+    opacity: 1;
+  }
+
+  .tab-close-hit-dirty {
+    pointer-events: none;
+    display: none;
+  }
+
+  .group:hover .tab-close-hit-dirty,
+  .group:focus-within .tab-close-hit-dirty {
+    pointer-events: auto;
+    display: flex;
+  }
+
+  .group:hover .tab-dirty-dot,
+  .group:focus-within .tab-dirty-dot {
+    display: none;
+  }
+}
+
+@media not ((any-hover: hover) and (any-pointer: fine)) {
+  /* Close is always shown on touch; hide the dirty dot so it does not stack. */
+  .tab-dirty-dot {
+    display: none;
+  }
+}
+
+@media (max-width: 767px) {
+  .tab-close-hit {
+    pointer-events: auto;
+    opacity: 1;
+  }
+
+  .tab-close-hit-dirty {
+    pointer-events: auto;
+    display: flex;
+    opacity: 1;
+  }
+
+  .tab-dirty-dot {
+    display: none;
+  }
+}
+
+/*
  * App-level (non-token) custom properties. Token variables live in the
  * generated theme import above; dark values for the props below are in the
  * `html.dark` block further down.
