@@ -48,10 +48,8 @@ import {
 } from "./composer-multiline";
 import {
   COMPOSER_INLINE_MIN_EDITOR_WIDTH_PX,
-  resolveComposerInlineOverflowUi,
+  shouldCompactComposerInlineControls,
   useComposerInlineControlsOverflow,
-  useComposerInlineOverflowStrategy,
-  type ComposerInlineOverflowStrategy,
 } from "./composer-inline-overflow";
 
 const COMPOSER_DOCK_HEIGHT_OVERLAY_MIN_LINES = 3;
@@ -526,12 +524,6 @@ interface ChatComposerProps {
   /** Force the docked composer into its stacked multi-line layout without using the legacy expanded shell. */
   forceMultiline?: boolean;
   /**
-   * Overrides how the docked single-line composer reacts when long mode/model
-   * labels would crowd out the editor (default: `"compact"`, or the
-   * `cesium.composer-overflow-strategy` localStorage override).
-   */
-  inlineOverflowStrategy?: ComposerInlineOverflowStrategy;
-  /**
    * When set, replaces the default horizontal shell margin (non-expanded only).
    * Default: `mx-0` until the pane `@container` is ≥481px wide, then `mx-[10px]`; use `""` for flush.
    */
@@ -983,7 +975,6 @@ export function ChatComposer({
   layout = "docked-bottom",
   variant = "docked",
   forceMultiline = false,
-  inlineOverflowStrategy,
   shellMxClass,
   agentShellDockHeightExpand = false,
   onRequestHandoff,
@@ -3034,8 +3025,7 @@ const handleNativeComposerKeyDown = useCallback(
   }, [hookMeasuresMultiline, value]);
 
   const useStickyMultiline = variant === "docked" && !isExpanded;
-  /** Content-driven multiline (typed text wrapped / forceMultiline), before overflow handling. */
-  const contentIsMultiLine = resolveComposerIsMultiLine({
+  const isMultiLine = resolveComposerIsMultiLine({
     forceMultiline,
     useStickyMultiline,
     hookMeasuresMultiline,
@@ -3047,37 +3037,31 @@ const handleNativeComposerKeyDown = useCallback(
    * Inline-controls overflow: on narrow (mobile-width) panes, a long model
    * name or mode label can crowd the single-line capsule until the editor is
    * unusably thin. A hidden probe row mirrors the full-size controls plus a
-   * minimum editor width; when the probe outgrows the composer row, either
-   * compact the mode/model triggers to icons (`"compact"`) or flip into the
-   * existing stacked two-line shell (`"stack"`).
+   * minimum editor width; when the probe outgrows the composer row, the
+   * mode/model triggers compact to icon-only pills. Once content wraps to the
+   * stacked layout the controls get their full labels back.
    */
   const inlineOverflowEnabled = variant === "docked" && !isExpanded;
-  const overflowStrategy = useComposerInlineOverflowStrategy(
-    inlineOverflowStrategy
-  );
   const inlineControlsOverflow = useComposerInlineControlsOverflow(
     inlineRowRef,
     inlineProbeRef,
     inlineOverflowEnabled
   );
-  const { compactInlineControls, forceStackedControls } =
-    resolveComposerInlineOverflowUi({
-      strategy: overflowStrategy,
-      inlineControlsOverflow,
-      contentIsMultiLine,
-    });
-  const isMultiLine = contentIsMultiLine || forceStackedControls;
+  const compactInlineControls = shouldCompactComposerInlineControls({
+    inlineControlsOverflow,
+    contentIsMultiLine: isMultiLine,
+  });
   canBackspaceClearModeChipRef.current =
     variant === "docked" &&
     !isExpanded &&
     !forceMultiline &&
-    !contentIsMultiLine &&
+    !isMultiLine &&
     attachedImages.length === 0 &&
     !(showComposerHeightOverlay && dockComposerHeightExpanded);
 
-  /** `trim()` alone can't hide the overlay after Shift+Enter (`\\n`-only trims to ""). Treating lone `\\n` or phantom `<br>` as "has newline" broke empty inputs (Chrome serializes sentinel breaks as "\\n"). Hiding instead when wrapped past one line aligns with visible layout + soft breaks. Uses the content-driven flag so the placeholder survives an overflow-forced stack of an empty composer. */
+  /** `trim()` alone can't hide the overlay after Shift+Enter (`\\n`-only trims to ""). Treating lone `\\n` or phantom `<br>` as "has newline" broke empty inputs (Chrome serializes sentinel breaks as "\\n"). Hiding instead when wrapped past one line aligns with visible layout + soft breaks. */
   const showFloatingPlaceholder =
-    composerTrimmedLength === 0 && !contentIsMultiLine;
+    composerTrimmedLength === 0 && !isMultiLine;
 
   const composerScrollFadeKey = [
     layout,
