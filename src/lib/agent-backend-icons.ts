@@ -20,6 +20,7 @@ export const AGENT_BACKEND_ICON_FILES: Partial<
   "opencode-server": { light: "OpenCode-Light.svg", dark: "OpenCode-Dark.svg" },
   "opencode-v2-beta": { light: "OpenCode-Light.svg", dark: "OpenCode-Dark.svg" },
   "devin-acp": { light: "Devin-Light.svg", dark: "Devin-Dark.svg" },
+  "grok-build": { light: "Grok-Light.svg", dark: "Grok-Dark.svg" },
 };
 
 const ICON_BASE = "/agent-backend-icons";

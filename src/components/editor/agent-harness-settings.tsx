@@ -72,6 +72,7 @@ export const HARNESS_ORDER: AgentBackendId[] = [
   "opencode-server",
   "opencode-v2-beta",
   "devin-acp",
+  "grok-build",
   "claude-code-sdk",
   "pi-agent",
   "google-antigravity-cli",
@@ -83,6 +84,7 @@ export const HARNESS_LABELS: Record<AgentBackendId, string> = {
   "opencode-server": "OpenCode Server",
   "opencode-v2-beta": "OpenCode v2 Beta",
   "devin-acp": "Devin",
+  "grok-build": "Grok Build",
   "codex-app-server": "Codex App Server",
   "claude-code-sdk": "Claude Code",
   "pi-agent": "Pi Agent",
@@ -100,6 +102,8 @@ const HARNESS_DESCRIPTIONS: Record<AgentBackendId, string> = {
     "Native OpenCode v2 beta API with typed tool events, durable reconnect recovery, background subagents, forms, and v2 permissions. Uses `opencode2` or `OPENCURSOR_OPENCODE_V2_SERVER_URL`.",
   "devin-acp":
     "Cognition Devin CLI over ACP (`devin acp`). Authenticate with `devin auth login` or set `WINDSURF_API_KEY`.",
+  "grok-build":
+    "SpaceXAI Grok Build CLI over official ACP (`grok agent stdio`). Authenticate with `grok login --device-auth` or set `XAI_API_KEY`; Cesium performs the non-interactive ACP handshake.",
   "codex-app-server":
     "Codex App Server over JSON-RPC stdio. Uses ambient Codex auth and mirrors native plans into OpenCursor plan files.",
   "claude-code-sdk":

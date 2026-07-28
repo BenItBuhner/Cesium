@@ -541,6 +541,7 @@ export interface ModelInfo {
     | "opencode"
     | "codex"
     | "claude"
+    | "xai"
     | "fixture";
   selected?: boolean;
 }
