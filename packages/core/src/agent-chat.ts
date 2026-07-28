@@ -3509,8 +3509,15 @@ function formatToolSummary(
   }
 
   if (likelyEdit) {
+    /** Preserve create/write verbs from backend titles ("Create x", "Write x") instead of flattening everything to "Update". */
+    const editVerbSource = `${streamToolTitle ?? resolvedTitleLabel ?? existing?.title ?? ""}`.trim();
+    const editVerb = /^create\b/i.test(editVerbSource)
+      ? "Create"
+      : /^write\b/i.test(editVerbSource)
+        ? "Write"
+        : "Update";
     const nextTitle = path?.trim()
-      ? `Update ${truncateMiddleLabel(
+      ? `${editVerb} ${truncateMiddleLabel(
           formatToolFileLabel(path, ws) ?? toolPathBasename(path),
           TOOL_PATH_LABEL_MAX
         )}`

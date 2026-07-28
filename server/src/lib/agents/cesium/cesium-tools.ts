@@ -102,8 +102,24 @@ const CESIUM_BASE_TOOLS: CesiumToolDefinition[] = [
     },
   },
   {
+    name: "write_file",
+    description:
+      "Create a new workspace file or overwrite an existing one with the full content. Parent directories are created automatically. Prefer edit_file for targeted changes inside existing files.",
+    requiresPermission: "editFile",
+    parameters: {
+      type: "object",
+      properties: {
+        path: { type: "string" },
+        content: { type: "string" },
+      },
+      required: ["path", "content"],
+      additionalProperties: false,
+    },
+  },
+  {
     name: "edit_file",
-    description: "Replace one exact string in a file. Returns a precise error if the match is missing or duplicated.",
+    description:
+      "Replace one exact string in an existing file (set replaceAll to true to replace every occurrence). Use write_file to create new files or fully rewrite one. Returns a precise, actionable error if the match is missing or ambiguous.",
     requiresPermission: "editFile",
     parameters: {
       type: "object",
@@ -111,6 +127,10 @@ const CESIUM_BASE_TOOLS: CesiumToolDefinition[] = [
         path: { type: "string" },
         oldString: { type: "string" },
         newString: { type: "string" },
+        replaceAll: {
+          type: "boolean",
+          description: "Replace every occurrence of oldString instead of requiring a unique match.",
+        },
       },
       required: ["path", "oldString", "newString"],
       additionalProperties: false,
@@ -805,6 +825,8 @@ export function toolKind(name: string): string {
       return "read";
     case "edit_file":
       return "edit";
+    case "write_file":
+      return "edit";
     case "terminal":
       return "terminal";
     case "switch_mode":
@@ -918,6 +940,8 @@ export function toolTitle(name: string, args: Record<string, unknown>): string {
       return `Read ${asString(args.path) ?? "file"}`;
     case "edit_file":
       return `Edit ${asString(args.path) ?? "file"}`;
+    case "write_file":
+      return `Write ${asString(args.path) ?? "file"}`;
     case "terminal":
       return `Run ${asString(args.command) ?? "command"}`;
     case "switch_mode": {

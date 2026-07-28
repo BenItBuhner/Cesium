@@ -15,6 +15,7 @@ import {
   ChevronDown,
   Circle,
   CircleHelp,
+  FilePlus2,
   FileText,
   FolderOpen,
   Globe,
@@ -72,11 +73,14 @@ function toolEntryIcon(entry: Extract<WorkedSessionEntry, { kind: "tool" }>): Re
   if (kind === "delete" || /^delete\b/i.test(title)) {
     return <Trash2 {...iconProps} />;
   }
+  if (/^create\b/i.test(title)) {
+    return <FilePlus2 {...iconProps} />;
+  }
   if (
     kind === "edit" ||
     kind === "write" ||
     entry.editPreview != null ||
-    /^(update|edit|write|create)\b/i.test(title)
+    /^(update|edit|write)\b/i.test(title)
   ) {
     return <SquarePen {...iconProps} />;
   }
@@ -273,7 +277,7 @@ function toolTitleDisplayedPathLabels(
   ) {
     return labels;
   }
-  const pathVerb = /^(Read|Update|Delete)\s+(.+)$/i.exec(tEffective);
+  const pathVerb = /^(Read|Update|Create|Write|Delete)\s+(.+)$/i.exec(tEffective);
   if (pathVerb?.[2]) {
     labels.add(pathVerb[2].trim());
   }
@@ -339,7 +343,7 @@ function renderToolTitleLine(
       </span>
     );
   }
-  const pathVerb = /^(Read|Update|Delete)\s+(.+)$/i.exec(tEffective);
+  const pathVerb = /^(Read|Update|Create|Write|Delete)\s+(.+)$/i.exec(tEffective);
   if (pathVerb) {
     const verb = pathVerb[1]!;
     const pathPart = pathVerb[2]!;

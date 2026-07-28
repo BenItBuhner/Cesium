@@ -115,7 +115,7 @@ export function resolveCesiumModeToolPolicy(input: {
     if (name === "terminal") {
       return { allowed: true };
     }
-    if (name === "edit_file") {
+    if (name === "edit_file" || name === "write_file") {
       return policyBlock(
         name,
         "Plan mode should write through plan-file tools under .cesium/plans/ and must not implement code changes directly."
@@ -210,6 +210,7 @@ export function summarizeCesiumModeToolPolicy(mode: string | undefined | null): 
         restricted: ["call_mcp_tool only after an explicit read-only server/tool check"],
         blocked: [
           "edit_file",
+          "write_file",
           "terminal",
           "plan writes",
           "orchestration mutations",
@@ -251,7 +252,7 @@ export function summarizeCesiumModeToolPolicy(mode: string | undefined | null): 
           "switch_mode",
         ],
         restricted: ["child-agent permissions are controlled by orchestration assignment policy"],
-        blocked: ["direct edit_file", "direct terminal implementation", "Goal execution controls", "Workflow execution controls"],
+        blocked: ["direct edit_file / write_file", "direct terminal implementation", "Goal execution controls", "Workflow execution controls"],
       };
     case "goal":
       return {
@@ -259,6 +260,7 @@ export function summarizeCesiumModeToolPolicy(mode: string | undefined | null): 
           "read_file",
           "grep",
           "edit_file",
+          "write_file",
           "terminal",
           "todo",
           "wait",
@@ -280,6 +282,7 @@ export function summarizeCesiumModeToolPolicy(mode: string | undefined | null): 
           "read_file",
           "grep",
           "edit_file",
+          "write_file",
           "terminal",
           "todo",
           "wait",
@@ -299,6 +302,7 @@ export function summarizeCesiumModeToolPolicy(mode: string | undefined | null): 
           "read_file",
           "grep",
           "edit_file",
+          "write_file",
           "terminal",
           "todo",
           "wait",
