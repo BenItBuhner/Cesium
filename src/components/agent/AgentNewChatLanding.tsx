@@ -157,6 +157,7 @@ export function AgentNewChatLanding() {
   const {
     workspaceSession,
     updateWorkspaceSession,
+    seedWorkspaceSessionChatDraft,
     openWorkspaceById,
     gitStatus,
     refreshGitStatus,
@@ -311,6 +312,13 @@ export function AgentNewChatLanding() {
           attachments
         );
         if (!created) return false;
+        // Carry the chosen backend/mode/model into the fresh sandbox before
+        // opening it, so its session does not reset to default drafts.
+        seedWorkspaceSessionChatDraft(created.workspaceId, {
+          backendId: backend.id,
+          mode: draftMode,
+          model: draftModel,
+        });
         setStandaloneDraftActive(false);
         await openWorkspaceById(created.workspaceId);
         setSelectedConversationId(created.conversation.id);
@@ -355,9 +363,7 @@ export function AgentNewChatLanding() {
       createAndPromptStandaloneConversation,
       draftBackend,
       draftMode,
-      draftModel.id,
-      draftModel.modelValue,
-      draftModel.name,
+      draftModel,
       createWorktree,
       deleteWorktree,
       gitStatus?.currentBranch,
@@ -365,6 +371,7 @@ export function AgentNewChatLanding() {
       noWorkspaceDraft,
       openWorkspaceById,
       refreshConversationGroups,
+      seedWorkspaceSessionChatDraft,
       setSelectedConversationId,
       setStandaloneDraftActive,
     ]
