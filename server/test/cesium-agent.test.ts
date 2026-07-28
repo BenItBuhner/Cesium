@@ -50,7 +50,7 @@ const [
     readCesiumEnvBootstrap,
     getCesiumModelCatalog,
   },
-  { normalizeEventsToHistory, openAiMessages, cesiumPermissionToolKey, createCesiumAgentProvider, buildOpenAiToolDefinitions, sanitizeOpenAiCompatibleJsonSchema, normalizeCesiumToolResultForModel, isEmptyCesiumAdapterResult, normalizeCallMcpToolArgs },
+  { normalizeEventsToHistory, openAiMessages, cesiumPermissionToolKey, createCesiumAgentProvider, createCesiumAssistantStreamSink, buildOpenAiToolDefinitions, sanitizeOpenAiCompatibleJsonSchema, normalizeCesiumToolResultForModel, isEmptyCesiumAdapterResult, normalizeCallMcpToolArgs },
   { buildCesiumBaseSystemPrompt },
   { resolveCesiumModeToolPolicy },
   { parsePlanEntriesFromMarkdown },
@@ -1188,6 +1188,71 @@ test("Cesium tool schema includes dedicated wait tool", () => {
     (wait.function.parameters as { required?: string[] }).required?.includes("seconds"),
     true
   );
+});
+
+test("Cesium stream sink persists the reasoning event before the first assistant chunk", async () => {
+  const appended: Array<{ kind: string; text?: string }> = [];
+  const sink = createCesiumAssistantStreamSink({
+    conversationId: "c1",
+    messageId: "assistant-1",
+    reasoningMessageId: "assistant-1-reasoning-0",
+    appendEvents: async (events) => {
+      for (const event of events) {
+        appended.push({
+          kind: event.kind,
+          text: "text" in event ? (event.text as string) : undefined,
+        });
+      }
+    },
+  });
+
+  await sink.pushReasoning("First I should ");
+  await sink.pushReasoning("count the items.");
+  await sink.pushText("1. Streaming");
+  await sink.pushText(" works.");
+  await sink.flush();
+
+  assert.equal(appended[0]?.kind, "reasoning");
+  assert.equal(appended[0]?.text, "First I should count the items.");
+  const firstChunkIndex = appended.findIndex(
+    (event) => event.kind === "assistant_message_chunk"
+  );
+  assert.ok(firstChunkIndex > 0, "expected an assistant chunk after the reasoning event");
+  assert.equal(
+    appended
+      .filter((event) => event.kind === "assistant_message_chunk")
+      .map((event) => event.text)
+      .join(""),
+    "1. Streaming works."
+  );
+  assert.equal(appended.filter((event) => event.kind === "reasoning").length, 1);
+});
+
+test("Cesium stream sink flushes reasoning for tool-only turns without text", async () => {
+  const appended: Array<{ kind: string; text?: string }> = [];
+  const sink = createCesiumAssistantStreamSink({
+    conversationId: "c1",
+    messageId: "assistant-2",
+    reasoningMessageId: "assistant-2-reasoning-0",
+    appendEvents: async (events) => {
+      for (const event of events) {
+        appended.push({
+          kind: event.kind,
+          text: "text" in event ? (event.text as string) : undefined,
+        });
+      }
+    },
+  });
+
+  await sink.pushReasoning("I need to call a tool.");
+  await sink.flush();
+
+  assert.deepEqual(appended, [
+    { kind: "reasoning", text: "I need to call a tool." },
+  ]);
+
+  await sink.flush();
+  assert.equal(appended.length, 1, "flush must be idempotent");
 });
 
 test("Cesium plan markdown parser projects checklist statuses", () => {
