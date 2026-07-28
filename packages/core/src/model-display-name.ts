@@ -136,6 +136,15 @@ function titleCaseToken(token: string): string {
     return token;
   }
   const lower = token.toLowerCase();
+  if (lower === "deepseek") {
+    return "DeepSeek";
+  }
+  if (lower === "openai") {
+    return "OpenAI";
+  }
+  if (lower === "openrouter") {
+    return "OpenRouter";
+  }
   if (MODEL_DISPLAY_ACRONYMS.has(lower)) {
     return lower.toUpperCase();
   }
