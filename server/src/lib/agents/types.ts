@@ -14,6 +14,7 @@ export type AgentBackendId =
   | "opencode-server"
   | "opencode-v2-beta"
   | "devin-acp"
+  | "grok-build"
   | "codex-app-server"
   | "claude-code-sdk"
   | "pi-agent"
@@ -415,6 +416,8 @@ export type AgentQueuedChatPrompt = {
   attachments?: Array<{ mimeType: string; data: string; name?: string }>;
   clientEventId?: string;
   clientMessageId?: string;
+  /** IANA timezone from the client (e.g. America/Los_Angeles) for date reminders. */
+  clientTimezone?: string;
   configOverride?: Partial<AgentConversationConfig> & {
     backendId?: AgentBackendId;
     setConfigOptions?: Array<{ configId: string; value: string }>;
@@ -578,6 +581,8 @@ export interface AgentSessionHandle {
     attachments?: Array<{ mimeType: string; data: string; name?: string }>;
     isRetry?: boolean;
     planHandoff?: AgentQueuedChatPrompt["planHandoff"];
+    /** IANA timezone from the client for date / time-gap reminders. */
+    clientTimezone?: string;
   }) => Promise<void>;
   cancel: () => Promise<void>;
   pause?: () => Promise<void>;

@@ -9,7 +9,10 @@ import {
   describePiAgentAuthStatus,
   hasPiAgentStoredAuthConfig,
 } from "../pi-agent-settings.js";
-import { readAgentBackendConfigCache } from "./provider-cache-store.js";
+import {
+  createGrokBuildModeConfigOption,
+  readAgentBackendConfigCache,
+} from "./provider-cache-store.js";
 import type {
   AgentBackendId,
   AgentBackendInfo,
@@ -46,6 +49,28 @@ function parseDevinCliAcpArgs(): string[] {
     }
   }
   return ["acp"];
+}
+
+/**
+ * Grok Build's official automation entrypoint is ACP over stdio. The update
+ * check is disabled for a server-managed process so startup never mutates the
+ * installed CLI or stalls a chat turn.
+ */
+function parseGrokBuildArgs(): string[] {
+  const rawJson =
+    process.env.OPENCURSOR_GROK_BUILD_ARGS?.trim() ||
+    process.env.OPENCURSOR_GROK_ARGS?.trim();
+  if (rawJson) {
+    try {
+      const parsed = JSON.parse(rawJson) as unknown;
+      if (Array.isArray(parsed) && parsed.every((item) => typeof item === "string")) {
+        return parsed;
+      }
+    } catch {
+      // Ignore invalid JSON and use the supported upstream invocation.
+    }
+  }
+  return ["--no-auto-update", "agent", "stdio"];
 }
 
 function fileExists(filePath: string): boolean {
@@ -238,6 +263,37 @@ function resolveDevinAcpRuntime(): AcpRuntimeSpec | null {
   return null;
 }
 
+function resolveGrokBuildRuntime(): AcpRuntimeSpec | null {
+  const args = parseGrokBuildArgs();
+  const configured = resolveConfiguredRuntime(
+    process.env.OPENCURSOR_GROK_BUILD_BIN || process.env.OPENCURSOR_GROK_BIN,
+    args
+  );
+  if (configured) {
+    return configured;
+  }
+
+  const names =
+    process.platform === "win32"
+      ? ["grok.exe", "grok.cmd", "grok.bat", "grok"]
+      : ["grok"];
+  const pathHit = findExecutableOnPath(names);
+  if (pathHit) {
+    return buildInvocation(pathHit, args);
+  }
+
+  for (const home of openCodeHomeDirCandidates()) {
+    for (const name of names) {
+      const candidate = path.join(home, ".grok", "bin", name);
+      if (fileExists(candidate)) {
+        return buildInvocation(candidate, args);
+      }
+    }
+  }
+
+  return null;
+}
+
 function resolveOpenCodeCliRuntime(): CliRuntimeSpec | null {
   const configured = resolveConfiguredRuntime(
     process.env.OPENCURSOR_OPENCODE_SERVER_BIN?.trim() ||
@@ -321,6 +377,7 @@ function resolveGoogleAntigravityCliRuntime(): CliRuntimeSpec | null {
 const OPENCODE_RUNTIME = resolveOpenCodeCliRuntime();
 const OPENCODE_V2_COMMAND = resolveOpenCodeV2CommandPath();
 const DEVIN_RUNTIME = resolveDevinAcpRuntime();
+const GROK_BUILD_RUNTIME = resolveGrokBuildRuntime();
 const CODEX_RUNTIME = resolveCodexCliRuntime();
 const GOOGLE_ANTIGRAVITY_RUNTIME = resolveGoogleAntigravityCliRuntime();
 
@@ -423,6 +480,19 @@ export const AGENT_BACKENDS: Record<AgentBackendId, AgentBackendInfo> = {
     defaultModelId: "auto",
     defaultModelName: "Auto",
   }),
+  "grok-build": createBackendInfo({
+    id: "grok-build",
+    label: "Grok Build",
+    description:
+      "SpaceXAI Grok Build CLI over its official ACP stdio transport (`grok agent stdio`). Uses ambient `grok login` credentials or `XAI_API_KEY`.",
+    experimental: true,
+    commandPreview: GROK_BUILD_RUNTIME?.commandPreview ?? "Grok Build CLI not found",
+    available: GROK_BUILD_RUNTIME !== null,
+    capabilities: AGENT_CAPABILITIES["grok-build"],
+    defaultMode: "agent",
+    defaultModelId: "grok-4.5",
+    defaultModelName: "Grok 4.5",
+  }),
   "codex-app-server": createBackendInfo({
     id: "codex-app-server",
     label: "Codex App Server",
@@ -487,6 +557,7 @@ const AGENT_BACKEND_MENU_ORDER = [
   "opencode-server",
   "opencode-v2-beta",
   "devin-acp",
+  "grok-build",
   "claude-code-sdk",
   "pi-agent",
   "google-antigravity-cli",
@@ -610,6 +681,44 @@ export async function createAgentProvider(
           env: DEVIN_RUNTIME.env,
           callbacks,
           loadSessionId: providerSessionId,
+        });
+      },
+    };
+  }
+
+  if (backendId === "grok-build") {
+    if (!GROK_BUILD_RUNTIME) {
+      throw new Error(
+        `${backend.label} requires the grok binary. Install it from https://x.ai/cli or configure OPENCURSOR_GROK_BUILD_BIN.`
+      );
+    }
+    const cachedConfigOptions = await readAgentBackendConfigCache(backendId);
+    const seedConfigOptions = cachedConfigOptions.some(
+      (option) => option.category === "mode"
+    )
+      ? cachedConfigOptions
+      : [createGrokBuildModeConfigOption(), ...cachedConfigOptions];
+    return {
+      backend,
+      startSession(callbacks) {
+        return AcpSessionHandle.create({
+          backend,
+          command: GROK_BUILD_RUNTIME.command,
+          args: GROK_BUILD_RUNTIME.args,
+          env: GROK_BUILD_RUNTIME.env,
+          callbacks,
+          seedConfigOptions,
+        });
+      },
+      loadSession(callbacks, providerSessionId) {
+        return AcpSessionHandle.create({
+          backend,
+          command: GROK_BUILD_RUNTIME.command,
+          args: GROK_BUILD_RUNTIME.args,
+          env: GROK_BUILD_RUNTIME.env,
+          callbacks,
+          loadSessionId: providerSessionId,
+          seedConfigOptions,
         });
       },
     };

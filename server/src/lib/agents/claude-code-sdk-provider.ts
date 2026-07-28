@@ -30,9 +30,9 @@ import {
   findPrimaryModelConfigOption,
 } from "./config-option-utils.js";
 import {
-  getGlobalSettings,
-  saveRememberedAgentPermissionRule,
-} from "../global-settings-store.js";
+  persistRememberedPermissionChoice,
+  resolveRememberedPermissionDecision,
+} from "./remembered-permissions.js";
 import type {
   AgentBackendInfo,
   AgentConfigOption,
@@ -530,19 +530,20 @@ class ClaudeCodeSdkSessionHandle implements AgentSessionHandle {
       options.decisionReason ||
       (typeof input.command === "string" ? input.command : JSON.stringify(input));
 
-    const settings = await getGlobalSettings().catch(() => undefined);
-    const remembered = settings?.agents.rememberedPermissions.find(
-      (rule) =>
-        rule.workspaceId === this.callbacks.workspace.id &&
-        rule.backendId === this.backend.id &&
-        rule.toolKey === toolKey
-    );
-    if (remembered) {
-      return remembered.decision === "allow"
+    const resolved = await resolveRememberedPermissionDecision({
+      workspaceId: this.callbacks.workspace.id,
+      backendId: this.backend.id,
+      toolKey,
+    });
+    if (resolved.kind === "remembered") {
+      return resolved.decision === "allow"
         ? { behavior: "allow", updatedPermissions: options.suggestions }
-        : { behavior: "deny", message: `Denied by remembered rule for ${remembered.toolLabel}.` };
+        : {
+            behavior: "deny",
+            message: `Denied by remembered rule for ${resolved.rule.toolLabel}.`,
+          };
     }
-    if (settings?.agents.autoAcceptAllAgentPermissions) {
+    if (resolved.kind === "auto_accept") {
       return { behavior: "allow" };
     }
 
@@ -965,15 +966,14 @@ class ClaudeCodeSdkSessionHandle implements AgentSessionHandle {
     const decision = input.cancelled ? "reject" : permissionDecisionFromOption(input.optionId);
     const optionId = input.cancelled ? undefined : input.optionId;
     if (optionId === "allow_always" || optionId === "reject_always") {
-      await saveRememberedAgentPermissionRule({
+      await persistRememberedPermissionChoice({
         workspaceId: this.callbacks.workspace.id,
         backendId: this.backend.id,
         toolKey: pending.toolKey,
         toolLabel: pending.toolLabel,
-        decision,
         optionId,
         optionKind: optionId,
-      }).catch(() => undefined);
+      });
     }
     await this.callbacks.appendEvents([
       {

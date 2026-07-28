@@ -20,6 +20,7 @@ describe("Cesium Agent frontend integration", () => {
       "opencode-server",
       "opencode-v2-beta",
       "devin-acp",
+      "grok-build",
       "claude-code-sdk",
       "pi-agent",
       "google-antigravity-cli",

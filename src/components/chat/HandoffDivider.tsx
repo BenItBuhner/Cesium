@@ -26,6 +26,8 @@ export function getAgentLabel(agentId: string): string {
       return "Gemini (retired)";
     case "devin-acp":
       return "Devin";
+    case "grok-build":
+      return "Grok Build";
     case "codex-adapter":
       return "Codex";
     case "codex-app-server":
@@ -51,6 +53,7 @@ function parseHandoffBackendId(raw: string): AgentBackendId | null {
     case "opencode-server":
     case "opencode-v2-beta":
     case "devin-acp":
+    case "grok-build":
     case "codex-app-server":
     case "claude-code-sdk":
     case "pi-agent":

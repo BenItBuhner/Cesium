@@ -160,7 +160,7 @@ export function EditorTab({
       <div className="relative mr-[6px] flex size-[22px] shrink-0 items-center justify-center">
         {tab.dirty ? (
           <span
-            className="pointer-events-none size-[8px] rounded-full bg-white group-hover:hidden"
+            className="tab-dirty-dot pointer-events-none size-[8px] rounded-full bg-white"
             aria-hidden
           />
         ) : null}
@@ -180,9 +180,7 @@ export function EditorTab({
             }
           }}
           className={`absolute inset-0 flex items-center justify-center rounded-[var(--radius-tab)] text-[var(--text-secondary)] transition-opacity hover:text-[var(--text-primary)] ${
-            tab.dirty
-              ? "pointer-events-none hidden opacity-100 group-hover:pointer-events-auto group-hover:flex"
-              : "pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100"
+            tab.dirty ? "tab-close-hit-dirty" : "tab-close-hit"
           }`}
           aria-label={`Close ${tab.name}`}
         >

@@ -34,6 +34,11 @@ import {
   appendAgentPluginPrompt,
   resolveAgentPluginAttachments,
 } from "../plugins/attachments.js";
+import {
+  buildRememberedPermissionToolKey,
+  persistRememberedPermissionChoice,
+  resolveRememberedPermissionDecision,
+} from "./remembered-permissions.js";
 
 type PendingTurn = {
   turnId: string | null;
@@ -44,6 +49,8 @@ type PendingTurn = {
 type PendingServerRequest = {
   rpcId: number | string;
   method: string;
+  toolKey: string;
+  toolLabel: string;
 };
 
 function currentValueFor(options: AgentConfigOption[], id: string): string | undefined {
@@ -345,6 +352,16 @@ class CodexAppServerSessionHandle implements AgentSessionHandle {
     }
     this.pendingServerRequests.delete(input.requestId);
     const decision = codexAppServerDecisionForOption(input.optionId, input.cancelled);
+    if (!input.cancelled && input.optionId === "acceptForSession") {
+      await persistRememberedPermissionChoice({
+        workspaceId: this.callbacks.workspace.id,
+        backendId: this.backend.id,
+        toolKey: pending.toolKey,
+        toolLabel: pending.toolLabel,
+        optionId: "allow_always",
+        optionKind: "allow_always",
+      });
+    }
     this.transport.respond(pending.rpcId, decision);
     await this.callbacks.appendEvents([
       {
@@ -895,7 +912,74 @@ class CodexAppServerSessionHandle implements AgentSessionHandle {
       ]);
       return;
     }
-    this.pendingServerRequests.set(requestId, { rpcId: message.id, method: message.method });
+    const toolKey = buildRememberedPermissionToolKey(
+      "codex-app-server",
+      message.method,
+      event.title,
+      event.detail
+    );
+    const toolLabel = event.title;
+    const resolved = await resolveRememberedPermissionDecision({
+      workspaceId: this.callbacks.workspace.id,
+      backendId: this.backend.id,
+      toolKey,
+      options: event.options,
+    });
+    if (resolved.kind === "remembered" || resolved.kind === "auto_accept") {
+      const optionId =
+        resolved.kind === "remembered"
+          ? resolved.decision === "allow"
+            ? "accept"
+            : "decline"
+          : "accept";
+      this.transport?.respond(
+        message.id,
+        codexAppServerDecisionForOption(optionId, false)
+      );
+      await this.callbacks.appendEvents([
+        {
+          eventId: randomUUID(),
+          conversationId: this.callbacks.conversation.id,
+          kind: "permission_resolved",
+          requestId,
+          outcome: "selected",
+          optionId:
+            resolved.kind === "remembered" ? resolved.rule.optionId : optionId,
+          raw:
+            resolved.kind === "remembered"
+              ? {
+                  rememberedPermission: {
+                    id: resolved.rule.id,
+                    decision: resolved.rule.decision,
+                    toolLabel: resolved.rule.toolLabel,
+                  },
+                }
+              : { autoAcceptedAll: true },
+        },
+        {
+          eventId: randomUUID(),
+          conversationId: this.callbacks.conversation.id,
+          kind: "status",
+          status: "running",
+          detail:
+            resolved.kind === "remembered"
+              ? `Used remembered permission for ${resolved.rule.toolLabel}.`
+              : "Auto-accepted (Agents → auto-approve all).",
+        },
+      ]);
+      await this.callbacks.updateConversation((current) => ({
+        ...current,
+        status: "running",
+        pendingPermission: null,
+      }));
+      return;
+    }
+    this.pendingServerRequests.set(requestId, {
+      rpcId: message.id,
+      method: message.method,
+      toolKey,
+      toolLabel,
+    });
     await this.callbacks.appendEvents([
       event,
       {

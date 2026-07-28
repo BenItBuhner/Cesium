@@ -175,12 +175,13 @@ export function UserMessageTicker({
 
   const totalHeight = historyControlHeight + railHeight;
 
+  // Mobile is too cramped for the scrub rail + preview; tablet/desktop only (md+ / 768px).
   return (
     <nav
       aria-label="User message navigation"
       data-user-message-ticker
       data-electron-no-drag
-      className="pointer-events-none absolute right-[2px] top-1/2 z-40 w-[30px] -translate-y-1/2"
+      className="pointer-events-none absolute right-[2px] top-1/2 z-40 hidden w-[30px] -translate-y-1/2 md:block"
       style={{ height: totalHeight }}
     >
       {hasOlderHistory ? (

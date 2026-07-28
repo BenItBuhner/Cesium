@@ -10,6 +10,7 @@ import {
   isCompressingContextStatusDetail,
   isTakingLongerStatusDetail,
 } from "./agent-completion-error";
+import { resolveModelDisplayName } from "./model-display-name";
 
 /** Agent is actively working or waiting on user mid-turn (not paused). */
 export function isAgentConversationBusy(status: AgentConversationStatus): boolean {
@@ -325,6 +326,8 @@ function modelProviderForBackend(backendId: AgentBackendId): ModelInfo["provider
       return "opencode";
     case "google-antigravity-cli":
       return "google";
+    case "grok-build":
+      return "xai";
     case "codex-app-server":
       return "codex";
     case "claude-code-sdk":
@@ -4717,7 +4720,9 @@ function cursorSdkStyleVariantDetailLabel(key: string, value: string): string | 
 }
 
 function formatModelVariantLabel(name: string, modelId: string): string {
-  const trimmedName = cleanModelVariantBaseName(name.trim() || modelId.trim() || "Model");
+  const trimmedName = cleanModelVariantBaseName(
+    resolveModelDisplayName(name.trim() || modelId.trim() || "Model", modelId.trim() || name.trim())
+  );
   const normalizedName = trimmedName.toLowerCase();
   const details: string[] = [];
 

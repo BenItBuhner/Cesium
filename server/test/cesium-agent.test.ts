@@ -50,7 +50,7 @@ const [
     readCesiumEnvBootstrap,
     getCesiumModelCatalog,
   },
-  { normalizeEventsToHistory, openAiMessages, cesiumPermissionToolKey, createCesiumAgentProvider, buildOpenAiToolDefinitions, sanitizeOpenAiCompatibleJsonSchema, normalizeCesiumToolResultForModel, isEmptyCesiumAdapterResult, normalizeCallMcpToolArgs },
+  { normalizeEventsToHistory, openAiMessages, cesiumPermissionToolKey, createCesiumAgentProvider, createCesiumAssistantStreamSink, buildOpenAiToolDefinitions, sanitizeOpenAiCompatibleJsonSchema, normalizeCesiumToolResultForModel, isEmptyCesiumAdapterResult, normalizeCallMcpToolArgs },
   { buildCesiumBaseSystemPrompt },
   { resolveCesiumModeToolPolicy },
   { parsePlanEntriesFromMarkdown },
@@ -485,16 +485,23 @@ test("upsertCesiumProviderKey allows OpenAI-format sk keys on OpenAI-compatible 
 test("readCesiumEnvBootstrap maps OPENAI_API_KEY onto a custom OpenAI-compatible host", () => {
   process.env.CESIUM_BASE_URL = "https://infer.techlitnow.com/v1";
   process.env.OPENAI_API_KEY = "sk-test-techlit-key";
-  process.env.CESIUM_DEFAULT_MODEL = "glm-5.2";
+  process.env.CESIUM_DEFAULT_MODEL = "kimi-k3";
   try {
     const bootstrap = readCesiumEnvBootstrap();
     assert.ok(bootstrap);
     assert.equal(bootstrap?.providerId, "techlit");
     assert.equal(bootstrap?.baseUrl, "https://infer.techlitnow.com/v1");
     assert.equal(bootstrap?.apiKey, "sk-test-techlit-key");
-    assert.equal(bootstrap?.defaultModelId, "techlit/glm-5.2");
-    assert.ok(bootstrap?.models.some((model) => model.id === "glm-5.2" && !model.supportsImages));
-    assert.ok(bootstrap?.models.some((model) => model.id === "kimi-k2.7-code" && model.supportsImages));
+    assert.equal(bootstrap?.defaultModelId, "techlit/kimi-k3");
+    assert.equal(bootstrap?.models.length, 1);
+    assert.ok(
+      bootstrap?.models.some(
+        (model) =>
+          model.id === "kimi-k3" &&
+          model.supportsImages &&
+          model.contextWindow === 1_000_000
+      )
+    );
   } finally {
     delete process.env.CESIUM_BASE_URL;
     delete process.env.OPENAI_API_KEY;
@@ -505,10 +512,10 @@ test("readCesiumEnvBootstrap maps OPENAI_API_KEY onto a custom OpenAI-compatible
 test("resolveCesiumAuth uses env bootstrap for techlit models", async () => {
   process.env.CESIUM_BASE_URL = "https://infer.techlitnow.com/v1";
   process.env.OPENAI_API_KEY = "sk-test-techlit-auth-key";
-  process.env.CESIUM_DEFAULT_MODEL = "kimi-k2.7-code";
+  process.env.CESIUM_DEFAULT_MODEL = "kimi-k3";
   try {
     const auth = await resolveCesiumAuth({
-      modelId: "techlit/kimi-k2.7-code",
+      modelId: "techlit/kimi-k3",
     });
     assert.equal(auth.providerId, "techlit");
     assert.equal(auth.apiKey, "sk-test-techlit-auth-key");
@@ -516,10 +523,9 @@ test("resolveCesiumAuth uses env bootstrap for techlit models", async () => {
     assert.equal(auth.apiKind, "openai-chat-completions");
 
     const catalog = await getCesiumModelCatalog();
-    const kimi = findCesiumModelCatalogEntry("techlit/kimi-k2.7-code", catalog);
-    const glm = findCesiumModelCatalogEntry("techlit/glm-5.2", catalog);
+    const kimi = findCesiumModelCatalogEntry("techlit/kimi-k3", catalog);
     assert.equal(kimi?.supportsImages, true);
-    assert.equal(glm?.supportsImages, false);
+    assert.equal(kimi?.contextWindow, 1_000_000);
 
     const publicSettings = await getCesiumAgentSettingsPublic();
     assert.ok(
@@ -1182,6 +1188,71 @@ test("Cesium tool schema includes dedicated wait tool", () => {
     (wait.function.parameters as { required?: string[] }).required?.includes("seconds"),
     true
   );
+});
+
+test("Cesium stream sink persists the reasoning event before the first assistant chunk", async () => {
+  const appended: Array<{ kind: string; text?: string }> = [];
+  const sink = createCesiumAssistantStreamSink({
+    conversationId: "c1",
+    messageId: "assistant-1",
+    reasoningMessageId: "assistant-1-reasoning-0",
+    appendEvents: async (events) => {
+      for (const event of events) {
+        appended.push({
+          kind: event.kind,
+          text: "text" in event ? (event.text as string) : undefined,
+        });
+      }
+    },
+  });
+
+  await sink.pushReasoning("First I should ");
+  await sink.pushReasoning("count the items.");
+  await sink.pushText("1. Streaming");
+  await sink.pushText(" works.");
+  await sink.flush();
+
+  assert.equal(appended[0]?.kind, "reasoning");
+  assert.equal(appended[0]?.text, "First I should count the items.");
+  const firstChunkIndex = appended.findIndex(
+    (event) => event.kind === "assistant_message_chunk"
+  );
+  assert.ok(firstChunkIndex > 0, "expected an assistant chunk after the reasoning event");
+  assert.equal(
+    appended
+      .filter((event) => event.kind === "assistant_message_chunk")
+      .map((event) => event.text)
+      .join(""),
+    "1. Streaming works."
+  );
+  assert.equal(appended.filter((event) => event.kind === "reasoning").length, 1);
+});
+
+test("Cesium stream sink flushes reasoning for tool-only turns without text", async () => {
+  const appended: Array<{ kind: string; text?: string }> = [];
+  const sink = createCesiumAssistantStreamSink({
+    conversationId: "c1",
+    messageId: "assistant-2",
+    reasoningMessageId: "assistant-2-reasoning-0",
+    appendEvents: async (events) => {
+      for (const event of events) {
+        appended.push({
+          kind: event.kind,
+          text: "text" in event ? (event.text as string) : undefined,
+        });
+      }
+    },
+  });
+
+  await sink.pushReasoning("I need to call a tool.");
+  await sink.flush();
+
+  assert.deepEqual(appended, [
+    { kind: "reasoning", text: "I need to call a tool." },
+  ]);
+
+  await sink.flush();
+  assert.equal(appended.length, 1, "flush must be idempotent");
 });
 
 test("Cesium plan markdown parser projects checklist statuses", () => {

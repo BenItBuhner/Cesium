@@ -19,6 +19,7 @@ import {
   createPersistableWorkspaceSession,
   mergeWorkspaceSessionFromImport,
 } from "@/lib/workspace-session";
+import { replaceRememberedAgentPermissions } from "@/lib/server-api";
 import {
   PageIntro,
   SettingsBlock,
@@ -220,6 +221,11 @@ export function ExportImportSettingsPanel() {
         }
         return next;
       });
+      if (slice.globalApp?.agents?.rememberedPermissions) {
+        void replaceRememberedAgentPermissions(
+          slice.globalApp.agents.rememberedPermissions
+        ).catch(() => undefined);
+      }
     }
     if (slice.workspaceSession != null) {
       updateWorkspaceSession((c) =>

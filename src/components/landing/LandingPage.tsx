@@ -107,7 +107,7 @@ function WorkbenchShot() {
           <span className="size-[10px] rounded-full bg-[var(--plan-accent)] opacity-80" />
           <span className="size-[10px] rounded-full bg-[var(--ask-accent)] opacity-80" />
           <span className="ml-[10px] font-mono text-[11px] text-[var(--text-disabled)]">
-            cesium — /agent · glm-5.2
+            cesium — /agent · kimi-k3
           </span>
         </div>
         <img
@@ -144,6 +144,7 @@ const AGENT_MARQUEE = [
   { name: "Claude Code", file: "Claude-Code-Light.svg", note: "SDK" },
   { name: "OpenCode", file: "OpenCode-Light.svg", note: "ACP" },
   { name: "Devin", file: "Devin-Light.svg", note: "ACP" },
+  { name: "Grok Build", file: "Grok-Light.svg", note: "ACP" },
   { name: "Pi Agent", file: "Pi-Light.svg", note: "ACP" },
   { name: "Antigravity", file: "Antigravity-Light.svg", note: "CLI" },
 ] as const;
