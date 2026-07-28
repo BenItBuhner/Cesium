@@ -1,6 +1,15 @@
 export * from "./platform-surfaces";
 export * from "./protocol";
 export * from "./types";
+export type {
+  WorkflowRunSnapshot,
+  WorkflowRunSnapshotAgent,
+  WorkflowRunSnapshotAgentStatus,
+  WorkflowRunSnapshotAgentStatusCounts,
+  WorkflowRunSnapshotLogEntry,
+  WorkflowRunSnapshotPhase,
+  WorkflowRunSnapshotStatus,
+} from "./types";
 export * from "./workspace";
 export * from "./mcp";
 export * from "./agent-harness";

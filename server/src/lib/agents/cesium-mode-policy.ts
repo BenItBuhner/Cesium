@@ -50,6 +50,7 @@ const WORKFLOW_TOOLS = new Set([
   "workflow_run",
   "workflow_status",
   "workflow_await",
+  "workflow_control",
 ]);
 
 export function normalizeCesiumMode(mode: string | undefined | null): string {
@@ -277,6 +278,7 @@ export function summarizeCesiumModeToolPolicy(mode: string | undefined | null): 
           "workflow_run",
           "workflow_status",
           "workflow_await",
+          "workflow_control",
           "read_file",
           "grep",
           "edit_file",

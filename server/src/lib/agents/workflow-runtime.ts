@@ -1,7 +1,6 @@
 import { cpus } from "node:os";
 import { Script, createContext } from "node:vm";
 import {
-  appendWorkflowJournal,
   appendWorkflowLog,
   hashWorkflowAgentCall,
   updateWorkflowRunStatus,
@@ -10,10 +9,13 @@ import {
 import {
   WORKFLOW_DEFAULT_MAX_AGENTS,
   WORKFLOW_DEFAULT_MAX_CONCURRENT,
+  WORKFLOW_JOURNAL_LIMIT,
+  WorkflowAgentSpawnError,
   type WorkflowAgentSpawner,
   type WorkflowJournalEntry,
   type WorkflowMeta,
   type WorkflowPhaseMeta,
+  type WorkflowRunLifecycleControl,
   type WorkflowRunRecord,
 } from "./workflow-types.js";
 
@@ -21,6 +23,20 @@ const NOW_ERR =
   "Date.now() / new Date() are unavailable in workflow scripts (breaks resume). Stamp results after the workflow returns, or pass timestamps via args.";
 const RANDOM_ERR =
   "Math.random() is unavailable in workflow scripts (breaks resume). For N independent samples, include the index in the agent label or prompt.";
+
+class WorkflowRunCancelledError extends Error {
+  constructor(message = "Workflow run cancelled.") {
+    super(message);
+    this.name = "WorkflowRunCancelledError";
+  }
+}
+
+function isAbortLikeError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  return error.name === "AbortError" || /abort|cancel/i.test(error.message);
+}
 
 export type CompileWorkflowResult =
   | { ok: true; meta: WorkflowMeta; body: string }
@@ -109,6 +125,9 @@ function normalizeMeta(raw: unknown): WorkflowMeta {
       : undefined;
   const phasesRaw = Array.isArray(record.phases) ? record.phases : [];
   const phases: WorkflowPhaseMeta[] = phasesRaw.flatMap((item) => {
+    if (typeof item === "string" && item.trim()) {
+      return [{ title: item.trim() }];
+    }
     if (!item || typeof item !== "object") return [];
     const phase = item as Record<string, unknown>;
     const title = typeof phase.title === "string" ? phase.title.trim() : "";
@@ -167,21 +186,66 @@ export function compileWorkflowScript(script: string): CompileWorkflowResult {
 
 class Semaphore {
   private active = 0;
-  private readonly waiters: Array<() => void> = [];
+  private readonly waiters: Array<{
+    resolve: () => void;
+    reject: (error: Error) => void;
+    signal?: AbortSignal;
+    onAbort?: () => void;
+  }> = [];
 
   constructor(private readonly limit: number) {}
 
-  async run<T>(fn: () => Promise<T>): Promise<T> {
-    if (this.active >= this.limit) {
-      await new Promise<void>((resolve) => this.waiters.push(resolve));
+  private release(): void {
+    const next = this.waiters.shift();
+    if (next) {
+      if (next.signal && next.onAbort) {
+        next.signal.removeEventListener("abort", next.onAbort);
+      }
+      next.resolve();
+    } else {
+      this.active -= 1;
     }
-    this.active += 1;
+  }
+
+  async run<T>(fn: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+    if (signal?.aborted) {
+      throw new WorkflowRunCancelledError("Workflow run cancelled while agent was queued.");
+    }
+    if (this.active >= this.limit) {
+      await new Promise<void>((resolve, reject) => {
+        const waiter: (typeof this.waiters)[number] = {
+          resolve,
+          reject,
+          signal,
+        };
+        if (signal) {
+          waiter.onAbort = () => {
+            const index = this.waiters.indexOf(waiter);
+            if (index >= 0) {
+              this.waiters.splice(index, 1);
+            }
+            reject(
+              new WorkflowRunCancelledError("Workflow run cancelled while agent was queued.")
+            );
+          };
+          signal.addEventListener("abort", waiter.onAbort, { once: true });
+        }
+        this.waiters.push(waiter);
+        if (signal?.aborted) {
+          waiter.onAbort?.();
+        }
+      });
+    } else {
+      this.active += 1;
+    }
+    if (signal?.aborted) {
+      this.release();
+      throw new WorkflowRunCancelledError("Workflow run cancelled while agent was queued.");
+    }
     try {
       return await fn();
     } finally {
-      this.active -= 1;
-      const next = this.waiters.shift();
-      if (next) next();
+      this.release();
     }
   }
 }
@@ -200,6 +264,7 @@ export async function executeWorkflowRun(input: {
   spawnAgent: WorkflowAgentSpawner;
   journalSeed?: WorkflowJournalEntry[];
   onUpdate?: (run: WorkflowRunRecord) => void | Promise<void>;
+  control?: WorkflowRunLifecycleControl;
 }): Promise<WorkflowRunRecord> {
   let run = input.run;
   const compiled = compileWorkflowScript(run.script);
@@ -231,9 +296,12 @@ export async function executeWorkflowRun(input: {
   );
   const maxAgents = run.maxAgents || WORKFLOW_DEFAULT_MAX_AGENTS;
   const semaphore = new Semaphore(maxConcurrent);
+  const activeTokenReservations = new Map<number, number>();
   let currentPhase: string | null = null;
   let cancelled = false;
   let writeChain: Promise<void> = Promise.resolve();
+  let sideEffectError: Error | null = null;
+  const pendingSideEffects = new Set<Promise<void>>();
 
   const withRunLock = async <T>(
     fn: (current: WorkflowRunRecord) => Promise<T> | T
@@ -252,10 +320,103 @@ export async function executeWorkflowRun(input: {
     }
   };
 
-  const persist = async (next: WorkflowRunRecord) => {
-    run = await upsertWorkflowRun(next);
+  let lastDiskAgentsUsed = run.agentsUsed;
+  let lastDiskTerminalAgents = run.agents.filter(
+    (agent) =>
+      agent.status === "completed" ||
+      agent.status === "failed" ||
+      agent.status === "cached" ||
+      agent.status === "skipped"
+  ).length;
+  let lastDiskWriteAt = Date.now();
+  const persist = async (next: WorkflowRunRecord, force = false) => {
+    const terminalAgents = next.agents.filter(
+      (agent) =>
+        agent.status === "completed" ||
+        agent.status === "failed" ||
+        agent.status === "cached" ||
+        agent.status === "skipped"
+    ).length;
+    const shouldWrite =
+      force ||
+      next.agentsUsed <= 10 ||
+      next.agentsUsed - lastDiskAgentsUsed >= 10 ||
+      terminalAgents - lastDiskTerminalAgents >= 10 ||
+      Date.now() - lastDiskWriteAt >= 1_000;
+    run = shouldWrite
+      ? await upsertWorkflowRun(next)
+      : { ...next, updatedAt: Date.now() };
+    if (shouldWrite) {
+      lastDiskAgentsUsed = run.agentsUsed;
+      lastDiskTerminalAgents = terminalAgents;
+      lastDiskWriteAt = Date.now();
+    }
     await input.onUpdate?.(run);
   };
+
+  const captureSideEffectError = (error: unknown) => {
+    sideEffectError =
+      error instanceof Error ? error : new Error(String(error));
+  };
+
+  const throwSideEffectError = () => {
+    if (sideEffectError) {
+      throw sideEffectError;
+    }
+  };
+
+  const scheduleSideEffect = (effect: () => Promise<void>) => {
+    const task = withRunLock(effect);
+    pendingSideEffects.add(task);
+    void task
+      .catch(captureSideEffectError)
+      .finally(() => pendingSideEffects.delete(task));
+  };
+
+  const flushSideEffects = async () => {
+    if (pendingSideEffects.size > 0) {
+      await Promise.allSettled([...pendingSideEffects]);
+    }
+    throwSideEffectError();
+  };
+
+  const checkpoint = async (): Promise<void> => {
+    if (!input.control) {
+      return;
+    }
+    await withRunLock(async (current) => {
+      run = await input.control!.checkpoint(current, {
+        currentPhase,
+        onUpdate: input.onUpdate,
+      });
+    });
+  };
+
+  const throwIfStopped = (): void => {
+    try {
+      input.control?.throwIfStopped();
+    } catch (error) {
+      throw error instanceof WorkflowRunCancelledError
+        ? error
+        : new WorkflowRunCancelledError(
+            error instanceof Error ? error.message : String(error)
+          );
+    }
+  };
+
+  try {
+    await checkpoint();
+  } catch (error) {
+    if (input.control?.isStopRequested() || isAbortLikeError(error)) {
+      const message = error instanceof Error ? error.message : "Workflow run cancelled.";
+      run = await withRunLock(async () =>
+        updateWorkflowRunStatus(run, "cancelled", { error: message })
+      );
+      await input.onUpdate?.(run);
+      return run;
+    }
+    throw error;
+  }
 
   const budget = {
     total: run.tokenBudget,
@@ -269,20 +430,23 @@ export async function executeWorkflowRun(input: {
   };
 
   const phase = (title: string) => {
-    currentPhase = String(title ?? "").trim() || null;
-    void withRunLock(async () => {
+    const nextPhase = String(title ?? "").trim() || null;
+    currentPhase = nextPhase;
+    scheduleSideEffect(async () => {
       run = await appendWorkflowLog(
-        { ...run, currentPhase },
-        currentPhase ? `Phase: ${currentPhase}` : "Phase cleared",
-        currentPhase
+        { ...run, currentPhase: nextPhase },
+        nextPhase ? `Phase: ${nextPhase}` : "Phase cleared",
+        nextPhase
       );
       await input.onUpdate?.(run);
     });
   };
 
   const log = (message: string) => {
-    void withRunLock(async () => {
-      run = await appendWorkflowLog(run, String(message ?? ""), currentPhase);
+    const phaseName = currentPhase;
+    const messageText = String(message ?? "");
+    scheduleSideEffect(async () => {
+      run = await appendWorkflowLog(run, messageText, phaseName);
       await input.onUpdate?.(run);
     });
   };
@@ -291,6 +455,9 @@ export async function executeWorkflowRun(input: {
     prompt: string,
     opts: Record<string, unknown> = {}
   ): Promise<unknown> => {
+    throwIfStopped();
+    await checkpoint();
+    await flushSideEffects();
     if (cancelled) return null;
     const promptText = String(prompt ?? "");
     if (!promptText.trim()) {
@@ -324,6 +491,7 @@ export async function executeWorkflowRun(input: {
     };
 
     const begin = await withRunLock(async () => {
+      throwSideEffectError();
       if (run.agentsUsed >= maxAgents) {
         throw new Error(
           `Workflow agent() call cap reached (${maxAgents}). This usually means a loop using budget.remaining() never terminates because no token budget was set — remaining() returns Infinity when budget.total is null. Add a hard iteration cap to the loop, or pass a token budget.`
@@ -348,6 +516,7 @@ export async function executeWorkflowRun(input: {
               phase: phaseName,
               prompt: promptText,
               status: "cached",
+              tokensUsed: 0,
               startedAt: Date.now(),
               completedAt: Date.now(),
               resultPreview: previewValue(cached.result),
@@ -359,7 +528,7 @@ export async function executeWorkflowRun(input: {
       }
 
       const agentId = key.slice(0, 12);
-      const startedAt = Date.now();
+      const agentIndex = run.agents.length;
       run = {
         ...run,
         agentsUsed: run.agentsUsed + 1,
@@ -370,8 +539,9 @@ export async function executeWorkflowRun(input: {
             label: finalLabel,
             phase: phaseName,
             prompt: promptText,
-            status: "running",
-            startedAt,
+            status: "queued",
+            tokensUsed: 0,
+            startedAt: null,
             completedAt: null,
           },
         ],
@@ -380,8 +550,7 @@ export async function executeWorkflowRun(input: {
       return {
         kind: "live" as const,
         key,
-        agentId,
-        startedAt,
+        agentIndex,
         finalLabel,
         hashOpts,
       };
@@ -392,16 +561,74 @@ export async function executeWorkflowRun(input: {
     }
 
     return semaphore.run(async () => {
-      if (cancelled) return null;
+      let childTokenBudget: number | undefined;
       try {
+        throwIfStopped();
+        await checkpoint();
+        throwIfStopped();
+        if (cancelled) {
+          throw new WorkflowRunCancelledError();
+        }
+        await withRunLock(async () => {
+          if (run.tokenBudget != null) {
+            const reserved = [...activeTokenReservations.values()].reduce(
+              (total, value) => total + value,
+              0
+            );
+            const available = Math.max(
+              0,
+              run.tokenBudget - run.tokensUsed - reserved
+            );
+            if (available === 0) {
+              throw new Error("Workflow token budget exhausted by active agents.");
+            }
+            const pendingAgents = run.agents.filter(
+              (agent) =>
+                agent.status === "queued" || agent.status === "running"
+            ).length;
+            const unreservedSlots = Math.max(
+              1,
+              Math.min(
+                maxConcurrent - activeTokenReservations.size,
+                pendingAgents
+              )
+            );
+            childTokenBudget = Math.max(
+              1,
+              Math.floor(available / unreservedSlots)
+            );
+            activeTokenReservations.set(begin.agentIndex, childTokenBudget);
+          }
+          run = {
+            ...run,
+            agents: run.agents.map((item, index) =>
+              index === begin.agentIndex && item.status === "queued"
+                ? {
+                    ...item,
+                    status: "running",
+                    startedAt: Date.now(),
+                  }
+                : item
+            ),
+          };
+          await persist(run);
+        });
         const result = await input.spawnAgent({
           prompt: promptText,
+          workflowRunId: run.runId,
           label: begin.finalLabel,
           phase: phaseName,
           schema,
           model,
           effort,
+          ...(childTokenBudget !== undefined
+            ? { tokenBudget: childTokenBudget }
+            : {}),
+          signal: input.control?.signal,
+          checkpoint: input.control ? checkpoint : undefined,
         });
+        activeTokenReservations.delete(begin.agentIndex);
+        throwIfStopped();
         const entry: WorkflowJournalEntry = {
           key: begin.key,
           prompt: promptText,
@@ -410,37 +637,70 @@ export async function executeWorkflowRun(input: {
           completedAt: Date.now(),
         };
         journal.set(begin.key, entry);
+        const childTokens = Math.max(0, result.tokensUsed ?? 0);
         await withRunLock(async () => {
-          run = await appendWorkflowJournal(
-            {
-              ...run,
-              tokensUsed: run.tokensUsed + Math.max(0, result.tokensUsed ?? 0),
-              agents: run.agents.map((item) =>
-                item.id === begin.agentId && item.startedAt === begin.startedAt
-                  ? {
-                      ...item,
-                      status: "completed",
-                      completedAt: Date.now(),
-                      resultPreview: previewValue(result.value),
-                    }
-                  : item
-              ),
-            },
-            entry
-          );
-          await input.onUpdate?.(run);
+          const nextJournal = [
+            ...run.journal.filter((item) => item.key !== entry.key),
+            entry,
+          ].slice(-WORKFLOW_JOURNAL_LIMIT);
+          await persist({
+            ...run,
+            tokensUsed: run.tokensUsed + childTokens,
+            journal: nextJournal,
+            agents: run.agents.map((item, index) =>
+              index === begin.agentIndex
+                ? {
+                    ...item,
+                    status: "completed",
+                    tokensUsed: childTokens,
+                    completedAt: Date.now(),
+                    resultPreview: previewValue(result.value),
+                  }
+                : item
+            ),
+          });
         });
         return result.value;
       } catch (error) {
+        activeTokenReservations.delete(begin.agentIndex);
+        if (
+          input.control?.isStopRequested() ||
+          (input.control?.signal.aborted && isAbortLikeError(error)) ||
+          error instanceof WorkflowRunCancelledError
+        ) {
+          const message = error instanceof Error ? error.message : "Workflow run cancelled.";
+          await withRunLock(async () => {
+            run = {
+              ...run,
+              agents: run.agents.map((item, index) =>
+                index === begin.agentIndex
+                  ? {
+                      ...item,
+                      status: "skipped",
+                      tokensUsed: item.tokensUsed ?? 0,
+                      completedAt: Date.now(),
+                      error: message,
+                    }
+                  : item
+              ),
+            };
+            await persist(run);
+          });
+          throw new WorkflowRunCancelledError(message);
+        }
         const message = error instanceof Error ? error.message : String(error);
+        const failedTokens =
+          error instanceof WorkflowAgentSpawnError ? error.tokensUsed : 0;
         await withRunLock(async () => {
           run = {
             ...run,
-            agents: run.agents.map((item) =>
-              item.id === begin.agentId && item.startedAt === begin.startedAt
+            tokensUsed: run.tokensUsed + failedTokens,
+            agents: run.agents.map((item, index) =>
+              index === begin.agentIndex
                 ? {
                     ...item,
                     status: "failed",
+                    tokensUsed: failedTokens,
                     completedAt: Date.now(),
                     error: message,
                   }
@@ -451,7 +711,7 @@ export async function executeWorkflowRun(input: {
         });
         return null;
       }
-    });
+    }, input.control?.signal);
   };
 
   const parallel = async (thunks: unknown): Promise<unknown[]> => {
@@ -466,8 +726,16 @@ export async function executeWorkflowRun(input: {
     return Promise.all(
       thunks.map(async (thunk) => {
         try {
+          throwIfStopped();
+          await checkpoint();
           return await (thunk as () => Promise<unknown>)();
-        } catch {
+        } catch (error) {
+          if (
+            error instanceof WorkflowRunCancelledError ||
+            (input.control?.signal.aborted && isAbortLikeError(error))
+          ) {
+            throw error;
+          }
           return null;
         }
       })
@@ -489,8 +757,16 @@ export async function executeWorkflowRun(input: {
         let current: unknown = original;
         for (const stage of stages) {
           try {
+            throwIfStopped();
+            await checkpoint();
             current = await stage(current, original, index);
-          } catch {
+          } catch (error) {
+            if (
+              error instanceof WorkflowRunCancelledError ||
+              (input.control?.signal.aborted && isAbortLikeError(error))
+            ) {
+              throw error;
+            }
             return null;
           }
         }
@@ -582,24 +858,61 @@ export async function executeWorkflowRun(input: {
     const script = new Script(wrapped, {
       filename: "workflow.js",
     });
+    throwIfStopped();
     const result = await script.runInContext(context, {
       timeout: 600_000,
       breakOnSigint: true,
     });
+    throwIfStopped();
+    await checkpoint();
+    await flushSideEffects();
     const safeReturnValue =
       result === undefined
         ? undefined
         : (JSON.parse(JSON.stringify(result)) as unknown);
-    run = await updateWorkflowRunStatus(run, "completed", {
-      returnValue: safeReturnValue,
-      error: null,
+    run = await withRunLock(async () => {
+      throwSideEffectError();
+      return updateWorkflowRunStatus(run, "completed", {
+        returnValue: safeReturnValue,
+        error: null,
+      });
     });
     await input.onUpdate?.(run);
     return run;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     cancelled = true;
-    run = await updateWorkflowRunStatus(run, "failed", { error: message });
+    if (
+      error instanceof WorkflowRunCancelledError ||
+      input.control?.isStopRequested() ||
+      (input.control?.signal.aborted && isAbortLikeError(error))
+    ) {
+      run = await withRunLock(async () => {
+        return updateWorkflowRunStatus(
+          {
+            ...run,
+            agents: run.agents.map((agent) =>
+              agent.status === "queued" || agent.status === "running"
+                ? {
+                    ...agent,
+                    status: "skipped",
+                    tokensUsed: agent.tokensUsed ?? 0,
+                    completedAt: Date.now(),
+                    error: message,
+                  }
+                : agent
+            ),
+          },
+          "cancelled",
+          { error: message }
+        );
+      });
+      await input.onUpdate?.(run);
+      return run;
+    }
+    run = await withRunLock(async () => {
+      return updateWorkflowRunStatus(run, "failed", { error: message });
+    });
     await input.onUpdate?.(run);
     return run;
   }

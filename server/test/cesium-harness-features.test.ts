@@ -16,6 +16,10 @@ delete process.env.ANTHROPIC_API_KEY;
 delete process.env.GOOGLE_API_KEY;
 process.env.OPENCURSOR_DATA_DIR = TEST_DATA_DIR;
 
+function activeTimeoutCount(): number {
+  return process.getActiveResourcesInfo().filter((resource) => resource === "Timeout").length;
+}
+
 const [
   {
     DEFAULT_WAIT_AGENT_MAX_TIMEOUT_MS,
@@ -135,11 +139,17 @@ test("SubagentsV2Runtime spawn/list/wait timeout path works without model calls 
   assert.throws(() => runtime.resolveAgent("/root/missing"), /Unknown agent/);
   assert.deepEqual(runtime.listAgents(), []);
 
+  const timeoutCountBeforeWait = activeTimeoutCount();
   const wait = JSON.parse(
     await runtime.waitAgent({ timeout_ms: defaultHarnessSettings().limits.waitAgentMinTimeoutMs })
   ) as { timed_out: boolean; message: string };
   assert.equal(wait.timed_out, true);
   assert.match(wait.message, /timed out/i);
+  assert.equal(
+    activeTimeoutCount(),
+    timeoutCountBeforeWait,
+    "wait_agent timeout path should not leave a polling timer active"
+  );
 
   runtime.dispose();
   assert.equal(events.length, 0);

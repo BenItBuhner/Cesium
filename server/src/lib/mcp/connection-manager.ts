@@ -241,7 +241,13 @@ export async function callMcpTool(input: {
   serverId: string;
   toolName: string;
   arguments: Record<string, unknown>;
+  signal?: AbortSignal;
 }): Promise<string> {
+  if (input.signal?.aborted) {
+    const error = new Error("MCP tool call cancelled.");
+    error.name = "AbortError";
+    throw error;
+  }
   const serverId =
     input.serverId.toLowerCase() === BROWSER_MCP_SERVER_ID
       ? BROWSER_MCP_SERVER_ID
@@ -284,10 +290,14 @@ export async function callMcpTool(input: {
   if (!active) {
     throw new Error(`MCP server is not connected: ${serverId}`);
   }
-  const result = await active.session.client.callTool({
-    name: input.toolName,
-    arguments: input.arguments,
-  });
+  const result = await active.session.client.callTool(
+    {
+      name: input.toolName,
+      arguments: input.arguments,
+    },
+    undefined,
+    { signal: input.signal }
+  );
   const content = Array.isArray(result.content) ? result.content : [];
   const textParts = content
     .filter(

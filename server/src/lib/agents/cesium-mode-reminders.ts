@@ -56,7 +56,7 @@ function modeFlow(mode: string): string {
   }
   if (normalized === "workflow") {
     return [
-      "The general flow when working in Workflow mode is 1) understand the fan-out / verification shape of the task 2) write a JavaScript orchestration script beginning with `export const meta = { name, description, phases }` 3) execute it with workflow_run (wait=true unless you intentionally background it) 4) inspect with workflow_status / workflow_await 5) return only the final synthesized result to the user.",
+      "The general flow when working in Workflow mode is 1) understand the fan-out / verification shape of the task 2) write a JavaScript orchestration script beginning with `export const meta = { name, description, phases }` 3) execute it with workflow_run (wait=true unless you intentionally background it) 4) inspect with workflow_status / workflow_await and use workflow_control for pause/resume/stop/restart 5) return only the final synthesized result to the user.",
       "",
       "Workflow scripts may use agent(), parallel(), pipeline(), phase(), log(), budget, and args. Prefer pipeline() for multi-stage item processing. Use parallel() only when a later stage needs every prior result at once. Keep intermediate agent results in script variables — do not dump every subagent transcript into the parent reply.",
       "",

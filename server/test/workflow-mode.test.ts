@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -8,9 +8,18 @@ import {
   createWorkflowRunRecord,
   hashWorkflowAgentCall,
   persistWorkflowScript,
+  readWorkflowScriptFile,
+  readWorkflowRun,
   upsertWorkflowRun,
 } from "../src/lib/agents/workflow-store.js";
+import { DATA_DIR } from "../src/lib/persistence.js";
+import { serializeWorkflowRunSnapshot } from "../src/lib/agents/workflow-snapshot.js";
 import type { WorkspaceRecord } from "../src/lib/workspace-registry.js";
+import {
+  WORKFLOW_DEFAULT_MAX_AGENTS,
+  WORKFLOW_DEFAULT_MAX_CONCURRENT,
+  WorkflowAgentSpawnError,
+} from "../src/lib/agents/workflow-types.js";
 import {
   resolveCesiumModeToolPolicy,
   summarizeCesiumModeToolPolicy,
@@ -58,6 +67,133 @@ test("compileWorkflowScript requires pure meta literal first", () => {
     `export const meta = { name: "x", description: "y", phases: [] };\nconst t = Date.now();\nreturn t;`
   );
   assert.equal(nondet.ok, false);
+
+  const stringPhases = compileWorkflowScript(
+    `export const meta = { name: "strings", description: "string phases", phases: ["Inspect", "Synthesize"] };\nreturn 1;`
+  );
+  assert.equal(stringPhases.ok, true);
+  if (stringPhases.ok) {
+    assert.deepEqual(
+      Array.from(stringPhases.meta.phases, (phase) => phase.title),
+      ["Inspect", "Synthesize"]
+    );
+  }
+});
+
+test("workflow snapshots infer the active phase from agent records", () => {
+  const workspace: WorkspaceRecord = {
+    id: "ws-workflow-snapshot-phase",
+    root: "/tmp",
+    name: "Snapshot phase",
+    createdAt: 1,
+    updatedAt: 1,
+    lastOpenedAt: 1,
+  };
+  const run = createWorkflowRunRecord({
+    workspace,
+    conversationId: "conv-snapshot-phase",
+    script: SAMPLE_SCRIPT,
+    scriptPath: "/tmp/snapshot-phase.js",
+  });
+  const snapshot = serializeWorkflowRunSnapshot({
+    ...run,
+    status: "running",
+    agentsUsed: 1,
+    agents: [
+      {
+        id: "inspect-1",
+        label: "Inspect package",
+        phase: "Inspect",
+        prompt: "Inspect package.json",
+        status: "running",
+        tokensUsed: 0,
+        startedAt: 10,
+        completedAt: null,
+      },
+    ],
+  });
+  assert.equal(snapshot.currentPhase, "Inspect");
+});
+
+test("truncated workflow snapshots retain full phase and status totals", () => {
+  const workspace: WorkspaceRecord = {
+    id: "ws-workflow-snapshot-scale",
+    root: "/tmp",
+    name: "Snapshot scale",
+    createdAt: 1,
+    updatedAt: 1,
+    lastOpenedAt: 1,
+  };
+  const run = createWorkflowRunRecord({
+    workspace,
+    conversationId: "conv-snapshot-scale",
+    script: SAMPLE_SCRIPT,
+    scriptPath: "/tmp/snapshot-scale.js",
+    meta: {
+      name: "scale",
+      description: "Scale snapshot",
+      phases: [{ title: "Inspect" }],
+    },
+  });
+  const agents = Array.from({ length: 600 }, (_, index) => ({
+    id: `agent-${index}`,
+    label: `Agent ${index}`,
+    phase: "Inspect",
+    prompt: `Inspect ${index}`,
+    status: "completed" as const,
+    tokensUsed: 100,
+    startedAt: index,
+    completedAt: index + 10,
+  }));
+  const snapshot = serializeWorkflowRunSnapshot(
+    {
+      ...run,
+      status: "completed",
+      agentsUsed: agents.length,
+      tokensUsed: 60_000,
+      agents,
+    },
+    { agentLimit: 50 }
+  );
+
+  assert.equal(snapshot.agents.length, 50);
+  assert.equal(snapshot.agentRecordsTotal, 600);
+  assert.equal(snapshot.agentsTruncated, true);
+  assert.equal(snapshot.agentStatusCounts.completed, 600);
+  assert.equal(snapshot.phases[0]?.agentCount, 600);
+  assert.equal(snapshot.phases[0]?.tokensUsed, 60_000);
+});
+
+test("workflow run records default to Claude-parity runtime caps", () => {
+  const workspace: WorkspaceRecord = {
+    id: "ws-workflow-default-caps",
+    root: "/tmp",
+    name: "Workflow defaults",
+    createdAt: 1,
+    updatedAt: 1,
+    lastOpenedAt: 1,
+  };
+  const defaults = createWorkflowRunRecord({
+    workspace,
+    conversationId: "conv-default-caps",
+    script: SAMPLE_SCRIPT,
+    scriptPath: "/tmp/default-caps.js",
+  });
+  assert.equal(WORKFLOW_DEFAULT_MAX_AGENTS, 1000);
+  assert.equal(WORKFLOW_DEFAULT_MAX_CONCURRENT, 16);
+  assert.equal(defaults.maxAgents, 1000);
+  assert.equal(defaults.maxConcurrent, 16);
+
+  const clamped = createWorkflowRunRecord({
+    workspace,
+    conversationId: "conv-clamped-caps",
+    script: SAMPLE_SCRIPT,
+    scriptPath: "/tmp/clamped-caps.js",
+    maxAgents: 10_000,
+    maxConcurrent: 100,
+  });
+  assert.equal(clamped.maxAgents, 1000);
+  assert.equal(clamped.maxConcurrent, 16);
 });
 
 test("executeWorkflowRun fans out agent calls and returns synthesized value", async () => {
@@ -111,6 +247,10 @@ test("executeWorkflowRun fans out agent calls and returns synthesized value", as
       args: { topic: "auth" },
     });
     assert.equal(completed.tokensUsed, 48);
+    assert.deepEqual(
+      completed.agents.map((agent) => agent.tokensUsed),
+      [12, 12, 12, 12]
+    );
     assert.ok(completed.logs.some((entry) => entry.message.includes("collected 3")));
   } finally {
     if (previous === undefined) {
@@ -158,6 +298,171 @@ return [a, b];
   assert.equal(liveCalls, 1);
   assert.deepEqual(completed.returnValue, ["live:same", "live:same"]);
   assert.equal(completed.agents.filter((item) => item.status === "cached").length, 1);
+  assert.deepEqual(
+    completed.agents.map((item) => item.tokensUsed),
+    [5, 0]
+  );
+});
+
+test("workflow semaphore never exceeds configured concurrency", async () => {
+  const workspace: WorkspaceRecord = {
+    id: `ws-workflow-concurrency-${process.pid}-${Date.now()}`,
+    root: "/tmp",
+    name: "Workflow concurrency",
+    createdAt: 1,
+    updatedAt: 1,
+    lastOpenedAt: 1,
+  };
+  const script = `export const meta = { name: "concurrency", description: "concurrency cap", phases: [] };
+return await parallel([
+  () => agent("one"),
+  () => agent("two"),
+  () => agent("three"),
+  () => agent("four"),
+  () => agent("five"),
+  () => agent("six"),
+]);
+`;
+  try {
+    let run = createWorkflowRunRecord({
+      workspace,
+      conversationId: "conv-concurrency",
+      script,
+      scriptPath: "/tmp/concurrency.js",
+      maxConcurrent: 2,
+    });
+    run = await upsertWorkflowRun(run);
+    let active = 0;
+    let maximum = 0;
+    const completed = await executeWorkflowRun({
+      run,
+      spawnAgent: async (request) => {
+        active += 1;
+        maximum = Math.max(maximum, active);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        active -= 1;
+        return { value: request.prompt, tokensUsed: 1 };
+      },
+    });
+
+    assert.equal(completed.status, "completed");
+    assert.equal(maximum, 2);
+  } finally {
+    await rm(path.join(DATA_DIR, "workspaces", workspace.id), {
+      recursive: true,
+      force: true,
+    });
+  }
+});
+
+test("workflow runtime threads remaining budget and records failed child usage", async () => {
+  const workspace: WorkspaceRecord = {
+    id: `ws-workflow-budget-${process.pid}-${Date.now()}`,
+    root: "/tmp",
+    name: "Workflow budget",
+    createdAt: 1,
+    updatedAt: 1,
+    lastOpenedAt: 1,
+  };
+  const script = `export const meta = { name: "budget", description: "budget demo", phases: [] };
+return await agent("bounded child");
+`;
+  try {
+    let run = createWorkflowRunRecord({
+      workspace,
+      conversationId: "conv-budget",
+      script,
+      scriptPath: "/tmp/budget.js",
+      tokenBudget: 25,
+      maxAgents: 1,
+    });
+    run = await upsertWorkflowRun(run);
+
+    const completed = await executeWorkflowRun({
+      run,
+      spawnAgent: async (request) => {
+        assert.equal(request.tokenBudget, 25);
+        throw new WorkflowAgentSpawnError("provider failed after a tool turn", 7);
+      },
+    });
+
+    assert.equal(completed.status, "completed");
+    assert.equal(completed.returnValue, null);
+    assert.equal(completed.tokensUsed, 7);
+    assert.equal(completed.agents[0]?.status, "failed");
+    assert.equal(completed.agents[0]?.tokensUsed, 7);
+  } finally {
+    await rm(path.join(DATA_DIR, "workspaces", workspace.id), { recursive: true, force: true });
+  }
+});
+
+test("upsertWorkflowRun preserves concurrent distinct runs in one workspace", async () => {
+  const workspace: WorkspaceRecord = {
+    id: `ws-workflow-upsert-${process.pid}-${Date.now()}`,
+    root: "/tmp",
+    name: "Workflow upsert race",
+    createdAt: 1,
+    updatedAt: 1,
+    lastOpenedAt: 1,
+  };
+  try {
+    const runs = Array.from({ length: 20 }, (_, index) =>
+      createWorkflowRunRecord({
+        workspace,
+        conversationId: `conv-upsert-${index}`,
+        script: SAMPLE_SCRIPT,
+        scriptPath: `/tmp/upsert-${index}.js`,
+      })
+    );
+
+    await Promise.all(runs.map((run) => upsertWorkflowRun(run)));
+
+    const persisted = await Promise.all(
+      runs.map((run) => readWorkflowRun({ workspaceId: workspace.id, runId: run.runId }))
+    );
+    assert.equal(persisted.filter(Boolean).length, runs.length);
+  } finally {
+    await rm(path.join(DATA_DIR, "workspaces", workspace.id), { recursive: true, force: true });
+  }
+});
+
+test("workflow immediate phase and log writes do not regress persisted completed status", async () => {
+  const workspace: WorkspaceRecord = {
+    id: `ws-workflow-immediate-${process.pid}-${Date.now()}`,
+    root: "/tmp",
+    name: "Workflow immediate return",
+    createdAt: 1,
+    updatedAt: 1,
+    lastOpenedAt: 1,
+  };
+  const script = `export const meta = { name: "instant", description: "instant return", phases: [{ title: "One" }] };
+phase("One");
+log("ready");
+return "done";
+`;
+  try {
+    let run = createWorkflowRunRecord({
+      workspace,
+      conversationId: "conv-immediate",
+      script,
+      scriptPath: "/tmp/instant.js",
+    });
+    run = await upsertWorkflowRun(run);
+
+    const completed = await executeWorkflowRun({
+      run,
+      spawnAgent: async () => ({ value: null, tokensUsed: 0 }),
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    const persisted = await readWorkflowRun({ workspaceId: workspace.id, runId: run.runId });
+    assert.equal(completed.status, "completed");
+    assert.equal(persisted?.status, "completed");
+    assert.equal(persisted?.returnValue, "done");
+    assert.equal(persisted?.logs.some((entry) => entry.message === "ready"), true);
+  } finally {
+    await rm(path.join(DATA_DIR, "workspaces", workspace.id), { recursive: true, force: true });
+  }
 });
 
 test("hashWorkflowAgentCall is stable for identical prompt/opts", () => {
@@ -170,6 +475,7 @@ test("hashWorkflowAgentCall is stable for identical prompt/opts", () => {
 
 test("Workflow mode policy allows workflow tools and blocks goal/orchestration", () => {
   assert.equal(resolveCesiumModeToolPolicy({ mode: "workflow", toolName: "workflow_run" }).allowed, true);
+  assert.equal(resolveCesiumModeToolPolicy({ mode: "workflow", toolName: "workflow_control" }).allowed, true);
   assert.equal(resolveCesiumModeToolPolicy({ mode: "workflow", toolName: "edit_file" }).allowed, true);
   assert.equal(resolveCesiumModeToolPolicy({ mode: "workflow", toolName: "goal_set" }).allowed, false);
   assert.equal(
@@ -180,6 +486,7 @@ test("Workflow mode policy allows workflow tools and blocks goal/orchestration",
   assert.equal(resolveCesiumModeToolPolicy({ mode: "goal", toolName: "workflow_run" }).allowed, false);
   const summary = summarizeCesiumModeToolPolicy("workflow");
   assert.equal(summary.allowed.includes("workflow_run"), true);
+  assert.equal(summary.allowed.includes("workflow_control"), true);
 });
 
 test("Workflow mode reminder documents script primitives", () => {
@@ -192,6 +499,7 @@ test("Workflow mode reminder documents script primitives", () => {
   });
   assert.match(reminder, /Workflow mode/);
   assert.match(reminder, /workflow_run/);
+  assert.match(reminder, /workflow_control/);
   assert.match(reminder, /pipeline\(\)/);
   assert.match(reminder, /export const meta/);
 });
@@ -214,4 +522,90 @@ test("persistWorkflowScript writes under the workspace workflows directory", asy
   });
   assert.match(scriptPath, /run-123\.js$/);
   void previous;
+});
+
+test("workflow script paths stay inside the workspace or persisted workflow directory", async () => {
+  const workspaceRoot = await mkdtemp(path.join(os.tmpdir(), "cesium-workflow-path-workspace-"));
+  const outsideRoot = await mkdtemp(path.join(os.tmpdir(), "cesium-workflow-path-outside-"));
+  const workspace: WorkspaceRecord = {
+    id: `ws-workflow-path-${process.pid}-${Date.now()}`,
+    root: workspaceRoot,
+    name: "Workflow path policy",
+    createdAt: 1,
+    updatedAt: 1,
+    lastOpenedAt: 1,
+  };
+  const script = `export const meta = { name: "path", description: "path policy" }; return 1;`;
+  try {
+    const workspaceScript = path.join(workspaceRoot, "workflow.js");
+    const outsideScript = path.join(outsideRoot, "outside.js");
+    const linkedScript = path.join(workspaceRoot, "linked.js");
+    await writeFile(workspaceScript, script, "utf8");
+    await writeFile(outsideScript, script, "utf8");
+    await symlink(outsideScript, linkedScript);
+
+    assert.equal(
+      await readWorkflowScriptFile({ workspace, scriptPath: workspaceScript }),
+      script
+    );
+    assert.equal(
+      await readWorkflowScriptFile({ workspace, scriptPath: "workflow.js" }),
+      script
+    );
+    await assert.rejects(
+      () => readWorkflowScriptFile({ workspace, scriptPath: outsideScript }),
+      /must resolve inside the active workspace/
+    );
+    await assert.rejects(
+      () => readWorkflowScriptFile({ workspace, scriptPath: linkedScript }),
+      /must resolve inside the active workspace/
+    );
+
+    const persistedPath = await persistWorkflowScript({
+      workspace,
+      runId: "path-policy",
+      script,
+    });
+    assert.equal(
+      await readWorkflowScriptFile({ workspace, scriptPath: persistedPath }),
+      script
+    );
+  } finally {
+    await Promise.all([
+      rm(workspaceRoot, { recursive: true, force: true }),
+      rm(outsideRoot, { recursive: true, force: true }),
+      rm(path.join(DATA_DIR, "workspaces", workspace.id), { recursive: true, force: true }),
+    ]);
+  }
+});
+
+test("persistWorkflowScript rejects symlink escapes", async () => {
+  const outsideRoot = await mkdtemp(path.join(os.tmpdir(), "cesium-workflow-persist-outside-"));
+  const workspace: WorkspaceRecord = {
+    id: `ws-workflow-persist-path-${process.pid}-${Date.now()}`,
+    root: "/tmp",
+    name: "Workflow persistence path policy",
+    createdAt: 1,
+    updatedAt: 1,
+    lastOpenedAt: 1,
+  };
+  const workspaceDataDir = path.join(DATA_DIR, "workspaces", workspace.id);
+  try {
+    await mkdir(workspaceDataDir, { recursive: true });
+    await symlink(outsideRoot, path.join(workspaceDataDir, "workflows"));
+    await assert.rejects(
+      () =>
+        persistWorkflowScript({
+          workspace,
+          runId: "escape",
+          script: SAMPLE_SCRIPT,
+        }),
+      /must stay inside the workspace data directory/
+    );
+  } finally {
+    await Promise.all([
+      rm(outsideRoot, { recursive: true, force: true }),
+      rm(workspaceDataDir, { recursive: true, force: true }),
+    ]);
+  }
 });

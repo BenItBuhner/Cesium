@@ -382,6 +382,7 @@ export class SubagentsV2Runtime {
       };
       this.waiters.add(entry);
       const timer = setTimeout(() => {
+        clearInterval(poll);
         this.waiters.delete(entry);
         resolve(null);
       }, timeoutMs);

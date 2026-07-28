@@ -12,6 +12,7 @@ import type {
   AgentConversationSnapshotHead,
   AgentContextUsageSnapshot,
   AgentRailRepositoryInfo,
+  WorkflowRunSnapshot,
 } from "@cesium/core";
 import type { WorkspaceSessionState } from "./workspace-session";
 import type {
@@ -1259,6 +1260,34 @@ export async function resumeAgentConversation(
   });
 }
 
+export async function getWorkflowRun(
+  conversationId: string,
+  runId: string
+): Promise<{ workflow: WorkflowRunSnapshot; active: boolean }> {
+  return request(
+    `/api/agents/conversations/${encodeURIComponent(conversationId)}/workflows/${encodeURIComponent(runId)}`
+  );
+}
+
+export async function controlWorkflowRun(
+  conversationId: string,
+  runId: string,
+  action: "pause" | "resume" | "stop"
+): Promise<{
+  ok: true;
+  requestedAction: "pause" | "resume" | "stop";
+  workflow: WorkflowRunSnapshot;
+  active: boolean;
+}> {
+  return request(
+    `/api/agents/conversations/${encodeURIComponent(conversationId)}/workflows/${encodeURIComponent(runId)}/control`,
+    {
+      method: "POST",
+      body: JSON.stringify({ action }),
+    }
+  );
+}
+
 export async function answerAgentPermission(
   conversationId: string,
   input: { requestId: string; optionId?: string; cancelled?: boolean }
@@ -1835,6 +1864,9 @@ export type CesiumAgentSettingsPayload = {
   orchestration: {
     continueWhenIncomplete: boolean;
   };
+  workflow: {
+    defaultTokenBudget: number;
+  };
   modes: {
     enabled: Record<
       "agent" | "plan" | "orchestration" | "goal" | "workflow" | "ask",
@@ -1876,6 +1908,7 @@ export type CesiumAgentSettingsPayload = {
     terminal: "ask" | "allow" | "deny";
     mcpCall: "ask" | "allow" | "deny";
     switchMode: "ask" | "allow" | "deny";
+    workflowLaunch: "ask" | "allow" | "deny";
   };
   providerKeys: CesiumProviderKeyStatus[];
   customProviders: CesiumCustomProvider[];
@@ -1915,6 +1948,7 @@ export async function patchCesiumAgentSettings(
       | "defaultApiKind"
       | "compression"
       | "orchestration"
+      | "workflow"
       | "modes"
       | "harness"
       | "toolPermissions"

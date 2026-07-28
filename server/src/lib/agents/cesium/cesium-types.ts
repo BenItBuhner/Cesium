@@ -28,10 +28,17 @@ export type CesiumToolRequest = {
   arguments: Record<string, unknown>;
 };
 
+export type CesiumTokenUsage = {
+  inputTokens?: number;
+  outputTokens?: number;
+  totalTokens?: number;
+};
+
 export type CesiumAdapterResult = {
   text: string;
   reasoning?: string;
   toolRequests: CesiumToolRequest[];
+  usage?: CesiumTokenUsage;
   raw?: unknown;
 };
 
@@ -40,4 +47,4 @@ export type CesiumAdapterStreamEvent =
   | { kind: "reasoning_delta"; text: string; raw?: unknown }
   | { kind: "tool_request"; request: CesiumToolRequest; raw?: unknown }
   | { kind: "raw"; raw: unknown }
-  | { kind: "done"; raw?: unknown };
+  | { kind: "done"; raw?: unknown; usage?: CesiumTokenUsage };

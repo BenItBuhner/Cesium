@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { constants as fsConstants } from "node:fs";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { DATA_DIR, readJsonFile, writeJsonFile } from "../persistence.js";
@@ -6,6 +7,8 @@ import type { WorkspaceRecord } from "../workspace-registry.js";
 import {
   WORKFLOW_DEFAULT_MAX_AGENTS,
   WORKFLOW_DEFAULT_MAX_CONCURRENT,
+  WORKFLOW_MAX_AGENTS,
+  WORKFLOW_MAX_CONCURRENT,
   WORKFLOW_JOURNAL_LIMIT,
   WORKFLOW_LOG_LIMIT,
   createEmptyWorkflowMeta,
@@ -20,6 +23,8 @@ type PersistedWorkflowRunsFile = {
   schemaVersion: 1;
   runs: WorkflowRunRecord[];
 };
+
+const workflowRunFileQueues = new Map<string, Promise<void>>();
 
 function getWorkflowRunsFile(workspaceId: string): string {
   return path.join(DATA_DIR, "workspaces", workspaceId, "workflow-runs.json");
@@ -67,6 +72,30 @@ async function writeRunsFile(
   } satisfies PersistedWorkflowRunsFile);
 }
 
+async function withWorkflowRunFileLock<T>(
+  workspaceId: string,
+  fn: () => Promise<T>
+): Promise<T> {
+  const filePath = getWorkflowRunsFile(workspaceId);
+  const previous = workflowRunFileQueues.get(filePath) ?? Promise.resolve();
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const current = previous.catch(() => undefined).then(() => gate);
+  workflowRunFileQueues.set(filePath, current);
+
+  await previous.catch(() => undefined);
+  try {
+    return await fn();
+  } finally {
+    release();
+    if (workflowRunFileQueues.get(filePath) === current) {
+      workflowRunFileQueues.delete(filePath);
+    }
+  }
+}
+
 export function hashWorkflowAgentCall(
   prompt: string,
   opts: Record<string, unknown>
@@ -81,19 +110,71 @@ export async function persistWorkflowScript(input: {
   runId: string;
   script: string;
 }): Promise<string> {
+  const workspaceDataDir = path.join(DATA_DIR, "workspaces", input.workspace.id);
   const dir = getWorkflowScriptsDir(input.workspace.id);
+  await fs.mkdir(workspaceDataDir, { recursive: true });
   await fs.mkdir(dir, { recursive: true });
+  const [resolvedWorkspaceDataDir, resolvedDir] = await Promise.all([
+    fs.realpath(workspaceDataDir),
+    fs.realpath(dir),
+  ]);
+  if (!isPathInside(resolvedWorkspaceDataDir, resolvedDir)) {
+    throw new Error("Persisted workflow directory must stay inside the workspace data directory.");
+  }
   const scriptPath = path.join(dir, `${input.runId}.js`);
-  await fs.writeFile(scriptPath, input.script, "utf8");
+  const existing = await fs.lstat(scriptPath).catch(() => null);
+  if (existing?.isSymbolicLink()) {
+    throw new Error(`Refusing to overwrite symlinked workflow script: ${scriptPath}`);
+  }
+  const handle = await fs.open(
+    scriptPath,
+    fsConstants.O_WRONLY |
+      fsConstants.O_CREAT |
+      fsConstants.O_TRUNC |
+      fsConstants.O_NOFOLLOW,
+    0o600
+  );
+  try {
+    await handle.writeFile(input.script, "utf8");
+  } finally {
+    await handle.close();
+  }
   return scriptPath;
 }
 
-export async function readWorkflowScriptFile(scriptPath: string): Promise<string> {
+function isPathInside(root: string, candidate: string): boolean {
+  const relative = path.relative(root, candidate);
+  return relative === "" || (!relative.startsWith(`..${path.sep}`) && relative !== ".." && !path.isAbsolute(relative));
+}
+
+export async function readWorkflowScriptFile(input: {
+  workspace: WorkspaceRecord;
+  scriptPath: string;
+}): Promise<string> {
+  const { workspace, scriptPath } = input;
   if (scriptPath.includes("\\") && /^\\\\/.test(scriptPath)) {
     throw new Error(`UNC paths are not allowed for workflow scriptPath: ${scriptPath}`);
   }
   try {
-    return await fs.readFile(scriptPath, "utf8");
+    const requestedPath = path.isAbsolute(scriptPath)
+      ? scriptPath
+      : path.resolve(workspace.root, scriptPath);
+    const [resolvedFile, resolvedWorkspace, resolvedPersistedDir] = await Promise.all([
+      fs.realpath(requestedPath),
+      fs.realpath(workspace.root).catch(() => path.resolve(workspace.root)),
+      fs.realpath(getWorkflowScriptsDir(workspace.id)).catch(() =>
+        path.resolve(getWorkflowScriptsDir(workspace.id))
+      ),
+    ]);
+    if (
+      !isPathInside(resolvedWorkspace, resolvedFile) &&
+      !isPathInside(resolvedPersistedDir, resolvedFile)
+    ) {
+      throw new Error(
+        "workflow scriptPath must resolve inside the active workspace or its persisted Cesium workflows directory"
+      );
+    }
+    return await fs.readFile(resolvedFile, "utf8");
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     throw new Error(`Failed to read workflow script file ${scriptPath}: ${message}`);
@@ -113,6 +194,14 @@ export function createWorkflowRunRecord(input: {
   resumeFromRunId?: string;
 }): WorkflowRunRecord {
   const now = nowMs();
+  const maxAgents =
+    typeof input.maxAgents === "number" && Number.isFinite(input.maxAgents)
+      ? Math.min(WORKFLOW_MAX_AGENTS, Math.max(1, Math.floor(input.maxAgents)))
+      : WORKFLOW_DEFAULT_MAX_AGENTS;
+  const maxConcurrent =
+    typeof input.maxConcurrent === "number" && Number.isFinite(input.maxConcurrent)
+      ? Math.min(WORKFLOW_MAX_CONCURRENT, Math.max(1, Math.floor(input.maxConcurrent)))
+      : WORKFLOW_DEFAULT_MAX_CONCURRENT;
   return {
     schemaVersion: 1,
     runId: randomUUID(),
@@ -128,8 +217,8 @@ export function createWorkflowRunRecord(input: {
         ? Math.max(0, Math.floor(input.tokenBudget))
         : null,
     tokensUsed: 0,
-    maxAgents: input.maxAgents ?? WORKFLOW_DEFAULT_MAX_AGENTS,
-    maxConcurrent: input.maxConcurrent ?? WORKFLOW_DEFAULT_MAX_CONCURRENT,
+    maxAgents,
+    maxConcurrent,
     agentsUsed: 0,
     currentPhase: null,
     agents: [],
@@ -144,18 +233,20 @@ export function createWorkflowRunRecord(input: {
 }
 
 export async function upsertWorkflowRun(record: WorkflowRunRecord): Promise<WorkflowRunRecord> {
-  const runs = await readRunsFile(record.workspaceId);
-  const index = runs.findIndex((item) => item.runId === record.runId);
-  const next = { ...record, updatedAt: nowMs() };
-  if (index >= 0) {
-    runs[index] = next;
-  } else {
-    runs.push(next);
-  }
-  // Keep the newest 100 runs.
-  runs.sort((a, b) => b.updatedAt - a.updatedAt);
-  await writeRunsFile(record.workspaceId, runs.slice(0, 100));
-  return next;
+  return withWorkflowRunFileLock(record.workspaceId, async () => {
+    const runs = await readRunsFile(record.workspaceId);
+    const index = runs.findIndex((item) => item.runId === record.runId);
+    const next = { ...record, updatedAt: nowMs() };
+    if (index >= 0) {
+      runs[index] = next;
+    } else {
+      runs.push(next);
+    }
+    // Keep the newest 100 runs.
+    runs.sort((a, b) => b.updatedAt - a.updatedAt);
+    await writeRunsFile(record.workspaceId, runs.slice(0, 100));
+    return next;
+  });
 }
 
 export async function readWorkflowRun(input: {

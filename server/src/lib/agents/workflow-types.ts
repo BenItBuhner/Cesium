@@ -34,6 +34,7 @@ export type WorkflowAgentRecord = {
   phase: string | null;
   prompt: string;
   status: WorkflowAgentStatus;
+  tokensUsed: number;
   startedAt: number | null;
   completedAt: number | null;
   error?: string;
@@ -82,11 +83,18 @@ export type WorkflowRunRecord = {
 
 export type WorkflowAgentSpawnRequest = {
   prompt: string;
+  workflowRunId?: string;
   label?: string;
   phase?: string | null;
   schema?: Record<string, unknown>;
   model?: string;
   effort?: string;
+  /** Remaining provider-reported best-effort token budget available to this child invocation. */
+  tokenBudget?: number;
+  /** Optional lifecycle signal for callers that can cancel an active child request. */
+  signal?: AbortSignal;
+  /** Optional lifecycle checkpoint for child loops between provider/tool work. */
+  checkpoint?: () => Promise<void>;
 };
 
 export type WorkflowAgentSpawnResult = {
@@ -98,8 +106,37 @@ export type WorkflowAgentSpawner = (
   request: WorkflowAgentSpawnRequest
 ) => Promise<WorkflowAgentSpawnResult>;
 
-export const WORKFLOW_DEFAULT_MAX_AGENTS = 50;
-export const WORKFLOW_DEFAULT_MAX_CONCURRENT = 8;
+export type WorkflowRunUpdateHandler = (
+  run: WorkflowRunRecord
+) => void | Promise<void>;
+
+export type WorkflowRunLifecycleControl = {
+  readonly signal: AbortSignal;
+  checkpoint(
+    run: WorkflowRunRecord,
+    context?: {
+      currentPhase?: string | null;
+      onUpdate?: WorkflowRunUpdateHandler;
+    }
+  ): Promise<WorkflowRunRecord>;
+  isStopRequested(): boolean;
+  throwIfStopped(): void;
+};
+
+export class WorkflowAgentSpawnError extends Error {
+  readonly tokensUsed: number;
+
+  constructor(message: string, tokensUsed: number) {
+    super(message);
+    this.name = "WorkflowAgentSpawnError";
+    this.tokensUsed = Math.max(0, Math.floor(tokensUsed));
+  }
+}
+
+export const WORKFLOW_MAX_AGENTS = 1000;
+export const WORKFLOW_MAX_CONCURRENT = 16;
+export const WORKFLOW_DEFAULT_MAX_AGENTS = WORKFLOW_MAX_AGENTS;
+export const WORKFLOW_DEFAULT_MAX_CONCURRENT = WORKFLOW_MAX_CONCURRENT;
 export const WORKFLOW_LOG_LIMIT = 200;
 export const WORKFLOW_JOURNAL_LIMIT = 500;
 

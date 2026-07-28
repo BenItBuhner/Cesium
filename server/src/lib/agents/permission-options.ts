@@ -10,6 +10,7 @@ export const AGENT_PERMISSION_CATEGORIES = [
   "terminal",
   "mcpCall",
   "switchMode",
+  "workflowLaunch",
 ] as const satisfies readonly AgentPermissionCategory[];
 
 export const ORCHESTRATION_PERMISSION_CATEGORIES = [
@@ -26,6 +27,7 @@ export const AGENT_PERMISSION_CATEGORY_LABELS: Record<AgentPermissionCategory, s
   terminal: "Terminal",
   mcpCall: "MCP call",
   switchMode: "Switch mode",
+  workflowLaunch: "Launch workflow",
 };
 
 /** Shared Accept / Always allow / Reject / Always reject options used across harnesses. */
@@ -44,7 +46,8 @@ export function isAgentPermissionCategory(value: unknown): value is AgentPermiss
     value === "editFile" ||
     value === "terminal" ||
     value === "mcpCall" ||
-    value === "switchMode"
+    value === "switchMode" ||
+    value === "workflowLaunch"
   );
 }
 
