@@ -420,27 +420,35 @@ const CESIUM_BASE_TOOLS: CesiumToolDefinition[] = [
   },
   {
     name: "ask_question",
-    description: "Ask the user a structured question with selectable options.",
+    description:
+      'Ask the user a question. Pass prompt (the question text) plus optional options (array of strings or {id,label}); omit options for an open-ended question — the user always gets a free-text answer field. Multi-step: questions: [{prompt, options}]. Example: {"prompt":"Which approach?","options":["Refactor now","Ship as-is"]}.',
     parameters: {
       type: "object",
       properties: {
-        prompt: { type: "string" },
-        options: { type: "array" },
+        prompt: { type: "string", description: "The question to show the user." },
+        question: { type: "string", description: "Alias of prompt." },
+        options: {
+          type: "array",
+          description: "Selectable answers: strings or {id,label}. Optional.",
+        },
+        choices: { type: "array", description: "Alias of options." },
         allowMultiple: { type: "boolean" },
         allow_multiple: { type: "boolean" },
         questions: {
           type: "array",
+          description: "Multiple question steps, each {prompt, options?}.",
           items: {
             type: "object",
             properties: {
               id: { type: "string" },
               prompt: { type: "string" },
+              question: { type: "string" },
               title: { type: "string" },
               options: { type: "array" },
+              choices: { type: "array" },
               allowMultiple: { type: "boolean" },
               allow_multiple: { type: "boolean" },
             },
-            required: ["options"],
             additionalProperties: false,
           },
         },

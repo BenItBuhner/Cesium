@@ -131,6 +131,7 @@ import {
   parseCesiumEditFileArgs,
   parseCesiumWriteFileArgs,
 } from "./cesium/cesium-file-tools.js";
+import { parseAskQuestionArgs } from "./cesium/cesium-ask-question.js";
 import {
   CESIUM_MAX_TOOL_ITERATIONS,
   CESIUM_RESPONSE_WARNING_MS,
@@ -2449,45 +2450,10 @@ class CesiumSessionHandle implements AgentSessionHandle {
   }
 
   private async toolAskQuestion(args: Record<string, unknown>): Promise<string> {
-    const parseOptions = (value: unknown): Array<{ id: string; label: string }> =>
-      Array.isArray(value)
-        ? value.flatMap((option, index) => {
-            const record = asRecord(option);
-            const label = asString(record?.label) ?? asString(record?.text) ?? asString(option);
-            if (!label) return [];
-            return [{ id: asString(record?.id) ?? `option-${index + 1}`, label }];
-          })
-        : [];
-    const questionsFromArgs = Array.isArray(args.questions)
-      ? args.questions.flatMap((question, index): CesiumQuestionStep[] => {
-          const record = asRecord(question);
-          if (!record) return [];
-          const prompt = asString(record.prompt) ?? asString(record.title);
-          const options = parseOptions(record.options);
-          if (!prompt || options.length === 0) return [];
-          return [
-            {
-              id: asString(record.id) ?? `question-${index + 1}`,
-              prompt,
-              options,
-              allowMultiple: record.allowMultiple === true || record.allow_multiple === true,
-            },
-          ];
-        })
-      : [];
-    const prompt = asString(args.prompt) ?? (questionsFromArgs.length > 1 ? "Questions" : questionsFromArgs[0]?.prompt);
-    const options = parseOptions(args.options);
-    const allowMultiple = args.allowMultiple === true || args.allow_multiple === true;
-    const questions =
-      questionsFromArgs.length > 0
-        ? questionsFromArgs
-        : prompt && options.length > 0
-          ? [{ id: "single", prompt, options, allowMultiple }]
-          : [];
-    if (!prompt || questions.length === 0) {
-      throw new Error("ask_question requires either prompt/options or a non-empty questions array.");
-    }
-    const primaryOptions = questions[0]?.options ?? options;
+    const parsed = parseAskQuestionArgs(args);
+    const prompt = parsed.prompt;
+    const questions: CesiumQuestionStep[] = parsed.questions;
+    const primaryOptions = questions[0]?.options ?? parsed.options;
     const primaryAllowMultiple = questions.length === 1 ? Boolean(questions[0]?.allowMultiple) : false;
     const questionId = randomUUID();
     await this.callbacks.appendEvents([
