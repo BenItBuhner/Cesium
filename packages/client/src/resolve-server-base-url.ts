@@ -1,5 +1,5 @@
 import { getConfiguredServerBaseUrl, getConfiguredServerPort } from "./configured-server-base-url";
-import { getActiveServerBaseUrl } from "./server-connections";
+import { getActiveServerBaseUrl, getServerConnectionKey } from "./server-connections";
 import { clientLocation } from "./platform";
 
 export { getConfiguredServerBaseUrl } from "./configured-server-base-url";
@@ -42,6 +42,50 @@ export function resolveExplicitServerBaseUrlForCurrentWindow(raw: string): strin
   return resolveClientServerBaseUrlForLocation(raw, currentLocationSource(), {
     explicitTarget: true,
   });
+}
+
+/**
+ * True when `baseUrl` points at the app's configured default server (the one
+ * the UI bundle itself was built/launched for). Saved server entries created
+ * from the default config match even after trivial normalization differences
+ * (trailing slash, `127.0.0.1` vs `localhost`).
+ */
+export function isConfiguredDefaultServerBaseUrl(baseUrl: string): boolean {
+  try {
+    return (
+      getServerConnectionKey(baseUrl) ===
+      getServerConnectionKey(getConfiguredServerBaseUrl())
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Resolve the URL used for actual HTTP/WS requests to a saved server.
+ *
+ * The app's primary/default server must collapse to same-origin on HTTPS
+ * pages exactly like auth does — reverse-proxy deployments (HTTPS UI in front
+ * of an HTTP API) would otherwise aim requests at the *browser's* loopback
+ * and the sidebar/chat list could never load even though login worked.
+ * Genuinely different saved servers keep their explicit host so multi-server
+ * fan-out (e.g. a local `http://localhost:9100` next to a hosted UI) still
+ * targets the right machine.
+ */
+export function resolveServerRequestBaseUrlForLocation(
+  raw: string,
+  locationSource: Parameters<typeof resolveClientServerBaseUrlForLocation>[1]
+): string {
+  return resolveClientServerBaseUrlForLocation(
+    raw,
+    locationSource,
+    isConfiguredDefaultServerBaseUrl(raw) ? undefined : { explicitTarget: true }
+  );
+}
+
+/** See {@link resolveServerRequestBaseUrlForLocation}; uses the current window location. */
+export function resolveServerRequestBaseUrlForCurrentWindow(raw: string): string {
+  return resolveServerRequestBaseUrlForLocation(raw, currentLocationSource());
 }
 
 /** Parse `?serverUrl=` for one-time bootstrap (not used for every API call). */

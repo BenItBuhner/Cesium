@@ -47,6 +47,34 @@ export type AgentConversationsAllPayload = {
 };
 
 const MIN_CONVERSATIONS_PER_WORKSPACE = 20;
+
+/**
+ * Per-workspace budget for git repository discovery. The rail must render
+ * conversations even when one repository is on a slow disk / network mount:
+ * clients time the whole `/all` request out at ~12s, so N workspaces x
+ * multi-second git scans would otherwise make a cold load fail entirely.
+ */
+const REPOSITORY_INFO_TIMEOUT_MS = 5_000;
+
+async function withTimeoutFallback<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  fallback: T
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((resolve) => {
+        timer = setTimeout(() => resolve(fallback), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) {
+      clearTimeout(timer);
+    }
+  }
+}
 const PLACEHOLDER_CONVERSATION_TITLES = new Set([
   "new chat",
   "start new chat",
@@ -107,7 +135,19 @@ export async function buildRepositoryInfoByWorkspace(
         ] as const;
       }
       try {
-        const status = await getGitWorkspaceStatus(workspace, workspaces);
+        const status = await withTimeoutFallback(
+          getGitWorkspaceStatus(workspace, workspaces),
+          REPOSITORY_INFO_TIMEOUT_MS,
+          null
+        );
+        if (!status) {
+          // Degraded-but-fast: conversations still render, repo grouping
+          // recovers on the next (cached) rebuild.
+          return [
+            workspace.id,
+            { isGitRepo: false } satisfies AgentRailRepositoryInfo,
+          ] as const;
+        }
         const info: AgentRailRepositoryInfo = {
           isGitRepo: status.isGitRepo,
           repoRoot: status.repoRoot,

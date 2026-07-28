@@ -3074,7 +3074,10 @@ export function AgentWorkspaceRail() {
                 </>
               ) : null}
             </div>
-          ) : railLoadError ? (
+          ) : railLoadError && !railHasContent ? (
+            // Only replace the list with an error when there is nothing to
+            // show; a transient refresh failure must never blank out
+            // already-loaded conversations.
             <div className="flex min-h-[120px] flex-col items-center justify-center gap-[8px] px-[10px] text-center font-sans text-[13px] text-[var(--text-secondary)]">
               <span>{railLoadError}</span>
               <button

@@ -6,6 +6,9 @@ export {
   resolveClientServerBaseUrlForCurrentWindow,
   resolveClientServerBaseUrlForLocation,
   resolveExplicitServerBaseUrlForCurrentWindow,
+  resolveServerRequestBaseUrlForCurrentWindow,
+  resolveServerRequestBaseUrlForLocation,
+  isConfiguredDefaultServerBaseUrl,
   stripServerUrlSearchParamFromLocation,
 } from "@cesium/client";
 export type {

@@ -25,8 +25,10 @@ import {
 } from "../src/lib/server-connections.ts";
 import { getConfiguredServerBaseUrl } from "../src/lib/configured-server-base-url.ts";
 import {
+  isConfiguredDefaultServerBaseUrl,
   parseServerUrlSearchParam,
   resolveClientServerBaseUrlForLocation,
+  resolveServerRequestBaseUrlForLocation,
 } from "../src/lib/resolve-server-base-url.ts";
 import {
   CESIUM_SERVER_INSTALLER_URL,
@@ -579,6 +581,70 @@ describe("base URL resolution", () => {
     );
   });
 
+  test("detects the configured default server across trivial URL variants", () => {
+    // Test env has no NEXT_PUBLIC_SERVER_URL, so the default is http://localhost:9100.
+    assert.equal(isConfiguredDefaultServerBaseUrl("http://localhost:9100"), true);
+    assert.equal(isConfiguredDefaultServerBaseUrl("http://localhost:9100/"), true);
+    assert.equal(isConfiguredDefaultServerBaseUrl("http://127.0.0.1:9100"), true);
+    assert.equal(isConfiguredDefaultServerBaseUrl("http://192.168.1.50:9100"), false);
+    assert.equal(isConfiguredDefaultServerBaseUrl("https://api.example.com"), false);
+    assert.equal(isConfiguredDefaultServerBaseUrl("not a url"), false);
+  });
+
+  test("request resolution collapses the default server to same-origin on https pages", () => {
+    // Reverse-proxy deployment: the page is served over TLS while the stored
+    // server entry still carries the build-time HTTP loopback URL. Requests
+    // must go same-origin (like auth and the agent WebSocket) or they would
+    // target the *browser's* loopback and the rail could never load.
+    const httpsLocation = {
+      location: {
+        protocol: "https:",
+        hostname: "cesium.example.com",
+        host: "cesium.example.com",
+      },
+    };
+    assert.equal(
+      resolveServerRequestBaseUrlForLocation("http://localhost:9100", httpsLocation),
+      ""
+    );
+    assert.equal(
+      resolveServerRequestBaseUrlForLocation("http://127.0.0.1:9100", httpsLocation),
+      ""
+    );
+  });
+
+  test("request resolution keeps genuinely different servers explicit", () => {
+    const httpsLocation = {
+      location: {
+        protocol: "https:",
+        hostname: "cesium.example.com",
+        host: "cesium.example.com",
+      },
+    };
+    // A saved server that is NOT the app's default keeps its own host so
+    // multi-server fan-out still reaches the right machine.
+    assert.equal(
+      resolveServerRequestBaseUrlForLocation("https://other-server.example.com", httpsLocation),
+      "https://other-server.example.com"
+    );
+    assert.equal(
+      resolveServerRequestBaseUrlForLocation("http://192.168.1.50:9100", httpsLocation),
+      "http://192.168.1.50:9100"
+    );
+  });
+
+  test("request resolution rewrites the default server on plain-http LAN pages", () => {
+    assert.equal(
+      resolveServerRequestBaseUrlForLocation("http://localhost:9100", {
+        location: {
+          protocol: "http:",
+          hostname: "192.168.4.172",
+          host: "192.168.4.172:3000",
+        },
+      }),
+      "http://192.168.4.172:9100"
+    );
+  });
 });
 
 describe("server installer command", () => {
