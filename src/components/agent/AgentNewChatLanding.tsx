@@ -219,9 +219,17 @@ export function AgentNewChatLanding() {
   const isHomeWorkspace = Boolean(
     homeWorkspaceId && activeWorkspaceGroup?.workspace.id === homeWorkspaceId
   );
+  // Standalone chats live in auto-created sandbox workspaces (named "Chat").
+  // When one is active, the draft should present and behave as "No workspace":
+  // never surface the sandbox as a selectable workspace, and send new chats
+  // through the standalone path so each one gets its own sandbox.
+  const activeIsStandaloneChat = Boolean(
+    activeWorkspaceGroup && isStandaloneChatWorkspace(activeWorkspaceGroup.workspace)
+  );
+  const noWorkspaceDraft = standaloneDraftActive || activeIsStandaloneChat;
   const workspaceRailAppearances = settings.general.workspaceRailAppearances;
 
-  const composerDraftId = standaloneDraftActive
+  const composerDraftId = noWorkspaceDraft
     ? "agent-draft:standalone"
     : `agent-draft:${activeWorkspaceGroup?.workspace.id ?? "workspace"}`;
   const composerDraftTitle = "Agent prompt";
@@ -291,7 +299,7 @@ export function AgentNewChatLanding() {
       const backend = draftBackend;
       if (!backend) return false;
 
-      if (standaloneDraftActive) {
+      if (noWorkspaceDraft) {
         const created = await createAndPromptStandaloneConversation(
           {
             backendId: backend.id,
@@ -354,11 +362,11 @@ export function AgentNewChatLanding() {
       deleteWorktree,
       gitStatus?.currentBranch,
       gitStatus?.worktrees,
+      noWorkspaceDraft,
       openWorkspaceById,
       refreshConversationGroups,
       setSelectedConversationId,
       setStandaloneDraftActive,
-      standaloneDraftActive,
     ]
   );
 
@@ -729,7 +737,7 @@ export function AgentNewChatLanding() {
                 }}
                 className="inline-flex min-w-0 max-w-[220px] items-center gap-[5px] rounded-[var(--radius-pill)] px-[6px] py-[4px] text-left font-sans text-[13px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)]"
               >
-                {standaloneDraftActive ? (
+                {noWorkspaceDraft ? (
                   <MessageSquare className="size-[13px] shrink-0" strokeWidth={1.5} />
                 ) : activeWorkspaceAppearanceKey ? (
                   <WorkspacePickerIcon
@@ -741,13 +749,13 @@ export function AgentNewChatLanding() {
                   <Folder className="size-[13px] shrink-0" strokeWidth={1.5} />
                 )}
                 <span className="max-w-[260px] min-w-0 shrink truncate">
-                  {standaloneDraftActive
+                  {noWorkspaceDraft
                     ? "No workspace"
                     : (activeWorkspaceGroup?.workspace.name ?? "Select workspace")}
                 </span>
                 <ChevronDown className="size-[13px] shrink-0" strokeWidth={1.5} />
               </button>
-              {!standaloneDraftActive && !isHomeWorkspace ? (
+              {!noWorkspaceDraft && !isHomeWorkspace ? (
               <button
                 ref={branchPickerRef}
                 type="button"
@@ -766,7 +774,7 @@ export function AgentNewChatLanding() {
                 <ChevronDown className="size-[13px] shrink-0" strokeWidth={1.5} />
               </button>
               ) : null}
-              {!standaloneDraftActive && !isHomeWorkspace ? (
+              {!noWorkspaceDraft && !isHomeWorkspace ? (
               <button
                 ref={targetPickerRef}
                 type="button"
@@ -954,7 +962,7 @@ export function AgentNewChatLanding() {
                 </div>
               ) : null}
               <VerticalFadedScroll
-                measureKey={`${workspaceQuery}\0${filteredWorkspaceGroups.length}\0${standaloneDraftActive ? 1 : 0}`}
+                measureKey={`${workspaceQuery}\0${filteredWorkspaceGroups.length}\0${noWorkspaceDraft ? 1 : 0}`}
                 scrollClassName="hide-scrollbar-y max-h-[min(320px,45vh)] min-h-0 overflow-y-auto overscroll-contain p-[4px]"
               >
                 <div
@@ -971,7 +979,7 @@ export function AgentNewChatLanding() {
                     <MessageSquare className="size-[13px] shrink-0" strokeWidth={1.5} />
                     <span className="min-w-0 flex-1 truncate">No workspace</span>
                   </button>
-                  {standaloneDraftActive ? (
+                  {noWorkspaceDraft ? (
                     <Check className="size-[13px] shrink-0" strokeWidth={2} />
                   ) : null}
                 </div>
@@ -987,7 +995,7 @@ export function AgentNewChatLanding() {
                     {section.items.map((group) => {
                       const groupKey = group.workspaceKey;
                       const current =
-                        !standaloneDraftActive && groupKey === activeWorkspaceAppearanceKey;
+                        !noWorkspaceDraft && groupKey === activeWorkspaceAppearanceKey;
                       const isHomeRow = Boolean(
                         homeWorkspaceId &&
                         group.id === homeWorkspaceId &&
