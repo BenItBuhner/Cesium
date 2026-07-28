@@ -36,10 +36,12 @@
 }
 
 /*
- * Tab close controls: always visible + tappable on touch / no-hover devices.
- * On fine-pointer hover devices, keep the classic hover-reveal (and dirty-dot
- * swap) so desktop chrome stays clean. Tailwind `group-hover:` alone is gated
- * by the hover media query and never reveals these on phones.
+ * Tab close controls: always visible + tappable on touch / no-hover devices
+ * and on the mobile layout breakpoint (<768px, matches useViewport isMobile).
+ * On fine-pointer hover desktops, keep the classic hover-reveal (and dirty-dot
+ * swap). Tailwind `group-hover:` alone is gated by the hover media query and
+ * never reveals these on phones. The max-width override also covers Chrome
+ * device emulation, where the host mouse still reports any-pointer: fine.
  */
 .tab-close-hit {
   pointer-events: auto;
@@ -87,6 +89,23 @@
 
 @media not ((any-hover: hover) and (any-pointer: fine)) {
   /* Close is always shown on touch; hide the dirty dot so it does not stack. */
+  .tab-dirty-dot {
+    display: none;
+  }
+}
+
+@media (max-width: 767px) {
+  .tab-close-hit {
+    pointer-events: auto;
+    opacity: 1;
+  }
+
+  .tab-close-hit-dirty {
+    pointer-events: auto;
+    display: flex;
+    opacity: 1;
+  }
+
   .tab-dirty-dot {
     display: none;
   }
