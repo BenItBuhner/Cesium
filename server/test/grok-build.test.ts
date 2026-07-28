@@ -238,38 +238,47 @@ test("Grok Build provider completes an authenticated ACP turn and resumes", asyn
     const provider = await createAgentProvider("grok-build");
     const first = createCallbacks("grok-build", directory);
     const handle = await provider.startSession(first.callbacks);
-    assert.equal(handle.sessionId, "grok-session-1");
-    assert.equal(first.conversation().providerSessionId, "grok-session-1");
-    assert.ok(handle.configOptions.some((option) => option.category === "model"));
-    assert.ok(handle.configOptions.some((option) => option.category === "mode"));
-    await handle.prompt({ text: "Say hello", userMessageId: "user-1" });
-    assert.ok(
-      first.appended.some(
-        (event) =>
-          event.kind === "assistant_message_chunk" &&
-          event.text === "Hello from Grok Build."
-      )
-    );
-    assert.ok(
-      first.appended.some(
-        (event) =>
-          event.kind === "assistant_message_end" &&
-          event.stopReason === "end_turn"
-      )
-    );
-    await handle.dispose();
+    try {
+      assert.equal(handle.sessionId, "grok-session-1");
+      assert.equal(first.conversation().providerSessionId, "grok-session-1");
+      assert.ok(handle.configOptions.some((option) => option.category === "model"));
+      assert.ok(
+        handle.configOptions.some((option) => option.category === "mode"),
+        `expected seeded mode options, received ${JSON.stringify(handle.configOptions)}`
+      );
+      await handle.prompt({ text: "Say hello", userMessageId: "user-1" });
+      assert.ok(
+        first.appended.some(
+          (event) =>
+            event.kind === "assistant_message_chunk" &&
+            event.text === "Hello from Grok Build."
+        )
+      );
+      assert.ok(
+        first.appended.some(
+          (event) =>
+            event.kind === "assistant_message_end" &&
+            event.stopReason === "end_turn"
+        )
+      );
+    } finally {
+      await handle.dispose();
+    }
 
     const resumed = createCallbacks("grok-build", directory);
     const resumedHandle = await provider.loadSession(
       resumed.callbacks,
       "grok-session-resumed"
     );
-    assert.equal(resumedHandle.sessionId, "grok-session-resumed");
-    assert.equal(
-      resumed.conversation().providerSessionId,
-      "grok-session-resumed"
-    );
-    await resumedHandle.dispose();
+    try {
+      assert.equal(resumedHandle.sessionId, "grok-session-resumed");
+      assert.equal(
+        resumed.conversation().providerSessionId,
+        "grok-session-resumed"
+      );
+    } finally {
+      await resumedHandle.dispose();
+    }
   } finally {
     if (previousBin === undefined) delete process.env.OPENCURSOR_GROK_BUILD_BIN;
     else process.env.OPENCURSOR_GROK_BUILD_BIN = previousBin;

@@ -9,7 +9,10 @@ import {
   describePiAgentAuthStatus,
   hasPiAgentStoredAuthConfig,
 } from "../pi-agent-settings.js";
-import { readAgentBackendConfigCache } from "./provider-cache-store.js";
+import {
+  createGrokBuildModeConfigOption,
+  readAgentBackendConfigCache,
+} from "./provider-cache-store.js";
 import type {
   AgentBackendId,
   AgentBackendInfo,
@@ -689,7 +692,12 @@ export async function createAgentProvider(
         `${backend.label} requires the grok binary. Install it from https://x.ai/cli or configure OPENCURSOR_GROK_BUILD_BIN.`
       );
     }
-    const seedConfigOptions = await readAgentBackendConfigCache(backendId);
+    const cachedConfigOptions = await readAgentBackendConfigCache(backendId);
+    const seedConfigOptions = cachedConfigOptions.some(
+      (option) => option.category === "mode"
+    )
+      ? cachedConfigOptions
+      : [createGrokBuildModeConfigOption(), ...cachedConfigOptions];
     return {
       backend,
       startSession(callbacks) {

@@ -575,17 +575,7 @@ export async function createGrokBuildConfigOptions(input?: {
   );
 
   return [
-    {
-      id: LEGACY_MODE_CONFIG_ID,
-      name: "Mode",
-      category: "mode",
-      currentValue: "default",
-      options: [
-        { value: "default", name: "Build" },
-        { value: "plan", name: "Plan" },
-        { value: "ask", name: "Ask" },
-      ],
-    },
+    createGrokBuildModeConfigOption(),
     {
       id: "model",
       name: "Model",
@@ -596,6 +586,20 @@ export async function createGrokBuildConfigOptions(input?: {
       options: models,
     },
   ];
+}
+
+export function createGrokBuildModeConfigOption(): AgentConfigOption {
+  return {
+    id: LEGACY_MODE_CONFIG_ID,
+    name: "Mode",
+    category: "mode",
+    currentValue: "default",
+    options: [
+      { value: "default", name: "Build" },
+      { value: "plan", name: "Plan" },
+      { value: "ask", name: "Ask" },
+    ],
+  };
 }
 
 function titleCaseConfigValue(value: string): string {
@@ -1663,6 +1667,14 @@ function maybeInPlaceMigrate(
     const hasModel = cachedOptions.some((option) => option.id === "model");
     const hasAgent = cachedOptions.some((option) => option.id === "agent" || option.id === "mode");
     if (!hasModel || !hasAgent) {
+      return { upgraded: cachedOptions, needsReseed: true };
+    }
+  }
+
+  if (backendId === "grok-build") {
+    const hasModel = cachedOptions.some((option) => option.category === "model");
+    const hasMode = cachedOptions.some((option) => option.category === "mode");
+    if (!hasModel || !hasMode) {
       return { upgraded: cachedOptions, needsReseed: true };
     }
   }
