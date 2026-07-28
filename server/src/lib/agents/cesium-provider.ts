@@ -328,6 +328,8 @@ class CesiumSessionHandle implements AgentSessionHandle {
   private pendingPermissions = new Map<string, ActivePermission>();
   private pendingQuestions = new Map<string, ActiveQuestion>();
   private terminalRuns = new Map<string, TerminalRun>();
+  /** Tool-call titles refined during execution (e.g. "Write x" → "Create x" once we know the file is new). */
+  private refinedToolTitles = new Map<string, string>();
   private subagentTranscripts = new Map<string, AgentStoredEvent[]>();
   private activeSystemPrompt = CESIUM_SYSTEM_PROMPT;
   private activeUserMessageId: string | null = null;
@@ -1805,13 +1807,15 @@ class CesiumSessionHandle implements AgentSessionHandle {
           throw new Error(`Unknown Cesium tool: ${request.name}`);
         }
       }
+      const refinedTitle = this.refinedToolTitles.get(request.id);
+      this.refinedToolTitles.delete(request.id);
       await this.callbacks.appendEvents([
         {
           eventId: randomUUID(),
           conversationId: this.callbacks.conversation.id,
           kind: "tool_call_update",
           toolCallId: request.id,
-          title,
+          title: refinedTitle ?? title,
           toolKind: toolKind(request.name),
           status: "completed",
           detail: result,
@@ -1820,6 +1824,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
       ]);
       return result;
     } catch (error) {
+      this.refinedToolTitles.delete(request.id);
       if (error instanceof PermissionRefusedToolCallError) {
         await this.callbacks.appendEvents([
           {
@@ -1937,13 +1942,17 @@ class CesiumSessionHandle implements AgentSessionHandle {
       { beforeFullFileContent: before ?? "", afterFullFileContent: outcome.after },
       parsed.path
     );
+    const refinedTitle = outcome.created ? `Create ${parsed.path}` : title;
+    if (outcome.created) {
+      this.refinedToolTitles.set(toolCallId, refinedTitle);
+    }
     await this.callbacks.appendEvents([
       {
         eventId: randomUUID(),
         conversationId: this.callbacks.conversation.id,
         kind: "tool_call_update",
         toolCallId,
-        title: outcome.created ? `Create ${parsed.path}` : title,
+        title: refinedTitle,
         toolKind: "edit",
         status: "in_progress",
         detail: outcome.created ? "Created file." : "Applied edit preview.",
@@ -1970,13 +1979,15 @@ class CesiumSessionHandle implements AgentSessionHandle {
       { beforeFullFileContent: before ?? "", afterFullFileContent: parsed.content },
       parsed.path
     );
+    const refinedTitle = `${created ? "Create" : "Update"} ${parsed.path}`;
+    this.refinedToolTitles.set(toolCallId, refinedTitle);
     await this.callbacks.appendEvents([
       {
         eventId: randomUUID(),
         conversationId: this.callbacks.conversation.id,
         kind: "tool_call_update",
         toolCallId,
-        title: `${created ? "Create" : "Update"} ${parsed.path}`,
+        title: refinedTitle,
         toolKind: "edit",
         status: "in_progress",
         detail: created ? "Created file." : "Overwrote file.",
