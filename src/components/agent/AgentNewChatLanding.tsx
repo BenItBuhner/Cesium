@@ -39,6 +39,7 @@ import {
   DEFAULT_MODE_OPTIONS,
   resolveCanonicalModeId,
 } from "@/lib/chat-modes";
+import { updateChatDraftDefault } from "@/lib/chat-draft-defaults";
 import type { AgentBackendId, AgentBackendInfo } from "@/lib/agent-types";
 import {
   detectShortcutPlatform,
@@ -49,6 +50,7 @@ import type {
   GitBranchInfo,
   GitWorktreeInfo,
   ImageAttachment,
+  ModelInfo,
 } from "@/lib/types";
 import { isStandaloneChatWorkspace } from "@/lib/types";
 import { useWorkspaceDirectory } from "@/contexts/WorkspaceDirectoryContext";
@@ -248,23 +250,40 @@ export function AgentNewChatLanding() {
   const [gitActionBusy, setGitActionBusy] = useState<string | null>(null);
   const [gitActionError, setGitActionError] = useState<string | null>(null);
 
+  const setDraftModel = useCallback(
+    (next: ModelInfo) => {
+      updateWorkspaceSession((current) => ({
+        ...current,
+        chat: updateChatDraftDefault(current.chat, { model: next }),
+      }));
+    },
+    [
+      updateWorkspaceSession,
+    ]
+  );
+
   const setDraftBackend = useCallback(
     (nextBackendId: AgentBackendId) => {
       const nextBackend = pickAvailableBackend(backends, nextBackendId);
       if (!nextBackend) return;
+      const nextMode =
+        buildDraftModeOptionsForBackend(nextBackend)[0]?.id ??
+        workspaceSession.chat.mode;
+      const nextModel = resolveDraftModelForBackend(nextBackend);
       updateWorkspaceSession((current) => ({
         ...current,
-        chat: {
-          ...current.chat,
+        chat: updateChatDraftDefault(current.chat, {
           backendId: nextBackend.id,
-          mode:
-            buildDraftModeOptionsForBackend(nextBackend)[0]?.id ??
-            current.chat.mode,
-          model: resolveDraftModelForBackend(nextBackend),
-        },
+          mode: nextMode ?? current.chat.mode,
+          model: nextModel,
+        }),
       }));
     },
-    [backends, updateWorkspaceSession]
+    [
+      backends,
+      updateWorkspaceSession,
+      workspaceSession.chat.mode,
+    ]
   );
 
   const handleSubmit = useCallback(
@@ -360,14 +379,7 @@ export function AgentNewChatLanding() {
           },
         })),
       model: draftModel,
-      onModelChange: (next: typeof draftModel) =>
-        updateWorkspaceSession((current) => ({
-          ...current,
-          chat: {
-            ...current.chat,
-            model: next,
-          },
-        })),
+      onModelChange: (next: typeof draftModel) => setDraftModel(next),
       backendId: draftBackend?.id ?? workspaceSession.chat.backendId,
       backends,
       onBackendChange: setDraftBackend,
@@ -392,6 +404,7 @@ export function AgentNewChatLanding() {
     expandedComposerDraftId,
     handleSubmit,
     setDraftBackend,
+    setDraftModel,
     updateWorkspaceSession,
     workspaceSession.chat.backendId,
   ]);
@@ -791,10 +804,7 @@ export function AgentNewChatLanding() {
                 }}
                 model={draftModel}
                 onModelChange={(next) => {
-                  updateWorkspaceSession((current) => ({
-                    ...current,
-                    chat: { ...current.chat, model: next },
-                  }));
+                  setDraftModel(next);
                 }}
                 backendId={draftBackend?.id ?? workspaceSession.chat.backendId}
                 backends={backends}
