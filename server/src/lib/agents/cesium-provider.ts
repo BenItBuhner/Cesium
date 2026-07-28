@@ -675,7 +675,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
             level: "warning",
             text:
               `Model ${modelId} does not advertise image/multimodal support. ` +
-              `Image attachments were dropped for this turn. Use a vision model such as kimi-k2.7-code.`,
+              `Image attachments were dropped for this turn. Use a vision model such as kimi-k3.`,
           },
         ]);
       }

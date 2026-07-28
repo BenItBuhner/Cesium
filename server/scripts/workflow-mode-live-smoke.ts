@@ -18,7 +18,7 @@ import { CESIUM_SYSTEM_PROMPT } from "../src/lib/agents/cesium/cesium-prompt.js"
 import type { WorkspaceRecord } from "../src/lib/workspace-registry.js";
 
 const BASE_URL = "https://infer.techlitnow.com/v1";
-const MODEL = "openai/glm-5.2";
+const MODEL = "openai/kimi-k3";
 
 const SCRIPT = `export const meta = {
   name: "live-smoke",

@@ -83,19 +83,19 @@ OpenAI-compatible provider with catalog models:
 
 - `CESIUM_BASE_URL` — falls back to `OPENAI_BASE_URL`
 - `CESIUM_API_KEY` — falls back to `OPENAI_API_KEY`
-- `CESIUM_DEFAULT_MODEL` — e.g. `glm-5.2` or `techlit/glm-5.2`
+- `CESIUM_DEFAULT_MODEL` — e.g. `kimi-k3` or `techlit/kimi-k3`
 - `CESIUM_PROVIDER_ID` — optional; defaults to `techlit` for
   `*.techlitnow.com` hosts, otherwise a hostname slug
-- `CESIUM_MODELS` — optional comma list or JSON array (default:
-  `glm-5.2`, `kimi-k2.7-code`)
+- `CESIUM_MODELS` — optional comma list or JSON array (default: `kimi-k3`)
 
-Default bootstrap models:
+Default bootstrap model:
 
-- `glm-5.2` — text / tools (no imagery)
-- `kimi-k2.7-code` — text / tools / **images** (multimodal)
+- `kimi-k3` — text / tools / **images** (multimodal); ~1M context, fast,
+  strong general intelligence. Use this as the single default for cloud-agent
+  and inference testing (no separate text-only vs vision model).
 
-Pick the vision model when attaching screenshots; Cesium drops image parts and
-warns if the selected model does not advertise `supportsImages`.
+Cesium still drops image parts and warns if a selected model does not advertise
+`supportsImages`; `kimi-k3` does.
 
 #### Speech transcription / title generation
 
@@ -119,20 +119,16 @@ Use the personal OpenAI-compatible proxy for Cesium Agent testing:
 
 - **Base URL:** `https://infer.techlitnow.com/v1`
 - **API key:** `OPENAI_API_KEY` Cloud Agent secret (or `CESIUM_API_KEY`)
-- **Text / default model:** `glm-5.2` (no imagery)
-- **Multimodal / imagery model:** `kimi-k2.7-code`
+- **Default model:** `kimi-k3` (text, tools, imagery; ~1M context)
 
 Env-only setup (preferred for cloud agents):
 
 ```bash
 export CESIUM_BASE_URL=https://infer.techlitnow.com/v1
 # OPENAI_API_KEY already set via Cloud Agent secrets
-export CESIUM_DEFAULT_MODEL=glm-5.2
-# For image attachments, switch the composer model to kimi-k2.7-code
-# (or: export CESIUM_DEFAULT_MODEL=kimi-k2.7-code)
+export CESIUM_DEFAULT_MODEL=kimi-k3
 ```
 
-That registers provider id `techlit` with models `techlit/glm-5.2` and
-`techlit/kimi-k2.7-code`. You can still save the same host under Settings →
-Agents → Cesium Agent via `PUT /api/settings/cesium-agent/provider-key` if you
-prefer a stored key.
+That registers provider id `techlit` with model `techlit/kimi-k3`. You can still
+save the same host under Settings → Agents → Cesium Agent via
+`PUT /api/settings/cesium-agent/provider-key` if you prefer a stored key.

@@ -107,7 +107,7 @@ function WorkbenchShot() {
           <span className="size-[10px] rounded-full bg-[var(--plan-accent)] opacity-80" />
           <span className="size-[10px] rounded-full bg-[var(--ask-accent)] opacity-80" />
           <span className="ml-[10px] font-mono text-[11px] text-[var(--text-disabled)]">
-            cesium — /agent · glm-5.2
+            cesium — /agent · kimi-k3
           </span>
         </div>
         <img
