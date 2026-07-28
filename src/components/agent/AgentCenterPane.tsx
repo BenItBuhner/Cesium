@@ -32,13 +32,17 @@ import {
   resolveDraftModelForBackend,
 } from "@/lib/agent-chat";
 import { isAgentComposerBusy } from "@/lib/agent-completion-error";
+import { updateChatDraftDefault } from "@/lib/chat-draft-defaults";
 import { computeContextUsageRefreshGeneration } from "@/lib/context-usage-refresh";
 import { DEFAULT_MODE_OPTIONS, isOrchestrationModeLocked, resolveCanonicalModeId } from "@/lib/chat-modes";
 import { markConversationSwitchVisible } from "@/lib/dev-perf";
 import { buildQueuedConfigOverride } from "@/lib/queued-prompt-utils";
 import { deleteAgentConversationQueueItem } from "@/lib/server-api";
-import type { AgentBackendId, AgentBackendInfo } from "@/lib/agent-types";
-import type { EditorMode, ImageAttachment, QueuedChatPrompt } from "@/lib/types";
+import type {
+  AgentBackendId,
+  AgentBackendInfo,
+} from "@/lib/agent-types";
+import type { EditorMode, ImageAttachment, ModelInfo, QueuedChatPrompt } from "@/lib/types";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
 import { AGENT_CENTER_CONTENT_CLASS } from "./agent-shell-layout";
@@ -419,6 +423,7 @@ export function AgentCenterPane() {
     start: composerDraftText.length,
     end: composerDraftText.length,
   };
+
   const [planBuildModelChoice, setPlanBuildModelChoice] =
     useState<PlanBuildModelChoice>("inherit");
   const planBuildModels = composerState?.models ?? draftModels;
@@ -633,14 +638,12 @@ export function AgentCenterPane() {
       }
       updateWorkspaceSession((current) => ({
         ...current,
-        chat: {
-          ...current.chat,
+        chat: updateChatDraftDefault(current.chat, {
           backendId: nextBackend.id,
-          mode:
-            buildDraftModeOptionsForBackend(nextBackend)[0]?.id ??
-            current.chat.mode,
+          mode: (buildDraftModeOptionsForBackend(nextBackend)[0]?.id ??
+            current.chat.mode) as EditorMode,
           model: resolveDraftModelForBackend(nextBackend),
-        },
+        }),
       }));
     },
     [backends, updateWorkspaceSession]
@@ -723,6 +726,92 @@ export function AgentCenterPane() {
     ]
   );
 
+  const handleComposerModelChange = useCallback(
+    (next: ModelInfo, source: "expanded" | "inline") => {
+      const nextBackendId =
+        (next.backendId as AgentBackendId | undefined) ??
+        composerState?.backendId ??
+        conversation?.config.backendId ??
+        workspaceSession.chat.backendId;
+      updateWorkspaceSession((current) => ({
+        ...current,
+        chat: updateChatDraftDefault(current.chat, {
+          backendId: nextBackendId,
+          mode: composerMode,
+          model: next,
+        }),
+      }));
+      if (selectedConversationId) {
+        if (composerState?.busy) {
+          if (source === "inline") {
+            setPendingConfigForConversation(selectedConversationId, {
+              modelId: next.modelValue ?? next.id,
+              modelName: next.name,
+              setConfigOptions: next.configSelections,
+            });
+          } else {
+            setPendingConfigForConversation(selectedConversationId, {
+              modelId: next.modelValue ?? next.id,
+              modelName: next.name,
+            });
+          }
+        } else {
+          void setConversationModel(selectedConversationId, next);
+        }
+        return;
+      }
+    },
+    [
+      composerMode,
+      composerState,
+      conversation?.config,
+      selectedConversationId,
+      setConversationModel,
+      setPendingConfigForConversation,
+      updateWorkspaceSession,
+      workspaceSession.chat.backendId,
+    ]
+  );
+
+  const handleComposerBackendChange = useCallback(
+    (next: AgentBackendId) => {
+      const nextBackend = pickAvailableBackend(backends, next);
+      const nextModel = nextBackend ? resolveDraftModelForBackend(nextBackend) : null;
+      const nextMode = nextBackend
+        ? (buildDraftModeOptionsForBackend(nextBackend)[0]?.id ?? composerMode)
+        : composerMode;
+      if (selectedConversationId) {
+        if (nextBackend && nextModel) {
+          updateWorkspaceSession((current) => ({
+            ...current,
+            chat: updateChatDraftDefault(current.chat, {
+              backendId: nextBackend.id,
+              mode: nextMode as EditorMode,
+              model: nextModel,
+            }),
+          }));
+        }
+        if (composerState?.busy) {
+          setPendingConfigForConversation(selectedConversationId, { backendId: next });
+        } else {
+          void setConversationBackend(selectedConversationId, next);
+        }
+        return;
+      }
+      setDraftBackend(next);
+    },
+    [
+      backends,
+      composerMode,
+      composerState,
+      selectedConversationId,
+      setConversationBackend,
+      setDraftBackend,
+      setPendingConfigForConversation,
+      updateWorkspaceSession,
+    ]
+  );
+
   const expandedComposerState = useMemo(() => {
     if (expandedComposerDraftId !== composerDraftId) {
       return null;
@@ -736,6 +825,14 @@ export function AgentCenterPane() {
           return;
         }
         if (selectedConversationId) {
+          updateWorkspaceSession((current) => ({
+            ...current,
+            chat: updateChatDraftDefault(current.chat, {
+              backendId: composerState?.backendId ?? conversation?.config.backendId,
+              mode: next,
+              model: composerState?.model ?? draftModel,
+            }),
+          }));
           if (composerState?.busy) {
             setPendingConfigForConversation(selectedConversationId, { mode: next });
           } else {
@@ -753,38 +850,13 @@ export function AgentCenterPane() {
       },
       model: composerState?.model ?? draftModel,
       onModelChange: (next: typeof draftModel) => {
-        if (selectedConversationId) {
-          if (composerState?.busy) {
-            setPendingConfigForConversation(selectedConversationId, {
-              modelId: next.modelValue ?? next.id,
-              modelName: next.name,
-            });
-          } else {
-            void setConversationModel(selectedConversationId, next);
-          }
-          return;
-        }
-        updateWorkspaceSession((current) => ({
-          ...current,
-          chat: {
-            ...current.chat,
-            model: next,
-          },
-        }));
+        handleComposerModelChange(next, "expanded");
       },
       backendId:
         composerState?.backendId ?? draftBackend?.id ?? workspaceSession.chat.backendId,
       backends,
       onBackendChange: (next: AgentBackendId) => {
-        if (selectedConversationId) {
-          if (composerState?.busy) {
-            setPendingConfigForConversation(selectedConversationId, { backendId: next });
-          } else {
-            void setConversationBackend(selectedConversationId, next);
-          }
-          return;
-        }
-        setDraftBackend(next);
+        handleComposerBackendChange(next);
       },
       models: composerState?.models ?? draftModels,
       modeOptions: composerState?.modeOptions ?? draftModeOptions,
@@ -810,26 +882,25 @@ export function AgentCenterPane() {
     backends,
     goalProgress,
     cancelConversation,
+    conversation?.config.backendId,
     conversation?.status,
     composerDraftId,
     composerDraftTitle,
     composerMode,
     composerState,
     draftBackend?.id,
-    draftMode,
     draftModeOptions,
     draftModel,
     draftModels,
     expandedComposerDraftId,
+    handleComposerBackendChange,
+    handleComposerModelChange,
     handleSubmit,
     modeLocked,
     selectedConversationId,
     setPendingConfigForConversation,
-    setConversationBackend,
     setConversationConfigOption,
     setConversationMode,
-    setConversationModel,
-    setDraftBackend,
     updateWorkspaceSession,
     workspaceSession.chat.backendId,
   ]);
@@ -1037,6 +1108,14 @@ export function AgentCenterPane() {
                         return;
                       }
                       if (selectedConversationId) {
+                        updateWorkspaceSession((current) => ({
+                          ...current,
+                          chat: updateChatDraftDefault(current.chat, {
+                            backendId: composerState?.backendId ?? conversation?.config.backendId,
+                            mode: next as EditorMode,
+                            model: composerState?.model ?? draftModel,
+                          }),
+                        }));
                         if (composerState?.busy) {
                           setPendingConfigForConversation(selectedConversationId, {
                             mode: next as EditorMode,
@@ -1056,40 +1135,12 @@ export function AgentCenterPane() {
                     }}
                     model={composerState?.model ?? draftModel}
                     onModelChange={(next) => {
-                      if (selectedConversationId) {
-                        if (composerState?.busy) {
-                          setPendingConfigForConversation(selectedConversationId, {
-                            modelId: next.modelValue ?? next.id,
-                            modelName: next.name,
-                            setConfigOptions: next.configSelections,
-                          });
-                        } else {
-                          void setConversationModel(selectedConversationId, next);
-                        }
-                        return;
-                      }
-                      updateWorkspaceSession((current) => ({
-                        ...current,
-                        chat: {
-                          ...current.chat,
-                          model: next,
-                        },
-                      }));
+                      handleComposerModelChange(next, "inline");
                     }}
                     backendId={composerState?.backendId ?? draftBackend?.id ?? workspaceSession.chat.backendId}
                     backends={backends}
                     onBackendChange={(next) => {
-                      if (selectedConversationId) {
-                        if (composerState?.busy) {
-                          setPendingConfigForConversation(selectedConversationId, {
-                            backendId: next,
-                          });
-                        } else {
-                          void setConversationBackend(selectedConversationId, next);
-                        }
-                        return;
-                      }
-                      setDraftBackend(next);
+                      handleComposerBackendChange(next);
                     }}
                     models={composerState?.models ?? draftModels}
                     modeOptions={composerState?.modeOptions ?? draftModeOptions}
