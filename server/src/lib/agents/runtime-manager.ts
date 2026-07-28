@@ -979,6 +979,7 @@ export class AgentRuntimeManager {
       planHandoff?: AgentQueuedChatPrompt["planHandoff"];
       clientEventId?: string;
       clientMessageId?: string;
+      clientTimezone?: string;
       delivery?: AgentQueuedChatPrompt["delivery"];
       hidden?: boolean;
     }
@@ -1001,6 +1002,7 @@ export class AgentRuntimeManager {
       planHandoff?: AgentQueuedChatPrompt["planHandoff"];
       clientEventId?: string;
       clientMessageId?: string;
+      clientTimezone?: string;
       delivery?: AgentQueuedChatPrompt["delivery"];
       hidden?: boolean;
     }
@@ -1016,6 +1018,7 @@ export class AgentRuntimeManager {
     }
     const clientEventId = options?.clientEventId?.trim();
     const clientMessageId = options?.clientMessageId?.trim();
+    const clientTimezone = options?.clientTimezone?.trim();
     const delivery = options?.delivery === "steer" ? "steer" : "normal";
     if (clientEventId) {
       const existingEvents = await readConversationEvents(workspace.id, conversationId);
@@ -1052,6 +1055,7 @@ export class AgentRuntimeManager {
         ...(attachments && attachments.length > 0 ? { attachments } : {}),
         ...(clientEventId ? { clientEventId } : {}),
         ...(clientMessageId ? { clientMessageId } : {}),
+        ...(clientTimezone ? { clientTimezone } : {}),
         ...(options?.configOverride && Object.keys(options.configOverride).length > 0
           ? { configOverride: options.configOverride }
           : {}),
@@ -1236,6 +1240,7 @@ export class AgentRuntimeManager {
           userMessageId,
           attachments,
           ...(options?.planHandoff ? { planHandoff: options.planHandoff } : {}),
+          ...(clientTimezone ? { clientTimezone } : {}),
         });
       } catch (error) {
         await this.persistRuntimeFailure(workspace.id, conversationId, error);
@@ -1358,6 +1363,7 @@ export class AgentRuntimeManager {
       await this.promptConversation(workspace, conversationId, head.text, head.attachments, {
         ...(head.clientEventId ? { clientEventId: head.clientEventId } : {}),
         ...(head.clientMessageId ? { clientMessageId: head.clientMessageId } : {}),
+        ...(head.clientTimezone ? { clientTimezone: head.clientTimezone } : {}),
         ...(head.delivery ? { delivery: head.delivery } : {}),
         ...(head.configOverride ? { configOverride: head.configOverride } : {}),
         ...(head.planHandoff ? { planHandoff: head.planHandoff } : {}),

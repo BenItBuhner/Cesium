@@ -17,6 +17,7 @@ export * from "./agent-subagent-routing";
 export * from "./workspace-tool-path-display";
 export * from "./mcp-server-display";
 export * from "./agent-chat";
+export * from "./model-display-name";
 export * from "./mobile-agent-projection";
 export * from "./watch-agent-contract";
 export * from "./orchestration-types";

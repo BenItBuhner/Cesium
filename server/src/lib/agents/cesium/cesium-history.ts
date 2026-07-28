@@ -1,4 +1,3 @@
-import type { McpServerSummary } from "@cesium/core/mcp";
 import type { AgentStoredEvent } from "../types.js";
 import { asRecord, asString, truncate } from "./cesium-coerce.js";
 import {
@@ -13,6 +12,21 @@ import type {
   CesiumHistoryMessage,
   CesiumHistoryToolCall,
 } from "./cesium-types.js";
+
+export {
+  CESIUM_TIME_GAP_REMINDER_MS,
+  cesiumEnvironmentChangeNotice,
+  cesiumEnvironmentReminderSnapshot,
+  formatCesiumDateLabel,
+  formatCesiumTimeGapDuration,
+  latestCesiumEnvironmentReminderSnapshot,
+  latestMcpReminderSnapshot,
+  mcpReminderChangeNotice,
+  mcpReminderSnapshot,
+  previousUserMessageCreatedAt,
+  type CesiumEnvironmentReminderSnapshot,
+  type McpReminderSnapshot,
+} from "./cesium-environment-reminders.js";
 
 type PendingHistoryToolCall = CesiumHistoryToolCall & {
   result?: string;
@@ -30,104 +44,6 @@ export function estimateHistoryTokens(messages: CesiumHistoryMessage[]): number 
     }
   }
   return Math.ceil(chars / 4);
-}
-
-export type McpReminderSnapshot = {
-  revision?: number;
-  dateLabel?: string;
-  mcpServers: Array<{ id: string; label: string; summary: string }>;
-};
-
-export function mcpReminderSnapshot(input: {
-  revision?: number;
-  dateLabel?: string | null;
-  summaries: McpServerSummary[];
-}): McpReminderSnapshot {
-  return {
-    revision: input.revision,
-    dateLabel: input.dateLabel ?? undefined,
-    mcpServers: input.summaries.map((summary) => ({
-      id: summary.id,
-      label: summary.label,
-      summary: summary.summary ?? "",
-    })),
-  };
-}
-
-export function latestMcpReminderSnapshot(events: AgentStoredEvent[]): McpReminderSnapshot | null {
-  for (let i = events.length - 1; i >= 0; i -= 1) {
-    const event = events[i]!;
-    if (event.kind !== "system_reminder") {
-      continue;
-    }
-    const raw = asRecord(event.raw);
-    const snapshot = asRecord(raw?.mcpReminderSnapshot);
-    const servers = Array.isArray(snapshot?.mcpServers)
-      ? snapshot.mcpServers
-          .map((entry) => {
-            const record = asRecord(entry);
-            const id = asString(record?.id);
-            const label = asString(record?.label);
-            if (!id || !label) {
-              return null;
-            }
-            return {
-              id,
-              label,
-              summary: asString(record?.summary) ?? "",
-            };
-          })
-          .filter((entry): entry is McpReminderSnapshot["mcpServers"][number] => Boolean(entry))
-      : null;
-    if (!servers) {
-      continue;
-    }
-    return {
-      revision: typeof snapshot?.revision === "number" ? snapshot.revision : undefined,
-      dateLabel: asString(snapshot?.dateLabel),
-      mcpServers: servers,
-    };
-  }
-  return null;
-}
-
-export function mcpReminderChangeNotice(
-  previous: McpReminderSnapshot | null,
-  current: McpReminderSnapshot
-): string | null {
-  if (!previous) {
-    return null;
-  }
-  const lines: string[] = [];
-  if (
-    previous.revision != null &&
-    current.revision != null &&
-    previous.revision !== current.revision
-  ) {
-    lines.push("- MCP catalog revision changed; reread mirrored schemas before using MCP tools.");
-  }
-  if (previous.dateLabel && current.dateLabel && previous.dateLabel !== current.dateLabel) {
-    lines.push(`- Date changed from ${previous.dateLabel} to ${current.dateLabel}.`);
-  }
-  const previousServers = new Map(previous.mcpServers.map((server) => [server.id, server]));
-  const currentServers = new Map(current.mcpServers.map((server) => [server.id, server]));
-  for (const [id, server] of currentServers) {
-    if (!previousServers.has(id)) {
-      lines.push(`- MCP server enabled: ${server.label}.`);
-    }
-  }
-  for (const [id, server] of previousServers) {
-    if (!currentServers.has(id)) {
-      lines.push(`- MCP server disabled or removed: ${server.label}.`);
-    }
-  }
-  for (const [id, server] of currentServers) {
-    const prior = previousServers.get(id);
-    if (prior && prior.summary !== server.summary) {
-      lines.push(`- MCP server refreshed: ${server.label}.`);
-    }
-  }
-  return lines.length ? lines.join("\n") : null;
 }
 
 export function normalizeCesiumToolResultForModel(input: {
