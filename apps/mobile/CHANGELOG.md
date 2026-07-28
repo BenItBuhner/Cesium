@@ -6,11 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-07-28
+
 ### Changed
 
 - Replaced the divergent native React Native workbench with the bundled Vite WebView client used by Electron, restoring settings, harness/model selection, workspace/repository controls, Markdown, tool calls, and conversation parity.
 - React Native now owns only the Android bridge and native services (live/Now Bar notifications, Wear, assistant, phone control, window insets, and runtime/image picker).
 - Removed the obsolete `@cesium/ui-native` package and its NativeWind/Reanimated/MMKV dependency stack.
+
+### Added
+
+- Cesium launcher icon: adaptive (and themed monochrome) hexagon-mark icons for the phone and Wear apps. Previous releases shipped no `android:icon`, so Android showed the default placeholder.
+- Brand notification small icon (`ic_stat_cesium`) for agent-run, phone-control, and Wear notifications, replacing the stock `stat_notify_sync` / `ic_dialog_info` system icons.
 
 ## [0.1.3] - 2026-07-17
 
