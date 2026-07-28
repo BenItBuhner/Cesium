@@ -144,6 +144,64 @@ describe("patchAgentConversationGroups", () => {
     assert.equal(next[0]!.conversations[0]!.status, "idle");
   });
 
+  test("stale updatedAt patch cannot revert newer archive state", async () => {
+    const { defaultAgentRailFilterToggles, matchesAgentRailMultiFilter } = await import(
+      "../src/lib/agent-rail"
+    );
+    const ws = "ws1";
+    const restoredRecord = baseRecord("restored", ws, {
+      archivedAt: 400,
+      updatedAt: 400,
+    });
+    const archivedRecord = baseRecord("archived", ws, {
+      archivedAt: null,
+      updatedAt: 500,
+    });
+    const groups = [group(ws, [restoredRecord, archivedRecord])];
+    const restoredTarget = groups[0]!.conversations.find((c) => c.id === "restored")!;
+    const archivedTarget = groups[0]!.conversations.find((c) => c.id === "archived")!;
+
+    const afterRestore = patchAgentConversationSummaryInGroups(groups, restoredTarget, {
+      archivedAt: null,
+      updatedAt: 1_000,
+    });
+    const staleRestoreAck = baseRecord("restored", ws, {
+      archivedAt: 400,
+      updatedAt: 400,
+    });
+    const afterStaleRestoreAck = patchAgentConversationGroups(afterRestore, staleRestoreAck);
+    assert.equal(
+      afterStaleRestoreAck[0]!.conversations.find((c) => c.id === "restored")!.archivedAt,
+      null
+    );
+
+    const afterArchive = patchAgentConversationSummaryInGroups(afterStaleRestoreAck, archivedTarget, {
+      archivedAt: 1_100,
+      updatedAt: 1_100,
+    });
+    const staleArchiveAck = baseRecord("archived", ws, {
+      archivedAt: null,
+      lastEventSeq: 2,
+      updatedAt: 500,
+    });
+    const next = patchAgentConversationGroups(afterArchive, staleArchiveAck);
+    const restored = next[0]!.conversations.find((c) => c.id === "restored")!;
+    const archived = next[0]!.conversations.find((c) => c.id === "archived")!;
+    assert.equal(restored.archivedAt, null);
+    assert.equal(archived.archivedAt, 1_100);
+
+    const ctx = {
+      pinnedConversationIds: new Set<string>(),
+      unreadCompletionByConversationId: undefined,
+    };
+    const off = defaultAgentRailFilterToggles();
+    const on = { ...off, archived: true };
+    assert.equal(matchesAgentRailMultiFilter(restored, off, ctx), true);
+    assert.equal(matchesAgentRailMultiFilter(archived, off, ctx), false);
+    assert.equal(matchesAgentRailMultiFilter(restored, on, ctx), false);
+    assert.equal(matchesAgentRailMultiFilter(archived, on, ctx), true);
+  });
+
   test("placeholder new-chat records are not inserted into rail groups", () => {
     const ws = "ws1";
     const placeholder = baseRecord("draft-record", ws, {

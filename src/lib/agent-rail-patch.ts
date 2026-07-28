@@ -52,7 +52,11 @@ function mergeRailSummaryByRecency(
   }
   if (incoming.updatedAt < existing.updatedAt) {
     if (incoming.lastEventSeq > existing.lastEventSeq) {
-      return { ...incoming, updatedAt: existing.updatedAt };
+      return {
+        ...incoming,
+        archivedAt: existing.archivedAt,
+        updatedAt: existing.updatedAt,
+      };
     }
     const metaChanged =
       existing.status !== incoming.status ||
@@ -67,6 +71,7 @@ function mergeRailSummaryByRecency(
       return {
         ...existing,
         ...incoming,
+        archivedAt: existing.archivedAt,
         updatedAt: existing.updatedAt,
       };
     }
