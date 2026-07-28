@@ -1045,11 +1045,12 @@ export async function listAgentConversationsForServer(
 export async function listCrossWorkspaceAgentConversations(params?: {
   limit?: number;
   cursor?: string | null;
+  cache?: RequestCache;
 }): Promise<AgentConversationGroupsResult> {
   return request(
     `/api/agents/conversations/all${buildPageQuery(params)}`,
     undefined,
-    { skipWorkspaceHeader: true }
+    { skipWorkspaceHeader: true, cache: params?.cache }
   );
 }
 
@@ -1058,12 +1059,13 @@ export async function listCrossWorkspaceAgentConversationsForServer(
   params?: {
     limit?: number;
     cursor?: string | null;
+    cache?: RequestCache;
   }
 ): Promise<AgentConversationGroupsResult> {
   return request(
     `/api/agents/conversations/all${buildPageQuery(params)}`,
     undefined,
-    { skipWorkspaceHeader: true, server }
+    { skipWorkspaceHeader: true, server, cache: params?.cache }
   );
 }
 
@@ -1179,12 +1181,13 @@ export async function fetchAgentConversationSnapshot(
 
 export async function updateAgentConversationConfig(
   conversationId: string,
-  patch: AgentConversationConfigPatch
+  patch: AgentConversationConfigPatch,
+  options?: { server?: ServerRequestContext }
 ): Promise<{ conversation: AgentConversationRecord }> {
   return request(`/api/agents/conversations/${encodeURIComponent(conversationId)}/config`, {
     method: "PATCH",
     body: JSON.stringify(patch),
-  });
+  }, options);
 }
 
 export async function patchAgentConversationMetadata(
@@ -1317,12 +1320,13 @@ export async function prepareRedoAgentConversation(
 
 export async function forkAgentConversation(
   conversationId: string,
-  options?: { upToMessageId?: string; beforeMessageId?: string }
+  options?: { upToMessageId?: string; beforeMessageId?: string },
+  requestOptions?: { server?: ServerRequestContext }
 ): Promise<{ conversation: AgentConversationRecord }> {
   return request(`/api/agents/conversations/${encodeURIComponent(conversationId)}/fork`, {
     method: "POST",
     body: JSON.stringify(options ?? {}),
-  });
+  }, requestOptions);
 }
 
 export async function listOrchestrationBoards(): Promise<{

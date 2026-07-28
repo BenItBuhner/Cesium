@@ -52,7 +52,11 @@ function mergeRailSummaryByRecency(
   }
   if (incoming.updatedAt < existing.updatedAt) {
     if (incoming.lastEventSeq > existing.lastEventSeq) {
-      return { ...incoming, updatedAt: existing.updatedAt };
+      return {
+        ...incoming,
+        archivedAt: existing.archivedAt,
+        updatedAt: existing.updatedAt,
+      };
     }
     const metaChanged =
       existing.status !== incoming.status ||
@@ -67,6 +71,7 @@ function mergeRailSummaryByRecency(
       return {
         ...existing,
         ...incoming,
+        archivedAt: existing.archivedAt,
         updatedAt: existing.updatedAt,
       };
     }
@@ -138,6 +143,45 @@ export function removeConversationFromAgentGroups(
           conversations: group.conversations.filter((c) => c.id !== conversationId),
         }
   );
+}
+
+/**
+ * Patch one rail row without waiting for a full server record.
+ *
+ * Conversation ids can collide across connected servers, so every optimistic
+ * mutation must stay scoped to the row's workspace and server.
+ */
+export function patchAgentConversationSummaryInGroups(
+  groups: AgentConversationGroup[],
+  target: AgentRailConversationSummary,
+  patch: Partial<AgentRailConversationSummary>
+): AgentConversationGroup[] {
+  let changed = false;
+  const next = groups.map((group) => {
+    if (
+      group.workspace.id !== target.workspaceId ||
+      (target.serverId && group.serverId && group.serverId !== target.serverId)
+    ) {
+      return group;
+    }
+    const index = group.conversations.findIndex(
+      (conversation) =>
+        conversation.id === target.id &&
+        (!target.conversationKey || conversation.conversationKey === target.conversationKey)
+    );
+    if (index < 0) {
+      return group;
+    }
+    changed = true;
+    const conversations = group.conversations.slice();
+    conversations[index] = { ...conversations[index]!, ...patch };
+    return {
+      ...group,
+      conversations:
+        patch.updatedAt == null ? conversations : sortRailSummaries(conversations),
+    };
+  });
+  return changed ? next : groups;
 }
 
 export function patchAgentConversationTitleInGroups(

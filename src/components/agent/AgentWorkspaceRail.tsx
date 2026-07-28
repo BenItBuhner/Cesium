@@ -38,7 +38,8 @@ import {
   orderedRailConversationKeys,
   railBulkClickModifierInBulkMode,
 } from "@/lib/agent-rail-bulk-select";
-import { useAgentConversations } from "@/components/chat/AgentConversationsContext";
+import { useWorkbenchNotifications } from "@/components/notifications/WorkbenchNotificationProvider";
+import { WORKBENCH_NOTIFICATION_KIND } from "@/components/notifications/workbench-notification-types";
 import { useOpenInEditor } from "@/components/editor/OpenInEditorContext";
 import type { AgentRailConversationSummary } from "@/lib/agent-types";
 import {
@@ -75,7 +76,9 @@ import {
 } from "@/lib/per-server-workspace-memory";
 import {
   createWorkspaceGitWorktree,
+  forkAgentConversation,
   startOrchestrationMode,
+  updateAgentConversationConfig,
 } from "@/lib/server-api";
 import { dispatchAgentConversationUpserted } from "@/lib/agent-conversation-events";
 import { agentRecordToRailSummary } from "@/lib/agent-rail-patch";
@@ -481,7 +484,7 @@ function RailIconCustomizePanel({
 
 export function AgentWorkspaceRail() {
   const { openSettingsView } = useShellView();
-  const { renameConversation, forkConversation } = useAgentConversations();
+  const { pushNotification } = useWorkbenchNotifications();
   const { openAgentConversation } = useOpenInEditor();
   const {
     groups,
@@ -497,6 +500,7 @@ export function AgentWorkspaceRail() {
     refreshConversationGroups,
     applyOptimisticRailTitle,
     archiveConversation,
+    unarchiveConversation,
     pinnedRailConversations,
     pinConversation,
     unpinConversation,
@@ -585,6 +589,7 @@ export function AgentWorkspaceRail() {
   const [recentChatsOpen, setRecentChatsOpen] = useState(false);
   const [renameState, setRenameState] = useState<{
     conversationId: string;
+    conversation: AgentRailConversationSummary;
     draft: string;
     original: string;
   } | null>(null);
@@ -1501,6 +1506,7 @@ export function AgentWorkspaceRail() {
     (conversation: AgentRailConversationSummary) => {
       setRenameState({
         conversationId: conversation.id,
+        conversation,
         draft: conversation.title,
         original: conversation.title,
       });
@@ -1530,19 +1536,50 @@ export function AgentWorkspaceRail() {
     const nextTitle = renameState.draft.trim();
     const originalTitle = renameState.original.trim();
     const conversationId = renameState.conversationId;
+    const target = renameState.conversation;
     setRenameState(null);
     if (!nextTitle || nextTitle === originalTitle) {
       return;
     }
     applyOptimisticRailTitle(conversationId, nextTitle);
-    void renameConversation(conversationId, nextTitle).catch(() => {
-      void refreshConversationGroups();
-    });
+    const targetServer =
+      (target.serverId
+        ? servers.find((server) => server.id === target.serverId)
+        : activeServer) ?? activeServer;
+    void updateAgentConversationConfig(
+      conversationId,
+      { title: nextTitle },
+      {
+        server: {
+          serverId: targetServer.id,
+          baseUrl: targetServer.baseUrl,
+          workspaceId: target.workspaceId,
+        },
+      }
+    )
+      .then(({ conversation }) => {
+        dispatchAgentConversationUpserted(conversation, targetServer.id);
+      })
+      .catch((error) => {
+        applyOptimisticRailTitle(conversationId, originalTitle);
+        pushNotification({
+          kind: WORKBENCH_NOTIFICATION_KIND.editorNotice,
+          severity: "error",
+          title: "Rename Failed",
+          message:
+            error instanceof Error ? error.message : "Could not rename the conversation.",
+          autoDismissMs: 8_000,
+          compact: true,
+        });
+        void refreshConversationGroups();
+      });
   }, [
+    activeServer,
     applyOptimisticRailTitle,
+    pushNotification,
     refreshConversationGroups,
-    renameConversation,
     renameState,
+    servers,
   ]);
 
   const allConversationsForSearch = useMemo<RecentChatOption[]>(() => {
@@ -1795,12 +1832,23 @@ export function AgentWorkspaceRail() {
     [bulkSelectedKeys, railConversationByKey]
   );
 
+  const bulkSelectionIsArchived =
+    bulkSelectedConversations.length > 0 &&
+    bulkSelectedConversations.every((conversation) => conversation.archivedAt != null);
+
   const handleBulkArchive = useCallback(() => {
     for (const conversation of bulkSelectedConversations) {
-      archiveConversation(conversation.id);
+      void (conversation.archivedAt != null
+        ? unarchiveConversation(conversation)
+        : archiveConversation(conversation));
     }
     exitBulkSelect();
-  }, [archiveConversation, bulkSelectedConversations, exitBulkSelect]);
+  }, [
+    archiveConversation,
+    bulkSelectedConversations,
+    exitBulkSelect,
+    unarchiveConversation,
+  ]);
 
   const handleBulkPin = useCallback(() => {
     for (const conversation of bulkSelectedConversations) {
@@ -1986,9 +2034,13 @@ export function AgentWorkspaceRail() {
         },
         {
           type: "item",
-          id: "archive",
-          label: "Archive",
-          onSelect: () => archiveConversation(conversationId),
+          id: conversation.archivedAt != null ? "unarchive" : "archive",
+          label: conversation.archivedAt != null ? "Restore from Archive" : "Archive",
+          onSelect: () => {
+            void (conversation.archivedAt != null
+              ? unarchiveConversation(conversation)
+              : archiveConversation(conversation));
+          },
         },
         {
           type: "item",
@@ -1996,24 +2048,57 @@ export function AgentWorkspaceRail() {
           label: "Fork",
           disabled: conversation.status === "running" || conversation.status === "awaiting_permission",
           onSelect: () => {
-            void forkConversation(conversationId).catch(() => undefined);
+            const targetServer =
+              (conversation.serverId
+                ? servers.find((server) => server.id === conversation.serverId)
+                : activeServer) ?? activeServer;
+            void forkAgentConversation(
+              conversationId,
+              undefined,
+              {
+                server: {
+                  serverId: targetServer.id,
+                  baseUrl: targetServer.baseUrl,
+                  workspaceId: conversation.workspaceId,
+                },
+              }
+            )
+              .then(({ conversation: forkedConversation }) => {
+                dispatchAgentConversationUpserted(forkedConversation, targetServer.id);
+              })
+              .catch((error) => {
+                pushNotification({
+                  kind: WORKBENCH_NOTIFICATION_KIND.editorNotice,
+                  severity: "error",
+                  title: "Fork Failed",
+                  message:
+                    error instanceof Error
+                      ? error.message
+                      : "Could not fork the conversation.",
+                  autoDismissMs: 8_000,
+                  compact: true,
+                });
+              });
           },
         },
       ];
     },
     [
+      activeServer,
       archiveConversation,
       beginConversationRename,
       bulkSelectMode,
       bulkSelectedKeys,
       createFolderForWorkspace,
       toggleBulkSelectConversation,
-      forkConversation,
       handleOpenConversationInEditor,
       moveConversationToFolder,
       pinConversation,
+      pushNotification,
       resolveConversationFolderScope,
+      servers,
       settings.general.chatFolders,
+      unarchiveConversation,
       unpinConversation,
     ]
   );
@@ -2924,6 +3009,7 @@ export function AgentWorkspaceRail() {
               selectedCount={bulkSelectedKeys.size}
               showPin={!bulkSectionPinned}
               showUnpin={bulkSectionPinned}
+              archiveLabel={bulkSelectionIsArchived ? "Restore" : "Archive"}
               topBarPadClass={railTopBarPadClass}
               onArchive={handleBulkArchive}
               onPin={handleBulkPin}

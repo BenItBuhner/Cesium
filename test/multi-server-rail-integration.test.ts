@@ -4,6 +4,8 @@ import { createServer, type Server } from "node:http";
 import {
   fetchWorkspacesForServer,
   listCrossWorkspaceAgentConversationsForServer,
+  patchAgentConversationMetadata,
+  setActiveWorkspaceId,
 } from "../src/lib/server-api.ts";
 
 type StartedServer = {
@@ -24,8 +26,17 @@ async function startFakeCesiumServer(input: {
   workspaceName: string;
   conversationId: string;
   repositoryId?: string;
+  requests?: Array<{ method: string; url: string; workspaceId: string | null }>;
 }): Promise<StartedServer> {
   const server = createServer((req, res) => {
+    input.requests?.push({
+      method: req.method ?? "GET",
+      url: req.url ?? "",
+      workspaceId:
+        typeof req.headers["x-opencursor-workspace-id"] === "string"
+          ? req.headers["x-opencursor-workspace-id"]
+          : null,
+    });
     if (req.url === "/health") {
       return json(res, { ok: true });
     }
@@ -97,6 +108,18 @@ async function startFakeCesiumServer(input: {
         nextCursor: null,
       });
     }
+    if (
+      req.method === "PATCH" &&
+      req.url === `/api/agents/conversations/${input.conversationId}/metadata`
+    ) {
+      return json(res, {
+        conversation: {
+          id: input.conversationId,
+          workspaceId: input.workspaceId,
+          archivedAt: Date.now(),
+        },
+      });
+    }
     res.statusCode = 404;
     res.end("not found");
   });
@@ -158,5 +181,31 @@ describe("multi-server rail integration", () => {
     );
     assert.equal(railA.groups[0]?.conversations[0]?.id, "chat-a");
     assert.equal(railB.groups[0]?.conversations[0]?.id, "chat-b");
+  });
+
+  test("conversation metadata mutations target the row workspace instead of the active workspace", async () => {
+    const requests: Array<{ method: string; url: string; workspaceId: string | null }> = [];
+    const remote = await startFakeCesiumServer({
+      workspaceId: "workspace-remote",
+      workspaceName: "repo-remote",
+      conversationId: "chat-remote",
+      requests,
+    });
+    setActiveWorkspaceId("workspace-active");
+
+    await patchAgentConversationMetadata(
+      "chat-remote",
+      { archived: true },
+      {
+        server: {
+          serverId: "server-remote",
+          baseUrl: remote.baseUrl,
+          workspaceId: "workspace-remote",
+        },
+      }
+    );
+
+    const mutation = requests.find((request) => request.method === "PATCH");
+    assert.equal(mutation?.workspaceId, "workspace-remote");
   });
 });

@@ -63,9 +63,11 @@ import {
   AGENT_CONVERSATION_UPSERTED_EVENT,
   dispatchAgentConversationUpserted,
   type AgentConversationDeletedDetail,
+  type AgentConversationUpsertedDetail,
 } from "@/lib/agent-conversation-events";
 import {
   patchAgentConversationGroups,
+  patchAgentConversationSummaryInGroups,
   patchAgentConversationTitleInGroups,
   removeConversationFromAgentGroups,
 } from "@/lib/agent-rail-patch";
@@ -77,7 +79,6 @@ import {
   type AgentSwitcherCandidate,
 } from "@/lib/agent-conversation-mru";
 import { markConversationSwitchStart } from "@/lib/dev-perf";
-import type { AgentConversationRecord } from "@/lib/agent-types";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { useWorkspaceDirectory } from "@/contexts/WorkspaceDirectoryContext";
 import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
@@ -100,6 +101,8 @@ import {
   type AgentSidePaneSessionState,
   type EditorSessionState,
 } from "@/lib/workspace-session";
+import { useWorkbenchNotifications } from "@/components/notifications/WorkbenchNotificationProvider";
+import { WORKBENCH_NOTIFICATION_KIND } from "@/components/notifications/workbench-notification-types";
 
 const AGENT_RAIL_CYCLE_PINNED_SECTION_ID = "__agentPinned__";
 const AGENT_RAIL_COLLAPSED_WORKSPACES_STORAGE_KEY =
@@ -227,8 +230,8 @@ type AgentShellStateContextValue = {
   refreshConversationGroups: () => Promise<void>;
   /** Instant rail label while PATCH round-trips; callers should refresh on failure. */
   applyOptimisticRailTitle: (conversationId: string, title: string) => void;
-  archiveConversation: (conversationId: string) => void;
-  unarchiveConversation: (conversationId: string) => void;
+  archiveConversation: (conversation: AgentRailConversationSummary) => Promise<void>;
+  unarchiveConversation: (conversation: AgentRailConversationSummary) => Promise<void>;
   pinnedRailConversations: AgentRailConversationSummary[];
   pinConversation: (conversationId: string) => void;
   unpinConversation: (conversationId: string) => void;
@@ -496,8 +499,15 @@ export function AgentShellStateProvider({
     updateWorkspaceSession,
   } = useWorkspace();
   const { settings, updateSettings } = useGlobalSettings();
-  const { activeServer, onlineServers, serverStatusById, setActiveServer, ready: connectionsReady } =
-    useServerConnections();
+  const {
+    activeServer,
+    onlineServers,
+    servers,
+    serverStatusById,
+    setActiveServer,
+    ready: connectionsReady,
+  } = useServerConnections();
+  const { pushNotification } = useWorkbenchNotifications();
   const { workspaces: directoryWorkspaces } = useWorkspaceDirectory();
   const { isMobile } = useViewport();
   const urlConversationId =
@@ -543,6 +553,8 @@ export function AgentShellStateProvider({
   const railInitialLoadCompletedRef = useRef(false);
   const serverStatusByIdRef = useRef(serverStatusById);
   const railRefreshInFlightRef = useRef<Promise<void> | null>(null);
+  const railFetchGenerationRef = useRef(0);
+  const archiveMutationSequenceRef = useRef(new Map<string, number>());
   serverStatusByIdRef.current = serverStatusById;
 
   useEffect(() => {
@@ -582,6 +594,7 @@ export function AgentShellStateProvider({
   );
 
   const refreshConversationGroups = useCallback(async () => {
+    const fetchGeneration = ++railFetchGenerationRef.current;
     const servers = resolveRailFetchServers({
       activeServer,
       onlineServers,
@@ -594,7 +607,7 @@ export function AgentShellStateProvider({
             listCrossWorkspaceAgentConversationsForServer({
               serverId: server.id,
               baseUrl: server.baseUrl,
-            }),
+            }, { cache: "no-store" }),
             `Rail fetch for ${server.label}`
           );
           return {
@@ -619,15 +632,21 @@ export function AgentShellStateProvider({
     const successful = results.filter((result): result is NonNullable<typeof result> =>
       Boolean(result)
     );
+    if (fetchGeneration !== railFetchGenerationRef.current) {
+      return;
+    }
     if (applyRailGroupsResult(servers, successful)) {
       return;
     }
 
     try {
       const result = await withRailFetchTimeout(
-        listCrossWorkspaceAgentConversations(),
+        listCrossWorkspaceAgentConversations({ cache: "no-store" }),
         "Rail fetch for active server"
       );
+      if (fetchGeneration !== railFetchGenerationRef.current) {
+        return;
+      }
       setBackends(result.backends);
       setGroups(
         mergeAuthRequiredServerPlaceholders(
@@ -724,6 +743,7 @@ export function AgentShellStateProvider({
 
   const applyOptimisticRailTitle = useCallback(
     (conversationId: string, title: string) => {
+      railFetchGenerationRef.current += 1;
       setGroups((prev) => patchAgentConversationTitleInGroups(prev, conversationId, title));
     },
     []
@@ -759,23 +779,31 @@ export function AgentShellStateProvider({
 
   useEffect(() => {
     const onUpsert = (ev: Event) => {
-      const detail = (ev as CustomEvent<AgentConversationRecord>).detail;
+      const detail = (ev as CustomEvent<AgentConversationUpsertedDetail>).detail;
       if (!detail?.id || !detail.workspaceId) {
         return;
       }
-      setGroups((prev) => patchAgentConversationGroups(prev, detail, activeServer.id));
+      if (railInitialLoadCompletedRef.current) {
+        railFetchGenerationRef.current += 1;
+      }
+      setGroups((prev) =>
+        patchAgentConversationGroups(prev, detail, detail.serverId ?? activeServer.id)
+      );
     };
     const onDeleted = (ev: Event) => {
       const detail = (ev as CustomEvent<AgentConversationDeletedDetail>).detail;
       if (!detail?.conversationId || !detail.workspaceId) {
         return;
       }
+      if (railInitialLoadCompletedRef.current) {
+        railFetchGenerationRef.current += 1;
+      }
       setGroups((prev) =>
         removeConversationFromAgentGroups(
           prev,
           detail.conversationId,
           detail.workspaceId,
-          activeServer.id
+            detail.serverId ?? activeServer.id
         )
       );
     };
@@ -1605,36 +1633,86 @@ export function AgentShellStateProvider({
     ]
   );
 
-  const archiveConversation = useCallback(
-    (conversationId: string) => {
-      void (async () => {
-        try {
-          const { conversation } = await patchAgentConversationMetadata(conversationId, {
-            archived: true,
+  const setConversationArchived = useCallback(
+    async (summary: AgentRailConversationSummary, archived: boolean) => {
+      const mutationKey =
+        summary.conversationKey ??
+        `${summary.serverId ?? activeServer.id}:${summary.workspaceId}:${summary.id}`;
+      const sequence = (archiveMutationSequenceRef.current.get(mutationKey) ?? 0) + 1;
+      archiveMutationSequenceRef.current.set(mutationKey, sequence);
+      const optimisticUpdatedAt = Math.max(summary.updatedAt + 1, Date.now());
+      railFetchGenerationRef.current += 1;
+      setGroups((current) =>
+        patchAgentConversationSummaryInGroups(current, summary, {
+          archivedAt: archived ? optimisticUpdatedAt : null,
+          updatedAt: optimisticUpdatedAt,
+        })
+      );
+
+      const targetServer =
+        (summary.serverId
+          ? servers.find((server) => server.id === summary.serverId)
+          : activeServer) ?? activeServer;
+      try {
+        const { conversation } = await patchAgentConversationMetadata(
+          summary.id,
+          { archived },
+          {
+            server: {
+              serverId: targetServer.id,
+              baseUrl: targetServer.baseUrl,
+              workspaceId: summary.workspaceId,
+            },
+          }
+        );
+        if (archiveMutationSequenceRef.current.get(mutationKey) === sequence) {
+          dispatchAgentConversationUpserted(conversation, targetServer.id);
+        }
+      } catch (error) {
+        if (archiveMutationSequenceRef.current.get(mutationKey) === sequence) {
+          setGroups((current) =>
+            patchAgentConversationSummaryInGroups(current, summary, {
+              archivedAt: summary.archivedAt,
+              updatedAt: summary.updatedAt,
+            })
+          );
+          pushNotification({
+            kind: WORKBENCH_NOTIFICATION_KIND.editorNotice,
+            severity: "error",
+            title: archived ? "Archive Failed" : "Restore Failed",
+            message:
+              error instanceof Error
+                ? error.message
+                : `Could not ${archived ? "archive" : "restore"} the conversation.`,
+            autoDismissMs: 8_000,
+            compact: true,
           });
-          dispatchAgentConversationUpserted(conversation);
-        } catch {
           await refreshConversationGroupsWithState();
         }
-      })();
+      } finally {
+        if (archiveMutationSequenceRef.current.get(mutationKey) === sequence) {
+          archiveMutationSequenceRef.current.delete(mutationKey);
+        }
+      }
     },
-    [refreshConversationGroupsWithState]
+    [
+      activeServer,
+      pushNotification,
+      refreshConversationGroupsWithState,
+      servers,
+    ]
+  );
+
+  const archiveConversation = useCallback(
+    (conversation: AgentRailConversationSummary) =>
+      setConversationArchived(conversation, true),
+    [setConversationArchived]
   );
 
   const unarchiveConversation = useCallback(
-    (conversationId: string) => {
-      void (async () => {
-        try {
-          const { conversation } = await patchAgentConversationMetadata(conversationId, {
-            archived: false,
-          });
-          dispatchAgentConversationUpserted(conversation);
-        } catch {
-          await refreshConversationGroupsWithState();
-        }
-      })();
-    },
-    [refreshConversationGroupsWithState]
+    (conversation: AgentRailConversationSummary) =>
+      setConversationArchived(conversation, false),
+    [setConversationArchived]
   );
 
   const pinConversation = useCallback(

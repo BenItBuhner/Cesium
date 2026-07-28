@@ -7,7 +7,10 @@ import type {
   AgentConversationRecord,
   AgentProviderCapabilities,
 } from "../src/lib/agent-types";
-import { patchAgentConversationGroups } from "../src/lib/agent-rail-patch";
+import {
+  patchAgentConversationGroups,
+  patchAgentConversationSummaryInGroups,
+} from "../src/lib/agent-rail-patch";
 import type { WorkspaceRecord } from "../src/lib/types";
 
 const backendId = "cursor-sdk" as AgentBackendId;
@@ -141,6 +144,64 @@ describe("patchAgentConversationGroups", () => {
     assert.equal(next[0]!.conversations[0]!.status, "idle");
   });
 
+  test("stale updatedAt patch cannot revert newer archive state", async () => {
+    const { defaultAgentRailFilterToggles, matchesAgentRailMultiFilter } = await import(
+      "../src/lib/agent-rail"
+    );
+    const ws = "ws1";
+    const restoredRecord = baseRecord("restored", ws, {
+      archivedAt: 400,
+      updatedAt: 400,
+    });
+    const archivedRecord = baseRecord("archived", ws, {
+      archivedAt: null,
+      updatedAt: 500,
+    });
+    const groups = [group(ws, [restoredRecord, archivedRecord])];
+    const restoredTarget = groups[0]!.conversations.find((c) => c.id === "restored")!;
+    const archivedTarget = groups[0]!.conversations.find((c) => c.id === "archived")!;
+
+    const afterRestore = patchAgentConversationSummaryInGroups(groups, restoredTarget, {
+      archivedAt: null,
+      updatedAt: 1_000,
+    });
+    const staleRestoreAck = baseRecord("restored", ws, {
+      archivedAt: 400,
+      updatedAt: 400,
+    });
+    const afterStaleRestoreAck = patchAgentConversationGroups(afterRestore, staleRestoreAck);
+    assert.equal(
+      afterStaleRestoreAck[0]!.conversations.find((c) => c.id === "restored")!.archivedAt,
+      null
+    );
+
+    const afterArchive = patchAgentConversationSummaryInGroups(afterStaleRestoreAck, archivedTarget, {
+      archivedAt: 1_100,
+      updatedAt: 1_100,
+    });
+    const staleArchiveAck = baseRecord("archived", ws, {
+      archivedAt: null,
+      lastEventSeq: 2,
+      updatedAt: 500,
+    });
+    const next = patchAgentConversationGroups(afterArchive, staleArchiveAck);
+    const restored = next[0]!.conversations.find((c) => c.id === "restored")!;
+    const archived = next[0]!.conversations.find((c) => c.id === "archived")!;
+    assert.equal(restored.archivedAt, null);
+    assert.equal(archived.archivedAt, 1_100);
+
+    const ctx = {
+      pinnedConversationIds: new Set<string>(),
+      unreadCompletionByConversationId: undefined,
+    };
+    const off = defaultAgentRailFilterToggles();
+    const on = { ...off, archived: true };
+    assert.equal(matchesAgentRailMultiFilter(restored, off, ctx), true);
+    assert.equal(matchesAgentRailMultiFilter(archived, off, ctx), false);
+    assert.equal(matchesAgentRailMultiFilter(restored, on, ctx), false);
+    assert.equal(matchesAgentRailMultiFilter(archived, on, ctx), true);
+  });
+
   test("placeholder new-chat records are not inserted into rail groups", () => {
     const ws = "ws1";
     const placeholder = baseRecord("draft-record", ws, {
@@ -193,6 +254,55 @@ describe("patchAgentConversationGroups", () => {
     assert.equal(summary.origin?.kind, "cloud");
     assert.equal(summary.origin?.providerId, "github");
     assert.equal(summary.origin?.label, "owner/repo#42");
+  });
+});
+
+describe("patchAgentConversationSummaryInGroups", () => {
+  test("optimistically archives only the matching workspace and server row", () => {
+    const shared = baseRecord("same-chat", "same-workspace");
+    const laptop = group("same-workspace", [shared], "laptop");
+    const desktop = group("same-workspace", [shared], "desktop");
+    const target = {
+      ...desktop.conversations[0]!,
+      serverId: "desktop",
+      conversationKey: "desktop:same-chat",
+    };
+    desktop.conversations[0] = target;
+    laptop.conversations[0] = {
+      ...laptop.conversations[0]!,
+      serverId: "laptop",
+      conversationKey: "laptop:same-chat",
+    };
+
+    const next = patchAgentConversationSummaryInGroups(
+      [laptop, desktop],
+      target,
+      { archivedAt: 900, updatedAt: 900 }
+    );
+
+    assert.equal(next[0]?.conversations[0]?.archivedAt, null);
+    assert.equal(next[1]?.conversations[0]?.archivedAt, 900);
+    assert.equal(next[1]?.conversations[0]?.updatedAt, 900);
+  });
+
+  test("restores the exact prior archive state after a failed mutation", () => {
+    const archived = baseRecord("chat", "ws", { archivedAt: 400, updatedAt: 400 });
+    const groups = [group("ws", [archived], "server")];
+    const target = {
+      ...groups[0]!.conversations[0]!,
+      serverId: "server",
+    };
+    const optimistic = patchAgentConversationSummaryInGroups(groups, target, {
+      archivedAt: null,
+      updatedAt: 800,
+    });
+    const rolledBack = patchAgentConversationSummaryInGroups(optimistic, target, {
+      archivedAt: target.archivedAt,
+      updatedAt: target.updatedAt,
+    });
+
+    assert.equal(rolledBack[0]?.conversations[0]?.archivedAt, 400);
+    assert.equal(rolledBack[0]?.conversations[0]?.updatedAt, 400);
   });
 });
 

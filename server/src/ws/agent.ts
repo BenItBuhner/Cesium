@@ -170,6 +170,14 @@ subscribeAgentStoreEvents((event) => {
   }
 
   if (event.type === "conversation_deleted") {
+    eventBroadcastPending.delete(
+      keyForEventWorkspaceConversation(event.workspaceId, event.conversationId)
+    );
+    const pendingUpserts = conversationUpsertPending.get(event.workspaceId);
+    pendingUpserts?.delete(event.conversationId);
+    if (pendingUpserts?.size === 0) {
+      conversationUpsertPending.delete(event.workspaceId);
+    }
     const clients = workspaceClients.get(event.workspaceId);
     if (!clients) {
       return;
