@@ -7,17 +7,23 @@ export const AGENT_CONVERSATION_DELETED_EVENT = "opencursor:agent_conversation_d
 export type AgentConversationDeletedDetail = {
   conversationId: string;
   workspaceId: string;
+  serverId?: string;
+};
+
+export type AgentConversationUpsertedDetail = AgentConversationRecord & {
+  serverId?: string;
 };
 
 export function dispatchAgentConversationUpserted(
-  conversation: AgentConversationRecord
+  conversation: AgentConversationRecord,
+  serverId?: string
 ): void {
   if (typeof window === "undefined") {
     return;
   }
   window.dispatchEvent(
-    new CustomEvent<AgentConversationRecord>(AGENT_CONVERSATION_UPSERTED_EVENT, {
-      detail: conversation,
+    new CustomEvent<AgentConversationUpsertedDetail>(AGENT_CONVERSATION_UPSERTED_EVENT, {
+      detail: serverId ? { ...conversation, serverId } : conversation,
     })
   );
 }

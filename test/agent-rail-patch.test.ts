@@ -7,7 +7,10 @@ import type {
   AgentConversationRecord,
   AgentProviderCapabilities,
 } from "../src/lib/agent-types";
-import { patchAgentConversationGroups } from "../src/lib/agent-rail-patch";
+import {
+  patchAgentConversationGroups,
+  patchAgentConversationSummaryInGroups,
+} from "../src/lib/agent-rail-patch";
 import type { WorkspaceRecord } from "../src/lib/types";
 
 const backendId = "cursor-sdk" as AgentBackendId;
@@ -193,6 +196,55 @@ describe("patchAgentConversationGroups", () => {
     assert.equal(summary.origin?.kind, "cloud");
     assert.equal(summary.origin?.providerId, "github");
     assert.equal(summary.origin?.label, "owner/repo#42");
+  });
+});
+
+describe("patchAgentConversationSummaryInGroups", () => {
+  test("optimistically archives only the matching workspace and server row", () => {
+    const shared = baseRecord("same-chat", "same-workspace");
+    const laptop = group("same-workspace", [shared], "laptop");
+    const desktop = group("same-workspace", [shared], "desktop");
+    const target = {
+      ...desktop.conversations[0]!,
+      serverId: "desktop",
+      conversationKey: "desktop:same-chat",
+    };
+    desktop.conversations[0] = target;
+    laptop.conversations[0] = {
+      ...laptop.conversations[0]!,
+      serverId: "laptop",
+      conversationKey: "laptop:same-chat",
+    };
+
+    const next = patchAgentConversationSummaryInGroups(
+      [laptop, desktop],
+      target,
+      { archivedAt: 900, updatedAt: 900 }
+    );
+
+    assert.equal(next[0]?.conversations[0]?.archivedAt, null);
+    assert.equal(next[1]?.conversations[0]?.archivedAt, 900);
+    assert.equal(next[1]?.conversations[0]?.updatedAt, 900);
+  });
+
+  test("restores the exact prior archive state after a failed mutation", () => {
+    const archived = baseRecord("chat", "ws", { archivedAt: 400, updatedAt: 400 });
+    const groups = [group("ws", [archived], "server")];
+    const target = {
+      ...groups[0]!.conversations[0]!,
+      serverId: "server",
+    };
+    const optimistic = patchAgentConversationSummaryInGroups(groups, target, {
+      archivedAt: null,
+      updatedAt: 800,
+    });
+    const rolledBack = patchAgentConversationSummaryInGroups(optimistic, target, {
+      archivedAt: target.archivedAt,
+      updatedAt: target.updatedAt,
+    });
+
+    assert.equal(rolledBack[0]?.conversations[0]?.archivedAt, 400);
+    assert.equal(rolledBack[0]?.conversations[0]?.updatedAt, 400);
   });
 });
 

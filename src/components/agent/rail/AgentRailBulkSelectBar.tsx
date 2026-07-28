@@ -6,6 +6,7 @@ export function AgentRailBulkSelectBar({
   selectedCount,
   showPin,
   showUnpin,
+  archiveLabel,
   topBarPadClass,
   onArchive,
   onPin,
@@ -15,6 +16,7 @@ export function AgentRailBulkSelectBar({
   selectedCount: number;
   showPin: boolean;
   showUnpin: boolean;
+  archiveLabel: "Archive" | "Restore";
   topBarPadClass: string;
   onArchive: () => void;
   onPin: () => void;
@@ -41,7 +43,7 @@ export function AgentRailBulkSelectBar({
           className="flex items-center gap-[4px] rounded-[var(--agent-control-radius)] px-[6px] py-[3px] font-sans text-[12px] text-[var(--text-primary)] transition-colors hover:bg-[var(--agent-card-bg)] disabled:cursor-not-allowed disabled:opacity-40"
         >
           <Archive className="size-[13px]" strokeWidth={1.6} aria-hidden />
-          Archive
+          {archiveLabel}
         </button>
         {showPin ? (
           <button
