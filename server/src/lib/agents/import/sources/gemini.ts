@@ -13,6 +13,7 @@ import {
   asRecord,
   asString,
   clampDetail,
+  dedupeSessionsByLatest,
   extractToolOutputText,
   inferToolKind,
   pathExists,
@@ -435,7 +436,7 @@ export function createGeminiImportSource(): HarnessImportSource {
         }
         summaries.push(summarizeConversation(conversation, file, conversation.sessionId, statMtime));
       }
-      return summaries.sort(
+      return dedupeSessionsByLatest(summaries).sort(
         (a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0) || a.id.localeCompare(b.id)
       );
     },

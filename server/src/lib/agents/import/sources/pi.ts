@@ -13,6 +13,7 @@ import {
   asRecord,
   asString,
   clampDetail,
+  dedupeSessionsByLatest,
   extractToolOutputText,
   inferToolKind,
   listFilesRecursive,
@@ -344,7 +345,7 @@ export function createPiImportSource(): HarnessImportSource {
         }
         summaries.push(summarizePiSession(entries, header, file, sessionId, statMtime));
       }
-      return summaries.sort(
+      return dedupeSessionsByLatest(summaries).sort(
         (a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0) || a.id.localeCompare(b.id)
       );
     },

@@ -87,6 +87,29 @@ export async function listFilesRecursive(root: string): Promise<string[]> {
   return out;
 }
 
+/**
+ * Dedupe session summaries by native id. Re-homed copies of the same session
+ * exist in several storage dirs after import; keep the furthest-along one
+ * (highest updatedAt, then highest messageCount).
+ */
+export function dedupeSessionsByLatest<T extends { id: string; updatedAt: number | null; messageCount: number }>(
+  sessions: T[]
+): T[] {
+  const byId = new Map<string, T>();
+  for (const session of sessions) {
+    const existing = byId.get(session.id);
+    if (
+      !existing ||
+      (session.updatedAt ?? 0) > (existing.updatedAt ?? 0) ||
+      ((session.updatedAt ?? 0) === (existing.updatedAt ?? 0) &&
+        session.messageCount > existing.messageCount)
+    ) {
+      byId.set(session.id, session);
+    }
+  }
+  return [...byId.values()];
+}
+
 /** Map a harness tool name onto the closest Cesium toolKind. */
 export function inferToolKind(toolName: string): string {
   const name = toolName.toLowerCase();

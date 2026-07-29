@@ -11,6 +11,7 @@ import type {
 } from "../types.js";
 import {
   clampDetail,
+  dedupeSessionsByLatest,
   extractToolOutputText,
   inferToolKind,
   listFilesRecursive,
@@ -392,7 +393,7 @@ export function createClaudeCodeImportSource(): HarnessImportSource {
         }
         summaries.push(summarizeEntries(entries, file, sessionId, statMtime));
       }
-      return summaries.sort(
+      return dedupeSessionsByLatest(summaries).sort(
         (a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0) || a.id.localeCompare(b.id)
       );
     },
