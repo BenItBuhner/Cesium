@@ -87,7 +87,8 @@ agentImportRoutes.get("/api/agents/imports/:backendId/sessions", async (c) => {
   const sessions = await source.listSessions();
 
   // Annotate sessions that were already imported into the requesting
-  // workspace so the UI offers "re-sync" instead of a duplicate import.
+  // workspace so the UI opens the existing conversation instead of offering a
+  // duplicate import (imports stay in sync with the source automatically).
   const workspaceId = c.req.header(WORKSPACE_ID_HEADER)?.trim();
   const importedByExternalId = new Map<string, string>();
   if (workspaceId) {

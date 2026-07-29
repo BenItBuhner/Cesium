@@ -111,8 +111,14 @@ function buildImportedRecord(input: {
     config: {
       backendId: input.backendId,
       mode: backend?.defaultMode ?? "agent",
-      modelId: backend?.defaultModelId ?? "auto",
-      modelName: backend?.defaultModelName ?? "Auto",
+      // Prefer the model the source session was actually running so native
+      // continuation uses the exact same model, not the backend default.
+      modelId: input.transcript.summary.modelId ?? backend?.defaultModelId ?? "auto",
+      modelName:
+        input.transcript.summary.modelName ??
+        input.transcript.summary.modelId ??
+        backend?.defaultModelName ??
+        "Auto",
     },
     providerSessionId: input.providerSessionId,
     configOptions: [],
@@ -283,6 +289,17 @@ export async function importHarnessSession(input: {
     const updated = await updateConversationRecord(input.workspace.id, existing.id, (current) => ({
       ...current,
       title: transcript.summary.title,
+      // Adopt the source model only while the conversation still runs on the
+      // backend default — a model the user picked in Cesium is never clobbered.
+      config:
+        transcript.summary.modelId &&
+        (!current.config.modelId || current.config.modelId === "auto")
+          ? {
+              ...current.config,
+              modelId: transcript.summary.modelId,
+              modelName: transcript.summary.modelName ?? transcript.summary.modelId,
+            }
+          : current.config,
       providerSessionId,
       status: "idle",
       pendingPermission: null,

@@ -387,7 +387,11 @@ function summarizeOpenCodeSession(
   }
   let messageCount = 0;
   let preview: string | undefined;
+  let model: { providerID?: string; modelID?: string } | undefined;
   for (const message of messages) {
+    if (message.role === "assistant" && message.model?.modelID) {
+      model = message.model;
+    }
     const messageParts = (partsByMessage.get(message.id) ?? []).filter((part) => !part.ignored);
     if (message.role === "user") {
       const text = messageParts
@@ -425,6 +429,14 @@ function summarizeOpenCodeSession(
     messageCount,
     sourcePath: session.sourcePath,
     ...(preview ? { preview } : {}),
+    // OpenCode addresses models as "providerID/modelID" — continuation keeps
+    // the exact model of the last assistant turn.
+    ...(model?.modelID
+      ? {
+          modelId: model.providerID ? `${model.providerID}/${model.modelID}` : model.modelID,
+          modelName: model.modelID,
+        }
+      : {}),
   };
 }
 

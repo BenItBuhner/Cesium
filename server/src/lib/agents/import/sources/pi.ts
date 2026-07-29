@@ -137,7 +137,15 @@ function summarizePiSession(
   let preview: string | undefined;
   let messageCount = 0;
   let updatedAt: number | null = null;
+  let provider: string | undefined;
+  let modelId: string | undefined;
   for (const entry of entries) {
+    if (entry.type === "model_change") {
+      const record = entry as PiEntry & { provider?: string; modelId?: string };
+      provider = asString(record.provider) ?? provider;
+      modelId = asString(record.modelId) ?? modelId;
+      continue;
+    }
     if (entry.type !== "message" || !entry.message) {
       continue;
     }
@@ -181,6 +189,9 @@ function summarizePiSession(
     messageCount,
     sourcePath,
     ...(preview ? { preview } : {}),
+    // Pi models are addressed as "provider/modelId" — continuation keeps the
+    // exact model the source session was running.
+    ...(provider && modelId ? { modelId: `${provider}/${modelId}`, modelName: modelId } : {}),
   };
 }
 

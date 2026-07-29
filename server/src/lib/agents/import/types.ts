@@ -36,6 +36,14 @@ export type HarnessSessionSummary = {
   sourcePath: string;
   /** Short first-user-message snippet for list previews. */
   preview?: string;
+  /**
+   * Harness-native model identifier in the backend's own `config.modelId`
+   * format, when the session records one — continuation then uses the exact
+   * model the source session was running, not the backend default.
+   */
+  modelId?: string;
+  /** Human-readable model label paired with `modelId`. */
+  modelName?: string;
 };
 
 export type HarnessSessionTranscript = {
