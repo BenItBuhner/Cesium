@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { WorkspaceRecord } from "../../workspace-registry.js";
 import { AGENT_BACKENDS } from "../providers.js";
 import {
@@ -27,6 +28,49 @@ export type HarnessImportResult = {
   title: string;
   backendId: AgentBackendId;
 };
+
+/**
+ * Imported transcripts contain no runtime `status` events, so without help
+ * every turn would render a perpetual "Working" indicator in the thread. Close
+ * each completed turn with a terminal idle status, exactly like a live
+ * provider does at end-of-turn.
+ */
+function settleImportedTurns(
+  events: AgentEventInput[],
+  conversationId: string
+): AgentEventInput[] {
+  const out: AgentEventInput[] = [];
+  let openTurn = false;
+  let lastCreatedAt = 0;
+  const idleEvent = (): AgentEventInput => ({
+    eventId: randomUUID(),
+    conversationId,
+    kind: "status",
+    status: "idle",
+    createdAt: lastCreatedAt + 1,
+  });
+  for (const event of events) {
+    if (event.kind === "user_message" && openTurn) {
+      out.push(idleEvent());
+    }
+    out.push(event);
+    if (event.kind === "user_message") {
+      openTurn = true;
+    } else if (
+      event.kind === "status" &&
+      (event.status === "idle" || event.status === "failed" || event.status === "cancelled")
+    ) {
+      openTurn = false;
+    }
+    if (typeof event.createdAt === "number") {
+      lastCreatedAt = Math.max(lastCreatedAt, event.createdAt);
+    }
+  }
+  if (openTurn) {
+    out.push(idleEvent());
+  }
+  return out;
+}
 
 /** Find the Cesium conversation that already represents this harness session. */
 export async function findImportedConversation(
@@ -102,9 +146,79 @@ function buildImportedRecord(input: {
       sourcePath: input.transcript.summary.sourcePath,
       ...(input.transcript.summary.cwd ? { sourceCwd: input.transcript.summary.cwd } : {}),
       ...(input.transcript.startedAt ? { sourceStartedAt: input.transcript.startedAt } : {}),
+      sourceUpdatedAt: input.transcript.summary.updatedAt ?? null,
       importedAt: now,
     },
   };
+}
+
+const lastAutoSyncCheck = new Map<string, number>();
+const AUTO_SYNC_MIN_INTERVAL_MS = 5_000;
+
+/**
+ * Keep an imported conversation transparently up to date with its harness's
+ * native storage. Called when a conversation is opened: if the user continued
+ * the session directly in the source CLI since the last sync, the new turns
+ * are pulled in automatically — no manual "re-sync" step exists or is needed.
+ *
+ * Never runs while the conversation is active in Cesium, after a handoff to a
+ * different backend, or when the source has nothing newer than what Cesium
+ * itself last wrote (so Cesium-side continuations are never clobbered).
+ */
+export async function maybeAutoSyncImportedConversation(
+  workspace: WorkspaceRecord,
+  record: AgentConversationRecord,
+  options?: { ignoreThrottle?: boolean }
+): Promise<boolean> {
+  const origin = record.origin;
+  if (origin?.kind !== "import") {
+    return false;
+  }
+  if (record.config.backendId !== origin.backendId) {
+    return false;
+  }
+  if (record.status !== "idle" && record.status !== "failed") {
+    return false;
+  }
+  const now = Date.now();
+  if (!options?.ignoreThrottle) {
+    const lastCheck = lastAutoSyncCheck.get(record.id) ?? 0;
+    if (now - lastCheck < AUTO_SYNC_MIN_INTERVAL_MS) {
+      return false;
+    }
+  }
+  lastAutoSyncCheck.set(record.id, now);
+  const source = getImportSourceForBackend(origin.backendId);
+  if (!source) {
+    return false;
+  }
+  try {
+    const transcript = await source.readSession(origin.externalSessionId);
+    const sourceUpdatedAt = transcript.summary.updatedAt;
+    if (sourceUpdatedAt == null) {
+      return false;
+    }
+    if (origin.sourceUpdatedAt != null && sourceUpdatedAt <= origin.sourceUpdatedAt) {
+      return false;
+    }
+    if (sourceUpdatedAt <= record.updatedAt) {
+      // The newest source content is something Cesium itself streamed live —
+      // the conversation already reflects it.
+      return false;
+    }
+    await importHarnessSession({
+      workspace,
+      backendId: origin.backendId,
+      externalSessionId: origin.externalSessionId,
+    });
+    return true;
+  } catch (error) {
+    console.warn(
+      `[agent-import] auto-sync failed for conversation ${record.id}:`,
+      error instanceof Error ? error.message : error
+    );
+    return false;
+  }
 }
 
 /**
@@ -161,10 +275,10 @@ export async function importHarnessSession(input: {
         staleEvents.map((event) => event.eventId)
       );
     }
-    const events: AgentEventInput[] = transcript.events.map((event) => ({
-      ...event,
-      conversationId: existing.id,
-    }));
+    const events: AgentEventInput[] = settleImportedTurns(
+      transcript.events.map((event) => ({ ...event, conversationId: existing.id })),
+      existing.id
+    );
     await appendConversationEvents(input.workspace.id, existing.id, events);
     const updated = await updateConversationRecord(input.workspace.id, existing.id, (current) => ({
       ...current,
@@ -181,6 +295,7 @@ export async function importHarnessSession(input: {
         sourcePath: transcript.summary.sourcePath,
         ...(transcript.summary.cwd ? { sourceCwd: transcript.summary.cwd } : {}),
         ...(transcript.startedAt ? { sourceStartedAt: transcript.startedAt } : {}),
+        sourceUpdatedAt: transcript.summary.updatedAt ?? null,
         importedAt: Date.now(),
       },
     }));
@@ -203,10 +318,10 @@ export async function importHarnessSession(input: {
     conversationId,
   });
   await saveConversationRecord(record);
-  const events: AgentEventInput[] = transcript.events.map((event) => ({
-    ...event,
-    conversationId,
-  }));
+  const events: AgentEventInput[] = settleImportedTurns(
+    transcript.events.map((event) => ({ ...event, conversationId })),
+    conversationId
+  );
   await appendConversationEvents(input.workspace.id, conversationId, events);
 
   return {

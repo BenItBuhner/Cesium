@@ -468,6 +468,8 @@ export type AgentConversationOrigin =
       sourceCwd?: string;
       /** ISO timestamp of the source session start, when known. */
       sourceStartedAt?: string;
+      /** Source-side last-activity timestamp at the moment of the last sync. */
+      sourceUpdatedAt?: number | null;
       /** When the session was last (re-)imported into Cesium. */
       importedAt: number;
     };

@@ -12,16 +12,13 @@ import type {
 import {
   asRecord,
   asString,
-  clampDetail,
-  extractToolOutputText,
-  inferToolKind,
   listFilesRecursive,
   pathExists,
   readJsonLines,
-  summarizeToolInput,
   toEpochMs,
   truncateTitle,
 } from "../reader-utils.js";
+import { importedToolCallEvent, importedToolResultEvent } from "../tool-events.js";
 
 /**
  * Codex CLI stores one rollout file per thread:
@@ -182,8 +179,30 @@ export function mapCodexRecordsToEvents(
     lastTs = (lastTs ?? Date.now()) + 1;
     return lastTs;
   };
-  /** call_id -> index of the tool_call event, for output updates. */
-  const toolCallIndexByCallId = new Map<string, number>();
+  /** call_id -> original call payload, for output updates. */
+  const toolInfoByCallId = new Map<string, { name: string; input: unknown }>();
+  /** Codex ships arguments as JSON strings, `cmd` keys, and argv arrays. */
+  const parseToolInput = (raw: unknown): unknown => {
+    let value = raw;
+    if (typeof value === "string") {
+      try {
+        value = JSON.parse(value);
+      } catch {
+        return raw;
+      }
+    }
+    const record = asRecord(value);
+    if (!record) {
+      return value;
+    }
+    const command = Array.isArray(record.command)
+      ? record.command.map((part) => String(part)).join(" ")
+      : asString(record.command) ?? asString(record.cmd);
+    return command ? { ...record, command } : value;
+  };
+  /** Codex exec tools carry opaque names; classify them as terminal commands. */
+  const canonicalToolName = (name: string): string =>
+    /^(exec|shell|local_shell|unified_exec|container\.exec)/i.test(name) ? "shell" : name;
 
   for (const record of records) {
     if (record.type !== "response_item") {
@@ -267,49 +286,57 @@ export function mapCodexRecordsToEvents(
       payloadType === "local_shell_call" ||
       payloadType === "custom_tool_call"
     ) {
-      const name =
-        asString(payload.name) ?? (payloadType === "local_shell_call" ? "shell" : "tool");
+      const name = canonicalToolName(
+        asString(payload.name) ?? (payloadType === "local_shell_call" ? "shell" : "tool")
+      );
       const callId =
         asString(payload.call_id) ?? asString(payload.callId) ?? asString(payload.id) ?? randomUUID();
       const rawInput =
         payloadType === "local_shell_call"
-          ? asRecord(payload.action)?.command ?? payload.action
-          : asString(payload.arguments) ?? payload.input ?? payload.arguments;
-      toolCallIndexByCallId.set(callId, events.length);
-      events.push({
-        eventId: randomUUID(),
-        conversationId,
-        kind: "tool_call",
-        toolCallId: callId,
-        title: name,
-        toolKind: inferToolKind(name),
-        status: "completed",
-        ...(clampDetail(summarizeToolInput(rawInput))
-          ? { detail: clampDetail(summarizeToolInput(rawInput)) }
-          : {}),
-        createdAt,
-      });
+          ? parseToolInput(payload.action)
+          : parseToolInput(asString(payload.arguments) ?? payload.input ?? payload.arguments);
+      toolInfoByCallId.set(callId, { name, input: rawInput });
+      events.push(
+        importedToolCallEvent({
+          conversationId,
+          toolCallId: callId,
+          name,
+          toolInput: rawInput,
+          createdAt,
+        })
+      );
       continue;
     }
 
     if (payloadType === "function_call_output" || payloadType === "custom_tool_call_output") {
       const callId = asString(payload.call_id) ?? asString(payload.callId);
-      const output = clampDetail(extractToolOutputText(payload.output));
-      if (!callId || output === undefined) {
+      if (!callId) {
         continue;
       }
-      const targetIndex = toolCallIndexByCallId.get(callId);
-      const target = targetIndex !== undefined ? events[targetIndex] : undefined;
-      if (target && target.kind === "tool_call") {
-        events.push({
-          eventId: randomUUID(),
-          conversationId,
-          kind: "tool_call_update",
-          toolCallId: callId,
-          status: "completed",
-          detail: [target.detail, output].filter(Boolean).join("\n\n--- Output ---\n\n"),
-          createdAt,
-        });
+      const info = toolInfoByCallId.get(callId);
+      if (info) {
+        // Shell outputs are JSON-encoded strings ({"output": "...", "metadata": …}).
+        let result = payload.output;
+        if (typeof result === "string") {
+          try {
+            const parsed: unknown = JSON.parse(result);
+            if (parsed && typeof parsed === "object") {
+              result = parsed as Record<string, unknown>;
+            }
+          } catch {
+            // plain-text output — keep as-is
+          }
+        }
+        events.push(
+          importedToolResultEvent({
+            conversationId,
+            toolCallId: callId,
+            name: info.name,
+            toolInput: info.input,
+            result,
+            createdAt,
+          })
+        );
       }
     }
   }

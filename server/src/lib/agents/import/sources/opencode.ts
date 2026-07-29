@@ -11,15 +11,12 @@ import type {
 import {
   asRecord,
   asString,
-  clampDetail,
-  extractToolOutputText,
-  inferToolKind,
   listFilesRecursive,
   pathExists,
-  summarizeToolInput,
   toEpochMs,
   truncateTitle,
 } from "../reader-utils.js";
+import { importedToolCallEvent, importedToolResultEvent } from "../tool-events.js";
 
 /**
  * OpenCode persists sessions in one of two layouts:
@@ -522,26 +519,29 @@ export function mapOpenCodeMessagesToEvents(
       }
       if (part.type === "tool" && part.tool) {
         const toolCallId = part.callID ?? part.id;
-        const inputDetail = clampDetail(summarizeToolInput(part.state?.input));
-        const outputDetail = clampDetail(
-          part.state?.error !== undefined
-            ? extractToolOutputText(part.state?.error)
-            : extractToolOutputText(part.state?.output)
+        const status = mapToolStatus(part.state?.status);
+        events.push(
+          importedToolCallEvent({
+            conversationId,
+            toolCallId,
+            name: part.tool,
+            toolInput: part.state?.input,
+            createdAt,
+          })
         );
-        const detail = [inputDetail, outputDetail]
-          .filter(Boolean)
-          .join(inputDetail && outputDetail ? "\n\n--- Output ---\n\n" : "");
-        events.push({
-          eventId: part.id,
-          conversationId,
-          kind: "tool_call",
-          toolCallId,
-          title: part.state?.title?.trim() || part.tool,
-          toolKind: inferToolKind(part.tool),
-          status: mapToolStatus(part.state?.status),
-          ...(detail ? { detail } : {}),
-          createdAt,
-        });
+        if (part.state?.output !== undefined || part.state?.error !== undefined) {
+          events.push(
+            importedToolResultEvent({
+              conversationId,
+              toolCallId,
+              name: part.tool,
+              toolInput: part.state?.input,
+              result: part.state?.error ?? part.state?.output,
+              isError: status === "failed",
+              createdAt: createdAt + 1,
+            })
+          );
+        }
         continue;
       }
     }

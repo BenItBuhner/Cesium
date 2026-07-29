@@ -28,6 +28,8 @@ type ImportConversationDialogProps = {
   open: boolean;
   onClose: () => void;
   onImported: (result: AgentImportResult) => void;
+  /** Open a session that is already imported — it stays in sync automatically. */
+  onOpenExisting: (conversationId: string, title: string) => void;
 };
 
 function formatRelativeTime(epochMs: number | null): string {
@@ -57,6 +59,7 @@ export function ImportConversationDialog({
   open,
   onClose,
   onImported,
+  onOpenExisting,
 }: ImportConversationDialogProps) {
   const [sources, setSources] = useState<AgentImportSourceInfo[] | null>(null);
   const [sourcesError, setSourcesError] = useState<string | null>(null);
@@ -210,8 +213,8 @@ export function ImportConversationDialog({
               Import conversation
             </h2>
             <p className="font-sans text-[12px] text-[var(--text-secondary)]">
-              Migrate a session from another agent harness. The native session id and full
-              transcript are preserved, and the original harness keeps resuming it natively.
+              Migrate a session from another agent harness. The native session is preserved
+              verbatim, keeps resuming in its original harness, and stays in sync automatically.
             </p>
           </div>
           <button
@@ -345,24 +348,34 @@ export function ImportConversationDialog({
                       </span>
                     </div>
                     {alreadyImported ? (
-                      <span className="flex shrink-0 items-center gap-[4px] font-sans text-[11px] text-[var(--text-secondary)]">
+                      <button
+                        type="button"
+                        disabled={importingSessionId !== null}
+                        onClick={() => {
+                          onOpenExisting(session.importedConversationId!, session.title);
+                          onClose();
+                        }}
+                        title="Already imported — stays in sync with the harness automatically"
+                        className="flex shrink-0 items-center gap-[5px] rounded-[var(--radius-pill)] bg-white/[0.06] px-[10px] py-[4px] font-sans text-[12px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-50"
+                      >
                         <Check className="size-[12px]" strokeWidth={2} />
-                        Imported
-                      </span>
-                    ) : null}
-                    <button
-                      type="button"
-                      disabled={busy || importingSessionId !== null}
-                      onClick={() => void handleImport(session)}
-                      className="flex shrink-0 items-center gap-[5px] rounded-[var(--radius-pill)] bg-[var(--accent-bg)] px-[10px] py-[4px] font-sans text-[12px] text-[var(--text-primary)] transition-colors hover:opacity-85 disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      {busy ? (
-                        <Loader2 className="size-[12px] animate-spin" strokeWidth={1.8} />
-                      ) : (
-                        <Download className="size-[12px]" strokeWidth={1.8} />
-                      )}
-                      {alreadyImported ? "Re-sync" : "Import"}
-                    </button>
+                        Open
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        disabled={busy || importingSessionId !== null}
+                        onClick={() => void handleImport(session)}
+                        className="flex shrink-0 items-center gap-[5px] rounded-[var(--radius-pill)] bg-[var(--accent-bg)] px-[10px] py-[4px] font-sans text-[12px] text-[var(--text-primary)] transition-colors hover:opacity-85 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {busy ? (
+                          <Loader2 className="size-[12px] animate-spin" strokeWidth={1.8} />
+                        ) : (
+                          <Download className="size-[12px]" strokeWidth={1.8} />
+                        )}
+                        Import
+                      </button>
+                    )}
                   </div>
                 );
               })}

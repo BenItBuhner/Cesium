@@ -1255,6 +1255,9 @@ export function AgentNewChatLanding() {
             title: result.title,
           });
         }}
+        onOpenExisting={(conversationId, title) => {
+          openAgentConversation({ conversationId, title });
+        }}
       />
     </div>
   );

@@ -12,16 +12,13 @@ import type {
 import {
   asRecord,
   asString,
-  clampDetail,
   dedupeSessionsByLatest,
-  extractToolOutputText,
-  inferToolKind,
   pathExists,
   readJsonLines,
-  summarizeToolInput,
   toEpochMs,
   truncateTitle,
 } from "../reader-utils.js";
+import { importedToolCallEvent, importedToolResultEvent } from "../tool-events.js";
 
 /**
  * Gemini CLI / Google Antigravity store chat checkpoints per project:
@@ -316,24 +313,30 @@ export function mapGeminiMessagesToEvents(
         if (!toolCall.name) {
           continue;
         }
-        const inputDetail = clampDetail(summarizeToolInput(toolCall.args));
-        const outputDetail = clampDetail(
-          extractToolOutputText(toolCall.resultDisplay ?? toolCall.output ?? toolCall.result)
+        const toolCallId = toolCall.id ?? randomUUID();
+        const result = toolCall.resultDisplay ?? toolCall.output ?? toolCall.result;
+        events.push(
+          importedToolCallEvent({
+            conversationId,
+            toolCallId,
+            name: toolCall.name,
+            toolInput: toolCall.args,
+            createdAt,
+          })
         );
-        const detail = [inputDetail, outputDetail]
-          .filter(Boolean)
-          .join(inputDetail && outputDetail ? "\n\n--- Output ---\n\n" : "");
-        events.push({
-          eventId: randomUUID(),
-          conversationId,
-          kind: "tool_call",
-          toolCallId: toolCall.id ?? randomUUID(),
-          title: toolCall.name,
-          toolKind: inferToolKind(toolCall.name),
-          status: toolCall.status === "error" ? "failed" : "completed",
-          ...(detail ? { detail } : {}),
-          createdAt,
-        });
+        if (result !== undefined) {
+          events.push(
+            importedToolResultEvent({
+              conversationId,
+              toolCallId,
+              name: toolCall.name,
+              toolInput: toolCall.args,
+              result,
+              isError: toolCall.status === "error",
+              createdAt: createdAt + 1,
+            })
+          );
+        }
       }
       const text = partText(message.content);
       if (text.trim()) {

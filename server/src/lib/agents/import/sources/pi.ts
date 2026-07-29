@@ -12,17 +12,14 @@ import type {
 import {
   asRecord,
   asString,
-  clampDetail,
   dedupeSessionsByLatest,
-  extractToolOutputText,
-  inferToolKind,
   listFilesRecursive,
   pathExists,
   readJsonLines,
-  summarizeToolInput,
   toEpochMs,
   truncateTitle,
 } from "../reader-utils.js";
+import { importedToolCallEvent, importedToolResultEvent } from "../tool-events.js";
 
 /**
  * Pi (pi-mono coding agent) stores one JSONL file per session:
@@ -199,7 +196,7 @@ export function mapPiEntriesToEvents(entries: PiEntry[], conversationId: string)
     lastTs = (lastTs ?? Date.now()) + 1;
     return lastTs;
   };
-  const toolCallIndexByCallId = new Map<string, number>();
+  const toolInfoByCallId = new Map<string, { name: string; input: unknown }>();
 
   for (const entry of entries) {
     if (entry.type !== "message" || !entry.message) {
@@ -243,20 +240,16 @@ export function mapPiEntriesToEvents(entries: PiEntry[], conversationId: string)
         }
         if (block.type === "toolCall" && block.name) {
           const toolCallId = block.id ?? randomUUID();
-          toolCallIndexByCallId.set(toolCallId, events.length);
-          events.push({
-            eventId: randomUUID(),
-            conversationId,
-            kind: "tool_call",
-            toolCallId,
-            title: block.name,
-            toolKind: inferToolKind(block.name),
-            status: "completed",
-            ...(clampDetail(summarizeToolInput(block.arguments))
-              ? { detail: clampDetail(summarizeToolInput(block.arguments)) }
-              : {}),
-            createdAt,
-          });
+          toolInfoByCallId.set(toolCallId, { name: block.name, input: block.arguments });
+          events.push(
+            importedToolCallEvent({
+              conversationId,
+              toolCallId,
+              name: block.name,
+              toolInput: block.arguments,
+              createdAt,
+            })
+          );
           continue;
         }
       }
@@ -288,19 +281,19 @@ export function mapPiEntriesToEvents(entries: PiEntry[], conversationId: string)
     }
 
     if (message.role === "toolResult" && message.toolCallId) {
-      const output = clampDetail(extractToolOutputText(message.content));
-      const targetIndex = toolCallIndexByCallId.get(message.toolCallId);
-      const target = targetIndex !== undefined ? events[targetIndex] : undefined;
-      if (output !== undefined && target && target.kind === "tool_call") {
-        events.push({
-          eventId: randomUUID(),
-          conversationId,
-          kind: "tool_call_update",
-          toolCallId: message.toolCallId,
-          status: message.isError ? "failed" : "completed",
-          detail: [target.detail, output].filter(Boolean).join("\n\n--- Output ---\n\n"),
-          createdAt,
-        });
+      const info = toolInfoByCallId.get(message.toolCallId);
+      if (info) {
+        events.push(
+          importedToolResultEvent({
+            conversationId,
+            toolCallId: message.toolCallId,
+            name: info.name,
+            toolInput: info.input,
+            result: message.content,
+            isError: message.isError === true,
+            createdAt,
+          })
+        );
       }
     }
   }

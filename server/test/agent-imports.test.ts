@@ -59,7 +59,7 @@ const [
   { createOpenCodeImportSource },
   { createPiImportSource },
   { createGeminiImportSource },
-  { importHarnessSession, findImportedConversation },
+  { importHarnessSession, findImportedConversation, maybeAutoSyncImportedConversation },
   { getImportSourceForBackend },
   { ensureWorkspaceRegistered },
   sessionStore,
@@ -123,17 +123,18 @@ test("claude reader lists and reads real Claude Code sessions", async () => {
   assert.equal(kinds.filter((kind) => kind === "user_message").length, 1);
   assert.ok(kinds.includes("tool_call"));
   const toolCalls = transcript.events.filter((event) => event.kind === "tool_call");
-  assert.equal(toolCalls[0]!.kind === "tool_call" && toolCalls[0]!.title, "Write");
-  assert.ok(
-    toolCalls.some(
-      (event) => event.kind === "tool_call" && event.title === "Write" && event.detail?.includes("haiku.txt")
-    )
-  );
+  // Tool cards run through the shared normalizer — same titles as live turns.
+  assert.equal(toolCalls[0]!.kind === "tool_call" && toolCalls[0]!.title, "Update haiku.txt");
+  assert.equal(toolCalls[0]!.kind === "tool_call" && toolCalls[0]!.toolKind, "edit");
   const updates = transcript.events.filter((event) => event.kind === "tool_call_update");
+  // The update's detail is the readable result (the written file content),
+  // and the card carries the file location — no raw JSON dumps.
   assert.ok(
     updates.some(
       (event) =>
-        event.kind === "tool_call_update" && event.detail?.includes("File created successfully")
+        event.kind === "tool_call_update" &&
+        event.detail?.includes("Waves crash on the shore") &&
+        event.locations?.some((location) => location.path.endsWith("haiku.txt"))
     )
   );
   const text = textOf(transcript.events as AgentStoredEvent[]);
@@ -180,10 +181,12 @@ test("codex reader lists and reads real Codex rollouts", async () => {
   const toolTranscript = await source.readSession(CODEX_TOOL_THREAD_ID);
   const toolCalls = toolTranscript.events.filter((event) => event.kind === "tool_call");
   assert.ok(toolCalls.length >= 1);
+  // Shell calls render as native terminal cards ("Ran <command>"), never raw JSON.
   assert.ok(
-    toolTranscript.events.some(
-      (event) => event.kind === "tool_call_update" && event.detail?.includes("--- Output ---")
-    )
+    toolCalls.some((event) => event.kind === "tool_call" && event.title.startsWith("Ran "))
+  );
+  assert.ok(
+    toolTranscript.events.some((event) => event.kind === "tool_call_update" && event.detail)
   );
 });
 
@@ -234,7 +237,8 @@ test("pi reader lists and reads real Pi sessions", async () => {
   const reasoning = transcript.events.find((event) => event.kind === "reasoning");
   assert.ok(reasoning);
   const toolCall = transcript.events.find((event) => event.kind === "tool_call");
-  assert.ok(toolCall && toolCall.kind === "tool_call" && /write/i.test(toolCall.title));
+  // Pi's `write` tool normalizes into the shared edit-card title format.
+  assert.ok(toolCall && toolCall.kind === "tool_call" && /^Update /.test(toolCall.title));
   const update = transcript.events.find((event) => event.kind === "tool_call_update");
   assert.ok(
     update && update.kind === "tool_call_update" && update.detail?.includes("Successfully wrote")
@@ -331,6 +335,90 @@ test("importer preserves native identity, verbatim content, and upserts on re-im
     `${CLAUDE_TOOL_SESSION_ID}.jsonl`
   );
   assert.ok(await fs.stat(rehomedTool).then(() => true).catch(() => false));
+});
+
+test("imported turns settle with terminal status events (no phantom Working)", async () => {
+  const workspace = await ensureWorkspaceRegistered("/workspace", "Import Test Workspace");
+  const imported = await importHarnessSession({
+    workspace,
+    backendId: "claude-code-sdk",
+    externalSessionId: CLAUDE_SESSION_ID,
+  });
+  const events = await sessionStore.readConversationEvents(workspace.id, imported.conversationId);
+  const userTurns = events.filter((event) => event.kind === "user_message");
+  const idleStatuses = events.filter(
+    (event) => event.kind === "status" && event.status === "idle"
+  );
+  // One terminal idle per turn: the projection settles every turn instead of
+  // rendering a perpetual "Working" indicator on the imported thread.
+  assert.equal(idleStatuses.length, userTurns.length);
+  const last = events[events.length - 1]!;
+  assert.ok(last.kind === "status" && last.status === "idle");
+});
+
+test("auto-sync pulls CLI-side continuations without any manual re-sync", async () => {
+  const workspace = await ensureWorkspaceRegistered("/workspace", "Import Test Workspace");
+  const imported = await importHarnessSession({
+    workspace,
+    backendId: "claude-code-sdk",
+    externalSessionId: CLAUDE_SESSION_ID,
+  });
+
+  // Nothing changed on the harness side — opening the conversation is a no-op.
+  const before = await sessionStore.readConversationRecord(workspace.id, imported.conversationId);
+  assert.equal(
+    await maybeAutoSyncImportedConversation(workspace, before!, { ignoreThrottle: true }),
+    false
+  );
+
+  // Simulate the user continuing the same session directly in the Claude CLI:
+  // the harness appends new entries to its own session file.
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  const sessionFile = path.join(
+    fixtureCopy,
+    ".claude",
+    "projects",
+    "-workspace",
+    `${CLAUDE_SESSION_ID}.jsonl`
+  );
+  const laterTs = new Date(Date.now() + 50).toISOString();
+  const cliTurn =
+    JSON.stringify({
+      type: "user",
+      uuid: randomUUID(),
+      timestamp: laterTs,
+      sessionId: CLAUDE_SESSION_ID,
+      cwd: "/workspace",
+      message: { role: "user", content: "And what about Nauru? One word." },
+    }) +
+    "\n" +
+    JSON.stringify({
+      type: "assistant",
+      uuid: randomUUID(),
+      timestamp: laterTs,
+      sessionId: CLAUDE_SESSION_ID,
+      cwd: "/workspace",
+      message: {
+        id: `msg-${randomUUID()}`,
+        role: "assistant",
+        model: "claude-test",
+        content: [{ type: "text", text: "Yaren" }],
+      },
+    }) +
+    "\n";
+  await fs.appendFile(sessionFile, cliTurn, "utf8");
+
+  // Opening the conversation now transparently pulls the CLI-side turn in.
+  const record = await sessionStore.readConversationRecord(workspace.id, imported.conversationId);
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  const synced = await maybeAutoSyncImportedConversation(workspace, record!, {
+    ignoreThrottle: true,
+  });
+  assert.equal(synced, true);
+  const events = await sessionStore.readConversationEvents(workspace.id, imported.conversationId);
+  const text = textOf(events);
+  assert.ok(text.includes("And what about Nauru? One word."));
+  assert.ok(text.includes("Yaren"));
 });
 
 test("importer works for every harness backend with local storage", async () => {

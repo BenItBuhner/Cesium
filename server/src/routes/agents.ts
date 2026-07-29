@@ -23,6 +23,8 @@ import type {
   AgentQueuedChatPrompt,
 } from "../lib/agents/types.js";
 import { createStandaloneChatWorkspace } from "../lib/standalone-chats.js";
+import { maybeAutoSyncImportedConversation } from "../lib/agents/import/importer.js";
+import { readConversationRecord } from "../lib/agents/session-store.js";
 import {
   harnessDiagnosticsFilePaths,
   readHarnessDiagnostics,
@@ -248,6 +250,14 @@ agentRoutes.get("/api/agents/conversations/:conversationId", async (c) => {
 
   // A running turn changes the snapshot on every streamed event. Never cache.
   c.header("Cache-Control", "no-store, max-age=0");
+
+  // Imported conversations transparently pick up turns the user ran in the
+  // source CLI since the last sync — no manual re-sync step exists.
+  const record = await readConversationRecord(workspace.id, conversationId);
+  if (record?.origin?.kind === "import") {
+    await maybeAutoSyncImportedConversation(workspace, record);
+  }
+
   if (full) {
     const snapshot = await agentRuntimeManager.getConversationSnapshot(workspace, conversationId, {
       hydrateRuntime,

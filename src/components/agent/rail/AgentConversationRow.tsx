@@ -145,12 +145,10 @@ export function AgentConversationRow({
   const isOrchestrationMode =
     String(conversation.mode).trim().toLowerCase() === "orchestration";
   const origin = conversation.origin;
+  // Imported conversations render exactly like native ones — no badge.
+  // Provenance stays discoverable via the hover title only.
   const originBadge =
-    origin?.kind === "cloud"
-      ? ORIGIN_PROVIDER_BADGES[origin.providerId] ?? "CLOUD"
-      : origin?.kind === "import"
-        ? "IMPORT"
-        : null;
+    origin?.kind === "cloud" ? ORIGIN_PROVIDER_BADGES[origin.providerId] ?? "CLOUD" : null;
   const originTitle = origin
     ? origin.kind === "cloud"
       ? `Triggered from ${ORIGIN_PROVIDER_NAMES[origin.providerId] ?? origin.providerId}${

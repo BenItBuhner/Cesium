@@ -10,17 +10,14 @@ import type {
   HarnessSessionTranscript,
 } from "../types.js";
 import {
-  clampDetail,
   dedupeSessionsByLatest,
-  extractToolOutputText,
-  inferToolKind,
   listFilesRecursive,
   pathExists,
   readJsonLines,
-  summarizeToolInput,
   toEpochMs,
   truncateTitle,
 } from "../reader-utils.js";
+import { importedToolCallEvent, importedToolResultEvent } from "../tool-events.js";
 
 /**
  * Claude Code stores one JSONL transcript per session:
@@ -64,6 +61,7 @@ type ClaudeEntry = {
   isMeta?: boolean;
   summary?: string;
   aiTitle?: string;
+  toolUseResult?: unknown;
   message?: {
     id?: string;
     role?: string;
@@ -229,8 +227,8 @@ export function mapClaudeEntriesToEvents(
     lastTs = (lastTs ?? Date.now()) + 1;
     return lastTs;
   };
-  /** tool_use id -> last event index, so results can update the same card. */
-  const toolCallIndexByToolUseId = new Map<string, number>();
+  /** tool_use id -> original call payload, so results can update the same card. */
+  const toolInfoByToolUseId = new Map<string, { name: string; input: unknown }>();
 
   for (const entry of entries) {
     if (entry.isSidechain || entry.isMeta) {
@@ -258,22 +256,21 @@ export function mapClaudeEntriesToEvents(
         if (block.type === "text" && block.text?.trim()) {
           textParts.push(block.text);
         } else if (block.type === "tool_result" && block.tool_use_id) {
-          const output = clampDetail(extractToolOutputText(block.content));
-          const targetIndex = toolCallIndexByToolUseId.get(block.tool_use_id);
-          if (output !== undefined && targetIndex !== undefined) {
-            const target = events[targetIndex];
-            if (target && target.kind === "tool_call") {
-              const inputDetail = target.detail;
-              events.push({
-                eventId: randomUUID(),
+          const info = toolInfoByToolUseId.get(block.tool_use_id);
+          if (info) {
+            events.push(
+              importedToolResultEvent({
                 conversationId,
-                kind: "tool_call_update",
-                toolCallId: target.toolCallId,
-                status: block.is_error ? "failed" : "completed",
-                detail: [inputDetail, output].filter(Boolean).join("\n\n--- Output ---\n\n"),
+                toolCallId: block.tool_use_id,
+                name: info.name,
+                toolInput: info.input,
+                // Claude keeps a structured result (stdout, file info…) on the
+                // entry itself; the block content is the plain-text fallback.
+                result: entry.toolUseResult ?? block.content,
+                isError: block.is_error === true,
                 createdAt: nextTime(entry),
-              });
-            }
+              })
+            );
           }
         }
       }
@@ -317,20 +314,16 @@ export function mapClaudeEntriesToEvents(
           continue;
         }
         const toolCallId = block.id ?? randomUUID();
-        toolCallIndexByToolUseId.set(toolCallId, events.length);
-        events.push({
-          eventId: randomUUID(),
-          conversationId,
-          kind: "tool_call",
-          toolCallId,
-          title: block.name,
-          toolKind: inferToolKind(block.name),
-          status: "completed",
-          ...(clampDetail(summarizeToolInput(block.input))
-            ? { detail: clampDetail(summarizeToolInput(block.input)) }
-            : {}),
-          createdAt,
-        });
+        toolInfoByToolUseId.set(toolCallId, { name: block.name, input: block.input });
+        events.push(
+          importedToolCallEvent({
+            conversationId,
+            toolCallId,
+            name: block.name,
+            toolInput: block.input,
+            createdAt,
+          })
+        );
       }
       if (text.trim()) {
         events.push(
