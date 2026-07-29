@@ -148,11 +148,15 @@ export function AgentConversationRow({
   const originBadge =
     origin?.kind === "cloud"
       ? ORIGIN_PROVIDER_BADGES[origin.providerId] ?? "CLOUD"
-      : null;
+      : origin?.kind === "import"
+        ? "IMPORT"
+        : null;
   const originTitle = origin
-    ? `Triggered from ${ORIGIN_PROVIDER_NAMES[origin.providerId] ?? origin.providerId}${
-        origin.label ? ` · ${origin.label}` : ""
-      }`
+    ? origin.kind === "cloud"
+      ? `Triggered from ${ORIGIN_PROVIDER_NAMES[origin.providerId] ?? origin.providerId}${
+          origin.label ? ` · ${origin.label}` : ""
+        }`
+      : `Imported from ${origin.backendId} · session ${origin.externalSessionId}`
     : undefined;
 
   const handleContextMenu = onContextMenu

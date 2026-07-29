@@ -14,6 +14,9 @@ import type {
   AgentConversationSnapshot,
   AgentConversationSnapshotHead,
   AgentContextUsageSnapshot,
+  AgentImportResult,
+  AgentImportSessionSummary,
+  AgentImportSourceInfo,
   AgentRailRepositoryInfo,
 } from "@cesium/core";
 import type { WorkspaceSessionState } from "./workspace-session";
@@ -1355,11 +1358,38 @@ export async function answerAgentQuestion(
 export async function handoffAgentConversation(
   conversationId: string,
   targetAgentBackend: string,
-  messageLimit?: number
+  messageLimit?: number,
+  options?: { resumeNative?: boolean }
 ): Promise<{ newConversationId: string; handoffMessageId?: string }> {
   return request(`/api/agents/conversations/${encodeURIComponent(conversationId)}/handoff`, {
     method: "POST",
-    body: JSON.stringify({ targetAgentBackend, messageLimit }),
+    body: JSON.stringify({
+      targetAgentBackend,
+      messageLimit,
+      ...(options?.resumeNative !== undefined ? { resumeNative: options.resumeNative } : {}),
+    }),
+  });
+}
+
+export async function listAgentImportSources(): Promise<{
+  sources: AgentImportSourceInfo[];
+}> {
+  return request(`/api/agents/imports/sources`);
+}
+
+export async function listAgentImportSessions(
+  backendId: AgentBackendId
+): Promise<{ sessions: AgentImportSessionSummary[] }> {
+  return request(`/api/agents/imports/${encodeURIComponent(backendId)}/sessions`);
+}
+
+export async function importAgentHarnessSession(
+  backendId: AgentBackendId,
+  sessionId: string
+): Promise<AgentImportResult> {
+  return request(`/api/agents/imports/${encodeURIComponent(backendId)}/import`, {
+    method: "POST",
+    body: JSON.stringify({ sessionId }),
   });
 }
 

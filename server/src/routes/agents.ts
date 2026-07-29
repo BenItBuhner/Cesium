@@ -440,7 +440,11 @@ agentRoutes.post("/api/agents/conversations/:conversationId/permission", async (
 agentRoutes.post("/api/agents/conversations/:conversationId/handoff", async (c) => {
   const workspace = await requireWorkspaceFromRequest(c);
   const conversationId = c.req.param("conversationId");
-  const body = await c.req.json<{ targetAgentBackend: string; messageLimit?: number }>();
+  const body = await c.req.json<{
+    targetAgentBackend: string;
+    messageLimit?: number;
+    resumeNative?: boolean;
+  }>();
   if (!body.targetAgentBackend) {
     return c.json({ error: "Expected targetAgentBackend." }, 400);
   }
@@ -449,7 +453,8 @@ agentRoutes.post("/api/agents/conversations/:conversationId/handoff", async (c) 
       workspace,
       conversationId,
       body.targetAgentBackend as AgentBackendId,
-      body.messageLimit
+      body.messageLimit,
+      { ...(typeof body.resumeNative === "boolean" ? { resumeNative: body.resumeNative } : {}) }
     );
     return c.json(result, 201);
   } catch (error) {

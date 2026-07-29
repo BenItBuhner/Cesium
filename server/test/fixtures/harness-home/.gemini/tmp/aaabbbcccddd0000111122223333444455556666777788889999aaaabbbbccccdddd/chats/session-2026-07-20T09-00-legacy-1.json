@@ -1,0 +1,25 @@
+{
+ "sessionId": "legacy-1111-2222-3333-444455556666",
+ "projectHash": "aaabbbcccddd0000111122223333444455556666777788889999aaaabbbbccccdddd",
+ "startTime": "2026-07-20T09:00:00.000Z",
+ "lastUpdated": "2026-07-20T09:05:00.000Z",
+ "messages": [
+  {
+   "id": "m1",
+   "timestamp": "2026-07-20T09:00:01.000Z",
+   "type": "user",
+   "content": [
+    {
+     "text": "What is 2+2? One word."
+    }
+   ]
+  },
+  {
+   "id": "m2",
+   "timestamp": "2026-07-20T09:00:30.000Z",
+   "type": "gemini",
+   "content": "Four",
+   "model": "gemini-2.5-pro"
+  }
+ ]
+}

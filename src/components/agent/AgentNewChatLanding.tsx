@@ -9,6 +9,7 @@ import {
   FolderGit2,
   GitBranch,
   GitFork,
+  Import,
   Laptop,
   MessageSquare,
   Plus,
@@ -40,7 +41,8 @@ import {
   resolveCanonicalModeId,
 } from "@/lib/chat-modes";
 import { updateChatDraftDefault } from "@/lib/chat-draft-defaults";
-import type { AgentBackendId, AgentBackendInfo } from "@/lib/agent-types";
+import type { AgentBackendId, AgentBackendInfo, AgentImportResult } from "@/lib/agent-types";
+import { ImportConversationDialog } from "./ImportConversationDialog";
 import {
   detectShortcutPlatform,
   getShortcutDisplayForCommand,
@@ -148,6 +150,7 @@ export function AgentNewChatLanding() {
     setComposerSelection,
     setExpandedComposerController,
     upsertComposerDraft,
+    openAgentConversation,
   } = useOpenInEditor();
   const {
     backends,
@@ -256,6 +259,7 @@ export function AgentNewChatLanding() {
   const [workspaceQuery, setWorkspaceQuery] = useState("");
   const [workspaceMachineFilter, setWorkspaceMachineFilter] = useState("all");
   const [targetPickerOpen, setTargetPickerOpen] = useState(false);
+  const [importDialogOpen, setImportDialogOpen] = useState(false);
   const [gitActionBusy, setGitActionBusy] = useState<string | null>(null);
   const [gitActionError, setGitActionError] = useState<string | null>(null);
 
@@ -798,6 +802,24 @@ export function AgentNewChatLanding() {
                 <ChevronDown className="size-[13px] shrink-0" strokeWidth={1.5} />
               </button>
               ) : null}
+              {!noWorkspaceDraft ? (
+                <button
+                  type="button"
+                  aria-label="Import conversation from another harness"
+                  title="Import a conversation from Claude Code, Codex, OpenCode, Gemini CLI, or Pi"
+                  data-perf="agent-import-conversation-button"
+                  onClick={() => {
+                    setWorkspacePickerOpen(false);
+                    setBranchPickerOpen(false);
+                    setTargetPickerOpen(false);
+                    setImportDialogOpen(true);
+                  }}
+                  className="inline-flex items-center gap-[5px] rounded-[var(--radius-pill)] px-[6px] py-[4px] font-sans text-[13px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)]"
+                >
+                  <Import className="size-[13px] shrink-0" strokeWidth={1.5} />
+                  <span className="whitespace-nowrap">Import</span>
+                </button>
+              ) : null}
             </div>
             {gitActionError ? (
               <div className="mt-[6px] max-w-[520px] rounded-[var(--radius-tab)] border border-[var(--palette-border)] bg-[var(--bg-card)] px-[8px] py-[6px] font-sans text-[12px] text-[var(--text-primary)]">
@@ -1223,6 +1245,17 @@ export function AgentNewChatLanding() {
             document.body
           )
         : null}
+      <ImportConversationDialog
+        open={importDialogOpen}
+        onClose={() => setImportDialogOpen(false)}
+        onImported={(result: AgentImportResult) => {
+          void refreshConversationGroups().catch(() => undefined);
+          openAgentConversation({
+            conversationId: result.conversationId,
+            title: result.title,
+          });
+        }}
+      />
     </div>
   );
 }

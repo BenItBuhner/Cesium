@@ -151,7 +151,10 @@ function approvalPolicyForPermission(permission: string): string {
   if (permission === "read-only" || permission === "readonly" || permission === "ask") {
     return "on-request";
   }
-  return "on-failure";
+  // Newer Codex CLI builds removed the `on-failure` approval policy variant
+  // (thread/turn start fails with "unknown variant `on-failure`"); `on-request`
+  // is the closest policy every supported app-server build accepts.
+  return "on-request";
 }
 
 function turnStatusFromConversationStatus(status: string): "idle" | "failed" | "interrupted" {

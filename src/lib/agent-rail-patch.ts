@@ -25,6 +25,17 @@ export function agentRecordToRailSummary(
   };
 }
 
+function originMergeKey(
+  origin: AgentRailConversationSummary["origin"] | undefined
+): string | null {
+  if (!origin) {
+    return null;
+  }
+  return origin.kind === "cloud"
+    ? `cloud:${origin.providerId}`
+    : `import:${origin.backendId}:${origin.externalSessionId}`;
+}
+
 /** Stable ordering: recency first, then creation time, then id (never title — renames must not reshuffle ties). */
 function compareRailOrder(
   a: AgentRailConversationSummary,
@@ -66,7 +77,7 @@ function mergeRailSummaryByRecency(
       existing.mode !== incoming.mode ||
       existing.experimental !== incoming.experimental ||
       existing.hasPendingPermission !== incoming.hasPendingPermission ||
-      existing.origin?.providerId !== incoming.origin?.providerId;
+      originMergeKey(existing.origin) !== originMergeKey(incoming.origin);
     if (metaChanged) {
       return {
         ...existing,
