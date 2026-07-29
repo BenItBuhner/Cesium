@@ -25,6 +25,7 @@ import {
   toolUsesFromClaudeAssistantMessage,
 } from "./claude-code-sdk-normalize.js";
 import { AGENT_CAPABILITIES } from "./agent-contract.js";
+import { claudeSessionFileExistsForCwd } from "./import/sources/claude-code.js";
 import {
   findPrimaryModeConfigOption,
   findPrimaryModelConfigOption,
@@ -460,6 +461,17 @@ class ClaudeCodeSdkSessionHandle implements AgentSessionHandle {
   private async buildQueryOptions(abortController: AbortController): Promise<Options> {
     const permissionMode = permissionModeForConfig(this.callbacks.conversation, this.configOptions);
     const proxyMode = hasClaudeCodeSdkProxyConfig();
+    const resumeSessionId = this.sessionId.startsWith("claude-code-sdk-pending-")
+      ? null
+      : this.sessionId;
+    // Proxy mode historically ran every turn statelessly (no resume, no
+    // persistence). When the native session file actually exists for this
+    // workspace — e.g. a conversation migrated in from the Claude Code CLI —
+    // resume it natively and keep persisting, so the harness continues the
+    // exact same session.
+    const canResumeNatively = resumeSessionId
+      ? await claudeSessionFileExistsForCwd(resumeSessionId, this.callbacks.workspace.root)
+      : false;
     const pluginAttachments = await resolveAgentPluginAttachments({
       workspaceId: this.callbacks.workspace.id,
       workspaceRoot: this.callbacks.workspace.root,
@@ -486,7 +498,9 @@ class ClaudeCodeSdkSessionHandle implements AgentSessionHandle {
       pathToClaudeCodeExecutable: claudeCodeSdkExecutablePath(),
       includePartialMessages: true,
       forwardSubagentText: true,
-      persistSession: !proxyMode && optionValue(this.configOptions, "session_persistence", "enabled") !== "disabled",
+      persistSession: proxyMode
+        ? canResumeNatively
+        : optionValue(this.configOptions, "session_persistence", "enabled") !== "disabled",
       model: selectedModel(this.callbacks.conversation, this.configOptions),
       permissionMode,
       allowDangerouslySkipPermissions:
@@ -504,15 +518,22 @@ class ClaudeCodeSdkSessionHandle implements AgentSessionHandle {
       maxBudgetUsd: maxBudgetForConfig(this.configOptions),
       ...(proxyMode
         ? {
-            extraArgs: {
-              bare: null,
-              "no-session-persistence": null,
-              "setting-sources": "local",
-            },
+            extraArgs: canResumeNatively
+              ? // `--bare` and `--no-session-persistence` both hard-conflict with
+                // `--resume` (the CLI errors out with no output), so native
+                // continuation only keeps the local setting sources pin.
+                { "setting-sources": "local" }
+              : {
+                  bare: null,
+                  "no-session-persistence": null,
+                  "setting-sources": "local",
+                },
             settingSources: [],
           }
         : {}),
-      ...(proxyMode || this.sessionId.startsWith("claude-code-sdk-pending-") ? {} : { resume: this.sessionId }),
+      ...(resumeSessionId && (!proxyMode || canResumeNatively)
+        ? { resume: resumeSessionId }
+        : {}),
     };
   }
 

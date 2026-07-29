@@ -46,6 +46,7 @@ import {
   findPrimaryModeConfigOption,
 } from "./config-option-utils.js";
 import { harnessLog } from "./harness-diagnostics.js";
+import { getImportSourceForBackend } from "./import/registry.js";
 import type {
   AgentBackendId,
   AgentBackendInfo,
@@ -120,6 +121,11 @@ function resolvePendingHandoffContext(
     }
   }
   if (!handoffEvent) {
+    return null;
+  }
+  if (handoffEvent.resumeNativeSession) {
+    // Native resume handoffs reload the harness's own session — injecting a
+    // transcript would duplicate context the harness already has.
     return null;
   }
   if (
@@ -535,7 +541,8 @@ export class AgentRuntimeManager {
     workspace: WorkspaceRecord,
     sourceConversationId: string,
     targetBackendId: AgentBackendId,
-    messageLimit?: number
+    messageLimit?: number,
+    options?: { resumeNative?: boolean }
   ): Promise<{ newConversationId: string }> {
     const sourceRecord = await readConversationRecord(workspace.id, sourceConversationId);
     if (!sourceRecord) {
@@ -554,6 +561,37 @@ export class AgentRuntimeManager {
       return {
         newConversationId: sourceConversationId,
       };
+    }
+
+    // Round-trip migration: handing back to the harness the conversation was
+    // imported from resumes the ORIGINAL native session (same id, full
+    // verbatim context) instead of transferring a transcript.
+    const importOrigin =
+      sourceRecord.origin?.kind === "import" ? sourceRecord.origin : null;
+    if (
+      importOrigin &&
+      importOrigin.backendId === resolvedTargetBackendId &&
+      options?.resumeNative !== false
+    ) {
+      try {
+        const source = getImportSourceForBackend(resolvedTargetBackendId);
+        const nativeSessionId = source?.prepareNativeResume
+          ? await source.prepareNativeResume(importOrigin.externalSessionId, workspace.root)
+          : importOrigin.externalSessionId;
+        if (source && nativeSessionId) {
+          return this.handoffWithNativeResume({
+            workspace,
+            sourceRecord,
+            targetBackendId: resolvedTargetBackendId,
+            nativeSessionId,
+          });
+        }
+      } catch (error) {
+        console.warn(
+          `[agent-runtime] native resume handoff to ${resolvedTargetBackendId} failed; falling back to transcript handoff:`,
+          error instanceof Error ? error.message : error
+        );
+      }
     }
 
   const fromAgent = sourceRecord.config.backendId;
@@ -686,6 +724,67 @@ export class AgentRuntimeManager {
     return {
       newConversationId: sourceConversationId,
     };
+  }
+
+  /**
+   * Hand off back to the origin harness of an imported conversation by
+   * resuming the harness's own session (identity + full native history),
+   * rather than replaying a transcript into a fresh session.
+   */
+  private async handoffWithNativeResume(input: {
+    workspace: WorkspaceRecord;
+    sourceRecord: AgentConversationRecord;
+    targetBackendId: AgentBackendId;
+    nativeSessionId: string;
+  }): Promise<{ newConversationId: string }> {
+    const { workspace, sourceRecord, targetBackendId, nativeSessionId } = input;
+    const fromAgent = sourceRecord.config.backendId;
+    const targetBackend = this.backends[targetBackendId];
+    const now = Date.now();
+    await appendConversationEvents(workspace.id, sourceRecord.id, [
+      {
+        eventId: randomUUID(),
+        conversationId: sourceRecord.id,
+        kind: "system",
+        level: "info",
+        text: `Resuming the original ${targetBackend?.label ?? targetBackendId} session natively (${nativeSessionId}). The next message continues the exact same harness session — no transcript transfer needed.`,
+        createdAt: now,
+      },
+      {
+        eventId: randomUUID(),
+        conversationId: sourceRecord.id,
+        kind: "agent_handoff",
+        fromAgent,
+        toAgent: targetBackendId,
+        resumeNativeSession: true,
+        createdAt: now + 1,
+      },
+    ]);
+
+    await this.disposeRuntime(sourceRecord.id);
+    const updatedRecord = await updateConversationRecord(
+      workspace.id,
+      sourceRecord.id,
+      (current) => ({
+        ...current,
+        config: {
+          ...current.config,
+          backendId: targetBackendId,
+          mode: targetBackend.defaultMode,
+          modelId: targetBackend.defaultModelId,
+          modelName: targetBackend.defaultModelName,
+        },
+        providerSessionId: nativeSessionId,
+        configOptions: [],
+        capabilities: targetBackend.capabilities,
+        pendingPermission: null,
+        status: "idle",
+        experimental: Boolean(targetBackend.experimental),
+        lastError: null,
+      })
+    );
+    this.warmConversationRuntime(workspace, updatedRecord);
+    return { newConversationId: sourceRecord.id };
   }
 
   async forkConversation(

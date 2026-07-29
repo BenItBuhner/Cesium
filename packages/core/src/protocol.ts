@@ -382,6 +382,12 @@ export type AgentStoredEvent =
   handoffMessageId?: string;
   turnCount?: number;
   toolCallCount?: number;
+  /**
+   * Set when the handoff returns to the harness the conversation was imported
+   * from and natively resumes the original session instead of transferring a
+   * transcript. The prompt path must not wrap the next turn in handoff context.
+   */
+  resumeNativeSession?: boolean;
 }
 | {
   seq: number;
@@ -400,16 +406,34 @@ export type AgentStoredEvent =
  * sources (Linear/GitHub/Slack via Cloud Agents) are normal conversations in
  * every way — this only records provenance for rail badges and filtering.
  */
-export type AgentConversationOrigin = {
-  kind: "cloud";
-  providerId: "linear" | "github" | "slack" | "manual";
-  /** Cloud Agents task id linking back to the external assignment. */
-  taskId?: string;
-  /** Short human label, e.g. "owner/repo#42" or "OSP-67". */
-  label?: string;
-  /** Deep link to the source issue/message. */
-  url?: string;
-};
+export type AgentConversationOrigin =
+  | {
+      kind: "cloud";
+      providerId: "linear" | "github" | "slack" | "manual";
+      /** Cloud Agents task id linking back to the external assignment. */
+      taskId?: string;
+      /** Short human label, e.g. "owner/repo#42" or "OSP-67". */
+      label?: string;
+      /** Deep link to the source issue/message. */
+      url?: string;
+    }
+  | {
+      kind: "import";
+      /** Cesium backend id of the harness the session was imported from. */
+      backendId: AgentBackendId;
+      /** Harness-native session/conversation/thread id, preserved verbatim. */
+      externalSessionId: string;
+      /** Absolute path of the source artifact the session was read from. */
+      sourcePath?: string;
+      /** Original working directory of the harness session, when known. */
+      sourceCwd?: string;
+      /** ISO timestamp of the source session start, when known. */
+      sourceStartedAt?: string;
+      /** Source-side last-activity timestamp at the moment of the last sync. */
+      sourceUpdatedAt?: number | null;
+      /** When the session was last (re-)imported into Cesium. */
+      importedAt: number;
+    };
 
 export type AgentConversationRecord = {
   schemaVersion: 1;
@@ -460,6 +484,45 @@ export type AgentConversationCreateInput = Partial<AgentConversationConfig> & {
   archived?: boolean;
   /** Provenance for conversations triggered from external sources. */
   origin?: AgentConversationOrigin | null;
+};
+
+/** One harness's import capability as reported by GET /api/agents/imports/sources. */
+export type AgentImportSourceInfo = {
+  backendId: AgentBackendId;
+  label: string;
+  /** Stable key of the harness family providing local storage, when importable. */
+  harnessKey: string | null;
+  available: boolean;
+  /** Why import is unavailable (or extra context) — shown greyed out in the UI. */
+  reason?: string;
+  storageRoot?: string | null;
+  sessionCount: number;
+};
+
+/** One harness-native session as reported by GET /api/agents/imports/:backendId/sessions. */
+export type AgentImportSessionSummary = {
+  /** Harness-native session id, preserved verbatim through import + resume. */
+  id: string;
+  title: string;
+  cwd?: string;
+  createdAt: number | null;
+  updatedAt: number | null;
+  messageCount: number;
+  sourcePath: string;
+  preview?: string;
+  /** Set when this session was already imported into the current workspace. */
+  importedConversationId?: string | null;
+};
+
+/** Response of POST /api/agents/imports/:backendId/import. */
+export type AgentImportResult = {
+  conversationId: string;
+  /** True when a new conversation was created; false when re-synced in place. */
+  created: boolean;
+  eventCount: number;
+  providerSessionId: string | null;
+  title: string;
+  backendId: AgentBackendId;
 };
 
 export type AgentConversationConfigPatch = Partial<AgentConversationConfig> & {

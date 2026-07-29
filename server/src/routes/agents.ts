@@ -23,6 +23,8 @@ import type {
   AgentQueuedChatPrompt,
 } from "../lib/agents/types.js";
 import { createStandaloneChatWorkspace } from "../lib/standalone-chats.js";
+import { maybeAutoSyncImportedConversation } from "../lib/agents/import/importer.js";
+import { readConversationRecord } from "../lib/agents/session-store.js";
 import {
   harnessDiagnosticsFilePaths,
   readHarnessDiagnostics,
@@ -248,6 +250,14 @@ agentRoutes.get("/api/agents/conversations/:conversationId", async (c) => {
 
   // A running turn changes the snapshot on every streamed event. Never cache.
   c.header("Cache-Control", "no-store, max-age=0");
+
+  // Imported conversations transparently pick up turns the user ran in the
+  // source CLI since the last sync — no manual re-sync step exists.
+  const record = await readConversationRecord(workspace.id, conversationId);
+  if (record?.origin?.kind === "import") {
+    await maybeAutoSyncImportedConversation(workspace, record);
+  }
+
   if (full) {
     const snapshot = await agentRuntimeManager.getConversationSnapshot(workspace, conversationId, {
       hydrateRuntime,
@@ -440,7 +450,11 @@ agentRoutes.post("/api/agents/conversations/:conversationId/permission", async (
 agentRoutes.post("/api/agents/conversations/:conversationId/handoff", async (c) => {
   const workspace = await requireWorkspaceFromRequest(c);
   const conversationId = c.req.param("conversationId");
-  const body = await c.req.json<{ targetAgentBackend: string; messageLimit?: number }>();
+  const body = await c.req.json<{
+    targetAgentBackend: string;
+    messageLimit?: number;
+    resumeNative?: boolean;
+  }>();
   if (!body.targetAgentBackend) {
     return c.json({ error: "Expected targetAgentBackend." }, 400);
   }
@@ -449,7 +463,8 @@ agentRoutes.post("/api/agents/conversations/:conversationId/handoff", async (c) 
       workspace,
       conversationId,
       body.targetAgentBackend as AgentBackendId,
-      body.messageLimit
+      body.messageLimit,
+      { ...(typeof body.resumeNative === "boolean" ? { resumeNative: body.resumeNative } : {}) }
     );
     return c.json(result, 201);
   } catch (error) {
