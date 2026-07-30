@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-07-30
+
+### Fixed
+
+- Termux one-command server install no longer aborts with `EBADPLATFORM: Unsupported platform for onnxruntime-node ... (current: {"os":"android"})`. The voice plane's `kokoro-js` dependency (whose `onnxruntime-node` transitive dependency ships no Android binaries) is now an `optionalDependency`, so the on-device `npm ci --omit=optional` skips it entirely, and the server compiles and runs without the module — the kokoro TTS engine simply reports unavailable.
+- Termux installer now installs `espeak` (eSpeak NG), so the voice control plane keeps a working local TTS engine on-device; it becomes the default engine when kokoro is absent.
+
 ## [0.3.0] - 2026-07-30
 
 ### Added
