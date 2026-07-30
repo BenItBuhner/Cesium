@@ -759,17 +759,67 @@ export function buildLedgerVerificationPrompt(input: {
 // Deterministic fallback extractor
 // ---------------------------------------------------------------------------
 
+/** Parse a ledger body into its `## SECTION` → lines mapping (order-preserving). */
+export function parseLedgerSections(body: string): Map<string, string[]> {
+  const sections = new Map<string, string[]>();
+  let current: string | null = null;
+  for (const line of body.split("\n")) {
+    const header = line.match(/^##\s+(.+?)\s*$/);
+    if (header) {
+      current = header[1]!.toUpperCase();
+      if (!sections.has(current)) {
+        sections.set(current, []);
+      }
+      continue;
+    }
+    if (current && line.trim()) {
+      sections.get(current)!.push(line);
+    }
+  }
+  return sections;
+}
+
+const HEURISTIC_SECTION_LINE_CAP = 60;
+
+function isPlaceholderLine(line: string): boolean {
+  return /^\(.*\)$/.test(line.trim());
+}
+
+/** Merge two ledger bodies section-wise: dedupe, keep newest, bounded per section. */
+export function mergeLedgerBodies(previousBody: string, freshBody: string): string {
+  const previous = parseLedgerSections(previousBody);
+  const fresh = parseLedgerSections(freshBody);
+  const names = [...CESIUM_LEDGER_SECTIONS.map((section) => section.toUpperCase())];
+  for (const name of [...previous.keys(), ...fresh.keys()]) {
+    if (!names.includes(name)) {
+      names.push(name);
+    }
+  }
+  const parts: string[] = [];
+  for (const name of names) {
+    const combined = [
+      ...(previous.get(name) ?? []),
+      ...(fresh.get(name) ?? []),
+    ].filter((line) => !isPlaceholderLine(line));
+    const deduped = [...new Set(combined)].slice(-HEURISTIC_SECTION_LINE_CAP);
+    parts.push(`## ${name}`);
+    parts.push(...(deduped.length ? deduped : ["(none recorded)"]));
+  }
+  return parts.join("\n");
+}
+
 /**
  * Deterministic ledger body builder used when no compactor model is available or
- * the LLM call fails. Extraction (not summarization): quotes and identifiers are
- * copied verbatim, so it degrades to "dense but unpolished" instead of "lossy".
+ * the LLM call fails. Extraction (not summarization): identifiers are copied
+ * verbatim, so it degrades to "dense but unpolished" instead of "lossy". User
+ * messages are NOT duplicated here — the verbatim user-message archive already
+ * guarantees them.
  */
 export function buildHeuristicLedgerBody(input: {
   previousBody: string;
   spanEvents: AgentStoredEvent[];
 }): string {
   const sorted = [...input.spanEvents].sort((a, b) => a.seq - b.seq);
-  const userLines: string[] = [];
   const stateLines: string[] = [];
   const factLines: string[] = [];
   const artifactLines: string[] = [];
@@ -779,11 +829,6 @@ export function buildHeuristicLedgerBody(input: {
   let lastAssistant = "";
   for (const event of sorted) {
     switch (event.kind) {
-      case "user_message":
-        if (!event.hidden && event.content.trim()) {
-          userLines.push(`- [s${event.seq}] "${capText(event.content, 400)}"`);
-        }
-        break;
       case "plan":
         stateLines.push(
           ...event.entries.map(
@@ -847,9 +892,9 @@ export function buildHeuristicLedgerBody(input: {
   const dedupe = (lines: string[]): string[] => [...new Set(lines)];
   const fresh = [
     "## MISSION",
-    userLines.length ? `See first and latest user directives below. [s${sorted[0]?.seq ?? 0}]` : "(unknown)",
+    "See the verbatim user messages below for directives and intent.",
     "## USER DIRECTIVES & PREFERENCES",
-    ...(dedupe(userLines).slice(-40).length ? dedupe(userLines).slice(-40) : ["(none recorded)"]),
+    "(preserved verbatim in the USER MESSAGES section of this ledger)",
     "## STATE",
     ...(dedupe(stateLines).slice(-40).length ? dedupe(stateLines).slice(-40) : ["(no plan recorded)"]),
     "## KEY FACTS & DECISIONS",
@@ -863,15 +908,12 @@ export function buildHeuristicLedgerBody(input: {
     "## OPEN THREADS & PROMISES",
     "(not extracted — check recent user messages)",
     "## NOW",
-    "Earlier context was condensed mechanically. Consult USER DIRECTIVES and STATE above; retrieve raw history by seq with search_history / read_history_page when detail is needed.",
+    "Earlier context was condensed mechanically. Consult STATE and the verbatim user messages; retrieve raw history by seq with search_history / read_history_page when detail is needed.",
   ].join("\n");
   if (!input.previousBody.trim()) {
     return fresh;
   }
-  // Mechanical merge: keep the previous body first (it already carries older
-  // generations), then append this span's extraction under a divider. The next
-  // LLM-backed compaction will fold both into one clean body.
-  return `${input.previousBody.trim()}\n\n${fresh}`;
+  return mergeLedgerBodies(input.previousBody, fresh);
 }
 
 // ---------------------------------------------------------------------------
@@ -1070,9 +1112,10 @@ export async function runCesiumCompactionPipeline(input: {
   if (!input.force && usedTokens < budgets.triggerTokens) {
     return { kind: "noop", usedTokens };
   }
-  const previousLedger = latestLedgerFromEvents(events) ?? emptyCesiumLedger();
+  const sortedAll = [...events].sort((a, b) => a.seq - b.seq);
+  const previousLedger = latestLedgerFromEvents(sortedAll) ?? emptyCesiumLedger();
   // Only events newer than what the ledger already covers are live context.
-  const liveEvents = events.filter(
+  const liveEvents = sortedAll.filter(
     (event) => event.seq > previousLedger.coveredToSeq && event.kind !== "compression_summary"
   );
 
@@ -1080,12 +1123,18 @@ export async function runCesiumCompactionPipeline(input: {
   const micro = applyToolResultMicrocompaction(liveEvents, {
     protectTokens: budgets.toolResultProtectTokens,
   });
+  // The microcompact view must preserve the FULL event stream (including
+  // compression_summary events and ledger-covered history) with only the live
+  // tool outputs swapped for stubs — normalizeEventsToHistory handles the
+  // layering. Returning live events alone here would silently drop the ledger.
+  const microBySeq = new Map(micro.events.map((event) => [event.seq, event]));
+  const microFullView = sortedAll.map((event) => microBySeq.get(event.seq) ?? event);
   const microSavedTokens = Math.floor(micro.savedChars / 4);
   const usedAfterMicro = Math.max(0, usedTokens - microSavedTokens);
   if (!input.force && usedAfterMicro <= budgets.targetTokens) {
     return {
       kind: "microcompact",
-      events: micro.events,
+      events: microFullView,
       stats: {
         usedTokensBefore: usedTokens,
         usedTokensAfter: usedAfterMicro,
@@ -1101,10 +1150,10 @@ export async function runCesiumCompactionPipeline(input: {
   });
   const spanTokens = estimateEventTokens(split.spanEvents);
   if (split.spanEvents.length === 0 || (!input.force && spanTokens < MIN_SPAN_TOKENS)) {
-    // Nothing meaningful to evict — return the microcompacted view.
+    // Nothing meaningful to evict — return the microcompacted full view.
     return {
       kind: "microcompact",
-      events: micro.events,
+      events: microFullView,
       stats: {
         usedTokensBefore: usedTokens,
         usedTokensAfter: usedAfterMicro,

@@ -1,0 +1,437 @@
+{
+  "ranAt": "2026-07-30T05:35:11.989Z",
+  "options": {
+    "scenarios": "fact-thread",
+    "strategies": "truncate,cesium-legacy,cesium-ledger@0.35",
+    "window": 16000,
+    "compactorModel": "turbo",
+    "probeModel": "turbo",
+    "out": "bench-results/smoke2.json",
+    "probeConcurrency": 4
+  },
+  "results": [
+    {
+      "scenarioId": "fact-thread",
+      "strategyId": "truncate",
+      "windowTokens": 16000,
+      "stats": {
+        "compactions": 2,
+        "compactorCalls": 0,
+        "finalTokens": 5972,
+        "peakTokens": 13691
+      },
+      "probes": [
+        {
+          "probeId": "fact-0",
+          "category": "fact",
+          "question": "What is the access token for service \"krypton-78\"?",
+          "expected": [
+            "willow_9997"
+          ],
+          "answer": "UNKNOWN",
+          "correct": false
+        },
+        {
+          "probeId": "fact-3",
+          "category": "fact",
+          "question": "What is the access token for service \"monsoon-67\"?",
+          "expected": [
+            "quartz_5918"
+          ],
+          "answer": "UNKNOWN",
+          "correct": false
+        },
+        {
+          "probeId": "fact-6",
+          "category": "fact",
+          "question": "What is the access token for service \"quartz-83\"?",
+          "expected": [
+            "ember_6708"
+          ],
+          "answer": "UNKNOWN",
+          "correct": false
+        },
+        {
+          "probeId": "fact-9",
+          "category": "fact",
+          "question": "What is the access token for service \"zephyr-49\"?",
+          "expected": [
+            "nebula_5756"
+          ],
+          "answer": "UNKNOWN",
+          "correct": false
+        },
+        {
+          "probeId": "fact-12",
+          "category": "fact",
+          "question": "What is the access token for service \"cinder-56\"?",
+          "expected": [
+            "tundra_2994"
+          ],
+          "answer": "UNKNOWN",
+          "correct": false
+        },
+        {
+          "probeId": "fact-15",
+          "category": "fact",
+          "question": "What is the access token for service \"rampart-11\"?",
+          "expected": [
+            "echo_4998"
+          ],
+          "answer": "UNKNOWN",
+          "correct": false
+        },
+        {
+          "probeId": "fact-18",
+          "category": "fact",
+          "question": "What is the access token for service \"willow-65\"?",
+          "expected": [
+            "saffron_8197"
+          ],
+          "answer": "UNKNOWN",
+          "correct": false
+        },
+        {
+          "probeId": "fact-21",
+          "category": "fact",
+          "question": "What is the access token for service \"juniper-92\"?",
+          "expected": [
+            "lattice_3084"
+          ],
+          "answer": "UNKNOWN",
+          "correct": false
+        },
+        {
+          "probeId": "fact-24",
+          "category": "fact",
+          "question": "What is the access token for service \"obsidian-51\"?",
+          "expected": [
+            "tundra_4298"
+          ],
+          "answer": "harbor_5710",
+          "correct": false
+        },
+        {
+          "probeId": "fact-27",
+          "category": "fact",
+          "question": "What is the access token for service \"harbor-89\"?",
+          "expected": [
+            "harbor_3944"
+          ],
+          "answer": "harbor_3944",
+          "correct": true
+        },
+        {
+          "probeId": "fact-30",
+          "category": "fact",
+          "question": "What is the access token for service \"obsidian-51\"?",
+          "expected": [
+            "harbor_5710"
+          ],
+          "answer": "harbor_5710",
+          "correct": true
+        },
+        {
+          "probeId": "fact-33",
+          "category": "fact",
+          "question": "What is the access token for service \"harbor-64\"?",
+          "expected": [
+            "lattice_5375"
+          ],
+          "answer": "lattice_5375",
+          "correct": true
+        }
+      ],
+      "accuracy": 0.25,
+      "byCategory": {
+        "fact": {
+          "correct": 3,
+          "total": 12
+        }
+      },
+      "wallTimeMs": 2363
+    },
+    {
+      "scenarioId": "fact-thread",
+      "strategyId": "cesium-legacy",
+      "windowTokens": 16000,
+      "stats": {
+        "compactions": 2,
+        "compactorCalls": 0,
+        "finalTokens": 12025,
+        "peakTokens": 13680
+      },
+      "probes": [
+        {
+          "probeId": "fact-0",
+          "category": "fact",
+          "question": "What is the access token for service \"krypton-78\"?",
+          "expected": [
+            "willow_9997"
+          ],
+          "answer": "UNKNOWN",
+          "correct": false
+        },
+        {
+          "probeId": "fact-3",
+          "category": "fact",
+          "question": "What is the access token for service \"monsoon-67\"?",
+          "expected": [
+            "quartz_5918"
+          ],
+          "answer": "UNKNOWN",
+          "correct": false
+        },
+        {
+          "probeId": "fact-6",
+          "category": "fact",
+          "question": "What is the access token for service \"quartz-83\"?",
+          "expected": [
+            "ember_6708"
+          ],
+          "answer": "UNKNOWN",
+          "correct": false
+        },
+        {
+          "probeId": "fact-9",
+          "category": "fact",
+          "question": "What is the access token for service \"zephyr-49\"?",
+          "expected": [
+            "nebula_5756"
+          ],
+          "answer": "UNKNOWN",
+          "correct": false
+        },
+        {
+          "probeId": "fact-12",
+          "category": "fact",
+          "question": "What is the access token for service \"cinder-56\"?",
+          "expected": [
+            "tundra_2994"
+          ],
+          "answer": "UNKNOWN",
+          "correct": false
+        },
+        {
+          "probeId": "fact-15",
+          "category": "fact",
+          "question": "What is the access token for service \"rampart-11\"?",
+          "expected": [
+            "echo_4998"
+          ],
+          "answer": "echo_4998",
+          "correct": true
+        },
+        {
+          "probeId": "fact-18",
+          "category": "fact",
+          "question": "What is the access token for service \"willow-65\"?",
+          "expected": [
+            "saffron_8197"
+          ],
+          "answer": "saffron_8197",
+          "correct": true
+        },
+        {
+          "probeId": "fact-21",
+          "category": "fact",
+          "question": "What is the access token for service \"juniper-92\"?",
+          "expected": [
+            "lattice_3084"
+          ],
+          "answer": "lattice_3084",
+          "correct": true
+        },
+        {
+          "probeId": "fact-24",
+          "category": "fact",
+          "question": "What is the access token for service \"obsidian-51\"?",
+          "expected": [
+            "tundra_4298"
+          ],
+          "answer": "harbor_5710",
+          "correct": false
+        },
+        {
+          "probeId": "fact-27",
+          "category": "fact",
+          "question": "What is the access token for service \"harbor-89\"?",
+          "expected": [
+            "harbor_3944"
+          ],
+          "answer": "harbor_3944",
+          "correct": true
+        },
+        {
+          "probeId": "fact-30",
+          "category": "fact",
+          "question": "What is the access token for service \"obsidian-51\"?",
+          "expected": [
+            "harbor_5710"
+          ],
+          "answer": "harbor_5710",
+          "correct": true
+        },
+        {
+          "probeId": "fact-33",
+          "category": "fact",
+          "question": "What is the access token for service \"harbor-64\"?",
+          "expected": [
+            "lattice_5375"
+          ],
+          "answer": "lattice_5375",
+          "correct": true
+        }
+      ],
+      "accuracy": 0.5,
+      "byCategory": {
+        "fact": {
+          "correct": 6,
+          "total": 12
+        }
+      },
+      "wallTimeMs": 2563
+    },
+    {
+      "scenarioId": "fact-thread",
+      "strategyId": "cesium-ledger@0.35",
+      "windowTokens": 16000,
+      "stats": {
+        "compactions": 2,
+        "compactorCalls": 2,
+        "finalTokens": 12446,
+        "peakTokens": 13680
+      },
+      "probes": [
+        {
+          "probeId": "fact-0",
+          "category": "fact",
+          "question": "What is the access token for service \"krypton-78\"?",
+          "expected": [
+            "willow_9997"
+          ],
+          "answer": "willow_9997",
+          "correct": true
+        },
+        {
+          "probeId": "fact-3",
+          "category": "fact",
+          "question": "What is the access token for service \"monsoon-67\"?",
+          "expected": [
+            "quartz_5918"
+          ],
+          "answer": "quartz_5918",
+          "correct": true
+        },
+        {
+          "probeId": "fact-6",
+          "category": "fact",
+          "question": "What is the access token for service \"quartz-83\"?",
+          "expected": [
+            "ember_6708"
+          ],
+          "answer": "ember_6708",
+          "correct": true
+        },
+        {
+          "probeId": "fact-9",
+          "category": "fact",
+          "question": "What is the access token for service \"zephyr-49\"?",
+          "expected": [
+            "nebula_5756"
+          ],
+          "answer": "nebula_5756",
+          "correct": true
+        },
+        {
+          "probeId": "fact-12",
+          "category": "fact",
+          "question": "What is the access token for service \"cinder-56\"?",
+          "expected": [
+            "tundra_2994"
+          ],
+          "answer": "tundra_2994",
+          "correct": true
+        },
+        {
+          "probeId": "fact-15",
+          "category": "fact",
+          "question": "What is the access token for service \"rampart-11\"?",
+          "expected": [
+            "echo_4998"
+          ],
+          "answer": "echo_4998",
+          "correct": true
+        },
+        {
+          "probeId": "fact-18",
+          "category": "fact",
+          "question": "What is the access token for service \"willow-65\"?",
+          "expected": [
+            "saffron_8197"
+          ],
+          "answer": "saffron_8197",
+          "correct": true
+        },
+        {
+          "probeId": "fact-21",
+          "category": "fact",
+          "question": "What is the access token for service \"juniper-92\"?",
+          "expected": [
+            "lattice_3084"
+          ],
+          "answer": "lattice_3084",
+          "correct": true
+        },
+        {
+          "probeId": "fact-24",
+          "category": "fact",
+          "question": "What is the access token for service \"obsidian-51\"?",
+          "expected": [
+            "tundra_4298"
+          ],
+          "answer": "harbor_5710",
+          "correct": false
+        },
+        {
+          "probeId": "fact-27",
+          "category": "fact",
+          "question": "What is the access token for service \"harbor-89\"?",
+          "expected": [
+            "harbor_3944"
+          ],
+          "answer": "harbor_3944",
+          "correct": true
+        },
+        {
+          "probeId": "fact-30",
+          "category": "fact",
+          "question": "What is the access token for service \"obsidian-51\"?",
+          "expected": [
+            "harbor_5710"
+          ],
+          "answer": "harbor_5710",
+          "correct": true
+        },
+        {
+          "probeId": "fact-33",
+          "category": "fact",
+          "question": "What is the access token for service \"harbor-64\"?",
+          "expected": [
+            "lattice_5375"
+          ],
+          "answer": "lattice_5375",
+          "correct": true
+        }
+      ],
+      "accuracy": 0.9166666666666666,
+      "byCategory": {
+        "fact": {
+          "correct": 11,
+          "total": 12
+        }
+      },
+      "wallTimeMs": 11911
+    }
+  ]
+}

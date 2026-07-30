@@ -541,6 +541,7 @@ export function cesiumLedgerStrategy(intensity: number): Strategy {
         async finalize() {
           const messages = assemble();
           stats.finalTokens = tokensOf(messages);
+          (this as { debugEvents?: AgentStoredEvent[] }).debugEvents = events;
           return { messages, stats };
         },
       };

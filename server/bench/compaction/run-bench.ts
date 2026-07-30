@@ -140,7 +140,7 @@ async function askProbe(input: {
   const answer = await benchChat({
     model: input.probeModel,
     messages: chatMessages,
-    maxTokens: 3000,
+    maxTokens: 8_000,
     temperature: 0,
   });
   return { answer: answer.trim(), correct: scoreProbe(input.probe, answer) };

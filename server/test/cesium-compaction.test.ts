@@ -13,6 +13,7 @@ import {
   emptyCesiumLedger,
   latestLedgerFromEvents,
   looksLikeLedgerBody,
+  mergeLedgerBodies,
   renderEventsForCompaction,
   renderLedgerForContext,
   resolveCompactionBudgets,
@@ -356,7 +357,7 @@ test("ledger system prompt covers all sections and looksLikeLedgerBody validates
 // Heuristic fallback
 // ---------------------------------------------------------------------------
 
-test("buildHeuristicLedgerBody extracts users, failures, subagents, artifacts verbatim", () => {
+test("buildHeuristicLedgerBody extracts failures, subagents, artifacts verbatim", () => {
   resetSeq();
   const events: AgentStoredEvent[] = [
     userEvent("Deploy polybot with the kelly-sizing branch"),
@@ -366,10 +367,34 @@ test("buildHeuristicLedgerBody extracts users, failures, subagents, artifacts ve
   ];
   const body = buildHeuristicLedgerBody({ previousBody: "", spanEvents: events });
   assert.ok(looksLikeLedgerBody(body));
-  assert.ok(body.includes("Deploy polybot with the kelly-sizing branch"));
   assert.ok(body.includes("/tmp/example.ts"));
   assert.ok(body.includes("ECONNREFUSED"));
   assert.ok(body.includes("sub-7"));
+});
+
+test("mergeLedgerBodies dedupes section-wise and stays bounded across generations", () => {
+  resetSeq();
+  const spanA: AgentStoredEvent[] = [
+    ...toolEvents("terminal", "Error: alpha exploded", "failed"),
+    subagentEvent("sub-a", "Task A", "done A"),
+  ];
+  const spanB: AgentStoredEvent[] = [
+    ...toolEvents("terminal", "Error: beta exploded", "failed"),
+    subagentEvent("sub-b", "Task B", "done B"),
+  ];
+  const genOne = buildHeuristicLedgerBody({ previousBody: "", spanEvents: spanA });
+  const genTwo = buildHeuristicLedgerBody({ previousBody: genOne, spanEvents: spanB });
+  const genThree = buildHeuristicLedgerBody({ previousBody: genTwo, spanEvents: spanB });
+  // Both generations' knowledge survives.
+  assert.ok(genTwo.includes("alpha exploded"));
+  assert.ok(genTwo.includes("beta exploded"));
+  assert.ok(genTwo.includes("sub-a"));
+  assert.ok(genTwo.includes("sub-b"));
+  // Re-merging identical content must not grow the body (dedupe works).
+  assert.ok(genThree.length <= genTwo.length + 32);
+  // Exactly one header per section (no stacked bodies).
+  const missionCount = (genThree.match(/## MISSION/g) ?? []).length;
+  assert.equal(missionCount, 1);
 });
 
 // ---------------------------------------------------------------------------
@@ -578,6 +603,63 @@ test("second-generation compaction merges previous ledger and carries quotes", a
     assert.ok(second.ledger.userQuotes.some((quote) => quote.text.startsWith("turn 0")));
     // Span only covers events newer than the previous coverage boundary.
     assert.ok(second.stats.spanFromSeq > first.stats.spanToSeq);
+  }
+});
+
+test("microcompact outcome preserves compression_summary events and covered history", async () => {
+  resetSeq();
+  const covered = userEvent("covered old turn");
+  const ledger = {
+    ...emptyCesiumLedger(),
+    generation: 1,
+    coveredToSeq: covered.seq,
+    body: "## MISSION\n- continue",
+  };
+  const summary: AgentStoredEvent = {
+    seq: covered.seq + 1,
+    eventId: "sum",
+    conversationId: "conv-1",
+    createdAt: 1,
+    kind: "compression_summary",
+    messageId: "sum",
+    summary: renderLedgerForContext(ledger),
+    retainedTurnCount: 1,
+    compressedTurnCount: 1,
+    sourceRange: { fromSeq: 1, toSeq: covered.seq },
+    generation: 1,
+    raw: { engine: CESIUM_COMPACTION_ENGINE_ID, ledger },
+  };
+  seqCounter += 1;
+  const events: AgentStoredEvent[] = [covered, summary];
+  for (let turn = 0; turn < 6; turn += 1) {
+    events.push(userEvent(`live turn ${turn}`));
+    events.push(...toolEvents("terminal", `noise\n${"log ".repeat(3_000)}`));
+    events.push(...assistantEvents(`ok ${turn}`));
+  }
+  const budgets = resolveCompactionBudgets({
+    contextWindowTokens: 40_000,
+    intensity: 1,
+    thresholdRatio: 0.5,
+  });
+  const outcome = await runCesiumCompactionPipeline({
+    events,
+    usedTokens: budgets.triggerTokens + 500,
+    budgets,
+    callModel: null,
+  });
+  assert.equal(outcome.kind, "microcompact");
+  if (outcome.kind === "microcompact") {
+    assert.ok(
+      outcome.events.some((event) => event.kind === "compression_summary"),
+      "ledger summary event must survive microcompaction"
+    );
+    assert.ok(
+      outcome.events.some((event) => event.seq === covered.seq),
+      "covered events must remain in the stream (normalize skips them via the ledger)"
+    );
+    // The ledger must still render in assembled history.
+    const messages = normalizeEventsToHistory(outcome.events);
+    assert.ok(messages[1]!.content.startsWith("<context_ledger>"));
   }
 });
 

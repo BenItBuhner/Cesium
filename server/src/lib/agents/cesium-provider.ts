@@ -1505,6 +1505,9 @@ class CesiumSessionHandle implements AgentSessionHandle {
             { role: "user", content: user },
           ],
           tools: [],
+          // Reasoning compactor models spend output budget on hidden reasoning
+          // before emitting the ledger body — give them generous headroom.
+          maxOutputTokens: 16_384,
         });
         return result.text;
       };

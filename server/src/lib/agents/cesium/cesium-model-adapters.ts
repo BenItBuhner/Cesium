@@ -133,6 +133,7 @@ function openAiChatRequestBody(
     model: string;
     messages: CesiumHistoryMessage[];
     tools?: import("./cesium-tools.js").CesiumToolDefinition[];
+    maxOutputTokens?: number;
   },
   stream: boolean
 ): Record<string, unknown> {
@@ -142,7 +143,7 @@ function openAiChatRequestBody(
     model: input.model,
     messages: openAiMessages(input.messages),
     ...(tools ? { tools, tool_choice: "auto" as const } : {}),
-    max_tokens: DEFAULT_MAX_OUTPUT_TOKENS,
+    max_tokens: input.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
     ...(stream ? { stream: true } : {}),
   };
 }
@@ -180,6 +181,7 @@ async function fetchOpenAiChat(input: {
   model: string;
   messages: CesiumHistoryMessage[];
   tools?: import("./cesium-tools.js").CesiumToolDefinition[];
+  maxOutputTokens?: number;
   stream: boolean;
 }): Promise<Response> {
   const baseUrl = resolveOpenAiCompatibleBaseUrl(input.baseUrl, input.providerId);
@@ -312,6 +314,7 @@ async function* streamOpenAiChat(input: {
   model: string;
   messages: CesiumHistoryMessage[];
   tools?: import("./cesium-tools.js").CesiumToolDefinition[];
+  maxOutputTokens?: number;
 }): AsyncGenerator<CesiumAdapterStreamEvent> {
   const response = await fetchOpenAiChat({ ...input, stream: true });
   if (!response.ok) {
@@ -742,6 +745,8 @@ export type RunAdapterInput = {
   messages: CesiumHistoryMessage[];
   /** When set, overrides the default composed Cesium tool list (including harness feature modules). */
   tools?: import("./cesium-tools.js").CesiumToolDefinition[];
+  /** Per-call output budget override (OpenAI-compatible chat only). Reasoning models need headroom. */
+  maxOutputTokens?: number;
 };
 
 async function* streamStaticResult(
@@ -774,6 +779,7 @@ export async function* streamAdapter(
         model,
         messages: input.messages,
         tools: input.tools,
+        maxOutputTokens: input.maxOutputTokens,
       });
       return;
     case "openai-realtime":

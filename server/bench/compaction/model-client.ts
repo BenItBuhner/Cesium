@@ -64,10 +64,12 @@ export async function benchChat(input: {
   timeoutMs?: number;
 }): Promise<string> {
   const url = `${benchBaseUrl()}/chat/completions`;
+  // Reasoning models (e.g. turbo, kimi-k3) burn output budget on hidden
+  // reasoning before emitting content — keep generous headroom.
   const body = JSON.stringify({
     model: input.model,
     messages: input.messages,
-    max_tokens: input.maxTokens ?? 4_096,
+    max_tokens: input.maxTokens ?? 16_384,
     temperature: input.temperature ?? 0,
   });
   let lastError: unknown = null;
