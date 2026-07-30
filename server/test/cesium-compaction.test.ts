@@ -619,8 +619,17 @@ test("second-generation compaction merges previous ledger and carries quotes", a
   if (second.kind === "compacted") {
     assert.equal(second.ledger.generation, 2);
     assert.ok(sawPreviousLedgerInPrompt, "previous ledger body must be fed to the merge prompt");
-    // Quotes from generation 1 carry forward.
-    assert.ok(second.ledger.userQuotes.some((quote) => quote.text.startsWith("turn 0")));
+    // Quotes carry forward within budget (oldest may evict under pressure);
+    // the newest quotes always survive.
+    assert.ok(second.ledger.userQuotes.length > 0);
+    assert.ok(
+      second.ledger.userQuotes[second.ledger.userQuotes.length - 1]!.text.startsWith("later turn")
+    );
+    const totalQuoteChars = second.ledger.userQuotes.reduce(
+      (sum, quote) => sum + quote.text.length,
+      0
+    );
+    assert.ok(totalQuoteChars <= budgets.userArchiveBudgetTokens * 4 + 400);
     // Span only covers events newer than the previous coverage boundary.
     assert.ok(second.stats.spanFromSeq > first.stats.spanToSeq);
   }
