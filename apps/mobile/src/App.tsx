@@ -107,6 +107,7 @@ export default function App() {
     [authToken, runtime, safeAreaTop, serverUrl, systemColorScheme]
   );
 
+  const lastPhoneControlConfigRef = useRef<string | null>(null);
   const configureNativeServices = useCallback(
     (
       nextFocused = focused,
@@ -119,13 +120,29 @@ export default function App() {
         conversationId: nextFocused.conversationId,
         authToken: nextAuthToken,
       });
-      void CesiumPhoneControl.configure({
+      // Phone control does not care about the focused conversation, and a null
+      // workspace (web still booting) must not clobber the stored one — each
+      // configure() restarts the native service, aborting in-flight
+      // registrations and flapping the "Reconnecting…" notification.
+      if (!nextFocused.workspaceId) {
+        return;
+      }
+      const phoneControlConfig = {
         serverUrl: nextServerUrl,
         workspaceId: nextFocused.workspaceId,
         authToken: nextAuthToken,
         backendId: "cesium-agent",
         mode: "agent",
-      }).catch(() => undefined);
+      };
+      const phoneControlKey = JSON.stringify(phoneControlConfig);
+      if (phoneControlKey === lastPhoneControlConfigRef.current) {
+        return;
+      }
+      lastPhoneControlConfigRef.current = phoneControlKey;
+      void CesiumPhoneControl.configure(phoneControlConfig).catch(() => {
+        // Allow a retry with the same config after a native failure.
+        lastPhoneControlConfigRef.current = null;
+      });
     },
     [focused]
   );
