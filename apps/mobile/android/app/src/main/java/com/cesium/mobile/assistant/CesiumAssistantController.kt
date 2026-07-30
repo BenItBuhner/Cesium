@@ -49,26 +49,50 @@ object CesiumAssistantController {
     if (client == null) client = CesiumAssistantClient(context.applicationContext)
     if (speaker == null) speaker = CesiumSpeaker(context.applicationContext)
     spokenFor = ""
-    emit(State(running = true, status = "Starting agent…", request = request))
-    client!!.createAgent(request, screenContext, screenshot) { status, answer ->
-      val terminal = status == "Done" ||
-        status.startsWith("Agent failed") ||
-        status.startsWith("Agent cancelled") ||
-        status.startsWith("Could not reach") ||
-        status.startsWith("Server returned") ||
-        status.startsWith("Open Cesium")
-      val next = state.copy(
-        running = !terminal,
-        status = status,
-        answer = answer ?: state.answer,
-        terminal = terminal,
-        ok = status == "Done"
-      )
-      emit(next)
-      if (next.ok && next.answer.isNotBlank() && spokenFor != next.answer) {
-        spokenFor = next.answer
-        speaker?.speak(Markdown.toSpeech(next.answer))
+    emit(State(running = true, status = "Thinking…", request = request))
+    client!!.runVoiceTurn(
+      request,
+      screenContext,
+      screenshot,
+      update = { status, answer ->
+        val terminal = status == "Done" ||
+          status.startsWith("Agent failed") ||
+          status.startsWith("Agent cancelled") ||
+          status.startsWith("Could not reach") ||
+          status.startsWith("Server returned") ||
+          status.startsWith("Voice controller") ||
+          status.startsWith("Open Cesium")
+        val next = state.copy(
+          running = !terminal,
+          status = status,
+          answer = answer ?: state.answer,
+          terminal = terminal,
+          ok = status == "Done"
+        )
+        emit(next)
+        // Delegated sessions still speak their final answer on completion
+        // (the voice-turn acknowledgement was already spoken via `speak`).
+        if (next.ok && next.answer.isNotBlank() && spokenFor != next.answer) {
+          spokenFor = next.answer
+          speakAloud(Markdown.toSpeech(next.answer))
+        }
+      },
+      speak = { spoken ->
+        spokenFor = spoken
+        speakAloud(spoken)
       }
+    )
+  }
+
+  /** Same voice as the web orb (server TTS stack), on-device TTS fallback. */
+  private fun speakAloud(text: String) {
+    val activeClient = client
+    if (activeClient == null) {
+      speaker?.speak(text)
+      return
+    }
+    activeClient.speakServer(text) { ok ->
+      if (!ok) speaker?.speak(text)
     }
   }
 
