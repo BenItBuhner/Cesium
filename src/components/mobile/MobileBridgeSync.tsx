@@ -2,11 +2,13 @@
 
 import { useEffect, useMemo, useRef } from "react";
 import { useAgentConversations } from "@/components/chat/AgentConversationsContext";
+import { useShellView } from "@/components/layout/ShellViewContext";
 import { useServerConnections } from "@/components/preferences/ServerConnectionsProvider";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { AGENT_NEW_CHAT_SESSION_ID } from "@/lib/workspace-session";
 import { getStoredSessionToken } from "@/lib/auth-client";
 import { getConfiguredServerBaseUrl } from "@/lib/configured-server-base-url";
+import { safeReadLocationSearchParam } from "@/lib/safe-url";
 import {
   dispatchMobileBridgeMessage,
   MOBILE_BRIDGE_MESSAGE_EVENT,
@@ -48,12 +50,25 @@ export function MobileBridgeSync() {
     syncConversationSnapshot,
   } = useAgentConversations();
   const previousProjectionRef = useRef<MobileAgentProjection | null>(null);
+  const { shellView } = useShellView();
   const activeChatTab = workspaceSession.chat.tabs.find((tab) => tab.active);
-  const focusedConversationId = activeChatTab?.id ?? null;
-  const focusedConversation =
-    focusedConversationId && focusedConversationId !== AGENT_NEW_CHAT_SESSION_ID
-      ? conversationsById[focusedConversationId]
+  const requestedConversationIdFromLocation =
+    shellView === "agent" && typeof window !== "undefined"
+      ? safeReadLocationSearchParam("conversationId")
       : null;
+  const normalizeConversationId = (id: string | null | undefined): string | null =>
+    id && id !== AGENT_NEW_CHAT_SESSION_ID ? id : null;
+  // Track the same conversation the agent view shows (URL param → agentView
+  // selection), then fall back to the IDE chat tab. Live notifications and the
+  // native agent-status subscription previously keyed off `chat.tabs` only,
+  // which stays on "new" in agent view — so nothing was ever projected.
+  const focusedConversationId =
+    normalizeConversationId(requestedConversationIdFromLocation) ??
+    normalizeConversationId(workspaceSession.agentView.selectedConversationId) ??
+    normalizeConversationId(activeChatTab?.id);
+  const focusedConversation = focusedConversationId
+    ? conversationsById[focusedConversationId] ?? null
+    : null;
 
   const projection = useMemo(() => {
     if (!focusedConversation) {
@@ -211,6 +226,12 @@ export function MobileBridgeSync() {
             chat: {
               ...current.chat,
               tabs: nextTabs,
+            },
+            // Also select it in the agent view — tapping a notification should
+            // land on that conversation, not just activate a hidden chat tab.
+            agentView: {
+              ...current.agentView,
+              selectedConversationId: conversationId,
             },
           };
         });

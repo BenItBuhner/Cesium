@@ -871,9 +871,22 @@ export function MessageThreadContent({
           : 0;
       const userTextLength =
         messages[seg.userIndex]?.type === "user" ? messages[seg.userIndex]!.content?.length ?? 0 : 0;
+      // Account for streamed assistant text: without it the estimate lags far
+      // behind measured heights and each remeasure jolts the scroll position.
+      let assistantTextLength = 0;
+      for (const tailIndex of seg.tailIndices) {
+        const tailMessage = messages[tailIndex];
+        if (tailMessage?.type === "assistant") {
+          assistantTextLength += tailMessage.content?.length ?? 0;
+        }
+      }
       return Math.min(
         16000,
-        220 + Math.ceil(userTextLength / 160) * 22 + todoItems * 28 + seg.tailIndices.length * 110
+        220 +
+          Math.ceil(userTextLength / 160) * 22 +
+          todoItems * 28 +
+          seg.tailIndices.length * 110 +
+          Math.ceil(assistantTextLength / 140) * 22
       );
     },
     overscan: 4,

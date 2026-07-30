@@ -75,6 +75,21 @@ export function GeneralSettingsPanel() {
           border={false}
         />
       </SettingsSection>
+      <SettingsSection title="Voice">
+        <SettingsRow
+          searchId="show-voice-orb"
+          title="Voice orb"
+          description="Show the floating ambient voice orb. Hiding it also turns the voice plane off. You can also hide it from the orb's long-press menu."
+          trailing={
+            <ToggleSwitch
+              checked={general.showVoiceOrb}
+              onChange={(value) => patchGeneral({ showVoiceOrb: value })}
+              size="md"
+            />
+          }
+          border={false}
+        />
+      </SettingsSection>
       <MobileNativeSettings />
     </>
   );

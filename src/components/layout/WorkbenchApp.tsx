@@ -1,11 +1,12 @@
 "use client";
 
-import { Suspense, useSyncExternalStore, type ReactNode } from "react";
+import { Suspense, useEffect, useSyncExternalStore, type ReactNode } from "react";
 import { DocsPageView } from "@/components/docs/DocsPageView";
 import { AgentConversationsProvider } from "@/components/chat/AgentConversationsContext";
 import { OpenInEditorProvider } from "@/components/editor/OpenInEditorContext";
+import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
 import { VoiceOrb } from "@/components/voice/VoiceOrb";
-import { VoiceProvider } from "@/components/voice/VoiceProvider";
+import { VoiceProvider, useVoice } from "@/components/voice/VoiceProvider";
 import { AgentLayout } from "@/components/layout/AgentLayout";
 import { MobileBridgeSync } from "@/components/mobile/MobileBridgeSync";
 import { SettingsShellView } from "@/components/layout/SettingsShellView";
@@ -38,6 +39,28 @@ function WorkbenchShell() {
   return <AgentLayout />;
 }
 
+/**
+ * Mounts the ambient voice orb only when enabled in Settings → General → Voice.
+ * Hiding the orb also forces the voice plane off so the mic never keeps
+ * listening without a visible indicator.
+ */
+function VoiceOrbGate() {
+  const { settings } = useGlobalSettings();
+  const { mode, setMode } = useVoice();
+  const showVoiceOrb = settings.general.showVoiceOrb;
+
+  useEffect(() => {
+    if (!showVoiceOrb && mode !== "off") {
+      setMode("off");
+    }
+  }, [showVoiceOrb, mode, setMode]);
+
+  if (!showVoiceOrb) {
+    return null;
+  }
+  return <VoiceOrb />;
+}
+
 function WorkbenchWithConversationProviders() {
   return (
     <OpenInEditorProvider>
@@ -45,7 +68,7 @@ function WorkbenchWithConversationProviders() {
         <VoiceProvider>
           <MobileBridgeSync />
           <WorkbenchShell />
-          <VoiceOrb />
+          <VoiceOrbGate />
         </VoiceProvider>
       </AgentConversationsProvider>
     </OpenInEditorProvider>

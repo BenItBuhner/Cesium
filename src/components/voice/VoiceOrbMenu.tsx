@@ -8,6 +8,7 @@
 
 import { useEffect, useRef } from "react";
 import {
+  EyeOff,
   FlaskConical,
   Loader2,
   Mic,
@@ -16,6 +17,7 @@ import {
   Square,
   VolumeX,
 } from "lucide-react";
+import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
 import { useVoice, type VoiceMode } from "./VoiceProvider";
 
 const MODE_BUTTONS: Array<{
@@ -50,7 +52,21 @@ export function VoiceOrbMenu({
     memory,
     error,
   } = useVoice();
+  const { updateSettings } = useGlobalSettings();
   const rootRef = useRef<HTMLDivElement | null>(null);
+
+  const hideOrb = () => {
+    // Turn the voice plane off before removing its only visible indicator.
+    setMode("off");
+    updateSettings((current) => ({
+      ...current,
+      general: {
+        ...current.general,
+        showVoiceOrb: false,
+      },
+    }));
+    onClose();
+  };
 
   useEffect(() => {
     const onPointerDown = (event: PointerEvent) => {
@@ -130,6 +146,16 @@ export function VoiceOrbMenu({
             <FlaskConical className="size-3" />
           )}
           Self-test
+        </button>
+        <button
+          type="button"
+          onClick={hideOrb}
+          title="Hide the voice orb (re-enable in Settings → General → Voice)"
+          className="flex flex-1 items-center justify-center gap-1 rounded-[8px] border border-[var(--border-card)] bg-[var(--bg-card)] py-1.5 text-[10px] text-[var(--text-secondary)] transition-colors hover:text-[var(--text-primary)]"
+          data-testid="voice-orb-hide"
+        >
+          <EyeOff className="size-3" />
+          Hide
         </button>
       </div>
 

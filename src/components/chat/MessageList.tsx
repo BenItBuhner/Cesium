@@ -176,6 +176,20 @@ export function MessageList({
   const isNearBottom = (root: HTMLDivElement) =>
     root.scrollHeight - (root.scrollTop + root.clientHeight) <= 48;
 
+  /**
+   * Idempotent bottom pin: writes `scrollTop` only when actually off the bottom.
+   * Redundant writes fire extra scroll events that feed the sticky/fade/persist
+   * handlers and (with virtual row remeasurement) can oscillate into visible
+   * high-frequency jitter while streaming.
+   */
+  const pinToBottom = useCallback((root: HTMLDivElement) => {
+    const target = root.scrollHeight - root.clientHeight;
+    if (root.scrollTop < target - 0.5) {
+      root.scrollTop = root.scrollHeight;
+    }
+    scrollSnapshotRef.current = { sh: root.scrollHeight, st: root.scrollTop };
+  }, []);
+
   const flushPersistedScrollTop = useCallback(() => {
     if (!onScrollTopSettled) {
       return;
@@ -293,13 +307,15 @@ export function MessageList({
     requestScrollAnchorRestore,
   ]);
 
-  useEffect(() => {
+  // Layout effect so the pin lands before paint — a passive effect paints one
+  // un-pinned frame first, which reads as a per-chunk bounce while streaming.
+  useLayoutEffect(() => {
     const root = scrollRootRef.current;
     if (!root || !stickToBottomRef.current) {
       return;
     }
-    root.scrollTop = root.scrollHeight;
-  }, [messages]);
+    pinToBottom(root);
+  }, [messages, pinToBottom]);
 
   useEffect(() => {
     wasLoadingOlderHistoryRef.current = false;
@@ -413,13 +429,14 @@ export function MessageList({
     if (!root) return;
     const observer = new ResizeObserver(() => {
       if (stickToBottomRef.current) {
-        root.scrollTop = root.scrollHeight;
+        pinToBottom(root);
+      } else {
+        scrollSnapshotRef.current = { sh: root.scrollHeight, st: root.scrollTop };
       }
-      scrollSnapshotRef.current = { sh: root.scrollHeight, st: root.scrollTop };
     });
     observer.observe(root);
     return () => observer.disconnect();
-  }, []);
+  }, [pinToBottom]);
 
   useEffect(() => {
     const flushOnPageHide = () => {
@@ -538,7 +555,7 @@ export function MessageList({
       <div
         ref={scrollRootRef}
         data-chat-scroll-root
-        className={`absolute inset-0 overflow-y-auto overflow-x-hidden overscroll-y-contain ${scrollPadX} [-webkit-overflow-scrolling:touch] hide-scrollbar-y ${
+        className={`absolute inset-0 overflow-y-auto overflow-x-hidden overscroll-y-contain [overflow-anchor:none] ${scrollPadX} [-webkit-overflow-scrolling:touch] hide-scrollbar-y ${
           bottomDockVisible ? "pb-[clamp(160px,24vh,240px)]" : "pb-[14px]"
         }`}
         onScroll={(event) => {
