@@ -713,7 +713,7 @@ test("budgets give the ledger roughly half the retention target", () => {
     thresholdRatio: 0.82,
   });
   assert.ok(budgets.ledgerBudgetTokens >= budgets.targetTokens * 0.3);
-  assert.ok(budgets.ledgerBudgetTokens <= budgets.targetTokens * 0.6);
+  assert.ok(budgets.ledgerBudgetTokens <= budgets.targetTokens * 0.75);
   assert.ok(budgets.tailBudgetTokens + budgets.ledgerBudgetTokens <= budgets.targetTokens + 1);
 });
 

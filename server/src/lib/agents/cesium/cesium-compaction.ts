@@ -106,11 +106,12 @@ export function resolveCompactionBudgets(input: {
   const warnRatio = Math.max(0.1, triggerRatio - 0.12);
   const targetTokens = Math.floor(window * targetRatio);
   // The ledger is the durable memory — it earns roughly half of the retention
-  // target (slightly less at high intensity), the verbatim tail gets the rest.
+  // target, and MORE as intensity rises: aggressive compaction sacrifices the
+  // verbatim tail before it sacrifices memory.
   const ledgerBudgetTokens = Math.floor(
-    clamp(targetTokens * lerp(0.5, 0.35, intensity), 1_200, 24_000)
+    clamp(targetTokens * lerp(0.5, 0.7, intensity), 1_200, 24_000)
   );
-  const tailBudgetTokens = Math.max(1_000, targetTokens - ledgerBudgetTokens);
+  const tailBudgetTokens = Math.max(800, targetTokens - ledgerBudgetTokens);
   return {
     contextWindowTokens: window,
     triggerTokens: Math.floor(window * triggerRatio),
