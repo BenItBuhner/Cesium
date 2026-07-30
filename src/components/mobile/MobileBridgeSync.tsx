@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef } from "react";
 import { useAgentConversations } from "@/components/chat/AgentConversationsContext";
+import { useServerConnections } from "@/components/preferences/ServerConnectionsProvider";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { AGENT_NEW_CHAT_SESSION_ID } from "@/lib/workspace-session";
 import { getStoredSessionToken } from "@/lib/auth-client";
@@ -32,6 +33,7 @@ function readNativeReadyMessage(): MobileNativeToWebMessage | null {
 }
 
 export function MobileBridgeSync() {
+  const { activeServer } = useServerConnections();
   const {
     activeWorkspaceId,
     flushWorkspaceSessionNow,
@@ -81,6 +83,20 @@ export function MobileBridgeSync() {
       authToken: getStoredSessionToken(),
     });
   }, [activeWorkspaceId, focusedConversationId]);
+
+  // Keep the native shell (agent status polling, phone control, notifications)
+  // pointed at whichever server the workbench is actually using, e.g. after
+  // switching to the on-device Termux server from the connection screen.
+  useEffect(() => {
+    postMobileBridgeMessage({
+      type: "serverConfigured",
+      server: {
+        baseUrl: activeServer.baseUrl,
+        label: activeServer.label,
+        authToken: getStoredSessionToken(activeServer.baseUrl),
+      },
+    });
+  }, [activeServer.baseUrl, activeServer.label]);
 
   useEffect(() => {
     postMobileBridgeMessage({

@@ -5,6 +5,7 @@ import { LockKeyhole, LogOut, RefreshCw, Server } from "lucide-react";
 import { useAuth } from "@/components/auth/AuthProvider";
 import { ServerConnectionsManager } from "@/components/preferences/ServerConnectionsManager";
 import { ServerSetupCommand } from "@/components/preferences/ServerSetupCommand";
+import { TermuxServerSetup } from "@/components/preferences/TermuxServerSetup";
 import { useServerConnections } from "@/components/preferences/ServerConnectionsProvider";
 
 export function AuthGate({ children }: { children: ReactNode }) {
@@ -183,6 +184,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
             <div className="rounded-[var(--radius-tab)] border border-[color-mix(in_srgb,var(--debug-accent)_28%,transparent)] bg-[color-mix(in_srgb,var(--debug-accent-bg)_82%,transparent)] px-[11px] py-[9px] font-sans text-[12px] leading-[1.45] text-[var(--text-primary)]">
               {connectionError}
             </div>
+            <TermuxServerSetup compact />
             <ServerSetupCommand compact />
           </div>
         )}

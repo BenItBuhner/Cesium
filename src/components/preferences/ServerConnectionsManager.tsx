@@ -10,6 +10,7 @@ import {
   type AuthSession,
 } from "@/lib/auth-client";
 import { ServerSetupCommand } from "@/components/preferences/ServerSetupCommand";
+import { TermuxServerSetup } from "@/components/preferences/TermuxServerSetup";
 
 const inputClass =
   "box-border h-[36px] w-full rounded-[var(--radius-tab)] border border-[var(--border-card)] bg-[var(--bg-main)] px-[10px] font-sans text-[12px] text-[var(--text-primary)] outline-none placeholder:text-[var(--text-disabled)]";
@@ -371,6 +372,8 @@ export function ServerConnectionsManager({
         </button>
 
         <ServerSetupCommand compact={compact} />
+
+        <TermuxServerSetup compact={compact} />
 
         <div className="border-t border-[var(--border-subtle)] pt-[16px]">
         <div className="mb-[10px] flex items-center gap-[8px] px-[2px]">

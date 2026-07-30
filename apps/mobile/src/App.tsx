@@ -3,6 +3,7 @@ import {
   AppState,
   BackHandler,
   Dimensions,
+  Linking,
   PermissionsAndroid,
   Platform,
   Pressable,
@@ -301,6 +302,14 @@ export default function App() {
       }
       if (message.type === "invokePhoneAssistant") {
         void CesiumPhoneControl.invokeAssistant();
+        return;
+      }
+      if (message.type === "openExternalUrl") {
+        // Open outside the WebView so the workbench (a file:// bundle) is not
+        // navigated away, e.g. the F-Droid page for the Termux server setup.
+        if (/^https?:\/\//i.test(message.url)) {
+          void Linking.openURL(message.url).catch(() => undefined);
+        }
         return;
       }
       if (message.type === "serverConfigured") {
