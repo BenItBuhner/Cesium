@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
+import path from "node:path";
 import { del as cacheDel, getJSON as cacheGetJSON, setJSON as cacheSetJSON } from "../../cache/kv.js";
 import { publish, subscribeSync } from "../../cache/pubsub.js";
 import { measureServerPerf } from "../perf.js";
@@ -923,6 +924,49 @@ export async function updateConversationRecord(
 
 export function createConversationId(): string {
   return randomUUID();
+}
+
+/**
+ * Move a conversation's persisted state to another workspace. The pg driver
+ * keys events by conversation id only, so rewriting `workspaceId` on the
+ * record is enough there; the legacy-json driver stores the meta + event log
+ * under the owning workspace directory, so the directory is physically moved.
+ */
+export async function relocateConversationStorage(
+  conversationId: string,
+  fromWorkspaceId: string,
+  toWorkspaceId: string,
+  patch?: Partial<AgentConversationRecord>
+): Promise<AgentConversationRecord> {
+  return withConversationQueue(fromWorkspaceId, conversationId, async () => {
+    const current = await readConversationRecord(fromWorkspaceId, conversationId);
+    if (!current) {
+      throw new Error(`Unknown conversation: ${conversationId}`);
+    }
+    const storage = await getStorage();
+    if (storage.kind === "legacy-json" && fromWorkspaceId !== toWorkspaceId) {
+      const { getConversationDir } = await import("./session-store-legacy-fs.js");
+      const fromDir = getConversationDir(fromWorkspaceId, conversationId);
+      const toDir = getConversationDir(toWorkspaceId, conversationId);
+      await fs.mkdir(path.dirname(toDir), { recursive: true });
+      await fs.rename(fromDir, toDir);
+    }
+    const next: AgentConversationRecord = {
+      ...current,
+      ...patch,
+      workspaceId: toWorkspaceId,
+      updatedAt: Math.max(current.updatedAt + 1, Date.now()),
+    };
+    await storage.upsertAgentConversation(next);
+    await invalidateConversationCaches(fromWorkspaceId, conversationId);
+    await invalidateConversationCaches(toWorkspaceId, conversationId);
+    scheduleAgentCacheRefill(toWorkspaceId, conversationId);
+    if (fromWorkspaceId !== toWorkspaceId) {
+      notify({ type: "conversation_deleted", workspaceId: fromWorkspaceId, conversationId });
+    }
+    notify({ type: "conversation", conversation: next });
+    return next;
+  });
 }
 
 export async function deleteConversationFromStore(

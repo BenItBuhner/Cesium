@@ -1,12 +1,21 @@
 import type { AgentBackendId, AgentBackendInfo, AgentConfigOption } from "./protocol";
 import type { AgentModeOption, EditorMode, FileNode, ModelInfo } from "./types";
+import { makeComposerConversationReferenceToken } from "./conversation-reference";
 
 export type AtSuggestion = {
   id: string;
   label: string;
   subtitle: string;
   insert: string;
-  category: "file" | "tool";
+  category: "file" | "tool" | "conversation";
+};
+
+/** Minimal conversation shape needed to offer `@` conversation suggestions. */
+export type AtConversationSource = {
+  id: string;
+  title: string;
+  workspaceName?: string;
+  updatedAt?: number;
 };
 
 export type SlashMenuAction =
@@ -97,8 +106,29 @@ const TOOL_AT: AtSuggestion[] = [
   },
 ];
 
-export function getAllAtSuggestions(root?: FileNode | null): AtSuggestion[] {
-  return [...TOOL_AT, ...filesFromTree(root ?? { name: "", type: "folder", children: [] })];
+function conversationSuggestions(conversations: AtConversationSource[]): AtSuggestion[] {
+  return [...conversations]
+    .sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0))
+    .map((conversation) => ({
+      id: `conversation:${conversation.id}`,
+      label: conversation.title || "Untitled chat",
+      subtitle: conversation.workspaceName
+        ? `Chat · ${conversation.workspaceName}`
+        : "Chat",
+      insert: makeComposerConversationReferenceToken(conversation.id),
+      category: "conversation" as const,
+    }));
+}
+
+export function getAllAtSuggestions(
+  root?: FileNode | null,
+  conversations?: AtConversationSource[] | null
+): AtSuggestion[] {
+  return [
+    ...TOOL_AT,
+    ...conversationSuggestions(conversations ?? []),
+    ...filesFromTree(root ?? { name: "", type: "folder", children: [] }),
+  ];
 }
 
 export function getSlashMenuSections(input: {
@@ -287,9 +317,21 @@ export function filterSlashMenuSections(
   return filterSlashMenuSectionsForDisplay(sections, query).sections;
 }
 
+/** Cap so recent chats stay discoverable without crowding files out of the empty-query popup. */
+const MAX_UNFILTERED_CONVERSATION_AT_SUGGESTIONS = 8;
+
 export function filterAtSuggestions(list: AtSuggestion[], query: string): AtSuggestion[] {
   const q = query.toLowerCase().trim();
-  if (!q) return list.slice(0, 40);
+  if (!q) {
+    let conversationCount = 0;
+    return list
+      .filter((s) => {
+        if (s.category !== "conversation") return true;
+        conversationCount += 1;
+        return conversationCount <= MAX_UNFILTERED_CONVERSATION_AT_SUGGESTIONS;
+      })
+      .slice(0, 40);
+  }
   return list
     .filter(
       (s) =>

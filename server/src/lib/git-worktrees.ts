@@ -455,7 +455,13 @@ export async function switchWorkspaceBranch(input: {
   workspace: WorkspaceRecord;
   workspaces: WorkspaceRecord[];
   branch: string;
-}): Promise<{ status: GitWorkspaceStatus; checkedOutWorktree?: GitWorktreeInfo }> {
+  /** Create the branch (from the current HEAD) when it does not exist yet. */
+  create?: boolean;
+}): Promise<{
+  status: GitWorkspaceStatus;
+  checkedOutWorktree?: GitWorktreeInfo;
+  created?: boolean;
+}> {
   const status = await getGitWorkspaceStatus(input.workspace, input.workspaces);
   if (!status.isGitRepo || !status.repoRoot) {
     throw new Error("Workspace is not a git repository.");
@@ -467,6 +473,14 @@ export async function switchWorkspaceBranch(input: {
   }
   if (status.dirty) {
     throw new Error("Cannot switch branches with uncommitted changes. Create a worktree instead.");
+  }
+  const exists = await localBranchExists(status.repoRoot, branch);
+  if (!exists && input.create) {
+    await runGit(status.repoRoot, ["switch", "-c", branch], GIT_MUTATION_TIMEOUT_MS);
+    return {
+      status: await getGitWorkspaceStatus(input.workspace, input.workspaces),
+      created: true,
+    };
   }
   await runGit(status.repoRoot, ["switch", branch], GIT_MUTATION_TIMEOUT_MS);
   return {

@@ -336,6 +336,23 @@ agentRoutes.post("/api/agents/conversations/:conversationId/prompt", async (c) =
   return c.json({ snapshot });
 });
 
+agentRoutes.post("/api/agents/conversations/:conversationId/relocate", async (c) => {
+  const workspace = await requireWorkspaceFromRequest(c);
+  const conversationId = c.req.param("conversationId");
+  const body = await c.req.json<{ workspaceId?: string; branch?: string }>();
+  try {
+    const result = await agentRuntimeManager.relocateConversation(workspace, conversationId, {
+      ...(body.workspaceId ? { workspaceId: body.workspaceId } : {}),
+      ...(body.branch ? { branch: body.branch } : {}),
+      initiatedBy: "user",
+    });
+    return c.json(result);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Relocate failed.";
+    return c.json({ error: message }, 400);
+  }
+});
+
 agentRoutes.post("/api/agents/conversations/:conversationId/retry", async (c) => {
   const workspace = await requireWorkspaceFromRequest(c);
   const conversationId = c.req.param("conversationId");

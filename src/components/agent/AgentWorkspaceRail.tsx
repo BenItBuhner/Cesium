@@ -77,6 +77,7 @@ import {
 import {
   createWorkspaceGitWorktree,
   forkAgentConversation,
+  relocateAgentConversation,
   startOrchestrationMode,
   updateAgentConversationConfig,
 } from "@/lib/server-api";
@@ -1923,6 +1924,49 @@ export function AgentWorkspaceRail() {
   toggleLeftRailCollapsed,
 ]);
 
+  const relocateConversationTo = useCallback(
+    async (
+      conversation: AgentRailConversationSummary,
+      target: { workspaceId?: string; branch?: string }
+    ) => {
+      const targetServer =
+        (conversation.serverId
+          ? servers.find((server) => server.id === conversation.serverId)
+          : activeServer) ?? activeServer;
+      try {
+        const result = await relocateAgentConversation(conversation.id, target, {
+          server: {
+            serverId: targetServer.id,
+            baseUrl: targetServer.baseUrl,
+            workspaceId: conversation.workspaceId,
+          },
+        });
+        await refreshConversationGroups();
+        pushNotification({
+          kind: WORKBENCH_NOTIFICATION_KIND.editorNotice,
+          severity: "info",
+          title: "Chat Relocated",
+          message: target.branch
+            ? `"${conversation.title}" now lives on branch ${target.branch} in ${result.workspace.name}. The agent is reminded on its next turn.`
+            : `"${conversation.title}" moved to ${result.workspace.name}. The agent is reminded on its next turn.`,
+          autoDismissMs: 8_000,
+          compact: true,
+        });
+      } catch (error) {
+        pushNotification({
+          kind: WORKBENCH_NOTIFICATION_KIND.editorNotice,
+          severity: "error",
+          title: "Relocate Failed",
+          message:
+            error instanceof Error ? error.message : "Could not relocate the conversation.",
+          autoDismissMs: 8_000,
+          compact: true,
+        });
+      }
+    },
+    [activeServer, pushNotification, refreshConversationGroups, servers]
+  );
+
   const buildConversationMenuItems = useCallback(
     (
       conversation: AgentRailConversationSummary,
@@ -1981,6 +2025,66 @@ export function AgentWorkspaceRail() {
             ]
           : []),
       ];
+      // Physical relocation (workspace / repository / branch) is Cesium-only:
+      // other harnesses pin native sessions to their original working directory.
+      const relocateBusy =
+        conversation.status === "running" ||
+        conversation.status === "awaiting_permission";
+      const relocateWorkspaceTargets =
+        conversation.backendId === "cesium-agent"
+          ? groups
+              .filter(
+                (group) =>
+                  group.workspace.id !== conversation.workspaceId &&
+                  group.workspace.kind !== "standalone-chat" &&
+                  (group.serverId ?? activeServer.id) ===
+                    (conversation.serverId ?? activeServer.id)
+              )
+              .filter(
+                (group, index, all) =>
+                  all.findIndex((candidate) => candidate.workspace.id === group.workspace.id) ===
+                  index
+              )
+              .slice(0, 12)
+          : [];
+      const relocationItems: WorkbenchMenuItem[] =
+        conversation.backendId === "cesium-agent"
+          ? [
+              { type: "sep" },
+              ...relocateWorkspaceTargets.map(
+                (group): WorkbenchMenuItem => ({
+                  type: "item",
+                  id: `relocate-ws-${group.workspace.id}`,
+                  label: `Relocate to ${group.workspace.name}${
+                    group.repository?.currentBranch
+                      ? ` (${group.repository.currentBranch})`
+                      : ""
+                  }`,
+                  disabled: relocateBusy,
+                  onSelect: () =>
+                    void relocateConversationTo(conversation, {
+                      workspaceId: group.workspace.id,
+                    }),
+                })
+              ),
+              {
+                type: "item",
+                id: "relocate-branch",
+                label: "Relocate to Branch...",
+                disabled: relocateBusy,
+                onSelect: () => {
+                  const branch = window.prompt(
+                    `Switch "${conversation.title}" to branch`,
+                    conversation.repository?.currentBranch ?? ""
+                  );
+                  const trimmed = branch?.trim();
+                  if (trimmed) {
+                    void relocateConversationTo(conversation, { branch: trimmed });
+                  }
+                },
+              },
+            ]
+          : [];
       return [
         {
           type: "item",
@@ -2015,6 +2119,7 @@ export function AgentWorkspaceRail() {
               onSelect: () => pinConversation(conversationId),
             },
         ...moveItems,
+        ...relocationItems,
         { type: "sep" },
         {
           type: "item",
@@ -2090,11 +2195,13 @@ export function AgentWorkspaceRail() {
       bulkSelectMode,
       bulkSelectedKeys,
       createFolderForWorkspace,
+      groups,
       toggleBulkSelectConversation,
       handleOpenConversationInEditor,
       moveConversationToFolder,
       pinConversation,
       pushNotification,
+      relocateConversationTo,
       resolveConversationFolderScope,
       servers,
       settings.general.chatFolders,

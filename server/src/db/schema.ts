@@ -142,6 +142,7 @@ export const agentConversations = pgTable(
       .notNull()
       .default(sql`'[]'::jsonb`),
     origin: jsonb("origin"),
+    pendingRelocation: jsonb("pending_relocation"),
   },
   (table) => [
     index("agent_conversations_workspace_updated_idx").on(

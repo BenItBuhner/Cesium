@@ -474,6 +474,26 @@ export type AgentConversationOrigin =
       importedAt: number;
     };
 
+/**
+ * Records that a conversation was moved to a different workspace/branch so the
+ * next Cesium turn can inject a `<system-reminder>` telling the agent to
+ * re-learn its surroundings. Cleared once the reminder has been delivered.
+ */
+export type AgentConversationRelocationNotice = {
+  fromWorkspaceId: string;
+  fromWorkspaceName?: string;
+  fromWorkspaceRoot?: string;
+  toWorkspaceId: string;
+  toWorkspaceName?: string;
+  toWorkspaceRoot?: string;
+  /** Branch checked out before the move, when known. */
+  fromBranch?: string | null;
+  /** Branch checked out (or switched to) after the move, when known. */
+  toBranch?: string | null;
+  movedAt: number;
+  initiatedBy: "user" | "agent";
+};
+
 export type AgentConversationRecord = {
   schemaVersion: 1;
   id: string;
@@ -495,6 +515,11 @@ export type AgentConversationRecord = {
   lastReadSeq: number;
   /** Set when the conversation was triggered from an external source. */
   origin?: AgentConversationOrigin | null;
+  /**
+   * Pending "this conversation was moved" notice, delivered as a system
+   * reminder on the next Cesium turn and then cleared. Cesium harness only.
+   */
+  pendingRelocation?: AgentConversationRelocationNotice | null;
   /** FIFO queue; applied automatically when the conversation becomes idle. */
   queuedPrompts: AgentQueuedChatPrompt[];
 };

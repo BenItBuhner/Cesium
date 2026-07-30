@@ -3,7 +3,7 @@
 import { useEffect } from "react";
 import { createPortal } from "react-dom";
 import type { RefObject } from "react";
-import { AtSign, File, Sparkles } from "lucide-react";
+import { AtSign, File, MessageSquare, Sparkles } from "lucide-react";
 import type { AtSuggestion } from "@/lib/composer-suggestions";
 
 const POPOVER_CLASS =
@@ -83,6 +83,8 @@ export function ComposerAutocomplete({
             </span>
             {item.category === "tool" ? (
               <Sparkles className="size-[14px] shrink-0 text-[var(--text-secondary)]" strokeWidth={1.5} />
+            ) : item.category === "conversation" ? (
+              <MessageSquare className="size-[14px] shrink-0 text-[var(--text-secondary)]" strokeWidth={1.5} />
             ) : (
               <File className="size-[14px] shrink-0 text-[var(--text-secondary)]" strokeWidth={1.5} />
             )}

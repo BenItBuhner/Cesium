@@ -119,6 +119,9 @@ function rowToConversation(row: ConversationRow): AgentConversationRecord {
     origin:
       ((row as ConversationRow & { origin?: unknown })
         .origin as AgentConversationRecord["origin"]) ?? null,
+    pendingRelocation:
+      ((row as ConversationRow & { pendingRelocation?: unknown })
+        .pendingRelocation as AgentConversationRecord["pendingRelocation"]) ?? null,
     queuedPrompts: Array.isArray(
       (row as ConversationRow & { queuedPrompts?: unknown }).queuedPrompts
     )
@@ -800,6 +803,8 @@ export class PgStorageDriver implements StorageDriver {
       archivedAt: record.archivedAt ?? null,
       queuedPrompts: (record.queuedPrompts ?? []) as unknown as unknown[],
       origin: (record.origin ?? null) as unknown as Record<string, unknown> | null,
+      pendingRelocation:
+        (record.pendingRelocation ?? null) as unknown as Record<string, unknown> | null,
     };
     await getDb()
       .insert(schema.agentConversations)
@@ -807,6 +812,8 @@ export class PgStorageDriver implements StorageDriver {
       .onConflictDoUpdate({
         target: schema.agentConversations.id,
         set: {
+          // Conversation relocation rewrites the owning workspace in place.
+          workspaceId: values.workspaceId,
           title: values.title,
           status: values.status,
           updatedAt: values.updatedAt,
@@ -822,6 +829,7 @@ export class PgStorageDriver implements StorageDriver {
           archivedAt: values.archivedAt,
           queuedPrompts: values.queuedPrompts,
           origin: values.origin,
+          pendingRelocation: values.pendingRelocation,
         },
       });
   }

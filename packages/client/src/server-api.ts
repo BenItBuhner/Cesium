@@ -1403,6 +1403,21 @@ export async function prepareRedoAgentConversation(
   });
 }
 
+/**
+ * Move a Cesium conversation to another workspace and/or git branch. The
+ * server injects a relocation system reminder into the next agent turn.
+ */
+export async function relocateAgentConversation(
+  conversationId: string,
+  options: { workspaceId?: string; branch?: string },
+  requestOptions?: { server?: ServerRequestContext }
+): Promise<{ conversation: AgentConversationRecord; workspace: WorkspaceRecord }> {
+  return request(`/api/agents/conversations/${encodeURIComponent(conversationId)}/relocate`, {
+    method: "POST",
+    body: JSON.stringify(options),
+  }, requestOptions);
+}
+
 export async function forkAgentConversation(
   conversationId: string,
   options?: { upToMessageId?: string; beforeMessageId?: string },

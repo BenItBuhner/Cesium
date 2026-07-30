@@ -17,6 +17,7 @@ export {
   CESIUM_TIME_GAP_REMINDER_MS,
   cesiumEnvironmentChangeNotice,
   cesiumEnvironmentReminderSnapshot,
+  cesiumRelocationChangeNotice,
   formatCesiumDateLabel,
   formatCesiumTimeGapDuration,
   latestCesiumEnvironmentReminderSnapshot,

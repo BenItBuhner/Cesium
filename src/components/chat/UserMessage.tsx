@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type MouseEvent } from "react";
-import { AtSign, CornerUpLeft, FileText, LayoutTemplate, MousePointerSquareDashed } from "lucide-react";
+import { AtSign, CornerUpLeft, FileText, LayoutTemplate, MessageSquare, MousePointerSquareDashed } from "lucide-react";
 import type { ImageAttachment, UserMessageSegment } from "@/lib/types";
 import { ImageCarousel } from "./ImageCarousel";
 import { MessageTextSelectionCite } from "./MessageTextSelectionCite";
@@ -139,6 +139,27 @@ export function UserMessage({
                       aria-hidden
                     />
                     <span className="max-w-[260px] truncate">{s.text || "element"}</span>
+                  </span>
+                );
+              }
+              if (s.type === "conversation") {
+                const title = s.conversationWorkspaceName
+                  ? `${s.text}\nChat in ${s.conversationWorkspaceName}`
+                  : s.text;
+                return (
+                  <span
+                    key={i}
+                    title={title}
+                    onClick={(event) => event.stopPropagation()}
+                    className="mx-[2px] inline-flex max-w-full items-center gap-[5px] rounded-[6px] border border-[var(--border-subtle)] bg-[var(--file-tag-bg)] px-[7px] py-[2px] align-baseline font-sans text-[13px] font-medium text-[var(--file-tag-text)]"
+                    data-conversation-reference-id={s.conversationId ?? ""}
+                  >
+                    <MessageSquare
+                      className="size-[12px] shrink-0 text-[var(--file-tag-icon)]"
+                      strokeWidth={1.75}
+                      aria-hidden
+                    />
+                    <span className="max-w-[260px] truncate">{s.text || "conversation"}</span>
                   </span>
                 );
               }

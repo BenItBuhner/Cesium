@@ -1,6 +1,6 @@
 import type { McpServerSummary } from "@cesium/core/mcp";
 import { resolveModelDisplayName } from "@cesium/core/model-display-name";
-import type { AgentStoredEvent } from "../types.js";
+import type { AgentConversationRelocationNotice, AgentStoredEvent } from "../types.js";
 import { asRecord, asString, asNumber } from "./cesium-coerce.js";
 
 /** Minimum elapsed time before a time-gap environment notice is emitted (infrequent on purpose). */
@@ -166,6 +166,47 @@ export function cesiumEnvironmentChangeNotice(input: {
   }
 
   return lines.length ? lines.join("\n") : null;
+}
+
+/**
+ * Terse "this conversation was moved" lines merged into the Environment
+ * Changes section of the next turn's system reminder. The user's intent when
+ * moving a chat is almost always to reuse its context in the new location, so
+ * the text steers the agent to re-learn its surroundings and keep working there.
+ */
+export function cesiumRelocationChangeNotice(
+  notice: AgentConversationRelocationNotice | null | undefined
+): string | null {
+  if (!notice) {
+    return null;
+  }
+  const movedWorkspace = notice.fromWorkspaceId !== notice.toWorkspaceId;
+  const fromBranch = notice.fromBranch?.trim();
+  const toBranch = notice.toBranch?.trim();
+  const movedBranch = Boolean(toBranch) && toBranch !== fromBranch;
+  const by = notice.initiatedBy === "agent" ? "this agent" : "the user";
+  const lines: string[] = [];
+  if (movedWorkspace) {
+    lines.push(
+      `- This conversation was relocated by ${by} from workspace "${
+        notice.fromWorkspaceName ?? notice.fromWorkspaceId
+      }" (${notice.fromWorkspaceRoot ?? "unknown path"}) to "${
+        notice.toWorkspaceName ?? notice.toWorkspaceId
+      }" (${notice.toWorkspaceRoot ?? "unknown path"}). All tools now operate on the new workspace root.`
+    );
+  }
+  if (movedBranch) {
+    lines.push(
+      `- The checked-out git branch changed${fromBranch ? ` from ${fromBranch}` : ""} to ${toBranch}.`
+    );
+  }
+  if (!movedWorkspace && !movedBranch) {
+    lines.push("- This conversation was relocated; its location settings were reapplied.");
+  }
+  lines.push(
+    "- Files from earlier turns may have changed, moved, or no longer exist here. Re-verify paths and re-read key files before editing; treat this as a new environment to re-learn while carrying the conversation's context forward. The move was most likely made to reuse this context in the new location, so continue the work there."
+  );
+  return lines.join("\n");
 }
 
 export type McpReminderSnapshot = {
