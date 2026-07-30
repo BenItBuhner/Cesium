@@ -108,8 +108,25 @@ function padFrame(frame: Float32Array, size: number): Float32Array {
   return out;
 }
 
+/**
+ * Packaged clients (Android WebView, Electron) load the workbench from
+ * file://, where a root-absolute "/voice" resolves to the filesystem root
+ * instead of the bundle. Resolve relative to the page so the bundled assets
+ * are found in both hosted and packaged deployments.
+ */
+export function defaultVoiceAssetBase(): string {
+  if (typeof window !== "undefined" && window.location.protocol === "file:") {
+    try {
+      return new URL("voice", window.location.href).toString();
+    } catch {
+      return "/voice";
+    }
+  }
+  return "/voice";
+}
+
 export async function createSileroVad(
-  assetBase = "/voice"
+  assetBase = defaultVoiceAssetBase()
 ): Promise<SileroVad | null> {
   try {
     const modelResponse = await fetch(`${assetBase}/silero_vad_v5.onnx`);
@@ -130,7 +147,9 @@ export async function createSileroVad(
 }
 
 /** Best available VAD: Silero when its assets are served, else energy. */
-export async function createBestVad(assetBase = "/voice"): Promise<VadEngine> {
+export async function createBestVad(
+  assetBase = defaultVoiceAssetBase()
+): Promise<VadEngine> {
   const silero = await createSileroVad(assetBase);
   return silero ?? new EnergyVad();
 }
