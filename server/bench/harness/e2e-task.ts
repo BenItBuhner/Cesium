@@ -82,7 +82,7 @@ export function generateE2ETask(options: { seed?: number; noiseTurns?: number } 
 
   const repoFiles: Record<string, string> = {
     "package.json": JSON.stringify(
-      { name: "pricing-service", version: "0.0.1", type: "commonjs", scripts: { test: "node --test test/" } },
+      { name: "pricing-service", version: "0.0.1", type: "commonjs", scripts: { test: "node --test" } },
       null,
       2
     ),
@@ -216,7 +216,9 @@ export type E2EGrade = {
 };
 
 export async function gradeE2ETask(task: E2ETask, repoDir: string): Promise<E2EGrade> {
-  const structural = await execCapture("node", ["--test", "test/"], repoDir, 60_000);
+  // Bare `node --test` auto-discovers ./test and works across node versions
+  // (a `test/` path argument is rejected by some builds).
+  const structural = await execCapture("node", ["--test"], repoDir, 60_000);
   const structuralPass = structural.code === 0;
   const caseScript = [
     "const { priceFor } = require('./lib/pricing.js');",
