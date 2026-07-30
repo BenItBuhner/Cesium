@@ -47,6 +47,7 @@ export function createSubagentsV1Module(): CesiumFeatureModule {
     tools: SUBAGENTS_V1_TOOLS,
     toolNames: [...SUBAGENTS_V1_TOOL_NAMES],
     reminder:
-      "Subagents V1 is active. Use `subagent` for ephemeral research children and `read_subagent_transcript` to inspect their cards. For durable kanban children use Orchestration Mode tools.",
+      "Subagents V1 is active. Use `subagent` for ephemeral research children and `read_subagent_transcript` to inspect their cards. For durable kanban children use Orchestration Mode tools. " +
+      "When delegated or parallel work must touch files, isolate each workstream on its own worktree branch (`create_worktree`), drive it via terminal against that path, then merge verified branches back and clean up.",
   };
 }

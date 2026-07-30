@@ -94,7 +94,7 @@ export type ImageAttachmentState = {
 
 /** Inline user bubble: plain text runs, file/context chips, or design-capture pills. */
 export interface UserMessageSegment {
-  type: "text" | "file" | "context" | "image" | "design" | "text-reference";
+  type: "text" | "file" | "context" | "image" | "design" | "text-reference" | "conversation";
   text: string;
   mimeType?: string;
   data?: string;
@@ -110,6 +110,10 @@ export interface UserMessageSegment {
   referenceText?: string;
   /** Text-reference pills: original pasted character count. */
   referenceCharCount?: number;
+  /** Conversation pills: referenced conversation id for tooltip/navigation. */
+  conversationId?: string;
+  /** Conversation pills: workspace name of the referenced conversation. */
+  conversationWorkspaceName?: string;
 }
 
 export interface TodoItem {

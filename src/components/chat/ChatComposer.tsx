@@ -180,6 +180,13 @@ import {
   makeComposerTextReferenceToken,
   type TextReference,
 } from "@/lib/text-reference";
+import {
+  buildConversationReferenceBlock,
+  COMPOSER_CONVERSATION_REFERENCE_TOKEN_REGEX,
+  type AtConversationSource,
+  type ConversationReference,
+} from "@cesium/core";
+import { useAgentShellStateMaybe } from "@/components/agent/AgentShellStateContext";
 
 const sendButtonBgClass: Record<KnownEditorMode, string> = {
   agent: "bg-[var(--accent-dark)]",
@@ -1135,7 +1142,44 @@ export function ChatComposer({
     },
     [onDraftTextReferencesChange]
   );
-  const atSuggestions = useMemo(() => getAllAtSuggestions(fileTree), [fileTree]);
+  // Saved conversations become taggable like files; tokens expand into
+  // <conversation-reference> blocks on submit so Cesium agents can pull the
+  // transcripts through the conversation tools.
+  const agentShellState = useAgentShellStateMaybe();
+  const conversationReferences = useMemo<Record<string, ConversationReference>>(() => {
+    const out: Record<string, ConversationReference> = {};
+    for (const group of agentShellState?.groups ?? []) {
+      for (const conversation of group.conversations) {
+        if (conversation.id === conversationId) continue;
+        out[conversation.id] = {
+          id: conversation.id,
+          title: conversation.title || "Untitled chat",
+          workspaceId: conversation.workspaceId,
+          workspaceName: group.workspace.name,
+        };
+      }
+    }
+    return out;
+  }, [agentShellState?.groups, conversationId]);
+  const conversationAtSources = useMemo<AtConversationSource[]>(() => {
+    const out: AtConversationSource[] = [];
+    for (const group of agentShellState?.groups ?? []) {
+      for (const conversation of group.conversations) {
+        if (conversation.id === conversationId || conversation.archivedAt != null) continue;
+        out.push({
+          id: conversation.id,
+          title: conversation.title || "Untitled chat",
+          workspaceName: group.workspace.name,
+          updatedAt: conversation.updatedAt,
+        });
+      }
+    }
+    return out;
+  }, [agentShellState?.groups, conversationId]);
+  const atSuggestions = useMemo(
+    () => getAllAtSuggestions(fileTree, conversationAtSources),
+    [conversationAtSources, fileTree]
+  );
   const activeBackend = useMemo(
     () => backends.find((entry) => entry.id === backendId) ?? backends[0] ?? null,
     [backendId, backends]
@@ -2029,7 +2073,13 @@ export function ChatComposer({
    */
   const expandComposerReferenceTokens = useCallback(
     (text: string): string => {
-      if (!text.includes("\u27E6design:") && !text.includes("\u27E6textref:")) return text;
+      if (
+        !text.includes("\u27E6design:") &&
+        !text.includes("\u27E6textref:") &&
+        !text.includes("\u27E6conv:")
+      ) {
+        return text;
+      }
       const caps = draftCaptures ?? {};
       const expandedDesign = text.replace(
         new RegExp(COMPOSER_CAPTURE_TOKEN_REGEX.source, "g"),
@@ -2040,7 +2090,7 @@ export function ChatComposer({
         }
       );
       const textRefs = effectiveTextReferences ?? {};
-      return expandedDesign.replace(
+      const expandedTextRefs = expandedDesign.replace(
         new RegExp(COMPOSER_TEXT_REFERENCE_TOKEN_REGEX.source, "g"),
         (match, id: string) => {
           const reference = textRefs[id];
@@ -2048,8 +2098,16 @@ export function ChatComposer({
           return buildTextReferenceBlock(reference);
         }
       );
+      return expandedTextRefs.replace(
+        new RegExp(COMPOSER_CONVERSATION_REFERENCE_TOKEN_REGEX.source, "g"),
+        (match, id: string) => {
+          const reference = conversationReferences[id];
+          if (!reference) return match;
+          return buildConversationReferenceBlock(reference);
+        }
+      );
     },
-    [draftCaptures, effectiveTextReferences]
+    [conversationReferences, draftCaptures, effectiveTextReferences]
   );
 
   const submitComposer = useCallback(async (delivery: "normal" | "steer" = "normal") => {
@@ -2146,7 +2204,8 @@ export function ChatComposer({
    * backing metadata is deeply equal but referentially new.
    */
   const pillDescriptors = useMemo<Record<string, ComposerPillDescriptor> | undefined>(() => {
-    if (!draftCaptures && !effectiveTextReferences) return undefined;
+    const hasConversations = Object.keys(conversationReferences).length > 0;
+    if (!draftCaptures && !effectiveTextReferences && !hasConversations) return undefined;
     const out: Record<string, ComposerPillDescriptor> = {};
     for (const [id, cap] of Object.entries(draftCaptures ?? {})) {
       out[`design:${id}`] = {
@@ -2164,8 +2223,16 @@ export function ChatComposer({
         snippet: `${reference.charCount.toLocaleString()} characters\n\n${reference.text.slice(0, 600)}`,
       };
     }
+    for (const [id, reference] of Object.entries(conversationReferences)) {
+      out[`conv:${id}`] = {
+        kind: "conversation",
+        id: reference.id,
+        label: reference.title,
+        snippet: reference.workspaceName ? `Chat in ${reference.workspaceName}` : "Chat",
+      };
+    }
     return out;
-  }, [draftCaptures, effectiveTextReferences]);
+  }, [conversationReferences, draftCaptures, effectiveTextReferences]);
 
   useEffect(() => {
     if (hardwareInputEnabled) return;
