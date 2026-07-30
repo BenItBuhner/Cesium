@@ -50,9 +50,13 @@ if [[ "${CESIUM_SKIP_PACKAGE_UPDATE:-0}" != "1" ]]; then
 fi
 ensure_curl_works
 
+# espeak (espeak-ng) gives the voice control plane a local TTS engine on
+# device; the neural kokoro engine is skipped on Termux because its
+# onnxruntime-node dependency does not support Android (EBADPLATFORM).
 DEBIAN_FRONTEND=noninteractive apt install -y \
   clang \
   curl \
+  espeak \
   git \
   jq \
   make \
@@ -100,7 +104,10 @@ printf 'Installing cesium-server...\n'
 (
   cd server
   # --no-workspaces: use server/package-lock.json in isolation (kept in sync
-  # with server/package.json). --omit=optional skips node-pty's NDK build.
+  # with server/package.json). --omit=optional skips node-pty's NDK build and
+  # kokoro-js, whose onnxruntime-node dependency npm hard-rejects on Android
+  # (EBADPLATFORM: wanted win32/darwin/linux). The server degrades to the
+  # espeak TTS engine installed above.
   npm ci --no-workspaces --omit=optional
   rm -f node_modules/cesium
   unset npm_config_ignore_scripts
