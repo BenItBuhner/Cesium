@@ -737,6 +737,19 @@ export function buildLedgerUpdateUserPrompt(input: {
 
 export const LEDGER_VERIFICATION_OK = "VERIFIED-OK";
 
+export function buildLedgerCondensePrompt(budgetChars: number): string {
+  const maxWords = Math.max(200, Math.floor((budgetChars / 5) * 0.9));
+  return [
+    "You are condensing an over-budget context ledger for an autonomous coding agent. The input is the full ledger body; output the SAME ledger with the SAME '## ' section structure, shrunk to fit the budget.",
+    `HARD BUDGET: at most ~${maxWords} words. Anything beyond it will be truncated mechanically (oldest lines first), so it is on you to compress smartly instead:`,
+    "- MERGE related entries onto dense shared lines (e.g. one line listing several service:value pairs; combine [sN] markers into [sN-sM] ranges).",
+    "- Preserve EVERY identifier:value pair you can — exact tokens, paths, ids, numbers. Prefer dropping prose over dropping values.",
+    "- Never drop user directives, dead ends/failed approaches, or subagent ids.",
+    "- Drop only redundant phrasing, chatter, and superseded values.",
+    "Output only the condensed ledger body — no preamble, no code fences.",
+  ].join("\n");
+}
+
 export function buildLedgerVerificationPrompt(input: {
   candidateBody: string;
   spanText: string;
@@ -1079,6 +1092,8 @@ async function generateLedgerBody(input: {
   spanEvents: AgentStoredEvent[];
   budgets: CesiumCompactionBudgets;
   callModel: CesiumCompactionModelCaller | null;
+  /** When set, an over-budget body triggers a model-side condense pass. */
+  bodyBudgetChars?: number;
 }): Promise<{ body: string; usedLlm: boolean; verificationRevised: boolean; llmError?: string }> {
   const fromSeq = input.spanEvents[0]?.seq ?? 0;
   const toSeq = input.spanEvents[input.spanEvents.length - 1]?.seq ?? 0;
@@ -1147,6 +1162,24 @@ async function generateLedgerBody(input: {
         }
       } catch {
         // Verification is best-effort; the unverified body is still valid.
+      }
+    }
+    // Condense pass: when the body outgrows its budget, the MODEL re-compresses
+    // it (merging related entries onto dense shared lines) far better than the
+    // mechanical trimmer, which can only evict oldest lines wholesale.
+    if (input.bodyBudgetChars != null && body.length > input.bodyBudgetChars) {
+      try {
+        const condensed = stripCodeFence(
+          await input.callModel({
+            system: buildLedgerCondensePrompt(input.bodyBudgetChars),
+            user: body,
+          })
+        );
+        if (looksLikeLedgerBody(condensed) && condensed.length < body.length) {
+          body = condensed;
+        }
+      } catch {
+        // Best effort — the deterministic trimmer remains the hard guarantee.
       }
     }
     return { body, usedLlm: true, verificationRevised };
@@ -1236,15 +1269,6 @@ export async function runCesiumCompactionPipeline(input: {
     (event) => originalBySeq.get(event.seq) ?? event
   );
   const pins = collectCompactionPins(events, { budgetChars: budgets.pinBudgetChars });
-  const generated = await generateLedgerBody({
-    previousBody: previousLedger.body,
-    pins,
-    spanEvents: spanOriginal,
-    budgets,
-    callModel: input.callModel,
-  });
-  const spanFromSeq = spanOriginal[0]?.seq ?? 0;
-  const spanToSeq = spanOriginal[spanOriginal.length - 1]?.seq ?? 0;
   const userQuotes = updateUserQuoteArchive(previousLedger.userQuotes, spanOriginal, budgets);
   // Prompt-side size guidance is advisory; enforce the ledger budget in code so
   // the rendered ledger (framing + pins + quotes + body) actually fits it.
@@ -1254,6 +1278,16 @@ export async function runCesiumCompactionPipeline(input: {
     2_000,
     budgets.ledgerBudgetTokens * 4 - pinChars - quoteChars - 1_200
   );
+  const generated = await generateLedgerBody({
+    previousBody: previousLedger.body,
+    pins,
+    spanEvents: spanOriginal,
+    budgets,
+    callModel: input.callModel,
+    bodyBudgetChars,
+  });
+  const spanFromSeq = spanOriginal[0]?.seq ?? 0;
+  const spanToSeq = spanOriginal[spanOriginal.length - 1]?.seq ?? 0;
   const ledger: CesiumLedger = {
     version: 1,
     generation: previousLedger.generation + 1,
