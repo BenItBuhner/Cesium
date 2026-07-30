@@ -14,6 +14,8 @@ const READ_ONLY_TOOLS = new Set([
   "grep",
   "search_history",
   "read_history_page",
+  "pin_context",
+  "compact_context",
   "ask_question",
   "subagent",
   "read_subagent_transcript",
@@ -145,6 +147,8 @@ export function resolveCesiumModeToolPolicy(input: {
       name === "ask_question" ||
       name === "search_history" ||
       name === "read_history_page" ||
+      name === "pin_context" ||
+      name === "compact_context" ||
       name === "todo" ||
       name === "wait" ||
       name === "subagent" ||

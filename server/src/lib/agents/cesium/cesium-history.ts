@@ -1,5 +1,6 @@
 import type { AgentStoredEvent } from "../types.js";
 import { asRecord, asString, truncate } from "./cesium-coerce.js";
+import { latestCompressionSummaryEvent } from "./cesium-compaction.js";
 import {
   CESIUM_SYSTEM_PROMPT,
   CESIUM_TOOL_RESULT_MODEL_MAX_CHARS,
@@ -197,13 +198,51 @@ function systemRemindersByTargetMessageId(
   return reminders;
 }
 
+/** Coverage boundary of a compression summary: events at or below it are evicted. */
+export function compressionSummaryCoveredToSeq(
+  event: Extract<AgentStoredEvent, { kind: "compression_summary" }>
+): number {
+  const ledger = asRecord(asRecord(event.raw)?.ledger);
+  if (ledger && typeof ledger.coveredToSeq === "number") {
+    return ledger.coveredToSeq;
+  }
+  return event.sourceRange?.toSeq ?? 0;
+}
+
+function compressionSummaryContextMessage(
+  event: Extract<AgentStoredEvent, { kind: "compression_summary" }>
+): string {
+  // ledger-v1 summaries are stored fully framed (<context_ledger> … </context_ledger>).
+  if (event.summary.trimStart().startsWith("<context_ledger>")) {
+    return event.summary;
+  }
+  return `[Compressed earlier conversation]\n${event.summary}`;
+}
+
 export function normalizeEventsToHistory(events: AgentStoredEvent[]): CesiumHistoryMessage[] {
   const messages: CesiumHistoryMessage[] = [{ role: "system", content: CESIUM_SYSTEM_PROMPT }];
   const assistantTextById = new Map<string, string>();
   const pendingToolCalls: PendingHistoryToolCall[] = [];
   const sorted = [...events].sort((a, b) => a.seq - b.seq);
   const remindersByMessageId = systemRemindersByTargetMessageId(sorted);
+  // Layered assembly: the latest compression summary (ledger) renders directly
+  // after the system prompt, everything it covers is skipped, and superseded
+  // older summaries are dropped entirely.
+  const latestSummary = latestCompressionSummaryEvent(sorted);
+  const coveredToSeq = latestSummary ? compressionSummaryCoveredToSeq(latestSummary) : 0;
+  if (latestSummary) {
+    messages.push({
+      role: "user",
+      content: compressionSummaryContextMessage(latestSummary),
+    });
+  }
   for (const event of sorted) {
+    if (event.kind === "compression_summary") {
+      continue;
+    }
+    if (latestSummary && event.seq > 0 && event.seq <= coveredToSeq) {
+      continue;
+    }
     switch (event.kind) {
       case "user_message":
         flushPendingToolCalls(messages, pendingToolCalls);
@@ -286,13 +325,6 @@ export function normalizeEventsToHistory(events: AgentStoredEvent[]): CesiumHist
         messages.push({
           role: "assistant",
           content: event.entries.map((entry) => `- [${entry.status}] ${entry.content}`).join("\n"),
-        });
-        break;
-      case "compression_summary":
-        flushPendingToolCalls(messages, pendingToolCalls);
-        messages.push({
-          role: "user",
-          content: `[Compressed earlier conversation]\n${event.summary}`,
         });
         break;
       case "agent_handoff":

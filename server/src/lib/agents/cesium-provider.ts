@@ -139,9 +139,6 @@ import {
   CESIUM_RESPONSE_WARNING_MS,
   CESIUM_SYSTEM_PROMPT,
   DEFAULT_GREP_RESULTS,
-  HISTORY_COMPACTION_TARGET_TURNS,
-  HISTORY_COMPACTION_THRESHOLD_RATIO,
-  HISTORY_TURN_LIMIT,
   LARGE_FILE_LINE_LIMIT,
   MAX_GREP_RESULTS,
   MAX_READ_LINES,
@@ -181,8 +178,19 @@ import {
   normalizeCesiumToolResultForModel,
   normalizeEventsToHistory,
   previousUserMessageCreatedAt,
-  summarizeForCompression,
 } from "./cesium/cesium-history.js";
+import {
+  CESIUM_COMPACTION_DEFAULT_INTENSITY,
+  CESIUM_COMPACTION_ENGINE_ID,
+  CESIUM_COMPACTION_PIN_MARKER,
+  compactionWarningBucket,
+  compactionWarningText,
+  renderLedgerForContext,
+  resolveCompactionBudgets,
+  runCesiumCompactionPipeline,
+  type CesiumCompactionBudgets,
+  type CesiumCompactionModelCaller,
+} from "./cesium/cesium-compaction.js";
 import { resolveModelDisplayName } from "@cesium/core/model-display-name";
 import {
   modelPart,
@@ -424,6 +432,12 @@ class CesiumSessionHandle implements AgentSessionHandle {
   private activeUserMessageId: string | null = null;
   private harness: ResolvedCesiumHarness = resolveCesiumTools();
   private subagentsV2: SubagentsV2Runtime | null = null;
+  /** Set by the compact_context tool; consumed (and reset) by buildHistory. */
+  private manualCompactionRequested = false;
+  /** Last 5%-bucket at which a pre-compaction warning was injected. */
+  private lastCompactionWarningBucket: number | null = null;
+  /** Iteration index of the last mid-turn compaction rebuild (thrash guard). */
+  private lastMidTurnCompactionIteration = Number.NEGATIVE_INFINITY;
 
   constructor(
     private readonly backend: AgentBackendInfo,
@@ -799,14 +813,14 @@ class CesiumSessionHandle implements AgentSessionHandle {
           },
         ]);
       }
-      const modelHistory = modelSupportsImages
+      let modelHistory = modelSupportsImages
         ? history
         : history.map((message) =>
             message.images?.length
               ? { ...message, images: undefined }
               : message
           );
-      const toolResultMessages: CesiumHistoryMessage[] = [];
+      let toolResultMessages: CesiumHistoryMessage[] = [];
       let usedToolResultChars = 0;
       let completedToolCallCount = 0;
       for (let iteration = 0; ; iteration += 1) {
@@ -893,6 +907,30 @@ class CesiumSessionHandle implements AgentSessionHandle {
               `Cesium is continuing after ${completedToolCallCount} tool calls…`
             );
           }
+        }
+        // Mid-turn compaction: long tool loops can blow the window inside a single
+        // turn. All streamed chunks / tool calls / results are already persisted as
+        // events, so rebuilding history from storage (which runs the compaction
+        // pipeline) is coherent mid-turn.
+        const midTurnTokens = estimateHistoryTokens([...modelHistory, ...toolResultMessages]);
+        const midTurnBudgets = await this.resolveCompactionBudgets().catch(() => null);
+        const canRebuild =
+          iteration - this.lastMidTurnCompactionIteration >= 3 ||
+          this.manualCompactionRequested;
+        if (
+          midTurnBudgets?.enabled &&
+          canRebuild &&
+          (this.manualCompactionRequested || midTurnTokens >= midTurnBudgets.budgets.triggerTokens)
+        ) {
+          this.lastMidTurnCompactionIteration = iteration;
+          const rebuilt = await this.buildHistory(input.userMessageId);
+          modelHistory = modelSupportsImages
+            ? rebuilt
+            : rebuilt.map((message) =>
+                message.images?.length ? { ...message, images: undefined } : message
+              );
+          toolResultMessages = [];
+          usedToolResultChars = 0;
         }
         await this.waitAtPauseCheckpoint();
         if (this.cancelled) {
@@ -1419,6 +1457,62 @@ class CesiumSessionHandle implements AgentSessionHandle {
     }));
   }
 
+  private async resolveCompactionBudgets(): Promise<{
+    budgets: CesiumCompactionBudgets;
+    enabled: boolean;
+    compressionModelId: string | null;
+  }> {
+    const settings = await getCesiumAgentSettings().catch(() => null);
+    const compression = settings?.compression;
+    const contextWindow = await resolveCesiumModelContextWindow(
+      resolvedModelId(this.callbacks.conversation.config.modelId, this.configOptions)
+    ).catch(() => 100_000);
+    return {
+      budgets: resolveCompactionBudgets({
+        contextWindowTokens: contextWindow,
+        intensity: compression?.intensity ?? CESIUM_COMPACTION_DEFAULT_INTENSITY,
+        thresholdRatio: compression?.thresholdRatio ?? 0.82,
+      }),
+      enabled: compression?.enabled !== false,
+      compressionModelId: compression?.modelId ?? null,
+    };
+  }
+
+  /** Build a one-shot model caller for the compactor (dedicated model or the conversation model). */
+  private async compactionModelCaller(
+    compressionModelId: string | null
+  ): Promise<CesiumCompactionModelCaller | null> {
+    const modelId =
+      compressionModelId?.trim() ||
+      resolvedModelId(this.callbacks.conversation.config.modelId, this.configOptions);
+    try {
+      const auth = await resolveCesiumAuth({
+        modelId,
+        configuredApiKind:
+          providerPart(modelId) === "openai"
+            ? (optionValue(this.configOptions, "api_kind", "openai-responses") as CesiumProviderKind)
+            : undefined,
+      });
+      return async ({ system, user }) => {
+        const result = await runAdapter({
+          apiKind: auth.apiKind,
+          apiKey: auth.apiKey,
+          baseUrl: auth.baseUrl,
+          providerId: auth.providerId,
+          modelId,
+          messages: [
+            { role: "system", content: system },
+            { role: "user", content: user },
+          ],
+          tools: [],
+        });
+        return result.text;
+      };
+    } catch {
+      return null;
+    }
+  }
+
   private async buildHistory(currentUserMessageId: string): Promise<CesiumHistoryMessage[]> {
     const snapshot = await this.callbacks.readSnapshot();
     const snapshotEvents = snapshot?.events ?? [];
@@ -1427,87 +1521,128 @@ class CesiumSessionHandle implements AgentSessionHandle {
       this.callbacks.conversation.id
     ).catch(() => snapshotEvents);
     const events = fullEvents.length > snapshotEvents.length ? fullEvents : snapshotEvents;
-    const visibleUserTurns = events.filter(
-      (event) => event.kind === "user_message" && !event.hidden
-    ).length;
-    const currentMessages = this.normalizeEventsToHistory(events);
-    const contextWindow = await resolveCesiumModelContextWindow(
-      optionValue(
-        this.configOptions,
-        "model",
-        this.callbacks.conversation.config.modelId || "openai/gpt-5.1"
-      )
-    ).catch(() => 100_000);
-    const estimatedTokensBefore = estimateHistoryTokens(currentMessages);
-    const shouldCompact =
-      visibleUserTurns > HISTORY_TURN_LIMIT ||
-      estimatedTokensBefore >= contextWindow * HISTORY_COMPACTION_THRESHOLD_RATIO;
-    if (shouldCompact) {
-      const sorted = [...events].sort((a, b) => a.seq - b.seq);
-      let retainedUsers = 0;
-      let splitIndex = 0;
-      for (let index = sorted.length - 1; index >= 0; index -= 1) {
-        const event = sorted[index]!;
-        if (event.kind === "user_message" && !event.hidden) {
-          retainedUsers += 1;
-          splitIndex = index;
-          if (retainedUsers >= HISTORY_COMPACTION_TARGET_TURNS) {
-            break;
-          }
-        }
-      }
-      const compressed = sorted.slice(0, splitIndex);
-      const retained = sorted.slice(splitIndex);
-      const compressedFromSeq = compressed[0]?.seq ?? 0;
-      const compressedToSeq = compressed[compressed.length - 1]?.seq ?? 0;
-      const latestSummary = [...sorted].reverse().find(
-        (event): event is Extract<AgentStoredEvent, { kind: "compression_summary" }> =>
-          event.kind === "compression_summary"
-      );
-      const latestSummaryToSeq = latestSummary?.sourceRange?.toSeq ?? 0;
-      if (compressed.length > 0 && compressedToSeq > latestSummaryToSeq) {
-        await this.emitConversationStatus("running", formatCompressingContextStatusDetail());
-        const retainedMessages = this.normalizeEventsToHistory(retained);
-        const estimatedTokensAfter = estimateHistoryTokens(retainedMessages);
-        await this.callbacks.appendEvents([
-          {
-            eventId: randomUUID(),
-            conversationId: this.callbacks.conversation.id,
-            kind: "compression_summary",
-            messageId: `cesium-compression-${randomUUID()}`,
-            summary: summarizeForCompression(compressed),
-            retainedTurnCount: retainedUsers,
-            compressedTurnCount: compressed.filter(
-              (event) => event.kind === "user_message" && !event.hidden
-            ).length,
-            sourceRange: { fromSeq: compressedFromSeq, toSeq: compressedToSeq },
-            estimatedTokensBefore,
-            estimatedTokensAfter,
-            generation: (latestSummary?.generation ?? 0) + 1,
-          },
-        ]);
-      }
-      const visibleRetained = retained.filter(
-        (event) => event.kind !== "user_message" || !event.hidden
-      );
-      const history = this.normalizeEventsToHistory(visibleRetained);
-      if (this.isGoalMode()) {
-        const goal = await readGoalForConversation({
-          workspace: this.callbacks.workspace,
-          conversationId: this.callbacks.conversation.id,
-        });
-        if (goal) {
-          history.push({ role: "user", content: goalCompactionRecoveryContext(goal) });
-        }
-      }
-      return history;
-    }
-    return this.normalizeEventsToHistory(
-      events.filter((event) =>
+    const visible = events.filter(
+      (event) =>
         event.kind !== "user_message" ||
         (!event.hidden && (event.messageId !== currentUserMessageId || event.seq > 0))
-      )
     );
+    const { budgets, enabled, compressionModelId } = await this.resolveCompactionBudgets();
+    const currentMessages = this.normalizeEventsToHistory(visible);
+    if (!enabled) {
+      return currentMessages;
+    }
+    const usedTokens = estimateHistoryTokens(currentMessages);
+    const force = this.manualCompactionRequested;
+    this.manualCompactionRequested = false;
+
+    // Pre-compaction warning: nudge the model to pin nuance before eviction.
+    const warningBucket = compactionWarningBucket({ usedTokens, budgets });
+    if (!force && warningBucket != null && warningBucket !== this.lastCompactionWarningBucket) {
+      this.lastCompactionWarningBucket = warningBucket;
+      const percentFull = Math.round((usedTokens / budgets.contextWindowTokens) * 100);
+      const triggerPercent = Math.round(
+        (budgets.triggerTokens / budgets.contextWindowTokens) * 100
+      );
+      const warning = compactionWarningText({ percentFull, triggerPercent });
+      await this.callbacks.appendEvents([
+        {
+          eventId: randomUUID(),
+          conversationId: this.callbacks.conversation.id,
+          kind: "system_reminder",
+          reminderId: `compaction-warning-${randomUUID()}`,
+          targetMessageId: currentUserMessageId,
+          reason: "compaction",
+          text: warning,
+          raw: { marker: "compaction_warning", bucket: warningBucket },
+        },
+      ]);
+      // Surface the warning in this turn's already-normalized history too.
+      const lastUserIndex = currentMessages.map((message) => message.role).lastIndexOf("user");
+      if (lastUserIndex >= 0) {
+        currentMessages[lastUserIndex] = {
+          ...currentMessages[lastUserIndex]!,
+          content: `${warning}\n\n${currentMessages[lastUserIndex]!.content}`,
+        };
+      }
+    }
+
+    if (!force && usedTokens < budgets.triggerTokens) {
+      return currentMessages;
+    }
+
+    await this.emitConversationStatus("running", formatCompressingContextStatusDetail());
+    const callModel = await this.compactionModelCaller(compressionModelId);
+    const outcome = await runCesiumCompactionPipeline({
+      events: visible,
+      usedTokens,
+      budgets,
+      callModel,
+      force,
+    });
+    if (outcome.kind === "noop") {
+      return currentMessages;
+    }
+    if (outcome.kind === "microcompact") {
+      return this.normalizeEventsToHistory(outcome.events);
+    }
+    const summaryText = renderLedgerForContext(outcome.ledger);
+    const retainedUserTurns = outcome.retainedEvents.filter(
+      (event) => event.kind === "user_message" && !event.hidden
+    ).length;
+    const compressedUserTurns = visible.filter(
+      (event) =>
+        event.kind === "user_message" &&
+        !event.hidden &&
+        event.seq <= outcome.stats.spanToSeq
+    ).length;
+    await this.callbacks.appendEvents([
+      {
+        eventId: randomUUID(),
+        conversationId: this.callbacks.conversation.id,
+        kind: "compression_summary",
+        messageId: `cesium-compression-${randomUUID()}`,
+        summary: summaryText,
+        retainedTurnCount: retainedUserTurns,
+        compressedTurnCount: compressedUserTurns,
+        sourceRange: { fromSeq: outcome.stats.spanFromSeq, toSeq: outcome.stats.spanToSeq },
+        estimatedTokensBefore: outcome.stats.usedTokensBefore,
+        estimatedTokensAfter: outcome.stats.usedTokensAfter,
+        generation: outcome.ledger.generation,
+        raw: {
+          engine: CESIUM_COMPACTION_ENGINE_ID,
+          ledger: outcome.ledger,
+          stats: outcome.stats,
+        },
+      },
+    ]);
+    const syntheticSummary: AgentStoredEvent = {
+      seq: outcome.stats.spanToSeq,
+      eventId: randomUUID(),
+      conversationId: this.callbacks.conversation.id,
+      createdAt: Date.now(),
+      kind: "compression_summary",
+      messageId: `cesium-compression-live-${randomUUID()}`,
+      summary: summaryText,
+      retainedTurnCount: retainedUserTurns,
+      compressedTurnCount: compressedUserTurns,
+      sourceRange: { fromSeq: outcome.stats.spanFromSeq, toSeq: outcome.stats.spanToSeq },
+      generation: outcome.ledger.generation,
+      raw: { engine: CESIUM_COMPACTION_ENGINE_ID, ledger: outcome.ledger },
+    };
+    const history = this.normalizeEventsToHistory([
+      syntheticSummary,
+      ...outcome.retainedEvents,
+    ]);
+    if (this.isGoalMode()) {
+      const goal = await readGoalForConversation({
+        workspace: this.callbacks.workspace,
+        conversationId: this.callbacks.conversation.id,
+      });
+      if (goal) {
+        history.push({ role: "user", content: goalCompactionRecoveryContext(goal) });
+      }
+    }
+    return history;
   }
 
   private normalizeEventsToHistory(events: AgentStoredEvent[]): CesiumHistoryMessage[] {
@@ -1856,6 +1991,12 @@ class CesiumSessionHandle implements AgentSessionHandle {
           break;
         case "read_history_page":
           result = await this.toolReadHistoryPage(request.arguments);
+          break;
+        case "pin_context":
+          result = await this.toolPinContext(request.arguments);
+          break;
+        case "compact_context":
+          result = await this.toolCompactContext();
           break;
         case "call_mcp_tool":
           result = await this.toolCallMcp(effectiveRequest.arguments, effectiveRequest.id, title);
@@ -3807,6 +3948,35 @@ class CesiumSessionHandle implements AgentSessionHandle {
       .slice(offset, offset + limit)
       .map((event) => `${event.kind}: ${safeJson(event)}`)
       .join("\n");
+  }
+
+  private async toolPinContext(args: Record<string, unknown>): Promise<string> {
+    const note = asString(args.note);
+    if (!note) throw new Error("pin_context.note is required.");
+    await this.callbacks.appendEvents([
+      {
+        eventId: randomUUID(),
+        conversationId: this.callbacks.conversation.id,
+        kind: "system_reminder",
+        reminderId: `compaction-pin-${randomUUID()}`,
+        reason: "compaction",
+        text: note,
+        raw: { marker: CESIUM_COMPACTION_PIN_MARKER },
+      },
+    ]);
+    return (
+      "Pinned. This note survives context compaction verbatim — it is carried in the " +
+      "PINNED section of the context ledger across all future compactions."
+    );
+  }
+
+  private async toolCompactContext(): Promise<string> {
+    this.manualCompactionRequested = true;
+    return (
+      "Context compaction scheduled: older history will be merged into the context ledger " +
+      "before your next model call. Anything you have pinned with pin_context is preserved verbatim; " +
+      "raw history stays retrievable via search_history / read_history_page."
+    );
   }
 
   private async toolSearchHistory(args: Record<string, unknown>): Promise<string> {

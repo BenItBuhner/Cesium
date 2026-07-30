@@ -3,6 +3,8 @@ import {
 } from "@cesium/core/mcp";
 import { resolveCesiumModelContextWindow } from "../cesium-agent-settings.js";
 import { buildOpenAiToolDefinitions, normalizeEventsToHistory } from "./cesium-provider.js";
+import { latestCompressionSummaryEvent } from "./cesium/cesium-compaction.js";
+import { compressionSummaryCoveredToSeq } from "./cesium/cesium-history.js";
 import type {
   AgentContextUsageCategory,
   AgentContextUsageCategoryId,
@@ -13,7 +15,6 @@ import type {
 import type { WorkspaceRecord } from "../workspace-registry.js";
 import { readConversationSnapshot } from "./session-store.js";
 
-const HISTORY_TURN_LIMIT = 250;
 const SYSTEM_PROMPT_CACHE_TTL_MS = 60_000;
 const USAGE_SNAPSHOT_CACHE_TTL_MS = 15_000;
 
@@ -153,29 +154,30 @@ function splitSystemPrompt(full: string): { base: string; mcp: string } {
   };
 }
 
+/**
+ * Split events at the latest compaction coverage boundary: events at or below
+ * the boundary live only inside the ledger; newer non-summary events are live
+ * conversation context. Mirrors normalizeEventsToHistory's layered assembly.
+ */
 function splitEventsForContext(events: AgentStoredEvent[]): {
   retained: AgentStoredEvent[];
-  compressed: AgentStoredEvent[];
+  latestSummary: Extract<AgentStoredEvent, { kind: "compression_summary" }> | null;
 } {
-  const userTurns = events.filter((event) => event.kind === "user_message").length;
-  if (userTurns <= HISTORY_TURN_LIMIT) {
-    return { retained: events, compressed: [] };
+  const latestSummary = latestCompressionSummaryEvent(events);
+  if (!latestSummary) {
+    return {
+      retained: events.filter((event) => event.kind !== "compression_summary"),
+      latestSummary: null,
+    };
   }
-  const sorted = [...events].sort((a, b) => a.seq - b.seq);
-  let retainedUsers = 0;
-  let splitIndex = 0;
-  for (let index = sorted.length - 1; index >= 0; index -= 1) {
-    if (sorted[index]!.kind === "user_message") {
-      retainedUsers += 1;
-      splitIndex = index;
-      if (retainedUsers >= HISTORY_TURN_LIMIT) {
-        break;
-      }
-    }
-  }
+  const coveredToSeq = compressionSummaryCoveredToSeq(latestSummary);
   return {
-    compressed: sorted.slice(0, splitIndex),
-    retained: sorted.slice(splitIndex),
+    retained: events.filter(
+      (event) =>
+        event.kind !== "compression_summary" &&
+        (event.seq <= 0 || event.seq > coveredToSeq)
+    ),
+    latestSummary,
   };
 }
 
@@ -185,12 +187,13 @@ function historyMessagesWithoutSystem(
   return normalizeEventsToHistory(events).filter((message) => message.role !== "system");
 }
 
-function summarizedConversationTokens(events: AgentStoredEvent[]): number {
-  const summaries = events.filter((event) => event.kind === "compression_summary");
-  if (summaries.length === 0) {
+function summarizedConversationTokens(
+  latestSummary: Extract<AgentStoredEvent, { kind: "compression_summary" }> | null
+): number {
+  if (!latestSummary) {
     return 0;
   }
-  return estimateTokensFromMessages(historyMessagesWithoutSystem(summaries));
+  return estimateTokensFromText(latestSummary.summary);
 }
 
 async function resolveCesiumSystemPromptForUsage(input: {
@@ -217,9 +220,8 @@ export function estimateCesiumContextUsageFromParts(input: {
 }): AgentContextUsageSnapshot {
   const { base, mcp } = splitSystemPrompt(input.systemPromptFull);
   const toolsText = toolDefinitionsText();
-  const { retained } = splitEventsForContext(input.events);
-  const retainedWithoutSummaries = retained.filter(
-    (event) => event.kind !== "compression_summary"
+  const { retained: retainedWithoutSummaries, latestSummary } = splitEventsForContext(
+    input.events
   );
 
   const categoryRows: Array<{
@@ -249,7 +251,7 @@ export function estimateCesiumContextUsageFromParts(input: {
     {
       id: "summarized_conversation",
       label: "Summarized conversation",
-      tokens: summarizedConversationTokens(input.events),
+      tokens: summarizedConversationTokens(latestSummary),
       colorKey: "summarized",
     },
     {
