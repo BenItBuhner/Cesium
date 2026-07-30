@@ -82,6 +82,11 @@ import { markConversationSwitchStart } from "@/lib/dev-perf";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { useWorkspaceDirectory } from "@/contexts/WorkspaceDirectoryContext";
 import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
+import {
+  AGENT_STANDALONE_COMPOSER_DRAFT_ID,
+  agentWorkspaceComposerDraftId,
+  useOpenInEditor,
+} from "@/components/editor/OpenInEditorContext";
 import type { WorkspaceSortMode } from "@/lib/global-settings";
 import type { ServerConnection } from "@/lib/server-connections";
 import {
@@ -510,6 +515,7 @@ export function AgentShellStateProvider({
   } = useServerConnections();
   const { pushNotification } = useWorkbenchNotifications();
   const { workspaces: directoryWorkspaces } = useWorkspaceDirectory();
+  const { resetComposerDraft } = useOpenInEditor();
   const { isMobile } = useViewport();
   const urlConversationId =
     typeof window !== "undefined"
@@ -1626,6 +1632,10 @@ export function AgentShellStateProvider({
   );
 
   const startNewConversation = useCallback(() => {
+    // New Chat must not inherit stuck / previously-sent composer text from the
+    // stable landing draft ids (submit used to race and re-apply stale content).
+    resetComposerDraft(AGENT_STANDALONE_COMPOSER_DRAFT_ID);
+    resetComposerDraft(agentWorkspaceComposerDraftId(activeWorkspaceId));
     updateWorkspaceSession((current) => ({
       ...current,
       agentView: {
@@ -1634,12 +1644,18 @@ export function AgentShellStateProvider({
       },
     }));
     replaceConversationIdInLocation(AGENT_NEW_CHAT_SESSION_ID);
-  }, [replaceConversationIdInLocation, updateWorkspaceSession]);
+  }, [
+    activeWorkspaceId,
+    replaceConversationIdInLocation,
+    resetComposerDraft,
+    updateWorkspaceSession,
+  ]);
 
   const startStandaloneChat = useCallback(() => {
+    resetComposerDraft(AGENT_STANDALONE_COMPOSER_DRAFT_ID);
     setStandaloneDraftActive(true);
     startNewConversation();
-  }, [startNewConversation]);
+  }, [resetComposerDraft, startNewConversation]);
 
   const startNewChatInWorkspace = useCallback(
     async (workspaceId: string) => {

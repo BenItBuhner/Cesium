@@ -16,6 +16,7 @@ import { useAgentCompletionErrorDock } from "@/components/chat/useAgentCompletio
 import { useRedoInlineUserMessage } from "@/components/chat/useRedoInlineUserMessage";
 import { useAgentConversations } from "@/components/chat/AgentConversationsContext";
 import {
+  agentWorkspaceComposerDraftId,
   useOpenInEditor,
   useRegisterDesignCaptureComposer,
 } from "@/components/editor/OpenInEditorContext";
@@ -408,7 +409,7 @@ export function AgentCenterPane() {
 
   const composerDraftId =
     selectedConversationId ??
-    `agent-draft:${activeWorkspaceGroup?.workspace.id ?? "workspace"}`;
+    agentWorkspaceComposerDraftId(activeWorkspaceGroup?.workspace.id);
   const composerDraftTitle =
     conversation?.title && conversation.title !== "New chat"
       ? `${conversation.title} prompt`
@@ -1189,9 +1190,11 @@ export function AgentCenterPane() {
                     layout="docked-bottom"
                     draftAttachments={composerDraftAttachments}
                     onDraftAttachmentsChange={(next) =>
+                      // Do not pass `content` here — submit clears text then
+                      // immediately clears attachments; a stale `content`
+                      // closure would resurrect the prompt in the composer.
                       upsertComposerDraft(composerDraftId, {
                         title: composerDraftTitle,
-                        content: composerDraftText,
                         attachments: next,
                       })
                     }
@@ -1199,7 +1202,6 @@ export function AgentCenterPane() {
                     onDraftCapturesChange={(next) =>
                       upsertComposerDraft(composerDraftId, {
                         title: composerDraftTitle,
-                        content: composerDraftText,
                         captures: next,
                       })
                     }
@@ -1207,7 +1209,6 @@ export function AgentCenterPane() {
                     onDraftTextReferencesChange={(next) =>
                       upsertComposerDraft(composerDraftId, {
                         title: composerDraftTitle,
-                        content: composerDraftText,
                         textReferences: next,
                       })
                     }

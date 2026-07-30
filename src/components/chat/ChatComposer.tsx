@@ -2164,6 +2164,12 @@ export function ChatComposer({
       onDraftCapturesChange(undefined);
     }
     updateTextReferences(undefined);
+    // Re-assert empty after metadata callbacks. Parents that incorrectly
+    // re-apply a stale `content` field while clearing attachments/captures
+    // would otherwise resurrect the prompt (especially on mobile agent UI).
+    valueRef.current = "";
+    setComposerValue("");
+    setComposerSelection({ start: 0, end: 0 });
     if (promptText || imagesToSubmit.length > 0) {
       void Promise.resolve(onSubmit(promptText, imagesToSubmit, { delivery }))
         .catch(() => undefined)
