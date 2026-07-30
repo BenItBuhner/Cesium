@@ -36,7 +36,7 @@ export function conciseQuotedSearchPattern(
 
 export function formatReadToolTitle(path: string | undefined): string {
   if (!path) {
-    return "Ran";
+    return "Read file";
   }
   return `Read ${truncateMiddleLabel(toolPathBasename(path), TOOL_PATH_BASE_MAX)}`;
 }

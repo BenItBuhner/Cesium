@@ -4,8 +4,10 @@ export {
   extractMcpServerIdFromTitle,
   extractMcpServerIdFromWorkedTool,
   formatMcpServerDisplayName,
+  formatMcpToolDisplayName,
   isMcpWorkedTool,
   normalizeMcpServerId,
+  parseMcpCompositeToolName,
   summarizeMcpServerCounts,
   summarizeMcpWorkedTools,
 } from "@cesium/core";

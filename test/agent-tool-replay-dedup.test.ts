@@ -262,7 +262,7 @@ test("stripSpuriousAcpToolCallReplays drops replayed tool_call_update after a la
   assert.equal(toolEntryCount, 1);
 });
 
-test("projectAgentEventsToChatMessages shows Ran for read tools without paths", async () => {
+test("projectAgentEventsToChatMessages shows Read file for read tools without paths", async () => {
   const { projectAgentEventsToChatMessages } = await import("../src/lib/agent-chat.ts");
   const base = { conversationId: "c1", eventId: "", createdAt: 0 };
   const messages = projectAgentEventsToChatMessages(
@@ -294,5 +294,5 @@ test("projectAgentEventsToChatMessages shows Ran for read tools without paths", 
     )
     .find((entry) => entry.kind === "tool");
   assert.ok(tool && tool.kind === "tool");
-  assert.equal(tool.title, "Ran");
+  assert.equal(tool.title, "Read file");
 });
