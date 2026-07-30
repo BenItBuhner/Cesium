@@ -1844,19 +1844,27 @@ function mergeAdjacentWorkedSessionsAroundPermission(messages: ChatMessage[]): C
   let changed = true;
   while (changed) {
     changed = false;
-    for (let i = 0; i + 2 < out.length; i += 1) {
+    for (let i = 0; i < out.length; i += 1) {
       const a = out[i];
-      const b = out[i + 1];
-      const c = out[i + 2];
-      if (
-        a?.type === "worked-session" &&
-        b?.type === "permission-request" &&
-        c?.type === "worked-session"
-      ) {
-        out.splice(i, 3, mergeWorkedSessionPair(a, c), b);
-        changed = true;
-        break;
+      if (a?.type !== "worked-session") {
+        continue;
       }
+      // A tool burst gated by several permissions produces runs like
+      // [worked, perm, worked, perm, worked]; merging only exact triplets left
+      // the trailing worked-session stranded as its own dropdown. Skip the
+      // whole permission run before checking for the next worked-session.
+      let j = i + 1;
+      while (j < out.length && out[j]?.type === "permission-request") {
+        j += 1;
+      }
+      const b = out[j];
+      if (j === i + 1 || b?.type !== "worked-session") {
+        continue;
+      }
+      const permissions = out.slice(i + 1, j);
+      out.splice(i, j - i + 1, mergeWorkedSessionPair(a, b), ...permissions);
+      changed = true;
+      break;
     }
   }
   return out;

@@ -268,6 +268,47 @@ describe("worked-session grouping", () => {
     assert.match(worked[0]?.workedLabel ?? "", /ran 2 commands/i);
   });
 
+  test("a burst gated by several permission prompts stays one dropdown", () => {
+    autoSeq = 0;
+    const permission = (requestId: string, toolCallId: string): AgentStoredEvent =>
+      ({
+        seq: (autoSeq += 1),
+        eventId: `evt-${autoSeq}`,
+        conversationId: "c1",
+        createdAt: autoSeq,
+        kind: "permission_request",
+        requestId,
+        title: "Run command?",
+        toolCallId,
+        options: [{ optionId: "once", name: "Allow once", kind: "allow_once" }],
+      }) as AgentStoredEvent;
+    const events: AgentStoredEvent[] = [
+      userMessage("run everything"),
+      cesiumTerminalCall("term-1", "echo one"),
+      permission("req-1", "term-1"),
+      cesiumTerminalUpdate("term-1", "echo one"),
+      cesiumTerminalCall("term-2", "echo two"),
+      permission("req-2", "term-2"),
+      cesiumTerminalUpdate("term-2", "echo two"),
+      cesiumTerminalCall("term-3", "echo three"),
+      permission("req-3", "term-3"),
+      cesiumTerminalUpdate("term-3", "echo three"),
+      idleStatus(),
+    ];
+    const messages = projectAgentEventsToChatMessages(events, {
+      backendId: "cesium-agent",
+    });
+    const worked = workedSessions(messages);
+    assert.equal(
+      worked.length,
+      1,
+      `expected one dropdown, got labels: ${worked.map((w) => w.workedLabel).join(" | ")}`
+    );
+    assert.match(worked[0]?.workedLabel ?? "", /ran 3 commands/i);
+    const perms = messages.filter((message) => message.type === "permission-request");
+    assert.equal(perms.length, 3);
+  });
+
   test("visible assistant text still splits command groups", () => {
     autoSeq = 0;
     const events: AgentStoredEvent[] = [
