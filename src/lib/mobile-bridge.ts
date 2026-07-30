@@ -76,6 +76,7 @@ export type MobileWebToNativeMessage =
   | { type: "openPhoneAccessibilitySettings" }
   | { type: "requestPhoneAssistantRole" }
   | { type: "invokePhoneAssistant" }
+  | { type: "openExternalUrl"; url: string }
   | { type: "serverConfigured"; server: MobileServerConfig }
   | {
       type: "wearSyncEnvelope";
