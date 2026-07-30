@@ -213,9 +213,10 @@ export class SubagentsV2Runtime {
       status: { kind: "pending_init" },
       mailbox: [],
       unreadCount: 0,
+      // Transcript events need distinct seqs: projection dedupes stored events by seq.
       transcript: [
         {
-          seq: 0,
+          seq: 1,
           eventId: randomUUID(),
           conversationId: this.options.conversationId,
           createdAt: Date.now(),
@@ -289,7 +290,7 @@ export class SubagentsV2Runtime {
     }
     agent.lastTaskMessage = message;
     agent.transcript.push({
-      seq: 0,
+      seq: agent.transcript.length + 1,
       eventId: randomUUID(),
       conversationId: this.options.conversationId,
       createdAt: Date.now(),
@@ -574,7 +575,7 @@ export class SubagentsV2Runtime {
           ? `Subagent requested unsupported child tools: ${result.toolRequests.map((tool) => tool.name).join(", ")}`
           : "Subagent completed without visible text.");
       agent.transcript.push({
-        seq: 0,
+        seq: agent.transcript.length + 1,
         eventId: randomUUID(),
         conversationId: this.options.conversationId,
         createdAt: Date.now(),
@@ -591,7 +592,7 @@ export class SubagentsV2Runtime {
       } else {
         agent.status = { kind: "errored", error: message };
         agent.transcript.push({
-          seq: 0,
+          seq: agent.transcript.length + 1,
           eventId: randomUUID(),
           conversationId: this.options.conversationId,
           createdAt: Date.now(),

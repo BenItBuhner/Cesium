@@ -313,6 +313,24 @@ export function getToolRawUpdate(
   if (fromUpdate && typeof fromUpdate === "object") {
     return fromUpdate as Record<string, unknown>;
   }
+  // Cesium tool_call_update wraps the original request: `{ request: {id, name, arguments}, result }`.
+  // Flatten it so tool-name based classification and transcript extraction keep working.
+  const fromRequest = raw.request;
+  if (
+    fromRequest &&
+    typeof fromRequest === "object" &&
+    !Array.isArray(fromRequest) &&
+    (fromRequest as Record<string, unknown>).name != null
+  ) {
+    const merged: Record<string, unknown> = { ...(fromRequest as Record<string, unknown>) };
+    if (raw.result !== undefined) {
+      merged.result = raw.result;
+    }
+    if (raw.error !== undefined) {
+      merged.error = raw.error;
+    }
+    return merged;
+  }
   if (
     typeof raw.sessionUpdate === "string" ||
     typeof raw.session_update === "string" ||
@@ -336,8 +354,26 @@ export function getSubagentTaskInput(event: SubagentToolCallEvent): Record<strin
   return (
     parseLooseJsonObject(rawUpdate?.rawInput) ??
     parseLooseJsonObject(rawUpdate?.input) ??
-    parseLooseJsonObject(rawUpdate?.args)
+    parseLooseJsonObject(rawUpdate?.args) ??
+    // Cesium tool requests carry `{ name, arguments }`.
+    parseLooseJsonObject(rawUpdate?.arguments)
   );
+}
+
+/**
+ * Prompt-ish text for a subagent task input. Cursor ACP uses `prompt`;
+ * Cesium's ephemeral `subagent` tool uses `instructions`.
+ */
+export function getSubagentPromptText(
+  rawInput: Record<string, unknown> | undefined
+): string | undefined {
+  for (const key of ["prompt", "instructions"] as const) {
+    const value = rawInput?.[key];
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+  }
+  return undefined;
 }
 
 function collectNestedText(value: unknown, bucket: string[]): void {
