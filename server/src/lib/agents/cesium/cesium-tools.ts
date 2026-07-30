@@ -458,6 +458,78 @@ const CESIUM_BASE_TOOLS: CesiumToolDefinition[] = [
     },
   },
   {
+    name: "list_conversations",
+    description:
+      "List saved Cesium conversations across every workspace (id, title, workspace, last update). Use to resolve <conversation-reference> tags from the user or to find related prior chats worth mining for context.",
+    parameters: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Optional title/workspace substring filter." },
+        workspaceId: { type: "string", description: "Optional workspace scope." },
+        limit: { type: "number" },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "read_conversation",
+    description:
+      "Read another conversation's transcript by id (most recent turns first, bounded). Read tagged <conversation-reference> chats before relying on their details.",
+    parameters: {
+      type: "object",
+      properties: {
+        conversationId: { type: "string" },
+        limitTurns: { type: "number", description: "Recent user turns to include (default 40)." },
+        maxChars: { type: "number", description: "Transcript character cap (default 24000)." },
+      },
+      required: ["conversationId"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "search_conversations",
+    description:
+      "Search text across saved conversation transcripts (all workspaces, or one conversation via conversationId). Returns snippets with conversation ids for read_conversation follow-up.",
+    parameters: {
+      type: "object",
+      properties: {
+        query: { type: "string" },
+        conversationId: { type: "string", description: "Optional single-conversation scope." },
+        maxResults: { type: "number" },
+      },
+      required: ["query"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "switch_branch",
+    description:
+      "Switch this workspace's checked-out git branch (set create=true to branch off the current HEAD). Refuses when the tree is dirty; use create_worktree instead for parallel work. The next reminder reflects the new location — re-verify paths after switching.",
+    parameters: {
+      type: "object",
+      properties: {
+        branch: { type: "string" },
+        create: { type: "boolean", description: "Create the branch if it does not exist." },
+      },
+      required: ["branch"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "create_worktree",
+    description:
+      "Create an isolated git worktree (own directory, own branch) for parallel or risky work without disturbing this checkout. Best etiquette: one worktree branch per concurrent workstream (especially delegated/subagent work); run commands there via terminal with the returned path, then merge finished branches back with git and remove the worktree.",
+    parameters: {
+      type: "object",
+      properties: {
+        branch: { type: "string", description: "Branch to check out in the worktree (created when missing)." },
+        baseBranch: { type: "string", description: "Optional base ref when creating the branch." },
+      },
+      required: ["branch"],
+      additionalProperties: false,
+    },
+  },
+  {
     name: "search_history",
     description: "Search older or compressed conversation history.",
     parameters: {
@@ -908,10 +980,16 @@ export function toolKind(name: string): string {
       return "subagent";
     case "search_history":
     case "read_history_page":
+    case "list_conversations":
+    case "read_conversation":
+    case "search_conversations":
       return "search";
     case "pin_context":
     case "compact_context":
       return "think";
+    case "switch_branch":
+    case "create_worktree":
+      return "terminal";
     case "call_mcp_tool":
     case "refresh_mcp_servers":
       return "mcp";
@@ -1066,6 +1144,16 @@ export function toolTitle(name: string, args: Record<string, unknown>): string {
       return "Pin context note";
     case "compact_context":
       return "Compact context";
+    case "list_conversations":
+      return "List conversations";
+    case "read_conversation":
+      return `Read conversation ${asString(args.conversationId) ?? ""}`.trim();
+    case "search_conversations":
+      return `Search conversations for ${asString(args.query) ?? ""}`.trim();
+    case "switch_branch":
+      return `Switch to branch ${asString(args.branch) ?? ""}`.trim();
+    case "create_worktree":
+      return `Create worktree for ${asString(args.branch) ?? "branch"}`;
     case "call_mcp_tool":
       if (asString(args.serverId) === BROWSER_MCP_SERVER_ID) {
         return `Browser ${asString(args.toolName) ?? "tool"}`;

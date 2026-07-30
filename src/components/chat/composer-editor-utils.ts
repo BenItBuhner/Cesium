@@ -264,10 +264,10 @@ export function replaceTextRange(
 
 const DESIGN_TOKEN_OPEN = "\u27E6";
 const DESIGN_TOKEN_CLOSE = "\u27E7";
-const COMPOSER_PILL_TOKEN_PATTERN = /\u27E6(design|textref):([A-Za-z0-9_-]+)\u27E7/g;
+const COMPOSER_PILL_TOKEN_PATTERN = /\u27E6(design|textref|conv):([A-Za-z0-9_-]+)\u27E7/g;
 
 export interface ComposerPillDescriptor {
-  kind: "design" | "text-reference";
+  kind: "design" | "text-reference" | "conversation";
   id: string;
   label: string;
   snippet?: string;
@@ -328,6 +328,7 @@ function buildPillSpan(token: string, pill: ComposerPillDescriptor | undefined):
   span.setAttribute("data-composer-pill-kind", pill?.kind ?? "");
   span.setAttribute("data-design-capture-id", pill?.kind === "design" ? pill.id : "");
   span.setAttribute("data-text-reference-id", pill?.kind === "text-reference" ? pill.id : "");
+  span.setAttribute("data-conversation-reference-id", pill?.kind === "conversation" ? pill.id : "");
   span.className =
     "cesium-design-pill mx-[2px] inline-flex max-w-full items-center gap-[4px] " +
     "rounded-[6px] border border-[var(--border-subtle)] bg-[var(--file-tag-bg)] " +
@@ -350,12 +351,17 @@ function buildPillSpan(token: string, pill: ComposerPillDescriptor | undefined):
         '<path d="M14 2v4a2 2 0 0 0 2 2h4"/>' +
         '<path d="M8 13h8"/><path d="M8 17h5"/>' +
         "</svg>"
-      : '<svg class="size-[12px] shrink-0" viewBox="0 0 24 24" fill="none" ' +
-        'stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
-        '<rect width="18" height="7" x="3" y="3" rx="1"/>' +
-        '<rect width="9" height="7" x="3" y="14" rx="1"/>' +
-        '<rect width="5" height="7" x="16" y="14" rx="1"/>' +
-        "</svg>";
+      : pill?.kind === "conversation"
+        ? '<svg class="size-[12px] shrink-0" viewBox="0 0 24 24" fill="none" ' +
+          'stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+          '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>' +
+          "</svg>"
+        : '<svg class="size-[12px] shrink-0" viewBox="0 0 24 24" fill="none" ' +
+          'stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+          '<rect width="18" height="7" x="3" y="3" rx="1"/>' +
+          '<rect width="9" height="7" x="3" y="14" rx="1"/>' +
+          '<rect width="5" height="7" x="16" y="14" rx="1"/>' +
+          "</svg>";
   const label = escapeHtml(pill?.label ?? "missing capture");
   span.innerHTML = `${iconSvg}<span class="max-w-[240px] truncate">${label}</span>`;
   return span;

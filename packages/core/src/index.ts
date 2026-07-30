@@ -12,6 +12,7 @@ export * from "./chat-modes";
 export * from "./composer-suggestions";
 export * from "./design-capture";
 export * from "./text-reference";
+export * from "./conversation-reference";
 export * from "./agent-config-option-utils";
 export * from "./agent-subagent-routing";
 export * from "./workspace-tool-path-display";

@@ -285,6 +285,7 @@ import {
 } from "./chat-modes";
 import { splitContentByDesignBlocks } from "./design-capture";
 import { splitContentByTextReferenceBlocks } from "./text-reference";
+import { splitContentByConversationReferenceBlocks } from "./conversation-reference";
 import {
   findConversationModeConfigOptionForUi,
   findConversationModelConfigOptionForUi,
@@ -1327,6 +1328,26 @@ function parseAtChipSegments(content: string): {
 }
 
 function parseUserMessageSegments(content: string): UserMessageSegment[] | undefined {
+  // Conversation-reference blocks split first: their text slices then run
+  // through the existing text-reference/design/@-chip pipeline unchanged.
+  const conversationSplit = splitContentByConversationReferenceBlocks(content);
+  if (conversationSplit) {
+    const out: UserMessageSegment[] = [];
+    for (const seg of conversationSplit) {
+      if (seg.type !== "text") {
+        out.push(seg);
+        continue;
+      }
+      const nested = parseUserMessageSegments(seg.text);
+      if (nested) {
+        out.push(...nested);
+      } else if (seg.text.length > 0) {
+        out.push({ type: "text", text: seg.text });
+      }
+    }
+    return out.filter((s) => s.type !== "text" || s.text.length > 0);
+  }
+
   // Compact-reference XML blocks take precedence — split the message on them
   // first so long/code-like bodies don't confuse the @-chip pass.
   const referenceSplit = splitContentByTextReferenceBlocks(content);

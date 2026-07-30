@@ -12,10 +12,19 @@ import {
   readConversationSnapshotHead,
   readConversationEventPrefix,
   readRecentConversationEvents,
+  relocateConversationStorage,
   saveConversationRecord,
   updateConversationRecord,
   listWorkspaceConversationRecordPage,
 } from "./session-store.js";
+import {
+  ensureWorkspaceRegistered,
+  listWorkspaces,
+} from "../workspace-registry.js";
+import {
+  getGitWorkspaceStatus,
+  switchWorkspaceBranch,
+} from "../git-worktrees.js";
 import { remapSourceEventsForFork } from "./fork-event-clone.js";
 import { generateConversationTitle } from "./title-generator.js";
 import {
@@ -55,6 +64,7 @@ import type {
   AgentConversationListResult,
   AgentConversationMetadataPatch,
   AgentConversationRecord,
+  AgentConversationRelocationNotice,
   AgentConversationSnapshot,
   AgentConversationSnapshotHead,
   AgentConversationStatus,
@@ -1043,6 +1053,113 @@ export class AgentRuntimeManager {
       return (await readConversationRecord(workspace.id, conversationId)) ?? record;
     }
     return record;
+  }
+
+  /**
+   * Move a conversation to another workspace and/or git branch. Cesium harness
+   * only: other harnesses pin native sessions to their original working
+   * directory. Sets `pendingRelocation` so the next Cesium turn injects a
+   * "you were moved — re-learn the environment" system reminder.
+   */
+  async relocateConversation(
+    workspace: WorkspaceRecord,
+    conversationId: string,
+    input: { workspaceId?: string; branch?: string; initiatedBy?: "user" | "agent" }
+  ): Promise<{ conversation: AgentConversationRecord; workspace: WorkspaceRecord }> {
+    const record = await readConversationRecord(workspace.id, conversationId);
+    if (!record) {
+      throw new Error(`Unknown conversation: ${conversationId}`);
+    }
+    if (record.config.backendId !== "cesium-agent") {
+      throw new Error(
+        "Only Cesium harness conversations can be relocated; other harnesses pin their native sessions to the original working directory."
+      );
+    }
+    if (isConversationTurnInProgress(record.status)) {
+      throw new Error("Wait for the current reply or cancel before moving this conversation.");
+    }
+
+    const requestedWorkspaceId = input.workspaceId?.trim();
+    const requestedBranch = input.branch?.trim();
+    if (!requestedBranch && (!requestedWorkspaceId || requestedWorkspaceId === workspace.id)) {
+      throw new Error("Choose a different workspace and/or a branch to relocate to.");
+    }
+
+    const workspaces = await listWorkspaces();
+    let target = requestedWorkspaceId
+      ? workspaces.find((candidate) => candidate.id === requestedWorkspaceId)
+      : workspace;
+    if (!target) {
+      throw new Error(`Unknown target workspace: ${requestedWorkspaceId}`);
+    }
+
+    const sourceBranch = await getGitWorkspaceStatus(workspace, workspaces)
+      .then((status) => status.currentBranch ?? null)
+      .catch(() => null);
+
+    let targetBranch: string | null = null;
+    if (requestedBranch) {
+      const switched = await switchWorkspaceBranch({
+        workspace: target,
+        workspaces,
+        branch: requestedBranch,
+      });
+      if (switched.checkedOutWorktree) {
+        // The branch already lives in another worktree — relocate the
+        // conversation there instead of stealing that checkout.
+        target = switched.checkedOutWorktree.workspaceId
+          ? workspaces.find(
+              (candidate) => candidate.id === switched.checkedOutWorktree!.workspaceId
+            ) ?? target
+          : await ensureWorkspaceRegistered(switched.checkedOutWorktree.path, undefined, {
+              trackOpen: false,
+            });
+      }
+      targetBranch = requestedBranch;
+    } else {
+      targetBranch = await getGitWorkspaceStatus(target, workspaces)
+        .then((status) => status.currentBranch ?? null)
+        .catch(() => null);
+    }
+
+    await this.disposeRuntime(conversationId);
+
+    const notice: AgentConversationRelocationNotice = {
+      fromWorkspaceId: workspace.id,
+      fromWorkspaceName: workspace.name,
+      fromWorkspaceRoot: workspace.root,
+      toWorkspaceId: target.id,
+      toWorkspaceName: target.name,
+      toWorkspaceRoot: target.root,
+      fromBranch: sourceBranch,
+      toBranch: targetBranch,
+      movedAt: Date.now(),
+      initiatedBy: input.initiatedBy ?? "user",
+    };
+    const updated = await relocateConversationStorage(conversationId, workspace.id, target.id, {
+      pendingRelocation: notice,
+      providerSessionId: null,
+      status: "idle",
+      pendingPermission: null,
+    });
+    const summary =
+      workspace.id === target.id
+        ? `Conversation switched to branch ${targetBranch ?? requestedBranch} in ${target.name}.`
+        : `Conversation moved from ${workspace.name} (${workspace.root}) to ${target.name} (${target.root})${
+            targetBranch ? ` on branch ${targetBranch}` : ""
+          }.`;
+    await appendConversationEvents(target.id, conversationId, [
+      {
+        eventId: randomUUID(),
+        conversationId,
+        kind: "system",
+        level: "info",
+        text: summary,
+      },
+    ]).catch(() => undefined);
+    const conversation =
+      (await readConversationRecord(target.id, conversationId)) ?? updated;
+    return { conversation, workspace: target };
   }
 
   async updateConversationMetadata(

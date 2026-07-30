@@ -133,6 +133,7 @@ export {
   refreshCesiumModelCatalog,
   refreshMcpServerMirror,
   refreshModelToggleState,
+  relocateAgentConversation,
   renamePath,
   resolveInstalledExtensionSurface,
   resumeAgentConversation,

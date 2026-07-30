@@ -167,6 +167,7 @@ export function createSubagentsV2Module(limits: CesiumHarnessLimits): CesiumFeat
     reminder:
       "Subagents V2 is active. Prefer spawn_agent + wait_agent + followup_task for parallel collaborative work. " +
       "Spawn returns immediately; poll with wait_agent using short timeouts when you can keep working. " +
-      "Agents address each other by path (e.g. /root/task_name). Do not use the legacy `subagent` tool — it is not registered in V2.",
+      "Agents address each other by path (e.g. /root/task_name). Do not use the legacy `subagent` tool — it is not registered in V2. " +
+      "When parallel workstreams must touch files, give each its own worktree branch (`create_worktree`), point the work at that path, then merge verified branches back and clean up.",
   };
 }
