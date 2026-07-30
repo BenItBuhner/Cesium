@@ -1860,7 +1860,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
               "Legacy `subagent` tool is only available when harness subagents version is 1. Switch Subagents to V1 in Settings → Agents → Cesium Agent, or use spawn_agent (V2)."
             );
           }
-          result = await this.toolSubagent(request.arguments);
+          result = await this.toolSubagent(request.arguments, request.id);
           break;
         case "read_subagent_transcript":
           result =
@@ -3744,17 +3744,20 @@ class CesiumSessionHandle implements AgentSessionHandle {
     throw new Error(`Timed out waiting for workflow run${runId ? ` ${runId}` : ""}.`);
   }
 
-  private async toolSubagent(args: Record<string, unknown>): Promise<string> {
+  private async toolSubagent(args: Record<string, unknown>, toolCallId: string): Promise<string> {
     const instructions = asString(args.instructions);
     if (!instructions) throw new Error("subagent.instructions is required.");
-    const subagentId = randomUUID();
+    // Reuse the spawning tool call id so the projected tool card and the dedicated
+    // subagent events merge into a single card instead of duplicating.
+    const subagentId = toolCallId || randomUUID();
     const title = asString(args.title) ?? "Cesium subagent";
     const modelId =
       asString(args.modelId) ||
       resolvedModelId(this.callbacks.conversation.config.modelId, this.configOptions);
+    // Transcript events need distinct seqs: projection dedupes stored events by seq.
     const transcript: AgentStoredEvent[] = [
       {
-        seq: 0,
+        seq: 1,
         eventId: randomUUID(),
         conversationId: this.callbacks.conversation.id,
         createdAt: Date.now(),
@@ -3763,6 +3766,19 @@ class CesiumSessionHandle implements AgentSessionHandle {
         content: instructions,
       },
     ];
+    await this.callbacks.appendEvents([
+      {
+        eventId: randomUUID(),
+        conversationId: this.callbacks.conversation.id,
+        kind: "subagent",
+        subagentId,
+        title,
+        status: "running",
+        transcript: [...transcript],
+        recentActivity: instructions.slice(0, 240),
+        raw: args,
+      },
+    ]);
     let status: "completed" | "failed" = "completed";
     let resultText = "";
     try {
@@ -3796,7 +3812,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
     }
     transcript.push(
       {
-        seq: 0,
+        seq: transcript.length + 1,
         eventId: randomUUID(),
         conversationId: this.callbacks.conversation.id,
         createdAt: Date.now(),

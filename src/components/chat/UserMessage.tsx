@@ -64,6 +64,11 @@ export function UserMessage({
       setExpanded((current) => !current);
     }
   };
+  // Compact styling must never change the measured node's content width.
+  // It used to add `pr-[30px]`, which made boundary-width text bistable:
+  // padding on -> wraps to two lines -> "not single line" -> padding off ->
+  // fits one line -> "single line" -> padding on... flipping the bubble's
+  // height every ResizeObserver tick and shaking the whole thread.
   const compactSingleLine = !attachments?.length && singleLineOrLess;
   const handleRedoClick = (event: MouseEvent<HTMLButtonElement>) => {
     event.preventDefault();
@@ -100,7 +105,7 @@ export function UserMessage({
         }}
         className={`relative text-left ${
           expanded ? "" : "overflow-hidden"
-        } ${compactSingleLine ? "flex min-h-[24px] items-center pr-[30px]" : ""} ${
+        } ${compactSingleLine ? "flex min-h-[24px] items-center" : ""} ${
           !displayOnly && overflowing ? "cursor-pointer" : ""
         }`}
         style={expanded ? undefined : { maxHeight: 100 }}

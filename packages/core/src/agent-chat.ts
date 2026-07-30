@@ -296,6 +296,7 @@ import {
   extractCodexSubagentStates,
   extractSubagentSessionIds,
   extractSubagentTaskText,
+  getSubagentPromptText,
   getSubagentTaskInput,
   getToolRawUpdate,
 } from "./agent-subagent-routing";
@@ -626,6 +627,14 @@ type ProjectedTurn = {
   todoCards: Map<string, ChatMessage>;
   subagentCards: Map<string, ChatMessage>;
   /**
+   * Cards owned by dedicated `subagent` events. Those events carry the authoritative
+   * title/status/transcript, so later `tool_call_update`s for the spawning tool must not
+   * clobber them (Cesium V1 emits both a `subagent` tool_call and `subagent` events).
+   */
+  subagentEventCards: Set<ChatMessage>;
+  /** Cards whose transcript was synthesized from tool_call payloads (placeholder quality). */
+  subagentToolTranscripts: Set<ChatMessage>;
+  /**
    * OpenCode: child `ses_*` session id → parent spawn task `toolCallId` so global SSE merges
    * into the same subagent card as the shell/task row (avoids duplicate "Subagent" cards).
    */
@@ -664,6 +673,8 @@ function createTurn(id: string): ProjectedTurn {
     permissionCards: new Map(),
     todoCards: new Map(),
     subagentCards: new Map(),
+    subagentEventCards: new Set(),
+    subagentToolTranscripts: new Set(),
     openCodeSpawnToolBySessionId: new Map(),
     openCodeUnlinkedSpawnQueue: [],
     openCodeOrphanSseSessionOrder: [],
@@ -2314,9 +2325,17 @@ function buildSubagentTranscriptFromTaskEvent(
   title: string
 ): ChatMessage[] {
   const rawInput = getSubagentTaskInput(event);
-  const { taskId, resultText } = extractSubagentTaskText(event);
+  const rawUpdate = getToolRawUpdate(event);
+  const taskText = extractSubagentTaskText(event);
+  const taskId = taskText.taskId;
+  // Cesium tool_call_updates expose the tool result as a plain `result` string.
+  const resultText =
+    taskText.resultText ??
+    (typeof rawUpdate?.result === "string" && rawUpdate.result.trim()
+      ? rawUpdate.result.trim()
+      : undefined);
   const transcript: ChatMessage[] = [];
-  const prompt = typeof rawInput?.prompt === "string" ? rawInput.prompt.trim() : "";
+  const prompt = getSubagentPromptText(rawInput) ?? "";
   if (prompt) {
     transcript.push({
       id: `${event.toolCallId}-prompt`,
@@ -2370,6 +2389,31 @@ function findSubagentMessageBySessionId(
   return Array.from(turn.subagentCards.values()).find(
     (message) => message.subagentId != null && sessionIds.includes(message.subagentId)
   );
+}
+
+/**
+ * Legacy Cesium V1 events keyed the `subagent` event by a random UUID while the spawning
+ * tool_call card was keyed by `toolCallId`, producing duplicate cards. Pair them by title:
+ * the tool_call title is `Subagent <title>` while the subagent event uses the bare title.
+ */
+function findToolDerivedSubagentCardByTitle(
+  turn: ProjectedTurn,
+  title: string | undefined
+): ChatMessage | undefined {
+  const wanted = title?.trim();
+  if (!wanted) {
+    return undefined;
+  }
+  for (const card of new Set(turn.subagentCards.values())) {
+    if (turn.subagentEventCards.has(card)) {
+      continue;
+    }
+    const cardTitle = card.subagentTitle?.trim() ?? "";
+    if (cardTitle === wanted || cardTitle === `Subagent ${wanted}`) {
+      return card;
+    }
+  }
+  return undefined;
 }
 
 function codexSubagentRuntimeStatus(
@@ -3876,7 +3920,9 @@ function subagentTitleQualityScore(title: string | undefined): number {
   if (/^subagent task$/i.test(t)) {
     return 2;
   }
-  return t.length + 10;
+  // "Subagent <name>" tool titles rank just below the bare "<name>" from subagent events.
+  const stripped = t.replace(/^subagent\s+/i, "");
+  return stripped.length + (stripped === t ? 10 : 9);
 }
 
 /**
@@ -4140,12 +4186,19 @@ let currentTurn: ProjectedTurn | null = null;
       }
       case "subagent": {
         const turn = ensureTurn();
-        const transcript = event.transcript?.length
+        let transcript = event.transcript?.length
           ? projectAgentEventsToChatMessages(event.transcript, {
               ...options,
               backendId: options?.backendId,
             })
           : [];
+        if (event.status !== "running") {
+          // Transcripts rarely carry a terminal status event, so the projected turn
+          // appends a live "Working" row — meaningless inside a settled card.
+          transcript = transcript.filter(
+            (row) => !(row.type === "worked-session" && row.loading)
+          );
+        }
         const nextMessage = {
           id: `subagent-${event.subagentId}`,
           type: "subagent",
@@ -4157,13 +4210,32 @@ let currentTurn: ProjectedTurn | null = null;
           subagentTranscript: transcript,
           recentActivity: event.recentActivity,
         } satisfies ChatMessage;
-        const existing = findSubagentMessageBySessionId(turn, [event.subagentId]);
+        const existing =
+          findSubagentMessageBySessionId(turn, [event.subagentId]) ??
+          turn.subagentCards.get(event.subagentId) ??
+          findToolDerivedSubagentCardByTitle(turn, event.title);
         if (existing) {
+          if (transcript.length > 0) {
+            if (turn.subagentToolTranscripts.has(existing)) {
+              // The dedicated subagent event carries the real transcript; drop the
+              // placeholder rows synthesized from the spawning tool_call payload.
+              existing.subagentTranscript = [];
+              turn.subagentToolTranscripts.delete(existing);
+            } else if (existing.subagentTranscript?.length) {
+              // Strip live "Working" rows projected from the running-state
+              // transcript so the row-id union doesn't keep them forever.
+              existing.subagentTranscript = existing.subagentTranscript.filter(
+                (row) => !(row.type === "worked-session" && row.loading)
+              );
+            }
+          }
           mergeSubagentCard(existing, nextMessage);
           turn.subagentCards.set(event.subagentId, existing);
+          turn.subagentEventCards.add(existing);
         } else {
           turn.subagentCards.set(event.subagentId, nextMessage);
           appendTimelineMessage(turn, nextMessage);
+          turn.subagentEventCards.add(nextMessage);
         }
         break;
       }
@@ -4228,16 +4300,28 @@ let currentTurn: ProjectedTurn | null = null;
             }
             break;
           }
+          const existingMessage =
+            findSubagentMessageBySessionId(turn, sessionIds) ?? turn.subagentCards.get(event.toolCallId);
+          if (existingMessage && turn.subagentEventCards.has(existingMessage)) {
+            // Dedicated `subagent` events own this card; tool events may only settle
+            // a still-running status (e.g. the tool failed before emitting completion).
+            const toolStatus = subagentStatusFromToolEventStatus(event.status);
+            if (existingMessage.subagentStatus === "running" && toolStatus !== "running") {
+              existingMessage.subagentStatus = toolStatus;
+              existingMessage.subagentComplete = true;
+            }
+            turn.subagentCards.set(event.toolCallId, existingMessage);
+            break;
+          }
           const title =
             (typeof rawInput?.description === "string" && rawInput.description.trim()) ||
+            (typeof rawInput?.title === "string" && rawInput.title.trim()) ||
             (typeof rawInput?.prompt === "string" && rawInput.prompt.trim()) ||
             (typeof event.title === "string" && event.title.trim() && event.title.trim().toLowerCase() !== "task"
               ? event.title.trim()
               : undefined) ||
             "Subagent task";
           const transcript = buildSubagentTranscriptFromTaskEvent(event, title);
-          const existingMessage =
-            findSubagentMessageBySessionId(turn, sessionIds) ?? turn.subagentCards.get(event.toolCallId);
           const message =
             existingMessage ??
             ({
@@ -4255,8 +4339,9 @@ let currentTurn: ProjectedTurn | null = null;
           message.recentActivity = buildSubagentRecentActivity(
             transcript,
             (typeof rawInput?.description === "string" ? rawInput.description : undefined) ??
-              (typeof rawInput?.prompt === "string" ? rawInput.prompt : undefined)
+              getSubagentPromptText(rawInput)
           );
+          turn.subagentToolTranscripts.add(message);
           if (!existingMessage) {
             turn.subagentCards.set(event.toolCallId, message);
             appendTimelineMessage(turn, message);
@@ -4349,16 +4434,28 @@ let currentTurn: ProjectedTurn | null = null;
             }
             break;
           }
+          const existingMessage =
+            findSubagentMessageBySessionId(turn, sessionIds) ?? turn.subagentCards.get(event.toolCallId);
+          if (existingMessage && turn.subagentEventCards.has(existingMessage)) {
+            // Dedicated `subagent` events own this card; tool events may only settle
+            // a still-running status (e.g. the tool failed before emitting completion).
+            const toolStatus = subagentStatusFromToolEventStatus(event.status);
+            if (existingMessage.subagentStatus === "running" && toolStatus !== "running") {
+              existingMessage.subagentStatus = toolStatus;
+              existingMessage.subagentComplete = true;
+            }
+            turn.subagentCards.set(event.toolCallId, existingMessage);
+            break;
+          }
           const title =
             (typeof rawInput?.description === "string" && rawInput.description.trim()) ||
+            (typeof rawInput?.title === "string" && rawInput.title.trim()) ||
             (typeof rawInput?.prompt === "string" && rawInput.prompt.trim()) ||
             (typeof event.title === "string" && event.title.trim() && event.title.trim().toLowerCase() !== "task"
               ? event.title.trim()
               : undefined) ||
             "Subagent task";
           const transcript = buildSubagentTranscriptFromTaskEvent(event, title);
-          const existingMessage =
-            findSubagentMessageBySessionId(turn, sessionIds) ?? turn.subagentCards.get(event.toolCallId);
           const message =
             existingMessage ??
             ({
@@ -4377,8 +4474,9 @@ let currentTurn: ProjectedTurn | null = null;
             transcript,
             taskText.resultText ??
               (typeof rawInput?.description === "string" ? rawInput.description : undefined) ??
-              (typeof rawInput?.prompt === "string" ? rawInput.prompt : undefined)
+              getSubagentPromptText(rawInput)
           );
+          turn.subagentToolTranscripts.add(message);
           if (!existingMessage) {
             turn.subagentCards.set(event.toolCallId, message);
             appendTimelineMessage(turn, message);
@@ -4723,12 +4821,19 @@ export function dedupeAgentStoredEvents(
   }
   const sorted = [...events].sort((a, b) => a.seq - b.seq);
   const bySeq = new Map<number, AgentStoredEvent>();
+  const unsequenced: AgentStoredEvent[] = [];
   for (const e of sorted) {
+    // Synthetic events (e.g. subagent transcripts) may all carry seq 0 — those are
+    // distinct events, so only dedupe by seq once the store has assigned one (> 0).
+    if (e.seq <= 0) {
+      unsequenced.push(e);
+      continue;
+    }
     if (!bySeq.has(e.seq)) {
       bySeq.set(e.seq, e);
     }
   }
-  const seqDeduped = [...bySeq.values()].sort((a, b) => a.seq - b.seq);
+  const seqDeduped = [...unsequenced, ...bySeq.values()].sort((a, b) => a.seq - b.seq);
   const seenEventIds = new Set<string>();
   const out: AgentStoredEvent[] = [];
   for (const e of seqDeduped) {
