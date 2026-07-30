@@ -4215,11 +4215,19 @@ let currentTurn: ProjectedTurn | null = null;
           turn.subagentCards.get(event.subagentId) ??
           findToolDerivedSubagentCardByTitle(turn, event.title);
         if (existing) {
-          if (turn.subagentToolTranscripts.has(existing) && transcript.length > 0) {
-            // The dedicated subagent event carries the real transcript; drop the
-            // placeholder rows synthesized from the spawning tool_call payload.
-            existing.subagentTranscript = [];
-            turn.subagentToolTranscripts.delete(existing);
+          if (transcript.length > 0) {
+            if (turn.subagentToolTranscripts.has(existing)) {
+              // The dedicated subagent event carries the real transcript; drop the
+              // placeholder rows synthesized from the spawning tool_call payload.
+              existing.subagentTranscript = [];
+              turn.subagentToolTranscripts.delete(existing);
+            } else if (existing.subagentTranscript?.length) {
+              // Strip live "Working" rows projected from the running-state
+              // transcript so the row-id union doesn't keep them forever.
+              existing.subagentTranscript = existing.subagentTranscript.filter(
+                (row) => !(row.type === "worked-session" && row.loading)
+              );
+            }
           }
           mergeSubagentCard(existing, nextMessage);
           turn.subagentCards.set(event.subagentId, existing);

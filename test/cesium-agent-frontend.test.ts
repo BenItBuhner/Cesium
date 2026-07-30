@@ -448,6 +448,13 @@ describe("Cesium Agent frontend integration", () => {
         row.content?.includes("The repo is a Next.js app with a Bun server.")
       )
     );
+    assert.equal(
+      card.subagentTranscript?.some(
+        (row) => row.type === "worked-session" && row.loading
+      ),
+      false,
+      "settled card must not keep the live 'Working' row from the running-state transcript"
+    );
   });
 
   test("wrapped tool_call_update settles a subagent card stuck running", () => {
