@@ -67,6 +67,8 @@ export async function benchChat(input: {
   // Reasoning models (e.g. turbo, kimi-k3) burn output budget on hidden
   // reasoning before emitting content — keep generous headroom, and escalate
   // when a response is cut off (finish_reason=length with empty content).
+  // Requests STREAM so proxies (Cloudflare) never kill long generations with
+  // 524 buffered-response timeouts.
   let maxTokens = input.maxTokens ?? 16_384;
   let lastError: unknown = null;
   for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt += 1) {
@@ -75,6 +77,7 @@ export async function benchChat(input: {
       messages: input.messages,
       max_tokens: maxTokens,
       temperature: input.temperature ?? 0,
+      stream: true,
     });
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), input.timeoutMs ?? 240_000);
@@ -88,7 +91,7 @@ export async function benchChat(input: {
         body,
         signal: controller.signal,
       });
-      if (!response.ok) {
+      if (!response.ok || !response.body) {
         const text = await response.text().catch(() => "");
         const retriable = response.status === 429 || response.status >= 500;
         const error = new Error(`HTTP ${response.status}: ${text.slice(0, 400)}`);
@@ -97,37 +100,67 @@ export async function benchChat(input: {
         }
         lastError = error;
       } else {
-        const payload = (await response.json()) as {
-          choices?: Array<{
-            finish_reason?: string;
-            message?: { content?: string | null };
-          }>;
-        };
-        const choice = payload.choices?.[0];
-        const content = choice?.message?.content;
-        if (typeof content === "string" && content.trim().length > 0) {
+        let content = "";
+        let finishReason: string | undefined;
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) {
+            break;
+          }
+          buffer += decoder.decode(value, { stream: true });
+          for (;;) {
+            const newline = buffer.indexOf("\n");
+            if (newline < 0) {
+              break;
+            }
+            const line = buffer.slice(0, newline).trim();
+            buffer = buffer.slice(newline + 1);
+            if (!line.startsWith("data:")) {
+              continue;
+            }
+            const data = line.slice(5).trim();
+            if (!data || data === "[DONE]") {
+              continue;
+            }
+            try {
+              const payload = JSON.parse(data) as {
+                choices?: Array<{ finish_reason?: string | null; delta?: { content?: string | null } }>;
+              };
+              const choice = payload.choices?.[0];
+              if (typeof choice?.delta?.content === "string") {
+                content += choice.delta.content;
+              }
+              if (choice?.finish_reason) {
+                finishReason = choice.finish_reason;
+              }
+            } catch {
+              // Ignore malformed keep-alive frames.
+            }
+          }
+        }
+        if (content.trim().length > 0) {
           requestCount += 1;
           totalPromptChars += body.length;
           totalCompletionChars += content.length;
           return content;
         }
-        if (choice?.finish_reason === "length" && maxTokens < 65_536) {
+        if (finishReason === "length" && maxTokens < 65_536) {
           // The model spent the whole budget on hidden reasoning; escalate.
           maxTokens = Math.min(65_536, maxTokens * 2);
           lastError = new Error("Completion cut off by max_tokens (reasoning overflow)");
         } else {
-          throw new Error(
-            `Malformed completion payload: ${JSON.stringify(payload).slice(0, 400)}`
+          lastError = new Error(
+            `Empty streamed completion (finish_reason=${finishReason ?? "none"})`
           );
         }
       }
     } catch (error) {
       if (error instanceof Error && error.name === "AbortError") {
         lastError = new Error("Request timed out");
-      } else if (
-        error instanceof Error &&
-        (error.message.startsWith("HTTP 4") || error.message.startsWith("Malformed"))
-      ) {
+      } else if (error instanceof Error && error.message.startsWith("HTTP 4")) {
         throw error;
       } else {
         lastError = error;

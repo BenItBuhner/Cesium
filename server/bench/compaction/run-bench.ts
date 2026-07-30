@@ -22,9 +22,46 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import type { AgentStoredEvent } from "../../src/lib/agents/types.js";
 import type { CesiumHistoryMessage } from "../../src/lib/agents/cesium/cesium-types.js";
-import { allScenarios, type BenchProbe, type BenchScenario } from "./scenarios.js";
+import {
+  chatNuanceScenario,
+  factThreadScenario,
+  mathStateScenario,
+  sweSimScenario,
+  type BenchProbe,
+  type BenchScenario,
+} from "./scenarios.js";
+import { generateGauntletScript, gauntletToScenario, type GauntletPreset } from "./gauntlet.js";
 import { resolveStrategies, type Strategy, type StrategyStats } from "./strategies.js";
 import { benchChat, benchModelUsage, makeBenchCaller } from "./model-client.js";
+
+export function resolveScenarios(spec: string, seed?: number): BenchScenario[] {
+  return spec
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .map((id) => {
+      const gauntlet = id.match(/^gauntlet-([sml])$/);
+      if (gauntlet) {
+        return gauntletToScenario(
+          generateGauntletScript({ preset: gauntlet[1] as GauntletPreset, seed })
+        );
+      }
+      switch (id) {
+        case "fact-thread":
+          return factThreadScenario({ seed });
+        case "swe-sim":
+          return sweSimScenario({ seed });
+        case "math-state":
+          return mathStateScenario({ seed });
+        case "chat-nuance":
+          return chatNuanceScenario({ seed });
+        default:
+          throw new Error(
+            `Unknown scenario "${id}". Known: fact-thread, swe-sim, math-state, chat-nuance, gauntlet-s, gauntlet-m, gauntlet-l`
+          );
+      }
+    });
+}
 
 type CliOptions = {
   scenarios: string;
@@ -34,6 +71,7 @@ type CliOptions = {
   probeModel: string;
   out: string | null;
   probeConcurrency: number;
+  seed: number | undefined;
 };
 
 function parseArgs(argv: string[]): CliOptions {
@@ -46,6 +84,7 @@ function parseArgs(argv: string[]): CliOptions {
     probeModel: "kimi-k3",
     out: null,
     probeConcurrency: 4,
+    seed: undefined,
   };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index]!;
@@ -72,9 +111,12 @@ function parseArgs(argv: string[]): CliOptions {
       case "--probe-concurrency":
         options.probeConcurrency = Number(next());
         break;
+      case "--seed":
+        options.seed = Number(next());
+        break;
       case "--help":
         console.log(
-          "Flags: --scenarios a,b --strategies x,y --window N --compactor-model M --probe-model M --out file.json --probe-concurrency N"
+          "Flags: --scenarios a,b --strategies x,y --window N --compactor-model M --probe-model M --out file.json --probe-concurrency N --seed N"
         );
         process.exit(0);
         break;
@@ -308,12 +350,7 @@ function formatTable(results: StrategyScenarioResult[]): string {
 
 async function main(): Promise<void> {
   const options = parseArgs(process.argv.slice(2));
-  const scenarios = allScenarios().filter((scenario) =>
-    options.scenarios
-      .split(",")
-      .map((part) => part.trim())
-      .includes(scenario.id)
-  );
+  const scenarios = resolveScenarios(options.scenarios, options.seed);
   if (scenarios.length === 0) {
     throw new Error(`No scenarios matched "${options.scenarios}".`);
   }

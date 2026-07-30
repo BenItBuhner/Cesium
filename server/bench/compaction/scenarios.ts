@@ -16,7 +16,15 @@ export type BenchProbeCategory =
   | "artifact"
   | "subagent"
   | "dead-end"
-  | "nuance";
+  | "nuance"
+  // Gauntlet categories:
+  | "latest-value"
+  | "lookalike"
+  | "authority"
+  | "multi-hop"
+  | "tool-only"
+  | "absent"
+  | "spec-detail";
 
 export type BenchProbe = {
   id: string;
