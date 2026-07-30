@@ -108,7 +108,10 @@ export function renderPlainTranscript(events: AgentStoredEvent[]): string {
         break;
       case "tool_call_update":
         if (event.status === "completed" || event.status === "failed") {
-          const detail = (event.detail ?? "").slice(0, 1_500);
+          // Real harnesses trim bulky tool outputs before compaction (Codex
+          // trims oversized function outputs; Gemini enforces a reverse token
+          // budget), so a per-result cap here is faithful to their designs.
+          const detail = (event.detail ?? "").slice(0, event.status === "failed" ? 1_200 : 700);
           lines.push(`Tool ${event.status}: ${event.title} -> ${detail}`);
         }
         break;
@@ -215,7 +218,23 @@ function makeSummaryStrategy(config: SummaryStrategyConfig): Strategy {
         if (evicted.length === 0) {
           return;
         }
-        summary = await config.summarize({ previousSummary: summary, evicted, callModel });
+        try {
+          summary = await config.summarize({ previousSummary: summary, evicted, callModel });
+        } catch (error) {
+          // Real harnesses degrade to truncation when the summarizer fails
+          // (e.g. Cline's rule-based fallback). Mirror that instead of aborting.
+          summary = [
+            summary,
+            "[Some earlier conversation was truncated because summarization failed and is no longer available.]",
+          ]
+            .filter(Boolean)
+            .join("\n");
+          console.warn(
+            `[bench] ${config.id} summarizer failed, degraded to truncation: ${
+              error instanceof Error ? error.message : String(error)
+            }`
+          );
+        }
         stats.compactions += 1;
         if (config.usesModel) {
           stats.compactorCalls += 1;

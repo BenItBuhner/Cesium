@@ -65,15 +65,17 @@ export async function benchChat(input: {
 }): Promise<string> {
   const url = `${benchBaseUrl()}/chat/completions`;
   // Reasoning models (e.g. turbo, kimi-k3) burn output budget on hidden
-  // reasoning before emitting content — keep generous headroom.
-  const body = JSON.stringify({
-    model: input.model,
-    messages: input.messages,
-    max_tokens: input.maxTokens ?? 16_384,
-    temperature: input.temperature ?? 0,
-  });
+  // reasoning before emitting content — keep generous headroom, and escalate
+  // when a response is cut off (finish_reason=length with empty content).
+  let maxTokens = input.maxTokens ?? 16_384;
   let lastError: unknown = null;
   for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt += 1) {
+    const body = JSON.stringify({
+      model: input.model,
+      messages: input.messages,
+      max_tokens: maxTokens,
+      temperature: input.temperature ?? 0,
+    });
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), input.timeoutMs ?? 240_000);
     try {
@@ -96,16 +98,28 @@ export async function benchChat(input: {
         lastError = error;
       } else {
         const payload = (await response.json()) as {
-          choices?: Array<{ message?: { content?: string } }>;
+          choices?: Array<{
+            finish_reason?: string;
+            message?: { content?: string | null };
+          }>;
         };
-        const content = payload.choices?.[0]?.message?.content;
-        if (typeof content !== "string") {
-          throw new Error(`Malformed completion payload: ${JSON.stringify(payload).slice(0, 400)}`);
+        const choice = payload.choices?.[0];
+        const content = choice?.message?.content;
+        if (typeof content === "string" && content.trim().length > 0) {
+          requestCount += 1;
+          totalPromptChars += body.length;
+          totalCompletionChars += content.length;
+          return content;
         }
-        requestCount += 1;
-        totalPromptChars += body.length;
-        totalCompletionChars += content.length;
-        return content;
+        if (choice?.finish_reason === "length" && maxTokens < 65_536) {
+          // The model spent the whole budget on hidden reasoning; escalate.
+          maxTokens = Math.min(65_536, maxTokens * 2);
+          lastError = new Error("Completion cut off by max_tokens (reasoning overflow)");
+        } else {
+          throw new Error(
+            `Malformed completion payload: ${JSON.stringify(payload).slice(0, 400)}`
+          );
+        }
       }
     } catch (error) {
       if (error instanceof Error && error.name === "AbortError") {

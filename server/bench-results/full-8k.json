@@ -1,0 +1,3774 @@
+{
+  "ranAt": "2026-07-30T07:21:22.612Z",
+  "options": {
+    "scenarios": "fact-thread,swe-sim,math-state,chat-nuance",
+    "strategies": "oracle,truncate,cesium-legacy,codex-style,claude-style,gemini-style,opencode-style,cesium-ledger@0.2,cesium-ledger@0.35,cesium-ledger@0.8",
+    "window": 8000,
+    "compactorModel": "turbo",
+    "probeModel": "kimi-k3",
+    "out": "bench-results/full-8k.json",
+    "probeConcurrency": 6
+  },
+  "results": [
+    {
+      "scenarioId": "fact-thread",
+      "strategyId": "oracle",
+      "windowTokens": 8000,
+      "stats": {
+        "compactions": 0,
+        "compactorCalls": 0,
+        "finalTokens": 21388,
+        "peakTokens": 21388
+      },
+      "probes": [
+        {
+          "probeId": "fact-0",
+          "category": "fact",
+          "question": "What is the access token for service \"krypton-78\"?",
+          "expected": [
+            "willow_9997"
+          ],
+          "answer": "willow_9997",
+          "correct": true
+        },
+        {
+          "probeId": "fact-3",
+          "category": "fact",
+          "question": "What is the access token for service \"monsoon-67\"?",
+          "expected": [
+            "quartz_5918"
+          ],
+          "answer": "quartz_5918",
+          "correct": true
+        },
+        {
+          "probeId": "fact-6",
+          "category": "fact",
+          "question": "What is the access token for service \"quartz-83\"?",
+          "expected": [
+            "ember_6708"
+          ],
+          "answer": "ember_6708",
+          "correct": true
+        },
+        {
+          "probeId": "fact-9",
+          "category": "fact",
+          "question": "What is the access token for service \"zephyr-49\"?",
+          "expected": [
+            "nebula_5756"
+          ],
+          "answer": "nebula_5756",
+          "correct": true
+        },
+        {
+          "probeId": "fact-12",
+          "category": "fact",
+          "question": "What is the access token for service \"cinder-56\"?",
+          "expected": [
+            "tundra_2994"
+          ],
+          "answer": "tundra_2994",
+          "correct": true
+        },
+        {
+          "probeId": "fact-15",
+          "category": "fact",
+          "question": "What is the access token for service \"rampart-11\"?",
+          "expected": [
+            "echo_4998"
+          ],
+          "answer": "echo_4998",
+          "correct": true
+        },
+        {
+          "probeId": "fact-18",
+          "category": "fact",
+          "question": "What is the access token for service \"willow-65\"?",
+          "expected": [
+            "saffron_8197"
+          ],
+          "answer": "saffron_8197",
+          "correct": true
+        },
+        {
+          "probeId": "fact-21",
+          "category": "fact",
+          "question": "What is the access token for service \"juniper-92\"?",
+          "expected": [
+            "lattice_3084"
+          ],
+          "answer": "lattice_3084",
+          "correct": true
+        },
+        {
+          "probeId": "fact-24",
+          "category": "fact",
+          "question": "What is the access token for service \"obsidian-51\"?",
+          "expected": [
+            "tundra_4298"
+          ],
+          "answer": "harbor_5710",
+          "correct": false
+        },
+        {
+          "probeId": "fact-27",
+          "category": "fact",
+          "question": "What is the access token for service \"harbor-89\"?",
+          "expected": [
+            "harbor_3944"
+          ],
+          "answer": "harbor_3944",
+          "correct": true
+        },
+        {
+          "probeId": "fact-30",
+          "category": "fact",
+          "question": "What is the access token for service \"obsidian-51\"?",
+          "expected": [
+            "harbor_5710"
+          ],
+          "answer": "harbor_5710",
+          "correct": true
+        },
+        {
+          "probeId": "fact-33",
+          "category": "fact",
+          "question": "What is the access token for service \"harbor-64\"?",
+          "expected": [
+            "lattice_5375"
+          ],
+          "answer": "lattice_5375",
+          "correct": true
+        }
+      ],
+      "accuracy": 0.9166666666666666,
+      "byCategory": {
+        "fact": {
+          "correct": 11,
+          "total": 12
+        }
+      },
+      "wallTimeMs": 37951
+    },
+    {
+      "scenarioId": "fact-thread",
+      "strategyId": "truncate",
+      "windowTokens": 8000,
+      "stats": {
+        "compactions": 5,
+        "compactorCalls": 0,
+        "finalTokens": 3008,
+        "peakTokens": 7145
+      },
+      "probes": [
+        {
+          "probeId": "fact-0",
+          "category": "fact",
+          "question": "What is the access token for service \"krypton-78\"?",
+          "expected": [
+            "willow_9997"
+          ],
+          "answer": "UNKNOWN",
+          "correct": false
+        },
+        {
+          "probeId": "fact-3",
+          "category": "fact",
+          "question": "What is the access token for service \"monsoon-67\"?",
+          "expected": [
+            "quartz_5918"
+          ],
+          "answer": "UNKNOWN",
+          "correct": false
+        },
+        {
+          "probeId": "fact-6",
+          "category": "fact",
+          "question": "What is the access token for service \"quartz-83\"?",
+          "expected": [
+            "ember_6708"
+          ],
+          "answer": "UNKNOWN",
+          "correct": false
+        },
+        {
+          "probeId": "fact-9",
+          "category": "fact",
+          "question": "What is the access token for service \"zephyr-49\"?",
+          "expected": [
+            "nebula_5756"
+          ],
+          "answer": "UNKNOWN",
+          "correct": false
+        },
+        {
+          "probeId": "fact-12",
+          "category": "fact",
+          "question": "What is the access token for service \"cinder-56\"?",
+          "expected": [
+            "tundra_2994"
+          ],
+          "answer": "UNKNOWN",
+          "correct": false
+        },
+        {
+          "probeId": "fact-15",
+          "category": "fact",
+          "question": "What is the access token for service \"rampart-11\"?",
+          "expected": [
+            "echo_4998"
+          ],
+          "answer": "UNKNOWN",
+          "correct": false
+        },
+        {
+          "probeId": "fact-18",
+          "category": "fact",
+          "question": "What is the access token for service \"willow-65\"?",
+          "expected": [
+            "saffron_8197"
+          ],
+          "answer": "UNKNOWN",
+          "correct": false
+        },
+        {
+          "probeId": "fact-21",
+          "category": "fact",
+          "question": "What is the access token for service \"juniper-92\"?",
+          "expected": [
+            "lattice_3084"
+          ],
+          "answer": "UNKNOWN",
+          "correct": false
+        },
+        {
+          "probeId": "fact-24",
+          "category": "fact",
+          "question": "What is the access token for service \"obsidian-51\"?",
+          "expected": [
+            "tundra_4298"
+          ],
+          "answer": "UNKNOWN",
+          "correct": false
+        },
+        {
+          "probeId": "fact-27",
+          "category": "fact",
+          "question": "What is the access token for service \"harbor-89\"?",
+          "expected": [
+            "harbor_3944"
+          ],
+          "answer": "UNKNOWN",
+          "correct": false
+        },
+        {
+          "probeId": "fact-30",
+          "category": "fact",
+          "question": "What is the access token for service \"obsidian-51\"?",
+          "expected": [
+            "harbor_5710"
+          ],
+          "answer": "UNKNOWN",
+          "correct": false
+        },
+        {
+          "probeId": "fact-33",
+          "category": "fact",
+          "question": "What is the access token for service \"harbor-64\"?",
+          "expected": [
+            "lattice_5375"
+          ],
+          "answer": "lattice_5375",
+          "correct": true
+        }
+      ],
+      "accuracy": 0.08333333333333333,
+      "byCategory": {
+        "fact": {
+          "correct": 1,
+          "total": 12
+        }
+      },
+      "wallTimeMs": 31853
+    },
+    {
+      "scenarioId": "fact-thread",
+      "strategyId": "cesium-legacy",
+      "windowTokens": 8000,
+      "stats": {
+        "compactions": 6,
+        "compactorCalls": 0,
+        "finalTokens": 5044,
+        "peakTokens": 7145
+      },
+      "probes": [
+        {
+          "probeId": "fact-0",
+          "category": "fact",
+          "question": "What is the access token for service \"krypton-78\"?",
+          "expected": [
+            "willow_9997"
+          ],
+          "answer": "UNKNOWN",
+          "correct": false
+        },
+        {
+          "probeId": "fact-3",
+          "category": "fact",
+          "question": "What is the access token for service \"monsoon-67\"?",
+          "expected": [
+            "quartz_5918"
+          ],
+          "answer": "UNKNOWN",
+          "correct": false
+        },
+        {
+          "probeId": "fact-6",
+          "category": "fact",
+          "question": "What is the access token for service \"quartz-83\"?",
+          "expected": [
+            "ember_6708"
+          ],
+          "answer": "UNKNOWN",
+          "correct": false
+        },
+        {
+          "probeId": "fact-9",
+          "category": "fact",
+          "question": "What is the access token for service \"zephyr-49\"?",
+          "expected": [
+            "nebula_5756"
+          ],
+          "answer": "UNKNOWN",
+          "correct": false
+        },
+        {
+          "probeId": "fact-12",
+          "category": "fact",
+          "question": "What is the access token for service \"cinder-56\"?",
+          "expected": [
+            "tundra_2994"
+          ],
+          "answer": "UNKNOWN",
+          "correct": false
+        },
+        {
+          "probeId": "fact-15",
+          "category": "fact",
+          "question": "What is the access token for service \"rampart-11\"?",
+          "expected": [
+            "echo_4998"
+          ],
+          "answer": "UNKNOWN",
+          "correct": false
+        },
+        {
+          "probeId": "fact-18",
+          "category": "fact",
+          "question": "What is the access token for service \"willow-65\"?",
+          "expected": [
+            "saffron_8197"
+          ],
+          "answer": "UNKNOWN",
+          "correct": false
+        },
+        {
+          "probeId": "fact-21",
+          "category": "fact",
+          "question": "What is the access token for service \"juniper-92\"?",
+          "expected": [
+            "lattice_3084"
+          ],
+          "answer": "UNKNOWN",
+          "correct": false
+        },
+        {
+          "probeId": "fact-24",
+          "category": "fact",
+          "question": "What is the access token for service \"obsidian-51\"?",
+          "expected": [
+            "tundra_4298"
+          ],
+          "answer": "harbor_5710",
+          "correct": false
+        },
+        {
+          "probeId": "fact-27",
+          "category": "fact",
+          "question": "What is the access token for service \"harbor-89\"?",
+          "expected": [
+            "harbor_3944"
+          ],
+          "answer": "harbor_3944",
+          "correct": true
+        },
+        {
+          "probeId": "fact-30",
+          "category": "fact",
+          "question": "What is the access token for service \"obsidian-51\"?",
+          "expected": [
+            "harbor_5710"
+          ],
+          "answer": "harbor_5710",
+          "correct": true
+        },
+        {
+          "probeId": "fact-33",
+          "category": "fact",
+          "question": "What is the access token for service \"harbor-64\"?",
+          "expected": [
+            "lattice_5375"
+          ],
+          "answer": "lattice_5375",
+          "correct": true
+        }
+      ],
+      "accuracy": 0.25,
+      "byCategory": {
+        "fact": {
+          "correct": 3,
+          "total": 12
+        }
+      },
+      "wallTimeMs": 11527
+    },
+    {
+      "scenarioId": "fact-thread",
+      "strategyId": "codex-style",
+      "windowTokens": 8000,
+      "stats": {
+        "compactions": 3,
+        "compactorCalls": 3,
+        "finalTokens": 3472,
+        "peakTokens": 7145
+      },
+      "probes": [
+        {
+          "probeId": "fact-0",
+          "category": "fact",
+          "question": "What is the access token for service \"krypton-78\"?",
+          "expected": [
+            "willow_9997"
+          ],
+          "answer": "willow_9997",
+          "correct": true
+        },
+        {
+          "probeId": "fact-3",
+          "category": "fact",
+          "question": "What is the access token for service \"monsoon-67\"?",
+          "expected": [
+            "quartz_5918"
+          ],
+          "answer": "quartz_5918",
+          "correct": true
+        },
+        {
+          "probeId": "fact-6",
+          "category": "fact",
+          "question": "What is the access token for service \"quartz-83\"?",
+          "expected": [
+            "ember_6708"
+          ],
+          "answer": "ember_6708",
+          "correct": true
+        },
+        {
+          "probeId": "fact-9",
+          "category": "fact",
+          "question": "What is the access token for service \"zephyr-49\"?",
+          "expected": [
+            "nebula_5756"
+          ],
+          "answer": "nebula_5756",
+          "correct": true
+        },
+        {
+          "probeId": "fact-12",
+          "category": "fact",
+          "question": "What is the access token for service \"cinder-56\"?",
+          "expected": [
+            "tundra_2994"
+          ],
+          "answer": "tundra_2994",
+          "correct": true
+        },
+        {
+          "probeId": "fact-15",
+          "category": "fact",
+          "question": "What is the access token for service \"rampart-11\"?",
+          "expected": [
+            "echo_4998"
+          ],
+          "answer": "echo_4998",
+          "correct": true
+        },
+        {
+          "probeId": "fact-18",
+          "category": "fact",
+          "question": "What is the access token for service \"willow-65\"?",
+          "expected": [
+            "saffron_8197"
+          ],
+          "answer": "saffron_8197",
+          "correct": true
+        },
+        {
+          "probeId": "fact-21",
+          "category": "fact",
+          "question": "What is the access token for service \"juniper-92\"?",
+          "expected": [
+            "lattice_3084"
+          ],
+          "answer": "lattice_3084",
+          "correct": true
+        },
+        {
+          "probeId": "fact-24",
+          "category": "fact",
+          "question": "What is the access token for service \"obsidian-51\"?",
+          "expected": [
+            "tundra_4298"
+          ],
+          "answer": "harbor_5710",
+          "correct": false
+        },
+        {
+          "probeId": "fact-27",
+          "category": "fact",
+          "question": "What is the access token for service \"harbor-89\"?",
+          "expected": [
+            "harbor_3944"
+          ],
+          "answer": "harbor_3944",
+          "correct": true
+        },
+        {
+          "probeId": "fact-30",
+          "category": "fact",
+          "question": "What is the access token for service \"obsidian-51\"?",
+          "expected": [
+            "harbor_5710"
+          ],
+          "answer": "harbor_5710",
+          "correct": true
+        },
+        {
+          "probeId": "fact-33",
+          "category": "fact",
+          "question": "What is the access token for service \"harbor-64\"?",
+          "expected": [
+            "lattice_5375"
+          ],
+          "answer": "lattice_5375",
+          "correct": true
+        }
+      ],
+      "accuracy": 0.9166666666666666,
+      "byCategory": {
+        "fact": {
+          "correct": 11,
+          "total": 12
+        }
+      },
+      "wallTimeMs": 32972
+    },
+    {
+      "scenarioId": "fact-thread",
+      "strategyId": "claude-style",
+      "windowTokens": 8000,
+      "stats": {
+        "compactions": 4,
+        "compactorCalls": 4,
+        "finalTokens": 2177,
+        "peakTokens": 7776
+      },
+      "probes": [
+        {
+          "probeId": "fact-0",
+          "category": "fact",
+          "question": "What is the access token for service \"krypton-78\"?",
+          "expected": [
+            "willow_9997"
+          ],
+          "answer": "UNKNOWN",
+          "correct": false
+        },
+        {
+          "probeId": "fact-3",
+          "category": "fact",
+          "question": "What is the access token for service \"monsoon-67\"?",
+          "expected": [
+            "quartz_5918"
+          ],
+          "answer": "UNKNOWN",
+          "correct": false
+        },
+        {
+          "probeId": "fact-6",
+          "category": "fact",
+          "question": "What is the access token for service \"quartz-83\"?",
+          "expected": [
+            "ember_6708"
+          ],
+          "answer": "UNKNOWN",
+          "correct": false
+        },
+        {
+          "probeId": "fact-9",
+          "category": "fact",
+          "question": "What is the access token for service \"zephyr-49\"?",
+          "expected": [
+            "nebula_5756"
+          ],
+          "answer": "UNKNOWN",
+          "correct": false
+        },
+        {
+          "probeId": "fact-12",
+          "category": "fact",
+          "question": "What is the access token for service \"cinder-56\"?",
+          "expected": [
+            "tundra_2994"
+          ],
+          "answer": "UNKNOWN",
+          "correct": false
+        },
+        {
+          "probeId": "fact-15",
+          "category": "fact",
+          "question": "What is the access token for service \"rampart-11\"?",
+          "expected": [
+            "echo_4998"
+          ],
+          "answer": "UNKNOWN",
+          "correct": false
+        },
+        {
+          "probeId": "fact-18",
+          "category": "fact",
+          "question": "What is the access token for service \"willow-65\"?",
+          "expected": [
+            "saffron_8197"
+          ],
+          "answer": "UNKNOWN",
+          "correct": false
+        },
+        {
+          "probeId": "fact-21",
+          "category": "fact",
+          "question": "What is the access token for service \"juniper-92\"?",
+          "expected": [
+            "lattice_3084"
+          ],
+          "answer": "UNKNOWN",
+          "correct": false
+        },
+        {
+          "probeId": "fact-24",
+          "category": "fact",
+          "question": "What is the access token for service \"obsidian-51\"?",
+          "expected": [
+            "tundra_4298"
+          ],
+          "answer": "harbor_5710",
+          "correct": false
+        },
+        {
+          "probeId": "fact-27",
+          "category": "fact",
+          "question": "What is the access token for service \"harbor-89\"?",
+          "expected": [
+            "harbor_3944"
+          ],
+          "answer": "harbor_3944",
+          "correct": true
+        },
+        {
+          "probeId": "fact-30",
+          "category": "fact",
+          "question": "What is the access token for service \"obsidian-51\"?",
+          "expected": [
+            "harbor_5710"
+          ],
+          "answer": "harbor_5710",
+          "correct": true
+        },
+        {
+          "probeId": "fact-33",
+          "category": "fact",
+          "question": "What is the access token for service \"harbor-64\"?",
+          "expected": [
+            "lattice_5375"
+          ],
+          "answer": "lattice_5375",
+          "correct": true
+        }
+      ],
+      "accuracy": 0.25,
+      "byCategory": {
+        "fact": {
+          "correct": 3,
+          "total": 12
+        }
+      },
+      "wallTimeMs": 47384
+    },
+    {
+      "scenarioId": "fact-thread",
+      "strategyId": "gemini-style",
+      "windowTokens": 8000,
+      "stats": {
+        "compactions": 4,
+        "compactorCalls": 4,
+        "finalTokens": 2290,
+        "peakTokens": 7145
+      },
+      "probes": [
+        {
+          "probeId": "fact-0",
+          "category": "fact",
+          "question": "What is the access token for service \"krypton-78\"?",
+          "expected": [
+            "willow_9997"
+          ],
+          "answer": "willow_9997",
+          "correct": true
+        },
+        {
+          "probeId": "fact-3",
+          "category": "fact",
+          "question": "What is the access token for service \"monsoon-67\"?",
+          "expected": [
+            "quartz_5918"
+          ],
+          "answer": "quartz_5918",
+          "correct": true
+        },
+        {
+          "probeId": "fact-6",
+          "category": "fact",
+          "question": "What is the access token for service \"quartz-83\"?",
+          "expected": [
+            "ember_6708"
+          ],
+          "answer": "ember_6708",
+          "correct": true
+        },
+        {
+          "probeId": "fact-9",
+          "category": "fact",
+          "question": "What is the access token for service \"zephyr-49\"?",
+          "expected": [
+            "nebula_5756"
+          ],
+          "answer": "nebula_5756",
+          "correct": true
+        },
+        {
+          "probeId": "fact-12",
+          "category": "fact",
+          "question": "What is the access token for service \"cinder-56\"?",
+          "expected": [
+            "tundra_2994"
+          ],
+          "answer": "tundra_2994",
+          "correct": true
+        },
+        {
+          "probeId": "fact-15",
+          "category": "fact",
+          "question": "What is the access token for service \"rampart-11\"?",
+          "expected": [
+            "echo_4998"
+          ],
+          "answer": "echo_4998",
+          "correct": true
+        },
+        {
+          "probeId": "fact-18",
+          "category": "fact",
+          "question": "What is the access token for service \"willow-65\"?",
+          "expected": [
+            "saffron_8197"
+          ],
+          "answer": "saffron_8197",
+          "correct": true
+        },
+        {
+          "probeId": "fact-21",
+          "category": "fact",
+          "question": "What is the access token for service \"juniper-92\"?",
+          "expected": [
+            "lattice_3084"
+          ],
+          "answer": "lattice_3084",
+          "correct": true
+        },
+        {
+          "probeId": "fact-24",
+          "category": "fact",
+          "question": "What is the access token for service \"obsidian-51\"?",
+          "expected": [
+            "tundra_4298"
+          ],
+          "answer": "harbor_5710",
+          "correct": false
+        },
+        {
+          "probeId": "fact-27",
+          "category": "fact",
+          "question": "What is the access token for service \"harbor-89\"?",
+          "expected": [
+            "harbor_3944"
+          ],
+          "answer": "harbor_3944",
+          "correct": true
+        },
+        {
+          "probeId": "fact-30",
+          "category": "fact",
+          "question": "What is the access token for service \"obsidian-51\"?",
+          "expected": [
+            "harbor_5710"
+          ],
+          "answer": "harbor_5710",
+          "correct": true
+        },
+        {
+          "probeId": "fact-33",
+          "category": "fact",
+          "question": "What is the access token for service \"harbor-64\"?",
+          "expected": [
+            "lattice_5375"
+          ],
+          "answer": "lattice_5375",
+          "correct": true
+        }
+      ],
+      "accuracy": 0.9166666666666666,
+      "byCategory": {
+        "fact": {
+          "correct": 11,
+          "total": 12
+        }
+      },
+      "wallTimeMs": 24863
+    },
+    {
+      "scenarioId": "fact-thread",
+      "strategyId": "opencode-style",
+      "windowTokens": 8000,
+      "stats": {
+        "compactions": 3,
+        "compactorCalls": 3,
+        "finalTokens": 3387,
+        "peakTokens": 7145
+      },
+      "probes": [
+        {
+          "probeId": "fact-0",
+          "category": "fact",
+          "question": "What is the access token for service \"krypton-78\"?",
+          "expected": [
+            "willow_9997"
+          ],
+          "answer": "willow_9997",
+          "correct": true
+        },
+        {
+          "probeId": "fact-3",
+          "category": "fact",
+          "question": "What is the access token for service \"monsoon-67\"?",
+          "expected": [
+            "quartz_5918"
+          ],
+          "answer": "quartz_5918",
+          "correct": true
+        },
+        {
+          "probeId": "fact-6",
+          "category": "fact",
+          "question": "What is the access token for service \"quartz-83\"?",
+          "expected": [
+            "ember_6708"
+          ],
+          "answer": "ember_6708",
+          "correct": true
+        },
+        {
+          "probeId": "fact-9",
+          "category": "fact",
+          "question": "What is the access token for service \"zephyr-49\"?",
+          "expected": [
+            "nebula_5756"
+          ],
+          "answer": "nebula_5756",
+          "correct": true
+        },
+        {
+          "probeId": "fact-12",
+          "category": "fact",
+          "question": "What is the access token for service \"cinder-56\"?",
+          "expected": [
+            "tundra_2994"
+          ],
+          "answer": "tundra_2994",
+          "correct": true
+        },
+        {
+          "probeId": "fact-15",
+          "category": "fact",
+          "question": "What is the access token for service \"rampart-11\"?",
+          "expected": [
+            "echo_4998"
+          ],
+          "answer": "echo_4998",
+          "correct": true
+        },
+        {
+          "probeId": "fact-18",
+          "category": "fact",
+          "question": "What is the access token for service \"willow-65\"?",
+          "expected": [
+            "saffron_8197"
+          ],
+          "answer": "saffron_8197",
+          "correct": true
+        },
+        {
+          "probeId": "fact-21",
+          "category": "fact",
+          "question": "What is the access token for service \"juniper-92\"?",
+          "expected": [
+            "lattice_3084"
+          ],
+          "answer": "UNKNOWN",
+          "correct": false
+        },
+        {
+          "probeId": "fact-24",
+          "category": "fact",
+          "question": "What is the access token for service \"obsidian-51\"?",
+          "expected": [
+            "tundra_4298"
+          ],
+          "answer": "UNKNOWN",
+          "correct": false
+        },
+        {
+          "probeId": "fact-27",
+          "category": "fact",
+          "question": "What is the access token for service \"harbor-89\"?",
+          "expected": [
+            "harbor_3944"
+          ],
+          "answer": "UNKNOWN",
+          "correct": false
+        },
+        {
+          "probeId": "fact-30",
+          "category": "fact",
+          "question": "What is the access token for service \"obsidian-51\"?",
+          "expected": [
+            "harbor_5710"
+          ],
+          "answer": "UNKNOWN",
+          "correct": false
+        },
+        {
+          "probeId": "fact-33",
+          "category": "fact",
+          "question": "What is the access token for service \"harbor-64\"?",
+          "expected": [
+            "lattice_5375"
+          ],
+          "answer": "lattice_5375",
+          "correct": true
+        }
+      ],
+      "accuracy": 0.6666666666666666,
+      "byCategory": {
+        "fact": {
+          "correct": 8,
+          "total": 12
+        }
+      },
+      "wallTimeMs": 66332
+    },
+    {
+      "scenarioId": "fact-thread",
+      "strategyId": "cesium-ledger@0.2",
+      "windowTokens": 8000,
+      "stats": {
+        "compactions": 7,
+        "compactorCalls": 7,
+        "finalTokens": 5500,
+        "peakTokens": 7150
+      },
+      "probes": [
+        {
+          "probeId": "fact-0",
+          "category": "fact",
+          "question": "What is the access token for service \"krypton-78\"?",
+          "expected": [
+            "willow_9997"
+          ],
+          "answer": "willow_9997",
+          "correct": true
+        },
+        {
+          "probeId": "fact-3",
+          "category": "fact",
+          "question": "What is the access token for service \"monsoon-67\"?",
+          "expected": [
+            "quartz_5918"
+          ],
+          "answer": "quartz_5918",
+          "correct": true
+        },
+        {
+          "probeId": "fact-6",
+          "category": "fact",
+          "question": "What is the access token for service \"quartz-83\"?",
+          "expected": [
+            "ember_6708"
+          ],
+          "answer": "ember_6708",
+          "correct": true
+        },
+        {
+          "probeId": "fact-9",
+          "category": "fact",
+          "question": "What is the access token for service \"zephyr-49\"?",
+          "expected": [
+            "nebula_5756"
+          ],
+          "answer": "nebula_5756",
+          "correct": true
+        },
+        {
+          "probeId": "fact-12",
+          "category": "fact",
+          "question": "What is the access token for service \"cinder-56\"?",
+          "expected": [
+            "tundra_2994"
+          ],
+          "answer": "tundra_2994",
+          "correct": true
+        },
+        {
+          "probeId": "fact-15",
+          "category": "fact",
+          "question": "What is the access token for service \"rampart-11\"?",
+          "expected": [
+            "echo_4998"
+          ],
+          "answer": "echo_4998",
+          "correct": true
+        },
+        {
+          "probeId": "fact-18",
+          "category": "fact",
+          "question": "What is the access token for service \"willow-65\"?",
+          "expected": [
+            "saffron_8197"
+          ],
+          "answer": "saffron_8197",
+          "correct": true
+        },
+        {
+          "probeId": "fact-21",
+          "category": "fact",
+          "question": "What is the access token for service \"juniper-92\"?",
+          "expected": [
+            "lattice_3084"
+          ],
+          "answer": "lattice_3084",
+          "correct": true
+        },
+        {
+          "probeId": "fact-24",
+          "category": "fact",
+          "question": "What is the access token for service \"obsidian-51\"?",
+          "expected": [
+            "tundra_4298"
+          ],
+          "answer": "harbor_5710",
+          "correct": false
+        },
+        {
+          "probeId": "fact-27",
+          "category": "fact",
+          "question": "What is the access token for service \"harbor-89\"?",
+          "expected": [
+            "harbor_3944"
+          ],
+          "answer": "harbor_3944",
+          "correct": true
+        },
+        {
+          "probeId": "fact-30",
+          "category": "fact",
+          "question": "What is the access token for service \"obsidian-51\"?",
+          "expected": [
+            "harbor_5710"
+          ],
+          "answer": "harbor_5710",
+          "correct": true
+        },
+        {
+          "probeId": "fact-33",
+          "category": "fact",
+          "question": "What is the access token for service \"harbor-64\"?",
+          "expected": [
+            "lattice_5375"
+          ],
+          "answer": "lattice_5375",
+          "correct": true
+        }
+      ],
+      "accuracy": 0.9166666666666666,
+      "byCategory": {
+        "fact": {
+          "correct": 11,
+          "total": 12
+        }
+      },
+      "wallTimeMs": 47932
+    },
+    {
+      "scenarioId": "fact-thread",
+      "strategyId": "cesium-ledger@0.35",
+      "windowTokens": 8000,
+      "stats": {
+        "compactions": 6,
+        "compactorCalls": 6,
+        "finalTokens": 4929,
+        "peakTokens": 7145
+      },
+      "probes": [
+        {
+          "probeId": "fact-0",
+          "category": "fact",
+          "question": "What is the access token for service \"krypton-78\"?",
+          "expected": [
+            "willow_9997"
+          ],
+          "answer": "willow_9997",
+          "correct": true
+        },
+        {
+          "probeId": "fact-3",
+          "category": "fact",
+          "question": "What is the access token for service \"monsoon-67\"?",
+          "expected": [
+            "quartz_5918"
+          ],
+          "answer": "quartz_5918",
+          "correct": true
+        },
+        {
+          "probeId": "fact-6",
+          "category": "fact",
+          "question": "What is the access token for service \"quartz-83\"?",
+          "expected": [
+            "ember_6708"
+          ],
+          "answer": "ember_6708",
+          "correct": true
+        },
+        {
+          "probeId": "fact-9",
+          "category": "fact",
+          "question": "What is the access token for service \"zephyr-49\"?",
+          "expected": [
+            "nebula_5756"
+          ],
+          "answer": "nebula_5756",
+          "correct": true
+        },
+        {
+          "probeId": "fact-12",
+          "category": "fact",
+          "question": "What is the access token for service \"cinder-56\"?",
+          "expected": [
+            "tundra_2994"
+          ],
+          "answer": "tundra_2994",
+          "correct": true
+        },
+        {
+          "probeId": "fact-15",
+          "category": "fact",
+          "question": "What is the access token for service \"rampart-11\"?",
+          "expected": [
+            "echo_4998"
+          ],
+          "answer": "echo_4998",
+          "correct": true
+        },
+        {
+          "probeId": "fact-18",
+          "category": "fact",
+          "question": "What is the access token for service \"willow-65\"?",
+          "expected": [
+            "saffron_8197"
+          ],
+          "answer": "saffron_8197",
+          "correct": true
+        },
+        {
+          "probeId": "fact-21",
+          "category": "fact",
+          "question": "What is the access token for service \"juniper-92\"?",
+          "expected": [
+            "lattice_3084"
+          ],
+          "answer": "lattice_3084",
+          "correct": true
+        },
+        {
+          "probeId": "fact-24",
+          "category": "fact",
+          "question": "What is the access token for service \"obsidian-51\"?",
+          "expected": [
+            "tundra_4298"
+          ],
+          "answer": "harbor_5710",
+          "correct": false
+        },
+        {
+          "probeId": "fact-27",
+          "category": "fact",
+          "question": "What is the access token for service \"harbor-89\"?",
+          "expected": [
+            "harbor_3944"
+          ],
+          "answer": "harbor_3944",
+          "correct": true
+        },
+        {
+          "probeId": "fact-30",
+          "category": "fact",
+          "question": "What is the access token for service \"obsidian-51\"?",
+          "expected": [
+            "harbor_5710"
+          ],
+          "answer": "harbor_5710",
+          "correct": true
+        },
+        {
+          "probeId": "fact-33",
+          "category": "fact",
+          "question": "What is the access token for service \"harbor-64\"?",
+          "expected": [
+            "lattice_5375"
+          ],
+          "answer": "lattice_5375",
+          "correct": true
+        }
+      ],
+      "accuracy": 0.9166666666666666,
+      "byCategory": {
+        "fact": {
+          "correct": 11,
+          "total": 12
+        }
+      },
+      "wallTimeMs": 52694
+    },
+    {
+      "scenarioId": "fact-thread",
+      "strategyId": "cesium-ledger@0.8",
+      "windowTokens": 8000,
+      "stats": {
+        "compactions": 4,
+        "compactorCalls": 4,
+        "finalTokens": 5782,
+        "peakTokens": 7145
+      },
+      "probes": [
+        {
+          "probeId": "fact-0",
+          "category": "fact",
+          "question": "What is the access token for service \"krypton-78\"?",
+          "expected": [
+            "willow_9997"
+          ],
+          "answer": "willow_9997",
+          "correct": true
+        },
+        {
+          "probeId": "fact-3",
+          "category": "fact",
+          "question": "What is the access token for service \"monsoon-67\"?",
+          "expected": [
+            "quartz_5918"
+          ],
+          "answer": "quartz_5918",
+          "correct": true
+        },
+        {
+          "probeId": "fact-6",
+          "category": "fact",
+          "question": "What is the access token for service \"quartz-83\"?",
+          "expected": [
+            "ember_6708"
+          ],
+          "answer": "ember_6708",
+          "correct": true
+        },
+        {
+          "probeId": "fact-9",
+          "category": "fact",
+          "question": "What is the access token for service \"zephyr-49\"?",
+          "expected": [
+            "nebula_5756"
+          ],
+          "answer": "nebula_5756",
+          "correct": true
+        },
+        {
+          "probeId": "fact-12",
+          "category": "fact",
+          "question": "What is the access token for service \"cinder-56\"?",
+          "expected": [
+            "tundra_2994"
+          ],
+          "answer": "tundra_2994",
+          "correct": true
+        },
+        {
+          "probeId": "fact-15",
+          "category": "fact",
+          "question": "What is the access token for service \"rampart-11\"?",
+          "expected": [
+            "echo_4998"
+          ],
+          "answer": "echo_4998",
+          "correct": true
+        },
+        {
+          "probeId": "fact-18",
+          "category": "fact",
+          "question": "What is the access token for service \"willow-65\"?",
+          "expected": [
+            "saffron_8197"
+          ],
+          "answer": "saffron_8197",
+          "correct": true
+        },
+        {
+          "probeId": "fact-21",
+          "category": "fact",
+          "question": "What is the access token for service \"juniper-92\"?",
+          "expected": [
+            "lattice_3084"
+          ],
+          "answer": "lattice_3084",
+          "correct": true
+        },
+        {
+          "probeId": "fact-24",
+          "category": "fact",
+          "question": "What is the access token for service \"obsidian-51\"?",
+          "expected": [
+            "tundra_4298"
+          ],
+          "answer": "harbor_5710",
+          "correct": false
+        },
+        {
+          "probeId": "fact-27",
+          "category": "fact",
+          "question": "What is the access token for service \"harbor-89\"?",
+          "expected": [
+            "harbor_3944"
+          ],
+          "answer": "harbor_3944",
+          "correct": true
+        },
+        {
+          "probeId": "fact-30",
+          "category": "fact",
+          "question": "What is the access token for service \"obsidian-51\"?",
+          "expected": [
+            "harbor_5710"
+          ],
+          "answer": "harbor_5710",
+          "correct": true
+        },
+        {
+          "probeId": "fact-33",
+          "category": "fact",
+          "question": "What is the access token for service \"harbor-64\"?",
+          "expected": [
+            "lattice_5375"
+          ],
+          "answer": "lattice_5375",
+          "correct": true
+        }
+      ],
+      "accuracy": 0.9166666666666666,
+      "byCategory": {
+        "fact": {
+          "correct": 11,
+          "total": 12
+        }
+      },
+      "wallTimeMs": 49879
+    },
+    {
+      "scenarioId": "swe-sim",
+      "strategyId": "oracle",
+      "windowTokens": 8000,
+      "stats": {
+        "compactions": 0,
+        "compactorCalls": 0,
+        "finalTokens": 34923,
+        "peakTokens": 34923
+      },
+      "probes": [
+        {
+          "probeId": "swe-directive-cap",
+          "category": "user-directive",
+          "question": "What is the maximum position size per market, as a percent of bankroll?",
+          "expected": [
+            "4.5"
+          ],
+          "answer": "4.5%",
+          "correct": true
+        },
+        {
+          "probeId": "swe-directive-hours",
+          "category": "user-directive",
+          "question": "Markets resolving in under how many hours must never be traded?",
+          "expected": [
+            "36"
+          ],
+          "answer": "36",
+          "correct": true
+        },
+        {
+          "probeId": "swe-deadend-ws",
+          "category": "dead-end",
+          "question": "Why was the raw websocket approach for the orderbook feed abandoned?",
+          "expected": [
+            "403",
+            "cloudflare",
+            "bot challenge"
+          ],
+          "answer": "The direct websocket connection was blocked by a Cloudflare bot challenge (HTTP 403).",
+          "correct": true
+        },
+        {
+          "probeId": "swe-artifact-feed",
+          "category": "artifact",
+          "question": "Which file implements the working orderbook feed?",
+          "expected": [
+            "src/feeds/clob_stream.py",
+            "clob_stream.py"
+          ],
+          "answer": "src/feeds/clob_stream.py",
+          "correct": true
+        },
+        {
+          "probeId": "swe-subagent-kelly",
+          "category": "subagent",
+          "question": "What fractional kelly value did the backtest subagent recommend?",
+          "expected": [
+            "0.31"
+          ],
+          "answer": "0.31",
+          "correct": true
+        },
+        {
+          "probeId": "swe-subagent-fees",
+          "category": "subagent",
+          "question": "What bug did the fee-audit subagent find?",
+          "expected": [
+            "double-counted",
+            "double counted",
+            "pnl.py"
+          ],
+          "answer": "A double-counted taker fee in pnl.py (+22 bps).",
+          "correct": true
+        },
+        {
+          "probeId": "swe-fact-redis",
+          "category": "fact",
+          "question": "What is the redis cache namespace?",
+          "expected": [
+            "pm-arb-prod-v7"
+          ],
+          "answer": "pm-arb-prod-v7",
+          "correct": true
+        }
+      ],
+      "accuracy": 1,
+      "byCategory": {
+        "user-directive": {
+          "correct": 2,
+          "total": 2
+        },
+        "dead-end": {
+          "correct": 1,
+          "total": 1
+        },
+        "artifact": {
+          "correct": 1,
+          "total": 1
+        },
+        "subagent": {
+          "correct": 2,
+          "total": 2
+        },
+        "fact": {
+          "correct": 1,
+          "total": 1
+        }
+      },
+      "wallTimeMs": 5150
+    },
+    {
+      "scenarioId": "swe-sim",
+      "strategyId": "truncate",
+      "windowTokens": 8000,
+      "stats": {
+        "compactions": 6,
+        "compactorCalls": 0,
+        "finalTokens": 4665,
+        "peakTokens": 7955
+      },
+      "probes": [
+        {
+          "probeId": "swe-directive-cap",
+          "category": "user-directive",
+          "question": "What is the maximum position size per market, as a percent of bankroll?",
+          "expected": [
+            "4.5"
+          ],
+          "answer": "UNKNOWN",
+          "correct": false
+        },
+        {
+          "probeId": "swe-directive-hours",
+          "category": "user-directive",
+          "question": "Markets resolving in under how many hours must never be traded?",
+          "expected": [
+            "36"
+          ],
+          "answer": "UNKNOWN",
+          "correct": false
+        },
+        {
+          "probeId": "swe-deadend-ws",
+          "category": "dead-end",
+          "question": "Why was the raw websocket approach for the orderbook feed abandoned?",
+          "expected": [
+            "403",
+            "cloudflare",
+            "bot challenge"
+          ],
+          "answer": "UNKNOWN",
+          "correct": false
+        },
+        {
+          "probeId": "swe-artifact-feed",
+          "category": "artifact",
+          "question": "Which file implements the working orderbook feed?",
+          "expected": [
+            "src/feeds/clob_stream.py",
+            "clob_stream.py"
+          ],
+          "answer": "UNKNOWN",
+          "correct": false
+        },
+        {
+          "probeId": "swe-subagent-kelly",
+          "category": "subagent",
+          "question": "What fractional kelly value did the backtest subagent recommend?",
+          "expected": [
+            "0.31"
+          ],
+          "answer": "UNKNOWN",
+          "correct": false
+        },
+        {
+          "probeId": "swe-subagent-fees",
+          "category": "subagent",
+          "question": "What bug did the fee-audit subagent find?",
+          "expected": [
+            "double-counted",
+            "double counted",
+            "pnl.py"
+          ],
+          "answer": "UNKNOWN",
+          "correct": false
+        },
+        {
+          "probeId": "swe-fact-redis",
+          "category": "fact",
+          "question": "What is the redis cache namespace?",
+          "expected": [
+            "pm-arb-prod-v7"
+          ],
+          "answer": "UNKNOWN",
+          "correct": false
+        }
+      ],
+      "accuracy": 0,
+      "byCategory": {
+        "user-directive": {
+          "correct": 0,
+          "total": 2
+        },
+        "dead-end": {
+          "correct": 0,
+          "total": 1
+        },
+        "artifact": {
+          "correct": 0,
+          "total": 1
+        },
+        "subagent": {
+          "correct": 0,
+          "total": 2
+        },
+        "fact": {
+          "correct": 0,
+          "total": 1
+        }
+      },
+      "wallTimeMs": 12957
+    },
+    {
+      "scenarioId": "swe-sim",
+      "strategyId": "cesium-legacy",
+      "windowTokens": 8000,
+      "stats": {
+        "compactions": 8,
+        "compactorCalls": 0,
+        "finalTokens": 3326,
+        "peakTokens": 8080
+      },
+      "probes": [
+        {
+          "probeId": "swe-directive-cap",
+          "category": "user-directive",
+          "question": "What is the maximum position size per market, as a percent of bankroll?",
+          "expected": [
+            "4.5"
+          ],
+          "answer": "UNKNOWN",
+          "correct": false
+        },
+        {
+          "probeId": "swe-directive-hours",
+          "category": "user-directive",
+          "question": "Markets resolving in under how many hours must never be traded?",
+          "expected": [
+            "36"
+          ],
+          "answer": "UNKNOWN",
+          "correct": false
+        },
+        {
+          "probeId": "swe-deadend-ws",
+          "category": "dead-end",
+          "question": "Why was the raw websocket approach for the orderbook feed abandoned?",
+          "expected": [
+            "403",
+            "cloudflare",
+            "bot challenge"
+          ],
+          "answer": "UNKNOWN",
+          "correct": false
+        },
+        {
+          "probeId": "swe-artifact-feed",
+          "category": "artifact",
+          "question": "Which file implements the working orderbook feed?",
+          "expected": [
+            "src/feeds/clob_stream.py",
+            "clob_stream.py"
+          ],
+          "answer": "UNKNOWN",
+          "correct": false
+        },
+        {
+          "probeId": "swe-subagent-kelly",
+          "category": "subagent",
+          "question": "What fractional kelly value did the backtest subagent recommend?",
+          "expected": [
+            "0.31"
+          ],
+          "answer": "UNKNOWN",
+          "correct": false
+        },
+        {
+          "probeId": "swe-subagent-fees",
+          "category": "subagent",
+          "question": "What bug did the fee-audit subagent find?",
+          "expected": [
+            "double-counted",
+            "double counted",
+            "pnl.py"
+          ],
+          "answer": "UNKNOWN",
+          "correct": false
+        },
+        {
+          "probeId": "swe-fact-redis",
+          "category": "fact",
+          "question": "What is the redis cache namespace?",
+          "expected": [
+            "pm-arb-prod-v7"
+          ],
+          "answer": "UNKNOWN",
+          "correct": false
+        }
+      ],
+      "accuracy": 0,
+      "byCategory": {
+        "user-directive": {
+          "correct": 0,
+          "total": 2
+        },
+        "dead-end": {
+          "correct": 0,
+          "total": 1
+        },
+        "artifact": {
+          "correct": 0,
+          "total": 1
+        },
+        "subagent": {
+          "correct": 0,
+          "total": 2
+        },
+        "fact": {
+          "correct": 0,
+          "total": 1
+        }
+      },
+      "wallTimeMs": 14907
+    },
+    {
+      "scenarioId": "swe-sim",
+      "strategyId": "codex-style",
+      "windowTokens": 8000,
+      "stats": {
+        "compactions": 4,
+        "compactorCalls": 4,
+        "finalTokens": 6386,
+        "peakTokens": 7955
+      },
+      "probes": [
+        {
+          "probeId": "swe-directive-cap",
+          "category": "user-directive",
+          "question": "What is the maximum position size per market, as a percent of bankroll?",
+          "expected": [
+            "4.5"
+          ],
+          "answer": "4.5%",
+          "correct": true
+        },
+        {
+          "probeId": "swe-directive-hours",
+          "category": "user-directive",
+          "question": "Markets resolving in under how many hours must never be traded?",
+          "expected": [
+            "36"
+          ],
+          "answer": "36",
+          "correct": true
+        },
+        {
+          "probeId": "swe-deadend-ws",
+          "category": "dead-end",
+          "question": "Why was the raw websocket approach for the orderbook feed abandoned?",
+          "expected": [
+            "403",
+            "cloudflare",
+            "bot challenge"
+          ],
+          "answer": "UNKNOWN",
+          "correct": false
+        },
+        {
+          "probeId": "swe-artifact-feed",
+          "category": "artifact",
+          "question": "Which file implements the working orderbook feed?",
+          "expected": [
+            "src/feeds/clob_stream.py",
+            "clob_stream.py"
+          ],
+          "answer": "UNKNOWN",
+          "correct": false
+        },
+        {
+          "probeId": "swe-subagent-kelly",
+          "category": "subagent",
+          "question": "What fractional kelly value did the backtest subagent recommend?",
+          "expected": [
+            "0.31"
+          ],
+          "answer": "UNKNOWN",
+          "correct": false
+        },
+        {
+          "probeId": "swe-subagent-fees",
+          "category": "subagent",
+          "question": "What bug did the fee-audit subagent find?",
+          "expected": [
+            "double-counted",
+            "double counted",
+            "pnl.py"
+          ],
+          "answer": "UNKNOWN",
+          "correct": false
+        },
+        {
+          "probeId": "swe-fact-redis",
+          "category": "fact",
+          "question": "What is the redis cache namespace?",
+          "expected": [
+            "pm-arb-prod-v7"
+          ],
+          "answer": "pm-arb-prod-v7",
+          "correct": true
+        }
+      ],
+      "accuracy": 0.42857142857142855,
+      "byCategory": {
+        "user-directive": {
+          "correct": 2,
+          "total": 2
+        },
+        "dead-end": {
+          "correct": 0,
+          "total": 1
+        },
+        "artifact": {
+          "correct": 0,
+          "total": 1
+        },
+        "subagent": {
+          "correct": 0,
+          "total": 2
+        },
+        "fact": {
+          "correct": 1,
+          "total": 1
+        }
+      },
+      "wallTimeMs": 33041
+    },
+    {
+      "scenarioId": "swe-sim",
+      "strategyId": "claude-style",
+      "windowTokens": 8000,
+      "stats": {
+        "compactions": 2,
+        "compactorCalls": 2,
+        "finalTokens": 11060,
+        "peakTokens": 16782
+      },
+      "probes": [
+        {
+          "probeId": "swe-directive-cap",
+          "category": "user-directive",
+          "question": "What is the maximum position size per market, as a percent of bankroll?",
+          "expected": [
+            "4.5"
+          ],
+          "answer": "4.5%",
+          "correct": true
+        },
+        {
+          "probeId": "swe-directive-hours",
+          "category": "user-directive",
+          "question": "Markets resolving in under how many hours must never be traded?",
+          "expected": [
+            "36"
+          ],
+          "answer": "36",
+          "correct": true
+        },
+        {
+          "probeId": "swe-deadend-ws",
+          "category": "dead-end",
+          "question": "Why was the raw websocket approach for the orderbook feed abandoned?",
+          "expected": [
+            "403",
+            "cloudflare",
+            "bot challenge"
+          ],
+          "answer": "Cloudflare bot challenge returned HTTP 403, blocking the connection.",
+          "correct": true
+        },
+        {
+          "probeId": "swe-artifact-feed",
+          "category": "artifact",
+          "question": "Which file implements the working orderbook feed?",
+          "expected": [
+            "src/feeds/clob_stream.py",
+            "clob_stream.py"
+          ],
+          "answer": "src/feeds/clob_stream.py",
+          "correct": true
+        },
+        {
+          "probeId": "swe-subagent-kelly",
+          "category": "subagent",
+          "question": "What fractional kelly value did the backtest subagent recommend?",
+          "expected": [
+            "0.31"
+          ],
+          "answer": "0.31",
+          "correct": true
+        },
+        {
+          "probeId": "swe-subagent-fees",
+          "category": "subagent",
+          "question": "What bug did the fee-audit subagent find?",
+          "expected": [
+            "double-counted",
+            "double counted",
+            "pnl.py"
+          ],
+          "answer": "The taker fee was double-counted in pnl.py line 88.",
+          "correct": true
+        },
+        {
+          "probeId": "swe-fact-redis",
+          "category": "fact",
+          "question": "What is the redis cache namespace?",
+          "expected": [
+            "pm-arb-prod-v7"
+          ],
+          "answer": "pm-arb-prod-v7",
+          "correct": true
+        }
+      ],
+      "accuracy": 1,
+      "byCategory": {
+        "user-directive": {
+          "correct": 2,
+          "total": 2
+        },
+        "dead-end": {
+          "correct": 1,
+          "total": 1
+        },
+        "artifact": {
+          "correct": 1,
+          "total": 1
+        },
+        "subagent": {
+          "correct": 2,
+          "total": 2
+        },
+        "fact": {
+          "correct": 1,
+          "total": 1
+        }
+      },
+      "wallTimeMs": 18609
+    },
+    {
+      "scenarioId": "swe-sim",
+      "strategyId": "gemini-style",
+      "windowTokens": 8000,
+      "stats": {
+        "compactions": 6,
+        "compactorCalls": 6,
+        "finalTokens": 1722,
+        "peakTokens": 7955
+      },
+      "probes": [
+        {
+          "probeId": "swe-directive-cap",
+          "category": "user-directive",
+          "question": "What is the maximum position size per market, as a percent of bankroll?",
+          "expected": [
+            "4.5"
+          ],
+          "answer": "4.5%",
+          "correct": true
+        },
+        {
+          "probeId": "swe-directive-hours",
+          "category": "user-directive",
+          "question": "Markets resolving in under how many hours must never be traded?",
+          "expected": [
+            "36"
+          ],
+          "answer": "36",
+          "correct": true
+        },
+        {
+          "probeId": "swe-deadend-ws",
+          "category": "dead-end",
+          "question": "Why was the raw websocket approach for the orderbook feed abandoned?",
+          "expected": [
+            "403",
+            "cloudflare",
+            "bot challenge"
+          ],
+          "answer": "Raw WebSocket connection was blocked by Cloudflare HTTP 403.",
+          "correct": true
+        },
+        {
+          "probeId": "swe-artifact-feed",
+          "category": "artifact",
+          "question": "Which file implements the working orderbook feed?",
+          "expected": [
+            "src/feeds/clob_stream.py",
+            "clob_stream.py"
+          ],
+          "answer": "src/feeds/clob_stream.py",
+          "correct": true
+        },
+        {
+          "probeId": "swe-subagent-kelly",
+          "category": "subagent",
+          "question": "What fractional kelly value did the backtest subagent recommend?",
+          "expected": [
+            "0.31"
+          ],
+          "answer": "0.31",
+          "correct": true
+        },
+        {
+          "probeId": "swe-subagent-fees",
+          "category": "subagent",
+          "question": "What bug did the fee-audit subagent find?",
+          "expected": [
+            "double-counted",
+            "double counted",
+            "pnl.py"
+          ],
+          "answer": "Taker fee double-counting in pnl.py line 88.",
+          "correct": true
+        },
+        {
+          "probeId": "swe-fact-redis",
+          "category": "fact",
+          "question": "What is the redis cache namespace?",
+          "expected": [
+            "pm-arb-prod-v7"
+          ],
+          "answer": "pm-arb-prod-v7",
+          "correct": true
+        }
+      ],
+      "accuracy": 1,
+      "byCategory": {
+        "user-directive": {
+          "correct": 2,
+          "total": 2
+        },
+        "dead-end": {
+          "correct": 1,
+          "total": 1
+        },
+        "artifact": {
+          "correct": 1,
+          "total": 1
+        },
+        "subagent": {
+          "correct": 2,
+          "total": 2
+        },
+        "fact": {
+          "correct": 1,
+          "total": 1
+        }
+      },
+      "wallTimeMs": 34066
+    },
+    {
+      "scenarioId": "swe-sim",
+      "strategyId": "opencode-style",
+      "windowTokens": 8000,
+      "stats": {
+        "compactions": 3,
+        "compactorCalls": 3,
+        "finalTokens": 1905,
+        "peakTokens": 15016
+      },
+      "probes": [
+        {
+          "probeId": "swe-directive-cap",
+          "category": "user-directive",
+          "question": "What is the maximum position size per market, as a percent of bankroll?",
+          "expected": [
+            "4.5"
+          ],
+          "answer": "4.5%",
+          "correct": true
+        },
+        {
+          "probeId": "swe-directive-hours",
+          "category": "user-directive",
+          "question": "Markets resolving in under how many hours must never be traded?",
+          "expected": [
+            "36"
+          ],
+          "answer": "36",
+          "correct": true
+        },
+        {
+          "probeId": "swe-deadend-ws",
+          "category": "dead-end",
+          "question": "Why was the raw websocket approach for the orderbook feed abandoned?",
+          "expected": [
+            "403",
+            "cloudflare",
+            "bot challenge"
+          ],
+          "answer": "It failed due to Cloudflare 403.",
+          "correct": true
+        },
+        {
+          "probeId": "swe-artifact-feed",
+          "category": "artifact",
+          "question": "Which file implements the working orderbook feed?",
+          "expected": [
+            "src/feeds/clob_stream.py",
+            "clob_stream.py"
+          ],
+          "answer": "`src/feeds/clob_stream.py`",
+          "correct": true
+        },
+        {
+          "probeId": "swe-subagent-kelly",
+          "category": "subagent",
+          "question": "What fractional kelly value did the backtest subagent recommend?",
+          "expected": [
+            "0.31"
+          ],
+          "answer": "0.31",
+          "correct": true
+        },
+        {
+          "probeId": "swe-subagent-fees",
+          "category": "subagent",
+          "question": "What bug did the fee-audit subagent find?",
+          "expected": [
+            "double-counted",
+            "double counted",
+            "pnl.py"
+          ],
+          "answer": "Taker fee double-counting in `pnl.py` (line 88).",
+          "correct": true
+        },
+        {
+          "probeId": "swe-fact-redis",
+          "category": "fact",
+          "question": "What is the redis cache namespace?",
+          "expected": [
+            "pm-arb-prod-v7"
+          ],
+          "answer": "pm-arb-prod-v7",
+          "correct": true
+        }
+      ],
+      "accuracy": 1,
+      "byCategory": {
+        "user-directive": {
+          "correct": 2,
+          "total": 2
+        },
+        "dead-end": {
+          "correct": 1,
+          "total": 1
+        },
+        "artifact": {
+          "correct": 1,
+          "total": 1
+        },
+        "subagent": {
+          "correct": 2,
+          "total": 2
+        },
+        "fact": {
+          "correct": 1,
+          "total": 1
+        }
+      },
+      "wallTimeMs": 23478
+    },
+    {
+      "scenarioId": "swe-sim",
+      "strategyId": "cesium-ledger@0.2",
+      "windowTokens": 8000,
+      "stats": {
+        "compactions": 17,
+        "compactorCalls": 5,
+        "finalTokens": 6277,
+        "peakTokens": 8224
+      },
+      "probes": [
+        {
+          "probeId": "swe-directive-cap",
+          "category": "user-directive",
+          "question": "What is the maximum position size per market, as a percent of bankroll?",
+          "expected": [
+            "4.5"
+          ],
+          "answer": "4.5%",
+          "correct": true
+        },
+        {
+          "probeId": "swe-directive-hours",
+          "category": "user-directive",
+          "question": "Markets resolving in under how many hours must never be traded?",
+          "expected": [
+            "36"
+          ],
+          "answer": "36",
+          "correct": true
+        },
+        {
+          "probeId": "swe-deadend-ws",
+          "category": "dead-end",
+          "question": "Why was the raw websocket approach for the orderbook feed abandoned?",
+          "expected": [
+            "403",
+            "cloudflare",
+            "bot challenge"
+          ],
+          "answer": "The direct websocket connection was rejected by Cloudflare with an HTTP 403 bot challenge (`websockets.exceptions.InvalidStatusCode: server rejected WebSocket connection: HTTP 403`), so the approach was switched to the authenticated CLOB SDK stream.",
+          "correct": true
+        },
+        {
+          "probeId": "swe-artifact-feed",
+          "category": "artifact",
+          "question": "Which file implements the working orderbook feed?",
+          "expected": [
+            "src/feeds/clob_stream.py",
+            "clob_stream.py"
+          ],
+          "answer": "`src/feeds/clob_stream.py`",
+          "correct": true
+        },
+        {
+          "probeId": "swe-subagent-kelly",
+          "category": "subagent",
+          "question": "What fractional kelly value did the backtest subagent recommend?",
+          "expected": [
+            "0.31"
+          ],
+          "answer": "0.31",
+          "correct": true
+        },
+        {
+          "probeId": "swe-subagent-fees",
+          "category": "subagent",
+          "question": "What bug did the fee-audit subagent find?",
+          "expected": [
+            "double-counted",
+            "double counted",
+            "pnl.py"
+          ],
+          "answer": "The taker fee was double-counted in `pnl.py` at line 88.",
+          "correct": true
+        },
+        {
+          "probeId": "swe-fact-redis",
+          "category": "fact",
+          "question": "What is the redis cache namespace?",
+          "expected": [
+            "pm-arb-prod-v7"
+          ],
+          "answer": "pm-arb-prod-v7",
+          "correct": true
+        }
+      ],
+      "accuracy": 1,
+      "byCategory": {
+        "user-directive": {
+          "correct": 2,
+          "total": 2
+        },
+        "dead-end": {
+          "correct": 1,
+          "total": 1
+        },
+        "artifact": {
+          "correct": 1,
+          "total": 1
+        },
+        "subagent": {
+          "correct": 2,
+          "total": 2
+        },
+        "fact": {
+          "correct": 1,
+          "total": 1
+        }
+      },
+      "wallTimeMs": 36265
+    },
+    {
+      "scenarioId": "swe-sim",
+      "strategyId": "cesium-ledger@0.35",
+      "windowTokens": 8000,
+      "stats": {
+        "compactions": 11,
+        "compactorCalls": 6,
+        "finalTokens": 6444,
+        "peakTokens": 8154
+      },
+      "probes": [
+        {
+          "probeId": "swe-directive-cap",
+          "category": "user-directive",
+          "question": "What is the maximum position size per market, as a percent of bankroll?",
+          "expected": [
+            "4.5"
+          ],
+          "answer": "4.5%",
+          "correct": true
+        },
+        {
+          "probeId": "swe-directive-hours",
+          "category": "user-directive",
+          "question": "Markets resolving in under how many hours must never be traded?",
+          "expected": [
+            "36"
+          ],
+          "answer": "36",
+          "correct": true
+        },
+        {
+          "probeId": "swe-deadend-ws",
+          "category": "dead-end",
+          "question": "Why was the raw websocket approach for the orderbook feed abandoned?",
+          "expected": [
+            "403",
+            "cloudflare",
+            "bot challenge"
+          ],
+          "answer": "Direct websocket connection to the orderbook was blocked by Cloudflare (HTTP 403 bot challenge).",
+          "correct": true
+        },
+        {
+          "probeId": "swe-artifact-feed",
+          "category": "artifact",
+          "question": "Which file implements the working orderbook feed?",
+          "expected": [
+            "src/feeds/clob_stream.py",
+            "clob_stream.py"
+          ],
+          "answer": "src/feeds/clob_stream.py",
+          "correct": true
+        },
+        {
+          "probeId": "swe-subagent-kelly",
+          "category": "subagent",
+          "question": "What fractional kelly value did the backtest subagent recommend?",
+          "expected": [
+            "0.31"
+          ],
+          "answer": "0.31",
+          "correct": true
+        },
+        {
+          "probeId": "swe-subagent-fees",
+          "category": "subagent",
+          "question": "What bug did the fee-audit subagent find?",
+          "expected": [
+            "double-counted",
+            "double counted",
+            "pnl.py"
+          ],
+          "answer": "Taker fee double-counted in `pnl.py` line 88.",
+          "correct": true
+        },
+        {
+          "probeId": "swe-fact-redis",
+          "category": "fact",
+          "question": "What is the redis cache namespace?",
+          "expected": [
+            "pm-arb-prod-v7"
+          ],
+          "answer": "pm-arb-prod-v7",
+          "correct": true
+        }
+      ],
+      "accuracy": 1,
+      "byCategory": {
+        "user-directive": {
+          "correct": 2,
+          "total": 2
+        },
+        "dead-end": {
+          "correct": 1,
+          "total": 1
+        },
+        "artifact": {
+          "correct": 1,
+          "total": 1
+        },
+        "subagent": {
+          "correct": 2,
+          "total": 2
+        },
+        "fact": {
+          "correct": 1,
+          "total": 1
+        }
+      },
+      "wallTimeMs": 39716
+    },
+    {
+      "scenarioId": "swe-sim",
+      "strategyId": "cesium-ledger@0.8",
+      "windowTokens": 8000,
+      "stats": {
+        "compactions": 11,
+        "compactorCalls": 6,
+        "finalTokens": 5364,
+        "peakTokens": 8182
+      },
+      "probes": [
+        {
+          "probeId": "swe-directive-cap",
+          "category": "user-directive",
+          "question": "What is the maximum position size per market, as a percent of bankroll?",
+          "expected": [
+            "4.5"
+          ],
+          "answer": "4.5%",
+          "correct": true
+        },
+        {
+          "probeId": "swe-directive-hours",
+          "category": "user-directive",
+          "question": "Markets resolving in under how many hours must never be traded?",
+          "expected": [
+            "36"
+          ],
+          "answer": "36",
+          "correct": true
+        },
+        {
+          "probeId": "swe-deadend-ws",
+          "category": "dead-end",
+          "question": "Why was the raw websocket approach for the orderbook feed abandoned?",
+          "expected": [
+            "403",
+            "cloudflare",
+            "bot challenge"
+          ],
+          "answer": "Direct websocket connection to the orderbook fails with HTTP 403 (Cloudflare bot challenge).",
+          "correct": true
+        },
+        {
+          "probeId": "swe-artifact-feed",
+          "category": "artifact",
+          "question": "Which file implements the working orderbook feed?",
+          "expected": [
+            "src/feeds/clob_stream.py",
+            "clob_stream.py"
+          ],
+          "answer": "src/feeds/clob_stream.py",
+          "correct": true
+        },
+        {
+          "probeId": "swe-subagent-kelly",
+          "category": "subagent",
+          "question": "What fractional kelly value did the backtest subagent recommend?",
+          "expected": [
+            "0.31"
+          ],
+          "answer": "0.31",
+          "correct": true
+        },
+        {
+          "probeId": "swe-subagent-fees",
+          "category": "subagent",
+          "question": "What bug did the fee-audit subagent find?",
+          "expected": [
+            "double-counted",
+            "double counted",
+            "pnl.py"
+          ],
+          "answer": "Taker fee was double-counted in `pnl.py` line 88.",
+          "correct": true
+        },
+        {
+          "probeId": "swe-fact-redis",
+          "category": "fact",
+          "question": "What is the redis cache namespace?",
+          "expected": [
+            "pm-arb-prod-v7"
+          ],
+          "answer": "pm-arb-prod-v7",
+          "correct": true
+        }
+      ],
+      "accuracy": 1,
+      "byCategory": {
+        "user-directive": {
+          "correct": 2,
+          "total": 2
+        },
+        "dead-end": {
+          "correct": 1,
+          "total": 1
+        },
+        "artifact": {
+          "correct": 1,
+          "total": 1
+        },
+        "subagent": {
+          "correct": 2,
+          "total": 2
+        },
+        "fact": {
+          "correct": 1,
+          "total": 1
+        }
+      },
+      "wallTimeMs": 45518
+    },
+    {
+      "scenarioId": "math-state",
+      "strategyId": "oracle",
+      "windowTokens": 8000,
+      "stats": {
+        "compactions": 0,
+        "compactorCalls": 0,
+        "finalTokens": 13056,
+        "peakTokens": 13056
+      },
+      "probes": [
+        {
+          "probeId": "math-alpha",
+          "category": "numeric-state",
+          "question": "What is the current value of register \"alpha\"?",
+          "expected": [
+            "45"
+          ],
+          "answer": "45",
+          "correct": true
+        },
+        {
+          "probeId": "math-beta",
+          "category": "numeric-state",
+          "question": "What is the current value of register \"beta\"?",
+          "expected": [
+            "366"
+          ],
+          "answer": "366",
+          "correct": true
+        },
+        {
+          "probeId": "math-gamma",
+          "category": "numeric-state",
+          "question": "What is the current value of register \"gamma\"?",
+          "expected": [
+            "112"
+          ],
+          "answer": "112",
+          "correct": true
+        }
+      ],
+      "accuracy": 1,
+      "byCategory": {
+        "numeric-state": {
+          "correct": 3,
+          "total": 3
+        }
+      },
+      "wallTimeMs": 12823
+    },
+    {
+      "scenarioId": "math-state",
+      "strategyId": "truncate",
+      "windowTokens": 8000,
+      "stats": {
+        "compactions": 2,
+        "compactorCalls": 0,
+        "finalTokens": 5258,
+        "peakTokens": 6975
+      },
+      "probes": [
+        {
+          "probeId": "math-alpha",
+          "category": "numeric-state",
+          "question": "What is the current value of register \"alpha\"?",
+          "expected": [
+            "45"
+          ],
+          "answer": "45",
+          "correct": true
+        },
+        {
+          "probeId": "math-beta",
+          "category": "numeric-state",
+          "question": "What is the current value of register \"beta\"?",
+          "expected": [
+            "366"
+          ],
+          "answer": "366",
+          "correct": true
+        },
+        {
+          "probeId": "math-gamma",
+          "category": "numeric-state",
+          "question": "What is the current value of register \"gamma\"?",
+          "expected": [
+            "112"
+          ],
+          "answer": "112",
+          "correct": true
+        }
+      ],
+      "accuracy": 1,
+      "byCategory": {
+        "numeric-state": {
+          "correct": 3,
+          "total": 3
+        }
+      },
+      "wallTimeMs": 16255
+    },
+    {
+      "scenarioId": "math-state",
+      "strategyId": "cesium-legacy",
+      "windowTokens": 8000,
+      "stats": {
+        "compactions": 3,
+        "compactorCalls": 0,
+        "finalTokens": 6076,
+        "peakTokens": 6975
+      },
+      "probes": [
+        {
+          "probeId": "math-alpha",
+          "category": "numeric-state",
+          "question": "What is the current value of register \"alpha\"?",
+          "expected": [
+            "45"
+          ],
+          "answer": "45",
+          "correct": true
+        },
+        {
+          "probeId": "math-beta",
+          "category": "numeric-state",
+          "question": "What is the current value of register \"beta\"?",
+          "expected": [
+            "366"
+          ],
+          "answer": "366",
+          "correct": true
+        },
+        {
+          "probeId": "math-gamma",
+          "category": "numeric-state",
+          "question": "What is the current value of register \"gamma\"?",
+          "expected": [
+            "112"
+          ],
+          "answer": "112",
+          "correct": true
+        }
+      ],
+      "accuracy": 1,
+      "byCategory": {
+        "numeric-state": {
+          "correct": 3,
+          "total": 3
+        }
+      },
+      "wallTimeMs": 18831
+    },
+    {
+      "scenarioId": "math-state",
+      "strategyId": "codex-style",
+      "windowTokens": 8000,
+      "stats": {
+        "compactions": 2,
+        "compactorCalls": 2,
+        "finalTokens": 779,
+        "peakTokens": 6975
+      },
+      "probes": [
+        {
+          "probeId": "math-alpha",
+          "category": "numeric-state",
+          "question": "What is the current value of register \"alpha\"?",
+          "expected": [
+            "45"
+          ],
+          "answer": "45",
+          "correct": true
+        },
+        {
+          "probeId": "math-beta",
+          "category": "numeric-state",
+          "question": "What is the current value of register \"beta\"?",
+          "expected": [
+            "366"
+          ],
+          "answer": "366",
+          "correct": true
+        },
+        {
+          "probeId": "math-gamma",
+          "category": "numeric-state",
+          "question": "What is the current value of register \"gamma\"?",
+          "expected": [
+            "112"
+          ],
+          "answer": "112",
+          "correct": true
+        }
+      ],
+      "accuracy": 1,
+      "byCategory": {
+        "numeric-state": {
+          "correct": 3,
+          "total": 3
+        }
+      },
+      "wallTimeMs": 15493
+    },
+    {
+      "scenarioId": "math-state",
+      "strategyId": "claude-style",
+      "windowTokens": 8000,
+      "stats": {
+        "compactions": 2,
+        "compactorCalls": 2,
+        "finalTokens": 2104,
+        "peakTokens": 6975
+      },
+      "probes": [
+        {
+          "probeId": "math-alpha",
+          "category": "numeric-state",
+          "question": "What is the current value of register \"alpha\"?",
+          "expected": [
+            "45"
+          ],
+          "answer": "UNKNOWN",
+          "correct": false
+        },
+        {
+          "probeId": "math-beta",
+          "category": "numeric-state",
+          "question": "What is the current value of register \"beta\"?",
+          "expected": [
+            "366"
+          ],
+          "answer": "366",
+          "correct": true
+        },
+        {
+          "probeId": "math-gamma",
+          "category": "numeric-state",
+          "question": "What is the current value of register \"gamma\"?",
+          "expected": [
+            "112"
+          ],
+          "answer": "112",
+          "correct": true
+        }
+      ],
+      "accuracy": 0.6666666666666666,
+      "byCategory": {
+        "numeric-state": {
+          "correct": 2,
+          "total": 3
+        }
+      },
+      "wallTimeMs": 24561
+    },
+    {
+      "scenarioId": "math-state",
+      "strategyId": "gemini-style",
+      "windowTokens": 8000,
+      "stats": {
+        "compactions": 2,
+        "compactorCalls": 2,
+        "finalTokens": 3543,
+        "peakTokens": 6995
+      },
+      "probes": [
+        {
+          "probeId": "math-alpha",
+          "category": "numeric-state",
+          "question": "What is the current value of register \"alpha\"?",
+          "expected": [
+            "45"
+          ],
+          "answer": "45",
+          "correct": true
+        },
+        {
+          "probeId": "math-beta",
+          "category": "numeric-state",
+          "question": "What is the current value of register \"beta\"?",
+          "expected": [
+            "366"
+          ],
+          "answer": "366",
+          "correct": true
+        },
+        {
+          "probeId": "math-gamma",
+          "category": "numeric-state",
+          "question": "What is the current value of register \"gamma\"?",
+          "expected": [
+            "112"
+          ],
+          "answer": "112",
+          "correct": true
+        }
+      ],
+      "accuracy": 1,
+      "byCategory": {
+        "numeric-state": {
+          "correct": 3,
+          "total": 3
+        }
+      },
+      "wallTimeMs": 22056
+    },
+    {
+      "scenarioId": "math-state",
+      "strategyId": "opencode-style",
+      "windowTokens": 8000,
+      "stats": {
+        "compactions": 2,
+        "compactorCalls": 2,
+        "finalTokens": 1258,
+        "peakTokens": 6975
+      },
+      "probes": [
+        {
+          "probeId": "math-alpha",
+          "category": "numeric-state",
+          "question": "What is the current value of register \"alpha\"?",
+          "expected": [
+            "45"
+          ],
+          "answer": "30",
+          "correct": false
+        },
+        {
+          "probeId": "math-beta",
+          "category": "numeric-state",
+          "question": "What is the current value of register \"beta\"?",
+          "expected": [
+            "366"
+          ],
+          "answer": "366",
+          "correct": true
+        },
+        {
+          "probeId": "math-gamma",
+          "category": "numeric-state",
+          "question": "What is the current value of register \"gamma\"?",
+          "expected": [
+            "112"
+          ],
+          "answer": "102",
+          "correct": false
+        }
+      ],
+      "accuracy": 0.3333333333333333,
+      "byCategory": {
+        "numeric-state": {
+          "correct": 1,
+          "total": 3
+        }
+      },
+      "wallTimeMs": 160132
+    },
+    {
+      "scenarioId": "math-state",
+      "strategyId": "cesium-ledger@0.2",
+      "windowTokens": 8000,
+      "stats": {
+        "compactions": 3,
+        "compactorCalls": 3,
+        "finalTokens": 5492,
+        "peakTokens": 6975
+      },
+      "probes": [
+        {
+          "probeId": "math-alpha",
+          "category": "numeric-state",
+          "question": "What is the current value of register \"alpha\"?",
+          "expected": [
+            "45"
+          ],
+          "answer": "45",
+          "correct": true
+        },
+        {
+          "probeId": "math-beta",
+          "category": "numeric-state",
+          "question": "What is the current value of register \"beta\"?",
+          "expected": [
+            "366"
+          ],
+          "answer": "366",
+          "correct": true
+        },
+        {
+          "probeId": "math-gamma",
+          "category": "numeric-state",
+          "question": "What is the current value of register \"gamma\"?",
+          "expected": [
+            "112"
+          ],
+          "answer": "112",
+          "correct": true
+        }
+      ],
+      "accuracy": 1,
+      "byCategory": {
+        "numeric-state": {
+          "correct": 3,
+          "total": 3
+        }
+      },
+      "wallTimeMs": 43889
+    },
+    {
+      "scenarioId": "math-state",
+      "strategyId": "cesium-ledger@0.35",
+      "windowTokens": 8000,
+      "stats": {
+        "compactions": 3,
+        "compactorCalls": 3,
+        "finalTokens": 4240,
+        "peakTokens": 6975
+      },
+      "probes": [
+        {
+          "probeId": "math-alpha",
+          "category": "numeric-state",
+          "question": "What is the current value of register \"alpha\"?",
+          "expected": [
+            "45"
+          ],
+          "answer": "45",
+          "correct": true
+        },
+        {
+          "probeId": "math-beta",
+          "category": "numeric-state",
+          "question": "What is the current value of register \"beta\"?",
+          "expected": [
+            "366"
+          ],
+          "answer": "366",
+          "correct": true
+        },
+        {
+          "probeId": "math-gamma",
+          "category": "numeric-state",
+          "question": "What is the current value of register \"gamma\"?",
+          "expected": [
+            "112"
+          ],
+          "answer": "112",
+          "correct": true
+        }
+      ],
+      "accuracy": 1,
+      "byCategory": {
+        "numeric-state": {
+          "correct": 3,
+          "total": 3
+        }
+      },
+      "wallTimeMs": 32834
+    },
+    {
+      "scenarioId": "math-state",
+      "strategyId": "cesium-ledger@0.8",
+      "windowTokens": 8000,
+      "stats": {
+        "compactions": 2,
+        "compactorCalls": 2,
+        "finalTokens": 3806,
+        "peakTokens": 6975
+      },
+      "probes": [
+        {
+          "probeId": "math-alpha",
+          "category": "numeric-state",
+          "question": "What is the current value of register \"alpha\"?",
+          "expected": [
+            "45"
+          ],
+          "answer": "45",
+          "correct": true
+        },
+        {
+          "probeId": "math-beta",
+          "category": "numeric-state",
+          "question": "What is the current value of register \"beta\"?",
+          "expected": [
+            "366"
+          ],
+          "answer": "366",
+          "correct": true
+        },
+        {
+          "probeId": "math-gamma",
+          "category": "numeric-state",
+          "question": "What is the current value of register \"gamma\"?",
+          "expected": [
+            "112"
+          ],
+          "answer": "112",
+          "correct": true
+        }
+      ],
+      "accuracy": 1,
+      "byCategory": {
+        "numeric-state": {
+          "correct": 3,
+          "total": 3
+        }
+      },
+      "wallTimeMs": 30044
+    },
+    {
+      "scenarioId": "chat-nuance",
+      "strategyId": "oracle",
+      "windowTokens": 8000,
+      "stats": {
+        "compactions": 0,
+        "compactorCalls": 0,
+        "finalTokens": 13006,
+        "peakTokens": 13006
+      },
+      "probes": [
+        {
+          "probeId": "nuance-name",
+          "category": "nuance",
+          "question": "What name does the user go by?",
+          "expected": [
+            "Rowan"
+          ],
+          "answer": "Rowan",
+          "correct": true
+        },
+        {
+          "probeId": "nuance-cat",
+          "category": "nuance",
+          "question": "What is the user's cat's name?",
+          "expected": [
+            "Pickle"
+          ],
+          "answer": "Pickle",
+          "correct": true
+        },
+        {
+          "probeId": "nuance-trip",
+          "category": "nuance",
+          "question": "Where and when is the user planning a trip?",
+          "expected": [
+            "Kyoto"
+          ],
+          "answer": "Kyoto, April (9 days, staying at a ryokan near Gion)",
+          "correct": true
+        },
+        {
+          "probeId": "nuance-style",
+          "category": "nuance",
+          "question": "What kind of analogies does the user prefer in explanations?",
+          "expected": [
+            "cooking"
+          ],
+          "answer": "Cooking analogies",
+          "correct": true
+        },
+        {
+          "probeId": "nuance-trip-length",
+          "category": "nuance",
+          "question": "How many days will the user's Kyoto trip be?",
+          "expected": [
+            "9",
+            "nine"
+          ],
+          "answer": "9",
+          "correct": true
+        }
+      ],
+      "accuracy": 1,
+      "byCategory": {
+        "nuance": {
+          "correct": 5,
+          "total": 5
+        }
+      },
+      "wallTimeMs": 27018
+    },
+    {
+      "scenarioId": "chat-nuance",
+      "strategyId": "truncate",
+      "windowTokens": 8000,
+      "stats": {
+        "compactions": 2,
+        "compactorCalls": 0,
+        "finalTokens": 5648,
+        "peakTokens": 6636
+      },
+      "probes": [
+        {
+          "probeId": "nuance-name",
+          "category": "nuance",
+          "question": "What name does the user go by?",
+          "expected": [
+            "Rowan"
+          ],
+          "answer": "UNKNOWN",
+          "correct": false
+        },
+        {
+          "probeId": "nuance-cat",
+          "category": "nuance",
+          "question": "What is the user's cat's name?",
+          "expected": [
+            "Pickle"
+          ],
+          "answer": "UNKNOWN",
+          "correct": false
+        },
+        {
+          "probeId": "nuance-trip",
+          "category": "nuance",
+          "question": "Where and when is the user planning a trip?",
+          "expected": [
+            "Kyoto"
+          ],
+          "answer": "Kyoto, 9 days, staying at a ryokan near Gion. The timing/dates were not specified.",
+          "correct": true
+        },
+        {
+          "probeId": "nuance-style",
+          "category": "nuance",
+          "question": "What kind of analogies does the user prefer in explanations?",
+          "expected": [
+            "cooking"
+          ],
+          "answer": "UNKNOWN",
+          "correct": false
+        },
+        {
+          "probeId": "nuance-trip-length",
+          "category": "nuance",
+          "question": "How many days will the user's Kyoto trip be?",
+          "expected": [
+            "9",
+            "nine"
+          ],
+          "answer": "9",
+          "correct": true
+        }
+      ],
+      "accuracy": 0.4,
+      "byCategory": {
+        "nuance": {
+          "correct": 2,
+          "total": 5
+        }
+      },
+      "wallTimeMs": 17086
+    },
+    {
+      "scenarioId": "chat-nuance",
+      "strategyId": "cesium-legacy",
+      "windowTokens": 8000,
+      "stats": {
+        "compactions": 4,
+        "compactorCalls": 0,
+        "finalTokens": 4733,
+        "peakTokens": 6776
+      },
+      "probes": [
+        {
+          "probeId": "nuance-name",
+          "category": "nuance",
+          "question": "What name does the user go by?",
+          "expected": [
+            "Rowan"
+          ],
+          "answer": "UNKNOWN",
+          "correct": false
+        },
+        {
+          "probeId": "nuance-cat",
+          "category": "nuance",
+          "question": "What is the user's cat's name?",
+          "expected": [
+            "Pickle"
+          ],
+          "answer": "UNKNOWN",
+          "correct": false
+        },
+        {
+          "probeId": "nuance-trip",
+          "category": "nuance",
+          "question": "Where and when is the user planning a trip?",
+          "expected": [
+            "Kyoto"
+          ],
+          "answer": "Kyoto, 9 days, staying at a ryokan near Gion. The specific dates are not mentioned.",
+          "correct": true
+        },
+        {
+          "probeId": "nuance-style",
+          "category": "nuance",
+          "question": "What kind of analogies does the user prefer in explanations?",
+          "expected": [
+            "cooking"
+          ],
+          "answer": "UNKNOWN",
+          "correct": false
+        },
+        {
+          "probeId": "nuance-trip-length",
+          "category": "nuance",
+          "question": "How many days will the user's Kyoto trip be?",
+          "expected": [
+            "9",
+            "nine"
+          ],
+          "answer": "9",
+          "correct": true
+        }
+      ],
+      "accuracy": 0.4,
+      "byCategory": {
+        "nuance": {
+          "correct": 2,
+          "total": 5
+        }
+      },
+      "wallTimeMs": 23022
+    },
+    {
+      "scenarioId": "chat-nuance",
+      "strategyId": "codex-style",
+      "windowTokens": 8000,
+      "stats": {
+        "compactions": 2,
+        "compactorCalls": 2,
+        "finalTokens": 1730,
+        "peakTokens": 6825
+      },
+      "probes": [
+        {
+          "probeId": "nuance-name",
+          "category": "nuance",
+          "question": "What name does the user go by?",
+          "expected": [
+            "Rowan"
+          ],
+          "answer": "Rowan",
+          "correct": true
+        },
+        {
+          "probeId": "nuance-cat",
+          "category": "nuance",
+          "question": "What is the user's cat's name?",
+          "expected": [
+            "Pickle"
+          ],
+          "answer": "Pickle",
+          "correct": true
+        },
+        {
+          "probeId": "nuance-trip",
+          "category": "nuance",
+          "question": "Where and when is the user planning a trip?",
+          "expected": [
+            "Kyoto"
+          ],
+          "answer": "Kyoto, April",
+          "correct": true
+        },
+        {
+          "probeId": "nuance-style",
+          "category": "nuance",
+          "question": "What kind of analogies does the user prefer in explanations?",
+          "expected": [
+            "cooking"
+          ],
+          "answer": "Cooking analogies.",
+          "correct": true
+        },
+        {
+          "probeId": "nuance-trip-length",
+          "category": "nuance",
+          "question": "How many days will the user's Kyoto trip be?",
+          "expected": [
+            "9",
+            "nine"
+          ],
+          "answer": "9",
+          "correct": true
+        }
+      ],
+      "accuracy": 1,
+      "byCategory": {
+        "nuance": {
+          "correct": 5,
+          "total": 5
+        }
+      },
+      "wallTimeMs": 19835
+    },
+    {
+      "scenarioId": "chat-nuance",
+      "strategyId": "claude-style",
+      "windowTokens": 8000,
+      "stats": {
+        "compactions": 2,
+        "compactorCalls": 2,
+        "finalTokens": 2744,
+        "peakTokens": 6665
+      },
+      "probes": [
+        {
+          "probeId": "nuance-name",
+          "category": "nuance",
+          "question": "What name does the user go by?",
+          "expected": [
+            "Rowan"
+          ],
+          "answer": "Rowan",
+          "correct": true
+        },
+        {
+          "probeId": "nuance-cat",
+          "category": "nuance",
+          "question": "What is the user's cat's name?",
+          "expected": [
+            "Pickle"
+          ],
+          "answer": "Pickle",
+          "correct": true
+        },
+        {
+          "probeId": "nuance-trip",
+          "category": "nuance",
+          "question": "Where and when is the user planning a trip?",
+          "expected": [
+            "Kyoto"
+          ],
+          "answer": "Kyoto in April, 9 days, staying at a ryokan near Gion.",
+          "correct": true
+        },
+        {
+          "probeId": "nuance-style",
+          "category": "nuance",
+          "question": "What kind of analogies does the user prefer in explanations?",
+          "expected": [
+            "cooking"
+          ],
+          "answer": "Cooking analogies",
+          "correct": true
+        },
+        {
+          "probeId": "nuance-trip-length",
+          "category": "nuance",
+          "question": "How many days will the user's Kyoto trip be?",
+          "expected": [
+            "9",
+            "nine"
+          ],
+          "answer": "9",
+          "correct": true
+        }
+      ],
+      "accuracy": 1,
+      "byCategory": {
+        "nuance": {
+          "correct": 5,
+          "total": 5
+        }
+      },
+      "wallTimeMs": 28561
+    },
+    {
+      "scenarioId": "chat-nuance",
+      "strategyId": "gemini-style",
+      "windowTokens": 8000,
+      "stats": {
+        "compactions": 2,
+        "compactorCalls": 2,
+        "finalTokens": 4064,
+        "peakTokens": 6643
+      },
+      "probes": [
+        {
+          "probeId": "nuance-name",
+          "category": "nuance",
+          "question": "What name does the user go by?",
+          "expected": [
+            "Rowan"
+          ],
+          "answer": "Rowan",
+          "correct": true
+        },
+        {
+          "probeId": "nuance-cat",
+          "category": "nuance",
+          "question": "What is the user's cat's name?",
+          "expected": [
+            "Pickle"
+          ],
+          "answer": "Pickle",
+          "correct": true
+        },
+        {
+          "probeId": "nuance-trip",
+          "category": "nuance",
+          "question": "Where and when is the user planning a trip?",
+          "expected": [
+            "Kyoto"
+          ],
+          "answer": "Kyoto in April.",
+          "correct": true
+        },
+        {
+          "probeId": "nuance-style",
+          "category": "nuance",
+          "question": "What kind of analogies does the user prefer in explanations?",
+          "expected": [
+            "cooking"
+          ],
+          "answer": "Cooking analogies.",
+          "correct": true
+        },
+        {
+          "probeId": "nuance-trip-length",
+          "category": "nuance",
+          "question": "How many days will the user's Kyoto trip be?",
+          "expected": [
+            "9",
+            "nine"
+          ],
+          "answer": "9",
+          "correct": true
+        }
+      ],
+      "accuracy": 1,
+      "byCategory": {
+        "nuance": {
+          "correct": 5,
+          "total": 5
+        }
+      },
+      "wallTimeMs": 39763
+    },
+    {
+      "scenarioId": "chat-nuance",
+      "strategyId": "opencode-style",
+      "windowTokens": 8000,
+      "stats": {
+        "compactions": 2,
+        "compactorCalls": 2,
+        "finalTokens": 1412,
+        "peakTokens": 6780
+      },
+      "probes": [
+        {
+          "probeId": "nuance-name",
+          "category": "nuance",
+          "question": "What name does the user go by?",
+          "expected": [
+            "Rowan"
+          ],
+          "answer": "Rowan",
+          "correct": true
+        },
+        {
+          "probeId": "nuance-cat",
+          "category": "nuance",
+          "question": "What is the user's cat's name?",
+          "expected": [
+            "Pickle"
+          ],
+          "answer": "Pickle",
+          "correct": true
+        },
+        {
+          "probeId": "nuance-trip",
+          "category": "nuance",
+          "question": "Where and when is the user planning a trip?",
+          "expected": [
+            "Kyoto"
+          ],
+          "answer": "Kyoto in April.",
+          "correct": true
+        },
+        {
+          "probeId": "nuance-style",
+          "category": "nuance",
+          "question": "What kind of analogies does the user prefer in explanations?",
+          "expected": [
+            "cooking"
+          ],
+          "answer": "Cooking analogies",
+          "correct": true
+        },
+        {
+          "probeId": "nuance-trip-length",
+          "category": "nuance",
+          "question": "How many days will the user's Kyoto trip be?",
+          "expected": [
+            "9",
+            "nine"
+          ],
+          "answer": "9 days",
+          "correct": true
+        }
+      ],
+      "accuracy": 1,
+      "byCategory": {
+        "nuance": {
+          "correct": 5,
+          "total": 5
+        }
+      },
+      "wallTimeMs": 26052
+    },
+    {
+      "scenarioId": "chat-nuance",
+      "strategyId": "cesium-ledger@0.2",
+      "windowTokens": 8000,
+      "stats": {
+        "compactions": 3,
+        "compactorCalls": 3,
+        "finalTokens": 6050,
+        "peakTokens": 6776
+      },
+      "probes": [
+        {
+          "probeId": "nuance-name",
+          "category": "nuance",
+          "question": "What name does the user go by?",
+          "expected": [
+            "Rowan"
+          ],
+          "answer": "Rowan",
+          "correct": true
+        },
+        {
+          "probeId": "nuance-cat",
+          "category": "nuance",
+          "question": "What is the user's cat's name?",
+          "expected": [
+            "Pickle"
+          ],
+          "answer": "Pickle",
+          "correct": true
+        },
+        {
+          "probeId": "nuance-trip",
+          "category": "nuance",
+          "question": "Where and when is the user planning a trip?",
+          "expected": [
+            "Kyoto"
+          ],
+          "answer": "Kyoto in April.",
+          "correct": true
+        },
+        {
+          "probeId": "nuance-style",
+          "category": "nuance",
+          "question": "What kind of analogies does the user prefer in explanations?",
+          "expected": [
+            "cooking"
+          ],
+          "answer": "Cooking analogies.",
+          "correct": true
+        },
+        {
+          "probeId": "nuance-trip-length",
+          "category": "nuance",
+          "question": "How many days will the user's Kyoto trip be?",
+          "expected": [
+            "9",
+            "nine"
+          ],
+          "answer": "9 days",
+          "correct": true
+        }
+      ],
+      "accuracy": 1,
+      "byCategory": {
+        "nuance": {
+          "correct": 5,
+          "total": 5
+        }
+      },
+      "wallTimeMs": 51222
+    },
+    {
+      "scenarioId": "chat-nuance",
+      "strategyId": "cesium-ledger@0.35",
+      "windowTokens": 8000,
+      "stats": {
+        "compactions": 3,
+        "compactorCalls": 3,
+        "finalTokens": 5104,
+        "peakTokens": 6804
+      },
+      "probes": [
+        {
+          "probeId": "nuance-name",
+          "category": "nuance",
+          "question": "What name does the user go by?",
+          "expected": [
+            "Rowan"
+          ],
+          "answer": "Rowan",
+          "correct": true
+        },
+        {
+          "probeId": "nuance-cat",
+          "category": "nuance",
+          "question": "What is the user's cat's name?",
+          "expected": [
+            "Pickle"
+          ],
+          "answer": "Pickle",
+          "correct": true
+        },
+        {
+          "probeId": "nuance-trip",
+          "category": "nuance",
+          "question": "Where and when is the user planning a trip?",
+          "expected": [
+            "Kyoto"
+          ],
+          "answer": "Kyoto in April",
+          "correct": true
+        },
+        {
+          "probeId": "nuance-style",
+          "category": "nuance",
+          "question": "What kind of analogies does the user prefer in explanations?",
+          "expected": [
+            "cooking"
+          ],
+          "answer": "Cooking analogies",
+          "correct": true
+        },
+        {
+          "probeId": "nuance-trip-length",
+          "category": "nuance",
+          "question": "How many days will the user's Kyoto trip be?",
+          "expected": [
+            "9",
+            "nine"
+          ],
+          "answer": "9 days",
+          "correct": true
+        }
+      ],
+      "accuracy": 1,
+      "byCategory": {
+        "nuance": {
+          "correct": 5,
+          "total": 5
+        }
+      },
+      "wallTimeMs": 33072
+    },
+    {
+      "scenarioId": "chat-nuance",
+      "strategyId": "cesium-ledger@0.8",
+      "windowTokens": 8000,
+      "stats": {
+        "compactions": 2,
+        "compactorCalls": 4,
+        "finalTokens": 4571,
+        "peakTokens": 6650
+      },
+      "probes": [
+        {
+          "probeId": "nuance-name",
+          "category": "nuance",
+          "question": "What name does the user go by?",
+          "expected": [
+            "Rowan"
+          ],
+          "answer": "Rowan",
+          "correct": true
+        },
+        {
+          "probeId": "nuance-cat",
+          "category": "nuance",
+          "question": "What is the user's cat's name?",
+          "expected": [
+            "Pickle"
+          ],
+          "answer": "Pickle",
+          "correct": true
+        },
+        {
+          "probeId": "nuance-trip",
+          "category": "nuance",
+          "question": "Where and when is the user planning a trip?",
+          "expected": [
+            "Kyoto"
+          ],
+          "answer": "Kyoto in April",
+          "correct": true
+        },
+        {
+          "probeId": "nuance-style",
+          "category": "nuance",
+          "question": "What kind of analogies does the user prefer in explanations?",
+          "expected": [
+            "cooking"
+          ],
+          "answer": "Cooking analogies",
+          "correct": true
+        },
+        {
+          "probeId": "nuance-trip-length",
+          "category": "nuance",
+          "question": "How many days will the user's Kyoto trip be?",
+          "expected": [
+            "9",
+            "nine"
+          ],
+          "answer": "9 days",
+          "correct": true
+        }
+      ],
+      "accuracy": 1,
+      "byCategory": {
+        "nuance": {
+          "correct": 5,
+          "total": 5
+        }
+      },
+      "wallTimeMs": 40291
+    }
+  ]
+}

@@ -70,6 +70,18 @@ describe("agent completion error parsing", () => {
     );
   });
 
+  test("does not misclassify prose mentioning a rate limiter as a failure", () => {
+    assert.equal(
+      isCompletionFailureThreadContent(
+        "The subagent was called sub-vega-12, and its rate limiter patch lives in src/net/limiter.py."
+      ),
+      false
+    );
+    assert.equal(isCompletionFailureThreadContent("Rate limit exceeded, retry later."), true);
+    assert.equal(isCompletionFailureThreadContent("You are being rate limited."), true);
+    assert.equal(isCompletionFailureThreadContent("429 Too Many Requests"), true);
+  });
+
   test("treats lastError alone as a completion failure", () => {
     const conversation = {
       status: "idle",
