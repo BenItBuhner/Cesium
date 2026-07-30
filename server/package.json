@@ -53,7 +53,6 @@
     "drizzle-orm": "^0.44.7",
     "hono": "^4.10.2",
     "ioredis": "^5.10.1",
-    "kokoro-js": "^1.2.1",
     "playwright": "^1.56.0",
     "postgres": "^3.4.9",
     "ssh2": "^1.17.0",
@@ -61,6 +60,7 @@
     "ws": "^8.18.3"
   },
   "optionalDependencies": {
+    "kokoro-js": "^1.2.1",
     "node-pty": "^1.0.0"
   },
   "devDependencies": {

@@ -27,6 +27,13 @@ type KokoroTtsInstance = {
 const DEFAULT_MODEL_ID = "onnx-community/Kokoro-82M-v1.0-ONNX";
 const DEFAULT_VOICE = "af_heart";
 
+// kokoro-js is an optionalDependency: its onnxruntime-node transitive dep has
+// no Android binaries, so Termux installs run `npm ci --omit=optional` and the
+// module is legitimately absent. Keep the specifier out of a literal
+// `import("...")` so tsc does not require the package (and its types) to be
+// installed at build time; the probe below gates every runtime use.
+const KOKORO_MODULE = "kokoro-js";
+
 const require = createRequire(import.meta.url);
 
 let modulePresent: boolean | undefined;
@@ -36,7 +43,7 @@ let instanceReady = false;
 function kokoroModulePresent(): boolean {
   if (modulePresent !== undefined) return modulePresent;
   try {
-    require.resolve("kokoro-js");
+    require.resolve(KOKORO_MODULE);
     modulePresent = true;
   } catch {
     modulePresent = false;
@@ -47,7 +54,7 @@ function kokoroModulePresent(): boolean {
 async function loadInstance(): Promise<KokoroTtsInstance> {
   if (!instancePromise) {
     instancePromise = (async () => {
-      const mod = (await import("kokoro-js")) as {
+      const mod = (await import(KOKORO_MODULE)) as {
         KokoroTTS: {
           from_pretrained(
             modelId: string,
