@@ -279,10 +279,29 @@ test("updateUserQuoteArchive keeps quotes verbatim then gists oldest under press
     userQuoteCapChars: 2_000,
     userArchiveBudgetTokens: 300, // 1200 chars
   });
-  assert.ok(gisted[0]!.gist);
-  assert.ok(gisted[0]!.text.includes("full text at s"));
-  // Newest quote stays verbatim longest.
-  assert.ok(!gisted[2]!.gist || gisted[2]!.text.length > 100);
+  // Oldest quotes get gisted and, under continued pressure, evicted entirely;
+  // the newest quote survives and the total respects the budget.
+  const totalChars = gisted.reduce((sum, quote) => sum + quote.text.length, 0);
+  assert.ok(totalChars <= 1_200 + 200, `archive over budget: ${totalChars}`);
+  assert.ok(gisted.length >= 1);
+  assert.ok(gisted[gisted.length - 1]!.text.startsWith("C"));
+});
+
+test("user quote archive stays bounded across hundreds of turns", () => {
+  resetSeq();
+  let archive: ReturnType<typeof updateUserQuoteArchive> = [];
+  for (let batch = 0; batch < 30; batch += 1) {
+    const events: AgentStoredEvent[] = [];
+    for (let i = 0; i < 10; i += 1) {
+      events.push(userEvent(`turn ${batch}-${i}: ${"content ".repeat(40)}`));
+    }
+    archive = updateUserQuoteArchive(archive, events, {
+      userQuoteCapChars: 1_400,
+      userArchiveBudgetTokens: 600, // 2400 chars
+    });
+  }
+  const totalChars = archive.reduce((sum, quote) => sum + quote.text.length, 0);
+  assert.ok(totalChars <= 2_600, `archive grew unboundedly: ${totalChars} chars, ${archive.length} quotes`);
 });
 
 // ---------------------------------------------------------------------------

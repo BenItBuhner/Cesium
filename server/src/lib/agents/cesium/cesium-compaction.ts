@@ -604,7 +604,10 @@ export function updateUserQuoteArchive(
     });
   }
   merged.sort((a, b) => a.seq - b.seq);
-  // Enforce the rolling budget: evict oldest verbatim quotes into one-line gists.
+  // Enforce the rolling budget in two stages: gist oldest verbatim quotes,
+  // then HARD-EVICT the oldest gists entirely. Without eviction the gist list
+  // itself grows linearly with conversation length and eventually dominates
+  // the ledger (hundreds of turns = thousands of tokens of gists).
   const budgetChars = budgets.userArchiveBudgetTokens * 4;
   let totalChars = merged.reduce((sum, quote) => sum + quote.text.length, 0);
   for (const quote of merged) {
@@ -618,6 +621,10 @@ export function updateUserQuoteArchive(
     quote.text = `${quote.text.slice(0, USER_QUOTE_GIST_CHARS)} …[gisted, full text at s${quote.seq}]`;
     quote.gist = true;
     totalChars += quote.text.length;
+  }
+  while (merged.length > 1 && totalChars > budgetChars) {
+    const evicted = merged.shift()!;
+    totalChars -= evicted.text.length;
   }
   return merged;
 }

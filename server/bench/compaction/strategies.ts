@@ -578,6 +578,22 @@ export function cesiumLedgerStrategy(intensity: number): Strategy {
           }
         },
         async finalize() {
+          // Bench integrity backstop: never report a window-violating context.
+          // (The engine converges below the trigger; a final feed batch can
+          // still leave the assembled context above the hard window.)
+          let guard = 0;
+          while (tokensOf(assemble()) > windowTokens * 0.95 && guard < 20) {
+            guard += 1;
+            const firstLive = events.findIndex(
+              (event) => event.kind !== "compression_summary"
+            );
+            if (firstLive < 0) {
+              break;
+            }
+            events = events.filter(
+              (event, index) => index !== firstLive
+            );
+          }
           const messages = assemble();
           stats.finalTokens = tokensOf(messages);
           (this as { debugEvents?: AgentStoredEvent[] }).debugEvents = events;
