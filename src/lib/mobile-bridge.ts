@@ -281,7 +281,7 @@ export function buildMobileBootstrapScript(server: MobileServerConfig): string {
       ".opencursor-mobile-native{--opencursor-mobile-safe-area-top:0px;}",
       ".opencursor-mobile-native .mobile-safe-top-pad{padding-top:var(--opencursor-mobile-safe-area-top)!important;}",
       ".opencursor-mobile-native .mobile-safe-top-content{padding-top:var(--opencursor-mobile-safe-area-top)!important;}",
-      ".opencursor-mobile-native .mobile-safe-top-offset{top:var(--opencursor-mobile-safe-area-top)!important;}",
+      ".opencursor-mobile-native .mobile-safe-top-offset{top:calc(var(--opencursor-mobile-safe-area-top) + 11px)!important;}",
       ".opencursor-mobile-native .mobile-safe-top-scroll{scroll-padding-top:var(--opencursor-mobile-safe-area-top)!important;}"
     ].join("\\n");
   };

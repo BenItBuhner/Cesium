@@ -364,7 +364,10 @@ html.dark .landing-shot-dark {
 }
 
 .opencursor-mobile-native .mobile-safe-top-offset {
-  top: var(--opencursor-mobile-safe-area-top) !important;
+  /* Floating 18px pane toggles sit at top-[11px], centered against the 40px
+     tab strip. Add the safe area to that offset instead of replacing it —
+     replacing pulled the buttons 11px above their pane-header neighbors. */
+  top: calc(var(--opencursor-mobile-safe-area-top) + 11px) !important;
 }
 
 .opencursor-mobile-native .mobile-safe-top-scroll {
