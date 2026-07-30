@@ -11,6 +11,7 @@ import {
   collectCompactionPins,
   compactionWarningBucket,
   emptyCesiumLedger,
+  enforceLedgerBodyBudget,
   latestLedgerFromEvents,
   looksLikeLedgerBody,
   mergeLedgerBodies,
@@ -661,6 +662,40 @@ test("microcompact outcome preserves compression_summary events and covered hist
     const messages = normalizeEventsToHistory(outcome.events);
     assert.ok(messages[1]!.content.startsWith("<context_ledger>"));
   }
+});
+
+test("enforceLedgerBodyBudget trims oldest lines from largest sections and converges", () => {
+  const bigSection = Array.from({ length: 400 }, (_, i) => `- fact ${i}: value_${i} [s${i}]`);
+  const body = [
+    "## MISSION",
+    "keep going",
+    "## KEY FACTS & DECISIONS",
+    ...bigSection,
+    "## NOW",
+    "working",
+  ].join("\n");
+  const trimmed = enforceLedgerBodyBudget(body, 4_000);
+  assert.ok(trimmed.length <= 4_600, `still too big: ${trimmed.length}`);
+  assert.ok(trimmed.includes("## MISSION"));
+  assert.ok(trimmed.includes("keep going"));
+  assert.ok(trimmed.includes("## NOW"));
+  // Newest facts survive, oldest die.
+  assert.ok(trimmed.includes("fact 399"));
+  assert.ok(!trimmed.includes("- fact 0:"));
+  assert.ok(trimmed.includes("[trimmed to budget"));
+  // Under-budget bodies pass through untouched.
+  assert.equal(enforceLedgerBodyBudget("## MISSION\nshort", 4_000), "## MISSION\nshort");
+});
+
+test("budgets give the ledger roughly half the retention target", () => {
+  const budgets = resolveCompactionBudgets({
+    contextWindowTokens: 8_000,
+    intensity: 0.35,
+    thresholdRatio: 0.82,
+  });
+  assert.ok(budgets.ledgerBudgetTokens >= budgets.targetTokens * 0.3);
+  assert.ok(budgets.ledgerBudgetTokens <= budgets.targetTokens * 0.6);
+  assert.ok(budgets.tailBudgetTokens + budgets.ledgerBudgetTokens <= budgets.targetTokens + 1);
 });
 
 test("latestLedgerFromEvents migrates legacy summaries", () => {

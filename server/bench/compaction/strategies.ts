@@ -243,6 +243,24 @@ function makeSummaryStrategy(config: SummaryStrategyConfig): Strategy {
           ? kept.filter((event) => event.kind === "user_message")
           : kept;
       };
+      const enforceWindow = (): void => {
+        // A real provider hard-rejects prompts beyond the context window; a
+        // strategy whose summary outgrows the window must lose content, same
+        // as production harnesses (Codex errors out, OpenCode prunes).
+        let guard = 0;
+        while (tokensOf(assemble()) > windowTokens * 0.95 && guard < 12) {
+          guard += 1;
+          if (summary.length > 2_000) {
+            summary = `${summary.slice(0, Math.floor(summary.length * 0.8))}\n[truncated to fit the context window]`;
+            continue;
+          }
+          if (tail.length > 2) {
+            tail = tail.slice(Math.ceil(tail.length * 0.2));
+            continue;
+          }
+          break;
+        }
+      };
       return {
         async feed(batch) {
           tail = [...tail, ...batch];
@@ -258,8 +276,10 @@ function makeSummaryStrategy(config: SummaryStrategyConfig): Strategy {
               break;
             }
           }
+          enforceWindow();
         },
         async finalize() {
+          enforceWindow();
           const messages = assemble();
           stats.finalTokens = tokensOf(messages);
           return { messages, stats };

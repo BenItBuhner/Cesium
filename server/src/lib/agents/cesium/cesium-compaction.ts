@@ -104,17 +104,17 @@ export function resolveCompactionBudgets(input: {
   // aggressive (intensity 1) compacts down to ~15%.
   const targetRatio = Math.min(lerp(0.7, 0.15, intensity), triggerRatio - 0.08);
   const warnRatio = Math.max(0.1, triggerRatio - 0.12);
+  const targetTokens = Math.floor(window * targetRatio);
+  // The ledger is the durable memory — it earns roughly half of the retention
+  // target (slightly less at high intensity), the verbatim tail gets the rest.
   const ledgerBudgetTokens = Math.floor(
-    clamp(window * lerp(0.08, 0.03, intensity), 1_200, 24_000)
+    clamp(targetTokens * lerp(0.5, 0.35, intensity), 1_200, 24_000)
   );
-  const tailBudgetTokens = Math.max(
-    1_000,
-    Math.floor(window * targetRatio) - ledgerBudgetTokens
-  );
+  const tailBudgetTokens = Math.max(1_000, targetTokens - ledgerBudgetTokens);
   return {
     contextWindowTokens: window,
     triggerTokens: Math.floor(window * triggerRatio),
-    targetTokens: Math.floor(window * targetRatio),
+    targetTokens,
     warnTokens: Math.floor(window * warnRatio),
     toolResultProtectTokens: Math.floor(
       clamp(window * lerp(0.3, 0.08, intensity), 2_000, 120_000)
@@ -699,7 +699,7 @@ export function buildLedgerSystemPrompt(budgets: {
     "- Preserve EXACT identifiers verbatim: file paths, URLs, shell commands, error strings, subagent ids, branch names, code symbols, numbers, names. Never paraphrase an identifier.",
     "- Carry provenance: suffix lines describing specific happenings with their [sN] or [sN-sM] markers copied from the span. The agent can retrieve raw history for any seq with its search_history / read_history_page tools.",
     "- Telegraphic, dense style. No filler words, no meta-commentary, no repetition of section headers inside sections.",
-    `- Keep the whole body under roughly ${maxWords} words. Compress by dropping adjectives, never by dropping identifiers or entries.`,
+    `- HARD BUDGET: keep the whole body under roughly ${maxWords} words — the harness truncates oldest entries beyond it. When the budget forces cuts, in order: (1) merge near-duplicate or related entries onto one line, (2) compress phrasing, (3) drop the oldest low-impact routine facts. NEVER drop user directives, dead ends, subagent ids, or values the user explicitly asked to remember; anything dropped stays retrievable via its [sN] marker.`,
     "- Do not mention compaction or summarization anywhere in the body.",
   ].join("\n");
 }
@@ -914,6 +914,65 @@ export function buildHeuristicLedgerBody(input: {
     return fresh;
   }
   return mergeLedgerBodies(input.previousBody, fresh);
+}
+
+// ---------------------------------------------------------------------------
+// Ledger budget enforcement
+// ---------------------------------------------------------------------------
+
+/**
+ * Hard code-side enforcement of the ledger body budget. Prompt-side word
+ * limits are advisory only — a faithful compactor model hoards entries and the
+ * body balloons across generations, eventually violating the context window
+ * itself. When over budget, the largest sections lose their OLDEST lines first
+ * (recency bias; evicted detail remains retrievable via seq provenance).
+ */
+export function enforceLedgerBodyBudget(body: string, budgetChars: number): string {
+  if (body.length <= budgetChars) {
+    return body;
+  }
+  const sections = parseLedgerSections(body);
+  // NOW/MISSION stay intact; big list sections shrink first.
+  const protectedNames = new Set(["MISSION", "NOW"]);
+  const totalChars = (): number =>
+    [...sections.values()].reduce(
+      (sum, lines) => sum + lines.reduce((s, line) => s + line.length + 1, 0),
+      0
+    ) + sections.size * 24;
+  let guard = 0;
+  while (totalChars() > budgetChars && guard < 10_000) {
+    guard += 1;
+    let largest: string | null = null;
+    let largestChars = 0;
+    for (const [name, lines] of sections) {
+      if (protectedNames.has(name) || lines.length <= 2) {
+        continue;
+      }
+      const chars = lines.reduce((sum, line) => sum + line.length, 0);
+      if (chars > largestChars) {
+        largest = name;
+        largestChars = chars;
+      }
+    }
+    if (!largest) {
+      break;
+    }
+    const lines = sections.get(largest)!;
+    // Drop the oldest content line (skipping the trim marker if present).
+    const dropIndex = lines[0]?.includes("[trimmed") ? 1 : 0;
+    lines.splice(dropIndex, 1);
+    if (!lines.some((line) => line.includes("[trimmed"))) {
+      lines.unshift(
+        "- [trimmed to budget — older entries evicted; recover raw detail via search_history]"
+      );
+    }
+  }
+  const parts: string[] = [];
+  for (const [name, lines] of sections) {
+    parts.push(`## ${name}`);
+    parts.push(...(lines.length ? lines : ["(none recorded)"]));
+  }
+  return parts.join("\n");
 }
 
 // ---------------------------------------------------------------------------
@@ -1178,13 +1237,22 @@ export async function runCesiumCompactionPipeline(input: {
   });
   const spanFromSeq = spanOriginal[0]?.seq ?? 0;
   const spanToSeq = spanOriginal[spanOriginal.length - 1]?.seq ?? 0;
+  const userQuotes = updateUserQuoteArchive(previousLedger.userQuotes, spanOriginal, budgets);
+  // Prompt-side size guidance is advisory; enforce the ledger budget in code so
+  // the rendered ledger (framing + pins + quotes + body) actually fits it.
+  const pinChars = pins.reduce((sum, pin) => sum + pin.text.length + 16, 0);
+  const quoteChars = userQuotes.reduce((sum, quote) => sum + quote.text.length + 16, 0);
+  const bodyBudgetChars = Math.max(
+    2_000,
+    budgets.ledgerBudgetTokens * 4 - pinChars - quoteChars - 1_200
+  );
   const ledger: CesiumLedger = {
     version: 1,
     generation: previousLedger.generation + 1,
     coveredToSeq: spanToSeq,
-    body: generated.body,
+    body: enforceLedgerBodyBudget(generated.body, bodyBudgetChars),
     pinned: pins,
-    userQuotes: updateUserQuoteArchive(previousLedger.userQuotes, spanOriginal, budgets),
+    userQuotes,
     ...(generated.usedLlm ? {} : { heuristic: true }),
   };
   const retainedTokens = estimateEventTokens(split.retainedEvents);
