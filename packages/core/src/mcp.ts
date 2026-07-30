@@ -1,3 +1,9 @@
+export {
+  formatMcpServerDisplayName,
+  formatMcpToolDisplayName,
+  parseMcpCompositeToolName,
+} from "./mcp-server-display";
+
 export type McpTransportKind = "stdio" | "streamable-http" | "sse";
 
 export type McpAuthConfig =

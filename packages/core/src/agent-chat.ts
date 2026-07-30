@@ -310,7 +310,9 @@ import {
   extractMcpServerIdFromTitle,
   extractMcpServerIdFromWorkedTool,
   formatMcpServerDisplayName,
+  formatMcpToolDisplayName,
   isMcpWorkedTool,
+  parseMcpCompositeToolName,
   summarizeMcpServerCounts,
 } from "./mcp-server-display";
 
@@ -1594,6 +1596,16 @@ function summarizeWorkedToolBucket(
       return count === 1 ? "updated Goal" : `updated Goal ${count} times`;
     case "workflow":
       return count === 1 ? "ran a workflow" : `ran workflows ${count} times`;
+    case "wait":
+      return count === 1 ? "waited" : `waited ${count} times`;
+    case "mode":
+      return count === 1 ? "switched mode" : `switched modes ${count} times`;
+    case "fetch":
+      return count === 1 ? "fetched a URL" : `fetched ${count} URLs`;
+    case "subagent":
+      return count === 1 ? "managed subagents" : `managed subagents ${count} times`;
+    case "orchestration":
+      return count === 1 ? "managed orchestration" : `managed orchestration ${count} times`;
     case "question":
     case "ask":
       return count === 1 ? "asked question" : "asked questions";
@@ -1850,7 +1862,41 @@ function mergeAdjacentWorkedSessionsAroundPermission(messages: ChatMessage[]): C
   return out;
 }
 
-function projectTurnTimelineToMessages(turn: ProjectedTurn): ChatMessage[] {
+/** Would this accumulated assistant text render as a visible chat bubble? */
+function assistantTextWouldRender(text: string): boolean {
+  const cleaned = stripAgentTodoJsonAssistantContent(text);
+  return cleaned.trim().length > 0 && !isCompletionFailureThreadContent(cleaned);
+}
+
+/**
+ * Collapse consecutive worked-session dropdowns with nothing visible between
+ * them into one. Leftover splits still occur when a timeline message between
+ * tool bursts is filtered out later (todo-update rows, stripped system rows).
+ */
+function mergeAdjacentWorkedSessions(messages: ChatMessage[]): ChatMessage[] {
+  const out: ChatMessage[] = [];
+  for (const message of messages) {
+    const prev = out[out.length - 1];
+    if (
+      prev?.type === "worked-session" &&
+      message.type === "worked-session" &&
+      !prev.loading &&
+      !message.loading &&
+      (prev.workedEntries?.length ?? 0) > 0 &&
+      (message.workedEntries?.length ?? 0) > 0
+    ) {
+      out[out.length - 1] = mergeWorkedSessionPair(prev, message);
+      continue;
+    }
+    out.push(message);
+  }
+  return out;
+}
+
+function projectTurnTimelineToMessages(
+  turn: ProjectedTurn,
+  options?: { isLatestTurn?: boolean }
+): ChatMessage[] {
   const messages: ChatMessage[] = [];
   let assistantText = "";
   let workedEntries: WorkedSessionEntry[] = [];
@@ -1894,16 +1940,21 @@ function projectTurnTimelineToMessages(turn: ProjectedTurn): ChatMessage[] {
       continue;
     }
     if (item.kind === "assistant") {
-      const chunk = item.text;
-      if (chunk === "") {
-        continue;
-      }
-      flushWorked();
-      assistantText += chunk;
+      // Accumulate without flushing: only visible assistant text may split a
+      // tool dropdown. Whitespace / stripped-JSON chunks used to break one tool
+      // burst into several back-to-back "Ran a command" dropdowns.
+      assistantText += item.text;
       continue;
     }
     const entry = item.entry;
-    flushAssistant();
+    if (assistantText) {
+      if (assistantTextWouldRender(assistantText)) {
+        flushWorked();
+        flushAssistant();
+      } else {
+        assistantText = "";
+      }
+    }
     workedEntries.push(entry);
   }
 
@@ -1915,8 +1966,10 @@ function projectTurnTimelineToMessages(turn: ProjectedTurn): ChatMessage[] {
   // gets moved to the end: [w1, w2, perm] — the triplet [w1, perm, w2] never forms and the UI
   // shows two "Searched workspace" dropdowns.
   const ordered = fixPermissionPlacedAfterWorkedForTools(
-    mergeTodoWorkedSessionNoise(
-      mergeAdjacentWorkedSessionsAroundPermission(messages)
+    mergeAdjacentWorkedSessions(
+      mergeTodoWorkedSessionNoise(
+        mergeAdjacentWorkedSessionsAroundPermission(messages)
+      )
     )
   );
 
@@ -1925,8 +1978,15 @@ function projectTurnTimelineToMessages(turn: ProjectedTurn): ChatMessage[] {
   const awaitingPermission = ordered.some(
     (message) => message.type === "permission-request" && !message.permissionResolved
   );
+  // Mid-turn user messages (steering / queued prompts) start a new turn; the
+  // terminal status event then settles only that newest turn. Older turns stay
+  // "unsettled" forever, so only the latest turn may show a live placeholder.
   const shouldShowLiveStatus =
-    turn.userMessage && !turn.turnEndedWithFailure && !turn.turnSettled && !awaitingPermission;
+    turn.userMessage &&
+    options?.isLatestTurn !== false &&
+    !turn.turnEndedWithFailure &&
+    !turn.turnSettled &&
+    !awaitingPermission;
   if (shouldShowLiveStatus) {
     const compressing = Boolean(turn.compressingContext);
     const liveStatusLabel = compressing
@@ -3296,6 +3356,90 @@ function formatToolSummary(
     });
   }
   /**
+   * MCP tools must route before every payload heuristic below. MCP tool
+   * arguments are arbitrary — a browser `script` arg used to hijack the
+   * terminal branch ("Ran <script>"), a `path` arg the read/edit branches —
+   * which mislabeled rows and corrupted the "ran N commands" group counts.
+   */
+  const mcpComposite =
+    parseMcpCompositeToolName(titleFromRaw) ??
+    acpToolCalls
+      .map((entry) => parseMcpCompositeToolName(entry.rawName))
+      .find((value) => value != null);
+  const mcpToolName = acpToolCalls
+    .map((entry) => entry.rawName)
+    .find((name) => /call_mcp_tool|refresh_mcp_servers/i.test(name ?? ""));
+  const isMcpTool =
+    toolKind === "mcp" ||
+    toolKindFromEvent === "mcp" ||
+    Boolean(mcpToolName) ||
+    Boolean(mcpComposite) ||
+    /^MCP\s+/i.test(resolvedTitleLabel ?? "") ||
+    /refresh mcp servers/i.test(resolvedTitleLabel ?? "");
+  if (isMcpTool) {
+    if (/refresh mcp servers/i.test(resolvedTitleLabel ?? streamToolTitle ?? "")) {
+      return withConciseToolDetail({
+        kind: "tool",
+        toolCallId: event.toolCallId,
+        toolKind: "mcp",
+        title: "Refresh MCP servers",
+        detail: safeToolDetailText(detail, { suppressVerbosePayload: true }) ?? existing?.detail,
+        rawDetail,
+        status,
+        locations: normalizedLocations,
+        editPreview,
+        files,
+        ...pluginMetadata,
+      });
+    }
+    const mcpServerId =
+      existing?.mcpServerId ??
+      extractMcpServerIdFromRecords([
+        ...rawInputs,
+        rawToolRecord,
+        rawTop,
+        ...(rawToolRecord?.request && typeof rawToolRecord.request === "object"
+          ? [rawToolRecord.request as Record<string, unknown>]
+          : []),
+      ]) ??
+      extractMcpServerIdFromTitle(resolvedTitleLabel) ??
+      extractMcpServerIdFromTitle(streamToolTitle) ??
+      extractMcpServerIdFromTitle(existing?.title) ??
+      mcpComposite?.serverId;
+    const mcpToolNameFromTitle =
+      resolvedTitleLabel?.match(/^MCP\s+.+?\s+-\s+(.+)$/i)?.[1]?.trim() ??
+      findFirstStringAcrossValues(rawInputs, ["toolName", "tool_name"]) ??
+      mcpComposite?.toolName;
+    const mcpTitle = mcpServerId
+      ? mcpToolNameFromTitle
+        ? `${formatMcpServerDisplayName(mcpServerId)} · ${formatMcpToolDisplayName(
+            mcpToolNameFromTitle,
+            mcpServerId
+          )}`
+        : formatMcpServerDisplayName(mcpServerId)
+      : mcpToolNameFromTitle
+        ? formatMcpToolDisplayName(mcpToolNameFromTitle)
+        : truncateMiddleLabel(
+            resolvedTitleLabel ?? existing?.title ?? "MCP tool",
+            TOOL_TITLE_MAX_LEN
+          );
+    return withConciseToolDetail({
+      kind: "tool",
+      toolCallId: event.toolCallId,
+      toolKind: "mcp",
+      mcpServerId,
+      title: mcpTitle,
+      detail: safeToolDetailText(detail, { suppressVerbosePayload: true }) ?? existing?.detail,
+      rawDetail,
+      status,
+      locations: normalizedLocations,
+      editPreview,
+      files,
+      variant: existing?.variant,
+      ...pluginMetadata,
+    });
+  }
+  /**
    * Todo tools must route before the edit/command heuristics: titles like
    * "Update todos" match the edit verb regex and used to fall through to a raw
    * JSON dump instead of a checklist.
@@ -3511,7 +3655,7 @@ function formatToolSummary(
           formatToolFileLabel(readPath, ws) ?? toolPathBasename(readPath),
           TOOL_PATH_LABEL_MAX
         )}`
-      : "Ran";
+      : "Read file";
     let readFiles = readPath
       ? [readPath, ...(files ?? []).filter((file) => file !== readPath)]
       : files;
@@ -3599,79 +3743,12 @@ function formatToolSummary(
     });
   }
 
-  const mcpToolName = acpToolCalls
-    .map((entry) => entry.rawName)
-    .find((name) => /call_mcp_tool|refresh_mcp_servers/i.test(name ?? ""));
-  const isMcpTool =
-    toolKind === "mcp" ||
-    toolKindFromEvent === "mcp" ||
-    Boolean(mcpToolName) ||
-    /^MCP\s+/i.test(resolvedTitleLabel ?? "") ||
-    /refresh mcp servers/i.test(resolvedTitleLabel ?? "");
-  if (isMcpTool) {
-    if (/refresh mcp servers/i.test(resolvedTitleLabel ?? streamToolTitle ?? "")) {
-      return withConciseToolDetail({
-        kind: "tool",
-        toolCallId: event.toolCallId,
-        toolKind: "mcp",
-        title: "Refresh MCP servers",
-        detail: safeToolDetailText(detail, { suppressVerbosePayload: true }) ?? existing?.detail,
-        rawDetail,
-        status,
-        locations: normalizedLocations,
-        editPreview,
-        files,
-        ...pluginMetadata,
-      });
-    }
-    const mcpServerId =
-      existing?.mcpServerId ??
-      extractMcpServerIdFromRecords([
-        ...rawInputs,
-        rawToolRecord,
-        rawTop,
-        ...(rawToolRecord?.request && typeof rawToolRecord.request === "object"
-          ? [rawToolRecord.request as Record<string, unknown>]
-          : []),
-      ]) ??
-      extractMcpServerIdFromTitle(resolvedTitleLabel) ??
-      extractMcpServerIdFromTitle(streamToolTitle) ??
-      extractMcpServerIdFromTitle(existing?.title);
-    const mcpToolNameFromTitle =
-      resolvedTitleLabel?.match(/^MCP\s+.+?\s+-\s+(.+)$/i)?.[1]?.trim() ??
-      findFirstStringAcrossValues(rawInputs, ["toolName", "tool_name"]) ??
-      undefined;
-    const mcpTitle = mcpServerId
-      ? mcpToolNameFromTitle
-        ? `${formatMcpServerDisplayName(mcpServerId)} · ${mcpToolNameFromTitle}`
-        : formatMcpServerDisplayName(mcpServerId)
-      : truncateMiddleLabel(
-          resolvedTitleLabel ?? existing?.title ?? "MCP tool",
-          TOOL_TITLE_MAX_LEN
-        );
-    return withConciseToolDetail({
-      kind: "tool",
-      toolCallId: event.toolCallId,
-      toolKind: "mcp",
-      mcpServerId,
-      title: mcpTitle,
-      detail: safeToolDetailText(detail, { suppressVerbosePayload: true }) ?? existing?.detail,
-      rawDetail,
-      status,
-      locations: normalizedLocations,
-      editPreview,
-      files,
-      variant: existing?.variant,
-      ...pluginMetadata,
-    });
-  }
-
   return withConciseToolDetail({
     kind: "tool",
     toolCallId: event.toolCallId,
     toolKind,
     title: truncateMiddleLabel(
-      resolvedTitleLabel ?? existing?.title ?? "Tool call",
+      capitalizeFirst(resolvedTitleLabel ?? existing?.title ?? "Tool call"),
       TOOL_TITLE_MAX_LEN
     ),
     detail: safeToolDetailText(detail, { suppressVerbosePayload: true }) ?? existing?.detail,
@@ -4015,6 +4092,16 @@ export function projectAgentEventsToChatMessages(
       : null;
 const turns: ProjectedTurn[] = [];
 let currentTurn: ProjectedTurn | null = null;
+/**
+ * toolCallId → live entry across every turn. Mid-turn user messages (steering /
+ * queued prompts) start a new turn with a fresh per-turn map; without this,
+ * a `tool_call_update` for a tool started before the boundary looked like an
+ * orphan and synthesized a duplicate row while the original stayed "running".
+ */
+const toolEntryByIdAcrossTurns = new Map<
+  string,
+  Extract<WorkedSessionEntry, { kind: "tool" }>
+>();
 
   const ensureTurn = () => {
     if (!currentTurn) {
@@ -4283,6 +4370,7 @@ let currentTurn: ProjectedTurn | null = null;
         if (!existing) {
           appendTraceEntry(turn, entry);
           turn.toolEntryById.set(event.toolCallId, entry);
+          toolEntryByIdAcrossTurns.set(event.toolCallId, entry);
         } else {
           Object.assign(existing, entry);
         }
@@ -4398,9 +4486,15 @@ let currentTurn: ProjectedTurn | null = null;
           }
           break;
         }
-        let existing = turn.toolEntryById.get(event.toolCallId) as
+        let existing = (turn.toolEntryById.get(event.toolCallId) ??
+          toolEntryByIdAcrossTurns.get(event.toolCallId)) as
           | Extract<WorkedSessionEntry, { kind: "tool" }>
           | undefined;
+        if (existing && !turn.toolEntryById.has(event.toolCallId)) {
+          // Update for a tool started before a mid-turn user message: mutate the
+          // original row in its earlier turn instead of synthesizing a duplicate.
+          turn.toolEntryById.set(event.toolCallId, existing);
+        }
         const unmatchedEntry = !existing ? formatToolSummary(event, undefined, workspaceRoot) : undefined;
         if (!existing) {
           const open = turn.trace.filter(
@@ -4457,6 +4551,7 @@ let currentTurn: ProjectedTurn | null = null;
         if (!existing) {
           appendTraceEntry(turn, entry);
           turn.toolEntryById.set(event.toolCallId, entry);
+          toolEntryByIdAcrossTurns.set(event.toolCallId, entry);
         } else {
           const keepToolCallId = existing.toolCallId;
           Object.assign(existing, entry);
@@ -4645,7 +4740,9 @@ const messages: ChatMessage[] = [];
 for (const turn of turns) {
   const timelineMsgs = appendTurnCompletionFooter(
     turn,
-    projectTurnTimelineToMessages(turn)
+    projectTurnTimelineToMessages(turn, {
+      isLatestTurn: turn === turns[turns.length - 1],
+    })
   );
   const forkInTimeline = timelineMsgs.filter((m) => m.type === "chat-fork");
   const otherTimeline = timelineMsgs.filter((m) => m.type !== "chat-fork");

@@ -92,6 +92,7 @@ test("redo composer seed falls back to conversation config", () => {
   assert.equal(seed.backendId, "cursor-sdk");
   assert.equal(seed.mode, "ask");
   assert.equal(seed.model.modelValue, "gpt-5.5");
-  assert.equal(seed.model.name, "GPT-5.5");
+  // Model display normalization (#77) renders slug-identical names spaced: "GPT 5.5".
+  assert.equal(seed.model.name, "GPT 5.5");
 });
 
