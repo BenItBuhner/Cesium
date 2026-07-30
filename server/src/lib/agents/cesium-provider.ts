@@ -912,7 +912,9 @@ class CesiumSessionHandle implements AgentSessionHandle {
         // turn. All streamed chunks / tool calls / results are already persisted as
         // events, so rebuilding history from storage (which runs the compaction
         // pipeline) is coherent mid-turn.
-        const midTurnTokens = estimateHistoryTokens([...modelHistory, ...toolResultMessages]);
+        const midTurnTokens =
+          estimateHistoryTokens([...modelHistory, ...toolResultMessages]) +
+          this.estimateToolDefinitionTokens();
         const midTurnBudgets = await this.resolveCompactionBudgets().catch(() => null);
         const canRebuild =
           iteration - this.lastMidTurnCompactionIteration >= 3 ||
@@ -1478,6 +1480,14 @@ class CesiumSessionHandle implements AgentSessionHandle {
     };
   }
 
+  private estimateToolDefinitionTokens(): number {
+    try {
+      return Math.ceil(JSON.stringify(this.harness.tools).length / 4);
+    } catch {
+      return 4_000;
+    }
+  }
+
   /** Build a one-shot model caller for the compactor (dedicated model or the conversation model). */
   private async compactionModelCaller(
     compressionModelId: string | null
@@ -1534,7 +1544,10 @@ class CesiumSessionHandle implements AgentSessionHandle {
     if (!enabled) {
       return currentMessages;
     }
-    const usedTokens = estimateHistoryTokens(currentMessages);
+    // Include fixed request overhead (tool definitions) so the trigger tracks
+    // what the provider actually sends, matching the context-usage meter.
+    const usedTokens =
+      estimateHistoryTokens(currentMessages) + this.estimateToolDefinitionTokens();
     const force = this.manualCompactionRequested;
     this.manualCompactionRequested = false;
 

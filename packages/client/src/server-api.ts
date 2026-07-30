@@ -1974,6 +1974,8 @@ export type CesiumAgentSettingsPayload = {
     enabled: boolean;
     modelId: string | null;
     thresholdRatio: number;
+    /** 0..1 compaction intensity: 0 = max retention, 1 = max aggression. */
+    intensity: number;
   };
   orchestration: {
     continueWhenIncomplete: boolean;
