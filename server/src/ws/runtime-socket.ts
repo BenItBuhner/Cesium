@@ -59,11 +59,16 @@ export class BufferedRuntimeSocket implements RuntimeSocket {
       data: RuntimeSocketData,
       options?: { binary?: boolean }
     ) => void,
-    private readonly closeImpl: (code?: number, reason?: string) => void
+    private readonly closeImpl: (code?: number, reason?: string) => void,
+    private readonly bufferedAmountImpl?: () => number
   ) {}
 
   get isOpen(): boolean {
     return this.open;
+  }
+
+  get bufferedAmount(): number {
+    return this.bufferedAmountImpl?.() ?? 0;
   }
 
   send(data: RuntimeSocketData, options?: { binary?: boolean }): void {

@@ -38,6 +38,7 @@ type BunServerWebSocket = {
   data: BunSocketData;
   send(data: RuntimeSocketData): void;
   close(code?: number, reason?: string): void;
+  getBufferedAmount?(): number;
 };
 
 type BunServer = {
@@ -99,7 +100,8 @@ async function upgradeOrReject(
 function attachSocket(ws: BunServerWebSocket): void {
   const runtimeSocket = new BufferedRuntimeSocket(
     (data) => ws.send(data),
-    (code, reason) => ws.close(code, reason)
+    (code, reason) => ws.close(code, reason),
+    () => ws.getBufferedAmount?.() ?? 0
   );
   ws.data.runtimeSocket = runtimeSocket;
   switch (ws.data.kind) {
