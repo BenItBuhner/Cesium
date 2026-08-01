@@ -2920,7 +2920,10 @@ export function AgentWorkspaceRail() {
                   }`}
                 >
                   <div
-                    draggable
+                    // Bucket groupings (priority/status/updated/...) render
+                    // pseudo-workspaces; dragging them would persist junk
+                    // custom-order entries keyed by bucket ids.
+                    draggable={workspaceActionsEnabled}
                     onDragStart={(event) => handleWorkspaceDragStart(event, groupKey)}
                     onDragEnd={handleWorkspaceDragEnd}
                     className="group flex items-center gap-[2px] px-px pb-[4px]"
@@ -3137,18 +3140,22 @@ export function AgentWorkspaceRail() {
                                           handleConversationSelect(conversation);
                                         }}
                                         onDragStart={
-                                          bulkSelectMode ? undefined : handleConversationDragStart
+                                          bulkSelectMode || !workspaceActionsEnabled
+                                            ? undefined
+                                            : handleConversationDragStart
                                         }
                                         onDragEnd={
-                                          bulkSelectMode ? undefined : handleConversationDragEnd
+                                          bulkSelectMode || !workspaceActionsEnabled
+                                            ? undefined
+                                            : handleConversationDragEnd
                                         }
                                         onDragOver={
-                                          bulkSelectMode
+                                          bulkSelectMode || !workspaceActionsEnabled
                                             ? undefined
                                             : (event) => handleFolderDropTargetDragOver(event)
                                         }
                                         onDrop={
-                                          bulkSelectMode
+                                          bulkSelectMode || !workspaceActionsEnabled
                                             ? undefined
                                             : (event) =>
                                                 handleConversationDrop(
@@ -3215,16 +3222,22 @@ export function AgentWorkspaceRail() {
                                 handleConversationSelect(conversation);
                               }}
                               onDragStart={
-                                bulkSelectMode ? undefined : handleConversationDragStart
+                                bulkSelectMode || !workspaceActionsEnabled
+                                  ? undefined
+                                  : handleConversationDragStart
                               }
-                              onDragEnd={bulkSelectMode ? undefined : handleConversationDragEnd}
+                              onDragEnd={
+                                bulkSelectMode || !workspaceActionsEnabled
+                                  ? undefined
+                                  : handleConversationDragEnd
+                              }
                               onDragOver={
-                                bulkSelectMode
+                                bulkSelectMode || !workspaceActionsEnabled
                                   ? undefined
                                   : (event) => handleFolderDropTargetDragOver(event)
                               }
                               onDrop={
-                                bulkSelectMode
+                                bulkSelectMode || !workspaceActionsEnabled
                                   ? undefined
                                   : (event) =>
                                       handleConversationDrop(

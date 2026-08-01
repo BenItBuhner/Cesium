@@ -321,8 +321,12 @@ function findConversationOwnerWorkspaceId(
   conversationId: string
 ): string | null {
   for (const group of groups) {
-    if (group.conversations.some((c) => c.id === conversationId)) {
-      return group.workspace.id;
+    const match = group.conversations.find((c) => c.id === conversationId);
+    if (match) {
+      // Never trust group.workspace.id: under bucket groupings (priority /
+      // status / updated / repository) it is a pseudo-workspace key like
+      // "priority:local:recent", and opening it as a workspace fails loudly.
+      return match.workspaceId ?? group.workspace.id;
     }
   }
   return null;
