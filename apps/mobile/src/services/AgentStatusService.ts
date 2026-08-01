@@ -47,6 +47,7 @@ export class AgentStatusService {
       this.conversation = null;
       this.previousProjection = null;
       this.reconnectAttempt = 0;
+      this.close("idle");
       if (this.connectionEnabled) {
         this.connect();
       }
@@ -83,9 +84,8 @@ export class AgentStatusService {
       this.options.onConnectionState?.("closed");
     };
     ws.onclose = () => {
-      if (this.ws === ws) {
-        this.ws = null;
-      }
+      if (this.ws !== ws) return;
+      this.ws = null;
       if (this.manuallyClosed) {
         this.options.onConnectionState?.("closed");
         return;

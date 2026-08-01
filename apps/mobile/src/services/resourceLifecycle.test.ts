@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { AgentStoredEvent } from "@cesium/core";
-import { mergeEvents } from "./AgentStatusService";
+import { AgentStatusService, mergeEvents } from "./AgentStatusService";
 import { BackgroundCoordinator } from "./BackgroundCoordinator";
 
 test("background coordinator only keeps the native agent socket in background", () => {
@@ -41,6 +41,42 @@ test("agent event merge appends monotonic batches and replaces duplicate sequenc
   assert.deepEqual(merged, [replacement, second]);
 });
 
+test("agent status reconnects and subscribes when background config changes", () => {
+  const originalWebSocket = globalThis.WebSocket;
+  FakeAgentWebSocket.instances = [];
+  globalThis.WebSocket = FakeAgentWebSocket as unknown as typeof WebSocket;
+  try {
+    const service = new AgentStatusService({ onProjection() {} });
+    service.setConnectionEnabled(true);
+    service.updateConfig({
+      serverBaseUrl: "http://localhost:9100",
+      workspaceId: "workspace",
+      conversationId: "first",
+    });
+    FakeAgentWebSocket.instances[0]?.open();
+
+    service.updateConfig({
+      serverBaseUrl: "http://localhost:9100",
+      workspaceId: "workspace",
+      conversationId: "second",
+    });
+    FakeAgentWebSocket.instances[1]?.open();
+
+    assert.equal(FakeAgentWebSocket.instances.length, 2);
+    assert.deepEqual(
+      JSON.parse(FakeAgentWebSocket.instances[1]?.sent[0] ?? "{}"),
+      {
+        type: "subscribe",
+        conversationIds: ["second"],
+        sinceByConversationId: { second: 0 },
+      }
+    );
+    service.close();
+  } finally {
+    globalThis.WebSocket = originalWebSocket;
+  }
+});
+
 function event(seq: number, eventId: string): AgentStoredEvent {
   return {
     seq,
@@ -50,6 +86,38 @@ function event(seq: number, eventId: string): AgentStoredEvent {
     kind: "status",
     status: "running",
   };
+}
+
+class FakeAgentWebSocket {
+  static readonly CONNECTING = 0;
+  static readonly OPEN = 1;
+  static readonly CLOSED = 3;
+  static instances: FakeAgentWebSocket[] = [];
+
+  readyState = FakeAgentWebSocket.CONNECTING;
+  sent: string[] = [];
+  onopen: (() => void) | null = null;
+  onclose: (() => void) | null = null;
+  onerror: (() => void) | null = null;
+  onmessage: ((event: { data: string }) => void) | null = null;
+
+  constructor(readonly url: string) {
+    FakeAgentWebSocket.instances.push(this);
+  }
+
+  open() {
+    this.readyState = FakeAgentWebSocket.OPEN;
+    this.onopen?.();
+  }
+
+  send(data: string) {
+    this.sent.push(data);
+  }
+
+  close() {
+    this.readyState = FakeAgentWebSocket.CLOSED;
+    this.onclose?.();
+  }
 }
 
 function liveUpdateStatus() {

@@ -285,7 +285,14 @@ function useThrottledMobileBridgeMessage(
   const lastSentAtRef = useRef(0);
 
   useEffect(() => {
-    if (!message) return;
+    if (!message) {
+      pendingRef.current = null;
+      if (timerRef.current) {
+        clearTimeout(timerRef.current);
+        timerRef.current = null;
+      }
+      return;
+    }
     pendingRef.current = message;
     if (timerRef.current) return;
 
