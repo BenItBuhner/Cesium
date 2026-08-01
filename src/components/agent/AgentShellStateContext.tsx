@@ -1992,6 +1992,42 @@ export function AgentShellStateProvider({
     return names;
   }, [groups]);
 
+  // Viewing a conversation marks its completion as read. Without this, the
+  // unread flag is only cleared by the IDE chat/editor tab handlers, so chats
+  // opened from the agent rail would sit in the Review bucket forever. Also
+  // covers flags set while the conversation is already open (the shell does
+  // not always mirror selection into `chat.tabs`), and defers clearing while
+  // the page is hidden so background completions stay unread until seen.
+  const unreadCompletionMap = workspaceSession.chat.unreadChatCompletionByConversationId;
+  useEffect(() => {
+    if (!selectedConversationId || !unreadCompletionMap?.[selectedConversationId]) {
+      return;
+    }
+    const clearIfSeen = () => {
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") {
+        return;
+      }
+      updateWorkspaceSession((current) => {
+        const unread = current.chat.unreadChatCompletionByConversationId ?? {};
+        if (!unread[selectedConversationId]) {
+          return current;
+        }
+        const next = { ...unread };
+        delete next[selectedConversationId];
+        return {
+          ...current,
+          chat: {
+            ...current.chat,
+            unreadChatCompletionByConversationId: next,
+          },
+        };
+      });
+    };
+    clearIfSeen();
+    document.addEventListener("visibilitychange", clearIfSeen);
+    return () => document.removeEventListener("visibilitychange", clearIfSeen);
+  }, [selectedConversationId, unreadCompletionMap, updateWorkspaceSession]);
+
   const agentSwitcherCandidates = useMemo(() => {
     const items: AgentSwitcherCandidate[] = [];
     const seen = new Set<string>();
