@@ -56,8 +56,12 @@ test("mobile lifecycle suspends and resumes reconnecting web sockets", () => {
 
   try {
     const states: string[] = [];
+    let unexpectedCloses = 0;
     const socket = new JsonWebSocket("ws://example.test/socket");
     socket.onState((state) => states.push(state));
+    socket.onClose(() => {
+      unexpectedCloses += 1;
+    });
     socket.connect();
     assert.equal(FakeWebSocket.instances.length, 1);
     FakeWebSocket.instances[0]?.open();
@@ -70,6 +74,7 @@ test("mobile lifecycle suspends and resumes reconnecting web sockets", () => {
     fakeWindow.dispatchEvent(backgroundEvent);
     assert.equal(socket.connected, false);
     assert.equal(FakeWebSocket.instances[0]?.readyState, FakeWebSocket.CLOSED);
+    assert.equal(unexpectedCloses, 0);
 
     const activeEvent = new Event("cesium:mobile-bridge-message");
     Object.defineProperty(activeEvent, "detail", {

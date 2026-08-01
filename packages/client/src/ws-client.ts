@@ -48,6 +48,7 @@ abstract class BaseReconnectSocket<TMessage> {
   private state: ConnectionState = "idle";
   private mobilePaused = false;
   private mobileLifecycleBound = false;
+  private readonly mobileSuspendedSockets = new WeakSet<WebSocket>();
   private readonly onMobileLifecycle = (event: Event) => {
     const detail = (event as CustomEvent<{ type?: string; state?: string }>).detail;
     if (detail?.type !== "lifecycle") return;
@@ -64,6 +65,9 @@ abstract class BaseReconnectSocket<TMessage> {
     this.clearReconnectTimer();
     const socket = this.ws;
     this.ws = null;
+    if (socket) {
+      this.mobileSuspendedSockets.add(socket);
+    }
     socket?.close();
     this.setState("closed");
   };
@@ -135,6 +139,9 @@ abstract class BaseReconnectSocket<TMessage> {
     ws.addEventListener("close", () => {
       if (this.ws === ws) {
         this.ws = null;
+      }
+      if (this.mobileSuspendedSockets.delete(ws)) {
+        return;
       }
       this.listeners.close.forEach((listener) => listener());
       if (!this.manuallyClosed && !this.mobilePaused) {
