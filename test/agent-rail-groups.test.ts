@@ -195,6 +195,68 @@ describe("agent rail grouping", () => {
     );
   });
 
+  test("priority grouping flattens workspaces into ordered urgency buckets", () => {
+    const grouped = groupAgentRailGroups(
+      [
+        {
+          workspace: workspace("ws-1", "Frontend"),
+          conversations: [
+            conversation("idle-old", "ws-1", 10),
+            conversation("running-chat", "ws-1", 20, { status: "running" }),
+            conversation("perm-chat", "ws-1", 5, { hasPendingPermission: true }),
+          ],
+        },
+        {
+          workspace: workspace("ws-2", "Backend"),
+          conversations: [
+            conversation("question-chat", "ws-2", 30, { status: "awaiting_question" }),
+            conversation("failed-chat", "ws-2", 40, { status: "failed" }),
+            conversation("unread-done", "ws-2", 50),
+          ],
+        },
+      ],
+      "priority",
+      1_000,
+      { unreadCompletionByConversationId: { "unread-done": true } }
+    );
+    assert.deepEqual(
+      grouped.map((group) => group.workspace.name),
+      ["Needs attention", "Running", "Review", "Recent"]
+    );
+    // Attention bucket: permission > question > failed, cross-workspace.
+    assert.deepEqual(
+      grouped[0]?.conversations.map((item) => item.id),
+      ["perm-chat", "question-chat", "failed-chat"]
+    );
+    assert.deepEqual(grouped[1]?.conversations.map((item) => item.id), ["running-chat"]);
+    assert.deepEqual(grouped[2]?.conversations.map((item) => item.id), ["unread-done"]);
+    assert.deepEqual(grouped[3]?.conversations.map((item) => item.id), ["idle-old"]);
+  });
+
+  test("priority buckets fold standalone chats in but never merge servers", () => {
+    const grouped = groupAgentRailGroups(
+      [
+        {
+          workspace: { ...workspace("chats", "Chats"), kind: "standalone-chat" },
+          serverId: "server-a",
+          conversations: [conversation("standalone-idle", "chats", 1)],
+        },
+        {
+          workspace: workspace("ws-1", "Home"),
+          serverId: "server-b",
+          conversations: [conversation("remote-idle", "ws-1", 2)],
+        },
+      ],
+      "priority"
+    );
+    assert.equal(grouped.length, 2);
+    for (const group of grouped) {
+      assert.equal(group.workspace.name, "Recent");
+      assert.notEqual(group.workspace.kind, "standalone-chat");
+      assert.equal(group.conversations.length, 1);
+    }
+  });
+
   test("status grouping never merges conversations across servers", () => {
     const grouped = groupAgentRailGroups(
       [

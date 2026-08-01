@@ -16,7 +16,13 @@ import {
 } from "./agent-rail-status";
 
 export type WorkspaceSortMode = "recent" | "alphabetical" | "machine" | "custom";
-export type AgentRailGroupByMode = "workspace" | "repository" | "server" | "updated" | "status";
+export type AgentRailGroupByMode =
+  | "workspace"
+  | "priority"
+  | "repository"
+  | "server"
+  | "updated"
+  | "status";
 export type AgentRailSectionId = "attention" | "pinned" | "chats" | "workspaces";
 
 export const AGENT_RAIL_SECTION_IDS: AgentRailSectionId[] = [
@@ -209,7 +215,7 @@ export function createDefaultGlobalSettings(): GlobalSettingsState {
         visibleServerIds: [],
         hiddenServerIds: [],
         showIcons: true,
-        rowDetail: "auto",
+        rowDetail: "balanced",
         sectionOrder: ["attention", "pinned", "chats", "workspaces"],
         hiddenSections: [],
       },
@@ -453,6 +459,7 @@ function normalizeAgentRailSettings(raw: unknown): AgentRailSettingsState {
   const record = raw as Partial<AgentRailSettingsState>;
   const rawGroupBy =
     record.groupBy === "workspace" ||
+    record.groupBy === "priority" ||
     record.groupBy === "repository" ||
     record.groupBy === "server" ||
     record.groupBy === "updated" ||
@@ -487,7 +494,10 @@ function normalizeAgentRailSettings(raw: unknown): AgentRailSettingsState {
       typeof record.showIcons === "boolean" ? record.showIcons : defaults.showIcons,
     rowDetail: isAgentRailRowDetailMode(record.rowDetail)
       ? record.rowDetail
-      : defaults.rowDetail,
+      : // Pre-release name for the balanced mode; migrate quietly.
+        (record.rowDetail as unknown) === "auto"
+        ? "balanced"
+        : defaults.rowDetail,
     sectionOrder,
     hiddenSections,
   };

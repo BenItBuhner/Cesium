@@ -534,7 +534,7 @@ export function AgentWorkspaceRail() {
   const workspaceSortMode = settings.general.workspaceSortMode;
   const workspaceCustomOrderIds = settings.general.workspaceCustomOrderIds;
   const agentRailSettings = settings.general.agentRail;
-  const railRowDetail = agentRailSettings.rowDetail ?? "auto";
+  const railRowDetail = agentRailSettings.rowDetail ?? "balanced";
   // Reference clock for relative times on row detail lines ("5m ago").
   const [railNow, setRailNow] = useState(() => Date.now());
   useEffect(() => {
@@ -783,8 +783,18 @@ export function AgentWorkspaceRail() {
     const order =
       agentRailSettings.sectionOrder ?? ["attention", "pinned", "chats", "workspaces"];
     const hidden = new Set(agentRailSettings.hiddenSections ?? []);
+    // Priority grouping IS the attention surface and folds standalone chats
+    // into its flat buckets; the extra sections would duplicate rows.
+    if (agentRailSettings.groupBy === "priority") {
+      hidden.add("attention");
+      hidden.add("chats");
+    }
     return order.filter((id) => !hidden.has(id));
-  }, [agentRailSettings.hiddenSections, agentRailSettings.sectionOrder]);
+  }, [
+    agentRailSettings.groupBy,
+    agentRailSettings.hiddenSections,
+    agentRailSettings.sectionOrder,
+  ]);
 
   // Cross-workspace priority inbox: conversations blocked on the user (approval,
   // question) or failed, ranked by urgency. Rows also stay in their home
@@ -2374,7 +2384,7 @@ export function AgentWorkspaceRail() {
               <AgentConversationRow
                 key={`attention:${conversation.conversationKey ?? conversation.id}`}
                 conversation={conversation}
-                detail="expanded"
+                detail={railRowDetail === "compact" ? "compact" : "expanded"}
                 detailContext={railWorkspaceNameById.get(conversation.workspaceId)}
                 now={railNow}
                 unreadCompletion={isConversationUnread(conversation)}
@@ -2412,6 +2422,7 @@ export function AgentWorkspaceRail() {
     isConversationChatSelected,
     isConversationUnread,
     railNow,
+    railRowDetail,
     railWorkspaceNameById,
     toggleWorkspaceCollapsed,
   ]);

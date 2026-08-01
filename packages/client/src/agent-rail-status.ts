@@ -206,13 +206,14 @@ export function formatAgentRailRelativeTime(timestamp: number, now = Date.now())
   return "just now";
 }
 
-export const AGENT_RAIL_ROW_DETAIL_MODES = ["compact", "auto", "expanded"] as const;
+export const AGENT_RAIL_ROW_DETAIL_MODES = ["compact", "balanced", "expanded"] as const;
 
 /**
  * How much per-row detail the rail shows.
- * - `compact`: single-line rows (title + status glyph only).
- * - `auto`: single-line, but rows that need something (attention / running /
- *   failed / unread result) grow a small description line.
+ * - `compact`: strict single-line rows — title plus a status dot (spinner while
+ *   running); no icons, no description text anywhere.
+ * - `balanced`: single-line, but rows that need something (approval, answer,
+ *   failure, active work, unread result) grow a small description line.
  * - `expanded`: every row shows a detail line (status or last-updated time).
  */
 export type AgentRailRowDetailMode = (typeof AGENT_RAIL_ROW_DETAIL_MODES)[number];
@@ -222,4 +223,48 @@ export function isAgentRailRowDetailMode(value: unknown): value is AgentRailRowD
     typeof value === "string" &&
     AGENT_RAIL_ROW_DETAIL_MODES.includes(value as AgentRailRowDetailMode)
   );
+}
+
+export const AGENT_RAIL_PRIORITY_BUCKETS = [
+  "attention",
+  "active",
+  "review",
+  "recent",
+] as const;
+
+/**
+ * Flat priority grouping buckets, in render order. Urgent-first so the user
+ * stays in flow: blocked-on-you, then working, then results to review, then
+ * everything settled.
+ */
+export type AgentRailPriorityBucket = (typeof AGENT_RAIL_PRIORITY_BUCKETS)[number];
+
+export const AGENT_RAIL_PRIORITY_BUCKET_LABELS: Record<AgentRailPriorityBucket, string> = {
+  attention: "Needs attention",
+  active: "Running",
+  review: "Review",
+  recent: "Recent",
+};
+
+export function getAgentRailPriorityBucket(
+  conversation: Pick<
+    AgentRailConversationSummary,
+    "status" | "hasPendingPermission" | "hasPendingQuestion"
+  >,
+  ctx?: AgentRailStatusContext
+): AgentRailPriorityBucket {
+  const kind = getAgentRailStatusKind(conversation, ctx);
+  switch (kind) {
+    case "permission":
+    case "question":
+    case "failed":
+      return "attention";
+    case "running":
+    case "pausing":
+      return "active";
+    case "done_unread":
+      return "review";
+    default:
+      return "recent";
+  }
 }

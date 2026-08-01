@@ -4,6 +4,7 @@ import {
   agentRailConversationNeedsAttention,
   compareAgentRailByStatusPriority,
   formatAgentRailRelativeTime,
+  getAgentRailPriorityBucket,
   getAgentRailStatusInfo,
   getAgentRailStatusKind,
   isAgentRailRowDetailMode,
@@ -154,10 +155,32 @@ describe("agent rail status", () => {
   });
 
   test("row detail mode guard", () => {
-    assert.equal(isAgentRailRowDetailMode("auto"), true);
+    assert.equal(isAgentRailRowDetailMode("balanced"), true);
     assert.equal(isAgentRailRowDetailMode("compact"), true);
     assert.equal(isAgentRailRowDetailMode("expanded"), true);
+    assert.equal(isAgentRailRowDetailMode("auto"), false);
     assert.equal(isAgentRailRowDetailMode("cozy"), false);
     assert.equal(isAgentRailRowDetailMode(undefined), false);
+  });
+
+  test("priority buckets: attention, active, review, recent", () => {
+    assert.equal(
+      getAgentRailPriorityBucket(summary({ hasPendingPermission: true })),
+      "attention"
+    );
+    assert.equal(
+      getAgentRailPriorityBucket(summary({ status: "awaiting_question" })),
+      "attention"
+    );
+    assert.equal(getAgentRailPriorityBucket(summary({ status: "failed" })), "attention");
+    assert.equal(getAgentRailPriorityBucket(summary({ status: "running" })), "active");
+    assert.equal(getAgentRailPriorityBucket(summary({ status: "pausing" })), "active");
+    assert.equal(
+      getAgentRailPriorityBucket(summary(), { unreadCompletion: true }),
+      "review"
+    );
+    assert.equal(getAgentRailPriorityBucket(summary({ status: "paused" })), "recent");
+    assert.equal(getAgentRailPriorityBucket(summary({ status: "cancelled" })), "recent");
+    assert.equal(getAgentRailPriorityBucket(summary()), "recent");
   });
 });

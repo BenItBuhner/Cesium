@@ -910,21 +910,39 @@ export function AgentShellStateProvider({
   );
 
   const groupedByRailMode = useMemo(
-    () => groupAgentRailGroups(visibleMachineGroups, settings.general.agentRail.groupBy),
-    [settings.general.agentRail.groupBy, visibleMachineGroups]
+    () =>
+      groupAgentRailGroups(
+        visibleMachineGroups,
+        settings.general.agentRail.groupBy,
+        Date.now(),
+        {
+          unreadCompletionByConversationId:
+            workspaceSession.chat.unreadChatCompletionByConversationId,
+        }
+      ),
+    [
+      settings.general.agentRail.groupBy,
+      visibleMachineGroups,
+      workspaceSession.chat.unreadChatCompletionByConversationId,
+    ]
   );
 
   const orderedGroups = useMemo(
     () =>
-      sortConversationGroups(
-        groupedByRailMode,
-        recentWorkspaceIds,
-        settings.general.workspaceSortMode,
-        settings.general.workspaceCustomOrderIds
-      ),
+      // Priority buckets come pre-ordered (urgent first); workspace sorting
+      // would scramble them alphabetically.
+      settings.general.agentRail.groupBy === "priority"
+        ? groupedByRailMode
+        : sortConversationGroups(
+            groupedByRailMode,
+            recentWorkspaceIds,
+            settings.general.workspaceSortMode,
+            settings.general.workspaceCustomOrderIds
+          ),
     [
       groupedByRailMode,
       recentWorkspaceIds,
+      settings.general.agentRail.groupBy,
       settings.general.workspaceCustomOrderIds,
       settings.general.workspaceSortMode,
     ]

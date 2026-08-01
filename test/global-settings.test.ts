@@ -36,10 +36,25 @@ describe("global settings", () => {
       visibleServerIds: [],
       hiddenServerIds: [],
       showIcons: true,
-      rowDetail: "auto",
+      rowDetail: "balanced",
       sectionOrder: ["attention", "pinned", "chats", "workspaces"],
       hiddenSections: [],
     });
+  });
+
+  test("preserves priority group-by", () => {
+    const base = createDefaultGlobalSettings();
+    const settings = normalizeLoadedGlobalSettings({
+      ...base,
+      general: {
+        ...base.general,
+        agentRail: {
+          ...base.general.agentRail,
+          groupBy: "priority",
+        },
+      },
+    });
+    assert.equal(settings.general.agentRail.groupBy, "priority");
   });
 
   test("preserves machine group-by", () => {
@@ -100,10 +115,25 @@ describe("global settings", () => {
       visibleServerIds: [],
       hiddenServerIds: ["server-b"],
       showIcons: true,
-      rowDetail: "auto",
+      rowDetail: "balanced",
       sectionOrder: ["attention", "pinned", "chats", "workspaces"],
       hiddenSections: [],
     });
+  });
+
+  test("migrates legacy 'auto' row detail to balanced", () => {
+    const base = createDefaultGlobalSettings();
+    const settings = normalizeLoadedGlobalSettings({
+      ...base,
+      general: {
+        ...base.general,
+        agentRail: {
+          ...base.general.agentRail,
+          rowDetail: "auto",
+        },
+      },
+    });
+    assert.equal(settings.general.agentRail.rowDetail, "balanced");
   });
 
   test("migrates persisted section order missing the attention section to the top", () => {
@@ -150,7 +180,7 @@ describe("global settings", () => {
     assert.deepEqual(settings.general.agentRail.hiddenSections, ["attention"]);
   });
 
-  test("falls back to auto row detail for unknown persisted values", () => {
+  test("falls back to balanced row detail for unknown persisted values", () => {
     const base = createDefaultGlobalSettings();
     const settings = normalizeLoadedGlobalSettings({
       ...base,
@@ -162,7 +192,7 @@ describe("global settings", () => {
         },
       },
     });
-    assert.equal(settings.general.agentRail.rowDetail, "auto");
+    assert.equal(settings.general.agentRail.rowDetail, "balanced");
   });
 
   test("normalizes machine workspace sorting", () => {

@@ -49,12 +49,39 @@ const DETAIL_TONE_CLASSES: Record<AgentRailStatusInfo["tone"], string> = {
 };
 
 function ConversationStatusGlyph({
+  compact = false,
   selected,
   statusInfo,
 }: {
+  /** Compact rows keep the classic minimal glyphs: a spinner or a plain dot. */
+  compact?: boolean;
   selected: boolean;
   statusInfo: AgentRailStatusInfo;
 }) {
+  if (compact) {
+    if (statusInfo.active) {
+      return (
+        <LoaderCircle
+          className="size-[14px] shrink-0 animate-spin text-[var(--text-secondary)]"
+          strokeWidth={1.5}
+          aria-hidden
+        />
+      );
+    }
+    const dotColor =
+      statusInfo.kind === "permission" || statusInfo.kind === "question"
+        ? "bg-[var(--plan-accent)]"
+        : statusInfo.kind === "failed"
+          ? "bg-red-400"
+          : selected
+            ? "bg-[var(--text-primary)]"
+            : "bg-[var(--text-disabled)]";
+    return (
+      <span className="grid size-[14px] shrink-0 place-items-center" aria-hidden>
+        <span className={`size-[6px] rounded-full ${dotColor}`} />
+      </span>
+    );
+  }
   switch (statusInfo.kind) {
     case "permission":
       return (
@@ -127,7 +154,7 @@ function ConversationStatusGlyph({
 
 export function AgentConversationRow({
   conversation,
-  detail = "auto",
+  detail = "balanced",
   detailContext,
   editValue,
   editing = false,
@@ -152,7 +179,7 @@ export function AgentConversationRow({
   unreadCompletion = false,
 }: {
   conversation: AgentRailConversationSummary;
-  /** Row density; `auto` grows a detail line only when the row needs one. */
+  /** Row density; `balanced` grows a detail line only when the row needs one. */
   detail?: AgentRailRowDetailMode;
   /** Extra muted context (e.g. workspace name) appended to the detail line. */
   detailContext?: string;
@@ -245,7 +272,11 @@ export function AgentConversationRow({
       />
     )
   ) : (
-    <ConversationStatusGlyph statusInfo={statusInfo} selected={selected} />
+    <ConversationStatusGlyph
+      statusInfo={statusInfo}
+      selected={selected}
+      compact={effectiveDetail === "compact"}
+    />
   );
   const isOrchestrationMode =
     String(conversation.mode).trim().toLowerCase() === "orchestration";
