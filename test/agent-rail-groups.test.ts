@@ -223,6 +223,10 @@ describe("agent rail grouping", () => {
       grouped.map((group) => group.workspace.name),
       ["Needs attention", "Running", "Review", "Recent"]
     );
+    // Every bucket must carry its own identity; buckets inheriting the seed
+    // workspace's key used to dedupe down to a single rendered section.
+    const keys = grouped.map((group) => group.workspaceKey);
+    assert.equal(new Set(keys).size, grouped.length);
     // Attention bucket: permission > question > failed, cross-workspace.
     assert.deepEqual(
       grouped[0]?.conversations.map((item) => item.id),

@@ -61,6 +61,10 @@ export function groupAgentRailGroups(
     }
     map.set(key, {
       ...group,
+      // Buckets must carry their own identity: inheriting the seed group's
+      // workspaceKey makes every bucket from one workspace share an appearance
+      // key, and the rail then dedupes all but the first bucket away.
+      workspaceKey: key,
       workspace: {
         ...group.workspace,
         id: key,

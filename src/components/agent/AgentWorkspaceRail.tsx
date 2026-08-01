@@ -1651,7 +1651,9 @@ export function AgentWorkspaceRail() {
           id: c.id,
           title: c.title,
           updatedAt: c.updatedAt,
-          detail: group.workspace.name,
+          // Bucket groupings (priority/status/updated) rename group.workspace;
+          // search results should always show the real workspace.
+          detail: railWorkspaceNameById.get(c.workspaceId) ?? group.workspace.name,
           badge:
             c.status === "running"
               ? "running"
@@ -1665,7 +1667,9 @@ export function AgentWorkspaceRail() {
       if (seen.has(c.id)) continue;
       seen.add(c.id);
       const detail =
-        groups.find((g) => g.workspace.id === c.workspaceId)?.workspace.name ?? "Pinned";
+        railWorkspaceNameById.get(c.workspaceId) ??
+        groups.find((g) => g.workspace.id === c.workspaceId)?.workspace.name ??
+        "Pinned";
       items.push({
         id: c.id,
         title: c.title,
@@ -1680,7 +1684,7 @@ export function AgentWorkspaceRail() {
       });
     }
     return items.sort((a, b) => b.updatedAt - a.updatedAt);
-  }, [activeServer.id, groups, pinnedRailConversations]);
+  }, [activeServer.id, groups, pinnedRailConversations, railWorkspaceNameById]);
 
   const visibleConversationIds = useMemo(() => {
     const ids = new Set<string>();

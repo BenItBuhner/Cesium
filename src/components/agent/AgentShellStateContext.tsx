@@ -948,14 +948,25 @@ export function AgentShellStateProvider({
     ]
   );
 
+  // Workspace-shaped view of the same data, independent of the rail's visual
+  // grouping. Identity consumers (active workspace, composer drafts, switcher
+  // labels) must never see bucket pseudo-workspaces like "Needs attention".
+  const workspaceShapedGroups = useMemo(
+    () =>
+      settings.general.agentRail.groupBy === "workspace"
+        ? groupedByRailMode
+        : groupAgentRailGroups(visibleMachineGroups, "workspace"),
+    [groupedByRailMode, settings.general.agentRail.groupBy, visibleMachineGroups]
+  );
+
   const activeWorkspaceGroup = useMemo(
     () =>
-      orderedGroups.find(
+      workspaceShapedGroups.find(
         (group) =>
           group.workspace.id === activeWorkspaceId &&
           (!group.serverId || group.serverId === activeServer.id)
       ) ??
-      orderedGroups.find((group) =>
+      workspaceShapedGroups.find((group) =>
         group.conversations.some(
           (conversation) =>
             conversation.workspaceId === activeWorkspaceId &&
@@ -963,7 +974,7 @@ export function AgentShellStateProvider({
         )
       ) ??
       null,
-    [activeServer.id, activeWorkspaceId, orderedGroups]
+    [activeServer.id, activeWorkspaceId, workspaceShapedGroups]
   );
 
   const validActiveConversationIds = useMemo(
@@ -2010,7 +2021,7 @@ export function AgentShellStateProvider({
       });
     };
 
-    for (const group of orderedGroups) {
+    for (const group of workspaceShapedGroups) {
       if (group.serverId && group.serverId !== activeServer.id) {
         continue;
       }
@@ -2025,7 +2036,7 @@ export function AgentShellStateProvider({
     }
 
     for (const pinnedId of pinnedAgentConversationIds) {
-      for (const group of orderedGroups) {
+      for (const group of workspaceShapedGroups) {
         const conversation = group.conversations.find((c) => c.id === pinnedId);
         if (!conversation) {
           continue;
@@ -2043,7 +2054,7 @@ export function AgentShellStateProvider({
     }
 
     return items;
-  }, [activeServer.id, orderedGroups, pinnedAgentConversationIds]);
+  }, [activeServer.id, pinnedAgentConversationIds, workspaceShapedGroups]);
 
   const agentSwitcherItems = useMemo(() => {
     const mruIds = settings.general.agentConversationMruByServer[activeServer.id] ?? [];
