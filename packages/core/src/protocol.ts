@@ -558,6 +558,12 @@ export type AgentRailConversationSummary = Pick<
   mode: AgentConversationMode;
   experimental: boolean;
   hasPendingPermission: boolean;
+  /** Optional: older servers omit these richer status fields. */
+  hasPendingQuestion?: boolean;
+  /** Short human title of the pending permission request (e.g. "Run terminal command"). */
+  pendingPermissionTitle?: string | null;
+  /** First line of the last error, truncated for rail display. */
+  lastErrorSummary?: string | null;
   origin?: AgentConversationOrigin | null;
   serverId?: string;
   serverLabel?: string;

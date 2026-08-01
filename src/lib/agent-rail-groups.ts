@@ -3,11 +3,23 @@ import type {
   AgentRailConversationSummary,
 } from "@/lib/agent-types";
 import type { AgentRailGroupByMode } from "@/lib/global-settings";
+import {
+  AGENT_RAIL_PRIORITY_BUCKETS,
+  AGENT_RAIL_PRIORITY_BUCKET_LABELS,
+  compareAgentRailByStatusPriority,
+  getAgentRailPriorityBucket,
+} from "@/lib/agent-rail-status";
+
+export type AgentRailGroupContext = {
+  /** Conversations whose finished turn the user has not opened yet. */
+  unreadCompletionByConversationId?: Record<string, true>;
+};
 
 export function groupAgentRailGroups(
   groups: AgentConversationGroup[],
   mode: AgentRailGroupByMode,
-  now = Date.now()
+  now = Date.now(),
+  ctx: AgentRailGroupContext = {}
 ): AgentConversationGroup[] {
   if (mode === "workspace") {
     // Compound workspaceKey (serverId:workspaceId) prevents same-id workspaces
@@ -49,6 +61,10 @@ export function groupAgentRailGroups(
     }
     map.set(key, {
       ...group,
+      // Buckets must carry their own identity: inheriting the seed group's
+      // workspaceKey makes every bucket from one workspace share an appearance
+      // key, and the rail then dedupes all but the first bucket away.
+      workspaceKey: key,
       workspace: {
         ...group.workspace,
         id: key,
@@ -100,6 +116,39 @@ export function groupAgentRailGroups(
       continue;
     }
 
+    if (mode === "priority") {
+      // Flat urgency-first list: no workspace/folder hierarchy at all. Buckets
+      // are cross-workspace (but still per-server; conversation ids can
+      // collide across servers, so buckets must never merge machines).
+      const byBucket = new Map<string, AgentRailConversationSummary[]>();
+      for (const conversation of group.conversations) {
+        const bucket = getAgentRailPriorityBucket(conversation, {
+          unreadCompletion: Boolean(
+            ctx.unreadCompletionByConversationId?.[conversation.id]
+          ),
+        });
+        const list = byBucket.get(bucket) ?? [];
+        list.push(conversation);
+        byBucket.set(bucket, list);
+      }
+      for (const [bucket, conversations] of byBucket) {
+        addToGroup(
+          `priority:${serverPrefix}:${bucket}`,
+          AGENT_RAIL_PRIORITY_BUCKET_LABELS[
+            bucket as (typeof AGENT_RAIL_PRIORITY_BUCKETS)[number]
+          ],
+          {
+            ...group,
+            // Buckets always render in the main list, even when seeded from a
+            // standalone-chat workspace; the flat view has no Chats split.
+            workspace: { ...group.workspace, kind: "workspace" },
+          },
+          conversations
+        );
+      }
+      continue;
+    }
+
     if (mode === "status") {
       const byStatus = new Map<string, AgentRailConversationSummary[]>();
       for (const conversation of group.conversations) {
@@ -132,6 +181,28 @@ export function groupAgentRailGroups(
         addToGroup(`updated:${serverPrefix}:${bucket}`, label, group, conversations);
       }
     }
+  }
+
+  if (mode === "priority") {
+    const bucketRank = (group: AgentConversationGroup) => {
+      const bucket = group.workspace.id.split(":").at(-1) ?? "";
+      const index = AGENT_RAIL_PRIORITY_BUCKETS.indexOf(
+        bucket as (typeof AGENT_RAIL_PRIORITY_BUCKETS)[number]
+      );
+      return index < 0 ? AGENT_RAIL_PRIORITY_BUCKETS.length : index;
+    };
+    return [...map.values()]
+      .sort(
+        (a, b) =>
+          bucketRank(a) - bucketRank(b) ||
+          a.workspace.id.localeCompare(b.workspace.id)
+      )
+      .map((group) => ({
+        ...group,
+        conversations: [...group.conversations].sort((a, b) =>
+          compareAgentRailByStatusPriority(a, b, ctx)
+        ),
+      }));
   }
 
   return [...map.values()].map((group) => ({

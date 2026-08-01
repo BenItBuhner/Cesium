@@ -23,6 +23,9 @@ export type AgentConversationsAllSummary = {
   mode: AgentConversationRecord["config"]["mode"];
   experimental: boolean;
   hasPendingPermission: boolean;
+  hasPendingQuestion: boolean;
+  pendingPermissionTitle: string | null;
+  lastErrorSummary: string | null;
   origin?: AgentConversationRecord["origin"];
   repository?: AgentRailRepositoryInfo;
 };
@@ -101,6 +104,22 @@ function worktreeBaseRoot(root: string, repoRoot?: string): string | undefined {
   return repoRoot;
 }
 
+/** Rail rows show at most one short line of detail; keep payloads small. */
+const RAIL_DETAIL_MAX_LENGTH = 140;
+
+export function summarizeRailDetailText(text: string | null | undefined): string | null {
+  if (!text) {
+    return null;
+  }
+  const firstLine = text.trim().split(/\r?\n/, 1)[0]?.trim() ?? "";
+  if (!firstLine) {
+    return null;
+  }
+  return firstLine.length > RAIL_DETAIL_MAX_LENGTH
+    ? `${firstLine.slice(0, RAIL_DETAIL_MAX_LENGTH - 1)}…`
+    : firstLine;
+}
+
 function summarizeConversation(
   conversation: AgentConversationRecord,
   repository?: AgentRailRepositoryInfo
@@ -118,6 +137,9 @@ function summarizeConversation(
     mode: conversation.config.mode,
     experimental: conversation.experimental,
     hasPendingPermission: conversation.pendingPermission != null,
+    hasPendingQuestion: conversation.pendingQuestion != null,
+    pendingPermissionTitle: summarizeRailDetailText(conversation.pendingPermission?.title),
+    lastErrorSummary: summarizeRailDetailText(conversation.lastError),
     ...(conversation.origin ? { origin: conversation.origin } : {}),
     repository,
   };
