@@ -29,6 +29,7 @@ export class AgentStatusService {
   private events: AgentStoredEvent[] = [];
   private previousProjection: MobileAgentProjection | null = null;
   private manuallyClosed = false;
+  private connectionEnabled = false;
 
   constructor(private readonly options: AgentStatusServiceOptions) {}
 
@@ -46,17 +47,27 @@ export class AgentStatusService {
       this.conversation = null;
       this.previousProjection = null;
       this.reconnectAttempt = 0;
-      this.connect();
-    } else if (this.ws?.readyState === WebSocket.OPEN) {
+      this.close("idle");
+      if (this.connectionEnabled) {
+        this.connect();
+      }
+    } else if (this.connectionEnabled && this.ws?.readyState === WebSocket.OPEN) {
       this.subscribe();
     }
   }
 
   connect() {
-    if (!this.config?.workspaceId || !this.config.conversationId) return;
+    if (
+      !this.connectionEnabled ||
+      !this.config?.workspaceId ||
+      !this.config.conversationId ||
+      this.ws?.readyState === WebSocket.OPEN ||
+      this.ws?.readyState === WebSocket.CONNECTING
+    ) {
+      return;
+    }
     this.manuallyClosed = false;
     this.clearReconnectTimer();
-    this.ws?.close();
     this.options.onConnectionState?.(this.reconnectAttempt > 0 ? "reconnecting" : "connecting");
     const ws = new WebSocket(this.buildUrl(this.config));
     this.ws = ws;
@@ -73,12 +84,24 @@ export class AgentStatusService {
       this.options.onConnectionState?.("closed");
     };
     ws.onclose = () => {
+      if (this.ws !== ws) return;
+      this.ws = null;
       if (this.manuallyClosed) {
         this.options.onConnectionState?.("closed");
         return;
       }
       this.scheduleReconnect();
     };
+  }
+
+  setConnectionEnabled(enabled: boolean) {
+    if (this.connectionEnabled === enabled) return;
+    this.connectionEnabled = enabled;
+    if (enabled) {
+      this.connect();
+      return;
+    }
+    this.close("idle");
   }
 
   close(nextState: "idle" | "closed" = "closed") {
@@ -107,19 +130,19 @@ export class AgentStatusService {
       case "snapshot_head":
         if (message.snapshot.conversation.id === this.config.conversationId) {
           this.conversation = message.snapshot.conversation;
-          this.events = dedupeEvents([...this.events, ...message.snapshot.events]);
+          this.events = mergeEvents(this.events, message.snapshot.events);
           this.emitProjection();
         }
         return;
       case "event":
         if (message.conversationId === this.config.conversationId) {
-          this.events = dedupeEvents([...this.events, message.event]);
+          this.events = mergeEvents(this.events, [message.event]);
           this.emitProjection();
         }
         return;
       case "event_batch":
         if (message.conversationId === this.config.conversationId) {
-          this.events = dedupeEvents([...this.events, ...message.events]);
+          this.events = mergeEvents(this.events, message.events);
           this.emitProjection();
         }
         return;
@@ -163,6 +186,7 @@ export class AgentStatusService {
   }
 
   private scheduleReconnect() {
+    if (!this.connectionEnabled) return;
     this.clearReconnectTimer();
     this.reconnectAttempt += 1;
     this.options.onConnectionState?.("reconnecting");
@@ -192,9 +216,26 @@ export class AgentStatusService {
   }
 }
 
-function dedupeEvents(events: AgentStoredEvent[]) {
+export function mergeEvents(
+  existing: AgentStoredEvent[],
+  incoming: AgentStoredEvent[]
+): AgentStoredEvent[] {
+  if (incoming.length === 0) return existing;
+  const lastSeq = existing.at(-1)?.seq ?? 0;
+  if (
+    incoming.every(
+      (event, index) =>
+        event.seq > lastSeq &&
+        (index === 0 || event.seq > (incoming[index - 1]?.seq ?? lastSeq))
+    )
+  ) {
+    return [...existing, ...incoming];
+  }
   const bySeq = new Map<number, AgentStoredEvent>();
-  for (const event of events) {
+  for (const event of existing) {
+    bySeq.set(event.seq, event);
+  }
+  for (const event of incoming) {
     bySeq.set(event.seq, event);
   }
   return [...bySeq.values()].sort((a, b) => a.seq - b.seq);

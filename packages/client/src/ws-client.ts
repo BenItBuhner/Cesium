@@ -46,6 +46,31 @@ abstract class BaseReconnectSocket<TMessage> {
     state: new Set(),
   };
   private state: ConnectionState = "idle";
+  private mobilePaused = false;
+  private mobileLifecycleBound = false;
+  private readonly mobileSuspendedSockets = new WeakSet<WebSocket>();
+  private readonly onMobileLifecycle = (event: Event) => {
+    const detail = (event as CustomEvent<{ type?: string; state?: string }>).detail;
+    if (detail?.type !== "lifecycle") return;
+    if (detail.state === "active") {
+      if (!this.mobilePaused) return;
+      this.mobilePaused = false;
+      if (!this.manuallyClosed) {
+        this.connect();
+      }
+      return;
+    }
+    if (detail.state !== "background" && detail.state !== "inactive") return;
+    this.mobilePaused = true;
+    this.clearReconnectTimer();
+    const socket = this.ws;
+    this.ws = null;
+    if (socket) {
+      this.mobileSuspendedSockets.add(socket);
+    }
+    socket?.close();
+    this.setState("closed");
+  };
 
   constructor(protected readonly url: string | (() => string)) {}
 
@@ -55,7 +80,18 @@ abstract class BaseReconnectSocket<TMessage> {
 
   connect(): void {
     this.manuallyClosed = false;
+    this.bindMobileLifecycle();
     this.clearReconnectTimer();
+    if (this.mobilePaused) {
+      this.setState("closed");
+      return;
+    }
+    if (
+      this.ws?.readyState === WebSocket.OPEN ||
+      this.ws?.readyState === WebSocket.CONNECTING
+    ) {
+      return;
+    }
     this.setState(this.reconnectAttempt > 0 ? "reconnecting" : "connecting");
 
     const ws = new WebSocket(this.getResolvedUrl());
@@ -68,6 +104,8 @@ abstract class BaseReconnectSocket<TMessage> {
     this.clearReconnectTimer();
     this.ws?.close();
     this.ws = null;
+    this.unbindMobileLifecycle();
+    this.mobilePaused = false;
     this.setState("closed");
   }
 
@@ -83,7 +121,7 @@ abstract class BaseReconnectSocket<TMessage> {
   }
 
   protected scheduleReconnect(): void {
-    if (this.manuallyClosed) return;
+    if (this.manuallyClosed || this.mobilePaused) return;
     this.clearReconnectTimer();
     const delay = Math.min(30000, 1000 * 2 ** this.reconnectAttempt);
     this.reconnectAttempt += 1;
@@ -99,8 +137,14 @@ abstract class BaseReconnectSocket<TMessage> {
     });
 
     ws.addEventListener("close", () => {
+      if (this.ws === ws) {
+        this.ws = null;
+      }
+      if (this.mobileSuspendedSockets.delete(ws)) {
+        return;
+      }
       this.listeners.close.forEach((listener) => listener());
-      if (!this.manuallyClosed) {
+      if (!this.manuallyClosed && !this.mobilePaused) {
         this.scheduleReconnect();
         return;
       }
@@ -117,6 +161,25 @@ abstract class BaseReconnectSocket<TMessage> {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
     }
+  }
+
+  private bindMobileLifecycle(): void {
+    if (this.mobileLifecycleBound || typeof window === "undefined") return;
+    const mobileWindow = window as typeof window & {
+      ReactNativeWebView?: { postMessage(message: string): void };
+    };
+    if (!mobileWindow.ReactNativeWebView) return;
+    this.mobileLifecycleBound = true;
+    this.mobilePaused = document.documentElement.classList.contains(
+      "opencursor-mobile-idle"
+    );
+    window.addEventListener("cesium:mobile-bridge-message", this.onMobileLifecycle);
+  }
+
+  private unbindMobileLifecycle(): void {
+    if (!this.mobileLifecycleBound || typeof window === "undefined") return;
+    window.removeEventListener("cesium:mobile-bridge-message", this.onMobileLifecycle);
+    this.mobileLifecycleBound = false;
   }
 
   protected setState(state: ConnectionState): void {
