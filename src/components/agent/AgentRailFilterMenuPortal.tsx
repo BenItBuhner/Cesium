@@ -25,6 +25,7 @@ import {
 import type { WorkspaceSortMode } from "@/lib/global-settings";
 import type { AgentRailGroupByMode, AgentRailSectionId } from "@/lib/global-settings";
 import { AGENT_RAIL_SECTION_IDS } from "@/lib/global-settings";
+import type { AgentRailRowDetailMode } from "@/lib/agent-rail-status";
 const FILTER_TOGGLE_LABELS: Record<AgentRailFilterToggleKey, string> = {
   archived: "Archived",
   running: "Running",
@@ -50,6 +51,16 @@ const GROUP_BY_OPTIONS: Array<{ value: AgentRailGroupByMode; label: string }> = 
   { value: "status", label: "Status" },
 ];
 
+const ROW_DETAIL_OPTIONS: Array<{
+  value: AgentRailRowDetailMode;
+  label: string;
+  hint: string;
+}> = [
+  { value: "compact", label: "Compact", hint: "Titles only" },
+  { value: "auto", label: "Smart", hint: "Detail when active" },
+  { value: "expanded", label: "Expanded", hint: "Always show detail" },
+];
+
 type AgentRailFilterMenuPortalProps = {
   open: boolean;
   onClose: () => void;
@@ -69,6 +80,8 @@ type AgentRailFilterMenuPortalProps = {
   setMachineVisible: (serverId: string, visible: boolean) => void;
   showIcons: boolean;
   setShowIcons: (value: boolean) => void;
+  rowDetail: AgentRailRowDetailMode;
+  setRowDetail: (mode: AgentRailRowDetailMode) => void;
   sectionOrder: AgentRailSectionId[];
   hiddenSections: AgentRailSectionId[];
   setSectionOrder: (order: AgentRailSectionId[]) => void;
@@ -76,6 +89,7 @@ type AgentRailFilterMenuPortalProps = {
 };
 
 const SECTION_LABELS: Record<AgentRailSectionId, string> = {
+  attention: "Needs attention",
   pinned: "Pinned",
   chats: "Chats",
   workspaces: "Workspaces",
@@ -100,6 +114,8 @@ export function AgentRailFilterMenuPortal({
   setMachineVisible,
   showIcons,
   setShowIcons,
+  rowDetail,
+  setRowDetail,
   sectionOrder,
   hiddenSections,
   setSectionOrder,
@@ -258,6 +274,25 @@ export function AgentRailFilterMenuPortal({
       >
         Reset custom order
       </button>
+      <div className={popoverMenuSeparatorClass} />
+      <div className={popoverMenuSectionLabelClass}>Row detail</div>
+      <div className="flex flex-col" onPointerDown={(e) => e.stopPropagation()}>
+        {ROW_DETAIL_OPTIONS.map((option) => (
+          <label key={option.value} className={popoverMenuFormRowClass}>
+            <input
+              type="radio"
+              name="agent-rail-row-detail"
+              checked={rowDetail === option.value}
+              onChange={() => setRowDetail(option.value)}
+              className="size-[14px] shrink-0 border border-[var(--border-subtle)] accent-[var(--accent)]"
+            />
+            <span className="min-w-0 flex-1">{option.label}</span>
+            <span className="shrink-0 text-[10px] text-[var(--text-disabled)]">
+              {option.hint}
+            </span>
+          </label>
+        ))}
+      </div>
       <div className={popoverMenuSeparatorClass} />
       <div className={popoverMenuSectionLabelClass}>Display</div>
       <div className="flex flex-col" onPointerDown={(e) => e.stopPropagation()}>

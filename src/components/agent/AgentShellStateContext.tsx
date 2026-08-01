@@ -51,6 +51,7 @@ import {
   type AgentRailFilterToggleKey,
   type AgentRailFilterToggleState,
 } from "@/lib/agent-rail";
+import { agentRailConversationNeedsAttention } from "@/lib/agent-rail-status";
 import {
   getGlobalPinnedAgentConversationIdsSnapshot,
   migrateGlobalPinnedAgentConversationIdsIfNeeded,
@@ -245,6 +246,10 @@ type AgentShellStateContextValue = {
   railFilterActive: boolean;
   setRailFilterToggle: (key: AgentRailFilterToggleKey, value: boolean) => void;
   clearRailFilters: () => void;
+  /** Conversations whose finished turn the user has not opened yet. */
+  unreadCompletionByConversationId: Record<string, true> | undefined;
+  /** Real workspace names keyed by workspace id (survives rail regrouping). */
+  railWorkspaceNameById: Map<string, string>;
   isMobile: boolean;
 };
 
@@ -1945,6 +1950,19 @@ export function AgentShellStateProvider({
     [filteredGroups, pinnedConversationIdSet]
   );
 
+  // Derived from the raw (pre-regrouping) groups so the attention section can
+  // label rows with real workspace names even when the rail is grouped by
+  // status/updated buckets.
+  const railWorkspaceNameById = useMemo(() => {
+    const names = new Map<string, string>();
+    for (const group of groups) {
+      if (!names.has(group.workspace.id)) {
+        names.set(group.workspace.id, group.workspace.name);
+      }
+    }
+    return names;
+  }, [groups]);
+
   const agentSwitcherCandidates = useMemo(() => {
     const items: AgentSwitcherCandidate[] = [];
     const seen = new Set<string>();
@@ -1968,7 +1986,7 @@ export function AgentShellStateProvider({
         badge:
           summary.status === "running"
             ? "running"
-            : summary.hasPendingPermission
+            : agentRailConversationNeedsAttention(summary)
               ? "needs attention"
               : undefined,
       });
@@ -2109,6 +2127,9 @@ export function AgentShellStateProvider({
       railFilterActive,
       setRailFilterToggle,
       clearRailFilters,
+      unreadCompletionByConversationId:
+        workspaceSession.chat.unreadChatCompletionByConversationId,
+      railWorkspaceNameById,
       isMobile,
     }),
     [
@@ -2159,6 +2180,8 @@ export function AgentShellStateProvider({
       unpinConversation,
       updateSidePaneEditorSession,
       sharedLeftRailCollapsed,
+      workspaceSession.chat.unreadChatCompletionByConversationId,
+      railWorkspaceNameById,
     ]
   );
 

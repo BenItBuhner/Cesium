@@ -32,13 +32,12 @@ describe("global settings", () => {
     const settings = createDefaultGlobalSettings();
     assert.deepEqual(settings.general.agentRail, {
       groupBy: "workspace",
-      sectionOrder: ["pinned", "chats", "workspaces"],
-      hiddenSections: [],
       visibleStatusFilters: [],
       visibleServerIds: [],
       hiddenServerIds: [],
       showIcons: true,
-      sectionOrder: ["pinned", "chats", "workspaces"],
+      rowDetail: "auto",
+      sectionOrder: ["attention", "pinned", "chats", "workspaces"],
       hiddenSections: [],
     });
   });
@@ -97,15 +96,73 @@ describe("global settings", () => {
 
     assert.deepEqual(settings.general.agentRail, {
       groupBy: "repository",
-      sectionOrder: ["pinned", "chats", "workspaces"],
-      hiddenSections: [],
       visibleStatusFilters: ["running"],
       visibleServerIds: [],
       hiddenServerIds: ["server-b"],
       showIcons: true,
-      sectionOrder: ["pinned", "chats", "workspaces"],
+      rowDetail: "auto",
+      sectionOrder: ["attention", "pinned", "chats", "workspaces"],
       hiddenSections: [],
     });
+  });
+
+  test("migrates persisted section order missing the attention section to the top", () => {
+    const base = createDefaultGlobalSettings();
+    const settings = normalizeLoadedGlobalSettings({
+      ...base,
+      general: {
+        ...base.general,
+        agentRail: {
+          ...base.general.agentRail,
+          sectionOrder: ["chats", "pinned", "workspaces"],
+        },
+      },
+    });
+    assert.deepEqual(settings.general.agentRail.sectionOrder, [
+      "attention",
+      "chats",
+      "pinned",
+      "workspaces",
+    ]);
+  });
+
+  test("preserves custom attention section placement and row detail mode", () => {
+    const base = createDefaultGlobalSettings();
+    const settings = normalizeLoadedGlobalSettings({
+      ...base,
+      general: {
+        ...base.general,
+        agentRail: {
+          ...base.general.agentRail,
+          rowDetail: "expanded",
+          sectionOrder: ["pinned", "attention", "chats", "workspaces"],
+          hiddenSections: ["attention"],
+        },
+      },
+    });
+    assert.equal(settings.general.agentRail.rowDetail, "expanded");
+    assert.deepEqual(settings.general.agentRail.sectionOrder, [
+      "pinned",
+      "attention",
+      "chats",
+      "workspaces",
+    ]);
+    assert.deepEqual(settings.general.agentRail.hiddenSections, ["attention"]);
+  });
+
+  test("falls back to auto row detail for unknown persisted values", () => {
+    const base = createDefaultGlobalSettings();
+    const settings = normalizeLoadedGlobalSettings({
+      ...base,
+      general: {
+        ...base.general,
+        agentRail: {
+          ...base.general.agentRail,
+          rowDetail: "gigantic",
+        },
+      },
+    });
+    assert.equal(settings.general.agentRail.rowDetail, "auto");
   });
 
   test("normalizes machine workspace sorting", () => {

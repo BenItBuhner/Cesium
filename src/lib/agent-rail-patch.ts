@@ -5,6 +5,22 @@ import type {
 } from "@/lib/agent-types";
 import { isRenderableAgentRailConversation } from "@/lib/agent-rail";
 
+/** Rail rows show at most one short line of detail; mirror the server-side cap. */
+const RAIL_DETAIL_MAX_LENGTH = 140;
+
+function summarizeRailDetailText(text: string | null | undefined): string | null {
+  if (!text) {
+    return null;
+  }
+  const firstLine = text.trim().split(/\r?\n/, 1)[0]?.trim() ?? "";
+  if (!firstLine) {
+    return null;
+  }
+  return firstLine.length > RAIL_DETAIL_MAX_LENGTH
+    ? `${firstLine.slice(0, RAIL_DETAIL_MAX_LENGTH - 1)}…`
+    : firstLine;
+}
+
 export function agentRecordToRailSummary(
   c: AgentConversationRecord
 ): AgentRailConversationSummary {
@@ -21,6 +37,9 @@ export function agentRecordToRailSummary(
     mode: c.config.mode,
     experimental: c.experimental,
     hasPendingPermission: c.pendingPermission != null,
+    hasPendingQuestion: c.pendingQuestion != null,
+    pendingPermissionTitle: summarizeRailDetailText(c.pendingPermission?.title),
+    lastErrorSummary: summarizeRailDetailText(c.lastError),
     ...(c.origin ? { origin: c.origin } : {}),
   };
 }
@@ -77,6 +96,9 @@ function mergeRailSummaryByRecency(
       existing.mode !== incoming.mode ||
       existing.experimental !== incoming.experimental ||
       existing.hasPendingPermission !== incoming.hasPendingPermission ||
+      (existing.hasPendingQuestion ?? false) !== (incoming.hasPendingQuestion ?? false) ||
+      (existing.pendingPermissionTitle ?? null) !== (incoming.pendingPermissionTitle ?? null) ||
+      (existing.lastErrorSummary ?? null) !== (incoming.lastErrorSummary ?? null) ||
       originMergeKey(existing.origin) !== originMergeKey(incoming.origin);
     if (metaChanged) {
       return {
