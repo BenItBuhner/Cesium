@@ -16,6 +16,7 @@ import {
   parseMobileBridgeMessage,
   postMobileBridgeMessage,
   type MobileNativeToWebMessage,
+  type MobileWebToNativeMessage,
 } from "@/lib/mobile-bridge";
 import {
   deriveMobileAgentProjection,
@@ -122,14 +123,18 @@ export function MobileBridgeSync() {
     });
   }, [activeWorkspaceId, focusedConversationId, projection?.lastEventSeq]);
 
-  useEffect(() => {
-    const serverBaseUrl = getConfiguredServerBaseUrl();
-    const watchProjection = projection
-      ? toWatchAgentProjection(projection, {
-          source: "phone_companion",
-        })
-      : null;
-    postMobileBridgeMessage({
+  const serverBaseUrl = getConfiguredServerBaseUrl();
+  const watchProjection = useMemo(
+    () =>
+      projection
+        ? toWatchAgentProjection(projection, {
+            source: "phone_companion",
+          })
+        : null,
+    [projection]
+  );
+  const wearSyncMessage = useMemo<MobileWebToNativeMessage>(
+    () => ({
       type: "wearSyncEnvelope",
       envelopeJson: JSON.stringify(
         toWatchSyncEnvelope({
@@ -153,19 +158,31 @@ export function MobileBridgeSync() {
         workspaceId: activeWorkspaceId,
         conversationId: focusedConversationId,
       },
-    });
-  }, [activeWorkspaceId, focusedConversationId, projection]);
+    }),
+    [
+      activeWorkspaceId,
+      focusedConversationId,
+      projection,
+      serverBaseUrl,
+      watchProjection,
+    ]
+  );
+  useThrottledMobileBridgeMessage(wearSyncMessage, 1500);
+
+  const agentProjectionMessage = useMemo<MobileWebToNativeMessage | null>(
+    () =>
+      projection
+        ? {
+            type: "agentProjection",
+            projection,
+          }
+        : null,
+    [projection]
+  );
+  useThrottledMobileBridgeMessage(agentProjectionMessage, 500);
 
   useEffect(() => {
-    if (!projection) {
-      previousProjectionRef.current = null;
-      return;
-    }
     previousProjectionRef.current = projection;
-    postMobileBridgeMessage({
-      type: "agentProjection",
-      projection,
-    });
   }, [projection]);
 
   useEffect(() => {
@@ -257,4 +274,48 @@ export function MobileBridgeSync() {
   ]);
 
   return null;
+}
+
+function useThrottledMobileBridgeMessage(
+  message: MobileWebToNativeMessage | null,
+  minimumIntervalMs: number
+) {
+  const pendingRef = useRef<MobileWebToNativeMessage | null>(null);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastSentAtRef = useRef(0);
+
+  useEffect(() => {
+    if (!message) return;
+    pendingRef.current = message;
+    if (timerRef.current) return;
+
+    const flush = () => {
+      timerRef.current = null;
+      const pending = pendingRef.current;
+      pendingRef.current = null;
+      if (!pending) return;
+      postMobileBridgeMessage(pending);
+      lastSentAtRef.current = Date.now();
+    };
+    const remaining = Math.max(
+      0,
+      minimumIntervalMs - (Date.now() - lastSentAtRef.current)
+    );
+    if (remaining === 0) {
+      flush();
+      return;
+    }
+    timerRef.current = setTimeout(flush, remaining);
+  }, [message, minimumIntervalMs]);
+
+  useEffect(
+    () => () => {
+      if (timerRef.current) {
+        clearTimeout(timerRef.current);
+        timerRef.current = null;
+      }
+      pendingRef.current = null;
+    },
+    []
+  );
 }

@@ -139,7 +139,7 @@ class CesiumPhoneControlService : Service() {
     if (stopped) return
     val deviceId = PhoneControlPreferences.deviceId(this)
     val path = "/api/phone-control/devices/${UriCodec.segment(deviceId)}/commands" +
-      "?after=$cursor&waitMs=20000"
+      "?after=$cursor&waitMs=25000"
     execute(request(config, path, "GET", null)) { call, response ->
       if (response?.isSuccessful != true) {
         if (!call.isCanceled()) {
@@ -153,12 +153,12 @@ class CesiumPhoneControlService : Service() {
         // A long-poll that returns an empty/partial body is a normal transient on
         // a slow link; just re-poll quietly instead of alarming the user.
         onHealthy(config.serverUrl)
-        handler.postDelayed({ registerAndPoll() }, 400)
+        handler.postDelayed({ poll(config) }, 400)
         return@execute
       }
       onHealthy(config.serverUrl)
       processCommands(config, json.optJSONArray("commands") ?: JSONArray(), 0) {
-        handler.postDelayed({ registerAndPoll() }, 250)
+        handler.postDelayed({ poll(config) }, 250)
       }
     }
   }
