@@ -51,7 +51,7 @@ export type CesiumCompactionSettings = {
   modelId: string | null;
 };
 
-export const CESIUM_COMPACTION_DEFAULT_INTENSITY = 0.35;
+export const CESIUM_COMPACTION_DEFAULT_INTENSITY = 0.2;
 export const CESIUM_COMPACTION_ENGINE_ID = "ledger-v1";
 
 export type CesiumCompactionBudgets = {
@@ -110,11 +110,6 @@ export function resolveCompactionBudgets(input: {
   const window = Math.max(4_000, Math.floor(input.contextWindowTokens));
   const intensity = clamp(input.intensity, 0, 1);
   const triggerRatio = clamp(input.thresholdRatio, 0.2, 0.98);
-  // High retention (intensity 0) leaves the window ~70% full after compaction;
-  // aggressive (intensity 1) compacts down to ~15%.
-  const targetRatio = Math.min(lerp(0.7, 0.15, intensity), triggerRatio - 0.08);
-  const warnRatio = Math.max(0.1, triggerRatio - 0.12);
-  const targetTokens = Math.floor(window * targetRatio);
   // Overflow pressure: 0 until content exceeds ~1.5x the window, saturating at
   // ~7.5x (the regime where every raw token retained is evicted almost
   // immediately anyway).
@@ -123,6 +118,20 @@ export function resolveCompactionBudgets(input: {
       ? input.totalContentTokens / window
       : 0;
   const pressure = clamp((overflow - 1.5) / 6, 0, 1);
+  // High retention (intensity 0) leaves the window ~70% full after compaction;
+  // aggressive (intensity 1) compacts down to ~15%. Under overflow pressure the
+  // retention target rises toward the trigger — when content vastly exceeds the
+  // window, every retained token is precious and the cost of compacting more
+  // often is worth paying — scaled by (1 - intensity) so aggressive users keep
+  // their cost/latency preference.
+  const baseTargetRatio = Math.min(lerp(0.7, 0.15, intensity), triggerRatio - 0.08);
+  const targetRatio = lerp(
+    baseTargetRatio,
+    triggerRatio - 0.06,
+    pressure * (1 - intensity)
+  );
+  const warnRatio = Math.max(0.1, triggerRatio - 0.12);
+  const targetTokens = Math.floor(window * targetRatio);
   // The ledger is the durable memory — it earns roughly half of the retention
   // target, MORE as intensity rises (aggressive compaction sacrifices the
   // verbatim tail before it sacrifices memory), and up to ~90% under extreme
