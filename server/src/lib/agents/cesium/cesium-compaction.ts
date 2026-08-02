@@ -154,8 +154,10 @@ export function resolveCompactionBudgets(input: {
     tailBudgetTokens,
     ledgerBudgetTokens,
     userQuoteCapChars: Math.floor(lerp(2_000, 320, intensity)),
+    // Scales with the ledger allocation (not the window) so tiny windows do not
+    // spend a third of their memory budget on quote fragments.
     userArchiveBudgetTokens: Math.floor(
-      clamp(window * lerp(0.06, 0.015, intensity), 600, 16_000)
+      clamp(ledgerBudgetTokens * 0.15, 200, 16_000)
     ),
     pinBudgetChars: Math.floor(lerp(8_000, 2_500, intensity)),
   };
