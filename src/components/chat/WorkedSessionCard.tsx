@@ -668,13 +668,6 @@ function ToolEditPreviewBlock({
   );
 }
 
-function prefersScrollInstant(): boolean {
-  if (typeof window === "undefined") {
-    return true;
-  }
-  return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-}
-
 export function WorkedSessionCard({
   label,
   entries,
@@ -871,8 +864,12 @@ export function WorkedSessionCard({
     if (!collapsibleOpen || !el || !stickToBottomRef.current) {
       return;
     }
-    const behavior = prefersScrollInstant() ? ("auto" as const) : ("smooth" as const);
-    el.scrollTo({ top: el.scrollHeight, behavior });
+    // Instant + idempotent: restarting a smooth scroll on every streamed tool
+    // update keeps an animation permanently in flight and reads as jitter.
+    const target = el.scrollHeight - el.clientHeight;
+    if (el.scrollTop < target - 0.5) {
+      el.scrollTo({ top: el.scrollHeight, behavior: "auto" });
+    }
   }, [collapsibleOpen]);
 
   useLayoutEffect(() => {

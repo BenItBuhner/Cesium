@@ -25,6 +25,8 @@ import { ChatComposer } from "@/components/chat/ChatComposer";
 import { VerticalFadedScroll } from "@/components/chat/VerticalFadedScroll";
 import { useAgentConversations } from "@/components/chat/AgentConversationsContext";
 import {
+  AGENT_STANDALONE_COMPOSER_DRAFT_ID,
+  agentWorkspaceComposerDraftId,
   useOpenInEditor,
   useRegisterDesignCaptureComposer,
 } from "@/components/editor/OpenInEditorContext";
@@ -234,8 +236,8 @@ export function AgentNewChatLanding() {
   const workspaceRailAppearances = settings.general.workspaceRailAppearances;
 
   const composerDraftId = noWorkspaceDraft
-    ? "agent-draft:standalone"
-    : `agent-draft:${activeWorkspaceGroup?.workspace.id ?? "workspace"}`;
+    ? AGENT_STANDALONE_COMPOSER_DRAFT_ID
+    : agentWorkspaceComposerDraftId(activeWorkspaceGroup?.workspace.id);
   const composerDraftTitle = "Agent prompt";
   useRegisterDesignCaptureComposer(composerDraftId, 9);
   const composerDraftText = composerDrafts[composerDraftId]?.content ?? "";
@@ -869,9 +871,11 @@ export function AgentNewChatLanding() {
                 shellMxClass=""
                 draftAttachments={composerDraftAttachments}
                 onDraftAttachmentsChange={(next) =>
+                  // Do not pass `content` here — submit clears text then
+                  // immediately clears attachments; a stale `content`
+                  // closure would resurrect the prompt in the composer.
                   upsertComposerDraft(composerDraftId, {
                     title: composerDraftTitle,
-                    content: composerDraftText,
                     attachments: next,
                   })
                 }
@@ -879,7 +883,6 @@ export function AgentNewChatLanding() {
                 onDraftCapturesChange={(next) =>
                   upsertComposerDraft(composerDraftId, {
                     title: composerDraftTitle,
-                    content: composerDraftText,
                     captures: next,
                   })
                 }
@@ -887,7 +890,6 @@ export function AgentNewChatLanding() {
                 onDraftTextReferencesChange={(next) =>
                   upsertComposerDraft(composerDraftId, {
                     title: composerDraftTitle,
-                    content: composerDraftText,
                     textReferences: next,
                   })
                 }

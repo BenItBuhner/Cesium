@@ -21,6 +21,11 @@ type TerminalSession = {
   exitCode: number | null;
   scrollbackChunks: Buffer[];
   scrollbackSize: number;
+  cols: number;
+  rows: number;
+  pendingOutputChunks: Buffer[];
+  pendingOutputSize: number;
+  outputFlushTimer: ReturnType<typeof setTimeout> | null;
 };
 
 const encoder = new TextEncoder();
@@ -28,6 +33,9 @@ const decoder = new TextDecoder();
 const terminalSessions = new Map<string, TerminalSession>();
 const terminalWebSocketServer = new WebSocketServer({ noServer: true });
 const TERMINAL_SCROLLBACK_LIMIT = 50 * 1024;
+const TERMINAL_OUTPUT_FLUSH_MS = 8;
+const TERMINAL_OUTPUT_BATCH_BYTES = 16 * 1024;
+const TERMINAL_CLIENT_BUFFER_LIMIT = 1024 * 1024;
 
 function getDefaultShell(): string {
   if (process.platform === "win32") {
@@ -177,6 +185,44 @@ function appendScrollback(session: TerminalSession, chunk: Buffer): void {
   }
 }
 
+function flushSessionOutput(session: TerminalSession): void {
+  if (session.outputFlushTimer) {
+    clearTimeout(session.outputFlushTimer);
+    session.outputFlushTimer = null;
+  }
+  if (session.pendingOutputSize === 0) return;
+  const chunk =
+    session.pendingOutputChunks.length === 1
+      ? session.pendingOutputChunks[0]!
+      : Buffer.concat(session.pendingOutputChunks, session.pendingOutputSize);
+  session.pendingOutputChunks = [];
+  session.pendingOutputSize = 0;
+  for (const client of session.attachedClients) {
+    if (!client.isOpen) continue;
+    if ((client.bufferedAmount ?? 0) > TERMINAL_CLIENT_BUFFER_LIMIT) {
+      client.close(1013, "Terminal client is not consuming output");
+      continue;
+    }
+    client.send(chunk, { binary: true });
+  }
+}
+
+function queueSessionOutput(session: TerminalSession, chunk: Buffer): void {
+  if (session.attachedClients.size === 0) return;
+  session.pendingOutputChunks.push(chunk);
+  session.pendingOutputSize += chunk.length;
+  if (session.pendingOutputSize >= TERMINAL_OUTPUT_BATCH_BYTES) {
+    flushSessionOutput(session);
+    return;
+  }
+  if (session.outputFlushTimer) return;
+  session.outputFlushTimer = setTimeout(
+    () => flushSessionOutput(session),
+    TERMINAL_OUTPUT_FLUSH_MS
+  );
+  session.outputFlushTimer.unref?.();
+}
+
 function spawnTerminalSession(
   workspaceId: string,
   cwd: string,
@@ -206,19 +252,21 @@ function spawnTerminalSession(
     exitCode: null,
     scrollbackChunks: [],
     scrollbackSize: 0,
+    cols: 80,
+    rows: 24,
+    pendingOutputChunks: [],
+    pendingOutputSize: 0,
+    outputFlushTimer: null,
   };
 
   ptyProcess.onData((data) => {
     const chunk = Buffer.from(data, "utf8");
     appendScrollback(session, chunk);
-    for (const client of session.attachedClients) {
-      if (client.isOpen) {
-        client.send(chunk, { binary: true });
-      }
-    }
+    queueSessionOutput(session, chunk);
   });
 
   ptyProcess.onExit(({ exitCode }) => {
+    flushSessionOutput(session);
     session.exited = true;
     session.exitCode = exitCode;
     sendSessionEvent(session, { type: "exit", code: exitCode });
@@ -260,12 +308,21 @@ export function listTerminalSessions(): Array<{
 export function killTerminalSession(id: string): boolean {
   const session = terminalSessions.get(id);
   if (!session) return false;
+  if (session.outputFlushTimer) {
+    clearTimeout(session.outputFlushTimer);
+    session.outputFlushTimer = null;
+  }
+  session.pendingOutputChunks = [];
+  session.pendingOutputSize = 0;
   session.pty.kill();
   terminalSessions.delete(id);
   return true;
 }
 
 function attachTerminalClient(session: TerminalSession, ws: RuntimeSocket): void {
+  // Avoid replaying bytes once from scrollback and again from a pending batch
+  // when a client happens to attach during the coalescing window.
+  flushSessionOutput(session);
   session.attachedClients.add(ws);
 
   ws.send(
@@ -298,7 +355,17 @@ function attachTerminalClient(session: TerminalSession, ws: RuntimeSocket): void
         | { type: "clear" };
 
       if (message.type === "resize") {
-        session.pty.resize(message.cols, message.rows);
+        const cols = Math.max(2, Math.min(1000, Math.floor(message.cols)));
+        const rows = Math.max(1, Math.min(1000, Math.floor(message.rows)));
+        if (
+          Number.isFinite(cols) &&
+          Number.isFinite(rows) &&
+          (cols !== session.cols || rows !== session.rows)
+        ) {
+          session.cols = cols;
+          session.rows = rows;
+          session.pty.resize(cols, rows);
+        }
         return;
       }
 

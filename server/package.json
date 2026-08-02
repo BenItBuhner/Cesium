@@ -60,6 +60,7 @@
     "ws": "^8.18.3"
   },
   "optionalDependencies": {
+    "kokoro-js": "^1.2.1",
     "node-pty": "^1.0.0"
   },
   "devDependencies": {

@@ -32,6 +32,7 @@
     "prod": "npm run build && npm run build --prefix server && npm run start:all",
     "lint": "eslint",
     "test": "node --import tsx --test ./test/*.test.ts",
+    "voice:assets": "node ./scripts/setup-voice-assets.mjs",
     "test:server-installer": "bash ./test/cesium-server-tunnel.test.sh",
     "test:mcp": "npm run build --workspace @cesium/core && npm run test:mcp --workspace cesium-server",
     "test:browser:e2e": "tsx --test ./test/browser-engine.e2e.ts"
@@ -47,6 +48,7 @@
     "lucide-react": "^0.577.0",
     "monaco-editor": "^0.55.1",
     "next": "16.1.7",
+    "onnxruntime-web": "^1.23.0",
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "react-resizable-panels": "^4.7.3"

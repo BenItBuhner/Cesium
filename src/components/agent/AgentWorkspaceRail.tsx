@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  BellRing,
   ChevronDown,
   ChevronRight,
   CircleUserRound,
@@ -46,6 +47,10 @@ import {
   AGENT_RAIL_FILTER_TOGGLE_KEYS,
   type AgentRailFilterToggleKey,
 } from "@/lib/agent-rail";
+import {
+  agentRailConversationNeedsAttention,
+  compareAgentRailByStatusPriority,
+} from "@/lib/agent-rail-status";
 import { AGENT_RAIL_OPEN_SEARCH_EVENT } from "@/components/agent/agent-rail-events";
 import { AgentRailFilterMenuPortal } from "@/components/agent/AgentRailFilterMenuPortal";
 import { useShellView } from "@/components/layout/ShellViewContext";
@@ -108,6 +113,7 @@ import {
 } from "@/lib/chat-folders";
 
 const PINNED_SECTION_WORKSPACE_ID = "__agentPinned__";
+const ATTENTION_SECTION_WORKSPACE_ID = "__agentAttention__";
 const CHATS_SECTION_WORKSPACE_ID = STANDALONE_CHATS_FOLDER_SCOPE;
 const AGENT_RAIL_CONVERSATION_DRAG_TYPE = "application/x-opencursor-agent-conversation";
 const AGENT_RAIL_FOLDER_DRAG_TYPE = "application/x-opencursor-agent-chat-folder";
@@ -509,6 +515,8 @@ export function AgentWorkspaceRail() {
     railFilterActive,
     setRailFilterToggle,
     clearRailFilters,
+    unreadCompletionByConversationId,
+    railWorkspaceNameById,
     isMobile,
   } = useAgentShellState();
   const {
@@ -526,6 +534,18 @@ export function AgentWorkspaceRail() {
   const workspaceSortMode = settings.general.workspaceSortMode;
   const workspaceCustomOrderIds = settings.general.workspaceCustomOrderIds;
   const agentRailSettings = settings.general.agentRail;
+  const railRowDetail = agentRailSettings.rowDetail ?? "balanced";
+  // Reference clock for relative times on row detail lines ("5m ago").
+  const [railNow, setRailNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setRailNow(Date.now()), 30_000);
+    return () => clearInterval(timer);
+  }, []);
+  const isConversationUnread = useCallback(
+    (conversation: AgentRailConversationSummary) =>
+      Boolean(unreadCompletionByConversationId?.[conversation.id]),
+    [unreadCompletionByConversationId]
+  );
   const padRailForWindowChrome = experimentalIpadWindowedTabInset && !isMobile;
   /** Only the top control row needs iPadOS window-chrome inset; list + footer stay full-width in the rail. */
   const railTopBarPadClass = `${padRailForWindowChrome
@@ -760,10 +780,44 @@ export function AgentWorkspaceRail() {
   );
 
   const railSectionOrder = useMemo(() => {
-    const order = agentRailSettings.sectionOrder ?? ["pinned", "chats", "workspaces"];
+    const order =
+      agentRailSettings.sectionOrder ?? ["attention", "pinned", "chats", "workspaces"];
     const hidden = new Set(agentRailSettings.hiddenSections ?? []);
+    // Priority grouping IS the attention surface and folds standalone chats
+    // into its flat buckets; the extra sections would duplicate rows.
+    if (agentRailSettings.groupBy === "priority") {
+      hidden.add("attention");
+      hidden.add("chats");
+    }
     return order.filter((id) => !hidden.has(id));
-  }, [agentRailSettings.hiddenSections, agentRailSettings.sectionOrder]);
+  }, [
+    agentRailSettings.groupBy,
+    agentRailSettings.hiddenSections,
+    agentRailSettings.sectionOrder,
+  ]);
+
+  // Cross-workspace priority inbox: conversations blocked on the user (approval,
+  // question) or failed, ranked by urgency. Rows also stay in their home
+  // sections; this is a live surfacing layer, not a move.
+  const attentionRailConversations = useMemo(() => {
+    if (!railSectionOrder.includes("attention")) {
+      return [];
+    }
+    const byKey = new Map<string, AgentRailConversationSummary>();
+    for (const conversation of pinnedRailConversations) {
+      if (agentRailConversationNeedsAttention(conversation)) {
+        byKey.set(getRailConversationKey(conversation), conversation);
+      }
+    }
+    for (const group of groups) {
+      for (const conversation of group.conversations) {
+        if (agentRailConversationNeedsAttention(conversation)) {
+          byKey.set(getRailConversationKey(conversation), conversation);
+        }
+      }
+    }
+    return [...byKey.values()].sort((a, b) => compareAgentRailByStatusPriority(a, b));
+  }, [groups, pinnedRailConversations, railSectionOrder]);
 
   const handleNewStandaloneChat = useCallback(() => {
     startStandaloneChat();
@@ -1597,8 +1651,15 @@ export function AgentWorkspaceRail() {
           id: c.id,
           title: c.title,
           updatedAt: c.updatedAt,
-          detail: group.workspace.name,
-          badge: c.status === "running" ? "running" : c.hasPendingPermission ? "needs attention" : undefined,
+          // Bucket groupings (priority/status/updated) rename group.workspace;
+          // search results should always show the real workspace.
+          detail: railWorkspaceNameById.get(c.workspaceId) ?? group.workspace.name,
+          badge:
+            c.status === "running"
+              ? "running"
+              : agentRailConversationNeedsAttention(c)
+                ? "needs attention"
+                : undefined,
         });
       }
     }
@@ -1606,17 +1667,24 @@ export function AgentWorkspaceRail() {
       if (seen.has(c.id)) continue;
       seen.add(c.id);
       const detail =
-        groups.find((g) => g.workspace.id === c.workspaceId)?.workspace.name ?? "Pinned";
+        railWorkspaceNameById.get(c.workspaceId) ??
+        groups.find((g) => g.workspace.id === c.workspaceId)?.workspace.name ??
+        "Pinned";
       items.push({
         id: c.id,
         title: c.title,
         updatedAt: c.updatedAt,
         detail,
-        badge: c.status === "running" ? "running" : c.hasPendingPermission ? "needs attention" : undefined,
+        badge:
+          c.status === "running"
+            ? "running"
+            : agentRailConversationNeedsAttention(c)
+              ? "needs attention"
+              : undefined,
       });
     }
     return items.sort((a, b) => b.updatedAt - a.updatedAt);
-  }, [activeServer.id, groups, pinnedRailConversations]);
+  }, [activeServer.id, groups, pinnedRailConversations, railWorkspaceNameById]);
 
   const visibleConversationIds = useMemo(() => {
     const ids = new Set<string>();
@@ -2273,6 +2341,96 @@ export function AgentWorkspaceRail() {
     [buildFolderMenuItems, openAt]
   );
 
+  const attentionSection: ReactNode = useMemo(() => {
+    // Hidden while bulk-selecting: rows keep living in their home sections and
+    // duplicated rows would make range selection ambiguous.
+    if (bulkSelectMode || attentionRailConversations.length === 0) {
+      return null;
+    }
+    const isAttentionHeaderCollapsed = collapsedWorkspaceIds.has(
+      ATTENTION_SECTION_WORKSPACE_ID
+    );
+    const machineIds = new Set(
+      attentionRailConversations.map((conversation) => conversation.serverId ?? "local")
+    );
+    const showMachine = machineIds.size > 1;
+    return (
+      <section className="pb-[12px]">
+        <div className="group flex items-center gap-[2px] px-px pb-[4px]">
+          <button
+            type="button"
+            onClick={() => toggleWorkspaceCollapsed(ATTENTION_SECTION_WORKSPACE_ID)}
+            className="group/wshead flex min-w-0 flex-1 items-center gap-[4px] rounded-[var(--radius-tab)] py-[2px] text-left"
+          >
+            <span className="relative grid size-[10px] shrink-0 place-items-center">
+              <BellRing
+                className="col-start-1 row-start-1 size-[10px] text-[var(--plan-accent)] group-hover/wshead:opacity-0"
+                strokeWidth={2}
+              />
+              <ChevronRight
+                className={`col-start-1 row-start-1 size-[10px] text-[var(--text-disabled)] opacity-0 group-hover/wshead:opacity-100 group-hover/wshead:text-[var(--text-secondary)] ${
+                  isAttentionHeaderCollapsed ? "" : "rotate-90"
+                }`}
+                strokeWidth={2}
+              />
+            </span>
+            <span className="truncate font-sans text-[10.5px] font-medium text-[var(--text-disabled)] group-hover/wshead:text-[var(--text-primary)]">
+              Needs attention
+            </span>
+            <span className="shrink-0 rounded-full bg-[var(--plan-accent-selected-bg)] px-[5px] font-mono text-[9px] font-medium leading-[14px] text-[var(--plan-accent)]">
+              {attentionRailConversations.length}
+            </span>
+          </button>
+        </div>
+        {!isAttentionHeaderCollapsed ? (
+          <div className="flex flex-col gap-[2px]">
+            {attentionRailConversations.map((conversation, index) => (
+              <AgentConversationRow
+                key={`attention:${conversation.conversationKey ?? conversation.id}`}
+                conversation={conversation}
+                detail={railRowDetail === "compact" ? "compact" : "expanded"}
+                detailContext={railWorkspaceNameById.get(conversation.workspaceId)}
+                now={railNow}
+                unreadCompletion={isConversationUnread(conversation)}
+                showMachineBadge={showMachine}
+                rowIndex={index}
+                selected={isConversationChatSelected(conversation)}
+                onSelect={() => handleConversationSelect(conversation)}
+                onContextMenu={(e, currentConversation) =>
+                  handleConversationContextMenu(e, currentConversation, {
+                    inPinnedSection: false,
+                    orderedConversations: attentionRailConversations,
+                  })
+                }
+                showOverflowMenu={experimentalIpadCustomButtons}
+                onOverflowMenu={(anchor) =>
+                  handleConversationOverflowMenu(conversation, anchor, {
+                    inPinnedSection: false,
+                    orderedConversations: attentionRailConversations,
+                  })
+                }
+              />
+            ))}
+          </div>
+        ) : null}
+      </section>
+    );
+  }, [
+    attentionRailConversations,
+    bulkSelectMode,
+    collapsedWorkspaceIds,
+    experimentalIpadCustomButtons,
+    handleConversationContextMenu,
+    handleConversationOverflowMenu,
+    handleConversationSelect,
+    isConversationChatSelected,
+    isConversationUnread,
+    railNow,
+    railRowDetail,
+    railWorkspaceNameById,
+    toggleWorkspaceCollapsed,
+  ]);
+
   const pinnedSection: ReactNode = useMemo(() => {
     if (pinnedRailConversations.length === 0) {
       return null;
@@ -2316,6 +2474,9 @@ export function AgentWorkspaceRail() {
                 <AgentConversationRow
                   key={conversation.conversationKey ?? conversation.id}
                   conversation={conversation}
+                  detail={railRowDetail}
+                  now={railNow}
+                  unreadCompletion={isConversationUnread(conversation)}
                   rowIndex={index}
                   selected={isConversationChatSelected(conversation)}
                   bulkSelectMode={bulkSelectMode}
@@ -2366,7 +2527,10 @@ export function AgentWorkspaceRail() {
     handleConversationSelect,
     handleConversationContextMenu,
     isConversationChatSelected,
+    isConversationUnread,
     pinnedRailConversations,
+    railNow,
+    railRowDetail,
     renameState?.conversationId,
     renameState?.draft,
     toggleWorkspaceCollapsed,
@@ -2401,6 +2565,9 @@ export function AgentWorkspaceRail() {
         <AgentConversationRow
           key={conversation.conversationKey ?? conversation.id}
           conversation={conversation}
+          detail={railRowDetail}
+          now={railNow}
+          unreadCompletion={isConversationUnread(conversation)}
           rowIndex={index}
           selected={isConversationChatSelected(conversation)}
           bulkSelectMode={bulkSelectMode}
@@ -2673,6 +2840,9 @@ export function AgentWorkspaceRail() {
     handleFolderReorderDrop,
     handleNewStandaloneChat,
     isConversationChatSelected,
+    isConversationUnread,
+    railNow,
+    railRowDetail,
     renameState?.conversationId,
     renameState?.draft,
     settings.general.chatFolders,
@@ -2750,7 +2920,10 @@ export function AgentWorkspaceRail() {
                   }`}
                 >
                   <div
-                    draggable
+                    // Bucket groupings (priority/status/updated/...) render
+                    // pseudo-workspaces; dragging them would persist junk
+                    // custom-order entries keyed by bucket ids.
+                    draggable={workspaceActionsEnabled}
                     onDragStart={(event) => handleWorkspaceDragStart(event, groupKey)}
                     onDragEnd={handleWorkspaceDragEnd}
                     className="group flex items-center gap-[2px] px-px pb-[4px]"
@@ -2945,6 +3118,9 @@ export function AgentWorkspaceRail() {
                                       <AgentConversationRow
                                         key={conversation.conversationKey ?? conversation.id}
                                         conversation={conversation}
+                                        detail={railRowDetail}
+                                        now={railNow}
+                                        unreadCompletion={isConversationUnread(conversation)}
                                         showMachineBadge={showConversationMachine}
                                         rowIndex={index}
                                         selected={isConversationChatSelected(conversation)}
@@ -2964,18 +3140,22 @@ export function AgentWorkspaceRail() {
                                           handleConversationSelect(conversation);
                                         }}
                                         onDragStart={
-                                          bulkSelectMode ? undefined : handleConversationDragStart
+                                          bulkSelectMode || !workspaceActionsEnabled
+                                            ? undefined
+                                            : handleConversationDragStart
                                         }
                                         onDragEnd={
-                                          bulkSelectMode ? undefined : handleConversationDragEnd
+                                          bulkSelectMode || !workspaceActionsEnabled
+                                            ? undefined
+                                            : handleConversationDragEnd
                                         }
                                         onDragOver={
-                                          bulkSelectMode
+                                          bulkSelectMode || !workspaceActionsEnabled
                                             ? undefined
                                             : (event) => handleFolderDropTargetDragOver(event)
                                         }
                                         onDrop={
-                                          bulkSelectMode
+                                          bulkSelectMode || !workspaceActionsEnabled
                                             ? undefined
                                             : (event) =>
                                                 handleConversationDrop(
@@ -3020,6 +3200,9 @@ export function AgentWorkspaceRail() {
                             <AgentConversationRow
                               key={conversation.conversationKey ?? conversation.id}
                               conversation={conversation}
+                              detail={railRowDetail}
+                              now={railNow}
+                              unreadCompletion={isConversationUnread(conversation)}
                               showMachineBadge={showConversationMachine}
                               rowIndex={index}
                               selected={isConversationChatSelected(conversation)}
@@ -3039,16 +3222,22 @@ export function AgentWorkspaceRail() {
                                 handleConversationSelect(conversation);
                               }}
                               onDragStart={
-                                bulkSelectMode ? undefined : handleConversationDragStart
+                                bulkSelectMode || !workspaceActionsEnabled
+                                  ? undefined
+                                  : handleConversationDragStart
                               }
-                              onDragEnd={bulkSelectMode ? undefined : handleConversationDragEnd}
+                              onDragEnd={
+                                bulkSelectMode || !workspaceActionsEnabled
+                                  ? undefined
+                                  : handleConversationDragEnd
+                              }
                               onDragOver={
-                                bulkSelectMode
+                                bulkSelectMode || !workspaceActionsEnabled
                                   ? undefined
                                   : (event) => handleFolderDropTargetDragOver(event)
                               }
                               onDrop={
-                                bulkSelectMode
+                                bulkSelectMode || !workspaceActionsEnabled
                                   ? undefined
                                   : (event) =>
                                       handleConversationDrop(
@@ -3087,7 +3276,9 @@ export function AgentWorkspaceRail() {
   const orderedRailSections = useMemo(() => {
     const nodes: ReactNode[] = [];
     for (const sectionId of railSectionOrder) {
-      if (sectionId === "pinned") {
+      if (sectionId === "attention") {
+        if (attentionSection) nodes.push(<div key="attention">{attentionSection}</div>);
+      } else if (sectionId === "pinned") {
         if (pinnedSection) nodes.push(<div key="pinned">{pinnedSection}</div>);
       } else if (sectionId === "chats") {
         nodes.push(<div key="chats">{chatsSection}</div>);
@@ -3096,7 +3287,7 @@ export function AgentWorkspaceRail() {
       }
     }
     return nodes;
-  }, [chatsSection, pinnedSection, railSectionOrder, workspaceGroupsSection]);
+  }, [attentionSection, chatsSection, pinnedSection, railSectionOrder, workspaceGroupsSection]);
 
   const desktopRailCollapsed = leftRailCollapsed && !isMobile;
   const railHasContent =
@@ -3364,7 +3555,11 @@ export function AgentWorkspaceRail() {
         setMachineVisible={setMachineVisible}
         showIcons={agentRailSettings.showIcons}
         setShowIcons={(value) => patchAgentRailSettings({ showIcons: value })}
-        sectionOrder={agentRailSettings.sectionOrder ?? ["pinned", "chats", "workspaces"]}
+        sectionOrder={
+          agentRailSettings.sectionOrder ?? ["attention", "pinned", "chats", "workspaces"]
+        }
+        rowDetail={railRowDetail}
+        setRowDetail={(mode) => patchAgentRailSettings({ rowDetail: mode })}
         hiddenSections={agentRailSettings.hiddenSections ?? []}
         setSectionOrder={setRailSectionOrder}
         setSectionHidden={setRailSectionHidden}

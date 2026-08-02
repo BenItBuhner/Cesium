@@ -1,3 +1,4 @@
+import { formatMcpToolDisplayName } from "@cesium/core/mcp";
 import { BROWSER_MCP_SERVER_ID } from "../../mcp/builtin-browser-tools.js";
 import type { AgentPermissionCategory } from "../types.js";
 import { permissionDecisionFromOption as sharedPermissionDecisionFromOption } from "../permission-options.js";
@@ -1156,7 +1157,10 @@ export function toolTitle(name: string, args: Record<string, unknown>): string {
       return `Create worktree for ${asString(args.branch) ?? "branch"}`;
     case "call_mcp_tool":
       if (asString(args.serverId) === BROWSER_MCP_SERVER_ID) {
-        return `Browser ${asString(args.toolName) ?? "tool"}`;
+        const browserTool = asString(args.toolName);
+        return browserTool
+          ? `Browser · ${formatMcpToolDisplayName(browserTool, BROWSER_MCP_SERVER_ID)}`
+          : "Browser tool";
       }
       return `MCP ${asString(args.serverId) ?? "server"} - ${asString(args.toolName) ?? "tool"}`;
     case "refresh_mcp_servers":
@@ -1181,8 +1185,12 @@ export function toolTitle(name: string, args: Record<string, unknown>): string {
       return `Read agent transcript ${asString(args.assignmentId) ?? asString(args.conversationId) ?? ""}`.trim();
     case "orchestration_wait":
       return "Wait for orchestration changes";
-    default:
-      return name;
+    default: {
+      const humanized = name.replace(/[_-]+/g, " ").replace(/\s+/g, " ").trim();
+      return humanized
+        ? humanized.charAt(0).toUpperCase() + humanized.slice(1)
+        : name;
+    }
   }
 }
 

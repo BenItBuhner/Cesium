@@ -10,12 +10,23 @@ import {
   normalizeThemeConfig,
   type ThemeConfig,
 } from "./theme-config";
+import {
+  isAgentRailRowDetailMode,
+  type AgentRailRowDetailMode,
+} from "./agent-rail-status";
 
 export type WorkspaceSortMode = "recent" | "alphabetical" | "machine" | "custom";
-export type AgentRailGroupByMode = "workspace" | "repository" | "server" | "updated" | "status";
-export type AgentRailSectionId = "pinned" | "chats" | "workspaces";
+export type AgentRailGroupByMode =
+  | "workspace"
+  | "priority"
+  | "repository"
+  | "server"
+  | "updated"
+  | "status";
+export type AgentRailSectionId = "attention" | "pinned" | "chats" | "workspaces";
 
 export const AGENT_RAIL_SECTION_IDS: AgentRailSectionId[] = [
+  "attention",
   "pinned",
   "chats",
   "workspaces",
@@ -46,6 +57,11 @@ export type ServerRailAppearance = {
 
 export type GeneralSettingsState = {
   doNotDisturb: boolean;
+  /**
+   * Show the floating ambient voice orb. Off by default: the orb is an opt-in
+   * surface and hiding it also disables the ambient voice plane.
+   */
+  showVoiceOrb: boolean;
   sideColumnsSwapped: boolean;
   workspaceSortMode: WorkspaceSortMode;
   workspaceCustomOrderIds: string[];
@@ -69,9 +85,11 @@ export type AgentRailSettingsState = {
   visibleServerIds: string[];
   hiddenServerIds: string[];
   showIcons: boolean;
+  /** Per-row detail density: compact, auto (smart), or expanded. */
+  rowDetail: AgentRailRowDetailMode;
   /**
    * Top-level rail section order. Unknown/missing ids are appended in default order.
-   * Default: pinned → chats (standalone) → workspaces.
+   * Default: attention → pinned → chats (standalone) → workspaces.
    */
   sectionOrder: AgentRailSectionId[];
   /** Sections omitted from the rail (e.g. hide the standalone Chats block). */
@@ -182,6 +200,7 @@ export function createDefaultGlobalSettings(): GlobalSettingsState {
     keyboardShortcuts: createDefaultKeyboardShortcutsState(),
     general: {
       doNotDisturb: false,
+      showVoiceOrb: false,
       sideColumnsSwapped: false,
       workspaceSortMode: "recent",
       workspaceCustomOrderIds: [],
@@ -196,7 +215,8 @@ export function createDefaultGlobalSettings(): GlobalSettingsState {
         visibleServerIds: [],
         hiddenServerIds: [],
         showIcons: true,
-        sectionOrder: ["pinned", "chats", "workspaces"],
+        rowDetail: "balanced",
+        sectionOrder: ["attention", "pinned", "chats", "workspaces"],
         hiddenSections: [],
       },
     },
@@ -415,6 +435,7 @@ function normalizeAgentRailSectionIds(raw: unknown): AgentRailSectionId[] {
   const out: AgentRailSectionId[] = [];
   for (const value of raw) {
     if (
+      value !== "attention" &&
       value !== "pinned" &&
       value !== "chats" &&
       value !== "workspaces"
@@ -438,6 +459,7 @@ function normalizeAgentRailSettings(raw: unknown): AgentRailSettingsState {
   const record = raw as Partial<AgentRailSettingsState>;
   const rawGroupBy =
     record.groupBy === "workspace" ||
+    record.groupBy === "priority" ||
     record.groupBy === "repository" ||
     record.groupBy === "server" ||
     record.groupBy === "updated" ||
@@ -449,6 +471,11 @@ function normalizeAgentRailSettings(raw: unknown): AgentRailSettingsState {
       ? value.filter((item): item is string => typeof item === "string")
       : [];
   const ordered = normalizeAgentRailSectionIds(record.sectionOrder);
+  // Settings persisted before the attention section existed should surface it
+  // in its default slot (the very top), not appended at the bottom.
+  if (!ordered.includes("attention")) {
+    ordered.unshift("attention");
+  }
   const sectionOrder: AgentRailSectionId[] = [
     ...ordered,
     ...AGENT_RAIL_SECTION_IDS.filter((id) => !ordered.includes(id)),
@@ -465,6 +492,12 @@ function normalizeAgentRailSettings(raw: unknown): AgentRailSettingsState {
     hiddenServerIds: strings(record.hiddenServerIds),
     showIcons:
       typeof record.showIcons === "boolean" ? record.showIcons : defaults.showIcons,
+    rowDetail: isAgentRailRowDetailMode(record.rowDetail)
+      ? record.rowDetail
+      : // Pre-release name for the balanced mode; migrate quietly.
+        (record.rowDetail as unknown) === "auto"
+        ? "balanced"
+        : defaults.rowDetail,
     sectionOrder,
     hiddenSections,
   };
@@ -571,6 +604,10 @@ export function normalizeLoadedGlobalSettings(
     general: {
       ...base.general,
       ...(r.general ?? {}),
+      showVoiceOrb:
+        typeof (r.general as Record<string, unknown> | undefined)?.showVoiceOrb === "boolean"
+          ? ((r.general as Record<string, unknown>).showVoiceOrb as boolean)
+          : base.general.showVoiceOrb,
       workspaceSortMode: normalizeWorkspaceSortMode(
         (r.general as Record<string, unknown> | undefined)?.workspaceSortMode
       ),

@@ -1,4 +1,5 @@
 import type { AgentRailConversationSummary } from "@cesium/core";
+import { agentRailConversationNeedsAttention } from "./agent-rail-status";
 
 export const AGENT_RAIL_FILTER_PRESETS = [
   "default",
@@ -156,7 +157,7 @@ export function matchesAgentRailMultiFilter(
   if (toggles.running && conversation.status !== "running") {
     return false;
   }
-  if (toggles.needs_attention && !conversation.hasPendingPermission) {
+  if (toggles.needs_attention && !agentRailConversationNeedsAttention(conversation)) {
     return false;
   }
   if (toggles.pinned && !isPinned) {

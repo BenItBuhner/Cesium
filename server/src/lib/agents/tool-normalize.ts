@@ -1,5 +1,10 @@
 import type { AgentToolLocation } from "./types.js";
 import {
+  formatMcpServerDisplayName,
+  formatMcpToolDisplayName,
+  parseMcpCompositeToolName,
+} from "@cesium/core/mcp";
+import {
   asRecord as asToolRecord,
   compactJson as compactToolJson,
   firstString as firstToolString,
@@ -191,8 +196,16 @@ export function titleForCanonicalTool(input: {
       return "Task";
     case "question":
       return "Ask question";
-    case "mcp":
+    case "mcp": {
+      const composite = parseMcpCompositeToolName(input.name);
+      if (composite) {
+        return `${formatMcpServerDisplayName(composite.serverId)} · ${formatMcpToolDisplayName(
+          composite.toolName,
+          composite.serverId
+        )}`;
+      }
       return truncateGenericToolTitle(input.name, "MCP tool");
+    }
     default:
       return humanizeToolName(input.name) || "Tool";
   }

@@ -6,6 +6,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-07-30
+
+### Fixed
+
+- Termux one-command server install no longer aborts with `EBADPLATFORM: Unsupported platform for onnxruntime-node ... (current: {"os":"android"})`. The voice plane's `kokoro-js` dependency (whose `onnxruntime-node` transitive dependency ships no Android binaries) is now an `optionalDependency`, so the on-device `npm ci --omit=optional` skips it entirely, and the server compiles and runs without the module — the kokoro TTS engine simply reports unavailable.
+- Termux installer now installs `espeak` (eSpeak NG), so the voice control plane keeps a working local TTS engine on-device; it becomes the default engine when kokoro is absent.
+
+## [0.3.0] - 2026-07-30
+
+### Added
+
+- Live voice control plane in the bundled workbench: ambient draggable voice orb with transient caption bubbles, capture → VAD → endpointing → STT pipeline, TTS playback, and a pipeline self-test — backed by the server's voice controller (session tools + compaction) and TTS engine registry. The Android assistant now drives the same voice controller.
+- Termux on-device server setup restored for the WebView app: the "Check Cesium server" screen and the server manager show a "Run the server on this phone" card with an F-Droid link, the one-command Termux installer, and a "Check and use this phone" button that connects to the local `127.0.0.1:9100` server.
+- `openExternalUrl` WebView bridge message: workbench links such as the F-Droid page open in the system browser via `Linking.openURL` instead of navigating the bundled `file://` app away.
+
+### Fixed
+
+- The native shell (agent status polling, phone control, notifications, Wear) follows workbench server switches again: the workbench re-broadcasts `serverConfigured` whenever the active server changes. The WebView revert had dropped this wiring, leaving native services pointed at the launch-time server.
+- Voice VAD assets resolve relative to the page on `file://` origins, so packaged builds can load Silero when the assets are bundled and fall back to the energy VAD cleanly when they are not.
+
 ## [0.2.1] - 2026-07-28
 
 ### Fixed

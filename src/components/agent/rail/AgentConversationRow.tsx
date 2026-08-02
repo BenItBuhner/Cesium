@@ -7,11 +7,24 @@ import {
   type DragEvent,
   type MouseEvent,
 } from "react";
-import { CheckSquare, LoaderCircle, MoreVertical, Square } from "lucide-react";
-import type {
-  AgentConversationStatus,
-  AgentRailConversationSummary,
-} from "@/lib/agent-types";
+import {
+  CheckSquare,
+  CircleAlert,
+  CircleCheck,
+  CirclePause,
+  LoaderCircle,
+  MessageCircleQuestion,
+  MoreVertical,
+  ShieldAlert,
+  Square,
+} from "lucide-react";
+import type { AgentRailConversationSummary } from "@/lib/agent-types";
+import {
+  formatAgentRailRelativeTime,
+  getAgentRailStatusInfo,
+  type AgentRailRowDetailMode,
+  type AgentRailStatusInfo,
+} from "@/lib/agent-rail-status";
 
 const ORIGIN_PROVIDER_BADGES: Record<string, string> = {
   github: "GH",
@@ -27,35 +40,125 @@ const ORIGIN_PROVIDER_NAMES: Record<string, string> = {
   manual: "Cloud Agents",
 };
 
-function ConversationStatusIcon({
-  hasPendingPermission,
+const DETAIL_TONE_CLASSES: Record<AgentRailStatusInfo["tone"], string> = {
+  attention: "text-[var(--plan-accent)]",
+  error: "text-red-400",
+  active: "text-[var(--text-secondary)]",
+  accent: "text-[var(--text-secondary)]",
+  muted: "text-[var(--text-disabled)]",
+};
+
+function ConversationStatusGlyph({
+  compact = false,
   selected,
-  status,
+  statusInfo,
 }: {
-  hasPendingPermission: boolean;
+  /** Compact rows keep the classic minimal glyphs: a spinner or a plain dot. */
+  compact?: boolean;
   selected: boolean;
-  status: AgentConversationStatus;
+  statusInfo: AgentRailStatusInfo;
 }) {
-  if (status === "running") {
+  if (compact) {
+    if (statusInfo.active) {
+      return (
+        <LoaderCircle
+          className="size-[14px] shrink-0 animate-spin text-[var(--text-secondary)]"
+          strokeWidth={1.5}
+          aria-hidden
+        />
+      );
+    }
+    const dotColor =
+      statusInfo.kind === "permission" || statusInfo.kind === "question"
+        ? "bg-[var(--plan-accent)]"
+        : statusInfo.kind === "failed"
+          ? "bg-red-400"
+          : selected
+            ? "bg-[var(--text-primary)]"
+            : "bg-[var(--text-disabled)]";
     return (
-      <LoaderCircle
-        className="size-[14px] shrink-0 animate-spin text-[var(--text-secondary)]"
-        strokeWidth={1.5}
-      />
+      <span className="grid size-[14px] shrink-0 place-items-center" aria-hidden>
+        <span className={`size-[6px] rounded-full ${dotColor}`} />
+      </span>
     );
   }
-  const dotColor = hasPendingPermission
-    ? "bg-[var(--plan-accent)]"
-    : selected
-      ? "bg-[var(--text-primary)]"
-      : "bg-[var(--text-disabled)]";
-  return <span className={`size-[6px] shrink-0 rounded-full ${dotColor}`} />;
+  switch (statusInfo.kind) {
+    case "permission":
+      return (
+        <ShieldAlert
+          className="size-[14px] shrink-0 text-[var(--plan-accent)]"
+          strokeWidth={1.8}
+          aria-hidden
+        />
+      );
+    case "question":
+      return (
+        <MessageCircleQuestion
+          className="size-[14px] shrink-0 text-[var(--plan-accent)]"
+          strokeWidth={1.8}
+          aria-hidden
+        />
+      );
+    case "failed":
+      return (
+        <CircleAlert
+          className="size-[14px] shrink-0 text-red-400"
+          strokeWidth={1.8}
+          aria-hidden
+        />
+      );
+    case "running":
+      return (
+        <LoaderCircle
+          className="size-[14px] shrink-0 animate-spin text-[var(--text-secondary)]"
+          strokeWidth={1.5}
+          aria-hidden
+        />
+      );
+    case "pausing":
+      return (
+        <LoaderCircle
+          className="size-[14px] shrink-0 animate-spin text-[var(--text-disabled)]"
+          strokeWidth={1.5}
+          aria-hidden
+        />
+      );
+    case "paused":
+      return (
+        <CirclePause
+          className="size-[14px] shrink-0 text-[var(--text-disabled)]"
+          strokeWidth={1.6}
+          aria-hidden
+        />
+      );
+    case "done_unread":
+      return (
+        <CircleCheck
+          className="size-[14px] shrink-0 text-[var(--accent)]"
+          strokeWidth={1.6}
+          aria-hidden
+        />
+      );
+    default: {
+      const dotColor = selected
+        ? "bg-[var(--text-primary)]"
+        : "bg-[var(--text-disabled)]";
+      return (
+        <span className="grid size-[14px] shrink-0 place-items-center" aria-hidden>
+          <span className={`size-[6px] rounded-full ${dotColor}`} />
+        </span>
+      );
+    }
+  }
 }
 
 export function AgentConversationRow({
   conversation,
+  detail = "balanced",
+  detailContext,
   editValue,
   editing = false,
+  now,
   onBeginRename,
   onCancelRename,
   onCommitRename,
@@ -73,10 +176,17 @@ export function AgentConversationRow({
   bulkSelected = false,
   showOverflowMenu = false,
   showMachineBadge = false,
+  unreadCompletion = false,
 }: {
   conversation: AgentRailConversationSummary;
+  /** Row density; `balanced` grows a detail line only when the row needs one. */
+  detail?: AgentRailRowDetailMode;
+  /** Extra muted context (e.g. workspace name) appended to the detail line. */
+  detailContext?: string;
   editValue?: string;
   editing?: boolean;
+  /** Reference timestamp for relative times on detail lines. */
+  now?: number;
   onBeginRename?: () => void;
   onCancelRename?: () => void;
   onCommitRename?: () => void;
@@ -98,6 +208,7 @@ export function AgentConversationRow({
   bulkSelected?: boolean;
   showOverflowMenu?: boolean;
   showMachineBadge?: boolean;
+  unreadCompletion?: boolean;
 }) {
   const renameInputRef = useRef<HTMLInputElement>(null);
 
@@ -112,8 +223,33 @@ export function AgentConversationRow({
     return () => cancelAnimationFrame(frame);
   }, [editing]);
 
+  const statusInfo = getAgentRailStatusInfo(conversation, { unreadCompletion });
+
+  const relativeTime =
+    now != null ? formatAgentRailRelativeTime(conversation.updatedAt, now) : null;
+  const effectiveDetail: AgentRailRowDetailMode =
+    bulkSelectMode || editing ? "compact" : detail;
+  let detailText: string | null = null;
+  let detailToneClass = DETAIL_TONE_CLASSES[statusInfo.tone];
+  if (effectiveDetail !== "compact") {
+    if (statusInfo.description) {
+      detailText =
+        statusInfo.kind === "done_unread" && relativeTime
+          ? `${statusInfo.description} · ${relativeTime}`
+          : statusInfo.description;
+    } else if (effectiveDetail === "expanded" && relativeTime) {
+      detailText = relativeTime;
+      detailToneClass = DETAIL_TONE_CLASSES.muted;
+    }
+  }
+  const hasDetailLine = detailText != null;
+
   const rowHighlighted = bulkSelectMode ? bulkSelected : selected;
-  const rowClassName = `flex h-[var(--agent-rail-row-height)] w-full items-center gap-[8px] rounded-[var(--agent-control-radius)] px-[9px] text-left select-none ${
+  const rowClassName = `flex w-full gap-[8px] rounded-[var(--agent-control-radius)] px-[9px] text-left select-none ${
+    hasDetailLine
+      ? "items-start py-[5px]"
+      : "h-[var(--agent-rail-row-height)] items-center"
+  } ${
     rowHighlighted ? "bg-[var(--agent-card-bg)]" : "hover:bg-[var(--agent-card-bg)]"
   } ${bulkSelectMode && bulkSelected ? "ring-1 ring-[var(--border-subtle)]" : ""}`;
 
@@ -136,10 +272,10 @@ export function AgentConversationRow({
       />
     )
   ) : (
-    <ConversationStatusIcon
-      status={conversation.status}
+    <ConversationStatusGlyph
+      statusInfo={statusInfo}
       selected={selected}
-      hasPendingPermission={conversation.hasPendingPermission}
+      compact={effectiveDetail === "compact"}
     />
   );
   const isOrchestrationMode =
@@ -196,6 +332,33 @@ export function AgentConversationRow({
     );
   }
 
+  const badges = (
+    <>
+      {showMachineBadge && conversation.serverLabel ? (
+        <span className="max-w-[72px] shrink truncate rounded-[var(--radius-tab)] bg-[var(--bg-card)] px-[4px] py-px font-sans text-[9px] text-[var(--text-disabled)]">
+          {conversation.serverLabel}
+        </span>
+      ) : null}
+      {isOrchestrationMode ? (
+        <span className="shrink-0 rounded-[var(--radius-tab)] border border-[color-mix(in_srgb,var(--orchestration-accent)_35%,transparent)] bg-[var(--orchestration-accent-bg)] px-[5px] py-px font-mono text-[9px] font-medium uppercase tracking-[0.04em] text-[var(--orchestration-accent)]">
+          ORCH
+        </span>
+      ) : null}
+      {originBadge ? (
+        <span
+          title={originTitle}
+          className="shrink-0 rounded-[var(--radius-tab)] border border-[color-mix(in_srgb,var(--accent)_35%,transparent)] bg-[var(--accent-bg)] px-[5px] py-px font-mono text-[9px] font-medium uppercase tracking-[0.04em] text-[var(--accent)]"
+        >
+          {originBadge}
+        </span>
+      ) : null}
+    </>
+  );
+
+  const rowTitle = detailText
+    ? `${conversation.title}\n${detailText}${detailContext ? ` · ${detailContext}` : ""}`
+    : conversation.title;
+
   return (
     <div
       className="group flex w-full min-w-0 items-center gap-[4px]"
@@ -219,40 +382,57 @@ export function AgentConversationRow({
         onContextMenu={handleContextMenu}
         data-perf="agent-rail-row-button"
         className={`${rowClassName} min-w-0 flex-1`}
-        title={conversation.title}
+        title={rowTitle}
       >
-        {statusIcon}
-        <span
-          className={titleClassName}
-          data-perf="agent-rail-row-title"
-          onDoubleClick={(event) => {
-            event.stopPropagation();
-            if (bulkSelectMode) {
-              return;
-            }
-            onBeginRename?.();
-          }}
-        >
-          {conversation.title}
-        </span>
-        {showMachineBadge && conversation.serverLabel ? (
-          <span className="max-w-[72px] shrink truncate rounded-[var(--radius-tab)] bg-[var(--bg-card)] px-[4px] py-px font-sans text-[9px] text-[var(--text-disabled)]">
-            {conversation.serverLabel}
-          </span>
-        ) : null}
-        {isOrchestrationMode ? (
-          <span className="shrink-0 rounded-[var(--radius-tab)] border border-[color-mix(in_srgb,var(--orchestration-accent)_35%,transparent)] bg-[var(--orchestration-accent-bg)] px-[5px] py-px font-mono text-[9px] font-medium uppercase tracking-[0.04em] text-[var(--orchestration-accent)]">
-            ORCH
-          </span>
-        ) : null}
-        {originBadge ? (
-          <span
-            title={originTitle}
-            className="shrink-0 rounded-[var(--radius-tab)] border border-[color-mix(in_srgb,var(--accent)_35%,transparent)] bg-[var(--accent-bg)] px-[5px] py-px font-mono text-[9px] font-medium uppercase tracking-[0.04em] text-[var(--accent)]"
-          >
-            {originBadge}
-          </span>
-        ) : null}
+        {hasDetailLine ? (
+          <>
+            <span className="flex h-[20px] shrink-0 items-center">{statusIcon}</span>
+            <span className="flex min-w-0 flex-1 flex-col">
+              <span className="flex min-w-0 items-center gap-[8px]">
+                <span
+                  className={`${titleClassName} min-w-0 flex-1 leading-[20px]`}
+                  data-perf="agent-rail-row-title"
+                  onDoubleClick={(event) => {
+                    event.stopPropagation();
+                    onBeginRename?.();
+                  }}
+                >
+                  {conversation.title}
+                </span>
+                {badges}
+              </span>
+              <span
+                className="flex min-w-0 items-baseline gap-[5px] pt-px font-sans text-[11px] leading-[15px]"
+                data-perf="agent-rail-row-detail"
+              >
+                <span className={`truncate ${detailToneClass}`}>{detailText}</span>
+                {detailContext ? (
+                  <span className="min-w-0 shrink-[2] truncate text-[var(--text-disabled)]">
+                    · {detailContext}
+                  </span>
+                ) : null}
+              </span>
+            </span>
+          </>
+        ) : (
+          <>
+            {statusIcon}
+            <span
+              className={titleClassName}
+              data-perf="agent-rail-row-title"
+              onDoubleClick={(event) => {
+                event.stopPropagation();
+                if (bulkSelectMode) {
+                  return;
+                }
+                onBeginRename?.();
+              }}
+            >
+              {conversation.title}
+            </span>
+            {badges}
+          </>
+        )}
       </button>
       {showOverflowMenu && onOverflowMenu ? (
         <button

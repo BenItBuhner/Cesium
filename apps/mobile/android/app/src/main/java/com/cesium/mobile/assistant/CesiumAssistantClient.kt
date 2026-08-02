@@ -23,8 +23,188 @@ class CesiumAssistantClient(private val context: Context) {
   private val handler = Handler(Looper.getMainLooper())
   private val client = OkHttpClient.Builder()
     .connectTimeout(10, TimeUnit.SECONDS)
-    .readTimeout(30, TimeUnit.SECONDS)
+    .readTimeout(60, TimeUnit.SECONDS)
     .build()
+
+  /**
+   * Voice control plane turn — the same principle as the web orb: one fast
+   * controller call that either answers directly (spoken via TTS) or
+   * delegates into a full Cesium session (session_start / session_message),
+   * with harness-style compaction keeping the running history bounded so
+   * the assistant can be used indefinitely. Falls back to the legacy
+   * create-and-prompt agent when the voice route is unavailable.
+   */
+  fun runVoiceTurn(
+    requestText: String,
+    screenContext: String,
+    screenshot: Bitmap?,
+    update: (status: String, answer: String?) -> Unit,
+    speak: (String) -> Unit
+  ) {
+    val config = PhoneControlPreferences.read(context)
+    if (config.serverUrl.isBlank() || config.workspaceId.isBlank()) {
+      update("Open Cesium once and select a server and workspace first.", null)
+      return
+    }
+    val utterance = buildString {
+      append(requestText.trim())
+      append(
+        "\n\n[Context: you are the live voice assistant on the user's Android phone. " +
+          "If you delegate work with session_start, tell the delegated agent it can " +
+          "control this phone through the built-in \"phone\" MCP server via " +
+          "call_mcp_tool — phone_screenshot, phone_snapshot, phone_apps, phone_tap, " +
+          "phone_type, phone_swipe, phone_global_action, phone_settings.]"
+      )
+      if (screenContext.isNotBlank()) {
+        append("\n\nForeground screen text:\n")
+        append(screenContext.take(3_000))
+      }
+    }
+    val body = JSONObject().apply {
+      put("utterance", utterance)
+      put("mode", "active")
+      synchronized(memoryLock) {
+        put("history", JSONArray(history.toString()))
+        summary?.let { put("summary", it) }
+      }
+    }
+    update("Thinking…", null)
+    client.newCall(
+      request(
+        config.serverUrl,
+        config.workspaceId,
+        config.authToken,
+        "/api/voice/controller",
+        "POST",
+        body
+      )
+    ).enqueue(object : Callback {
+      override fun onFailure(call: Call, error: IOException) {
+        handler.post { update("Could not reach the Cesium server: ${error.message}", null) }
+      }
+
+      override fun onResponse(call: Call, response: Response) {
+        response.use {
+          val raw = it.body?.string() ?: "{}"
+          if (!it.isSuccessful) {
+            // Voice plane unavailable (e.g. controller not configured):
+            // keep working through the legacy full-agent path.
+            handler.post {
+              createAgent(requestText, screenContext, screenshot, update)
+            }
+            return
+          }
+          val result = runCatching { JSONObject(raw).getJSONObject("result") }.getOrNull()
+          if (result == null) {
+            handler.post { update("Voice controller returned an unreadable response.", null) }
+            return
+          }
+          val spokenText = result.optString("spokenText")
+          val displayText = result.optString("displayText").ifBlank { spokenText }
+          adoptMemory(result, requestText, displayText)
+          val delegatedId = delegatedConversationId(result)
+          handler.post {
+            update(
+              if (delegatedId != null) "Agent is working. You can dismiss this overlay." else "Done",
+              displayText.takeIf(String::isNotBlank)
+            )
+            if (spokenText.isNotBlank()) speak(spokenText)
+          }
+          if (delegatedId != null) {
+            poll(config.serverUrl, config.workspaceId, config.authToken, delegatedId, update)
+          }
+        }
+      }
+    })
+  }
+
+  /** Adopts server-side compaction, then appends this turn to the memory. */
+  private fun adoptMemory(result: JSONObject, userText: String, assistantText: String) {
+    synchronized(memoryLock) {
+      val compaction = result.optJSONObject("compaction")
+      if (compaction != null) {
+        summary = compaction.optString("summary").takeIf(String::isNotBlank)
+        history = compaction.optJSONArray("history") ?: JSONArray()
+      }
+      history.put(JSONObject().apply {
+        put("role", "user")
+        put("content", userText.take(2_000))
+      })
+      history.put(JSONObject().apply {
+        put("role", "assistant")
+        put("content", assistantText.take(2_000))
+      })
+    }
+  }
+
+  private fun delegatedConversationId(result: JSONObject): String? {
+    val actions = result.optJSONArray("actions") ?: return null
+    for (index in 0 until actions.length()) {
+      val action = actions.optJSONObject(index) ?: continue
+      if (
+        action.optString("tool") in setOf("session_start", "session_message") &&
+        action.optBoolean("ok")
+      ) {
+        val conversationId = action.optString("conversationId")
+        if (conversationId.isNotBlank()) return conversationId
+      }
+    }
+    return null
+  }
+
+  /**
+   * Speaks through the server's TTS adapter stack (the same voice as the
+   * web orb). Invokes [onResult] with false when synthesis or playback is
+   * unavailable so callers can fall back to on-device TextToSpeech.
+   */
+  fun speakServer(text: String, onResult: (Boolean) -> Unit) {
+    val config = PhoneControlPreferences.read(context)
+    if (config.serverUrl.isBlank() || text.isBlank()) {
+      onResult(false)
+      return
+    }
+    val body = JSONObject().put("text", text.take(3_500))
+    client.newCall(
+      request(config.serverUrl, config.workspaceId, config.authToken, "/api/voice/tts", "POST", body)
+    ).enqueue(object : Callback {
+      override fun onFailure(call: Call, error: IOException) {
+        handler.post { onResult(false) }
+      }
+
+      override fun onResponse(call: Call, response: Response) {
+        response.use {
+          val bytes = if (it.isSuccessful) it.body?.bytes() else null
+          if (bytes == null || bytes.isEmpty()) {
+            handler.post { onResult(false) }
+            return
+          }
+          val file = java.io.File.createTempFile("cesium-voice", ".wav", context.cacheDir)
+          file.writeBytes(bytes)
+          handler.post {
+            val player = android.media.MediaPlayer()
+            val done = java.util.concurrent.atomic.AtomicBoolean(false)
+            fun finish(ok: Boolean) {
+              if (done.compareAndSet(false, true)) {
+                runCatching { player.release() }
+                runCatching { file.delete() }
+                onResult(ok)
+              }
+            }
+            runCatching {
+              player.setDataSource(file.absolutePath)
+              player.setOnCompletionListener { finish(true) }
+              player.setOnErrorListener { _, _, _ ->
+                finish(false)
+                true
+              }
+              player.prepare()
+              player.start()
+            }.onFailure { finish(false) }
+          }
+        }
+      }
+    })
+  }
 
   fun createAgent(
     requestText: String,
@@ -270,5 +450,14 @@ class CesiumAssistantClient(private val context: Context) {
 
   companion object {
     private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
+
+    /**
+     * Process-lifetime voice memory shared across assistant invocations.
+     * Compaction is server-driven: when the controller folds old turns into
+     * the running summary, [adoptMemory] replaces both fields.
+     */
+    private val memoryLock = Any()
+    private var history = JSONArray()
+    private var summary: String? = null
   }
 }

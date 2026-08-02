@@ -78,10 +78,122 @@ function titleCaseMcpToken(token: string): string {
   if (/^\d+$/.test(token)) {
     return token;
   }
-  if (token.length <= 4 && /^[a-z0-9]+$/.test(token)) {
-    return token.charAt(0).toUpperCase() + token.slice(1);
+  const override = MCP_TOOL_TOKEN_OVERRIDES[token.toLowerCase()];
+  if (override) {
+    return override;
   }
   return token.charAt(0).toUpperCase() + token.slice(1);
+}
+
+/** Tokens that read as acronyms/proper nouns when humanizing raw MCP tool names. */
+const MCP_TOOL_TOKEN_OVERRIDES: Record<string, string> = {
+  id: "ID",
+  ids: "IDs",
+  url: "URL",
+  urls: "URLs",
+  uri: "URI",
+  api: "API",
+  apis: "APIs",
+  http: "HTTP",
+  https: "HTTPS",
+  json: "JSON",
+  html: "HTML",
+  css: "CSS",
+  js: "JS",
+  ts: "TS",
+  sql: "SQL",
+  db: "DB",
+  ui: "UI",
+  ai: "AI",
+  mcp: "MCP",
+  ci: "CI",
+  cli: "CLI",
+  pr: "PR",
+  prs: "PRs",
+  dom: "DOM",
+  io: "IO",
+  ip: "IP",
+  jwt: "JWT",
+  oauth: "OAuth",
+  pdf: "PDF",
+  png: "PNG",
+  svg: "SVG",
+  csv: "CSV",
+  xml: "XML",
+  yaml: "YAML",
+  regex: "Regex",
+  github: "GitHub",
+  gitlab: "GitLab",
+  javascript: "JavaScript",
+  typescript: "TypeScript",
+};
+
+/**
+ * Some MCP surfaces expose composite tool names like `mcp__github__create_issue`
+ * (Claude SDK style) or `mcp_context7_resolve-library-id`. Split them back into
+ * server + tool so both halves can be displayed formally.
+ */
+export function parseMcpCompositeToolName(
+  rawName: string | undefined
+): { serverId: string; toolName: string } | undefined {
+  const name = rawName?.trim();
+  if (!name) {
+    return undefined;
+  }
+  const doubleUnderscore = name.match(/^mcp__([^_].*?)__(.+)$/i);
+  if (doubleUnderscore?.[1] && doubleUnderscore[2]) {
+    return { serverId: doubleUnderscore[1], toolName: doubleUnderscore[2] };
+  }
+  const singleUnderscore = name.match(/^mcp_([a-z0-9][a-z0-9-]*)_(.+)$/i);
+  if (singleUnderscore?.[1] && singleUnderscore[2]) {
+    return { serverId: singleUnderscore[1], toolName: singleUnderscore[2] };
+  }
+  return undefined;
+}
+
+/**
+ * Formal display name for a raw MCP tool name (e.g. `browser_snapshot` →
+ * "Snapshot" under the Browser server, `resolve-library-id` → "Resolve Library ID").
+ * Strips a redundant server prefix, splits snake/kebab/camelCase, and applies
+ * acronym-aware Title Case so raw wire names never leak into the UI.
+ */
+export function formatMcpToolDisplayName(toolName: string, serverId?: string): string {
+  let name = toolName.trim();
+  if (!name) {
+    return name;
+  }
+  const composite = parseMcpCompositeToolName(name);
+  if (composite) {
+    name = composite.toolName;
+    serverId = serverId ?? composite.serverId;
+  }
+  const normalizedServer = serverId ? normalizeMcpServerId(serverId) : undefined;
+  if (normalizedServer) {
+    const lowered = name.toLowerCase();
+    for (const separator of ["__", "_", "-", "."]) {
+      const prefix = `${normalizedServer}${separator}`;
+      if (lowered.startsWith(prefix) && name.length > prefix.length) {
+        name = name.slice(prefix.length);
+        break;
+      }
+    }
+  }
+  const words = name
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2")
+    .split(/[\s_./-]+/)
+    .filter(Boolean)
+    .map((token) => {
+      const override = MCP_TOOL_TOKEN_OVERRIDES[token.toLowerCase()];
+      if (override) {
+        return override;
+      }
+      if (/^[A-Z0-9]+$/.test(token) && token.length > 1) {
+        return token;
+      }
+      return token.charAt(0).toUpperCase() + token.slice(1);
+    });
+  return words.join(" ");
 }
 
 /** Human-readable MCP server name from a config / tool server id. */

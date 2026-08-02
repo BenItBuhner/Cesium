@@ -12,6 +12,7 @@ export class LiveUpdateController {
   private lastProjection: MobileAgentProjection | null = null;
   private stopTimer: ReturnType<typeof setTimeout> | null = null;
   private status: LiveUpdateStatus | null = null;
+  private lastPayloadSignature: string | null = null;
 
   async update(projection: MobileAgentProjection | null) {
     this.lastProjection = projection;
@@ -26,7 +27,18 @@ export class LiveUpdateController {
     }
 
     const payload = toLiveUpdatePayload(projection);
-    this.status = await CesiumLiveUpdates.startOrUpdate(payload);
+    const payloadSignature = JSON.stringify(payload);
+    if (payloadSignature !== this.lastPayloadSignature) {
+      this.lastPayloadSignature = payloadSignature;
+      try {
+        this.status = await CesiumLiveUpdates.startOrUpdate(payload);
+      } catch (error) {
+        if (this.lastPayloadSignature === payloadSignature) {
+          this.lastPayloadSignature = null;
+        }
+        throw error;
+      }
+    }
 
     if (!isMobileAgentRunActive(projection.status)) {
       this.stopTimer = setTimeout(() => {
@@ -53,6 +65,7 @@ export class LiveUpdateController {
       clearTimeout(this.stopTimer);
       this.stopTimer = null;
     }
+    this.lastPayloadSignature = null;
     await CesiumLiveUpdates.stop();
   }
 }

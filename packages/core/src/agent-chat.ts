@@ -296,6 +296,7 @@ import {
   extractCodexSubagentStates,
   extractSubagentSessionIds,
   extractSubagentTaskText,
+  getSubagentPromptText,
   getSubagentTaskInput,
   getToolRawUpdate,
 } from "./agent-subagent-routing";
@@ -310,7 +311,9 @@ import {
   extractMcpServerIdFromTitle,
   extractMcpServerIdFromWorkedTool,
   formatMcpServerDisplayName,
+  formatMcpToolDisplayName,
   isMcpWorkedTool,
+  parseMcpCompositeToolName,
   summarizeMcpServerCounts,
 } from "./mcp-server-display";
 
@@ -626,6 +629,14 @@ type ProjectedTurn = {
   todoCards: Map<string, ChatMessage>;
   subagentCards: Map<string, ChatMessage>;
   /**
+   * Cards owned by dedicated `subagent` events. Those events carry the authoritative
+   * title/status/transcript, so later `tool_call_update`s for the spawning tool must not
+   * clobber them (Cesium V1 emits both a `subagent` tool_call and `subagent` events).
+   */
+  subagentEventCards: Set<ChatMessage>;
+  /** Cards whose transcript was synthesized from tool_call payloads (placeholder quality). */
+  subagentToolTranscripts: Set<ChatMessage>;
+  /**
    * OpenCode: child `ses_*` session id → parent spawn task `toolCallId` so global SSE merges
    * into the same subagent card as the shell/task row (avoids duplicate "Subagent" cards).
    */
@@ -664,6 +675,8 @@ function createTurn(id: string): ProjectedTurn {
     permissionCards: new Map(),
     todoCards: new Map(),
     subagentCards: new Map(),
+    subagentEventCards: new Set(),
+    subagentToolTranscripts: new Set(),
     openCodeSpawnToolBySessionId: new Map(),
     openCodeUnlinkedSpawnQueue: [],
     openCodeOrphanSseSessionOrder: [],
@@ -1594,6 +1607,16 @@ function summarizeWorkedToolBucket(
       return count === 1 ? "updated Goal" : `updated Goal ${count} times`;
     case "workflow":
       return count === 1 ? "ran a workflow" : `ran workflows ${count} times`;
+    case "wait":
+      return count === 1 ? "waited" : `waited ${count} times`;
+    case "mode":
+      return count === 1 ? "switched mode" : `switched modes ${count} times`;
+    case "fetch":
+      return count === 1 ? "fetched a URL" : `fetched ${count} URLs`;
+    case "subagent":
+      return count === 1 ? "managed subagents" : `managed subagents ${count} times`;
+    case "orchestration":
+      return count === 1 ? "managed orchestration" : `managed orchestration ${count} times`;
     case "question":
     case "ask":
       return count === 1 ? "asked question" : "asked questions";
@@ -1832,25 +1855,67 @@ function mergeAdjacentWorkedSessionsAroundPermission(messages: ChatMessage[]): C
   let changed = true;
   while (changed) {
     changed = false;
-    for (let i = 0; i + 2 < out.length; i += 1) {
+    for (let i = 0; i < out.length; i += 1) {
       const a = out[i];
-      const b = out[i + 1];
-      const c = out[i + 2];
-      if (
-        a?.type === "worked-session" &&
-        b?.type === "permission-request" &&
-        c?.type === "worked-session"
-      ) {
-        out.splice(i, 3, mergeWorkedSessionPair(a, c), b);
-        changed = true;
-        break;
+      if (a?.type !== "worked-session") {
+        continue;
       }
+      // A tool burst gated by several permissions produces runs like
+      // [worked, perm, worked, perm, worked]; merging only exact triplets left
+      // the trailing worked-session stranded as its own dropdown. Skip the
+      // whole permission run before checking for the next worked-session.
+      let j = i + 1;
+      while (j < out.length && out[j]?.type === "permission-request") {
+        j += 1;
+      }
+      const b = out[j];
+      if (j === i + 1 || b?.type !== "worked-session") {
+        continue;
+      }
+      const permissions = out.slice(i + 1, j);
+      out.splice(i, j - i + 1, mergeWorkedSessionPair(a, b), ...permissions);
+      changed = true;
+      break;
     }
   }
   return out;
 }
 
-function projectTurnTimelineToMessages(turn: ProjectedTurn): ChatMessage[] {
+/** Would this accumulated assistant text render as a visible chat bubble? */
+function assistantTextWouldRender(text: string): boolean {
+  const cleaned = stripAgentTodoJsonAssistantContent(text);
+  return cleaned.trim().length > 0 && !isCompletionFailureThreadContent(cleaned);
+}
+
+/**
+ * Collapse consecutive worked-session dropdowns with nothing visible between
+ * them into one. Leftover splits still occur when a timeline message between
+ * tool bursts is filtered out later (todo-update rows, stripped system rows).
+ */
+function mergeAdjacentWorkedSessions(messages: ChatMessage[]): ChatMessage[] {
+  const out: ChatMessage[] = [];
+  for (const message of messages) {
+    const prev = out[out.length - 1];
+    if (
+      prev?.type === "worked-session" &&
+      message.type === "worked-session" &&
+      !prev.loading &&
+      !message.loading &&
+      (prev.workedEntries?.length ?? 0) > 0 &&
+      (message.workedEntries?.length ?? 0) > 0
+    ) {
+      out[out.length - 1] = mergeWorkedSessionPair(prev, message);
+      continue;
+    }
+    out.push(message);
+  }
+  return out;
+}
+
+function projectTurnTimelineToMessages(
+  turn: ProjectedTurn,
+  options?: { isLatestTurn?: boolean }
+): ChatMessage[] {
   const messages: ChatMessage[] = [];
   let assistantText = "";
   let workedEntries: WorkedSessionEntry[] = [];
@@ -1894,16 +1959,21 @@ function projectTurnTimelineToMessages(turn: ProjectedTurn): ChatMessage[] {
       continue;
     }
     if (item.kind === "assistant") {
-      const chunk = item.text;
-      if (chunk === "") {
-        continue;
-      }
-      flushWorked();
-      assistantText += chunk;
+      // Accumulate without flushing: only visible assistant text may split a
+      // tool dropdown. Whitespace / stripped-JSON chunks used to break one tool
+      // burst into several back-to-back "Ran a command" dropdowns.
+      assistantText += item.text;
       continue;
     }
     const entry = item.entry;
-    flushAssistant();
+    if (assistantText) {
+      if (assistantTextWouldRender(assistantText)) {
+        flushWorked();
+        flushAssistant();
+      } else {
+        assistantText = "";
+      }
+    }
     workedEntries.push(entry);
   }
 
@@ -1915,8 +1985,10 @@ function projectTurnTimelineToMessages(turn: ProjectedTurn): ChatMessage[] {
   // gets moved to the end: [w1, w2, perm] — the triplet [w1, perm, w2] never forms and the UI
   // shows two "Searched workspace" dropdowns.
   const ordered = fixPermissionPlacedAfterWorkedForTools(
-    mergeTodoWorkedSessionNoise(
-      mergeAdjacentWorkedSessionsAroundPermission(messages)
+    mergeAdjacentWorkedSessions(
+      mergeTodoWorkedSessionNoise(
+        mergeAdjacentWorkedSessionsAroundPermission(messages)
+      )
     )
   );
 
@@ -1925,8 +1997,15 @@ function projectTurnTimelineToMessages(turn: ProjectedTurn): ChatMessage[] {
   const awaitingPermission = ordered.some(
     (message) => message.type === "permission-request" && !message.permissionResolved
   );
+  // Mid-turn user messages (steering / queued prompts) start a new turn; the
+  // terminal status event then settles only that newest turn. Older turns stay
+  // "unsettled" forever, so only the latest turn may show a live placeholder.
   const shouldShowLiveStatus =
-    turn.userMessage && !turn.turnEndedWithFailure && !turn.turnSettled && !awaitingPermission;
+    turn.userMessage &&
+    options?.isLatestTurn !== false &&
+    !turn.turnEndedWithFailure &&
+    !turn.turnSettled &&
+    !awaitingPermission;
   if (shouldShowLiveStatus) {
     const compressing = Boolean(turn.compressingContext);
     const liveStatusLabel = compressing
@@ -2314,9 +2393,17 @@ function buildSubagentTranscriptFromTaskEvent(
   title: string
 ): ChatMessage[] {
   const rawInput = getSubagentTaskInput(event);
-  const { taskId, resultText } = extractSubagentTaskText(event);
+  const rawUpdate = getToolRawUpdate(event);
+  const taskText = extractSubagentTaskText(event);
+  const taskId = taskText.taskId;
+  // Cesium tool_call_updates expose the tool result as a plain `result` string.
+  const resultText =
+    taskText.resultText ??
+    (typeof rawUpdate?.result === "string" && rawUpdate.result.trim()
+      ? rawUpdate.result.trim()
+      : undefined);
   const transcript: ChatMessage[] = [];
-  const prompt = typeof rawInput?.prompt === "string" ? rawInput.prompt.trim() : "";
+  const prompt = getSubagentPromptText(rawInput) ?? "";
   if (prompt) {
     transcript.push({
       id: `${event.toolCallId}-prompt`,
@@ -2370,6 +2457,31 @@ function findSubagentMessageBySessionId(
   return Array.from(turn.subagentCards.values()).find(
     (message) => message.subagentId != null && sessionIds.includes(message.subagentId)
   );
+}
+
+/**
+ * Legacy Cesium V1 events keyed the `subagent` event by a random UUID while the spawning
+ * tool_call card was keyed by `toolCallId`, producing duplicate cards. Pair them by title:
+ * the tool_call title is `Subagent <title>` while the subagent event uses the bare title.
+ */
+function findToolDerivedSubagentCardByTitle(
+  turn: ProjectedTurn,
+  title: string | undefined
+): ChatMessage | undefined {
+  const wanted = title?.trim();
+  if (!wanted) {
+    return undefined;
+  }
+  for (const card of new Set(turn.subagentCards.values())) {
+    if (turn.subagentEventCards.has(card)) {
+      continue;
+    }
+    const cardTitle = card.subagentTitle?.trim() ?? "";
+    if (cardTitle === wanted || cardTitle === `Subagent ${wanted}`) {
+      return card;
+    }
+  }
+  return undefined;
 }
 
 function codexSubagentRuntimeStatus(
@@ -3296,6 +3408,90 @@ function formatToolSummary(
     });
   }
   /**
+   * MCP tools must route before every payload heuristic below. MCP tool
+   * arguments are arbitrary — a browser `script` arg used to hijack the
+   * terminal branch ("Ran <script>"), a `path` arg the read/edit branches —
+   * which mislabeled rows and corrupted the "ran N commands" group counts.
+   */
+  const mcpComposite =
+    parseMcpCompositeToolName(titleFromRaw) ??
+    acpToolCalls
+      .map((entry) => parseMcpCompositeToolName(entry.rawName))
+      .find((value) => value != null);
+  const mcpToolName = acpToolCalls
+    .map((entry) => entry.rawName)
+    .find((name) => /call_mcp_tool|refresh_mcp_servers/i.test(name ?? ""));
+  const isMcpTool =
+    toolKind === "mcp" ||
+    toolKindFromEvent === "mcp" ||
+    Boolean(mcpToolName) ||
+    Boolean(mcpComposite) ||
+    /^MCP\s+/i.test(resolvedTitleLabel ?? "") ||
+    /refresh mcp servers/i.test(resolvedTitleLabel ?? "");
+  if (isMcpTool) {
+    if (/refresh mcp servers/i.test(resolvedTitleLabel ?? streamToolTitle ?? "")) {
+      return withConciseToolDetail({
+        kind: "tool",
+        toolCallId: event.toolCallId,
+        toolKind: "mcp",
+        title: "Refresh MCP servers",
+        detail: safeToolDetailText(detail, { suppressVerbosePayload: true }) ?? existing?.detail,
+        rawDetail,
+        status,
+        locations: normalizedLocations,
+        editPreview,
+        files,
+        ...pluginMetadata,
+      });
+    }
+    const mcpServerId =
+      existing?.mcpServerId ??
+      extractMcpServerIdFromRecords([
+        ...rawInputs,
+        rawToolRecord,
+        rawTop,
+        ...(rawToolRecord?.request && typeof rawToolRecord.request === "object"
+          ? [rawToolRecord.request as Record<string, unknown>]
+          : []),
+      ]) ??
+      extractMcpServerIdFromTitle(resolvedTitleLabel) ??
+      extractMcpServerIdFromTitle(streamToolTitle) ??
+      extractMcpServerIdFromTitle(existing?.title) ??
+      mcpComposite?.serverId;
+    const mcpToolNameFromTitle =
+      resolvedTitleLabel?.match(/^MCP\s+.+?\s+-\s+(.+)$/i)?.[1]?.trim() ??
+      findFirstStringAcrossValues(rawInputs, ["toolName", "tool_name"]) ??
+      mcpComposite?.toolName;
+    const mcpTitle = mcpServerId
+      ? mcpToolNameFromTitle
+        ? `${formatMcpServerDisplayName(mcpServerId)} · ${formatMcpToolDisplayName(
+            mcpToolNameFromTitle,
+            mcpServerId
+          )}`
+        : formatMcpServerDisplayName(mcpServerId)
+      : mcpToolNameFromTitle
+        ? formatMcpToolDisplayName(mcpToolNameFromTitle)
+        : truncateMiddleLabel(
+            resolvedTitleLabel ?? existing?.title ?? "MCP tool",
+            TOOL_TITLE_MAX_LEN
+          );
+    return withConciseToolDetail({
+      kind: "tool",
+      toolCallId: event.toolCallId,
+      toolKind: "mcp",
+      mcpServerId,
+      title: mcpTitle,
+      detail: safeToolDetailText(detail, { suppressVerbosePayload: true }) ?? existing?.detail,
+      rawDetail,
+      status,
+      locations: normalizedLocations,
+      editPreview,
+      files,
+      variant: existing?.variant,
+      ...pluginMetadata,
+    });
+  }
+  /**
    * Todo tools must route before the edit/command heuristics: titles like
    * "Update todos" match the edit verb regex and used to fall through to a raw
    * JSON dump instead of a checklist.
@@ -3511,7 +3707,7 @@ function formatToolSummary(
           formatToolFileLabel(readPath, ws) ?? toolPathBasename(readPath),
           TOOL_PATH_LABEL_MAX
         )}`
-      : "Ran";
+      : "Read file";
     let readFiles = readPath
       ? [readPath, ...(files ?? []).filter((file) => file !== readPath)]
       : files;
@@ -3599,79 +3795,12 @@ function formatToolSummary(
     });
   }
 
-  const mcpToolName = acpToolCalls
-    .map((entry) => entry.rawName)
-    .find((name) => /call_mcp_tool|refresh_mcp_servers/i.test(name ?? ""));
-  const isMcpTool =
-    toolKind === "mcp" ||
-    toolKindFromEvent === "mcp" ||
-    Boolean(mcpToolName) ||
-    /^MCP\s+/i.test(resolvedTitleLabel ?? "") ||
-    /refresh mcp servers/i.test(resolvedTitleLabel ?? "");
-  if (isMcpTool) {
-    if (/refresh mcp servers/i.test(resolvedTitleLabel ?? streamToolTitle ?? "")) {
-      return withConciseToolDetail({
-        kind: "tool",
-        toolCallId: event.toolCallId,
-        toolKind: "mcp",
-        title: "Refresh MCP servers",
-        detail: safeToolDetailText(detail, { suppressVerbosePayload: true }) ?? existing?.detail,
-        rawDetail,
-        status,
-        locations: normalizedLocations,
-        editPreview,
-        files,
-        ...pluginMetadata,
-      });
-    }
-    const mcpServerId =
-      existing?.mcpServerId ??
-      extractMcpServerIdFromRecords([
-        ...rawInputs,
-        rawToolRecord,
-        rawTop,
-        ...(rawToolRecord?.request && typeof rawToolRecord.request === "object"
-          ? [rawToolRecord.request as Record<string, unknown>]
-          : []),
-      ]) ??
-      extractMcpServerIdFromTitle(resolvedTitleLabel) ??
-      extractMcpServerIdFromTitle(streamToolTitle) ??
-      extractMcpServerIdFromTitle(existing?.title);
-    const mcpToolNameFromTitle =
-      resolvedTitleLabel?.match(/^MCP\s+.+?\s+-\s+(.+)$/i)?.[1]?.trim() ??
-      findFirstStringAcrossValues(rawInputs, ["toolName", "tool_name"]) ??
-      undefined;
-    const mcpTitle = mcpServerId
-      ? mcpToolNameFromTitle
-        ? `${formatMcpServerDisplayName(mcpServerId)} · ${mcpToolNameFromTitle}`
-        : formatMcpServerDisplayName(mcpServerId)
-      : truncateMiddleLabel(
-          resolvedTitleLabel ?? existing?.title ?? "MCP tool",
-          TOOL_TITLE_MAX_LEN
-        );
-    return withConciseToolDetail({
-      kind: "tool",
-      toolCallId: event.toolCallId,
-      toolKind: "mcp",
-      mcpServerId,
-      title: mcpTitle,
-      detail: safeToolDetailText(detail, { suppressVerbosePayload: true }) ?? existing?.detail,
-      rawDetail,
-      status,
-      locations: normalizedLocations,
-      editPreview,
-      files,
-      variant: existing?.variant,
-      ...pluginMetadata,
-    });
-  }
-
   return withConciseToolDetail({
     kind: "tool",
     toolCallId: event.toolCallId,
     toolKind,
     title: truncateMiddleLabel(
-      resolvedTitleLabel ?? existing?.title ?? "Tool call",
+      capitalizeFirst(resolvedTitleLabel ?? existing?.title ?? "Tool call"),
       TOOL_TITLE_MAX_LEN
     ),
     detail: safeToolDetailText(detail, { suppressVerbosePayload: true }) ?? existing?.detail,
@@ -3876,7 +4005,9 @@ function subagentTitleQualityScore(title: string | undefined): number {
   if (/^subagent task$/i.test(t)) {
     return 2;
   }
-  return t.length + 10;
+  // "Subagent <name>" tool titles rank just below the bare "<name>" from subagent events.
+  const stripped = t.replace(/^subagent\s+/i, "");
+  return stripped.length + (stripped === t ? 10 : 9);
 }
 
 /**
@@ -4015,6 +4146,16 @@ export function projectAgentEventsToChatMessages(
       : null;
 const turns: ProjectedTurn[] = [];
 let currentTurn: ProjectedTurn | null = null;
+/**
+ * toolCallId → live entry across every turn. Mid-turn user messages (steering /
+ * queued prompts) start a new turn with a fresh per-turn map; without this,
+ * a `tool_call_update` for a tool started before the boundary looked like an
+ * orphan and synthesized a duplicate row while the original stayed "running".
+ */
+const toolEntryByIdAcrossTurns = new Map<
+  string,
+  Extract<WorkedSessionEntry, { kind: "tool" }>
+>();
 
   const ensureTurn = () => {
     if (!currentTurn) {
@@ -4140,12 +4281,19 @@ let currentTurn: ProjectedTurn | null = null;
       }
       case "subagent": {
         const turn = ensureTurn();
-        const transcript = event.transcript?.length
+        let transcript = event.transcript?.length
           ? projectAgentEventsToChatMessages(event.transcript, {
               ...options,
               backendId: options?.backendId,
             })
           : [];
+        if (event.status !== "running") {
+          // Transcripts rarely carry a terminal status event, so the projected turn
+          // appends a live "Working" row — meaningless inside a settled card.
+          transcript = transcript.filter(
+            (row) => !(row.type === "worked-session" && row.loading)
+          );
+        }
         const nextMessage = {
           id: `subagent-${event.subagentId}`,
           type: "subagent",
@@ -4157,13 +4305,32 @@ let currentTurn: ProjectedTurn | null = null;
           subagentTranscript: transcript,
           recentActivity: event.recentActivity,
         } satisfies ChatMessage;
-        const existing = findSubagentMessageBySessionId(turn, [event.subagentId]);
+        const existing =
+          findSubagentMessageBySessionId(turn, [event.subagentId]) ??
+          turn.subagentCards.get(event.subagentId) ??
+          findToolDerivedSubagentCardByTitle(turn, event.title);
         if (existing) {
+          if (transcript.length > 0) {
+            if (turn.subagentToolTranscripts.has(existing)) {
+              // The dedicated subagent event carries the real transcript; drop the
+              // placeholder rows synthesized from the spawning tool_call payload.
+              existing.subagentTranscript = [];
+              turn.subagentToolTranscripts.delete(existing);
+            } else if (existing.subagentTranscript?.length) {
+              // Strip live "Working" rows projected from the running-state
+              // transcript so the row-id union doesn't keep them forever.
+              existing.subagentTranscript = existing.subagentTranscript.filter(
+                (row) => !(row.type === "worked-session" && row.loading)
+              );
+            }
+          }
           mergeSubagentCard(existing, nextMessage);
           turn.subagentCards.set(event.subagentId, existing);
+          turn.subagentEventCards.add(existing);
         } else {
           turn.subagentCards.set(event.subagentId, nextMessage);
           appendTimelineMessage(turn, nextMessage);
+          turn.subagentEventCards.add(nextMessage);
         }
         break;
       }
@@ -4228,16 +4395,28 @@ let currentTurn: ProjectedTurn | null = null;
             }
             break;
           }
+          const existingMessage =
+            findSubagentMessageBySessionId(turn, sessionIds) ?? turn.subagentCards.get(event.toolCallId);
+          if (existingMessage && turn.subagentEventCards.has(existingMessage)) {
+            // Dedicated `subagent` events own this card; tool events may only settle
+            // a still-running status (e.g. the tool failed before emitting completion).
+            const toolStatus = subagentStatusFromToolEventStatus(event.status);
+            if (existingMessage.subagentStatus === "running" && toolStatus !== "running") {
+              existingMessage.subagentStatus = toolStatus;
+              existingMessage.subagentComplete = true;
+            }
+            turn.subagentCards.set(event.toolCallId, existingMessage);
+            break;
+          }
           const title =
             (typeof rawInput?.description === "string" && rawInput.description.trim()) ||
+            (typeof rawInput?.title === "string" && rawInput.title.trim()) ||
             (typeof rawInput?.prompt === "string" && rawInput.prompt.trim()) ||
             (typeof event.title === "string" && event.title.trim() && event.title.trim().toLowerCase() !== "task"
               ? event.title.trim()
               : undefined) ||
             "Subagent task";
           const transcript = buildSubagentTranscriptFromTaskEvent(event, title);
-          const existingMessage =
-            findSubagentMessageBySessionId(turn, sessionIds) ?? turn.subagentCards.get(event.toolCallId);
           const message =
             existingMessage ??
             ({
@@ -4255,8 +4434,9 @@ let currentTurn: ProjectedTurn | null = null;
           message.recentActivity = buildSubagentRecentActivity(
             transcript,
             (typeof rawInput?.description === "string" ? rawInput.description : undefined) ??
-              (typeof rawInput?.prompt === "string" ? rawInput.prompt : undefined)
+              getSubagentPromptText(rawInput)
           );
+          turn.subagentToolTranscripts.add(message);
           if (!existingMessage) {
             turn.subagentCards.set(event.toolCallId, message);
             appendTimelineMessage(turn, message);
@@ -4283,6 +4463,7 @@ let currentTurn: ProjectedTurn | null = null;
         if (!existing) {
           appendTraceEntry(turn, entry);
           turn.toolEntryById.set(event.toolCallId, entry);
+          toolEntryByIdAcrossTurns.set(event.toolCallId, entry);
         } else {
           Object.assign(existing, entry);
         }
@@ -4349,16 +4530,28 @@ let currentTurn: ProjectedTurn | null = null;
             }
             break;
           }
+          const existingMessage =
+            findSubagentMessageBySessionId(turn, sessionIds) ?? turn.subagentCards.get(event.toolCallId);
+          if (existingMessage && turn.subagentEventCards.has(existingMessage)) {
+            // Dedicated `subagent` events own this card; tool events may only settle
+            // a still-running status (e.g. the tool failed before emitting completion).
+            const toolStatus = subagentStatusFromToolEventStatus(event.status);
+            if (existingMessage.subagentStatus === "running" && toolStatus !== "running") {
+              existingMessage.subagentStatus = toolStatus;
+              existingMessage.subagentComplete = true;
+            }
+            turn.subagentCards.set(event.toolCallId, existingMessage);
+            break;
+          }
           const title =
             (typeof rawInput?.description === "string" && rawInput.description.trim()) ||
+            (typeof rawInput?.title === "string" && rawInput.title.trim()) ||
             (typeof rawInput?.prompt === "string" && rawInput.prompt.trim()) ||
             (typeof event.title === "string" && event.title.trim() && event.title.trim().toLowerCase() !== "task"
               ? event.title.trim()
               : undefined) ||
             "Subagent task";
           const transcript = buildSubagentTranscriptFromTaskEvent(event, title);
-          const existingMessage =
-            findSubagentMessageBySessionId(turn, sessionIds) ?? turn.subagentCards.get(event.toolCallId);
           const message =
             existingMessage ??
             ({
@@ -4377,8 +4570,9 @@ let currentTurn: ProjectedTurn | null = null;
             transcript,
             taskText.resultText ??
               (typeof rawInput?.description === "string" ? rawInput.description : undefined) ??
-              (typeof rawInput?.prompt === "string" ? rawInput.prompt : undefined)
+              getSubagentPromptText(rawInput)
           );
+          turn.subagentToolTranscripts.add(message);
           if (!existingMessage) {
             turn.subagentCards.set(event.toolCallId, message);
             appendTimelineMessage(turn, message);
@@ -4398,9 +4592,15 @@ let currentTurn: ProjectedTurn | null = null;
           }
           break;
         }
-        let existing = turn.toolEntryById.get(event.toolCallId) as
+        let existing = (turn.toolEntryById.get(event.toolCallId) ??
+          toolEntryByIdAcrossTurns.get(event.toolCallId)) as
           | Extract<WorkedSessionEntry, { kind: "tool" }>
           | undefined;
+        if (existing && !turn.toolEntryById.has(event.toolCallId)) {
+          // Update for a tool started before a mid-turn user message: mutate the
+          // original row in its earlier turn instead of synthesizing a duplicate.
+          turn.toolEntryById.set(event.toolCallId, existing);
+        }
         const unmatchedEntry = !existing ? formatToolSummary(event, undefined, workspaceRoot) : undefined;
         if (!existing) {
           const open = turn.trace.filter(
@@ -4457,6 +4657,7 @@ let currentTurn: ProjectedTurn | null = null;
         if (!existing) {
           appendTraceEntry(turn, entry);
           turn.toolEntryById.set(event.toolCallId, entry);
+          toolEntryByIdAcrossTurns.set(event.toolCallId, entry);
         } else {
           const keepToolCallId = existing.toolCallId;
           Object.assign(existing, entry);
@@ -4645,7 +4846,9 @@ const messages: ChatMessage[] = [];
 for (const turn of turns) {
   const timelineMsgs = appendTurnCompletionFooter(
     turn,
-    projectTurnTimelineToMessages(turn)
+    projectTurnTimelineToMessages(turn, {
+      isLatestTurn: turn === turns[turns.length - 1],
+    })
   );
   const forkInTimeline = timelineMsgs.filter((m) => m.type === "chat-fork");
   const otherTimeline = timelineMsgs.filter((m) => m.type !== "chat-fork");
@@ -4723,12 +4926,19 @@ export function dedupeAgentStoredEvents(
   }
   const sorted = [...events].sort((a, b) => a.seq - b.seq);
   const bySeq = new Map<number, AgentStoredEvent>();
+  const unsequenced: AgentStoredEvent[] = [];
   for (const e of sorted) {
+    // Synthetic events (e.g. subagent transcripts) may all carry seq 0 — those are
+    // distinct events, so only dedupe by seq once the store has assigned one (> 0).
+    if (e.seq <= 0) {
+      unsequenced.push(e);
+      continue;
+    }
     if (!bySeq.has(e.seq)) {
       bySeq.set(e.seq, e);
     }
   }
-  const seqDeduped = [...bySeq.values()].sort((a, b) => a.seq - b.seq);
+  const seqDeduped = [...unsequenced, ...bySeq.values()].sort((a, b) => a.seq - b.seq);
   const seenEventIds = new Set<string>();
   const out: AgentStoredEvent[] = [];
   for (const e of seqDeduped) {

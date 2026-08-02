@@ -35,6 +35,8 @@ class CesiumPhoneControlService : Service() {
     .build()
   private var activeCall: Call? = null
   private var stopped = false
+  private var loopActive = false
+  private var activeConfigKey: String? = null
   private var cursor = 0L
   private var consecutiveFailures = 0
   private var connectedHost: String? = null
@@ -57,8 +59,21 @@ class CesiumPhoneControlService : Service() {
       stopControl()
       return START_NOT_STICKY
     }
+    val configKey = listOf(config.serverUrl, config.workspaceId, config.authToken ?: "")
+      .joinToString("\u0000")
+    if (loopActive && !stopped && consecutiveFailures == 0 && configKey == activeConfigKey) {
+      // The register/poll loop is healthy and the connection config is
+      // unchanged. Reconfigure churn from the app (workspace focus changes,
+      // web reloads) used to cancel in-flight registrations here, which
+      // surfaced as bogus "Reconnecting…" failures.
+      return START_STICKY
+    }
     stopped = false
-    startAsForeground("Connected to ${hostLabel(config.serverUrl)}")
+    loopActive = true
+    activeConfigKey = configKey
+    consecutiveFailures = 0
+    connectedHost = null
+    startAsForeground("Connecting to ${hostLabel(config.serverUrl)}…")
     handler.removeCallbacksAndMessages(null)
     activeCall?.cancel()
     registerAndPoll()
@@ -67,6 +82,7 @@ class CesiumPhoneControlService : Service() {
 
   override fun onDestroy() {
     stopped = true
+    loopActive = false
     activeCall?.cancel()
     handler.removeCallbacksAndMessages(null)
     super.onDestroy()
@@ -96,7 +112,7 @@ class CesiumPhoneControlService : Service() {
         "POST",
         body
       )
-    ) { response ->
+    ) { call, response ->
       if (response?.isSuccessful == true) {
         try {
           val registered = JSONObject(response.body?.string() ?: "{}")
@@ -107,10 +123,14 @@ class CesiumPhoneControlService : Service() {
           onHealthy(config.serverUrl)
           poll(PhoneControlPreferences.setDeviceToken(this, token))
         } catch (error: Exception) {
-          scheduleRetry(error.message ?: "Invalid phone registration response")
+          // A call cancelled mid-read (service reconfigure) is not a failure;
+          // the restarted loop re-registers on its own.
+          if (!call.isCanceled()) {
+            scheduleRetry("Registration failed: ${describeFailure(error)}")
+          }
         }
-      } else {
-        scheduleRetry(response?.code?.let { "Server returned HTTP $it" } ?: "Server unavailable")
+      } else if (!call.isCanceled()) {
+        scheduleRetry(httpFailureDetail(response))
       }
     }
   }
@@ -119,10 +139,12 @@ class CesiumPhoneControlService : Service() {
     if (stopped) return
     val deviceId = PhoneControlPreferences.deviceId(this)
     val path = "/api/phone-control/devices/${UriCodec.segment(deviceId)}/commands" +
-      "?after=$cursor&waitMs=20000"
-    execute(request(config, path, "GET", null)) { response ->
+      "?after=$cursor&waitMs=25000"
+    execute(request(config, path, "GET", null)) { call, response ->
       if (response?.isSuccessful != true) {
-        scheduleRetry(response?.code?.let { "Server returned HTTP $it" } ?: "Connection lost")
+        if (!call.isCanceled()) {
+          scheduleRetry(httpFailureDetail(response, whenUnavailable = "Connection lost"))
+        }
         return@execute
       }
       val raw = runCatching { response.body?.string() }.getOrNull().orEmpty()
@@ -131,12 +153,12 @@ class CesiumPhoneControlService : Service() {
         // A long-poll that returns an empty/partial body is a normal transient on
         // a slow link; just re-poll quietly instead of alarming the user.
         onHealthy(config.serverUrl)
-        handler.postDelayed({ registerAndPoll() }, 400)
+        handler.postDelayed({ poll(config) }, 400)
         return@execute
       }
       onHealthy(config.serverUrl)
       processCommands(config, json.optJSONArray("commands") ?: JSONArray(), 0) {
-        handler.postDelayed({ registerAndPoll() }, 250)
+        handler.postDelayed({ poll(config) }, 250)
       }
     }
   }
@@ -201,7 +223,7 @@ class CesiumPhoneControlService : Service() {
         "POST",
         body
       )
-    ) { response ->
+    ) { _, response ->
       if (response?.isSuccessful == true) {
         finished(true)
         return@execute
@@ -246,13 +268,14 @@ class CesiumPhoneControlService : Service() {
     return builder.method(method, body).build()
   }
 
-  private fun execute(request: Request, completed: (Response?) -> Unit) {
+  private fun execute(request: Request, completed: (Call, Response?) -> Unit) {
     if (stopped) return
-    activeCall = client.newCall(request)
-    activeCall!!.enqueue(object : Callback {
+    val call = client.newCall(request)
+    activeCall = call
+    call.enqueue(object : Callback {
       override fun onFailure(call: Call, error: IOException) {
         if (!stopped && !call.isCanceled()) {
-          handler.post { safeComplete(null, completed) }
+          handler.post { safeComplete(call, null, completed) }
         }
       }
 
@@ -261,18 +284,40 @@ class CesiumPhoneControlService : Service() {
         // InflaterSource.close throwing) escape onto the main looper and crash
         // the whole app process, which previously took the service down for
         // Android's 30-minute restart backoff.
-        handler.post { safeComplete(response, completed) }
+        handler.post { safeComplete(call, response, completed) }
       }
     })
   }
 
-  private fun safeComplete(response: Response?, completed: (Response?) -> Unit) {
+  private fun safeComplete(call: Call, response: Response?, completed: (Call, Response?) -> Unit) {
     try {
-      completed(response)
+      completed(call, response)
     } catch (error: Exception) {
-      scheduleRetry(error.message ?: "Phone control callback error")
+      if (!call.isCanceled()) {
+        scheduleRetry(describeFailure(error))
+      }
     } finally {
       if (response != null) runCatching { response.close() }
+    }
+  }
+
+  /** Human-readable failure label; null-message exceptions show their class name. */
+  private fun describeFailure(error: Exception): String =
+    error.message?.takeIf { it.isNotBlank() } ?: error.javaClass.simpleName
+
+  /** Surfaces the server's JSON `{error}` body so 401/404/500s become actionable. */
+  private fun httpFailureDetail(
+    response: Response?,
+    whenUnavailable: String = "Server unavailable"
+  ): String {
+    if (response == null) return whenUnavailable
+    val bodyError = runCatching {
+      JSONObject(response.body?.string().orEmpty()).optString("error")
+    }.getOrNull()?.trim().orEmpty()
+    return if (bodyError.isNotBlank()) {
+      "HTTP ${response.code}: ${bodyError.take(140)}"
+    } else {
+      "Server returned HTTP ${response.code}"
     }
   }
 
@@ -290,16 +335,23 @@ class CesiumPhoneControlService : Service() {
     consecutiveFailures += 1
     connectedHost = null
     // Keep the notification calm through brief blips; only surface trouble once
-    // failures persist. Recover fast (short backoff, capped).
+    // failures persist. Recover fast (short backoff), then back off deeply so a
+    // persistently unreachable/misconfigured server isn't hammered forever.
     if (consecutiveFailures >= 3) {
       startAsForeground("Reconnecting… ($detail)")
     }
-    val delay = (750L * consecutiveFailures).coerceAtMost(5_000L)
+    val delay = if (consecutiveFailures <= 5) {
+      750L * consecutiveFailures
+    } else {
+      (5_000L * (consecutiveFailures - 4)).coerceAtMost(60_000L)
+    }
     handler.postDelayed({ registerAndPoll() }, delay)
   }
 
   private fun stopControl() {
     stopped = true
+    loopActive = false
+    activeConfigKey = null
     activeCall?.cancel()
     handler.removeCallbacksAndMessages(null)
     stopForeground(STOP_FOREGROUND_REMOVE)

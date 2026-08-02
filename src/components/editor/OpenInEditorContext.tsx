@@ -67,6 +67,37 @@ export function hasMeaningfulComposerContent(draft: ComposerDraftRecord): boolea
   return false;
 }
 
+/** Stable draft ids used by the agent new-chat landing composers. */
+export const AGENT_STANDALONE_COMPOSER_DRAFT_ID = "agent-draft:standalone";
+
+export function agentWorkspaceComposerDraftId(workspaceId: string | null | undefined): string {
+  return `agent-draft:${workspaceId ?? "workspace"}`;
+}
+
+/**
+ * Merge a partial composer draft patch. Omitting `content` (or attachments /
+ * captures / textReferences) preserves the existing field — callers that clear
+ * text on submit must not re-pass a stale `content` when updating attachments.
+ */
+export function mergeComposerDraftRecord(
+  existing: ComposerDraftRecord | undefined,
+  draftId: string,
+  patch: Partial<ComposerDraftRecord>
+): ComposerDraftRecord {
+  return {
+    draftId,
+    title: patch.title ?? existing?.title ?? "Composer",
+    content: patch.content !== undefined ? patch.content : (existing?.content ?? ""),
+    attachments:
+      patch.attachments !== undefined ? patch.attachments : existing?.attachments,
+    captures: patch.captures !== undefined ? patch.captures : existing?.captures,
+    textReferences:
+      patch.textReferences !== undefined
+        ? patch.textReferences
+        : existing?.textReferences,
+  };
+}
+
 /** Highest-priority registered draft wins (see `useRegisterDesignCaptureComposer`). */
 const designCaptureRegistry = new Map<string, number>();
 
@@ -255,6 +286,8 @@ type Ctx = {
     draftId: string,
     patch: Partial<ComposerDraftRecord>
   ) => void;
+  /** Clears text + attachments/captures/refs for a draft (e.g. New Chat). */
+  resetComposerDraft: (draftId: string) => void;
   migrateComposerDraft: (oldDraftId: string, newDraftId: string) => void;
   setComposerSelection: (draftId: string, selection: TextSelection) => void;
   expandedComposerDraftId: string | null;
@@ -327,20 +360,7 @@ export function OpenInEditorProvider({ children }: { children: ReactNode }) {
     ) => {
       setComposerDrafts((current) => {
         const existing = current[draftId];
-        const next: ComposerDraftRecord = {
-          draftId,
-          title: patch.title ?? existing?.title ?? "Composer",
-          content:
-            patch.content !== undefined ? patch.content : (existing?.content ?? ""),
-          attachments:
-            patch.attachments !== undefined ? patch.attachments : existing?.attachments,
-          captures:
-            patch.captures !== undefined ? patch.captures : existing?.captures,
-          textReferences:
-            patch.textReferences !== undefined
-              ? patch.textReferences
-              : existing?.textReferences,
-        };
+        const next = mergeComposerDraftRecord(existing, draftId, patch);
         if (
           existing &&
           existing.title === next.title &&
@@ -359,6 +379,41 @@ export function OpenInEditorProvider({ children }: { children: ReactNode }) {
     },
     []
   );
+
+  const resetComposerDraft = useCallback((draftId: string) => {
+    setComposerDrafts((current) => {
+      const existing = current[draftId];
+      if (
+        existing &&
+        existing.content === "" &&
+        existing.attachments === undefined &&
+        existing.captures === undefined &&
+        existing.textReferences === undefined
+      ) {
+        return current;
+      }
+      return {
+        ...current,
+        [draftId]: {
+          draftId,
+          title: existing?.title ?? "Composer",
+          content: "",
+          attachments: undefined,
+          captures: undefined,
+          textReferences: undefined,
+        },
+      };
+    });
+    setComposerSelections((current) => {
+      if (!current[draftId]) {
+        return current;
+      }
+      return {
+        ...current,
+        [draftId]: { start: 0, end: 0 },
+      };
+    });
+  }, []);
 
   const migrateComposerDraft = useCallback(
     (oldDraftId: string, newDraftId: string) => {
@@ -683,6 +738,7 @@ export function OpenInEditorProvider({ children }: { children: ReactNode }) {
       composerDrafts,
       composerSelections,
       upsertComposerDraft,
+      resetComposerDraft,
       migrateComposerDraft,
       setComposerSelection,
       expandedComposerDraftId,
@@ -707,6 +763,7 @@ export function OpenInEditorProvider({ children }: { children: ReactNode }) {
       composerDrafts,
       composerSelections,
       upsertComposerDraft,
+      resetComposerDraft,
       migrateComposerDraft,
       setComposerSelection,
       expandedComposerDraftId,

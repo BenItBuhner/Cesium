@@ -883,8 +883,8 @@ function buildCliToolDisplayTitle(rawName: string, input: unknown, result?: unkn
   }
   const humanized = humanizeCliToolName(String(rawName));
   return humanized
-    ? truncateGenericToolTitle(`Ran ${humanized}`, "Ran")
-    : "Ran";
+    ? truncateGenericToolTitle(`Ran ${humanized}`, "Tool call")
+    : "Tool call";
 }
 
 function countLinesInText(text: string): number {

@@ -13,6 +13,7 @@ export * from "./mcp-types";
 export * from "./plugin-types";
 export * from "./cloud-agents-types";
 export * from "./agent-rail";
+export * from "./agent-rail-status";
 export * from "./composer-status-bar";
 export * from "./workspace-session";
 export * from "./agent-conversation-mru";

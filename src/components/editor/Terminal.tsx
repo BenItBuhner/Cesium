@@ -178,6 +178,7 @@ export function Terminal({ terminalId, onAutoCloseAfterCleanExit }: TerminalProp
 
   useEffect(() => {
     if (!containerRef.current) return;
+    const isMobileNative = Boolean(window.ReactNativeWebView);
 
     const focusTerminalTarget = () => {
       if (hardwareInputEnabledRef.current) {
@@ -194,7 +195,7 @@ export function Terminal({ terminalId, onAutoCloseAfterCleanExit }: TerminalProp
     };
 
     const terminal = new XTerm({
-      cursorBlink: true,
+      cursorBlink: !isMobileNative,
       fontFamily: readCssVariable("--font-geist-mono", GEIST_MONO_FALLBACK),
       fontSize: 12,
       fontWeight: "400",
@@ -203,7 +204,7 @@ export function Terminal({ terminalId, onAutoCloseAfterCleanExit }: TerminalProp
       letterSpacing: 0,
       theme: initialThemeRef.current,
       convertEol: true,
-      scrollback: 5000,
+      scrollback: isMobileNative ? 2000 : 5000,
     });
     const fitAddon = new FitAddon();
     const webLinksAddon = new WebLinksAddon();
@@ -223,8 +224,28 @@ export function Terminal({ terminalId, onAutoCloseAfterCleanExit }: TerminalProp
     const socket = new BinaryWebSocket(socketUrl);
     socketRef.current = socket;
 
-    const sendResize = () => {
+    let resizeFrame: number | null = null;
+    let resizeForce = false;
+    let resizeRefresh = false;
+    let lastSentCols = 0;
+    let lastSentRows = 0;
+
+    const applyTerminalResize = () => {
+      resizeFrame = null;
       fitAddon.fit();
+      if (resizeRefresh) {
+        terminal.refresh(0, Math.max(terminal.rows - 1, 0));
+      }
+      const changed =
+        terminal.cols !== lastSentCols || terminal.rows !== lastSentRows;
+      if (!changed && !resizeForce) {
+        resizeRefresh = false;
+        return;
+      }
+      lastSentCols = terminal.cols;
+      lastSentRows = terminal.rows;
+      resizeForce = false;
+      resizeRefresh = false;
       socket.sendJson({
         type: "resize",
         cols: terminal.cols,
@@ -232,14 +253,14 @@ export function Terminal({ terminalId, onAutoCloseAfterCleanExit }: TerminalProp
       });
     };
 
-    const syncTerminalMetrics = () => {
-      fitAddon.fit();
-      terminal.refresh(0, Math.max(terminal.rows - 1, 0));
-      socket.sendJson({
-        type: "resize",
-        cols: terminal.cols,
-        rows: terminal.rows,
-      });
+    const scheduleTerminalResize = (options?: {
+      force?: boolean;
+      refresh?: boolean;
+    }) => {
+      resizeForce ||= options?.force === true;
+      resizeRefresh ||= options?.refresh === true;
+      if (resizeFrame != null) return;
+      resizeFrame = requestAnimationFrame(applyTerminalResize);
     };
 
     const scheduleTerminalClear = () => {
@@ -302,7 +323,7 @@ export function Terminal({ terminalId, onAutoCloseAfterCleanExit }: TerminalProp
         if (state === "open") {
           userRequestedExitRef.current = false;
           terminal.reset();
-          sendResize();
+          scheduleTerminalResize({ force: true });
           requestAnimationFrame(focusTerminalTarget);
         }
       }),
@@ -355,7 +376,7 @@ export function Terminal({ terminalId, onAutoCloseAfterCleanExit }: TerminalProp
     });
 
     resizeObserverRef.current = new ResizeObserver(() => {
-      sendResize();
+      scheduleTerminalResize();
     });
     resizeObserverRef.current.observe(containerRef.current);
 
@@ -363,7 +384,7 @@ export function Terminal({ terminalId, onAutoCloseAfterCleanExit }: TerminalProp
     const fontSet = document.fonts;
     const onFontsSettled = () => {
       if (cancelled) return;
-      requestAnimationFrame(syncTerminalMetrics);
+      scheduleTerminalResize({ refresh: true });
     };
 
     void fontSet.ready.then(onFontsSettled);
@@ -379,6 +400,10 @@ export function Terminal({ terminalId, onAutoCloseAfterCleanExit }: TerminalProp
       if (clearTimerRef.current) {
         window.clearTimeout(clearTimerRef.current);
         clearTimerRef.current = null;
+      }
+      if (resizeFrame != null) {
+        cancelAnimationFrame(resizeFrame);
+        resizeFrame = null;
       }
       pendingCommandRef.current = "";
       pendingClearRef.current = false;

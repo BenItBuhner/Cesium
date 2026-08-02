@@ -2164,6 +2164,12 @@ export function ChatComposer({
       onDraftCapturesChange(undefined);
     }
     updateTextReferences(undefined);
+    // Re-assert empty after metadata callbacks. Parents that incorrectly
+    // re-apply a stale `content` field while clearing attachments/captures
+    // would otherwise resurrect the prompt (especially on mobile agent UI).
+    valueRef.current = "";
+    setComposerValue("");
+    setComposerSelection({ start: 0, end: 0 });
     if (promptText || imagesToSubmit.length > 0) {
       void Promise.resolve(onSubmit(promptText, imagesToSubmit, { delivery }))
         .catch(() => undefined)
@@ -3101,22 +3107,26 @@ const handleNativeComposerKeyDown = useCallback(
   });
 
   /**
-   * Inline-controls overflow: on narrow (mobile-width) panes, a long model
-   * name or mode label can crowd the single-line capsule until the editor is
-   * unusably thin. A hidden probe row mirrors the full-size controls plus a
-   * minimum editor width; when the probe outgrows the composer row, the
-   * mode/model triggers compact to icon-only pills. Once content wraps to the
-   * stacked layout the controls get their full labels back.
+   * Inline-controls overflow: on narrow (mobile-width) panes, mode/model
+   * labels crowd the single-line capsule until the editor is unusably thin.
+   * A hidden probe row mirrors the full-size controls plus a minimum editor
+   * width; when the probe outgrows the composer row — or the row itself is
+   * at mobile width — the mode/model triggers compact to icon-only pills
+   * (short model names included; length must not opt out of compaction).
+   * Once content wraps to the stacked layout the controls get their full
+   * labels back.
    */
   const inlineOverflowEnabled = variant === "docked" && !isExpanded;
-  const inlineControlsOverflow = useComposerInlineControlsOverflow(
-    inlineRowRef,
-    inlineProbeRef,
-    inlineOverflowEnabled
-  );
+  const { overflow: inlineControlsOverflow, rowWidthPx: inlineRowWidthPx } =
+    useComposerInlineControlsOverflow(
+      inlineRowRef,
+      inlineProbeRef,
+      inlineOverflowEnabled
+    );
   const compactInlineControls = shouldCompactComposerInlineControls({
     inlineControlsOverflow,
     contentIsMultiLine: isMultiLine,
+    rowWidthPx: inlineRowWidthPx,
   });
   canBackspaceClearModeChipRef.current =
     variant === "docked" &&

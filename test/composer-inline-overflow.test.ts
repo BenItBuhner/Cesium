@@ -1,13 +1,17 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
-import { shouldCompactComposerInlineControls } from "../src/components/chat/composer-inline-overflow.ts";
+import {
+  COMPOSER_INLINE_FORCE_COMPACT_MAX_ROW_WIDTH_PX,
+  shouldCompactComposerInlineControls,
+} from "../src/components/chat/composer-inline-overflow.ts";
 
 describe("composer inline overflow", () => {
-  test("no overflow keeps full-size single-line controls", () => {
+  test("no overflow on a wide row keeps full-size single-line controls", () => {
     assert.equal(
       shouldCompactComposerInlineControls({
         inlineControlsOverflow: false,
         contentIsMultiLine: false,
+        rowWidthPx: COMPOSER_INLINE_FORCE_COMPACT_MAX_ROW_WIDTH_PX + 80,
       }),
       false
     );
@@ -18,6 +22,26 @@ describe("composer inline overflow", () => {
       shouldCompactComposerInlineControls({
         inlineControlsOverflow: true,
         contentIsMultiLine: false,
+        rowWidthPx: 900,
+      }),
+      true
+    );
+  });
+
+  test("narrow rows always compact, even when a short model name would fit", () => {
+    assert.equal(
+      shouldCompactComposerInlineControls({
+        inlineControlsOverflow: false,
+        contentIsMultiLine: false,
+        rowWidthPx: COMPOSER_INLINE_FORCE_COMPACT_MAX_ROW_WIDTH_PX,
+      }),
+      true
+    );
+    assert.equal(
+      shouldCompactComposerInlineControls({
+        inlineControlsOverflow: false,
+        contentIsMultiLine: false,
+        rowWidthPx: 390,
       }),
       true
     );
@@ -28,6 +52,7 @@ describe("composer inline overflow", () => {
       shouldCompactComposerInlineControls({
         inlineControlsOverflow: true,
         contentIsMultiLine: true,
+        rowWidthPx: 390,
       }),
       false
     );
@@ -38,6 +63,25 @@ describe("composer inline overflow", () => {
       shouldCompactComposerInlineControls({
         inlineControlsOverflow: false,
         contentIsMultiLine: true,
+        rowWidthPx: 390,
+      }),
+      false
+    );
+  });
+
+  test("missing row width does not force compact without overflow", () => {
+    assert.equal(
+      shouldCompactComposerInlineControls({
+        inlineControlsOverflow: false,
+        contentIsMultiLine: false,
+        rowWidthPx: null,
+      }),
+      false
+    );
+    assert.equal(
+      shouldCompactComposerInlineControls({
+        inlineControlsOverflow: false,
+        contentIsMultiLine: false,
       }),
       false
     );

@@ -137,6 +137,14 @@ const STATIC_SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
     "Suppress all notifications — connection alerts, warnings, file overrides, and every other notification type.",
     ["dnd", "notifications", "quiet"]
   ),
+  section("general", "voice", "Voice"),
+  row(
+    "general",
+    "show-voice-orb",
+    "Voice orb",
+    "Show the floating ambient voice orb. Hiding it also turns the voice plane off.",
+    ["voice", "orb", "ambient", "microphone", "assistant", "overlay", "bubble"]
+  ),
 
   // —— Appearance ——
   section("appearance", "mode", "Appearance mode", "system light dark"),

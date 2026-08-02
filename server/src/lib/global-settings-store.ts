@@ -121,8 +121,23 @@ export type GlobalSettings = {
   };
 };
 
-export type WorkspaceSortMode = "recent" | "alphabetical" | "custom";
-export type AgentRailGroupByMode = "workspace" | "repository" | "server" | "updated" | "status";
+export type WorkspaceSortMode = "recent" | "alphabetical" | "machine" | "custom";
+export type AgentRailGroupByMode =
+  | "workspace"
+  | "priority"
+  | "repository"
+  | "server"
+  | "updated"
+  | "status";
+export type AgentRailSectionId = "attention" | "pinned" | "chats" | "workspaces";
+export type AgentRailRowDetailMode = "compact" | "balanced" | "expanded";
+
+const AGENT_RAIL_SECTION_IDS: AgentRailSectionId[] = [
+  "attention",
+  "pinned",
+  "chats",
+  "workspaces",
+];
 
 export type ChatFolderState = {
   id: string;
@@ -147,6 +162,12 @@ export type ServerRailAppearance = {
   nickname?: string;
 };
 
+/**
+ * MUST stay in sync with `AgentRailSettingsState` in
+ * `packages/client/src/global-settings.ts`. Fields missing here are silently
+ * stripped on every save round-trip and the client's choices evaporate on the
+ * next refetch — the exact "my setting silently reverted" bug class.
+ */
 export type AgentRailSettingsState = {
   groupBy: AgentRailGroupByMode;
   visibleStatusFilters: string[];
@@ -154,6 +175,10 @@ export type AgentRailSettingsState = {
   visibleServerIds: string[];
   hiddenServerIds: string[];
   showIcons: boolean;
+  /** Per-row detail density: compact, balanced, or expanded. */
+  rowDetail: AgentRailRowDetailMode;
+  sectionOrder: AgentRailSectionId[];
+  hiddenSections: AgentRailSectionId[];
 };
 
 function createDefaultSettings(): GlobalSettings {
@@ -174,6 +199,9 @@ function createDefaultSettings(): GlobalSettings {
         visibleServerIds: [],
         hiddenServerIds: [],
         showIcons: true,
+        rowDetail: "balanced",
+        sectionOrder: ["attention", "pinned", "chats", "workspaces"],
+        hiddenSections: [],
       },
     },
     agents: {
@@ -390,7 +418,7 @@ function normalizeRememberedAgentPermissionRules(
 }
 
 function normalizeWorkspaceSortMode(raw: unknown): WorkspaceSortMode {
-  return raw === "recent" || raw === "alphabetical" || raw === "custom"
+  return raw === "recent" || raw === "alphabetical" || raw === "machine" || raw === "custom"
     ? raw
     : "recent";
 }
@@ -559,25 +587,61 @@ function normalizeChatRootOrderByScope(raw: unknown): Record<string, string[]> {
   return out;
 }
 
+function normalizeAgentRailSectionIds(raw: unknown): AgentRailSectionId[] {
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+  const seen = new Set<AgentRailSectionId>();
+  const out: AgentRailSectionId[] = [];
+  for (const value of raw) {
+    if (
+      value !== "attention" &&
+      value !== "pinned" &&
+      value !== "chats" &&
+      value !== "workspaces"
+    ) {
+      continue;
+    }
+    if (seen.has(value)) {
+      continue;
+    }
+    seen.add(value);
+    out.push(value);
+  }
+  return out;
+}
+
+/** Mirrors `normalizeAgentRailSettings` in `packages/client/src/global-settings.ts`. */
 function normalizeAgentRailSettings(raw: unknown): AgentRailSettingsState {
   const defaults = createDefaultSettings().general.agentRail;
   if (!raw || typeof raw !== "object") {
     return defaults;
   }
   const record = raw as Partial<AgentRailSettingsState>;
-  const rawGroupBy =
+  const groupBy =
     record.groupBy === "workspace" ||
+    record.groupBy === "priority" ||
     record.groupBy === "repository" ||
     record.groupBy === "server" ||
     record.groupBy === "updated" ||
     record.groupBy === "status"
       ? record.groupBy
       : defaults.groupBy;
-  const groupBy = rawGroupBy === "server" ? "workspace" : rawGroupBy;
   const strings = (value: unknown): string[] =>
     Array.isArray(value)
       ? value.filter((item): item is string => typeof item === "string")
       : [];
+  const ordered = normalizeAgentRailSectionIds(record.sectionOrder);
+  if (!ordered.includes("attention")) {
+    ordered.unshift("attention");
+  }
+  const sectionOrder: AgentRailSectionId[] = [
+    ...ordered,
+    ...AGENT_RAIL_SECTION_IDS.filter((id) => !ordered.includes(id)),
+  ];
+  const hiddenSections = normalizeAgentRailSectionIds(record.hiddenSections).filter(
+    (id) => id !== "workspaces"
+  );
   return {
     groupBy,
     visibleStatusFilters: strings(record.visibleStatusFilters),
@@ -587,6 +651,16 @@ function normalizeAgentRailSettings(raw: unknown): AgentRailSettingsState {
     hiddenServerIds: strings(record.hiddenServerIds),
     showIcons:
       typeof record.showIcons === "boolean" ? record.showIcons : defaults.showIcons,
+    rowDetail:
+      record.rowDetail === "compact" ||
+      record.rowDetail === "balanced" ||
+      record.rowDetail === "expanded"
+        ? record.rowDetail
+        : (record.rowDetail as unknown) === "auto"
+          ? "balanced"
+          : defaults.rowDetail,
+    sectionOrder,
+    hiddenSections,
   };
 }
 

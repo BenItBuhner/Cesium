@@ -51,6 +51,7 @@ import {
   type AgentRailFilterToggleKey,
   type AgentRailFilterToggleState,
 } from "@/lib/agent-rail";
+import { agentRailConversationNeedsAttention } from "@/lib/agent-rail-status";
 import {
   getGlobalPinnedAgentConversationIdsSnapshot,
   migrateGlobalPinnedAgentConversationIdsIfNeeded,
@@ -82,6 +83,11 @@ import { markConversationSwitchStart } from "@/lib/dev-perf";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { useWorkspaceDirectory } from "@/contexts/WorkspaceDirectoryContext";
 import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
+import {
+  AGENT_STANDALONE_COMPOSER_DRAFT_ID,
+  agentWorkspaceComposerDraftId,
+  useOpenInEditor,
+} from "@/components/editor/OpenInEditorContext";
 import type { WorkspaceSortMode } from "@/lib/global-settings";
 import type { ServerConnection } from "@/lib/server-connections";
 import {
@@ -240,6 +246,10 @@ type AgentShellStateContextValue = {
   railFilterActive: boolean;
   setRailFilterToggle: (key: AgentRailFilterToggleKey, value: boolean) => void;
   clearRailFilters: () => void;
+  /** Conversations whose finished turn the user has not opened yet. */
+  unreadCompletionByConversationId: Record<string, true> | undefined;
+  /** Real workspace names keyed by workspace id (survives rail regrouping). */
+  railWorkspaceNameById: Map<string, string>;
   isMobile: boolean;
 };
 
@@ -311,8 +321,12 @@ function findConversationOwnerWorkspaceId(
   conversationId: string
 ): string | null {
   for (const group of groups) {
-    if (group.conversations.some((c) => c.id === conversationId)) {
-      return group.workspace.id;
+    const match = group.conversations.find((c) => c.id === conversationId);
+    if (match) {
+      // Never trust group.workspace.id: under bucket groupings (priority /
+      // status / updated / repository) it is a pseudo-workspace key like
+      // "priority:local:recent", and opening it as a workspace fails loudly.
+      return match.workspaceId ?? group.workspace.id;
     }
   }
   return null;
@@ -510,6 +524,7 @@ export function AgentShellStateProvider({
   } = useServerConnections();
   const { pushNotification } = useWorkbenchNotifications();
   const { workspaces: directoryWorkspaces } = useWorkspaceDirectory();
+  const { resetComposerDraft } = useOpenInEditor();
   const { isMobile } = useViewport();
   const urlConversationId =
     typeof window !== "undefined"
@@ -899,34 +914,63 @@ export function AgentShellStateProvider({
   );
 
   const groupedByRailMode = useMemo(
-    () => groupAgentRailGroups(visibleMachineGroups, settings.general.agentRail.groupBy),
-    [settings.general.agentRail.groupBy, visibleMachineGroups]
+    () =>
+      groupAgentRailGroups(
+        visibleMachineGroups,
+        settings.general.agentRail.groupBy,
+        Date.now(),
+        {
+          unreadCompletionByConversationId:
+            workspaceSession.chat.unreadChatCompletionByConversationId,
+        }
+      ),
+    [
+      settings.general.agentRail.groupBy,
+      visibleMachineGroups,
+      workspaceSession.chat.unreadChatCompletionByConversationId,
+    ]
   );
 
   const orderedGroups = useMemo(
     () =>
-      sortConversationGroups(
-        groupedByRailMode,
-        recentWorkspaceIds,
-        settings.general.workspaceSortMode,
-        settings.general.workspaceCustomOrderIds
-      ),
+      // Priority buckets come pre-ordered (urgent first); workspace sorting
+      // would scramble them alphabetically.
+      settings.general.agentRail.groupBy === "priority"
+        ? groupedByRailMode
+        : sortConversationGroups(
+            groupedByRailMode,
+            recentWorkspaceIds,
+            settings.general.workspaceSortMode,
+            settings.general.workspaceCustomOrderIds
+          ),
     [
       groupedByRailMode,
       recentWorkspaceIds,
+      settings.general.agentRail.groupBy,
       settings.general.workspaceCustomOrderIds,
       settings.general.workspaceSortMode,
     ]
   );
 
+  // Workspace-shaped view of the same data, independent of the rail's visual
+  // grouping. Identity consumers (active workspace, composer drafts, switcher
+  // labels) must never see bucket pseudo-workspaces like "Needs attention".
+  const workspaceShapedGroups = useMemo(
+    () =>
+      settings.general.agentRail.groupBy === "workspace"
+        ? groupedByRailMode
+        : groupAgentRailGroups(visibleMachineGroups, "workspace"),
+    [groupedByRailMode, settings.general.agentRail.groupBy, visibleMachineGroups]
+  );
+
   const activeWorkspaceGroup = useMemo(
     () =>
-      orderedGroups.find(
+      workspaceShapedGroups.find(
         (group) =>
           group.workspace.id === activeWorkspaceId &&
           (!group.serverId || group.serverId === activeServer.id)
       ) ??
-      orderedGroups.find((group) =>
+      workspaceShapedGroups.find((group) =>
         group.conversations.some(
           (conversation) =>
             conversation.workspaceId === activeWorkspaceId &&
@@ -934,7 +978,7 @@ export function AgentShellStateProvider({
         )
       ) ??
       null,
-    [activeServer.id, activeWorkspaceId, orderedGroups]
+    [activeServer.id, activeWorkspaceId, workspaceShapedGroups]
   );
 
   const validActiveConversationIds = useMemo(
@@ -1626,6 +1670,10 @@ export function AgentShellStateProvider({
   );
 
   const startNewConversation = useCallback(() => {
+    // New Chat must not inherit stuck / previously-sent composer text from the
+    // stable landing draft ids (submit used to race and re-apply stale content).
+    resetComposerDraft(AGENT_STANDALONE_COMPOSER_DRAFT_ID);
+    resetComposerDraft(agentWorkspaceComposerDraftId(activeWorkspaceId));
     updateWorkspaceSession((current) => ({
       ...current,
       agentView: {
@@ -1634,12 +1682,18 @@ export function AgentShellStateProvider({
       },
     }));
     replaceConversationIdInLocation(AGENT_NEW_CHAT_SESSION_ID);
-  }, [replaceConversationIdInLocation, updateWorkspaceSession]);
+  }, [
+    activeWorkspaceId,
+    replaceConversationIdInLocation,
+    resetComposerDraft,
+    updateWorkspaceSession,
+  ]);
 
   const startStandaloneChat = useCallback(() => {
+    resetComposerDraft(AGENT_STANDALONE_COMPOSER_DRAFT_ID);
     setStandaloneDraftActive(true);
     startNewConversation();
-  }, [startNewConversation]);
+  }, [resetComposerDraft, startNewConversation]);
 
   const startNewChatInWorkspace = useCallback(
     async (workspaceId: string) => {
@@ -1929,6 +1983,55 @@ export function AgentShellStateProvider({
     [filteredGroups, pinnedConversationIdSet]
   );
 
+  // Derived from the raw (pre-regrouping) groups so the attention section can
+  // label rows with real workspace names even when the rail is grouped by
+  // status/updated buckets.
+  const railWorkspaceNameById = useMemo(() => {
+    const names = new Map<string, string>();
+    for (const group of groups) {
+      if (!names.has(group.workspace.id)) {
+        names.set(group.workspace.id, group.workspace.name);
+      }
+    }
+    return names;
+  }, [groups]);
+
+  // Viewing a conversation marks its completion as read. Without this, the
+  // unread flag is only cleared by the IDE chat/editor tab handlers, so chats
+  // opened from the agent rail would sit in the Review bucket forever. Also
+  // covers flags set while the conversation is already open (the shell does
+  // not always mirror selection into `chat.tabs`), and defers clearing while
+  // the page is hidden so background completions stay unread until seen.
+  const unreadCompletionMap = workspaceSession.chat.unreadChatCompletionByConversationId;
+  useEffect(() => {
+    if (!selectedConversationId || !unreadCompletionMap?.[selectedConversationId]) {
+      return;
+    }
+    const clearIfSeen = () => {
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") {
+        return;
+      }
+      updateWorkspaceSession((current) => {
+        const unread = current.chat.unreadChatCompletionByConversationId ?? {};
+        if (!unread[selectedConversationId]) {
+          return current;
+        }
+        const next = { ...unread };
+        delete next[selectedConversationId];
+        return {
+          ...current,
+          chat: {
+            ...current.chat,
+            unreadChatCompletionByConversationId: next,
+          },
+        };
+      });
+    };
+    clearIfSeen();
+    document.addEventListener("visibilitychange", clearIfSeen);
+    return () => document.removeEventListener("visibilitychange", clearIfSeen);
+  }, [selectedConversationId, unreadCompletionMap, updateWorkspaceSession]);
+
   const agentSwitcherCandidates = useMemo(() => {
     const items: AgentSwitcherCandidate[] = [];
     const seen = new Set<string>();
@@ -1952,13 +2055,13 @@ export function AgentShellStateProvider({
         badge:
           summary.status === "running"
             ? "running"
-            : summary.hasPendingPermission
+            : agentRailConversationNeedsAttention(summary)
               ? "needs attention"
               : undefined,
       });
     };
 
-    for (const group of orderedGroups) {
+    for (const group of workspaceShapedGroups) {
       if (group.serverId && group.serverId !== activeServer.id) {
         continue;
       }
@@ -1973,7 +2076,7 @@ export function AgentShellStateProvider({
     }
 
     for (const pinnedId of pinnedAgentConversationIds) {
-      for (const group of orderedGroups) {
+      for (const group of workspaceShapedGroups) {
         const conversation = group.conversations.find((c) => c.id === pinnedId);
         if (!conversation) {
           continue;
@@ -1991,7 +2094,7 @@ export function AgentShellStateProvider({
     }
 
     return items;
-  }, [activeServer.id, orderedGroups, pinnedAgentConversationIds]);
+  }, [activeServer.id, pinnedAgentConversationIds, workspaceShapedGroups]);
 
   const agentSwitcherItems = useMemo(() => {
     const mruIds = settings.general.agentConversationMruByServer[activeServer.id] ?? [];
@@ -2093,6 +2196,9 @@ export function AgentShellStateProvider({
       railFilterActive,
       setRailFilterToggle,
       clearRailFilters,
+      unreadCompletionByConversationId:
+        workspaceSession.chat.unreadChatCompletionByConversationId,
+      railWorkspaceNameById,
       isMobile,
     }),
     [
@@ -2143,6 +2249,8 @@ export function AgentShellStateProvider({
       unpinConversation,
       updateSidePaneEditorSession,
       sharedLeftRailCollapsed,
+      workspaceSession.chat.unreadChatCompletionByConversationId,
+      railWorkspaceNameById,
     ]
   );
 
