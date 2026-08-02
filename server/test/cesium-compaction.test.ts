@@ -715,6 +715,39 @@ test("enforceLedgerBodyBudget trims oldest lines from largest sections and conve
   assert.equal(enforceLedgerBodyBudget("## MISSION\nshort", 4_000), "## MISSION\nshort");
 });
 
+test("overflow pressure shifts tail budget into the ledger; large windows unaffected", () => {
+  const calm = resolveCompactionBudgets({
+    contextWindowTokens: 8_000,
+    intensity: 0.35,
+    thresholdRatio: 0.82,
+    totalContentTokens: 8_000, // 1x — no pressure
+  });
+  const crushed = resolveCompactionBudgets({
+    contextWindowTokens: 8_000,
+    intensity: 0.35,
+    thresholdRatio: 0.82,
+    totalContentTokens: 80_000, // 10x overflow — full pressure
+  });
+  assert.equal(calm.pressure, 0);
+  assert.ok(crushed.pressure > 0.9);
+  assert.ok(crushed.ledgerBudgetTokens > calm.ledgerBudgetTokens * 1.3);
+  assert.ok(crushed.tailBudgetTokens < calm.tailBudgetTokens);
+  // Both stay within the retention target.
+  assert.ok(
+    crushed.ledgerBudgetTokens + crushed.tailBudgetTokens <= crushed.targetTokens + 601
+  );
+  // A 262k window with the same 80k content: no pressure, giant verbatim tail.
+  const large = resolveCompactionBudgets({
+    contextWindowTokens: 262_000,
+    intensity: 0.35,
+    thresholdRatio: 0.82,
+    totalContentTokens: 80_000,
+  });
+  assert.equal(large.pressure, 0);
+  assert.ok(large.tailBudgetTokens > 100_000, `large-window tail too small: ${large.tailBudgetTokens}`);
+  assert.equal(large.ledgerBudgetTokens, 24_000);
+});
+
 test("budgets give the ledger roughly half the retention target", () => {
   const budgets = resolveCompactionBudgets({
     contextWindowTokens: 8_000,

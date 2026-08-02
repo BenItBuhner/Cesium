@@ -31,6 +31,7 @@ import {
 } from "../../src/lib/agents/cesium/cesium-history.js";
 import {
   CESIUM_COMPACTION_ENGINE_ID,
+  estimateEventTokens,
   renderLedgerForContext,
   resolveCompactionBudgets,
   runCesiumCompactionPipeline,
@@ -516,12 +517,15 @@ export function cesiumLedgerStrategy(intensity: number): Strategy {
     createRun({ windowTokens, callModel }) {
       let events: AgentStoredEvent[] = [];
       let syntheticSeq = 1_000_000; // synthetic summary events sit above real seqs
+      let totalContentTokens = 0;
       const stats: StrategyStats = { compactions: 0, compactorCalls: 0, finalTokens: 0, peakTokens: 0 };
-      const budgets = resolveCompactionBudgets({
-        contextWindowTokens: windowTokens,
-        intensity,
-        thresholdRatio: TRIGGER_RATIO,
-      });
+      const budgetsNow = () =>
+        resolveCompactionBudgets({
+          contextWindowTokens: windowTokens,
+          intensity,
+          thresholdRatio: TRIGGER_RATIO,
+          totalContentTokens,
+        });
       const assemble = (): CesiumHistoryMessage[] => {
         const normalized = normalizeEventsToHistory(events);
         return withBenchSystem(normalized.slice(1));
@@ -529,8 +533,10 @@ export function cesiumLedgerStrategy(intensity: number): Strategy {
       return {
         async feed(batch) {
           events = [...events, ...batch];
+          totalContentTokens += estimateEventTokens(batch);
           let guard = 0;
           for (;;) {
+            const budgets = budgetsNow();
             const messages = assemble();
             const usedTokens = tokensOf(messages);
             stats.peakTokens = Math.max(stats.peakTokens, usedTokens);

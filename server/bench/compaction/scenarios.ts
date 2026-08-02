@@ -24,14 +24,18 @@ export type BenchProbeCategory =
   | "multi-hop"
   | "tool-only"
   | "absent"
-  | "spec-detail";
+  | "spec-detail"
+  // LoCoMo / melange categories:
+  | "temporal"
+  | "cross-domain";
 
 export type BenchProbe = {
   id: string;
   question: string;
   /** Any-of acceptable answers. */
   expected: string[];
-  matcher: "contains" | "number";
+  /** fuzzy = normalized containment OR token-F1 (for third-party datasets). */
+  matcher: "contains" | "number" | "fuzzy";
   category: BenchProbeCategory;
   /** Turn index where the answer was planted (0-based). Higher = later = easier. */
   plantedAtTurn: number;

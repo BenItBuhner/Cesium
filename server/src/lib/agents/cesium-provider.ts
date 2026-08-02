@@ -196,6 +196,7 @@ import {
   CESIUM_COMPACTION_PIN_MARKER,
   compactionWarningBucket,
   compactionWarningText,
+  estimateEventTokens,
   renderLedgerForContext,
   resolveCompactionBudgets,
   runCesiumCompactionPipeline,
@@ -1484,7 +1485,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
     }));
   }
 
-  private async resolveCompactionBudgets(): Promise<{
+  private async resolveCompactionBudgets(totalContentTokens?: number): Promise<{
     budgets: CesiumCompactionBudgets;
     enabled: boolean;
     compressionModelId: string | null;
@@ -1499,6 +1500,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
         contextWindowTokens: contextWindow,
         intensity: compression?.intensity ?? CESIUM_COMPACTION_DEFAULT_INTENSITY,
         thresholdRatio: compression?.thresholdRatio ?? 0.82,
+        totalContentTokens,
       }),
       enabled: compression?.enabled !== false,
       compressionModelId: compression?.modelId ?? null,
@@ -1564,7 +1566,9 @@ class CesiumSessionHandle implements AgentSessionHandle {
         event.kind !== "user_message" ||
         (!event.hidden && (event.messageId !== currentUserMessageId || event.seq > 0))
     );
-    const { budgets, enabled, compressionModelId } = await this.resolveCompactionBudgets();
+    const { budgets, enabled, compressionModelId } = await this.resolveCompactionBudgets(
+      estimateEventTokens(events)
+    );
     const currentMessages = this.normalizeEventsToHistory(visible);
     if (!enabled) {
       return currentMessages;

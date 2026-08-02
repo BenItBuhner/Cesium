@@ -56,6 +56,8 @@ export const CESIUM_COMPACTION_ENGINE_ID = "ledger-v1";
 
 export type CesiumCompactionBudgets = {
   contextWindowTokens: number;
+  /** Overflow pressure 0..1 (0 = content fits comfortably, 1 = extreme churn). */
+  pressure: number;
   /** Compaction fires at or above this many tokens. */
   triggerTokens: number;
   /** Stage 2 aims to land the assembled context at or below this. */
@@ -96,6 +98,14 @@ export function resolveCompactionBudgets(input: {
   contextWindowTokens: number;
   intensity: number;
   thresholdRatio: number;
+  /**
+   * Total conversation content tokens (entire history, including already
+   * compacted spans). Drives overflow-pressure adaptation: when content far
+   * exceeds the window, the verbatim tail is churn (it will be evicted again
+   * within a cycle or two), so its budget shifts into durable ledger memory.
+   * At large windows overflow stays low and verbatim retention dominates.
+   */
+  totalContentTokens?: number;
 }): CesiumCompactionBudgets {
   const window = Math.max(4_000, Math.floor(input.contextWindowTokens));
   const intensity = clamp(input.intensity, 0, 1);
@@ -105,15 +115,27 @@ export function resolveCompactionBudgets(input: {
   const targetRatio = Math.min(lerp(0.7, 0.15, intensity), triggerRatio - 0.08);
   const warnRatio = Math.max(0.1, triggerRatio - 0.12);
   const targetTokens = Math.floor(window * targetRatio);
+  // Overflow pressure: 0 until content exceeds ~1.5x the window, saturating at
+  // ~7.5x (the regime where every raw token retained is evicted almost
+  // immediately anyway).
+  const overflow =
+    input.totalContentTokens != null && input.totalContentTokens > 0
+      ? input.totalContentTokens / window
+      : 0;
+  const pressure = clamp((overflow - 1.5) / 6, 0, 1);
   // The ledger is the durable memory — it earns roughly half of the retention
-  // target, and MORE as intensity rises: aggressive compaction sacrifices the
-  // verbatim tail before it sacrifices memory.
+  // target, MORE as intensity rises (aggressive compaction sacrifices the
+  // verbatim tail before it sacrifices memory), and up to ~90% under extreme
+  // overflow pressure.
+  const baseLedgerShare = lerp(0.5, 0.7, intensity);
+  const ledgerShare = lerp(baseLedgerShare, 0.9, pressure);
   const ledgerBudgetTokens = Math.floor(
-    clamp(targetTokens * lerp(0.5, 0.7, intensity), 1_200, 24_000)
+    clamp(targetTokens * ledgerShare, 1_200, 24_000)
   );
-  const tailBudgetTokens = Math.max(800, targetTokens - ledgerBudgetTokens);
+  const tailBudgetTokens = Math.max(600, targetTokens - ledgerBudgetTokens);
   return {
     contextWindowTokens: window,
+    pressure,
     triggerTokens: Math.floor(window * triggerRatio),
     targetTokens,
     warnTokens: Math.floor(window * warnRatio),

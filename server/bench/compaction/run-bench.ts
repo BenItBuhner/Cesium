@@ -31,36 +31,53 @@ import {
   type BenchScenario,
 } from "./scenarios.js";
 import { generateGauntletScript, gauntletToScenario, type GauntletPreset } from "./gauntlet.js";
+import { locomoScenario } from "./locomo.js";
+import { melangeScenario } from "./melange.js";
 import { resolveStrategies, type Strategy, type StrategyStats } from "./strategies.js";
 import { benchChat, benchModelUsage, makeBenchCaller } from "./model-client.js";
 
-export function resolveScenarios(spec: string, seed?: number): BenchScenario[] {
-  return spec
-    .split(",")
-    .map((part) => part.trim())
-    .filter(Boolean)
-    .map((id) => {
-      const gauntlet = id.match(/^gauntlet-([sml])$/);
-      if (gauntlet) {
-        return gauntletToScenario(
+export async function resolveScenarios(spec: string, seed?: number): Promise<BenchScenario[]> {
+  const out: BenchScenario[] = [];
+  for (const id of spec.split(",").map((part) => part.trim()).filter(Boolean)) {
+    const gauntlet = id.match(/^gauntlet-([sml])$/);
+    if (gauntlet) {
+      out.push(
+        gauntletToScenario(
           generateGauntletScript({ preset: gauntlet[1] as GauntletPreset, seed })
+        )
+      );
+      continue;
+    }
+    const locomo = id.match(/^locomo-(\d+)$/);
+    if (locomo) {
+      out.push(await locomoScenario({ index: Number(locomo[1]), seed }));
+      continue;
+    }
+    const melange = id.match(/^melange(?:-([sml]))?$/);
+    if (melange) {
+      out.push(melangeScenario({ preset: (melange[1] as "s" | "m" | "l") ?? "m", seed }));
+      continue;
+    }
+    switch (id) {
+      case "fact-thread":
+        out.push(factThreadScenario({ seed }));
+        break;
+      case "swe-sim":
+        out.push(sweSimScenario({ seed }));
+        break;
+      case "math-state":
+        out.push(mathStateScenario({ seed }));
+        break;
+      case "chat-nuance":
+        out.push(chatNuanceScenario({ seed }));
+        break;
+      default:
+        throw new Error(
+          `Unknown scenario "${id}". Known: fact-thread, swe-sim, math-state, chat-nuance, gauntlet-s/m/l, melange[-s/m/l], locomo-<0..9>`
         );
-      }
-      switch (id) {
-        case "fact-thread":
-          return factThreadScenario({ seed });
-        case "swe-sim":
-          return sweSimScenario({ seed });
-        case "math-state":
-          return mathStateScenario({ seed });
-        case "chat-nuance":
-          return chatNuanceScenario({ seed });
-        default:
-          throw new Error(
-            `Unknown scenario "${id}". Known: fact-thread, swe-sim, math-state, chat-nuance, gauntlet-s, gauntlet-m, gauntlet-l`
-          );
-      }
-    });
+    }
+  }
+  return out;
 }
 
 type CliOptions = {
@@ -148,11 +165,60 @@ function normalizeAnswer(text: string): string {
   return text.toLowerCase().replace(/\s+/g, " ").trim();
 }
 
+const FUZZY_STOPWORDS = new Set([
+  "the", "a", "an", "of", "in", "on", "at", "to", "and", "or", "is", "was",
+  "were", "for", "with", "by", "his", "her", "their", "its",
+]);
+
+function fuzzyTokens(text: string): string[] {
+  return normalizeAnswer(text)
+    .replace(/[^a-z0-9\s]/g, " ")
+    .split(/\s+/)
+    .filter((token) => token && !FUZZY_STOPWORDS.has(token));
+}
+
+/** Token-F1 in the LoCoMo/SQuAD tradition (order-insensitive, stopword-free). */
+export function tokenF1(expected: string, answer: string): number {
+  const expectedTokens = fuzzyTokens(expected);
+  const answerTokens = fuzzyTokens(answer);
+  if (expectedTokens.length === 0 || answerTokens.length === 0) {
+    return 0;
+  }
+  const answerCounts = new Map<string, number>();
+  for (const token of answerTokens) {
+    answerCounts.set(token, (answerCounts.get(token) ?? 0) + 1);
+  }
+  let overlap = 0;
+  for (const token of expectedTokens) {
+    const remaining = answerCounts.get(token) ?? 0;
+    if (remaining > 0) {
+      overlap += 1;
+      answerCounts.set(token, remaining - 1);
+    }
+  }
+  if (overlap === 0) {
+    return 0;
+  }
+  const precision = overlap / answerTokens.length;
+  const recall = overlap / expectedTokens.length;
+  return (2 * precision * recall) / (precision + recall);
+}
+
 export function scoreProbe(probe: BenchProbe, answer: string): boolean {
   const normalized = normalizeAnswer(answer);
   if (probe.matcher === "number") {
     const numbers = normalized.match(/-?\d+(?:\.\d+)?/g) ?? [];
     return probe.expected.some((expected) => numbers.includes(expected));
+  }
+  if (probe.matcher === "fuzzy") {
+    return probe.expected.some(
+      (expected) =>
+        normalized.includes(normalizeAnswer(expected)) ||
+        // Recall-weighted acceptance: every expected token must appear (dates,
+        // names); verbose answers are not penalized for extra words.
+        fuzzyTokens(expected).every((token) => fuzzyTokens(answer).includes(token)) ||
+        tokenF1(expected, answer) >= 0.6
+    );
   }
   return probe.expected.some((expected) => normalized.includes(normalizeAnswer(expected)));
 }
@@ -350,7 +416,7 @@ function formatTable(results: StrategyScenarioResult[]): string {
 
 async function main(): Promise<void> {
   const options = parseArgs(process.argv.slice(2));
-  const scenarios = resolveScenarios(options.scenarios, options.seed);
+  const scenarios = await resolveScenarios(options.scenarios, options.seed);
   if (scenarios.length === 0) {
     throw new Error(`No scenarios matched "${options.scenarios}".`);
   }
