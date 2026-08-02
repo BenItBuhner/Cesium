@@ -708,8 +708,15 @@ export function collectCompactionPins(
 
 export function buildLedgerSystemPrompt(budgets: {
   ledgerBudgetTokens: number;
+  /** Actual body space in chars (ledger budget minus pins/quotes/framing). */
+  bodyBudgetChars?: number;
 }): string {
-  const maxWords = Math.max(300, Math.floor(budgets.ledgerBudgetTokens * 0.72));
+  const maxWords = Math.max(
+    300,
+    budgets.bodyBudgetChars != null
+      ? Math.floor(budgets.bodyBudgetChars / 5.5)
+      : Math.floor(budgets.ledgerBudgetTokens * 0.72)
+  );
   return [
     "You are the context-ledger maintainer inside an autonomous coding agent's harness.",
     "Older conversation events are being evicted from the model's context window. Your job is to MERGE the evicted span into the running ledger so the agent can continue seamlessly, as if nothing was lost.",
@@ -1137,7 +1144,10 @@ async function generateLedgerBody(input: {
   }
   try {
     const fullSpanText = renderEventsForCompaction(input.spanEvents);
-    const system = buildLedgerSystemPrompt(input.budgets);
+    const system = buildLedgerSystemPrompt({
+      ledgerBudgetTokens: input.budgets.ledgerBudgetTokens,
+      bodyBudgetChars: input.bodyBudgetChars,
+    });
     // Chunk giant spans: anchored merging composes naturally across sequential calls.
     const chunks: string[] = [];
     if (fullSpanText.length <= MAX_SPAN_CHARS_PER_CALL) {
