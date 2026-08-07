@@ -90,10 +90,18 @@ artifactRoutes.get("/artifacts/_runtime/chart.umd.js", async (c) => {
   });
 });
 
-artifactRoutes.get("/artifacts/:workspaceId/:artifactId", (c) => {
-  const url = new URL(c.req.url);
-  return c.redirect(`${url.pathname}/${url.search}`, 301);
-});
+// Serve the entry file with or without a trailing slash. A redirect would be
+// cleaner for relative-URL resolution, but the in-IDE browser proxy strips
+// trailing slashes from upstream paths, so a `/…/id` → `/…/id/` redirect loops
+// forever behind it. All URLs Cesium hands out include the trailing slash, so
+// relative asset resolution still works in both the direct and proxied cases.
+artifactRoutes.get("/artifacts/:workspaceId/:artifactId", async (c) =>
+  serveArtifactFile({
+    workspaceId: c.req.param("workspaceId"),
+    artifactId: c.req.param("artifactId"),
+    filePath: null,
+  })
+);
 
 async function serveArtifactFile(input: {
   workspaceId: string;
