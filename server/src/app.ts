@@ -10,6 +10,7 @@ import { browserDebugRoutes } from "./routes/browser-debug.js";
 import { browserControlRoutes } from "./routes/browser-control.js";
 import { phoneControlRoutes } from "./routes/phone-control.js";
 import { agentRoutes } from "./routes/agents.js";
+import { artifactRoutes } from "./routes/artifacts.js";
 import { agentImportRoutes } from "./routes/agent-imports.js";
 import { audioRoutes } from "./routes/audio.js";
 import { voiceRoutes } from "./routes/voice.js";
@@ -150,6 +151,7 @@ export function createCesiumApp(): Hono {
   app.route("/", terminalRoutes);
   app.route("/", agentRoutes);
   app.route("/", agentImportRoutes);
+  app.route("/", artifactRoutes);
   app.route("/", orchestrationRoutes);
   app.route("/", cloudAgentRoutes);
   app.route("/", extensionRoutes);

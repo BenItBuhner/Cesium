@@ -1015,16 +1015,18 @@ export const authMiddleware: MiddlewareHandler = async (c, next) => {
     return;
   }
 
-  // Iframe navigations to `/browser/*` and `/browser-debug/*` cannot attach the
-  // `x-opencursor-session-token` header (only fetch/XHR can). SameSite=Lax
-  // cookies don't reliably flow across ports on localhost for sub-document
-  // navigation either — Chromium partitions some flows that Chrome docs call
-  // "same-site" in theory. So for these two surfaces we accept the session
+  // Iframe navigations to `/browser/*`, `/browser-debug/*`, and `/artifacts/*`
+  // cannot attach the `x-opencursor-session-token` header (only fetch/XHR can).
+  // SameSite=Lax cookies don't reliably flow across ports on localhost for
+  // sub-document navigation either — Chromium partitions some flows that Chrome
+  // docs call "same-site" in theory. So for these surfaces we accept the session
   // token from `?access_token=…` (same mechanism WebSocket upgrades use) and
   // bootstrap the session cookie on success so every subsequent same-origin
   // sub-resource fetch from inside the iframe authenticates via cookie.
   const isBrowserSurfacePath =
-    pathname.startsWith("/browser/") || pathname.startsWith("/browser-debug/");
+    pathname.startsWith("/browser/") ||
+    pathname.startsWith("/browser-debug/") ||
+    pathname.startsWith("/artifacts/");
   const auth = await authenticateRequest(c.req.raw, {
     allowQuery: isBrowserSurfacePath,
     rotate: true,
