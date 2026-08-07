@@ -1,6 +1,8 @@
 "use client";
 
 import { Fragment, type ReactNode } from "react";
+import { matchArtifactEmbedLine } from "@/lib/artifact-embed";
+import { ArtifactCard } from "./ArtifactCard";
 
 type MarkdownBlock =
   | { type: "heading"; level: 1 | 2 | 3 | 4 | 5 | 6; text: string }
@@ -9,7 +11,8 @@ type MarkdownBlock =
   | { type: "list"; ordered: boolean; items: string[] }
   | { type: "hr" }
   | { type: "table"; headers: string[]; rows: string[][] }
-  | { type: "blockquote"; lines: string[] };
+  | { type: "blockquote"; lines: string[] }
+  | { type: "artifact"; artifactId: string };
 
 function isHorizontalRule(line: string): boolean {
   return /^\s*([-*_])(?:\s*\1){2,}\s*$/.test(line);
@@ -65,6 +68,13 @@ function parseMarkdown(source: string): MarkdownBlock[] {
     const trimmed = line.trim();
 
     if (!trimmed) {
+      index += 1;
+      continue;
+    }
+
+    const artifactId = matchArtifactEmbedLine(trimmed);
+    if (artifactId) {
+      blocks.push({ type: "artifact", artifactId });
       index += 1;
       continue;
     }
@@ -192,7 +202,8 @@ function parseMarkdown(source: string): MarkdownBlock[] {
         candidateTrimmed.match(/^(#{1,6})\s+/) ||
         isHorizontalRule(candidateTrimmed) ||
         /^\s*>\s?/.test(candidate) ||
-        /^\s*((?:[-*+])|(?:\d+\.))\s+/.test(candidate)
+        /^\s*((?:[-*+])|(?:\d+\.))\s+/.test(candidate) ||
+        matchArtifactEmbedLine(candidateTrimmed) !== null
       ) {
         break;
       }
@@ -331,6 +342,10 @@ function renderHeading(level: 1 | 2 | 3 | 4 | 5 | 6, text: string) {
 
 export function ChatMarkdown({ source }: { source: string }) {
   const blocks = parseMarkdown(source);
+  // Stable keys for artifact embeds across streaming re-parses: block indexes
+  // shift as text streams in, but "nth occurrence of artifact X" does not, so
+  // the live iframe never remounts mid-stream.
+  const artifactOccurrence = new Map<string, number>();
 
   return (
     <div className="min-w-0 space-y-[10px] px-[1px] font-sans text-[14px] leading-[1.6] text-[var(--text-primary)]">
@@ -442,6 +457,16 @@ export function ChatMarkdown({ source }: { source: string }) {
                 ))}
               </blockquote>
             );
+          case "artifact": {
+            const occurrence = artifactOccurrence.get(block.artifactId) ?? 0;
+            artifactOccurrence.set(block.artifactId, occurrence + 1);
+            return (
+              <ArtifactCard
+                key={`artifact-${block.artifactId}-${occurrence}`}
+                artifactId={block.artifactId}
+              />
+            );
+          }
           default:
             return null;
         }

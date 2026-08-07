@@ -62,6 +62,7 @@ import type { WorkbenchMenuItem } from "@/components/ide/workbench-context-menu-
 import {
   useOpenInEditor,
   type OpenAgentConversationPayload,
+  type OpenBrowserUrlPayload,
   type OpenComposerDraftPayload,
   type OpenTranscriptPayload,
 } from "./OpenInEditorContext";
@@ -309,6 +310,7 @@ export function EditorPanel({
     registerOpenComposerDraft,
     registerOpenAgentConversation,
     registerOpenExplorerFile,
+    registerOpenBrowserUrl,
     composerDrafts,
     upsertComposerDraft,
     setActiveExplorerPath,
@@ -563,6 +565,7 @@ export function EditorPanel({
         group?: EditorGroup;
         activate?: boolean;
         engine?: "proxy" | "electron-native" | "server-chromium";
+        title?: string;
       }
     ) => {
       try {
@@ -571,6 +574,7 @@ export function EditorPanel({
           group: options?.group ?? "right",
           active: options?.activate ?? true,
           engine: options?.engine ?? "proxy",
+          title: options?.title,
         });
         dispatch({
           type: "OPEN_BROWSER_TAB",
@@ -876,22 +880,32 @@ export function EditorPanel({
     const onExplorer = (payload: ExplorerOpenRequest) => {
       void loadExplorerFile(payload);
     };
+    const onBrowserUrl = (payload: OpenBrowserUrlPayload) => {
+      void openBrowserTab(payload.url, {
+        group: payload.group ?? "right",
+        title: payload.title,
+      });
+    };
     registerOpenTranscript(onTranscript);
     registerOpenComposerDraft(onComposerDraft);
     registerOpenAgentConversation(onAgentConversation);
     registerOpenExplorerFile(onExplorer);
+    registerOpenBrowserUrl(onBrowserUrl);
     return () => {
       registerOpenTranscript(null);
       registerOpenComposerDraft(null);
       registerOpenAgentConversation(null);
       registerOpenExplorerFile(null);
+      registerOpenBrowserUrl(null);
     };
   }, [
     loadExplorerFile,
+    openBrowserTab,
     registerOpenAgentConversation,
     registerOpenComposerDraft,
     registerOpenTranscript,
     registerOpenExplorerFile,
+    registerOpenBrowserUrl,
   ]);
 
   useEffect(() => {

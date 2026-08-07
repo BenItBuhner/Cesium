@@ -57,6 +57,12 @@ export type OpenAgentConversationPayload = {
   group?: "left" | "right";
 };
 
+export type OpenBrowserUrlPayload = {
+  url: string;
+  title?: string;
+  group?: "left" | "right";
+};
+
 export type ComposerDraftRecord = OpenComposerDraftPayload;
 
 export function hasMeaningfulComposerContent(draft: ComposerDraftRecord): boolean {
@@ -263,6 +269,7 @@ type TranscriptHandler = (payload: OpenTranscriptPayload) => void;
 type ComposerDraftHandler = (payload: OpenComposerDraftPayload) => void;
 type AgentConversationHandler = (payload: OpenAgentConversationPayload) => void;
 type ExplorerHandler = (payload: ExplorerOpenRequest) => void;
+type BrowserUrlHandler = (payload: OpenBrowserUrlPayload) => void;
 
 export type MessageCitationPayload = {
   label: string;
@@ -280,6 +287,9 @@ type Ctx = {
   openAgentConversation: (payload: OpenAgentConversationPayload) => void;
   registerOpenExplorerFile: (handler: ExplorerHandler | null) => void;
   openExplorerFile: (payload: ExplorerOpenRequest) => void;
+  registerOpenBrowserUrl: (handler: BrowserUrlHandler | null) => void;
+  /** Opens a URL (e.g. an artifact view) as a dedicated browser tab in the editor panel. */
+  openBrowserUrl: (payload: OpenBrowserUrlPayload) => void;
   composerDrafts: Record<string, ComposerDraftRecord>;
   composerSelections: Record<string, TextSelection>;
   upsertComposerDraft: (
@@ -316,6 +326,8 @@ export function OpenInEditorProvider({ children }: { children: ReactNode }) {
   const pendingConversationRef = useRef<OpenAgentConversationPayload | null>(null);
   const explorerRef = useRef<ExplorerHandler | null>(null);
   const pendingExplorerRef = useRef<ExplorerOpenRequest | null>(null);
+  const browserUrlRef = useRef<BrowserUrlHandler | null>(null);
+  const pendingBrowserUrlRef = useRef<OpenBrowserUrlPayload | null>(null);
   const [composerDrafts, setComposerDrafts] = useState<Record<string, ComposerDraftRecord>>({});
   const [composerSelections, setComposerSelections] = useState<
     Record<string, TextSelection>
@@ -725,6 +737,23 @@ export function OpenInEditorProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  const registerOpenBrowserUrl = useCallback((handler: BrowserUrlHandler | null) => {
+    browserUrlRef.current = handler;
+    if (handler && pendingBrowserUrlRef.current) {
+      const pending = pendingBrowserUrlRef.current;
+      pendingBrowserUrlRef.current = null;
+      handler(pending);
+    }
+  }, []);
+
+  const openBrowserUrl = useCallback((payload: OpenBrowserUrlPayload) => {
+    if (browserUrlRef.current) {
+      browserUrlRef.current(payload);
+    } else {
+      pendingBrowserUrlRef.current = payload;
+    }
+  }, []);
+
   const value = useMemo(
     () => ({
       registerOpenTranscript,
@@ -735,6 +764,8 @@ export function OpenInEditorProvider({ children }: { children: ReactNode }) {
       openAgentConversation,
       registerOpenExplorerFile,
       openExplorerFile,
+      registerOpenBrowserUrl,
+      openBrowserUrl,
       composerDrafts,
       composerSelections,
       upsertComposerDraft,
@@ -760,6 +791,8 @@ export function OpenInEditorProvider({ children }: { children: ReactNode }) {
       openAgentConversation,
       registerOpenExplorerFile,
       openExplorerFile,
+      registerOpenBrowserUrl,
+      openBrowserUrl,
       composerDrafts,
       composerSelections,
       upsertComposerDraft,
