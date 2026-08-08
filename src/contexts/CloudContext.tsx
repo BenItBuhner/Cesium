@@ -6,6 +6,7 @@ import {
   useEffect,
   useMemo,
   useRef,
+  useState,
   type ReactNode,
 } from "react";
 import { ClerkProvider, useAuth, useUser } from "@clerk/nextjs";
@@ -260,15 +261,20 @@ function CloudBridge({
   clerkEmail: string | null;
   children: ReactNode;
 }) {
-  const deviceKey = useMemo(
-    () => (mode === "device" ? getOrCreateDeviceKey() : undefined),
-    [mode]
-  );
+  // The device key lives in browser storage; resolve it client-side only so
+  // SSR markup never bakes in a different (ephemeral, server-generated) key.
+  const [deviceKey, setDeviceKey] = useState<string | null>(null);
+  useEffect(() => {
+    if (mode === "device") {
+      setDeviceKey(getOrCreateDeviceKey());
+    }
+  }, [mode]);
   const identityArgs = useMemo(
     () => (deviceKey ? { deviceKey } : {}),
     [deviceKey]
   );
-  const active = authReady && signedIn;
+  const identityReady = mode !== "device" || deviceKey !== null;
+  const active = authReady && signedIn && identityReady;
 
   const convex = useConvex();
   const bootstrap = useQuery(
@@ -372,7 +378,7 @@ function CloudBridge({
     ? "loading"
     : !signedIn
       ? "signed-out"
-      : bootstrap === undefined
+      : !identityReady || bootstrap === undefined
         ? "loading"
         : "ready";
 
