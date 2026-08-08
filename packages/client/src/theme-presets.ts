@@ -2,6 +2,13 @@ import type { ThemeTokensPartial } from "./theme-tokens";
 
 export const DEFAULT_BUILTIN_THEME_ID = "default" as const;
 
+/**
+ * Dark appearance defaults to OLED black: true-black surfaces read better on
+ * OLED panels (phones, tablets, modern laptops) and save power there. Users
+ * can still pick any dark preset (including "Default") in Appearance settings.
+ */
+export const DEFAULT_DARK_BUILTIN_THEME_ID = "oled" as const;
+
 export type BuiltinThemePreset = {
   label: string;
   light: ThemeTokensPartial;
