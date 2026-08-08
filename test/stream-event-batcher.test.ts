@@ -172,6 +172,34 @@ test("control and lifecycle events flush queued stream payload immediately", () 
     ]),
     true
   );
+  assert.equal(
+    shouldFlushAgentEventRenderBatch([
+      {
+        seq: 4,
+        eventId: "tool-running",
+        conversationId: "conversation",
+        createdAt: 4,
+        kind: "tool_call_update",
+        toolCallId: "tool",
+        status: "in_progress",
+      },
+    ]),
+    false
+  );
+  assert.equal(
+    shouldFlushAgentEventRenderBatch([
+      {
+        seq: 5,
+        eventId: "tool-complete",
+        conversationId: "conversation",
+        createdAt: 5,
+        kind: "tool_call_update",
+        toolCallId: "tool",
+        status: "completed",
+      },
+    ]),
+    true
+  );
 });
 
 test("compacts only adjacent chunks from the same assistant message", () => {

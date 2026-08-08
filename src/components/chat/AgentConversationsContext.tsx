@@ -347,7 +347,6 @@ const MAX_CLIENT_EVENTS_PER_CONVERSATION = 6_000;
 const BATCHABLE_STREAM_EVENT_KINDS = new Set<AgentStoredEvent["kind"]>([
   "assistant_message_chunk",
   "reasoning",
-  "tool_call_update",
 ]);
 
 type StreamRenderPerfSnapshot = {
@@ -377,7 +376,15 @@ declare global {
 export function shouldFlushAgentEventRenderBatch(
   events: readonly AgentStoredEvent[]
 ): boolean {
-  return events.some((event) => !BATCHABLE_STREAM_EVENT_KINDS.has(event.kind));
+  return events.some((event) => {
+    if (BATCHABLE_STREAM_EVENT_KINDS.has(event.kind)) {
+      return false;
+    }
+    if (event.kind === "tool_call_update") {
+      return event.status !== "pending" && event.status !== "in_progress";
+    }
+    return true;
+  });
 }
 
 /**
