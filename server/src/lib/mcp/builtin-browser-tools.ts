@@ -4,6 +4,7 @@ import {
   dispatchBrowserControlInput,
   evaluateBrowserControlTab,
   focusBrowserControlTab,
+  getBrowserControlRecordingStatus,
   listBrowserControlTabs,
   moveBrowserControlTab,
   navigateBrowserControlTab,
@@ -13,7 +14,13 @@ import {
   setBrowserControlLock,
   setBrowserControlViewport,
   snapshotBrowserControlTab,
+  startBrowserControlRecording,
+  stopBrowserControlRecording,
 } from "../browser-control/service.js";
+import {
+  parseImageDataUrl,
+  saveBrowserScreenshotArtifact,
+} from "../browser-control/artifacts.js";
 import type { BrowserControlViewport } from "../browser-control/types.js";
 
 export const BROWSER_MCP_SERVER_ID = "browser";
@@ -140,11 +147,37 @@ export const BROWSER_MCP_TOOLS: Tool[] = [
   {
     name: "browser_screenshot",
     description:
-      "Capture a screenshot of the current browser viewport. Works with visible electron-native editor tabs and legacy server-chromium tabs.",
+      "Capture a screenshot of the current browser viewport. The image is saved as a workspace artifact under artifacts/browser/ and the file path is returned (plus the image itself for vision-capable clients). Works with visible electron-native editor tabs and server-chromium tabs.",
     inputSchema: {
       type: "object",
-      properties: { tabId: tabIdSchema },
+      properties: {
+        tabId: tabIdSchema,
+        fileName: {
+          type: "string",
+          description: "Optional artifact base name (extension added automatically).",
+        },
+      },
       required: ["tabId"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "browser_record",
+    description:
+      "Record a demo video of a server-chromium browser tab. action=start begins capturing, action=stop encodes the frames with ffmpeg and saves the video under artifacts/browser/ (returning the file path), action=status reports the live frame count. Keep recordings focused: start right before the demo interaction and stop right after.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        tabId: tabIdSchema,
+        action: { type: "string", enum: ["start", "stop", "status"] },
+        fileName: {
+          type: "string",
+          description: "Optional artifact base name for action=stop (extension added automatically).",
+        },
+        maxWidth: { type: "number", description: "Optional max frame width for action=start." },
+        maxHeight: { type: "number", description: "Optional max frame height for action=start." },
+      },
+      required: ["tabId", "action"],
       additionalProperties: false,
     },
   },
@@ -335,14 +368,174 @@ async function focusResolvedElement(
   return { ok: Boolean(value?.ok), result: evaluated.result, exception: evaluated.exception };
 }
 
+export type BuiltInBrowserToolImage = {
+  mimeType: string;
+  /** Base64 image bytes (no data: prefix). */
+  data: string;
+};
+
+export type BuiltInBrowserToolResult = {
+  text: string;
+  images?: BuiltInBrowserToolImage[];
+};
+
 export async function callBuiltInBrowserTool(input: {
+  workspaceId: string;
+  workspaceRoot?: string;
+  toolName: string;
+  arguments: Record<string, unknown>;
+}): Promise<string> {
+  return (await callBuiltInBrowserToolRich(input)).text;
+}
+
+/**
+ * Rich variant that additionally returns captured screenshots as image payloads
+ * so vision-capable callers (Cesium Agent, MCP HTTP bridge clients) can see the
+ * pixels instead of a truncated base64 text blob.
+ */
+export async function callBuiltInBrowserToolRich(input: {
+  workspaceId: string;
+  workspaceRoot?: string;
+  toolName: string;
+  arguments: Record<string, unknown>;
+}): Promise<BuiltInBrowserToolResult> {
+  const normalized = normalizeBrowserMcpToolInvocation(input);
+  if (normalized.toolName === "browser_screenshot") {
+    return await handleBrowserScreenshot({
+      workspaceId: input.workspaceId,
+      workspaceRoot: input.workspaceRoot,
+      arguments: normalized.arguments,
+    });
+  }
+  if (normalized.toolName === "browser_record") {
+    return {
+      text: await handleBrowserRecord({
+        workspaceId: input.workspaceId,
+        workspaceRoot: input.workspaceRoot,
+        arguments: normalized.arguments,
+      }),
+    };
+  }
+  return {
+    text: await callBuiltInBrowserToolText({
+      workspaceId: input.workspaceId,
+      toolName: normalized.toolName,
+      arguments: normalized.arguments,
+    }),
+  };
+}
+
+async function handleBrowserScreenshot(input: {
+  workspaceId: string;
+  workspaceRoot?: string;
+  arguments: Record<string, unknown>;
+}): Promise<BuiltInBrowserToolResult> {
+  const tabId = asString(input.arguments.tabId);
+  if (!tabId) throw new Error("browser_screenshot requires tabId.");
+  const { imageDataUrl, tab } = await screenshotBrowserControlTab(input.workspaceId, tabId);
+  if (!imageDataUrl) {
+    return {
+      text: json({
+        ok: false,
+        action: "browser_screenshot",
+        tab,
+        error:
+          "No screenshot data was captured. For visible editor tabs the observation bridge may still be mounting; retry shortly or use a server-chromium tab.",
+      }),
+    };
+  }
+  const parsed = parseImageDataUrl(imageDataUrl);
+  const artifact = input.workspaceRoot
+    ? await saveBrowserScreenshotArtifact({
+        workspaceRoot: input.workspaceRoot,
+        imageDataUrl,
+        fileName: asString(input.arguments.fileName),
+      }).catch(() => null)
+    : null;
+  return {
+    text: json({
+      ok: true,
+      action: "browser_screenshot",
+      artifact: artifact
+        ? {
+            filePath: artifact.relativePath,
+            absolutePath: artifact.absolutePath,
+            bytes: artifact.bytes,
+            mimeType: artifact.mimeType,
+          }
+        : null,
+      tab,
+      note: artifact
+        ? `Screenshot saved to ${artifact.relativePath} (workspace-relative). The image is also attached for vision-capable models.`
+        : "Screenshot captured. No workspace root was available, so the image was not saved as an artifact file; it is attached for vision-capable models.",
+    }),
+    images: parsed
+      ? [{ mimeType: parsed.mimeType, data: parsed.data.toString("base64") }]
+      : undefined,
+  };
+}
+
+async function handleBrowserRecord(input: {
+  workspaceId: string;
+  workspaceRoot?: string;
+  arguments: Record<string, unknown>;
+}): Promise<string> {
+  const tabId = asString(input.arguments.tabId);
+  if (!tabId) throw new Error("browser_record requires tabId.");
+  const action = asString(input.arguments.action) ?? "status";
+  if (action === "start") {
+    const maxWidth = Number(input.arguments.maxWidth);
+    const maxHeight = Number(input.arguments.maxHeight);
+    const { status, tab } = await startBrowserControlRecording(input.workspaceId, tabId, {
+      maxWidth: Number.isFinite(maxWidth) && maxWidth > 0 ? maxWidth : undefined,
+      maxHeight: Number.isFinite(maxHeight) && maxHeight > 0 ? maxHeight : undefined,
+    });
+    return json({
+      ok: true,
+      action: "browser_record_started",
+      recording: status,
+      tab,
+      note:
+        "Recording frames now. Perform the demo interactions (navigate, click, type), then call browser_record with action=stop to encode and save the video artifact.",
+    });
+  }
+  if (action === "stop") {
+    if (!input.workspaceRoot) {
+      throw new Error("browser_record action=stop requires a workspace root to save the video artifact.");
+    }
+    const { result, tab } = await stopBrowserControlRecording(input.workspaceId, tabId, {
+      workspaceRoot: input.workspaceRoot,
+      fileName: asString(input.arguments.fileName),
+    });
+    return json({
+      ok: true,
+      action: "browser_record_saved",
+      artifact: {
+        filePath: result.artifact.relativePath,
+        absolutePath: result.artifact.absolutePath,
+        bytes: result.artifact.bytes,
+        mimeType: result.artifact.mimeType,
+      },
+      frameCount: result.frameCount,
+      durationMs: result.durationMs,
+      tab,
+      note: `Demo video saved to ${result.artifact.relativePath} (workspace-relative). Report this path in your summary so the user and parent agent can open it.`,
+    });
+  }
+  if (action === "status") {
+    const { status, tab } = getBrowserControlRecordingStatus(input.workspaceId, tabId);
+    return json({ ok: true, action: "browser_record_status", recording: status, tab });
+  }
+  throw new Error(`browser_record action must be start, stop, or status (got ${action}).`);
+}
+
+async function callBuiltInBrowserToolText(input: {
   workspaceId: string;
   toolName: string;
   arguments: Record<string, unknown>;
 }): Promise<string> {
-  const normalized = normalizeBrowserMcpToolInvocation(input);
-  const toolName = normalized.toolName;
-  const args = normalized.arguments;
+  const toolName = input.toolName;
+  const args = input.arguments;
   if (toolName === "browser_tabs") {
     const action = asString(args.action) ?? "list";
     if (action === "list") return json({ tabs: listBrowserControlTabs(input.workspaceId) });
@@ -524,7 +717,6 @@ export async function callBuiltInBrowserTool(input: {
         "Do not claim text was entered or submitted unless a follow-up observation verifies it. If precision matters, navigate directly to a deterministic URL or ask the user to confirm visible page state.",
     });
   }
-  if (toolName === "browser_screenshot") return json(await screenshotBrowserControlTab(input.workspaceId, tabId));
   if (toolName === "browser_viewport") {
     return json({
       tab: await setBrowserControlViewport(

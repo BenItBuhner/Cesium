@@ -14,6 +14,15 @@ import {
   browserControlCapabilitiesForEngine,
   normalizeBrowserControlViewport,
 } from "./capabilities.js";
+import {
+  browserRecordingStatus,
+  discardBrowserRecording,
+  isBrowserRecordingActive,
+  startBrowserRecording,
+  stopBrowserRecording,
+  type BrowserRecordingResult,
+  type BrowserRecordingStatus,
+} from "./recording.js";
 import type {
   BrowserControlCommand,
   BrowserControlCommandPayload,
@@ -268,6 +277,9 @@ export async function openBrowserControlTab(input: {
 export async function closeBrowserControlTab(workspaceId: string, tabId: string): Promise<void> {
   const tab = requireTab(workspaceId, tabId);
   const session = sessionForTab(tab.tabId);
+  if (isBrowserRecordingActive(tab.tabId)) {
+    await discardBrowserRecording(tab.tabId).catch(() => undefined);
+  }
   if (session?.debugSessionId) {
     await destroyDebugSession(session.debugSessionId).catch(() => undefined);
   }
@@ -421,6 +433,60 @@ export async function screenshotBrowserControlTab(
     : null;
   pushEvent({ type: "agent_action", tabId, detail: "Captured screenshot" });
   return { imageDataUrl, tab: tabs.get(tabId) ?? tab };
+}
+
+export async function startBrowserControlRecording(
+  workspaceId: string,
+  tabId: string,
+  options?: { maxWidth?: number; maxHeight?: number; everyNthFrame?: number }
+): Promise<{ status: BrowserRecordingStatus; tab: BrowserControlTab }> {
+  const tab = requireTab(workspaceId, tabId);
+  if (tab.engine !== "server-chromium") {
+    throw new Error(
+      `Demo recording requires the server-chromium engine (tab engine is ${tab.engine}). Open the tab with engine=server-chromium to record.`
+    );
+  }
+  const session = await ensureServerChromiumSession(tab);
+  if (!session.debugSessionId) {
+    throw new Error("Browser tab has no debug session to record.");
+  }
+  const status = await startBrowserRecording({
+    workspaceId,
+    tabId,
+    debugSessionId: session.debugSessionId,
+    maxWidth: options?.maxWidth ?? tab.viewport.width,
+    maxHeight: options?.maxHeight ?? tab.viewport.height,
+    everyNthFrame: options?.everyNthFrame,
+  });
+  pushEvent({ type: "agent_action", tabId, detail: "Started demo recording" });
+  return { status, tab: tabs.get(tabId) ?? tab };
+}
+
+export async function stopBrowserControlRecording(
+  workspaceId: string,
+  tabId: string,
+  input: { workspaceRoot: string; fileName?: string }
+): Promise<{ result: BrowserRecordingResult; tab: BrowserControlTab }> {
+  const tab = requireTab(workspaceId, tabId);
+  const result = await stopBrowserRecording({
+    tabId,
+    workspaceRoot: input.workspaceRoot,
+    fileName: input.fileName,
+  });
+  pushEvent({
+    type: "agent_action",
+    tabId,
+    detail: `Saved demo recording ${result.artifact.relativePath}`,
+  });
+  return { result, tab: tabs.get(tabId) ?? tab };
+}
+
+export function getBrowserControlRecordingStatus(
+  workspaceId: string,
+  tabId: string
+): { status: BrowserRecordingStatus; tab: BrowserControlTab } {
+  const tab = requireTab(workspaceId, tabId);
+  return { status: browserRecordingStatus(tabId), tab };
 }
 
 export async function snapshotBrowserControlTab(

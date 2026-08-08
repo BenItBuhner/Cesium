@@ -159,3 +159,5 @@ apps/mobile/android/.gradle/
 apps/mobile/android/.kotlin/
 apps/mobile/android/local.properties
 apps/mobile/node_modules/
+
+artifacts/browser/

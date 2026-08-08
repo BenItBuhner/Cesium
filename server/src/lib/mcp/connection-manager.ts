@@ -9,11 +9,12 @@ import {
   setMcpConnectionStatus,
 } from "./server-store.js";
 import type { McpConnectionStatus } from "./types.js";
+import { builtinMcpHttpUrl, localMcpServerBaseUrl } from "./http-bridge-url.js";
 import { ensureMcpGitignore, writeMcpWorkspaceMirror } from "./workspace-mirror.js";
 import {
   BROWSER_MCP_SERVER_ID,
   BROWSER_MCP_TOOLS,
-  callBuiltInBrowserTool,
+  callBuiltInBrowserToolRich,
 } from "./builtin-browser-tools.js";
 import {
   PHONE_MCP_SERVER_ID,
@@ -128,7 +129,7 @@ export async function refreshWorkspaceMcpMirror(input: {
     id: BROWSER_MCP_SERVER_ID,
     label: "Browser",
     summary:
-      "Built-in browser-tab control tools for opening visible IDE editor browser tabs, locking them, clicking, typing, inspecting page state, and optionally using the legacy server Chromium engine.",
+      "Built-in browser control tools for testing sites: open tabs (visible editor tabs or headless server-chromium), click, type, inspect page state, capture screenshots, and record demo videos saved under artifacts/browser/.",
     transport: "stdio",
     stdio: { command: "builtin:browser", args: [] },
     enabled: true,
@@ -158,8 +159,13 @@ export async function refreshWorkspaceMcpMirror(input: {
     catalogs.push({
       config: browserConfig,
       status: { connected: true, lastCheckedAt: Date.now(), toolCount: BROWSER_MCP_TOOLS.length },
-      instructions:
-        "Use these tools to control browser tabs in the editor. Open tabs with the default electron-native engine for visible desktop tabs; use proxy only for the legacy iframe path and server-chromium only when the user explicitly needs the legacy headless browser. Prefer locking before mutating page state, and check browser_events for user unlocks or interventions.",
+      instructions: [
+        "Use these tools to control browser tabs for site testing, screenshots, and demo recordings.",
+        "Engines: server-chromium is the headless automation engine (works everywhere, supports screenshots + browser_record demo videos); electron-native opens a visible desktop editor tab (desktop app only); proxy is the legacy iframe path.",
+        "Screenshots (browser_screenshot) and demo videos (browser_record start/stop) are saved as workspace files under artifacts/browser/ — report those file paths in summaries so users and parent agents can open them.",
+        "Prefer locking before mutating page state, and check browser_events for user unlocks or interventions.",
+        `External harness CLIs can attach to this server natively over streamable HTTP at ${builtinMcpHttpUrl(input.workspaceId, BROWSER_MCP_SERVER_ID)} (Cesium exports this automatically to harnesses with native MCP support), or invoke a single tool with POST ${localMcpServerBaseUrl()}/api/workspaces/${input.workspaceId}/mcp/call and JSON body {"serverId":"browser","toolName":"browser_tabs","arguments":{...}}.`,
+      ].join("\n"),
       tools: BROWSER_MCP_TOOLS,
     });
   }
@@ -235,6 +241,11 @@ export async function testMcpServer(input: {
   return result.status;
 }
 
+export type McpToolCallRichResult = {
+  text: string;
+  images?: Array<{ mimeType: string; data: string }>;
+};
+
 export async function callMcpTool(input: {
   workspaceId: string;
   workspaceRoot: string;
@@ -242,6 +253,20 @@ export async function callMcpTool(input: {
   toolName: string;
   arguments: Record<string, unknown>;
 }): Promise<string> {
+  return (await callMcpToolRich(input)).text;
+}
+
+/**
+ * Call an MCP tool and keep image content parts (screenshots and similar)
+ * alongside the joined text so vision-capable callers can attach the pixels.
+ */
+export async function callMcpToolRich(input: {
+  workspaceId: string;
+  workspaceRoot: string;
+  serverId: string;
+  toolName: string;
+  arguments: Record<string, unknown>;
+}): Promise<McpToolCallRichResult> {
   const serverId =
     input.serverId.toLowerCase() === BROWSER_MCP_SERVER_ID
       ? BROWSER_MCP_SERVER_ID
@@ -252,8 +277,9 @@ export async function callMcpTool(input: {
     if (!(await isBuiltInBrowserMcpEnabled(input.workspaceId))) {
       throw new Error("Browser MCP is disabled for this workspace.");
     }
-    return await callBuiltInBrowserTool({
+    return await callBuiltInBrowserToolRich({
       workspaceId: input.workspaceId,
+      workspaceRoot: input.workspaceRoot,
       toolName: input.toolName,
       arguments: input.arguments,
     });
@@ -262,11 +288,13 @@ export async function callMcpTool(input: {
     if (!(await isBuiltInPhoneMcpEnabled(input.workspaceId))) {
       throw new Error("Phone MCP is disabled for this workspace.");
     }
-    return await callBuiltInPhoneTool({
-      workspaceId: input.workspaceId,
-      toolName: input.toolName,
-      arguments: input.arguments,
-    });
+    return {
+      text: await callBuiltInPhoneTool({
+        workspaceId: input.workspaceId,
+        toolName: input.toolName,
+        arguments: input.arguments,
+      }),
+    };
   }
   const config = await getMcpServer(input.workspaceId, serverId);
   if (!config || !config.enabled) {
@@ -300,10 +328,23 @@ export async function callMcpTool(input: {
         typeof part.text === "string"
     )
     .map((part) => part.text);
-  if (textParts.length > 0) {
-    return textParts.join("\n");
-  }
-  return JSON.stringify(result, null, 2);
+  const images = content.filter(
+    (part): part is { type: "image"; data: string; mimeType: string } =>
+      typeof part === "object" &&
+      part !== null &&
+      "type" in part &&
+      part.type === "image" &&
+      "data" in part &&
+      typeof part.data === "string" &&
+      "mimeType" in part &&
+      typeof part.mimeType === "string"
+  );
+  return {
+    text: textParts.length > 0 ? textParts.join("\n") : JSON.stringify(result, null, 2),
+    ...(images.length > 0
+      ? { images: images.map((part) => ({ mimeType: part.mimeType, data: part.data })) }
+      : {}),
+  };
 }
 
 export async function disconnectMcpServer(
