@@ -79,6 +79,9 @@ function sanitizeRecordForSnapshot(
     queuedPrompts: [],
     pendingRelocation: null,
     providerSessionId: null,
+    // Provider config options can embed the engine's entire model catalog
+    // (megabytes); the target engine regenerates them from its own catalog.
+    configOptions: [],
   };
 }
 
@@ -240,6 +243,7 @@ export async function materializeCloudSnapshot(
     lastError: null,
     providerSessionId: null,
     queuedPrompts: [],
+    configOptions: parsedRecord.configOptions ?? [],
     origin,
   };
   await saveConversationRecord(record);

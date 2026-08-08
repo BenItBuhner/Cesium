@@ -5,6 +5,7 @@ import {
   listAgentBackendsWithCache,
   refreshAgentBackendRuntimes,
 } from "../lib/agents/providers.js";
+import { getCesiumAgentSettings } from "../lib/cesium-agent-settings.js";
 import {
   getInstallSpecForBackend,
   isInstallSupportedOnThisHost,
@@ -23,8 +24,17 @@ let installInFlight: Promise<unknown> | null = null;
  */
 agentInstallRoutes.get("/api/agents/backends", async (c) => {
   const backends = await listAgentBackendsWithCache();
+  // The Cesium Agent's effective default model lives in settings (env
+  // bootstrap / user choice), not the static registry entry.
+  const cesiumDefaultModelId = await getCesiumAgentSettings()
+    .then((settings) => settings.defaultModelId)
+    .catch(() => null);
   const payload = backends.map((backend) => {
     const spec = getInstallSpecForBackend(backend.id);
+    const defaultModelId =
+      backend.id === "cesium-agent" && cesiumDefaultModelId
+        ? cesiumDefaultModelId
+        : backend.defaultModelId;
     return {
       id: backend.id,
       label: backend.label,
@@ -32,8 +42,11 @@ agentInstallRoutes.get("/api/agents/backends", async (c) => {
       available: backend.available,
       experimental: backend.experimental,
       commandPreview: backend.commandPreview ?? null,
-      defaultModelId: backend.defaultModelId,
-      defaultModelName: backend.defaultModelName,
+      defaultModelId,
+      defaultModelName:
+        defaultModelId === backend.defaultModelId
+          ? backend.defaultModelName
+          : defaultModelId,
       installer:
         spec && isInstallSupportedOnThisHost(spec)
           ? {

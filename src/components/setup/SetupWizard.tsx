@@ -2,11 +2,13 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { ArrowRight, Check } from "lucide-react";
 import {
   getActiveServerConnection,
   getConfiguredServerBaseUrl,
 } from "@cesium/client";
+import { adoptDeviceKey } from "@/lib/cloud/cloud-env";
 import { useCloudContext } from "@/contexts/CloudContext";
 import { WORKSPACE_ROUTE } from "@/lib/workbench-view";
 import {
@@ -44,7 +46,17 @@ const STEP_DESCRIPTIONS: Record<SetupStepId, string> = {
  */
 export function SetupWizard() {
   const cloud = useCloudContext();
+  const searchParams = useSearchParams();
   const profile = useMemo(() => getPlatformSetupProfile(), []);
+
+  // Device-mode account linking: /setup?link=<deviceKey> adopts an existing
+  // device identity — the keyless analogue of signing in on a new machine.
+  useEffect(() => {
+    const link = searchParams?.get("link");
+    if (link && adoptDeviceKey(link)) {
+      window.location.replace("/setup");
+    }
+  }, [searchParams]);
   const [state, setState] = useState<OnboardingState>(() => readOnboardingState());
   const [activeStep, setActiveStep] = useState<SetupStepId>(
     () =>

@@ -150,6 +150,8 @@ test("snapshot export sanitizes runtime state and strips seq/raw", async () => {
   assert.equal(parsedRecord.providerSessionId, null);
   assert.equal(parsedRecord.status, "idle");
   assert.deepEqual(parsedRecord.queuedPrompts, []);
+  // Config options can embed the engine's whole model catalog — never travel.
+  assert.deepEqual(parsedRecord.configOptions, []);
 
   const parsedEvents = JSON.parse(snapshot.eventsJson) as Array<
     Record<string, unknown>
