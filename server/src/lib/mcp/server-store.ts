@@ -6,6 +6,11 @@ import { readJsonFile, writeJsonFile } from "../persistence.js";
 import { mcpSecretsPath, mcpServersConfigPath, slugifyMcpServerId } from "./paths.js";
 import { BROWSER_MCP_SERVER_ID, BROWSER_MCP_TOOLS } from "./builtin-browser-tools.js";
 import { PHONE_MCP_SERVER_ID, PHONE_MCP_TOOLS } from "./builtin-phone-tools.js";
+import {
+  ARTIFACTS_MCP_SERVER_ID,
+  ARTIFACTS_MCP_SUMMARY,
+  ARTIFACTS_MCP_TOOLS,
+} from "./builtin-artifact-tools.js";
 import type {
   McpConnectionStatus,
   McpSecretsFile,
@@ -106,6 +111,7 @@ export async function listMcpServers(workspaceId: string): Promise<McpServerPubl
   const file = await readServersFile(workspaceId);
   const browserEnabled = file.builtins?.browser?.enabled !== false;
   const phoneEnabled = file.builtins?.phone?.enabled !== false;
+  const artifactsEnabled = file.builtins?.artifacts?.enabled !== false;
   const browserServer: McpServerPublic = {
     id: BROWSER_MCP_SERVER_ID,
     label: "Browser",
@@ -138,7 +144,23 @@ export async function listMcpServers(workspaceId: string): Promise<McpServerPubl
       ? { connected: true, lastCheckedAt: Date.now(), toolCount: PHONE_MCP_TOOLS.length }
       : { connected: false, lastCheckedAt: Date.now(), error: "Disabled" },
   };
-  return [browserServer, phoneServer, ...file.servers.map((server) => ({
+  const artifactsServer: McpServerPublic = {
+    id: ARTIFACTS_MCP_SERVER_ID,
+    label: "Artifacts",
+    enabled: artifactsEnabled,
+    transport: "stdio",
+    stdio: { command: "builtin:artifacts", args: [] },
+    auth: { kind: "none" },
+    summary: ARTIFACTS_MCP_SUMMARY,
+    createdAt: 0,
+    updatedAt: file.builtins?.artifacts?.updatedAt ?? 0,
+    builtIn: true,
+    removable: false,
+    connectionStatus: artifactsEnabled
+      ? { connected: true, lastCheckedAt: Date.now(), toolCount: ARTIFACTS_MCP_TOOLS.length }
+      : { connected: false, lastCheckedAt: Date.now(), error: "Disabled" },
+  };
+  return [browserServer, phoneServer, artifactsServer, ...file.servers.map((server) => ({
     ...server,
     removable: true,
     connectionStatus: getMcpConnectionStatus(workspaceId, server.id),
@@ -169,6 +191,27 @@ export async function setBuiltInBrowserMcpEnabled(
 export async function isBuiltInPhoneMcpEnabled(workspaceId: string): Promise<boolean> {
   const file = await readServersFile(workspaceId);
   return file.builtins?.phone?.enabled !== false;
+}
+
+export async function isBuiltInArtifactsMcpEnabled(workspaceId: string): Promise<boolean> {
+  const file = await readServersFile(workspaceId);
+  return file.builtins?.artifacts?.enabled !== false;
+}
+
+export async function setBuiltInArtifactsMcpEnabled(
+  workspaceId: string,
+  enabled: boolean
+): Promise<void> {
+  const file = await readServersFile(workspaceId);
+  const now = Date.now();
+  await writeServersFile(workspaceId, {
+    ...file,
+    updatedAt: now,
+    builtins: {
+      ...file.builtins,
+      artifacts: { enabled, updatedAt: now },
+    },
+  });
 }
 
 export async function setBuiltInPhoneMcpEnabled(
@@ -308,6 +351,7 @@ export async function getMcpSummariesForPrompt(
   const servers = await listEnabledMcpServers(workspaceId);
   const includeBrowser = await isBuiltInBrowserMcpEnabled(workspaceId);
   const includePhone = await isBuiltInPhoneMcpEnabled(workspaceId);
+  const includeArtifacts = await isBuiltInArtifactsMcpEnabled(workspaceId);
   return [
     ...(includeBrowser ? [{
       id: BROWSER_MCP_SERVER_ID,
@@ -318,6 +362,11 @@ export async function getMcpSummariesForPrompt(
       id: PHONE_MCP_SERVER_ID,
       label: "Android phone",
       summary: PHONE_MCP_SUMMARY,
+    }] : []),
+    ...(includeArtifacts ? [{
+      id: ARTIFACTS_MCP_SERVER_ID,
+      label: "Artifacts",
+      summary: ARTIFACTS_MCP_SUMMARY,
     }] : []),
     ...servers.map((server) => ({
       id: server.id,

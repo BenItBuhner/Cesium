@@ -3,6 +3,7 @@ import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { connectMcpClient, type McpClientSession } from "./client-factory.js";
 import {
   getMcpServer,
+  isBuiltInArtifactsMcpEnabled,
   isBuiltInBrowserMcpEnabled,
   isBuiltInPhoneMcpEnabled,
   listEnabledMcpServers,
@@ -20,6 +21,13 @@ import {
   PHONE_MCP_TOOLS,
   callBuiltInPhoneTool,
 } from "./builtin-phone-tools.js";
+import {
+  ARTIFACTS_MCP_INSTRUCTIONS,
+  ARTIFACTS_MCP_SERVER_ID,
+  ARTIFACTS_MCP_SUMMARY,
+  ARTIFACTS_MCP_TOOLS,
+  callBuiltInArtifactTool,
+} from "./builtin-artifact-tools.js";
 
 type ActiveSession = {
   session: McpClientSession;
@@ -124,6 +132,7 @@ export async function refreshWorkspaceMcpMirror(input: {
   const servers = await listEnabledMcpServers(input.workspaceId);
   const includeBrowser = await isBuiltInBrowserMcpEnabled(input.workspaceId);
   const includePhone = await isBuiltInPhoneMcpEnabled(input.workspaceId);
+  const includeArtifacts = await isBuiltInArtifactsMcpEnabled(input.workspaceId);
   const browserConfig: McpServerConfig = {
     id: BROWSER_MCP_SERVER_ID,
     label: "Browser",
@@ -143,6 +152,17 @@ export async function refreshWorkspaceMcpMirror(input: {
       "Built-in Android phone tools for connected-device capability discovery, app launching, semantic screen snapshots, screenshots, gestures, system actions, settings, and a Cesium-owned private secondary display.",
     transport: "stdio",
     stdio: { command: "builtin:phone", args: [] },
+    enabled: true,
+    auth: { kind: "none" },
+    createdAt: 0,
+    updatedAt: 0,
+  };
+  const artifactsConfig: McpServerConfig = {
+    id: ARTIFACTS_MCP_SERVER_ID,
+    label: "Artifacts",
+    summary: ARTIFACTS_MCP_SUMMARY,
+    transport: "stdio",
+    stdio: { command: "builtin:artifacts", args: [] },
     enabled: true,
     auth: { kind: "none" },
     createdAt: 0,
@@ -176,6 +196,18 @@ export async function refreshWorkspaceMcpMirror(input: {
       tools: PHONE_MCP_TOOLS,
     });
   }
+  if (includeArtifacts) {
+    catalogs.push({
+      config: artifactsConfig,
+      status: {
+        connected: true,
+        lastCheckedAt: Date.now(),
+        toolCount: ARTIFACTS_MCP_TOOLS.length,
+      },
+      instructions: ARTIFACTS_MCP_INSTRUCTIONS,
+      tools: ARTIFACTS_MCP_TOOLS,
+    });
+  }
 
   await Promise.all(
     servers.map(async (config) => {
@@ -198,6 +230,7 @@ export async function refreshWorkspaceMcpMirror(input: {
     servers: [
       ...(includeBrowser ? [browserConfig] : []),
       ...(includePhone ? [phoneConfig] : []),
+      ...(includeArtifacts ? [artifactsConfig] : []),
       ...servers,
     ],
     catalogs,
@@ -223,6 +256,12 @@ export async function testMcpServer(input: {
       ? { connected: true, lastCheckedAt: Date.now(), toolCount: PHONE_MCP_TOOLS.length }
       : { connected: false, lastCheckedAt: Date.now(), error: "Phone MCP is disabled." };
   }
+  if (input.serverId.toLowerCase() === ARTIFACTS_MCP_SERVER_ID) {
+    const enabled = await isBuiltInArtifactsMcpEnabled(input.workspaceId);
+    return enabled
+      ? { connected: true, lastCheckedAt: Date.now(), toolCount: ARTIFACTS_MCP_TOOLS.length }
+      : { connected: false, lastCheckedAt: Date.now(), error: "Artifacts MCP is disabled." };
+  }
   if (!config) {
     throw new Error(`Unknown MCP server: ${input.serverId}`);
   }
@@ -247,7 +286,9 @@ export async function callMcpTool(input: {
       ? BROWSER_MCP_SERVER_ID
       : input.serverId.toLowerCase() === PHONE_MCP_SERVER_ID
         ? PHONE_MCP_SERVER_ID
-        : input.serverId;
+        : input.serverId.toLowerCase() === ARTIFACTS_MCP_SERVER_ID
+          ? ARTIFACTS_MCP_SERVER_ID
+          : input.serverId;
   if (serverId === BROWSER_MCP_SERVER_ID) {
     if (!(await isBuiltInBrowserMcpEnabled(input.workspaceId))) {
       throw new Error("Browser MCP is disabled for this workspace.");
@@ -264,6 +305,17 @@ export async function callMcpTool(input: {
     }
     return await callBuiltInPhoneTool({
       workspaceId: input.workspaceId,
+      toolName: input.toolName,
+      arguments: input.arguments,
+    });
+  }
+  if (serverId === ARTIFACTS_MCP_SERVER_ID) {
+    if (!(await isBuiltInArtifactsMcpEnabled(input.workspaceId))) {
+      throw new Error("Artifacts MCP is disabled for this workspace.");
+    }
+    return await callBuiltInArtifactTool({
+      workspaceId: input.workspaceId,
+      workspaceRoot: input.workspaceRoot,
       toolName: input.toolName,
       arguments: input.arguments,
     });

@@ -1,5 +1,6 @@
 import { formatMcpToolDisplayName } from "@cesium/core/mcp";
 import { BROWSER_MCP_SERVER_ID } from "../../mcp/builtin-browser-tools.js";
+import { ARTIFACTS_MCP_SERVER_ID } from "../../mcp/builtin-artifact-tools.js";
 import type { AgentPermissionCategory } from "../types.js";
 import { permissionDecisionFromOption as sharedPermissionDecisionFromOption } from "../permission-options.js";
 import {
@@ -1124,6 +1125,12 @@ export function toolTitle(name: string, args: Record<string, unknown>): string {
         return browserTool
           ? `Browser · ${formatMcpToolDisplayName(browserTool, BROWSER_MCP_SERVER_ID)}`
           : "Browser tool";
+      }
+      if (asString(args.serverId) === ARTIFACTS_MCP_SERVER_ID) {
+        const artifactTool = asString(args.toolName);
+        return artifactTool
+          ? `Artifacts · ${formatMcpToolDisplayName(artifactTool, ARTIFACTS_MCP_SERVER_ID)}`
+          : "Artifact tool";
       }
       return `MCP ${asString(args.serverId) ?? "server"} - ${asString(args.toolName) ?? "tool"}`;
     case "refresh_mcp_servers":
