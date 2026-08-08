@@ -76,7 +76,7 @@ function gitError(stderr: string, fallback: string): Error {
   return new Error(truncateStderr(stderr) || fallback);
 }
 
-async function runGit(
+export async function runGit(
   cwd: string,
   args: string[],
   timeoutMs = GIT_TIMEOUT_MS
@@ -119,7 +119,7 @@ async function runGit(
   });
 }
 
-async function tryGit(cwd: string, args: string[]): Promise<GitResult | null> {
+export async function tryGit(cwd: string, args: string[]): Promise<GitResult | null> {
   try {
     return await runGit(cwd, args);
   } catch {

@@ -1,4 +1,5 @@
 import {
+  ActionsResource,
   AgentsResource,
   AuthResource,
   CloudAgentsResource,
@@ -23,6 +24,7 @@ export class CesiumClient {
   readonly settings: SettingsResource;
   readonly cloudAgents: CloudAgentsResource;
   readonly storage: StorageResource;
+  readonly actions: ActionsResource;
 
   private readonly transport: CesiumTransport;
   private readonly workspaceClients = new Map<string, WorkspaceResource>();
@@ -36,6 +38,7 @@ export class CesiumClient {
     this.settings = new SettingsResource(this.transport);
     this.cloudAgents = new CloudAgentsResource(this.transport);
     this.storage = new StorageResource(this.transport);
+    this.actions = new ActionsResource(this.transport);
   }
 
   /**

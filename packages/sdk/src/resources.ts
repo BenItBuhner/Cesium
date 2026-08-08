@@ -1,3 +1,10 @@
+import type {
+  QuickActionDefinition,
+  QuickActionPreset,
+  QuickActionRunResult,
+  QuickActionsConfig,
+  WorkspaceInsights,
+} from "@cesium/contracts";
 import {
   AgentConversationListSchema,
   AgentConversationRecordSchema,
@@ -803,6 +810,90 @@ export class ConversationsResource {
   }
 }
 
+export class ActionsResource {
+  constructor(private readonly transport: CesiumTransport) {}
+
+  /** Stored config plus the built-in preset catalog. */
+  list(options?: { signal?: AbortSignal }): Promise<{
+    config: QuickActionsConfig;
+    presets: QuickActionPreset[];
+  }> {
+    return this.transport.request("actions.list", "/api/actions", {
+      signal: options?.signal,
+    });
+  }
+
+  async upsertCustom(
+    actionId: string,
+    definition: Partial<QuickActionDefinition> & { label: string; kind: QuickActionDefinition["kind"] },
+    options?: { signal?: AbortSignal }
+  ): Promise<{ action: QuickActionDefinition; config: QuickActionsConfig }> {
+    return this.transport.request(
+      "actions.upsertCustom",
+      `/api/actions/custom/${id(actionId)}`,
+      {
+        method: "PUT",
+        json: definition,
+        signal: options?.signal,
+      }
+    );
+  }
+
+  async removeCustom(
+    actionId: string,
+    options?: { signal?: AbortSignal }
+  ): Promise<{ ok: true; config: QuickActionsConfig }> {
+    return this.transport.request(
+      "actions.removeCustom",
+      `/api/actions/custom/${id(actionId)}`,
+      {
+        method: "DELETE",
+        signal: options?.signal,
+      }
+    );
+  }
+
+  /** Toggle built-in presets on or off. */
+  setPresetStates(
+    states: Record<string, boolean>,
+    options?: { signal?: AbortSignal }
+  ): Promise<{ ok: true; config: QuickActionsConfig }> {
+    return this.transport.request("actions.presets", "/api/actions/presets", {
+      method: "PATCH",
+      json: { states },
+      signal: options?.signal,
+    });
+  }
+}
+
+export class WorkspaceActionsResource {
+  constructor(
+    private readonly transport: CesiumTransport,
+    private readonly workspaceId: string
+  ) {}
+
+  /**
+   * Run a quick action in this workspace. `command` actions execute at the
+   * workspace root; `prompt` actions require the target conversationId.
+   */
+  async run(
+    actionId: string,
+    input?: { conversationId?: string; signal?: AbortSignal }
+  ): Promise<QuickActionRunResult> {
+    const response = await this.transport.request<{ result: QuickActionRunResult }>(
+      "actions.run",
+      `/api/actions/${id(actionId)}/run`,
+      {
+        method: "POST",
+        workspaceId: this.workspaceId,
+        json: input?.conversationId ? { conversationId: input.conversationId } : {},
+        signal: input?.signal,
+      }
+    );
+    return response.result;
+  }
+}
+
 export class McpResource {
   constructor(
     private readonly transport: CesiumTransport,
@@ -969,17 +1060,35 @@ export class WorkspaceResource {
   readonly git: GitResource;
   readonly mcp: McpResource;
   readonly orchestration: OrchestrationResource;
+  readonly actions: WorkspaceActionsResource;
+
+  private readonly transport: CesiumTransport;
 
   constructor(
     readonly id: string,
     transport: CesiumTransport
   ) {
+    this.transport = transport;
     this.conversations = new ConversationsResource(transport, id);
     this.files = new FilesResource(transport, id);
     this.terminals = new TerminalsResource(transport, id);
     this.git = new GitResource(transport, id);
     this.mcp = new McpResource(transport, id);
     this.orchestration = new OrchestrationResource(transport, id);
+    this.actions = new WorkspaceActionsResource(transport, id);
+  }
+
+  /** Composer insights: diff totals, merge/conflict state, background work. */
+  async insights(options?: { signal?: AbortSignal }): Promise<WorkspaceInsights> {
+    const response = await this.transport.request<{ insights: WorkspaceInsights }>(
+      "workspaces.insights",
+      `/api/workspaces/${id(this.id)}/insights`,
+      {
+        workspaceId: this.id,
+        signal: options?.signal,
+      }
+    );
+    return response.insights;
   }
 }
 
