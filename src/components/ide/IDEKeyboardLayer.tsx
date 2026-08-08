@@ -54,6 +54,10 @@ import {
 import { useShellView } from "@/components/layout/ShellViewContext";
 import { useAgentShellStateMaybe } from "@/components/agent/AgentShellStateContext";
 import {
+  BACK_INTENT_PRIORITY,
+  useBackHandler,
+} from "@/components/mobile/BackIntentContext";
+import {
   collectExtensionKeybindings,
   eventMatchesExtensionKeybinding,
   type ParsedExtensionKeybinding,
@@ -594,6 +598,35 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
   const cancelAgentSwitcher = useCallback(() => {
     closeAgentSwitcher();
   }, [closeAgentSwitcher]);
+
+  // Route the Android back gesture to close the top-most IDE overlay (palette,
+  // prompt, or modal) before it reaches lower layers or exits the app. These
+  // are effectively mutually exclusive, but they are closed in visual stacking
+  // order for safety.
+  const anyIdeOverlayOpen =
+    palette !== "closed" ||
+    folderPromptOpen ||
+    workspaceStudioOpen ||
+    browserPromptOpen ||
+    workspaceWindowsModalOpen ||
+    renameWindowOpen;
+  useBackHandler(anyIdeOverlayOpen, BACK_INTENT_PRIORITY.overlay, () => {
+    if (renameWindowOpen) {
+      setRenameWindowOpen(false);
+    } else if (workspaceWindowsModalOpen) {
+      setWorkspaceWindowsModalOpen(false);
+    } else if (browserPromptOpen) {
+      setBrowserPromptOpen(false);
+    } else if (workspaceStudioOpen) {
+      setWorkspaceStudioOpen(false);
+    } else if (folderPromptOpen) {
+      setFolderPromptOpen(false);
+    } else if (palette === "agentSwitcher") {
+      cancelAgentSwitcher();
+    } else if (palette !== "closed") {
+      setPalette("closed");
+    }
+  });
 
   const confirmAgentSwitcher = useCallback(() => {
     const items = agentSwitcherItemsRef.current;

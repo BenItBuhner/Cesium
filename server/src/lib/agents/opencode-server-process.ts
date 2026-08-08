@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import path from "node:path";
+import { buildCliInvocation, detectHarnessCli } from "./harness-runtime.js";
 import { getOpenCodeAcpListenPort, openCodeAcpInternalBaseUrl } from "./opencode-acp-port.js";
 import { spawnSafeEnv } from "./spawn-env.js";
 import { harnessLog } from "./harness-diagnostics.js";
@@ -70,24 +70,13 @@ function subscribeToRowExit(
   };
 }
 
-async function resolveOpenCodeCommand(): Promise<string> {
-  const configured =
-    process.env.OPENCURSOR_OPENCODE_SERVER_BIN?.trim() ||
-    process.env.OPENCURSOR_OPENCODE_ACP_BIN?.trim();
-  if (configured) {
-    return configured;
-  }
-  if (process.platform === "win32" && process.env.APPDATA?.trim()) {
-    const npmShim = path.join(process.env.APPDATA, "npm", "opencode.cmd");
-    try {
-      const { promises: fs } = await import("node:fs");
-      await fs.access(npmShim);
-      return npmShim;
-    } catch {
-      // Fall through to PATH resolution.
-    }
-  }
-  return "opencode";
+/**
+ * Central detection (env override → PATH → `~/.opencode/bin` → common bins).
+ * Falls back to the bare `opencode` name so the spawn error still names the
+ * missing binary when nothing was detected.
+ */
+function resolveOpenCodeCommand(): string {
+  return detectHarnessCli("opencode")?.executablePath ?? "opencode";
 }
 
 async function waitForHealth(client: OpenCodeServerClient): Promise<void> {
@@ -151,11 +140,19 @@ export async function connectOpenCodeServer(input: {
 
   const port = await getOpenCodeAcpListenPort(poolKey);
   const baseUrl = openCodeAcpInternalBaseUrl(port);
-  const command = await resolveOpenCodeCommand();
+  const command = resolveOpenCodeCommand();
+  const invocation = buildCliInvocation(command, [
+    "serve",
+    "--hostname",
+    "127.0.0.1",
+    "--port",
+    String(port),
+  ]);
+  const directInvocation = invocation.command === command;
   const spawnedAt = Date.now();
   const child = spawn(
-    command,
-    ["serve", "--hostname", "127.0.0.1", "--port", String(port)],
+    invocation.command,
+    invocation.args,
     {
       cwd: input.workspaceRoot,
       env: spawnSafeEnv({
@@ -163,7 +160,9 @@ export async function connectOpenCodeServer(input: {
       }),
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
-      argv0: `Cesium Agent - OpenCode Server :${port}`,
+      ...(directInvocation
+        ? { argv0: `Cesium Agent - OpenCode Server :${port}` }
+        : {}),
     }
   );
   harnessLog({

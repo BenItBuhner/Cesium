@@ -115,6 +115,13 @@ export type AgentProviderCapabilities = {
   supportsCompletionRetry: boolean;
 };
 
+/** Live CLI detection details for a harness-backed agent backend. */
+export type AgentBackendRuntimeInfo = {
+  executablePath: string;
+  source: "env" | "path" | "well-known";
+  version: string | null;
+};
+
 export type AgentBackendInfo = {
   id: AgentBackendId;
   label: string;
@@ -127,6 +134,8 @@ export type AgentBackendInfo = {
   defaultModelName: string;
   capabilities: AgentProviderCapabilities;
   cachedConfigOptions?: AgentConfigOption[];
+  /** Detected CLI installation (path, discovery source, version) when applicable. */
+  runtime?: AgentBackendRuntimeInfo | null;
 };
 
 export type AgentConversationConfig = {

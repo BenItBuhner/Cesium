@@ -15,16 +15,41 @@ import com.facebook.react.bridge.ReactContextBaseJavaModule
 import com.facebook.react.bridge.ReactMethod
 import com.facebook.react.bridge.ReadableMap
 
-internal const val LIVE_UPDATE_PREFERENCE_NOW_BAR = "nowbar"
+/**
+ * Android Live Updates (promoted ongoing notifications) are the primary
+ * delivery surface. Samsung's Now Bar has no third-party API of its own —
+ * One UI 8+ renders these same standard Live Updates in the Now Bar — so the
+ * only real fallback is a plain ongoing notification, which the system
+ * applies automatically whenever promotion is unsupported or denied.
+ */
 internal const val LIVE_UPDATE_PREFERENCE_LIVE = "live"
+internal const val LIVE_UPDATE_PREFERENCE_BASIC = "basic"
 internal const val LIVE_UPDATE_PREFERENCE_OFF = "off"
+
+/** Value stored by builds that exposed a separate "Now Bar" placement. */
+internal const val LEGACY_LIVE_UPDATE_PREFERENCE_NOW_BAR = "nowbar"
 
 internal fun normalizeLiveUpdatePreference(preference: String?): String =
   when (preference) {
-    LIVE_UPDATE_PREFERENCE_NOW_BAR,
     LIVE_UPDATE_PREFERENCE_LIVE,
+    LIVE_UPDATE_PREFERENCE_BASIC,
     LIVE_UPDATE_PREFERENCE_OFF -> preference
-    else -> LIVE_UPDATE_PREFERENCE_NOW_BAR
+    // Legacy "nowbar" requested promotion with fallback, which is exactly
+    // what "live" means now.
+    LEGACY_LIVE_UPDATE_PREFERENCE_NOW_BAR -> LIVE_UPDATE_PREFERENCE_LIVE
+    else -> LIVE_UPDATE_PREFERENCE_LIVE
+  }
+
+/**
+ * Maps a value stored under the legacy preference key onto the new value set.
+ * Legacy "live" meant "never request promotion", which is now "basic".
+ */
+internal fun migrateLegacyLiveUpdatePreference(legacy: String?): String? =
+  when (legacy) {
+    LEGACY_LIVE_UPDATE_PREFERENCE_NOW_BAR -> LIVE_UPDATE_PREFERENCE_LIVE
+    "live" -> LIVE_UPDATE_PREFERENCE_BASIC
+    LIVE_UPDATE_PREFERENCE_OFF -> LIVE_UPDATE_PREFERENCE_OFF
+    else -> null
   }
 
 class CesiumLiveUpdatesModule(
@@ -35,16 +60,19 @@ class CesiumLiveUpdatesModule(
   @ReactMethod
   fun startOrUpdate(payload: ReadableMap, promise: Promise) {
     val extras = payload.toBundle()
-    when (deliveryPreference()) {
-      LIVE_UPDATE_PREFERENCE_OFF -> {
-        stopLiveUpdate()
-        promise.resolve(statusMap())
-        return
-      }
-      LIVE_UPDATE_PREFERENCE_LIVE -> extras.putBoolean("promote", false)
-      LIVE_UPDATE_PREFERENCE_NOW_BAR -> extras.putBoolean("promote", true)
+    val preference = deliveryPreference()
+    if (preference == LIVE_UPDATE_PREFERENCE_OFF) {
+      stopAllLiveUpdates()
+      promise.resolve(statusMap())
+      return
     }
-    if (CesiumLiveUpdateStateStore.wasDismissed(reactContext, extras.getString("runKey"))) {
+    extras.putBoolean("promote", preference == LIVE_UPDATE_PREFERENCE_LIVE)
+    val runKey = extras.getString("runKey")
+    val alert = extras.getBoolean("alert", false)
+    // A dismissed run stays quiet for progress updates, but interventions and
+    // completions still surface — those need the user, not the other way
+    // around.
+    if (!alert && CesiumLiveUpdateStateStore.wasDismissed(reactContext, runKey)) {
       promise.resolve(statusMap(suppressedByDismissal = true))
       return
     }
@@ -56,36 +84,66 @@ class CesiumLiveUpdatesModule(
       extras.getBoolean("ongoing", true) &&
       Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
     ) {
-      reactContext.startForegroundService(intent)
+      try {
+        reactContext.startForegroundService(intent)
+      } catch (_: IllegalStateException) {
+        // Foreground-service start restrictions (app in background) must not
+        // drop the update — the notification itself needs no service.
+        notifyDirectly(extras)
+      }
     } else {
       try {
         reactContext.startService(intent)
       } catch (_: IllegalStateException) {
-        CesiumLiveUpdateStateStore.clearActive(reactContext)
-        val manager = reactContext.getSystemService(NotificationManager::class.java)
-        manager.notify(
-          CesiumAgentNotification.NOTIFICATION_ID,
-          CesiumAgentNotification.build(reactContext, extras)
-        )
+        notifyDirectly(extras)
       }
     }
     promise.resolve(statusMap())
   }
 
   @ReactMethod
-  fun stop(promise: Promise) {
-    stopLiveUpdate()
+  fun stopRun(runKey: String, promise: Promise) {
+    val intent = Intent(reactContext, CesiumForegroundService::class.java).apply {
+      action = CesiumForegroundService.ACTION_STOP_RUN
+      putExtra("runKey", runKey)
+    }
+    try {
+      reactContext.startService(intent)
+    } catch (_: IllegalStateException) {
+      CesiumLiveUpdateStateStore.removeRun(reactContext, runKey)
+      reactContext.getSystemService(NotificationManager::class.java)
+        .cancel(CesiumAgentNotification.notificationId(runKey))
+    }
     promise.resolve(null)
   }
 
-  private fun stopLiveUpdate() {
+  @ReactMethod
+  fun stop(promise: Promise) {
+    stopAllLiveUpdates()
+    promise.resolve(null)
+  }
+
+  private fun stopAllLiveUpdates() {
+    val runKeys = CesiumLiveUpdateStateStore.activeRunKeys(reactContext)
+    CesiumLiveUpdateStateStore.clearActive(reactContext)
     val intent = Intent(reactContext, CesiumForegroundService::class.java).apply {
       action = CesiumForegroundService.ACTION_STOP
     }
-    CesiumLiveUpdateStateStore.clearActive(reactContext)
     reactContext.stopService(intent)
-    reactContext.getSystemService(NotificationManager::class.java)
-      .cancel(CesiumAgentNotification.NOTIFICATION_ID)
+    val manager = reactContext.getSystemService(NotificationManager::class.java)
+    runKeys.forEach { runKey ->
+      manager.cancel(CesiumAgentNotification.notificationId(runKey))
+    }
+  }
+
+  private fun notifyDirectly(extras: Bundle) {
+    if (!extras.getBoolean("ongoing", true)) {
+      CesiumLiveUpdateStateStore.removeRun(reactContext, extras.getString("runKey"))
+    }
+    reactContext.getSystemService(NotificationManager::class.java).notify(
+      CesiumAgentNotification.notificationId(extras.getString("runKey")),
+      CesiumAgentNotification.build(reactContext, extras)
+    )
   }
 
   @ReactMethod
@@ -107,7 +165,7 @@ class CesiumLiveUpdatesModule(
       .putString(KEY_DELIVERY_PREFERENCE, normalized)
       .apply()
     if (normalized == LIVE_UPDATE_PREFERENCE_OFF) {
-      stopLiveUpdate()
+      stopAllLiveUpdates()
     }
     promise.resolve(statusMap())
   }
@@ -150,11 +208,21 @@ class CesiumLiveUpdatesModule(
     putString("deliveryPreference", deliveryPreference())
   }
 
-  private fun deliveryPreference(): String =
-    reactContext
-      .getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
-      .getString(KEY_DELIVERY_PREFERENCE, LIVE_UPDATE_PREFERENCE_NOW_BAR)
-      .let(::normalizeLiveUpdatePreference)
+  private fun deliveryPreference(): String {
+    val prefs = reactContext.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
+    val stored = prefs.getString(KEY_DELIVERY_PREFERENCE, null)
+    if (stored != null) {
+      return normalizeLiveUpdatePreference(stored)
+    }
+    val migrated = migrateLegacyLiveUpdatePreference(
+      prefs.getString(LEGACY_KEY_DELIVERY_PREFERENCE, null)
+    )
+    if (migrated != null) {
+      prefs.edit().putString(KEY_DELIVERY_PREFERENCE, migrated).apply()
+      return migrated
+    }
+    return LIVE_UPDATE_PREFERENCE_LIVE
+  }
 
   private fun notificationsEnabled(): Boolean {
     val manager = reactContext.getSystemService(NotificationManager::class.java)
@@ -167,7 +235,8 @@ class CesiumLiveUpdatesModule(
 
   companion object {
     private const val PREFERENCES = "cesium-live-update-preferences"
-    private const val KEY_DELIVERY_PREFERENCE = "delivery-preference"
+    private const val KEY_DELIVERY_PREFERENCE = "delivery-preference-v2"
+    private const val LEGACY_KEY_DELIVERY_PREFERENCE = "delivery-preference"
   }
 }
 

@@ -14,8 +14,8 @@ import {
 } from "../packages/design/src/theme-tokens.ts";
 
 test("Design 2.0 composer recipes are shared across adapters", () => {
-  assert.equal(DESIGN_2_RECIPES.composer.plusSize, 22);
-  assert.equal(DESIGN_2_RECIPES.composer.sendSize, 20);
+  assert.equal(DESIGN_2_RECIPES.composer.plusSize, 24);
+  assert.equal(DESIGN_2_RECIPES.composer.sendSize, 24);
   assert.equal(DESIGN_2_RECIPES.rail.toolbarButtonSize, 18);
   assert.equal(DESIGN_2_RECIPES.cards.borderWidth, 1);
   assert.equal(
@@ -27,6 +27,12 @@ test("Design 2.0 composer recipes are shared across adapters", () => {
     }).radius,
     999
   );
+  // Multi-line keeps the single-line pill's visible corner roundness:
+  // padding + control-size / 2 + border = half the collapsed shell height.
+  const pillCornerRadius =
+    DESIGN_2_RECIPES.composer.padding +
+    DESIGN_2_RECIPES.composer.sendSize / 2 +
+    DESIGN_2_RECIPES.composer.borderWidth;
   assert.equal(
     resolveDesign2ComposerLayout({
       measuredMultiline: true,
@@ -34,7 +40,11 @@ test("Design 2.0 composer recipes are shared across adapters", () => {
       hasAttachments: false,
       value: "wrapped content",
     }).radius,
-    10
+    pillCornerRadius
+  );
+  assert.equal(
+    DESIGN_2_SURFACE_ALIASES.common["--agent-composer-radius"],
+    `${pillCornerRadius}px`
   );
 });
 
@@ -49,7 +59,8 @@ test("native token resolution includes the same Design 2.0 aliases as CSS", () =
   const dark = resolveDesign2ThemeTokens(DEFAULT_THEME_TOKENS_DARK, "dark");
   assert.equal(light["--agent-plus-button-bg"], DESIGN_2_SURFACE_ALIASES.light["--agent-plus-button-bg"]);
   assert.equal(dark["--agent-plus-button-bg"], DESIGN_2_SURFACE_ALIASES.dark["--agent-plus-button-bg"]);
-  assert.equal(light["--d2-composer-send-size"], "20px");
+  assert.equal(light["--d2-composer-send-size"], "24px");
+  assert.equal(light["--d2-composer-plus-size"], "24px");
 });
 
 test("web sticky multiline behavior remains sourced from the design package", () => {

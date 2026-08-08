@@ -2,6 +2,7 @@
 export {
   BUILTIN_THEME_CATALOG,
   DEFAULT_BUILTIN_THEME_ID,
+  DEFAULT_DARK_BUILTIN_THEME_ID,
   isBuiltinThemeId,
   listBuiltinThemeIds,
 } from "@cesium/client";
