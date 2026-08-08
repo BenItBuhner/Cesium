@@ -84,13 +84,13 @@
   --agent-card-bg: var(--bg-card);
   --agent-card-hover-bg: var(--bg-card-hover);
   --agent-border: var(--border-card);
-  --agent-composer-radius: var(--radius-card);
+  --agent-composer-radius: 23px;
   --agent-card-radius: var(--radius-card);
   --agent-control-radius: var(--radius-tab);
   --agent-pill-radius: var(--radius-pill);
   --agent-rail-row-height: 30px;
-  --d2-composer-plus-size: 22px;
-  --d2-composer-send-size: 20px;
+  --d2-composer-plus-size: 24px;
+  --d2-composer-send-size: 24px;
   --d2-card-border-width: 1px;
   --d2-rail-control-size: 18px;
   --agent-plus-button-bg: #eaeaea;

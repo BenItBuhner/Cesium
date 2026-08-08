@@ -77,26 +77,43 @@ export const DESIGN_2_MODE_RECIPES: Record<Design2ModeTone, Design2ModeRecipe> =
   },
 };
 
+const COMPOSER_PADDING = 10;
+const COMPOSER_BORDER_WIDTH = 1;
+/**
+ * Attach (+), send, stop, and voice controls share one diameter. 24px keeps
+ * the collapsed capsule compact while giving comfortable touch targets.
+ */
+const COMPOSER_CONTROL_SIZE = 24;
+/**
+ * Corner radius for the composer shell once it grows past one line. The
+ * single-line capsule renders `rounded-full`, whose visible corner radius is
+ * half the collapsed shell height (padding + tallest control + border), so
+ * multi-line shells reuse that exact value instead of snapping to the sharper
+ * card radius.
+ */
+const COMPOSER_SHELL_RADIUS =
+  COMPOSER_PADDING + COMPOSER_CONTROL_SIZE / 2 + COMPOSER_BORDER_WIDTH;
+
 export const DESIGN_2_RECIPES = {
   composer: {
     placeholder: "Ask anything, @ for files, / for commands",
     compactPlaceholder: "Ask anything, @ for files…",
     modePlaceholder: "Ask anything…",
-    padding: 10,
+    padding: COMPOSER_PADDING,
     gap: 10,
     stackedGap: 8,
-    plusSize: 22,
-    plusIconSize: 13,
-    sendSize: 20,
-    sendIconSize: 12,
+    plusSize: COMPOSER_CONTROL_SIZE,
+    plusIconSize: 14,
+    sendSize: COMPOSER_CONTROL_SIZE,
+    sendIconSize: 14,
     sendIconStrokeWidth: 2.5,
     modeChipHeight: 22,
     modeChipPaddingLeft: 7,
     modeChipPaddingRight: 4,
     modeChipGap: 3,
     singleLineRadius: 999,
-    multilineRadius: 10,
-    borderWidth: 1,
+    multilineRadius: COMPOSER_SHELL_RADIUS,
+    borderWidth: COMPOSER_BORDER_WIDTH,
     lineHeight: 20,
     multilineThreshold: 30,
     maxHeight: 240,
@@ -137,13 +154,13 @@ export const DESIGN_2_SURFACE_ALIASES = {
     "--agent-card-bg": "var(--bg-card)",
     "--agent-card-hover-bg": "var(--bg-card-hover)",
     "--agent-border": "var(--border-card)",
-    "--agent-composer-radius": "var(--radius-card)",
+    "--agent-composer-radius": `${COMPOSER_SHELL_RADIUS}px`,
     "--agent-card-radius": "var(--radius-card)",
     "--agent-control-radius": "var(--radius-tab)",
     "--agent-pill-radius": "var(--radius-pill)",
     "--agent-rail-row-height": "30px",
-    "--d2-composer-plus-size": "22px",
-    "--d2-composer-send-size": "20px",
+    "--d2-composer-plus-size": `${COMPOSER_CONTROL_SIZE}px`,
+    "--d2-composer-send-size": `${COMPOSER_CONTROL_SIZE}px`,
     "--d2-card-border-width": "1px",
     "--d2-rail-control-size": "18px",
   },

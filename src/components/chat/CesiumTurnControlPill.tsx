@@ -16,8 +16,9 @@ type CesiumTurnControlPillProps = {
   onStop?: () => Promise<void> | void;
 };
 
+/** Each control square matches the composer's shared send-button diameter. */
 const SQUARE_BUTTON_CLASS =
-  "flex h-[20px] w-[20px] shrink-0 items-center justify-center transition-opacity hover:opacity-80 disabled:cursor-default";
+  "flex h-[var(--d2-composer-send-size)] w-[var(--d2-composer-send-size)] shrink-0 touch-manipulation items-center justify-center transition-opacity hover:opacity-80 disabled:cursor-default";
 
 export function CesiumTurnControlPill({
   conversationStatus,
@@ -87,8 +88,10 @@ export function CesiumTurnControlPill({
 
   return (
     <div
-      className={`flex h-[20px] shrink-0 items-center gap-0 overflow-hidden rounded-full transition-[width] duration-300 ease-out ${toneClass} ${
-        expanded ? "w-[40px]" : "w-[20px]"
+      className={`flex h-[var(--d2-composer-send-size)] shrink-0 items-center gap-0 overflow-hidden rounded-full transition-[width] duration-300 ease-out ${toneClass} ${
+        expanded
+          ? "w-[calc(var(--d2-composer-send-size)*2)]"
+          : "w-[var(--d2-composer-send-size)]"
       }`}
       aria-label="Cesium agent controls"
     >
@@ -116,14 +119,14 @@ export function CesiumTurnControlPill({
           />
         ) : paused ? (
           <Play
-            className="size-[9px] shrink-0 text-[var(--bg-main)]"
+            className="size-[10px] shrink-0 text-[var(--bg-main)]"
             fill="currentColor"
             strokeWidth={2.2}
             aria-hidden
           />
         ) : (
           <Pause
-            className="size-[9px] shrink-0 text-[var(--bg-main)]"
+            className="size-[10px] shrink-0 text-[var(--bg-main)]"
             fill="currentColor"
             strokeWidth={2.2}
             aria-hidden
@@ -146,7 +149,7 @@ export function CesiumTurnControlPill({
           />
         ) : (
           <Square
-            className="size-[9px] text-[var(--bg-main)]"
+            className="size-[10px] text-[var(--bg-main)]"
             fill="currentColor"
             strokeWidth={2.2}
             aria-hidden
