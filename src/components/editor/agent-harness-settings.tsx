@@ -66,19 +66,10 @@ import {
   tagClass,
 } from "@/components/editor/settings-ui";
 import { notifyAgentBackendsChanged } from "@/lib/agent-backend-events";
+import { ACTIVE_AGENT_BACKEND_IDS } from "@cesium/core";
 
-export const HARNESS_ORDER: AgentBackendId[] = [
-  "cesium-agent",
-  "cursor-sdk",
-  "codex-app-server",
-  "opencode-server",
-  "opencode-v2-beta",
-  "devin-acp",
-  "grok-build",
-  "claude-code-sdk",
-  "pi-agent",
-  "google-antigravity-cli",
-];
+/** Derived from the shared registry so settings never drift from the server menu. */
+export const HARNESS_ORDER: AgentBackendId[] = [...ACTIVE_AGENT_BACKEND_IDS];
 
 export const HARNESS_LABELS: Record<AgentBackendId, string> = {
   "cesium-agent": "Cesium Agent (Beta)",
