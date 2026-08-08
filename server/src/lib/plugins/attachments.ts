@@ -1,6 +1,7 @@
 import type { McpServerConfig, McpServerSummary } from "@cesium/core/mcp";
 import type { AgentBackendId } from "../agents/types.js";
 import {
+  exportBuiltInMcpServersForSdk,
   exportEnabledMcpServersForSdk,
   type ExportedMcpServers,
 } from "../agents/mcp-export-adapter.js";
@@ -177,6 +178,26 @@ export async function resolveAgentPluginAttachments(input: {
     workspaceRoot: input.workspaceRoot,
     configs: mcpServers,
   });
+  if (getHarnessPluginCapability(input.backendId).nativeMcp) {
+    try {
+      const builtins = await exportBuiltInMcpServersForSdk(input.workspaceId);
+      for (const [id, config] of Object.entries(builtins)) {
+        if (!sdkMcp.servers[id]) {
+          sdkMcp.servers[id] = config;
+        }
+      }
+    } catch (error) {
+      warnings.push({
+        pluginId: "builtin-mcp",
+        pluginName: "Built-in MCP servers",
+        backendId: input.backendId,
+        reason:
+          error instanceof Error
+            ? `Failed to export built-in MCP servers: ${error.message}`
+            : "Failed to export built-in MCP servers.",
+      });
+    }
+  }
   const toolDisplays = plugins.map((plugin) => ({
     pluginId: plugin.definition.pluginId,
     pluginName: plugin.definition.displayName,

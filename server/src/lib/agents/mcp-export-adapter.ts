@@ -1,6 +1,9 @@
 import type { McpServerConfig } from "@cesium/core/mcp";
+import { BROWSER_MCP_SERVER_ID } from "../mcp/builtin-browser-tools.js";
+import { builtinMcpHttpUrl } from "../mcp/http-bridge-url.js";
 import {
   getMcpSecret,
+  isBuiltInBrowserMcpEnabled,
   listEnabledMcpServers,
 } from "../mcp/server-store.js";
 import { validateMcpRemoteUrl } from "../mcp/url-policy.js";
@@ -91,6 +94,25 @@ export async function mcpServerConfigToSdkServer(input: {
     url,
     ...(Object.keys(headers).length > 0 ? { headers } : {}),
   };
+}
+
+/**
+ * Built-in MCP servers exported as local streamable HTTP endpoints so external
+ * harnesses (Claude Code, Cursor, Codex, OpenCode, …) get the same browser
+ * control surface as the Cesium harness. Only the browser server is exported —
+ * phone control stays in-app because it depends on a paired device session.
+ */
+export async function exportBuiltInMcpServersForSdk(
+  workspaceId: string
+): Promise<Record<string, SdkMcpServerConfig>> {
+  const servers: Record<string, SdkMcpServerConfig> = {};
+  if (await isBuiltInBrowserMcpEnabled(workspaceId)) {
+    servers[BROWSER_MCP_SERVER_ID] = {
+      type: "http",
+      url: builtinMcpHttpUrl(workspaceId, BROWSER_MCP_SERVER_ID),
+    };
+  }
+  return servers;
 }
 
 export async function exportEnabledMcpServersForSdk(input: {
