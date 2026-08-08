@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { Plus, RefreshCw, Trash2 } from "lucide-react";
+import { IntegrationIcon } from "@/components/chat/IntegrationIcon";
+import { hasIntegrationIconAsset } from "@/lib/integration-icons";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import type {
   McpAuthConfig,
@@ -242,6 +244,14 @@ export function McpServersSettingsPanel() {
             key={preset.presetId}
             title={preset.label}
             description={preset.description}
+            leading={
+              hasIntegrationIconAsset(preset.presetId) ? (
+                <IntegrationIcon
+                  providerId={preset.presetId}
+                  className="size-[14px]"
+                />
+              ) : null
+            }
             trailing={
               <button
                 type="button"

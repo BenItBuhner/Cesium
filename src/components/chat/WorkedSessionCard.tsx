@@ -32,6 +32,11 @@ import {
   Wrench,
 } from "lucide-react";
 import { CollapsibleHeight } from "./CollapsibleHeight";
+import { IntegrationIcon } from "@/components/chat/IntegrationIcon";
+import {
+  hasIntegrationIconAsset,
+  normalizeIntegrationIconId,
+} from "@/lib/integration-icons";
 import { useTheme } from "@/components/theme/ThemeProvider";
 import type { EditDiffRenderingMode } from "@/lib/theme-config";
 import { useOpenInEditor } from "@/components/editor/OpenInEditorContext";
@@ -1301,9 +1306,17 @@ function renderEntry(
       const rawDetailDisplay = rawDetail ? formatRawDetailForDisplay(rawDetail) : undefined;
       const rawDetailHeading = entry.variant === "terminal" ? "Output" : "Details";
       const todos = entry.todos && entry.todos.length > 0 ? entry.todos : null;
+      const pluginIntegrationId = entry.pluginName
+        ? normalizeIntegrationIconId(entry.pluginName)
+        : null;
       const pluginBadge = entry.pluginName ? (
         <span className="inline-flex items-center gap-[6px] rounded-[6px] border border-[color-mix(in_srgb,var(--border-card)_85%,transparent)] bg-[color-mix(in_srgb,var(--bg-card)_88%,transparent)] px-[7px] py-[2px] font-sans text-[10px] font-medium tracking-[0.01em] text-[var(--text-secondary)]">
-          {entry.pluginIconUrl ? (
+          {pluginIntegrationId && hasIntegrationIconAsset(pluginIntegrationId) ? (
+            <IntegrationIcon
+              providerId={pluginIntegrationId}
+              className="size-[12px]"
+            />
+          ) : entry.pluginIconUrl ? (
             <img
               alt=""
               src={entry.pluginIconUrl}
