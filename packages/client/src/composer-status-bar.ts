@@ -31,6 +31,74 @@ export function composerStatusBarHasVisibleItems(
   return visibility.context;
 }
 
+const MAX_PER_CONVERSATION_ENTRIES = 300;
+
+/**
+ * Minimal structural slice of `ChatSessionState` used by the status bar
+ * config. `composerStatusBarVisibility` is the "last used" default applied to
+ * new conversations; the ByConversationId map holds per-conversation state.
+ */
+export type ComposerStatusBarScopeState = {
+  composerStatusBarVisibility?: ComposerStatusBarVisibility;
+  composerStatusBarVisibilityByConversationId?: Record<
+    string,
+    ComposerStatusBarVisibility
+  >;
+};
+
+/**
+ * Per-conversation state wins; otherwise the last-used default; otherwise the
+ * built-in defaults. New conversations therefore inherit whatever the user
+ * configured most recently, and keep their own state once toggled.
+ */
+export function resolveComposerStatusBarVisibilityForConversation(
+  scope: ComposerStatusBarScopeState,
+  conversationId: string | null | undefined
+): ComposerStatusBarVisibility {
+  const byConversation = scope.composerStatusBarVisibilityByConversationId;
+  if (conversationId && byConversation && byConversation[conversationId]) {
+    return normalizeComposerStatusBarVisibility(byConversation[conversationId]);
+  }
+  return normalizeComposerStatusBarVisibility(scope.composerStatusBarVisibility);
+}
+
+function pruneStatusBarPerConversationMap(
+  map: Record<string, ComposerStatusBarVisibility>
+): Record<string, ComposerStatusBarVisibility> {
+  const keys = Object.keys(map);
+  if (keys.length <= MAX_PER_CONVERSATION_ENTRIES) {
+    return map;
+  }
+  const next: Record<string, ComposerStatusBarVisibility> = {};
+  for (const key of keys.slice(keys.length - MAX_PER_CONVERSATION_ENTRIES)) {
+    next[key] = map[key]!;
+  }
+  return next;
+}
+
+/**
+ * Records a visibility change: the conversation (when known) keeps its own
+ * entry, and the same value becomes the last-used default for new chats.
+ */
+export function withComposerStatusBarVisibility<T extends ComposerStatusBarScopeState>(
+  scope: T,
+  conversationId: string | null | undefined,
+  next: ComposerStatusBarVisibility
+): T {
+  const normalized = normalizeComposerStatusBarVisibility(next);
+  const byConversation = conversationId
+    ? pruneStatusBarPerConversationMap({
+        ...(scope.composerStatusBarVisibilityByConversationId ?? {}),
+        [conversationId]: normalized,
+      })
+    : scope.composerStatusBarVisibilityByConversationId ?? {};
+  return {
+    ...scope,
+    composerStatusBarVisibility: normalized,
+    composerStatusBarVisibilityByConversationId: byConversation,
+  };
+}
+
 export function normalizeComposerStatusBarVisibility(
   raw: unknown
 ): ComposerStatusBarVisibility {

@@ -19,6 +19,7 @@ export {
   type CesiumSocketState,
 } from "./socket.js";
 export {
+  ActionsResource,
   AgentsResource,
   AuthResource,
   CloudAgentsResource,
@@ -31,6 +32,7 @@ export {
   StorageResource,
   SystemResource,
   TerminalsResource,
+  WorkspaceActionsResource,
   WorkspaceResource,
   WorkspacesResource,
 } from "./resources.js";

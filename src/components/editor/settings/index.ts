@@ -7,6 +7,7 @@ import { AgentsHarnessSettingsPanel } from "@/components/editor/agent-harness-se
 import { CloudAgentsSettingsPanel } from "@/components/editor/cloud-agents-settings";
 import { VscodeExtensionsSettingsPanel } from "@/components/editor/vscode-extensions-settings";
 import { GeneralSettingsPanel } from "./GeneralSettingsPanel";
+import { ActionsSettingsPanel } from "./ActionsSettingsPanel";
 import { AppearanceSettingsPanel } from "./AppearanceSettingsPanel";
 import { ModelsSettingsPanel } from "./ModelsSettingsPanel";
 import { PluginsSettingsPanel } from "./PluginsSettingsPanel";
@@ -22,6 +23,7 @@ export { usePluginsMcpNavigation } from "./PluginsSettingsPanel";
 
 export const SETTINGS_PANELS: Record<string, ComponentType> = {
   general: GeneralSettingsPanel,
+  actions: ActionsSettingsPanel,
   appearance: AppearanceSettingsPanel,
   agents: AgentsHarnessSettingsPanel,
   cloudAgents: CloudAgentsSettingsPanel,

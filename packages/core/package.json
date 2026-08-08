@@ -29,6 +29,10 @@
     "./phone-control": {
       "types": "./dist/phone-control.d.ts",
       "import": "./dist/phone-control.js"
+    },
+    "./quick-actions": {
+      "types": "./dist/quick-actions.d.ts",
+      "import": "./dist/quick-actions.js"
     }
   },
   "scripts": {

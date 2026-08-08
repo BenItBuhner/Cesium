@@ -1,5 +1,10 @@
 import type { ChatTab, EditorTab, EditorMode, ModelInfo } from "@cesium/core";
 import {
+  DEFAULT_COMPOSER_PILLS_VISIBILITY,
+  normalizeComposerPillsVisibility,
+  type ComposerPillsVisibility,
+} from "@cesium/core";
+import {
   DEFAULT_COMPOSER_STATUS_BAR_VISIBILITY,
   normalizeComposerStatusBarVisibility,
   type ComposerStatusBarVisibility,
@@ -341,8 +346,17 @@ export type ChatSessionState = {
   dismissedPlanEventByConversationId?: Record<string, string>;
   /** Conversation completed (idle) since last viewed; key present means show unread dot. */
   unreadChatCompletionByConversationId?: Record<string, true>;
-  /** Composer footer: repo / branch / Goal progress / context visibility toggles. */
+  /**
+   * Composer footer: repo / branch / Goal progress / context visibility
+   * toggles. This is the "last used" default inherited by new conversations.
+   */
   composerStatusBarVisibility?: ComposerStatusBarVisibility;
+  /** Per-conversation status bar state; falls back to the last-used default. */
+  composerStatusBarVisibilityByConversationId?: Record<string, ComposerStatusBarVisibility>;
+  /** Composer action pill toggles ("last used" default for new conversations). */
+  composerPillsVisibility?: ComposerPillsVisibility;
+  /** Per-conversation pill state; falls back to the last-used default. */
+  composerPillsVisibilityByConversationId?: Record<string, ComposerPillsVisibility>;
 };
 
 export type AgentSidePaneSessionState = {
@@ -497,6 +511,9 @@ export function createDefaultWorkspaceSession(
       dismissedPlanEventByConversationId: {},
       unreadChatCompletionByConversationId: {},
       composerStatusBarVisibility: { ...DEFAULT_COMPOSER_STATUS_BAR_VISIBILITY },
+      composerStatusBarVisibilityByConversationId: {},
+      composerPillsVisibility: { ...DEFAULT_COMPOSER_PILLS_VISIBILITY },
+      composerPillsVisibilityByConversationId: {},
     },
     explorer: {
       view: "explorer",
@@ -834,6 +851,24 @@ function normalizeAgentSidePaneSessionMap(
   return Object.fromEntries(entries);
 }
 
+function normalizeVisibilityByConversationMap<T>(
+  raw: unknown,
+  fallback: Record<string, T>,
+  normalizeEntry: (value: unknown) => T
+): Record<string, T> {
+  if (!raw || typeof raw !== "object") {
+    return { ...fallback };
+  }
+  const next: Record<string, T> = {};
+  for (const [conversationId, value] of Object.entries(raw)) {
+    if (!conversationId || !value || typeof value !== "object") {
+      continue;
+    }
+    next[conversationId] = normalizeEntry(value);
+  }
+  return next;
+}
+
 /** Merge an imported session snapshot onto the current workspace session. */
 export function mergeWorkspaceSessionFromImport(
   current: WorkspaceSessionState,
@@ -940,6 +975,19 @@ export function mergeWorkspaceSessionFromImport(
           : current.chat.unreadChatCompletionByConversationId ?? {},
       composerStatusBarVisibility: normalizeComposerStatusBarVisibility(
         r.chat?.composerStatusBarVisibility ?? current.chat.composerStatusBarVisibility
+      ),
+      composerStatusBarVisibilityByConversationId: normalizeVisibilityByConversationMap(
+        r.chat?.composerStatusBarVisibilityByConversationId,
+        current.chat.composerStatusBarVisibilityByConversationId ?? {},
+        normalizeComposerStatusBarVisibility
+      ),
+      composerPillsVisibility: normalizeComposerPillsVisibility(
+        r.chat?.composerPillsVisibility ?? current.chat.composerPillsVisibility
+      ),
+      composerPillsVisibilityByConversationId: normalizeVisibilityByConversationMap(
+        r.chat?.composerPillsVisibilityByConversationId,
+        current.chat.composerPillsVisibilityByConversationId ?? {},
+        normalizeComposerPillsVisibility
       ),
       model: importedUnsupportedBackend ? current.chat.model : r.chat?.model ?? current.chat.model,
       mode: importedUnsupportedBackend ? current.chat.mode : r.chat?.mode ?? current.chat.mode,

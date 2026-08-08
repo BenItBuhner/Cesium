@@ -10,6 +10,7 @@ import {
   initializeGitRepoForWorkspace,
   switchWorkspaceBranch,
 } from "../lib/git-worktrees.js";
+import { getWorkspaceInsights } from "../lib/workspace-insights.js";
 import { listBrowseDirectories, listBrowseRoots } from "../lib/workspace-browse.js";
 import {
   browseSshDirectories,
@@ -582,6 +583,16 @@ workspaceRoutes.get("/api/workspaces/:workspaceId/git/status", async (c) => {
   const workspaces = await listWorkspaces();
   const status = await getGitWorkspaceStatus(workspace, workspaces);
   return c.json({ workspace, status });
+});
+
+workspaceRoutes.get("/api/workspaces/:workspaceId/insights", async (c) => {
+  const workspaceId = c.req.param("workspaceId");
+  const workspace = await getWorkspaceById(workspaceId);
+  if (!workspace) {
+    return c.json({ error: `Unknown workspace: ${workspaceId}` }, 404);
+  }
+  const insights = await getWorkspaceInsights(workspace);
+  return c.json({ insights });
 });
 
 workspaceRoutes.post("/api/workspaces/:workspaceId/git/init", async (c) => {

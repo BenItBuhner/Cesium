@@ -100,6 +100,7 @@ import { ModelDropdown } from "./ModelDropdown";
 import { BackendDropdown } from "./BackendDropdown";
 import { SessionConfigOptionDropdown } from "./SessionConfigOptionDropdown";
 import { ComposerStatusBar } from "./ComposerStatusBar";
+import { ComposerActionPills } from "./ComposerActionPills";
 import { ContextBreakdownDock } from "./ContextBreakdownDock";
 import { dockedComposerCardSlot } from "./docked-card";
 import {
@@ -159,7 +160,7 @@ import {
 } from "@/lib/agent-chat";
 import {
   composerStatusBarHasVisibleItems,
-  normalizeComposerStatusBarVisibility,
+  resolveComposerStatusBarVisibilityForConversation,
 } from "@/lib/composer-status-bar";
 import { useAgentContextUsage } from "@/hooks/useAgentContextUsage";
 import { CesiumTurnControlPill } from "@/components/chat/CesiumTurnControlPill";
@@ -2958,8 +2959,9 @@ const handleNativeComposerKeyDown = useCallback(
     shellMxClass !== undefined ? shellMxClass : "mx-0 @min-[481px]:mx-[10px]";
   const statusBarMounted =
     showStatusBar && variant !== "expanded" && layout !== "empty-top";
-  const composerStatusBarVisibility = normalizeComposerStatusBarVisibility(
-    workspaceSession.chat.composerStatusBarVisibility
+  const composerStatusBarVisibility = resolveComposerStatusBarVisibilityForConversation(
+    workspaceSession.chat,
+    conversationId
   );
   const statusBarHasVisibleItems =
     statusBarMounted &&
@@ -2993,11 +2995,19 @@ const handleNativeComposerKeyDown = useCallback(
   const statusBarEl = statusBarMounted ? (
     <ComposerStatusBar
       backendId={backendId}
+      conversationId={conversationId}
       usage={contextUsage}
       contextLoading={contextLoading}
       contextBreakdownOpen={contextBreakdownOpen}
       onContextBreakdownOpenChange={setContextBreakdownOpen}
       goalProgress={goalProgress}
+      shellInsetClass={shellMx}
+    />
+  ) : null;
+  const actionPillsEl = statusBarMounted ? (
+    <ComposerActionPills
+      conversationId={conversationId}
+      conversationStatus={conversationStatus}
       shellInsetClass={shellMx}
     />
   ) : null;
@@ -3359,6 +3369,7 @@ const handleNativeComposerKeyDown = useCallback(
 
     return (
       <>
+      {actionPillsEl}
       {contextBreakdownDock}
       <div
         ref={composerRootRef}
@@ -3602,6 +3613,7 @@ const handleNativeComposerKeyDown = useCallback(
 
   return (
     <>
+    {actionPillsEl}
     {contextBreakdownDock}
     <div
       ref={composerRootRef}
