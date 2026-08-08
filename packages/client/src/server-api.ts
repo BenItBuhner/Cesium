@@ -55,6 +55,7 @@ import type {
   McpServerConfig,
   McpServerPublic,
 } from "./mcp-types";
+import type { ArtifactSummary } from "./artifact-types";
 import type {
   AgentPluginDefinition,
   AgentPluginDiscoveryResult,
@@ -3219,6 +3220,38 @@ async function mcpJsonRequest<T>(
 export async function fetchMcpPresets(): Promise<McpPresetDefinition[]> {
   const result = await mcpJsonRequest<{ presets: McpPresetDefinition[] }>("/api/mcp/presets");
   return result.presets;
+}
+
+export async function fetchWorkspaceArtifacts(
+  workspaceId: string
+): Promise<ArtifactSummary[]> {
+  const result = await mcpJsonRequest<{ artifacts: ArtifactSummary[] }>(
+    `/api/workspaces/${encodeURIComponent(workspaceId)}/artifacts`,
+    { workspaceId }
+  );
+  return result.artifacts;
+}
+
+export async function fetchWorkspaceArtifact(
+  workspaceId: string,
+  artifactId: string
+): Promise<ArtifactSummary> {
+  const result = await mcpJsonRequest<{ artifact: ArtifactSummary }>(
+    `/api/workspaces/${encodeURIComponent(workspaceId)}/artifacts/${encodeURIComponent(artifactId)}`,
+    { workspaceId }
+  );
+  return result.artifact;
+}
+
+/**
+ * Direct iframe/tab URL for an artifact. Appends `?access_token=` when auth is
+ * enabled (iframe navigations cannot attach the session header).
+ */
+export function buildArtifactViewUrl(workspaceId: string, artifactId: string): string {
+  const base = `${resolveClientServerBaseUrl()}/artifacts/${encodeURIComponent(
+    workspaceId
+  )}/${encodeURIComponent(artifactId)}/`;
+  return buildAuthenticatedUrl(base);
 }
 
 export async function fetchMcpServers(workspaceId: string): Promise<McpServerPublic[]> {

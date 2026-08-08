@@ -7,7 +7,15 @@ const MOBILE_THEME_CONFIG_STORAGE_KEY = "opencursor-theme-config";
 const MOBILE_LEGACY_THEME_STORAGE_KEY = "opencursor-theme";
 
 export type MobileLifecycleState = "active" | "background" | "inactive";
-export type MobileLiveUpdatePreference = "nowbar" | "live" | "off";
+/**
+ * "live"  — Android Live Updates (promoted ongoing notifications). The system
+ *           renders these in the status bar chip / lock screen, and Samsung's
+ *           Now Bar picks them up automatically on One UI 8+. Falls back to a
+ *           standard notification whenever promotion is unsupported/denied.
+ * "basic" — standard live notification only, never request promotion.
+ * "off"   — no run notifications.
+ */
+export type MobileLiveUpdatePreference = "live" | "basic" | "off";
 
 export type MobileNativeStatus = {
   liveUpdates: {
@@ -49,6 +57,8 @@ export type MobileFocusedConversation = {
   workspaceId: string | null;
   conversationId: string | null;
   lastEventSeq?: number;
+  /** Every conversation with an active agent run, for background tracking. */
+  activeConversationIds?: string[];
 };
 
 export type MobileAgentProjectionMessage = {
@@ -56,17 +66,29 @@ export type MobileAgentProjectionMessage = {
   projection: unknown;
 };
 
+/** Full set of tracked agent projections (one live notification per run). */
+export type MobileAgentProjectionsMessage = {
+  type: "agentProjections";
+  projections: unknown[];
+};
+
 export type MobileNativeToWebMessage =
   | { type: "nativeReady"; server: MobileServerConfig }
   | { type: "mobileNativeStatus"; status: MobileNativeStatus }
   | { type: "lifecycle"; state: MobileLifecycleState }
   | { type: "notificationAction"; actionId: string; workspaceId?: string | null; conversationId?: string | null }
-  | { type: "resumeCatchUp"; workspaceId?: string | null; conversationId?: string | null; lastEventSeq?: number };
+  | { type: "resumeCatchUp"; workspaceId?: string | null; conversationId?: string | null; lastEventSeq?: number }
+  // The Android hardware/predictive back gesture was invoked. The web layer
+  // owns the in-WebView navigation stack (open overlays, drawers, settings
+  // view) and decides what to pop; if it cannot handle the intent it replies
+  // with `backFallback` so the native shell can walk WebView history or exit.
+  | { type: "backRequest" };
 
 export type MobileWebToNativeMessage =
   | { type: "webReady"; workspaceId: string | null; focusedConversationId: string | null; authToken?: string | null }
   | ({ type: "focusedConversationChanged" } & MobileFocusedConversation)
   | MobileAgentProjectionMessage
+  | MobileAgentProjectionsMessage
   | { type: "webIdleMode"; enabled: boolean }
   | { type: "webRuntimeError"; message: string; source?: string; line?: number }
   | { type: "getMobileNativeStatus" }
@@ -77,6 +99,14 @@ export type MobileWebToNativeMessage =
   | { type: "requestPhoneAssistantRole" }
   | { type: "invokePhoneAssistant" }
   | { type: "openExternalUrl"; url: string }
+  // Tells the native shell whether the web layer currently has an in-WebView
+  // layer (overlay, drawer, settings view, …) that a back gesture should pop.
+  // The native BackHandler uses this to decide between routing the gesture to
+  // the web layer versus walking WebView history / exiting the app.
+  | { type: "backCapability"; canHandleBack: boolean }
+  // Sent in reply to `backRequest` when the web layer had nothing to pop after
+  // all, so the native shell should perform its default back behavior.
+  | { type: "backFallback" }
   | { type: "serverConfigured"; server: MobileServerConfig }
   | {
       type: "wearSyncEnvelope";

@@ -5,11 +5,19 @@ import {
 } from "@cesium/core";
 import type { LiveUpdatePayload } from "./liveUpdateTypes";
 
+/**
+ * Stable identity for a single agent run: one conversation can host many
+ * runs over time, and each run owns its own live notification.
+ */
+export function getLiveUpdateRunKey(projection: MobileAgentProjection): string {
+  return `${projection.conversationId}:${projection.startedAt ?? projection.updatedAt}`;
+}
+
 export function toLiveUpdatePayload(
   projection: MobileAgentProjection
 ): LiveUpdatePayload {
   const active = isMobileAgentRunActive(projection.status);
-  const runKey = `${projection.conversationId}:${projection.startedAt ?? projection.updatedAt}`;
+  const runKey = getLiveUpdateRunKey(projection);
   if (!active) {
     return {
       runKey,

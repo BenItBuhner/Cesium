@@ -20,6 +20,7 @@ import {
   deleteMcpServer,
   getMcpServer,
   listMcpServers,
+  setBuiltInArtifactsMcpEnabled,
   setBuiltInBrowserMcpEnabled,
   setBuiltInPhoneMcpEnabled,
   setMcpSecret,
@@ -28,6 +29,7 @@ import {
 } from "../lib/mcp/server-store.js";
 import { BROWSER_MCP_SERVER_ID } from "../lib/mcp/builtin-browser-tools.js";
 import { PHONE_MCP_SERVER_ID } from "../lib/mcp/builtin-phone-tools.js";
+import { ARTIFACTS_MCP_SERVER_ID } from "../lib/mcp/builtin-artifact-tools.js";
 import { slugifyMcpServerId } from "../lib/mcp/paths.js";
 
 export const mcpRoutes = new Hono();
@@ -135,7 +137,8 @@ mcpRoutes.delete("/api/workspaces/:workspaceId/mcp/servers/:serverId", async (c)
   const serverId = c.req.param("serverId");
   if (
     serverId.toLowerCase() === BROWSER_MCP_SERVER_ID ||
-    serverId.toLowerCase() === PHONE_MCP_SERVER_ID
+    serverId.toLowerCase() === PHONE_MCP_SERVER_ID ||
+    serverId.toLowerCase() === ARTIFACTS_MCP_SERVER_ID
   ) {
     return c.json({ error: "Built-in MCP servers can be disabled, not removed." }, 400);
   }
@@ -150,7 +153,11 @@ mcpRoutes.delete("/api/workspaces/:workspaceId/mcp/servers/:serverId", async (c)
 mcpRoutes.patch("/api/workspaces/:workspaceId/mcp/builtins/:serverId", async (c) => {
   const workspace = await requireWorkspaceFromRequest(c);
   const serverId = c.req.param("serverId").toLowerCase();
-  if (serverId !== BROWSER_MCP_SERVER_ID && serverId !== PHONE_MCP_SERVER_ID) {
+  if (
+    serverId !== BROWSER_MCP_SERVER_ID &&
+    serverId !== PHONE_MCP_SERVER_ID &&
+    serverId !== ARTIFACTS_MCP_SERVER_ID
+  ) {
     return c.json({ error: `Unknown built-in MCP server: ${serverId}` }, 404);
   }
   const body = await c.req.json<{ enabled?: boolean }>();
@@ -159,8 +166,10 @@ mcpRoutes.patch("/api/workspaces/:workspaceId/mcp/builtins/:serverId", async (c)
   }
   if (serverId === BROWSER_MCP_SERVER_ID) {
     await setBuiltInBrowserMcpEnabled(workspace.id, body.enabled);
-  } else {
+  } else if (serverId === PHONE_MCP_SERVER_ID) {
     await setBuiltInPhoneMcpEnabled(workspace.id, body.enabled);
+  } else {
+    await setBuiltInArtifactsMcpEnabled(workspace.id, body.enabled);
   }
   await refreshWorkspaceMcpMirror({
     workspaceId: workspace.id,

@@ -328,7 +328,7 @@ function ModeChip({
         type="button"
         disabled={disabled}
         onClick={() => onModeChange(defaultMode)}
-        className={`${compactClass} transition-opacity hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-50`}
+        className={`${compactClass} touch-manipulation transition-opacity hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-50`}
         style={{ background: colors.bg }}
         aria-label={`Remove ${label} mode`}
         title={`${label} mode — tap to remove`}
@@ -349,7 +349,7 @@ function ModeChip({
           type="button"
           disabled={disabled}
           onClick={() => onModeChange(defaultMode)}
-          className="ml-[2px] flex size-[14px] items-center justify-center rounded-full transition-[background-color,opacity] hover:bg-black/15 disabled:cursor-not-allowed disabled:opacity-50"
+          className="ml-[2px] flex size-[14px] touch-manipulation items-center justify-center rounded-full transition-[background-color,opacity] hover:bg-black/15 disabled:cursor-not-allowed disabled:opacity-50"
           aria-label={`Remove ${label} mode`}
           title={`Remove ${label} mode`}
         >
@@ -3171,8 +3171,8 @@ const handleNativeComposerKeyDown = useCallback(
   const renderVoiceButton = (variant: "primary" | "secondary"): ReactElement => {
     const isPrimary = variant === "primary";
     const buttonClassName = isPrimary
-      ? `relative flex h-[var(--d2-composer-send-size)] w-[var(--d2-composer-send-size)] items-center justify-center rounded-full transition-opacity hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-50 ${sendButtonBgClass[getModeTone(mode)]}`
-      : `relative flex h-[var(--d2-composer-send-size)] min-w-[var(--d2-composer-send-size)] items-center justify-center rounded-full transition-colors ${
+      ? `relative flex h-[var(--d2-composer-send-size)] w-[var(--d2-composer-send-size)] touch-manipulation items-center justify-center rounded-full transition-opacity hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-50 ${sendButtonBgClass[getModeTone(mode)]}`
+      : `relative flex h-[var(--d2-composer-send-size)] min-w-[var(--d2-composer-send-size)] touch-manipulation items-center justify-center rounded-full transition-colors ${
           recordingState === "recording" || recordingState === "transcribing"
             ? "bg-[var(--accent-bg)] text-[var(--text-primary)]"
             : "text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
@@ -3228,11 +3228,11 @@ const handleNativeComposerKeyDown = useCallback(
         type="button"
         onClick={() => fileInputRef.current?.click()}
         disabled={configLocked}
-        className="flex size-[var(--d2-composer-plus-size)] shrink-0 items-center justify-center rounded-full border border-[var(--agent-border)] bg-[var(--agent-plus-button-bg)] text-[var(--agent-plus-button-icon)] transition-colors hover:bg-[var(--agent-plus-button-bg-hover)] hover:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-50"
+        className="flex size-[var(--d2-composer-plus-size)] shrink-0 touch-manipulation items-center justify-center rounded-full border border-[var(--agent-border)] bg-[var(--agent-plus-button-bg)] text-[var(--agent-plus-button-icon)] transition-colors hover:bg-[var(--agent-plus-button-bg-hover)] hover:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-50"
         aria-label="Attach media"
         title="Attach media"
       >
-        <Plus className="size-[13px] shrink-0" strokeWidth={2} aria-hidden />
+        <Plus className="size-[14px] shrink-0" strokeWidth={2} aria-hidden />
       </button>
     );
 
@@ -3324,20 +3324,20 @@ const handleNativeComposerKeyDown = useCallback(
         <button
           type="button"
           onClick={() => void onCancel?.()}
-          className={`flex h-[var(--d2-composer-send-size)] w-[var(--d2-composer-send-size)] items-center justify-center rounded-full transition-opacity hover:opacity-80 ${sendButtonBgClass[getModeTone(mode)]}`}
+          className={`flex h-[var(--d2-composer-send-size)] w-[var(--d2-composer-send-size)] touch-manipulation items-center justify-center rounded-full transition-opacity hover:opacity-80 ${sendButtonBgClass[getModeTone(mode)]}`}
           aria-label="Stop"
         >
-          <Square className="size-[9px] text-[var(--bg-main)]" fill="currentColor" strokeWidth={2.2} />
+          <Square className="size-[10px] text-[var(--bg-main)]" fill="currentColor" strokeWidth={2.2} />
         </button>
       ) : (
         <button
           type="button"
           onClick={() => void submitComposer()}
           disabled={!canSubmit}
-          className={`flex h-[var(--d2-composer-send-size)] w-[var(--d2-composer-send-size)] items-center justify-center rounded-full transition-opacity hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-50 ${sendButtonBgClass[getModeTone(mode)]}`}
+          className={`flex h-[var(--d2-composer-send-size)] w-[var(--d2-composer-send-size)] touch-manipulation items-center justify-center rounded-full transition-opacity hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-50 ${sendButtonBgClass[getModeTone(mode)]}`}
           aria-label={busy ? "Send or queue message" : "Send"}
         >
-          <ArrowUp className="size-3 text-[var(--bg-main)]" strokeWidth={2.5} />
+          <ArrowUp className="size-[14px] text-[var(--bg-main)]" strokeWidth={2.5} />
         </button>
       )
     );
@@ -3347,9 +3347,10 @@ const handleNativeComposerKeyDown = useCallback(
 
     /**
      * Single-line pill collapses to a fully circular shell so the composer
-     * reads as one continuous capsule (Cursor 3.1). Multi-line falls back to
-     * the squarer composer-radius so the bottom row corners stay tidy under a
-     * tall editor.
+     * reads as one continuous capsule (Cursor 3.1). Multi-line keeps the same
+     * visible corner roundness: `--agent-composer-radius` equals half the
+     * collapsed shell height, so growing past one line never sharpens the
+     * corners.
      */
     const pillRadiusClass =
       isMultiLine || attachedImages.length > 0
@@ -3578,20 +3579,20 @@ const handleNativeComposerKeyDown = useCallback(
       <button
         type="button"
         onClick={() => void onCancel?.()}
-        className={`flex h-[var(--d2-composer-send-size)] w-[var(--d2-composer-send-size)] items-center justify-center rounded-full transition-opacity hover:opacity-80 ${sendButtonBgClass[getModeTone(mode)]}`}
+        className={`flex h-[var(--d2-composer-send-size)] w-[var(--d2-composer-send-size)] touch-manipulation items-center justify-center rounded-full transition-opacity hover:opacity-80 ${sendButtonBgClass[getModeTone(mode)]}`}
         aria-label="Stop"
       >
-        <Square className="size-[9px] text-[var(--bg-main)]" fill="currentColor" strokeWidth={2.2} />
+        <Square className="size-[10px] text-[var(--bg-main)]" fill="currentColor" strokeWidth={2.2} />
       </button>
     ) : (
       <button
         type="button"
         onClick={() => void submitComposer()}
         disabled={!canSubmit}
-        className={`flex h-[var(--d2-composer-send-size)] w-[var(--d2-composer-send-size)] items-center justify-center rounded-full transition-opacity hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-50 ${sendButtonBgClass[getModeTone(mode)]}`}
+        className={`flex h-[var(--d2-composer-send-size)] w-[var(--d2-composer-send-size)] touch-manipulation items-center justify-center rounded-full transition-opacity hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-50 ${sendButtonBgClass[getModeTone(mode)]}`}
         aria-label={busy ? "Send or queue message" : "Send"}
       >
-        <ArrowUp className="size-3 text-[var(--bg-main)]" strokeWidth={2.5} />
+        <ArrowUp className="size-[14px] text-[var(--bg-main)]" strokeWidth={2.5} />
       </button>
     )
   );
@@ -3844,7 +3845,7 @@ const handleNativeComposerKeyDown = useCallback(
             <button
               type="button"
               onClick={onCollapseComposer}
-              className="text-[var(--text-secondary)] transition-colors hover:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-40"
+              className="-m-[4px] touch-manipulation p-[4px] text-[var(--text-secondary)] transition-colors hover:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-40"
               aria-label="Minimize composer"
             >
               <Minimize2 className="size-[14px] shrink-0" strokeWidth={1.5} aria-hidden />
@@ -3854,7 +3855,7 @@ const handleNativeComposerKeyDown = useCallback(
               type="button"
               onClick={onExpandComposer}
               disabled={!onExpandComposer}
-              className="text-[var(--text-secondary)] transition-colors hover:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-40"
+              className="-m-[4px] touch-manipulation p-[4px] text-[var(--text-secondary)] transition-colors hover:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-40"
               aria-label="Expand composer"
             >
               <Maximize2 className="size-[14px] shrink-0" strokeWidth={1.5} aria-hidden />
@@ -3863,7 +3864,7 @@ const handleNativeComposerKeyDown = useCallback(
           <button
             type="button"
             onClick={() => fileInputRef.current?.click()}
-            className="text-[var(--text-secondary)] transition-colors hover:text-[var(--text-primary)]"
+            className="-m-[4px] touch-manipulation p-[4px] text-[var(--text-secondary)] transition-colors hover:text-[var(--text-primary)]"
             aria-label="Upload image"
           >
             <ImageIcon className="size-[14px] shrink-0" strokeWidth={1.5} aria-hidden />

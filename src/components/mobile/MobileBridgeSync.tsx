@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useAgentConversations } from "@/components/chat/AgentConversationsContext";
 import { useShellView } from "@/components/layout/ShellViewContext";
 import { useServerConnections } from "@/components/preferences/ServerConnectionsProvider";
@@ -20,9 +20,43 @@ import {
 } from "@/lib/mobile-bridge";
 import {
   deriveMobileAgentProjection,
+  isMobileAgentRunActive,
   type MobileAgentProjection,
 } from "@/lib/mobile-agent-projection";
 import { toWatchAgentProjection, toWatchSyncEnvelope } from "@/lib/watch-agent-contract";
+
+// Cheap pre-filter before deriving a full projection per conversation.
+const BUSY_AGENT_STATUSES = new Set<string>([
+  "running",
+  "pause_requested",
+  "pausing",
+  "awaiting_permission",
+  "awaiting_question",
+]);
+
+// Keep terminal runs projected briefly so the native side can post the final
+// completion/failure alert before tracking stops.
+const TERMINAL_AGENT_LINGER_MS = 30_000;
+
+function areProjectionListsEqual(
+  current: MobileAgentProjection[],
+  next: MobileAgentProjection[]
+): boolean {
+  if (current.length !== next.length) {
+    return false;
+  }
+  return current.every((entry, index) => {
+    const other = next[index];
+    return (
+      other != null &&
+      entry.conversationId === other.conversationId &&
+      entry.lastEventSeq === other.lastEventSeq &&
+      entry.status === other.status &&
+      entry.pendingIntervention === other.pendingIntervention &&
+      entry.updatedAt === other.updatedAt
+    );
+  });
+}
 
 function readNativeReadyMessage(): MobileNativeToWebMessage | null {
   if (typeof window === "undefined") {
@@ -44,6 +78,7 @@ export function MobileBridgeSync() {
     workspaceSession,
   } = useWorkspace();
   const {
+    bootstrapped,
     cancelConversation,
     conversationsById,
     eventsByConversationId,
@@ -51,6 +86,9 @@ export function MobileBridgeSync() {
     syncConversationSnapshot,
   } = useAgentConversations();
   const previousProjectionRef = useRef<MobileAgentProjection | null>(null);
+  const trackedAgentsRef = useRef(
+    new Map<string, { previous: MobileAgentProjection; terminalSince: number | null }>()
+  );
   const { shellView } = useShellView();
   const activeChatTab = workspaceSession.chat.tabs.find((tab) => tab.active);
   const requestedConversationIdFromLocation =
@@ -84,6 +122,68 @@ export function MobileBridgeSync() {
     );
   }, [eventsByConversationId, focusedConversation]);
 
+  // Project every conversation with an active agent run (not just the focused
+  // one) so each agent keeps its own live notification. Terminal runs linger
+  // briefly so their completion alert is delivered before tracking stops.
+  // Computed in an effect because the tracked map carries impure bookkeeping
+  // (previous projections, linger timestamps).
+  const [activeProjections, setActiveProjections] = useState<MobileAgentProjection[]>(
+    []
+  );
+  useEffect(() => {
+    const now = Date.now();
+    const tracked = trackedAgentsRef.current;
+    const result: MobileAgentProjection[] = [];
+    const seen = new Set<string>();
+    for (const conversation of Object.values(conversationsById)) {
+      const entry = tracked.get(conversation.id);
+      const maybeBusy =
+        BUSY_AGENT_STATUSES.has(conversation.status) ||
+        conversation.pendingPermission != null ||
+        conversation.pendingQuestion != null;
+      if (!maybeBusy && !entry) {
+        continue;
+      }
+      const nextProjection = deriveMobileAgentProjection(
+        conversation,
+        eventsByConversationId[conversation.id] ?? [],
+        { previous: entry?.previous ?? null }
+      );
+      if (isMobileAgentRunActive(nextProjection.status)) {
+        tracked.set(conversation.id, { previous: nextProjection, terminalSince: null });
+      } else if (entry == null) {
+        // Finished before we ever tracked it — nothing to notify about.
+        continue;
+      } else {
+        const terminalSince = entry.terminalSince ?? now;
+        if (now - terminalSince > TERMINAL_AGENT_LINGER_MS) {
+          tracked.delete(conversation.id);
+          continue;
+        }
+        tracked.set(conversation.id, { previous: nextProjection, terminalSince });
+      }
+      seen.add(conversation.id);
+      result.push(nextProjection);
+    }
+    for (const conversationId of [...tracked.keys()]) {
+      if (!seen.has(conversationId) && !conversationsById[conversationId]) {
+        tracked.delete(conversationId);
+      }
+    }
+    setActiveProjections((current) =>
+      areProjectionListsEqual(current, result) ? current : result
+    );
+  }, [conversationsById, eventsByConversationId]);
+
+  const activeConversationIds = useMemo(
+    () =>
+      activeProjections
+        .filter((entry) => isMobileAgentRunActive(entry.status))
+        .map((entry) => entry.conversationId)
+        .sort(),
+    [activeProjections]
+  );
+
   useEffect(() => {
     const nativeReady = readNativeReadyMessage();
     if (nativeReady) {
@@ -114,14 +214,23 @@ export function MobileBridgeSync() {
     });
   }, [activeServer.baseUrl, activeServer.label]);
 
+  const activeConversationIdsKey = activeConversationIds.join(",");
   useEffect(() => {
     postMobileBridgeMessage({
       type: "focusedConversationChanged",
       workspaceId: activeWorkspaceId,
       conversationId: focusedConversationId,
       lastEventSeq: projection?.lastEventSeq ?? 0,
+      activeConversationIds: activeConversationIdsKey
+        ? activeConversationIdsKey.split(",")
+        : [],
     });
-  }, [activeWorkspaceId, focusedConversationId, projection?.lastEventSeq]);
+  }, [
+    activeWorkspaceId,
+    activeConversationIdsKey,
+    focusedConversationId,
+    projection?.lastEventSeq,
+  ]);
 
   const serverBaseUrl = getConfiguredServerBaseUrl();
   const watchProjection = useMemo(
@@ -169,6 +278,22 @@ export function MobileBridgeSync() {
   );
   useThrottledMobileBridgeMessage(wearSyncMessage, 1500);
 
+  // Full multi-agent set for the native live-notification controller. Only
+  // sent once conversations are bootstrapped: an early empty list would tear
+  // down live notifications for agents that are still running.
+  const agentProjectionsMessage = useMemo<MobileWebToNativeMessage | null>(
+    () =>
+      bootstrapped
+        ? {
+            type: "agentProjections",
+            projections: activeProjections,
+          }
+        : null,
+    [activeProjections, bootstrapped]
+  );
+  useThrottledMobileBridgeMessage(agentProjectionsMessage, 500);
+
+  // Legacy single-projection message keeps older native shells working.
   const agentProjectionMessage = useMemo<MobileWebToNativeMessage | null>(
     () =>
       projection

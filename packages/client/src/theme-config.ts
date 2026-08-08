@@ -1,4 +1,7 @@
-import { DEFAULT_BUILTIN_THEME_ID } from "./theme-presets";
+import {
+  DEFAULT_BUILTIN_THEME_ID,
+  DEFAULT_DARK_BUILTIN_THEME_ID,
+} from "./theme-presets";
 import {
   sanitizeThemeTokensPartial,
   type ThemeTokensPartial,
@@ -71,7 +74,7 @@ export function createDefaultThemeConfig(): ThemeConfig {
     schemaVersion: 1,
     appearance: "system",
     lightThemeId: DEFAULT_BUILTIN_THEME_ID,
-    darkThemeId: DEFAULT_BUILTIN_THEME_ID,
+    darkThemeId: DEFAULT_DARK_BUILTIN_THEME_ID,
     customThemes: [],
     showFloatingSidebarReveal: false,
     editDiffRenderingMode: "full",

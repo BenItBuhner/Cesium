@@ -77,6 +77,9 @@ export {
   fetchSshWorkspaceMetadata,
   fetchStorageStatus,
   fetchTree,
+  buildArtifactViewUrl,
+  fetchWorkspaceArtifact,
+  fetchWorkspaceArtifacts,
   fetchWorkspaceBootstrap,
   fetchWorkspaceBootstrapForServer,
   fetchWorkspaceGitStatus,
@@ -218,6 +221,8 @@ export {
 } from "@cesium/client";
 export type {
   AgentConversationSnapshotResponse,
+  ArtifactKind,
+  ArtifactSummary,
   AudioTranscriptionResult,
   VoiceCompactionInfo,
   VoiceControllerAction,

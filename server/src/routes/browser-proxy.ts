@@ -172,10 +172,11 @@ function forwardableHeaders(incoming: Headers): Headers {
 
 function rewriteHtmlBody(
   html: string,
-  upstreamOrigin: string,
+  /** Full upstream document URL — relative refs must resolve against its path. */
+  upstreamHref: string,
   requestOrigin: string
 ): string {
-  const upstream = new URL(upstreamOrigin);
+  const upstream = new URL(upstreamHref);
   const abs = upstream.origin;
 
   const toProxy = (href: string): string => {
@@ -299,7 +300,12 @@ browserProxyRoutes.all("/*", async (c) => {
 
   const hostportSeg = segments[1];
   const pathRest = segments.slice(2).join("/");
-  const upstreamPath = pathRest ? `/${pathRest}` : "/";
+  // Preserve a trailing slash from the proxied path: `filter(Boolean)` above
+  // drops it, and without it relative subresources (e.g. `style.css` next to a
+  // directory-served `index.html`) resolve one directory too high both in the
+  // upstream request and in rewriteHtmlBody's relative-URL resolution.
+  const hadTrailingSlash = pathname.endsWith("/") && segments.length > 2;
+  const upstreamPath = pathRest ? `/${pathRest}${hadTrailingSlash ? "/" : ""}` : "/";
 
   let upstream: URL;
   try {
@@ -468,7 +474,7 @@ browserProxyRoutes.all("/*", async (c) => {
   }
 
   let text = new TextDecoder("utf-8", { fatal: false }).decode(buf);
-  text = rewriteHtmlBody(text, upstreamBase.origin, requestOrigin);
+  text = rewriteHtmlBody(text, upstream.href, requestOrigin);
   text = appendDesignModeGuestScript(text);
   outHeaders.set("content-length", String(Buffer.byteLength(text, "utf8")));
 

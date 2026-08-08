@@ -6,6 +6,33 @@ import {
 } from "../src/lib/global-settings.ts";
 
 describe("global settings", () => {
+  test("voice orb is opt-in (hidden by default)", () => {
+    const settings = createDefaultGlobalSettings();
+    assert.equal(settings.general.showVoiceOrb, false);
+  });
+
+  test("normalizes missing showVoiceOrb to opt-in default", () => {
+    const base = createDefaultGlobalSettings();
+    const { showVoiceOrb: _ignored, ...generalWithoutOrb } = base.general;
+    const settings = normalizeLoadedGlobalSettings({
+      ...base,
+      general: generalWithoutOrb,
+    });
+    assert.equal(settings.general.showVoiceOrb, false);
+  });
+
+  test("preserves explicit showVoiceOrb true", () => {
+    const base = createDefaultGlobalSettings();
+    const settings = normalizeLoadedGlobalSettings({
+      ...base,
+      general: {
+        ...base.general,
+        showVoiceOrb: true,
+      },
+    });
+    assert.equal(settings.general.showVoiceOrb, true);
+  });
+
   test("defaults workspace rail appearances to empty map", () => {
     const settings = createDefaultGlobalSettings();
     assert.deepEqual(settings.general.workspaceRailAppearances, {});

@@ -48,6 +48,7 @@
     "@hono/node-server": "^1.19.6",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "cesium": "file:..",
+    "chart.js": "^4.5.0",
     "chokidar": "^4.0.3",
     "dotenv": "^17.3.1",
     "drizzle-orm": "^0.44.7",

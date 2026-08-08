@@ -1,7 +1,5 @@
-import { existsSync } from "node:fs";
-import os from "node:os";
-import path from "node:path";
 import { type CliRuntimeSpec } from "./cli-adapter.js";
+import { ACTIVE_AGENT_BACKEND_IDS } from "../active-agent-backends.js";
 import { AGENT_CAPABILITIES } from "./agent-contract.js";
 import { getCursorSdkCredentialStatus } from "../cursor-sdk-credentials.js";
 import { getCesiumCredentialStatus } from "../cesium-agent-settings.js";
@@ -16,6 +14,7 @@ import {
 import type {
   AgentBackendId,
   AgentBackendInfo,
+  AgentBackendRuntimeInfo,
   AgentConversationMode,
   AgentProvider,
   AgentProviderCapabilities,
@@ -24,431 +23,31 @@ import {
   describeClaudeCodeSdkAuthStatus,
   getClaudeCodeSdkProxyModel,
   getClaudeCodeSdkProxyModelName,
+  hasClaudeCodeAmbientCliAuth,
   hasClaudeCodeSdkAuthConfig,
   hasClaudeCodeSdkProxyConfig,
 } from "../claude-code-sdk-credentials.js";
 import { AcpSessionHandle } from "./acp/acp-session.js";
-import { resolveCesiumToolBin } from "./install/cli-install-registry.js";
-import { resolveOpenCodeV2CommandPath } from "./opencode-v2-process.js";
-
-type AcpRuntimeSpec = CliRuntimeSpec;
-
-/**
- * Devin CLI ACP invocation: default `devin acp` (see https://docs.devin.ai/cli/acp/jetbrains).
- * Override with JSON array if your build uses different flags.
- */
-function parseDevinCliAcpArgs(): string[] {
-  const rawJson = process.env.OPENCURSOR_DEVIN_CLI_ARGS?.trim();
-  if (rawJson) {
-    try {
-      const parsed = JSON.parse(rawJson) as unknown;
-      if (Array.isArray(parsed) && parsed.every((item) => typeof item === "string")) {
-        return parsed;
-      }
-    } catch {
-      // ignore invalid JSON
-    }
-  }
-  return ["acp"];
-}
+import {
+  detectHarnessCli,
+  probeHarnessCliVersion,
+  resolveHarnessRuntimeSpec,
+  type HarnessCliId,
+} from "./harness-runtime.js";
 
 /**
- * Grok Build's official automation entrypoint is ACP over stdio. The update
- * check is disabled for a server-managed process so startup never mutates the
- * installed CLI or stalls a chat turn.
+ * Maps CLI-backed agent backends onto the harness runtime descriptor that
+ * discovers their executable. SDK/credential backends have no CLI to detect.
  */
-function parseGrokBuildArgs(): string[] {
-  const rawJson =
-    process.env.OPENCURSOR_GROK_BUILD_ARGS?.trim() ||
-    process.env.OPENCURSOR_GROK_ARGS?.trim();
-  if (rawJson) {
-    try {
-      const parsed = JSON.parse(rawJson) as unknown;
-      if (Array.isArray(parsed) && parsed.every((item) => typeof item === "string")) {
-        return parsed;
-      }
-    } catch {
-      // Ignore invalid JSON and use the supported upstream invocation.
-    }
-  }
-  return ["--no-auto-update", "agent", "stdio"];
-}
-
-function fileExists(filePath: string): boolean {
-  try {
-    return existsSync(filePath);
-  } catch {
-    return false;
-  }
-}
-
-function quotePreview(value: string): string {
-  return /\s/.test(value) ? `"${value}"` : value;
-}
-
-function quoteCmdArg(value: string): string {
-  if (value.length === 0) {
-    return '""';
-  }
-  return /[\s"]/u.test(value)
-    ? `"${value.replace(/"/g, '\\"')}"`
-    : value;
-}
-
-function buildInvocation(
-  executablePath: string,
-  args: string[],
-  env?: NodeJS.ProcessEnv
-): AcpRuntimeSpec {
-  const ext = path.extname(executablePath).toLowerCase();
-  if (process.platform === "win32" && (ext === ".cmd" || ext === ".bat")) {
-    const comspec =
-      process.env.ComSpec ??
-      path.join(process.env.SystemRoot ?? "C:\\Windows", "System32", "cmd.exe");
-    const commandLine = [quoteCmdArg(executablePath), ...args.map(quoteCmdArg)].join(" ");
-    return {
-      command: comspec,
-      args: ["/d", "/s", "/c", commandLine],
-      env,
-      commandPreview: [quotePreview(executablePath), ...args.map(quotePreview)].join(" "),
-    };
-  }
-
-  if (process.platform === "win32" && ext === ".ps1") {
-    const powershell =
-      process.env.PWSH ??
-      path.join(
-        process.env.SystemRoot ?? "C:\\Windows",
-        "System32",
-        "WindowsPowerShell",
-        "v1.0",
-        "powershell.exe"
-      );
-    return {
-      command: powershell,
-      args: ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", executablePath, ...args],
-      env,
-      commandPreview: [quotePreview(executablePath), ...args.map(quotePreview)].join(" "),
-    };
-  }
-
-  return {
-    command: executablePath,
-    args,
-    env,
-    commandPreview: [quotePreview(executablePath), ...args.map(quotePreview)].join(" "),
-  };
-}
-
-function findExecutableOnPath(names: string[]): string | null {
-  const rawPath = process.env.PATH ?? "";
-  const directories = rawPath
-    .split(path.delimiter)
-    .map((value) => value.trim())
-    .filter(Boolean);
-  for (const directory of directories) {
-    for (const name of names) {
-      const candidate = path.join(directory, name);
-      if (fileExists(candidate)) {
-        return candidate;
-      }
-    }
-  }
-  return null;
-}
-
-function resolveConfiguredRuntime(
-  configured: string | undefined,
-  args: string[],
-  env?: NodeJS.ProcessEnv
-): AcpRuntimeSpec | null {
-  const trimmed = configured?.trim();
-  if (!trimmed) {
-    return null;
-  }
-  const direct =
-    trimmed.includes("\\") ||
-    trimmed.includes("/") ||
-    /^[a-zA-Z]:/.test(trimmed)
-      ? trimmed
-      : findExecutableOnPath(
-          process.platform === "win32"
-            ? [trimmed, `${trimmed}.exe`, `${trimmed}.cmd`, `${trimmed}.bat`, `${trimmed}.ps1`]
-            : [trimmed]
-        );
-  if (!direct) {
-    return null;
-  }
-  return buildInvocation(direct, args, env);
-}
-
-function openCodeHomeDirCandidates(): string[] {
-  const raw = process.env.OPENCURSOR_REAL_HOME?.trim();
-  const out: string[] = [];
-  const push = (value: string | undefined) => {
-    const t = value?.trim();
-    if (t && !out.includes(t)) {
-      out.push(t);
-    }
-  };
-  push(raw || undefined);
-  if (process.env.USER?.trim()) {
-    push(`/home/${process.env.USER!.trim()}`);
-  }
-  push(os.homedir());
-  return out;
-}
-
-function resolveOpenCodeBundledBinary(): string | null {
-  const names =
-    process.platform === "win32"
-      ? ["opencode.exe", "opencode.cmd", "opencode.bat", "opencode"]
-      : ["opencode"];
-  for (const home of openCodeHomeDirCandidates()) {
-    for (const name of names) {
-      const candidate = path.join(home, ".opencode", "bin", name);
-      if (fileExists(candidate)) {
-        return candidate;
-      }
-    }
-  }
-  return null;
-}
-
-function resolveDevinLocalBin(): string | null {
-  const names =
-    process.platform === "win32"
-      ? ["devin.exe", "devin.cmd", "devin.bat", "devin"]
-      : ["devin"];
-  for (const home of openCodeHomeDirCandidates()) {
-    for (const name of names) {
-      const candidate = path.join(home, ".local", "bin", name);
-      if (fileExists(candidate)) {
-        return candidate;
-      }
-    }
-  }
-  return null;
-}
-
-function resolveDevinAcpRuntime(): AcpRuntimeSpec | null {
-  const acpArgs = parseDevinCliAcpArgs();
-  const configured = resolveConfiguredRuntime(process.env.OPENCURSOR_DEVIN_CLI_BIN, acpArgs);
-  if (configured) {
-    return configured;
-  }
-
-  const pathHit = findExecutableOnPath(
-    process.platform === "win32"
-      ? ["devin.exe", "devin.cmd", "devin.bat", "devin"]
-      : ["devin"]
-  );
-  if (pathHit) {
-    return buildInvocation(pathHit, acpArgs);
-  }
-
-  const localBin = resolveDevinLocalBin();
-  if (localBin) {
-    return buildInvocation(localBin, acpArgs);
-  }
-
-  if (process.platform === "win32") {
-    const roamingNpm = process.env.APPDATA?.trim()
-      ? path.join(process.env.APPDATA, "npm", "devin.cmd")
-      : null;
-    if (roamingNpm && fileExists(roamingNpm)) {
-      return buildInvocation(roamingNpm, acpArgs);
-    }
-  }
-
-  return null;
-}
-
-function resolveGrokBuildRuntime(): AcpRuntimeSpec | null {
-  const args = parseGrokBuildArgs();
-  const configured = resolveConfiguredRuntime(
-    process.env.OPENCURSOR_GROK_BUILD_BIN || process.env.OPENCURSOR_GROK_BIN,
-    args
-  );
-  if (configured) {
-    return configured;
-  }
-
-  const names =
-    process.platform === "win32"
-      ? ["grok.exe", "grok.cmd", "grok.bat", "grok"]
-      : ["grok"];
-  const pathHit = findExecutableOnPath(names);
-  if (pathHit) {
-    return buildInvocation(pathHit, args);
-  }
-
-  for (const home of openCodeHomeDirCandidates()) {
-    for (const name of names) {
-      const candidate = path.join(home, ".grok", "bin", name);
-      if (fileExists(candidate)) {
-        return buildInvocation(candidate, args);
-      }
-    }
-  }
-
-  return null;
-}
-
-function resolveOpenCodeCliRuntime(): CliRuntimeSpec | null {
-  const configured = resolveConfiguredRuntime(
-    process.env.OPENCURSOR_OPENCODE_SERVER_BIN?.trim() ||
-      process.env.OPENCURSOR_OPENCODE_ACP_BIN?.trim(),
-    []
-  );
-  if (configured) {
-    return configured;
-  }
-
-  const pathHit = findExecutableOnPath(
-    process.platform === "win32"
-      ? ["opencode.exe", "opencode.cmd", "opencode.bat", "opencode"]
-      : ["opencode"]
-  );
-  if (pathHit) {
-    return buildInvocation(pathHit, []);
-  }
-
-  const cesiumTool = resolveCesiumToolBin("opencode");
-  if (cesiumTool) {
-    return buildInvocation(cesiumTool, []);
-  }
-
-  const bundled = resolveOpenCodeBundledBinary();
-  if (bundled) {
-    return buildInvocation(bundled, []);
-  }
-
-  if (process.platform === "win32") {
-    const roamingNpm = process.env.APPDATA?.trim()
-      ? path.join(process.env.APPDATA, "npm", "opencode.cmd")
-      : null;
-    if (roamingNpm && fileExists(roamingNpm)) {
-      return buildInvocation(roamingNpm, []);
-    }
-  }
-
-  return null;
-}
-
-function resolveCodexCliRuntime(): CliRuntimeSpec | null {
-  const configured = resolveConfiguredRuntime(process.env.OPENCURSOR_CODEX_BIN, []);
-  if (configured) {
-    return configured;
-  }
-
-  const pathHit = findExecutableOnPath(
-    process.platform === "win32"
-      ? ["codex.exe", "codex.cmd", "codex.bat", "codex"]
-      : ["codex"]
-  );
-  if (pathHit) {
-    return buildInvocation(pathHit, []);
-  }
-
-  const cesiumTool = resolveCesiumToolBin("codex");
-  return cesiumTool ? buildInvocation(cesiumTool, []) : null;
-}
-
-function resolveGoogleAntigravityCliRuntime(): CliRuntimeSpec | null {
-  const configured = resolveConfiguredRuntime(
-    process.env.OPENCURSOR_ANTIGRAVITY_CLI_BIN ?? process.env.OPENCURSOR_AGY_BIN,
-    []
-  );
-  if (configured) {
-    return configured;
-  }
-
-  const pathHit = findExecutableOnPath(
-    process.platform === "win32"
-      ? ["agy.exe", "agy.cmd", "agy.bat", "agy"]
-      : ["agy"]
-  );
-  if (pathHit) {
-    return buildInvocation(pathHit, []);
-  }
-
-  if (process.platform === "win32") {
-    const roamingNpm = process.env.APPDATA?.trim()
-      ? path.join(process.env.APPDATA, "npm", "agy.cmd")
-      : null;
-    if (roamingNpm && fileExists(roamingNpm)) {
-      return buildInvocation(roamingNpm, []);
-    }
-  }
-
-  return null;
-}
-
-let OPENCODE_RUNTIME = resolveOpenCodeCliRuntime();
-let OPENCODE_V2_COMMAND = resolveOpenCodeV2CommandPath();
-let DEVIN_RUNTIME = resolveDevinAcpRuntime();
-let GROK_BUILD_RUNTIME = resolveGrokBuildRuntime();
-let CODEX_RUNTIME = resolveCodexCliRuntime();
-let GOOGLE_ANTIGRAVITY_RUNTIME = resolveGoogleAntigravityCliRuntime();
-
-/**
- * Re-resolve CLI runtimes and refresh the derived availability on
- * `AGENT_BACKENDS`. Called after a one-click install so newly installed
- * harness CLIs activate without a server restart.
- */
-export function refreshAgentBackendRuntimes(): void {
-  OPENCODE_RUNTIME = resolveOpenCodeCliRuntime();
-  OPENCODE_V2_COMMAND = resolveOpenCodeV2CommandPath();
-  DEVIN_RUNTIME = resolveDevinAcpRuntime();
-  GROK_BUILD_RUNTIME = resolveGrokBuildRuntime();
-  CODEX_RUNTIME = resolveCodexCliRuntime();
-  GOOGLE_ANTIGRAVITY_RUNTIME = resolveGoogleAntigravityCliRuntime();
-
-  const opencodeServer = AGENT_BACKENDS["opencode-server"];
-  opencodeServer.available =
-    Boolean(process.env.OPENCURSOR_OPENCODE_SERVER_URL?.trim()) || OPENCODE_RUNTIME !== null;
-  opencodeServer.commandPreview = process.env.OPENCURSOR_OPENCODE_SERVER_URL?.trim()
-    ? `OpenCode server at ${process.env.OPENCURSOR_OPENCODE_SERVER_URL.trim()}`
-    : OPENCODE_RUNTIME
-      ? `${OPENCODE_RUNTIME.commandPreview} serve`
-      : "OpenCode server not configured";
-
-  const opencodeV2 = AGENT_BACKENDS["opencode-v2-beta"];
-  opencodeV2.available =
-    Boolean(process.env.OPENCURSOR_OPENCODE_V2_SERVER_URL?.trim()) ||
-    OPENCODE_V2_COMMAND !== null;
-  opencodeV2.commandPreview = process.env.OPENCURSOR_OPENCODE_V2_SERVER_URL?.trim()
-    ? `OpenCode v2 server at ${process.env.OPENCURSOR_OPENCODE_V2_SERVER_URL.trim()}`
-    : OPENCODE_V2_COMMAND
-      ? `${OPENCODE_V2_COMMAND} serve --stdio`
-      : "OpenCode v2 Beta server not configured";
-
-  const devin = AGENT_BACKENDS["devin-acp"];
-  devin.available = DEVIN_RUNTIME !== null;
-  devin.commandPreview = DEVIN_RUNTIME?.commandPreview ?? "Devin CLI not found";
-
-  const grokBuild = AGENT_BACKENDS["grok-build"];
-  grokBuild.available = GROK_BUILD_RUNTIME !== null;
-  grokBuild.commandPreview =
-    GROK_BUILD_RUNTIME?.commandPreview ?? "Grok Build CLI not found";
-
-  const codex = AGENT_BACKENDS["codex-app-server"];
-  codex.available = CODEX_RUNTIME !== null;
-  codex.commandPreview = CODEX_RUNTIME
-    ? `${CODEX_RUNTIME.commandPreview} app-server`
-    : "Codex CLI not found";
-
-  const antigravity = AGENT_BACKENDS["google-antigravity-cli"];
-  antigravity.available = GOOGLE_ANTIGRAVITY_RUNTIME !== null;
-  antigravity.commandPreview = GOOGLE_ANTIGRAVITY_RUNTIME
-    ? `${GOOGLE_ANTIGRAVITY_RUNTIME.commandPreview} interactive`
-    : "Antigravity CLI (agy) not found";
-
-  const claude = AGENT_BACKENDS["claude-code-sdk"];
-  claude.available = hasClaudeCodeSdkAuthConfig();
-  claude.commandPreview = `@anthropic-ai/claude-agent-sdk · ${describeClaudeCodeSdkAuthStatus()}`;
-}
+const BACKEND_HARNESS_CLI: Partial<Record<AgentBackendId, HarnessCliId>> = {
+  "opencode-server": "opencode",
+  "opencode-v2-beta": "opencode-v2",
+  "devin-acp": "devin",
+  "grok-build": "grok",
+  "codex-app-server": "codex",
+  "google-antigravity-cli": "google-antigravity",
+  "claude-code-sdk": "claude",
+};
 
 function createBackendInfo(input: {
   id: AgentBackendId;
@@ -476,164 +75,240 @@ function createBackendInfo(input: {
   };
 }
 
-export const AGENT_BACKENDS: Record<AgentBackendId, AgentBackendInfo> = {
-  "cesium-agent": createBackendInfo({
-    id: "cesium-agent",
-    label: "Cesium Agent (Beta)",
-    description: "First-party Cesium harness with direct provider APIs, tools, subagents, and compression.",
-    experimental: true,
-    commandPreview: "Cesium first-party runtime",
-    available: true,
-    capabilities: AGENT_CAPABILITIES["cesium-agent"],
-    defaultMode: "agent",
-    defaultModelId: "openai/gpt-5.1",
-    defaultModelName: "OpenAI/GPT-5.1",
-  }),
-  "cursor-sdk": createBackendInfo({
-    id: "cursor-sdk",
-    label: "Cursor SDK",
-    description: "Cursor TypeScript SDK local agent runtime with OpenCursor MCP settings bridged in memory.",
-    experimental: true,
-    commandPreview: "@cursor/sdk local agent · API key via Settings → Agents",
-    available: true,
-    capabilities: AGENT_CAPABILITIES["cursor-sdk"],
-    defaultMode: "agent",
-    defaultModelId: "composer-2.5",
-    defaultModelName: "Composer 2.5",
-  }),
-  "opencode-server": createBackendInfo({
-    id: "opencode-server",
-    label: "OpenCode Server",
-    description: "OpenCode native HTTP/SSE server API with root and child-session event routing.",
-    experimental: true,
-    commandPreview: process.env.OPENCURSOR_OPENCODE_SERVER_URL?.trim()
-      ? `OpenCode server at ${process.env.OPENCURSOR_OPENCODE_SERVER_URL.trim()}`
-      : OPENCODE_RUNTIME
-        ? `${OPENCODE_RUNTIME.commandPreview} serve`
-        : "OpenCode server not configured",
-    available: Boolean(process.env.OPENCURSOR_OPENCODE_SERVER_URL?.trim()) || OPENCODE_RUNTIME !== null,
-    capabilities: AGENT_CAPABILITIES["opencode-server"],
-    defaultMode: "build",
-    defaultModelId: "auto",
-    defaultModelName: "Auto",
-  }),
-  "opencode-v2-beta": createBackendInfo({
-    id: "opencode-v2-beta",
-    label: "OpenCode v2 Beta",
-    description:
-      "Native OpenCode v2 API with durable event recovery, typed tool events, background subagents, forms, and v2 permissions.",
-    experimental: true,
-    commandPreview: process.env.OPENCURSOR_OPENCODE_V2_SERVER_URL?.trim()
-      ? `OpenCode v2 server at ${process.env.OPENCURSOR_OPENCODE_V2_SERVER_URL.trim()}`
-      : OPENCODE_V2_COMMAND
-        ? `${OPENCODE_V2_COMMAND} serve --stdio`
-        : "OpenCode v2 Beta server not configured",
-    available:
-      Boolean(process.env.OPENCURSOR_OPENCODE_V2_SERVER_URL?.trim()) ||
-      OPENCODE_V2_COMMAND !== null,
-    capabilities: AGENT_CAPABILITIES["opencode-v2-beta"],
-    defaultMode: "build",
-    defaultModelId: "auto",
-    defaultModelName: "Auto",
-  }),
-  "devin-acp": createBackendInfo({
-    id: "devin-acp",
-    label: "Devin",
-    description:
-      "Cognition Devin CLI over ACP stdio (`devin acp`). Uses ambient `devin auth login` credentials or `WINDSURF_API_KEY`.",
-    experimental: true,
-    commandPreview: DEVIN_RUNTIME?.commandPreview ?? "Devin CLI not found",
-    available: DEVIN_RUNTIME !== null,
-    capabilities: AGENT_CAPABILITIES["devin-acp"],
-    defaultMode: "agent",
-    defaultModelId: "auto",
-    defaultModelName: "Auto",
-  }),
-  "grok-build": createBackendInfo({
-    id: "grok-build",
-    label: "Grok Build",
-    description:
-      "SpaceXAI Grok Build CLI over its official ACP stdio transport (`grok agent stdio`). Uses ambient `grok login` credentials or `XAI_API_KEY`.",
-    experimental: true,
-    commandPreview: GROK_BUILD_RUNTIME?.commandPreview ?? "Grok Build CLI not found",
-    available: GROK_BUILD_RUNTIME !== null,
-    capabilities: AGENT_CAPABILITIES["grok-build"],
-    defaultMode: "agent",
-    defaultModelId: "grok-4.5",
-    defaultModelName: "Grok 4.5",
-  }),
-  "codex-app-server": createBackendInfo({
-    id: "codex-app-server",
-    label: "Codex App Server",
-    description: "Official Codex App Server over JSON-RPC stdio with canonical tool and plan-file mirroring.",
-    experimental: true,
-    commandPreview: CODEX_RUNTIME
-      ? `${CODEX_RUNTIME.commandPreview} app-server`
-      : "Codex CLI not found",
-    available: CODEX_RUNTIME !== null,
-    capabilities: AGENT_CAPABILITIES["codex-app-server"],
-    defaultMode: "agent",
-    defaultModelId: "__default__",
-    defaultModelName: "Codex App Server Default",
-  }),
-  "claude-code-sdk": createBackendInfo({
-    id: "claude-code-sdk",
-    label: "Claude Code SDK",
-    description: "Anthropic Claude Agent SDK with stock Claude Code tools and OpenCursor MCP settings bridged in memory.",
-    experimental: true,
-    commandPreview: `@anthropic-ai/claude-agent-sdk · ${describeClaudeCodeSdkAuthStatus()}`,
-    available: hasClaudeCodeSdkAuthConfig(),
-    capabilities: AGENT_CAPABILITIES["claude-code-sdk"],
-    defaultMode: "agent",
-    defaultModelId: hasClaudeCodeSdkProxyConfig() ? getClaudeCodeSdkProxyModel() : "claude-sonnet-4-5",
-    defaultModelName: hasClaudeCodeSdkProxyConfig() ? getClaudeCodeSdkProxyModelName() : "Claude Sonnet 4.5",
-  }),
-  "pi-agent": createBackendInfo({
-    id: "pi-agent",
-    label: "Pi Agent",
-    description:
-      "Native Pi coding agent SDK. Loads ~/.pi/agent (packages, extensions, skills, settings) plus project .pi/ customization.",
-    experimental: true,
-    commandPreview: `@earendil-works/pi-coding-agent · API key via settings`,
-    available: false,
-    capabilities: AGENT_CAPABILITIES["pi-agent"],
-    defaultMode: "agent",
-    defaultModelId: "auto",
-    defaultModelName: "Auto",
-  }),
-  "google-antigravity-cli": createBackendInfo({
-    id: "google-antigravity-cli",
-    label: "Google Antigravity CLI",
-    description:
-      "Google Antigravity CLI (`agy`) — successor to Gemini CLI. Uses ambient Google OAuth from the CLI login on the host; OpenCursor does not broker tokens.",
-    experimental: true,
-    commandPreview: GOOGLE_ANTIGRAVITY_RUNTIME
-      ? `${GOOGLE_ANTIGRAVITY_RUNTIME.commandPreview} interactive`
-      : "Antigravity CLI (agy) not found",
-    available: GOOGLE_ANTIGRAVITY_RUNTIME !== null,
-    capabilities: AGENT_CAPABILITIES["google-antigravity-cli"],
-    defaultMode: "agent",
-    defaultModelId: "auto",
-    defaultModelName: "Auto",
-  }),
-};
+/**
+ * Builds a backend's info from *live* CLI detection. Called on every access
+ * of `AGENT_BACKENDS[...]` / `listAgentBackends()`, so availability follows
+ * installs and uninstalls without a server restart (detection is TTL-cached
+ * in `harness-runtime.ts`, so repeated access stays cheap).
+ */
+function computeBackendInfo(id: AgentBackendId): AgentBackendInfo {
+  switch (id) {
+    case "cesium-agent":
+      return createBackendInfo({
+        id: "cesium-agent",
+        label: "Cesium Agent (Beta)",
+        description:
+          "First-party Cesium harness with direct provider APIs, tools, subagents, and compression.",
+        experimental: true,
+        commandPreview: "Cesium first-party runtime",
+        available: true,
+        capabilities: AGENT_CAPABILITIES["cesium-agent"],
+        defaultMode: "agent",
+        defaultModelId: "openai/gpt-5.1",
+        defaultModelName: "OpenAI/GPT-5.1",
+      });
+    case "cursor-sdk":
+      return createBackendInfo({
+        id: "cursor-sdk",
+        label: "Cursor SDK",
+        description:
+          "Cursor TypeScript SDK local agent runtime with OpenCursor MCP settings bridged in memory.",
+        experimental: true,
+        commandPreview: "@cursor/sdk local agent · API key via Settings → Agents",
+        available: true,
+        capabilities: AGENT_CAPABILITIES["cursor-sdk"],
+        defaultMode: "agent",
+        defaultModelId: "composer-2.5",
+        defaultModelName: "Composer 2.5",
+      });
+    case "opencode-server": {
+      const externalUrl = process.env.OPENCURSOR_OPENCODE_SERVER_URL?.trim();
+      const runtime = resolveHarnessRuntimeSpec("opencode");
+      return createBackendInfo({
+        id: "opencode-server",
+        label: "OpenCode Server",
+        description:
+          "OpenCode native HTTP/SSE server API with root and child-session event routing.",
+        experimental: true,
+        commandPreview: externalUrl
+          ? `OpenCode server at ${externalUrl}`
+          : runtime
+            ? `${runtime.commandPreview} serve`
+            : "OpenCode server not configured",
+        available: Boolean(externalUrl) || runtime !== null,
+        capabilities: AGENT_CAPABILITIES["opencode-server"],
+        defaultMode: "build",
+        defaultModelId: "auto",
+        defaultModelName: "Auto",
+      });
+    }
+    case "opencode-v2-beta": {
+      const externalUrl = process.env.OPENCURSOR_OPENCODE_V2_SERVER_URL?.trim();
+      const detection = detectHarnessCli("opencode-v2");
+      return createBackendInfo({
+        id: "opencode-v2-beta",
+        label: "OpenCode v2 Beta",
+        description:
+          "Native OpenCode v2 API with durable event recovery, typed tool events, background subagents, forms, and v2 permissions.",
+        experimental: true,
+        commandPreview: externalUrl
+          ? `OpenCode v2 server at ${externalUrl}`
+          : detection
+            ? `${detection.executablePath} serve --stdio`
+            : "OpenCode v2 Beta server not configured",
+        available: Boolean(externalUrl) || detection !== null,
+        capabilities: AGENT_CAPABILITIES["opencode-v2-beta"],
+        defaultMode: "build",
+        defaultModelId: "auto",
+        defaultModelName: "Auto",
+      });
+    }
+    case "devin-acp": {
+      const runtime = resolveHarnessRuntimeSpec("devin");
+      return createBackendInfo({
+        id: "devin-acp",
+        label: "Devin",
+        description:
+          "Cognition Devin CLI over ACP stdio (`devin acp`). Uses ambient `devin auth login` credentials or `WINDSURF_API_KEY`.",
+        experimental: true,
+        commandPreview: runtime?.commandPreview ?? "Devin CLI not found",
+        available: runtime !== null,
+        capabilities: AGENT_CAPABILITIES["devin-acp"],
+        defaultMode: "agent",
+        defaultModelId: "auto",
+        defaultModelName: "Auto",
+      });
+    }
+    case "grok-build": {
+      const runtime = resolveHarnessRuntimeSpec("grok");
+      return createBackendInfo({
+        id: "grok-build",
+        label: "Grok Build",
+        description:
+          "SpaceXAI Grok Build CLI over its official ACP stdio transport (`grok agent stdio`). Uses ambient `grok login` credentials or `XAI_API_KEY`.",
+        experimental: true,
+        commandPreview: runtime?.commandPreview ?? "Grok Build CLI not found",
+        available: runtime !== null,
+        capabilities: AGENT_CAPABILITIES["grok-build"],
+        defaultMode: "agent",
+        defaultModelId: "grok-4.5",
+        defaultModelName: "Grok 4.5",
+      });
+    }
+    case "codex-app-server": {
+      const runtime = resolveHarnessRuntimeSpec("codex");
+      return createBackendInfo({
+        id: "codex-app-server",
+        label: "Codex App Server",
+        description:
+          "Official Codex App Server over JSON-RPC stdio with canonical tool and plan-file mirroring.",
+        experimental: true,
+        commandPreview: runtime
+          ? `${runtime.commandPreview} app-server`
+          : "Codex CLI not found",
+        available: runtime !== null,
+        capabilities: AGENT_CAPABILITIES["codex-app-server"],
+        defaultMode: "agent",
+        defaultModelId: "__default__",
+        defaultModelName: "Codex App Server Default",
+      });
+    }
+    case "claude-code-sdk": {
+      // The Claude Agent SDK ships its own CLI runtime, so ambient host
+      // credentials (native `claude login`, installed CLI) make the backend
+      // usable without any explicit key. Explicit auth config always wins.
+      const hasAuth = hasClaudeCodeSdkAuthConfig() || hasClaudeCodeAmbientCliAuth();
+      return createBackendInfo({
+        id: "claude-code-sdk",
+        label: "Claude Code SDK",
+        description: hasAuth
+          ? "Anthropic Claude Agent SDK with stock Claude Code tools and OpenCursor MCP settings bridged in memory."
+          : "Claude Code SDK requires ANTHROPIC_API_KEY, a configured proxy, a supported provider env, or an installed `claude` CLI login. Open Settings -> Agents to configure it.",
+        experimental: true,
+        commandPreview: `@anthropic-ai/claude-agent-sdk · ${describeClaudeCodeSdkAuthStatus()}`,
+        available: hasAuth,
+        capabilities: AGENT_CAPABILITIES["claude-code-sdk"],
+        defaultMode: "agent",
+        defaultModelId: hasClaudeCodeSdkProxyConfig()
+          ? getClaudeCodeSdkProxyModel()
+          : "claude-sonnet-4-5",
+        defaultModelName: hasClaudeCodeSdkProxyConfig()
+          ? getClaudeCodeSdkProxyModelName()
+          : "Claude Sonnet 4.5",
+      });
+    }
+    case "pi-agent":
+      return createBackendInfo({
+        id: "pi-agent",
+        label: "Pi Agent",
+        description:
+          "Native Pi coding agent SDK. Loads ~/.pi/agent (packages, extensions, skills, settings) plus project .pi/ customization.",
+        experimental: true,
+        commandPreview: `@earendil-works/pi-coding-agent · API key via settings`,
+        available: false,
+        capabilities: AGENT_CAPABILITIES["pi-agent"],
+        defaultMode: "agent",
+        defaultModelId: "auto",
+        defaultModelName: "Auto",
+      });
+    case "google-antigravity-cli": {
+      const runtime = resolveHarnessRuntimeSpec("google-antigravity");
+      return createBackendInfo({
+        id: "google-antigravity-cli",
+        label: "Google Antigravity CLI",
+        description:
+          "Google Antigravity CLI (`agy`) — successor to Gemini CLI. Uses ambient Google OAuth from the CLI login on the host; OpenCursor does not broker tokens.",
+        experimental: true,
+        commandPreview: runtime
+          ? `${runtime.commandPreview} interactive`
+          : "Antigravity CLI (agy) not found",
+        available: runtime !== null,
+        capabilities: AGENT_CAPABILITIES["google-antigravity-cli"],
+        defaultMode: "agent",
+        defaultModelId: "auto",
+        defaultModelName: "Auto",
+      });
+    }
+  }
+}
 
-/** Stable ordering for harness/model-picker menus (Cesium first, then Cursor, Codex, OpenCode, Devin, Claude, Antigravity). */
-const AGENT_BACKEND_MENU_ORDER = [
-  "cesium-agent",
-  "cursor-sdk",
-  "codex-app-server",
-  "opencode-server",
-  "opencode-v2-beta",
-  "devin-acp",
-  "grok-build",
-  "claude-code-sdk",
-  "pi-agent",
-  "google-antigravity-cli",
-] as const satisfies readonly AgentBackendId[];
+/**
+ * Stable ordering for harness/model-picker menus. Derived from the shared
+ * active-backend registry so the server menu, model toggles, and frontend
+ * settings can never drift apart.
+ */
+const AGENT_BACKEND_MENU_ORDER: readonly AgentBackendId[] = ACTIVE_AGENT_BACKEND_IDS;
+
+/**
+ * Live backend registry. Property reads compute fresh info from the current
+ * CLI detection state, so `AGENT_BACKENDS["grok-build"].available` flips as
+ * soon as the CLI is installed/uninstalled — no server restart or module
+ * reload required. Spreads, `Object.entries`, and `in` checks all behave like
+ * a plain record.
+ */
+export const AGENT_BACKENDS: Record<AgentBackendId, AgentBackendInfo> = (() => {
+  const registry = {} as Record<AgentBackendId, AgentBackendInfo>;
+  for (const id of AGENT_BACKEND_MENU_ORDER) {
+    Object.defineProperty(registry, id, {
+      enumerable: true,
+      get: () => computeBackendInfo(id),
+    });
+  }
+  return registry;
+})();
 
 export function listAgentBackends(): AgentBackendInfo[] {
-  return AGENT_BACKEND_MENU_ORDER.map((id) => AGENT_BACKENDS[id]);
+  return AGENT_BACKEND_MENU_ORDER.map((id) => computeBackendInfo(id));
+}
+
+/** Live detection details (path/source/version) for a CLI-backed backend. */
+async function describeBackendRuntime(
+  backendId: AgentBackendId
+): Promise<AgentBackendRuntimeInfo | null> {
+  const harness = BACKEND_HARNESS_CLI[backendId];
+  if (!harness) {
+    return null;
+  }
+  const detection = detectHarnessCli(harness);
+  if (!detection) {
+    return null;
+  }
+  const version = await probeHarnessCliVersion(harness).catch(() => null);
+  return {
+    executablePath: detection.executablePath,
+    source: detection.source,
+    version,
+  };
 }
 
 export async function listAgentBackendsWithCache(): Promise<AgentBackendInfo[]> {
@@ -651,8 +326,11 @@ export async function listAgentBackendsWithCache(): Promise<AgentBackendInfo[]> 
   ]);
   return Promise.all(
     AGENT_BACKEND_MENU_ORDER.map(async (id) => {
-      const backend = AGENT_BACKENDS[id];
-      const cachedConfigOptions = await readAgentBackendConfigCache(backend.id);
+      const backend = computeBackendInfo(id);
+      const [cachedConfigOptions, runtime] = await Promise.all([
+        readAgentBackendConfigCache(backend.id),
+        describeBackendRuntime(backend.id),
+      ]);
       return {
         ...backend,
         available:
@@ -666,6 +344,8 @@ export async function listAgentBackendsWithCache(): Promise<AgentBackendInfo[]> 
         commandPreview:
           backend.id === "pi-agent"
             ? `@earendil-works/pi-coding-agent · ${piAgentAuthStatus}`
+            : runtime?.version && backend.commandPreview
+            ? `${backend.commandPreview} · v${runtime.version}`
             : backend.commandPreview,
         description:
           backend.id === "cesium-agent" && !cesiumStatus.configured
@@ -675,10 +355,43 @@ export async function listAgentBackendsWithCache(): Promise<AgentBackendInfo[]> 
             : backend.id === "pi-agent" && !piAgentStatus
             ? "Pi Agent requires at least one provider credential (OAuth or API key in Settings, env keys, or native ~/.pi/agent auth). Open Settings -> Agents to configure it."
             : backend.description,
+        runtime,
         cachedConfigOptions,
       };
     })
   );
+}
+
+function createAcpProvider(input: {
+  backend: AgentBackendInfo;
+  runtime: CliRuntimeSpec;
+  seedConfigOptions?: Parameters<typeof AcpSessionHandle.create>[0]["seedConfigOptions"];
+}): AgentProvider {
+  const { backend, runtime, seedConfigOptions } = input;
+  return {
+    backend,
+    startSession(callbacks) {
+      return AcpSessionHandle.create({
+        backend,
+        command: runtime.command,
+        args: runtime.args,
+        env: runtime.env,
+        callbacks,
+        seedConfigOptions,
+      });
+    },
+    loadSession(callbacks, providerSessionId) {
+      return AcpSessionHandle.create({
+        backend,
+        command: runtime.command,
+        args: runtime.args,
+        env: runtime.env,
+        callbacks,
+        loadSessionId: providerSessionId,
+        seedConfigOptions,
+      });
+    },
+  };
 }
 
 export async function createAgentProvider(
@@ -706,7 +419,10 @@ export async function createAgentProvider(
   }
 
   if (backendId === "opencode-server") {
-    if (!process.env.OPENCURSOR_OPENCODE_SERVER_URL?.trim() && !OPENCODE_RUNTIME) {
+    if (
+      !process.env.OPENCURSOR_OPENCODE_SERVER_URL?.trim() &&
+      !detectHarnessCli("opencode")
+    ) {
       throw new Error(`${backend.label} is not installed or configured.`);
     }
     const { createOpenCodeServerProvider } = await import("./opencode-server-provider.js");
@@ -717,7 +433,10 @@ export async function createAgentProvider(
   }
 
   if (backendId === "opencode-v2-beta") {
-    if (!process.env.OPENCURSOR_OPENCODE_V2_SERVER_URL?.trim() && !OPENCODE_V2_COMMAND) {
+    if (
+      !process.env.OPENCURSOR_OPENCODE_V2_SERVER_URL?.trim() &&
+      !detectHarnessCli("opencode-v2")
+    ) {
       throw new Error(`${backend.label} is not installed or configured.`);
     }
     const { createOpenCodeV2Provider } = await import("./opencode-v2-provider.js");
@@ -728,81 +447,38 @@ export async function createAgentProvider(
   }
 
   if (backendId === "devin-acp") {
-    if (!DEVIN_RUNTIME) {
+    const runtime = resolveHarnessRuntimeSpec("devin");
+    if (!runtime) {
       throw new Error(`${backend.label} is not installed or could not be resolved.`);
     }
-    const devinRuntime = DEVIN_RUNTIME;
-    return {
-      backend,
-      startSession(callbacks) {
-        return AcpSessionHandle.create({
-          backend,
-          command: devinRuntime.command,
-          args: devinRuntime.args,
-          env: devinRuntime.env,
-          callbacks,
-        });
-      },
-      loadSession(callbacks, providerSessionId) {
-        return AcpSessionHandle.create({
-          backend,
-          command: devinRuntime.command,
-          args: devinRuntime.args,
-          env: devinRuntime.env,
-          callbacks,
-          loadSessionId: providerSessionId,
-        });
-      },
-    };
+    return createAcpProvider({ backend, runtime });
   }
 
   if (backendId === "grok-build") {
-    if (!GROK_BUILD_RUNTIME) {
+    const runtime = resolveHarnessRuntimeSpec("grok");
+    if (!runtime) {
       throw new Error(
         `${backend.label} requires the grok binary. Install it from https://x.ai/cli or configure OPENCURSOR_GROK_BUILD_BIN.`
       );
     }
-    const grokRuntime = GROK_BUILD_RUNTIME;
     const cachedConfigOptions = await readAgentBackendConfigCache(backendId);
     const seedConfigOptions = cachedConfigOptions.some(
       (option) => option.category === "mode"
     )
       ? cachedConfigOptions
       : [createGrokBuildModeConfigOption(), ...cachedConfigOptions];
-    return {
-      backend,
-      startSession(callbacks) {
-        return AcpSessionHandle.create({
-          backend,
-          command: grokRuntime.command,
-          args: grokRuntime.args,
-          env: grokRuntime.env,
-          callbacks,
-          seedConfigOptions,
-        });
-      },
-      loadSession(callbacks, providerSessionId) {
-        return AcpSessionHandle.create({
-          backend,
-          command: grokRuntime.command,
-          args: grokRuntime.args,
-          env: grokRuntime.env,
-          callbacks,
-          loadSessionId: providerSessionId,
-          seedConfigOptions,
-        });
-      },
-    };
+    return createAcpProvider({ backend, runtime, seedConfigOptions });
   }
 
   if (backendId === "codex-app-server") {
-    if (!CODEX_RUNTIME) {
+    const runtime = resolveHarnessRuntimeSpec("codex");
+    if (!runtime) {
       throw new Error(`${backend.label} is not installed or could not be resolved.`);
     }
     const { createCodexAppServerProvider } = await import("./codex-app-server-provider.js");
     return createCodexAppServerProvider({
       backend,
-      runtime: CODEX_RUNTIME,
+      runtime,
       configOptions: await readAgentBackendConfigCache(backendId),
     });
   }
@@ -827,13 +503,14 @@ export async function createAgentProvider(
   }
 
   if (backendId === "google-antigravity-cli") {
-    if (!GOOGLE_ANTIGRAVITY_RUNTIME) {
+    const runtime = resolveHarnessRuntimeSpec("google-antigravity");
+    if (!runtime) {
       throw new Error(`${backend.label} requires the agy binary to be installed and available on PATH.`);
     }
     const { createGoogleAntigravityCliProvider } = await import("./google-antigravity-cli-provider.js");
     return createGoogleAntigravityCliProvider({
       backend,
-      runtime: GOOGLE_ANTIGRAVITY_RUNTIME,
+      runtime,
       configOptions: await readAgentBackendConfigCache(backendId),
     });
   }

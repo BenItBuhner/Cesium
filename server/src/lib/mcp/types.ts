@@ -35,6 +35,10 @@ export type McpServersFile = {
       enabled: boolean;
       updatedAt: number;
     };
+    artifacts?: {
+      enabled: boolean;
+      updatedAt: number;
+    };
   };
 };
 

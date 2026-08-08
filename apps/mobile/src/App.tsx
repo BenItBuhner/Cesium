@@ -59,15 +59,20 @@ export default function App() {
   const [focused, setFocused] = useState<{
     workspaceId: string | null;
     conversationId: string | null;
-  }>({ workspaceId: null, conversationId: null });
-  const [canGoBack, setCanGoBack] = useState(false);
+    activeConversationIds: string[];
+  }>({ workspaceId: null, conversationId: null, activeConversationIds: [] });
   const [loadError, setLoadError] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
   const [webViewAvailable, setWebViewAvailable] = useState(true);
   const webViewRef = useRef<WebViewType>(null);
+  // Refs so the single hardware-back subscription can read the freshest
+  // navigation state without re-subscribing on every WebView update.
+  const canGoBackRef = useRef(false);
+  const webCanHandleBackRef = useRef(false);
   const serverUrlRef = useRef(serverUrl);
   const authTokenRef = useRef(authToken);
-  const liveUpdatesRef = useRef(new LiveUpdateController());
+  const liveUpdatesRef = useRef(new LiveUpdateController(CesiumLiveUpdates));
+  const webSendsProjectionSetsRef = useRef(false);
   const sendToWebRef = useRef<((message: MobileNativeToWebMessage) => void) | null>(null);
   const agentStatusRef = useRef(
     new AgentStatusService({
@@ -75,10 +80,13 @@ export default function App() {
         void liveUpdatesRef.current.update(projection);
         sendToWebRef.current?.({
           type: "resumeCatchUp",
-          workspaceId: projection?.workspaceId,
-          conversationId: projection?.conversationId,
-          lastEventSeq: projection?.lastEventSeq,
+          workspaceId: projection.workspaceId,
+          conversationId: projection.conversationId,
+          lastEventSeq: projection.lastEventSeq,
         });
+      },
+      onConversationRemoved: (conversationId) => {
+        void liveUpdatesRef.current.removeConversation(conversationId);
       },
     })
   );
@@ -114,10 +122,17 @@ export default function App() {
       nextAuthToken = authTokenRef.current,
       nextServerUrl = serverUrlRef.current
     ) => {
+      const conversationIds = [
+        ...new Set(
+          [nextFocused.conversationId, ...nextFocused.activeConversationIds].filter(
+            (id): id is string => typeof id === "string" && id.length > 0
+          )
+        ),
+      ];
       agentStatusRef.current.updateConfig({
         serverBaseUrl: nextServerUrl,
         workspaceId: nextFocused.workspaceId,
-        conversationId: nextFocused.conversationId,
+        conversationIds,
         authToken: nextAuthToken,
       });
       // Phone control does not care about the focused conversation, and a null
@@ -247,13 +262,27 @@ export default function App() {
   }, [consumeNotificationAction, refreshSafeArea, sendToWeb]);
 
   useEffect(() => {
+    // A single, stable subscription. The Android predictive/hardware back
+    // gesture is resolved in priority order:
+    //   1. If the web layer reports an open in-WebView layer (overlay, drawer,
+    //      settings view), route the intent there. The web replies with
+    //      `backFallback` if it turns out there is nothing to pop.
+    //   2. Otherwise walk the WebView's own navigation history.
+    //   3. Otherwise let Android run its default back behavior (exit the app),
+    //      which is where the predictive-back exit animation applies.
     const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
-      if (!canGoBack) return false;
-      webViewRef.current?.goBack();
-      return true;
+      if (webViewRef.current && webCanHandleBackRef.current) {
+        sendToWeb({ type: "backRequest" });
+        return true;
+      }
+      if (webViewRef.current && canGoBackRef.current) {
+        webViewRef.current.goBack();
+        return true;
+      }
+      return false;
     });
     return () => subscription.remove();
-  }, [canGoBack]);
+  }, [sendToWeb]);
 
   useEffect(() => {
     void consumeNotificationAction();
@@ -283,6 +312,7 @@ export default function App() {
         const nextFocused = {
           workspaceId: message.workspaceId,
           conversationId: message.focusedConversationId,
+          activeConversationIds: focused.activeConversationIds,
         };
         const nextToken = message.authToken ?? null;
         setAuthToken(nextToken);
@@ -321,6 +351,19 @@ export default function App() {
         void CesiumPhoneControl.invokeAssistant();
         return;
       }
+      if (message.type === "backCapability") {
+        webCanHandleBackRef.current = message.canHandleBack;
+        return;
+      }
+      if (message.type === "backFallback") {
+        // The web layer had nothing to pop after all; run the native default.
+        if (canGoBackRef.current) {
+          webViewRef.current?.goBack();
+        } else {
+          BackHandler.exitApp();
+        }
+        return;
+      }
       if (message.type === "openExternalUrl") {
         // Open outside the WebView so the workbench (a file:// bundle) is not
         // navigated away, e.g. the F-Droid page for the Termux server setup.
@@ -341,13 +384,26 @@ export default function App() {
         const nextFocused = {
           workspaceId: message.workspaceId,
           conversationId: message.conversationId,
+          activeConversationIds:
+            message.activeConversationIds ?? focused.activeConversationIds,
         };
         setFocused(nextFocused);
         configureNativeServices(nextFocused);
         return;
       }
+      if (message.type === "agentProjections") {
+        webSendsProjectionSetsRef.current = true;
+        void liveUpdatesRef.current.updateAll(
+          message.projections as MobileAgentProjection[]
+        );
+        return;
+      }
+      // Legacy single-projection message from older web bundles. Ignored once
+      // the web sends full sets — mixing both would track the same run twice.
       if (message.type === "agentProjection") {
-        void liveUpdatesRef.current.update(message.projection as MobileAgentProjection);
+        if (!webSendsProjectionSetsRef.current) {
+          void liveUpdatesRef.current.update(message.projection as MobileAgentProjection);
+        }
         return;
       }
       if (message.type === "wearSyncEnvelope") {
@@ -361,7 +417,7 @@ export default function App() {
   );
 
   const handleNavigation = useCallback((navigation: WebViewNavigation) => {
-    setCanGoBack(navigation.canGoBack);
+    canGoBackRef.current = navigation.canGoBack;
   }, []);
 
   return (
@@ -402,7 +458,8 @@ export default function App() {
               ? "Android System WebView crashed. The failed renderer was discarded. Update Android System WebView and, on an emulator, enable hardware acceleration before retrying."
               : "Android stopped the WebView renderer to reclaim resources. The failed renderer was discarded; retry to create a fresh one.";
             webViewRef.current = null;
-            setCanGoBack(false);
+            canGoBackRef.current = false;
+            webCanHandleBackRef.current = false;
             setWebViewAvailable(false);
             setLoadError(description);
           }}
@@ -420,6 +477,8 @@ export default function App() {
           <Text style={styles.errorBody}>{loadError}</Text>
           <Pressable
             onPress={() => {
+              canGoBackRef.current = false;
+              webCanHandleBackRef.current = false;
               setLoadError(null);
               setReloadKey((current) => current + 1);
               setWebViewAvailable(true);

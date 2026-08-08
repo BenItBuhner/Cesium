@@ -3,8 +3,8 @@ import { Hono } from "hono";
 import {
   AGENT_BACKENDS,
   listAgentBackendsWithCache,
-  refreshAgentBackendRuntimes,
 } from "../lib/agents/providers.js";
+import { refreshHarnessCliDetection } from "../lib/agents/harness-runtime.js";
 import { getCesiumAgentSettings } from "../lib/cesium-agent-settings.js";
 import {
   buildInstallCommand,
@@ -124,7 +124,9 @@ agentInstallRoutes.post("/api/agents/backends/:backendId/install", async (c) => 
         });
         child.on("close", (code) => {
           clearTimeout(timeout);
-          refreshAgentBackendRuntimes();
+          // Drop cached CLI detections so the freshly installed binary is
+          // visible immediately (the TTL cache would otherwise lag ~30s).
+          refreshHarnessCliDetection();
           const available = AGENT_BACKENDS[spec.backendId]?.available ?? false;
           if (code === 0) {
             emit({ type: "done", ok: true, available, authHint: spec.authHint });

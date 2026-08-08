@@ -36,13 +36,15 @@ const [
     isInstallSupportedOnThisHost,
     resolveCesiumToolBin,
   },
-  { AGENT_BACKENDS, refreshAgentBackendRuntimes },
+  { AGENT_BACKENDS },
+  { refreshHarnessCliDetection },
 ] = await Promise.all([
   import("../src/lib/agents/cloud-snapshot.js"),
   import("../src/lib/agents/session-store.js"),
   import("../src/lib/workspace-registry.js"),
   import("../src/lib/agents/install/cli-install-registry.js"),
   import("../src/lib/agents/providers.js"),
+  import("../src/lib/agents/harness-runtime.js"),
 ]);
 
 import type {
@@ -288,25 +290,28 @@ test("install registry only exposes vetted argv installers", () => {
   assert.ok(codexSpec && isInstallSupportedOnThisHost(codexSpec));
 });
 
-test("tools-dir installs are picked up by runtime refresh", async () => {
+test("tools-dir installs are picked up after a detection refresh", async () => {
   const binDir = path.join(getCesiumToolsDir(), "node_modules", ".bin");
   await fs.mkdir(binDir, { recursive: true });
   const fakeOpencode = path.join(binDir, "opencode");
   await fs.writeFile(fakeOpencode, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
   try {
     assert.equal(resolveCesiumToolBin("opencode"), fakeOpencode);
-    refreshAgentBackendRuntimes();
+    // Filesystem-only changes are not in the detection fingerprint; the
+    // install route drops the cache explicitly, exactly like this.
+    refreshHarnessCliDetection();
     assert.equal(AGENT_BACKENDS["opencode-server"].available, true);
     assert.ok(
       AGENT_BACKENDS["opencode-server"].commandPreview?.includes("opencode")
     );
   } finally {
     await fs.rm(fakeOpencode, { force: true });
-    refreshAgentBackendRuntimes();
+    refreshHarnessCliDetection();
+    assert.equal(AGENT_BACKENDS["opencode-server"].available, false);
   }
 });
 
-test("refreshAgentBackendRuntimes flips availability when a CLI appears", async () => {
+test("live registry flips availability when a CLI env override appears", async () => {
   const binDir = path.join(TEST_DATA_DIR, "fake-bin");
   await fs.mkdir(binDir, { recursive: true });
   const fakeCodex = path.join(binDir, "codex");
@@ -315,14 +320,14 @@ test("refreshAgentBackendRuntimes flips availability when a CLI appears", async 
   const before = AGENT_BACKENDS["codex-app-server"].available;
   process.env.OPENCURSOR_CODEX_BIN = fakeCodex;
   try {
-    refreshAgentBackendRuntimes();
+    // Env changes invalidate the detection fingerprint automatically — the
+    // getter-based registry reflects them on the next property read.
     assert.equal(AGENT_BACKENDS["codex-app-server"].available, true);
     assert.ok(
       AGENT_BACKENDS["codex-app-server"].commandPreview?.includes("app-server")
     );
   } finally {
     delete process.env.OPENCURSOR_CODEX_BIN;
-    refreshAgentBackendRuntimes();
     assert.equal(AGENT_BACKENDS["codex-app-server"].available, before);
   }
 });

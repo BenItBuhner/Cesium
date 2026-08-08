@@ -1,4 +1,11 @@
+import path from "node:path";
 import { getStoredClaudeCodeSdkSettingsSync } from "./claude-code-sdk-settings.js";
+import {
+  detectHarnessCli,
+  harnessHomeDirCandidates,
+  isExecutableFile,
+} from "./agents/harness-runtime.js";
+import { existsSync } from "node:fs";
 
 function readEnvValue(name: string): string {
   return process.env[name]?.trim() ?? "";
@@ -71,10 +78,35 @@ export function hasClaudeCodeSdkAuthConfig(): boolean {
     hasClaudeCodeSdkProxyConfig() ||
       readEnvValue("ANTHROPIC_API_KEY") ||
       readEnvValue("ANTHROPIC_AUTH_TOKEN") ||
+      readEnvValue("CLAUDE_CODE_OAUTH_TOKEN") ||
       readEnvValue("CLAUDE_CODE_USE_BEDROCK") === "1" ||
       readEnvValue("CLAUDE_CODE_USE_VERTEX") === "1" ||
       readEnvValue("CLAUDE_CODE_USE_FOUNDRY") === "1"
   );
+}
+
+/**
+ * Detects ambient Claude Code CLI credentials on the host: a native `claude
+ * login` credentials file, or an installed `claude` binary (whose login the
+ * bundled Agent SDK runtime reuses). Explicit auth config always wins over
+ * this — see `hasClaudeCodeSdkAuthConfig`.
+ */
+export function hasClaudeCodeAmbientCliAuth(): boolean {
+  for (const home of harnessHomeDirCandidates()) {
+    const credentialsFile = path.join(home, ".claude", ".credentials.json");
+    try {
+      if (existsSync(credentialsFile)) {
+        return true;
+      }
+    } catch {
+      // Unreadable home candidates are skipped.
+    }
+    const localLauncher = path.join(home, ".claude", "local", "claude");
+    if (isExecutableFile(localLauncher)) {
+      return true;
+    }
+  }
+  return detectHarnessCli("claude") !== null;
 }
 
 export function describeClaudeCodeSdkAuthStatus(): string {
@@ -89,6 +121,9 @@ export function describeClaudeCodeSdkAuthStatus(): string {
   if (readEnvValue("ANTHROPIC_AUTH_TOKEN")) {
     return "ANTHROPIC_AUTH_TOKEN configured";
   }
+  if (readEnvValue("CLAUDE_CODE_OAUTH_TOKEN")) {
+    return "CLAUDE_CODE_OAUTH_TOKEN configured";
+  }
   if (readEnvValue("CLAUDE_CODE_USE_BEDROCK") === "1") {
     return "Bedrock provider configured";
   }
@@ -98,5 +133,8 @@ export function describeClaudeCodeSdkAuthStatus(): string {
   if (readEnvValue("CLAUDE_CODE_USE_FOUNDRY") === "1") {
     return "Foundry provider configured";
   }
-  return "Set Claude Code SDK settings, OPENCURSOR_CLAUDE_CODE_SDK_API_KEY + OPENCURSOR_CLAUDE_CODE_SDK_BASE_URL, ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, or a supported Claude provider env var";
+  if (hasClaudeCodeAmbientCliAuth()) {
+    return "ambient Claude Code CLI credentials";
+  }
+  return "Set Claude Code SDK settings, OPENCURSOR_CLAUDE_CODE_SDK_API_KEY + OPENCURSOR_CLAUDE_CODE_SDK_BASE_URL, ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, CLAUDE_CODE_OAUTH_TOKEN, or a supported Claude provider env var";
 }
