@@ -6,6 +6,33 @@ import {
 } from "../src/lib/global-settings.ts";
 
 describe("global settings", () => {
+  test("stream event batching is enabled by default", () => {
+    const settings = createDefaultGlobalSettings();
+    assert.equal(settings.general.batchStreamEvents, true);
+  });
+
+  test("normalizes missing stream event batching to the enabled default", () => {
+    const base = createDefaultGlobalSettings();
+    const { batchStreamEvents: _ignored, ...generalWithoutBatching } = base.general;
+    const settings = normalizeLoadedGlobalSettings({
+      ...base,
+      general: generalWithoutBatching,
+    });
+    assert.equal(settings.general.batchStreamEvents, true);
+  });
+
+  test("preserves an explicit disabled stream event batching setting", () => {
+    const base = createDefaultGlobalSettings();
+    const settings = normalizeLoadedGlobalSettings({
+      ...base,
+      general: {
+        ...base.general,
+        batchStreamEvents: false,
+      },
+    });
+    assert.equal(settings.general.batchStreamEvents, false);
+  });
+
   test("voice orb is opt-in (hidden by default)", () => {
     const settings = createDefaultGlobalSettings();
     assert.equal(settings.general.showVoiceOrb, false);

@@ -60,6 +60,21 @@ export function GeneralSettingsPanel() {
           border={false}
         />
       </SettingsSection>
+      <SettingsSection title="Performance">
+        <SettingsRow
+          searchId="batch-stream-events"
+          title="Batch streamed events"
+          description="Render high-speed token and progress streams in short 50 ms batches. Turn this off for immediate per-event updates at the cost of higher CPU, GPU, and battery use."
+          trailing={
+            <ToggleSwitch
+              checked={general.batchStreamEvents}
+              onChange={(value) => patchGeneral({ batchStreamEvents: value })}
+              size="md"
+            />
+          }
+          border={false}
+        />
+      </SettingsSection>
       <SettingsSection title="Notifications">
         <SettingsRow
           searchId="do-not-disturb"

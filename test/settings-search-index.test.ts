@@ -15,6 +15,12 @@ describe("settings search index", () => {
     assert.ok(dnd.some((hit) => hit.rowId === "do-not-disturb"));
   });
 
+  test("finds the streamed event batching performance setting", () => {
+    const index = buildSettingsSearchIndex({});
+    const hits = searchSettingsIndex(index, "streaming performance");
+    assert.ok(hits.some((hit) => hit.rowId === "batch-stream-events"));
+  });
+
   test("indexes model names from the catalog", () => {
     const index = buildSettingsSearchIndex({
       "cesium-agent": [
