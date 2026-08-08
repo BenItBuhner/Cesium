@@ -297,6 +297,12 @@ export function LandingPage() {
               Docs
             </Link>
             <Link
+              href="/setup"
+              className="rounded-[var(--radius-tab)] px-[12px] py-[6px] text-[13px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--accent-bg)] hover:text-[var(--text-primary)]"
+            >
+              Get started
+            </Link>
+            <Link
               href={WORKSPACE_ROUTE}
               className="rounded-[var(--radius-tab)] bg-[var(--accent)] px-[14px] py-[6px] text-[13px] font-medium text-[var(--bg-main)] transition-colors hover:bg-[var(--accent-dark)]"
             >

@@ -290,7 +290,11 @@ export function AgentConversationRow({
       ? `Triggered from ${ORIGIN_PROVIDER_NAMES[origin.providerId] ?? origin.providerId}${
           origin.label ? ` · ${origin.label}` : ""
         }`
-      : `Imported from ${origin.backendId} · session ${origin.externalSessionId}`
+      : origin.kind === "cloud-snapshot"
+        ? `Imported from your cloud context${
+            origin.sourceServerName ? ` · ${origin.sourceServerName}` : ""
+          }`
+        : `Imported from ${origin.backendId} · session ${origin.externalSessionId}`
     : undefined;
 
   const handleContextMenu = onContextMenu

@@ -481,6 +481,18 @@ export type AgentConversationOrigin =
       sourceUpdatedAt?: number | null;
       /** When the session was last (re-)imported into Cesium. */
       importedAt: number;
+    }
+  | {
+      kind: "cloud-snapshot";
+      /** Cloud Context snapshot key (origin conversation id on the source engine). */
+      snapshotKey: string;
+      /** Human labels captured when the snapshot was pushed. */
+      sourceServerName?: string | null;
+      sourceWorkspaceName?: string | null;
+      /** Source-side last-activity timestamp when the snapshot was pushed. */
+      sourceUpdatedAt?: number | null;
+      /** When the snapshot was last materialized on this engine. */
+      importedAt: number;
     };
 
 /**

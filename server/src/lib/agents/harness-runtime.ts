@@ -3,6 +3,7 @@ import { execFile } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
 import { harnessLog } from "./harness-diagnostics.js";
+import { getCesiumToolsDir } from "./install/cli-install-registry.js";
 import { spawnSafeEnv } from "./spawn-env.js";
 import type { CliRuntimeSpec } from "./cli-adapter.js";
 
@@ -198,6 +199,10 @@ function commonBinDirectories(): string[] {
       dirs.push(trimmed);
     }
   };
+  // Cesium-managed one-click install prefix ({DATA_DIR}/tools) — checked
+  // first so engine-driven installs win over ambient user installs.
+  push(path.join(getCesiumToolsDir(), "node_modules", ".bin"));
+  push(getCesiumToolsDir()); // npm --prefix on Windows puts shims in the root
   const homes = harnessHomeDirCandidates();
   if (process.platform === "win32") {
     if (process.env.APPDATA?.trim()) {

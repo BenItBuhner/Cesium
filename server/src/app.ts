@@ -12,6 +12,8 @@ import { phoneControlRoutes } from "./routes/phone-control.js";
 import { agentRoutes } from "./routes/agents.js";
 import { artifactRoutes } from "./routes/artifacts.js";
 import { agentImportRoutes } from "./routes/agent-imports.js";
+import { agentInstallRoutes } from "./routes/agent-install.js";
+import { cloudContextRoutes } from "./routes/cloud-context.js";
 import { audioRoutes } from "./routes/audio.js";
 import { voiceRoutes } from "./routes/voice.js";
 import { authRoutes } from "./routes/auth.js";
@@ -153,6 +155,8 @@ export function createCesiumApp(): Hono {
   app.route("/", terminalRoutes);
   app.route("/", agentRoutes);
   app.route("/", agentImportRoutes);
+  app.route("/", agentInstallRoutes);
+  app.route("/", cloudContextRoutes);
   app.route("/", artifactRoutes);
   app.route("/", orchestrationRoutes);
   app.route("/", cloudAgentRoutes);

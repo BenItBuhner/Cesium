@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import Script from "next/script";
 import { RegisterServiceWorker } from "@/components/pwa/RegisterServiceWorker";
+import { CloudProviders } from "@/contexts/CloudContext";
 import { USER_PREFERENCES_STORAGE_KEY } from "@/lib/preferences";
 import { buildThemeBootstrapScript } from "@/lib/theme-bootstrap";
 import "./globals.css";
@@ -69,7 +70,7 @@ export default function RootLayout({
           {preferencesBootstrap}
         </Script>
         <RegisterServiceWorker />
-        {children}
+        <CloudProviders>{children}</CloudProviders>
       </body>
     </html>
   );
