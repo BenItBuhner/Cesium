@@ -28,6 +28,7 @@ import {
 import { AgentSidePane } from "@/components/agent/AgentSidePane";
 import { AgentWorkspaceRail } from "@/components/agent/AgentWorkspaceRail";
 import { AgentWorkspaceRailCollapsedOverlay } from "@/components/agent/AgentWorkspaceRailCollapsedOverlay";
+import { MobileAgentShell } from "@/components/agent/MobileAgentShell";
 import { ExtensionsWorkspaceBridge } from "@/components/extensions/ExtensionsWorkspaceBridge";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { useUserPreferences } from "@/components/preferences/UserPreferencesProvider";
@@ -99,6 +100,10 @@ function AgentLayoutShell() {
   const railPanelRef = usePanelRef();
   const sidePanelRef = usePanelRef();
   const applyingShellLayoutFromContextRef = useRef(false);
+  const desktopShellRef = useRef<HTMLDivElement | null>(null);
+  const panelsAnimatingRef = useRef(false);
+  const panelAnimationCleanupRef = useRef<number | null>(null);
+  const prevPanelToggleStateRef = useRef<{ rail: boolean; side: boolean } | null>(null);
 
   const agentShellLayout = useMemo(
     () => {
@@ -131,8 +136,69 @@ function AgentLayoutShell() {
 
   useLayoutEffect(() => {
     if (isMobile) {
+      prevPanelToggleStateRef.current = null;
       return;
     }
+
+    // Slide animation for programmatic rail / workbench toggles: transition
+    // `flex-grow` on the panels (react-resizable-panels' size channel) and pin
+    // each sliding panel's content to the edge it travels from, locked at its
+    // resting width, so it genuinely slides instead of squishing. Drag-resizes
+    // never enter this path (the classes live only for the toggle window).
+    const previousToggleState = prevPanelToggleStateRef.current;
+    const nextToggleState = { rail: leftRailCollapsed, side: rightPaneOpen };
+    prevPanelToggleStateRef.current = nextToggleState;
+    const railToggled =
+      previousToggleState != null && previousToggleState.rail !== nextToggleState.rail;
+    const sideToggled =
+      previousToggleState != null && previousToggleState.side !== nextToggleState.side;
+    const groupEl = desktopShellRef.current?.querySelector<HTMLElement>("[data-group]");
+    const reducedMotion =
+      window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+    if (groupEl && (railToggled || sideToggled) && !reducedMotion) {
+      const groupWidth = groupEl.getBoundingClientRect().width || 1;
+      groupEl.classList.add("agent-shell-panels-animating");
+      if (railToggled) {
+        const railEl = groupEl.querySelector<HTMLElement>(
+          `[data-panel][id="${AGENT_SHELL_PANEL_IDS.rail}"]`
+        );
+        const currentPx = railEl?.getBoundingClientRect().width ?? 0;
+        const targetPx =
+          ((agentShellLayout[AGENT_SHELL_PANEL_IDS.rail] ?? 0) / 100) * groupWidth;
+        groupEl.style.setProperty(
+          "--agent-rail-slide-width",
+          `${Math.max(1, Math.round(Math.max(currentPx, targetPx)))}px`
+        );
+        groupEl.classList.add("agent-shell-rail-sliding");
+      }
+      if (sideToggled) {
+        const sideEl = groupEl.querySelector<HTMLElement>(
+          `[data-panel][id="${AGENT_SHELL_PANEL_IDS.side}"]`
+        );
+        const currentPx = sideEl?.getBoundingClientRect().width ?? 0;
+        const targetPx =
+          ((agentShellLayout[AGENT_SHELL_PANEL_IDS.side] ?? 0) / 100) * groupWidth;
+        groupEl.style.setProperty(
+          "--agent-side-slide-width",
+          `${Math.max(1, Math.round(Math.max(currentPx, targetPx)))}px`
+        );
+        groupEl.classList.add("agent-shell-side-sliding");
+      }
+      panelsAnimatingRef.current = true;
+      if (panelAnimationCleanupRef.current != null) {
+        window.clearTimeout(panelAnimationCleanupRef.current);
+      }
+      panelAnimationCleanupRef.current = window.setTimeout(() => {
+        groupEl.classList.remove(
+          "agent-shell-panels-animating",
+          "agent-shell-rail-sliding",
+          "agent-shell-side-sliding"
+        );
+        panelsAnimatingRef.current = false;
+        panelAnimationCleanupRef.current = null;
+      }, 320);
+    }
+
     applyingShellLayoutFromContextRef.current = true;
     try {
       groupRef.current?.setLayout(agentShellLayout);
@@ -192,21 +258,18 @@ function AgentLayoutShell() {
         <IDEKeyboardLayer>
           <div className="relative h-screen w-screen overflow-hidden bg-[var(--bg-main)]">
             {isMobile ? (
-              <>
-                {!leftRailCollapsed ? (
-                  <>
-                    <div
-                      className="absolute inset-0 z-30 bg-black/40"
-                      onClick={() => setLeftRailCollapsed(true)}
-                    />
-                    <div
-                      className="absolute inset-y-0 left-0 z-40 overflow-hidden border-r border-[var(--border-subtle)] shadow-[0_0_40px_rgba(0,0,0,0.35)]"
-                      style={{ width: `${AGENT_LEFT_RAIL_EXPANDED_WIDTH}px` }}
-                    >
-                      <AgentWorkspaceRail />
-                    </div>
-                  </>
-                ) : (
+              <MobileAgentShell
+                railOpen={!leftRailCollapsed}
+                rightOpen={rightPaneOpen}
+                setRailOpen={(open) => setLeftRailCollapsed(!open)}
+                setRightOpen={setRightPaneOpen}
+                rightGestureEnabled={!isDraftConversationSelected}
+                railWidth={AGENT_LEFT_RAIL_EXPANDED_WIDTH}
+                rightPaneWidthCss={`min(100vw, ${AGENT_RIGHT_PANE_WIDTH}px)`}
+                rail={<AgentWorkspaceRail />}
+                rightPane={<AgentSidePane />}
+              >
+                {leftRailCollapsed ? (
                   <button
                     type="button"
                     onClick={() => setLeftRailCollapsed(false)}
@@ -215,7 +278,7 @@ function AgentLayoutShell() {
                   >
                     <PanelLeftOpen className="size-[16px]" strokeWidth={1.5} />
                   </button>
-                )}
+                ) : null}
 
                 <div className="relative z-10 h-full min-w-0">
                   <AgentCenterStage compact>
@@ -223,19 +286,6 @@ function AgentLayoutShell() {
                   </AgentCenterStage>
                 </div>
 
-                <div
-                  className={`absolute inset-y-0 right-0 z-40 overflow-hidden ${
-                    rightPaneOpen
-                      ? "border-l border-[var(--border-subtle)] shadow-[-12px_0_36px_rgba(0,0,0,0.28)]"
-                      : "pointer-events-none border-l-0 shadow-none"
-                  }`}
-                  style={{
-                    width: rightPaneOpen ? `min(100vw, ${AGENT_RIGHT_PANE_WIDTH}px)` : "0px",
-                  }}
-                  aria-hidden={!rightPaneOpen}
-                >
-                  <AgentSidePane />
-                </div>
                 {!rightPaneOpen && !isDraftConversationSelected ? (
                   <button
                     type="button"
@@ -254,9 +304,9 @@ function AgentLayoutShell() {
                     <PanelRightOpen className="size-[16px]" strokeWidth={1.5} />
                   </button>
                 ) : null}
-              </>
+              </MobileAgentShell>
             ) : (
-              <>
+              <div ref={desktopShellRef} className="h-full min-w-0 [&>[data-group]]:h-full">
               <Group
                 id="agent-shell-panels"
                 groupRef={groupRef}
@@ -273,7 +323,7 @@ function AgentLayoutShell() {
                   collapsible
                   collapsedSize={`${AGENT_LEFT_RAIL_COLLAPSED_SIZE_PERCENT}%`}
                   onResize={(panelSize) => {
-                    if (applyingShellLayoutFromContextRef.current) {
+                    if (applyingShellLayoutFromContextRef.current || panelsAnimatingRef.current) {
                       return;
                     }
                     setAgentShellDesktopLayout({
@@ -331,7 +381,7 @@ function AgentLayoutShell() {
                   collapsible
                   collapsedSize="0%"
                   onResize={(panelSize) => {
-                    if (applyingShellLayoutFromContextRef.current) {
+                    if (applyingShellLayoutFromContextRef.current || panelsAnimatingRef.current) {
                       return;
                     }
                     setAgentShellDesktopLayout({
@@ -348,7 +398,7 @@ function AgentLayoutShell() {
                 </Panel>
               </Group>
               <AgentWorkspaceRailCollapsedOverlay />
-              </>
+              </div>
             )}
           </div>
         </IDEKeyboardLayer>

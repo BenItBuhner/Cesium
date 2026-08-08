@@ -43,7 +43,12 @@ import {
   resolveCanonicalModeId,
 } from "@/lib/chat-modes";
 import { updateChatDraftDefault } from "@/lib/chat-draft-defaults";
-import type { AgentBackendId, AgentBackendInfo, AgentImportResult } from "@/lib/agent-types";
+import type {
+  AgentBackendId,
+  AgentBackendInfo,
+  AgentConversationCreateInput,
+  AgentImportResult,
+} from "@/lib/agent-types";
 import { ImportConversationDialog } from "./ImportConversationDialog";
 import {
   detectShortcutPlatform,
@@ -145,7 +150,20 @@ function WorkspacePickerIcon({
   );
 }
 
-export function AgentNewChatLanding() {
+export function AgentNewChatLanding({
+  onInstantSubmit,
+}: {
+  /**
+   * Optimistic first-prompt path provided by AgentCenterPane: switches to the
+   * conversation view immediately (with the composer split animation) and
+   * finishes the server round-trip in the background.
+   */
+  onInstantSubmit?: (
+    input: AgentConversationCreateInput,
+    text: string,
+    attachments?: ImageAttachment[]
+  ) => boolean;
+}) {
   const {
     composerDrafts,
     composerSelections,
@@ -353,12 +371,20 @@ export function AgentNewChatLanding() {
           newBranch: true,
         });
       }
-      const created = await createAndPromptConversation({
+      const conversationInput: AgentConversationCreateInput = {
         backendId: backend.id,
         mode: draftMode,
         modelId: draftModel.modelValue ?? draftModel.id,
         modelName: draftModel.name,
-      }, promptText, attachments);
+      };
+      if (onInstantSubmit) {
+        return onInstantSubmit(conversationInput, promptText, attachments);
+      }
+      const created = await createAndPromptConversation(
+        conversationInput,
+        promptText,
+        attachments
+      );
       if (!created) return false;
       setSelectedConversationId(created.id);
       void refreshConversationGroups();
@@ -366,6 +392,7 @@ export function AgentNewChatLanding() {
     },
     [
       createAndPromptConversation,
+      onInstantSubmit,
       createAndPromptStandaloneConversation,
       draftBackend,
       draftMode,

@@ -9,6 +9,7 @@ import {
   useState,
   useDeferredValue,
   useSyncExternalStore,
+  type CSSProperties,
   type MouseEvent,
 } from "react";
 import { Search } from "lucide-react";
@@ -2714,6 +2715,11 @@ const cancelPromptForDraft = useCallback(
         />
           {!composerHiddenForExpanded ? (
             <div className="pointer-events-none absolute inset-x-0 bottom-0 z-30">
+              <div
+                aria-hidden
+                className="chat-bottom-fade"
+                style={{ "--chat-fade-surface": "var(--bg-panel)" } as CSSProperties}
+              />
               <div className="pointer-events-auto chat-bottom-dock">
                 {recentChatsSection ? (
                   <div className="pt-[8px]">{recentChatsSection}</div>
