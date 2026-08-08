@@ -80,8 +80,13 @@ export type SubagentsV2RuntimeOptions = {
   appendEvents: AppendEvents;
   getParentHistory?: () => Promise<CesiumHistoryMessage[]>;
   isCancelled?: () => boolean;
-  /** Restricted tool surface (browser control) available to child agents. */
-  toolset?: CesiumSubagentToolset | null;
+  /**
+   * Codex parity: children get the same tool surface as the parent (workspace
+   * tools, browser tools, and the collaboration tools themselves). The factory
+   * receives the child's canonical path so collaboration calls are scoped to
+   * that caller (its own children, depth checks from its position).
+   */
+  toolsetForAgent?: (agentPath: string) => CesiumSubagentToolset | null;
 };
 
 function providerPart(modelId: string): string {
@@ -112,6 +117,19 @@ function joinAgentPath(parentPath: string, taskName: string): string {
   return `${base}/${taskName}`;
 }
 
+/** Spawn depth of a canonical path: /root = 0, /root/a = 1, /root/a/b = 2. */
+function spawnDepthOf(path: string): number {
+  const trimmed = path.replace(/^\/+|\/+$/g, "");
+  const segments = trimmed.split("/").filter(Boolean);
+  return Math.max(0, segments.length - 1);
+}
+
+/** Direct spawner path of a canonical agent path (/root/a/b → /root/a). */
+function parentPathOf(path: string): string {
+  const index = path.lastIndexOf("/");
+  return index > 0 ? path.slice(0, index) : "/root";
+}
+
 function statusKind(status: SubagentsV2AgentStatus): SubagentsV2StatusKind {
   return status.kind;
 }
@@ -135,6 +153,7 @@ export class SubagentsV2Runtime {
   private waiters = new Set<{
     resolve: (paths: string[]) => void;
     seenEpoch: number;
+    callerPath: string;
   }>();
   private readonly parentPath: string;
 
@@ -156,7 +175,7 @@ export class SubagentsV2Runtime {
       }));
   }
 
-  resolveAgent(target: string): SubagentsV2Agent {
+  resolveAgent(target: string, callerPath = this.parentPath): SubagentsV2Agent {
     const trimmed = target.trim();
     if (!trimmed) {
       throw new Error("Agent target is required.");
@@ -171,8 +190,8 @@ export class SubagentsV2Runtime {
       const agent = this.agents.get(byTask);
       if (agent) return agent;
     }
-    // Relative path under parent
-    const joined = joinAgentPath(this.parentPath, sanitizeTaskName(trimmed));
+    // Relative path under the caller
+    const joined = joinAgentPath(callerPath, sanitizeTaskName(trimmed));
     const relative = this.agents.get(joined);
     if (relative) return relative;
     const byId = [...this.agents.values()].find((agent) => agent.id === trimmed);
@@ -180,7 +199,25 @@ export class SubagentsV2Runtime {
     throw new Error(`Unknown agent target: ${trimmed}. Use list_agents to see live paths.`);
   }
 
-  async spawnAgent(args: Record<string, unknown>): Promise<string> {
+  /** History a spawned child forks from: root conversation or the caller's own transcript. */
+  private async historyForCaller(callerPath: string): Promise<CesiumHistoryMessage[]> {
+    if (callerPath === this.parentPath) {
+      return (await this.options.getParentHistory?.()) ?? [];
+    }
+    const caller = this.agents.get(callerPath);
+    if (!caller) return [];
+    const history: CesiumHistoryMessage[] = [...caller.forkHistory];
+    for (const event of caller.transcript) {
+      if (event.kind === "user_message" && typeof event.content === "string") {
+        history.push({ role: "user", content: event.content });
+      } else if (event.kind === "assistant_message_chunk" && typeof event.text === "string") {
+        history.push({ role: "assistant", content: event.text });
+      }
+    }
+    return history;
+  }
+
+  async spawnAgent(args: Record<string, unknown>, callerPath = this.parentPath): Promise<string> {
     const taskName = sanitizeTaskName(asString(args.task_name) ?? asString(args.taskName) ?? "");
     const message = asString(args.message)?.trim();
     if (!message) {
@@ -192,19 +229,29 @@ export class SubagentsV2Runtime {
         `Cannot spawn: max concurrent subagents (${this.options.limits.maxConcurrentSubagents}) reached. Interrupt or wait for agents to finish.`
       );
     }
-    const path = joinAgentPath(this.parentPath, taskName);
+    const path = joinAgentPath(callerPath, taskName);
+    const maxSpawnDepth = this.options.limits.maxSpawnDepth ?? 1;
+    if (spawnDepthOf(path) > maxSpawnDepth) {
+      // Codex parity: `agents.max_depth` is enforced at spawn time.
+      throw new Error(
+        `Cannot spawn ${path}: maximum agent spawn depth (${maxSpawnDepth}) exceeded. Complete the task yourself or report back to your parent agent.`
+      );
+    }
     if (this.agents.has(path)) {
       throw new Error(`Agent path ${path} already exists. Choose a different task_name or reuse via followup_task.`);
     }
 
-    const forkTurns = (asString(args.fork_turns) ?? asString(args.forkTurns) ?? "none").trim().toLowerCase();
+    // Codex parity: fork_turns defaults to "all" (full-history fork).
+    const forkTurns = (asString(args.fork_turns) ?? asString(args.forkTurns) ?? "all").trim().toLowerCase();
     let forkHistory: CesiumHistoryMessage[] = [];
     if (forkTurns === "all") {
-      forkHistory = (await this.options.getParentHistory?.()) ?? [];
+      forkHistory = await this.historyForCaller(callerPath);
     } else if (forkTurns !== "none" && /^\d+$/.test(forkTurns)) {
       const n = Number(forkTurns);
-      const history = (await this.options.getParentHistory?.()) ?? [];
+      const history = await this.historyForCaller(callerPath);
       forkHistory = history.slice(-Math.max(0, n));
+    } else if (forkTurns !== "none" && forkTurns !== "all") {
+      throw new Error('spawn_agent.fork_turns must be "none", "all", or a positive integer string.');
     }
 
     const modelId =
@@ -244,7 +291,7 @@ export class SubagentsV2Runtime {
     // until the child produces a status/mailbox update.
     agent.mailbox.push({
       id: randomUUID(),
-      from: this.parentPath,
+      from: callerPath,
       to: path,
       message,
       triggerTurn: true,
@@ -262,17 +309,17 @@ export class SubagentsV2Runtime {
     return JSON.stringify(result);
   }
 
-  async sendMessage(args: Record<string, unknown>): Promise<string> {
+  async sendMessage(args: Record<string, unknown>, callerPath = this.parentPath): Promise<string> {
     const target = asString(args.target);
     const message = asString(args.message)?.trim();
     if (!target) throw new Error("send_message.target is required.");
     if (!message) throw new Error("send_message.message is required.");
-    const agent = this.resolveAgent(target);
+    const agent = this.resolveAgent(target, callerPath);
     if (agent.status.kind === "shutdown") {
       throw new Error(`Agent ${agent.path} is shut down.`);
     }
     this.enqueueMessage({
-      from: this.parentPath,
+      from: callerPath,
       to: agent.path,
       message,
       triggerTurn: false,
@@ -285,12 +332,12 @@ export class SubagentsV2Runtime {
     });
   }
 
-  async followupTask(args: Record<string, unknown>): Promise<string> {
+  async followupTask(args: Record<string, unknown>, callerPath = this.parentPath): Promise<string> {
     const target = asString(args.target);
     const message = asString(args.message)?.trim();
     if (!target) throw new Error("followup_task.target is required.");
     if (!message) throw new Error("followup_task.message is required.");
-    const agent = this.resolveAgent(target);
+    const agent = this.resolveAgent(target, callerPath);
     if (agent.status.kind === "shutdown") {
       throw new Error(`Agent ${agent.path} is shut down.`);
     }
@@ -307,7 +354,7 @@ export class SubagentsV2Runtime {
     // Queue for the child without waking parent waiters (same as spawn).
     agent.mailbox.push({
       id: randomUUID(),
-      from: this.parentPath,
+      from: callerPath,
       to: agent.path,
       message,
       triggerTurn: true,
@@ -327,10 +374,10 @@ export class SubagentsV2Runtime {
     });
   }
 
-  async interruptAgent(args: Record<string, unknown>): Promise<string> {
+  async interruptAgent(args: Record<string, unknown>, callerPath = this.parentPath): Promise<string> {
     const target = asString(args.target);
     if (!target) throw new Error("interrupt_agent.target is required.");
-    const agent = this.resolveAgent(target);
+    const agent = this.resolveAgent(target, callerPath);
     if (agent.path === this.parentPath) {
       throw new Error("Cannot interrupt the root agent.");
     }
@@ -347,7 +394,7 @@ export class SubagentsV2Runtime {
     });
   }
 
-  async waitAgent(args: Record<string, unknown>): Promise<string> {
+  async waitAgent(args: Record<string, unknown>, callerPath = this.parentPath): Promise<string> {
     const rawTimeout =
       typeof args.timeout_ms === "number"
         ? args.timeout_ms
@@ -364,7 +411,7 @@ export class SubagentsV2Runtime {
     );
 
     // Immediate pending unread?
-    const pending = this.agentsWithUnread();
+    const pending = this.agentsWithUnread(callerPath);
     if (pending.length > 0) {
       for (const path of pending) {
         const agent = this.agents.get(path);
@@ -386,6 +433,7 @@ export class SubagentsV2Runtime {
           resolve(updated);
         },
         seenEpoch,
+        callerPath,
       };
       this.waiters.add(entry);
       const timer = setTimeout(() => {
@@ -428,12 +476,12 @@ export class SubagentsV2Runtime {
     return JSON.stringify(result);
   }
 
-  async readTranscript(args: Record<string, unknown>): Promise<string> {
+  async readTranscript(args: Record<string, unknown>, callerPath = this.parentPath): Promise<string> {
     const id = asString(args.subagentId) ?? asString(args.target);
     if (!id) throw new Error("read_subagent_transcript.subagentId is required.");
     let agent: SubagentsV2Agent;
     try {
-      agent = this.resolveAgent(id);
+      agent = this.resolveAgent(id, callerPath);
     } catch {
       return `No collaborative subagent transcript found for ${id}.`;
     }
@@ -469,9 +517,15 @@ export class SubagentsV2Runtime {
     }
   }
 
-  private agentsWithUnread(): string[] {
+  /**
+   * Agents with pending updates for a given waiter. Updates from an agent are
+   * addressed to its direct spawner, so each caller only wakes on activity
+   * from its own children (the root waits on /root/* children, a child at
+   * /root/a waits on /root/a/* grandchildren).
+   */
+  private agentsWithUnread(callerPath = this.parentPath): string[] {
     return [...this.agents.values()]
-      .filter((agent) => agent.unreadCount > 0)
+      .filter((agent) => agent.unreadCount > 0 && parentPathOf(agent.path) === callerPath)
       .map((agent) => agent.path);
   }
 
@@ -499,7 +553,10 @@ export class SubagentsV2Runtime {
   private notifyMailbox(paths: string[]): void {
     this.mailboxEpoch += 1;
     for (const waiter of [...this.waiters]) {
-      waiter.resolve(paths);
+      const relevant = paths.filter((path) => parentPathOf(path) === waiter.callerPath);
+      if (relevant.length > 0) {
+        waiter.resolve(relevant);
+      }
     }
   }
 
@@ -525,9 +582,21 @@ export class SubagentsV2Runtime {
   }
 
   private async runTurn(agent: SubagentsV2Agent): Promise<void> {
-    const pending = agent.mailbox.filter((entry) => !entry.consumed && entry.triggerTurn);
+    // Deliver queued mailbox content with Codex MultiAgentV2-style headers so
+    // children can distinguish tasks from context messages and see senders.
+    const pending = agent.mailbox.filter((entry) => !entry.consumed);
     const taskText =
-      pending.map((entry) => entry.message).join("\n\n") ||
+      pending
+        .map((entry) =>
+          [
+            `Message Type: ${entry.triggerTurn ? "NEW_TASK" : "MESSAGE"}`,
+            `Task name: ${entry.to}`,
+            `Sender: ${entry.from}`,
+            "Payload:",
+            entry.message,
+          ].join("\n")
+        )
+        .join("\n\n") ||
       agent.lastTaskMessage ||
       "Continue your assigned work.";
     for (const entry of pending) {
@@ -547,15 +616,19 @@ export class SubagentsV2Runtime {
         configuredApiKind:
           subagentProviderId === "openai" ? this.options.defaultApiKind : undefined,
       });
-      const toolset = this.options.toolset ?? null;
+      const toolset = this.options.toolsetForAgent?.(agent.path) ?? null;
       const toolGuidance = subagentToolsetGuidance(toolset);
+      const canSpawnChildren = toolset?.toolNames.has("spawn_agent") === true;
       const messages: CesiumHistoryMessage[] = [
         {
           role: "system",
           content:
             `${CESIUM_SYSTEM_PROMPT}\n\n` +
             `You are collaborative subagent ${agent.path} (${agent.title}). ` +
-            "Complete the assigned task. Do not spawn additional subagents. " +
+            "Complete the assigned task. " +
+            (canSpawnChildren
+              ? "You may spawn your own sub-agents with spawn_agent when parallel delegation genuinely helps, subject to the configured spawn depth limit. "
+              : "Do not spawn additional subagents. ") +
             "Reply with a clear final summary of findings or work completed." +
             (toolGuidance ? `\n\n${toolGuidance}` : ""),
         },

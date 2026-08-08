@@ -16,8 +16,21 @@ export const HARD_MAX_WAIT_AGENT_TIMEOUT_MS = 60 * 60 * 1000;
 /** Product default max for wait_agent (30 minutes). */
 export const DEFAULT_WAIT_AGENT_MAX_TIMEOUT_MS = 30 * 60 * 1000;
 export const DEFAULT_MAX_CONCURRENT_SUBAGENTS = 8;
+/**
+ * Codex `agents.max_depth` parity: root is depth 0, children are depth 1, and
+ * spawning past the limit fails. Default 1 = only the root agent may spawn.
+ */
+export const DEFAULT_SUBAGENTS_MAX_SPAWN_DEPTH = 1;
+export const HARD_MAX_SUBAGENTS_SPAWN_DEPTH = 4;
 
 export const DEFAULT_SUBAGENTS_VERSION: CesiumSubagentsVersion = 1;
+
+function envInt(name: string): number | undefined {
+  const raw = process.env[name]?.trim();
+  if (!raw) return undefined;
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
 
 export function defaultHarnessLimits(): CesiumHarnessLimits {
   return {
@@ -25,7 +38,18 @@ export function defaultHarnessLimits(): CesiumHarnessLimits {
     waitAgentDefaultTimeoutMs: DEFAULT_WAIT_AGENT_DEFAULT_TIMEOUT_MS,
     waitAgentMinTimeoutMs: DEFAULT_WAIT_AGENT_MIN_TIMEOUT_MS,
     waitAgentMaxTimeoutMs: DEFAULT_WAIT_AGENT_MAX_TIMEOUT_MS,
-    maxConcurrentSubagents: DEFAULT_MAX_CONCURRENT_SUBAGENTS,
+    // Env overrides mirror how Codex takes these from config.toml; stored
+    // harness Settings still win when explicitly set.
+    maxConcurrentSubagents: clampInt(
+      envInt("OPENCURSOR_SUBAGENTS_MAX_CONCURRENT") ?? DEFAULT_MAX_CONCURRENT_SUBAGENTS,
+      1,
+      64
+    ),
+    maxSpawnDepth: clampInt(
+      envInt("OPENCURSOR_SUBAGENTS_MAX_DEPTH") ?? DEFAULT_SUBAGENTS_MAX_SPAWN_DEPTH,
+      1,
+      HARD_MAX_SUBAGENTS_SPAWN_DEPTH
+    ),
   };
 }
 
@@ -107,6 +131,11 @@ export function normalizeHarnessLimits(raw: unknown): CesiumHarnessLimits {
       1,
       64
     ),
+    maxSpawnDepth: clampInt(
+      asNumber(record.maxSpawnDepth) ?? defaults.maxSpawnDepth,
+      1,
+      HARD_MAX_SUBAGENTS_SPAWN_DEPTH
+    ),
   };
 }
 
@@ -163,7 +192,11 @@ export function mergeHarnessSettings(
   });
 }
 
-/** Resolve and validate a wait_agent timeout against configured limits. */
+/**
+ * Resolve and validate a wait_agent timeout against configured limits.
+ * Codex MultiAgentV2 parity: values below the minimum are clamped up to it,
+ * while values above the maximum are rejected.
+ */
 export function resolveWaitAgentTimeoutMs(
   requested: number | undefined,
   limits: CesiumHarnessLimits
@@ -172,15 +205,10 @@ export function resolveWaitAgentTimeoutMs(
     return limits.waitAgentDefaultTimeoutMs;
   }
   const ms = Math.floor(requested);
-  if (ms < limits.waitAgentMinTimeoutMs) {
-    throw new Error(
-      `wait_agent.timeout_ms must be at least ${limits.waitAgentMinTimeoutMs} (configured minimum).`
-    );
-  }
   if (ms > limits.waitAgentMaxTimeoutMs) {
     throw new Error(
       `wait_agent.timeout_ms must be at most ${limits.waitAgentMaxTimeoutMs} (configured maximum, default 30 minutes).`
     );
   }
-  return ms;
+  return Math.max(ms, limits.waitAgentMinTimeoutMs);
 }

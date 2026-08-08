@@ -41,7 +41,7 @@ import {
 } from "../mcp/connection-manager.js";
 import { getMcpCatalogRevision, getMcpServer, getMcpSummariesForPrompt } from "../mcp/server-store.js";
 import { resolveAgentPluginAttachments } from "../plugins/attachments.js";
-import { BROWSER_MCP_SERVER_ID } from "../mcp/builtin-browser-tools.js";
+import { BROWSER_MCP_SERVER_ID, callBuiltInBrowserTool } from "../mcp/builtin-browser-tools.js";
 import { generateTranscriptFromEvents } from "./event-log-read.js";
 import { asNumber } from "./json-coerce.js";
 import { readConversationEvents } from "./session-store.js";
@@ -178,12 +178,15 @@ import {
   harnessFeatureReminder,
   isSubagentsV2ToolName,
   SubagentsV2Runtime,
+  type CesiumToolDefinition,
   type ResolvedCesiumHarness,
 } from "./cesium/features/index.js";
 import {
-  createBrowserSubagentToolset,
+  createSubagentToolset,
   runSubagentToolLoop,
+  subagentToolDefinitions,
   subagentToolsetGuidance,
+  type CesiumSubagentToolset,
 } from "./cesium/subagent-toolset.js";
 import {
   cesiumEnvironmentChangeNotice,
@@ -1417,13 +1420,129 @@ class CesiumSessionHandle implements AgentSessionHandle {
           );
         },
         isCancelled: () => this.cancelled || this.disposed,
-        toolset: createBrowserSubagentToolset({
-          id: this.callbacks.workspace.id,
-          root: this.callbacks.workspace.root,
-        }),
+        toolsetForAgent: (agentPath) => this.buildSubagentToolset(agentPath),
       });
     }
     return this.subagentsV2;
+  }
+
+  /**
+   * Tool surface for spawned subagents. Codex MultiAgentV2 parity: children
+   * share the parent's workspace tools (files, terminal, MCP, browser) and —
+   * for V2 collaborative children — the collaboration tools themselves, with
+   * spawn depth enforced by the runtime. Every gated call flows through the
+   * same mode policy and permission cascade as the parent agent.
+   *
+   * `agentPath` is the child's canonical path for V2 children, or null for
+   * the legacy single-shot `subagent` tool (no collaboration surface).
+   */
+  private buildSubagentToolset(agentPath: string | null): CesiumSubagentToolset {
+    const includeCollaboration = agentPath != null && this.harness.subagentsVersion === 2;
+    const definitions = subagentToolDefinitions({
+      hostTools: this.harness.tools,
+      includeCollaboration,
+    });
+    return createSubagentToolset({
+      definitions,
+      execute: (name, args) => this.executeSubagentTool(agentPath, name, args, definitions),
+    });
+  }
+
+  private async executeSubagentTool(
+    agentPath: string | null,
+    name: string,
+    args: Record<string, unknown>,
+    definitions: CesiumToolDefinition[]
+  ): Promise<string> {
+    const callerPath = agentPath ?? "/root (ephemeral subagent)";
+    const isBrowserTool = name.startsWith("browser_");
+    // Direct browser tools are policy/permission-equivalent to calling the
+    // built-in browser MCP server through call_mcp_tool.
+    const policyToolName = isBrowserTool ? "call_mcp_tool" : name;
+    const policy = resolveCesiumModeToolPolicy({
+      mode: this.currentMode(),
+      toolName: policyToolName,
+    });
+    if (!policy.allowed) {
+      throw new Error(policy.reason ?? `Tool ${name} is blocked in the active mode.`);
+    }
+    const permissionCategory = isBrowserTool
+      ? resolveCesiumToolPermissionCategory(this.harness.tools, "call_mcp_tool")
+      : resolveCesiumToolPermissionCategory(definitions, name);
+    if (permissionCategory) {
+      const permissionArgs = isBrowserTool
+        ? { serverId: BROWSER_MCP_SERVER_ID, toolName: name, arguments: args }
+        : permissionCategory === "mcpCall"
+          ? (() => {
+              const normalized = normalizeCallMcpToolArgs(args);
+              return {
+                serverId: normalized.serverId,
+                toolName: normalized.toolName,
+                arguments: normalized.arguments,
+              };
+            })()
+          : args;
+      const title = `Subagent ${callerPath} · ${toolTitle(
+        isBrowserTool ? "call_mcp_tool" : name,
+        isBrowserTool ? { serverId: BROWSER_MCP_SERVER_ID, toolName: name } : args
+      )}`;
+      await this.requirePermission({
+        toolCallId: randomUUID(),
+        title,
+        detail: this.buildPermissionDetail(permissionCategory, permissionArgs),
+        permission: permissionCategory,
+        toolKey: cesiumPermissionToolKey(permissionCategory, permissionArgs),
+        toolLabel: title,
+      });
+    }
+    if (isBrowserTool) {
+      return await callBuiltInBrowserTool({
+        workspaceId: this.callbacks.workspace.id,
+        workspaceRoot: this.callbacks.workspace.root,
+        toolName: name,
+        arguments: args,
+      });
+    }
+    switch (name) {
+      case "read_file":
+        return await this.toolReadFile(args);
+      case "grep":
+        return await this.toolGrep(args);
+      case "write_file":
+        return await this.toolWriteFile(args, randomUUID());
+      case "edit_file":
+        return await this.toolEditFile(args, randomUUID(), toolTitle(name, args));
+      case "terminal":
+        return await this.toolTerminal(args);
+      case "wait":
+        return await this.toolWait(args);
+      case "call_mcp_tool":
+        return await this.toolCallMcp(args, randomUUID(), toolTitle(name, args));
+      default:
+        break;
+    }
+    if (agentPath != null && this.harness.subagentsVersion === 2) {
+      const runtime = this.ensureSubagentsV2();
+      switch (name) {
+        case "spawn_agent":
+          return await runtime.spawnAgent(args, agentPath);
+        case "send_message":
+          return await runtime.sendMessage(args, agentPath);
+        case "followup_task":
+          return await runtime.followupTask(args, agentPath);
+        case "wait_agent":
+          return await runtime.waitAgent(args, agentPath);
+        case "interrupt_agent":
+          return await runtime.interruptAgent(args, agentPath);
+        case "list_agents":
+          return JSON.stringify(runtime.listAgents(asString(args.path_prefix)));
+        case "read_subagent_transcript":
+          return await runtime.readTranscript(args, agentPath);
+        default:
+          break;
+      }
+    }
+    throw new Error(`Tool ${name} is not available to subagents.`);
   }
 
   private async executeSubagentsV2Tool(
@@ -3862,10 +3981,7 @@ class CesiumSessionHandle implements AgentSessionHandle {
             ? (optionValue(this.configOptions, "api_kind", "openai-responses") as CesiumProviderKind)
             : undefined,
       });
-      const toolset = createBrowserSubagentToolset({
-        id: this.callbacks.workspace.id,
-        root: this.callbacks.workspace.root,
-      });
+      const toolset = this.buildSubagentToolset(null);
       const toolGuidance = subagentToolsetGuidance(toolset);
       const result = await runSubagentToolLoop({
         adapter: {
