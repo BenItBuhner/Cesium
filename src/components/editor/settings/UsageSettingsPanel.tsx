@@ -117,6 +117,7 @@ function buildDaySeries(
         requests: 0,
       }
     );
+    cursor.setDate(cursor.getDate() + 1);
   }
   return out;
 }
