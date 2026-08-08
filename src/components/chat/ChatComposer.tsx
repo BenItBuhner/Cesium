@@ -604,6 +604,13 @@ interface ChatComposerProps {
   contextUsageRefreshGeneration?: number;
   /** Show repo/branch/context footer below the composer card. */
   showStatusBar?: boolean;
+  /**
+   * True while the host renders a docked card (completion error, ask question,
+   * queued prompts, plan review) flush above the composer shell. Those cards
+   * use an open-bottom frame that must touch the composer, so the action pill
+   * row yields to them instead of wedging into the gap.
+   */
+  dockedCardVisible?: boolean;
 }
 
 function resolvePointerSelection(
@@ -999,6 +1006,7 @@ export function ChatComposer({
   conversationId = null,
   contextUsageRefreshGeneration,
   showStatusBar = true,
+  dockedCardVisible = false,
 }: ChatComposerProps) {
   const { fileTree, gitStatus, workspaceSession } = useWorkspace();
   const { settings } = useGlobalSettings();
@@ -3004,7 +3012,7 @@ const handleNativeComposerKeyDown = useCallback(
       shellInsetClass={shellMx}
     />
   ) : null;
-  const actionPillsEl = statusBarMounted ? (
+  const actionPillsEl = statusBarMounted && !dockedCardVisible ? (
     <ComposerActionPills
       conversationId={conversationId}
       conversationStatus={conversationStatus}

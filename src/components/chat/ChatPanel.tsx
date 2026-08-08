@@ -2533,6 +2533,11 @@ const cancelPromptForDraft = useCallback(
           : undefined
       }
       layout={isEmptyThread ? "empty-top" : "docked-bottom"}
+      dockedCardVisible={
+        dockedAsk != null ||
+        activeQueuedPrompts.length > 0 ||
+        completionErrorDock.visible
+      }
       contextUsageRefreshGeneration={contextUsageRefreshGeneration}
       draftAttachments={composerDraftAttachments}
       onDraftAttachmentsChange={(next) =>
