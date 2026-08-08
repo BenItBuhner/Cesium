@@ -1094,8 +1094,18 @@ export function AgentCenterPane() {
     };
   }, [optimisticEvents, optimisticTurn, workspaceInfo?.root]);
 
+  // While the optimistic turn is live, the real view must not take over until
+  // its projected messages exist: `threadMessages` derives from
+  // `useDeferredValue(rawThreadEvents)`, which can lag a few frames behind the
+  // snapshot merge on slower devices — swapping onto an empty projection would
+  // blank the just-sent message before popping it back in.
+  const realConversationViewReady =
+    !!selectedConversationId &&
+    !!conversation &&
+    hasConversationHistoryLoaded &&
+    (!optimisticTurn || scrollMessages.length > 0);
   const visibleConversationView =
-    selectedConversationId && conversation && hasConversationHistoryLoaded
+    realConversationViewReady && selectedConversationId && conversation
       ? {
           conversationId: selectedConversationId,
           messages: scrollMessages,
@@ -1119,15 +1129,26 @@ export function AgentCenterPane() {
   }, [optimisticTurn]);
 
   // Retire the optimistic view once the real conversation is selected, loaded,
-  // and rendering the same turn.
+  // and actually rendering the same turn (non-empty projection).
   useEffect(() => {
     if (!optimisticTurn) {
       return;
     }
-    if (selectedConversationId && conversation && hasConversationHistoryLoaded) {
+    if (
+      selectedConversationId &&
+      conversation &&
+      hasConversationHistoryLoaded &&
+      scrollMessages.length > 0
+    ) {
       setOptimisticTurn(null);
     }
-  }, [conversation, hasConversationHistoryLoaded, optimisticTurn, selectedConversationId]);
+  }, [
+    conversation,
+    hasConversationHistoryLoaded,
+    optimisticTurn,
+    scrollMessages.length,
+    selectedConversationId,
+  ]);
   const emptyState = (
     <div className="absolute inset-0 flex items-center justify-center px-[14px] pb-[220px] sm:px-[20px] max-[480px]:px-0 max-[480px]:pl-[max(0px,env(safe-area-inset-left,0px))] max-[480px]:pr-[max(0px,env(safe-area-inset-right,0px))]">
       <div className={`${AGENT_CENTER_CONTENT_CLASS} text-center`}>
