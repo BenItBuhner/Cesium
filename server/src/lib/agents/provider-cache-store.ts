@@ -1,6 +1,4 @@
-import { promises as fs } from "node:fs";
 import { execFile } from "node:child_process";
-import os from "node:os";
 import path from "node:path";
 import { readJsonFile } from "../persistence.js";
 import { getStorage } from "../../storage/runtime.js";
@@ -18,6 +16,13 @@ import {
   isPiAgentPlaceholderModelCatalog,
 } from "../pi-agent-model-catalog.js";
 import { spawnSafeEnv } from "./spawn-env.js";
+import { harnessLog } from "./harness-diagnostics.js";
+import {
+  buildHarnessInvocation,
+  detectHarnessCli,
+  harnessHomeDirCandidates,
+  refreshHarnessCliDetection,
+} from "./harness-runtime.js";
 import { CodexAppServerTransport } from "./codex-app-server-transport.js";
 import { OpenCodeServerClient, openCodeServerAuthFromEnv } from "./opencode-server-client.js";
 import { OpenCodeV2Client, openCodeV2AuthFromEnv } from "./opencode-v2-client.js";
@@ -70,142 +75,18 @@ async function execFileText(
   });
 }
 
-function resolveCursorCliInvocation(inputCommand?: string): CommandInvocation {
-  const explicitCommand = inputCommand?.trim() || process.env.OPENCURSOR_CURSOR_CLI_BIN?.trim();
-  if (explicitCommand) {
-    return { command: explicitCommand, args: ["--list-models"] };
-  }
-  if (process.platform !== "win32") {
-    return { command: "agent", args: ["--list-models"] };
-  }
-
-  const localAppData = process.env.LOCALAPPDATA?.trim();
-  const systemRoot = process.env.SystemRoot?.trim() || "C:\\Windows";
-  if (localAppData) {
-    const cursorAgentScript = path.join(localAppData, "cursor-agent", "agent.ps1");
-    return {
-      command: path.join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe"),
-      args: [
-        "-NoProfile",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-File",
-        cursorAgentScript,
-        "--list-models",
-      ],
-    };
-  }
-  return { command: "agent", args: ["--list-models"] };
-}
-
-function formatCursorCliModelDisplayName(value: string, cliParsedName: string): string {
-  const name = cliParsedName.trim();
-  const v = value.trim();
-  if (name.length > 0 && name !== v && (/[A-Z]/.test(name) || name.includes(" "))) {
-    return name;
-  }
-  return v
-    .split("/")
-    .map((segment) =>
-      segment
-        .replace(/[._-]+/g, " ")
-        .split(/\s+/)
-        .filter(Boolean)
-        .map((word) => {
-          const lower = word.toLowerCase();
-          if (lower === "gpt") return "GPT";
-          if (lower === "api") return "API";
-          if (/^o\d+/i.test(word)) return word.toUpperCase();
-          if (/^\d+(\.\d+)?$/.test(word)) return word;
-          if (word.length <= 4 && word === word.toUpperCase()) return word;
-          return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
-        })
-        .join(" ")
-    )
-    .join(" · ");
-}
-
-/**
- * The modern Cursor CLI (`agent --list-models`) emits one fully baked variant per
- * line — `gpt-5.4-xhigh-fast - GPT-5.4 Extra High Fast  (current)`. Each effort /
- * context / fast / thinking combination is a standalone model id, so there is no
- * cross-product to do on our side: we surface exactly what the CLI gives us and
- * let the user pick a concrete variant row. The old bracketed format (with per-
- * model knob metadata + a synthetic reasoning-effort dropdown) would double-
- * explode these rows and is no longer in use.
- */
-export async function createCursorCliConfigOptions(input?: {
-  command?: string;
-  env?: NodeJS.ProcessEnv;
-  cwd?: string;
-}): Promise<AgentConfigOption[]> {
-  const invocation = resolveCursorCliInvocation(input?.command);
-  const raw = await execFileText(invocation.command, invocation.args, {
-    cwd: input?.cwd,
-    env: input?.env,
-  }).catch(() => "");
-  const cleaned = stripAnsi(raw);
-  const options: AgentConfigOption["options"] = [];
-  let currentValue: string | null = null;
-  let defaultValue: string | null = null;
-
-  for (const line of cleaned.split("\n")) {
-    const trimmed = line.trim();
-    if (!trimmed || /^tip:/i.test(trimmed) || /^available models$/i.test(trimmed)) {
-      continue;
-    }
-    const match = /^(\S+)\s+-\s+(.+?)(?:\s{2,}\(([^)]+)\))?$/.exec(trimmed);
-    if (!match) {
-      continue;
-    }
-    const value = (match[1] ?? "").trim();
-    const name = (match[2] ?? "").trim();
-    const flags = (match[3] ?? "").toLowerCase();
-    if (!value || !name) {
-      continue;
-    }
-    if (flags.includes("current")) {
-      currentValue = value;
-    } else if (flags.includes("default") && !defaultValue) {
-      defaultValue = value;
-    }
-    options.push({
-      value,
-      name: formatCursorCliModelDisplayName(value, name),
-    });
-  }
-
-  if (options.length === 0) {
-    return [];
-  }
-
-  const resolvedCurrent =
-    currentValue ??
-    defaultValue ??
-    options.find((o) => o.value === "auto")?.value ??
-    options[0]?.value ??
-    "auto";
-
-  return [
-    {
-      id: "mode",
-      name: "Mode",
-      category: "mode",
-      currentValue: "agent",
-      options: [
-        { value: "agent", name: "Agent" },
-        { value: "plan", name: "Plan" },
-        { value: "ask", name: "Ask" },
-      ],
-    },
-    {
-      id: "model",
-      name: "Model",
-      category: "model",
-      currentValue: resolvedCurrent,
-      options,
-    },
-  ];
+/** Logs a model-discovery probe failure so empty catalogs are explainable. */
+function logSeedProbeFailure(
+  backendId: AgentBackendId,
+  detail: string,
+  error: unknown
+): void {
+  harnessLog({
+    level: "warning",
+    backendId,
+    event: "models.seed_probe_failed",
+    detail: `${detail}: ${error instanceof Error ? error.message : String(error)}`,
+  });
 }
 
 async function createOpenCodeCliConfigOptions(input?: {
@@ -213,12 +94,21 @@ async function createOpenCodeCliConfigOptions(input?: {
   env?: NodeJS.ProcessEnv;
   cwd?: string;
 }): Promise<AgentConfigOption[]> {
-  const command =
-    input?.command ?? process.env.OPENCURSOR_OPENCODE_ACP_BIN ?? "opencode";
-  const raw = await execFileText(command, ["models", "--verbose"], {
+  const invocation = input?.command
+    ? { command: input.command, args: ["models", "--verbose"] }
+    : (() => {
+        const resolved = buildHarnessInvocation("opencode", ["models", "--verbose"]);
+        return resolved
+          ? { command: resolved.command, args: resolved.args }
+          : { command: "opencode", args: ["models", "--verbose"] };
+      })();
+  const raw = await execFileText(invocation.command, invocation.args, {
     cwd: input?.cwd,
     env: input?.env,
-  }).catch(() => "");
+  }).catch((error) => {
+    logSeedProbeFailure("opencode-server", "opencode models --verbose failed", error);
+    return "";
+  });
   const lines = raw.split("\n");
   const options: AgentConfigOption["options"] = [];
   const formatProviderName = (value: string) => {
@@ -435,22 +325,53 @@ async function createOpenCodeServerConfigOptions(): Promise<AgentConfigOption[]>
 
 async function createOpenCodeV2ConfigOptions(): Promise<AgentConfigOption[]> {
   const baseUrl = process.env.OPENCURSOR_OPENCODE_V2_SERVER_URL?.trim();
-  if (!baseUrl) {
+  const directory = process.env.WORKSPACE_ROOT?.trim() || process.cwd();
+  if (baseUrl) {
+    try {
+      const client = new OpenCodeV2Client({
+        baseUrl,
+        ...openCodeV2AuthFromEnv(),
+        timeoutMs: 10_000,
+      });
+      const [agents, models] = await Promise.all([
+        client.listAgents(directory),
+        client.listModels(directory),
+      ]);
+      return buildOpenCodeV2ConfigOptions({ agents, models });
+    } catch (error) {
+      logSeedProbeFailure(
+        "opencode-v2-beta",
+        `OpenCode v2 model discovery failed against ${baseUrl}`,
+        error
+      );
+      return [];
+    }
+  }
+
+  // No external server configured: when the opencode2 binary is installed,
+  // discover through a short-lived managed serve so the catalog is real
+  // instead of empty until the first chat.
+  if (!detectHarnessCli("opencode-v2")) {
     return [];
   }
-  const directory = process.env.WORKSPACE_ROOT?.trim() || process.cwd();
   try {
-    const client = new OpenCodeV2Client({
-      baseUrl,
-      ...openCodeV2AuthFromEnv(),
-      timeoutMs: 10_000,
-    });
-    const [agents, models] = await Promise.all([
-      client.listAgents(directory),
-      client.listModels(directory),
-    ]);
-    return buildOpenCodeV2ConfigOptions({ agents, models });
-  } catch {
+    const { connectOpenCodeV2 } = await import("./opencode-v2-process.js");
+    const connection = await connectOpenCodeV2({ workspaceRoot: directory });
+    try {
+      const [agents, models] = await Promise.all([
+        connection.client.listAgents(directory),
+        connection.client.listModels(directory),
+      ]);
+      return buildOpenCodeV2ConfigOptions({ agents, models });
+    } finally {
+      await connection.dispose();
+    }
+  } catch (error) {
+    logSeedProbeFailure(
+      "opencode-v2-beta",
+      "OpenCode v2 managed-server model discovery failed",
+      error
+    );
     return [];
   }
 }
@@ -512,23 +433,6 @@ function formatGrokBuildModelName(modelId: string): string {
   return modelId;
 }
 
-async function resolveGrokBuildCommand(): Promise<string> {
-  const configured =
-    process.env.OPENCURSOR_GROK_BUILD_BIN?.trim() ||
-    process.env.OPENCURSOR_GROK_BIN?.trim();
-  if (configured) {
-    return configured;
-  }
-  const binaryName = process.platform === "win32" ? "grok.exe" : "grok";
-  const installed = path.join(os.homedir(), ".grok", "bin", binaryName);
-  try {
-    await fs.access(installed);
-    return installed;
-  } catch {
-    return "grok";
-  }
-}
-
 /**
  * Grok exposes a credential-independent model catalog through `grok models`.
  * Live ACP session metadata supersedes this seed after authentication.
@@ -538,11 +442,21 @@ export async function createGrokBuildConfigOptions(input?: {
   env?: NodeJS.ProcessEnv;
   cwd?: string;
 }): Promise<AgentConfigOption[]> {
-  const command = input?.command?.trim() || (await resolveGrokBuildCommand());
-  const raw = await execFileText(command, ["models"], {
+  const invocation = input?.command?.trim()
+    ? { command: input.command.trim(), args: ["models"] }
+    : (() => {
+        const resolved = buildHarnessInvocation("grok", ["models"]);
+        return resolved
+          ? { command: resolved.command, args: resolved.args }
+          : { command: "grok", args: ["models"] };
+      })();
+  const raw = await execFileText(invocation.command, invocation.args, {
     cwd: input?.cwd,
     env: input?.env,
-  }).catch(() => "");
+  }).catch((error) => {
+    logSeedProbeFailure("grok-build", "grok models probe failed", error);
+    return "";
+  });
   const cleaned = stripAnsi(raw);
   const defaultModel =
     cleaned.match(/^\s*Default model:\s*(\S+)\s*$/im)?.[1]?.trim() || "grok-4.5";
@@ -734,44 +648,20 @@ function codexAppServerOptionsFromModels(
   return baseOptions;
 }
 
-async function resolveCodexAppServerCommand(): Promise<string> {
-  const configured = process.env.OPENCURSOR_CODEX_BIN?.trim();
-  if (configured) {
-    return configured;
-  }
-  if (process.platform === "win32" && process.env.APPDATA?.trim()) {
-    const npmShim = path.join(process.env.APPDATA, "npm", "codex.cmd");
-    const pathMatches = await execFileText("where.exe", ["codex.cmd"])
-      .then((raw) =>
-        raw
-          .split(/\r?\n/)
-          .map((line) => line.trim())
-          .filter(Boolean)
-      )
-      .catch(() => []);
-    const normalizedNpmShim = path.normalize(npmShim).toLowerCase();
-    const pathShim = pathMatches.find(
-      (match) => path.normalize(match).toLowerCase() !== normalizedNpmShim
-    );
-    if (pathShim) {
-      return pathShim;
-    }
-    try {
-      await fs.access(npmShim);
-      return npmShim;
-    } catch {
-      // Fall through to PATH resolution by child_process.
-    }
-  }
-  return "codex";
+function resolveCodexAppServerInvocation(): CommandInvocation {
+  const resolved = buildHarnessInvocation("codex", ["app-server"]);
+  return resolved
+    ? { command: resolved.command, args: resolved.args }
+    : { command: "codex", args: ["app-server"] };
 }
 
 async function createCodexAppServerConfigOptions(): Promise<AgentConfigOption[]> {
   let transport: CodexAppServerTransport | null = null;
   try {
+    const invocation = resolveCodexAppServerInvocation();
     transport = new CodexAppServerTransport({
-      command: await resolveCodexAppServerCommand(),
-      args: ["app-server"],
+      command: invocation.command,
+      args: invocation.args,
       cwd: process.cwd(),
       processName: "Cesium Agent - Codex Model Discovery",
     });
@@ -797,7 +687,12 @@ async function createCodexAppServerConfigOptions(): Promise<AgentConfigOption[]>
       cursor = result.nextCursor;
     } while (cursor);
     return codexAppServerOptionsFromModels(models);
-  } catch {
+  } catch (error) {
+    logSeedProbeFailure(
+      "codex-app-server",
+      "codex app-server model/list probe failed (fallback catalog)",
+      error
+    );
     return createCodexAppServerFallbackConfigOptions();
   } finally {
     transport?.dispose();
@@ -1356,8 +1251,18 @@ async function createPiAgentConfigOptions(): Promise<AgentConfigOption[]> {
 }
 
 async function createGoogleAntigravityCliConfigOptions(): Promise<AgentConfigOption[]> {
-  const settingsPath = path.join(os.homedir(), ".gemini", "antigravity-cli", "settings.json");
-  const settings = await readJsonFile<Record<string, unknown> | null>(settingsPath, null).catch(() => null);
+  // Settings can live under an overridden or conventional home (packaged
+  // launches rewrite HOME), so every home candidate is checked.
+  let settings: Record<string, unknown> | null = null;
+  for (const home of harnessHomeDirCandidates()) {
+    const settingsPath = path.join(home, ".gemini", "antigravity-cli", "settings.json");
+    settings = await readJsonFile<Record<string, unknown> | null>(settingsPath, null).catch(
+      () => null
+    );
+    if (settings) {
+      break;
+    }
+  }
   const configuredModel = typeof settings?.model === "string" && settings.model.trim()
     ? settings.model.trim()
     : "auto";
@@ -1574,6 +1479,9 @@ export type ForceRefreshResult = {
 export async function forceRefreshAllBackendCaches(
   backendIds: AgentBackendId[]
 ): Promise<ForceRefreshResult> {
+  // A user-triggered refresh should also notice CLIs installed since the last
+  // detection pass, so the discovery cache is dropped up front.
+  refreshHarnessCliDetection();
   const byBackend: Record<string, AgentConfigOption[]> = {};
   const timedOut: AgentBackendId[] = [];
   const failed: AgentBackendId[] = [];

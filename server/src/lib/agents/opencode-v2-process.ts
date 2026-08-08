@@ -1,9 +1,8 @@
 import { randomBytes } from "node:crypto";
 import { spawn, type ChildProcess } from "node:child_process";
-import { existsSync } from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { getOpenCodeAcpListenPort, openCodeAcpInternalBaseUrl } from "./opencode-acp-port.js";
+import { buildCliInvocation, detectHarnessCli } from "./harness-runtime.js";
 import { spawnSafeEnv } from "./spawn-env.js";
 import {
   OpenCodeV2Client,
@@ -25,96 +24,9 @@ type ManagedServerPoolRow = {
 
 const managedServerPool = new Map<string, ManagedServerPoolRow>();
 
+/** Central detection (env override → PATH → `~/.opencode/bin` → common bins). */
 export function resolveOpenCodeV2CommandPath(): string | null {
-  const configured =
-    process.env.OPENCURSOR_OPENCODE_V2_SERVER_BIN?.trim() ||
-    process.env.OPENCURSOR_OPENCODE_V2_BIN?.trim();
-  if (configured) {
-    if (
-      configured.includes("/") ||
-      configured.includes("\\") ||
-      /^[a-zA-Z]:/.test(configured)
-    ) {
-      return existsSync(configured) ? configured : null;
-    }
-  }
-  const names =
-    process.platform === "win32"
-      ? [
-          configured,
-          "opencode2.exe",
-          "opencode2.cmd",
-          "opencode2.bat",
-          "opencode2.ps1",
-          "opencode2",
-        ]
-      : [configured, "opencode2"];
-  for (const directory of (process.env.PATH ?? "").split(path.delimiter).filter(Boolean)) {
-    for (const name of names) {
-      if (!name) continue;
-      const candidate = path.join(directory, name);
-      if (existsSync(candidate)) return candidate;
-    }
-  }
-  const homeCandidates = [
-    process.env.OPENCURSOR_REAL_HOME?.trim(),
-    process.env.USER?.trim() ? `/home/${process.env.USER.trim()}` : undefined,
-    os.homedir(),
-  ].filter((value): value is string => Boolean(value));
-  for (const home of homeCandidates) {
-    for (const name of names) {
-      if (!name) continue;
-      const candidate = path.join(home, ".opencode", "bin", name);
-      if (existsSync(candidate)) return candidate;
-    }
-  }
-  if (process.platform === "win32" && process.env.APPDATA?.trim()) {
-    const npmShim = path.join(process.env.APPDATA, "npm", "opencode2.cmd");
-    if (existsSync(npmShim)) return npmShim;
-  }
-  return null;
-}
-
-function quoteWindowsArg(value: string): string {
-  return /[\s"]/u.test(value) ? `"${value.replace(/"/g, '\\"')}"` : value;
-}
-
-function spawnCommand(
-  command: string,
-  args: string[]
-): { command: string; args: string[]; direct: boolean } {
-  const extension = path.extname(command).toLowerCase();
-  if (process.platform === "win32" && (extension === ".cmd" || extension === ".bat")) {
-    const comspec =
-      process.env.ComSpec ??
-      path.join(
-        process.env.SystemRoot ?? "C:\\Windows",
-        "System32",
-        "cmd.exe"
-      );
-    return {
-      command: comspec,
-      args: ["/d", "/s", "/c", [command, ...args].map(quoteWindowsArg).join(" ")],
-      direct: false,
-    };
-  }
-  if (process.platform === "win32" && extension === ".ps1") {
-    const powershell =
-      process.env.PWSH ??
-      path.join(
-        process.env.SystemRoot ?? "C:\\Windows",
-        "System32",
-        "WindowsPowerShell",
-        "v1.0",
-        "powershell.exe"
-      );
-    return {
-      command: powershell,
-      args: ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", command, ...args],
-      direct: false,
-    };
-  }
-  return { command, args, direct: true };
+  return detectHarnessCli("opencode-v2")?.executablePath ?? null;
 }
 
 async function waitForHealth(client: OpenCodeV2Client): Promise<void> {
@@ -200,7 +112,7 @@ export async function connectOpenCodeV2(input: {
   const baseUrl = openCodeAcpInternalBaseUrl(port);
   const password = randomBytes(32).toString("base64url");
   const executable = resolveOpenCodeV2CommandPath() ?? "opencode2";
-  const invocation = spawnCommand(executable, [
+  const invocation = buildCliInvocation(executable, [
     "serve",
     "--stdio",
     "--hostname",
@@ -208,6 +120,7 @@ export async function connectOpenCodeV2(input: {
     "--port",
     String(port),
   ]);
+  const directInvocation = invocation.command === executable;
   const configuredDirectory = process.env.OPENCURSOR_OPENCODE_V2_CONFIG_DIR?.trim();
   const child = spawn(
     invocation.command,
@@ -222,7 +135,7 @@ export async function connectOpenCodeV2(input: {
       }),
       stdio: ["pipe", "pipe", "pipe"],
       windowsHide: true,
-      ...(invocation.direct
+      ...(directInvocation
         ? { argv0: `Cesium Agent - OpenCode v2 Beta :${port}` }
         : {}),
     }
