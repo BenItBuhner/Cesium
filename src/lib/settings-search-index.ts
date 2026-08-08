@@ -38,6 +38,7 @@ const NAV_LABELS: Record<string, string> = {
   agents: "Agents",
   cloudAgents: "Cloud Agents",
   models: "Models",
+  usage: "Usage",
   plugins: "Plugins",
   extensions: "Extensions",
   servers: "Servers",
@@ -291,6 +292,49 @@ const STATIC_SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
 
   // —— Models (panel chrome; model rows are dynamic) ——
   section("models", "catalog", "Model catalog", "visibility toggle refresh"),
+
+  // —— Usage ——
+  section(
+    "usage",
+    "overview",
+    "Usage overview",
+    "tokens quota subscription meter analytics graphs projections burn rate"
+  ),
+  row(
+    "usage",
+    "usage-controls",
+    "Usage auto-refresh",
+    "Live polling of local harness usage data every 60 seconds, with manual refresh.",
+    ["tokens", "quota", "rate limit", "refresh", "polling"]
+  ),
+  row(
+    "usage",
+    "usage-tabs",
+    "Harness selector",
+    "Switch between Codex, Claude Code, Antigravity, OpenCode, Pi, and Cesium usage dashboards.",
+    ["codex", "claude", "antigravity", "gemini", "opencode", "pi", "tabs"]
+  ),
+  row(
+    "usage",
+    "usage-summary",
+    "Usage summary",
+    "Total tokens, requests, known spend, and tracked harnesses across subscriptions.",
+    ["tokens", "spend", "cost", "summary"]
+  ),
+  row(
+    "usage",
+    "usage-limits-codex",
+    "Codex subscription limits",
+    "ChatGPT plan 5h and weekly rate-limit meters with consumption charts and projections.",
+    ["codex", "openai", "chatgpt", "quota", "rate limit", "meter", "projection"]
+  ),
+  row(
+    "usage",
+    "usage-limits-claude-code",
+    "Claude Code session blocks",
+    "Current 5h session block and rolling 7-day window with burn-rate projections.",
+    ["claude", "anthropic", "session block", "weekly", "projection"]
+  ),
 
   // —— Plugins ——
   section("plugins", "catalog", "Agent Plugins", "catalog install enable disable harness"),
