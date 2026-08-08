@@ -7,6 +7,7 @@ import {
   type EventBatchMap,
 } from "../src/lib/stream-event-batcher.ts";
 import {
+  compactAdjacentAgentMessageChunks,
   mergeAgentConversationEventMap,
   shouldFlushAgentEventRenderBatch,
 } from "../src/components/chat/AgentConversationsContext.tsx";
@@ -95,7 +96,15 @@ test("batches 2,000 events/sec across eight concurrent conversations into 20 upd
   assert.equal(committedEvents, conversations * eventsPerConversation);
   assert.equal(batcher.pendingEventCount(), 0);
   for (let index = 0; index < conversations; index += 1) {
-    assert.equal(state[`conversation-${index}`]?.length, eventsPerConversation);
+    const stored = state[`conversation-${index}`];
+    assert.equal(stored?.length, 1);
+    assert.equal(
+      stored?.[0]?.kind === "assistant_message_chunk"
+        ? stored[0].text.length
+        : 0,
+      eventsPerConversation
+    );
+    assert.equal(stored?.[0]?.seq, eventsPerConversation);
   }
 });
 
@@ -163,4 +172,58 @@ test("control and lifecycle events flush queued stream payload immediately", () 
     ]),
     true
   );
+});
+
+test("compacts only adjacent chunks from the same assistant message", () => {
+  const events: AgentStoredEvent[] = [
+    chunkEvent("conversation", 1),
+    { ...chunkEvent("conversation", 2), text: "y" },
+    {
+      seq: 3,
+      eventId: "tool",
+      conversationId: "conversation",
+      createdAt: 3,
+      kind: "tool_call_update",
+      toolCallId: "tool",
+      status: "running",
+    },
+    { ...chunkEvent("conversation", 4), text: "z" },
+  ];
+
+  const compacted = compactAdjacentAgentMessageChunks(events);
+
+  assert.equal(compacted.length, 3);
+  assert.deepEqual(compacted[0], {
+    ...events[1],
+    text: "xy",
+  });
+  assert.equal(compacted[1], events[2]);
+  assert.equal(compacted[2], events[3]);
+});
+
+test("live map merging compacts chunks across consecutive render windows", () => {
+  const first = mergeAgentConversationEventMap(
+    {},
+    new Map([
+      ["conversation", [chunkEvent("conversation", 1)]],
+    ])
+  );
+  const second = mergeAgentConversationEventMap(
+    first,
+    new Map([
+      [
+        "conversation",
+        [
+          { ...chunkEvent("conversation", 2), text: "y" },
+          { ...chunkEvent("conversation", 3), text: "z" },
+        ],
+      ],
+    ])
+  );
+
+  assert.equal(second.conversation?.length, 1);
+  assert.deepEqual(second.conversation?.[0], {
+    ...chunkEvent("conversation", 3),
+    text: "xyz",
+  });
 });

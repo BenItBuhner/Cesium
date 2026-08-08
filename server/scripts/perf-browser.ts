@@ -52,10 +52,10 @@ async function api<T>(
   return (await response.json()) as T;
 }
 
-function agentUrl(): string {
+function agentUrl(targetConversationId = conversationId): string {
   const url = new URL("/agent", frontendUrl);
-  if (conversationId) {
-    url.searchParams.set("conversationId", conversationId);
+  if (targetConversationId) {
+    url.searchParams.set("conversationId", targetConversationId);
   }
   if (workspaceId) {
     url.searchParams.set("workspaceId", workspaceId);
@@ -278,13 +278,15 @@ async function runSettingsBenchmarks(page: Page): Promise<BrowserPerfSample[]> {
 }
 
 async function runStreamRenderBenchmarks(page: Page): Promise<BrowserPerfSample[]> {
-  const available = await page
-    .waitForFunction(() => Boolean(window.__opencursorStreamRenderPerf), undefined, {
-      timeout: 10_000,
-    })
-    .then(() => true)
-    .catch(() => false);
-  if (!available || !conversationId) {
+  const created = await api<{ conversation: { id: string } }>(
+    "/api/agents/conversations",
+    {
+      method: "POST",
+      body: JSON.stringify({ title: `Stream render perf ${Date.now()}` }),
+    }
+  ).catch(() => null);
+  const streamConversationId = created?.conversation.id ?? conversationId;
+  if (!streamConversationId) {
     return [
       {
         label: "stream.render.failed",
@@ -292,9 +294,7 @@ async function runStreamRenderBenchmarks(page: Page): Promise<BrowserPerfSample[
         at: Date.now(),
         fields: {
           skipped: true,
-          reason: available
-            ? "No foreground conversation is available"
-            : "Stream render perf controls are unavailable",
+          reason: "No foreground conversation is available",
         },
       },
     ];
@@ -303,6 +303,22 @@ async function runStreamRenderBenchmarks(page: Page): Promise<BrowserPerfSample[
   const samples: BrowserPerfSample[] = [];
   for (const conversations of [1, 4, 8]) {
     for (const batchingEnabled of [false, true]) {
+      // Every scenario gets a fresh provider and empty synthetic event state so
+      // prior high-volume runs cannot bias reconciliation or garbage collection.
+      await page.goto(agentUrl(streamConversationId), { waitUntil: "domcontentloaded" });
+      await page.waitForLoadState("networkidle", { timeout: 30_000 }).catch(() => undefined);
+      const available = await page
+        .waitForFunction(() => Boolean(window.__opencursorStreamRenderPerf), undefined, {
+          timeout: 10_000,
+        })
+        .then(() => true)
+        .catch(() => false);
+      if (!available) {
+        throw new Error("Stream render perf controls are unavailable");
+      }
+      // tsx/esbuild annotates nested callbacks with this helper. Playwright
+      // serializes the callback body without the module-scoped helper declaration.
+      await page.evaluate("globalThis.__name = (target) => target");
       const result = await page.evaluate(
         async ({ foregroundConversationId, conversations, batchingEnabled }) => {
           const api = window.__opencursorStreamRenderPerf;
@@ -405,7 +421,11 @@ async function runStreamRenderBenchmarks(page: Page): Promise<BrowserPerfSample[
             stats,
           };
         },
-        { foregroundConversationId: conversationId, conversations, batchingEnabled }
+        {
+          foregroundConversationId: streamConversationId,
+          conversations,
+          batchingEnabled,
+        }
       );
 
       samples.push({

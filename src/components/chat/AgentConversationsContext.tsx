@@ -380,6 +380,40 @@ export function shouldFlushAgentEventRenderBatch(
   return events.some((event) => !BATCHABLE_STREAM_EVENT_KINDS.has(event.kind));
 }
 
+/**
+ * Adjacent assistant deltas are observationally equivalent to one concatenated
+ * delta. Keep the newest sequence/id so reconnect cursors still advance to the
+ * last event represented by the compacted row.
+ */
+export function compactAdjacentAgentMessageChunks(
+  events: AgentStoredEvent[]
+): AgentStoredEvent[] {
+  let compacted: AgentStoredEvent[] | null = null;
+  for (let index = 1; index < events.length; index += 1) {
+    const previous = compacted
+      ? compacted[compacted.length - 1]
+      : events[index - 1];
+    const event = events[index]!;
+    if (
+      previous?.kind === "assistant_message_chunk" &&
+      event.kind === "assistant_message_chunk" &&
+      previous.messageId === event.messageId
+    ) {
+      if (!compacted) {
+        compacted = events.slice(0, index);
+      }
+      compacted[compacted.length - 1] = {
+        ...previous,
+        ...event,
+        text: previous.text + event.text,
+      };
+      continue;
+    }
+    compacted?.push(event);
+  }
+  return compacted ?? events;
+}
+
 function compactConversationEvents(events: AgentStoredEvent[]): AgentStoredEvent[] {
   if (events.length <= MAX_CLIENT_EVENTS_PER_CONVERSATION) {
     return events;
@@ -419,7 +453,7 @@ export function mergeAgentConversationEventBatch(
   )
     ? next
     : [...next].sort((a, b) => a.seq - b.seq);
-  return compactConversationEvents(ordered);
+  return compactConversationEvents(compactAdjacentAgentMessageChunks(ordered));
 }
 
 export function mergeAgentConversationEventMap(
