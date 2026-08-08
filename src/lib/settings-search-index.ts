@@ -33,6 +33,7 @@ export type SettingsSearchEntry = {
 
 const NAV_LABELS: Record<string, string> = {
   general: "General",
+  actions: "Actions",
   appearance: "Appearance",
   keyboardShortcuts: "Keyboard shortcuts",
   agents: "Agents",
@@ -402,6 +403,39 @@ const IPAD_BETA_SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
 ];
 
 const STATIC_SETTINGS_SEARCH_ENTRIES_TAIL: SettingsSearchEntry[] = [
+  // —— Actions ——
+  section("actions", "composer-pills", "Composer pills", "diff conflicts sync work"),
+  row(
+    "actions",
+    "actions-pill-diff",
+    "Diff line counts",
+    "Show +added / −removed line totals for uncommitted changes above the composer.",
+    ["diff", "lines", "added", "removed", "pill"]
+  ),
+  row(
+    "actions",
+    "actions-pill-conflicts",
+    "Merge conflicts",
+    "Surface unresolved merge conflicts and a confirmation once fixed.",
+    ["merge", "conflict", "pill"]
+  ),
+  row(
+    "actions",
+    "actions-pill-sync",
+    "Ahead / behind upstream",
+    "Show unpushed and unpulled commit counts for the current branch.",
+    ["push", "pull", "ahead", "behind", "upstream"]
+  ),
+  row(
+    "actions",
+    "actions-pill-work",
+    "Background work",
+    "Live pill while agents, cloud tasks, or terminals are running.",
+    ["subagent", "background", "running", "tasks"]
+  ),
+  section("actions", "presets", "Preset actions", "quick actions presets"),
+  section("actions", "custom", "Custom actions", "custom quick action command prompt keybinding"),
+
   section("keyboardShortcuts", "voice", "Voice input", "hold toggle"),
 
   // —— Import & export ——

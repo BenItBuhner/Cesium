@@ -4,9 +4,10 @@ import { useCallback, useEffect, useMemo, useState, type MouseEvent } from "reac
 import { Flame, GitBranch } from "lucide-react";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import {
-  normalizeComposerStatusBarVisibility,
   resolveComposerBranchLabel,
   resolveComposerRepoLabel,
+  resolveComposerStatusBarVisibilityForConversation,
+  withComposerStatusBarVisibility,
 } from "@/lib/composer-status-bar";
 import type { AgentBackendId, AgentContextUsageSnapshot } from "@/lib/agent-types";
 import type { GoalProgressSnapshotStatus, GoalProgressStatus } from "@/lib/agent-chat";
@@ -97,6 +98,8 @@ function GoalSummaryHistoryCard({
 
 interface ComposerStatusBarProps {
   backendId: AgentBackendId;
+  /** Active conversation; scopes the visibility toggles per conversation. */
+  conversationId?: string | null;
   shellInsetClass?: string;
   usage?: AgentContextUsageSnapshot | null;
   contextLoading?: boolean;
@@ -107,6 +110,7 @@ interface ComposerStatusBarProps {
 
 export function ComposerStatusBar({
   backendId,
+  conversationId = null,
   shellInsetClass = "mx-0 @min-[481px]:mx-[10px]",
   usage = null,
   contextLoading = false,
@@ -119,8 +123,9 @@ export function ComposerStatusBar({
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const [goalSummaryOpen, setGoalSummaryOpen] = useState(false);
 
-  const visibility = normalizeComposerStatusBarVisibility(
-    workspaceSession.chat.composerStatusBarVisibility
+  const visibility = resolveComposerStatusBarVisibilityForConversation(
+    workspaceSession.chat,
+    conversationId
   );
 
   const workspaceName =
@@ -133,15 +138,13 @@ export function ComposerStatusBar({
 
   const setVisibility = useCallback(
     (next: typeof visibility) => {
+      // Persist per conversation and as the last-used default for new chats.
       updateWorkspaceSession((current) => ({
         ...current,
-        chat: {
-          ...current.chat,
-          composerStatusBarVisibility: next,
-        },
+        chat: withComposerStatusBarVisibility(current.chat, conversationId, next),
       }));
     },
-    [updateWorkspaceSession]
+    [conversationId, updateWorkspaceSession]
   );
 
   const handleContextMenu = useCallback(

@@ -79,6 +79,9 @@ import {
   listOrchestrationBoards,
 } from "@/lib/server-api";
 import type { OrchestrationBoardRecord } from "@/lib/orchestration-types";
+import { runQuickAction, useQuickActionsConfig } from "@/lib/quick-actions";
+import { requestWorkspaceInsightsRefresh } from "@/hooks/useWorkspaceInsights";
+import type { QuickActionDefinition } from "@cesium/core";
 
 type PaletteMode = "closed" | "command" | "quickopen" | "agentSwitcher";
 
@@ -935,6 +938,16 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
         case "chat.action.agentRailNextConversation":
           agentShell?.cycleAgentConversation(1);
           break;
+        case "quickActions.layout.toggleRightPane":
+          agentShell?.setRightPaneOpen(!agentShell.rightPaneOpen);
+          break;
+        case "quickActions.layout.toggleLeftRail":
+          agentShell?.setLeftRailCollapsed(!agentShell.leftRailCollapsed);
+          break;
+        case "quickActions.layout.focusChat":
+          agentShell?.setLeftRailCollapsed(true);
+          agentShell?.setRightPaneOpen(false);
+          break;
         default:
           break;
       }
@@ -966,6 +979,68 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
         editableTarget: isEditableShortcutTarget(e.target),
       }),
     [runShortcutCommand, shortcutBindings, shortcutPlatform]
+  );
+
+  const { effectiveActions: quickActions } = useQuickActionsConfig();
+  const quickActionsRef = useRef<QuickActionDefinition[]>(quickActions);
+  quickActionsRef.current = quickActions;
+
+  /** User-configured quick action keybindings run after workbench shortcuts. */
+  const tryRunQuickActionKeybinding = useCallback(
+    (event: KeyboardEvent): boolean => {
+      for (const action of quickActionsRef.current) {
+        if (!action.enabled || !action.keybinding) {
+          continue;
+        }
+        const parsed = parseShortcutBinding(action.keybinding);
+        const step = parsed?.length === 1 ? parsed[0] : null;
+        if (!step || !matchesShortcutStep(event, step, shortcutPlatform)) {
+          continue;
+        }
+        event.preventDefault();
+        if (action.kind === "ui") {
+          runShortcutCommand(
+            action.uiCommand === "settings.open"
+              ? "workbench.action.openGlobalSettings"
+              : action.uiCommand === "chat.newConversation"
+                ? "chat.action.newChat"
+                : `quickActions.${action.uiCommand}`
+          );
+          return true;
+        }
+        if (action.confirm && !window.confirm(`Run "${action.label}"?`)) {
+          return true;
+        }
+        const conversationId =
+          action.kind === "prompt" ? agentShell?.selectedConversationId ?? null : null;
+        if (action.kind === "prompt" && !conversationId) {
+          flash(setToast, "Open a conversation to run this prompt action.");
+          return true;
+        }
+        flash(setToast, `Running ${action.label}…`);
+        void runQuickAction(action.id, {
+          ...(conversationId ? { conversationId } : {}),
+        })
+          .then(({ result }) => {
+            flash(
+              setToast,
+              result.ok
+                ? `${action.label} finished.`
+                : `${action.label} failed: ${result.error ?? "unknown error"}`
+            );
+          })
+          .catch((error) =>
+            flash(
+              setToast,
+              error instanceof Error ? `${action.label} failed: ${error.message}` : `${action.label} failed.`
+            )
+          )
+          .finally(() => requestWorkspaceInsightsRefresh());
+        return true;
+      }
+      return false;
+    },
+    [agentShell, runShortcutCommand, setToast, shortcutPlatform]
   );
 
   const inputSinkWorkbenchBindings = useMemo(() => {
@@ -1554,6 +1629,10 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
         return;
       }
 
+      if (tryRunQuickActionKeybinding(e)) {
+        return;
+      }
+
       if (tryRunExtensionKeybinding(e)) {
         return;
       }
@@ -1658,6 +1737,7 @@ export function IDEKeyboardLayer({ children }: { children: ReactNode }) {
   shortcutPlatform,
   stepAgentSwitcher,
   tryRunExtensionKeybinding,
+  tryRunQuickActionKeybinding,
 ]);
 
   const onQuickPick = useCallback(

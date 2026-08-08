@@ -28,8 +28,13 @@ import type {
   ImageAttachment,
   PlanBuildHandoff,
   QueuedPromptConfigOverride,
+  QuickActionDefinition,
+  QuickActionPreset,
+  QuickActionRunResult,
+  QuickActionsConfig,
   TerminalInfo,
   WorkspaceInfo,
+  WorkspaceInsights,
   WorkspaceRecord,
   WorkspaceWindowRecord,
 } from "@cesium/core";
@@ -760,6 +765,75 @@ export async function fetchWorkspaceGitStatus(workspaceId: string): Promise<{
     undefined,
     { skipWorkspaceHeader: true }
   );
+}
+
+export async function fetchWorkspaceInsights(
+  workspaceId: string,
+  options?: { signal?: AbortSignal }
+): Promise<{ insights: WorkspaceInsights }> {
+  return request(
+    `/api/workspaces/${encodeURIComponent(workspaceId)}/insights`,
+    options?.signal ? { signal: options.signal } : undefined,
+    { skipWorkspaceHeader: true }
+  );
+}
+
+export async function fetchQuickActions(options?: { signal?: AbortSignal }): Promise<{
+  config: QuickActionsConfig;
+  presets: QuickActionPreset[];
+}> {
+  return request(
+    "/api/actions",
+    options?.signal ? { signal: options.signal } : undefined,
+    { skipWorkspaceHeader: true }
+  );
+}
+
+export async function upsertCustomQuickAction(
+  actionId: string,
+  definition: Partial<QuickActionDefinition>
+): Promise<{ ok: true; action: QuickActionDefinition; config: QuickActionsConfig }> {
+  return request(
+    `/api/actions/custom/${encodeURIComponent(actionId)}`,
+    {
+      method: "PUT",
+      body: JSON.stringify(definition),
+    },
+    { skipWorkspaceHeader: true }
+  );
+}
+
+export async function removeCustomQuickAction(
+  actionId: string
+): Promise<{ ok: true; config: QuickActionsConfig }> {
+  return request(
+    `/api/actions/custom/${encodeURIComponent(actionId)}`,
+    { method: "DELETE" },
+    { skipWorkspaceHeader: true }
+  );
+}
+
+export async function updateQuickActionPresetStates(
+  states: Record<string, boolean>
+): Promise<{ ok: true; config: QuickActionsConfig }> {
+  return request(
+    "/api/actions/presets",
+    {
+      method: "PATCH",
+      body: JSON.stringify({ states }),
+    },
+    { skipWorkspaceHeader: true }
+  );
+}
+
+export async function runQuickAction(
+  actionId: string,
+  input?: { conversationId?: string }
+): Promise<{ result: QuickActionRunResult }> {
+  return request(`/api/actions/${encodeURIComponent(actionId)}/run`, {
+    method: "POST",
+    body: JSON.stringify(input?.conversationId ? { conversationId: input.conversationId } : {}),
+  });
 }
 
 export async function initializeWorkspaceGitRepo(workspaceId: string): Promise<{

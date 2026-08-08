@@ -7,7 +7,10 @@ export {
   normalizeComposerStatusBarVisibility,
   resolveComposerBranchLabel,
   resolveComposerRepoLabel,
+  resolveComposerStatusBarVisibilityForConversation,
+  withComposerStatusBarVisibility,
 } from "@cesium/client";
 export type {
+  ComposerStatusBarScopeState,
   ComposerStatusBarVisibility,
 } from "@cesium/client";

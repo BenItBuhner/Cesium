@@ -45,6 +45,7 @@ import {
   Blocks,
   Server,
   Settings,
+  Zap,
 } from "lucide-react";
 import { ServerPickerPopover } from "@/components/preferences/ServerPickerPopover";
 import { useServerConnections } from "@/components/preferences/ServerConnectionsProvider";
@@ -85,6 +86,7 @@ type NavEntry =
  */
 const NAV_ENTRIES: NavEntry[] = [
   { kind: "item", id: "general", label: "General", icon: Settings },
+  { kind: "item", id: "actions", label: "Actions", icon: Zap },
   { kind: "item", id: "appearance", label: "Appearance", icon: Palette },
   { kind: "item", id: "keyboardShortcuts", label: "Keyboard shortcuts", icon: Keyboard },
   { kind: "item", id: "agents", label: "Agents", icon: Bot },
