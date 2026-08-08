@@ -131,6 +131,14 @@ const STATIC_SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
     "Back up or restore theme, shortcuts, workspace app settings, and more as JSON.",
     ["backup", "restore", "json"]
   ),
+  section("general", "performance", "Performance", "stream rendering"),
+  row(
+    "general",
+    "batch-stream-events",
+    "Batch streamed events",
+    "Render high-speed token and progress streams in short batches.",
+    ["streaming", "tokens", "render", "repaint", "gpu", "cpu", "battery", "performance"]
+  ),
   section("general", "notifications", "Notifications"),
   row(
     "general",

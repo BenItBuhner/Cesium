@@ -57,7 +57,11 @@ import { resolveEffectiveConfig } from "@/lib/queued-prompt-utils";
 import { useShellView } from "@/components/layout/ShellViewContext";
 import { normalizeEditorPanelState } from "@/components/editor/editor-panel-state";
 import { JsonWebSocket } from "@/lib/ws-client";
-import { recordPerfSample } from "@/lib/dev-perf";
+import { devPerfEnabled, recordPerfSample } from "@/lib/dev-perf";
+import {
+  KeyedEventBatcher,
+  type EventBatchMap,
+} from "@/lib/stream-event-batcher";
 import {
   dispatchAgentConversationDeleted,
   dispatchAgentConversationUpserted,
@@ -340,6 +344,41 @@ const AgentConversationsContext =
   createContext<AgentConversationsContextValue | null>(null);
 
 const MAX_CLIENT_EVENTS_PER_CONVERSATION = 6_000;
+const BATCHABLE_STREAM_EVENT_KINDS = new Set<AgentStoredEvent["kind"]>([
+  "assistant_message_chunk",
+  "reasoning",
+  "tool_call_update",
+]);
+
+type StreamRenderPerfSnapshot = {
+  batchingEnabled: boolean;
+  receivedEvents: number;
+  flushes: number;
+  stateUpdates: number;
+  committedEvents: number;
+  maxBatchEvents: number;
+  pendingEvents: number;
+};
+
+type StreamRenderPerfControl = {
+  ingest: (conversationId: string, events: AgentStoredEvent[]) => void;
+  setBatchingEnabled: (enabled: boolean | null) => void;
+  flush: () => void;
+  reset: () => void;
+  snapshot: () => StreamRenderPerfSnapshot;
+};
+
+declare global {
+  interface Window {
+    __opencursorStreamRenderPerf?: StreamRenderPerfControl;
+  }
+}
+
+export function shouldFlushAgentEventRenderBatch(
+  events: readonly AgentStoredEvent[]
+): boolean {
+  return events.some((event) => !BATCHABLE_STREAM_EVENT_KINDS.has(event.kind));
+}
 
 function compactConversationEvents(events: AgentStoredEvent[]): AgentStoredEvent[] {
   if (events.length <= MAX_CLIENT_EVENTS_PER_CONVERSATION) {
@@ -381,6 +420,25 @@ export function mergeAgentConversationEventBatch(
     ? next
     : [...next].sort((a, b) => a.seq - b.seq);
   return compactConversationEvents(ordered);
+}
+
+export function mergeAgentConversationEventMap(
+  current: Record<string, AgentStoredEvent[]>,
+  batches: ReadonlyMap<string, AgentStoredEvent[]>
+): Record<string, AgentStoredEvent[]> {
+  let next = current;
+  for (const [conversationId, incoming] of batches) {
+    const existing = current[conversationId] ?? [];
+    const merged = mergeAgentConversationEventBatch(existing, incoming);
+    if (merged === existing) {
+      continue;
+    }
+    if (next === current) {
+      next = { ...current };
+    }
+    next[conversationId] = merged;
+  }
+  return next;
 }
 
 export function AgentConversationsProvider({
@@ -436,6 +494,30 @@ export function AgentConversationsProvider({
   const historyOlderPagesFetchedRef = useRef<Record<string, number>>({});
   const conversationsByIdRef = useRef(conversationsById);
   conversationsByIdRef.current = conversationsById;
+  const commitEventBatchesRef = useRef<
+    (batches: EventBatchMap<AgentStoredEvent>) => void
+  >(() => {});
+  const ingestConversationEventsRef = useRef<
+    (conversationId: string, events: AgentStoredEvent[]) => void
+  >(() => {});
+  const configuredBatchingEnabledRef = useRef(
+    globalSettings.general.batchStreamEvents
+  );
+  const batchingOverrideRef = useRef<boolean | null>(null);
+  const streamRenderPerfRef = useRef({
+    receivedEvents: 0,
+    flushes: 0,
+    stateUpdates: 0,
+    committedEvents: 0,
+    maxBatchEvents: 0,
+  });
+  const [eventRenderBatcher] = useState(
+    () =>
+      new KeyedEventBatcher<AgentStoredEvent>({
+        enabled: globalSettings.general.batchStreamEvents,
+        onFlush: (batches) => commitEventBatchesRef.current(batches),
+      })
+  );
 
   useEffect(() => {
     chatDraftRef.current = workspaceSession.chat;
@@ -805,78 +887,134 @@ updateWorkspaceSession((current) => {
     []
   );
 
-  const applyConversationStatusFromEvent = useCallback(
-    (conversationId: string, event: AgentStoredEvent) => {
-      if (event.kind !== "status") {
+  const commitConversationEventBatches = useCallback(
+    (batches: EventBatchMap<AgentStoredEvent>) => {
+      let eventCount = 0;
+      let maxConversationBatch = 0;
+      let hasStatusEvents = false;
+      for (const events of batches.values()) {
+        eventCount += events.length;
+        maxConversationBatch = Math.max(maxConversationBatch, events.length);
+        hasStatusEvents ||= events.some((event) => event.kind === "status");
+      }
+      if (eventCount === 0) {
         return;
       }
-      setConversationsById((current) => {
-        const conversation = current[conversationId];
-        if (!conversation) {
-          return current;
-        }
-        const merged = mergeAgentConversationStatusFromEvent(conversation, event);
-        if (!merged) {
-          return current;
-        }
-        return {
-          ...current,
-          [conversationId]: merged,
-        };
-      });
+
+      const perf = streamRenderPerfRef.current;
+      perf.flushes += 1;
+      perf.stateUpdates += 1;
+      perf.committedEvents += eventCount;
+      perf.maxBatchEvents = Math.max(perf.maxBatchEvents, maxConversationBatch);
+
+      if (hasStatusEvents) {
+        setConversationsById((current) => {
+          let next = current;
+          for (const [conversationId, events] of batches) {
+            let conversation = next[conversationId];
+            if (!conversation) {
+              continue;
+            }
+            for (const event of events) {
+              if (event.kind !== "status") {
+                continue;
+              }
+              const merged = mergeAgentConversationStatusFromEvent(conversation, event);
+              if (!merged) {
+                continue;
+              }
+              if (next === current) {
+                next = { ...current };
+              }
+              conversation = merged;
+              next[conversationId] = merged;
+            }
+          }
+          return next;
+        });
+      }
+
+      setEventsByConversationId((current) =>
+        mergeAgentConversationEventMap(current, batches)
+      );
     },
     []
   );
 
-  const appendConversationEvent = useCallback(
-    (conversationId: string, event: AgentStoredEvent) => {
-      applyConversationStatusFromEvent(conversationId, event);
-      setEventsByConversationId((current) => {
-        const existing = current[conversationId] ?? [];
-        if (
-          existing.some(
-            (item) => item.seq === event.seq || item.eventId === event.eventId
-          )
-        ) {
-          return current;
-        }
-        if (isIncomingEventDroppedByAcpToolStrip(existing, event)) {
-          return current;
-        }
-        const appended =
-          existing.length === 0 || event.seq >= (existing[existing.length - 1]?.seq ?? 0)
-            ? [...existing, event]
-            : [...existing, event].sort((a, b) => a.seq - b.seq);
-        return {
-          ...current,
-          [conversationId]: compactConversationEvents(appended),
-        };
-      });
-    },
-    [applyConversationStatusFromEvent]
-  );
+  useEffect(() => {
+    commitEventBatchesRef.current = commitConversationEventBatches;
+  }, [commitConversationEventBatches]);
 
-  const appendConversationEventBatch = useCallback(
+  const ingestConversationEvents = useCallback(
     (conversationId: string, incoming: AgentStoredEvent[]) => {
       if (incoming.length === 0) {
         return;
       }
-      for (const event of incoming) {
-        applyConversationStatusFromEvent(conversationId, event);
-      }
-      setEventsByConversationId((current) => {
-        const existing = current[conversationId] ?? [];
-        const next = mergeAgentConversationEventBatch(existing, incoming);
-        if (next === existing) {
-          return current;
-        }
-        return {
-          ...current,
-          [conversationId]: next,
-        };
-      });
+      streamRenderPerfRef.current.receivedEvents += incoming.length;
+      eventRenderBatcher.enqueue(
+        conversationId,
+        incoming,
+        shouldFlushAgentEventRenderBatch(incoming)
+      );
     },
-    [applyConversationStatusFromEvent]
+    [eventRenderBatcher]
+  );
+
+  useEffect(() => {
+    ingestConversationEventsRef.current = ingestConversationEvents;
+  }, [ingestConversationEvents]);
+
+  useEffect(() => {
+    configuredBatchingEnabledRef.current =
+      globalSettings.general.batchStreamEvents;
+    if (batchingOverrideRef.current == null) {
+      eventRenderBatcher.setEnabled(globalSettings.general.batchStreamEvents);
+    }
+  }, [eventRenderBatcher, globalSettings.general.batchStreamEvents]);
+
+  useEffect(() => {
+    if (!devPerfEnabled()) {
+      return;
+    }
+    const control: StreamRenderPerfControl = {
+      ingest: (conversationId, events) =>
+        ingestConversationEventsRef.current(conversationId, events),
+      setBatchingEnabled: (enabled) => {
+        batchingOverrideRef.current = enabled;
+        eventRenderBatcher.setEnabled(
+          enabled ?? configuredBatchingEnabledRef.current
+        );
+      },
+      flush: () => eventRenderBatcher.flush(),
+      reset: () => {
+        eventRenderBatcher.flush();
+        streamRenderPerfRef.current = {
+          receivedEvents: 0,
+          flushes: 0,
+          stateUpdates: 0,
+          committedEvents: 0,
+          maxBatchEvents: 0,
+        };
+      },
+      snapshot: () => ({
+        batchingEnabled: eventRenderBatcher.isEnabled(),
+        ...streamRenderPerfRef.current,
+        pendingEvents: eventRenderBatcher.pendingEventCount(),
+      }),
+    };
+    window.__opencursorStreamRenderPerf = control;
+    return () => {
+      if (window.__opencursorStreamRenderPerf === control) {
+        delete window.__opencursorStreamRenderPerf;
+      }
+    };
+  }, [eventRenderBatcher]);
+
+  useEffect(
+    () => () => {
+      eventRenderBatcher.dispose();
+    },
+    [eventRenderBatcher]
   );
 
   const upsertConversation = useCallback(
@@ -1684,6 +1822,7 @@ busy,
   );
 
   useEffect(() => {
+    eventRenderBatcher.clear();
     if (!activeWorkspaceId) {
       if (subscribeDebounceTimerRef.current != null) {
         clearTimeout(subscribeDebounceTimerRef.current);
@@ -1868,7 +2007,7 @@ busy,
     return () => {
       cancelled = true;
     };
-  }, [activeWorkspaceId, updateWorkspaceSession]);
+  }, [activeWorkspaceId, eventRenderBatcher, updateWorkspaceSession]);
 
   useEffect(() => {
     if (!activeWorkspaceId || !bootstrapped) {
@@ -2009,6 +2148,7 @@ busy,
           return;
         case "conversation_deleted": {
           const deletedId = message.conversationId;
+          eventRenderBatcher.discard(deletedId);
           setConversationsById((current) => {
             if (!current[deletedId]) {
               return current;
@@ -2081,10 +2221,10 @@ busy,
           );
           return;
         case "event":
-          appendConversationEvent(message.conversationId, message.event);
+          ingestConversationEvents(message.conversationId, [message.event]);
           return;
         case "event_batch":
-          appendConversationEventBatch(message.conversationId, message.events);
+          ingestConversationEvents(message.conversationId, message.events);
           return;
         case "error": {
           const forConv = message.conversationId;
@@ -2116,9 +2256,9 @@ busy,
     activeWorkspaceId,
     agentSocketServerKey,
     bootstrapped,
-    appendConversationEvent,
-    appendConversationEventBatch,
+    eventRenderBatcher,
     flushAgentSubscription,
+    ingestConversationEvents,
     mergeConversationSnapshot,
     prependHistoryPage,
     updateWorkspaceSession,

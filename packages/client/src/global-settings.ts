@@ -58,6 +58,11 @@ export type ServerRailAppearance = {
 export type GeneralSettingsState = {
   doNotDisturb: boolean;
   /**
+   * Coalesce high-frequency token and progress events before updating React
+   * state. Enabled by default to cap stream rendering at roughly 20 Hz.
+   */
+  batchStreamEvents: boolean;
+  /**
    * Show the floating ambient voice orb. Off by default: the orb is an opt-in
    * surface and hiding it also disables the ambient voice plane.
    */
@@ -200,6 +205,7 @@ export function createDefaultGlobalSettings(): GlobalSettingsState {
     keyboardShortcuts: createDefaultKeyboardShortcutsState(),
     general: {
       doNotDisturb: false,
+      batchStreamEvents: true,
       showVoiceOrb: false,
       sideColumnsSwapped: false,
       workspaceSortMode: "recent",
@@ -604,6 +610,11 @@ export function normalizeLoadedGlobalSettings(
     general: {
       ...base.general,
       ...(r.general ?? {}),
+      batchStreamEvents:
+        typeof (r.general as Record<string, unknown> | undefined)
+          ?.batchStreamEvents === "boolean"
+          ? ((r.general as Record<string, unknown>).batchStreamEvents as boolean)
+          : base.general.batchStreamEvents,
       showVoiceOrb:
         typeof (r.general as Record<string, unknown> | undefined)?.showVoiceOrb === "boolean"
           ? ((r.general as Record<string, unknown>).showVoiceOrb as boolean)

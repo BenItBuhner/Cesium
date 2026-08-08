@@ -27,6 +27,22 @@ after(async () => {
   await fs.rm(TEST_DATA_DIR, { recursive: true, force: true }).catch(() => {});
 });
 
+test("global settings persist the stream event batching toggle", async () => {
+  const settings = await store.getGlobalSettings();
+  assert.equal(settings.general.batchStreamEvents, true);
+  settings.general.batchStreamEvents = false;
+
+  const response = await settingsRoutes.request("/api/settings/global", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ settings }),
+  });
+  assert.equal(response.status, 200);
+
+  const persisted = await store.getGlobalSettings();
+  assert.equal(persisted.general.batchStreamEvents, false);
+});
+
 test("model toggle saves survive later stale full global settings PUT", async () => {
   await writeAgentBackendConfigCache("cursor-sdk", [
     {

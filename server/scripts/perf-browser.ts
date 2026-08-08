@@ -122,6 +122,16 @@ async function discoverTargetContext(): Promise<void> {
     );
     conversationId = body.conversations?.[0]?.id ?? "";
   }
+  if (!conversationId && workspaceId) {
+    const created = await api<{ conversation: { id: string } }>(
+      "/api/agents/conversations",
+      {
+        method: "POST",
+        body: JSON.stringify({ title: `Stream perf ${Date.now()}` }),
+      }
+    );
+    conversationId = created.conversation.id;
+  }
 }
 
 async function waitForRailRowAtTopOfSection(
@@ -263,6 +273,162 @@ async function runSettingsBenchmarks(page: Page): Promise<BrowserPerfSample[]> {
     await toggle.click();
     await page.waitForTimeout(50);
     pushSample(samples, "settings.models.toggle_visible", toggleStartedAt);
+  }
+  return samples;
+}
+
+async function runStreamRenderBenchmarks(page: Page): Promise<BrowserPerfSample[]> {
+  const available = await page
+    .waitForFunction(() => Boolean(window.__opencursorStreamRenderPerf), undefined, {
+      timeout: 10_000,
+    })
+    .then(() => true)
+    .catch(() => false);
+  if (!available || !conversationId) {
+    return [
+      {
+        label: "stream.render.failed",
+        ms: 0,
+        at: Date.now(),
+        fields: {
+          skipped: true,
+          reason: available
+            ? "No foreground conversation is available"
+            : "Stream render perf controls are unavailable",
+        },
+      },
+    ];
+  }
+
+  const samples: BrowserPerfSample[] = [];
+  for (const conversations of [1, 4, 8]) {
+    for (const batchingEnabled of [false, true]) {
+      const result = await page.evaluate(
+        async ({ foregroundConversationId, conversations, batchingEnabled }) => {
+          const api = window.__opencursorStreamRenderPerf;
+          if (!api) {
+            throw new Error("Stream render perf controls disappeared");
+          }
+          api.setBatchingEnabled(batchingEnabled);
+          api.reset();
+
+          const runId = `${Date.now()}-${conversations}-${batchingEnabled ? "batched" : "immediate"}`;
+          const conversationIds = [
+            foregroundConversationId,
+            ...Array.from(
+              { length: conversations - 1 },
+              (_, index) => `stream-perf-background-${runId}-${index}`
+            ),
+          ];
+          const eventsPerConversation = 2_000;
+          const ticks = 100;
+          const eventsPerTick = eventsPerConversation / ticks;
+          const tickMs = 10;
+          const sequenceBase = Date.now() * 100;
+          let sentEvents = 0;
+          let maxTimerLagMs = 0;
+          let maxFrameGapMs = 0;
+          let longTaskCount = 0;
+          let longTaskTotalMs = 0;
+          let animationFrameActive = true;
+          let lastFrameAt = performance.now();
+          const frame = (now: number) => {
+            maxFrameGapMs = Math.max(maxFrameGapMs, now - lastFrameAt);
+            lastFrameAt = now;
+            if (animationFrameActive) {
+              requestAnimationFrame(frame);
+            }
+          };
+          requestAnimationFrame(frame);
+
+          const observer =
+            typeof PerformanceObserver !== "undefined" &&
+            PerformanceObserver.supportedEntryTypes.includes("longtask")
+              ? new PerformanceObserver((list) => {
+                  for (const entry of list.getEntries()) {
+                    longTaskCount += 1;
+                    longTaskTotalMs += entry.duration;
+                  }
+                })
+              : null;
+          observer?.observe({ entryTypes: ["longtask"] });
+
+          const startedAt = performance.now();
+          let expectedTickAt = startedAt;
+          for (let tick = 0; tick < ticks; tick += 1) {
+            expectedTickAt += tickMs;
+            const waitMs = Math.max(0, expectedTickAt - performance.now());
+            await new Promise((resolve) => setTimeout(resolve, waitMs));
+            maxTimerLagMs = Math.max(
+              maxTimerLagMs,
+              performance.now() - expectedTickAt
+            );
+            for (let conversationIndex = 0; conversationIndex < conversations; conversationIndex += 1) {
+              const targetConversationId = conversationIds[conversationIndex]!;
+              for (let offset = 0; offset < eventsPerTick; offset += 1) {
+                const seq =
+                  sequenceBase +
+                  conversationIndex * eventsPerConversation +
+                  tick * eventsPerTick +
+                  offset;
+                api.ingest(targetConversationId, [
+                  {
+                    seq,
+                    eventId: `${runId}-${conversationIndex}-${tick}-${offset}`,
+                    conversationId: targetConversationId,
+                    createdAt: Date.now(),
+                    kind: "assistant_message_chunk",
+                    messageId: `stream-perf-message-${runId}-${conversationIndex}`,
+                    text: "x",
+                  },
+                ]);
+                sentEvents += 1;
+              }
+            }
+          }
+          api.flush();
+          await new Promise<void>((resolve) =>
+            requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+          );
+          const elapsedMs = performance.now() - startedAt;
+          animationFrameActive = false;
+          observer?.disconnect();
+          const stats = api.snapshot();
+          api.setBatchingEnabled(null);
+          return {
+            elapsedMs,
+            sentEvents,
+            maxTimerLagMs,
+            maxFrameGapMs,
+            longTaskCount,
+            longTaskTotalMs,
+            stats,
+          };
+        },
+        { foregroundConversationId: conversationId, conversations, batchingEnabled }
+      );
+
+      samples.push({
+        label: `stream.render.${batchingEnabled ? "batched" : "immediate"}.${conversations}_sessions`,
+        ms: result.elapsedMs,
+        at: Date.now(),
+        fields: {
+          conversations,
+          eventsPerSecondPerConversation: 2_000,
+          sentEvents: result.sentEvents,
+          batchingEnabled,
+          flushes: result.stats.flushes,
+          stateUpdates: result.stats.stateUpdates,
+          committedEvents: result.stats.committedEvents,
+          maxBatchEvents: result.stats.maxBatchEvents,
+          pendingEvents: result.stats.pendingEvents,
+          maxTimerLagMs: Number(result.maxTimerLagMs.toFixed(2)),
+          maxFrameGapMs: Number(result.maxFrameGapMs.toFixed(2)),
+          longTaskCount: result.longTaskCount,
+          longTaskTotalMs: Number(result.longTaskTotalMs.toFixed(2)),
+        },
+      });
+    }
   }
   return samples;
 }
@@ -451,6 +617,9 @@ async function main(): Promise<void> {
   await page.goto(agentUrl(), { waitUntil: "domcontentloaded" });
   await page.waitForLoadState("networkidle", { timeout: 30_000 }).catch(() => undefined);
   await page.waitForTimeout(500);
+  const streamRenderSamples = await runBrowserBenchmarkGroup("stream.render", () =>
+    runStreamRenderBenchmarks(page)
+  );
   const railSamples = await runBrowserBenchmarkGroup("rail", () => runRailBenchmarks(page));
   const targetDropdownSamples = await runBrowserBenchmarkGroup("target", () =>
     runAgentTargetDropdownBenchmarks(page)
@@ -475,12 +644,14 @@ async function main(): Promise<void> {
     conversationId,
     samples: [
       ...(samples as BrowserPerfSample[]),
+      ...streamRenderSamples,
       ...railSamples,
       ...settingsSamples,
       ...targetDropdownSamples,
       ...harnessDropdownSamples,
     ],
     settingsSamples,
+    streamRenderSamples,
     railSamples,
     targetDropdownSamples,
     harnessDropdownSamples,

@@ -65,6 +65,7 @@ export type GlobalSettings = {
   themeConfig?: unknown;
   general: {
     doNotDisturb: boolean;
+    batchStreamEvents: boolean;
     sideColumnsSwapped: boolean;
     workspaceSortMode: WorkspaceSortMode;
     workspaceCustomOrderIds: string[];
@@ -186,6 +187,7 @@ function createDefaultSettings(): GlobalSettings {
     schemaVersion: 1,
     general: {
       doNotDisturb: false,
+      batchStreamEvents: true,
       sideColumnsSwapped: false,
       workspaceSortMode: "recent",
       workspaceCustomOrderIds: [],
@@ -873,6 +875,11 @@ function migrateGlobalSettings(raw: Record<string, unknown>): GlobalSettings {
     general: {
       ...defaults.general,
       ...(r.general ?? {}),
+      batchStreamEvents:
+        typeof (r.general as Record<string, unknown> | undefined)
+          ?.batchStreamEvents === "boolean"
+          ? (r.general as GlobalSettings["general"]).batchStreamEvents
+          : defaults.general.batchStreamEvents,
       workspaceSortMode: normalizeWorkspaceSortMode(
         (r.general as Record<string, unknown> | undefined)?.workspaceSortMode
       ),
