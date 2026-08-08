@@ -6,7 +6,6 @@ import {
   refreshAgentBackendRuntimes,
 } from "../lib/agents/providers.js";
 import {
-  CLI_INSTALL_SPECS,
   getInstallSpecForBackend,
   isInstallSupportedOnThisHost,
 } from "../lib/agents/install/cli-install-registry.js";

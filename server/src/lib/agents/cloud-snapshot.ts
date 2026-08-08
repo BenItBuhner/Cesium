@@ -62,15 +62,16 @@ function sanitizeRecordForSnapshot(
   AgentConversationRecord,
   "id" | "workspaceId" | "lastEventSeq" | "lastReadSeq"
 > {
-  const {
-    id: _id,
-    workspaceId: _workspaceId,
-    lastEventSeq: _lastEventSeq,
-    lastReadSeq: _lastReadSeq,
-    ...rest
-  } = record;
+  const rest = { ...record } as Partial<AgentConversationRecord>;
+  delete rest.id;
+  delete rest.workspaceId;
+  delete rest.lastEventSeq;
+  delete rest.lastReadSeq;
   return {
-    ...rest,
+    ...(rest as Omit<
+      AgentConversationRecord,
+      "id" | "workspaceId" | "lastEventSeq" | "lastReadSeq"
+    >),
     status: "idle",
     pendingPermission: null,
     pendingQuestion: null,
@@ -93,9 +94,9 @@ export async function exportConversationSnapshot(
 
   // Strip seq (reassigned on materialize) and oversized raw payloads.
   const portable: AgentEventInput[] = events.map((event) => {
-    const { seq: _seq, raw: _raw, ...rest } = event as AgentStoredEvent & {
-      raw?: unknown;
-    };
+    const rest = { ...event } as Partial<AgentStoredEvent> & { raw?: unknown };
+    delete rest.seq;
+    delete rest.raw;
     return rest as AgentEventInput;
   });
 

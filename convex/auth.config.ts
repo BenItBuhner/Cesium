@@ -21,7 +21,7 @@ function readOptionalEnv(name: string): string | undefined {
 
 const clerkIssuerDomain = readOptionalEnv("CLERK_JWT_ISSUER_DOMAIN");
 
-export default {
+const authConfig = {
   providers: clerkIssuerDomain
     ? [
         {
@@ -31,3 +31,5 @@ export default {
       ]
     : [],
 };
+
+export default authConfig;
