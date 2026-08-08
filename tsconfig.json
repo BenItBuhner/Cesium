@@ -20,6 +20,7 @@
     ],
     "paths": {
       "@/*": ["./src/*"],
+      "@convex/*": ["./convex/*"],
       "@cesium/core": ["./packages/core/src/index.ts"],
       "@cesium/client": ["./packages/client/src/index.ts"],
       "@cesium/client/react": ["./packages/client/src/react.ts"],

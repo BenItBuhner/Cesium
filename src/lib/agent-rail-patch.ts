@@ -50,9 +50,13 @@ function originMergeKey(
   if (!origin) {
     return null;
   }
-  return origin.kind === "cloud"
-    ? `cloud:${origin.providerId}`
-    : `import:${origin.backendId}:${origin.externalSessionId}`;
+  if (origin.kind === "cloud") {
+    return `cloud:${origin.providerId}`;
+  }
+  if (origin.kind === "cloud-snapshot") {
+    return `cloud-snapshot:${origin.snapshotKey}`;
+  }
+  return `import:${origin.backendId}:${origin.externalSessionId}`;
 }
 
 /** Stable ordering: recency first, then creation time, then id (never title — renames must not reshuffle ties). */

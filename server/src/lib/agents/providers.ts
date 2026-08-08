@@ -374,12 +374,70 @@ function resolveGoogleAntigravityCliRuntime(): CliRuntimeSpec | null {
   return null;
 }
 
-const OPENCODE_RUNTIME = resolveOpenCodeCliRuntime();
-const OPENCODE_V2_COMMAND = resolveOpenCodeV2CommandPath();
-const DEVIN_RUNTIME = resolveDevinAcpRuntime();
-const GROK_BUILD_RUNTIME = resolveGrokBuildRuntime();
-const CODEX_RUNTIME = resolveCodexCliRuntime();
-const GOOGLE_ANTIGRAVITY_RUNTIME = resolveGoogleAntigravityCliRuntime();
+let OPENCODE_RUNTIME = resolveOpenCodeCliRuntime();
+let OPENCODE_V2_COMMAND = resolveOpenCodeV2CommandPath();
+let DEVIN_RUNTIME = resolveDevinAcpRuntime();
+let GROK_BUILD_RUNTIME = resolveGrokBuildRuntime();
+let CODEX_RUNTIME = resolveCodexCliRuntime();
+let GOOGLE_ANTIGRAVITY_RUNTIME = resolveGoogleAntigravityCliRuntime();
+
+/**
+ * Re-resolve CLI runtimes and refresh the derived availability on
+ * `AGENT_BACKENDS`. Called after a one-click install so newly installed
+ * harness CLIs activate without a server restart.
+ */
+export function refreshAgentBackendRuntimes(): void {
+  OPENCODE_RUNTIME = resolveOpenCodeCliRuntime();
+  OPENCODE_V2_COMMAND = resolveOpenCodeV2CommandPath();
+  DEVIN_RUNTIME = resolveDevinAcpRuntime();
+  GROK_BUILD_RUNTIME = resolveGrokBuildRuntime();
+  CODEX_RUNTIME = resolveCodexCliRuntime();
+  GOOGLE_ANTIGRAVITY_RUNTIME = resolveGoogleAntigravityCliRuntime();
+
+  const opencodeServer = AGENT_BACKENDS["opencode-server"];
+  opencodeServer.available =
+    Boolean(process.env.OPENCURSOR_OPENCODE_SERVER_URL?.trim()) || OPENCODE_RUNTIME !== null;
+  opencodeServer.commandPreview = process.env.OPENCURSOR_OPENCODE_SERVER_URL?.trim()
+    ? `OpenCode server at ${process.env.OPENCURSOR_OPENCODE_SERVER_URL.trim()}`
+    : OPENCODE_RUNTIME
+      ? `${OPENCODE_RUNTIME.commandPreview} serve`
+      : "OpenCode server not configured";
+
+  const opencodeV2 = AGENT_BACKENDS["opencode-v2-beta"];
+  opencodeV2.available =
+    Boolean(process.env.OPENCURSOR_OPENCODE_V2_SERVER_URL?.trim()) ||
+    OPENCODE_V2_COMMAND !== null;
+  opencodeV2.commandPreview = process.env.OPENCURSOR_OPENCODE_V2_SERVER_URL?.trim()
+    ? `OpenCode v2 server at ${process.env.OPENCURSOR_OPENCODE_V2_SERVER_URL.trim()}`
+    : OPENCODE_V2_COMMAND
+      ? `${OPENCODE_V2_COMMAND} serve --stdio`
+      : "OpenCode v2 Beta server not configured";
+
+  const devin = AGENT_BACKENDS["devin-acp"];
+  devin.available = DEVIN_RUNTIME !== null;
+  devin.commandPreview = DEVIN_RUNTIME?.commandPreview ?? "Devin CLI not found";
+
+  const grokBuild = AGENT_BACKENDS["grok-build"];
+  grokBuild.available = GROK_BUILD_RUNTIME !== null;
+  grokBuild.commandPreview =
+    GROK_BUILD_RUNTIME?.commandPreview ?? "Grok Build CLI not found";
+
+  const codex = AGENT_BACKENDS["codex-app-server"];
+  codex.available = CODEX_RUNTIME !== null;
+  codex.commandPreview = CODEX_RUNTIME
+    ? `${CODEX_RUNTIME.commandPreview} app-server`
+    : "Codex CLI not found";
+
+  const antigravity = AGENT_BACKENDS["google-antigravity-cli"];
+  antigravity.available = GOOGLE_ANTIGRAVITY_RUNTIME !== null;
+  antigravity.commandPreview = GOOGLE_ANTIGRAVITY_RUNTIME
+    ? `${GOOGLE_ANTIGRAVITY_RUNTIME.commandPreview} interactive`
+    : "Antigravity CLI (agy) not found";
+
+  const claude = AGENT_BACKENDS["claude-code-sdk"];
+  claude.available = hasClaudeCodeSdkAuthConfig();
+  claude.commandPreview = `@anthropic-ai/claude-agent-sdk · ${describeClaudeCodeSdkAuthStatus()}`;
+}
 
 function createBackendInfo(input: {
   id: AgentBackendId;
@@ -662,23 +720,24 @@ export async function createAgentProvider(
     if (!DEVIN_RUNTIME) {
       throw new Error(`${backend.label} is not installed or could not be resolved.`);
     }
+    const devinRuntime = DEVIN_RUNTIME;
     return {
       backend,
       startSession(callbacks) {
         return AcpSessionHandle.create({
           backend,
-          command: DEVIN_RUNTIME.command,
-          args: DEVIN_RUNTIME.args,
-          env: DEVIN_RUNTIME.env,
+          command: devinRuntime.command,
+          args: devinRuntime.args,
+          env: devinRuntime.env,
           callbacks,
         });
       },
       loadSession(callbacks, providerSessionId) {
         return AcpSessionHandle.create({
           backend,
-          command: DEVIN_RUNTIME.command,
-          args: DEVIN_RUNTIME.args,
-          env: DEVIN_RUNTIME.env,
+          command: devinRuntime.command,
+          args: devinRuntime.args,
+          env: devinRuntime.env,
           callbacks,
           loadSessionId: providerSessionId,
         });
@@ -692,6 +751,7 @@ export async function createAgentProvider(
         `${backend.label} requires the grok binary. Install it from https://x.ai/cli or configure OPENCURSOR_GROK_BUILD_BIN.`
       );
     }
+    const grokRuntime = GROK_BUILD_RUNTIME;
     const cachedConfigOptions = await readAgentBackendConfigCache(backendId);
     const seedConfigOptions = cachedConfigOptions.some(
       (option) => option.category === "mode"
@@ -703,9 +763,9 @@ export async function createAgentProvider(
       startSession(callbacks) {
         return AcpSessionHandle.create({
           backend,
-          command: GROK_BUILD_RUNTIME.command,
-          args: GROK_BUILD_RUNTIME.args,
-          env: GROK_BUILD_RUNTIME.env,
+          command: grokRuntime.command,
+          args: grokRuntime.args,
+          env: grokRuntime.env,
           callbacks,
           seedConfigOptions,
         });
@@ -713,9 +773,9 @@ export async function createAgentProvider(
       loadSession(callbacks, providerSessionId) {
         return AcpSessionHandle.create({
           backend,
-          command: GROK_BUILD_RUNTIME.command,
-          args: GROK_BUILD_RUNTIME.args,
-          env: GROK_BUILD_RUNTIME.env,
+          command: grokRuntime.command,
+          args: grokRuntime.args,
+          env: grokRuntime.env,
           callbacks,
           loadSessionId: providerSessionId,
           seedConfigOptions,
