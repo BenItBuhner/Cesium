@@ -1326,7 +1326,7 @@ function CesiumAgentHarnessSettings() {
           <HarnessDetailBlock>
             <HarnessDetailToggleRow
               title="Context compression"
-              description="Summarize older turns when the session approaches the model context limit."
+              description="Compact older turns into a structured context ledger when the session approaches the model context limit."
               trailing={
                 <ToggleSwitch
                   checked={settings.compression.enabled}
@@ -1343,6 +1343,42 @@ function CesiumAgentHarnessSettings() {
                 />
               }
             />
+            {settings.compression.enabled ? (
+              <div className="mt-[12px] flex flex-col gap-[6px]">
+                <div className="flex items-center justify-between gap-[16px]">
+                  <p className="font-sans text-[13px] font-medium text-[var(--text-primary)]">
+                    Compaction intensity
+                  </p>
+                  <span className="font-mono text-[12px] text-[var(--text-secondary)]">
+                    {Math.round((settings.compression.intensity ?? 0.35) * 100)}%
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min={0}
+                  max={100}
+                  step={5}
+                  value={Math.round((settings.compression.intensity ?? 0.35) * 100)}
+                  onChange={(event) =>
+                    void patchSettings({
+                      compression: {
+                        ...settings.compression,
+                        intensity: Number(event.target.value) / 100,
+                      },
+                    })
+                  }
+                  disabled={busy}
+                  aria-label="Compaction intensity"
+                  className="w-full accent-[var(--accent-primary,#22c55e)]"
+                />
+                <p className="font-sans text-[12px] leading-[1.45] text-[var(--text-secondary)]">
+                  Low intensity keeps the context ~70% full after compaction (maximum recall,
+                  higher cost). High intensity compacts down to ~15% (cheaper and faster, more
+                  lossy). Verbatim user messages, pinned notes, and raw history retrieval survive
+                  at every intensity.
+                </p>
+              </div>
+            ) : null}
           </HarnessDetailBlock>
 
           <HarnessDetailBlock>

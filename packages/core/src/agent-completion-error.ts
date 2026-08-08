@@ -22,7 +22,9 @@ export function isCesiumFailureAssistantChunk(text: string): boolean {
 
 const TOOL_CALL_PAIRING_ERROR =
   /assistant message with ['"]tool_calls['"] must be followed by tool messages/i;
-const RATE_LIMIT_ERROR = /rate limit|too many requests|requests per minute/i;
+// Word-bounded so ordinary prose about a "rate limiter" (or similar) is never
+// misclassified as a provider failure and silently dropped from the thread.
+const RATE_LIMIT_ERROR = /rate limit(?:ed|s)?(?!\w)|too many requests|requests per minute/i;
 
 /** Provider completion errors belong in the composer dock, not the message thread. */
 export function isCompletionFailureThreadContent(text: string): boolean {

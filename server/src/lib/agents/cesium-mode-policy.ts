@@ -14,6 +14,8 @@ const READ_ONLY_TOOLS = new Set([
   "grep",
   "search_history",
   "read_history_page",
+  "pin_context",
+  "compact_context",
   "list_conversations",
   "read_conversation",
   "search_conversations",
@@ -148,6 +150,8 @@ export function resolveCesiumModeToolPolicy(input: {
       name === "ask_question" ||
       name === "search_history" ||
       name === "read_history_page" ||
+      name === "pin_context" ||
+      name === "compact_context" ||
       name === "list_conversations" ||
       name === "read_conversation" ||
       name === "search_conversations" ||
