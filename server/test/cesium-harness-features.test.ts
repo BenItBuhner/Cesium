@@ -81,11 +81,15 @@ test("buildOpenAiToolDefinitions reflects harness version", () => {
   assert.equal(v2Names.includes("subagent"), false);
 });
 
-test("wait_agent timeout validation rejects out-of-range values", () => {
+test("wait_agent timeout validation clamps low values and rejects high values (Codex parity)", () => {
   const limits = defaultHarnessSettings().limits;
   assert.equal(resolveWaitAgentTimeoutMs(undefined, limits), limits.waitAgentDefaultTimeoutMs);
   assert.equal(resolveWaitAgentTimeoutMs(45_000, limits), 45_000);
-  assert.throws(() => resolveWaitAgentTimeoutMs(limits.waitAgentMinTimeoutMs - 1, limits), /at least/);
+  // Codex MultiAgentV2 clamps requests below the minimum up to the minimum.
+  assert.equal(
+    resolveWaitAgentTimeoutMs(limits.waitAgentMinTimeoutMs - 1, limits),
+    limits.waitAgentMinTimeoutMs
+  );
   assert.throws(() => resolveWaitAgentTimeoutMs(limits.waitAgentMaxTimeoutMs + 1, limits), /at most/);
 });
 

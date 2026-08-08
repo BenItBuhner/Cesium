@@ -9,30 +9,99 @@ process.env.OPENCURSOR_DATA_DIR = await mkdtemp(
 );
 
 const {
-  createBrowserSubagentToolset,
+  createSubagentToolset,
   runSubagentToolLoop,
+  subagentToolDefinitions,
   subagentToolsetGuidance,
+  SUBAGENT_COLLABORATION_TOOL_NAMES,
+  SUBAGENT_SHARED_HOST_TOOL_NAMES,
 } = await import("../src/lib/agents/cesium/subagent-toolset.js");
+const { resolveCesiumTools } = await import("../src/lib/agents/cesium/cesium-tools.js");
 const { listBrowserControlTabs, resetBrowserControlForTests } = await import(
   "../src/lib/browser-control/service.js"
 );
-const { BROWSER_MCP_TOOLS } = await import("../src/lib/mcp/builtin-browser-tools.js");
+const { BROWSER_MCP_TOOLS, callBuiltInBrowserTool } = await import(
+  "../src/lib/mcp/builtin-browser-tools.js"
+);
 import type { CesiumAdapterResult } from "../src/lib/agents/cesium/cesium-types.js";
+import type { CesiumSubagentToolset } from "../src/lib/agents/cesium/subagent-toolset.js";
 
-test("browser subagent toolset exposes the full built-in browser tool surface", () => {
-  const toolset = createBrowserSubagentToolset({ id: "ws-toolset", root: os.tmpdir() });
-  assert.equal(toolset.tools.length, BROWSER_MCP_TOOLS.length);
-  assert.ok(toolset.toolNames.has("browser_tabs"));
-  assert.ok(toolset.toolNames.has("browser_screenshot"));
-  assert.ok(toolset.toolNames.has("browser_record"));
-  assert.match(subagentToolsetGuidance(toolset), /artifacts\/browser\//);
+function browserBackedToolset(workspaceId: string): CesiumSubagentToolset {
+  const definitions = subagentToolDefinitions({
+    hostTools: resolveCesiumTools({ features: { subagents: { version: 2 } } }).tools,
+    includeCollaboration: true,
+  });
+  return createSubagentToolset({
+    definitions,
+    execute: async (name, args) => {
+      if (name.startsWith("browser_")) {
+        return await callBuiltInBrowserTool({
+          workspaceId,
+          workspaceRoot: os.tmpdir(),
+          toolName: name,
+          arguments: args,
+        });
+      }
+      return `stub:${name}`;
+    },
+  });
+}
+
+test("subagents share the host workspace tool surface plus browser and collaboration tools (Codex parity)", () => {
+  const host = resolveCesiumTools({ features: { subagents: { version: 2 } } }).tools;
+  const defs = subagentToolDefinitions({ hostTools: host, includeCollaboration: true });
+  const names = new Set(defs.map((tool) => tool.name));
+  for (const shared of SUBAGENT_SHARED_HOST_TOOL_NAMES) {
+    assert.ok(names.has(shared), `missing shared host tool ${shared}`);
+  }
+  for (const browserTool of BROWSER_MCP_TOOLS) {
+    assert.ok(names.has(browserTool.name), `missing browser tool ${browserTool.name}`);
+  }
+  for (const collab of SUBAGENT_COLLABORATION_TOOL_NAMES) {
+    assert.ok(names.has(collab), `missing collaboration tool ${collab}`);
+  }
+  // Parent-conversation control tools stay excluded — children have no
+  // conversation of their own for these to act on.
+  for (const excluded of ["switch_mode", "create_plan", "goal_set", "orchestration_create_issue", "ask_question"]) {
+    assert.equal(names.has(excluded), false, `${excluded} must not leak to subagents`);
+  }
+  // Permission markers are preserved so the shared cascade still gates children.
+  const terminal = defs.find((tool) => tool.name === "terminal");
+  assert.equal(terminal?.requiresPermission, "terminal");
+  const editFile = defs.find((tool) => tool.name === "edit_file");
+  assert.equal(editFile?.requiresPermission, "editFile");
+});
+
+test("collaboration tools are omitted for single-shot (v1) subagents", () => {
+  const host = resolveCesiumTools({ features: { subagents: { version: 2 } } }).tools;
+  const defs = subagentToolDefinitions({ hostTools: host, includeCollaboration: false });
+  const names = new Set(defs.map((tool) => tool.name));
+  assert.equal(names.has("spawn_agent"), false);
+  assert.ok(names.has("read_file"));
+  assert.ok(names.has("browser_record"));
+});
+
+test("guidance reflects the shared-workspace protocol and collaboration availability", () => {
+  const host = resolveCesiumTools({ features: { subagents: { version: 2 } } }).tools;
+  const collab = createSubagentToolset({
+    definitions: subagentToolDefinitions({ hostTools: host, includeCollaboration: true }),
+    execute: async () => "",
+  });
+  const solo = createSubagentToolset({
+    definitions: subagentToolDefinitions({ hostTools: host, includeCollaboration: false }),
+    execute: async () => "",
+  });
+  assert.match(subagentToolsetGuidance(collab), /same filesystem and working directory/);
+  assert.match(subagentToolsetGuidance(collab), /spawn_agent creates a child/);
+  assert.match(subagentToolsetGuidance(solo), /artifacts\/browser\//);
+  assert.doesNotMatch(subagentToolsetGuidance(solo), /spawn_agent creates a child/);
   assert.equal(subagentToolsetGuidance(null), "");
 });
 
 test("subagent tool loop executes browser tools and returns the final text", async () => {
   resetBrowserControlForTests();
   const workspaceId = "ws-subagent-loop";
-  const toolset = createBrowserSubagentToolset({ id: workspaceId, root: os.tmpdir() });
+  const toolset = browserBackedToolset(workspaceId);
   const seenToolNames: string[] = [];
   let call = 0;
   const result = await runSubagentToolLoop({
@@ -80,7 +149,13 @@ test("subagent tool loop executes browser tools and returns the final text", asy
 });
 
 test("subagent tool loop rejects tools outside the toolset", async () => {
-  const toolset = createBrowserSubagentToolset({ id: "ws-reject", root: os.tmpdir() });
+  const toolset = createSubagentToolset({
+    definitions: subagentToolDefinitions({
+      hostTools: resolveCesiumTools({ features: { subagents: { version: 2 } } }).tools,
+      includeCollaboration: false,
+    }),
+    execute: async () => "unused",
+  });
   let call = 0;
   const rejected: string[] = [];
   const result = await runSubagentToolLoop({
@@ -90,7 +165,7 @@ test("subagent tool loop rejects tools outside the toolset", async () => {
       providerId: "openai",
       modelId: "openai/test-model",
     },
-    messages: [{ role: "user", content: "try to edit files" }],
+    messages: [{ role: "user", content: "try a parent-only tool" }],
     toolset,
     runAdapterImpl: async (input): Promise<CesiumAdapterResult> => {
       call += 1;
@@ -98,24 +173,24 @@ test("subagent tool loop rejects tools outside the toolset", async () => {
         return {
           text: "",
           toolRequests: [
-            { id: "tool-x", name: "write_file", arguments: { path: "x", content: "y" } },
+            { id: "tool-x", name: "switch_mode", arguments: { target_mode: "plan" } },
           ],
         };
       }
       const toolMessage = input.messages.find((message) => message.role === "tool");
       assert.match(toolMessage!.content, /not available to this subagent/);
-      return { text: "Understood, browser tools only.", toolRequests: [] };
+      return { text: "Understood.", toolRequests: [] };
     },
     onToolCall: async (event) => {
       if (!event.ok) rejected.push(event.name);
     },
   });
-  assert.equal(result.text, "Understood, browser tools only.");
-  assert.deepEqual(rejected, ["write_file"]);
+  assert.equal(result.text, "Understood.");
+  assert.deepEqual(rejected, ["switch_mode"]);
 });
 
 test("subagent tool loop stops at max iterations", async () => {
-  const toolset = createBrowserSubagentToolset({ id: "ws-max", root: os.tmpdir() });
+  const toolset = browserBackedToolset("ws-max");
   const result = await runSubagentToolLoop({
     adapter: {
       apiKind: "openai-chat-completions",
