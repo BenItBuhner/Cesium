@@ -25,20 +25,8 @@ import {
   type AgentRailRowDetailMode,
   type AgentRailStatusInfo,
 } from "@/lib/agent-rail-status";
-
-const ORIGIN_PROVIDER_BADGES: Record<string, string> = {
-  github: "GH",
-  linear: "LIN",
-  slack: "SLK",
-  manual: "CLOUD",
-};
-
-const ORIGIN_PROVIDER_NAMES: Record<string, string> = {
-  github: "GitHub",
-  linear: "Linear",
-  slack: "Slack",
-  manual: "Cloud Agents",
-};
+import { IntegrationIcon } from "@/components/chat/IntegrationIcon";
+import { integrationIconLabel } from "@/lib/integration-icons";
 
 const DETAIL_TONE_CLASSES: Record<AgentRailStatusInfo["tone"], string> = {
   attention: "text-[var(--plan-accent)]",
@@ -283,11 +271,10 @@ export function AgentConversationRow({
   const origin = conversation.origin;
   // Imported conversations render exactly like native ones — no badge.
   // Provenance stays discoverable via the hover title only.
-  const originBadge =
-    origin?.kind === "cloud" ? ORIGIN_PROVIDER_BADGES[origin.providerId] ?? "CLOUD" : null;
+  const originProviderId = origin?.kind === "cloud" ? origin.providerId : null;
   const originTitle = origin
     ? origin.kind === "cloud"
-      ? `Triggered from ${ORIGIN_PROVIDER_NAMES[origin.providerId] ?? origin.providerId}${
+      ? `Triggered from ${integrationIconLabel(origin.providerId)}${
           origin.label ? ` · ${origin.label}` : ""
         }`
       : origin.kind === "cloud-snapshot"
@@ -348,12 +335,16 @@ export function AgentConversationRow({
           ORCH
         </span>
       ) : null}
-      {originBadge ? (
+      {originProviderId ? (
         <span
           title={originTitle}
-          className="shrink-0 rounded-[var(--radius-tab)] border border-[color-mix(in_srgb,var(--accent)_35%,transparent)] bg-[var(--accent-bg)] px-[5px] py-px font-mono text-[9px] font-medium uppercase tracking-[0.04em] text-[var(--accent)]"
+          className="inline-flex size-[16px] shrink-0 items-center justify-center rounded-[var(--radius-tab)] border border-[color-mix(in_srgb,var(--accent)_35%,transparent)] bg-[var(--accent-bg)] text-[var(--accent)]"
         >
-          {originBadge}
+          <IntegrationIcon
+            providerId={originProviderId}
+            className="size-[10px]"
+            tone="text"
+          />
         </span>
       ) : null}
     </>

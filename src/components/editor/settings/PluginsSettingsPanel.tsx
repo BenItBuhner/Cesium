@@ -34,6 +34,8 @@ import {
   rowButtonClass,
 } from "@/components/editor/settings-ui";
 import { AgentBackendIcon } from "@/components/chat/AgentBackendIcon";
+import { IntegrationIcon } from "@/components/chat/IntegrationIcon";
+import { hasIntegrationIconAsset } from "@/lib/integration-icons";
 import type { AgentBackendId } from "@/lib/agent-types";
 import { shortcutInputClass } from "./shared";
 
@@ -77,8 +79,19 @@ export function usePluginsMcpNavigation() {
   return { mcpsOpen, openMcpServers, closeMcpServers, openRulesSkills };
 }
 
-function PluginIcon({ iconUrl, size = 18 }: { iconUrl?: string; size?: number }) {
+function PluginIcon({
+  pluginId,
+  iconUrl,
+  size = 18,
+}: {
+  pluginId?: string;
+  iconUrl?: string;
+  size?: number;
+}) {
   const sizeClass = size === 16 ? "size-[16px]" : "size-[18px]";
+  if (pluginId && hasIntegrationIconAsset(pluginId)) {
+    return <IntegrationIcon providerId={pluginId} className={`${sizeClass} shrink-0`} />;
+  }
   return iconUrl ? (
     <img alt="" src={iconUrl} className={`${sizeClass} rounded-[4px]`} />
   ) : (
@@ -113,7 +126,10 @@ function InstalledPluginBlock({
       <div className="flex items-start justify-between gap-[12px]">
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-[8px]">
-            <PluginIcon iconUrl={plugin.definition.iconUrl} />
+            <PluginIcon
+              pluginId={plugin.definition.pluginId}
+              iconUrl={plugin.definition.iconUrl}
+            />
             <span className="font-sans text-[13px] font-medium text-[var(--text-primary)]">
               {plugin.definition.displayName}
             </span>
@@ -569,7 +585,11 @@ export function PluginsSettingsPanel() {
           >
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-[8px]">
-                <PluginIcon iconUrl={entry.definition.iconUrl} size={16} />
+                <PluginIcon
+                  pluginId={entry.definition.pluginId}
+                  iconUrl={entry.definition.iconUrl}
+                  size={16}
+                />
                 <span className="font-sans text-[12px] font-medium text-[var(--text-primary)]">
                   {entry.definition.displayName}
                 </span>

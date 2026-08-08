@@ -113,6 +113,7 @@ export function SettingsRow({
   description,
   trailing,
   border = true,
+  leading,
   titleExtra,
   searchId,
   highlight,
@@ -121,6 +122,8 @@ export function SettingsRow({
   description?: string;
   trailing: ReactNode;
   border?: boolean;
+  /** Optional mark shown before the title (e.g. brand icons). */
+  leading?: ReactNode;
   titleExtra?: ReactNode;
   /** Stable id for global settings search scroll/highlight (`data-settings-search-id`). */
   searchId?: string;
@@ -135,6 +138,7 @@ export function SettingsRow({
     >
       <div className="min-w-0 flex-1">
         <p className="flex flex-wrap items-center gap-[8px] font-sans text-[13px] font-medium text-[var(--text-primary)]">
+          {leading}
           {title}
           {titleExtra}
         </p>

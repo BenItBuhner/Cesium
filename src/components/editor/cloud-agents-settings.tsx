@@ -4,15 +4,15 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Check,
   Copy,
-  Github,
   Loader2,
-  MessageSquare,
   Plus,
   RefreshCw,
   Send,
   Trash2,
   Unplug,
 } from "lucide-react";
+import { IntegrationIcon } from "@/components/chat/IntegrationIcon";
+import { integrationIconLabel } from "@/lib/integration-icons";
 import {
   PageIntro,
   SettingsFieldLabel,
@@ -143,11 +143,10 @@ function ProviderConnectionCard({
     <div className="border-b border-[var(--border-subtle)] px-[16px] py-[14px] last:border-b-0">
       <div className="flex flex-wrap items-center justify-between gap-[10px]">
         <div className="flex min-w-0 items-center gap-[10px]">
-          {provider.id === "github" ? (
-            <Github className="size-[16px] shrink-0 text-[var(--text-secondary)]" strokeWidth={1.5} aria-hidden />
-          ) : (
-            <MessageSquare className="size-[16px] shrink-0 text-[var(--text-secondary)]" strokeWidth={1.5} aria-hidden />
-          )}
+          <IntegrationIcon
+            providerId={provider.id}
+            className="size-[16px] shrink-0"
+          />
           <div className="min-w-0">
             <p className="flex flex-wrap items-center gap-[8px] font-sans text-[13px] font-medium text-[var(--text-primary)]">
               {provider.label}
@@ -616,7 +615,17 @@ export function CloudAgentsSettingsPanel() {
             <ul className="mb-[10px] flex flex-col gap-[6px]">
               {settings.routingRules.map((rule) => (
                 <li key={rule.id} className="flex flex-wrap items-center gap-[8px]">
-                  <span className={tagClass}>{rule.providerId}</span>
+                  <span className={`${tagClass} inline-flex items-center gap-[5px]`}>
+                    {rule.providerId !== "any" ? (
+                      <IntegrationIcon
+                        providerId={rule.providerId}
+                        className="size-[11px]"
+                      />
+                    ) : null}
+                    {rule.providerId === "any"
+                      ? "Any"
+                      : integrationIconLabel(rule.providerId)}
+                  </span>
                   <span className="font-mono text-[11px] text-[var(--text-secondary)]">
                     {rule.match || "(everything)"}
                   </span>
@@ -766,12 +775,18 @@ export function CloudAgentsSettingsPanel() {
                     <span className={`${tagClass} !text-amber-400`}>unverified</span>
                   ) : null}
                 </p>
-                <p className="mt-[2px] font-sans text-[11px] text-[var(--text-secondary)]">
-                  {task.source.providerId} ·{" "}
-                  {task.workspaceId
-                    ? workspacesById.get(task.workspaceId)?.name ?? task.workspaceId
-                    : "no workspace routed"}
-                  {task.lastError ? ` · ${task.lastError}` : ""}
+                <p className="mt-[2px] flex flex-wrap items-center gap-[5px] font-sans text-[11px] text-[var(--text-secondary)]">
+                  <IntegrationIcon
+                    providerId={task.source.providerId}
+                    className="size-[11px]"
+                  />
+                  <span>
+                    {integrationIconLabel(task.source.providerId)} ·{" "}
+                    {task.workspaceId
+                      ? workspacesById.get(task.workspaceId)?.name ?? task.workspaceId
+                      : "no workspace routed"}
+                    {task.lastError ? ` · ${task.lastError}` : ""}
+                  </span>
                 </p>
               </div>
               <div className="flex shrink-0 items-center gap-[6px]">
