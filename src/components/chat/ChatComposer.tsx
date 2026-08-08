@@ -3030,7 +3030,7 @@ const handleNativeComposerKeyDown = useCallback(
       : `${shellMx} ${statusBarHasVisibleItems ? "mb-0" : COMPOSER_BOTTOM_GAP_CLASS}`.trim();
   const shellChrome = isExpanded
     ? "h-full min-h-0 gap-0 rounded-none border-0 bg-[var(--bg-main)] p-0"
-    : "gap-[10px] overflow-hidden rounded-[var(--agent-composer-radius)] border border-[var(--agent-border)] bg-[var(--agent-card-bg)] p-[10px]";
+    : "chat-composer-surface gap-[10px] overflow-hidden rounded-[var(--agent-composer-radius)] border border-[var(--agent-border)] p-[10px]";
   const editorRegionClassName = isExpanded
     ? "flex min-h-0 flex-1 flex-col"
     : "";
@@ -3374,7 +3374,8 @@ const handleNativeComposerKeyDown = useCallback(
       <div
         ref={composerRootRef}
         data-ide-input-sink
-        className={`${shellMargin} relative flex shrink-0 flex-col gap-[8px] overflow-hidden ${pillRadiusClass} border border-[var(--agent-border)] bg-[var(--agent-card-bg)] p-[10px]`}
+        data-composer-shell
+        className={`${shellMargin} chat-composer-surface relative flex shrink-0 flex-col gap-[8px] overflow-hidden ${pillRadiusClass} border border-[var(--agent-border)] p-[10px]`}
       >
         {inlineOverflowProbe}
         {attachedImages.length > 0 && (
@@ -3618,6 +3619,7 @@ const handleNativeComposerKeyDown = useCallback(
     <div
       ref={composerRootRef}
       data-ide-input-sink
+      data-composer-shell={isExpanded ? undefined : true}
       className={`${shellMargin} flex ${isExpanded ? "h-full min-h-0" : "shrink-0"} flex-col ${shellChrome}`}
     >
       <div

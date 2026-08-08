@@ -1,6 +1,15 @@
 "use client";
 
-import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useDeferredValue,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+} from "react";
 import { AskQuestionCard } from "@/components/chat/AskQuestionCard";
 import { AgentCompletionErrorDock } from "@/components/chat/AgentCompletionErrorDock";
 import { ChatComposer } from "@/components/chat/ChatComposer";
@@ -42,8 +51,15 @@ import { deleteAgentConversationQueueItem } from "@/lib/server-api";
 import type {
   AgentBackendId,
   AgentBackendInfo,
+  AgentConversationCreateInput,
+  AgentStoredEvent,
 } from "@/lib/agent-types";
 import type { EditorMode, ImageAttachment, ModelInfo, QueuedChatPrompt } from "@/lib/types";
+import {
+  captureComposerSplitSource,
+  clearComposerSplitSource,
+  runComposerSplitAnimation,
+} from "@/components/chat/composer-split-animation";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { useGlobalSettings } from "@/components/preferences/GlobalSettingsProvider";
 import { AGENT_CENTER_CONTENT_CLASS } from "./agent-shell-layout";
@@ -64,6 +80,24 @@ function pickAvailableBackend(
 
 /** Stable identity for the no-events case so memos/effects keyed on it don't re-fire every render. */
 const EMPTY_THREAD_EVENTS: never[] = [];
+
+/** Synthetic conversation id for the optimistic first-turn view shown before the server ack. */
+const OPTIMISTIC_CONVERSATION_ID = "__optimistic-new-chat__";
+
+/**
+ * Hold the selection commit until the composer split animation has finished,
+ * so the real conversation view (which remounts MessageList + composer via
+ * `key`) never swaps in mid-flight and kills the FLIP transforms.
+ */
+const OPTIMISTIC_COMMIT_MIN_MS = 440;
+
+type OptimisticNewChatTurn = {
+  key: number;
+  text: string;
+  attachments?: ImageAttachment[];
+  backendId?: AgentBackendId;
+  createdAt: number;
+};
 
 export function AgentCenterPane() {
   const {
@@ -425,6 +459,102 @@ export function AgentCenterPane() {
     end: composerDraftText.length,
   };
 
+  /**
+   * Instant new-chat spawning: the conversation view renders optimistically
+   * the moment the first prompt is submitted (no server round-trip in the
+   * critical path), while the composer visually splits — the typed prompt
+   * FLIPs into the user-message card at the top of the thread and the emptied
+   * shell slides down to its docked spot at the bottom.
+   */
+  const paneRootRef = useRef<HTMLDivElement | null>(null);
+  const [optimisticTurn, setOptimisticTurn] = useState<OptimisticNewChatTurn | null>(null);
+  const optimisticSubmitSeqRef = useRef(0);
+  const optimisticPendingRef = useRef(false);
+  const optimisticFollowUpsRef = useRef<
+    Array<{ text: string; attachments?: ImageAttachment[]; delivery?: "normal" | "steer" }>
+  >([]);
+  const isDraftConversationSelectedRef = useRef(isDraftConversationSelected);
+  isDraftConversationSelectedRef.current = isDraftConversationSelected;
+
+  const beginInstantConversation = useCallback(
+    (
+      input: AgentConversationCreateInput,
+      text: string,
+      attachments?: ImageAttachment[]
+    ) => {
+      const key = ++optimisticSubmitSeqRef.current;
+      const submittedAt = Date.now();
+      const draftIdAtSubmit = composerDraftId;
+      const draftTitleAtSubmit = composerDraftTitle;
+      captureComposerSplitSource(paneRootRef.current);
+      optimisticPendingRef.current = true;
+      setOptimisticTurn({
+        key,
+        text,
+        attachments,
+        backendId: input.backendId,
+        createdAt: submittedAt,
+      });
+      void (async () => {
+        const created = await createAndPromptConversation(input, text, attachments);
+        if (optimisticSubmitSeqRef.current !== key) {
+          return;
+        }
+        if (!created) {
+          optimisticPendingRef.current = false;
+          const followUps = optimisticFollowUpsRef.current.splice(0);
+          clearComposerSplitSource();
+          setOptimisticTurn(null);
+          // Give the prompt back to the composer instead of losing it.
+          upsertComposerDraft(draftIdAtSubmit, {
+            title: draftTitleAtSubmit,
+            content: [text, ...followUps.map((item) => item.text)].join("\n\n"),
+            attachments,
+          });
+          return;
+        }
+        void refreshConversationGroups();
+        const commitDelay = Math.max(
+          0,
+          OPTIMISTIC_COMMIT_MIN_MS - (Date.now() - submittedAt)
+        );
+        window.setTimeout(() => {
+          if (optimisticSubmitSeqRef.current !== key) {
+            return;
+          }
+          optimisticPendingRef.current = false;
+          const followUps = optimisticFollowUpsRef.current.splice(0);
+          if (!isDraftConversationSelectedRef.current) {
+            // The user navigated elsewhere while the ack landed; the chat is
+            // in the rail already, so do not yank the selection back.
+            setOptimisticTurn(null);
+            return;
+          }
+          setSelectedConversationId(created.id);
+          for (const followUp of followUps) {
+            void promptConversation(
+              created.id,
+              followUp.text,
+              followUp.attachments,
+              undefined,
+              followUp.delivery
+            );
+          }
+        }, commitDelay);
+      })();
+      return true;
+    },
+    [
+      composerDraftId,
+      composerDraftTitle,
+      createAndPromptConversation,
+      promptConversation,
+      refreshConversationGroups,
+      setSelectedConversationId,
+      upsertComposerDraft,
+    ]
+  );
+
   const [planBuildModelChoice, setPlanBuildModelChoice] =
     useState<PlanBuildModelChoice>("inherit");
   const planBuildModels = composerState?.models ?? draftModels;
@@ -656,25 +786,32 @@ export function AgentCenterPane() {
       attachments?: ImageAttachment[],
       options?: { delivery?: "normal" | "steer" }
     ) => {
-      let targetConversationId = selectedConversationId;
+      const targetConversationId = selectedConversationId;
       if (!targetConversationId) {
+        if (optimisticPendingRef.current) {
+          // A first prompt is already in flight; deliver this one right after
+          // the conversation ack instead of spawning a second conversation.
+          optimisticFollowUpsRef.current.push({
+            text,
+            attachments,
+            delivery: options?.delivery,
+          });
+          return true;
+        }
         const backend = draftBackend;
         if (!backend) {
           return false;
         }
-        const created = await createAndPromptConversation({
-          backendId: backend.id,
-          mode: draftMode,
-          modelId: draftModel.modelValue ?? draftModel.id,
-          modelName: draftModel.name,
-        }, text, attachments);
-        if (!created) {
-          return false;
-        }
-        targetConversationId = created.id;
-        setSelectedConversationId(created.id);
-        void refreshConversationGroups();
-        return true;
+        return beginInstantConversation(
+          {
+            backendId: backend.id,
+            mode: draftMode,
+            modelId: draftModel.modelValue ?? draftModel.id,
+            modelName: draftModel.name,
+          },
+          text,
+          attachments
+        );
       }
       const targetConversation =
         targetConversationId === conversation?.id
@@ -710,7 +847,7 @@ export function AgentCenterPane() {
       return true;
     },
     [
-      createAndPromptConversation,
+      beginInstantConversation,
       composerState,
       conversation,
       conversationsById,
@@ -723,7 +860,6 @@ export function AgentCenterPane() {
       promptConversation,
       refreshConversationGroups,
       selectedConversationId,
-      setSelectedConversationId,
     ]
   );
 
@@ -913,12 +1049,63 @@ export function AgentCenterPane() {
     };
   }, [expandedComposerState, setExpandedComposerController]);
 
-  const showLanding = isDraftConversationSelected && !conversation;
+  const showLanding = isDraftConversationSelected && !conversation && !optimisticTurn;
   const showConversationTransitionState =
-    conversationSelectionPending ||
-    (!!selectedConversationId && loadState !== "error" && (!conversation || !hasConversationHistoryLoaded));
+    !optimisticTurn &&
+    (conversationSelectionPending ||
+      (!!selectedConversationId && loadState !== "error" && (!conversation || !hasConversationHistoryLoaded)));
+
+  /**
+   * Synthetic single-turn view rendered the instant a first prompt is sent.
+   * Built through the same event → message projection as real threads so the
+   * swap to the server-acked conversation is pixel-identical.
+   */
+  const optimisticEvents = useMemo<AgentStoredEvent[] | null>(() => {
+    if (!optimisticTurn) {
+      return null;
+    }
+    return [
+      {
+        seq: 1,
+        eventId: `optimistic-event-${optimisticTurn.key}`,
+        conversationId: OPTIMISTIC_CONVERSATION_ID,
+        createdAt: optimisticTurn.createdAt,
+        kind: "user_message",
+        messageId: `optimistic-message-${optimisticTurn.key}`,
+        content: optimisticTurn.text,
+        attachments: optimisticTurn.attachments,
+      },
+    ];
+  }, [optimisticTurn]);
+  const optimisticConversationView = useMemo(() => {
+    if (!optimisticTurn || !optimisticEvents) {
+      return null;
+    }
+    return {
+      conversationId: OPTIMISTIC_CONVERSATION_ID,
+      messages: projectAgentEventsToChatMessages(optimisticEvents, {
+        backendId: optimisticTurn.backendId,
+        workspaceRoot: workspaceInfo?.root ?? null,
+      }),
+      conversationBusy: true,
+      hasOlderHistory: false,
+      loadingOlderHistory: false,
+      initialScrollTop: 0,
+    };
+  }, [optimisticEvents, optimisticTurn, workspaceInfo?.root]);
+
+  // While the optimistic turn is live, the real view must not take over until
+  // its projected messages exist: `threadMessages` derives from
+  // `useDeferredValue(rawThreadEvents)`, which can lag a few frames behind the
+  // snapshot merge on slower devices — swapping onto an empty projection would
+  // blank the just-sent message before popping it back in.
+  const realConversationViewReady =
+    !!selectedConversationId &&
+    !!conversation &&
+    hasConversationHistoryLoaded &&
+    (!optimisticTurn || scrollMessages.length > 0);
   const visibleConversationView =
-    selectedConversationId && conversation && hasConversationHistoryLoaded
+    realConversationViewReady && selectedConversationId && conversation
       ? {
           conversationId: selectedConversationId,
           messages: scrollMessages,
@@ -929,9 +1116,39 @@ export function AgentCenterPane() {
           loadingOlderHistory: historyCursor.loadingOlder,
           initialScrollTop: workspaceSession.chat.scrollTopByTabId[selectedConversationId] ?? 0,
         }
-      : showConversationTransitionState
-        ? stableConversationView
-        : null;
+      : optimisticConversationView ??
+        (showConversationTransitionState ? stableConversationView : null);
+
+  // Run the split FLIP right after the optimistic view is in the DOM: the
+  // user-message card and docked shell are translated from the captured
+  // source rect to their natural spots before the browser paints.
+  useLayoutEffect(() => {
+    if (optimisticTurn) {
+      runComposerSplitAnimation(paneRootRef.current);
+    }
+  }, [optimisticTurn]);
+
+  // Retire the optimistic view once the real conversation is selected, loaded,
+  // and actually rendering the same turn (non-empty projection).
+  useEffect(() => {
+    if (!optimisticTurn) {
+      return;
+    }
+    if (
+      selectedConversationId &&
+      conversation &&
+      hasConversationHistoryLoaded &&
+      scrollMessages.length > 0
+    ) {
+      setOptimisticTurn(null);
+    }
+  }, [
+    conversation,
+    hasConversationHistoryLoaded,
+    optimisticTurn,
+    scrollMessages.length,
+    selectedConversationId,
+  ]);
   const emptyState = (
     <div className="absolute inset-0 flex items-center justify-center px-[14px] pb-[220px] sm:px-[20px] max-[480px]:px-0 max-[480px]:pl-[max(0px,env(safe-area-inset-left,0px))] max-[480px]:pr-[max(0px,env(safe-area-inset-right,0px))]">
       <div className={`${AGENT_CENTER_CONTENT_CLASS} text-center`}>
@@ -950,14 +1167,20 @@ export function AgentCenterPane() {
 
   if (showLanding) {
     return (
-      <div className="relative flex h-full min-h-0 w-full flex-col overflow-hidden bg-[var(--bg-main)] @container">
-        <AgentNewChatLanding />
+      <div
+        ref={paneRootRef}
+        className="relative flex h-full min-h-0 w-full flex-col overflow-hidden bg-[var(--bg-main)] @container"
+      >
+        <AgentNewChatLanding onInstantSubmit={beginInstantConversation} />
       </div>
     );
   }
 
   return (
-    <div className="relative flex h-full min-h-0 w-full flex-col overflow-hidden bg-[var(--bg-main)] @container">
+    <div
+      ref={paneRootRef}
+      className="relative flex h-full min-h-0 w-full flex-col overflow-hidden bg-[var(--bg-main)] @container"
+    >
       <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
         {visibleConversationView ? (
           <div className={showConversationTransitionState ? "pointer-events-none h-full" : "h-full"}>
@@ -976,6 +1199,9 @@ export function AgentCenterPane() {
               }
               initialScrollTop={visibleConversationView.initialScrollTop}
               onScrollTopSettled={(scrollTop) => {
+                if (visibleConversationView.conversationId === OPTIMISTIC_CONVERSATION_ID) {
+                  return;
+                }
                 updateWorkspaceSession((current) =>
                   Math.abs(
                     (current.chat.scrollTopByTabId[visibleConversationView.conversationId] ?? 0) -
@@ -1014,6 +1240,13 @@ export function AgentCenterPane() {
 
         {!composerHiddenForExpanded && !showConversationTransitionState ? (
           <div className="pointer-events-none absolute inset-x-0 bottom-0 z-30">
+            {visibleConversationView ? (
+              <div
+                aria-hidden
+                className="chat-bottom-fade"
+                style={{ "--chat-fade-surface": "var(--bg-main)" } as CSSProperties}
+              />
+            ) : null}
             <div className="pointer-events-auto chat-bottom-dock">
               {dockedAsk && visibleConversationView ? (
                 <div className="pt-[8px] px-0 @min-[481px]:px-[10px]">

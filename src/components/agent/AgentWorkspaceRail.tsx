@@ -3289,7 +3289,21 @@ export function AgentWorkspaceRail() {
     return nodes;
   }, [attentionSection, chatsSection, pinnedSection, railSectionOrder, workspaceGroupsSection]);
 
-  const desktopRailCollapsed = leftRailCollapsed && !isMobile;
+  // Desktop collapse animates the rail panel to 0% width; keep the content
+  // mounted for the slide-out so it visibly travels off instead of vanishing.
+  const desktopRailCollapsedTarget = leftRailCollapsed && !isMobile;
+  const [desktopRailCollapsed, setDesktopRailCollapsed] = useState(desktopRailCollapsedTarget);
+  useEffect(() => {
+    if (desktopRailCollapsedTarget === desktopRailCollapsed) {
+      return;
+    }
+    if (!desktopRailCollapsedTarget) {
+      setDesktopRailCollapsed(false);
+      return;
+    }
+    const timer = window.setTimeout(() => setDesktopRailCollapsed(true), 300);
+    return () => window.clearTimeout(timer);
+  }, [desktopRailCollapsed, desktopRailCollapsedTarget]);
   const railHasContent =
     pinnedRailConversations.length > 0 ||
     standaloneChatConversations.length > 0 ||
@@ -3353,7 +3367,10 @@ export function AgentWorkspaceRail() {
             </div>
           )}
 
-          {!leftRailCollapsed ? (
+          {/* Gate on the DELAYED collapse flag: the raw context value would
+              unmount the list on the first frame of the desktop slide-out and
+              empty the mobile drawer while it is still animating closed. */}
+          {!desktopRailCollapsed ? (
             <>
               <AgentRailConversationListScroll measureKey={railListScrollMeasureKey}>
           {railLoading ? (
