@@ -4467,3 +4467,86 @@ export async function postCloudAgentTaskUpdate(
     { skipWorkspaceHeader: true }
   );
 }
+
+// ---------------------------------------------------------------------------
+// Cross-harness usage (Settings → Usage)
+// ---------------------------------------------------------------------------
+
+export type UsageTokenTotals = {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  reasoningTokens: number;
+  totalTokens: number;
+};
+
+export type UsageTotals = UsageTokenTotals & {
+  costUsd: number | null;
+  sessions: number;
+  requests: number;
+};
+
+export type UsageDailyBucket = UsageTokenTotals & {
+  date: string;
+  costUsd: number | null;
+  requests: number;
+};
+
+export type UsageModelBreakdown = UsageTokenTotals & {
+  model: string;
+  costUsd: number | null;
+  requests: number;
+};
+
+export type UsageLimitWindow = {
+  id: string;
+  label: string;
+  usedPercent: number | null;
+  windowMinutes: number | null;
+  resetsAt: string | null;
+  capturedAt: string | null;
+  detail: string | null;
+};
+
+export type ProviderUsageReport = {
+  id: string;
+  label: string;
+  vendor: string;
+  available: boolean;
+  reason: string | null;
+  storageRoot: string | null;
+  plan: string | null;
+  limitWindows: UsageLimitWindow[];
+  totals: UsageTotals;
+  days: UsageDailyBucket[];
+  models: UsageModelBreakdown[];
+  estimated: boolean;
+  lastActivityAt: string | null;
+};
+
+export type UsageOverviewResponse = {
+  generatedAt: string;
+  lookbackDays: number;
+  providers: ProviderUsageReport[];
+};
+
+export async function fetchUsageOverview(options?: {
+  days?: number;
+  refresh?: boolean;
+  signal?: AbortSignal;
+}): Promise<UsageOverviewResponse> {
+  const params = new URLSearchParams();
+  if (options?.days) {
+    params.set("days", String(options.days));
+  }
+  if (options?.refresh) {
+    params.set("refresh", "1");
+  }
+  const query = params.toString();
+  return request<UsageOverviewResponse>(
+    `/api/usage/overview${query ? `?${query}` : ""}`,
+    options?.signal ? { signal: options.signal } : undefined,
+    { skipWorkspaceHeader: true, cache: "no-store" }
+  );
+}

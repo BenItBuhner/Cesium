@@ -18,6 +18,7 @@ import { authRoutes } from "./routes/auth.js";
 import { mcpRoutes } from "./routes/mcp.js";
 import { pluginRoutes } from "./routes/plugins.js";
 import { storageRoutes } from "./routes/storage.js";
+import { usageRoutes } from "./routes/usage.js";
 import { orchestrationRoutes } from "./routes/orchestration.js";
 import { cloudAgentRoutes } from "./routes/cloud-agents.js";
 import { extensionRoutes } from "./routes/extensions.js";
@@ -158,6 +159,7 @@ export function createCesiumApp(): Hono {
   app.route("/", audioRoutes);
   app.route("/", voiceRoutes);
   app.route("/", storageRoutes);
+  app.route("/", usageRoutes);
   return app;
 }
 

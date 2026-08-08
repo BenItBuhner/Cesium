@@ -16,6 +16,7 @@ import { BetaSettingsPanel } from "./BetaSettingsPanel";
 import { KeyboardShortcutsSettingsPanel } from "./KeyboardShortcutsSettingsPanel";
 import { ExportImportSettingsPanel } from "./ExportImportSettingsPanel";
 import { StorageSettingsPanel } from "./StorageSettingsPanel";
+import { UsageSettingsPanel } from "./UsageSettingsPanel";
 
 export { usePluginsMcpNavigation } from "./PluginsSettingsPanel";
 
@@ -25,6 +26,7 @@ export const SETTINGS_PANELS: Record<string, ComponentType> = {
   agents: AgentsHarnessSettingsPanel,
   cloudAgents: CloudAgentsSettingsPanel,
   models: ModelsSettingsPanel,
+  usage: UsageSettingsPanel,
   plugins: PluginsSettingsPanel,
   extensions: VscodeExtensionsSettingsPanel,
   servers: ServerConnectionsSettingsPanel,

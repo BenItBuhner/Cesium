@@ -38,6 +38,7 @@ const NAV_LABELS: Record<string, string> = {
   agents: "Agents",
   cloudAgents: "Cloud Agents",
   models: "Models",
+  usage: "Usage",
   plugins: "Plugins",
   extensions: "Extensions",
   servers: "Servers",
@@ -291,6 +292,44 @@ const STATIC_SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
 
   // —— Models (panel chrome; model rows are dynamic) ——
   section("models", "catalog", "Model catalog", "visibility toggle refresh"),
+
+  // —— Usage ——
+  section("usage", "overview", "Usage overview", "tokens quota subscription meter analytics"),
+  row(
+    "usage",
+    "usage-controls",
+    "Usage lookback and refresh",
+    "Choose the analytics window (7, 30, or 90 days) and re-scan local harness data.",
+    ["tokens", "quota", "rate limit", "refresh"]
+  ),
+  row(
+    "usage",
+    "usage-limits-codex",
+    "Codex subscription limits",
+    "ChatGPT plan rate-limit windows (5h and weekly) read from Codex CLI rollouts.",
+    ["codex", "openai", "chatgpt", "quota", "rate limit", "meter"]
+  ),
+  row(
+    "usage",
+    "usage-activity-claude-code",
+    "Claude Code usage",
+    "Token analytics and current 5h session block from ~/.claude transcripts.",
+    ["claude", "anthropic", "session block", "tokens"]
+  ),
+  row(
+    "usage",
+    "usage-activity-gemini",
+    "Gemini CLI / Antigravity usage",
+    "Token analytics from ~/.gemini chat checkpoints.",
+    ["gemini", "antigravity", "google", "tokens"]
+  ),
+  row(
+    "usage",
+    "usage-activity-opencode",
+    "OpenCode usage",
+    "Tokens and recorded spend from the OpenCode store.",
+    ["opencode", "cost", "tokens"]
+  ),
 
   // —— Plugins ——
   section("plugins", "catalog", "Agent Plugins", "catalog install enable disable harness"),
